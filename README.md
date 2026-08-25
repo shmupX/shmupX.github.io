@@ -39,7 +39,19 @@ Requires Deno canary (`deno upgrade canary`).
 
 ## Deploy
 
-Deno Deploy EA git integration: the `deploy` block in `deno.json` (org
-`easierbycode`, app `shmupx`) plus the connected repo — Deploy runs
-`deno task build` on push to main. Point the `codemonkey.games` domain at the
-app in the Deploy dashboard.
+Deno Deploy git integration: the app is linked to this repo in the Deploy
+dashboard (the app slug decides the default `<app>.<org>.deno.net` URL — it is
+not set from this file), and every push to main triggers a build.
+
+The `deploy` block in `deno.json` is what that build follows:
+
+- `install` — `deno install` (npm deps for vite/esbuild/svelte).
+- `build` — `deno task build` (manifest → BGM → dashboard bundle → engine bundle
+  → `vite build`).
+- `runtime.entrypoint` — `./_fresh/server.js`, the built server that wraps the
+  Fresh handler in `{ fetch }`. This must be set explicitly: `main.ts` exports a
+  Fresh `App`, which has no `fetch` and cannot serve traffic, so leaving Deploy
+  to auto-detect an entrypoint yields a build that never produces a working
+  deployment.
+
+Point the `codemonkey.games` domain at the app in the Deploy dashboard.

@@ -83,7 +83,11 @@
     ]
   },
   "deploy": {
-    "org": "easierbycode",
-    "app": "shmupx"
+    "install": "deno install",
+    "build": "deno task build",
+    "runtime": {
+      "type": "dynamic",
+      "entrypoint": "./_fresh/server.js"
+    }
   }
 }
