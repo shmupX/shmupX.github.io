@@ -1,0 +1,296 @@
+{
+	"frames": {
+		"modeSelectTxt.gif": {
+			"frame": {
+				"x": 0,
+				"y": 0,
+				"w": 170,
+				"h": 32
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 170,
+				"h": 32
+			},
+			"sourceSize": {
+				"w": 170,
+				"h": 32
+			}
+		},
+		"playBtnPc0.gif": {
+			"frame": {
+				"x": 0,
+				"y": 33,
+				"w": 170,
+				"h": 58
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 170,
+				"h": 58
+			},
+			"sourceSize": {
+				"w": 170,
+				"h": 58
+			}
+		},
+		"playBtnPc1.gif": {
+			"frame": {
+				"x": 0,
+				"y": 91,
+				"w": 170,
+				"h": 58
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 170,
+				"h": 58
+			},
+			"sourceSize": {
+				"w": 170,
+				"h": 58
+			}
+		},
+		"playBtnPcTxt.gif": {
+			"frame": {
+				"x": 0,
+				"y": 149,
+				"w": 170,
+				"h": 11
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 170,
+				"h": 11
+			},
+			"sourceSize": {
+				"w": 170,
+				"h": 11
+			}
+		},
+		"playBtnSp0.gif": {
+			"frame": {
+				"x": 0,
+				"y": 160,
+				"w": 170,
+				"h": 58
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 170,
+				"h": 58
+			},
+			"sourceSize": {
+				"w": 170,
+				"h": 58
+			}
+		},
+		"playBtnSp1.gif": {
+			"frame": {
+				"x": 0,
+				"y": 218,
+				"w": 170,
+				"h": 58
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 170,
+				"h": 58
+			},
+			"sourceSize": {
+				"w": 170,
+				"h": 58
+			}
+		},
+		"playBtnSpTxt.gif": {
+			"frame": {
+				"x": 0,
+				"y": 276,
+				"w": 170,
+				"h": 11
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 170,
+				"h": 11
+			},
+			"sourceSize": {
+				"w": 170,
+				"h": 11
+			}
+		},
+		"recommendBtn0.gif": {
+			"frame": {
+				"x": 0,
+				"y": 290,
+				"w": 186,
+				"h": 47
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 186,
+				"h": 47
+			},
+			"sourceSize": {
+				"w": 186,
+				"h": 47
+			}
+		},
+		"recommendBtn1.gif": {
+			"frame": {
+				"x": 0,
+				"y": 337,
+				"w": 186,
+				"h": 47
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 186,
+				"h": 47
+			},
+			"sourceSize": {
+				"w": 186,
+				"h": 47
+			}
+		},
+		"recommendBtn0_en.gif": {
+			"frame": {
+				"x": 0,
+				"y": 400,
+				"w": 186,
+				"h": 47
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 186,
+				"h": 47
+			},
+			"sourceSize": {
+				"w": 186,
+				"h": 47
+			}
+		},
+		"recommendBtn1_en.gif": {
+			"frame": {
+				"x": 0,
+				"y": 447,
+				"w": 186,
+				"h": 47
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 186,
+				"h": 47
+			},
+			"sourceSize": {
+				"w": 186,
+				"h": 47
+			}
+		},
+		"recommendModal.gif": {
+			"frame": {
+				"x": 190,
+				"y": 0,
+				"w": 241,
+				"h": 429
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 241,
+				"h": 429
+			},
+			"sourceSize": {
+				"w": 241,
+				"h": 429
+			}
+		},
+		"recommendModal_en.gif": {
+			"frame": {
+				"x": 440,
+				"y": 0,
+				"w": 241,
+				"h": 429
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 241,
+				"h": 429
+			},
+			"sourceSize": {
+				"w": 241,
+				"h": 429
+			}
+		},
+		"recommendModalCloseBtn.gif": {
+			"frame": {
+				"x": 190,
+				"y": 440,
+				"w": 22,
+				"h": 22
+			},
+			"rotated": false,
+			"trimmed": true,
+			"spriteSourceSize": {
+				"x": 0,
+				"y": 0,
+				"w": 22,
+				"h": 22
+			},
+			"sourceSize": {
+				"w": 22,
+				"h": 22
+			}
+		}
+	},
+	"meta": {
+		"app": "",
+		"version": "1.0",
+		"image": "img/title_ui.png",
+		"format": "RGBA8888",
+		"size": {
+			"w": 1024,
+			"h": 512
+		},
+		"scale": "1",
+		"smartupdate": "$TexturePacker:SmartUpdate:2f213a6b451f9f5719773418dfe80ae8$"
+	}
+}

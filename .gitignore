@@ -1,0 +1,10 @@
+_fresh/
+node_modules/
+vendor/
+.claude/
+static/games/2028-ai/assets/custom-bgm/
+
+# Local .sav test fixtures (community Dezaemon 2 saves — never committed).
+# Drop .sav/.bcr/.bkr files here to enable the fixture-gated engine tests.
+dev-fixtures/
+packages/shmup-engine/fixtures/

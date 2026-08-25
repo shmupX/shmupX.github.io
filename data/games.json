@@ -1,0 +1,10 @@
+[
+  {
+    "id": "shmupx",
+    "name": "shmupX",
+    "title": "SHMUPX",
+    "sub": "Level Editor // Phaser 4",
+    "icon": "/icons/2028-icon.png",
+    "url": "/editor/?game=2028-ai"
+  }
+]

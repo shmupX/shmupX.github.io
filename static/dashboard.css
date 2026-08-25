@@ -1,0 +1,1417 @@
+:root {
+  --green: #9CFF6B;
+  --green-glow: #7CFF4F;
+  --green-deep: #0e6a2b;
+  --yellow: #F6FF4A;
+  --yellow-hot: #FFEE5A;
+  --tile-edge: rgba(140, 255, 110, .55);
+  --breathe-mult: 1; /* OSD "Breathe speed" tweak scales the breathe animations */
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app-root {
+  height: 100%;
+  margin: 0;
+  background: #000;
+  color: var(--green);
+  font-family: 'Orbitron', sans-serif;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background:
+    radial-gradient(ellipse 80% 60% at 38% 55%, rgba(20, 90, 40, .45), transparent 70%),
+    radial-gradient(ellipse 60% 70% at 50% 50%, rgba(8, 40, 18, .85), #000 80%);
+  background-color: #000;
+}
+
+/* Hide the pointer on anything that isn't a keyboard-and-mouse desk: a
+   touchscreen or a connected gamepad means the controller is the input and a
+   parked arrow is just litter over the game. body.no-cursor carries that
+   verdict (set in Dashboard.svelte).
+
+   body.cfg-mouse is the one exception — the Controller Layout panel reached by
+   an actual mouse click. It only applies while NO pad is connected, which in
+   practice means a keyboard-and-mouse desk: a touchscreen that also hides the
+   cursor still gets the pointer back for that panel.
+
+   A connected gamepad overrides it (body.pad-on, also set in Dashboard.svelte).
+   Once a pad is in play the pointer stays gone everywhere, the Controller
+   Layout panel included — that panel has its own gamepad path
+   (handleConfiguratorPadTick in controller-configurator.js drives it with the
+   D-pad), so nothing becomes unreachable. */
+body.no-cursor:not(.cfg-mouse),
+body.no-cursor:not(.cfg-mouse) *,
+body.no-cursor.pad-on,
+body.no-cursor.pad-on * { cursor: none !important; }
+
+/* === Background mesh === */
+.field { position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.field svg { position: absolute; left: -10%; top: -10%; width: 120%; height: 120%; opacity: .55; }
+.mesh { animation: meshSpin 90s linear infinite; transform-origin: 50% 50%; }
+.mesh2 { animation: meshSpin 140s linear infinite reverse; transform-origin: 50% 50%; }
+@keyframes meshSpin { to { transform: rotate(360deg); } }
+
+/* Scan + vignette */
+.scan { position: fixed; inset: 0; pointer-events: none; z-index: 50; background: repeating-linear-gradient(180deg, rgba(0, 255, 120, .035) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
+body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
+.vignette { position: fixed; inset: 0; pointer-events: none; z-index: 51; background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, .88) 100%); }
+.noise { position: fixed; inset: 0; pointer-events: none; z-index: 49; opacity: .05; mix-blend-mode: overlay; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 0.7  0 0 0 0 1  0 0 0 0 0.5  0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"); }
+
+.stage { position: relative; height: 100%; width: 100%; z-index: 1; }
+
+/* === Top HUD === */
+.topbar {
+  position: absolute; left: 5vmin; top: 3vmin; right: 5vmin;
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: 'Share Tech Mono', monospace; font-size: clamp(11px, 1.4vmin, 15px); color: rgba(180, 255, 140, .7);
+  letter-spacing: .2em; text-transform: uppercase; z-index: 3;
+}
+.topbar .brand { display: flex; align-items: center; gap: .7em; color: rgba(220, 255, 180, .85); }
+.topbar .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green-glow); box-shadow: 0 0 10px var(--green-glow); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.topbar .right { display: flex; gap: 2em; }
+.topbar .right span { position: relative; }
+
+/* === Dashboard view === */
+.dashboard {
+  position: absolute; inset: 0;
+  display: grid; grid-template-columns: 1.05fr 1fr; align-items: center;
+  transition: opacity .55s ease, transform .65s cubic-bezier(.5, .05, .3, 1), filter .55s ease;
+}
+.dashboard.gone { opacity: 0; transform: scale(.78) translateX(-8%); filter: blur(10px); pointer-events: none; }
+
+/* ORB */
+.orb-wrap { position: relative; display: flex; align-items: center; justify-content: center; height: 80vmin; }
+.orb {
+  position: relative; width: 56vmin; height: 56vmin; max-width: 560px; max-height: 560px;
+  display: flex; align-items: center; justify-content: center;
+  animation: breathe calc(5.2s / var(--breathe-mult, 1)) ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { filter: drop-shadow(0 0 28px rgba(120, 255, 80, .45)) drop-shadow(0 0 80px rgba(60, 220, 90, .35)); transform: scale(1); }
+  50% { filter: drop-shadow(0 0 60px rgba(180, 255, 120, .85)) drop-shadow(0 0 140px rgba(80, 255, 120, .55)); transform: scale(1.035); }
+}
+.orb .core {
+  position: absolute; inset: 14%; border-radius: 50%;
+  background: radial-gradient(circle at 38% 38%, #f9ffd0 0%, #d6ff7a 13%, #7CFF4F 35%, #2ea14b 60%, #093a16 86%, #000 100%);
+  box-shadow: inset -10px -20px 60px rgba(0, 0, 0, .55), inset 20px 30px 80px rgba(255, 255, 200, .35), 0 0 60px rgba(110, 255, 90, .5);
+  animation: coreShift 8s ease-in-out infinite;
+}
+@keyframes coreShift { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(1%, -1%) scale(1.02); } }
+.orb .ring { position: absolute; inset: -6%; border: 1px solid rgba(160, 255, 120, .4); border-radius: 50%; box-shadow: inset 0 0 30px rgba(120, 255, 90, .18), 0 0 30px rgba(120, 255, 90, .18); }
+.orb .ring.a { animation: rA 14s linear infinite; }
+.orb .ring.b { inset: -15%; border-color: rgba(120, 255, 80, .22); animation: rB 20s linear infinite reverse; }
+.orb .ring.c { inset: -25%; border-color: rgba(120, 255, 80, .12); animation: rC 28s linear infinite; }
+@keyframes rA { 0% { transform: rotateX(72deg) rotateZ(0); } 100% { transform: rotateX(72deg) rotateZ(360deg); } }
+@keyframes rB { 0% { transform: rotateX(58deg) rotateY(20deg) rotateZ(0); } 100% { transform: rotateX(58deg) rotateY(20deg) rotateZ(360deg); } }
+@keyframes rC { 0% { transform: rotateX(35deg) rotateY(-15deg) rotateZ(0); } 100% { transform: rotateX(35deg) rotateY(-15deg) rotateZ(360deg); } }
+.orb .glyph {
+  position: relative; z-index: 3; font-size: 22vmin; line-height: 1;
+  filter: drop-shadow(0 0 18px rgba(40, 30, 10, .7));
+  animation: glyphFloat calc(5.2s / var(--breathe-mult, 1)) ease-in-out infinite;
+}
+@keyframes glyphFloat { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-2%) rotate(3deg); } }
+.orb::before, .orb::after {
+  content: ""; position: absolute; inset: -25%; pointer-events: none; filter: blur(20px);
+  background: radial-gradient(ellipse 60% 30% at 50% 40%, rgba(120, 255, 90, .2), transparent 70%);
+  animation: wisp 9s ease-in-out infinite;
+}
+.orb::after { animation-delay: -4s; transform: rotate(45deg); }
+@keyframes wisp { 0%, 100% { opacity: .4; transform: scale(1); } 50% { opacity: .9; transform: scale(1.1) rotate(8deg); } }
+
+/* === Menu list === */
+.menu { position: relative; display: flex; flex-direction: column; gap: 3.4vmin; padding-right: 8vmin; padding-left: 4vmin; }
+.item {
+  position: relative; display: flex; align-items: center; gap: 2.4vmin;
+  height: 9vmin; max-height: 96px; min-height: 62px; cursor: pointer;
+  animation: itemBreathe calc(4.8s / var(--breathe-mult, 1)) ease-in-out infinite;
+}
+.item:nth-child(2) { animation-delay: -1.6s; }
+.item:nth-child(3) { animation-delay: -3.2s; }
+@keyframes itemBreathe { 50% { transform: translateX(.5%); } }
+
+.node {
+  position: relative; width: 9vmin; max-width: 96px; min-width: 62px; aspect-ratio: 1; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.node::before {
+  content: ""; position: absolute; inset: 18%; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff 0%, #d4ff8a 18%, var(--green) 45%, #1c5b2a 75%, #061b0c 100%);
+  box-shadow: 0 0 22px rgba(140, 255, 90, .55), inset -3px -6px 14px rgba(0, 0, 0, .5);
+  transition: background .25s ease, box-shadow .25s ease;
+}
+.node::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  border: 1.5px solid rgba(140, 255, 110, .55);
+  box-shadow: inset 0 0 14px rgba(140, 255, 110, .22), 0 0 18px rgba(120, 255, 90, .25);
+  transition: border-color .25s ease, box-shadow .25s ease;
+}
+.item.sel .node::before {
+  background: radial-gradient(circle at 35% 30%, #fffacc 0%, #fff36a 20%, var(--yellow) 50%, #8c7a00 80%, #2b2400 100%);
+  box-shadow: 0 0 28px rgba(255, 240, 90, .75), inset -3px -6px 14px rgba(0, 0, 0, .5);
+}
+.item.sel .node::after { border-color: rgba(255, 240, 90, .85); box-shadow: inset 0 0 16px rgba(255, 240, 90, .35), 0 0 26px rgba(255, 240, 90, .4); }
+
+.bar {
+  position: relative; flex: 1; height: 100%;
+  display: flex; align-items: center; padding: 0 5vmin 0 4vmin;
+  color: #dfffc4;
+  font-weight: 700; font-size: clamp(20px, 3.4vmin, 38px); letter-spacing: .2em;
+  background: linear-gradient(180deg, rgba(70, 180, 90, .08), rgba(20, 60, 30, .55) 35%, rgba(20, 60, 30, .55) 65%, rgba(70, 180, 90, .08));
+  border: 1px solid var(--tile-edge); border-left: none;
+  clip-path: polygon(0 0, calc(100% - 4vmin) 0, 100% 50%, calc(100% - 4vmin) 100%, 0 100%);
+  box-shadow: inset 0 0 0 1px rgba(140, 255, 110, .08), inset 0 2px 0 rgba(180, 255, 140, .18), inset 0 -2px 0 rgba(180, 255, 140, .08), 0 0 24px rgba(50, 200, 80, .2);
+  transition: background .25s ease, color .25s ease, box-shadow .25s ease;
+}
+.bar::before {
+  content: ""; position: absolute; left: 0; right: 6%; top: 50%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(160, 255, 110, .4), transparent);
+}
+.bar .num { margin-left: auto; font-family: 'Share Tech Mono', monospace; font-size: .55em; color: rgba(220, 255, 180, .55); letter-spacing: .08em; }
+
+.item.sel .bar {
+  color: #0a0a06;
+  background: linear-gradient(180deg, #fffea1 0%, var(--yellow) 25%, #d8e640 60%, #a4b00b 100%);
+  border-color: #fff36a;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 180, .5), inset 0 2px 0 rgba(255, 255, 220, .7), inset 0 -2px 0 rgba(150, 140, 0, .4), 0 0 40px rgba(255, 240, 90, .5), 0 0 80px rgba(255, 240, 90, .2);
+}
+.item.sel .bar .num { color: rgba(60, 50, 0, .7); }
+.item:hover:not(.sel) .bar {
+  background: linear-gradient(180deg, rgba(120, 230, 140, .18), rgba(40, 110, 55, .7) 35%, rgba(40, 110, 55, .7) 65%, rgba(120, 230, 140, .18));
+  color: #f7ffe6;
+  box-shadow: inset 0 2px 0 rgba(190, 255, 150, .32), 0 0 32px rgba(80, 220, 100, .35);
+}
+.item .tag {
+  position: absolute; left: 0; top: -1.4em; font-family: 'Share Tech Mono'; font-size: clamp(10px, 1.2vmin, 13px);
+  color: rgba(180, 255, 140, .5); letter-spacing: .2em; text-transform: uppercase;
+}
+
+/* === Footer === */
+/* z-index above .games-screen (5) so the tappable A/Back buttons aren't
+   occluded by the full-viewport games overlay / its panel. Without this, a real
+   touch lands on .games-panel and the footer's onpointerup never fires (PR #27's
+   handler is correct but unreachable). Stays below .game-iframe (99, outside
+   .stage) so the footers remain hidden while a game is playing. */
+.footer { position: absolute; right: 5vmin; bottom: 4vmin; z-index: 6; display: flex; align-items: center; gap: 1vmin; font-family: 'Share Tech Mono'; letter-spacing: .2em; color: #dfffc4; text-transform: uppercase; font-size: clamp(12px, 1.5vmin, 16px); }
+.footer.left { left: 5vmin; right: auto; }
+/* Update hint sits left of the A action, centred, without a transform (so the
+   .footer.tap:active scale stays intact). */
+.footer.upd { left: 50%; right: auto; margin-left: -7vmin; color: #5effc8; }
+.footer.tap { cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
+.footer.tap:active { transform: scale(.96); }
+.footer.tap:active .btn-hint { filter: brightness(1.2); }
+.btn-hint {
+  width: 4.4vmin; height: 4.4vmin; min-width: 36px; min-height: 36px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff 0%, #b6ff80 20%, #3ed26c 50%, #094c1c 85%);
+  box-shadow: 0 0 18px rgba(140, 255, 90, .5), inset -2px -4px 10px rgba(0, 0, 0, .5);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; color: #062a0e; font-size: clamp(15px, 2vmin, 20px);
+  border: 1.5px solid rgba(180, 255, 120, .7);
+}
+.btn-hint.b { background: radial-gradient(circle at 35% 30%, #fff0c0 0%, #ffe066 25%, #caa800 60%, #3a2c00 95%); color: #241a00; border-color: rgba(255, 230, 120, .75); box-shadow: 0 0 18px rgba(255, 220, 90, .6), inset -2px -4px 10px rgba(0, 0, 0, .5); }
+.btn-hint.x { background: radial-gradient(circle at 35% 30%, #ffd9d9 0%, #ff8a8a 30%, #c0392b 65%, #3a0c08 95%); color: #2a0606; border-color: rgba(255, 150, 150, .75); box-shadow: 0 0 18px rgba(255, 90, 90, .55), inset -2px -4px 10px rgba(0, 0, 0, .5); }
+.btn-hint.y { background: radial-gradient(circle at 35% 30%, #cffff0 0%, #5effc8 25%, #1f9e7a 60%, #04332a 95%); color: #04241c; border-color: rgba(120, 255, 210, .75); box-shadow: 0 0 18px rgba(94, 255, 200, .55), inset -2px -4px 10px rgba(0, 0, 0, .5); }
+.footer.mid { left: 50%; right: auto; transform: translateX(-50%); }
+.footer.mid.tap:active { transform: translateX(-50%) scale(.96); }
+/* Multi-action footer (graduated CMG Network game: Uninstall + optional Update). */
+.footer.acts { gap: 2.4vmin; }
+.footer .act { display: flex; align-items: center; gap: 1vmin; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
+.footer .act:active { transform: scale(.96); }
+.footer .act:active .btn-hint { filter: brightness(1.2); }
+
+/* === Games popover === */
+.games-screen {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  opacity: 0; transform: scale(.6); filter: blur(20px); pointer-events: none; z-index: 5;
+  transition: opacity .55s ease, transform .65s cubic-bezier(.2, .8, .2, 1.08), filter .5s ease;
+}
+.games-screen.shown { opacity: 1; transform: scale(1); filter: blur(0); pointer-events: auto; }
+
+.games-panel { position: relative; width: min(92vw, 2400px); height: min(92vh, 1500px); display: grid; grid-template-columns: 24vmin 1fr; grid-template-rows: 1fr; gap: 3vmin; overflow: hidden; }
+/* The catalog panel carries the emulator strip across the top, so it grows a
+   second row. Every other games-screen (Demos, CMG Network, Add Game, Settings,
+   …) keeps the single-row grid above and its absolutely-positioned .strip-top. */
+.games-panel.with-strip { grid-template-rows: auto 1fr; gap: 2.6vmin 3vmin; height: min(88vh, 1500px); }
+.disc-col { display: flex; flex-direction: column; align-items: center; gap: 2.4vmin; padding-top: 4vmin; }
+.games-panel.with-strip .disc-col { padding-top: 0; min-height: 0; }
+/* The strip takes a row off the top of this panel, so the disc gives back a
+   little floor and refuses to be squeezed by the meta block under it. */
+.games-panel.with-strip .disc { min-width: 120px; min-height: 120px; flex-shrink: 0; }
+.disc {
+  width: 19vmin; height: 19vmin; max-width: 220px; max-height: 220px; min-width: 140px; min-height: 140px;
+  border-radius: 50%; position: relative;
+  background:
+    radial-gradient(circle at 50% 50%, #000 0%, #061a0b 22%, transparent 23%),
+    conic-gradient(from 0deg, rgba(120, 255, 90, .55), rgba(60, 180, 80, .25), rgba(120, 255, 90, .55) 60%, rgba(60, 180, 80, .25), rgba(120, 255, 90, .55));
+  box-shadow: 0 0 35px rgba(120, 255, 90, .45), inset 0 0 40px rgba(0, 0, 0, .65);
+  animation: spin 9s linear infinite;
+}
+.disc::before { content: ""; position: absolute; inset: 38%; border-radius: 50%; background: radial-gradient(circle, #fffec5, var(--yellow) 30%, #6e7b00 70%, #1a1d00 100%); box-shadow: 0 0 25px rgba(255, 240, 90, .6); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.meta {
+  width: 100%; border: 1px solid rgba(140, 255, 110, .45);
+  background: linear-gradient(180deg, rgba(40, 110, 55, .5), rgba(15, 50, 25, .7));
+  padding: 1.4vmin 1.8vmin; font-family: 'Share Tech Mono'; font-size: clamp(11px, 1.4vmin, 15px); line-height: 1.6;
+  color: #e7ffce; letter-spacing: .05em;
+}
+.meta .k { color: rgba(180, 255, 140, .55); margin-right: .5em; }
+.meta b { color: #fff; letter-spacing: .08em; }
+
+.games-right { display: flex; flex-direction: column; gap: 1.6vmin; height: 100%; min-width: 0; min-height: 0; }
+.games-header { display: flex; align-items: center; gap: 1.6vmin; height: 8.5vmin; max-height: 88px; min-height: 64px; }
+.title-bar {
+  flex: 1; height: 100%; min-width: 0;
+  background: linear-gradient(180deg, rgba(70, 180, 90, .18), rgba(20, 60, 30, .7) 50%, rgba(20, 60, 30, .7) 50%, rgba(70, 180, 90, .05));
+  border: 1px solid var(--tile-edge);
+  clip-path: polygon(0 0, calc(100% - 3vmin) 0, 100% 50%, calc(100% - 3vmin) 100%, 0 100%, 3vmin 50%);
+  display: flex; align-items: center; justify-content: center;
+  color: #dfffc4; font-weight: 800; font-size: clamp(13px, 3.6vmin, 42px); letter-spacing: .22em;
+  white-space: nowrap; overflow: hidden;
+  text-shadow: 0 0 18px rgba(120, 255, 90, .55);
+  box-shadow: inset 0 2px 0 rgba(180, 255, 140, .2), 0 0 30px rgba(50, 200, 80, .22);
+  padding: 0 4vmin;
+  /* .dim rides in and out on every Up/Down between the strip and the list. */
+  transition: color .25s ease, border-color .25s ease;
+}
+.counter { font-family: 'Share Tech Mono'; font-size: clamp(11px, 1.5vmin, 16px); letter-spacing: .14em; color: rgba(220, 255, 180, .7); text-transform: uppercase; min-width: 5em; text-align: right; flex-shrink: 0; }
+/* The catalog header carries a third element (the Add button), so the title
+   gives back a little size and the row can shrink further before it wraps. */
+.games-panel.with-strip .games-header { min-height: 56px; }
+.games-panel.with-strip .title-bar { font-size: clamp(13px, 3.2vmin, 38px); }
+
+.games-list { position: relative; flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 1.4vmin; overflow-x: visible; overflow-y: auto; padding: 2vmin 1vmin 2vmin max(1.6vmin, 32px); scroll-behavior: smooth; scrollbar-width: none; -ms-overflow-style: none; mask-image: linear-gradient(180deg, transparent 0, #000 3vmin, #000 calc(100% - 3vmin), transparent 100%); -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 3vmin, #000 calc(100% - 3vmin), transparent 100%); }
+.games-list::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.game-row { flex-shrink: 0; scroll-margin: 3vmin 0; }
+
+.game-row {
+  position: relative; display: flex; align-items: center; gap: 2.2vmin;
+  height: 8vmin; max-height: 78px; min-height: 58px; cursor: pointer;
+  animation: rowBreathe calc(4.6s / var(--breathe-mult, 1)) ease-in-out infinite;
+}
+.game-row:nth-child(2n) { animation-delay: -1.2s; }
+.game-row:nth-child(3n) { animation-delay: -2.4s; }
+@keyframes rowBreathe { 50% { transform: translateX(.4%); } }
+
+.game-icon {
+  width: 7.4vmin; height: 7.4vmin; max-width: 72px; max-height: 72px; min-width: 54px; min-height: 54px;
+  flex-shrink: 0; position: relative; border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, #061a0b 25%, transparent 26%),
+    conic-gradient(from 30deg, rgba(140, 255, 90, .7), rgba(60, 180, 80, .25), rgba(140, 255, 90, .7) 60%, rgba(60, 180, 80, .25), rgba(140, 255, 90, .7));
+  box-shadow: 0 0 18px rgba(120, 255, 90, .5), inset 0 0 14px rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center;
+}
+.game-icon .glass {
+  position: absolute; inset: 14%; border-radius: 50%; background: #0a1a0e;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  box-shadow: inset 0 0 12px rgba(120, 255, 90, .4), 0 0 0 2px rgba(140, 255, 110, .75);
+}
+.game-icon .glass img { width: 88%; height: 88%; object-fit: contain; filter: drop-shadow(0 0 6px rgba(120, 255, 90, .55)); }
+.game-icon .glass .ph { color: #bdf48c; font-weight: 800; font-size: clamp(16px, 2.2vmin, 22px); text-shadow: 0 0 10px rgba(120, 255, 90, .7); letter-spacing: .05em; }
+
+/* Submenu / category tiles (Demos, CMG Network, PlayStation, …): a small folder
+   holding a couple of game discs — signalling "a collection of games" rather
+   than one game. Same footprint, green palette, and glow as .game-icon; the
+   selected row swaps the glow/edge to yellow exactly like .game-row.sel .game-icon
+   (disc/folder fills stay green, only the halo turns yellow). Class names are
+   .sub-disc/.folder rather than .disc because .disc is already the spinning
+   emulator-loading disc. */
+.submenu-icon {
+  width: 7.4vmin; height: 7.4vmin; max-width: 72px; max-height: 72px; min-width: 54px; min-height: 54px;
+  flex-shrink: 0; position: relative;
+  filter: drop-shadow(0 0 16px rgba(120, 255, 90, .5));
+}
+/* The square box every percentage below is measured against. It exists as its
+   own element so a theme that reshapes the tile — theme-nintendo turns it into
+   a wide card thumbnail — re-anchors this one box and leaves the folder/disc
+   geometry intact; positioned directly off .submenu-icon the pieces would
+   stretch with the tile's aspect ratio into an unrecognisable smear. */
+.submenu-art { position: absolute; inset: 0; }
+.submenu-art .folder {
+  position: absolute; left: 7%; right: 7%; top: 32%; bottom: 7%; z-index: 1;
+  border-radius: 14%; border: 1px solid var(--tile-edge);
+  background: linear-gradient(165deg, #0c4420, #061a0b);
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, .55);
+}
+/* No folder tab: at this geometry the back disc's circle covers all four of its
+   corners, so it only ghosts through the conic gradient's transparent sectors —
+   dead weight that the theme blocks below would each have to restate. The discs
+   rising out of the folder body already read as "a collection of games". */
+.submenu-art .sub-disc {
+  position: absolute; width: 44%; height: 44%; border-radius: 50%; z-index: 2;
+  border: 1px solid rgba(140, 255, 110, .7);
+  box-shadow: 0 0 6px rgba(120, 255, 90, .5), inset 0 0 6px rgba(0, 0, 0, .55);
+  background:
+    radial-gradient(circle at 50% 50%, #061a0b 24%, transparent 25%),
+    conic-gradient(from 30deg, rgba(140, 255, 90, .85), rgba(60, 180, 80, .3), rgba(140, 255, 90, .85) 60%, rgba(60, 180, 80, .3), rgba(140, 255, 90, .85));
+}
+.submenu-art .sub-disc-back { left: 11%; top: 7%; }
+.submenu-art .sub-disc-front { right: 9%; top: 17%; }
+.submenu-art::after { /* folder front flap — tucks the discs into the folder */
+  content: ''; position: absolute; left: 7%; right: 7%; bottom: 7%; height: 40%; z-index: 3;
+  border-radius: 0 0 14% 14%; border: 1px solid var(--tile-edge); border-top: 1.5px solid rgba(170, 255, 130, .85);
+  background: linear-gradient(180deg, #1b6e34, #0a3318);
+  box-shadow: inset 0 2px 0 rgba(180, 255, 140, .22);
+}
+.game-row.sel .submenu-icon { filter: drop-shadow(0 0 22px rgba(255, 240, 90, .7)); }
+.game-row.sel .submenu-art .sub-disc { border-color: rgba(255, 240, 90, .9); box-shadow: 0 0 8px rgba(255, 240, 90, .5), inset 0 0 6px rgba(0, 0, 0, .5); }
+.game-row.sel .submenu-art .folder,
+.game-row.sel .submenu-art::after { border-color: rgba(255, 240, 90, .85); }
+.game-row.sel .submenu-art::after { border-top-color: #fff36a; }
+
+.game-bar {
+  flex: 1; height: 100%;
+  background: linear-gradient(180deg, rgba(70, 180, 90, .08), rgba(20, 60, 30, .55) 50%, rgba(20, 60, 30, .55) 50%, rgba(70, 180, 90, .05));
+  border: 1px solid var(--tile-edge);
+  clip-path: polygon(0 0, calc(100% - 3vmin) 0, 100% 50%, calc(100% - 3vmin) 100%, 0 100%);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 4vmin 0 3vmin; color: #dfffc4; font-weight: 600;
+  font-size: clamp(15px, 2.1vmin, 22px); letter-spacing: .14em;
+  box-shadow: inset 0 2px 0 rgba(180, 255, 140, .16), 0 0 18px rgba(50, 200, 80, .15);
+  transition: background .25s ease, color .25s ease, box-shadow .25s ease;
+  min-width: 0;
+}
+.game-bar .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 0 10px rgba(80, 220, 100, .3); }
+.game-bar .sub { font-family: 'Share Tech Mono'; font-weight: 400; font-size: .7em; color: rgba(220, 255, 180, .55); letter-spacing: .1em; margin-left: 1.5em; white-space: nowrap; }
+.game-row.sel .game-icon { box-shadow: 0 0 28px rgba(255, 240, 90, .7), inset 0 0 14px rgba(0, 0, 0, .55); }
+.game-row.sel .game-icon .glass { box-shadow: inset 0 0 12px rgba(255, 240, 90, .5), 0 0 0 2px rgba(255, 240, 90, .9); }
+.game-row.sel .game-bar {
+  color: #0e0e02;
+  background: linear-gradient(180deg, #fffea1 0%, var(--yellow) 28%, #d8e640 65%, #a4b00b 100%);
+  border-color: #fff36a;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 220, .7), 0 0 36px rgba(255, 240, 90, .5);
+}
+.game-row.sel .game-bar .sub { color: rgba(40, 30, 0, .65); }
+.game-row:hover:not(.sel) .game-bar {
+  background: linear-gradient(180deg, rgba(120, 230, 140, .16), rgba(40, 110, 55, .7) 50%, rgba(40, 110, 55, .7) 50%, rgba(120, 230, 140, .16));
+}
+
+/* Uninstall (✕) control on graduated CMG Network installs in the Games list.
+   Flex sibling after .game-bar so the bar shrinks to make room (no overlap). */
+.uninstall-btn {
+  flex-shrink: 0; width: 4.4vmin; height: 4.4vmin; min-width: 38px; min-height: 38px;
+  border-radius: 50%; cursor: pointer;
+  border: 1.5px solid rgba(255, 150, 150, .7);
+  background: radial-gradient(circle at 35% 30%, #ffd9d9 0%, #ff8a8a 35%, #b3322b 80%);
+  color: #2a0606; font-weight: 800; font-size: clamp(14px, 1.9vmin, 19px); line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 12px rgba(255, 90, 90, .45), inset -1px -2px 6px rgba(0, 0, 0, .4);
+  transition: transform .15s ease, filter .2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.uninstall-btn:hover { filter: brightness(1.1); }
+.uninstall-btn:active { transform: scale(.9); }
+.game-row.sel .uninstall-btn { box-shadow: 0 0 16px rgba(255, 110, 110, .7), inset -1px -2px 6px rgba(0, 0, 0, .4); }
+
+/* === Emulator strip ======================================================
+   A horizontal shelf of console tiles across the top of the catalog panel.
+   Selecting a tile swaps the list underneath in place — the console libraries
+   used to be submenu rows that pushed to their own screen.
+
+   Focus lives on .cmg-strip: .on means the cursor is IN the strip (yellow edge,
+   roomy tiles with their labels showing, the section title below dims to say
+   "not here"); without it the strip is the collapsed rail.
+
+   The tile has THREE tiers, not two. .sel is the tile the cursor is on and only
+   exists while the strip has focus. .active is the selected SECTION and is on
+   whether or not the strip has focus — a dimmer yellow that keeps saying "this
+   is the shelf you are looking at" once the cursor drops into the list and the
+   rail collapses its labels away. Neither class is the resting green. */
+.strip-block { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 1vmin; min-width: 0; }
+.strip-head {
+  display: flex; align-items: baseline; gap: 2em;
+  font-family: 'Share Tech Mono', monospace; font-size: clamp(11px, 1.4vmin, 15px);
+  letter-spacing: .26em; text-transform: uppercase; color: rgba(220, 255, 180, .6);
+  padding: 0 .4vmin;
+}
+.strip-head .strip-label { transition: color .2s ease, text-shadow .2s ease; }
+.strip-head .strip-label.on { color: #fff36a; text-shadow: 0 0 14px rgba(255, 240, 90, .5); }
+.strip-head .strip-core { color: rgba(220, 255, 180, .42); letter-spacing: .22em; }
+/* Pushes the emulator credits to the right end of the header line. Carried by a
+   class rather than :first-of-type — the label span is the first <span> here, so
+   a type-positional selector matches nothing. */
+.strip-head .strip-core.push { margin-left: auto; }
+
+.cmg-strip {
+  display: flex; align-items: flex-start; gap: 2.2vmin;
+  overflow-x: auto; overflow-y: hidden; scroll-behavior: smooth;
+  scrollbar-width: none; -ms-overflow-style: none;
+  padding: 1.6vmin max(1.6vmin, 24px) 1vmin;
+  touch-action: pan-x; cursor: grab;
+  border: 1px solid rgba(140, 255, 110, .3);
+  background: linear-gradient(180deg, rgba(70, 180, 90, .1), rgba(12, 40, 20, .55));
+  box-shadow: inset 0 2px 0 rgba(180, 255, 140, .12);
+  transition: border-color .25s ease, box-shadow .25s ease, padding .3s ease, gap .3s ease;
+  mask-image: linear-gradient(90deg, transparent 0, #000 3vmin, #000 calc(100% - 3vmin), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 3vmin, #000 calc(100% - 3vmin), transparent 100%);
+}
+.cmg-strip::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.cmg-strip:active { cursor: grabbing; }
+.cmg-strip.on {
+  border-color: rgba(255, 240, 90, .5);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 220, .18), 0 0 30px rgba(255, 240, 90, .16);
+}
+/* Collapsed rail: once the cursor drops into the list the strip shrinks to small
+   icons and drops its label line, handing the vertical space back to the game
+   rows. Keyed off the absence of .on so it is the same signal the focus styles
+   above already use — the two halves of the screen are never both expanded. */
+.cmg-strip:not(.on) { padding: .8vmin max(1.6vmin, 24px); gap: 1.4vmin; }
+
+.strip-tile {
+  flex-shrink: 0; width: clamp(96px, 13vmin, 150px);
+  display: flex; flex-direction: column; align-items: center; gap: .9vmin;
+  cursor: pointer; scroll-margin: 0 3vmin;
+  animation: tileBreathe calc(4.6s / var(--breathe-mult, 1)) ease-in-out infinite;
+  transition: width .3s cubic-bezier(.2, .8, .2, 1), gap .3s ease;
+}
+.cmg-strip:not(.on) .strip-tile { width: clamp(40px, 5.2vmin, 60px); gap: 0; animation: none; }
+@keyframes tileBreathe { 50% { transform: translateY(-.6%); } }
+
+.strip-disc {
+  width: 100%; aspect-ratio: 1 / 1; position: relative; border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, #061a0b 25%, transparent 26%),
+    conic-gradient(from 30deg, rgba(140, 255, 90, .7), rgba(60, 180, 80, .25), rgba(140, 255, 90, .7) 60%, rgba(60, 180, 80, .25), rgba(140, 255, 90, .7));
+  box-shadow: 0 0 18px rgba(120, 255, 90, .5), inset 0 0 14px rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .22s cubic-bezier(.2, .8, .2, 1.08), box-shadow .22s ease;
+}
+.strip-disc .glass {
+  position: absolute; inset: 11%; border-radius: 50%; background: #0a1a0e;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  box-shadow: inset 0 0 12px rgba(120, 255, 90, .4), 0 0 0 2px rgba(140, 255, 110, .75);
+}
+.strip-disc .glass img { width: 82%; height: 82%; object-fit: contain; filter: drop-shadow(0 0 6px rgba(120, 255, 90, .55)); }
+.strip-disc .mark {
+  font-weight: 800; font-size: clamp(18px, 2.9vmin, 32px); letter-spacing: .04em;
+  color: #bdf48c; text-shadow: 0 0 10px rgba(120, 255, 90, .7);
+  transition: font-size .3s ease, color .2s ease;
+}
+/* A four-letter mark (MAME) has to shrink or it breaks the glass. */
+.strip-disc .mark.long { font-size: clamp(14px, 2.1vmin, 24px); }
+/* …and both sizes step down again on the collapsed rail, where the disc is a
+   third of its expanded width. */
+.cmg-strip:not(.on) .strip-disc .mark { font-size: clamp(9px, 1.25vmin, 14px); }
+.cmg-strip:not(.on) .strip-disc .mark.long { font-size: clamp(7px, .95vmin, 11px); }
+
+/* The tile name only shows for the tile under the cursor — eight labels at once
+   is noise, and the section title bar below already names the selected one. The
+   max-height is the collapse axis (every tile, driven by the rail state); the
+   opacity is the selection axis. Both animate, so the rail's height eases. */
+.strip-name {
+  font-family: 'Share Tech Mono', monospace; font-size: clamp(10px, 1.3vmin, 14px);
+  letter-spacing: .16em; text-transform: uppercase; white-space: nowrap;
+  color: #fff36a; text-shadow: 0 0 12px rgba(255, 240, 90, .6);
+  opacity: 0; max-height: 3vmin; overflow: hidden;
+  transition: opacity .2s ease, max-height .3s ease; width: max-content;
+}
+.cmg-strip:not(.on) .strip-name { max-height: 0; }
+.strip-tile.sel .strip-disc {
+  transform: scale(1.06);
+  box-shadow: 0 0 34px rgba(255, 240, 90, .75), inset 0 0 14px rgba(0, 0, 0, .55);
+}
+.strip-tile.sel .strip-disc .glass {
+  background: radial-gradient(circle at 50% 30%, #123a17, #0a1a0e 70%);
+  box-shadow: inset 0 0 14px rgba(255, 240, 90, .5), 0 0 0 2px rgba(255, 240, 90, .9);
+}
+.strip-tile.sel .strip-disc .mark { color: #fff8b0; text-shadow: 0 0 16px rgba(255, 240, 90, .85); }
+.strip-tile.sel .strip-name { opacity: 1; }
+/* Middle tier — the selected section with the cursor down in the list. Half the
+   glow of .sel and none of its scale, gradient or label: enough yellow to find
+   your shelf on the collapsed rail, not enough to compete with the row cursor. */
+.strip-tile.active:not(.sel) .strip-disc {
+  box-shadow: 0 0 18px rgba(255, 240, 90, .45), inset 0 0 14px rgba(0, 0, 0, .55);
+}
+.strip-tile.active:not(.sel) .strip-disc .glass {
+  box-shadow: inset 0 0 12px rgba(255, 240, 90, .3), 0 0 0 2px rgba(255, 240, 90, .65);
+}
+.strip-tile.active:not(.sel) .strip-disc .mark { color: #e6ffb0; }
+.strip-tile:hover:not(.sel) .strip-disc { transform: scale(1.03); }
+
+/* While the cursor is up in the strip the section title steps back, so the two
+   halves never both look active. */
+.title-bar.dim { color: rgba(223, 255, 196, .55); border-color: rgba(140, 255, 110, .28); }
+
+/* Section header action: Add Game on the catalog, the section's own BYOD/BYOC
+   picker on a console. Same pill as .byod-btn, sized to sit in the header row. */
+.add-btn {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 10px;
+  font-family: 'Orbitron', sans-serif; font-weight: 700; letter-spacing: .18em;
+  text-transform: uppercase; font-size: clamp(11px, 1.2vmin, 13px);
+  color: #051208;
+  background: linear-gradient(180deg, rgba(160, 255, 110, .95), rgba(90, 220, 60, .9));
+  border: 1px solid rgba(180, 255, 140, 1);
+  padding: 12px 22px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 0 24px rgba(120, 255, 90, .45), inset 0 -2px 0 rgba(0, 0, 0, .15);
+  transition: transform .15s ease, box-shadow .2s ease;
+}
+.add-btn:hover { transform: translateY(-1px); box-shadow: 0 0 32px rgba(120, 255, 90, .7), inset 0 -2px 0 rgba(0, 0, 0, .15); }
+.add-btn:active { transform: translateY(0) scale(.98); }
+.add-btn-icon { font-size: 1.2em; }
+
+/* clock/info top right */
+.strip-top {
+  position: absolute; left: 25vmin; right: 2vmin; top: -4.2vmin; height: 3vmin;
+  display: flex; align-items: center; justify-content: flex-end; gap: 2em;
+  color: rgba(220, 255, 180, .55); font-family: 'Share Tech Mono'; font-size: clamp(11px, 1.3vmin, 14px); letter-spacing: .22em; text-transform: uppercase;
+}
+
+/* Iframe holder when a game is launched */
+.game-iframe {
+  position: fixed; inset: 0; background: #000; z-index: 99;
+  opacity: 0; transform: scale(.92); pointer-events: none;
+  transition: opacity .5s ease, transform .5s ease;
+}
+.game-iframe.on { opacity: 1; transform: scale(1); pointer-events: auto; }
+.game-iframe iframe { width: 100%; height: 100%; border: 0; background: #000; }
+
+/* Touch twin-stick overlay — enabled from the Guide only for twin-stick games.
+   The visuals reuse the Nintendo dynamic analog assets while each half of the
+   screen feeds one analog stick into the same gamepad stream as Twin-Stick Mode. */
+.twin-touch-zone {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 101;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.twin-touch-zone.left { left: 0; width: 50vw; }
+.twin-touch-zone.right { right: 0; width: 50vw; }
+.twin-touch-base,
+.twin-touch-knob {
+  position: fixed;
+  display: block;
+  border-radius: 50%;
+  pointer-events: none;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  opacity: .94;
+  transform: translate(-50%, -50%);
+  filter: hue-rotate(-90deg) saturate(.65) brightness(1.68) drop-shadow(0 0 12px rgba(124, 255, 79, .42));
+}
+.twin-touch-base {
+  width: 132px;
+  height: 132px;
+  background-image: url('/ui/gfx/virtual-gamepad-circle.png');
+}
+.twin-touch-knob {
+  width: 60px;
+  height: 60px;
+  background-image: url('/ui/gfx/virtual-gamepad-dot.png');
+}
+
+/* In-game OSD trigger zones — small transparent corners layered above the game
+   iframe (z 99). A simultaneous touch in both (bottom-left + top-right) opens
+   the Guide. Kept small to minimize overlap with a game's own corner controls. */
+.osd-corner { position: fixed; width: min(13vmin, 104px); height: min(13vmin, 104px); z-index: 102; background: transparent; -webkit-tap-highlight-color: transparent; }
+.osd-corner.bl { left: 0; bottom: 0; }
+.osd-corner.tr { right: 0; top: 0; }
+/* Opposite diagonal — top-left + bottom-right — boots the soft-mod cinematic. */
+.osd-corner.tl { left: 0; top: 0; }
+.osd-corner.br { right: 0; bottom: 0; }
+
+/* Soft-mod cinematic overlay — full-screen, above the game iframe and OSD. */
+.softmod-overlay { position: fixed; inset: 0; z-index: 200; background: #000; }
+.softmod-overlay iframe { width: 100%; height: 100%; border: 0; display: block; }
+
+/* Music app sidebar — a CMG Network kind:'music' app docked to the right edge.
+   Layered above the game iframe (z 99) but below the Guide (z 102/103) so the
+   Guide can still open over it. No full-screen scrim: the game stays visible and
+   interactive at the left and keeps running in parallel while the music plays.
+   NB: while a game runs with the Guide closed, the top-right two-corner gesture
+   zone (.osd-corner.tr, z 102) sits over the header's ✕ — so the docked player
+   is closed with B (via osdBack) from inside the Guide, not the docked ✕. */
+.music-sidebar {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 101;
+  width: min(380px, 86vw);
+  display: flex; flex-direction: column;
+  background: linear-gradient(180deg, rgba(10, 30, 16, .97), rgba(5, 16, 9, .98));
+  border-left: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
+  box-shadow: -18px 0 48px rgba(0, 0, 0, .6), inset 1px 0 0 rgba(140, 255, 110, .08);
+  transform: translateX(100%); opacity: 0; pointer-events: none;
+  transition: transform .32s cubic-bezier(.22, .61, .36, 1), opacity .32s ease;
+  -webkit-backdrop-filter: blur(6px) saturate(140%); backdrop-filter: blur(6px) saturate(140%);
+}
+.music-sidebar.on { transform: none; opacity: 1; pointer-events: auto; }
+/* Armed — the launcher auto-mounted the player for a game that scores itself
+   from its analyser feed (startMusicForGame), and nobody has opened the sidebar.
+   It has to stay out of sight WITHOUT leaving the viewport: Chromium (and Gecko,
+   and WebKit) render-throttle a cross-origin iframe that is display:none or
+   fully outside the viewport, and a throttled frame loses requestAnimationFrame
+   — which is the exact loop the player computes and broadcasts its bands from.
+   Parked at translateX(100%) like the closed state above, the music would still
+   play (audio isn't rAF-driven) but every visualiser synced to it would starve
+   and fall back to idle. Two transparent pixels in the corner keep the frame
+   rendered and the feed alive. Opacity is not part of the throttling criteria,
+   so 0 is safe here; a zero AREA would not be. */
+.music-sidebar.armed {
+  transform: none; opacity: 0; pointer-events: none;
+  width: 2px; height: 2px; bottom: auto; overflow: hidden;
+  border-left: 0; box-shadow: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+.music-hd {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 12px 12px 16px; border-bottom: 1px solid rgba(140, 255, 110, .18);
+  color: #eaffd2; font-family: 'Orbitron', sans-serif;
+}
+.music-dot { color: var(--green, #8cff6e); font-size: 15px; text-shadow: 0 0 12px rgba(120, 255, 90, .6); }
+.music-title {
+  flex: 1; font-weight: 800; letter-spacing: .2em; font-size: 13px; text-transform: uppercase;
+  text-shadow: 0 0 14px rgba(120, 255, 90, .4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.music-x {
+  appearance: none; border: 0; background: transparent; color: rgba(220, 255, 180, .6);
+  width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 15px; line-height: 1; flex-shrink: 0;
+}
+.music-x:hover { background: rgba(120, 255, 90, .12); color: #eaffd2; }
+.music-sidebar iframe { flex: 1; width: 100%; border: 0; background: #000; display: block; }
+
+/* XBOX 360 blades Guide — while the Music blade is expanded with a player on,
+   the Osd renders an inline player slot and publishes its rect as the
+   --osd-music-* vars (plus body.osd-music-blade). Lift the docked sidebar onto
+   that slot instead of reparenting its iframe, which would reload the player
+   and cut the audio. Back to the right dock the moment the Guide closes. */
+body.theme-xbox360.osd-music-blade .music-sidebar {
+  top: var(--osd-music-y, 0); left: var(--osd-music-x, auto);
+  right: auto; bottom: auto;
+  width: var(--osd-music-w, 380px); height: var(--osd-music-h, 60vh);
+  z-index: 104; /* above the blades layer (103) */
+  border-radius: 10px; border: 1px solid rgba(255, 255, 255, .18);
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .5);
+}
+body.theme-xbox360.osd-music-blade .music-hd {
+  font-family: 'Orbitron', sans-serif;
+  color: #eaffd2; border-bottom-color: rgba(200, 255, 170, .25);
+}
+
+/* Music app store badge (CMG Network list) — violet to set it apart from the
+   green GET / blue download badges, since it opens rather than installs. */
+.net-badge.music { color: #c7a8ff; }
+
+/* BYOD (Bring Your Own Disc) — shown when the PSX game list is empty */
+.byod {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 5vmin 4vmin; text-align: center;
+  height: 100%; box-sizing: border-box;
+}
+.byod-title {
+  font-family: 'Orbitron', sans-serif; font-weight: 800; letter-spacing: .22em;
+  font-size: clamp(14px, 1.6vmin, 18px);
+  color: #c8ff9c; text-shadow: 0 0 12px rgba(120, 255, 90, .35);
+}
+.byod-sub {
+  font-family: 'Share Tech Mono', monospace; color: rgba(220, 255, 200, .78);
+  font-size: clamp(11px, 1.2vmin, 13px); max-width: 36ch;
+}
+.byod-sub code {
+  color: #dfffc4; background: rgba(120, 255, 90, .08);
+  padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(120, 255, 90, .25);
+}
+.byod-input { display: none; }
+.byod-btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: 'Orbitron', sans-serif; font-weight: 700; letter-spacing: .18em;
+  text-transform: uppercase; font-size: clamp(11px, 1.2vmin, 13px);
+  color: #051208;
+  background: linear-gradient(180deg, rgba(160, 255, 110, .95), rgba(90, 220, 60, .9));
+  border: 1px solid rgba(180, 255, 140, 1);
+  padding: 12px 22px; border-radius: 999px;
+  box-shadow: 0 0 24px rgba(120, 255, 90, .45), inset 0 -2px 0 rgba(0, 0, 0, .15);
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .2s ease;
+}
+.byod-btn:hover { transform: translateY(-1px); box-shadow: 0 0 32px rgba(120, 255, 90, .7), inset 0 -2px 0 rgba(0, 0, 0, .15); }
+.byod-btn:active { transform: translateY(0) scale(.98); }
+.byod-btn-icon { font-size: 1.2em; }
+.byod-hint {
+  font-family: 'Share Tech Mono', monospace; color: rgba(220, 255, 200, .55);
+  font-size: clamp(10px, 1.05vmin, 12px); line-height: 1.5; max-width: 40ch;
+}
+.byod-err {
+  font-family: 'Share Tech Mono', monospace;
+  color: #ffbcbc;
+  background: rgba(255, 90, 90, .08);
+  border: 1px solid rgba(255, 120, 120, .4);
+  padding: 8px 12px; border-radius: 6px;
+  font-size: clamp(11px, 1.1vmin, 13px); max-width: 40ch;
+}
+
+/* Add Game screen — text-entry rows. Reuses .game-row; the input sits under the
+   field label inside .game-bar and inherits the theme's green-on-black CRT look. */
+.add-input {
+  margin-top: 4px;
+  width: 100%;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(12px, 1.3vmin, 15px);
+  color: #eaffe0;
+  background: rgba(0, 0, 0, .35);
+  border: 1px solid rgba(120, 255, 90, .35);
+  border-radius: 6px;
+  padding: 7px 10px;
+  outline: none;
+  caret-color: var(--green, #9dff6a);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.add-input::placeholder { color: rgba(200, 255, 180, .35); }
+.add-input:focus {
+  border-color: rgba(160, 255, 120, .9);
+  box-shadow: 0 0 14px rgba(120, 255, 90, .35), inset 0 0 8px rgba(120, 255, 90, .12);
+}
+.game-row.add-field { cursor: text; }
+.game-row.add-field .game-bar { width: 100%; }
+/* On the focused row the highlight already inverts text to dark; keep the input
+   itself readable (dark text on light field) so typed characters stay visible. */
+.game-row.add-field.sel .add-input { color: #0c1a08; background: rgba(255, 255, 255, .82); border-color: rgba(20, 40, 0, .5); }
+.game-row.add-field.sel .add-input::placeholder { color: rgba(20, 40, 0, .45); }
+
+/* BYOC / BYOB pinned upload rows. Reuses .game-row; a dashed icon ring + upload
+   glyph mark it as "load your own" rather than a launchable title. */
+.byoc-row .game-icon .glass {
+  box-shadow: inset 0 0 12px rgba(120, 255, 90, .3);
+  border: 2px dashed rgba(140, 255, 110, .7);
+}
+.byoc-row .game-icon .glass .ph { font-size: clamp(18px, 2.6vmin, 26px); }
+
+/* Settings → OpenEmu import picker + Controller Sync. Reuses .games-screen /
+   .game-row; adds non-selectable system-section headers (.oe-head), a dimmed
+   already-in-library treatment (.oe-in), and the sync mapping table rows. */
+.oe-head {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between; gap: 1em;
+  padding: 1.2vmin .6vmin .2vmin;
+  font-family: 'Share Tech Mono', monospace; font-size: clamp(10px, 1.3vmin, 13px);
+  letter-spacing: .24em; text-transform: uppercase;
+  color: rgba(180, 255, 140, .55);
+  border-bottom: 1px solid rgba(140, 255, 110, .18);
+}
+.game-row.oe-in { opacity: .55; }
+.game-row.oe-in .game-icon .glass .ph { color: #4fd06a; }
+.sync-row {
+  flex-shrink: 0;
+  display: grid; grid-template-columns: 1.2fr auto 1.2fr 1.6fr; align-items: center; gap: 1.2em;
+  padding: .9vmin 1.2vmin;
+  font-family: 'Share Tech Mono', monospace; font-size: clamp(11px, 1.5vmin, 15px);
+  letter-spacing: .1em; color: rgba(220, 255, 180, .8);
+  border: 1px solid rgba(140, 255, 110, .16); border-radius: .8vmin;
+  background: linear-gradient(180deg, rgba(70, 180, 90, .05), rgba(20, 60, 30, .25));
+}
+.sync-row .sync-arrow { color: rgba(180, 255, 140, .5); }
+.sync-row .sync-retro { color: #fff; }
+.sync-row .sync-note { text-align: right; font-size: .85em; color: rgba(220, 255, 180, .45); text-transform: uppercase; }
+
+/* CMG Network (e-shop) — reuses .games-screen/.game-row; adds a network-tinted
+   disc plus a per-row store badge (GET / downloading % / INSTALLED) and a thin
+   download progress bar pinned to the bottom of the row. */
+.disc.net { animation-duration: 6s; filter: hue-rotate(150deg) saturate(1.15); }
+.net-badge {
+  font-family: 'Share Tech Mono', monospace; font-weight: 700;
+  font-size: .62em; letter-spacing: .12em; margin-left: 1.5em;
+  padding: 2px 11px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid currentColor; flex-shrink: 0;
+}
+.net-badge.get { color: #bdf48c; }
+.net-badge.dl  { color: #7fd8ff; }
+.net-badge.ok  { color: #ffe06a; }
+.net-badge.err { color: #ff9b9b; }
+.net-badge.upd { color: #5effc8; cursor: pointer; animation: net-upd-pulse 1.4s ease-in-out infinite; }
+.net-badge.upd:hover { background: rgba(94, 255, 200, .18); }
+@keyframes net-upd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+.game-row.sel .net-badge { color: #1a1400; border-color: rgba(20, 20, 0, .45); background: rgba(255, 255, 255, .35); }
+.net-prog {
+  position: absolute; left: 7.4vmin; right: 0; bottom: -1px; height: 3px;
+  background: rgba(0, 0, 0, .45); border-radius: 2px; overflow: hidden;
+}
+.net-prog-fill { height: 100%; width: 0; background: linear-gradient(90deg, #55eeff, #bdf48c); transition: width .2s ease; box-shadow: 0 0 8px rgba(120, 255, 90, .6); }
+
+/* Boot flash */
+.boot { position: fixed; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; z-index: 200; pointer-events: none; animation: bootOut 1.6s ease forwards; }
+/* .b-glyph is an <img> (the voxel X), so it sizes off width/height rather than
+   font-size. pixelated keeps the voxel edges hard when the flash scales it past
+   the source's 399px. */
+.boot .b-glyph { width: 30vmin; height: 30vmin; image-rendering: pixelated; animation: bootIn 1.4s ease forwards; filter: drop-shadow(0 0 30px rgba(120, 255, 80, .8)); }
+@keyframes bootIn { 0% { opacity: 0; transform: scale(.5); } 40% { opacity: 1; transform: scale(1.1); } 70% { transform: scale(1); } 100% { opacity: 0; transform: scale(1.4); } }
+@keyframes bootOut { 0%, 80% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+
+@media (max-width: 720px) {
+  .dashboard { grid-template-columns: 1fr; grid-template-rows: auto 1fr; padding-top: 8vmin; }
+  .orb-wrap { height: 38vmin; }
+  .menu { padding: 0 6vmin; }
+  .games-panel { grid-template-columns: 1fr; grid-template-rows: auto 1fr; padding: max(8vmin, 40px) 2vmin 2vmin max(8vmin, 40px); }
+  /* One column here, so the catalog panel's three children stack: strip, then
+     the disc/meta bar, then the list taking the rest. (Without the third track
+     the list falls into an implicit auto row and collapses to nothing.) */
+  .games-panel.with-strip { grid-template-rows: auto auto 1fr; padding-top: max(6vmin, 28px); }
+  /* Three things share the header row and the title needs most of it, so the
+     action drops to its glyph — ＋ / ⬆ still reads as add-something. */
+  .add-btn { padding: 10px; gap: 0; }
+  .add-btn span:not(.add-btn-icon) { display: none; }
+  .disc-col { flex-direction: row; justify-content: flex-start; padding: 0; gap: 2vmin; }
+  .disc { width: 14vmin; height: 14vmin; }
+  .meta { flex: 1; }
+  /* Too narrow for a side-by-side dock — the music app takes the full width. */
+  .music-sidebar { width: 100%; }
+}
+
+/* ?paddebug=1 — on-screen gamepad monitor (raw + normalized pad state) */
+.pad-debug {
+  position: fixed; left: 8px; bottom: 8px; z-index: 300;
+  margin: 0; padding: 6px 8px; max-width: 92vw;
+  font: 11px/1.45 "Share Tech Mono", monospace; color: #9cff6b;
+  background: rgba(0, 0, 0, .78); border: 1px solid rgba(120, 255, 80, .5);
+  white-space: pre-wrap; word-break: break-all; pointer-events: none;
+}
+
+/* ═══ Nintendo theme (Settings → THEME) ═══════════════════════════════════
+   Palette ported from codemonkey-games-launcher: NES cabinet grays
+   (#d5d5d8 / #88848b), Nintendo red (#e4000f), and its dark navy backdrop
+   (#0d0f1a, cards #0f1622, borders #1f2a3c, muted #8ba0c2). Toggled by
+   body.theme-nintendo, applied from the Dashboard tweaks effect. */
+body.theme-nintendo {
+  --green: #e9ecf1;        /* primary text — launcher fg */
+  --green-glow: #ff3b49;   /* glow accent — brightened Nintendo red */
+  --green-deep: #5a0e14;   /* deep red */
+  --yellow: #e4000f;       /* selection color — Nintendo red */
+  --yellow-hot: #ff4554;
+  --tile-edge: rgba(213, 213, 216, .45); /* cabinet-gray tile edges */
+  background:
+    radial-gradient(1000px 500px at 20% -10%, #1b203a 0%, transparent 60%),
+    radial-gradient(1000px 500px at 80% 110%, #1b203a 0%, transparent 60%),
+    radial-gradient(ellipse 60% 70% at 50% 50%, rgba(15, 22, 34, .9), #0d0f1a 80%);
+  background-color: #0d0f1a;
+  color: var(--green);
+}
+body.theme-nintendo .scan { background: repeating-linear-gradient(180deg, rgba(255, 70, 84, .03) 0 1px, transparent 1px 3px); }
+
+/* Top HUD */
+body.theme-nintendo .topbar { color: rgba(139, 160, 194, .8); }
+body.theme-nintendo .topbar .brand { color: rgba(233, 236, 241, .9); }
+
+/* Orb — red core, cabinet-gray rings */
+@keyframes breatheNin {
+  0%, 100% { filter: drop-shadow(0 0 28px rgba(255, 60, 74, .45)) drop-shadow(0 0 80px rgba(228, 0, 15, .3)); transform: scale(1); }
+  50% { filter: drop-shadow(0 0 60px rgba(255, 100, 112, .8)) drop-shadow(0 0 140px rgba(255, 69, 84, .5)); transform: scale(1.035); }
+}
+body.theme-nintendo .orb { animation-name: breatheNin; }
+body.theme-nintendo .orb .core {
+  background: radial-gradient(circle at 38% 38%, #ffe9ea 0%, #ff959e 13%, #e4000f 35%, #8c0a14 60%, #2a050a 86%, #000 100%);
+  box-shadow: inset -10px -20px 60px rgba(0, 0, 0, .55), inset 20px 30px 80px rgba(255, 220, 222, .3), 0 0 60px rgba(255, 60, 74, .5);
+}
+body.theme-nintendo .orb .ring { border-color: rgba(213, 213, 216, .4); box-shadow: inset 0 0 30px rgba(255, 90, 102, .16), 0 0 30px rgba(255, 90, 102, .16); }
+body.theme-nintendo .orb .ring.b { border-color: rgba(213, 213, 216, .22); }
+body.theme-nintendo .orb .ring.c { border-color: rgba(213, 213, 216, .12); }
+body.theme-nintendo .orb::before, body.theme-nintendo .orb::after { background: radial-gradient(ellipse 60% 30% at 50% 40%, rgba(255, 70, 84, .2), transparent 70%); }
+
+/* Menu — silver cabinet spheres, navy card bars, Nintendo-red selection */
+body.theme-nintendo .node::before {
+  background: radial-gradient(circle at 35% 30%, #fff 0%, #e9ecf1 18%, #b7bcc6 45%, #565a66 75%, #14161d 100%);
+  box-shadow: 0 0 22px rgba(213, 213, 216, .45), inset -3px -6px 14px rgba(0, 0, 0, .5);
+}
+body.theme-nintendo .node::after { border-color: rgba(213, 213, 216, .5); box-shadow: inset 0 0 14px rgba(213, 213, 216, .2), 0 0 18px rgba(213, 213, 216, .22); }
+body.theme-nintendo .item.sel .node::before {
+  background: radial-gradient(circle at 35% 30%, #ffe3e5 0%, #ff8089 20%, var(--yellow) 50%, #7a000a 80%, #240104 100%);
+  box-shadow: 0 0 28px rgba(255, 69, 84, .75), inset -3px -6px 14px rgba(0, 0, 0, .5);
+}
+body.theme-nintendo .item.sel .node::after { border-color: rgba(255, 128, 137, .85); box-shadow: inset 0 0 16px rgba(255, 69, 84, .35), 0 0 26px rgba(255, 69, 84, .4); }
+body.theme-nintendo .bar {
+  color: #e9ecf1;
+  background: linear-gradient(180deg, rgba(139, 160, 194, .1), rgba(15, 22, 34, .85) 35%, rgba(15, 22, 34, .85) 65%, rgba(139, 160, 194, .08));
+  box-shadow: inset 0 0 0 1px rgba(213, 213, 216, .08), inset 0 2px 0 rgba(233, 236, 241, .15), inset 0 -2px 0 rgba(233, 236, 241, .06), 0 0 24px rgba(228, 0, 15, .12);
+}
+body.theme-nintendo .bar::before { background: linear-gradient(90deg, transparent, rgba(213, 213, 216, .35), transparent); }
+body.theme-nintendo .bar .num { color: rgba(139, 160, 194, .7); }
+body.theme-nintendo .item.sel .bar {
+  color: #fff;
+  background: linear-gradient(180deg, #ff5b66 0%, var(--yellow) 30%, #c00011 70%, #8c000c 100%);
+  border-color: #ff8089;
+  box-shadow: inset 0 0 0 1px rgba(255, 160, 168, .5), inset 0 2px 0 rgba(255, 205, 210, .55), inset 0 -2px 0 rgba(90, 0, 8, .5), 0 0 40px rgba(228, 0, 15, .5), 0 0 80px rgba(228, 0, 15, .22);
+}
+body.theme-nintendo .item.sel .bar .num { color: rgba(255, 225, 228, .8); }
+body.theme-nintendo .item:hover:not(.sel) .bar {
+  color: #fff;
+  background: linear-gradient(180deg, rgba(213, 213, 216, .16), rgba(31, 42, 60, .8) 35%, rgba(31, 42, 60, .8) 65%, rgba(213, 213, 216, .12));
+  box-shadow: inset 0 2px 0 rgba(233, 236, 241, .25), 0 0 32px rgba(228, 0, 15, .25);
+}
+body.theme-nintendo .item .tag { color: rgba(139, 160, 194, .6); }
+
+/* Footer hints — NES-red A button, cabinet-gray B */
+body.theme-nintendo .footer { color: #d5d5d8; }
+body.theme-nintendo .btn-hint {
+  background: radial-gradient(circle at 35% 30%, #ffd9db 0%, #ff6b76 20%, #e4000f 50%, #4a0308 85%);
+  color: #fff; border-color: rgba(255, 140, 148, .75);
+  box-shadow: 0 0 18px rgba(228, 0, 15, .5), inset -2px -4px 10px rgba(0, 0, 0, .5);
+}
+body.theme-nintendo .btn-hint.b {
+  background: radial-gradient(circle at 35% 30%, #fff 0%, #d5d5d8 25%, #88848b 60%, #2f2f2f 95%);
+  color: #e4000f; border-color: rgba(213, 213, 216, .75);
+  box-shadow: 0 0 18px rgba(213, 213, 216, .45), inset -2px -4px 10px rgba(0, 0, 0, .5);
+}
+
+/* Games / catalog screens — the original launcher layout: dark navy page,
+   rounded card boxes (thumbnail on top, name + source + PLAY pill below),
+   laid out as a single horizontal coverflow row. */
+body.theme-nintendo .dashboard { bottom: 132px; }
+body.theme-nintendo .games-screen { bottom: 132px; }
+body.theme-nintendo .footer { bottom: calc(132px + 2.5vmin); }
+body.theme-nintendo .games-panel { grid-template-columns: 1fr; height: min(calc(92vh - 148px), 1500px); }
+body.theme-nintendo .disc-col { display: none; }
+body.theme-nintendo .strip-top { left: 2vmin; color: rgba(139, 160, 194, .7); }
+body.theme-nintendo .title-bar {
+  clip-path: none;
+  background: #0f1622;
+  border: 1px solid #1f2a3c;
+  border-radius: 14px;
+  color: #e9ecf1;
+  text-shadow: none;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, .35);
+}
+body.theme-nintendo .counter { color: #8ba0c2; }
+
+/* Single horizontal coverflow row */
+body.theme-nintendo .games-list {
+  flex-direction: row;
+  align-items: center;
+  overflow-x: auto; overflow-y: visible;
+  gap: 2.4vmin;
+  padding: 3vmin 5vmin;
+  mask-image: linear-gradient(90deg, transparent 0, #000 4vmin, #000 calc(100% - 4vmin), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 4vmin, #000 calc(100% - 4vmin), transparent 100%);
+}
+body.theme-nintendo .game-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  width: 32vmin; min-width: 240px; max-width: 340px;
+  height: auto; max-height: none; min-height: 0;
+  flex-shrink: 0;
+  scroll-margin: 0 6vmin;
+  background: #0f1622;
+  border: 1px solid #1f2a3c;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 16px 30px rgba(0, 0, 0, .35);
+  animation: none;
+  transform: scale(.9);
+  transition: transform .22s ease, border-color .22s ease, box-shadow .22s ease;
+}
+body.theme-nintendo .game-row.sel {
+  transform: scale(1);
+  border-color: #49c2ff;
+  box-shadow: 0 0 0 2px rgba(73, 194, 255, .35), 0 22px 40px rgba(0, 0, 0, .45);
+}
+body.theme-nintendo .game-row:hover:not(.sel) { transform: scale(.94); border-color: rgba(73, 194, 255, .6); }
+
+/* Card thumbnail (red placeholder stripe shows when there's no cover art) */
+body.theme-nintendo .game-icon {
+  width: 100%; max-width: none; height: 18vmin; max-height: 180px; min-height: 120px;
+  border-radius: 0;
+  background: #05080c;
+  box-shadow: none;
+  position: relative;
+}
+body.theme-nintendo .game-icon::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 14px;
+  background: var(--nintendo-red, #e4000f);
+}
+body.theme-nintendo .game-icon .glass {
+  position: absolute; inset: 0; border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+body.theme-nintendo .game-icon .glass img { width: 100%; height: 100%; object-fit: cover; filter: none; }
+body.theme-nintendo .game-icon .glass .ph { color: #fff; font-size: clamp(20px, 3vmin, 30px); text-shadow: none; letter-spacing: .04em; }
+body.theme-nintendo .game-row.sel .game-icon,
+body.theme-nintendo .game-row.sel .game-icon .glass { box-shadow: none; }
+
+/* Submenu tiles have to become the same card thumbnail as .game-icon above —
+   the row is a vertical card here, so a 7.4vmin green disc-sized tile would sit
+   as a floating square on a transparent header while every neighbouring card
+   shows a full-bleed cover. The tile takes the thumbnail's box + red stripe and
+   the folder art is re-anchored to a centred square inside it (see .submenu-art),
+   recoloured from CRT green to the launcher's navy/cabinet-gray palette. */
+body.theme-nintendo .submenu-icon {
+  width: 100%; max-width: none; height: 18vmin; max-height: 180px; min-height: 120px;
+  background: #05080c;
+  filter: none;
+}
+body.theme-nintendo .submenu-icon::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 14px;
+  background: var(--nintendo-red, #e4000f);
+}
+body.theme-nintendo .submenu-art {
+  inset: auto; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  height: 74%; aspect-ratio: 1;
+}
+body.theme-nintendo .submenu-art .folder { background: linear-gradient(165deg, #1f2a3c, #0f1622); }
+body.theme-nintendo .submenu-art .sub-disc {
+  border-color: rgba(213, 213, 216, .75);
+  box-shadow: 0 0 6px rgba(0, 0, 0, .5), inset 0 0 6px rgba(0, 0, 0, .55);
+  background:
+    radial-gradient(circle at 50% 50%, #0f1622 24%, transparent 25%),
+    conic-gradient(from 30deg, rgba(233, 236, 241, .9), rgba(139, 160, 194, .35), rgba(233, 236, 241, .9) 60%, rgba(139, 160, 194, .35), rgba(233, 236, 241, .9));
+}
+body.theme-nintendo .submenu-art::after { /* cabinet-plastic front flap */
+  background: linear-gradient(180deg, #d5d5d8, #88848b);
+  border-top-color: rgba(255, 255, 255, .9);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .35);
+}
+/* Selection is the card's blue ring in this theme (the row handles it), so the
+   tile drops the yellow halo entirely and only picks up the blue edge. */
+body.theme-nintendo .game-row.sel .submenu-icon { filter: none; }
+body.theme-nintendo .game-row.sel .submenu-art .sub-disc {
+  border-color: rgba(73, 194, 255, .85);
+  box-shadow: 0 0 8px rgba(73, 194, 255, .35), inset 0 0 6px rgba(0, 0, 0, .5);
+}
+body.theme-nintendo .game-row.sel .submenu-art .folder,
+body.theme-nintendo .game-row.sel .submenu-art::after { border-color: rgba(73, 194, 255, .7); }
+body.theme-nintendo .game-row.sel .submenu-art::after { border-top-color: #49c2ff; }
+
+/* Card footer: name on top, source label bottom-left, PLAY pill bottom-right */
+body.theme-nintendo .game-bar {
+  clip-path: none;
+  height: auto; min-width: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; row-gap: 1vmin;
+  padding: 1.6vmin 1.8vmin;
+  background: none; border: none; box-shadow: none;
+  color: #e9ecf1; font-weight: 800;
+  font-size: clamp(13px, 1.8vmin, 17px); letter-spacing: .05em;
+}
+body.theme-nintendo .game-bar .name { grid-column: 1 / -1; text-shadow: none; }
+body.theme-nintendo .game-bar .sub { margin-left: 0; color: #8ba0c2; letter-spacing: .12em; text-transform: uppercase; }
+body.theme-nintendo .game-bar::after {
+  content: "PLAY";
+  grid-column: 2; justify-self: end;
+  padding: .55em 1.2em; border-radius: 999px;
+  background: linear-gradient(135deg, #49c2ff, #00ffa7);
+  color: #04283b; font-weight: 800; font-size: .78em; letter-spacing: .1em;
+}
+body.theme-nintendo .game-row.sel .game-bar { color: #fff; background: none; border-color: transparent; box-shadow: none; }
+body.theme-nintendo .game-row.sel .game-bar .sub { color: #49c2ff; }
+body.theme-nintendo .uninstall-btn { position: absolute; top: 10px; right: 10px; z-index: 2; }
+
+/* Emulator strip — cabinet plastic over navy, matching the coverflow cards.
+   Note the coverflow row below is also horizontal, so on THIS screen left/right
+   drives the strip and the cards keep up/down (see navHasH in Dashboard.svelte);
+   two horizontal lists sharing one axis would be unnavigable. */
+body.theme-nintendo .games-panel.with-strip { grid-template-columns: 1fr; }
+body.theme-nintendo .strip-head { color: rgba(139, 160, 194, .75); }
+body.theme-nintendo .strip-head .strip-label.on { color: #49c2ff; text-shadow: none; }
+body.theme-nintendo .strip-head .strip-core { color: rgba(139, 160, 194, .55); }
+body.theme-nintendo .cmg-strip {
+  background: #0f1622; border: 1px solid #1f2a3c; border-radius: 16px;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, .35);
+}
+body.theme-nintendo .cmg-strip.on { border-color: #49c2ff; box-shadow: 0 0 0 2px rgba(73, 194, 255, .3), 0 10px 22px rgba(0, 0, 0, .35); }
+body.theme-nintendo .strip-tile {
+  animation: none; transform: scale(.92);
+  transition: transform .22s ease, width .3s cubic-bezier(.2, .8, .2, 1), gap .3s ease;
+}
+/* Scale is this theme's "current shelf" cue, so the selected section keeps it
+   after the cursor leaves the strip — same middle tier as .active elsewhere. */
+body.theme-nintendo .strip-tile.sel,
+body.theme-nintendo .strip-tile.active { transform: scale(1); }
+body.theme-nintendo .strip-disc {
+  background: #05080c; border: 1px solid #1f2a3c; box-shadow: none;
+  border-radius: 14px; overflow: hidden; transform: none;
+}
+body.theme-nintendo .strip-disc::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 10px; z-index: 1;
+  background: var(--nintendo-red, #e4000f);
+}
+body.theme-nintendo .strip-disc .glass { inset: 0; border-radius: 0; background: transparent; box-shadow: none; }
+body.theme-nintendo .strip-disc .glass img { width: 100%; height: 100%; object-fit: cover; filter: none; }
+body.theme-nintendo .strip-disc .mark { color: #fff; text-shadow: none; }
+body.theme-nintendo .strip-tile.sel .strip-disc { border-color: #49c2ff; box-shadow: 0 0 0 2px rgba(73, 194, 255, .35); transform: none; }
+body.theme-nintendo .strip-tile.sel .strip-disc .glass { background: transparent; box-shadow: none; }
+body.theme-nintendo .strip-tile.sel .strip-disc .mark { color: #fff; text-shadow: none; }
+/* The base theme's yellow middle tier would leak through here (its selector is
+   the more specific of the two), so restate it in cabinet blue. */
+body.theme-nintendo .strip-tile.active:not(.sel) .strip-disc {
+  border-color: rgba(73, 194, 255, .5); box-shadow: 0 0 0 2px rgba(73, 194, 255, .16);
+}
+body.theme-nintendo .strip-tile.active:not(.sel) .strip-disc .glass { background: transparent; box-shadow: none; }
+body.theme-nintendo .strip-tile.active:not(.sel) .strip-disc .mark { color: #fff; text-shadow: none; }
+body.theme-nintendo .strip-name { color: #e9ecf1; text-shadow: none; }
+body.theme-nintendo .title-bar.dim { color: rgba(233, 236, 241, .55); border-color: #1f2a3c; }
+body.theme-nintendo .add-btn {
+  background: #49c2ff; border-color: #49c2ff; color: #04283b;
+  border-radius: 12px; box-shadow: 0 8px 18px rgba(0, 0, 0, .35);
+}
+body.theme-nintendo .add-btn:hover { box-shadow: 0 10px 22px rgba(0, 0, 0, .45); }
+
+/* NES-cabinet bottom bar (markup rendered by Dashboard.svelte in this theme).
+   Sits above the scanline/vignette overlays so the plastic reads solid. */
+.nes-bar { position: fixed; left: 0; right: 0; bottom: 0; height: 132px; z-index: 60; display: flex; flex-direction: column; pointer-events: none; }
+.nes-bar-top { position: relative; background: #d5d5d8; height: 74px; }
+.nes-logo { height: 55%; margin: 14px 0 0 60px; image-rendering: pixelated; filter: saturate(3.5); }
+.nes-bar-mid { position: relative; background: #88848b; height: 18px; }
+.nes-bar-bottom { position: relative; background: #88848b; flex: 1; }
+.nes-box { position: absolute; right: 60px; top: 0; bottom: 0; width: 100px; background: #2f2f2f; }
+.nes-line { width: 92px; height: 6px; margin: 4px auto 0; background: #56595a; }
+
+@media (max-width: 720px) {
+  /* .disc-col is display:none in this theme, so the panel has a single visible
+     child (.games-right). With `auto 1fr` it auto-places into the `auto` row and
+     sticks to the top; a single `1fr` row lets it fill so the coverflow list
+     (align-items:center) centers vertically. Balanced padding keeps it centered. */
+  body.theme-nintendo .games-panel { grid-template-rows: 1fr; padding: 2vmin; }
+  /* …except the catalog panel, which still needs its strip row on top. */
+  body.theme-nintendo .games-panel.with-strip { grid-template-rows: auto 1fr; }
+  .nes-logo { margin-left: 20px; }
+  .nes-box { right: 20px; }
+}
+
+/* Mobile landscape — a 132px cabinet bar eats too much of a short viewport, so
+   hide it and let the dashboard / games screen reclaim the full height. */
+@media (orientation: landscape) and (max-height: 480px) {
+  .nes-bar { display: none; }
+  body.theme-nintendo .dashboard,
+  body.theme-nintendo .games-screen { bottom: 0; }
+  body.theme-nintendo .footer { bottom: 4vmin; }
+  body.theme-nintendo .games-panel { height: min(92vh, 1500px); }
+}
+
+/* ═══ Xbox 360 theme (Settings → THEME) ═══════════════════════════════════
+   CRT-green rework of the "blades" look: the 360 geometry (glossy top-lit
+   rounded cards, node orbs, silver power-button sphere) carried by ONE
+   unified brand-green accent — selection is the lit blade. Type matches the
+   default XBOX theme (Orbitron / Share Tech Mono). Fixed palette like
+   Nintendo, so the hue tweak is ignored. */
+body.theme-xbox360 {
+  --green: #dfffc4;          /* primary text — CRT cream-green */
+  --green-glow: #7CFF4F;     /* brand glow green */
+  --green-deep: #0e6a2b;
+  --yellow: #9CFF6B;         /* selection color — lit blade green */
+  --yellow-hot: #D9FFA6;
+  --tile-edge: rgba(140, 255, 110, .5);
+  font-family: 'Orbitron', sans-serif;
+  /* base body background (default theme's green radial) applies — no override */
+  color: var(--green);
+}
+/* default green scanlines apply — no .scan override */
+
+/* Orb — the 360 power button: silver sphere, brand-green ring-of-light */
+@keyframes breathe360 {
+  0%, 100% { filter: drop-shadow(0 0 28px rgba(124, 255, 79, .5)) drop-shadow(0 0 80px rgba(124, 255, 79, .3)); transform: scale(1); }
+  50% { filter: drop-shadow(0 0 60px rgba(160, 255, 120, .85)) drop-shadow(0 0 140px rgba(124, 255, 79, .5)); transform: scale(1.035); }
+}
+body.theme-xbox360 .orb { animation-name: breathe360; }
+body.theme-xbox360 .orb .core {
+  background: radial-gradient(circle at 38% 38%, #fff 0%, #eef5ea 12%, #c2d0bc 38%, #5f6e58 66%, #131c0e 90%, #000 100%);
+  box-shadow: inset -10px -20px 60px rgba(0, 0, 0, .55), inset 20px 30px 80px rgba(255, 255, 255, .4), 0 0 60px rgba(124, 255, 79, .6);
+}
+body.theme-xbox360 .orb .ring { border-color: rgba(150, 255, 110, .55); box-shadow: inset 0 0 30px rgba(124, 255, 79, .22), 0 0 30px rgba(124, 255, 79, .28); }
+body.theme-xbox360 .orb .ring.b { border-color: rgba(150, 255, 110, .3); }
+body.theme-xbox360 .orb .ring.c { border-color: rgba(150, 255, 110, .16); }
+body.theme-xbox360 .orb::before, body.theme-xbox360 .orb::after { background: radial-gradient(ellipse 60% 30% at 50% 40%, rgba(124, 255, 79, .25), transparent 70%); }
+
+/* Menu — every row is the same brand-green blade; selection is the lit one.
+   One accent set, no per-item nth-child overrides. */
+body.theme-xbox360 .item { --blade: 124, 255, 79; --blade-hi: #d9ffa6; --blade-mid: #9cff6b; --blade-lo: #17842f; --blade-edge: #d9ffa6; }
+body.theme-xbox360 .node::before {
+  background: radial-gradient(circle at 35% 30%, #fff 0%, #9cff6b 45%, #1c5b2a 75%, #04120a 100%);
+  box-shadow: 0 0 22px rgba(var(--blade), .5), inset -3px -6px 14px rgba(0, 0, 0, .5);
+}
+body.theme-xbox360 .node::after { border-color: rgba(140, 255, 110, .5); box-shadow: inset 0 0 14px rgba(140, 255, 110, .22), 0 0 18px rgba(var(--blade), .25); }
+body.theme-xbox360 .item.sel .node::before {
+  background: radial-gradient(circle at 35% 30%, #fff 0%, var(--blade-hi) 40%, #7cff4f 62%, #1c6a2e 85%, #04120a 100%);
+  box-shadow: 0 0 28px rgba(var(--blade), .85), inset -3px -6px 14px rgba(0, 0, 0, .5);
+}
+body.theme-xbox360 .item.sel .node::after { border-color: rgba(217, 255, 166, .9); box-shadow: inset 0 0 16px rgba(var(--blade), .4), 0 0 26px rgba(var(--blade), .45); }
+body.theme-xbox360 .bar {
+  color: #dfffc4; font-weight: 700; letter-spacing: .18em;
+  clip-path: none; border-radius: 12px;
+  border: 1px solid rgba(140, 255, 110, .3);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(var(--blade), .14), rgba(8, 22, 10, .78));
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(200, 255, 170, .3);
+}
+body.theme-xbox360 .bar::before { background: linear-gradient(90deg, transparent, rgba(160, 255, 110, .35), transparent); }
+body.theme-xbox360 .bar .num { color: rgba(200, 255, 170, .55); }
+body.theme-xbox360 .item.sel .bar {
+  color: #05230d; font-weight: 800; text-shadow: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .4), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(180deg, var(--blade-hi) 0%, var(--blade-mid) 32%, #58e05f 68%, var(--blade-lo) 100%);
+  border-color: var(--blade-edge);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .65), 0 0 44px rgba(var(--blade), .55), 0 0 90px rgba(var(--blade), .25);
+}
+body.theme-xbox360 .item.sel .bar .num { color: rgba(8, 60, 24, .65); }
+body.theme-xbox360 .item:hover:not(.sel) .bar {
+  color: #f4ffe8;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .24), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(var(--blade), .26), rgba(10, 28, 14, .8));
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(200, 255, 170, .4), 0 0 32px rgba(var(--blade), .3);
+}
+body.theme-xbox360 .item .tag { color: rgba(180, 255, 140, .5); }
+
+/* Footer hints — the default theme's face buttons (green A, amber B, red X,
+   teal Y) fit the CRT palette: no overrides needed. */
+
+/* Games / Settings screens — glossy blade cards, unified green */
+body.theme-xbox360 .strip-top { color: rgba(220, 255, 180, .55); }
+body.theme-xbox360 .title-bar {
+  clip-path: none; border-radius: 12px;
+  border: 1px solid rgba(190, 255, 150, .55);
+  color: #f4ffe8; font-weight: 800; letter-spacing: .22em;
+  text-shadow: 0 0 18px rgba(124, 255, 79, .55), 0 1px 2px rgba(0, 0, 0, .4);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .26), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, #58e05f 0%, #1f8a35 55%, #0b4a1c 100%);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .5), 0 0 30px rgba(124, 255, 79, .35);
+}
+body.theme-xbox360 .counter { color: rgba(220, 255, 180, .7); }
+body.theme-xbox360 .meta {
+  border: 1px solid rgba(140, 255, 110, .3); border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .14), rgba(255, 255, 255, 0) 40%),
+    linear-gradient(180deg, rgba(124, 255, 79, .12), rgba(8, 22, 10, .8));
+  color: #e7ffce;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(200, 255, 170, .25);
+}
+body.theme-xbox360 .meta .k { color: rgba(180, 255, 140, .55); }
+body.theme-xbox360 .game-icon {
+  background:
+    radial-gradient(circle at 50% 50%, #08140a 25%, transparent 26%),
+    conic-gradient(from 30deg, rgba(124, 255, 79, .75), rgba(30, 110, 45, .28), rgba(124, 255, 79, .75) 60%, rgba(30, 110, 45, .28), rgba(124, 255, 79, .75));
+  box-shadow: 0 0 18px rgba(124, 255, 79, .5), inset 0 0 14px rgba(0, 0, 0, .55);
+}
+body.theme-xbox360 .game-icon .glass { background: #07160b; box-shadow: inset 0 0 12px rgba(124, 255, 79, .4), 0 0 0 2px rgba(150, 255, 110, .75); }
+body.theme-xbox360 .game-icon .glass .ph { color: #c9f7a0; text-shadow: 0 0 10px rgba(124, 255, 79, .7); }
+/* Submenu tiles keep their shape here (this theme only recolours the row) — but
+   the base rules hardcode the default theme's CRT green and its yellow selected
+   halo, and this palette is one unified blade green with a lit-green selection,
+   so both states are restated in #7CFF4F / #d9ffa6. */
+body.theme-xbox360 .submenu-icon { filter: drop-shadow(0 0 16px rgba(124, 255, 79, .5)); }
+body.theme-xbox360 .submenu-art .folder { background: linear-gradient(165deg, #0d5124, #07160b); }
+body.theme-xbox360 .submenu-art .sub-disc {
+  border-color: rgba(150, 255, 110, .7);
+  box-shadow: 0 0 6px rgba(124, 255, 79, .5), inset 0 0 6px rgba(0, 0, 0, .55);
+  background:
+    radial-gradient(circle at 50% 50%, #07160b 24%, transparent 25%),
+    conic-gradient(from 30deg, rgba(124, 255, 79, .85), rgba(30, 110, 45, .3), rgba(124, 255, 79, .85) 60%, rgba(30, 110, 45, .3), rgba(124, 255, 79, .85));
+}
+body.theme-xbox360 .submenu-art::after { /* glossy blade-green front flap */
+  background: linear-gradient(180deg, #1f8a35, #0b4a1c);
+  border-top-color: rgba(217, 255, 166, .9);
+  box-shadow: inset 0 2px 0 rgba(200, 255, 170, .28);
+}
+body.theme-xbox360 .game-row.sel .submenu-icon { filter: drop-shadow(0 0 22px rgba(124, 255, 79, .7)); }
+body.theme-xbox360 .game-row.sel .submenu-art .sub-disc {
+  border-color: rgba(217, 255, 166, .95);
+  box-shadow: 0 0 8px rgba(124, 255, 79, .5), inset 0 0 6px rgba(0, 0, 0, .5);
+}
+body.theme-xbox360 .game-row.sel .submenu-art .folder,
+body.theme-xbox360 .game-row.sel .submenu-art::after { border-color: rgba(217, 255, 166, .85); }
+body.theme-xbox360 .game-row.sel .submenu-art::after { border-top-color: #d9ffa6; }
+body.theme-xbox360 .game-bar {
+  clip-path: none; border-radius: 12px;
+  border: 1px solid rgba(140, 255, 110, .25);
+  color: #dfffc4; font-weight: 600; letter-spacing: .1em;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .14), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(124, 255, 79, .1), rgba(8, 22, 10, .72));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(200, 255, 170, .22);
+}
+body.theme-xbox360 .game-bar .name { text-shadow: none; }
+body.theme-xbox360 .game-bar .sub { color: rgba(200, 255, 170, .55); }
+body.theme-xbox360 .game-row.sel .game-icon { box-shadow: 0 0 28px rgba(124, 255, 79, .7), inset 0 0 14px rgba(0, 0, 0, .55); }
+body.theme-xbox360 .game-row.sel .game-icon .glass { box-shadow: inset 0 0 12px rgba(124, 255, 79, .5), 0 0 0 2px rgba(217, 255, 166, .95); }
+body.theme-xbox360 .game-row.sel .game-bar {
+  color: #05230d; font-weight: 700; text-shadow: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .36), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, #d9ffa6 0%, #9cff6b 35%, #4ecf5c 70%, #17842f 100%);
+  border-color: #d9ffa6;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .65), 0 0 36px rgba(124, 255, 79, .5);
+}
+body.theme-xbox360 .game-row.sel .game-bar .sub { color: rgba(8, 60, 24, .7); }
+body.theme-xbox360 .game-row:hover:not(.sel) .game-bar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .2), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(124, 255, 79, .24), rgba(10, 28, 14, .76));
+}
+/* Emulator strip — the blade treatment: rounded, glossy, one unified green.
+   Selection is a lit blade edge (#d9ffa6) rather than the base theme's yellow. */
+body.theme-xbox360 .cmg-strip {
+  border-radius: 14px; border: 1px solid rgba(140, 255, 110, .25);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(124, 255, 79, .1), rgba(8, 22, 10, .72));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(200, 255, 170, .22);
+}
+body.theme-xbox360 .cmg-strip.on {
+  border-color: rgba(217, 255, 166, .8);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .35), 0 0 30px rgba(124, 255, 79, .35);
+}
+body.theme-xbox360 .strip-head .strip-label.on { color: #d9ffa6; text-shadow: 0 0 14px rgba(124, 255, 79, .55); }
+body.theme-xbox360 .strip-disc {
+  background:
+    radial-gradient(circle at 50% 50%, #08140a 25%, transparent 26%),
+    conic-gradient(from 30deg, rgba(124, 255, 79, .75), rgba(30, 110, 45, .28), rgba(124, 255, 79, .75) 60%, rgba(30, 110, 45, .28), rgba(124, 255, 79, .75));
+  box-shadow: 0 0 18px rgba(124, 255, 79, .5), inset 0 0 14px rgba(0, 0, 0, .55);
+}
+body.theme-xbox360 .strip-disc .glass { background: #07160b; box-shadow: inset 0 0 12px rgba(124, 255, 79, .4), 0 0 0 2px rgba(150, 255, 110, .75); }
+body.theme-xbox360 .strip-disc .mark { color: #c9f7a0; text-shadow: 0 0 10px rgba(124, 255, 79, .7); }
+body.theme-xbox360 .strip-tile.sel .strip-disc { box-shadow: 0 0 30px rgba(124, 255, 79, .75), inset 0 0 14px rgba(0, 0, 0, .55); }
+body.theme-xbox360 .strip-tile.sel .strip-disc .glass {
+  background: radial-gradient(circle at 50% 30%, #0f3418, #07160b 70%);
+  box-shadow: inset 0 0 14px rgba(124, 255, 79, .5), 0 0 0 2px rgba(217, 255, 166, .95);
+}
+body.theme-xbox360 .strip-tile.sel .strip-disc .mark { color: #eaffd2; text-shadow: 0 0 16px rgba(124, 255, 79, .85); }
+/* Middle tier in blade green rather than the base theme's yellow. */
+body.theme-xbox360 .strip-tile.active:not(.sel) .strip-disc {
+  box-shadow: 0 0 18px rgba(124, 255, 79, .5), inset 0 0 14px rgba(0, 0, 0, .55);
+}
+body.theme-xbox360 .strip-tile.active:not(.sel) .strip-disc .glass {
+  box-shadow: inset 0 0 12px rgba(124, 255, 79, .35), 0 0 0 2px rgba(217, 255, 166, .55);
+}
+body.theme-xbox360 .strip-tile.active:not(.sel) .strip-disc .mark { color: #dcffc0; }
+body.theme-xbox360 .strip-name { color: #d9ffa6; text-shadow: 0 0 12px rgba(124, 255, 79, .55); }
+body.theme-xbox360 .title-bar.dim { color: rgba(244, 255, 232, .6); border-color: rgba(190, 255, 150, .3); }
+body.theme-xbox360 .add-btn {
+  border-radius: 999px; color: #05230d;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .36), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, #d9ffa6 0%, #9cff6b 35%, #4ecf5c 70%, #17842f 100%);
+  border-color: #d9ffa6;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .65), 0 0 26px rgba(124, 255, 79, .45);
+}
+
+/* ── Transient toast ─────────────────────────────────────────────────────────
+   Self-dismissing notice (Dashboard showToast) for actions the browser can't
+   honor from gamepad input — file pickers and text fields need a real
+   key/tap/click gesture. Sits above the Guide (103) and its close ✕ (104). */
+.cmg-toast {
+  position: fixed; left: 50%; bottom: 9vmin; transform: translateX(-50%);
+  z-index: 150; max-width: min(560px, 88vw);
+  padding: 12px 18px; border-radius: 10px; text-align: center;
+  font-family: 'Share Tech Mono', monospace; font-size: 13px; letter-spacing: .08em;
+  color: #eaffd2; background: rgba(8, 22, 10, .94);
+  border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
+  box-shadow: 0 0 28px rgba(80, 220, 100, .35);
+  animation: toastIn .18s ease-out;
+  pointer-events: none;
+}
+@keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%); } }
+
+/* Keyboard focus on the footer chips / update badge — they are role="button"
+   elements reachable with Tab, so give them a visible focus ring (the launcher
+   otherwise runs a selection-class model with no focus styling at all). */
+.footer.tap:focus-visible,
+.footer .act:focus-visible,
+.net-badge.upd:focus-visible {
+  outline: 2px solid var(--yellow, #F6FF4A);
+  outline-offset: 3px;
+  border-radius: 6px;
+}

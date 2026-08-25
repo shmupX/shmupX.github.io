@@ -1,0 +1,672 @@
+{
+	"stage0": {
+		"enemylist":[
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["R0", "S0", "R0", "A0", "A0", "R0", "S0", "R0"],
+			["B1", "00", "00", "00", "00", "00", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B3"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["A0", "A0", "A0", "00", "00", "A0", "A0", "A0"],
+			["00", "00", "A0", "A0", "A0", "A0", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["00", "00", "00", "00", "A3", "00", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["B0", "00", "00", "00", "A0", "00", "00", "B0"],
+			["R0", "S0", "00", "A0", "00", "00", "S0", "R0"],
+			["00", "00", "00", "00", "A0", "00", "00", "00"],
+			["S0", "R0", "S0", "A2", "A3", "S0", "R0", "S0"],
+			["A0", "00", "00", "00", "00", "00", "00", "A1"],
+			["00", "00", "00", "00", "A0", "00", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["A0", "00", "00", "00", "00", "00", "00", "A0"],
+			["A0", "A0", "00", "00", "00", "00", "A0", "A0"],
+			["A0", "A0", "A0", "00", "00", "A0", "A0", "A0"],
+			["00", "00", "A0", "A0", "A0", "A0", "00", "00"],
+			["00", "00", "00", "A0", "A0", "00", "00", "00"],
+			["00", "00", "00", "A0", "A3", "00", "00", "00"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["R0", "S0", "R0", "00", "00", "R0", "S0", "R0"],
+			["00", "00", "00", "A2", "A0", "00", "00", "00"],
+			["S0", "R0", "S0", "00", "00", "S0", "R0", "S0"],
+			["B9", "00", "00", "00", "00", "00", "00", "B3"],
+			["R0", "S0", "A0", "A3", "A0", "A0", "S0", "R0"],
+			["00", "00", "00", "A0", "00", "00", "00", "00"],
+			["00", "00", "00", "00", "A1", "00", "00", "00"],
+			["S0", "R0", "00", "A0", "00", "00", "R0", "S0"],
+			["00", "00", "00", "00", "A0", "00", "00", "00"],
+			["R0", "S0", "00", "A0", "00", "00", "S0", "R0"],
+			["00", "00", "00", "00", "A0", "00", "00", "00"],
+			["B3", "00", "00", "A0", "00", "00", "00", "B9"],
+			["00", "A0", "A0", "A0", "A0", "A0", "A0", "00"],
+			["00", "00", "00", "00", "A0", "00", "00", "00"],
+			["00", "00", "00", "A0", "00", "00", "00", "00"],
+			["A0", "00", "00", "00", "A0", "00", "00", "A0"],
+			["00", "00", "00", "A3", "00", "00", "00", "00"],
+			["00", "00", "00", "00", "A0", "00", "00", "00"],
+			["A0", "00", "00", "A0", "00", "00", "00", "A0"],
+			["00", "00", "00", "00", "A0", "00", "00", "00"],
+			["00", "00", "00", "A0", "00", "00", "00", "00"]
+		]
+	},
+	"stage1": {
+		"enemylist":[
+			["C0", "00", "C0", "00", "00", "C0", "00", "C0"],
+			["00", "C0", "00", "00", "00", "00", "C0", "00"],
+			["C0", "00", "00", "00", "00", "00", "00", "C3"],
+			["00", "00", "00", "U0", "T0", "00", "00", "00"],
+			["00", "C0", "00", "C0", "C0", "00", "C0", "00"],
+			["00", "00", "00", "C0", "C0", "00", "00", "00"],
+			["T0", "00", "00", "00", "00", "00", "00", "U0"],
+			["00", "C3", "00", "C0", "00", "C0", "00", "T0"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["U0", "00", "C0", "00", "C0", "00", "U0", "00"],
+			["C0", "C1", "C0", "00", "00", "C2", "C0", "C0"],
+			["00", "00", "C0", "C0", "C0", "C0", "00", "00"],
+			["00", "00", "C0", "C0", "C0", "C0", "00", "00"],
+			["T0", "C0", "00", "00", "00", "00", "C0", "00"],
+			["00", "00", "C0", "00", "00", "00", "00", "00"],
+			["00", "00", "00", "C0", "00", "C0", "00", "00"],
+			["U0", "T0", "C0", "00", "C0", "00", "T0", "U0"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["T0", "00", "00", "C0", "00", "U0", "T0", "00"],
+			["00", "00", "00", "C2", "00", "T0", "U0", "00"],
+			["00", "U0", "T0", "00", "00", "00", "00", "00"],
+			["00", "T0", "U0", "00", "00", "00", "00", "00"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["00", "00", "00", "00", "00", "T0", "U0", "00"],
+			["00", "U0", "T0", "U0", "00", "00", "00", "00"],
+			["T0", "00", "00", "00", "00", "00", "00", "U0"],
+			["00", "C0", "00", "C0", "C1", "00", "C3", "00"],
+			["00", "00", "00", "00", "00", "C0", "00", "00"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["U0", "00", "00", "T0", "U0", "00", "00", "T0"],
+			["00", "00", "00", "C0", "C0", "00", "00", "00"],
+			["00", "00", "00", "C3", "C0", "00", "00", "00"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["00", "00", "U0", "00", "00", "T0", "00", "00"],
+			["T0", "U0", "T0", "00", "00", "U0", "T0", "U0"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["T0", "U0", "T0", "U0", "00", "00", "T0", "U0"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["C9", "T0", "00", "00", "00", "00", "U0", "C0"],
+			["00", "00", "C0", "00", "T0", "C0", "00", "00"],
+			["00", "00", "00", "C0", "C0", "00", "00", "00"]
+		]
+	},
+	"stage2": {
+		"enemylist":[
+			["D0", "00", "00", "00", "00", "00", "00", "D0"],
+			["00", "00", "00", "D0", "D0", "00", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["P0", "A0", "P0", "A0", "A0", "P0", "A0", "P0"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["B0", "00", "00", "P0", "P0", "00", "00", "B2"],
+			["A1", "A0", "00", "00", "00", "00", "A0", "A0"],
+			["00", "00", "O0", "O0", "O0", "O0", "00", "00"],
+			["O0", "O0", "O0", "O0", "O0", "O0", "O0", "O0"],
+			["00", "D0", "O0", "O0", "O0", "O0", "D3", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["P0", "P0", "A0", "A0", "A0", "A0", "P0", "P0"],
+			["00", "00", "A2", "00", "00", "A0", "00", "00"],
+			["B0", "00", "00", "A0", "A0", "00", "00", "B0"],
+			["00", "00", "00", "00", "00", "00", "D3", "D0"],
+			["A0", "00", "00", "00", "00", "00", "00", "A0"],
+			["00", "00", "D1", "00", "00", "00", "D0", "00"],
+			["O9", "D0", "00", "00", "00", "D0", "00", "O3"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B3"],
+			["00", "00", "00", "00", "A3", "A0", "P0", "P0"],
+			["P0", "P0", "A0", "A0", "00", "00", "00", "00"],
+			["A0", "00", "00", "00", "00", "00", "00", "A0"],
+			["00", "P0", "00", "00", "00", "00", "P0", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["00", "A0", "A0", "A0", "A0", "A0", "A0", "00"],
+			["00", "A0", "A0", "A3", "A0", "A0", "A0", "00"],
+			["P0", "00", "00", "00", "00", "00", "00", "P0"],
+			["00", "00", "P0", "00", "00", "P0", "00", "00"],
+			["00", "00", "A0", "O1", "O2", "A0", "00", "00"]
+		]
+	},
+	"stage3": {
+		"enemylist":[
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["00", "00", "A0", "A0", "A0", "A0", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["00", "00", "A3", "A0", "A0", "A1", "00", "00"],
+			["00", "00", "00", "A0", "A0", "00", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["00", "00", "V0", "00", "00", "V0", "00", "00"],
+			["00", "00", "V0", "00", "00", "V0", "00", "00"],
+			["00", "00", "V0", "00", "00", "V0", "00", "00"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["A3", "00", "A0", "00", "00", "A0", "00", "A2"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["00", "00", "00", "00", "00", "00", "00", "00"],
+			["00", "00", "O0", "O0", "O0", "O0", "00", "00"],
+			["00", "O0", "O0", "O0", "O0", "O0", "O0", "00"],
+			["00", "O0", "00", "O0", "O0", "00", "O0", "00"],
+			["00", "O0", "00", "O0", "O0", "00", "O0", "00"],
+			["Q0", "O0", "00", "O1", "O2", "00", "O0", "Q0"],
+			["00", "O0", "O0", "O0", "O0", "O0", "O0", "00"],
+			["00", "O3", "O0", "O0", "O0", "O0", "O0", "00"],
+			["00", "00", "O0", "O0", "O0", "O0", "00", "00"],
+			["B0", "00", "O0", "O0", "O0", "O0", "00", "B0"],
+			["A0", "A0", "A0", "A0", "A0", "A0", "A0", "A0"],
+			["A0", "A0", "A0", "A0", "A0", "A0", "A0", "A0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["Q0", "00", "00", "00", "00", "00", "00", "Q0"],
+			["00", "00", "A0", "A0", "A0", "A0", "00", "00"],
+			["00", "Q0", "00", "00", "00", "00", "Q0", "00"],
+			["B3", "00", "00", "00", "00", "00", "00", "B0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["A0", "A0", "00", "00", "00", "00", "A0", "A0"],
+			["00", "00", "V0", "A0", "A0", "V0", "00", "00"],
+			["00", "00", "V0", "A0", "A0", "V0", "00", "00"],
+			["00", "00", "V0", "A2", "A1", "V0", "00", "00"]
+		]
+	},
+
+	"stage4": {
+		"enemylist":[
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["A3", "00", "00", "00", "00", "00", "00", "A2"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["00", "00", "A3", "A0", "A0", "A0", "00", "00"],
+			["00", "00", "A0", "00", "00", "A1", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["00", "00", "A0", "A0", "A0", "A0", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["P0", "00", "00", "00", "00", "00", "00", "P0"],
+			["B0", "00", "Q0", "A1", "A0", "Q0", "00", "B0"],
+			["P0", "00", "00", "00", "00", "00", "00", "P0"],
+			["00", "00", "A0", "A0", "A0", "A0", "00", "B0"],
+			["P0", "00", "00", "A0", "A0", "00", "00", "P0"],
+			["B0", "00", "A0", "00", "00", "A0", "00", "00"],
+			["P0", "00", "00", "00", "00", "00", "00", "P0"],
+			["00", "A0", "00", "00", "00", "00", "A0", "00"],
+			["P0", "00", "00", "Q0", "Q0", "00", "00", "P1"],
+			["B0", "00", "00", "A0", "A0", "00", "00", "B0"],
+			["P3", "00", "A0", "A0", "A0", "A0", "00", "P0"],
+			["00", "Q0", "A0", "A0", "A0", "A0", "Q0", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["00", "00", "Q0", "A0", "A0", "Q9", "00", "00"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["P0", "P0", "00", "00", "00", "00", "P3", "P0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["P0", "P0", "00", "00", "00", "00", "P0", "P0"],
+			["00", "00", "00", "A0", "A0", "00", "00", "00"],
+			["A1", "A0", "A0", "A0", "A0", "A0", "A0", "A2"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["P0", "P0", "00", "00", "00", "00", "P0", "P0"],
+			["P0", "P0", "00", "A0", "A0", "00", "P0", "P0"],
+			["P0", "00", "A0", "A0", "A0", "A0", "00", "P0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B3"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["B0", "00", "00", "00", "00", "00", "00", "B0"],
+			["P0", "P0", "A2", "A0", "A0", "A1", "P0", "P0"]
+		]
+	},
+
+
+	
+
+	"playerData": {
+		"name"			: "duke",
+		"maxHp"			: 3,
+		"spDamage"		: 50,
+		"speed"			: 150,
+		"defaultShootName"  : "normal",
+		"defaultShootSpeed" : "speed_normal",
+		"texture"		: ["duke_0", "duke_1", "duke_2", "duke_3"],
+		"shootNormal"	: {
+			"name"			: "normal",
+			"damage"			: 1,
+			"hp"				: 1,
+			"interval"		: 23,
+			"texture"		: ["bigProjectile_0.png","bigProjectile_1.png","bigProjectile_2.png","bigProjectile_3.png"]
+		},
+		"shootBig"		: {
+			"name"			: "big",
+			"damage"			: 2,
+			"hp"				: 100,
+			"interval"		: 39,
+			"texture"		: ["bigProjectile0.png","bigProjectile1.png","bigProjectile2.png"]
+		},
+		"shoot3way"		: {
+			"name"			: "3way",
+			"damage"			: 1,
+			"hp"				: 1,
+			"interval"		: 31,
+			"texture"		: ["hadoken0.png","hadoken1.png"]
+		},
+		"barrier"		: {
+			"time"			: 4,
+			"texture"		: ["shield0.png","shield1.png","shield2.png","shield3.png","shield4.png","shield5.png","shield6.png","shield7.png","shield8.png","shield9.png"]
+		}
+	},
+
+
+
+	"enemyData": {
+		"enemyA": {
+			"name"	: "soliderA",
+			"score"			: 100,
+			"spgage"			: 4,
+			"hp"				: 1,
+			"speed"			: 0.8,
+			"interval"		: 300,
+			"texture"		: ["soliderA0.gif", "soliderA1.gif", "soliderA2.gif"],
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"bulletData"		: {
+				"score"			: 100,
+				"spgage"			: 2,
+				"hp"				: 1,
+				"speed"			: 1,
+				"damage"			: 1,
+				"texture"		: ["normalProjectile0.gif", "normalProjectile1.gif", "normalProjectile2.gif"]
+			}
+		},
+		"enemyB": {
+			"name"	: "soliderB",
+			"score"			: 200,
+			"hp"				: 3,
+			"speed"			: 0.7,
+			"spgage"			: 7,
+			"interval"		: 60,
+			"texture"		: ["soliderB0.gif", "soliderB1.gif", "soliderB2.gif"],
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"bulletData"		: {
+				"score"			: 100,
+				"spgage"			: 2,
+				"hp"				: 2,
+				"speed"			: 2,
+				"damage"			: 1,
+				"texture"		: ["vegaProjectile0.gif", "vegaProjectile1.gif", "vegaProjectile2.gif"]
+			}
+		},
+		"enemyC": {
+			"name"	: "soliderC",
+			"score"			: 200,
+			"spgage"			: 5,
+			"hp"				: 1,
+			"speed"			: 0.8,
+			"interval"		: 170,
+			"texture"		: ["soliderC0.gif", "soliderC1.gif", "soliderC2.gif"],
+			"shadowReverse": false,
+			"shadowOffsetY": 30,
+			"bulletData"		: {
+				"score"			: 100,
+				"spgage"			: 1,
+				"hp"				: 1,
+				"speed"			: 1.2,
+				"damage"			: 1,
+				"texture"		: ["vegaProjectile0.gif", "vegaProjectile1.gif", "vegaProjectile2.gif"]
+			}
+		},
+		"enemyD": {
+			"name"	: "tora",
+			"score"			: 200,
+			"spgage"			: 10,
+			"hp"				: 5,
+			"speed"			: 1.5,
+			"interval"		: -1,
+			"texture"		: ["tora0.gif", "tora1.gif", "tora2.gif", "tora3.gif", "tora4.gif", "tora5.gif", "tora6.gif", "tora7.gif", "tora8.gif", "tora9.gif"],
+			"shadowReverse": false,
+			"shadowOffsetY": 35,
+			"bulletData"		: null
+		},
+
+
+
+
+		"enemyO": {
+			"name"			: "woodenbox",
+			"score"			: 100,
+			"spgage"			: 1,
+			"hp"				: 5,
+			"speed"			: 0.7,
+			"interval"		: -1,
+			"texture"		: ["woodenbox.gif"],
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"bulletData"		: null
+		},
+		"enemyP": {
+			"name"			: "drum",
+			"score"			: 300,
+			"spgage"			: 1,
+			"hp"				: 18,
+			"speed"			: 0.7,
+			"interval"		: -1,
+			"texture"		: ["drum.gif"],
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"bulletData"		: null
+		},
+		"enemyQ": {
+			"name"			: "launchpad",
+			"score"			: 300,
+			"spgage"			: 1,
+			"hp"				: 30,
+			"speed"			: 0.7,
+			"interval"		: 100,
+			"texture"		: ["launchpad.gif"],
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"bulletData"		: {
+				"score"			: 400,
+				"spgage"			: 1,
+				"hp"				: 1,
+				"speed"			: 3.8,
+				"damage"			: 1,
+				"texture"		: ["missile0.gif", "missile1.gif"]
+			}
+		},
+		"enemyR": {
+			"name"			: "slotA",
+			"score"			: 400,
+			"spgage"			: 1,
+			"hp"				: 20,
+			"speed"			: 0.7,
+			"interval"		: -1,
+			"texture"		: ["slotA.gif"],
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"bulletData"		: null
+		},
+		"enemyS": {
+			"name"	: "slotB",
+			"score"			: 200,
+			"spgage"			: 2,
+			"hp"				: 20,
+			"speed"			: 0.7,
+			"interval"		: -1,
+			"texture"		: ["slotB.gif"],
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"bulletData"		: null
+		},
+		"enemyT": {
+			"name"			: "baraA",
+			"score"			: 300,
+			"spgage"			: 5,
+			"hp"				: 10,
+			"speed"			: 0.7,
+			"interval"		: -1,
+			"texture"		: ["baraA.gif"],
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"bulletData"		: null
+		},
+		"enemyU": {
+			"name"			: "baraB",
+			"score"			: 300,
+			"spgage"			: 5,
+			"hp"				: 10,
+			"speed"			: 0.7,
+			"interval"		: -1,
+			"texture"		: ["baraB.gif"],
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"bulletData"		: null
+		},
+		"enemyV": {
+			"name"			: "vegasamazou",
+			"score"			: 300,
+			"spgage"			: 0,
+			"hp"				: "infinity",
+			"speed"			: 0.7,
+			"interval"		: -1,
+			"texture"		: ["vegasamazou.gif"],
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"bulletData"		: null
+		}
+		
+	},
+
+
+
+	
+	"bossData": {
+		"boss0": {
+			"name"			: "bison",
+			"score"			: 2200,
+			"spgage"			: 30,
+			"hp"				: 150,
+			"interval"		: 100,
+			"shadowReverse": true,
+			"shadowOffsetY": 50,
+			"anim"			:  {
+				"idle": ["bison_idle0.gif","bison_idle1.gif","bison_idle2.gif","bison_idle3.gif"],
+				"attack": ["bison_attack0.gif","bison_attack1.gif"]
+			},
+			"bulletData"		: {}
+		},
+		"boss1": {
+			"name"			: "barlog",
+			"score"			: 3000,
+			"spgage"			: 30,
+			"hp"				: 200,
+			"interval"		: 200,
+			"shadowReverse": false,
+			"shadowOffsetY": 127,
+			"anim"			:  {
+				"idle": ["barlog_idle0.gif","barlog_idle1.gif","barlog_idle2.gif","barlog_idle0.gif","barlog_idle3.gif","barlog_idle4.gif","barlog_idle3.gif"],
+				"shoot": ["barlog_shoot0.gif", "barlog_shoot1.gif", "barlog_shoot2.gif"],
+				"charge": ["barlog_charge0.gif","barlog_charge1.gif"],
+				"attack": ["barlog_attack0.gif","barlog_attack1.gif"]
+			},
+			"bulletData"		: {
+				"score"			: 150,
+				"spgage"			: 5,
+				"hp"				: 8,
+				"speed"			: 1.7,
+				"damage"			: 1,
+				"texture"		: ["barlog_projectile0.gif", "barlog_projectile1.gif","barlog_projectile2.gif"]
+			}
+		},
+		"boss2": {
+			"name"			: "sagat",
+			"score"			: 4500,
+			"spgage"			: 30,
+			"hp"				: 250,
+			"interval"		: 200,
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"anim"			:  {
+				"idle": ["sagat_idle0.gif","sagat_idle1.gif"],
+				"charge": ["sagat_charge0.gif","sagat_charge1.gif"],
+				"shoot": ["sagat_shoot0.gif"],
+				"attack": ["sagat_attack0.gif"]
+			},
+			"bulletDataA"		: {
+				"score"			: 200,
+				"spgage"			: 2,
+				"hp"				: 5,
+				"speed"			: 2.5,
+				"damage"			: 1,
+				"texture"		: ["sagat_projectileA0.gif", "sagat_projectileA1.gif"]
+			},
+			"bulletDataB"		: {
+				"score"			: 500,
+				"spgage"			: 20,
+				"hp"				: 18,
+				"speed"			: 1.8,
+				"damage"			: 1,
+				"texture"		: ["sagat_projectileB0.gif", "sagat_projectileB1.gif", "sagat_projectileB2.gif"]
+			}
+		},
+		"boss3": {
+			"name"			: "vega",
+			"score"			: 6000,
+			"spgage"			: 30,
+			"hp"				: 300,
+			"interval"		: 250,
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"anim"			:  {
+				"idle": ["vega_idle0.gif","vega_idle1.gif"],
+				"shoot": ["vega_shoot0.gif","vega_shoot1.gif"],
+				"attack": ["vega_attack0.gif","vega_attack1.gif","vega_attack2.gif","vega_attack3.gif"]
+			},
+			"bulletDataA"		: {
+				"score"			: 100,
+				"spgage"			: 10,
+				"hp"				: 10,
+				"speed"			: 0.6,
+				"damage"			: 1,
+				"texture"		: ["vega_projectile0.gif", "vega_projectile1.gif", "vega_projectile2.gif", "vega_projectile3.gif"]
+			},
+			"bulletDataB"		: {
+				"score"			: 100,
+				"spgage"			: 1,
+				"hp"				: 2,
+				"speed"			: 1,
+				"damage"			: 1,
+				"texture"		: ["vegaProjectile0.gif", "vegaProjectile1.gif", "vegaProjectile2.gif"]
+			}
+		},
+		"bossExtra": {
+			"name"			: "goki",
+			"spgage"			: 30,
+			"score"			: 8000,
+			"hp"				: 350,
+			"interval"		: 200,
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"anim"			:  {
+				"idle": ["goki_idle0.gif","goki_idle1.gif"],
+				"syngoku": ["goki_syungoku0.gif","goki_syungoku1.gif","goki_syungoku2.gif"],
+				"syngokuFinish": ["goki_syungoku_finish.gif"],
+				"syngokuFinishTen": ["goki_syungoku_finish_ten.gif"],
+				"shootA": ["goki_shootA0.gif", "goki_shootA1.gif", "goki_shootA2.gif"],
+				"shootB": ["goki_shootB0.gif", "goki_shootB1.gif", "goki_shootB2.gif", "goki_shootB3.gif", "goki_shootB4.gif"]
+			},
+			"bulletDataA"		: {
+				"score"			: 100,
+				"spgage"			: 5,
+				"hp"				: 5,
+				"speed"			: 2.3,
+				"damage"			: 1,
+				"texture"		: ["goki_projectileA0.gif", "goki_projectileA1.gif", "goki_projectileA2.gif"]
+			},
+			"bulletDataB"		: {
+				"score"			: 500,
+				"spgage"			: 10,
+				"hp"				: 20,
+				"speed"			: 1.5,
+				"damage"			: 1,
+				"texture"		: ["goki_projectileB0.gif", "goki_projectileB1.gif", "goki_projectileB2.gif"]
+			}
+		},
+		"boss4": {
+			"name"			: "fang",
+			"spgage"			: 30,
+			"score"			: 22222,
+			"hp"				: 500,
+			"interval"		: 120,
+			"shadowReverse": true,
+			"shadowOffsetY": 10,
+			"anim"			:  {
+				"idle": ["fang_idle0.gif","fang_idle1.gif","fang_idle2.gif"],
+				"wait": ["fang_wait0.gif","fang_wait1.gif"],
+				"charge": ["fang_charge0.gif", "fang_charge1.gif", "fang_charge2.gif", "fang_charge3.gif"],
+				"shoot": ["fang_shoot0.gif", "fang_shoot1.gif"]
+			},
+			"bulletDataA"		: {
+				"score"			: 222,
+				"spgage"			: 5,
+				"hp"				: 9,
+				"speed"			: 3,
+				"damage"			: 1,
+				"texture"		: ["fang_projectileA0.gif","fang_projectileA1.gif"]
+			},
+			"bulletDataB"		: {
+				"score"			: 222,
+				"spgage"			: 10,
+				"hp"				: 15,
+				"speed"			: 0.5,
+				"damage"			: 1,
+				"texture"		: ["fang_projectileB0.gif", "fang_projectileB1.gif", "fang_projectileB2.gif","fang_projectileB3.gif", "fang_projectileB4.gif", "fang_projectileB5.gif","fang_projectileB6.gif","fang_projectileB7.gif","fang_projectileB8.gif"]
+			},
+			"bulletDataC"		: {
+				"score"			: 222,
+				"spgage"			: 5,
+				"hp"				: 4,
+				"speed"			: 0.8,
+				"damage"			: 1,
+				"texture"		: ["fang_projectileC0.gif", "fang_projectileC1.gif", "fang_projectileC2.gif"]
+			}
+
+		}
+	},
+
+
+	"meta": {
+		 "version": "1.0"
+	},
+
+	"continueComment": [
+		"敵は囲まれる前に対処しよう！",
+		"敵の弾は破壊できるぞ！",
+		"コンボをつなげていくと\nスコアがどんどん上がるぞ！",
+		"ここぞという時には\nCA BOMB！を使用しよう！",
+		"CA BOMB！は\n全画面攻撃だ！",
+		"バリアを入手したら\nチャンスだ！",
+		"世界大統領の攻撃を\nもってしても破壊できない\n物体があるらしいぞ！",
+		"BIG SHOTは通常の\n2倍の威力で貫通するぞ！",
+		"苦手な敵は避けてしまおう！",
+		"硬い敵は無視するのも\n作戦の1つだ！",
+		"間違って\n苦手なパワーアップアイテムを\n取らないようにしよう！",
+		"ボスの攻撃にはパターンがある！\nしっかり見極めよう！",
+		"全てのボスをある条件で倒すと…？",
+		"地球人民は1日に平均15000回\nまばたきをするらしいぞ！",
+		"地球人民のくしゃみの速度は\n平均時速160キロらしいぞ！",
+		"太陽の光は地球に届くまで\n500秒程度かかるらしいぞ！",
+		"Gの帽子の中には\n地球人民の夢が詰まっているぞ！",
+		"今日の運勢は絶好調らしいぞ！",
+		"ご飯は\nよく噛んで食べると\nいいらしいぞ！",
+		"早起きは三文の徳らしいぞ！",
+		"寝る前には歯を磨こう！",
+		"人には優しくしよう！",
+		"カプコン社員食堂のカレーは\n美味しいらしいぞ！",
+		"今回の元ネタとなった\n「1942」は1984年に\nリリースされたぞ！"
+	],
+
+	"continueCommentEn": [
+		"Take care of enemies before they surround you!",
+		"You can destroy enemy projectiles!",
+		"Increase your combo count for a higher score!",
+		"Be sure to use the CA BOMB when in a pinch!",
+		"The CA BOMB! is a full-screen attack!",
+		"Make full use of the Barrier once you have it!",
+		"Even for the world's president, there are some things his attack can't break!",
+		"Break through with the 2x power of the BIG SHOT!",
+		"Try avoiding tough enemies!",
+		"Avoiding difficult enemies is part of a good battle strategy!",
+		"Be sure to avoid  accidentally taking power-up items that don't fit your style!",
+		"The boss's attacks all follow a pattern!  Try to figure it out!",
+		"If you defeat all the bosses under a certain condition...",
+		"Did you know that the citizens of the earth blink 15,000 times a day?",
+		"Did you know that the citizens of the earth sneeze at an average speed of 100 mph?",
+		"It takes about 500 seconds for the light from the sun to reach the Earth!",
+		"Inside of G's hat you can find the hopes and dreams of all the Earth's citizens!",
+		"Our teamwork is on point today!",
+		"Be sure to properly chew your meals!",
+		"The early bird catches the worm!",
+		"Brush your teeth before bedtime!",
+		"Be kind to other people!",
+		"The curry in the Capcom employee cafeteria is really delicious!",
+		"This game's inspiration, \"1942,\" was released in 1984!"
+	]
+}

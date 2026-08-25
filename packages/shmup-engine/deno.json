@@ -1,0 +1,27 @@
+{
+  "name": "@shmupx/shmup-engine",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./mod.js",
+    "./bup-source": "./src/bup-source.js",
+    "./bup-parse": "./src/bup-parse.js",
+    "./bup-deinterleave": "./src/bup-deinterleave.js",
+    "./payload-table": "./src/payload-table.js",
+    "./decompress": "./src/decompress.js",
+    "./decode": "./src/decode/index.js",
+    "./map-to-game": "./src/map-to-game.js",
+    "./atlas-pack": "./src/atlas-pack.js",
+    "./game-schema": "./src/game-schema.js",
+    "./player-art": "./src/player-art.js",
+    "./diff-ranges": "./src/diff-ranges.js"
+  },
+  "fmt": {
+    "exclude": ["src/**", "FORMAT.md", "games-db.json"]
+  },
+  "lint": {
+    "exclude": ["src/**"]
+  },
+  "publish": {
+    "exclude": ["test/", "fixtures/"]
+  }
+}
