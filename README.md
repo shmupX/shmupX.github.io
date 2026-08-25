@@ -43,6 +43,15 @@ Deno Deploy git integration: the app is linked to this repo in the Deploy
 dashboard (the app slug decides the default `<app>.<org>.deno.net` URL — it is
 not set from this file), and every push to main triggers a build.
 
+**App Directory must be the repository root.** Deploy's framework detection
+scans the tree and will happily pick `./packages/shmup-engine` (the JSR
+workspace member) as the app directory. Everything still builds — install,
+manifest, bundles and `vite build` all succeed at the root — and then the Fresh
+finalize step fails with `Could not find _fresh folder after building project`,
+because it looks for `_fresh` inside that app directory. Leaving App Directory
+blank in the app config (it defaults to the repo root) fixes it, and is also
+what makes Deploy read the `deploy` block below instead of dashboard settings.
+
 The `deploy` block in `deno.json` is what that build follows:
 
 - `install` — `deno install` (npm deps for vite/esbuild/svelte).
