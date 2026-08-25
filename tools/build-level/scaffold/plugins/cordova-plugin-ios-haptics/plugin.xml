@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
+        id="cordova-plugin-ios-haptics"
+        version="1.0.0">
+
+    <name>iOS Haptics</name>
+    <description>Lightweight iOS haptic feedback using UIFeedbackGenerator APIs</description>
+    <license>MIT</license>
+
+    <engines>
+        <engine name="cordova-ios" version=">=6.0.0" />
+    </engines>
+
+    <platform name="ios">
+        <js-module src="www/IOSHaptics.js" name="IOSHaptics">
+            <clobbers target="window.TapticEngine" />
+        </js-module>
+
+        <config-file target="config.xml" parent="/*">
+            <feature name="IOSHaptics">
+                <param name="ios-package" value="IOSHaptics" />
+            </feature>
+        </config-file>
+
+        <source-file src="src/ios/IOSHaptics.swift" />
+    </platform>
+</plugin>

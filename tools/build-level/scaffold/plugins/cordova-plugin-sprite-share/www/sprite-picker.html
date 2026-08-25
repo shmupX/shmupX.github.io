@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Sprite Share</title>
+<link rel="stylesheet" href="sprite-picker.css">
+</head>
+<body>
+  <!-- Top bar -->
+  <header id="topbar">
+    <span class="topbar-title">Sprite Share</span>
+    <button id="close-btn" title="Close">&times;</button>
+  </header>
+
+  <!-- Main canvas area (image + detection overlay) -->
+  <div id="canvas-wrap">
+    <canvas id="source-canvas"></canvas>
+    <canvas id="overlay-canvas"></canvas>
+  </div>
+
+  <!-- Thumbnail strip of selected sprites -->
+  <div id="thumbs-strip">
+    <span id="thumbs-empty">No sprites selected</span>
+  </div>
+
+  <!-- Controls panel -->
+  <div id="controls">
+    <div class="ctrl-row">
+      <label for="atlas-select">Atlas</label>
+      <select id="atlas-select">
+        <option value="game_asset">game_asset</option>
+        <option value="game_ui">game_ui</option>
+        <option value="title_ui">title_ui</option>
+      </select>
+    </div>
+    <div class="ctrl-row">
+      <label for="mode-select">Mode</label>
+      <select id="mode-select">
+        <option value="add">Add as new sprites</option>
+        <option value="replace">Replace existing frame</option>
+      </select>
+    </div>
+    <div class="ctrl-row" id="frame-row" style="display:none">
+      <label for="frame-select">Frame</label>
+      <select id="frame-select">
+        <option value="">-- Loading --</option>
+      </select>
+    </div>
+    <div class="ctrl-buttons">
+      <button id="save-btn" class="btn btn-primary">Save to Atlas</button>
+      <button id="select-all-btn" class="btn">Select All</button>
+      <button id="clear-btn" class="btn btn-danger">Clear</button>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div id="status">Waiting for image...</div>
+
+  <script src="sprite-detect.js"></script>
+  <script src="sprite-picker-app.js"></script>
+</body>
+</html>

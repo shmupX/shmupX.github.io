@@ -1,0 +1,12 @@
+{
+  "name": "cordova-plugin-sprite-share",
+  "version": "1.0.0",
+  "description": "Receive shared images via Android intent, auto-detect sprites, and add/replace them in game atlases.",
+  "cordova": {
+    "id": "cordova-plugin-sprite-share",
+    "platforms": ["android"]
+  },
+  "keywords": ["cordova", "ecosystem:cordova", "cordova-android"],
+  "author": "easierbycode",
+  "license": "MIT"
+}

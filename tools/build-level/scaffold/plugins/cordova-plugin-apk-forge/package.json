@@ -1,0 +1,12 @@
+{
+  "name": "cordova-plugin-apk-forge",
+  "version": "1.0.0",
+  "description": "On-device APK builder. Clones a bundled shell APK, swaps assets/www/, patches the package id and display name, re-signs with v1+v2, and hands the result to the system installer.",
+  "cordova": {
+    "id": "cordova-plugin-apk-forge",
+    "platforms": ["android"]
+  },
+  "keywords": ["cordova", "ecosystem:cordova", "cordova-android", "apk", "signing"],
+  "author": "easierbycode",
+  "license": "MIT"
+}

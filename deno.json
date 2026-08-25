@@ -30,9 +30,12 @@
   "exclude": [
     "**/_fresh/*",
     ".claude/**",
+    ".deno/**",
+    "build/**",
     "node_modules/**",
     "static/**",
-    "svelte-src/**"
+    "svelte-src/**",
+    "tools/build-level/**"
   ],
   "imports": {
     "@/": "./",

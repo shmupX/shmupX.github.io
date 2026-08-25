@@ -1,0 +1,12 @@
+{
+  "name": "cordova-plugin-ios-haptics",
+  "version": "1.0.0",
+  "description": "Lightweight iOS haptic feedback using UIFeedbackGenerator APIs",
+  "cordova": {
+    "id": "cordova-plugin-ios-haptics",
+    "platforms": ["ios"]
+  },
+  "keywords": ["cordova", "ios", "haptics", "ecosystem:cordova", "cordova-ios"],
+  "author": "easierbycode",
+  "license": "MIT"
+}

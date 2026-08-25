@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
+        id="cordova-plugin-sprite-share"
+        version="1.0.0">
+
+    <name>Sprite Share</name>
+    <description>Receive shared images via Android intent or iOS share sheet, auto-detect sprites, and add/replace them in game atlases.</description>
+
+    <js-module src="www/sprite-share.js" name="SpriteShare">
+        <clobbers target="SpriteShare" />
+    </js-module>
+
+    <platform name="android">
+        <source-file src="src/android/SpriteShareActivity.kt"
+                     target-dir="app/src/main/java/com/easierbycode/spriteshare" />
+
+        <!-- Register the share-receiver Activity in AndroidManifest -->
+        <config-file target="AndroidManifest.xml" parent="/manifest/application">
+            <activity android:name="com.easierbycode.spriteshare.SpriteShareActivity"
+                      android:label="Sprite Share"
+                      android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+                      android:screenOrientation="portrait"
+                      android:exported="true"
+                      xmlns:android="http://schemas.android.com/apk/res/android">
+                <intent-filter>
+                    <action android:name="android.intent.action.SEND" />
+                    <action android:name="android.intent.action.SEND_MULTIPLE" />
+                    <category android:name="android.intent.category.DEFAULT" />
+                    <data android:mimeType="image/*" />
+                </intent-filter>
+            </activity>
+        </config-file>
+
+        <!-- Copy picker UI assets into the APK's assets/www/sprite-share/ directory -->
+        <resource-file src="www/sprite-picker.html"   target="app/src/main/assets/www/sprite-share/sprite-picker.html" />
+        <resource-file src="www/sprite-picker.css"    target="app/src/main/assets/www/sprite-share/sprite-picker.css" />
+        <resource-file src="www/sprite-picker-app.js" target="app/src/main/assets/www/sprite-share/sprite-picker-app.js" />
+        <resource-file src="www/sprite-detect.js"     target="app/src/main/assets/www/sprite-share/sprite-detect.js" />
+    </platform>
+
+    <platform name="ios">
+        <engines>
+            <engine name="cordova-ios" version=">=7.0.0" />
+        </engines>
+
+        <!--
+            The iOS Share Extension is added as a separate Xcode target via
+            a hook script. Cordova's plugin.xml doesn't natively support
+            app extension targets, so the hook handles:
+              - Creating the SpriteShareExtension directory
+              - Copying Swift source, Info.plist, entitlements, and web assets
+              - Adding the target, build phases, and frameworks to pbxproj
+              - Configuring App Groups for shared atlas storage
+        -->
+        <hook type="after_platform_add" src="hooks/ios/add-share-extension.js" />
+        <hook type="after_prepare" src="hooks/ios/add-share-extension.js" />
+    </platform>
+</plugin>

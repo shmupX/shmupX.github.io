@@ -1,0 +1,117 @@
+<?xml version='1.0' encoding='utf-8'?>
+<widget id="com.easierbycode.game2028" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+    <name>2028.ai</name>
+    <description>Street Fighter browser game</description>
+    <content src="phaser-game.html" />
+
+    <access origin="*" />
+    <allow-navigation href="*" />
+
+    <preference name="Fullscreen" value="true" />
+    <preference name="Orientation" value="portrait" />
+    <preference name="DisallowOverscroll" value="true" />
+    <preference name="StatusBarOverlaysWebView" value="false" />
+    <preference name="StatusBarStyle" value="default" />
+    <preference name="BackgroundColor" value="#ff000000" />
+    <preference name="KeepRunning" value="true" />
+
+    <!-- iOS: disable swipe-back/forward navigation gesture -->
+    <preference name="AllowBackForwardNavigationGestures" value="false" />
+    <!-- iOS: suppress the bounce/overscroll effect at viewport edges -->
+    <preference name="SuppressesIncrementalRendering" value="false" />
+    <preference name="KeyboardDisplayRequiresUserAction" value="true" />
+
+    <preference name="AndroidPersistentFileLocation" value="Compatibility" />
+    <preference name="android-targetSdkVersion" value="35" />
+    <preference name="android-compileSdkVersion" value="35" />
+    <!-- Pin appcompat to 1.6.1 to avoid AAPT2 resource parsing failures seen with 1.7.0 in CI -->
+    <preference name="AndroidXAppCompatVersion" value="1.6.1" />
+
+    <!-- Immersive sticky mode is applied via hooks/after_prepare.js (patches MainActivity.kt) -->
+    <hook type="after_prepare" src="hooks/after_prepare.js" />
+
+    <platform name="android">
+        <!-- Required for navigator.vibrate() haptic feedback (was previously
+             provided by cordova-plugin-vibration, now removed) -->
+        <config-file target="AndroidManifest.xml" parent="/*">
+            <uses-permission android:name="android.permission.VIBRATE" xmlns:android="http://schemas.android.com/apk/res/android" />
+        </config-file>
+        <icon density="ldpi" src="res/android/ldpi.png" />
+        <icon density="mdpi" src="res/android/mdpi.png" />
+        <icon density="hdpi" src="res/android/hdpi.png" />
+        <icon density="xhdpi" src="res/android/xhdpi.png" />
+        <icon density="xxhdpi" src="res/android/xxhdpi.png" />
+        <icon density="xxxhdpi" src="res/android/xxxhdpi.png" />
+        <preference name="FullScreen" value="true" />
+        <preference name="Orientation" value="portrait" />
+        <preference name="AndroidLaunchMode" value="singleTask" />
+        <!-- Handle config changes in-app so orientation change doesn't restart the activity -->
+        <edit-config file="AndroidManifest.xml" target="/manifest/application/activity" mode="merge">
+            <activity android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+                      android:screenOrientation="portrait"
+                      android:resizeableActivity="true"
+                      xmlns:android="http://schemas.android.com/apk/res/android" />
+        </edit-config>
+    </platform>
+
+    <platform name="ios">
+        <preference name="deployment-target" value="14.0" />
+        <preference name="Orientation" value="portrait" />
+        <preference name="AllowBackForwardNavigationGestures" value="false" />
+        <preference name="DisallowOverscroll" value="true" />
+        <!-- Use https scheme so fetch() API works in WKWebView.
+             The default "app://" scheme doesn't route fetch() through
+             the WKURLSchemeHandler, causing all Phaser 4 asset loads to fail. -->
+        <preference name="scheme" value="https" />
+        <preference name="hostname" value="localhost" />
+        <preference name="MediaPlaybackRequiresUserAction" value="false" />
+        <preference name="AllowsInlineMediaPlayback" value="true" />
+        <preference name="MediaTypesRequiringUserActionForPlayback" value="none" />
+        <!-- Remote debugging: make WKWebView inspectable via Safari/chrome://inspect -->
+        <preference name="InspectableWebview" value="true" />
+        <!-- Swift version required for cordova-plugin-ios-haptics -->
+        <preference name="SwiftVersion" value="5.0" />
+
+        <icon src="icons/ios/icon-20.png" width="20" height="20" />
+        <icon src="icons/ios/icon-20@2x.png" width="40" height="40" />
+        <icon src="icons/ios/icon-20@3x.png" width="60" height="60" />
+        <icon src="icons/ios/icon-29.png" width="29" height="29" />
+        <icon src="icons/ios/icon-29@2x.png" width="58" height="58" />
+        <icon src="icons/ios/icon-29@3x.png" width="87" height="87" />
+        <icon src="icons/ios/icon-40.png" width="40" height="40" />
+        <icon src="icons/ios/icon-40@2x.png" width="80" height="80" />
+        <icon src="icons/ios/icon-40@3x.png" width="120" height="120" />
+        <icon src="icons/ios/icon-60@2x.png" width="120" height="120" />
+        <icon src="icons/ios/icon-60@3x.png" width="180" height="180" />
+        <icon src="icons/ios/icon-76.png" width="76" height="76" />
+        <icon src="icons/ios/icon-76@2x.png" width="152" height="152" />
+        <icon src="icons/ios/icon-83.5@2x.png" width="167" height="167" />
+        <icon src="icons/ios/icon-1024.png" width="1024" height="1024" />
+
+        <splash src="res/splash/Default@2x~universal~anyany.png" />
+        <splash src="res/splash/Default@3x~universal~anyany.png" />
+    </platform>
+
+    <!-- Plugins removed: cordova-plugin-statusbar and cordova-plugin-vibration
+         are incompatible with cordova-android 13+ (Kotlin-based MainActivity).
+         Status bar hiding is handled natively via hooks/after_prepare.js.
+         Vibration is available via the Web Vibration API (navigator.vibrate). -->
+
+    <!-- iOS-only haptic feedback: plugins/cordova-plugin-ios-haptics
+         Exposes window.TapticEngine (impact/notification/selection).
+         Installed via `cordova plugin add` in CI workflows (path is
+         relative to the Cordova project, not this file). -->
+
+    <!-- Android sprite share: receive images via share intent, auto-detect
+         sprites, and add/replace them in game atlases.
+         Installed via `cordova plugin add` in CI workflows (path is
+         relative to the Cordova project, not this file).
+         Plugin source: plugins/cordova-plugin-sprite-share -->
+
+    <!-- Android APK Forge: builds an installable APK on-device by stamping a
+         bundled shell template with new package id, label, and assets/www.
+         Adds REQUEST_INSTALL_PACKAGES + a FileProvider via plugin.xml.
+         The shell APK lives at /android_asset/apkforge/shell-template.apk
+         and is produced by the shell-apk CI job (tools/build-shell-apk).
+         Plugin source: plugins/cordova-plugin-apk-forge -->
+</widget>

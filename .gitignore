@@ -2,6 +2,8 @@ _fresh/
 node_modules/
 vendor/
 .claude/
+.deno/
+build/
 static/games/2028-ai/assets/custom-bgm/
 
 # Local .sav test fixtures (community Dezaemon 2 saves — never committed).

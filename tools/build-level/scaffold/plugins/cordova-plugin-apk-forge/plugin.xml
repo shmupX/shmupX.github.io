@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
+        id="cordova-plugin-apk-forge"
+        version="1.0.0">
+
+    <name>APK Forge</name>
+    <description>On-device APK builder. Clones a bundled shell APK, swaps assets/www/, patches the package id and display name, re-signs with v1+v2, and hands the result to the system installer.</description>
+
+    <js-module src="www/apk-forge.js" name="ApkForge">
+        <clobbers target="ApkForge" />
+    </js-module>
+
+    <platform name="android">
+        <config-file target="res/xml/config.xml" parent="/*">
+            <feature name="ApkForge">
+                <param name="android-package" value="com.easierbycode.apkforge.ApkForgePlugin" />
+                <!-- Lazy-load: the plugin is instantiated on first JS call,
+                     not at app startup. With onload="true" the plugin class
+                     was loaded during super.onCreate() of MainActivity, and
+                     any verification / class-resolution failure (e.g. a
+                     transitive missing dep on apksig / bouncycastle) would
+                     crash the entire game APK before our diagnostics could
+                     run. Lazy loading isolates that risk to the moment the
+                     user actually triggers a forge build. -->
+                <param name="onload" value="false" />
+            </feature>
+        </config-file>
+
+        <!-- IMPORTANT: the <application android:name="...ForgeApplication"/>
+             and <provider name="...ForgeFileProvider"/> entries are
+             intentionally omitted. Earlier versions added them, but those
+             caused the game APK to crash on launch on real devices (process
+             died before any of our patched code could run, with no log file
+             or Toast). The on-device APK installer hand-off is temporarily
+             disabled until we can ship those entries with confidence; the
+             rest of the plugin (Cordova-side feature registration, build
+             pipeline, signing, etc.) still loads through res/xml/config.xml
+             below.
+
+             We do keep the REQUEST_INSTALL_PACKAGES permission though: it's
+             a pure manifest-level declaration that doesn't reference a
+             class, so it can't cause the boot crash, and
+             PackageManager.canRequestPackageInstalls() (used by
+             ApkForge.checkInstallPermission) returns false without it. -->
+
+        <config-file target="AndroidManifest.xml" parent="/manifest">
+            <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+                             xmlns:android="http://schemas.android.com/apk/res/android" />
+        </config-file>
+
+        <resource-file src="res/xml/apk_forge_paths.xml"
+                       target="res/xml/apk_forge_paths.xml" />
+
+        <source-file src="src/android/ApkForgePlugin.kt"
+                     target-dir="app/src/main/java/com/easierbycode/apkforge" />
+        <source-file src="src/android/ApkBuilder.kt"
+                     target-dir="app/src/main/java/com/easierbycode/apkforge" />
+        <source-file src="src/android/AxmlPatcher.kt"
+                     target-dir="app/src/main/java/com/easierbycode/apkforge" />
+        <source-file src="src/android/ArscPatcher.kt"
+                     target-dir="app/src/main/java/com/easierbycode/apkforge" />
+        <source-file src="src/android/IconRecolor.kt"
+                     target-dir="app/src/main/java/com/easierbycode/apkforge" />
+        <source-file src="src/android/Signer.kt"
+                     target-dir="app/src/main/java/com/easierbycode/apkforge" />
+        <source-file src="src/android/Installer.kt"
+                     target-dir="app/src/main/java/com/easierbycode/apkforge" />
+        <source-file src="src/android/ZipRewriter.kt"
+                     target-dir="app/src/main/java/com/easierbycode/apkforge" />
+
+        <framework src="src/android/build.gradle" custom="true" type="gradleReference" />
+    </platform>
+</plugin>

@@ -1,0 +1,39 @@
+{
+  "name": "phaser-game",
+  "version": "1.0.0",
+  "description": "2028.ai — AI vs The World",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --linux AppImage"
+  },
+  "build": {
+    "appId": "com.easierbycode.game2028",
+    "productName": "phaser-game",
+    "linux": {
+      "target": "AppImage",
+      "icon": "icons/icon-512.png",
+      "category": "Game",
+      "artifactName": "phaser-game.AppImage"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "www/**/*",
+      "icons/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "afterPack": "./afterPack.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/easierbycode/2019-es7.git"
+  },
+  "author": "easierbycode",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "build-level",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Export a single Firebase level as a standalone Cordova/Electron app, built from cmg's in-repo 2028-ai game (no external 2019-es7 checkout).",
+  "bin": "./index.js"
+}
