@@ -1,0 +1,5 @@
+# Saturn backup images — never touch these bytes (a Windows clone with
+# core.autocrlf=true would otherwise risk mangling any that look like text).
+*.sav binary
+*.bcr binary
+*.bkr binary

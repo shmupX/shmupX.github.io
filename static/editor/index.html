@@ -4000,9 +4000,11 @@
             return ok;
         }
 
-        // ============ SAVED GAMES (local community save collection) ============
-        // /api/dezaemon-saves lists the machine's "Dez 2 - *.sav" collection
-        // (dev-fixtures — local-only, see the route); games-db.json carries the
+        // ============ SAVED GAMES (community save collection) ============
+        // dezaemon/saves.manifest.json indexes the "Dez 2 - *.sav" collection
+        // committed under static/editor/dezaemon/saves/ (built by
+        // scripts/build-deza-saves-manifest.ts, since Deno Deploy can serve
+        // static files but cannot list a directory); games-db.json carries the
         // community metadata. A save whose title matches an entry shows its
         // developer; rows group under genre headers, genres Z-A so the vertical
         // shoot-em-ups lead, titles A-Z within a genre, unmatched genres last.
@@ -4096,11 +4098,13 @@
                 list.innerHTML = '<div class="menu-note">LOADING…</div>';
                 try {
                     const [savesResp, byTitle] = await Promise.all([
-                        fetch('/api/dezaemon-saves'),
+                        fetch('dezaemon/saves.manifest.json'),
                         loadDezaGamesDbByTitle(),
                     ]);
-                    const savesJson = await savesResp.json();
-                    dezaLibraryState = { available: !!savesJson.available, saves: savesJson.saves || [], byTitle };
+                    // A checkout with no collection has no manifest at all.
+                    const savesJson = savesResp.ok ? await savesResp.json() : { saves: [] };
+                    const saves = savesJson.saves || [];
+                    dezaLibraryState = { available: saves.length > 0, saves, byTitle };
                 } catch (err) {
                     list.innerHTML = '';
                     const note = document.createElement('div');
@@ -4122,7 +4126,7 @@
             if (!st.available || !st.saves.length) {
                 const note = document.createElement('div');
                 note.className = 'menu-note';
-                note.textContent = 'NO LOCAL SAVE COLLECTION FOUND — PUT "Dez 2 - *.sav" FILES IN dev-fixtures/.';
+                note.textContent = 'NO SAVE COLLECTION IN THIS BUILD — PUT "Dez 2 - *.sav" FILES IN static/editor/dezaemon/saves/ AND REBUILD.';
                 list.appendChild(note);
                 return;
             }
@@ -4177,7 +4181,7 @@
 
         async function loadDezaemonLibraryGame(file, fallbackTitle, meta) {
             document.getElementById('dezaemon-library-modal').classList.add('hidden');
-            const ok = await loadDezaemonFromUrl('/api/dezaemon-saves?file=' + encodeURIComponent(file));
+            const ok = await loadDezaemonFromUrl('dezaemon/saves/' + encodeURIComponent(file));
             if (!ok) return;
             // One click from the shelf into the editor: when the cart holds
             // exactly one game save, select it and import without stopping at
