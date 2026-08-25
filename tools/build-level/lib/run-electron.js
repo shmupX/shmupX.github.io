@@ -1,9 +1,15 @@
 "use strict";
 
-// Compiles the staged www/ into a Linux AppImage via electron-builder. Electron
+// Compiles the staged www/ into a desktop app via electron-builder: a Linux
+// AppImage or a Windows .exe (a single-file `portable` build by default, so it
+// mirrors the AppImage — --win-target nsis|zip|dir picks another). Electron
 // scaffolding (main.js/preload.js/afterPack.js/package.json + icons) comes from
 // the tool's vendored scaffold/ dir. main.js loads phaser-game.html over a
 // custom app:// protocol, so the staged shell name matches.
+//
+// Cross-building: an AppImage needs a Linux host, and ANY Windows target built
+// from Linux needs wine on PATH — electron-builder rcedits the packaged .exe
+// (icon + version resources) through it, before the target even matters.
 
 const fs = require("fs");
 const path = require("path");
@@ -36,8 +42,20 @@ function run(cmd, args, opts) {
   if (r.status !== 0) throw new Error(cmd + " exited " + r.status);
 }
 
-async function buildElectronLinux(opts) {
+// Artifact extension per electron-builder target, used to pick the built files
+// out of electron/dist/ afterwards.
+function artifactExt(platform, winTarget) {
+  if (platform !== "windows") return ".AppImage";
+  return winTarget === "zip" ? ".zip" : ".exe";
+}
+
+async function buildElectron(opts) {
   const { scaffoldRoot, wwwRoot, buildRoot, rebrandedPackageJson } = opts;
+  const platform = opts.platform === "windows" ? "windows" : "linux";
+  const winTarget = opts.winTarget || "portable";
+  // electron-builder otherwise packs for the *host* arch, which on an arm64
+  // machine silently yields a win32-arm64 app almost nobody can run.
+  const winArch = opts.winArch || "x64";
   const perfMode = opts.perfMode !== false;
   const electronSrc = path.join(scaffoldRoot, "electron");
   const electronDir = path.join(buildRoot, "electron");
@@ -100,7 +118,10 @@ async function buildElectronLinux(opts) {
     "electron@^33",
     "electron-builder@^25",
   ], { cwd: electronDir });
-  run("npx", ["electron-builder", "--linux", "AppImage", "--publish", "never"], {
+  const targetArgs = platform === "windows"
+    ? ["--win", winTarget, "--" + winArch]
+    : ["--linux", "AppImage"];
+  run("npx", ["electron-builder"].concat(targetArgs, ["--publish", "never"]), {
     cwd: electronDir,
   });
 
@@ -108,9 +129,10 @@ async function buildElectronLinux(opts) {
   const outDir = path.join(buildRoot, "dist");
   fs.mkdirSync(outDir, { recursive: true });
   const artifacts = [];
+  const ext = artifactExt(platform, winTarget);
   if (fs.existsSync(distDir)) {
     for (const f of fs.readdirSync(distDir)) {
-      if (f.endsWith(".AppImage")) {
+      if (f.toLowerCase().endsWith(ext.toLowerCase())) {
         copyFile(path.join(distDir, f), path.join(outDir, f));
         artifacts.push(path.join(outDir, f));
       }
@@ -119,4 +141,4 @@ async function buildElectronLinux(opts) {
   return { artifacts };
 }
 
-module.exports = { buildElectronLinux };
+module.exports = { buildElectron };

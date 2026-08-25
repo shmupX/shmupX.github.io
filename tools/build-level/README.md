@@ -1,20 +1,27 @@
 # tools/build-level
 
 Export a single Firebase level as a standalone **Cordova** (Android APK / iOS
-project) or **Electron** (Linux AppImage) app — built entirely from cmg's own
-in-repo game. There is **no external 2019-es7 checkout** and **no `CMG_ES7_REPO`**
+project) or **Electron** (Linux AppImage / Windows .exe) app — built entirely
+from cmg's own in-repo game. There is **no external 2019-es7 checkout** and **no `CMG_ES7_REPO`**
 env var. This is what the level editor's "Export to APK" button
 (`static/editor/index.html` → `routes/api/build-apk.ts`) drives.
 
 ## Run
 
 ```
-node tools/build-level <levelName> <android|ios|linux|all> [flags]
+node tools/build-level <levelName> <android|ios|linux|windows|desktop|all> [flags]
 ```
+
+`desktop` resolves to `windows` on a Windows host and `linux` everywhere else.
+`all` stays what it always was — linux, android, ios. `deno task build:windows
+<levelName>` / `deno task build:linux <levelName>` are wrappers around this.
 
 Flags: `--stage-only` (stage `www/` and stop — no native compile),
 `--out <dir>`, `--package-id <id>`, `--skip-bgm`,
-`--level-file <path>` (read the level from a local JSON file instead of Firebase).
+`--win-target <portable|nsis|zip|dir>` (default `portable` — one self-contained
+`.exe`, the closest thing to the AppImage), `--win-arch <x64|arm64|ia32>`
+(default `x64`, *not* the host arch), `--level-file <path>` (read the level from
+a local JSON file instead of Firebase).
 
 Output goes to `build/<slug>/` (git-ignored): `www/` (staged app),
 `cordova/` or `electron/` (native project), and `dist/` (the artifact).
@@ -46,8 +53,13 @@ game renders identically in the exported build.
 - **Node** on PATH (the route spawns `node`).
 - **Android:** cordova + Android SDK + Gradle + JDK, `ANDROID_SDK_ROOT`.
 - **Linux:** `electron-builder` toolchain (installed on demand into the build).
-- Runs from a **source checkout** (`deno task dev`), not the packaged desktop
-  binary (a `deno compile` VFS can't be a `node` working directory).
+- **Windows:** the same electron-builder toolchain, plus `wine` on `PATH` when
+  building from Linux/macOS — electron-builder rcedits the packaged `.exe`
+  (icon + version resources) through it for every target, `zip` included.
+- Runs from a **source checkout** (`deno task dev`) or from the packaged desktop
+  app (`deno task build:windows` / `build:linux`) — a `deno compile` VFS can't be
+  a `node` working directory, so there `routes/api/build-apk.ts` copies the
+  embedded tool + game onto real disk first and runs the build from that copy.
 
 ## `scaffold/`
 

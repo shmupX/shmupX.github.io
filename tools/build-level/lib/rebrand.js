@@ -34,7 +34,10 @@ function rebrandConfigXml(sourceXml, levelName, packageId) {
   return xml;
 }
 
-function rebrandElectronPackageJson(sourcePath, levelName, packageId, slug) {
+// opts.winTarget picks the electron-builder Windows target (portable by
+// default — one self-contained .exe, the closest thing to the AppImage).
+function rebrandElectronPackageJson(sourcePath, levelName, packageId, slug, opts) {
+  const winTarget = (opts && opts.winTarget) || "portable";
   const pkg = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
   pkg.name = slug;
   pkg.productName = levelName;
@@ -44,6 +47,14 @@ function rebrandElectronPackageJson(sourcePath, levelName, packageId, slug) {
   pkg.build.productName = levelName;
   pkg.build.linux = pkg.build.linux || {};
   pkg.build.linux.artifactName = slug + ".AppImage";
+  // The scaffold only carries a Linux block; Windows is configured here so the
+  // vendored package.json stays exactly as it came from 2019-es7. icon-512.png
+  // is fine as a Windows icon — electron-builder converts a >=256px PNG to .ico.
+  pkg.build.win = pkg.build.win || {};
+  pkg.build.win.target = winTarget;
+  pkg.build.win.icon = pkg.build.win.icon || "icons/icon-512.png";
+  pkg.build.win.artifactName = slug +
+    (winTarget === "zip" ? ".zip" : winTarget === "dir" ? "" : ".exe");
   return pkg;
 }
 

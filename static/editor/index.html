@@ -453,6 +453,7 @@
             background: linear-gradient(90deg, var(--sr1), var(--sr2) 28%, var(--sr3) 65%, var(--sr4));
             border-color: transparent; font-weight: 800; color: var(--srink); box-shadow: 0 0 14px var(--srglow);
         }
+        .seg.xseg { font-size: 8px; letter-spacing: .05em; padding: 5px 0; }
         .toggle-row { justify-content: space-between; padding: 6px 10px; cursor: pointer; }
         .toggle {
             width: 36px; height: 18px; border-radius: 9px; background: var(--tgbg);
@@ -870,7 +871,16 @@
         <button class="menu-row" onclick="saveToFirebase()"><span class="mono-badge">SG</span>SAVE GAME</button>
         <button class="menu-row" onclick="loadFromFirebasePrompt()"><span class="mono-badge">LG</span>LOAD GAME</button>
         <button class="menu-row" onclick="playFirebaseLevel()"><span class="mono-badge">PG</span>PLAY GAME</button>
-        <button class="menu-row" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge">AP</span>EXPORT TO APK</button>
+        <div class="display-row" title="Which app the export builds. Linux/Windows are Electron desktop builds; a Windows build from a Linux host needs wine on PATH.">
+            <span class="display-lbl">TARGET</span>
+            <div class="seg-wrap" id="export-platform-segs">
+                <button class="seg xseg" data-platform="android" onclick="setExportPlatform('android')">ANDROID</button>
+                <button class="seg xseg" data-platform="ios" onclick="setExportPlatform('ios')">IOS</button>
+                <button class="seg xseg" data-platform="linux" onclick="setExportPlatform('linux')">LINUX</button>
+                <button class="seg xseg" data-platform="windows" onclick="setExportPlatform('windows')">WIN</button>
+            </div>
+        </div>
+        <button class="menu-row" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
         <div id="export-apk-status" class="menu-note"></div>
         <div class="menu-label">DEZAEMON 2 (SATURN)</div>
         <button class="menu-row" onclick="startNewGame();closeMenu()"><span class="mono-badge">NG</span>NEW GAME</button>
@@ -7581,10 +7591,38 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             window.open(`${GAME_PLAY_URL}?level=${encodeURIComponent(name)}&stage=${getCurrentStageId()}${godModeParam()}`, '_blank');
         }
 
-        // Export the saved Firebase "Game" to an installable APK. The heavy build
-        // (fetch level from RTDB → stage cmg's in-repo 2028-ai game → download BGM
-        // → cordova compile) runs server-side in this repo's own tools/build-level
-        // pipeline; this just kicks it off via the launcher's /api/build-apk route
+        // TARGET picker: which platform tools/build-level compiles the export
+        // for. Persisted like the other editor toggles. android needs cordova +
+        // the SDK, ios macOS + Xcode; linux/windows are Electron desktop builds
+        // (a Windows build from a Linux host additionally needs wine on PATH).
+        const EXPORT_PLATFORMS = {
+            android: { label: 'EXPORT TO APK',   badge: 'AP', artifact: 'APK' },
+            ios:     { label: 'EXPORT IOS APP',  badge: 'IP', artifact: 'iOS app' },
+            linux:   { label: 'EXPORT APPIMAGE', badge: 'LX', artifact: 'AppImage' },
+            windows: { label: 'EXPORT TO EXE',   badge: 'EX', artifact: 'EXE' },
+        };
+        let exportPlatform = 'android';
+        function applyExportPlatform(p) {
+            exportPlatform = EXPORT_PLATFORMS[p] ? p : 'android';
+            const cfg = EXPORT_PLATFORMS[exportPlatform];
+            document.querySelectorAll('#export-platform-segs .seg').forEach(el =>
+                el.classList.toggle('on', el.getAttribute('data-platform') === exportPlatform));
+            const label = document.getElementById('export-apk-label');
+            const badge = document.getElementById('export-apk-badge');
+            if (label) label.textContent = cfg.label;
+            if (badge) badge.textContent = cfg.badge;
+        }
+        function setExportPlatform(p) {
+            applyExportPlatform(p);
+            try { localStorage.setItem('cmg-export-platform', exportPlatform); } catch (e) {}
+        }
+        try { applyExportPlatform(localStorage.getItem('cmg-export-platform') || 'android'); } catch (e) { applyExportPlatform('android'); }
+
+        // Export the saved Firebase "Game" to an installable app for the picked
+        // TARGET platform. The heavy build (fetch level from RTDB → stage cmg's
+        // in-repo 2028-ai game → download BGM → cordova compile / electron-builder)
+        // runs server-side in this repo's own tools/build-level pipeline; this just
+        // kicks it off via the launcher's /api/build-apk route
         // and polls for the artifact. Works from the local `deno task dev` host
         // and the packaged desktop app (which stages the embedded tool onto disk
         // first); the route refuses only on the deployed (read-only) origin, and
@@ -7603,13 +7641,14 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             setStatus('Saving game before export…');
             try { await saveToFirebase(); } catch (e) { /* saveToFirebase alerts on its own */ }
             const btn = document.getElementById('export-apk-btn');
+            const cfg = EXPORT_PLATFORMS[exportPlatform];
             btn.disabled = true;
-            setStatus('Building APK for "' + name + '" — this can take several minutes…', '#f59e0b');
+            setStatus('Building ' + cfg.artifact + ' for "' + name + '" — this can take several minutes…', '#f59e0b');
             try {
                 const resp = await fetch('/api/build-apk', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ level: name, platform: 'android' }),
+                    body: JSON.stringify({ level: name, platform: exportPlatform }),
                 });
                 const data = await resp.json().catch(() => ({}));
                 if (!resp.ok || !data.ok) {
@@ -7618,13 +7657,17 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                 }
                 const artifact = (data.artifacts && data.artifacts[0]) || data.artifact;
                 if (data.downloadUrl) {
-                    setStatus('APK ready — downloading…', '#84cc16');
+                    setStatus(cfg.artifact + ' ready — downloading…', '#84cc16');
                     const a = document.createElement('a');
                     a.href = data.downloadUrl;
-                    a.download = (name.replace(/[^a-zA-Z0-9]/g, '') || 'game') + '.apk';
+                    // The artifact path carries the real extension; strip it for
+                    // the suggested filename and keep whatever the server built.
+                    const base = (name.replace(/[^a-zA-Z0-9]/g, '') || 'game');
+                    const m = /(\.[A-Za-z0-9]+)$/.exec(String(artifact || data.downloadUrl));
+                    a.download = base + (m ? m[1] : '');
                     document.body.appendChild(a); a.click(); a.remove();
                 } else {
-                    setStatus('APK built: ' + (artifact || 'see build/ output'), '#84cc16');
+                    setStatus(cfg.artifact + ' built: ' + (artifact || 'see build/ output'), '#84cc16');
                 }
             } catch (e) {
                 setStatus('Export error: ' + e.message, '#f87171');

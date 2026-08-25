@@ -39,8 +39,9 @@ unobtrusive backdrop that pairs with the brown/tan monkey:
 
 ## Steam (the launcher binary)
 
-The Linux AppImage build (`scripts/build-appimage.ts`) already embeds
-`launcher-256.png` as its `.DirIcon`/desktop icon, so when the AppImage is added
+The Linux AppImage build (`deno task build:linux`, `scripts/build-desktop.ts`) embeds
+`launcher-256.png` as its `.DirIcon`/desktop icon, and `cmg.ico` is the Windows
+`.exe` icon (`deno task build:windows`). When the AppImage is added
 to Steam as a non-Steam game it shows the monkey automatically. To set it by
 hand on any shortcut: **Properties → click the icon** and choose
 `launcher-512.png` (macOS/Linux) or `cmg.ico` (Windows).

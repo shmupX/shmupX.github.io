@@ -18,7 +18,16 @@ import { dirname, fromFileUrl, join } from "jsr:@std/path@^1.1.2";
 // local Node + the platform toolchain (cordova/Android SDK, electron-builder)
 // must be installed on the machine.
 
-const PLATFORMS = new Set(["android", "ios", "linux", "all"]);
+const PLATFORMS = new Set([
+  "android",
+  "ios",
+  "linux",
+  "windows",
+  // Whichever desktop app this host can build natively — resolved below rather
+  // than passed through, so findArtifacts knows which extension to look for.
+  "desktop",
+  "all",
+]);
 
 // Mirror the tool's slugify: keep the arg to a benign charset. Args are passed
 // to Deno.Command as an array (no shell), so this is belt-and-suspenders.
@@ -105,14 +114,17 @@ async function stageEmbeddedRuntime(vfsRoot: string): Promise<string> {
     join(vfsRoot, "static", "games", "2028-ai"),
     join(work, "static", "games", "2028-ai"),
   );
-  // Loose files the tool reads straight off CMG_ROOT. Both are existsSync-
+  // Loose files the tool reads straight off CMG_ROOT. Each is existsSync-
   // guarded on its side, so leaving one behind degrades the export silently
   // (no controller shim / a scene script's `import Phaser from "phaser"`
-  // failing to resolve offline) rather than failing the build.
+  // failing to resolve offline / no leaderboard) rather than failing the build.
   for (
     const rel of [
       ["static", "gamepad-compatibility-plugin.js"],
       ["static", "phaser-plugins", "phaser-global.js"],
+      // Leaderboard credentials — without these the exported app plays fine but
+      // scores nowhere.
+      ["static", "firebase-config.js"],
     ]
   ) {
     const src = join(vfsRoot, ...rel);
@@ -135,6 +147,8 @@ async function findArtifacts(
   if (!(await pathExists(distDir))) return [];
   const wantExt = platform === "linux"
     ? ".appimage"
+    : platform === "windows"
+    ? ".exe"
     : platform === "ios"
     ? ".ipa"
     : ".apk";
@@ -185,12 +199,17 @@ export const handler = define.handlers({
         { status: 400 },
       );
     }
-    const platform = String(body.platform || "android").toLowerCase();
+    let platform = String(body.platform || "android").toLowerCase();
     if (!PLATFORMS.has(platform)) {
       return Response.json(
         { ok: false, error: `Unknown platform '${platform}'.` },
         { status: 400 },
       );
+    }
+    // The tool resolves "desktop" the same way, but resolving it here keeps the
+    // artifact lookup (and the platform echoed back to the editor) honest.
+    if (platform === "desktop") {
+      platform = Deno.build.os === "windows" ? "windows" : "linux";
     }
 
     // In a source checkout this is a real dir; in the packaged desktop binary

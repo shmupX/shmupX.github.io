@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 "use strict";
 
-// Build a standalone Cordova (android/ios) or Electron (linux) app from a single
-// Firebase level, using cmg's OWN in-repo game (static/games/2028-ai) as the
-// source — no external 2019-es7 checkout, no CMG_ES7_REPO. Invoked by
-// routes/api/build-apk.ts (the level editor's "Export to APK" button).
+// Build a standalone Cordova (android/ios) or Electron (linux/windows) app from
+// a single Firebase level, using cmg's OWN in-repo game (static/games/2028-ai)
+// as the source — no external 2019-es7 checkout, no CMG_ES7_REPO. Invoked by
+// routes/api/build-apk.ts (the level editor's "Export to APK" button) and by
+// `deno task build:windows <levelName>` / `build:linux <levelName>`.
 //
 // Usage:
-//   node tools/build-level <levelName> <android|ios|linux|all> [flags]
+//   node tools/build-level <levelName> <android|ios|linux|windows|desktop|all> [flags]
+//
+// "desktop" resolves to windows on a Windows host and linux everywhere else.
 //
 // Flags:
 //   --stage-only      Stage www/ and stop (no native compile). Verifiable
@@ -15,6 +18,9 @@
 //   --out <dir>       Override build root (default: <cmg>/build/<slug>)
 //   --package-id <id> Override package id (default: com.easierbycode.<slug>)
 //   --skip-bgm        Skip custom BGM downloads
+//   --win-target <t>  Windows electron-builder target: portable (default,
+//                     one self-contained .exe), nsis, zip or dir.
+//   --win-arch <a>    Windows CPU architecture: x64 (default), arm64 or ia32.
 //   --level-file <p>  Read the level record from a local JSON file instead of
 //                     Firebase (offline staging / tests).
 //
@@ -40,7 +46,7 @@ const {
   rebrandManifestJson,
 } = require("./lib/rebrand");
 const { buildCordova } = require("./lib/run-cordova");
-const { buildElectronLinux } = require("./lib/run-electron");
+const { buildElectron } = require("./lib/run-electron");
 
 const CMG_ROOT = path.resolve(__dirname, "..", "..");
 const GAME_DIR = process.env.CMG_GAME_DIR ||
@@ -65,7 +71,13 @@ const SCAFFOLD_ROOT = path.join(__dirname, "scaffold");
 
 function parseArgs(argv) {
   const out = { _: [], flags: {} };
-  const takesValue = new Set(["out", "package-id", "level-file"]);
+  const takesValue = new Set([
+    "out",
+    "package-id",
+    "level-file",
+    "win-target",
+    "win-arch",
+  ]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith("--")) {
@@ -85,20 +97,39 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const levelName = args._[0];
-  const platformArg = (args._[1] || "android").toLowerCase();
+  let platformArg = (args._[1] || "android").toLowerCase();
   if (!levelName) {
     console.error(
-      "Usage: node tools/build-level <levelName> <android|ios|linux|all> " +
+      "Usage: node tools/build-level <levelName> " +
+        "<android|ios|linux|windows|desktop|all> " +
         "[--stage-only] [--out DIR] [--package-id ID] [--skip-bgm] " +
+        "[--win-target portable|nsis|zip|dir] [--win-arch x64|arm64|ia32] " +
         "[--level-file PATH]",
     );
     process.exit(2);
   }
+  // Whichever desktop app this machine can actually build natively.
+  if (platformArg === "desktop") {
+    platformArg = process.platform === "win32" ? "windows" : "linux";
+    console.log("Platform 'desktop' resolved to " + platformArg + ".");
+  }
+  const winTarget = args.flags["win-target"] || "portable";
+  if (!["portable", "nsis", "zip", "dir"].includes(winTarget)) {
+    console.error("Unknown --win-target: " + winTarget);
+    process.exit(2);
+  }
+  const winArch = args.flags["win-arch"] || "x64";
+  if (!["x64", "arm64", "ia32"].includes(winArch)) {
+    console.error("Unknown --win-arch: " + winArch);
+    process.exit(2);
+  }
+  // "all" stays the three platforms it always meant: adding windows here would
+  // turn a green run red on any host without wine.
   const platforms = platformArg === "all"
     ? ["linux", "android", "ios"]
     : [platformArg];
   for (const p of platforms) {
-    if (!["ios", "android", "linux"].includes(p)) {
+    if (!["ios", "android", "linux", "windows"].includes(p)) {
       console.error("Unknown platform: " + p);
       process.exit(2);
     }
@@ -196,18 +227,22 @@ async function main() {
   for (const p of platforms) {
     console.log("\n--- " + p.toUpperCase() + " ---");
     try {
-      if (p === "linux") {
+      if (p === "linux" || p === "windows") {
         const pkg = rebrandElectronPackageJson(
           path.join(SCAFFOLD_ROOT, "electron", "package.json"),
           levelName,
           packageId,
           slug,
+          { winTarget: winTarget },
         );
-        results.linux = await buildElectronLinux({
+        results[p] = await buildElectron({
           scaffoldRoot: SCAFFOLD_ROOT,
           wwwRoot,
           buildRoot,
           rebrandedPackageJson: pkg,
+          platform: p,
+          winTarget: winTarget,
+          winArch: winArch,
         });
       } else {
         results[p] = await buildCordova({

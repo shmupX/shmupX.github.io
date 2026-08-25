@@ -14,6 +14,8 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
 
 - `main.ts`, `routes/`, `vite.config.ts` — the Fresh shell (launcher marker
   injection + static files + fs routes).
+- `desktop.ts`, `scripts/build-desktop.ts` — the packaged desktop launcher
+  (`deno task build:windows` / `build:linux`, see below).
 - `svelte-src/` — the launcher dashboard (Svelte 5), esbuild-bundled at build
   time into `static/dashboard.bundle.js` by `deno task dashboard:build`.
 - `data/games.json` → `deno task games:manifest` → `static/games.manifest.json`
@@ -28,14 +30,67 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
 ## Tasks
 
 ```sh
-deno task dev      # vite dev server (+ ngrok tunnel when available)
-deno task build    # manifest + dashboard + engine bundle + vite build
-deno task start    # serve the production build (_fresh/server.js)
-deno task test     # shmup-engine tests
-deno task check    # fmt + lint + type-check
+deno task dev             # vite dev server (+ ngrok tunnel when available)
+deno task build           # manifest + dashboard + engine bundle + vite build
+deno task start           # serve the production build (_fresh/server.js)
+deno task test            # shmup-engine tests
+deno task check           # fmt + lint + type-check
+
+deno task build:windows   # the launcher as a Windows .exe
+deno task build:linux     # the launcher as a Linux .AppImage
+deno task build:desktop   # …whichever of those two matches this host
 ```
 
 Requires Deno canary (`deno upgrade canary`).
+
+## Desktop app
+
+`deno task build:windows` / `build:linux` package the launcher itself into
+`build/desktop/` (git-ignored). `deno compile` embeds the Vite build, so one
+file is the whole thing: it serves the app on `127.0.0.1:8787` (or the next free
+port) and opens your browser at it. `--port N`, `--no-open` and `SHMUPX_PORT` /
+`SHMUPX_HOST` / `SHMUPX_NO_OPEN` work on the artifact itself.
+
+- `desktop.ts` — what gets compiled: the local server + browser launch.
+- `scripts/build-desktop.ts` — the packaging (Vite build → `deno compile` →
+  AppDir → `appimagetool`).
+
+|                 | artifact                                                       | default arch                                            |
+| --------------- | -------------------------------------------------------------- | ------------------------------------------------------- |
+| `build:windows` | `shmupX-windows-<arch>.exe` (icon: `static/app-icons/cmg.ico`) | `x86_64` — Windows on ARM emulates x64, not the reverse |
+| `build:linux`   | `shmupX-linux-<arch>.AppImage` (icon: `launcher-256.png`)      | this host's, so the AppImage runs where it was built    |
+
+Flags: `--arch x86_64|aarch64`, `--out <dir>`, `--skip-build` (reuse the
+existing `_fresh/`), `--no-terminal` (Windows: no console window),
+`--no-appimage` (stop at the raw Linux binary), `--no-export-tools`.
+
+The AppImage step needs a **Linux host**: `appimagetool` plus the type-2 runtime
+for the target arch are downloaded into `build/desktop/.cache/` on first use
+(`$APPIMAGETOOL` or one on `PATH` wins). Cross-compiling the binary itself works
+from anywhere Deno runs.
+
+The packaged app embeds `tools/build-level` + `static/games/2028-ai`, so the
+editor's **Export to APK** button works inside it — `routes/api/build-apk.ts`
+stages them out of the read-only `deno compile` VFS onto disk before spawning
+`node`. It costs ~0.3MB, since Deno dedupes the game against the identical copy
+Vite already put in `_fresh/client`.
+
+### One level as a desktop app
+
+Passing a level name builds _that game_ instead of the launcher, through the
+same per-level Electron export the editor drives:
+
+```sh
+deno task build:windows "My Level"   # → build/<slug>/dist/<slug>.exe
+deno task build:linux "My Level"     # → build/<slug>/dist/<slug>.AppImage
+deno task build:desktop "My Level"   # → whichever this host builds natively
+```
+
+Extra flags go straight to `tools/build-level` (`--skip-bgm`, `--level-file`,
+`--package-id`, `--win-target`, `--stage-only`); `--arch` becomes its
+`--win-arch`. This path needs Node and electron-builder, and a **Windows build
+from Linux needs `wine` on `PATH`** — electron-builder rcedits the packaged
+`.exe` through it whatever the target is.
 
 ## Deploy
 
