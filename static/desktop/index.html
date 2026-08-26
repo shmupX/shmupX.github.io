@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CMG Desktop — codemonkey.games</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@500;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" sizes="32x32" href="/app-icons/icon-32.png">
+  <meta name="theme-color" content="#0d59c7">
+  <link rel="stylesheet" href="/desktop/desktop.css">
+</head>
+<body>
+  <header id="taskbar">
+    <div class="tb-badge"><img src="/logo.svg" alt="codemonkey.games"></div>
+    <button id="tb-start" title="Start — apps">SHMUPX</button>
+    <button id="tb-search" class="tb-iconbtn" title="Search apps">
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    </button>
+    <div id="tb-online"><span>ONLINE</span></div>
+    <button id="tb-restore" hidden></button>
+    <nav id="tb-tray" aria-label="Open windows"></nav>
+    <button id="tb-layouts" class="tb-iconbtn" title="Window layouts — snap, tile, stack">
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+    </button>
+    <span id="tb-clock">00:00</span>
+    <button id="tb-console" title="Back to the console dashboard">&#8592; CONSOLE</button>
+  </header>
+
+  <main id="desktop">
+    <div id="desktop-icons"></div>
+  </main>
+
+  <div id="toast" role="status"></div>
+
+  <script type="module" src="/desktop/desktop.js"></script>
+</body>
+</html>

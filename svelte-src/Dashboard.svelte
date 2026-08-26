@@ -6,6 +6,7 @@
     { id: 'memory',   label: 'Memory',   tag: '01 / sys.core', num: '0x01' },
     { id: 'games',    label: 'Games',    tag: '02 / disc.io',  num: '0x02' },
     { id: 'settings', label: 'Settings', tag: '03 / config',   num: '0x03' },
+    { id: 'desktop',  label: 'Desktop',  tag: '04 / wkstn.ui', num: '0x04' },
   ];
 
   // Baked-in fallback snapshot of the game list — the offline / pre-manifest
@@ -1317,6 +1318,10 @@
     } else if (m.id === 'settings') {
       screen = 'settings';
       settingsSel = 0;
+    } else if (m.id === 'desktop') {
+      // Switch to Desktop mode — the windowed workstation at /desktop/.
+      // Root-relative on purpose, same convention as the level editor.
+      location.href = '/desktop/';
     } else {
       const el = menuEls[idx];
       if (el?.animate) {
