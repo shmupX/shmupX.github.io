@@ -1,0 +1,130 @@
+{
+  "origin": "https://cmg.easierbycode.deno.net",
+  "shared": [
+    "/emulator-controls.js",
+    "/shaders/"
+  ],
+  "cores": [
+    {
+      "id": "nes",
+      "name": "Nintendo",
+      "mark": "NES",
+      "title": "NINTENDO",
+      "metaType": "NES / .NES",
+      "date": "NES",
+      "coreA": "core // fceumm",
+      "coreB": "emulatorjs",
+      "size": "~6 MB",
+      "player": "/nes/play.html",
+      "manifest": "/Nintendo/manifest.json",
+      "prefixes": ["/nes/", "/Nintendo/"]
+    },
+    {
+      "id": "tg16",
+      "name": "TurboGrafx-16",
+      "mark": "PCE",
+      "title": "TURBOGRAFX-16",
+      "metaType": "TG16 / .PCE",
+      "date": "PCE",
+      "coreA": "core // mednafen",
+      "coreB": "emulatorjs",
+      "size": "~7 MB",
+      "player": "/turbografx16/play.html",
+      "manifest": "/TurboGrafx-16/manifest.json",
+      "prefixes": ["/turbografx16/", "/TurboGrafx-16/"]
+    },
+    {
+      "id": "psx",
+      "name": "PlayStation",
+      "mark": "PSX",
+      "title": "PLAYSTATION",
+      "metaType": "PSX / .BIN",
+      "date": "PSX",
+      "coreA": "core // mednafen psx",
+      "coreB": "emulatorjs",
+      "size": "~12 MB",
+      "player": "/psx/play.html",
+      "manifest": "/PlayStation/manifest.json",
+      "prefixes": ["/psx/", "/PlayStation/"]
+    },
+    {
+      "id": "saturn",
+      "name": "Sega Saturn",
+      "mark": "SS",
+      "title": "SEGA SATURN",
+      "metaType": "SATURN / .CUE",
+      "date": "SS",
+      "coreA": "core // yabause",
+      "coreB": "emulatorjs",
+      "size": "~10 MB",
+      "player": "/saturn/play.html",
+      "manifest": "/SegaSaturn/manifest.json",
+      "prefixes": ["/saturn/", "/SegaSaturn/"]
+    },
+    {
+      "id": "arcade",
+      "name": "Arcade",
+      "mark": "MAME",
+      "title": "ARCADE",
+      "metaType": "ARCADE / MAME",
+      "date": "MAME",
+      "coreA": "core // mame2003+",
+      "coreB": "emularity",
+      "size": "~40 MB",
+      "player": "/arcade/play.html",
+      "manifest": "/arcade/manifest.json",
+      "prefixes": ["/arcade/"]
+    },
+    {
+      "id": "naomi",
+      "name": "NAOMI",
+      "mark": "DC",
+      "title": "NAOMI",
+      "metaType": "NAOMI / FLYCAST",
+      "date": "DC",
+      "coreA": "core // flycast",
+      "coreB": "wasm",
+      "icon": "/icons/naomi-reindeer.png",
+      "size": "~14 MB",
+      "player": "/naomi/play.html",
+      "manifest": "/Naomi/manifest.json",
+      "prefixes": ["/naomi/", "/Naomi/"]
+    },
+    {
+      "id": "ps2",
+      "name": "PlayStation 2",
+      "mark": "PS2",
+      "title": "PLAYSTATION 2",
+      "metaType": "PS2 / .ISO",
+      "date": "PS2",
+      "coreA": "core // play!",
+      "coreB": "wasm",
+      "size": "~30 MB",
+      "player": "/ps2/play.html",
+      "manifest": "/PlayStation2/manifest.json",
+      "prefixes": [
+        "/ps2/",
+        "/PlayStation2/",
+        "/games/ps2-mario/",
+        "/games/racer-intro/",
+        "/games/shmup-party-ps2/"
+      ],
+      "isolated": true
+    },
+    {
+      "id": "switch",
+      "name": "Nintendo Switch",
+      "mark": "NSW",
+      "title": "NINTENDO SWITCH",
+      "metaType": "SWITCH / BYOC",
+      "date": "NSW",
+      "coreA": "core // voland",
+      "coreB": "wasm",
+      "size": "~25 MB",
+      "player": "/switch/play.html",
+      "manifest": "/NintendoSwitch/manifest.json",
+      "prefixes": ["/switch/", "/NintendoSwitch/"],
+      "isolated": true
+    }
+  ]
+}

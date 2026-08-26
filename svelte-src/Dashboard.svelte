@@ -25,7 +25,7 @@
   // root-relative so mapped gamepad→keyboard input injection works).
   let manifestOrigin = $state('');
 
-  let screen = $state('dashboard'); // 'dashboard' | 'games' | 'settings'
+  let screen = $state('dashboard'); // 'dashboard' | 'games' | 'settings' | 'emulators'
   let menuSel = $state(1);           // start on Games
   let gameSel = $state(0);
   let clockStr = $state('--:--:--');
@@ -42,6 +42,11 @@
   // SECTIONS (below); `stripFocus` says which of the two the cursor is in —
   // Down off the strip enters the list, Up from row 0 returns to it, so the
   // two halves behave like one continuous column.
+  //
+  // The strip only earns its row when there is more than one section to switch
+  // between: shmupX ships the catalog alone, and a one-tile rail is pure chrome.
+  // `stripShown` gates the markup and `stripOn` is the focus flag every consumer
+  // reads — a hidden strip can never hold the cursor, whatever stripFocus says.
   let secSel = $state(0);
   let stripFocus = $state(true);
   let stripEl = $state(null);
@@ -51,6 +56,279 @@
   // stays generic — a section with a `picker` gets it back for free.
   let byodInputEl = $state(null);
   let byodBtnEl = $state(null);
+
+  // ─── Emulators (opt-in downloads) ──────────────────────────────────────────
+  // shmupX ships no emulator cores. static/emulators.json is the catalogue;
+  // installing one records its id here and hands its path prefixes to
+  // static/emu-sw.js, which from then on answers those paths from Cache Storage,
+  // pulling anything it does not already hold from the cmg origin. Every byte
+  // therefore arrives SAME-ORIGIN, which is what lets the launcher's mapped
+  // gamepad→keyboard input reach the player frame at all.
+  //
+  // Nothing is downloaded up front beyond the player page, the ROM manifest and
+  // the catalogue's shared scripts (see installCore); the core wasm, BIOS and
+  // ROMs materialise as the player asks for them.
+  const EMU_KEY = 'shmupx-emulators';
+  const EMU_SW = '/emu-sw.js';
+  const EMU_CATALOG = '/emulators.json';
+  // emu-sw.js's own cache name and state key. The worker sends no reply, but it
+  // persists the state it applied here, which is the only ack available — see
+  // pushEmuState. Keep in sync with CACHE / STATE_URL in static/emu-sw.js.
+  const EMU_CACHE = 'shmupx-emu-v1';
+  const EMU_STATE_URL = '/__emu-state.json';
+  function loadInstalledEmus() {
+    try {
+      const v = JSON.parse(localStorage.getItem(EMU_KEY) || '[]');
+      return Array.isArray(v) ? v.filter((s) => typeof s === 'string') : [];
+    } catch (_) { return []; }
+  }
+  let emuCatalog = $state(null);              // parsed /emulators.json, null until fetched
+  let emuInstalled = $state(loadInstalledEmus());
+  // Fetched ROM manifests, keyed by core id. undefined = not read yet, null =
+  // the read failed, [] = a real empty shelf (several consoles deploy none).
+  let emuManifests = $state({});
+  // In-flight manifest reads, so a re-entrant call can't double-fetch. Plain
+  // Set, not $state: nothing renders off it.
+  const emuManifestPending = new Set();
+  // Per-core install progress: { busy, step, total, err }.
+  let emuStatus = $state({});
+  // Row cursor per installed section, keyed by core id — the sections are
+  // dynamic, so they share one map instead of a rune each.
+  let emuSecSel = $state({});
+  let emuSel = $state(0);                     // cursor on the Emulators screen
+  let emuRowEls = $state([]);
+
+  let emuCores = $derived(emuCatalog?.cores || []);
+  let emuShared = $derived(emuCatalog?.shared || []);
+  let installedCores = $derived(emuCores.filter((c) => emuInstalled.includes(c.id)));
+
+  // The worker only answers paths it has been handed. `prefixes` is the union of
+  // every installed core's prefixes PLUS the catalogue's shared scripts, which
+  // sit at the root rather than under any core (/emulator-controls.js) and would
+  // otherwise fall through to this origin, which does not have them. With
+  // nothing installed the message is empty and the worker stays out of the way.
+  function emuState() {
+    const cores = installedCores;
+    const prefixes = [];
+    for (const c of cores) {
+      prefixes.push(...(c.prefixes || []));
+      // A core's tile icon lives under /icons/ on the cmg origin, outside its
+      // own prefixes, so it needs naming too or the strip tile would 404 and
+      // show a broken image where the type-mark used to be. The worker matches
+      // an exact path as happily as a directory.
+      if (c.icon) prefixes.push(c.icon);
+    }
+    if (cores.length) prefixes.push(...emuShared);
+    const isolated = [];
+    for (const c of cores) if (c.isolated) isolated.push(...(c.prefixes || []));
+    return { origin: emuCatalog?.origin || '', prefixes, isolated };
+  }
+
+  // Registering is idempotent — register() on an already-installed worker
+  // resolves with the existing one. Resolves once the worker is not merely
+  // active but CONTROLLING this page: an uncontrolled page's fetches never
+  // reach it, so warming would 404 against this origin instead of mirroring.
+  let emuSwReady = null;
+  function readyEmuWorker() {
+    if (emuSwReady) return emuSwReady;
+    if (!('serviceWorker' in navigator)) return Promise.resolve(null);
+    emuSwReady = (async () => {
+      await navigator.serviceWorker.register(EMU_SW);
+      const reg = await navigator.serviceWorker.ready;
+      if (!navigator.serviceWorker.controller) {
+        await new Promise((resolve) => {
+          const done = () => { clearTimeout(timer); resolve(); };
+          // A claim that never lands must not hang an install forever.
+          const timer = setTimeout(done, 8000);
+          navigator.serviceWorker.addEventListener('controllerchange', done, { once: true });
+          // The worker may have claimed the page between the check above and
+          // the listener attaching; controllerchange would never fire again.
+          if (navigator.serviceWorker.controller) done();
+        });
+      }
+      return reg;
+    })().catch(() => null);
+    return emuSwReady;
+  }
+
+  async function emuWorker() {
+    const reg = await readyEmuWorker();
+    return reg?.active || navigator.serviceWorker?.controller || null;
+  }
+
+  // The worker handles the message asynchronously, and a fetch that beats it
+  // lands on this origin — a 404 — instead of the mirror. There is no reply
+  // channel, but the worker persists the state it applied, so wait for that copy
+  // to match before treating the mirrored paths as live.
+  async function confirmEmuState(state) {
+    const want = state.prefixes.join('|');
+    for (let i = 0; i < 60; i++) {
+      try {
+        const res = await (await caches.open(EMU_CACHE)).match(EMU_STATE_URL);
+        if (res) {
+          const got = await res.json();
+          if (got.origin === state.origin && (got.prefixes || []).join('|') === want) return true;
+        }
+      } catch (_) { return false; } // no Cache Storage — nothing to wait for
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    return false;
+  }
+
+  async function pushEmuState() {
+    // Snapshot before awaiting so the message can't describe a set that moved
+    // on while the worker was coming up. emuState() builds plain arrays of plain
+    // strings on purpose — a $state-backed array is not structured-cloneable.
+    const state = emuState();
+    const w = await emuWorker();
+    if (!w) return;
+    w.postMessage({ type: 'emu-state', state });
+    await confirmEmuState(state);
+  }
+
+  function persistEmus() {
+    try { localStorage.setItem(EMU_KEY, JSON.stringify(emuInstalled)); } catch (_) {}
+  }
+
+  // Read once per install and cached. An empty array is a real answer, so it is
+  // stored as-is and the section renders its shelf note rather than an error.
+  async function loadEmuManifest(core, force = false) {
+    if (!core) return;
+    if (emuManifestPending.has(core.id)) return;
+    if (!force && emuManifests[core.id] !== undefined) return;
+    emuManifestPending.add(core.id);
+    try {
+      await readyEmuWorker();
+      const r = await fetch(core.manifest, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      emuManifests = { ...emuManifests, [core.id]: Array.isArray(data) ? data : [] };
+    } catch (_) {
+      emuManifests = { ...emuManifests, [core.id]: null };
+    } finally {
+      emuManifestPending.delete(core.id);
+    }
+  }
+
+  // Install: record the core, hand the worker its prefixes, then warm the few
+  // files the section needs to be usable immediately — the player page, the ROM
+  // manifest, and the catalogue's shared scripts. These are same-origin fetches
+  // the worker mirrors and keeps, which is why the section works offline after.
+  //
+  // A failed warm leaves the core INSTALLED and flags the row instead of rolling
+  // back: the worker is already primed, so nothing is broken by keeping it, and
+  // A on the flagged row retries the same warm.
+  async function installCore(id) {
+    const core = emuCores.find((c) => c.id === id);
+    if (!core || emuStatus[id]?.busy) return;
+    if (!emuInstalled.includes(id)) {
+      emuInstalled = [...emuInstalled, id];
+      persistEmus();
+    }
+    const targets = [core.player, core.manifest, ...emuShared].filter(Boolean);
+    const set = (v) => (emuStatus = { ...emuStatus, [id]: v });
+    set({ busy: true, step: 0, total: targets.length, err: '' });
+    await pushEmuState();
+    let done = 0;
+    for (const path of targets) {
+      try {
+        const r = await fetch(path, { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        // Drain the body: the worker's cache.put() only completes once the
+        // response has been read, so progress must not run ahead of it.
+        await r.arrayBuffer();
+      } catch (e) {
+        set({ busy: false, step: done, total: targets.length, err: 'WARM FAILED · ' + path });
+        showToast(core.name + ': could not fetch ' + path + ' — press A to retry.');
+        return;
+      }
+      set({ busy: true, step: ++done, total: targets.length, err: '' });
+    }
+    set({ busy: false, step: done, total: targets.length, err: '' });
+    await loadEmuManifest(core, true);
+  }
+
+  // Uninstall: drop the id, persist, re-state the worker (so it stops answering
+  // those paths) and only then evict — the two messages arrive in order, so the
+  // worker is never asked to serve a prefix it has just dropped the bytes for.
+  async function uninstallCore(id) {
+    const core = emuCores.find((c) => c.id === id);
+    if (!core) return;
+    emuInstalled = emuInstalled.filter((x) => x !== id);
+    persistEmus();
+    const m = { ...emuManifests }; delete m[core.id]; emuManifests = m;
+    const s = { ...emuStatus }; delete s[core.id]; emuStatus = s;
+    // Spread out of the reactive proxy: a $state-backed array is not structured-
+    // cloneable and postMessage throws DataCloneError on it, silently leaving
+    // every mirrored byte in the cache.
+    const gone = [...(core.prefixes || [])];
+    if (core.icon) gone.push(core.icon);
+    // The shared scripts belong to whichever cores are installed; with the last
+    // one gone they are dead weight, so they leave with it.
+    if (!installedCores.length) gone.push(...emuShared);
+    await pushEmuState();
+    const w = await emuWorker();
+    if (w) w.postMessage({ type: 'emu-evict', prefixes: gone });
+  }
+
+  // Boot: read the saved set, read the catalogue, register the worker and hand
+  // it the current state, then fill in the installed cores' shelves. Strictly
+  // sequential — a manifest read before the worker holds the prefixes would
+  // 404 against this origin.
+  async function initEmulators() {
+    try {
+      const r = await fetch(EMU_CATALOG, { cache: 'no-store' });
+      if (r.ok) emuCatalog = await r.json();
+    } catch (_) { /* no catalogue — the Emulators screen says so */ }
+    await pushEmuState();
+    if (!emuCatalog) return;
+    for (const c of installedCores) loadEmuManifest(c);
+  }
+
+  // Row badge on the Emulators screen — the same GET / ⬇ / INSTALLED vocabulary
+  // the network installs use elsewhere in the launcher.
+  function emuBadge(c) {
+    const st = emuStatus[c.id];
+    if (st?.busy) return { cls: 'dl', text: '⬇ ' + st.step + ' / ' + st.total };
+    if (st?.err) return { cls: 'err', text: '! RETRY' };
+    return emuInstalled.includes(c.id)
+      ? { cls: 'ok', text: 'INSTALLED' }
+      : { cls: 'get', text: 'GET ⬇' };
+  }
+
+  function activateEmulator(i) {
+    const c = emuCores[i];
+    if (!c) return;
+    emuSel = i;
+    if (emuStatus[c.id]?.busy) return;
+    sfx.enter();
+    // A on a flagged row retries the warm rather than uninstalling — the fix
+    // for a half-installed core is the one press already under the cursor.
+    if (emuInstalled.includes(c.id) && !emuStatus[c.id]?.err) uninstallCore(c.id);
+    else installCore(c.id);
+  }
+
+  let emuCurrent = $derived(emuCores[emuSel]);
+  let emuCounterText = $derived(
+    String(Math.min(emuSel + 1, emuCores.length)).padStart(2, '0') + ' / ' +
+    String(emuCores.length).padStart(2, '0')
+  );
+  let emuStateLabel = $derived.by(() => {
+    const c = emuCurrent;
+    if (!c) return '—';
+    const st = emuStatus[c.id];
+    if (st?.busy) return 'INSTALLING ' + st.step + ' / ' + st.total;
+    if (st?.err) return st.err;
+    return emuInstalled.includes(c.id) ? 'INSTALLED' : 'NOT INSTALLED';
+  });
+  let emuActionLabel = $derived.by(() => {
+    const c = emuCurrent;
+    if (!c) return 'Select';
+    const st = emuStatus[c.id];
+    if (st?.busy) return 'Working…';
+    if (st?.err) return 'Retry';
+    return emuInstalled.includes(c.id) ? 'Uninstall' : 'Install';
+  });
 
   // ─── Settings → Theme ──────────────────────────────────────────────────────
   // Dashboard skins. 'xbox' is the shipped green look; 'xbox360' is the
@@ -68,6 +346,13 @@
       id: 'theme',
       label: 'THEME',
       sub: THEMES.map((t) => (t.id === tweaks.theme ? `[ ${t.label} ]` : t.label)).join('  ·  '),
+    },
+    {
+      id: 'emulators',
+      label: 'EMULATORS',
+      sub: installedCores.length
+        ? installedCores.map((c) => c.mark).join('  ·  ')
+        : 'none installed  ·  add a console',
     },
   ]);
   let settingsSel = $state(0);
@@ -818,7 +1103,7 @@
   // the rows, a flat 24px for the tiles. Assigning scrollTop/scrollLeft still
   // animates; both containers carry scroll-behavior: smooth.
   $effect(() => {
-    if (screen !== 'games' || stripFocus) return;
+    if (screen !== 'games' || stripOn) return;
     const el = gameRowEls[curSel];
     const list = gameListEl;
     if (!el || !list) return;
@@ -875,17 +1160,50 @@
     if (curSection.sel() > max) curSection.setSel(max);
   });
 
+  // A whole section can vanish under the cursor (a core is uninstalled), taking
+  // the strip with it when the catalog is the last one standing. Clamp the tile
+  // index and never leave the focus flag parked on a rail that isn't rendered —
+  // stripOn already masks it for consumers, this keeps the state itself honest.
+  $effect(() => {
+    if (secSel > SECTIONS.length - 1) secSel = Math.max(SECTIONS.length - 1, 0);
+    if (!stripShown && stripFocus) stripFocus = false;
+  });
+
+  // Emulators screen: keep the cursor on screen, same as Settings.
+  $effect(() => {
+    if (screen !== 'emulators') return;
+    const el = emuRowEls[emuSel];
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+
   // ─── Strip sections ────────────────────────────────────────────────────────
   // One descriptor per strip tile. shmupX ships a single section — the games
-  // catalog — but the section plumbing (cursor, rows, disc readout) is kept so
-  // the screen chrome works unchanged.
+  // catalog — and every INSTALLED emulator core appends one built straight from
+  // its catalogue entry, which is what makes the strip appear at all.
   //
   //   name/mark/icon      — the strip tile (mark is the type-mark in the glass
   //                         disc; a section with an icon shows that instead)
   //   title/metaType/date — section header + the disc panel's readout
   //   coreA/coreB         — the credits line in the strip's header
-  //   rows                — normalized row descriptors
+  //   rows                — normalized row descriptors (see romRows)
   //   sel/setSel/activate — cursor + what FBTN_BOTTOM does on a row
+  //   byod                — shelf note when rows is empty
+  function romRows(list, core) {
+    return (list || []).map((g) => ({
+      key: g.file || g.url, name: g.name, title: String(g.name).toUpperCase(), sub: g.size,
+      icon: null, size: g.size, date: g.date, type: core.metaType,
+      file: g.file, url: g.url, kind: g.kind, bios: g.bios,
+    }));
+  }
+  // Empty-shelf copy for an installed core. The three states are distinct on
+  // purpose: a manifest that has not arrived is not the same as one that failed,
+  // and neither is the same as a console that genuinely deploys no titles.
+  function emuNote(core) {
+    const m = emuManifests[core.id];
+    if (m === undefined) return { title: 'READING SHELF…', pre: 'Fetching ', path: core.manifest, post: ' from the mirror.', hint: [] };
+    if (m === null) return { title: 'SHELF UNAVAILABLE', pre: 'Could not read ', path: core.manifest, post: '. Reinstall the core from Settings → Emulators.', hint: [] };
+    return { title: 'NO GAMES', pre: 'The mirror lists nothing in ', path: core.manifest, post: ' yet.', hint: [] };
+  }
   let SECTIONS = $derived([
     {
       id: 'games', name: 'Games', mark: 'SX', icon: '/x-logo.png',
@@ -900,6 +1218,16 @@
         g,
       })),
     },
+    ...installedCores.map((c) => ({
+      id: 'emu-' + c.id, name: c.name, mark: c.mark, icon: c.icon || null,
+      title: c.title, metaType: c.metaType, date: c.date,
+      coreA: c.coreA, coreB: c.coreB,
+      sel: () => emuSecSel[c.id] || 0,
+      setSel: (v) => (emuSecSel = { ...emuSecSel, [c.id]: v }),
+      activate: (i) => launchEmuRow(c, romRows(emuManifests[c.id], c)[i]),
+      rows: romRows(emuManifests[c.id], c),
+      byod: emuNote(c),
+    })),
   ]);
 
   let curSection = $derived(SECTIONS[secSel] || SECTIONS[0]);
@@ -907,13 +1235,19 @@
   let curSel = $derived(Math.min(curSection.sel(), Math.max(curRows.length - 1, 0)));
   let curRow = $derived(curRows[curSel]);
   let sectionEmpty = $derived(curRows.length === 0);
+  // With one section the strip has nothing to switch between, so it is not
+  // rendered and the panel falls back to the single-row grid every other screen
+  // uses. Installing a core brings both back. Every read of "is the cursor in
+  // the strip" goes through stripOn, so a hidden strip can never hold it.
+  let stripShown = $derived(SECTIONS.length > 1);
+  let stripOn = $derived(stripShown && stripFocus);
   let stripCounter = $derived(
     String(secSel + 1).padStart(2, '0') + ' / ' + String(SECTIONS.length).padStart(2, '0')
   );
   // Second half of the strip's header line. With the cursor up here it advertises
   // the gesture; once the rail collapses it names the shelf you are looking at
   // (the collapsed tiles have dropped their labels) and how to get back to it.
-  let stripHint = $derived(stripFocus ? 'swipe ↔' : curSection.name + ' · ↑ expand');
+  let stripHint = $derived(stripOn ? 'swipe ↔' : curSection.name + ' · ↑ expand');
 
   let currentGame = $derived(GAMES[gameSel]);
   let clockShort = $derived(clockStr.slice(0, 5));
@@ -928,14 +1262,14 @@
   );
   // The disc panel reads the section while the cursor is on the strip, and the
   // selected row once it drops into the list.
-  let metaName = $derived(stripFocus ? curSection.name : (curRow ? curRow.name : '—'));
-  let metaSize = $derived(stripFocus ? '— MB' : (curRow ? curRow.size : '—'));
-  let metaType = $derived(stripFocus ? curSection.metaType : (curRow?.type || curSection.metaType));
-  let metaDate = $derived(stripFocus ? curSection.date : (curRow ? curRow.date : '—'));
+  let metaName = $derived(stripOn ? curSection.name : (curRow ? curRow.name : '—'));
+  let metaSize = $derived(stripOn ? '— MB' : (curRow ? curRow.size : '—'));
+  let metaType = $derived(stripOn ? curSection.metaType : (curRow?.type || curSection.metaType));
+  let metaDate = $derived(stripOn ? curSection.date : (curRow ? curRow.date : '—'));
   // What A does from here: open the section (or its file picker, when the
   // section is empty and A goes straight to the dialog), or launch a row.
   let gamesActionLabel = $derived(
-    stripFocus
+    stripOn
       ? (sectionEmpty ? (curSection.picker ? 'Browse' : 'Open') : 'Open')
       : (curRow?.pinned ? 'Browse' : 'Launch')
   );
@@ -1002,7 +1336,9 @@
 
   function goBack() {
     sfx.back();
-    screen = 'dashboard';
+    // A screen reached from another screen names its parent in SCREEN_DEFS
+    // (Emulators → Settings); everything else returns to the dashboard.
+    screen = SCREEN_DEFS[screen]?.back || 'dashboard';
   }
 
   // ─── Strip navigation ──────────────────────────────────────────────────────
@@ -1022,7 +1358,7 @@
       if (gameListEl) gameListEl.scrollTop = 0;
       sfx.nav();
     }
-    stripFocus = true;
+    stripFocus = stripShown;
   }
   function enterList() {
     if (sectionEmpty) return false;
@@ -1034,13 +1370,20 @@
   // keyboard and gamepad share it. `fresh` (a deliberate new press) wraps at the
   // list's bottom; a held repeat clamps — same contract as navMove.
   function gamesMove(dir, fresh = false) {
-    if (stripFocus) {
+    if (stripOn) {
       if (dir > 0) enterList();
       return;
     }
     const max = Math.max(curRows.length - 1, 0);
     const next = curSection.sel() + dir;
-    if (next < 0) { stripFocus = true; return; }
+    // Up off row 0 returns to the strip — unless there isn't one, in which case
+    // the list is the whole screen and Up follows navMove's contract instead
+    // (a fresh press wraps to the bottom, a held repeat clamps).
+    if (next < 0) {
+      if (stripShown) { stripFocus = true; return; }
+      curSection.setSel(fresh && max > 0 ? max : 0);
+      return;
+    }
     curSection.setSel(next > max ? (fresh && max > 0 ? 0 : max) : next);
   }
   // Horizontal move — the strip, from either half of the screen. Coming from the
@@ -1106,7 +1449,7 @@
   }
   function onTileClick(i) {
     if (stripDragged) { stripDragged = false; return; }
-    if (i === secSel && !stripFocus) { stripFocus = true; sfx.nav(); return; }
+    if (i === secSel && !stripOn) { stripFocus = true; sfx.nav(); return; }
     pickSection(i);
     sfx.enter();
   }
@@ -1174,6 +1517,9 @@
     if (it.id === 'theme') {
       const cur = THEMES.findIndex((t) => t.id === tweaks.theme);
       setTweak('theme', THEMES[(cur + 1) % THEMES.length].id);
+    } else if (it.id === 'emulators') {
+      screen = 'emulators';
+      emuSel = 0;
     }
   }
 
@@ -1193,6 +1539,37 @@
     // ('' → root-relative url), which is what lets gamepad-support.js
     // synthesize mapped keyboard events into the frame.
     gameSrc = manifestOrigin ? new URL(item.url, manifestOrigin).href : item.url;
+    setTimeout(() => { gameOn = true; }, 30);
+  }
+
+  // One launcher for every installed core. All eight players take ?rom=<file>
+  // off their own page (core.player), so the only per-core knowledge left is the
+  // BIOS list arcade rows carry — everything else is the catalogue entry.
+  //
+  // Root-relative and therefore same-origin: the worker mirrors the player from
+  // the cmg origin, which is exactly what lets gamepad-support.js synthesize
+  // mapped keyboard events into the frame. (The PS2 and Switch players also want
+  // cross-origin isolation for SharedArrayBuffer; the worker stamps COOP/COEP on
+  // their responses, but an iframe only isolates when the embedder does too, so
+  // those two are best-effort here.)
+  function launchEmuRow(core, row) {
+    if (!core || !row) return;
+    sfx.enter();
+    chromeDismissed = false;
+    // A ps2 "web" row is a browser build living beside the ISOs, not a disc —
+    // launch its own url rather than handing the filename to the emulator.
+    if (row.kind === 'web' && row.url) {
+      gameSrc = row.url;
+    } else {
+      if (!row.file) return;
+      let q = 'rom=' + encodeURIComponent(row.file);
+      if (Array.isArray(row.bios) && row.bios.length) {
+        const params = new URLSearchParams({ rom: row.file });
+        params.set('bios', row.bios.join(','));
+        q = params.toString();
+      }
+      gameSrc = core.player + '?' + q;
+    }
     setTimeout(() => { gameOn = true; }, 30);
   }
 
@@ -1480,17 +1857,21 @@
       move: (dir, fresh) => gamesMove(dir, fresh),
       moveH: (dir) => gamesMoveH(dir),
       // L2/R2 jump between the two halves: to the strip, or to the last row.
-      top: () => { stripFocus = true; },
+      // With no strip rendered, "top" is just the top of the list.
+      top: () => { if (stripShown) stripFocus = true; else curSection.setSel(0); },
       bottom: () => { if (enterList()) curSection.setSel(Math.max(curRows.length - 1, 0)); },
       // On the strip, A drops into the list — or opens the picker outright when
       // the section is empty, so an empty console is one press from a file
       // dialog instead of a dead end.
       activate: (i) => {
-        if (stripFocus) { if (!enterList()) openSectionPicker(); return; }
+        if (stripOn) { if (!enterList()) openSectionPicker(); return; }
+        if (sectionEmpty) { openSectionPicker(); return; }
         curSection.activate(i);
       },
     },
     settings: { sel: () => settingsSel, setSel: (v) => (settingsSel = v), len: () => SETTINGS_ITEMS.length, activate: (i) => activateSettings(i) },
+    // Reached from Settings, so B goes back there rather than to the dashboard.
+    emulators: { sel: () => emuSel, setSel: (v) => (emuSel = v), len: () => emuCores.length, activate: (i) => activateEmulator(i), back: 'settings' },
   };
 
   // Shared vertical nav. `fresh` marks a deliberate new press (gamepad edge /
@@ -2208,6 +2589,7 @@
     padRaf = requestAnimationFrame(pollPad);
 
     loadManifest();
+    initEmulators();
   });
 
   function refreshPadConnected() {
@@ -2454,7 +2836,17 @@
        reached through submenu rows — everything they rendered is now this one
        block driven by the section descriptor. -->
   <div class="games-screen games-screen-strip {screen === 'games' ? 'shown' : ''}">
-    <div class="games-panel with-strip">
+    <div class="games-panel {stripShown ? 'with-strip' : ''}">
+      {#if !stripShown}
+        <!-- Nothing to switch between: the panel drops the strip's grid row and
+             wears the same absolutely-positioned header line every other
+             single-section screen uses. -->
+        <div class="strip-top">
+          <span>{curSection.coreA}</span>
+          <span>{curSection.coreB}</span>
+          <span>{clockStr}</span>
+        </div>
+      {:else}
       <div class="strip-block">
         <div class="strip-head">
           <span class="strip-label {stripFocus ? 'on' : ''}">library</span>
@@ -2492,6 +2884,7 @@
           {/each}
         </div>
       </div>
+      {/if}
 
       <div class="disc-col">
         <div class="disc"></div>
@@ -2505,7 +2898,7 @@
 
       <div class="games-right">
         <div class="games-header">
-          <div class="title-bar {stripFocus ? 'dim' : ''}">{curSection.title}</div>
+          <div class="title-bar {stripOn ? 'dim' : ''}">{curSection.title}</div>
           <div class="counter">{counterText}</div>
           {#if curSection.add}
             <button type="button" class="add-btn" onclick={curSection.add.run}>
@@ -2561,9 +2954,9 @@
             {#each curRows as r, i (r.key)}
               <div
                 bind:this={gameRowEls[i]}
-                class="game-row {r.pinned ? 'byoc-row' : ''} {!stripFocus && i === curSel ? 'sel' : ''}"
+                class="game-row {r.pinned ? 'byoc-row' : ''} {!stripOn && i === curSel ? 'sel' : ''}"
                 style="animation-delay: {i % 3 === 0 ? -2.4 : i % 2 === 0 ? -1.2 : 0}s"
-                onmouseenter={() => { if (stripFocus || i !== curSel) { stripFocus = false; curSection.setSel(i); sfx.nav(); } }}
+                onmouseenter={() => { if (stripOn || i !== curSel) { stripFocus = false; curSection.setSel(i); sfx.nav(); } }}
                 onclick={() => { stripFocus = false; curSection.setSel(i); curSection.activate(i); }}
               >
                 {#if r.submenu}
@@ -2646,6 +3039,78 @@
     </div>
   </div>
 
+  <!-- Emulators — opt-in downloads, reached from Settings. Installing a core
+       appends its section to the strip on the catalog screen; until then
+       nothing of it is fetched at all. -->
+  <div class="games-screen {screen === 'emulators' ? 'shown' : ''}">
+    <div class="games-panel">
+      <div class="strip-top">
+        <span>sys // emulators</span>
+        <span>{installedCores.length} / {emuCores.length} installed</span>
+        <span>{clockStr}</span>
+      </div>
+      <div class="disc-col">
+        <div class="disc net"></div>
+        <div class="meta">
+          <div><span class="k">core</span><b>{emuCurrent?.name ?? '—'}</b></div>
+          <div><span class="k">size</span><b>{emuCurrent?.size ?? '—'}</b></div>
+          <div><span class="k">type</span><b>{emuCurrent?.metaType ?? '—'}</b></div>
+          <div><span class="k">state</span><b>{emuStateLabel}</b></div>
+        </div>
+      </div>
+      <div class="games-right">
+        <div class="games-header">
+          <div class="title-bar">EMULATORS</div>
+          <div class="counter">{emuCounterText}</div>
+        </div>
+        <div class="games-list">
+          {#each emuCores as c, i (c.id)}
+            <div
+              bind:this={emuRowEls[i]}
+              class="game-row {i === emuSel ? 'sel' : ''}"
+              onmouseenter={() => { if (i !== emuSel) { emuSel = i; sfx.nav(); } }}
+              onclick={() => activateEmulator(i)}
+            >
+              <div class="game-icon">
+                <div class="glass">
+                  <!-- A core's icon is mirrored with the rest of it, so an
+                       uninstalled row has nothing to point at yet and wears its
+                       type-mark instead. -->
+                  {#if c.icon && emuInstalled.includes(c.id)}
+                    <img src={c.icon} alt={c.name} onerror={(e) => onIconError(e, c.name)} />
+                  {:else}
+                    <span class="ph">{c.mark}</span>
+                  {/if}
+                </div>
+              </div>
+              <div class="game-bar">
+                <span class="name">{c.name}</span>
+                <span class="sub">{c.size} · {c.coreA}</span>
+              </div>
+              <span class="net-badge {emuBadge(c).cls}">{emuBadge(c).text}</span>
+              {#if emuInstalled.includes(c.id)}
+                <!-- stopPropagation: the row's own click installs/uninstalls, so
+                     without it the ✕ would fire the row handler too. -->
+                <button
+                  type="button"
+                  class="uninstall-btn"
+                  title="Uninstall {c.name}"
+                  onclick={(e) => { e.stopPropagation(); emuSel = i; sfx.back(); uninstallCore(c.id); }}
+                >✕</button>
+              {/if}
+            </div>
+          {/each}
+          {#if !emuCores.length}
+            <div class="byod">
+              <div class="byod-title">CATALOGUE UNAVAILABLE</div>
+              <div class="byod-sub">Could not read <code>{EMU_CATALOG}</code>. Check the connection and reopen this screen.</div>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+
   {#if screen !== 'dashboard'}
     <div class="footer left tap" role="button" tabindex="0" onpointerup={tapHandler(goBack)} onkeydown={chipKeyHandler(goBack)}>
       <div class="btn-hint b">B</div>
@@ -2654,7 +3119,7 @@
   {/if}
   <div class="footer tap" role="button" tabindex="0" onpointerup={tapHandler(actFbtnBottom)} onkeydown={chipKeyHandler(actFbtnBottom)}>
     <div class="btn-hint">A</div>
-    <span>{screen === 'games' ? gamesActionLabel : 'Select'}</span>
+    <span>{screen === 'games' ? gamesActionLabel : screen === 'emulators' ? emuActionLabel : 'Select'}</span>
   </div>
 </div>
 

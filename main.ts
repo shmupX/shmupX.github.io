@@ -27,6 +27,27 @@ app.use(async (ctx) => {
   return new Response(html, { status: res.status, headers });
 });
 
+// Cross-origin isolation for the PS2 and Switch players. Both keep guest RAM
+// in a shared WebAssembly.Memory addressed by worker threads, which browsers
+// gate on SharedArrayBuffer, which in turn requires the document to arrive
+// cross-origin-isolated. Scoped to these two prefixes because a site-wide COEP
+// would break every other embedded page's cross-origin subresources.
+//
+// These players are opted-in downloads, so in practice static/emu-sw.js serves
+// them out of Cache Storage and stamps the same pair itself. This covers the
+// case where the files are present on the server instead. Keep the list in
+// sync with ISOLATED_PLAYERS in vite.config.ts (dev) and emu-sw.js.
+const ISOLATED_PLAYERS = ["/ps2/", "/switch/"];
+app.use(async (ctx) => {
+  const res = await ctx.next();
+  const path = new URL(ctx.req.url).pathname;
+  if (ISOLATED_PLAYERS.some((p) => path.startsWith(p))) {
+    res.headers.set("Cross-Origin-Opener-Policy", "same-origin");
+    res.headers.set("Cross-Origin-Embedder-Policy", "require-corp");
+  }
+  return res;
+});
+
 app.use(staticFiles());
 
 // Pass a shared value from a middleware

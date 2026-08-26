@@ -116,6 +116,39 @@ Extra flags go straight to `tools/build-level` (`--skip-bgm`, `--level-file`,
 from Linux needs `wine` on `PATH`** — electron-builder rcedits the packaged
 `.exe` through it whatever the target is.
 
+## Emulators (opt-in)
+
+shmupX ships no emulators. Settings → EMULATORS lists the eight cores in
+[`static/emulators.json`](static/emulators.json); enabling one downloads it, and
+the console then appears as a tile in the top strip. With nothing installed
+there is only one section, so the strip hides itself entirely.
+
+Nothing is vendored here. [`static/emu-sw.js`](static/emu-sw.js) is a service
+worker that mirrors an installed core's path prefixes from the cmg origin into
+Cache Storage, fetching each file the first time it is asked for. That is why
+installing needs no file list — the players pull their own cores, BIOS and ROMs,
+and each request materialises on use. Installing only pre-warms the player page,
+the console's manifest and the shared assets so the shelf is usable at once.
+
+It has to be a worker rather than plain fetches:
+
+- The gamepad→keyboard input the launcher synthesises only reaches a
+  **same-origin** frame (`gamepad-support.js` bails silently otherwise), so a
+  player loaded straight from cmg would be cross-origin and quietly unplayable.
+  Every byte has to arrive under our own origin.
+- PS2 and Switch need SharedArrayBuffer, so their responses are stamped
+  COOP/COEP, and every mirrored subresource gets CORP or `require-corp` rejects
+  it. `ISOLATED_PLAYERS` in `main.ts` and `vite.config.ts` covers the case where
+  those files are served from disk instead — keep the three lists in sync.
+- HEAD is mirrored as well as GET: EmulatorJS HEADs a ROM for its
+  `content-length` before streaming it and aborts the load if that 404s.
+
+Two path notes. The catalogue's `shared` entries and each core's `icon` sit
+outside every core prefix, so the dashboard adds them to the prefix set it hands
+the worker. And PS2's web builds live under `/games/<slug>/`, which is listed
+per slug rather than as a bare `/games/` — that prefix would shadow shmupX's own
+`/games/2028-ai` with cmg's copy.
+
 ## Deploy
 
 Deno Deploy git integration: the app is linked to this repo in the Deploy
