@@ -15,6 +15,7 @@
     "2028-ai:bgm": "deno run -A scripts/2028-ai/download-custom-bgm.ts",
     "games:manifest": "deno run -A scripts/build-games-manifest.ts",
     "deza:manifest": "deno run -A scripts/build-deza-saves-manifest.ts",
+    "deza:upload": "deno run -A scripts/upload-deza-saves.ts",
     "dashboard:build": "deno run -A scripts/build-dashboard.ts",
     "engine:bundle": "deno run -A scripts/build-engine.ts",
     "start": "deno serve -A _fresh/server.js",
