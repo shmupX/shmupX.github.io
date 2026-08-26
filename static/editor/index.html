@@ -3991,6 +3991,35 @@
             return ingestDezaemonBytes(u8, dezaemonLabelFromUrl(url));
         }
 
+        // /dezaemon/saves/<slug> holds gzip of the DEINTERLEAVED cart image in
+        // base64 — ~190KB instead of the 1MB .sav, and the form normalize()
+        // can unwrap in the one pass ingestDezaemonBytes gives it.
+        async function loadDezaemonFromRtdb(slug, file) {
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return false; }
+            const base = (typeof FIREBASE_CONFIG !== 'undefined' && FIREBASE_CONFIG.databaseURL) || '';
+            let rec;
+            try {
+                const resp = await fetch(base + '/dezaemon/saves/' + encodeURIComponent(slug) + '.json');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+                rec = await resp.json();
+            } catch (err) {
+                alert('Could not fetch "' + (file || slug) + '" from the database.\n\n' + (err.message || err));
+                return false;
+            }
+            if (!rec || !rec.sav) {
+                alert('The database has no save data for "' + (file || slug) + '".');
+                return false;
+            }
+            let u8;
+            try {
+                u8 = dezaB64ToBytes(rec.sav);
+            } catch (err) {
+                alert('Could not decode "' + (file || slug) + '".\n\n' + (err.message || err));
+                return false;
+            }
+            return ingestDezaemonBytes(u8, file || slug);
+        }
+
         async function importDezaemonFromUrlInput() {
             const input = document.getElementById('deza-url-input');
             const url = (input.value || '').trim();
@@ -4001,14 +4030,114 @@
         }
 
         // ============ SAVED GAMES (community save collection) ============
-        // dezaemon/saves.manifest.json indexes the "Dez 2 - *.sav" collection
-        // committed under static/editor/dezaemon/saves/ (built by
-        // scripts/build-deza-saves-manifest.ts, since Deno Deploy can serve
-        // static files but cannot list a directory); games-db.json carries the
-        // community metadata. A save whose title matches an entry shows its
-        // developer; rows group under genre headers, genres Z-A so the vertical
+        // The shelf reads the collection from the Realtime Database
+        // (/dezaemon/index, written by `deno task deza:upload`): one GET brings
+        // 258 rows carrying the games-db join already done — titleEn/titleJa,
+        // developerEn/developerJa, genre — plus a generated title-screen cover
+        // per game, lazily fetched from /dezaemon/covers/<slug> as rows scroll
+        // into view. The blobs under /dezaemon/saves/<slug> are gzip, which is
+        // exactly what Dezaemon.normalize() already unwraps.
+        //
+        // dezaemon/saves.manifest.json + saves/*.sav are the offline fallback:
+        // the .sav files are no longer committed (275MB), so they exist only in
+        // a working checkout, and a deployed build's manifest is empty. Local
+        // dev therefore keeps working with no network, and the hosted editor
+        // gets the library it could not otherwise serve.
+        //
+        // Rows group under genre headers, genres Z-A so the vertical
         // shoot-em-ups lead, titles A-Z within a genre, unmatched genres last.
-        let dezaLibraryState = null;   // { available, saves: [{file,title}], byTitle: Map }
+        let dezaLibraryState = null;   // { available, saves: [item], byTitle: Map, source }
+
+        // Normalised shelf item, from either source:
+        //   { file, title, slug|null, meta|null, hasCover }
+        // `slug` present => load over RTDB; absent => fetch the static .sav.
+
+        function dezaB64ToBytes(b64) {
+            const bin = atob(b64);
+            const out = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+            return out;
+        }
+
+        // The upload writes metadata columns straight onto the index row, so
+        // the shelf does not repeat the games-db join for RTDB entries. genre
+        // is null for the saves the community table has no row for; leaving
+        // meta null puts them in the trailing "Unknown" group, exactly where
+        // an unmatched local save lands.
+        function dezaItemFromRtdb(slug, e) {
+            const meta = e.genre
+                ? {
+                    title: e.titleEn, titleJa: e.titleJa,
+                    developer: e.developerEn, developerJa: e.developerJa,
+                    genre: e.genre,
+                }
+                : null;
+            return {
+                slug,
+                file: e.file || (slug + '.sav'),
+                title: e.fileTitle || e.titleEn || slug,
+                meta,
+                hasCover: !!e.hasCover,
+            };
+        }
+
+        async function loadDezaLibraryFromRtdb() {
+            const base = (typeof FIREBASE_CONFIG !== 'undefined' && FIREBASE_CONFIG.databaseURL) || '';
+            if (!base) return null;
+            const resp = await fetch(base + '/dezaemon/index.json');
+            if (!resp.ok) return null;
+            const index = await resp.json();
+            if (!index || typeof index !== 'object') return null;
+            const saves = Object.keys(index)
+                .map((slug) => dezaItemFromRtdb(slug, index[slug] || {}))
+                .filter((it) => it.file);
+            return saves.length ? saves : null;
+        }
+
+        async function loadDezaLibraryFromStatic(byTitle) {
+            const resp = await fetch('dezaemon/saves.manifest.json');
+            // A checkout with no collection has no manifest at all.
+            const json = resp.ok ? await resp.json() : { saves: [] };
+            return (json.saves || []).map((s) => ({
+                slug: null,
+                file: s.file,
+                title: s.title,
+                meta: byTitle.get(dezaNormTitle(s.title)) || null,
+                hasCover: false,
+            }));
+        }
+
+        // Covers are fetched one row at a time, only once a row is actually
+        // scrolled into view — 258 eager fetches (or one ~2.4MB blob) would
+        // cost far more than the shelf needs to show a few screens of art.
+        const dezaCoverCache = new Map();
+        function dezaAttachCover(imgEl, slug) {
+            if (dezaCoverCache.has(slug)) {
+                const url = dezaCoverCache.get(slug);
+                if (url) imgEl.src = url;
+                return;
+            }
+            const load = async () => {
+                const base = (typeof FIREBASE_CONFIG !== 'undefined' && FIREBASE_CONFIG.databaseURL) || '';
+                if (!base) return;
+                try {
+                    const resp = await fetch(base + '/dezaemon/covers/' + encodeURIComponent(slug) + '.json');
+                    const rec = resp.ok ? await resp.json() : null;
+                    const url = rec && rec.png ? rec.png : null;
+                    dezaCoverCache.set(slug, url);
+                    if (url) imgEl.src = url;
+                } catch (_e) { dezaCoverCache.set(slug, null); }
+            };
+            if (typeof IntersectionObserver !== 'function') { load(); return; }
+            const obs = new IntersectionObserver((entries) => {
+                for (const entry of entries) {
+                    if (!entry.isIntersecting) continue;
+                    obs.disconnect();
+                    load();
+                }
+            }, { rootMargin: '200px' });
+            obs.observe(imgEl);
+        }
 
         function dezaNormTitle(s) {
             return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -4097,14 +4226,18 @@
             if (!dezaLibraryState) {
                 list.innerHTML = '<div class="menu-note">LOADING…</div>';
                 try {
-                    const [savesResp, byTitle] = await Promise.all([
-                        fetch('dezaemon/saves.manifest.json'),
-                        loadDezaGamesDbByTitle(),
-                    ]);
-                    // A checkout with no collection has no manifest at all.
-                    const savesJson = savesResp.ok ? await savesResp.json() : { saves: [] };
-                    const saves = savesJson.saves || [];
-                    dezaLibraryState = { available: saves.length > 0, saves, byTitle };
+                    const byTitle = await loadDezaGamesDbByTitle();
+                    // Database first — it is the only source a deployed build
+                    // has — then the static collection for offline checkouts.
+                    let saves = null, source = 'rtdb';
+                    try {
+                        saves = await loadDezaLibraryFromRtdb();
+                    } catch (_e) { saves = null; }
+                    if (!saves) {
+                        saves = await loadDezaLibraryFromStatic(byTitle);
+                        source = 'static';
+                    }
+                    dezaLibraryState = { available: saves.length > 0, saves, byTitle, source };
                 } catch (err) {
                     list.innerHTML = '';
                     const note = document.createElement('div');
@@ -4126,16 +4259,18 @@
             if (!st.available || !st.saves.length) {
                 const note = document.createElement('div');
                 note.className = 'menu-note';
-                note.textContent = 'NO SAVE COLLECTION IN THIS BUILD — PUT "Dez 2 - *.sav" FILES IN static/editor/dezaemon/saves/ AND REBUILD.';
+                note.textContent = 'NO SAVE COLLECTION REACHABLE — THE DATABASE COULD NOT BE READ, AND THIS BUILD HAS NO "Dez 2 - *.sav" FILES IN static/editor/dezaemon/saves/.';
                 list.appendChild(note);
                 return;
             }
             const groups = new Map();
             for (const s of st.saves) {
-                const meta = st.byTitle.get(dezaNormTitle(s.title)) || null;
+                // RTDB rows arrive with the games-db join already applied; a
+                // static row resolves it here against the same table.
+                const meta = s.meta || st.byTitle.get(dezaNormTitle(s.title)) || null;
                 const genre = meta ? meta.genre : 'Unknown';
                 if (!groups.has(genre)) groups.set(genre, []);
-                groups.get(genre).push({ file: s.file, title: s.title, meta });
+                groups.get(genre).push({ file: s.file, title: s.title, meta, slug: s.slug, hasCover: s.hasCover });
             }
             // Genres Z-A ("Vertical Shoot-em-up" family first); the Unknown
             // bucket (saves the table doesn't know) always sits last.
@@ -4153,6 +4288,17 @@
                 for (const item of rows) {
                     const card = document.createElement('div');
                     card.className = 'deza-slot selectable';
+                    if (item.slug && item.hasCover) {
+                        const thumb = document.createElement('img');
+                        thumb.alt = '';
+                        thumb.loading = 'lazy';
+                        // Reserve the 256x480 cover's aspect up front so rows
+                        // do not jump as art arrives.
+                        thumb.style.cssText = 'width:32px;height:60px;flex:0 0 auto;margin-right:10px;' +
+                            'object-fit:cover;image-rendering:pixelated;background:#000;border:1px solid rgba(255,255,255,.15);';
+                        dezaAttachCover(thumb, item.slug);
+                        card.appendChild(thumb);
+                    }
                     const body = document.createElement('div');
                     body.style.cssText = 'flex:1;min-width:0;';
                     const name = document.createElement('div');
@@ -4173,15 +4319,20 @@
                     go.textContent = 'LOAD ›';
                     card.appendChild(body);
                     card.appendChild(go);
-                    card.onclick = () => loadDezaemonLibraryGame(item.file, item.title, item.meta);
+                    card.onclick = () => loadDezaemonLibraryGame(item.file, item.title, item.meta, item.slug);
                     list.appendChild(card);
                 }
             }
         }
 
-        async function loadDezaemonLibraryGame(file, fallbackTitle, meta) {
+        async function loadDezaemonLibraryGame(file, fallbackTitle, meta, slug) {
             document.getElementById('dezaemon-library-modal').classList.add('hidden');
-            const ok = await loadDezaemonFromUrl('dezaemon/saves/' + encodeURIComponent(file));
+            // A database row carries the cart as gzip in base64 — hand the
+            // bytes straight to the same ingest the file path uses, since
+            // Dezaemon.normalize() unwraps gzip itself.
+            const ok = slug
+                ? await loadDezaemonFromRtdb(slug, file)
+                : await loadDezaemonFromUrl('dezaemon/saves/' + encodeURIComponent(file));
             if (!ok) return;
             // One click from the shelf into the editor: when the cart holds
             // exactly one game save, select it and import without stopping at
