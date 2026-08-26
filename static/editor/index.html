@@ -1588,6 +1588,7 @@
 
         async function switchAtlas(key) {
             currentAtlasKey = key;
+            dezaInvalidateBaseAtlas(key);
             const cfg = ATLAS_CONFIGS[key];
             const editorJson = "_" + cfg.json;
             const editorPng = "_" + cfg.png;
@@ -1693,6 +1694,7 @@
         }
 
         async function loadGameFilesFromFileList(files) {
+            dezaInvalidateBaseAtlas();
             // Build a path -> File map for quick lookup
             const fileMap = {};
             for (const f of files) {
@@ -1756,6 +1758,7 @@
         }
 
         async function loadGameFiles() {
+            dezaInvalidateBaseAtlas();
             let jsonText;
             try {
                 jsonText = await (await (await getFileHandle([GAME_JSON_NAME])).getFile()).text();
@@ -3803,7 +3806,17 @@
         // loaded as an ESM in <head> from /engine/shmup-engine.js, rebuilt by
         // `deno task engine:bundle`) so the JSR module, its tests and this
         // editor all share one pipeline.
-        let dezaImportState = null;      // { containerKind, saves, selectedSlot, decoded, fileName }
+        let dezaImportState = null;      // { containerKind, saves, selectedSlot, decoded, fileName, importing }
+        // Per atlas key, the atlas as it stood before the first .sav import —
+        // every import restores it, so one load never inherits another's frames.
+        const dezaBaseAtlas = {};        // key -> { json: string, image: Image }
+
+        // A fresh atlas load from files supersedes the pre-import snapshot for
+        // that key (or all of them, on a whole-project reload).
+        function dezaInvalidateBaseAtlas(key) {
+            if (key) delete dezaBaseAtlas[key];
+            else for (const k in dezaBaseAtlas) delete dezaBaseAtlas[k];
+        }
         let defaultGameSnapshot = null;  // pristine defaults captured before the first overwrite
 
         function dezaClone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -3941,7 +3954,10 @@
 
         // One ingest path for every source (file picker, URL, ?sav=): parse the
         // container, list the slots, and leave the modal open on the slot list.
-        async function ingestDezaemonBytes(u8, label) {
+        // opts.openModal:false parses without touching the modal — the SAVED
+        // GAMES shelf decides afterwards whether its one-click import needs
+        // the slot sheet at all.
+        async function ingestDezaemonBytes(u8, label, opts) {
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return false; }
             let normalized;
             try {
@@ -3957,13 +3973,18 @@
                 alert('Not a Saturn backup image (' + label + '):\n\n' + (err.message || err));
                 return false;
             }
-            dezaImportState = { containerKind: normalized.kind, saves, selectedSlot: null, decoded: null, fileName: label };
+            dezaImportState = { containerKind: normalized.kind, saves, selectedSlot: null, decoded: null, fileName: label, importing: false };
+            if (!opts || opts.openModal !== false) openDezaemonImportModal();
+            return true;
+        }
+
+        function openDezaemonImportModal() {
+            const st = dezaImportState;
             document.getElementById('deza-container-kind').textContent =
-                (label ? label + ' · ' : '') + normalized.kind + ' · ' + saves.length + ' SLOT' + (saves.length === 1 ? '' : 'S');
+                (st.fileName ? st.fileName + ' · ' : '') + st.containerKind + ' · ' + st.saves.length + ' SLOT' + (st.saves.length === 1 ? '' : 'S');
             document.getElementById('deza-slot-detail').classList.add('hidden');
             renderDezaemonSlots();
             document.getElementById('dezaemon-import-modal').classList.remove('hidden');
-            return true;
         }
 
         function dezaemonLabelFromUrl(url) {
@@ -3976,7 +3997,7 @@
             }
         }
 
-        async function loadDezaemonFromUrl(url) {
+        async function loadDezaemonFromUrl(url, opts) {
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return false; }
             let resp;
             try {
@@ -3991,13 +4012,13 @@
                 return false;
             }
             const u8 = new Uint8Array(await resp.arrayBuffer());
-            return ingestDezaemonBytes(u8, dezaemonLabelFromUrl(url));
+            return ingestDezaemonBytes(u8, dezaemonLabelFromUrl(url), opts);
         }
 
         // /dezaemon/saves/<slug> holds gzip of the DEINTERLEAVED cart image in
         // base64 — ~190KB instead of the 1MB .sav, and the form normalize()
         // can unwrap in the one pass ingestDezaemonBytes gives it.
-        async function loadDezaemonFromRtdb(slug, file) {
+        async function loadDezaemonFromRtdb(slug, file, opts) {
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return false; }
             const base = (typeof FIREBASE_CONFIG !== 'undefined' && FIREBASE_CONFIG.databaseURL) || '';
             let rec;
@@ -4020,7 +4041,7 @@
                 alert('Could not decode "' + (file || slug) + '".\n\n' + (err.message || err));
                 return false;
             }
-            return ingestDezaemonBytes(u8, file || slug);
+            return ingestDezaemonBytes(u8, file || slug, opts);
         }
 
         async function importDezaemonFromUrlInput() {
@@ -4329,31 +4350,36 @@
         }
 
         async function loadDezaemonLibraryGame(file, fallbackTitle, meta, slug) {
-            document.getElementById('dezaemon-library-modal').classList.add('hidden');
+            // Parse before hiding the shelf: closing it first left a blank
+            // screen while the cart downloaded, and a fetch failure dumped the
+            // user back at the editor instead of the shelf.
+            flash('LOADING: ' + (fallbackTitle || file));
             // A database row carries the cart as gzip in base64 — hand the
             // bytes straight to the same ingest the file path uses, since
             // Dezaemon.normalize() unwraps gzip itself.
             const ok = slug
-                ? await loadDezaemonFromRtdb(slug, file)
-                : await loadDezaemonFromUrl('dezaemon/saves/' + encodeURIComponent(file));
+                ? await loadDezaemonFromRtdb(slug, file, { openModal: false })
+                : await loadDezaemonFromUrl('dezaemon/saves/' + encodeURIComponent(file), { openModal: false });
             if (!ok) return;
+            document.getElementById('dezaemon-library-modal').classList.add('hidden');
             // One click from the shelf into the editor: when the cart holds
-            // exactly one game save, select it and import without stopping at
-            // the slot sheet. Multi-slot carts keep the sheet for the choice.
+            // exactly one game save, import it straight away — the slot sheet
+            // never opens, so there is no IMPORT button to double-press and no
+            // per-frame preview to build. Multi-slot carts keep the sheet for
+            // the choice.
             const st = dezaImportState;
             const usable = [];
             st.saves.forEach((s, i) => { if (window.Dezaemon.isGameSave(s) && s.payload) usable.push(i); });
-            if (usable.length === 1) {
-                selectDezaemonSlot(usable[0]);
-                await applyDezaemonImport();
-                // The shelf knows this save's table row by filename match —
-                // refine the credits the import just attached (it looked up
-                // the cart's own title, which can differ from the filename).
-                if (gameData) {
-                    if (meta) gameData.dezaemonCredits = dezaCreditsFromMeta(meta);
-                    else if (!gameData.dezaemonCredits) {
-                        gameData.dezaemonCredits = { title: fallbackTitle || file.replace(/\.sav$/i, '') };
-                    }
+            if (usable.length !== 1) { openDezaemonImportModal(); return; }
+            selectDezaemonSlotState(usable[0]);
+            const imported = await applyDezaemonImport();
+            // The shelf knows this save's table row by filename match —
+            // refine the credits the import just attached (it looked up
+            // the cart's own title, which can differ from the filename).
+            if (imported && gameData) {
+                if (meta) gameData.dezaemonCredits = dezaCreditsFromMeta(meta);
+                else if (!gameData.dezaemonCredits) {
+                    gameData.dezaemonCredits = { title: fallbackTitle || file.replace(/\.sav$/i, '') };
                 }
             }
         }
@@ -4382,10 +4408,18 @@
             });
         }
 
-        function selectDezaemonSlot(i) {
+        // Decode a slot into the import state without rendering the slot
+        // sheet — the shelf's one-click import needs the selection, not the
+        // preview DOM.
+        function selectDezaemonSlotState(i) {
             const save = dezaImportState.saves[i];
             dezaImportState.selectedSlot = i;
             dezaImportState.decoded = window.Dezaemon.decodeSave(save.payload.buffer);
+            return save;
+        }
+
+        function selectDezaemonSlot(i) {
+            const save = selectDezaemonSlotState(i);
             renderDezaemonSlots();
             const d = dezaImportState.decoded;
             const lines = [];
@@ -4424,15 +4458,44 @@
             document.getElementById('deza-decoded-summary').innerHTML = lines.join('<br>');
             const spriteGrid = document.getElementById('deza-sprite-preview');
             spriteGrid.innerHTML = '';
-            for (const sp of d.sprites) {
-                const c = document.createElement('canvas');
-                c.width = sp.w; c.height = sp.h;
-                c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(sp.rgba), sp.w, sp.h), 0, 0);
-                c.title = sp.key;
-                spriteGrid.appendChild(c);
+            // One composited sheet, not a canvas per frame: a full save holds
+            // hundreds of frames, and that many live canvases exhausts mobile
+            // Chrome's canvas memory — the preview rendered as blank tiles or
+            // gray sad-face placeholders, sometimes blacking out the page
+            // while the GPU process recovered.
+            if (d.sprites && d.sprites.length) {
+                const sheet = renderDezaemonSpriteSheet(d.sprites);
+                sheet.style.gridColumn = '1 / -1';
+                spriteGrid.appendChild(sheet);
             }
             document.getElementById('deza-hex-preview').textContent = renderDezaemonHexPreview(save.payload.buffer, 512);
             document.getElementById('deza-slot-detail').classList.remove('hidden');
+        }
+
+        // All frames packed into a single canvas, rows wrapped at the sheet
+        // width, so the preview costs one canvas however many frames the save
+        // carries.
+        function renderDezaemonSpriteSheet(sprites) {
+            const gap = 2;
+            let sheetW = 512;
+            for (const sp of sprites) if (sp.w > sheetW) sheetW = sp.w;
+            let x = 0, y = 0, rowH = 0;
+            const slots = sprites.map(sp => {
+                if (x && x + sp.w > sheetW) { x = 0; y += rowH + gap; rowH = 0; }
+                const slot = { x, y, sp };
+                x += sp.w + gap;
+                if (sp.h > rowH) rowH = sp.h;
+                return slot;
+            });
+            const c = document.createElement('canvas');
+            c.width = sheetW;
+            c.height = Math.max(1, y + rowH);
+            const ctx = c.getContext('2d');
+            for (const s of slots) {
+                ctx.putImageData(new ImageData(new Uint8ClampedArray(s.sp.rgba), s.sp.w, s.sp.h), s.x, s.y);
+            }
+            c.title = sprites.length + ' frames';
+            return c;
         }
 
         function renderDezaemonHexPreview(u8, maxBytes) {
@@ -4457,7 +4520,27 @@
 
         async function applyDezaemonImport() {
             const st = dezaImportState;
-            if (!st || st.selectedSlot === null || !st.decoded) return;
+            if (!st || st.selectedSlot === null || !st.decoded || st.importing) return false;
+            // Close the sheet and refuse re-entry up front: the import below is
+            // async (credits lookup, atlas merge), and a second IMPORT press
+            // while it ran used to run the whole import twice — two "Import
+            // notes" alerts and duplicated atlas frames.
+            st.importing = true;
+            document.getElementById('dezaemon-import-modal').classList.add('hidden');
+            setDezaStatus('IMPORTING…');
+            try {
+                await applyDezaemonImportInner(st);
+                return true;
+            } catch (err) {
+                setDezaStatus('IMPORT FAILED');
+                alert('Import failed:\n\n' + (err.message || err));
+                return false;
+            } finally {
+                st.importing = false;
+            }
+        }
+
+        async function applyDezaemonImportInner(st) {
             const save = st.saves[st.selectedSlot];
             snapshotDefaultsOnce();
             let { gameJson, sprites, warnings } = window.Dezaemon.mapSaveToGame(st.decoded, {
@@ -4468,6 +4551,22 @@
             // Reset per-level atlas customization state (same discipline as
             // loadFromFirebase) BEFORE adding this import's sprites.
             replacedFrames = {}; extraSprites = []; customFrameKeys = new Set();
+            // And restore the atlas that stood before the first import: without
+            // this, each back-to-back load repacked every earlier game's frames
+            // into an ever-taller atlas — plus a 64x64 thumb canvas per frame —
+            // which ran mobile Chrome out of canvas memory after two or three
+            // games (blank/sad-face tiles, momentary black screens).
+            let restoredBaseAtlas = false;
+            if (atlasData && atlasImage) {
+                const snap = dezaBaseAtlas[currentAtlasKey];
+                if (snap) {
+                    atlasData = JSON.parse(snap.json);
+                    atlasImage = snap.image;
+                    restoredBaseAtlas = true;
+                } else {
+                    dezaBaseAtlas[currentAtlasKey] = { json: JSON.stringify(atlasData), image: atlasImage };
+                }
+            }
             const existing = new Set(Object.keys((atlasData && atlasData.frames) || {}));
             // Every texture array in the imported game, so a frame renamed to
             // dodge a collision stays referenced. Enemies, bosses and the player
@@ -4539,6 +4638,7 @@
             // extraSprites, frameThumbs has no entry for them, and every grid
             // cell draws empty.
             if (sprites.length) await mergeExtraSpritesIntoAtlas();
+            else if (restoredBaseAtlas) buildFrameThumbs();
             populateStagePills(); loadCurrentStage(); renderEnemyList(); renderAtlas(); updateToolUI();
             checkMissingTextures();
             const nameInput = document.getElementById('firebase-level-name');
@@ -4546,7 +4646,6 @@
             const title = st.decoded.title || save.comment || 'DEZAEMON 2 GAME';
             setDezaStatus('IMPORTED: ' + title + ' (DEZAEMON 2)');
             flash('IMPORTED: ' + title);
-            document.getElementById('dezaemon-import-modal').classList.add('hidden');
             const notes = warnings.slice();
             const importedStages = Object.keys(gameData).filter(k => /^stage\d+$/.test(k));
             const spawnCount = importedStages.reduce((n, k) =>
