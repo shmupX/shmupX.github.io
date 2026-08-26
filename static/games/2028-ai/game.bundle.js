@@ -5104,6 +5104,9 @@
     if (typeof vibrate !== "function") {
       return false;
     }
+    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) {
+      return false;
+    }
     try {
       return !!vibrate.call(navigator, resolveBrowserVibration(preset));
     } catch (error) {

@@ -29,7 +29,19 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
   Deploy can serve `static/` but can't list it at runtime, so the manifest is
   committed, exactly like `games.manifest.json`.
 - `static/games/2028-ai/` — the editor's base game + play runtime (the Phaser 4
-  engine that runs editor-authored levels).
+  engine that runs editor-authored levels). `game.bundle.js` here is a vendored
+  prebuilt artifact — this repo has no build step for it (the sources live in
+  the 2019-es7 checkout), so it carries two edits by hand that a rebuild would
+  silently drop:
+  - `LEVEL_DATA_URL` fetches `foo.json` same-origin instead of from cmg's deploy
+    origin. `tools/build-level/lib/stage.js` matches that exact string when it
+    stages an offline export, so the two must change together.
+  - `tryNavigatorVibrate` returns early when
+    `navigator.userActivation.hasBeenActive` is false. Chrome blocks
+    `navigator.vibrate()` before the frame has been tapped and logs an
+    intervention for every call; the blocked call _returns false_ rather than
+    throwing, so the function's own `try/catch` never suppressed it. Upstream
+    fix belongs in `2019-es7/src/haptics.js`.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
 
