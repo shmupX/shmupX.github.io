@@ -10,3 +10,11 @@ static/games/2028-ai/assets/custom-bgm/
 # Drop .sav/.bcr/.bkr files here to enable the fixture-gated engine tests.
 dev-fixtures/
 packages/shmup-engine/fixtures/
+
+# The community save collection. It lives in the Realtime Database instead
+# (`deno task deza:upload` — /dezaemon/saves, with covers and metadata), so it
+# does not ride along in every clone and every Deploy build as 275MB of .sav.
+# Keep the files here locally: the editor's shelf and deza:upload both read
+# them, and `deno task deza:manifest` writes an empty manifest when they are
+# absent rather than failing.
+static/editor/dezaemon/saves/
