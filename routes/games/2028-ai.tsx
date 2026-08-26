@@ -216,6 +216,17 @@ export default define.page(function Game2028() {
           content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
         />
         <meta name="theme-color" content="#000000" />
+        {
+          /* Declared so the browser stops probing /apple-touch-icon.png at the
+             root and 404ing: with no link element it guesses that path itself.
+             Same icon the dashboard uses, so a home-screen shortcut to a game
+             matches a shortcut to the launcher. */
+        }
+        <link
+          key="apple-touch"
+          rel="apple-touch-icon"
+          href="/app-icons/ios/icon-180.png"
+        />
         <style>
           {`
           html, body {
