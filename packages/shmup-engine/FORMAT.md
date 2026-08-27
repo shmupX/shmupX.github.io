@@ -202,7 +202,7 @@ literal pools; they tile the 396,640 bytes exactly, with no gaps:
 
 | Offset | Layout | Content | Status |
 |--------|--------|---------|--------|
-| `+0x00000` | 10 × `0x5400` | **Background tilemap** per stage: 14 cols × 768 rows of u16be = 48 parts × 16 rows. `0xFFFF` = empty; else bit15 H-flip, bit14 V-flip, bits 0–9 = CG cell index (1024-cell space). Part = 224×256 px. | **decoded** |
+| `+0x00000` | 10 × `0x5400` | **Background tilemap** per stage: 14 cols × 768 rows of u16be = 48 parts × 16 rows. `0xFFFF` = empty; else bit15 V-flip, bit14 H-flip (same convention as the sprite banks), bits 0–9 = CG cell index (1024-cell space). Part = 224×256 px. | **decoded** |
 | `+0x34800` | 10 × `0xC0` | **Per-stage scroll curve**: 192 bytes, one per 4 map rows (64 px of scroll). Values move in long runs and ramp down through the stage; the non-zero extent tracks the stage's used rows (`lastNonZero ≈ lastUsedRow/4`, always slightly short of it). Not a record array — no stride shows column specialisation. | decoded (shape), field meaning open |
 | `+0x34F80` | 10 × `0x3C00` | **Object placement grid**: 20 columns × 768 rows of *bytes* over the 320-px screen (the 224-px playfield sits at columns 3–16), sharing the background's rows and 48-part division. See the id table below. | **decoded** |
 | `+0x5A780` | `0x60` | **Global settings** — see the byte map below | mostly decoded |
@@ -258,14 +258,21 @@ and the rest via fallback, yielding its aircraft, jets and capsules with their
 4-frame animations.
 
 Composition words: `0xFFFF` = empty, else bits 0–9 = CG cell index and
-**bit14 = H-flip, bit15 = V-flip** — the OPPOSITE of the background tilemap's
-bit15 H / bit14 V (sprites go through VDP1 draw commands, the map through
-VDP2 pattern names). An earlier revision claimed the banks used "the same
-encoding as the background map"; that was inherited by analogy, never
-validated, and is wrong. Evidence: a corpus render sweep — every mirror-pair
-composition (pervasive in boss and large art) composes only under bit14 = H,
-a 4-fold-symmetric core in Mucha Kucha Fighter exercises both bits at once,
-and there are zero counter-examples across the 262 saves. The two banks
+**bit14 = H-flip, bit15 = V-flip** — the SAME convention as the background
+tilemap. (Two earlier revisions each got this wrong in one direction: the
+first claimed the sprite banks copied the background map's then-documented
+bit15 = H, the second "corrected" that by declaring the banks OPPOSITE to
+the map. In fact the background map's bit15 = H claim was itself the error —
+both stores use bit15 = V / bit14 = H.) Evidence, sprites: a corpus render
+sweep — every mirror-pair composition (pervasive in boss and large art)
+composes only under bit14 = H, a 4-fold-symmetric core in Mucha Kucha
+Fighter exercises both bits at once, and there are zero counter-examples
+across the 262 saves. Evidence, background (2026-08-27): Ramsie's
+mirror-symmetric chambers — the stage-0 goddess boss chamber, stage 3's
+vine pillars, stage 4's mandala — render as coherent left-right-mirrored
+artwork only under bit14 = H, and under bit15 = H reproduce exactly the
+garbled right-of-boss tiles reported from the level editor's play mode
+(confirmed against a Saturn capture of the same chamber). The two banks
 close the section exactly (`0x5D490 + 232·2 = 0x5D660`; `0x5D660 + 10·1408 =
 0x60D60`), and both bases are SH-2 literals in the engine.
 

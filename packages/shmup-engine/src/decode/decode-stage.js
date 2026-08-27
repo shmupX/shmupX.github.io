@@ -7,8 +7,11 @@
 // The background tilemap is fully decoded: each stage owns a 0x5400-byte
 // bank holding 14 columns x 768 rows of u16be words, which the editor
 // presents as 48 "parts" (screens) of 16 rows each. A word of 0xFFFF is an
-// empty tile; otherwise bit15 = horizontal flip, bit14 = vertical flip, and
+// empty tile; otherwise bit15 = vertical flip, bit14 = horizontal flip, and
 // bits 0-9 index the 1024-cell CG space (4 pages x 256 cells of 16x16 px).
+// The flip bits are the SAME convention as the sprite composition banks
+// (FORMAT.md) — an earlier revision had them swapped here, which garbled
+// every mirror-symmetric background (e.g. Ramsie's boss chambers).
 //
 // Environment-neutral ESM (Node + browser).
 
@@ -48,8 +51,8 @@ export function decodeStageBackground(sec5, stage) {
         }
         tiles[i] = {
             cell: word & 0x3ff,
-            hflip: (word & 0x8000) !== 0,
-            vflip: (word & 0x4000) !== 0,
+            hflip: (word & 0x4000) !== 0,
+            vflip: (word & 0x8000) !== 0,
         };
         usedTiles++;
         partUsed[(i / (BG_COLS * BG_ROWS_PER_PART)) | 0] = 1;

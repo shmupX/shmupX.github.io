@@ -1222,8 +1222,8 @@ function decodeStageBackground(sec5, stage) {
     }
     tiles[i] = {
       cell: word & 1023,
-      hflip: (word & 32768) !== 0,
-      vflip: (word & 16384) !== 0
+      hflip: (word & 16384) !== 0,
+      vflip: (word & 32768) !== 0
     };
     usedTiles++;
     partUsed[i / (BG_COLS * BG_ROWS_PER_PART) | 0] = 1;

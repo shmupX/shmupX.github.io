@@ -8,7 +8,10 @@ static/games/2028-ai/assets/custom-bgm/
 
 # Local .sav test fixtures (community Dezaemon 2 saves — never committed).
 # Drop .sav/.bcr/.bkr files here to enable the fixture-gated engine tests.
-dev-fixtures/
+# debug-tools/ is the exception — scripts that read the fixtures, not the
+# fixtures themselves.
+dev-fixtures/*
+!dev-fixtures/debug-tools/
 packages/shmup-engine/fixtures/
 
 # The community save collection. It lives in the Realtime Database instead

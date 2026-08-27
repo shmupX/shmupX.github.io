@@ -23,10 +23,10 @@
 // F3 = one 128x128. A frame's cells are read row-major at its fixed width.
 //
 // Composition words: bits 0-9 = CG cell index, bit14 = H-flip, bit15 =
-// V-flip, 0xFFFF = empty. Note the flip bits are the OPPOSITE of the
-// background tilemap's (bit15 H / bit14 V) — sprites go through VDP1 draw
-// commands, the map through VDP2 pattern names. Verified by rendering: the
-// sprite banks' pervasive mirror pairs only compose under bit14 = H.
+// V-flip, 0xFFFF = empty — the SAME convention as the background tilemap.
+// Verified by rendering: the sprite banks' pervasive mirror pairs only
+// compose under bit14 = H, and the background's mirror-symmetric chambers
+// (Ramsie stages 0/3/4) only compose under bit14 = H as well.
 //
 // Environment-neutral ESM (Node + browser).
 
@@ -266,8 +266,8 @@ export function extractEnemySprites(sec5, sections, palettes, enemies, stagesPla
 // DISTINCT cell any used stage references, and (b) a compact per-stage grid of
 // words that index that list (bits 0-9 ordinal, bit15 hflip, bit14 vflip,
 // 0xFFFF empty). Flips stay in the grid, so a cell mirrored both ways still
-// costs one sprite. (The map keeps the VDP2 bit order — bit15 = H — unlike
-// the sprite banks above.)
+// costs one sprite. (This projected word format is the runtime's own — its
+// bit15 = hflip regardless of how the raw save encodes flips.)
 //
 // Returns {cells: [{key,w,h,rgba}], stages: [{rows, words: Uint16Array}|null]}
 // where words is rows*14 long and `rows` is trimmed to the last non-empty row.
