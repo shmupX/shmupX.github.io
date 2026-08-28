@@ -4393,7 +4393,7 @@
             }
         }
 
-        async function loadDezaemonLibraryGame(file, fallbackTitle, meta, slug) {
+        async function loadDezaemonLibraryGame(file, fallbackTitle, meta, slug, opts) {
             // Parse before hiding the shelf: closing it first left a blank
             // screen while the cart downloaded, and a fetch failure dumped the
             // user back at the editor instead of the shelf.
@@ -4412,7 +4412,10 @@
             // per-frame preview to build. Multi-slot carts keep the sheet for
             // the choice — except in player mode (EDIT FIRST off), which takes
             // the first game save so the tap always goes straight to play.
-            const playNow = !dezaEditFirstOn;
+            // opts.forcePlay (the launcher's ?play= hand-off) means "run it" no
+            // matter how the EDIT FIRST toggle is set — the player asked to
+            // play, not to open the editor.
+            const playNow = !!(opts && opts.forcePlay) || !dezaEditFirstOn;
             const st = dezaImportState;
             const usable = [];
             st.saves.forEach((s, i) => { if (window.Dezaemon.isGameSave(s) && s.payload) usable.push(i); });
@@ -4729,11 +4732,53 @@
             if (notes.length && !(opts && opts.silent)) alert('Import notes:\n- ' + notes.join('\n- '));
         }
 
+        // ?play=<slug> — the launcher's coverflow picker (or a bookmark) hands
+        // the editor a shelf game to run immediately: resolve the slug against
+        // the same library the SAVED GAMES shelf reads (database first, static
+        // collection offline) and take the shelf's own player-mode path. Static
+        // rows carry no slug, so one is derived from the title with the upload
+        // script's algorithm (slugOf in scripts/upload-deza-saves.ts) — the two
+        // sources therefore agree on every slug.
+        function dezaSlugOfTitle(title) {
+            const s = String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+            return s || 'save';
+        }
+        // The stock project load (autoLoadFromServer, run from window.onload)
+        // assigns gameData/atlasData unconditionally when its fetches land. An
+        // automatic ?play= import that starts before it settles could be
+        // clobbered mid-flight — the recipe/atlas handed to the runtime would
+        // be the stock game, not the picked cart. The hand-off therefore waits
+        // for the baseline to settle (resolved in window.onload, on failure
+        // too — an unreachable game.json must not wedge the play).
+        let editorBaselineResolve;
+        const editorBaselineReady = new Promise((resolve) => { editorBaselineResolve = resolve; });
+        async function playDezaemonLibrarySlug(slug) {
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
+            await editorBaselineReady;
+            let row = null;
+            try {
+                const byTitle = await loadDezaGamesDbByTitle();
+                let saves = null;
+                try { saves = await loadDezaLibraryFromRtdb(); } catch (_e) { saves = null; }
+                if (!saves) saves = await loadDezaLibraryFromStatic(byTitle);
+                row = (saves || []).find((s) => (s.slug || dezaSlugOfTitle(s.title)) === slug) || null;
+                if (row && !row.meta) row.meta = byTitle.get(dezaNormTitle(row.title)) || null;
+            } catch (err) {
+                flash('COULD NOT LIST SAVED GAMES: ' + (err.message || err));
+                return;
+            }
+            if (!row) { flash('NO SUCH SAVED GAME: ' + slug); return; }
+            loadDezaemonLibraryGame(row.file, row.title, row.meta, row.slug, { forcePlay: true });
+        }
+
         // ?sav=<url> opens the importer straight from a link, so the launcher (or
         // a bookmark) can hand the editor a save to open.
         window.addEventListener('dezaemon-ready', () => {
-            const sav = new URLSearchParams(location.search).get('sav');
-            if (sav) loadDezaemonFromUrl(sav);
+            const params = new URLSearchParams(location.search);
+            const sav = params.get('sav');
+            if (sav) { loadDezaemonFromUrl(sav); return; }
+            const play = params.get('play');
+            if (play) playDezaemonLibrarySlug(play);
         });
 
         // Test hook for the e2e suite (and console debugging).
@@ -8556,7 +8601,7 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
         window.onload = async () => {
             updateToolUI();
             // Auto-load local data first so Firebase can override it
-            await autoLoadFromServer();
+            try { await autoLoadFromServer(); } finally { editorBaselineResolve(); }
             const urlLevel = new URLSearchParams(window.location.search).get('level');
             if (urlLevel) {
                 document.getElementById('firebase-level-name').value = urlLevel;
