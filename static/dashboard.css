@@ -75,6 +75,10 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 @keyframes pulse { 50% { opacity: .3; } }
 .topbar .right { display: flex; gap: 2em; }
 .topbar .right span { position: relative; }
+/* The clock is one value, so it never breaks across lines; the wide/narrow pair
+   swaps at the mobile breakpoint below. */
+.topbar .clock { white-space: nowrap; }
+.topbar .clock.short { display: none; }
 
 /* === Dashboard view === */
 .dashboard {
@@ -377,7 +381,11 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   min-width: 0;
 }
 .game-bar .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 0 10px rgba(80, 220, 100, .3); }
-.game-bar .sub { font-family: 'Share Tech Mono'; font-weight: 400; font-size: .7em; color: rgba(220, 255, 180, .55); letter-spacing: .1em; margin-left: 1.5em; white-space: nowrap; }
+/* The subtitle yields first when the bar is too narrow (huge shrink factor +
+   min-width:0 so it can go below its text width). Without it the nowrap sub
+   holds its full width and the name — the thing you are actually picking —
+   collapses to a single letter and an ellipsis. */
+.game-bar .sub { font-family: 'Share Tech Mono'; font-weight: 400; font-size: .7em; color: rgba(220, 255, 180, .55); letter-spacing: .1em; margin-left: 1.5em; white-space: nowrap; flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .game-row.sel .game-icon { box-shadow: 0 0 28px rgba(255, 240, 90, .7), inset 0 0 14px rgba(0, 0, 0, .55); }
 .game-row.sel .game-icon .glass { box-shadow: inset 0 0 12px rgba(255, 240, 90, .5), 0 0 0 2px rgba(255, 240, 90, .9); }
 .game-row.sel .game-bar {
@@ -857,8 +865,18 @@ body.theme-xbox360.osd-music-blade .music-hd {
   .disc-col { flex-direction: row; justify-content: flex-start; padding: 0; gap: 2vmin; }
   .disc { width: 14vmin; height: 14vmin; }
   .meta { flex: 1; }
+  /* HUD line: seconds go, and the decorations give up some of their gap. */
+  .topbar .clock.full { display: none; }
+  .topbar .clock.short { display: inline; }
+  .topbar .right { gap: 1.4em; }
   /* Too narrow for a side-by-side dock — the music app takes the full width. */
   .music-sidebar { width: 100%; }
+  /* Phone widths can't fit name and subtitle side by side, and squeezing the
+     subtitle down to nothing loses it anyway — so they stack, and the name gets
+     the whole bar width before it ellipsizes. */
+  .game-bar { flex-direction: column; align-items: flex-start; justify-content: center; gap: .15em; padding: 0 5vmin 0 3vmin; }
+  .game-bar .name, .game-bar .sub { max-width: 100%; }
+  .game-bar .sub { margin-left: 0; }
 }
 
 /* ?paddebug=1 — on-screen gamepad monitor (raw + normalized pad state) */

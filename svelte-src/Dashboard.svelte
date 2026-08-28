@@ -30,6 +30,10 @@
   let menuSel = $state(1);           // start on Games
   let gameSel = $state(0);
   let clockStr = $state('--:--:--');
+  // Same clock without the seconds, for the cramped strip header. Set in the
+  // tick beside clockStr rather than sliced off it — a slice would cut the
+  // 12-hour string's AM/PM away.
+  let clockShort = $state('--:--');
   let gameSrc = $state(null);
   let gameOn = $state(false);
   let bootGone = $state(false);
@@ -1251,7 +1255,6 @@
   let stripHint = $derived(stripOn ? 'swipe ↔' : curSection.name + ' · ↑ expand');
 
   let currentGame = $derived(GAMES[gameSel]);
-  let clockShort = $derived(clockStr.slice(0, 5));
   // Section header counter. A pinned BYO row labels itself (BYOB / BYOC) rather
   // than claiming an index in the ROM count it isn't part of.
   let counterText = $derived(
@@ -2567,12 +2570,17 @@
   }
 
   onMount(() => {
+    // 12-hour wall clock, the way the phone's own status bar reads it — the
+    // HUD is set dressing, not a mission timer.
     const tick = () => {
       const d = new Date();
-      const h = String(d.getHours()).padStart(2, '0');
+      const h24 = d.getHours();
+      const h = String(h24 % 12 || 12);
       const m = String(d.getMinutes()).padStart(2, '0');
       const s = String(d.getSeconds()).padStart(2, '0');
-      clockStr = h + ':' + m + ':' + s;
+      const ap = h24 < 12 ? 'AM' : 'PM';
+      clockStr = h + ':' + m + ':' + s + ' ' + ap;
+      clockShort = h + ':' + m + ' ' + ap;
     };
     tick();
     clockTimer = setInterval(tick, 1000);
@@ -2797,10 +2805,14 @@
   <div class="topbar">
     <div class="brand">
       <span class="dot"></span>
-      <span>shmupX // codemonkey.games</span>
+      <span>codemonkey.games</span>
     </div>
     <div class="right">
-      <span>{clockStr}</span>
+      <!-- Two clocks, one shown at a time by width: the HUD line is already
+           crowded on a phone, and "10:27:18 PM" wrapping between the seconds
+           and the meridiem looks broken. Narrow screens get the short one. -->
+      <span class="clock full">{clockStr}</span>
+      <span class="clock short">{clockShort}</span>
       <span>core stable</span>
       <span>sys ▮▮▮▮▮▮▮▱</span>
     </div>
