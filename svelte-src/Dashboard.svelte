@@ -378,7 +378,17 @@
   // bottom corners. While one is the active frame the overlay zones are
   // suppressed and the same gestures are detected by listeners injected into
   // the (guaranteed same-origin) frame instead — see injectEditorCornerGesture.
-  let editorFrameActive = $derived(typeof gameSrc === 'string' && /^\/editor(\/|\?|$)/.test(gameSrc));
+  //
+  // The frame can also navigate itself away from the editor (the SAVED GAMES
+  // shelf's player mode swaps it for /games/…), so the live location — read on
+  // each frame load, null for cross-origin frames — outranks gameSrc here:
+  // once the editor frame becomes a game, the corner zones and the Guide's
+  // Sound section come back.
+  let frameUrl = $state(null);
+  let editorFrameActive = $derived.by(() => {
+    const src = typeof frameUrl === 'string' ? frameUrl : gameSrc;
+    return typeof src === 'string' && /^\/editor(\/|\?|$)/.test(src);
+  });
   // Same-origin games get the launcher's Gamepad API patch (Twin-Stick /
   // touch virtual pad); cross-origin games run their own touch analogs off
   // cmg-twinstick-touch-set instead, so the launcher's zones must stand down.
@@ -414,6 +424,47 @@
     catch (_) { return { ...OSD_COLLAPSE_DEFAULTS }; }
   }
   let osdCollapsed = $state(loadCollapsed());
+
+  // ── Sound: BGM/SFX master volumes ─────────────────────────────────────────
+  // Percent sliders in the Guide's Sound section. Persisted to localStorage
+  // under the same keys the 2028-ai runtime reads at boot (same origin), and
+  // posted live into the running frame as 0..1 factors over cmg-volume — so
+  // launcher-hosted and standalone play stay in sync. Defaults: BGM full,
+  // SFX at a third (the effects are tuned loud relative to the music).
+  const VOL_BGM_KEY = 'cmg-vol-bgm';
+  const VOL_SFX_KEY = 'cmg-vol-sfx';
+  function loadVolPct(key, dflt) {
+    try {
+      // parseFloat, not Number: a missing key reads back null, and
+      // Number(null) is 0 — which would silently mute instead of defaulting.
+      const v = parseFloat(localStorage.getItem(key));
+      return Number.isFinite(v) && v >= 0 && v <= 100 ? Math.round(v) : dflt;
+    } catch (_) { return dflt; }
+  }
+  let volBgm = $state(loadVolPct(VOL_BGM_KEY, 100));
+  let volSfx = $state(loadVolPct(VOL_SFX_KEY, 33));
+  // targetOrigin '*' for the same reason as setPlugin: the payload is benign
+  // numbers and a volume-capable game could load cross-origin.
+  function postVolume() {
+    const iframe = document.getElementById('gameframe');
+    try { iframe?.contentWindow?.postMessage({ type: 'cmg-volume', bgm: volBgm / 100, sfx: volSfx / 100 }, '*'); }
+    catch (_) { /* ignore */ }
+  }
+  function setVolume(key, pct) {
+    pct = Math.max(0, Math.min(100, Math.round(pct)));
+    if (key === 'vol-bgm') volBgm = pct; else volSfx = pct;
+    try { localStorage.setItem(key === 'vol-bgm' ? VOL_BGM_KEY : VOL_SFX_KEY, String(pct)); } catch (_) {}
+    postVolume();
+  }
+  // While the Guide is up over a running game, hold the game paused. The frame
+  // acknowledges cmg-pause by sleeping its loop and suspending audio (the
+  // 2028-ai runtime); frames without a listener (e.g. the editor) ignore it.
+  $effect(() => {
+    const paused = osdOpen;
+    if (!gameOn) return;
+    const iframe = document.getElementById('gameframe');
+    try { iframe?.contentWindow?.postMessage({ type: 'cmg-pause', paused }, '*'); } catch (_) { /* ignore */ }
+  });
 
   // Cheats are boot-time URL params on the running game's iframe. A game
   // advertises which ones it supports by postMessage'ing
@@ -629,6 +680,7 @@
     // the editor must stay on the launcher's own origin so its /api/build-apk
     // call and Firebase writes run against the local dev/desktop host, not the
     // read-only deploy.
+    frameUrl = null;
     gameSrc = le.url;
     setTimeout(() => { gameOn = true; }, 30);
   }
@@ -956,6 +1008,15 @@
       { key: p.key, kind: 'toggle', label: p.label, value: p.value, plugin: p.id }
     )));
 
+    // Master volume for the running game (relayed over cmg-volume). The editor
+    // frame plays no audio, so the section hides while it is the active frame.
+    if (gameOn && !editorFrameActive) {
+      addSection('Sound', [
+        { key: 'vol-bgm', kind: 'slider', label: 'BGM', value: volBgm, min: 0, max: 100, step: 5, unit: '%' },
+        { key: 'vol-sfx', kind: 'slider', label: 'SFX', value: volSfx, min: 0, max: 100, step: 5, unit: '%' },
+      ]);
+    }
+
     addSection('Look', [
       { key: 'hue', kind: 'color', label: 'Glow color', value: tweaks.hue, options: HUE_SWATCHES },
       { key: 'breathe', kind: 'slider', label: 'Breathe speed', value: tweaks.breatheSpeed, min: 0.4, max: 2.2, step: 0.1, unit: '×' },
@@ -1011,6 +1072,7 @@
     if (it.param) { setCheat(it.param, it.kind === 'toggle' ? (v ? (it.on || '1') : null) : v); return; }
     // Plugin rows carry a `plugin` id — flip it live in the running game.
     if (it.plugin) { setPlugin(it.plugin, !!v); return; }
+    if (it.key === 'vol-bgm' || it.key === 'vol-sfx') { setVolume(it.key, v); return; }
     if (it.key === 'hue') setTweak('hue', v);
     else if (it.key === 'breathe') setTweak('breatheSpeed', Math.round(v * 10) / 10);
     else if (it.key === 'scanlines') setTweak('scanlines', !!v);
@@ -1534,6 +1596,7 @@
   function launchGame(id) {
     sfx.enter();
     chromeDismissed = false;
+    frameUrl = null;
     const item = GAMES.find((g) => g.id === id);
     if (!item || !item.url) return;
     initTwinStick(id, item);
@@ -1615,6 +1678,7 @@
     const unmount = () => { if (!unmounted) { unmounted = true; gameSrc = null; } };
     setTimeout(unmount, 500);
     gameOn = false;
+    frameUrl = null;
     chromeDismissed = false;
     // Drop the prior game's advertised cheats; the next game re-broadcasts its
     // own on boot. closeGame is the single chokepoint between games (the list
@@ -3152,7 +3216,7 @@
       src={gameSrc}
       title="game"
       allow="autoplay; fullscreen; gamepad; xr-spatial-tracking"
-      onload={(e) => { injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); applyTwinStick(); applyTouchControls(); applyGameTheme(); }}
+      onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); applyTwinStick(); applyTouchControls(); applyGameTheme(); postVolume(); }}
     ></iframe>
   </div>
 {/if}

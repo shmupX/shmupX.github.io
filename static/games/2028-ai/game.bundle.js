@@ -3013,6 +3013,262 @@
     return result;
   }
 
+  // cmg: master-volume + pause runtime (hand-patched into the bundle, like the
+  // other launcher-integration edits). BGM/SFX factors come from localStorage
+  // (cmg-vol-bgm / cmg-vol-sfx, percent — the launcher OSD writes the same
+  // keys) or live cmg-volume messages; cmg-pause sleeps the game loop and
+  // suspends audio while the launcher's Guide is up. Standalone (no parent
+  // frame) the same pause rides a gray PAUSE panel — the STAFF ROLL card's
+  // look — with the two sliders, opened by ESC, START during play, or the
+  // launcher's two-corner tap gesture.
+  var cmgVol = { bgm: 1, sfx: 0.33 };
+  (function () {
+    function pct(key, dflt) {
+      try {
+        var v = parseFloat(localStorage.getItem(key));
+        return isFinite(v) && v >= 0 && v <= 100 ? v / 100 : dflt;
+      } catch (e) {
+        return dflt;
+      }
+    }
+    cmgVol.bgm = pct("cmg-vol-bgm", 1);
+    cmgVol.sfx = pct("cmg-vol-sfx", 0.33);
+  })();
+  function cmgBgmVol(v) {
+    return v * cmgVol.bgm;
+  }
+  function cmgSfxVol(v) {
+    return v * cmgVol.sfx;
+  }
+  var cmgDezaBgms = [];
+  function cmgApplyVolumes() {
+    for (var i = 0; i < cmgDezaBgms.length; i++) {
+      var st = cmgDezaBgms[i];
+      try {
+        st.master.gain.value = BGM_GAIN * cmgVol.bgm;
+        if (st.echo) st.echo.gain.value = (st.echoBase || 0) * cmgVol.bgm;
+      } catch (e) {
+      }
+    }
+    var game = globalThis.__PHASER_4_GAME__ || globalThis.__PHASER_GAME__;
+    var sounds = game && game.sound && game.sound.sounds;
+    if (sounds && sounds.length) {
+      for (var s = 0; s < sounds.length; s++) {
+        var snd = sounds[s];
+        if (snd && typeof snd.__cmgBgmBase === "number") {
+          try {
+            snd.setVolume(cmgBgmVol(snd.__cmgBgmBase));
+          } catch (e2) {
+          }
+        }
+      }
+    }
+  }
+  function cmgSetVolumes(bgm, sfx, persist) {
+    if (typeof bgm === "number" && isFinite(bgm)) cmgVol.bgm = Math.min(1, Math.max(0, bgm));
+    if (typeof sfx === "number" && isFinite(sfx)) cmgVol.sfx = Math.min(1, Math.max(0, sfx));
+    if (persist) {
+      try {
+        localStorage.setItem("cmg-vol-bgm", String(Math.round(cmgVol.bgm * 100)));
+        localStorage.setItem("cmg-vol-sfx", String(Math.round(cmgVol.sfx * 100)));
+      } catch (e) {
+      }
+    }
+    cmgApplyVolumes();
+  }
+  var cmgPaused = false;
+  function cmgSetPaused(p) {
+    p = !!p;
+    if (cmgPaused === p) return;
+    var game = globalThis.__PHASER_4_GAME__ || globalThis.__PHASER_GAME__;
+    if (!game) return;
+    cmgPaused = p;
+    try {
+      if (p) game.loop.sleep();
+      else game.loop.wake();
+    } catch (e) {
+    }
+    // Suspending the shared AudioContext freezes Phaser sounds AND the
+    // Dezaemon synth in place (ctx.currentTime stops, so its scheduled notes
+    // resume exactly where they left off).
+    try {
+      var ctx = game.sound && game.sound.context;
+      if (ctx && typeof ctx.suspend === "function") {
+        if (p) ctx.suspend();
+        else ctx.resume();
+      }
+    } catch (e2) {
+    }
+    // Belt over the suspend: the host page's autoplay-unlock handlers resume
+    // the context on any gesture — including the tap that opened the pause
+    // panel — so pause the individual sounds too. Only the ones playing right
+    // now get paused, so a deliberately parked sound (BGM continuity between
+    // stages) isn't resumed by mistake.
+    try {
+      var list = game.sound && game.sound.sounds;
+      if (list) {
+        for (var i = 0; i < list.length; i++) {
+          var snd = list[i];
+          if (!snd) continue;
+          if (p) {
+            if (snd.isPlaying) {
+              snd.pause();
+              snd.__cmgPausedByPause = true;
+            }
+          } else if (snd.__cmgPausedByPause) {
+            snd.__cmgPausedByPause = false;
+            try {
+              snd.resume();
+            } catch (e3) {
+            }
+          }
+        }
+      }
+    } catch (e4) {
+    }
+  }
+  var cmgPanelEl = null;
+  function cmgPanelVisible() {
+    return !!(cmgPanelEl && cmgPanelEl.style.display !== "none");
+  }
+  function cmgSliderRow(label, key) {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:10px;margin:14px 0;font-size:11px;letter-spacing:.15em;";
+    var lbl = document.createElement("span");
+    lbl.textContent = label;
+    lbl.style.cssText = "width:38px;text-align:left;";
+    var val = document.createElement("span");
+    val.style.cssText = "width:44px;text-align:right;font-family:monospace;";
+    var input = document.createElement("input");
+    input.type = "range";
+    input.min = "0";
+    input.max = "100";
+    input.step = "1";
+    input.value = String(Math.round(cmgVol[key] * 100));
+    input.style.cssText = "flex:1;accent-color:#fff;";
+    val.textContent = input.value + "%";
+    input.addEventListener("input", function () {
+      var v = parseInt(input.value, 10) / 100;
+      cmgSetVolumes(key === "bgm" ? v : void 0, key === "sfx" ? v : void 0, true);
+      val.textContent = input.value + "%";
+    });
+    row.appendChild(lbl);
+    row.appendChild(input);
+    row.appendChild(val);
+    return row;
+  }
+  function cmgEnsurePanel() {
+    if (cmgPanelEl) return;
+    var wrap = document.createElement("div");
+    wrap.id = "cmg-pause-panel";
+    wrap.style.cssText = "position:fixed;inset:0;z-index:10000;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'Orbitron',system-ui,sans-serif;color:#fff;";
+    // The same gray card as the STAFF ROLL panel (0x464646, rounded corners).
+    var card = document.createElement("div");
+    card.style.cssText = "background:rgba(70,70,70,.9);border-radius:8px;padding:20px 24px 22px;width:min(320px,84vw);text-align:center;box-shadow:0 10px 44px rgba(0,0,0,.65);";
+    var title = document.createElement("div");
+    title.textContent = "PAUSE";
+    title.style.cssText = "font-size:16px;font-weight:700;letter-spacing:.34em;text-indent:.34em;margin-bottom:10px;";
+    card.appendChild(title);
+    card.appendChild(cmgSliderRow("BGM", "bgm"));
+    card.appendChild(cmgSliderRow("SFX", "sfx"));
+    var btn = document.createElement("button");
+    btn.textContent = "RESUME";
+    btn.style.cssText = "margin-top:14px;padding:9px 26px;border-radius:6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;font-family:inherit;font-size:11px;letter-spacing:.24em;text-indent:.24em;cursor:pointer;";
+    btn.addEventListener("click", function () {
+      cmgTogglePausePanel();
+    });
+    card.appendChild(btn);
+    wrap.appendChild(card);
+    wrap.addEventListener("pointerdown", function (ev) {
+      if (ev.target === wrap) cmgTogglePausePanel();
+    });
+    document.body.appendChild(wrap);
+    cmgPanelEl = wrap;
+  }
+  function cmgTogglePausePanel() {
+    cmgEnsurePanel();
+    if (cmgPanelVisible()) {
+      cmgPanelEl.style.display = "none";
+      cmgSetPaused(false);
+    } else {
+      cmgPanelEl.style.display = "flex";
+      cmgSetPaused(true);
+    }
+  }
+  function cmgStartPressed() {
+    // START during play. Under a parent frame the launcher's Guide OSD is the
+    // pause UI — toggle it up (opening it posts cmg-pause back down).
+    // Standalone, raise the local PAUSE panel.
+    if (window.parent !== window) {
+      try {
+        window.parent.postMessage({ type: "tg16-toggle-controls" }, "*");
+      } catch (e) {
+      }
+      return;
+    }
+    cmgTogglePausePanel();
+  }
+  (function () {
+    if (typeof window === "undefined") return;
+    window.addEventListener("message", function (ev) {
+      var d = ev && ev.data;
+      if (!d || typeof d !== "object") return;
+      if (d.type === "cmg-volume") cmgSetVolumes(d.bgm, d.sfx, false);
+      else if (d.type === "cmg-pause") cmgSetPaused(!!d.paused);
+    });
+    var standalone;
+    try {
+      standalone = window.parent === window;
+    } catch (e) {
+      standalone = false;
+    }
+    if (!standalone) return;
+    // ESC toggles the PAUSE panel. (Embedded builds never get here — the host
+    // page's OSD_BRIDGE forwards ESC to the launcher instead.)
+    window.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        cmgTogglePausePanel();
+      }
+    });
+    // Two-corner tap (bottom-left + top-right at once) — the launcher's OSD
+    // gesture, honored standalone too. Same zone math as the launcher's
+    // .osd-corner hit-zones: min(13vmin, 104px).
+    var cmgCorners = { bl: false, tr: false };
+    var cmgCornerByPointer = {};
+    function cmgCornerOf(ev) {
+      var zone = Math.min(Math.min(window.innerWidth, window.innerHeight) * 0.13, 104);
+      if (ev.clientX <= zone && ev.clientY >= window.innerHeight - zone) return "bl";
+      if (ev.clientX >= window.innerWidth - zone && ev.clientY <= zone) return "tr";
+      return null;
+    }
+    window.addEventListener("pointerdown", function (ev) {
+      var c = cmgCornerOf(ev);
+      if (!c) return;
+      cmgCornerByPointer[ev.pointerId] = c;
+      cmgCorners[c] = true;
+      if (cmgCorners.bl && cmgCorners.tr) {
+        cmgCorners.bl = false;
+        cmgCorners.tr = false;
+        cmgTogglePausePanel();
+      }
+    }, true);
+    function cmgCornerUp(ev) {
+      var c = cmgCornerByPointer[ev.pointerId];
+      if (!c) return;
+      delete cmgCornerByPointer[ev.pointerId];
+      cmgCorners[c] = false;
+    }
+    window.addEventListener("pointerup", cmgCornerUp, true);
+    window.addEventListener("pointercancel", cmgCornerUp, true);
+    // While the panel is up the game loop sleeps, so the scenes' own gamepad
+    // polling stops — this small poller lets START close it again.
+    setInterval(function () {
+      if (!cmgPaused || !cmgPanelVisible()) return;
+      if (pollGamepads().enter) cmgTogglePausePanel();
+    }, 150);
+  })();
+
   // ../2019-es7/src/phaser/dezaemon-runtime.js
   var TILE = 16;
   var SATURN_TICKS_PER_FRAME = 2;
@@ -3866,7 +4122,8 @@
       scheduled: 0,
       echo: null
     };
-    st.master.gain.value = BGM_GAIN;
+    st.master.gain.value = BGM_GAIN * cmgVol.bgm;
+    cmgDezaBgms.push(st);
     st.master.connect(ctx.destination);
     if (song.echoLevel > 0) {
       var delay = ctx.createDelay(0.5);
@@ -3874,7 +4131,8 @@
       var fb = ctx.createGain();
       fb.gain.value = 0.3;
       var wet = ctx.createGain();
-      wet.gain.value = 0.45 * (song.echoLevel / 7);
+      st.echoBase = 0.45 * (song.echoLevel / 7);
+      wet.gain.value = st.echoBase * cmgVol.bgm;
       st.master.connect(delay);
       delay.connect(fb);
       fb.connect(delay);
@@ -3979,6 +4237,8 @@
       } catch (e2) {
       }
     }
+    var cmgIx = cmgDezaBgms.indexOf(st);
+    if (cmgIx >= 0) cmgDezaBgms.splice(cmgIx, 1);
     scene._dezaBgm = null;
   }
   var SFX_GAIN = 0.14;
@@ -3990,7 +4250,7 @@
     var bank = bgm.sfxSet === 2 ? "comic" : bgm.sfxSet === 3 ? "sf" : "real";
     var t = ctx.currentTime;
     var g = ctx.createGain();
-    g.gain.value = SFX_GAIN;
+    g.gain.value = SFX_GAIN * cmgVol.sfx;
     g.connect(ctx.destination);
     if (name === "explosion" || name === "bossExplosion") {
       var big = name === "bossExplosion";
@@ -4418,9 +4678,9 @@
       }
       try {
         if (this.sound.get(key)) {
-          this.sound.play(key, { volume: 0.7 });
+          this.sound.play(key, { volume: cmgSfxVol(0.7) });
         } else if (this.cache.audio.exists(key)) {
-          this.sound.add(key).play({ volume: 0.7 });
+          this.sound.add(key).play({ volume: cmgSfxVol(0.7) });
         }
       } catch (e) {
       }
@@ -4430,7 +4690,7 @@
         return;
       }
       try {
-        var vol = typeof volume === "number" ? volume : 0.75;
+        var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.75);
         if (this.sound.get(key)) {
           this.sound.play(key, { volume: vol });
         } else if (this.cache.audio.exists(key)) {
@@ -4740,7 +5000,7 @@
         return;
       }
       try {
-        var vol = typeof volume === "number" ? volume : 0.7;
+        var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
         if (this.sound.get(key)) {
           this.sound.play(key, { volume: vol });
         } else if (this.cache.audio.exists(key)) {
@@ -4754,11 +5014,15 @@
         return;
       }
       try {
+        var base = volume || 0.2;
         var existing = this.sound.get(key);
         if (existing) {
-          existing.play({ volume: volume || 0.2, loop: true });
+          existing.__cmgBgmBase = base;
+          existing.play({ volume: cmgBgmVol(base), loop: true });
         } else if (this.cache.audio.exists(key)) {
-          this.sound.add(key, { loop: true, volume: volume || 0.2 }).play();
+          var snd = this.sound.add(key, { loop: true, volume: cmgBgmVol(base) });
+          snd.__cmgBgmBase = base;
+          snd.play();
         }
       } catch (e) {
       }
@@ -5331,6 +5595,12 @@
   function handleKeyboardInput(scene) {
     if (!scene.gameStarted || scene.playerDead || scene.theWorldFlg) return;
     var gp = pollGamepads();
+    // START during play pauses: launcher builds raise the Guide OSD, which
+    // pauses over cmg-pause; standalone raises the local PAUSE panel.
+    if (gp.enter) {
+      cmgStartPressed();
+      return;
+    }
     var moveX = 0;
     var moveY = 0;
     if (scene.cursors && scene.cursors.left.isDown || scene.wasd && scene.wasd.left.isDown || gp.left) {
@@ -5881,22 +6151,37 @@
   // ../2019-es7/src/phaser/effects/Explosions.js
   var GW4 = GAME_DIMENSIONS.WIDTH;
   var GH3 = GAME_DIMENSIONS.HEIGHT;
-  function showExplosion(scene, x, y) {
-    if (!scene.anims.exists("explosion_anim")) {
+  // An effect animation is only as good as the atlas in play: a recipe's
+  // custom atlas (Dezaemon imports especially) may lack these frames, and
+  // generateFrameNames then yields an empty animation whose play() crashes
+  // Phaser (getFirstTick reads currentFrame.duration). Create-if-missing and
+  // report whether the animation is actually playable; a key that came up
+  // empty is remembered so frequent effects (hit impacts) don't re-attempt
+  // and re-warn on every call.
+  var deadEffectAnims = {};
+  function ensureEffectAnim(scene, key, frameRate, names) {
+    if (deadEffectAnims[key]) return false;
+    if (!scene.anims.exists(key)) {
       scene.anims.create({
-        key: "explosion_anim",
-        frames: scene.anims.generateFrameNames("game_asset", {
-          prefix: "explosion",
-          start: 0,
-          end: 6,
-          zeroPad: 2,
-          suffix: ".gif"
-        }),
-        frameRate: 18,
-        //48,
+        key,
+        frames: scene.anims.generateFrameNames("game_asset", names),
+        frameRate,
         repeat: 0
       });
     }
+    var anim = scene.anims.get(key);
+    if (anim && anim.frames && anim.frames.length) return true;
+    deadEffectAnims[key] = true;
+    return false;
+  }
+  function showExplosion(scene, x, y) {
+    if (!ensureEffectAnim(scene, "explosion_anim", 18, {
+      prefix: "explosion",
+      start: 0,
+      end: 6,
+      zeroPad: 2,
+      suffix: ".gif"
+    })) return;
     var ex = scene.add.sprite(x, y, "game_asset", "explosion00.gif");
     ex.setOrigin(0.5);
     ex.setDepth(60);
@@ -5906,20 +6191,13 @@
     });
   }
   function spExplosions(scene) {
-    if (!scene.anims.exists("sp_explosion_anim")) {
-      scene.anims.create({
-        key: "sp_explosion_anim",
-        frames: scene.anims.generateFrameNames("game_asset", {
-          prefix: "spExplosion",
-          start: 0,
-          end: 7,
-          zeroPad: 2,
-          suffix: ".gif"
-        }),
-        frameRate: 24,
-        repeat: 0
-      });
-    }
+    if (!ensureEffectAnim(scene, "sp_explosion_anim", 24, {
+      prefix: "spExplosion",
+      start: 0,
+      end: 7,
+      zeroPad: 2,
+      suffix: ".gif"
+    })) return;
     for (var n = 0; n < 64; n++) {
       (function(idx) {
         scene.time.delayedCall(10 * idx, function() {
@@ -5946,20 +6224,12 @@
   }
   function showHitImpact(scene, x, y, isGuard) {
     var animKey = isGuard ? "guard_impact_anim" : "hit_impact_anim";
-    if (!scene.anims.exists(animKey)) {
-      var prefix = isGuard ? "guard" : "hit";
-      scene.anims.create({
-        key: animKey,
-        frames: scene.anims.generateFrameNames("game_asset", {
-          prefix,
-          start: 0,
-          end: 4,
-          suffix: ".gif"
-        }),
-        frameRate: 48,
-        repeat: 0
-      });
-    }
+    if (!ensureEffectAnim(scene, animKey, 48, {
+      prefix: isGuard ? "guard" : "hit",
+      start: 0,
+      end: 4,
+      suffix: ".gif"
+    })) return;
     var frameKey = isGuard ? "guard0.gif" : "hit0.gif";
     var impact = scene.add.sprite(x, y - 10, "game_asset", frameKey);
     impact.setOrigin(0.5);
@@ -6009,20 +6279,13 @@
     boss.setData("_tintTween", tw);
   }
   function showBossExplosion(scene, x, y) {
-    if (!scene.anims.exists("boss_explosion_anim")) {
-      scene.anims.create({
-        key: "boss_explosion_anim",
-        frames: scene.anims.generateFrameNames("game_asset", {
-          prefix: "explosion",
-          start: 0,
-          end: 6,
-          zeroPad: 2,
-          suffix: ".gif"
-        }),
-        frameRate: 18,
-        repeat: 0
-      });
-    }
+    if (!ensureEffectAnim(scene, "boss_explosion_anim", 18, {
+      prefix: "explosion",
+      start: 0,
+      end: 6,
+      zeroPad: 2,
+      suffix: ".gif"
+    })) return;
     var ex = scene.add.sprite(x, y, "game_asset", "explosion00.gif");
     ex.setOrigin(0.5);
     ex.setDepth(60);
@@ -8372,7 +8635,7 @@
         if (deza && playDezaemonSfx(this, deza)) return;
       }
       try {
-        var vol = typeof volume === "number" ? volume : 0.7;
+        var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
         if (this.cache.audio.exists(key)) {
           var existing = this.sound.get(key);
           if (existing) {
@@ -8388,12 +8651,16 @@
       if (gameState.lowModeFlg) return;
       try {
         if (this.cache.audio.exists(key)) {
+          var base = volume || 0.4;
           var existing = this.sound.get(key);
           if (existing) {
             if (existing.isPlaying) existing.stop();
-            existing.play({ volume: volume || 0.4, loop: true });
+            existing.__cmgBgmBase = base;
+            existing.play({ volume: cmgBgmVol(base), loop: true });
           } else {
-            this.sound.add(key, { loop: true, volume: volume || 0.4 }).play();
+            var snd = this.sound.add(key, { loop: true, volume: cmgBgmVol(base) });
+            snd.__cmgBgmBase = base;
+            snd.play();
           }
         }
       } catch (e) {
@@ -9251,7 +9518,7 @@
     playSound(key, volume) {
       if (gameState.lowModeFlg) return;
       try {
-        var vol = typeof volume === "number" ? volume : 0.7;
+        var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
         if (this.cache.audio.exists(key)) {
           var existing = this.sound.get(key);
           if (existing) {
@@ -9267,12 +9534,16 @@
       if (gameState.lowModeFlg) return;
       try {
         if (this.cache.audio.exists(key)) {
+          var base = volume || 0.25;
           var existing = this.sound.get(key);
           if (existing) {
             if (existing.isPlaying) existing.stop();
-            existing.play({ volume: volume || 0.25, loop: true });
+            existing.__cmgBgmBase = base;
+            existing.play({ volume: cmgBgmVol(base), loop: true });
           } else {
-            this.sound.add(key, { loop: true, volume: volume || 0.25 }).play();
+            var snd = this.sound.add(key, { loop: true, volume: cmgBgmVol(base) });
+            snd.__cmgBgmBase = base;
+            snd.play();
           }
         }
       } catch (e) {
@@ -9675,7 +9946,7 @@
     playSound(key, volume) {
       if (gameState.lowModeFlg) return;
       try {
-        var vol = typeof volume === "number" ? volume : 0.7;
+        var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
         if (this.cache.audio.exists(key)) {
           var existing = this.sound.get(key);
           if (existing) {

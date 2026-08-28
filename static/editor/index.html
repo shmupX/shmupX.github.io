@@ -53,6 +53,14 @@
             font-display: swap;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+        /* CRT scrollbars — thin green thumb on a transparent track (themes swap
+           the color through --redge). scrollbar-color inherits from body. */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--redge); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--bedge); }
+        ::-webkit-scrollbar-corner { background: transparent; }
+        body { scrollbar-width: thin; scrollbar-color: var(--redge) transparent; }
         body {
             font-family: 'Orbitron', system-ui, -apple-system, sans-serif; color: #fff; overflow: hidden; touch-action: manipulation;
             background: radial-gradient(ellipse 80% 60% at 38% 55%, rgba(20,90,40,.45), transparent 70%),
@@ -141,6 +149,10 @@
         .badge:active { transform: scale(0.95); }
         .badge.menu-badge { font-size: 15px; }
         .badge img { width: 30px; height: 30px; image-rendering: pixelated; object-fit: contain; }
+        .badge svg { width: 22px; height: 22px; display: block; }
+        /* While a Dezaemon .sav game is loaded the drawer shows only the
+           controls that apply to it — directory/cloud/export rows hide. */
+        body.sav-loaded .hide-when-sav { display: none !important; }
         .badge.active {
             border-color: #F6FF4A; color: #F6FF4A;
             background: radial-gradient(circle at 35% 30%, rgba(60,120,60,.9), rgba(6,30,12,.95) 70%);
@@ -161,7 +173,10 @@
         #stage-rail { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 8px 16px 10px; }
         .rail-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .2em; color: rgba(156,255,107,.5); }
         body.theme-nintendo .rail-label { color: rgba(139,160,194,.7); }
-        .tb-pills { display: flex; gap: 12px; align-items: center; overflow-x: auto; flex-shrink: 1; min-width: 0; }
+        /* Padding + negative margin give the selected orb's 18-26px glow room
+           to render inside the scrollport instead of being clipped at its edges. */
+        .tb-pills { display: flex; gap: 12px; align-items: center; overflow-x: auto; flex-shrink: 1; min-width: 0; padding: 16px; margin: -16px; scrollbar-width: none; }
+        .tb-pills::-webkit-scrollbar { display: none; }
         .tb-pill {
             width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
             font-size: 11px; font-weight: 800; cursor: pointer; flex-shrink: 0;
@@ -778,15 +793,17 @@
             <button id="powerup-picker-btn" class="badge" title="Select item drop" onclick="openPicker('powerup')">
                 <span id="powerup-btn-img"></span>
             </button>
-            <!-- Delete badge -->
-            <button id="delete-mode-btn" class="badge" title="Delete mode" onclick="setDeleteMode()">DL</button>
+            <!-- Delete badge (Lucide eraser) -->
+            <button id="delete-mode-btn" class="badge" title="Delete mode" onclick="setDeleteMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
 
             <div class="tb-spacer"></div>
 
+            <!-- Play (Lucide play) -->
+            <button class="badge" title="Play in Phaser" onclick="playCurrentStage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
             <!-- Boss Viewer -->
             <a id="boss-viewer-link" href="boss-viewer.html" class="badge" title="Boss viewer">BV</a>
-            <!-- Save -->
-            <button class="badge" title="Save" onclick="quickSave()">SV</button>
+            <!-- Save (Lucide save) -->
+            <button class="badge" title="Save" onclick="quickSave()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></button>
             <!-- Menu -->
             <button class="badge menu-badge" title="Menu" onclick="openMenu()">≡</button>
         </div>
@@ -845,17 +862,14 @@
     <div id="menu-backdrop" class="menu-backdrop hidden" onclick="closeMenu()"></div>
     <div id="menu-panel" class="menu-panel hidden">
         <div class="drawer-banner">SYSTEM MENU</div>
-        <div id="back-to-game-section" style="display:none">
-            <button class="menu-row" onclick="closeMenu();if(window.parent&&window.parent!==window&&typeof window.parent.howtoModalClose==='function')window.parent.howtoModalClose()"><span class="mono-badge">✕</span>BACK TO GAME</button>
-        </div>
         <div class="menu-label">WAVES</div>
         <div class="menu-duo">
             <button class="menu-row" onclick="addWave();closeMenu()"><span class="accent">+</span> ADD WAVE</button>
             <button class="menu-row" onclick="deleteLastWave();closeMenu()"><span class="accent del">−</span> DELETE WAVE</button>
         </div>
         <div class="menu-label">FILE SYSTEM</div>
-        <button class="menu-row" onclick="loadDirectory();closeMenu()"><span class="mono-badge">LD</span>LOAD DIRECTORY</button>
-        <button class="menu-row" onclick="saveAll();closeMenu()"><span class="mono-badge">SA</span>SAVE ALL</button>
+        <button class="menu-row hide-when-sav" onclick="loadDirectory();closeMenu()"><span class="mono-badge">LD</span>LOAD DIRECTORY</button>
+        <button class="menu-row hide-when-sav" onclick="saveAll();closeMenu()"><span class="mono-badge">SA</span>SAVE ALL</button>
         <button class="menu-row" onclick="playCurrentStage();closeMenu()"><span class="mono-badge">PL</span>PLAY IN PHASER</button>
         <button class="display-row toggle-row" onclick="toggleGodMode()" title="Launch PLAY with player invincibility (?god=1)">
             <span class="display-lbl">GOD MODE</span>
@@ -865,16 +879,16 @@
             <span class="display-lbl">NO STORY</span>
             <span class="toggle"><span id="nostory-knob" class="knob off"></span></span>
         </button>
-        <button class="menu-row" onclick="exportCurrentLevelJSON();closeMenu()"><span class="mono-badge">EX</span>EXPORT JSON</button>
-        <button class="menu-row" onclick="saveAs3D();closeMenu()"><span class="mono-badge">3D</span>SAVE AS 3D</button>
+        <button class="menu-row hide-when-sav" onclick="exportCurrentLevelJSON();closeMenu()"><span class="mono-badge">EX</span>EXPORT JSON</button>
+        <button class="menu-row hide-when-sav" onclick="saveAs3D();closeMenu()"><span class="mono-badge">3D</span>SAVE AS 3D</button>
         <button class="menu-row" onclick="play3D();closeMenu()"><span class="mono-badge">P3</span>PLAY 3D</button>
-        <button class="menu-row" onclick="saveAsVoxel3D();closeMenu()" title="Voxelize every atlas frame (Pixel Composer, pitch/yaw 10) and publish a Phaser 4.2.1 dual-mode (2D shooter / 3D super scaler) build at a URL"><span class="mono-badge">V3</span>SAVE AS VOXEL 3D</button>
-        <div class="menu-label">GAME SAVE (CLOUD)</div>
-        <input id="firebase-level-name" type="text" placeholder="MY GAME NAME" class="menu-input" style="margin-bottom:0">
-        <button class="menu-row" onclick="saveToFirebase()"><span class="mono-badge">SG</span>SAVE GAME</button>
-        <button class="menu-row" onclick="loadFromFirebasePrompt()"><span class="mono-badge">LG</span>LOAD GAME</button>
-        <button class="menu-row" onclick="playFirebaseLevel()"><span class="mono-badge">PG</span>PLAY GAME</button>
-        <div class="display-row" title="Which app the export builds. Linux/Windows are Electron desktop builds; a Windows build from a Linux host needs wine on PATH.">
+        <button class="menu-row hide-when-sav" onclick="saveAsVoxel3D();closeMenu()" title="Voxelize every atlas frame (Pixel Composer, pitch/yaw 10) and publish a Phaser 4.2.1 dual-mode (2D shooter / 3D super scaler) build at a URL"><span class="mono-badge">V3</span>SAVE AS VOXEL 3D</button>
+        <div class="menu-label hide-when-sav">GAME SAVE (CLOUD)</div>
+        <input id="firebase-level-name" type="text" placeholder="MY GAME NAME" class="menu-input hide-when-sav" style="margin-bottom:0">
+        <button class="menu-row hide-when-sav" onclick="saveToFirebase()"><span class="mono-badge">SG</span>SAVE GAME</button>
+        <button class="menu-row hide-when-sav" onclick="loadFromFirebasePrompt()"><span class="mono-badge">LG</span>LOAD GAME</button>
+        <button class="menu-row hide-when-sav" onclick="playFirebaseLevel()"><span class="mono-badge">PG</span>PLAY GAME</button>
+        <div class="display-row hide-when-sav" title="Which app the export builds. Linux/Windows are Electron desktop builds; a Windows build from a Linux host needs wine on PATH.">
             <span class="display-lbl">TARGET</span>
             <div class="seg-wrap" id="export-platform-segs">
                 <button class="seg xseg" data-platform="android" onclick="setExportPlatform('android')">ANDROID</button>
@@ -883,14 +897,14 @@
                 <button class="seg xseg" data-platform="windows" onclick="setExportPlatform('windows')">WIN</button>
             </div>
         </div>
-        <button class="menu-row" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
-        <div id="export-apk-status" class="menu-note"></div>
+        <button class="menu-row hide-when-sav" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
+        <div id="export-apk-status" class="menu-note hide-when-sav"></div>
         <div class="menu-label">DEZAEMON 2 (SATURN)</div>
         <button class="menu-row" onclick="startNewGame();closeMenu()"><span class="mono-badge">NG</span>NEW GAME</button>
-        <button class="menu-row" onclick="openDezaemonImport()"><span class="mono-badge">SV</span>IMPORT .SAV</button>
-        <input id="deza-url-input" type="url" placeholder="HTTPS://…/GAME.SAV" class="menu-input" style="margin-bottom:0"
+        <button class="menu-row hide-when-sav" onclick="openDezaemonImport()"><span class="mono-badge">SV</span>IMPORT .SAV</button>
+        <input id="deza-url-input" type="url" placeholder="HTTPS://…/GAME.SAV" class="menu-input hide-when-sav" style="margin-bottom:0"
                onkeydown="if(event.key==='Enter')document.getElementById('deza-url-btn').click()">
-        <button class="menu-row" id="deza-url-btn" onclick="importDezaemonFromUrlInput()"><span class="mono-badge">UR</span>IMPORT .SAV FROM URL</button>
+        <button class="menu-row hide-when-sav" id="deza-url-btn" onclick="importDezaemonFromUrlInput()"><span class="mono-badge">UR</span>IMPORT .SAV FROM URL</button>
         <button class="menu-row" id="deza-library-btn" onclick="openDezaemonLibrary()"><span class="mono-badge">LG</span>LOAD GAME</button>
         <div class="menu-note">SATURN BACKUP SAVES: .SAV / .BCR / .BKR</div>
         <div class="menu-label">ADVANCED EDITORS</div>
@@ -946,6 +960,12 @@
             <div class="picker-title">SAVED GAMES
                 <span id="deza-library-count" class="deza-kind"></span>
             </div>
+            <button class="display-row toggle-row" onclick="toggleDezaEditFirst()"
+                    title="ON: a game opens in the editor to tweak first. OFF: a game plays immediately.">
+                <span class="display-lbl">EDIT FIRST</span>
+                <span class="toggle"><span id="deza-editfirst-knob" class="knob off"></span></span>
+            </button>
+            <div id="deza-editfirst-note" class="menu-note" style="margin-top:0"></div>
             <div id="deza-library-list" class="deza-slots"></div>
         </div>
     </div>
@@ -1559,12 +1579,6 @@
             return getThumbURL(pt.frame);
         }
 
-        // Show "Back to Game" when loaded inside an iframe (Cordova modal)
-        if (window.parent && window.parent !== window) {
-            var bsec = document.getElementById('back-to-game-section');
-            if (bsec) bsec.style.display = '';
-        }
-
         // ================== MENU ==================
         function openMenu() {
             document.getElementById('menu-backdrop').classList.remove('hidden');
@@ -1663,6 +1677,7 @@
                     dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
                     document.getElementById('status').textContent = `STATUS: DIR: ${dirHandle.name.toUpperCase()}`;
                     flash('DIRECTORY LOADED: ' + dirHandle.name.toUpperCase());
+                    document.body.classList.remove('sav-loaded');
                     await loadGameFiles();
                 } catch (e) { alert("Directory picker cancelled or not supported"); }
             } else {
@@ -1746,6 +1761,7 @@
             const dirName = (files[0].webkitRelativePath || '').split('/')[0] || 'folder';
             document.getElementById('status').textContent = `STATUS: DIR: ${dirName.toUpperCase()}`;
             flash('DIRECTORY LOADED: ' + dirName.toUpperCase());
+            document.body.classList.remove('sav-loaded');
             populateStagePills();
             loadCurrentStage();
             renderAll();
@@ -2215,6 +2231,9 @@
             if (currentTool === 'delete') flash('DELETE TOOL ARMED');
         }
 
+        // Lucide zap — the powerup badge's face when no item art is armed.
+        const POWERUP_ZAP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>';
+
         function updateToolUI() {
             // Enemy button
             const eBtn = document.getElementById('enemy-picker-btn');
@@ -2248,10 +2267,10 @@
                     img.style.cssText = 'width:28px;height:28px;image-rendering:pixelated;object-fit:contain;';
                     pBtnImg.appendChild(img);
                 } else {
-                    pBtnImg.textContent = 'IT';
+                    pBtnImg.innerHTML = POWERUP_ZAP_SVG;
                 }
             } else {
-                pBtnImg.textContent = 'IT';
+                pBtnImg.innerHTML = POWERUP_ZAP_SVG;
             }
             pBtn.classList.toggle('active', selectedPowerup !== '0');
 
@@ -3770,7 +3789,7 @@
             return r;
         }
 
-        async function playCurrentStage() {
+        async function playCurrentStage(opts) {
             if (!gameData) { alert('Load directory first'); return; }
             if (!syncEnemyEditorForm(true)) return;
             const sid = getCurrentStageId();
@@ -3790,7 +3809,12 @@
             // this is normally a fast no-op rewrite; it settles well inside the
             // window where a click still authorizes window.open.
             await storeAtlasForViewers();
-            window.open(`${GAME_PLAY_URL}?editorPlay=1&stage=${sid}${godModeParam()}`, '_blank');
+            const playUrl = `${GAME_PLAY_URL}?editorPlay=1&stage=${sid}${godModeParam()}`;
+            // navigate: swap this page (or this launcher frame) for the game
+            // instead of opening a tab — the shelf's player mode uses it so a
+            // slow cart fetch can't outlive the click's popup allowance.
+            if (opts && opts.navigate) { location.assign(playUrl); return; }
+            window.open(playUrl, '_blank');
         }
 
         function exportCurrentLevelJSON() {
@@ -3913,6 +3937,7 @@
             if (nameInput) nameInput.value = '';
             setDezaStatus('NEW GAME (UNSAVED)');
             flash('NEW GAME — STAGE 00');
+            document.body.classList.remove('sav-loaded');
         }
 
         function setDezaStatus(text) {
@@ -4241,12 +4266,31 @@
             return title ? { title } : null;
         }
 
+        // EDIT FIRST: ON loads a shelf game into the editor (slot sheet on
+        // multi-slot carts, import-notes alert, editor grid). OFF — the
+        // default — is player mode: one tap imports the cart silently and
+        // swaps this page for the game. Persisted like the display prefs.
+        let dezaEditFirstOn = false;
+        try { dezaEditFirstOn = localStorage.getItem('cmg-deza-edit-first') === '1'; } catch (e) {}
+        function updateDezaEditFirstUI() {
+            const k = document.getElementById('deza-editfirst-knob');
+            if (k) k.classList.toggle('off', !dezaEditFirstOn);
+            const n = document.getElementById('deza-editfirst-note');
+            if (n) n.textContent = dezaEditFirstOn ? 'TAP A GAME TO OPEN IT IN THE EDITOR' : 'TAP A GAME TO PLAY IT INSTANTLY';
+        }
+        function toggleDezaEditFirst() {
+            dezaEditFirstOn = !dezaEditFirstOn;
+            try { localStorage.setItem('cmg-deza-edit-first', dezaEditFirstOn ? '1' : '0'); } catch (e) {}
+            updateDezaEditFirstUI();
+        }
+
         async function openDezaemonLibrary() {
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
             closeMenu();
             const modal = document.getElementById('dezaemon-library-modal');
             const list = document.getElementById('deza-library-list');
             modal.classList.remove('hidden');
+            updateDezaEditFirstUI();
             if (!dezaLibraryState) {
                 list.innerHTML = '<div class="menu-note">LOADING…</div>';
                 try {
@@ -4366,22 +4410,31 @@
             // exactly one game save, import it straight away — the slot sheet
             // never opens, so there is no IMPORT button to double-press and no
             // per-frame preview to build. Multi-slot carts keep the sheet for
-            // the choice.
+            // the choice — except in player mode (EDIT FIRST off), which takes
+            // the first game save so the tap always goes straight to play.
+            const playNow = !dezaEditFirstOn;
             const st = dezaImportState;
             const usable = [];
             st.saves.forEach((s, i) => { if (window.Dezaemon.isGameSave(s) && s.payload) usable.push(i); });
-            if (usable.length !== 1) { openDezaemonImportModal(); return; }
+            // A cart with no usable slot always gets the sheet — it shows
+            // what is wrong with each slot.
+            if (!usable.length || (usable.length !== 1 && !playNow)) { openDezaemonImportModal(); return; }
             selectDezaemonSlotState(usable[0]);
-            const imported = await applyDezaemonImport();
+            const imported = await applyDezaemonImport({ silent: playNow });
+            if (!imported) return;
             // The shelf knows this save's table row by filename match —
             // refine the credits the import just attached (it looked up
             // the cart's own title, which can differ from the filename).
-            if (imported && gameData) {
+            if (gameData) {
                 if (meta) gameData.dezaemonCredits = dezaCreditsFromMeta(meta);
                 else if (!gameData.dezaemonCredits) {
                     gameData.dezaemonCredits = { title: fallbackTitle || file.replace(/\.sav$/i, '') };
                 }
             }
+            // Player mode: swap this page for the game (same-tab / same-frame
+            // navigation, so no popup blocker in the way — and under the
+            // launcher the game inherits the frame with the Guide OSD intact).
+            if (playNow) playCurrentStage({ navigate: true });
         }
 
         function renderDezaemonSlots() {
@@ -4518,7 +4571,7 @@
             return lines.join('\n');
         }
 
-        async function applyDezaemonImport() {
+        async function applyDezaemonImport(opts) {
             const st = dezaImportState;
             if (!st || st.selectedSlot === null || !st.decoded || st.importing) return false;
             // Close the sheet and refuse re-entry up front: the import below is
@@ -4529,7 +4582,7 @@
             document.getElementById('dezaemon-import-modal').classList.add('hidden');
             setDezaStatus('IMPORTING…');
             try {
-                await applyDezaemonImportInner(st);
+                await applyDezaemonImportInner(st, opts);
                 return true;
             } catch (err) {
                 setDezaStatus('IMPORT FAILED');
@@ -4540,7 +4593,7 @@
             }
         }
 
-        async function applyDezaemonImportInner(st) {
+        async function applyDezaemonImportInner(st, opts) {
             const save = st.saves[st.selectedSlot];
             snapshotDefaultsOnce();
             let { gameJson, sprites, warnings } = window.Dezaemon.mapSaveToGame(st.decoded, {
@@ -4646,6 +4699,9 @@
             const title = st.decoded.title || save.comment || 'DEZAEMON 2 GAME';
             setDezaStatus('IMPORTED: ' + title + ' (DEZAEMON 2)');
             flash('IMPORTED: ' + title);
+            // A loaded .sav trims the drawer to the controls that apply to it
+            // (see body.sav-loaded); NEW GAME / directory / cloud loads restore it.
+            document.body.classList.add('sav-loaded');
             const notes = warnings.slice();
             const importedStages = Object.keys(gameData).filter(k => /^stage\d+$/.test(k));
             const spawnCount = importedStages.reduce((n, k) =>
@@ -4669,7 +4725,8 @@
                     ' songs from the save play as its soundtrack (chiptune-voiced), with the ' +
                     (bankNames[gameData.dezaemonBgm.sfxSet] || 'REAL') + ' effect bank.');
             }
-            if (notes.length) alert('Import notes:\n- ' + notes.join('\n- '));
+            // Player-mode (silent) imports go straight to play — no notes popup.
+            if (notes.length && !(opts && opts.silent)) alert('Import notes:\n- ' + notes.join('\n- '));
         }
 
         // ?sav=<url> opens the importer straight from a link, so the launcher (or
@@ -7777,6 +7834,7 @@ function GAME3D_RUNTIME(DATA) {
                 }
                 document.getElementById('firebase-level-name').value = name;
                 document.getElementById('status').textContent = `STATUS: GAME: ${String(name).toUpperCase()} (CLOUD)`;
+                document.body.classList.remove('sav-loaded');
 // Restore sprite thumbnails from Firebase data
                 if (d.frameThumbnails) restoreFrameThumbnails(d.frameThumbnails);
                 renderGrid(); updateToolUI(); renderEnemyList();
