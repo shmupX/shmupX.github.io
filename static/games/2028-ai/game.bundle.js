@@ -2759,8 +2759,8 @@
         this.addLinkButton("staffrollTwitterBtn.gif", 178, 304, "https://twitter.com/rereibara");
         this.addLinkButton("staffrollLinkBtn.gif", 153, 329, "https://magazine.jp.square-enix.com/biggangan/introduction/highscoregirl/");
         this.addLinkButton("staffrollLinkBtn.gif", 161, 355, "http://hi-score-girl.com/");
-        var thanksLabelStyle = { fontSize: "8px", fontFamily: "Orbitron, Arial", fill: "#ffff00", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 4 };
-        var thanksNameStyle = { fontSize: "7px", fontFamily: "Orbitron, Arial", fill: "#ffffff", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 4 };
+        var thanksLabelStyle = { fontSize: "8px", fontFamily: "Orbitron, Arial", fill: "#ffff00", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 1 };
+        var thanksNameStyle = { fontSize: "7px", fontFamily: "Orbitron, Arial", fill: "#ffffff", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 1 };
         this.thanksLabel = scene.add.text(this.GCX, 393, "SPECIAL THANKS", thanksLabelStyle);
         this.thanksLabel.setOrigin(0.5, 0);
         this.add(this.thanksLabel);
@@ -2774,6 +2774,14 @@
       });
       scene.add.existing(this);
       this.showWithAnimation();
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(() => {
+          if (!this.active) return;
+          this.list.forEach(function(child) {
+            if (child.updateText) child.updateText();
+          });
+        });
+      }
     }
     // The import's credits card: title and developer, English and Japanese.
     _addDezaCredits(credits) {
@@ -2787,27 +2795,33 @@
         y += t.height + 6;
         return t;
       };
-      var base = { fontFamily: "Orbitron, Arial, sans-serif", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 4, wordWrap: { width: this.GW - 44 } };
-      addLine(credits.title, { ...base, fontSize: "14px", fill: "#ffd700" });
+      // Orbitron carries no Japanese glyphs — the JP families take over
+      // per-glyph for kana/kanji. No stroke: the dark card supplies the
+      // contrast, and a 2px stroke fills small kanji in solid. resolution
+      // stays 1: the 256px framebuffer draws these 1:1, and a higher-res
+      // raster only gets minified back down (pixelArt NEAREST), which
+      // shreds kanji strokes — native-ppem hinting beats supersampling.
+      var base = { fontFamily: 'Orbitron, "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", Meiryo, sans-serif', align: "center", resolution: 1, wordWrap: { width: this.GW - 44 } };
+      addLine(credits.title, { ...base, fontSize: "14px", fontStyle: "bold", fill: "#ffd700" });
       if (credits.titleJa && credits.titleJa !== credits.title) {
-        addLine(credits.titleJa, { ...base, fontSize: "11px", fill: "#ffffff" });
+        addLine(credits.titleJa, { ...base, fontSize: "12px", fill: "#ffffff" });
       }
       if (credits.developer) {
         y += 24;
-        addLine("DEVELOPER", { ...base, fontSize: "8px", fill: "#ffff00" });
+        addLine("DEVELOPER", { ...base, fontSize: "9px", fontStyle: "bold", fill: "#ffff00" });
         addLine(credits.developer, { ...base, fontSize: "12px", fill: "#ffffff" });
         if (credits.developerJa && credits.developerJa !== credits.developer) {
-          addLine(credits.developerJa, { ...base, fontSize: "10px", fill: "#cccccc" });
+          addLine(credits.developerJa, { ...base, fontSize: "11px", fill: "#cccccc" });
         }
       }
       if (credits.genre || credits.genreJa) {
         y += 24;
-        addLine("GENRE", { ...base, fontSize: "8px", fill: "#ffff00" });
+        addLine("GENRE", { ...base, fontSize: "9px", fontStyle: "bold", fill: "#ffff00" });
         if (credits.genre) {
           addLine(credits.genre.toUpperCase(), { ...base, fontSize: "10px", fill: "#9be37f" });
         }
         if (credits.genreJa && credits.genreJa !== credits.genre) {
-          addLine(credits.genreJa, { ...base, fontSize: "9px", fill: "#9be37f" });
+          addLine(credits.genreJa, { ...base, fontSize: "11px", fill: "#9be37f" });
         }
       }
     }

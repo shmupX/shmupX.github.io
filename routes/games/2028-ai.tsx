@@ -108,6 +108,16 @@ const CHEATS_BROADCAST = `
 })();
 `;
 
+// A font declared only in @font-face never loads for canvas text (canvas
+// drawing doesn't count as CSS usage), so start the fetch explicitly. Any
+// text object drawn before it lands gets re-rendered by the runtime's
+// document.fonts.ready hook.
+const FONT_PRELOAD = `
+if (document.fonts && document.fonts.load) {
+  document.fonts.load("700 16px Orbitron").catch(function () {});
+}
+`;
+
 // Screen-fit + portrait, ported from 2019-es7/phaser-game.html.
 const FIT_PORTRAIT = `
 (function () {
@@ -229,6 +239,16 @@ export default define.page(function Game2028() {
         />
         <style>
           {`
+          /* The runtime's STAFF ROLL card renders canvas text in Orbitron;
+             declared here because canvas usage alone never fetches a CSS
+             font — FONT_PRELOAD below starts the load. */
+          @font-face {
+            font-family: 'Orbitron';
+            src: url('/games/2028-ai/assets/fonts/Orbitron-Variable.woff2') format('woff2'),
+                 url('/games/2028-ai/assets/fonts/Orbitron-Variable.ttf') format('truetype');
+            font-weight: 400 900;
+            font-display: swap;
+          }
           html, body {
             margin: 0;
             padding: 0;
@@ -310,6 +330,7 @@ export default define.page(function Game2028() {
         <script dangerouslySetInnerHTML={{ __html: OSD_BRIDGE }} />
         <script dangerouslySetInnerHTML={{ __html: LEVEL_EDITOR_BROADCAST }} />
         <script dangerouslySetInnerHTML={{ __html: AUDIO_UNLOCK }} />
+        <script dangerouslySetInnerHTML={{ __html: FONT_PRELOAD }} />
         <script dangerouslySetInnerHTML={{ __html: FIT_PORTRAIT }} />
       </Head>
 

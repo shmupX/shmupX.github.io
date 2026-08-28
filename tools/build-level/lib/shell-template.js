@@ -131,7 +131,17 @@ const FIT_PORTRAIT = `
 })();
 `;
 
+// The runtime's STAFF ROLL card renders canvas text in Orbitron (the file is
+// staged with the wholesale assets/ copy). Canvas usage alone never fetches a
+// CSS font, so FONT_PRELOAD starts the load explicitly.
 const STYLE = `
+@font-face {
+  font-family: 'Orbitron';
+  src: url('assets/fonts/Orbitron-Variable.woff2') format('woff2'),
+       url('assets/fonts/Orbitron-Variable.ttf') format('truetype');
+  font-weight: 400 900;
+  font-display: swap;
+}
 html, body { margin: 0; padding: 0; width: 100%; height: 100%; height: 100dvh; background: #000; overflow: hidden; overscroll-behavior: none; touch-action: none; }
 #phaser-canvas { width: 100%; height: 100%; height: 100dvh; display: flex; align-items: center; justify-content: center; box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
 #phaser-canvas canvas { image-rendering: pixelated; image-rendering: crisp-edges; touch-action: none; }
@@ -139,6 +149,12 @@ html, body { margin: 0; padding: 0; width: 100%; height: 100%; height: 100dvh; b
   html { transform: rotate(-90deg); transform-origin: left top; width: 100vh; height: 100vw; overflow: hidden; position: absolute; top: 100%; left: 0; }
   html body { height: 100%; }
   html #phaser-canvas { height: 100%; }
+}
+`;
+
+const FONT_PRELOAD = `
+if (document.fonts && document.fonts.load) {
+  document.fonts.load("700 16px Orbitron").catch(function () {});
 }
 `;
 
@@ -212,6 +228,7 @@ function renderShell(opts) {
     <div id="phaser-canvas"></div>
 
     <script>${AUDIO_UNLOCK}</script>
+    <script>${FONT_PRELOAD}</script>
     <script>${FIT_PORTRAIT}</script>${gamepadTag}
     <script src="lib/phaser.min.js"></script>
     <script src="game.bundle.js"></script>
