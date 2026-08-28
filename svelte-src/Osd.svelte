@@ -48,6 +48,17 @@
     // Buttons + toggles act on the row tap; slider/color have their own controls.
     if (it.kind === 'button' || it.kind === 'toggle') onactivate(i);
   }
+  // Keyboard twin of rowClick: a row is click-focusable (tabindex="-1"), and a
+  // role="menuitem" div synthesizes no click on Enter/Space. stopPropagation so
+  // the Dashboard's window-level onKey doesn't activate the row a second time.
+  function rowKey(it, i) {
+    return (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      e.stopPropagation();
+      rowClick(it, i);
+    };
+  }
 
   // ── blade grouping ──────────────────────────────────────────────────────────
   // Fold the flat item list into [{ key, label, headerIndex, collapsed, rows }]
@@ -147,6 +158,7 @@
     tabindex="-1"
     onpointerenter={() => onselect(i)}
     onclick={() => rowClick(it, i)}
+    onkeydown={rowKey(it, i)}
   >
     <span class="osd-lbl">{it.label}</span>
 
@@ -155,7 +167,7 @@
     {:else if it.kind === 'toggle'}
       <span class="osd-toggle" data-on={it.value ? '1' : '0'} aria-hidden="true"><i></i></span>
     {:else if it.kind === 'slider'}
-      <span class="osd-ctl" onclick={(e) => e.stopPropagation()}>
+      <span class="osd-ctl" role="presentation" onclick={(e) => e.stopPropagation()}>
         <span class="osd-val">{it.value}{it.unit ?? ''}</span>
         <!-- it.commit sliders (cheats, which reload the game on apply)
              fire on change/drag-end only; live sliders (tweaks) on input. -->
@@ -169,7 +181,7 @@
         />
       </span>
     {:else if it.kind === 'color'}
-      <span class="osd-chips" onclick={(e) => e.stopPropagation()}>
+      <span class="osd-chips" role="presentation" onclick={(e) => e.stopPropagation()}>
         {#each it.options as opt (opt.hue)}
           <button
             type="button"
@@ -194,7 +206,8 @@
       class="osd-blades"
       role="menu"
       aria-label="Guide"
-      onclick={(e) => { if (e.target === e.currentTarget) onclose(); }}
+      tabindex="-1"
+      onpointerdown={(e) => { if (e.target === e.currentTarget) onclose(); }}
     >
       <!-- Top status strip — battery / pad / avatar / now-playing / clock. -->
       <div class="osd-guide-top">
@@ -218,6 +231,7 @@
         {#each groups as g, gi (g.key)}
           <div
             class="blade {gi === activeGroup ? 'active' : ''}"
+            role="presentation"
             onclick={() => bladePick(gi)}
           >
             <div class="blade-sheen" aria-hidden="true"></div>
@@ -238,7 +252,7 @@
               {/if}
             </button>
             {#if gi === activeGroup}
-              <div class="blade-body" onclick={(e) => e.stopPropagation()}>
+              <div class="blade-body" role="presentation" onclick={(e) => e.stopPropagation()}>
                 {#each g.rows as r (r.it.key)}
                   {@render row(r.it, r.i)}
                 {/each}

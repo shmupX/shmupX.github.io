@@ -110,6 +110,18 @@
     if (off === 0) onlaunch(i);
     else onselect(i);
   }
+  // Keyboard twin of cardClick: the cards are click-focusable (tabindex="-1"),
+  // so a focused card has to answer Enter/Space itself — a role="option" div
+  // synthesizes no click. stopPropagation keeps the Dashboard's window-level
+  // onKey from acting on the same keystroke as well.
+  function cardKey(off, i) {
+    return (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      e.stopPropagation();
+      cardClick(off, i);
+    };
+  }
 
   // Wheel browses; both axes so trackpads and mice agree.
   let wheelAcc = 0;
@@ -143,6 +155,7 @@
         class="sav-stage"
         role="listbox"
         aria-label="Saved games"
+        tabindex="-1"
         bind:this={stageEl}
         onpointerdown={onStageDown}
         onwheel={onStageWheel}
@@ -155,6 +168,7 @@
             tabindex="-1"
             style={cardStyle(v.off)}
             onclick={() => cardClick(v.off, v.i)}
+            onkeydown={cardKey(v.off, v.i)}
           >
             {#if v.item.slug && covers[v.item.slug]}
               <img class="cf-art" src={covers[v.item.slug]} alt={v.item.title} draggable="false" />

@@ -1536,9 +1536,10 @@
       action();
     };
   }
-  // Keyboard twin of tapHandler for the role="button" footer chips — non-native
-  // buttons don't synthesize a click on Enter/Space, so without this they were
-  // focusable but inert on a keyboard (and for assistive tech).
+  // Keyboard twin of tapHandler for every role="button"/role="menuitem" div in
+  // here (footer chips, menu items, strip tiles, list rows) — non-native buttons
+  // don't synthesize a click on Enter/Space, so without this they were focusable
+  // but inert on a keyboard (and for assistive tech).
   function chipKeyHandler(action) {
     return (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -3268,13 +3269,16 @@
         <div class="glyph">🐵</div>
       </div>
     </div>
-    <div class="menu">
+    <div class="menu" role="menu" aria-label="Main menu">
       {#each MAIN_MENU as m, i (m.id)}
         <div
           bind:this={menuEls[i]}
           class="item {i === menuSel ? 'sel' : ''}"
+          role="menuitem"
+          tabindex="-1"
           onmouseenter={() => { if (i !== menuSel) { menuSel = i; sfx.nav(); } }}
           onclick={() => pickMenu(i)}
+          onkeydown={chipKeyHandler(() => pickMenu(i))}
         >
           <span class="tag">{m.tag}</span>
           <div class="node"></div>
@@ -3315,6 +3319,9 @@
 
         <div
           class="cmg-strip {stripFocus ? 'on' : ''}"
+          role="tablist"
+          aria-label="Libraries"
+          tabindex="-1"
           bind:this={stripEl}
           onwheel={onStripWheel}
           onpointerdown={onStripDown}
@@ -3324,7 +3331,11 @@
               bind:this={tileEls[i]}
               class="strip-tile {i === secSel ? 'active' : ''} {stripFocus && i === secSel ? 'sel' : ''}"
               style="animation-delay: {(i % 4) * -1.1}s"
+              role="tab"
+              aria-selected={i === secSel}
+              tabindex="-1"
               onclick={() => onTileClick(i)}
+              onkeydown={chipKeyHandler(() => onTileClick(i))}
               onmouseenter={() => { if (!(stripFocus && i === secSel)) pickSection(i); }}
             >
               <div class="strip-disc">
@@ -3413,8 +3424,11 @@
                 bind:this={gameRowEls[i]}
                 class="game-row {r.pinned ? 'byoc-row' : ''} {!stripOn && i === curSel ? 'sel' : ''}"
                 style="animation-delay: {i % 3 === 0 ? -2.4 : i % 2 === 0 ? -1.2 : 0}s"
+                role="button"
+                tabindex="-1"
                 onmouseenter={() => { if (stripOn || i !== curSel) { stripFocus = false; curSection.setSel(i); sfx.nav(); } }}
                 onclick={() => { if (consumeRowPress()) return; stripFocus = false; curSection.setSel(i); curSection.activate(i); }}
+                onkeydown={chipKeyHandler(() => { stripFocus = false; curSection.setSel(i); curSection.activate(i); })}
                 oncontextmenu={(e) => onRowContextMenu(e, r, i)}
                 onpointerdown={(e) => rowPressStart(e, r, i)}
                 onpointermove={(e) => rowPressMove(e)}
@@ -3462,6 +3476,7 @@
                       tabindex="-1"
                       aria-label="Browse the game shelf"
                       onclick={(e) => { e.stopPropagation(); if (consumeRowPress()) return; stripFocus = false; curSection.setSel(i); openSavPicker(r.g); }}
+                      onkeydown={chipKeyHandler(() => { stripFocus = false; curSection.setSel(i); openSavPicker(r.g); })}
                       onpointerdown={(e) => e.stopPropagation()}
                       oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!savPickerOpen) { stripFocus = false; curSection.setSel(i); openSavPicker(r.g); } }}
                     >
@@ -3515,8 +3530,11 @@
             <div
               bind:this={settingsRowEls[i]}
               class="game-row {i === settingsSel ? 'sel' : ''}"
+              role="button"
+              tabindex="-1"
               onmouseenter={() => { if (i !== settingsSel) { settingsSel = i; sfx.nav(); } }}
               onclick={() => activateSettings(i)}
+              onkeydown={chipKeyHandler(() => activateSettings(i))}
             >
               <div class="game-icon"><div class="glass"><span class="ph">◧</span></div></div>
               <div class="game-bar">
@@ -3559,8 +3577,11 @@
             <div
               bind:this={emuRowEls[i]}
               class="game-row {i === emuSel ? 'sel' : ''}"
+              role="button"
+              tabindex="-1"
               onmouseenter={() => { if (i !== emuSel) { emuSel = i; sfx.nav(); } }}
               onclick={() => activateEmulator(i)}
+              onkeydown={chipKeyHandler(() => activateEmulator(i))}
             >
               <div class="game-icon">
                 <div class="glass">
