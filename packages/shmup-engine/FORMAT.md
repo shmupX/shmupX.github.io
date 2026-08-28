@@ -193,7 +193,7 @@ assembly, 音まろ music, ポリ吉 3D):
 | sec4    | **Palette bank**: 16 palettes × 16 colors, u16be RGB555 (R bits 0–4, G 5–9, B 10–14, bit15 = CRAM RGB-mode flag). Rows 0–11 (0x000–0x17F) = 12 preset ramps, byte-identical across all games, bit15 clear; rows 12–15 (0x180–0x1FF) = the 4 user palettes (= the editor's "192 system + 64 user colors"), stored `0x8000\|color`, 0x0000 empty. u16[0] varies per game (meaning open). | confirmed |
 | sec5    | **Game assembly data** (組み子さん) — see the sec5 region map below. Regions are proven from engine-code multiplications and tile exactly; the background tilemap, placement grid, enemy records, boss record and sprite composition banks are decoded, the scroll curve's field meaning and parts of the settings block remain open. | mostly decoded |
 | sec6    | **BGM**: 24 song slots × 4,228 B (disc `M_DATA*` presets match verbatim). Song = 4-byte header + **32 measures × 132 B**, each measure = 4 control bytes + **4 parts × 32 steps**, part-major. Step: 0x00 empty, 0x01–0x3B note (~5 octaves), 0x80–0x88 sustain. | confirmed |
-| sec7    | **3D models** (ポリ吉): u32be magic `0x12345678` (absent = never opened the 3D editor; section then all-zero or residual RAM — ELFI's "custom" sec7 is just uninitialized garbage), then 16 model slots × 328 B (u16be part count 0–9, u16be model color, 9 part records × 36 B: u16 shape descriptor, s32be 16.16 X/Y/Z position, s16be rotations (65536=360°), s32be signed 16.16 scales, negative = mirror), then 576 residual bytes. POLYKITI.bin literal pools confirm (HWRAM working base `0x06097E90`, stride 0x148, end 0x1484). | confirmed |
+| sec7    | **3D models** (ポリ吉): u32be magic `0x12345678` (absent = never opened the 3D editor; section then all-zero or residual RAM — ELFI's "custom" sec7 is just uninitialized garbage), then 16 model slots × 328 B (u16be part count 0–9, u16be model color, 9 part records × 36 B), then 576 residual bytes. Part record, offsets pinned against SGM_DAIO's 37 parts (2026-08-28): `+0x00` u16 shape descriptor (high nibble = primitive family 0–5, rest variant bits), `+0x02` u16 pad (0), `+0x04` s32be×3 X/Y/Z position 16.16, `+0x10` u16be×3 rotations (65536 = 360°), `+0x16` u16 pad (0), `+0x18` s32be×3 scales, signed 16.16, negative = mirror. POLYKITI.bin literal pools confirm the slot stride (HWRAM working base `0x06097E90`, stride 0x148, end 0x1484). Decoder: `lib/decode/decode-model.js` (the part-shape meshes themselves are engine-fixed in the POLYKITI overlay — still untraced, so models decode as transforms over named-by-number primitives). | confirmed |
 
 ### sec5 region map
 
@@ -203,11 +203,11 @@ literal pools; they tile the 396,640 bytes exactly, with no gaps:
 | Offset | Layout | Content | Status |
 |--------|--------|---------|--------|
 | `+0x00000` | 10 × `0x5400` | **Background tilemap** per stage: 14 cols × 768 rows of u16be = 48 parts × 16 rows. `0xFFFF` = empty; else bit15 V-flip, bit14 H-flip (same convention as the sprite banks), bits 0–9 = CG cell index (1024-cell space). Part = 224×256 px. | **decoded** |
-| `+0x34800` | 10 × `0xC0` | **Per-stage scroll curve**: 192 bytes, one per 4 map rows (64 px of scroll). Values move in long runs and ramp down through the stage; the non-zero extent tracks the stage's used rows (`lastNonZero ≈ lastUsedRow/4`, always slightly short of it). Not a record array — no stride shows column specialisation. | decoded (shape), field meaning open |
+| `+0x34800` | 10 × `0xC0` | **Per-stage scroll curve** — **decoded** (2026-08-28, verified): one byte per 64 px of map (4 rows), indexed live as `stage*0xC0 + scrollPos>>6` and re-read every frame (stage init `+0x1DF44`, per-frame `+0x1E04C`; index shift = kernel `0x06010BF8` = `>>6`). Bits 0-2 = background **scroll speed** target via u16 table `+0x25B14` `[0,64,128,192,256,384,512,1024]` in **1/256 px per frame** (0–4 px/f); the engine EASES the current speed toward it at ±(12 + gap/16) units/frame (snap to 0), integrating whole pixels through a 1/256 accumulator; horizontal games scale ×365/256. Bits 3-5 = **raster-wave amplitude** via u16 table `+0x25B24` = px<<8 of `[0,1,3,5,9,15,22,30]`, ramped ±32 units/frame (a type change fades the old wave out at 64/frame first, rebuilding it every frame of the fade). Bits 6-7 = **wave type**, driving VDP2 SCRCTL NBG0: 0 = vertical ripple (LSCY, wavelength 64 lines, map-locked phase), 1 = traveling horizontal sine (LSCX, amp ×2), 2 = per-line random shake (LSCX, max ±0.75×amp px), 3 = line-zoom bulge (LZMX, symmetric around line 120). The engine substitutes a constant `0x02` byte when its play-STATE byte `u8[0x060840C5]` equals 2 (a demo/attract state — NOT the settings game mode; the same byte holds 6 in another state). Decoder: `lib/decode/decode-stage.js` (`decodeScrollCurve`). | **decoded** |
 | `+0x34F80` | 10 × `0x3C00` | **Object placement grid**: 20 columns × 768 rows of *bytes* over the 320-px screen (the 224-px playfield sits at columns 3–16), sharing the background's rows and 48-part division. See the id table below. | **decoded** |
 | `+0x5A780` | `0x60` | **Global settings** — see the byte map below | mostly decoded |
 | `+0x5A7E0` | 10 × `0x478` | **Per-stage enemy definitions**: 60 records × 18 B (`0x438`) + the `0x40` **boss record** trailer. Record N defines the Nth zako id — see "Enemy record" and "Boss record" below. | **decoded** |
-| `+0x5D490` | `0x1D0` | **Global sprite composition bank**: 232 u16be cell refs (player ship frames, bullets, item icons, explosions, the drawn title logo, credit glyphs) | decoded (structure) |
+| `+0x5D490` | `0x1D0` | **Global sprite composition bank**: 232 u16be cell refs — **fully decoded** (2026-08-28, via the global-art VRAM upload GAME `+0x3EEC` over the 85-entry char-slot table `+0x27F1C` and the spawners that pick each char). Refs 0-23 = P1 ship (bank-A / idle / bank-B pairs of 2 × 32×32 frames), 24-47 = P2 ship, 48-51 charge glow, 52-68 per-weapon shot/effect art (63 = weapon-1 fire FX, 65 = weapon-2, 66 = weapon-3 object, 68 = weapon-4 missiles; 57-60 the beam segments), 69-78 = weapons 6/7 option figures (10 × 16×16), 79-92 = bomb art (79-82 bomb 4, 87 bomb 5, 88-89 bomb-7 dome, 91-92 sub-2 object), 93 missile smoke, 94-101 = the **8 item icons**, 102-107 = **blast anim A** (6 × 16×16), 108-131 = **blast anim B** (6 × 32×32), 132-143 = the **3 global bullet types** (4 × 16×16 frames each, drawn by char slots 55/59/63), 144-175 / 176-207 = **TITLE 1 / TITLE 2** (each 8×4 cells = 128×64 px), 208-231 = **six 64×16 credit strips** (an earlier 8×3/8×5/three-8×1 title split covered the same refs but mis-cut the pieces). Bombs 1/2/3 draw system chars, not save cells — every save gets them free. Decoder: `lib/decode/decode-sprites.js` (`extractGlobalArt`, `TITLE_SLOTS`). | **decoded** |
 | `+0x5D660` | 10 × `0x580` | **Per-stage sprite composition**: 704 u16be cell refs — the flat bank GAME.CMP's stage-art VRAM upload walks slot by slot. Records 0–59 map onto seven art bands, the last 64 refs (`+0x500`) are the boss core; layout below. | **engine-traced** |
 
 The bank layout is engine-traced (2026-08-22), replacing an earlier geometry
@@ -313,8 +313,8 @@ start/end/rate/repeat interpolators:
 
 | Byte | Field |
 |------|-------|
-| 0 | appearance id: full byte indexes a 256-entry pointer table (`+0x6088e5c`) of sprite/animation definitions; `b0>>3` also classifies (a `>3` query helper exists) |
-| 1 | bits0-2 **hp** index → `[60,30,15,10,5,3,2,1]` (`+0x6085ee8`; index 0 = toughest, 7 = the editor default); bits4-6 **score** index → `[50,100,200,500,1000,2000,5000,10000]` (`+0x6085ef0`); bit7 **ground** flag |
+| 0 | appearance id: full byte indexes the 256-entry pointer table `+0x6088e5c` — whose entries are **BEHAVIOR SCRIPTS, not sprite definitions** (decoded 2026-08-28, adversarially verified; extracted to `data/appearance-scripts.json`): variable-length lists of 10-byte rows `{u16 dur, u16 angle/offset, u16 angVel/delta, u16 amplitude+flags, u16 flagsWord}` driving the zako's built-in entry motion (polar drift or lateral-target interpolation, chosen by flags bit7), scroll-riding (amplitude bit15: `pos += scrollSpeed×128`/tick) and gates — flags bit4 = never fires (the long-known `APPEARANCE_NOFIRE`), bit9 = early-expire at a resolver threshold. Sprite size, char slot, frame count and hitbox come from the PLACEMENT-ID BAND instead (seven spawn wrappers `+0x16070..+0x165F8`: frame counts 4/4/4/4/2/2/1 and char bases 67/131/163/195/259/267/275 across the seven art bands); `b0>>3` classifies the object class. |
+| 1 | bits0-2 **hp** index → `[60,30,15,10,5,3,2,1]` (`+0x6085ee8`; index 0 = toughest, 7 = the editor default) — the SAME value is the **animation frame period in ticks** (both counters load from it at spawn `+0x15448`; the anim reload doubles as the pierce-exchange hp, so damaged enemies animate faster); bits4-6 **score** index → `[50,100,200,500,1000,2000,5000,10000]` (`+0x6085ef0`); bit7 **ground** flag |
 | 2 | bits0-2 **speed** index → u32 `[256,12800,…,512000]` (`+0x6085f20`, 16.16 px/frame, ×1.5 at rank ≥2 and again at rank 6); bit3+bits4-5 **movement pattern** (0-7, `((b2>>4)&3)\|((b2&8)>>1)`); bits6-7 **fire type** |
 | 3 | fire params (type 1: bits0-2 count−1, bit3 wide; other types OR raw) |
 | 4 | bits0-1 fire mode; bits4-6 **fire rate** index → interval `[119,59,29,19,9,5,3,1]` (`+0x6085f81`; mode 3 uses `[119,59,39,19,11,7,3,1]`) + randomization window `[29,22,16,11,7,4,2,1]` (`+0x6085f61`) — reload = interval + rand(window) |
@@ -328,15 +328,23 @@ Channel byte layout (A,B,C): A bits4-6 step index; B low/high nibble start/end
 value index (rotation: 3-bit); C bits4-5 repeat (0 once, 1 loop, 2 ping-pong),
 bits0-2 a trigger mode packed into a per-enemy status word (semantics open).
 
-**Byte 5 is dual-use: pattern selector AND angle.** The fire dispatcher
-(`+0x1989e`) masks `b5 & 0xF` and routes 10/11/12 to three special pattern
-handlers (`+0x193d0` / `+0x19538` / `+0x196a8` — three variants of one
-routine; which shape each draws is still open). Every other value falls
-through to the default handler (`+0x192d4`), which passes `b5 & 0x1F` as the
-angle argument to the kernel's shot-spawn helper (`0x6010be6`) alongside the
-object's current heading. So 10-12 are patterns, not directions — 765 of the
-12,153 enemies measured across 60 community saves (6.3%) carry one, and
-reading them as angles pointed those enemies sideways.
+**Byte 5's low nibble is a GEOMETRY selector, used twice** (fully traced
+2026-08-28, adversarially verified). The fire dispatcher (`+0x1989e`) masks
+`b5 & 0xF` and routes 10/11/12 to three burst handlers (`+0x193d0` /
+`+0x19538` / `+0x196a8`) — variants of one template over a per-slot burst
+counter `u8[0x608DCF0]`: **10 = 4 volleys** one fire tick apart (counter
+`&3`), **11 = 5 volleys** (reset when >4), **12 = 16 volleys on consecutive
+serviced frames** (counter `&15`; its counter check precedes the fire-tick
+gate, so a started spiral finishes even with global fire off). Every other
+value falls through to the default handler (`+0x192d4`). All paths call the
+same SHOOTER `+0x18FAC(slot, type=b4&3, b5&0x1F, Y; stack X, heading>>8)`
+(the "kernel shot-spawn helper 0x6010be6" of the earlier note is just an
+arithmetic `>>8`), which dispatches the nibble AGAIN through the 16-pointer
+geometry table `0x6086074` — so the burst nibbles also pick their geometry:
+10 = plain single (the 4-burst is 4 straight/aimed shots), 11 = single with
+per-shot jitter of `(rand&31)−16` angle units, 12 = single stepping through
+the 16-byte rotation table `+0x22064` `[C0 D0 E0 F0 00 10 .. B0]` indexed by
+the burst counter — a **22.5°/shot full-circle spiral**.
 
 **Movement is a 2-bit mode plus a flag, not an 8-way enum.** The spawn packs
 `b2` bits 4-5 and bit 3 into one byte at `0x6091550`
@@ -417,9 +425,15 @@ The runtime plays exactly this: 16-step measures, one voice per part taking
 its pitch from the pitch column and holding it through ties,
 `stepSeconds = divisor/240`, loop points (pass 0 from the top, later passes
 rewind to loop-start), and the echo send approximated as a feedback-delay
-tap scaled by `header[2]/7`. Not reproduced: the ROM accompaniment patterns
-and the instrument column's timbres (the Saturn's samples are not in the
-save, so each part keeps a fixed synth voice).
+tap scaled by `header[2]/7`. The two missing halves are now EXTRACTED
+(2026-08-28) though not yet played: the kernel ROM accompaniment pattern
+table (0KERNEL `+0x1B490`, 1260 rows × 16 steps; row = `ctrl0*140 +
+(ctrl1*5 + ((ctrl2&0x7F)>>1))*7 + channel` — the `>>1` binds to ctrl2 only)
+ships in `data/bgm-accompaniment.json`, and the 116-instrument tone bank map
+(sample offsets into SNDPAC.BIN, loops, root pitch, envelopes — traced
+through the 68000 driver's instrument-select command) in
+`data/bgm-instruments.json`; a runtime that is handed SNDPAC.BIN can cut the
+real Saturn timbres from it.
 
 **Zako firing, re-traced 2026-08-24** (fire routine `+0x19810`, dispatcher
 `+0x1989e`, shooter `+0x18fac`, spawn fill `+0x1548e`; supersedes the earlier
@@ -427,14 +441,45 @@ save, so each part keeps a fixed synth voice).
 tests in the 320-wide grid space, so an enemy may fire anywhere visible):
 
 - **`b5 & 0xF` picks a bullet-GEOMETRY function** from the 16-pointer table
-  at `0x6086074`: **0 is an empty routine — the enemy never fires** (most of
-  a stage's roster); 1 = single shot, 2 = side-by-side pair (±8px), 5 = a
-  three-shot fan (±8 angle units), 13 = a perpendicular pair (±64 units);
-  10/11/12 route to the three special handlers (`+0x193d0`/`+0x19538`/
-  `+0x196a8`, still untraced). **`b5 & 0x10` aims the volley at the player**
-  (angle computed at fire time via `+0x183d0`); without it the shot leaves
-  relative to the enemy's facing (`0x6094440`), straight down for a standard
-  zako.
+  at `0x6086074` — ALL 16 traced (2026-08-28, verified; angle deltas in
+  1/256-circle units, every shot same origin and speed): **0** = empty (the
+  enemy never fires — most of a stage's roster); **1/10** = single; **2** =
+  ±8 pair; **3** = 0,±8; **4** = 0,±16; **5** = ±8,±24 (no center); **6** =
+  0,±8,±16; **7** = 0,±16,±32; **8** = the same 5-fan with bullet state 19 +
+  a stored steer target (curving shots); **9** = single with homing state
+  (18 aimed / 17 facing); **11** = single, jitter `(rand&31)−16`; **12** =
+  single stepping the `+0x22064` spiral table; **13** = ±64 perpendicular
+  pair; **14** = 0,±64,128 cross; **15** = 8-way star (0,±32,±64,±96,128).
+  This same table serves the BOSS fire-point "shot function" (executor
+  `+0x19FF4`; boss nibbles 9/10/11 route to boss burst handlers instead).
+  **`b5 & 0x10` aims the volley at the player** (octant-folded atan2 via
+  `+0x183d0`, re-computed EVERY volley so bursts track a moving player;
+  suppressed within a (size+36) px point-blank box of the player); without
+  it the shot leaves along the enemy's heading (`0x6094440`, 8.8 word) —
+  seeded by the spawn walker as `((64 − direction) & 255) << 8` from the
+  movement direction, so the **256-circle heading runs 0 = +X, 0x40 = up,
+  0xC0 = straight down** (the default), and velocity = angle measured from
+  +Y: `Y += (cos·speed)>>16`, `X −= (sin·speed)>>16` into 24.8 positions.
+- **Fire cadence is a global RANK-driven pulse**: a per-frame accumulator
+  `u16[0x6091E28] += 28 + rank/2` emits one fire tick on overflow past 255
+  (~10 frames apart at rank 0, 2 at rank 255; tick flag `u8[0x6092024]`).
+  Reload counters decrement and bursts advance only on fire ticks (pattern
+  12's mid-burst shots excepted — every serviced frame). Off-screen and
+  gate-suppressed ticks still decrement the reload (the gates branch to the
+  fire routine's tail); only nibble 0 bypasses it. An extra per-slot
+  suppress bit gates firing: `u16[0x6093C50] & 0x8000` set = no fire.
+- **Rank** — two variables, both fully traced (2026-08-28, adversarially
+  corrected). Static rank `u8[0x0608C712]` is the OPTION-menu difficulty
+  LEVEL (EASY/NORMAL/HARD/MANIAC = 0..3, default 1; pad-edited in the
+  option screen `+0x1F01A`/`+0x1F0A2`); it scales zako movement speed
+  (×2/3 on EASY, ×1.5 at HARD+ — the old "rank 6" second ×1.5 is really
+  play-state flags `0x060840C8 & 6 == 6`, the harder loop) and picks the
+  dynamic system's rate tables. Dynamic level
+  `u8[0x06090A2E]` ramps toward `target = [8,32,80,64][R] + 4*power +
+  8*stage` (+1 per 256/[1,2,6,4][R] frames up, −1 per 256/[32,16,8,12][R]
+  down, `+0x4AD8`/`+0x3728`); player death resets it to `8*stage +
+  [2,8,20,16][R]` — dying lowers the difficulty. Consumers: the enemy bullet
+  speed base `u16[0x608EF30] = dyn*4` and the fire-tick rate `28 + dyn/2`.
 - **`b4 & 3` is the BULLET TYPE**, selecting one of the save's four global
   bullet configs (settings bytes +37..+40; bullet speed = live base
   `u16[0x608ef30]` + `[128,256,512,896][(cfg>>4)&3]`). It is not a "fire
@@ -489,12 +534,19 @@ are the channel A/C bytes.
 
 | Offset | Content |
 |--------|---------|
-| `+0x00` | game mode, values 0–3 (2 bits; scroll orientation + player count candidates) |
-| `+0x0C`–`+0x0F`, `+0x10`–`+0x13` | the two player-ship config blocks (P1/P2). Byte +0: always `0x10`/`0x11` (two-value item, open). Byte +1: two packed enums (open). Byte +2: KUMITATE-edited pair (`0x40/0x41/0x44` observed, open). Byte +3 low nibble = **MAIN WEAPON 0-7**, high nibble a 0-3 select. Weapon evidence: KUMITATE's menu handler pairs `+0x0F`/`+0x13` with its own UI data; the nibble spans 6 of 8 values across the corpus (an 8-option menu; every other ship byte holds 2-4 values); the factory default (SGM_INIT = Gust) stores 6. GAME.CMP has TWO fire dispatchers, both segmented: the autofire jump table `+0x15144` (mova `+0x15150`) routes 0→none (returns -1), 1→`+0xf498`, 2→`+0xfcac`, 3→`+0xfe08`, 4→`+0x104cc`, 5→exit (charge-type), 6→`+0x1110c`, 7→`+0x11ea8`; the charge/release dispatcher `+0x1cebc` routes 5→`+0x10a6c` (charge-level damage table `+0x6085e14`), 6→`+0x113fc` (4/bullet bursts, `+0x11fd0`), 7→`+0x1204c`. Weapon 4's damage is traced: twin bullets of 27 (r5 arg at `+0x10500` into the spawn `+0x1038c`). Weapons 1/2/3/7 pass damage through helper args or per-frame beam ticks (weapon 1 zeroes the damage slot at spawn, `+0xf046`) — dataflow follow-up still open. The sub-weapon has its own dispatcher `+0x1528c` (config via pointer global `0x6084118`, & 3): 0→none, 1→`+0x1471c` (calls `+0x145e8`, table `+0x6085e6c` [16..24]), 2→`+0x14988` (table `+0x6085ebc` [8..32]), 3→`+0x14d04` (table `+0x6085edc` [48..96]) — so those three tables are SUB-weapon damage-by-level, and the ship block's `+3` high nibble (0-3) is the sub-weapon select. The settings→engine copy is pointer-indirected and untraced, so the weapon byte is `heuristic` (congruence), not `confirmed`. |
-| `+0x1C`–`+0x23` | 8-entry table, all values ≤ 38 — the 8 item slots |
-| `+0x2D`–`+0x40` | 20 **always-even** bytes (10 pairs, max 48 = 2×24) |
+| `+0x00` | **game mode** — **decoded** (2026-08-28, verified): bit0 = scroll orientation (0 vertical, 1 horizontal), bit1 = player count (0 = 1P, 1 = 2P join-in). The engine reads the block IN PLACE through the pointer global `u32[0x060840C0] = 0x0029A780` (initialized data at GAME file `+0x200C0` — there is no copy, which is why literal scans found no readers). The world sim is orientation-INVARIANT: the same tilemap/placement/scroll-curve code runs both modes (1 grid row per 16 px of scroll); horizontal games differ only in presentation (screen x = right-to-left scroll axis), input mapping, spawn edges, clamps, and a ×365/256 scroll factor. Horizontal art is authored pre-rotated. |
+| `+0x01` | **HUD dressing**: bits4-6 frame-graphic select (7 VDP2 tile sets via kernel `0x0600516C`), bits0-2 HUD palette select (kernel `0x06005138`) |
+| `+0x02`–`+0x0B` | **per-stage flag bytes** (10 stages): bit0 CLEAR = the row starts a NEW numbered stage; bit0 SET = continuation part — the stage number holds and the BGM carries over (`+0x9C4`; polarity adversarially verified against MIYA/DAIOH/RAMS); bit6 = keep the scroll position on player death (`+0x121A`); bit7 = **the final stage** (the game ends after it, `+0xC2C`); bit5 editor-edited, consumer unfound |
+| `+0x0C`–`+0x0F`, `+0x10`–`+0x13` | the two player-ship config blocks (P1/P2) — **decoded** (2026-08-28, verified; REPLACES the earlier "byte +3 low nibble = main weapon" heuristic, which was actually the autofire rate): byte +0 = `0x10 \| startingLoadout` (engine reads only &3); byte +1 = maxSpeedLevel<<4 \| rapid-fire param (manual fire interval = 8−v frames); byte +2 = maxPowerLevel<<4 \| initialPowerLevel (≤4; the power level indexes per-weapon per-level tables); byte +3 low nibble = **autofire rate index** → `[60,30,15,10,5,3,2,1]` frames/volley (`+0x21EE8`), high nibble 0-3 open. Loaded at player init `+0x90EC` into per-player globals. |
+| `+0x14`–`+0x1B` | the four **WEAPON LOADOUT presets** (2 B each) — **decoded**: byte0 bits0-2 = MAIN weapon 0-7 (autofire dispatcher `+0x15128`: 0→none, 1→`+0xf498` … 7→`+0x11ea8`; per-level u32 damage tables, e.g. weapon 1 `+0x21D6C` = [13312..5120] per bullet — per-bullet damage FALLS as the level rises while projectile count grows; enemy LIFE stores as LIFE<<8, so a max-LIFE zako = 15360 units = 3 full-power weapon-1 hits), bits4-6 = SUB/option weapon 0-7 (dispatcher `+0x1509C`, burst counts `+0x21C50`); byte1 bits0-1 = CHARGE type 0-3 (dispatcher `+0x1528C` — the tables `+0x6085EA8/EBC/EC8/EDC` earlier labeled "sub-weapon" belong HERE; gauge 0-320, level = gauge/64−1), bits4-7 = BOMB type + variant flag (16-way dispatcher `+0x151B0`, per-type attack powers 4096..10240 into the damage word `u32[0x608C720]`; no screen-clear exists — bombs are big piercing contact objects). The ship byte +0 picks the STARTING loadout; weapon-change items (types 0-3) switch loadouts mid-game. The old `+0x6085E14` "charge damage [9,12,15,18,21]" claim is refuted — that table holds `[0x900..0x1500]` charge-pellet lifetime words. |
+| `+0x1C`–`+0x23` | the 8 **item slots** — **decoded** (2026-08-28, verified): byte = `movement<<4 \| itemType`. Types (effect table `+0x25ACC`): 0-3 = weapon change to loadout preset 0-3, 4 = barrier (persists across respawns), 5 = bomb stock +1 (cap 99), 6 = score bonus, 7 = power-up (+1 shot level, capped by ship byte +2 high nibble), 8 = speed-up (+1, capped by ship byte +1 high nibble). Movement: 0 = launch-and-drift (6 px/f spin-launch, decay v−=v/8, then drift backward; uncollectible during the launch phase), 1 = bouncer (15 frames still, then 45°+k·90° diagonals at ~0.79 px/f per axis, bouncing off the playfield, blink-out after 1024 frames), 2 = scroll-anchored (rides the background). Placement ids 0xE8-0xEF spawn slot id&7; an enemy death-word `(w & 0x300)==0x100` drops item `w&0xFF` (1-8 = slot, 9 = cycling). |
+| `+0x24` | **score-item value index** into the boss score table `[5000..1000000]` (`+0x21F00`) — one game-wide value for every type-6 item |
+| `+0x25`–`+0x27` | the **3 global bullet configs** — **decoded** (2026-08-28, verified): read LIVE via the settings pointer `u32[0x060840C0]` (shooter `+0x19002` adds `0x25 + (record b4&3)`, so **b4&3 == 3 aliases the blast byte** — an engine quirk). Bits 0-2 = bullet **damage** index into u8 `[60,30,15,10,5,3,2,1]` (`+0x21EE8` — the shared durability units); bits 4-5 = **speed add** index into u16 `[128,256,512,896]` (`+0x220B4`); bit 7 = an editor checkbox stored per bullet (`cfg&0x80`, no traced play effect); bits 3/6 never set in the corpus. Bullet speed = `u16[0x608EF30] + add` where the base has exactly one writer: `rank<<2` (see rank below); velocity = `(speed × sin1.15) >> 16` added raw into **24.8** positions (256 units = 1 px), so px/frame = speed/512 — the four adds alone are 0.25/0.5/1.0/1.75 px/f. Bullet sprites: types 0/1/2 draw composition slots 55/59/63 with a 4-frame anim. Decoder: `lib/decode/decode-settings.js` (`bullets`). |
+| `+0x28` | **blast byte**: bits 0-2 / bits 4-6 = explosion anim A/B **tick-hold** index into u8 `[8,7,6,5,4,3,2,1]` (`+0x25A98`; spawners `+0x1C104`/`+0x1C1F0`, appearances 43/49) |
+| `+0x2D`–`+0x40` | **per-stage scroll extents** — **decoded** (2026-08-28): one (loop-start, end) byte pair per stage in **parts of 256 px** (16 map rows), read via `u32[0x060840C0]+0x2D/0x2E+2×stage`. Normal play STOPS the scroll one hardware screen short of `end<<8` (lookahead 256 px vertical / 320 horizontal, flag `0x06090A2A`); a boss fight (`u8[0x06084158]`) or game modes ≥ 2 **LOOP the background** from `end<<8` back to `loop<<8` preserving the 16-px row phase. This is why the values are always even ≤ 48. Decoder: `decode-settings.js` (`stageExtents`). |
 | `+0x41`–`+0x58` | **BGM assignment table**: 24 entries, every value ≤ 23 in every game, indexing sec6's 24 song slots. Three special tracks first, then (main, boss) pairs per stage — DAIOH reads `12,11,13, 1,6, 2,7, 3,8, 4,9, 5,10`. No entry ever points at an empty song slot. |
 | `+0x59` | **SFX set**: 1, 2 or 3 = the editor's REAL / COMIC / SF banks |
+| `+0x5A`–`+0x5C` | **staff-roll role labels** — **decoded** (2026-08-28): three indices into the engine's fixed 16-label list (`+0x20164`: blank, PLANNING, PRODUCE, SFX PLAY, ENEMY DESIGN, MAP DESIGN, CHARACTER DESIGN, TITLE LOGO, 2D GRAPHIC, 3D GRAPHIC, DEBUG, SPECIAL THANKS, PRESENTED BY, GRAPHIC, MUSIC, THANKS), paired with the six drawn 64×16 credit strips (global bank refs 208-231) at the ending. The GameFAQs-derived "15-slot entrance effect sequencer" does not exist — the title has one fixed sway-in; this label picker is the 15-choice title-page feature. |
 
 Background-map occupancy recovers each game's stage count, cross-checked by
 the disc's per-stage `DEMO_?N.BIN` recordings: Ramsie 5 stages (31/29/46/32/12
@@ -516,14 +568,32 @@ offsets; the engine reaches the trailer through the pointer global
 | 0 | bits0-1 core **size class** (placement id `0xF0`–`0xF3`); bits4-5 **HP-stage count** − 1; bit6 rotate-in-place; bit7 death-FX spin variant |
 | 1 | bits0-2 **hp** index → u32 `[1024000, 1536000, 2304000, 3328000, 4608000, 6144000, 7936000, 9984000]` (`+0x21F40`); bit3 option flag, stored **inverted** by the editor; bits4-6 **score** index → `[5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]` (`+0x21F00`) |
 | 2–5 | **pattern playlist**: byte 2+k = HP stage k's loop of four 2-bit pattern ids, consumed LSB-first. HP stages split the HP bar into equal bands; a band change advances to the next byte — the editor's "16-entry phase loop" is these 4 bytes × 4 entries |
-| 6 / 7 | **arrival / death** behavior selectors (velocity presets and scroll-stop position); carried raw |
+| 6 / 7 | **arrival / death** selectors — **decoded** (2026-08-28): bits4-7 pick the off-screen start point (byte 6) / death-drift target (byte 7) from four 4-entry position preset tables (orientation-dependent sets; no bits set = default entry riding in at scroll speed / dying in place); bits0-3 = FX: bit0 spin enable, bit1 spin direction, bit2 zoom enable, bit3 zoom direction (grow/shrink). Death glide speed = distance/2. |
 | 8–63 | 4 **pattern records** × 14 B |
 
-Pattern record: byte +0 bits3-7 = **movement script** 0–31 (engine-fixed
-script data at `+0x252D4`–`+0x25A18`, pointer table `+0x25A18`), bits0-2 =
+Pattern record: byte +0 bits3-7 = **movement script** 0–31, bits0-2 =
 speed; byte +1 bits0-2 = **fire-tick divider** → frames per fire tick
 `[60,30,15,10,5,3,2,1]` (`+0x21EE8`); then 3 **fire points** of
-`[dx.s8, dy.s8, rate<<4|type, param]`, dx/dy relative to the boss centre.
+`[dx.s8, dy.s8, rate<<4|type, param]`, dx/dy (s8, px) relative to the boss
+centre.
+
+**The 32 movement scripts are DECODED** (2026-08-28, adversarially verified;
+extracted byte-exact to `lib/../data/boss-move-scripts.json`): script data at
+`+0x252D4`–`+0x25A18`, pointer table `+0x25A18`, interpreted by `+0x1A2A4`
+(the same interpreter drives zako appearance movement). A script is a list of
+10-byte steps `{u16 dur, u16 heading, s16 turnRate, s16 speed, u16 flags}`;
+`flags&3 == 0` terminates — **and the playlist advances to its next pattern
+when the script ends**, snapping the boss back to its park anchor (a
+pattern's length IS its script's length). The speed setting (byte +0 bits0-2)
+picks factor `f` from `[1,2,3,4,6,8,10,14]` (`+0x2525C`): `counter = dur/f`,
+`velocity = speed·f` (px/f = value/256), `turn/frame = turnRate·f/2` — so the
+path SHAPE is speed-invariant (distance = speed·dur/256 px, total turn =
+turnRate·dur/2 units of 65536/circle). Heading 0 = DOWN-screen, 0x8000 = up.
+Track flags: 0x20 = evade the player on X at speed/2, 0x40 = chase the
+player's Y, 0x800 = aim-tracking heading (re-target every 8-23 frames, turn
+448 units/frame); scripts 29-31 end with live-tracking terminators that skip
+the park snap. The 32 shapes run from "sit still" (0) and vertical bobs (1-2)
+through S-curves, loops, box weaves and cloverleafs to the tracking scripts.
 Fire point types:
 
 | type | Meaning |

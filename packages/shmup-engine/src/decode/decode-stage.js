@@ -19,7 +19,7 @@ import { decodeEnemyRecord } from "./decode-enemy.js";
 
 export const SEC5_REGIONS = {
     stageBanks: { offset: 0x00000, count: 10, stride: 0x5400 },
-    stageHeaders: { offset: 0x34800, count: 10, stride: 0x00c0 },
+    scrollCurves: { offset: 0x34800, count: 10, stride: 0x00c0 },
     placement: { offset: 0x34f80, count: 10, stride: 0x3c00 },
     settings: { offset: 0x5a780, count: 1, stride: 0x0060 },
     enemies: { offset: 0x5a7e0, count: 10, stride: 0x0478 },
@@ -81,6 +81,7 @@ export function decodeStages(sec5) {
             ...bg,
             placement: decodeStagePlacement(sec5, s),
             enemies: decodeStageEnemies(sec5, s),
+            scrollCurve: scrollCurveBytes(sec5, s),
         });
     }
     // Stage count comes from the placement grid rather than the background
@@ -92,6 +93,48 @@ export function decodeStages(sec5) {
         if (s.placement.objects.length) stageCount = i + 1;
     });
     return { stages, stageCount };
+}
+
+// --- Scroll curve ----------------------------------------------------
+//
+// Each stage owns 192 bytes at sec5 +0x34800 + stage*0xC0 — one byte per
+// 64 px of map (4 rows), indexed live as stage*0xC0 + scrollPos>>6 and
+// re-read every frame (GAME.bin +0x1DF44 stage init / +0x1E04C per-frame,
+// traced 2026-08-28). The byte packs two settings:
+//
+//   bits 0-2  background scroll speed: u16 table +0x25B14
+//             [0,64,128,192,256,384,512,1024] in 1/256 px per frame
+//             (0 / 0.25 / 0.5 / 0.75 / 1.0 / 1.5 / 2.0 / 4.0 px/f); the
+//             engine EASES toward it at ±(12 + gap/16) units per frame,
+//             so curve plateaus are targets, not steps. Horizontal games
+//             scroll the same units x365/256 (~320/224).
+//   bits 3-5  raster-wave amplitude: u16 table +0x25B24 = px<<8 of
+//             [0,1,3,5,9,15,22,30] (ramped +-32/frame toward the target)
+//   bits 6-7  raster-wave type: 0 vertical ripple (VDP2 line-scroll Y),
+//             1 traveling horizontal sine (line-scroll X), 2 per-line
+//             random shake (X), 3 line-zoom bulge centered mid-screen
+//
+// (The engine substitutes a constant 0x02 byte when its play-STATE byte
+// 0x060840C5 equals 2 — a demo/attract state, not the settings game mode;
+// normal play always consumes the authored curve.)
+export const SCROLL_SPEED_TABLE = [0, 64, 128, 192, 256, 384, 512, 1024];
+export const SCROLL_WAVE_AMP_TABLE = [0, 1, 3, 5, 9, 15, 22, 30];
+export const SCROLL_WAVE_TYPES = ["ripple", "sine", "shake", "zoom"];
+
+// One stage's raw curve bytes (the compact form the mapper ships).
+export function scrollCurveBytes(sec5, stage) {
+    const { offset, stride } = SEC5_REGIONS.scrollCurves;
+    const base = offset + stage * stride;
+    return sec5.subarray(base, base + stride);
+}
+
+// Decoded view: one entry per 4 map rows, in engine units.
+export function decodeScrollCurve(sec5, stage) {
+    return Array.from(scrollCurveBytes(sec5, stage), (b) => ({
+        speed: SCROLL_SPEED_TABLE[b & 7] / 256, // px per frame at 60 Hz
+        waveType: SCROLL_WAVE_TYPES[(b >> 6) & 3],
+        waveAmp: SCROLL_WAVE_AMP_TABLE[(b >> 3) & 7], // px
+    }));
 }
 
 // --- Enemy placement -------------------------------------------------
@@ -248,7 +291,9 @@ export function enemyPairKey(stage, record) {
 }
 
 // stages -> {enemies, stages, stagesUsing} for mapSaveToGame().
-export function projectForEditor(stages, { cols = PLACEMENT_COLS } = {}) {
+// `itemSlots` is decode-settings' slot table; with it each placed item drops
+// as its authored TYPE instead of the legacy even spread.
+export function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = {}) {
     // Roster: every (stage, record) pair placed anywhere, in stage-then-record
     // order. There is no cap to ration any more, and stage order is what makes
     // a 340-entry roster readable in the editor's enemy picker.
@@ -319,11 +364,22 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS } = {}) {
         // slot and position are kept in `items` either way.
         const items = st.placement.objects
             .filter((o) => o.kind === "item")
-            .map((o) => ({ slot: o.slot, row: o.row, col: placementColumn(o.col) }));
+            .map((o) => {
+                const def = itemSlots && itemSlots[o.slot & 7];
+                return {
+                    slot: o.slot,
+                    row: o.row,
+                    col: placementColumn(o.col),
+                    ...(def ? { type: def.type, movement: def.movement } : {}),
+                };
+            });
         const sortedRows = [...byRow.keys()].sort((a, b) => a - b);
         for (const item of items) {
             const host = nearestSpawn(byRow, sortedRows, item.row, item.col);
-            if (host) host.drop = ITEM_SLOT_DROPS[item.slot % ITEM_SLOT_DROPS.length];
+            if (!host) continue;
+            host.drop = item.type !== undefined
+                ? (ITEM_TYPE_DROPS[item.type] ?? 0)
+                : ITEM_SLOT_DROPS[item.slot % ITEM_SLOT_DROPS.length];
         }
         return {
             rows: sortedRows.map((r) => byRow.get(r)),
@@ -332,16 +388,21 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS } = {}) {
             cols,
             boss: st.placement.boss || null,
             items,
+            // The stage's own scroll curve (192 raw bytes — see the region
+            // decoder above), so the mapper can ship the save's pacing.
+            scrollCurve: st.scrollCurve || null,
         };
     });
     return { enemies, stages: projected, stagesUsing };
 }
 
-// Runtime drop codes, by Dezaemon item slot. The save's own slot table
-// (settings +0x1C) is not decoded, so which of the eight slots is a shot
-// upgrade and which is a bomb is still unknown; spreading the four runtime
-// pickups evenly across the eight slots keeps every placed item in the level
-// (and the untouched slot number stays in stage.items).
+// Runtime drop codes by item TYPE (slot byte & 15, decode-settings.js):
+// 0-3 weapon change -> 2 (the runtime's weapon-change pickup), 4 barrier ->
+// 9, 5 bomb stock -> 5 (SP-gauge charge), 6 score bonus -> 4, 7 power-up ->
+// 1 (shot upgrade), 8 speed-up -> 3.
+export const ITEM_TYPE_DROPS = [2, 2, 2, 2, 9, 5, 4, 1, 3];
+// Legacy spread for saves whose settings block did not decode: keeps every
+// placed item in the level at the cost of arbitrary identities.
 export const ITEM_SLOT_DROPS = [1, 1, 2, 2, 3, 3, 9, 9];
 
 function nearestSpawn(byRow, sortedRows, row, col) {

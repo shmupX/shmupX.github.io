@@ -549,9 +549,403 @@ function decodePlayerArt() {
   });
 }
 
+// packages/shmup-engine/src/decode/decode-enemy.js
+var HP_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
+var SCORE_TABLE = [50, 100, 200, 500, 1e3, 2e3, 5e3, 1e4];
+var SPEED_TABLE = [256, 12800, 25600, 51200, 102400, 204800, 256e3, 512e3];
+var FIRE_WINDOW_TABLE = [29, 22, 16, 11, 7, 4, 2, 1];
+var FIRE_INTERVAL_TABLE = [119, 59, 29, 19, 9, 5, 3, 1];
+var FIRE_INTERVAL_TABLE_ALT = [119, 59, 39, 19, 11, 7, 3, 1];
+var FACTOR_TABLE = [0, 4, 8, 12, 16, 24, 32, 48, 64];
+var ROTATION_TABLE = [0, 32, 64, 96, 128, 160, 192, 224];
+var DIRECTION_TABLE = [0, 16, 32, 48, 64, 80, 96, 112, 128];
+var APPEARANCE_NOFIRE_HEX = "0000000000ffff00000000ff000000ffff000000ff0000000000000000000000";
+function appearanceFires(appearance) {
+  const byte = parseInt(
+    APPEARANCE_NOFIRE_HEX.slice((appearance >> 3) * 2, (appearance >> 3) * 2 + 2),
+    16
+  );
+  return (byte & 1 << (appearance & 7)) === 0;
+}
+var SPECIAL_FIRE_PATTERNS = { 10: 0, 11: 1, 12: 2 };
+var FACTOR_STEP_TABLE = [16, 32, 64, 128, 256, 384, 512, 1024];
+var ROTATION_STEP_TABLE = [16, 32, 64, 128, 256, 512, 1024, 2048];
+var DIRECTION_STEP_TABLE = [128, 256, 512, 768, 1024, 1536, 2048, 32767];
+var clampIndex = (v, table) => table[Math.min(v, table.length - 1)];
+function channel(a, b, c, { enabled, table, stepTable, angle }) {
+  const rawFrom = angle ? b & 7 : b & 15;
+  const rawTo = angle ? b >> 4 & 7 : b >> 4 & 15;
+  const from = clampIndex(rawFrom, table);
+  const to = clampIndex(rawTo, table);
+  const step = stepTable[a >> 4 & 7] / 256;
+  const scale = angle ? 360 / 256 : 1 / 16;
+  return {
+    enabled,
+    from: from * scale,
+    to: to * scale,
+    // sign follows the engine: it negates the step when start > end
+    step: (from > to ? -step : step) * scale,
+    repeat: c >> 4 & 3,
+    // 0 once, 1 loop, 2 ping-pong
+    trigger: c & 7
+  };
+}
+function decodeEnemyRecord(bytes) {
+  const b = Array.from(bytes);
+  const rotationMode = b[9] & 7;
+  const scaleMode = b[12] & 3;
+  return {
+    appearance: b[0],
+    hp: HP_TABLE[b[1] & 7],
+    score: SCORE_TABLE[b[1] >> 4 & 7],
+    ground: (b[1] & 128) !== 0,
+    speed: SPEED_TABLE[b[2] & 7] / 65536,
+    // The spawn packs b2 bits 4-5 and bit 3 into one byte (0x6091550), and
+    // the engine reads that byte BITWISE — masks 0x1/0x2/0x3 (the low
+    // two-bit mode) and 0x4 (an independent flag) across its 56 read
+    // sites. So this is a 2-bit mode plus a flag, not an 8-way enum;
+    // movePattern keeps the packed value for continuity.
+    movePattern: b[2] >> 4 & 3 | (b[2] & 8) >> 1,
+    move: {
+      mode: b[2] >> 4 & 3,
+      // engine tests &1, &2, &3
+      flag: (b[2] & 8) !== 0
+      // engine tests &4 of the packed byte
+    },
+    fire: {
+      // Two gates silence an enemy outright: the appearance's no-fire
+      // bit, and byte 5's low nibble being 0 — the geometry table's
+      // entry 0 is an empty routine (FORMAT.md "Zako firing,
+      // re-traced"). `enabled` carries only the appearance gate; the
+      // runtime combines it with `direction`.
+      enabled: appearanceFires(b[0]),
+      type: b[2] >> 6 & 3,
+      // b2 bits 6-7 (semantics open)
+      count: (b[3] & 7) + 1,
+      wide: (b[3] & 8) !== 0,
+      param: b[3],
+      // raw
+      // b4 & 3 = BULLET TYPE: which of the save's four global bullet
+      // configs this enemy fires (settings +37..+40). Bullet types
+      // 0-2 reload from the short table [14,12,10,8,6,4,2,1]
+      // (0x6085f70); only type 3 uses the long tables kept here — the
+      // runtime substitutes the short table for types 0-2.
+      mode: b[4] & 3,
+      interval: clampIndex(
+        b[4] >> 4 & 7,
+        (b[4] & 3) === 3 ? FIRE_INTERVAL_TABLE_ALT : FIRE_INTERVAL_TABLE
+      ),
+      window: FIRE_WINDOW_TABLE[b[4] >> 4 & 7],
+      // Byte 5's low nibble picks a bullet-geometry function from the
+      // 16-pointer table at 0x6086074 — all 16 traced (2026-08-28):
+      // 0 silent, 1/10 single, 2 = ±8-unit pair, 3 = 0,±8 fan,
+      // 4 = 0,±16, 5 = ±8,±24 (no center), 6 = 0,±8,±16,
+      // 7 = 0,±16,±32, 8 = same as 7 with curving bullets, 9 = homing
+      // single, 11 = single with (rand&31)−16 unit jitter, 12 = single
+      // stepping +16 units (22.5°) per shot through a full circle,
+      // 13 = ±64 perpendicular pair, 14 = 0,±64,128 cross, 15 = 8-way
+      // star (angle units = 1/256 circle). Values 10/11/12 ALSO route
+      // the fire routine to burst handlers (+0x193d0/+0x19538/+0x196a8):
+      // 10 = 4 volleys one fire-tick apart, 11 = 5 jittered volleys,
+      // 12 = 16 shots on consecutive frames — the rotating spiral.
+      // Bit 4 (0x10) aims the volley at the player (re-aimed every
+      // shot); otherwise shots leave along the enemy's facing.
+      geometry: b[5] & 15,
+      aimed: (b[5] & 16) !== 0,
+      pattern: SPECIAL_FIRE_PATTERNS[b[5] & 15] ?? null,
+      direction: SPECIAL_FIRE_PATTERNS[b[5] & 15] !== void 0 ? 0 : b[5] & 31,
+      directionEx: b[5] >> 5 & 7
+    },
+    speedChange: channel(b[6], b[7], b[8], {
+      enabled: (b[6] & 1) !== 0,
+      table: FACTOR_TABLE,
+      stepTable: FACTOR_STEP_TABLE,
+      angle: false
+    }),
+    rotation: {
+      ...channel(b[9], b[10], b[11], {
+        enabled: rotationMode !== 0,
+        table: ROTATION_TABLE,
+        stepTable: ROTATION_STEP_TABLE,
+        angle: true
+      }),
+      mode: rotationMode
+    },
+    scale: {
+      ...channel(b[12], b[13], b[14], {
+        enabled: scaleMode !== 0,
+        table: FACTOR_TABLE,
+        stepTable: FACTOR_STEP_TABLE,
+        angle: false
+      }),
+      // which axes the channel drives
+      axes: scaleMode === 1 ? "xy" : scaleMode === 2 ? "x" : scaleMode === 3 ? "y" : "",
+      repeatY: b[14] >> 2 & 3
+    },
+    direction: channel(b[15], b[16], b[17], {
+      enabled: (b[15] & 1) !== 0,
+      table: DIRECTION_TABLE,
+      stepTable: DIRECTION_STEP_TABLE,
+      angle: true
+    })
+  };
+}
+
+// packages/shmup-engine/src/decode/decode-stage.js
+var SEC5_REGIONS = {
+  stageBanks: { offset: 0, count: 10, stride: 21504 },
+  scrollCurves: { offset: 215040, count: 10, stride: 192 },
+  placement: { offset: 216960, count: 10, stride: 15360 },
+  settings: { offset: 370560, count: 1, stride: 96 },
+  enemies: { offset: 370656, count: 10, stride: 1144 },
+  spriteBank: { offset: 382096, count: 1, stride: 464 },
+  spriteStages: { offset: 382560, count: 10, stride: 1408 }
+};
+var MAX_STAGES = 10;
+var BG_COLS = 14;
+var BG_ROWS = 768;
+var BG_ROWS_PER_PART = 16;
+var BG_PARTS = BG_ROWS / BG_ROWS_PER_PART;
+var BG_EMPTY = 65535;
+function decodeStageBackground(sec5, stage) {
+  const { offset, stride } = SEC5_REGIONS.stageBanks;
+  const base = offset + stage * stride;
+  const tiles = new Array(BG_COLS * BG_ROWS);
+  const partUsed = new Uint8Array(BG_PARTS);
+  let usedTiles = 0;
+  for (let i = 0; i < tiles.length; i++) {
+    const o = base + i * 2;
+    const word = sec5[o] << 8 | sec5[o + 1];
+    if (word === BG_EMPTY) {
+      tiles[i] = null;
+      continue;
+    }
+    tiles[i] = {
+      cell: word & 1023,
+      hflip: (word & 16384) !== 0,
+      vflip: (word & 32768) !== 0
+    };
+    usedTiles++;
+    partUsed[i / (BG_COLS * BG_ROWS_PER_PART) | 0] = 1;
+  }
+  let partCount = 0;
+  for (const u of partUsed) partCount += u;
+  return {
+    stage,
+    cols: BG_COLS,
+    rows: BG_ROWS,
+    tiles,
+    partUsed,
+    partCount,
+    usedTiles,
+    empty: partCount === 0
+  };
+}
+function decodeStages(sec5) {
+  const stages = [];
+  for (let s = 0; s < MAX_STAGES; s++) {
+    const bg = decodeStageBackground(sec5, s);
+    stages.push({
+      ...bg,
+      placement: decodeStagePlacement(sec5, s),
+      enemies: decodeStageEnemies(sec5, s),
+      scrollCurve: scrollCurveBytes(sec5, s)
+    });
+  }
+  let stageCount = 0;
+  stages.forEach((s, i) => {
+    if (s.placement.objects.length) stageCount = i + 1;
+  });
+  return { stages, stageCount };
+}
+function scrollCurveBytes(sec5, stage) {
+  const { offset, stride } = SEC5_REGIONS.scrollCurves;
+  const base = offset + stage * stride;
+  return sec5.subarray(base, base + stride);
+}
+var PLACEMENT_COLS = 20;
+var PLACEMENT_ROWS = 768;
+var PLAYFIELD_COL_START = 3;
+var PLAYFIELD_COL_END = 16;
+var ZAKO_GROUPS = [[128, 24], [160, 8], [176, 16], [192, 4], [208, 4], [224, 4]];
+var ZAKO_SLOT_COUNT = 60;
+function isBoss(id) {
+  return id >= 240 && id <= 243;
+}
+function zakoRecordIndex(id) {
+  let base = 0;
+  for (const [first, count] of ZAKO_GROUPS) {
+    if (id >= first && id < first + count) return base + (id - first);
+    base += count;
+  }
+  return -1;
+}
+function describePlacementId(id) {
+  if (isBoss(id)) return { id, kind: "boss", sizeClass: id & 15, record: -1 };
+  if (id >= 232 && id <= 239) return { id, kind: "item", slot: id & 7, record: -1 };
+  const record = zakoRecordIndex(id);
+  if (record >= 0) return { id, kind: "zako", record, group: id >> 4, slot: id & 15 };
+  return { id, kind: "unknown", record: -1 };
+}
+function decodeStagePlacement(sec5, stage) {
+  const { offset, stride } = SEC5_REGIONS.placement;
+  const base = offset + stage * stride;
+  const objects = [];
+  let boss = null;
+  for (let row = 0; row < PLACEMENT_ROWS; row++) {
+    for (let col = 0; col < PLACEMENT_COLS; col++) {
+      const id = sec5[base + row * PLACEMENT_COLS + col];
+      if (!id) continue;
+      const obj = { ...describePlacementId(id), row, col, part: row / BG_ROWS_PER_PART | 0 };
+      objects.push(obj);
+      if (obj.kind === "boss") boss = obj;
+    }
+  }
+  return { stage, cols: PLACEMENT_COLS, rows: PLACEMENT_ROWS, objects, boss };
+}
+var ENEMY_RECORD_SIZE = 18;
+function decodeStageEnemies(sec5, stage) {
+  const { offset, stride } = SEC5_REGIONS.enemies;
+  const base = offset + stage * stride;
+  const records = [];
+  for (let i = 0; i < ZAKO_SLOT_COUNT; i++) {
+    const at = base + i * ENEMY_RECORD_SIZE;
+    const bytes = sec5.subarray(at, at + ENEMY_RECORD_SIZE);
+    let defined = false;
+    for (const b of bytes) if (b) {
+      defined = true;
+      break;
+    }
+    records.push({ index: i, defined, bytes });
+  }
+  return {
+    stage,
+    records,
+    definedCount: records.filter((r) => r.defined).length,
+    trailer: sec5.subarray(base + ZAKO_SLOT_COUNT * ENEMY_RECORD_SIZE, base + stride)
+  };
+}
+var PLAYFIELD_COLS = PLAYFIELD_COL_END - PLAYFIELD_COL_START + 1;
+function placementColumn(col) {
+  return Math.min(PLACEMENT_COLS - 1, Math.max(0, col));
+}
+function enemyPairKey(stage, record) {
+  return `${stage}:${record}`;
+}
+function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = {}) {
+  const uses = /* @__PURE__ */ new Map();
+  stages.forEach((st, s) => {
+    for (const o of st.placement.objects) {
+      if (o.kind !== "zako") continue;
+      const key = enemyPairKey(s, o.record);
+      uses.set(key, (uses.get(key) || 0) + 1);
+    }
+  });
+  const enemies = [];
+  const indexOf = /* @__PURE__ */ new Map();
+  stages.forEach((st, s) => {
+    const placed = new Set(
+      st.placement.objects.filter((o) => o.kind === "zako").map((o) => o.record)
+    );
+    for (const record of [...placed].sort((a, b) => a - b)) {
+      const key = enemyPairKey(s, record);
+      indexOf.set(key, enemies.length);
+      const bytes = st.enemies.records[record] ? st.enemies.records[record].bytes : null;
+      enemies.push({
+        // stage-qualified so two stages' record 7 stay distinct
+        name: `deza${s}_${String(record).padStart(2, "0")}`,
+        stage: s,
+        record,
+        key,
+        placements: uses.get(key),
+        // The 18-byte definition decoded into named fields — hp, score,
+        // speed, fire config and the four change channels. Engine-traced
+        // (see decode-enemy.js); this is what makes imported enemies
+        // play with their own stats instead of defaults.
+        behavior: bytes ? decodeEnemyRecord(bytes) : null,
+        // The raw 18 bytes still ride along for auditability.
+        bytes
+      });
+    }
+  });
+  const stagesUsing = /* @__PURE__ */ new Map();
+  stages.forEach((st, i) => {
+    for (const o of st.placement.objects) {
+      if (o.kind !== "zako") continue;
+      if (!stagesUsing.has(o.record)) stagesUsing.set(o.record, []);
+      const list = stagesUsing.get(o.record);
+      if (!list.includes(i)) list.push(i);
+    }
+  });
+  const projected = stages.map((st, s) => {
+    const byRow = /* @__PURE__ */ new Map();
+    const rowOf = (row) => {
+      if (!byRow.has(row)) byRow.set(row, new Array(cols).fill(null));
+      return byRow.get(row);
+    };
+    for (const o of st.placement.objects) {
+      if (o.kind !== "zako") continue;
+      const idx = indexOf.get(enemyPairKey(s, o.record));
+      if (idx === void 0) continue;
+      rowOf(o.row)[placementColumn(o.col)] = { enemy: idx, drop: 0 };
+    }
+    const items = st.placement.objects.filter((o) => o.kind === "item").map((o) => {
+      const def = itemSlots && itemSlots[o.slot & 7];
+      return {
+        slot: o.slot,
+        row: o.row,
+        col: placementColumn(o.col),
+        ...def ? { type: def.type, movement: def.movement } : {}
+      };
+    });
+    const sortedRows = [...byRow.keys()].sort((a, b) => a - b);
+    for (const item of items) {
+      const host = nearestSpawn(byRow, sortedRows, item.row, item.col);
+      if (!host) continue;
+      host.drop = item.type !== void 0 ? ITEM_TYPE_DROPS[item.type] ?? 0 : ITEM_SLOT_DROPS[item.slot % ITEM_SLOT_DROPS.length];
+    }
+    return {
+      rows: sortedRows.map((r) => byRow.get(r)),
+      // Scroll row each wave came from, same order as `rows`.
+      waveRows: sortedRows,
+      cols,
+      boss: st.placement.boss || null,
+      items,
+      // The stage's own scroll curve (192 raw bytes — see the region
+      // decoder above), so the mapper can ship the save's pacing.
+      scrollCurve: st.scrollCurve || null
+    };
+  });
+  return { enemies, stages: projected, stagesUsing };
+}
+var ITEM_TYPE_DROPS = [2, 2, 2, 2, 9, 5, 4, 1, 3];
+var ITEM_SLOT_DROPS = [1, 1, 2, 2, 3, 3, 9, 9];
+function nearestSpawn(byRow, sortedRows, row, col) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const r of sortedRows) {
+    const d = Math.abs(r - row);
+    if (d >= bestDist) continue;
+    const cell = byRow.get(r)[col];
+    if (!cell) continue;
+    best = cell;
+    bestDist = d;
+  }
+  return best;
+}
+function sec5Regions(sec5) {
+  return Object.entries(SEC5_REGIONS).map(([name, r]) => ({
+    name,
+    offset: r.offset,
+    count: r.count,
+    stride: r.stride,
+    length: r.count * r.stride
+  }));
+}
+
 // packages/shmup-engine/src/map-to-game.js
 var GRID_COLS = 8;
-var MAX_STAGES = 10;
+var MAX_STAGES2 = 10;
 var SINGLE_LETTER_ENEMIES = 26;
 var BLANK_WAVES = 8;
 var FRAMES_PER_SOURCE_ROW = 8;
@@ -709,7 +1103,8 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
       rec.speed = Math.round(e.behavior.speed * 100) / 100;
       rec.interval = e.behavior.fire.enabled ? e.behavior.fire.interval : -1;
       if (e.behavior.fire.enabled && rec.bulletData) {
-        rec.bulletData.speed = ENEMY_BULLET_SPEED;
+        const cfg = decoded.settings && decoded.settings.bullets && decoded.settings.bullets.configs[e.behavior.fire.mode];
+        rec.bulletData.speed = cfg ? Math.round(((8 + 8 * e.stage) * 4 / 512 + cfg.speedAdd) * 2 * 100) / 100 : ENEMY_BULLET_SPEED;
       }
     }
     if (Array.isArray(e.spriteKeys) && e.spriteKeys.length) {
@@ -732,13 +1127,13 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
     enemyData.enemyA = clone(defaults.starterEnemy);
   }
   const decodedStages = decoded.stages || [];
-  if (decodedStages.length > MAX_STAGES) {
+  if (decodedStages.length > MAX_STAGES2) {
     warnings.push(
-      `save has ${decodedStages.length} stages; the runtime plays ${MAX_STAGES} (stage0..stage${MAX_STAGES - 1}) \u2014 dropped ${decodedStages.length - MAX_STAGES}`
+      `save has ${decodedStages.length} stages; the runtime plays ${MAX_STAGES2} (stage0..stage${MAX_STAGES2 - 1}) \u2014 dropped ${decodedStages.length - MAX_STAGES2}`
     );
   }
   const gameJson = {};
-  const stageCount = Math.max(1, Math.min(decodedStages.length, MAX_STAGES));
+  const stageCount = Math.max(1, Math.min(decodedStages.length, MAX_STAGES2));
   for (let s = 0; s < stageCount; s++) {
     const decodedStage = decodedStages[s] || {};
     const rows = decodedStage.rows || [];
@@ -764,6 +1159,14 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
       stage.waveInterval = FRAMES_PER_SOURCE_ROW;
     }
     if (decodedStage.items && decodedStage.items.length) stage.items = decodedStage.items;
+    if (decodedStage.scrollCurve && decodedStage.scrollCurve.length) {
+      stage.scroll = { curve: bytesToBase64(decodedStage.scrollCurve) };
+      const extent = decoded.settings && decoded.settings.stageExtents && decoded.settings.stageExtents[s];
+      if (extent) {
+        stage.scroll.loopPart = extent.loopPart;
+        stage.scroll.endPart = extent.endPart;
+      }
+    }
     const bgStage = (decoded.bgStages || [])[s];
     if (bgStage && bgStage.words) {
       const bytes = new Uint8Array(bgStage.words.length * 2);
@@ -851,12 +1254,60 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
       };
     }
   }
+  if (decoded.settings && decoded.settings.bullets) {
+    gameJson.dezaemonBullets = clone(decoded.settings.bullets);
+  }
+  if (decoded.settings && decoded.settings.itemSlots) {
+    gameJson.dezaemonItems = {
+      score: decoded.settings.scoreItemValue,
+      slots: clone(decoded.settings.itemSlots)
+    };
+  }
+  if (decoded.globalArt) {
+    const art = decoded.globalArt;
+    const keysOf = (indices) => (indices || []).map((i) => i != null ? spriteKeyByIndex[i] : null);
+    if (art.player && art.player.idle) {
+      const idle = keysOf(art.player.idle).filter(Boolean);
+      if (idle.length) {
+        gameJson.playerData.texture = idle;
+        gameJson.playerData.name = "dezaShip";
+      }
+    }
+    if (gameJson.dezaemonBullets && art.bullets) {
+      gameJson.dezaemonBullets.art = art.bullets.map((frames) => {
+        const keys = keysOf(frames).filter(Boolean);
+        return keys.length ? keys : null;
+      });
+    }
+    if (gameJson.dezaemonBullets && (art.blastA || art.blastB)) {
+      gameJson.dezaemonBullets.blastArt = {};
+      if (art.blastA) gameJson.dezaemonBullets.blastArt.a = keysOf(art.blastA).filter(Boolean);
+      if (art.blastB) gameJson.dezaemonBullets.blastArt.b = keysOf(art.blastB).filter(Boolean);
+    }
+    if (gameJson.dezaemonItems && art.items) {
+      const icons = keysOf(art.items);
+      gameJson.dezaemonItems.icons = icons;
+      const iconByDrop = {};
+      decoded.settings.itemSlots.forEach((slot, s) => {
+        const drop = ITEM_TYPE_DROPS[slot.type];
+        if (drop != null && icons[s] && iconByDrop[drop] === void 0) {
+          iconByDrop[drop] = icons[s];
+        }
+      });
+      if (Object.keys(iconByDrop).length) gameJson.dezaemonItems.iconByDrop = iconByDrop;
+    }
+  }
   gameJson.meta = { version: "1.0", source: "dezaemon2" };
   if (decoded.settings) {
     gameJson.meta.dezaemonSettings = {
       gameMode: decoded.settings.gameMode,
-      mainWeapon: decoded.settings.ships[0].mainWeapon,
-      mainWeapon2P: decoded.settings.ships[1].mainWeapon,
+      // gameMode decoded (2026-08-28): bit0 = horizontal scroller,
+      // bit1 = two players
+      horizontal: (decoded.settings.gameMode & 1) !== 0,
+      twoPlayer: (decoded.settings.gameMode & 2) !== 0,
+      staffRoles: decoded.settings.staffRoles,
+      mainWeapon: decoded.settings.mainWeapon,
+      mainWeapon2P: decoded.settings.loadouts ? decoded.settings.loadouts[decoded.settings.ships[1].startLoadout].main : void 0,
       shotDamage,
       sfxSet: decoded.settings.sfxSet
     };
@@ -889,6 +1340,11 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
   if (!decodedStages.length) {
     warnings.push(
       "no stage layout decoded from this save \u2014 every wave is empty, so nothing will spawn"
+    );
+  }
+  if (decoded.settings && decoded.settings.gameMode & 1) {
+    warnings.push(
+      "this is a HORIZONTAL-scroll save (game mode bit 0) \u2014 the runtime still plays it as a vertical scroller, so its stages will read sideways"
     );
   }
   if (!savedSprites && !decodedEnemies.length && !decodedStages.length) {
@@ -1059,371 +1515,6 @@ function decodeCg(sections, sec4) {
   return { palettes, pages };
 }
 
-// packages/shmup-engine/src/decode/decode-enemy.js
-var HP_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
-var SCORE_TABLE = [50, 100, 200, 500, 1e3, 2e3, 5e3, 1e4];
-var SPEED_TABLE = [256, 12800, 25600, 51200, 102400, 204800, 256e3, 512e3];
-var FIRE_WINDOW_TABLE = [29, 22, 16, 11, 7, 4, 2, 1];
-var FIRE_INTERVAL_TABLE = [119, 59, 29, 19, 9, 5, 3, 1];
-var FIRE_INTERVAL_TABLE_ALT = [119, 59, 39, 19, 11, 7, 3, 1];
-var FACTOR_TABLE = [0, 4, 8, 12, 16, 24, 32, 48, 64];
-var ROTATION_TABLE = [0, 32, 64, 96, 128, 160, 192, 224];
-var DIRECTION_TABLE = [0, 16, 32, 48, 64, 80, 96, 112, 128];
-var APPEARANCE_NOFIRE_HEX = "0000000000ffff00000000ff000000ffff000000ff0000000000000000000000";
-function appearanceFires(appearance) {
-  const byte = parseInt(
-    APPEARANCE_NOFIRE_HEX.slice((appearance >> 3) * 2, (appearance >> 3) * 2 + 2),
-    16
-  );
-  return (byte & 1 << (appearance & 7)) === 0;
-}
-var SPECIAL_FIRE_PATTERNS = { 10: 0, 11: 1, 12: 2 };
-var FACTOR_STEP_TABLE = [16, 32, 64, 128, 256, 384, 512, 1024];
-var ROTATION_STEP_TABLE = [16, 32, 64, 128, 256, 512, 1024, 2048];
-var DIRECTION_STEP_TABLE = [128, 256, 512, 768, 1024, 1536, 2048, 32767];
-var clampIndex = (v, table) => table[Math.min(v, table.length - 1)];
-function channel(a, b, c, { enabled, table, stepTable, angle }) {
-  const rawFrom = angle ? b & 7 : b & 15;
-  const rawTo = angle ? b >> 4 & 7 : b >> 4 & 15;
-  const from = clampIndex(rawFrom, table);
-  const to = clampIndex(rawTo, table);
-  const step = stepTable[a >> 4 & 7] / 256;
-  const scale = angle ? 360 / 256 : 1 / 16;
-  return {
-    enabled,
-    from: from * scale,
-    to: to * scale,
-    // sign follows the engine: it negates the step when start > end
-    step: (from > to ? -step : step) * scale,
-    repeat: c >> 4 & 3,
-    // 0 once, 1 loop, 2 ping-pong
-    trigger: c & 7
-  };
-}
-function decodeEnemyRecord(bytes) {
-  const b = Array.from(bytes);
-  const rotationMode = b[9] & 7;
-  const scaleMode = b[12] & 3;
-  return {
-    appearance: b[0],
-    hp: HP_TABLE[b[1] & 7],
-    score: SCORE_TABLE[b[1] >> 4 & 7],
-    ground: (b[1] & 128) !== 0,
-    speed: SPEED_TABLE[b[2] & 7] / 65536,
-    // The spawn packs b2 bits 4-5 and bit 3 into one byte (0x6091550), and
-    // the engine reads that byte BITWISE — masks 0x1/0x2/0x3 (the low
-    // two-bit mode) and 0x4 (an independent flag) across its 56 read
-    // sites. So this is a 2-bit mode plus a flag, not an 8-way enum;
-    // movePattern keeps the packed value for continuity.
-    movePattern: b[2] >> 4 & 3 | (b[2] & 8) >> 1,
-    move: {
-      mode: b[2] >> 4 & 3,
-      // engine tests &1, &2, &3
-      flag: (b[2] & 8) !== 0
-      // engine tests &4 of the packed byte
-    },
-    fire: {
-      // Two gates silence an enemy outright: the appearance's no-fire
-      // bit, and byte 5's low nibble being 0 — the geometry table's
-      // entry 0 is an empty routine (FORMAT.md "Zako firing,
-      // re-traced"). `enabled` carries only the appearance gate; the
-      // runtime combines it with `direction`.
-      enabled: appearanceFires(b[0]),
-      type: b[2] >> 6 & 3,
-      // b2 bits 6-7 (semantics open)
-      count: (b[3] & 7) + 1,
-      wide: (b[3] & 8) !== 0,
-      param: b[3],
-      // raw
-      // b4 & 3 = BULLET TYPE: which of the save's four global bullet
-      // configs this enemy fires (settings +37..+40). Bullet types
-      // 0-2 reload from the short table [14,12,10,8,6,4,2,1]
-      // (0x6085f70); only type 3 uses the long tables kept here — the
-      // runtime substitutes the short table for types 0-2.
-      mode: b[4] & 3,
-      interval: clampIndex(
-        b[4] >> 4 & 7,
-        (b[4] & 3) === 3 ? FIRE_INTERVAL_TABLE_ALT : FIRE_INTERVAL_TABLE
-      ),
-      window: FIRE_WINDOW_TABLE[b[4] >> 4 & 7],
-      // Byte 5's low nibble picks a bullet-geometry function from the
-      // 16-pointer table at 0x6086074 (0 = silent, 1 = single, 2 =
-      // pair, 5 = 3-fan, 13 = perpendicular pair, ...); values
-      // 10/11/12 route to three special handlers instead (+0x193d0/
-      // +0x19538/+0x196a8, untraced). Bit 4 (0x10) aims the volley at
-      // the player; otherwise shots leave along the enemy's facing.
-      pattern: SPECIAL_FIRE_PATTERNS[b[5] & 15] ?? null,
-      direction: SPECIAL_FIRE_PATTERNS[b[5] & 15] !== void 0 ? 0 : b[5] & 31,
-      directionEx: b[5] >> 5 & 7
-    },
-    speedChange: channel(b[6], b[7], b[8], {
-      enabled: (b[6] & 1) !== 0,
-      table: FACTOR_TABLE,
-      stepTable: FACTOR_STEP_TABLE,
-      angle: false
-    }),
-    rotation: {
-      ...channel(b[9], b[10], b[11], {
-        enabled: rotationMode !== 0,
-        table: ROTATION_TABLE,
-        stepTable: ROTATION_STEP_TABLE,
-        angle: true
-      }),
-      mode: rotationMode
-    },
-    scale: {
-      ...channel(b[12], b[13], b[14], {
-        enabled: scaleMode !== 0,
-        table: FACTOR_TABLE,
-        stepTable: FACTOR_STEP_TABLE,
-        angle: false
-      }),
-      // which axes the channel drives
-      axes: scaleMode === 1 ? "xy" : scaleMode === 2 ? "x" : scaleMode === 3 ? "y" : "",
-      repeatY: b[14] >> 2 & 3
-    },
-    direction: channel(b[15], b[16], b[17], {
-      enabled: (b[15] & 1) !== 0,
-      table: DIRECTION_TABLE,
-      stepTable: DIRECTION_STEP_TABLE,
-      angle: true
-    })
-  };
-}
-
-// packages/shmup-engine/src/decode/decode-stage.js
-var SEC5_REGIONS = {
-  stageBanks: { offset: 0, count: 10, stride: 21504 },
-  stageHeaders: { offset: 215040, count: 10, stride: 192 },
-  placement: { offset: 216960, count: 10, stride: 15360 },
-  settings: { offset: 370560, count: 1, stride: 96 },
-  enemies: { offset: 370656, count: 10, stride: 1144 },
-  spriteBank: { offset: 382096, count: 1, stride: 464 },
-  spriteStages: { offset: 382560, count: 10, stride: 1408 }
-};
-var MAX_STAGES2 = 10;
-var BG_COLS = 14;
-var BG_ROWS = 768;
-var BG_ROWS_PER_PART = 16;
-var BG_PARTS = BG_ROWS / BG_ROWS_PER_PART;
-var BG_EMPTY = 65535;
-function decodeStageBackground(sec5, stage) {
-  const { offset, stride } = SEC5_REGIONS.stageBanks;
-  const base = offset + stage * stride;
-  const tiles = new Array(BG_COLS * BG_ROWS);
-  const partUsed = new Uint8Array(BG_PARTS);
-  let usedTiles = 0;
-  for (let i = 0; i < tiles.length; i++) {
-    const o = base + i * 2;
-    const word = sec5[o] << 8 | sec5[o + 1];
-    if (word === BG_EMPTY) {
-      tiles[i] = null;
-      continue;
-    }
-    tiles[i] = {
-      cell: word & 1023,
-      hflip: (word & 16384) !== 0,
-      vflip: (word & 32768) !== 0
-    };
-    usedTiles++;
-    partUsed[i / (BG_COLS * BG_ROWS_PER_PART) | 0] = 1;
-  }
-  let partCount = 0;
-  for (const u of partUsed) partCount += u;
-  return {
-    stage,
-    cols: BG_COLS,
-    rows: BG_ROWS,
-    tiles,
-    partUsed,
-    partCount,
-    usedTiles,
-    empty: partCount === 0
-  };
-}
-function decodeStages(sec5) {
-  const stages = [];
-  for (let s = 0; s < MAX_STAGES2; s++) {
-    const bg = decodeStageBackground(sec5, s);
-    stages.push({
-      ...bg,
-      placement: decodeStagePlacement(sec5, s),
-      enemies: decodeStageEnemies(sec5, s)
-    });
-  }
-  let stageCount = 0;
-  stages.forEach((s, i) => {
-    if (s.placement.objects.length) stageCount = i + 1;
-  });
-  return { stages, stageCount };
-}
-var PLACEMENT_COLS = 20;
-var PLACEMENT_ROWS = 768;
-var PLAYFIELD_COL_START = 3;
-var PLAYFIELD_COL_END = 16;
-var ZAKO_GROUPS = [[128, 24], [160, 8], [176, 16], [192, 4], [208, 4], [224, 4]];
-var ZAKO_SLOT_COUNT = 60;
-function isBoss(id) {
-  return id >= 240 && id <= 243;
-}
-function zakoRecordIndex(id) {
-  let base = 0;
-  for (const [first, count] of ZAKO_GROUPS) {
-    if (id >= first && id < first + count) return base + (id - first);
-    base += count;
-  }
-  return -1;
-}
-function describePlacementId(id) {
-  if (isBoss(id)) return { id, kind: "boss", sizeClass: id & 15, record: -1 };
-  if (id >= 232 && id <= 239) return { id, kind: "item", slot: id & 7, record: -1 };
-  const record = zakoRecordIndex(id);
-  if (record >= 0) return { id, kind: "zako", record, group: id >> 4, slot: id & 15 };
-  return { id, kind: "unknown", record: -1 };
-}
-function decodeStagePlacement(sec5, stage) {
-  const { offset, stride } = SEC5_REGIONS.placement;
-  const base = offset + stage * stride;
-  const objects = [];
-  let boss = null;
-  for (let row = 0; row < PLACEMENT_ROWS; row++) {
-    for (let col = 0; col < PLACEMENT_COLS; col++) {
-      const id = sec5[base + row * PLACEMENT_COLS + col];
-      if (!id) continue;
-      const obj = { ...describePlacementId(id), row, col, part: row / BG_ROWS_PER_PART | 0 };
-      objects.push(obj);
-      if (obj.kind === "boss") boss = obj;
-    }
-  }
-  return { stage, cols: PLACEMENT_COLS, rows: PLACEMENT_ROWS, objects, boss };
-}
-var ENEMY_RECORD_SIZE = 18;
-function decodeStageEnemies(sec5, stage) {
-  const { offset, stride } = SEC5_REGIONS.enemies;
-  const base = offset + stage * stride;
-  const records = [];
-  for (let i = 0; i < ZAKO_SLOT_COUNT; i++) {
-    const at = base + i * ENEMY_RECORD_SIZE;
-    const bytes = sec5.subarray(at, at + ENEMY_RECORD_SIZE);
-    let defined = false;
-    for (const b of bytes) if (b) {
-      defined = true;
-      break;
-    }
-    records.push({ index: i, defined, bytes });
-  }
-  return {
-    stage,
-    records,
-    definedCount: records.filter((r) => r.defined).length,
-    trailer: sec5.subarray(base + ZAKO_SLOT_COUNT * ENEMY_RECORD_SIZE, base + stride)
-  };
-}
-var PLAYFIELD_COLS = PLAYFIELD_COL_END - PLAYFIELD_COL_START + 1;
-function placementColumn(col) {
-  return Math.min(PLACEMENT_COLS - 1, Math.max(0, col));
-}
-function enemyPairKey(stage, record) {
-  return `${stage}:${record}`;
-}
-function projectForEditor(stages, { cols = PLACEMENT_COLS } = {}) {
-  const uses = /* @__PURE__ */ new Map();
-  stages.forEach((st, s) => {
-    for (const o of st.placement.objects) {
-      if (o.kind !== "zako") continue;
-      const key = enemyPairKey(s, o.record);
-      uses.set(key, (uses.get(key) || 0) + 1);
-    }
-  });
-  const enemies = [];
-  const indexOf = /* @__PURE__ */ new Map();
-  stages.forEach((st, s) => {
-    const placed = new Set(
-      st.placement.objects.filter((o) => o.kind === "zako").map((o) => o.record)
-    );
-    for (const record of [...placed].sort((a, b) => a - b)) {
-      const key = enemyPairKey(s, record);
-      indexOf.set(key, enemies.length);
-      const bytes = st.enemies.records[record] ? st.enemies.records[record].bytes : null;
-      enemies.push({
-        // stage-qualified so two stages' record 7 stay distinct
-        name: `deza${s}_${String(record).padStart(2, "0")}`,
-        stage: s,
-        record,
-        key,
-        placements: uses.get(key),
-        // The 18-byte definition decoded into named fields — hp, score,
-        // speed, fire config and the four change channels. Engine-traced
-        // (see decode-enemy.js); this is what makes imported enemies
-        // play with their own stats instead of defaults.
-        behavior: bytes ? decodeEnemyRecord(bytes) : null,
-        // The raw 18 bytes still ride along for auditability.
-        bytes
-      });
-    }
-  });
-  const stagesUsing = /* @__PURE__ */ new Map();
-  stages.forEach((st, i) => {
-    for (const o of st.placement.objects) {
-      if (o.kind !== "zako") continue;
-      if (!stagesUsing.has(o.record)) stagesUsing.set(o.record, []);
-      const list = stagesUsing.get(o.record);
-      if (!list.includes(i)) list.push(i);
-    }
-  });
-  const projected = stages.map((st, s) => {
-    const byRow = /* @__PURE__ */ new Map();
-    const rowOf = (row) => {
-      if (!byRow.has(row)) byRow.set(row, new Array(cols).fill(null));
-      return byRow.get(row);
-    };
-    for (const o of st.placement.objects) {
-      if (o.kind !== "zako") continue;
-      const idx = indexOf.get(enemyPairKey(s, o.record));
-      if (idx === void 0) continue;
-      rowOf(o.row)[placementColumn(o.col)] = { enemy: idx, drop: 0 };
-    }
-    const items = st.placement.objects.filter((o) => o.kind === "item").map((o) => ({ slot: o.slot, row: o.row, col: placementColumn(o.col) }));
-    const sortedRows = [...byRow.keys()].sort((a, b) => a - b);
-    for (const item of items) {
-      const host = nearestSpawn(byRow, sortedRows, item.row, item.col);
-      if (host) host.drop = ITEM_SLOT_DROPS[item.slot % ITEM_SLOT_DROPS.length];
-    }
-    return {
-      rows: sortedRows.map((r) => byRow.get(r)),
-      // Scroll row each wave came from, same order as `rows`.
-      waveRows: sortedRows,
-      cols,
-      boss: st.placement.boss || null,
-      items
-    };
-  });
-  return { enemies, stages: projected, stagesUsing };
-}
-var ITEM_SLOT_DROPS = [1, 1, 2, 2, 3, 3, 9, 9];
-function nearestSpawn(byRow, sortedRows, row, col) {
-  let best = null;
-  let bestDist = Infinity;
-  for (const r of sortedRows) {
-    const d = Math.abs(r - row);
-    if (d >= bestDist) continue;
-    const cell = byRow.get(r)[col];
-    if (!cell) continue;
-    best = cell;
-    bestDist = d;
-  }
-  return best;
-}
-function sec5Regions(sec5) {
-  return Object.entries(SEC5_REGIONS).map(([name, r]) => ({
-    name,
-    offset: r.offset,
-    count: r.count,
-    stride: r.stride,
-    length: r.count * r.stride
-  }));
-}
-
 // packages/shmup-engine/src/decode/decode-song.js
 var SONG_SIZE = 4228;
 var SONG_SLOTS = 24;
@@ -1561,50 +1652,152 @@ function decodeSongs(sec6) {
 }
 
 // packages/shmup-engine/src/decode/decode-settings.js
-var WEAPON_SHOT_DAMAGE = {
-  0: { damage: 21, basis: "none", note: "fires no main shot (dispatcher returns -1)" },
-  1: { damage: 21, basis: "contact", note: "spawn zeroes dmg (+0xf046); armed per contact (+0xb620 args)" },
-  2: { damage: 21, basis: "contact", note: "beam; per-contact exchange" },
-  3: { damage: 21, basis: "contact", note: "beam, 10-frame contact window (+0x10110)" },
-  4: { damage: 27, basis: "traced", note: "twin missiles, 27 each (r5 arg into +0x1038c)" },
-  5: { damage: 21, basis: "traced", note: "charge shot, table +0x6085e14 full power" },
-  6: { damage: 21, basis: "traced-burst", note: "4/bullet bursts (+0x11fd0); volley ~21" },
-  7: { damage: 21, basis: "contact", chargeDamage: 192, note: "homing contact; charge single hit 192 (+0x12484)" }
+var WEAPON_FULL_POWER_DAMAGE = {
+  0: 5120,
+  // fires no main shot; keep the anchor pace
+  1: 5120,
+  2: 11520,
+  3: 5120,
+  // homing stream: 128/contact, many contacts/frame — floored
+  4: 5120,
+  // twin 1152 missiles + sub coverage — floored
+  5: 5120,
+  // 1280 tap + 7168/pellet charge — floored
+  6: 5120,
+  // 384/bullet at 1-frame intervals — floored
+  7: 5120
+  // 3584..7680 per beam frame — floored
 };
-var DEFAULT_SHOT_DAMAGE = 21;
+var DEFAULT_SHOT_DAMAGE = 20;
 function weaponShotDamage(weapon) {
-  const w = WEAPON_SHOT_DAMAGE[weapon];
-  return w ? w.damage : DEFAULT_SHOT_DAMAGE;
+  const units = WEAPON_FULL_POWER_DAMAGE[weapon];
+  return units ? Math.round(units / 256) : DEFAULT_SHOT_DAMAGE;
 }
+var BULLET_DAMAGE_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
+var BULLET_SPEED_ADD_TABLE = [128, 256, 512, 896];
+var BLAST_HOLD_TABLE = [8, 7, 6, 5, 4, 3, 2, 1];
+function bulletConfig(byte) {
+  return {
+    raw: byte,
+    damage: BULLET_DAMAGE_TABLE[byte & 7],
+    // px/frame at 60 Hz, before the rank-driven base
+    speedAdd: BULLET_SPEED_ADD_TABLE[byte >> 4 & 3] / 512,
+    flag: (byte & 128) !== 0
+  };
+}
+var AUTOFIRE_RATE_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
+var STAFF_ROLE_LABELS = [
+  "",
+  "PLANNING",
+  "PRODUCE",
+  "SFX PLAY",
+  "ENEMY DESIGN",
+  "MAP DESIGN",
+  "CHARACTER DESIGN",
+  "TITLE LOGO",
+  "2D GRAPHIC",
+  "3D GRAPHIC",
+  "DEBUG",
+  "SPECIAL THANKS",
+  "PRESENTED BY",
+  "GRAPHIC",
+  "MUSIC",
+  "THANKS"
+];
 function shipBlock(sec5, base) {
   return {
-    // +0: 0x10 or 0x11 across the corpus — a two-value item (meaning open)
-    a: sec5[base],
-    // +1: two packed nibbles, both small enums (meaning open)
-    b: sec5[base + 1],
-    // +2: KUMITATE-edited (paired P1/P2); values 0x40/0x41/0x44 (open)
-    c: sec5[base + 2],
-    // +3: low nibble = MAIN WEAPON 0-7; high nibble = SUB-WEAPON 0-3
-    // (its own dispatcher at GAME.CMP +0x1528c serves the three
-    // sub-weapon damage tables [16..24]/[8..32]/[48..96])
-    mainWeapon: sec5[base + 3] & 15,
-    subWeapon: sec5[base + 3] >> 4 & 3,
+    startLoadout: sec5[base] & 3,
+    rapidParam: sec5[base + 1] & 7,
+    // manual fire interval = 8 - v frames
+    maxSpeed: sec5[base + 1] >> 4 & 7,
+    initialPower: sec5[base + 2] & 7,
+    maxPower: Math.min(4, sec5[base + 2] >> 4 & 7),
+    // frames between autofire volleys
+    autofireFrames: AUTOFIRE_RATE_TABLE[sec5[base + 3] & 7],
     raw: [...sec5.subarray(base, base + 4)]
+  };
+}
+function loadout(sec5, base) {
+  const b0 = sec5[base];
+  const b1 = sec5[base + 1];
+  return {
+    main: b0 & 7,
+    sub: b0 >> 4 & 7,
+    charge: b1 & 3,
+    bomb: b1 >> 4 & 7,
+    bombVariant: (b1 & 128) !== 0,
+    raw: [b0, b1]
   };
 }
 function decodeSettings(sec5) {
   const base = SEC5_REGIONS.settings.offset;
   const ships = [shipBlock(sec5, base + 12), shipBlock(sec5, base + 16)];
+  const loadouts = [0, 1, 2, 3].map((k) => loadout(sec5, base + 20 + k * 2));
+  const startWeapons = loadouts[ships[0].startLoadout];
+  const stageExtents = [];
+  for (let s = 0; s < 10; s++) {
+    stageExtents.push({
+      loopPart: sec5[base + 45 + s * 2],
+      endPart: sec5[base + 46 + s * 2]
+    });
+  }
   return {
     gameMode: sec5[base] & 3,
     ships,
-    // per-save shot damage: player 1's main weapon decides the pace
-    shotDamage: weaponShotDamage(ships[0].mainWeapon),
-    itemSlots: [...sec5.subarray(base + 28, base + 36)],
+    loadouts,
+    // per-save shot damage: player 1's starting main weapon sets the pace
+    mainWeapon: startWeapons.main,
+    shotDamage: weaponShotDamage(startWeapons.main),
+    // The 8 item slots (+0x1C..+0x23) — decoded 2026-08-28: each byte is
+    // (movement << 4) | itemType. Types (effect pointer table +0x25ACC):
+    // 0-3 = weapon change to loadout preset 0-3 (presets at +0x14..+0x1B),
+    // 4 = barrier, 5 = bomb stock +1, 6 = score bonus (value picked by
+    // byte +0x24 through the boss score table), 7 = power-up (shot level
+    // +1), 8 = speed-up. Movement: 0 = launch-and-drift, 1 = bouncer,
+    // 2 = scroll-anchored (rides the background).
+    itemSlots: [...sec5.subarray(base + 28, base + 36)].map((byte) => ({
+      raw: byte,
+      type: byte & 15,
+      movement: byte >> 4 & 3
+    })),
+    // +0x24: game-wide score-item value index into the boss score table
+    // [5000,10000,20000,50000,100000,200000,500000,1000000] (+0x21F00).
+    scoreItemValue: [5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 5e5, 1e6][sec5[base + 36] & 7],
+    bullets: {
+      configs: [37, 38, 39, 40].map((o) => bulletConfig(sec5[base + o])),
+      blast: {
+        a: BLAST_HOLD_TABLE[sec5[base + 40] & 7],
+        b: BLAST_HOLD_TABLE[sec5[base + 40] >> 4 & 7]
+      }
+    },
+    stageExtents,
     bgmTable: [...sec5.subarray(base + 65, base + 89)],
     sfxSet: sec5[base + 89],
+    // +0x01: HUD dressing — bits4-6 frame-graphic select (7 VDP2 tile
+    // sets), bits0-2 HUD palette select (traced 2026-08-28).
+    hudStyle: {
+      frame: sec5[base + 1] >> 4 & 7,
+      palette: sec5[base + 1] & 7
+    },
+    // +0x02..+0x0B: per-stage flag bytes. bit0 CLEAR = the row starts a
+    // NEW numbered stage; SET = a continuation part (the stage number
+    // holds and the music carries over — polarity adversarially
+    // verified). bit6 = keep the scroll position on player death,
+    // bit7 = the final stage (the game ends after it).
+    stageFlags: [...sec5.subarray(base + 2, base + 12)].map((b) => ({
+      newStage: (b & 1) === 0,
+      keepScrollOnDeath: (b & 64) !== 0,
+      finalStage: (b & 128) !== 0
+    })),
+    // +0x5A..+0x5C: the staff roll's three role labels — indices into the
+    // engine's fixed 16-entry list (GAME.bin +0x20164).
+    staffRoles: [90, 91, 92].map((o) => STAFF_ROLE_LABELS[sec5[base + o] & 15]),
     confidence: {
-      mainWeapon: "heuristic",
+      mainWeapon: "confirmed",
+      loadouts: "confirmed",
+      itemSlots: "confirmed",
+      bullets: "confirmed",
+      stageExtents: "confirmed",
       bgmTable: "confirmed",
       sfxSet: "confirmed"
     }
@@ -1830,9 +2023,16 @@ function extractBackgroundCells(backgrounds, sections, palettes, stageCount) {
   return { cells, stages };
 }
 var TITLE_SLOTS = {
-  title1: { first: 144, w: 8, h: 3 },
-  title2: { first: 168, w: 8, h: 5 },
-  credits: [{ first: 208, w: 8, h: 1 }, { first: 216, w: 8, h: 1 }, { first: 224, w: 8, h: 1 }]
+  title1: { first: 144, w: 8, h: 4 },
+  title2: { first: 176, w: 8, h: 4 },
+  credits: [
+    { first: 208, w: 4, h: 1 },
+    { first: 212, w: 4, h: 1 },
+    { first: 216, w: 4, h: 1 },
+    { first: 220, w: 4, h: 1 },
+    { first: 224, w: 4, h: 1 },
+    { first: 228, w: 4, h: 1 }
+  ]
 };
 function readBankComposition(sec5, slot) {
   const { offset } = SEC5_REGIONS.spriteBank;
@@ -1913,6 +2113,69 @@ function extractTitleArt(sec5, sections, palettes, baseIndex) {
     roles.credit = baseIndex + sprites.length;
     sprites.push({ key: "dezaCredit", w, h, rgba });
   }
+  return { sprites, roles };
+}
+var GLOBAL_ART_SLOTS = {
+  playerIdle: { first: 8, w: 2, h: 2, frames: 2 },
+  playerBankA: { first: 0, w: 2, h: 2, frames: 2 },
+  playerBankB: { first: 16, w: 2, h: 2, frames: 2 },
+  blastA: { first: 102, w: 1, h: 1, frames: 6 },
+  blastB: { first: 108, w: 2, h: 2, frames: 6 }
+};
+function extractGlobalArt(sec5, sections, palettes, baseIndex) {
+  const sprites = [];
+  const roles = {};
+  const placeholder = findPlaceholderCell(sec5).cell;
+  const renderCells = (first, w, h) => {
+    const comp = readBankComposition(sec5, { first, w, h });
+    if (!comp || isUnpainted({ frames: [comp] }, placeholder)) return null;
+    return renderFrame(sections, palettes, comp);
+  };
+  const pushFrames = (name, slot) => {
+    const cells = slot.w * slot.h;
+    const out = [];
+    for (let f = 0; f < slot.frames; f++) {
+      const img = renderCells(slot.first + f * cells, slot.w, slot.h);
+      if (!img) return null;
+      out.push(baseIndex + sprites.length);
+      sprites.push({ key: `${name}${f}`, ...img });
+    }
+    return out;
+  };
+  const idle = pushFrames("dezaShip", GLOBAL_ART_SLOTS.playerIdle);
+  if (idle) {
+    roles.player = { idle };
+    const bankA = pushFrames("dezaShipL", GLOBAL_ART_SLOTS.playerBankA);
+    const bankB = pushFrames("dezaShipR", GLOBAL_ART_SLOTS.playerBankB);
+    if (bankA) roles.player.bankA = bankA;
+    if (bankB) roles.player.bankB = bankB;
+  }
+  const icons = [];
+  for (let i = 0; i < 8; i++) {
+    const img = renderCells(94 + i, 1, 1);
+    if (img) {
+      icons[i] = baseIndex + sprites.length;
+      sprites.push({ key: `dezaItem${i}`, ...img });
+    } else {
+      icons[i] = null;
+    }
+  }
+  if (icons.some((i) => i !== null)) roles.items = icons;
+  const blastA = pushFrames("dezaBlastA", GLOBAL_ART_SLOTS.blastA);
+  if (blastA) roles.blastA = blastA;
+  const blastB = pushFrames("dezaBlastB", GLOBAL_ART_SLOTS.blastB);
+  if (blastB) roles.blastB = blastB;
+  const bullets = [];
+  for (let t = 0; t < 3; t++) {
+    const frames = pushFrames(`dezaBullet${t}_`, {
+      first: 132 + t * 4,
+      w: 1,
+      h: 1,
+      frames: 4
+    });
+    bullets[t] = frames;
+  }
+  if (bullets.some(Boolean)) roles.bullets = bullets;
   return { sprites, roles };
 }
 function extractBossSprites(sec5, sections, palettes, bosses) {
@@ -2084,6 +2347,66 @@ function readBossTrailer(sec5, stage) {
   return decodeBossTrailer(sec5.subarray(base, base + BOSS_TRAILER_SIZE));
 }
 
+// packages/shmup-engine/src/decode/decode-model.js
+var SEC7_MAGIC = 305419896;
+var MODEL_SLOTS = 16;
+var MODEL_SLOT_SIZE = 328;
+var MAX_PARTS = 9;
+var PART_SIZE = 36;
+var u16 = (b, o) => b[o] << 8 | b[o + 1];
+var s32 = (b, o) => b[o] << 24 | b[o + 1] << 16 | b[o + 2] << 8 | b[o + 3] | 0;
+function decodePart(bytes, off) {
+  const shape = u16(bytes, off);
+  return {
+    shape,
+    // Observed families across the disc corpus: 0x0-0x5 in the high
+    // nibble with variant bits below. Which family is which primitive
+    // (cube/cylinder/cone/sphere/plane) awaits a POLYKITI mesh trace, so
+    // the split is carried as data, not names.
+    shapeFamily: shape >> 12 & 15,
+    shapeVariant: shape & 4095,
+    position: {
+      x: s32(bytes, off + 4) / 65536,
+      y: s32(bytes, off + 8) / 65536,
+      z: s32(bytes, off + 12) / 65536
+    },
+    // degrees, engine-stored as a u16 circle (65536 = 360)
+    rotation: {
+      x: u16(bytes, off + 16) * 360 / 65536,
+      y: u16(bytes, off + 18) * 360 / 65536,
+      z: u16(bytes, off + 20) * 360 / 65536
+    },
+    // x1.0 = 1; a negative scale mirrors its axis
+    scale: {
+      x: s32(bytes, off + 24) / 65536,
+      y: s32(bytes, off + 28) / 65536,
+      z: s32(bytes, off + 32) / 65536
+    }
+  };
+}
+function decodeModels(sec7) {
+  if (!sec7 || sec7.length < 4 + MODEL_SLOTS * MODEL_SLOT_SIZE) return null;
+  const magic = s32(sec7, 0) >>> 0;
+  if (magic !== SEC7_MAGIC) return null;
+  const models = [];
+  for (let slot = 0; slot < MODEL_SLOTS; slot++) {
+    const base = 4 + slot * MODEL_SLOT_SIZE;
+    const partCount = u16(sec7, base);
+    if (partCount === 0 || partCount > MAX_PARTS) continue;
+    const parts = [];
+    for (let p = 0; p < partCount; p++) {
+      parts.push(decodePart(sec7, base + 4 + p * PART_SIZE));
+    }
+    models.push({
+      slot,
+      // RGB555 like the palette bank (R bits 0-4, G 5-9, B 10-14)
+      color: u16(sec7, base + 2),
+      parts
+    });
+  }
+  return { models };
+}
+
 // packages/shmup-engine/src/decode/index.js
 function decodeSave(payload) {
   const result = {
@@ -2166,7 +2489,9 @@ function decodeSave(payload) {
         } catch (err) {
           result.settingsError = err.message;
         }
-        const projected = projectForEditor(stages.slice(0, stageCount));
+        const projected = projectForEditor(stages.slice(0, stageCount), {
+          itemSlots: result.settings ? result.settings.itemSlots : null
+        });
         result.enemies = projected.enemies;
         result.stages = projected.stages;
         result.bosses = projected.stages.map((st, stage) => st.boss ? {
@@ -2227,7 +2552,16 @@ function decodeSave(payload) {
             if (Object.keys(titleArt.roles).length) {
               result.titleArt = titleArt.roles;
             }
-            result.sprites = sprites.concat(boss.sprites, parts.sprites, titleArt.sprites);
+            const globalArt = extractGlobalArt(
+              assembly.decompressed,
+              cgPages,
+              result.cg.palettes,
+              sprites.length + boss.sprites.length + parts.sprites.length + titleArt.sprites.length
+            );
+            if (Object.keys(globalArt.roles).length) {
+              result.globalArt = globalArt.roles;
+            }
+            result.sprites = sprites.concat(boss.sprites, parts.sprites, titleArt.sprites, globalArt.sprites);
             if (result.sprites.length) result.confidence.sprites = "heuristic";
             const bg = extractBackgroundCells(
               result.backgrounds,
@@ -2256,11 +2590,20 @@ function decodeSave(payload) {
         result.songError = err.message;
       }
     }
+    const modelSection = result.sections[7];
+    if (modelSection?.sizeMatchesKnown) {
+      try {
+        result.models = decodeModels(modelSection.decompressed);
+        if (result.models) result.confidence.models = "confirmed";
+      } catch (err) {
+        result.modelError = err.message;
+      }
+    }
     result.regions = result.sections.map((s) => ({
       name: `sec${s.index}: ${s.hint}`,
       offset: s.offset,
       length: s.size,
-      decoded: Boolean(result.cg) && s.index <= 4 || Boolean(result.backgrounds) && s.index === 5 || Boolean(result.songs) && s.index === 6,
+      decoded: Boolean(result.cg) && s.index <= 4 || Boolean(result.backgrounds) && s.index === 5 || Boolean(result.songs) && s.index === 6 || Boolean(result.models) && s.index === 7,
       decompressedSize: s.decompressedSize
     }));
   } catch (err) {
@@ -2479,8 +2822,10 @@ export {
   FRAMES_PER_SOURCE_ROW,
   GRID_COLS,
   MAGIC,
-  MAX_STAGES,
+  MAX_STAGES2 as MAX_STAGES,
+  MODEL_SLOTS,
   PLAYER_SHOT_DAMAGE_BY_LEVEL,
+  SEC7_MAGIC,
   SECTION_COUNT,
   SECTION_HINTS,
   SECTION_SIZES,
@@ -2490,6 +2835,7 @@ export {
   bupDateToDate,
   byteSum,
   coalesceDiffRanges,
+  decodeModels,
   decodePlayerArt,
   decodeSave,
   decompress,

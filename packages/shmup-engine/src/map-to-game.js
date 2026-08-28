@@ -21,6 +21,7 @@
 //   - BootScene plays stage0..stage9
 
 import { DUKE_PLAYER, decodePlayerArt } from "./player-art.js";
+import { ITEM_TYPE_DROPS } from "./decode/decode-stage.js";
 
 export { decodePlayerArt, DUKE_PLAYER };
 
@@ -262,7 +263,17 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             // volley pattern, including 0.
             rec.interval = e.behavior.fire.enabled ? e.behavior.fire.interval : -1;
             if (e.behavior.fire.enabled && rec.bulletData) {
-                rec.bulletData.speed = ENEMY_BULLET_SPEED;
+                // The save's own global bullet config (byte4 & 3 picks one of
+                // the three at settings +0x25; decode-settings.js). Hardware
+                // px/frame = (4*rank + speedAdd*512)/512 with rank ~8+8*stage
+                // at normal difficulty; the runtime playfield is twice the
+                // Saturn's 240 visible px, so speeds double to keep crossing
+                // times. Falls back to the legacy constant when undecoded.
+                const cfg = decoded.settings && decoded.settings.bullets &&
+                    decoded.settings.bullets.configs[e.behavior.fire.mode];
+                rec.bulletData.speed = cfg
+                    ? Math.round(((8 + 8 * e.stage) * 4 / 512 + cfg.speedAdd) * 2 * 100) / 100
+                    : ENEMY_BULLET_SPEED;
             }
         }
         if (Array.isArray(e.spriteKeys) && e.spriteKeys.length) {
@@ -329,6 +340,28 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             stage.waveInterval = FRAMES_PER_SOURCE_ROW;
         }
         if (decodedStage.items && decodedStage.items.length) stage.items = decodedStage.items;
+        // The save's own scroll pacing: 192 curve bytes (one per 4 map rows;
+        // bits 0-2 speed, bits 3-5 wave amplitude, bits 6-7 wave type — see
+        // decode-stage.js "Scroll curve") plus the settings block's
+        // (loop-start, end) extent pair in 256-px parts. The runtime scrolls
+        // the background at the curve's own speeds, stops one screen short of
+        // endPart in normal play and loops loopPart..endPart during the boss.
+        // gameMode 2 saves override every byte with 0x02 on hardware; the
+        // mode rides in meta.dezaemonSettings for the runtime to honor.
+        if (decodedStage.scrollCurve && decodedStage.scrollCurve.length) {
+            stage.scroll = { curve: bytesToBase64(decodedStage.scrollCurve) };
+            const extent = decoded.settings && decoded.settings.stageExtents &&
+                decoded.settings.stageExtents[s];
+            if (extent) {
+                stage.scroll.loopPart = extent.loopPart;
+                stage.scroll.endPart = extent.endPart;
+            }
+            // NOTE the engine byte 0x060840C5==2 that substitutes a constant
+            // 0x02 curve is a PLAY-STATE (demo/attract — the same byte holds
+            // 6 in another engine state), not the settings game mode: mode-2
+            // saves like DAIOH visibly ride their authored curves on
+            // hardware. Normal play always consumes the curve.
+        }
         // The save's own scenery: a compact tile grid (u16be words, base64;
         // bits 0-9 index backgroundCells, bit15/14 = h/v flip, 0xFFFF empty).
         // The runtime composes and scrolls it in place of the stock backdrop.
@@ -482,12 +515,77 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
         }
     }
 
+    // The save's three global bullet configs + blast anims, one record for
+    // the whole game (decode-settings.js `bullets`): per config the damage
+    // in durability units, the speed add in px/frame, and the editor flag.
+    // The runtime reads configs[fire.mode] to pace and arm enemy volleys.
+    if (decoded.settings && decoded.settings.bullets) {
+        gameJson.dezaemonBullets = clone(decoded.settings.bullets);
+    }
+
+    // Item data the runtime needs beyond the per-cell drop digits: the
+    // game-wide score-item value (settings +0x24) and the decoded slot table.
+    if (decoded.settings && decoded.settings.itemSlots) {
+        gameJson.dezaemonItems = {
+            score: decoded.settings.scoreItemValue,
+            slots: clone(decoded.settings.itemSlots),
+        };
+    }
+
+    // The save's own global art (bank refs 0-143, decode-sprites.js
+    // extractGlobalArt): the player ship replaces Duke's frames, the item
+    // icons dress the drops, and each global bullet type gets its 4-frame
+    // anim. Duke's frames still ride along as the fallback art.
+    if (decoded.globalArt) {
+        const art = decoded.globalArt;
+        const keysOf = (indices) =>
+            (indices || []).map((i) => (i != null ? spriteKeyByIndex[i] : null));
+        if (art.player && art.player.idle) {
+            const idle = keysOf(art.player.idle).filter(Boolean);
+            if (idle.length) {
+                gameJson.playerData.texture = idle;
+                gameJson.playerData.name = "dezaShip";
+            }
+        }
+        if (gameJson.dezaemonBullets && art.bullets) {
+            gameJson.dezaemonBullets.art = art.bullets.map((frames) => {
+                const keys = keysOf(frames).filter(Boolean);
+                return keys.length ? keys : null;
+            });
+        }
+        if (gameJson.dezaemonBullets && (art.blastA || art.blastB)) {
+            gameJson.dezaemonBullets.blastArt = {};
+            if (art.blastA) gameJson.dezaemonBullets.blastArt.a = keysOf(art.blastA).filter(Boolean);
+            if (art.blastB) gameJson.dezaemonBullets.blastArt.b = keysOf(art.blastB).filter(Boolean);
+        }
+        if (gameJson.dezaemonItems && art.items) {
+            const icons = keysOf(art.items);
+            gameJson.dezaemonItems.icons = icons;
+            // drop digit -> icon: the first configured slot of each type wins
+            const iconByDrop = {};
+            decoded.settings.itemSlots.forEach((slot, s) => {
+                const drop = ITEM_TYPE_DROPS[slot.type];
+                if (drop != null && icons[s] && iconByDrop[drop] === undefined) {
+                    iconByDrop[drop] = icons[s];
+                }
+            });
+            if (Object.keys(iconByDrop).length) gameJson.dezaemonItems.iconByDrop = iconByDrop;
+        }
+    }
+
     gameJson.meta = { version: "1.0", source: "dezaemon2" };
     if (decoded.settings) {
         gameJson.meta.dezaemonSettings = {
             gameMode: decoded.settings.gameMode,
-            mainWeapon: decoded.settings.ships[0].mainWeapon,
-            mainWeapon2P: decoded.settings.ships[1].mainWeapon,
+            // gameMode decoded (2026-08-28): bit0 = horizontal scroller,
+            // bit1 = two players
+            horizontal: (decoded.settings.gameMode & 1) !== 0,
+            twoPlayer: (decoded.settings.gameMode & 2) !== 0,
+            staffRoles: decoded.settings.staffRoles,
+            mainWeapon: decoded.settings.mainWeapon,
+            mainWeapon2P: decoded.settings.loadouts
+                ? decoded.settings.loadouts[decoded.settings.ships[1].startLoadout].main
+                : undefined,
             shotDamage,
             sfxSet: decoded.settings.sfxSet,
         };
@@ -532,6 +630,12 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
     if (!decodedStages.length) {
         warnings.push(
             "no stage layout decoded from this save — every wave is empty, so nothing will spawn"
+        );
+    }
+    if (decoded.settings && (decoded.settings.gameMode & 1)) {
+        warnings.push(
+            "this is a HORIZONTAL-scroll save (game mode bit 0) — the runtime still " +
+            "plays it as a vertical scroller, so its stages will read sideways"
         );
     }
     if (!savedSprites && !decodedEnemies.length && !decodedStages.length) {

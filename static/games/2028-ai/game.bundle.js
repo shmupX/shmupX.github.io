@@ -55,6 +55,7 @@
     }
     if (src.background) stage.background = src.background;
     if (src.items) stage.items = src.items;
+    if (src.scroll) stage.scroll = src.scroll;
     return stage;
   }
   function readParam(name) {
@@ -388,6 +389,12 @@
         }
         if (levelData.dezaemonBgm && typeof levelData.dezaemonBgm === "object") {
           recipe.dezaemonBgm = levelData.dezaemonBgm;
+        }
+        if (levelData.dezaemonBullets && typeof levelData.dezaemonBullets === "object") {
+          recipe.dezaemonBullets = levelData.dezaemonBullets;
+        }
+        if (levelData.dezaemonItems && typeof levelData.dezaemonItems === "object") {
+          recipe.dezaemonItems = levelData.dezaemonItems;
         }
         if (levelData.dezaemonTitle && typeof levelData.dezaemonTitle === "object") {
           recipe.dezaemonTitle = levelData.dezaemonTitle;
@@ -2087,6 +2094,9 @@
     if (src.items) {
       stage.items = src.items;
     }
+    if (src.scroll) {
+      stage.scroll = src.scroll;
+    }
     return stage;
   }
   function primeGameStateForStage(recipe, stageId) {
@@ -2292,6 +2302,7 @@
         var stageKey = data.stageKey || "stage0";
         var loadedStage = { enemylist: data.enemylist };
         if (data.background) loadedStage.background = data.background;
+        if (data.scroll) loadedStage.scroll = data.scroll;
         if (data.waveRows) {
           loadedStage.waveRows = data.waveRows;
           loadedStage.waveInterval = data.waveInterval;
@@ -2306,6 +2317,8 @@
         }
         if (data.backgroundCells) baseRecipe.backgroundCells = data.backgroundCells;
         if (data.dezaemonBgm) baseRecipe.dezaemonBgm = data.dezaemonBgm;
+        if (data.dezaemonBullets) baseRecipe.dezaemonBullets = data.dezaemonBullets;
+        if (data.dezaemonItems) baseRecipe.dezaemonItems = data.dezaemonItems;
         function finishLevelLoad() {
           if (data.enemyData) {
             var merged = JSON.parse(JSON.stringify(data.enemyData));
@@ -3273,6 +3286,10 @@
   var TILE = 16;
   var SATURN_TICKS_PER_FRAME = 2;
   var SCROLL_PX_PER_FRAME = 2;
+  // Scroll-curve tables, byte-exact from GAME.bin +0x25B14/+0x25B24: target
+  // speeds in 1/256 px per Saturn frame, wave amplitudes in px.
+  var SCROLL_SPEED_UNITS = [0, 64, 128, 192, 256, 384, 512, 1024];
+  var SCROLL_WAVE_AMPS = [0, 1, 3, 5, 9, 15, 22, 30];
   var BOSS_PARK_SHIFT = 48;
   var STRIP_ROWS = 128;
   function decodeBase64(str) {
@@ -3345,7 +3362,8 @@
       img.setOrigin(0, 0);
       container.add(img);
     }
-    container.x = Math.floor((GW16 - bg.cols * TILE) / 2);
+    var baseX = Math.floor((GW16 - bg.cols * TILE) / 2);
+    container.x = baseX;
     var maxScroll = Math.max(0, mapHeight - GH14);
     var stopScroll = maxScroll;
     if (typeof bossRow === "number") {
@@ -3354,6 +3372,33 @@
         (bossRow + 1) * TILE - GH14 + Math.floor(GH14 / 4) + BOSS_PARK_SHIFT
       ));
     }
+    // The save's own scroll pacing (sec5 +0x34800, engine-traced): one curve
+    // byte per 64 px of map. Bits 0-2 pick the target speed from
+    // [0,64,128,192,256,384,512,1024] (1/256 px per Saturn frame — 0 to 4
+    // px/f), eased at ±(12 + gap/16) units per frame like the hardware; bits
+    // 3-5 the raster-wave amplitude [0,1,3,5,9,15,22,30] px; bits 6-7 the
+    // wave type (0 vertical ripple, 1 horizontal sine, 2 per-line shake,
+    // 3 line-zoom bulge — approximated here as whole-layer motion).
+    // scroll.forcedByte, when present, substitutes every curve byte (the
+    // engine does this in its demo/attract play-state); imports do not
+    // emit it — normal play always rides the authored curve.
+    var curveBytes = null;
+    var scrollCfg = stageData && stageData.scroll;
+    if (scrollCfg && typeof scrollCfg.curve === "string") {
+      try {
+        var bin = atob(scrollCfg.curve);
+        curveBytes = new Uint8Array(bin.length);
+        for (var cb = 0; cb < bin.length; cb++) curveBytes[cb] = bin.charCodeAt(cb);
+      } catch (e) {
+        curveBytes = null;
+      }
+    }
+    // Normal play stops one screen short of the authored end part (256 px
+    // per part); a stage with a placed boss keeps parking at the boss row.
+    var curveStop = stopScroll;
+    if (curveBytes && typeof bossRow !== "number" && Number.isFinite(scrollCfg.endPart) && scrollCfg.endPart > 0) {
+      curveStop = Math.max(0, Math.min(maxScroll, scrollCfg.endPart * 256 - GH14));
+    }
     var controller = {
       container,
       mapHeight,
@@ -3361,6 +3406,74 @@
       stopScroll,
       lastDelta: 0,
       _scroll: -1,
+      curve: curveBytes,
+      curveStop,
+      forcedByte: curveBytes && Number.isFinite(scrollCfg.forcedByte) ? scrollCfg.forcedByte : null,
+      scrollPos: 0,
+      scrollFrac: 0,
+      scrollCur: 0,
+      waveSel: 0,
+      waveCur: 0,
+      wavePhase: 0,
+      curveByte: function() {
+        if (this.forcedByte !== null) return this.forcedByte;
+        var i = this.scrollPos >> 6;
+        return i < this.curve.length ? this.curve[i] : 0;
+      },
+      // One Saturn frame of the hardware's scroll state machine.
+      tickCurve: function() {
+        var b = this.curveByte();
+        var tgt = SCROLL_SPEED_UNITS[b & 7];
+        var cur = this.scrollCur;
+        if (tgt === 0) cur = 0;
+        else if (cur > tgt) cur = Math.max(tgt, cur - 12 - ((cur - tgt) >> 4));
+        else if (cur < tgt) cur = Math.min(tgt, cur + 12 + ((tgt - cur) >> 4));
+        this.scrollCur = cur;
+        this.scrollFrac += cur;
+        var adv = this.scrollFrac >> 8;
+        this.scrollFrac &= 255;
+        if (adv) this.scrollPos = Math.min(this.curveStop, this.scrollPos + adv);
+        // Wave: a type change fades the old wave out (1/4 px per frame,
+        // hardware 64 units) before latching; otherwise the amplitude eases
+        // toward the byte's target at 1/8 px per frame (hardware 32 units).
+        var sel = (b >> 6) & 3;
+        var amp = SCROLL_WAVE_AMPS[(b >> 3) & 7];
+        if (sel !== this.waveSel) {
+          this.waveCur = Math.max(0, this.waveCur - 0.25);
+          if (this.waveCur === 0) {
+            this.waveSel = sel;
+            this.wavePhase = 0;
+          }
+        } else if (this.waveCur > amp) {
+          this.waveCur = Math.max(amp, this.waveCur - 0.125);
+        } else if (this.waveCur < amp) {
+          this.waveCur = Math.min(amp, this.waveCur + 0.125);
+        }
+        this.wavePhase++;
+      },
+      // Whole-layer stand-ins for the per-scanline VDP2 effects, at the
+      // traced amplitudes. Call after setScroll (it owns container.y).
+      applyWaveFx: function() {
+        var amp = this.waveCur;
+        if (!amp) {
+          if (container.x !== baseX) container.x = baseX;
+          if (container.scaleX !== 1) container.setScale(1);
+          return;
+        }
+        var ph = this.wavePhase * (Math.PI * 2 / 64);
+        if (this.waveSel === 0) {
+          container.x = baseX;
+          container.y += Math.sin(ph) * amp;
+        } else if (this.waveSel === 1) {
+          container.x = baseX + Math.sin(ph) * amp * 2;
+        } else if (this.waveSel === 2) {
+          container.x = baseX + (Math.random() * 2 - 1) * amp * 0.75;
+        } else {
+          var sc = 1 + amp / 240;
+          container.setScale(sc, 1);
+          container.x = baseX - bg.cols * TILE * (sc - 1) / 2;
+        }
+      },
       setScroll: function(px) {
         var clamped = Math.max(0, Math.min(stopScroll, px));
         this.lastDelta = this._scroll < 0 ? 0 : clamped - this._scroll;
@@ -3416,19 +3529,86 @@
   }
   var TYPE012_INTERVAL = [14, 12, 10, 8, 6, 4, 2, 1];
   var FIRE_WINDOW = [29, 22, 16, 11, 7, 4, 2, 1];
-  var ZAKO_AI_STRIDE = 8;
+  // Reloads count FIRE TICKS, not frames: the engine pulses a global fire
+  // tick from a per-frame accumulator (+= 28 + rank/2, tick on >255 —
+  // ~10 frames apart at rank 0), and every burst step and reload decrement
+  // is quantized to it. Rank is the dynamic difficulty; its stage-start
+  // value at normal difficulty is 8 + 8*stage (engine-traced).
   function zakoReload(fire) {
     var rate = FIRE_WINDOW.indexOf(fire.window);
     if (rate < 0) rate = 0;
     var interval = fire.mode === 3 ? fire.interval : TYPE012_INTERVAL[rate];
-    return (interval + Math.floor(Math.random() * (fire.window || 1))) * ZAKO_AI_STRIDE;
+    return interval + Math.floor(Math.random() * (fire.window || 1));
   }
+  // Dynamic difficulty (engine +0x4AD8 at the boot rank): the level ramps
+  // +1 per 128 frames toward 32 + 4*power + 8*stage and resets to
+  // 8 + 8*stage when the player dies. It drives BOTH the fire-tick rate
+  // (28 + dyn/2 per frame) and the enemy bullet speed base (dyn*4 units).
+  function dezaRank(scene) {
+    return scene._dezaDyn !== undefined ? scene._dezaDyn : 8 + 8 * (gameState.stageId || 0);
+  }
+  function dezaRankTick(scene) {
+    var stage = gameState.stageId || 0;
+    if (scene._dezaDyn === undefined) scene._dezaDyn = 8 + 8 * stage;
+    var power = scene.shootMode && scene.shootMode !== "normal" ? 3 : 1;
+    var target = 32 + 4 * power + 8 * stage;
+    scene._dezaRankAcc = (scene._dezaRankAcc || 0) + 2;
+    if (scene._dezaRankAcc > 255) {
+      scene._dezaRankAcc = 0;
+      if (scene._dezaDyn < target) scene._dezaDyn += 1;
+      else if (scene._dezaDyn > target) scene._dezaDyn -= 1;
+    }
+  }
+  function dezaRankDeath(scene) {
+    scene._dezaDyn = 8 + 8 * (gameState.stageId || 0);
+  }
+  function dezaFirePulse(scene) {
+    var acc = (scene._dezaFireAcc || 0) + 28 + (dezaRank(scene) >> 1);
+    var pulse = acc > 255;
+    scene._dezaFireAcc = pulse ? 0 : acc;
+    scene._dezaFirePulse = pulse;
+  }
+  // Byte 5's low nibble on old cloud records predates fire.geometry —
+  // reconstruct it from the fields the old decoder did keep.
+  function zakoGeometry(fire) {
+    if (fire.geometry != null) return fire.geometry;
+    if (fire.pattern != null) return 10 + fire.pattern;
+    return (fire.direction || 0) & 15;
+  }
+  function zakoAimed(fire) {
+    if (fire.aimed != null) return fire.aimed;
+    return ((fire.direction || 0) & 16) !== 0;
+  }
+  // The engine's 16-entry bullet-geometry table (0x6086074), angle deltas in
+  // 1/256-circle units. 8 fires the same fan as 7 but with curving bullets
+  // and 9 is a homing single — both fly straight here until the bullet
+  // steering states (17/18/19) are traced. 11 jitters, 12 spirals (below).
+  var GEOMETRY_SPREADS = {
+    1: [0],
+    2: [-8, 8],
+    3: [0, -8, 8],
+    4: [0, -16, 16],
+    5: [-8, 8, -24, 24],
+    6: [0, -8, 8, -16, 16],
+    7: [0, -16, 16, -32, 32],
+    8: [0, -16, 16, -32, 32],
+    9: [0],
+    10: [0],
+    13: [-64, 64],
+    14: [0, -64, 64, 128],
+    15: [0, -32, 32, -64, 64, -96, 96, 128]
+  };
+  // Handler 12's rotation table (0x6086064): shot i leaves at base + table[i],
+  // stepping 22.5 degrees per shot through the full circle.
+  var SPIRAL_DELTAS = [192, 208, 224, 240, 0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176];
+  var ANGLE_UNIT = Math.PI * 2 / 256;
   function ridesTheMap(movePattern) {
     return movePattern === 4 || (movePattern & 3) === 2;
   }
   function initEnemyBehavior(enemy, behavior) {
-    var d = behavior.fire.pattern != null ? 0 : behavior.fire.direction;
-    var fires = behavior.fire.enabled && d !== 0 && behavior.fire.pattern == null;
+    // Geometry 0 is the engine's empty routine — most of a roster never
+    // fires. Everything else fires, the burst patterns 10-12 included.
+    var fires = behavior.fire.enabled && zakoGeometry(behavior.fire) !== 0;
     var facesPlayer = behavior.rotation.enabled && behavior.rotation.mode >= 3;
     enemy.setData("deza", {
       behavior,
@@ -3453,11 +3633,18 @@
       // hangs near the top of the screen like the capture shows.
       directionCh: makeChannel(behavior.direction, null),
       // stagger the first volley inside the randomization window
-      reload: fires ? zakoReload(behavior.fire) : -1
+      reload: fires ? zakoReload(behavior.fire) : -1,
+      burst: 0
     });
     if (behavior.ground) {
       var shadow = enemy.getData("shadow");
       if (shadow) shadow.setVisible(false);
+    }
+    // Hardware ties the animation period to the LIFE setting: frame period
+    // in AI ticks = the LIFE value itself (record b1&7 loads both from one
+    // table) — tough enemies animate slowly, fodder flickers.
+    if (Number.isFinite(behavior.hp)) {
+      enemy.setData("animPeriod", Math.max(33, behavior.hp * 1000 / 60));
     }
   }
   function updateEnemyBehavior(scene, enemy) {
@@ -3523,54 +3710,95 @@
     ctx.fillRect(5, 3, 2, 2);
     tex.refresh();
   }
-  function updateEnemyFire(scene, enemy, shootFn) {
-    var st = enemy.getData("deza");
-    if (!st) return false;
+  // One volley of the engine's shooter: base angle from the aim bit (re-aimed
+  // every shot, so bursts track a moving player) or the enemy's facing
+  // (default = straight down; rotation channels and aim-style facing carry
+  // in through enemy.rotation), shaped by the traced geometry table.
+  function dezaVolley(scene, enemy, st, geom, shootFn) {
     var fire = st.behavior.fire;
-    if (!fire.enabled || st.reload < 0) return true;
-    if (st.tick % SATURN_TICKS_PER_FRAME) return true;
-    st.reload -= 1;
-    if (st.reload > 0) return true;
-    st.reload = zakoReload(fire);
-    var GH14 = scene.scale ? scene.scale.height : 480;
-    if (!scene.playerSprite) return true;
-    if (enemy.y < 8 || enemy.y > GH14 - 8) return true;
-    var d = fire.direction;
-    var aimed = (d & 16) !== 0 || st.facesPlayer || st.patrols;
+    if (!scene.playerSprite) return;
+    var aimed = zakoAimed(fire) || st.facesPlayer;
     var base;
     if (aimed) {
       var dx = scene.playerSprite.x - enemy.x;
       var dy = scene.playerSprite.y - enemy.y;
+      // hardware point-blank gate: no shot within ~(size+36)px of the player
+      if (Math.abs(dx) < 40 && Math.abs(dy) < 40) return;
       base = Math.atan2(dx, -dy);
     } else {
-      base = Math.PI;
+      // Hardware derives the fire heading from the enemy's movement
+      // direction (the walker seeds it from the direction channel), not from
+      // the sprite's spin — default 180° = straight down.
+      var dirDeg = st.directionCh ? st.directionCh.value : 180;
+      base = dirDeg * Math.PI / 180;
     }
-    ensureZakoBulletTexture(scene);
-    var fireOne = function(a, offsetX) {
+    // The save's global bullet config: record byte4&3 picks it; speed =
+    // rank base + config add, doubled for the runtime's taller playfield.
+    var cfgs = scene.recipe && scene.recipe.dezaemonBullets && scene.recipe.dezaemonBullets.configs;
+    var cfg = cfgs && cfgs[fire.mode] ? cfgs[fire.mode] : null;
+    var speed = cfg && Number.isFinite(cfg.speedAdd)
+      ? (dezaRank(scene) * 4 / 512 + cfg.speedAdd) * 2
+      : ZAKO_BULLET_SPEED;
+    // The save's own bullet art for this type (4-frame anim from the global
+    // bank), else the drawn ring fallback.
+    var art = cfgs && scene.recipe.dezaemonBullets.art && scene.recipe.dezaemonBullets.art[fire.mode];
+    var atlas = art && art.length ? scene.textures.get("game_asset") : null;
+    if (!(atlas && atlas.has(art[0]))) art = null;
+    if (!art) ensureZakoBulletTexture(scene);
+    var fireOne = function(a) {
       var bullet = shootFn(scene, enemy, Math.sin(a), -Math.cos(a));
       if (!bullet) return;
-      if (offsetX) bullet.x += offsetX;
-      bullet.setTexture(ZAKO_BULLET_KEY);
-      bullet.setData("frames", null);
-      bullet.setData("speed", ZAKO_BULLET_SPEED / SATURN_TICKS_PER_FRAME);
+      if (art) {
+        bullet.setTexture("game_asset", art[0]);
+        bullet.setData("frames", art.length > 1 ? art : null);
+        bullet.setData("animIdx", 0);
+        bullet.setData("animTimer", 0);
+      } else {
+        bullet.setTexture(ZAKO_BULLET_KEY);
+        bullet.setData("frames", null);
+      }
+      bullet.setData("speed", speed / SATURN_TICKS_PER_FRAME);
     };
-    var FAN = 11 * Math.PI / 180;
-    var geometry = d & 15;
-    if (geometry === 2) {
-      fireOne(base, -8);
-      fireOne(base, 8);
-    } else if (geometry >= 5 && geometry <= 7) {
-      fireOne(base - FAN);
-      fireOne(base);
-      fireOne(base + FAN);
-    } else if (geometry === 8 || geometry === 9) {
-      for (var i = -2; i <= 2; i++) fireOne(base + i * FAN);
-    } else if (geometry === 13) {
-      fireOne(base - Math.PI / 2);
-      fireOne(base + Math.PI / 2);
+    if (geom === 11) {
+      // burst handler 11: each shot jittered by (rand&31)-16 units
+      fireOne(base + (Math.floor(Math.random() * 32) - 16) * ANGLE_UNIT);
+    } else if (geom === 12) {
+      // burst handler 12: the rotating spiral, one shot per step
+      fireOne(base + SPIRAL_DELTAS[st.burst & 15] * ANGLE_UNIT);
     } else {
-      fireOne(base);
+      var spread = GEOMETRY_SPREADS[geom] || [0];
+      for (var i = 0; i < spread.length; i++) fireOne(base + spread[i] * ANGLE_UNIT);
     }
+  }
+  function updateEnemyFire(scene, enemy, shootFn) {
+    var st = enemy.getData("deza");
+    if (!st) return false;
+    var fire = st.behavior.fire;
+    var geom = zakoGeometry(fire);
+    if (!fire.enabled || geom === 0 || st.reload < 0) return true;
+    if (st.tick % SATURN_TICKS_PER_FRAME) return true;
+    var GH14 = scene.scale ? scene.scale.height : 480;
+    var onScreen = enemy.y >= 8 && enemy.y <= GH14 - 8;
+    var pulse = scene._dezaFirePulse;
+    var isBurst = geom >= 10 && geom <= 12;
+    var burstLen = geom === 10 ? 4 : geom === 11 ? 5 : 16;
+    var firedMidBurst = false;
+    if (isBurst && st.burst > 0) {
+      // Mid-burst: pattern 12 fires every Saturn frame (a started spiral
+      // finishes no matter what); 10 and 11 step on fire ticks only.
+      if (geom === 12 || pulse) {
+        dezaVolley(scene, enemy, st, geom, shootFn);
+        st.burst = (st.burst + 1) % burstLen;
+        firedMidBurst = true;
+      }
+    } else if (pulse && st.reload <= 0 && onScreen) {
+      st.reload = zakoReload(fire);
+      dezaVolley(scene, enemy, st, geom, shootFn);
+      if (isBurst) st.burst = 1;
+    }
+    // The reload counts down on every fire tick a volley didn't freeze —
+    // including off-screen ticks and the burst-start tick, like hardware.
+    if (pulse && st.reload > 0 && !firedMidBurst) st.reload -= 1;
     return true;
   }
   var BOSS_ENTRY_FRAMES = 360;
@@ -3617,6 +3845,97 @@
     spgage: 0,
     texture: ["normalProjectile0.gif", "normalProjectile1.gif", "normalProjectile2.gif"]
   };
+  // The engine's 32 fixed boss movement scripts (GAME.bin +0x252D4..+0x25A18,
+  // extracted byte-exact 2026-08-28): 10-byte steps [duration, heading,
+  // turnRate, speed, flags]. Heading: 65536 = full circle, 0 = DOWN-screen,
+  // 0x8000 = up, 0x4000/0xC000 = the two horizontals (adversarially
+  // verified; screen left/right mirror still open). A pattern's speed setting divides
+  // step duration and multiplies speed/turn, so the path shape is
+  // speed-invariant: distance = speed*duration/256 px. flags&3 == 0 ends the
+  // script (the pattern advances); flag 0x20 = evade the player on X,
+  // 0x40 = chase the player's Y, 0x800 = aim-tracking heading.
+  var DEZA_BOSS_SCRIPTS = [[[1024,0,0,0,1],[32767,49152,0,256,0]],[[80,32768,0,32,1],[40,32768,0,16,1],[160,0,0,32,1],[40,0,0,16,1],[79,32768,0,32,1],[32767,49152,0,256,0]],[[200,32768,0,32,1],[40,32768,0,16,1],[400,0,0,32,1],[40,0,0,16,1],[199,32768,0,32,1],[32767,49152,0,256,0]],[[80,49152,0,64,1],[40,49152,0,32,1],[160,16384,0,32,1],[39,16384,0,32,1],[32767,49152,0,256,0]],[[200,49152,0,64,1],[40,49152,0,32,1],[400,16384,0,32,1],[39,16384,0,32,1],[32767,49152,0,256,0]],[[128,49152,0,32,1],[208,32768,-113,32,1],[40,24576,-113,16,1],[444,52701,113,32,1],[40,8192,113,16,1],[208,45056,-113,32,1],[127,16384,0,32,1],[32767,49152,0,256,0]],[[128,49152,0,32,1],[332,32768,-42,32,1],[40,24576,-42,16,1],[682,58436,42,32,1],[40,8192,42,16,1],[332,40140,-42,32,1],[122,16384,0,32,1],[32767,49152,0,256,0]],[[208,32768,113,32,1],[40,40960,113,16,1],[424,12834,-113,32,1],[40,57890,-113,16,1],[207,19933,128,32,1],[32767,49152,0,256,0]],[[332,32768,42,32,1],[40,40960,42,16,1],[676,7645,-42,32,1],[40,57890,-42,16,1],[327,25122,48,32,1],[32767,49152,0,256,0]],[[740,32768,176,32,1],[32767,49152,0,256,0]],[[192,32768,0,32,1],[384,32768,170,32,1],[400,0,0,32,1],[384,0,170,32,1],[192,32768,0,32,1],[32767,49152,0,256,0]],[[1480,32768,88,32,1],[32767,49152,0,256,0]],[[192,49152,-170,32,1],[64,32768,0,32,1],[384,32768,-170,32,1],[64,0,0,32,1],[192,0,-170,32,1],[192,49152,170,32,1],[64,0,0,32,1],[384,0,170,32,1],[64,32768,0,32,1],[168,32768,200,32,1],[32767,49152,0,256,0]],[[192,0,-170,32,1],[64,49152,0,32,1],[384,49152,-170,32,1],[64,16384,0,32,1],[192,16384,-170,32,1],[192,0,170,32,1],[64,16384,0,32,1],[384,16384,170,32,1],[64,49152,0,32,1],[192,49152,192,32,1],[32767,49152,0,256,0]],[[360,49152,-170,32,1],[40,24576,-170,16,1],[192,49152,170,32,1],[12,0,0,16,1],[184,0,170,32,1],[40,8192,170,16,1],[192,49152,170,32,1],[8,0,0,32,1],[184,0,170,32,1],[40,10376,170,16,1],[380,49152,-170,32,1],[39,21572,-170,16,1],[32767,49152,0,256,0]],[[360,16384,170,32,1],[40,40960,170,16,1],[192,16384,-170,32,1],[12,0,0,16,1],[184,0,-170,32,1],[40,57344,-170,16,1],[184,16384,-144,32,1],[20,0,0,32,1],[180,0,-170,32,1],[40,55432,-170,16,1],[384,16384,170,32,1],[32767,49152,0,256,0]],[[460,43008,0,32,1],[528,0,0,32,1],[436,22400,0,32,1],[40,22400,0,16,1],[32767,49152,0,256,0]],[[256,32768,0,32,1],[456,55552,0,32,1],[464,10240,0,32,1],[232,32768,0,32,1],[40,32768,0,16,1],[32767,49152,0,256,0]],[[316,39424,0,32,1],[316,59136,0,32,1],[316,6656,0,32,1],[296,25792,0,32,1],[38,25792,0,16,1],[32767,49152,0,256,0]],[[256,32768,0,32,1],[392,49152,0,32,1],[524,0,0,32,1],[392,16384,0,32,1],[256,32768,0,32,1],[32767,49152,0,256,0]],[[640,32768,0,32,1],[1024,49152,0,32,1],[1280,0,0,32,1],[1024,16384,0,32,1],[640,32768,0,32,1],[32767,49152,0,256,0]],[[640,32768,0,32,1],[1024,49152,0,32,1],[640,0,0,32,1],[1024,16384,0,32,1],[640,0,0,32,1],[1024,49152,0,32,1],[640,32768,0,32,1],[1024,16384,0,32,1],[32767,49152,0,256,0]],[[384,32768,0,32,1],[602,49152,109,64,1],[376,32768,0,32,1],[32767,49152,0,256,0]],[[384,0,0,32,1],[602,49152,-109,64,1],[376,0,0,32,1],[32767,49152,0,256,0]],[[512,32768,0,32,1],[724,57344,0,64,1],[1024,16384,0,32,1],[512,32768,0,32,1],[32767,49152,0,256,0]],[[512,0,0,32,1],[724,40960,0,64,1],[1024,16384,0,32,1],[512,0,0,32,1],[32767,49152,0,256,0]],[[640,32768,0,32,1],[1024,49152,0,32,1],[1024,16384,0,32,1],[640,0,0,32,1],[32767,49152,0,256,0]],[[640,0,0,32,1],[1024,49152,0,32,1],[1024,16384,0,32,1],[640,32768,0,32,1],[32767,49152,0,256,0]],[[512,16384,0,16,1],[128,16384,0,0,1],[512,49152,0,96,1],[1296,16384,0,32,1],[32767,49152,0,256,0]],[[1280,49152,0,32,2113],[32767,49152,0,256,2112]],[[1280,49152,0,32,2081],[32767,49152,0,256,2080]],[[1280,49152,0,32,2049],[32767,49152,0,256,2048]]];
+  var BOSS_SPEED_FACTOR = [1, 2, 3, 4, 6, 8, 10, 14];
+  function initBossMove(st, pattern, boss) {
+    var script = DEZA_BOSS_SCRIPTS[(pattern.moveScript || 0) & 31];
+    var keep = !!(st.mv && st.mv.liveContinue && st.mv.scriptId === (pattern.moveScript & 31));
+    if (st.mv && !keep && st.mv.anchor) {
+      boss.x = st.mv.anchor.x;
+      boss.y = st.mv.anchor.y;
+    }
+    st.mv = {
+      scriptId: (pattern.moveScript || 0) & 31,
+      script,
+      factor: BOSS_SPEED_FACTOR[pattern.moveSpeed & 7],
+      step: 0,
+      counter: -1,
+      heading: keep && st.mv ? st.mv.heading : 0,
+      keepHeading: keep,
+      turn: 0,
+      speed: 0,
+      flags: 0,
+      done: false,
+      liveContinue: false,
+      anchor: st.mv && st.mv.anchor ? st.mv.anchor : { x: boss.x, y: boss.y }
+    };
+  }
+  // One Saturn frame of the boss movement interpreter (engine +0x1A2A4).
+  function dezaBossMove(scene, st, boss) {
+    var mv = st.mv;
+    if (!mv || !mv.script || mv.done) return;
+    if (--mv.counter < 0) {
+      var s = mv.script[mv.step];
+      if (!s || (s[4] & 3) === 0) {
+        mv.flags = s ? s[4] : 0;
+        // Terminator: live-tracking scripts keep their track bits and skip
+        // the park snap; everything else returns to the anchor.
+        if (mv.flags & 0x800) mv.liveContinue = true;
+        else {
+          boss.x = mv.anchor.x;
+          boss.y = mv.anchor.y;
+        }
+        mv.done = true;
+        return;
+      }
+      mv.flags = s[4];
+      mv.counter = Math.max(1, Math.floor(s[0] / mv.factor));
+      if (!mv.keepHeading) mv.heading = s[1];
+      mv.keepHeading = false;
+      mv.turn = s[2] * mv.factor / 2;
+      mv.speed = s[3] * mv.factor;
+      mv.step++;
+    } else if (mv.turn && !(mv.flags & 0x860)) {
+      mv.heading = (mv.heading + mv.turn) % 65536;
+      if (mv.heading < 0) mv.heading += 65536;
+    }
+    var v = mv.speed / 256;
+    var vx = 0;
+    var vy = 0;
+    var player = scene.playerSprite;
+    if (mv.flags & 0x20 && player) {
+      if (Math.abs(boss.x - player.x) >= 8) vx = (boss.x >= player.x ? 1 : -1) * v / 2;
+    } else if (mv.flags & 0x40 && player) {
+      if (Math.abs(boss.y - player.y) >= 8) vy = (boss.y > player.y ? -1 : 1) * v / 2;
+    } else {
+      if (mv.flags & 0x800 && player) {
+        var want = Math.atan2(player.x - boss.x, player.y - boss.y) / (Math.PI * 2) * 65536;
+        want = (want % 65536 + 65536) % 65536;
+        var diff = want - mv.heading;
+        if (diff > 32768) diff -= 65536;
+        if (diff < -32768) diff += 65536;
+        mv.heading += Math.abs(diff) <= 448 ? diff : diff > 0 ? 448 : -448;
+        mv.heading = (mv.heading % 65536 + 65536) % 65536;
+      }
+      // heading 0 = down-screen: vy = +cos, vx = +sin
+      var th = mv.heading * Math.PI * 2 / 65536;
+      vx = Math.sin(th) * v;
+      vy = Math.cos(th) * v;
+    }
+    var GW = scene.scale ? scene.scale.width : 256;
+    var GH = scene.scale ? scene.scale.height : 480;
+    boss.x = Math.max(24, Math.min(GW - 24, boss.x + vx));
+    boss.y = Math.max(32, Math.min(GH * 0.72, boss.y + vy));
+  }
   function fpKey(fp) {
     var rec = fp.spawn ? fp.spawn.record : null;
     return fp.type + ":" + rec + ":" + fp.dx + ":" + fp.dy;
@@ -3732,6 +4051,9 @@
     st.partRespawn = {};
     clearBeams(st);
     if (!st.pattern) return;
+    if (scene.bossSprite && scene.bossSprite.active) {
+      initBossMove(st, st.pattern, scene.bossSprite);
+    }
     var wanted = {};
     st.pattern.firePoints.forEach(function(fp) {
       if ((fp.type === 3 || fp.type === 4) && fp.spawn) wanted[fpKey(fp)] = fp;
@@ -3760,6 +4082,25 @@
     return null;
   }
   function bossWeapon(scene, weapon) {
+    // The save's own bullet art + config for this global type, when painted.
+    var bullets = scene.recipe && scene.recipe.dezaemonBullets;
+    var art = bullets && bullets.art && bullets.art[weapon];
+    if (art && art.length) {
+      var atlas = scene.textures.get("game_asset");
+      if (atlas && atlas.has(art[0])) {
+        var cfg = bullets.configs && bullets.configs[weapon];
+        return {
+          speed: cfg && Number.isFinite(cfg.speedAdd)
+            ? (dezaRank(scene) * 4 / 512 + cfg.speedAdd) * 2
+            : DEZA_BOSS_BULLET.speed,
+          damage: 1,
+          hp: 1,
+          score: 0,
+          spgage: 0,
+          texture: art
+        };
+      }
+    }
     var pd = weapon === 1 ? scene.bossProjDataB : weapon === 2 ? scene.bossProjDataC : scene.bossProjDataA;
     return pd && pd.texture && pd.texture.length ? pd : DEZA_BOSS_BULLET;
   }
@@ -3792,25 +4133,31 @@
     var boss = scene.bossSprite;
     var x = boss.x + fp.dx;
     var y = boss.y + fp.dy;
-    var dirX = 0;
-    var dirY = 1;
+    // The boss fire executor indexes the SAME 16-entry geometry table the
+    // zako shooter uses (param bits0-3 = shot function); 0 is the empty
+    // routine. Boss nibbles 9/10/11 route to boss burst handlers on
+    // hardware (untraced) — their geometry entries stand in here.
+    var fn = fp.shot ? fp.shot.fn : 1;
+    if (fn === 0) return;
+    var base = Math.PI; // boss heading: straight down
     if (fp.shot && fp.shot.aimed && scene.playerSprite) {
-      var dx = scene.playerSprite.x - x;
-      var dy = scene.playerSprite.y - y;
-      var d = Math.sqrt(dx * dx + dy * dy) || 1;
-      dirX = dx / d;
-      dirY = dy / d;
+      base = Math.atan2(scene.playerSprite.x - x, -(scene.playerSprite.y - y));
     }
     var projData = bossWeapon(scene, fp.shot ? fp.shot.weapon : 0);
-    spawnDezaBossBullet(
-      scene,
-      x,
-      y,
-      dirX,
-      dirY,
-      projData,
-      projData === DEZA_BOSS_BULLET ? 8368895 : 0
-    );
+    var tint = projData === DEZA_BOSS_BULLET ? 8368895 : 0;
+    var deltas;
+    if (fn === 11) {
+      deltas = [Math.floor(Math.random() * 32) - 16];
+    } else if (fn === 12) {
+      scene._dezaBossSpiral = ((scene._dezaBossSpiral || 0) + 1) & 15;
+      deltas = [SPIRAL_DELTAS[scene._dezaBossSpiral]];
+    } else {
+      deltas = GEOMETRY_SPREADS[fn] || [0];
+    }
+    for (var di = 0; di < deltas.length; di++) {
+      var a = base + deltas[di] * ANGLE_UNIT;
+      spawnDezaBossBullet(scene, x, y, Math.sin(a), -Math.cos(a), projData, tint);
+    }
   }
   function fireDezaFlame(scene, fp) {
     var boss = scene.bossSprite;
@@ -3900,20 +4247,21 @@
       }
       activatePattern(scene, st, playlistPattern(b, band, 0));
     } else {
+      // Hardware advances the 4-entry playlist when the pattern's movement
+      // script hits its terminator — pattern length IS the script length.
+      // The old fixed timer stays as the fallback for a record with no
+      // usable script state.
       st.entryAge++;
-      if (st.entryAge >= BOSS_ENTRY_FRAMES) {
+      var scriptOver = st.mv ? st.mv.done : st.entryAge >= BOSS_ENTRY_FRAMES;
+      if (scriptOver) {
         st.entryAge = 0;
         st.entryIdx = st.entryIdx + 1 & 3;
         activatePattern(scene, st, playlistPattern(b, st.bandIdx, st.entryIdx));
       }
     }
-    var pattern = st.pattern;
-    if (pattern && pattern.moveScript > 0 && pattern.moveSpeed > 0 && !scene.bossEntering) {
-      var GW16 = scene.scale ? scene.scale.width : 256;
-      var amp = Math.min(10 + pattern.moveSpeed * 8, (GW16 - boss.width) / 2);
-      boss.x = GW16 / 2 + Math.sin(st.age * (6e-3 + pattern.moveSpeed * 2e-3)) * amp;
-    }
+    if (!scene.bossEntering) dezaBossMove(scene, st, boss);
     if (b.rotate) boss.rotation += 0.02;
+    var pattern = st.pattern;
     updateDezaBeams(scene, st);
     if (!pattern) return;
     st.tickCnt++;
@@ -5685,6 +6033,7 @@
   function playerDie(scene) {
     if (scene.playerDead) return;
     scene.playerDead = true;
+    dezaRankDeath(scene);
     scene.gameStarted = false;
     triggerHaptic("death");
     scene.showExplosion(scene.playerSprite.x, scene.playerSprite.y);
@@ -5741,6 +6090,20 @@
       case PLAYER_STATES.SHOOT_NAME_3WAY:
         scene.shootMode = "3way";
         scene.shootSpeed = "speed_normal";
+        break;
+      case "dezaScore": {
+        // Dezaemon score item: game-wide value from settings +0x24
+        // (dezaemonItems.score), same table the bosses score from.
+        var bonus = scene.recipe && scene.recipe.dezaemonItems && scene.recipe.dezaemonItems.score || 1e4;
+        scene.scoreCount += bonus;
+        if (scene.playerSprite) scene.showScorePopup(scene.playerSprite.x, scene.playerSprite.y - 24, bonus, 1);
+        break;
+      }
+      case "dezaSp":
+        // Dezaemon bomb-stock item: the runtime's bomb is the SP gauge.
+        scene.spGauge = Math.min(100, scene.spGauge + 34);
+        scene.updateSpGauge();
+        if (scene.spGauge >= 100 && scene.spBtn) scene.spBtn.setAlpha(1);
         break;
       default:
         scene.shootMode = "normal";
@@ -5837,6 +6200,12 @@
         case "3":
           itemName = PLAYER_STATES.SHOOT_SPEED_HIGH;
           break;
+        case "4":
+          itemName = "dezaScore";
+          break;
+        case "5":
+          itemName = "dezaSp";
+          break;
         case "9":
           itemName = PLAYER_STATES.BARRIER;
           break;
@@ -5848,7 +6217,17 @@
       if (deza) {
         ex = gridLeft + i * 16 + 16;
         ey = GH2 + scene.dezaBg._scroll - (dezaRow * 16 + 8);
-        if (ey > -16) ey = -16;
+        if (!scene.waveDueByScroll) {
+          // Legacy tick-timed stages keep the fly-in clamp.
+          if (ey > -16) ey = -16;
+        } else if (ey > GH2 - 8) {
+          // Position-locked stages: the row scrolled past before its spawn
+          // (a stage skip) — nothing to place.
+          continue;
+        }
+        // Otherwise the enemy appears AT its map row: rows inside the
+        // window at stage start pop in place (a hardware static arena);
+        // rows crossed by the scroll spawn ~40 px above the screen top.
       } else {
         ex = cellW * i + cellW / 2;
         ey = -16;
@@ -6005,7 +6384,7 @@
     if (animFrames && animFrames.length > 1) {
       var animTimer = enemy.getData("animTimer") + step;
       enemy.setData("animTimer", animTimer);
-      if (animTimer > 150) {
+      if (animTimer > (enemy.getData("animPeriod") || 150)) {
         enemy.setData("animTimer", 0);
         var animIdx = (enemy.getData("animIdx") + 1) % animFrames.length;
         enemy.setData("animIdx", animIdx);
@@ -8024,18 +8403,27 @@
         if (this.stageBgOverlay) this.stageBgOverlay.setVisible(false);
       }
       this.waveDueTicks = null;
+      this.waveDueByScroll = !!(this.dezaBg && this.dezaBg.curve);
       if (this.stageWaveRows) {
         var rowsAsc = this.stageWaveRows;
         var firstRow = rowsAsc[0] || 0;
         var perRow = this.waveInterval || 8;
         var self0 = this;
         this.waveDueTicks = rowsAsc.map(function(row) {
+          // Curve-driven stages spawn by scroll POSITION so waves stay glued
+          // to their scenery whatever the save's speed curve does: row r is
+          // due when the scroll reaches r*16 - 512 px — the same window the
+          // tick formula below encodes at the legacy constant 2 px/frame.
+          if (self0.waveDueByScroll) return Math.max(0, row * 16 - 512);
           return self0.dezaBg ? Math.max(0, (row * perRow - 256) * SATURN_TICKS_PER_FRAME) : (row - firstRow) * perRow;
         });
       }
-      this.bossDueTick = this.dezaBg && dezaBossRow !== null ? Math.ceil(this.dezaBg.stopScroll * SATURN_TICKS_PER_FRAME / SCROLL_PX_PER_FRAME) : null;
+      this.bossDueTick = this.dezaBg && dezaBossRow !== null
+        ? (this.waveDueByScroll ? this.dezaBg.stopScroll : Math.ceil(this.dezaBg.stopScroll * SATURN_TICKS_PER_FRAME / SCROLL_PX_PER_FRAME))
+        : null;
       if (gameState.shortFlg && this.bossDueTick !== null) {
-        this.worldTime = this.bossDueTick;
+        if (this.waveDueByScroll) this.dezaBg.scrollPos = this.dezaBg.stopScroll;
+        else this.worldTime = this.bossDueTick;
       }
       this.stageBgOverlay = null;
       if (gameState.hasCustomEnemies && !this.dezaBg && this.textures.exists("stage_over_c")) {
@@ -8581,13 +8969,29 @@
         big: "powerupBig0.gif",
         "3way": "powerup3way0.gif",
         speed_high: "speedupItem0.gif",
-        barrier: "barrierItem0.gif"
+        barrier: "barrierItem0.gif",
+        // Dezaemon pickups reuse stock icons, tinted apart below.
+        dezaScore: "powerupBig0.gif",
+        dezaSp: "barrierItem0.gif"
       };
       var frameKey = frameMap[itemName] || "powerupBig0.gif";
+      var tint = itemName === "dezaScore" ? 16766720 : itemName === "dezaSp" ? 16729156 : 0;
+      // The save's own item icon for this drop, when the import carried one.
+      var dropByName = { big: 1, "3way": 2, speed_high: 3, dezaScore: 4, dezaSp: 5, barrier: 9 };
+      var icons = this.recipe && this.recipe.dezaemonItems && this.recipe.dezaemonItems.iconByDrop;
+      var own = icons && icons[dropByName[itemName]];
+      if (own) {
+        var atlas = this.textures.get("game_asset");
+        if (atlas && atlas.has(own)) {
+          frameKey = own;
+          tint = 0;
+        }
+      }
       var item = this.add.sprite(x, y, "game_asset", frameKey);
       item.setOrigin(0.5);
       item.setDepth(55);
       item.setData("itemName", itemName);
+      if (tint) item.setTint(tint);
       this.items.push(item);
     }
     collectItem(itemName) {
@@ -8687,9 +9091,35 @@
     fixedUpdate(time, step) {
       if (this.gameStarted && !this.playerDead && !this.stageCleared && !this.theWorldFlg) {
         this.worldTime += 1;
+        // Advance the global enemy fire tick all zako reloads and bursts are
+        // clocked by, once per Saturn frame. The flag holds for the whole
+        // 2-step frame — each enemy's own tick gate runs once within it, so
+        // every enemy consumes every pulse exactly once whatever its spawn
+        // parity.
+        if (this.worldTime % SATURN_TICKS_PER_FRAME === 0) {
+          dezaRankTick(this);
+          dezaFirePulse(this);
+        }
+      } else {
+        this._dezaFirePulse = false;
       }
       if (this.dezaBg) {
-        this.dezaBg.setScroll(this.worldTime * SCROLL_PX_PER_FRAME / SATURN_TICKS_PER_FRAME);
+        if (this.dezaBg.curve) {
+          // The save's own pacing: advance the traced state machine once per
+          // Saturn frame (2 steps), only while the world runs — the same gate
+          // worldTime advances under, so pauses and deaths freeze the scroll.
+          if (this.gameStarted && !this.playerDead && !this.stageCleared && !this.theWorldFlg) {
+            this._curveStep = (this._curveStep || 0) + 1;
+            if (this._curveStep >= SATURN_TICKS_PER_FRAME) {
+              this._curveStep = 0;
+              this.dezaBg.tickCurve();
+            }
+          }
+          this.dezaBg.setScroll(this.dezaBg.scrollPos);
+          this.dezaBg.applyWaveFx();
+        } else {
+          this.dezaBg.setScroll(this.worldTime * SCROLL_PX_PER_FRAME / SATURN_TICKS_PER_FRAME);
+        }
       } else if (this.stageBg && !this.playerDead && !this.stageCleared) {
         if (!this.bossActive && !this.bossReached) {
           var bgMove = this.gameStarted ? this.stageBgAmountMove || 0.7 : 0.7;
@@ -8980,12 +9410,19 @@
       if (this.enemyWaveFlg) {
         this.enemyWaveFrameCounter += 1;
         if (this.waveDueTicks) {
-          var waveClock = this.dezaBg ? this.worldTime : this.enemyWaveFrameCounter;
+          var waveClock = this.dezaBg ? (this.waveDueByScroll ? this.dezaBg.scrollPos : this.worldTime) : this.enemyWaveFrameCounter;
           while (this.waveCount < this.stageEnemyPositionList.length && waveClock >= this.waveDueTicks[this.waveCount]) {
             enemyWave(this);
           }
           var bossDue = this.bossDueTick !== null ? waveClock >= this.bossDueTick : waveClock >= this.waveDueTicks[this.waveDueTicks.length - 1] + this.waveInterval;
-          if (this.waveCount >= this.stageEnemyPositionList.length && bossDue) {
+          if (this.waveDueByScroll && this.bossDueTick !== null && bossDue) {
+            // Position-locked stages spawn the boss when its row scrolls in,
+            // like hardware — NOT after every wave: a save can place its
+            // boss early with waves the scroll never reaches (the scroll
+            // parks at the boss row, hardware loops there), and waiting for
+            // those waves deadlocks the stage.
+            this.bossAdd();
+          } else if (this.waveCount >= this.stageEnemyPositionList.length && bossDue) {
             enemyWave(this);
           }
         } else if (this.enemyWaveFrameCounter >= this.waveInterval) {

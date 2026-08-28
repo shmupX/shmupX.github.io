@@ -3691,6 +3691,9 @@
             }
             if (src && src.background) stage.background = src.background;
             if (src && Array.isArray(src.items) && src.items.length) stage.items = src.items;
+            // A Dezaemon import's scroll pacing (curve + extents) rides the
+            // stage record; the runtime scrolls the save's own speeds from it.
+            if (src && src.scroll) stage.scroll = src.scroll;
             return stage;
         }
 
@@ -7626,6 +7629,7 @@ function GAME3D_RUNTIME(DATA) {
                     payload.waveRows = stageRec.waveRows;
                     payload.waveInterval = stageRec.waveInterval;
                 }
+                if (stageRec && stageRec.scroll) payload.scroll = stageRec.scroll;
                 // The whole game's stages, beside the flat fields rather than
                 // instead of them: readers written against the old shape decide
                 // a level exists by `data.enemylist` and copy the record
@@ -7653,6 +7657,10 @@ function GAME3D_RUNTIME(DATA) {
                 // customAudioURLs to fall back on — so a level saved without it
                 // plays in silence everywhere it is loaded from the cloud.
                 payload.dezaemonBgm = (gameData && gameData.dezaemonBgm) || null;
+                // The save's three global bullet configs + blast anims — one
+                // record for the whole game, like the soundtrack.
+                payload.dezaemonBullets = (gameData && gameData.dezaemonBullets) || null;
+                payload.dezaemonItems = (gameData && gameData.dezaemonItems) || null;
                 // The import's drawn title screen, the no-story flag and the
                 // community credits ride the level record; level-loader
                 // carries them into the recipe.
@@ -7804,6 +7812,10 @@ function GAME3D_RUNTIME(DATA) {
                 else delete gameData.backgroundCells;
                 if (d.dezaemonBgm) gameData.dezaemonBgm = d.dezaemonBgm;
                 else delete gameData.dezaemonBgm;
+                if (d.dezaemonBullets) gameData.dezaemonBullets = d.dezaemonBullets;
+                else delete gameData.dezaemonBullets;
+                if (d.dezaemonItems) gameData.dezaemonItems = d.dezaemonItems;
+                else delete gameData.dezaemonItems;
                 if (d.dezaemonTitle) gameData.dezaemonTitle = d.dezaemonTitle;
                 else delete gameData.dezaemonTitle;
                 if (d.dezaemonCredits) gameData.dezaemonCredits = d.dezaemonCredits;

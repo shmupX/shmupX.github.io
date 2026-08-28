@@ -151,11 +151,21 @@ export function decodeEnemyRecord(bytes) {
                 (b[4] & 3) === 3 ? FIRE_INTERVAL_TABLE_ALT : FIRE_INTERVAL_TABLE),
             window: FIRE_WINDOW_TABLE[(b[4] >> 4) & 7],
             // Byte 5's low nibble picks a bullet-geometry function from the
-            // 16-pointer table at 0x6086074 (0 = silent, 1 = single, 2 =
-            // pair, 5 = 3-fan, 13 = perpendicular pair, ...); values
-            // 10/11/12 route to three special handlers instead (+0x193d0/
-            // +0x19538/+0x196a8, untraced). Bit 4 (0x10) aims the volley at
-            // the player; otherwise shots leave along the enemy's facing.
+            // 16-pointer table at 0x6086074 — all 16 traced (2026-08-28):
+            // 0 silent, 1/10 single, 2 = ±8-unit pair, 3 = 0,±8 fan,
+            // 4 = 0,±16, 5 = ±8,±24 (no center), 6 = 0,±8,±16,
+            // 7 = 0,±16,±32, 8 = same as 7 with curving bullets, 9 = homing
+            // single, 11 = single with (rand&31)−16 unit jitter, 12 = single
+            // stepping +16 units (22.5°) per shot through a full circle,
+            // 13 = ±64 perpendicular pair, 14 = 0,±64,128 cross, 15 = 8-way
+            // star (angle units = 1/256 circle). Values 10/11/12 ALSO route
+            // the fire routine to burst handlers (+0x193d0/+0x19538/+0x196a8):
+            // 10 = 4 volleys one fire-tick apart, 11 = 5 jittered volleys,
+            // 12 = 16 shots on consecutive frames — the rotating spiral.
+            // Bit 4 (0x10) aims the volley at the player (re-aimed every
+            // shot); otherwise shots leave along the enemy's facing.
+            geometry: b[5] & 0x0f,
+            aimed: (b[5] & 0x10) !== 0,
             pattern: SPECIAL_FIRE_PATTERNS[b[5] & 0x0f] ?? null,
             direction: SPECIAL_FIRE_PATTERNS[b[5] & 0x0f] !== undefined ? 0 : (b[5] & 0x1f),
             directionEx: (b[5] >> 5) & 7,
