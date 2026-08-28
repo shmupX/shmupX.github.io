@@ -351,10 +351,18 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
     // One boss per stage (runtime spawns bossData["boss" + stageId]). Stages
     // whose save places a boss get its own art; the rest keep the default so
     // the stage still ends.
+    //
+    // Every one of them is named dezaBoss<stage>, art or not: the slot keys
+    // boss0..boss4 are also the STOCK game's bosses, and both the editor and
+    // the boss viewer label a slot from that stock roster (Bison, Barlog,
+    // Sagat, Vega, Fang) unless the record's own name says otherwise. Leaving
+    // an art-less stage on the starter record's name would file it under
+    // whichever stock boss shares its slot.
     const bossData = {};
     const bossByStage = new Map((decoded.bosses || []).map((b) => [b.stage, b]));
     for (let s = 0; s < stageCount; s++) {
         const rec = clone(defaults.starterBoss);
+        rec.name = `dezaBoss${s}`;
         const decodedBoss = bossByStage.get(s);
         if (decodedBoss) {
             rec.dezaemon = { sizeClass: decodedBoss.sizeClass, row: decodedBoss.row, col: decodedBoss.col };
@@ -388,7 +396,6 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                     .map((idx) => spriteKeyByIndex[idx])
                     .filter(Boolean);
                 if (frames.length) {
-                    rec.name = `dezaBoss${s}`;
                     // Core frames are the boss's real animation loop. Fallback
                     // figure pieces (unpainted core) are separate forms, so
                     // idle holds only the first and attack the second — they

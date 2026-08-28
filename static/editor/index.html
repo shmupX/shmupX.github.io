@@ -2602,7 +2602,7 @@
 
                 const label = document.createElement('span');
                 if (currentEditorTab === 'bosses') {
-                    label.textContent = (BOSS_PATTERN_NAMES[key] || entry.name || key);
+                    label.textContent = bossDisplayName(key, entry);
                 } else if (currentEditorTab === 'player') {
                     label.textContent = (entry && entry.name) ? entry.name : 'player';
                 } else {
@@ -6508,13 +6508,25 @@ function GAME3D_RUNTIME(DATA) {
         // Object.prototype, win the `|| entry.name || key` fallback chain and
         // render as function source. With no prototype an unknown key is just
         // undefined, which is what the fallback chain already expects, so every
-        // BOSS_PATTERN_NAMES[…] site (the enemy/boss list labels, the pattern
-        // dropdown options and the pattern rows) is covered without each one
-        // needing its own own-property guard.
+        // caller of bossDisplayName() below (the enemy/boss list labels, the
+        // pattern dropdown options and the pattern rows) is covered without each
+        // one needing its own own-property guard.
         const BOSS_PATTERN_NAMES = Object.assign(Object.create(null), {
             boss0: 'Bison',  boss1: 'Barlog', boss2: 'Sagat',
             boss3: 'Vega',   boss4: 'Fang',   bossExtra: 'Goki'
         });
+
+        // Those names are the SHIPPED game's roster, keyed by the slot each one
+        // occupies. A Dezaemon import fills the same slots with its own bosses
+        // and names them dezaBoss0..dezaBossN (map-to-game.js), so the record's
+        // own name wins whenever it carries that form — otherwise an imported
+        // save's stage bosses would all read as Bison, Barlog, Sagat, Vega, Fang.
+        const IMPORTED_BOSS_NAME = /^dezaBoss\d+$/;
+        function bossDisplayName(key, entry) {
+            const own = entry && entry.name;
+            if (IMPORTED_BOSS_NAME.test(own || '')) return own;
+            return BOSS_PATTERN_NAMES[key] || own || key;
+        }
 
         function showBossPatternEditor() {
             closeMenu();
@@ -6533,7 +6545,7 @@ function GAME3D_RUNTIME(DATA) {
             // Pattern sources: all bosses available as patterns
             const patternOptions = allBossKeys.map(k => ({
                 key: k,
-                label: BOSS_PATTERN_NAMES[k] || bossData[k].name || k
+                label: bossDisplayName(k, bossData[k])
             }));
 
             for (const bk of allBossKeys) {
@@ -6578,7 +6590,7 @@ function GAME3D_RUNTIME(DATA) {
                 // own origin, triggered by opening the Boss Pattern editor.
                 const nameEl = document.createElement('div');
                 nameEl.className = 'boss-pattern-name';
-                nameEl.textContent = BOSS_PATTERN_NAMES[bk] || b.name || bk;
+                nameEl.textContent = bossDisplayName(bk, b);
                 info.appendChild(nameEl);
                 const keyEl = document.createElement('div');
                 keyEl.className = 'boss-pattern-key';

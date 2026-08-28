@@ -263,11 +263,11 @@ Deno.test("a stage's own boss art and placement are carried over", () => {
     col: 8,
     coreArt: true,
   });
-  // a stage the save gave no boss still ends, on the default one
-  assertStrictEquals(
-    gameJson.bossData.boss1.name,
-    BUILTIN_DEFAULTS.starterBoss.name,
-  );
+  // a stage the save gave no boss still ends, on the default one's art —
+  // but under the import's own name, not the stock boss that shares the slot
+  assertStrictEquals(gameJson.bossData.boss0.name, "dezaBoss0");
+  assertStrictEquals(gameJson.bossData.boss1.name, "dezaBoss1");
+  assertEquals(gameJson.bossData.boss1.anim, BUILTIN_DEFAULTS.starterBoss.anim);
   assert(validateGameJson(gameJson).ok);
 });
 

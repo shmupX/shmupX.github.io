@@ -783,6 +783,7 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
   const bossByStage = new Map((decoded.bosses || []).map((b) => [b.stage, b]));
   for (let s = 0; s < stageCount; s++) {
     const rec = clone(defaults.starterBoss);
+    rec.name = `dezaBoss${s}`;
     const decodedBoss = bossByStage.get(s);
     if (decodedBoss) {
       rec.dezaemon = { sizeClass: decodedBoss.sizeClass, row: decodedBoss.row, col: decodedBoss.col };
@@ -802,7 +803,6 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
       if (Array.isArray(decodedBoss.spriteKeys) && decodedBoss.spriteKeys.length) {
         const frames = decodedBoss.spriteKeys.map((idx) => spriteKeyByIndex[idx]).filter(Boolean);
         if (frames.length) {
-          rec.name = `dezaBoss${s}`;
           rec.anim = decodedBoss.coreArt ? { idle: frames, attack: frames } : { idle: [frames[0]], attack: [frames[1] || frames[0]] };
           rec.dezaemon.coreArt = decodedBoss.coreArt === true;
         }
