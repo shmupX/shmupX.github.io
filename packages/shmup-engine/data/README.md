@@ -22,4 +22,7 @@ they live in the game's own ROM/overlays (see FORMAT.md for the traces):
   10-byte rows `{duration, angle/offset, angularVel/delta, amplitude+flags,
   flagsWord}` that drive a zako's built-in entry motion, scroll riding and
   fire gating (flags bit4 = never fires). Sprite size/frames do NOT live
-  here — they come from the placement-id band.
+  here — they come from the placement-id band. This file is the verbose
+  reference; the runtime ships the same 1,206 rows compactly from
+  `src/decode/appearance-table.js`, which the mapper attaches to each
+  imported enemy as `dezaemon.entry` and the 2028-ai runtime interprets.

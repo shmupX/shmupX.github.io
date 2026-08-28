@@ -313,7 +313,7 @@ start/end/rate/repeat interpolators:
 
 | Byte | Field |
 |------|-------|
-| 0 | appearance id: full byte indexes the 256-entry pointer table `+0x6088e5c` — whose entries are **BEHAVIOR SCRIPTS, not sprite definitions** (decoded 2026-08-28, adversarially verified; extracted to `data/appearance-scripts.json`): variable-length lists of 10-byte rows `{u16 dur, u16 angle/offset, u16 angVel/delta, u16 amplitude+flags, u16 flagsWord}` driving the zako's built-in entry motion (polar drift or lateral-target interpolation, chosen by flags bit7), scroll-riding (amplitude bit15: `pos += scrollSpeed×128`/tick) and gates — flags bit4 = never fires (the long-known `APPEARANCE_NOFIRE`), bit9 = early-expire at a resolver threshold. Sprite size, char slot, frame count and hitbox come from the PLACEMENT-ID BAND instead (seven spawn wrappers `+0x16070..+0x165F8`: frame counts 4/4/4/4/2/2/1 and char bases 67/131/163/195/259/267/275 across the seven art bands); `b0>>3` classifies the object class. |
+| 0 | appearance id: indexes the 256-entry pointer table `+0x6088e5c` — whose entries are **BEHAVIOR SCRIPTS, not sprite definitions**. See "Appearance scripts" below. Sprite size, char slot, frame count and hitbox come from the PLACEMENT-ID BAND instead (seven spawn wrappers `+0x16070..+0x165F8`: frame counts 4/4/4/4/2/2/1 and char bases 67/131/163/195/259/267/275 across the seven art bands); `b0>>3` selects the object CLASS from `+0x21FB0` — 0x30 = scripted zako (208 ids, **93.9%** of corpus enemy definitions), 0x31–0x36 = hardcoded special AI on an empty script (48 ids, the rest). |
 | 1 | bits0-2 **hp** index → `[60,30,15,10,5,3,2,1]` (`+0x6085ee8`; index 0 = toughest, 7 = the editor default) — the SAME value is the **animation frame period in ticks** (both counters load from it at spawn `+0x15448`; the anim reload doubles as the pierce-exchange hp, so damaged enemies animate faster); bits4-6 **score** index → `[50,100,200,500,1000,2000,5000,10000]` (`+0x6085ef0`); bit7 **ground** flag |
 | 2 | bits0-2 **speed** index → u32 `[256,12800,…,512000]` (`+0x6085f20`, 16.16 px/frame, ×1.5 at rank ≥2 and again at rank 6); bit3+bits4-5 **movement pattern** (0-7, `((b2>>4)&3)\|((b2&8)>>1)`); bits6-7 **fire type** |
 | 3 | fire params (type 1: bits0-2 count−1, bit3 wide; other types OR raw) |
@@ -346,12 +346,172 @@ per-shot jitter of `(rand&31)−16` angle units, 12 = single stepping through
 the 16-byte rotation table `+0x22064` `[C0 D0 E0 F0 00 10 .. B0]` indexed by
 the burst counter — a **22.5°/shot full-circle spiral**.
 
+### Axes and angles (settled 2026-08-28 — supersedes earlier notes)
+
+Three independent code paths pin the two per-object position arrays, and
+several earlier claims in this file had them (and therefore every angle)
+rotated 90°:
+
+| array | axis | evidence |
+|-------|------|----------|
+| `0x06090040` | **lateral** — the 20-column axis, screen X in a vertical game (0…320 px, playfield 48–272) | the placement walker stores `column << 11` (= col·16 px·128) here (`+0x169EE`→`+0x1609E`); the item spawner does the same with `(col·16+8)·128`; the collision test at `+0x18322` compares this axis' separation against the hitbox extent that holds **12** for a 32×16 sprite (its wide half-extent) |
+| `0x0608D400` | **scroll** — the axis the stage scrolls along, screen Y in a vertical game (playfield 224 px) | the same call passes a *pixel* scroll position `<< 7`; the on-screen fire window tests it against `[0, 0x7000]` = 0–224 px; its hitbox extent is the narrow **6** |
+
+Every object integrates in the master walker at `+0x7930`:
+
+```
+lateral (0x06090040) += s16 0x06094840[slot]      // the COS component
+scroll  (0x0608D400) -= s16 0x0608F640[slot]      // the SIN component
+```
+
+and every velocity producer — the zako appearance drift (`+0x4D80`), the
+boss movement interpreter (`+0x1A4E2`), the bullet spawn (`+0x185E2`) —
+writes `cos(angle)·speed` to `0x06094840` and `sin(angle)·speed` to
+`0x0608F640`. So for **every** angle in the engine:
+
+> **screenX += cos(θ)·v, screenY −= sin(θ)·v** — i.e. a standard
+> math-convention circle with the screen's Y flipped:
+> **0 = right, ¼ turn = UP, ½ turn = left, ¾ turn = straight DOWN.**
+
+In the 65536-unit space the interpreters use (boss steps, appearance rows)
+that reads `0x0000` right, `0x4000` up, `0x8000` left, **`0xC000` down** —
+which is why virtually every appearance row and boss "advance" step stores
+`0xC000`. Verified in the runtime at frame resolution: a boss on heading
+`0x0000` measures dx +0.287/dy 0, on `0x8000` dx −0.772/dy 0.
+
+Speeds: a velocity producer computes `(trig · amplitude) >> 16` with a
+trig amplitude of 0x7FFF (zako) or 0x10000 with an extra `>>1` (boss), so
+the stored velocity is ≈ amplitude/2 in the ×128 position units —
+**px/frame = amplitude/256** in both systems. In horizontal games the
+SCROLL component is rescaled ×365/256 (`+0x4E1A`, `+0x1A514`) for the
+320-px-wide scroll axis.
+
 **Movement is a 2-bit mode plus a flag, not an 8-way enum.** The spawn packs
 `b2` bits 4-5 and bit 3 into one byte at `0x6091550`
 (`((b2>>4)&3) | (bit3 ? 4 : 0)`), and the engine reads that byte BITWISE
 across its 56 read sites: masks `0x1` (17x), `0x4` (13x), `0x3` (12x), `0x2`
 (2x), `0x8` (1x). Mode 3 never occurs in the corpus. `decode-enemy.js` now
 exposes `move: {mode, flag}` alongside the packed `movePattern`.
+
+### Appearance scripts (**decoded** 2026-08-28)
+
+Each of the 256 appearance ids points at a variable-length list of 10-byte
+rows (script data `+0x220BC`–`+0x24E52`; 202 distinct scripts, 1,206 rows
+in total, extracted byte-exact to `data/appearance-scripts.json` and shipped
+to the runtime by `src/decode/appearance-table.js`). The rows are the
+enemy's **entry choreography** — the swoops, circles and hovers a Dezaemon
+enemy performs on its own, independent of the record's change channels.
+
+| offset | field |
+|--------|-------|
+| +0 | `u16` duration in AI ticks (one tick per display frame); `0x7FFF` = hold |
+| +2 | `u16` drift **angle**, 65536 = full circle (see "Axes and angles": `0xC000` = straight down) |
+| +4 | `s16` **turn rate** added to the angle every tick |
+| +6 | `u16` **amplitude** in bits 0–14 (px/frame = amp/256); **bit15 = rides the scroll** |
+| +8 | `u16` **flags** |
+
+Interpreter 1 (`+0x4EC4`, the polar-drift one; interpreter 2 at `+0x5054`
+is selected by flags bit7 and steers toward a lateral target instead) runs
+one tick per frame:
+
+- when the row timer expires the next row is loaded; **flags bit0 advances
+  the cursor**, and a row without it holds forever (`+0x4F42`)
+- while a row runs, `angle += turnRate` (`+0x4F60`)
+- the drift helper `+0x4D80` then rewrites the velocity — but **only on a
+  row load or on a tick that actually turned** (`+0x4F6C` skips the call
+  when the turn rate is 0), so between those the velocity persists and the
+  record's own channels stay in charge
+- **flags bit5 SUPPRESSES the lateral component and bit6 the scroll one.**
+  Both `tst`/`bt/s` pairs branch to the COMPUTE path when the bit is
+  CLEAR and fall through to a store of 0 when it is set — the opposite of
+  the "enable" reading, and the corpus confirms it: only 16 of the 256
+  scripts ever set either bit, so under the enable reading 240 of the
+  engine's choreographies would be motionless
+- a **right-half spawn** (status bit0, set when the lateral coordinate
+  exceeds `0x4FFF` = 160 px) negates the lateral component, which is what
+  makes placed formations sweep out symmetrically; the **ground** flag
+  (status bit1) negates the scroll component
+- amplitude bit15 (or flags bit8 together with the packed movement byte's
+  bit2) adds `scrollSpeed × 128` to the scroll coordinate each tick
+  (`+0x5286`, shift chain `<<2 <<2 ×2 <<2`; `0x06090A2C` counts WHOLE
+  pixels of map scroll this frame, so the ride moves the object exactly
+  with the map). Objects in appearance groups 0/2/3 carry status bit6
+  instead and have their scroll coordinate recomputed ABSOLUTELY from a map
+  anchor each tick (`+0x4BFC`) — that is how turrets and scenery stay glued
+  to the terrain. **Everything else holds its screen position** unless its
+  own drift moves it. The 2028-ai runtime implements this model for
+  entry-carrying imports (riders move with the map, anchored riders refuse
+  vertical record movement, holders hold; hidden-above-screen holders are
+  retired after ten seconds), keeping the legacy everything-scrolls model
+  for imports that predate the entry data
+
+Other flag bits: **bit4 = this appearance never fires** (48 of 256 ids —
+the long-known `APPEARANCE_NOFIRE`), bit9 = expire the row early past a
+resolver threshold, bit12 = halve the duration for the band's variant-B
+spawn.
+
+One AI tick is one display frame: the master walker makes a single pass
+over slots 0–248 per frame with no segmentation (`+0x791C`), and a row
+lasts `duration + 1` ticks (the counter is decremented before the test).
+
+**The six special classes 0x31-0x36** (appearance ids 184-191 and 216-255,
+11.5% of corpus enemy definitions — **decoded 2026-08-28 and adversarially
+verified with no substantive errors**; full spec in the trace reports, all
+six implemented in the 2028-ai runtime). The class table byte (`+0x21FB0`,
+id>>3) routes them to hardcoded AI instead of the script interpreters; their
+speed is `SPEED[id&7]` = `[128,256,384,512,640,768,1152,1536]`/256 =
+0.5-6.0 px/tick:
+
+- **0x36** (216-223, 6.7% of records): aims at the player ONCE at spawn and
+  flies straight forever (no player: straight down for air, up for ground).
+  Its fixed-heading branch is dead code — every spawn path clears the
+  selector bit first.
+- **0x31** (224-231): homer — re-aims every 8-23 ticks, turning 448 units
+  (2.46°)/tick with shortest-way snap.
+- **0x32** (240-247): stop-and-go over counter `c = s16(c+1)`, flip to
+  `-LIMIT[id&7]` past `+LIMIT` (`[72,64,56,48,40,32,24,16]`): hover (c<0)
+  aims at 2·S/tick with velocities zeroed and fire enabled; dash (c>=0)
+  flies the frozen heading with fire suppressed, stopping early when it
+  reaches the player's 16-px cell.
+- **0x33** (232-239): drifts along the scroll axis (air down, ground up) at
+  S/2; when the player draws level it charges sideways toward the player's
+  side, accelerating S/64 units/tick² forever.
+- **0x34** (248-255): the mirror — slides toward the player's column, then
+  dives along the scroll axis with the same acceleration (and, unlike 0x33,
+  terrain-rides during its slide when the movement byte's flag is set).
+- **0x35** (184-191): locks on and flies at the player; within 56 px cross /
+  128 px scroll it banks its angle through a half-circle at (S+128)
+  units/tick with speed growing S/32 per tick — a swerving strafe that
+  escapes sideways.
+
+**Formation keys and the death word** (same trace): EVERY grid-placed zako
+gets `0x06090530[slot]` = its placement cell byte (helper `+0x1675C`, called
+from the placement walker's common tail). The record's death word
+(`b2>>6` mode, `b3` parameter): mode 1 = drop item 1-9, mode 2 = spawn the
+enemy record `BASE[(p>>4)&7] | (p&15)` (`BASE = [0,16,24,32,48,52,56]`) at
+the dying enemy's position with key `p|0x80`, mode 3 = **chain-kill**: every
+live object whose key equals `p|0x80` — i.e. everything placed as grid id
+`p|0x80` — dies in a 4-tick ripple, the editor's squad-bonus mechanic.
+`(b4>>2)&3 == 0` = die SILENTLY (no blast); anything else spawns the blast
+anim.
+
+**Change-channel triggers** (the C byte's bits 0–2 of each of the record's
+four channels) resolve through `+0x4C8C` to a scroll-axis threshold: mode 0
+= run from spawn, modes 1/2/3 = arm at `0x1F00`/`0x3800`/`0x5200` = **62 /
+112 / 164 px** into the 224-px playfield (a per-enemy signed byte from
+`+0x22044` shifts that by up to ±16 px), modes 4–7 = never arm (the
+resolver returns 0). An **air** enemy arms when its scroll coordinate has
+reached the threshold, a **ground** one when it has fallen back past it;
+ground records additionally have modes 0 and 4 swapped at spawn
+(`+0x15CD4`), which is why the editor's default reads the same for both —
+and why the corpus shows air channels piled on mode 0 and ground channels
+on mode 4. Arming re-seeds the channel from the start of its ramp.
+
+A channel that reaches a scale of ×0 or ×4, or a direction value of 0,
+**silently removes the object** (`+0x632A` — no explosion, no score), and
+the per-enemy status word's bit15 (set while the scale is off unity or the
+direction channel is exhausted) makes the object neither fire nor collide
+that tick.
 
 **Song playback: FULLY TRACED — timing has no calibrated constants.** BGM
 sequencing is not in the 68000 driver at all — 0KERNEL walks a playing song
@@ -455,11 +615,9 @@ tests in the 320-wide grid space, so an enemy may fire anywhere visible):
   **`b5 & 0x10` aims the volley at the player** (octant-folded atan2 via
   `+0x183d0`, re-computed EVERY volley so bursts track a moving player;
   suppressed within a (size+36) px point-blank box of the player); without
-  it the shot leaves along the enemy's heading (`0x6094440`, 8.8 word) —
-  seeded by the spawn walker as `((64 − direction) & 255) << 8` from the
-  movement direction, so the **256-circle heading runs 0 = +X, 0x40 = up,
-  0xC0 = straight down** (the default), and velocity = angle measured from
-  +Y: `Y += (cos·speed)>>16`, `X −= (sin·speed)>>16` into 24.8 positions.
+  it the shot leaves along the enemy's heading (`0x6094440`, 8.8 word),
+  seeded by the spawn walker from the movement direction. See "Axes and
+  angles" below for the velocity convention.
 - **Fire cadence is a global RANK-driven pulse**: a per-frame accumulator
   `u16[0x6091E28] += 28 + rank/2` emits one fire tick on overflow past 255
   (~10 frames apart at rank 0, 2 at rank 255; tick flag `u8[0x6092024]`).
@@ -568,7 +726,7 @@ offsets; the engine reaches the trailer through the pointer global
 | 0 | bits0-1 core **size class** (placement id `0xF0`–`0xF3`); bits4-5 **HP-stage count** − 1; bit6 rotate-in-place; bit7 death-FX spin variant |
 | 1 | bits0-2 **hp** index → u32 `[1024000, 1536000, 2304000, 3328000, 4608000, 6144000, 7936000, 9984000]` (`+0x21F40`); bit3 option flag, stored **inverted** by the editor; bits4-6 **score** index → `[5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]` (`+0x21F00`) |
 | 2–5 | **pattern playlist**: byte 2+k = HP stage k's loop of four 2-bit pattern ids, consumed LSB-first. HP stages split the HP bar into equal bands; a band change advances to the next byte — the editor's "16-entry phase loop" is these 4 bytes × 4 entries |
-| 6 / 7 | **arrival / death** selectors — **decoded** (2026-08-28): bits4-7 pick the off-screen start point (byte 6) / death-drift target (byte 7) from four 4-entry position preset tables (orientation-dependent sets; no bits set = default entry riding in at scroll speed / dying in place); bits0-3 = FX: bit0 spin enable, bit1 spin direction, bit2 zoom enable, bit3 zoom direction (grow/shrink). Death glide speed = distance/2. |
+| 6 / 7 | **arrival / death** selectors — **decoded** (2026-08-28; 60% of the corpus's 1,396 bosses author a position and 40% the flourishes). High nibble picks the off-screen START point (byte 6) / the death-drift TARGET (byte 7) out of two 4-entry preset tables per orientation, in the engine's 320×224 px space: vertical-mode arrival lateral `[160,-16,160,336]` (bit6 gates it) and scroll `[56,280,56,-56]` (bits 4∨6 gate it, else the **default entry**: start just off the top and ride in at the scroll speed); vertical-mode death lateral `[160,336,160,-16]` (bit6) and scroll `[56,-56,56,280]` (bit4), with neither set meaning "die where it stands". Entry 0 of each table is the park anchor — lateral 160 = centre, scroll 56. The size class nudges the entry's scroll coordinate by `[0,0,32,32]`. Low nibble = FX, the same pair on both bytes: **bit0 = ZOOM** (scale register `0x06094A40`, neutral `0x1000`) with bit1 its direction, **bit2 = SPIN** (rotation register `0x06094440`) with bit3 its direction. Both entrance flourishes run exactly **256 frames** — the same length as the entry glide, by design: the zoom rides 4.0×→1.0× at −48/frame or 0→1.0× at +16/frame, and the spin turns eight full revolutions with its rate ramping from 22.5°/frame down to nothing, landing upright. On death the scale rate is CONSTANT (+24 grow / −16 shrink) while the spin rate ACCELERATES by 16/frame and never settles; record byte0 bit7 is a 159-frame hold plus a 64-frame **fade-out**, not a second spin channel. The shared approach primitive `+0x1A6B4` sets a CONSTANT velocity of `distance·k/256` px/frame (k = 1 on arrival, 4 on a fast return, ½ on the death glide, floored at 0.5), so a glide takes ~256 frames whatever the distance. |
 | 8–63 | 4 **pattern records** × 14 B |
 
 Pattern record: byte +0 bits3-7 = **movement script** 0–31, bits0-2 =
@@ -588,7 +746,12 @@ pattern's length IS its script's length). The speed setting (byte +0 bits0-2)
 picks factor `f` from `[1,2,3,4,6,8,10,14]` (`+0x2525C`): `counter = dur/f`,
 `velocity = speed·f` (px/f = value/256), `turn/frame = turnRate·f/2` — so the
 path SHAPE is speed-invariant (distance = speed·dur/256 px, total turn =
-turnRate·dur/2 units of 65536/circle). Heading 0 = DOWN-screen, 0x8000 = up.
+turnRate·dur/2 units of 65536/circle). Headings follow the engine-wide
+convention (see "Axes and angles"): **0 = right, 0x4000 = up, 0x8000 = left,
+0xC000 = down** — so scripts 1/2 are horizontal bobs and 3/4 vertical sways,
+9/11 true circles (30×30 and 59×59 px), 22–27 mirror pairs, and the
+live-tracking scripts 29–31 advance 160 px straight DOWN at the player. All
+32 simulate to their analytic duration / path length / total turn.
 Track flags: 0x20 = evade the player on X at speed/2, 0x40 = chase the
 player's Y, 0x800 = aim-tracking heading (re-target every 8-23 frames, turn
 448 units/frame); scripts 29-31 end with live-tracking terminators that skip

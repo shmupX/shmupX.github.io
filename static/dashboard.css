@@ -388,6 +388,61 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .game-bar .sub { font-family: 'Share Tech Mono'; font-weight: 400; font-size: .7em; color: rgba(220, 255, 180, .55); letter-spacing: .1em; margin-left: 1.5em; white-space: nowrap; flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .game-row.sel .game-icon { box-shadow: 0 0 28px rgba(255, 240, 90, .7), inset 0 0 14px rgba(0, 0, 0, .55); }
 .game-row.sel .game-icon .glass { box-shadow: inset 0 0 12px rgba(255, 240, 90, .5), 0 0 0 2px rgba(255, 240, 90, .9); }
+/* ── Shelf badge ──────────────────────────────────────────────────────────
+   A row that owns a .sav shelf (ShmupX) wears a little stack of cartridge
+   spines at its right edge — "there are more games in here" at a glance.
+   On the highlighted row the stack grows its label, the live game count and
+   the way in: the Y face button on a pad, or tapping the badge itself.
+   The badge is its own click target (Dashboard.svelte stops propagation) so
+   browsing the shelf and launching the row stay separate gestures. */
+.shelf-badge {
+  display: flex; align-items: center; gap: 1vmin; flex-shrink: 0;
+  /* .game-bar is pointer-inert (the row is the click target) — the badge
+     must accept clicks of its own to open the shelf instead of launching */
+  pointer-events: auto;
+  padding: .6vmin 1.1vmin; border-radius: .8vmin; cursor: pointer;
+  border: 1px solid rgba(140, 255, 110, .45);
+  background: linear-gradient(180deg, rgba(10, 40, 18, .92), rgba(6, 26, 11, .92));
+  box-shadow: 0 0 10px rgba(50, 200, 80, .25);
+}
+.shelf-spines { display: flex; align-items: flex-end; gap: .35vmin; height: 3.2vmin; min-height: 22px; }
+.shelf-spines i {
+  display: block; width: .9vmin; min-width: 6px; border-radius: .2vmin;
+  background: linear-gradient(180deg, rgba(140, 255, 110, .9), rgba(40, 140, 60, .8));
+  box-shadow: 0 0 6px rgba(120, 255, 90, .5);
+}
+.shelf-spines i:nth-child(1) { height: 70%; }
+.shelf-spines i:nth-child(2) { height: 100%; }
+.shelf-spines i:nth-child(3) { height: 84%; transform: rotate(9deg); transform-origin: bottom center; }
+.shelf-copy { display: none; flex-direction: column; line-height: 1.2; text-align: left; }
+.shelf-copy b { font-size: clamp(9px, 1.3vmin, 12px); letter-spacing: .22em; color: #dfffc4; }
+.shelf-copy em {
+  font-style: normal; font-size: clamp(8px, 1.1vmin, 11px); letter-spacing: .12em;
+  color: rgba(190, 255, 150, .75); text-transform: uppercase; white-space: nowrap;
+}
+.shelf-key {
+  display: flex; align-items: center; justify-content: center;
+  width: 2.6vmin; height: 2.6vmin; min-width: 18px; min-height: 18px; border-radius: 50%;
+  border: 1px solid rgba(255, 240, 90, .8); color: #ffef6a; font-weight: 800;
+  font-size: clamp(9px, 1.3vmin, 12px);
+  box-shadow: 0 0 8px rgba(255, 240, 90, .35), inset 0 0 6px rgba(255, 240, 90, .15);
+}
+.shelf-badge.lit {
+  border-color: rgba(255, 240, 90, .75);
+  animation: shelfPulse 1.6s ease-in-out infinite;
+}
+.shelf-badge.lit .shelf-copy { display: flex; }
+.shelf-badge.lit .shelf-spines i {
+  background: linear-gradient(180deg, #ffef8a, #b09a20);
+  box-shadow: 0 0 8px rgba(255, 240, 90, .6);
+}
+@keyframes shelfPulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 240, 90, .25); }
+  50% { box-shadow: 0 0 22px rgba(255, 240, 90, .55); }
+}
+.shelf-badge:hover { border-color: rgba(255, 240, 90, .9); }
+.shelf-badge:hover .shelf-copy { display: flex; }
+
 .game-row.sel .game-bar {
   color: #0e0e02;
   background: linear-gradient(180deg, #fffea1 0%, var(--yellow) 28%, #d8e640 65%, #a4b00b 100%);

@@ -1653,7 +1653,8 @@
   }
 
   // ─── ShmupX context menu — .sav coverflow picker ──────────────────────────
-  // Right-click, SELECT + Up (gamepad), or tap-and-hold on the highlighted
+  // Right-click, the gamepad's top face button (Y / triangle), the row's
+  // shelf badge, or tap-and-hold on the highlighted
   // ShmupX row opens a coverflow over the Dezaemon .sav shelf — the same
   // library the editor's SAVED GAMES drawer reads: the database index first
   // (the only source a deployed build has), the static manifest for offline
@@ -1679,6 +1680,12 @@
     const g = row?.g;
     return !!g && (g.savLibrary === true || SAV_PICKER_IDS.has(g.id));
   }
+
+  // Warm the shelf the moment a shelf-owning row is highlighted: the badge
+  // gets its game count and the picker opens instantly instead of loading.
+  $effect(() => {
+    if (screen === 'games' && rowHasSavPicker(curRow)) loadSavLibrary();
+  });
 
   // The upload script's slug algorithm (slugOf in scripts/upload-deza-saves.ts),
   // so static-manifest rows agree with the database keys.
@@ -1789,7 +1796,7 @@
     savPickerOpen = false;
     sfx.back();
   }
-  // The SELECT + Up chord's entry: only while a shelf-owning row is the
+  // The gamepad entry (FBTN_TOP): only while a shelf-owning row is the
   // highlighted row of the games screen.
   function openSavPickerForRow() {
     if (gameOn || screen !== 'games' || stripOn) return false;
@@ -2046,7 +2053,7 @@
     lastNavAt: 0,
     // Hold-to-repeat feel: long enough that a deliberate single tap (which
     // often lasts 300ms+) never auto-repeats, then a steady scroll.
-    initialDelayMs: 400,
+    initialDelayMs: 600,
     repeatMs: 150,
     holdingSince: 0,
     comboLatched: false,
@@ -2183,14 +2190,25 @@
     const dirs = { up: false, down: false, left: false, right: false };
     if (!pad) return dirs;
     const btn = (i) => !!pad.buttons[i]?.pressed;
+    dirs.up = btn(12);
+    dirs.down = btn(13);
+    dirs.left = btn(14);
+    dirs.right = btn(15);
+    // A pad the browser normalized to the standard mapping is DONE here:
+    // 12-15 ARE its D-pad, the raw slots past 15 are extra hardware (on a
+    // DualShock 4, 16 = the PS button and 17 = the touchpad click — read as
+    // "up"/"down" they navigated the launcher), and its axes past 3 are
+    // whatever the driver felt like (a resting trigger reads as a held
+    // direction). Only non-standard layouts need the fallback sweeps.
+    if (pad.mapping === 'standard') return dirs;
     // SNES pads: the compat plugin rebuilds 12-15 from the hat, and the raw
     // slots past 15 can hold Select/Start on some platforms — reading them as
     // a D-pad turns Select/Start into phantom up/down presses.
     const isSnes = SNES_PAD_RE.test(pad?.id || '');
-    dirs.up = btn(12) || (!isSnes && (btn(16) || btn(18) || btn(20)));
-    dirs.down = btn(13) || (!isSnes && (btn(17) || btn(19) || btn(21)));
-    dirs.left = btn(14);
-    dirs.right = btn(15);
+    if (!isSnes) {
+      dirs.up ||= btn(16) || btn(18) || btn(20);
+      dirs.down ||= btn(17) || btn(19) || btn(21);
+    }
     const ax = pad.axes || [];
     if (typeof ax[6] === 'number' && Math.abs(ax[6]) <= 1.05) {
       if (ax[6] <= -PAD_DEADZONE) dirs.left = true;
@@ -2486,8 +2504,12 @@
     // 15 can hold Select/Start on some platforms, which made Select/Start
     // scroll the launcher.
     const isSnesPad = SNES_PAD_RE.test(pad?.id || '');
-    const upButtonIdxs = isSnesPad ? [12] : [12, 16, 18, 20];
-    const downButtonIdxs = isSnesPad ? [13] : [13, 17, 19, 21];
+    // Standard-mapping pads end at 12/13: on a DualShock 4 the raw slots 16
+    // and 17 are the PS button and the touchpad click, which read here as
+    // phantom up/down (and doubled D-pad presses when a driver mirrors them).
+    const trustRawSlots = pad.mapping !== 'standard' && !isSnesPad;
+    const upButtonIdxs = trustRawSlots ? [12, 16, 18, 20] : [12];
+    const downButtonIdxs = trustRawSlots ? [13, 17, 19, 21] : [13];
     const dpadUp = upButtonIdxs.some((i) => !!pad.buttons[i]?.pressed);
     const dpadDown = downButtonIdxs.some((i) => !!pad.buttons[i]?.pressed);
     let dir = 0;
@@ -2534,22 +2556,13 @@
       }
     }
 
-    // SELECT is a chord modifier in the launcher: SELECT + Up on the
-    // highlighted ShmupX row opens the .sav coverflow. While SELECT is held
-    // the D-pad must not also navigate, and SELECT's own Back action moves to
-    // its release edge (below) — otherwise Back would fire the moment the
-    // chord's first half went down and the chord could never exist.
-    //
-    // The chord needs a fresh Up EDGE (rawDirPrev tracks last frame's
-    // pre-suppression read): a player already scrolling with Up held who
-    // presses SELECT meant Back, not the chord. And it only consumes the
-    // SELECT press when the picker actually opens — a failed chord (wrong
-    // row, wrong screen) still backs out on release like a plain SELECT.
+    // While SELECT is held the D-pad must not navigate, and SELECT's own
+    // Back action lives on its release edge (below) — the OSD open-chord
+    // (SELECT + Down, in-game) and the historical launcher chords depend on
+    // the hold being inert. The .sav shelf now opens on FBTN_TOP (Y /
+    // triangle) instead of the old SELECT + Up chord.
     const selHeld = !!pad.buttons[8]?.pressed;
     if (selHeld) {
-      if (dir < 0 && (padState.rawDirPrev ?? 0) >= 0 && !padState.selChordFired) {
-        if (openSavPickerForRow()) { padState.selChordFired = true; lastInput = 'pad'; }
-      }
       padState.rawDirPrev = dir;
       dir = 0;
       // Neutralize the direction latches too: the bounce filter below would
@@ -2652,6 +2665,11 @@
     const justPressed = (i) => pressedNow.has(i) && !padState.btn.has(i);
     if (justPressed(0) || justPressed(9)) actFbtnBottom(); // FBTN_BOTTOM or Start
     if (justPressed(1)) actFbtnRight();                    // FBTN_RIGHT
+    // FBTN_TOP (Y / triangle) opens the highlighted row's .sav shelf — the
+    // one-button replacement for the old SELECT + Up chord.
+    if (justPressed(3)) {
+      if (openSavPickerForRow()) lastInput = 'pad';
+    }
     // SELECT backs out on its RELEASE edge, so SELECT + Up can chord (above)
     // without Back firing the moment SELECT goes down. Only a press that
     // began in this branch arms it — a release inherited from the in-game or
@@ -3430,7 +3448,35 @@
                 {/if}
                 <div class="game-bar">
                   <span class="name">{r.title}</span>
-                  <span class="sub">{r.sub}</span>
+                  {#if rowHasSavPicker(r)}
+                    <!-- The row owns a shelf of ready-to-play .sav games: in
+                         place of the subtitle, a stack of cartridge spines
+                         says so at a glance, and on the highlighted row it
+                         grows the count plus the way in (Y on a pad,
+                         tapping the badge otherwise). The badge is its own
+                         click target — browsing the shelf and launching the
+                         row stay separate gestures. -->
+                    <div
+                      class="shelf-badge {!stripOn && i === curSel ? 'lit' : ''}"
+                      role="button"
+                      tabindex="-1"
+                      aria-label="Browse the game shelf"
+                      onclick={(e) => { e.stopPropagation(); if (consumeRowPress()) return; stripFocus = false; curSection.setSel(i); openSavPicker(r.g); }}
+                      onpointerdown={(e) => e.stopPropagation()}
+                      oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!savPickerOpen) { stripFocus = false; curSection.setSel(i); openSavPicker(r.g); } }}
+                    >
+                      <span class="shelf-spines" aria-hidden="true"><i></i><i></i><i></i></span>
+                      <span class="shelf-copy">
+                        <b>SHELF</b>
+                        <em>{savLibrary?.length ? `${savLibrary.length} GAMES` : 'browse'}</em>
+                      </span>
+                      {#if !stripOn && i === curSel && padConnected}
+                        <span class="shelf-key" aria-hidden="true">Y</span>
+                      {/if}
+                    </div>
+                  {:else}
+                    <span class="sub">{r.sub}</span>
+                  {/if}
                 </div>
               </div>
             {/each}

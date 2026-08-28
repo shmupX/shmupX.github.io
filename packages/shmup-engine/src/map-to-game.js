@@ -22,6 +22,7 @@
 
 import { DUKE_PLAYER, decodePlayerArt } from "./player-art.js";
 import { ITEM_TYPE_DROPS } from "./decode/decode-stage.js";
+import { APPEARANCE_SCRIPTS, appearanceScript } from "./decode/appearance-table.js";
 
 export { decodePlayerArt, DUKE_PLAYER };
 
@@ -293,7 +294,22 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                 placements: e.placements,
                 attributes: toHex(e.bytes),
             };
-            if (e.behavior) rec.dezaemon.behavior = clone(e.behavior);
+            if (e.behavior) {
+                rec.dezaemon.behavior = clone(e.behavior);
+                // The appearance id's ENTRY SCRIPT — the engine's built-in
+                // choreography for this enemy (swoop in, circle, hold), run
+                // by the runtime's appearance interpreter. Rows ride along
+                // compactly; a non-scripted (special-AI) appearance carries
+                // its class instead so the runtime can fall back.
+                const script = appearanceScript(e.behavior.appearance);
+                if (script) {
+                    rec.dezaemon.entry = script.scripted
+                        ? { rows: APPEARANCE_SCRIPTS[script.id] }
+                        : { objectClass: script.objectClass };
+                    // groups 0/2/3 are glued to the terrain (turrets, scenery)
+                    if (script.anchored) rec.dezaemon.entry.anchored = true;
+                }
+            }
         }
         enemyData[`enemy${letters}`] = rec;
     });

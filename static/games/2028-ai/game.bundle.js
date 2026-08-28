@@ -1418,6 +1418,20 @@
   function isExportedLevelApp() {
     return typeof window !== "undefined" && !!window.__EXPORTED_LEVEL_APP__;
   }
+  // A loaded level that came from a Dezaemon .sav import — the recipe always
+  // carries at least one dezaemon* record or per-enemy dezaemon block.
+  function isImportedLevel() {
+    var r = gameState._phaserRecipe;
+    if (!r) return false;
+    if (r.dezaemonBgm || r.dezaemonTitle || r.dezaemonBullets || r.dezaemonItems || r.dezaemonCredits) return true;
+    var ed = r.enemyData;
+    if (ed) {
+      for (var k in ed) {
+        if (ed[k] && ed[k].dezaemon) return true;
+      }
+    }
+    return false;
+  }
   function scoreCountsAsRecord(state = gameState) {
     return !state.godFlg || isExportedLevelApp();
   }
@@ -3487,7 +3501,26 @@
     controller.setScroll(0);
     return controller;
   }
-  function makeChannel(ch, extra) {
+  // A change channel does not have to start at spawn: its C byte's low 3
+  // bits are a TRIGGER that arms it once the enemy has travelled far enough
+  // into the playfield. The engine resolves the mode to a scroll-axis
+  // threshold (+0x4C8C): mode 0 = armed from spawn, modes 1/2/3 = ~31/56/82
+  // px into the 224-px playfield, modes 4-7 = never armed (the resolver
+  // returns 0 and the channel simply never runs). A GROUND enemy has the
+  // pair swapped at spawn — its 4 means "from spawn" and its 0 "never" —
+  // so the editor's default reads the same either way.
+  // Resolver bases 0x1F00 / 0x3800 / 0x5200 (px*128) = 62 / 112 / 164 px
+  // into the Saturn's 224-px playfield; the runtime's is 480 tall.
+  var CHANNEL_TRIGGER_PX = [0, 62, 112, 164];
+  var CHANNEL_TRIGGER_SCALE = 480 / 224;
+  function channelTrigger(ch, ground) {
+    var mode = ch && ch.trigger ? ch.trigger & 7 : 0;
+    if (ground) mode = mode === 0 ? 4 : mode === 4 ? 0 : mode;
+    if (mode === 0) return null;              // runs immediately
+    if (mode > 3) return Infinity;            // never arms
+    return CHANNEL_TRIGGER_PX[mode] * CHANNEL_TRIGGER_SCALE;
+  }
+  function makeChannel(ch, extra, ground) {
     if (!ch || !ch.enabled) return null;
     var step = Math.abs(ch.step);
     if (extra && extra.reverse) step = -step;
@@ -3500,11 +3533,32 @@
       // 0 once, 1 loop, 2 ping-pong
       spin: !!(extra && extra.spin) || ch.from === ch.to && ch.step !== 0 && !!(extra && extra.wrap),
       wrap: !!(extra && extra.wrap),
+      armAt: channelTrigger(ch, ground),
       done: false
     };
   }
+  // Arm any channel whose trigger threshold the enemy has now crossed; an
+  // armed channel re-seeds its value from the start of its ramp, as the
+  // engine does at +0x58AA.
+  function armChannels(st, enemy) {
+    if (!st.pendingChannels) return;
+    var y = enemy.y;
+    var still = false;
+    for (var i = 0; i < st.pendingChannels.length; i++) {
+      var ch = st.pendingChannels[i];
+      if (!ch || ch.armAt === null) continue;
+      if (y >= ch.armAt) {
+        ch.armAt = null;
+        ch.value = ch.from;
+      } else {
+        still = true;
+      }
+    }
+    if (!still) st.pendingChannels = null;
+  }
   function stepChannel(st) {
     if (!st || st.done) return st ? st.value : 0;
+    if (st.armAt !== null && st.armAt !== undefined) return st.value;
     if (st.spin) {
       st.value += st.step || 1;
       return st.value;
@@ -3605,37 +3659,320 @@
   function ridesTheMap(movePattern) {
     return movePattern === 4 || (movePattern & 3) === 2;
   }
-  function initEnemyBehavior(enemy, behavior) {
+  // ---- Appearance scripts (enemy record byte 0) -------------------------
+  //
+  // Every zako carries an ENTRY CHOREOGRAPHY from the engine's 256-entry
+  // appearance table: a list of rows [duration, angle, turnRate, ampWord,
+  // flags] run one at a time, one row-tick per Saturn frame. Traced from
+  // interpreter 1 (GAME.CMP +0x4EC4) and its drift helper (+0x4D80):
+  //
+  //   - a row loads when the previous one's duration expires; flags bit0
+  //     advances the cursor, and a row without it HOLDS forever
+  //   - the row's angle goes into the heading word, turnRate is added to it
+  //     every tick, and the amplitude's bit15 marks "rides the scroll"
+  //   - the drift helper writes velocity ONLY on a row load or on a tick
+  //     that turned (+0x4F6C skips it when turnRate == 0), so between those
+  //     the enemy's own record channels stay in charge of its motion
+  //   - flags bit5 SUPPRESSES the cos component and bit6 the sin component
+  //     (the tst/bt/s pair at +0x4D9A and +0x4DF4 branches to the COMPUTE
+  //     path when the bit is CLEAR, and falls through to a store of 0 when
+  //     it is set — only 16 of the 256 scripts ever set either, which is
+  //     what makes the other 240 choreographies move at all). The engine
+  //     writes cos to the LATERAL velocity array and sin to the SCROLL one,
+  //     and the object walker (+0x7930) integrates lateral += cos,
+  //     scroll -= sin. So angle 0 = screen right, 0x4000 = up,
+  //     0x8000 = left, 0xC000 = straight down.
+  //   - a right-half spawn negates the cos component (mirrored entries) and
+  //     the ground flag negates the sin one
+  //
+  // Velocity: (trig * amp) >> 16 into px*128 positions = amp/256 px/frame.
+  var ENTRY_ADVANCE = 0x1;
+  var ENTRY_NO_COS = 0x20; // suppress the lateral component
+  var ENTRY_NO_SIN = 0x40; // suppress the scroll component
+  var ENTRY_RIDES = 0x8000;
+  function initEntryScript(dz, enemy, scene) {
+    var rows = dz && dz.entry && dz.entry.rows;
+    if (!rows || !rows.length) return null;
+    var GW = scene && scene.scale ? scene.scale.width : 256;
+    return {
+      rows,
+      idx: 0,
+      rowT: 0, // 0 -> the first tick loads row 0
+      angle: 0,
+      turn: 0,
+      amp: 0,
+      flags: 0,
+      rides: false,
+      ridesNow: false,
+      anchored: !!dz.entry.anchored,
+      moveFlag: !!(dz.behavior && dz.behavior.move && dz.behavior.move.flag),
+      vx: 0,
+      vy: 0,
+      active: false,
+      mirror: enemy.x > GW / 2,
+      ground: !!(dz.behavior && dz.behavior.ground)
+    };
+  }
+  // One Saturn frame of the script. Returns true while the script owns the
+  // enemy's motion (a row with a velocity component), in which case it has
+  // already moved the sprite and the record's own speed/direction channels
+  // stand down — on hardware both write the same velocity slot.
+  function stepEntryScript(enemy, st) {
+    var e = st.entry;
+    if (!e) return false;
+    var recompute = false;
+    if (--e.rowT < 0) {
+      var row = e.rows[e.idx < e.rows.length ? e.idx : e.rows.length - 1];
+      e.flags = row[4];
+      e.rowT = row[0];
+      e.angle = row[1];
+      e.turn = row[2];
+      e.amp = row[3] & 0x7fff;
+      e.rides = (row[3] & ENTRY_RIDES) !== 0;
+      e.ridesNow = e.rides || ((row[4] & 0x100) !== 0 && e.moveFlag);
+      if (e.flags & ENTRY_ADVANCE) {
+        e.idx = e.idx + 1 < e.rows.length ? e.idx + 1 : e.rows.length - 1;
+      }
+      recompute = true;
+    } else if (e.turn) {
+      e.angle = (e.angle + e.turn) & 0xffff;
+      recompute = true;
+    }
+    if (recompute) {
+      var th = (e.angle >>> 8) * (Math.PI * 2 / 256);
+      // The record's speed-change channel is a x0..x4 multiplier on the
+      // script's own amplitude.
+      var v = e.amp / 256 * (st.speedCh ? st.speedCh.value : 1);
+      e.vx = e.flags & ENTRY_NO_COS ? 0 : Math.cos(th) * v;
+      if (e.mirror) e.vx = -e.vx;
+      e.vy = e.flags & ENTRY_NO_SIN ? 0 : -Math.sin(th) * v;
+      if (e.ground) e.vy = -e.vy;
+      // A zero-amplitude script (the "sit on the map" archetype, appearance
+      // 0 and 23% of the corpus) leaves the enemy to its record channels.
+      e.active = e.amp > 0;
+    }
+    if (!e.active) return false;
+    // The velocity the helper wrote persists between recompute ticks, so it
+    // is integrated every frame, not only on the ticks that set it.
+    enemy.x += e.vx;
+    enemy.y += e.vy;
+    return true;
+  }
+  // ---- Special appearance classes (0x31-0x36) ---------------------------
+  //
+  // Six hardcoded engine behaviors for appearance ids 184-191 and 216-255 —
+  // 11.5% of corpus enemy definitions, dominated by 0x36 (the spawn-aimed
+  // straight flier) and 0x31 (the homer). Angles ride the engine's 256-step
+  // circle (0 = +X, 64 = up, 192 = down; runtime x += cos, y -= sin);
+  // speeds are SPEED[id & 7]/256 px per tick. These enemies drive their own
+  // velocity every tick, so the record's movement channels and the scroll
+  // stand down while one runs.
+  var SPECIAL_SPEED = [128, 256, 384, 512, 640, 768, 1152, 1536];
+  var SPECIAL_LIMIT = [72, 64, 56, 48, 40, 32, 24, 16];
+  function specialAimA(enemy, player) {
+    var a = Math.atan2(-(player.y - enemy.y), player.x - enemy.x) / (Math.PI * 2) * 256;
+    return ((Math.round(a) % 256) + 256) % 256;
+  }
+  function specialSetVel(sp, a256, S) {
+    var th = a256 * Math.PI * 2 / 256;
+    sp.vx = Math.cos(th) * S / 256;
+    sp.vy = -Math.sin(th) * S / 256;
+  }
+  function initSpecialClass(st, behavior, cls) {
+    var pIdx = behavior.appearance & 7;
+    st.sp = {
+      cls,
+      S: SPECIAL_SPEED[pIdx],
+      L: SPECIAL_LIMIT[pIdx],
+      air: !behavior.ground,
+      A: (!behavior.ground ? 0xC0 : 0x40) << 8, // a-space seed: down / up
+      aimT: 0,
+      c: 0,
+      state: 0,
+      curS: SPECIAL_SPEED[pIdx],
+      side: 0,
+      noFire: false,
+      moveFlag: !!(behavior.move && behavior.move.flag),
+      vx: 0,
+      vy: 0
+    };
+  }
+  var CELL16 = function(v) { return Math.floor((v + 8) / 16); };
+  function stepSpecialClass(scene, enemy, st) {
+    var sp = st.sp;
+    var player = scene.playerSprite && scene.playerSprite.active ? scene.playerSprite : null;
+    var S = sp.S;
+    if (sp.cls === 0x36) {
+      // one shot: aim at the player on the first tick and never adjust
+      if (sp.state === 0) {
+        specialSetVel(sp, player ? specialAimA(enemy, player) : sp.A >> 8, S);
+        sp.state = 1;
+      }
+    } else if (sp.cls === 0x31) {
+      // homer: re-aim every 8-23 ticks, turn 448 A-units (2.46 deg)/tick
+      if (player && enemy.y >= 0) {
+        if (--sp.aimT <= 0) {
+          sp.Atgt = specialAimA(enemy, player) << 8;
+          sp.aimT = 8 + Math.floor(Math.random() * 16);
+        }
+      }
+      if (sp.Atgt !== undefined) {
+        var d = ((sp.Atgt - sp.A + 0x8000) & 0xffff) - 0x8000;
+        sp.A = Math.abs(d) < 448 ? sp.Atgt : (sp.A + (d > 0 ? 448 : -448)) & 0xffff;
+      }
+      specialSetVel(sp, sp.A >> 8, S);
+    } else if (sp.cls === 0x32) {
+      // stop-and-go: hover (aim, may fire) for L ticks, dash on the frozen
+      // heading for L ticks (fire suppressed), stop early on reaching the
+      // player's 16-px cell
+      sp.c = sp.c + 1;
+      if (sp.c > sp.L) sp.c = -sp.L;
+      if (sp.c < 0) {
+        sp.noFire = false;
+        if (player && --sp.aimT <= 0) {
+          sp.Atgt = specialAimA(enemy, player) << 8;
+          sp.aimT = 8 + Math.floor(Math.random() * 16);
+        }
+        if (sp.Atgt !== undefined) {
+          var d2 = ((sp.Atgt - sp.A + 0x8000) & 0xffff) - 0x8000;
+          var turn = 2 * S;
+          sp.A = Math.abs(d2) < turn ? sp.Atgt : (sp.A + (d2 > 0 ? turn : -turn)) & 0xffff;
+        }
+        sp.vx = 0;
+        sp.vy = 0;
+      } else {
+        sp.noFire = true;
+        specialSetVel(sp, sp.A >> 8, S);
+        if (player && CELL16(enemy.x) === CELL16(player.x) && CELL16(enemy.y) === CELL16(player.y)) {
+          sp.vx = 0;
+          sp.vy = 0;
+          sp.c = -sp.L;
+        }
+      }
+    } else if (sp.cls === 0x33) {
+      // drift along the scroll axis, then charge sideways at the player's
+      // side, accelerating forever
+      if (sp.state === 0) {
+        sp.vx = 0;
+        sp.vy = (sp.air ? 1 : -1) * S / 512;
+        sp.state = 1;
+      } else if (sp.state === 1) {
+        if (player && (sp.air ? player.y < enemy.y : player.y > enemy.y)) {
+          sp.vy = 0;
+          sp.side = player.x >= enemy.x ? 1 : -1;
+          sp.vx = sp.side * S / 512;
+          sp.state = 2;
+        }
+      } else if (!sp.moveFlag) {
+        sp.vx += sp.side * S / 8192;
+      }
+    } else if (sp.cls === 0x34) {
+      // slide toward the player's column, then dive along the scroll axis
+      if (sp.state === 0) {
+        if (!player) {
+          sp.side = enemy.x > 128 ? -1 : 1;
+          sp.vx = sp.side * S / 512;
+          sp.vy = 0;
+          sp.state = 3; // terminal slide
+        } else {
+          sp.side = player.x >= enemy.x ? 1 : -1;
+          sp.vx = sp.side * S / 512;
+          sp.vy = 0;
+          sp.state = 1;
+        }
+      } else if (sp.state === 1) {
+        if (player && (sp.side > 0 ? enemy.x >= player.x : enemy.x <= player.x)) {
+          sp.vx = 0;
+          sp.vy = (sp.air ? 1 : -1) * S / 512;
+          sp.state = 2;
+        }
+      } else if (sp.state === 2 && !sp.moveFlag) {
+        sp.vy += (sp.air ? 1 : -1) * S / 8192;
+      }
+      // (Hardware asymmetry, verified: 0x34 also terrain-rides during state
+      // 1 when the movement byte's flag is set — 0x33 does not. The
+      // terrain-ride helper's math is untraced, so moveFlag enemies here
+      // simply skip the acceleration instead.)
+    } else if (sp.cls === 0x35) {
+      // lock on and fly at the player; near them, bank through a half
+      // circle with growing speed and escape sideways
+      if (sp.state === 0) {
+        if (player) {
+          sp.A = specialAimA(enemy, player) << 8;
+          sp.curS = S;
+          specialSetVel(sp, sp.A >> 8, sp.curS);
+          sp.state = 1;
+        } else {
+          specialSetVel(sp, sp.A >> 8, S);
+        }
+      } else if (sp.state === 1) {
+        specialSetVel(sp, sp.A >> 8, sp.curS);
+        if (player && Math.abs(player.x - enemy.x) <= 56 && Math.abs(player.y - enemy.y) <= 128) {
+          sp.turn = (player.x >= enemy.x ? -1 : 1) * (S + 128);
+          sp.accel = S >> 5;
+          sp.state = 2;
+        }
+      } else if (sp.state === 2) {
+        var raw = sp.A & 0xffff;
+        if (sp.air) {
+          raw = raw > 0x8000 ? (raw + sp.turn) & 0xffff : sp.turn >= 0 ? 0 : 0x8000;
+        } else {
+          raw = raw > 0x7fff ? (sp.turn >= 0 ? 0 : 0x8000) : (raw - sp.turn) & 0xffff;
+        }
+        sp.A = raw;
+        var th35 = (raw >> 8) * Math.PI * 2 / 256;
+        sp.vx = Math.cos(th35) * sp.curS / 256;
+        // the scroll-axis velocity stays frozen during the bank
+        sp.curS += sp.accel;
+      }
+    }
+    enemy.x += sp.vx;
+    enemy.y += sp.vy;
+    return true;
+  }
+  function initEnemyBehavior(enemy, behavior, dezaemon, scene) {
     // Geometry 0 is the engine's empty routine — most of a roster never
     // fires. Everything else fires, the burst patterns 10-12 included.
     var fires = behavior.fire.enabled && zakoGeometry(behavior.fire) !== 0;
     var facesPlayer = behavior.rotation.enabled && behavior.rotation.mode >= 3;
+    var hasEntry = !!(dezaemon && dezaemon.entry && dezaemon.entry.rows && dezaemon.entry.rows.length);
+    var specialCls = dezaemon && dezaemon.entry && dezaemon.entry.objectClass;
     enemy.setData("deza", {
       behavior,
       age: 0,
       tick: 0,
-      pinned: ridesTheMap(behavior.movePattern),
+      // pinned/patrols were pre-appearance-script heuristics; with real
+      // entry data the script and the ride flags carry that behavior.
+      pinned: !hasEntry && ridesTheMap(behavior.movePattern),
       facesPlayer,
       // Slow free-movers (speed index 0-1, plain mode 0) patrol laterally
       // on hardware — the capture's bat flock enters mid-screen and sweeps
       // out to the walls — instead of hanging motionless in the scroll.
-      patrols: !ridesTheMap(behavior.movePattern) && behavior.move.mode === 0 && !behavior.move.flag && behavior.speed < 0.3,
+      patrols: !hasEntry && !ridesTheMap(behavior.movePattern) && behavior.move.mode === 0 && !behavior.move.flag && behavior.speed < 0.3,
       patrolPhase: Math.random() * Math.PI * 2,
-      speedCh: makeChannel(behavior.speedChange, null),
+      speedCh: makeChannel(behavior.speedChange, null, behavior.ground),
       rotationCh: facesPlayer ? null : makeChannel(behavior.rotation, {
         wrap: true,
         reverse: behavior.rotation.mode === 2
-      }),
-      scaleCh: makeChannel(behavior.scale, null),
+      }, behavior.ground),
+      scaleCh: makeChannel(behavior.scale, null, behavior.ground),
       // No wrap: a flat direction channel (from == to) HOLDS its heading.
       // Spun as a circle it sent Ramsie's roc riding the scroll to the
       // screen bottom; held at 0 (up-map, fighting the scroll) the roc
       // hangs near the top of the screen like the capture shows.
-      directionCh: makeChannel(behavior.direction, null),
+      directionCh: makeChannel(behavior.direction, null, behavior.ground),
       // stagger the first volley inside the randomization window
       reload: fires ? zakoReload(behavior.fire) : -1,
-      burst: 0
+      burst: 0,
+      entry: initEntryScript(dezaemon, enemy, scene),
+      special: specialCls >= 0x31 && specialCls <= 0x36 ? specialCls : null
     });
+    var dzst0 = enemy.getData("deza");
+    if (dzst0.special) initSpecialClass(dzst0, behavior, dzst0.special);
+    var dzst = enemy.getData("deza");
+    var pending = [dzst.speedCh, dzst.rotationCh, dzst.scaleCh, dzst.directionCh]
+      .filter(function(c) { return c && c.armAt !== null; });
+    dzst.pendingChannels = pending.length ? pending : null;
     if (behavior.ground) {
       var shadow = enemy.getData("shadow");
       if (shadow) shadow.setVisible(false);
@@ -3652,19 +3989,57 @@
     if (!st) return false;
     var b = st.behavior;
     var scroll = scene.dezaBg ? scene.dezaBg.lastDelta : scene.bossActive || scene.bossReached ? 0 : SCROLL_PX_PER_FRAME / SATURN_TICKS_PER_FRAME;
-    enemy.y += scroll;
+    // Hardware does NOT scroll every enemy with the map: the ride mover
+    // (+0x4BFC) runs only while the current appearance row asks for it —
+    // amplitude bit15, or flags bit8 together with the movement byte's
+    // flag — and everything else HOLDS its screen position. Imports without
+    // entry data keep the legacy everything-scrolls model.
+    var entry = st.entry;
+    if (st.sp) {
+      // special classes drive their own velocity every tick; no scroll ride
+      st.tick++;
+      if (st.tick % SATURN_TICKS_PER_FRAME) return true;
+      st.age++;
+      stepSpecialClass(scene, enemy, st);
+      if (st.scaleCh) {
+        var fSp = stepChannel(st.scaleCh);
+        enemy.setScale(fSp, fSp);
+      }
+      return true;
+    }
+    if (!entry || entry.ridesNow) enemy.y += scroll;
     st.tick++;
     if (st.tick % SATURN_TICKS_PER_FRAME) return true;
     st.age++;
+    // A holder that spawned above the screen and cannot reach it would sit
+    // in the pool forever; hardware culls out-of-bounds objects, so retire
+    // anything that stays hidden past the top for ten seconds.
+    if (entry && enemy.y < -8) {
+      st.hiddenT = (st.hiddenT || 0) + 1;
+      if (st.hiddenT > 600) enemy.setData("dezaGone", true);
+    } else if (st.hiddenT) {
+      st.hiddenT = 0;
+    }
+    armChannels(st, enemy);
     var mult = st.speedCh ? stepChannel(st.speedCh) : 1;
-    var dirDeg = st.directionCh ? stepChannel(st.directionCh) : 0;
+    // With no direction channel the engine seeds the heading from the
+    // editor default (straight down), so an entry-model enemy with a speed
+    // flies down the screen; the legacy model kept 0 (up, fighting the
+    // scroll it was always given).
+    var dirDeg = st.directionCh ? stepChannel(st.directionCh) : entry ? 180 : 0;
     var speed = b.speed * mult;
-    if (!st.pinned) {
+    var scripted = stepEntryScript(enemy, st);
+    if (!st.pinned && !scripted) {
       var rad = dirDeg * Math.PI / 180;
       enemy.x += Math.sin(rad) * speed;
-      enemy.y += -Math.cos(rad) * speed;
+      // A map-anchored rider (appearance groups 0/2/3: turrets, scenery)
+      // has its scroll coordinate recomputed absolutely from the map each
+      // tick, so its record movement cannot walk it up or down the screen.
+      if (!(entry && entry.anchored && entry.ridesNow)) {
+        enemy.y += -Math.cos(rad) * speed;
+      }
     }
-    if (st.patrols) {
+    if (st.patrols && !scripted) {
       enemy.x += Math.cos(st.patrolPhase + st.age * (Math.PI * 2 / 150)) * (26 * Math.PI * 2 / 150);
     }
     if (st.facesPlayer && scene.playerSprite) {
@@ -3776,6 +4151,7 @@
     var fire = st.behavior.fire;
     var geom = zakoGeometry(fire);
     if (!fire.enabled || geom === 0 || st.reload < 0) return true;
+    if (st.sp && st.sp.noFire) return true; // 0x32 mid-dash: fire suppressed
     if (st.tick % SATURN_TICKS_PER_FRAME) return true;
     var GH14 = scene.scale ? scene.scale.height : 480;
     var onScreen = enemy.y >= 8 && enemy.y <= GH14 - 8;
@@ -3847,15 +4223,71 @@
   };
   // The engine's 32 fixed boss movement scripts (GAME.bin +0x252D4..+0x25A18,
   // extracted byte-exact 2026-08-28): 10-byte steps [duration, heading,
-  // turnRate, speed, flags]. Heading: 65536 = full circle, 0 = DOWN-screen,
-  // 0x8000 = up, 0x4000/0xC000 = the two horizontals (adversarially
-  // verified; screen left/right mirror still open). A pattern's speed setting divides
+  // turnRate, speed, flags]. Heading: 65536 = full circle, 0 = screen RIGHT,
+  // 0x4000 = up, 0x8000 = left, 0xC000 = straight DOWN — proven from the
+  // velocity writes at +0x1A4E2 (cos -> the lateral array 0x06094840, sin ->
+  // the scroll array 0x0608F640) and the object walker's integration at
+  // +0x7930 (lateral += cos, scroll -= sin). A pattern's speed setting divides
   // step duration and multiplies speed/turn, so the path shape is
   // speed-invariant: distance = speed*duration/256 px. flags&3 == 0 ends the
   // script (the pattern advances); flag 0x20 = evade the player on X,
   // 0x40 = chase the player's Y, 0x800 = aim-tracking heading.
   var DEZA_BOSS_SCRIPTS = [[[1024,0,0,0,1],[32767,49152,0,256,0]],[[80,32768,0,32,1],[40,32768,0,16,1],[160,0,0,32,1],[40,0,0,16,1],[79,32768,0,32,1],[32767,49152,0,256,0]],[[200,32768,0,32,1],[40,32768,0,16,1],[400,0,0,32,1],[40,0,0,16,1],[199,32768,0,32,1],[32767,49152,0,256,0]],[[80,49152,0,64,1],[40,49152,0,32,1],[160,16384,0,32,1],[39,16384,0,32,1],[32767,49152,0,256,0]],[[200,49152,0,64,1],[40,49152,0,32,1],[400,16384,0,32,1],[39,16384,0,32,1],[32767,49152,0,256,0]],[[128,49152,0,32,1],[208,32768,-113,32,1],[40,24576,-113,16,1],[444,52701,113,32,1],[40,8192,113,16,1],[208,45056,-113,32,1],[127,16384,0,32,1],[32767,49152,0,256,0]],[[128,49152,0,32,1],[332,32768,-42,32,1],[40,24576,-42,16,1],[682,58436,42,32,1],[40,8192,42,16,1],[332,40140,-42,32,1],[122,16384,0,32,1],[32767,49152,0,256,0]],[[208,32768,113,32,1],[40,40960,113,16,1],[424,12834,-113,32,1],[40,57890,-113,16,1],[207,19933,128,32,1],[32767,49152,0,256,0]],[[332,32768,42,32,1],[40,40960,42,16,1],[676,7645,-42,32,1],[40,57890,-42,16,1],[327,25122,48,32,1],[32767,49152,0,256,0]],[[740,32768,176,32,1],[32767,49152,0,256,0]],[[192,32768,0,32,1],[384,32768,170,32,1],[400,0,0,32,1],[384,0,170,32,1],[192,32768,0,32,1],[32767,49152,0,256,0]],[[1480,32768,88,32,1],[32767,49152,0,256,0]],[[192,49152,-170,32,1],[64,32768,0,32,1],[384,32768,-170,32,1],[64,0,0,32,1],[192,0,-170,32,1],[192,49152,170,32,1],[64,0,0,32,1],[384,0,170,32,1],[64,32768,0,32,1],[168,32768,200,32,1],[32767,49152,0,256,0]],[[192,0,-170,32,1],[64,49152,0,32,1],[384,49152,-170,32,1],[64,16384,0,32,1],[192,16384,-170,32,1],[192,0,170,32,1],[64,16384,0,32,1],[384,16384,170,32,1],[64,49152,0,32,1],[192,49152,192,32,1],[32767,49152,0,256,0]],[[360,49152,-170,32,1],[40,24576,-170,16,1],[192,49152,170,32,1],[12,0,0,16,1],[184,0,170,32,1],[40,8192,170,16,1],[192,49152,170,32,1],[8,0,0,32,1],[184,0,170,32,1],[40,10376,170,16,1],[380,49152,-170,32,1],[39,21572,-170,16,1],[32767,49152,0,256,0]],[[360,16384,170,32,1],[40,40960,170,16,1],[192,16384,-170,32,1],[12,0,0,16,1],[184,0,-170,32,1],[40,57344,-170,16,1],[184,16384,-144,32,1],[20,0,0,32,1],[180,0,-170,32,1],[40,55432,-170,16,1],[384,16384,170,32,1],[32767,49152,0,256,0]],[[460,43008,0,32,1],[528,0,0,32,1],[436,22400,0,32,1],[40,22400,0,16,1],[32767,49152,0,256,0]],[[256,32768,0,32,1],[456,55552,0,32,1],[464,10240,0,32,1],[232,32768,0,32,1],[40,32768,0,16,1],[32767,49152,0,256,0]],[[316,39424,0,32,1],[316,59136,0,32,1],[316,6656,0,32,1],[296,25792,0,32,1],[38,25792,0,16,1],[32767,49152,0,256,0]],[[256,32768,0,32,1],[392,49152,0,32,1],[524,0,0,32,1],[392,16384,0,32,1],[256,32768,0,32,1],[32767,49152,0,256,0]],[[640,32768,0,32,1],[1024,49152,0,32,1],[1280,0,0,32,1],[1024,16384,0,32,1],[640,32768,0,32,1],[32767,49152,0,256,0]],[[640,32768,0,32,1],[1024,49152,0,32,1],[640,0,0,32,1],[1024,16384,0,32,1],[640,0,0,32,1],[1024,49152,0,32,1],[640,32768,0,32,1],[1024,16384,0,32,1],[32767,49152,0,256,0]],[[384,32768,0,32,1],[602,49152,109,64,1],[376,32768,0,32,1],[32767,49152,0,256,0]],[[384,0,0,32,1],[602,49152,-109,64,1],[376,0,0,32,1],[32767,49152,0,256,0]],[[512,32768,0,32,1],[724,57344,0,64,1],[1024,16384,0,32,1],[512,32768,0,32,1],[32767,49152,0,256,0]],[[512,0,0,32,1],[724,40960,0,64,1],[1024,16384,0,32,1],[512,0,0,32,1],[32767,49152,0,256,0]],[[640,32768,0,32,1],[1024,49152,0,32,1],[1024,16384,0,32,1],[640,0,0,32,1],[32767,49152,0,256,0]],[[640,0,0,32,1],[1024,49152,0,32,1],[1024,16384,0,32,1],[640,32768,0,32,1],[32767,49152,0,256,0]],[[512,16384,0,16,1],[128,16384,0,0,1],[512,49152,0,96,1],[1296,16384,0,32,1],[32767,49152,0,256,0]],[[1280,49152,0,32,2113],[32767,49152,0,256,2112]],[[1280,49152,0,32,2081],[32767,49152,0,256,2080]],[[1280,49152,0,32,2049],[32767,49152,0,256,2048]]];
   var BOSS_SPEED_FACTOR = [1, 2, 3, 4, 6, 8, 10, 14];
+  // Engine boss coordinates -> runtime screen pixels. The engine works in a
+  // 320x224 space whose playfield is the 224-px band at 48..272 (lateral)
+  // and whose boss parks at scroll 56; the runtime's playfield is the same
+  // 224 px wide but roughly twice as tall, so lateral maps 1:1 into the
+  // centred band and scroll offsets from the park are doubled.
+  var BOSS_ENGINE_PARK_LATERAL = 160;
+  var BOSS_ENGINE_PARK_SCROLL = 56;
+  function bossEngineX(scene, lateral) {
+    var GW = scene.scale ? scene.scale.width : 256;
+    return lateral - 48 + (GW - 224) / 2;
+  }
+  function bossEngineY(parkY, scroll) {
+    return parkY + (scroll - BOSS_ENGINE_PARK_SCROLL) * 2;
+  }
+  // The engine's approach primitive (+0x1A6B4) sets a CONSTANT velocity of
+  // distance/256 px per frame (k=1 on arrival, k=1/2 on the death glide,
+  // floored at 0.5 px/f), so a glide takes ~256 frames whatever the
+  // distance — 4.3 s in, 8.5 s out.
+  function bossGlideMs(distPx, k) {
+    var v = Math.max(0.5, distPx * k / 256);
+    return Math.min(12000, distPx / v / 60 * 1000);
+  }
+  // Entrance / death flourishes from the record's byte 6 / byte 7 low
+  // nibbles: a ~256-frame spin settling to upright, and a zoom that grows
+  // or shrinks into place.
+  function bossSpinTween(scene, boss, spec, ms, dying) {
+    if (!spec.spin) return;
+    // Phaser wraps `rotation` on assignment, so the spin rides a plain proxy
+    // value and is written through each frame: a full turn settling upright
+    // on arrival, an accelerating tumble on death.
+    var dir = spec.spinReverse ? 1 : -1;
+    var spin = { v: dying ? 0 : dir * Math.PI * 2 };
+    scene.tweens.add({
+      targets: spin,
+      v: dying ? dir * Math.PI * 6 : 0,
+      duration: ms,
+      ease: dying ? "Quad.easeIn" : "Sine.easeOut",
+      onUpdate: function() {
+        if (boss.active) boss.rotation = spin.v;
+      }
+    });
+  }
+  function bossZoomTween(scene, boss, spec, ms, dying) {
+    if (!spec.zoom) return;
+    if (dying) {
+      // constant-rate grow or shrink out of the fight
+      var to = spec.zoomFromLarge ? 0.05 : 2.6;
+      scene.tweens.add({ targets: boss, scaleX: to, scaleY: to, duration: ms, ease: "Linear" });
+    } else {
+      // 4.0x -> 1.0x, or 0 -> 1.0x, over the same 256 frames as the glide
+      boss.setScale(spec.zoomFromLarge ? 4 : 0.02);
+      scene.tweens.add({ targets: boss, scaleX: 1, scaleY: 1, duration: ms, ease: "Linear" });
+    }
+  }
   function initBossMove(st, pattern, boss) {
     var script = DEZA_BOSS_SCRIPTS[(pattern.moveScript || 0) & 31];
     var keep = !!(st.mv && st.mv.liveContinue && st.mv.scriptId === (pattern.moveScript & 31));
@@ -3918,7 +4350,7 @@
       if (Math.abs(boss.y - player.y) >= 8) vy = (boss.y > player.y ? -1 : 1) * v / 2;
     } else {
       if (mv.flags & 0x800 && player) {
-        var want = Math.atan2(player.x - boss.x, player.y - boss.y) / (Math.PI * 2) * 65536;
+        var want = Math.atan2(-(player.y - boss.y), player.x - boss.x) / (Math.PI * 2) * 65536;
         want = (want % 65536 + 65536) % 65536;
         var diff = want - mv.heading;
         if (diff > 32768) diff -= 65536;
@@ -3926,10 +4358,13 @@
         mv.heading += Math.abs(diff) <= 448 ? diff : diff > 0 ? 448 : -448;
         mv.heading = (mv.heading % 65536 + 65536) % 65536;
       }
-      // heading 0 = down-screen: vy = +cos, vx = +sin
+      // The engine writes cos(heading)*speed to the LATERAL velocity array
+      // and sin(heading)*speed to the SCROLL one, and the object walker does
+      // lateral += cos, scroll -= sin (+0x7930). So heading 0 = screen
+      // RIGHT, 0x4000 = up, 0x8000 = left, 0xC000 = straight down.
       var th = mv.heading * Math.PI * 2 / 65536;
-      vx = Math.sin(th) * v;
-      vy = Math.cos(th) * v;
+      vx = Math.cos(th) * v;
+      vy = -Math.sin(th) * v;
     }
     var GW = scene.scale ? scene.scale.width : 256;
     var GH = scene.scale ? scene.scale.height : 480;
@@ -4850,7 +5285,7 @@
         this.howtoBtn.setVisible(false);
         this.howtoBtn.disableInteractive();
       }
-      if (isExportedLevelApp()) {
+      if (isExportedLevelApp() || isImportedLevel()) {
         this.twitterBtn.setVisible(false);
         this.twitterBtn.disableInteractive();
       }
@@ -6114,7 +6549,7 @@
   // ../2019-es7/src/phaser/game-objects/Enemy.js
   var GW2 = GAME_DIMENSIONS.WIDTH;
   var GH2 = GAME_DIMENSIONS.HEIGHT;
-  var DEZA_MAX_LIVE_ZAKO = 32;
+  var DEZA_MAX_LIVE_ZAKO = 48;
   function resolveFrame(scene, atlasKey, frameName) {
     var atlas = scene.textures.get(atlasKey);
     if (!atlas) return frameName;
@@ -6155,7 +6590,7 @@
     enemy.setData("projData", data.bulletData || data.projectileData || null);
     enemy.setData("enemyKey", data._enemyKey || null);
     if (data.dezaemon && data.dezaemon.behavior) {
-      initEnemyBehavior(enemy, data.dezaemon.behavior);
+      initEnemyBehavior(enemy, data.dezaemon.behavior, data.dezaemon, scene);
     }
     var shadowReverse = data.shadowReverse !== false;
     var shadowOffsetY = data.shadowOffsetY || 10;
@@ -7487,11 +7922,33 @@
       entryY = rowTopY - coreH / 2;
     }
     scene.bossBaseY = entryY;
+    // The record's byte 6 picks where the boss flies in FROM (two 4-entry
+    // preset tables) and what it does on the way; with no preset it takes
+    // the engine's default entry, riding in from just off the top.
+    var arrival = dezaArmed && bossData.dezaemon && bossData.dezaemon.boss &&
+      bossData.dezaemon.boss.arrival;
+    var entryMs = 2e3;
+    var entryEase = "Quint.easeOut";
+    var entryX = scene.bossSprite.x;
+    if (arrival && !arrival.defaultEntry) {
+      entryX = bossEngineX(scene, BOSS_ENGINE_PARK_LATERAL);
+      scene.bossSprite.x = bossEngineX(scene, arrival.lateral);
+      scene.bossSprite.y = bossEngineY(entryY, arrival.scroll);
+      entryMs = bossGlideMs(
+        Math.hypot(scene.bossSprite.x - entryX, scene.bossSprite.y - entryY), 1
+      );
+      entryEase = "Linear";
+    }
+    if (arrival) {
+      bossSpinTween(scene, scene.bossSprite, arrival, entryMs, false);
+      bossZoomTween(scene, scene.bossSprite, arrival, entryMs, false);
+    }
     scene.tweens.add({
       targets: scene.bossSprite,
+      x: entryX,
       y: entryY,
-      duration: 2e3,
-      ease: "Quint.easeOut",
+      duration: entryMs,
+      ease: entryEase,
       onComplete: function() {
         scene.bossEntering = false;
         scene.bossTimerCountDown = 99;
@@ -7914,6 +8371,22 @@
       }
     }
     scene.playerBullets = [];
+    // Byte 7's high nibble moves the boss's anchor to a death-drift target
+    // and it glides there at half speed while the explosions walk over it;
+    // with no target set it dies where it stands.
+    var dying = scene.dezaBossState && scene.dezaBossState.boss &&
+      scene.dezaBossState.boss.dying;
+    if (dying && (dying.lateral !== null || dying.scroll !== null)) {
+      var toX = dying.lateral !== null ? bossEngineX(scene, dying.lateral) : boss.x;
+      var toY = dying.scroll !== null ? bossEngineY(scene.bossBaseY || boss.y, dying.scroll) : boss.y;
+      var dieMs = bossGlideMs(Math.hypot(toX - boss.x, toY - boss.y), 0.5);
+      scene.tweens.add({ targets: boss, x: toX, y: toY, duration: dieMs, ease: "Linear" });
+      bossSpinTween(scene, boss, dying, dieMs, true);
+      bossZoomTween(scene, boss, dying, dieMs, true);
+    } else if (dying) {
+      bossSpinTween(scene, boss, dying, 2500, true);
+      bossZoomTween(scene, boss, dying, 2500, true);
+    }
     var startX = boss.x;
     var startY = boss.y;
     var bw = boss.width || 80;
@@ -9876,14 +10349,17 @@
         self.tweetBtn.setFrame("twitterBtn1.gif");
         openUrl(buildTweetUrl());
       });
-      if (isExportedLevelApp()) {
+      if (isExportedLevelApp() || isImportedLevel()) {
         this.tweetBtn.setVisible(false);
         this.tweetBtn.disableInteractive();
+        this.tweetBtnHidden = true;
       }
       this.gotoTitleBtn = this.add.sprite(0, 0, "game_ui", "gotoTitleBtn0.gif");
       this.gotoTitleBtn.setOrigin(0.5);
       this.gotoTitleBtn.x = GCX7;
-      this.gotoTitleBtn.y = this.tweetBtn.y + this.tweetBtn.height / 2 + this.gotoTitleBtn.height / 2 + 6;
+      this.gotoTitleBtn.y = this.tweetBtnHidden
+        ? this.tweetBtn.y - this.tweetBtn.height / 2 + this.gotoTitleBtn.height / 2
+        : this.tweetBtn.y + this.tweetBtn.height / 2 + this.gotoTitleBtn.height / 2 + 6;
       this.gotoTitleBtn.setInteractive({ useHandCursor: true });
       this.gotoTitleBtn.on("pointerover", function() {
         self.gotoTitleBtn.setFrame("gotoTitleBtn1.gif");
@@ -10182,9 +10658,10 @@
       this.tweetBtn.on("pointerup", function() {
         openUrl2(buildTweetUrl2());
       });
-      if (isExportedLevelApp()) {
+      if (isExportedLevelApp() || isImportedLevel()) {
         this.tweetBtn.setVisible(false);
         this.tweetBtn.disableInteractive();
+        this.tweetBtnHidden = true;
       }
       this.gotoTitleBtn = this.add.sprite(0, 0, "game_ui", "gotoTitleBtn0.gif");
       this.gotoTitleBtn.setOrigin(0, 0);

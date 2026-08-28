@@ -84,6 +84,68 @@ function decodeFirePoint(f) {
     return fp;
 }
 
+// Boss entrance / death position presets (GAME.CMP +0x25264..+0x2529C),
+// in pixels of the engine's 320x224 coordinate space. "lateral" is the
+// 20-column axis (screen X in a vertical game, 160 = centre, playfield
+// 48..272) and "scroll" the axis the stage scrolls along (screen Y; the
+// boss parks at 56). Entries beyond those ranges are deliberately
+// off-screen — that is where the boss flies in from, or drifts away to.
+export const BOSS_ARRIVE_LATERAL = [160, -16, 160, 336];
+export const BOSS_ARRIVE_SCROLL = [56, 280, 56, -56];
+export const BOSS_DEATH_LATERAL = [160, 336, 160, -16];
+export const BOSS_DEATH_SCROLL = [56, -56, 56, 280];
+// Per size-class nudge applied to the entry's scroll coordinate.
+const BOSS_CLASS_NUDGE = [0, 0, 32, 32];
+export const BOSS_PARK_LATERAL = BOSS_ARRIVE_LATERAL[0];
+export const BOSS_PARK_SCROLL = BOSS_ARRIVE_SCROLL[0];
+
+// The low nibble of both bytes is the same FX pair: bit0 enables the ZOOM
+// (the scale register 0x06094A40, neutral 0x1000) with bit1 choosing its
+// direction, and bit2 the SPIN (the rotation register 0x06094440) with bit3
+// choosing its direction. Both entrance flourishes run exactly 256 frames —
+// the same length as the entry glide, by design: the zoom rides 4.0x -> 1.0x
+// at -48/frame or 0.0x -> 1.0x at +16/frame, and the spin turns eight full
+// revolutions with its rate ramping 22.5 deg/frame down to nothing, landing
+// upright. On death the scale rate is CONSTANT (+24 grow / -16 shrink) while
+// the spin rate ACCELERATES by 16/frame and never settles.
+export const BOSS_FX_FRAMES = 256;
+
+function fxSpec(b) {
+    return {
+        zoom: (b & 1) !== 0,
+        zoomFromLarge: (b & 2) === 0, // clear = start at 4.0x, set = start at 0
+        spin: (b & 4) !== 0,
+        spinReverse: (b & 8) !== 0,
+    };
+}
+
+function arriveSpec(b, sizeClass) {
+    // The scroll preset is consulted when either bit4 or bit6 is set; with
+    // neither, the boss uses the DEFAULT ENTRY — it starts just off the top
+    // and rides in at the scroll speed.
+    const usesScroll = (b & 0x50) !== 0;
+    const nudge = BOSS_CLASS_NUDGE[sizeClass & 3];
+    return {
+        lateral: (b & 0x40) ? BOSS_ARRIVE_LATERAL[(b >> 6) & 3] : BOSS_PARK_LATERAL,
+        scroll: (usesScroll ? BOSS_ARRIVE_SCROLL[(b >> 4) & 3] : -56) +
+            ((b & 0x10) ? nudge : -nudge),
+        defaultEntry: !usesScroll,
+        ...fxSpec(b),
+    };
+}
+
+function deathSpec(b, fadeOut) {
+    return {
+        // With neither gate bit set the boss dies where it stands.
+        lateral: (b & 0x40) ? BOSS_DEATH_LATERAL[(b >> 6) & 3] : null,
+        scroll: (b & 0x10) ? BOSS_DEATH_SCROLL[(b >> 4) & 3] : null,
+        ...fxSpec(b),
+        // record byte0 bit7: a 159-frame hold then a 64-frame level ramp to
+        // nothing — the boss fades out rather than gaining a second spin.
+        fadeOut,
+    };
+}
+
 // Decode the 64-byte boss trailer. Returns null for an all-zero trailer
 // (a stage that never had its boss edited).
 export function decodeBossTrailer(t) {
@@ -116,6 +178,11 @@ export function decodeBossTrailer(t) {
             [b & 3, (b >> 2) & 3, (b >> 4) & 3, (b >> 6) & 3]),
         arrive: t[6],
         death: t[7],
+        // Byte 6 / byte 7 decoded (2026-08-28): the off-screen start point
+        // and the death-drift target, each picked out of two 4-entry
+        // position preset tables, plus the spin/zoom flourishes.
+        arrival: arriveSpec(t[6], t[0] & 3),
+        dying: deathSpec(t[7], (t[0] & 0x80) !== 0),
         patterns,
     };
 }

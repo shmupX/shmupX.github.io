@@ -184,7 +184,7 @@
     <div class="sav-foot">
       <span><b>A</b> Play</span>
       <span><b>B</b> Close</span>
-      <span class="sav-foot-hint">← → browse · SELECT + ↑</span>
+      <span class="sav-foot-hint">← → browse · <b>Y</b> opens this shelf</span>
     </div>
   </div>
 {/if}
