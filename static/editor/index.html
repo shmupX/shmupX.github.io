@@ -150,6 +150,8 @@
         .badge.menu-badge { font-size: 15px; }
         .badge img { width: 30px; height: 30px; image-rendering: pixelated; object-fit: contain; }
         .badge svg { width: 22px; height: 22px; display: block; }
+        /* Boss Viewer: a bigger, meaner invader, still inside the 46px circle */
+        #boss-viewer-link svg { width: 28px; height: 28px; }
         /* While a Dezaemon .sav game is loaded the drawer shows only the
            controls that apply to it — directory/cloud/export rows hide. */
         body.sav-loaded .hide-when-sav { display: none !important; }
@@ -801,7 +803,7 @@
             <!-- Play (Lucide play) -->
             <button class="badge" title="Play in Phaser" onclick="playCurrentStage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
             <!-- Boss Viewer -->
-            <a id="boss-viewer-link" href="boss-viewer.html" class="badge" title="Boss viewer">BV</a>
+            <a id="boss-viewer-link" href="boss-viewer.html" class="badge" title="Boss viewer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 2 2 4h12l2-4 2 4v8h-3v3h-3v-3H8v3H5v-3H2V6z"/><path d="m8 9 2.5 1.5M16 9l-2.5 1.5"/><path d="m8 12.5 2 1.5 2-1.5 2 1.5 2-1.5"/></svg></a>
             <!-- Save (Lucide save) -->
             <button class="badge" title="Save" onclick="quickSave()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></button>
             <!-- Menu -->
@@ -2233,6 +2235,8 @@
 
         // Lucide zap — the powerup badge's face when no item art is armed.
         const POWERUP_ZAP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>';
+        // Invader outline (👾 as a stroke icon, tinted by the badge's currentColor)
+        const ENEMY_INVADER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4h6v2h3v2h3v6h-2v3h-2v-3H7v3H5v-3H3V8h3V6h3z"/><path d="m7.5 2 1.5 2m7.5-2L15 4"/><path d="M9 11h.01M15 11h.01"/></svg>';
 
         function updateToolUI() {
             // Enemy button
@@ -2250,7 +2254,7 @@
                     eBtnImg.textContent = selectedEnemyLetter;
                 }
             } else {
-                eBtnImg.innerHTML = '<span style="font-size:16px">👾</span>';
+                eBtnImg.innerHTML = ENEMY_INVADER_SVG;
             }
             eBtn.classList.toggle('active', currentTool === 'place' && !!selectedEnemyLetter);
 
@@ -2300,7 +2304,8 @@
         function updateOsdClock() {
             const d = new Date();
             document.getElementById('osd-clock').textContent =
-                [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+                [d.getHours() % 12 || 12, d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':')
+                + (d.getHours() < 12 ? ' AM' : ' PM');
         }
         updateOsdClock();
         setInterval(updateOsdClock, 1000);
