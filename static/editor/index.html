@@ -23,6 +23,10 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-storage-compat.js"></script>
+    <!-- Shared EXTRACT MODE helpers (window.ShmupExtract): frame collection,
+         shelf packing and the /characters + /atlases publish. The same file
+         powers the in-game extract mode on the PAUSE panel. -->
+    <script src="/phaser-plugins/extract-mode.js"></script>
     <script type="module">
         // Dezaemon 2 (Saturn) save importer. The whole .sav/game.json pipeline
         // lives in the shmup-engine JSR module (packages/shmup-engine), bundled
@@ -53,6 +57,14 @@
             font-display: swap;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+        /* CRT scrollbars — thin green thumb on a transparent track (themes swap
+           the color through --redge). scrollbar-color inherits from body. */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--redge); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--bedge); }
+        ::-webkit-scrollbar-corner { background: transparent; }
+        body { scrollbar-width: thin; scrollbar-color: var(--redge) transparent; }
         body {
             font-family: 'Orbitron', system-ui, -apple-system, sans-serif; color: #fff; overflow: hidden; touch-action: manipulation;
             background: radial-gradient(ellipse 80% 60% at 38% 55%, rgba(20,90,40,.45), transparent 70%),
@@ -141,6 +153,12 @@
         .badge:active { transform: scale(0.95); }
         .badge.menu-badge { font-size: 15px; }
         .badge img { width: 30px; height: 30px; image-rendering: pixelated; object-fit: contain; }
+        .badge svg { width: 22px; height: 22px; display: block; }
+        /* Boss Viewer: a bigger, meaner invader, still inside the 46px circle */
+        #boss-viewer-link svg { width: 28px; height: 28px; }
+        /* While a Dezaemon .sav game is loaded the drawer shows only the
+           controls that apply to it — directory/cloud/export rows hide. */
+        body.sav-loaded .hide-when-sav { display: none !important; }
         .badge.active {
             border-color: #F6FF4A; color: #F6FF4A;
             background: radial-gradient(circle at 35% 30%, rgba(60,120,60,.9), rgba(6,30,12,.95) 70%);
@@ -161,7 +179,10 @@
         #stage-rail { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 8px 16px 10px; }
         .rail-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .2em; color: rgba(156,255,107,.5); }
         body.theme-nintendo .rail-label { color: rgba(139,160,194,.7); }
-        .tb-pills { display: flex; gap: 12px; align-items: center; overflow-x: auto; flex-shrink: 1; min-width: 0; }
+        /* Padding + negative margin give the selected orb's 18-26px glow room
+           to render inside the scrollport instead of being clipped at its edges. */
+        .tb-pills { display: flex; gap: 12px; align-items: center; overflow-x: auto; flex-shrink: 1; min-width: 0; padding: 16px; margin: -16px; scrollbar-width: none; }
+        .tb-pills::-webkit-scrollbar { display: none; }
         .tb-pill {
             width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
             font-size: 11px; font-weight: 800; cursor: pointer; flex-shrink: 0;
@@ -227,6 +248,25 @@
         }
         .grid-cell.drag-over { box-shadow: inset 0 0 0 2px #F6FF4A, 0 0 14px rgba(246,255,74,.45); }
         body.theme-nintendo .grid-cell.drag-over { box-shadow: inset 0 0 0 2px #ff3b49, 0 0 14px rgba(228,0,15,.5); }
+        /* Both carry the mode class: #grid-icon-view flips live in
+           updateToolUI, .editor-grid on the next renderGrid. */
+        .editor-grid.mode-extract .grid-cell.occupied, #grid-icon-view.mode-extract .grid-cell.occupied { cursor: crosshair; }
+        .editor-grid.mode-extract .grid-cell.occupied:hover, #grid-icon-view.mode-extract .grid-cell.occupied:hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
+        /* BOSS STRIP: the stage boss is not a grid cell — the runtime spawns
+           bossData["boss"+stageId] once the last wave clears — so it gets its
+           own full-width row under the waves, in that same spawn position. */
+        .boss-strip {
+            grid-column: 1 / -1; display: flex; align-items: center; gap: 8px;
+            margin-top: 6px; padding: 5px 10px; min-height: 34px; border-radius: 4px;
+            background: rgba(10,16,34,.9); border: 1px solid rgba(140,255,110,.3);
+            font-size: 10px; letter-spacing: .12em; color: #cfe8bf;
+        }
+        .boss-strip img { width: 24px; height: 24px; image-rendering: pixelated; object-fit: contain; }
+        .boss-strip .boss-tag { margin-left: auto; opacity: .55; font-size: 8px; }
+        .boss-strip.empty { opacity: .4; border-style: dashed; cursor: default; }
+        body.theme-nintendo .boss-strip { background: #10182a; border-color: #2a3850; color: #ffd7da; }
+        .editor-grid.mode-extract .boss-strip:not(.empty), #grid-icon-view.mode-extract .boss-strip:not(.empty) { cursor: crosshair; }
+        .editor-grid.mode-extract .boss-strip:not(.empty):hover, #grid-icon-view.mode-extract .boss-strip:not(.empty):hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
 
         /* ===== NES CABINET STRIPE (nintendo theme) ===== */
         #nes-stripe {
@@ -778,15 +818,20 @@
             <button id="powerup-picker-btn" class="badge" title="Select item drop" onclick="openPicker('powerup')">
                 <span id="powerup-btn-img"></span>
             </button>
-            <!-- Delete badge -->
-            <button id="delete-mode-btn" class="badge" title="Delete mode" onclick="setDeleteMode()">DL</button>
+            <!-- Delete badge (Lucide eraser) -->
+            <button id="delete-mode-btn" class="badge" title="Delete mode" onclick="setDeleteMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
+            <!-- Extract badge (Lucide pipette): click a placed enemy to
+                 inspect it and save it to the shared character library -->
+            <button id="extract-mode-btn" class="badge" title="Extract mode — click a placed enemy or the stage boss to save it to the character library" onclick="setExtractMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg></button>
 
             <div class="tb-spacer"></div>
 
+            <!-- Play (Lucide play) -->
+            <button class="badge" title="Play in Phaser" onclick="playCurrentStage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
             <!-- Boss Viewer -->
-            <a id="boss-viewer-link" href="boss-viewer.html" class="badge" title="Boss viewer">BV</a>
-            <!-- Save -->
-            <button class="badge" title="Save" onclick="quickSave()">SV</button>
+            <a id="boss-viewer-link" href="boss-viewer.html" class="badge" title="Boss viewer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 2 2 4h12l2-4 2 4v8h-3v3h-3v-3H8v3H5v-3H2V6z"/><path d="m8 9 2.5 1.5M16 9l-2.5 1.5"/><path d="m8 12.5 2 1.5 2-1.5 2 1.5 2-1.5"/></svg></a>
+            <!-- Save (Lucide save) -->
+            <button class="badge" title="Save" onclick="quickSave()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></button>
             <!-- Menu -->
             <button class="badge menu-badge" title="Menu" onclick="openMenu()">≡</button>
         </div>
@@ -845,17 +890,14 @@
     <div id="menu-backdrop" class="menu-backdrop hidden" onclick="closeMenu()"></div>
     <div id="menu-panel" class="menu-panel hidden">
         <div class="drawer-banner">SYSTEM MENU</div>
-        <div id="back-to-game-section" style="display:none">
-            <button class="menu-row" onclick="closeMenu();if(window.parent&&window.parent!==window&&typeof window.parent.howtoModalClose==='function')window.parent.howtoModalClose()"><span class="mono-badge">✕</span>BACK TO GAME</button>
-        </div>
         <div class="menu-label">WAVES</div>
         <div class="menu-duo">
             <button class="menu-row" onclick="addWave();closeMenu()"><span class="accent">+</span> ADD WAVE</button>
             <button class="menu-row" onclick="deleteLastWave();closeMenu()"><span class="accent del">−</span> DELETE WAVE</button>
         </div>
         <div class="menu-label">FILE SYSTEM</div>
-        <button class="menu-row" onclick="loadDirectory();closeMenu()"><span class="mono-badge">LD</span>LOAD DIRECTORY</button>
-        <button class="menu-row" onclick="saveAll();closeMenu()"><span class="mono-badge">SA</span>SAVE ALL</button>
+        <button class="menu-row hide-when-sav" onclick="loadDirectory();closeMenu()"><span class="mono-badge">LD</span>LOAD DIRECTORY</button>
+        <button class="menu-row hide-when-sav" onclick="saveAll();closeMenu()"><span class="mono-badge">SA</span>SAVE ALL</button>
         <button class="menu-row" onclick="playCurrentStage();closeMenu()"><span class="mono-badge">PL</span>PLAY IN PHASER</button>
         <button class="display-row toggle-row" onclick="toggleGodMode()" title="Launch PLAY with player invincibility (?god=1)">
             <span class="display-lbl">GOD MODE</span>
@@ -865,16 +907,16 @@
             <span class="display-lbl">NO STORY</span>
             <span class="toggle"><span id="nostory-knob" class="knob off"></span></span>
         </button>
-        <button class="menu-row" onclick="exportCurrentLevelJSON();closeMenu()"><span class="mono-badge">EX</span>EXPORT JSON</button>
-        <button class="menu-row" onclick="saveAs3D();closeMenu()"><span class="mono-badge">3D</span>SAVE AS 3D</button>
+        <button class="menu-row hide-when-sav" onclick="exportCurrentLevelJSON();closeMenu()"><span class="mono-badge">EX</span>EXPORT JSON</button>
+        <button class="menu-row hide-when-sav" onclick="saveAs3D();closeMenu()"><span class="mono-badge">3D</span>SAVE AS 3D</button>
         <button class="menu-row" onclick="play3D();closeMenu()"><span class="mono-badge">P3</span>PLAY 3D</button>
-        <button class="menu-row" onclick="saveAsVoxel3D();closeMenu()" title="Voxelize every atlas frame (Pixel Composer, pitch/yaw 10) and publish a Phaser 4.2.1 dual-mode (2D shooter / 3D super scaler) build at a URL"><span class="mono-badge">V3</span>SAVE AS VOXEL 3D</button>
-        <div class="menu-label">GAME SAVE (CLOUD)</div>
-        <input id="firebase-level-name" type="text" placeholder="MY GAME NAME" class="menu-input" style="margin-bottom:0">
-        <button class="menu-row" onclick="saveToFirebase()"><span class="mono-badge">SG</span>SAVE GAME</button>
-        <button class="menu-row" onclick="loadFromFirebasePrompt()"><span class="mono-badge">LG</span>LOAD GAME</button>
-        <button class="menu-row" onclick="playFirebaseLevel()"><span class="mono-badge">PG</span>PLAY GAME</button>
-        <div class="display-row" title="Which app the export builds. Linux/Windows are Electron desktop builds; a Windows build from a Linux host needs wine on PATH. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
+        <button class="menu-row hide-when-sav" onclick="saveAsVoxel3D();closeMenu()" title="Voxelize every atlas frame (Pixel Composer, pitch/yaw 10) and publish a Phaser 4.2.1 dual-mode (2D shooter / 3D super scaler) build at a URL"><span class="mono-badge">V3</span>SAVE AS VOXEL 3D</button>
+        <div class="menu-label hide-when-sav">GAME SAVE (CLOUD)</div>
+        <input id="firebase-level-name" type="text" placeholder="MY GAME NAME" class="menu-input hide-when-sav" style="margin-bottom:0">
+        <button class="menu-row hide-when-sav" onclick="saveToFirebase()"><span class="mono-badge">SG</span>SAVE GAME</button>
+        <button class="menu-row hide-when-sav" onclick="loadFromFirebasePrompt()"><span class="mono-badge">LG</span>LOAD GAME</button>
+        <button class="menu-row hide-when-sav" onclick="playFirebaseLevel()"><span class="mono-badge">PG</span>PLAY GAME</button>
+        <div class="display-row hide-when-sav" title="Which app the export builds. Linux/Windows are Electron desktop builds; a Windows build from a Linux host needs wine on PATH. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
             <span class="display-lbl">TARGET</span>
             <div class="seg-wrap" id="export-platform-segs">
                 <button class="seg xseg" data-platform="android" onclick="setExportPlatform('android')">ANDROID</button>
@@ -884,14 +926,14 @@
                 <button class="seg xseg" data-platform="ps2" onclick="setExportPlatform('ps2')">PS2</button>
             </div>
         </div>
-        <button class="menu-row" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
-        <div id="export-apk-status" class="menu-note"></div>
+        <button class="menu-row hide-when-sav" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
+        <div id="export-apk-status" class="menu-note hide-when-sav"></div>
         <div class="menu-label">DEZAEMON 2 (SATURN)</div>
         <button class="menu-row" onclick="startNewGame();closeMenu()"><span class="mono-badge">NG</span>NEW GAME</button>
-        <button class="menu-row" onclick="openDezaemonImport()"><span class="mono-badge">SV</span>IMPORT .SAV</button>
-        <input id="deza-url-input" type="url" placeholder="HTTPS://…/GAME.SAV" class="menu-input" style="margin-bottom:0"
+        <button class="menu-row hide-when-sav" onclick="openDezaemonImport()"><span class="mono-badge">SV</span>IMPORT .SAV</button>
+        <input id="deza-url-input" type="url" placeholder="HTTPS://…/GAME.SAV" class="menu-input hide-when-sav" style="margin-bottom:0"
                onkeydown="if(event.key==='Enter')document.getElementById('deza-url-btn').click()">
-        <button class="menu-row" id="deza-url-btn" onclick="importDezaemonFromUrlInput()"><span class="mono-badge">UR</span>IMPORT .SAV FROM URL</button>
+        <button class="menu-row hide-when-sav" id="deza-url-btn" onclick="importDezaemonFromUrlInput()"><span class="mono-badge">UR</span>IMPORT .SAV FROM URL</button>
         <button class="menu-row" id="deza-library-btn" onclick="openDezaemonLibrary()"><span class="mono-badge">LG</span>LOAD GAME</button>
         <div class="menu-note">SATURN BACKUP SAVES: .SAV / .BCR / .BKR</div>
         <div class="menu-label">ADVANCED EDITORS</div>
@@ -947,6 +989,12 @@
             <div class="picker-title">SAVED GAMES
                 <span id="deza-library-count" class="deza-kind"></span>
             </div>
+            <button class="display-row toggle-row" onclick="toggleDezaEditFirst()"
+                    title="ON: a game opens in the editor to tweak first. OFF: a game plays immediately.">
+                <span class="display-lbl">EDIT FIRST</span>
+                <span class="toggle"><span id="deza-editfirst-knob" class="knob off"></span></span>
+            </button>
+            <div id="deza-editfirst-note" class="menu-note" style="margin-top:0"></div>
             <div id="deza-library-list" class="deza-slots"></div>
         </div>
     </div>
@@ -986,6 +1034,14 @@
         <div class="picker-panel" style="max-height:90vh;width:min(1100px,94vw);max-width:94vw;">
             <div class="picker-title">CHARACTER LIBRARY EDITOR</div>
             <div id="library-editor-host" style="height:72vh;"></div>
+        </div>
+    </div>
+
+    <!-- EXTRACT TOOL INFO CARD (toolbar pipette -> click a placed enemy) -->
+    <div id="extract-info-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+        <div class="picker-panel" style="width:min(340px,90vw)">
+            <div class="picker-title">EXTRACT</div>
+            <div id="extract-info-body" style="padding:0 4px;"></div>
         </div>
     </div>
 
@@ -1560,12 +1616,6 @@
             return getThumbURL(pt.frame);
         }
 
-        // Show "Back to Game" when loaded inside an iframe (Cordova modal)
-        if (window.parent && window.parent !== window) {
-            var bsec = document.getElementById('back-to-game-section');
-            if (bsec) bsec.style.display = '';
-        }
-
         // ================== MENU ==================
         function openMenu() {
             document.getElementById('menu-backdrop').classList.remove('hidden');
@@ -1664,6 +1714,7 @@
                     dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
                     document.getElementById('status').textContent = `STATUS: DIR: ${dirHandle.name.toUpperCase()}`;
                     flash('DIRECTORY LOADED: ' + dirHandle.name.toUpperCase());
+                    document.body.classList.remove('sav-loaded');
                     await loadGameFiles();
                 } catch (e) { alert("Directory picker cancelled or not supported"); }
             } else {
@@ -1747,6 +1798,7 @@
             const dirName = (files[0].webkitRelativePath || '').split('/')[0] || 'folder';
             document.getElementById('status').textContent = `STATUS: DIR: ${dirName.toUpperCase()}`;
             flash('DIRECTORY LOADED: ' + dirName.toUpperCase());
+            document.body.classList.remove('sav-loaded');
             populateStagePills();
             loadCurrentStage();
             renderAll();
@@ -2216,6 +2268,18 @@
             if (currentTool === 'delete') flash('DELETE TOOL ARMED');
         }
 
+        function setExtractMode() {
+            currentTool = currentTool === 'extract' ? (selectedEnemyLetter ? 'place' : 'none') : 'extract';
+            closePicker();
+            updateToolUI();
+            if (currentTool === 'extract') flash('EXTRACT TOOL ARMED · CLICK AN ENEMY OR THE BOSS');
+        }
+
+        // Lucide zap — the powerup badge's face when no item art is armed.
+        const POWERUP_ZAP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>';
+        // Invader outline (👾 as a stroke icon, tinted by the badge's currentColor)
+        const ENEMY_INVADER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4h6v2h3v2h3v6h-2v3h-2v-3H7v3H5v-3H3V8h3V6h3z"/><path d="m7.5 2 1.5 2m7.5-2L15 4"/><path d="M9 11h.01M15 11h.01"/></svg>';
+
         function updateToolUI() {
             // Enemy button
             const eBtn = document.getElementById('enemy-picker-btn');
@@ -2232,7 +2296,7 @@
                     eBtnImg.textContent = selectedEnemyLetter;
                 }
             } else {
-                eBtnImg.innerHTML = '<span style="font-size:16px">👾</span>';
+                eBtnImg.innerHTML = ENEMY_INVADER_SVG;
             }
             eBtn.classList.toggle('active', currentTool === 'place' && !!selectedEnemyLetter);
 
@@ -2249,15 +2313,18 @@
                     img.style.cssText = 'width:28px;height:28px;image-rendering:pixelated;object-fit:contain;';
                     pBtnImg.appendChild(img);
                 } else {
-                    pBtnImg.textContent = 'IT';
+                    pBtnImg.innerHTML = POWERUP_ZAP_SVG;
                 }
             } else {
-                pBtnImg.textContent = 'IT';
+                pBtnImg.innerHTML = POWERUP_ZAP_SVG;
             }
             pBtn.classList.toggle('active', selectedPowerup !== '0');
 
             // Delete button
             document.getElementById('delete-mode-btn').classList.toggle('active', currentTool === 'delete');
+
+            // Extract button
+            document.getElementById('extract-mode-btn').classList.toggle('active', currentTool === 'extract');
 
             // Footer pad hints mirror the toolbar state
             document.getElementById('pad-hint-b').classList.toggle('active', currentTool === 'delete');
@@ -2265,8 +2332,9 @@
 
             // Grid mode class
             const gv = document.getElementById('grid-icon-view');
-            gv.classList.remove('mode-place', 'mode-delete', 'mode-none');
+            gv.classList.remove('mode-place', 'mode-delete', 'mode-extract', 'mode-none');
             gv.classList.add(currentTool === 'delete' ? 'mode-delete' :
+                currentTool === 'extract' ? 'mode-extract' :
                 (currentTool === 'place' && selectedEnemyLetter) ? 'mode-place' : 'mode-none');
         }
 
@@ -2282,7 +2350,8 @@
         function updateOsdClock() {
             const d = new Date();
             document.getElementById('osd-clock').textContent =
-                [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+                [d.getHours() % 12 || 12, d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':')
+                + (d.getHours() < 12 ? ' AM' : ' PM');
         }
         updateOsdClock();
         setInterval(updateOsdClock, 1000);
@@ -2390,6 +2459,7 @@
             const grid = document.createElement('div');
             grid.className = `editor-grid ${
                 currentTool === 'delete' ? 'mode-delete' :
+                currentTool === 'extract' ? 'mode-extract' :
                 (currentTool === 'place' && selectedEnemyLetter) ? 'mode-place' : 'mode-none'}`;
             grid.style.gridTemplateColumns = `18px repeat(${COLS}, 1fr)`;
 
@@ -2414,7 +2484,53 @@
                 }
             });
 
+            grid.appendChild(createBossStrip());
+
             container.appendChild(grid);
+        }
+
+        // The stage boss, rendered where it actually arrives: after the last
+        // wave. Clickable by the EXTRACT tool (bosses never appear in the grid,
+        // so this is their only pipette target); otherwise it opens the
+        // character editor on it. bossExtra is intentionally not reachable
+        // here — it is not stage-bound (only the ?boss=goki swap uses it).
+        function createBossStrip() {
+            const sid = getCurrentStageId();
+            const key = 'boss' + sid;
+            const entry = bossData[key];
+            const frames = libraryFrames(entry);
+            const strip = document.createElement('div');
+            strip.className = 'boss-strip' + (frames.length ? '' : ' empty');
+            if (!frames.length) {
+                strip.textContent = 'NO BOSS · STAGE CLEARS';
+                strip.onclick = () => flash('NO BOSS FOR STAGE ' + sid);
+                return strip;
+            }
+            const url = getThumbURL(frames[0]);
+            if (url) {
+                const img = document.createElement('img');
+                img.src = url;
+                img.draggable = false;
+                strip.appendChild(img);
+            } else {
+                const glyph = document.createElement('span');
+                glyph.textContent = '\uD83D\uDC79';
+                strip.appendChild(glyph);
+            }
+            const label = document.createElement('span');
+            label.textContent = bossDisplayName(key, entry);
+            strip.appendChild(label);
+            const tag = document.createElement('span');
+            tag.className = 'boss-tag';
+            tag.textContent = 'BOSS · ' + key;
+            strip.appendChild(tag);
+            strip.onclick = () => {
+                if (currentTool === 'extract') { openExtractCard(key); return; }
+                document.getElementById('enemy-editor-modal').classList.remove('hidden');
+                switchEditorTab('bosses');
+                editEnemy(key);
+            };
+            return strip;
         }
 
         function createGridCell(wi, si, code) {
@@ -2471,6 +2587,11 @@
         }
 
         function handleCellClick(wi, si) {
+            if (currentTool === 'extract') {
+                const cur = currentGrid[wi][si];
+                if (cur && cur !== '00') openExtractCard('enemy' + cellEnemyLetter(cur));
+                return;
+            }
             if (currentTool === 'delete') {
                 currentGrid[wi][si] = '00';
             } else if (currentTool === 'place' && selectedEnemyLetter) {
@@ -2603,7 +2724,7 @@
 
                 const label = document.createElement('span');
                 if (currentEditorTab === 'bosses') {
-                    label.textContent = (BOSS_PATTERN_NAMES[key] || entry.name || key);
+                    label.textContent = bossDisplayName(key, entry);
                 } else if (currentEditorTab === 'player') {
                     label.textContent = (entry && entry.name) ? entry.name : 'player';
                 } else {
@@ -2916,7 +3037,6 @@
         // library, so any game (or an import) can use this character.
         async function publishCharacterToLibrary() {
             if (!syncEnemyEditorForm(true)) return;
-            if (!atlasData || !atlasImage) return alert('Load a game first');
             let entry, suggested;
             if (currentEditorTab === 'player') {
                 entry = playerData;
@@ -2927,109 +3047,182 @@
                 suggested = (entry && entry.name) || currentEnemyKey;
             }
             if (!entry) return alert('Nothing to publish');
-            let name = prompt('Publish to the shared library as:', String(suggested).replace(/[^A-Za-z0-9_]/g, '_'));
-            if (!name) return;
-            name = name.trim();
-            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return alert('Use letters, digits and underscores only');
+            const name = await publishEntryToLibrary(entry, suggested);
+            if (name) alert(`Published '${name}' to the shared library.`);
+        }
 
-            // Every frame name the entry references, in order, deduped.
-            const wanted = [];
-            const seen = new Set();
-            const collect = (obj, depth) => {
-                if (!obj || typeof obj !== 'object' || depth > 2) return;
-                for (const v of Object.values(obj)) {
-                    if (Array.isArray(v) && v.length && v.every((s) => typeof s === 'string')) {
-                        for (const f of v) if (!seen.has(f)) { seen.add(f); wanted.push(f); }
-                    } else if (v && typeof v === 'object') collect(v, depth + 1);
-                }
-            };
-            collect(entry, 0);
+        // Crop, pack and PUT one character entry (playerData or an
+        // enemyData/bossData record) into /characters + /atlases. The frame
+        // walk, shelf packer and REST writes live in the shared
+        // /phaser-plugins/extract-mode.js (window.ShmupExtract) — the same
+        // code the in-game EXTRACT MODE runs against live Phaser textures.
+        // Resolves the published name, or null when nothing was written.
+        async function publishEntryToLibrary(entry, suggested) {
+            const EX = window.ShmupExtract;
+            if (!EX) { alert('extract-mode.js failed to load'); return null; }
+            if (!atlasData || !atlasImage) { alert('Load a game first'); return null; }
+            let name = prompt('Publish to the shared library as:', EX.suggestName(suggested));
+            if (!name) return null;
+            name = name.trim();
+            if (!EX.validName(name)) { alert('Use letters, digits and underscores only'); return null; }
+            if (EX.reservedName(name)) { alert(`'${name}' is reserved by the characters module — pick another name`); return null; }
 
             const frames = atlasData.frames || {};
-            const sprites = [];
-            const missing = [];
-            for (const fk of wanted) {
-                let f = frames[fk];
-                if (!f) {
-                    const alt = fk.endsWith('.gif') ? fk.slice(0, -4) + '.png'
-                        : fk.endsWith('.png') ? fk.slice(0, -4) + '.gif' : null;
-                    if (alt) f = frames[alt];
-                }
-                if (!f || !f.frame) { missing.push(fk); continue; }
-                const c = document.createElement('canvas');
-                c.width = f.frame.w; c.height = f.frame.h;
-                c.getContext('2d').drawImage(atlasImage, f.frame.x, f.frame.y, f.frame.w, f.frame.h, 0, 0, f.frame.w, f.frame.h);
-                sprites.push({ key: fk, canvas: c, w: f.frame.w, h: f.frame.h });
-            }
-            if (!sprites.length) return alert('None of the frames this entry references are in the atlas');
-            if (missing.length && !confirm(`${missing.length} referenced frame(s) are missing from the atlas and will be skipped. Publish anyway?`)) return;
-
-            // Shelf-pack the frames (same scheme as buildAtlasWithReplacements).
-            sprites.sort((a, b) => b.h - a.h);
-            const MW = 1024, P = 2;
-            let cx = P, cy = P, rh = 0, fh = 0;
-            const pos = {};
-            sprites.forEach((s) => {
-                if (cx + s.w + P > MW) { cy += rh + P; cx = P; rh = 0; }
-                pos[s.key] = { x: cx, y: cy }; cx += s.w + P;
-                rh = Math.max(rh, s.h); fh = Math.max(fh, cy + s.h + P);
+            const crop = EX.cropFrames(entry, (fk) => {
+                const f = frames[fk];
+                if (!f || !f.frame) return null;
+                return { image: atlasImage, x: f.frame.x, y: f.frame.y, w: f.frame.w, h: f.frame.h };
             });
-            const canvas = document.createElement('canvas');
-            canvas.width = MW; canvas.height = fh;
-            const nc = canvas.getContext('2d');
-            const outFrames = {};
-            sprites.forEach((s) => {
-                const p = pos[s.key];
-                nc.drawImage(s.canvas, p.x, p.y);
-                outFrames[s.key] = {
-                    frame: { x: p.x, y: p.y, w: s.w, h: s.h }, rotated: false, trimmed: false,
-                    spriteSourceSize: { x: 0, y: 0, w: s.w, h: s.h }, sourceSize: { w: s.w, h: s.h },
-                };
-            });
-            const atlasJson = {
-                frames: outFrames,
-                meta: { app: 'cmg level editor', version: '1.0', image: 'atlas.png', format: 'RGBA8888', scale: '1', size: { w: canvas.width, h: canvas.height } },
-            };
-            const record = dezaClone(entry);
-            if (!record.name) record.name = name;
-            record.textureKey = name;
+            if (!crop.sprites.length) { alert('None of the frames this entry references are in the atlas'); return null; }
+            if (crop.missing.length && !confirm(`${crop.missing.length} referenced frame(s) are missing from the atlas and will be skipped. Publish anyway?`)) return null;
 
-            const DB = FIREBASE_CONFIG.databaseURL;
+            const packed = EX.packFrames(crop.sprites, 'cmg level editor');
             try {
-                const existing = await fetch(`${DB}/characters/${encodeURIComponent(name)}.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-                if (existing && !confirm(`'${name}' already exists in the library. Overwrite it?`)) return;
-                const put = (path, body) => fetch(`${DB}/${path}.json`, {
-                    method: 'PUT',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify(body),
-                }).then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); });
-                await put('atlases/' + encodeURIComponent(name), { json: JSON.stringify(atlasJson), png: canvas.toDataURL('image/png') });
-                await put('characters/' + encodeURIComponent(name), record);
-                alert(`Published '${name}' to the shared library.`);
+                return await EX.publishRecord({
+                    name, record: entry, db: FIREBASE_CONFIG.databaseURL,
+                    missing: crop.missing,
+                    canvas: packed.canvas, atlasJson: packed.atlasJson,
+                });
             } catch (e) {
                 alert('Publish failed: ' + e.message);
+                return null;
             }
         }
 
         // "LIBRARY EDITOR": the full <character-editor> custom element, loaded
         // from the deployed characters module (override with __CHARACTERS_BASE__).
-        async function openLibraryEditor() {
+        // Pass a character name to open it on that character (the element
+        // observes a `character` attribute); a named open re-mounts the
+        // element so a just-published character is in its listing.
+        async function openLibraryEditor(characterName) {
             const modal = document.getElementById('library-editor-modal');
             const host = document.getElementById('library-editor-host');
             modal.classList.remove('hidden');
-            if (host.dataset.loaded) return;
+            if (host.dataset.loaded) {
+                if (!characterName) return;
+                host.textContent = '';
+                delete host.dataset.loaded;
+            }
             host.textContent = 'Loading editor…';
             try {
                 await import(charactersBase() + '/editor.js');
                 host.textContent = '';
                 const el = document.createElement('character-editor');
                 el.style.cssText = 'display:block;width:100%;height:100%;';
+                if (characterName) el.setAttribute('character', characterName);
                 el.addEventListener('close', () => modal.classList.add('hidden'));
                 host.appendChild(el);
                 host.dataset.loaded = '1';
             } catch (e) {
                 host.textContent = 'Could not load the character editor from ' + charactersBase() + ' — ' + e.message;
             }
+        }
+
+        // ================== EXTRACT TOOL ==================
+        // The toolbar pipette: click a placed enemy — or the boss strip under
+        // the last wave — to inspect it and push it into the shared library.
+        // key is a full record key: 'enemyA', 'boss2' or 'playerData'.
+        function openExtractCard(key) {
+            const entry = key === 'playerData' ? playerData : (bossData[key] || enemyData[key]);
+            if (!entry) { flash('NO DATA FOR ' + key.toUpperCase()); return; }
+            const kind = characterKindOf(entry);
+            const body = document.getElementById('extract-info-body');
+            body.innerHTML = '';
+
+            const head = document.createElement('div');
+            head.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;';
+            const thumbFrame = libraryFrames(entry)[0];
+            const url = thumbFrame ? getThumbURL(thumbFrame) : null;
+            if (url) {
+                const img = document.createElement('img');
+                img.src = url;
+                img.style.cssText = 'width:48px;height:48px;image-rendering:pixelated;object-fit:contain;';
+                head.appendChild(img);
+            }
+            const title = document.createElement('div');
+            const nm = document.createElement('div');
+            nm.textContent = kind === 'boss' ? bossDisplayName(key, entry) : (entry.name || key);
+            nm.style.cssText = 'font-weight:700;font-size:13px;';
+            const sub = document.createElement('div');
+            sub.textContent = key;
+            sub.style.cssText = 'font-size:10px;color:#888;';
+            title.appendChild(nm);
+            title.appendChild(sub);
+            head.appendChild(title);
+            body.appendChild(head);
+
+            const stats = document.createElement('div');
+            stats.style.cssText = 'font-size:11px;font-family:monospace;margin-bottom:12px;display:grid;grid-template-columns:auto 1fr;gap:2px 12px;';
+            const addStat = (l, v) => {
+                if (v === undefined || v === null) return;
+                const a = document.createElement('span'); a.textContent = l; a.style.color = '#888';
+                const b = document.createElement('span'); b.textContent = String(v);
+                stats.appendChild(a); stats.appendChild(b);
+            };
+            addStat('HP', entry.hp);
+            addStat('SCORE', entry.score);
+            addStat('SPEED', entry.speed);
+            addStat('INTERVAL', entry.interval);
+            if (kind === 'boss') {
+                addStat('SP GAUGE', entry.spgage);
+                addStat('PATTERN', entry.attackPattern
+                    ? bossDisplayName(entry.attackPattern, bossData[entry.attackPattern])
+                    : bossDisplayName(key, entry));
+            }
+            const EX = window.ShmupExtract;
+            const names = EX ? EX.collectFrameNames(entry) : (entry.texture || []);
+            let crop = null;
+            if (EX && atlasData && atlasImage) {
+                const fr = atlasData.frames || {};
+                crop = EX.cropFrames(entry, (fk) => {
+                    const f = fr[fk];
+                    return f && f.frame
+                        ? { image: atlasImage, x: f.frame.x, y: f.frame.y, w: f.frame.w, h: f.frame.h }
+                        : null;
+                });
+            }
+            const uniq = crop ? EX.uniqueFrameCount(crop.sprites) : null;
+            let frameLabel = String(names.length);
+            if (crop && crop.missing.length) frameLabel += ` (${crop.missing.length} missing)`;
+            else if (uniq !== null && uniq < names.length) frameLabel += ` (${uniq} unique)`;
+            addStat('FRAMES', frameLabel);
+            body.appendChild(stats);
+            // Dezaemon art often repeats one picture across all four animation
+            // slots — say so, or a static library preview reads as a broken save.
+            if (uniq === 1 && names.length > 1 && crop && !crop.missing.length) {
+                const note = document.createElement('div');
+                note.textContent = 'All frames identical — this art does not animate.';
+                note.style.cssText = 'font-size:10px;color:#888;margin:-6px 0 10px;';
+                body.appendChild(note);
+            }
+
+            const btns = document.createElement('div');
+            btns.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
+            const save = document.createElement('button');
+            save.className = 'menu-btn';
+            save.style.cssText = 'background:#84cc16;color:#000;font-weight:700;';
+            save.textContent = 'SAVE TO LIBRARY';
+            save.onclick = async () => {
+                const name = await publishEntryToLibrary(entry, entry.name || (kind === 'boss' ? bossDisplayName(key, entry) : key));
+                if (name) {
+                    document.getElementById('extract-info-modal').classList.add('hidden');
+                    if (confirm(`Saved '${name}'. Open it in the CHARACTER LIBRARY EDITOR?`)) openLibraryEditor(name);
+                }
+            };
+            const edit = document.createElement('button');
+            edit.className = 'menu-btn';
+            edit.textContent = 'EDIT';
+            edit.onclick = () => {
+                document.getElementById('extract-info-modal').classList.add('hidden');
+                document.getElementById('enemy-editor-modal').classList.remove('hidden');
+                switchEditorTab(kind === 'boss' ? 'bosses' : kind === 'player' ? 'player' : 'enemies');
+                editEnemy(key);
+            };
+            btns.appendChild(save);
+            btns.appendChild(edit);
+            body.appendChild(btns);
+
+            document.getElementById('extract-info-modal').classList.remove('hidden');
         }
 
         // ================== ATLAS ==================
@@ -3673,6 +3866,9 @@
             }
             if (src && src.background) stage.background = src.background;
             if (src && Array.isArray(src.items) && src.items.length) stage.items = src.items;
+            // A Dezaemon import's scroll pacing (curve + extents) rides the
+            // stage record; the runtime scrolls the save's own speeds from it.
+            if (src && src.scroll) stage.scroll = src.scroll;
             return stage;
         }
 
@@ -3771,7 +3967,7 @@
             return r;
         }
 
-        async function playCurrentStage() {
+        async function playCurrentStage(opts) {
             if (!gameData) { alert('Load directory first'); return; }
             if (!syncEnemyEditorForm(true)) return;
             const sid = getCurrentStageId();
@@ -3791,7 +3987,12 @@
             // this is normally a fast no-op rewrite; it settles well inside the
             // window where a click still authorizes window.open.
             await storeAtlasForViewers();
-            window.open(`${GAME_PLAY_URL}?editorPlay=1&stage=${sid}${godModeParam()}`, '_blank');
+            const playUrl = `${GAME_PLAY_URL}?editorPlay=1&stage=${sid}${godModeParam()}`;
+            // navigate: swap this page (or this launcher frame) for the game
+            // instead of opening a tab — the shelf's player mode uses it so a
+            // slow cart fetch can't outlive the click's popup allowance.
+            if (opts && opts.navigate) { location.assign(playUrl); return; }
+            window.open(playUrl, '_blank');
         }
 
         function exportCurrentLevelJSON() {
@@ -3914,6 +4115,7 @@
             if (nameInput) nameInput.value = '';
             setDezaStatus('NEW GAME (UNSAVED)');
             flash('NEW GAME — STAGE 00');
+            document.body.classList.remove('sav-loaded');
         }
 
         function setDezaStatus(text) {
@@ -4242,12 +4444,31 @@
             return title ? { title } : null;
         }
 
+        // EDIT FIRST: ON loads a shelf game into the editor (slot sheet on
+        // multi-slot carts, import-notes alert, editor grid). OFF — the
+        // default — is player mode: one tap imports the cart silently and
+        // swaps this page for the game. Persisted like the display prefs.
+        let dezaEditFirstOn = false;
+        try { dezaEditFirstOn = localStorage.getItem('cmg-deza-edit-first') === '1'; } catch (e) {}
+        function updateDezaEditFirstUI() {
+            const k = document.getElementById('deza-editfirst-knob');
+            if (k) k.classList.toggle('off', !dezaEditFirstOn);
+            const n = document.getElementById('deza-editfirst-note');
+            if (n) n.textContent = dezaEditFirstOn ? 'TAP A GAME TO OPEN IT IN THE EDITOR' : 'TAP A GAME TO PLAY IT INSTANTLY';
+        }
+        function toggleDezaEditFirst() {
+            dezaEditFirstOn = !dezaEditFirstOn;
+            try { localStorage.setItem('cmg-deza-edit-first', dezaEditFirstOn ? '1' : '0'); } catch (e) {}
+            updateDezaEditFirstUI();
+        }
+
         async function openDezaemonLibrary() {
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
             closeMenu();
             const modal = document.getElementById('dezaemon-library-modal');
             const list = document.getElementById('deza-library-list');
             modal.classList.remove('hidden');
+            updateDezaEditFirstUI();
             if (!dezaLibraryState) {
                 list.innerHTML = '<div class="menu-note">LOADING…</div>';
                 try {
@@ -4350,7 +4571,7 @@
             }
         }
 
-        async function loadDezaemonLibraryGame(file, fallbackTitle, meta, slug) {
+        async function loadDezaemonLibraryGame(file, fallbackTitle, meta, slug, opts) {
             // Parse before hiding the shelf: closing it first left a blank
             // screen while the cart downloaded, and a fetch failure dumped the
             // user back at the editor instead of the shelf.
@@ -4367,22 +4588,34 @@
             // exactly one game save, import it straight away — the slot sheet
             // never opens, so there is no IMPORT button to double-press and no
             // per-frame preview to build. Multi-slot carts keep the sheet for
-            // the choice.
+            // the choice — except in player mode (EDIT FIRST off), which takes
+            // the first game save so the tap always goes straight to play.
+            // opts.forcePlay (the launcher's ?play= hand-off) means "run it" no
+            // matter how the EDIT FIRST toggle is set — the player asked to
+            // play, not to open the editor.
+            const playNow = !!(opts && opts.forcePlay) || !dezaEditFirstOn;
             const st = dezaImportState;
             const usable = [];
             st.saves.forEach((s, i) => { if (window.Dezaemon.isGameSave(s) && s.payload) usable.push(i); });
-            if (usable.length !== 1) { openDezaemonImportModal(); return; }
+            // A cart with no usable slot always gets the sheet — it shows
+            // what is wrong with each slot.
+            if (!usable.length || (usable.length !== 1 && !playNow)) { openDezaemonImportModal(); return; }
             selectDezaemonSlotState(usable[0]);
-            const imported = await applyDezaemonImport();
+            const imported = await applyDezaemonImport({ silent: playNow });
+            if (!imported) return;
             // The shelf knows this save's table row by filename match —
             // refine the credits the import just attached (it looked up
             // the cart's own title, which can differ from the filename).
-            if (imported && gameData) {
+            if (gameData) {
                 if (meta) gameData.dezaemonCredits = dezaCreditsFromMeta(meta);
                 else if (!gameData.dezaemonCredits) {
                     gameData.dezaemonCredits = { title: fallbackTitle || file.replace(/\.sav$/i, '') };
                 }
             }
+            // Player mode: swap this page for the game (same-tab / same-frame
+            // navigation, so no popup blocker in the way — and under the
+            // launcher the game inherits the frame with the Guide OSD intact).
+            if (playNow) playCurrentStage({ navigate: true });
         }
 
         function renderDezaemonSlots() {
@@ -4519,7 +4752,7 @@
             return lines.join('\n');
         }
 
-        async function applyDezaemonImport() {
+        async function applyDezaemonImport(opts) {
             const st = dezaImportState;
             if (!st || st.selectedSlot === null || !st.decoded || st.importing) return false;
             // Close the sheet and refuse re-entry up front: the import below is
@@ -4530,7 +4763,7 @@
             document.getElementById('dezaemon-import-modal').classList.add('hidden');
             setDezaStatus('IMPORTING…');
             try {
-                await applyDezaemonImportInner(st);
+                await applyDezaemonImportInner(st, opts);
                 return true;
             } catch (err) {
                 setDezaStatus('IMPORT FAILED');
@@ -4541,7 +4774,7 @@
             }
         }
 
-        async function applyDezaemonImportInner(st) {
+        async function applyDezaemonImportInner(st, opts) {
             const save = st.saves[st.selectedSlot];
             snapshotDefaultsOnce();
             let { gameJson, sprites, warnings } = window.Dezaemon.mapSaveToGame(st.decoded, {
@@ -4647,6 +4880,9 @@
             const title = st.decoded.title || save.comment || 'DEZAEMON 2 GAME';
             setDezaStatus('IMPORTED: ' + title + ' (DEZAEMON 2)');
             flash('IMPORTED: ' + title);
+            // A loaded .sav trims the drawer to the controls that apply to it
+            // (see body.sav-loaded); NEW GAME / directory / cloud loads restore it.
+            document.body.classList.add('sav-loaded');
             const notes = warnings.slice();
             const importedStages = Object.keys(gameData).filter(k => /^stage\d+$/.test(k));
             const spawnCount = importedStages.reduce((n, k) =>
@@ -4670,14 +4906,57 @@
                     ' songs from the save play as its soundtrack (chiptune-voiced), with the ' +
                     (bankNames[gameData.dezaemonBgm.sfxSet] || 'REAL') + ' effect bank.');
             }
-            if (notes.length) alert('Import notes:\n- ' + notes.join('\n- '));
+            // Player-mode (silent) imports go straight to play — no notes popup.
+            if (notes.length && !(opts && opts.silent)) alert('Import notes:\n- ' + notes.join('\n- '));
+        }
+
+        // ?play=<slug> — the launcher's coverflow picker (or a bookmark) hands
+        // the editor a shelf game to run immediately: resolve the slug against
+        // the same library the SAVED GAMES shelf reads (database first, static
+        // collection offline) and take the shelf's own player-mode path. Static
+        // rows carry no slug, so one is derived from the title with the upload
+        // script's algorithm (slugOf in scripts/upload-deza-saves.ts) — the two
+        // sources therefore agree on every slug.
+        function dezaSlugOfTitle(title) {
+            const s = String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+            return s || 'save';
+        }
+        // The stock project load (autoLoadFromServer, run from window.onload)
+        // assigns gameData/atlasData unconditionally when its fetches land. An
+        // automatic ?play= import that starts before it settles could be
+        // clobbered mid-flight — the recipe/atlas handed to the runtime would
+        // be the stock game, not the picked cart. The hand-off therefore waits
+        // for the baseline to settle (resolved in window.onload, on failure
+        // too — an unreachable game.json must not wedge the play).
+        let editorBaselineResolve;
+        const editorBaselineReady = new Promise((resolve) => { editorBaselineResolve = resolve; });
+        async function playDezaemonLibrarySlug(slug) {
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
+            await editorBaselineReady;
+            let row = null;
+            try {
+                const byTitle = await loadDezaGamesDbByTitle();
+                let saves = null;
+                try { saves = await loadDezaLibraryFromRtdb(); } catch (_e) { saves = null; }
+                if (!saves) saves = await loadDezaLibraryFromStatic(byTitle);
+                row = (saves || []).find((s) => (s.slug || dezaSlugOfTitle(s.title)) === slug) || null;
+                if (row && !row.meta) row.meta = byTitle.get(dezaNormTitle(row.title)) || null;
+            } catch (err) {
+                flash('COULD NOT LIST SAVED GAMES: ' + (err.message || err));
+                return;
+            }
+            if (!row) { flash('NO SUCH SAVED GAME: ' + slug); return; }
+            loadDezaemonLibraryGame(row.file, row.title, row.meta, row.slug, { forcePlay: true });
         }
 
         // ?sav=<url> opens the importer straight from a link, so the launcher (or
         // a bookmark) can hand the editor a save to open.
         window.addEventListener('dezaemon-ready', () => {
-            const sav = new URLSearchParams(location.search).get('sav');
-            if (sav) loadDezaemonFromUrl(sav);
+            const params = new URLSearchParams(location.search);
+            const sav = params.get('sav');
+            if (sav) { loadDezaemonFromUrl(sav); return; }
+            const play = params.get('play');
+            if (play) playDezaemonLibrarySlug(play);
         });
 
         // Test hook for the e2e suite (and console debugging).
@@ -6509,13 +6788,25 @@ function GAME3D_RUNTIME(DATA) {
         // Object.prototype, win the `|| entry.name || key` fallback chain and
         // render as function source. With no prototype an unknown key is just
         // undefined, which is what the fallback chain already expects, so every
-        // BOSS_PATTERN_NAMES[…] site (the enemy/boss list labels, the pattern
-        // dropdown options and the pattern rows) is covered without each one
-        // needing its own own-property guard.
+        // caller of bossDisplayName() below (the enemy/boss list labels, the
+        // pattern dropdown options and the pattern rows) is covered without each
+        // one needing its own own-property guard.
         const BOSS_PATTERN_NAMES = Object.assign(Object.create(null), {
             boss0: 'Bison',  boss1: 'Barlog', boss2: 'Sagat',
             boss3: 'Vega',   boss4: 'Fang',   bossExtra: 'Goki'
         });
+
+        // Those names are the SHIPPED game's roster, keyed by the slot each one
+        // occupies. A Dezaemon import fills the same slots with its own bosses
+        // and names them dezaBoss0..dezaBossN (map-to-game.js), so the record's
+        // own name wins whenever it carries that form — otherwise an imported
+        // save's stage bosses would all read as Bison, Barlog, Sagat, Vega, Fang.
+        const IMPORTED_BOSS_NAME = /^dezaBoss\d+$/;
+        function bossDisplayName(key, entry) {
+            const own = entry && entry.name;
+            if (IMPORTED_BOSS_NAME.test(own || '')) return own;
+            return BOSS_PATTERN_NAMES[key] || own || key;
+        }
 
         function showBossPatternEditor() {
             closeMenu();
@@ -6534,7 +6825,7 @@ function GAME3D_RUNTIME(DATA) {
             // Pattern sources: all bosses available as patterns
             const patternOptions = allBossKeys.map(k => ({
                 key: k,
-                label: BOSS_PATTERN_NAMES[k] || bossData[k].name || k
+                label: bossDisplayName(k, bossData[k])
             }));
 
             for (const bk of allBossKeys) {
@@ -6579,7 +6870,7 @@ function GAME3D_RUNTIME(DATA) {
                 // own origin, triggered by opening the Boss Pattern editor.
                 const nameEl = document.createElement('div');
                 nameEl.className = 'boss-pattern-name';
-                nameEl.textContent = BOSS_PATTERN_NAMES[bk] || b.name || bk;
+                nameEl.textContent = bossDisplayName(bk, b);
                 info.appendChild(nameEl);
                 const keyEl = document.createElement('div');
                 keyEl.className = 'boss-pattern-key';
@@ -7513,6 +7804,7 @@ function GAME3D_RUNTIME(DATA) {
                     payload.waveRows = stageRec.waveRows;
                     payload.waveInterval = stageRec.waveInterval;
                 }
+                if (stageRec && stageRec.scroll) payload.scroll = stageRec.scroll;
                 // The whole game's stages, beside the flat fields rather than
                 // instead of them: readers written against the old shape decide
                 // a level exists by `data.enemylist` and copy the record
@@ -7540,6 +7832,10 @@ function GAME3D_RUNTIME(DATA) {
                 // customAudioURLs to fall back on — so a level saved without it
                 // plays in silence everywhere it is loaded from the cloud.
                 payload.dezaemonBgm = (gameData && gameData.dezaemonBgm) || null;
+                // The save's three global bullet configs + blast anims — one
+                // record for the whole game, like the soundtrack.
+                payload.dezaemonBullets = (gameData && gameData.dezaemonBullets) || null;
+                payload.dezaemonItems = (gameData && gameData.dezaemonItems) || null;
                 // The import's drawn title screen, the no-story flag and the
                 // community credits ride the level record; level-loader
                 // carries them into the recipe.
@@ -7691,6 +7987,10 @@ function GAME3D_RUNTIME(DATA) {
                 else delete gameData.backgroundCells;
                 if (d.dezaemonBgm) gameData.dezaemonBgm = d.dezaemonBgm;
                 else delete gameData.dezaemonBgm;
+                if (d.dezaemonBullets) gameData.dezaemonBullets = d.dezaemonBullets;
+                else delete gameData.dezaemonBullets;
+                if (d.dezaemonItems) gameData.dezaemonItems = d.dezaemonItems;
+                else delete gameData.dezaemonItems;
                 if (d.dezaemonTitle) gameData.dezaemonTitle = d.dezaemonTitle;
                 else delete gameData.dezaemonTitle;
                 if (d.dezaemonCredits) gameData.dezaemonCredits = d.dezaemonCredits;
@@ -7766,6 +8066,7 @@ function GAME3D_RUNTIME(DATA) {
                 }
                 document.getElementById('firebase-level-name').value = name;
                 document.getElementById('status').textContent = `STATUS: GAME: ${String(name).toUpperCase()} (CLOUD)`;
+                document.body.classList.remove('sav-loaded');
 // Restore sprite thumbnails from Firebase data
                 if (d.frameThumbnails) restoreFrameThumbnails(d.frameThumbnails);
                 renderGrid(); updateToolUI(); renderEnemyList();
@@ -8491,13 +8792,19 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
         window.onload = async () => {
             updateToolUI();
             // Auto-load local data first so Firebase can override it
-            await autoLoadFromServer();
-            const urlLevel = new URLSearchParams(window.location.search).get('level');
+            try { await autoLoadFromServer(); } finally { editorBaselineResolve(); }
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlLevel = urlParams.get('level');
             if (urlLevel) {
                 document.getElementById('firebase-level-name').value = urlLevel;
                 initFirebase();
                 const tryLoad = () => { initFirebase(); loadFromFirebase(urlLevel); };
                 firebaseDb ? tryLoad() : setTimeout(tryLoad, 1000);
+            }
+            // Deep link from the game page's EXTRACT MODE (or a shared URL):
+            // ?libraryEditor=1&character=name opens the library editor on it.
+            if (urlParams.get('libraryEditor')) {
+                openLibraryEditor(urlParams.get('character') || undefined);
             }
         };
     </script>

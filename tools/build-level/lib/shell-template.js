@@ -48,20 +48,24 @@ const FIT_PORTRAIT = `
 (function () {
   var GW = 256, GH = 480;
 
+  function isRotated() {
+    var t = window.getComputedStyle(document.documentElement).transform;
+    return !!t && t !== "none";
+  }
+
   function fitCanvas() {
     var pc = document.querySelector("#phaser-canvas canvas");
     if (!pc) return;
     var vw = window.innerWidth, vh = window.innerHeight;
-    var t = window.getComputedStyle(document.documentElement).transform;
-    var cssRotated = t && t !== "none";
+    var cssRotated = isRotated();
     if (cssRotated && vw > vh) { var tmp = vw; vw = vh; vh = tmp; }
     var scale = Math.min(vw / GW, vh / GH);
     pc.style.width = Math.floor(GW * scale) + "px";
     pc.style.height = Math.floor(GH * scale) + "px";
-    if (!cssRotated) {
-      var g = window.__PHASER_4_GAME__;
-      if (g && g.scale && typeof g.scale.refresh === "function") g.scale.refresh();
-    }
+    var g = window.__PHASER_4_GAME__;
+    if (!g || !g.scale) return;
+    if (!cssRotated && typeof g.scale.refresh === "function") g.scale.refresh();
+    else if (cssRotated && typeof g.scale.updateBounds === "function") g.scale.updateBounds();
   }
   window.__fitCanvas = fitCanvas;
   window.addEventListener("resize", fitCanvas);
@@ -75,29 +79,44 @@ const FIT_PORTRAIT = `
   }
   window.__fixPhaserTransform = fixPhaserTransform;
 
+  // rotate(-90deg) about left/top with the page at top:100% maps local (x, y)
+  // to screen (y, innerHeight - x); invert that for the canvas bounds and for
+  // every mouse/touch coordinate so Phaser's hit-testing lines up with what
+  // the player sees. Live rotation checks so mid-game orientation flips
+  // engage/disengage the mapping.
   function patchCanvasInputForRotation(canvas) {
-    var s = window.getComputedStyle(document.documentElement);
-    if (!s.transform || s.transform === "none") return;
     var origBCR = HTMLElement.prototype.getBoundingClientRect;
     canvas.getBoundingClientRect = function () {
       var r = origBCR.call(canvas);
+      if (!isRotated()) return r;
+      var vh = window.innerHeight;
       return {
-        left: r.top, top: window.innerHeight - r.right,
-        right: r.bottom, bottom: window.innerHeight - r.left,
+        left: vh - r.bottom, top: r.left,
+        right: vh - r.top, bottom: r.right,
         width: r.height, height: r.width,
-        x: r.top, y: window.innerHeight - r.right,
+        x: vh - r.bottom, y: r.left,
       };
     };
-    var vh = window.innerHeight;
-    function swap(e) {
-      var cx = e.clientX, cy = e.clientY;
-      Object.defineProperty(e, "clientX", { value: cy, configurable: true });
-      Object.defineProperty(e, "clientY", { value: vh - cx, configurable: true });
-      Object.defineProperty(e, "pageX", { value: cy, configurable: true });
-      Object.defineProperty(e, "pageY", { value: vh - cx, configurable: true });
+    function toLocal(p) {
+      var cx = p.clientX, cy = p.clientY;
+      var vh = window.innerHeight;
+      Object.defineProperty(p, "clientX", { value: vh - cy, configurable: true });
+      Object.defineProperty(p, "clientY", { value: cx, configurable: true });
+      Object.defineProperty(p, "pageX", { value: vh - cy, configurable: true });
+      Object.defineProperty(p, "pageY", { value: cx, configurable: true });
     }
-    ["pointerdown", "pointerup", "pointermove", "mousedown", "mouseup", "mousemove"].forEach(function (ev) {
-      canvas.addEventListener(ev, swap, true);
+    function swap(e) {
+      if (!isRotated()) return;
+      if (e.changedTouches) {
+        for (var i = 0; i < e.changedTouches.length; i++) toLocal(e.changedTouches[i]);
+      } else {
+        toLocal(e);
+      }
+    }
+    // Window capture so the rewrite always runs before Phaser's own listeners.
+    ["pointerdown", "pointerup", "pointermove", "mousedown", "mouseup", "mousemove",
+      "touchstart", "touchend", "touchmove", "touchcancel"].forEach(function (ev) {
+      window.addEventListener(ev, swap, true);
     });
   }
 
@@ -110,16 +129,24 @@ const FIT_PORTRAIT = `
   }
   window.addEventListener("pointerdown", lockPortrait, { once: true });
 
-  (function observe() {
+  // Bounds/event rewrite first so fitCanvas's updateBounds call already reads
+  // the virtual (un-rotated) rect.
+  function onCanvas(canvas) {
+    patchCanvasInputForRotation(canvas);
+    fixPhaserTransform();
+    fitCanvas();
+  }
+
+  function arm() {
     var container = document.getElementById("phaser-canvas");
-    if (!container) return;
+    if (!container) return false;
+    var existing = container.querySelector("canvas");
+    if (existing) { onCanvas(existing); return true; }
     var obs = new MutationObserver(function (muts) {
       for (var i = 0; i < muts.length; i++) {
         for (var j = 0; j < muts[i].addedNodes.length; j++) {
           if (muts[i].addedNodes[j].tagName === "CANVAS") {
-            fitCanvas();
-            patchCanvasInputForRotation(muts[i].addedNodes[j]);
-            fixPhaserTransform();
+            onCanvas(muts[i].addedNodes[j]);
             obs.disconnect();
             return;
           }
@@ -127,11 +154,23 @@ const FIT_PORTRAIT = `
       }
     });
     obs.observe(container, { childList: true });
-  })();
+    return true;
+  }
+  if (!arm()) document.addEventListener("DOMContentLoaded", arm);
 })();
 `;
 
+// The runtime's STAFF ROLL card renders canvas text in Orbitron (the file is
+// staged with the wholesale assets/ copy). Canvas usage alone never fetches a
+// CSS font, so FONT_PRELOAD starts the load explicitly.
 const STYLE = `
+@font-face {
+  font-family: 'Orbitron';
+  src: url('assets/fonts/Orbitron-Variable.woff2') format('woff2'),
+       url('assets/fonts/Orbitron-Variable.ttf') format('truetype');
+  font-weight: 400 900;
+  font-display: swap;
+}
 html, body { margin: 0; padding: 0; width: 100%; height: 100%; height: 100dvh; background: #000; overflow: hidden; overscroll-behavior: none; touch-action: none; }
 #phaser-canvas { width: 100%; height: 100%; height: 100dvh; display: flex; align-items: center; justify-content: center; box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
 #phaser-canvas canvas { image-rendering: pixelated; image-rendering: crisp-edges; touch-action: none; }
@@ -139,6 +178,12 @@ html, body { margin: 0; padding: 0; width: 100%; height: 100%; height: 100dvh; b
   html { transform: rotate(-90deg); transform-origin: left top; width: 100vh; height: 100vw; overflow: hidden; position: absolute; top: 100%; left: 0; }
   html body { height: 100%; }
   html #phaser-canvas { height: 100%; }
+}
+`;
+
+const FONT_PRELOAD = `
+if (document.fonts && document.fonts.load) {
+  document.fonts.load("700 16px Orbitron").catch(function () {});
 }
 `;
 
@@ -180,9 +225,19 @@ function renderShell(opts) {
   const gamepadTag = opts.hasGamepad
     ? '\n    <script src="gamepad-compatibility-plugin.js"></script>'
     : "";
+  // Rides the standalone PAUSE panel this shell already gets, so an exported
+  // app can save its own characters to the shared library.
+  const extractTag = opts.hasExtract
+    ? '\n    <script src="extract-mode.js"></script>'
+    : "";
   const flagsTag = "window.__EXPORTED_LEVEL_APP__ = true;" +
     (opts.godMode ? " window.__GAME_STATE__ = { godFlg: true };" : "") +
-    (opts.gameId ? " window.__GAME_ID__ = " + jsonLiteral(String(opts.gameId)) + ";" : "");
+    (opts.gameId ? " window.__GAME_ID__ = " + jsonLiteral(String(opts.gameId)) + ";" : "") +
+    // An export has no /editor/ route of its own; without a host origin the
+    // extract plugin hides its "open library editor" deep link.
+    (opts.editorOrigin
+      ? " window.__SHMUP_EDITOR_ORIGIN__ = " + jsonLiteral(String(opts.editorOrigin)) + ";"
+      : "");
   // No gameId means no board to reach, so the SDK would only be dead weight.
   const leaderboardTags = opts.gameId
     ? '\n    <script src="firebase-config.js"></script>' +
@@ -212,9 +267,10 @@ function renderShell(opts) {
     <div id="phaser-canvas"></div>
 
     <script>${AUDIO_UNLOCK}</script>
+    <script>${FONT_PRELOAD}</script>
     <script>${FIT_PORTRAIT}</script>${gamepadTag}
     <script src="lib/phaser.min.js"></script>
-    <script src="game.bundle.js"></script>
+    <script src="game.bundle.js"></script>${extractTag}
 </body>
 </html>
 `;

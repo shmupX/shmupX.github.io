@@ -17,6 +17,8 @@ const MIN_W = 280;
 const MIN_H = 180;
 const SNAP_GAP = 10; // breathing room around snapped windows, matches the taskbar float
 const EDGE = 24; // px from a desktop edge that arms drag-snap
+const MARGIN = 8; // gap a window keeps from the desktop edge when placed
+const NARROW = 700; // below this a desktop-sized window cannot fit — fill instead
 
 export class WindowManager {
   /**
@@ -46,11 +48,49 @@ export class WindowManager {
         if (win) this.focus(win);
       }
     });
-    globalThis.addEventListener("resize", () => this.reflowSnapped());
+    this.lastBounds = this.bounds();
+    globalThis.addEventListener("resize", () => this.reflow());
   }
 
   bounds() {
     return { w: this.desktop.clientWidth, h: this.desktop.clientHeight };
+  }
+
+  /** Phone-width desktop: app-requested window sizes cannot fit it. */
+  isNarrow() {
+    return this.bounds().w < NARROW;
+  }
+
+  /** The whole desktop minus the edge margin — what a window fills when narrow. */
+  fullBleedRect() {
+    const { w, h } = this.bounds();
+    return {
+      x: MARGIN,
+      y: MARGIN,
+      w: Math.max(MIN_W, w - MARGIN * 2),
+      h: Math.max(MIN_H, h - MARGIN * 2),
+    };
+  }
+
+  /**
+   * Force a rect onto the desktop: sane numbers, no bigger than the desktop,
+   * no corner outside it. Every placement path funnels through here so a
+   * saved/restored/app-supplied rect can never hang off a small screen.
+   */
+  clampRect(raw = {}) {
+    const num = (v, d) => (Number.isFinite(v) ? v : d);
+    const { w: bw, h: bh } = this.bounds();
+    const w = Math.min(
+      Math.max(num(raw.w, 720), MIN_W),
+      Math.max(MIN_W, bw - MARGIN * 2),
+    );
+    const h = Math.min(
+      Math.max(num(raw.h, 480), MIN_H),
+      Math.max(MIN_H, bh - MARGIN * 2),
+    );
+    const x = Math.min(Math.max(num(raw.x, 60), 0), Math.max(0, bw - w));
+    const y = Math.min(Math.max(num(raw.y, 40), 0), Math.max(0, bh - h));
+    return { x, y, w, h };
   }
 
   /**
@@ -97,12 +137,23 @@ export class WindowManager {
     el.querySelector(".win-body").appendChild(opts.content);
 
     const { w: bw, h: bh } = this.bounds();
-    const width = Math.min(opts.width ?? 720, bw - 20);
-    const height = Math.min(opts.height ?? 480, bh - 20);
-    // Cascade new windows from the top-left like a desktop should.
-    const cascade = (this.windows.length % 8) * 28;
-    const x = opts.x ?? Math.max(8, Math.min(60 + cascade, bw - width - 8));
-    const y = opts.y ?? Math.max(8, Math.min(48 + cascade, bh - height - 8));
+    let rect;
+    if (this.isNarrow()) {
+      // No room to cascade a 960px app window on a phone: every window fills
+      // the desktop and the taskbar tray switches between them.
+      rect = this.fullBleedRect();
+    } else {
+      const width = Math.min(opts.width ?? 720, bw - 20);
+      const height = Math.min(opts.height ?? 480, bh - 20);
+      // Cascade new windows from the top-left like a desktop should.
+      const cascade = (this.windows.length % 8) * 28;
+      rect = this.clampRect({
+        x: opts.x ?? Math.max(8, Math.min(60 + cascade, bw - width - 8)),
+        y: opts.y ?? Math.max(8, Math.min(48 + cascade, bh - height - 8)),
+        w: width,
+        h: height,
+      });
+    }
 
     const win = {
       id,
@@ -115,7 +166,7 @@ export class WindowManager {
       minimized: false,
       onClose: opts.onClose,
     };
-    this.setRect(win, { x, y, w: width, h: height });
+    this.setRect(win, rect);
     this.windows.push(win);
     this.desktop.appendChild(el);
 
@@ -389,10 +440,39 @@ export class WindowManager {
     return !!(win.snap.h || win.snap.v || win.snap.max);
   }
 
-  reflowSnapped() {
-    for (const w of this.windows) {
-      if (this.isSnapped(w)) this.setRect(w, this.snapRect(w.snap));
+  /**
+   * The desktop changed size (rotation, a phone's collapsing URL bar, a
+   * resized browser). Snapped windows re-snap; floating ones get pulled back
+   * inside. A window that filled the old bounds keeps filling the new ones —
+   * otherwise a phone's URL bar sliding away would shrink it a little on
+   * every scroll and never give the height back.
+   */
+  reflow() {
+    const prev = this.lastBounds ?? this.bounds();
+    const now = this.bounds();
+    this.lastBounds = now;
+    if (!now.w || !now.h) return; // desktop is hidden — measurements are junk
+    let moved = false;
+    for (const win of this.windows) {
+      if (this.isSnapped(win)) {
+        this.setRect(win, this.snapRect(win.snap));
+        moved = true;
+        continue;
+      }
+      if (win.minimized && !win.lastRect) continue;
+      const r = this.getRect(win);
+      const filled = r.w >= prev.w - MARGIN * 3 && r.h >= prev.h - MARGIN * 3;
+      const next = filled ? this.fullBleedRect() : this.clampRect(r);
+      if (
+        next.x === r.x && next.y === r.y && next.w === r.w && next.h === r.h
+      ) continue;
+      if (win.minimized) win.lastRect = next;
+      this.setRect(win, next);
+      moved = true;
     }
+    // Resize fires in a stream while a browser window is dragged; only tell
+    // the shell (tray re-render, state save) when a rect actually changed.
+    if (moved) this.changed();
   }
 
   // ---- dragging --------------------------------------------------------

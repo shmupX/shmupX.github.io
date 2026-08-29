@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import Osd from './Osd.svelte';
+  import SavPicker from './SavPicker.svelte';
 
   const MAIN_MENU = [
     { id: 'memory',   label: 'Memory',   tag: '01 / sys.core', num: '0x01' },
@@ -30,6 +31,10 @@
   let menuSel = $state(1);           // start on Games
   let gameSel = $state(0);
   let clockStr = $state('--:--:--');
+  // Same clock without the seconds, for the cramped strip header. Set in the
+  // tick beside clockStr rather than sliced off it — a slice would cut the
+  // 12-hour string's AM/PM away.
+  let clockShort = $state('--:--');
   let gameSrc = $state(null);
   let gameOn = $state(false);
   let bootGone = $state(false);
@@ -374,7 +379,17 @@
   // bottom corners. While one is the active frame the overlay zones are
   // suppressed and the same gestures are detected by listeners injected into
   // the (guaranteed same-origin) frame instead — see injectEditorCornerGesture.
-  let editorFrameActive = $derived(typeof gameSrc === 'string' && /^\/editor(\/|\?|$)/.test(gameSrc));
+  //
+  // The frame can also navigate itself away from the editor (the SAVED GAMES
+  // shelf's player mode swaps it for /games/…), so the live location — read on
+  // each frame load, null for cross-origin frames — outranks gameSrc here:
+  // once the editor frame becomes a game, the corner zones and the Guide's
+  // Sound section come back.
+  let frameUrl = $state(null);
+  let editorFrameActive = $derived.by(() => {
+    const src = typeof frameUrl === 'string' ? frameUrl : gameSrc;
+    return typeof src === 'string' && /^\/editor(\/|\?|$)/.test(src);
+  });
   // Same-origin games get the launcher's Gamepad API patch (Twin-Stick /
   // touch virtual pad); cross-origin games run their own touch analogs off
   // cmg-twinstick-touch-set instead, so the launcher's zones must stand down.
@@ -410,6 +425,47 @@
     catch (_) { return { ...OSD_COLLAPSE_DEFAULTS }; }
   }
   let osdCollapsed = $state(loadCollapsed());
+
+  // ── Sound: BGM/SFX master volumes ─────────────────────────────────────────
+  // Percent sliders in the Guide's Sound section. Persisted to localStorage
+  // under the same keys the 2028-ai runtime reads at boot (same origin), and
+  // posted live into the running frame as 0..1 factors over cmg-volume — so
+  // launcher-hosted and standalone play stay in sync. Defaults: BGM full,
+  // SFX at a third (the effects are tuned loud relative to the music).
+  const VOL_BGM_KEY = 'cmg-vol-bgm';
+  const VOL_SFX_KEY = 'cmg-vol-sfx';
+  function loadVolPct(key, dflt) {
+    try {
+      // parseFloat, not Number: a missing key reads back null, and
+      // Number(null) is 0 — which would silently mute instead of defaulting.
+      const v = parseFloat(localStorage.getItem(key));
+      return Number.isFinite(v) && v >= 0 && v <= 100 ? Math.round(v) : dflt;
+    } catch (_) { return dflt; }
+  }
+  let volBgm = $state(loadVolPct(VOL_BGM_KEY, 100));
+  let volSfx = $state(loadVolPct(VOL_SFX_KEY, 33));
+  // targetOrigin '*' for the same reason as setPlugin: the payload is benign
+  // numbers and a volume-capable game could load cross-origin.
+  function postVolume() {
+    const iframe = document.getElementById('gameframe');
+    try { iframe?.contentWindow?.postMessage({ type: 'cmg-volume', bgm: volBgm / 100, sfx: volSfx / 100 }, '*'); }
+    catch (_) { /* ignore */ }
+  }
+  function setVolume(key, pct) {
+    pct = Math.max(0, Math.min(100, Math.round(pct)));
+    if (key === 'vol-bgm') volBgm = pct; else volSfx = pct;
+    try { localStorage.setItem(key === 'vol-bgm' ? VOL_BGM_KEY : VOL_SFX_KEY, String(pct)); } catch (_) {}
+    postVolume();
+  }
+  // While the Guide is up over a running game, hold the game paused. The frame
+  // acknowledges cmg-pause by sleeping its loop and suspending audio (the
+  // 2028-ai runtime); frames without a listener (e.g. the editor) ignore it.
+  $effect(() => {
+    const paused = osdOpen;
+    if (!gameOn) return;
+    const iframe = document.getElementById('gameframe');
+    try { iframe?.contentWindow?.postMessage({ type: 'cmg-pause', paused }, '*'); } catch (_) { /* ignore */ }
+  });
 
   // Cheats are boot-time URL params on the running game's iframe. A game
   // advertises which ones it supports by postMessage'ing
@@ -625,6 +681,7 @@
     // the editor must stay on the launcher's own origin so its /api/build-apk
     // call and Firebase writes run against the local dev/desktop host, not the
     // read-only deploy.
+    frameUrl = null;
     gameSrc = le.url;
     setTimeout(() => { gameOn = true; }, 30);
   }
@@ -952,6 +1009,15 @@
       { key: p.key, kind: 'toggle', label: p.label, value: p.value, plugin: p.id }
     )));
 
+    // Master volume for the running game (relayed over cmg-volume). The editor
+    // frame plays no audio, so the section hides while it is the active frame.
+    if (gameOn && !editorFrameActive) {
+      addSection('Sound', [
+        { key: 'vol-bgm', kind: 'slider', label: 'BGM', value: volBgm, min: 0, max: 100, step: 5, unit: '%' },
+        { key: 'vol-sfx', kind: 'slider', label: 'SFX', value: volSfx, min: 0, max: 100, step: 5, unit: '%' },
+      ]);
+    }
+
     addSection('Look', [
       { key: 'hue', kind: 'color', label: 'Glow color', value: tweaks.hue, options: HUE_SWATCHES },
       { key: 'breathe', kind: 'slider', label: 'Breathe speed', value: tweaks.breatheSpeed, min: 0.4, max: 2.2, step: 0.1, unit: '×' },
@@ -1007,6 +1073,7 @@
     if (it.param) { setCheat(it.param, it.kind === 'toggle' ? (v ? (it.on || '1') : null) : v); return; }
     // Plugin rows carry a `plugin` id — flip it live in the running game.
     if (it.plugin) { setPlugin(it.plugin, !!v); return; }
+    if (it.key === 'vol-bgm' || it.key === 'vol-sfx') { setVolume(it.key, v); return; }
     if (it.key === 'hue') setTweak('hue', v);
     else if (it.key === 'breathe') setTweak('breatheSpeed', Math.round(v * 10) / 10);
     else if (it.key === 'scanlines') setTweak('scanlines', !!v);
@@ -1251,7 +1318,6 @@
   let stripHint = $derived(stripOn ? 'swipe ↔' : curSection.name + ' · ↑ expand');
 
   let currentGame = $derived(GAMES[gameSel]);
-  let clockShort = $derived(clockStr.slice(0, 5));
   // Section header counter. A pinned BYO row labels itself (BYOB / BYOC) rather
   // than claiming an index in the ROM count it isn't part of.
   let counterText = $derived(
@@ -1470,9 +1536,10 @@
       action();
     };
   }
-  // Keyboard twin of tapHandler for the role="button" footer chips — non-native
-  // buttons don't synthesize a click on Enter/Space, so without this they were
-  // focusable but inert on a keyboard (and for assistive tech).
+  // Keyboard twin of tapHandler for every role="button"/role="menuitem" div in
+  // here (footer chips, menu items, strip tiles, list rows) — non-native buttons
+  // don't synthesize a click on Enter/Space, so without this they were focusable
+  // but inert on a keyboard (and for assistive tech).
   function chipKeyHandler(action) {
     return (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -1528,11 +1595,18 @@
     }
   }
 
-  function launchGame(id) {
+  // urlOverride launches the entry at a different URL than its catalog one —
+  // the .sav coverflow's &play=<slug> hand-off — while keeping every per-game
+  // capability (twin-stick, touch controls, level editor) keyed to the entry.
+  function launchGame(id, urlOverride) {
     sfx.enter();
     chromeDismissed = false;
+    frameUrl = null;
+    // A long-press pending on a row must not survive into the game and pop
+    // the picker over it (openSavPicker's gameOn guard is the second belt).
+    rowPressCancel();
     const item = GAMES.find((g) => g.id === id);
-    if (!item || !item.url) return;
+    if (!item || !(urlOverride || item.url)) return;
     initTwinStick(id, item);
     initTouchControls(id, item);
     // Level-editor availability from the catalog entry (games that broadcast
@@ -1543,7 +1617,8 @@
     // Resolve against the origin the manifest came from — same-origin here
     // ('' → root-relative url), which is what lets gamepad-support.js
     // synthesize mapped keyboard events into the frame.
-    gameSrc = manifestOrigin ? new URL(item.url, manifestOrigin).href : item.url;
+    const url = urlOverride || item.url;
+    gameSrc = manifestOrigin ? new URL(url, manifestOrigin).href : url;
     setTimeout(() => { gameOn = true; }, 30);
   }
 
@@ -1576,6 +1651,298 @@
       gameSrc = core.player + '?' + q;
     }
     setTimeout(() => { gameOn = true; }, 30);
+  }
+
+  // ─── ShmupX context menu — .sav coverflow picker ──────────────────────────
+  // Right-click, the gamepad's top face button (Y / triangle), the row's
+  // shelf badge, or tap-and-hold on the highlighted
+  // ShmupX row opens a coverflow over the Dezaemon .sav shelf — the same
+  // library the editor's SAVED GAMES drawer reads: the database index first
+  // (the only source a deployed build has), the static manifest for offline
+  // checkouts. Picking a cover launches the row's own editor URL with
+  // &play=<slug> appended — the editor's instant-play hand-off, which imports
+  // the cart silently and swaps the frame for the running game.
+  const SAV_DB_URL = 'https://evil-invaders-default-rtdb.firebaseio.com';
+  const SAV_STATIC_MANIFEST = '/editor/dezaemon/saves.manifest.json';
+  // Catalog entries that own a .sav shelf. A manifest entry can also opt in
+  // with `savLibrary: true` — same pattern as twinStick/touchControls.
+  const SAV_PICKER_IDS = new Set(['shmupx']);
+  let savPickerOpen = $state(false);
+  let savPickerSel = $state(0);
+  let savLibrary = $state(null);      // null until first open; [] = nothing reachable
+  let savLibraryLoading = $state(false);
+  let savLibraryErr = $state('');
+  let savCovers = $state({});         // slug -> data URL | null (fetch failed)
+  let savPickerGame = $state(null);   // the catalog entry the picker was opened for
+  const savCoverPending = new Set();  // in-flight cover fetches; nothing renders off it
+  let savLibraryPending = false;
+
+  function rowHasSavPicker(row) {
+    const g = row?.g;
+    return !!g && (g.savLibrary === true || SAV_PICKER_IDS.has(g.id));
+  }
+
+  // Warm the shelf the moment a shelf-owning row is highlighted: the badge
+  // gets its game count and the picker opens instantly instead of loading.
+  $effect(() => {
+    if (screen === 'games' && rowHasSavPicker(curRow)) loadSavLibrary();
+  });
+
+  // The upload script's slug algorithm (slugOf in scripts/upload-deza-saves.ts),
+  // so static-manifest rows agree with the database keys.
+  function savSlugOf(title) {
+    const s = String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    return s || 'save';
+  }
+
+  async function loadSavLibrary() {
+    if (savLibraryPending || savLibrary) return;
+    savLibraryPending = true;
+    savLibraryLoading = true;
+    savLibraryErr = '';
+    try {
+      let rows = null;
+      try {
+        const r = await fetch(SAV_DB_URL + '/dezaemon/index.json');
+        if (r.ok) {
+          const index = await r.json();
+          if (index && typeof index === 'object') {
+            rows = Object.keys(index).map((slug) => {
+              const e = index[slug] || {};
+              return {
+                slug,
+                file: e.file || slug + '.sav',
+                title: e.titleEn || e.fileTitle || slug,
+                titleJa: e.titleJa || '',
+                developer: e.developerEn || '',
+                developerJa: e.developerJa || '',
+                genre: e.genre || '',
+                hasCover: !!e.hasCover,
+              };
+            }).filter((s) => s.file);
+            if (!rows.length) rows = null;
+          }
+        }
+      } catch (_) { rows = null; }
+      if (!rows) {
+        // Offline checkout: the static manifest beside the .sav files. Covers
+        // live only in the database, so these rows wear the placeholder art.
+        const r = await fetch(SAV_STATIC_MANIFEST);
+        const data = r.ok ? await r.json() : { saves: [] };
+        rows = (data.saves || []).map((s) => ({
+          slug: savSlugOf(s.title), file: s.file, title: s.title,
+          titleJa: '', developer: '', developerJa: '', genre: '', hasCover: false,
+        }));
+      }
+      rows.sort((a, b) => a.title.localeCompare(b.title));
+      savLibrary = rows;
+    } catch (err) {
+      savLibrary = [];
+      savLibraryErr = 'COULD NOT READ THE SHELF: ' + (err?.message || err);
+    } finally {
+      savLibraryPending = false;
+      savLibraryLoading = false;
+    }
+  }
+
+  function fetchSavCover(item) {
+    if (!item || !item.slug || !item.hasCover) return;
+    if (item.slug in savCovers || savCoverPending.has(item.slug)) return;
+    savCoverPending.add(item.slug);
+    (async () => {
+      try {
+        const r = await fetch(SAV_DB_URL + '/dezaemon/covers/' + encodeURIComponent(item.slug) + '.json');
+        const rec = r.ok ? await r.json() : null;
+        savCovers = { ...savCovers, [item.slug]: rec && rec.png ? rec.png : null };
+      } catch (_) {
+        savCovers = { ...savCovers, [item.slug]: null };
+      } finally {
+        savCoverPending.delete(item.slug);
+      }
+    })();
+  }
+
+  // Fetch art for the covers in and just beyond the rendered fan as the
+  // cursor moves — the full shelf is 258 × ~9KB, far more than a browse needs.
+  $effect(() => {
+    if (!savPickerOpen || !savLibrary?.length) return;
+    const lo = Math.max(0, savPickerSel - 6);
+    const hi = Math.min(savLibrary.length - 1, savPickerSel + 6);
+    for (let i = lo; i <= hi; i++) fetchSavCover(savLibrary[i]);
+  });
+
+  // Keep the coverflow cursor in range if the shelf shrinks under it.
+  $effect(() => {
+    if (savLibrary && savPickerSel > savLibrary.length - 1) {
+      savPickerSel = Math.max(0, savLibrary.length - 1);
+    }
+  });
+
+  function openSavPicker(g) {
+    // The gameOn guard covers async entries — a long-press timer that fires
+    // after another input already launched a game must not stack the picker
+    // over the running frame.
+    if (savPickerOpen || gameOn) return;
+    if (g) savPickerGame = g;
+    savNav.hDir = 0; savNav.hSeenAt = 0; savNav.hHeldSince = 0; savNav.hLastNav = 0;
+    savPickerOpen = true;
+    sfx.enter();
+    // A shelf that came up empty (offline at the time, fetch error) retries
+    // on the next open instead of caching the failure for the session.
+    if (savLibrary && !savLibrary.length) savLibrary = null;
+    loadSavLibrary();
+  }
+  function closeSavPicker() {
+    if (!savPickerOpen) return;
+    savPickerOpen = false;
+    sfx.back();
+  }
+  // The gamepad entry (FBTN_TOP): only while a shelf-owning row is the
+  // highlighted row of the games screen.
+  function openSavPickerForRow() {
+    if (gameOn || screen !== 'games' || stripOn) return false;
+    if (!rowHasSavPicker(curRow)) return false;
+    openSavPicker(curRow.g);
+    return true;
+  }
+  function savPickerJump(i) {
+    if (!savLibrary?.length) return;
+    const next = Math.max(0, Math.min(savLibrary.length - 1, i));
+    if (next !== savPickerSel) { savPickerSel = next; sfx.nav(); }
+  }
+  function savPickerMove(dir) { savPickerJump(savPickerSel + dir); }
+  function launchSavGame(i) {
+    const item = savLibrary?.[i];
+    const g = savPickerGame;
+    if (!item || !g || !g.url) return;
+    savPickerOpen = false;
+    let url;
+    try {
+      const u = new URL(g.url, window.location.origin);
+      u.searchParams.set('play', item.slug || savSlugOf(item.title));
+      url = u.pathname + u.search + u.hash;
+    } catch (_) { return; }
+    launchGame(g.id, url);
+  }
+
+  // ── Row context gestures ──────────────────────────────────────────────────
+  // Right-click and tap-and-hold on a shelf-owning row open the coverflow.
+  // The long-press stamps rowPressFiredAt so the click that follows its
+  // release is swallowed (consumeRowPress in the row's onclick) instead of
+  // ALSO launching the row, and a drag past a few pixels cancels it so list
+  // scrolling stays a scroll.
+  let rowPress = null;          // { id, x, y, timer }
+  let rowPressFiredAt = 0;
+  const ROW_PRESS_MS = 550;
+  const ROW_PRESS_SLOP = 12;
+  function rowPressStart(e, r, i) {
+    if (!rowHasSavPicker(r) || savPickerOpen) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    rowPressCancel();
+    rowPress = {
+      id: e.pointerId, x: e.clientX, y: e.clientY,
+      timer: setTimeout(() => {
+        rowPress = null;
+        rowPressFiredAt = performance.now();
+        stripFocus = false;
+        curSection.setSel(i);
+        openSavPicker(r.g);
+      }, ROW_PRESS_MS),
+    };
+  }
+  function rowPressMove(e) {
+    if (!rowPress || rowPress.id !== e.pointerId) return;
+    if (Math.hypot(e.clientX - rowPress.x, e.clientY - rowPress.y) > ROW_PRESS_SLOP) rowPressCancel();
+  }
+  function rowPressEnd(e) {
+    if (rowPress && rowPress.id === e.pointerId) rowPressCancel();
+  }
+  function rowPressCancel() {
+    if (rowPress) { clearTimeout(rowPress.timer); rowPress = null; }
+  }
+  // Self-expiring: a hold whose release never produces a click (the finger
+  // lifted over the picker's scrim) must not swallow the NEXT genuine click.
+  function consumeRowPress() {
+    return performance.now() - rowPressFiredAt < 800;
+  }
+  function onRowContextMenu(e, r, i) {
+    if (!rowHasSavPicker(r)) return; // other rows keep the native menu
+    e.preventDefault();
+    if (savPickerOpen) return;
+    stripFocus = false;
+    curSection.setSel(i);
+    openSavPicker(r.g);
+  }
+
+  // Gamepad nav state for the picker (edge latch + hold-to-repeat, the same
+  // feel as the launcher lists). Plain object — nothing renders off it.
+  const savNav = { hDir: 0, hSeenAt: 0, hHeldSince: 0, hLastNav: 0 };
+  function pollSavPickerPad(pad) {
+    padState.axisDir = 0; padState.hAxisDir = 0;
+    const pressedNow = new Set();
+    pad.buttons.forEach((btn, i) => { if (btn?.pressed) pressedNow.add(i); });
+    const justPressed = (i) => pressedNow.has(i) && !padState.btn.has(i);
+    const dirs = readPadDirs(pad);
+    const now = performance.now();
+    const isSnes = SNES_PAD_RE.test(pad?.id || '');
+    // Ignore direction input while SELECT is held — the still-held SELECT+Up
+    // OPEN chord would otherwise feed straight into nav on the picker's first
+    // frame (same guard, and same reason, as the OSD branch's selHeld).
+    const selHeld = !!pad.buttons[8]?.pressed;
+    // The fan is the only thing on screen, so Up/Down fold into prev/next too.
+    let h = 0;
+    if (!selHeld) {
+      if (dirs.left || dirs.up) h = -1;
+      else if (dirs.right || dirs.down) h = 1;
+      else {
+        // Sticks — capped at 1.05 like every other axis read: idle axes on
+        // some pads rest at "no input" sentinels like 1.28. SNES pads have no
+        // sticks, and their raw slots must not be read as analog at all.
+        for (const i of isSnes ? [] : [0, 1]) {
+          const v = pad.axes[i];
+          if (typeof v !== 'number' || Math.abs(v) > 1.05) continue;
+          if (v < -PAD_DEADZONE) { h = -1; break; }
+          if (v > PAD_DEADZONE) { h = 1; break; }
+        }
+      }
+    }
+    const hReal = h;
+    if (h === 0 && savNav.hDir !== 0 && now - savNav.hSeenAt < 80) h = savNav.hDir;
+    if (hReal !== 0) savNav.hSeenAt = now;
+    if (h !== 0 && h !== savNav.hDir) {
+      // Fresh edges are rate-limited like the launcher lists: bounce trains
+      // with gaps past the dropout window land as several edges per tap.
+      if (now - savNav.hLastNav >= 150 || savNav.hLastNav === 0) {
+        savPickerMove(h);
+        savNav.hLastNav = now;
+      }
+      savNav.hHeldSince = now;
+    } else if (h !== 0 && h === savNav.hDir) {
+      if (now - savNav.hHeldSince >= padState.initialDelayMs && now - savNav.hLastNav >= padState.repeatMs) {
+        savPickerMove(h);
+        savNav.hLastNav = now;
+      }
+    }
+    savNav.hDir = h;
+    if (IS_ANDROID && isSnes) {
+      // Android Chrome + SNES: the D-pad doesn't report and physical R
+      // arrives remapped to the L2 slot — L/L2 are the primary prev/next
+      // there, exactly as they are the launcher lists' primary up/down.
+      if (justPressed(4)) savPickerMove(-1);
+      if (justPressed(6)) savPickerMove(1);
+    } else {
+      // Shoulders page, triggers jump to the ends — the shelf is 258 long.
+      if (justPressed(4)) savPickerJump(savPickerSel - 10);
+      if (justPressed(5)) savPickerJump(savPickerSel + 10);
+      if (justPressed(6)) savPickerJump(0);
+      if (justPressed(7)) savPickerJump(savLibrary ? savLibrary.length - 1 : 0);
+    }
+    if (justPressed(0) || justPressed(9)) { lastInput = 'pad'; launchSavGame(savPickerSel); }
+    else if (justPressed(1) || justPressed(8)) closeSavPicker();
+    // The SELECT still held from the opening chord must not read as Back once
+    // it is finally released back in the launcher branch.
+    if (!pressedNow.has(8)) { padState.selChordFired = false; padState.selArmed = false; }
+    padState.btn = pressedNow;
   }
 
   async function loadManifest() {
@@ -1612,6 +1979,7 @@
     const unmount = () => { if (!unmounted) { unmounted = true; gameSrc = null; } };
     setTimeout(unmount, 500);
     gameOn = false;
+    frameUrl = null;
     chromeDismissed = false;
     // Drop the prior game's advertised cheats; the next game re-broadcasts its
     // own on boot. closeGame is the single chokepoint between games (the list
@@ -1686,10 +2054,17 @@
     lastNavAt: 0,
     // Hold-to-repeat feel: long enough that a deliberate single tap (which
     // often lasts 300ms+) never auto-repeats, then a steady scroll.
-    initialDelayMs: 400,
+    initialDelayMs: 600,
     repeatMs: 150,
     holdingSince: 0,
     comboLatched: false,
+    // SELECT chord bookkeeping for the launcher branch: selArmed marks a
+    // SELECT press that began there (so a release edge inherited from another
+    // branch can't fire Back), selChordFired marks that SELECT + Up consumed
+    // the hold (so its release doesn't ALSO fire Back).
+    selArmed: false,
+    selChordFired: false,
+    rawDirPrev: 0,
     r3Latched: false,
     dirSeenAt: 0,
     lastPollAt: 0,
@@ -1816,14 +2191,25 @@
     const dirs = { up: false, down: false, left: false, right: false };
     if (!pad) return dirs;
     const btn = (i) => !!pad.buttons[i]?.pressed;
+    dirs.up = btn(12);
+    dirs.down = btn(13);
+    dirs.left = btn(14);
+    dirs.right = btn(15);
+    // A pad the browser normalized to the standard mapping is DONE here:
+    // 12-15 ARE its D-pad, the raw slots past 15 are extra hardware (on a
+    // DualShock 4, 16 = the PS button and 17 = the touchpad click — read as
+    // "up"/"down" they navigated the launcher), and its axes past 3 are
+    // whatever the driver felt like (a resting trigger reads as a held
+    // direction). Only non-standard layouts need the fallback sweeps.
+    if (pad.mapping === 'standard') return dirs;
     // SNES pads: the compat plugin rebuilds 12-15 from the hat, and the raw
     // slots past 15 can hold Select/Start on some platforms — reading them as
     // a D-pad turns Select/Start into phantom up/down presses.
     const isSnes = SNES_PAD_RE.test(pad?.id || '');
-    dirs.up = btn(12) || (!isSnes && (btn(16) || btn(18) || btn(20)));
-    dirs.down = btn(13) || (!isSnes && (btn(17) || btn(19) || btn(21)));
-    dirs.left = btn(14);
-    dirs.right = btn(15);
+    if (!isSnes) {
+      dirs.up ||= btn(16) || btn(18) || btn(20);
+      dirs.down ||= btn(17) || btn(19) || btn(21);
+    }
     const ax = pad.axes || [];
     if (typeof ax[6] === 'number' && Math.abs(ax[6]) <= 1.05) {
       if (ax[6] <= -PAD_DEADZONE) dirs.left = true;
@@ -1960,6 +2346,7 @@
       if (pad) pad.buttons.forEach((btn, i) => { if (btn?.pressed) pressedNow.add(i); });
       padState.btn = pressedNow;
       padState.axisDir = 0; padState.hAxisDir = 0; padState.comboLatched = false;
+      if (!pressedNow.has(8)) { padState.selArmed = false; padState.selChordFired = false; }
       osdNav.vDir = 0; osdNav.hDir = 0;
       return;
     }
@@ -1969,10 +2356,13 @@
       // drive OSD navigation while it's open — body.osd-open makes
       // gamepad-support yield, so these presses don't leak into the game.
       padState.axisDir = 0; padState.hAxisDir = 0;
-      if (!pad) { padState.btn.clear(); padState.comboLatched = false; osdNav.vDir = 0; osdNav.hDir = 0; return; }
+      if (!pad) { padState.btn.clear(); padState.comboLatched = false; padState.selArmed = false; padState.selChordFired = false; osdNav.vDir = 0; osdNav.hDir = 0; return; }
       const pressedNow = new Set();
       pad.buttons.forEach((btn, i) => { if (btn?.pressed) pressedNow.add(i); });
       const justPressed = (i) => pressedNow.has(i) && !padState.btn.has(i);
+      // A SELECT released while a game runs must not leave the launcher's
+      // chord latches armed — they'd eat (or forge) the next launcher Back.
+      if (!pressedNow.has(8)) { padState.selArmed = false; padState.selChordFired = false; }
 
       if (osdOpen) {
         // Vertical: D-pad 12/13 or left-stick Y → move selection (edge-latched).
@@ -2066,8 +2456,11 @@
       padState.btn = pressedNow;
       return;
     }
-    if (!pad) { padState.btn.clear(); padState.axisDir = 0; padState.hAxisDir = 0; if (padConnected) padConnected = false; return; }
+    if (!pad) { padState.btn.clear(); padState.axisDir = 0; padState.hAxisDir = 0; padState.rawDirPrev = 0; padState.selArmed = false; padState.selChordFired = false; if (padConnected) padConnected = false; return; }
     if (!padConnected) padConnected = true;
+    // The .sav coverflow owns the pad while it is up — nothing may navigate
+    // or launch underneath it. Same shape as the OSD branch above.
+    if (savPickerOpen) { pollSavPickerPad(pad); return; }
     if (!padHadConnection) {
       padHadConnection = true;
       try { getAc()?.resume(); } catch (_) {}
@@ -2112,8 +2505,12 @@
     // 15 can hold Select/Start on some platforms, which made Select/Start
     // scroll the launcher.
     const isSnesPad = SNES_PAD_RE.test(pad?.id || '');
-    const upButtonIdxs = isSnesPad ? [12] : [12, 16, 18, 20];
-    const downButtonIdxs = isSnesPad ? [13] : [13, 17, 19, 21];
+    // Standard-mapping pads end at 12/13: on a DualShock 4 the raw slots 16
+    // and 17 are the PS button and the touchpad click, which read here as
+    // phantom up/down (and doubled D-pad presses when a driver mirrors them).
+    const trustRawSlots = pad.mapping !== 'standard' && !isSnesPad;
+    const upButtonIdxs = trustRawSlots ? [12, 16, 18, 20] : [12];
+    const downButtonIdxs = trustRawSlots ? [13, 17, 19, 21] : [13];
     const dpadUp = upButtonIdxs.some((i) => !!pad.buttons[i]?.pressed);
     const dpadDown = downButtonIdxs.some((i) => !!pad.buttons[i]?.pressed);
     let dir = 0;
@@ -2158,6 +2555,24 @@
         if (hat.left) dir = -1;
         else if (hat.right) dir = 1;
       }
+    }
+
+    // While SELECT is held the D-pad must not navigate, and SELECT's own
+    // Back action lives on its release edge (below) — the OSD open-chord
+    // (SELECT + Down, in-game) and the historical launcher chords depend on
+    // the hold being inert. The .sav shelf now opens on FBTN_TOP (Y /
+    // triangle) instead of the old SELECT + Up chord.
+    const selHeld = !!pad.buttons[8]?.pressed;
+    if (selHeld) {
+      padState.rawDirPrev = dir;
+      dir = 0;
+      // Neutralize the direction latches too: the bounce filter below would
+      // otherwise resurrect a pre-chord press from them for up to 80ms and
+      // navigate under the held SELECT.
+      padState.axisDir = 0;
+      padState.hAxisDir = 0;
+    } else {
+      padState.rawDirPrev = dir;
     }
 
     // Bounce/dropout filter: a one-or-two-frame neutral blip in the middle of
@@ -2207,7 +2622,7 @@
     // between the strip and the row list. Only polled on a screen that
     // declares moveH, so nothing else pays for it.
     let hdir = 0;
-    if (!gameOn && navHasH()) {
+    if (!gameOn && navHasH() && !selHeld) {
       if (pad.buttons[14]?.pressed) hdir = -1;      // standard-mapping D-pad left
       else if (pad.buttons[15]?.pressed) hdir = 1;  // standard-mapping D-pad right
       if (hdir === 0 && !isSnesPad) {
@@ -2250,7 +2665,22 @@
     pad.buttons.forEach((btn, i) => { if (btn?.pressed) pressedNow.add(i); });
     const justPressed = (i) => pressedNow.has(i) && !padState.btn.has(i);
     if (justPressed(0) || justPressed(9)) actFbtnBottom(); // FBTN_BOTTOM or Start
-    if (justPressed(1) || justPressed(8)) actFbtnRight();  // FBTN_RIGHT or Back/Select
+    if (justPressed(1)) actFbtnRight();                    // FBTN_RIGHT
+    // FBTN_TOP (Y / triangle) opens the highlighted row's .sav shelf — the
+    // one-button replacement for the old SELECT + Up chord.
+    if (justPressed(3)) {
+      if (openSavPickerForRow()) lastInput = 'pad';
+    }
+    // SELECT backs out on its RELEASE edge, so SELECT + Up can chord (above)
+    // without Back firing the moment SELECT goes down. Only a press that
+    // began in this branch arms it — a release inherited from the in-game or
+    // picker branches must not fire a stray Back.
+    if (justPressed(8)) padState.selArmed = true;
+    if (padState.btn.has(8) && !pressedNow.has(8)) {
+      if (padState.selArmed && !padState.selChordFired) actFbtnRight();
+      padState.selArmed = false;
+      padState.selChordFired = false;
+    }
     // Shoulder/trigger navigation — fallback when D-pad isn't recognized
     // (e.g. Firefox + non-standard SNES adapters). Safe for SNES pads too:
     // the compat plugin guarantees normalized 6/7 are either real L2/R2
@@ -2273,6 +2703,19 @@
   function onKey(e) {
     lastInput = 'key';
     completePendingFullscreen();
+    // The .sav coverflow owns the keyboard while it is up (launcher only —
+    // it can never be open over a running game).
+    if (savPickerOpen) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); savPickerMove(-1); }
+      else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); savPickerMove(1); }
+      else if (e.key === 'PageUp') { e.preventDefault(); savPickerJump(savPickerSel - 10); }
+      else if (e.key === 'PageDown') { e.preventDefault(); savPickerJump(savPickerSel + 10); }
+      else if (e.key === 'Home') { e.preventDefault(); savPickerJump(0); }
+      else if (e.key === 'End') { e.preventDefault(); savPickerJump((savLibrary?.length || 1) - 1); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launchSavGame(savPickerSel); }
+      else if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'b' || e.key === 'B') { e.preventDefault(); closeSavPicker(); }
+      return;
+    }
     // Nintendo theme lays the catalog lists out as a horizontal coverflow row,
     // so left/right arrows navigate them too (up/down keeps working). Skipped on
     // a screen that owns the horizontal axis itself — the games screen's strip
@@ -2567,12 +3010,17 @@
   }
 
   onMount(() => {
+    // 12-hour wall clock, the way the phone's own status bar reads it — the
+    // HUD is set dressing, not a mission timer.
     const tick = () => {
       const d = new Date();
-      const h = String(d.getHours()).padStart(2, '0');
+      const h24 = d.getHours();
+      const h = String(h24 % 12 || 12);
       const m = String(d.getMinutes()).padStart(2, '0');
       const s = String(d.getSeconds()).padStart(2, '0');
-      clockStr = h + ':' + m + ':' + s;
+      const ap = h24 < 12 ? 'AM' : 'PM';
+      clockStr = h + ':' + m + ':' + s + ' ' + ap;
+      clockShort = h + ':' + m + ' ' + ap;
     };
     tick();
     clockTimer = setInterval(tick, 1000);
@@ -2733,6 +3181,7 @@
     if (clockTimer) clearInterval(clockTimer);
     if (bootTimer) clearTimeout(bootTimer);
     if (toastTimer) clearTimeout(toastTimer);
+    rowPressCancel();
     if (padRaf) cancelAnimationFrame(padRaf);
     document.removeEventListener('click', unlockAudio);
     window.removeEventListener('keydown', onKey);
@@ -2797,10 +3246,14 @@
   <div class="topbar">
     <div class="brand">
       <span class="dot"></span>
-      <span>shmupX // codemonkey.games</span>
+      <span>codemonkey.games</span>
     </div>
     <div class="right">
-      <span>{clockStr}</span>
+      <!-- Two clocks, one shown at a time by width: the HUD line is already
+           crowded on a phone, and "10:27:18 PM" wrapping between the seconds
+           and the meridiem looks broken. Narrow screens get the short one. -->
+      <span class="clock full">{clockStr}</span>
+      <span class="clock short">{clockShort}</span>
       <span>core stable</span>
       <span>sys ▮▮▮▮▮▮▮▱</span>
     </div>
@@ -2816,13 +3269,16 @@
         <div class="glyph">🐵</div>
       </div>
     </div>
-    <div class="menu">
+    <div class="menu" role="menu" aria-label="Main menu">
       {#each MAIN_MENU as m, i (m.id)}
         <div
           bind:this={menuEls[i]}
           class="item {i === menuSel ? 'sel' : ''}"
+          role="menuitem"
+          tabindex="-1"
           onmouseenter={() => { if (i !== menuSel) { menuSel = i; sfx.nav(); } }}
           onclick={() => pickMenu(i)}
+          onkeydown={chipKeyHandler(() => pickMenu(i))}
         >
           <span class="tag">{m.tag}</span>
           <div class="node"></div>
@@ -2863,6 +3319,9 @@
 
         <div
           class="cmg-strip {stripFocus ? 'on' : ''}"
+          role="tablist"
+          aria-label="Libraries"
+          tabindex="-1"
           bind:this={stripEl}
           onwheel={onStripWheel}
           onpointerdown={onStripDown}
@@ -2872,7 +3331,11 @@
               bind:this={tileEls[i]}
               class="strip-tile {i === secSel ? 'active' : ''} {stripFocus && i === secSel ? 'sel' : ''}"
               style="animation-delay: {(i % 4) * -1.1}s"
+              role="tab"
+              aria-selected={i === secSel}
+              tabindex="-1"
               onclick={() => onTileClick(i)}
+              onkeydown={chipKeyHandler(() => onTileClick(i))}
               onmouseenter={() => { if (!(stripFocus && i === secSel)) pickSection(i); }}
             >
               <div class="strip-disc">
@@ -2961,8 +3424,17 @@
                 bind:this={gameRowEls[i]}
                 class="game-row {r.pinned ? 'byoc-row' : ''} {!stripOn && i === curSel ? 'sel' : ''}"
                 style="animation-delay: {i % 3 === 0 ? -2.4 : i % 2 === 0 ? -1.2 : 0}s"
+                role="button"
+                tabindex="-1"
                 onmouseenter={() => { if (stripOn || i !== curSel) { stripFocus = false; curSection.setSel(i); sfx.nav(); } }}
-                onclick={() => { stripFocus = false; curSection.setSel(i); curSection.activate(i); }}
+                onclick={() => { if (consumeRowPress()) return; stripFocus = false; curSection.setSel(i); curSection.activate(i); }}
+                onkeydown={chipKeyHandler(() => { stripFocus = false; curSection.setSel(i); curSection.activate(i); })}
+                oncontextmenu={(e) => onRowContextMenu(e, r, i)}
+                onpointerdown={(e) => rowPressStart(e, r, i)}
+                onpointermove={(e) => rowPressMove(e)}
+                onpointerup={(e) => rowPressEnd(e)}
+                onpointercancel={(e) => rowPressEnd(e)}
+                onpointerleave={(e) => rowPressEnd(e)}
               >
                 {#if r.submenu}
                   <!-- Category rows get a folder-of-discs instead of the single
@@ -2990,7 +3462,36 @@
                 {/if}
                 <div class="game-bar">
                   <span class="name">{r.title}</span>
-                  <span class="sub">{r.sub}</span>
+                  {#if rowHasSavPicker(r)}
+                    <!-- The row owns a shelf of ready-to-play .sav games: in
+                         place of the subtitle, a stack of cartridge spines
+                         says so at a glance, and on the highlighted row it
+                         grows the count plus the way in (Y on a pad,
+                         tapping the badge otherwise). The badge is its own
+                         click target — browsing the shelf and launching the
+                         row stay separate gestures. -->
+                    <div
+                      class="shelf-badge {!stripOn && i === curSel ? 'lit' : ''}"
+                      role="button"
+                      tabindex="-1"
+                      aria-label="Browse the game shelf"
+                      onclick={(e) => { e.stopPropagation(); if (consumeRowPress()) return; stripFocus = false; curSection.setSel(i); openSavPicker(r.g); }}
+                      onkeydown={chipKeyHandler(() => { stripFocus = false; curSection.setSel(i); openSavPicker(r.g); })}
+                      onpointerdown={(e) => e.stopPropagation()}
+                      oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!savPickerOpen) { stripFocus = false; curSection.setSel(i); openSavPicker(r.g); } }}
+                    >
+                      <span class="shelf-spines" aria-hidden="true"><i></i><i></i><i></i></span>
+                      <span class="shelf-copy">
+                        <b>SHELF</b>
+                        <em>{savLibrary?.length ? `${savLibrary.length} GAMES` : 'browse'}</em>
+                      </span>
+                      {#if !stripOn && i === curSel && padConnected}
+                        <span class="shelf-key" aria-hidden="true">Y</span>
+                      {/if}
+                    </div>
+                  {:else}
+                    <span class="sub">{r.sub}</span>
+                  {/if}
                 </div>
               </div>
             {/each}
@@ -3029,8 +3530,11 @@
             <div
               bind:this={settingsRowEls[i]}
               class="game-row {i === settingsSel ? 'sel' : ''}"
+              role="button"
+              tabindex="-1"
               onmouseenter={() => { if (i !== settingsSel) { settingsSel = i; sfx.nav(); } }}
               onclick={() => activateSettings(i)}
+              onkeydown={chipKeyHandler(() => activateSettings(i))}
             >
               <div class="game-icon"><div class="glass"><span class="ph">◧</span></div></div>
               <div class="game-bar">
@@ -3073,8 +3577,11 @@
             <div
               bind:this={emuRowEls[i]}
               class="game-row {i === emuSel ? 'sel' : ''}"
+              role="button"
+              tabindex="-1"
               onmouseenter={() => { if (i !== emuSel) { emuSel = i; sfx.nav(); } }}
               onclick={() => activateEmulator(i)}
+              onkeydown={chipKeyHandler(() => activateEmulator(i))}
             >
               <div class="game-icon">
                 <div class="glass">
@@ -3140,7 +3647,7 @@
       src={gameSrc}
       title="game"
       allow="autoplay; fullscreen; gamepad; xr-spatial-tracking"
-      onload={(e) => { injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); applyTwinStick(); applyTouchControls(); applyGameTheme(); }}
+      onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); applyTwinStick(); applyTouchControls(); applyGameTheme(); postVolume(); }}
     ></iframe>
   </div>
 {/if}
@@ -3204,6 +3711,11 @@
 {#if toastMsg}
   <div class="cmg-toast" role="status">{toastMsg}</div>
 {/if}
+
+<SavPicker open={savPickerOpen} items={savLibrary || []} sel={savPickerSel}
+     covers={savCovers} loading={savLibraryLoading} error={savLibraryErr}
+     onselect={(i) => savPickerJump(i)} onlaunch={(i) => launchSavGame(i)}
+     onclose={closeSavPicker} />
 
 <Osd open={osdOpen} items={osdItems} sel={osdSel} theme={tweaks.theme}
      clock={clockStr} title={currentGame?.title || currentGame?.name || ''}

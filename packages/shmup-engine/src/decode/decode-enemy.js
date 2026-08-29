@@ -13,10 +13,13 @@
 //   byte 0      appearance id (art class; redundant here — art comes from the
 //               per-stage composition banks)
 //   byte 1      bits0-2 hp index, bits4-6 score index, bit7 ground flag
-//   byte 2      bits0-2 speed index, bit3+bits4-5 movement pattern (0-7),
-//               bits6-7 fire type
-//   byte 3      fire parameters (type 1: bits0-2 count-1, bit3 wide)
-//   byte 4      bits0-1 fire mode, bits4-6 fire rate index
+//   byte 2      bits0-2 speed index, bit3 terrain-ride flag + bits4-5
+//               movement pattern, bits6-7 DEATH MODE
+//   byte 3      DEATH PARAMETER (item slot / child record / chain key).
+//               NOT fire params: the firing path reads neither byte 3 nor
+//               byte 2's top bits — see decodeDeathWord() below
+//   byte 4      bits0-1 fire mode, bits2-3 death presentation,
+//               bits4-6 fire rate index
 //   byte 5      bits0-4 fire direction, bits5-7 extra
 //   bytes 6-8   speed-change channel   (enable b6&1)
 //   bytes 9-11  rotation channel       (mode b9&7: 0 off, 1 cw, 2 ccw,
@@ -110,6 +113,70 @@ function channel(a, b, c, { enabled, table, stepTable, angle }) {
 // Decode one 18-byte record into named fields (all in editor/runtime units:
 // hp in hits, score in points, speed in px/frame, angles in degrees,
 // factors where 1 = 100%).
+// How the ENGINE turns a placement cell byte into a record index. The cell byte
+// is `1 bbb nnnn` — bit7 the OCCUPIED flag, bits4-6 the BAND, bits0-3 the index
+// within it. Both producers (the placement walker and the death-word child
+// spawner `+0x18E7C`) funnel into the same seven band wrappers
+// `+0x16070/16148/16238/16328/16400/164F0/165E0`, and each wrapper hard-codes
+// its own base byte from the 7-byte table at `0x0608603C`:
+//
+//     record index = BASE[band] | (cell & 15)        // e.g. +0x1A488: or r4,r5
+//
+// The index is OR-ed in **unmasked**. The per-band mask below is a separate
+// thing — it shapes only the ART (char index = charBase + step*(cell & mask))
+// and the hitbox, so a cell whose index overruns its band still selects a
+// record, just not a matching sprite. Band 7 (cells 0xF0-0xFF) is unreachable
+// on the death path: `+0x18E98` clamps band > 6 into the band-0 case.
+export const ZAKO_BAND_BASE = [0x00, 0x10, 0x18, 0x20, 0x30, 0x34, 0x38];
+export const ZAKO_BAND_ART_MASK = [15, 7, 7, 15, 3, 3, 3];
+
+// Record index for a placement cell byte / formation key, the engine's way.
+// May exceed the 60 defined records when the index overruns its band (the
+// engine reads on into the block trailer); callers resolve it against the
+// roster they actually have.
+export function zakoRecordFromKey(key) {
+    const band = (key >> 4) & 7;
+    return ZAKO_BAND_BASE[band === 7 ? 0 : band] | (key & 15);
+}
+
+// The DEATH WORD — record byte 2's top two bits and the whole of byte 3, which
+// this file long mis-read as a "fire type" and its parameters. Traced
+// 2026-08-28: the spawn routine (`+0x153C8`) packs them into one per-slot u16
+// at `0x06094240` as `mode<<8 | param`, and the ONLY code that ever reads
+// either byte is that packing — the firing path never touches them. The death
+// dispatcher (`+0x6448`) then switches on `word & 0x0300`:
+//
+//   0 nothing · 1 DROP an item · 2 SPAWN a child enemy · 3 CHAIN-kill a group
+//
+// Byte 4's bits 2-3 ride along in the same word as the death PRESENTATION
+// (bit15 = vanish silently, bit14 = the small blast and no revenge shot).
+function decodeDeathWord(b) {
+    const mode = (b[2] >> 6) & 3;
+    const param = b[3];
+    const present = (b[4] >> 2) & 3;
+    const death = {
+        mode, // 0 none, 1 item, 2 child, 3 chain
+        param,
+        // The engine renders the death itself from byte 4: value 0 removes the
+        // object with no explosion and no sound, value 2 picks the small blast
+        // (and suppresses the rank-3 revenge shot); 1 and 3 are the full one.
+        silent: present === 0,
+        small: present === 2,
+    };
+    if (mode === 1) {
+        // Item slot 1-8, or 9 = "cycle", the engine's own encoding of byte 3 —
+        // NOT a shot count. Slot 0 means the drop is skipped.
+        death.item = (param & 8) !== 0 ? 9 : (param & 7) + 1;
+    } else if (mode >= 2) {
+        // Modes 2 and 3 share one meaning for byte 3: a placement cell byte
+        // with its occupied bit stripped. The engine ORs 0x80 back on, making
+        // it both the child's FORMATION KEY and (mode 3) the key to sweep.
+        death.key = param | 0x80;
+        death.record = zakoRecordFromKey(death.key);
+    }
+    return death;
+}
+
 export function decodeEnemyRecord(bytes) {
     const b = Array.from(bytes);
     const rotationMode = b[9] & 7;
@@ -137,10 +204,6 @@ export function decodeEnemyRecord(bytes) {
             // re-traced"). `enabled` carries only the appearance gate; the
             // runtime combines it with `direction`.
             enabled: appearanceFires(b[0]),
-            type: (b[2] >> 6) & 3,          // b2 bits 6-7 (semantics open)
-            count: (b[3] & 7) + 1,
-            wide: (b[3] & 8) !== 0,
-            param: b[3],                     // raw
             // b4 & 3 = BULLET TYPE: which of the save's four global bullet
             // configs this enemy fires (settings +37..+40). Bullet types
             // 0-2 reload from the short table [14,12,10,8,6,4,2,1]
@@ -151,15 +214,26 @@ export function decodeEnemyRecord(bytes) {
                 (b[4] & 3) === 3 ? FIRE_INTERVAL_TABLE_ALT : FIRE_INTERVAL_TABLE),
             window: FIRE_WINDOW_TABLE[(b[4] >> 4) & 7],
             // Byte 5's low nibble picks a bullet-geometry function from the
-            // 16-pointer table at 0x6086074 (0 = silent, 1 = single, 2 =
-            // pair, 5 = 3-fan, 13 = perpendicular pair, ...); values
-            // 10/11/12 route to three special handlers instead (+0x193d0/
-            // +0x19538/+0x196a8, untraced). Bit 4 (0x10) aims the volley at
-            // the player; otherwise shots leave along the enemy's facing.
+            // 16-pointer table at 0x6086074 — all 16 traced (2026-08-28):
+            // 0 silent, 1/10 single, 2 = ±8-unit pair, 3 = 0,±8 fan,
+            // 4 = 0,±16, 5 = ±8,±24 (no center), 6 = 0,±8,±16,
+            // 7 = 0,±16,±32, 8 = same as 7 with curving bullets, 9 = homing
+            // single, 11 = single with (rand&31)−16 unit jitter, 12 = single
+            // stepping +16 units (22.5°) per shot through a full circle,
+            // 13 = ±64 perpendicular pair, 14 = 0,±64,128 cross, 15 = 8-way
+            // star (angle units = 1/256 circle). Values 10/11/12 ALSO route
+            // the fire routine to burst handlers (+0x193d0/+0x19538/+0x196a8):
+            // 10 = 4 volleys one fire-tick apart, 11 = 5 jittered volleys,
+            // 12 = 16 shots on consecutive frames — the rotating spiral.
+            // Bit 4 (0x10) aims the volley at the player (re-aimed every
+            // shot); otherwise shots leave along the enemy's facing.
+            geometry: b[5] & 0x0f,
+            aimed: (b[5] & 0x10) !== 0,
             pattern: SPECIAL_FIRE_PATTERNS[b[5] & 0x0f] ?? null,
             direction: SPECIAL_FIRE_PATTERNS[b[5] & 0x0f] !== undefined ? 0 : (b[5] & 0x1f),
             directionEx: (b[5] >> 5) & 7,
         },
+        death: decodeDeathWord(b),
         speedChange: channel(b[6], b[7], b[8], {
             enabled: (b[6] & 1) !== 0,
             table: FACTOR_TABLE,

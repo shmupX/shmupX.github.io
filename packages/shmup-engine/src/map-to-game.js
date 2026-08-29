@@ -21,6 +21,8 @@
 //   - BootScene plays stage0..stage9
 
 import { DUKE_PLAYER, decodePlayerArt } from "./player-art.js";
+import { ITEM_TYPE_DROPS, zakoPlacementId } from "./decode/decode-stage.js";
+import { APPEARANCE_SCRIPTS, appearanceScript } from "./decode/appearance-table.js";
 
 export { decodePlayerArt, DUKE_PLAYER };
 
@@ -262,7 +264,17 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             // volley pattern, including 0.
             rec.interval = e.behavior.fire.enabled ? e.behavior.fire.interval : -1;
             if (e.behavior.fire.enabled && rec.bulletData) {
-                rec.bulletData.speed = ENEMY_BULLET_SPEED;
+                // The save's own global bullet config (byte4 & 3 picks one of
+                // the three at settings +0x25; decode-settings.js). Hardware
+                // px/frame = (4*rank + speedAdd*512)/512 with rank ~8+8*stage
+                // at normal difficulty; the runtime playfield is twice the
+                // Saturn's 240 visible px, so speeds double to keep crossing
+                // times. Falls back to the legacy constant when undecoded.
+                const cfg = decoded.settings && decoded.settings.bullets &&
+                    decoded.settings.bullets.configs[e.behavior.fire.mode];
+                rec.bulletData.speed = cfg
+                    ? Math.round(((8 + 8 * e.stage) * 4 / 512 + cfg.speedAdd) * 2 * 100) / 100
+                    : ENEMY_BULLET_SPEED;
             }
         }
         if (Array.isArray(e.spriteKeys) && e.spriteKeys.length) {
@@ -281,10 +293,47 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                 record: e.record,
                 placements: e.placements,
                 attributes: toHex(e.bytes),
+                // The engine's FORMATION KEY: every grid-spawned enemy carries
+                // its placement cell byte in `0x06090530[slot]`, and the death
+                // word's chain mode sweeps everything sharing one. Record index
+                // and cell byte are a bijection, so it is recoverable here.
+                placementId: zakoPlacementId(e.record),
             };
-            if (e.behavior) rec.dezaemon.behavior = clone(e.behavior);
+            if (e.behavior) {
+                rec.dezaemon.behavior = clone(e.behavior);
+                // The appearance id's ENTRY SCRIPT — the engine's built-in
+                // choreography for this enemy (swoop in, circle, hold), run
+                // by the runtime's appearance interpreter. Rows ride along
+                // compactly; a non-scripted (special-AI) appearance carries
+                // its class instead so the runtime can fall back.
+                const script = appearanceScript(e.behavior.appearance);
+                if (script) {
+                    rec.dezaemon.entry = script.scripted
+                        ? { rows: APPEARANCE_SCRIPTS[script.id] }
+                        : { objectClass: script.objectClass };
+                    // groups 0/2/3 are glued to the terrain (turrets, scenery)
+                    if (script.anchored) rec.dezaemon.entry.anchored = true;
+                }
+            }
         }
         enemyData[`enemy${letters}`] = rec;
+    });
+    // Second pass: resolve each death word's CHILD to a roster key. The engine
+    // spawns it from the current stage's record table, so the child is whatever
+    // entry shares this enemy's stage and carries the named record index — and
+    // a record only reachable as a child is never placed on the map, so this is
+    // the only thing that pulls it into the roster's reach.
+    const enemyKeyByStageRecord = new Map();
+    decodedEnemies.forEach((e, i) => {
+        if (e.stage === undefined) return;
+        enemyKeyByStageRecord.set(`${e.stage}:${e.record}`, `enemy${enemyLetterByIndex[i]}`);
+    });
+    decodedEnemies.forEach((e, i) => {
+        const death = e.behavior && e.behavior.death;
+        if (!death || death.mode !== 2) return;
+        const child = enemyKeyByStageRecord.get(`${e.stage}:${death.record}`);
+        const rec = enemyData[`enemy${enemyLetterByIndex[i]}`];
+        if (child && rec && rec.dezaemon) rec.dezaemon.deathChild = child;
     });
     if (Object.keys(enemyData).length === 0) {
         enemyData.enemyA = clone(defaults.starterEnemy);
@@ -329,6 +378,28 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             stage.waveInterval = FRAMES_PER_SOURCE_ROW;
         }
         if (decodedStage.items && decodedStage.items.length) stage.items = decodedStage.items;
+        // The save's own scroll pacing: 192 curve bytes (one per 4 map rows;
+        // bits 0-2 speed, bits 3-5 wave amplitude, bits 6-7 wave type — see
+        // decode-stage.js "Scroll curve") plus the settings block's
+        // (loop-start, end) extent pair in 256-px parts. The runtime scrolls
+        // the background at the curve's own speeds, stops one screen short of
+        // endPart in normal play and loops loopPart..endPart during the boss.
+        // gameMode 2 saves override every byte with 0x02 on hardware; the
+        // mode rides in meta.dezaemonSettings for the runtime to honor.
+        if (decodedStage.scrollCurve && decodedStage.scrollCurve.length) {
+            stage.scroll = { curve: bytesToBase64(decodedStage.scrollCurve) };
+            const extent = decoded.settings && decoded.settings.stageExtents &&
+                decoded.settings.stageExtents[s];
+            if (extent) {
+                stage.scroll.loopPart = extent.loopPart;
+                stage.scroll.endPart = extent.endPart;
+            }
+            // NOTE the engine byte 0x060840C5==2 that substitutes a constant
+            // 0x02 curve is a PLAY-STATE (demo/attract — the same byte holds
+            // 6 in another engine state), not the settings game mode: mode-2
+            // saves like DAIOH visibly ride their authored curves on
+            // hardware. Normal play always consumes the curve.
+        }
         // The save's own scenery: a compact tile grid (u16be words, base64;
         // bits 0-9 index backgroundCells, bit15/14 = h/v flip, 0xFFFF empty).
         // The runtime composes and scrolls it in place of the stock backdrop.
@@ -351,10 +422,18 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
     // One boss per stage (runtime spawns bossData["boss" + stageId]). Stages
     // whose save places a boss get its own art; the rest keep the default so
     // the stage still ends.
+    //
+    // Every one of them is named dezaBoss<stage>, art or not: the slot keys
+    // boss0..boss4 are also the STOCK game's bosses, and both the editor and
+    // the boss viewer label a slot from that stock roster (Bison, Barlog,
+    // Sagat, Vega, Fang) unless the record's own name says otherwise. Leaving
+    // an art-less stage on the starter record's name would file it under
+    // whichever stock boss shares its slot.
     const bossData = {};
     const bossByStage = new Map((decoded.bosses || []).map((b) => [b.stage, b]));
     for (let s = 0; s < stageCount; s++) {
         const rec = clone(defaults.starterBoss);
+        rec.name = `dezaBoss${s}`;
         const decodedBoss = bossByStage.get(s);
         if (decodedBoss) {
             rec.dezaemon = { sizeClass: decodedBoss.sizeClass, row: decodedBoss.row, col: decodedBoss.col };
@@ -388,7 +467,6 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                     .map((idx) => spriteKeyByIndex[idx])
                     .filter(Boolean);
                 if (frames.length) {
-                    rec.name = `dezaBoss${s}`;
                     // Core frames are the boss's real animation loop. Fallback
                     // figure pieces (unpainted core) are separate forms, so
                     // idle holds only the first and attack the second — they
@@ -475,12 +553,93 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
         }
     }
 
+    // The save's three global bullet configs + blast anims, one record for
+    // the whole game (decode-settings.js `bullets`): per config the damage
+    // in durability units, the speed add in px/frame, and the editor flag.
+    // The runtime reads configs[fire.mode] to pace and arm enemy volleys.
+    if (decoded.settings && decoded.settings.bullets) {
+        gameJson.dezaemonBullets = clone(decoded.settings.bullets);
+    }
+
+    // Item data the runtime needs beyond the per-cell drop digits: the
+    // game-wide score-item value (settings +0x24) and the decoded slot table.
+    if (decoded.settings && decoded.settings.itemSlots) {
+        gameJson.dezaemonItems = {
+            score: decoded.settings.scoreItemValue,
+            slots: clone(decoded.settings.itemSlots),
+        };
+    }
+
+    // The save's own global art (bank refs 0-143, decode-sprites.js
+    // extractGlobalArt): the player ship replaces Duke's frames, the item
+    // icons dress the drops, and each global bullet type gets its 4-frame
+    // anim. Duke's frames still ride along as the fallback art.
+    if (decoded.globalArt) {
+        const art = decoded.globalArt;
+        const keysOf = (indices) =>
+            (indices || []).map((i) => (i != null ? spriteKeyByIndex[i] : null));
+        if (art.player && art.player.idle) {
+            const idle = keysOf(art.player.idle).filter(Boolean);
+            if (idle.length) {
+                gameJson.playerData.texture = idle;
+                gameJson.playerData.name = "dezaShip";
+            }
+        }
+        if (gameJson.dezaemonBullets && art.bullets) {
+            gameJson.dezaemonBullets.art = art.bullets.map((frames) => {
+                const keys = keysOf(frames).filter(Boolean);
+                return keys.length ? keys : null;
+            });
+        }
+        if (gameJson.dezaemonBullets && (art.blastA || art.blastB)) {
+            gameJson.dezaemonBullets.blastArt = {};
+            if (art.blastA) gameJson.dezaemonBullets.blastArt.a = keysOf(art.blastA).filter(Boolean);
+            if (art.blastB) gameJson.dezaemonBullets.blastArt.b = keysOf(art.blastB).filter(Boolean);
+        }
+        if (gameJson.dezaemonItems && art.items) {
+            const icons = keysOf(art.items);
+            gameJson.dezaemonItems.icons = icons;
+            // drop digit -> icon: the first configured slot of each type wins
+            const iconByDrop = {};
+            decoded.settings.itemSlots.forEach((slot, s) => {
+                const drop = ITEM_TYPE_DROPS[slot.type];
+                if (drop != null && icons[s] && iconByDrop[drop] === undefined) {
+                    iconByDrop[drop] = icons[s];
+                }
+            });
+            if (Object.keys(iconByDrop).length) gameJson.dezaemonItems.iconByDrop = iconByDrop;
+        }
+    }
+
     gameJson.meta = { version: "1.0", source: "dezaemon2" };
     if (decoded.settings) {
         gameJson.meta.dezaemonSettings = {
             gameMode: decoded.settings.gameMode,
-            mainWeapon: decoded.settings.ships[0].mainWeapon,
-            mainWeapon2P: decoded.settings.ships[1].mainWeapon,
+            // gameMode decoded (2026-08-28): bit0 = horizontal scroller,
+            // bit1 = two players
+            horizontal: (decoded.settings.gameMode & 1) !== 0,
+            twoPlayer: (decoded.settings.gameMode & 2) !== 0,
+            staffRoles: decoded.settings.staffRoles,
+            mainWeapon: decoded.settings.mainWeapon,
+            mainWeapon2P: decoded.settings.loadouts
+                ? decoded.settings.loadouts[decoded.settings.ships[1].startLoadout].main
+                : undefined,
+            // The four WEAPON LOADOUT presets in full — main, sub/option,
+            // charge and bomb per preset — plus which one each ship starts on.
+            // Weapon-change items (types 0-3) switch between them mid-game, so
+            // the runtime needs all four, not just the starting set.
+            loadouts: decoded.settings.loadouts
+                ? decoded.settings.loadouts.map((l) => ({
+                    main: l.main,
+                    sub: l.sub,
+                    charge: l.charge,
+                    bomb: l.bomb,
+                    bombVariant: l.bombVariant,
+                }))
+                : undefined,
+            startLoadout: decoded.settings.ships
+                ? decoded.settings.ships.map((sh) => sh.startLoadout)
+                : undefined,
             shotDamage,
             sfxSet: decoded.settings.sfxSet,
         };
@@ -525,6 +684,15 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
     if (!decodedStages.length) {
         warnings.push(
             "no stage layout decoded from this save — every wave is empty, so nothing will spawn"
+        );
+    }
+    if (decoded.settings && (decoded.settings.gameMode & 1)) {
+        warnings.push(
+            "this is a HORIZONTAL-scroll save (game mode bit 0) — the world plays " +
+            "correctly (the engine's horizontal mode is the same simulation drawn " +
+            "transposed, and the runtime applies its scroll rate, entry margin and " +
+            "trigger lines), but the art is authored for a landscape screen, so turn " +
+            "your device to read it the right way up"
         );
     }
     if (!savedSprites && !decodedEnemies.length && !decodedStages.length) {

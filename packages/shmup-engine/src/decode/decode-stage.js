@@ -7,16 +7,19 @@
 // The background tilemap is fully decoded: each stage owns a 0x5400-byte
 // bank holding 14 columns x 768 rows of u16be words, which the editor
 // presents as 48 "parts" (screens) of 16 rows each. A word of 0xFFFF is an
-// empty tile; otherwise bit15 = horizontal flip, bit14 = vertical flip, and
+// empty tile; otherwise bit15 = vertical flip, bit14 = horizontal flip, and
 // bits 0-9 index the 1024-cell CG space (4 pages x 256 cells of 16x16 px).
+// The flip bits are the SAME convention as the sprite composition banks
+// (FORMAT.md) — an earlier revision had them swapped here, which garbled
+// every mirror-symmetric background (e.g. Ramsie's boss chambers).
 //
 // Environment-neutral ESM (Node + browser).
 
-import { decodeEnemyRecord } from "./decode-enemy.js";
+import { decodeEnemyRecord, zakoRecordFromKey } from "./decode-enemy.js";
 
 export const SEC5_REGIONS = {
     stageBanks: { offset: 0x00000, count: 10, stride: 0x5400 },
-    stageHeaders: { offset: 0x34800, count: 10, stride: 0x00c0 },
+    scrollCurves: { offset: 0x34800, count: 10, stride: 0x00c0 },
     placement: { offset: 0x34f80, count: 10, stride: 0x3c00 },
     settings: { offset: 0x5a780, count: 1, stride: 0x0060 },
     enemies: { offset: 0x5a7e0, count: 10, stride: 0x0478 },
@@ -48,8 +51,8 @@ export function decodeStageBackground(sec5, stage) {
         }
         tiles[i] = {
             cell: word & 0x3ff,
-            hflip: (word & 0x8000) !== 0,
-            vflip: (word & 0x4000) !== 0,
+            hflip: (word & 0x4000) !== 0,
+            vflip: (word & 0x8000) !== 0,
         };
         usedTiles++;
         partUsed[(i / (BG_COLS * BG_ROWS_PER_PART)) | 0] = 1;
@@ -78,6 +81,7 @@ export function decodeStages(sec5) {
             ...bg,
             placement: decodeStagePlacement(sec5, s),
             enemies: decodeStageEnemies(sec5, s),
+            scrollCurve: scrollCurveBytes(sec5, s),
         });
     }
     // Stage count comes from the placement grid rather than the background
@@ -89,6 +93,48 @@ export function decodeStages(sec5) {
         if (s.placement.objects.length) stageCount = i + 1;
     });
     return { stages, stageCount };
+}
+
+// --- Scroll curve ----------------------------------------------------
+//
+// Each stage owns 192 bytes at sec5 +0x34800 + stage*0xC0 — one byte per
+// 64 px of map (4 rows), indexed live as stage*0xC0 + scrollPos>>6 and
+// re-read every frame (GAME.bin +0x1DF44 stage init / +0x1E04C per-frame,
+// traced 2026-08-28). The byte packs two settings:
+//
+//   bits 0-2  background scroll speed: u16 table +0x25B14
+//             [0,64,128,192,256,384,512,1024] in 1/256 px per frame
+//             (0 / 0.25 / 0.5 / 0.75 / 1.0 / 1.5 / 2.0 / 4.0 px/f); the
+//             engine EASES toward it at ±(12 + gap/16) units per frame,
+//             so curve plateaus are targets, not steps. Horizontal games
+//             scroll the same units x365/256 (~320/224).
+//   bits 3-5  raster-wave amplitude: u16 table +0x25B24 = px<<8 of
+//             [0,1,3,5,9,15,22,30] (ramped +-32/frame toward the target)
+//   bits 6-7  raster-wave type: 0 vertical ripple (VDP2 line-scroll Y),
+//             1 traveling horizontal sine (line-scroll X), 2 per-line
+//             random shake (X), 3 line-zoom bulge centered mid-screen
+//
+// (The engine substitutes a constant 0x02 byte when its play-STATE byte
+// 0x060840C5 equals 2 — a demo/attract state, not the settings game mode;
+// normal play always consumes the authored curve.)
+export const SCROLL_SPEED_TABLE = [0, 64, 128, 192, 256, 384, 512, 1024];
+export const SCROLL_WAVE_AMP_TABLE = [0, 1, 3, 5, 9, 15, 22, 30];
+export const SCROLL_WAVE_TYPES = ["ripple", "sine", "shake", "zoom"];
+
+// One stage's raw curve bytes (the compact form the mapper ships).
+export function scrollCurveBytes(sec5, stage) {
+    const { offset, stride } = SEC5_REGIONS.scrollCurves;
+    const base = offset + stage * stride;
+    return sec5.subarray(base, base + stride);
+}
+
+// Decoded view: one entry per 4 map rows, in engine units.
+export function decodeScrollCurve(sec5, stage) {
+    return Array.from(scrollCurveBytes(sec5, stage), (b) => ({
+        speed: SCROLL_SPEED_TABLE[b & 7] / 256, // px per frame at 60 Hz
+        waveType: SCROLL_WAVE_TYPES[(b >> 6) & 3],
+        waveAmp: SCROLL_WAVE_AMP_TABLE[(b >> 3) & 7], // px
+    }));
 }
 
 // --- Enemy placement -------------------------------------------------
@@ -127,6 +173,24 @@ export function zakoRecordIndex(id) {
     let base = 0;
     for (const [first, count] of ZAKO_GROUPS) {
         if (id >= first && id < first + count) return base + (id - first);
+        base += count;
+    }
+    return -1;
+}
+
+// The engine's own placement-cell-byte -> record-index math lives next to the
+// record decoder (this module already depends on it); re-exported here because
+// it is a placement concept too.
+export { ZAKO_BAND_ART_MASK, ZAKO_BAND_BASE, zakoRecordFromKey } from "./decode-enemy.js";
+
+// The inverse: the placement id a record index is placed as. The mapping is a
+// bijection over the 60 zako slots, which is what lets an enemy's FORMATION KEY
+// (the engine's per-slot `0x06090530[slot]` = the placement cell byte) be
+// recovered from its record index alone — no extra per-object data to carry.
+export function zakoPlacementId(record) {
+    let base = 0;
+    for (const [first, count] of ZAKO_GROUPS) {
+        if (record >= base && record < base + count) return first + (record - base);
         base += count;
     }
     return -1;
@@ -245,7 +309,35 @@ export function enemyPairKey(stage, record) {
 }
 
 // stages -> {enemies, stages, stagesUsing} for mapSaveToGame().
-export function projectForEditor(stages, { cols = PLACEMENT_COLS } = {}) {
+// Records a stage can spawn through mode-2 death words but never places on its
+// grid, found by walking parent -> child until nothing new turns up. The engine
+// has no depth limit here (a child's own record supplies its own death word),
+// so the walk is bounded only by the 60-record table.
+function deathChildClosure(stage, placed) {
+    const found = new Set();
+    const queue = [...placed];
+    const seen = new Set(queue);
+    while (queue.length) {
+        const record = queue.pop();
+        const entry = stage.enemies.records[record];
+        if (!entry || !entry.defined) continue;
+        const bytes = entry.bytes;
+        if (((bytes[2] >> 6) & 3) !== 2) continue;
+        const child = zakoRecordFromKey(bytes[3] | 0x80);
+        if (child < 0 || child >= ZAKO_SLOT_COUNT || seen.has(child)) continue;
+        seen.add(child);
+        // Only a record with content is worth carrying — an all-zero one would
+        // land in the roster as an invisible do-nothing enemy.
+        if (!stage.enemies.records[child] || !stage.enemies.records[child].defined) continue;
+        found.add(child);
+        queue.push(child);
+    }
+    return found;
+}
+
+// `itemSlots` is decode-settings' slot table; with it each placed item drops
+// as its authored TYPE instead of the legacy even spread.
+export function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = {}) {
     // Roster: every (stage, record) pair placed anywhere, in stage-then-record
     // order. There is no cap to ration any more, and stage order is what makes
     // a 340-entry roster readable in the editor's enemy picker.
@@ -264,6 +356,12 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS } = {}) {
         const placed = new Set(
             st.placement.objects.filter((o) => o.kind === "zako").map((o) => o.record),
         );
+        // A record the map never places can still reach the screen: the death
+        // word's child mode spawns one from the same stage's table when its
+        // parent dies, and that child may spawn a child of its own. Follow that
+        // chain so the roster holds everything the stage can actually put in
+        // front of the player, not just what the grid seeds.
+        for (const record of deathChildClosure(st, placed)) placed.add(record);
         for (const record of [...placed].sort((a, b) => a - b)) {
             const key = enemyPairKey(s, record);
             indexOf.set(key, enemies.length);
@@ -274,7 +372,9 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS } = {}) {
                 stage: s,
                 record,
                 key,
-                placements: uses.get(key),
+                // 0 for a record the grid never places — it reaches the
+                // screen only as another record's death-word child.
+                placements: uses.get(key) || 0,
                 // The 18-byte definition decoded into named fields — hp, score,
                 // speed, fire config and the four change channels. Engine-traced
                 // (see decode-enemy.js); this is what makes imported enemies
@@ -316,11 +416,22 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS } = {}) {
         // slot and position are kept in `items` either way.
         const items = st.placement.objects
             .filter((o) => o.kind === "item")
-            .map((o) => ({ slot: o.slot, row: o.row, col: placementColumn(o.col) }));
+            .map((o) => {
+                const def = itemSlots && itemSlots[o.slot & 7];
+                return {
+                    slot: o.slot,
+                    row: o.row,
+                    col: placementColumn(o.col),
+                    ...(def ? { type: def.type, movement: def.movement } : {}),
+                };
+            });
         const sortedRows = [...byRow.keys()].sort((a, b) => a - b);
         for (const item of items) {
             const host = nearestSpawn(byRow, sortedRows, item.row, item.col);
-            if (host) host.drop = ITEM_SLOT_DROPS[item.slot % ITEM_SLOT_DROPS.length];
+            if (!host) continue;
+            host.drop = item.type !== undefined
+                ? (ITEM_TYPE_DROPS[item.type] ?? 0)
+                : ITEM_SLOT_DROPS[item.slot % ITEM_SLOT_DROPS.length];
         }
         return {
             rows: sortedRows.map((r) => byRow.get(r)),
@@ -329,16 +440,21 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS } = {}) {
             cols,
             boss: st.placement.boss || null,
             items,
+            // The stage's own scroll curve (192 raw bytes — see the region
+            // decoder above), so the mapper can ship the save's pacing.
+            scrollCurve: st.scrollCurve || null,
         };
     });
     return { enemies, stages: projected, stagesUsing };
 }
 
-// Runtime drop codes, by Dezaemon item slot. The save's own slot table
-// (settings +0x1C) is not decoded, so which of the eight slots is a shot
-// upgrade and which is a bomb is still unknown; spreading the four runtime
-// pickups evenly across the eight slots keeps every placed item in the level
-// (and the untouched slot number stays in stage.items).
+// Runtime drop codes by item TYPE (slot byte & 15, decode-settings.js):
+// 0-3 weapon change -> 2 (the runtime's weapon-change pickup), 4 barrier ->
+// 9, 5 bomb stock -> 5 (SP-gauge charge), 6 score bonus -> 4, 7 power-up ->
+// 1 (shot upgrade), 8 speed-up -> 3.
+export const ITEM_TYPE_DROPS = [2, 2, 2, 2, 9, 5, 4, 1, 3];
+// Legacy spread for saves whose settings block did not decode: keeps every
+// placed item in the level at the cost of arbitrary identities.
 export const ITEM_SLOT_DROPS = [1, 1, 2, 2, 3, 3, 9, 9];
 
 function nearestSpawn(byRow, sortedRows, row, col) {

@@ -44,6 +44,12 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
     intervention for every call; the blocked call _returns false_ rather than
     throwing, so the function's own `try/catch` never suppressed it. Upstream
     fix belongs in `2019-es7/src/haptics.js`.
+  - `window.__cmgSetPaused = cmgSetPaused` exposes the cmg pause closure to
+    `static/phaser-plugins/extract-mode.js`. Embedded in the launcher the
+    standalone PAUSE panel is never built, so extract mode has no button to ride
+    and must pause the game itself; routing through this one closure keeps a
+    single `cmgPaused` flag and the per-`Sound` bookkeeping. The plugin falls
+    back to its own `loop.sleep()` if the line goes missing.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
 

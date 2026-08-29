@@ -1,0 +1,304 @@
+<script>
+  // ShmupX context menu — the coverflow picker over the Dezaemon .sav shelf.
+  // Like Osd.svelte this is a dumb renderer: the Dashboard owns the library,
+  // the selected index, the cover cache, and every handler, so gamepad,
+  // keyboard, and touch/mouse all drive one source of truth.
+  //
+  // Item shape: { slug, file, title, titleJa?, developer?, developerJa?,
+  //   genre?, hasCover } — the editor shelf's normalized row. `covers` maps
+  //   slug -> data URL (256x480 PNG), null for a failed fetch, undefined while
+  //   not fetched; anything falsy renders the cartridge placeholder.
+  let {
+    open = false,
+    items = [],
+    sel = 0,
+    covers = {},
+    loading = false,
+    error = '',
+    onselect = () => {},
+    onlaunch = () => {},
+    onclose = () => {},
+  } = $props();
+
+  // Cards rendered per side. The outermost pair sits at opacity 0, so a card
+  // entering the window mounts invisible at the edge and fades in as it slides
+  // inward — a keyed {#each} mounts nodes at their final style, which would
+  // otherwise pop.
+  const WINDOW = 4;
+  let visible = $derived.by(() => {
+    const out = [];
+    const lo = Math.max(0, sel - WINDOW), hi = Math.min(items.length - 1, sel + WINDOW);
+    for (let i = lo; i <= hi; i++) out.push({ item: items[i], i, off: i - sel });
+    return out;
+  });
+  let current = $derived(items[sel]);
+  let counter = $derived(
+    items.length
+      ? String(sel + 1).padStart(3, '0') + ' / ' + String(items.length).padStart(3, '0')
+      : '000 / 000'
+  );
+
+  // Fan layout: the centred card faces the viewer; the rest recede in a
+  // classic coverflow arc. Distances are multiples of the card width
+  // (--cf-w) so one variable resizes the whole fan.
+  function cardStyle(off) {
+    const abs = Math.abs(off);
+    const sign = off < 0 ? -1 : 1;
+    const x = off === 0 ? '0px' : `calc(${(sign * (0.66 + (abs - 1) * 0.30)).toFixed(2)} * var(--cf-w))`;
+    const z = off === 0 ? '7vmin' : `calc(-6vmin - ${abs * 1.2}vmin)`;
+    const ry = off === 0 ? 0 : -sign * 46;
+    const sc = off === 0 ? 1 : 0.88;
+    // The invisible outermost pair exists only as fade-in staging — it must
+    // not be hit-testable (opacity 0 still takes clicks without this).
+    const ghost = abs >= WINDOW;
+    return `z-index:${100 - abs};opacity:${ghost ? 0 : 1};${ghost ? 'pointer-events:none;' : ''}` +
+      `transform:translate(-50%, -50%) translateX(${x}) translateZ(${z}) rotateY(${ry}deg) scale(${sc});`;
+  }
+
+  // Swipe: the fan slides under the finger (~one cover per --cf-w * .55 of
+  // travel); a drag past a few pixels swallows the trailing click so a swipe
+  // never launches a game — same contract as the Dashboard's strip drag.
+  let stageEl = $state(null);
+  let drag = null;
+  let dragMoveFn = null;
+  let dragUpFn = null;
+  let dragged = false;
+  function stepPx() {
+    const w = stageEl ? stageEl.clientWidth : 0;
+    return Math.max(48, (w || 600) * 0.12);
+  }
+  function onStageDown(e) {
+    // One drag at a time, primary pointer only: a second finger (or a resting
+    // palm) must neither hijack the live drag's origin nor orphan its window
+    // listeners, and a right-button press is the context menu's, not a swipe.
+    if (drag || e.isPrimary === false) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    drag = { id: e.pointerId, x: e.clientX, sel0: sel, moved: false };
+    dragMoveFn = (ev) => {
+      if (!drag || ev.pointerId !== drag.id) return;
+      const dx = ev.clientX - drag.x;
+      if (Math.abs(dx) > 6) drag.moved = true;
+      const next = Math.max(0, Math.min(items.length - 1, drag.sel0 + Math.round(-dx / stepPx())));
+      if (next !== sel) onselect(next);
+    };
+    dragUpFn = (ev) => {
+      if (!drag || ev.pointerId !== drag.id) return;
+      dragged = !!drag.moved;
+      endDrag();
+    };
+    window.addEventListener('pointermove', dragMoveFn);
+    window.addEventListener('pointerup', dragUpFn);
+    window.addEventListener('pointercancel', dragUpFn);
+  }
+  function endDrag() {
+    drag = null;
+    if (dragMoveFn) window.removeEventListener('pointermove', dragMoveFn);
+    if (dragUpFn) {
+      window.removeEventListener('pointerup', dragUpFn);
+      window.removeEventListener('pointercancel', dragUpFn);
+    }
+    dragMoveFn = dragUpFn = null;
+  }
+  // Closing mid-swipe (Esc, gamepad B) unmounts the stage but not the window
+  // listeners — drop them whenever the picker closes, and on teardown.
+  $effect(() => {
+    if (!open) endDrag();
+    return () => endDrag();
+  });
+  function cardClick(off, i) {
+    if (dragged) { dragged = false; return; }
+    if (off === 0) onlaunch(i);
+    else onselect(i);
+  }
+  // Keyboard twin of cardClick: the cards are click-focusable (tabindex="-1"),
+  // so a focused card has to answer Enter/Space itself — a role="option" div
+  // synthesizes no click. stopPropagation keeps the Dashboard's window-level
+  // onKey from acting on the same keystroke as well.
+  function cardKey(off, i) {
+    return (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      e.stopPropagation();
+      cardClick(off, i);
+    };
+  }
+
+  // Wheel browses; both axes so trackpads and mice agree.
+  let wheelAcc = 0;
+  function onStageWheel(e) {
+    e.preventDefault();
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    wheelAcc += d;
+    while (wheelAcc >= 40) { wheelAcc -= 40; if (sel < items.length - 1) onselect(sel + 1); }
+    while (wheelAcc <= -40) { wheelAcc += 40; if (sel > 0) onselect(sel - 1); }
+  }
+</script>
+
+{#if open}
+  <div class="sav-scrim" aria-hidden="true" onpointerdown={onclose}></div>
+  <div class="sav-picker" role="menu" aria-label="Saved games">
+    <div class="sav-hd">
+      <span class="sav-title">SAVED GAMES</span>
+      <span class="sav-sub">.SAV SHELF // DEZAEMON 2</span>
+      <span class="sav-count">{items.length ? items.length + ' GAMES' : ''}</span>
+      <button type="button" class="sav-x" aria-label="Close" onclick={onclose}>✕</button>
+    </div>
+
+    {#if loading}
+      <div class="sav-note">READING SHELF…</div>
+    {:else if error}
+      <div class="sav-note err">{error}</div>
+    {:else if !items.length}
+      <div class="sav-note">NO SAVED GAMES REACHABLE — the database could not be read and this build ships no .sav collection.</div>
+    {:else}
+      <div
+        class="sav-stage"
+        role="listbox"
+        aria-label="Saved games"
+        tabindex="-1"
+        bind:this={stageEl}
+        onpointerdown={onStageDown}
+        onwheel={onStageWheel}
+      >
+        {#each visible as v (v.item.slug || v.item.file)}
+          <div
+            class="cf-card {v.off === 0 ? 'center' : ''}"
+            role="option"
+            aria-selected={v.off === 0}
+            tabindex="-1"
+            style={cardStyle(v.off)}
+            onclick={() => cardClick(v.off, v.i)}
+            onkeydown={cardKey(v.off, v.i)}
+          >
+            {#if v.item.slug && covers[v.item.slug]}
+              <img class="cf-art" src={covers[v.item.slug]} alt={v.item.title} draggable="false" />
+            {:else}
+              <div class="cf-ph">
+                <span class="cf-ph-mark">DEZAEMON 2</span>
+                <span class="cf-ph-title">{v.item.title}</span>
+                <span class="cf-ph-foot">.SAV</span>
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </div>
+
+      <div class="sav-caption">
+        <div class="sav-name">
+          {current?.title || '—'}{#if current?.titleJa && current.titleJa !== current.title}<span class="ja"> · {current.titleJa}</span>{/if}
+        </div>
+        <div class="sav-meta">
+          {#if current?.developer}<span>{current.developer}</span>{/if}
+          {#if current?.genre}<span>{current.genre}</span>{/if}
+          <span class="sav-counter">{counter}</span>
+        </div>
+      </div>
+    {/if}
+
+    <div class="sav-foot">
+      <span><b>A</b> Play</span>
+      <span><b>B</b> Close</span>
+      <span class="sav-foot-hint">← → browse · <b>Y</b> opens this shelf</span>
+    </div>
+  </div>
+{/if}
+
+<style>
+  .sav-scrim { position: fixed; inset: 0; z-index: 102; background: rgba(0, 0, 0, .62); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+
+  .sav-picker {
+    position: fixed; inset: 0; z-index: 103;
+    display: flex; flex-direction: column;
+    padding: max(2.4vmin, 14px) max(3vmin, 16px);
+    box-sizing: border-box; pointer-events: none;
+    color: var(--green, #9CFF6B); font-family: 'Orbitron', sans-serif;
+    animation: savIn .16s ease-out;
+    --cf-w: clamp(120px, 30vmin, 220px);
+  }
+  .sav-picker > * { pointer-events: auto; }
+  @keyframes savIn { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: none; } }
+
+  .sav-hd { display: flex; align-items: baseline; gap: 14px; }
+  .sav-title { font-weight: 800; letter-spacing: .26em; font-size: clamp(13px, 2.4vmin, 18px); text-shadow: 0 0 16px var(--green-glow, #7CFF4F); }
+  .sav-sub, .sav-count {
+    font-family: 'Share Tech Mono', monospace; font-size: clamp(9px, 1.6vmin, 12px);
+    letter-spacing: .18em; opacity: .6; white-space: nowrap;
+  }
+  .sav-count { margin-left: auto; }
+  .sav-x {
+    appearance: none; border: 0; background: transparent; color: var(--green, #9CFF6B);
+    opacity: .65; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+    font-size: 15px; line-height: 1; align-self: center;
+  }
+  .sav-x:hover { opacity: 1; background: rgba(120, 255, 90, .12); }
+
+  .sav-note {
+    flex: 1; display: flex; align-items: center; justify-content: center; text-align: center;
+    font-family: 'Share Tech Mono', monospace; font-size: clamp(11px, 2vmin, 14px);
+    letter-spacing: .14em; opacity: .75; padding: 0 8vmin;
+  }
+  .sav-note.err { color: #ff9a7a; opacity: .95; }
+
+  .sav-stage {
+    position: relative; flex: 1; min-height: 0;
+    perspective: 1100px; perspective-origin: 50% 46%;
+    touch-action: pan-y; cursor: grab; overflow: hidden;
+  }
+  .cf-card {
+    position: absolute; left: 50%; top: 47%;
+    /* Height-led sizing: on short viewports the cap shrinks BOTH axes through
+       the aspect ratio, instead of squashing a fixed width against it. */
+    height: min(calc(var(--cf-w) * 1.875), 74%);
+    aspect-ratio: 256 / 480;
+    border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
+    border-radius: 6px; overflow: hidden; background: #000;
+    transition: transform .3s cubic-bezier(.22, .9, .32, 1), opacity .3s ease, box-shadow .3s ease;
+    box-shadow: 0 1.6vmin 4vmin rgba(0, 0, 0, .7);
+    -webkit-box-reflect: below 1.2vmin linear-gradient(transparent 68%, rgba(0, 0, 0, .30));
+    cursor: pointer;
+  }
+  .cf-card.center {
+    border-color: var(--yellow, #F6FF4A);
+    box-shadow: 0 0 3.4vmin color-mix(in srgb, var(--green-glow, #7CFF4F) 55%, transparent), 0 2vmin 5vmin rgba(0, 0, 0, .75);
+  }
+  .cf-art { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; display: block; }
+
+  .cf-ph {
+    width: 100%; height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.6vmin; padding: 8%;
+    box-sizing: border-box; text-align: center;
+    background:
+      linear-gradient(160deg, rgba(120, 255, 90, .12), transparent 42%),
+      linear-gradient(180deg, #101c10, #060b06 78%);
+  }
+  .cf-ph-mark, .cf-ph-foot { font-family: 'Share Tech Mono', monospace; font-size: clamp(7px, 1.3vmin, 10px); letter-spacing: .3em; opacity: .5; }
+  .cf-ph-title {
+    font-weight: 700; font-size: clamp(10px, 2vmin, 15px); line-height: 1.35;
+    letter-spacing: .08em; overflow-wrap: anywhere;
+    text-shadow: 0 0 10px color-mix(in srgb, var(--green-glow, #7CFF4F) 60%, transparent);
+  }
+
+  .sav-caption { text-align: center; padding: 1vmin 0 0; }
+  .sav-name { font-weight: 700; font-size: clamp(12px, 2.4vmin, 18px); letter-spacing: .1em; text-shadow: 0 0 14px color-mix(in srgb, var(--green-glow, #7CFF4F) 50%, transparent); }
+  .sav-name .ja { font-weight: 500; opacity: .85; }
+  .sav-meta {
+    display: flex; justify-content: center; gap: 2.4vmin; margin-top: .6vmin;
+    font-family: 'Share Tech Mono', monospace; font-size: clamp(9px, 1.7vmin, 12px);
+    letter-spacing: .14em; opacity: .65;
+  }
+  .sav-counter { color: var(--yellow, #F6FF4A); opacity: .9; }
+
+  .sav-foot {
+    display: flex; align-items: center; gap: 18px; padding-top: 1.4vmin;
+    font-family: 'Share Tech Mono', monospace; font-size: clamp(9px, 1.6vmin, 11px);
+    letter-spacing: .12em; text-transform: uppercase; opacity: .7;
+  }
+  .sav-foot b {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 2.6vmin; height: 2.6vmin; min-width: 16px; min-height: 16px;
+    margin-right: 6px; border-radius: 50%;
+    border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
+    font-size: .85em;
+  }
+  .sav-foot-hint { margin-left: auto; text-transform: none; }
+</style>

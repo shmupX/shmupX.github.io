@@ -55,6 +55,7 @@
     }
     if (src.background) stage.background = src.background;
     if (src.items) stage.items = src.items;
+    if (src.scroll) stage.scroll = src.scroll;
     return stage;
   }
   function readParam(name) {
@@ -388,6 +389,12 @@
         }
         if (levelData.dezaemonBgm && typeof levelData.dezaemonBgm === "object") {
           recipe.dezaemonBgm = levelData.dezaemonBgm;
+        }
+        if (levelData.dezaemonBullets && typeof levelData.dezaemonBullets === "object") {
+          recipe.dezaemonBullets = levelData.dezaemonBullets;
+        }
+        if (levelData.dezaemonItems && typeof levelData.dezaemonItems === "object") {
+          recipe.dezaemonItems = levelData.dezaemonItems;
         }
         if (levelData.dezaemonTitle && typeof levelData.dezaemonTitle === "object") {
           recipe.dezaemonTitle = levelData.dezaemonTitle;
@@ -1411,6 +1418,20 @@
   function isExportedLevelApp() {
     return typeof window !== "undefined" && !!window.__EXPORTED_LEVEL_APP__;
   }
+  // A loaded level that came from a Dezaemon .sav import — the recipe always
+  // carries at least one dezaemon* record or per-enemy dezaemon block.
+  function isImportedLevel() {
+    var r = gameState._phaserRecipe;
+    if (!r) return false;
+    if (r.dezaemonBgm || r.dezaemonTitle || r.dezaemonBullets || r.dezaemonItems || r.dezaemonCredits) return true;
+    var ed = r.enemyData;
+    if (ed) {
+      for (var k in ed) {
+        if (ed[k] && ed[k].dezaemon) return true;
+      }
+    }
+    return false;
+  }
   function scoreCountsAsRecord(state = gameState) {
     return !state.godFlg || isExportedLevelApp();
   }
@@ -2087,6 +2108,9 @@
     if (src.items) {
       stage.items = src.items;
     }
+    if (src.scroll) {
+      stage.scroll = src.scroll;
+    }
     return stage;
   }
   function primeGameStateForStage(recipe, stageId) {
@@ -2292,6 +2316,7 @@
         var stageKey = data.stageKey || "stage0";
         var loadedStage = { enemylist: data.enemylist };
         if (data.background) loadedStage.background = data.background;
+        if (data.scroll) loadedStage.scroll = data.scroll;
         if (data.waveRows) {
           loadedStage.waveRows = data.waveRows;
           loadedStage.waveInterval = data.waveInterval;
@@ -2306,6 +2331,8 @@
         }
         if (data.backgroundCells) baseRecipe.backgroundCells = data.backgroundCells;
         if (data.dezaemonBgm) baseRecipe.dezaemonBgm = data.dezaemonBgm;
+        if (data.dezaemonBullets) baseRecipe.dezaemonBullets = data.dezaemonBullets;
+        if (data.dezaemonItems) baseRecipe.dezaemonItems = data.dezaemonItems;
         function finishLevelLoad() {
           if (data.enemyData) {
             var merged = JSON.parse(JSON.stringify(data.enemyData));
@@ -2759,8 +2786,8 @@
         this.addLinkButton("staffrollTwitterBtn.gif", 178, 304, "https://twitter.com/rereibara");
         this.addLinkButton("staffrollLinkBtn.gif", 153, 329, "https://magazine.jp.square-enix.com/biggangan/introduction/highscoregirl/");
         this.addLinkButton("staffrollLinkBtn.gif", 161, 355, "http://hi-score-girl.com/");
-        var thanksLabelStyle = { fontSize: "8px", fontFamily: "Orbitron, Arial", fill: "#ffff00", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 4 };
-        var thanksNameStyle = { fontSize: "7px", fontFamily: "Orbitron, Arial", fill: "#ffffff", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 4 };
+        var thanksLabelStyle = { fontSize: "8px", fontFamily: "Orbitron, Arial", fill: "#ffff00", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 1 };
+        var thanksNameStyle = { fontSize: "7px", fontFamily: "Orbitron, Arial", fill: "#ffffff", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 1 };
         this.thanksLabel = scene.add.text(this.GCX, 393, "SPECIAL THANKS", thanksLabelStyle);
         this.thanksLabel.setOrigin(0.5, 0);
         this.add(this.thanksLabel);
@@ -2774,6 +2801,14 @@
       });
       scene.add.existing(this);
       this.showWithAnimation();
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(() => {
+          if (!this.active) return;
+          this.list.forEach(function(child) {
+            if (child.updateText) child.updateText();
+          });
+        });
+      }
     }
     // The import's credits card: title and developer, English and Japanese.
     _addDezaCredits(credits) {
@@ -2787,27 +2822,33 @@
         y += t.height + 6;
         return t;
       };
-      var base = { fontFamily: "Orbitron, Arial, sans-serif", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 4, wordWrap: { width: this.GW - 44 } };
-      addLine(credits.title, { ...base, fontSize: "14px", fill: "#ffd700" });
+      // Orbitron carries no Japanese glyphs — the JP families take over
+      // per-glyph for kana/kanji. No stroke: the dark card supplies the
+      // contrast, and a 2px stroke fills small kanji in solid. resolution
+      // stays 1: the 256px framebuffer draws these 1:1, and a higher-res
+      // raster only gets minified back down (pixelArt NEAREST), which
+      // shreds kanji strokes — native-ppem hinting beats supersampling.
+      var base = { fontFamily: 'Orbitron, "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", Meiryo, sans-serif', align: "center", resolution: 1, wordWrap: { width: this.GW - 44 } };
+      addLine(credits.title, { ...base, fontSize: "14px", fontStyle: "bold", fill: "#ffd700" });
       if (credits.titleJa && credits.titleJa !== credits.title) {
-        addLine(credits.titleJa, { ...base, fontSize: "11px", fill: "#ffffff" });
+        addLine(credits.titleJa, { ...base, fontSize: "12px", fill: "#ffffff" });
       }
       if (credits.developer) {
         y += 24;
-        addLine("DEVELOPER", { ...base, fontSize: "8px", fill: "#ffff00" });
+        addLine("DEVELOPER", { ...base, fontSize: "9px", fontStyle: "bold", fill: "#ffff00" });
         addLine(credits.developer, { ...base, fontSize: "12px", fill: "#ffffff" });
         if (credits.developerJa && credits.developerJa !== credits.developer) {
-          addLine(credits.developerJa, { ...base, fontSize: "10px", fill: "#cccccc" });
+          addLine(credits.developerJa, { ...base, fontSize: "11px", fill: "#cccccc" });
         }
       }
       if (credits.genre || credits.genreJa) {
         y += 24;
-        addLine("GENRE", { ...base, fontSize: "8px", fill: "#ffff00" });
+        addLine("GENRE", { ...base, fontSize: "9px", fontStyle: "bold", fill: "#ffff00" });
         if (credits.genre) {
           addLine(credits.genre.toUpperCase(), { ...base, fontSize: "10px", fill: "#9be37f" });
         }
         if (credits.genreJa && credits.genreJa !== credits.genre) {
-          addLine(credits.genreJa, { ...base, fontSize: "9px", fill: "#9be37f" });
+          addLine(credits.genreJa, { ...base, fontSize: "11px", fill: "#9be37f" });
         }
       }
     }
@@ -2999,10 +3040,274 @@
     return result;
   }
 
+  // cmg: master-volume + pause runtime (hand-patched into the bundle, like the
+  // other launcher-integration edits). BGM/SFX factors come from localStorage
+  // (cmg-vol-bgm / cmg-vol-sfx, percent — the launcher OSD writes the same
+  // keys) or live cmg-volume messages; cmg-pause sleeps the game loop and
+  // suspends audio while the launcher's Guide is up. Standalone (no parent
+  // frame) the same pause rides a gray PAUSE panel — the STAFF ROLL card's
+  // look — with the two sliders, opened by ESC, START during play, or the
+  // launcher's two-corner tap gesture.
+  var cmgVol = { bgm: 1, sfx: 0.33 };
+  (function () {
+    function pct(key, dflt) {
+      try {
+        var v = parseFloat(localStorage.getItem(key));
+        return isFinite(v) && v >= 0 && v <= 100 ? v / 100 : dflt;
+      } catch (e) {
+        return dflt;
+      }
+    }
+    cmgVol.bgm = pct("cmg-vol-bgm", 1);
+    cmgVol.sfx = pct("cmg-vol-sfx", 0.33);
+  })();
+  function cmgBgmVol(v) {
+    return v * cmgVol.bgm;
+  }
+  function cmgSfxVol(v) {
+    return v * cmgVol.sfx;
+  }
+  var cmgDezaBgms = [];
+  function cmgApplyVolumes() {
+    for (var i = 0; i < cmgDezaBgms.length; i++) {
+      var st = cmgDezaBgms[i];
+      try {
+        st.master.gain.value = BGM_GAIN * cmgVol.bgm;
+        if (st.echo) st.echo.gain.value = (st.echoBase || 0) * cmgVol.bgm;
+      } catch (e) {
+      }
+    }
+    var game = globalThis.__PHASER_4_GAME__ || globalThis.__PHASER_GAME__;
+    var sounds = game && game.sound && game.sound.sounds;
+    if (sounds && sounds.length) {
+      for (var s = 0; s < sounds.length; s++) {
+        var snd = sounds[s];
+        if (snd && typeof snd.__cmgBgmBase === "number") {
+          try {
+            snd.setVolume(cmgBgmVol(snd.__cmgBgmBase));
+          } catch (e2) {
+          }
+        }
+      }
+    }
+  }
+  function cmgSetVolumes(bgm, sfx, persist) {
+    if (typeof bgm === "number" && isFinite(bgm)) cmgVol.bgm = Math.min(1, Math.max(0, bgm));
+    if (typeof sfx === "number" && isFinite(sfx)) cmgVol.sfx = Math.min(1, Math.max(0, sfx));
+    if (persist) {
+      try {
+        localStorage.setItem("cmg-vol-bgm", String(Math.round(cmgVol.bgm * 100)));
+        localStorage.setItem("cmg-vol-sfx", String(Math.round(cmgVol.sfx * 100)));
+      } catch (e) {
+      }
+    }
+    cmgApplyVolumes();
+  }
+  var cmgPaused = false;
+  function cmgSetPaused(p) {
+    p = !!p;
+    if (cmgPaused === p) return;
+    var game = globalThis.__PHASER_4_GAME__ || globalThis.__PHASER_GAME__;
+    if (!game) return;
+    cmgPaused = p;
+    try {
+      if (p) game.loop.sleep();
+      else game.loop.wake();
+    } catch (e) {
+    }
+    // Suspending the shared AudioContext freezes Phaser sounds AND the
+    // Dezaemon synth in place (ctx.currentTime stops, so its scheduled notes
+    // resume exactly where they left off).
+    try {
+      var ctx = game.sound && game.sound.context;
+      if (ctx && typeof ctx.suspend === "function") {
+        if (p) ctx.suspend();
+        else ctx.resume();
+      }
+    } catch (e2) {
+    }
+    // Belt over the suspend: the host page's autoplay-unlock handlers resume
+    // the context on any gesture — including the tap that opened the pause
+    // panel — so pause the individual sounds too. Only the ones playing right
+    // now get paused, so a deliberately parked sound (BGM continuity between
+    // stages) isn't resumed by mistake.
+    try {
+      var list = game.sound && game.sound.sounds;
+      if (list) {
+        for (var i = 0; i < list.length; i++) {
+          var snd = list[i];
+          if (!snd) continue;
+          if (p) {
+            if (snd.isPlaying) {
+              snd.pause();
+              snd.__cmgPausedByPause = true;
+            }
+          } else if (snd.__cmgPausedByPause) {
+            snd.__cmgPausedByPause = false;
+            try {
+              snd.resume();
+            } catch (e3) {
+            }
+          }
+        }
+      }
+    } catch (e4) {
+    }
+  }
+  // Handle for /phaser-plugins/extract-mode.js: embedded builds never build
+  // the PAUSE panel, so extract mode needs the same loop-sleep + audio
+  // suspend this closure owns rather than keeping a rival paused flag.
+  try { window.__cmgSetPaused = cmgSetPaused; } catch (e) {}
+  var cmgPanelEl = null;
+  function cmgPanelVisible() {
+    return !!(cmgPanelEl && cmgPanelEl.style.display !== "none");
+  }
+  function cmgSliderRow(label, key) {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:10px;margin:14px 0;font-size:11px;letter-spacing:.15em;";
+    var lbl = document.createElement("span");
+    lbl.textContent = label;
+    lbl.style.cssText = "width:38px;text-align:left;";
+    var val = document.createElement("span");
+    val.style.cssText = "width:44px;text-align:right;font-family:monospace;";
+    var input = document.createElement("input");
+    input.type = "range";
+    input.min = "0";
+    input.max = "100";
+    input.step = "1";
+    input.value = String(Math.round(cmgVol[key] * 100));
+    input.style.cssText = "flex:1;accent-color:#fff;";
+    val.textContent = input.value + "%";
+    input.addEventListener("input", function () {
+      var v = parseInt(input.value, 10) / 100;
+      cmgSetVolumes(key === "bgm" ? v : void 0, key === "sfx" ? v : void 0, true);
+      val.textContent = input.value + "%";
+    });
+    row.appendChild(lbl);
+    row.appendChild(input);
+    row.appendChild(val);
+    return row;
+  }
+  function cmgEnsurePanel() {
+    if (cmgPanelEl) return;
+    var wrap = document.createElement("div");
+    wrap.id = "cmg-pause-panel";
+    wrap.style.cssText = "position:fixed;inset:0;z-index:10000;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'Orbitron',system-ui,sans-serif;color:#fff;";
+    // The same gray card as the STAFF ROLL panel (0x464646, rounded corners).
+    var card = document.createElement("div");
+    card.style.cssText = "background:rgba(70,70,70,.9);border-radius:8px;padding:20px 24px 22px;width:min(320px,84vw);text-align:center;box-shadow:0 10px 44px rgba(0,0,0,.65);";
+    var title = document.createElement("div");
+    title.textContent = "PAUSE";
+    title.style.cssText = "font-size:16px;font-weight:700;letter-spacing:.34em;text-indent:.34em;margin-bottom:10px;";
+    card.appendChild(title);
+    card.appendChild(cmgSliderRow("BGM", "bgm"));
+    card.appendChild(cmgSliderRow("SFX", "sfx"));
+    var btn = document.createElement("button");
+    btn.textContent = "RESUME";
+    btn.style.cssText = "margin-top:14px;padding:9px 26px;border-radius:6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;font-family:inherit;font-size:11px;letter-spacing:.24em;text-indent:.24em;cursor:pointer;";
+    btn.addEventListener("click", function () {
+      cmgTogglePausePanel();
+    });
+    card.appendChild(btn);
+    wrap.appendChild(card);
+    wrap.addEventListener("pointerdown", function (ev) {
+      if (ev.target === wrap) cmgTogglePausePanel();
+    });
+    document.body.appendChild(wrap);
+    cmgPanelEl = wrap;
+  }
+  function cmgTogglePausePanel() {
+    cmgEnsurePanel();
+    if (cmgPanelVisible()) {
+      cmgPanelEl.style.display = "none";
+      cmgSetPaused(false);
+    } else {
+      cmgPanelEl.style.display = "flex";
+      cmgSetPaused(true);
+    }
+  }
+  function cmgStartPressed() {
+    // START during play. Under a parent frame the launcher's Guide OSD is the
+    // pause UI — toggle it up (opening it posts cmg-pause back down).
+    // Standalone, raise the local PAUSE panel.
+    if (window.parent !== window) {
+      try {
+        window.parent.postMessage({ type: "tg16-toggle-controls" }, "*");
+      } catch (e) {
+      }
+      return;
+    }
+    cmgTogglePausePanel();
+  }
+  (function () {
+    if (typeof window === "undefined") return;
+    window.addEventListener("message", function (ev) {
+      var d = ev && ev.data;
+      if (!d || typeof d !== "object") return;
+      if (d.type === "cmg-volume") cmgSetVolumes(d.bgm, d.sfx, false);
+      else if (d.type === "cmg-pause") cmgSetPaused(!!d.paused);
+    });
+    var standalone;
+    try {
+      standalone = window.parent === window;
+    } catch (e) {
+      standalone = false;
+    }
+    if (!standalone) return;
+    // ESC toggles the PAUSE panel. (Embedded builds never get here — the host
+    // page's OSD_BRIDGE forwards ESC to the launcher instead.)
+    window.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        cmgTogglePausePanel();
+      }
+    });
+    // Two-corner tap (bottom-left + top-right at once) — the launcher's OSD
+    // gesture, honored standalone too. Same zone math as the launcher's
+    // .osd-corner hit-zones: min(13vmin, 104px).
+    var cmgCorners = { bl: false, tr: false };
+    var cmgCornerByPointer = {};
+    function cmgCornerOf(ev) {
+      var zone = Math.min(Math.min(window.innerWidth, window.innerHeight) * 0.13, 104);
+      if (ev.clientX <= zone && ev.clientY >= window.innerHeight - zone) return "bl";
+      if (ev.clientX >= window.innerWidth - zone && ev.clientY <= zone) return "tr";
+      return null;
+    }
+    window.addEventListener("pointerdown", function (ev) {
+      var c = cmgCornerOf(ev);
+      if (!c) return;
+      cmgCornerByPointer[ev.pointerId] = c;
+      cmgCorners[c] = true;
+      if (cmgCorners.bl && cmgCorners.tr) {
+        cmgCorners.bl = false;
+        cmgCorners.tr = false;
+        cmgTogglePausePanel();
+      }
+    }, true);
+    function cmgCornerUp(ev) {
+      var c = cmgCornerByPointer[ev.pointerId];
+      if (!c) return;
+      delete cmgCornerByPointer[ev.pointerId];
+      cmgCorners[c] = false;
+    }
+    window.addEventListener("pointerup", cmgCornerUp, true);
+    window.addEventListener("pointercancel", cmgCornerUp, true);
+    // While the panel is up the game loop sleeps, so the scenes' own gamepad
+    // polling stops — this small poller lets START close it again.
+    setInterval(function () {
+      if (!cmgPaused || !cmgPanelVisible()) return;
+      if (pollGamepads().enter) cmgTogglePausePanel();
+    }, 150);
+  })();
+
   // ../2019-es7/src/phaser/dezaemon-runtime.js
   var TILE = 16;
   var SATURN_TICKS_PER_FRAME = 2;
   var SCROLL_PX_PER_FRAME = 2;
+  // Scroll-curve tables, byte-exact from GAME.bin +0x25B14/+0x25B24: target
+  // speeds in 1/256 px per Saturn frame, wave amplitudes in px.
+  var SCROLL_SPEED_UNITS = [0, 64, 128, 192, 256, 384, 512, 1024];
+  var SCROLL_WAVE_AMPS = [0, 1, 3, 5, 9, 15, 22, 30];
   var BOSS_PARK_SHIFT = 48;
   var STRIP_ROWS = 128;
   function decodeBase64(str) {
@@ -3075,7 +3380,8 @@
       img.setOrigin(0, 0);
       container.add(img);
     }
-    container.x = Math.floor((GW16 - bg.cols * TILE) / 2);
+    var baseX = Math.floor((GW16 - bg.cols * TILE) / 2);
+    container.x = baseX;
     var maxScroll = Math.max(0, mapHeight - GH14);
     var stopScroll = maxScroll;
     if (typeof bossRow === "number") {
@@ -3084,13 +3390,112 @@
         (bossRow + 1) * TILE - GH14 + Math.floor(GH14 / 4) + BOSS_PARK_SHIFT
       ));
     }
+    // The save's own scroll pacing (sec5 +0x34800, engine-traced): one curve
+    // byte per 64 px of map. Bits 0-2 pick the target speed from
+    // [0,64,128,192,256,384,512,1024] (1/256 px per Saturn frame — 0 to 4
+    // px/f), eased at ±(12 + gap/16) units per frame like the hardware; bits
+    // 3-5 the raster-wave amplitude [0,1,3,5,9,15,22,30] px; bits 6-7 the
+    // wave type (0 vertical ripple, 1 horizontal sine, 2 per-line shake,
+    // 3 line-zoom bulge — approximated here as whole-layer motion).
+    // scroll.forcedByte, when present, substitutes every curve byte (the
+    // engine does this in its demo/attract play-state); imports do not
+    // emit it — normal play always rides the authored curve.
+    var curveBytes = null;
+    var scrollCfg = stageData && stageData.scroll;
+    if (scrollCfg && typeof scrollCfg.curve === "string") {
+      try {
+        var bin = atob(scrollCfg.curve);
+        curveBytes = new Uint8Array(bin.length);
+        for (var cb = 0; cb < bin.length; cb++) curveBytes[cb] = bin.charCodeAt(cb);
+      } catch (e) {
+        curveBytes = null;
+      }
+    }
+    // Normal play stops one screen short of the authored end part (256 px
+    // per part); a stage with a placed boss keeps parking at the boss row.
+    var curveStop = stopScroll;
+    if (curveBytes && typeof bossRow !== "number" && Number.isFinite(scrollCfg.endPart) && scrollCfg.endPart > 0) {
+      curveStop = Math.max(0, Math.min(maxScroll, scrollCfg.endPart * 256 - GH14));
+    }
     var controller = {
       container,
       mapHeight,
       maxScroll,
       stopScroll,
       lastDelta: 0,
+      horizontal: dezaHorizontal(scene),
       _scroll: -1,
+      curve: curveBytes,
+      curveStop,
+      forcedByte: curveBytes && Number.isFinite(scrollCfg.forcedByte) ? scrollCfg.forcedByte : null,
+      scrollPos: 0,
+      scrollFrac: 0,
+      scrollCur: 0,
+      waveSel: 0,
+      waveCur: 0,
+      wavePhase: 0,
+      curveByte: function() {
+        if (this.forcedByte !== null) return this.forcedByte;
+        var i = this.scrollPos >> 6;
+        return i < this.curve.length ? this.curve[i] : 0;
+      },
+      // One Saturn frame of the hardware's scroll state machine.
+      tickCurve: function() {
+        var b = this.curveByte();
+        var tgt = SCROLL_SPEED_UNITS[b & 7];
+        // A horizontal game crosses a 320 px axis instead of 224, so the engine
+        // scales the same authored speed by 365/256 to keep the crossing time.
+        if (this.horizontal) tgt = Math.round(tgt * DEZA_H_SCROLL_SCALE);
+        var cur = this.scrollCur;
+        if (tgt === 0) cur = 0;
+        else if (cur > tgt) cur = Math.max(tgt, cur - 12 - ((cur - tgt) >> 4));
+        else if (cur < tgt) cur = Math.min(tgt, cur + 12 + ((tgt - cur) >> 4));
+        this.scrollCur = cur;
+        this.scrollFrac += cur;
+        var adv = this.scrollFrac >> 8;
+        this.scrollFrac &= 255;
+        if (adv) this.scrollPos = Math.min(this.curveStop, this.scrollPos + adv);
+        // Wave: a type change fades the old wave out (1/4 px per frame,
+        // hardware 64 units) before latching; otherwise the amplitude eases
+        // toward the byte's target at 1/8 px per frame (hardware 32 units).
+        var sel = (b >> 6) & 3;
+        var amp = SCROLL_WAVE_AMPS[(b >> 3) & 7];
+        if (sel !== this.waveSel) {
+          this.waveCur = Math.max(0, this.waveCur - 0.25);
+          if (this.waveCur === 0) {
+            this.waveSel = sel;
+            this.wavePhase = 0;
+          }
+        } else if (this.waveCur > amp) {
+          this.waveCur = Math.max(amp, this.waveCur - 0.125);
+        } else if (this.waveCur < amp) {
+          this.waveCur = Math.min(amp, this.waveCur + 0.125);
+        }
+        this.wavePhase++;
+      },
+      // Whole-layer stand-ins for the per-scanline VDP2 effects, at the
+      // traced amplitudes. Call after setScroll (it owns container.y).
+      applyWaveFx: function() {
+        var amp = this.waveCur;
+        if (!amp) {
+          if (container.x !== baseX) container.x = baseX;
+          if (container.scaleX !== 1) container.setScale(1);
+          return;
+        }
+        var ph = this.wavePhase * (Math.PI * 2 / 64);
+        if (this.waveSel === 0) {
+          container.x = baseX;
+          container.y += Math.sin(ph) * amp;
+        } else if (this.waveSel === 1) {
+          container.x = baseX + Math.sin(ph) * amp * 2;
+        } else if (this.waveSel === 2) {
+          container.x = baseX + (Math.random() * 2 - 1) * amp * 0.75;
+        } else {
+          var sc = 1 + amp / 240;
+          container.setScale(sc, 1);
+          container.x = baseX - bg.cols * TILE * (sc - 1) / 2;
+        }
+      },
       setScroll: function(px) {
         var clamped = Math.max(0, Math.min(stopScroll, px));
         this.lastDelta = this._scroll < 0 ? 0 : clamped - this._scroll;
@@ -3104,7 +3509,43 @@
     controller.setScroll(0);
     return controller;
   }
-  function makeChannel(ch, extra) {
+  // A change channel does not have to start at spawn: its C byte's low 3
+  // bits are a TRIGGER that arms it once the enemy has travelled far enough
+  // into the playfield. The engine resolves the mode to a scroll-axis
+  // threshold (+0x4C8C): mode 0 = armed from spawn, modes 1/2/3 = ~31/56/82
+  // px into the 224-px playfield, modes 4-7 = never armed (the resolver
+  // returns 0 and the channel simply never runs). A GROUND enemy has the
+  // pair swapped at spawn — its 4 means "from spawn" and its 0 "never" —
+  // so the editor's default reads the same either way.
+  // A HORIZONTAL save is the SAME world simulation — the engine transposes it
+  // only at draw time (lateral becomes screen Y, the scroll axis becomes screen
+  // X running right-to-left). This runtime already draws lateral across and the
+  // scroll down, which is that transpose seen with the device turned, so the
+  // presentation needs no rotation. What genuinely differs is the numbers
+  // below: the scroll runs 365/256 faster to cross a wider playfield in the
+  // same time, objects live 96 px further out before the entry edge, and the
+  // per-channel trigger lines sit somewhere else entirely.
+  var DEZA_H_SCROLL_SCALE = 365 / 256;
+  var DEZA_H_ENTRY_MARGIN = 96;
+  function dezaHorizontal(scene) {
+    var m = scene && scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
+    return !!(m && m.horizontal);
+  }
+  // Resolver bases 0x1F00 / 0x3800 / 0x5200 (px*128) = 62 / 112 / 164 px
+  // into the Saturn's 224-px playfield; the runtime's is 480 tall.
+  var CHANNEL_TRIGGER_PX = [0, 62, 112, 164];
+  // The same resolver returns 0x0700 / 0x1800 / 0x3A00 in a horizontal game.
+  var CHANNEL_TRIGGER_PX_H = [0, 14, 48, 116];
+  var CHANNEL_TRIGGER_SCALE = 480 / 224;
+  function channelTrigger(ch, ground, horizontal) {
+    var mode = ch && ch.trigger ? ch.trigger & 7 : 0;
+    if (ground) mode = mode === 0 ? 4 : mode === 4 ? 0 : mode;
+    if (mode === 0) return null;              // runs immediately
+    if (mode > 3) return Infinity;            // never arms
+    var table = horizontal ? CHANNEL_TRIGGER_PX_H : CHANNEL_TRIGGER_PX;
+    return table[mode] * CHANNEL_TRIGGER_SCALE;
+  }
+  function makeChannel(ch, extra, ground, horizontal) {
     if (!ch || !ch.enabled) return null;
     var step = Math.abs(ch.step);
     if (extra && extra.reverse) step = -step;
@@ -3117,11 +3558,32 @@
       // 0 once, 1 loop, 2 ping-pong
       spin: !!(extra && extra.spin) || ch.from === ch.to && ch.step !== 0 && !!(extra && extra.wrap),
       wrap: !!(extra && extra.wrap),
+      armAt: channelTrigger(ch, ground, horizontal),
       done: false
     };
   }
+  // Arm any channel whose trigger threshold the enemy has now crossed; an
+  // armed channel re-seeds its value from the start of its ramp, as the
+  // engine does at +0x58AA.
+  function armChannels(st, enemy) {
+    if (!st.pendingChannels) return;
+    var y = enemy.y;
+    var still = false;
+    for (var i = 0; i < st.pendingChannels.length; i++) {
+      var ch = st.pendingChannels[i];
+      if (!ch || ch.armAt === null) continue;
+      if (y >= ch.armAt) {
+        ch.armAt = null;
+        ch.value = ch.from;
+      } else {
+        still = true;
+      }
+    }
+    if (!still) st.pendingChannels = null;
+  }
   function stepChannel(st) {
     if (!st || st.done) return st ? st.value : 0;
+    if (st.armAt !== null && st.armAt !== undefined) return st.value;
     if (st.spin) {
       st.value += st.step || 1;
       return st.value;
@@ -3146,68 +3608,529 @@
   }
   var TYPE012_INTERVAL = [14, 12, 10, 8, 6, 4, 2, 1];
   var FIRE_WINDOW = [29, 22, 16, 11, 7, 4, 2, 1];
-  var ZAKO_AI_STRIDE = 8;
+  // Reloads count FIRE TICKS, not frames: the engine pulses a global fire
+  // tick from a per-frame accumulator (+= 28 + rank/2, tick on >255 —
+  // ~10 frames apart at rank 0), and every burst step and reload decrement
+  // is quantized to it. Rank is the dynamic difficulty; its stage-start
+  // value at normal difficulty is 8 + 8*stage (engine-traced).
   function zakoReload(fire) {
     var rate = FIRE_WINDOW.indexOf(fire.window);
     if (rate < 0) rate = 0;
     var interval = fire.mode === 3 ? fire.interval : TYPE012_INTERVAL[rate];
-    return (interval + Math.floor(Math.random() * (fire.window || 1))) * ZAKO_AI_STRIDE;
+    return interval + Math.floor(Math.random() * (fire.window || 1));
   }
+  // Dynamic difficulty (engine +0x4AD8 at the boot rank): the level ramps
+  // +1 per 128 frames toward 32 + 4*power + 8*stage and resets to
+  // 8 + 8*stage when the player dies. It drives BOTH the fire-tick rate
+  // (28 + dyn/2 per frame) and the enemy bullet speed base (dyn*4 units).
+  function dezaRank(scene) {
+    return scene._dezaDyn !== undefined ? scene._dezaDyn : 8 + 8 * (gameState.stageId || 0);
+  }
+  function dezaRankTick(scene) {
+    var stage = gameState.stageId || 0;
+    if (scene._dezaDyn === undefined) scene._dezaDyn = 8 + 8 * stage;
+    var power = scene.shootMode && scene.shootMode !== "normal" ? 3 : 1;
+    var target = 32 + 4 * power + 8 * stage;
+    scene._dezaRankAcc = (scene._dezaRankAcc || 0) + 2;
+    if (scene._dezaRankAcc > 255) {
+      scene._dezaRankAcc = 0;
+      if (scene._dezaDyn < target) scene._dezaDyn += 1;
+      else if (scene._dezaDyn > target) scene._dezaDyn -= 1;
+    }
+  }
+  function dezaRankDeath(scene) {
+    scene._dezaDyn = 8 + 8 * (gameState.stageId || 0);
+  }
+  function dezaFirePulse(scene) {
+    var acc = (scene._dezaFireAcc || 0) + 28 + (dezaRank(scene) >> 1);
+    var pulse = acc > 255;
+    scene._dezaFireAcc = pulse ? 0 : acc;
+    scene._dezaFirePulse = pulse;
+  }
+  // Byte 5's low nibble on old cloud records predates fire.geometry —
+  // reconstruct it from the fields the old decoder did keep.
+  function zakoGeometry(fire) {
+    if (fire.geometry != null) return fire.geometry;
+    if (fire.pattern != null) return 10 + fire.pattern;
+    return (fire.direction || 0) & 15;
+  }
+  function zakoAimed(fire) {
+    if (fire.aimed != null) return fire.aimed;
+    return ((fire.direction || 0) & 16) !== 0;
+  }
+  // The engine's 16-entry bullet-geometry table (0x6086074), angle deltas in
+  // 1/256-circle units. 8 fires the same fan as 7 but with curving bullets
+  // and 9 is a homing single — both fly straight here until the bullet
+  // steering states (17/18/19) are traced. 11 jitters, 12 spirals (below).
+  var GEOMETRY_SPREADS = {
+    1: [0],
+    2: [-8, 8],
+    3: [0, -8, 8],
+    4: [0, -16, 16],
+    5: [-8, 8, -24, 24],
+    6: [0, -8, 8, -16, 16],
+    7: [0, -16, 16, -32, 32],
+    8: [0, -16, 16, -32, 32],
+    9: [0],
+    10: [0],
+    13: [-64, 64],
+    14: [0, -64, 64, 128],
+    15: [0, -32, 32, -64, 64, -96, 96, 128]
+  };
+  // Handler 12's rotation table (0x6086064): shot i leaves at base + table[i],
+  // stepping 22.5 degrees per shot through the full circle.
+  var SPIRAL_DELTAS = [192, 208, 224, 240, 0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176];
+  var ANGLE_UNIT = Math.PI * 2 / 256;
   function ridesTheMap(movePattern) {
     return movePattern === 4 || (movePattern & 3) === 2;
   }
-  function initEnemyBehavior(enemy, behavior) {
-    var d = behavior.fire.pattern != null ? 0 : behavior.fire.direction;
-    var fires = behavior.fire.enabled && d !== 0 && behavior.fire.pattern == null;
+  // ---- Appearance scripts (enemy record byte 0) -------------------------
+  //
+  // Every zako carries an ENTRY CHOREOGRAPHY from the engine's 256-entry
+  // appearance table: a list of rows [duration, angle, turnRate, ampWord,
+  // flags] run one at a time, one row-tick per Saturn frame. Traced from
+  // interpreter 1 (GAME.CMP +0x4EC4) and its drift helper (+0x4D80):
+  //
+  //   - a row loads when the previous one's duration expires; flags bit0
+  //     advances the cursor, and a row without it HOLDS forever
+  //   - the row's angle goes into the heading word, turnRate is added to it
+  //     every tick, and the amplitude's bit15 marks "rides the scroll"
+  //   - the drift helper writes velocity ONLY on a row load or on a tick
+  //     that turned (+0x4F6C skips it when turnRate == 0), so between those
+  //     the enemy's own record channels stay in charge of its motion
+  //   - flags bit5 SUPPRESSES the cos component and bit6 the sin component
+  //     (the tst/bt/s pair at +0x4D9A and +0x4DF4 branches to the COMPUTE
+  //     path when the bit is CLEAR, and falls through to a store of 0 when
+  //     it is set — only 16 of the 256 scripts ever set either, which is
+  //     what makes the other 240 choreographies move at all). The engine
+  //     writes cos to the LATERAL velocity array and sin to the SCROLL one,
+  //     and the object walker (+0x7930) integrates lateral += cos,
+  //     scroll -= sin. So angle 0 = screen right, 0x4000 = up,
+  //     0x8000 = left, 0xC000 = straight down.
+  //   - a right-half spawn negates the cos component (mirrored entries) and
+  //     the ground flag negates the sin one
+  //
+  // Velocity: (trig * amp) >> 16 into px*128 positions = amp/256 px/frame.
+  var ENTRY_ADVANCE = 0x1;
+  var ENTRY_NO_COS = 0x20; // suppress the lateral component
+  var ENTRY_NO_SIN = 0x40; // suppress the scroll component
+  // Row flags bit7 picks which of the engine's TWO script movers runs the row.
+  // Mover B (+0x5054) inlines a relative ride and never consults the anchor
+  // bit; mover A (+0x4EC4) calls the terrain-ride helper (+0x4BFC), which is
+  // the only path that can take the absolute map-anchor branch.
+  var ENTRY_MOVER_B = 0x80;
+  var ENTRY_RIDE_GATE = 0x100; // mover A only: ride when the movement flag is set too
+  var ENTRY_RIDES = 0x8000;
+  function initEntryScript(dz, enemy, scene) {
+    var rows = dz && dz.entry && dz.entry.rows;
+    if (!rows || !rows.length) return null;
+    var GW = scene && scene.scale ? scene.scale.width : 256;
+    return {
+      rows,
+      idx: 0,
+      rowT: 0, // 0 -> the first tick loads row 0
+      angle: 0,
+      turn: 0,
+      amp: 0,
+      flags: 0,
+      rides: false,
+      ridesNow: false,
+      moverB: false,
+      anchored: !!dz.entry.anchored,
+      // The engine's terrain anchor, taken once at spawn: the object's screen
+      // position on the scroll axis and the map scroll that was under it then
+      // (0x06094C40 / 0x0608EC90, both whole pixels). An anchored rider's
+      // position is RECOMPUTED from this pair every tick rather than nudged, so
+      // it can never drift off the piece of terrain it was placed on.
+      anchorY: enemy.y,
+      anchorScroll: scene && scene.dezaBg ? scene.dezaBg._scroll : 0,
+      moveFlag: !!(dz.behavior && dz.behavior.move && dz.behavior.move.flag),
+      vx: 0,
+      vy: 0,
+      active: false,
+      mirror: enemy.x > GW / 2,
+      ground: !!(dz.behavior && dz.behavior.ground)
+    };
+  }
+  // One Saturn frame of the script. Returns true while the script owns the
+  // enemy's motion (a row with a velocity component), in which case it has
+  // already moved the sprite and the record's own speed/direction channels
+  // stand down — on hardware both write the same velocity slot.
+  function stepEntryScript(enemy, st) {
+    var e = st.entry;
+    if (!e) return false;
+    var recompute = false;
+    if (--e.rowT < 0) {
+      var row = e.rows[e.idx < e.rows.length ? e.idx : e.rows.length - 1];
+      e.flags = row[4];
+      e.rowT = row[0];
+      e.angle = row[1];
+      e.turn = row[2];
+      e.amp = row[3] & 0x7fff;
+      e.rides = (row[3] & ENTRY_RIDES) !== 0;
+      // The helper's call gate, verbatim: amplitude bit15 makes the row ride
+      // outright, and mover A additionally rides when the row asks for it AND
+      // the record's own movement flag (byte 2 bit 3) is set. Mover B rows have
+      // only the amplitude gate — and never the anchored form.
+      e.moverB = (row[4] & ENTRY_MOVER_B) !== 0;
+      e.ridesNow = e.rides ||
+        (!e.moverB && (row[4] & ENTRY_RIDE_GATE) !== 0 && e.moveFlag);
+      if (e.flags & ENTRY_ADVANCE) {
+        e.idx = e.idx + 1 < e.rows.length ? e.idx + 1 : e.rows.length - 1;
+      }
+      recompute = true;
+    } else if (e.turn) {
+      e.angle = (e.angle + e.turn) & 0xffff;
+      recompute = true;
+    }
+    if (recompute) {
+      var th = (e.angle >>> 8) * (Math.PI * 2 / 256);
+      // The record's speed-change channel is a x0..x4 multiplier on the
+      // script's own amplitude.
+      var v = e.amp / 256 * (st.speedCh ? st.speedCh.value : 1);
+      e.vx = e.flags & ENTRY_NO_COS ? 0 : Math.cos(th) * v;
+      if (e.mirror) e.vx = -e.vx;
+      e.vy = e.flags & ENTRY_NO_SIN ? 0 : -Math.sin(th) * v;
+      if (e.ground) e.vy = -e.vy;
+      // A zero-amplitude script (the "sit on the map" archetype, appearance
+      // 0 and 23% of the corpus) leaves the enemy to its record channels.
+      e.active = e.amp > 0;
+    }
+    if (!e.active) return false;
+    // The velocity the helper wrote persists between recompute ticks, so it
+    // is integrated every frame, not only on the ticks that set it.
+    enemy.x += e.vx;
+    enemy.y += e.vy;
+    return true;
+  }
+  // ---- Special appearance classes (0x31-0x36) ---------------------------
+  //
+  // Six hardcoded engine behaviors for appearance ids 184-191 and 216-255 —
+  // 11.5% of corpus enemy definitions, dominated by 0x36 (the spawn-aimed
+  // straight flier) and 0x31 (the homer). Angles ride the engine's 256-step
+  // circle (0 = +X, 64 = up, 192 = down; runtime x += cos, y -= sin);
+  // speeds are SPEED[id & 7]/256 px per tick. These enemies drive their own
+  // velocity every tick, so the record's movement channels and the scroll
+  // stand down while one runs.
+  var SPECIAL_SPEED = [128, 256, 384, 512, 640, 768, 1152, 1536];
+  var SPECIAL_LIMIT = [72, 64, 56, 48, 40, 32, 24, 16];
+  function specialAimA(enemy, player) {
+    var a = Math.atan2(-(player.y - enemy.y), player.x - enemy.x) / (Math.PI * 2) * 256;
+    return ((Math.round(a) % 256) + 256) % 256;
+  }
+  function specialSetVel(sp, a256, S) {
+    var th = a256 * Math.PI * 2 / 256;
+    sp.vx = Math.cos(th) * S / 256;
+    sp.vy = -Math.sin(th) * S / 256;
+  }
+  function initSpecialClass(st, behavior, cls) {
+    var pIdx = behavior.appearance & 7;
+    st.sp = {
+      cls,
+      S: SPECIAL_SPEED[pIdx],
+      L: SPECIAL_LIMIT[pIdx],
+      air: !behavior.ground,
+      A: (!behavior.ground ? 0xC0 : 0x40) << 8, // a-space seed: down / up
+      aimT: 0,
+      c: 0,
+      state: 0,
+      curS: SPECIAL_SPEED[pIdx],
+      side: 0,
+      noFire: false,
+      moveFlag: !!(behavior.move && behavior.move.flag),
+      vx: 0,
+      vy: 0
+    };
+  }
+  var CELL16 = function(v) { return Math.floor((v + 8) / 16); };
+  function stepSpecialClass(scene, enemy, st) {
+    var sp = st.sp;
+    var player = scene.playerSprite && scene.playerSprite.active ? scene.playerSprite : null;
+    var S = sp.S;
+    if (sp.cls === 0x36) {
+      // one shot: aim at the player on the first tick and never adjust
+      if (sp.state === 0) {
+        specialSetVel(sp, player ? specialAimA(enemy, player) : sp.A >> 8, S);
+        sp.state = 1;
+      }
+    } else if (sp.cls === 0x31) {
+      // homer: re-aim every 8-23 ticks, turn 448 A-units (2.46 deg)/tick
+      if (player && enemy.y >= 0) {
+        if (--sp.aimT <= 0) {
+          sp.Atgt = specialAimA(enemy, player) << 8;
+          sp.aimT = 8 + Math.floor(Math.random() * 16);
+        }
+      }
+      if (sp.Atgt !== undefined) {
+        var d = ((sp.Atgt - sp.A + 0x8000) & 0xffff) - 0x8000;
+        sp.A = Math.abs(d) < 448 ? sp.Atgt : (sp.A + (d > 0 ? 448 : -448)) & 0xffff;
+      }
+      specialSetVel(sp, sp.A >> 8, S);
+    } else if (sp.cls === 0x32) {
+      // stop-and-go: hover (aim, may fire) for L ticks, dash on the frozen
+      // heading for L ticks (fire suppressed), stop early on reaching the
+      // player's 16-px cell
+      sp.c = sp.c + 1;
+      if (sp.c > sp.L) sp.c = -sp.L;
+      if (sp.c < 0) {
+        sp.noFire = false;
+        if (player && --sp.aimT <= 0) {
+          sp.Atgt = specialAimA(enemy, player) << 8;
+          sp.aimT = 8 + Math.floor(Math.random() * 16);
+        }
+        if (sp.Atgt !== undefined) {
+          var d2 = ((sp.Atgt - sp.A + 0x8000) & 0xffff) - 0x8000;
+          var turn = 2 * S;
+          sp.A = Math.abs(d2) < turn ? sp.Atgt : (sp.A + (d2 > 0 ? turn : -turn)) & 0xffff;
+        }
+        sp.vx = 0;
+        sp.vy = 0;
+      } else {
+        sp.noFire = true;
+        specialSetVel(sp, sp.A >> 8, S);
+        if (player && CELL16(enemy.x) === CELL16(player.x) && CELL16(enemy.y) === CELL16(player.y)) {
+          sp.vx = 0;
+          sp.vy = 0;
+          sp.c = -sp.L;
+        }
+      }
+    } else if (sp.cls === 0x33) {
+      // drift along the scroll axis, then charge sideways at the player's
+      // side, accelerating forever
+      if (sp.state === 0) {
+        sp.vx = 0;
+        sp.vy = (sp.air ? 1 : -1) * S / 512;
+        sp.state = 1;
+      } else if (sp.state === 1) {
+        if (player && (sp.air ? player.y < enemy.y : player.y > enemy.y)) {
+          sp.vy = 0;
+          sp.side = player.x >= enemy.x ? 1 : -1;
+          sp.vx = sp.side * S / 512;
+          sp.state = 2;
+        }
+      } else if (sp.moveFlag) {
+        // Its charge state calls the ride helper and returns, so the sideways
+        // acceleration never runs and the enemy simply travels with the map.
+        sp.vx = 0;
+        sp.vy = 0;
+        enemy.y += scene.dezaBg ? scene.dezaBg.lastDelta : 0;
+      } else {
+        sp.vx += sp.side * S / 8192;
+      }
+    } else if (sp.cls === 0x34) {
+      // slide toward the player's column, then dive along the scroll axis
+      if (sp.state === 0) {
+        if (!player) {
+          sp.side = enemy.x > 128 ? -1 : 1;
+          sp.vx = sp.side * S / 512;
+          sp.vy = 0;
+          sp.state = 3; // terminal slide
+        } else {
+          sp.side = player.x >= enemy.x ? 1 : -1;
+          sp.vx = sp.side * S / 512;
+          sp.vy = 0;
+          sp.state = 1;
+        }
+      } else if (sp.state === 1) {
+        if (player && (sp.side > 0 ? enemy.x >= player.x : enemy.x <= player.x)) {
+          sp.vx = 0;
+          sp.vy = (sp.air ? 1 : -1) * S / 512;
+          sp.state = 2;
+        }
+      } else if (sp.state === 2 && !sp.moveFlag) {
+        // In the dive, a movement-flag 0x34 leaves the handler at once
+        // (+0x70E6) — it neither accelerates nor rides, and simply coasts.
+        sp.vy += (sp.air ? 1 : -1) * S / 8192;
+      }
+      // PHASE 1 — the lateral approach — has a tail of its own (+0x70A0): it
+      // sets the scroll-axis velocity to HALF speed downward and zeroes the
+      // heading every tick, and only then, if the record's movement flag is
+      // set, rides the terrain as well. So a movement-flag 0x34 crosses toward
+      // the player while both its own drift and the map carry it down. (0x33
+      // rides in its charge state instead; neither class can ever take the
+      // anchored branch, since spawn sets the anchor bit only for class-table
+      // entries carrying bit7.)
+      if (sp.state === 1 || sp.state === 3) {
+        sp.vy = S / 512;
+        if (sp.moveFlag) {
+          enemy.y += scene.dezaBg ? scene.dezaBg.lastDelta : 0;
+        }
+      }
+    } else if (sp.cls === 0x35) {
+      // lock on and fly at the player; near them, bank through a half
+      // circle with growing speed and escape sideways
+      if (sp.state === 0) {
+        if (player) {
+          sp.A = specialAimA(enemy, player) << 8;
+          sp.curS = S;
+          specialSetVel(sp, sp.A >> 8, sp.curS);
+          sp.state = 1;
+        } else {
+          specialSetVel(sp, sp.A >> 8, S);
+        }
+      } else if (sp.state === 1) {
+        specialSetVel(sp, sp.A >> 8, sp.curS);
+        if (player && Math.abs(player.x - enemy.x) <= 56 && Math.abs(player.y - enemy.y) <= 128) {
+          sp.turn = (player.x >= enemy.x ? -1 : 1) * (S + 128);
+          sp.accel = S >> 5;
+          sp.state = 2;
+        }
+      } else if (sp.state === 2) {
+        var raw = sp.A & 0xffff;
+        if (sp.air) {
+          raw = raw > 0x8000 ? (raw + sp.turn) & 0xffff : sp.turn >= 0 ? 0 : 0x8000;
+        } else {
+          raw = raw > 0x7fff ? (sp.turn >= 0 ? 0 : 0x8000) : (raw - sp.turn) & 0xffff;
+        }
+        sp.A = raw;
+        var th35 = (raw >> 8) * Math.PI * 2 / 256;
+        sp.vx = Math.cos(th35) * sp.curS / 256;
+        // the scroll-axis velocity stays frozen during the bank
+        sp.curS += sp.accel;
+      }
+    }
+    enemy.x += sp.vx;
+    enemy.y += sp.vy;
+    return true;
+  }
+  function initEnemyBehavior(enemy, behavior, dezaemon, scene) {
+    // Geometry 0 is the engine's empty routine — most of a roster never
+    // fires. Everything else fires, the burst patterns 10-12 included.
+    var fires = behavior.fire.enabled && zakoGeometry(behavior.fire) !== 0;
     var facesPlayer = behavior.rotation.enabled && behavior.rotation.mode >= 3;
+    var horiz = dezaHorizontal(scene);
+    var hasEntry = !!(dezaemon && dezaemon.entry && dezaemon.entry.rows && dezaemon.entry.rows.length);
+    var specialCls = dezaemon && dezaemon.entry && dezaemon.entry.objectClass;
     enemy.setData("deza", {
       behavior,
       age: 0,
       tick: 0,
-      pinned: ridesTheMap(behavior.movePattern),
+      // pinned/patrols were pre-appearance-script heuristics; with real
+      // entry data the script and the ride flags carry that behavior.
+      pinned: !hasEntry && ridesTheMap(behavior.movePattern),
       facesPlayer,
       // Slow free-movers (speed index 0-1, plain mode 0) patrol laterally
       // on hardware — the capture's bat flock enters mid-screen and sweeps
       // out to the walls — instead of hanging motionless in the scroll.
-      patrols: !ridesTheMap(behavior.movePattern) && behavior.move.mode === 0 && !behavior.move.flag && behavior.speed < 0.3,
+      patrols: !hasEntry && !ridesTheMap(behavior.movePattern) && behavior.move.mode === 0 && !behavior.move.flag && behavior.speed < 0.3,
       patrolPhase: Math.random() * Math.PI * 2,
-      speedCh: makeChannel(behavior.speedChange, null),
+      speedCh: makeChannel(behavior.speedChange, null, behavior.ground, horiz),
       rotationCh: facesPlayer ? null : makeChannel(behavior.rotation, {
         wrap: true,
         reverse: behavior.rotation.mode === 2
-      }),
-      scaleCh: makeChannel(behavior.scale, null),
+      }, behavior.ground, horiz),
+      scaleCh: makeChannel(behavior.scale, null, behavior.ground, horiz),
       // No wrap: a flat direction channel (from == to) HOLDS its heading.
       // Spun as a circle it sent Ramsie's roc riding the scroll to the
       // screen bottom; held at 0 (up-map, fighting the scroll) the roc
       // hangs near the top of the screen like the capture shows.
-      directionCh: makeChannel(behavior.direction, null),
+      directionCh: makeChannel(behavior.direction, null, behavior.ground, horiz),
       // stagger the first volley inside the randomization window
-      reload: fires ? zakoReload(behavior.fire) : -1
+      reload: fires ? zakoReload(behavior.fire) : -1,
+      burst: 0,
+      entry: initEntryScript(dezaemon, enemy, scene),
+      special: specialCls >= 0x31 && specialCls <= 0x36 ? specialCls : null
     });
+    var dzst0 = enemy.getData("deza");
+    if (dzst0.special) initSpecialClass(dzst0, behavior, dzst0.special);
+    var dzst = enemy.getData("deza");
+    var pending = [dzst.speedCh, dzst.rotationCh, dzst.scaleCh, dzst.directionCh]
+      .filter(function(c) { return c && c.armAt !== null; });
+    dzst.pendingChannels = pending.length ? pending : null;
     if (behavior.ground) {
       var shadow = enemy.getData("shadow");
       if (shadow) shadow.setVisible(false);
+    }
+    // Hardware ties the animation period to the LIFE setting: frame period
+    // in AI ticks = the LIFE value itself (record b1&7 loads both from one
+    // table) — tough enemies animate slowly, fodder flickers.
+    if (Number.isFinite(behavior.hp)) {
+      enemy.setData("animPeriod", Math.max(33, behavior.hp * 1000 / 60));
+    }
+  }
+  // The engine's terrain-ride helper (+0x4BFC), both branches. Status bit6 —
+  // set at spawn for the appearance groups whose class-table byte carries bit7,
+  // i.e. ids 0-7 and 16-31, the turrets and scenery — takes the ABSOLUTE form,
+  // which rewrites the scroll coordinate outright from the map anchor:
+  //
+  //     scrollPx = anchorY + mapScroll - anchorScroll
+  //
+  // Everything else takes the incremental form, adding the whole pixels the map
+  // moved this frame. (The engine works in px<<7 and multiplies the whole-pixel
+  // scroll by 128; in the runtime's pixel units that scaling cancels out.)
+  // Imports with no entry data keep the legacy everything-scrolls model.
+  function applyTerrainRide(scene, enemy, entry, scroll) {
+    if (!entry) {
+      enemy.y += scroll;
+      return;
+    }
+    if (!entry.ridesNow) return;
+    if (entry.anchored && !entry.moverB && scene.dezaBg) {
+      enemy.y = entry.anchorY + (scene.dezaBg._scroll - entry.anchorScroll);
+    } else {
+      enemy.y += scroll;
     }
   }
   function updateEnemyBehavior(scene, enemy) {
     var st = enemy.getData("deza");
     if (!st) return false;
+    // A chain-kill link is frozen from the moment it is marked: the engine
+    // zeroes both walker components and clears its ride bit, so it neither
+    // drifts nor travels with the map while its countdown runs.
+    if (st.chainDying) return true;
     var b = st.behavior;
     var scroll = scene.dezaBg ? scene.dezaBg.lastDelta : scene.bossActive || scene.bossReached ? 0 : SCROLL_PX_PER_FRAME / SATURN_TICKS_PER_FRAME;
-    enemy.y += scroll;
+    // Hardware does NOT scroll every enemy with the map: the ride mover
+    // (+0x4BFC) runs only while the current appearance row asks for it —
+    // amplitude bit15, or flags bit8 together with the movement byte's
+    // flag — and everything else HOLDS its screen position. Imports without
+    // entry data keep the legacy everything-scrolls model.
+    var entry = st.entry;
+    if (st.sp) {
+      // special classes drive their own velocity every tick; no scroll ride
+      st.tick++;
+      if (st.tick % SATURN_TICKS_PER_FRAME) return true;
+      st.age++;
+      stepSpecialClass(scene, enemy, st);
+      if (st.scaleCh) {
+        var fSp = stepChannel(st.scaleCh);
+        enemy.setScale(fSp, fSp);
+      }
+      return true;
+    }
+    applyTerrainRide(scene, enemy, entry, scroll);
     st.tick++;
     if (st.tick % SATURN_TICKS_PER_FRAME) return true;
     st.age++;
+    // A holder that spawned above the screen and cannot reach it would sit
+    // in the pool forever; hardware culls out-of-bounds objects, so retire
+    // anything that stays hidden past the top for ten seconds.
+    if (entry && enemy.y < -8) {
+      st.hiddenT = (st.hiddenT || 0) + 1;
+      if (st.hiddenT > 600) enemy.setData("dezaGone", true);
+    } else if (st.hiddenT) {
+      st.hiddenT = 0;
+    }
+    armChannels(st, enemy);
     var mult = st.speedCh ? stepChannel(st.speedCh) : 1;
-    var dirDeg = st.directionCh ? stepChannel(st.directionCh) : 0;
+    // With no direction channel the engine seeds the heading from the
+    // editor default (straight down), so an entry-model enemy with a speed
+    // flies down the screen; the legacy model kept 0 (up, fighting the
+    // scroll it was always given).
+    var dirDeg = st.directionCh ? stepChannel(st.directionCh) : entry ? 180 : 0;
     var speed = b.speed * mult;
-    if (!st.pinned) {
+    var scripted = stepEntryScript(enemy, st);
+    if (!st.pinned && !scripted) {
       var rad = dirDeg * Math.PI / 180;
       enemy.x += Math.sin(rad) * speed;
-      enemy.y += -Math.cos(rad) * speed;
+      // A map-anchored rider (appearance groups 0/2/3: turrets, scenery)
+      // has its scroll coordinate recomputed absolutely from the map each
+      // tick, so its record movement cannot walk it up or down the screen.
+      if (!(entry && entry.anchored && entry.ridesNow)) {
+        enemy.y += -Math.cos(rad) * speed;
+      }
     }
-    if (st.patrols) {
+    if (st.patrols && !scripted) {
       enemy.x += Math.cos(st.patrolPhase + st.age * (Math.PI * 2 / 150)) * (26 * Math.PI * 2 / 150);
     }
     if (st.facesPlayer && scene.playerSprite) {
@@ -3253,54 +4176,96 @@
     ctx.fillRect(5, 3, 2, 2);
     tex.refresh();
   }
-  function updateEnemyFire(scene, enemy, shootFn) {
-    var st = enemy.getData("deza");
-    if (!st) return false;
+  // One volley of the engine's shooter: base angle from the aim bit (re-aimed
+  // every shot, so bursts track a moving player) or the enemy's facing
+  // (default = straight down; rotation channels and aim-style facing carry
+  // in through enemy.rotation), shaped by the traced geometry table.
+  function dezaVolley(scene, enemy, st, geom, shootFn) {
     var fire = st.behavior.fire;
-    if (!fire.enabled || st.reload < 0) return true;
-    if (st.tick % SATURN_TICKS_PER_FRAME) return true;
-    st.reload -= 1;
-    if (st.reload > 0) return true;
-    st.reload = zakoReload(fire);
-    var GH14 = scene.scale ? scene.scale.height : 480;
-    if (!scene.playerSprite) return true;
-    if (enemy.y < 8 || enemy.y > GH14 - 8) return true;
-    var d = fire.direction;
-    var aimed = (d & 16) !== 0 || st.facesPlayer || st.patrols;
+    if (!scene.playerSprite) return;
+    var aimed = zakoAimed(fire) || st.facesPlayer;
     var base;
     if (aimed) {
       var dx = scene.playerSprite.x - enemy.x;
       var dy = scene.playerSprite.y - enemy.y;
+      // hardware point-blank gate: no shot within ~(size+36)px of the player
+      if (Math.abs(dx) < 40 && Math.abs(dy) < 40) return;
       base = Math.atan2(dx, -dy);
     } else {
-      base = Math.PI;
+      // Hardware derives the fire heading from the enemy's movement
+      // direction (the walker seeds it from the direction channel), not from
+      // the sprite's spin — default 180° = straight down.
+      var dirDeg = st.directionCh ? st.directionCh.value : 180;
+      base = dirDeg * Math.PI / 180;
     }
-    ensureZakoBulletTexture(scene);
-    var fireOne = function(a, offsetX) {
+    // The save's global bullet config: record byte4&3 picks it; speed =
+    // rank base + config add, doubled for the runtime's taller playfield.
+    var cfgs = scene.recipe && scene.recipe.dezaemonBullets && scene.recipe.dezaemonBullets.configs;
+    var cfg = cfgs && cfgs[fire.mode] ? cfgs[fire.mode] : null;
+    var speed = cfg && Number.isFinite(cfg.speedAdd)
+      ? (dezaRank(scene) * 4 / 512 + cfg.speedAdd) * 2
+      : ZAKO_BULLET_SPEED;
+    // The save's own bullet art for this type (4-frame anim from the global
+    // bank), else the drawn ring fallback.
+    var art = cfgs && scene.recipe.dezaemonBullets.art && scene.recipe.dezaemonBullets.art[fire.mode];
+    var atlas = art && art.length ? scene.textures.get("game_asset") : null;
+    if (!(atlas && atlas.has(art[0]))) art = null;
+    if (!art) ensureZakoBulletTexture(scene);
+    var fireOne = function(a) {
       var bullet = shootFn(scene, enemy, Math.sin(a), -Math.cos(a));
       if (!bullet) return;
-      if (offsetX) bullet.x += offsetX;
-      bullet.setTexture(ZAKO_BULLET_KEY);
-      bullet.setData("frames", null);
-      bullet.setData("speed", ZAKO_BULLET_SPEED / SATURN_TICKS_PER_FRAME);
+      if (art) {
+        bullet.setTexture("game_asset", art[0]);
+        bullet.setData("frames", art.length > 1 ? art : null);
+        bullet.setData("animIdx", 0);
+        bullet.setData("animTimer", 0);
+      } else {
+        bullet.setTexture(ZAKO_BULLET_KEY);
+        bullet.setData("frames", null);
+      }
+      bullet.setData("speed", speed / SATURN_TICKS_PER_FRAME);
     };
-    var FAN = 11 * Math.PI / 180;
-    var geometry = d & 15;
-    if (geometry === 2) {
-      fireOne(base, -8);
-      fireOne(base, 8);
-    } else if (geometry >= 5 && geometry <= 7) {
-      fireOne(base - FAN);
-      fireOne(base);
-      fireOne(base + FAN);
-    } else if (geometry === 8 || geometry === 9) {
-      for (var i = -2; i <= 2; i++) fireOne(base + i * FAN);
-    } else if (geometry === 13) {
-      fireOne(base - Math.PI / 2);
-      fireOne(base + Math.PI / 2);
+    if (geom === 11) {
+      // burst handler 11: each shot jittered by (rand&31)-16 units
+      fireOne(base + (Math.floor(Math.random() * 32) - 16) * ANGLE_UNIT);
+    } else if (geom === 12) {
+      // burst handler 12: the rotating spiral, one shot per step
+      fireOne(base + SPIRAL_DELTAS[st.burst & 15] * ANGLE_UNIT);
     } else {
-      fireOne(base);
+      var spread = GEOMETRY_SPREADS[geom] || [0];
+      for (var i = 0; i < spread.length; i++) fireOne(base + spread[i] * ANGLE_UNIT);
     }
+  }
+  function updateEnemyFire(scene, enemy, shootFn) {
+    var st = enemy.getData("deza");
+    if (!st) return false;
+    var fire = st.behavior.fire;
+    var geom = zakoGeometry(fire);
+    if (!fire.enabled || geom === 0 || st.reload < 0) return true;
+    if (st.sp && st.sp.noFire) return true; // 0x32 mid-dash: fire suppressed
+    if (st.tick % SATURN_TICKS_PER_FRAME) return true;
+    var GH14 = scene.scale ? scene.scale.height : 480;
+    var onScreen = enemy.y >= 8 && enemy.y <= GH14 - 8;
+    var pulse = scene._dezaFirePulse;
+    var isBurst = geom >= 10 && geom <= 12;
+    var burstLen = geom === 10 ? 4 : geom === 11 ? 5 : 16;
+    var firedMidBurst = false;
+    if (isBurst && st.burst > 0) {
+      // Mid-burst: pattern 12 fires every Saturn frame (a started spiral
+      // finishes no matter what); 10 and 11 step on fire ticks only.
+      if (geom === 12 || pulse) {
+        dezaVolley(scene, enemy, st, geom, shootFn);
+        st.burst = (st.burst + 1) % burstLen;
+        firedMidBurst = true;
+      }
+    } else if (pulse && st.reload <= 0 && onScreen) {
+      st.reload = zakoReload(fire);
+      dezaVolley(scene, enemy, st, geom, shootFn);
+      if (isBurst) st.burst = 1;
+    }
+    // The reload counts down on every fire tick a volley didn't freeze —
+    // including off-screen ticks and the burst-start tick, like hardware.
+    if (pulse && st.reload > 0 && !firedMidBurst) st.reload -= 1;
     return true;
   }
   var BOSS_ENTRY_FRAMES = 360;
@@ -3347,6 +4312,156 @@
     spgage: 0,
     texture: ["normalProjectile0.gif", "normalProjectile1.gif", "normalProjectile2.gif"]
   };
+  // The engine's 32 fixed boss movement scripts (GAME.bin +0x252D4..+0x25A18,
+  // extracted byte-exact 2026-08-28): 10-byte steps [duration, heading,
+  // turnRate, speed, flags]. Heading: 65536 = full circle, 0 = screen RIGHT,
+  // 0x4000 = up, 0x8000 = left, 0xC000 = straight DOWN — proven from the
+  // velocity writes at +0x1A4E2 (cos -> the lateral array 0x06094840, sin ->
+  // the scroll array 0x0608F640) and the object walker's integration at
+  // +0x7930 (lateral += cos, scroll -= sin). A pattern's speed setting divides
+  // step duration and multiplies speed/turn, so the path shape is
+  // speed-invariant: distance = speed*duration/256 px. flags&3 == 0 ends the
+  // script (the pattern advances); flag 0x20 = evade the player on X,
+  // 0x40 = chase the player's Y, 0x800 = aim-tracking heading.
+  var DEZA_BOSS_SCRIPTS = [[[1024,0,0,0,1],[32767,49152,0,256,0]],[[80,32768,0,32,1],[40,32768,0,16,1],[160,0,0,32,1],[40,0,0,16,1],[79,32768,0,32,1],[32767,49152,0,256,0]],[[200,32768,0,32,1],[40,32768,0,16,1],[400,0,0,32,1],[40,0,0,16,1],[199,32768,0,32,1],[32767,49152,0,256,0]],[[80,49152,0,64,1],[40,49152,0,32,1],[160,16384,0,32,1],[39,16384,0,32,1],[32767,49152,0,256,0]],[[200,49152,0,64,1],[40,49152,0,32,1],[400,16384,0,32,1],[39,16384,0,32,1],[32767,49152,0,256,0]],[[128,49152,0,32,1],[208,32768,-113,32,1],[40,24576,-113,16,1],[444,52701,113,32,1],[40,8192,113,16,1],[208,45056,-113,32,1],[127,16384,0,32,1],[32767,49152,0,256,0]],[[128,49152,0,32,1],[332,32768,-42,32,1],[40,24576,-42,16,1],[682,58436,42,32,1],[40,8192,42,16,1],[332,40140,-42,32,1],[122,16384,0,32,1],[32767,49152,0,256,0]],[[208,32768,113,32,1],[40,40960,113,16,1],[424,12834,-113,32,1],[40,57890,-113,16,1],[207,19933,128,32,1],[32767,49152,0,256,0]],[[332,32768,42,32,1],[40,40960,42,16,1],[676,7645,-42,32,1],[40,57890,-42,16,1],[327,25122,48,32,1],[32767,49152,0,256,0]],[[740,32768,176,32,1],[32767,49152,0,256,0]],[[192,32768,0,32,1],[384,32768,170,32,1],[400,0,0,32,1],[384,0,170,32,1],[192,32768,0,32,1],[32767,49152,0,256,0]],[[1480,32768,88,32,1],[32767,49152,0,256,0]],[[192,49152,-170,32,1],[64,32768,0,32,1],[384,32768,-170,32,1],[64,0,0,32,1],[192,0,-170,32,1],[192,49152,170,32,1],[64,0,0,32,1],[384,0,170,32,1],[64,32768,0,32,1],[168,32768,200,32,1],[32767,49152,0,256,0]],[[192,0,-170,32,1],[64,49152,0,32,1],[384,49152,-170,32,1],[64,16384,0,32,1],[192,16384,-170,32,1],[192,0,170,32,1],[64,16384,0,32,1],[384,16384,170,32,1],[64,49152,0,32,1],[192,49152,192,32,1],[32767,49152,0,256,0]],[[360,49152,-170,32,1],[40,24576,-170,16,1],[192,49152,170,32,1],[12,0,0,16,1],[184,0,170,32,1],[40,8192,170,16,1],[192,49152,170,32,1],[8,0,0,32,1],[184,0,170,32,1],[40,10376,170,16,1],[380,49152,-170,32,1],[39,21572,-170,16,1],[32767,49152,0,256,0]],[[360,16384,170,32,1],[40,40960,170,16,1],[192,16384,-170,32,1],[12,0,0,16,1],[184,0,-170,32,1],[40,57344,-170,16,1],[184,16384,-144,32,1],[20,0,0,32,1],[180,0,-170,32,1],[40,55432,-170,16,1],[384,16384,170,32,1],[32767,49152,0,256,0]],[[460,43008,0,32,1],[528,0,0,32,1],[436,22400,0,32,1],[40,22400,0,16,1],[32767,49152,0,256,0]],[[256,32768,0,32,1],[456,55552,0,32,1],[464,10240,0,32,1],[232,32768,0,32,1],[40,32768,0,16,1],[32767,49152,0,256,0]],[[316,39424,0,32,1],[316,59136,0,32,1],[316,6656,0,32,1],[296,25792,0,32,1],[38,25792,0,16,1],[32767,49152,0,256,0]],[[256,32768,0,32,1],[392,49152,0,32,1],[524,0,0,32,1],[392,16384,0,32,1],[256,32768,0,32,1],[32767,49152,0,256,0]],[[640,32768,0,32,1],[1024,49152,0,32,1],[1280,0,0,32,1],[1024,16384,0,32,1],[640,32768,0,32,1],[32767,49152,0,256,0]],[[640,32768,0,32,1],[1024,49152,0,32,1],[640,0,0,32,1],[1024,16384,0,32,1],[640,0,0,32,1],[1024,49152,0,32,1],[640,32768,0,32,1],[1024,16384,0,32,1],[32767,49152,0,256,0]],[[384,32768,0,32,1],[602,49152,109,64,1],[376,32768,0,32,1],[32767,49152,0,256,0]],[[384,0,0,32,1],[602,49152,-109,64,1],[376,0,0,32,1],[32767,49152,0,256,0]],[[512,32768,0,32,1],[724,57344,0,64,1],[1024,16384,0,32,1],[512,32768,0,32,1],[32767,49152,0,256,0]],[[512,0,0,32,1],[724,40960,0,64,1],[1024,16384,0,32,1],[512,0,0,32,1],[32767,49152,0,256,0]],[[640,32768,0,32,1],[1024,49152,0,32,1],[1024,16384,0,32,1],[640,0,0,32,1],[32767,49152,0,256,0]],[[640,0,0,32,1],[1024,49152,0,32,1],[1024,16384,0,32,1],[640,32768,0,32,1],[32767,49152,0,256,0]],[[512,16384,0,16,1],[128,16384,0,0,1],[512,49152,0,96,1],[1296,16384,0,32,1],[32767,49152,0,256,0]],[[1280,49152,0,32,2113],[32767,49152,0,256,2112]],[[1280,49152,0,32,2081],[32767,49152,0,256,2080]],[[1280,49152,0,32,2049],[32767,49152,0,256,2048]]];
+  var BOSS_SPEED_FACTOR = [1, 2, 3, 4, 6, 8, 10, 14];
+  // Engine boss coordinates -> runtime screen pixels. The engine works in a
+  // 320x224 space whose playfield is the 224-px band at 48..272 (lateral)
+  // and whose boss parks at scroll 56; the runtime's playfield is the same
+  // 224 px wide but roughly twice as tall, so lateral maps 1:1 into the
+  // centred band and scroll offsets from the park are doubled.
+  var BOSS_ENGINE_PARK_LATERAL = 160;
+  var BOSS_ENGINE_PARK_SCROLL = 56;
+  function bossEngineX(scene, lateral) {
+    var GW = scene.scale ? scene.scale.width : 256;
+    return lateral - 48 + (GW - 224) / 2;
+  }
+  function bossEngineY(parkY, scroll) {
+    return parkY + (scroll - BOSS_ENGINE_PARK_SCROLL) * 2;
+  }
+  // The engine's approach primitive (+0x1A6B4) sets a CONSTANT velocity of
+  // distance/256 px per frame (k=1 on arrival, k=1/2 on the death glide,
+  // floored at 0.5 px/f), so a glide takes ~256 frames whatever the
+  // distance — 4.3 s in, 8.5 s out.
+  function bossGlideMs(distPx, k) {
+    var v = Math.max(0.5, distPx * k / 256);
+    return Math.min(12000, distPx / v / 60 * 1000);
+  }
+  // Entrance / death flourishes from the record's byte 6 / byte 7 low
+  // nibbles: a ~256-frame spin settling to upright, and a zoom that grows
+  // or shrinks into place.
+  function bossSpinTween(scene, boss, spec, ms, dying) {
+    if (!spec.spin) return;
+    // Phaser wraps `rotation` on assignment, so the spin rides a plain proxy
+    // value and is written through each frame: a full turn settling upright
+    // on arrival, an accelerating tumble on death.
+    var dir = spec.spinReverse ? 1 : -1;
+    var spin = { v: dying ? 0 : dir * Math.PI * 2 };
+    scene.tweens.add({
+      targets: spin,
+      v: dying ? dir * Math.PI * 6 : 0,
+      duration: ms,
+      ease: dying ? "Quad.easeIn" : "Sine.easeOut",
+      onUpdate: function() {
+        if (boss.active) boss.rotation = spin.v;
+      }
+    });
+  }
+  function bossZoomTween(scene, boss, spec, ms, dying) {
+    if (!spec.zoom) return;
+    if (dying) {
+      // constant-rate grow or shrink out of the fight
+      var to = spec.zoomFromLarge ? 0.05 : 2.6;
+      scene.tweens.add({ targets: boss, scaleX: to, scaleY: to, duration: ms, ease: "Linear" });
+    } else {
+      // 4.0x -> 1.0x, or 0 -> 1.0x, over the same 256 frames as the glide
+      boss.setScale(spec.zoomFromLarge ? 4 : 0.02);
+      scene.tweens.add({ targets: boss, scaleX: 1, scaleY: 1, duration: ms, ease: "Linear" });
+    }
+  }
+  function initBossMove(st, pattern, boss) {
+    var script = DEZA_BOSS_SCRIPTS[(pattern.moveScript || 0) & 31];
+    var keep = !!(st.mv && st.mv.liveContinue && st.mv.scriptId === (pattern.moveScript & 31));
+    if (st.mv && !keep && st.mv.anchor) {
+      boss.x = st.mv.anchor.x;
+      boss.y = st.mv.anchor.y;
+    }
+    st.mv = {
+      scriptId: (pattern.moveScript || 0) & 31,
+      script,
+      factor: BOSS_SPEED_FACTOR[pattern.moveSpeed & 7],
+      step: 0,
+      counter: -1,
+      heading: keep && st.mv ? st.mv.heading : 0,
+      keepHeading: keep,
+      turn: 0,
+      speed: 0,
+      flags: 0,
+      done: false,
+      liveContinue: false,
+      anchor: st.mv && st.mv.anchor ? st.mv.anchor : { x: boss.x, y: boss.y }
+    };
+  }
+  // One Saturn frame of the boss movement interpreter (engine +0x1A2A4).
+  function dezaBossMove(scene, st, boss) {
+    var mv = st.mv;
+    if (!mv || !mv.script || mv.done) return;
+    if (--mv.counter < 0) {
+      var s = mv.script[mv.step];
+      if (!s || (s[4] & 3) === 0) {
+        mv.flags = s ? s[4] : 0;
+        // Terminator: live-tracking scripts keep their track bits and skip
+        // the park snap; everything else returns to the anchor.
+        if (mv.flags & 0x800) mv.liveContinue = true;
+        else {
+          boss.x = mv.anchor.x;
+          boss.y = mv.anchor.y;
+        }
+        mv.done = true;
+        return;
+      }
+      mv.flags = s[4];
+      mv.counter = Math.max(1, Math.floor(s[0] / mv.factor));
+      if (!mv.keepHeading) mv.heading = s[1];
+      mv.keepHeading = false;
+      mv.turn = s[2] * mv.factor / 2;
+      mv.speed = s[3] * mv.factor;
+      mv.step++;
+    } else if (mv.turn && !(mv.flags & 0x860)) {
+      mv.heading = (mv.heading + mv.turn) % 65536;
+      if (mv.heading < 0) mv.heading += 65536;
+    }
+    var v = mv.speed / 256;
+    var vx = 0;
+    var vy = 0;
+    var player = scene.playerSprite;
+    if (mv.flags & 0x20 && player) {
+      if (Math.abs(boss.x - player.x) >= 8) vx = (boss.x >= player.x ? 1 : -1) * v / 2;
+    } else if (mv.flags & 0x40 && player) {
+      if (Math.abs(boss.y - player.y) >= 8) vy = (boss.y > player.y ? -1 : 1) * v / 2;
+    } else {
+      if (mv.flags & 0x800 && player) {
+        var want = Math.atan2(-(player.y - boss.y), player.x - boss.x) / (Math.PI * 2) * 65536;
+        want = (want % 65536 + 65536) % 65536;
+        var diff = want - mv.heading;
+        if (diff > 32768) diff -= 65536;
+        if (diff < -32768) diff += 65536;
+        mv.heading += Math.abs(diff) <= 448 ? diff : diff > 0 ? 448 : -448;
+        mv.heading = (mv.heading % 65536 + 65536) % 65536;
+      }
+      // The engine writes cos(heading)*speed to the LATERAL velocity array
+      // and sin(heading)*speed to the SCROLL one, and the object walker does
+      // lateral += cos, scroll -= sin (+0x7930). So heading 0 = screen
+      // RIGHT, 0x4000 = up, 0x8000 = left, 0xC000 = straight down.
+      var th = mv.heading * Math.PI * 2 / 65536;
+      vx = Math.cos(th) * v;
+      vy = -Math.sin(th) * v;
+    }
+    var GW = scene.scale ? scene.scale.width : 256;
+    var GH = scene.scale ? scene.scale.height : 480;
+    boss.x = Math.max(24, Math.min(GW - 24, boss.x + vx));
+    boss.y = Math.max(32, Math.min(GH * 0.72, boss.y + vy));
+  }
   function fpKey(fp) {
     var rec = fp.spawn ? fp.spawn.record : null;
     return fp.type + ":" + rec + ":" + fp.dx + ":" + fp.dy;
@@ -3462,6 +4577,9 @@
     st.partRespawn = {};
     clearBeams(st);
     if (!st.pattern) return;
+    if (scene.bossSprite && scene.bossSprite.active) {
+      initBossMove(st, st.pattern, scene.bossSprite);
+    }
     var wanted = {};
     st.pattern.firePoints.forEach(function(fp) {
       if ((fp.type === 3 || fp.type === 4) && fp.spawn) wanted[fpKey(fp)] = fp;
@@ -3490,6 +4608,25 @@
     return null;
   }
   function bossWeapon(scene, weapon) {
+    // The save's own bullet art + config for this global type, when painted.
+    var bullets = scene.recipe && scene.recipe.dezaemonBullets;
+    var art = bullets && bullets.art && bullets.art[weapon];
+    if (art && art.length) {
+      var atlas = scene.textures.get("game_asset");
+      if (atlas && atlas.has(art[0])) {
+        var cfg = bullets.configs && bullets.configs[weapon];
+        return {
+          speed: cfg && Number.isFinite(cfg.speedAdd)
+            ? (dezaRank(scene) * 4 / 512 + cfg.speedAdd) * 2
+            : DEZA_BOSS_BULLET.speed,
+          damage: 1,
+          hp: 1,
+          score: 0,
+          spgage: 0,
+          texture: art
+        };
+      }
+    }
     var pd = weapon === 1 ? scene.bossProjDataB : weapon === 2 ? scene.bossProjDataC : scene.bossProjDataA;
     return pd && pd.texture && pd.texture.length ? pd : DEZA_BOSS_BULLET;
   }
@@ -3522,25 +4659,31 @@
     var boss = scene.bossSprite;
     var x = boss.x + fp.dx;
     var y = boss.y + fp.dy;
-    var dirX = 0;
-    var dirY = 1;
+    // The boss fire executor indexes the SAME 16-entry geometry table the
+    // zako shooter uses (param bits0-3 = shot function); 0 is the empty
+    // routine. Boss nibbles 9/10/11 route to boss burst handlers on
+    // hardware (untraced) — their geometry entries stand in here.
+    var fn = fp.shot ? fp.shot.fn : 1;
+    if (fn === 0) return;
+    var base = Math.PI; // boss heading: straight down
     if (fp.shot && fp.shot.aimed && scene.playerSprite) {
-      var dx = scene.playerSprite.x - x;
-      var dy = scene.playerSprite.y - y;
-      var d = Math.sqrt(dx * dx + dy * dy) || 1;
-      dirX = dx / d;
-      dirY = dy / d;
+      base = Math.atan2(scene.playerSprite.x - x, -(scene.playerSprite.y - y));
     }
     var projData = bossWeapon(scene, fp.shot ? fp.shot.weapon : 0);
-    spawnDezaBossBullet(
-      scene,
-      x,
-      y,
-      dirX,
-      dirY,
-      projData,
-      projData === DEZA_BOSS_BULLET ? 8368895 : 0
-    );
+    var tint = projData === DEZA_BOSS_BULLET ? 8368895 : 0;
+    var deltas;
+    if (fn === 11) {
+      deltas = [Math.floor(Math.random() * 32) - 16];
+    } else if (fn === 12) {
+      scene._dezaBossSpiral = ((scene._dezaBossSpiral || 0) + 1) & 15;
+      deltas = [SPIRAL_DELTAS[scene._dezaBossSpiral]];
+    } else {
+      deltas = GEOMETRY_SPREADS[fn] || [0];
+    }
+    for (var di = 0; di < deltas.length; di++) {
+      var a = base + deltas[di] * ANGLE_UNIT;
+      spawnDezaBossBullet(scene, x, y, Math.sin(a), -Math.cos(a), projData, tint);
+    }
   }
   function fireDezaFlame(scene, fp) {
     var boss = scene.bossSprite;
@@ -3630,20 +4773,21 @@
       }
       activatePattern(scene, st, playlistPattern(b, band, 0));
     } else {
+      // Hardware advances the 4-entry playlist when the pattern's movement
+      // script hits its terminator — pattern length IS the script length.
+      // The old fixed timer stays as the fallback for a record with no
+      // usable script state.
       st.entryAge++;
-      if (st.entryAge >= BOSS_ENTRY_FRAMES) {
+      var scriptOver = st.mv ? st.mv.done : st.entryAge >= BOSS_ENTRY_FRAMES;
+      if (scriptOver) {
         st.entryAge = 0;
         st.entryIdx = st.entryIdx + 1 & 3;
         activatePattern(scene, st, playlistPattern(b, st.bandIdx, st.entryIdx));
       }
     }
-    var pattern = st.pattern;
-    if (pattern && pattern.moveScript > 0 && pattern.moveSpeed > 0 && !scene.bossEntering) {
-      var GW16 = scene.scale ? scene.scale.width : 256;
-      var amp = Math.min(10 + pattern.moveSpeed * 8, (GW16 - boss.width) / 2);
-      boss.x = GW16 / 2 + Math.sin(st.age * (6e-3 + pattern.moveSpeed * 2e-3)) * amp;
-    }
+    if (!scene.bossEntering) dezaBossMove(scene, st, boss);
     if (b.rotate) boss.rotation += 0.02;
+    var pattern = st.pattern;
     updateDezaBeams(scene, st);
     if (!pattern) return;
     st.tickCnt++;
@@ -3762,6 +4906,106 @@
     }
     return out;
   }
+  // ---- Dezaemon BGM: auto-accompaniment and real tone-bank voices ---------
+  //
+  // Two pieces of engine-fixed data a save cannot carry, both traced out of the
+  // retail binaries (see packages/shmup-engine/data/):
+  //
+  //  * DEZA_ACCOMP — the kernel ROM auto-accompaniment pattern table
+  //    (0KERNEL.BIN +0x1B490): 1260 rows x 16 step bytes. A measure's control
+  //    bytes pick seven consecutive rows, one per accompaniment channel:
+  //      row = ctrl0*140 + (ctrl1*5 + ((ctrl2 & 0x7F) >> 1)) * 7 + channel
+  //    A step byte is 0 = rest, bit7 = tie, else an absolute note in the same
+  //    scale the composed parts use. ctrl3 indexes a signed transpose applied
+  //    to channels 0-3 only, and every channel sounds instrument 60 + ctrl0.
+  //
+  //  * DEZA_BGM_VOICES — 116 tone-bank voices as HARMONIC PROFILES, derived by
+  //    spectral analysis of the retail sample bank. The samples themselves are
+  //    disc content and are not here (and never should be); what ships is the
+  //    analysis: sixteen harmonic amplitudes, an envelope, level and pan. That
+  //    is enough to rebuild each instrument as a WebAudio PeriodicWave, which
+  //    is far closer to the Saturn than the four fixed square/triangle/noise
+  //    voices this runtime used before.
+  var DEZA_ACCOMP_B64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAgICAgICAgICAgICAgIAAgICAgICAgICAgICAgICAAICAgICAgICAgICAgICAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgICAgICAgICAgICAgICAAICAgICAgICAgICAgICAgACAgICAgICAgICAgICAgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAICAgICAgICAgICAgICAgACAgICAgICAgICAgICAgIAAgICAgICAgICAgICAgICAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAgICAgICAgICAgICAgIAAgICAgICAgICAgICAgICAAICAgICAgICAgICAgICAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgICAgICAgICAgICAgICAAICAgICAgICAgICAgICAgACAgICAgICAgICAgICAgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwMEgAMDBIADAwSAAwMEgACAgICAgICAgICAgICAgIAAgICAAYAAgICAgIABgACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDBIADAwSAAwMEgAMDBIAAgICAgICAgICAgICAgICAAICAgAGAAICAgICAAYAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAwSAAwMEgAMDBIADAwSAAICAgICAgICAgICAgICAgACAgIABgACAgICAgAGAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwMEgAMDBIADAwSAAwMEgACAgICAgICAgICAgICAgIAAgICAAYAAgICAgIABgACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDBIADAwSAAwMEgAMDBIAAgICAgICAgICAgICAgICAAICAgAGAAICAgICAAYAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAICAAwCAgAMAgIADAASAAICAgICAgICAgICAgICAgAGAAICAgICAgICAgICAgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwCAgAMAgIADAICAAwAEgACAgICAgICAgICAgICAgIABgACAgICAgICAgICAgICAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAgIADAICAAwCAgAMABIAAgICAgICAgICAgICAgICAAYAAgICAgICAgICAgICAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAICAAwCAgAMAgIADAASAAICAgICAgICAgICAgICAgAGAAICAgICAgICAgICAgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwCAgAMAgIADAICAAwAEgACAgICAgICAgICAgICAgIABgACAgICAgICAgICAgICAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAwADAAMAAwADAAMABIAAgICAAoCAAICAgIACgIAAAYAAgICAgIABgAGAAICAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAMAAwADAAMAAwADAASAAICAgAKAgACAgICAAoCAAAGAAICAgICAAYABgACAgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwADAAMAAwADAAMAAwAEgACAgIACgIAAgICAgAKAgAABgACAgICAgAGAAYAAgICAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAwADAAMAAwADAAMABIAAgICAAoCAAICAgIACgIAAAYAAgICAgIABgAGAAICAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAMAAwADAAMAAwADAASAAICAgAKAgACAgICAAoCAAAGAAICAgICAAYABgACAgIBbgICAgICAgICAgICAgICASICAgICAgICAgICAgICAgDw8JDw8JIA8PDwkPDwkgDwKDAwMgAyADIAMgAyADIAMA4ADgAOAA4ADgAOAA4ADgACAgIACgIAAAICAgAKAgAABgACAgICAgAGAAYAAgICAW4CAgICAgICAgICAgICAgEiAgICAgICAgICAgICAgIAkPDwkPDwkPDwkPDwkPCQ8CgwMDIAMgAyADIAMgAyADAOAA4ADgAOAA4ADgAOAA4AAgICAAoCAAACAgIACgIAAAYAAgICAgIABgAGAAICAgFuAgICAgICAgICAgICAgIBIgICAgICAgICAgICAgICAPDwnPCckPCKAPCQ8JyKAPAoMDAyADIAMgAyADIAMgAwDgAOAA4ADgAOAA4ADgAOAAICAgAKAgAAAgICAAoCAAAGAAICAgICAAYABgACAgIBbgICAgICAgICAgICAgICASICAgICAgICAgICAgICAgCIkPDw8PCIkPDw8PCIkPDwKDAwMgAyADIAMgAyADIAMA4ADgAOAA4ADgAOAA4ADgACAgIACgIAAAICAgAKAgAABgACAgICAgAGAAYAAgICAWoCAgICAgICAgICAgICAgEiAgICAgICAgICAgICAgIA8PCc8PDwiPDw8Jzw8PCI8CgwMDIAMgAyADIAMgAyADAOAA4ADgAOAA4ADgAOAA4AAgICAAoCAAACAgIACgIAAAYAAgICAgIABgAGAAICAgFuAgICAgICAgICAgICAgIBIgICAgICAgICAgICAgICAPDwkPDwkgDw8PCQ8PCSAPAyADIAMCgwPgA8RgIARCoADgAOAA4ADgAOAA4ADgAOAAICAgAKAgAACAoCAAoACAgGAAAGAAAGAAIABgACAgIBbgICAgICAgICAgICAgICASICAgICAgICAgICAgICAgCQ8PCQ8PCQ8PCQ8PCQ8JDwMgAyADAoMD4APEYCAEQqAA4ADgAOAA4ADgAOAA4ADgACAgIACgIAAAgKAgAKAAgIBgAABgAABgACAAYAAgICAW4CAgICAgICAgICAgICAgEiAgICAgICAgICAgICAgIA8PCc8JyQ8IoA8JDwnIoA8DIAMgAwKDA+ADxGAgBEKgAOAA4ADgAOAA4ADgAOAA4AAgICAAoCAAAICgIACgAICAYAAAYAAAYAAgAGAAICAgFuAgICAgICAgICAgICAgIBIgICAgICAgICAgICAgICAIiQ8PDw8IiQ8PDw8IiQ8PAyADIAMCgwPgA8RgIARCoADgAOAA4ADgAOAA4ADgAOAAICAgAKAgAACAoCAAoACAgGAAAGAAAGAAIABgACAgIBagICAgICAgICAgICAgICASICAgICAgICAgICAgICAgDw8Jzw8PCI8PDwnPDw8IjwMgAyADAoMD4APEoCAEgqAA4ADgAOAA4ADgAOAA4ADgACAgIACgIAAAgKAgAKAAgIBgAABgAABgACAAYAAgICAW4CAgICAgICAgICAgICAgEiAgICAgICAgICAgICAgIA8PCQ8PCSAPDw8JDw8JIA8CgwMDIAMCgwMDIAMCgwMgAOAA4ADgAOAA4ADgAOAA4AAgAKAgAACgIAAAoCAAAKAAYAAgAEBgACAAYAAgAGAAFuAgICAgICAgICAgICAgIBIgICAgICAgICAgICAgICAJDw8JDw8JDw8JDw8JDwkPAoMDAyADAoMDAyADAoMDIADgAOAA4ADgAOAA4ADgAOAAIACgIAAAoCAAAKAgAACgAGAAIABAYAAgAGAAIABgABbgICAgICAgICAgICAgICASICAgICAgICAgICAgICAgDw8JzwnJDwigDwkPCcigDwKDAwMgAwKDAwMgAwKDAyAA4ADgAOAA4ADgAOAA4ADgACAAoCAAAKAgAACgIAAAoABgACAAQGAAIABgACAAYAAW4CAgICAgICAgICAgICAgEiAgICAgICAgICAgICAgIAiJDw8PDwiJDw8PDwiJDw8CgwMDIAMCgwMDIAMCgwMgAOAA4ADgAOAA4ADgAOAA4AAgAKAgAACgIAAAoCAAAKAAYAAgAEBgACAAYAAgAGAAFqAgICAgICAgICAgICAgIBIgICAgICAgICAgICAgICAPDwnPDw8Ijw8PCc8PDwiPAoMDAyADAoMDAyADAoMDIADgAOAA4ADgAOAA4ADgAOAAIACgIAAAoCAAAKAgAACgAGAAIABAYAAgAGAAIABgABbgICAgICAgICAgICAgICASICAgICAgICAgICAgICAgDw8JDw8JIA8PDwkPDwkgDwMDAwMCgwPERITChMRDwwKA4ADgAOAA4ADgAOAA4ADgACAAoCAAAICAgKAAgICAgIBgAABgAGAAAGAAIABgACAW4CAgICAgICAgICAgICAgEiAgICAgICAgICAgICAgIAkPDwkPDwkPDwkPDwkPCQ8DAwMDAoMDxESEwoTEQ8MCgOAA4ADgAOAA4ADgAOAA4AAgAKAgAACAgICgAICAgICAYAAAYABgAABgACAAYAAgFuAgICAgICAgICAgICAgIBIgICAgICAgICAgICAgICAPDwnPCckPCKAPCQ8JyKAPAwMDAwKDA8REhMKExEPDAoDgAOAA4ADgAOAA4ADgAOAAIACgIAAAgICAoACAgICAgGAAAGAAYAAAYAAgAGAAIBbgICAgICAgICAgICAgICASICAgICAgICAgICAgICAgCIkPDw8PCIkPDw8PCIkPDwMDAwMCgwPERITChMRDwwKA4ADgAOAA4ADgAOAA4ADgACAAoCAAAICAgKAAgICAgIBgAABgAGAAAGAAIABgACAWoCAgICAgICAgICAgICAgEiAgICAgICAgICAgICAgIA8PCc8PDwiPDw8Jzw8PCI8DAwMDAoMDxAREgoSEQ8MCgOAA4ADgAOAA4ADgAOAA4AAgAKAgAACAgICgAICAgICAYAAAYABgAABgACAAYAAgEOAgICAgEOAgICAgICAgIA0gICAgIA0gICAgICAgICAJICAgICAIYCAgICAgICAgAyADIAMgAyADIAMgAyADIAEAAQABAAEAAQABAAEAAaAAICAgAKAgAAAgICAAoCAAAGAAICAgICAAYABgACAgIBDgICAgIBDgICAgICAgICANICAgICANICAgICAgICAgCaAgICAgCaAgICAgICAgIAMgAyADIAMgAyADIAMgAyABAAEAAQABAAEAAQABAAGgACAgIACgIAAAICAgAKAgAABgACAgICAgAGAAYAAgICAQ4CAgICAQ4CAgICAgICAgDOAgICAgDOAgICAgICAgIAigICAgIAmgICAgICAgICADIAMgAyADIAMgAyADIAMgAQABAAEAAQABAAEAAQABoAAgICAAoCAAACAgIACgIAAAYAAgICAgIABgAGAAICAgEOAgICAgEOAgICAgICAgIA0gICAgIA0gICAgICAgICAI4CAgICAJoCAgICAgICAgAyADIAMgAyADIAMgAyADIAEAAQABAAEAAQABAAEAAaAAICAgAKAgAAAgICAAoCAAAGAAICAgICAAYABgACAgIBCgICAgIBCgICAgICAgICAM4CAgICAM4CAgICAgICAgCGAgICAgCGAgICAgICAgIAMgAyADIAMgAyADIAMgAyABAAEAAQABAAEAAQABAAGgACAgIACgIAAAICAgAKAgAABgACAgICAgAGAAYAAgICAQ4CAgICAQ4CAgICAgICAgDSAgICAgDSAgICAgICAgIAkgICAgIAhgICAgICAgICADIAMgAyADIAMgAyADIAMgAQDBQMEAwUDBAMFAwUDBoAAgICAAoCAAACAgIACgIAAAYAAgICAgIABgAGAAICAgEOAgICAgEOAgICAgICAgIA0gICAgIA0gICAgICAgICAJoCAgICAJoCAgICAgICAgAyADIAMgAyADIAMgAyADIAEAwUDBAMFAwQDBQMFAwaAAICAgAKAgAAAgICAAoCAAAGAAICAgICAAYABgACAgIBDgICAgIBDgICAgICAgICAM4CAgICAM4CAgICAgICAgCKAgICAgCaAgICAgICAgIAMgAyADIAMgAyADIAMgAyABAMFAwQDBQMEAwUDBQMGgACAgIACgIAAAICAgAKAgAABgACAgICAgAGAAYAAgICAQ4CAgICAQ4CAgICAgICAgDSAgICAgDSAgICAgICAgIAjgICAgIAmgICAgICAgICADIAMgAyADIAMgAyADIAMgAQDBQMEAwUDBAMFAwUDBoAAgICAAoCAAACAgIACgIAAAYAAgICAgIABgAGAAICAgEKAgICAgEKAgICAgICAgIAzgICAgIAzgICAgICAgICAIYCAgICAIYCAgICAgICAgAyADIAMgAyADIAMgAyADIAEAwUDBAMFAwQDBQMFAwaAAICAgAKAgAAAgICAAoCAAAGAAICAgICAAYABgACAgIBDgICAgIBDgICAgICAgICANICAgICANICAgICAgICAgCSAgICAgCGAgICAgICAgIAMgAyADIAMgAyADIAMgAyABQMEAwUDBAMFAwQDBQMGgACAgICAgICAgICAgAKAgAABgAABgAABgACAgICAgICAQ4CAgICAQ4CAgICAgICAgDSAgICAgDSAgICAgICAgIAmgICAgIAmgICAgICAgICADIAMgAyADIAMgAyADIAMgAUDBAMFAwQDBQMEAwUDBoAAgICAgICAgICAgIACgIAAAYAAAYAAAYAAgICAgICAgEOAgICAgEOAgICAgICAgIAzgICAgIAzgICAgICAgICAIoCAgICAJoCAgICAgICAgAyADIAMgAyADIAMgAyADIAFAwQDBQMEAwUDBAMFAwaAAICAgICAgICAgICAAoCAAAGAAAGAAAGAAICAgICAgIBDgICAgIBDgICAgICAgICANICAgICANICAgICAgICAgCOAgICAgCaAgICAgICAgIAMgAyADIAMgAyADIAMgAyABQMEAwUDBAMFAwQDBQMGgACAgICAgICAgICAgAKAgAABgAABgAABgACAgICAgICAQoCAgICAQoCAgICAgICAgDOAgICAgDOAgICAgICAgIAhgICAgIAhgICAgICAgICADIAMgAyADIAMgAyADIAMgAUDBAMFAwQDBQMEAwUDBoAAgICAgICAgICAgIACgIAAAYAAAYAAAYAAgICAgICAgEOAgICAgEOAgICAgICAgIA0gICAgIA0gICAgICAgICAJICAgICAIYCAgICAgICAgAyADIAMgAyADIAMgAyADIAFAwQDBQMEAwUDBAMFAwaAAIACgIAAAoCAAAKAgAACgAGAAIABAYAAAYAAgAEBgABDgICAgIBDgICAgICAgICANICAgICANICAgICAgICAgCaAgICAgCaAgICAgICAgIAMgAyADIAMgAyADIAMgAyABQMEAwUDBAMFAwQDBQMGgACAAoCAAAKAgAACgIAAAoABgACAAQGAAAGAAIABAYAAQ4CAgICAQ4CAgICAgICAgDOAgICAgDOAgICAgICAgIAigICAgIAmgICAgICAgICADIAMgAyADIAMgAyADIAMgAUDBAMFAwQDBQMEAwUDBoAAgAKAgAACgIAAAoCAAAKAAYAAgAEBgAABgACAAQGAAEOAgICAgEOAgICAgICAgIA0gICAgIA0gICAgICAgICAI4CAgICAJoCAgICAgICAgAyADIAMgAyADIAMgAyADIAFAwQDBQMEAwUDBAMFAwaAAIACgIAAAoCAAAKAgAACgAGAAIABAYAAAYAAgAEBgABCgICAgIBCgICAgICAgICAM4CAgICAM4CAgICAgICAgCGAgICAgCGAgICAgICAgIAMgAyADIAMgAyADIAMgAyABQMEAwUDBAMFAwQDBQMGgACAAoCAAAKAgAACgIAAAoABgACAAQGAAAGAAIABAYAAW4CAgICAgICAgICAgICAgECAgICAgICAgICAgICAgIAkgICAgICAgICAgICAgICADICAAAyAgAAMgAyAgAAMDACAgICAgICAgICAgICAgIAAgICAgICAgICAgICAgICAAICAgICAgICAgICAgICAgFuAgICAgICAgICAgICAgIBBgICAgICAgICAgICAgICAJICAgICAgICAgICAgICAgAyAgAAMgIAADIAMgIAADAwAgICAgICAgICAgICAgICAAICAgICAgICAgICAgICAgACAgICAgICAgICAgICAgIBbgICAgICAgICAgICAgICAP4CAgICAgICAgICAgICAgCSAgICAgICAgICAgICAgIAMgIAADICAAAyADICAAAwMAICAgICAgICAgICAgICAgACAgICAgICAgICAgICAgIAAgICAgICAgICAgICAgICAWICAgICAgICAgICAgICAgDyAgICAgICAgICAgICAgIAjgICAgICAgICAgICAgICADICAAAyAgAAMgAyAgAAMDACAgICAgICAgICAgICAgIAAgICAgICAgICAgICAgICAAICAgICAgICAgICAgICAgFqAgICAgICAgICAgICAgIA/gICAgICAgICAgICAgICAJICAgICAgICAgICAgICAgAyAgAAMgIAADIAMgIAADAwAgICAgICAgICAgICAgICAAICAgICAgICAgICAgICAgACAgICAgICAgICAgICAgIBbgICAgICAgICAgICAgICAQICAgICAgICAgICAgICAgCSAgICAgICAgICAgICAgIAMgIAADICAAAyADICAAAwMAICAgICAgICAgICAgICAgAWAgACAgICAgICAgICAAwQAgICAgICAgICAgICAgICAW4CAgICAgICAgICAgICAgEGAgICAgICAgICAgICAgIAkgICAgICAgICAgICAgICADICAAAyAgAAMgAyAgAAMDACAgICAgICAgICAgICAgIAFgIAAgICAgICAgICAgAMEAICAgICAgICAgICAgICAgFuAgICAgICAgICAgICAgIA/gICAgICAgICAgICAgICAJICAgICAgICAgICAgICAgAyAgAAMgIAADIAMgIAADAwAgICAgICAgICAgICAgICABYCAAICAgICAgICAgIADBACAgICAgICAgICAgICAgIBYgICAgICAgICAgICAgICAPICAgICAgICAgICAgICAgCOAgICAgICAgICAgICAgIAMgIAADICAAAyADICAAAwMAICAgICAgICAgICAgICAgAWAgACAgICAgICAgICAAwQAgICAgICAgICAgICAgICAWoCAgICAgICAgICAgICAgD+AgICAgICAgICAgICAgIAkgICAgICAgICAgICAgICADICAAAyAgAAMgAyAgAAMDACAgICAgICAgICAgICAgIAFgIAAgICAgICAgICAgAMEAICAgICAgICAgICAgICAgFuAgICAgICAgICAgICAgIBAgICAgICAgICAgICAgICAJICAgICAgICAgICAgICAgAyAgAAMgIAADIAMgIAADAwAgICAgICAgICAgICAgICABQMEAwUDBAMFAwQDBQMEAwCAgICAgICAgICAgICAgIBbgICAgICAgICAgICAgICAQYCAgICAgICAgICAgICAgCSAgICAgICAgICAgICAgIAMgIAADICAAAyADICAAAwMAICAgICAgICAgICAgICAgAUDBAMFAwQDBQMEAwUDBAMAgICAgICAgICAgICAgICAW4CAgICAgICAgICAgICAgD+AgICAgICAgICAgICAgIAkgICAgICAgICAgICAgICADICAAAyAgAAMgAyAgAAMDACAgICAgICAgICAgICAgIAFAwQDBQMEAwUDBAMFAwQDAICAgICAgICAgICAgICAgFiAgICAgICAgICAgICAgIA8gICAgICAgICAgICAgICAI4CAgICAgICAgICAgICAgAyAgAAMgIAADIAMgIAADAwAgICAgICAgICAgICAgICABQMEAwUDBAMFAwQDBQMEAwCAgICAgICAgICAgICAgIBagICAgICAgICAgICAgICAP4CAgICAgICAgICAgICAgCSAgICAgICAgICAgICAgIAMgIAADICAAAyADICAAAwMAICAgICAgICAgICAgICAgAUDBAMFAwQDBQMEAwUDBAMAgICAgICAgICAgICAgICAW4CAgICAgICAgICAgICAgECAgICAgICAgICAgICAgIAkgICAgICAgICAgICAgICADICAAAyAgAAMgAyAgAAMDACAgICAgICAgICAgICAgIACAgIDAwMEBAQFBQUGBgYGAICAgICAgICAgICAgICAgFuAgICAgICAgICAgICAgIBBgICAgICAgICAgICAgICAJICAgICAgICAgICAgICAgAyAgAAMgIAADIAMgIAADAwAgICAgICAgICAgICAgICAAgICAwMDBAQEBQUFBgYGBgCAgICAgICAgICAgICAgIBbgICAgICAgICAgICAgICAP4CAgICAgICAgICAgICAgCSAgICAgICAgICAgICAgIAMgIAADICAAAyADICAAAwMAICAgICAgICAgICAgICAgAICAgMDAwQEBAUFBQYGBgYAgICAgICAgICAgICAgICAWICAgICAgICAgICAgICAgDyAgICAgICAgICAgICAgIAjgICAgICAgICAgICAgICADICAAAyAgAAMgAyAgAAMDACAgICAgICAgICAgICAgIACAgIDAwMEBAQFBQUGBgYGAICAgICAgICAgICAgICAgFqAgICAgICAgICAgICAgIA/gICAgICAgICAgICAgICAJICAgICAgICAgICAgICAgAyAgAAMgIAADIAMgIAADAwAgICAgICAgICAgICAgICAAgICAwMDBAQEBQUFBgYGBgCAgICAgICAgICAgICAgIBDgICAQ4CAgICAQ4CAgICANICAgDSAgICAgDSAgICAgCSAgIAkgICAgIAkgICAgIAMgICAgICAgICAgICAgICAAwMEgAMDAwQDAwSAAwMDBACAgICAgICAgICAgICAgIABgACAgICAgICAgICAgAGAQICAgECAgICAgECAgICAgDCAgIAwgICAgIAwgICAgIAigICAIoCAgICAIoCAgICADICAgICAgICAgICAgICAgAMDBIADAwMEAwMEgAMDAwQAgICAgICAgICAgICAgICAAYAAgICAgICAgICAgIABgEOAgIBDgICAgIBDgICAgIAzgICAM4CAgICAM4CAgICAJICAgCSAgICAgCSAgICAgAyAgICAgICAgICAgICAgIADAwSAAwMDBAMDBIADAwMEAICAgICAgICAgICAgICAgAGAAICAgICAgICAgICAAYBDgICAQ4CAgICAQ4CAgICANICAgDSAgICAgDSAgICAgCOAgIAjgICAgIAjgICAgIAMgICAgICAgICAgICAgICAAwMEgAMDAwQDAwSAAwMDBACAgICAgICAgICAgICAgIABgACAgICAgICAgICAgAGAQoCAgEKAgICAgEKAgICAgDOAgIAzgICAgIAzgICAgIAkgICAJICAgICAJICAgICADICAgICAgICAgICAgICAgAMDBIADAwMEAwMEgAMDAwQAgICAgICAgICAgICAgICAAYAAgICAgICAgICAgIABgEOAgIBDgICAgIBDgICAgIA0gICANICAgICANICAgICAJICAgCSAgICAgCSAgICAgAyAgICAgICAgICAgAyAgIADAwQEgAMEgAMDBASAAwSAAICAgICAgICAgICAgICAgAKAAICAgAGAAYAAgICAAQFAgICAQICAgICAQICAgICAMICAgDCAgICAgDCAgICAgCKAgIAigICAgIAigICAgIAMgICAgICAgICAgIAMgICAAwMEBIADBIADAwQEgAMEgACAgICAgICAgICAgICAgIACgACAgIABgAGAAICAgAEBQ4CAgEOAgICAgEOAgICAgDOAgIAzgICAgIAzgICAgIAkgICAJICAgICAJICAgICADICAgICAgICAgICADICAgAMDBASAAwSAAwMEBIADBIAAgICAgICAgICAgICAgICAAoAAgICAAYABgACAgIABAUOAgIBDgICAgIBDgICAgIA0gICANICAgICANICAgICAI4CAgCOAgICAgCOAgICAgAyAgICAgICAgICAgAyAgIADAwQEgAMEgAMDBASAAwSAAICAgICAgICAgICAgICAgAKAAICAgAGAAYAAgICAAQFCgICAQoCAgICAQoCAgICAM4CAgDOAgICAgDOAgICAgCSAgIAkgICAgIAkgICAgIAMgICAgICAgICAgIAMgICAAwMEBIADBIADAwQEgAMEgACAgICAgICAgICAgICAgIACgACAgIABgAGAAICAgAEBQ4CAgEOAgICAgEOAgICAgDSAgIA0gICAgIA0gICAgIAkgICAJICAgICAJICAgICADICAgICADICAgICAE4CAgAMDAwMEAwMEBIADAwQDAwQAgICAgICAgICAgICAgICAAoACgAECgAEBAQKAAQKAAUCAgIBAgICAgIBAgICAgIAwgICAMICAgICAMICAgICAIoCAgCKAgICAgCKAgICAgAyAgICAgAyAgICAgBOAgIADAwMDBAMDBASAAwMEAwMEAICAgICAgICAgICAgICAgAKAAoABAoABAQECgAECgAFDgICAQ4CAgICAQ4CAgICAM4CAgDOAgICAgDOAgICAgCSAgIAkgICAgIAkgICAgIAMgICAgIAMgICAgIATgICAAwMDAwQDAwQEgAMDBAMDBACAgICAgICAgICAgICAgIACgAKAAQKAAQEBAoABAoABQ4CAgEOAgICAgEOAgICAgDSAgIA0gICAgIA0gICAgIAjgICAI4CAgICAI4CAgICADICAgICADICAgICAE4CAgAMDAwMEAwMEBIADAwQDAwQAgICAgICAgICAgICAgICAAoACgAECgAEBAQKAAQKAAUKAgIBCgICAgIBCgICAgIAzgICAM4CAgICAM4CAgICAJICAgCSAgICAgCSAgICAgAyAgICAgAyAgICAgBKAgIADAwMDBAMDBASAAwMEAwMEAICAgICAgICAgICAgICAgAKAAoABAoABAQECgAECgAFDgICAQ4CAgICAQ4CAgICANICAgDSAgICAgDSAgICAgCSAgIAkgICAgIAkgICAgIAMDAyADIAMgICADIATgICABAMEBAMDBAMDBAMDBAMDBACAgICAgICAgICAgICAgIACAQECgAECgAIBAQKAAQKAQICAgECAgICAgECAgICAgDCAgIAwgICAgIAwgICAgIAigICAIoCAgICAIoCAgICADAwMgAyADICAgAyAE4CAgAQDBAQDAwQDAwQDAwQDAwQAgICAgICAgICAgICAgICAAgEBAoABAoACAQECgAECgEOAgIBDgICAgIBDgICAgIAzgICAM4CAgICAM4CAgICAJICAgCSAgICAgCSAgICAgAwMDIAMgAyAgIAMgBOAgIAEAwQEAwMEAwMEAwMEAwMEAICAgICAgICAgICAgICAgAIBAQKAAQKAAgEBAoABAoBDgICAQ4CAgICAQ4CAgICANICAgDSAgICAgDSAgICAgCOAgIAjgICAgIAjgICAgIAMDAyADIAMgICADIATgICABAMEBAMDBAMDBAMDBAMDBACAgICAgICAgICAgICAgIACAQECgAECgAIBAQKAAQKAQoCAgEKAgICAgEKAgICAgDOAgIAzgICAgIAzgICAgIAkgICAJICAgICAJICAgICADAwMgAyADICAgAyAEoCAgAQDBAQDAwQDAwQDAwQDAwQAgICAgICAgICAgICAgICAAgEBAoABAoACAQECgAECgEOAgICAgICAgICAgICAgIA0gICAgICAgICAgICAgICAJICAgICAgICAgICAgICAgAyAgIAMgICADICAgAyADIAAgICAgICAgICAgICAgICAAgMFAwIFAgMFAgMFAwIDAgGAAICAgICAAYAAgICAgIBDgICAgICAgICAgICAgICANICAgICAgICAgICAgICAgCKAgICAgICAgICAgICAgIAMgICADICAgAyAgIAMgAyAAICAgICAgICAgICAgICAgAIDBQMCBQIDBQIDBQMCAwIBgACAgICAgAGAAICAgICAQ4CAgICAgICAgICAgICAgDOAgICAgICAgICAgICAgIAigICAgICAgICAgICAgICADICAgAyAgIAMgICADIAMgACAgICAgICAgICAgICAgIACAwUDAgUCAwUCAwUDAgMCAYAAgICAgIABgACAgICAgEOAgICAgICAgICAgICAgIA0gICAgICAgICAgICAgICAI4CAgICAgICAgICAgICAgAyAgIAMgICADICAgAyADIAAgICAgICAgICAgICAgICAAgMFAwIFAgMFAgMFAwIDAgGAAICAgICAAYAAgICAgIBCgICAgICAgICAgICAgICAM4CAgICAgICAgICAgICAgCGAgICAgICAgICAgICAgIAMgICADICAgAyAgIAMgAyAAICAgICAgICAgICAgICAgAIDBQMCBQIDBQIDBQMCAwIBgACAgICAgAGAAICAgICAQ4CAgICAgICAgICAgICAgDSAgICAgICAgICAgICAgIAkgICAgICAgICAgICAgICADICADAATABMMgICAgICAgGaAZIBmgGSAZoBkgGaAZIAAgICABICAAICAgIAEgIAAAYAAgIABgAEBgACAgICAgEOAgICAgICAgICAgICAgIA0gICAgICAgICAgICAgICAIoCAgICAgICAgICAgICAgAyAgAwAEwATDICAgICAgIBmgGSAZoBkgGaAZIBmgGSAAICAgASAgACAgICABICAAAGAAICAAYABAYAAgICAgIBDgICAgICAgICAgICAgICAM4CAgICAgICAgICAgICAgCKAgICAgICAgICAgICAgIAMgIAMABMAEwyAgICAgICAZoBkgGaAZIBmgGSAZoBkgACAgIAEgIAAgICAgASAgAABgACAgAGAAQGAAICAgICAQ4CAgICAgICAgICAgICAgDSAgICAgICAgICAgICAgIAjgICAgICAgICAgICAgICADICADAATABMMgICAgICAgGaAZIBmgGSAZoBkgGaAZIAAgICABICAAICAgIAEgIAAAYAAgIABgAEBgACAgICAgEKAgICAgICAgICAgICAgIAzgICAgICAgICAgICAgICAIYCAgICAgICAgICAgICAgAyAgAwAEgASDICAgICAgIBmgGSAZoBkgGaAZIBmgGSAAICAgASAgACAgICABICAAAGAAICAAYABAYAAgICAgIBDgICAgICAgICAgICAgICANICAgICAgICAgICAgICAgCSAgICAgICAgICAgICAgIAMgICAgICAEwyAgICAgICAZWRmgGVkZoBlZGaAZWRmgACAgIAEgIAAgICAgASAgAABgAABgACAgAGAAAGAAICAQ4CAgICAgICAgICAgICAgDSAgICAgICAgICAgICAgIAigICAgICAgICAgICAgICADICAgICAgBMMgICAgICAgGVkZoBlZGaAZWRmgGVkZoAAgICABICAAICAgIAEgIAAAYAAAYAAgIABgAABgACAgEOAgICAgICAgICAgICAgIAzgICAgICAgICAgICAgICAIoCAgICAgICAgICAgICAgAyAgICAgIATDICAgICAgIBlZGaAZWRmgGVkZoBlZGaAAICAgASAgACAgICABICAAAGAAAGAAICAAYAAAYAAgIBDgICAgICAgICAgICAgICANICAgICAgICAgICAgICAgCOAgICAgICAgICAgICAgIAMgICAgICAEwyAgICAgICAZWRmgGVkZoBlZGaAZWRmgACAgIAEgIAAgICAgASAgAABgAABgACAgAGAAAGAAICAQoCAgICAgICAgICAgICAgDOAgICAgICAgICAgICAgIAhgICAgICAgICAgICAgICADICAgICAgBIMgICAgICAgGVkZoBlZGaAZWRmgGVkZoAAgICABICAAICAgIAEgIAAAYAAAYAAgIABgAABgACAgEOAgICAgICAgICAgICAgIA0gICAgICAgICAgICAgICAJICAgICAgICAgICAgICAgAyAgIAQgICAE4CAgBWAgIAAgGaAgIBmgICAZoCAgGaAAICAgASAgACAgICABICAAAGAAICAAICAAYAAgICAgIBDgICAgICAgICAgICAgICANICAgICAgICAgICAgICAgCKAgICAgICAgICAgICAgIAMgICAEICAgBOAgIAVgICAAIBmgICAZoCAgGaAgIBmgACAgIAEgIAAgICAgASAgAABgACAgACAgAGAAICAgICAQ4CAgICAgICAgICAgICAgDOAgICAgICAgICAgICAgIAigICAgICAgICAgICAgICADICAgA+AgIATgICAFYCAgACAZoCAgGaAgIBmgICAZoAAgICABICAAICAgIAEgIAAAYAAgIAAgIABgACAgICAgEOAgICAgICAgICAgICAgIA0gICAgICAgICAgICAgICAI4CAgICAgICAgICAgICAgAyAgIAQgICAE4CAgBWAgIAAgGaAgIBmgICAZoCAgGaAAICAgASAgACAgICABICAAAGAAICAAICAAYAAgICAgIBCgICAgICAgICAgICAgICAM4CAgICAgICAgICAgICAgCGAgICAgICAgICAgICAgIAMgICAD4CAgBKAgIAVgICAAIBmgICAZoCAgGaAgIBmgACAgIAEgIAAgICAgASAgAABgACAgACAgAGAAICAgICAT08AKCgfWFhPTwCAKChYWEBANzcAgB8AgEBANzcAHx8kJCQkJCQkJCQkJCQkJCQkDAAMDAwADAwMAAwMDAAMDAQABAQFgAQEBAQEBAWABAQAgICAgICAgICAgICAgICAAYACgAGAAgIBgAKAAYACAk9PACgoH1hYT08AgCgoWFhAQDc3AIAfAIBAQDc3AB8fIiIiIiIiIiIiIiIiIiIiIgwADAwMAAwMDAAMDAwADAwEAAQEBYAEBAQEBAQFgAQEAICAgICAgICAgICAgICAgAGAAoABgAICAYACgAGAAgJPTwAnJx9XV09PAIAnJ1dXPz83NwCAHwCAPz83NwAfHyQkJCQkJCQkJCQkJCQkJCQMAAwMDAAMDAwADAwMAAwMBAAEBAWABAQEBAQEBYAEBACAgICAgICAgICAgICAgIABgAKAAYACAgGAAoABgAICT08AKCgfWFhPTwCAKChYWEBANzcAgB8AgEBANzcAHx8jIyMjIyMjIyMjIyMjIyMjDAAMDAwADAwMAAwMDAAMDAQABAQFgAQEBAQEBAWABAQAgICAgICAgICAgICAgICAAYACgAGAAgIBgAKAAYACAk5OACcnHldXTk4AgCcnV1c/PzY2AIAeAIA/PzY2AB4eJCQkJCQkJCQkJCQkJCQkJAwADAwMAAwMDAAMDAwADAwEAAQEBYAEBAQEBAQFgAQEAICAgICAgICAgICAgICAgAGAAoABgAICAYACgAGAAgJPTwAoKB9YWE9PAIAoKFhYQEA3NwCAHwCAQEA3NwAfHyQkJCQkJCQkJCQkJCQkJCQMAAwMDAAMDAwADAwMAAwMBYAEAAWABAAFgAQABYAEAACAgIADgACAAICAgAOAAIABgAABgAABgAGAAYAAgICAT08AKCgfWFhPTwCAKChYWEBANzcAgB8AgEBANzcAHx8iIiIiIiIiIiIiIiIiIiIiDAAMDAwADAwMAAwMDAAMDAWABAAFgAQABYAEAAWABAAAgICAA4AAgACAgIADgACAAYAAAYAAAYABgAGAAICAgE9PACcnH1dXT08AgCcnV1c/Pzc3AIAfAIA/Pzc3AB8fJCQkJCQkJCQkJCQkJCQkJAwADAwMAAwMDAAMDAwADAwFgAQABYAEAAWABAAFgAQAAICAgAOAAIAAgICAA4AAgAGAAAGAAAGAAYABgACAgIBPTwAoKB9YWE9PAIAoKFhYQEA3NwCAHwCAQEA3NwAfHyMjIyMjIyMjIyMjIyMjIyMMAAwMDAAMDAwADAwMAAwMBYAEAAWABAAFgAQABYAEAACAgIADgACAAICAgAOAAIABgAABgAABgAGAAYAAgICATk4AJyceV1dOTgCAJydXVz8/NjYAgB4AgD8/NjYAHh4kJCQkJCQkJCQkJCQkJCQkDAAMDAwADAwMAAwMDAAMDAWABAAFgAQABYAEAAWABAAAgICAA4AAgACAgIADgACAAYAAAYAAAYABgAGAAICAgE9PACgoH1hYT08AgCgoWFhAQDc3AIAfAIBAQDc3AB8fJCQkJCQkJCQkJCQkJCQkJAwADAwMAAwMDAAMDAwADAwEBAQABYAEBAQABYAEBAWAAICAgAOAAICAA4AAA4AAgAGAAoAAgAECAYABgACAAQJPTwAoKB9YWE9PAIAoKFhYQEA3NwCAHwCAQEA3NwAfHyIiIiIiIiIiIiIiIiIiIiIMAAwMDAAMDAwADAwMAAwMBAQEAAWABAQEAAWABAQFgACAgIADgACAgAOAAAOAAIABgAKAAIABAgGAAYAAgAECT08AJycfV1dPTwCAJydXVz8/NzcAgB8AgD8/NzcAHx8kJCQkJCQkJCQkJCQkJCQkDAAMDAwADAwMAAwMDAAMDAQEBAAFgAQEBAAFgAQEBYAAgICAA4AAgIADgAADgACAAYACgACAAQIBgAGAAIABAk9PACgoH1hYT08AgCgoWFhAQDc3AIAfAIBAQDc3AB8fIyMjIyMjIyMjIyMjIyMjIwwADAwMAAwMDAAMDAwADAwEBAQABYAEBAQABYAEBAWAAICAgAOAAICAA4AAA4AAgAGAAoAAgAECAYABgACAAQJOTgAnJx5XV05OAIAnJ1dXPz82NgCAHgCAPz82NgAeHiQkJCQkJCQkJCQkJCQkJCQMAAwMDAAMDAwADAwMAAwMBAQEAAWABAQEAAWABAQFgACAgIADgACAgAOAAAOAAIABgAKAAIABAgGAAYAAgAECT08AKCgfWFhPTwCAKChYWEBANzcAgB8AgEBANzcAHx8kJCQkJCQkJCQkJCQkJCQkDAAMDAwADAwMAAwMDAAMDAQEBAAFgAWABAQEBAWABYAAgICAA4AAgAMDAwMDAwMDAYAAAYAAAYABgACAgICAgE9PACgoH1hYT08AgCgoWFhAQDc3AIAfAIBAQDc3AB8fIiIiIiIiIiIiIiIiIiIiIgwADAwMAAwMDAAMDAwADAwEBAQABYAFgAQEBAQFgAWAAICAgAOAAIADAwMDAwMDAwGAAAGAAAGAAYAAgICAgIBPTwAnJx9XV09PAIAnJ1dXPz83NwCAHwCAPz83NwAfHyQkJCQkJCQkJCQkJCQkJCQMAAwMDAAMDAwADAwMAAwMBAQEAAWABYAEBAQEBYAFgACAgIADgACAAwMDAwMDAwMBgAABgAABgAGAAICAgICAT08AKCgfWFhPTwCAKChYWEBANzcAgB8AgEBANzcAHx8jIyMjIyMjIyMjIyMjIyMjDAAMDAwADAwMAAwMDAAMDAQEBAAFgAWABAQEBAWABYAAgICAA4AAgAMDAwMDAwMDAYAAAYAAAYABgACAgICAgE5OACcnHldXTk4AgCcnV1c/PzY2AIAeAIA/PzY2AB4eJCQkJCQkJCQkJCQkJCQkJAwADAwMAAwMDAAMDAwADAwEBAQABYAFgAQEBAQFgAWAAICAgAOAAIADAwMDAwMDAwGAAAGAAAGAAYAAgICAgIBDQ2dDQ0NnQ0NDZ0OAQ2dnNDRYNDQ0WDQ0NFg0gDRYWCQkACQkJAAkJCQAJIAkAIAMgIATE4CADAyAgBMTgIAMeHh5eHh4eXh4eHl4eHl5eACAgIACgIAAgICAgAKAgAABgAABAYAAAQGAAAEBgAABQ0NnQ0NDZ0NDQ2dDgENnZzQ0WDQ0NFg0NDRYNIA0WFgiIgAiIiIAIiIiACKAIgCADICAExOAgAwMgIATE4CADHh4eXh4eHl4eHh5eHh5eXgAgICAAoCAAICAgIACgIAAAYAAAQGAAAEBgAABAYAAAUNDZ0NDQ2dDQ0NnQ4BDZ2czM1czMzNXMzMzVzOAM1dXIiIAIiIiACIiIgAigCIAgAyAgBMTgIAMDICAExOAgAx4eHl4eHh5eHh4eXh4eXl4AICAgAKAgACAgICAAoCAAAGAAAEBgAABAYAAAQGAAAFDQ2dDQ0NnQ0NDZ0OAQ2dnNDRYNDQ0WDQ0NFg0gDRYWCMjACMjIwAjIyMAI4AjAIAMgIATE4CADAyAgBMTgIAMeHh5eHh4eXh4eHl4eHl5eACAgIACgIAAgICAgAKAgAABgAABAYAAAQGAAAEBgAABQkJmQkJCZkJCQmZCgEJmZjMzVzMzM1czMzNXM4AzV1chIQAhISEAISEhACGAIQCADICAEhKAgAwMgIASEoCADHh4eXh4eHl4eHh5eHh5eXgAgICAAoCAAICAgIACgIAAAYAAAQGAAAEBgAABAYAAAUNDZ0NDQ2dDQ0NnQ4BDZ2c0NFg0NDRYNDQ0WDSANFhYJCQAJCQkACQkJAAkgCQAgAyAgBMTgIAMDICAExOAgAx4eQR4eHgDA3h5BHh4eAMDAICAgAKAgACAgICAAoCAAAGAAAEBgAABAYAAAQGAAAFDQ2dDQ0NnQ0NDZ0OAQ2dnNDRYNDQ0WDQ0NFg0gDRYWCIiACIiIgAiIiIAIoAiAIAMgIATE4CADAyAgBMTgIAMeHkEeHh4AwN4eQR4eHgDAwCAgIACgIAAgICAgAKAgAABgAABAYAAAQGAAAEBgAABQ0NnQ0NDZ0NDQ2dDgENnZzMzVzMzM1czMzNXM4AzV1ciIgAiIiIAIiIiACKAIgCADICAExOAgAwMgIATE4CADHh5BHh4eAMDeHkEeHh4AwMAgICAAoCAAICAgIACgIAAAYAAAQGAAAEBgAABAYAAAUNDZ0NDQ2dDQ0NnQ4BDZ2c0NFg0NDRYNDQ0WDSANFhYIyMAIyMjACMjIwAjgCMAgAyAgBMTgIAMDICAExOAgAx4eQR4eHgDA3h5BHh4eAMDAICAgAKAgACAgICAAoCAAAGAAAEBgAABAYAAAQGAAAFCQmZCQkJmQkJCZkKAQmZmMzNXMzMzVzMzM1czgDNXVyEhACEhIQAhISEAIYAhAIAMgIASEoCADAyAgBISgIAMeHkEeHh4AwN4eQR4eHgDAwCAgIACgIAAgICAgAKAgAABgAABAYAAAQGAAAEBgAABQ0NnQ0NDZ0NDQ2dDgENnZzQ0WDQ0NFg0NDRYNIA0WFgkJAAkJCQAJCQkACSAJACADICAExOAgAwMgIATE4CADHp6ent6e3p7e3p6e3p7ensAgICAAoCAAICAgIACgIAAAYAAAQGAAAEBgAABAYAAAUNDZ0NDQ2dDQ0NnQ4BDZ2c0NFg0NDRYNDQ0WDSANFhYIiIAIiIiACIiIgAigCIAgAyAgBMTgIAMDICAExOAgAx6enp7ent6e3t6ent6e3p7AICAgAKAgACAgICAAoCAAAGAAAEBgAABAYAAAQGAAAFDQ2dDQ0NnQ0NDZ0OAQ2dnMzNXMzMzVzMzM1czgDNXVyIiACIiIgAiIiIAIoAiAIAMgIATE4CADAyAgBMTgIAMenp6e3p7ent7enp7ent6ewCAgIACgIAAgICAgAKAgAABgAABAYAAAQGAAAEBgAABQ0NnQ0NDZ0NDQ2dDgENnZzQ0WDQ0NFg0NDRYNIA0WFgjIwAjIyMAIyMjACOAIwCADICAExOAgAwMgIATE4CADHp6ent6e3p7e3p6e3p7ensAgICAAoCAAICAgIACgIAAAYAAAQGAAAEBgAABAYAAAUJCZkJCQmZCQkJmQoBCZmYzM1czMzNXMzMzVzOAM1dXISEAISEhACEhIQAhgCEAgAyAgBISgIAMDICAEhKAgAx6enp7ent6e3t6ent6e3p7AICAgAKAgACAgICAAoCAAAGAAAEBgAABAYAAAQGAAAFDQ2dDQ0NnQ0NDZ0OAQ2dnNDRYNDQ0WDQ0NFg0gDRYWCQkACQkJAAkJCQAJIAkAIAMgIATE4CADAyAgBMTgIAMBoAGgAUFgAaABoAGBYAFgAACAoACgAICgAICgAKAAgIBgAABAYAAAQGAAAEBgAABQ0NnQ0NDZ0NDQ2dDgENnZzQ0WDQ0NFg0NDRYNIA0WFgiIgAiIiIAIiIiACKAIgCADICAExOAgAwMgIATE4CADAaABoAFBYAGgAaABgWABYAAAgKAAoACAoACAoACgAICAYAAAQGAAAEBgAABAYAAAUNDZ0NDQ2dDQ0NnQ4BDZ2czM1czMzNXMzMzVzOAM1dXIiIAIiIiACIiIgAigCIAgAyAgBMTgIAMDICAExOAgAwGgAaABQWABoAGgAYFgAWAAAICgAKAAgKAAgKAAoACAgGAAAEBgAABAYAAAQGAAAFDQ2dDQ0NnQ0NDZ0OAQ2dnNDRYNDQ0WDQ0NFg0gDRYWCMjACMjIwAjIyMAI4AjAIAMgIATE4CADAyAgBMTgIAMBoAGgAUFgAaABoAGBYAFgAACAoACgAICgAICgAKAAgIBgAABAYAAAQGAAAEBgAABQkJmQkJCZkJCQmZCgEJmZjMzVzMzM1czMzNXM4AzV1chIQAhISEAISEhACGAIQCADICAEhKAgAwMgIASEoCADAaABoAFBYAGgAaABgWABYAAAgKAAoACAoACAoACgAICAYAAAQGAAAEBgAABAYAAAUOAgEMAgEOAgIBDAIBDgIA0gIA0AIA0gICANACANICAJICAJACAJICAgCQAgCSAgAyAgIAMgICADICAgAyAE4BkAGUAZGZngGQAZQBkZmeAAICAgICAgICAgICAgICAgAGAgAABgIAAAYCAAAGAgABDgIBDAIBDgICAQwCAQ4CANICANACANICAgDQAgDSAgCKAgCIAgCKAgIAiAIAigIAMgICADICAgAyAgIAMgBOAZABlAGRmZ4BkAGUAZGZngACAgICAgICAgICAgICAgIABgIAAAYCAAAGAgAABgIAAQ4CAQwCAQ4CAgEMAgEOAgDOAgDMAgDOAgIAzAIAzgIAkgIAkAIAkgICAJACAJICADICAgAyAgIAMgICADIATgGQAZQBkZmeAZABlAGRmZ4AAgICAgICAgICAgICAgICAAYCAAAGAgAABgIAAAYCAAEOAgEMAgEOAgIBDAIBDgIA0gIA0AIA0gICANACANICAI4CAIwCAI4CAgCMAgCOAgAyAgIAMgICADICAgAyAE4BkAGUAZGZngGQAZQBkZmeAAICAgICAgICAgICAgICAgAGAgAABgIAAAYCAAAGAgABCgIBCAIBCgICAQgCAQoCAM4CAMwCAM4CAgDMAgDOAgCSAgCQAgCSAgIAkAIAkgIAMgICADICAgAyAgIAMgBKAZABlAGRmZ4BkAGUAZGZngACAgICAgICAgICAgICAgIABgIAAAYCAAAGAgAABgIAAQ4CAQwCAQ4CAgEMAgEOAgDSAgDQAgDSAgIA0AIA0gIAkgIAkAIAkgICAJACAJICADICAgAyAgIAMgICADIATgAAAAwAAAAMAAAADAAAAAwAAgICAAoCAAoACgIACgIACAYCAAAGAgAABgIAAAYABAEOAgEMAgEOAgIBDAIBDgIA0gIA0AIA0gICANACANICAIoCAIgCAIoCAgCIAgCKAgAyAgIAMgICADICAgAyAE4AAAAMAAAADAAAAAwAAAAMAAICAgAKAgAKAAoCAAoCAAgGAgAABgIAAAYCAAAGAAQBDgIBDAIBDgICAQwCAQ4CAM4CAMwCAM4CAgDMAgDOAgCSAgCQAgCSAgIAkAIAkgIAMgICADICAgAyAgIAMgBOAAAADAAAAAwAAAAMAAAADAACAgIACgIACgAKAgAKAgAIBgIAAAYCAAAGAgAABgAEAQ4CAQwCAQ4CAgEMAgEOAgDSAgDQAgDSAgIA0AIA0gIAjgIAjAIAjgICAIwCAI4CADICAgAyAgIAMgICADIATgAAAAwAAAAMAAAADAAAAAwAAgICAAoCAAoACgIACgIACAYCAAAGAgAABgIAAAYABAEKAgEIAgEKAgIBCAIBCgIAzgIAzAIAzgICAMwCAM4CAJICAJACAJICAgCQAgCSAgAyAgIAMgICADICAgAyAEoAAAAMAAAADAAAAAwAAAAMAAICAgAKAgAKAAoCAAoCAAgGAgAABgIAAAYCAAAGAAQBDgIBDAIBDgICAQwCAQ4CANICANACANICAgDQAgDSAgCSAgCQAgCSAgIAkAIAkgIAMgICADICAgAyAgIAMgBOAZ2RkZGdkZGRnZGRkZmZlZACAgIACgACAgAKAAAKAAAIBgIABgIAAAQGAAYCAAYCAQ4CAQwCAQ4CAgEMAgEOAgDSAgDQAgDSAgIA0AIA0gIAigIAiAIAigICAIgCAIoCADICAgAyAgIAMgICADIATgGdkZGRnZGRkZ2RkZGZmZWQAgICAAoAAgIACgAACgAACAYCAAYCAAAEBgAGAgAGAgEOAgEMAgEOAgIBDAIBDgIAzgIAzAIAzgICAMwCAM4CAJICAJACAJICAgCQAgCSAgAyAgIAMgICADICAgAyAE4BnZGRkZ2RkZGdkZGRmZmVkAICAgAKAAICAAoAAAoAAAgGAgAGAgAABAYABgIABgIBDgIBDAIBDgICAQwCAQ4CANICANACANICAgDQAgDSAgCOAgCMAgCOAgIAjAIAjgIAMgICADICAgAyAgIAMgBOAZ2RkZGdkZGRnZGRkZmZlZACAgIACgACAgAKAAAKAAAIBgIABgIAAAQGAAYCAAYCAQoCAQgCAQoCAgEIAgEKAgDOAgDMAgDOAgIAzAIAzgIAkgIAkAIAkgICAJACAJICADICAgAyAgIAMgICADIASgGdkZGRnZGRkZ2RkZGZmZWQAgICAAoAAgIACgAACgAACAYCAAYCAAAEBgAGAgAGAgEOAgEMAgEOAgIBDAIBDgIA0gIA0AIA0gICANACANICAJICAJACAJICAgCQAgCSAgAyAgIAMgICADICAgAyAE4ADAwSAAwMEgAMDBIADAwSAAICAgICAgICAgICAgICAgAGAgAABgIAAAYCAAAGAgABDgIBDAIBDgICAQwCAQ4CANICANACANICAgDQAgDSAgCKAgCIAgCKAgIAiAIAigIAMgICADICAgAyAgIAMgBOAAwMEgAMDBIADAwSAAwMEgACAgICAgICAgICAgICAgIABgIAAAYCAAAGAgAABgIAAQ4CAQwCAQ4CAgEMAgEOAgDOAgDMAgDOAgIAzAIAzgIAkgIAkAIAkgICAJACAJICADICAgAyAgIAMgICADIATgAMDBIADAwSAAwMEgAMDBIAAgICAgICAgICAgICAgICAAYCAAAGAgAABgIAAAYCAAEOAgEMAgEOAgIBDAIBDgIA0gIA0AIA0gICANACANICAI4CAIwCAI4CAgCMAgCOAgAyAgIAMgICADICAgAyAE4ADAwSAAwMEgAMDBIADAwSAAICAgICAgICAgICAgICAgAGAgAABgIAAAYCAAAGAgABCgIBCAIBCgICAQgCAQoCAM4CAMwCAM4CAgDMAgDOAgCSAgCQAgCSAgIAkAIAkgIAMgICADICAgAyAgIAMgBKAAwMEgAMDBIADAwSAAwMEgACAgICAgICAgICAgICAgIABgIAAAYCAAAGAgAABgIAA";
+  // Per instrument, one entry per distinct LAYER note-range:
+  // [noteLo, noteHi, level, attack, decay, sustain, release, noise, ...16 harmonics].
+  // A bank instrument is often one multisample spanning drums, bass and chords,
+  // so the layer is chosen by the note being played — picking a single layer
+  // would make the accompaniment's drums sound like its chords.
+  var DEZA_BGM_VOICES = [[[0,58,0,0.0,0.204,0.84,0.021,0.26,255,134,45,2,1,0,0,0,0,0,0,0,0,0,1,0],[59,127,3,0.0,0.204,0.84,0.021,0.26,255,134,45,2,1,0,0,0,0,0,0,0,0,0,1,0]],[[0,127,0,0.0,0.288,0.84,0.021,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5]],[[0,59,0,0.0,0.242,0.84,0.021,0.33,255,39,5,28,13,12,4,1,1,2,2,1,0,0,0,0],[60,82,2,0.0,0.242,0.84,0.021,0.33,255,39,5,28,13,12,4,1,1,2,2,1,0,0,0,0],[83,127,4,0.0,0.242,0.84,0.021,0.33,255,39,5,28,13,12,4,1,1,2,2,1,0,0,0,0]],[[0,64,8,0.0,0.242,0.84,0.021,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[65,83,5,0.0,0.242,0.84,0.021,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[84,127,0,0.0,0.242,0.84,0.021,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41]],[[55,58,0,0.0,8.0,1.0,0.021,0.61,255,37,3,0,0,0,0,0,0,0,0,0,0,0,0,0],[59,67,4,0.0,8.0,1.0,0.021,0.61,255,37,3,0,0,0,0,0,0,0,0,0,0,0,0,0],[68,77,5,0.0,8.0,1.0,0.021,0.61,255,37,3,0,0,0,0,0,0,0,0,0,0,0,0,0],[78,127,6,0.0,8.0,1.0,0.021,0.61,255,37,3,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[0,127,0,0.0,8.0,1.0,0.021,0.66,255,4,54,12,2,13,1,2,1,2,1,0,0,2,0,1]],[[0,58,0,0.0,8.0,1.0,0.021,0.7,255,26,8,10,3,2,1,1,2,1,1,1,1,1,1,1],[59,74,3,0.0,8.0,1.0,0.021,0.7,255,26,8,10,3,2,1,1,2,1,1,1,1,1,1,1],[75,127,6,0.0,8.0,1.0,0.021,0.7,255,26,8,10,3,2,1,1,2,1,1,1,1,1,1,1]],[[0,58,0,0.0,8.0,1.0,0.021,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[59,127,2,0.0,8.0,1.0,0.021,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1]],[[0,58,0,0.0,0.171,0.84,0.021,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0],[59,127,4,0.0,0.171,0.84,0.021,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0]],[[0,58,0,0.0,0.242,0.84,0.021,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[59,70,2,0.0,0.242,0.84,0.021,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[71,77,5,0.0,0.242,0.84,0.021,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[78,127,12,0.0,0.242,0.84,0.021,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[0,127,0,0.0,0.102,0.84,0.021,0.35,255,4,4,8,3,1,1,1,1,1,0,0,0,0,0,0]],[[0,58,0,0.0,0.288,0.84,0.03,0.24,93,175,79,23,179,255,40,171,66,4,17,2,6,4,12,1],[59,127,2,0.0,0.288,0.84,0.03,0.24,93,175,79,23,179,255,40,171,66,4,17,2,6,4,12,1]],[[0,58,0,0.0,0.343,0.84,0.021,0.24,255,101,113,28,44,17,2,2,1,1,0,1,0,0,0,0],[59,127,2,0.0,0.343,0.84,0.021,0.24,255,101,113,28,44,17,2,2,1,1,0,1,0,0,0,0]],[[0,58,0,0.0,0.407,0.84,0.021,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40],[59,61,2,0.0,0.407,0.84,0.021,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40],[62,68,4,0.0,0.407,0.84,0.021,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40],[69,73,5,0.0,0.407,0.84,0.021,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40],[74,75,6,0.0,0.407,0.84,0.021,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40],[76,77,7,0.0,0.407,0.84,0.021,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40],[78,81,9,0.0,0.407,0.84,0.021,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40],[82,127,10,0.0,0.407,0.84,0.021,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40]],[[0,58,0,0.0,8.0,1.0,0.021,0.0,255,255,255,107,35,13,3,3,2,2,1,1,1,1,1,1],[59,68,2,0.0,8.0,1.0,0.021,0.0,255,255,255,107,35,13,3,3,2,2,1,1,1,1,1,1],[69,71,4,0.0,8.0,1.0,0.021,0.0,255,255,255,107,35,13,3,3,2,2,1,1,1,1,1,1],[72,83,7,0.0,8.0,1.0,0.021,0.0,255,255,255,107,35,13,3,3,2,2,1,1,1,1,1,1],[84,127,10,0.0,8.0,1.0,0.021,0.0,255,255,255,107,35,13,3,3,2,2,1,1,1,1,1,1]],[[0,58,0,0.0,0.204,0.84,0.021,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[59,70,3,0.0,0.204,0.84,0.021,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[71,127,5,0.0,0.204,0.84,0.021,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0]],[[0,65,0,0.0,0.242,0.84,0.021,0.0,255,255,90,78,78,29,7,7,7,5,5,2,0,0,0,0],[66,67,5,0.0,0.242,0.84,0.021,0.0,255,255,90,78,78,29,7,7,7,5,5,2,0,0,0,0],[68,70,8,0.0,0.242,0.84,0.021,0.0,255,255,90,78,78,29,7,7,7,5,5,2,0,0,0,0],[71,74,16,0.0,0.242,0.84,0.021,0.0,255,255,90,78,78,29,7,7,7,5,5,2,0,0,0,0],[75,77,20,0.0,0.242,0.84,0.021,0.0,255,255,90,78,78,29,7,7,7,5,5,2,0,0,0,0],[78,82,25,0.0,0.242,0.84,0.021,0.0,255,255,90,78,78,29,7,7,7,5,5,2,0,0,0,0],[83,127,30,0.0,0.242,0.84,0.021,0.0,255,255,90,78,78,29,7,7,7,5,5,2,0,0,0,0]],[[0,68,0,0.0,0.343,0.84,0.021,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[69,70,4,0.0,0.343,0.84,0.021,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[71,75,9,0.0,0.343,0.84,0.021,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[76,80,14,0.0,0.343,0.84,0.021,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[81,82,16,0.0,0.343,0.84,0.021,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[83,127,21,0.0,0.343,0.84,0.021,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23]],[[0,71,0,0.0,0.288,0.84,0.021,0.0,255,255,255,204,128,61,36,20,22,22,22,18,18,10,13,13],[72,127,3,0.0,0.288,0.84,0.021,0.0,255,255,255,204,128,61,36,20,22,22,22,18,18,10,13,13]],[[0,69,0,0.0,0.288,0.84,0.021,0.0,255,255,138,138,138,79,79,79,57,26,26,26,26,17,11,12],[70,77,3,0.0,0.288,0.84,0.021,0.0,255,255,138,138,138,79,79,79,57,26,26,26,26,17,11,12],[78,83,5,0.0,0.288,0.84,0.021,0.0,255,255,138,138,138,79,79,79,57,26,26,26,26,17,11,12],[84,127,7,0.0,0.288,0.84,0.021,0.0,255,255,138,138,138,79,79,79,57,26,26,26,26,17,11,12]],[[0,58,0,0.0,0.407,0.84,0.021,0.79,85,255,100,147,63,90,186,63,44,80,71,42,26,27,35,12],[59,127,2,0.0,0.407,0.84,0.021,0.79,85,255,100,147,63,90,186,63,44,80,71,42,26,27,35,12]],[[0,59,0,0.0,0.343,0.84,0.021,0.85,255,119,156,28,32,39,16,55,146,30,4,1,2,8,9,7],[60,64,9,0.0,0.343,0.84,0.021,0.85,255,119,156,28,32,39,16,55,146,30,4,1,2,8,9,7],[65,70,12,0.0,0.343,0.84,0.021,0.85,255,119,156,28,32,39,16,55,146,30,4,1,2,8,9,7],[71,76,17,0.0,0.343,0.84,0.021,0.85,255,119,156,28,32,39,16,55,146,30,4,1,2,8,9,7],[77,80,20,0.0,0.343,0.84,0.021,0.85,255,119,156,28,32,39,16,55,146,30,4,1,2,8,9,7],[81,127,24,0.0,0.343,0.84,0.021,0.85,255,119,156,28,32,39,16,55,146,30,4,1,2,8,9,7]],[[0,58,0,0.0,0.204,0.84,0.021,0.61,255,58,2,1,0,0,1,5,1,29,65,4,0,0,0,0],[59,127,3,0.0,0.204,0.84,0.021,0.61,255,58,2,1,0,0,1,5,1,29,65,4,0,0,0,0]],[[0,58,0,0.0,8.0,1.0,0.03,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[59,127,4,0.0,8.0,1.0,0.03,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3]],[[0,59,0,0.0,0.815,0.84,0.021,0.06,160,240,255,190,152,126,102,90,83,64,55,53,42,29,25,19],[60,127,1,0.0,0.815,0.84,0.021,0.06,160,240,255,190,152,126,102,90,83,64,55,53,42,29,25,19]],[[0,58,0,0.0,0.815,0.84,0.021,0.11,255,144,33,15,4,62,36,9,29,33,19,11,14,24,41,28],[59,66,4,0.0,0.815,0.84,0.021,0.11,255,144,33,15,4,62,36,9,29,33,19,11,14,24,41,28],[67,78,6,0.0,0.815,0.84,0.021,0.11,255,144,33,15,4,62,36,9,29,33,19,11,14,24,41,28],[79,127,8,0.0,0.815,0.84,0.021,0.11,255,144,33,15,4,62,36,9,29,33,19,11,14,24,41,28]],[[0,58,0,0.013,0.685,0.84,0.021,0.27,255,3,5,41,9,41,16,31,12,7,5,5,3,2,4,11],[59,76,3,0.013,0.685,0.84,0.021,0.27,255,3,5,41,9,41,16,31,12,7,5,5,3,2,4,11],[77,127,6,0.013,0.685,0.84,0.021,0.27,255,3,5,41,9,41,16,31,12,7,5,5,3,2,4,11]],[[0,127,0,0.0,0.815,0.84,0.021,0.37,130,255,38,28,8,1,2,2,1,1,1,1,2,0,1,1]],[[0,58,0,0.0,8.0,1.0,0.021,0.56,255,2,1,2,1,2,1,1,0,0,0,0,0,0,0,0],[59,66,2,0.0,8.0,1.0,0.021,0.56,255,2,1,2,1,2,1,1,0,0,0,0,0,0,0,0],[67,127,3,0.0,8.0,1.0,0.021,0.56,255,2,1,2,1,2,1,1,0,0,0,0,0,0,0,0]],[[0,58,10,0.0,0.815,0.84,0.021,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[59,63,7,0.0,0.815,0.84,0.021,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[64,66,6,0.0,0.815,0.84,0.021,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[67,71,3,0.0,0.815,0.84,0.021,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[72,78,2,0.0,0.815,0.84,0.021,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[79,127,0,0.0,0.815,0.84,0.021,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7]],[[0,58,0,0.288,8.0,1.0,0.021,0.54,255,16,9,8,33,18,27,47,13,17,8,9,2,9,6,2],[59,60,1,0.288,8.0,1.0,0.021,0.54,255,16,9,8,33,18,27,47,13,17,8,9,2,9,6,2],[61,66,4,0.242,8.0,1.0,0.021,0.54,255,16,9,8,33,18,27,47,13,17,8,9,2,9,6,2],[67,69,5,0.204,8.0,1.0,0.021,0.54,255,16,9,8,33,18,27,47,13,17,8,9,2,9,6,2],[70,72,7,0.204,8.0,1.0,0.021,0.54,255,16,9,8,33,18,27,47,13,17,8,9,2,9,6,2],[73,75,8,0.171,8.0,1.0,0.021,0.54,255,16,9,8,33,18,27,47,13,17,8,9,2,9,6,2],[76,78,9,0.144,8.0,1.0,0.021,0.54,255,16,9,8,33,18,27,47,13,17,8,9,2,9,6,2],[79,81,9,0.144,8.0,1.0,0.021,0.54,255,16,9,8,33,18,27,47,13,17,8,9,2,9,6,2],[82,84,12,0.144,8.0,1.0,0.021,0.54,255,16,9,8,33,18,27,47,13,17,8,9,2,9,6,2],[85,127,14,0.121,8.0,1.0,0.021,0.54,255,16,9,8,33,18,27,47,13,17,8,9,2,9,6,2]],[[0,58,0,0.288,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[59,60,3,0.242,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[61,66,3,0.204,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[67,72,3,0.171,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[73,78,2,0.144,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[79,84,3,0.121,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[85,127,3,0.121,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11]],[[0,58,0,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[59,65,4,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[66,77,6,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[78,127,7,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[0,58,0,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[59,127,4,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[0,58,0,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[59,61,4,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[62,67,7,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[68,71,11,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[72,77,14,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[78,82,17,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[83,84,16,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[85,127,26,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[0,58,0,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[59,64,3,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[65,68,7,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[69,71,9,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[72,77,10,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[78,80,14,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[81,127,17,0.0,8.0,1.0,0.021,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[0,58,0,0.0,0.144,0.84,0.021,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0],[59,127,1,0.0,0.144,0.84,0.021,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0]],[[0,58,0,0.0,8.0,1.0,0.021,0.31,255,54,33,39,9,17,2,3,3,5,6,8,2,25,2,3],[59,127,1,0.0,8.0,1.0,0.021,0.31,255,54,33,39,9,17,2,3,3,5,6,8,2,25,2,3]],[[0,58,0,0.0,8.0,1.0,0.021,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25],[59,71,4,0.0,8.0,1.0,0.021,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25],[72,77,5,0.0,8.0,1.0,0.021,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25],[78,80,6,0.0,8.0,1.0,0.021,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25],[81,127,7,0.0,8.0,1.0,0.021,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25]],[[0,64,0,0.0,8.0,1.0,0.021,0.9,255,11,17,50,67,42,42,21,33,75,75,64,95,11,14,47],[65,70,0,0.0,8.0,1.0,0.021,0.9,255,11,17,50,67,42,42,21,33,75,75,64,95,11,14,47],[71,75,1,0.0,8.0,1.0,0.021,0.9,255,11,17,50,67,42,42,21,33,75,75,64,95,11,14,47],[76,81,1,0.0,8.0,1.0,0.021,0.9,255,11,17,50,67,42,42,21,33,75,75,64,95,11,14,47],[82,84,1,0.0,8.0,1.0,0.021,0.9,255,11,17,50,67,42,42,21,33,75,75,64,95,11,14,47],[85,127,2,0.0,8.0,1.0,0.021,0.9,255,11,17,50,67,42,42,21,33,75,75,64,95,11,14,47]],[[0,66,6,0.0,0.171,0.84,0.021,0.78,255,15,4,13,20,8,4,15,3,4,2,1,3,1,1,1],[67,76,3,0.0,0.171,0.84,0.021,0.78,255,15,4,13,20,8,4,15,3,4,2,1,3,1,1,1],[77,127,0,0.0,0.171,0.84,0.021,0.78,255,15,4,13,20,8,4,15,3,4,2,1,3,1,1,1]],[[0,58,0,0.0,0.815,0.84,0.021,0.22,255,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[59,68,3,0.0,0.815,0.84,0.021,0.22,255,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[69,71,6,0.0,0.815,0.84,0.021,0.22,255,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[72,77,9,0.0,0.815,0.84,0.021,0.22,255,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[78,85,10,0.0,0.815,0.84,0.021,0.22,255,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[86,127,13,0.0,0.815,0.84,0.021,0.22,255,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0]],[[0,127,0,0.0,0.242,0.84,0.03,0.56,230,255,171,80,22,12,17,31,21,15,4,2,2,1,0,0]],[[0,58,0,0.0,0.171,0.84,0.021,0.2,255,83,10,8,0,0,0,0,0,0,0,0,0,0,0,0],[59,70,4,0.0,0.171,0.84,0.021,0.2,255,83,10,8,0,0,0,0,0,0,0,0,0,0,0,0],[71,127,6,0.0,0.171,0.84,0.021,0.2,255,83,10,8,0,0,0,0,0,0,0,0,0,0,0,0]],[[0,58,0,0.144,8.0,1.0,0.013,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[59,60,3,0.144,8.0,1.0,0.013,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[61,66,3,0.121,8.0,1.0,0.021,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[67,72,4,0.102,8.0,1.0,0.021,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[73,78,7,0.086,8.0,1.0,0.021,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[79,84,8,0.072,8.0,1.0,0.021,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[85,127,9,0.072,8.0,1.0,0.021,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175]],[[0,74,0,0.0,0.171,0.84,0.021,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[75,76,3,0.0,0.171,0.84,0.021,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[77,78,5,0.0,0.171,0.84,0.021,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[79,81,8,0.0,0.171,0.84,0.021,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[82,84,12,0.0,0.171,0.84,0.021,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[85,127,16,0.0,0.171,0.84,0.021,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[0,60,3,0.204,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[61,66,2,0.171,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[67,72,1,0.144,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[73,78,0,0.121,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[79,84,0,0.102,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[85,127,0,0.102,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12]],[[0,60,4,0.204,8.0,1.0,0.021,0.18,255,6,9,4,5,4,4,3,5,4,3,6,3,1,4,2],[61,66,2,0.204,8.0,1.0,0.021,0.18,255,6,9,4,5,4,4,3,5,4,3,6,3,1,4,2],[67,68,2,0.171,8.0,1.0,0.021,0.18,255,6,9,4,5,4,4,3,5,4,3,6,3,1,4,2],[69,72,4,0.144,8.0,1.0,0.021,0.18,255,6,9,4,5,4,4,3,5,4,3,6,3,1,4,2],[73,78,5,0.144,8.0,1.0,0.021,0.18,255,6,9,4,5,4,4,3,5,4,3,6,3,1,4,2],[79,84,7,0.102,8.0,1.0,0.021,0.18,255,6,9,4,5,4,4,3,5,4,3,6,3,1,4,2],[85,127,6,0.102,8.0,1.0,0.021,0.18,255,6,9,4,5,4,4,3,5,4,3,6,3,1,4,2]],[[0,127,0,0.0,8.0,1.0,0.021,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96]],[[0,60,5,0.204,8.0,1.0,0.021,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[61,66,5,0.171,8.0,1.0,0.021,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[67,72,4,0.144,8.0,1.0,0.021,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[73,78,0,0.121,8.0,1.0,0.021,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[79,84,0,0.102,8.0,1.0,0.021,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[85,127,0,0.102,8.0,1.0,0.021,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96]],[[0,63,0,0.407,8.0,1.0,0.021,0.96,222,186,255,25,12,7,13,9,0,0,0,0,0,0,0,0],[64,66,2,0.288,8.0,1.0,0.021,0.96,222,186,255,25,12,7,13,9,0,0,0,0,0,0,0,0],[67,68,3,0.288,8.0,1.0,0.021,0.96,222,186,255,25,12,7,13,9,0,0,0,0,0,0,0,0],[69,72,4,0.242,8.0,1.0,0.021,0.96,222,186,255,25,12,7,13,9,0,0,0,0,0,0,0,0],[73,78,4,0.204,8.0,1.0,0.021,0.96,222,186,255,25,12,7,13,9,0,0,0,0,0,0,0,0],[79,84,3,0.171,8.0,1.0,0.021,0.96,222,186,255,25,12,7,13,9,0,0,0,0,0,0,0,0],[85,127,0,0.171,8.0,1.0,0.021,0.96,222,186,255,25,12,7,13,9,0,0,0,0,0,0,0,0]],[[0,127,0,0.0,0.144,0.84,0.021,0.94,255,90,58,12,15,10,0,0,0,0,0,0,0,0,0,0]],[[0,60,0,0.144,8.0,1.0,0.021,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2],[61,66,2,0.102,8.0,1.0,0.021,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2],[67,72,1,0.102,8.0,1.0,0.021,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2],[73,78,1,0.086,8.0,1.0,0.021,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2],[79,84,1,0.072,8.0,1.0,0.021,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2],[85,127,1,0.072,8.0,1.0,0.021,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2]],[[0,60,3,0.144,8.0,1.0,0.021,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[61,66,2,0.121,8.0,1.0,0.021,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[67,72,0,0.102,8.0,1.0,0.021,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[73,78,0,0.086,8.0,1.0,0.021,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[79,84,0,0.072,8.0,1.0,0.021,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[85,127,0,0.072,8.0,1.0,0.021,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0]],[[0,60,0,0.144,8.0,1.0,0.021,0.16,255,7,4,1,1,0,0,0,0,0,0,0,0,0,0,0],[61,66,0,0.121,8.0,1.0,0.021,0.16,255,7,4,1,1,0,0,0,0,0,0,0,0,0,0,0],[67,72,0,0.102,8.0,1.0,0.021,0.16,255,7,4,1,1,0,0,0,0,0,0,0,0,0,0,0],[73,78,0,0.086,8.0,1.0,0.021,0.16,255,7,4,1,1,0,0,0,0,0,0,0,0,0,0,0],[79,84,1,0.072,8.0,1.0,0.021,0.16,255,7,4,1,1,0,0,0,0,0,0,0,0,0,0,0],[85,127,0,0.072,8.0,1.0,0.021,0.16,255,7,4,1,1,0,0,0,0,0,0,0,0,0,0,0]],[[0,59,0,0.204,8.0,1.0,0.021,0.15,255,50,84,4,16,30,23,9,24,8,9,4,5,5,4,3],[60,63,2,0.171,8.0,1.0,0.021,0.15,255,50,84,4,16,30,23,9,24,8,9,4,5,5,4,3],[64,66,5,0.144,8.0,1.0,0.021,0.15,255,50,84,4,16,30,23,9,24,8,9,4,5,5,4,3],[67,72,7,0.144,8.0,1.0,0.021,0.15,255,50,84,4,16,30,23,9,24,8,9,4,5,5,4,3],[73,76,7,0.121,8.0,1.0,0.021,0.15,255,50,84,4,16,30,23,9,24,8,9,4,5,5,4,3],[77,78,9,0.102,8.0,1.0,0.021,0.15,255,50,84,4,16,30,23,9,24,8,9,4,5,5,4,3],[79,84,9,0.102,8.0,1.0,0.021,0.15,255,50,84,4,16,30,23,9,24,8,9,4,5,5,4,3],[85,127,9,0.086,8.0,1.0,0.021,0.15,255,50,84,4,16,30,23,9,24,8,9,4,5,5,4,3]],[[0,61,0,0.0,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[62,65,3,0.0,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[66,71,6,0.0,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[72,75,7,0.0,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[76,78,8,0.0,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[79,83,10,0.0,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[84,127,11,0.0,8.0,1.0,0.021,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12]],[[0,58,0,0.0,8.0,1.0,0.021,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[59,127,2,0.0,8.0,1.0,0.021,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96]],[[0,58,0,0.0,8.0,1.0,0.021,0.96,222,186,255,25,12,7,13,9,0,0,0,0,0,0,0,0],[59,127,2,0.0,8.0,1.0,0.021,0.96,222,186,255,25,12,7,13,9,0,0,0,0,0,0,0,0]],[[0,58,0,0.0,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[59,63,3,0.0,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[64,68,5,0.0,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[69,75,7,0.0,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[76,127,9,0.0,8.0,1.0,0.021,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11]],[[1,1,35,0.102,8.0,1.0,0.015,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[2,2,54,0.144,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[3,3,62,0.0,8.0,1.0,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[4,4,68,0.144,8.0,1.0,0.013,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96]],[[93,97,81,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[85,92,81,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[69,78,81,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[67,68,81,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[41,45,62,0.0,0.288,0.84,0.015,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40],[29,40,62,0.0,0.343,0.84,0.015,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40],[65,66,55,0.0,0.121,0.84,0.015,0.0,255,255,255,107,35,13,3,3,2,2,1,1,1,1,1,1],[55,64,55,0.0,0.121,0.84,0.015,0.0,255,255,255,107,35,13,3,3,2,2,1,1,1,1,1,1],[23,25,50,0.0,0.343,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[16,22,44,0.0,0.343,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[11,15,50,0.0,0.343,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[5,10,44,0.0,0.343,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[1,1,35,0.102,8.0,1.0,0.015,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[2,2,54,0.144,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[3,3,68,0.144,8.0,1.0,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96]],[[68,73,78,0.0,0.242,0.84,0.015,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[61,67,78,0.0,0.242,0.84,0.015,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[56,58,78,0.0,0.242,0.84,0.015,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[46,55,78,0.0,0.242,0.84,0.015,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[44,44,78,0.0,0.242,0.84,0.015,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[32,43,78,0.0,0.242,0.84,0.015,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[28,31,78,0.0,0.242,0.84,0.015,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[16,18,34,0.0,0.121,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[11,15,40,0.0,0.121,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[7,10,36,0.0,0.121,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[1,1,35,0.102,8.0,1.0,0.015,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[2,2,54,0.144,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[3,3,78,0.0,8.0,1.0,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[4,4,62,0.0,8.0,1.0,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[5,5,52,0.0,8.0,1.0,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[6,6,68,0.144,8.0,1.0,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96]],[[93,97,64,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[83,92,64,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[69,71,64,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[57,68,64,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[55,56,64,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[33,42,64,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[30,32,64,0.0,8.0,1.0,0.015,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[2,2,67,0.121,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[3,3,63,0.121,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[4,4,58,0.121,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[5,5,54,0.121,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[6,6,50,0.121,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[16,18,46,0.204,8.0,1.0,0.015,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[11,15,47,0.171,8.0,1.0,0.015,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[7,10,47,0.204,8.0,1.0,0.015,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11]],[[69,73,55,0.0,0.102,0.84,0.015,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0],[59,68,55,0.0,0.102,0.84,0.015,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0],[57,58,55,0.0,0.102,0.84,0.015,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0],[45,56,55,0.0,0.102,0.84,0.015,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0],[43,44,55,0.0,0.102,0.84,0.015,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0],[33,42,55,0.0,0.102,0.84,0.015,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0],[29,32,55,0.0,0.102,0.84,0.015,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0],[23,25,48,0.03,0.204,0.84,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[16,22,44,0.03,0.204,0.84,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[11,15,48,0.03,0.204,0.84,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[7,10,44,0.03,0.204,0.84,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[4,4,66,0.0,0.102,0.84,0.015,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[3,3,69,0.0,8.0,1.0,0.015,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[2,2,37,0.03,8.0,1.0,0.015,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2],[1,1,52,0.144,8.0,1.0,0.015,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2]],[[68,73,69,0.0,0.242,0.84,0.015,0.33,255,39,5,28,13,12,4,1,1,2,2,1,0,0,0,0],[61,67,69,0.0,0.242,0.84,0.015,0.33,255,39,5,28,13,12,4,1,1,2,2,1,0,0,0,0],[56,58,69,0.0,0.242,0.84,0.015,0.33,255,39,5,28,13,12,4,1,1,2,2,1,0,0,0,0],[46,55,69,0.0,0.242,0.84,0.015,0.33,255,39,5,28,13,12,4,1,1,2,2,1,0,0,0,0],[32,42,69,0.0,0.242,0.84,0.015,0.33,255,39,5,28,13,12,4,1,1,2,2,1,0,0,0,0],[28,31,69,0.0,0.242,0.84,0.015,0.33,255,39,5,28,13,12,4,1,1,2,2,1,0,0,0,0],[23,27,28,0.0,0.288,0.84,0.015,0.0,255,255,255,204,128,61,36,20,22,22,22,18,18,10,13,13],[16,22,28,0.0,0.288,0.84,0.015,0.0,255,255,255,204,128,61,36,20,22,22,22,18,18,10,13,13],[11,15,28,0.0,0.288,0.84,0.015,0.0,255,255,255,204,128,61,36,20,22,22,22,18,18,10,13,13],[7,10,28,0.0,0.288,0.84,0.015,0.0,255,255,255,204,128,61,36,20,22,22,22,18,18,10,13,13],[100,100,67,0.0,0.121,0.84,0.015,0.94,255,90,58,12,15,10,0,0,0,0,0,0,0,0,0,0],[101,101,63,0.0,0.121,0.84,0.015,0.94,255,90,58,12,15,10,0,0,0,0,0,0,0,0,0,0],[102,102,50,0.0,0.121,0.84,0.015,0.94,255,90,58,12,15,10,0,0,0,0,0,0,0,0,0,0],[1,1,35,0.102,8.0,1.0,0.015,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[2,2,77,0.144,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[3,3,63,0.144,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[4,4,54,0.144,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[5,5,52,0.144,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12]],[[93,94,51,0.0,0.072,0.84,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[81,92,51,0.0,0.072,0.84,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[73,80,51,0.0,0.072,0.84,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[69,70,51,0.0,0.072,0.84,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[57,68,51,0.0,0.072,0.84,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[49,56,51,0.0,0.072,0.84,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[45,46,51,0.0,0.072,0.84,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[33,44,51,0.0,0.072,0.84,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[25,32,51,0.0,0.072,0.84,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[16,18,36,0.0,0.086,0.84,0.015,0.0,255,255,138,138,138,79,79,79,57,26,26,26,26,17,11,12],[10,15,38,0.0,0.086,0.84,0.015,0.0,255,255,138,138,138,79,79,79,57,26,26,26,26,17,11,12],[7,9,37,0.0,0.086,0.84,0.015,0.0,255,255,138,138,138,79,79,79,57,26,26,26,26,17,11,12],[1,1,67,0.288,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[2,2,65,0.204,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[3,3,68,0.144,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[4,4,62,0.0,8.0,1.0,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[5,5,68,0.144,8.0,1.0,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96]],[[68,73,74,0.0,0.171,0.84,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[61,67,74,0.0,0.171,0.84,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[56,58,74,0.0,0.171,0.84,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[46,55,74,0.0,0.171,0.84,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[32,42,74,0.0,0.171,0.84,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[28,31,74,0.0,0.171,0.84,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[104,109,55,0.0,8.0,1.0,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[97,103,55,0.0,8.0,1.0,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[92,94,55,0.0,8.0,1.0,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[82,91,55,0.0,8.0,1.0,0.015,0.62,255,35,0,0,0,0,0,0,0,0,0,0,3,75,4,0],[23,25,50,0.0,0.343,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[16,22,44,0.0,0.343,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[11,15,50,0.0,0.343,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[7,10,44,0.0,0.343,0.84,0.015,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[1,1,35,0.102,8.0,1.0,0.015,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[2,2,54,0.144,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[3,3,48,0.121,8.0,1.0,0.015,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2],[4,4,48,0.102,8.0,1.0,0.015,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2],[5,5,59,0.102,8.0,1.0,0.015,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[6,6,58,0.102,8.0,1.0,0.015,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[122,122,67,0.0,8.0,1.0,0.015,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[123,123,74,0.0,0.121,0.84,0.015,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0],[120,120,93,0.03,0.06,0.84,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[121,121,75,0.03,0.06,0.84,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96]],[[68,73,65,0.0,0.204,0.84,0.015,0.26,255,134,45,2,1,0,0,0,0,0,0,0,0,0,1,0],[61,67,65,0.0,0.204,0.84,0.015,0.26,255,134,45,2,1,0,0,0,0,0,0,0,0,0,1,0],[56,58,65,0.0,0.204,0.84,0.015,0.26,255,134,45,2,1,0,0,0,0,0,0,0,0,0,1,0],[46,55,65,0.0,0.204,0.84,0.015,0.26,255,134,45,2,1,0,0,0,0,0,0,0,0,0,1,0],[32,42,65,0.0,0.204,0.84,0.015,0.26,255,134,45,2,1,0,0,0,0,0,0,0,0,0,1,0],[29,31,65,0.0,0.204,0.84,0.015,0.26,255,134,45,2,1,0,0,0,0,0,0,0,0,0,1,0],[23,25,56,0.0,8.0,1.0,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[16,22,53,0.0,8.0,1.0,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[11,15,56,0.0,8.0,1.0,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[7,10,53,0.0,8.0,1.0,0.015,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[1,1,24,0.0,0.086,0.84,0.005,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[2,2,64,0.102,8.0,1.0,0.015,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[3,3,62,0.0,8.0,1.0,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[4,4,68,0.144,8.0,1.0,0.015,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[100,100,79,0.0,0.043,0.84,0.015,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0],[101,101,68,0.0,0.121,0.84,0.015,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0],[102,102,79,0.0,0.043,0.84,0.015,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0],[103,103,68,0.0,0.121,0.84,0.015,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0]],[[0,0,23,0.03,8.0,1.0,0.009,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0],[4,7,20,0.0,8.0,1.0,0.009,0.35,255,4,4,8,3,1,1,1,1,1,0,0,0,0,0,0],[12,28,12,0.0,8.0,1.0,0.009,0.61,255,37,3,0,0,0,0,0,0,0,0,0,0,0,0,0],[40,52,11,0.06,8.0,1.0,0.006,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[56,56,5,0.043,8.0,1.0,0.009,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23],[64,65,30,0.0,8.0,1.0,0.009,0.61,255,37,3,0,0,0,0,0,0,0,0,0,0,0,0,0],[71,71,21,0.0,8.0,1.0,0.009,0.94,255,90,58,12,15,10,0,0,0,0,0,0,0,0,0,0],[76,76,10,0.036,8.0,1.0,0.009,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0],[83,83,19,0.06,8.0,1.0,0.009,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96]],[[0,0,5,0.013,8.0,1.0,0.009,0.56,255,2,1,2,1,2,1,1,0,0,0,0,0,0,0,0],[8,8,13,0.0,8.0,1.0,0.009,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[12,12,9,0.0,8.0,1.0,0.009,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[23,35,18,0.0,0.144,0.84,0.009,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[45,45,28,0.0,8.0,1.0,0.009,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[59,63,24,0.171,8.0,1.0,0.009,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11]],[[0,36,1,0.0,8.0,1.0,0.006,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[48,84,0,0.0,8.0,1.0,0.006,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2],[91,127,20,0.0,8.0,1.0,0.006,0.24,255,101,113,28,44,17,2,2,1,1,0,1,0,0,0,0]],[[91,127,14,0.0,8.0,1.0,0.006,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[0,40,15,0.0,8.0,1.0,0.006,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[80,80,18,0.0,8.0,1.0,0.006,0.27,255,3,5,41,9,41,16,31,12,7,5,5,3,2,4,11],[71,71,15,0.0,8.0,1.0,0.006,0.27,255,3,5,41,9,41,16,31,12,7,5,5,3,2,4,11],[48,70,18,0.0,8.0,1.0,0.006,0.27,255,3,5,41,9,41,16,31,12,7,5,5,3,2,4,11],[44,44,18,0.0,8.0,1.0,0.006,0.27,255,3,5,41,9,41,16,31,12,7,5,5,3,2,4,11]],[[91,127,4,0.0,8.0,1.0,0.006,0.0,255,255,255,183,170,170,113,71,34,34,38,41,41,41,39,40],[48,84,8,0.0,8.0,1.0,0.006,0.22,255,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[0,40,23,0.0,8.0,1.0,0.006,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7]],[[84,84,25,0.051,8.0,1.0,0.006,0.66,255,4,54,12,2,13,1,2,1,2,1,0,0,2,0,1],[48,83,17,0.06,8.0,1.0,0.006,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[0,36,0,0.0,8.0,1.0,0.006,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25]],[[48,84,0,0.0,8.0,1.0,0.006,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[0,36,40,0.03,8.0,1.0,0.006,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[91,127,3,0.0,8.0,1.0,0.006,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25]],[[60,84,8,0.03,8.0,1.0,0.006,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2],[84,127,4,0.03,8.0,1.0,0.006,0.0,255,255,138,138,138,79,79,79,57,26,26,26,26,17,11,12],[0,59,39,0.0,8.0,1.0,0.006,0.61,255,37,3,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[48,84,1,0.013,8.0,1.0,0.006,0.61,255,37,3,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,36,11,0.0,8.0,1.0,0.006,0.56,255,2,1,2,1,2,1,1,0,0,0,0,0,0,0,0],[100,100,9,0.0,8.0,1.0,0.006,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[110,110,6,0.0,8.0,1.0,0.006,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5]],[[0,36,18,0.0,8.0,1.0,0.006,0.31,255,54,33,39,9,17,2,3,3,5,6,8,2,25,2,3],[48,84,0,0.072,8.0,1.0,0.006,0.31,255,54,33,39,9,17,2,3,3,5,6,8,2,25,2,3],[85,127,36,0.0,8.0,1.0,0.006,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[91,127,1,0.0,8.0,1.0,0.006,0.0,255,255,138,138,138,79,79,79,57,26,26,26,26,17,11,12],[47,84,27,0.0,8.0,1.0,0.006,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,36,1,0.0,8.0,1.0,0.006,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13]],[[24,24,13,0.0,8.0,1.0,0.006,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[25,25,13,0.0,8.0,1.0,0.006,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[26,26,13,0.0,8.0,1.0,0.006,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[27,27,13,0.0,8.0,1.0,0.006,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[28,28,13,0.0,8.0,1.0,0.006,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[29,29,13,0.0,8.0,1.0,0.006,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[108,108,3,0.0,8.0,1.0,0.006,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[109,109,3,0.0,8.0,1.0,0.008,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[110,110,3,0.0,8.0,1.0,0.006,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[111,111,3,0.0,8.0,1.0,0.006,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[112,112,3,0.0,8.0,1.0,0.006,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[113,113,3,0.0,8.0,1.0,0.006,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[72,72,4,0.036,8.0,1.0,0.006,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[73,73,4,0.06,8.0,1.0,0.006,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[74,74,4,0.06,8.0,1.0,0.006,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[75,75,4,0.06,8.0,1.0,0.006,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[76,76,4,0.06,8.0,1.0,0.006,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[77,77,4,0.025,8.0,1.0,0.006,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[85,127,14,0.025,8.0,1.0,0.006,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175],[0,36,33,0.0,8.0,1.0,0.006,0.94,255,90,58,12,15,10,0,0,0,0,0,0,0,0,0,0],[48,84,1,0.008,8.0,1.0,0.006,0.66,255,4,54,12,2,13,1,2,1,2,1,0,0,2,0,1]],[[0,36,19,0.343,8.0,1.0,0.006,0.53,214,89,61,255,106,86,70,57,19,10,9,6,4,5,2,3],[91,127,17,0.343,8.0,1.0,0.006,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[48,84,1,0.343,8.0,1.0,0.006,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0]],[[0,36,23,0.407,8.0,1.0,0.006,0.99,255,53,5,12,9,4,10,0,0,0,0,0,0,0,0,0],[48,84,3,0.407,8.0,1.0,0.006,0.22,255,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0],[91,127,22,0.171,8.0,1.0,0.006,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175]],[[91,127,2,0.0,8.0,1.0,0.006,0.0,255,255,138,138,138,79,79,79,57,26,26,26,26,17,11,12],[0,36,34,0.0,8.0,1.0,0.006,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[48,84,28,0.0,8.0,1.0,0.006,0.2,255,9,11,6,3,4,4,4,3,2,1,2,2,1,2,2]],[[91,127,0,0.343,8.0,1.0,0.006,0.9,255,11,17,50,67,42,42,21,33,75,75,64,95,11,14,47],[48,84,31,0.343,8.0,1.0,0.006,0.24,93,175,79,23,179,255,40,171,66,4,17,2,6,4,12,1],[0,36,34,0.343,8.0,1.0,0.006,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25]],[[91,127,11,0.407,8.0,1.0,0.006,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[0,36,24,0.407,8.0,1.0,0.006,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25],[48,84,0,0.407,8.0,1.0,0.006,0.56,255,2,1,2,1,2,1,1,0,0,0,0,0,0,0,0]],[[91,127,20,0.0,8.0,1.0,0.006,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96],[48,84,0,0.0,8.0,1.0,0.006,0.18,255,6,9,4,5,4,4,3,5,4,3,6,3,1,4,2],[0,36,24,0.0,8.0,1.0,0.006,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41]],[[0,36,28,0.0,8.0,1.0,0.006,0.94,255,90,58,12,15,10,0,0,0,0,0,0,0,0,0,0],[91,127,0,0.0,8.0,1.0,0.006,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25],[48,84,23,0.0,8.0,1.0,0.006,0.37,130,255,38,28,8,1,2,2,1,1,1,1,2,0,1,1]],[[0,36,29,0.0,8.0,1.0,0.006,0.94,255,90,58,12,15,10,0,0,0,0,0,0,0,0,0,0],[91,127,0,0.0,8.0,1.0,0.006,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25],[52,52,30,0.0,8.0,1.0,0.006,0.37,130,255,38,28,8,1,2,2,1,1,1,1,2,0,1,1]],[[76,76,12,0.06,8.0,1.0,0.006,0.35,255,4,4,8,3,1,1,1,1,1,0,0,0,0,0,0],[64,64,22,0.06,8.0,1.0,0.006,0.35,255,4,4,8,3,1,1,1,1,1,0,0,0,0,0,0],[16,16,21,0.072,8.0,1.0,0.006,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[4,4,22,0.0,8.0,1.0,0.006,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[100,100,0,0.0,8.0,1.0,0.006,0.66,255,4,54,12,2,13,1,2,1,2,1,0,0,2,0,1],[88,88,8,0.0,8.0,1.0,0.006,0.66,255,4,54,12,2,13,1,2,1,2,1,0,0,2,0,1]],[[71,71,15,0.025,8.0,1.0,0.006,0.35,255,4,4,8,3,1,1,1,1,1,0,0,0,0,0,0],[83,83,18,0.025,8.0,1.0,0.006,0.35,255,4,4,8,3,1,1,1,1,1,0,0,0,0,0,0],[20,20,21,0.0,8.0,1.0,0.006,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[32,32,23,0.086,8.0,1.0,0.006,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[92,92,1,0.0,8.0,1.0,0.006,0.66,255,4,54,12,2,13,1,2,1,2,1,0,0,2,0,1],[104,104,4,0.0,8.0,1.0,0.006,0.66,255,4,54,12,2,13,1,2,1,2,1,0,0,2,0,1]],[[0,23,0,0.0,8.0,1.0,0.006,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[91,127,25,0.0,8.0,1.0,0.006,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[48,84,6,0.144,8.0,1.0,0.009,0.26,255,134,45,2,1,0,0,0,0,0,0,0,0,0,1,0]],[[84,127,0,0.0,8.0,1.0,0.006,0.81,255,140,74,218,35,38,44,19,12,11,10,14,8,5,3,7],[0,36,32,0.0,8.0,1.0,0.006,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25],[48,83,15,0.013,8.0,1.0,0.006,0.27,255,3,5,41,9,41,16,31,12,7,5,5,3,2,4,11]],[[71,127,10,0.0,8.0,1.0,0.006,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1],[0,36,0,0.0,8.0,1.0,0.006,0.81,255,212,14,53,11,53,6,41,6,32,112,19,48,36,49,25],[48,70,16,0.013,8.0,1.0,0.006,0.11,255,144,33,15,4,62,36,9,29,33,19,11,14,24,41,28]],[[0,36,35,0.013,8.0,1.0,0.006,0.56,255,2,1,2,1,2,1,1,0,0,0,0,0,0,0,0],[48,71,2,0.0,8.0,1.0,0.006,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[84,127,12,0.0,8.0,1.0,0.006,0.31,255,54,33,39,9,17,2,3,3,5,6,8,2,25,2,3]],[[84,127,7,0.0,8.0,1.0,0.006,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0],[0,36,27,0.0,8.0,1.0,0.006,0.19,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[48,84,0,0.0,8.0,1.0,0.006,0.24,93,175,79,23,179,255,40,171,66,4,17,2,6,4,12,1]],[[48,84,0,0.0,8.0,1.0,0.006,0.24,93,175,79,23,179,255,40,171,66,4,17,2,6,4,12,1],[0,36,5,0.0,8.0,1.0,0.006,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0],[91,127,10,0.0,8.0,1.0,0.006,0.83,255,1,1,0,0,0,2,0,0,0,2,1,0,0,0,0]],[[84,127,8,0.013,8.0,1.0,0.006,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[0,36,12,0.009,8.0,1.0,0.006,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[48,84,1,0.013,8.0,1.0,0.006,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41]],[[91,127,4,0.0,8.0,1.0,0.006,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0],[48,84,1,0.013,8.0,1.0,0.006,0.12,87,160,39,94,21,18,3,16,15,101,103,20,165,56,255,41],[0,36,12,0.0,8.0,1.0,0.006,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0]],[[91,127,5,0.0,8.0,1.0,0.006,0.61,255,37,3,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,48,0,0.0,8.0,1.0,0.006,0.86,255,135,103,47,6,14,5,31,14,12,7,10,4,5,4,11],[48,84,2,0.0,8.0,1.0,0.006,0.06,160,240,255,190,152,126,102,90,83,64,55,53,42,29,25,19]],[[0,36,18,0.0,8.0,1.0,0.006,0.66,255,4,54,12,2,13,1,2,1,2,1,0,0,2,0,1],[56,56,0,0.043,8.0,1.0,0.006,0.78,255,15,4,13,20,8,4,15,3,4,2,1,3,1,1,1],[68,68,5,0.043,8.0,1.0,0.006,0.78,255,15,4,13,20,8,4,15,3,4,2,1,3,1,1,1],[91,127,20,0.0,8.0,1.0,0.006,0.33,255,39,5,28,13,12,4,1,1,2,2,1,0,0,0,0]],[[91,127,16,0.018,8.0,1.0,0.006,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[48,84,0,0.0,8.0,1.0,0.006,0.27,255,3,5,41,9,41,16,31,12,7,5,5,3,2,4,11],[0,47,17,0.0,8.0,1.0,0.006,0.22,255,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0]],[[97,127,5,0.0,8.0,1.0,0.006,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[96,96,5,0.0,8.0,1.0,0.006,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[12,12,1,0.0,8.0,1.0,0.006,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[13,36,27,0.0,8.0,1.0,0.006,0.7,255,65,26,37,16,11,24,19,7,14,11,10,14,7,11,12],[48,84,10,0.0,8.0,1.0,0.006,0.99,255,53,5,12,9,4,10,0,0,0,0,0,0,0,0,0]],[[0,36,0,0.0,8.0,1.0,0.006,0.9,255,11,17,50,67,42,42,21,33,75,75,64,95,11,14,47],[91,127,3,0.0,8.0,1.0,0.006,0.99,255,53,5,12,9,4,10,0,0,0,0,0,0,0,0,0],[48,84,13,0.0,8.0,1.0,0.006,0.0,193,255,255,255,176,156,156,86,129,129,204,242,242,242,175,175]],[[82,127,14,0.0,8.0,1.0,0.006,1.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[48,84,0,0.0,8.0,1.0,0.006,0.27,255,59,8,60,219,101,20,15,3,9,3,18,20,5,11,5],[0,36,21,0.0,8.0,1.0,0.006,0.94,255,90,58,12,15,10,0,0,0,0,0,0,0,0,0,0]],[[91,127,18,0.0,8.0,1.0,0.006,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[48,84,1,0.0,8.0,1.0,0.006,0.19,255,3,1,1,1,1,0,0,0,0,0,0,0,0,0,0],[0,36,20,0.0,8.0,1.0,0.006,0.38,255,15,113,6,7,8,1,1,0,0,0,0,1,1,1,1]],[[0,36,0,0.0,8.0,1.0,0.051,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[45,59,9,0.0,8.0,1.0,0.051,0.99,255,53,5,12,9,4,10,0,0,0,0,0,0,0,0,0],[91,127,0,0.0,8.0,1.0,0.051,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[69,81,9,0.0,8.0,1.0,0.043,0.16,255,7,4,1,1,0,0,0,0,0,0,0,0,0,0,0],[62,64,15,0.0,8.0,1.0,0.051,0.56,255,2,1,2,1,2,1,1,0,0,0,0,0,0,0,0]],[[11,44,0,0.0,8.0,1.0,0.086,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[46,80,0,0.0,8.0,1.0,0.086,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[83,116,0,0.0,8.0,1.0,0.086,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13]],[[0,40,0,0.0,8.0,1.0,0.086,0.99,255,53,5,12,9,4,10,0,0,0,0,0,0,0,0,0],[48,84,33,0.0,8.0,1.0,0.06,0.99,255,53,5,12,9,4,10,0,0,0,0,0,0,0,0,0],[92,127,0,0.0,8.0,1.0,0.086,0.99,255,53,5,12,9,4,10,0,0,0,0,0,0,0,0,0]],[[11,44,0,0.0,8.0,1.0,0.086,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[47,80,0,0.0,8.0,1.0,0.086,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13],[83,116,0,0.0,8.0,1.0,0.086,0.41,255,37,20,10,6,8,5,5,5,12,15,10,10,12,16,13]],[[0,127,0,0.0,0.685,0.84,0.018,0.37,130,255,38,28,8,1,2,2,1,1,1,1,2,0,1,1]],[[0,127,0,0.013,0.288,0.84,0.018,0.0,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],[[0,127,0,0.0,0.171,0.84,0.036,0.05,255,8,1,2,2,2,0,0,1,0,0,0,0,0,0,0]],[[0,127,0,0.0,0.343,0.84,0.018,0.0,255,198,101,65,24,12,10,3,3,3,3,3,4,7,7,23]],[[0,127,0,0.0,8.0,1.0,0.018,0.92,140,24,10,56,181,49,141,59,133,105,255,171,42,62,64,96]]];
+  var DEZA_ACCOMP_TRANSPOSE = [-3, -2, -1, 0, 1, 2, 3, 4, 5, 6, -5, -4];
+  var dezaAccompTable = null;
+  function accompTable() {
+    if (!dezaAccompTable) dezaAccompTable = b64ToBytes(DEZA_ACCOMP_B64);
+    return dezaAccompTable;
+  }
+  // The seven accompaniment channels of a whole song, as note streams shaped
+  // exactly like the composed parts so one scheduler can play both.
+  function buildAccompParts(control) {
+    var chans = [[], [], [], [], [], [], []];
+    var tab = accompTable();
+    var rows = tab.length / 16 | 0;
+    for (var m = 0; m < control.length; m++) {
+      var c = control[m];
+      var base = c[0] * 140 + (c[1] * 5 + ((c[2] & 127) >> 1)) * 7;
+      var tr = DEZA_ACCOMP_TRANSPOSE[c[3]] || 0;
+      for (var ch = 0; ch < 7; ch++) {
+        var row = base + ch;
+        if (row < 0 || row >= rows) continue;
+        var at = row * 16;
+        var cur = null;
+        for (var st = 0; st < 16; st++) {
+          var b = tab[at + st];
+          var abs = m * 16 + st;
+          if (b === 0) {
+            cur = null;
+          } else if (b & 128) {
+            // A tie with nothing sounding is a no-op — which is exactly how the
+            // editor's default control bytes come out silent.
+            if (cur) cur.len = abs - cur.step + 1;
+          } else {
+            cur = { step: abs, note: b + (ch < 4 ? tr : 0), len: 1, inst: 60 + c[0] };
+            chans[ch].push(cur);
+          }
+        }
+      }
+    }
+    return chans;
+  }
+  // One tone-bank voice for a given instrument AND note, built lazily.
+  function dezaVoice(st, instrument, note) {
+    var idx = instrument | 0;
+    if (idx < 0 || idx >= DEZA_BGM_VOICES.length) idx = 0;
+    var layers = DEZA_BGM_VOICES[idx];
+    if (!layers || !layers.length) return null;
+    var li = 0;
+    for (var k = 0; k < layers.length; k++) {
+      if (note >= layers[k][0] && note <= layers[k][1]) { li = k; break; }
+    }
+    var cache = st.voices || (st.voices = {});
+    var ck = idx + ":" + li;
+    if (cache[ck]) return cache[ck];
+    var L = layers[li];
+    var harm = L.slice(8);
+    var voice = {
+      level: L[2], attack: L[3], decay: L[4], sustain: L[5],
+      release: L[6], noise: L[7], wave: null
+    };
+    // Percussion and other inharmonic samples read as noise; everything else
+    // becomes a periodic wave from its measured harmonic series.
+    if (voice.noise < 0.75) {
+      var n = harm.length + 1;
+      var real = new Float32Array(n), imag = new Float32Array(n);
+      for (var h = 0; h < harm.length; h++) imag[h + 1] = harm[h] / 255;
+      try {
+        voice.wave = st.ctx.createPeriodicWave(real, imag, { disableNormalization: false });
+      } catch (e) {
+        voice.wave = null;
+      }
+    }
+    cache[ck] = voice;
+    return voice;
+  }
   function parseBgmSong(b64) {
     var raw = b64ToBytes(b64);
     var parts = [[], [], [], []];
@@ -3774,12 +5018,14 @@
           var voice = raw[base + st];
           var pitch = raw[base + 16 + st];
           var abs = m * 16 + st;
-          if (voice === 0) {
-            current = null;
-          } else if (voice & 128) {
+          // What sounds is decided by the PITCH column alone (0 = rest); the
+          // VOICE column carries the tone-bank instrument in bits 0-6 and the
+          // TIE flag in bit 7. Instrument 0 is a real instrument, so a zero
+          // voice byte must not be read as a rest.
+          if (voice & 128) {
             if (current) current.len = abs - current.step + 1;
           } else if (pitch >= 1 && pitch <= 59) {
-            current = { step: abs, note: pitch, len: 1 };
+            current = { step: abs, note: pitch, len: 1, inst: voice & 127 };
             stream.push(current);
           } else {
             current = null;
@@ -3793,8 +5039,19 @@
       loopStartStep = 0;
       loopEndStep = 32 * 16;
     }
+    // The four CONTROL bytes of each measure drive the engine's automatic
+    // accompaniment: ctrl0 picks the pattern bank (and the instrument, 60+ctrl0),
+    // ctrl1 and ctrl2 pick the pattern within it, ctrl3 indexes a transpose
+    // table that applies to the accompaniment's first four channels only.
+    var control = [];
+    for (var mc = 0; mc < 32; mc++) {
+      var cb = 4 + mc * 132;
+      control.push([raw[cb], raw[cb + 1], raw[cb + 2], raw[cb + 3]]);
+    }
     return {
       parts,
+      control,
+      accomp: buildAccompParts(control),
       loopStartStep,
       loopEndStep,
       stepSeconds: bgmStepSeconds(raw[3]),
@@ -3805,15 +5062,31 @@
     var snd = scene.sound;
     return snd && snd.context && typeof snd.context.createOscillator === "function" ? snd.context : null;
   }
-  function noteFreq(note) {
-    return 440 * Math.pow(2, (note - 34) / 12);
+  // Both stream kinds are expressed in the driver's own note scale: a composed
+  // part's sounding note is its pitch-column byte + 54, and an accompaniment
+  // pattern byte is already in that scale. 88 is the scale value that sounds
+  // concert A, which keeps composed parts at the pitch this runtime has always
+  // played them while letting the accompaniment share one reference.
+  var DEZA_NOTE_A = 88;
+  function dezaNoteFreq(scaleNote) {
+    return 440 * Math.pow(2, (scaleNote - DEZA_NOTE_A) / 12);
   }
+  function noteFreq(note) {
+    return dezaNoteFreq(note + 54);
+  }
+  // Per-stream gain. The waveform no longer lives here — each note carries its
+  // own tone-bank instrument, so these are only mix levels.
   var PART_VOICES = [
-    { type: "square", gain: 1 },
-    { type: "square", gain: 0.8 },
-    { type: "triangle", gain: 1.2 },
-    { type: "noise", gain: 0.5 }
+    { gain: 1, pan: 0 },
+    { gain: 0.8, pan: 0 },
+    { gain: 1.2, pan: (55 - 64) / 64 },
+    { gain: 0.5, pan: (72 - 64) / 64 }
   ];
+  var ACCOMP_VOICE = { gain: 0.85, pan: 0 };
+  // The kernel spreads one 16th-step over four frames: composed note-ons land
+  // on frame 1 and accompaniment note-ons on frame 3, so the backing always
+  // sounds two frames behind the melody.
+  var ACCOMP_DELAY = 2 / 60;
   function makeNoiseBuffer(ctx) {
     var len = ctx.sampleRate * 0.25 | 0;
     var buf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -3837,13 +5110,16 @@
     if (idx == null || !bgm.songs || bgm.songs[idx] == null) return false;
     stopDezaemonBgm(scene);
     var song = parseBgmSong(bgm.songs[idx]);
+    // The four composed parts play alongside the seven channels of the engine's
+    // automatic accompaniment; one scheduler drives all eleven.
+    song.streams = song.parts.concat(song.accomp || []);
     var st = scene._dezaBgm = {
       ctx,
       song,
       stepSeconds: song.stepSeconds,
       songIndex: idx,
       which,
-      cursor: [0, 0, 0, 0],
+      cursor: [],
       startTime: ctx.currentTime + 0.05,
       loop: 0,
       master: ctx.createGain(),
@@ -3852,7 +5128,9 @@
       scheduled: 0,
       echo: null
     };
-    st.master.gain.value = BGM_GAIN;
+    for (var ci = 0; ci < song.streams.length; ci++) st.cursor.push(0);
+    st.master.gain.value = BGM_GAIN * cmgVol.bgm;
+    cmgDezaBgms.push(st);
     st.master.connect(ctx.destination);
     if (song.echoLevel > 0) {
       var delay = ctx.createDelay(0.5);
@@ -3860,7 +5138,8 @@
       var fb = ctx.createGain();
       fb.gain.value = 0.3;
       var wet = ctx.createGain();
-      wet.gain.value = 0.45 * (song.echoLevel / 7);
+      st.echoBase = 0.45 * (song.echoLevel / 7);
+      wet.gain.value = st.echoBase * cmgVol.bgm;
       st.master.connect(delay);
       delay.connect(fb);
       fb.connect(delay);
@@ -3880,17 +5159,20 @@
     var horizon = ctx.currentTime + BGM_LOOKAHEAD;
     var song = st.song;
     var span = song.loopEndStep - song.loopStartStep;
-    var n = song.parts.length;
+    var streams = song.streams;
+    var n = streams.length;
     for (var p = 0; p < n; p++) {
-      var events = song.parts[p];
+      var events = streams[p];
       if (!events.length) continue;
-      var voice = PART_VOICES[p];
+      // Composed parts keep their per-part gain; accompaniment channels sit a
+      // little back so they support the melody instead of covering it.
+      var voice = p < 4 ? PART_VOICES[p] : ACCOMP_VOICE;
       for (; ; ) {
         var i = st.cursor[p];
         if (i >= events.length) {
           var allDone = true;
           for (var q = 0; q < n; q++) {
-            if (st.cursor[q] < song.parts[q].length) {
+            if (st.cursor[q] < streams[q].length) {
               allDone = false;
               break;
             }
@@ -3898,7 +5180,7 @@
           if (allDone) {
             st.loop += 1;
             for (var r = 0; r < n; r++) {
-              var evs = song.parts[r];
+              var evs = streams[r];
               var at = evs.length;
               for (var k = 0; k < evs.length; k++) {
                 if (evs[k].step >= song.loopStartStep) {
@@ -3922,34 +5204,72 @@
         if (t > horizon) break;
         st.cursor[p] = i + 1;
         if (t < ctx.currentTime - 0.02) continue;
-        playBgmNote(st, voice, e, t);
+        // Composed parts carry a pitch-column byte; accompaniment patterns are
+        // already in the driver's note scale.
+        playBgmNote(st, voice, e, p < 4 ? t : t + ACCOMP_DELAY,
+          p < 4 ? e.note + 54 : e.note);
         st.scheduled += 1;
       }
     }
   }
-  function playBgmNote(st, voice, e, t) {
+  function playBgmNote(st, mix, e, t, scaleNote) {
     var ctx = st.ctx;
     var dur = Math.max(0.05, e.len * st.stepSeconds * 0.95);
+    var v = dezaVoice(st, e.inst || 0, scaleNote);
+    if (!v) return;
+    // The tone bank's own level and the instrument's volume adjust set how loud
+    // this instrument sits; both are attenuations, so they only ever pull down.
+    // The bank's per-layer level is an attenuation (~0.375 dB a step). Applied
+    // literally the quietest instruments vanish under the mix, so it is floored:
+    // the loud/quiet ordering survives, audibility is guaranteed.
+    var peak = mix.gain * 0.5 *
+      Math.max(0.15, Math.pow(10, -v.level * 0.375 / 20));
     var g = ctx.createGain();
+    // The sampled envelope: attack to peak, decay to the sustain level, then
+    // release when the note's own length runs out.
+    var atk = Math.min(v.attack, dur * 0.5);
     g.gain.setValueAtTime(1e-4, t);
-    g.gain.linearRampToValueAtTime(voice.gain * 0.5, t + 0.01);
-    g.gain.setTargetAtTime(1e-4, t + dur, 0.03);
-    g.connect(st.master);
-    if (voice.type === "noise") {
-      var src = ctx.createBufferSource();
-      src.buffer = st.noise;
-      src.playbackRate.value = 0.5 + e.note / 59;
-      src.connect(g);
-      src.start(t);
-      src.stop(t + Math.min(dur, 0.2));
-    } else {
+    if (atk > 0.001) g.gain.linearRampToValueAtTime(peak, t + atk);
+    else g.gain.setValueAtTime(peak, t + 0.001);
+    var sus = Math.max(0.02, peak * v.sustain);
+    if (v.decay < 4 && sus < peak) {
+      g.gain.setTargetAtTime(sus, t + atk, Math.max(0.01, v.decay * 0.4));
+    }
+    g.gain.setTargetAtTime(1e-4, t + dur, Math.max(0.02, v.release * 0.5));
+    var out = g;
+    // The kernel sends a pan controller for composed parts 3 and 4 ONLY, at two
+    // fixed values (55 and 72 of 127) — parts 1 and 2 and every accompaniment
+    // channel stay centred. It is not a per-instrument property.
+    if (ctx.createStereoPanner && mix.pan) {
+      var pan = ctx.createStereoPanner();
+      pan.pan.value = mix.pan;
+      g.connect(pan);
+      out = pan;
+    }
+    out.connect(st.master);
+    var stop = t + dur + Math.min(1.5, v.release * 2) + 0.05;
+    if (v.wave) {
       var osc = ctx.createOscillator();
-      osc.type = voice.type;
-      osc.frequency.value = noteFreq(e.note);
+      osc.setPeriodicWave(v.wave);
+      osc.frequency.value = dezaNoteFreq(scaleNote);
       osc.connect(g);
       osc.start(t);
-      osc.stop(t + dur + 0.1);
+      osc.stop(stop);
+    } else {
+      // An inharmonic sample (drums and the like) plays as pitched noise.
+      var src = ctx.createBufferSource();
+      src.buffer = st.noise;
+      src.playbackRate.value = Math.max(0.15, dezaNoteFreq(scaleNote) / 440);
+      src.connect(g);
+      src.start(t);
+      src.stop(t + Math.min(dur + 0.1, 0.6));
     }
+  }
+  // Exposed for headless verification (see the parity harness): lets a test
+  // render one instrument offline and confirm the derived voice makes sound.
+  if (typeof window !== "undefined") {
+    window.__playBgmNoteProbe = playBgmNote;
+    window.__dezaVoiceProbe = dezaVoice;
   }
   function stopDezaemonBgm(scene) {
     var st = scene._dezaBgm;
@@ -3965,6 +5285,8 @@
       } catch (e2) {
       }
     }
+    var cmgIx = cmgDezaBgms.indexOf(st);
+    if (cmgIx >= 0) cmgDezaBgms.splice(cmgIx, 1);
     scene._dezaBgm = null;
   }
   var SFX_GAIN = 0.14;
@@ -3976,7 +5298,7 @@
     var bank = bgm.sfxSet === 2 ? "comic" : bgm.sfxSet === 3 ? "sf" : "real";
     var t = ctx.currentTime;
     var g = ctx.createGain();
-    g.gain.value = SFX_GAIN;
+    g.gain.value = SFX_GAIN * cmgVol.sfx;
     g.connect(ctx.destination);
     if (name === "explosion" || name === "bossExplosion") {
       var big = name === "bossExplosion";
@@ -4228,7 +5550,7 @@
         this.howtoBtn.setVisible(false);
         this.howtoBtn.disableInteractive();
       }
-      if (isExportedLevelApp()) {
+      if (isExportedLevelApp() || isImportedLevel()) {
         this.twitterBtn.setVisible(false);
         this.twitterBtn.disableInteractive();
       }
@@ -4404,9 +5726,9 @@
       }
       try {
         if (this.sound.get(key)) {
-          this.sound.play(key, { volume: 0.7 });
+          this.sound.play(key, { volume: cmgSfxVol(0.7) });
         } else if (this.cache.audio.exists(key)) {
-          this.sound.add(key).play({ volume: 0.7 });
+          this.sound.add(key).play({ volume: cmgSfxVol(0.7) });
         }
       } catch (e) {
       }
@@ -4416,7 +5738,7 @@
         return;
       }
       try {
-        var vol = typeof volume === "number" ? volume : 0.75;
+        var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.75);
         if (this.sound.get(key)) {
           this.sound.play(key, { volume: vol });
         } else if (this.cache.audio.exists(key)) {
@@ -4726,7 +6048,7 @@
         return;
       }
       try {
-        var vol = typeof volume === "number" ? volume : 0.7;
+        var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
         if (this.sound.get(key)) {
           this.sound.play(key, { volume: vol });
         } else if (this.cache.audio.exists(key)) {
@@ -4740,11 +6062,15 @@
         return;
       }
       try {
+        var base = volume || 0.2;
         var existing = this.sound.get(key);
         if (existing) {
-          existing.play({ volume: volume || 0.2, loop: true });
+          existing.__cmgBgmBase = base;
+          existing.play({ volume: cmgBgmVol(base), loop: true });
         } else if (this.cache.audio.exists(key)) {
-          this.sound.add(key, { loop: true, volume: volume || 0.2 }).play();
+          var snd = this.sound.add(key, { loop: true, volume: cmgBgmVol(base) });
+          snd.__cmgBgmBase = base;
+          snd.play();
         }
       } catch (e) {
       }
@@ -5317,6 +6643,12 @@
   function handleKeyboardInput(scene) {
     if (!scene.gameStarted || scene.playerDead || scene.theWorldFlg) return;
     var gp = pollGamepads();
+    // START during play pauses: launcher builds raise the Guide OSD, which
+    // pauses over cmg-pause; standalone raises the local PAUSE panel.
+    if (gp.enter) {
+      cmgStartPressed();
+      return;
+    }
     var moveX = 0;
     var moveY = 0;
     if (scene.cursors && scene.cursors.left.isDown || scene.wasd && scene.wasd.left.isDown || gp.left) {
@@ -5337,8 +6669,15 @@
     if (scene.wasd && scene.wasd.sp && Phaser.Input.Keyboard.JustDown(scene.wasd.sp) || gp.sp) {
       scene.onSpFire();
     }
+    // The engine charges while the FIRE button is held, but this runtime
+    // autofires, so the charge gets an input of its own: SHIFT on a keyboard.
+    var charging = !!(scene.wasd && scene.wasd.charge && scene.wasd.charge.isDown);
+    updateDezaWeapons(scene, charging);
   }
   function playerDamage(scene, amount) {
+    // Bomb types 1, 2, 4, 6 and 7 hold the player invincible for their whole run
+    // — 6 and 7 by switching the ship itself off as a collidable.
+    if (scene.dezaBombInvuln) return;
     if (gameState.godFlg) return;
     if (scene.barrierActive) return;
     if (scene.damageAnimationFlg) return;
@@ -5401,6 +6740,7 @@
   function playerDie(scene) {
     if (scene.playerDead) return;
     scene.playerDead = true;
+    dezaRankDeath(scene);
     scene.gameStarted = false;
     triggerHaptic("death");
     scene.showExplosion(scene.playerSprite.x, scene.playerSprite.y);
@@ -5458,6 +6798,26 @@
         scene.shootMode = "3way";
         scene.shootSpeed = "speed_normal";
         break;
+      case "dezaScore": {
+        // Dezaemon score item: game-wide value from settings +0x24
+        // (dezaemonItems.score), same table the bosses score from.
+        var bonus = scene.recipe && scene.recipe.dezaemonItems && scene.recipe.dezaemonItems.score || 1e4;
+        scene.scoreCount += bonus;
+        if (scene.playerSprite) scene.showScorePopup(scene.playerSprite.x, scene.playerSprite.y - 24, bonus, 1);
+        break;
+      }
+      case "dezaSp":
+        // Dezaemon bomb-stock item (+1, capped at 99). Levels that authored no
+        // bomb fall back to topping up the runtime's own SP gauge.
+        if (dezaBombArmed(scene)) {
+          scene.dezaBombStock = Math.min(99, (scene.dezaBombStock || 0) + 1);
+          scene.updateSpGauge();
+        } else {
+          scene.spGauge = Math.min(100, scene.spGauge + 34);
+          scene.updateSpGauge();
+          if (scene.spGauge >= 100 && scene.spBtn) scene.spBtn.setAlpha(1);
+        }
+        break;
       default:
         scene.shootMode = "normal";
         break;
@@ -5467,7 +6827,7 @@
   // ../2019-es7/src/phaser/game-objects/Enemy.js
   var GW2 = GAME_DIMENSIONS.WIDTH;
   var GH2 = GAME_DIMENSIONS.HEIGHT;
-  var DEZA_MAX_LIVE_ZAKO = 32;
+  var DEZA_MAX_LIVE_ZAKO = 48;
   function resolveFrame(scene, atlasKey, frameName) {
     var atlas = scene.textures.get(atlasKey);
     if (!atlas) return frameName;
@@ -5507,8 +6867,16 @@
     enemy.setData("animTimer", 0);
     enemy.setData("projData", data.bulletData || data.projectileData || null);
     enemy.setData("enemyKey", data._enemyKey || null);
+    // The engine's FORMATION KEY (0x06090530[slot]): a grid-spawned enemy gets
+    // its placement cell byte, a death-word child gets its parent's parameter
+    // with bit7 forced on. The chain mode sweeps everything sharing one.
+    if (data.dezaemon) {
+      enemy.setData("dezaKey", data.dezaemon.placementId);
+      enemy.setData("dezaDeath", data.dezaemon.behavior && data.dezaemon.behavior.death);
+      enemy.setData("dezaChild", data.dezaemon.deathChild || null);
+    }
     if (data.dezaemon && data.dezaemon.behavior) {
-      initEnemyBehavior(enemy, data.dezaemon.behavior);
+      initEnemyBehavior(enemy, data.dezaemon.behavior, data.dezaemon, scene);
     }
     var shadowReverse = data.shadowReverse !== false;
     var shadowOffsetY = data.shadowOffsetY || 10;
@@ -5553,6 +6921,12 @@
         case "3":
           itemName = PLAYER_STATES.SHOOT_SPEED_HIGH;
           break;
+        case "4":
+          itemName = "dezaScore";
+          break;
+        case "5":
+          itemName = "dezaSp";
+          break;
         case "9":
           itemName = PLAYER_STATES.BARRIER;
           break;
@@ -5564,7 +6938,17 @@
       if (deza) {
         ex = gridLeft + i * 16 + 16;
         ey = GH2 + scene.dezaBg._scroll - (dezaRow * 16 + 8);
-        if (ey > -16) ey = -16;
+        if (!scene.waveDueByScroll) {
+          // Legacy tick-timed stages keep the fly-in clamp.
+          if (ey > -16) ey = -16;
+        } else if (ey > GH2 - 8) {
+          // Position-locked stages: the row scrolled past before its spawn
+          // (a stage skip) — nothing to place.
+          continue;
+        }
+        // Otherwise the enemy appears AT its map row: rows inside the
+        // window at stage start pop in place (a hardware static arena);
+        // rows crossed by the scroll spawn ~40 px above the screen top.
       } else {
         ex = cellW * i + cellW / 2;
         ey = -16;
@@ -5632,6 +7016,96 @@
     }
     scene.enemyBullets.push(bullet);
   }
+  // ---- The enemy DEATH WORD (record byte 2 bits 6-7 + byte 3) --------------
+  //
+  // Traced from the engine's death dispatcher (+0x6448). The record packs a
+  // mode and a parameter that the spawn folds into one per-slot word, and when
+  // the enemy's hp reaches zero the dispatcher switches on it:
+  //
+  //   1  DROP an item — the parameter is an item SLOT (9 = cycle the slots)
+  //   2  SPAWN a successor at the dying enemy's exact position, taken from the
+  //      same stage's record table and tagged with the parent's key
+  //   3  CHAIN — every other live object carrying that key dies too, four
+  //      ticks apart, and each of those runs its own death word in turn
+  //
+  // Byte 4 bits 2-3 ride along as the death's PRESENTATION (vanish silently /
+  // small blast / full blast).
+  // Ticks between links, from the engine's n*4 countdown. One engine AI tick is
+  // SATURN_TICKS_PER_FRAME runtime updates, and the countdown below is counted
+  // down per update, so convert once here.
+  var DEATH_CHAIN_STEP = 4 * SATURN_TICKS_PER_FRAME;
+  var deathItemCycle = 0;   // the engine's own rolling counter (+0x60840D2)
+  function deathWordItemName(scene, slotIndex) {
+    var items = scene.recipe && scene.recipe.dezaemonItems;
+    var slots = items && items.slots;
+    if (!slots || !slots.length) return null;
+    var slot = slots[slotIndex % slots.length];
+    if (!slot) return null;
+    // Item TYPE -> the runtime's drop digit -> the name dropItem() knows.
+    var DROP_BY_TYPE = [2, 2, 2, 2, 9, 5, 4, 1, 3];
+    var digit = DROP_BY_TYPE[slot.type];
+    if (digit === 1) return PLAYER_STATES.SHOOT_NAME_BIG;
+    if (digit === 2) return PLAYER_STATES.SHOOT_NAME_3WAY;
+    if (digit === 3) return PLAYER_STATES.SHOOT_SPEED_HIGH;
+    if (digit === 4) return "dezaScore";
+    if (digit === 5) return "dezaSp";
+    if (digit === 9) return PLAYER_STATES.BARRIER;
+    return null;
+  }
+  function runDeathWord(scene, enemy) {
+    var death = enemy.getData("dezaDeath");
+    if (!death || !death.mode) return death;
+    if (death.mode === 1) {
+      // Slot 9 is the engine's "cycling" item: a global counter, not random.
+      var idx = death.item === 9 ? deathItemCycle++ & 7 : death.item - 1;
+      var name = death.item > 0 ? deathWordItemName(scene, idx) : null;
+      if (name) scene.dropItem(enemy.x, enemy.y, name);
+    } else if (death.mode === 2) {
+      spawnDeathChild(scene, enemy, death);
+    } else if (death.mode === 3) {
+      var n = 0;
+      for (var i = 0; i < scene.enemies.length; i++) {
+        var other = scene.enemies[i];
+        if (!other || other === enemy || !other.active) continue;
+        if (other.getData("type") === "boss") continue;
+        if (other.getData("dezaKey") !== death.key) continue;
+        // The engine freezes each victim where it stands, silences its guns and
+        // arms a countdown; the death itself runs the victim's own death word,
+        // so a chain can cascade.
+        var st = other.getData("deza");
+        if (st) {
+          st.chainDying = true;
+          if (st.entry) st.entry.ridesNow = false;
+          if (st.sp) { st.sp.vx = 0; st.sp.vy = 0; st.sp.noFire = true; }
+        }
+        other.setData("dezaChainT", DEATH_CHAIN_STEP * (++n));
+      }
+    }
+    return death;
+  }
+  function spawnDeathChild(scene, enemy, death) {
+    var key = enemy.getData("dezaChild");
+    var data = key && scene.recipe && scene.recipe.enemyData
+      ? scene.recipe.enemyData[key]
+      : null;
+    if (!data) return;
+    // The engine draws the child from a separate 150-slot pool; the runtime's
+    // single cap stands in for it, so a chain of successors cannot outrun it.
+    if (scene.enemies.length >= DEZA_MAX_LIVE_ZAKO) return;
+    data._enemyKey = key.replace(/^enemy/, "");
+    var child = createEnemy(scene, data, enemy.x, enemy.y, null);
+    // The successor is tagged with the PARENT's parameter, not its own
+    // placement id — that is what makes a squad share one chain key.
+    child.setData("dezaKey", death.key);
+    // An anchored parent hands its terrain anchor down verbatim, so the child
+    // stays glued to the same spot on the map (+0x18F10).
+    var pst = enemy.getData("deza");
+    var cst = child.getData("deza");
+    if (pst && pst.entry && pst.entry.anchored && cst && cst.entry) {
+      cst.entry.anchorY = pst.entry.anchorY;
+      cst.entry.anchorScroll = pst.entry.anchorScroll;
+    }
+  }
   function enemyDie(scene, enemy, isSp) {
     if (!enemy || !enemy.active) return;
     var score = enemy.getData("score") || 100;
@@ -5654,18 +7128,469 @@
     if (itemName) {
       scene.dropItem(enemy.x, enemy.y, itemName);
     }
+    // The record's DEATH WORD, run before the blast — the engine dispatches it
+    // on the same tick and only then decides how to render the death.
+    var death = runDeathWord(scene, enemy);
     triggerHaptic("kill");
-    scene.showExplosion(enemy.x, enemy.y);
+    if (!(death && death.silent)) {
+      scene.showExplosion(enemy.x, enemy.y);
+      scene.playSound("se_explosion", 0.175);
+    }
     scene.showScorePopup(enemy.x, enemy.y, score, ratio);
-    scene.playSound("se_explosion", 0.175);
     var idx = scene.enemies.indexOf(enemy);
     if (idx >= 0) scene.enemies.splice(idx, 1);
     var eShadow = enemy.getData("shadow");
     if (eShadow && eShadow.active) eShadow.destroy();
     enemy.destroy();
   }
+  // ---- Dezaemon player BOMBS -----------------------------------------------
+  //
+  // The save's weapon loadout picks one of eight bomb behaviours (a 4-bit type;
+  // bit3 is a variant that re-routes type 6 and adds a spin to types 4 and 5).
+  // Traced from the 16-way dispatcher +0x151B0 and its eight object classes.
+  //
+  // A bomb is a big PIERCING contact object, not a screen clear: it deals its
+  // attack power to every enemy it overlaps EVERY FRAME, killing does not
+  // consume it, and nothing can damage it. Only one may be alive per player,
+  // and a press that cannot fire costs no stock.
+  //
+  // Engine attack powers are in the same durability units as enemy LIFE, where
+  // a full-power main shot is 5120 — which is one point of the runtime's own
+  // damage scale.
+  var DEZA_BOMB_UNIT = 5120;
+  var DEZA_BOMB_POWER = { 1: 4096, 2: 5632, 3: 6144, 4: 4608, 5: 10240, 6: 3584, 7: 3584, 8: 512 };
+  // Dispatcher nibble -> behaviour. 0 and 8 fire nothing at all.
+  var DEZA_BOMB_BY_NIBBLE = [0, 1, 2, 3, 4, 5, 6, 8, 0, 1, 2, 3, 4, 5, 7, 8];
+  var DEZA_BOMB_SPIN = 3072 / 65536 * Math.PI * 2; // +16.875 deg/frame on the variants
+  function dezaLoadout(scene) {
+    var m = scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
+    if (!m || !m.loadouts || !m.loadouts.length) return null;
+    var k = scene.dezaLoadoutIndex;
+    if (typeof k !== "number") {
+      k = m.startLoadout && m.startLoadout.length ? m.startLoadout[0] : 0;
+      scene.dezaLoadoutIndex = k;
+    }
+    return m.loadouts[k & 3] || null;
+  }
+  function dezaBombNibble(scene) {
+    var lo = dezaLoadout(scene);
+    if (!lo) return 0;
+    return (lo.bomb & 7) | (lo.bombVariant ? 8 : 0);
+  }
+  // True when this level is a Dezaemon import that authored a real bomb.
+  function dezaBombArmed(scene) {
+    return DEZA_BOMB_BY_NIBBLE[dezaBombNibble(scene)] !== 0;
+  }
+  function fireDezaBomb(scene) {
+    var nib = dezaBombNibble(scene);
+    var type = DEZA_BOMB_BY_NIBBLE[nib];
+    if (!type) return false;
+    // One bomb in flight per player, and a blocked press costs no stock.
+    if (scene.dezaBomb && scene.dezaBomb.alive) return false;
+    if (!scene.dezaBombStock) return false;
+    scene.dezaBombStock--;
+    var p = scene.playerSprite;
+    var px = p ? p.x : GW13 / 2;
+    var py = p ? p.y : GH11 - 80;
+    var b = {
+      type: type, spin: (nib === 12 || nib === 13) ? DEZA_BOMB_SPIN : 0,
+      alive: true, age: 0, x: px, y: py,
+      power: DEZA_BOMB_POWER[type] / DEZA_BOMB_UNIT,
+      damaging: true, shape: "circle", r: 0, dr: 0,
+      halfW: 0, halfH: 0, vy: 0, w16: 0, s: 0, ds: 0, life: 0,
+      target: null, rot: 0, phase: 0,
+      // Types 1, 2, 4, 6 and 7 hold the player invincible for their whole run.
+      invincible: type === 1 || type === 2 || type === 4 || type === 6 || type === 7
+    };
+    if (type === 2) { b.x = px; b.y = GH11 + 40; b.w16 = 0x4000; b.shape = "strip"; }
+    if (type === 5) { b.vy = -8; b.damaging = false; }
+    if (type === 8) { b.x = GW13 / 2; b.y = GH11 + 32; b.shape = "box"; b.halfW = 120; b.halfH = 32; }
+    if (type === 3) { b.life = 160; b.shape = "box"; }
+    if (type === 6 || type === 7) { b.life = 256; b.shape = type === 7 ? "box" : "circle"; }
+    scene.dezaBomb = b;
+    // Bomb types 6 and 7 zero the charge gauge and any discharge in progress.
+    if ((type === 6 || type === 7) && scene.dezaWeapons) {
+      scene.dezaWeapons.gauge = 0;
+      scene.dezaWeapons.busy = 0;
+      scene.dezaChargeBeam = null;
+      scene.dezaShotLocked = false;
+    }
+    scene.playSound("se_bomb", 0.5);
+    triggerHaptic("special");
+    if (b.invincible) scene.dezaBombInvuln = true;
+    return true;
+  }
+  // One frame of the live bomb. Returns false once it is done.
+  function stepDezaBomb(scene, b) {
+    var p = scene.playerSprite;
+    b.age++;
+    b.rot += b.spin;
+    if (b.type === 1) {
+      // Flash sphere: accelerating growth to 344 px, then a white fade.
+      if (b.age <= 53) { b.r += b.dr; b.dr += 32; }
+      else if (b.age === 54 && scene.cameras && scene.cameras.main) scene.cameras.main.flash(500, 255, 255, 255);
+      b.radius = Math.min(344, b.r / 128);
+      if (b.age > 77) b.damaging = false;
+      if (b.age > 101) return false;
+    } else if (b.type === 2) {
+      // Rising pillar: climbs to the top of the screen, then thins out.
+      if (b.y > 72) b.y = Math.max(72, b.y - 32);
+      b.w16 = b.w16 - 40 - (b.w16 / 64);
+      b.halfW = Math.max(0, b.w16 / 256);
+      if (b.w16 <= 511) b.damaging = false;
+      if (b.age > 128) return false;
+    } else if (b.type === 3) {
+      // Tether: latches onto one enemy and drains only that one.
+      if (!b.target || !b.target.active) b.target = nearestDezaEnemy(scene, b.x, b.y);
+      if (b.target && b.target.active) {
+        b.x = b.x + (b.target.x - b.x) * 0.25;
+        b.y = b.y + (b.target.y - b.y) * 0.25;
+      }
+      if (b.age > 160) return false;
+    } else if (b.type === 4) {
+      // Expanding ring.
+      if (b.age <= 79) { b.r += b.dr; b.dr += 20; }
+      b.radius = Math.min(240, b.r / 256);
+      if (b.age > 79 + 27) b.damaging = false;
+      if (b.age > 79 + 33) return false;
+    } else if (b.type === 5) {
+      // Lobbed ball: harmless while it rises, then blooms where it lands.
+      // `phase` is tracked separately from `damaging` — the bloom switches its
+      // damage off before it finishes shrinking, and reusing one flag for both
+      // makes the landing re-trigger for ever.
+      if (b.phase !== 1 && b.age <= 28 && b.y > 32) {
+        b.y += b.vy;
+        b.vy = b.vy + 24 / 128 + b.vy / 64;
+        if (b.vy > 0) b.vy = 0;
+      } else if (b.phase !== 1) {
+        b.phase = 1;
+        b.damaging = true;
+        b.s = 2048;
+        b.ds = 0;
+        b.life = 80;
+        scene.playSound("se_explosion", 0.2);
+      }
+      if (b.phase === 1) {
+        if (b.life > 0) {
+          b.life--;
+          if (b.s <= 22528) { b.s += b.ds; if (b.ds <= 767) b.ds += 64; } else b.s = 18432;
+        } else {
+          b.s -= 768;
+          if (b.s <= 4095) b.damaging = false;
+          if (b.s < 0) return false;
+        }
+        var sp = b.s / 256;
+        b.radius = Math.sqrt(sp * sp / 6);
+      }
+    } else if (b.type === 6 || b.type === 7) {
+      // The ship itself becomes the weapon: it stops colliding for the whole
+      // run, and the bomb rides on top of it.
+      if (p) { b.x = p.x; b.y = p.y; }
+      if (b.type === 6) {
+        // Six tiers, largest while the counter is still small, and the pair
+        // alternates every TWO frames (+0x77718..+0x7779A).
+        var c = b.age % 48;
+        var sx = c <= 7 ? 16384 : c <= 15 ? 14336 : c <= 23 ? 12288
+          : c <= 31 ? 10240 : c <= 39 ? 8192 : 6144;
+        if ((b.age & 2) !== 0) sx = Math.max(4096, sx - 2048);
+        b.radius = Math.sqrt((sx / 256) * (sx / 256) / 8 * 7);
+      } else {
+        b.halfW = Math.min(20480, 1024 + b.age * 1024) / 512;
+        b.halfH = 24;
+        if (b.age > 200) b.power = 256 / DEZA_BOMB_UNIT;
+      }
+      if (b.age > 256) return false;
+    } else if (b.type === 8) {
+      // Screen-wide wave, fixed in X, sweeping up and ignoring the ship.
+      b.y -= 12;
+      if (b.age % 8 === 0) scene.playSound("se_explosion", 0.12);
+      if (scene.showExplosion && b.age % 4 === 0) {
+        scene.showExplosion(32 + Math.random() * 224, b.y - 40);
+      }
+      if (b.y < -64) return false;
+    }
+    return true;
+  }
+  if (typeof window !== "undefined") window.__updateDezaBombProbe = function (sc) { updateDezaBomb(sc); };
+  function nearestDezaEnemy(scene, x, y) {
+    var best = null, bd = Infinity;
+    for (var i = 0; i < scene.enemies.length; i++) {
+      var e = scene.enemies[i];
+      if (!e || !e.active) continue;
+      var d = (e.x - x) * (e.x - x) + (e.y - y) * (e.y - y);
+      if (d < bd) { bd = d; best = e; }
+    }
+    return best;
+  }
+  // Bomb vs enemies: every overlapping enemy takes the attack power THIS FRAME,
+  // and a kill neither stops nor shrinks the bomb.
+  function dezaBombDamage(scene, b) {
+    if (!b.damaging) return;
+    for (var i = scene.enemies.length - 1; i >= 0; i--) {
+      var e = scene.enemies[i];
+      if (!e || !e.active) continue;
+      if (e.getData("type") === "boss" && scene.bossEntering) continue;
+      // The tether drains only the enemy it latched onto.
+      if (b.type === 3 && e !== b.target) continue;
+      var dx = Math.abs(e.x - b.x), dy = Math.abs(e.y - b.y);
+      var hit;
+      if (b.shape === "strip") hit = dx <= b.halfW + e.width / 2;
+      else if (b.shape === "box") hit = dx <= b.halfW + e.width / 2 && dy <= b.halfH + e.height / 2;
+      else hit = dx * dx + dy * dy <= (b.radius || 0) * (b.radius || 0) + e.width * e.height;
+      if (!hit) continue;
+      var hp = e.getData("hp");
+      if (hp === "infinity") continue;
+      hp -= b.power;
+      e.setData("hp", hp);
+      if (hp <= 0) {
+        if (e.getData("type") === "boss") scene.bossDie(e);
+        else scene.enemyDie(e, true);
+      }
+    }
+  }
+  function updateDezaBomb(scene) {
+    var b = scene.dezaBomb;
+    if (!b || !b.alive) return;
+    if (!stepDezaBomb(scene, b)) {
+      b.alive = false;
+      scene.dezaBomb = null;
+      scene.dezaBombInvuln = false;
+      if (scene.dezaBombGfx) { scene.dezaBombGfx.clear(); }
+      return;
+    }
+    dezaBombDamage(scene, b);
+    drawDezaBomb(scene, b);
+  }
+  // The bombs have no art in the imported atlas, so they are drawn as shapes —
+  // the traced geometry is exactly what the collision uses.
+  function drawDezaBomb(scene, b) {
+    var g = scene.dezaBombGfx;
+    if (!g) {
+      g = scene.dezaBombGfx = scene.add.graphics();
+      g.setDepth(58);
+    }
+    g.clear();
+    var a = b.damaging ? 0.42 : 0.16;
+    g.fillStyle(b.type === 8 ? 8965375 : b.type === 6 || b.type === 7 ? 16755370 : 10092543, a);
+    g.lineStyle(2, 16777215, a + 0.25);
+    if (b.shape === "strip") {
+      g.fillRect(b.x - b.halfW, 0, b.halfW * 2, GH11);
+      g.strokeRect(b.x - b.halfW, 0, b.halfW * 2, GH11);
+    } else if (b.shape === "box") {
+      g.fillRect(b.x - b.halfW, b.y - b.halfH, b.halfW * 2, b.halfH * 2);
+      g.strokeRect(b.x - b.halfW, b.y - b.halfH, b.halfW * 2, b.halfH * 2);
+    } else {
+      var r = b.radius || 0;
+      if (r > 0) { g.fillCircle(b.x, b.y, r); g.strokeCircle(b.x, b.y, r); }
+    }
+  }
+  // ---- Dezaemon CHARGE and SUB weapons -------------------------------------
+  //
+  // The loadout's other two fields, traced from the charge dispatcher +0x1528C
+  // and the sub dispatcher +0x1509C.
+  //
+  // There are NO option pods: the "sub weapon" is simply a second shot type
+  // fired from the ship, with its own burst cap and reload interval. The ship's
+  // power level divides the reload, so power multiplies the fire rate.
+  var DEZA_SUB_BURST = [0, 3, 3, 1, 1, 6, 3, 2];      // max shots per tap, +0x21C50
+  var DEZA_SUB_INTERVAL = [0, 6, 5, 12, 1, 3, 6, 28]; // reload units, +0x21C58
+  // Per-level damage for the two fully traced types, in engine durability units.
+  var DEZA_SUB_DMG1 = [7680, 6656, 5632, 4608, 3584];
+  var DEZA_SUB_DMG7 = [8960, 7680, 6656, 5888, 5376];
+  // Type 1's symmetric spread, in 256-per-turn angle units from straight up.
+  var DEZA_SUB_SPREAD1 = [[0], [3, -3], [0, 8, -8], [12, -12, 3, -3], [0, 16, -16, 8, -8]];
+  var DEZA_CHARGE_BUSY = [0, 16, 96, 160]; // attack length per charge type
+  function dezaSubType(scene) {
+    var lo = dezaLoadout(scene);
+    return lo ? (lo.sub & 7) : 0;
+  }
+  function dezaChargeType(scene) {
+    var lo = dezaLoadout(scene);
+    return lo ? (lo.charge & 3) : 0;
+  }
+  function dezaPowerLevel(scene) {
+    return Math.max(0, Math.min(4, scene.dezaPower || 0));
+  }
+  // One frame of both weapons. `held` is the charge input, `tap` its rising edge.
+  function updateDezaWeapons(scene, held) {
+    if (!dezaLoadout(scene) || !scene.playerSprite || scene.playerDead) return;
+    var st = scene.dezaWeapons || (scene.dezaWeapons = {
+      burst: 255, reload: 0, aim: 64, gauge: 0, busy: 0, chargeLevel: -1
+    });
+    var L = dezaPowerLevel(scene);
+    var ctype = dezaChargeType(scene);
+
+    // --- charge gauge: +1 a frame while held, capped at 320, never decays ---
+    if (st.busy > 0) {
+      st.busy--;
+      if (st.busy === 0) st.gauge = 0;
+    } else if (held && ctype !== 0) {
+      if (st.gauge < 320) st.gauge++;
+      if (st.gauge === 64) scene.playSound("se_damage", 0.12);
+    } else if (!held && st.gauge > 0) {
+      var level = (st.gauge >> 6) - 1;
+      if (level >= 0 && ctype !== 0) {
+        fireDezaCharge(scene, ctype, level);
+        st.busy = DEZA_CHARGE_BUSY[ctype];
+        st.chargeLevel = level;
+      } else {
+        st.gauge = 0;
+      }
+    }
+    // A charge past 31 locks out BOTH shot weapons — the main autofire as well
+    // as the sub. (The bomb is unaffected: it runs off its own button.)
+    var suppressed = st.gauge > 31;
+    scene.dezaShotLocked = suppressed;
+
+    // --- sub weapon: burst counter + reload, exactly as the gate routine ---
+    var stype = dezaSubType(scene);
+    if (stype && !suppressed) {
+      // The runtime autofires, so the main shot's cadence stands in for the
+      // engine's held rapid button: the burst cap never applies.
+      st.burst = 0;
+      if (st.burst < DEZA_SUB_BURST[stype] && st.reload === 0) {
+        fireDezaSub(scene, stype, L);
+        st.reload = DEZA_SUB_INTERVAL[stype];
+      }
+      if (st.reload !== 0) st.reload -= 1;
+      // The extra power-scaled drain sits INSIDE the type-7 branch (+0xDD4C
+      // returns to the epilogue for every other type), so types 1-6 fire at a
+      // flat interval and only type 7 speeds up with the ship's power.
+      if (stype === 7 && st.reload !== 0) st.reload = Math.max(0, st.reload - (L + 2));
+    }
+    updateDezaChargeShots(scene);
+  }
+  if (typeof window !== "undefined") {
+    window.__updateDezaWeaponsProbe = updateDezaWeapons;
+    window.__DEZA_SUB_BURST = DEZA_SUB_BURST;
+    window.__DEZA_SUB_INTERVAL = DEZA_SUB_INTERVAL;
+  }
+  function dezaShotDamage(units) {
+    return Math.max(1, Math.round(units / DEZA_BOMB_UNIT));
+  }
+  function fireDezaSub(scene, type, L) {
+    var p = scene.playerSprite;
+    var muzzleY = p.y - (type === 5 ? 0 : 8);
+    var shots = [];
+    if (type === 1) {
+      // Symmetric spread; one more projectile per power level.
+      var sp = DEZA_SUB_SPREAD1[L] || DEZA_SUB_SPREAD1[0];
+      for (var i = 0; i < sp.length; i++) shots.push({ a: sp[i], dmg: DEZA_SUB_DMG1[L] });
+    } else if (type === 7) {
+      // The only aimed type, and it is a strafe TILT, not a target lock: the
+      // aim leans against the ship's own drift and recentres when it stops.
+      var st = scene.dezaWeapons;
+      var vx = p.x - (scene.dezaLastX == null ? p.x : scene.dezaLastX);
+      st.aim += vx < 0 ? 2 : vx > 0 ? -2 : (st.aim < 64 ? 1 : st.aim > 64 ? -1 : 0);
+      st.aim = Math.max(40, Math.min(88, st.aim));
+      shots.push({ a: st.aim - 64 - 8, dmg: DEZA_SUB_DMG7[L] });
+      shots.push({ a: st.aim - 64 + 8, dmg: DEZA_SUB_DMG7[L] });
+    } else {
+      // Types 2-6: cadence and count are traced, the exact spread of each is
+      // not — they fire their burst straight ahead until it is.
+      var n = Math.min(3, 1 + (L >> 1));
+      for (var k = 0; k < n; k++) shots.push({ a: (k - (n - 1) / 2) * 6, dmg: DEZA_SUB_DMG1[L] });
+    }
+    for (var s = 0; s < shots.length; s++) {
+      var th = shots[s].a * Math.PI * 2 / 256;
+      spawnDezaPlayerShot(scene, p.x, muzzleY,
+        Math.sin(th) * 8, -Math.cos(th) * 8, dezaShotDamage(shots[s].dmg));
+    }
+    scene.dezaLastX = p.x;
+  }
+  // The charge release. Type 1 throws level+1 orbs, type 2 grows a beam column
+  // anchored to the ship, type 3 is its longer cousin.
+  function fireDezaCharge(scene, type, level) {
+    var p = scene.playerSprite;
+    scene.playSound("se_sp", 0.35);
+    if (type === 1) {
+      for (var i = 0; i <= level; i++) {
+        var a = (i - level / 2) * 8 * Math.PI * 2 / 256;
+        spawnDezaPlayerShot(scene, p.x, p.y - 8,
+          Math.sin(a) * 6, -Math.cos(a) * 6, dezaShotDamage(6656) + level);
+      }
+    } else {
+      // Types 2 and 3 are a column of segments that stays fixed to the ship and
+      // recedes up the screen while the attack runs.
+      scene.dezaChargeBeam = { grow: 0, life: DEZA_CHARGE_BUSY[type], level: level,
+        dmg: dezaShotDamage(7680) + level * 2 };
+    }
+  }
+  function updateDezaChargeShots(scene) {
+    var beam = scene.dezaChargeBeam;
+    if (!beam) return;
+    var p = scene.playerSprite;
+    beam.life--;
+    beam.grow += 15;
+    if (beam.life <= 0 || !p) {
+      scene.dezaChargeBeam = null;
+      if (scene.dezaBeamGfx) scene.dezaBeamGfx.clear();
+      return;
+    }
+    var top = Math.max(-20, p.y - beam.grow);
+    var halfW = 6 + beam.level * 3;
+    var g = scene.dezaBeamGfx;
+    if (!g) { g = scene.dezaBeamGfx = scene.add.graphics(); g.setDepth(45); }
+    g.clear();
+    g.fillStyle(9498623, 0.5);
+    g.fillRect(p.x - halfW, top, halfW * 2, p.y - top);
+    // The column damages everything it covers, every frame, and pierces.
+    for (var i = scene.enemies.length - 1; i >= 0; i--) {
+      var e = scene.enemies[i];
+      if (!e || !e.active || e.getData("type") === "boss") continue;
+      if (Math.abs(e.x - p.x) > halfW + e.width / 2) continue;
+      if (e.y > p.y || e.y < top) continue;
+      var hp = e.getData("hp");
+      if (hp === "infinity") continue;
+      hp -= beam.dmg / 8;
+      e.setData("hp", hp);
+      if (hp <= 0) scene.enemyDie(e, true);
+    }
+  }
+  // A plain player projectile, reusing the runtime's own bullet pipeline.
+  function spawnDezaPlayerShot(scene, x, y, vx, vy, damage) {
+    // The ship's OWN shot art, not the stock atlas frames. An imported save's
+    // player carries its bullet frames with it (the import resets the atlas to
+    // make room for the save's sprites), so hardcoded shot00-03 is at best a
+    // foreign-looking bullet and at worst a missing frame drawn as __BASE.
+    // shootNormal is the plain-shot record: the sub is a SECOND shot type, not
+    // the powerup-selected main weapon, so it deliberately does not follow
+    // scene.shootMode.
+    var pd = scene.recipe && scene.recipe.playerData;
+    var shootData = pd && (pd.shootNormal || pd.shootBig || pd.shoot3way);
+    var frames = playerBulletFrames(scene, shootData, "deza-sub");
+    var b = scene.add.sprite(x, y, "game_asset", frames[0]);
+    b.setOrigin(0.5);
+    // Bullet art points +X at rotation 0 — the stock shot sets -PI/2 to fly
+    // straight up — so a shot that carries its own velocity has to face that
+    // velocity. Without this every sub/charge shot draws sideways to its path:
+    // the straight-ahead ones point +X while flying up, and a spread fans out
+    // without turning at all.
+    b.setRotation(Math.atan2(vy, vx));
+    b.setDepth(42);
+    b.setData("damage", damage);
+    b.setData("dezaVx", vx);
+    b.setData("dezaVy", vy);
+    b.setData("bulletId", scene.bulletIdSeq = (scene.bulletIdSeq || 0) + 1);
+    attachAnim(b, frames, (shootData && shootData.frameRate) || 6);
+    scene.playerBullets.push(b);
+    return b;
+  }
   function updateEnemy(scene, enemy, step) {
     if (updateDezaBossPart(scene, enemy)) return;
+    // A chain-kill victim counts down where it stands — the engine keeps the
+    // countdown in the hp word and re-enters the full death handler at zero, so
+    // the link dies exactly as if it had been shot: own score, own item, own
+    // successor, and its own chain.
+    var chainT = enemy.getData("dezaChainT");
+    if (chainT) {
+      enemy.setData("dezaChainT", chainT - 1);
+      if (chainT - 1 <= 0) {
+        enemy.setData("dezaChainT", 0);
+        scene.enemyDie(enemy, false);
+        return;
+      }
+    }
     if (updateEnemyBehavior(scene, enemy)) {
       var dShadow = enemy.getData("shadow");
       if (dShadow && dShadow.active) {
@@ -5721,7 +7646,7 @@
     if (animFrames && animFrames.length > 1) {
       var animTimer = enemy.getData("animTimer") + step;
       enemy.setData("animTimer", animTimer);
-      if (animTimer > 150) {
+      if (animTimer > (enemy.getData("animPeriod") || 150)) {
         enemy.setData("animTimer", 0);
         var animIdx = (enemy.getData("animIdx") + 1) % animFrames.length;
         enemy.setData("animIdx", animIdx);
@@ -5748,6 +7673,35 @@
     bullet.setData("animTimer", 0);
     bullet.setData("frameRate", frameRate);
   }
+  // The frames a player bullet actually has art for: the weapon record's own
+  // texture list, spelled the way this atlas spells it (.gif/.png differ
+  // between the stock assets and an import), minus anything the atlas lacks,
+  // falling back to the stock shot. `tag` only names the weapon in the
+  // once-per-weapon warning.
+  function playerBulletFrames(scene, shootData, tag) {
+    var raw = shootData && shootData.texture && shootData.texture.length
+      ? resolveFrames(scene, "game_asset", shootData.texture)
+      : ["shot00.gif"];
+    var atlas = scene.textures.get("game_asset");
+    var atlasFrames = atlas && atlas.frames ? atlas.frames : null;
+    if (!atlasFrames) return raw;
+    var present = raw.filter(function(f) {
+      return !!atlasFrames[f];
+    });
+    var frames = present.length ? present : resolveFrames(scene, "game_asset", ["shot00.gif"]);
+    if (present.length !== raw.length) {
+      scene._bulletWarnSeen = scene._bulletWarnSeen || {};
+      var warnKey = tag + ":" + raw.join(",");
+      if (!scene._bulletWarnSeen[warnKey]) {
+        scene._bulletWarnSeen[warnKey] = true;
+        var missing = raw.filter(function(f) {
+          return !atlasFrames[f];
+        });
+        console.warn("Bullet[" + tag + "]: dropping missing frames", missing, "kept", frames);
+      }
+    }
+    return frames;
+  }
   function shootBullets(scene) {
     if (!scene.gameStarted || scene.playerDead || scene.theWorldFlg) {
       return;
@@ -5765,31 +7719,7 @@
         shootData = pd.shootNormal;
         break;
     }
-    var rawFrames = shootData.texture && shootData.texture.length ? shootData.texture : ["shot00.gif"];
-    var atlas = scene.textures.get("game_asset");
-    var atlasFrames = atlas && atlas.frames ? atlas.frames : null;
-    var frames = rawFrames;
-    if (atlasFrames) {
-      var present = rawFrames.filter(function(f) {
-        return !!atlasFrames[f];
-      });
-      if (present.length === 0) {
-        frames = ["shot00.gif"];
-      } else {
-        frames = present;
-      }
-      if (present.length !== rawFrames.length) {
-        scene._bulletWarnSeen = scene._bulletWarnSeen || {};
-        var warnKey = scene.shootMode + ":" + rawFrames.join(",");
-        if (!scene._bulletWarnSeen[warnKey]) {
-          scene._bulletWarnSeen[warnKey] = true;
-          var missing = rawFrames.filter(function(f) {
-            return !atlasFrames[f];
-          });
-          console.warn("Bullet[" + scene.shootMode + "]: dropping missing frames", missing, "kept", frames);
-        }
-      }
-    }
+    var frames = playerBulletFrames(scene, shootData, scene.shootMode);
     var frameKey = frames[0];
     var frameRate = shootData.frameRate || 6;
     if (scene.shootMode === "3way") {
@@ -5854,10 +7784,18 @@
         }
         bullet.setData("animTimer", bTimer);
       }
-      var angle = bullet.getData("angle") || 0;
-      bullet.y -= 3.5;
-      bullet.x += angle * 3.5;
-      if (bullet.y < -20) {
+      // Dezaemon sub- and charge-weapon shots carry their own velocity; the
+      // stock shot keeps its straight-up path with an optional lean.
+      var dvx = bullet.getData("dezaVx");
+      if (dvx !== undefined && dvx !== null) {
+        bullet.x += dvx;
+        bullet.y += bullet.getData("dezaVy") || 0;
+      } else {
+        var angle = bullet.getData("angle") || 0;
+        bullet.y -= 3.5;
+        bullet.x += angle * 3.5;
+      }
+      if (bullet.y < -20 || bullet.y > GH3 + 20 || bullet.x < -20 || bullet.x > GW4 + 20) {
         bullet.destroy();
         scene.playerBullets.splice(b, 1);
       }
@@ -5867,22 +7805,37 @@
   // ../2019-es7/src/phaser/effects/Explosions.js
   var GW4 = GAME_DIMENSIONS.WIDTH;
   var GH3 = GAME_DIMENSIONS.HEIGHT;
-  function showExplosion(scene, x, y) {
-    if (!scene.anims.exists("explosion_anim")) {
+  // An effect animation is only as good as the atlas in play: a recipe's
+  // custom atlas (Dezaemon imports especially) may lack these frames, and
+  // generateFrameNames then yields an empty animation whose play() crashes
+  // Phaser (getFirstTick reads currentFrame.duration). Create-if-missing and
+  // report whether the animation is actually playable; a key that came up
+  // empty is remembered so frequent effects (hit impacts) don't re-attempt
+  // and re-warn on every call.
+  var deadEffectAnims = {};
+  function ensureEffectAnim(scene, key, frameRate, names) {
+    if (deadEffectAnims[key]) return false;
+    if (!scene.anims.exists(key)) {
       scene.anims.create({
-        key: "explosion_anim",
-        frames: scene.anims.generateFrameNames("game_asset", {
-          prefix: "explosion",
-          start: 0,
-          end: 6,
-          zeroPad: 2,
-          suffix: ".gif"
-        }),
-        frameRate: 18,
-        //48,
+        key,
+        frames: scene.anims.generateFrameNames("game_asset", names),
+        frameRate,
         repeat: 0
       });
     }
+    var anim = scene.anims.get(key);
+    if (anim && anim.frames && anim.frames.length) return true;
+    deadEffectAnims[key] = true;
+    return false;
+  }
+  function showExplosion(scene, x, y) {
+    if (!ensureEffectAnim(scene, "explosion_anim", 18, {
+      prefix: "explosion",
+      start: 0,
+      end: 6,
+      zeroPad: 2,
+      suffix: ".gif"
+    })) return;
     var ex = scene.add.sprite(x, y, "game_asset", "explosion00.gif");
     ex.setOrigin(0.5);
     ex.setDepth(60);
@@ -5892,20 +7845,13 @@
     });
   }
   function spExplosions(scene) {
-    if (!scene.anims.exists("sp_explosion_anim")) {
-      scene.anims.create({
-        key: "sp_explosion_anim",
-        frames: scene.anims.generateFrameNames("game_asset", {
-          prefix: "spExplosion",
-          start: 0,
-          end: 7,
-          zeroPad: 2,
-          suffix: ".gif"
-        }),
-        frameRate: 24,
-        repeat: 0
-      });
-    }
+    if (!ensureEffectAnim(scene, "sp_explosion_anim", 24, {
+      prefix: "spExplosion",
+      start: 0,
+      end: 7,
+      zeroPad: 2,
+      suffix: ".gif"
+    })) return;
     for (var n = 0; n < 64; n++) {
       (function(idx) {
         scene.time.delayedCall(10 * idx, function() {
@@ -5932,20 +7878,12 @@
   }
   function showHitImpact(scene, x, y, isGuard) {
     var animKey = isGuard ? "guard_impact_anim" : "hit_impact_anim";
-    if (!scene.anims.exists(animKey)) {
-      var prefix = isGuard ? "guard" : "hit";
-      scene.anims.create({
-        key: animKey,
-        frames: scene.anims.generateFrameNames("game_asset", {
-          prefix,
-          start: 0,
-          end: 4,
-          suffix: ".gif"
-        }),
-        frameRate: 48,
-        repeat: 0
-      });
-    }
+    if (!ensureEffectAnim(scene, animKey, 48, {
+      prefix: isGuard ? "guard" : "hit",
+      start: 0,
+      end: 4,
+      suffix: ".gif"
+    })) return;
     var frameKey = isGuard ? "guard0.gif" : "hit0.gif";
     var impact = scene.add.sprite(x, y - 10, "game_asset", frameKey);
     impact.setOrigin(0.5);
@@ -5995,20 +7933,13 @@
     boss.setData("_tintTween", tw);
   }
   function showBossExplosion(scene, x, y) {
-    if (!scene.anims.exists("boss_explosion_anim")) {
-      scene.anims.create({
-        key: "boss_explosion_anim",
-        frames: scene.anims.generateFrameNames("game_asset", {
-          prefix: "explosion",
-          start: 0,
-          end: 6,
-          zeroPad: 2,
-          suffix: ".gif"
-        }),
-        frameRate: 18,
-        repeat: 0
-      });
-    }
+    if (!ensureEffectAnim(scene, "boss_explosion_anim", 18, {
+      prefix: "explosion",
+      start: 0,
+      end: 6,
+      zeroPad: 2,
+      suffix: ".gif"
+    })) return;
     var ex = scene.add.sprite(x, y, "game_asset", "explosion00.gif");
     ex.setOrigin(0.5);
     ex.setDepth(60);
@@ -6831,11 +8762,33 @@
       entryY = rowTopY - coreH / 2;
     }
     scene.bossBaseY = entryY;
+    // The record's byte 6 picks where the boss flies in FROM (two 4-entry
+    // preset tables) and what it does on the way; with no preset it takes
+    // the engine's default entry, riding in from just off the top.
+    var arrival = dezaArmed && bossData.dezaemon && bossData.dezaemon.boss &&
+      bossData.dezaemon.boss.arrival;
+    var entryMs = 2e3;
+    var entryEase = "Quint.easeOut";
+    var entryX = scene.bossSprite.x;
+    if (arrival && !arrival.defaultEntry) {
+      entryX = bossEngineX(scene, BOSS_ENGINE_PARK_LATERAL);
+      scene.bossSprite.x = bossEngineX(scene, arrival.lateral);
+      scene.bossSprite.y = bossEngineY(entryY, arrival.scroll);
+      entryMs = bossGlideMs(
+        Math.hypot(scene.bossSprite.x - entryX, scene.bossSprite.y - entryY), 1
+      );
+      entryEase = "Linear";
+    }
+    if (arrival) {
+      bossSpinTween(scene, scene.bossSprite, arrival, entryMs, false);
+      bossZoomTween(scene, scene.bossSprite, arrival, entryMs, false);
+    }
     scene.tweens.add({
       targets: scene.bossSprite,
+      x: entryX,
       y: entryY,
-      duration: 2e3,
-      ease: "Quint.easeOut",
+      duration: entryMs,
+      ease: entryEase,
       onComplete: function() {
         scene.bossEntering = false;
         scene.bossTimerCountDown = 99;
@@ -7258,6 +9211,22 @@
       }
     }
     scene.playerBullets = [];
+    // Byte 7's high nibble moves the boss's anchor to a death-drift target
+    // and it glides there at half speed while the explosions walk over it;
+    // with no target set it dies where it stands.
+    var dying = scene.dezaBossState && scene.dezaBossState.boss &&
+      scene.dezaBossState.boss.dying;
+    if (dying && (dying.lateral !== null || dying.scroll !== null)) {
+      var toX = dying.lateral !== null ? bossEngineX(scene, dying.lateral) : boss.x;
+      var toY = dying.scroll !== null ? bossEngineY(scene.bossBaseY || boss.y, dying.scroll) : boss.y;
+      var dieMs = bossGlideMs(Math.hypot(toX - boss.x, toY - boss.y), 0.5);
+      scene.tweens.add({ targets: boss, x: toX, y: toY, duration: dieMs, ease: "Linear" });
+      bossSpinTween(scene, boss, dying, dieMs, true);
+      bossZoomTween(scene, boss, dying, dieMs, true);
+    } else if (dying) {
+      bossSpinTween(scene, boss, dying, 2500, true);
+      bossZoomTween(scene, boss, dying, 2500, true);
+    }
     var startX = boss.x;
     var startY = boss.y;
     var bw = boss.width || 80;
@@ -7713,6 +9682,14 @@
       this.maxCombo = gameState.maxCombo || 0;
       this.comboTimeCnt = 0;
       this.spGauge = gameState.spgage || 0;
+      // The engine seeds the bomb count from a settings byte this decoder does
+      // not name yet; three is the shmup-standard stand-in until it is traced.
+      this.dezaBombStock = 3;
+      // A horizontal game's scroll-axis window reaches 96 px further past the
+      // entry edge, so objects must be allowed to live out there.
+      this.dezaEntryMargin = dezaHorizontal(this) ? 20 + DEZA_H_ENTRY_MARGIN : 20;
+      this.dezaBomb = null;
+      this.dezaBombInvuln = false;
       this.spFired = false;
       this.spFiredDuringBoss = false;
       this.spReadyHapticPlayed = false;
@@ -7747,18 +9724,27 @@
         if (this.stageBgOverlay) this.stageBgOverlay.setVisible(false);
       }
       this.waveDueTicks = null;
+      this.waveDueByScroll = !!(this.dezaBg && this.dezaBg.curve);
       if (this.stageWaveRows) {
         var rowsAsc = this.stageWaveRows;
         var firstRow = rowsAsc[0] || 0;
         var perRow = this.waveInterval || 8;
         var self0 = this;
         this.waveDueTicks = rowsAsc.map(function(row) {
+          // Curve-driven stages spawn by scroll POSITION so waves stay glued
+          // to their scenery whatever the save's speed curve does: row r is
+          // due when the scroll reaches r*16 - 512 px — the same window the
+          // tick formula below encodes at the legacy constant 2 px/frame.
+          if (self0.waveDueByScroll) return Math.max(0, row * 16 - 512);
           return self0.dezaBg ? Math.max(0, (row * perRow - 256) * SATURN_TICKS_PER_FRAME) : (row - firstRow) * perRow;
         });
       }
-      this.bossDueTick = this.dezaBg && dezaBossRow !== null ? Math.ceil(this.dezaBg.stopScroll * SATURN_TICKS_PER_FRAME / SCROLL_PX_PER_FRAME) : null;
+      this.bossDueTick = this.dezaBg && dezaBossRow !== null
+        ? (this.waveDueByScroll ? this.dezaBg.stopScroll : Math.ceil(this.dezaBg.stopScroll * SATURN_TICKS_PER_FRAME / SCROLL_PX_PER_FRAME))
+        : null;
       if (gameState.shortFlg && this.bossDueTick !== null) {
-        this.worldTime = this.bossDueTick;
+        if (this.waveDueByScroll) this.dezaBg.scrollPos = this.dezaBg.stopScroll;
+        else this.worldTime = this.bossDueTick;
       }
       this.stageBgOverlay = null;
       if (gameState.hasCustomEnemies && !this.dezaBg && this.textures.exists("stage_over_c")) {
@@ -7816,7 +9802,8 @@
           down: Phaser.Input.Keyboard.KeyCodes.S,
           left: Phaser.Input.Keyboard.KeyCodes.A,
           right: Phaser.Input.Keyboard.KeyCodes.D,
-          sp: Phaser.Input.Keyboard.KeyCodes.SPACE
+          sp: Phaser.Input.Keyboard.KeyCodes.SPACE,
+          charge: Phaser.Input.Keyboard.KeyCodes.SHIFT
         });
       } catch (e) {
       }
@@ -8105,7 +10092,14 @@
     // SP fire (orchestrates cutin, explosions, damage — touches many subsystems)
     // =================================================================
     onSpFire() {
-      if (this.spGauge < 100 || this.spFired || !this.gameStarted) return;
+      if (!this.gameStarted) return;
+      // A Dezaemon import flies the save's OWN bomb off this button: its stock
+      // is a count, not a gauge, and only one may be in flight at a time.
+      if (dezaBombArmed(this)) {
+        if (fireDezaBomb(this)) this.updateSpGauge();
+        return;
+      }
+      if (this.spGauge < 100 || this.spFired) return;
       this.doSpFire();
     }
     doSpFire() {
@@ -8259,7 +10253,11 @@
     // =================================================================
     updateSpGauge() {
       if (!this.spBtnBar) return;
-      var ratio = Math.min(this.spGauge / 100, 1);
+      // With a Dezaemon bomb armed the meter shows STOCK, not a charge: full
+      // while any bomb remains, empty at zero.
+      var ratio = dezaBombArmed(this)
+        ? (this.dezaBombStock > 0 ? 1 : 0)
+        : Math.min(this.spGauge / 100, 1);
       if (ratio <= 0) {
         this.spBtnBar.setCrop(0, 0, 0, 0);
       } else {
@@ -8304,13 +10302,29 @@
         big: "powerupBig0.gif",
         "3way": "powerup3way0.gif",
         speed_high: "speedupItem0.gif",
-        barrier: "barrierItem0.gif"
+        barrier: "barrierItem0.gif",
+        // Dezaemon pickups reuse stock icons, tinted apart below.
+        dezaScore: "powerupBig0.gif",
+        dezaSp: "barrierItem0.gif"
       };
       var frameKey = frameMap[itemName] || "powerupBig0.gif";
+      var tint = itemName === "dezaScore" ? 16766720 : itemName === "dezaSp" ? 16729156 : 0;
+      // The save's own item icon for this drop, when the import carried one.
+      var dropByName = { big: 1, "3way": 2, speed_high: 3, dezaScore: 4, dezaSp: 5, barrier: 9 };
+      var icons = this.recipe && this.recipe.dezaemonItems && this.recipe.dezaemonItems.iconByDrop;
+      var own = icons && icons[dropByName[itemName]];
+      if (own) {
+        var atlas = this.textures.get("game_asset");
+        if (atlas && atlas.has(own)) {
+          frameKey = own;
+          tint = 0;
+        }
+      }
       var item = this.add.sprite(x, y, "game_asset", frameKey);
       item.setOrigin(0.5);
       item.setDepth(55);
       item.setData("itemName", itemName);
+      if (tint) item.setTint(tint);
       this.items.push(item);
     }
     collectItem(itemName) {
@@ -8358,7 +10372,7 @@
         if (deza && playDezaemonSfx(this, deza)) return;
       }
       try {
-        var vol = typeof volume === "number" ? volume : 0.7;
+        var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
         if (this.cache.audio.exists(key)) {
           var existing = this.sound.get(key);
           if (existing) {
@@ -8374,12 +10388,16 @@
       if (gameState.lowModeFlg) return;
       try {
         if (this.cache.audio.exists(key)) {
+          var base = volume || 0.4;
           var existing = this.sound.get(key);
           if (existing) {
             if (existing.isPlaying) existing.stop();
-            existing.play({ volume: volume || 0.4, loop: true });
+            existing.__cmgBgmBase = base;
+            existing.play({ volume: cmgBgmVol(base), loop: true });
           } else {
-            this.sound.add(key, { loop: true, volume: volume || 0.4 }).play();
+            var snd = this.sound.add(key, { loop: true, volume: cmgBgmVol(base) });
+            snd.__cmgBgmBase = base;
+            snd.play();
           }
         }
       } catch (e) {
@@ -8406,9 +10424,35 @@
     fixedUpdate(time, step) {
       if (this.gameStarted && !this.playerDead && !this.stageCleared && !this.theWorldFlg) {
         this.worldTime += 1;
+        // Advance the global enemy fire tick all zako reloads and bursts are
+        // clocked by, once per Saturn frame. The flag holds for the whole
+        // 2-step frame — each enemy's own tick gate runs once within it, so
+        // every enemy consumes every pulse exactly once whatever its spawn
+        // parity.
+        if (this.worldTime % SATURN_TICKS_PER_FRAME === 0) {
+          dezaRankTick(this);
+          dezaFirePulse(this);
+        }
+      } else {
+        this._dezaFirePulse = false;
       }
       if (this.dezaBg) {
-        this.dezaBg.setScroll(this.worldTime * SCROLL_PX_PER_FRAME / SATURN_TICKS_PER_FRAME);
+        if (this.dezaBg.curve) {
+          // The save's own pacing: advance the traced state machine once per
+          // Saturn frame (2 steps), only while the world runs — the same gate
+          // worldTime advances under, so pauses and deaths freeze the scroll.
+          if (this.gameStarted && !this.playerDead && !this.stageCleared && !this.theWorldFlg) {
+            this._curveStep = (this._curveStep || 0) + 1;
+            if (this._curveStep >= SATURN_TICKS_PER_FRAME) {
+              this._curveStep = 0;
+              this.dezaBg.tickCurve();
+            }
+          }
+          this.dezaBg.setScroll(this.dezaBg.scrollPos);
+          this.dezaBg.applyWaveFx();
+        } else {
+          this.dezaBg.setScroll(this.worldTime * SCROLL_PX_PER_FRAME / SATURN_TICKS_PER_FRAME);
+        }
       } else if (this.stageBg && !this.playerDead && !this.stageCleared) {
         if (!this.bossActive && !this.bossReached) {
           var bgMove = this.gameStarted ? this.stageBgAmountMove || 0.7 : 0.7;
@@ -8446,7 +10490,8 @@
       }
       this.shootTimer += 1;
       var interval = this.shootSpeed === "speed_high" ? Math.floor(this.shootInterval * 0.6) : this.shootInterval;
-      if (this.shootTimer >= interval) {
+      if (this.dezaShotLocked) this.shootTimer = 0;
+      else if (this.shootTimer >= interval) {
         this.shootTimer = 0;
         shootBullets(this);
       }
@@ -8575,7 +10620,8 @@
             }
           }
         }
-        if (!isBoss && (enemy.y > GH11 + 20 || enemy.x < -40 || enemy.x > GW13 + 40)) {
+        var entryMargin = this.dezaEntryMargin || 20;
+    if (!isBoss && (enemy.y > GH11 + entryMargin || enemy.x < -40 || enemy.x > GW13 + 40)) {
           var idx = this.enemies.indexOf(enemy);
           if (idx >= 0) this.enemies.splice(idx, 1);
           var osShadow = enemy.getData("shadow");
@@ -8583,6 +10629,7 @@
           enemy.destroy();
         }
       }
+      updateDezaBomb(this);
       for (var eb = this.enemyBullets.length - 1; eb >= 0; eb--) {
         var eBullet = this.enemyBullets[eb];
         if (!eBullet || !eBullet.active) {
@@ -8699,12 +10746,19 @@
       if (this.enemyWaveFlg) {
         this.enemyWaveFrameCounter += 1;
         if (this.waveDueTicks) {
-          var waveClock = this.dezaBg ? this.worldTime : this.enemyWaveFrameCounter;
+          var waveClock = this.dezaBg ? (this.waveDueByScroll ? this.dezaBg.scrollPos : this.worldTime) : this.enemyWaveFrameCounter;
           while (this.waveCount < this.stageEnemyPositionList.length && waveClock >= this.waveDueTicks[this.waveCount]) {
             enemyWave(this);
           }
           var bossDue = this.bossDueTick !== null ? waveClock >= this.bossDueTick : waveClock >= this.waveDueTicks[this.waveDueTicks.length - 1] + this.waveInterval;
-          if (this.waveCount >= this.stageEnemyPositionList.length && bossDue) {
+          if (this.waveDueByScroll && this.bossDueTick !== null && bossDue) {
+            // Position-locked stages spawn the boss when its row scrolls in,
+            // like hardware — NOT after every wave: a save can place its
+            // boss early with waves the scroll never reaches (the scroll
+            // parks at the boss row, hardware loops there), and waiting for
+            // those waves deadlocks the stage.
+            this.bossAdd();
+          } else if (this.waveCount >= this.stageEnemyPositionList.length && bossDue) {
             enemyWave(this);
           }
         } else if (this.enemyWaveFrameCounter >= this.waveInterval) {
@@ -9158,14 +11212,17 @@
         self.tweetBtn.setFrame("twitterBtn1.gif");
         openUrl(buildTweetUrl());
       });
-      if (isExportedLevelApp()) {
+      if (isExportedLevelApp() || isImportedLevel()) {
         this.tweetBtn.setVisible(false);
         this.tweetBtn.disableInteractive();
+        this.tweetBtnHidden = true;
       }
       this.gotoTitleBtn = this.add.sprite(0, 0, "game_ui", "gotoTitleBtn0.gif");
       this.gotoTitleBtn.setOrigin(0.5);
       this.gotoTitleBtn.x = GCX7;
-      this.gotoTitleBtn.y = this.tweetBtn.y + this.tweetBtn.height / 2 + this.gotoTitleBtn.height / 2 + 6;
+      this.gotoTitleBtn.y = this.tweetBtnHidden
+        ? this.tweetBtn.y - this.tweetBtn.height / 2 + this.gotoTitleBtn.height / 2
+        : this.tweetBtn.y + this.tweetBtn.height / 2 + this.gotoTitleBtn.height / 2 + 6;
       this.gotoTitleBtn.setInteractive({ useHandCursor: true });
       this.gotoTitleBtn.on("pointerover", function() {
         self.gotoTitleBtn.setFrame("gotoTitleBtn1.gif");
@@ -9237,7 +11294,7 @@
     playSound(key, volume) {
       if (gameState.lowModeFlg) return;
       try {
-        var vol = typeof volume === "number" ? volume : 0.7;
+        var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
         if (this.cache.audio.exists(key)) {
           var existing = this.sound.get(key);
           if (existing) {
@@ -9253,12 +11310,16 @@
       if (gameState.lowModeFlg) return;
       try {
         if (this.cache.audio.exists(key)) {
+          var base = volume || 0.25;
           var existing = this.sound.get(key);
           if (existing) {
             if (existing.isPlaying) existing.stop();
-            existing.play({ volume: volume || 0.25, loop: true });
+            existing.__cmgBgmBase = base;
+            existing.play({ volume: cmgBgmVol(base), loop: true });
           } else {
-            this.sound.add(key, { loop: true, volume: volume || 0.25 }).play();
+            var snd = this.sound.add(key, { loop: true, volume: cmgBgmVol(base) });
+            snd.__cmgBgmBase = base;
+            snd.play();
           }
         }
       } catch (e) {
@@ -9460,9 +11521,10 @@
       this.tweetBtn.on("pointerup", function() {
         openUrl2(buildTweetUrl2());
       });
-      if (isExportedLevelApp()) {
+      if (isExportedLevelApp() || isImportedLevel()) {
         this.tweetBtn.setVisible(false);
         this.tweetBtn.disableInteractive();
+        this.tweetBtnHidden = true;
       }
       this.gotoTitleBtn = this.add.sprite(0, 0, "game_ui", "gotoTitleBtn0.gif");
       this.gotoTitleBtn.setOrigin(0, 0);
@@ -9661,7 +11723,7 @@
     playSound(key, volume) {
       if (gameState.lowModeFlg) return;
       try {
-        var vol = typeof volume === "number" ? volume : 0.7;
+        var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
         if (this.cache.audio.exists(key)) {
           var existing = this.sound.get(key);
           if (existing) {

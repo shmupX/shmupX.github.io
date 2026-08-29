@@ -23,10 +23,10 @@
 // F3 = one 128x128. A frame's cells are read row-major at its fixed width.
 //
 // Composition words: bits 0-9 = CG cell index, bit14 = H-flip, bit15 =
-// V-flip, 0xFFFF = empty. Note the flip bits are the OPPOSITE of the
-// background tilemap's (bit15 H / bit14 V) — sprites go through VDP1 draw
-// commands, the map through VDP2 pattern names. Verified by rendering: the
-// sprite banks' pervasive mirror pairs only compose under bit14 = H.
+// V-flip, 0xFFFF = empty — the SAME convention as the background tilemap.
+// Verified by rendering: the sprite banks' pervasive mirror pairs only
+// compose under bit14 = H, and the background's mirror-symmetric chambers
+// (Ramsie stages 0/3/4) only compose under bit14 = H as well.
 //
 // Environment-neutral ESM (Node + browser).
 
@@ -266,8 +266,8 @@ export function extractEnemySprites(sec5, sections, palettes, enemies, stagesPla
 // DISTINCT cell any used stage references, and (b) a compact per-stage grid of
 // words that index that list (bits 0-9 ordinal, bit15 hflip, bit14 vflip,
 // 0xFFFF empty). Flips stay in the grid, so a cell mirrored both ways still
-// costs one sprite. (The map keeps the VDP2 bit order — bit15 = H — unlike
-// the sprite banks above.)
+// costs one sprite. (This projected word format is the runtime's own — its
+// bit15 = hflip regardless of how the raw save encodes flips.)
 //
 // Returns {cells: [{key,w,h,rgba}], stages: [{rows, words: Uint16Array}|null]}
 // where words is rows*14 long and `rows` is trimmed to the last non-empty row.
@@ -314,16 +314,27 @@ export function extractBackgroundCells(backgrounds, sections, palettes, stageCou
 // The KUMITATE editor's TITLE page: a save's title screen is DRAWN — no
 // title text exists anywhere in the data (FORMAT.md). The compositions live
 // in the tail of the global sprite bank (+0x5D490, 232 u16be refs), laid out
-// row-major at 8 cells wide. Verified by rendering: Ramsie's script + winged
-// emblem and DEVIL BLADE 2's logo pieces compose cleanly at these slots:
+// row-major at 8 cells wide. Geometry engine-traced 2026-08-28 from the
+// global-art VRAM upload's char-slot table (+0x27F1C, geometry +0x25CFC):
 //
-//   refs 144-167   TITLE 1, 8x3 cells (128x48 px)
-//   refs 168-207   TITLE 2, 8x5 cells (128x80 px)
-//   refs 208-231   3 credit strips, 8x1 cells (128x16 px) each
+//   refs 144-175   TITLE 1, 8x4 cells (128x64 px)
+//   refs 176-207   TITLE 2, 8x4 cells (128x64 px)
+//   refs 208-231   SIX 64x16 credit strips, 4x1 cells each
+//
+// (An earlier 8x3/8x5/three-8x1 guess covered the same 88 refs but split
+// them wrong — title2 stole title1's last row and each rendered credit line
+// glued two hardware strips together.)
 export const TITLE_SLOTS = {
-    title1: { first: 144, w: 8, h: 3 },
-    title2: { first: 168, w: 8, h: 5 },
-    credits: [{ first: 208, w: 8, h: 1 }, { first: 216, w: 8, h: 1 }, { first: 224, w: 8, h: 1 }],
+    title1: { first: 144, w: 8, h: 4 },
+    title2: { first: 176, w: 8, h: 4 },
+    credits: [
+        { first: 208, w: 4, h: 1 },
+        { first: 212, w: 4, h: 1 },
+        { first: 216, w: 4, h: 1 },
+        { first: 220, w: 4, h: 1 },
+        { first: 224, w: 4, h: 1 },
+        { first: 228, w: 4, h: 1 },
+    ],
 };
 
 function readBankComposition(sec5, slot) {
@@ -414,6 +425,86 @@ export function extractTitleArt(sec5, sections, palettes, baseIndex) {
         roles.credit = baseIndex + sprites.length;
         sprites.push({ key: "dezaCredit", w, h, rgba });
     }
+    return { sprites, roles };
+}
+
+// --- Global bank head: player / item / blast / bullet art --------------
+//
+// Refs 0-143 of the global sprite bank (engine-traced 2026-08-28 via the
+// global-art VRAM upload +0x3EEC and the spawners that pick each char):
+//   0-7 / 8-15 / 16-23   P1 ship bank-A / idle / bank-B, 2 frames of 32x32
+//   24-47                P2 ship, same three pairs
+//   94-101               the 8 item icons, one 16x16 cell per slot
+//   102-107              blast anim A, 6 x 16x16
+//   108-131              blast anim B, 6 frames of 32x32
+//   132-143              the 3 global bullet types, 4 x 16x16 frames each
+// (48-93 hold per-weapon effect art — beams, bomb domes, option figures —
+// tied to engine spawners the runtime does not model yet.)
+const GLOBAL_ART_SLOTS = {
+    playerIdle: { first: 8, w: 2, h: 2, frames: 2 },
+    playerBankA: { first: 0, w: 2, h: 2, frames: 2 },
+    playerBankB: { first: 16, w: 2, h: 2, frames: 2 },
+    blastA: { first: 102, w: 1, h: 1, frames: 6 },
+    blastB: { first: 108, w: 2, h: 2, frames: 6 },
+};
+
+// Extract the head of the global bank. Returns {sprites, roles}; roles maps
+// player/items/blasts/bullets onto absolute sprite indices (with baseIndex
+// added), each only when its refs are painted.
+export function extractGlobalArt(sec5, sections, palettes, baseIndex) {
+    const sprites = [];
+    const roles = {};
+    const placeholder = findPlaceholderCell(sec5).cell;
+    const renderCells = (first, w, h) => {
+        const comp = readBankComposition(sec5, { first, w, h });
+        if (!comp || isUnpainted({ frames: [comp] }, placeholder)) return null;
+        return renderFrame(sections, palettes, comp);
+    };
+    const pushFrames = (name, slot) => {
+        const cells = slot.w * slot.h;
+        const out = [];
+        for (let f = 0; f < slot.frames; f++) {
+            const img = renderCells(slot.first + f * cells, slot.w, slot.h);
+            if (!img) return null; // an anim is all-or-nothing
+            out.push(baseIndex + sprites.length);
+            sprites.push({ key: `${name}${f}`, ...img });
+        }
+        return out;
+    };
+    const idle = pushFrames("dezaShip", GLOBAL_ART_SLOTS.playerIdle);
+    if (idle) {
+        roles.player = { idle };
+        const bankA = pushFrames("dezaShipL", GLOBAL_ART_SLOTS.playerBankA);
+        const bankB = pushFrames("dezaShipR", GLOBAL_ART_SLOTS.playerBankB);
+        if (bankA) roles.player.bankA = bankA;
+        if (bankB) roles.player.bankB = bankB;
+    }
+    const icons = [];
+    for (let i = 0; i < 8; i++) {
+        const img = renderCells(94 + i, 1, 1);
+        if (img) {
+            icons[i] = baseIndex + sprites.length;
+            sprites.push({ key: `dezaItem${i}`, ...img });
+        } else {
+            icons[i] = null;
+        }
+    }
+    if (icons.some((i) => i !== null)) roles.items = icons;
+    const blastA = pushFrames("dezaBlastA", GLOBAL_ART_SLOTS.blastA);
+    if (blastA) roles.blastA = blastA;
+    const blastB = pushFrames("dezaBlastB", GLOBAL_ART_SLOTS.blastB);
+    if (blastB) roles.blastB = blastB;
+    const bullets = [];
+    for (let t = 0; t < 3; t++) {
+        const frames = pushFrames(`dezaBullet${t}_`, {
+            first: 132 + t * 4,
+            w: 1,
+            h: 1,
+            frames: 4,
+        });
+        bullets[t] = frames;
+    }
+    if (bullets.some(Boolean)) roles.bullets = bullets;
     return { sprites, roles };
 }
 

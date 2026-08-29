@@ -331,7 +331,21 @@
         document.getElementById('nav-play').href = '/games/' + GAME_ID;
 
         const BOSS_ORDER = ['boss0', 'boss1', 'boss2', 'boss3', 'boss4', 'bossExtra'];
-        const NAMES = { boss0: 'Bison', boss1: 'Barlog', boss2: 'Sagat', boss3: 'Vega', boss4: 'Fang', bossExtra: 'Goki' };
+        // Null-prototype: bossName() is called with bossData keys and with a
+        // record's own attackPattern, both of which come straight off a shared
+        // level, so a plain object would let "constructor"/"toString" pull an
+        // inherited value out of Object.prototype and render as function source.
+        const NAMES = Object.assign(Object.create(null), { boss0: 'Bison', boss1: 'Barlog', boss2: 'Sagat', boss3: 'Vega', boss4: 'Fang', bossExtra: 'Goki' });
+        // NAMES is the SHIPPED game's roster, keyed by the slot each boss
+        // occupies. A Dezaemon import fills the same slots with its own bosses,
+        // named dezaBoss0..dezaBossN by map-to-game.js — that name wins, or every
+        // imported save's stage bosses would read as Bison, Barlog, Sagat, Vega, Fang.
+        const IMPORTED_BOSS_NAME = /^dezaBoss\d+$/;
+        const bossName = (k) => {
+            const own = bossData && bossData[k] && bossData[k].name;
+            if (IMPORTED_BOSS_NAME.test(own || '')) return own;
+            return NAMES[k] || own || k;
+        };
         const BASE = 0.26;          // boss resting y (fraction of stage height)
         const SPRITE_SCALE = 3;     // boss sprite scale (clamped to fit the stage)
         const REPEAT_DELAY = 1000;  // ms before a finished pattern move loops
@@ -747,7 +761,7 @@
             orderedKeys().forEach(k => {
                 const btn = document.createElement('button');
                 btn.className = 'boss-chip' + (k === state.bossKey ? ' active' : '');
-                btn.textContent = NAMES[k] || bossData[k].name || k;
+                btn.textContent = bossName(k);
                 btn.onclick = () => selectBoss(k);
                 bar.appendChild(btn);
             });
@@ -763,7 +777,7 @@
         function renderTitleRow() {
             const boss = curBoss();
             if (!boss) return;
-            $('boss-title').textContent = (NAMES[state.bossKey] || boss.name || '').toUpperCase();
+            $('boss-title').textContent = bossName(state.bossKey).toUpperCase();
             const pat = PAT[effPatternKey(state.bossKey)];
             const overridden = !!boss.attackPattern;
             const tag = $('pattern-tag');
@@ -876,12 +890,12 @@
                 info.className = 'prow-info';
                 const name = document.createElement('div');
                 name.className = 'prow-name';
-                name.textContent = NAMES[bk] || b.name || bk;
+                name.textContent = bossName(bk);
                 const sub = document.createElement('div');
                 sub.className = 'prow-sub';
                 let subText = bk + ' · HP ' + (b.hp || '?') + ' · ';
                 if (isPending) subText += 'PREVIEW — NOT APPLIED';
-                else if (saved) subText += 'OVERRIDDEN → ' + (NAMES[saved] || saved).toUpperCase();
+                else if (saved) subText += 'OVERRIDDEN → ' + bossName(saved).toUpperCase();
                 else subText += 'DEFAULT MOVEMENT';
                 sub.textContent = subText;
                 info.appendChild(name);
@@ -896,7 +910,7 @@
                 keys.filter(k => k !== bk).forEach(k => {
                     const opt = document.createElement('option');
                     opt.value = k;
-                    opt.textContent = (NAMES[k] || k).toUpperCase() + ' (' + k + ')';
+                    opt.textContent = bossName(k).toUpperCase() + ' (' + k + ')';
                     sel.appendChild(opt);
                 });
                 sel.value = pendingVal;
@@ -939,7 +953,7 @@
                 pv.dots.forEach(p => { svg += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="5" fill="var(--sel)"/>'; });
                 svg += '</svg>';
                 previewEl.innerHTML =
-                    '<div class="preview-label">PATTERN PREVIEW · ' + (NAMES[pb] || pb).toUpperCase() + '</div>' +
+                    '<div class="preview-label">PATTERN PREVIEW · ' + bossName(pb).toUpperCase() + '</div>' +
                     svg +
                     '<div class="preview-desc"></div>' +
                     '<div class="preview-chips"></div>';

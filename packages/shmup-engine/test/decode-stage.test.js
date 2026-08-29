@@ -61,20 +61,20 @@ Deno.test({
   },
 });
 
-Deno.test("tile words: 0xFFFF is empty, bit15/bit14 are flips, bits 0-9 the cell", () => {
+Deno.test("tile words: 0xFFFF is empty, bit15=V/bit14=H flips, bits 0-9 the cell", () => {
   const sec5 = new Uint8Array(SECTION_SIZES[5]).fill(0xff);
   const put = (i, word) => {
     sec5[i * 2] = word >> 8;
     sec5[i * 2 + 1] = word & 0xff;
   };
   put(0, 0x0123); // plain cell 0x123
-  put(1, 0x8123); // h-flipped
-  put(2, 0x4123); // v-flipped
+  put(1, 0x8123); // v-flipped (same bit convention as the sprite banks)
+  put(2, 0x4123); // h-flipped
   put(3, 0xffff); // empty
   const bg = decodeStageBackground(sec5, 0);
   assertEquals(bg.tiles[0], { cell: 0x123, hflip: false, vflip: false });
-  assertEquals(bg.tiles[1], { cell: 0x123, hflip: true, vflip: false });
-  assertEquals(bg.tiles[2], { cell: 0x123, hflip: false, vflip: true });
+  assertEquals(bg.tiles[1], { cell: 0x123, hflip: false, vflip: true });
+  assertEquals(bg.tiles[2], { cell: 0x123, hflip: true, vflip: false });
   assertStrictEquals(bg.tiles[3], null);
   assertStrictEquals(bg.usedTiles, 3);
   assertStrictEquals(bg.partCount, 1); // all three live in part 0
@@ -155,7 +155,8 @@ Deno.test({
       assert(e.record >= 0 && e.record < 60);
       assertStrictEquals(e.key, `${e.stage}:${e.record}`);
       assertStrictEquals(e.bytes.length, 18);
-      assert(e.placements > 0);
+      // 0 is legal: a record only a death word spawns is never placed.
+      assert(e.placements >= 0);
     }
     assertStrictEquals(decoded.stages.length, decoded.stageCount);
     // stage 0 yields real spawn rows, earliest first, the save's own width

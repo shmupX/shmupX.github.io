@@ -20,8 +20,9 @@ import { decodeCg } from "./decode-cg.js";
 import { decodeStages, sec5Regions, projectForEditor } from "./decode-stage.js";
 import { decodeSongs } from "./decode-song.js";
 import { decodeSettings } from "./decode-settings.js";
-import { extractEnemySprites, extractBossSprites, extractBossPartSprites, extractBackgroundCells, extractTitleArt } from "./decode-sprites.js";
+import { extractEnemySprites, extractBossSprites, extractBossPartSprites, extractBackgroundCells, extractGlobalArt, extractTitleArt } from "./decode-sprites.js";
 import { readBossTrailer } from "./decode-boss.js";
+import { decodeModels } from "./decode-model.js";
 
 export function decodeSave(payload) {
     const result = {
@@ -108,7 +109,9 @@ export function decodeSave(payload) {
                 // 18-byte attribute record (decode-enemy.js — hp, score,
                 // speed, fire config and the four change channels), traced
                 // from the play engine's own field reads.
-                const projected = projectForEditor(stages.slice(0, stageCount));
+                const projected = projectForEditor(stages.slice(0, stageCount), {
+                    itemSlots: result.settings ? result.settings.itemSlots : null,
+                });
                 result.enemies = projected.enemies;
                 result.stages = projected.stages;
                 // Each boss carries its decoded 64-byte record (decode-boss
@@ -190,7 +193,19 @@ export function decodeSave(payload) {
                         if (Object.keys(titleArt.roles).length) {
                             result.titleArt = titleArt.roles;
                         }
-                        result.sprites = sprites.concat(boss.sprites, parts.sprites, titleArt.sprites);
+                        // The bank's head: the save's own player ship, item
+                        // icons, blast anims and the 3 global bullet types
+                        // (decode-sprites.js `extractGlobalArt`).
+                        const globalArt = extractGlobalArt(
+                            assembly.decompressed,
+                            cgPages,
+                            result.cg.palettes,
+                            sprites.length + boss.sprites.length + parts.sprites.length + titleArt.sprites.length,
+                        );
+                        if (Object.keys(globalArt.roles).length) {
+                            result.globalArt = globalArt.roles;
+                        }
+                        result.sprites = sprites.concat(boss.sprites, parts.sprites, titleArt.sprites, globalArt.sprites);
                         if (result.sprites.length) result.confidence.sprites = "heuristic";
                         // Stage backgrounds as art: one sprite per distinct
                         // tile plus a compact per-stage grid, so the game can
@@ -223,6 +238,17 @@ export function decodeSave(payload) {
                 result.songError = err.message;
             }
         }
+        // 3D models (sec7): the ポリ吉 part compositions. null when the save
+        // never opened the 3D editor (no magic) — that is data, not an error.
+        const modelSection = result.sections[7];
+        if (modelSection?.sizeMatchesKnown) {
+            try {
+                result.models = decodeModels(modelSection.decompressed);
+                if (result.models) result.confidence.models = "confirmed";
+            } catch (err) {
+                result.modelError = err.message;
+            }
+        }
         result.regions = result.sections.map((s) => ({
             name: `sec${s.index}: ${s.hint}`,
             offset: s.offset,
@@ -230,7 +256,8 @@ export function decodeSave(payload) {
             decoded:
                 (Boolean(result.cg) && s.index <= 4) ||
                 (Boolean(result.backgrounds) && s.index === 5) ||
-                (Boolean(result.songs) && s.index === 6),
+                (Boolean(result.songs) && s.index === 6) ||
+                (Boolean(result.models) && s.index === 7),
             decompressedSize: s.decompressedSize,
         }));
     } catch (err) {
