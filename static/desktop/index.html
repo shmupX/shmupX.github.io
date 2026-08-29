@@ -13,7 +13,7 @@
 </head>
 <body>
   <header id="taskbar">
-    <div class="tb-badge"><img src="/logo.svg" alt="codemonkey.games"></div>
+    <button class="tb-badge" id="tb-brand" title="Start — apps" aria-label="Start — apps"><img src="/logo.svg" alt="codemonkey.games"></button>
     <button id="tb-start" title="Start — apps">SHMUPX</button>
     <button id="tb-search" class="tb-iconbtn" title="Search apps">
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -25,7 +25,7 @@
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
     </button>
     <span id="tb-clock">00:00</span>
-    <button id="tb-console" title="Back to the console dashboard">&#8592; CONSOLE</button>
+    <button id="tb-console" title="Back to the console dashboard" aria-label="Back to the console dashboard">&#8592;<span class="tb-label"> CONSOLE</span></button>
   </header>
 
   <main id="desktop">

@@ -631,7 +631,7 @@ function popover(anchor, className, build) {
 
 // Start menu off the brand pill — uppercase section headers over app-tile
 // grids, the Phaser Desktop start-menu shape scaled to our app count.
-document.getElementById("tb-start").addEventListener("click", (e) => {
+const openStartMenu = (e) => {
   popover(e.currentTarget, "start-pop", (pop) => {
     const sections = [
       ["Tools", ["spritex", "leveleditor", "pixelcomposer", "bossviewer"]],
@@ -661,7 +661,11 @@ document.getElementById("tb-start").addEventListener("click", (e) => {
       pop.appendChild(grid);
     }
   });
-});
+};
+// The wordmark pill hides on narrow bars, so the brand badge opens the same
+// menu — otherwise phones have no way into it.
+document.getElementById("tb-start").addEventListener("click", openStartMenu);
+document.getElementById("tb-brand").addEventListener("click", openStartMenu);
 
 document.getElementById("tb-search").addEventListener("click", (e) => {
   const pop = popover(e.currentTarget, "search-pop", (pop) => {
@@ -759,16 +763,6 @@ globalThis.cmgDesktop = { launch, setWorkspace, wm, apps: APPS };
 // Saved rects are clamped into the current viewport — a layout saved on a
 // bigger monitor (or a mangled localStorage blob) must not strand windows
 // off-screen.
-function clampRect(raw) {
-  const num = (v, d) => (Number.isFinite(v) ? v : d);
-  const { w: bw, h: bh } = wm.bounds();
-  const w = Math.min(Math.max(num(raw.w, 720), 280), Math.max(280, bw - 16));
-  const h = Math.min(Math.max(num(raw.h, 480), 180), Math.max(180, bh - 16));
-  const x = Math.min(Math.max(num(raw.x, 60), 0), Math.max(0, bw - w));
-  const y = Math.min(Math.max(num(raw.y, 40), 0), Math.max(0, bh - h));
-  return { x, y, w, h };
-}
-
 let restored = 0;
 for (const saved of state.openApps) {
   if (!saved || typeof saved !== "object") continue;
@@ -777,7 +771,9 @@ for (const saved of state.openApps) {
   const win = launch(saved.app, saved.data ?? undefined);
   if (!win) continue;
   restored++;
-  const rect = saved.rect ? clampRect(saved.rect) : null;
+  // On a phone the window was already opened full-bleed; a rect saved on a
+  // desktop would only shrink it back into a sliver.
+  const rect = saved.rect && !wm.isNarrow() ? wm.clampRect(saved.rect) : null;
   if (rect) wm.setRect(win, rect);
   if (saved.snap && (saved.snap.h || saved.snap.v || saved.snap.max)) {
     win.restoreRect = rect;
@@ -791,7 +787,14 @@ if (!restored && !state.visited) {
   const tools = launch("tools");
   if (tools) {
     const { w } = wm.bounds();
-    wm.setRect(tools, { x: Math.max(16, w - 600), y: 64, w: 560, h: 380 });
+    // Parked to the right of the welcome window — but only where there is a
+    // right-hand side to park in.
+    if (!wm.isNarrow()) {
+      wm.setRect(
+        tools,
+        wm.clampRect({ x: Math.max(16, w - 600), y: 64, w: 560, h: 380 }),
+      );
+    }
     wm.focus(tools);
   }
   saveStateSoon();
