@@ -3689,6 +3689,12 @@
   var ENTRY_ADVANCE = 0x1;
   var ENTRY_NO_COS = 0x20; // suppress the lateral component
   var ENTRY_NO_SIN = 0x40; // suppress the scroll component
+  // Row flags bit7 picks which of the engine's TWO script movers runs the row.
+  // Mover B (+0x5054) inlines a relative ride and never consults the anchor
+  // bit; mover A (+0x4EC4) calls the terrain-ride helper (+0x4BFC), which is
+  // the only path that can take the absolute map-anchor branch.
+  var ENTRY_MOVER_B = 0x80;
+  var ENTRY_RIDE_GATE = 0x100; // mover A only: ride when the movement flag is set too
   var ENTRY_RIDES = 0x8000;
   function initEntryScript(dz, enemy, scene) {
     var rows = dz && dz.entry && dz.entry.rows;
@@ -3704,7 +3710,15 @@
       flags: 0,
       rides: false,
       ridesNow: false,
+      moverB: false,
       anchored: !!dz.entry.anchored,
+      // The engine's terrain anchor, taken once at spawn: the object's screen
+      // position on the scroll axis and the map scroll that was under it then
+      // (0x06094C40 / 0x0608EC90, both whole pixels). An anchored rider's
+      // position is RECOMPUTED from this pair every tick rather than nudged, so
+      // it can never drift off the piece of terrain it was placed on.
+      anchorY: enemy.y,
+      anchorScroll: scene && scene.dezaBg ? scene.dezaBg._scroll : 0,
       moveFlag: !!(dz.behavior && dz.behavior.move && dz.behavior.move.flag),
       vx: 0,
       vy: 0,
@@ -3729,7 +3743,13 @@
       e.turn = row[2];
       e.amp = row[3] & 0x7fff;
       e.rides = (row[3] & ENTRY_RIDES) !== 0;
-      e.ridesNow = e.rides || ((row[4] & 0x100) !== 0 && e.moveFlag);
+      // The helper's call gate, verbatim: amplitude bit15 makes the row ride
+      // outright, and mover A additionally rides when the row asks for it AND
+      // the record's own movement flag (byte 2 bit 3) is set. Mover B rows have
+      // only the amplitude gate — and never the anchored form.
+      e.moverB = (row[4] & ENTRY_MOVER_B) !== 0;
+      e.ridesNow = e.rides ||
+        (!e.moverB && (row[4] & ENTRY_RIDE_GATE) !== 0 && e.moveFlag);
       if (e.flags & ENTRY_ADVANCE) {
         e.idx = e.idx + 1 < e.rows.length ? e.idx + 1 : e.rows.length - 1;
       }
@@ -3863,7 +3883,13 @@
           sp.vx = sp.side * S / 512;
           sp.state = 2;
         }
-      } else if (!sp.moveFlag) {
+      } else if (sp.moveFlag) {
+        // Its charge state calls the ride helper and returns, so the sideways
+        // acceleration never runs and the enemy simply travels with the map.
+        sp.vx = 0;
+        sp.vy = 0;
+        enemy.y += scene.dezaBg ? scene.dezaBg.lastDelta : 0;
+      } else {
         sp.vx += sp.side * S / 8192;
       }
     } else if (sp.cls === 0x34) {
@@ -3887,12 +3913,24 @@
           sp.state = 2;
         }
       } else if (sp.state === 2 && !sp.moveFlag) {
+        // In the dive, a movement-flag 0x34 leaves the handler at once
+        // (+0x70E6) — it neither accelerates nor rides, and simply coasts.
         sp.vy += (sp.air ? 1 : -1) * S / 8192;
       }
-      // (Hardware asymmetry, verified: 0x34 also terrain-rides during state
-      // 1 when the movement byte's flag is set — 0x33 does not. The
-      // terrain-ride helper's math is untraced, so moveFlag enemies here
-      // simply skip the acceleration instead.)
+      // PHASE 1 — the lateral approach — has a tail of its own (+0x70A0): it
+      // sets the scroll-axis velocity to HALF speed downward and zeroes the
+      // heading every tick, and only then, if the record's movement flag is
+      // set, rides the terrain as well. So a movement-flag 0x34 crosses toward
+      // the player while both its own drift and the map carry it down. (0x33
+      // rides in its charge state instead; neither class can ever take the
+      // anchored branch, since spawn sets the anchor bit only for class-table
+      // entries carrying bit7.)
+      if (sp.state === 1 || sp.state === 3) {
+        sp.vy = S / 512;
+        if (sp.moveFlag) {
+          enemy.y += scene.dezaBg ? scene.dezaBg.lastDelta : 0;
+        }
+      }
     } else if (sp.cls === 0x35) {
       // lock on and fly at the player; near them, bank through a half
       // circle with growing speed and escape sideways
@@ -3984,9 +4022,36 @@
       enemy.setData("animPeriod", Math.max(33, behavior.hp * 1000 / 60));
     }
   }
+  // The engine's terrain-ride helper (+0x4BFC), both branches. Status bit6 —
+  // set at spawn for the appearance groups whose class-table byte carries bit7,
+  // i.e. ids 0-7 and 16-31, the turrets and scenery — takes the ABSOLUTE form,
+  // which rewrites the scroll coordinate outright from the map anchor:
+  //
+  //     scrollPx = anchorY + mapScroll - anchorScroll
+  //
+  // Everything else takes the incremental form, adding the whole pixels the map
+  // moved this frame. (The engine works in px<<7 and multiplies the whole-pixel
+  // scroll by 128; in the runtime's pixel units that scaling cancels out.)
+  // Imports with no entry data keep the legacy everything-scrolls model.
+  function applyTerrainRide(scene, enemy, entry, scroll) {
+    if (!entry) {
+      enemy.y += scroll;
+      return;
+    }
+    if (!entry.ridesNow) return;
+    if (entry.anchored && !entry.moverB && scene.dezaBg) {
+      enemy.y = entry.anchorY + (scene.dezaBg._scroll - entry.anchorScroll);
+    } else {
+      enemy.y += scroll;
+    }
+  }
   function updateEnemyBehavior(scene, enemy) {
     var st = enemy.getData("deza");
     if (!st) return false;
+    // A chain-kill link is frozen from the moment it is marked: the engine
+    // zeroes both walker components and clears its ride bit, so it neither
+    // drifts nor travels with the map while its countdown runs.
+    if (st.chainDying) return true;
     var b = st.behavior;
     var scroll = scene.dezaBg ? scene.dezaBg.lastDelta : scene.bossActive || scene.bossReached ? 0 : SCROLL_PX_PER_FRAME / SATURN_TICKS_PER_FRAME;
     // Hardware does NOT scroll every enemy with the map: the ride mover
@@ -4007,7 +4072,7 @@
       }
       return true;
     }
-    if (!entry || entry.ridesNow) enemy.y += scroll;
+    applyTerrainRide(scene, enemy, entry, scroll);
     st.tick++;
     if (st.tick % SATURN_TICKS_PER_FRAME) return true;
     st.age++;
@@ -6589,6 +6654,14 @@
     enemy.setData("animTimer", 0);
     enemy.setData("projData", data.bulletData || data.projectileData || null);
     enemy.setData("enemyKey", data._enemyKey || null);
+    // The engine's FORMATION KEY (0x06090530[slot]): a grid-spawned enemy gets
+    // its placement cell byte, a death-word child gets its parent's parameter
+    // with bit7 forced on. The chain mode sweeps everything sharing one.
+    if (data.dezaemon) {
+      enemy.setData("dezaKey", data.dezaemon.placementId);
+      enemy.setData("dezaDeath", data.dezaemon.behavior && data.dezaemon.behavior.death);
+      enemy.setData("dezaChild", data.dezaemon.deathChild || null);
+    }
     if (data.dezaemon && data.dezaemon.behavior) {
       initEnemyBehavior(enemy, data.dezaemon.behavior, data.dezaemon, scene);
     }
@@ -6730,6 +6803,96 @@
     }
     scene.enemyBullets.push(bullet);
   }
+  // ---- The enemy DEATH WORD (record byte 2 bits 6-7 + byte 3) --------------
+  //
+  // Traced from the engine's death dispatcher (+0x6448). The record packs a
+  // mode and a parameter that the spawn folds into one per-slot word, and when
+  // the enemy's hp reaches zero the dispatcher switches on it:
+  //
+  //   1  DROP an item — the parameter is an item SLOT (9 = cycle the slots)
+  //   2  SPAWN a successor at the dying enemy's exact position, taken from the
+  //      same stage's record table and tagged with the parent's key
+  //   3  CHAIN — every other live object carrying that key dies too, four
+  //      ticks apart, and each of those runs its own death word in turn
+  //
+  // Byte 4 bits 2-3 ride along as the death's PRESENTATION (vanish silently /
+  // small blast / full blast).
+  // Ticks between links, from the engine's n*4 countdown. One engine AI tick is
+  // SATURN_TICKS_PER_FRAME runtime updates, and the countdown below is counted
+  // down per update, so convert once here.
+  var DEATH_CHAIN_STEP = 4 * SATURN_TICKS_PER_FRAME;
+  var deathItemCycle = 0;   // the engine's own rolling counter (+0x60840D2)
+  function deathWordItemName(scene, slotIndex) {
+    var items = scene.recipe && scene.recipe.dezaemonItems;
+    var slots = items && items.slots;
+    if (!slots || !slots.length) return null;
+    var slot = slots[slotIndex % slots.length];
+    if (!slot) return null;
+    // Item TYPE -> the runtime's drop digit -> the name dropItem() knows.
+    var DROP_BY_TYPE = [2, 2, 2, 2, 9, 5, 4, 1, 3];
+    var digit = DROP_BY_TYPE[slot.type];
+    if (digit === 1) return PLAYER_STATES.SHOOT_NAME_BIG;
+    if (digit === 2) return PLAYER_STATES.SHOOT_NAME_3WAY;
+    if (digit === 3) return PLAYER_STATES.SHOOT_SPEED_HIGH;
+    if (digit === 4) return "dezaScore";
+    if (digit === 5) return "dezaSp";
+    if (digit === 9) return PLAYER_STATES.BARRIER;
+    return null;
+  }
+  function runDeathWord(scene, enemy) {
+    var death = enemy.getData("dezaDeath");
+    if (!death || !death.mode) return death;
+    if (death.mode === 1) {
+      // Slot 9 is the engine's "cycling" item: a global counter, not random.
+      var idx = death.item === 9 ? deathItemCycle++ & 7 : death.item - 1;
+      var name = death.item > 0 ? deathWordItemName(scene, idx) : null;
+      if (name) scene.dropItem(enemy.x, enemy.y, name);
+    } else if (death.mode === 2) {
+      spawnDeathChild(scene, enemy, death);
+    } else if (death.mode === 3) {
+      var n = 0;
+      for (var i = 0; i < scene.enemies.length; i++) {
+        var other = scene.enemies[i];
+        if (!other || other === enemy || !other.active) continue;
+        if (other.getData("type") === "boss") continue;
+        if (other.getData("dezaKey") !== death.key) continue;
+        // The engine freezes each victim where it stands, silences its guns and
+        // arms a countdown; the death itself runs the victim's own death word,
+        // so a chain can cascade.
+        var st = other.getData("deza");
+        if (st) {
+          st.chainDying = true;
+          if (st.entry) st.entry.ridesNow = false;
+          if (st.sp) { st.sp.vx = 0; st.sp.vy = 0; st.sp.noFire = true; }
+        }
+        other.setData("dezaChainT", DEATH_CHAIN_STEP * (++n));
+      }
+    }
+    return death;
+  }
+  function spawnDeathChild(scene, enemy, death) {
+    var key = enemy.getData("dezaChild");
+    var data = key && scene.recipe && scene.recipe.enemyData
+      ? scene.recipe.enemyData[key]
+      : null;
+    if (!data) return;
+    // The engine draws the child from a separate 150-slot pool; the runtime's
+    // single cap stands in for it, so a chain of successors cannot outrun it.
+    if (scene.enemies.length >= DEZA_MAX_LIVE_ZAKO) return;
+    data._enemyKey = key.replace(/^enemy/, "");
+    var child = createEnemy(scene, data, enemy.x, enemy.y, null);
+    // The successor is tagged with the PARENT's parameter, not its own
+    // placement id — that is what makes a squad share one chain key.
+    child.setData("dezaKey", death.key);
+    // An anchored parent hands its terrain anchor down verbatim, so the child
+    // stays glued to the same spot on the map (+0x18F10).
+    var pst = enemy.getData("deza");
+    var cst = child.getData("deza");
+    if (pst && pst.entry && pst.entry.anchored && cst && cst.entry) {
+      cst.entry.anchorY = pst.entry.anchorY;
+      cst.entry.anchorScroll = pst.entry.anchorScroll;
+    }
+  }
   function enemyDie(scene, enemy, isSp) {
     if (!enemy || !enemy.active) return;
     var score = enemy.getData("score") || 100;
@@ -6752,10 +6915,15 @@
     if (itemName) {
       scene.dropItem(enemy.x, enemy.y, itemName);
     }
+    // The record's DEATH WORD, run before the blast — the engine dispatches it
+    // on the same tick and only then decides how to render the death.
+    var death = runDeathWord(scene, enemy);
     triggerHaptic("kill");
-    scene.showExplosion(enemy.x, enemy.y);
+    if (!(death && death.silent)) {
+      scene.showExplosion(enemy.x, enemy.y);
+      scene.playSound("se_explosion", 0.175);
+    }
     scene.showScorePopup(enemy.x, enemy.y, score, ratio);
-    scene.playSound("se_explosion", 0.175);
     var idx = scene.enemies.indexOf(enemy);
     if (idx >= 0) scene.enemies.splice(idx, 1);
     var eShadow = enemy.getData("shadow");
@@ -6764,6 +6932,19 @@
   }
   function updateEnemy(scene, enemy, step) {
     if (updateDezaBossPart(scene, enemy)) return;
+    // A chain-kill victim counts down where it stands — the engine keeps the
+    // countdown in the hp word and re-enters the full death handler at zero, so
+    // the link dies exactly as if it had been shot: own score, own item, own
+    // successor, and its own chain.
+    var chainT = enemy.getData("dezaChainT");
+    if (chainT) {
+      enemy.setData("dezaChainT", chainT - 1);
+      if (chainT - 1 <= 0) {
+        enemy.setData("dezaChainT", 0);
+        scene.enemyDie(enemy, false);
+        return;
+      }
+    }
     if (updateEnemyBehavior(scene, enemy)) {
       var dShadow = enemy.getData("shadow");
       if (dShadow && dShadow.active) {

@@ -315,9 +315,9 @@ start/end/rate/repeat interpolators:
 |------|-------|
 | 0 | appearance id: indexes the 256-entry pointer table `+0x6088e5c` — whose entries are **BEHAVIOR SCRIPTS, not sprite definitions**. See "Appearance scripts" below. Sprite size, char slot, frame count and hitbox come from the PLACEMENT-ID BAND instead (seven spawn wrappers `+0x16070..+0x165F8`: frame counts 4/4/4/4/2/2/1 and char bases 67/131/163/195/259/267/275 across the seven art bands); `b0>>3` selects the object CLASS from `+0x21FB0` — 0x30 = scripted zako (208 ids, **93.9%** of corpus enemy definitions), 0x31–0x36 = hardcoded special AI on an empty script (48 ids, the rest). |
 | 1 | bits0-2 **hp** index → `[60,30,15,10,5,3,2,1]` (`+0x6085ee8`; index 0 = toughest, 7 = the editor default) — the SAME value is the **animation frame period in ticks** (both counters load from it at spawn `+0x15448`; the anim reload doubles as the pierce-exchange hp, so damaged enemies animate faster); bits4-6 **score** index → `[50,100,200,500,1000,2000,5000,10000]` (`+0x6085ef0`); bit7 **ground** flag |
-| 2 | bits0-2 **speed** index → u32 `[256,12800,…,512000]` (`+0x6085f20`, 16.16 px/frame, ×1.5 at rank ≥2 and again at rank 6); bit3+bits4-5 **movement pattern** (0-7, `((b2>>4)&3)\|((b2&8)>>1)`); bits6-7 **fire type** |
-| 3 | fire params (type 1: bits0-2 count−1, bit3 wide; other types OR raw) |
-| 4 | bits0-1 fire mode; bits4-6 **fire rate** index → interval `[119,59,29,19,9,5,3,1]` (`+0x6085f81`; mode 3 uses `[119,59,39,19,11,7,3,1]`) + randomization window `[29,22,16,11,7,4,2,1]` (`+0x6085f61`) — reload = interval + rand(window) |
+| 2 | bits0-2 **speed** index → u32 `[256,12800,…,512000]` (`+0x6085f20`, 16.16 px/frame, ×1.5 at rank ≥2 and again at rank 6); bit3+bits4-5 **movement pattern** (0-7, `((b2>>4)&3)\|((b2&8)>>1)`); bit3 alone is the TERRAIN-RIDE flag the ride helper gates on; bits6-7 **death mode** (see "The death word") |
+| 3 | **death word parameter** — item slot / child record / chain key, by mode (see "The death word"). NOT fire params: nothing in the firing path reads this byte. |
+| 4 | bits0-1 fire mode; **bits2-3 death presentation** (0 = vanish silently, 2 = small blast, 1/3 = full); bits4-6 **fire rate** index → interval `[119,59,29,19,9,5,3,1]` (`+0x6085f81`; mode 3 uses `[119,59,39,19,11,7,3,1]`) + randomization window `[29,22,16,11,7,4,2,1]` (`+0x6085f61`) — reload = interval + rand(window) |
 | 5 | bits0-4 fire direction (0 = default/aimed), bits5-7 extra (passed to the shooter at `+0x607cfac`) |
 | 6-8 | **speed-change channel** (enable `b6&1`) — values `[0,4,8,12,16,24,32,48,64]`/16 = ×0..×4 (`+0x6086004`), steps `[16..1024]`/256 (`+0x608600e`) |
 | 9-11 | **rotation channel** (mode `b9&7`: 0 off, 1 cw, 2 ccw, 3/4 engine-special) — angles `[0,32,…,224]` of the 256-circle (`+0x6085fec`), steps `[16..2048]`/256 (`+0x6085ff4`) |
@@ -357,7 +357,7 @@ rotated 90°:
 | `0x06090040` | **lateral** — the 20-column axis, screen X in a vertical game (0…320 px, playfield 48–272) | the placement walker stores `column << 11` (= col·16 px·128) here (`+0x169EE`→`+0x1609E`); the item spawner does the same with `(col·16+8)·128`; the collision test at `+0x18322` compares this axis' separation against the hitbox extent that holds **12** for a 32×16 sprite (its wide half-extent) |
 | `0x0608D400` | **scroll** — the axis the stage scrolls along, screen Y in a vertical game (playfield 224 px) | the same call passes a *pixel* scroll position `<< 7`; the on-screen fire window tests it against `[0, 0x7000]` = 0–224 px; its hitbox extent is the narrow **6** |
 
-Every object integrates in the master walker at `+0x7930`:
+Every object integrates in the master walker at `+0x791C` (`0x0606B91C`; the `+0x7930` of earlier notes is mid-body):
 
 ```
 lateral (0x06090040) += s16 0x06094840[slot]      // the COS component
@@ -431,19 +431,18 @@ one tick per frame:
   exceeds `0x4FFF` = 160 px) negates the lateral component, which is what
   makes placed formations sweep out symmetrically; the **ground** flag
   (status bit1) negates the scroll component
-- amplitude bit15 (or flags bit8 together with the packed movement byte's
-  bit2) adds `scrollSpeed × 128` to the scroll coordinate each tick
-  (`+0x5286`, shift chain `<<2 <<2 ×2 <<2`; `0x06090A2C` counts WHOLE
-  pixels of map scroll this frame, so the ride moves the object exactly
-  with the map). Objects in appearance groups 0/2/3 carry status bit6
-  instead and have their scroll coordinate recomputed ABSOLUTELY from a map
-  anchor each tick (`+0x4BFC`) — that is how turrets and scenery stay glued
-  to the terrain. **Everything else holds its screen position** unless its
-  own drift moves it. The 2028-ai runtime implements this model for
-  entry-carrying imports (riders move with the map, anchored riders refuse
-  vertical record movement, holders hold; hidden-above-screen holders are
-  retired after ten seconds), keeping the legacy everything-scrolls model
-  for imports that predate the entry data
+- the TERRAIN RIDE — **fully traced 2026-08-28, superseding two earlier
+  mis-attributions in this file** (see "Terrain ride" below for the complete
+  helper). The row's amplitude bit15, **or** flags bit8 together with the
+  packed movement byte's bit2, is the CALL GATE of the ride helper
+  `+0x4BFC`; status bit6 is orthogonal to that gate and selects WHICH of the
+  helper's two forms runs, not whether it runs at all. **Everything else
+  holds its screen position** unless its own drift moves it. The 2028-ai
+  runtime implements the whole model for entry-carrying imports (anchored
+  riders recompute absolutely, plain riders add the frame's whole pixels,
+  holders hold; hidden-above-screen holders are retired after ten seconds),
+  keeping the legacy everything-scrolls model for imports that predate the
+  entry data
 
 Other flag bits: **bit4 = this appearance never fires** (48 of 256 ids —
 the long-known `APPEARANCE_NOFIRE`), bit9 = expire the row early past a
@@ -484,16 +483,107 @@ speed is `SPEED[id&7]` = `[128,256,384,512,640,768,1152,1536]`/256 =
   units/tick with speed growing S/32 per tick — a swerving strafe that
   escapes sideways.
 
-**Formation keys and the death word** (same trace): EVERY grid-placed zako
-gets `0x06090530[slot]` = its placement cell byte (helper `+0x1675C`, called
-from the placement walker's common tail). The record's death word
-(`b2>>6` mode, `b3` parameter): mode 1 = drop item 1-9, mode 2 = spawn the
-enemy record `BASE[(p>>4)&7] | (p&15)` (`BASE = [0,16,24,32,48,52,56]`) at
-the dying enemy's position with key `p|0x80`, mode 3 = **chain-kill**: every
-live object whose key equals `p|0x80` — i.e. everything placed as grid id
-`p|0x80` — dies in a 4-tick ripple, the editor's squad-bonus mechanic.
-`(b4>>2)&3 == 0` = die SILENTLY (no blast); anything else spawns the blast
-anim.
+### Terrain ride — the helper `+0x4BFC` (fully traced, 2026-08-28)
+
+`0x06068BFC(slot)` is 58 instructions (`..0x06068C6E`) with two branches, chosen by **bit6
+(0x40) of `0x0608EF40[slot]`**. All positions below are the scroll axis;
+`0x0608D400[slot]` is px<<7 and every other quantity here is WHOLE PIXELS
+(`0x06010BF6`, the kernel helper the spawn calls, is literally seven
+`shar r4` = an arithmetic `>>7`):
+
+| symbol | meaning |
+|--------|---------|
+| `0x0608D3FA` (s16) | the map's current scroll position, in px |
+| `0x06090A2C` (s16) | px the map scrolled THIS frame (recomputed every UNPAUSED frame at `+0x3570`) |
+| `0x06094C40[slot]` (s16) | the object's screen Y **when its anchor was taken** |
+| `0x0608EC90[slot]` (s16) | the map scroll at that same moment |
+| `0x06090F40` (s16) | a map-LOOP rebase correction, non-zero only on a wrap frame — and wraps are NOT a demo-mode curiosity: the wrap block runs when the game mode is > 1 **or** any boss flag (`0x06084158`) is set, so ordinary play hits it |
+
+```
+ride(slot):
+  if (status[slot] & 0x40):                       # ANCHORED — absolute
+      if (rebase != 0): anchorScroll[slot] -= rebase
+      scroll[slot] = (anchorY[slot] + mapScroll - anchorScroll[slot]) * 128
+  else:                                           # plain rider — incremental
+      scroll[slot] += framePixels * 128
+```
+
+The anchored form **rewrites** the coordinate rather than nudging it, so a
+turret can never drift off its piece of terrain; the rebase keeps
+`mapScroll - anchorScroll` invariant when a looping map wraps, so nothing
+jumps. The anchor pair is seeded in exactly three places — the spawn tail
+`+0x1675C`, the boss landing sequence, and the death-word child spawner
+`+0x18F10`, where a child of an ANCHORED parent inherits both values verbatim
+(otherwise it takes a fresh anchor at its own position).
+
+Bit6 is **dynamic state**, not an object kind: the spawn sets it from bit7 of
+the class-table byte `0x06085FB0[b0>>3]`, which is `0xB0` at indices 0, 2 and
+3 — hence appearance ids 0-7 and 16-31, the turrets and scenery — and the
+boss code sets/clears it as the map starts and stops scrolling, which is what
+fixes its meaning as "currently riding the terrain". Chain-killed objects have
+it cleared.
+
+The helper has exactly **three call sites**, so it does NOT run for every
+object every frame:
+
+- `+0x4FAC`, in script mover A (`+0x4EC4`), when
+  `(rowFlags & 0x100 && moveByte & 4) || (s16)amplitude < 0` — the second test
+  is amplitude bit15. Row flags **bit7 picks the mover**: set = mover B
+  (`+0x5054`), which inlines the incremental ride, gates on amplitude bit15
+  alone and can never take the anchored branch; clear = mover A, the only path
+  that honours bit6.
+- `+0x6DA2`, class 0x33, in its sideways-charge sub-state, gated on the
+  movement flag.
+- `+0x70C4`, class 0x34, throughout **phase 1** (the lateral approach, not the
+  dive), gated on the movement flag. It does not zero the scroll-axis velocity — it
+  SETS it to `-(amplitude>>1)`, a half-speed downward drift, and zeroes only
+  the heading, so the enemy slides across while both its own drift and the
+  terrain carry it down. In phase 2 the movement flag instead makes the
+  handler return at once (`+0x70E6`): neither ride nor acceleration.
+
+That gating flag, bit2 of `0x06091550[slot]`, is **enemy-record byte 2 bit 3**
+— the editor's per-placement movement flag. There is no lateral analogue: the
+anchor array is referenced only alongside the scroll axis.
+
+**Formation keys** (`0x06090530[slot]`): every grid-spawned ENEMY gets its
+placement cell byte, written by the spawn tail `+0x1675C` (and by the periodic
+extra spawner). Placed ITEMS (cells 0xE8-0xEF) bypass it and get key 0; cells
+0xF0-0xFF spawn nothing. The byte is `1 bbb nnnn` — bit7 the OCCUPIED flag
+(always 1 for a real key), bits4-6 the band, bits0-3 the index — and the band
+nibble doubles as the object's size class for the despawn bound (`+0x4C8C`).
+The array is a general per-slot scratch byte, not a dedicated key: other
+object classes keep an 8-direction angle or a 0/1 latch there, and it is never
+cleared when a slot is freed (every allocation site rewrites it first).
+
+**The death word** — record byte 2 bits 6-7 (mode) and byte 3 (parameter),
+**which this file previously mis-labelled "fire type" and "fire params"**. The
+firing path never reads either byte; the spawn `+0x153C8` is the only code that
+does, packing them into one per-slot u16 `0x06094240[slot]` as `mode<<8 | param`
+that the death dispatcher `+0x6448` consumes when hp hits 0:
+
+| mode | effect |
+|------|--------|
+| 0 | nothing |
+| 1 | **drop an item.** The parameter is re-encoded at spawn as `(b3&8) ? 9 : (b3&7)+1` — an item SLOT 1-8, or 9 = cycle the slots through a global counter. 0 drops nothing. |
+| 2 | **spawn a successor** at the dying enemy's exact position (no cell snapping), from the CURRENT stage's record table, index `BASE[(p>>4)&7] \| (p&15)` where `BASE` = the 7 bytes at `0x0608603C` = `[0,16,24,32,48,52,56]`. The low nibble is OR-ed in **unmasked** (`+0x1A488 or r4,r5`); the per-band mask 15/7/7/15/3/3/3 shapes only the art and hitbox. Band 7 is clamped to band 0. The child is tagged `0x06090530[child] = p\|0x80` and takes no velocity, hp or rank from its parent — only, conditionally, its terrain anchor. |
+| 3 | **chain-kill.** Scans the 149 other slots of the 99-248 enemy pool for `0x06090530[j] == p\|0x80`, and arms the Nth match with `hp[j] = (4*N) \| 0x80000000`. A per-tick countdown re-enters the FULL death handler at zero, so each link awards its own score, drops its own item, spawns its own successor and can chain again. Victims are frozen (both walker components zeroed), silenced, credited to the same player and have their anchor bit cleared. |
+
+Score is awarded unconditionally, before the mode dispatch. Record byte 4
+bits 2-3 ride in the same word as the death PRESENTATION: **0 = vanish
+silently** (no blast, no sound — word bit15), 2 = the small blast and no
+revenge shot (bit14), 1 and 3 = the full blast. All of this applies to boss
+parts too: they are built from the same 18-byte record by the same spawn.
+
+Mode 2 also has a second, reduced trigger (`+0x63AC`) that every class handler
+calls when the AI script vanishes the object: it spawns the successor only —
+no score, no item, no chain, no blast.
+
+The decoder surfaces all of it as `behavior.death`
+(`{mode, param, item|key, record, silent, small}`, decode-enemy.js), the mapper
+ships the formation key as `dezaemon.placementId` and resolves mode 2 to
+`dezaemon.deathChild`, and the 2028-ai runtime implements every mode. Because a
+child record is often never PLACED, the roster now includes the transitive
+closure of mode-2 children so those enemies exist to be spawned.
 
 **Change-channel triggers** (the C byte's bits 0–2 of each of the record's
 four channels) resolve through `+0x4C8C` to a scroll-axis threshold: mode 0

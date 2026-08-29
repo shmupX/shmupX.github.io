@@ -15,7 +15,7 @@
 //
 // Environment-neutral ESM (Node + browser).
 
-import { decodeEnemyRecord } from "./decode-enemy.js";
+import { decodeEnemyRecord, zakoRecordFromKey } from "./decode-enemy.js";
 
 export const SEC5_REGIONS = {
     stageBanks: { offset: 0x00000, count: 10, stride: 0x5400 },
@@ -178,6 +178,24 @@ export function zakoRecordIndex(id) {
     return -1;
 }
 
+// The engine's own placement-cell-byte -> record-index math lives next to the
+// record decoder (this module already depends on it); re-exported here because
+// it is a placement concept too.
+export { ZAKO_BAND_ART_MASK, ZAKO_BAND_BASE, zakoRecordFromKey } from "./decode-enemy.js";
+
+// The inverse: the placement id a record index is placed as. The mapping is a
+// bijection over the 60 zako slots, which is what lets an enemy's FORMATION KEY
+// (the engine's per-slot `0x06090530[slot]` = the placement cell byte) be
+// recovered from its record index alone — no extra per-object data to carry.
+export function zakoPlacementId(record) {
+    let base = 0;
+    for (const [first, count] of ZAKO_GROUPS) {
+        if (record >= base && record < base + count) return first + (record - base);
+        base += count;
+    }
+    return -1;
+}
+
 export function describePlacementId(id) {
     if (isBoss(id)) return { id, kind: "boss", sizeClass: id & 0x0f, record: -1 };
     if (id >= 0xe8 && id <= 0xef) return { id, kind: "item", slot: id & 0x07, record: -1 };
@@ -291,6 +309,32 @@ export function enemyPairKey(stage, record) {
 }
 
 // stages -> {enemies, stages, stagesUsing} for mapSaveToGame().
+// Records a stage can spawn through mode-2 death words but never places on its
+// grid, found by walking parent -> child until nothing new turns up. The engine
+// has no depth limit here (a child's own record supplies its own death word),
+// so the walk is bounded only by the 60-record table.
+function deathChildClosure(stage, placed) {
+    const found = new Set();
+    const queue = [...placed];
+    const seen = new Set(queue);
+    while (queue.length) {
+        const record = queue.pop();
+        const entry = stage.enemies.records[record];
+        if (!entry || !entry.defined) continue;
+        const bytes = entry.bytes;
+        if (((bytes[2] >> 6) & 3) !== 2) continue;
+        const child = zakoRecordFromKey(bytes[3] | 0x80);
+        if (child < 0 || child >= ZAKO_SLOT_COUNT || seen.has(child)) continue;
+        seen.add(child);
+        // Only a record with content is worth carrying — an all-zero one would
+        // land in the roster as an invisible do-nothing enemy.
+        if (!stage.enemies.records[child] || !stage.enemies.records[child].defined) continue;
+        found.add(child);
+        queue.push(child);
+    }
+    return found;
+}
+
 // `itemSlots` is decode-settings' slot table; with it each placed item drops
 // as its authored TYPE instead of the legacy even spread.
 export function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = {}) {
@@ -312,6 +356,12 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = nu
         const placed = new Set(
             st.placement.objects.filter((o) => o.kind === "zako").map((o) => o.record),
         );
+        // A record the map never places can still reach the screen: the death
+        // word's child mode spawns one from the same stage's table when its
+        // parent dies, and that child may spawn a child of its own. Follow that
+        // chain so the roster holds everything the stage can actually put in
+        // front of the player, not just what the grid seeds.
+        for (const record of deathChildClosure(st, placed)) placed.add(record);
         for (const record of [...placed].sort((a, b) => a - b)) {
             const key = enemyPairKey(s, record);
             indexOf.set(key, enemies.length);
@@ -322,7 +372,9 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = nu
                 stage: s,
                 record,
                 key,
-                placements: uses.get(key),
+                // 0 for a record the grid never places — it reaches the
+                // screen only as another record's death-word child.
+                placements: uses.get(key) || 0,
                 // The 18-byte definition decoded into named fields — hp, score,
                 // speed, fire config and the four change channels. Engine-traced
                 // (see decode-enemy.js); this is what makes imported enemies

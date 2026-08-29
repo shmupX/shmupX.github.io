@@ -1,0 +1,305 @@
+<title>Dezaemon 2 Parity Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #F3F6F3;
+    --surface: #FFFFFF;
+    --ink: #17211C;
+    --muted: #5A6B62;
+    --line: #D8E0DA;
+    --accent: #1F7A52;
+    --accent-ink: #FFFFFF;
+    --ok: #1F7A52;
+    --ok-bg: #E3F0E8;
+    --part: #96661A;
+    --part-bg: #F5ECD9;
+    --miss: #A8433A;
+    --miss-bg: #F6E4E1;
+    --chip-bg: #EAF0EB;
+    --code-bg: #EDF2EE;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F1512;
+      --surface: #161F1A;
+      --ink: #DCE6DF;
+      --muted: #8FA398;
+      --line: #263229;
+      --accent: #58C08C;
+      --accent-ink: #0F1512;
+      --ok: #6CC79A;
+      --ok-bg: #1A2E23;
+      --part: #D3A557;
+      --part-bg: #2E2618;
+      --miss: #D98077;
+      --miss-bg: #331E1B;
+      --chip-bg: #1D2822;
+      --code-bg: #1A241E;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1512;
+    --surface: #161F1A;
+    --ink: #DCE6DF;
+    --muted: #8FA398;
+    --line: #263229;
+    --accent: #58C08C;
+    --accent-ink: #0F1512;
+    --ok: #6CC79A;
+    --ok-bg: #1A2E23;
+    --part: #D3A557;
+    --part-bg: #2E2618;
+    --miss: #D98077;
+    --miss-bg: #331E1B;
+    --chip-bg: #1D2822;
+    --code-bg: #1A241E;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 20px 96px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header { padding: 56px 0 8px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 44px);
+    font-weight: 900;
+    line-height: 1.15;
+    letter-spacing: -.01em;
+    margin: 0 0 4px;
+    text-wrap: balance;
+  }
+  h1 .jp { color: var(--muted); font-weight: 700; font-size: .55em; letter-spacing: .04em; vertical-align: .35em; margin-left: .5em; }
+  .lede { color: var(--muted); max-width: 62ch; margin: 12px 0 0; }
+  .lede strong { color: var(--ink); font-weight: 700; }
+
+  .meterline {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin: 28px 0 0; padding: 14px 16px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .meter { flex: 1 1 260px; height: 10px; border-radius: 5px; overflow: hidden; display: flex; }
+  .meter i { display: block; height: 100%; }
+  .meter .m-ok { background: var(--ok); }
+  .meter .m-part { background: var(--part); }
+  .meter .m-miss { background: var(--miss); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .legend b { color: var(--ink); font-weight: 700; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+
+  h2 {
+    font-size: 22px; font-weight: 900; letter-spacing: -.005em;
+    margin: 56px 0 6px; text-wrap: balance;
+  }
+  h2 .no {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    color: var(--accent); font-weight: 600; font-size: 15px; margin-right: 10px;
+  }
+  .sub { color: var(--muted); margin: 0 0 20px; max-width: 66ch; }
+
+  code, .ref {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .86em;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  .ref { color: var(--muted); }
+
+  /* ── remaining-work list ── */
+  ol.remaining { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  ol.remaining li {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px 14px 14px;
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 4px 12px;
+  }
+  ol.remaining .n {
+    grid-row: 1 / 3;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600; font-size: 14px;
+    color: var(--accent);
+    background: var(--chip-bg);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    height: 34px;
+  }
+  ol.remaining h3 { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.4; }
+  ol.remaining h3 .tag {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 500; letter-spacing: .05em;
+    border-radius: 999px; padding: 2px 9px; margin-left: 8px;
+    vertical-align: 2px; white-space: nowrap;
+  }
+  .tag.spec { background: var(--ok-bg); color: var(--ok); }
+  .tag.open { background: var(--part-bg); color: var(--part); }
+  .tag.none { background: var(--miss-bg); color: var(--miss); }
+  ol.remaining p { margin: 0; font-size: 14px; color: var(--muted); max-width: 72ch; }
+  ol.remaining p b { color: var(--ink); font-weight: 700; }
+
+  /* ── status tables ── */
+  .band {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    border-radius: 999px; padding: 3px 12px;
+  }
+  .band.ok { background: var(--ok-bg); color: var(--ok); }
+  .band.part { background: var(--part-bg); color: var(--part); }
+  .band.miss { background: var(--miss-bg); color: var(--miss); }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th {
+    text-align: left; font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); padding: 12px 16px 8px; border-bottom: 1px solid var(--line);
+  }
+  td { padding: 10px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.feat { font-weight: 700; white-space: nowrap; }
+  td .note { color: var(--muted); }
+  .tablegroup { display: grid; gap: 12px; margin-top: 14px; }
+
+  ul.plain { margin: 10px 0 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
+  ul.plain li { margin: 6px 0; max-width: 72ch; }
+  ul.plain b { color: var(--ink); font-weight: 700; }
+
+  .pipeline {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13px; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto; white-space: nowrap;
+    margin: 18px 0 0;
+  }
+  .pipeline b { color: var(--accent); font-weight: 600; }
+
+  footer { margin-top: 64px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; max-width: 72ch; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .meter i { transition: width .6s ease; }
+  }
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">shmupX · packages/shmup-engine · reverse-engineering status</p>
+  <h1>Dezaemon 2 Parity Map<span class="jp">デザエモン2</span></h1>
+  <p class="lede">What the importer already decodes of a Sega Saturn <strong>Dezaemon 2</strong> save, and what still stands between it and full feature parity. Target is the Saturn release (big-endian SH-2, <code>BackUpRam Format</code> BUP saves, LZSS-compressed 8-section payloads) — not the SNES original. The canonical RE notes live in <code>packages/shmup-engine/FORMAT.md</code>; the whole pipeline is currently <strong>import-only</strong>.</p>
+
+  <div class="pipeline">.sav → bup-parse → decompress (LZSS) → decode <b>sec0–3 CG</b> · <b>sec4 palettes</b> · <b>sec5 stages</b> · <b>sec6 BGM</b> · settings → mapSaveToGame → editor game.json → Phaser runtime</div>
+
+  <div class="meterline">
+    <div class="meter" role="img" aria-label="Roughly seven eighths implemented, a tenth partial, the rest absent">
+      <i class="m-ok" style="width:86%"></i><i class="m-part" style="width:9%"></i><i class="m-miss" style="width:5%"></i>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--ok)"></i><b>Implemented</b> container · graphics · levels · enemies · bosses · items · BGM · 3D decode</span>
+      <span><i class="dot" style="background:var(--part)"></i><b>Partial</b> data landed, runtime pending</span>
+      <span><i class="dot" style="background:var(--miss)"></i><b>Absent</b> write path, horizontal, 2P, endings</span>
+    </div>
+  </div>
+</header>
+
+<h2><span class="no">01</span>What remains</h2>
+<p class="sub">Two reverse-engineering blitzes (2026-08-28) closed most of the original twelve items; what follows is the residue. <span class="tag spec" style="margin-left:0">SPEC WRITTEN</span> means the layout is traced and documented in FORMAT.md and only the runtime is missing; <span class="tag open" style="margin-left:0">MEANING OPEN</span> means the bytes are located but their semantics are untraced; <span class="tag none" style="margin-left:0">NO TRACE</span> means nothing exists yet.</p>
+
+<ol class="remaining">
+  <li><span class="n">1</span>
+    <h3>Write path — .sav export<span class="tag none">NO TRACE</span></h3>
+    <p>Unchanged, and still the single largest missing capability: no LZSS <b>compressor</b>, no section-table/checksum builder, no BUP block allocator anywhere (<span class="ref">grep over src finds only decompress</span>). The real compressor lives in the disc's <code>S_OPT.bin</code>. Until this exists the editor can never round-trip a game back to a Saturn cart, so the pipeline stays <b>import-only</b>.</p>
+  </li>
+  <li><span class="n">2</span>
+    <h3>Horizontal scrolling &amp; two-player at runtime<span class="tag spec">SPEC WRITTEN</span></h3>
+    <p>The bytes are decoded — settings <code>gameMode</code> bit0 = horizontal, bit1 = two players — and the import now <b>warns</b> rather than silently lying (<span class="ref">map-to-game.js:674</span>). The work left is presentation, not RE: the world simulation is orientation-invariant, so only the playfield mapping, input and spawn edges change. A large slice of the corpus is horizontal (Biometal Gust, Air Streamer…), and until this lands their stages read sideways.</p>
+  </li>
+  <li><span class="n">3</span>
+    <h3>BGM accompaniment patterns &amp; real instrument timbres<span class="tag spec">SPEC WRITTEN</span></h3>
+    <p>Song timing is now engine-exact and the 1,260 kernel accompaniment rows plus the 116-instrument tone-bank map are <b>extracted and shipped</b> (<span class="ref">data/bgm-accompaniment.json · data/bgm-instruments.json</span>) — but nothing plays them. Parts are still hard-assigned square/square/triangle/noise, so an imported song has the right notes and tempo with the wrong voices and no auto-accompaniment. The instrument map carries <code>SNDPAC.BIN</code> offsets; that file is disc content and must never be committed.</p>
+  </li>
+  <li><span class="n">4</span>
+    <h3>Bombs, charge shots and option pods at runtime<span class="tag spec">SPEC WRITTEN</span></h3>
+    <p>The four weapon-loadout presets are fully traced — main 0–7, sub/option 0–7, charge 0–3, bomb type + variant, each with its dispatcher and per-type attack powers (<span class="ref">FORMAT.md +0x14–+0x1B</span>). The runtime still only fires the main shot: bomb pickups increment a stock counter, charge and option pods do nothing. (Note the traced surprise: <b>no bomb is a screen-clear</b> — they are large piercing contact objects.)</p>
+  </li>
+  <li><span class="n">5</span>
+    <h3>Title scene — draw the decoded art, and the entrance sequencer<span class="tag open">MEANING OPEN</span></h3>
+    <p>The title compositions decode correctly now (the 8×4 + 8×4 layout was corrected), and staff-role labels come from the save — but the title scene does not draw them, so imports still get a static logo blit. The 15-slot entrance-effect sequencer that animates a real Dezaemon title is untraced.</p>
+  </li>
+  <li><span class="n">6</span>
+    <h3>sec7 part-shape meshes (ポリ吉 primitives)<span class="tag open">MEANING OPEN</span></h3>
+    <p>The model section itself is decoded — 16 slots × 328 B, 9 parts × 36 B, positions/rotations/scales in 16.16, slot stride confirmed against POLYKITI's literal pools (<span class="ref">decode-model.js</span>). What is missing is the other half: the <b>primitive meshes are engine-fixed inside the POLYKITI overlay</b> and untraced, so a model decodes as transforms over shapes named only by number.</p>
+  </li>
+  <li><span class="n">7</span>
+    <h3>Bullet steering states 17 / 18 / 19<span class="tag open">MEANING OPEN</span></h3>
+    <p>All sixteen zako fire geometries are traced, but three per-bullet steering states they hand off to are not — geometry 8 is the 5-fan "with bullet state 19" and curves in a way the runtime approximates as straight (<span class="ref">FORMAT.md:698 · game.bundle.js:3639</span>). Affects the flight path of a minority of shots, not whether they appear.</p>
+  </li>
+  <li><span class="n">8</span>
+    <h3>Open correctness risk: which record byte is HP<span class="tag open">MEANING OPEN</span></h3>
+    <p>A synthesis pass argues that <b>record byte 2 bits 0–2 is HP, not speed</b> — its table is difficulty-scaled into <code>0x06095040</code>, which is provably the HP slot — and that byte 1's <code>[60,30,15,…]</code> is the animation-period pair instead. If true this inverts <code>SPEED_TABLE</code>/<code>HP_TABLE</code> and ripples through the mapper's hp/speed and the shot-damage divisor. <b>Deliberately not acted on:</b> the current model is self-consistent (LIFE stored &lt;&lt;8, three hits at max LIFE) and 12,800 raw units would be ~600 hits. Needs its own adversarial pass before anything is rewritten.</p>
+  </li>
+  <li><span class="n">9</span>
+    <h3>Save-driven endings<span class="tag none">NO TRACE</span></h3>
+    <p>The ending scene is still stock 2028-AI. Demo/attract recordings live on the retail disc rather than in saves, so this is bounded work — but nothing is decoded for it yet.</p>
+  </li>
+</ol>
+
+<h2><span class="no">02</span>Already implemented</h2>
+<p class="sub"><span class="band ok">Confirmed</span>&ensp;Checksum-proven or engine-disassembly-traced, and driven end-to-end by the runtime. These need no further RE work.</p>
+<div class="tablewrap">
+<table>
+  <tr><th>Area</th><th>Coverage</th></tr>
+  <tr><td class="feat">Container</td><td><span class="note">gzip <code>.bcr</code> / interleaved cart dumps / raw <code>.bkr</code> → BUP partitions, directory entries (Shift-JIS names, dates), fragmented block-chain reassembly, full 0x6C section-table + checksum validation, Okumura LZSS.</span> <span class="ref">bup-parse.js · payload-table.js · decompress.js</span></td></tr>
+  <tr><td class="feat">Graphics</td><td><span class="note">sec0–3 CG pages (8bpp, 16×16 cells), sec4 RGB555 palettes, background tilemaps with corrected flip bits, per-stage sprite composition bank with boss-core geometry, drawn title screens, and the save's own global art — player ship, item icons, bullet animations, blast frames.</span> <span class="ref">decode-cg.js · decode-sprites.js</span></td></tr>
+  <tr><td class="feat">Levels</td><td><span class="note">Placement grid (72 ids), stage count, per-(stage, record) enemy identity, and the authored scroll curve: speed table with easing, wave amplitude and type, per-stage extents. Spawns are scroll-<em>position</em> locked, so pacing survives the round trip.</span> <span class="ref">decode-stage.js · map-to-game.js</span></td></tr>
+  <tr><td class="feat">Enemy AI</td><td><span class="note">The 18-byte record plus the engine's own choreography: all 256 <b>appearance behaviour scripts</b> (1,206 rows) interpreted live, the six hardcoded <b>special classes 0x31–0x36</b>, the 16-entry fire-geometry table with the 10/11/12 burst handlers, change-channel triggers at the traced pixel thresholds, and the hardware <b>terrain-ride</b> model — anchored riders recomputed absolutely from a map anchor, plain riders stepped by the frame's whole pixels, everything else holding station.</span> <span class="ref">decode-enemy.js · appearance-table.js · game.bundle.js</span></td></tr>
+  <tr><td class="feat">Death word</td><td><span class="note">Record bytes 2–3 — long mis-read as "fire type / fire params" — are the death word, now implemented in full: <b>item drops</b> by authored slot, <b>child spawn</b> of a successor at the dying enemy's exact position (inheriting an anchored parent's terrain anchor), and <b>chain-kill</b> of every object sharing a formation key in a four-tick ripple where each link runs its own death word. Byte 4 selects silent / small / full blast.</span> <span class="ref">decode-enemy.js · game.bundle.js</span></td></tr>
+  <tr><td class="feat">Bosses</td><td><span class="note">0x40 trailer decoded (size class, HP bands, pattern playlist, 4×14-byte patterns with 3 fire points) <em>and</em> all 32 engine movement scripts embedded with their step interpreter, including the arrive/death selectors that place the authored off-screen start, the death-drift target and the zoom/spin flourishes.</span> <span class="ref">decode-boss.js · data/boss-move-scripts.json</span></td></tr>
+  <tr><td class="feat">Items &amp; weapons</td><td><span class="note">Eight item slots decoded as <code>movement&lt;&lt;4 | type</code> across nine types with their three launch behaviours, drops dressed in the save's own icons; weapon loadout presets and real per-level damage tables replace the refuted "+3 nibble = main weapon" reading.</span> <span class="ref">decode-settings.js · map-to-game.js</span></td></tr>
+  <tr><td class="feat">BGM / SFX</td><td><span class="note">sec6 fully decoded (24 songs × 32 measures × 4 parts × 16 steps, byte-exact tempo table, loop, echo, transpose) and synthesized live in WebAudio from the save's bytes — not prerecorded. Timing is engine-exact with no calibrated constants. SFX set honoured.</span> <span class="ref">decode-song.js · game.bundle.js</span></td></tr>
+  <tr><td class="feat">3D</td><td><span class="note">sec7 decodes: magic, 16 model slots, 9 parts each, 16.16 positions / rotations / scales with mirror-by-negative-scale.</span> <span class="ref">decode-model.js</span></td></tr>
+</table>
+</div>
+
+<h2><span class="no">03</span>Decoded but not yet used</h2>
+<p class="sub"><span class="band part">Partial</span>&ensp;Bytes extracted and carried through, then nothing reads them — cheap wins once the runtime grows a consumer.</p>
+<ul class="plain">
+  <li><b>BGM accompaniment rows and the instrument tone-bank map</b> ship as data but are never played <span class="ref">data/bgm-accompaniment.json · data/bgm-instruments.json</span></li>
+  <li><b>3D models</b> decode to transforms, but with no mesh library to draw and no renderer <span class="ref">decode-model.js</span></li>
+  <li><b>gameMode</b> horizontal / two-player flags reach <code>meta.dezaemonSettings</code> and raise an import warning, nothing more <span class="ref">map-to-game.js:617</span></li>
+  <li><b>Player 2's ship and loadout</b> are decoded and then dropped <span class="ref">map-to-game.js</span></li>
+  <li><b>Bomb, charge and sub-weapon types</b> with their attack powers — decoded, never fired <span class="ref">decode-settings.js</span></li>
+  <li><b>Title art and staff-role labels</b> — decoded, not drawn <span class="ref">decode-sprites.js · decode-settings.js</span></li>
+</ul>
+
+<h2><span class="no">04</span>No trace at all</h2>
+<p class="sub"><span class="band miss">Absent</span>&ensp;Real Dezaemon 2 features with no code behind them.</p>
+<ul class="plain">
+  <li><b>Any write path</b> — LZSS compressor, section-table builder, BUP writer, .sav export (item 1 above)</li>
+  <li><b>Save-driven endings</b> and the title entrance-effect sequencer (items 5 and 9)</li>
+  <li><b>The POLYKITI primitive mesh library</b> behind sec7's shape descriptors (item 6)</li>
+  <li><b>Dev tooling referenced by FORMAT.md</b> — <code>dev/scan-compression.js</code>, <code>dev/decode-corpus.js</code>, <code>dev/diff-saves.js</code> and the controlled-delta capture matrix exist only as plans; only <code>dev-fixtures/debug-tools/render-chamber.ts</code> survives</li>
+</ul>
+
+<footer>
+  Sources: <code>packages/shmup-engine/FORMAT.md</code> (930-line canonical notes, split confirmed vs open), the decoder suite under <code>packages/shmup-engine/src/decode/</code>, and the 2028-ai runtime bundle. Everything marked implemented above was traced from SH-2 disassembly of <code>GAME.CMP</code> / <code>0KERNEL.BIN</code> / <code>KUMITATE</code> and adversarially verified — verifiers caught real errors every round (inverted bit polarities, 90° angle conventions, unit scales), so no trace ships unverified. Confidence plumbing distinguishes <em>confirmed / heuristic</em> per section and the import sheet surfaces it in the editor. Surveyed 2026-08-28, after the second RE blitz.
+</footer>
+</div>

@@ -21,7 +21,7 @@
 //   - BootScene plays stage0..stage9
 
 import { DUKE_PLAYER, decodePlayerArt } from "./player-art.js";
-import { ITEM_TYPE_DROPS } from "./decode/decode-stage.js";
+import { ITEM_TYPE_DROPS, zakoPlacementId } from "./decode/decode-stage.js";
 import { APPEARANCE_SCRIPTS, appearanceScript } from "./decode/appearance-table.js";
 
 export { decodePlayerArt, DUKE_PLAYER };
@@ -293,6 +293,11 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                 record: e.record,
                 placements: e.placements,
                 attributes: toHex(e.bytes),
+                // The engine's FORMATION KEY: every grid-spawned enemy carries
+                // its placement cell byte in `0x06090530[slot]`, and the death
+                // word's chain mode sweeps everything sharing one. Record index
+                // and cell byte are a bijection, so it is recoverable here.
+                placementId: zakoPlacementId(e.record),
             };
             if (e.behavior) {
                 rec.dezaemon.behavior = clone(e.behavior);
@@ -312,6 +317,23 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             }
         }
         enemyData[`enemy${letters}`] = rec;
+    });
+    // Second pass: resolve each death word's CHILD to a roster key. The engine
+    // spawns it from the current stage's record table, so the child is whatever
+    // entry shares this enemy's stage and carries the named record index — and
+    // a record only reachable as a child is never placed on the map, so this is
+    // the only thing that pulls it into the roster's reach.
+    const enemyKeyByStageRecord = new Map();
+    decodedEnemies.forEach((e, i) => {
+        if (e.stage === undefined) return;
+        enemyKeyByStageRecord.set(`${e.stage}:${e.record}`, `enemy${enemyLetterByIndex[i]}`);
+    });
+    decodedEnemies.forEach((e, i) => {
+        const death = e.behavior && e.behavior.death;
+        if (!death || death.mode !== 2) return;
+        const child = enemyKeyByStageRecord.get(`${e.stage}:${death.record}`);
+        const rec = enemyData[`enemy${enemyLetterByIndex[i]}`];
+        if (child && rec && rec.dezaemon) rec.dezaemon.deathChild = child;
     });
     if (Object.keys(enemyData).length === 0) {
         enemyData.enemyA = clone(defaults.starterEnemy);

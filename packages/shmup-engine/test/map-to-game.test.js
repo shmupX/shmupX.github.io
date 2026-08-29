@@ -137,6 +137,8 @@ Deno.test("the save's own definition bytes travel with each enemy", () => {
     record: 7,
     placements: 5,
     attributes: "3cb70001",
+    // the engine's formation key for record 7 — placement cell byte 0x87
+    placementId: 0x87,
   });
   // ...and the attributes themselves still come from the defaults, because
   // the record's field layout is not decoded yet

@@ -155,7 +155,8 @@ Deno.test({
       assert(e.record >= 0 && e.record < 60);
       assertStrictEquals(e.key, `${e.stage}:${e.record}`);
       assertStrictEquals(e.bytes.length, 18);
-      assert(e.placements > 0);
+      // 0 is legal: a record only a death word spawns is never placed.
+      assert(e.placements >= 0);
     }
     assertStrictEquals(decoded.stages.length, decoded.stageCount);
     // stage 0 yields real spawn rows, earliest first, the save's own width

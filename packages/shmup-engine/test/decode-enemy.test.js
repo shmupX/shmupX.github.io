@@ -11,7 +11,13 @@ import {
   HP_TABLE,
   SCORE_TABLE,
   SPEED_TABLE,
+  ZAKO_BAND_BASE,
+  zakoRecordFromKey,
 } from "../src/decode/decode-enemy.js";
+import {
+  ZAKO_SLOT_COUNT,
+  zakoPlacementId,
+} from "../src/decode/decode-stage.js";
 import { normalize } from "../src/bup-source.js";
 import * as bup from "../src/bup-parse.js";
 import { decodeSave } from "../src/decode/index.js";
@@ -40,7 +46,7 @@ Deno.test("engine tables are the GAME.bin literals, byte for byte", () => {
   ]);
 });
 
-Deno.test("head fields: hp, score, ground, speed, fire type", () => {
+Deno.test("head fields: hp, score, ground, speed, death mode", () => {
   // DAIOH stage 0 record 0 — the most-placed enemy: b1=0x15 -> hp idx 5,
   // score idx 1; b2=0 -> stationary, no fire.
   const d = decodeEnemyRecord(rec("6b1500002811004400000000000000000000"));
@@ -48,7 +54,7 @@ Deno.test("head fields: hp, score, ground, speed, fire type", () => {
   assertStrictEquals(d.score, 100);
   assertStrictEquals(d.ground, false);
   assertStrictEquals(d.speed, SPEED_TABLE[0] / 65536);
-  assertStrictEquals(d.fire.type, 0);
+  assertStrictEquals(d.death.mode, 0);
   assertStrictEquals(hasTransforms(d), false);
 
   // b1 bit7 = ground, bits0-2 hp, bits4-6 score
@@ -88,12 +94,10 @@ Deno.test("channels: rotation, scale, direction decode to editor units", () => {
   assert(hasTransforms(dir));
 });
 
-Deno.test("fire config: interval tables select on mode, spread params on type 1", () => {
-  // b2 fire type 1 (bit6), b3 = count 3 + wide, b4 = mode 0 rate idx 2
+Deno.test("fire config: interval tables select on mode", () => {
+  // b4 = mode 0 rate idx 2. (b2 bits6-7 and b3 belong to the DEATH WORD, not
+  // to firing — the engine's fire path never reads either byte.)
   const d = decodeEnemyRecord(rec("0000400b2000000000000000000000000000"));
-  assertStrictEquals(d.fire.type, 1);
-  assertStrictEquals(d.fire.count, 4); // (b3&7)+1
-  assertStrictEquals(d.fire.wide, true);
   assertStrictEquals(d.fire.interval, 29); // FIRE_INTERVAL_TABLE[2]
   // mode 3 swaps to the alternate table
   const alt = decodeEnemyRecord(rec("0000400b2300000000000000000000000000"));
@@ -113,7 +117,7 @@ Deno.test({
       assert(HP_TABLE.includes(e.behavior.hp));
       assert(SCORE_TABLE.includes(e.behavior.score));
       assert(e.behavior.speed >= 0 && e.behavior.speed < 8);
-      assert(e.behavior.fire.type >= 0 && e.behavior.fire.type <= 3);
+      assert(e.behavior.death.mode >= 0 && e.behavior.death.mode <= 3);
       assert(e.behavior.fire.interval >= 1 && e.behavior.fire.interval <= 119);
       for (const ch of [e.behavior.speedChange, e.behavior.scale]) {
         assert(ch.from >= 0 && ch.from <= 4, "factor channels stay in x0..x4");
@@ -193,5 +197,70 @@ Deno.test("the editor-default record (Gust) decodes to the weakest enemy", () =>
   const d = decodeEnemyRecord(rec("270700000000000000000000000000000000"));
   assertStrictEquals(d.hp, 1);
   assertStrictEquals(d.score, 50);
-  assertStrictEquals(d.fire.type, 0);
+  assertStrictEquals(d.death.mode, 0);
+});
+
+// --- the death word (record b2 bits6-7 + b3, presentation from b4) ---------
+
+Deno.test("death word: mode, parameter and presentation", () => {
+  // mode 0 — the record says nothing happens on death.
+  assertEquals(
+    decodeEnemyRecord(rec("000000000c0000000000000000000000000")).death.mode,
+    0,
+  );
+
+  // mode 1 (b2 bit6) — b3 is an ITEM SLOT, encoded (b3&8) ? 9 : (b3&7)+1.
+  // This is the field this file used to call fire "count"/"wide".
+  assertStrictEquals(
+    decodeEnemyRecord(rec("000040040c0000000000000000000000000")).death.item,
+    5,
+  );
+  assertStrictEquals(
+    decodeEnemyRecord(rec("0000400c0c0000000000000000000000000")).death.item,
+    9,
+  ); // bit3 = cycling
+  assertStrictEquals(
+    decodeEnemyRecord(rec("000040000c0000000000000000000000000")).death.item,
+    1,
+  );
+
+  // modes 2/3 (b2 bits6-7) — b3 is a placement cell byte minus its occupied
+  // bit; the engine ORs 0x80 back on for both the child and the chain key.
+  const child =
+    decodeEnemyRecord(rec("000080210c0000000000000000000000000")).death;
+  assertStrictEquals(child.mode, 2);
+  assertStrictEquals(child.key, 0xa1);
+  assertStrictEquals(child.record, 25);
+  const chain =
+    decodeEnemyRecord(rec("0000c03e0c0000000000000000000000000")).death;
+  assertStrictEquals(chain.mode, 3);
+  assertStrictEquals(chain.key, 0xbe);
+
+  // b4 bits2-3 select the death PRESENTATION: 0 = vanish silently,
+  // 2 = the small blast, 1 and 3 = the full one.
+  assertStrictEquals(
+    decodeEnemyRecord(rec("000000000000000000000000000000000000")).death.silent,
+    true,
+  );
+  assertStrictEquals(
+    decodeEnemyRecord(rec("000000000800000000000000000000000000")).death.small,
+    true,
+  );
+  const full =
+    decodeEnemyRecord(rec("000000000400000000000000000000000000")).death;
+  assertEquals([full.silent, full.small], [false, false]);
+});
+
+Deno.test("placement cell byte <-> record index is the engine's band math", () => {
+  // record index = BASE[band] | (cell & 15), the low nibble OR-ed UNMASKED
+  // (+0x1A488 `or r4,r5`); the per-band mask shapes only the art.
+  assertEquals(ZAKO_BAND_BASE, [0x00, 0x10, 0x18, 0x20, 0x30, 0x34, 0x38]);
+  for (let record = 0; record < ZAKO_SLOT_COUNT; record++) {
+    assertStrictEquals(zakoRecordFromKey(zakoPlacementId(record)), record);
+  }
+  // An index that overruns its band still selects a record, just not a
+  // matching sprite — the engine does not mask it back.
+  assertStrictEquals(zakoRecordFromKey(0x9c), 0x1c);
+  // Band 7 is unreachable on the death path: +0x18E98 clamps it to band 0.
+  assertStrictEquals(zakoRecordFromKey(0xf5), 5);
 });
