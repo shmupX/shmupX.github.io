@@ -47,17 +47,59 @@
         return wanted;
     }
 
+    // A cheap content hash of one cropped frame, used to spot the duplicate
+    // frames Dezaemon art is full of (an enemy whose four animation slots
+    // hold the same picture) so they share one rect in the packed atlas.
+    function frameHash(sprite) {
+        var d;
+        try {
+            d = sprite.canvas.getContext('2d').getImageData(0, 0, sprite.w, sprite.h).data;
+        } catch (e) {
+            return null; // tainted canvas — treat as unique
+        }
+        var h = 2166136261;
+        for (var i = 0; i < d.length; i++) {
+            h ^= d[i];
+            h = (h + (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+        }
+        return sprite.w + 'x' + sprite.h + ':' + h;
+    }
+
+    // How many of a record's frames are visually distinct. Frame lists that
+    // collapse to one image do not animate however they are published — the
+    // info cards surface this so a static character reads as source art
+    // rather than a broken export.
+    function uniqueFrameCount(sprites) {
+        var seen = {};
+        var n = 0;
+        for (var i = 0; i < sprites.length; i++) {
+            var h = frameHash(sprites[i]);
+            if (h === null) { n++; continue; }
+            if (!seen[h]) { seen[h] = 1; n++; }
+        }
+        return n;
+    }
+
     // Shelf-pack cropped frames into one canvas + TexturePacker-style JSON
     // (the same 1024-wide / 2px-pad scheme as the editor's atlas builder).
     // sprites: [{ key, canvas, w, h }]; app tags meta.app for provenance.
+    // Pixel-identical frames are packed once and shared by every name that
+    // references them, so a four-slot static enemy costs one image.
     function packFrames(sprites, app) {
         var sorted = sprites.slice().sort(function (a, b) { return b.h - a.h; });
         var MW = 1024, P = 2;
         var cx = P, cy = P, rh = 0, fh = 0;
         var pos = {};
+        var rectByHash = {};
+        var drawList = [];
         sorted.forEach(function (s) {
+            var h = frameHash(s);
+            if (h !== null && rectByHash[h]) { pos[s.key] = rectByHash[h]; return; }
             if (cx + s.w + P > MW) { cy += rh + P; cx = P; rh = 0; }
-            pos[s.key] = { x: cx, y: cy };
+            var rect = { x: cx, y: cy };
+            pos[s.key] = rect;
+            if (h !== null) rectByHash[h] = rect;
+            drawList.push(s);
             cx += s.w + P;
             rh = Math.max(rh, s.h);
             fh = Math.max(fh, cy + s.h + P);
@@ -67,9 +109,12 @@
         canvas.height = fh;
         var nc = canvas.getContext('2d');
         var outFrames = {};
-        sorted.forEach(function (s) {
+        drawList.forEach(function (s) {
             var p = pos[s.key];
             nc.drawImage(s.canvas, p.x, p.y);
+        });
+        sorted.forEach(function (s) {
+            var p = pos[s.key];
             outFrames[s.key] = {
                 frame: { x: p.x, y: p.y, w: s.w, h: s.h }, rotated: false, trimmed: false,
                 spriteSourceSize: { x: 0, y: 0, w: s.w, h: s.h }, sourceSize: { w: s.w, h: s.h },
@@ -113,15 +158,43 @@
         return { sprites: sprites, missing: missing };
     }
 
+    // Drop frame names the atlas does not carry from every frame list in the
+    // record (same depth<=2 walk as collectFrameNames). A published character
+    // must be self-consistent: the library editor animates straight off these
+    // lists, so a name with no frame behind it stalls the preview on whatever
+    // was drawn last. A list left with nothing is removed outright rather than
+    // emptied — an absent list falls back to the consumer's defaults, while a
+    // present-but-empty one renders a frameless sprite.
+    function pruneFrameNames(record, missing) {
+        if (!missing || !missing.length) return record;
+        var drop = {};
+        for (var i = 0; i < missing.length; i++) drop[missing[i]] = 1;
+        var walk = function (obj, depth) {
+            if (!obj || typeof obj !== 'object' || depth > 2) return;
+            for (var k in obj) {
+                var v = obj[k];
+                if (Array.isArray(v) && v.length && v.every(function (x) { return typeof x === 'string'; })) {
+                    var kept = v.filter(function (x) { return !drop[x]; });
+                    if (kept.length === v.length) continue;
+                    if (kept.length) obj[k] = kept;
+                    else delete obj[k];
+                } else if (v && typeof v === 'object') walk(v, depth + 1);
+            }
+        };
+        walk(record, 0);
+        return record;
+    }
+
     // PUT the packed atlas + the record. Resolves the published name, or null
     // when an existing character was kept (overwrite declined).
-    // opts: { name, record, canvas, atlasJson, db?, confirmOverwrite? }
+    // opts: { name, record, canvas, atlasJson, db?, missing?, confirmOverwrite? }
     async function publishRecord(opts) {
         var name = opts.name;
         var record = JSON.parse(JSON.stringify(opts.record));
         delete record._enemyKey; // runtime-only tag createEnemy leaves on recipe entries
         if (!record.name) record.name = name;
         record.textureKey = name;
+        pruneFrameNames(record, opts.missing);
 
         if (opts.atlasJson && opts.atlasJson.frames && opts.atlasJson.frames.__BASE) {
             throw new Error("'__BASE' is a reserved Phaser frame name");
@@ -189,6 +262,8 @@
         cropFrames: cropFrames,
         packFrames: packFrames,
         publishRecord: publishRecord,
+        pruneFrameNames: pruneFrameNames,
+        uniqueFrameCount: uniqueFrameCount,
         validName: validName,
         reservedName: reservedName,
         suggestName: suggestName,
@@ -517,15 +592,26 @@
         var rows = document.createElement('div');
         rows.style.cssText = 'margin-bottom:10px;';
         var frames = collectFrameNames(sel.record);
+        var crop = cropFrames(sel.record, textureFrameSource(scene, sel.textureKey));
+        var uniq = uniqueFrameCount(crop.sprites);
+        var frameLabel = String(frames.length);
+        if (crop.missing.length) frameLabel += ' (' + crop.missing.length + ' missing)';
+        else if (uniq < frames.length) frameLabel += ' (' + uniq + ' unique)';
         [
             statRow('HP', sel.record.hp !== undefined ? sel.record.hp : sel.record.maxHp),
             statRow('SCORE', sel.record.score),
             statRow('SPEED', sel.record.speed),
             statRow('FIRE INTERVAL', sel.record.interval),
-            statRow('FRAMES', frames.length),
+            statRow('FRAMES', frameLabel),
             statRow('ATLAS', sel.textureKey),
         ].forEach(function (r) { if (r) rows.appendChild(r); });
         card.appendChild(rows);
+        if (uniq === 1 && frames.length > 1 && !crop.missing.length) {
+            var note = document.createElement('div');
+            note.textContent = 'ALL FRAMES IDENTICAL — THIS ART DOES NOT ANIMATE';
+            note.style.cssText = 'font-size:8px;letter-spacing:.14em;opacity:.6;margin:-6px 0 8px;';
+            card.appendChild(note);
+        }
 
         var btns = document.createElement('div');
         btns.style.cssText = 'display:flex;gap:8px;justify-content:center;flex-wrap:wrap;';
@@ -610,7 +696,7 @@
         var packed = packFrames(crop.sprites);
         try {
             var saved = await publishRecord({
-                name: name, record: sel.record,
+                name: name, record: sel.record, missing: crop.missing,
                 canvas: packed.canvas, atlasJson: packed.atlasJson,
             });
             if (saved) showSaved(saved);

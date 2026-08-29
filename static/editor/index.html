@@ -3018,6 +3018,7 @@
             try {
                 return await EX.publishRecord({
                     name, record: entry, db: FIREBASE_CONFIG.databaseURL,
+                    missing: crop.missing,
                     canvas: packed.canvas, atlasJson: packed.atlasJson,
                 });
             } catch (e) {
@@ -3099,10 +3100,32 @@
             addStat('SCORE', entry.score);
             addStat('SPEED', entry.speed);
             addStat('INTERVAL', entry.interval);
-            addStat('FRAMES', window.ShmupExtract
-                ? window.ShmupExtract.collectFrameNames(entry).length
-                : (entry.texture || []).length);
+            const EX = window.ShmupExtract;
+            const names = EX ? EX.collectFrameNames(entry) : (entry.texture || []);
+            let crop = null;
+            if (EX && atlasData && atlasImage) {
+                const fr = atlasData.frames || {};
+                crop = EX.cropFrames(entry, (fk) => {
+                    const f = fr[fk];
+                    return f && f.frame
+                        ? { image: atlasImage, x: f.frame.x, y: f.frame.y, w: f.frame.w, h: f.frame.h }
+                        : null;
+                });
+            }
+            const uniq = crop ? EX.uniqueFrameCount(crop.sprites) : null;
+            let frameLabel = String(names.length);
+            if (crop && crop.missing.length) frameLabel += ` (${crop.missing.length} missing)`;
+            else if (uniq !== null && uniq < names.length) frameLabel += ` (${uniq} unique)`;
+            addStat('FRAMES', frameLabel);
             body.appendChild(stats);
+            // Dezaemon art often repeats one picture across all four animation
+            // slots — say so, or a static library preview reads as a broken save.
+            if (uniq === 1 && names.length > 1 && crop && !crop.missing.length) {
+                const note = document.createElement('div');
+                note.textContent = 'All frames identical — this art does not animate.';
+                note.style.cssText = 'font-size:10px;color:#888;margin:-6px 0 10px;';
+                body.appendChild(note);
+            }
 
             const btns = document.createElement('div');
             btns.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';

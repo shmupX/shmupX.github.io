@@ -7545,14 +7545,30 @@
   }
   // A plain player projectile, reusing the runtime's own bullet pipeline.
   function spawnDezaPlayerShot(scene, x, y, vx, vy, damage) {
-    var frames = resolveFrames(scene, "game_asset", ["shot00.gif", "shot01.gif", "shot02.gif", "shot03.gif"]);
-    var b = scene.add.sprite(x, y, "game_asset", frames[0] || "shot00.gif");
+    // The ship's OWN shot art, not the stock atlas frames. An imported save's
+    // player carries its bullet frames with it (the import resets the atlas to
+    // make room for the save's sprites), so hardcoded shot00-03 is at best a
+    // foreign-looking bullet and at worst a missing frame drawn as __BASE.
+    // shootNormal is the plain-shot record: the sub is a SECOND shot type, not
+    // the powerup-selected main weapon, so it deliberately does not follow
+    // scene.shootMode.
+    var pd = scene.recipe && scene.recipe.playerData;
+    var shootData = pd && (pd.shootNormal || pd.shootBig || pd.shoot3way);
+    var frames = playerBulletFrames(scene, shootData, "deza-sub");
+    var b = scene.add.sprite(x, y, "game_asset", frames[0]);
     b.setOrigin(0.5);
+    // Bullet art points +X at rotation 0 — the stock shot sets -PI/2 to fly
+    // straight up — so a shot that carries its own velocity has to face that
+    // velocity. Without this every sub/charge shot draws sideways to its path:
+    // the straight-ahead ones point +X while flying up, and a spread fans out
+    // without turning at all.
+    b.setRotation(Math.atan2(vy, vx));
     b.setDepth(42);
     b.setData("damage", damage);
     b.setData("dezaVx", vx);
     b.setData("dezaVy", vy);
     b.setData("bulletId", scene.bulletIdSeq = (scene.bulletIdSeq || 0) + 1);
+    attachAnim(b, frames, (shootData && shootData.frameRate) || 6);
     scene.playerBullets.push(b);
     return b;
   }
@@ -7653,6 +7669,35 @@
     bullet.setData("animTimer", 0);
     bullet.setData("frameRate", frameRate);
   }
+  // The frames a player bullet actually has art for: the weapon record's own
+  // texture list, spelled the way this atlas spells it (.gif/.png differ
+  // between the stock assets and an import), minus anything the atlas lacks,
+  // falling back to the stock shot. `tag` only names the weapon in the
+  // once-per-weapon warning.
+  function playerBulletFrames(scene, shootData, tag) {
+    var raw = shootData && shootData.texture && shootData.texture.length
+      ? resolveFrames(scene, "game_asset", shootData.texture)
+      : ["shot00.gif"];
+    var atlas = scene.textures.get("game_asset");
+    var atlasFrames = atlas && atlas.frames ? atlas.frames : null;
+    if (!atlasFrames) return raw;
+    var present = raw.filter(function(f) {
+      return !!atlasFrames[f];
+    });
+    var frames = present.length ? present : resolveFrames(scene, "game_asset", ["shot00.gif"]);
+    if (present.length !== raw.length) {
+      scene._bulletWarnSeen = scene._bulletWarnSeen || {};
+      var warnKey = tag + ":" + raw.join(",");
+      if (!scene._bulletWarnSeen[warnKey]) {
+        scene._bulletWarnSeen[warnKey] = true;
+        var missing = raw.filter(function(f) {
+          return !atlasFrames[f];
+        });
+        console.warn("Bullet[" + tag + "]: dropping missing frames", missing, "kept", frames);
+      }
+    }
+    return frames;
+  }
   function shootBullets(scene) {
     if (!scene.gameStarted || scene.playerDead || scene.theWorldFlg) {
       return;
@@ -7670,31 +7715,7 @@
         shootData = pd.shootNormal;
         break;
     }
-    var rawFrames = shootData.texture && shootData.texture.length ? shootData.texture : ["shot00.gif"];
-    var atlas = scene.textures.get("game_asset");
-    var atlasFrames = atlas && atlas.frames ? atlas.frames : null;
-    var frames = rawFrames;
-    if (atlasFrames) {
-      var present = rawFrames.filter(function(f) {
-        return !!atlasFrames[f];
-      });
-      if (present.length === 0) {
-        frames = ["shot00.gif"];
-      } else {
-        frames = present;
-      }
-      if (present.length !== rawFrames.length) {
-        scene._bulletWarnSeen = scene._bulletWarnSeen || {};
-        var warnKey = scene.shootMode + ":" + rawFrames.join(",");
-        if (!scene._bulletWarnSeen[warnKey]) {
-          scene._bulletWarnSeen[warnKey] = true;
-          var missing = rawFrames.filter(function(f) {
-            return !atlasFrames[f];
-          });
-          console.warn("Bullet[" + scene.shootMode + "]: dropping missing frames", missing, "kept", frames);
-        }
-      }
-    }
+    var frames = playerBulletFrames(scene, shootData, scene.shootMode);
     var frameKey = frames[0];
     var frameRate = shootData.frameRate || 6;
     if (scene.shootMode === "3way") {
