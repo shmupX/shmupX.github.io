@@ -3154,6 +3154,10 @@
     } catch (e4) {
     }
   }
+  // Handle for /phaser-plugins/extract-mode.js: embedded builds never build
+  // the PAUSE panel, so extract mode needs the same loop-sleep + audio
+  // suspend this closure owns rather than keeping a rival paused flag.
+  try { window.__cmgSetPaused = cmgSetPaused; } catch (e) {}
   var cmgPanelEl = null;
   function cmgPanelVisible() {
     return !!(cmgPanelEl && cmgPanelEl.style.display !== "none");

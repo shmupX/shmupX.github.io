@@ -252,6 +252,21 @@
            updateToolUI, .editor-grid on the next renderGrid. */
         .editor-grid.mode-extract .grid-cell.occupied, #grid-icon-view.mode-extract .grid-cell.occupied { cursor: crosshair; }
         .editor-grid.mode-extract .grid-cell.occupied:hover, #grid-icon-view.mode-extract .grid-cell.occupied:hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
+        /* BOSS STRIP: the stage boss is not a grid cell — the runtime spawns
+           bossData["boss"+stageId] once the last wave clears — so it gets its
+           own full-width row under the waves, in that same spawn position. */
+        .boss-strip {
+            grid-column: 1 / -1; display: flex; align-items: center; gap: 8px;
+            margin-top: 6px; padding: 5px 10px; min-height: 34px; border-radius: 4px;
+            background: rgba(10,16,34,.9); border: 1px solid rgba(140,255,110,.3);
+            font-size: 10px; letter-spacing: .12em; color: #cfe8bf;
+        }
+        .boss-strip img { width: 24px; height: 24px; image-rendering: pixelated; object-fit: contain; }
+        .boss-strip .boss-tag { margin-left: auto; opacity: .55; font-size: 8px; }
+        .boss-strip.empty { opacity: .4; border-style: dashed; cursor: default; }
+        body.theme-nintendo .boss-strip { background: #10182a; border-color: #2a3850; color: #ffd7da; }
+        .editor-grid.mode-extract .boss-strip:not(.empty), #grid-icon-view.mode-extract .boss-strip:not(.empty) { cursor: crosshair; }
+        .editor-grid.mode-extract .boss-strip:not(.empty):hover, #grid-icon-view.mode-extract .boss-strip:not(.empty):hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
 
         /* ===== NES CABINET STRIPE (nintendo theme) ===== */
         #nes-stripe {
@@ -807,7 +822,7 @@
             <button id="delete-mode-btn" class="badge" title="Delete mode" onclick="setDeleteMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
             <!-- Extract badge (Lucide pipette): click a placed enemy to
                  inspect it and save it to the shared character library -->
-            <button id="extract-mode-btn" class="badge" title="Extract mode — click a placed enemy to save it to the character library" onclick="setExtractMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg></button>
+            <button id="extract-mode-btn" class="badge" title="Extract mode — click a placed enemy or the stage boss to save it to the character library" onclick="setExtractMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg></button>
 
             <div class="tb-spacer"></div>
 
@@ -2256,7 +2271,7 @@
             currentTool = currentTool === 'extract' ? (selectedEnemyLetter ? 'place' : 'none') : 'extract';
             closePicker();
             updateToolUI();
-            if (currentTool === 'extract') flash('EXTRACT TOOL ARMED · CLICK A PLACED ENEMY');
+            if (currentTool === 'extract') flash('EXTRACT TOOL ARMED · CLICK AN ENEMY OR THE BOSS');
         }
 
         // Lucide zap — the powerup badge's face when no item art is armed.
@@ -2468,7 +2483,53 @@
                 }
             });
 
+            grid.appendChild(createBossStrip());
+
             container.appendChild(grid);
+        }
+
+        // The stage boss, rendered where it actually arrives: after the last
+        // wave. Clickable by the EXTRACT tool (bosses never appear in the grid,
+        // so this is their only pipette target); otherwise it opens the
+        // character editor on it. bossExtra is intentionally not reachable
+        // here — it is not stage-bound (only the ?boss=goki swap uses it).
+        function createBossStrip() {
+            const sid = getCurrentStageId();
+            const key = 'boss' + sid;
+            const entry = bossData[key];
+            const frames = libraryFrames(entry);
+            const strip = document.createElement('div');
+            strip.className = 'boss-strip' + (frames.length ? '' : ' empty');
+            if (!frames.length) {
+                strip.textContent = 'NO BOSS · STAGE CLEARS';
+                strip.onclick = () => flash('NO BOSS FOR STAGE ' + sid);
+                return strip;
+            }
+            const url = getThumbURL(frames[0]);
+            if (url) {
+                const img = document.createElement('img');
+                img.src = url;
+                img.draggable = false;
+                strip.appendChild(img);
+            } else {
+                const glyph = document.createElement('span');
+                glyph.textContent = '\uD83D\uDC79';
+                strip.appendChild(glyph);
+            }
+            const label = document.createElement('span');
+            label.textContent = bossDisplayName(key, entry);
+            strip.appendChild(label);
+            const tag = document.createElement('span');
+            tag.className = 'boss-tag';
+            tag.textContent = 'BOSS · ' + key;
+            strip.appendChild(tag);
+            strip.onclick = () => {
+                if (currentTool === 'extract') { openExtractCard(key); return; }
+                document.getElementById('enemy-editor-modal').classList.remove('hidden');
+                switchEditorTab('bosses');
+                editEnemy(key);
+            };
+            return strip;
         }
 
         function createGridCell(wi, si, code) {
@@ -2527,7 +2588,7 @@
         function handleCellClick(wi, si) {
             if (currentTool === 'extract') {
                 const cur = currentGrid[wi][si];
-                if (cur && cur !== '00') openExtractCard(cellEnemyLetter(cur));
+                if (cur && cur !== '00') openExtractCard('enemy' + cellEnemyLetter(cur));
                 return;
             }
             if (currentTool === 'delete') {
@@ -3057,18 +3118,19 @@
         }
 
         // ================== EXTRACT TOOL ==================
-        // The toolbar pipette: click a placed enemy on the grid to inspect it
-        // and push it straight into the shared character library.
-        function openExtractCard(letter) {
-            const key = 'enemy' + letter;
-            const entry = enemyData[key];
+        // The toolbar pipette: click a placed enemy — or the boss strip under
+        // the last wave — to inspect it and push it into the shared library.
+        // key is a full record key: 'enemyA', 'boss2' or 'playerData'.
+        function openExtractCard(key) {
+            const entry = key === 'playerData' ? playerData : (bossData[key] || enemyData[key]);
             if (!entry) { flash('NO DATA FOR ' + key.toUpperCase()); return; }
+            const kind = characterKindOf(entry);
             const body = document.getElementById('extract-info-body');
             body.innerHTML = '';
 
             const head = document.createElement('div');
             head.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;';
-            const thumbFrame = entry.texture && entry.texture[0];
+            const thumbFrame = libraryFrames(entry)[0];
             const url = thumbFrame ? getThumbURL(thumbFrame) : null;
             if (url) {
                 const img = document.createElement('img');
@@ -3078,7 +3140,7 @@
             }
             const title = document.createElement('div');
             const nm = document.createElement('div');
-            nm.textContent = entry.name || key;
+            nm.textContent = kind === 'boss' ? bossDisplayName(key, entry) : (entry.name || key);
             nm.style.cssText = 'font-weight:700;font-size:13px;';
             const sub = document.createElement('div');
             sub.textContent = key;
@@ -3100,6 +3162,12 @@
             addStat('SCORE', entry.score);
             addStat('SPEED', entry.speed);
             addStat('INTERVAL', entry.interval);
+            if (kind === 'boss') {
+                addStat('SP GAUGE', entry.spgage);
+                addStat('PATTERN', entry.attackPattern
+                    ? bossDisplayName(entry.attackPattern, bossData[entry.attackPattern])
+                    : bossDisplayName(key, entry));
+            }
             const EX = window.ShmupExtract;
             const names = EX ? EX.collectFrameNames(entry) : (entry.texture || []);
             let crop = null;
@@ -3134,7 +3202,7 @@
             save.style.cssText = 'background:#84cc16;color:#000;font-weight:700;';
             save.textContent = 'SAVE TO LIBRARY';
             save.onclick = async () => {
-                const name = await publishEntryToLibrary(entry, entry.name || key);
+                const name = await publishEntryToLibrary(entry, entry.name || (kind === 'boss' ? bossDisplayName(key, entry) : key));
                 if (name) {
                     document.getElementById('extract-info-modal').classList.add('hidden');
                     if (confirm(`Saved '${name}'. Open it in the CHARACTER LIBRARY EDITOR?`)) openLibraryEditor(name);
@@ -3146,7 +3214,7 @@
             edit.onclick = () => {
                 document.getElementById('extract-info-modal').classList.add('hidden');
                 document.getElementById('enemy-editor-modal').classList.remove('hidden');
-                switchEditorTab('enemies');
+                switchEditorTab(kind === 'boss' ? 'bosses' : kind === 'player' ? 'player' : 'enemies');
                 editEnemy(key);
             };
             btns.appendChild(save);

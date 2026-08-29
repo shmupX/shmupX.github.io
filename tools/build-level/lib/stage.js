@@ -83,6 +83,8 @@ function stageWww(opts) {
     gamepad,
     phaserGlobalShim,
     firebaseConfig,
+    extractPlugin,
+    editorOrigin,
     wwwRoot,
     levelName,
     levelData,
@@ -107,6 +109,13 @@ function stageWww(opts) {
   // doing `import Phaser from "phaser"` would fail to resolve offline.
   if (phaserGlobalShim && fs.existsSync(phaserGlobalShim)) {
     copyFile(phaserGlobalShim, path.join(wwwRoot, "phaser-global.js"));
+  }
+
+  // EXTRACT MODE: lets the exported app save any paused sprite to the shared
+  // character library. Must be emitted after game.bundle.js (see renderShell).
+  const hasExtract = !!(extractPlugin && fs.existsSync(extractPlugin));
+  if (hasExtract) {
+    copyFile(extractPlugin, path.join(wwwRoot, "extract-mode.js"));
   }
   fs.writeFileSync(
     path.join(wwwRoot, "game.bundle.js"),
@@ -144,6 +153,8 @@ function stageWww(opts) {
       hasGamepad,
       godMode: !!(levelData && levelData.godMode === true),
       gameId: hasFirebase ? gameId : null,
+      hasExtract,
+      editorOrigin: editorOrigin || null,
     }),
   );
 }

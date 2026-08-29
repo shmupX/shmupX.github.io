@@ -250,9 +250,19 @@
         return /^[A-Za-z_]/.test(s) ? s : '_' + s;
     }
 
+    // Where the level editor lives. '' means this same origin; null means
+    // there is none to link to — a packaged export has no /editor/ route, so
+    // the deep-link button is hidden unless a host origin was configured at
+    // build time (tools/build-level --editor-origin).
+    function editorOrigin() {
+        var o = window.__SHMUP_EDITOR_ORIGIN__;
+        if (typeof o === 'string' && o) return o.replace(/\/+$/, '');
+        return window.__EXPORTED_LEVEL_APP__ ? null : '';
+    }
+
     // Deep link into the level editor's CHARACTER LIBRARY EDITOR modal.
-    function libraryEditorURL(gameId, characterName) {
-        return '/editor/?game=' + encodeURIComponent(gameId || '2028-ai')
+    function libraryEditorURL(gameId, characterName, origin) {
+        return (origin || '') + '/editor/?game=' + encodeURIComponent(gameId || '2028-ai')
             + '&libraryEditor=1&character=' + encodeURIComponent(characterName);
     }
 
@@ -268,6 +278,7 @@
         reservedName: reservedName,
         suggestName: suggestName,
         libraryEditorURL: libraryEditorURL,
+        editorOrigin: editorOrigin,
     };
 
     // =====================================================================
@@ -279,6 +290,31 @@
     var ui = null;        // { overlay, hint, box, card }
     var pausePanel = null;
     var picked = null;    // current selection: { sprite, kind, key, record, textureKey }
+    // Embedded in the cmg launcher there is no PAUSE panel to ride, so extract
+    // mode owns the pause itself. `launcherWantsPaused` mirrors the last
+    // cmg-pause the launcher sent, so exiting restores ITS intent rather than
+    // blindly resuming under an open Guide.
+    var launcherWantsPaused = false;
+
+    function embedded() {
+        try { return window.parent !== window; } catch (e) { return true; }
+    }
+
+    // The bundle owns one `cmgPaused` boolean plus per-Sound bookkeeping, so
+    // route through its closure when the hand patch exposed it; the fallback
+    // keeps extract mode usable against an unpatched bundle.
+    function setPaused(p) {
+        if (typeof window.__cmgSetPaused === 'function') {
+            try { window.__cmgSetPaused(p); return; } catch (e) { }
+        }
+        var game = phaserGame();
+        if (!game) return;
+        try { p ? game.loop.sleep() : game.loop.wake(); } catch (e) { }
+        try {
+            var ctx = game.sound && game.sound.context;
+            if (ctx) p ? ctx.suspend() : ctx.resume();
+        } catch (e2) { }
+    }
 
     function phaserGame() {
         return window.__PHASER_4_GAME__ || window.__PHASER_GAME__ || null;
@@ -533,9 +569,12 @@
         if (!ui) return;
         ui.overlay.style.display = 'none';
         picked = null;
-        // Back to the PAUSE panel — the game is still cmg-paused.
+        // Back to the PAUSE panel — the game is still cmg-paused. Embedded
+        // there is no panel: hand the pause back to whatever the launcher
+        // last asked for, so we never resume under an open Guide.
         var panel = document.getElementById('cmg-pause-panel');
         if (panel) panel.style.display = 'flex';
+        else if (embedded()) setPaused(launcherWantsPaused);
     }
 
     function statRow(label, value) {
@@ -639,9 +678,12 @@
         card.appendChild(note);
         var btns = document.createElement('div');
         btns.style.cssText = 'display:flex;gap:8px;justify-content:center;flex-wrap:wrap;';
-        btns.appendChild(makeButton('OPEN LIBRARY EDITOR', function () {
-            window.open(libraryEditorURL(gameIdFromPath(), name), '_blank');
-        }));
+        var eo = editorOrigin();
+        if (eo !== null) {
+            btns.appendChild(makeButton('OPEN LIBRARY EDITOR', function () {
+                window.open(libraryEditorURL(gameIdFromPath(), name, eo), '_blank');
+            }));
+        }
         btns.appendChild(makeButton('DONE', function () {
             card.style.display = 'none';
             ui.box.style.display = 'none';
@@ -701,7 +743,9 @@
             });
             if (saved) showSaved(saved);
         } catch (e) {
-            alert('Save failed: ' + e.message);
+            alert(navigator.onLine === false
+                ? 'You are offline — the shared library needs a connection.'
+                : 'Save failed: ' + e.message);
         }
     }
 
@@ -767,6 +811,69 @@
         mo.observe(document.body, { childList: true });
     }
 
-    if (document.body) armWhenPanelAppears();
-    else document.addEventListener('DOMContentLoaded', armWhenPanelAppears);
+    // Embedded in the cmg launcher the bundle never builds #cmg-pause-panel
+    // (its whole standalone block is gated on window.parent === window), and
+    // ESC / START / the corner gesture are all redirected to the launcher's
+    // Guide. The way in is the launcher's own actions protocol: advertise
+    // EXTRACT MODE, and the Guide renders it as a button that closes itself
+    // and posts cmg-action back down.
+    var EXTRACT_ACTION = 'extract';
+
+    // Only a page that actually hosts the game may advertise — the level
+    // editor loads this file too for the helpers above, and the launcher
+    // swaps its own frame to /editor/, where a dead button must not appear.
+    function hostsGame() {
+        return !!document.getElementById('phaser-canvas');
+    }
+
+    function advertiseAction() {
+        if (!embedded() || !hostsGame()) return;
+        try {
+            // The launcher replaces its action list wholesale per message, so
+            // this must stay the only cmg-actions this game ever posts.
+            window.parent.postMessage({
+                type: 'cmg-actions',
+                actions: [{ id: EXTRACT_ACTION, label: 'Extract Mode' }],
+            }, '*');
+        } catch (e) { }
+    }
+
+    window.addEventListener('message', function (ev) {
+        var d = ev && ev.data;
+        if (!d || typeof d !== 'object') return;
+        if (d.type === 'cmg-pause') {
+            launcherWantsPaused = !!d.paused;
+            // Activating a Guide action closes the Guide, which un-pauses one
+            // dispatch later. The bundle's handler already ran this tick, so
+            // re-assert before the next frame — no frame advances under the
+            // overlay.
+            if (extractActive() && !launcherWantsPaused) setPaused(true);
+            return;
+        }
+        if (d.type !== 'cmg-action') return;
+        if ((d.id || d.action) !== EXTRACT_ACTION) return;
+        if (!activeGameScene()) { flashToast('EXTRACT MODE · NO STAGE RUNNING'); return; }
+        setPaused(true);
+        enterExtractMode();
+    });
+
+    // Transient notice for the embedded case, where there is no pause-panel
+    // button whose label can carry the message.
+    function flashToast(text) {
+        var t = document.createElement('div');
+        t.textContent = text;
+        t.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:10002;'
+            + 'background:rgba(70,70,70,.94);color:#fff;border-radius:6px;padding:8px 14px;'
+            + "font-family:'Orbitron',system-ui,sans-serif;font-size:10px;letter-spacing:.2em;";
+        document.body.appendChild(t);
+        setTimeout(function () { t.remove(); }, 1800);
+    }
+
+    function arm() {
+        armWhenPanelAppears();
+        advertiseAction();
+    }
+
+    if (document.body) arm();
+    else document.addEventListener('DOMContentLoaded', arm);
 })();

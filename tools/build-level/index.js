@@ -67,6 +67,14 @@ const PHASER_GLOBAL_SHIM = path.join(
 // Leaderboard credentials, shared verbatim with the hosted player so an
 // exported app scores to the same database.
 const FIREBASE_CONFIG_SCRIPT = path.join(CMG_ROOT, "static", "firebase-config.js");
+// EXTRACT MODE plugin — lets the exported app publish sprites to the shared
+// character library from its PAUSE panel.
+const EXTRACT_MODE_PLUGIN = path.join(
+  CMG_ROOT,
+  "static",
+  "phaser-plugins",
+  "extract-mode.js",
+);
 const SCAFFOLD_ROOT = path.join(__dirname, "scaffold");
 
 function parseArgs(argv) {
@@ -77,6 +85,7 @@ function parseArgs(argv) {
     "level-file",
     "win-target",
     "win-arch",
+    "editor-origin",
   ]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -189,6 +198,9 @@ async function main() {
     gamepad: GAMEPAD_PLUGIN,
     phaserGlobalShim: PHASER_GLOBAL_SHIM,
     firebaseConfig: FIREBASE_CONFIG_SCRIPT,
+    extractPlugin: EXTRACT_MODE_PLUGIN,
+    editorOrigin: args.flags["editor-origin"] || process.env.SHMUPX_EDITOR_ORIGIN ||
+      null,
     wwwRoot,
     levelName,
     levelData,

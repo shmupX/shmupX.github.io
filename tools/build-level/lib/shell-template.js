@@ -225,9 +225,19 @@ function renderShell(opts) {
   const gamepadTag = opts.hasGamepad
     ? '\n    <script src="gamepad-compatibility-plugin.js"></script>'
     : "";
+  // Rides the standalone PAUSE panel this shell already gets, so an exported
+  // app can save its own characters to the shared library.
+  const extractTag = opts.hasExtract
+    ? '\n    <script src="extract-mode.js"></script>'
+    : "";
   const flagsTag = "window.__EXPORTED_LEVEL_APP__ = true;" +
     (opts.godMode ? " window.__GAME_STATE__ = { godFlg: true };" : "") +
-    (opts.gameId ? " window.__GAME_ID__ = " + jsonLiteral(String(opts.gameId)) + ";" : "");
+    (opts.gameId ? " window.__GAME_ID__ = " + jsonLiteral(String(opts.gameId)) + ";" : "") +
+    // An export has no /editor/ route of its own; without a host origin the
+    // extract plugin hides its "open library editor" deep link.
+    (opts.editorOrigin
+      ? " window.__SHMUP_EDITOR_ORIGIN__ = " + jsonLiteral(String(opts.editorOrigin)) + ";"
+      : "");
   // No gameId means no board to reach, so the SDK would only be dead weight.
   const leaderboardTags = opts.gameId
     ? '\n    <script src="firebase-config.js"></script>' +
@@ -260,7 +270,7 @@ function renderShell(opts) {
     <script>${FONT_PRELOAD}</script>
     <script>${FIT_PORTRAIT}</script>${gamepadTag}
     <script src="lib/phaser.min.js"></script>
-    <script src="game.bundle.js"></script>
+    <script src="game.bundle.js"></script>${extractTag}
 </body>
 </html>
 `;
