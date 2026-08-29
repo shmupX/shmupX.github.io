@@ -6,6 +6,10 @@ vendor/
 build/
 static/games/2028-ai/assets/custom-bgm/
 
+# Finder's per-directory metadata. No leading slash, so it is ignored at every
+# depth — macOS drops one into any folder it has been browsed in.
+.DS_Store
+
 # Local .sav test fixtures (community Dezaemon 2 saves — never committed).
 # Drop .sav/.bcr/.bkr files here to enable the fixture-gated engine tests.
 # debug-tools/ is the exception — scripts that read the fixtures, not the
