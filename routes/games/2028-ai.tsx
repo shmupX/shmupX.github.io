@@ -123,22 +123,29 @@ const FIT_PORTRAIT = `
 (function () {
   var GW = 256, GH = 480;
 
+  function isRotated() {
+    var t = window.getComputedStyle(document.documentElement).transform;
+    return !!t && t !== "none";
+  }
+
   function fitCanvas() {
     var pc = document.querySelector("#phaser-canvas canvas");
     if (!pc) return;
     var vw = window.innerWidth, vh = window.innerHeight;
     // Under the CSS landscape-rotation fallback the visual viewport is
     // portrait but innerWidth/innerHeight still report landscape — swap them.
-    var t = window.getComputedStyle(document.documentElement).transform;
-    var cssRotated = t && t !== "none";
+    var cssRotated = isRotated();
     if (cssRotated && vw > vh) { var tmp = vw; vw = vh; vh = tmp; }
     var scale = Math.min(vw / GW, vh / GH);
     pc.style.width = Math.floor(GW * scale) + "px";
     pc.style.height = Math.floor(GH * scale) + "px";
-    if (!cssRotated) {
-      var g = window.__PHASER_4_GAME__;
-      if (g && g.scale && typeof g.scale.refresh === "function") g.scale.refresh();
-    }
+    var g = window.__PHASER_4_GAME__;
+    if (!g || !g.scale) return;
+    // refresh() re-derives the whole scale state, but only makes sense on the
+    // unrotated layout; when rotated just re-read canvasBounds (through the
+    // patched getBoundingClientRect) so pointer mapping tracks the new size.
+    if (!cssRotated && typeof g.scale.refresh === "function") g.scale.refresh();
+    else if (cssRotated && typeof g.scale.updateBounds === "function") g.scale.updateBounds();
   }
   window.__fitCanvas = fitCanvas;
   window.addEventListener("resize", fitCanvas);
@@ -154,32 +161,48 @@ const FIT_PORTRAIT = `
   }
   window.__fixPhaserTransform = fixPhaserTransform;
 
-  // When the page is CSS-rotated (landscape fallback), Phaser's
-  // getBoundingClientRect-based hit-testing breaks; return virtual un-rotated
-  // bounds and swap pointer axes so input lines up with the rotated layout.
+  // Under the landscape fallback the page lives in rotated local coordinates
+  // while pointer events and getBoundingClientRect speak screen coordinates.
+  // rotate(-90deg) about left/top with the page at top:100% maps local (x, y)
+  // to screen (y, innerHeight - x); invert that (local x = innerHeight -
+  // screenY, local y = screenX) for the canvas bounds and for every mouse and
+  // touch coordinate so Phaser's hit-testing lines up with what the player
+  // sees. The rotation checks are live so flipping orientation mid-game
+  // engages/disengages the mapping.
   function patchCanvasInputForRotation(canvas) {
-    var s = window.getComputedStyle(document.documentElement);
-    if (!s.transform || s.transform === "none") return;
     var origBCR = HTMLElement.prototype.getBoundingClientRect;
     canvas.getBoundingClientRect = function () {
       var r = origBCR.call(canvas);
+      if (!isRotated()) return r;
+      var vh = window.innerHeight;
       return {
-        left: r.top, top: window.innerHeight - r.right,
-        right: r.bottom, bottom: window.innerHeight - r.left,
+        left: vh - r.bottom, top: r.left,
+        right: vh - r.top, bottom: r.right,
         width: r.height, height: r.width,
-        x: r.top, y: window.innerHeight - r.right,
+        x: vh - r.bottom, y: r.left,
       };
     };
-    var vh = window.innerHeight;
-    function swap(e) {
-      var cx = e.clientX, cy = e.clientY;
-      Object.defineProperty(e, "clientX", { value: cy, configurable: true });
-      Object.defineProperty(e, "clientY", { value: vh - cx, configurable: true });
-      Object.defineProperty(e, "pageX", { value: cy, configurable: true });
-      Object.defineProperty(e, "pageY", { value: vh - cx, configurable: true });
+    function toLocal(p) {
+      var cx = p.clientX, cy = p.clientY;
+      var vh = window.innerHeight;
+      Object.defineProperty(p, "clientX", { value: vh - cy, configurable: true });
+      Object.defineProperty(p, "clientY", { value: cx, configurable: true });
+      Object.defineProperty(p, "pageX", { value: vh - cy, configurable: true });
+      Object.defineProperty(p, "pageY", { value: cx, configurable: true });
     }
-    ["pointerdown", "pointerup", "pointermove", "mousedown", "mouseup", "mousemove"].forEach(function (ev) {
-      canvas.addEventListener(ev, swap, true);
+    function swap(e) {
+      if (!isRotated()) return;
+      if (e.changedTouches) {
+        for (var i = 0; i < e.changedTouches.length; i++) toLocal(e.changedTouches[i]);
+      } else {
+        toLocal(e);
+      }
+    }
+    // Window capture so the rewrite always runs before Phaser's own canvas/
+    // window listeners, whatever order they were registered in.
+    ["pointerdown", "pointerup", "pointermove", "mousedown", "mouseup", "mousemove",
+      "touchstart", "touchend", "touchmove", "touchcancel"].forEach(function (ev) {
+      window.addEventListener(ev, swap, true);
     });
   }
 
@@ -194,17 +217,28 @@ const FIT_PORTRAIT = `
   }
   window.addEventListener("pointerdown", lockPortrait, { once: true });
 
-  // Fit + patch as soon as Phaser inserts the canvas.
-  (function observe() {
+  // Order matters: install the bounds/event rewrite first so fitCanvas's
+  // updateBounds call already reads the virtual (un-rotated) rect.
+  function onCanvas(canvas) {
+    patchCanvasInputForRotation(canvas);
+    fixPhaserTransform();
+    fitCanvas();
+  }
+
+  // Fit + patch as soon as Phaser inserts the canvas. On the cmg route this
+  // script runs in <head>, before #phaser-canvas exists in the body, so arm
+  // the observer on DOMContentLoaded in that case (the exported shell runs it
+  // from the end of <body>, where the container is already there).
+  function arm() {
     var container = document.getElementById("phaser-canvas");
-    if (!container) return;
+    if (!container) return false;
+    var existing = container.querySelector("canvas");
+    if (existing) { onCanvas(existing); return true; }
     var obs = new MutationObserver(function (muts) {
       for (var i = 0; i < muts.length; i++) {
         for (var j = 0; j < muts[i].addedNodes.length; j++) {
           if (muts[i].addedNodes[j].tagName === "CANVAS") {
-            fitCanvas();
-            patchCanvasInputForRotation(muts[i].addedNodes[j]);
-            fixPhaserTransform();
+            onCanvas(muts[i].addedNodes[j]);
             obs.disconnect();
             return;
           }
@@ -212,7 +246,9 @@ const FIT_PORTRAIT = `
       }
     });
     obs.observe(container, { childList: true });
-  })();
+    return true;
+  }
+  if (!arm()) document.addEventListener("DOMContentLoaded", arm);
 })();
 `;
 
