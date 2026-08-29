@@ -46,6 +46,57 @@ const RESERVED = new Set([
   "ArcadeCollider",
 ]);
 
+// ECMAScript keywords pass IDENT_RE but can never be `export const` names —
+// a character stored as "class" (the DB is open-write) would otherwise turn
+// the whole generated module into one SyntaxError for every consumer.
+const JS_KEYWORDS = new Set([
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "instanceof",
+  "interface",
+  "let",
+  "new",
+  "null",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "return",
+  "static",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
+
 function pascal(name: string): string {
   const p = name.replace(/[_-]+(.)/g, (_m, c: string) => c.toUpperCase());
   return p.charAt(0).toUpperCase() + p.slice(1);
@@ -62,11 +113,14 @@ function renderModule(names: string[]): string {
   ];
   const seen = new Set(RESERVED);
   for (const n of names) {
-    if (!IDENT_RE.test(n) || seen.has(n)) continue;
+    if (!IDENT_RE.test(n) || seen.has(n) || JS_KEYWORDS.has(n)) continue;
     lines.push(`export const ${n} = character(${JSON.stringify(n)});`);
     seen.add(n);
     const alias = pascal(n);
-    if (alias !== n && IDENT_RE.test(alias) && !seen.has(alias)) {
+    if (
+      alias !== n && IDENT_RE.test(alias) && !seen.has(alias) &&
+      !JS_KEYWORDS.has(alias)
+    ) {
       lines.push(`export { ${n} as ${alias} };`);
       seen.add(alias);
     }

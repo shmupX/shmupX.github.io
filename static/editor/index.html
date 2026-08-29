@@ -23,6 +23,10 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-storage-compat.js"></script>
+    <!-- Shared EXTRACT MODE helpers (window.ShmupExtract): frame collection,
+         shelf packing and the /characters + /atlases publish. The same file
+         powers the in-game extract mode on the PAUSE panel. -->
+    <script src="/phaser-plugins/extract-mode.js"></script>
     <script type="module">
         // Dezaemon 2 (Saturn) save importer. The whole .sav/game.json pipeline
         // lives in the shmup-engine JSR module (packages/shmup-engine), bundled
@@ -244,6 +248,10 @@
         }
         .grid-cell.drag-over { box-shadow: inset 0 0 0 2px #F6FF4A, 0 0 14px rgba(246,255,74,.45); }
         body.theme-nintendo .grid-cell.drag-over { box-shadow: inset 0 0 0 2px #ff3b49, 0 0 14px rgba(228,0,15,.5); }
+        /* Both carry the mode class: #grid-icon-view flips live in
+           updateToolUI, .editor-grid on the next renderGrid. */
+        .editor-grid.mode-extract .grid-cell.occupied, #grid-icon-view.mode-extract .grid-cell.occupied { cursor: crosshair; }
+        .editor-grid.mode-extract .grid-cell.occupied:hover, #grid-icon-view.mode-extract .grid-cell.occupied:hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
 
         /* ===== NES CABINET STRIPE (nintendo theme) ===== */
         #nes-stripe {
@@ -797,6 +805,9 @@
             </button>
             <!-- Delete badge (Lucide eraser) -->
             <button id="delete-mode-btn" class="badge" title="Delete mode" onclick="setDeleteMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
+            <!-- Extract badge (Lucide pipette): click a placed enemy to
+                 inspect it and save it to the shared character library -->
+            <button id="extract-mode-btn" class="badge" title="Extract mode — click a placed enemy to save it to the character library" onclick="setExtractMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg></button>
 
             <div class="tb-spacer"></div>
 
@@ -1007,6 +1018,14 @@
         <div class="picker-panel" style="max-height:90vh;width:min(1100px,94vw);max-width:94vw;">
             <div class="picker-title">CHARACTER LIBRARY EDITOR</div>
             <div id="library-editor-host" style="height:72vh;"></div>
+        </div>
+    </div>
+
+    <!-- EXTRACT TOOL INFO CARD (toolbar pipette -> click a placed enemy) -->
+    <div id="extract-info-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+        <div class="picker-panel" style="width:min(340px,90vw)">
+            <div class="picker-title">EXTRACT</div>
+            <div id="extract-info-body" style="padding:0 4px;"></div>
         </div>
     </div>
 
@@ -2233,6 +2252,13 @@
             if (currentTool === 'delete') flash('DELETE TOOL ARMED');
         }
 
+        function setExtractMode() {
+            currentTool = currentTool === 'extract' ? (selectedEnemyLetter ? 'place' : 'none') : 'extract';
+            closePicker();
+            updateToolUI();
+            if (currentTool === 'extract') flash('EXTRACT TOOL ARMED · CLICK A PLACED ENEMY');
+        }
+
         // Lucide zap — the powerup badge's face when no item art is armed.
         const POWERUP_ZAP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>';
         // Invader outline (👾 as a stroke icon, tinted by the badge's currentColor)
@@ -2281,14 +2307,18 @@
             // Delete button
             document.getElementById('delete-mode-btn').classList.toggle('active', currentTool === 'delete');
 
+            // Extract button
+            document.getElementById('extract-mode-btn').classList.toggle('active', currentTool === 'extract');
+
             // Footer pad hints mirror the toolbar state
             document.getElementById('pad-hint-b').classList.toggle('active', currentTool === 'delete');
             document.getElementById('pad-hint-a').classList.toggle('active', currentTool === 'place' && !!selectedEnemyLetter);
 
             // Grid mode class
             const gv = document.getElementById('grid-icon-view');
-            gv.classList.remove('mode-place', 'mode-delete', 'mode-none');
+            gv.classList.remove('mode-place', 'mode-delete', 'mode-extract', 'mode-none');
             gv.classList.add(currentTool === 'delete' ? 'mode-delete' :
+                currentTool === 'extract' ? 'mode-extract' :
                 (currentTool === 'place' && selectedEnemyLetter) ? 'mode-place' : 'mode-none');
         }
 
@@ -2413,6 +2443,7 @@
             const grid = document.createElement('div');
             grid.className = `editor-grid ${
                 currentTool === 'delete' ? 'mode-delete' :
+                currentTool === 'extract' ? 'mode-extract' :
                 (currentTool === 'place' && selectedEnemyLetter) ? 'mode-place' : 'mode-none'}`;
             grid.style.gridTemplateColumns = `18px repeat(${COLS}, 1fr)`;
 
@@ -2494,6 +2525,11 @@
         }
 
         function handleCellClick(wi, si) {
+            if (currentTool === 'extract') {
+                const cur = currentGrid[wi][si];
+                if (cur && cur !== '00') openExtractCard(cellEnemyLetter(cur));
+                return;
+            }
             if (currentTool === 'delete') {
                 currentGrid[wi][si] = '00';
             } else if (currentTool === 'place' && selectedEnemyLetter) {
@@ -2939,7 +2975,6 @@
         // library, so any game (or an import) can use this character.
         async function publishCharacterToLibrary() {
             if (!syncEnemyEditorForm(true)) return;
-            if (!atlasData || !atlasImage) return alert('Load a game first');
             let entry, suggested;
             if (currentEditorTab === 'player') {
                 entry = playerData;
@@ -2950,109 +2985,152 @@
                 suggested = (entry && entry.name) || currentEnemyKey;
             }
             if (!entry) return alert('Nothing to publish');
-            let name = prompt('Publish to the shared library as:', String(suggested).replace(/[^A-Za-z0-9_]/g, '_'));
-            if (!name) return;
-            name = name.trim();
-            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return alert('Use letters, digits and underscores only');
+            const name = await publishEntryToLibrary(entry, suggested);
+            if (name) alert(`Published '${name}' to the shared library.`);
+        }
 
-            // Every frame name the entry references, in order, deduped.
-            const wanted = [];
-            const seen = new Set();
-            const collect = (obj, depth) => {
-                if (!obj || typeof obj !== 'object' || depth > 2) return;
-                for (const v of Object.values(obj)) {
-                    if (Array.isArray(v) && v.length && v.every((s) => typeof s === 'string')) {
-                        for (const f of v) if (!seen.has(f)) { seen.add(f); wanted.push(f); }
-                    } else if (v && typeof v === 'object') collect(v, depth + 1);
-                }
-            };
-            collect(entry, 0);
+        // Crop, pack and PUT one character entry (playerData or an
+        // enemyData/bossData record) into /characters + /atlases. The frame
+        // walk, shelf packer and REST writes live in the shared
+        // /phaser-plugins/extract-mode.js (window.ShmupExtract) — the same
+        // code the in-game EXTRACT MODE runs against live Phaser textures.
+        // Resolves the published name, or null when nothing was written.
+        async function publishEntryToLibrary(entry, suggested) {
+            const EX = window.ShmupExtract;
+            if (!EX) { alert('extract-mode.js failed to load'); return null; }
+            if (!atlasData || !atlasImage) { alert('Load a game first'); return null; }
+            let name = prompt('Publish to the shared library as:', EX.suggestName(suggested));
+            if (!name) return null;
+            name = name.trim();
+            if (!EX.validName(name)) { alert('Use letters, digits and underscores only'); return null; }
+            if (EX.reservedName(name)) { alert(`'${name}' is reserved by the characters module — pick another name`); return null; }
 
             const frames = atlasData.frames || {};
-            const sprites = [];
-            const missing = [];
-            for (const fk of wanted) {
-                let f = frames[fk];
-                if (!f) {
-                    const alt = fk.endsWith('.gif') ? fk.slice(0, -4) + '.png'
-                        : fk.endsWith('.png') ? fk.slice(0, -4) + '.gif' : null;
-                    if (alt) f = frames[alt];
-                }
-                if (!f || !f.frame) { missing.push(fk); continue; }
-                const c = document.createElement('canvas');
-                c.width = f.frame.w; c.height = f.frame.h;
-                c.getContext('2d').drawImage(atlasImage, f.frame.x, f.frame.y, f.frame.w, f.frame.h, 0, 0, f.frame.w, f.frame.h);
-                sprites.push({ key: fk, canvas: c, w: f.frame.w, h: f.frame.h });
-            }
-            if (!sprites.length) return alert('None of the frames this entry references are in the atlas');
-            if (missing.length && !confirm(`${missing.length} referenced frame(s) are missing from the atlas and will be skipped. Publish anyway?`)) return;
-
-            // Shelf-pack the frames (same scheme as buildAtlasWithReplacements).
-            sprites.sort((a, b) => b.h - a.h);
-            const MW = 1024, P = 2;
-            let cx = P, cy = P, rh = 0, fh = 0;
-            const pos = {};
-            sprites.forEach((s) => {
-                if (cx + s.w + P > MW) { cy += rh + P; cx = P; rh = 0; }
-                pos[s.key] = { x: cx, y: cy }; cx += s.w + P;
-                rh = Math.max(rh, s.h); fh = Math.max(fh, cy + s.h + P);
+            const crop = EX.cropFrames(entry, (fk) => {
+                const f = frames[fk];
+                if (!f || !f.frame) return null;
+                return { image: atlasImage, x: f.frame.x, y: f.frame.y, w: f.frame.w, h: f.frame.h };
             });
-            const canvas = document.createElement('canvas');
-            canvas.width = MW; canvas.height = fh;
-            const nc = canvas.getContext('2d');
-            const outFrames = {};
-            sprites.forEach((s) => {
-                const p = pos[s.key];
-                nc.drawImage(s.canvas, p.x, p.y);
-                outFrames[s.key] = {
-                    frame: { x: p.x, y: p.y, w: s.w, h: s.h }, rotated: false, trimmed: false,
-                    spriteSourceSize: { x: 0, y: 0, w: s.w, h: s.h }, sourceSize: { w: s.w, h: s.h },
-                };
-            });
-            const atlasJson = {
-                frames: outFrames,
-                meta: { app: 'cmg level editor', version: '1.0', image: 'atlas.png', format: 'RGBA8888', scale: '1', size: { w: canvas.width, h: canvas.height } },
-            };
-            const record = dezaClone(entry);
-            if (!record.name) record.name = name;
-            record.textureKey = name;
+            if (!crop.sprites.length) { alert('None of the frames this entry references are in the atlas'); return null; }
+            if (crop.missing.length && !confirm(`${crop.missing.length} referenced frame(s) are missing from the atlas and will be skipped. Publish anyway?`)) return null;
 
-            const DB = FIREBASE_CONFIG.databaseURL;
+            const packed = EX.packFrames(crop.sprites, 'cmg level editor');
             try {
-                const existing = await fetch(`${DB}/characters/${encodeURIComponent(name)}.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-                if (existing && !confirm(`'${name}' already exists in the library. Overwrite it?`)) return;
-                const put = (path, body) => fetch(`${DB}/${path}.json`, {
-                    method: 'PUT',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify(body),
-                }).then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); });
-                await put('atlases/' + encodeURIComponent(name), { json: JSON.stringify(atlasJson), png: canvas.toDataURL('image/png') });
-                await put('characters/' + encodeURIComponent(name), record);
-                alert(`Published '${name}' to the shared library.`);
+                return await EX.publishRecord({
+                    name, record: entry, db: FIREBASE_CONFIG.databaseURL,
+                    canvas: packed.canvas, atlasJson: packed.atlasJson,
+                });
             } catch (e) {
                 alert('Publish failed: ' + e.message);
+                return null;
             }
         }
 
         // "LIBRARY EDITOR": the full <character-editor> custom element, loaded
         // from the deployed characters module (override with __CHARACTERS_BASE__).
-        async function openLibraryEditor() {
+        // Pass a character name to open it on that character (the element
+        // observes a `character` attribute); a named open re-mounts the
+        // element so a just-published character is in its listing.
+        async function openLibraryEditor(characterName) {
             const modal = document.getElementById('library-editor-modal');
             const host = document.getElementById('library-editor-host');
             modal.classList.remove('hidden');
-            if (host.dataset.loaded) return;
+            if (host.dataset.loaded) {
+                if (!characterName) return;
+                host.textContent = '';
+                delete host.dataset.loaded;
+            }
             host.textContent = 'Loading editor…';
             try {
                 await import(charactersBase() + '/editor.js');
                 host.textContent = '';
                 const el = document.createElement('character-editor');
                 el.style.cssText = 'display:block;width:100%;height:100%;';
+                if (characterName) el.setAttribute('character', characterName);
                 el.addEventListener('close', () => modal.classList.add('hidden'));
                 host.appendChild(el);
                 host.dataset.loaded = '1';
             } catch (e) {
                 host.textContent = 'Could not load the character editor from ' + charactersBase() + ' — ' + e.message;
             }
+        }
+
+        // ================== EXTRACT TOOL ==================
+        // The toolbar pipette: click a placed enemy on the grid to inspect it
+        // and push it straight into the shared character library.
+        function openExtractCard(letter) {
+            const key = 'enemy' + letter;
+            const entry = enemyData[key];
+            if (!entry) { flash('NO DATA FOR ' + key.toUpperCase()); return; }
+            const body = document.getElementById('extract-info-body');
+            body.innerHTML = '';
+
+            const head = document.createElement('div');
+            head.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;';
+            const thumbFrame = entry.texture && entry.texture[0];
+            const url = thumbFrame ? getThumbURL(thumbFrame) : null;
+            if (url) {
+                const img = document.createElement('img');
+                img.src = url;
+                img.style.cssText = 'width:48px;height:48px;image-rendering:pixelated;object-fit:contain;';
+                head.appendChild(img);
+            }
+            const title = document.createElement('div');
+            const nm = document.createElement('div');
+            nm.textContent = entry.name || key;
+            nm.style.cssText = 'font-weight:700;font-size:13px;';
+            const sub = document.createElement('div');
+            sub.textContent = key;
+            sub.style.cssText = 'font-size:10px;color:#888;';
+            title.appendChild(nm);
+            title.appendChild(sub);
+            head.appendChild(title);
+            body.appendChild(head);
+
+            const stats = document.createElement('div');
+            stats.style.cssText = 'font-size:11px;font-family:monospace;margin-bottom:12px;display:grid;grid-template-columns:auto 1fr;gap:2px 12px;';
+            const addStat = (l, v) => {
+                if (v === undefined || v === null) return;
+                const a = document.createElement('span'); a.textContent = l; a.style.color = '#888';
+                const b = document.createElement('span'); b.textContent = String(v);
+                stats.appendChild(a); stats.appendChild(b);
+            };
+            addStat('HP', entry.hp);
+            addStat('SCORE', entry.score);
+            addStat('SPEED', entry.speed);
+            addStat('INTERVAL', entry.interval);
+            addStat('FRAMES', window.ShmupExtract
+                ? window.ShmupExtract.collectFrameNames(entry).length
+                : (entry.texture || []).length);
+            body.appendChild(stats);
+
+            const btns = document.createElement('div');
+            btns.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
+            const save = document.createElement('button');
+            save.className = 'menu-btn';
+            save.style.cssText = 'background:#84cc16;color:#000;font-weight:700;';
+            save.textContent = 'SAVE TO LIBRARY';
+            save.onclick = async () => {
+                const name = await publishEntryToLibrary(entry, entry.name || key);
+                if (name) {
+                    document.getElementById('extract-info-modal').classList.add('hidden');
+                    if (confirm(`Saved '${name}'. Open it in the CHARACTER LIBRARY EDITOR?`)) openLibraryEditor(name);
+                }
+            };
+            const edit = document.createElement('button');
+            edit.className = 'menu-btn';
+            edit.textContent = 'EDIT';
+            edit.onclick = () => {
+                document.getElementById('extract-info-modal').classList.add('hidden');
+                document.getElementById('enemy-editor-modal').classList.remove('hidden');
+                switchEditorTab('enemies');
+                editEnemy(key);
+            };
+            btns.appendChild(save);
+            btns.appendChild(edit);
+            body.appendChild(btns);
+
+            document.getElementById('extract-info-modal').classList.remove('hidden');
         }
 
         // ================== ATLAS ==================
@@ -8619,12 +8697,18 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             updateToolUI();
             // Auto-load local data first so Firebase can override it
             try { await autoLoadFromServer(); } finally { editorBaselineResolve(); }
-            const urlLevel = new URLSearchParams(window.location.search).get('level');
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlLevel = urlParams.get('level');
             if (urlLevel) {
                 document.getElementById('firebase-level-name').value = urlLevel;
                 initFirebase();
                 const tryLoad = () => { initFirebase(); loadFromFirebase(urlLevel); };
                 firebaseDb ? tryLoad() : setTimeout(tryLoad, 1000);
+            }
+            // Deep link from the game page's EXTRACT MODE (or a shared URL):
+            // ?libraryEditor=1&character=name opens the library editor on it.
+            if (urlParams.get('libraryEditor')) {
+                openLibraryEditor(urlParams.get('character') || undefined);
             }
         };
     </script>

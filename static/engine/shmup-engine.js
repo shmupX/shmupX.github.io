@@ -590,6 +590,33 @@ function channel(a, b, c, { enabled, table, stepTable, angle }) {
     trigger: c & 7
   };
 }
+var ZAKO_BAND_BASE = [0, 16, 24, 32, 48, 52, 56];
+function zakoRecordFromKey(key) {
+  const band = key >> 4 & 7;
+  return ZAKO_BAND_BASE[band === 7 ? 0 : band] | key & 15;
+}
+function decodeDeathWord(b) {
+  const mode = b[2] >> 6 & 3;
+  const param = b[3];
+  const present = b[4] >> 2 & 3;
+  const death = {
+    mode,
+    // 0 none, 1 item, 2 child, 3 chain
+    param,
+    // The engine renders the death itself from byte 4: value 0 removes the
+    // object with no explosion and no sound, value 2 picks the small blast
+    // (and suppresses the rank-3 revenge shot); 1 and 3 are the full one.
+    silent: present === 0,
+    small: present === 2
+  };
+  if (mode === 1) {
+    death.item = (param & 8) !== 0 ? 9 : (param & 7) + 1;
+  } else if (mode >= 2) {
+    death.key = param | 128;
+    death.record = zakoRecordFromKey(death.key);
+  }
+  return death;
+}
 function decodeEnemyRecord(bytes) {
   const b = Array.from(bytes);
   const rotationMode = b[9] & 7;
@@ -619,12 +646,6 @@ function decodeEnemyRecord(bytes) {
       // re-traced"). `enabled` carries only the appearance gate; the
       // runtime combines it with `direction`.
       enabled: appearanceFires(b[0]),
-      type: b[2] >> 6 & 3,
-      // b2 bits 6-7 (semantics open)
-      count: (b[3] & 7) + 1,
-      wide: (b[3] & 8) !== 0,
-      param: b[3],
-      // raw
       // b4 & 3 = BULLET TYPE: which of the save's four global bullet
       // configs this enemy fires (settings +37..+40). Bullet types
       // 0-2 reload from the short table [14,12,10,8,6,4,2,1]
@@ -656,6 +677,7 @@ function decodeEnemyRecord(bytes) {
       direction: SPECIAL_FIRE_PATTERNS[b[5] & 15] !== void 0 ? 0 : b[5] & 31,
       directionEx: b[5] >> 5 & 7
     },
+    death: decodeDeathWord(b),
     speedChange: channel(b[6], b[7], b[8], {
       enabled: (b[6] & 1) !== 0,
       table: FACTOR_TABLE,
@@ -780,6 +802,14 @@ function zakoRecordIndex(id) {
   }
   return -1;
 }
+function zakoPlacementId(record) {
+  let base = 0;
+  for (const [first, count] of ZAKO_GROUPS) {
+    if (record >= base && record < base + count) return first + (record - base);
+    base += count;
+  }
+  return -1;
+}
 function describePlacementId(id) {
   if (isBoss(id)) return { id, kind: "boss", sizeClass: id & 15, record: -1 };
   if (id >= 232 && id <= 239) return { id, kind: "item", slot: id & 7, record: -1 };
@@ -832,6 +862,25 @@ function placementColumn(col) {
 function enemyPairKey(stage, record) {
   return `${stage}:${record}`;
 }
+function deathChildClosure(stage, placed) {
+  const found = /* @__PURE__ */ new Set();
+  const queue = [...placed];
+  const seen = new Set(queue);
+  while (queue.length) {
+    const record = queue.pop();
+    const entry = stage.enemies.records[record];
+    if (!entry || !entry.defined) continue;
+    const bytes = entry.bytes;
+    if ((bytes[2] >> 6 & 3) !== 2) continue;
+    const child = zakoRecordFromKey(bytes[3] | 128);
+    if (child < 0 || child >= ZAKO_SLOT_COUNT || seen.has(child)) continue;
+    seen.add(child);
+    if (!stage.enemies.records[child] || !stage.enemies.records[child].defined) continue;
+    found.add(child);
+    queue.push(child);
+  }
+  return found;
+}
 function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = {}) {
   const uses = /* @__PURE__ */ new Map();
   stages.forEach((st, s) => {
@@ -847,6 +896,7 @@ function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = 
     const placed = new Set(
       st.placement.objects.filter((o) => o.kind === "zako").map((o) => o.record)
     );
+    for (const record of deathChildClosure(st, placed)) placed.add(record);
     for (const record of [...placed].sort((a, b) => a - b)) {
       const key = enemyPairKey(s, record);
       indexOf.set(key, enemies.length);
@@ -857,7 +907,9 @@ function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = 
         stage: s,
         record,
         key,
-        placements: uses.get(key),
+        // 0 for a record the grid never places — it reaches the
+        // screen only as another record's death-word child.
+        placements: uses.get(key) || 0,
         // The 18-byte definition decoded into named fields — hp, score,
         // speed, fire config and the four change channels. Engine-traced
         // (see decode-enemy.js); this is what makes imported enemies
@@ -1167,7 +1219,12 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
         stage: e.stage,
         record: e.record,
         placements: e.placements,
-        attributes: toHex(e.bytes)
+        attributes: toHex(e.bytes),
+        // The engine's FORMATION KEY: every grid-spawned enemy carries
+        // its placement cell byte in `0x06090530[slot]`, and the death
+        // word's chain mode sweeps everything sharing one. Record index
+        // and cell byte are a bijection, so it is recoverable here.
+        placementId: zakoPlacementId(e.record)
       };
       if (e.behavior) {
         rec.dezaemon.behavior = clone(e.behavior);
@@ -1179,6 +1236,18 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
       }
     }
     enemyData[`enemy${letters}`] = rec;
+  });
+  const enemyKeyByStageRecord = /* @__PURE__ */ new Map();
+  decodedEnemies.forEach((e, i) => {
+    if (e.stage === void 0) return;
+    enemyKeyByStageRecord.set(`${e.stage}:${e.record}`, `enemy${enemyLetterByIndex[i]}`);
+  });
+  decodedEnemies.forEach((e, i) => {
+    const death = e.behavior && e.behavior.death;
+    if (!death || death.mode !== 2) return;
+    const child = enemyKeyByStageRecord.get(`${e.stage}:${death.record}`);
+    const rec = enemyData[`enemy${enemyLetterByIndex[i]}`];
+    if (child && rec && rec.dezaemon) rec.dezaemon.deathChild = child;
   });
   if (Object.keys(enemyData).length === 0) {
     enemyData.enemyA = clone(defaults.starterEnemy);
@@ -1365,6 +1434,18 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
       staffRoles: decoded.settings.staffRoles,
       mainWeapon: decoded.settings.mainWeapon,
       mainWeapon2P: decoded.settings.loadouts ? decoded.settings.loadouts[decoded.settings.ships[1].startLoadout].main : void 0,
+      // The four WEAPON LOADOUT presets in full — main, sub/option,
+      // charge and bomb per preset — plus which one each ship starts on.
+      // Weapon-change items (types 0-3) switch between them mid-game, so
+      // the runtime needs all four, not just the starting set.
+      loadouts: decoded.settings.loadouts ? decoded.settings.loadouts.map((l) => ({
+        main: l.main,
+        sub: l.sub,
+        charge: l.charge,
+        bomb: l.bomb,
+        bombVariant: l.bombVariant
+      })) : void 0,
+      startLoadout: decoded.settings.ships ? decoded.settings.ships.map((sh) => sh.startLoadout) : void 0,
       shotDamage,
       sfxSet: decoded.settings.sfxSet
     };
@@ -1401,7 +1482,7 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
   }
   if (decoded.settings && decoded.settings.gameMode & 1) {
     warnings.push(
-      "this is a HORIZONTAL-scroll save (game mode bit 0) \u2014 the runtime still plays it as a vertical scroller, so its stages will read sideways"
+      "this is a HORIZONTAL-scroll save (game mode bit 0) \u2014 the world plays correctly (the engine's horizontal mode is the same simulation drawn transposed, and the runtime applies its scroll rate, entry margin and trigger lines), but the art is authored for a landscape screen, so turn your device to read it the right way up"
     );
   }
   if (!savedSprites && !decodedEnemies.length && !decodedStages.length) {

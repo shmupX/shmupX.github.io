@@ -381,6 +381,12 @@ export default define.page(function Game2028() {
       <script src="/games/2028-ai/lib/phaser.min.js" defer></script>
       <script src="/games/2028-ai/game.bundle.js" defer></script>
 
+      {
+        /* EXTRACT MODE: save any paused sprite to the shared character
+          library — rides the standalone PAUSE panel the bundle builds. */
+      }
+      <script src="/phaser-plugins/extract-mode.js" defer></script>
+
       {/* Advertise boot-time cheats to the cmg launcher's Guide OSD. */}
       <script dangerouslySetInnerHTML={{ __html: CHEATS_BROADCAST }} />
     </>
