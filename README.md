@@ -15,7 +15,9 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
 - `main.ts`, `routes/`, `vite.config.ts` — the Fresh shell (launcher marker
   injection + static files + fs routes).
 - `desktop.ts`, `scripts/build-desktop.ts` — the packaged desktop launcher
-  (`deno task build:windows` / `build:linux`, see below).
+  (`deno task build:windows` / `build:linux` / `build:mac`, see below).
+- `lib/ps2/`, `scripts/build-ps2.ts` — the PlayStation 2 export
+  (`deno task build:ps2`, see below). Pure Deno, no toolchain to install.
 - `svelte-src/` — the launcher dashboard (Svelte 5), esbuild-bundled at build
   time into `static/dashboard.bundle.js` by `deno task dashboard:build`.
 - `data/games.json` → `deno task games:manifest` → `static/games.manifest.json`
@@ -56,29 +58,32 @@ deno task check           # fmt + lint + type-check
 
 deno task build:windows   # the launcher as a Windows .exe
 deno task build:linux     # the launcher as a Linux .AppImage
-deno task build:desktop   # …whichever of those two matches this host
+deno task build:mac       # the launcher as a macOS .app
+deno task build:desktop   # …whichever of those three matches this host
+deno task build:ps2       # a level as a PlayStation 2 disc + USB folder
 ```
 
 Requires Deno canary (`deno upgrade canary`).
 
 ## Desktop app
 
-`deno task build:windows` / `build:linux` package the launcher itself into
-`build/desktop/` (git-ignored). `deno compile` embeds the Vite build, so one
-file is the whole thing: it serves the app on `127.0.0.1:8787` (or the next free
-port) and opens your browser at it. `--port N`, `--no-open` and `SHMUPX_PORT` /
-`SHMUPX_HOST` / `SHMUPX_NO_OPEN` work on the artifact itself.
+`deno task build:windows` / `build:linux` / `build:mac` package the launcher
+itself into `build/desktop/` (git-ignored). `deno compile` embeds the Vite
+build, so one file is the whole thing: it serves the app on `127.0.0.1:8787` (or
+the next free port) and opens your browser at it. `--port N`, `--no-open` and
+`SHMUPX_PORT` / `SHMUPX_HOST` / `SHMUPX_NO_OPEN` work on the artifact itself.
 
 - `desktop.ts` — what gets compiled: the local server + browser launch.
 - `scripts/build-desktop.ts` — the packaging (Vite build → `deno compile` →
-  AppDir → `appimagetool`).
+  AppDir → `appimagetool`, or → `.app` bundle).
 
-|                 | artifact                                                       | default arch                                            |
-| --------------- | -------------------------------------------------------------- | ------------------------------------------------------- |
-| `build:windows` | `shmupX-windows-<arch>.exe` (icon: `static/app-icons/cmg.ico`) | `x86_64` — Windows on ARM emulates x64, not the reverse |
-| `build:linux`   | `shmupX-linux-<arch>.AppImage` (icon: `launcher-256.png`)      | this host's, so the AppImage runs where it was built    |
+|                 | artifact                                                       | default arch                                                        |
+| --------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `build:windows` | `shmupX-windows-<arch>.exe` (icon: `static/app-icons/cmg.ico`) | `x86_64` — Windows on ARM emulates x64, not the reverse             |
+| `build:linux`   | `shmupX-linux-<arch>.AppImage` (icon: `launcher-256.png`)      | this host's, so the AppImage runs where it was built                |
+| `build:mac`     | `shmupX-mac-<arch>.app` (icon: built from `icon-*.png`)        | this host's on a Mac, else `aarch64` — Rosetta covers the other way |
 
-Both artifacts carry the whole Dezaemon collection, so the save shelf works
+All three artifacts carry the whole Dezaemon collection, so the save shelf works
 offline in the packaged app — that is most of their size: ~426MB for the `.exe`
 (deno compile does not compress the embedded VFS) against ~136MB for the
 AppImage (whose squashfs does). Narrow `--include ./_fresh/client` to the
@@ -86,12 +91,20 @@ subtrees you need for a lean build.
 
 Flags: `--arch x86_64|aarch64`, `--out <dir>`, `--skip-build` (reuse the
 existing `_fresh/`), `--no-terminal` (Windows: no console window),
-`--no-appimage` (stop at the raw Linux binary), `--no-export-tools`.
+`--no-appimage` (stop at the raw Linux binary), `--no-bundle` (stop at the raw
+macOS binary), `--no-export-tools`.
 
 The AppImage step needs a **Linux host**: `appimagetool` plus the type-2 runtime
 for the target arch are downloaded into `build/desktop/.cache/` on first use
 (`$APPIMAGETOOL` or one on `PATH` wins). Cross-compiling the binary itself works
 from anywhere Deno runs.
+
+The `.app` is assembled by the script itself — `Info.plist`, `PkgInfo` and an
+`.icns` built out of `static/app-icons/icon-{32,128,256,512}.png` (an icns is
+just a container of PNGs, so no `iconutil` and no Mac needed). On a Mac it is
+then sealed with `codesign --force --sign -`; a bundle cross-built elsewhere
+arrives unsigned and the build prints the one command to run on the Mac it lands
+on.
 
 The packaged app embeds `tools/build-level` + `static/games/2028-ai`, so the
 editor's **Export to APK** button works inside it — `routes/api/build-apk.ts`
@@ -107,14 +120,78 @@ same per-level Electron export the editor drives:
 ```sh
 deno task build:windows "My Level"   # → build/<slug>/dist/<slug>.exe
 deno task build:linux "My Level"     # → build/<slug>/dist/<slug>.AppImage
+deno task build:mac "My Level"       # → build/<slug>/dist/<slug>.dmg
 deno task build:desktop "My Level"   # → whichever this host builds natively
 ```
 
 Extra flags go straight to `tools/build-level` (`--skip-bgm`, `--level-file`,
-`--package-id`, `--win-target`, `--stage-only`); `--arch` becomes its
-`--win-arch`. This path needs Node and electron-builder, and a **Windows build
-from Linux needs `wine` on `PATH`** — electron-builder rcedits the packaged
-`.exe` through it whatever the target is.
+`--package-id`, `--win-target`, `--mac-target`, `--stage-only`); `--arch`
+becomes its `--win-arch` / `--mac-arch`. This path needs Node and
+electron-builder, a **Windows build from Linux needs `wine` on `PATH`** —
+electron-builder rcedits the packaged `.exe` through it whatever the target is —
+and a **Mac build needs a Mac**, for `hdiutil` and `codesign`.
+
+## PlayStation 2
+
+```sh
+deno task build:ps2                     # the game this repo ships
+deno task build:ps2 "Master Arena Mod"  # that Firebase level
+```
+
+Either way you get **build/ps2/&lt;level name&gt;/** holding the two ways PS2
+homebrew is actually run:
+
+|                   |                                                                                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<LevelName>/`    | the **athena.elf build** — copy the folder to a USB stick (or a memory card, or an HDD partition) and launch `athena.elf` from wLaunchELF, OPL or FMCB |
+| `<LevelName>.iso` | the same tree as a **bootable disc** — PCSX2, the launcher's own in-browser PS2 player, or a burned disc on a console that will boot homebrew          |
+
+There is nothing to install: no ps2dev, no C compiler, not even Node. The
+console runs the game as **JavaScript**, because `athena.elf` is
+[AthenaEnv](https://github.com/DanielSant0s/AthenaEnv) — a QuickJS interpreter
+for the PS2 with a 2D drawing, pad and file API. The game itself is
+[5velte-ps2](https://github.com/easierbycode/svelte-ps2)'s AthenaEnv port of
+this very shooter, pulled from JSR and compiled to one `main.js` by
+`deno bundle` (cached in `build/ps2/.cache/`, so only the first build is slow).
+The AthenaEnv release is downloaded once and cached beside it;
+`--athena-elf
+<path>` or `$ATHENA_ELF` points at a local build instead and skips
+the network entirely.
+
+Everything else in the export is data, produced by `lib/ps2/`:
+
+- The editor's atlases are 2048px sheets and the Graphics Synthesizer tops out
+  at 1024×1024 with 4MB of VRAM to also hold the frame buffers, so every atlas
+  is **cut apart and repacked** into the smallest power-of-two sheet that fits
+  (512px by default), with a `meta.ps2DisplayScale` telling the runtime how far
+  to scale each frame back up. Sprites keep their original on-screen size and
+  lose texture resolution — `--atlas-max 1024` trades VRAM for sharpness.
+- The level's custom atlas is merged over the base one exactly as the browser
+  player composites it, and the result is made **self-sufficient**: a frame the
+  level names but never customised is pulled from the base sheet, because the
+  PS2 port looks for every one of a level's own sprites in the level atlas.
+- The ISO is written here too ([`lib/ps2/iso9660.ts`](lib/ps2/iso9660.ts)) — no
+  mkisofs, no xorriso. Names are uppercase ISO 9660 level 2 with a `;1` suffix,
+  which ps2sdk's `cdfs` driver matches case-insensitively against the lowercase
+  paths the game opens.
+
+Flags: `--out <dir>`, `--level-file <path>` (a local JSON export instead of
+Firebase), `--athena-elf <path>`, `--refresh-athena`, `--atlas-max <px>`,
+`--no-iso`.
+
+The editor drives the same code: its **TARGET → PS2** option posts to
+`routes/api/build-apk.ts`, which — unlike every other target — runs the build
+in-process rather than spawning `node tools/build-level`. It needs a source
+checkout (`deno task dev`), since `deno bundle` compiles the game from
+`lib/ps2/runtime-entry.ts` on disk.
+
+The exported game is **silent**: AthenaEnv plays sound effects only as PS2
+ADPCM, which would mean converting the game's MP3s with ps2sdk's `adpenc`, and
+the port's own sound layer is a no-op on hardware.
+[`tests/ps2_runtime_smoke_test.ts`](tests/ps2_runtime_smoke_test.ts) boots the
+built `main.js` against a stand-in for AthenaEnv's globals and plays several
+hundred frames, which is what catches an asset the game opens but the exporter
+never wrote.
 
 ## Emulators (opt-in)
 

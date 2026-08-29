@@ -1,6 +1,6 @@
 // desktop.ts — entry point of the packaged desktop launcher.
 //
-// `deno task build:windows` / `deno task build:linux` compile this file with
+// `deno task build:windows` / `build:linux` / `build:mac` compile this file with
 // `deno compile` (see scripts/build-desktop.ts) into one self-contained binary
 // that serves the built Fresh app on loopback and opens it in the browser. The
 // same binary is what routes/api/build-apk.ts calls "the packaged desktop app":

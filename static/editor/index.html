@@ -874,13 +874,14 @@
         <button class="menu-row" onclick="saveToFirebase()"><span class="mono-badge">SG</span>SAVE GAME</button>
         <button class="menu-row" onclick="loadFromFirebasePrompt()"><span class="mono-badge">LG</span>LOAD GAME</button>
         <button class="menu-row" onclick="playFirebaseLevel()"><span class="mono-badge">PG</span>PLAY GAME</button>
-        <div class="display-row" title="Which app the export builds. Linux/Windows are Electron desktop builds; a Windows build from a Linux host needs wine on PATH.">
+        <div class="display-row" title="Which app the export builds. Linux/Windows are Electron desktop builds; a Windows build from a Linux host needs wine on PATH. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
             <span class="display-lbl">TARGET</span>
             <div class="seg-wrap" id="export-platform-segs">
                 <button class="seg xseg" data-platform="android" onclick="setExportPlatform('android')">ANDROID</button>
                 <button class="seg xseg" data-platform="ios" onclick="setExportPlatform('ios')">IOS</button>
                 <button class="seg xseg" data-platform="linux" onclick="setExportPlatform('linux')">LINUX</button>
                 <button class="seg xseg" data-platform="windows" onclick="setExportPlatform('windows')">WIN</button>
+                <button class="seg xseg" data-platform="ps2" onclick="setExportPlatform('ps2')">PS2</button>
             </div>
         </div>
         <button class="menu-row" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
@@ -7848,15 +7849,19 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             window.open(`${GAME_PLAY_URL}?level=${encodeURIComponent(name)}&stage=${getCurrentStageId()}${godModeParam()}`, '_blank');
         }
 
-        // TARGET picker: which platform tools/build-level compiles the export
-        // for. Persisted like the other editor toggles. android needs cordova +
-        // the SDK, ios macOS + Xcode; linux/windows are Electron desktop builds
-        // (a Windows build from a Linux host additionally needs wine on PATH).
+        // TARGET picker: which platform the export is compiled for. Persisted
+        // like the other editor toggles. android needs cordova + the SDK, ios
+        // macOS + Xcode; linux/windows are Electron desktop builds (a Windows
+        // build from a Linux host additionally needs wine on PATH). PS2 needs
+        // nothing installed — it runs on a JavaScript interpreter for the
+        // console (AthenaEnv), which the build downloads once and caches — and
+        // yields both a bootable .iso and a folder to drop on a USB stick.
         const EXPORT_PLATFORMS = {
             android: { label: 'EXPORT TO APK',   badge: 'AP', artifact: 'APK' },
             ios:     { label: 'EXPORT IOS APP',  badge: 'IP', artifact: 'iOS app' },
             linux:   { label: 'EXPORT APPIMAGE', badge: 'LX', artifact: 'AppImage' },
             windows: { label: 'EXPORT TO EXE',   badge: 'EX', artifact: 'EXE' },
+            ps2:     { label: 'EXPORT PS2 DISC', badge: 'P2', artifact: 'PS2 disc' },
         };
         let exportPlatform = 'android';
         function applyExportPlatform(p) {

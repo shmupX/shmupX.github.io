@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 "use strict";
 
-// Build a standalone Cordova (android/ios) or Electron (linux/windows) app from
+// Build a standalone Cordova (android/ios) or Electron (linux/windows/mac) app from
 // a single Firebase level, using cmg's OWN in-repo game (static/games/2028-ai)
 // as the source — no external 2019-es7 checkout, no CMG_ES7_REPO. Invoked by
 // routes/api/build-apk.ts (the level editor's "Export to APK" button) and by
-// `deno task build:windows <levelName>` / `build:linux <levelName>`.
+// `deno task build:windows <levelName>` / `build:linux` / `build:mac`.
 //
 // Usage:
-//   node tools/build-level <levelName> <android|ios|linux|windows|desktop|all> [flags]
+//   node tools/build-level <levelName> <android|ios|linux|windows|mac|desktop|all> [flags]
 //
-// "desktop" resolves to windows on a Windows host and linux everywhere else.
+// "desktop" resolves to the desktop app this host builds natively: windows on
+// Windows, mac on macOS, linux everywhere else.
 //
 // Flags:
 //   --stage-only      Stage www/ and stop (no native compile). Verifiable
@@ -77,6 +78,8 @@ function parseArgs(argv) {
     "level-file",
     "win-target",
     "win-arch",
+    "mac-target",
+    "mac-arch",
   ]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -101,16 +104,21 @@ async function main() {
   if (!levelName) {
     console.error(
       "Usage: node tools/build-level <levelName> " +
-        "<android|ios|linux|windows|desktop|all> " +
+        "<android|ios|linux|windows|mac|desktop|all> " +
         "[--stage-only] [--out DIR] [--package-id ID] [--skip-bgm] " +
         "[--win-target portable|nsis|zip|dir] [--win-arch x64|arm64|ia32] " +
+        "[--mac-target dmg|zip|dir] [--mac-arch x64|arm64|universal] " +
         "[--level-file PATH]",
     );
     process.exit(2);
   }
   // Whichever desktop app this machine can actually build natively.
   if (platformArg === "desktop") {
-    platformArg = process.platform === "win32" ? "windows" : "linux";
+    platformArg = process.platform === "win32"
+      ? "windows"
+      : process.platform === "darwin"
+      ? "mac"
+      : "linux";
     console.log("Platform 'desktop' resolved to " + platformArg + ".");
   }
   const winTarget = args.flags["win-target"] || "portable";
@@ -123,13 +131,28 @@ async function main() {
     console.error("Unknown --win-arch: " + winArch);
     process.exit(2);
   }
-  // "all" stays the three platforms it always meant: adding windows here would
-  // turn a green run red on any host without wine.
+  // A .dmg is to the Mac what the portable .exe and the AppImage are to the
+  // other two: the one file you hand someone.
+  const macTarget = args.flags["mac-target"] || "dmg";
+  if (!["dmg", "zip", "dir"].includes(macTarget)) {
+    console.error("Unknown --mac-target: " + macTarget);
+    process.exit(2);
+  }
+  // Unlike Windows, a Mac build only ever happens on a Mac, so this host's own
+  // arch is the useful default.
+  const macArch = args.flags["mac-arch"] ||
+    (process.arch === "arm64" ? "arm64" : "x64");
+  if (!["x64", "arm64", "universal"].includes(macArch)) {
+    console.error("Unknown --mac-arch: " + macArch);
+    process.exit(2);
+  }
+  // "all" stays the three platforms it always meant: adding windows or mac here
+  // would turn a green run red on any host without wine, or without a Mac.
   const platforms = platformArg === "all"
     ? ["linux", "android", "ios"]
     : [platformArg];
   for (const p of platforms) {
-    if (!["ios", "android", "linux", "windows"].includes(p)) {
+    if (!["ios", "android", "linux", "windows", "mac"].includes(p)) {
       console.error("Unknown platform: " + p);
       process.exit(2);
     }
@@ -227,13 +250,13 @@ async function main() {
   for (const p of platforms) {
     console.log("\n--- " + p.toUpperCase() + " ---");
     try {
-      if (p === "linux" || p === "windows") {
+      if (p === "linux" || p === "windows" || p === "mac") {
         const pkg = rebrandElectronPackageJson(
           path.join(SCAFFOLD_ROOT, "electron", "package.json"),
           levelName,
           packageId,
           slug,
-          { winTarget: winTarget },
+          { winTarget: winTarget, macTarget: macTarget },
         );
         results[p] = await buildElectron({
           scaffoldRoot: SCAFFOLD_ROOT,
@@ -243,6 +266,8 @@ async function main() {
           platform: p,
           winTarget: winTarget,
           winArch: winArch,
+          macTarget: macTarget,
+          macArch: macArch,
         });
       } else {
         results[p] = await buildCordova({

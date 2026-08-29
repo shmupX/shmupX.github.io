@@ -4,6 +4,7 @@
     "jsr:@deno/esbuild-plugin@^1.2.0": "1.2.1",
     "jsr:@deno/loader@0.4": "0.4.0",
     "jsr:@deno/loader@~0.3.10": "0.3.14",
+    "jsr:@easierbycode/svelte-ps2@^1.1.0": "1.1.0",
     "jsr:@fresh/build-id@1": "1.0.1",
     "jsr:@fresh/core@2": "2.3.3",
     "jsr:@fresh/core@^2.3.3": "2.3.3",
@@ -72,6 +73,9 @@
     },
     "@deno/loader@0.4.0": {
       "integrity": "6c1b18cfa18592740613ce79e15625c24268d60dbfc54bebfb5153bf512c536b"
+    },
+    "@easierbycode/svelte-ps2@1.1.0": {
+      "integrity": "26c6b15dae1d091ef2dba0b86755d12236dc100ceb7868b9f00fa1dfba8a12f1"
     },
     "@fresh/build-id@1.0.1": {
       "integrity": "12a2ec25fd52ae9ec68c26848a5696cd1c9b537f7c983c7e56e4fb1e7e816c20",
@@ -1548,6 +1552,7 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@easierbycode/svelte-ps2@^1.1.0",
       "jsr:@fresh/core@^2.3.3",
       "jsr:@fresh/plugin-vite@^1.1.2",
       "jsr:@std/assert@1",

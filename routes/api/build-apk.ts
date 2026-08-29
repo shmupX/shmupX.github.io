@@ -1,5 +1,6 @@
 import { define } from "../../utils.ts";
 import { crossSiteGuard } from "../../lib/local-guards.ts";
+import { buildPs2 } from "../../lib/ps2/build.ts";
 import { dirname, fromFileUrl, join } from "jsr:@std/path@^1.1.2";
 
 // POST /api/build-apk — export a custom Firebase "Game" to an installable app.
@@ -9,6 +10,9 @@ import { dirname, fromFileUrl, join } from "jsr:@std/path@^1.1.2";
 // checkout and no CMG_ES7_REPO env var any more. The level editor
 // (static/editor/index.html) POSTs here; we spawn `node tools/build-level`,
 // wait for it, and return the artifact path(s) + a log tail.
+//
+// PS2 is the exception: that target has no Node half at all. It is pure Deno
+// (lib/ps2), so it runs in-process here — see the "ps2" branch below.
 //
 // LOCAL-ONLY: it spawns a subprocess and writes to disk, so it is refused on the
 // read-only Deno Deploy origin. It runs under `deno task dev` and inside the
@@ -23,6 +27,8 @@ const PLATFORMS = new Set([
   "ios",
   "linux",
   "windows",
+  // Built in-process by lib/ps2 rather than by tools/build-level.
+  "ps2",
   // Whichever desktop app this host can build natively — resolved below rather
   // than passed through, so findArtifacts knows which extension to look for.
   "desktop",
@@ -76,6 +82,25 @@ async function findRuntimeRoot(): Promise<string | null> {
   let dir = dirname(fromFileUrl(import.meta.url));
   for (let i = 0; i < 6; i++) {
     if (await pathExists(join(dir, "tools", "build-level", "index.js"))) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+// The PS2 target needs a different marker: it has no Node half, and it has to
+// hand `deno bundle` a real path to lib/ps2/runtime-entry.ts, so what it looks
+// for is the source checkout itself rather than the staged export tool.
+async function findPs2Root(): Promise<string | null> {
+  let dir = dirname(fromFileUrl(import.meta.url));
+  for (let i = 0; i < 6; i++) {
+    if (
+      await pathExists(join(dir, "lib", "ps2", "runtime-entry.ts")) &&
+      await pathExists(join(dir, "static", "games", "2028-ai", "foo.json"))
+    ) {
       return dir;
     }
     const parent = dirname(dir);
@@ -151,6 +176,8 @@ async function findArtifacts(
     ? ".exe"
     : platform === "ios"
     ? ".ipa"
+    : platform === "ps2"
+    ? ".iso"
     : ".apk";
   const out: string[] = [];
   try {
@@ -210,6 +237,53 @@ export const handler = define.handlers({
     // artifact lookup (and the platform echoed back to the editor) honest.
     if (platform === "desktop") {
       platform = Deno.build.os === "windows" ? "windows" : "linux";
+    }
+
+    // PS2: no subprocess and no toolchain to install — lib/ps2 does the whole
+    // job in this process. It does shell out to `deno bundle` once to compile
+    // the game for AthenaEnv's QuickJS, which needs the repository on disk, so
+    // the packaged desktop app (whose modules live in a read-only VFS) is told
+    // to use a source checkout rather than failing halfway through a build.
+    if (platform === "ps2") {
+      if (isCompiledBinary()) {
+        return Response.json({
+          ok: false,
+          error: "PS2 export needs a source checkout (`deno task dev`) — the " +
+            "packaged app cannot run the bundler against its embedded copy.",
+        }, { status: 500 });
+      }
+      const root = await findPs2Root();
+      if (!root) {
+        return Response.json({
+          ok: false,
+          error: "Could not locate the source checkout the PS2 build needs " +
+            "(lib/ps2 + static/games/2028-ai).",
+        }, { status: 500 });
+      }
+      const lines: string[] = [];
+      try {
+        const built = await buildPs2({
+          root,
+          levelName: level,
+          log: (message) => lines.push(message),
+        });
+        return Response.json({
+          ok: true,
+          level,
+          platform,
+          slug: slugFor(level),
+          artifacts: built.isoPath
+            ? [built.isoPath, built.appDir]
+            : [built.appDir],
+          log: lines.join("\n"),
+        });
+      } catch (e) {
+        return Response.json({
+          ok: false,
+          error: `PS2 export failed: ${(e as Error).message}`,
+          log: lines.join("\n"),
+        }, { status: 500 });
+      }
     }
 
     // In a source checkout this is a real dir; in the packaged desktop binary
