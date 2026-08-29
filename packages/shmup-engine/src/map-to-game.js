@@ -624,6 +624,22 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             mainWeapon2P: decoded.settings.loadouts
                 ? decoded.settings.loadouts[decoded.settings.ships[1].startLoadout].main
                 : undefined,
+            // The four WEAPON LOADOUT presets in full — main, sub/option,
+            // charge and bomb per preset — plus which one each ship starts on.
+            // Weapon-change items (types 0-3) switch between them mid-game, so
+            // the runtime needs all four, not just the starting set.
+            loadouts: decoded.settings.loadouts
+                ? decoded.settings.loadouts.map((l) => ({
+                    main: l.main,
+                    sub: l.sub,
+                    charge: l.charge,
+                    bomb: l.bomb,
+                    bombVariant: l.bombVariant,
+                }))
+                : undefined,
+            startLoadout: decoded.settings.ships
+                ? decoded.settings.ships.map((sh) => sh.startLoadout)
+                : undefined,
             shotDamage,
             sfxSet: decoded.settings.sfxSet,
         };
@@ -672,8 +688,11 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
     }
     if (decoded.settings && (decoded.settings.gameMode & 1)) {
         warnings.push(
-            "this is a HORIZONTAL-scroll save (game mode bit 0) — the runtime still " +
-            "plays it as a vertical scroller, so its stages will read sideways"
+            "this is a HORIZONTAL-scroll save (game mode bit 0) — the world plays " +
+            "correctly (the engine's horizontal mode is the same simulation drawn " +
+            "transposed, and the runtime applies its scroll rate, entry margin and " +
+            "trigger lines), but the art is authored for a landscape screen, so turn " +
+            "your device to read it the right way up"
         );
     }
     if (!savedSprites && !decodedEnemies.length && !decodedStages.length) {
