@@ -16,7 +16,7 @@
     "./diff-ranges": "./src/diff-ranges.js"
   },
   "fmt": {
-    "exclude": ["src/**", "FORMAT.md", "games-db.json"]
+    "exclude": ["src/**", "FORMAT.md", "games-db.json", "data/*.json"]
   },
   "lint": {
     "exclude": ["src/**"]

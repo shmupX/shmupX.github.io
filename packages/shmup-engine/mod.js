@@ -64,7 +64,11 @@ export {
 export { decodeSave } from "./src/decode/index.js";
 
 // --- sec7 3D models (src/decode/decode-model.js) ---
-export { decodeModels, MODEL_SLOTS, SEC7_MAGIC } from "./src/decode/decode-model.js";
+export {
+  decodeModels,
+  MODEL_SLOTS,
+  SEC7_MAGIC,
+} from "./src/decode/decode-model.js";
 
 // --- Atlas packing (src/atlas-pack.js) ---
 export { packShelf } from "./src/atlas-pack.js";

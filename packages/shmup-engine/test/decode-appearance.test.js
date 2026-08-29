@@ -34,7 +34,9 @@ Deno.test("the appearance table covers all 256 ids with well-formed rows", () =>
     assert(script.length > 0, `id ${id} has rows`);
     for (const row of script) {
       assertStrictEquals(row.length, 5, `id ${id} row width`);
-      for (const v of row) assert(Number.isInteger(v) && v >= -32768 && v <= 65535);
+      for (const v of row) {
+        assert(Number.isInteger(v) && v >= -32768 && v <= 65535);
+      }
       rows++;
     }
   }
@@ -67,14 +69,24 @@ Deno.test("velocity-suppress flags are rare, which is what makes the scripts mov
       }
     }
   }
-  assert(reach <= 24, `only a handful of scripts suppress a component, got ${reach}`);
+  assert(
+    reach <= 24,
+    `only a handful of scripts suppress a component, got ${reach}`,
+  );
   // and a third of the table carries a real drift amplitude
-  const moving = APPEARANCE_SCRIPTS.filter((rows) => rows.some((r) => (r[3] & 0x7fff) > 0));
-  assert(moving.length > 80, `most scripts carry an amplitude, got ${moving.length}`);
+  const moving = APPEARANCE_SCRIPTS.filter((rows) =>
+    rows.some((r) => (r[3] & 0x7fff) > 0)
+  );
+  assert(
+    moving.length > 80,
+    `most scripts carry an amplitude, got ${moving.length}`,
+  );
 });
 
 Deno.test("the rides-scroll bit survives into the compact table", () => {
-  const riding = APPEARANCE_SCRIPTS.flat().filter((r) => (r[3] & RIDES_SCROLL) !== 0);
+  const riding = APPEARANCE_SCRIPTS.flat().filter((r) =>
+    (r[3] & RIDES_SCROLL) !== 0
+  );
   assertStrictEquals(riding.length, 40);
 });
 
@@ -85,8 +97,13 @@ Deno.test({
     const { mapSaveToGame } = await import("../src/map-to-game.js");
     const d = await decodedFixture("ramsie.sav");
     const { gameJson } = mapSaveToGame(d);
-    const recs = Object.values(gameJson.enemyData).filter((r) => r.dezaemon && r.dezaemon.entry);
-    assert(recs.length > 100, `most enemies carry an entry, got ${recs.length}`);
+    const recs = Object.values(gameJson.enemyData).filter((r) =>
+      r.dezaemon && r.dezaemon.entry
+    );
+    assert(
+      recs.length > 100,
+      `most enemies carry an entry, got ${recs.length}`,
+    );
     for (const r of recs) {
       const e = r.dezaemon.entry;
       if (e.rows) {
@@ -112,9 +129,16 @@ Deno.test({
       assert(BOSS_ARRIVE_LATERAL.includes(a.lateral));
       assertStrictEquals(typeof a.defaultEntry, "boolean");
       // with no scroll preset the boss starts above the screen and rides in
-      if (a.defaultEntry) assert(a.scroll < 0, `default entry starts off-screen, got ${a.scroll}`);
+      if (a.defaultEntry) {
+        assert(
+          a.scroll < 0,
+          `default entry starts off-screen, got ${a.scroll}`,
+        );
+      }
       const x = b.behavior.dying;
-      if (x.lateral !== null) assert(BOSS_ARRIVE_LATERAL.includes(x.lateral) || x.lateral === 336);
+      if (x.lateral !== null) {
+        assert(BOSS_ARRIVE_LATERAL.includes(x.lateral) || x.lateral === 336);
+      }
     }
     // Stage 1's boss (b6 = 0x31) zooms in from just above the screen at the
     // park's lateral centre, and (b7 = 0x33) drifts off the bottom as it

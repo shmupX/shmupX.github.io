@@ -30,7 +30,12 @@ Deno.test({
     assertStrictEquals(d.settings.ships[0].maxPower, 4);
     assertStrictEquals(d.settings.mainWeapon, 1);
     assertEquals(d.settings.loadouts[0], {
-      main: 1, sub: 2, charge: 1, bomb: 5, bombVariant: true, raw: [0x21, 0xd1],
+      main: 1,
+      sub: 2,
+      charge: 1,
+      bomb: 5,
+      bombVariant: true,
+      raw: [0x21, 0xd1],
     });
     assertStrictEquals(d.settings.gameMode, 2);
     assertStrictEquals(d.settings.sfxSet, 3); // SF bank
@@ -63,7 +68,10 @@ Deno.test({
     const d = await decodedFixture("ramsie.sav");
     for (const slot of d.settings.itemSlots) {
       assert(slot.type >= 0 && slot.type <= 8, `type ${slot.type}`);
-      assert(slot.movement >= 0 && slot.movement <= 2, `movement ${slot.movement}`);
+      assert(
+        slot.movement >= 0 && slot.movement <= 2,
+        `movement ${slot.movement}`,
+      );
     }
     assert(d.settings.scoreItemValue >= 5000);
   },
