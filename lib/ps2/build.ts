@@ -330,7 +330,9 @@ export async function buildPs2(
   const encoder = new TextEncoder();
   const payload: StagedFile[] = [
     { path: "SYSTEM.CNF", data: encoder.encode(SYSTEM_CNF) },
-    { path: "athena.elf", data: athena.bytes },
+    // Upper case, matching SYSTEM.CNF's BOOT2 exactly. Names keep their case
+    // on the disc now, so this one is not folded for us any more.
+    { path: "ATHENA.ELF", data: athena.bytes },
     { path: "athena.ini", data: encoder.encode(athenaIni(hasAudio)) },
     { path: "main.js", data: mainJs },
     ...staged.files,
@@ -383,8 +385,9 @@ function readme(
     `${app}/`,
     "    The AthenaEnv build. Copy the whole folder to a USB stick (or a",
     "    memory card, or an internal HDD partition) and launch",
-    `    ${app}/athena.elf from wLaunchELF, OPL or FMCB. athena.elf is the`,
-    "    interpreter; main.js is the game; assets/ is this level.",
+    `    ${app}/ATHENA.ELF from wLaunchELF, OPL or FMCB. ATHENA.ELF is the`,
+    "    interpreter; main.js is the game; assets/ is this level. It is",
+    "    upper case because SYSTEM.CNF's BOOT2 has to name it exactly.",
     "",
     "    Launch it from one of those. AthenaEnv finds its own boot path by",
     "    special-casing cdrom0:, mass: and hdd0:, so under an emulator the",

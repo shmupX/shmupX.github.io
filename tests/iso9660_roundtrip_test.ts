@@ -49,9 +49,12 @@ Deno.test("a written disc opens as 2048-byte cooked sectors", () => {
   assertEquals(d.dataOffset, 0);
 });
 
-Deno.test("the root directory lists what was staged", () => {
+Deno.test("the root directory lists what was staged, in its own case", () => {
+  // Case is preserved rather than folded to upper: the runtime opens
+  // `assets/game_ui.png`, so that is the name that has to be on the disc. A
+  // working AthenaEnv disc keeps its lowercase names the same way.
   const names = listFiles(disc()).map((e) => e.name).sort();
-  assertEquals(names, ["ASSETS", "MAIN.JS;1", "SYSTEM.CNF;1"]);
+  assertEquals(names, ["SYSTEM.CNF;1", "assets", "main.js;1"]);
 });
 
 Deno.test("nested paths resolve past the mangled directory names", () => {
@@ -59,7 +62,7 @@ Deno.test("nested paths resolve past the mangled directory names", () => {
   const dir = findEntry(d, "assets/sounds/tonebank");
   assert(dir?.isDir, "assets/sounds/tonebank is not a directory");
   const names = listFiles(d, dir).map((e) => e.name).sort();
-  assertEquals(names, ["TB00.ADP;1", "TONEBANK.JSON;1"]);
+  assertEquals(names, ["tb00.adp;1", "tonebank.json;1"]);
 });
 
 Deno.test("file contents survive the round trip byte for byte", () => {
@@ -103,4 +106,27 @@ Deno.test("MODE1/2352 raw sectors are detected", () => {
   assertEquals(d.sectorSize, 2352);
   assertEquals(d.dataOffset, 16);
   assertEquals(new TextDecoder().decode(readFile(d, "hello.txt")!), "hi");
+});
+
+Deno.test("the volume does not declare itself expired", () => {
+  // ECMA-119 8.4.28: sixteen ASCII zeros mean "no expiration". A real date
+  // means the volume is obsolete after it — and this wrote the Unix epoch,
+  // stamping every disc as having expired in 1970. genisoimage leaves the
+  // field unspecified, and so does a PS2 disc that boots.
+  const iso = buildIso({
+    volumeId: "TESTDISC",
+    files: [{ path: "SYSTEM.CNF", data: encoder.encode("BOOT2 = x\n") }],
+    date: new Date("2000-03-04T00:00:00Z"),
+  });
+  const pvd = iso.subarray(16 * 2048, 17 * 2048);
+  assertEquals(
+    new TextDecoder().decode(pvd.subarray(847, 863)),
+    "0000000000000000",
+  );
+  assertEquals(pvd[863], 0, "the offset byte after an unset date is zero");
+  // The dates that ARE specified still are.
+  assertEquals(
+    new TextDecoder().decode(pvd.subarray(813, 829)),
+    "2000030400000000",
+  );
 });

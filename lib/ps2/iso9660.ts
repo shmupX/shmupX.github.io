@@ -25,17 +25,28 @@ export interface IsoOptions {
   date?: Date;
 }
 
-// ISO 9660 d-characters, plus the '.' and ';' the name grammar adds. Anything
-// else is folded to '_' rather than dropped, so two different source names
-// cannot silently collapse onto one another.
+// ISO 9660 d-characters, plus the '.' and ';' the name grammar adds, and
+// lowercase. Anything else is folded to '_' rather than dropped, so two
+// different source names cannot silently collapse onto one another.
 //
 // Level 2 names (up to 30 characters, one dot, a ';1' version suffix) rather
 // than 8.3: `game_asset.json` has to survive intact, since that is the name
 // the game asks cdfs for.
+//
+// CASE IS PRESERVED, which strict ECMA-119 does not allow — d-characters are
+// upper case only. It is preserved because the name the game asks cdfs for is
+// the one that has to be on the disc: the runtime opens `assets/game_ui.png`,
+// and an image storing `ASSETS/GAME_UI.PNG` only works if the console's
+// filesystem happens to fold case. A working AthenaEnv disc built by
+// genisoimage keeps its `assets`, `main.js` and `athena.ini` lowercase in the
+// primary descriptor, so this follows it. The boot executable stays upper
+// case, as it is on that disc, because SYSTEM.CNF's BOOT2 has to name it
+// exactly and that is the one lookup the BIOS makes before anything of ours
+// is running.
 const MAX_IDENTIFIER = 30;
 
 function mangle(name: string, isDirectory: boolean): string {
-  const clean = name.toUpperCase().replace(/[^A-Z0-9_.]/g, "_");
+  const clean = name.replace(/[^A-Za-z0-9_.]/g, "_");
   if (isDirectory) {
     return clean.replace(/\./g, "_").slice(0, MAX_IDENTIFIER) || "_";
   }
@@ -81,7 +92,19 @@ function recordingDate(bytes: Uint8Array, at: number, date: Date): void {
 }
 
 // The 17-byte "digits" form used inside the volume descriptor.
-function volumeDate(bytes: Uint8Array, at: number, date: Date): void {
+//
+// `null` writes the ECMA-119 "not specified" value — sixteen ASCII zeros, not
+// a zero date. The distinction matters for the expiration field at offset 847:
+// all-zeros means the volume never expires, while a real date means it is
+// obsolete after that instant. Writing the Unix epoch there, as this did,
+// stamps every disc as having expired on 1970-01-01, which a conforming reader
+// is entitled to refuse. A disc that genisoimage builds leaves it unspecified.
+function volumeDate(bytes: Uint8Array, at: number, date: Date | null): void {
+  if (date === null) {
+    for (let i = 0; i < 16; i++) bytes[at + i] = 0x30; // '0'
+    bytes[at + 16] = 0;
+    return;
+  }
   const pad = (value: number, width: number) =>
     String(value).padStart(width, "0");
   const text = pad(date.getUTCFullYear(), 4) + pad(date.getUTCMonth() + 1, 2) +
@@ -296,7 +319,7 @@ export function buildIso(options: IsoOptions): Uint8Array {
   ascii(pvd, 776, "", 37);
   volumeDate(pvd, 813, date);
   volumeDate(pvd, 830, date);
-  volumeDate(pvd, 847, new Date(0));
+  volumeDate(pvd, 847, null); // never expires
   volumeDate(pvd, 864, date);
   pvd[881] = 1; // file structure version
 
