@@ -359,7 +359,9 @@
     text-shadow: 0 0 8px var(--green-glow, #7CFF4F); pointer-events: none;
   }
   .cf-fav {
-    position: absolute; right: 5%; top: 3.5%;
+    /* Diagonally opposite the ▶ chip, so a card with a video wears one
+       affordance per bottom corner instead of stacking them on one edge. */
+    position: absolute; left: 5%; bottom: 3.5%;
     width: 22%; aspect-ratio: 1; display: grid; place-items: center;
     border-radius: 50%; background: rgba(0, 0, 0, .55);
     border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
