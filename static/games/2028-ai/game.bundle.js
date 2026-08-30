@@ -1437,11 +1437,15 @@
   function isExportedLevelApp() {
     return typeof window !== "undefined" && !!window.__EXPORTED_LEVEL_APP__;
   }
-  // A loaded level that came from a Dezaemon .sav import — the recipe always
-  // carries at least one dezaemon* record or per-enemy dezaemon block.
+  // A loaded level that came from a Dezaemon .sav import. map-to-game stamps
+  // meta.source on every mapped save, so that alone settles it — the dezaemon*
+  // records below are the fallback for a recipe old enough (or hand-edited
+  // enough) to have lost the stamp, since a save that carries none of them at
+  // all would otherwise be taken for a stock level and shown the tweet button.
   function isImportedLevel() {
     var r = gameState._phaserRecipe;
     if (!r) return false;
+    if (r.meta && (r.meta.source === "dezaemon2" || r.meta.dezaemonSettings)) return true;
     if (r.dezaemonBgm || r.dezaemonTitle || r.dezaemonBullets || r.dezaemonItems || r.dezaemonCredits) return true;
     var ed = r.enemyData;
     if (ed) {
@@ -1450,6 +1454,15 @@
       }
     }
     return false;
+  }
+  // A Dezaemon cart has no CONTINUE? prompt: losing the last ship is GAME OVER
+  // and the cart goes back to its own title. So an imported save skips the
+  // prompt (the scene still shows GAME OVER, the score and GO TO TITLE) unless
+  // the launcher's Cheats → Allow Continues asks for it with ?continues=1.
+  // 2028.Ai itself is unchanged — free play, continues on.
+  function continuesAllowed() {
+    if (!isImportedLevel()) return true;
+    return readBooleanSearchParam("continues", false);
   }
   function scoreCountsAsRecord(state = gameState) {
     return !state.godFlg || isExportedLevelApp();
@@ -2810,7 +2823,9 @@
       if (dezaCredits) {
         this.wakingG.setVisible(false);
         this._addDezaCredits(dezaCredits);
-      } else if (recipe && recipe.dezaemonTitle) {
+      } else if (isImportedLevel()) {
+        // No credits to show, but this is somebody else's cart — an empty card
+        // beats crediting them with 2028.Ai's staff and their Twitter handles.
         this.wakingG.setVisible(false);
       } else {
         this.namePanel = scene.add.sprite(15, 90, "game_ui", "staffrollName.gif");
@@ -3162,7 +3177,7 @@
   // frame) the same pause rides a gray PAUSE panel — the STAFF ROLL card's
   // look — with the two sliders, opened by ESC, START during play, or the
   // launcher's two-corner tap gesture.
-  var cmgVol = { bgm: 1, sfx: 0.33 };
+  var cmgVol = { bgm: 1, sfx: 0.13 };
   (function () {
     function pct(key, dflt) {
       try {
@@ -3173,7 +3188,7 @@
       }
     }
     cmgVol.bgm = pct("cmg-vol-bgm", 1);
-    cmgVol.sfx = pct("cmg-vol-sfx", 0.33);
+    cmgVol.sfx = pct("cmg-vol-sfx", 0.13);
   })();
   function cmgBgmVol(v) {
     return v * cmgVol.bgm;
@@ -6016,7 +6031,7 @@
         this.twitterBtn.setVisible(false);
         this.twitterBtn.disableInteractive();
       }
-      if (this.dezaTitle && !dezaStaffCredits(recipe)) {
+      if ((this.dezaTitle || isImportedLevel()) && !dezaStaffCredits(recipe)) {
         this.staffrollBtn.setVisible(false);
         this.staffrollBtn.disableInteractive();
       }
@@ -6143,7 +6158,7 @@
       if (this.staffRollPanel && this.staffRollPanel.active) {
         return;
       }
-      if (this.dezaTitle && !dezaStaffCredits(gameState._phaserRecipe)) {
+      if ((this.dezaTitle || isImportedLevel()) && !dezaStaffCredits(gameState._phaserRecipe)) {
         return;
       }
       this.staffRollPanel = new StaffRollPanel(this);
@@ -12124,9 +12139,14 @@
       this.sceneSwitch = 0;
       this.countDown = 9;
       this.countActive = true;
+      // Without continues this scene is only its second half — GAME OVER, the
+      // score and GO TO TITLE. The CONTINUE? banner still lays the card out
+      // (every row below measures against it), it just isn't drawn.
+      this.allowContinue = continuesAllowed();
       this.add.rectangle(GCX7, GCY4, GW14, GH12, 0);
       this.continueTitle = this.add.sprite(0, 70, "game_ui", "continueTitle.gif");
       this.continueTitle.setOrigin(0, 0);
+      if (!this.allowContinue) this.continueTitle.setVisible(false);
       if (!this.anims.exists("continue_face_idle")) {
         this.anims.create({
           key: "continue_face_idle",
@@ -12143,6 +12163,12 @@
       this.loseFace = this.add.sprite(20, this.continueTitle.y + this.continueTitle.height + 38, "game_ui", "continueFace0.gif");
       this.loseFace.setOrigin(0, 0);
       this.loseFace.play("continue_face_idle");
+      // G belongs to 2028.Ai, not to somebody's Dezaemon cart: an imported save
+      // idles its own ship in his place. His sprite stays (hidden) because the
+      // whole card is laid out against that box, and selectYes/selectNo still
+      // swap its frames.
+      this.shipFace = isImportedLevel() ? this._addShipFace(this.loseFace) : null;
+      if (this.shipFace) this.loseFace.setVisible(false);
       this.cntTextBg = this.add.sprite(
         this.loseFace.x + this.loseFace.width + 20,
         this.continueTitle.y + this.continueTitle.height + 30,
@@ -12158,6 +12184,10 @@
       );
       this.cntText.setOrigin(0, 0);
       this.cntText.setAlpha(0);
+      if (!this.allowContinue) {
+        this.cntTextBg.setVisible(false);
+        this.cntText.setVisible(false);
+      }
       var self = this;
       this.yesBtn = this.add.sprite(0, 0, "game_ui", "continueYes.gif");
       this.yesBtn.setOrigin(0, 0);
@@ -12196,6 +12226,12 @@
         this.enterKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
       } catch (e) {
       }
+      if (!this.allowContinue) {
+        // Straight to GAME OVER — no prompt, no nine-second clock, no
+        // bgm_continue over the top of it.
+        this.selectNo();
+        return;
+      }
       this.playBgm("bgm_continue", 0.25);
       this.countdownTimer = this.time.addEvent({
         delay: 1200,
@@ -12204,6 +12240,45 @@
         callback: this.onCountDown,
         callbackScope: this
       });
+    }
+    // The save's own ship, idling, sized to fill the portrait box G left. Null
+    // when the recipe names frames this atlas does not have — G stays up rather
+    // than leaving a hole.
+    _addShipFace(box) {
+      var recipe = gameState._phaserRecipe;
+      var pd = recipe && recipe.playerData;
+      var wanted = pd && Array.isArray(pd.texture) ? pd.texture : [];
+      var atlas = this.textures.get("game_asset");
+      var frames = [];
+      for (var i = 0; i < wanted.length; i++) {
+        if (atlas && atlas.has(wanted[i])) frames.push(wanted[i]);
+      }
+      if (!frames.length) return null;
+      var ship = this.add.sprite(
+        box.x + box.width / 2,
+        box.y + box.height / 2,
+        "game_asset",
+        frames[0]
+      );
+      ship.setOrigin(0.5);
+      var fit = Math.min(box.width / ship.width, box.height / ship.height);
+      // Whole-pixel scaling only: this is a pixel-art ship blown up ~3x from a
+      // 32px sprite, and a fractional factor shimmers.
+      ship.setScale(Math.max(1, Math.floor(fit)));
+      if (frames.length > 1) {
+        var key = "continue_ship_idle";
+        if (this.anims.exists(key)) this.anims.remove(key);
+        this.anims.create({
+          key: key,
+          frames: frames.map(function(f) {
+            return { key: "game_asset", frame: f };
+          }),
+          frameRate: 6,
+          repeat: -1
+        });
+        ship.play(key);
+      }
+      return ship;
     }
     setupContinueButton(button, framePrefix, onPress) {
       button.setInteractive({ useHandCursor: true });
@@ -12458,7 +12533,11 @@
               gameState.player2ShootSpeed = recipe.playerData.defaultShootSpeed;
               gameState.player2Spgage = 0;
             }
-            gameState.stageId = 0;
+            // 2028.Ai's continue restarts the run from stage 0. An imported
+            // save resumes on the stage that killed you — a Dezaemon cart is
+            // somebody's ten-stage game, and sending them back to the start is
+            // a punishment its author never wrote.
+            if (!isImportedLevel()) gameState.stageId = 0;
             gameState.continueCnt = Number(gameState.continueCnt || 0) + 1;
             gameState.score = gameState.continueCnt;
             nextScene = "PhaserGameScene";
@@ -13522,6 +13601,31 @@
     gameState.akebonoCnt = 0;
     gameState.shortFlg = false;
   }
+  // cmg: cheat-availability broadcast (hand-patched, like the volume/pause
+  // runtime above). The launcher's Guide turns this into its Cheats submenu.
+  // It is sent once the level has resolved rather than from the page's <head>,
+  // because what this game offers depends on which level it is running: an
+  // imported Dezaemon save has its own stage count, has no Akuma to summon, and
+  // wants no continue screen unless the player asks for one. Standalone — no
+  // parent frame — it is a no-op.
+  function cmgBroadcastCheats(recipe) {
+    if (typeof window === "undefined" || window.parent === window) return;
+    var cheats = [
+      { param: "bossRush", kind: "toggle", label: "Boss Rush", on: "1" }
+    ];
+    if (isImportedLevel()) {
+      cheats.push({ param: "stage", kind: "slider", label: "Start Stage", min: 0, max: lastStageId(recipe) });
+      cheats.push({ param: "finalBoss", kind: "toggle", label: "Final Boss", on: "1" });
+      cheats.push({ param: "continues", kind: "toggle", label: "Allow Continues", on: "1" });
+    } else {
+      cheats.push({ param: "stage", kind: "slider", label: "Start Stage", min: 0, max: 4 });
+      cheats.push({ param: "boss", kind: "toggle", label: "Akuma Boss", on: "goki" });
+    }
+    try {
+      window.parent.postMessage({ type: "cmg-cheats", cheats: cheats }, "*");
+    } catch (e) {
+    }
+  }
   var PluginBootScene = class extends BootScene {
     preload() {
       this.load.setBaseURL(ASSET_BASE);
@@ -13546,6 +13650,13 @@
               if (p.get("stage") == null) stageId = 3;
               bossRush = true;
             }
+            // Cheats → Final Boss: whatever this cart's last stage happens to
+            // be, opened at its boss. The Akuma cheat above is 2028.Ai's own
+            // fixed stage-3 fight and stays as it is.
+            if (p.get("finalBoss") === "1") {
+              stageId = lastStageId(recipe);
+              bossRush = true;
+            }
           } catch (_e) {
           }
           primeGameStateForStage2(recipe, stageId);
@@ -13555,6 +13666,7 @@
         if (result.bgmSourceURLs) {
           gameState.bgmSourceURLs = result.bgmSourceURLs;
         }
+        cmgBroadcastCheats(gameState._phaserRecipe);
         return initSceneScripts({ recipe: gameState._phaserRecipe }).then(() => {
           let nextScene = result.showTitle ? "PhaserTitleScene" : "PhaserGameScene";
           if (nextScene === "PhaserGameScene") {

@@ -41,8 +41,8 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
 - `static/games/2028-ai/` — the editor's base game + play runtime (the Phaser 4
   engine that runs editor-authored levels). `game.bundle.js` here is a vendored
   prebuilt artifact — this repo has no build step for it (the sources live in
-  the 2019-es7 checkout), so it carries two edits by hand that a rebuild would
-  silently drop:
+  the 2019-es7 checkout), so it carries a handful of edits by hand that a
+  rebuild would silently drop:
   - `LEVEL_DATA_URL` fetches `foo.json` same-origin instead of from cmg's deploy
     origin. `tools/build-level/lib/stage.js` matches that exact string when it
     stages an offline export, so the two must change together.
@@ -58,6 +58,11 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
     and must pause the game itself; routing through this one closure keeps a
     single `cmgPaused` flag and the per-`Sound` bookkeeping. The plugin falls
     back to its own `loop.sleep()` if the line goes missing.
+  - `cmgBroadcastCheats` posts the Guide's Cheats submenu to the launcher once
+    the level has resolved, because the set depends on which level is running —
+    see **A Dezaemon save is not 2028.Ai** below. `routes/games/2028-ai.tsx`
+    used to send a fixed list from its `<head>` and no longer does.
+  - The Dezaemon divergences below, all of them keyed off `isImportedLevel()`.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
 - `spacetimedb/` — the online-2P module (see **Two players** below), published
@@ -147,6 +152,32 @@ Then open the game with
 Shipping it means `spacetime login` and `deno task netplay:publish`.
 
 Requires Deno canary (`deno upgrade canary`).
+
+## A Dezaemon save is not 2028.Ai
+
+The runtime plays two quite different things: 2028.Ai itself — a Capcom April
+Fool's joke with its own staff, its own top-hatted G and its own tweet buttons —
+and 258 carts other people wrote on a Saturn in 1997. `isImportedLevel()` in
+`game.bundle.js` tells them apart (`meta.source === "dezaemon2"`, stamped by
+`map-to-game.js`, with the `dezaemon*` records as a fallback), and everything
+that is 2028.Ai's rather than the game's is keyed off it:
+
+- **No tweet button, anywhere** — title, game over, ending. The staff roll is
+  the cart's own credits from the community table; where there are none the card
+  is empty rather than crediting the cart to 2028.Ai's staff and linking their
+  Twitter accounts.
+- **No CONTINUE?** A Dezaemon cart has no continue prompt — losing the last ship
+  is GAME OVER and the cart returns to its title, so an imported save goes
+  straight to the game-over half of `PhaserContinueScene` (score, high score, GO
+  TO TITLE) and never sees the nine-second countdown. Cheats → **Allow
+  Continues** (`?continues=1`) puts the prompt back, and a continue there
+  resumes on the stage that killed you rather than restarting the run.
+- **G is replaced by the ship.** When the prompt is on, the save's own player
+  sprite idles in the portrait box G would have filled.
+- **Its own cheats.** The Guide's Cheats submenu is broadcast per level: Boss
+  Rush, a Start Stage slider bounded by the cart's real stage count, **Final
+  Boss** (`?finalBoss=1` — the cart's last stage, opened at its boss) and Allow
+  Continues. 2028.Ai keeps its own set, Akuma (`?boss=goki`) included.
 
 ## Desktop app
 

@@ -91,22 +91,12 @@ const LEVEL_EDITOR_BROADCAST = `
 })();
 `;
 
-// Cheat-availability broadcast. Advertises this game's boot-time URL-param
-// cheats (bossRush, stage, and the ?boss=goki Akuma cheat) to the parent
-// launcher over the cmg-cheats opt-in pattern, so its Guide OSD surfaces a
-// Cheats submenu when this game runs inside cmg. The Xbox-360-blade embedded
-// OSD that used to render these in-page was extracted into the launcher's
-// XBOX 360 dashboard theme (Settings → Theme).
-const CHEATS_BROADCAST = `
-(function () {
-  if (window.parent === window) return; // standalone — no launcher to notify
-  try { window.parent.postMessage({ type: "cmg-cheats", cheats: [
-    { param: "bossRush", kind: "toggle", label: "Boss Rush", on: "1" },
-    { param: "stage", kind: "slider", label: "Start Stage", min: 0, max: 4 },
-    { param: "boss", kind: "toggle", label: "Akuma Boss", on: "goki" }
-  ] }, "*"); } catch (_) {}
-})();
-`;
+// Cheat-availability broadcast: see `cmgBroadcastCheats` in game.bundle.js. It
+// used to be a static list in this head, but which boot-time cheats this page
+// offers depends on the level it ends up running — an imported Dezaemon save
+// has its own stage count and no Akuma — so the bundle sends it once the level
+// has resolved instead. (The Xbox-360-blade embedded OSD that used to render
+// these in-page was extracted into the launcher's XBOX 360 dashboard theme.)
 
 // A font declared only in @font-face never loads for canvas text (canvas
 // drawing doesn't count as CSS usage), so start the fetch explicitly. Any
@@ -394,9 +384,6 @@ export default define.page(function Game2028() {
       }
       <script src="/phaser-plugins/netplay-lobby.js" type="module" defer>
       </script>
-
-      {/* Advertise boot-time cheats to the cmg launcher's Guide OSD. */}
-      <script dangerouslySetInnerHTML={{ __html: CHEATS_BROADCAST }} />
     </>
   );
 });

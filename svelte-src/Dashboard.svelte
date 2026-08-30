@@ -4,10 +4,9 @@
   import SavPicker from './SavPicker.svelte';
 
   const MAIN_MENU = [
-    { id: 'memory',   label: 'Memory',   tag: '01 / sys.core', num: '0x01' },
-    { id: 'games',    label: 'Games',    tag: '02 / disc.io',  num: '0x02' },
-    { id: 'settings', label: 'Settings', tag: '03 / config',   num: '0x03' },
-    { id: 'desktop',  label: 'Desktop',  tag: '04 / wkstn.ui', num: '0x04' },
+    { id: 'games',    label: 'Games',    tag: '01 / disc.io',  num: '0x01' },
+    { id: 'settings', label: 'Settings', tag: '02 / config',   num: '0x02' },
+    { id: 'desktop',  label: 'Desktop',  tag: '03 / wkstn.ui', num: '0x03' },
   ];
 
   // Baked-in fallback snapshot of the game list — the offline / pre-manifest
@@ -28,7 +27,7 @@
   let manifestOrigin = $state('');
 
   let screen = $state('dashboard'); // 'dashboard' | 'games' | 'settings' | 'emulators'
-  let menuSel = $state(1);           // start on Games
+  let menuSel = $state(0);           // start on Games
   let gameSel = $state(0);
   let clockStr = $state('--:--:--');
   // Same clock without the seconds, for the cramped strip header. Set in the
@@ -38,7 +37,6 @@
   let gameSrc = $state(null);
   let gameOn = $state(false);
   let bootGone = $state(false);
-  let menuEls = $state([]);
   let gameRowEls = $state([]);
   let gameListEl = $state(null);
 
@@ -502,7 +500,8 @@
   // under the same keys the 2028-ai runtime reads at boot (same origin), and
   // posted live into the running frame as 0..1 factors over cmg-volume — so
   // launcher-hosted and standalone play stay in sync. Defaults: BGM full,
-  // SFX at a third (the effects are tuned loud relative to the music).
+  // SFX at an eighth (the effects are tuned loud relative to the music, and a
+  // Dezaemon save's chiptune-voiced hits are louder still).
   const VOL_BGM_KEY = 'cmg-vol-bgm';
   const VOL_SFX_KEY = 'cmg-vol-sfx';
   function loadVolPct(key, dflt) {
@@ -514,7 +513,7 @@
     } catch (_) { return dflt; }
   }
   let volBgm = $state(loadVolPct(VOL_BGM_KEY, 100));
-  let volSfx = $state(loadVolPct(VOL_SFX_KEY, 33));
+  let volSfx = $state(loadVolPct(VOL_SFX_KEY, 13));
   // targetOrigin '*' for the same reason as setPlugin: the payload is benign
   // numbers and a volume-capable game could load cross-origin.
   function postVolume() {
@@ -629,11 +628,21 @@
     const relative = target.origin === window.location.origin;
     gameSrc = relative ? target.pathname + target.search + target.hash : target.href;
   }
-  // Parse gameSrc (absolute https://… for external games, root-relative /…/ for
+  // Which URL a cheat applies to. A frame can navigate itself away from what we
+  // launched — the .sav shelf hands the editor /editor/?play=<slug> and the
+  // editor swaps itself for /games/2028-ai?editorPlay=1 — and the cheats belong
+  // to the page that is actually running, not to the one that opened it. So the
+  // live location wins (frameUrl, root-relative and same-origin-only) and
+  // gameSrc is the fallback for cross-origin frames we can't read.
+  function cheatSrc() {
+    return (typeof frameUrl === 'string' && frameUrl) ? frameUrl : gameSrc;
+  }
+  // Parse that (absolute https://… for external games, root-relative /…/ for
   // in-repo ones) into a URL so we can read/rewrite a single query param.
   function cheatUrl() {
-    if (!gameSrc) return null;
-    try { return new URL(gameSrc, gameSrc.startsWith('/') ? window.location.origin : undefined); }
+    const src = cheatSrc();
+    if (!src) return null;
+    try { return new URL(src, src.startsWith('/') ? window.location.origin : undefined); }
     catch (_) { return null; }
   }
   function cheatParam(param) {
@@ -642,10 +651,11 @@
   // value === null deletes the param; otherwise it is set. Re-serialize keeping
   // the original absolute/relative shape so same-origin games stay same-origin.
   function setCheat(param, value) {
-    const u = cheatUrl(); if (!u) return;
+    const src = cheatSrc();
+    const u = cheatUrl(); if (!u || !src) return;
     if (value === null) u.searchParams.delete(param);
     else u.searchParams.set(param, String(value));
-    const relative = gameSrc.startsWith('/') && u.origin === window.location.origin;
+    const relative = src.startsWith('/') && u.origin === window.location.origin;
     gameSrc = relative ? u.pathname + u.search + u.hash : u.href;
   }
   // Harden a game-advertised plugin set (mirrors sanitizeCheats). Each plugin is
@@ -1459,20 +1469,6 @@
       // Switch to Desktop mode — the windowed workstation at /desktop/.
       // Root-relative on purpose, same convention as the level editor.
       location.href = '/desktop/';
-    } else {
-      const el = menuEls[idx];
-      if (el?.animate) {
-        el.animate(
-          [
-            { transform: 'translateX(0)' },
-            { transform: 'translateX(-1.2%)' },
-            { transform: 'translateX(1.2%)' },
-            { transform: 'translateX(0)' },
-          ],
-          { duration: 280, easing: 'ease-out' }
-        );
-      }
-      sfx.back();
     }
   }
 
@@ -3430,7 +3426,6 @@
     <div class="menu" role="menu" aria-label="Main menu">
       {#each MAIN_MENU as m, i (m.id)}
         <div
-          bind:this={menuEls[i]}
           class="item {i === menuSel ? 'sel' : ''}"
           role="menuitem"
           tabindex="-1"
