@@ -17,6 +17,7 @@
 //   --sndpac <path>      render the tone bank from this SNDPAC.BIN
 //   --no-audio           build silent even when a sound bank is available
 //   --no-music           keep the effects, drop the streamed music
+//   --uncapped           unlock the frame rate and show the frame counter
 //   --sfx-budget <KB>    how much IOP RAM the effects may use (default 384)
 //   --no-iso             stop after the folder build
 
@@ -52,9 +53,13 @@ function parse(argv: string[]) {
       const value = argv[++i];
       if (value === undefined) fail(`${arg} needs a value`);
       flags[arg] = value;
+    } else if (arg === "--") {
+      // `deno task build:ps2 -- --uncapped` passes the separator through.
+      continue;
     } else if (
       arg === "--refresh-athena" || arg === "--no-iso" ||
-      arg === "--no-audio" || arg === "--no-music"
+      arg === "--no-audio" || arg === "--no-music" ||
+      arg === "--uncapped"
     ) {
       flags[arg] = true;
     } else {
@@ -94,6 +99,7 @@ try {
     sndpac: typeof flags["--sndpac"] === "string" ? flags["--sndpac"] : null,
     skipAudio: flags["--no-audio"] === true,
     skipMusic: flags["--no-music"] === true,
+    uncapped: flags["--uncapped"] === true,
     sfxBudgetBytes: typeof flags["--sfx-budget"] === "string"
       ? Number(flags["--sfx-budget"]) * 1024
       : undefined,

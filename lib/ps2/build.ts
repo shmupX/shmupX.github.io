@@ -73,6 +73,8 @@ export interface BuildPs2Options {
   skipMusic?: boolean;
   /** Override how much IOP RAM the effects may use. See SFX_BUDGET_BYTES. */
   sfxBudgetBytes?: number;
+  /** Take the flip off the vertical blank and show AthenaEnv's frame counter. */
+  uncapped?: boolean;
   log?: (message: string) => void;
 }
 
@@ -328,13 +330,27 @@ export async function buildPs2(
   if (!hasAudio) log("  building silent");
 
   const encoder = new TextEncoder();
+
+  // A one-line preamble rather than a second bundle: runtime-entry.ts reads
+  // this global, so an uncapped build is the same compiled game with the
+  // frame pacing turned off.
+  const uncappedMainJs = options.uncapped
+    ? new Uint8Array([
+      ...encoder.encode("globalThis.__PS2_UNCAPPED__ = true;\n"),
+      ...mainJs,
+    ])
+    : mainJs;
+  if (options.uncapped) {
+    log("  frame pacing: uncapped, with AthenaEnv's frame counter on");
+  }
+
   const payload: StagedFile[] = [
     { path: "SYSTEM.CNF", data: encoder.encode(SYSTEM_CNF) },
     // Upper case, matching SYSTEM.CNF's BOOT2 exactly. Names keep their case
     // on the disc now, so this one is not folded for us any more.
     { path: "ATHENA.ELF", data: athena.bytes },
     { path: "athena.ini", data: encoder.encode(athenaIni(hasAudio)) },
-    { path: "main.js", data: mainJs },
+    { path: "main.js", data: uncappedMainJs },
     ...staged.files,
     ...(sfx?.files ?? []),
     ...(bgm?.files ?? []),
@@ -351,7 +367,17 @@ export async function buildPs2(
     log("  writing the disc image…");
     const iso = buildIso({
       volumeId: app,
-      files: payload,
+      // Names on the disc are whatever each reader actually asks cdfs for,
+      // because cdfs matches them literally. AthenaEnv looks for
+      // `cdrom0:ATHENA.INI;1` in upper case when it boots from a disc, and
+      // for plain `athena.ini` when it boots from a USB folder (its
+      // `default_cfg`, src/main.c) — so the folder keeps the lower-case name
+      // and the disc gets the upper-case one. Everything else already matches:
+      // SYSTEM.CNF and the ELF are named in upper case by BOOT2, and
+      // `default_script` and the game's own asset paths are lower case.
+      files: payload.map((file) =>
+        file.path === "athena.ini" ? { ...file, path: "ATHENA.INI" } : file
+      ),
       // Fixed, so rebuilding the same level yields the same image.
       date: new Date("2000-03-04T00:00:00Z"),
     });

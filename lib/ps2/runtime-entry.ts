@@ -27,9 +27,22 @@ const screen = (globalThis as {
   Screen?: {
     setParam?: (param: number, value: number) => void;
     setVSync?: (on: boolean) => void;
+    setFrameCounter?: (on: boolean) => void;
     DEPTH_TEST_ENABLE?: number;
   };
 }).Screen;
+
+// `deno task build:ps2 --uncapped` prepends this to the bundle. It takes the
+// flip off the vertical blank so the loop runs as fast as the console can
+// draw, and turns on AthenaEnv's own frame counter so the number is visible
+// on the TV. Both are measurement tools: an uncapped build tears, and the
+// game's logic is a fixed 30 Hz step either way (FixedStep in ps2-sp), so the
+// only thing this changes is how often a frame is presented — which is
+// exactly what you want to know when the question is "how fast could this
+// go?".
+const uncapped =
+  (globalThis as { __PS2_UNCAPPED__?: boolean }).__PS2_UNCAPPED__ === true;
+
 if (screen) {
   if (
     typeof screen.setParam === "function" &&
@@ -37,7 +50,10 @@ if (screen) {
   ) {
     screen.setParam(screen.DEPTH_TEST_ENABLE, 0);
   }
-  if (typeof screen.setVSync === "function") screen.setVSync(true);
+  if (typeof screen.setVSync === "function") screen.setVSync(!uncapped);
+  if (uncapped && typeof screen.setFrameCounter === "function") {
+    screen.setFrameCounter(true);
+  }
 }
 
 const runtime = createNativeRuntime();
