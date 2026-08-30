@@ -8,15 +8,17 @@
 // three files live on the disc. Nothing here runs under Deno — it is compiled
 // for QuickJS, which is the JavaScript engine inside athena.elf.
 
-import {
-  createNativeRuntime,
-  runNativeLoop,
-} from "@easierbycode/svelte-ps2/native";
+import { createNativeRuntime } from "@easierbycode/svelte-ps2/native";
 import { createGame } from "@easierbycode/svelte-ps2/ps2-sp";
+import { createAthenaSound } from "./runtime-sound.ts";
 
 const runtime = createNativeRuntime();
 
+// audsrv, when this build carries audio; a silent stand-in when it does not.
+const sound = createAthenaSound();
+
 createGame(runtime, {
+  sound,
   // Paths are relative to the boot directory: `cdfs:/` on a disc, the app's
   // own folder on a USB stick. lib/ps2/build.ts writes exactly these three.
   level: {
@@ -26,4 +28,10 @@ createGame(runtime, {
   },
 });
 
-runNativeLoop(runtime);
+// The package's runNativeLoop() is `while (true) rt.tick()`. The music needs
+// a look every frame as well — audsrv's streams do not loop themselves — so
+// the loop lives here instead.
+for (;;) {
+  runtime.tick();
+  sound.pump();
+}

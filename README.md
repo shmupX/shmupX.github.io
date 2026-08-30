@@ -85,6 +85,8 @@ deno task build:desktop   # …whichever of those three matches this host
 deno task build:ps2       # a level as a PlayStation 2 disc + USB folder
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
+deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
+deno task tonebank:table  # re-pack the instrument map into src/audio/
 deno task netplay:bundle  # bundle the online-2P browser client
 deno task netplay:generate  # regenerate its bindings from the module
 deno task netplay:publish   # publish the module (needs `spacetime login`)
@@ -291,7 +293,7 @@ Everything else in the export is data, produced by `lib/ps2/`:
 
 Flags: `--out <dir>`, `--level-file <path>` (a local JSON export instead of
 Firebase), `--athena-elf <path>`, `--refresh-athena`, `--atlas-max <px>`,
-`--no-iso`.
+`--sndpac <path>`, `--no-audio`, `--no-music`, `--no-iso`.
 
 The editor drives the same code: its **TARGET → PS2** option posts to
 `routes/api/build-apk.ts`, which — unlike every other target — runs the build
@@ -299,13 +301,49 @@ in-process rather than spawning `node tools/build-level`. It needs a source
 checkout (`deno task dev`), since `deno bundle` compiles the game from
 `lib/ps2/runtime-entry.ts` on disk.
 
-The exported game is **silent**: AthenaEnv plays sound effects only as PS2
-ADPCM, which would mean converting the game's MP3s with ps2sdk's `adpenc`, and
-the port's own sound layer is a no-op on hardware.
+**Audio.** audsrv splits sound in two, and so does the export.
+[`lib/ps2/sound-pack.ts`](lib/ps2/sound-pack.ts) builds both packs and
+[`lib/ps2/runtime-sound.ts`](lib/ps2/runtime-sound.ts) is the console-side
+`SoundPlayer` that plays them; both need **ffmpeg on the build host**, and
+without it the export is silent as it always was.
+
+- **Effects and voices** are one-shots, which the SPU2 takes only as PS2 ADPCM
+  (`Sound.Sfx`). All 60 keys the port loads are re-encoded through
+  [`lib/ps2/adpcm.ts`](lib/ps2/adpcm.ts) — a transliteration of ps2sdk's
+  `adpenc`, checked byte-for-byte against a golden vector in
+  [`tests/adpcm_test.ts`](tests/adpcm_test.ts). The port's baked-in paths do not
+  match the base game's layout, so each key is resolved against the game's tree
+  and staged where the port will look; the runtime swaps `.wav` for `.adp`.
+- **Music** is streamed and stays compressed, since AthenaEnv links libVorbis:
+  all 9 tracks are transcoded to Ogg and played with `Sound.Stream`. It is most
+  of the disc — 13.8 MB of the 21.9 MB image — so `--no-music` drops it and
+  keeps the effects. `Sound.Stream` does not loop, so the runtime rewinds a
+  finished track itself, which is why `runtime-entry.ts` runs its own frame loop
+  rather than the package's `runNativeLoop`.
+
+Then there is the Dezaemon 2 tone bank:
+[`lib/ps2/tone-bank-pack.ts`](lib/ps2/tone-bank-pack.ts) runs the 116-instrument
+map through the same encoder to produce `assets/sounds/tonebank/` — one `.adp`
+per distinct sample, with the loop points carried in the SPU2 block flags, plus
+a `tonebank.json` saying which instrument layer plays which at what root pitch,
+level and pan. Nothing plays it on the console yet: `Sound.Sfx` has no
+playback-rate control, so sounding a note off the bank means rendering it ahead
+of time rather than pitching a sample live the way the browser does.
+`athena.ini` gets `audsrv = true` when any pack is staged.
+
+The samples come from `SNDPAC.BIN`, which is disc content: it is not in this
+repo and is never published. Drop a Dezaemon 2 disc image into the gitignored
+`dev-fixtures/` and [`lib/sndpac.ts`](lib/sndpac.ts) pulls the file out of it
+with the engine's ISO 9660 reader; `--sndpac <path>` points at a bank directly
+and `--no-audio` forces a silent build. **A fresh checkout has no disc, so it
+gets no tone bank** — the effects and the music still come through, since they
+are the game's own files.
+
 [`tests/ps2_runtime_smoke_test.ts`](tests/ps2_runtime_smoke_test.ts) boots the
-built `main.js` against a stand-in for AthenaEnv's globals and plays several
-hundred frames, which is what catches an asset the game opens but the exporter
-never wrote.
+built `main.js` against a stand-in for AthenaEnv's globals (including the
+`Sound` binding audsrv publishes) and plays several hundred frames, which is
+what catches an asset the game opens but the exporter never wrote — sheets and
+sounds alike. It tests the newest export in `build/ps2/`, not the largest.
 
 ## Emulators (opt-in)
 

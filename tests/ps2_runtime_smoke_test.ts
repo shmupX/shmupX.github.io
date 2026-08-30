@@ -27,14 +27,19 @@ function findBuild(): { dir: string; levelFrames: number } | null {
   } catch {
     return null;
   }
-  let best: { dir: string; levelFrames: number } | null = null;
+  // The NEWEST build, not the richest one: build/ps2/ accumulates every level
+  // ever exported, and the point of this test is that the bundle just built
+  // still boots. Picking by level size instead would quietly keep testing an
+  // old main.js — which is how a build with sound came up silent here.
+  let best: { dir: string; levelFrames: number; built: number } | null = null;
   for (const entry of entries) {
     if (!entry.isDirectory || entry.name === ".cache") continue;
     for (const inner of Deno.readDirSync(join(base, entry.name))) {
       if (!inner.isDirectory) continue;
       const dir = join(base, entry.name, inner.name);
+      let built: number;
       try {
-        Deno.statSync(join(dir, "main.js"));
+        built = Deno.statSync(join(dir, "main.js")).mtime?.getTime() ?? 0;
       } catch {
         continue; // not an app folder
       }
@@ -47,7 +52,7 @@ function findBuild(): { dir: string; levelFrames: number } | null {
       } catch {
         // an unreadable atlas is itself worth reporting — leave the count at 0
       }
-      if (!best || levelFrames > best.levelFrames) best = { dir, levelFrames };
+      if (!best || built > best.built) best = { dir, levelFrames, built };
     }
   }
   return best;
@@ -72,6 +77,22 @@ class Harness {
   opened: string[] = [];
   missing: string[] = [];
   draws: DrawCall[] = [];
+  /** Effects the game asked audsrv to load. */
+  played: string[] = [];
+  /** Every one-shot actually fired, with the channel it went to. */
+  plays: { path: string; ch: number }[] = [];
+  /** Music tracks opened, and how often a finished one was restarted. */
+  streams: string[] = [];
+  rewinds = 0;
+
+  /**
+   * Whether this export carries music at all. `--no-music` is a supported
+   * build — it is most of the disc — and there the game still asks audsrv for
+   * every track, so an absent .ogg is the export working, not a gap in it.
+   */
+  get hasMusic(): boolean {
+    return this.read("assets/sounds/adventure_bgm.ogg") !== null;
+  }
   rects = 0;
   prints = 0;
   frames = 0;
@@ -202,6 +223,54 @@ function install(self: Harness): void {
     getTime: () => (clock += 33_333),
   };
 
+  // AthenaEnv's audsrv binding, present only when athena.ini enables it.
+  // lib/ps2/runtime-sound.ts drives this, so an effect the exporter never
+  // staged shows up here as a missing file exactly like a missing sheet
+  // would — audsrv itself throws on a path it cannot open.
+  g.Sound = {
+    Sfx: (path: string) => {
+      self.opened.push(path);
+      if (!self.read(path)) {
+        self.missing.push(path);
+        throw new Error(`no such sound: ${path}`);
+      }
+      self.played.push(path);
+      return { volume: 0, play: (ch: number) => self.plays.push({ path, ch }) };
+    },
+    // A track that runs out after 20 polls, so the looping in
+    // runtime-sound.ts pump() is exercised rather than merely present:
+    // audsrv streams do not loop, and a BGM that stops after one pass is the
+    // bug this is here to catch. Twenty because the harness presses Cross
+    // every 30 frames, so no scene here holds the music for much longer.
+    Stream: (path: string) => {
+      self.opened.push(path);
+      if (!self.read(path)) {
+        // audsrv throws on a path it cannot open, and runtime-sound.ts is
+        // meant to swallow that and play on in silence.
+        if (self.hasMusic) self.missing.push(path);
+        throw new Error(`no such track: ${path}`);
+      }
+      self.streams.push(path);
+      let left = 0;
+      return {
+        play: () => {
+          left = 20;
+        },
+        pause: () => {
+          left = 0;
+        },
+        playing: () => (left > 0 ? (left--, true) : false),
+        rewind: () => {
+          self.rewinds++;
+        },
+        free: () => {},
+        volume: 0,
+      };
+    },
+    findChannel: () => 0,
+    setVolume: () => {},
+  };
+
   g.std = {
     loadFile: (path: string) => {
       self.opened.push(path);
@@ -280,4 +349,50 @@ Deno.test("the PS2 bundle boots against AthenaEnv's interface", async () => {
     drawnFrom.has("assets/cyber_liberty.png"),
     "the player ship was never drawn",
   );
+
+  // Sound. The port asks for .wav paths and the disc carries .adp, so this
+  // also pins the extension swap in lib/ps2/runtime-sound.ts.
+  if (harness.played.length) {
+    for (const path of harness.played) {
+      assert(
+        path.startsWith("assets/sounds/") && path.endsWith(".adp"),
+        `loaded a sound from an unexpected path: ${path}`,
+      );
+    }
+    assert(
+      harness.played.includes("assets/sounds/se_shoot.adp"),
+      "the shot effect was never loaded",
+    );
+    console.log(
+      `  loaded ${harness.played.length} effects, fired ${harness.plays.length}`,
+    );
+    assert(
+      harness.plays.length > 0,
+      "900 frames of play fired no sound at all",
+    );
+
+    // Music, when this build has it — --no-music is a supported export, and
+    // it is most of the disc. loadStream only records a path, so a track
+    // opening at all means the game reached a scene that plays one.
+    if (harness.hasMusic) {
+      assert(harness.streams.length > 0, "no music track was ever opened");
+      for (const path of harness.streams) {
+        assert(
+          path.startsWith("assets/sounds/") && path.endsWith(".ogg"),
+          `opened a track from an unexpected path: ${path}`,
+        );
+      }
+      console.log(
+        `  opened ${harness.streams.length} tracks, looped ${harness.rewinds}`,
+      );
+      assert(
+        harness.rewinds > 0,
+        "a track ran out and was never restarted — BGM would play once",
+      );
+    } else {
+      console.log("  (no music in this build — track assertions skipped)");
+    }
+  } else {
+    console.log("  (no audio in this build — sound assertions skipped)");
+  }
 });

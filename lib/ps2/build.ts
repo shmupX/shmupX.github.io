@@ -15,19 +15,30 @@ import { ensureDir } from "@std/fs";
 import { resolveAthenaElf } from "./athena.ts";
 import { type LevelRecord, stageAssets, type StagedFile } from "./assets.ts";
 import { buildIso } from "./iso9660.ts";
+import {
+  buildToneBankPack,
+  cacheSndpac,
+  findSndpac,
+} from "./tone-bank-pack.ts";
+import { buildBgmPack, buildSfxPack } from "./sound-pack.ts";
 
 const FIREBASE_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 
 // AthenaEnv reads this beside the ELF (or as cdrom0:ATHENA.INI;1 on a disc).
-// The boot logo is off so the game comes straight up, and audsrv stays
-// unloaded because ps2-sp runs silent on hardware — see the README.
-const ATHENA_INI = [
-  "boot_logo = false",
-  "dark_mode = true",
-  'default_script = "main.js"',
-  "audsrv = false",
-  "",
-].join("\n");
+// The boot logo is off so the game comes straight up. audsrv is the sound IRX:
+// it is loaded only when the build actually carries audio, which today means
+// the Dezaemon tone bank rendered out of a SNDPAC.BIN found in dev-fixtures/.
+// Without it the export is silent exactly as it always was, and there is no
+// point paying for the IOP module.
+function athenaIni(audsrv: boolean): string {
+  return [
+    "boot_logo = false",
+    "dark_mode = true",
+    'default_script = "main.js"',
+    `audsrv = ${audsrv}`,
+    "",
+  ].join("\n");
+}
 
 // What the PS2 boot ROM reads off the disc to find the executable.
 const SYSTEM_CNF = [
@@ -54,6 +65,12 @@ export interface BuildPs2Options {
   maxSheet?: number;
   /** Skip the ISO and produce only the folder build. */
   skipIso?: boolean;
+  /** SNDPAC.BIN to render the tone bank from; default: search dev-fixtures/. */
+  sndpac?: string | null;
+  /** Build without audio even when a sound bank is available. */
+  skipAudio?: boolean;
+  /** Keep the effects but leave the music off — it is most of the disc. */
+  skipMusic?: boolean;
   log?: (message: string) => void;
 }
 
@@ -237,13 +254,53 @@ export async function buildPs2(
   });
   for (const note of staged.notes) log(`    ${note}`);
 
+  const notes = [...staged.notes];
+
+  // The base game's own audio: effects as SPU2 ADPCM, music as Ogg Vorbis.
+  // Both need ffmpeg on the build host; without it there are no packs.
+  const sfx = options.skipAudio ? null : await buildSfxPack(gameDir);
+  const bgm = options.skipAudio || options.skipMusic
+    ? null
+    : await buildBgmPack(gameDir);
+  if (sfx) {
+    for (const note of sfx.notes) log(`    ${note}`);
+    notes.push(...sfx.notes);
+  } else if (!options.skipAudio) {
+    log("  no ffmpeg on this host — game audio skipped");
+  }
+  if (bgm) {
+    for (const note of bgm.notes) log(`    ${note}`);
+    notes.push(...bgm.notes);
+  }
+
+  const audio = options.skipAudio
+    ? null
+    : await findSndpac(root, options.sndpac ?? null);
+  const toneBank = audio ? buildToneBankPack(audio.bytes) : null;
+  if (audio && toneBank) {
+    log(`  sound bank: ${audio.from}`);
+    for (const note of toneBank.notes) log(`    ${note}`);
+    notes.push(...toneBank.notes);
+    if (!options.sndpac) await cacheSndpac(root, audio.bytes);
+  } else if (!options.skipAudio) {
+    log("  no SNDPAC.BIN in dev-fixtures/ — no tone bank");
+  }
+
+  // audsrv costs an IOP module, so it is loaded only when something can use it.
+  const hasAudio = !!toneBank || !!(sfx && sfx.files.length) ||
+    !!(bgm && bgm.files.length);
+  if (!hasAudio) log("  building silent");
+
   const encoder = new TextEncoder();
   const payload: StagedFile[] = [
     { path: "SYSTEM.CNF", data: encoder.encode(SYSTEM_CNF) },
     { path: "athena.elf", data: athena.bytes },
-    { path: "athena.ini", data: encoder.encode(ATHENA_INI) },
+    { path: "athena.ini", data: encoder.encode(athenaIni(hasAudio)) },
     { path: "main.js", data: mainJs },
     ...staged.files,
+    ...(sfx?.files ?? []),
+    ...(bgm?.files ?? []),
+    ...(toneBank?.files ?? []),
   ];
 
   await Deno.remove(appDir, { recursive: true }).catch(() => {});
@@ -268,13 +325,22 @@ export async function buildPs2(
 
   await Deno.writeTextFile(
     join(dir, "README.txt"),
-    readme(name, app, isoPath !== null),
+    readme(name, app, isoPath !== null, {
+      sfx: !!(sfx && sfx.files.length),
+      bgm: !!(bgm && bgm.files.length),
+      toneBank: !!toneBank,
+    }),
   );
 
-  return { name, dir, appDir, isoPath, artifacts, notes: staged.notes };
+  return { name, dir, appDir, isoPath, artifacts, notes };
 }
 
-function readme(name: string, app: string, hasIso: boolean): string {
+function readme(
+  name: string,
+  app: string,
+  hasIso: boolean,
+  audio: { sfx: boolean; bgm: boolean; toneBank: boolean },
+): string {
   return [
     `${name} — PlayStation 2 build`,
     "",
@@ -293,6 +359,39 @@ function readme(name: string, app: string, hasIso: boolean): string {
         "",
       ]
       : []),
+    ...(audio.sfx
+      ? [
+        "assets/sounds/*.adp",
+        "    The game's own sound effects and voices, re-encoded as SPU2",
+        "    ADPCM — the only one-shot format audsrv plays.",
+        "",
+      ]
+      : []),
+    ...(audio.bgm
+      ? [
+        "assets/sounds/*.ogg",
+        "    The music, as Ogg Vorbis for audsrv's streamer. It is most of",
+        "    the disc; rebuild with --no-music to leave it out.",
+        "",
+      ]
+      : []),
+    ...(audio.toneBank
+      ? [
+        "assets/sounds/tonebank/",
+        "    The Dezaemon 2 tone bank as audsrv ADPCM: one .adp per distinct",
+        "    sample, and tonebank.json saying which instrument layer uses",
+        "    which, at what root pitch, level and pan.",
+        "",
+      ]
+      : []),
+    ...(audio.sfx || audio.bgm || audio.toneBank
+      ? ["audsrv is enabled in athena.ini for these.", ""]
+      : [
+        "This build is silent: there was no ffmpeg on the build host to",
+        "re-encode the game's audio, and no SNDPAC.BIN in dev-fixtures/ to",
+        "cut a tone bank from. See README.md.",
+        "",
+      ]),
     "Controls: D-pad or left stick to move, Cross to fire, Start to pause.",
     "",
     "Rebuild with:  deno task build:ps2 " + JSON.stringify(name),

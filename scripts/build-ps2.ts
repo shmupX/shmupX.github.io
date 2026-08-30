@@ -14,6 +14,9 @@
 //   --athena-elf <path>  use this AthenaEnv build instead of downloading one
 //   --refresh-athena     re-download AthenaEnv even if it is cached
 //   --atlas-max <px>     cap generated atlases at this size (default 512)
+//   --sndpac <path>      render the tone bank from this SNDPAC.BIN
+//   --no-audio           build silent even when a sound bank is available
+//   --no-music           keep the effects, drop the streamed music
 //   --no-iso             stop after the folder build
 
 import { dirname, fromFileUrl, relative, resolve } from "@std/path";
@@ -26,6 +29,7 @@ const VALUE_FLAGS = new Set([
   "--level-file",
   "--athena-elf",
   "--atlas-max",
+  "--sndpac",
 ]);
 
 function fail(message: string): never {
@@ -46,7 +50,10 @@ function parse(argv: string[]) {
       const value = argv[++i];
       if (value === undefined) fail(`${arg} needs a value`);
       flags[arg] = value;
-    } else if (arg === "--refresh-athena" || arg === "--no-iso") {
+    } else if (
+      arg === "--refresh-athena" || arg === "--no-iso" ||
+      arg === "--no-audio" || arg === "--no-music"
+    ) {
       flags[arg] = true;
     } else {
       fail(`unknown flag ${arg}`);
@@ -82,6 +89,9 @@ try {
     refreshAthena: flags["--refresh-athena"] === true,
     maxSheet: atlasMax === undefined ? undefined : Number(atlasMax),
     skipIso: flags["--no-iso"] === true,
+    sndpac: typeof flags["--sndpac"] === "string" ? flags["--sndpac"] : null,
+    skipAudio: flags["--no-audio"] === true,
+    skipMusic: flags["--no-music"] === true,
   });
 
   const here = (path: string) => relative(ROOT, path) || path;
