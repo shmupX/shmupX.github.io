@@ -16,10 +16,17 @@
     covers = {},
     loading = false,
     error = '',
+    favs = new Set(),
+    onfav = () => {},
     onselect = () => {},
     onlaunch = () => {},
     onclose = () => {},
   } = $props();
+
+  // Same id the Dashboard stores favorites under: every row carries a slug
+  // (static-manifest rows get one computed at load), so the file fallback is
+  // belt-only — and it matches the {#each} key below.
+  const favId = (it) => it?.slug || it?.file || '';
 
   // Cards rendered per side. The outermost pair sits at opacity 0, so a card
   // entering the window mounts invisible at the edge and fades in as it slides
@@ -33,6 +40,7 @@
     return out;
   });
   let current = $derived(items[sel]);
+  let curFav = $derived(!!current && favs.has(favId(current)));
   let counter = $derived(
     items.length
       ? String(sel + 1).padStart(3, '0') + ' / ' + String(items.length).padStart(3, '0')
@@ -237,6 +245,21 @@
             {#if v.item.video && previewIdx !== v.i}
               <span class="cf-play" aria-hidden="true">▶</span>
             {/if}
+            <!-- The centred card wears the live ★ toggle; the rest only mark
+                 membership. pointerdown stops here so pressing the star never
+                 starts a stage drag or arms the hold-preview underneath. -->
+            {#if v.off === 0}
+              <button
+                type="button"
+                class="cf-fav {curFav ? 'on' : ''}"
+                aria-label={curFav ? 'Unpin from favorites' : 'Pin to favorites'}
+                aria-pressed={curFav}
+                onclick={(e) => { e.stopPropagation(); onfav(v.i); }}
+                onpointerdown={(e) => e.stopPropagation()}
+              >{curFav ? '★' : '☆'}</button>
+            {:else if favs.has(favId(v.item))}
+              <span class="cf-fav is-static on" aria-hidden="true">★</span>
+            {/if}
           </div>
         {/each}
       </div>
@@ -256,7 +279,8 @@
     <div class="sav-foot">
       <span><b>A</b> Play</span>
       <span><b>B</b> Close</span>
-      <span class="sav-foot-hint">← → browse · hover or hold a cover to preview it · <b>Y</b> opens this shelf</span>
+      <span><b>X</b> Favorite</span>
+      <span class="sav-foot-hint">← → browse · F favorites · hover or hold a cover to preview it · <b>Y</b> opens this shelf</span>
     </div>
   </div>
 {/if}
@@ -334,6 +358,20 @@
     color: var(--green, #9CFF6B); font-size: clamp(8px, 1.5vmin, 12px);
     text-shadow: 0 0 8px var(--green-glow, #7CFF4F); pointer-events: none;
   }
+  .cf-fav {
+    position: absolute; right: 5%; top: 3.5%;
+    width: 22%; aspect-ratio: 1; display: grid; place-items: center;
+    border-radius: 50%; background: rgba(0, 0, 0, .55);
+    border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
+    color: var(--green, #9CFF6B); font-size: clamp(9px, 1.7vmin, 13px);
+    padding: 0; appearance: none; cursor: pointer; line-height: 1;
+  }
+  .cf-fav:hover { color: var(--yellow, #F6FF4A); border-color: var(--yellow, #F6FF4A); }
+  .cf-fav.on {
+    color: var(--yellow, #F6FF4A); border-color: var(--yellow, #F6FF4A);
+    text-shadow: 0 0 10px color-mix(in srgb, var(--yellow, #F6FF4A) 70%, transparent);
+  }
+  .cf-fav.is-static { width: 16%; opacity: .85; pointer-events: none; }
 
   .cf-ph {
     width: 100%; height: 100%; display: flex; flex-direction: column;

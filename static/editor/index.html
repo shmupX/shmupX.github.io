@@ -361,6 +361,14 @@
             font-size: 11px; line-height: 1; cursor: pointer;
         }
         .deza-play:hover { color: var(--sel); border-color: var(--sel); }
+        .deza-fav {
+            flex: 0 0 auto; margin-left: 4px; width: 32px; height: 28px; padding: 0;
+            display: grid; place-items: center; border-radius: 6px;
+            background: var(--rbg); border: 1px solid var(--redge); color: var(--rsub);
+            font-size: 13px; line-height: 1; cursor: pointer;
+        }
+        .deza-fav:hover { color: var(--sel); border-color: var(--sel); }
+        .deza-fav.on { color: var(--sel); border-color: var(--sel); text-shadow: 0 0 8px var(--selglow); }
         /* Hover preview. Fixed, so the shelf's own overflow cannot clip it, and
            click-through, so it can never swallow the press that opens a game. */
         .deza-preview {
@@ -4669,6 +4677,58 @@
             updateDezaEditFirstUI();
         }
 
+        // FAVORITES: the games the player pinned to the top of the shelf.
+        // One localStorage key shared with the launcher's coverflow, so a
+        // game starred on either surface leads both. Ids are the database
+        // slugs; a static-manifest row (slug null) gets the identical slug
+        // computed from its title — the same algorithm the upload script and
+        // the launcher use.
+        const DEZA_FAVS_KEY = 'cmg-deza-favs';
+        function loadDezaFavs() {
+            try {
+                const raw = JSON.parse(localStorage.getItem(DEZA_FAVS_KEY) || '[]');
+                if (Array.isArray(raw)) return new Set(raw.filter((v) => typeof v === 'string'));
+            } catch (e) { }
+            return new Set();
+        }
+        let dezaFavs = loadDezaFavs();
+        function dezaFavId(item) {
+            if (item.slug) return item.slug;
+            const s = String(item.title || '').toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+            return s || 'save';
+        }
+        function toggleDezaFav(id) {
+            // Re-read before flipping: the launcher (one frame up) may have
+            // pinned games of its own since this page loaded.
+            dezaFavs = loadDezaFavs();
+            if (dezaFavs.has(id)) dezaFavs.delete(id); else dezaFavs.add(id);
+            try { localStorage.setItem(DEZA_FAVS_KEY, JSON.stringify([...dezaFavs])); } catch (e) { }
+        }
+        // The row's ★ toggle. Rebuilds the list so the game moves into (or
+        // out of) the FAVORITES group at once — with the scroll held in
+        // place, so the list does not jump back to the top under the click.
+        function dezaFavChip(item) {
+            const id = dezaFavId(item);
+            const on = dezaFavs.has(id);
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'deza-fav' + (on ? ' on' : '');
+            btn.textContent = on ? '★' : '☆';
+            btn.title = on ? 'UNPIN FROM FAVORITES' : 'PIN TO FAVORITES';
+            btn.setAttribute('aria-label', btn.title);
+            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+            btn.onclick = (ev) => {
+                ev.stopPropagation();
+                toggleDezaFav(id);
+                const panel = document.getElementById('deza-library-list').closest('.picker-panel');
+                const top = panel ? panel.scrollTop : 0;
+                renderDezaemonLibrary();
+                if (panel) panel.scrollTop = top;
+            };
+            return btn;
+        }
+
         async function openDezaemonLibrary() {
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
             closeMenu();
@@ -4700,6 +4760,8 @@
                     return;
                 }
             }
+            // Pick up pins toggled on the launcher's shelf since the last open.
+            dezaFavs = loadDezaFavs();
             renderDezaemonLibrary();
         }
 
@@ -4723,27 +4785,35 @@
                 return;
             }
             const groups = new Map();
+            const favRows = [];
             for (const s of st.saves) {
                 // RTDB rows arrive with the games-db join already applied; a
                 // static row resolves it here against the same table.
                 const meta = dezaAttachLinks(s.meta || st.byTitle.get(dezaNormTitle(s.title)) || null,
                     st.byTitle, s.title);
+                const row = { file: s.file, title: s.title, meta, slug: s.slug, hasCover: s.hasCover };
+                // A pinned game lives in the FAVORITES group instead of its
+                // genre; un-starring it sends it back where it came from.
+                if (dezaFavs.has(dezaFavId(row))) { favRows.push(row); continue; }
                 const genre = meta ? meta.genre : 'Unknown';
                 if (!groups.has(genre)) groups.set(genre, []);
-                groups.get(genre).push({ file: s.file, title: s.title, meta, slug: s.slug, hasCover: s.hasCover });
+                groups.get(genre).push(row);
             }
-            // Genres Z-A ("Vertical Shoot-em-up" family first); the Unknown
-            // bucket (saves the table doesn't know) always sits last.
+            // The player's pinned games lead the shelf; then genres Z-A
+            // ("Vertical Shoot-em-up" family first); the Unknown bucket
+            // (saves the table doesn't know) always sits last.
             const genres = [...groups.keys()]
                 .filter((g) => g !== 'Unknown')
                 .sort((a, b) => b.localeCompare(a));
             if (groups.has('Unknown')) genres.push('Unknown');
-            for (const genre of genres) {
+            const sections = genres.map((g) => [g.toUpperCase(), groups.get(g)]);
+            if (favRows.length) sections.unshift(['★ FAVORITES', favRows]);
+            for (const [label, unsorted] of sections) {
                 const head = document.createElement('div');
                 head.className = 'menu-label';
-                head.textContent = genre.toUpperCase();
+                head.textContent = label;
                 list.appendChild(head);
-                const rows = groups.get(genre).sort((a, b) =>
+                const rows = unsorted.sort((a, b) =>
                     (a.meta ? a.meta.title : a.title).localeCompare(b.meta ? b.meta.title : b.title));
                 for (const item of rows) {
                     const card = document.createElement('div');
@@ -4781,6 +4851,7 @@
                     if (item.meta && item.meta.video) {
                         card.appendChild(dezaPlayChip(item.meta.video, item.meta.title));
                     }
+                    card.appendChild(dezaFavChip(item));
                     const go = document.createElement('div');
                     go.className = 'deza-slot-go';
                     go.textContent = 'LOAD ›';

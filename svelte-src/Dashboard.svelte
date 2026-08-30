@@ -1748,6 +1748,20 @@
   // Catalog entries that own a .sav shelf. A manifest entry can also opt in
   // with `savLibrary: true` — same pattern as twinStick/touchControls.
   const SAV_PICKER_IDS = new Set(['shmupx']);
+  // The player's pinned games. One localStorage key shared with the editor's
+  // SAVED GAMES drawer, so a game starred on either surface leads both. Ids
+  // are the database slugs — static-manifest rows compute the identical slug
+  // (savSlugOf mirrors the upload script), so the two sources agree.
+  const SAV_FAVS_KEY = 'cmg-deza-favs';
+  function readSavFavs() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SAV_FAVS_KEY) || '[]');
+      if (Array.isArray(raw)) return new Set(raw.filter((v) => typeof v === 'string'));
+    } catch (_) { /* unreadable pref — start unpinned */ }
+    return new Set();
+  }
+  let savFavs = $state(readSavFavs());
+  function savFavId(item) { return item.slug || savSlugOf(item.title); }
   let savPickerOpen = $state(false);
   let savPickerSel = $state(0);
   let savLibrary = $state(null);      // null until first open; [] = nothing reachable
@@ -1855,6 +1869,33 @@
     }
   }
 
+  // What the coverflow actually shows: the FAVORITES block leads, everything
+  // behind it keeps savLibrary's A-Z order (the block itself stays A-Z too,
+  // being a stable partition of a sorted list). Derived, so a toggle
+  // re-shelves without refetching, and every picker index — sel, launch,
+  // cover prefetch — reads this order, never savLibrary's.
+  let savShelf = $derived.by(() => {
+    if (!savLibrary?.length || !savFavs.size) return savLibrary;
+    const favs = [], rest = [];
+    for (const r of savLibrary) (savFavs.has(savFavId(r)) ? favs : rest).push(r);
+    return favs.length ? favs.concat(rest) : savLibrary;
+  });
+
+  function toggleSavFav(i) {
+    const item = savShelf?.[i];
+    if (!item) return;
+    const id = savFavId(item);
+    const next = new Set(savFavs);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    savFavs = next;
+    try { localStorage.setItem(SAV_FAVS_KEY, JSON.stringify([...next])); } catch (_) { /* session-only pin */ }
+    // The cover just moved into (or out of) the leading favorites block —
+    // follow it, so the fan stays centred on the game that was just starred.
+    const at = savShelf ? savShelf.findIndex((r) => savFavId(r) === id) : -1;
+    if (at >= 0 && at !== savPickerSel) savPickerSel = at;
+    sfx.nav();
+  }
+
   function fetchSavCover(item) {
     if (!item || !item.slug || !item.hasCover) return;
     if (item.slug in savCovers || savCoverPending.has(item.slug)) return;
@@ -1875,10 +1916,10 @@
   // Fetch art for the covers in and just beyond the rendered fan as the
   // cursor moves — the full shelf is 258 × ~9KB, far more than a browse needs.
   $effect(() => {
-    if (!savPickerOpen || !savLibrary?.length) return;
+    if (!savPickerOpen || !savShelf?.length) return;
     const lo = Math.max(0, savPickerSel - 6);
-    const hi = Math.min(savLibrary.length - 1, savPickerSel + 6);
-    for (let i = lo; i <= hi; i++) fetchSavCover(savLibrary[i]);
+    const hi = Math.min(savShelf.length - 1, savPickerSel + 6);
+    for (let i = lo; i <= hi; i++) fetchSavCover(savShelf[i]);
   });
 
   // Keep the coverflow cursor in range if the shelf shrinks under it.
@@ -1895,6 +1936,9 @@
     if (savPickerOpen || gameOn) return;
     if (g) savPickerGame = g;
     savNav.hDir = 0; savNav.hSeenAt = 0; savNav.hHeldSince = 0; savNav.hLastNav = 0;
+    // Pins toggled in the editor's drawer (a same-origin iframe away) land
+    // between opens — re-read, so both surfaces shelve the same games first.
+    savFavs = readSavFavs();
     savPickerOpen = true;
     sfx.enter();
     // A shelf that came up empty (offline at the time, fetch error) retries
@@ -1922,7 +1966,7 @@
   }
   function savPickerMove(dir) { savPickerJump(savPickerSel + dir); }
   function launchSavGame(i) {
-    const item = savLibrary?.[i];
+    const item = savShelf?.[i];
     const g = savPickerGame;
     if (!item || !g || !g.url) return;
     savPickerOpen = false;
@@ -2047,6 +2091,8 @@
       if (justPressed(6)) savPickerJump(0);
       if (justPressed(7)) savPickerJump(savLibrary ? savLibrary.length - 1 : 0);
     }
+    // FBTN_LEFT (X / square) pins the centred cover to the favorites block.
+    if (justPressed(2)) toggleSavFav(savPickerSel);
     if (justPressed(0) || justPressed(9)) { lastInput = 'pad'; launchSavGame(savPickerSel); }
     else if (justPressed(1) || justPressed(8)) closeSavPicker();
     // The SELECT still held from the opening chord must not read as Back once
@@ -2822,6 +2868,7 @@
       else if (e.key === 'PageDown') { e.preventDefault(); savPickerJump(savPickerSel + 10); }
       else if (e.key === 'Home') { e.preventDefault(); savPickerJump(0); }
       else if (e.key === 'End') { e.preventDefault(); savPickerJump((savLibrary?.length || 1) - 1); }
+      else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleSavFav(savPickerSel); }
       else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launchSavGame(savPickerSel); }
       else if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'b' || e.key === 'B') { e.preventDefault(); closeSavPicker(); }
       return;
@@ -3831,7 +3878,8 @@
   <div class="cmg-toast" role="status">{toastMsg}</div>
 {/if}
 
-<SavPicker open={savPickerOpen} items={savLibrary || []} sel={savPickerSel}
+<SavPicker open={savPickerOpen} items={savShelf || []} sel={savPickerSel}
+     favs={savFavs} onfav={toggleSavFav}
      covers={savCovers} loading={savLibraryLoading} error={savLibraryErr}
      onselect={(i) => savPickerJump(i)} onlaunch={(i) => launchSavGame(i)}
      onclose={closeSavPicker} />
