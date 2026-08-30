@@ -11,6 +11,8 @@ import {
   buildBgmPack,
   buildSfxPack,
   findFfmpeg,
+  SFX_BUDGET_BYTES,
+  SFX_DIR,
   SFX_RATE,
   sfxRequests,
 } from "../lib/ps2/sound-pack.ts";
@@ -55,21 +57,68 @@ Deno.test("every key the port loads has a request, at the port's own path", () =
   );
 });
 
-Deno.test("the base game answers every request", gated, () => {
-  // A key with no source is a silent effect on the console, so a drop here is
-  // worth failing over rather than noting.
-  assertEquals(pack!.files.length, sfxRequests().length);
+Deno.test("the base game answers every request", gated, async () => {
+  // A key with no source would be a silent effect on the console. With the
+  // budget lifted, every one of them has to encode.
+  const all = await buildSfxPack(GAME_DIR, { ffmpeg, budgetBytes: Infinity });
+  assertEquals(all!.files.length, sfxRequests().length);
 });
 
 Deno.test(
   "each effect is staged where the port will look for it",
   gated,
   () => {
-    const staged = new Set(pack!.files.map((f) => f.path));
-    for (const { path } of sfxRequests()) {
-      const adp = path.replace(/\.[^./]*$/, "") + ".adp";
-      assert(staged.has(adp), `not staged: ${adp}`);
+    // Flat under assets/sounds/, whatever subdirectory the port's own path
+    // named — runtime-sound.ts rewrites the path the same way.
+    const wanted = new Set(
+      sfxRequests().map(({ key }) => `${SFX_DIR}/${key}.adp`),
+    );
+    for (const file of pack!.files) {
+      assert(wanted.has(file.path), `staged somewhere odd: ${file.path}`);
     }
+    assert(
+      pack!.files.every((f) => f.path.split("/").length === 3),
+      "an effect is nested deeper than assets/sounds/",
+    );
+  },
+);
+
+Deno.test("the effects fit in IOP RAM, gameplay first", gated, () => {
+  // audsrv DMAs every sample into the IOP's 2 MB, and AthenaEnv ignores the
+  // return code — so going over is not an error anybody reports, it is a
+  // console that falls over. The whole set is ~1.5 MB.
+  const bytes = pack!.files.reduce((n, f) => n + f.data.length, 0);
+  assert(
+    bytes <= SFX_BUDGET_BYTES,
+    `${bytes} bytes of ADPCM is over the ${SFX_BUDGET_BYTES} budget`,
+  );
+
+  // Whatever else is dropped, the sounds that fire during play are not.
+  const staged = new Set(pack!.files.map((f) => f.path));
+  for (const { key } of sfxRequests()) {
+    if (!key.startsWith("se_")) continue;
+    assert(
+      staged.has(`${SFX_DIR}/${key}.adp`),
+      `gameplay effect dropped: ${key}`,
+    );
+  }
+});
+
+Deno.test(
+  "a tighter budget drops more, and never the shots",
+  gated,
+  async () => {
+    const tight = await buildSfxPack(GAME_DIR, {
+      ffmpeg,
+      budgetBytes: 128 * 1024,
+    });
+    assert(tight!.files.length < pack!.files.length);
+    const staged = new Set(tight!.files.map((f) => f.path));
+    assert(staged.has("assets/sounds/se_shoot.adp"), "dropped se_shoot");
+    assert(
+      staged.has("assets/sounds/se_explosion.adp"),
+      "dropped se_explosion",
+    );
   },
 );
 

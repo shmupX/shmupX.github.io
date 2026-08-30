@@ -295,6 +295,35 @@ Flags: `--out <dir>`, `--level-file <path>` (a local JSON export instead of
 Firebase), `--athena-elf <path>`, `--refresh-athena`, `--atlas-max <px>`,
 `--sndpac <path>`, `--no-audio`, `--no-music`, `--no-iso`.
 
+**Running it.** Under an emulator, boot the `.iso` **with fast boot enabled** —
+this is a homebrew disc, and a full BIOS boot will not run one. The retail BIOS
+authenticates the disc and drops to _"Please insert a PlayStation or PlayStation
+2 format disc"_; fast boot skips that and `LoadExec`s the ELF named in
+`SYSTEM.CNF` directly. In PCSX2 that is the default — just make sure you are not
+using _Boot Full (with BIOS)_. The log tells you which you got:
+
+```
+ELF Loading: cdrom0:\ATHENA.ELF;1     <- fast boot, correct
+ELF Loading: , EntryPoint = 0xFFFFFFFF <- full BIOS boot, disc refused
+```
+
+AthenaEnv finds its own boot path by special-casing `cdrom0:`, `mass:` and
+`hdd0:` (`src/main.c`), so a disc is the path it definitely handles; _Run ELF_
+on `athena.elf` goes through `host:`, which is not one of those and is not
+something this export is tested against. The folder build is for a USB stick, a
+memory card or an HDD partition, launched from wLaunchELF, OPL or FMCB.
+
+**Two screen calls the port cannot make.** AthenaEnv v4 turns on a depth test
+with no Z-buffer behind it, which blanks every other flip, and leaves VSync off,
+which puts the flip mid-scanout. Either one alone is a console that draws
+nothing at all while every other check still passes. So
+[`runtime-entry.ts`](lib/ps2/runtime-entry.ts) does
+`Screen.setParam(Screen.DEPTH_TEST_ENABLE, 0)` and `Screen.setVSync(true)`
+before anything else, and the smoke test asserts both — this is a 2D game drawn
+in painter's order and it wants neither. (Credit to
+[ps2-mario](https://github.com/easierbycode/ps2-mario), which had already found
+this.)
+
 The editor drives the same code: its **TARGET → PS2** option posts to
 `routes/api/build-apk.ts`, which — unlike every other target — runs the build
 in-process rather than spawning `node tools/build-level`. It needs a source

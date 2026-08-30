@@ -81,6 +81,15 @@ class Harness {
   played: string[] = [];
   /** Every one-shot actually fired, with the channel it went to. */
   plays: { path: string; ch: number }[] = [];
+  /**
+   * Screen setup. AthenaEnv v4's depth test has no Z-buffer behind it and
+   * blanks every other flip, and VSync off puts the flip mid-scanout: either
+   * one is a console that draws nothing while every other check here still
+   * passes, which is exactly what happened. Undefined means never set.
+   */
+  vsync: boolean | undefined = undefined;
+  depthTest: number | undefined = undefined;
+
   /** Music tracks opened, and how often a finished one was restarted. */
   streams: string[] = [];
   rewinds = 0;
@@ -117,8 +126,12 @@ function install(self: Harness): void {
     NTSC: 2,
     DEPTH_TEST_ENABLE: 1,
     getMode: () => ({ width: 640, height: 448 }),
-    setVSync: () => {},
-    setParam: () => {},
+    setVSync: (on: boolean) => {
+      self.vsync = on;
+    },
+    setParam: (param: number, value: number) => {
+      if (param === 1) self.depthTest = value;
+    },
     clear: () => {},
     flip: () => {
       self.frames++;
@@ -277,7 +290,14 @@ function install(self: Harness): void {
       const bytes = self.read(path);
       return bytes ? new TextDecoder().decode(bytes) : null;
     },
-    open: () => ({ puts: () => {}, close: () => {} }),
+    // QuickJS's std.open returns null when it cannot open the file, which is
+    // what lib/ps2/runtime-sound.ts probes with before handing a path to
+    // AthenaEnv's loaders — those fseek() a NULL FILE* and take the console
+    // down. Writes (the high-score file) always succeed.
+    open: (path: string, mode: string) =>
+      mode.indexOf("r") !== -1 && !self.read(path)
+        ? null
+        : { puts: () => {}, close: () => {} },
   };
 }
 
@@ -303,6 +323,20 @@ Deno.test("the PS2 bundle boots against AthenaEnv's interface", async () => {
     harness.missing,
     [],
     "the game opened files the exporter did not write",
+  );
+
+  // Before anything about drawing: did the runtime make the screen usable?
+  assertEquals(
+    harness.depthTest,
+    0,
+    "the depth test was left on — v4 blanks every other flip without a " +
+      "Z-buffer, so nothing is ever seen on hardware",
+  );
+  assertEquals(
+    harness.vsync,
+    true,
+    "VSync was never enabled — the flip lands mid-scanout and the screen " +
+      "goes black on hardware",
   );
   assert(
     harness.frames >= 900,

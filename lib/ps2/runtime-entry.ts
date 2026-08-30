@@ -12,6 +12,34 @@ import { createNativeRuntime } from "@easierbycode/svelte-ps2/native";
 import { createGame } from "@easierbycode/svelte-ps2/ps2-sp";
 import { createAthenaSound } from "./runtime-sound.ts";
 
+// Set the screen up before anything draws.
+//
+// AthenaEnv v4 enables a depth test with no Z-buffer behind it, which blanks
+// every other flip: the screen alternates between the clear colour and black
+// and no sprite ever survives to be seen. This game is painter's-order 2D and
+// wants none of it. VSync has to be on for the same reason — off, the flip
+// lands mid-scanout and the picture goes black.
+//
+// Neither call is the port's to make (its runtime interface exposes no
+// setParam), and neither has a counterpart in the browser build, so they live
+// here — the one file that is only ever compiled for the console.
+const screen = (globalThis as {
+  Screen?: {
+    setParam?: (param: number, value: number) => void;
+    setVSync?: (on: boolean) => void;
+    DEPTH_TEST_ENABLE?: number;
+  };
+}).Screen;
+if (screen) {
+  if (
+    typeof screen.setParam === "function" &&
+    typeof screen.DEPTH_TEST_ENABLE === "number"
+  ) {
+    screen.setParam(screen.DEPTH_TEST_ENABLE, 0);
+  }
+  if (typeof screen.setVSync === "function") screen.setVSync(true);
+}
+
 const runtime = createNativeRuntime();
 
 // audsrv, when this build carries audio; a silent stand-in when it does not.

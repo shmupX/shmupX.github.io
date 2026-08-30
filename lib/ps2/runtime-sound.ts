@@ -53,6 +53,11 @@ interface AthenaSound {
   Stream(path: string): AthenaStream;
 }
 
+/** QuickJS's std, which AthenaEnv publishes as a global. */
+interface QuickJsStd {
+  open(path: string, mode: string): { close(): void } | null;
+}
+
 /** The port's audio interface, restated so this file stands alone. */
 export interface SoundPlayer {
   init(): void;
@@ -72,14 +77,42 @@ export interface PumpedSoundPlayer extends SoundPlayer {
 }
 
 /**
- * The port asks for `assets/sounds/se_shoot.wav`; the disc carries
- * `assets/sounds/se_shoot.adp`, because that is the only one-shot format the
- * SPU2 plays. Swapping the extension here keeps the port's baked-in paths and
- * the exporter's staged paths from having to agree on anything else. Music
- * needs no swap: it is staged as the `.ogg` the port already asks for.
+ * Where the disc actually carries the effect the port just asked for.
+ *
+ * Two rewrites. The extension, because ADPCM is the only one-shot format the
+ * SPU2 plays. And the directory: the port asks for things like
+ * `assets/sounds/scene_continue/voice_countdown0.wav`, but the pack stages
+ * every effect flat under `assets/sounds/`. Effect keys are unique, so
+ * flattening loses nothing, and it means a disc never asks a PS2's cdfs to
+ * walk a path deeper than the images already do. Music needs no rewrite: it
+ * is staged as the `.ogg` the port already asks for.
  */
 function adpPath(path: string): string {
-  return path.replace(/\.[^./]*$/, "") + ".adp";
+  const stem = path.replace(/^.*\//, "").replace(/\.[^.]*$/, "");
+  return "assets/sounds/" + stem + ".adp";
+}
+
+/**
+ * Does this path open at all?
+ *
+ * It has to be asked before every `Sound.Sfx` and `Sound.Stream`, because
+ * AthenaEnv's loaders do not ask. `sound_sfx_load()` runs
+ * `fopen(path); fseek(f, 0, SEEK_END);` with no NULL check in between, so a
+ * path cdfs cannot open is not an exception this file could catch — it is a
+ * null dereference that takes the console down. Same shape in
+ * `sound_stream_load()`. One probe up front turns that into silence.
+ */
+function canOpen(path: string): boolean {
+  const std = (globalThis as { std?: QuickJsStd }).std;
+  if (!std || typeof std.open !== "function") return true; // nothing to ask
+  try {
+    const file = std.open(path, "rb");
+    if (!file) return false;
+    file.close();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** audsrv's 0-100 from the port's 0..1, when the port bothers to pass one. */
@@ -150,6 +183,7 @@ export function createAthenaSound(): PumpedSoundPlayer {
     const path = streamPaths[key];
     if (!canStream || !path) return;
     dropTrack();
+    if (!canOpen(path)) return;
     try {
       const next = Sound.Stream(path);
       if (volume !== undefined && typeof next.volume === "number") {
@@ -187,8 +221,10 @@ export function createAthenaSound(): PumpedSoundPlayer {
     },
 
     loadSfx(key, path) {
+      const file = adpPath(path);
+      if (!canOpen(file)) return;
       try {
-        sfx[key] = Sound.Sfx(adpPath(path));
+        sfx[key] = Sound.Sfx(file);
       } catch {
         // Not staged, or not encodable. Stays absent; plays become no-ops.
       }

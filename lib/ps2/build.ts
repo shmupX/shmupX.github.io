@@ -71,6 +71,8 @@ export interface BuildPs2Options {
   skipAudio?: boolean;
   /** Keep the effects but leave the music off — it is most of the disc. */
   skipMusic?: boolean;
+  /** Override how much IOP RAM the effects may use. See SFX_BUDGET_BYTES. */
+  sfxBudgetBytes?: number;
   log?: (message: string) => void;
 }
 
@@ -140,9 +142,40 @@ async function loadRecord(
 }
 
 /**
+ * Every local module reachable from `entry` by relative import, entry first.
+ *
+ * The cache key below has to cover all of them. It used to be the entry's own
+ * text, which was true only while runtime-entry.ts imported nothing local —
+ * the moment it picked up ./runtime-sound.ts, editing the sound backend
+ * stopped invalidating the cache and `build:ps2` would happily stage a stale
+ * main.js. A silently stale runtime is about the worst thing this exporter
+ * can ship, since the disc looks freshly built.
+ */
+async function localGraph(entry: string): Promise<string[]> {
+  const seen = new Set<string>();
+  const queue = [entry];
+  while (queue.length) {
+    const path = queue.shift()!;
+    if (seen.has(path)) continue;
+    seen.add(path);
+    let text: string;
+    try {
+      text = await Deno.readTextFile(path);
+    } catch {
+      continue;
+    }
+    for (const match of text.matchAll(/from\s+"(\.[^"]*)"/g)) {
+      queue.push(resolve(dirname(path), match[1]));
+    }
+  }
+  return [...seen].sort();
+}
+
+/**
  * Bundle lib/ps2/runtime-entry.ts (and the JSR game it pulls in) into the
- * single main.js AthenaEnv evaluates. The result depends only on the entry and
- * the pinned dependency, so it is cached and reused across level builds.
+ * single main.js AthenaEnv evaluates. The result depends only on our own
+ * sources and the pinned dependency, so it is cached and reused across level
+ * builds.
  */
 async function bundleRuntime(
   root: string,
@@ -152,10 +185,11 @@ async function bundleRuntime(
   const entry = join(root, "lib", "ps2", "runtime-entry.ts");
   const out = join(cacheDir, "main.js");
   const stamp = join(cacheDir, "main.js.key");
-  const key = [
-    await Deno.readTextFile(entry),
-    await Deno.readTextFile(join(root, "deno.json")),
-  ].join("\n");
+  const parts = [await Deno.readTextFile(join(root, "deno.json"))];
+  for (const path of await localGraph(entry)) {
+    parts.push(path, await Deno.readTextFile(path));
+  }
+  const key = parts.join("\n");
 
   try {
     if (await Deno.readTextFile(stamp) === key) {
@@ -258,7 +292,9 @@ export async function buildPs2(
 
   // The base game's own audio: effects as SPU2 ADPCM, music as Ogg Vorbis.
   // Both need ffmpeg on the build host; without it there are no packs.
-  const sfx = options.skipAudio ? null : await buildSfxPack(gameDir);
+  const sfx = options.skipAudio
+    ? null
+    : await buildSfxPack(gameDir, { budgetBytes: options.sfxBudgetBytes });
   const bgm = options.skipAudio || options.skipMusic
     ? null
     : await buildBgmPack(gameDir);
@@ -350,12 +386,24 @@ function readme(
     `    ${app}/athena.elf from wLaunchELF, OPL or FMCB. athena.elf is the`,
     "    interpreter; main.js is the game; assets/ is this level.",
     "",
+    "    Launch it from one of those. AthenaEnv finds its own boot path by",
+    "    special-casing cdrom0:, mass: and hdd0:, so under an emulator the",
+    '    .iso is the path it definitely handles — PCSX2\'s "Run ELF" goes',
+    "    through host:, which is not one of them.",
+    "",
     ...(hasIso
       ? [
         `${app}.iso`,
-        "    The same tree as a bootable disc. Runs in PCSX2 and in the",
-        "    launcher's own in-browser PS2 player; burning it for real",
-        "    hardware needs a modchip or FMCB, as with any homebrew disc.",
+        "    The same tree as a bootable disc, and the way to run this under",
+        "    an emulator. Boot it with FAST BOOT ON: this is a homebrew",
+        "    disc, so a full BIOS boot authenticates it, fails, and shows",
+        '    "Please insert a PlayStation or PlayStation 2 format disc".',
+        "    Fast boot skips that and runs the ELF from SYSTEM.CNF. In",
+        '    PCSX2 that is the default — just avoid "Boot Full (with',
+        '    BIOS)". The log should say: ELF Loading: cdrom0:\\ATHENA.ELF;1',
+        "    It also runs in the launcher's own in-browser PS2 player;",
+        "    burning it for real hardware needs a modchip or FMCB, as with",
+        "    any homebrew disc.",
         "",
       ]
       : []),

@@ -51,6 +51,28 @@ export const BGM_RATE = 44_100;
  */
 export const BGM_QUALITY = 3;
 
+/**
+ * How much ADPCM the effects may add up to, in bytes.
+ *
+ * This is not a disc-space limit — it is SPU2 RAM. audsrv's IOP side packs
+ * every loaded sample end to end into the SPU2's 2 MB, starting at 0x5010 and
+ * never freeing any of it (ps2sdk `iop/sound/audsrv/src/adpcm.c`). The whole
+ * set is 1.5 MB, which does fit — but the base address is a guess that the
+ * code's own comment admits does not account for the PCM streaming space, and
+ * the music streams through the same core. Leaving half the SPU2 free is
+ * cheap insurance against a collision nobody would be able to debug from a
+ * flickering screen.
+ *
+ * 85% of the set is long voice lines; the thirteen `se_*` effects that carry
+ * the actual gameplay come to 225 KB. So the pack spends the budget gameplay
+ * first and drops what will not fit, which keeps every sound that fires during
+ * play and loses boss taunts at the margin.
+ */
+export const SFX_BUDGET_BYTES = 1024 * 1024;
+
+/** Where the effects land on the disc — one flat directory. */
+export const SFX_DIR = "assets/sounds";
+
 /** Extensions worth looking for, best source first. */
 const SOURCE_EXTENSIONS = [".wav", ".mp3", ".ogg"];
 
@@ -235,7 +257,7 @@ async function decodeMono(
  */
 export async function buildSfxPack(
   gameDir: string,
-  options: { ffmpeg?: string | null } = {},
+  options: { ffmpeg?: string | null; budgetBytes?: number } = {},
 ): Promise<SoundPack | null> {
   const ffmpeg = options.ffmpeg === undefined
     ? await findFfmpeg()
@@ -243,12 +265,18 @@ export async function buildSfxPack(
   if (!ffmpeg) return null;
 
   const sources = await indexSources(join(gameDir, "assets", "sounds"));
-  const files: StagedFile[] = [];
+  const budget = options.budgetBytes ?? SFX_BUDGET_BYTES;
   const missing: string[] = [];
-  let bytes = 0;
-  let seconds = 0;
   let attenuated = 0;
 
+  // Encode everything first, then decide what fits: the cost of a key is not
+  // knowable until it has been through the encoder.
+  const encoded: {
+    key: string;
+    path: string;
+    data: Uint8Array;
+    seconds: number;
+  }[] = [];
   for (const { key, path } of sfxRequests()) {
     const source = sources.get(key);
     if (!source) {
@@ -262,20 +290,59 @@ export async function buildSfxPack(
     }
     const fitted = fitToHeadroom(pcm);
     if (fitted.scale !== 1) attenuated++;
-    const adp = encodeAdp(fitted.pcm, { rate: SFX_RATE });
-    bytes += adp.length;
-    seconds += pcm.length / SFX_RATE;
-    files.push({
-      path: `${dirname(path)}/${key}.adp`,
-      data: adp,
+    encoded.push({
+      key,
+      // Flat, whatever the port's own path was. Effect keys are unique, and
+      // AthenaEnv's loaders null-deref rather than fail on a path cdfs cannot
+      // resolve, so the fewer directory levels the disc asks a PS2 to walk the
+      // better — runtime-sound.ts rewrites the port's path the same way.
+      path: `${SFX_DIR}/${key}.adp`,
+      data: encodeAdp(fitted.pcm, { rate: SFX_RATE }),
+      seconds: pcm.length / SFX_RATE,
     });
   }
+
+  // Gameplay first, then shortest first.
+  //
+  // The `se_*` effects are the ones that fire every few frames — shots, hits,
+  // explosions, menu blips — and together they are only a quarter of the
+  // budget, so they all go in. What is left buys as many voice lines as it
+  // can, shortest first, which is why a four-second boss taunt is the thing
+  // that goes. Sorting on size alone loses `se_sp_explosion` to a taunt,
+  // which is the wrong trade.
+  const tier = (key: string) => (key.startsWith("se_") ? 0 : 1);
+  const dropped: string[] = [];
+  const files: StagedFile[] = [];
+  let bytes = 0;
+  let seconds = 0;
+  const order = [...encoded].sort((a, b) =>
+    tier(a.key) - tier(b.key) || a.data.length - b.data.length
+  );
+  for (const item of order) {
+    if (bytes + item.data.length > budget) {
+      dropped.push(item.key);
+      continue;
+    }
+    bytes += item.data.length;
+    seconds += item.seconds;
+    files.push({ path: item.path, data: item.data });
+  }
+  files.sort((a, b) => (a.path < b.path ? -1 : 1));
 
   const notes = [
     `sound effects: ${files.length} of ${sfxRequests().length} keys, ${
       seconds.toFixed(0)
-    }s as ${(bytes / 1024).toFixed(0)} KB of ADPCM`,
+    }s as ${(bytes / 1024).toFixed(0)} KB of ADPCM (IOP budget ${
+      (budget / 1024).toFixed(0)
+    } KB)`,
   ];
+  if (dropped.length) {
+    notes.push(
+      `sound effects: ${dropped.length} over the IOP budget and dropped — ${
+        dropped.slice(0, 3).join(", ")
+      }${dropped.length > 3 ? ", …" : ""}`,
+    );
+  }
   if (attenuated) {
     notes.push(
       `sound effects: ${attenuated} pulled under the SPU2 encoder's headroom`,

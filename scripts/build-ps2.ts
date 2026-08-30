@@ -17,6 +17,7 @@
 //   --sndpac <path>      render the tone bank from this SNDPAC.BIN
 //   --no-audio           build silent even when a sound bank is available
 //   --no-music           keep the effects, drop the streamed music
+//   --sfx-budget <KB>    how much IOP RAM the effects may use (default 384)
 //   --no-iso             stop after the folder build
 
 import { dirname, fromFileUrl, relative, resolve } from "@std/path";
@@ -25,6 +26,7 @@ import { buildPs2 } from "../lib/ps2/build.ts";
 const ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 
 const VALUE_FLAGS = new Set([
+  "--sfx-budget",
   "--out",
   "--level-file",
   "--athena-elf",
@@ -92,6 +94,9 @@ try {
     sndpac: typeof flags["--sndpac"] === "string" ? flags["--sndpac"] : null,
     skipAudio: flags["--no-audio"] === true,
     skipMusic: flags["--no-music"] === true,
+    sfxBudgetBytes: typeof flags["--sfx-budget"] === "string"
+      ? Number(flags["--sfx-budget"]) * 1024
+      : undefined,
   });
 
   const here = (path: string) => relative(ROOT, path) || path;
