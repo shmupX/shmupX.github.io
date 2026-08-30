@@ -682,8 +682,36 @@ table (0KERNEL `+0x1B490`, 1260 rows × 16 steps; row = `ctrl0*140 +
 ships in `data/bgm-accompaniment.json`, and the 116-instrument tone bank map
 (sample offsets into SNDPAC.BIN, loops, root pitch, envelopes — traced
 through the 68000 driver's instrument-select command) in
-`data/bgm-instruments.json`; a runtime that is handed SNDPAC.BIN can cut the
-real Saturn timbres from it.
+`data/bgm-instruments.json`.
+
+**The tone bank is now cut and played** (`src/audio/tone-bank.js`, packed table
+in `src/audio/tone-bank-table.js`). SNDPAC.BIN is disc content and is not in
+this repo; `src/cd/iso9660-read.js` pulls it out of a disc image the caller
+supplies. Two facts settled by measurement against the retail bank:
+**format 16 is signed BIG-endian 16-bit** (mean absolute first difference is
+4-8x smaller than the little-endian reading on every tonal slice) and format 8
+is signed 8-bit; and **every one of the 590 layers loops to its LAST sample** —
+`loopEnd == lengthSamples - 1` without exception, so a loop is always the tail
+`[loopStart, lengthSamples)`. The SCSP's reverse (LPCTL 2, 34 layers) and
+alternating (LPCTL 3, 37 layers) modes are baked into the PCM at cut time, so
+consumers only implement a forward loop. The 590 layers share 85 distinct
+cuts. A note-on strikes EVERY layer whose range contains the note, which is
+what makes the detune pairs chorus.
+
+The bank's **base rate — the rate a sample plays at when it is sounding its own
+`rootPitch` — measures 14,842 Hz, not 44,100.** A looped instrument sample
+loops on a period boundary, so for base rate R the cycle count
+`k = loopLength * 440 * 2^((rootPitch - 88)/12) / R` must be integral for every
+layer (88 being the scale note that sounds concert A, the anchor the runtime's
+BGM already uses). Fitting R over the bank's 34 distinct short loops puts 31 of
+them within 2% of a whole cycle count with unbiased residuals; 44,100 fits
+ZERO of 34 and would play every sampled note ~18.9 semitones sharp of the
+periodic-wave voices. The shortest loops come out at exactly one cycle, which
+pins the octave the fit is otherwise blind to. `SCSP_BASE_RATE` ships as
+14,848 (29*512, within 0.04% of the fit); rendering the same instrument both
+ways in an OfflineAudioContext then agrees to within one 1/48-octave analysis
+bin. This is a calibration of the bank against the sequencer's note scale, not
+a claim about the SCSP's DAC clock.
 
 **Zako firing, re-traced 2026-08-24** (fire routine `+0x19810`, dispatcher
 `+0x1989e`, shooter `+0x18fac`, spawn fill `+0x1548e`; supersedes the earlier

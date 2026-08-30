@@ -85,5 +85,34 @@ export { decompress, SECTION_HINTS, SECTION_SIZES } from "./src/decompress.js";
 // --- Extras: cartridge-dump deinterleaving (src/bup-deinterleave.js) ---
 export { deinterleave, detect } from "./src/bup-deinterleave.js";
 
+// --- Tone bank: real Saturn samples out of SNDPAC.BIN (src/audio/tone-bank.js) ---
+export {
+  cutLayer,
+  INSTRUMENT_COUNT,
+  instrumentAt,
+  LAYER_COUNT,
+  layerAt,
+  levelGain,
+  LOOP_ALTERNATE,
+  LOOP_FORWARD,
+  LOOP_OFF,
+  LOOP_REVERSE,
+  panPosition,
+  pickLayers,
+  playbackRate,
+  SCSP_BASE_RATE,
+  toFloat32,
+  uniqueSlices,
+} from "./src/audio/tone-bank.js";
+
+// --- Read-only ISO 9660, for pulling files off a disc image (src/cd/iso9660-read.js) ---
+export {
+  findEntry,
+  listFiles,
+  openDisc,
+  readExtent,
+  readFile,
+} from "./src/cd/iso9660-read.js";
+
 // --- Extras: byte-range diffing (src/diff-ranges.js) ---
 export { coalesceDiffRanges, totalDiffBytes } from "./src/diff-ranges.js";

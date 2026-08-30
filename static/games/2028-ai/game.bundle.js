@@ -5564,6 +5564,106 @@
   // on frame 1 and accompaniment note-ons on frame 3, so the backing always
   // sounds two frames behind the melody.
   var ACCOMP_DELAY = 2 / 60;
+  // ---- Real Saturn samples: the tone bank cut out of SNDPAC.BIN -----------
+  //
+  // DEZA_BGM_VOICES above is an ANALYSIS of the retail sample bank — sixteen
+  // harmonic amplitudes per instrument, rebuilt as periodic waves. The
+  // instrument map also carries each layer's byte offset INTO SNDPAC.BIN and
+  // its loop points, which is enough to play the samples themselves.
+  //
+  // SNDPAC.BIN is disc content: it is not in this repo and is never published.
+  // A Dezaemon 2 disc image dropped into the gitignored dev-fixtures/ is cut
+  // up by packages/shmup-engine/src/audio/tone-bank.js and served, DEV ONLY,
+  // by the vite.config.ts route below. In production both requests 404 and
+  // every note falls back to the periodic-wave voice, exactly as before.
+  //
+  //   /dev/tone-bank.json  slices (offset, length, loop point) + which layer
+  //                        of which instrument plays which slice
+  //   /dev/tone-bank.pcm   the slices themselves, Int16 little-endian,
+  //                        loop-baked so reverse and ping-pong are already
+  //                        ordinary forward loops
+  var DEZA_TONE_BANK = null;
+  var dezaToneBankPending = null;
+  function loadDezaToneBank() {
+    if (DEZA_TONE_BANK || dezaToneBankPending) return dezaToneBankPending;
+    if (typeof fetch !== "function") return null;
+    var grab = function(url, as) {
+      return fetch(url).then(function(r) {
+        return r.ok ? r[as]() : null;
+      });
+    };
+    dezaToneBankPending = Promise.all([
+      grab("/dev/tone-bank.json", "json"),
+      grab("/dev/tone-bank.pcm", "arrayBuffer")
+    ]).then(function(both) {
+      if (!both[0] || !both[1]) return null;
+      var bank = both[0];
+      bank.pcm = new Int16Array(both[1]);
+      DEZA_TONE_BANK = bank;
+      return bank;
+    }).catch(function() {
+      return null;
+    });
+    return dezaToneBankPending;
+  }
+  // One slice as an AudioBuffer, cached across every instrument using it. The
+  // buffer keeps the bank's own 44.1kHz rate whatever the context runs at;
+  // Web Audio folds that ratio into playbackRate for us.
+  function dezaSampleBuffer(st, sliceIndex) {
+    var cache = st.buffers || (st.buffers = {});
+    if (cache[sliceIndex]) return cache[sliceIndex];
+    var bank = DEZA_TONE_BANK;
+    var slice = bank.slices[sliceIndex];
+    var buf = st.ctx.createBuffer(1, slice.samples, bank.sampleRate);
+    var out = buf.getChannelData(0);
+    for (var i = 0; i < slice.samples; i++) {
+      out[i] = bank.pcm[slice.at + i] / 32768;
+    }
+    cache[sliceIndex] = buf;
+    return buf;
+  }
+  // The sample layers a note-on strikes: EVERY layer of the instrument whose
+  // [noteLo..noteHi] contains the note, because the bank's detune pairs are
+  // two layers over one range and taking only the first loses the chorus.
+  // Null when no bank is loaded — the caller then plays a periodic wave.
+  function dezaSamples(st, instrument, note) {
+    var bank = DEZA_TONE_BANK;
+    if (!bank) return null;
+    var inst = bank.instruments[instrument | 0];
+    if (!inst || !inst.layers.length) return null;
+    var cache = st.samples || (st.samples = {});
+    var key = instrument + ":" + note;
+    if (cache[key] !== undefined) return cache[key];
+    var hits = [];
+    for (var i = 0; i < inst.layers.length; i++) {
+      var l = inst.layers[i];
+      if (note >= l.noteLo && note <= l.noteHi) hits.push(l);
+    }
+    // A note outside every range still sounds: the driver never drops a
+    // note-on, it just plays the nearest thing it has.
+    if (!hits.length) hits = [inst.layers[0]];
+    var voices = [];
+    for (var h = 0; h < hits.length; h++) {
+      var layer = hits[h];
+      var slice = bank.slices[layer.slice];
+      if (!slice) continue;
+      voices.push({
+        buffer: dezaSampleBuffer(st, layer.slice),
+        loop: !!slice.loop,
+        loopStart: slice.loopStart / bank.sampleRate,
+        loopEnd: slice.samples / bank.sampleRate,
+        // playbackRate = 2^((note - rootPitch + fineTune/256)/12), the
+        // driver's own pitch formula.
+        rate: Math.pow(
+          2,
+          (note - layer.rootPitch + layer.fineTune / 256) / 12
+        ),
+        level: layer.level
+      });
+    }
+    cache[key] = voices.length ? voices : null;
+    return cache[key];
+  }
   function makeNoiseBuffer(ctx) {
     var len = ctx.sampleRate * 0.25 | 0;
     var buf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -5585,6 +5685,10 @@
       idx = pair ? which === "boss" ? pair[1] : pair[0] : null;
     }
     if (idx == null || !bgm.songs || bgm.songs[idx] == null) return false;
+    // Fire-and-forget: notes scheduled before the bank lands play as periodic
+    // waves, and the ones after it play the real samples. No load gate, so a
+    // missing bank costs one 404 and nothing else.
+    loadDezaToneBank();
     stopDezaemonBgm(scene);
     var song = parseBgmSong(bgm.songs[idx]);
     // The four composed parts play alongside the seven channels of the engine's
@@ -5601,6 +5705,8 @@
       loop: 0,
       master: ctx.createGain(),
       noise: makeNoiseBuffer(ctx),
+      buffers: {},
+      samples: {},
       timer: null,
       scheduled: 0,
       echo: null
@@ -5692,25 +5798,43 @@
   function playBgmNote(st, mix, e, t, scaleNote) {
     var ctx = st.ctx;
     var dur = Math.max(0.05, e.len * st.stepSeconds * 0.95);
-    var v = dezaVoice(st, e.inst || 0, scaleNote);
+    var inst = e.inst || 0;
+    var v = dezaVoice(st, inst, scaleNote);
     if (!v) return;
-    // The tone bank's own level and the instrument's volume adjust set how loud
-    // this instrument sits; both are attenuations, so they only ever pull down.
-    // The bank's per-layer level is an attenuation (~0.375 dB a step). Applied
-    // literally the quietest instruments vanish under the mix, so it is floored:
-    // the loud/quiet ordering survives, audibility is guaranteed.
-    var peak = mix.gain * 0.5 *
-      Math.max(0.15, Math.pow(10, -v.level * 0.375 / 20));
+    // Real bank samples when one has been loaded, the analysed periodic wave
+    // otherwise. The two paths share the gain, pan and echo plumbing; only the
+    // source node and the envelope differ.
+    var samples = dezaSamples(st, inst, scaleNote);
     var g = ctx.createGain();
-    // The sampled envelope: attack to peak, decay to the sustain level, then
-    // release when the note's own length runs out.
-    var atk = Math.min(v.attack, dur * 0.5);
-    g.gain.setValueAtTime(1e-4, t);
-    if (atk > 0.001) g.gain.linearRampToValueAtTime(peak, t + atk);
-    else g.gain.setValueAtTime(peak, t + 0.001);
-    var sus = Math.max(0.02, peak * v.sustain);
-    if (v.decay < 4 && sus < peak) {
-      g.gain.setTargetAtTime(sus, t + atk, Math.max(0.01, v.decay * 0.4));
+    var peak;
+    if (samples) {
+      // A recorded sample already contains its own attack and decay, and its
+      // loop IS the sustain, so re-applying the analysed envelope would shape
+      // it twice. All that is needed is a click guard on the way in and the
+      // release the note's own length calls for. Per-layer attenuation is
+      // applied to each source below instead.
+      peak = mix.gain * 0.5;
+      g.gain.setValueAtTime(1e-4, t);
+      g.gain.linearRampToValueAtTime(peak, t + 15e-4);
+    } else {
+      // The tone bank's own level and the instrument's volume adjust set how
+      // loud this instrument sits; both are attenuations, so they only ever
+      // pull down. The bank's per-layer level is an attenuation (~0.375 dB a
+      // step). Applied literally the quietest instruments vanish under the
+      // mix, so it is floored: the loud/quiet ordering survives, audibility is
+      // guaranteed.
+      peak = mix.gain * 0.5 *
+        Math.max(0.15, Math.pow(10, -v.level * 0.375 / 20));
+      // The sampled envelope: attack to peak, decay to the sustain level, then
+      // release when the note's own length runs out.
+      var atk = Math.min(v.attack, dur * 0.5);
+      g.gain.setValueAtTime(1e-4, t);
+      if (atk > 0.001) g.gain.linearRampToValueAtTime(peak, t + atk);
+      else g.gain.setValueAtTime(peak, t + 0.001);
+      var sus = Math.max(0.02, peak * v.sustain);
+      if (v.decay < 4 && sus < peak) {
+        g.gain.setTargetAtTime(sus, t + atk, Math.max(0.01, v.decay * 0.4));
+      }
     }
     g.gain.setTargetAtTime(1e-4, t + dur, Math.max(0.02, v.release * 0.5));
     var out = g;
@@ -5725,7 +5849,30 @@
     }
     out.connect(st.master);
     var stop = t + dur + Math.min(1.5, v.release * 2) + 0.05;
-    if (v.wave) {
+    if (samples) {
+      // Every matching layer sounds at once (that is what the detune pairs
+      // are), so the set is levelled by its own size to keep a chorus from
+      // being twice the weight of a single layer.
+      var share = 1 / Math.sqrt(samples.length);
+      for (var si = 0; si < samples.length; si++) {
+        var s = samples[si];
+        var lg = ctx.createGain();
+        lg.gain.value = share *
+          Math.max(0.15, Math.pow(10, -s.level * 0.375 / 20));
+        lg.connect(g);
+        var bsrc = ctx.createBufferSource();
+        bsrc.buffer = s.buffer;
+        bsrc.playbackRate.value = Math.max(0.03, Math.min(32, s.rate));
+        if (s.loop) {
+          bsrc.loop = true;
+          bsrc.loopStart = s.loopStart;
+          bsrc.loopEnd = s.loopEnd;
+        }
+        bsrc.connect(lg);
+        bsrc.start(t);
+        bsrc.stop(stop);
+      }
+    } else if (v.wave) {
       var osc = ctx.createOscillator();
       osc.setPeriodicWave(v.wave);
       osc.frequency.value = dezaNoteFreq(scaleNote);
@@ -5747,6 +5894,11 @@
   if (typeof window !== "undefined") {
     window.__playBgmNoteProbe = playBgmNote;
     window.__dezaVoiceProbe = dezaVoice;
+    window.__dezaSamplesProbe = dezaSamples;
+    window.__dezaToneBankProbe = function() {
+      return DEZA_TONE_BANK;
+    };
+    window.__loadDezaToneBank = loadDezaToneBank;
   }
   function stopDezaemonBgm(scene) {
     var st = scene._dezaBgm;

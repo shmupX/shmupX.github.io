@@ -14,7 +14,9 @@
     "./game-schema": "./src/game-schema.js",
     "./player-art": "./src/player-art.js",
     "./player2-art": "./src/player2-art.js",
-    "./diff-ranges": "./src/diff-ranges.js"
+    "./diff-ranges": "./src/diff-ranges.js",
+    "./tone-bank": "./src/audio/tone-bank.js",
+    "./iso9660-read": "./src/cd/iso9660-read.js"
   },
   "fmt": {
     "exclude": ["src/**", "FORMAT.md", "games-db.json", "data/*.json"]

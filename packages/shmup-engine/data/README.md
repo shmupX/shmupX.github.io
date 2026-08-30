@@ -14,8 +14,14 @@ live in the game's own ROM/overlays (see FORMAT.md for the traces):
   `row = ctrl0*140 + (ctrl1*5 + ((ctrl2&0x7F)>>1))*7 + channel`.
 - `bgm-instruments.json` — the 116-instrument tone bank map: per layer the
   sample offset INTO SNDPAC.BIN (not shipped here — it is disc content), loop
-  points, root pitch, fine tune, PCM format, envelope, pan and level. Enough for
-  a runtime to cut real Saturn timbres out of a user-supplied SNDPAC.BIN.
+  points, root pitch, fine tune, PCM format, envelope, pan and level. This is
+  the verbose reference; the runtime ships the same 590 layers packed into
+  `src/audio/tone-bank-table.js` (regenerate with `deno task tonebank:table`),
+  and `src/audio/tone-bank.js` cuts the real Saturn timbres out of a
+  user-supplied SNDPAC.BIN. Three things it took measurement to settle, all
+  shown in FORMAT.md: 16-bit samples are BIG-endian, every loop runs to the last
+  sample (so reverse and ping-pong bake down to a plain forward loop), and the
+  base rate is 14,842 Hz rather than 44,100.
 - `appearance-scripts.json` — the 256-entry appearance pointer table's behavior
   scripts (GAME.CMP +0x220BC..+0x24E52): per appearance id, the 10-byte rows
   `{duration, angle/offset, angularVel/delta, amplitude+flags,
