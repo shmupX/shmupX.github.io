@@ -42,6 +42,8 @@ interface LiveSession {
   score: number;
   players: number;
   joinable: boolean;
+  /** The host's last heartbeat, in ms since the epoch. */
+  updatedAt: number;
   mine: boolean;
 }
 

@@ -24,7 +24,7 @@
 //
 // Defaults to ../shmup-party-phaser4 next to this checkout.
 
-import { decodePng, encodePng } from "../lib/ps2/png.ts";
+import { decodePng, encodePng, type Raster } from "../lib/ps2/png.ts";
 import { fromFileUrl } from "@std/path";
 
 // Every 8th frame of the 64-frame cycle: eight phases is a readable stride at
@@ -414,10 +414,13 @@ const stripX = existing ? existing.frame.x : 0;
 const stripY = existing ? existing.frame.y : sheetPng.height;
 const newHeight = Math.max(sheetPng.height, stripY + H);
 
-const merged = {
+// A Raster, so encodePng takes it as-is: plain Uint8Array, not clamped —
+// every byte written below is copied from an already-decoded sheet or frame,
+// so there is nothing for the clamping to do.
+const merged: Raster = {
   width: sheetPng.width,
   height: newHeight,
-  data: new Uint8ClampedArray(sheetPng.width * newHeight * 4),
+  data: new Uint8Array(sheetPng.width * newHeight * 4),
 };
 merged.data.set(
   sheetPng.data.subarray(0, sheetPng.width * sheetPng.height * 4),
