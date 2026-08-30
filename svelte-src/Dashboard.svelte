@@ -1740,6 +1740,11 @@
   // the cart silently and swaps the frame for the running game.
   const SAV_DB_URL = 'https://evil-invaders-default-rtdb.firebaseio.com';
   const SAV_STATIC_MANIFEST = '/editor/dezaemon/saves.manifest.json';
+  // The database index was written before the community table carried a game's
+  // page and gameplay video, so those two come off games-db.json instead — the
+  // same title join the editor's shelf does. The video is what the coverflow
+  // previews on hover / tap-and-hold.
+  const SAV_GAMES_DB = '/editor/dezaemon/games-db.json';
   // Catalog entries that own a .sav shelf. A manifest entry can also opt in
   // with `savLibrary: true` — same pattern as twinStick/touchControls.
   const SAV_PICKER_IDS = new Set(['shmupx']);
@@ -1769,6 +1774,34 @@
   function savSlugOf(title) {
     const s = String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     return s || 'save';
+  }
+
+  // The editor's matcher (dezaNormTitle in static/editor/index.html).
+  function savNormTitle(title) {
+    return String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+
+  // Rows in, same rows out — with `url` / `video` filled in where the table
+  // knows the game. A missing or unreadable table just means no previews.
+  async function savAttachLinks(rows) {
+    try {
+      const r = await fetch(SAV_GAMES_DB);
+      if (!r.ok) return rows;
+      const db = await r.json();
+      const byTitle = new Map();
+      for (const g of db.games || []) byTitle.set(savNormTitle(g[0]), g);
+      for (const [from, to] of Object.entries(db.aliases || {})) {
+        const target = byTitle.get(to);
+        if (target && !byTitle.has(from)) byTitle.set(from, target);
+      }
+      for (const row of rows) {
+        const g = byTitle.get(savNormTitle(row.title));
+        if (!g) continue;
+        row.url = g[5] || '';
+        row.video = g[6] || '';
+      }
+    } catch (_) { /* no links — the shelf itself is unaffected */ }
+    return rows;
   }
 
   async function loadSavLibrary() {
@@ -1810,6 +1843,7 @@
           titleJa: '', developer: '', developerJa: '', genre: '', hasCover: false,
         }));
       }
+      await savAttachLinks(rows);
       rows.sort((a, b) => a.title.localeCompare(b.title));
       savLibrary = rows;
     } catch (err) {

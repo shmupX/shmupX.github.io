@@ -5,7 +5,8 @@
   // keyboard, and touch/mouse all drive one source of truth.
   //
   // Item shape: { slug, file, title, titleJa?, developer?, developerJa?,
-  //   genre?, hasCover } — the editor shelf's normalized row. `covers` maps
+  //   genre?, video?, hasCover } — the editor shelf's normalized row, plus the
+  //   YouTube id the Dashboard joins on from games-db.json. `covers` maps
   //   slug -> data URL (256x480 PNG), null for a failed fetch, undefined while
   //   not fetched; anything falsy renders the cartridge placeholder.
   let {
@@ -77,7 +78,7 @@
     dragMoveFn = (ev) => {
       if (!drag || ev.pointerId !== drag.id) return;
       const dx = ev.clientX - drag.x;
-      if (Math.abs(dx) > 6) drag.moved = true;
+      if (Math.abs(dx) > 6) { drag.moved = true; dropPreview(); }
       const next = Math.max(0, Math.min(items.length - 1, drag.sel0 + Math.round(-dx / stepPx())));
       if (next !== sel) onselect(next);
     };
@@ -102,10 +103,12 @@
   // Closing mid-swipe (Esc, gamepad B) unmounts the stage but not the window
   // listeners — drop them whenever the picker closes, and on teardown.
   $effect(() => {
-    if (!open) endDrag();
-    return () => endDrag();
+    if (!open) { endDrag(); dropPreview(); }
+    return () => { endDrag(); dropPreview(); };
   });
   function cardClick(off, i) {
+    // The press that ends a hold-preview is spent; it must not launch.
+    if (heldPreview) { heldPreview = false; dropPreview(); return; }
     if (dragged) { dragged = false; return; }
     if (off === 0) onlaunch(i);
     else onselect(i);
@@ -121,6 +124,46 @@
       e.stopPropagation();
       cardClick(off, i);
     };
+  }
+
+  // ── gameplay preview ────────────────────────────────────────────────────
+  // A cover whose game has a video (scraped from its satakore.com page) plays
+  // it muted in place of the art while the pointer rests on the card, or while
+  // a finger holds it. One at a time, and the player is click-through, so the
+  // card underneath is still what launches the game.
+  let previewIdx = $state(-1);
+  let previewTimer = 0;
+  let heldPreview = false;
+
+  function previewSrc(id) {
+    return 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(id) +
+      '?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1';
+  }
+  function armPreview(i, item, delay, hold) {
+    if (!item?.video) return;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => {
+      previewIdx = i;
+      if (hold) heldPreview = true;
+    }, delay);
+  }
+  function dropPreview() {
+    clearTimeout(previewTimer);
+    previewTimer = 0;
+    previewIdx = -1;
+  }
+  function cardEnter(e, v) {
+    if (e.pointerType === 'mouse') armPreview(v.i, v.item, 320, false);
+  }
+  // Touch/pen: a hold is the hover. `heldPreview` marks the press as spent so
+  // the release that ends the preview does not also launch the game.
+  function cardDown(e, v) {
+    if (e.pointerType === 'mouse') return;
+    heldPreview = false;
+    armPreview(v.i, v.item, 400, true);
+  }
+  function cardUp(e) {
+    if (e.pointerType !== 'mouse') dropPreview();
   }
 
   // Wheel browses; both axes so trackpads and mice agree.
@@ -169,8 +212,20 @@
             style={cardStyle(v.off)}
             onclick={() => cardClick(v.off, v.i)}
             onkeydown={cardKey(v.off, v.i)}
+            onpointerenter={(e) => cardEnter(e, v)}
+            onpointerleave={dropPreview}
+            onpointerdown={(e) => cardDown(e, v)}
+            onpointerup={cardUp}
+            onpointercancel={cardUp}
           >
-            {#if v.item.slug && covers[v.item.slug]}
+            {#if previewIdx === v.i && v.item.video}
+              <iframe
+                class="cf-video"
+                src={previewSrc(v.item.video)}
+                title="{v.item.title} — gameplay"
+                allow="autoplay; encrypted-media; picture-in-picture"
+              ></iframe>
+            {:else if v.item.slug && covers[v.item.slug]}
               <img class="cf-art" src={covers[v.item.slug]} alt={v.item.title} draggable="false" />
             {:else}
               <div class="cf-ph">
@@ -178,6 +233,9 @@
                 <span class="cf-ph-title">{v.item.title}</span>
                 <span class="cf-ph-foot">.SAV</span>
               </div>
+            {/if}
+            {#if v.item.video && previewIdx !== v.i}
+              <span class="cf-play" aria-hidden="true">▶</span>
             {/if}
           </div>
         {/each}
@@ -198,7 +256,7 @@
     <div class="sav-foot">
       <span><b>A</b> Play</span>
       <span><b>B</b> Close</span>
-      <span class="sav-foot-hint">← → browse · <b>Y</b> opens this shelf</span>
+      <span class="sav-foot-hint">← → browse · hover or hold a cover to preview it · <b>Y</b> opens this shelf</span>
     </div>
   </div>
 {/if}
@@ -262,6 +320,20 @@
     box-shadow: 0 0 3.4vmin color-mix(in srgb, var(--green-glow, #7CFF4F) 55%, transparent), 0 2vmin 5vmin rgba(0, 0, 0, .75);
   }
   .cf-art { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; display: block; }
+  .cf-video {
+    position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+    border: 0; background: #000;
+    /* Click-through: the card under it stays the thing a press launches. */
+    pointer-events: none;
+  }
+  .cf-play {
+    position: absolute; right: 5%; bottom: 3.5%;
+    width: 22%; aspect-ratio: 1; display: grid; place-items: center;
+    border-radius: 50%; background: rgba(0, 0, 0, .55);
+    border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
+    color: var(--green, #9CFF6B); font-size: clamp(8px, 1.5vmin, 12px);
+    text-shadow: 0 0 8px var(--green-glow, #7CFF4F); pointer-events: none;
+  }
 
   .cf-ph {
     width: 100%; height: 100%; display: flex; flex-direction: column;

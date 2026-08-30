@@ -142,6 +142,20 @@ function openIframeWindow({ appId, title, icon, url, width, height, sandbox }) {
   // the user previews from disk does not: a blob: frame would otherwise
   // inherit this origin and could read the desktop's own storage.
   if (sandbox) frame.setAttribute("sandbox", sandbox);
+  // Those same trusted tools are told they are running on the desktop, so a
+  // link they would otherwise send to a browser tab can come back here as a
+  // Web Browser instead (see the cmg-open-url listener below). A sandboxed
+  // preview has an opaque origin and is never told.
+  if (!sandbox && new URL(url, location.href).origin === location.origin) {
+    frame.addEventListener("load", () => {
+      try {
+        frame.contentWindow?.postMessage(
+          { type: "cmg-desktop-hello" },
+          location.origin,
+        );
+      } catch (_e) { /* frame navigated away mid-announcement */ }
+    });
+  }
   const win = wm.create({
     appId,
     title,
@@ -354,7 +368,7 @@ const APPS = {
   },
 
   browser: {
-    title: "Web Window",
+    title: "Web Browser",
     icon: { lucide: "globe", hue: 212 },
     desktopIcon: true,
     pinned: true,
@@ -385,6 +399,42 @@ function launch(appId, data) {
 
 // ---- web (iframe) browser windows -------------------------------------
 
+// YouTube's watch pages refuse to be embedded; its player at /embed/ does
+// not. The address bar and ↗ keep the real watch URL — only what the frame
+// loads is swapped — so a video handed over by an app (the level editor's
+// Dezaemon shelf) actually plays in this window instead of sitting blank.
+function youtubeIdOf(url) {
+  try {
+    const u = new URL(url, location.href);
+    const host = u.hostname.replace(/^www\./, "");
+    const id = host === "youtu.be"
+      ? u.pathname.slice(1).split("/")[0]
+      : /^youtube(-nocookie)?\.com$/.test(host)
+      ? (u.pathname === "/watch"
+        ? u.searchParams.get("v")
+        : (u.pathname.match(/^\/(?:embed|shorts|live|v)\/([^/?#]+)/) || [])[1])
+      : null;
+    return id && /^[\w-]{6,20}$/.test(id) ? id : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function frameSrcFor(url) {
+  const id = youtubeIdOf(url);
+  return id
+    ? `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&playsinline=1`
+    : url;
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url, location.href).host || url;
+  } catch (_e) {
+    return url;
+  }
+}
+
 function normalizeUrl(raw) {
   const t = raw.trim();
   if (!t) return null;
@@ -413,6 +463,7 @@ function openBrowserWindow(initialUrl) {
   `;
   const urlInput = wrap.querySelector(".bw-url");
   const frameWrap = wrap.querySelector(".bw-frame-wrap");
+  const placeholder = wrap.querySelector(".bw-placeholder");
   const ext = wrap.querySelector(".bw-ext");
   let frame = null;
   let currentUrl = null;
@@ -423,21 +474,31 @@ function openBrowserWindow(initialUrl) {
     currentUrl = url;
     urlInput.value = url;
     ext.href = url;
+    // A refused frame is indistinguishable from a loaded one in script (load
+    // fires either way, and the document is opaque either way) — but it paints
+    // nothing at all. So the note stays in the wrap and the frame is layered
+    // over it: a site that loads covers the note, a site that refuses leaves
+    // it showing.
+    placeholder.innerHTML = `<p><b>${hostOf(url)}</b></p>` +
+      `<p class="fa-hint">If this stays blank, the site refuses to be ` +
+      `embedded (X-Frame-Options / CSP frame-ancestors) — use &#8599; above ` +
+      `to open it in a browser tab.</p>`;
     if (!frame) {
-      frameWrap.textContent = "";
       frame = document.createElement("iframe");
       frame.className = "app-frame";
-      frame.allow = IFRAME_ALLOW;
-      frame.title = "web window";
+      // IFRAME_ALLOW already carries autoplay; encrypted-media is what an
+      // embedded YouTube player wants on top of it.
+      frame.allow = `${IFRAME_ALLOW}; encrypted-media`;
+      frame.title = "web browser";
       frameWrap.appendChild(frame);
     }
-    frame.src = url;
+    frame.src = frameSrcFor(url);
     win.persistUrl = url;
     saveStateSoon();
   };
   wrap.querySelector(".bw-go").addEventListener("click", () => go());
   wrap.querySelector(".bw-reload").addEventListener("click", () => {
-    if (frame && currentUrl) frame.src = currentUrl;
+    if (frame && currentUrl) frame.src = frameSrcFor(currentUrl);
   });
   urlInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") go();
@@ -445,17 +506,53 @@ function openBrowserWindow(initialUrl) {
 
   const win = wm.create({
     appId: "browser",
-    title: "Web Window",
+    title: "Web Browser",
     icon: iconNode({ lucide: "globe", hue: 212 }),
     width: 980,
     height: 660,
     content: wrap,
   });
   win.persistData = () => ({ url: win.persistUrl ?? null });
+  win.browserGo = go;
   if (initialUrl) go(initialUrl);
   else setTimeout(() => urlInput.focus(), 50);
   return win;
 }
+
+// ---- links handed over by a hosted app ---------------------------------
+//
+// A tool running in a window asks the desktop to open a link instead of
+// opening it itself — the level editor does this for the satakore.com page and
+// the YouTube video of a Dezaemon .sav it recognises — so the page lands in a
+// Web Browser window beside the tool rather than as a browser tab. Only
+// same-origin frames this desktop hosts may ask, and only for an address
+// normalizeUrl() accepts.
+//
+// An open Web Browser window is reused rather than stacking a new one per
+// link, the way following a link in a browser reuses its tab.
+function isHostedFrame(source) {
+  if (!source) return false;
+  for (const w of wm.windows) {
+    for (const frame of w.el.querySelectorAll("iframe")) {
+      if (frame.contentWindow === source) return true;
+    }
+  }
+  return false;
+}
+
+globalThis.addEventListener("message", (ev) => {
+  const msg = ev.data;
+  if (!msg || msg.type !== "cmg-open-url" || typeof msg.url !== "string") return;
+  if (ev.origin !== location.origin || !isHostedFrame(ev.source)) return;
+  const url = normalizeUrl(msg.url);
+  if (!url) return;
+  const open = wm.windows.find((w) => w.appId === "browser" && w.browserGo);
+  if (open) {
+    open.browserGo(url);
+    wm.focus(open);
+  } else launch("browser", { url });
+  notify(`Web Browser: ${msg.title || hostOf(url)}`);
+});
 
 // ---- help window -------------------------------------------------------
 
@@ -467,7 +564,7 @@ function openHelpWindow() {
     <p>A desktop mode for codemonkey.games. Open the <b>Tools</b> folder for
     the workbench apps (spriteX, Level Editor, Pixel Composer), browse and
     edit <b>local files</b> with Files + Code Editor, and open any website as
-    a draggable window with <b>Web Window</b>.</p>
+    a draggable window with <b>Web Browser</b>.</p>
 
     <h3>Window snapping</h3>
     <p>Drag a window against an edge or corner (or use the shortcuts / the

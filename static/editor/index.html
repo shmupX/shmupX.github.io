@@ -354,6 +354,24 @@
         .deza-slot-name { font-size: 13px; font-weight: 800; letter-spacing: .08em; }
         .deza-slot-meta { font-size: 10px; color: var(--rsub); letter-spacing: .06em; }
         .deza-slot-go { font-size: 10px; color: var(--sel); letter-spacing: .12em; }
+        .deza-play {
+            flex: 0 0 auto; margin-left: 4px; width: 32px; height: 28px; padding: 0;
+            display: grid; place-items: center; border-radius: 6px;
+            background: var(--rbg); border: 1px solid var(--redge); color: var(--rsub);
+            font-size: 11px; line-height: 1; cursor: pointer;
+        }
+        .deza-play:hover { color: var(--sel); border-color: var(--sel); }
+        /* Hover preview. Fixed, so the shelf's own overflow cannot clip it, and
+           click-through, so it can never swallow the press that opens a game. */
+        .deza-preview {
+            /* Above the shelf overlay (200) and the drawer (301), under the
+               flash toast (400). */
+            position: fixed; z-index: 350; width: 288px; aspect-ratio: 16 / 9;
+            border-radius: 8px; overflow: hidden; background: #000;
+            border: 1px solid var(--sel); box-shadow: 0 12px 34px rgba(0,0,0,.75);
+            pointer-events: none;
+        }
+        .deza-preview iframe { display: block; width: 100%; height: 100%; border: 0; }
         .deza-summary { font-size: 11px; color: var(--rsub); margin: 10px 6px; line-height: 1.8; }
         .deza-summary .ok { color: var(--sel); }
         .deza-sec {
@@ -935,6 +953,8 @@
                onkeydown="if(event.key==='Enter')document.getElementById('deza-url-btn').click()">
         <button class="menu-row hide-when-sav" id="deza-url-btn" onclick="importDezaemonFromUrlInput()"><span class="mono-badge">UR</span>IMPORT .SAV FROM URL</button>
         <button class="menu-row" id="deza-library-btn" onclick="openDezaemonLibrary()"><span class="mono-badge">LG</span>LOAD GAME</button>
+        <button class="menu-row hidden" id="deza-website-btn" onclick="openLoadedGameWebsite()"
+                title="Open this game's page on satakore.com — inside the CMG Desktop it opens as a Web Browser window"><span class="mono-badge">WB</span>VIEW WEBSITE</button>
         <div class="menu-note">SATURN BACKUP SAVES: .SAV / .BCR / .BKR</div>
         <div class="menu-label">ADVANCED EDITORS</div>
         <div class="adv-grid">
@@ -977,6 +997,7 @@
                 <pre id="deza-hex-preview" class="deza-hex"></pre>
                 <div class="deza-actions">
                     <button id="deza-import-btn" class="menu-row" onclick="applyDezaemonImport()"><span class="mono-badge">IM</span>IMPORT INTO EDITOR</button>
+                    <button id="deza-slot-website-btn" class="menu-row hidden" onclick="openDezaemonSlotWebsite()"><span class="mono-badge">WB</span>WEBSITE</button>
                     <button class="menu-row" onclick="document.getElementById('dezaemon-import-modal').classList.add('hidden')"><span class="mono-badge">✕</span>CANCEL</button>
                 </div>
             </div>
@@ -1620,6 +1641,7 @@
         function openMenu() {
             document.getElementById('menu-backdrop').classList.remove('hidden');
             document.getElementById('menu-panel').classList.remove('hidden');
+            updateDezaWebsiteRow();
         }
         function closeMenu() {
             document.getElementById('menu-backdrop').classList.add('hidden');
@@ -4118,6 +4140,30 @@
             document.body.classList.remove('sav-loaded');
         }
 
+        // ================== EXTERNAL LINKS (CMG DESKTOP AWARE) ==================
+        // The CMG Desktop hosts this editor in an iframe and says so with
+        // cmg-desktop-hello as the frame loads. Under it a link opens as a Web
+        // Window on that desktop — the same window manager every other app
+        // uses — instead of escaping to a browser tab. Anywhere else (bare
+        // /editor/, the console launcher) it is a plain new tab.
+        let cmgDesktopHost = false;
+        window.addEventListener('message', (ev) => {
+            if (ev.origin !== location.origin || ev.source !== window.parent) return;
+            if (ev.data && ev.data.type === 'cmg-desktop-hello') cmgDesktopHost = true;
+        });
+        function openExternalUrl(url, title) {
+            if (!url) return;
+            if (cmgDesktopHost) {
+                try {
+                    window.parent.postMessage({ type: 'cmg-open-url', url, title: title || null }, location.origin);
+                    flash('WEB BROWSER: ' + (title || url));
+                    return;
+                } catch (e) { /* desktop unreachable — fall through to a tab */ }
+            }
+            // noopener: the page opened must not reach back into the editor.
+            window.open(url, '_blank', 'noopener');
+        }
+
         function setDezaStatus(text) {
             const el = document.getElementById('status');
             if (el) el.textContent = 'STATUS: ' + text;
@@ -4403,7 +4449,10 @@
                     const byTitle = new Map();
                     for (const g of (db.games || [])) {
                         byTitle.set(dezaNormTitle(g[0]),
-                            { title: g[0], titleJa: g[1], developer: g[2], developerJa: g[3], genre: g[4] });
+                            {
+                                title: g[0], titleJa: g[1], developer: g[2], developerJa: g[3],
+                                genre: g[4], url: g[5] || null, video: g[6] || null,
+                            });
                     }
                     // Filename spellings that differ from the table (romanization
                     // variants, source typos) map onto their table entry here, so
@@ -4426,22 +4475,180 @@
                 title: meta.title, titleJa: meta.titleJa,
                 developer: meta.developer, developerJa: meta.developerJa,
                 genre: meta.genre, genreJa: DEZA_GENRE_JA[meta.genre] || null,
+                url: meta.url || null,
             };
         }
 
-        // Credits for an imported save: the community table's row when its
-        // title is known there, else just the title the cart itself carries —
-        // and null when there is not even that. The runtime's STAFF ROLL
-        // shows these, and hides its button entirely on null.
-        async function dezaLookupCredits(title) {
-            if (title) {
-                try {
-                    const byTitle = await loadDezaGamesDbByTitle();
-                    const meta = byTitle.get(dezaNormTitle(title));
-                    if (meta) return dezaCreditsFromMeta(meta);
-                } catch (e) { /* table unavailable — fall through to title-only */ }
+        // What the community table knows about a save beyond the cart itself:
+        // its page on satakore.com and the YouTube video of the game being
+        // played, scraped from that page. Saves the table does not know simply
+        // never show the WEBSITE row or the shelf's ▶.
+        //
+        // RTDB index rows were joined against the table by `deno task
+        // deza:upload` before it carried either link, so the shelf fills them
+        // in from games-db.json, which every editor build ships.
+        function dezaAttachLinks(meta, byTitle, fallbackTitle) {
+            if (!meta || !byTitle || (meta.url && meta.video)) return meta;
+            const row = byTitle.get(dezaNormTitle(meta.title || fallbackTitle));
+            if (!row) return meta;
+            if (!meta.url && row.url) meta.url = row.url;
+            if (!meta.video && row.video) meta.video = row.video;
+            return meta;
+        }
+
+        // "Dez 2 - Air Streamer -Ver.A-.sav" -> "Air Streamer -Ver.A-", the
+        // same key games-db.json uses (scripts/upload-deza-saves.ts does this
+        // to name the collection's rows).
+        function dezaFileTitle(name) {
+            return String(name || '').replace(/\.(sav|bcr|bkr)$/i, '').replace(/^Dez 2 - /, '');
+        }
+
+        // What to look a cart up by, best first. Plenty of carts carry no title
+        // of their own and only the generic "D2SGM2" save comment, so the file
+        // name — which the collection names after the game — is the last resort
+        // rather than no answer at all.
+        function dezaTitleCandidates(st, save) {
+            return [
+                st && st.decoded && st.decoded.title,
+                save && save.comment,
+                dezaFileTitle(st && st.fileName),
+            ].filter(Boolean);
+        }
+
+        // The community table's row for the first candidate it knows, or null.
+        async function dezaMatchGame(candidates) {
+            try {
+                const byTitle = await loadDezaGamesDbByTitle();
+                for (const c of candidates) {
+                    const meta = byTitle.get(dezaNormTitle(c));
+                    if (meta) return meta;
+                }
+            } catch (e) { /* table unavailable — no match, no harm */ }
+            return null;
+        }
+
+        // The drawer's VIEW WEBSITE row follows the loaded game's credits, so
+        // it covers every way a cart arrives (import sheet, shelf, cloud load)
+        // and goes away with NEW GAME or a directory load. openMenu() refreshes
+        // it, which is the only moment it can be seen.
+        function updateDezaWebsiteRow() {
+            const btn = document.getElementById('deza-website-btn');
+            if (!btn) return;
+            const credits = gameData && gameData.dezaemonCredits;
+            btn.classList.toggle('hidden', !(credits && credits.url));
+        }
+
+        function openLoadedGameWebsite() {
+            const credits = gameData && gameData.dezaemonCredits;
+            if (credits && credits.url) openExternalUrl(credits.url, credits.title);
+        }
+
+        // Import sheet: the WEBSITE button lights up only once the lookup for
+        // THIS slot lands, so a slow table read cannot leave the previous
+        // slot's site attached to the one now selected.
+        let dezaSlotSite = null;         // { url, title } for the previewed slot
+        let dezaSlotSiteToken = 0;
+        async function refreshDezaSlotWebsite(candidates) {
+            const btn = document.getElementById('deza-slot-website-btn');
+            const token = ++dezaSlotSiteToken;
+            dezaSlotSite = null;
+            if (btn) btn.classList.add('hidden');
+            const meta = await dezaMatchGame(candidates);
+            if (token !== dezaSlotSiteToken) return;
+            dezaSlotSite = meta && meta.url ? { url: meta.url, title: meta.title } : null;
+            if (btn && dezaSlotSite) btn.classList.remove('hidden');
+        }
+
+        function openDezaemonSlotWebsite() {
+            if (dezaSlotSite) openExternalUrl(dezaSlotSite.url, dezaSlotSite.title);
+        }
+
+        // ---------- shelf video previews ----------
+        // Each table row carries the YouTube video of the game being played,
+        // scraped from its satakore.com page. The shelf's ▶ shows it muted in
+        // place on hover (or a touch hold) and opens it full on a press.
+        function dezaVideoUrl(id) { return 'https://www.youtube.com/watch?v=' + id; }
+
+        // Muted autoplay is the only autoplay browsers allow — and the only
+        // kind a preview should use, with a shelf of 258 games to sweep past.
+        // -nocookie keeps YouTube from profiling a hover.
+        function dezaPreviewSrc(id) {
+            return 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(id) +
+                '?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1';
+        }
+
+        let dezaPreviewEl = null;
+        let dezaPreviewTimer = 0;
+        function hideDezaPreview() {
+            clearTimeout(dezaPreviewTimer);
+            dezaPreviewTimer = 0;
+            if (dezaPreviewEl) { dezaPreviewEl.remove(); dezaPreviewEl = null; }
+        }
+
+        // Above the chip, or below it when there is no room — and never off the
+        // side of a phone-width sheet.
+        function showDezaPreview(anchor, id) {
+            hideDezaPreview();
+            const box = document.createElement('div');
+            box.className = 'deza-preview';
+            const frame = document.createElement('iframe');
+            frame.src = dezaPreviewSrc(id);
+            frame.allow = 'autoplay; encrypted-media; picture-in-picture';
+            frame.title = 'video preview';
+            box.appendChild(frame);
+            document.body.appendChild(box);
+            const r = anchor.getBoundingClientRect();
+            const w = box.offsetWidth, h = box.offsetHeight;
+            box.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) + 'px';
+            box.style.top = (r.top - h - 10 >= 8 ? r.top - h - 10
+                : Math.min(window.innerHeight - h - 8, r.bottom + 10)) + 'px';
+            dezaPreviewEl = box;
+        }
+
+        function dezaPlayChip(videoId, label) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'deza-play';
+            btn.textContent = '▶';
+            btn.title = 'Play ' + label + ' on YouTube — hover (or hold) to preview';
+            // A hold is the touch twin of hover, so the press that ends it must
+            // not also count as "open the video".
+            let held = false;
+            btn.addEventListener('pointerenter', (e) => {
+                if (e.pointerType !== 'mouse') return;
+                clearTimeout(dezaPreviewTimer);
+                dezaPreviewTimer = setTimeout(() => showDezaPreview(btn, videoId), 260);
+            });
+            btn.addEventListener('pointerleave', hideDezaPreview);
+            btn.addEventListener('pointerdown', (e) => {
+                if (e.pointerType === 'mouse') return;
+                held = false;
+                clearTimeout(dezaPreviewTimer);
+                dezaPreviewTimer = setTimeout(() => {
+                    held = true;
+                    showDezaPreview(btn, videoId);
+                }, 350);
+            });
+            for (const ev of ['pointerup', 'pointercancel']) {
+                btn.addEventListener(ev, (e) => { if (e.pointerType !== 'mouse') hideDezaPreview(); });
             }
-            return title ? { title } : null;
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (held) { held = false; return; }
+                hideDezaPreview();
+                openExternalUrl(dezaVideoUrl(videoId), label);
+            });
+            return btn;
+        }
+
+        // Credits for an imported save: the community table's row when one of
+        // the cart's names is known there, else just the name the cart itself
+        // carries — and null when there is not even that. The runtime's STAFF
+        // ROLL shows these, and hides its button entirely on null.
+        async function dezaLookupCredits(candidates) {
+            const meta = await dezaMatchGame(candidates);
+            if (meta) return dezaCreditsFromMeta(meta);
+            return candidates.length ? { title: candidates[0] } : null;
         }
 
         // EDIT FIRST: ON loads a shelf game into the editor (slot sheet on
@@ -4500,6 +4707,12 @@
             const st = dezaLibraryState;
             const list = document.getElementById('deza-library-list');
             const count = document.getElementById('deza-library-count');
+            hideDezaPreview();
+            const panel = list.closest('.picker-panel');
+            if (panel && !panel.dataset.previewScroll) {
+                panel.dataset.previewScroll = '1';
+                panel.addEventListener('scroll', hideDezaPreview, { passive: true });
+            }
             list.innerHTML = '';
             count.textContent = st.saves.length ? st.saves.length + ' GAMES' : '';
             if (!st.available || !st.saves.length) {
@@ -4513,7 +4726,8 @@
             for (const s of st.saves) {
                 // RTDB rows arrive with the games-db join already applied; a
                 // static row resolves it here against the same table.
-                const meta = s.meta || st.byTitle.get(dezaNormTitle(s.title)) || null;
+                const meta = dezaAttachLinks(s.meta || st.byTitle.get(dezaNormTitle(s.title)) || null,
+                    st.byTitle, s.title);
                 const genre = meta ? meta.genre : 'Unknown';
                 if (!groups.has(genre)) groups.set(genre, []);
                 groups.get(genre).push({ file: s.file, title: s.title, meta, slug: s.slug, hasCover: s.hasCover });
@@ -4560,12 +4774,21 @@
                             (item.meta.developerJa && item.meta.developerJa !== item.meta.developer ? ' · ' + item.meta.developerJa : '');
                         body.appendChild(dev);
                     }
+                    card.appendChild(body);
+                    // A row whose game has a video gets the ▶: hover (or hold)
+                    // for a muted preview in place, press to watch it full —
+                    // on the desktop, in a Web Browser window beside the editor.
+                    if (item.meta && item.meta.video) {
+                        card.appendChild(dezaPlayChip(item.meta.video, item.meta.title));
+                    }
                     const go = document.createElement('div');
                     go.className = 'deza-slot-go';
                     go.textContent = 'LOAD ›';
-                    card.appendChild(body);
                     card.appendChild(go);
-                    card.onclick = () => loadDezaemonLibraryGame(item.file, item.title, item.meta, item.slug);
+                    card.onclick = () => {
+                        hideDezaPreview();
+                        loadDezaemonLibraryGame(item.file, item.title, item.meta, item.slug);
+                    };
                     list.appendChild(card);
                 }
             }
@@ -4607,10 +4830,13 @@
             // refine the credits the import just attached (it looked up
             // the cart's own title, which can differ from the filename).
             if (gameData) {
-                if (meta) gameData.dezaemonCredits = dezaCreditsFromMeta(meta);
-                else if (!gameData.dezaemonCredits) {
+                if (meta) {
+                    gameData.dezaemonCredits = dezaCreditsFromMeta(
+                        dezaAttachLinks(meta, await loadDezaGamesDbByTitle().catch(() => null), fallbackTitle));
+                } else if (!gameData.dezaemonCredits) {
                     gameData.dezaemonCredits = { title: fallbackTitle || file.replace(/\.sav$/i, '') };
                 }
+                updateDezaWebsiteRow();
             }
             // Player mode: swap this page for the game (same-tab / same-frame
             // navigation, so no popup blocker in the way — and under the
@@ -4656,6 +4882,7 @@
             const save = selectDezaemonSlotState(i);
             renderDezaemonSlots();
             const d = dezaImportState.decoded;
+            refreshDezaSlotWebsite(dezaTitleCandidates(dezaImportState, save));
             const lines = [];
             lines.push('PAYLOAD: ' + save.payload.buffer.length.toLocaleString() + ' bytes, ' +
                 save.blocks.length + ' blocks (block-accurate)');
@@ -4865,7 +5092,8 @@
             // import path, not just the SAVED GAMES shelf (which refines this
             // with its filename-matched row after the import returns).
             gameData.dezaemonCredits =
-                await dezaLookupCredits(st.decoded.title || save.comment || '');
+                await dezaLookupCredits(dezaTitleCandidates(st, save));
+            updateDezaWebsiteRow();
             currentStageKey = 'stage0';
             storeBossDataForViewers();
             // Fold the save's sprites into the atlas before the first paint —

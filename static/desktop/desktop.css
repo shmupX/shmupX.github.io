@@ -834,6 +834,13 @@ kbd {
   font-size: 13.5px;
   max-width: 46ch;
 }
+/* Layered over the note, and transparent, so a site that refuses to be
+   embedded — it paints nothing — leaves the note showing underneath. */
+.bw-frame-wrap .app-frame {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+}
 
 /* ---- code editor ------------------------------------------------------ */
 
