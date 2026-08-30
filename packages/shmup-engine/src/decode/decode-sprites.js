@@ -444,6 +444,12 @@ const GLOBAL_ART_SLOTS = {
     playerIdle: { first: 8, w: 2, h: 2, frames: 2 },
     playerBankA: { first: 0, w: 2, h: 2, frames: 2 },
     playerBankB: { first: 16, w: 2, h: 2, frames: 2 },
+    // P2's three pairs sit immediately after P1's, same geometry (refs 24-47).
+    // Only a save authored for 2P join-in (game mode bit1) paints them, so the
+    // all-or-nothing pushFrames rule below is what tells the two apart.
+    player2Idle: { first: 32, w: 2, h: 2, frames: 2 },
+    player2BankA: { first: 24, w: 2, h: 2, frames: 2 },
+    player2BankB: { first: 40, w: 2, h: 2, frames: 2 },
     blastA: { first: 102, w: 1, h: 1, frames: 6 },
     blastB: { first: 108, w: 2, h: 2, frames: 6 },
 };
@@ -478,6 +484,14 @@ export function extractGlobalArt(sec5, sections, palettes, baseIndex) {
         const bankB = pushFrames("dezaShipR", GLOBAL_ART_SLOTS.playerBankB);
         if (bankA) roles.player.bankA = bankA;
         if (bankB) roles.player.bankB = bankB;
+    }
+    const idle2 = pushFrames("dezaShip2", GLOBAL_ART_SLOTS.player2Idle);
+    if (idle2) {
+        roles.player2 = { idle: idle2 };
+        const bankA2 = pushFrames("dezaShip2L", GLOBAL_ART_SLOTS.player2BankA);
+        const bankB2 = pushFrames("dezaShip2R", GLOBAL_ART_SLOTS.player2BankB);
+        if (bankA2) roles.player2.bankA = bankA2;
+        if (bankB2) roles.player2.bankB = bankB2;
     }
     const icons = [];
     for (let i = 0; i < 8; i++) {

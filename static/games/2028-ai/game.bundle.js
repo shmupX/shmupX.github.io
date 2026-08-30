@@ -492,6 +492,11 @@
           }
           recipe.playerData = mergedPlayer;
         }
+        // The save's second ship, art only — everything else about player 2
+        // comes from playerData.
+        if (levelData.playerData2 && typeof levelData.playerData2 === "object") {
+          recipe.playerData2 = deepClone(levelData.playerData2);
+        }
         return recipe;
       }
       // ---- Title imagery ----------------------------------------------------
@@ -1377,6 +1382,15 @@
     }
     return !/^(0|false|off|no)$/i.test(String(value));
   }
+  // ?players=2 forces two-player join-in on. The save's own game-mode bit1 is
+  // the normal gate; this is how you reach 2P on a level that carries no
+  // decoded Dezaemon settings at all — the stock 2028-ai game among them — and
+  // how an exported shell pre-seeds a two-player build.
+  function readPlayerCountParam(defaultValue) {
+    var raw = readSearchParam("players");
+    if (raw == null || raw === "") return defaultValue;
+    return Number(raw) === 2 ? 2 : 1;
+  }
   function ensureRuntimeState(state) {
     if (typeof state.vibrateFlg !== "boolean") {
       state.vibrateFlg = true;
@@ -1413,6 +1427,11 @@
       state.secondLoop = false;
     }
     state.godFlg = readBooleanSearchParam("god", typeof state.godFlg === "boolean" ? state.godFlg : false);
+    state.playerCount = readPlayerCountParam(state.playerCount === 2 ? 2 : 1);
+    state.twoPlayerForced = state.playerCount === 2;
+    // Online 2P is opt-in: a title screen should not open a socket to a cloud
+    // database nobody asked it to.
+    state.onlineFlg = readBooleanSearchParam("online", state.onlineFlg === true);
   }
   syncRuntimeFlagsFromLocation(gameState);
   function isExportedLevelApp() {
@@ -2120,7 +2139,19 @@
       gameState.playerHp = recipe.playerData.maxHp;
       gameState.shootMode = recipe.playerData.defaultShootName;
       gameState.shootSpeed = recipe.playerData.defaultShootSpeed;
+      // The second ship, if this run has one. It shares player 1's record —
+      // Dezaemon gives each ship a config block, not its own bullets — so the
+      // only thing that differs is the art, which createPlayer overlays.
+      gameState.player2MaxHp = recipe.playerData.maxHp;
+      gameState.player2Hp = recipe.playerData.maxHp;
+      gameState.player2ShootMode = recipe.playerData.defaultShootName;
+      gameState.player2ShootSpeed = recipe.playerData.defaultShootSpeed;
+      gameState.player2Spgage = 0;
     }
+    // A fresh run starts with one ship however the last one ended; ?players=2
+    // is re-read from the URL, so the override survives.
+    gameState.playerCount = readPlayerCountParam(1);
+    gameState.twoPlayerForced = gameState.playerCount === 2;
     gameState.combo = 0;
     gameState.maxCombo = 0;
     gameState.score = 0;
@@ -2426,6 +2457,11 @@
               console.warn("Player texture resolution failed, using Firebase playerData as-is:", playerTexErr);
             }
             baseRecipe.playerData = mergedPlayer;
+          }
+          // The second ship's frames, art only (see playerData2 in the engine's
+          // map-to-game). Another explicit whitelist — an unnamed key is lost.
+          if (data.playerData2 && typeof data.playerData2 === "object") {
+            baseRecipe.playerData2 = JSON.parse(JSON.stringify(data.playerData2));
           }
           if (data.titleBgDataURL) {
             var titleImg = new Image();
@@ -2950,14 +2986,31 @@
   var DPAD_RIGHT = 15;
   var STICK_THRESHOLD = 0.5;
   var _prevButtons = {};
-  var _gamepadConnected = false;
+  var _padSeen = {};
   try {
     window.addEventListener("gamepadconnected", function(e) {
-      _gamepadConnected = true;
-      console.log("Gamepad connected: " + e.gamepad.id + " (index " + e.gamepad.index + ")");
+      var idx = e.gamepad.index;
+      // A controller that RECONNECTS with something held down would read as a
+      // fresh press — a stray bomb, or a spurious second player joining — so
+      // its edge state is seeded from the buttons it arrives holding.
+      //
+      // Only on a reconnect, though. Chrome and Edge hide gamepads until the
+      // user touches one, so the FIRST connect event is itself the player's
+      // first press; seeding that one would swallow it, and the title screen
+      // would need two presses to start.
+      if (_padSeen[idx]) {
+        var seed = _prevButtons[idx] = {};
+        var btns = e.gamepad.buttons || [];
+        for (var b = 0; b < btns.length; b++) seed[b] = isButtonPressed(btns[b]);
+        seed["_editor_" + BTN_R3] = seed[BTN_R3];
+        seed["_editor_" + BTN_SELECT] = seed[BTN_SELECT];
+      }
+      _padSeen[idx] = true;
+      console.log("Gamepad connected: " + e.gamepad.id + " (index " + idx + ")");
     });
     window.addEventListener("gamepaddisconnected", function(e) {
       delete _prevButtons[e.gamepad.index];
+      delete _padSample.pads[e.gamepad.index];
       console.log("Gamepad disconnected: " + e.gamepad.id);
     });
   } catch (e) {
@@ -2980,9 +3033,8 @@
     if (!btn) return false;
     return typeof btn === "object" ? btn.pressed : btn > 0.5;
   }
-  function pollGamepads() {
-    var pads = getGamepads();
-    var result = {
+  function emptyPadState() {
+    return {
       sp: false,
       // any face/shoulder button just pressed
       enter: false,
@@ -2993,49 +3045,111 @@
       // any face/shoulder button held
       enterDown: false,
       // start button held
+      charge: false,
+      // either shoulder held — the pad's stand-in for the keyboard's SHIFT
       left: false,
       right: false,
       up: false,
       down: false
     };
+  }
+  function orPadState(into, from) {
+    for (var k in from) if (from[k]) into[k] = true;
+    return into;
+  }
+  // Advancing the edge state is a SIDE EFFECT, so it must happen exactly once
+  // per tick however many readers there are. Two players polling in the same
+  // frame used to mean whoever asked first consumed the press and the other
+  // player's fire button was simply dead. So: sample every pad once, memoized
+  // on a tick token the caller supplies, and let pollPad/pollGamepads read that
+  // sample without touching _prevButtons at all.
+  var _padSample = { tick: null, pads: {}, order: [] };
+  function beginGamepadFrame(tick) {
+    if (_padSample.tick === tick) return;
+    _padSample.tick = tick;
+    _padSample.pads = {};
+    _padSample.order = [];
+    var pads = getGamepads();
     for (var p = 0; p < pads.length; p++) {
       var gp = pads[p];
       if (!gp || !gp.buttons) continue;
       var idx = gp.index;
+      // The launcher's virtual twin-touch pad reports index 0 alongside a real
+      // pad 0; first one wins rather than both writing the same slot.
+      if (_padSample.pads[idx]) continue;
+      var state = emptyPadState();
+      state.id = gp.id || "";
       if (!_prevButtons[idx]) _prevButtons[idx] = {};
-      for (var i = 0; i < SP_BUTTONS.length; i++) {
-        var bi = SP_BUTTONS[i];
-        var pressed = isButtonPressed(gp.buttons[bi]);
-        var wasPressed = !!_prevButtons[idx][bi];
-        if (pressed && !wasPressed) result.sp = true;
-        if (pressed) result.spDown = true;
+      var i, bi, pressed, wasPressed;
+      for (i = 0; i < SP_BUTTONS.length; i++) {
+        bi = SP_BUTTONS[i];
+        pressed = isButtonPressed(gp.buttons[bi]);
+        wasPressed = !!_prevButtons[idx][bi];
+        if (pressed && !wasPressed) state.sp = true;
+        if (pressed) state.spDown = true;
         _prevButtons[idx][bi] = pressed;
       }
-      for (var i = 0; i < ENTER_BUTTONS.length; i++) {
-        var bi = ENTER_BUTTONS[i];
-        var pressed = isButtonPressed(gp.buttons[bi]);
-        var wasPressed = !!_prevButtons[idx][bi];
-        if (pressed && !wasPressed) result.enter = true;
-        if (pressed) result.enterDown = true;
+      for (i = 0; i < ENTER_BUTTONS.length; i++) {
+        bi = ENTER_BUTTONS[i];
+        pressed = isButtonPressed(gp.buttons[bi]);
+        wasPressed = !!_prevButtons[idx][bi];
+        if (pressed && !wasPressed) state.enter = true;
+        if (pressed) state.enterDown = true;
         _prevButtons[idx][bi] = pressed;
+      }
+      // A pad has no SHIFT, so the shoulders hold the charge.
+      if (isButtonPressed(gp.buttons[SHOULDER_L1]) || isButtonPressed(gp.buttons[SHOULDER_R1])) {
+        state.charge = true;
       }
       var editorBtn = gp.buttons.length > BTN_R3 ? BTN_R3 : BTN_SELECT;
       if (editorBtn < gp.buttons.length) {
         var editorPressed = isButtonPressed(gp.buttons[editorBtn]);
         var editorWas = !!_prevButtons[idx]["_editor_" + editorBtn];
-        if (editorPressed && !editorWas) result.editor = true;
+        if (editorPressed && !editorWas) state.editor = true;
         _prevButtons[idx]["_editor_" + editorBtn] = editorPressed;
       }
-      if (isButtonPressed(gp.buttons[DPAD_LEFT])) result.left = true;
-      if (isButtonPressed(gp.buttons[DPAD_RIGHT])) result.right = true;
-      if (isButtonPressed(gp.buttons[DPAD_UP])) result.up = true;
-      if (isButtonPressed(gp.buttons[DPAD_DOWN])) result.down = true;
+      if (isButtonPressed(gp.buttons[DPAD_LEFT])) state.left = true;
+      if (isButtonPressed(gp.buttons[DPAD_RIGHT])) state.right = true;
+      if (isButtonPressed(gp.buttons[DPAD_UP])) state.up = true;
+      if (isButtonPressed(gp.buttons[DPAD_DOWN])) state.down = true;
       if (gp.axes && gp.axes.length >= 2) {
-        if (gp.axes[0] < -STICK_THRESHOLD) result.left = true;
-        if (gp.axes[0] > STICK_THRESHOLD) result.right = true;
-        if (gp.axes[1] < -STICK_THRESHOLD) result.up = true;
-        if (gp.axes[1] > STICK_THRESHOLD) result.down = true;
+        if (gp.axes[0] < -STICK_THRESHOLD) state.left = true;
+        if (gp.axes[0] > STICK_THRESHOLD) state.right = true;
+        if (gp.axes[1] < -STICK_THRESHOLD) state.up = true;
+        if (gp.axes[1] > STICK_THRESHOLD) state.down = true;
       }
+      _padSample.pads[idx] = state;
+      _padSample.order.push(idx);
+    }
+  }
+  // One pad's state this tick. `padIndex` null (a keyboard-only player) reads
+  // as no input at all rather than as every pad merged.
+  function pollPad(padIndex) {
+    if (typeof padIndex !== "number") return emptyPadState();
+    return _padSample.pads[padIndex] || emptyPadState();
+  }
+  function connectedPadIndices() {
+    return _padSample.order.slice();
+  }
+  // The fixed-step loop can run several times per rendered frame off one
+  // sample, so a rising edge has to be spent once and then cleared — otherwise
+  // a single press reads as a press on every sub-step of that frame.
+  function consumeGamepadEdges() {
+    for (var i = 0; i < _padSample.order.length; i++) {
+      var st = _padSample.pads[_padSample.order[i]];
+      st.sp = false;
+      st.enter = false;
+      st.editor = false;
+    }
+  }
+  // Every pad merged — what the menus want, and what every caller outside the
+  // game scene still gets. Its own tick token means a menu polling once a frame
+  // keeps the exact edge behaviour it had before per-pad sampling existed.
+  function pollGamepads() {
+    beginGamepadFrame({});
+    var result = emptyPadState();
+    for (var i = 0; i < _padSample.order.length; i++) {
+      orPadState(result, _padSample.pads[_padSample.order[i]]);
     }
     return result;
   }
@@ -3299,6 +3413,330 @@
       if (pollGamepads().enter) cmgTogglePausePanel();
     }, 150);
   })();
+
+  // cmg: online two-player over SpacetimeDB (hand-patched into the bundle, like
+  // the volume/pause block above).
+  //
+  // The browser running the game is the HOST and stays authoritative: this sim
+  // is not deterministic (Math.random is all over the enemy code), so there is
+  // nothing to lock-step. Instead the host announces its run, publishes a
+  // compact snapshot of the world a few times a second, and reads a guest's
+  // buttons back. The guest never simulates — it renders those snapshots and
+  // sends input, which is why joining feels instant and needs no download.
+  //
+  // Everything here is optional and failure-tolerant. An offline export has no
+  // /netplay/ to import, a player may be on a plane, the database may be down:
+  // in every one of those cases the import or the connect fails, `cmgNet.api`
+  // stays null, and the game runs exactly as it does today.
+  var CMG_NET_MODULE = "/netplay/shmupx-netplay.js";
+  // Snapshots are the bulk of the traffic. 15Hz is enough for the lobby
+  // preview to read as live and for a guest's ship to feel attached, at about
+  // 10KB/s per watched session.
+  var CMG_NET_SNAPSHOT_HZ = 15;
+  var CMG_NET_HEARTBEAT_MS = 2000;
+  var cmgNet = {
+    api: null,
+    loading: null,
+    // host bookkeeping
+    hosting: false,
+    lastSnapAt: 0,
+    lastBeatAt: 0,
+    guestHex: null,
+    unsubInput: null,
+    unsubSeat: null,
+  };
+
+  // Opt-in: ?online=1, or a launcher/exported shell that pre-seeds the flag.
+  // Off by default because a title screen should not open a socket to a cloud
+  // database nobody asked it to.
+  function cmgNetEnabled() {
+    if (typeof gameState !== "undefined" && gameState.onlineFlg === true) return true;
+    return false;
+  }
+
+  /** Resolve the shared client, at most once per page. Never throws. */
+  function cmgNetLoad() {
+    if (cmgNet.api) return Promise.resolve(cmgNet.api);
+    if (cmgNet.loading) return cmgNet.loading;
+    if (!cmgNetEnabled()) return Promise.resolve(null);
+    cmgNet.loading = import(CMG_NET_MODULE)
+      .then(function(mod) {
+        var opts = { gameId: resolveGameId() || "shmupx" };
+        var uri = readSearchParam("netplayUri");
+        if (uri) opts.uri = uri;
+        var db = readSearchParam("netplayDb");
+        if (db) opts.moduleName = db;
+        return mod.netplay(opts).then(function(api) {
+          cmgNet.api = api;
+          cmgNet.mod = mod;
+          return api;
+        });
+      })
+      .catch(function(err) {
+        console.warn("[netplay] unavailable:", err && err.message ? err.message : err);
+        return null;
+      });
+    return cmgNet.loading;
+  }
+
+  function cmgNetLevelTitle(scene) {
+    var recipe = scene && scene.recipe;
+    var meta = recipe && recipe.meta;
+    return String(
+      (meta && meta.sourceTitle) || (recipe && recipe.name) || resolveGameId() || "SHMUPX",
+    ).slice(0, 64);
+  }
+
+  /** The second seat is on offer only while this run could actually seat one. */
+  function cmgNetJoinable(scene) {
+    if (!scene.gameStarted || scene._runEnded || scene.stageCleared) return false;
+    if (!twoPlayerAllowed(scene)) return false;
+    // A seat whose ship has been shot down is FREE — the same rule the local
+    // re-join follows. Counting slots rather than living ships would leave the
+    // run permanently unjoinable after the first guest left.
+    return livePlayers(scene).length < 2;
+  }
+
+  // Enemy art is looked up by ROSTER INDEX on the far side, not by frame name:
+  // a name would cost a string per enemy per frame, and the guest is playing
+  // the same level so it has the same roster.
+  function cmgNetEnemyKind(scene, enemy) {
+    var key = enemy.getData("enemyKey");
+    if (!key) return 0;
+    var roster = scene._netRoster;
+    if (!roster) {
+      roster = scene._netRoster = {};
+      var data = (scene.recipe && scene.recipe.enemyData) || {};
+      var names = Object.keys(data).sort();
+      for (var i = 0; i < names.length && i < 255; i++) {
+        roster[names[i].replace(/^enemy/, "")] = i + 1;
+      }
+    }
+    return roster[key] || 0;
+  }
+
+  function cmgNetSnapshot(scene) {
+    var ships = [];
+    var ps = scene.players || [];
+    for (var i = 0; i < ps.length; i++) {
+      var p = ps[i];
+      if (!p || !p.sprite) continue;
+      ships.push({
+        x: p.sprite.x,
+        y: p.sprite.y,
+        hp: p.hp | 0,
+        maxHp: p.maxHp | 0,
+        dead: !!p.dead,
+      });
+    }
+    var enemies = [];
+    var list = scene.enemies || [];
+    for (var e = 0; e < list.length && enemies.length < 64; e++) {
+      var en = list[e];
+      if (!en || !en.active || !en.visible) continue;
+      enemies.push({ x: en.x, y: en.y, kind: cmgNetEnemyKind(scene, en) });
+    }
+    var bullets = [];
+    var pb = scene.playerBullets || [];
+    for (var b = 0; b < pb.length && bullets.length < 96; b++) {
+      if (pb[b] && pb[b].active) bullets.push({ x: pb[b].x, y: pb[b].y });
+    }
+    var eb = [];
+    var ebl = scene.enemyBullets || [];
+    for (var k = 0; k < ebl.length && eb.length < 128; k++) {
+      if (ebl[k] && ebl[k].active) eb.push({ x: ebl[k].x, y: ebl[k].y });
+    }
+    var mod = cmgNet.mod;
+    var flags = 0;
+    if (scene.gameStarted) flags |= mod.FLAG_STARTED;
+    if (scene.bossActive) flags |= mod.FLAG_BOSS;
+    if (scene.stageCleared) flags |= mod.FLAG_CLEARED;
+    if (scene.theWorldFlg) flags |= mod.FLAG_FROZEN;
+    return {
+      flags: flags,
+      stage: (gameState.stageId || 0) & 0xff,
+      score: scene.scoreCount || 0,
+      ships: ships,
+      enemies: enemies,
+      bullets: bullets,
+      enemyBullets: eb,
+    };
+  }
+
+  /** Announce this run and start relaying. Safe to call when offline. */
+  function cmgNetSeatGuest(scene) {
+    var p = scene.players && scene.players[1];
+    // A LIVING local player 2 owns that seat. Attaching `remote` to them would
+    // hand a stranger their ship and cut their own pad out of the input path,
+    // so the join is refused — the module's `joinable` flag is a snapshot the
+    // host may already have moved past.
+    if (p && !p.dead && !p.remote) return null;
+    if (!p || p.dead) p = joinPlayer(scene, null, null);
+    if (!p) return null;
+    // Never replace a live button state — this can be reached again while the
+    // same guest is already flying, and a fresh object would drop whatever
+    // they are holding down at that instant.
+    if (!p.remote) {
+      p.remote = {
+        left: false, right: false, up: false, down: false,
+        sp: false, enter: false, charge: false, fireHeld: false,
+      };
+    }
+    return p;
+  }
+  function cmgNetHostStart(scene) {
+    if (!cmgNetEnabled()) return;
+    var gen = (cmgNet.gen = (cmgNet.gen || 0) + 1);
+    cmgNetLoad().then(function(api) {
+      if (!api || !api.online) return;
+      // The scene may have moved on while the socket was opening.
+      if (!scene.scene || !scene.scene.isActive()) return;
+      // cmgNetHostStop may have run while the socket was opening; without a
+      // generation check this callback would re-announce a run that is over.
+      if (gen !== cmgNet.gen) return;
+      cmgNet.hosting = true;
+      cmgNet.scene = scene;
+      cmgNetStartHeartbeat();
+      // A guest who joined on an earlier stage is still in the seat: no
+      // `session` update fires for them here, so seat them directly or their
+      // ship would sit inert for the whole stage.
+      if (cmgNet.guestHex) cmgNetSeatGuest(scene);
+      api.openSession(
+        resolveGameId() || "shmupx",
+        cmgNetLevelTitle(scene),
+        (scene.players && scene.players.length) || 1,
+        cmgNetJoinable(scene),
+      );
+      if (cmgNet.unsubSeat) cmgNet.unsubSeat();
+      cmgNet.unsubSeat = api.onSeat(function(ev) {
+        cmgNet.guestHex = ev.guestHex;
+        var live = cmgNet.scene;
+        if (!live || !live.scene || !live.scene.isActive()) return;
+        if (!ev.guestHex) {
+          // The guest left: their ship becomes a wreck like any other, and the
+          // seat reopens for whoever asks next.
+          var p2 = live.players && live.players[1];
+          if (p2 && !p2.dead) {
+            p2.remote = null;
+            playerDie(live, p2);
+          }
+          return;
+        }
+        // Seat a networked player 2 through the same door a pad press uses.
+        cmgNetSeatGuest(live);
+      });
+      if (cmgNet.unsubInput) cmgNet.unsubInput();
+      cmgNet.unsubInput = api.onGuestInput(function(ev) {
+        var live = cmgNet.scene;
+        var p = live && live.players && live.players[1];
+        if (!p || !p.remote) return;
+        // `sp` is an edge in the local input path (JustDown on a key, a rising
+        // edge on a pad), so it is derived here rather than held: the guest
+        // sends "fire is down" and this turns it into one press.
+        var wasFire = p.remote.fireHeld;
+        p.remote.left = ev.input.left;
+        p.remote.right = ev.input.right;
+        p.remote.up = ev.input.up;
+        p.remote.down = ev.input.down;
+        p.remote.charge = ev.input.charge;
+        p.remote.fireHeld = ev.input.fire;
+        // LATCHED, not assigned: two input rows can land between two frames of
+        // the game loop, and `sp = press && !wasPress` would have the second
+        // erase the first one's press before anything read it.
+        if (ev.input.fire && !wasFire) p.remote.sp = true;
+        p.remote.enter = false;
+      });
+    });
+  }
+
+  /** Per-frame: heartbeat, snapshot, and clear the one-shot fire edge. */
+  function cmgNetHostTick(scene, nowMs) {
+    var api = cmgNet.api;
+    if (!api || !cmgNet.hosting) return;
+    if (!api.online) {
+      // The socket went away. A networked ship would otherwise keep flying on
+      // whatever buttons arrived last, forever — so it goes down like any other
+      // player who left, and the seat reopens if the connection comes back.
+      var lost = scene.players && scene.players[1];
+      if (lost && lost.remote) {
+        lost.remote = null;
+        if (!lost.dead) playerDie(scene, lost);
+      }
+      cmgNet.guestHex = null;
+      return;
+    }
+    if (nowMs - cmgNet.lastSnapAt >= 1000 / CMG_NET_SNAPSHOT_HZ) {
+      cmgNet.lastSnapAt = nowMs;
+      try {
+        api.publishSnapshot(cmgNetSnapshot(scene));
+      } catch (e) {
+      }
+    }
+    if (nowMs - cmgNet.lastBeatAt >= CMG_NET_HEARTBEAT_MS) {
+      cmgNet.lastBeatAt = nowMs;
+      api.updateSession(
+        (gameState.stageId || 0) & 0xff,
+        scene.scoreCount || 0,
+        (scene.players && scene.players.length) || 1,
+        cmgNetJoinable(scene),
+      );
+    }
+    // The rising edge lives for exactly one frame, like a real button press.
+    var p = scene.players && scene.players[1];
+    if (p && p.remote && p.remote.sp) p.remote.sp = false;
+    cmgNet.scene = scene;
+  }
+
+  var cmgNetBeat = null;
+  function cmgNetStartHeartbeat() {
+    if (cmgNetBeat) return;
+    cmgNetBeat = setInterval(function() {
+      var api = cmgNet.api;
+      if (!api || !cmgNet.hosting || !api.online) return;
+      var scene = cmgNet.scene;
+      // A stage transition parks the game scene for seconds at a time. Beating
+      // from here rather than from the game loop keeps the run listed through
+      // it, and keeps the seat warm for the guest already in it.
+      api.updateSession(
+        (gameState.stageId || 0) & 0xff,
+        (scene && scene.scoreCount) || gameState.score || 0,
+        (scene && scene.players && scene.players.length) || 1,
+        !!(scene && cmgNetJoinable(scene)),
+      );
+    }, CMG_NET_HEARTBEAT_MS);
+  }
+  function cmgNetHostStop() {
+    cmgNet.gen = (cmgNet.gen || 0) + 1;
+    if (cmgNetBeat) {
+      clearInterval(cmgNetBeat);
+      cmgNetBeat = null;
+    }
+    if (!cmgNet.hosting) return;
+    cmgNet.hosting = false;
+    cmgNet.guestHex = null;
+    cmgNet.scene = null;
+    if (cmgNet.unsubInput) {
+      cmgNet.unsubInput();
+      cmgNet.unsubInput = null;
+    }
+    if (cmgNet.unsubSeat) {
+      cmgNet.unsubSeat();
+      cmgNet.unsubSeat = null;
+    }
+    if (cmgNet.api) cmgNet.api.closeSession();
+  }
+
+  // A tab that goes away mid-run should not leave a ghost in the lobby. The
+  // module reaps stale sessions anyway, but this makes it immediate.
+  try {
+    window.addEventListener("pagehide", function() {
+      try {
+        cmgNetHostStop();
+      } catch (e) {
+      }
+    });
+  } catch (e) {
+  }
 
   // ../2019-es7/src/phaser/dezaemon-runtime.js
   var TILE = 16;
@@ -3629,7 +4067,14 @@
   function dezaRankTick(scene) {
     var stage = gameState.stageId || 0;
     if (scene._dezaDyn === undefined) scene._dezaDyn = 8 + 8 * stage;
-    var power = scene.shootMode && scene.shootMode !== "normal" ? 3 : 1;
+    // The ramp's power term is the strongest shot ON THE FIELD: with two ships
+    // the pressure should follow whoever is best armed, not player 1.
+    var powered = false;
+    var ranked = scene.players || [];
+    for (var ri = 0; ri < ranked.length; ri++) {
+      if (!ranked[ri].dead && ranked[ri].shootMode && ranked[ri].shootMode !== "normal") powered = true;
+    }
+    var power = powered ? 3 : 1;
     var target = 32 + 4 * power + 8 * stage;
     scene._dezaRankAcc = (scene._dezaRankAcc || 0) + 2;
     if (scene._dezaRankAcc > 255) {
@@ -3845,7 +4290,11 @@
   var CELL16 = function(v) { return Math.floor((v + 8) / 16); };
   function stepSpecialClass(scene, enemy, st) {
     var sp = st.sp;
-    var player = scene.playerSprite && scene.playerSprite.active ? scene.playerSprite : null;
+    // The dead do not get shot at: playerDie only hides the sprite, so an
+    // `.active` test would keep aiming at a wreck now that one death no longer
+    // stops the world. `sp.tgt` latches the slot this object first locked onto.
+    if (sp.tgt == null) sp.tgt = aimSlot(scene);
+    var player = aimPlayer(scene, sp.tgt);
     var S = sp.S;
     if (sp.cls === 0x36) {
       // one shot: aim at the player on the first tick and never adjust
@@ -4133,10 +4582,11 @@
     if (st.patrols && !scripted) {
       enemy.x += Math.cos(st.patrolPhase + st.age * (Math.PI * 2 / 150)) * (26 * Math.PI * 2 / 150);
     }
-    if (st.facesPlayer && scene.playerSprite) {
+    var faceTarget = st.facesPlayer ? aimPlayer(scene) : null;
+    if (faceTarget) {
       enemy.rotation = Math.atan2(
-        scene.playerSprite.x - enemy.x,
-        -(scene.playerSprite.y - enemy.y)
+        faceTarget.x - enemy.x,
+        -(faceTarget.y - enemy.y)
       ) + Math.PI;
     } else if (st.rotationCh) {
       enemy.rotation = stepChannel(st.rotationCh) * Math.PI / 180;
@@ -4182,12 +4632,15 @@
   // in through enemy.rotation), shaped by the traced geometry table.
   function dezaVolley(scene, enemy, st, geom, shootFn) {
     var fire = st.behavior.fire;
-    if (!scene.playerSprite) return;
     var aimed = zakoAimed(fire) || st.facesPlayer;
     var base;
     if (aimed) {
-      var dx = scene.playerSprite.x - enemy.x;
-      var dy = scene.playerSprite.y - enemy.y;
+      // Resolve once: the point-blank gate below and the heading must agree
+      // about WHICH ship they mean.
+      var target = aimPlayer(scene);
+      if (!target) return;
+      var dx = target.x - enemy.x;
+      var dy = target.y - enemy.y;
       // hardware point-blank gate: no shot within ~(size+36)px of the player
       if (Math.abs(dx) < 40 && Math.abs(dy) < 40) return;
       base = Math.atan2(dx, -dy);
@@ -4434,7 +4887,7 @@
     var v = mv.speed / 256;
     var vx = 0;
     var vy = 0;
-    var player = scene.playerSprite;
+    var player = aimPlayer(scene);
     if (mv.flags & 0x20 && player) {
       if (Math.abs(boss.x - player.x) >= 8) vx = (boss.x >= player.x ? 1 : -1) * v / 2;
     } else if (mv.flags & 0x40 && player) {
@@ -4666,8 +5119,9 @@
     var fn = fp.shot ? fp.shot.fn : 1;
     if (fn === 0) return;
     var base = Math.PI; // boss heading: straight down
-    if (fp.shot && fp.shot.aimed && scene.playerSprite) {
-      base = Math.atan2(scene.playerSprite.x - x, -(scene.playerSprite.y - y));
+    var aimAt = fp.shot && fp.shot.aimed ? aimPlayer(scene) : null;
+    if (aimAt) {
+      base = Math.atan2(aimAt.x - x, -(aimAt.y - y));
     }
     var projData = bossWeapon(scene, fp.shot ? fp.shot.weapon : 0);
     var tint = projData === DEZA_BOSS_BULLET ? 8368895 : 0;
@@ -4714,7 +5168,7 @@
     var oval = scene.add.ellipse(boss.x + fp.dx, boss.y + fp.dy, 100, 100, 14492211, 0.45);
     oval.setDepth(44);
     oval.setScale(0, 0);
-    st.beams.push({ key, fp, sprite: oval, age: 0, cooldown: 0 });
+    st.beams.push({ key, fp, sprite: oval, age: 0, cooldowns: [0, 0] });
   }
   function updateDezaBeams(scene, st) {
     var boss = scene.bossSprite;
@@ -4737,14 +5191,22 @@
       beam.sprite.setScale(shape.w / 100, shape.h / 100);
       var fade = Math.min(1, beam.age / 12, (life - beam.age) / 25);
       beam.sprite.setFillStyle(14492211, (0.4 + 0.1 * Math.sin(beam.age * 0.5)) * fade);
-      if (beam.cooldown > 0) beam.cooldown--;
-      var player = scene.playerSprite;
-      if (player && fade > 0.6 && beam.cooldown <= 0 && !scene.barrierActive) {
-        var nx = (player.x - cx) / (shape.w / 2 + 8);
-        var ny = (player.y - cy) / (shape.h / 2 + 8);
+      // The beam burns every ship standing in it, not just the one it aimed
+      // at — and its re-burn cooldown is PER SHIP. One shared counter would let
+      // the first ship tested absorb the hit and leave the other one immune.
+      if (!beam.cooldowns) beam.cooldowns = [0, 0];
+      for (var ci = 0; ci < beam.cooldowns.length; ci++) {
+        if (beam.cooldowns[ci] > 0) beam.cooldowns[ci]--;
+      }
+      var inBeam = livePlayers(scene);
+      for (var bi = 0; bi < inBeam.length; bi++) {
+        var bp = inBeam[bi];
+        if (!(fade > 0.6) || beam.cooldowns[bp.index] > 0 || bp.barrierActive) continue;
+        var nx = (bp.sprite.x - cx) / (shape.w / 2 + 8);
+        var ny = (bp.sprite.y - cy) / (shape.h / 2 + 8);
         if (nx * nx + ny * ny <= 1) {
-          beam.cooldown = 60;
-          scene.playerDamage(1);
+          beam.cooldowns[bp.index] = 60;
+          scene.playerDamage(bp, 1);
         }
       }
     }
@@ -5784,7 +6246,14 @@
         gameState.playerHp = recipe.playerData.maxHp;
         gameState.shootMode = recipe.playerData.defaultShootName;
         gameState.shootSpeed = recipe.playerData.defaultShootSpeed;
+        gameState.player2MaxHp = recipe.playerData.maxHp;
+        gameState.player2Hp = recipe.playerData.maxHp;
+        gameState.player2ShootMode = recipe.playerData.defaultShootName;
+        gameState.player2ShootSpeed = recipe.playerData.defaultShootSpeed;
+        gameState.player2Spgage = 0;
       }
+      gameState.playerCount = readPlayerCountParam(1);
+    gameState.twoPlayerForced = gameState.playerCount === 2;
       gameState.combo = 0;
       gameState.maxCombo = 0;
       gameState.score = 0;
@@ -6497,7 +6966,10 @@
     }
     return false;
   }
-  function tryGamepadHaptics(preset) {
+  // `padIndex` scopes the rumble to one controller — with two players, an
+  // unscoped buzz has both pads shake on either ship's hit. Omit it for the
+  // game-wide events (a boss arriving, a stage clearing) that belong to both.
+  function tryGamepadHaptics(preset, padIndex) {
     if (typeof navigator === "undefined" || typeof navigator.getGamepads !== "function") {
       return false;
     }
@@ -6512,6 +6984,7 @@
     }
     var triggered = false;
     for (var i = 0; i < pads.length; i++) {
+      if (typeof padIndex === "number" && pads[i] && pads[i].index !== padIndex) continue;
       var actuators = getGamepadActuators(pads[i]);
       for (var j = 0; j < actuators.length; j++) {
         triggered = triggerActuator(actuators[j], preset) || triggered;
@@ -6519,7 +6992,7 @@
     }
     return triggered;
   }
-  function triggerHaptic(name) {
+  function triggerHaptic(name, padIndex) {
     var presetName = name || "ui";
     var preset = resolvePreset(presetName);
     if (!shouldTriggerPreset(presetName, preset)) {
@@ -6531,7 +7004,7 @@
     if (!usedCordovaDevice) {
       triggered = tryNavigatorVibrate(preset) || triggered;
     }
-    triggered = tryGamepadHaptics(preset) || triggered;
+    triggered = tryGamepadHaptics(preset, padIndex) || triggered;
     return triggered;
   }
 
@@ -6555,6 +7028,192 @@
     shadow.y = sprite.y + sprite.height - offsetY;
   }
 
+  // --- two-player plumbing -------------------------------------------------
+  //
+  // Dezaemon 2's settings bit1 enables 2P join-in: two ships in dedicated
+  // slots, each reading its own pad, one player's death not ending the other's
+  // game (FORMAT.md "Settings byte map" +0x00; the traced spec is written up in
+  // static/dezaemon-parity.html item 2). This runtime grew up single-player,
+  // with ~70 sites across the enemy, boss and plugin code reading
+  // `scene.playerSprite` / `scene.playerHp` / `scene.playerDead` directly.
+  //
+  // So P1's storage does not move. Player 1 IS the legacy fields; player 2
+  // mirrors them under a `p2` prefix, and `scene.players[i]` is a thin accessor
+  // view that reads and writes whichever set belongs to slot i. A site that was
+  // missed in the port therefore keeps operating on player 1 and keeps behaving
+  // exactly as it does today, instead of reading `undefined` and throwing —
+  // and `grep playerSprite` still enumerates precisely the legacy sites left to
+  // audit.
+  var PLAYER_FIELDS = {
+    sprite: ["playerSprite", "p2Sprite"],
+    shadow: ["playerShadow", "p2Shadow"],
+    hp: ["playerHp", "p2Hp"],
+    maxHp: ["playerMaxHp", "p2MaxHp"],
+    dead: ["playerDead", "p2Dead"],
+    unitX: ["playerUnitX", "p2UnitX"],
+    unitY: ["playerUnitY", "p2UnitY"],
+    halfW: ["playerHitAreaHalfWidth", "p2HitAreaHalfWidth"],
+    hurtFlg: ["damageAnimationFlg", "p2DamageAnimationFlg"],
+    barrierActive: ["barrierActive", "p2BarrierActive"],
+    barrierTimer: ["barrierTimer", "p2BarrierTimer"],
+    barrierSprite: ["barrierSprite", "p2BarrierSprite"],
+    shootMode: ["shootMode", "p2ShootMode"],
+    shootSpeed: ["shootSpeed", "p2ShootSpeed"],
+    shootTimer: ["shootTimer", "p2ShootTimer"],
+    shootInterval: ["shootInterval", "p2ShootInterval"],
+    dezaShotLocked: ["dezaShotLocked", "p2DezaShotLocked"],
+    dezaLoadoutIndex: ["dezaLoadoutIndex", "p2DezaLoadoutIndex"],
+    dezaPower: ["dezaPower", "p2DezaPower"],
+    dezaWeapons: ["dezaWeapons", "p2DezaWeapons"],
+    dezaChargeBeam: ["dezaChargeBeam", "p2DezaChargeBeam"],
+    dezaLastX: ["dezaLastX", "p2DezaLastX"],
+    dezaBomb: ["dezaBomb", "p2DezaBomb"],
+    dezaBombStock: ["dezaBombStock", "p2DezaBombStock"],
+    dezaBombInvuln: ["dezaBombInvuln", "p2DezaBombInvuln"],
+    spGauge: ["spGauge", "p2SpGauge"],
+    spFired: ["spFired", "p2SpFired"],
+    spReadyHapticPlayed: ["spReadyHapticPlayed", "p2SpReadyHapticPlayed"],
+    comboCount: ["comboCount", "p2ComboCount"],
+    comboTimeCnt: ["comboTimeCnt", "p2ComboTimeCnt"],
+    maxCombo: ["maxCombo", "p2MaxCombo"],
+    bossContactAt: ["_lastBossContactTime", "_p2LastBossContactTime"],
+    hpBar: ["hpBar", "hpBarP2"],
+    comboBar: ["comboLabel", "comboLabelP2"],
+    animKey: ["_animKeyP1", "_animKeyP2"],
+    padIndex: ["_padIndexP1", "_padIndexP2"],
+    padId: ["_padIdP1", "_padIdP2"],
+    keys: ["wasd", "p2Keys"],
+    // Set when this seat is driven over the network instead of by a pad or a
+    // keyboard: the latest buttons a remote player sent, held until they send
+    // different ones. Null for a local ship.
+    remote: ["_remoteP1", "_remoteP2"]
+  };
+  function makePlayerView(scene, i) {
+    var view = { index: i };
+    Object.keys(PLAYER_FIELDS).forEach(function(name) {
+      var key = PLAYER_FIELDS[name][i];
+      Object.defineProperty(view, name, {
+        get: function() {
+          return scene[key];
+        },
+        set: function(value) {
+          scene[key] = value;
+        },
+        enumerable: true,
+        configurable: true
+      });
+    });
+    return view;
+  }
+  // The player a kill belongs to. An unattributed kill — a scripted death, a
+  // chain link that inherited no owner — falls to player 1, which is precisely
+  // what a one-player game has always done.
+  function killer(scene, owner) {
+    var ps = scene.players || [];
+    return ps[owner] || ps[0];
+  }
+  function livePlayers(scene) {
+    var out = [];
+    var ps = scene && scene.players || [];
+    for (var i = 0; i < ps.length; i++) {
+      if (ps[i] && !ps[i].dead && ps[i].sprite) out.push(ps[i]);
+    }
+    return out;
+  }
+  function allPlayersDead(scene) {
+    return livePlayers(scene).length === 0;
+  }
+  // Enemies aim at ONE global target that ALTERNATES between the ships on a
+  // timer while both are alive — not at whichever is nearest (traced; see
+  // dezaemon-parity.html item 2). The swap period itself is not traced, so this
+  // picks ~2 seconds, slow enough to read and fast enough that neither ship can
+  // camp out of the line of fire.
+  var AIM_SWAP_TICKS = 128;
+  function aimSlot(scene) {
+    var ps = scene && scene.players || [];
+    var want = scene && scene._aimSlot || 0;
+    if (ps[want] && !ps[want].dead && ps[want].sprite) return want;
+    for (var i = 0; i < ps.length; i++) {
+      if (ps[i] && !ps[i].dead && ps[i].sprite) return i;
+    }
+    return -1;
+  }
+  // The x a boss should dash to, or `fallback` (its own x) when there is no
+  // live ship to dash at — never re-centre, that reads as the boss losing
+  // interest.
+  function aimX(scene, fallback) {
+    var t = aimPlayer(scene);
+    return t ? t.x : fallback;
+  }
+  // The sprite to shoot at, or null when nobody is alive to shoot at — which is
+  // a REACHABLE state now that one death no longer stops the world, so every
+  // caller has to handle it. Pass `slot` to pin the choice an earlier frame
+  // made, so a volley's range gate and its aim cannot disagree.
+  function aimPlayer(scene, slot) {
+    var ps = scene && scene.players || [];
+    if (typeof slot === "number" && slot >= 0) {
+      var pinned = ps[slot];
+      if (pinned && !pinned.dead && pinned.sprite) return pinned.sprite;
+    }
+    var i = aimSlot(scene);
+    return i < 0 ? null : ps[i].sprite;
+  }
+  // Hand both ships' state to the next stage. `gameState` is the only thing
+  // that survives a scene.stop/start, so anything a player carries forward has
+  // to be written here — a field left out is the classic "player 2's HP bar is
+  // NaN on stage 2" bug.
+  function writePlayerStateToGameState(scene) {
+    var ps = scene.players || [];
+    var best = gameState.maxCombo || 0;
+    for (var b = 0; b < ps.length; b++) best = Math.max(best, ps[b].maxCombo || 0);
+    gameState.maxCombo = best;
+    // Only the SURVIVORS ride to the next stage, compacted into the slots from
+    // the front. A player who died does not quietly reappear at the next stage
+    // start — the seat simply opens again, and they take it back by pressing a
+    // button, exactly as they joined the first time. (If player 1 was the one
+    // who fell, the survivor inherits slot 1 and its HUD row along with it.)
+    var alive = livePlayers(scene);
+    gameState.playerCount = Math.max(1, alive.length);
+    for (var i = 0; i < 2; i++) {
+      var pre = i === 0 ? "player" : "player2";
+      var p = alive[i];
+      if (!p) {
+        // Clear the whole slot. Leaving MaxHp / Spgage / ShootMode behind would
+        // have the next player to take this seat inherit the last one's weapon
+        // and a full SP gauge.
+        gameState[pre + "Hp"] = 0;
+        gameState[pre + "MaxHp"] = 0;
+        gameState[pre + "Spgage"] = 0;
+        gameState[pre + "ShootMode"] = null;
+        gameState[pre + "ShootSpeed"] = null;
+        continue;
+      }
+      // A cleared stage refills the ships that survived it.
+      gameState[pre + "Hp"] = p.maxHp;
+      gameState[pre + "MaxHp"] = p.maxHp;
+      gameState[pre + "Spgage"] = p.spGauge;
+      gameState[pre + "ShootMode"] = p.shootMode;
+      gameState[pre + "ShootSpeed"] = p.shootSpeed;
+    }
+    // Player 1 keeps the legacy field names every other scene already reads.
+    gameState.spgage = alive[0] ? alive[0].spGauge : 0;
+    gameState.shootMode = alive[0] ? alive[0].shootMode : "normal";
+    gameState.shootSpeed = alive[0] ? alive[0].shootSpeed : "speed_normal";
+  }
+  // Is this level allowed a second player? The save's own game-mode bit is the
+  // gate (bit1 = 2P join-in), with ?players=2 forcing it on — which is also the
+  // only way to reach 2P on a level that carries no decoded Dezaemon settings
+  // at all, such as the stock 2028-ai game.
+  function twoPlayerAllowed(scene) {
+    // `twoPlayerForced` is the ?players=2 override and never changes during a
+    // run — deliberately NOT playerCount, which counts the ships currently in
+    // play and drops to 1 the moment one of them is lost.
+    if (gameState.twoPlayerForced) return true;
+    if (gameState.onlineFlg === true) return true;
+    var m = scene && scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
+    return !!(m && m.twoPlayer);
+  }
+
   // ../2019-es7/src/phaser/game-objects/Player.js
   var GW = GAME_DIMENSIONS.WIDTH;
   var GH = GAME_DIMENSIONS.HEIGHT;
@@ -6568,39 +7227,181 @@
     if (pointer.pointerId !== void 0 && pointer.pointerId !== null) return pointer.pointerId;
     return null;
   }
-  function createPlayer(scene) {
+  // The ship record slot i flies. P2 differs from P1 only in its art — Dezaemon
+  // gives each ship a config block (settings +0x10, reaching us as
+  // meta.dezaemonSettings.ships[1]), not its own bullets — so the save's second
+  // ship is P1's record with playerData2's frames laid over it.
+  // Player 2's default ship: the trooper from shmup-party-phaser4, baked into
+  // the game_asset atlas beside Duke by scripts/build-player2-art.ts. Its walk
+  // cycle is drawn from above facing up, so it needs no rotation here.
+  var TROOPER_FRAMES = ["trooper_0", "trooper_1", "trooper_2", "trooper_3", "trooper_4", "trooper_5", "trooper_6", "trooper_7"];
+  // Frames present in whatever atlas this level ended up with. A level imported
+  // before the trooper existed, or one whose save replaced the atlas wholesale,
+  // simply has no trooper — those fall back to player 1's ship rather than
+  // drawing the atlas's __BASE placeholder.
+  function framesInAtlas(scene, names) {
+    var atlas = scene.textures.get("game_asset");
+    if (!atlas) return null;
+    for (var i = 0; i < names.length; i++) {
+      if (!atlas.has(names[i])) return null;
+    }
+    return names.slice();
+  }
+  function playerRecord(scene, i) {
     var pd = scene.recipe.playerData;
+    if (i !== 1) return pd;
+    // The save's OWN second ship wins; the trooper is the default for every
+    // level that did not draw one.
+    var pd2 = scene.recipe.playerData2;
+    if (pd2 && Array.isArray(pd2.texture) && pd2.texture.length) {
+      var own = framesInAtlas(scene, pd2.texture);
+      if (own) return Object.assign({}, pd, { texture: own, name: pd2.name || "dezaShip2" });
+    }
+    var trooper = framesInAtlas(scene, TROOPER_FRAMES);
+    if (trooper) return Object.assign({}, pd, { texture: trooper, name: "trooper" });
+    return pd;
+  }
+  // Hardware starts a 2P game with the ships 128 px apart, straddling centre.
+  // A mid-stage join has no shared start to straddle, so P2 arrives alongside
+  // P1 instead, on whichever side has room.
+  function playerSpawnX(scene, i) {
+    if (i === 0) return scene.playerCount > 1 ? GCX - 64 : GCX;
+    var p1 = scene.players[0];
+    if (scene.gameStarted && p1 && p1.sprite) {
+      return clamp(p1.sprite.x + (p1.sprite.x > GCX ? -64 : 64), 24, GW - 24);
+    }
+    return GCX + 64;
+  }
+  function createPlayer(scene, i) {
+    var p = scene.players[i] = makePlayerView(scene, i);
+    var pd = playerRecord(scene, i);
     var playerFrames = pd && Array.isArray(pd.texture) && pd.texture.length > 0 ? pd.texture.slice() : ["player00.gif", "player01.gif", "player02.gif", "player03.gif", "player04.gif", "player05.gif"];
     var firstFrame = playerFrames[0] || "player00.gif";
-    scene.playerSprite = scene.add.sprite(GCX, GH - 80, "game_asset", firstFrame);
-    scene.playerSprite.setOrigin(0.5);
-    scene.playerSprite.setDepth(50);
-    scene.playerHitAreaHalfWidth = (scene.playerSprite.width - 14) / 2;
-    if (!isFinite(scene.playerHitAreaHalfWidth) || scene.playerHitAreaHalfWidth <= 0) {
-      scene.playerHitAreaHalfWidth = 16;
+    p.sprite = scene.add.sprite(playerSpawnX(scene, i), GH - 80, "game_asset", firstFrame);
+    p.sprite.setOrigin(0.5);
+    p.sprite.setDepth(50);
+    p.sprite.setData("playerSlot", i);
+    p.halfW = (p.sprite.width - 14) / 2;
+    if (!isFinite(p.halfW) || p.halfW <= 0) {
+      p.halfW = 16;
     }
-    scene.playerUnitX = scene.playerSprite.x;
-    scene.playerUnitY = scene.playerSprite.y;
-    scene.playerHp = gameState.playerHp || pd.maxHp;
-    scene.playerMaxHp = gameState.playerMaxHp || pd.maxHp;
-    if (scene.anims.exists("player-idle")) {
-      scene.anims.remove("player-idle");
+    p.dead = false;
+    p.hurtFlg = false;
+    p.unitX = p.sprite.x;
+    p.unitY = p.sprite.y;
+    // P2 must not inherit P1's mid-stage HP out of gameState.
+    p.hp = (i === 0 ? gameState.playerHp : gameState.player2Hp) || pd.maxHp;
+    if (!(p.hp > 0)) p.hp = pd.maxHp;
+    p.maxHp = (i === 0 ? gameState.playerMaxHp : gameState.player2MaxHp) || pd.maxHp;
+    // One animation key per slot: `anims` is the game-wide AnimationManager, so
+    // a shared key would have the second ship's frames replace the first's.
+    p.animKey = i === 0 ? "player-idle" : "player-idle-p2";
+    if (scene.anims.exists(p.animKey)) {
+      scene.anims.remove(p.animKey);
     }
     scene.anims.create({
-      key: "player-idle",
+      key: p.animKey,
       frames: playerFrames.map(function(f) {
         return { key: "game_asset", frame: f };
       }),
       frameRate: 6,
       repeat: -1
     });
-    scene.playerSprite.play("player-idle");
-    scene.playerShadow = createShadow(scene, scene.playerSprite, firstFrame, true, 5, "game_asset");
-    scene.playerShadow.play("player-idle");
-    updateShadowPosition(scene.playerShadow, scene.playerSprite);
-    scene.barrierActive = false;
-    scene.barrierTimer = 0;
-    scene.barrierSprite = null;
+    p.sprite.play(p.animKey);
+    p.shadow = createShadow(scene, p.sprite, firstFrame, true, 5, "game_asset");
+    p.shadow.play(p.animKey);
+    updateShadowPosition(p.shadow, p.sprite);
+    p.barrierActive = false;
+    p.barrierTimer = 0;
+    p.barrierSprite = null;
+    p.shootTimer = 0;
+    p.shootInterval = pd.shootNormal && pd.shootNormal.interval || 23;
+    p.shootMode = (i === 0 ? gameState.shootMode : gameState.player2ShootMode) || pd.defaultShootName || "normal";
+    p.shootSpeed = (i === 0 ? gameState.shootSpeed : gameState.player2ShootSpeed) || pd.defaultShootSpeed || "speed_normal";
+    p.spGauge = (i === 0 ? gameState.spgage : gameState.player2Spgage) || 0;
+    p.spFired = false;
+    p.spReadyHapticPlayed = false;
+    p.comboCount = 0;
+    p.comboTimeCnt = 0;
+    p.maxCombo = gameState.maxCombo || 0;
+    // The engine seeds the bomb count from a settings byte this decoder does
+    // not name yet; three is the shmup-standard stand-in until it is traced.
+    p.dezaBombStock = 3;
+    p.dezaBomb = null;
+    p.dezaBombInvuln = false;
+    p.dezaWeapons = null;
+    p.dezaChargeBeam = null;
+    p.dezaShotLocked = false;
+    p.dezaLoadoutIndex = void 0;
+    p.bossContactAt = 0;
+    // A ship starts LOCAL. Anything networked re-attaches through
+    // cmgNetSeatGuest; leaving a previous guest's buttons on a fresh ship would
+    // fly it with input nobody is sending any more.
+    p.remote = null;
+    return p;
+  }
+  // Put a lost ship back in the air, in the slot it already owns. A rejoin
+  // starts clean — full HP, the default weapon, no bomb stock carried over from
+  // the run that killed it — so taking the seat back is never better than
+  // holding it.
+  function revivePlayer(scene, p) {
+    var pd = playerRecord(scene, p.index);
+    scene.tweens.killTweensOf(p.sprite);
+    p.dead = false;
+    p.hurtFlg = false;
+    p.hp = p.maxHp || pd.maxHp;
+    p.sprite.x = playerSpawnX(scene, p.index);
+    p.unitX = p.sprite.x;
+    p.sprite.y = GH - 80;
+    p.unitY = p.sprite.y;
+    p.sprite.setAlpha(1);
+    p.sprite.clearTint();
+    p.sprite.setVisible(true);
+    if (p.shadow) {
+      p.shadow.setVisible(true);
+      updateShadowPosition(p.shadow, p.sprite);
+    }
+    p.shootMode = pd.defaultShootName || "normal";
+    p.shootSpeed = pd.defaultShootSpeed || "speed_normal";
+    p.shootTimer = 0;
+    p.spGauge = 0;
+    p.spFired = false;
+    p.spReadyHapticPlayed = false;
+    p.comboCount = 0;
+    p.comboTimeCnt = 0;
+    p.dezaWeapons = null;
+    p.dezaChargeBeam = null;
+    p.dezaShotLocked = false;
+    p.dezaBomb = null;
+    p.dezaBombInvuln = false;
+    p.dezaBombStock = 3;
+    p.bossContactAt = 0;
+    p.remote = null;
+    if (p.hpBar) {
+      p.hpBar.scaleX = 1;
+      p.hpBar.setAlpha(1);
+    }
+    if (p.comboBar) p.comboBar.scaleX = 0;
+    return p;
+  }
+  // A second player taking the seat mid-run — arriving for the first time, or
+  // coming back after being shot down. This is the single entry point a join
+  // takes: a pad press today, and the seam a networked peer would call.
+  function joinPlayer(scene, padIndex, padId) {
+    if (!scene.players || !scene.gameStarted) return null;
+    if (!twoPlayerAllowed(scene) || scene._runEnded) return null;
+    var p = scene.players[1];
+    if (p && !p.dead) return null;
+    scene.playerCount = 2;
+    gameState.playerCount = 2;
+    if (p) revivePlayer(scene, p);
+    else p = createPlayer(scene, 1);
+    p.padIndex = typeof padIndex === "number" ? padIndex : null;
+    p.padId = padId || null;
+    scene.enterTwoPlayerHud(true);
+    scene.playSound("g_powerup_voice", 0.7);
+    triggerHaptic("ready", p.padIndex);
+    return p;
   }
   function createDragArea(scene) {
     scene.dragArea = scene.add.zone(0, 0, GW, GH);
@@ -6616,16 +7417,20 @@
       onScreenDragEnd(scene, pointer);
     });
   }
-  function clampPlayerX(scene, x) {
-    return clamp(x, scene.playerHitAreaHalfWidth, GW - scene.playerHitAreaHalfWidth);
+  function clampPlayerX(p, x) {
+    return clamp(x, p.halfW, GW - p.halfW);
   }
+  // Touch drives player 1 only: the game is configured for a single pointer
+  // (no addPointer call), so a second finger is never delivered. P2 is a pad or
+  // a keyboard.
   function onScreenDragStart(scene, pointer) {
-    if (!scene.gameStarted || scene.playerDead) return;
+    var p = scene.players && scene.players[0];
+    if (!scene.gameStarted || !p || p.dead) return;
     if (pointer.rightButtonDown()) {
-      scene.onSpFire();
+      scene.onSpFire(p);
       return;
     }
-    scene.playerUnitX = pointer.x;
+    p.unitX = clampPlayerX(p, pointer.x);
     scene.isDragging = true;
     scene.dragPointerId = pointerId(pointer);
   }
@@ -6636,70 +7441,75 @@
     scene.dragPointerId = null;
   }
   function onScreenDragMove(scene, pointer) {
-    if (!scene.isDragging || !scene.gameStarted || scene.playerDead || scene.theWorldFlg) return;
+    var p = scene.players && scene.players[0];
+    if (!scene.isDragging || !scene.gameStarted || !p || p.dead || scene.theWorldFlg) return;
     if (scene.dragPointerId !== null && pointerId(pointer) !== scene.dragPointerId) return;
-    scene.playerUnitX = clampPlayerX(scene, pointer.x);
+    p.unitX = clampPlayerX(p, pointer.x);
   }
-  function handleKeyboardInput(scene) {
-    if (!scene.gameStarted || scene.playerDead || scene.theWorldFlg) return;
-    var gp = pollGamepads();
+  function handleKeyboardInput(scene, p) {
+    if (!scene.gameStarted || p.dead || scene.theWorldFlg) return;
+    // A networked seat reads as a pad that happens to live somewhere else. The
+    // rest of this function cannot tell the difference, which is the point:
+    // one movement path, one fire path, whoever is holding the buttons.
+    var gp = p.remote ? p.remote : pollPad(p.padIndex);
     // START during play pauses: launcher builds raise the Guide OSD, which
-    // pauses over cmg-pause; standalone raises the local PAUSE panel.
-    if (gp.enter) {
+    // pauses over cmg-pause; standalone raises the local PAUSE panel. Only
+    // player 1's pad pauses — P2's START must not stop P1's game.
+    if (gp.enter && p.index === 0) {
       cmgStartPressed();
       return;
     }
+    var cursors = p.remote ? null : (p.index === 0 ? scene.cursors : null);
+    var keys = p.remote ? null : p.keys;
     var moveX = 0;
     var moveY = 0;
-    if (scene.cursors && scene.cursors.left.isDown || scene.wasd && scene.wasd.left.isDown || gp.left) {
+    if (cursors && cursors.left.isDown || keys && keys.left.isDown || gp.left) {
       moveX = -scene.keyMoveSpeed;
-    } else if (scene.cursors && scene.cursors.right.isDown || scene.wasd && scene.wasd.right.isDown || gp.right) {
+    } else if (cursors && cursors.right.isDown || keys && keys.right.isDown || gp.right) {
       moveX = scene.keyMoveSpeed;
     }
-    if (scene.cursors && scene.cursors.up.isDown || scene.wasd && scene.wasd.up.isDown || gp.up) {
+    if (cursors && cursors.up.isDown || keys && keys.up.isDown || gp.up) {
       moveY = -scene.keyMoveSpeed;
-    } else if (scene.cursors && scene.cursors.down.isDown || scene.wasd && scene.wasd.down.isDown || gp.down) {
+    } else if (cursors && cursors.down.isDown || keys && keys.down.isDown || gp.down) {
       moveY = scene.keyMoveSpeed;
     }
     if (moveX !== 0 || moveY !== 0) {
-      scene.playerUnitX = clampPlayerX(scene, scene.playerUnitX + moveX);
-      scene.playerSprite.y = clamp(scene.playerSprite.y + moveY, 50, GH - 20);
-      scene.playerUnitY = scene.playerSprite.y;
+      p.unitX = clampPlayerX(p, p.unitX + moveX);
+      p.sprite.y = clamp(p.sprite.y + moveY, 50, GH - 20);
+      p.unitY = p.sprite.y;
     }
-    if (scene.wasd && scene.wasd.sp && Phaser.Input.Keyboard.JustDown(scene.wasd.sp) || gp.sp) {
-      scene.onSpFire();
+    if (keys && keys.sp && Phaser.Input.Keyboard.JustDown(keys.sp) || gp.sp) {
+      scene.onSpFire(p);
     }
     // The engine charges while the FIRE button is held, but this runtime
-    // autofires, so the charge gets an input of its own: SHIFT on a keyboard.
-    var charging = !!(scene.wasd && scene.wasd.charge && scene.wasd.charge.isDown);
-    updateDezaWeapons(scene, charging);
+    // autofires, so the charge gets an input of its own: SHIFT on a keyboard
+    // (I/U for player 2), or either shoulder button on a pad.
+    var charging = !!(keys && keys.charge && keys.charge.isDown) || gp.charge;
+    updateDezaWeapons(scene, p, charging);
   }
-  function playerDamage(scene, amount) {
+  function playerDamage(scene, p, amount) {
     // Bomb types 1, 2, 4, 6 and 7 hold the player invincible for their whole run
     // — 6 and 7 by switching the ship itself off as a collidable.
-    if (scene.dezaBombInvuln) return;
+    if (p.dead) return;
+    if (p.dezaBombInvuln) return;
     if (gameState.godFlg) return;
-    if (scene.barrierActive) return;
-    if (scene.damageAnimationFlg) return;
-    scene.damageAnimationFlg = true;
-    scene.playerHp -= amount;
-    if (scene.playerHp <= 0) {
-      scene.playerHp = 0;
-      playerDie(scene);
+    if (p.barrierActive) return;
+    if (p.hurtFlg) return;
+    p.hurtFlg = true;
+    p.hp -= amount;
+    if (p.hp <= 0) {
+      p.hp = 0;
+      playerDie(scene, p);
     }
-    scene.hpBar.setScale(Math.max(0, scene.playerHp / scene.playerMaxHp), 1);
-    triggerHaptic("damage");
+    // scaleX only: the bar's HEIGHT carries which player it belongs to once the
+    // HUD has split, and setScale(x, 1) would reset that every hit.
+    if (p.hpBar) p.hpBar.scaleX = Math.max(0, p.hp / p.maxHp);
+    triggerHaptic("damage", p.padIndex);
     scene.playSound("se_damage", 0.15);
     scene.playSound("g_damage_voice", 0.5);
     scene.cameras.main.shake(150, 0.01);
-    scene.tweens.add({
-      targets: scene.hudBg,
-      alpha: 0.5,
-      duration: 100,
-      yoyo: true,
-      repeat: 2
-    });
-    var sprite = scene.playerSprite;
+    scene.flashHudBg();
+    var sprite = p.sprite;
     var baseY = sprite.y;
     var steps = [
       // Cycle 1: down+red
@@ -6731,26 +7541,53 @@
             }
           },
           onComplete: isLast ? function() {
-            scene.damageAnimationFlg = false;
+            p.hurtFlg = false;
           } : void 0
         });
       })(steps[i], i === steps.length - 1);
     }
   }
-  function playerDie(scene) {
-    if (scene.playerDead) return;
-    scene.playerDead = true;
+  function playerDie(scene, p) {
+    if (p.dead) return;
+    p.dead = true;
     dezaRankDeath(scene);
+    triggerHaptic("death", p.padIndex);
+    scene.showExplosion(p.sprite.x, p.sprite.y);
+    p.sprite.setVisible(false);
+    if (p.shadow) p.shadow.setVisible(false);
+    if (p.barrierSprite) {
+      p.barrierSprite.destroy();
+      p.barrierSprite = null;
+    }
+    p.barrierActive = false;
+    // The wreck stops being a target immediately; the bar it owns drains and
+    // stays on screen, dimmed, advertising the slot as free to rejoin.
+    if (p.hpBar) {
+      p.hpBar.scaleX = 0;
+      if (p.index === 1) p.hpBar.setAlpha(0.3);
+    }
+    if (p.comboBar) p.comboBar.scaleX = 0;
+    p.comboCount = 0;
+    p.comboTimeCnt = 0;
+    gameState.maxCombo = Math.max(gameState.maxCombo || 0, p.maxCombo);
+    // Release the pad — and the network seat — so either can take it back.
+    p.padIndex = null;
+    p.padId = null;
+    p.remote = null;
+    if (allPlayersDead(scene)) endRun(scene);
+  }
+  // The run is over only when every ship is gone. Latched separately from the
+  // per-player death: two deaths inside the same two-second window would
+  // otherwise race two scene transitions.
+  function endRun(scene) {
+    if (scene._runEnded) return;
+    scene._runEnded = true;
     scene.gameStarted = false;
-    triggerHaptic("death");
-    scene.showExplosion(scene.playerSprite.x, scene.playerSprite.y);
-    scene.playerSprite.setVisible(false);
-    if (scene.playerShadow) scene.playerShadow.setVisible(false);
-    gameState.maxCombo = Math.max(gameState.maxCombo || 0, scene.maxCombo);
+    cmgNetHostStop();
     var game = scene.game;
     scene.time.delayedCall(2e3, function() {
       gameState.score = scene.scoreCount;
-      gameState.spgage = scene.spGauge;
+      gameState.spgage = scene.players[0] ? scene.players[0].spGauge : 0;
       scene.stopAllSounds();
       setTimeout(function() {
         game.scene.stop("PhaserGameScene");
@@ -6758,68 +7595,69 @@
       }, 50);
     });
   }
-  function updateBarrier(scene, step) {
-    if (!scene.barrierActive) return;
-    scene.barrierTimer -= step / 1e3;
-    if (scene.barrierTimer <= 0) {
-      scene.barrierActive = false;
-      if (scene.barrierSprite) {
-        scene.barrierSprite.destroy();
-        scene.barrierSprite = null;
+  function updateBarrier(scene, p, step) {
+    if (!p.barrierActive) return;
+    p.barrierTimer -= step / 1e3;
+    if (p.barrierTimer <= 0) {
+      p.barrierActive = false;
+      if (p.barrierSprite) {
+        p.barrierSprite.destroy();
+        p.barrierSprite = null;
       }
       scene.playSound("se_barrier_end", 0.9);
-    } else if (scene.barrierSprite) {
-      scene.barrierSprite.x = scene.playerSprite.x;
-      scene.barrierSprite.y = scene.playerSprite.y;
+    } else if (p.barrierSprite) {
+      p.barrierSprite.x = p.sprite.x;
+      p.barrierSprite.y = p.sprite.y;
     }
   }
-  function collectItem(scene, itemName) {
-    triggerHaptic("pickup");
+  function collectItem(scene, p, itemName) {
+    triggerHaptic("pickup", p.padIndex);
     scene.playSound("g_powerup_voice", 0.55);
     switch (itemName) {
       case PLAYER_STATES.SHOOT_SPEED_HIGH:
-        scene.shootSpeed = "speed_high";
+        p.shootSpeed = "speed_high";
         break;
       case PLAYER_STATES.BARRIER:
-        scene.barrierActive = true;
-        scene.barrierTimer = 4;
+        p.barrierActive = true;
+        p.barrierTimer = 4;
         scene.playSound("se_barrier_start", 0.9);
-        if (scene.barrierSprite) scene.barrierSprite.destroy();
-        scene.barrierSprite = scene.add.sprite(scene.playerSprite.x, scene.playerSprite.y, "game_asset", "barrier0.gif");
-        scene.barrierSprite.setOrigin(0.5);
-        scene.barrierSprite.setDepth(51);
-        scene.barrierSprite.setAlpha(0.6);
+        if (p.barrierSprite) p.barrierSprite.destroy();
+        p.barrierSprite = scene.add.sprite(p.sprite.x, p.sprite.y, "game_asset", "barrier0.gif");
+        p.barrierSprite.setOrigin(0.5);
+        p.barrierSprite.setDepth(51);
+        p.barrierSprite.setAlpha(0.6);
         break;
       case PLAYER_STATES.SHOOT_NAME_BIG:
-        scene.shootMode = "big";
-        scene.shootSpeed = "speed_normal";
+        p.shootMode = "big";
+        p.shootSpeed = "speed_normal";
         break;
       case PLAYER_STATES.SHOOT_NAME_3WAY:
-        scene.shootMode = "3way";
-        scene.shootSpeed = "speed_normal";
+        p.shootMode = "3way";
+        p.shootSpeed = "speed_normal";
         break;
       case "dezaScore": {
         // Dezaemon score item: game-wide value from settings +0x24
-        // (dezaemonItems.score), same table the bosses score from.
+        // (dezaemonItems.score), same table the bosses score from. Score is
+        // shared, so it lands in the one pot either ship feeds.
         var bonus = scene.recipe && scene.recipe.dezaemonItems && scene.recipe.dezaemonItems.score || 1e4;
         scene.scoreCount += bonus;
-        if (scene.playerSprite) scene.showScorePopup(scene.playerSprite.x, scene.playerSprite.y - 24, bonus, 1);
+        if (p.sprite) scene.showScorePopup(p.sprite.x, p.sprite.y - 24, bonus, 1);
         break;
       }
       case "dezaSp":
         // Dezaemon bomb-stock item (+1, capped at 99). Levels that authored no
         // bomb fall back to topping up the runtime's own SP gauge.
-        if (dezaBombArmed(scene)) {
-          scene.dezaBombStock = Math.min(99, (scene.dezaBombStock || 0) + 1);
+        if (dezaBombArmed(scene, p)) {
+          p.dezaBombStock = Math.min(99, (p.dezaBombStock || 0) + 1);
           scene.updateSpGauge();
         } else {
-          scene.spGauge = Math.min(100, scene.spGauge + 34);
+          p.spGauge = Math.min(100, p.spGauge + 34);
           scene.updateSpGauge();
-          if (scene.spGauge >= 100 && scene.spBtn) scene.spBtn.setAlpha(1);
+          if (p.index === 0 && p.spGauge >= 100 && scene.spBtn) scene.spBtn.setAlpha(1);
         }
         break;
       default:
-        scene.shootMode = "normal";
+        p.shootMode = "normal";
         break;
     }
   }
@@ -7005,8 +7843,9 @@
       bullet.setData("rotX", 0);
       bullet.setData("rotY", 1);
     } else if (isSoldierB && gameState.secondLoop || projName === "beam" || projName === "smoke" || projName === "meka" || projName === "psychofield") {
-      var dx = scene.playerSprite.x - enemy.x;
-      var dy = scene.playerSprite.y - enemy.y;
+      var aimAt = aimPlayer(scene);
+      var dx = aimAt ? aimAt.x - enemy.x : 0;
+      var dy = aimAt ? aimAt.y - enemy.y : 1;
       var dist = Math.sqrt(dx * dx + dy * dy) || 1;
       bullet.setData("rotX", dx / dist);
       bullet.setData("rotY", dy / dist);
@@ -7079,6 +7918,7 @@
           if (st.sp) { st.sp.vx = 0; st.sp.vy = 0; st.sp.noFire = true; }
         }
         other.setData("dezaChainT", DEATH_CHAIN_STEP * (++n));
+        other.setData("dezaChainOwner", enemy.getData("dezaChainOwner"));
       }
     }
     return death;
@@ -7106,32 +7946,43 @@
       cst.entry.anchorScroll = pst.entry.anchorScroll;
     }
   }
-  function enemyDie(scene, enemy, isSp) {
+  // `owner` is the slot whose weapon landed the kill: the combo, its multiplier
+  // and the SP charge are that player's, while the score itself goes into the
+  // one pot both ships feed.
+  function enemyDie(scene, enemy, isSp, owner) {
     if (!enemy || !enemy.active) return;
     var score = enemy.getData("score") || 100;
     var spgage = enemy.getData("spgage") || 1;
-    scene.comboCount++;
-    if (scene.comboCount > scene.maxCombo) {
-      scene.maxCombo = scene.comboCount;
-    }
-    var ratio = Math.max(1, Math.ceil(scene.comboCount / 10));
-    scene.scoreCount += score * ratio;
-    scene.comboTimeCnt = 100;
-    if (!isSp) {
-      scene.spGauge = Math.min(100, scene.spGauge + spgage);
-      scene.updateSpGauge();
-      if (scene.spGauge >= 100) {
-        scene.spBtn.setAlpha(1);
+    var p = killer(scene, owner);
+    // A dead player's shots stay in flight and still pay into the shared pot,
+    // but they do not feed a combo or an SP gauge the wreck can no longer
+    // spend — that would refill its drained HUD trough and leave it stuck full.
+    var ratio = 1;
+    if (!p.dead) {
+      p.comboCount++;
+      if (p.comboCount > p.maxCombo) {
+        p.maxCombo = p.comboCount;
+      }
+      ratio = Math.max(1, Math.ceil(p.comboCount / 10));
+      p.comboTimeCnt = 100;
+      if (!isSp) {
+        p.spGauge = Math.min(100, p.spGauge + spgage);
+        scene.updateSpGauge();
+        if (p.index === 0 && p.spGauge >= 100 && scene.spBtn) {
+          scene.spBtn.setAlpha(1);
+        }
       }
     }
+    scene.scoreCount += score * ratio;
     var itemName = enemy.getData("itemName");
     if (itemName) {
       scene.dropItem(enemy.x, enemy.y, itemName);
     }
     // The record's DEATH WORD, run before the blast — the engine dispatches it
     // on the same tick and only then decides how to render the death.
+    enemy.setData("dezaChainOwner", p.index);
     var death = runDeathWord(scene, enemy);
-    triggerHaptic("kill");
+    triggerHaptic("kill", p.padIndex);
     if (!(death && death.silent)) {
       scene.showExplosion(enemy.x, enemy.y);
       scene.playSound("se_explosion", 0.175);
@@ -7162,38 +8013,45 @@
   // Dispatcher nibble -> behaviour. 0 and 8 fire nothing at all.
   var DEZA_BOMB_BY_NIBBLE = [0, 1, 2, 3, 4, 5, 6, 8, 0, 1, 2, 3, 4, 5, 7, 8];
   var DEZA_BOMB_SPIN = 3072 / 65536 * Math.PI * 2; // +16.875 deg/frame on the variants
-  function dezaLoadout(scene) {
+  function dezaLoadout(scene, p) {
     var m = scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
     if (!m || !m.loadouts || !m.loadouts.length) return null;
-    var k = scene.dezaLoadoutIndex;
+    var k = p.dezaLoadoutIndex;
     if (typeof k !== "number") {
-      k = m.startLoadout && m.startLoadout.length ? m.startLoadout[0] : 0;
-      scene.dezaLoadoutIndex = k;
+      // Each ship starts on its OWN preset (the two config blocks at settings
+      // +0x0C and +0x10 reach us as startLoadout[0] and [1]), so the second
+      // player need not fly the first's weapons.
+      var starts = m.startLoadout;
+      k = starts && starts.length ? (starts[p.index] != null ? starts[p.index] : starts[0]) : 0;
+      p.dezaLoadoutIndex = k;
     }
     return m.loadouts[k & 3] || null;
   }
-  function dezaBombNibble(scene) {
-    var lo = dezaLoadout(scene);
+  function dezaBombNibble(scene, p) {
+    var lo = dezaLoadout(scene, p);
     if (!lo) return 0;
     return (lo.bomb & 7) | (lo.bombVariant ? 8 : 0);
   }
-  // True when this level is a Dezaemon import that authored a real bomb.
-  function dezaBombArmed(scene) {
-    return DEZA_BOMB_BY_NIBBLE[dezaBombNibble(scene)] !== 0;
+  // True when this level is a Dezaemon import that authored a real bomb for
+  // this ship. The two ships' presets are independent bytes, so one can carry a
+  // bomb while the other charges.
+  function dezaBombArmed(scene, p) {
+    return DEZA_BOMB_BY_NIBBLE[dezaBombNibble(scene, p)] !== 0;
   }
-  function fireDezaBomb(scene) {
-    var nib = dezaBombNibble(scene);
+  function fireDezaBomb(scene, p) {
+    var nib = dezaBombNibble(scene, p);
     var type = DEZA_BOMB_BY_NIBBLE[nib];
     if (!type) return false;
     // One bomb in flight per player, and a blocked press costs no stock.
-    if (scene.dezaBomb && scene.dezaBomb.alive) return false;
-    if (!scene.dezaBombStock) return false;
-    scene.dezaBombStock--;
-    var p = scene.playerSprite;
-    var px = p ? p.x : GW13 / 2;
-    var py = p ? p.y : GH11 - 80;
+    if (p.dezaBomb && p.dezaBomb.alive) return false;
+    if (!p.dezaBombStock) return false;
+    p.dezaBombStock--;
+    var ship = p.sprite;
+    var px = ship ? ship.x : GW13 / 2;
+    var py = ship ? ship.y : GH11 - 80;
     var b = {
-      type: type, spin: (nib === 12 || nib === 13) ? DEZA_BOMB_SPIN : 0,
+      type: type, owner: p.index,
+      spin: (nib === 12 || nib === 13) ? DEZA_BOMB_SPIN : 0,
       alive: true, age: 0, x: px, y: py,
       power: DEZA_BOMB_POWER[type] / DEZA_BOMB_UNIT,
       damaging: true, shape: "circle", r: 0, dr: 0,
@@ -7207,22 +8065,23 @@
     if (type === 8) { b.x = GW13 / 2; b.y = GH11 + 32; b.shape = "box"; b.halfW = 120; b.halfH = 32; }
     if (type === 3) { b.life = 160; b.shape = "box"; }
     if (type === 6 || type === 7) { b.life = 256; b.shape = type === 7 ? "box" : "circle"; }
-    scene.dezaBomb = b;
+    p.dezaBomb = b;
     // Bomb types 6 and 7 zero the charge gauge and any discharge in progress.
-    if ((type === 6 || type === 7) && scene.dezaWeapons) {
-      scene.dezaWeapons.gauge = 0;
-      scene.dezaWeapons.busy = 0;
-      scene.dezaChargeBeam = null;
-      scene.dezaShotLocked = false;
+    if ((type === 6 || type === 7) && p.dezaWeapons) {
+      p.dezaWeapons.gauge = 0;
+      p.dezaWeapons.busy = 0;
+      p.dezaChargeBeam = null;
+      p.dezaShotLocked = false;
     }
     scene.playSound("se_bomb", 0.5);
-    triggerHaptic("special");
-    if (b.invincible) scene.dezaBombInvuln = true;
+    triggerHaptic("special", p.padIndex);
+    if (b.invincible) p.dezaBombInvuln = true;
     return true;
   }
   // One frame of the live bomb. Returns false once it is done.
   function stepDezaBomb(scene, b) {
-    var p = scene.playerSprite;
+    var owner = scene.players[b.owner || 0];
+    var p = owner && owner.sprite;
     b.age++;
     b.rot += b.spin;
     if (b.type === 1) {
@@ -7311,7 +8170,10 @@
     }
     return true;
   }
-  if (typeof window !== "undefined") window.__updateDezaBombProbe = function (sc) { updateDezaBomb(sc); };
+  // Debug probe: defaults to player 1's bomb, so a console call still works.
+  if (typeof window !== "undefined") {
+    window.__updateDezaBombProbe = function (sc, p) { updateDezaBomb(sc, p || sc.players[0]); };
+  }
   function nearestDezaEnemy(scene, x, y) {
     var best = null, bd = Infinity;
     for (var i = 0; i < scene.enemies.length; i++) {
@@ -7343,19 +8205,18 @@
       hp -= b.power;
       e.setData("hp", hp);
       if (hp <= 0) {
-        if (e.getData("type") === "boss") scene.bossDie(e);
-        else scene.enemyDie(e, true);
+        if (e.getData("type") === "boss") scene.bossDie(e, b.owner);
+        else scene.enemyDie(e, true, b.owner);
       }
     }
   }
-  function updateDezaBomb(scene) {
-    var b = scene.dezaBomb;
+  function updateDezaBomb(scene, p) {
+    var b = p.dezaBomb;
     if (!b || !b.alive) return;
     if (!stepDezaBomb(scene, b)) {
       b.alive = false;
-      scene.dezaBomb = null;
-      scene.dezaBombInvuln = false;
-      if (scene.dezaBombGfx) { scene.dezaBombGfx.clear(); }
+      p.dezaBomb = null;
+      p.dezaBombInvuln = false;
       return;
     }
     dezaBombDamage(scene, b);
@@ -7364,12 +8225,13 @@
   // The bombs have no art in the imported atlas, so they are drawn as shapes —
   // the traced geometry is exactly what the collision uses.
   function drawDezaBomb(scene, b) {
+    // One Graphics for both bombs, so the clear() belongs to the caller's loop
+    // — clearing here would erase the first player's bomb as the second drew.
     var g = scene.dezaBombGfx;
     if (!g) {
       g = scene.dezaBombGfx = scene.add.graphics();
       g.setDepth(58);
     }
-    g.clear();
     var a = b.damaging ? 0.42 : 0.16;
     g.fillStyle(b.type === 8 ? 8965375 : b.type === 6 || b.type === 7 ? 16755370 : 10092543, a);
     g.lineStyle(2, 16777215, a + 0.25);
@@ -7400,25 +8262,28 @@
   // Type 1's symmetric spread, in 256-per-turn angle units from straight up.
   var DEZA_SUB_SPREAD1 = [[0], [3, -3], [0, 8, -8], [12, -12, 3, -3], [0, 16, -16, 8, -8]];
   var DEZA_CHARGE_BUSY = [0, 16, 96, 160]; // attack length per charge type
-  function dezaSubType(scene) {
-    var lo = dezaLoadout(scene);
+  function dezaSubType(scene, p) {
+    var lo = dezaLoadout(scene, p);
     return lo ? (lo.sub & 7) : 0;
   }
-  function dezaChargeType(scene) {
-    var lo = dezaLoadout(scene);
+  function dezaChargeType(scene, p) {
+    var lo = dezaLoadout(scene, p);
     return lo ? (lo.charge & 3) : 0;
   }
-  function dezaPowerLevel(scene) {
-    return Math.max(0, Math.min(4, scene.dezaPower || 0));
+  function dezaPowerLevel(p) {
+    return Math.max(0, Math.min(4, p.dezaPower || 0));
   }
-  // One frame of both weapons. `held` is the charge input, `tap` its rising edge.
-  function updateDezaWeapons(scene, held) {
-    if (!dezaLoadout(scene) || !scene.playerSprite || scene.playerDead) return;
-    var st = scene.dezaWeapons || (scene.dezaWeapons = {
+  // One frame of both weapons for one ship. `held` is that player's charge
+  // input. Every counter here is per player: a shared gauge would have both
+  // SHIFT keys feeding one charge and the sub firing at half its cadence,
+  // alternating owners.
+  function updateDezaWeapons(scene, p, held) {
+    if (!dezaLoadout(scene, p) || !p.sprite || p.dead) return;
+    var st = p.dezaWeapons || (p.dezaWeapons = {
       burst: 255, reload: 0, aim: 64, gauge: 0, busy: 0, chargeLevel: -1
     });
-    var L = dezaPowerLevel(scene);
-    var ctype = dezaChargeType(scene);
+    var L = dezaPowerLevel(p);
+    var ctype = dezaChargeType(scene, p);
 
     // --- charge gauge: +1 a frame while held, capped at 320, never decays ---
     if (st.busy > 0) {
@@ -7430,7 +8295,7 @@
     } else if (!held && st.gauge > 0) {
       var level = (st.gauge >> 6) - 1;
       if (level >= 0 && ctype !== 0) {
-        fireDezaCharge(scene, ctype, level);
+        fireDezaCharge(scene, p, ctype, level);
         st.busy = DEZA_CHARGE_BUSY[ctype];
         st.chargeLevel = level;
       } else {
@@ -7440,16 +8305,16 @@
     // A charge past 31 locks out BOTH shot weapons — the main autofire as well
     // as the sub. (The bomb is unaffected: it runs off its own button.)
     var suppressed = st.gauge > 31;
-    scene.dezaShotLocked = suppressed;
+    p.dezaShotLocked = suppressed;
 
     // --- sub weapon: burst counter + reload, exactly as the gate routine ---
-    var stype = dezaSubType(scene);
+    var stype = dezaSubType(scene, p);
     if (stype && !suppressed) {
       // The runtime autofires, so the main shot's cadence stands in for the
       // engine's held rapid button: the burst cap never applies.
       st.burst = 0;
       if (st.burst < DEZA_SUB_BURST[stype] && st.reload === 0) {
-        fireDezaSub(scene, stype, L);
+        fireDezaSub(scene, p, stype, L);
         st.reload = DEZA_SUB_INTERVAL[stype];
       }
       if (st.reload !== 0) st.reload -= 1;
@@ -7458,7 +8323,7 @@
       // flat interval and only type 7 speeds up with the ship's power.
       if (stype === 7 && st.reload !== 0) st.reload = Math.max(0, st.reload - (L + 2));
     }
-    updateDezaChargeShots(scene);
+    updateDezaChargeShots(scene, p);
   }
   if (typeof window !== "undefined") {
     window.__updateDezaWeaponsProbe = updateDezaWeapons;
@@ -7468,9 +8333,9 @@
   function dezaShotDamage(units) {
     return Math.max(1, Math.round(units / DEZA_BOMB_UNIT));
   }
-  function fireDezaSub(scene, type, L) {
-    var p = scene.playerSprite;
-    var muzzleY = p.y - (type === 5 ? 0 : 8);
+  function fireDezaSub(scene, p, type, L) {
+    var ship = p.sprite;
+    var muzzleY = ship.y - (type === 5 ? 0 : 8);
     var shots = [];
     if (type === 1) {
       // Symmetric spread; one more projectile per power level.
@@ -7479,8 +8344,8 @@
     } else if (type === 7) {
       // The only aimed type, and it is a strafe TILT, not a target lock: the
       // aim leans against the ship's own drift and recentres when it stops.
-      var st = scene.dezaWeapons;
-      var vx = p.x - (scene.dezaLastX == null ? p.x : scene.dezaLastX);
+      var st = p.dezaWeapons;
+      var vx = ship.x - (p.dezaLastX == null ? ship.x : p.dezaLastX);
       st.aim += vx < 0 ? 2 : vx > 0 ? -2 : (st.aim < 64 ? 1 : st.aim > 64 ? -1 : 0);
       st.aim = Math.max(40, Math.min(88, st.aim));
       shots.push({ a: st.aim - 64 - 8, dmg: DEZA_SUB_DMG7[L] });
@@ -7493,62 +8358,62 @@
     }
     for (var s = 0; s < shots.length; s++) {
       var th = shots[s].a * Math.PI * 2 / 256;
-      spawnDezaPlayerShot(scene, p.x, muzzleY,
+      spawnDezaPlayerShot(scene, p, ship.x, muzzleY,
         Math.sin(th) * 8, -Math.cos(th) * 8, dezaShotDamage(shots[s].dmg));
     }
-    scene.dezaLastX = p.x;
+    p.dezaLastX = ship.x;
   }
   // The charge release. Type 1 throws level+1 orbs, type 2 grows a beam column
   // anchored to the ship, type 3 is its longer cousin.
-  function fireDezaCharge(scene, type, level) {
-    var p = scene.playerSprite;
+  function fireDezaCharge(scene, p, type, level) {
+    var ship = p.sprite;
     scene.playSound("se_sp", 0.35);
     if (type === 1) {
       for (var i = 0; i <= level; i++) {
         var a = (i - level / 2) * 8 * Math.PI * 2 / 256;
-        spawnDezaPlayerShot(scene, p.x, p.y - 8,
+        spawnDezaPlayerShot(scene, p, ship.x, ship.y - 8,
           Math.sin(a) * 6, -Math.cos(a) * 6, dezaShotDamage(6656) + level);
       }
     } else {
       // Types 2 and 3 are a column of segments that stays fixed to the ship and
       // recedes up the screen while the attack runs.
-      scene.dezaChargeBeam = { grow: 0, life: DEZA_CHARGE_BUSY[type], level: level,
-        dmg: dezaShotDamage(7680) + level * 2 };
+      p.dezaChargeBeam = { grow: 0, life: DEZA_CHARGE_BUSY[type], level: level,
+        owner: p.index, dmg: dezaShotDamage(7680) + level * 2 };
     }
   }
-  function updateDezaChargeShots(scene) {
-    var beam = scene.dezaChargeBeam;
+  function updateDezaChargeShots(scene, p) {
+    var beam = p.dezaChargeBeam;
     if (!beam) return;
-    var p = scene.playerSprite;
+    var ship = p.sprite;
     beam.life--;
     beam.grow += 15;
-    if (beam.life <= 0 || !p) {
-      scene.dezaChargeBeam = null;
-      if (scene.dezaBeamGfx) scene.dezaBeamGfx.clear();
+    if (beam.life <= 0 || !ship) {
+      p.dezaChargeBeam = null;
       return;
     }
-    var top = Math.max(-20, p.y - beam.grow);
+    var top = Math.max(-20, ship.y - beam.grow);
     var halfW = 6 + beam.level * 3;
+    // Shared Graphics: the caller clears it once a frame, before either beam
+    // draws, so two columns can be on screen at the same time.
     var g = scene.dezaBeamGfx;
     if (!g) { g = scene.dezaBeamGfx = scene.add.graphics(); g.setDepth(45); }
-    g.clear();
     g.fillStyle(9498623, 0.5);
-    g.fillRect(p.x - halfW, top, halfW * 2, p.y - top);
+    g.fillRect(ship.x - halfW, top, halfW * 2, ship.y - top);
     // The column damages everything it covers, every frame, and pierces.
     for (var i = scene.enemies.length - 1; i >= 0; i--) {
       var e = scene.enemies[i];
       if (!e || !e.active || e.getData("type") === "boss") continue;
-      if (Math.abs(e.x - p.x) > halfW + e.width / 2) continue;
-      if (e.y > p.y || e.y < top) continue;
+      if (Math.abs(e.x - ship.x) > halfW + e.width / 2) continue;
+      if (e.y > ship.y || e.y < top) continue;
       var hp = e.getData("hp");
       if (hp === "infinity") continue;
       hp -= beam.dmg / 8;
       e.setData("hp", hp);
-      if (hp <= 0) scene.enemyDie(e, true);
+      if (hp <= 0) scene.enemyDie(e, true, beam.owner);
     }
   }
   // A plain player projectile, reusing the runtime's own bullet pipeline.
-  function spawnDezaPlayerShot(scene, x, y, vx, vy, damage) {
+  function spawnDezaPlayerShot(scene, p, x, y, vx, vy, damage) {
     // The ship's OWN shot art, not the stock atlas frames. An imported save's
     // player carries its bullet frames with it (the import resets the atlas to
     // make room for the save's sprites), so hardcoded shot00-03 is at best a
@@ -7571,7 +8436,11 @@
     b.setData("damage", damage);
     b.setData("dezaVx", vx);
     b.setData("dezaVy", vy);
-    b.setData("bulletId", scene.bulletIdSeq = (scene.bulletIdSeq || 0) + 1);
+    // One id sequence for every player bullet: the piercing-hit bookkeeping in
+    // fixedUpdate keys enemy data on "bulletid_" + id, so two sequences would
+    // have a sub shot and a main shot throttle each other on the same enemy.
+    b.setData("bulletId", scene.bulletIdCnt++);
+    b.setData("owner", p.index);
     attachAnim(b, frames, (shootData && shootData.frameRate) || 6);
     scene.playerBullets.push(b);
     return b;
@@ -7587,7 +8456,7 @@
       enemy.setData("dezaChainT", chainT - 1);
       if (chainT - 1 <= 0) {
         enemy.setData("dezaChainT", 0);
-        scene.enemyDie(enemy, false);
+        scene.enemyDie(enemy, false, enemy.getData("dezaChainOwner"));
         return;
       }
     }
@@ -7606,8 +8475,9 @@
     var isTypeA = enemyKey === "A" || enemyName === "soliderA";
     var isTypeB = enemyKey === "B" || enemyName === "soliderB";
     if (isTypeA) {
-      if (enemy.y >= GH2 / 1.5 && scene.playerSprite) {
-        enemy.x += 5e-3 * (scene.playerSprite.x - enemy.x);
+      var driftTo = enemy.y >= GH2 / 1.5 ? aimPlayer(scene) : null;
+      if (driftTo) {
+        enemy.x += 5e-3 * (driftTo.x - enemy.x);
       }
     } else if (isTypeB) {
       if (!enemy.getData("posName")) {
@@ -7636,7 +8506,8 @@
     var shootInterval = enemy.getData("interval") || 300;
     if (shootInterval > 0 && shootCnt >= shootInterval) {
       enemy.setData("shootCnt", shootCnt - shootInterval);
-      if (enemy.y < scene.playerSprite.y - 20) {
+      var shootAt = aimPlayer(scene);
+      if (shootAt && enemy.y < shootAt.y - 20) {
         enemyShoot(scene, enemy);
       }
     }
@@ -7702,13 +8573,13 @@
     }
     return frames;
   }
-  function shootBullets(scene) {
-    if (!scene.gameStarted || scene.playerDead || scene.theWorldFlg) {
+  function shootBullets(scene, p) {
+    if (!scene.gameStarted || p.dead || scene.theWorldFlg) {
       return;
     }
     var pd = scene.recipe.playerData;
     var shootData;
-    switch (scene.shootMode) {
+    switch (p.shootMode) {
       case "big":
         shootData = pd.shootBig;
         break;
@@ -7719,38 +8590,51 @@
         shootData = pd.shootNormal;
         break;
     }
-    var frames = playerBulletFrames(scene, shootData, scene.shootMode);
+    var frames = playerBulletFrames(scene, shootData, p.shootMode);
     var frameKey = frames[0];
     var frameRate = shootData.frameRate || 6;
-    if (scene.shootMode === "3way") {
+    var ship = p.sprite;
+    // Both the owner and the piercing flag travel WITH the bullet: the
+    // collision pass must not ask the scene whose powerups are in effect, or
+    // one player's "big" pickup decides whether the other's shots pierce.
+    var isBig = p.shootMode === "big";
+    if (p.shootMode === "3way") {
       for (var a = -1; a <= 1; a++) {
-        var b = scene.add.sprite(scene.playerSprite.x + a * 10, scene.playerSprite.y - 16, "game_asset", frameKey);
+        var b = scene.add.sprite(ship.x + a * 10, ship.y - 16, "game_asset", frameKey);
         b.setOrigin(0.5);
         b.setDepth(50);
         b.setData("damage", shootData.damage);
         b.setData("hp", shootData.hp);
         b.setData("angle", a * 0.15);
         b.setData("bulletId", scene.bulletIdCnt++);
+        b.setData("owner", p.index);
+        b.setData("big", false);
         b.setRotation(-Math.PI / 2 + a * 0.2);
         attachAnim(b, frames, frameRate);
         scene.playerBullets.push(b);
       }
     } else {
-      var bullet = scene.add.sprite(scene.playerSprite.x, scene.playerSprite.y - 16, "game_asset", frameKey);
+      var bullet = scene.add.sprite(ship.x, ship.y - 16, "game_asset", frameKey);
       bullet.setOrigin(0.5);
       bullet.setDepth(50);
       bullet.setData("damage", shootData.damage);
       bullet.setData("hp", shootData.hp);
       bullet.setData("angle", 0);
       bullet.setData("bulletId", scene.bulletIdCnt++);
+      bullet.setData("owner", p.index);
+      bullet.setData("big", isBig);
       bullet.setRotation(-Math.PI / 2);
-      if (scene.shootMode === "big") {
+      if (isBig) {
         bullet.setScale(1.5);
       }
       attachAnim(bullet, frames, frameRate);
       scene.playerBullets.push(bullet);
     }
-    scene.playSound("se_shoot", 0.3);
+    // One shot sound per frame however many ships fired in it.
+    if (scene._shootSfxTick !== scene.worldTime) {
+      scene._shootSfxTick = scene.worldTime;
+      scene.playSound("se_shoot", 0.3);
+    }
   }
   function updatePlayerBullets(scene, step) {
     var stepMs = step || 0;
@@ -7980,7 +8864,7 @@
         }
       });
     } else if (seed < 0.8) {
-      var px = clamp2(scene.playerSprite.x, 30, GW6 - 30);
+      var px = clamp2(aimX(scene, boss.x), 30, GW6 - 30);
       scene.tweens.add({
         targets: boss,
         x: px,
@@ -7997,7 +8881,7 @@
         }
       });
     } else {
-      var px2 = clamp2(scene.playerSprite.x, 30, GW6 - 30);
+      var px2 = clamp2(aimX(scene, boss.x), 30, GW6 - 30);
       scene.tweens.add({
         targets: boss,
         x: px2,
@@ -8117,7 +9001,7 @@
         }
       });
     } else {
-      var px5 = clamp3(scene.playerSprite.x, 30, GW7 - 30);
+      var px5 = clamp3(aimX(scene, boss.x), 30, GW7 - 30);
       scene.tweens.add({
         targets: boss,
         x: px5,
@@ -8282,7 +9166,7 @@
         }
       });
     } else {
-      var px6 = clamp4(scene.playerSprite.x, 30, GW8 - 30);
+      var px6 = clamp4(aimX(scene, boss.x), 30, GW8 - 30);
       scene.tweens.add({
         targets: boss,
         alpha: 0,
@@ -8429,7 +9313,7 @@
     var projA = scene.bossProjDataA || scene.bossProjData;
     var projB = scene.bossProjDataB || scene.bossProjData;
     if (seed < 0.35) {
-      var px = clamp6(scene.playerSprite.x, 30, GW10 - 30);
+      var px = clamp6(aimX(scene, boss.x), 30, GW10 - 30);
       scene.tweens.add({
         targets: boss,
         x: px,
@@ -8462,7 +9346,7 @@
         }
       });
     } else if (seed < 0.65) {
-      var px2 = clamp6(scene.playerSprite.x, 30, GW10 - 30);
+      var px2 = clamp6(aimX(scene, boss.x), 30, GW10 - 30);
       scene.tweens.add({
         targets: boss,
         x: px2,
@@ -8626,7 +9510,7 @@
         }
       });
     } else {
-      var px = scene.playerSprite.x;
+      var px = aimX(scene, boss.x);
       boss.x = px;
       _setBossAnim4(scene, boss, animAttack);
       scene.tweens.add({
@@ -8955,7 +9839,7 @@
     });
   }
   function _bossAlive(scene) {
-    return scene.bossSprite && scene.bossSprite.active && !scene.stageCleared && !scene.playerDead;
+    return scene.bossSprite && scene.bossSprite.active && !scene.stageCleared && !allPlayersDead(scene);
   }
   function bossShootStart(scene) {
     if (!_bossAlive(scene) || scene.theWorldFlg) {
@@ -9039,8 +9923,9 @@
     bullet.setData("hp", projData.hp || 1);
     bullet.setData("score", projData.score || 0);
     bullet.setData("spgage", projData.spgage || 0);
-    var dx = scene.playerSprite.x - scene.bossSprite.x;
-    var dy = scene.playerSprite.y - scene.bossSprite.y;
+    var aimAt = aimPlayer(scene);
+    var dx = aimAt ? aimAt.x - scene.bossSprite.x : 0;
+    var dy = aimAt ? aimAt.y - scene.bossSprite.y : 1;
     var dist = Math.sqrt(dx * dx + dy * dy) || 1;
     bullet.setData("rotX", dx / dist);
     bullet.setData("rotY", dy / dist);
@@ -9084,8 +9969,9 @@
     var frames = projData.texture || [];
     var frameKey = frames[0] || "normalProjectile0.gif";
     var speed = projData.speed || 1;
-    var dx = scene.playerSprite.x - scene.bossSprite.x;
-    var dy = scene.playerSprite.y - scene.bossSprite.y;
+    var spreadAt = aimPlayer(scene);
+    var dx = spreadAt ? spreadAt.x - scene.bossSprite.x : 0;
+    var dy = spreadAt ? spreadAt.y - scene.bossSprite.y : 1;
     var baseAngle = Math.atan2(dy, dx);
     var spreadRad = angleDeg * Math.PI / 180;
     var half = Math.floor(count / 2);
@@ -9187,9 +10073,10 @@
       balloon.y = scene.bossSprite.y + (balloon.getData("relY") || 0);
     }
   }
-  function bossDie(scene, boss) {
+  function bossDie(scene, boss, owner) {
     if (scene.stageCleared) return;
-    var isAkebono = !!scene.spFired;
+    var ps = scene.players || [];
+    var isAkebono = ps.some(function(sp) { return sp && sp.spFired; });
     if (!isAkebono && scene.bossShadow && scene.bossShadow.active) {
       scene.bossShadow.destroy();
       scene.bossShadow = null;
@@ -9198,11 +10085,15 @@
     scene.bossTimerLabel.setVisible(false);
     scene.bossTimerNum.container.setVisible(false);
     scene.theWorldFlg = true;
-    scene.comboCount++;
-    if (scene.comboCount > scene.maxCombo) {
-      scene.maxCombo = scene.comboCount;
+    var slayer = killer(scene, owner);
+    var ratio = 1;
+    if (!slayer.dead) {
+      slayer.comboCount++;
+      if (slayer.comboCount > slayer.maxCombo) {
+        slayer.maxCombo = slayer.comboCount;
+      }
+      ratio = Math.max(1, Math.ceil(slayer.comboCount / 10));
     }
-    var ratio = Math.max(1, Math.ceil(scene.comboCount / 10));
     scene.scoreCount += scene.bossScore * ratio;
     scene.showScorePopup(boss.x, boss.y, scene.bossScore, ratio);
     for (var pb = scene.playerBullets.length - 1; pb >= 0; pb--) {
@@ -9309,7 +10200,7 @@
       scene.stageClear();
     });
   }
-  function gokiPlayerAttack(scene) {
+  function gokiPlayerAttack(scene, p) {
     scene.theWorldFlg = true;
     scene.spBtn.setAlpha(0);
     for (var pb = scene.playerBullets.length - 1; pb >= 0; pb--) {
@@ -9318,7 +10209,7 @@
       }
     }
     scene.playerBullets = [];
-    scene.playerSprite.setAlpha(0);
+    p.sprite.setAlpha(0);
     var boss = scene.bossSprite;
     if (boss && boss.active && scene.gokiAnimSyngoku && scene.gokiAnimSyngoku.length > 0) {
       boss.setData("frames", scene.gokiAnimSyngoku);
@@ -9342,8 +10233,8 @@
     var flash = scene.add.rectangle(GCX4, GCY, GW12, GH10, 16777215);
     flash.setDepth(201);
     flash.setAlpha(0);
-    var playerX = scene.playerSprite.x;
-    var playerY = scene.playerSprite.y;
+    var playerX = p.sprite.x;
+    var playerY = p.sprite.y;
     scene.time.addEvent({
       delay: 50,
       repeat: 9,
@@ -9377,7 +10268,7 @@
       }
     });
     scene.time.delayedCall(1800, function() {
-      scene.playerSprite.setAlpha(1);
+      p.sprite.setAlpha(1);
     });
     scene.time.delayedCall(1900, function() {
       scene.playSound("boss_goki_voice_syungokusatu1", 0.9);
@@ -9453,7 +10344,7 @@
       });
     });
     scene.time.delayedCall(2700, function() {
-      scene.playerDamage(100);
+      scene.playerDamage(p, 100);
       if (gameState.godFlg) {
         scene.time.delayedCall(800, function() {
           scene.theWorldFlg = false;
@@ -9579,6 +10470,19 @@
     se_damage: "hit",
     se_hit: "hit"
   };
+  // The HP and COMBO troughs are painted INTO hudBg0.gif with a 1px white rule
+  // above and below, and hpBar.gif / comboBar.gif fill them to the pixel: HP
+  // interior is rows 7-17 (11 px), COMBO rows 32-36 (5 px). Splitting a trough
+  // between two players therefore has to land on integers — `pixelArt: true`
+  // floors the translation but not the scale, so a 0.5 scale at y 12.5 would
+  // paint over the rule at y 18. P1 keeps the top rows, P2 takes the bottom,
+  // and the trough's own black shows through the row between them as a divider.
+  var HP_BAR_X = 49, HP_P1_Y = 7, HP_P2_Y = 13, HP_SPLIT_SCALEY = 5 / 11;
+  var CB_BAR_X = 149, CB_P1_Y = 32, CB_P2_Y = 35, CB_SPLIT_SCALEY = 2 / 5;
+  // Position is the primary cue (top is always P1); the tint reinforces it.
+  // FILL, not multiply: both bars are near-saturated reds and greens, and a
+  // multiply tint can only darken them.
+  var P2_HUD_TINT = 3120639;
   var GW13 = GAME_DIMENSIONS.WIDTH;
   var GH11 = GAME_DIMENSIONS.HEIGHT;
   var GCX6 = GAME_DIMENSIONS.CENTER_X;
@@ -9618,8 +10522,8 @@
     checkBossDanger() {
       checkBossDanger(this);
     }
-    bossDie(boss) {
-      bossDie(this, boss);
+    bossDie(boss, owner) {
+      bossDie(this, boss, owner);
     }
     bossAdd() {
       if (this.recipe && this.recipe.dezaemonBgm && !this.bossActive && !gameState.lowModeFlg) {
@@ -9627,8 +10531,8 @@
       }
       bossAdd(this);
     }
-    enemyDie(enemy, isSp) {
-      enemyDie(this, enemy, isSp);
+    enemyDie(enemy, isSp, owner) {
+      enemyDie(this, enemy, isSp, owner);
     }
     showExplosion(x, y) {
       showExplosion(this, x, y);
@@ -9674,23 +10578,25 @@
       this.bossTimerStartFlg = false;
       this.gameStarted = false;
       this.stageCleared = false;
-      this.playerDead = false;
-      this.damageAnimationFlg = false;
       this.bossEntering = false;
+      this._runEnded = false;
       this.scoreCount = gameState.score || 0;
-      this.comboCount = 0;
-      this.maxCombo = gameState.maxCombo || 0;
-      this.comboTimeCnt = 0;
-      this.spGauge = gameState.spgage || 0;
-      // The engine seeds the bomb count from a settings byte this decoder does
-      // not name yet; three is the shmup-standard stand-in until it is traced.
-      this.dezaBombStock = 3;
+      // Score is the one pot both ships feed; HP, combo, SP and the weapon
+      // state are per player and are seeded in createPlayer.
       // A horizontal game's scroll-axis window reaches 96 px further past the
       // entry edge, so objects must be allowed to live out there.
       this.dezaEntryMargin = dezaHorizontal(this) ? 20 + DEZA_H_ENTRY_MARGIN : 20;
-      this.dezaBomb = null;
-      this.dezaBombInvuln = false;
-      this.spFired = false;
+      // The Scene instance outlives a scene.stop/start but its display objects
+      // do not, so these have to be dropped or stage 2 draws through handles to
+      // destroyed Graphics.
+      this.dezaBombGfx = null;
+      this.dezaBeamGfx = null;
+      this.hudTwoPlayer = false;
+      this.hpBarP2 = null;
+      this.comboLabelP2 = null;
+      this._hudFlashTween = null;
+      this._aimSlot = 0;
+      this._aimSwapAcc = 0;
       this.spFiredDuringBoss = false;
       this.spReadyHapticPlayed = false;
       var stageId = gameState.stageId || 0;
@@ -9763,7 +10669,13 @@
       this.bulletIdCnt = 0;
       this.isDragging = false;
       this.dragPointerId = null;
-      createPlayer(this);
+      // Player 1 always exists; player 2 exists from the start only when it
+      // joined on an earlier stage (or a continue revived it), and otherwise
+      // arrives mid-run through joinPlayer.
+      this.players = [];
+      this.playerCount = gameState.playerCount === 2 && twoPlayerAllowed(this) ? 2 : 1;
+      createPlayer(this, 0);
+      if (this.playerCount > 1) createPlayer(this, 1);
       createDragArea(this);
       this.createHUD();
       this.createCover();
@@ -9788,13 +10700,10 @@
         this.isDragging = false;
         this.dragPointerId = null;
       }, this);
-      this.shootTimer = 0;
-      this.shootInterval = this.recipe.playerData.shootNormal.interval || 23;
-      this.shootMode = gameState.shootMode || "normal";
-      this.shootSpeed = gameState.shootSpeed || "speed_normal";
       this.enemyWaveFrameCounter = 0;
       this.cursors = null;
       this.wasd = null;
+      this.p2Keys = null;
       try {
         this.cursors = this.input.keyboard.createCursorKeys();
         this.wasd = this.input.keyboard.addKeys({
@@ -9805,9 +10714,29 @@
           sp: Phaser.Input.Keyboard.KeyCodes.SPACE,
           charge: Phaser.Input.Keyboard.KeyCodes.SHIFT
         });
+        // Player 2 on a shared keyboard: IJKL to fly, O to bomb, U to charge.
+        // Deliberately clear of P1's arrows/WASD/SPACE/SHIFT and of the keys
+        // static/gamepad-support.js synthesizes for a mapped pad.
+        this.p2Keys = this.input.keyboard.addKeys({
+          up: Phaser.Input.Keyboard.KeyCodes.I,
+          down: Phaser.Input.Keyboard.KeyCodes.K,
+          left: Phaser.Input.Keyboard.KeyCodes.J,
+          right: Phaser.Input.Keyboard.KeyCodes.L,
+          sp: Phaser.Input.Keyboard.KeyCodes.O,
+          charge: Phaser.Input.Keyboard.KeyCodes.U
+        });
       } catch (e) {
       }
       this.keyMoveSpeed = 3;
+      // Pads bind per frame in updatePadBindings, not here: the browser hides a
+      // controller until it has been touched, so at create() time there is
+      // usually nothing to bind to yet.
+      this.players[0].padIndex = null;
+      this.players[0].padId = null;
+      if (this.players[1]) {
+        this.players[1].padIndex = null;
+        this.players[1].padId = null;
+      }
       this.stageBgmName = "";
       this.playBossBgm(stageId);
       var self = this;
@@ -9822,10 +10751,12 @@
       this.hudBg = this.add.sprite(0, 0, "game_ui", "hudBg0.gif");
       this.hudBg.setOrigin(0, 0);
       this.hudBg.setDepth(100);
-      this.hpBar = this.add.sprite(49, 7, "game_ui", "hpBar.gif");
+      this.hpBar = this.add.sprite(HP_BAR_X, HP_P1_Y, "game_ui", "hpBar.gif");
       this.hpBar.setOrigin(0, 0);
       this.hpBar.setDepth(101);
-      this.hpBar.setScale(this.playerHp / this.playerMaxHp, 1);
+      // scaleX alone: once the HUD has split, the bar's HEIGHT is what says
+      // which player it belongs to, and setScale(x, 1) would reset it.
+      this.hpBar.scaleX = Math.max(0, this.players[0].hp / this.players[0].maxHp);
       this.scoreLabel = this.add.sprite(30, 25, "game_ui", "smallScoreTxt.gif");
       this.scoreLabel.setOrigin(0, 0);
       this.scoreLabel.setDepth(101);
@@ -9841,15 +10772,19 @@
         { fontFamily: "Arial", fontSize: "9px", fontStyle: "bold", color: "#ffffff", stroke: "#000000", strokeThickness: 2 }
       );
       this.worldBestText.setDepth(101);
-      this.comboLabel = this.add.sprite(149, 32, "game_ui", "comboBar.gif");
+      this.comboLabel = this.add.sprite(CB_BAR_X, CB_P1_Y, "game_ui", "comboBar.gif");
       this.comboLabel.setOrigin(0, 0);
       this.comboLabel.setDepth(101);
-      this.comboLabel.setScale(0, 1);
+      this.comboLabel.scaleX = 0;
       this.comboNumContainer = this.add.container(194, 19);
       this.comboNumContainer.setDepth(101);
       this._comboNumSprites = [];
-      this._lastComboNum = -1;
-      this._setComboNum(0);
+      this._lastComboNum = "";
+      this._setComboNum(0, 0);
+      // Player 2 already aboard (it joined on an earlier stage, or a continue
+      // brought it back): the HUD arrives already split, with no animation to
+      // replay every stage.
+      if (this.players.length > 1) this.enterTwoPlayerHud(false);
       this.spBtnWrap = this.add.container(GW13 - 70, GCY3 + 15);
       this.spBtnWrap.setDepth(103);
       this.spBtnPulse = this.add.sprite(32, 32, "game_ui", "hudCabtnBg1.gif");
@@ -9878,7 +10813,9 @@
       this.spBtnBarBg.on("pointerout", function() {
         if (this.game && this.game.canvas) this.game.canvas.style.cursor = "default";
       }, this);
-      this.spBtnBarBg.on("pointerup", this.onSpFire, this);
+      this.spBtnBarBg.on("pointerup", function() {
+        this.onSpFire(this.players[0]);
+      }, this);
       this.spBtn = this.spBtnWrap;
       this.spReadyTween = null;
       this.updateSpGauge();
@@ -9898,6 +10835,143 @@
       this.bossHpBarFg = this.add.graphics();
       this.bossHpBarFg.setDepth(101);
       this.bossHpBarFg.setVisible(false);
+    }
+    // Split the HP and COMBO bands in two. `animate` is the join-in moment:
+    // player 1's bar collapses into the top half of each trough and player 2's
+    // grows into the bottom half just behind it, so the gutter opens first and
+    // the eye follows it down. Called with false when the split is simply the
+    // state a new stage starts in.
+    //
+    // The split is a ONE-WAY latch for the life of the scene: when player 2
+    // dies its bar drains and dims rather than closing up, which both keeps
+    // player 1's HP band the height it has been reading all fight and leaves
+    // the empty slot on screen saying the seat is open.
+    enterTwoPlayerHud(animate) {
+      if (this.hudTwoPlayer) return;
+      this.hudTwoPlayer = true;
+      var p2 = this.players[1];
+      this.hpBarP2 = this.add.sprite(HP_BAR_X, HP_P2_Y, "game_ui", "hpBar.gif");
+      this.hpBarP2.setOrigin(0, 0);
+      this.hpBarP2.setDepth(101);
+      this.hpBarP2.setTint(P2_HUD_TINT).setTintMode(Phaser.TintModes.FILL);
+      this.hpBarP2.scaleX = p2 ? Math.max(0, p2.hp / p2.maxHp) : 0;
+      this.comboLabelP2 = this.add.sprite(CB_BAR_X, CB_P2_Y, "game_ui", "comboBar.gif");
+      this.comboLabelP2.setOrigin(0, 0);
+      this.comboLabelP2.setDepth(101);
+      this.comboLabelP2.setTint(P2_HUD_TINT).setTintMode(Phaser.TintModes.FILL);
+      this.comboLabelP2.scaleX = 0;
+      if (!animate) {
+        this.hpBar.scaleY = HP_SPLIT_SCALEY;
+        this.comboLabel.scaleY = CB_SPLIT_SCALEY;
+        this.hpBarP2.scaleY = HP_SPLIT_SCALEY;
+        this.comboLabelP2.scaleY = CB_SPLIT_SCALEY;
+        return;
+      }
+      this.hpBarP2.scaleY = 0;
+      this.hpBarP2.setAlpha(0);
+      this.comboLabelP2.scaleY = 0;
+      this.comboLabelP2.setAlpha(0);
+      // Cubic.easeOut, never a Back/Elastic ease: an overshoot past the split
+      // height paints over the trough's white rule.
+      this.tweens.add({ targets: this.hpBar, scaleY: HP_SPLIT_SCALEY, duration: 220, ease: "Cubic.easeOut" });
+      this.tweens.add({ targets: this.comboLabel, scaleY: CB_SPLIT_SCALEY, duration: 220, ease: "Cubic.easeOut" });
+      this.tweens.add({ targets: this.hpBarP2, scaleY: HP_SPLIT_SCALEY, alpha: 1, duration: 220, delay: 110, ease: "Cubic.easeOut" });
+      this.tweens.add({ targets: this.comboLabelP2, scaleY: CB_SPLIT_SCALEY, alpha: 1, duration: 220, delay: 110, ease: "Cubic.easeOut" });
+      this.flashHudBg();
+    }
+    // The HUD's own hit-flash. It owns its tween handle because two hits inside
+    // the 600ms yoyo would otherwise leave hudBg parked at half alpha for good.
+    flashHudBg() {
+      if (this._hudFlashTween) {
+        this._hudFlashTween.stop();
+        this._hudFlashTween = null;
+      }
+      this.hudBg.setAlpha(1);
+      var self = this;
+      this._hudFlashTween = this.tweens.add({
+        targets: this.hudBg,
+        alpha: 0.5,
+        duration: 100,
+        yoyo: true,
+        repeat: 2,
+        onComplete: function() {
+          self._hudFlashTween = null;
+          self.hudBg.setAlpha(1);
+        }
+      });
+    }
+    // Bind a player to a physical pad. The id is kept alongside the index
+    // because Chrome hands a reconnecting controller the lowest free index —
+    // without the id check, unplugging player 1's pad would silently give its
+    // ship to the next controller plugged in.
+    bindPlayerPad(p, padIndex, padId) {
+      if (!p) return;
+      p.padIndex = typeof padIndex === "number" ? padIndex : null;
+      p.padId = padId || (typeof padIndex === "number" ? pollPad(padIndex).id : null) || null;
+    }
+    // Keep the players pointed at the right controllers, and let a second one
+    // in. Runs once a frame, off the same pad sample the players read.
+    //
+    // Player 1 holds the lowest-numbered pad — the convention every console
+    // uses, and the only rule that does not depend on who presses first.
+    // Player 2 is whoever asks: a SECOND pad pressing a face or shoulder
+    // button, or player 2's own fire key on a shared keyboard.
+    updatePadBindings() {
+      var pads = connectedPadIndices();
+      var i, p, st;
+      // A binding dies with its controller. Chrome hands a reconnecting pad the
+      // lowest free index, so the id has to be checked too — otherwise
+      // unplugging player 1's pad quietly gives its ship to the next
+      // controller plugged in.
+      for (i = 0; i < this.players.length; i++) {
+        p = this.players[i];
+        if (p.padIndex == null) continue;
+        st = pollPad(p.padIndex);
+        if (pads.indexOf(p.padIndex) < 0 || (p.padId && st.id && st.id !== p.padId)) {
+          p.padIndex = null;
+          p.padId = null;
+        }
+      }
+      var p1 = this.players[0];
+      var p2 = this.players[1];
+      // A player who has been shot down holds no pad and no seat: the slot is
+      // as free as an empty one, and taking it back runs the same join path.
+      var seated2 = p2 && !p2.dead;
+      if (p1 && p1.padIndex == null && pads.length) {
+        var lowest = pads[0];
+        for (i = 1; i < pads.length; i++) if (pads[i] < lowest) lowest = pads[i];
+        if (!seated2 || p2.padIndex !== lowest) this.bindPlayerPad(p1, lowest);
+      }
+      if (seated2) {
+        // Player 2 lost its pad and picked another up.
+        if (p2.padIndex == null) {
+          for (i = 0; i < pads.length; i++) {
+            if (pads[i] === (p1 && p1.padIndex)) continue;
+            st = pollPad(pads[i]);
+            if (st.sp || st.left || st.right || st.up || st.down) {
+              this.bindPlayerPad(p2, pads[i], st.id);
+              break;
+            }
+          }
+        }
+        return;
+      }
+      if (this._runEnded || !this.gameStarted || !twoPlayerAllowed(this)) return;
+      // Joining in: any face or shoulder button, never START — START is PAUSE
+      // during play, and under the launcher it raises the Guide overlay too.
+      for (i = 0; i < pads.length; i++) {
+        if (p1 && pads[i] === p1.padIndex) continue;
+        st = pollPad(pads[i]);
+        if (st.sp) {
+          joinPlayer(this, pads[i], st.id);
+          return;
+        }
+      }
+      // Sharing one keyboard: player 2's own fire key opens the seat, so a pair
+      // with a single pad (or none at all) can still play.
+      if (this.p2Keys && this.p2Keys.sp && Phaser.Input.Keyboard.JustDown(this.p2Keys.sp)) {
+        joinPlayer(this, null, null);
+      }
     }
     createCover() {
       if (this.dezaBg || !this.textures.getFrame("game_asset", "stagebgOver.gif")) {
@@ -9988,12 +11062,16 @@
     }
     startGame() {
       this.gameStarted = true;
+      cmgNetHostStart(this);
       this.stageBgAmountMove = 0.7;
       this.enemyWaveFlg = true;
       this.frameCnt = 0;
       this.waveCount = 0;
-      this.playerUnitX = this.playerSprite.x;
-      this.playerUnitY = this.playerSprite.y;
+      for (var i = 0; i < this.players.length; i++) {
+        var p = this.players[i];
+        p.unitX = p.sprite.x;
+        p.unitY = p.sprite.y;
+      }
     }
     stageClear() {
       if (this.stageCleared) return;
@@ -10001,12 +11079,9 @@
       stopDezaemonBgm(this);
       this.gameStarted = false;
       gameState.score = this.scoreCount;
-      gameState.playerHp = this.playerMaxHp;
-      gameState.playerMaxHp = this.playerMaxHp;
-      gameState.spgage = this.spGauge;
-      gameState.maxCombo = Math.max(gameState.maxCombo || 0, this.maxCombo);
-      gameState.shootMode = this.shootMode;
-      gameState.shootSpeed = this.shootSpeed;
+      // Both ships' state has to ride to the next stage, or player 2 starts it
+      // with an undefined HP bar.
+      writePlayerStateToGameState(this);
       if (this.spFiredDuringBoss) {
         gameState.akebonoCnt = (gameState.akebonoCnt || 0) + 1;
       }
@@ -10063,10 +11138,14 @@
       });
     }
     timeoverComplete() {
+      // Reaching the continue screen ends the hosted run, whichever way it got
+      // there. Without this the heartbeat keeps the session alive and every
+      // lobby in the world advertises a run nobody is playing.
+      cmgNetHostStop();
       gameState.bgmContinuityActive = false;
       gameState.currentBgmKey = null;
       gameState.score = this.scoreCount;
-      gameState.maxCombo = Math.max(gameState.maxCombo || 0, this.maxCombo);
+      writePlayerStateToGameState(this);
       var timeOverText = this.add.text(GCX6, GCY3, "TIME OVER", {
         fontFamily: "sans-serif",
         fontSize: "22px",
@@ -10091,23 +11170,28 @@
     // =================================================================
     // SP fire (orchestrates cutin, explosions, damage — touches many subsystems)
     // =================================================================
-    onSpFire() {
+    // `p` is the ship that pressed. Defaults to player 1 so the on-screen SP
+    // button, which belongs to the touch player, keeps working unchanged.
+    onSpFire(p) {
       if (!this.gameStarted) return;
+      p = p && p.index != null ? p : this.players[0];
+      if (!p || p.dead) return;
       // A Dezaemon import flies the save's OWN bomb off this button: its stock
-      // is a count, not a gauge, and only one may be in flight at a time.
-      if (dezaBombArmed(this)) {
-        if (fireDezaBomb(this)) this.updateSpGauge();
+      // is a count, not a gauge, and only one may be in flight at a time — per
+      // player, so one ship's bomb cannot lock the other's button.
+      if (dezaBombArmed(this, p)) {
+        if (fireDezaBomb(this, p)) this.updateSpGauge();
         return;
       }
-      if (this.spGauge < 100 || this.spFired) return;
-      this.doSpFire();
+      if (p.spGauge < 100 || p.spFired) return;
+      this.doSpFire(p);
     }
-    doSpFire() {
-      this.spFired = true;
+    doSpFire(p) {
+      p.spFired = true;
       this.spFiredDuringBoss = this.bossActive;
-      this.spGauge = 0;
+      p.spGauge = 0;
       this.updateSpGauge();
-      triggerHaptic("special");
+      triggerHaptic("special", p.padIndex);
       this.playSound("se_sp", 0.8);
       this.playSound("g_sp_voice", 0.7);
       this.theWorldFlg = true;
@@ -10207,7 +11291,7 @@
       var spLine = this.add.graphics();
       spLine.setDepth(150);
       spLine.fillStyle(16711680, 1);
-      spLine.fillRect(this.playerSprite.x - 1, 0, 3, GH11);
+      spLine.fillRect(p.sprite.x - 1, 0, 3, GH11);
       this.tweens.add({
         targets: spLine,
         alpha: 0,
@@ -10235,17 +11319,17 @@
               self.bossHp = ehp;
               self.checkBossDanger();
               if (ehp <= 0) {
-                self.bossDie(en);
+                self.bossDie(en, p.index);
               }
             } else {
-              self.enemyDie(en, true);
+              self.enemyDie(en, true, p.index);
             }
           }
         }
       });
       this.time.delayedCall(2500, function() {
         self.theWorldFlg = false;
-        self.spFired = false;
+        p.spFired = false;
       });
     }
     // =================================================================
@@ -10253,11 +11337,16 @@
     // =================================================================
     updateSpGauge() {
       if (!this.spBtnBar) return;
+      // One widget, and it belongs to player 1 — it is also a touch BUTTON, and
+      // the pointer only ever drives player 1. Player 2's bomb stock and charge
+      // are tracked on its own view; there is no room in a 45px HUD band for a
+      // second meter, and inventing one would crowd the split bars.
+      var owner = this.players[0];
       // With a Dezaemon bomb armed the meter shows STOCK, not a charge: full
       // while any bomb remains, empty at zero.
-      var ratio = dezaBombArmed(this)
-        ? (this.dezaBombStock > 0 ? 1 : 0)
-        : Math.min(this.spGauge / 100, 1);
+      var ratio = dezaBombArmed(this, owner)
+        ? (owner.dezaBombStock > 0 ? 1 : 0)
+        : Math.min(owner.spGauge / 100, 1);
       if (ratio <= 0) {
         this.spBtnBar.setCrop(0, 0, 0, 0);
       } else {
@@ -10267,9 +11356,9 @@
       }
       if (ratio >= 1) {
         this.spBtnReadyBg.setAlpha(1);
-        if (!this.spReadyHapticPlayed) {
-          triggerHaptic("ready");
-          this.spReadyHapticPlayed = true;
+        if (!owner.spReadyHapticPlayed) {
+          triggerHaptic("ready", owner.padIndex);
+          owner.spReadyHapticPlayed = true;
         }
         if (!this.spReadyTween) {
           this.spReadyTween = this.tweens.add({
@@ -10281,7 +11370,7 @@
           });
         }
       } else {
-        this.spReadyHapticPlayed = false;
+        owner.spReadyHapticPlayed = false;
         this.spBtnReadyBg.setAlpha(0);
         this.spBtnPulse.setAlpha(0);
         if (this.spReadyTween) {
@@ -10327,11 +11416,11 @@
       if (tint) item.setTint(tint);
       this.items.push(item);
     }
-    collectItem(itemName) {
-      collectItem(this, itemName);
+    collectItem(p, itemName) {
+      collectItem(this, p, itemName);
     }
-    playerDamage(amount) {
-      playerDamage(this, amount);
+    playerDamage(p, amount) {
+      playerDamage(this, p, amount);
     }
     // =================================================================
     // Sound
@@ -10422,8 +11511,16 @@
       }
     }
     fixedUpdate(time, step) {
-      if (this.gameStarted && !this.playerDead && !this.stageCleared && !this.theWorldFlg) {
+      var anyAlive = !allPlayersDead(this);
+      if (this.gameStarted && anyAlive && !this.stageCleared && !this.theWorldFlg) {
         this.worldTime += 1;
+        // Which ship the enemies are shooting at swaps on a timer while both
+        // are alive — the traced hardware rule, and the only one that keeps the
+        // pressure even.
+        if (this.players.length > 1 && ++this._aimSwapAcc >= AIM_SWAP_TICKS) {
+          this._aimSwapAcc = 0;
+          this._aimSlot ^= 1;
+        }
         // Advance the global enemy fire tick all zako reloads and bursts are
         // clocked by, once per Saturn frame. The flag holds for the whole
         // 2-step frame — each enemy's own tick gate runs once within it, so
@@ -10441,7 +11538,7 @@
           // The save's own pacing: advance the traced state machine once per
           // Saturn frame (2 steps), only while the world runs — the same gate
           // worldTime advances under, so pauses and deaths freeze the scroll.
-          if (this.gameStarted && !this.playerDead && !this.stageCleared && !this.theWorldFlg) {
+          if (this.gameStarted && anyAlive && !this.stageCleared && !this.theWorldFlg) {
             this._curveStep = (this._curveStep || 0) + 1;
             if (this._curveStep >= SATURN_TICKS_PER_FRAME) {
               this._curveStep = 0;
@@ -10453,7 +11550,7 @@
         } else {
           this.dezaBg.setScroll(this.worldTime * SCROLL_PX_PER_FRAME / SATURN_TICKS_PER_FRAME);
         }
-      } else if (this.stageBg && !this.playerDead && !this.stageCleared) {
+      } else if (this.stageBg && anyAlive && !this.stageCleared) {
         if (!this.bossActive && !this.bossReached) {
           var bgMove = this.gameStarted ? this.stageBgAmountMove || 0.7 : 0.7;
           this.stageBg.tilePositionY -= bgMove;
@@ -10471,29 +11568,51 @@
         }
       }
       if (!this.gameStarted) return;
-      if (this.playerDead || this.stageCleared) return;
-      handleKeyboardInput(this);
-      this.playerSprite.x += 0.09 * (this.playerUnitX - this.playerSprite.x);
-      if (this.playerShadow && this.playerShadow.active) {
-        updateShadowPosition(this.playerShadow, this.playerSprite);
-        if (this.playerSprite.frame && this.playerShadow.frame.name !== this.playerSprite.frame.name) {
-          try {
-            this.playerShadow.setFrame(this.playerSprite.frame.name);
-          } catch (e2) {
+      if (!anyAlive || this.stageCleared) return;
+      // Sample every pad ONCE for this rendered frame, then let each player
+      // read its own: two readers advancing the edge state would have the
+      // second one see every press as already handled.
+      beginGamepadFrame(time);
+      var alive = livePlayers(this);
+      var pi, p;
+      // Both ships' charge columns share one Graphics; clearing it here, before
+      // either draws, is what lets two of them be on screen at once. Not while
+      // the world is frozen though: the draw lives inside handleKeyboardInput,
+      // which bails on theWorldFlg, so clearing then would blank a live column
+      // for the whole freeze and pop it back afterwards.
+      if (this.dezaBeamGfx && !this.theWorldFlg) this.dezaBeamGfx.clear();
+      for (pi = 0; pi < alive.length; pi++) {
+        p = alive[pi];
+        handleKeyboardInput(this, p);
+        p.sprite.x += 0.09 * (p.unitX - p.sprite.x);
+        if (p.shadow && p.shadow.active) {
+          updateShadowPosition(p.shadow, p.sprite);
+          if (p.sprite.frame && p.shadow.frame.name !== p.sprite.frame.name) {
+            try {
+              p.shadow.setFrame(p.sprite.frame.name);
+            } catch (e2) {
+            }
           }
         }
       }
+      this.updatePadBindings();
+      consumeGamepadEdges();
       if (this.theWorldFlg) {
         this.updateHUD();
         this.updateBossHpBar();
         return;
       }
-      this.shootTimer += 1;
-      var interval = this.shootSpeed === "speed_high" ? Math.floor(this.shootInterval * 0.6) : this.shootInterval;
-      if (this.dezaShotLocked) this.shootTimer = 0;
-      else if (this.shootTimer >= interval) {
-        this.shootTimer = 0;
-        shootBullets(this);
+      // Each ship reloads on its own clock, off its own loadout.
+      for (pi = 0; pi < alive.length; pi++) {
+        p = alive[pi];
+        if (p.dead) continue;
+        p.shootTimer += 1;
+        var interval = p.shootSpeed === "speed_high" ? Math.floor(p.shootInterval * 0.6) : p.shootInterval;
+        if (p.dezaShotLocked) p.shootTimer = 0;
+        else if (p.shootTimer >= interval) {
+          p.shootTimer = 0;
+          shootBullets(this, p);
+        }
       }
       updatePlayerBullets(this, step);
       for (var e = this.enemies.length - 1; e >= 0; e--) {
@@ -10533,7 +11652,8 @@
             pb.setTint(16773120);
             pb.setData("_tintTimer", 5);
             var applyDamage = true;
-            if (this.shootMode === "big") {
+            var pbBig = !!pb.getData("big");
+            if (pbBig) {
               var bid = pb.getData("bulletId");
               var bkey = "bulletid_" + bid;
               var bfkey = "bulletframeCnt_" + bid;
@@ -10568,9 +11688,9 @@
                 this.playSound("se_damage", 0.15);
                 if (ehp <= 0) {
                   if (isBoss) {
-                    this.bossDie(enemy);
+                    this.bossDie(enemy, pb.getData("owner"));
                   } else {
-                    this.enemyDie(enemy, false);
+                    this.enemyDie(enemy, false, pb.getData("owner"));
                   }
                   break;
                 }
@@ -10589,37 +11709,51 @@
                 }
               }
             }
-            if (this.shootMode !== "big") {
+            if (!pbBig) {
               pb.destroy();
               this.playerBullets.splice(bb, 1);
             }
           }
         }
         if (!enemy.active) continue;
-        if (this.barrierActive && this.barrierSprite) {
-          var barRect = { x: this.barrierSprite.x - 20, y: this.barrierSprite.y - 20, w: 40, h: 40 };
-          if (rectOverlap(eRect, barRect) && !isBoss) {
-            this.enemyDie(enemy, false);
-            continue;
-          }
-        }
-        var pRect = { x: this.playerSprite.x - 8, y: this.playerSprite.y - 16, w: 16, h: 32 };
-        if (rectOverlap(eRect, pRect) && !isBoss) {
-          this.playerDamage(1);
-          this.enemyDie(enemy, false);
-          continue;
-        }
-        if (isBoss && rectOverlap(eRect, pRect)) {
-          if (this.bossIsGoki) {
-            gokiPlayerAttack(this);
-          } else {
-            var now = this.time.now;
-            if (!this._lastBossContactTime || now - this._lastBossContactTime > 1e3) {
-              this._lastBossContactTime = now;
-              this.playerDamage(1);
+        // Barriers and hulls are per ship: each living player tests its own.
+        var hit = false;
+        for (pi = 0; pi < alive.length; pi++) {
+          p = alive[pi];
+          if (p.dead) continue;
+          if (p.barrierActive && p.barrierSprite) {
+            var barRect = { x: p.barrierSprite.x - 20, y: p.barrierSprite.y - 20, w: 40, h: 40 };
+            if (rectOverlap(eRect, barRect) && !isBoss) {
+              this.enemyDie(enemy, false, p.index);
+              hit = true;
+              break;
             }
           }
+          var pRect = { x: p.sprite.x - 8, y: p.sprite.y - 16, w: 16, h: 32 };
+          if (!rectOverlap(eRect, pRect)) continue;
+          if (!isBoss) {
+            this.playerDamage(p, 1);
+            this.enemyDie(enemy, false, p.index);
+            hit = true;
+            break;
+          }
+          if (this.bossIsGoki) {
+            // A singleton cinematic: it freezes the world and takes over the
+            // screen, so exactly one ship gets grabbed even if both touched the
+            // boss on this tick.
+            gokiPlayerAttack(this, p);
+            hit = true;
+            break;
+          }
+          // The one-second grace after touching a boss is per ship, or one
+          // player's scrape buys the other a free second.
+          var now = this.time.now;
+          if (!p.bossContactAt || now - p.bossContactAt > 1e3) {
+            p.bossContactAt = now;
+            this.playerDamage(p, 1);
+          }
         }
+        if (hit) continue;
         var entryMargin = this.dezaEntryMargin || 20;
     if (!isBoss && (enemy.y > GH11 + entryMargin || enemy.x < -40 || enemy.x > GW13 + 40)) {
           var idx = this.enemies.indexOf(enemy);
@@ -10629,7 +11763,9 @@
           enemy.destroy();
         }
       }
-      updateDezaBomb(this);
+      if (this.dezaBombGfx) this.dezaBombGfx.clear();
+      for (pi = 0; pi < alive.length; pi++) updateDezaBomb(this, alive[pi]);
+
       for (var eb = this.enemyBullets.length - 1; eb >= 0; eb--) {
         var eBullet = this.enemyBullets[eb];
         if (!eBullet || !eBullet.active) {
@@ -10662,16 +11798,21 @@
           this.enemyBullets.splice(eb, 1);
           continue;
         }
-        if (this.barrierActive && this.barrierSprite) {
-          var barRect2 = { x: this.barrierSprite.x - 20, y: this.barrierSprite.y - 20, w: 40, h: 40 };
-          var ebRect0 = { x: eBullet.x - eBullet.width / 2, y: eBullet.y - eBullet.height / 2, w: eBullet.width, h: eBullet.height };
+        var ebRect0 = { x: eBullet.x - eBullet.width / 2, y: eBullet.y - eBullet.height / 2, w: eBullet.width, h: eBullet.height };
+        var guarded = false;
+        for (pi = 0; pi < alive.length; pi++) {
+          p = alive[pi];
+          if (p.dead || !p.barrierActive || !p.barrierSprite) continue;
+          var barRect2 = { x: p.barrierSprite.x - 20, y: p.barrierSprite.y - 20, w: 40, h: 40 };
           if (rectOverlap(ebRect0, barRect2)) {
             this.playSound("se_guard", 0.3);
             eBullet.destroy();
             this.enemyBullets.splice(eb, 1);
-            continue;
+            guarded = true;
+            break;
           }
         }
+        if (guarded) continue;
         var ebDestroyed = false;
         var ebRect1 = { x: eBullet.x - eBullet.width / 2, y: eBullet.y - eBullet.height / 2, w: eBullet.width, h: eBullet.height };
         var ebHp = eBullet.getData("hp") || 1;
@@ -10685,22 +11826,26 @@
             var pb2dmg = pb2.getData("damage") || 1;
             ebHp -= pb2dmg;
             eBullet.setData("hp", ebHp);
-            if (this.shootMode !== "big") {
+            if (!pb2.getData("big")) {
               pb2.destroy();
               this.playerBullets.splice(pbb, 1);
             }
             if (ebHp <= 0) {
-              triggerHaptic("deflect");
+              var canceller = killer(this, pb2.getData("owner"));
+              triggerHaptic("deflect", canceller.padIndex);
               var ebScore = eBullet.getData("score") || 0;
               var ebSpgage = eBullet.getData("spgage") || 0;
               if (ebScore > 0) {
-                this.comboCount++;
-                if (this.comboCount > this.maxCombo) this.maxCombo = this.comboCount;
-                var ebRatio = Math.max(1, Math.ceil(this.comboCount / 10));
+                var ebRatio = 1;
+                if (!canceller.dead) {
+                  canceller.comboCount++;
+                  if (canceller.comboCount > canceller.maxCombo) canceller.maxCombo = canceller.comboCount;
+                  ebRatio = Math.max(1, Math.ceil(canceller.comboCount / 10));
+                  canceller.comboTimeCnt = 100;
+                  canceller.spGauge = Math.min(100, canceller.spGauge + ebSpgage);
+                  this.updateSpGauge();
+                }
                 this.scoreCount += ebScore * ebRatio;
-                this.comboTimeCnt = 100;
-                this.spGauge = Math.min(100, this.spGauge + ebSpgage);
-                this.updateSpGauge();
                 this.showScorePopup(eBullet.x, eBullet.y, ebScore, ebRatio);
               }
               this.showExplosion(eBullet.x, eBullet.y);
@@ -10713,13 +11858,16 @@
           }
         }
         if (ebDestroyed) continue;
-        var ebRect = { x: eBullet.x - eBullet.width / 2, y: eBullet.y - eBullet.height / 2, w: eBullet.width, h: eBullet.height };
-        var pRect2 = { x: this.playerSprite.x - 8, y: this.playerSprite.y - 16, w: 16, h: 32 };
-        if (rectOverlap(ebRect, pRect2)) {
+        for (pi = 0; pi < alive.length; pi++) {
+          p = alive[pi];
+          if (p.dead) continue;
+          var pRect2 = { x: p.sprite.x - 8, y: p.sprite.y - 16, w: 16, h: 32 };
+          if (!rectOverlap(ebRect0, pRect2)) continue;
           var edamage = eBullet.getData("damage") || 1;
-          this.playerDamage(edamage);
+          this.playerDamage(p, edamage);
           eBullet.destroy();
           this.enemyBullets.splice(eb, 1);
+          break;
         }
       }
       for (var it = this.items.length - 1; it >= 0; it--) {
@@ -10730,14 +11878,19 @@
         }
         item.y += 1;
         var iRect = { x: item.x - item.width / 2, y: item.y - item.height / 2, w: item.width, h: item.height };
-        var pRect3 = { x: this.playerSprite.x - 12, y: this.playerSprite.y - 20, w: 24, h: 40 };
-        if (rectOverlap(iRect, pRect3)) {
-          var iname = item.getData("itemName");
-          this.collectItem(iname);
+        var taken = false;
+        for (pi = 0; pi < alive.length; pi++) {
+          p = alive[pi];
+          if (p.dead) continue;
+          var pRect3 = { x: p.sprite.x - 12, y: p.sprite.y - 20, w: 24, h: 40 };
+          if (!rectOverlap(iRect, pRect3)) continue;
+          this.collectItem(p, item.getData("itemName"));
           item.destroy();
           this.items.splice(it, 1);
-          continue;
+          taken = true;
+          break;
         }
+        if (taken) continue;
         if (item.y > GH11) {
           item.destroy();
           this.items.splice(it, 1);
@@ -10778,12 +11931,17 @@
         }
         this._setBigNum(this.bossTimerNum, Math.max(0, this.bossTimerCountDown));
       }
-      this.comboTimeCnt -= 0.1;
-      if (this.comboTimeCnt <= 0) {
-        this.comboTimeCnt = 0;
-        this.comboCount = 0;
+      for (pi = 0; pi < alive.length; pi++) {
+        p = alive[pi];
+        if (p.dead) continue;
+        p.comboTimeCnt -= 0.1;
+        if (p.comboTimeCnt <= 0) {
+          p.comboTimeCnt = 0;
+          p.comboCount = 0;
+        }
+        updateBarrier(this, p, step);
       }
-      updateBarrier(this, step);
+      cmgNetHostTick(this, time);
       this.updateHUD();
       this.updateBossHpBar();
     }
@@ -10791,20 +11949,34 @@
     // HUD update + number display helpers
     // =================================================================
     updateHUD() {
+      // One score for the pair.
       this._setSmallNum(this.scoreSmallNum, this.scoreCount);
-      this._setComboNum(this.comboCount);
-      if (this.comboLabel) {
-        this.comboLabel.setScale(this.comboTimeCnt / 100, 1);
+      // The combo troughs drain per player; only scaleX is written, so the
+      // heights the split set stay put.
+      var lead = this.players[0];
+      for (var i = 0; i < this.players.length; i++) {
+        var p = this.players[i];
+        if (p.comboBar) p.comboBar.scaleX = p.comboTimeCnt / 100;
+        if (p.comboCount > lead.comboCount) lead = p;
       }
+      // There is room for exactly one row of combo digits between the score
+      // line and the trough's rule, so the number shows the LEADING combo,
+      // tinted to whoever owns it. Max, not sum: the number is the score
+      // multiplier (ceil(combo/10)), and a sum would print a figure that
+      // multiplies nothing.
+      this._setComboNum(lead.comboCount, lead.index);
       if (this.worldBestText) {
         var best = Math.max(getDisplayedHighScore(), this.scoreCount);
         this.worldBestText.setText(getWorldBestLabel() + " " + String(best));
       }
     }
-    _setComboNum(num) {
+    _setComboNum(num, owner) {
       if (!this.comboNumContainer || !this._comboNumSprites) return;
-      if (this._lastComboNum === num) return;
-      this._lastComboNum = num;
+      // The cache key carries the owner too: at equal combos a hand-off would
+      // otherwise leave the previous player's tint on the digits.
+      var key = num + ":" + (owner || 0);
+      if (this._lastComboNum === key) return;
+      this._lastComboNum = key;
       for (var i = 0; i < this._comboNumSprites.length; i++) {
         this.comboNumContainer.remove(this._comboNumSprites[i], true);
       }
@@ -10816,6 +11988,8 @@
         try {
           var sprite = this.add.image(x, 0, "game_ui", frame);
           sprite.setOrigin(0, 0);
+          // A container does not propagate a tint, so it goes on each digit.
+          if (owner === 1) sprite.setTint(P2_HUD_TINT).setTintMode(Phaser.TintModes.FILL);
           this.comboNumContainer.add(sprite);
           this._comboNumSprites.push(sprite);
           x += sprite.width;
@@ -11275,6 +12449,14 @@
               gameState.playerHp = gameState.playerMaxHp;
               gameState.shootMode = recipe.playerData.defaultShootName;
               gameState.shootSpeed = recipe.playerData.defaultShootSpeed;
+              // A continue revives every ship that was in the run: the score
+              // they are playing for is shared, so reviving only one would make
+              // the other player pay for a seat they no longer have.
+              gameState.player2MaxHp = recipe.playerData.maxHp;
+              gameState.player2Hp = gameState.player2MaxHp;
+              gameState.player2ShootMode = recipe.playerData.defaultShootName;
+              gameState.player2ShootSpeed = recipe.playerData.defaultShootSpeed;
+              gameState.player2Spgage = 0;
             }
             gameState.stageId = 0;
             gameState.continueCnt = Number(gameState.continueCnt || 0) + 1;
@@ -12320,7 +13502,17 @@
       gameState.playerHp = recipe.playerData.maxHp;
       gameState.shootMode = recipe.playerData.defaultShootName;
       gameState.shootSpeed = recipe.playerData.defaultShootSpeed;
+      // The second ship, if this run has one. It shares player 1's record —
+      // Dezaemon gives each ship a config block, not its own bullets — so the
+      // only thing that differs is the art, which createPlayer overlays.
+      gameState.player2MaxHp = recipe.playerData.maxHp;
+      gameState.player2Hp = recipe.playerData.maxHp;
+      gameState.player2ShootMode = recipe.playerData.defaultShootName;
+      gameState.player2ShootSpeed = recipe.playerData.defaultShootSpeed;
+      gameState.player2Spgage = 0;
     }
+    gameState.playerCount = readPlayerCountParam(1);
+    gameState.twoPlayerForced = gameState.playerCount === 2;
     gameState.combo = 0;
     gameState.maxCombo = 0;
     gameState.score = 0;

@@ -637,6 +637,12 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         }
         recipe.playerData = mergedPlayer;
       }
+      // The save's second ship, art only — everything else about player 2
+      // comes from playerData. This is an explicit key whitelist, so an
+      // unnamed record is silently dropped on the way in.
+      if (levelData.playerData2 && typeof levelData.playerData2 === "object") {
+        recipe.playerData2 = deepClone(levelData.playerData2);
+      }
 
       return recipe;
     }

@@ -395,6 +395,42 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    the way in: the Y face button on a pad, or tapping the badge itself.
    The badge is its own click target (Dashboard.svelte stops propagation) so
    browsing the shelf and launching the row stay separate gestures. */
+/*
+   Somebody is playing this game RIGHT NOW. The launcher subscribes to the
+   netplay `session` table (Dashboard.svelte initNetplayPresence) and marks the
+   rows that have a live run; "JOINABLE" means that run still has its second
+   seat open, and launching the row brings the game up with its own live-runs
+   panel already on screen.
+   Nothing here renders without a network, so the offline launcher is unchanged.
+*/
+.live-chip {
+  /* Sits beside a row that may already carry a shelf badge, so it takes the
+     least width it can: one line, no wrap, and it never grows or shrinks the
+     row's own title. */
+  display: inline-flex; align-items: center; flex-shrink: 0;
+  margin-left: 1vmin; padding: 0.2vmin 0.8vmin;
+  border-radius: 0.5vmin; font-size: 0.7em; font-weight: 700;
+  letter-spacing: 0.1em; white-space: nowrap; line-height: 1.6;
+  /* Solid, dark-on-light: the selected row's background is bright yellow and
+     the unselected one is near-black, and a translucent pill legible on one is
+     invisible on the other. */
+  color: #06172b; background: #9ccdf5;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+}
+/* An open seat is the actionable case, so it gets the warmer colour and the
+   pulse; a full run is information, not an invitation. */
+.live-chip.open {
+  color: #06240f; background: #7dff9a;
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-chip.open { animation: none; }
+}
+
 .shelf-badge {
   display: flex; align-items: center; gap: 1vmin; flex-shrink: 0;
   /* .game-bar is pointer-inert (the row is the click target) — the badge

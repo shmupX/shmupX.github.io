@@ -18,6 +18,7 @@ import {
   SINGLE_LETTER_ENEMIES,
 } from "../src/map-to-game.js";
 import { PLAYER_FRAMES } from "../src/player-art.js";
+import { TROOPER_FRAMES, TROOPER_PLAYER } from "../src/player2-art.js";
 import { validateGameJson } from "../src/game-schema.js";
 import { normalize } from "../src/bup-source.js";
 import * as bup from "../src/bup-parse.js";
@@ -61,8 +62,11 @@ Deno.test("mapSaveToGame on an undecoded save yields a valid skeleton", () => {
   const { ok, errors } = validateGameJson(gameJson);
   assertEquals(errors, []);
   assert(ok);
-  // The save decoded to nothing, but the player still arrives with its art.
-  assertStrictEquals(sprites.length, PLAYER_FRAMES.length);
+  // The save decoded to nothing, but both ships still arrive with their art.
+  assertStrictEquals(
+    sprites.length,
+    PLAYER_FRAMES.length + TROOPER_FRAMES.length,
+  );
   assertStrictEquals(gameJson.meta.source, "dezaemon2");
   assertStrictEquals(gameJson.meta.sourceComment, "DEZA2 SGM");
   assertStrictEquals(gameJson.meta.sourceFilename, "DEZA2____01");
@@ -324,7 +328,7 @@ Deno.test("sprite keys are sanitized, .gif-suffixed, and deduped", () => {
   ];
   const { sprites } = mapSaveToGame(decoded);
   // The save's sprites come first, so decoded indices keep addressing them;
-  // the player's own frames are appended after.
+  // the two ships' own frames are appended after, player 1 then player 2.
   assertEquals(sprites.slice(0, 3).map((s) => s.key), [
     "ship_a.gif",
     "ship_a_2.gif",
@@ -332,7 +336,7 @@ Deno.test("sprite keys are sanitized, .gif-suffixed, and deduped", () => {
   ]);
   assertEquals(
     sprites.slice(3).map((s) => s.key),
-    PLAYER_FRAMES.map((f) => f.key),
+    [...PLAYER_FRAMES, ...TROOPER_FRAMES].map((f) => f.key),
   );
 });
 
@@ -492,6 +496,97 @@ Deno.test("enemies with decoded sprites get their texture repointed by sprite in
   decoded.enemies = [{ name: "zako", spriteKeys: [0] }];
   const { gameJson } = mapSaveToGame(decoded);
   assertEquals(gameJson.enemyData.enemyA.texture, ["zako.gif"]);
+});
+
+Deno.test("a 2P save's second ship comes across as playerData2, art only", () => {
+  const decoded = emptyDecoded();
+  const cell = () => ({
+    w: 32,
+    h: 32,
+    rgba: new Uint8ClampedArray(32 * 32 * 4),
+  });
+  decoded.sprites = [
+    { key: "dezaShip0", ...cell() },
+    { key: "dezaShip1", ...cell() },
+    { key: "dezaShip20", ...cell() },
+    { key: "dezaShip21", ...cell() },
+  ];
+  decoded.globalArt = { player: { idle: [0, 1] }, player2: { idle: [2, 3] } };
+  const { gameJson } = mapSaveToGame(decoded);
+
+  assertEquals(gameJson.playerData.texture, ["dezaShip0.gif", "dezaShip1.gif"]);
+  assertStrictEquals(gameJson.playerData.name, "dezaShip");
+  // P2 differs from P1 only in its frames — Dezaemon gives each ship a config
+  // block, not its own bullets — so the record carries nothing else.
+  assertEquals(gameJson.playerData2, {
+    name: "dezaShip2",
+    texture: ["dezaShip20.gif", "dezaShip21.gif"],
+  });
+  const { ok, errors } = validateGameJson(gameJson);
+  assertEquals(errors, []);
+  assert(ok);
+});
+
+Deno.test("a save that drew no second ship falls back to the trooper", () => {
+  const decoded = emptyDecoded();
+  decoded.sprites = [{
+    key: "dezaShip0",
+    w: 32,
+    h: 32,
+    rgba: new Uint8ClampedArray(32 * 32 * 4),
+  }];
+  decoded.globalArt = { player: { idle: [0] } };
+  const { gameJson, sprites } = mapSaveToGame(decoded);
+  // Player 2 always has a ship: the trooper, whose frames ride along in
+  // `sprites` exactly as Duke's do.
+  assertEquals(gameJson.playerData2, TROOPER_PLAYER);
+  for (const key of gameJson.playerData2.texture) {
+    assert(sprites.some((s) => s.key === key), `${key} ships in sprites`);
+  }
+  assertEquals(validateGameJson(gameJson).errors, []);
+});
+
+Deno.test("both ship config blocks reach the runtime, P2's alongside P1's", () => {
+  const decoded = emptyDecoded();
+  const ship = (startLoadout, maxSpeed) => ({
+    startLoadout,
+    rapidParam: 3,
+    maxSpeed,
+    initialPower: 1,
+    maxPower: 4,
+    autofireFrames: 10,
+    raw: [0x10 | startLoadout, 0, 0, 0],
+  });
+  decoded.settings = {
+    gameMode: 2, // bit1 = 2P join-in
+    ships: [ship(0, 5), ship(2, 3)],
+    loadouts: [
+      { main: 1, sub: 0, charge: 0, bomb: 0, bombVariant: false },
+      { main: 2, sub: 0, charge: 0, bomb: 0, bombVariant: false },
+      { main: 5, sub: 3, charge: 1, bomb: 2, bombVariant: true },
+      { main: 7, sub: 0, charge: 0, bomb: 0, bombVariant: false },
+    ],
+    mainWeapon: 1,
+    shotDamage: 20,
+    staffRoles: ["", "", ""],
+    sfxSet: 0,
+  };
+  const { gameJson } = mapSaveToGame(decoded);
+  const m = gameJson.meta.dezaemonSettings;
+
+  assert(m.twoPlayer, "game mode bit1 marks the save as 2P join-in");
+  assertStrictEquals(m.ships.length, 2);
+  // P2 starts on preset 2, so its main weapon is that preset's — and the
+  // long-standing mainWeapon2P field still agrees with it.
+  assertStrictEquals(m.ships[1].startLoadout, 2);
+  assertStrictEquals(m.loadouts[m.ships[1].startLoadout].main, 5);
+  assertStrictEquals(m.mainWeapon2P, 5);
+  // The rest of P2's block rides along — join-in reads its own speed cap,
+  // power levels and autofire cadence, not P1's.
+  assertStrictEquals(m.ships[1].maxSpeed, 3);
+  assertStrictEquals(m.ships[0].maxSpeed, 5);
+  assertStrictEquals(m.ships[1].maxPower, 4);
+  assertStrictEquals(m.ships[1].autofireFrames, 10);
 });
 
 Deno.test("decoded behavior lands on the runtime fields and rides along whole", () => {

@@ -4816,6 +4816,7 @@
                     }
                 };
                 fix(gameJson.enemyData); fix(gameJson.bossData); fix(gameJson.playerData);
+                fix(gameJson.playerData2);
                 // The drawn title screen references frames by name too — a
                 // rename (e.g. a second import in one session) must follow.
                 if (gameJson.dezaemonTitle) {
@@ -7795,6 +7796,10 @@ function GAME3D_RUNTIME(DATA) {
                     name, stageKey: currentStageKey, enemylist: normalizeGrid(currentGrid),
                     enemyData: enemyData || {}, bossData: bossData || {},
                     playerData: playerData || {},
+                    // The save's second ship (art only). Named explicitly because
+                    // this payload is a whitelist — an unlisted record survives the
+                    // session and then vanishes on the first cloud round-trip.
+                    playerData2: (gameData && gameData.playerData2) || null,
                     storyData: (gameData && gameData.storyData) || null,
                     sceneScripts: await ensureSceneScriptsCompiled(),
                     width: gridWidth(currentGrid), savedAt: firebase.database.ServerValue.TIMESTAMP
@@ -7963,6 +7968,12 @@ function GAME3D_RUNTIME(DATA) {
                 if (d.playerData && typeof d.playerData === 'object') {
                     playerData = d.playerData;
                     if (gameData) gameData.playerData = playerData;
+                }
+                if (d.playerData2 && typeof d.playerData2 === 'object') {
+                    if (!gameData) gameData = {};
+                    gameData.playerData2 = d.playerData2;
+                } else if (gameData) {
+                    delete gameData.playerData2;
                 }
                 storeBossDataForViewers();
                 if (d.storyData && typeof d.storyData === 'object') {

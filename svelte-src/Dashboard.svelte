@@ -365,6 +365,77 @@
   let settingsRowEls = $state([]);
   // The rendered Games list. Reassigning manifestGames re-derives this.
   let GAMES = $derived([...manifestGames]);
+
+  // --- online 2P presence -------------------------------------------------
+  //
+  // Which catalogue entries somebody is playing RIGHT NOW, so a row can say so
+  // and launch straight into the game's own join panel. Keyed by the netplay
+  // session's gameId, which for a shipped game is its catalogue id.
+  //
+  // Entirely optional: the client is imported lazily and every failure path
+  // leaves this empty, so a launcher with no network looks exactly as it does
+  // today.
+  let liveRuns = $state({});
+  let liveTotal = $state(null);
+  let netplayApi = null;
+
+  // A session is keyed by the LEVEL being played, not by a catalogue row —
+  // shmupX's single entry covers every level its editor can open, so an exact
+  // id match would never fire for it. So: an exact match wins where one exists
+  // (a future catalogue entry that is one specific game), and otherwise any
+  // live run counts toward the shmupX-hosted rows, which is what those rows
+  // actually mean. External games get nothing, correctly: this launcher has no
+  // idea what is happening inside somebody else's origin.
+  function liveFor(row) {
+    if (!row) return null;
+    const exact = liveRuns[row.key];
+    if (exact) return exact;
+    const url = row.g && row.g.url;
+    const ours = typeof url === 'string' && !/^https?:/i.test(url);
+    return ours ? liveTotal : null;
+  }
+
+  async function initNetplayPresence() {
+    try {
+      const mod = await import('/netplay/shmupx-netplay.js');
+      const opts = {};
+      // Dev overrides, so a local SpacetimeDB can be pointed at without
+      // touching the built defaults.
+      const uri = qs('netplayUri');
+      if (uri) opts.uri = uri;
+      const db = qs('netplayDb');
+      if (db) opts.moduleName = db;
+      // No gameId filter: the launcher wants every game's runs at once.
+      netplayApi = await mod.netplay(opts);
+      if (!netplayApi) return;
+      netplayApi.onSessions((rows) => {
+        const next = {};
+        let total = null;
+        for (const r of rows) {
+          const cur = next[r.gameId] || { count: 0, joinable: false };
+          cur.count += 1;
+          cur.joinable = cur.joinable || r.joinable;
+          next[r.gameId] = cur;
+          total = total || { count: 0, joinable: false };
+          total.count += 1;
+          total.joinable = total.joinable || r.joinable;
+        }
+        liveRuns = next;
+        liveTotal = total;
+      });
+    } catch (err) {
+      // No bundle (offline export), no network, no database — all the same.
+      console.warn('[netplay] presence unavailable:', err && err.message ? err.message : err);
+    }
+  }
+
+  function qs(name) {
+    try {
+      return new URLSearchParams(location.search).get(name);
+    } catch (e) {
+      return null;
+    }
+  }
   let isTouch = $state(false);
   let padHadConnection = $state(false);
   let padConnected = $state(false);
@@ -1617,7 +1688,12 @@
     // Resolve against the origin the manifest came from — same-origin here
     // ('' → root-relative url), which is what lets gamepad-support.js
     // synthesize mapped keyboard events into the frame.
-    const url = urlOverride || item.url;
+    let url = urlOverride || item.url;
+    // Somebody is already playing this one: bring the game up with its own
+    // live-runs panel armed, so the row's LIVE badge leads somewhere.
+    if (liveFor({ key: item.id, g: item }) && url.indexOf('online=') === -1) {
+      url += (url.indexOf('?') === -1 ? '?' : '&') + 'online=1';
+    }
     gameSrc = manifestOrigin ? new URL(url, manifestOrigin).href : url;
     setTimeout(() => { gameOn = true; }, 30);
   }
@@ -3042,6 +3118,7 @@
     padRaf = requestAnimationFrame(pollPad);
 
     loadManifest();
+    initNetplayPresence();
     initEmulators();
   });
 
@@ -3491,6 +3568,14 @@
                     </div>
                   {:else}
                     <span class="sub">{r.sub}</span>
+                  {/if}
+                  <!-- Outside the shelf/sub branches on purpose: the shmupX row
+                       renders a shelf badge INSTEAD of a sub, and that is
+                       precisely the row a live run belongs on. -->
+                  {#if liveFor(r)}
+                    <b class="live-chip" class:open={liveFor(r).joinable}>
+                      {liveFor(r).joinable ? 'LIVE · OPEN' : 'LIVE'}
+                    </b>
                   {/if}
                 </div>
               </div>

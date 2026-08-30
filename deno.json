@@ -8,7 +8,7 @@
     "test": "deno test -A packages/shmup-engine tests",
     "dev": "deno run -A scripts/dev.ts",
     "dev:vite": "vite",
-    "build": "deno task games:manifest && deno task deza:manifest && deno task 2028-ai:bgm && deno task dashboard:build && deno task engine:bundle && vite build",
+    "build": "deno task games:manifest && deno task deza:manifest && deno task 2028-ai:bgm && deno task dashboard:build && deno task engine:bundle && deno task netplay:bundle && vite build",
     "build:desktop": "deno run -A scripts/build-desktop.ts desktop",
     "build:windows": "deno run -A scripts/build-desktop.ts windows",
     "build:linux": "deno run -A scripts/build-desktop.ts linux",
@@ -20,6 +20,10 @@
     "deza:upload": "deno run -A scripts/upload-deza-saves.ts",
     "dashboard:build": "deno run -A scripts/build-dashboard.ts",
     "engine:bundle": "deno run -A scripts/build-engine.ts",
+    "netplay:bundle": "deno run -A scripts/build-netplay.ts",
+    "netplay:generate": "cd spacetimedb && spacetime generate --lang typescript --out-dir ../static/netplay/bindings --module-path module",
+    "netplay:publish": "cd spacetimedb && spacetime publish shmupx-netplay --yes",
+    "player2:art": "deno run -A scripts/build-player2-art.ts",
     "start": "deno serve -A _fresh/server.js",
     "update": "deno run -A -r jsr:@fresh/update ."
   },
@@ -40,6 +44,7 @@
     ".deno/**",
     "build/**",
     "node_modules/**",
+    "spacetimedb/**",
     "static/**",
     "svelte-src/**",
     "tools/build-level/**"

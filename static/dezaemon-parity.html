@@ -215,7 +215,7 @@
     <div class="legend">
       <span><i class="dot" style="background:var(--ok)"></i><b>Implemented</b> container · graphics · levels · enemies · bosses · items · weapons · BGM · 3D decode</span>
       <span><i class="dot" style="background:var(--part)"></i><b>Partial</b> approximated shot spreads, one open risk</span>
-      <span><i class="dot" style="background:var(--miss)"></i><b>Absent</b> write path, two-player, endings</span>
+      <span><i class="dot" style="background:var(--miss)"></i><b>Absent</b> write path, endings</span>
     </div>
   </div>
 </header>
@@ -229,30 +229,26 @@
     <p>Unchanged, and still the single largest missing capability: no LZSS <b>compressor</b>, no section-table/checksum builder, no BUP block allocator anywhere (<span class="ref">grep over src finds only decompress</span>). The real compressor lives in the disc's <code>S_OPT.bin</code>. Until this exists the editor can never round-trip a game back to a Saturn cart, so the pipeline stays <b>import-only</b>.</p>
   </li>
   <li><span class="n">2</span>
-    <h3>Local two-player<span class="tag spec">SPEC WRITTEN</span></h3>
-    <p>Now the only unbuilt half of what used to be item 2 — <b>horizontal scrolling is done</b> (below). Two-player is fully traced: settings bit1 enables it, the two ships occupy dedicated slots and read their own pads, they spawn 128 px apart and drift together at 1.5 px/frame, <b>lives and score are per player</b>, one player's death does not end the other's game, and enemies aim at a single global target that <b>alternates</b> between the two on a timer while both are alive. Not implemented: the runtime is single-player throughout — one <code>playerSprite</code>, one life count, one HUD row, one collision pass — so a second ship reaches input, scoring, respawn and game-over all at once. It is a self-contained feature, not a patch.</p>
-  </li>
-  <li><span class="n">3</span>
     <h3>Charge and sub-weapon shot spreads for types 2–6<span class="tag open">MEANING OPEN</span></h3>
     <p>The weapon <em>system</em> is exact — burst caps <code>[0,3,3,1,1,6,3,2]</code> and reload intervals <code>[0,6,5,12,1,3,6,28]</code>, with the power-scaled drain correctly confined to type 7 (an adversarial verifier caught that: types 1–6 fire at their raw interval no matter the power, and only type 7 speeds up). What is still approximated is the <b>geometry of sub-weapon types 2–6</b>: type 1's symmetric spread and type 7's strafe tilt were traced leaf by leaf, the other five fire their traced count and cadence straight ahead until someone reads their leaves too.</p>
   </li>
-  <li><span class="n">4</span>
+  <li><span class="n">3</span>
     <h3>Title scene — draw the decoded art, and the entrance sequencer<span class="tag open">MEANING OPEN</span></h3>
     <p>The title compositions decode correctly (the 8×4 + 8×4 layout was corrected), and staff-role labels come from the save — but the title scene does not draw them, so imports still get a static logo blit. The 15-slot entrance-effect sequencer that animates a real Dezaemon title is untraced.</p>
   </li>
-  <li><span class="n">5</span>
+  <li><span class="n">4</span>
     <h3>sec7 part-shape meshes (ポリ吉 primitives)<span class="tag open">MEANING OPEN</span></h3>
     <p>The model section itself is decoded — 16 slots × 328 B, 9 parts × 36 B, positions/rotations/scales in 16.16, slot stride confirmed against POLYKITI's literal pools (<span class="ref">decode-model.js</span>). What is missing is the other half: the <b>primitive meshes are engine-fixed inside the POLYKITI overlay</b> and untraced, so a model decodes as transforms over shapes named only by number.</p>
   </li>
-  <li><span class="n">6</span>
+  <li><span class="n">5</span>
     <h3>Bullet steering states 17 / 18 / 19<span class="tag open">MEANING OPEN</span></h3>
     <p>All sixteen zako fire geometries are traced, but three per-bullet steering states they hand off to are not — geometry 8 is the 5-fan "with bullet state 19" and curves in a way the runtime approximates as straight (<span class="ref">FORMAT.md:698 · game.bundle.js</span>). Affects the flight path of a minority of shots, not whether they appear.</p>
   </li>
-  <li><span class="n">7</span>
+  <li><span class="n">6</span>
     <h3>Open correctness risk: which record byte is HP<span class="tag open">MEANING OPEN</span></h3>
     <p>A synthesis pass argues that <b>record byte 2 bits 0–2 is HP, not speed</b> — its table is difficulty-scaled into <code>0x06095040</code>, which is provably the HP slot — and that byte 1's <code>[60,30,15,…]</code> is the animation-period pair instead. If true this inverts <code>SPEED_TABLE</code>/<code>HP_TABLE</code> and ripples through the mapper's hp/speed and the shot-damage divisor. <b>Deliberately not acted on:</b> the current model is self-consistent (LIFE stored &lt;&lt;8, three hits at max LIFE) and 12,800 raw units would be ~600 hits. Needs its own adversarial pass before anything is rewritten.</p>
   </li>
-  <li><span class="n">8</span>
+  <li><span class="n">7</span>
     <h3>Save-driven endings<span class="tag none">NO TRACE</span></h3>
     <p>The ending scene is still stock 2028-AI. Demo/attract recordings live on the retail disc rather than in saves, so this is bounded work — but nothing is decoded for it yet.</p>
   </li>
@@ -273,6 +269,7 @@
   <tr><td class="feat">BGM / SFX</td><td><span class="note">sec6 fully decoded (24 songs × 32 measures × 4 parts × 16 steps, byte-exact tempo table, loop, echo, transpose) and synthesized live in WebAudio from the save's bytes — not prerecorded. Timing is engine-exact. Now with the kernel's <b>auto-accompaniment</b>: a measure's control bytes pick seven pattern channels (three chords, a bass, three percussion) out of the 1,260-row ROM table, transposed and voiced exactly as the driver does it. Instruments are the save's own: each note picks its tone-bank voice, and multisampled banks pick the LAYER covering that note.</span> <span class="ref">decode-song.js · data/bgm-accompaniment.json · game.bundle.js</span></td></tr>
   <tr><td class="feat">Timbres</td><td><span class="note">The 116 tone-bank instruments ship as <b>harmonic profiles derived by spectral analysis of the retail sample bank</b> — analysis output only, never sample audio, which is disc content. Each is rebuilt at runtime as a WebAudio PeriodicWave with the bank's own envelope and level, replacing four fixed square/triangle/noise voices.</span> <span class="ref">data/bgm-voices.json</span></td></tr>
   <tr><td class="feat">Player weapons</td><td><span class="note">The loadout's four presets drive the ship: <b>eight bomb behaviours</b> (flash sphere, rising pillar, tether, expanding ring, lobbed ball, ship aura, ship-as-projectile, rising wave) as piercing per-frame contact objects with their traced growth curves, lifetimes, invincibility and one-in-flight stock rule; the <b>charge</b> gauge with its levels, busy counters and sub-weapon suppression; and the <b>sub weapon</b> at engine-exact cadence. There are no option pods — that reading was refuted.</span> <span class="ref">decode-settings.js · game.bundle.js</span></td></tr>
+  <tr><td class="feat">Two players</td><td><span class="note">Settings bit1 is live: a second ship <b>joins in</b> mid-run on a free pad (or player 2's own keys), flying the save's <b>own P2 art</b> from global bank refs 24–47 and its <b>own weapon preset</b> from ship block +0x10. Each ship carries its own HP, combo, powerups, barrier, charge, sub weapon and bomb — the engine's one-bomb-per-player rule included — and enemies aim at a single global target that <b>alternates</b> between them on a timer, as traced. One player's death does not end the other's game; the run ends only when both are gone. <b>One deliberate divergence from hardware:</b> score is <b>shared</b>, not per player, and the HUD splits the HP and combo troughs vertically (player 1 on top) rather than showing two rows.</span> <span class="ref">decode-sprites.js · map-to-game.js · game.bundle.js</span></td></tr>
   <tr><td class="feat">Orientation</td><td><span class="note">A horizontal save is the SAME simulation drawn transposed, so the world needed no rotation — what it needed were its own numbers, and it has them: scroll rate ×365/256, a scroll window reaching 96 px further past the entry edge, and the horizontal change-channel trigger lines (14/48/116 px instead of 62/112/164).</span> <span class="ref">map-to-game.js · game.bundle.js</span></td></tr>
   <tr><td class="feat">3D</td><td><span class="note">sec7 decodes: magic, 16 model slots, 9 parts each, 16.16 positions / rotations / scales with mirror-by-negative-scale.</span> <span class="ref">decode-model.js</span></td></tr>
 </table>
@@ -282,7 +279,6 @@
 <p class="sub"><span class="band part">Partial</span>&ensp;Bytes extracted and carried through, then nothing reads them — cheap wins once the runtime grows a consumer.</p>
 <ul class="plain">
   <li><b>3D models</b> decode to transforms, but with no mesh library to draw and no renderer <span class="ref">decode-model.js</span></li>
-  <li><b>Player 2's ship and loadout</b> are decoded and then dropped — nothing flies them <span class="ref">map-to-game.js</span></li>
   <li><b>Title art and staff-role labels</b> — decoded, not drawn <span class="ref">decode-sprites.js · decode-settings.js</span></li>
   <li><b>The instrument map's SNDPAC offsets and loop points</b> — enough to cut real Saturn samples out of a user-supplied sound bank, which nothing does <span class="ref">data/bgm-instruments.json</span></li>
 </ul>

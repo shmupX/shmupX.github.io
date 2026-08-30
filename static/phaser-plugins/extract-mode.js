@@ -410,6 +410,20 @@
     function extractables(scene) {
         var out = [];
         var recipe = scene.recipe || {};
+        // Both ships, when the game is in two-player. Player 2 is listed FIRST
+        // so player 1 wins a dead heat: hitTest keeps the LAST match at equal
+        // depth, and both ships sit at depth 50. Without an entry of its own,
+        // tapping player 2 falls through to the display-list scan and publishes
+        // a bogus enemy-shaped character named after its frame.
+        if (scene.p2Sprite && scene.p2Sprite.active && scene.p2Sprite.visible) {
+            out.push({
+                sprite: scene.p2Sprite, kind: 'player', key: 'playerData2',
+                // playerData2 is art only; the rest of the ship is playerData's.
+                record: recipe.playerData2
+                    ? Object.assign({}, recipe.playerData, recipe.playerData2)
+                    : (recipe.playerData || synthesizedRecord(scene.p2Sprite)),
+            });
+        }
         if (scene.playerSprite && scene.playerSprite.active && scene.playerSprite.visible) {
             out.push({
                 sprite: scene.playerSprite, kind: 'player', key: 'playerData',

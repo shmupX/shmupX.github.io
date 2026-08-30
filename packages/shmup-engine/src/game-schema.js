@@ -134,6 +134,18 @@ export function validateGameJson(g) {
         }
     }
 
+    // --- playerData2 (optional) ---
+    // The second ship's frames, present only when the import found P2 art in
+    // the save's global bank. Everything else about P2 comes from playerData,
+    // so the record is valid with nothing but a texture array.
+    if (g.playerData2 !== undefined) {
+        if (!isObj(g.playerData2)) {
+            err("playerData2 must be an object when present");
+        } else if (!isTextureArray(g.playerData2.texture)) {
+            err("playerData2.texture must be a non-empty string array");
+        }
+    }
+
     // --- bossData ---
     if (!isObj(g.bossData)) {
         err("bossData must be an object");

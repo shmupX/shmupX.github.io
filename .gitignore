@@ -25,3 +25,10 @@ packages/shmup-engine/fixtures/
 # them, and `deno task deza:manifest` writes an empty manifest when they are
 # absent rather than failing.
 static/editor/dezaemon/saves/
+
+# The SpacetimeDB module's build output and its npm tree. `spacetime build`
+# regenerates dist/bundle.js from spacetimedb/module/src, and the SDK there is
+# also what scripts/build-netplay.ts bundles the browser client against — so it
+# is a normal `npm install`, not something to commit.
+spacetimedb/module/dist/
+spacetimedb/module/node_modules/

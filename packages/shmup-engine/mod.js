@@ -39,12 +39,14 @@ export {
 } from "./src/payload-table.js";
 
 // --- game.json mapping (src/map-to-game.js) ---
-// decodePlayerArt and DUKE_PLAYER originate in src/player-art.js; map-to-game
+// decodePlayerArt/DUKE_PLAYER originate in src/player-art.js and
+// decodePlayer2Art/TROOPER_PLAYER in src/player2-art.js; map-to-game
 // re-exports them, so this module is their single flat-surface source.
 export {
   BLANK_WAVES,
   buildBlankGame,
   BUILTIN_DEFAULTS,
+  decodePlayer2Art,
   decodePlayerArt,
   DUKE_PLAYER,
   emptyWave,
@@ -58,6 +60,7 @@ export {
   MAX_STAGES,
   PLAYER_SHOT_DAMAGE_BY_LEVEL,
   SINGLE_LETTER_ENEMIES,
+  TROOPER_PLAYER,
 } from "./src/map-to-game.js";
 
 // --- Save decoding (src/decode/index.js) ---

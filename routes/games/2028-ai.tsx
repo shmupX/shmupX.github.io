@@ -387,6 +387,14 @@ export default define.page(function Game2028() {
       }
       <script src="/phaser-plugins/extract-mode.js" defer></script>
 
+      {
+        /* ONLINE 2P: the live-runs panel and the guest view. Inert unless the
+          page is opened with ?online=1 — see static/phaser-plugins/netplay-lobby.js
+          and the cmgNet* host half in game.bundle.js. */
+      }
+      <script src="/phaser-plugins/netplay-lobby.js" type="module" defer>
+      </script>
+
       {/* Advertise boot-time cheats to the cmg launcher's Guide OSD. */}
       <script dangerouslySetInnerHTML={{ __html: CHEATS_BROADCAST }} />
     </>

@@ -52,6 +52,9 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
     back to its own `loop.sleep()` if the line goes missing.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
+- `spacetimedb/` — the online-2P module (see **Two players** below), published
+  to SpacetimeDB. `static/netplay/` holds its generated client bindings and the
+  bundled browser client.
 
 ## Tasks
 
@@ -67,7 +70,73 @@ deno task build:linux     # the launcher as a Linux .AppImage
 deno task build:mac       # the launcher as a macOS .app
 deno task build:desktop   # …whichever of those three matches this host
 deno task build:ps2       # a level as a PlayStation 2 disc + USB folder
+
+deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
+deno task netplay:bundle  # bundle the online-2P browser client
+deno task netplay:generate  # regenerate its bindings from the module
+deno task netplay:publish   # publish the module (needs `spacetime login`)
 ```
+
+## Two players
+
+Local 2P is join-in: a second pad pressing any face or shoulder button — or `O`
+on a shared keyboard — puts a second ship in the air mid-run. It is gated on the
+save's own game-mode bit1 (Dezaemon 2's "2P join-in"), with `?players=2` forcing
+it on for levels that carry no decoded settings, the shipped 2028-ai game among
+them.
+
+Each ship carries its own HP, combo, powerups, barrier, charge, sub weapon and
+bomb — including the engine's one-bomb-per-player rule. **Score is shared**,
+which is a deliberate divergence from the hardware (see
+`static/dezaemon-parity.html`). The HUD splits the HP and combo troughs
+vertically, player 1 on top; the split animates in when player 2 joins and is a
+one-way latch for the stage, so a ship going down leaves an empty slot rather
+than resizing the bar player 1 has been reading all fight. One death does not
+end the run — only losing every ship does, and a downed player can take the seat
+back.
+
+Player 2 flies the **trooper** from shmup-party-phaser4, baked into the
+`game_asset` atlas beside Duke by `deno task player2:art` (idempotent, and it
+also writes `packages/shmup-engine/src/player2-art.js` for imports). A save that
+drew its own second ship — global sprite-bank refs 24-47, which the decoder now
+extracts — flies that instead.
+
+### Online
+
+`?online=1` turns on cross-machine 2P over
+[SpacetimeDB](https://spacetimedb.com). The browser running the game is the
+**host** and stays authoritative: this simulation is not deterministic, so there
+is nothing to lock-step. It announces its run, publishes a compact world
+snapshot ~15Hz, and reads a guest's buttons back. A guest does not simulate — it
+renders those snapshots and streams input, so joining is instant, needs no level
+download, and cannot desync. The trade is that a guest sees their own ship at
+the host's latency; their movement is predicted locally to hide most of it.
+
+- `spacetimedb/module/src/index.ts` — three tables (`session`, `snapshot`,
+  `input`), all keyed by the host's identity, plus a scheduled reaper for runs
+  whose browser vanished.
+- `static/netplay/src/` → `static/netplay/shmupx-netplay.js` — the browser
+  client, bundled same-origin for the same reason the engine is.
+- `static/phaser-plugins/netplay-lobby.js` — the live-runs panel on the title
+  screen (with a real preview drawn from the host's snapshots) and the guest
+  view.
+- `game.bundle.js` `cmgNet*` — the host half.
+- The launcher marks games with a live run (`svelte-src/Dashboard.svelte`).
+
+Every part fails soft: no bundle (an offline export), no network or no database
+leaves `?online=1` inert and the game plays exactly as it does offline.
+
+Working on it locally:
+
+```sh
+spacetimedb-standalone start --data-dir /tmp/stdb --jwt-pub-key-path /tmp/stdb/id_ecdsa.pub --jwt-priv-key-path /tmp/stdb/id_ecdsa
+cd spacetimedb && spacetime publish shmupx-netplay --server local --yes
+deno test -A --no-check tests/netplay_smoke_test.ts   # skips when no server
+```
+
+Then open the game with
+`?online=1&netplayUri=ws://127.0.0.1:3000&netplayDb=shmupx-netplay` in two tabs.
+Shipping it means `spacetime login` and `deno task netplay:publish`.
 
 Requires Deno canary (`deno upgrade canary`).
 

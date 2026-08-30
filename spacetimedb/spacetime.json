@@ -1,0 +1,5 @@
+{
+  "server": "maincloud",
+  "module-path": "./module",
+  "database": "shmupx-netplay"
+}

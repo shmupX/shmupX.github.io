@@ -1,0 +1,17 @@
+{
+  "name": "shmupx-netplay",
+  "version": "1.0.0",
+  "description": "Live-session presence and host-authoritative 2P relay for shmupX",
+  "private": true,
+  "scripts": {
+    "build": "spacetime build",
+    "publish": "spacetime publish"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "spacetimedb": "2.8.*"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.2"
+  }
+}

@@ -4259,6 +4259,166 @@
         "y": 0
       },
       "trimmed": true
+    },
+    "trooper_0": {
+      "frame": {
+        "h": 40,
+        "w": 28,
+        "x": 0,
+        "y": 2088
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 40,
+        "w": 28
+      },
+      "spriteSourceSize": {
+        "h": 40,
+        "w": 28,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "trooper_1": {
+      "frame": {
+        "h": 40,
+        "w": 28,
+        "x": 28,
+        "y": 2088
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 40,
+        "w": 28
+      },
+      "spriteSourceSize": {
+        "h": 40,
+        "w": 28,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "trooper_2": {
+      "frame": {
+        "h": 40,
+        "w": 28,
+        "x": 56,
+        "y": 2088
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 40,
+        "w": 28
+      },
+      "spriteSourceSize": {
+        "h": 40,
+        "w": 28,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "trooper_3": {
+      "frame": {
+        "h": 40,
+        "w": 28,
+        "x": 84,
+        "y": 2088
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 40,
+        "w": 28
+      },
+      "spriteSourceSize": {
+        "h": 40,
+        "w": 28,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "trooper_4": {
+      "frame": {
+        "h": 40,
+        "w": 28,
+        "x": 112,
+        "y": 2088
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 40,
+        "w": 28
+      },
+      "spriteSourceSize": {
+        "h": 40,
+        "w": 28,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "trooper_5": {
+      "frame": {
+        "h": 40,
+        "w": 28,
+        "x": 140,
+        "y": 2088
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 40,
+        "w": 28
+      },
+      "spriteSourceSize": {
+        "h": 40,
+        "w": 28,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "trooper_6": {
+      "frame": {
+        "h": 40,
+        "w": 28,
+        "x": 168,
+        "y": 2088
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 40,
+        "w": 28
+      },
+      "spriteSourceSize": {
+        "h": 40,
+        "w": 28,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "trooper_7": {
+      "frame": {
+        "h": 40,
+        "w": 28,
+        "x": 196,
+        "y": 2088
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 40,
+        "w": 28
+      },
+      "spriteSourceSize": {
+        "h": 40,
+        "w": 28,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
     }
   },
   "meta": {
@@ -4268,7 +4428,7 @@
     "scale": "1",
     "size": {
       "w": 2048,
-      "h": 2088
+      "h": 2128
     },
     "version": "1.0"
   }

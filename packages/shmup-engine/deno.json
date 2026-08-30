@@ -13,6 +13,7 @@
     "./atlas-pack": "./src/atlas-pack.js",
     "./game-schema": "./src/game-schema.js",
     "./player-art": "./src/player-art.js",
+    "./player2-art": "./src/player2-art.js",
     "./diff-ranges": "./src/diff-ranges.js"
   },
   "fmt": {

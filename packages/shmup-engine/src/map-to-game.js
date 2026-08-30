@@ -21,10 +21,11 @@
 //   - BootScene plays stage0..stage9
 
 import { DUKE_PLAYER, decodePlayerArt } from "./player-art.js";
+import { decodePlayer2Art, TROOPER_PLAYER } from "./player2-art.js";
 import { ITEM_TYPE_DROPS, zakoPlacementId } from "./decode/decode-stage.js";
 import { APPEARANCE_SCRIPTS, appearanceScript } from "./decode/appearance-table.js";
 
-export { decodePlayerArt, DUKE_PLAYER };
+export { decodePlayer2Art, decodePlayerArt, DUKE_PLAYER, TROOPER_PLAYER };
 
 export const GRID_COLS = 8;          // blank-game / legacy grid width
 export const MAX_STAGES = 10;        // Dezaemon's own maximum, and the runtime's
@@ -112,6 +113,7 @@ export const EVIL_INVADERS_PLAYER = {
 // Duke, and his frames do not: they ride along in decodePlayerArt().
 export const BUILTIN_DEFAULTS = {
     playerData: DUKE_PLAYER,
+    playerData2: TROOPER_PLAYER,
     starterEnemy: {
         name: "soliderA",
         score: 100,
@@ -154,6 +156,7 @@ export function buildBlankGame(defaults = BUILTIN_DEFAULTS) {
     return {
         stage0: { enemylist: Array.from({ length: BLANK_WAVES }, emptyWave) },
         playerData: clone(defaults.playerData),
+        playerData2: clone(defaults.playerData2),
         enemyData: { enemyA: clone(defaults.starterEnemy) },
         bossData: { boss0: clone(defaults.starterBoss) },
         meta: { version: "1.0" },
@@ -226,6 +229,13 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
     // frame in the stock game_asset atlas.
     const playerArt = decodePlayerArt();
     for (const frame of playerArt) {
+        usedKeys.add(frame.key);
+        sprites.push(frame);
+    }
+    // Player 2's ship travels the same way. It ships with every game, not just
+    // the 2P ones: which levels allow a second player is a runtime gate, and a
+    // ship that only half the imports carry would be a second failure mode.
+    for (const frame of decodePlayer2Art()) {
         usedKeys.add(frame.key);
         sprites.push(frame);
     }
@@ -511,6 +521,9 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
     // game pointing at frames that no longer exist: an invisible ship firing
     // invisible shots. This character's frames travel with it, in `sprites`.
     gameJson.playerData = clone(DUKE_PLAYER);
+    // Player 2 flies the trooper unless the save drew its own second ship
+    // (handled with the rest of the global art below).
+    gameJson.playerData2 = clone(TROOPER_PLAYER);
     if (backgroundCells.length) gameJson.backgroundCells = backgroundCells;
     gameJson.enemyData = enemyData;
     gameJson.bossData = bossData;
@@ -585,6 +598,18 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                 gameJson.playerData.name = "dezaShip";
             }
         }
+        // The SECOND ship (global bank refs 24-47), painted only by a save
+        // authored for 2P join-in. Where it exists it replaces the trooper the
+        // import defaults to; everything but the art is shared with P1 —
+        // Dezaemon gives each ship its own config block (settings +0x10, see
+        // meta.dezaemonSettings.ships), not its own bullets — so this record
+        // carries just the frames the runtime overlays on playerData.
+        if (art.player2 && art.player2.idle) {
+            const idle2 = keysOf(art.player2.idle).filter(Boolean);
+            if (idle2.length) {
+                gameJson.playerData2 = { name: "dezaShip2", texture: idle2 };
+            }
+        }
         if (gameJson.dezaemonBullets && art.bullets) {
             gameJson.dezaemonBullets.art = art.bullets.map((frames) => {
                 const keys = keysOf(frames).filter(Boolean);
@@ -623,6 +648,20 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             mainWeapon: decoded.settings.mainWeapon,
             mainWeapon2P: decoded.settings.loadouts
                 ? decoded.settings.loadouts[decoded.settings.ships[1].startLoadout].main
+                : undefined,
+            // Both ship config blocks in full (+0x0C P1, +0x10 P2). P2 join-in
+            // reads ships[1] for its own starting loadout, speed cap, power
+            // levels and autofire cadence; `mainWeapon2P` above is the same
+            // ship's starting main weapon, kept for callers that predate this.
+            ships: decoded.settings.ships
+                ? decoded.settings.ships.map((sh) => ({
+                    startLoadout: sh.startLoadout,
+                    rapidParam: sh.rapidParam,
+                    maxSpeed: sh.maxSpeed,
+                    initialPower: sh.initialPower,
+                    maxPower: sh.maxPower,
+                    autofireFrames: sh.autofireFrames,
+                }))
                 : undefined,
             // The four WEAPON LOADOUT presets in full — main, sub/option,
             // charge and bomb per preset — plus which one each ship starts on.
