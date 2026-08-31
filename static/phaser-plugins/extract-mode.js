@@ -266,8 +266,122 @@
             + '&libraryEditor=1&character=' + encodeURIComponent(characterName);
     }
 
+    // ---------------- a boss's projectiles ----------------
+    // A Dezaemon-imported boss keeps none of its own weaponry. Its bullet art
+    // and speed live in the save-wide `dezaemonBullets` bank, which the runtime
+    // reads off the RECIPE (game.bundle.js `bossWeapon`); its destructible
+    // parts, where the boss record names no art, are dressed from whichever
+    // enemyData record was decoded out of the boss's own stage (`partFrames`).
+    // Neither is reachable from the boss record, so a boss published as-is and
+    // flown in another game arrives unarmed: the frame walk finds no bullet
+    // names to pack, and both lookups then answer with the new game's own art
+    // or with nothing at all.
+    //
+    // Resolving them here, the same way the runtime would, puts real frame
+    // names on the record — which is all the frame walk, the packer and the
+    // library atlas need. bulletDataA/B/C and dezaemon.partArt are slots the
+    // runtime already reads (bossAdd, partFrames), so nothing downstream has to
+    // learn a new shape.
+    var BOSS_WEAPON_KEYS = ['bulletDataA', 'bulletDataB', 'bulletDataC'];
+    var BOSS_WEAPON_ALIASES = ['projectileDataA', 'projectileDataB', 'projectileDataC'];
+
+    // One weapon out of the save-wide bank, in the shape bossAdd stores and
+    // spawnDezaBossBullet reads.
+    function bankWeapon(recipe, weapon) {
+        var bullets = recipe && recipe.dezaemonBullets;
+        var art = bullets && bullets.art && bullets.art[weapon];
+        if (!Array.isArray(art) || !art.length) return null;
+        var cfg = bullets.configs && bullets.configs[weapon];
+        // bossWeapon's own speed, evaluated at rank 0: the rank term is a live
+        // difficulty reading that cannot travel, and it only ever adds.
+        var speed = cfg && typeof cfg.speedAdd === 'number' ? cfg.speedAdd * 2 : 0;
+        return {
+            texture: art.slice(),
+            speed: speed > 0 ? speed : 2.5,
+            damage: 1, hp: 1, score: 0, spgage: 0,
+        };
+    }
+
+    // Which weapons (A/B/C) a boss's fire points actually fire, and which part
+    // records they spawn. Types 0-2 are bullets, 3/4 spawn a part.
+    function bossFirePointUse(behavior) {
+        var weapons = {};
+        var parts = {};
+        var patterns = (behavior && behavior.patterns) || [];
+        for (var p = 0; p < patterns.length; p++) {
+            var fps = (patterns[p] && patterns[p].firePoints) || [];
+            for (var i = 0; i < fps.length; i++) {
+                var fp = fps[i];
+                if (!fp) continue;
+                // fn 0 is the empty geometry routine: decodeBossTrailer emits
+                // all 4x3 slots whether or not the editor filled them in, and
+                // a blank one decodes to weapon 0 / fn 0. The runtime drops
+                // those (game.bundle.js `fireDezaBullet`), so counting them
+                // would arm bosses that never fire and pack bullet art they
+                // do not use.
+                if (fp.type <= 2 && fp.shot && fp.shot.fn !== 0) weapons[fp.shot.weapon || 0] = 1;
+                else if (fp.spawn && fp.spawn.record != null) parts[fp.spawn.record] = 1;
+            }
+        }
+        return {
+            weapons: Object.keys(weapons).map(Number),
+            parts: Object.keys(parts).map(Number),
+        };
+    }
+
+    // partFrames' second rung, resolved once so it stops depending on the stage
+    // slot the boss happens to be standing in.
+    function bossPartArt(recipe, stageId, records, existing) {
+        var out = {};
+        var enemyData = (recipe && recipe.enemyData) || {};
+        for (var i = 0; i < records.length; i++) {
+            var record = records[i];
+            if (existing && existing[record] && existing[record].length) continue;
+            for (var k in enemyData) {
+                var d = enemyData[k];
+                if (d && d.dezaemon && d.dezaemon.stage === stageId
+                    && d.dezaemon.record === record
+                    && Array.isArray(d.texture) && d.texture.length) {
+                    out[record] = d.texture.slice();
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    // The boss record as it should LEAVE this game: its own weaponry and part
+    // art written down rather than looked up. A record that already carries a
+    // weapon keeps it — the stock 2028.Ai bosses arm themselves and must not be
+    // rearmed out of an imported save's bank.
+    function bossTravelRecord(recipe, record, stageId) {
+        var deza = record && record.dezaemon;
+        if (!deza || !deza.boss) return record;
+        var use = bossFirePointUse(deza.boss);
+        var out = JSON.parse(JSON.stringify(record));
+        for (var i = 0; i < use.weapons.length; i++) {
+            var w = use.weapons[i];
+            var key = BOSS_WEAPON_KEYS[w];
+            if (!key) continue;
+            var have = out[key] || out[BOSS_WEAPON_ALIASES[w]];
+            if (have && Array.isArray(have.texture) && have.texture.length) continue;
+            var proj = bankWeapon(recipe, w);
+            if (proj) out[key] = proj;
+        }
+        var partArt = bossPartArt(recipe, stageId, use.parts, deza.partArt);
+        if (Object.keys(partArt).length) {
+            out.dezaemon = out.dezaemon || {};
+            // Merge onto the CLONE's own map: `deza` still points into the live
+            // recipe, and assigning from it would put its frame arrays back
+            // into the record we are about to hand out.
+            out.dezaemon.partArt = Object.assign({}, out.dezaemon.partArt || {}, partArt);
+        }
+        return out;
+    }
+
     window.ShmupExtract = {
         dbURL: dbURL,
+        bossTravelRecord: bossTravelRecord,
         collectFrameNames: collectFrameNames,
         cropFrames: cropFrames,
         packFrames: packFrames,
@@ -438,9 +552,12 @@
                 // The hand-patched Akuma swap keeps bossStageId but reads its
                 // record from bossData.bossExtra — mirror that here.
                 var bossKey = scene.bossIsGoki ? 'bossExtra' : 'boss' + String(scene.bossStageId);
+                var bossRec = (recipe.bossData && recipe.bossData[bossKey]) || synthesizedRecord(e);
                 out.push({
                     sprite: e, kind: 'boss', key: bossKey,
-                    record: (recipe.bossData && recipe.bossData[bossKey]) || synthesizedRecord(e),
+                    // Written down now, while the recipe that answers them is
+                    // still on screen — see bossTravelRecord.
+                    record: bossTravelRecord(recipe, bossRec, scene.bossStageId),
                 });
             } else {
                 var letter = e.getData('enemyKey');

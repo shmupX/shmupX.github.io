@@ -1062,7 +1062,25 @@
     <div id="library-editor-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:90vh;width:min(1100px,94vw);max-width:94vw;">
             <div class="picker-title">CHARACTER LIBRARY EDITOR</div>
-            <div id="library-editor-host" style="height:72vh;"></div>
+            <!-- Firing range: the record's own projectile frames, fired. The
+                 element below draws a character; only this says whether it
+                 brought a weapon with it. -->
+            <div style="display:flex;align-items:center;gap:12px;margin:0 0 8px;padding:0 4px;">
+                <canvas id="library-editor-demo-canvas" width="360" height="108"
+                        style="image-rendering:pixelated;background:#111;flex:none;border-radius:6px;border:1px solid #333;"></canvas>
+                <div style="display:flex;flex-direction:column;gap:6px;min-width:0;">
+                    <!-- The range aims itself. The element below owns no outward
+                         signal for which character it is showing, and reaching
+                         into its shadow DOM to find out would break on its next
+                         deploy — so this picker drives the range and nothing else,
+                         and in particular never writes to the editor. -->
+                    <select id="library-editor-demo-pick" onchange="showLibraryDemo(this.value)"
+                            style="background:#1e293b;color:#e2e8f0;border:1px solid #475569;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;max-width:220px;"></select>
+                    <div id="library-editor-demo-note"
+                         style="font-size:10px;letter-spacing:.16em;opacity:.7;white-space:pre-line;"></div>
+                </div>
+            </div>
+            <div id="library-editor-host" style="height:62vh;"></div>
         </div>
     </div>
 
@@ -1380,6 +1398,16 @@
         }
 
         // ================== STATE ==================
+        // Every field the runtime reads a projectile record out of
+        // (game.bundle.js bossAdd -> `scene.bossProjData*`, spawnEnemyBullet).
+        // Bullets are spread over four independent slots, so anything that
+        // inspects or repairs one has to cover all of them.
+        const BOSS_PROJECTILE_KEYS = [
+            'bulletData', 'projectileData',
+            'bulletDataA', 'projectileDataA',
+            'bulletDataB', 'projectileDataB',
+            'bulletDataC', 'projectileDataC',
+        ];
         let dirHandle = null;
         let gameData = null;
         let atlasData = null;
@@ -1511,6 +1539,11 @@
         // Firebase atlas never overrides unrelated frames that may have been
         // repacked locally since the level was last saved.
         let customFrameKeys = new Set();
+        // Set when the in-memory atlas gains pixels the cloud copy does not have
+        // yet, cleared when a whole-game save writes it or a load replaces it.
+        // The per-entry save reads it: a record and its art go to two different
+        // places, and only the whole-game save writes the second one.
+        let atlasAheadOfCloud = false;
         let currentEnemyKey = null;
         let currentEditorTab = 'player'; // 'player', 'enemies' or 'bosses'
 
@@ -1957,12 +1990,20 @@
             for (const d of Object.values(enemyData)) {
                 if (!d) continue;
                 collectTextures(d.texture);
-                if (d.bulletData) collectTextures(d.bulletData.texture);
+                for (const pk of BOSS_PROJECTILE_KEYS) if (d[pk]) collectTextures(d[pk].texture);
             }
             for (const b of Object.values(bossData)) {
                 if (!b) continue;
                 if (b.anim) { for (const [k, animFrames] of Object.entries(b.anim)) { if (!k.startsWith('_')) collectTextures(animFrames); } }
-                if (b.bulletData) collectTextures(b.bulletData.texture);
+                // Every slot the runtime arms a boss out of, not just
+                // bulletData — a boss brought in from the library carries
+                // bulletDataA/B/C, and its parts carry dezaemon.partArt,
+                // which had no safety net anywhere: unresolvable part art
+                // does not draw a placeholder, the part simply never spawns.
+                for (const pk of BOSS_PROJECTILE_KEYS) if (b[pk]) collectTextures(b[pk].texture);
+                if (b.dezaemon && b.dezaemon.partArt) {
+                    for (const partFrames of Object.values(b.dezaemon.partArt)) collectTextures(partFrames);
+                }
             }
 
             if (missing.size > 0) {
@@ -2810,6 +2851,36 @@
             return true;
         }
 
+        // Every frame name an entry stands on, at the depth the runtime reads
+        // (anim.*, texture, the bullet records' own texture lists). Underscored
+        // keys are the editor's own disabled variants and never reach the game.
+        function entryFrameNames(entry) {
+            const names = new Set();
+            const walk = (obj, depth) => {
+                if (!obj || typeof obj !== 'object' || depth > 2) return;
+                for (const k of Object.keys(obj)) {
+                    if (k.startsWith('_')) continue;
+                    const v = obj[k];
+                    if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'string')) {
+                        for (const f of v) names.add(f);
+                    } else if (v && typeof v === 'object') walk(v, depth + 1);
+                }
+            };
+            walk(entry, 0);
+            return [...names];
+        }
+
+        // Frame names an entry stands on that this level's atlas does not have.
+        // A record and the pixels it names are written to two different places
+        // in the cloud save, and only the FULL game save writes the second one
+        // — so a per-entry save can strand a character brought in from the
+        // library on art nobody else will ever see, and the runtime answers an
+        // unknown frame with the atlas's first one (the player ship).
+        function entryFramesMissingFromAtlas(entry) {
+            const have = (atlasData && atlasData.frames) || {};
+            return entryFrameNames(entry).filter((f) => !have[f]);
+        }
+
         function saveCurrentEnemy() {
             if (syncEnemyEditorForm(true)) {
                 const tab = currentEditorTab;
@@ -2819,6 +2890,24 @@
                 if (fbName) {
                     initFirebase();
                     if (firebaseDb) {
+                        // This entry's art rides in the level's atlas, which only
+                        // the full SAVE GAME writes. If any of it is custom, the
+                        // record alone is not a save — send them there instead of
+                        // shipping frame names with nothing behind them.
+                        const entryNow = tab === 'player' ? playerData
+                            : (tab === 'bosses' ? bossData : enemyData)[currentEnemyKey];
+                        const custom = atlasAheadOfCloud;
+                        const dangling = entryFramesMissingFromAtlas(entryNow);
+                        if (dangling.length) {
+                            alert(label + " references " + dangling.length + " frame(s) this level's atlas\n"
+                                + 'does not have — they would render as the player ship:\n\n  '
+                                + dangling.slice(0, 6).join('\n  ')
+                                + (dangling.length > 6 ? '\n  …' : ''));
+                            return;
+                        }
+                        if (custom && !confirm(label + " stands on this level's custom art, which only\n"
+                            + 'SAVE GAME writes to the cloud. Save the whole game now?')) return;
+                        if (custom) { saveToFirebase(); return; }
                         const dataKey = tab === 'player' ? 'playerData' : (tab === 'bosses' ? 'bossData' : 'enemyData');
                         const dataVal = tab === 'player' ? (playerData || {}) : (tab === 'bosses' ? (bossData || {}) : (enemyData || {}));
                         const ref = firebaseDb.ref(`${LEVEL_LOADER_DEFAULTS.levelsPath}/${fbName}/${dataKey}`);
@@ -2902,6 +2991,225 @@
             } catch (e) { /* row stays thumbless */ }
         }
 
+        // Every weapon a library record carries. A player keeps one list per
+        // shoot mode, an enemy one bullet record, a boss up to four — and it
+        // really is up to four: pyramid fires evilEye out of projectileDataA
+        // and hexagram out of projectileDataB, so answering with the first list
+        // found would under-report half its armament. Alias pairs collapse the
+        // way the runtime resolves them (bossAdd: bulletDataX || projectileDataX).
+        //
+        // An empty answer is a normal one, not an error: pruneFrameNames drops a
+        // frame list whose art was missing at publish time, so "carries a bullet
+        // record but no texture" means nothing was published — and that is the
+        // one thing the editor should say out loud.
+        const LIBRARY_WEAPON_SLOTS = [
+            ['shootNormal'], ['shootBig'], ['shoot3way'],
+            ['bulletData', 'projectileData'],
+            ['bulletDataA', 'projectileDataA'],
+            ['bulletDataB', 'projectileDataB'],
+            ['bulletDataC', 'projectileDataC'],
+        ];
+
+        function libraryWeapons(rec) {
+            const ok = (v) => Array.isArray(v) && v.length && v.every(s => typeof s === 'string');
+            const out = [];
+            if (!rec) return out;
+            for (const aliases of LIBRARY_WEAPON_SLOTS) {
+                for (const k of aliases) {
+                    const w = rec[k];
+                    if (w && ok(w.texture)) { out.push({ slot: k, texture: w.texture, frameRate: w.frameRate }); break; }
+                }
+            }
+            return out;
+        }
+
+        // ---- the library editor's firing range ----
+        // The <character-editor> element is served from the characters module
+        // and shows a character's art. What it cannot show is whether the
+        // character brought its WEAPON with it — a boss extracted out of a
+        // Dezaemon save keeps its bullets in the save-wide bank, not in its own
+        // record, so it publishes disarmed and only says so once it is in a
+        // level and firing the wrong thing. This strip fires the record's own
+        // projectile frames beside the editor, so "no projectiles published"
+        // is something you read here rather than discover later.
+        //
+        // It costs no network: the character's atlas is already decoded and
+        // pinned in libraryAtlasCache by the time the editor mounts.
+        const LIB_DEMO_W = 360, LIB_DEMO_H = 108, LIB_BODY_BOX = 72, LIB_SHOT_BOX = 26;
+        let libraryDemo = null;
+        let libraryDemoRaf = 0;
+        // Bumped on every aim. The picker can be changed faster than a record
+        // and its atlas come back, and without this a slow earlier fetch would
+        // land last and leave the range firing the character you just left.
+        let libraryDemoGen = 0;
+
+        function stopLibraryDemo() {
+            libraryDemo = null;
+            if (libraryDemoRaf) cancelAnimationFrame(libraryDemoRaf);
+            libraryDemoRaf = 0;
+        }
+
+        function startLibraryDemoTicker() {
+            if (libraryDemoRaf) return;
+            let last = 0;
+            const tick = (now) => {
+                const modal = document.getElementById('library-editor-modal');
+                // Cancels itself on every close path the modal has, including
+                // the backdrop's inline onclick, which knows nothing about this.
+                if (!libraryDemo || !modal || modal.classList.contains('hidden')) {
+                    stopLibraryDemo();
+                    return;
+                }
+                libraryDemoRaf = requestAnimationFrame(tick);
+                const dt = last ? Math.min(100, now - last) : 16;
+                last = now;
+                drawLibraryDemo(libraryDemo, dt);
+            };
+            libraryDemoRaf = requestAnimationFrame(tick);
+        }
+
+        function blitLibraryFrame(ctx, atlas, f, cx, cy, scale) {
+            const { x, y, w, h } = f.frame;
+            ctx.drawImage(atlas.img, x, y, w, h,
+                Math.round(cx - w * scale / 2), Math.round(cy - h * scale / 2), w * scale, h * scale);
+        }
+
+        function drawLibraryDemo(d, dt) {
+            const ctx = d.ctx;
+            ctx.clearRect(0, 0, LIB_DEMO_W, LIB_DEMO_H);
+            d.t += dt;
+
+            // Firing swaps the body to its attack art for as long as the shot
+            // takes to clear the muzzle — most Dezaemon bosses have a one-frame
+            // idle and would otherwise stand still through their own demo.
+            const set = d.fireFlash > 0 && d.fire.length ? d.fire : d.body;
+            const cy = LIB_DEMO_H / 2;
+            blitLibraryFrame(ctx, d.atlas, set[Math.floor(d.t / 120) % set.length], d.bodyX, cy, d.bodyScale);
+            if (d.fireFlash > 0) d.fireFlash -= dt;
+
+            if (!d.weapons.length) return;
+            d.fireAcc += dt;
+            if (d.fireAcc >= d.fireEvery && d.bullets.length < 16) {
+                d.fireAcc = 0;
+                d.fireFlash = 260;
+                // Round-robin, so a two-weapon boss shows BOTH barrels rather
+                // than looking like it only published the first one.
+                d.bullets.push({ x: d.muzzleX, t: 0, w: d.nextWeapon });
+                d.nextWeapon = (d.nextWeapon + 1) % d.weapons.length;
+            }
+            for (let i = d.bullets.length - 1; i >= 0; i--) {
+                const b = d.bullets[i];
+                b.x += dt * 0.13;
+                b.t += dt;
+                if (b.x > LIB_DEMO_W + 12) { d.bullets.splice(i, 1); continue; }
+                const w = d.weapons[b.w];
+                blitLibraryFrame(ctx, d.atlas, w.frames[Math.floor(b.t / w.msPerFrame) % w.frames.length],
+                    b.x, cy, w.scale);
+            }
+        }
+
+        // Fit art into a box: whole-pixel magnification for the small sprites
+        // Dezaemon art is mostly made of, fractional only to shrink a 128px boss.
+        function libraryDemoScale(f, box) {
+            const s = Math.min(box / f.frame.w, box / f.frame.h);
+            return s >= 1 ? Math.floor(s) : s;
+        }
+
+        // Names for the range's own picker. Shallow: this only needs the keys,
+        // and the full /characters read is one base64 atlas per record.
+        async function fillLibraryDemoPicker(selected) {
+            const pick = document.getElementById('library-editor-demo-pick');
+            if (!pick) return;
+            showLibraryDemo(selected);
+            const gen = libraryDemoGen;
+            let names = [];
+            try {
+                const res = await fetch(`${FIREBASE_CONFIG.databaseURL}/characters.json?shallow=true`);
+                if (res.ok) names = Object.keys((await res.json()) || {}).sort();
+            } catch (e) { /* picker stays as-is */ }
+            if (selected && !names.includes(selected)) names.unshift(selected);
+            pick.textContent = '';
+            for (const n of names) {
+                const o = document.createElement('option');
+                // characters/ is an open-write path — names are
+                // attacker-controllable, so textContent only.
+                o.value = n;
+                o.textContent = n;
+                if (n === selected) o.selected = true;
+                pick.appendChild(o);
+            }
+            // Only auto-aim if nothing has aimed since: the user may already have
+            // picked while the name list was in flight.
+            if (!selected && names.length && libraryDemoGen === gen) showLibraryDemo(names[0]);
+        }
+
+        // Aim the strip at one library character. Resolves false when there is
+        // nothing to draw, so the caller can say why.
+        async function showLibraryDemo(name) {
+            stopLibraryDemo();
+            const gen = ++libraryDemoGen;
+            const stale = () => gen !== libraryDemoGen;
+            const canvas = document.getElementById('library-editor-demo-canvas');
+            const note = document.getElementById('library-editor-demo-note');
+            if (!canvas || !note) return false;
+            canvas.getContext('2d').clearRect(0, 0, LIB_DEMO_W, LIB_DEMO_H);
+            note.textContent = '';
+            if (!name) { note.textContent = 'PICK A CHARACTER TO SEE IT FIRE'; return false; }
+            let rec = null;
+            try {
+                const res = await fetch(`${FIREBASE_CONFIG.databaseURL}/characters/${encodeURIComponent(name)}.json`);
+                if (res.ok) rec = await res.json();
+            } catch (e) { /* handled below */ }
+            if (stale()) return false;
+            if (!rec) { note.textContent = "COULD NOT READ '" + name + "'"; return false; }
+
+            const atlas = await loadLibraryAtlas(rec.textureKey || name);
+            if (stale()) return false;
+            if (!atlas) { note.textContent = "COULD NOT LOAD '" + name + "' ART"; return false; }
+            const resolve = (names) => (names || []).map((n) => libraryFrameOf(atlas, n)).filter(Boolean);
+            const body = resolve(libraryFrames(rec));
+            if (!body.length) { note.textContent = 'NO BODY ART PUBLISHED'; return false; }
+            // One entry per armed slot, each with its own art, animation rate
+            // and magnification — the record gives every weapon its own.
+            const weapons = [];
+            for (const w of libraryWeapons(rec)) {
+                const frames = resolve(w.texture);
+                if (!frames.length) continue;
+                weapons.push({
+                    slot: w.slot, frames,
+                    scale: libraryDemoScale(frames[0], LIB_SHOT_BOX),
+                    msPerFrame: Math.max(40, Math.min(400, 1000 / (Number(w.frameRate) || 11))),
+                });
+            }
+            const anim = rec.anim || {};
+            const fire = resolve(anim.shoot || anim.attack);
+
+            const bodyScale = libraryDemoScale(body[0], LIB_BODY_BOX);
+            const bodyX = 8 + body[0].frame.w * bodyScale / 2;
+            libraryDemo = {
+                ctx: canvas.getContext('2d'),
+                atlas, body, weapons, fire, bodyScale, bodyX,
+                fireFlash: 0,
+                nextWeapon: 0,
+                muzzleX: bodyX + body[0].frame.w * bodyScale / 2,
+                // Records store the interval in engine frames; a tenth of it in
+                // milliseconds keeps a boss on interval 250 legible without
+                // turning a fast enemy into a wall.
+                fireEvery: Math.max(220, Math.min(1400, Number(rec.interval) * 10 || 700)),
+                fireAcc: 1e9, // fire on the first tick rather than after a wait
+                bullets: [],
+                t: 0,
+            };
+            libraryDemo.ctx.imageSmoothingEnabled = false;
+            const shotFrames = weapons.reduce((n, w) => n + w.frames.length, 0);
+            note.textContent = weapons.length
+                ? name.toUpperCase() + '  ·  ' + weapons.length + (weapons.length === 1 ? ' WEAPON' : ' WEAPONS')
+                    + '  ·  ' + shotFrames + ' PROJECTILE FRAMES\n' + weapons.map((w) => w.slot).join(', ')
+                : name.toUpperCase() + '  ·  NO PROJECTILES PUBLISHED';
+            startLibraryDemoTicker();
+            return true;
+        }
+
         async function openCharacterLibrary() {
             const overlay = document.getElementById('character-library-modal');
             overlay.classList.remove('hidden');
@@ -2961,6 +3269,22 @@
         }
 
         // "+ NEW": seed a fresh entry from the same defaults a new game uses.
+        // Which boss a library character should stand in for, when every slot is
+        // already spoken for. Returns null if the user backs out or names a slot
+        // that does not exist.
+        function askBossSlotToReplace(name) {
+            const keys = Object.keys(bossData || {}).filter((k) => /^boss\d+$/.test(k)).sort();
+            if (!keys.length) return null;
+            const menu = keys.map((k) => '  ' + k + '  ·  ' + bossDisplayName(k, bossData[k])).join('\n');
+            const pick = prompt("Every boss slot is taken. Which one should '" + name
+                + "' replace?\n\n" + menu + '\n', keys[0]);
+            if (!pick) return null;
+            const key = pick.trim();
+            if (!bossData[key]) { alert("'" + key + "' is not a boss slot in this game"); return null; }
+            if (!confirm('Replace ' + bossDisplayName(key, bossData[key]) + " with '" + name + "'?")) return null;
+            return key;
+        }
+
         function addNewCharacterEntry() {
             const defaults = getDezaemonDefaults();
             if (!defaults) {
@@ -2989,7 +3313,14 @@
         // is cropped out of the library atlas and folded into the level atlas
         // under collision-safe names, and the entry's frame lists are rewritten
         // to match.
-        async function importCharacterFromLibrary(name, rec) {
+        // targetKey names an existing slot to OVERWRITE. Without it the import
+        // appends, which a full game cannot do — Master Arena Mod holds boss0..9,
+        // so "add" was a dead end there and the only way to fly a library boss
+        // was to retype its frame names into a slot by hand, which copies the
+        // NAMES and leaves the pixels behind in the library. That is the whole
+        // bug: replacing has to go through this function, because this is where
+        // the art is cropped out of the library atlas and folded into the level.
+        async function importCharacterFromLibrary(name, rec, targetKey) {
             if (!atlasData || !atlasImage) {
                 alert("Load or start a game first — the character's art is copied into this level's atlas.");
                 return;
@@ -3004,12 +3335,17 @@
 
             const safe = String(name).replace(/[^A-Za-z0-9_]/g, '_');
             const renames = {};
+            const unresolved = [];
             let idx = 0;
             const existing = atlasData.frames || {};
             const mapFrames = (arr) => arr.map((old) => {
                 if (renames[old]) return renames[old];
                 const f = libraryFrameOf(atlas, old);
-                if (!f) return old; // unresolved names are left as-is
+                // A name the character's own atlas cannot answer. Left as-is
+                // it would reach the runtime pointing at nothing, and Phaser
+                // draws the atlas's first frame — the player ship — rather
+                // than failing. Say so instead of letting it through quietly.
+                if (!f) { unresolved.push(old); return old; }
                 const nk = safe + '_' + (idx++) + '.png';
                 const c = document.createElement('canvas');
                 c.width = f.frame.w; c.height = f.frame.h;
@@ -3029,12 +3365,31 @@
                 }
             };
             walk(entry, 0);
-            await mergeExtraSpritesIntoAtlas();
+            // The merge is what actually puts the cropped art in the level
+            // atlas; it resolves false when the repacked sheet will not
+            // encode. Ignoring that leaves the entry naming frames nothing
+            // has, which is invisible until the level is played.
+            const merged = await mergeExtraSpritesIntoAtlas();
+            const landed = (atlasData && atlasData.frames) || {};
+            const lost = Object.values(renames).filter((nk) => !landed[nk]);
+            if (!merged || lost.length) {
+                alert("Could not fold '" + name + "' into this level's atlas — "
+                    + (lost.length || 'all') + " frame(s) did not land.\n"
+                    + 'Nothing was added; the level is unchanged.');
+                for (const nk of Object.values(renames)) customFrameKeys.delete(nk);
+                return;
+            }
+            if (unresolved.length) {
+                alert("'" + name + "' names " + unresolved.length + " frame(s) its own atlas\n"
+                    + 'does not carry. They will render as the player ship:\n\n  '
+                    + unresolved.slice(0, 6).join('\n  ')
+                    + (unresolved.length > 6 ? '\n  …' : ''));
+            }
 
             let key;
             if (kind === 'boss') {
-                key = nextBossKey();
-                if (!key) return alert('All boss slots are taken');
+                key = targetKey || nextBossKey() || askBossSlotToReplace(name);
+                if (!key) return;
                 if (!entry.anim) { entry.anim = { idle: entry.texture || [] }; delete entry.texture; }
                 if (!entry.anim.idle || !entry.anim.idle.length) entry.anim.idle = libraryFrames(entry);
                 if (!entry.bulletData) entry.bulletData = {};
@@ -3051,7 +3406,7 @@
             } else {
                 if (entry.hp === undefined) entry.hp = 1;
                 if (entry.score === undefined) entry.score = 100;
-                key = nextEnemyKey();
+                key = targetKey || nextEnemyKey();
                 if (!key) return alert('No free enemy key');
                 enemyData[key] = entry;
                 gameData.enemyData = enemyData;
@@ -3077,7 +3432,7 @@
                 suggested = (entry && entry.name) || currentEnemyKey;
             }
             if (!entry) return alert('Nothing to publish');
-            const name = await publishEntryToLibrary(entry, suggested);
+            const name = await publishEntryToLibrary(entry, suggested, currentEditorTab === 'player' ? null : currentEnemyKey);
             if (name) alert(`Published '${name}' to the shared library.`);
         }
 
@@ -3087,10 +3442,17 @@
         // /phaser-plugins/extract-mode.js (window.ShmupExtract) — the same
         // code the in-game EXTRACT MODE runs against live Phaser textures.
         // Resolves the published name, or null when nothing was written.
-        async function publishEntryToLibrary(entry, suggested) {
+        async function publishEntryToLibrary(entry, suggested, entryKey) {
             const EX = window.ShmupExtract;
             if (!EX) { alert('extract-mode.js failed to load'); return null; }
             if (!atlasData || !atlasImage) { alert('Load a game first'); return null; }
+            // A boss arms itself out of the LEVEL, not out of its own record
+            // (extract-mode.js `bossTravelRecord`). Resolving that here is what
+            // makes a boss published from the editor travel armed, the way one
+            // published from the game's own EXTRACT MODE already does — the two
+            // doors write to the same library and must not disagree.
+            const bossSlot = /^boss(\d+)$/.exec(entryKey || '');
+            if (bossSlot) entry = EX.bossTravelRecord(gameData, entry, Number(bossSlot[1]));
             let name = prompt('Publish to the shared library as:', EX.suggestName(suggested));
             if (!name) return null;
             name = name.trim();
@@ -3128,6 +3490,7 @@
             const modal = document.getElementById('library-editor-modal');
             const host = document.getElementById('library-editor-host');
             modal.classList.remove('hidden');
+            fillLibraryDemoPicker(characterName);
             if (host.dataset.loaded) {
                 if (!characterName) return;
                 host.textContent = '';
@@ -3233,7 +3596,7 @@
             save.style.cssText = 'background:#84cc16;color:#000;font-weight:700;';
             save.textContent = 'SAVE TO LIBRARY';
             save.onclick = async () => {
-                const name = await publishEntryToLibrary(entry, entry.name || (kind === 'boss' ? bossDisplayName(key, entry) : key));
+                const name = await publishEntryToLibrary(entry, entry.name || (kind === 'boss' ? bossDisplayName(key, entry) : key), key);
                 if (name) {
                     document.getElementById('extract-info-modal').classList.add('hidden');
                     if (confirm(`Saved '${name}'. Open it in the CHARACTER LIBRARY EDITOR?`)) openLibraryEditor(name);
@@ -3777,6 +4140,7 @@
                     atlasImage = img;
                     extraSprites = [];
                     replacedFrames = {};
+                    atlasAheadOfCloud = true;
                     buildFrameThumbs();
                     // Publish before resolving: the caller (an import, or a new
                     // game seeding the player's art) is the last step before the
@@ -8242,6 +8606,9 @@ function GAME3D_RUNTIME(DATA) {
                 // re-minted every save would orphan the board each time.
                 payload.gameId = await ensureGameId(name);
                 await firebaseDb.ref(`${LEVEL_LOADER_DEFAULTS.levelsPath}/${name}`).update(payload);
+                // The atlas snapshot went up with the records, so a later
+                // per-entry save no longer has art to strand.
+                atlasAheadOfCloud = false;
                 if (gameData) gameData.gameId = payload.gameId;
                 document.getElementById('firebase-level-name').value = name;
                 alert(`Game "${name}" saved!\nIncludes: title, story, sprites, levels, enemies & bosses`);
@@ -8319,6 +8686,7 @@ function GAME3D_RUNTIME(DATA) {
                 // must be imported so the Atlas Manager renders the customizations
                 // and the next save preserves them — otherwise editing a level after
                 // load drops every previously-saved override.
+                atlasAheadOfCloud = false;
                 if (d.atlasImageDataURL && d.atlasFrames) {
                     const hasLocalAtlas = !!(atlasData && atlasData.frames && Object.keys(atlasData.frames).length > 0);
                     if (!hasLocalAtlas) {
@@ -8361,7 +8729,12 @@ function GAME3D_RUNTIME(DATA) {
                             // loaded from the cloud used to play with none of
                             // its own art — its enemies and its ship resolved to
                             // whatever the local atlas happened to have.
-                            mergeExtraSpritesIntoAtlas().then(renderAtlas);
+                            mergeExtraSpritesIntoAtlas().then(() => {
+                                // This merge only re-materialised what the cloud
+                                // already holds, so the atlas is level with it.
+                                atlasAheadOfCloud = false;
+                                renderAtlas();
+                            });
                         };
                         fbImg.onerror = () => {
                             customFrameKeys = new Set();

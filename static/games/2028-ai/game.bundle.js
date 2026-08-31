@@ -191,6 +191,19 @@
     }
     return firebase2.database();
   }
+  // Every field bossAdd will read a projectile record out of (game.bundle.js,
+  // `scene.bossProjData*`). A boss's bullets are spread across four
+  // independent slots, so anything that repairs one has to repair all of them.
+  var BOSS_PROJECTILE_KEYS = [
+    "bulletData",
+    "projectileData",
+    "bulletDataA",
+    "projectileDataA",
+    "bulletDataB",
+    "projectileDataB",
+    "bulletDataC",
+    "projectileDataC"
+  ];
   function createLevelLoaderPlugin(Phaser2 = globalThis.Phaser) {
     if (!Phaser2 || !Phaser2.Plugins || !Phaser2.Plugins.ScenePlugin) {
       throw new Error(
@@ -457,12 +470,16 @@
                   }
                 }
               }
-              if (fb && fb.bulletData && fb.bulletData.texture) {
-                const fbBulletTex = fb.bulletData.texture;
-                if (fbBulletTex.length > 0 && !atlasFrames[fbBulletTex[0]]) {
-                  if (lb && lb.bulletData && lb.bulletData.texture) {
-                    fb.bulletData.texture = lb.bulletData.texture;
-                  }
+              // Every slot bossAdd reads a projectile record out of, not just
+              // `bulletData`: a boss whose art did not travel with it fires
+              // duke_0 at the player otherwise.
+              for (const pk of BOSS_PROJECTILE_KEYS) {
+                const fbProj = fb && fb[pk];
+                if (!fbProj || !Array.isArray(fbProj.texture) || !fbProj.texture.length) continue;
+                if (atlasFrames[fbProj.texture[0]]) continue;
+                const lbProj = lb && lb[pk];
+                if (lbProj && lbProj.texture && lbProj.texture.length) {
+                  fbProj.texture = lbProj.texture;
                 }
               }
             }
@@ -2428,12 +2445,14 @@
                       }
                     }
                   }
-                  if (fb && fb.bulletData && fb.bulletData.texture) {
-                    var fbBulletTex = fb.bulletData.texture;
-                    if (fbBulletTex.length > 0 && !bossAtlasFrames[fbBulletTex[0]]) {
-                      if (lb && lb.bulletData && lb.bulletData.texture) {
-                        fb.bulletData.texture = lb.bulletData.texture;
-                      }
+                  for (var pi = 0; pi < BOSS_PROJECTILE_KEYS.length; pi++) {
+                    var pk = BOSS_PROJECTILE_KEYS[pi];
+                    var fbProj = fb && fb[pk];
+                    if (!fbProj || !Array.isArray(fbProj.texture) || !fbProj.texture.length) continue;
+                    if (bossAtlasFrames[fbProj.texture[0]]) continue;
+                    var lbProj = lb && lb[pk];
+                    if (lbProj && lbProj.texture && lbProj.texture.length) {
+                      fbProj.texture = lbProj.texture;
                     }
                   }
                 }
@@ -5076,6 +5095,16 @@
     return null;
   }
   function bossWeapon(scene, weapon) {
+    // A boss carrying its OWN bullet record wins the slot. Nothing an import
+    // produces does — map-to-game leaves every boss on `bulletData: {}` and
+    // arms them out of the save-wide bank below — so this can only be a
+    // deliberate statement by a character that was extracted into the library
+    // with its weaponry written down (extract-mode.js `bossTravelRecord`), and
+    // the bank belonging to whichever game it landed in must not overrule it.
+    var own = weapon === 1 ? scene.bossProjDataB : weapon === 2 ? scene.bossProjDataC : scene.bossProjDataA;
+    if (own && own.texture && own.texture.length && bulletFramesInAtlas(scene, own.texture, null).length) {
+      return own;
+    }
     // The save's own bullet art + config for this global type, when painted.
     var bullets = scene.recipe && scene.recipe.dezaemonBullets;
     var art = bullets && bullets.art && bullets.art[weapon];
@@ -5099,7 +5128,7 @@
     return pd && pd.texture && pd.texture.length ? pd : DEZA_BOSS_BULLET;
   }
   function spawnDezaBossBullet(scene, x, y, dirX, dirY, projData, tint) {
-    var frames = projData.texture || [];
+    var frames = bulletFramesInAtlas(scene, projData.texture, DEZA_BOSS_BULLET.texture);
     var bullet = scene.add.sprite(x, y, "game_asset", frames[0] || "normalProjectile0.gif");
     bullet.setOrigin(0.5);
     bullet.setDepth(47);
@@ -7850,6 +7879,30 @@
     }
     return result;
   }
+  // resolveFrames, but only the names this atlas actually carries. Phaser
+  // answers an unknown frame with the texture's FIRST frame — in a game_asset
+  // that starts at duke_0, a boss and its bullets come out as the player ship.
+  // A record can name art this level never got (a character extracted out of
+  // another game, a level whose atlas did not travel with its records), so
+  // where a stock fallback exists it is far better to draw that: wrong art
+  // that reads as wrong beats wrong art that reads as a bug in the boss.
+  function bulletFramesInAtlas(scene, frames, fallback) {
+    var atlas = null;
+    try {
+      atlas = scene.textures.get("game_asset");
+    } catch (e) {
+    }
+    var keep = function(list) {
+      var out = [];
+      for (var i = 0; i < (list || []).length; i++) {
+        var f = resolveFrame(scene, "game_asset", list[i]);
+        if (!atlas || atlas.has(f)) out.push(f);
+      }
+      return out;
+    };
+    var kept = keep(frames);
+    return kept.length ? kept : keep(fallback);
+  }
   function createEnemy(scene, data, x, y, itemName) {
     var frames = resolveFrames(scene, "game_asset", data.texture || []);
     var frameKey = frames[0] || "soliderA0.gif";
@@ -9762,7 +9815,13 @@
     scene.bossProjDataC = bossData.bulletDataC || bossData.projectileDataC || null;
     scene.bossProjData = bossData.bulletData || bossData.projectileData || scene.bossProjDataA;
     triggerHaptic("bossEnter");
-    var bossFrames = bossData.anim && bossData.anim.idle || bossData.texture || [];
+    // Same reasoning as the bullets: art named by a record that travelled here
+    // without its pixels must not resolve to duke_0, the atlas's first frame.
+    var bossFrames = bulletFramesInAtlas(
+      scene,
+      bossData.anim && bossData.anim.idle || bossData.texture,
+      ["bison_idle0.gif", "bison_idle1.gif", "bison_idle2.gif", "bison_idle3.gif"]
+    );
     var bossFrame = bossFrames[0] || "bison_idle0.gif";
     scene.bossSprite = scene.add.sprite(GCX4, -50, "game_asset", bossFrame);
     scene.bossSprite.setOrigin(0.5);
@@ -9779,22 +9838,32 @@
     var bossShadowOffsetY = bossData.shadowOffsetY || 10;
     scene.bossShadow = createShadow(scene, scene.bossSprite, bossFrame, bossShadowReverse, bossShadowOffsetY);
     scene.bossSprite.setData("shadow", scene.bossShadow);
+    // The per-boss animation states below are handed to _setBossAnim, which
+    // calls setFrame() on the raw names — so they need the same atlas filter
+    // the entry art got, or a record that arrived without its pixels flips the
+    // boss to duke_0 the moment it changes stance. An UNRESOLVABLE set filters
+    // down to empty, and _setBossAnim leaves the current frame alone rather
+    // than drawing the wrong one; a set the record never defined stays empty
+    // exactly as before.
+    var bossAnimFrames = function(list) {
+      return bulletFramesInAtlas(scene, list, null);
+    };
     if (stageId === 3 && bossData.anim) {
-      scene.vegaAnimIdle = bossData.anim.idle || [];
-      scene.vegaAnimShoot = bossData.anim.shoot || [];
-      scene.vegaAnimAttack = bossData.anim.attack || [];
+      scene.vegaAnimIdle = bossAnimFrames(bossData.anim.idle);
+      scene.vegaAnimShoot = bossAnimFrames(bossData.anim.shoot);
+      scene.vegaAnimAttack = bossAnimFrames(bossData.anim.attack);
     }
     if (stageId === 4 && bossData.anim) {
-      scene.fangAnimIdle = bossData.anim.idle || [];
-      scene.fangAnimWait = bossData.anim.wait || [];
-      scene.fangAnimCharge = bossData.anim.charge || [];
-      scene.fangAnimShoot = bossData.anim.shoot || [];
+      scene.fangAnimIdle = bossAnimFrames(bossData.anim.idle);
+      scene.fangAnimWait = bossAnimFrames(bossData.anim.wait);
+      scene.fangAnimCharge = bossAnimFrames(bossData.anim.charge);
+      scene.fangAnimShoot = bossAnimFrames(bossData.anim.shoot);
     }
     if (bossData.anim) {
-      scene.pyramidAnimIdle = bossData.anim.idle || [];
-      scene.pyramidAnimAttack = bossData.anim.attack || [];
-      scene.pyramidAnimShoot = bossData.anim.shoot || [];
-      scene.pyramidAnimWarp = bossData.anim.warp || [];
+      scene.pyramidAnimIdle = bossAnimFrames(bossData.anim.idle);
+      scene.pyramidAnimAttack = bossAnimFrames(bossData.anim.attack);
+      scene.pyramidAnimShoot = bossAnimFrames(bossData.anim.shoot);
+      scene.pyramidAnimWarp = bossAnimFrames(bossData.anim.warp);
     }
     scene.enemies.push(scene.bossSprite);
     var dezaArmed = initDezaBoss(scene, bossData);
@@ -10056,7 +10125,7 @@
   }
   function bossShootStraight(scene, projData) {
     if (!projData || !scene.bossSprite) return;
-    var frames = projData.texture || [];
+    var frames = bulletFramesInAtlas(scene, projData.texture, DEZA_BOSS_BULLET.texture);
     var frameKey = frames[0] || "normalProjectile0.gif";
     var speed = projData.speed || 1;
     var bullet = scene.add.sprite(scene.bossSprite.x, scene.bossSprite.y + 20, "game_asset", frameKey);
@@ -10079,7 +10148,7 @@
   }
   function bossShootAimed(scene, projData) {
     if (!projData || !scene.bossSprite) return;
-    var frames = projData.texture || [];
+    var frames = bulletFramesInAtlas(scene, projData.texture, DEZA_BOSS_BULLET.texture);
     var frameKey = frames[0] || "normalProjectile0.gif";
     var speed = projData.speed || 1;
     var bullet = scene.add.sprite(scene.bossSprite.x, scene.bossSprite.y + 20, "game_asset", frameKey);
@@ -10106,7 +10175,7 @@
   }
   function bossShootBeam(scene, projData, degree) {
     if (!projData || !scene.bossSprite) return;
-    var frames = projData.texture || [];
+    var frames = bulletFramesInAtlas(scene, projData.texture, DEZA_BOSS_BULLET.texture);
     var frameKey = frames[0] || "normalProjectile0.gif";
     var speed = projData.speed || 1;
     var rad = degree * Math.PI / 180;
@@ -10133,7 +10202,7 @@
   }
   function bossShootSpread(scene, projData, count, angleDeg) {
     if (!projData || !scene.bossSprite) return;
-    var frames = projData.texture || [];
+    var frames = bulletFramesInAtlas(scene, projData.texture, DEZA_BOSS_BULLET.texture);
     var frameKey = frames[0] || "normalProjectile0.gif";
     var speed = projData.speed || 1;
     var spreadAt = aimPlayer(scene);
@@ -10165,7 +10234,7 @@
   }
   function bossShootRadial(scene, projData, count) {
     if (!projData || !scene.bossSprite) return;
-    var frames = projData.texture || [];
+    var frames = bulletFramesInAtlas(scene, projData.texture, DEZA_BOSS_BULLET.texture);
     var frameKey = frames[0] || "normalProjectile0.gif";
     var speed = (projData.speed || 1) * 0.8;
     for (var i = 0; i < count; i++) {
@@ -12291,6 +12360,20 @@
       this.sceneSwitch = 0;
       this.countDown = 9;
       this.countActive = true;
+      // The Scene instance outlives a scene.stop/start and only create() runs
+      // again, so the one-shot GO TO TITLE latches have to be dropped here.
+      // Left set, the SECOND game over has a button that plays its sound and
+      // does nothing, and an update() whose ENTER / gamepad branch is gated
+      // behind !_gotoTitleDone — which is exactly what a run without continues
+      // hits, since GO TO TITLE is then the card's only way out.
+      this._gotoTitleReady = false;
+      this._gotoTitleDone = false;
+      this._gamepadTitlePressed = false;
+      // Same reason, for the handles update() dereferences every frame: their
+      // objects went down with the last display list.
+      this.worldBestText = null;
+      this.scoreSyncText = null;
+      this.tweetBtnHidden = false;
       // Without continues this scene is only its second half — GAME OVER, the
       // score and GO TO TITLE. The CONTINUE? banner still lays the card out
       // (every row below measures against it), it just isn't drawn.

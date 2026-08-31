@@ -87,6 +87,20 @@ export const DEFAULTS = {
   },
 };
 
+// Every field the runtime reads a boss projectile record out of
+// (game.bundle.js, `scene.bossProjData*`). A boss's bullets are spread over
+// four independent slots, so anything that repairs one repairs all of them.
+const BOSS_PROJECTILE_KEYS = [
+  "bulletData",
+  "projectileData",
+  "bulletDataA",
+  "projectileDataA",
+  "bulletDataB",
+  "projectileDataB",
+  "bulletDataC",
+  "projectileDataC",
+];
+
 function deepClone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
@@ -594,12 +608,16 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
                 }
               }
             }
-            if (fb && fb.bulletData && fb.bulletData.texture) {
-              const fbBulletTex = fb.bulletData.texture;
-              if (fbBulletTex.length > 0 && !atlasFrames[fbBulletTex[0]]) {
-                if (lb && lb.bulletData && lb.bulletData.texture) {
-                  fb.bulletData.texture = lb.bulletData.texture;
-                }
+            // Every slot the runtime reads a projectile record out of, not
+            // just `bulletData` (see BOSS_PROJECTILE_KEYS): a boss whose art
+            // did not travel with it otherwise fires the atlas's first frame.
+            for (const pk of BOSS_PROJECTILE_KEYS) {
+              const fbProj = fb && fb[pk];
+              if (!fbProj || !Array.isArray(fbProj.texture) || !fbProj.texture.length) continue;
+              if (atlasFrames[fbProj.texture[0]]) continue;
+              const lbProj = lb && lb[pk];
+              if (lbProj && lbProj.texture && lbProj.texture.length) {
+                fbProj.texture = lbProj.texture;
               }
             }
           }
