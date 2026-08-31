@@ -107,6 +107,11 @@ class Harness {
   frames = 0;
   /** Draw.rect() calls in each completed frame — the pause overlay is one. */
   rectsPerFrame: number[] = [];
+  /**
+   * pad.update() runs once per FixedStep logic step, so this counts the
+   * game's thinking rate rather than its drawing rate.
+   */
+  steps = 0;
 
   constructor(readonly dir: string, readonly frameLimit: number) {}
 
@@ -207,7 +212,9 @@ function install(self: Harness): void {
   const CROSS = 0x4000;
   const START = 0x0008;
   const pad = {
-    update: () => {},
+    update: () => {
+      self.steps++;
+    },
     // Cross every 30 frames to get through the menus and into play, then
     // hands off; START goes down twice, at PAUSE_ON and PAUSE_OFF, with
     // nothing else touching the pad in between so the pause is unambiguous.
@@ -403,6 +410,26 @@ Deno.test("the PS2 bundle boots against AthenaEnv's interface", async () => {
   assert(
     drawnFrom.has("assets/cyber_liberty.png"),
     "the player ship was never drawn",
+  );
+
+  // Game speed. The port's logic runs on a fixed step, and that step — not
+  // the frame rate — is what moves ships, bullets and waves. The export
+  // scales the clock FixedStep reads so it takes more steps per second; the
+  // harness advances that clock by one 30Hz frame per flip, so the steps per
+  // rendered frame come out as the multiple the build asked for.
+  const configured = new TextDecoder()
+    .decode(harness.read("main.js") ?? new Uint8Array())
+    .match(/__PS2_GAME_FPS__ = (\d+)/);
+  const wantedFps = configured ? Number(configured[1]) : 30;
+  const stepsPerFrame = harness.steps / harness.frames;
+  console.log(
+    `  logic: ${stepsPerFrame.toFixed(2)} steps/frame (${wantedFps}/sec)`,
+  );
+  assertEquals(
+    Math.round(stepsPerFrame),
+    Math.round(wantedFps / 30),
+    `the build asks for ${wantedFps} logic steps/sec but runs ` +
+      `${stepsPerFrame.toFixed(2)} per 30Hz frame`,
   );
 
   // Pause. The port's game scene reads one START press as two things: it

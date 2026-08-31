@@ -18,6 +18,7 @@
 //   --no-audio           build silent even when a sound bank is available
 //   --no-music           keep the effects, drop the streamed music
 //   --uncapped           unlock the frame rate and show the frame counter
+//   --game-fps <n>       logic steps per second (default 120; the port's is 30)
 //   --sfx-budget <KB>    how much IOP RAM the effects may use (default 384)
 //   --iso                also write a disc image (the folder is the default)
 
@@ -28,6 +29,7 @@ const ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 
 const VALUE_FLAGS = new Set([
   "--sfx-budget",
+  "--game-fps",
   "--out",
   "--level-file",
   "--athena-elf",
@@ -100,6 +102,9 @@ try {
     skipAudio: flags["--no-audio"] === true,
     skipMusic: flags["--no-music"] === true,
     uncapped: flags["--uncapped"] === true,
+    gameFps: typeof flags["--game-fps"] === "string"
+      ? Number(flags["--game-fps"])
+      : undefined,
     sfxBudgetBytes: typeof flags["--sfx-budget"] === "string"
       ? Number(flags["--sfx-budget"]) * 1024
       : undefined,

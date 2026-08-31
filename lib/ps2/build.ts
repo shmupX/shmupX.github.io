@@ -24,6 +24,16 @@ import { buildBgmPack, buildSfxPack } from "./sound-pack.ts";
 
 const FIREBASE_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 
+/**
+ * Logic steps per second for the export.
+ *
+ * The port's `FixedStep` runs at 30, which is the rate the browser build plays
+ * at, and on a TV it reads as slow motion. This is the export's default; pass
+ * `--game-fps 30` to get the original pace back. It is not a frame rate —
+ * see runtime-entry.ts.
+ */
+const DEFAULT_GAME_FPS = 120;
+
 // AthenaEnv reads this beside the ELF (or as cdrom0:ATHENA.INI;1 on a disc).
 // The boot logo is off so the game comes straight up. audsrv is the sound IRX:
 // it is loaded only when the build actually carries audio, which today means
@@ -87,6 +97,13 @@ export interface BuildPs2Options {
   sfxBudgetBytes?: number;
   /** Take the flip off the vertical blank and show AthenaEnv's frame counter. */
   uncapped?: boolean;
+  /**
+   * Logic steps per second. The port's own step is 30; the export defaults to
+   * `DEFAULT_GAME_FPS` because 30 plays sluggishly on a TV. See
+   * runtime-entry.ts — this scales the clock FixedStep reads, not the frame
+   * rate.
+   */
+  gameFps?: number;
   log?: (message: string) => void;
 }
 
@@ -346,15 +363,23 @@ export async function buildPs2(
   // A one-line preamble rather than a second bundle: runtime-entry.ts reads
   // this global, so an uncapped build is the same compiled game with the
   // frame pacing turned off.
-  const uncappedMainJs = options.uncapped
-    ? new Uint8Array([
-      ...encoder.encode("globalThis.__PS2_UNCAPPED__ = true;\n"),
-      ...mainJs,
-    ])
+  const gameFps = options.gameFps ?? DEFAULT_GAME_FPS;
+  const preamble = [
+    options.uncapped ? "globalThis.__PS2_UNCAPPED__ = true;" : "",
+    gameFps === 30 ? "" : `globalThis.__PS2_GAME_FPS__ = ${gameFps};`,
+  ].filter(Boolean).join("\n");
+  const uncappedMainJs = preamble
+    ? new Uint8Array([...encoder.encode(preamble + "\n"), ...mainJs])
     : mainJs;
   if (options.uncapped) {
     log("  frame pacing: uncapped, with AthenaEnv's frame counter on");
   }
+  log(
+    `  game speed: ${gameFps} logic steps/sec` +
+      (gameFps === 30
+        ? " (the port's own pace)"
+        : ` — ${(gameFps / 30).toFixed(gameFps % 30 ? 2 : 0)}x the port's 30`),
+  );
 
   const payload: StagedFile[] = [
     { path: "SYSTEM.CNF", data: encoder.encode(SYSTEM_CNF) },

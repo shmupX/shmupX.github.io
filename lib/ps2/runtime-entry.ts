@@ -58,6 +58,31 @@ if (screen) {
 
 const runtime = createNativeRuntime();
 
+// How fast the game THINKS. Not a frame rate — the port runs its logic on a
+// fixed 30 Hz step (`FixedStep` in ps2-sp/game.ts) and that step is what moves
+// everything: ships, bullets, waves, the scroll. Rendering as fast as the
+// console can is separate and changes none of it, which is why an uncapped
+// build looked no quicker.
+//
+// FixedStep divides real elapsed time by its 33.3 ms step to decide how many
+// updates to run, and it reads that time from `rt.Timer` — the only thing in
+// the whole bundle that does. Handing it a clock that runs `rate` times fast
+// therefore buys `rate` times as many logic steps per second, while
+// `FRAME_MS` stays 33.3 so each step advances tweens and the scheduler by
+// exactly what it always did. Four times the movement, same physics per step.
+//
+// `deno task build:ps2 -- --game-fps 30` puts it back to the browser's pace.
+const GAME_FPS =
+  (globalThis as { __PS2_GAME_FPS__?: number }).__PS2_GAME_FPS__ ?? 30;
+const rate = GAME_FPS / 30;
+if (rate !== 1) {
+  const base = runtime.Timer;
+  runtime.Timer = {
+    ...base,
+    getTime: (timer) => base.getTime(timer) * rate,
+  };
+}
+
 // audsrv, when this build carries audio; a silent stand-in when it does not.
 const sound = createAthenaSound();
 
@@ -96,11 +121,31 @@ const game = createGame(runtime, {
 // `createGame` hands back the context to do it with.
 const ctx = game.ctx;
 
+// The edge is read off the pad here rather than through `ctx.input`, because
+// the port's `isPressed` is an edge against a snapshot it retakes on every
+// LOGIC step — and there are `rate` of those per rendered frame. By the time
+// the frame is over the press has long since stopped being an edge, so
+// `isStartPressed()` is false and the repair would never fire. The pad's own
+// held state, sampled once per frame, is the thing that survives.
+const pad = runtime.Pads.get();
+const START = runtime.Pads.START;
+let startWasDown = false;
+
 for (;;) {
+  // Sample the pad BEFORE the frame runs, so this edge and the one the port's
+  // own input layer takes during the frame are the same press. Reading it
+  // afterwards puts this a frame ahead: the repair would set `paused` before
+  // the scene had handled the press, and the scene would then find it already
+  // paused and treat the press as an unpause.
+  const startDown = pad.pressed(START);
+  const startPressed = startDown && !startWasDown;
+  startWasDown = startDown;
   const pausedBefore = ctx.state.paused;
+
   runtime.tick();
   sound.pump();
-  if (ctx.scenes.current === SCENE_GAME && ctx.input.isStartPressed()) {
+
+  if (startPressed && ctx.scenes.current === SCENE_GAME) {
     const paused = !pausedBefore;
     ctx.state.paused = paused ? 1 : 0;
     ctx.scheduler.paused = paused;
