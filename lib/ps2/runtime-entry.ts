@@ -9,7 +9,7 @@
 // for QuickJS, which is the JavaScript engine inside athena.elf.
 
 import { createNativeRuntime } from "@easierbycode/svelte-ps2/native";
-import { createGame } from "@easierbycode/svelte-ps2/ps2-sp";
+import { createGame, SCENE_GAME } from "@easierbycode/svelte-ps2/ps2-sp";
 import { createAthenaSound } from "./runtime-sound.ts";
 
 // Set the screen up before anything draws.
@@ -61,7 +61,7 @@ const runtime = createNativeRuntime();
 // audsrv, when this build carries audio; a silent stand-in when it does not.
 const sound = createAthenaSound();
 
-createGame(runtime, {
+const game = createGame(runtime, {
   sound,
   // Paths are relative to the boot directory: `cdfs:/` on a disc, the app's
   // own folder on a USB stick. lib/ps2/build.ts writes exactly these three.
@@ -72,10 +72,38 @@ createGame(runtime, {
   },
 });
 
-// The package's runNativeLoop() is `while (true) rt.tick()`. The music needs
-// a look every frame as well — audsrv's streams do not loop themselves — so
-// the loop lives here instead.
+// The package's runNativeLoop() is `while (true) rt.tick()`. Two things need a
+// look every frame that it does not give us, so the loop lives here instead.
+//
+// The music, because audsrv's streams do not loop themselves.
+//
+// And START, because the port's game scene reads one press as two things. Its
+// update does:
+//
+//     if (input.isStartPressed()) { ...paused = 1... }
+//     if (state.paused) { updatePauseMenu(); return }
+//
+// and updatePauseMenu's own `isConfirmPressed()` is
+// `isPressed(CROSS) || isPressed(START)`. `isPressed` is an edge against a
+// held/prevHeld snapshot taken once per frame, so on the frame START pauses
+// the game the menu sees that same edge as "confirm", the cursor is still on
+// Resume, and it unpauses again before anything is drawn. Pressing START did
+// nothing at all.
+//
+// That belongs upstream in @easierbycode/svelte-ps2 — the menu should ignore
+// confirm on the frame it opened. Until it is fixed there, this re-applies
+// what the press meant, from the state as it was before the frame ran.
+// `createGame` hands back the context to do it with.
+const ctx = game.ctx;
+
 for (;;) {
+  const pausedBefore = ctx.state.paused;
   runtime.tick();
   sound.pump();
+  if (ctx.scenes.current === SCENE_GAME && ctx.input.isStartPressed()) {
+    const paused = !pausedBefore;
+    ctx.state.paused = paused ? 1 : 0;
+    ctx.scheduler.paused = paused;
+    ctx.tweens.paused = paused;
+  }
 }

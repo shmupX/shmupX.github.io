@@ -42,6 +42,12 @@ export interface LevelRecord {
   playerData?: Record<string, unknown>;
   atlasFrames?: Record<string, FrameEntry>;
   atlasImageDataURL?: string;
+  /**
+   * A Dezaemon save's own drawn title screen: role -> the atlas frame name
+   * holding it. `mapSaveToGame` writes this from the save's TITLE 1/2 and
+   * credit strips.
+   */
+  dezaemonTitle?: Record<string, string>;
 }
 
 export interface StagedFile {
@@ -56,7 +62,7 @@ export interface StageResult {
 }
 
 /** One frame, and which sheet it must be cut from. */
-interface IndexedFrame {
+export interface IndexedFrame {
   sheet: Raster;
   entry: FrameEntry;
 }
@@ -213,6 +219,10 @@ async function repackBaseAtlas(
   name: string,
   maxSheet: number,
   rotate: Set<string> = new Set(),
+  /** Frames to pack under these names instead of the base sheet's own. */
+  overrides: SourceFrame[] = [],
+  /** Base frames to leave out entirely, so `hasFrame` reports false. */
+  drop: Set<string> = new Set(),
 ): Promise<{ files: StagedFile[]; note: string }> {
   const sheet = await decodePng(
     await Deno.readFile(join(gameDir, "assets", "img", `${name}.png`)),
@@ -220,9 +230,13 @@ async function repackBaseAtlas(
   const source = JSON.parse(
     await Deno.readTextFile(join(gameDir, "assets", `${name}.json`)),
   ) as { frames: Record<string, FrameEntry> };
-  const frames: SourceFrame[] = Object.entries(source.frames).map((
-    [frameName, entry],
-  ) => ({ name: frameName, sheet, entry, rotate: rotate.has(frameName) }));
+  const replaced = new Set(overrides.map((frame) => frame.name));
+  const frames: SourceFrame[] = Object.entries(source.frames)
+    .filter(([frameName]) => !drop.has(frameName) && !replaced.has(frameName))
+    .map((
+      [frameName, entry],
+    ) => ({ name: frameName, sheet, entry, rotate: rotate.has(frameName) }));
+  frames.push(...overrides);
   const built = buildPs2Atlas(frames, `${name}.png`, maxSheet);
   const encoded = await encodeSheet(built.image, name);
   return {
@@ -243,6 +257,70 @@ export interface StageOptions {
   maxSheet?: number;
 }
 
+/**
+ * A Dezaemon save's own title screen, mapped onto the frames the PS2 port's
+ * title scene actually draws.
+ *
+ * `mapSaveToGame` records the save's drawn TITLE 1/2 and credit strips as
+ * `dezaemonTitle`: role -> a frame name in the level's atlas. The browser
+ * runtime keys off the same field and, when it is there, hides the stock
+ * backdrop and the sliding "titleG" logo and puts the save's own art up
+ * instead (game.bundle.js, `dezaTitle`). The port has no such branch — it
+ * draws `title_bg`, `titleG.gif`, `logo.gif` and `subTitle.gif` from game_ui
+ * and nothing else — so the same effect is arranged here, by packing the
+ * save's art under those names and leaving the ones it should not draw out of
+ * the sheet entirely. A frame that is not in the atlas fails the port's own
+ * `hasFrame` check, which is exactly the `setVisible(false)` the browser does.
+ *
+ * The role pairing follows the browser: title1 is the logo, or title2 stands
+ * in when a save drew only the lower strip; the subtitle is title2, and only
+ * when title1 took the logo slot. `credit` has nowhere to go — the port draws
+ * its copyright line as text — so it is reported and dropped.
+ */
+export function dezaemonTitleFrames(
+  record: LevelRecord,
+  index: Map<string, IndexedFrame>,
+  notes: string[],
+): { overrides: SourceFrame[]; drop: Set<string> } {
+  const roles = record.dezaemonTitle;
+  const overrides: SourceFrame[] = [];
+  const drop = new Set<string>();
+  if (!roles || !Object.keys(roles).length) return { overrides, drop };
+
+  const frameFor = (role: string): SourceFrame | null => {
+    const name = roles[role];
+    if (!name) return null;
+    const found = resolve(index, name);
+    return found ? { name, sheet: found.sheet, entry: found.entry } : null;
+  };
+
+  const title1 = frameFor("title1");
+  const title2 = frameFor("title2");
+  const logo = title1 ?? title2;
+  const subtitle = title1 ? title2 : null;
+
+  // The save's title replaces the whole stock arrangement, not part of it.
+  drop.add("titleG.gif");
+  drop.add("title_bg");
+
+  if (logo) overrides.push({ ...logo, name: "logo.gif" });
+  else drop.add("logo.gif");
+  if (subtitle) overrides.push({ ...subtitle, name: "subTitle.gif" });
+  else drop.add("subTitle.gif");
+
+  const missing = Object.entries(roles)
+    .filter(([role, name]) => role !== "credit" && name && !frameFor(role))
+    .map(([role]) => role);
+  notes.push(
+    `dezaemon title: ${
+      logo ? `logo from ${roles.title1 ?? roles.title2}` : "no logo art"
+    }${subtitle ? `, subtitle from ${roles.title2}` : ""}` +
+      `${roles.credit ? " (credit strip has nowhere to go)" : ""}` +
+      `${missing.length ? `; ${missing.join(", ")} not in the atlas` : ""}`,
+  );
+  return { overrides, drop };
+}
+
 /** Produce every file the console reads, ready to hand to the ISO writer. */
 export async function stageAssets(options: StageOptions): Promise<StageResult> {
   const { gameDir, record } = options;
@@ -255,31 +333,6 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
   ) as { playerData?: Record<string, unknown> };
   // Only game_asset: that is the sheet the port draws bullets from.
   const upright = playerShotFrames(record, baseRecipe);
-
-  for (const name of ["game_asset", "game_ui"]) {
-    const built = await repackBaseAtlas(
-      gameDir,
-      name,
-      maxSheet,
-      name === "game_asset" ? upright : new Set(),
-    );
-    files.push(...built.files);
-    notes.push(built.note);
-  }
-  if (upright.size) {
-    notes.push(
-      `player shots: ${upright.size} frame(s) turned upright — ` +
-        `${[...upright].slice(0, 3).join(", ")}${
-          upright.size > 3 ? ", …" : ""
-        }`,
-    );
-  }
-
-  // The recipe the port normalises into its own shape at boot.
-  files.push({
-    path: "assets/game.json",
-    data: await Deno.readFile(join(gameDir, "assets", "game.json")),
-  });
 
   const baseSheet = await decodePng(
     await Deno.readFile(join(gameDir, "assets", "img", "game_asset.png")),
@@ -303,6 +356,35 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     notes.push("custom atlas: none — the level uses the base sprites");
   }
   const index = buildFrameIndex(baseSheet, baseJson.frames, custom);
+
+  const title = dezaemonTitleFrames(record, index, notes);
+
+  for (const name of ["game_asset", "game_ui"]) {
+    const built = await repackBaseAtlas(
+      gameDir,
+      name,
+      maxSheet,
+      name === "game_asset" ? upright : new Set(),
+      name === "game_ui" ? title.overrides : [],
+      name === "game_ui" ? title.drop : new Set(),
+    );
+    files.push(...built.files);
+    notes.push(built.note);
+  }
+  if (upright.size) {
+    notes.push(
+      `player shots: ${upright.size} frame(s) turned upright — ` +
+        `${[...upright].slice(0, 3).join(", ")}${
+          upright.size > 3 ? ", …" : ""
+        }`,
+    );
+  }
+
+  // The recipe the port normalises into its own shape at boot.
+  files.push({
+    path: "assets/game.json",
+    data: await Deno.readFile(join(gameDir, "assets", "game.json")),
+  });
 
   // --- the level's own atlas ---
   const wanted = new Set<string>();

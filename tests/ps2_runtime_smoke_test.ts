@@ -105,6 +105,8 @@ class Harness {
   rects = 0;
   prints = 0;
   frames = 0;
+  /** Draw.rect() calls in each completed frame — the pause overlay is one. */
+  rectsPerFrame: number[] = [];
 
   constructor(readonly dir: string, readonly frameLimit: number) {}
 
@@ -116,6 +118,11 @@ class Harness {
     }
   }
 }
+
+/** Frames at which the harness presses START, to pause and then unpause. */
+const PAUSE_ON = 650;
+const PAUSE_OFF = 780;
+const near = (frame: number, at: number) => frame >= at && frame < at + 3;
 
 // Publish the AthenaEnv surface the bundle expects. A free function rather
 // than a method so the stub classes can close over the harness directly.
@@ -134,6 +141,8 @@ function install(self: Harness): void {
     },
     clear: () => {},
     flip: () => {
+      self.rectsPerFrame.push(self.rects);
+      self.rects = 0;
       self.frames++;
       // The bundle's last statement is an infinite render loop; this is how
       // the test gets control back.
@@ -196,10 +205,22 @@ function install(self: Harness): void {
   // Pulse CROSS rather than holding it: the scenes advance on a rising
   // edge, and the title only accepts one after its intro has finished.
   const CROSS = 0x4000;
+  const START = 0x0008;
   const pad = {
     update: () => {},
-    pressed: (mask: number) => mask === CROSS && self.frames % 30 < 2,
-    justPressed: (mask: number) => mask === CROSS && self.frames % 30 === 0,
+    // Cross every 30 frames to get through the menus and into play, then
+    // hands off; START goes down twice, at PAUSE_ON and PAUSE_OFF, with
+    // nothing else touching the pad in between so the pause is unambiguous.
+    pressed: (mask: number) =>
+      self.frames < 600
+        ? mask === CROSS && self.frames % 30 < 2
+        : mask === START &&
+          (near(self.frames, PAUSE_ON) || near(self.frames, PAUSE_OFF)),
+    justPressed: (mask: number) =>
+      self.frames < 600
+        ? mask === CROSS && self.frames % 30 === 0
+        : mask === START &&
+          (self.frames === PAUSE_ON || self.frames === PAUSE_OFF),
     lx: 0,
     ly: 0,
     rx: 0,
@@ -382,6 +403,33 @@ Deno.test("the PS2 bundle boots against AthenaEnv's interface", async () => {
   assert(
     drawnFrom.has("assets/cyber_liberty.png"),
     "the player ship was never drawn",
+  );
+
+  // Pause. The port's game scene reads one START press as two things: it
+  // pauses, and then its own pause menu sees the same edge through
+  // `isConfirmPressed()` — which is `isPressed(CROSS) || isPressed(START)` —
+  // and resumes before anything is drawn. runtime-entry.ts re-applies the
+  // press afterwards. The overlay is a full-screen Draw.rect, so a paused
+  // frame fills more rectangles than a running one.
+  const meanRects = (from: number, to: number) => {
+    const window = harness.rectsPerFrame.slice(from, to);
+    return window.reduce((n, v) => n + v, 0) / (window.length || 1);
+  };
+  const running = meanRects(PAUSE_ON - 40, PAUSE_ON);
+  const paused = meanRects(PAUSE_ON + 10, PAUSE_OFF);
+  const resumed = meanRects(PAUSE_OFF + 10, PAUSE_OFF + 100);
+  console.log(
+    `  rects/frame: ${running.toFixed(2)} running, ${paused.toFixed(2)} ` +
+      `paused, ${resumed.toFixed(2)} resumed`,
+  );
+  assert(
+    paused > running,
+    `START did not pause: ${paused.toFixed(2)} rects/frame while paused vs ` +
+      `${running.toFixed(2)} running`,
+  );
+  assert(
+    resumed < paused,
+    `START did not unpause: still ${resumed.toFixed(2)} rects/frame`,
   );
 
   // Sound. The port asks for .wav paths and the disc carries .adp, so this

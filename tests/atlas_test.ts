@@ -65,3 +65,93 @@ Deno.test("the packer honours the rotate flag per frame", () => {
   assertEquals(shot.w, wing.h);
   assertEquals(shot.h, wing.w);
 });
+
+// --- a Dezaemon save's own title screen ---
+//
+// mapSaveToGame records the save's drawn TITLE 1/2 and credit strips as
+// `dezaemonTitle`: role -> a frame name in the level's atlas. The browser
+// runtime hides the stock backdrop and sliding logo when that field is there
+// and shows the save's art instead. The PS2 port has no such branch, so the
+// exporter arranges the same thing by packing the save's frames under the
+// names the port does draw, and leaving the rest out of the sheet — a frame
+// that is not in the atlas fails the port's own hasFrame() check.
+
+import {
+  dezaemonTitleFrames,
+  type IndexedFrame,
+  type LevelRecord,
+} from "../lib/ps2/assets.ts";
+
+function index(names: string[]): Map<string, IndexedFrame> {
+  const sheet = newRaster(64, 64);
+  const map = new Map<string, IndexedFrame>();
+  for (const name of names) {
+    map.set(name, {
+      sheet,
+      entry: {
+        frame: { x: 0, y: 0, w: 8, h: 8 },
+        rotated: false,
+        trimmed: false,
+      },
+    });
+  }
+  return map;
+}
+
+Deno.test("a save's title art replaces the stock title screen", () => {
+  const record: LevelRecord = {
+    dezaemonTitle: {
+      title1: "dezaTitle1.gif",
+      title2: "dezaTitle2.gif",
+      credit: "dezaCredit.gif",
+    },
+  };
+  const notes: string[] = [];
+  const { overrides, drop } = dezaemonTitleFrames(
+    record,
+    index(["dezaTitle1.gif", "dezaTitle2.gif", "dezaCredit.gif"]),
+    notes,
+  );
+  const under = new Map(overrides.map((f) => [f.name, f]));
+  assertEquals([...under.keys()].sort(), ["logo.gif", "subTitle.gif"]);
+  // The stock backdrop and the sliding "titleG" logo are what the browser
+  // hides; here they are simply not packed.
+  assert(drop.has("titleG.gif"), "titleG.gif should be dropped");
+  assert(drop.has("title_bg"), "title_bg should be dropped");
+  assert(notes.some((n) => n.includes("dezaemon title")), "no note");
+});
+
+Deno.test("title2 alone still becomes the logo", () => {
+  // The browser's `dezaLogo = title1 || title2` — a save that drew only the
+  // lower strip still gets it as the logo rather than as a subtitle under
+  // nothing.
+  const notes: string[] = [];
+  const { overrides, drop } = dezaemonTitleFrames(
+    { dezaemonTitle: { title2: "dezaTitle2.gif" } },
+    index(["dezaTitle2.gif"]),
+    notes,
+  );
+  assertEquals(overrides.map((f) => f.name), ["logo.gif"]);
+  assert(drop.has("subTitle.gif"), "there is no subtitle to draw");
+});
+
+Deno.test("a level with no save title leaves the stock screen alone", () => {
+  const notes: string[] = [];
+  const { overrides, drop } = dezaemonTitleFrames({}, index([]), notes);
+  assertEquals(overrides.length, 0);
+  assertEquals(drop.size, 0);
+  assertEquals(notes.length, 0);
+});
+
+Deno.test("a role naming a frame the atlas lacks is reported", () => {
+  const notes: string[] = [];
+  const { overrides, drop } = dezaemonTitleFrames(
+    { dezaemonTitle: { title1: "gone.gif", title2: "dezaTitle2.gif" } },
+    index(["dezaTitle2.gif"]),
+    notes,
+  );
+  // title1 is missing, so title2 is promoted to the logo slot.
+  assertEquals(overrides.map((f) => f.name), ["logo.gif"]);
+  assert(drop.has("subTitle.gif"));
+  assert(notes[0].includes("title1"), `note did not name title1: ${notes[0]}`);
+});
