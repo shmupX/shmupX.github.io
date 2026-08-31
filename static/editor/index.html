@@ -3392,7 +3392,12 @@
                 if (!key) return;
                 if (!entry.anim) { entry.anim = { idle: entry.texture || [] }; delete entry.texture; }
                 if (!entry.anim.idle || !entry.anim.idle.length) entry.anim.idle = libraryFrames(entry);
-                if (!entry.bulletData) entry.bulletData = {};
+                // No bulletData stub here: an empty weapon record is TRUTHY, and
+                // bossAdd resolves `bulletData || projectileData || projectileDataA`
+                // — so the stub won that chain and the boss fired the stock
+                // normalProjectile instead of its own first weapon. The editor's
+                // own preview (bossBulletDef) already guards on texture.length, so
+                // nothing was relying on the slot existing.
                 if (entry.hp === undefined) entry.hp = 150;
                 bossData[key] = entry;
                 gameData.bossData = bossData;
@@ -3452,7 +3457,28 @@
             // published from the game's own EXTRACT MODE already does — the two
             // doors write to the same library and must not disagree.
             const bossSlot = /^boss(\d+)$/.exec(entryKey || '');
-            if (bossSlot) entry = EX.bossTravelRecord(gameData, entry, Number(bossSlot[1]));
+            if (bossSlot) {
+                entry = EX.bossTravelRecord(gameData, entry, Number(bossSlot[1]));
+                // Its BEHAVIOUR is the slot's too: bossShootStart picks the boss
+                // pattern from the slot NUMBER a record lands in, never from the
+                // record — so pyramid, published out of boss0 and imported into
+                // boss1, runs Barlog's routine: one that never changes the boss's
+                // stance and fires one weapon where pyramid has two. Pin the slot
+                // it was authored for, so the behaviour travels with the art.
+                //
+                // Never for a Dezaemon-native boss: initDezaBoss reads any
+                // attackPattern as an opt-out of its own state machine — parts, HP
+                // bands, movement scripts — so pinning one there would disarm the
+                // very thing this is meant to preserve. A pattern the author set by
+                // hand wins over the slot it happens to sit in.
+                //
+                // Copy rather than assign: bossTravelRecord hands back the LIVE
+                // bossData record for a non-Dezaemon boss, and publishing must not
+                // write a pattern into the level being edited.
+                if (!entry.attackPattern && !(entry.dezaemon && entry.dezaemon.boss)) {
+                    entry = Object.assign({}, entry, { attackPattern: entryKey });
+                }
+            }
             let name = prompt('Publish to the shared library as:', EX.suggestName(suggested));
             if (!name) return null;
             name = name.trim();
