@@ -9,7 +9,11 @@
 // for QuickJS, which is the JavaScript engine inside athena.elf.
 
 import { createNativeRuntime } from "@easierbycode/svelte-ps2/native";
-import { createGame, SCENE_GAME } from "@easierbycode/svelte-ps2/ps2-sp";
+import {
+  createGame,
+  type GameContext,
+  SCENE_GAME,
+} from "@easierbycode/svelte-ps2/ps2-sp";
 import { createAthenaSound } from "./runtime-sound.ts";
 
 // Set the screen up before anything draws.
@@ -75,12 +79,84 @@ const runtime = createNativeRuntime();
 const GAME_FPS =
   (globalThis as { __PS2_GAME_FPS__?: number }).__PS2_GAME_FPS__ ?? 30;
 const rate = GAME_FPS / 30;
+
+// Set once createGame returns; everything below reads it lazily, because the
+// port builds its input layer inside createGame and so has to be handed the
+// wrapped pad before there is a context to consult.
+let ctx: GameContext | null = null;
+const inGame = () => ctx !== null && ctx.scenes.current === SCENE_GAME;
+
 if (rate !== 1) {
+  // ONLY the game scene runs fast. Everything else — the title, the
+  // interlude, the continue countdown — is paced against the wall clock by
+  // counting logic steps, so speeding those up just makes the countdown run
+  // out four times too soon. `cs.countDownTimer++` with `% 40` is nine
+  // seconds at 30 Hz and a bit over two at 120.
+  //
+  // The clock scales the DELTA rather than the reading, so it stays monotonic
+  // across a scene change. Scaling the reading would make time jump backwards
+  // when the rate dropped, and FixedStep would sit on a negative accumulator.
   const base = runtime.Timer;
+  let virtualUs = 0;
+  let lastRealUs = 0;
+  let started = false;
   runtime.Timer = {
     ...base,
-    getTime: (timer) => base.getTime(timer) * rate,
+    getTime: (timer) => {
+      const real = base.getTime(timer);
+      if (!started) {
+        lastRealUs = real;
+        started = true;
+      }
+      virtualUs += (real - lastRealUs) * (inGame() ? rate : 1);
+      lastRealUs = real;
+      return virtualUs;
+    },
   };
+
+  // Steering is the one thing that must NOT go four times faster. The port
+  // moves the ship by nudging a target every logic step —
+  // `p.targetX -= PLAYER_MOVE_SPEED` while left is held — and then eases the
+  // ship toward it with `PLAYER_SMOOTHING`. Four times the steps means four
+  // times the travel per second, which is what makes a tap cross half the
+  // screen. So the direction keys and the stick are shown to the game on one
+  // step in `rate`: the target moves at its original pace while the easing
+  // still runs at the full rate, which reads as the same speed but smoother.
+  //
+  // Only while actually flying. Menus read directions as edges
+  // (`isUpPressed`), and a held direction flickering on every fourth step
+  // would spin a cursor.
+  const pads = runtime.Pads;
+  const realPad = pads.get();
+  const DIRECTIONS = [pads.UP, pads.DOWN, pads.LEFT, pads.RIGHT];
+  let logicStep = 0;
+  const steering = () =>
+    inGame() && !ctx!.state.paused && logicStep % rate !== 0;
+
+  const gatedPad = {
+    update: () => {
+      logicStep++;
+      realPad.update();
+    },
+    pressed: (mask: number) =>
+      DIRECTIONS.indexOf(mask) !== -1 && steering()
+        ? false
+        : realPad.pressed(mask),
+    justPressed: (mask: number) => realPad.justPressed(mask),
+    get lx() {
+      return steering() ? 0 : realPad.lx;
+    },
+    get ly() {
+      return steering() ? 0 : realPad.ly;
+    },
+    get rx() {
+      return realPad.rx;
+    },
+    get ry() {
+      return realPad.ry;
+    },
+  };
+  runtime.Pads = { ...pads, get: () => gatedPad } as typeof pads;
 }
 
 // audsrv, when this build carries audio; a silent stand-in when it does not.
@@ -119,7 +195,7 @@ const game = createGame(runtime, {
 // confirm on the frame it opened. Until it is fixed there, this re-applies
 // what the press meant, from the state as it was before the frame ran.
 // `createGame` hands back the context to do it with.
-const ctx = game.ctx;
+ctx = game.ctx;
 
 // The edge is read off the pad here rather than through `ctx.input`, because
 // the port's `isPressed` is an edge against a snapshot it retakes on every

@@ -112,6 +112,9 @@ class Harness {
    * game's thinking rate rather than its drawing rate.
    */
   steps = 0;
+  /** Logic steps in each completed frame — the rate is scene-dependent. */
+  stepsPerFrame: number[] = [];
+  stepsAtFrameStart = 0;
 
   constructor(readonly dir: string, readonly frameLimit: number) {}
 
@@ -148,6 +151,8 @@ function install(self: Harness): void {
     flip: () => {
       self.rectsPerFrame.push(self.rects);
       self.rects = 0;
+      self.stepsPerFrame.push(self.steps - self.stepsAtFrameStart);
+      self.stepsAtFrameStart = self.steps;
       self.frames++;
       // The bundle's last statement is an infinite render loop; this is how
       // the test gets control back.
@@ -421,15 +426,30 @@ Deno.test("the PS2 bundle boots against AthenaEnv's interface", async () => {
     .decode(harness.read("main.js") ?? new Uint8Array())
     .match(/__PS2_GAME_FPS__ = (\d+)/);
   const wantedFps = configured ? Number(configured[1]) : 30;
-  const stepsPerFrame = harness.steps / harness.frames;
+  // Only the game scene runs fast — the title and the continue countdown are
+  // paced against the wall clock — so the rate is measured mid-play rather
+  // than across the whole run, which would average the two.
+  const playing = harness.stepsPerFrame.slice(300, PAUSE_ON - 20);
+  const stepsPerFrame = playing.reduce((n, v) => n + v, 0) /
+    (playing.length || 1);
+  const menu = harness.stepsPerFrame.slice(2, 40);
+  const menuSteps = menu.reduce((n, v) => n + v, 0) / (menu.length || 1);
   console.log(
-    `  logic: ${stepsPerFrame.toFixed(2)} steps/frame (${wantedFps}/sec)`,
+    `  logic: ${stepsPerFrame.toFixed(2)} steps/frame in play, ` +
+      `${menuSteps.toFixed(2)} in the menus (${wantedFps}/sec)`,
   );
   assertEquals(
     Math.round(stepsPerFrame),
     Math.round(wantedFps / 30),
-    `the build asks for ${wantedFps} logic steps/sec but runs ` +
+    `the build asks for ${wantedFps} logic steps/sec but plays at ` +
       `${stepsPerFrame.toFixed(2)} per 30Hz frame`,
+  );
+  assertEquals(
+    Math.round(menuSteps),
+    1,
+    `the menus should stay at the port's own 30Hz, not ` +
+      `${menuSteps.toFixed(2)} steps/frame — a fast continue countdown ` +
+      `runs out before the player can read it`,
   );
 
   // Pause. The port's game scene reads one START press as two things: it
