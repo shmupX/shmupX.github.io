@@ -20,11 +20,13 @@ import { join } from "@std/path";
 import {
   decodeDataUrl,
   decodePng,
+  encodeIndexedPng,
   encodePng,
   newRaster,
   type Raster,
 } from "./png.ts";
 import { buildPs2Atlas, type FrameEntry, type SourceFrame } from "./atlas.ts";
+import { quantize } from "./palette.ts";
 import { blit, cut, fitInto } from "./raster.ts";
 
 /** A Firebase `levels/{name}` record, as the editor saves it. */
@@ -148,6 +150,34 @@ function collectTextures(value: unknown, into: Set<string>): void {
   }
 }
 
+/**
+ * Every sheet goes on the disc as an 8-bit indexed PNG.
+ *
+ * AthenaEnv uploads those as GS_PSM_T8, a quarter of the VRAM of the RGBA
+ * form. That is the difference between the working set fitting in the GS's
+ * 4 MB and not: the three sheets are 2.51 MB at 32bpp, and the framebuffer
+ * alone (640x448, double-buffered, 32-bit) is 2.19 MB of the 4. Over-commit
+ * and AthenaEnv's texture manager evicts and re-uploads sheets over DMA,
+ * which costs far more than the colour ever could.
+ *
+ * The sheets hold 17k-32k distinct colours, so this is lossy — measured mean
+ * error is under 3.2 of 255. `note` says so per sheet, and says EXACT when a
+ * sheet fitted in 256 colours on its own.
+ */
+async function encodeSheet(
+  raster: Raster,
+  name: string,
+): Promise<{ data: Uint8Array; note: string }> {
+  const q = quantize(raster);
+  return {
+    data: await encodeIndexedPng(q),
+    note: q.exact
+      ? `${name}: ${q.sourceColors} colours, exact as 8-bit indexed`
+      : `${name}: ${q.sourceColors} colours -> 256, mean error ` +
+        `${q.meanError.toFixed(2)}/255`,
+  };
+}
+
 async function repackBaseAtlas(
   gameDir: string,
   name: string,
@@ -163,13 +193,14 @@ async function repackBaseAtlas(
     [frameName, entry],
   ) => ({ name: frameName, sheet, entry }));
   const built = buildPs2Atlas(frames, `${name}.png`, maxSheet);
+  const encoded = await encodeSheet(built.image, name);
   return {
     files: [
-      { path: `assets/${name}.png`, data: await encodePng(built.image) },
+      { path: `assets/${name}.png`, data: encoded.data },
       { path: `assets/${name}.json`, data: json(built.json) },
     ],
     note: `${name}: ${frames.length} frames -> ${built.image.width}x` +
-      `${built.image.height} at 1/${built.displayScale}`,
+      `${built.image.height} at 1/${built.displayScale}; ${encoded.note}`,
   };
 }
 
@@ -241,13 +272,15 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
 
   if (levelFrames.length > 0) {
     const built = buildPs2Atlas(levelFrames, "level_atlas.png", maxSheet);
+    const sheet = await encodeSheet(built.image, "level_atlas");
     files.push(
-      { path: "assets/level_atlas.png", data: await encodePng(built.image) },
+      { path: "assets/level_atlas.png", data: sheet.data },
       { path: "assets/level_atlas.json", data: json(built.json) },
     );
     notes.push(
       `level_atlas: ${levelFrames.length} frames -> ${built.image.width}x` +
         `${built.image.height} at 1/${built.displayScale}`,
+      sheet.note,
     );
   } else {
     // ps2-sp opens both paths unconditionally, and AthenaEnv's image loader
@@ -255,7 +288,7 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     files.push(
       {
         path: "assets/level_atlas.png",
-        data: await encodePng(newRaster(2, 2)),
+        data: (await encodeSheet(newRaster(2, 2), "level_atlas")).data,
       },
       { path: "assets/level_atlas.json", data: json({ frames: {} }) },
     );
@@ -279,10 +312,11 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     (playerFrames && playerFrames.length
       ? playerFrames
       : fallback.playerData?.texture) ?? ["player00.gif", "player01.gif"];
-  files.push({
-    path: "assets/cyber_liberty.png",
-    data: await encodePng(buildPlayerSheet(index, wantedPlayer)),
-  });
+  const player = await encodeSheet(
+    buildPlayerSheet(index, wantedPlayer),
+    "player sheet",
+  );
+  files.push({ path: "assets/cyber_liberty.png", data: player.data });
   notes.push(`player: ${wantedPlayer.slice(0, 2).join(", ")}`);
 
   // --- the level itself ---

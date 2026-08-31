@@ -7,6 +7,7 @@
 // and encodes exactly one: 8-bit RGBA.
 
 import { type Bytes, deflate, inflate } from "./deflate.ts";
+import type { Indexed } from "./palette.ts";
 
 export type { Bytes };
 
@@ -285,6 +286,67 @@ function filterRows(raster: Raster): Bytes {
     out[dst++] = bestFilter;
     out.set(best, dst);
     dst += stride;
+  }
+  return out;
+}
+
+/**
+ * Encode an 8-bit indexed PNG — colour type 3, the form AthenaEnv uploads as
+ * a GS_PSM_T8 texture at a quarter of the VRAM.
+ *
+ * tRNS is written only as long as the palette's non-opaque run, because
+ * AthenaEnv defaults entries it does not cover to PS2-opaque 0x80 and
+ * halves the ones it does (`trans[i] >> 1`) — an opaque 255 covered by tRNS
+ * would come back as 127 and make solid pixels faintly see-through. See
+ * palette.ts, which orders the palette to make that run contiguous.
+ *
+ * Rows are written unfiltered: the bytes are palette indices, and the
+ * predictors PNG offers are arithmetic on neighbouring pixels, which turns
+ * flat runs of one index into noise that deflate then has to carry.
+ */
+export async function encodeIndexedPng(image: Indexed): Promise<Bytes> {
+  const { width, height, indices, palette } = image;
+
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 3; // indexed
+  const plte = new Uint8Array(palette.count * 3);
+  for (let i = 0; i < palette.count; i++) {
+    plte[i * 3] = palette.colors[i * 4];
+    plte[i * 3 + 1] = palette.colors[i * 4 + 1];
+    plte[i * 3 + 2] = palette.colors[i * 4 + 2];
+  }
+
+  const raw = new Uint8Array(height * (width + 1));
+  for (let y = 0; y < height; y++) {
+    raw[y * (width + 1)] = 0; // filter: none
+    raw.set(indices.subarray(y * width, (y + 1) * width), y * (width + 1) + 1);
+  }
+
+  const parts = [
+    new Uint8Array(SIGNATURE),
+    chunk("IHDR", ihdr),
+    chunk("PLTE", plte),
+  ];
+  if (palette.transparentCount > 0) {
+    const trns = new Uint8Array(palette.transparentCount);
+    for (let i = 0; i < palette.transparentCount; i++) {
+      trns[i] = palette.colors[i * 4 + 3];
+    }
+    parts.push(chunk("tRNS", trns));
+  }
+  parts.push(chunk("IDAT", await deflate(raw)));
+  parts.push(chunk("IEND", new Uint8Array(0)));
+
+  const total = parts.reduce((n, part) => n + part.length, 0);
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
   }
   return out;
 }

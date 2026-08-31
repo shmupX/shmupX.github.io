@@ -19,7 +19,7 @@
 //   --no-music           keep the effects, drop the streamed music
 //   --uncapped           unlock the frame rate and show the frame counter
 //   --sfx-budget <KB>    how much IOP RAM the effects may use (default 384)
-//   --no-iso             stop after the folder build
+//   --iso                also write a disc image (the folder is the default)
 
 import { dirname, fromFileUrl, relative, resolve } from "@std/path";
 import { buildPs2 } from "../lib/ps2/build.ts";
@@ -57,7 +57,7 @@ function parse(argv: string[]) {
       // `deno task build:ps2 -- --uncapped` passes the separator through.
       continue;
     } else if (
-      arg === "--refresh-athena" || arg === "--no-iso" ||
+      arg === "--refresh-athena" || arg === "--iso" ||
       arg === "--no-audio" || arg === "--no-music" ||
       arg === "--uncapped"
     ) {
@@ -95,7 +95,7 @@ try {
       : null,
     refreshAthena: flags["--refresh-athena"] === true,
     maxSheet: atlasMax === undefined ? undefined : Number(atlasMax),
-    skipIso: flags["--no-iso"] === true,
+    iso: flags["--iso"] === true,
     sndpac: typeof flags["--sndpac"] === "string" ? flags["--sndpac"] : null,
     skipAudio: flags["--no-audio"] === true,
     skipMusic: flags["--no-music"] === true,

@@ -293,9 +293,30 @@ Everything else in the export is data, produced by `lib/ps2/`:
 
 Flags: `--out <dir>`, `--level-file <path>` (a local JSON export instead of
 Firebase), `--athena-elf <path>`, `--refresh-athena`, `--atlas-max <px>`,
-`--sndpac <path>`, `--no-audio`, `--no-music`, `--no-iso`.
+`--sndpac <path>`, `--no-audio`, `--no-music`, `--uncapped`, `--iso`.
 
-**Running it.** Under an emulator, boot the `.iso` **with fast boot enabled** —
+**The output is a folder** — `athena.elf`, `main.js`, `athena.ini` and
+`assets/`. Copy it to a USB stick, or point an emulator straight at
+`athena.elf`. `--iso` also writes a disc image; it is opt-in because the folder
+is what actually gets run, and a burned homebrew disc needs FMCB or a modchip
+regardless.
+
+**Sheets ship paletted.** Every atlas goes out as an 8-bit indexed PNG, which
+AthenaEnv uploads as `GS_PSM_T8` — a quarter of the VRAM of the RGBA form. That
+is the difference between fitting in the GS's 4 MB and not: the three sheets are
+2.51 MB at 32bpp and the framebuffer alone (640x448, double-buffered, 32-bit) is
+2.19 MB of the 4, so the RGBA build over-committed and AthenaEnv's texture
+manager had to evict and re-upload sheets over DMA every frame. Paletted they
+come to 0.63 MB and everything stays resident.
+[`lib/ps2/palette.ts`](lib/ps2/palette.ts) does the median cut — the sheets hold
+17k-32k distinct colours, so it is lossy, at a measured mean error under 3.2 of
+255 — and the build log reports the count and error per sheet. The palette is
+ordered with every non-opaque entry first, because AthenaEnv defaults palette
+alpha to PS2-opaque `0x80` and halves whatever `tRNS` covers: an opaque 255
+inside that run would come back as 127 and make solid pixels faintly
+see-through.
+
+**Booting the disc.** If you do build one, boot it **with fast boot enabled** —
 this is a homebrew disc, and a full BIOS boot will not run one. The retail BIOS
 authenticates the disc and drops to _"Please insert a PlayStation or PlayStation
 2 format disc"_; fast boot skips that and `LoadExec`s the ELF named in

@@ -40,9 +40,17 @@ function athenaIni(audsrv: boolean): string {
   ].join("\n");
 }
 
+/**
+ * The boot executable's name ON THE DISC — `SHMP-00001` once PCSX2 folds it
+ * into a serial. It has to match `????_???.??`; anything else leaves the disc
+ * serial empty, which makes the emulated mechacon's disc key all zeros and the
+ * BIOS refuses the disc. The folder build keeps `athena.elf`.
+ */
+const DISC_BOOT = "SHMP_000.01";
+
 // What the PS2 boot ROM reads off the disc to find the executable.
 const SYSTEM_CNF = [
-  "BOOT2 = cdrom0:\\ATHENA.ELF;1",
+  `BOOT2 = cdrom0:\\${DISC_BOOT};1`,
   "VER = 1.00",
   "VMODE = NTSC",
   "",
@@ -63,8 +71,12 @@ export interface BuildPs2Options {
   refreshAthena?: boolean;
   /** Cap on either dimension of a generated atlas (default 512). */
   maxSheet?: number;
-  /** Skip the ISO and produce only the folder build. */
-  skipIso?: boolean;
+  /**
+   * Also write a disc image. Off by default: the folder is what gets run,
+   * from a USB stick or by pointing an emulator at athena.elf, and a burned
+   * homebrew disc needs FMCB or a modchip anyway.
+   */
+  iso?: boolean;
   /** SNDPAC.BIN to render the tone bank from; default: search dev-fixtures/. */
   sndpac?: string | null;
   /** Build without audio even when a sound bank is available. */
@@ -85,7 +97,7 @@ export interface BuildPs2Result {
   dir: string;
   /** The athena.elf build — copy this whole folder to a USB stick. */
   appDir: string;
-  /** The disc image, unless --no-iso was passed. */
+  /** The disc image, when --iso asked for one. */
   isoPath: string | null;
   artifacts: string[];
   notes: string[];
@@ -346,9 +358,7 @@ export async function buildPs2(
 
   const payload: StagedFile[] = [
     { path: "SYSTEM.CNF", data: encoder.encode(SYSTEM_CNF) },
-    // Upper case, matching SYSTEM.CNF's BOOT2 exactly. Names keep their case
-    // on the disc now, so this one is not folded for us any more.
-    { path: "ATHENA.ELF", data: athena.bytes },
+    { path: "athena.elf", data: athena.bytes },
     { path: "athena.ini", data: encoder.encode(athenaIni(hasAudio)) },
     { path: "main.js", data: uncappedMainJs },
     ...staged.files,
@@ -363,7 +373,7 @@ export async function buildPs2(
 
   const artifacts = [appDir];
   let isoPath: string | null = null;
-  if (!options.skipIso) {
+  if (options.iso) {
     log("  writing the disc image…");
     const iso = buildIso({
       volumeId: app,
@@ -375,9 +385,28 @@ export async function buildPs2(
       // and the disc gets the upper-case one. Everything else already matches:
       // SYSTEM.CNF and the ELF are named in upper case by BOOT2, and
       // `default_script` and the game's own asset paths are lower case.
-      files: payload.map((file) =>
-        file.path === "athena.ini" ? { ...file, path: "ATHENA.INI" } : file
-      ),
+      files: payload.map((file) => {
+        // The disc carries different names for two files, because different
+        // readers ask cdfs for them literally:
+        //
+        //  athena.ini -> ATHENA.INI   AthenaEnv looks for `cdrom0:ATHENA.INI;1`
+        //                             in upper case on a CD boot, and plain
+        //                             `athena.ini` from a folder (default_cfg,
+        //                             its src/main.c).
+        //  athena.elf -> DISC_BOOT    the PS2 BIOS will not boot a disc whose
+        //                             BOOT2 basename does not match the
+        //                             licensed XXXX_NNN.NN shape. PCSX2's
+        //                             ExecutablePathToSerial() clears the
+        //                             serial otherwise, cdvdReadKey() then
+        //                             builds an all-zero disc key from the
+        //                             empty serial, and the BIOS drops to
+        //                             "insert a PlayStation format disc".
+        //                             A folder boot never consults SYSTEM.CNF,
+        //                             so it keeps the readable name.
+        if (file.path === "athena.ini") return { ...file, path: "ATHENA.INI" };
+        if (file.path === "athena.elf") return { ...file, path: DISC_BOOT };
+        return file;
+      }),
       // Fixed, so rebuilding the same level yields the same image.
       date: new Date("2000-03-04T00:00:00Z"),
     });
