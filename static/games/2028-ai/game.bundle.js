@@ -5616,6 +5616,12 @@
   function loadDezaToneBank() {
     if (DEZA_TONE_BANK || dezaToneBankPending) return dezaToneBankPending;
     if (typeof fetch !== "function") return null;
+    // The bank only exists behind the vite dev route; asking for it on the
+    // deployed site is two guaranteed 404s in everyone's console.
+    var host = typeof location === "object" && location ? location.hostname : "";
+    var isDev = host === "localhost" || host === "127.0.0.1" || host === "[::1]" ||
+      /(^|\.)localhost$/.test(host) || /\.ngrok(-free)?\.(app|io|dev)$/.test(host);
+    if (!isDev) return null;
     var grab = function(url, as) {
       return fetch(url).then(function(r) {
         return r.ok ? r[as]() : null;
