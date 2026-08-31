@@ -10,7 +10,7 @@
 //   Sound.setVolume(100)            global, 0-100
 //   const ch = Sound.findChannel()  a free one-shot channel
 //   Sound.Sfx("x.adp").play(ch)     ADPCM only, and NO playback-rate control
-//   Sound.Stream("x.ogg")           play/pause/playing/rewind/free, position
+//   Sound.Stream("x.wav")           play/pause/playing/rewind/free, position
 //
 // `Sound` exists only when athena.ini says `audsrv = true`, which lib/ps2/
 // build.ts writes only when the export actually carries audio. Everything here
@@ -88,8 +88,31 @@ export interface PumpedSoundPlayer extends SoundPlayer {
  * is staged as the `.ogg` the port already asks for.
  */
 function adpPath(path: string): string {
+  return soundPath(path, ".adp");
+}
+
+/**
+ * Where the disc carries the music the port just asked for.
+ *
+ * The port asks for `.ogg`, and AthenaEnv does link libVorbis — but decoding
+ * Vorbis happens inside audsrv's fill-buffer callback (`ov_read` in
+ * `sound_ogg_fillbuf_handler`), and an Ogg that libvorbis reads perfectly well
+ * on a desktop still took the console down the moment the adventure scene
+ * started the music. The WAV path's handler is a bare `fread` into audsrv's
+ * buffer with no decoder anywhere near it, so the music is staged as WAV and
+ * the extension rewritten here.
+ */
+function wavPath(path: string): string {
+  return soundPath(path, ".wav");
+}
+
+/**
+ * The port's paths are baked into its bundle and name subdirectories the pack
+ * does not use, so only the basename is kept.
+ */
+function soundPath(path: string, extension: string): string {
   const stem = path.replace(/^.*\//, "").replace(/\.[^.]*$/, "");
-  return "assets/sounds/" + stem + ".adp";
+  return "assets/sounds/" + stem + extension;
 }
 
 /**
@@ -230,9 +253,9 @@ export function createAthenaSound(): PumpedSoundPlayer {
       }
     },
 
-    // Just the path: the decoder is not opened until something plays it.
+    // Just the path: nothing is opened until something plays it.
     loadStream(key, path) {
-      streamPaths[key] = path;
+      streamPaths[key] = wavPath(path);
     },
 
     playSfx: fireSfx,

@@ -25,7 +25,7 @@
 // extension to `.adp` and nothing else has to agree.
 
 import { basename, dirname, extname, join } from "@std/path";
-import { encodeAdp, fitToHeadroom } from "./adpcm.ts";
+import { encodeAdp, encodeWav, fitToHeadroom } from "./adpcm.ts";
 import type { StagedFile } from "./assets.ts";
 
 /**
@@ -37,19 +37,11 @@ import type { StagedFile } from "./assets.ts";
 export const SFX_RATE = 22_050;
 
 /**
- * Music is streamed rather than sampled, so it keeps its own rate and both
- * channels: the SPU2 is not decoding it, the EE is.
+ * Music is streamed rather than sampled, so the SPU2 never sees it — the EE
+ * feeds audsrv 4 KB at a time. Mono at the effects' rate keeps the files to
+ * something a USB stick will not mind.
  */
-export const BGM_RATE = 44_100;
-
-/**
- * Vorbis quality for the music. This Homebrew ffmpeg has no libvorbis, so the
- * encoder is ffmpeg's own — weaker at a given bitrate, and behind `-strict -2`.
- * q=3 lands around 117 kbps, which is honest for sources that were already
- * ~128 kbps MP3: q=1 (46 kbps) audibly swims, and q=5 buys nothing a
- * transcode can recover.
- */
-export const BGM_QUALITY = 3;
+export const BGM_RATE = 22_050;
 
 /**
  * How much ADPCM the effects may add up to, in bytes.
@@ -144,6 +136,9 @@ export function sfxRequests(): { key: string; path: string }[] {
 /**
  * Every music key the port streams. `playBgm` loops these; `playSound` fires
  * one of them (`bgm_gameover`) as a jingle — see runtime-sound.ts.
+ *
+ * The port asks for `.ogg`; the disc carries `.wav`, and runtime-sound.ts
+ * rewrites the extension. See encodeWavTrack() for why it is not Ogg.
  */
 export function bgmRequests(): { key: string; path: string }[] {
   return [
@@ -156,7 +151,7 @@ export function bgmRequests(): { key: string; path: string }[] {
     "boss_fang_bgm",
     "bgm_continue",
     "bgm_gameover",
-  ].map((key) => ({ key, path: `assets/sounds/${key}.ogg` }));
+  ].map((key) => ({ key, path: `assets/sounds/${key}.wav` }));
 }
 
 export interface SoundPack {
@@ -221,10 +216,11 @@ async function indexSources(
   return found;
 }
 
-/** Decode anything ffmpeg reads into mono s16 PCM at `SFX_RATE`. */
+/** Decode anything ffmpeg reads into mono s16 PCM at `rate`. */
 async function decodeMono(
   ffmpeg: string,
   path: string,
+  rate: number = SFX_RATE,
 ): Promise<Int16Array | null> {
   const cmd = new Deno.Command(ffmpeg, {
     args: [
@@ -235,7 +231,7 @@ async function decodeMono(
       "-ac",
       "1",
       "-ar",
-      String(SFX_RATE),
+      String(rate),
       "-f",
       "s16le",
       "-",
@@ -358,40 +354,34 @@ export async function buildSfxPack(
   return { files, notes };
 }
 
-/** Transcode to the Ogg Vorbis AthenaEnv's streamer decodes. */
-async function encodeOgg(
+/**
+ * Render one track as the WAV AthenaEnv's streamer reads.
+ *
+ * NOT Ogg, though the port asks for `.ogg` and AthenaEnv links libVorbis.
+ * Its `load_ogg()` returns `-ENOENT` — a pointer value of 0xFFFFFFFE — from a
+ * function typed `SoundStream*` whenever `ov_open_callbacks` refuses the
+ * stream, and the caller dereferences it, so an Ogg libVorbis dislikes is not
+ * a silent track, it is a dead console with no way for JS to see it coming.
+ * The Ogg this build could produce came from ffmpeg's own *experimental*
+ * Vorbis encoder (no libvorbis in the host ffmpeg), and it crashed the game
+ * the moment the adventure scene started the music. WAV has no decoder to
+ * refuse it.
+ *
+ * `load_wav()` reads the canonical 44-byte header into its `t_wave` — which
+ * is exactly that layout — and then seeks to 0x30 for the samples, four bytes
+ * past the header. That looks like an off-by-four in AthenaEnv, so the file
+ * opens with four bytes of silence and the seek lands on the first real
+ * sample rather than clipping it.
+ */
+async function encodeWavTrack(
   ffmpeg: string,
   path: string,
 ): Promise<Uint8Array | null> {
-  const cmd = new Deno.Command(ffmpeg, {
-    args: [
-      "-v",
-      "error",
-      "-i",
-      path,
-      "-c:a",
-      "vorbis",
-      // ffmpeg's own Vorbis encoder is marked experimental; it is the only one
-      // in this build, and libVorbis on the console decodes what it writes.
-      "-strict",
-      "-2",
-      "-q:a",
-      String(BGM_QUALITY),
-      "-ar",
-      String(BGM_RATE),
-      "-ac",
-      "2",
-      "-f",
-      "ogg",
-      "-",
-    ],
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const out = await cmd.output();
-  // Ogg is a streaming container, so this comes back down the pipe whole.
-  if (!out.success || out.stdout.length < 4) return null;
-  return out.stdout;
+  const pcm = await decodeMono(ffmpeg, path, BGM_RATE);
+  if (!pcm) return null;
+  const padded = new Int16Array(pcm.length + 2);
+  padded.set(pcm, 2);
+  return encodeWav(padded, BGM_RATE);
 }
 
 /**
@@ -418,19 +408,19 @@ export async function buildBgmPack(
       missing.push(key);
       continue;
     }
-    const ogg = await encodeOgg(ffmpeg, source);
-    if (!ogg) {
+    const wav = await encodeWavTrack(ffmpeg, source);
+    if (!wav) {
       missing.push(key);
       continue;
     }
-    bytes += ogg.length;
-    files.push({ path, data: ogg });
+    bytes += wav.length;
+    files.push({ path, data: wav });
   }
 
   const notes = [
     `music: ${files.length} of ${bgmRequests().length} tracks, ${
       (bytes / 1048576).toFixed(1)
-    } MB of Vorbis`,
+    } MB of ${BGM_RATE / 1000} kHz mono WAV`,
   ];
   if (missing.length) {
     notes.push(`music: no source for ${missing.join(", ")}`);

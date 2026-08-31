@@ -97,10 +97,10 @@ class Harness {
   /**
    * Whether this export carries music at all. `--no-music` is a supported
    * build — it is most of the disc — and there the game still asks audsrv for
-   * every track, so an absent .ogg is the export working, not a gap in it.
+   * every track, so an absent track is the export working, not a gap in it.
    */
   get hasMusic(): boolean {
-    return this.read("assets/sounds/adventure_bgm.ogg") !== null;
+    return this.read("assets/sounds/adventure_bgm.wav") !== null;
   }
   rects = 0;
   prints = 0;
@@ -412,7 +412,7 @@ Deno.test("the PS2 bundle boots against AthenaEnv's interface", async () => {
       assert(harness.streams.length > 0, "no music track was ever opened");
       for (const path of harness.streams) {
         assert(
-          path.startsWith("assets/sounds/") && path.endsWith(".ogg"),
+          path.startsWith("assets/sounds/") && path.endsWith(".wav"),
           `opened a track from an unexpected path: ${path}`,
         );
       }

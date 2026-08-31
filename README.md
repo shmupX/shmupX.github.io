@@ -364,12 +364,19 @@ without it the export is silent as it always was.
   [`tests/adpcm_test.ts`](tests/adpcm_test.ts). The port's baked-in paths do not
   match the base game's layout, so each key is resolved against the game's tree
   and staged where the port will look; the runtime swaps `.wav` for `.adp`.
-- **Music** is streamed and stays compressed, since AthenaEnv links libVorbis:
-  all 9 tracks are transcoded to Ogg and played with `Sound.Stream`. It is most
-  of the disc — 13.8 MB of the 21.9 MB image — so `--no-music` drops it and
-  keeps the effects. `Sound.Stream` does not loop, so the runtime rewinds a
-  finished track itself, which is why `runtime-entry.ts` runs its own frame loop
-  rather than the package's `runNativeLoop`.
+- **Music** is streamed, as 22.05 kHz mono **WAV** — 31.9 MB of the export, so
+  `--no-music` drops it and keeps the effects. Not Ogg, even though the port
+  asks for `.ogg` and AthenaEnv does link libVorbis: Vorbis gets decoded inside
+  audsrv's fill-buffer callback (`ov_read` in `sound_ogg_fillbuf_handler`), and
+  a stream that `oggdec` reads perfectly on a desktop still killed the console
+  the moment the adventure scene started the music. The WAV handler is a bare
+  `fread` into audsrv's buffer with no decoder near it. `runtime-sound.ts`
+  rewrites the extension. Two details worth knowing: `load_wav` reads the
+  canonical 44-byte header into a struct of exactly that shape and then seeks to
+  `0x30` for the samples — four bytes past it — so each track is written with
+  four bytes of lead-in silence; and `Sound.Stream` does not loop, so the
+  runtime rewinds a finished track itself, which is why `runtime-entry.ts` runs
+  its own frame loop rather than the package's `runNativeLoop`.
 
 Then there is the Dezaemon 2 tone bank:
 [`lib/ps2/tone-bank-pack.ts`](lib/ps2/tone-bank-pack.ts) runs the 116-instrument

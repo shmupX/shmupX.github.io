@@ -7,6 +7,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { dirname, fromFileUrl, join, resolve } from "@std/path";
 import {
+  BGM_RATE,
   bgmRequests,
   buildBgmPack,
   buildSfxPack,
@@ -161,11 +162,11 @@ Deno.test("the music keys are the ones the port streams", () => {
   const requests = bgmRequests();
   assertEquals(requests.length, 9);
   const byKey = new Map(requests.map((r) => [r.key, r.path]));
-  // Staged as .ogg at the port's own path: unlike the effects, nothing swaps
-  // an extension at runtime, because audsrv streams Ogg directly.
-  assertEquals(byKey.get("adventure_bgm"), "assets/sounds/adventure_bgm.ogg");
+  // Staged as .wav — the port asks for .ogg and runtime-sound.ts rewrites it,
+  // because Vorbis decoding inside audsrv's fill callback crashes the console.
+  assertEquals(byKey.get("adventure_bgm"), "assets/sounds/adventure_bgm.wav");
   // In scene_continue/ in the base game, at the top of the port's tree.
-  assertEquals(byKey.get("bgm_continue"), "assets/sounds/bgm_continue.ogg");
+  assertEquals(byKey.get("bgm_continue"), "assets/sounds/bgm_continue.wav");
   // A boss track per boss, matching `"boss_" + bossData.name + "_bgm"`.
   for (const boss of ["bison", "barlog", "sagat", "vega", "goki", "fang"]) {
     assert(byKey.has(`boss_${boss}_bgm`), `no track for ${boss}`);
@@ -180,19 +181,27 @@ Deno.test("the base game answers every music request", gated, () => {
   }
 });
 
-Deno.test("every track is a real Ogg stream", gated, () => {
+Deno.test("every track is a WAV AthenaEnv's t_wave can read", gated, () => {
+  const text = (b: Uint8Array) => new TextDecoder().decode(b);
   for (const file of music!.files) {
-    assertEquals(
-      new TextDecoder().decode(file.data.subarray(0, 4)),
-      "OggS",
-      file.path,
-    );
-    // The first page carries the Vorbis identification header, which is what
-    // libVorbis on the console looks for. A container with the wrong codec
-    // inside would still start "OggS".
-    const head = new TextDecoder("latin1").decode(file.data.subarray(0, 128));
-    assert(head.includes("vorbis"), `${file.path}: not Vorbis`);
-    assert(file.data.length > 4096, `${file.path}: suspiciously short`);
+    const v = new DataView(file.data.buffer, file.data.byteOffset);
+    assertEquals(text(file.data.subarray(0, 4)), "RIFF", file.path);
+    assertEquals(text(file.data.subarray(8, 12)), "WAVE", file.path);
+    assertEquals(text(file.data.subarray(12, 16)), "fmt ", file.path);
+    // AthenaEnv freads sizeof(t_wave) — the canonical 44-byte header — and
+    // reads channels, rate and bit depth straight out of it, so the layout
+    // has to be exactly that, with the data chunk at offset 36.
+    assertEquals(v.getUint32(16, true), 16, `${file.path}: fmt chunk size`);
+    assertEquals(v.getUint16(20, true), 1, `${file.path}: PCM`);
+    assertEquals(v.getUint16(22, true), 1, `${file.path}: mono`);
+    assertEquals(v.getUint32(24, true), BGM_RATE, `${file.path}: rate`);
+    assertEquals(v.getUint16(34, true), 16, `${file.path}: bits`);
+    assertEquals(text(file.data.subarray(36, 40)), "data", file.path);
+    // load_wav() seeks to 0x30 for the samples, four bytes past the 44-byte
+    // header, so the track opens with four bytes of silence and the seek
+    // lands on real audio instead of clipping it.
+    assertEquals(v.getUint32(44, true), 0, `${file.path}: lead-in silence`);
+    assert(file.data.length > 44 + 4, `${file.path}: suspiciously short`);
   }
 });
 
