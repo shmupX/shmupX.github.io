@@ -65,6 +65,11 @@ export const SFX_BUDGET_BYTES = 1024 * 1024;
 /** Where the effects land on the disc — one flat directory. */
 export const SFX_DIR = "assets/sounds";
 
+/** `assets/sounds/se_shoot.adp` -> `se_shoot`: the key the port asks for. */
+function keyOf(path: string): string {
+  return path.replace(/^.*\//, "").replace(/\.[^.]*$/, "");
+}
+
 /** Extensions worth looking for, best source first. */
 const SOURCE_EXTENSIONS = [".wav", ".mp3", ".ogg"];
 
@@ -157,6 +162,17 @@ export function bgmRequests(): { key: string; path: string }[] {
 export interface SoundPack {
   /** Files to stage on the disc. */
   files: StagedFile[];
+  /**
+   * The keys this pack actually carries.
+   *
+   * Not every key the port asks for survives the IOP budget, and a key that
+   * did not make it is one the console must never go looking for: cdfs answers
+   * a miss with a full directory scan and a `CAN NOT FOUND` line, which costs
+   * real boot time and reads like a broken disc. build.ts hands this list to
+   * the runtime so a dropped effect is skipped rather than searched for — see
+   * `__PS2_SFX__` in lib/ps2/runtime-sound.ts.
+   */
+  keys: string[];
   notes: string[];
 }
 
@@ -333,10 +349,12 @@ export async function buildSfxPack(
     } KB)`,
   ];
   if (dropped.length) {
+    // Named in full, not the usual first-three-and-an-ellipsis: these are the
+    // keys the console will play silently, and the whole list is what tells
+    // you whether `--sfx-budget` is worth raising.
     notes.push(
-      `sound effects: ${dropped.length} over the IOP budget and dropped — ${
-        dropped.slice(0, 3).join(", ")
-      }${dropped.length > 3 ? ", …" : ""}`,
+      `sound effects: ${dropped.length} over the IOP budget and dropped — ` +
+        `${dropped.join(", ")} (raise --sfx-budget to keep them)`,
     );
   }
   if (attenuated) {
@@ -351,7 +369,7 @@ export async function buildSfxPack(
       }${missing.length > 4 ? ", …" : ""}`,
     );
   }
-  return { files, notes };
+  return { files, keys: files.map((f) => keyOf(f.path)), notes };
 }
 
 /**
@@ -425,5 +443,5 @@ export async function buildBgmPack(
   if (missing.length) {
     notes.push(`music: no source for ${missing.join(", ")}`);
   }
-  return { files, notes };
+  return { files, keys: files.map((f) => keyOf(f.path)), notes };
 }

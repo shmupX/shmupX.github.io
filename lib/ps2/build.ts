@@ -22,6 +22,9 @@ import {
   findSndpac,
 } from "./tone-bank-pack.ts";
 import { buildBgmPack, buildSfxPack } from "./sound-pack.ts";
+import { loadSavLevel } from "./sav.ts";
+import { buildZip } from "./zip.ts";
+import type { FrameEntry } from "./atlas.ts";
 
 const FIREBASE_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 
@@ -34,6 +37,13 @@ const FIREBASE_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
  * see runtime-entry.ts.
  */
 const DEFAULT_GAME_FPS = 120;
+
+/**
+ * The timestamp every artifact is stamped with. Fixed rather than read from
+ * the clock so rebuilding the same level twice produces the same disc and the
+ * same archive, byte for byte.
+ */
+const BUILD_DATE = new Date("2000-03-04T00:00:00Z");
 
 // AthenaEnv reads this beside the ELF (or as cdrom0:ATHENA.INI;1 on a disc).
 // The boot logo is off so the game comes straight up. audsrv is the sound IRX:
@@ -74,8 +84,34 @@ export interface BuildPs2Options {
   levelName?: string | null;
   /** Read the level from this JSON file instead of Firebase. */
   levelFile?: string | null;
+  /**
+   * Build straight from a Dezaemon 2 cart image — no editor, no Firebase.
+   * `levelName` then only names the artifact; the level itself comes out of
+   * the save (lib/ps2/sav.ts).
+   */
+  savFile?: string | null;
+  /** Which game in a cart image that holds more than one. Default: the first. */
+  savSlot?: number | null;
+  /**
+   * Which of a save's stages to export — the console runs one. Default: the
+   * first stage that has anything placed on it.
+   */
+  stage?: string | null;
   /** Defaults to <root>/build/ps2. */
   outDir?: string | null;
+  /**
+   * Where the compiled runtime and the downloaded athena.elf are kept between
+   * builds. Defaults to <root>/build/ps2/.cache — which a packaged desktop app
+   * cannot write to, since its whole tree is a read-only deno-compile VFS, so
+   * that caller points this at real disk.
+   */
+  cacheDir?: string | null;
+  /**
+   * An already-compiled main.js. Supplying it skips `deno bundle` entirely,
+   * which is what lets a build run somewhere the Deno CLI and the sources are
+   * not — see buildRuntimeBundle().
+   */
+  runtimeJs?: Uint8Array | null;
   /** Use this athena.elf rather than downloading the AthenaEnv release. */
   athenaElf?: string | null;
   /** Re-download AthenaEnv even if the cache has it. */
@@ -88,6 +124,11 @@ export interface BuildPs2Options {
    * homebrew disc needs FMCB or a modchip anyway.
    */
   iso?: boolean;
+  /**
+   * Write the folder as one `.zip` instead of as a folder. Same tree, same
+   * names, one file to hand to a browser download or copy onto a stick.
+   */
+  zip?: boolean;
   /** SNDPAC.BIN to render the tone bank from; default: search dev-fixtures/. */
   sndpac?: string | null;
   /**
@@ -120,10 +161,15 @@ export interface BuildPs2Result {
   name: string;
   /** Folder holding both artifacts. */
   dir: string;
-  /** The athena.elf build — copy this whole folder to a USB stick. */
-  appDir: string;
+  /**
+   * The athena.elf build — copy this whole folder to a USB stick. Null when
+   * `--zip` asked for the archive instead of the folder.
+   */
+  appDir: string | null;
   /** The disc image, when --iso asked for one. */
   isoPath: string | null;
+  /** The zipped folder, when --zip asked for one. */
+  zipPath: string | null;
   artifacts: string[];
   notes: string[];
 }
@@ -142,10 +188,31 @@ function appName(name: string): string {
     .slice(0, 30);
 }
 
+interface LoadedLevel {
+  record: LevelRecord;
+  fallbackName: string;
+  /** Set only by the .sav path — see StageOptions.customAtlas. */
+  customAtlas?: { sheet: Raster; frames: Record<string, FrameEntry> } | null;
+}
+
 async function loadRecord(
   options: BuildPs2Options,
   log: (message: string) => void,
-): Promise<{ record: LevelRecord; fallbackName: string }> {
+): Promise<LoadedLevel> {
+  if (options.savFile) {
+    log(`  level from a Dezaemon save: ${options.savFile}`);
+    const level = await loadSavLevel(options.savFile, {
+      slot: options.savSlot,
+      stage: options.stage,
+      name: options.levelName,
+    });
+    for (const note of level.notes) log(`    ${note}`);
+    return {
+      record: level.record,
+      fallbackName: level.name,
+      customAtlas: level.atlas,
+    };
+  }
   if (options.levelFile) {
     log(`  level from file: ${options.levelFile}`);
     const record = JSON.parse(
@@ -253,12 +320,17 @@ async function loadCover(
  * Bundle lib/ps2/runtime-entry.ts (and the JSR game it pulls in) into the
  * single main.js AthenaEnv evaluates. The result depends only on our own
  * sources and the pinned dependency, so it is cached and reused across level
- * builds.
+ * builds — and, because it is level-independent, it can be compiled once ahead
+ * of time and carried somewhere the sources are not. That is how the packaged
+ * desktop app exports for the PS2 at all: scripts/build-desktop.ts calls this
+ * and embeds the result, and the route hands it back as `runtimeJs`.
+ *
+ * Exported for that caller; `buildPs2` calls it itself when it has to.
  */
-async function bundleRuntime(
+export async function buildRuntimeBundle(
   root: string,
   cacheDir: string,
-  log: (message: string) => void,
+  log: (message: string) => void = () => {},
 ): Promise<Uint8Array> {
   const entry = join(root, "lib", "ps2", "runtime-entry.ts");
   const out = join(cacheDir, "main.js");
@@ -330,9 +402,11 @@ export async function buildPs2(
   const log = options.log ?? ((message: string) => console.log(message));
   const root = resolve(options.root);
   const gameDir = join(root, "static", "games", "2028-ai");
-  const cacheDir = join(root, "build", "ps2", ".cache");
+  const cacheDir = options.cacheDir
+    ? resolve(options.cacheDir)
+    : join(root, "build", "ps2", ".cache");
 
-  const { record, fallbackName } = await loadRecord(options, log);
+  const { record, fallbackName, customAtlas } = await loadRecord(options, log);
   const name = safeName(options.levelName ?? fallbackName);
   const app = appName(name);
   const outRoot = options.outDir
@@ -344,7 +418,11 @@ export async function buildPs2(
   log(`Level  : ${name}`);
   log(`Output : ${dir}`);
 
-  const mainJs = await bundleRuntime(root, cacheDir, log);
+  // A caller that already holds the compiled runtime hands it over rather than
+  // making this shell out to `deno bundle` — see buildRuntimeBundle.
+  const mainJs = options.runtimeJs ??
+    await buildRuntimeBundle(root, cacheDir, log);
+  if (options.runtimeJs) log("  runtime: using the bundle the caller supplied");
   log(`  runtime: main.js is ${(mainJs.length / 1024).toFixed(0)}KB`);
 
   const athena = await resolveAthenaElf({
@@ -365,6 +443,7 @@ export async function buildPs2(
     gameDir,
     record,
     cover,
+    customAtlas,
     maxSheet: options.maxSheet,
   });
   for (const note of staged.notes) log(`    ${note}`);
@@ -414,9 +493,17 @@ export async function buildPs2(
   // this global, so an uncapped build is the same compiled game with the
   // frame pacing turned off.
   const gameFps = options.gameFps ?? DEFAULT_GAME_FPS;
+  // Which effects the disc actually carries. Without it the runtime has to
+  // probe for every key the port asks for, and cdfs answers a miss with a full
+  // directory scan plus a `CAN NOT FOUND` line — nine dropped voice lines cost
+  // most of a second of boot and read like a broken disc. See SoundPack.keys.
+  const sfxKeys = sfx && sfx.files.length
+    ? `globalThis.__PS2_SFX__ = ${JSON.stringify(sfx.keys)};`
+    : "";
   const preamble = [
     options.uncapped ? "globalThis.__PS2_UNCAPPED__ = true;" : "",
     gameFps === 30 ? "" : `globalThis.__PS2_GAME_FPS__ = ${gameFps};`,
+    sfxKeys,
   ].filter(Boolean).join("\n");
   const uncappedMainJs = preamble
     ? new Uint8Array([...encoder.encode(preamble + "\n"), ...mainJs])
@@ -442,11 +529,30 @@ export async function buildPs2(
     ...(toneBank?.files ?? []),
   ];
 
+  // The folder and the zip are the same tree; --zip asks for it as one file,
+  // so the folder is not also left behind to go stale beside it.
   await Deno.remove(appDir, { recursive: true }).catch(() => {});
-  await ensureDir(appDir);
-  await writeTree(appDir, payload);
+  const artifacts: string[] = [];
+  let zipPath: string | null = null;
+  if (options.zip) {
+    // Entries are prefixed with the app folder, so unpacking anywhere
+    // reproduces the folder wLaunchELF/OPL expects rather than spraying
+    // athena.elf and assets/ into the current directory.
+    const zip = await buildZip(
+      payload.map((file) => ({ path: `${app}/${file.path}`, data: file.data })),
+      BUILD_DATE,
+    );
+    zipPath = join(dir, `${app}.zip`);
+    await ensureDir(dir);
+    await Deno.writeFile(zipPath, zip);
+    artifacts.push(zipPath);
+    log(`  zip: ${(zip.length / 1048576).toFixed(1)}MB`);
+  } else {
+    await ensureDir(appDir);
+    await writeTree(appDir, payload);
+    artifacts.push(appDir);
+  }
 
-  const artifacts = [appDir];
   let isoPath: string | null = null;
   if (options.iso) {
     log("  writing the disc image…");
@@ -483,7 +589,7 @@ export async function buildPs2(
         return file;
       }),
       // Fixed, so rebuilding the same level yields the same image.
-      date: new Date("2000-03-04T00:00:00Z"),
+      date: BUILD_DATE,
     });
     isoPath = join(dir, `${app}.iso`);
     await Deno.writeFile(isoPath, iso);
@@ -491,30 +597,66 @@ export async function buildPs2(
     log(`  iso: ${(iso.length / 1048576).toFixed(1)}MB`);
   }
 
+  // The exact command that produced this, so the folder is self-describing
+  // once it is off the machine that built it.
+  const task = options.zip
+    ? "build:ps2:zip"
+    : options.iso
+    ? "build:ps2:iso"
+    : "build:ps2";
+  const rebuildCommand = [
+    `deno task ${task}`,
+    options.savFile && !options.levelName ? "" : JSON.stringify(name),
+    options.savFile ? `--sav ${JSON.stringify(options.savFile)}` : "",
+    options.stage ? `--stage ${options.stage}` : "",
+    options.savSlot ? `--slot ${options.savSlot}` : "",
+    // build:ps2:zip pre-sets only --zip, so a build that asked for both still
+    // has to name the disc.
+    options.zip && options.iso ? "--iso" : "",
+  ].filter(Boolean).join(" ");
+
   await Deno.writeTextFile(
     join(dir, "README.txt"),
-    readme(name, app, isoPath !== null, {
+    readme(name, app, isoPath !== null, zipPath !== null, rebuildCommand, {
       sfx: !!(sfx && sfx.files.length),
       bgm: !!(bgm && bgm.files.length),
       toneBank: !!toneBank,
     }),
   );
 
-  return { name, dir, appDir, isoPath, artifacts, notes };
+  return {
+    name,
+    dir,
+    appDir: options.zip ? null : appDir,
+    isoPath,
+    zipPath,
+    artifacts,
+    notes,
+  };
 }
 
 function readme(
   name: string,
   app: string,
   hasIso: boolean,
+  zipped: boolean,
+  rebuild: string,
   audio: { sfx: boolean; bgm: boolean; toneBank: boolean },
 ): string {
   return [
     `${name} — PlayStation 2 build`,
     "",
-    `${app}/`,
-    "    The AthenaEnv build. Copy the whole folder to a USB stick (or a",
-    "    memory card, or an internal HDD partition) and launch",
+    zipped ? `${app}.zip` : `${app}/`,
+    ...(zipped
+      ? [
+        `    The AthenaEnv build, zipped. Unpack it and copy the ${app}/`,
+        "    folder it holds onto a USB stick (or a memory card, or an",
+        "    internal HDD partition), then launch",
+      ]
+      : [
+        "    The AthenaEnv build. Copy the whole folder to a USB stick (or a",
+        "    memory card, or an internal HDD partition) and launch",
+      ]),
     `    ${app}/ATHENA.ELF from wLaunchELF, OPL or FMCB. ATHENA.ELF is the`,
     "    interpreter; main.js is the game; assets/ is this level. It is",
     "    upper case because SYSTEM.CNF's BOOT2 has to name it exactly.",
@@ -575,7 +717,7 @@ function readme(
       ]),
     "Controls: D-pad or left stick to move, Cross to fire, Start to pause.",
     "",
-    "Rebuild with:  deno task build:ps2 " + JSON.stringify(name),
+    "Rebuild with:  " + rebuild,
     "",
   ].join("\n");
 }

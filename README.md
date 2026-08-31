@@ -82,7 +82,9 @@ deno task build:windows   # the launcher as a Windows .exe
 deno task build:linux     # the launcher as a Linux .AppImage
 deno task build:mac       # the launcher as a macOS .app
 deno task build:desktop   # …whichever of those three matches this host
-deno task build:ps2       # a level as a PlayStation 2 disc + USB folder
+deno task build:ps2       # a level as a PlayStation 2 USB folder
+deno task build:ps2:zip   # …as one .zip of that folder
+deno task build:ps2:iso   # …plus a bootable disc image
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
@@ -210,6 +212,14 @@ existing `_fresh/`), `--no-terminal` (Windows: no console window),
 `--no-appimage` (stop at the raw Linux binary), `--no-bundle` (stop at the raw
 macOS binary), `--no-export-tools`.
 
+`--no-export-tools` is what the editor's export button rides on. It leaves out
+`tools/build-level` and the base game (which the APK/desktop targets stage onto
+real disk before spawning `node`), and also the **PS2 runtime**: the packaged
+app has no sources to bundle and no Deno CLI to bundle with, so
+`scripts/build-desktop.ts` compiles `main.js` once at packaging time
+(`buildRuntimeBundle`) and embeds it beside a cached `athena.elf` — ~5MB, and
+the difference between a PS2 export that works in the app and one that refuses.
+
 The AppImage step needs a **Linux host**: `appimagetool` plus the type-2 runtime
 for the target arch are downloaded into `build/desktop/.cache/` on first use
 (`$APPIMAGETOOL` or one on `PATH` wins). Cross-compiling the binary itself works
@@ -252,15 +262,39 @@ and a **Mac build needs a Mac**, for `hdiutil` and `codesign`.
 ```sh
 deno task build:ps2                     # the game this repo ships
 deno task build:ps2 "Master Arena Mod"  # that Firebase level
+deno task build:ps2 --sav "Dez 2 - Chohsoku Stringer.sav"   # that Saturn cart
 ```
 
-Either way you get **build/ps2/&lt;level name&gt;/** holding the two ways PS2
+Any of them gives you **build/ps2/&lt;level name&gt;/** holding the ways PS2
 homebrew is actually run:
 
-|                   |                                                                                                                                                        |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<LevelName>/`    | the **athena.elf build** — copy the folder to a USB stick (or a memory card, or an HDD partition) and launch `athena.elf` from wLaunchELF, OPL or FMCB |
-| `<LevelName>.iso` | the same tree as a **bootable disc** — PCSX2, the launcher's own in-browser PS2 player, or a burned disc on a console that will boot homebrew          |
+|                   |                                                                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<LevelName>/`    | the **athena.elf build** — copy the folder to a USB stick (or a memory card, or an HDD partition) and launch `athena.elf` from wLaunchELF, OPL or FMCB  |
+| `<LevelName>.zip` | the same folder as **one file** (`--zip`), for a browser download or a chat window — unpack it and you have the folder back                             |
+| `<LevelName>.iso` | the same tree as a **bootable disc** (`--iso`) — PCSX2, the launcher's own in-browser PS2 player, or a burned disc on a console that will boot homebrew |
+
+The folder is the default; `--zip` swaps it for the archive and `--iso` adds the
+disc beside whichever of the two was written. The two sibling tasks are this one
+with the flag pre-set, so the everyday spellings are short:
+
+```sh
+deno task build:ps2:zip "Chohsoku Stringer" --sav="./Dez 2 - Chohsoku Stringer.sav"
+deno task build:ps2:iso --sav="./Dez 2 - Chohsoku Stringer.sav"
+```
+
+**Straight from a `.sav`.** `--sav <path>` skips the editor and Firebase
+entirely: [`lib/ps2/sav.ts`](lib/ps2/sav.ts) runs the same pipeline the editor's
+importer does — `normalize` → `parse` → `decodeSave` → `mapSaveToGame` out of
+[`packages/shmup-engine`](packages/shmup-engine) — and lands on the same level
+record the Firebase reader produces, so nothing downstream can tell the two
+apart. The name is then optional, as the second command above shows: leave it
+off and the filename supplies it, with the shelf's own `Dez 2 -` prefix stripped
+("Dez 2 - Chohsoku Stringer.sav" → "Chohsoku Stringer"). A save holds up to ten
+stages and the console runs one, so the export takes the first stage with
+anything placed on it; `--stage <n>` picks another, and `--slot <n>` picks
+between games in a cart image that holds more than one. Pair it with
+`--cover <slug>` (below) to put that save's shelf shot on the title screen.
 
 There is nothing to install: no ps2dev, no C compiler, not even Node. The
 console runs the game as **JavaScript**, because `athena.elf` is
@@ -292,9 +326,11 @@ Everything else in the export is data, produced by `lib/ps2/`:
   paths the game opens.
 
 Flags: `--out <dir>`, `--level-file <path>` (a local JSON export instead of
-Firebase), `--athena-elf <path>`, `--refresh-athena`, `--atlas-max <px>`,
+Firebase), `--sav <path>` (a Dezaemon 2 cart image), `--stage <n>`,
+`--slot <n>`, `--athena-elf <path>`, `--refresh-athena`, `--atlas-max <px>`,
 `--sndpac <path>`, `--no-audio`, `--no-music`, `--uncapped`, `--game-fps <n>`,
-`--cover <slug|png>`, `--iso`.
+`--cover <slug|png>`, `--iso`, `--zip`. Each takes `--flag value` or
+`--flag=value`, which is the readable spelling for a path with spaces in it.
 
 **Game speed.** The port runs its logic on a fixed 30 Hz step and that step is
 what moves everything; the frame rate is separate and changes none of it. 30 is
@@ -375,9 +411,56 @@ this.)
 
 The editor drives the same code: its **TARGET → PS2** option posts to
 `routes/api/build-apk.ts`, which — unlike every other target — runs the build
-in-process rather than spawning `node tools/build-level`. It needs a source
-checkout (`deno task dev`), since `deno bundle` compiles the game from
-`lib/ps2/runtime-entry.ts` on disk.
+in-process rather than spawning `node tools/build-level`.
+
+It works in the **packaged desktop app** as well as in a checkout, which takes
+three adjustments, because a `deno compile` binary is a read-only VFS with no
+Deno CLI beside it:
+
+- the runtime is **pre-compiled**. `buildRuntimeBundle` produces one
+  level-independent `main.js`, so `scripts/build-desktop.ts` runs it once at
+  packaging time and embeds the result (plus `athena.elf`); the route hands it
+  back as `runtimeJs` and no `deno bundle` is needed. A checkout still bundles
+  on every build, so an edit to `lib/ps2` lands in the very next disc.
+- everything written goes to
+  [`lib/build-workspace.ts`](lib/build-workspace.ts)'s directory on real disk,
+  and [`routes/api/build-artifact.ts`](routes/api/build-artifact.ts) serves from
+  there as well as from a checkout's `build/`.
+- the base game is **staged out of the VFS first**. Deno reads the VFS happily,
+  but the sound packs shell out to `ffmpeg`, and a separate process cannot see
+  it at all — the same reason `node tools/build-level` gets staged out. Without
+  that the app built a perfectly good disc with every sound missing.
+
+What a packaged export still lacks is the Dezaemon tone bank, which comes from a
+`SNDPAC.BIN` in `dev-fixtures/` — community disc content that is not shipped.
+
+**What the editor offers when the build lands.** A finished PS2 export is three
+things at once, so the panel under the EXPORT button offers all three rather
+than printing a path and stopping:
+
+|                            |                                                                                                                                |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| DOWNLOAD DISC (.ISO)       | the disc image, streamed by [`routes/api/build-artifact.ts`](routes/api/build-artifact.ts)                                     |
+| DOWNLOAD USB FOLDER (.ZIP) | the athena.elf folder, zipped on the way out by the same route                                                                 |
+| → PS2 LIBRARY              | install the Play! core if it is not already here, file the disc in the launcher's own PS2 shelf, and play it — in this browser |
+
+[`static/ps2-library.js`](static/ps2-library.js) is the shared half: the editor
+imports it at runtime, the dashboard at bundle time, so both surfaces use one
+shelf (an IndexedDB store), one core-install path and one rule for what
+`emu-sw.js` may mirror. A disc filed from the editor therefore also appears in
+the launcher's **PLAYSTATION 2** section, ahead of the mirror's hosted rows and
+marked `built in this editor`; re-exporting the same level replaces its row
+rather than adding another.
+
+Two things follow from how Play! works. The **disc** is what gets filed, not the
+`athena.elf`: Play! will boot a bare ELF, but AthenaEnv would then have no
+device to read `main.js` and `assets/` from, and only the `.iso` carries the
+whole tree behind a `SYSTEM.CNF`. And the player opens as a **top-level
+navigation** rather than in the launcher's frame, because Play! keeps guest RAM
+in a `SharedArrayBuffer` and only a cross-origin-isolated document gets one —
+which an iframe cannot be unless its embedder is too. That is the mode
+`play.html`'s own BYOD path is written for, exit gestures (Escape, SELECT+START,
+two held corners) included.
 
 **Audio.** audsrv splits sound in two, and so does the export.
 [`lib/ps2/sound-pack.ts`](lib/ps2/sound-pack.ts) builds both packs and
@@ -392,6 +475,21 @@ without it the export is silent as it always was.
   [`tests/adpcm_test.ts`](tests/adpcm_test.ts). The port's baked-in paths do not
   match the base game's layout, so each key is resolved against the game's tree
   and staged where the port will look; the runtime swaps `.wav` for `.adp`.
+
+  Not all 60 make it onto the disc. audsrv keeps samples in **IOP RAM**, of
+  which there are 2 MB in total, so the pack has a **1 MB budget**
+  (`--sfx-budget <KB>`) and fills it gameplay-first: every `se_*` together is a
+  quarter of it, and what is left buys voice lines shortest-first, so a
+  four-second boss taunt is what goes. The build names every key it dropped.
+
+  The port then asks audsrv for all 60 regardless, and on a console an absent
+  one is not free: cdfs answers a miss by scanning the whole directory and
+  printing `***** FILE ... CAN NOT FOUND ******`, which costs real boot time and
+  reads like a broken disc. So the build bakes the staged list into `main.js` as
+  `__PS2_SFX__` and [`runtime-sound.ts`](lib/ps2/runtime-sound.ts) skips
+  anything absent from it rather than going looking.
+  [`tests/ps2_runtime_smoke_test.ts`](tests/ps2_runtime_smoke_test.ts) boots the
+  newest export and asserts the runtime probes for nothing the disc lacks.
 - **Music** is streamed, as 22.05 kHz mono **WAV** — 31.9 MB of the export, so
   `--no-music` drops it and keeps the effects. Not Ogg, even though the port
   asks for `.ogg` and AthenaEnv does link libVorbis: Vorbis gets decoded inside

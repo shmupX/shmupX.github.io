@@ -76,6 +76,15 @@ interface DrawCall {
 class Harness {
   opened: string[] = [];
   missing: string[] = [];
+  /**
+   * Paths the runtime asked `std.open` about before loading them.
+   *
+   * A probe is not free on hardware: cdfs answers a miss by scanning the whole
+   * directory and printing `CAN NOT FOUND`, so probing for something the disc
+   * was never going to carry is wasted boot time that reads like a broken
+   * disc. See `__PS2_SFX__` in lib/ps2/runtime-sound.ts.
+   */
+  probes: string[] = [];
   draws: DrawCall[] = [];
   /** Effects the game asked audsrv to load. */
   played: string[] = [];
@@ -327,10 +336,11 @@ function install(self: Harness): void {
     // what lib/ps2/runtime-sound.ts probes with before handing a path to
     // AthenaEnv's loaders — those fseek() a NULL FILE* and take the console
     // down. Writes (the high-score file) always succeed.
-    open: (path: string, mode: string) =>
-      mode.indexOf("r") !== -1 && !self.read(path)
-        ? null
-        : { puts: () => {}, close: () => {} },
+    open: (path: string, mode: string) => {
+      if (mode.indexOf("r") === -1) return { puts: () => {}, close: () => {} };
+      self.probes.push(path);
+      return self.read(path) ? { puts: () => {}, close: () => {} } : null;
+    },
   };
 }
 
@@ -498,6 +508,25 @@ Deno.test("the PS2 bundle boots against AthenaEnv's interface", async () => {
     assert(
       harness.plays.length > 0,
       "900 frames of play fired no sound at all",
+    );
+
+    // The effects that did NOT fit the IOP budget. The port asks audsrv for
+    // all sixty keys whatever the disc holds, so the build bakes the staged
+    // list into main.js and the runtime skips the rest — without that, every
+    // dropped voice line costs a full cdfs directory scan and prints
+    // `CAN NOT FOUND` on a console that is working exactly as designed.
+    const strayProbes = harness.probes.filter((path) =>
+      path.endsWith(".adp") && !harness.read(path)
+    );
+    assertEquals(
+      strayProbes,
+      [],
+      "the runtime went looking for effects the disc does not carry — each " +
+        "one is a wasted cdfs scan and a CAN NOT FOUND line",
+    );
+    console.log(
+      `  probed ${harness.probes.filter((p) => p.endsWith(".adp")).length} ` +
+        `effects, none of them absent`,
     );
 
     // Music, when this build has it — --no-music is a supported export, and

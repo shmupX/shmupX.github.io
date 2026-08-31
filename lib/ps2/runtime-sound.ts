@@ -111,8 +111,12 @@ function wavPath(path: string): string {
  * does not use, so only the basename is kept.
  */
 function soundPath(path: string, extension: string): string {
-  const stem = path.replace(/^.*\//, "").replace(/\.[^.]*$/, "");
-  return "assets/sounds/" + stem + extension;
+  return "assets/sounds/" + soundStem(path) + extension;
+}
+
+/** The basename without its extension — what the pack names an effect by. */
+function soundStem(path: string): string {
+  return path.replace(/^.*\//, "").replace(/\.[^.]*$/, "");
 }
 
 /**
@@ -163,6 +167,19 @@ export function createAthenaSound(): PumpedSoundPlayer {
   if (!Sound || typeof Sound.Sfx !== "function") return silent;
 
   const canStream = typeof Sound.Stream === "function";
+
+  // What the disc carries, when the build said so (lib/ps2/build.ts writes
+  // this into main.js's preamble from SoundPack.keys). The port asks for all
+  // sixty effects whatever the disc holds, and the ones the IOP budget dropped
+  // are not merely absent — asking for one makes cdfs scan the whole
+  // directory, print `CAN NOT FOUND`, and hand back nothing. Knowing the list
+  // up front turns each of those into no work at all. Absent (an older build,
+  // a silent one), everything falls through to the probe below, which is the
+  // behaviour this always had.
+  const staged = (globalThis as { __PS2_SFX__?: unknown }).__PS2_SFX__;
+  const stagedSfx: Record<string, true> | null = Array.isArray(staged)
+    ? Object.fromEntries(staged.map((key) => [String(key), true as const]))
+    : null;
 
   // Keys that failed to load stay out of these, so every play is a lookup that
   // can simply miss. One missing effect never costs more than itself.
@@ -245,6 +262,12 @@ export function createAthenaSound(): PumpedSoundPlayer {
 
     loadSfx(key, path) {
       const file = adpPath(path);
+      // The pack's own list first: an effect it never staged is one the disc
+      // must not be searched for. Matched on the disc name rather than the
+      // port's key, because that is what would actually be opened — the two
+      // agree today (sfxRequests names each file after its key) and this does
+      // not depend on their continuing to.
+      if (stagedSfx && !stagedSfx[soundStem(file)]) return;
       if (!canOpen(file)) return;
       try {
         sfx[key] = Sound.Sfx(file);

@@ -14,6 +14,8 @@
     "build:linux": "deno run -A scripts/build-desktop.ts linux",
     "build:mac": "deno run -A scripts/build-desktop.ts mac",
     "build:ps2": "deno run -A scripts/build-ps2.ts",
+    "build:ps2:zip": "deno run -A scripts/build-ps2.ts --zip",
+    "build:ps2:iso": "deno run -A scripts/build-ps2.ts --iso",
     "2028-ai:bgm": "deno run -A scripts/2028-ai/download-custom-bgm.ts",
     "games:manifest": "deno run -A scripts/build-games-manifest.ts",
     "deza:manifest": "deno run -A scripts/build-deza-saves-manifest.ts",

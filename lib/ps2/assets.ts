@@ -258,6 +258,16 @@ export interface StageOptions {
    */
   cover?: Raster | null;
   record: LevelRecord;
+  /**
+   * The level's custom sprite sheet, already decoded.
+   *
+   * A Firebase record carries its atlas as a PNG data URL, because that is what
+   * a browser canvas produces. A build straight from a .sav has the sprites as
+   * raw RGBA (lib/ps2/sav.ts) and hands the packed sheet over directly rather
+   * than encoding a multi-megabyte base64 string only to decode it again.
+   * When this is set it wins over `record.atlasImageDataURL`.
+   */
+  customAtlas?: { sheet: Raster; frames: Record<string, FrameEntry> } | null;
   /** Cap on either dimension of a generated atlas. */
   maxSheet?: number;
 }
@@ -425,7 +435,13 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
 
   let custom: { sheet: Raster; frames: Record<string, FrameEntry> } | null =
     null;
-  if (record.atlasImageDataURL && record.atlasFrames) {
+  if (options.customAtlas) {
+    custom = options.customAtlas;
+    notes.push(
+      `custom atlas: ${Object.keys(custom.frames).length} frames, ` +
+        `${custom.sheet.width}x${custom.sheet.height}`,
+    );
+  } else if (record.atlasImageDataURL && record.atlasFrames) {
     custom = {
       sheet: await decodeDataUrl(record.atlasImageDataURL),
       frames: record.atlasFrames,

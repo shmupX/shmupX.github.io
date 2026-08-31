@@ -44,6 +44,8 @@
 
 import { basename, dirname, fromFileUrl, join, resolve } from "@std/path";
 import { ensureDir, walk } from "@std/fs";
+import { buildRuntimeBundle } from "../lib/ps2/build.ts";
+import { resolveAthenaElf } from "../lib/ps2/athena.ts";
 
 const ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 
@@ -235,6 +237,49 @@ async function buildWeb(skip: boolean): Promise<void> {
   await run(Deno.execPath(), ["task", "build"]);
 }
 
+/**
+ * Compile the PS2 runtime, and get hold of the AthenaEnv interpreter, so both
+ * can be embedded.
+ *
+ * The packaged app has no sources to bundle from and no Deno CLI to bundle
+ * with, which is why its PS2 export used to refuse outright. The runtime is
+ * level-independent — it is the same main.js for every disc — so compiling it
+ * here, once, is all that was missing. athena.elf rides along for the same
+ * reason a checkout caches it: otherwise the first export in the packaged app
+ * needs a GitHub download.
+ *
+ * Best effort. Either one failing costs the packaged app its PS2 export
+ * (routes/api/build-apk.ts says so plainly) but must not sink a desktop build.
+ */
+async function stagePs2Runtime(): Promise<string[]> {
+  const cacheDir = join(ROOT, "build", "ps2", ".cache");
+  const includes: string[] = [];
+  try {
+    await buildRuntimeBundle(ROOT, cacheDir, (m) => console.log(` ${m}`));
+    includes.push("--include", "./build/ps2/.cache/main.js");
+  } catch (err) {
+    console.warn(
+      `  PS2 runtime: ${(err as Error).message} — the packaged app will not ` +
+        `be able to export for the PS2.`,
+    );
+    return includes;
+  }
+  try {
+    const athena = await resolveAthenaElf({ cacheDir });
+    console.log(
+      `  athena.elf: ${(athena.bytes.length / 1048576).toFixed(1)}MB from ` +
+        athena.source,
+    );
+    includes.push("--include", "./build/ps2/.cache/athena.elf");
+  } catch (err) {
+    console.warn(
+      `  athena.elf: ${(err as Error).message} — the packaged app will ` +
+        `download it on its first PS2 export instead.`,
+    );
+  }
+  return includes;
+}
+
 async function compileLauncher(opts: Options): Promise<string> {
   const target = opts.platform === "windows"
     ? `${opts.arch}-pc-windows-msvc`
@@ -303,6 +348,10 @@ async function compileLauncher(opts: Options): Promise<string> {
       "--include",
       "./static/firebase-config.js",
     );
+    // And what the PS2 export needs, which is not a Node tool at all: the
+    // compiled runtime plus the interpreter that runs it.
+    console.log("\n  Staging the PS2 runtime…");
+    args.push(...await stagePs2Runtime());
   }
   if (opts.platform === "windows") {
     args.push("--icon", "./static/app-icons/cmg.ico");

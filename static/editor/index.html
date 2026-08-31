@@ -954,6 +954,18 @@
         </div>
         <button class="menu-row hide-when-sav" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
         <div id="export-apk-status" class="menu-note hide-when-sav"></div>
+        <!-- What to do with a finished PS2 build. Hidden until one exists;
+             filled in by showPs2ExportActions(). The disc and the USB folder
+             are both downloadable, and "PS2 LIBRARY" files the disc in the
+             launcher's own shelf (static/ps2-library.js) so it can be played
+             here, in the browser, on the Play! core. -->
+        <div id="export-ps2-actions" class="hidden">
+            <button class="menu-row" id="export-ps2-iso" onclick="downloadPs2Artifact('iso')"><span class="mono-badge">IS</span>DOWNLOAD DISC (.ISO)</button>
+            <button class="menu-row" id="export-ps2-zip" onclick="downloadPs2Artifact('zip')"><span class="mono-badge">US</span>DOWNLOAD USB FOLDER (.ZIP)</button>
+            <button class="menu-row" id="export-ps2-lib" onclick="addPs2ExportToLibrary()" title="Install the Play! core if it is not already here, file this disc in the launcher's PlayStation 2 shelf, and play it in the browser"><span class="mono-badge">P2</span>&rarr; PS2 LIBRARY</button>
+            <button class="menu-row hidden" id="export-ps2-play" onclick="playPs2Export()"><span class="mono-badge">PL</span>PLAY ON PS2</button>
+            <div id="export-ps2-note" class="menu-note"></div>
+        </div>
         <div class="menu-label">DEZAEMON 2 (SATURN)</div>
         <button class="menu-row" onclick="startNewGame();closeMenu()"><span class="mono-badge">NG</span>NEW GAME</button>
         <button class="menu-row hide-when-sav" onclick="openDezaemonImport()"><span class="mono-badge">SV</span>IMPORT .SAV</button>
@@ -8914,6 +8926,7 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             try { await saveToFirebase(); } catch (e) { /* saveToFirebase alerts on its own */ }
             const btn = document.getElementById('export-apk-btn');
             const cfg = EXPORT_PLATFORMS[exportPlatform];
+            hidePs2ExportActions();
             btn.disabled = true;
             setStatus('Building ' + cfg.artifact + ' for "' + name + '" — this can take several minutes…', '#f59e0b');
             try {
@@ -8927,6 +8940,10 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                     setStatus('Export failed: ' + (data.error || ('HTTP ' + resp.status)), '#f87171');
                     return;
                 }
+                // A PS2 build lands on disk rather than in the browser, and the
+                // launcher can actually run one — so instead of naming a path
+                // and stopping, offer what can be done with it.
+                if (data.platform === 'ps2' && data.ps2) { showPs2ExportActions(data, setStatus); return; }
                 const artifact = (data.artifacts && data.artifacts[0]) || data.artifact;
                 if (data.downloadUrl) {
                     setStatus(cfg.artifact + ' ready — downloading…', '#84cc16');
@@ -8945,6 +8962,132 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                 setStatus('Export error: ' + e.message, '#f87171');
             } finally {
                 btn.disabled = false;
+            }
+        }
+
+        // ================== PS2 EXPORT FOLLOW-UPS ==================
+        // A finished PS2 build is three things at once: a bootable disc image, a
+        // folder for a USB stick, and — because the launcher can install a PS2
+        // core on demand — something playable right here in the browser. The
+        // panel under the EXPORT button offers all three rather than naming a
+        // path on disk and stopping.
+        //
+        // static/ps2-library.js owns the shelf, the core install and the hand-off
+        // to the player, and the launcher's dashboard reads the same store, so a
+        // disc filed here also turns up in its PlayStation 2 section.
+
+        let ps2Export = null;          // { name, isoPath, appDir, id } of the last build
+        let ps2LibraryPending = null;  // the shared module, imported once on demand
+        function ps2Library() {
+            if (!ps2LibraryPending) ps2LibraryPending = import('/ps2-library.js');
+            return ps2LibraryPending;
+        }
+
+        function ps2Note(msg, color) {
+            const el = document.getElementById('export-ps2-note');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = color || '';
+        }
+
+        function hidePs2ExportActions() {
+            ps2Export = null;
+            const panel = document.getElementById('export-ps2-actions');
+            if (panel) panel.classList.add('hidden');
+            const play = document.getElementById('export-ps2-play');
+            if (play) play.classList.add('hidden');
+            ps2Note('');
+        }
+
+        function showPs2ExportActions(data, setStatus) {
+            ps2Export = {
+                name: (data.ps2 && data.ps2.name) || data.level,
+                isoPath: data.ps2 && data.ps2.isoPath,
+                appDir: data.ps2 && data.ps2.appDir,
+                id: null,
+            };
+            setStatus('PS2 disc built for "' + ps2Export.name + '" — pick what to do with it.', '#84cc16');
+            const panel = document.getElementById('export-ps2-actions');
+            if (panel) panel.classList.remove('hidden');
+            const iso = document.getElementById('export-ps2-iso');
+            if (iso) iso.disabled = !ps2Export.isoPath;
+            const zip = document.getElementById('export-ps2-zip');
+            if (zip) zip.disabled = !ps2Export.appDir;
+            const play = document.getElementById('export-ps2-play');
+            if (play) play.classList.add('hidden');
+            ps2Note('');
+        }
+
+        // /api/build-artifact streams the file with its own content-disposition
+        // (and zips the folder on the way out), so a plain link does the whole
+        // job — and a 40 MB disc never has to sit in this page's memory.
+        function downloadPs2Artifact(kind) {
+            if (!ps2Export) return;
+            const path = kind === 'iso' ? ps2Export.isoPath : ps2Export.appDir;
+            if (!path) { ps2Note('That artifact was not built.', '#f87171'); return; }
+            const a = document.createElement('a');
+            a.href = '/api/build-artifact?path=' + encodeURIComponent(path);
+            document.body.appendChild(a); a.click(); a.remove();
+            ps2Note(kind === 'iso'
+                ? 'Downloading the disc image…'
+                : 'Zipping the USB folder — the download starts once it is packed…');
+        }
+
+        // Install the core if it is not already here, read the disc off the build
+        // host, and file it. Deliberately does NOT launch: the player has to open
+        // at the top level (see playPs2Export), and a navigation several awaits
+        // after the click is the one thing browsers reliably block. The PLAY row
+        // that appears when this finishes is that navigation's own gesture.
+        async function addPs2ExportToLibrary() {
+            if (!ps2Export) return;
+            if (!ps2Export.isoPath) { ps2Note('This build has no disc image to file.', '#f87171'); return; }
+            const btn = document.getElementById('export-ps2-lib');
+            if (btn) btn.disabled = true;
+            try {
+                const lib = await ps2Library();
+                ps2Note('Reading the disc off the build host…');
+                const blob = await lib.fetchArtifact(ps2Export.isoPath, (got, total) => {
+                    const mb = (n) => (n / 1048576).toFixed(1);
+                    ps2Note('Reading the disc off the build host… ' + mb(got) +
+                        (total ? ' / ' + mb(total) : '') + ' MB');
+                });
+                await lib.ensurePs2Core((step) => ps2Note(step));
+                ps2Note('Filing it in the PS2 shelf…');
+                const record = await lib.addPs2Game({
+                    name: ps2Export.name,
+                    blob,
+                    source: 'built in this editor',
+                });
+                ps2Export.id = record.id;
+                const play = document.getElementById('export-ps2-play');
+                if (play) play.classList.remove('hidden');
+                ps2Note('"' + record.name + '" is in the PS2 library (' +
+                    (record.size / 1048576).toFixed(1) + ' MB). It is in the launcher\'s ' +
+                    'PLAYSTATION 2 section too.', '#84cc16');
+            } catch (e) {
+                ps2Note('Could not add it: ' + (e.message || e), '#f87171');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        // Play! keeps guest RAM in a SharedArrayBuffer, which the browser only
+        // grants a cross-origin-isolated document — and an iframe cannot isolate
+        // unless its embedder does too. So the player opens at the TOP level: a
+        // new tab where the browser allows one (this editor stays put), else this
+        // window, which the player's own exit gestures come back from.
+        async function playPs2Export() {
+            if (!ps2Export || !ps2Export.id) return;
+            try {
+                const lib = await ps2Library();
+                const record = await lib.getPs2Game(ps2Export.id);
+                if (!record) { ps2Note('That game is no longer in the library.', '#f87171'); return; }
+                const url = await lib.ps2PlayerUrl(record);
+                ps2Note('Booting Play!…');
+                const opened = window.open(url, '_blank');
+                if (!opened) (window.top || window).location.href = url;
+            } catch (e) {
+                ps2Note('Could not start the player: ' + (e.message || e), '#f87171');
             }
         }
 

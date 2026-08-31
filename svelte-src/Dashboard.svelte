@@ -2,6 +2,15 @@
   import { onMount, onDestroy } from 'svelte';
   import Osd from './Osd.svelte';
   import SavPicker from './SavPicker.svelte';
+  // The PS2 shelf the level editor files its own builds in, and the rule for
+  // what emu-sw.js is allowed to mirror. Shared with static/editor/index.html
+  // (which imports the same module at runtime) so the two cannot drift — see
+  // static/ps2-library.js.
+  import {
+    emuStateFor,
+    listPs2Games,
+    ps2PlayerUrl,
+  } from '../static/ps2-library.js';
 
   const MAIN_MENU = [
     { id: 'games',    label: 'Games',    tag: '01 / disc.io',  num: '0x01' },
@@ -106,26 +115,18 @@
   let emuShared = $derived(emuCatalog?.shared || []);
   let installedCores = $derived(emuCores.filter((c) => emuInstalled.includes(c.id)));
 
-  // The worker only answers paths it has been handed. `prefixes` is the union of
-  // every installed core's prefixes PLUS the catalogue's shared scripts, which
-  // sit at the root rather than under any core (/emulator-controls.js) and would
-  // otherwise fall through to this origin, which does not have them. With
-  // nothing installed the message is empty and the worker stays out of the way.
+  // The worker only answers paths it has been handed: the union of every
+  // installed core's prefixes, each core's tile icon (which lives under /icons/
+  // on the cmg origin, outside its own prefixes) and the catalogue's shared
+  // scripts (which sit at the root, under no core at all). With nothing
+  // installed the message is empty and the worker stays out of the way.
+  //
+  // The rule itself lives in static/ps2-library.js because the editor installs
+  // the PS2 core too, and two copies of it would eventually disagree about what
+  // the worker may mirror. It returns plain arrays, which is what postMessage
+  // needs — a $state-backed one is not structured-cloneable.
   function emuState() {
-    const cores = installedCores;
-    const prefixes = [];
-    for (const c of cores) {
-      prefixes.push(...(c.prefixes || []));
-      // A core's tile icon lives under /icons/ on the cmg origin, outside its
-      // own prefixes, so it needs naming too or the strip tile would 404 and
-      // show a broken image where the type-mark used to be. The worker matches
-      // an exact path as happily as a directory.
-      if (c.icon) prefixes.push(c.icon);
-    }
-    if (cores.length) prefixes.push(...emuShared);
-    const isolated = [];
-    for (const c of cores) if (c.isolated) isolated.push(...(c.prefixes || []));
-    return { origin: emuCatalog?.origin || '', prefixes, isolated };
+    return emuStateFor(emuCatalog, [...emuInstalled]);
   }
 
   // Registering is idempotent — register() on an already-installed worker
@@ -275,11 +276,22 @@
     if (w) w.postMessage({ type: 'emu-evict', prefixes: gone });
   }
 
+  // ─── The local PS2 shelf ───────────────────────────────────────────────────
+  // PS2 games built on this machine — the level editor's TARGET -> PS2 export,
+  // filed through static/ps2-library.js. They live in IndexedDB rather than on
+  // the mirror, so they are read here and shown ahead of the hosted rows in the
+  // PlayStation 2 section. Nothing else in the launcher knows they are local.
+  let ps2Local = $state([]);
+  async function refreshPs2Local() {
+    try { ps2Local = await listPs2Games(); } catch (_) { ps2Local = []; }
+  }
+
   // Boot: read the saved set, read the catalogue, register the worker and hand
   // it the current state, then fill in the installed cores' shelves. Strictly
   // sequential — a manifest read before the worker holds the prefixes would
   // 404 against this origin.
   async function initEmulators() {
+    refreshPs2Local();
     try {
       const r = await fetch(EMU_CATALOG, { cache: 'no-store' });
       if (r.ok) emuCatalog = await r.json();
@@ -1344,6 +1356,24 @@
       file: g.file, url: g.url, kind: g.kind, bios: g.bios,
     }));
   }
+  // The same shape for a disc that never came off the mirror. `local` carries
+  // the record (blob included) straight through to launchEmuRow, so the row is
+  // the only thing that has to know where the game came from.
+  function localRows(core) {
+    if (core.id !== 'ps2') return [];
+    return ps2Local.map((g) => ({
+      key: 'local:' + g.id, name: g.name, title: String(g.name).toUpperCase(),
+      sub: g.source || 'built here', icon: null,
+      size: (g.size / 1048576).toFixed(1) + ' MB',
+      date: 'LOCAL', type: 'PS2 / BUILT HERE',
+      kind: 'local', local: g,
+    }));
+  }
+  // Rows for an installed core: what this machine built first, then the mirror's
+  // shelf. A build you just made is the one you came here to play.
+  function coreRows(core) {
+    return [...localRows(core), ...romRows(emuManifests[core.id], core)];
+  }
   // Empty-shelf copy for an installed core. The three states are distinct on
   // purpose: a manifest that has not arrived is not the same as one that failed,
   // and neither is the same as a console that genuinely deploys no titles.
@@ -1373,8 +1403,8 @@
       coreA: c.coreA, coreB: c.coreB,
       sel: () => emuSecSel[c.id] || 0,
       setSel: (v) => (emuSecSel = { ...emuSecSel, [c.id]: v }),
-      activate: (i) => launchEmuRow(c, romRows(emuManifests[c.id], c)[i]),
-      rows: romRows(emuManifests[c.id], c),
+      activate: (i) => launchEmuRow(c, coreRows(c)[i]),
+      rows: coreRows(c),
       byod: emuNote(c),
     })),
   ]);
@@ -1708,6 +1738,16 @@
     if (!core || !row) return;
     sfx.enter();
     chromeDismissed = false;
+    // A disc built on this machine never reaches the mirror, so it is handed to
+    // the player through IndexedDB instead of by filename — and at the TOP
+    // level, because Play! keeps guest RAM in a SharedArrayBuffer and only a
+    // cross-origin-isolated document gets one; an iframe cannot isolate unless
+    // its embedder does too. That is the mode the player's own BYOD path was
+    // written for, exit gestures (Escape, SELECT+START, two corners) included.
+    if (row.kind === 'local' && row.local) {
+      launchLocalPs2(row.local);
+      return;
+    }
     // A ps2 "web" row is a browser build living beside the ISOs, not a disc —
     // launch its own url rather than handing the filename to the emulator.
     if (row.kind === 'web' && row.url) {
@@ -1723,6 +1763,14 @@
       gameSrc = core.player + '?' + q;
     }
     setTimeout(() => { gameOn = true; }, 30);
+  }
+
+  async function launchLocalPs2(game) {
+    try {
+      location.href = await ps2PlayerUrl(game);
+    } catch (e) {
+      showToast('Could not start the PS2 player: ' + (e?.message || e));
+    }
   }
 
   // ─── ShmupX context menu — .sav coverflow picker ──────────────────────────

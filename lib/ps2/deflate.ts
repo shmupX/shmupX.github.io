@@ -43,3 +43,10 @@ export const deflate = (bytes: Bytes): Promise<Bytes> =>
 /** Inflate a gzip stream. */
 export const ungzip = (bytes: Bytes): Promise<Bytes> =>
   pump(bytes, new DecompressionStream("gzip"));
+
+/**
+ * Deflate to a RAW stream — no zlib header, no adler32. That is the only
+ * shape a ZIP entry's method-8 payload may take.
+ */
+export const deflateRaw = (bytes: Bytes): Promise<Bytes> =>
+  pump(bytes, new CompressionStream("deflate-raw"));

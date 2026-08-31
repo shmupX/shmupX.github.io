@@ -2,6 +2,7 @@ import { define } from "../../utils.ts";
 import { crossSiteGuard } from "../../lib/local-guards.ts";
 import { buildPs2 } from "../../lib/ps2/build.ts";
 import { dirname, fromFileUrl, join } from "jsr:@std/path@^1.1.2";
+import { packagedBuildRoot } from "../../lib/build-workspace.ts";
 
 // POST /api/build-apk — export a custom Firebase "Game" to an installable app.
 //
@@ -91,15 +92,19 @@ async function findRuntimeRoot(): Promise<string | null> {
   return null;
 }
 
-// The PS2 target needs a different marker: it has no Node half, and it has to
-// hand `deno bundle` a real path to lib/ps2/runtime-entry.ts, so what it looks
-// for is the source checkout itself rather than the staged export tool.
+// The PS2 target needs a different marker: it has no Node half, so what it
+// looks for is the base game lib/ps2 stages every export out of. That tree is
+// embedded in the packaged app as well as sitting in a checkout, which is why
+// the marker is the game rather than lib/ps2/runtime-entry.ts — the packaged
+// app builds without the sources at all (see ps2Runtime below).
 async function findPs2Root(): Promise<string | null> {
   let dir = dirname(fromFileUrl(import.meta.url));
   for (let i = 0; i < 6; i++) {
     if (
-      await pathExists(join(dir, "lib", "ps2", "runtime-entry.ts")) &&
-      await pathExists(join(dir, "static", "games", "2028-ai", "foo.json"))
+      await pathExists(join(dir, "static", "games", "2028-ai", "foo.json")) &&
+      await pathExists(
+        join(dir, "static", "games", "2028-ai", "assets", "game.json"),
+      )
     ) {
       return dir;
     }
@@ -108,6 +113,45 @@ async function findPs2Root(): Promise<string | null> {
     dir = parent;
   }
   return null;
+}
+
+// The base game, on REAL disk.
+//
+// lib/ps2 reads most of the tree itself, and Deno reads the VFS happily — but
+// the sound packs shell out to ffmpeg with a source path, and a separate
+// process cannot see Deno's VFS at all. Without this the packaged app built a
+// perfectly good disc with every sound missing ("no source for 60 key(s)"),
+// which is the same reason `node tools/build-level` gets staged out next door.
+// Re-copied each run so an app update propagates.
+async function stagePs2Game(vfsRoot: string): Promise<string> {
+  const root = join(packagedBuildRoot(), "src");
+  await copyTree(
+    join(vfsRoot, "static", "games", "2028-ai"),
+    join(root, "static", "games", "2028-ai"),
+  );
+  return root;
+}
+
+// What the packaged app exports with instead of the sources.
+//
+// A source checkout compiles lib/ps2/runtime-entry.ts with `deno bundle` on
+// every build, so an edit to the runtime lands in the next disc. The packaged
+// binary has neither those sources nor a Deno CLI to run, so
+// scripts/build-desktop.ts compiles the runtime once at packaging time and
+// embeds it — together with the AthenaEnv interpreter, which otherwise costs a
+// download. Both live where a checkout's own cache keeps them, so the paths are
+// the same either way.
+async function ps2Runtime(
+  vfsRoot: string,
+): Promise<{ runtimeJs: Uint8Array; athenaElf: string | null } | null> {
+  const cache = join(vfsRoot, "build", "ps2", ".cache");
+  const bundle = join(cache, "main.js");
+  if (!(await pathExists(bundle))) return null;
+  const elf = join(cache, "athena.elf");
+  return {
+    runtimeJs: await Deno.readFile(bundle),
+    athenaElf: (await pathExists(elf)) ? elf : null,
+  };
 }
 
 // Recursively copy a directory tree from `src` to `dst`. Used to materialise the
@@ -245,26 +289,46 @@ export const handler = define.handlers({
     // the packaged desktop app (whose modules live in a read-only VFS) is told
     // to use a source checkout rather than failing halfway through a build.
     if (platform === "ps2") {
-      if (isCompiledBinary()) {
-        return Response.json({
-          ok: false,
-          error: "PS2 export needs a source checkout (`deno task dev`) — the " +
-            "packaged app cannot run the bundler against its embedded copy.",
-        }, { status: 500 });
-      }
       const root = await findPs2Root();
       if (!root) {
         return Response.json({
           ok: false,
-          error: "Could not locate the source checkout the PS2 build needs " +
-            "(lib/ps2 + static/games/2028-ai).",
+          error: "Could not locate the base game the PS2 build stages from " +
+            "(static/games/2028-ai).",
         }, { status: 500 });
       }
+      // Packaged: the tree is a read-only VFS, so the runtime comes pre-compiled
+      // out of it and everything written goes to real disk. A checkout keeps its
+      // own behaviour — bundling from source, writing into build/ps2 — so an
+      // edit to lib/ps2 still shows up in the very next export.
+      const packaged = isCompiledBinary();
+      const prebuilt = packaged ? await ps2Runtime(root) : null;
+      if (packaged && !prebuilt) {
+        return Response.json({
+          ok: false,
+          error: "This build of the app carries no PS2 runtime, so it cannot " +
+            "export for the PS2. Rebuild it without --no-export-tools, or run " +
+            "the export from a source checkout (`deno task dev`).",
+        }, { status: 500 });
+      }
+      const workRoot = packaged ? join(packagedBuildRoot(), "ps2") : null;
       const lines: string[] = [];
       try {
         const built = await buildPs2({
-          root,
+          root: packaged ? await stagePs2Game(root) : root,
           levelName: level,
+          ...(workRoot
+            ? { outDir: workRoot, cacheDir: join(workRoot, ".cache") }
+            : {}),
+          ...(prebuilt
+            ? { runtimeJs: prebuilt.runtimeJs, athenaElf: prebuilt.athenaElf }
+            : {}),
+          // The disc is what the editor's own follow-up actions need: it is
+          // the artifact an emulator boots, in-browser or otherwise. The
+          // athena.elf folder alone is a USB-stick artifact — Play! can load
+          // an ELF, but AthenaEnv would then have no device to read main.js
+          // and assets/ from, so the disc is the only self-contained form.
+          iso: true,
           log: (message) => lines.push(message),
         });
         return Response.json({
@@ -272,9 +336,15 @@ export const handler = define.handlers({
           level,
           platform,
           slug: slugFor(level),
-          artifacts: built.isoPath
-            ? [built.isoPath, built.appDir]
-            : [built.appDir],
+          artifacts: built.artifacts,
+          // Named rather than positional, so the editor can offer the disc and
+          // the USB folder as separate downloads (see /api/build-artifact).
+          ps2: {
+            name: built.name,
+            dir: built.dir,
+            appDir: built.appDir,
+            isoPath: built.isoPath,
+          },
           log: lines.join("\n"),
         });
       } catch (e) {
