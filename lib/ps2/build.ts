@@ -15,6 +15,7 @@ import { ensureDir } from "@std/fs";
 import { resolveAthenaElf } from "./athena.ts";
 import { type LevelRecord, stageAssets, type StagedFile } from "./assets.ts";
 import { buildIso } from "./iso9660.ts";
+import { decodeDataUrl, decodePng, type Raster } from "./png.ts";
 import {
   buildToneBankPack,
   cacheSndpac,
@@ -89,6 +90,13 @@ export interface BuildPs2Options {
   iso?: boolean;
   /** SNDPAC.BIN to render the tone bank from; default: search dev-fixtures/. */
   sndpac?: string | null;
+  /**
+   * The shelf entry whose title-screen shot becomes the title screen — a
+   * Dezaemon slug (`mucha-kucha-fighter`) or a local PNG. A level saved under
+   * a different name than its save has no link back to the shelf, so this
+   * says which one.
+   */
+  cover?: string | null;
   /** Build without audio even when a sound bank is available. */
   skipAudio?: boolean;
   /** Keep the effects but leave the music off — it is most of the disc. */
@@ -203,6 +211,45 @@ async function localGraph(entry: string): Promise<string[]> {
 }
 
 /**
+ * The title-screen shot for a game, from the shelf or from disk.
+ *
+ * shmupX generates one for every Dezaemon save it holds, at 256x480, and
+ * keeps it in the Realtime Database beside the save. `cover` is either that
+ * entry's slug or a path to a PNG; anything that fails to load is reported
+ * and the build carries on with the stock title screen rather than failing.
+ */
+async function loadCover(
+  cover: string | null,
+  log: (message: string) => void,
+): Promise<Raster | null> {
+  if (!cover) return null;
+  try {
+    if (cover.endsWith(".png")) {
+      const raster = await decodePng(await Deno.readFile(cover));
+      log(`  cover: ${cover} (${raster.width}x${raster.height})`);
+      return raster;
+    }
+    const url = `${FIREBASE_DB}/dezaemon/covers/${
+      encodeURIComponent(cover)
+    }/png.json`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const dataUrl = await response.json() as string | null;
+    if (!dataUrl) throw new Error("the shelf has no cover for that slug");
+    const raster = await decodeDataUrl(dataUrl);
+    log(`  cover: ${cover} (${raster.width}x${raster.height}) from the shelf`);
+    return raster;
+  } catch (error) {
+    log(
+      `  cover: ${cover} could not be read (${
+        (error as Error).message
+      }) — keeping the stock title screen`,
+    );
+    return null;
+  }
+}
+
+/**
  * Bundle lib/ps2/runtime-entry.ts (and the JSR game it pulls in) into the
  * single main.js AthenaEnv evaluates. The result depends only on our own
  * sources and the pinned dependency, so it is cached and reused across level
@@ -311,10 +358,13 @@ export async function buildPs2(
     }MB from ${athena.source}`,
   );
 
+  const cover = await loadCover(options.cover ?? null, log);
+
   log("  staging assets…");
   const staged = await stageAssets({
     gameDir,
     record,
+    cover,
     maxSheet: options.maxSheet,
   });
   for (const note of staged.notes) log(`    ${note}`);

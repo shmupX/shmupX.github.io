@@ -77,6 +77,7 @@ Deno.test("the packer honours the rotate flag per frame", () => {
 // that is not in the atlas fails the port's own hasFrame() check.
 
 import {
+  coverTitleFrames,
   dezaemonTitleFrames,
   type IndexedFrame,
   type LevelRecord,
@@ -154,4 +155,20 @@ Deno.test("a role naming a frame the atlas lacks is reported", () => {
   assertEquals(overrides.map((f) => f.name), ["logo.gif"]);
   assert(drop.has("subTitle.gif"));
   assert(notes[0].includes("title1"), `note did not name title1: ${notes[0]}`);
+});
+
+Deno.test("a shelf cover becomes the whole title screen", () => {
+  // The shelf renders a 256x480 shot of every Dezaemon save's title screen,
+  // which is exactly the logical screen the port lays its title scene out in.
+  // It goes in as `title_bg`, drawn full-screen, and everything the stock
+  // screen would put on top of it is left out of the sheet.
+  const notes: string[] = [];
+  const { overrides, drop } = coverTitleFrames(newRaster(256, 480), notes);
+  assertEquals(overrides.length, 1);
+  assertEquals(overrides[0].name, "title_bg");
+  assertEquals(overrides[0].entry.frame, { x: 0, y: 0, w: 256, h: 480 });
+  for (const covered of ["titleG.gif", "logo.gif", "subTitle.gif"]) {
+    assert(drop.has(covered), `${covered} would sit on top of the shot`);
+  }
+  assert(notes[0].includes("256x480"), notes[0]);
 });

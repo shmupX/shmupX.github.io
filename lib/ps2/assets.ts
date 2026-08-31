@@ -252,6 +252,11 @@ async function repackBaseAtlas(
 export interface StageOptions {
   /** static/games/2028-ai — the base game's asset tree. */
   gameDir: string;
+  /**
+   * The shelf's title-screen shot for this game, 256x480 — the port's own
+   * logical screen. When it is here it becomes the whole title screen.
+   */
+  cover?: Raster | null;
   record: LevelRecord;
   /** Cap on either dimension of a generated atlas. */
   maxSheet?: number;
@@ -321,6 +326,44 @@ export function dezaemonTitleFrames(
   return { overrides, drop };
 }
 
+/**
+ * The shelf's title screenshot, as the whole title screen.
+ *
+ * shmupX's shelf renders a cover for every Dezaemon save from the save's own
+ * title art, at 256x480 — which is exactly GW x GH, the logical screen the
+ * port lays its title scene out in. The port draws `title_bg` full-screen
+ * (`drawFrameTL("game_ui", "title_bg", 0, 0, SCREEN_W / 256, SCREEN_H / 480)`)
+ * so the shot goes in there, and everything the stock screen would put on top
+ * of it — the sliding titleG, the logo, the subtitle — is left out of the
+ * sheet so nothing covers it. The port keeps drawing its own HI-SCORE and
+ * PRESS START text, which is what you want.
+ *
+ * This is a better title than `dezaemonTitle` gives: that pulls the save's
+ * two drawn strips out of the level atlas, while the cover is the whole
+ * screen as the shelf shows it, already composed.
+ */
+export function coverTitleFrames(
+  cover: Raster,
+  notes: string[],
+): { overrides: SourceFrame[]; drop: Set<string> } {
+  notes.push(
+    `title screen: the shelf's ${cover.width}x${cover.height} cover`,
+  );
+  return {
+    overrides: [{
+      name: "title_bg",
+      sheet: cover,
+      entry: {
+        frame: { x: 0, y: 0, w: cover.width, h: cover.height },
+        rotated: false,
+        trimmed: false,
+      },
+    }],
+    // Nothing sits on top of the shot.
+    drop: new Set(["titleG.gif", "logo.gif", "subTitle.gif"]),
+  };
+}
+
 /** Produce every file the console reads, ready to hand to the ISO writer. */
 export async function stageAssets(options: StageOptions): Promise<StageResult> {
   const { gameDir, record } = options;
@@ -357,7 +400,9 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
   }
   const index = buildFrameIndex(baseSheet, baseJson.frames, custom);
 
-  const title = dezaemonTitleFrames(record, index, notes);
+  const title = options.cover
+    ? coverTitleFrames(options.cover, notes)
+    : dezaemonTitleFrames(record, index, notes);
 
   for (const name of ["game_asset", "game_ui"]) {
     const built = await repackBaseAtlas(

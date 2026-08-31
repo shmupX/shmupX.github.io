@@ -293,7 +293,28 @@ Everything else in the export is data, produced by `lib/ps2/`:
 
 Flags: `--out <dir>`, `--level-file <path>` (a local JSON export instead of
 Firebase), `--athena-elf <path>`, `--refresh-athena`, `--atlas-max <px>`,
-`--sndpac <path>`, `--no-audio`, `--no-music`, `--uncapped`, `--iso`.
+`--sndpac <path>`, `--no-audio`, `--no-music`, `--uncapped`, `--game-fps <n>`,
+`--cover <slug|png>`, `--iso`.
+
+**Game speed.** The port runs its logic on a fixed 30 Hz step and that step is
+what moves everything; the frame rate is separate and changes none of it. 30 is
+the pace the browser plays at and on a TV it reads as slow motion, so the export
+runs the logic at **120 steps a second** — it hands `FixedStep` a clock four
+times fast, which is the only thing in the bundle that reads `rt.Timer`.
+`FRAME_MS` is untouched, so each step advances tweens and the scheduler by
+exactly what it always did. `--game-fps 30` restores the browser's pace.
+
+**Title screen.** `--cover <slug>` takes the shelf's title-screen shot for a
+Dezaemon save — 256x480, which is exactly the logical screen the port lays its
+title scene out in — and makes it the whole title screen, dropping the stock
+logo, subtitle and sliding "titleG" so nothing covers it. A level saved under a
+name other than its save's has no link back to the shelf, which is why the slug
+is given rather than guessed: `--cover mucha-kucha-fighter` for a level saved as
+`fighter`. A `.png` path works too. Failing that, a level whose record carries
+`dezaemonTitle` (the save's own drawn TITLE 1/2 strips) uses those instead.
+Either way the shot is packed at the sheet's scale, so at the default
+`--atlas-max 512` it lands at 64x120 and stretches; 1024 doubles that but puts
+the textures over the GS's 4 MB again.
 
 **The output is a folder** — `athena.elf`, `main.js`, `athena.ini` and
 `assets/`. Copy it to a USB stick, or point an emulator straight at

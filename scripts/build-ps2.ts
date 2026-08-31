@@ -19,6 +19,7 @@
 //   --no-music           keep the effects, drop the streamed music
 //   --uncapped           unlock the frame rate and show the frame counter
 //   --game-fps <n>       logic steps per second (default 120; the port's is 30)
+//   --cover <slug|png>   use this shelf title-screen shot as the title screen
 //   --sfx-budget <KB>    how much IOP RAM the effects may use (default 384)
 //   --iso                also write a disc image (the folder is the default)
 
@@ -28,6 +29,7 @@ import { buildPs2 } from "../lib/ps2/build.ts";
 const ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 
 const VALUE_FLAGS = new Set([
+  "--cover",
   "--sfx-budget",
   "--game-fps",
   "--out",
@@ -102,6 +104,7 @@ try {
     skipAudio: flags["--no-audio"] === true,
     skipMusic: flags["--no-music"] === true,
     uncapped: flags["--uncapped"] === true,
+    cover: typeof flags["--cover"] === "string" ? flags["--cover"] : null,
     gameFps: typeof flags["--game-fps"] === "string"
       ? Number(flags["--game-fps"])
       : undefined,
