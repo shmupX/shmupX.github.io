@@ -168,3 +168,38 @@ export function rotateCcw(src: Raster): Raster {
   }
   return out;
 }
+
+/**
+ * Resample to an exact size, without preserving aspect.
+ *
+ * `fitInto` letterboxes to keep proportions; this deliberately does not,
+ * because the PS2 port draws the title background with a different scale on
+ * each axis and the image has to be pre-distorted by the inverse to come out
+ * square. Nearest-neighbour for the same reason as fitInto: the sources are
+ * pixel art and a box filter only smears them.
+ */
+export function resizeTo(src: Raster, width: number, height: number): Raster {
+  const out = newRaster(width, height);
+  if (src.width === 0 || src.height === 0 || width === 0 || height === 0) {
+    return out;
+  }
+  for (let y = 0; y < height; y++) {
+    const sy = Math.min(
+      src.height - 1,
+      Math.floor(((y + 0.5) * src.height) / height),
+    );
+    for (let x = 0; x < width; x++) {
+      const sx = Math.min(
+        src.width - 1,
+        Math.floor(((x + 0.5) * src.width) / width),
+      );
+      const s = (sy * src.width + sx) * 4;
+      const d = (y * width + x) * 4;
+      out.data[d] = src.data[s];
+      out.data[d + 1] = src.data[s + 1];
+      out.data[d + 2] = src.data[s + 2];
+      out.data[d + 3] = src.data[s + 3];
+    }
+  }
+  return out;
+}

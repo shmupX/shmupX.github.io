@@ -160,8 +160,8 @@ Deno.test("a role naming a frame the atlas lacks is reported", () => {
 Deno.test("a shelf cover becomes the whole title screen", () => {
   // The shelf renders a 256x480 shot of every Dezaemon save's title screen,
   // which is exactly the logical screen the port lays its title scene out in.
-  // It goes in as `title_bg`, drawn full-screen, and everything the stock
-  // screen would put on top of it is left out of the sheet.
+  // It goes in as `title_bg`, and everything the stock screen would put on
+  // top of it is left out of the sheet.
   const notes: string[] = [];
   const { overrides, drop } = coverTitleFrames(newRaster(256, 480), notes);
   assertEquals(overrides.length, 1);
@@ -170,5 +170,33 @@ Deno.test("a shelf cover becomes the whole title screen", () => {
   for (const covered of ["titleG.gif", "logo.gif", "subTitle.gif"]) {
     assert(drop.has(covered), `${covered} would sit on top of the shot`);
   }
-  assert(notes[0].includes("256x480"), notes[0]);
+});
+
+Deno.test("the cover is pre-distorted into the window that survives", () => {
+  // `title_bg` is the one frame the title scene draws in raw screen
+  // coordinates rather than through the viewport, and the letterbox is then
+  // painted over it — so only the middle 96 of its 256 columns are ever seen,
+  // stretched 2.5x. A cover dropped in untreated shows as the middle third of
+  // itself. It is squeezed into those columns instead, and the port's own
+  // stretch undoes the squeeze.
+  const cover = newRaster(256, 480);
+  for (let i = 0; i < 256 * 480; i++) cover.data.set([9, 9, 9, 255], i * 4);
+  const { overrides } = coverTitleFrames(cover, []);
+  const framed = overrides[0].sheet;
+  assertEquals(framed.width, 256);
+  assertEquals(framed.height, 480);
+
+  const columnUsed = (x: number) => {
+    for (let y = 0; y < framed.height; y++) {
+      if (framed.data[(y * framed.width + x) * 4 + 3] !== 0) return true;
+    }
+    return false;
+  };
+  // Padding either side, content in the middle.
+  assert(!columnUsed(0), "column 0 should be padding");
+  assert(!columnUsed(79), "column 79 should be padding");
+  assert(columnUsed(80), "the content should start at column 80");
+  assert(columnUsed(175), "the content should reach column 175");
+  assert(!columnUsed(176), "column 176 should be padding");
+  assert(!columnUsed(255), "column 255 should be padding");
 });

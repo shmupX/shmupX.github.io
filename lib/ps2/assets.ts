@@ -27,7 +27,7 @@ import {
 } from "./png.ts";
 import { buildPs2Atlas, type FrameEntry, type SourceFrame } from "./atlas.ts";
 import { quantize } from "./palette.ts";
-import { blit, cut, fitInto } from "./raster.ts";
+import { blit, cut, fitInto, resizeTo } from "./raster.ts";
 
 /** A Firebase `levels/{name}` record, as the editor saves it. */
 export interface LevelRecord {
@@ -326,6 +326,43 @@ export function dezaemonTitleFrames(
   return { overrides, drop };
 }
 
+// The port's own screen geometry, from ps2-sp/constants.ts. `title_bg` is the
+// one thing the title scene draws in raw screen coordinates —
+// `drawFrameTL("game_ui", "title_bg", 0, 0, SCREEN_W / GW, SCREEN_H / GH)` —
+// rather than through the viewport the way `drawStageBg` does, and the
+// letterbox is then painted over the top of it every frame. So the frame gets
+// stretched 2.5x across the full 640 and the bars hide everything outside the
+// centre ~239, which is why an untreated cover shows as the middle third of
+// itself.
+const GW = 256;
+const GH = 480;
+const SCREEN_W = 640;
+const SCREEN_H = 448;
+const VIEWPORT_SCALE = Math.min(SCREEN_W / GW, SCREEN_H / GH);
+/** Columns of a `title_bg` frame that survive the letterbox: 96 of 256. */
+const TITLE_VISIBLE_W = Math.round(
+  (GW * VIEWPORT_SCALE) / (SCREEN_W / GW),
+);
+/** Where those columns start. */
+const TITLE_VISIBLE_X = Math.round(
+  ((SCREEN_W - GW * VIEWPORT_SCALE) / 2) / (SCREEN_W / GW),
+);
+
+/**
+ * Pre-distort a cover so it lands square inside the visible window.
+ *
+ * The cover is squeezed into the columns the letterbox leaves and padded
+ * either side. The port then stretches the whole frame 2.5x horizontally and
+ * 0.933x vertically, which undoes the squeeze exactly: 96 columns become 240
+ * screen pixels against the game area's 239, and 480 rows become 448. The
+ * result is the whole title at its own proportions instead of a third of it.
+ */
+function frameForTitleBg(cover: Raster): Raster {
+  const canvas = newRaster(GW, GH);
+  blit(canvas, resizeTo(cover, TITLE_VISIBLE_W, GH), TITLE_VISIBLE_X, 0);
+  return canvas;
+}
+
 /**
  * The shelf's title screenshot, as the whole title screen.
  *
@@ -346,15 +383,17 @@ export function coverTitleFrames(
   cover: Raster,
   notes: string[],
 ): { overrides: SourceFrame[]; drop: Set<string> } {
+  const framed = frameForTitleBg(cover);
   notes.push(
-    `title screen: the shelf's ${cover.width}x${cover.height} cover`,
+    `title screen: the shelf's ${cover.width}x${cover.height} cover, ` +
+      `letterboxed into the ${TITLE_VISIBLE_W}x${GH} the port actually shows`,
   );
   return {
     overrides: [{
       name: "title_bg",
-      sheet: cover,
+      sheet: framed,
       entry: {
-        frame: { x: 0, y: 0, w: cover.width, h: cover.height },
+        frame: { x: 0, y: 0, w: framed.width, h: framed.height },
         rotated: false,
         trimmed: false,
       },
@@ -405,10 +444,19 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     : dezaemonTitleFrames(record, index, notes);
 
   for (const name of ["game_asset", "game_ui"]) {
+    // A cover lands in game_ui and the port magnifies it 2.5x, so that sheet
+    // gets a bigger budget when one is present: at 512 it packs at 1/4 and
+    // the title has 24 texels across the 239 pixels it is shown in, at 1024
+    // it packs at 1/2 and has 48. The other sheets stay where they are, which
+    // keeps the working set inside the GS's 4 MB — see the note in
+    // encodeSheet().
+    const budget = name === "game_ui" && options.cover
+      ? Math.max(maxSheet, 1024)
+      : maxSheet;
     const built = await repackBaseAtlas(
       gameDir,
       name,
-      maxSheet,
+      budget,
       name === "game_asset" ? upright : new Set(),
       name === "game_ui" ? title.overrides : [],
       name === "game_ui" ? title.drop : new Set(),

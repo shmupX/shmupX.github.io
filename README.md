@@ -312,9 +312,16 @@ name other than its save's has no link back to the shelf, which is why the slug
 is given rather than guessed: `--cover mucha-kucha-fighter` for a level saved as
 `fighter`. A `.png` path works too. Failing that, a level whose record carries
 `dezaemonTitle` (the save's own drawn TITLE 1/2 strips) uses those instead.
-Either way the shot is packed at the sheet's scale, so at the default
-`--atlas-max 512` it lands at 64x120 and stretches; 1024 doubles that but puts
-the textures over the GS's 4 MB again.
+`title_bg` is the one frame the title scene draws in raw screen coordinates —
+`drawFrameTL(..., 0, 0, SCREEN_W / 256, SCREEN_H / 480)` — rather than through
+the viewport the way `drawStageBg` does, and the letterbox is painted over it
+every frame. So only the middle 96 of its 256 columns are ever seen, stretched
+2.5x, and a cover dropped in untreated shows as the middle third of itself. The
+exporter squeezes it into exactly those columns and pads either side; the port's
+own stretch undoes the squeeze and the whole title comes out at its own
+proportions. When a cover is present game_ui gets a 1024 sheet rather than 512,
+which packs it at 1/2 instead of 1/4 — 48 texels across the 239 pixels it is
+shown in rather than 24 — and keeps the working set at 3.57 MB of the GS's 4.
 
 **The output is a folder** — `athena.elf`, `main.js`, `athena.ini` and
 `assets/`. Copy it to a USB stick, or point an emulator straight at
