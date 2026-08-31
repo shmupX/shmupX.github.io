@@ -178,10 +178,41 @@ async function encodeSheet(
   };
 }
 
+/**
+ * The player's shot frames, from the level's own recipe with the base game's
+ * as the fallback — the same lookup the port does at draw time
+ * (`p.shootNormalData.texture[0]` and friends).
+ *
+ * These are the frames that get turned upright. The art is drawn side-on —
+ * `bigProjectile_0.png` is a 23x8 horizontal streak — because the browser
+ * engine rotates a sprite to its heading. The PS2 port does not: its
+ * `AtlasManager.drawFrame` takes no angle, and a bullet's `rotation` only ever
+ * moves it. So shots flew up the screen lying on their side.
+ */
+function playerShotFrames(
+  record: LevelRecord,
+  fallback: { playerData?: Record<string, unknown> },
+): Set<string> {
+  const out = new Set<string>();
+  for (const source of [record.playerData, fallback.playerData]) {
+    if (!source) continue;
+    for (const [key, value] of Object.entries(source)) {
+      if (!key.startsWith("shoot")) continue;
+      const texture = (value as { texture?: unknown })?.texture;
+      if (!Array.isArray(texture)) continue;
+      for (const frame of texture) {
+        if (typeof frame === "string") out.add(frame);
+      }
+    }
+  }
+  return out;
+}
+
 async function repackBaseAtlas(
   gameDir: string,
   name: string,
   maxSheet: number,
+  rotate: Set<string> = new Set(),
 ): Promise<{ files: StagedFile[]; note: string }> {
   const sheet = await decodePng(
     await Deno.readFile(join(gameDir, "assets", "img", `${name}.png`)),
@@ -191,7 +222,7 @@ async function repackBaseAtlas(
   ) as { frames: Record<string, FrameEntry> };
   const frames: SourceFrame[] = Object.entries(source.frames).map((
     [frameName, entry],
-  ) => ({ name: frameName, sheet, entry }));
+  ) => ({ name: frameName, sheet, entry, rotate: rotate.has(frameName) }));
   const built = buildPs2Atlas(frames, `${name}.png`, maxSheet);
   const encoded = await encodeSheet(built.image, name);
   return {
@@ -219,10 +250,29 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
   const files: StagedFile[] = [];
   const notes: string[] = [];
 
+  const baseRecipe = JSON.parse(
+    await Deno.readTextFile(join(gameDir, "assets", "game.json")),
+  ) as { playerData?: Record<string, unknown> };
+  // Only game_asset: that is the sheet the port draws bullets from.
+  const upright = playerShotFrames(record, baseRecipe);
+
   for (const name of ["game_asset", "game_ui"]) {
-    const built = await repackBaseAtlas(gameDir, name, maxSheet);
+    const built = await repackBaseAtlas(
+      gameDir,
+      name,
+      maxSheet,
+      name === "game_asset" ? upright : new Set(),
+    );
     files.push(...built.files);
     notes.push(built.note);
+  }
+  if (upright.size) {
+    notes.push(
+      `player shots: ${upright.size} frame(s) turned upright — ` +
+        `${[...upright].slice(0, 3).join(", ")}${
+          upright.size > 3 ? ", …" : ""
+        }`,
+    );
   }
 
   // The recipe the port normalises into its own shape at boot.

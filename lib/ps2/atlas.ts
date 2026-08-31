@@ -11,7 +11,7 @@
 // into the smallest power-of-two sheet that holds the set.
 
 import { type Raster } from "./png.ts";
-import { blit, cut, downscale, type Rect } from "./raster.ts";
+import { blit, cut, downscale, type Rect, rotateCcw } from "./raster.ts";
 
 /** One entry of a TexturePacker JSON-hash `frames` map. */
 export interface FrameEntry {
@@ -38,6 +38,11 @@ export interface SourceFrame {
   name: string;
   sheet: Raster;
   entry: FrameEntry;
+  /**
+   * Turn this frame a quarter turn anticlockwise as it is packed, so art drawn
+   * pointing right ends up pointing up the screen. See rotateCcw().
+   */
+  rotate?: boolean;
 }
 
 export interface BuiltAtlas {
@@ -138,7 +143,9 @@ export function buildPs2Atlas(
   }
   const cutouts = new Map<string, Raster>();
   for (const frame of frames) {
-    if (!cutouts.has(frame.name)) cutouts.set(frame.name, extract(frame));
+    if (cutouts.has(frame.name)) continue;
+    const cutout = extract(frame);
+    cutouts.set(frame.name, frame.rotate ? rotateCcw(cutout) : cutout);
   }
   const sheetSteps = SHEET_STEPS.filter((size) => size <= maxSheet);
   if (sheetSteps.length === 0) {

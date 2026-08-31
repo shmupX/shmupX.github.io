@@ -137,3 +137,34 @@ export function fitInto(src: Raster, boxW: number, boxH: number): Raster {
   }
   return out;
 }
+
+/**
+ * Turn a raster a quarter turn anticlockwise: what pointed right now points up.
+ *
+ * The PS2 port draws every frame axis-aligned — `AtlasManager.drawFrame` takes
+ * no angle and the bullet's `rotation` is only ever used to move it
+ * (`x += cos`, `y += sin`) — so a sprite drawn from side-on source art comes
+ * out side-on however the shot is travelling. The exporter turns that art at
+ * pack time instead, which is what authoring for a renderer without rotation
+ * means.
+ */
+export function rotateCcw(src: Raster): Raster {
+  const { width, height, data } = src;
+  const out: Raster = {
+    width: height,
+    height: width,
+    data: new Uint8Array(width * height * 4),
+  };
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      // (x, y) -> (y, width - 1 - x)
+      const from = (y * width + x) * 4;
+      const to = ((width - 1 - x) * height + y) * 4;
+      out.data[to] = data[from];
+      out.data[to + 1] = data[from + 1];
+      out.data[to + 2] = data[from + 2];
+      out.data[to + 3] = data[from + 3];
+    }
+  }
+  return out;
+}
