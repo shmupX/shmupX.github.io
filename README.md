@@ -37,7 +37,13 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
   screen) and opens it in full on a press. Under the CMG Desktop (`/desktop/`)
   those links open in its Web Browser window rather than a browser tab — YouTube
   watch URLs are framed as the /embed/ player, since the watch page itself
-  refuses embedding.
+  refuses embedding. 258 covers is more than left/right can walk, so the
+  coverflow carries an A–Z rail down its right edge — swipe or drag it to scrub
+  to a letter (`[` / `]` and the right stick step the same buckets) — and a
+  filter over title, Japanese title, developer and genre, opened with `/`,
+  ⌘/Ctrl+F or the ⌕ button. Buckets are derived from what is actually on the
+  shelf, so a letter nobody used never appears, and pinned favorites keep their
+  own ★ bucket at the top.
 - `static/games/2028-ai/` — the editor's base game + play runtime (the Phaser 4
   engine that runs editor-authored levels). `game.bundle.js` here is a vendored
   prebuilt artifact — this repo has no build step for it (the sources live in

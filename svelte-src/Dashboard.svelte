@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import Osd from './Osd.svelte';
   import SavPicker from './SavPicker.svelte';
   // The PS2 shelf the level editor files its own builds in, and the rule for
@@ -1309,8 +1309,10 @@
   // open the native file picker — gamepad input doesn't count. Focusing means a
   // real Enter on a USB keyboard will trigger the picker; programmatic .click()
   // from gamepad polling will be silently denied in some browsers.
+  // Not while the .sav picker is up: this re-runs on unrelated reactivity and
+  // would rip focus out of the picker's search field mid-word.
   $effect(() => {
-    if (screen !== 'games' || !sectionEmpty || !curSection.picker) return;
+    if (screen !== 'games' || !sectionEmpty || !curSection.picker || savPickerOpen) return;
     queueMicrotask(() => { try { byodBtnEl?.focus(); } catch (_) {} });
   });
 
@@ -1808,6 +1810,15 @@
   function savFavId(item) { return item.slug || savSlugOf(item.title); }
   let savPickerOpen = $state(false);
   let savPickerSel = $state(0);
+  let savQuery = $state('');          // the live search filter; '' = the whole shelf
+  let savFindOpen = $state(false);    // is the search field on screen
+  let savScrubbing = $state(false);   // a finger is on the alpha rail right now
+  // The game savPickerSel is MEANT to be on, by identity rather than by index.
+  // A plain let, not $state: the follow effect below reads it but must not
+  // re-run on it, or writing the selection would retrigger the effect that
+  // wrote it. Every write to savPickerSel goes through setSavSel so this
+  // cannot drift.
+  let savAnchorId = '';
   let savLibrary = $state(null);      // null until first open; [] = nothing reachable
   let savLibraryLoading = $state(false);
   let savLibraryErr = $state('');
@@ -1837,6 +1848,26 @@
   // The editor's matcher (dezaNormTitle in static/editor/index.html).
   function savNormTitle(title) {
     return String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+
+  // Search folding. NFKD splits the accents off "Sōkyūgurentai" and the
+  // combining marks are then dropped, so an ASCII keyboard still finds it; it
+  // also folds the full-width Latin some of the scraped titles carry. Kana and
+  // kanji survive untouched — those match by paste or by an IME, which is what
+  // the titleJa column is there for.
+  function savFold(s) {
+    return String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  }
+  // Built once per row at load, NEVER lazily inside the filter: savLibrary is
+  // $state, so its rows are proxies, and writing a field on one from inside a
+  // $derived is a mutation during derivation — Svelte 5 throws for that.
+  function savBuildHaystacks(rows) {
+    for (const r of rows) {
+      r._hay = savFold(
+        [r.title, r.titleJa, r.developer, r.developerJa, r.genre, r.slug].filter(Boolean).join(' ')
+      );
+    }
+    return rows;
   }
 
   // Rows in, same rows out — with `url` / `video` filled in where the table
@@ -1903,6 +1934,7 @@
       }
       await savAttachLinks(rows);
       rows.sort((a, b) => a.title.localeCompare(b.title));
+      savBuildHaystacks(rows);
       savLibrary = rows;
     } catch (err) {
       savLibrary = [];
@@ -1913,17 +1945,72 @@
     }
   }
 
-  // What the coverflow actually shows: the FAVORITES block leads, everything
-  // behind it keeps savLibrary's A-Z order (the block itself stays A-Z too,
-  // being a stable partition of a sorted list). Derived, so a toggle
-  // re-shelves without refetching, and every picker index — sel, launch,
-  // cover prefetch — reads this order, never savLibrary's.
-  let savShelf = $derived.by(() => {
-    if (!savLibrary?.length || !savFavs.size) return savLibrary;
+  // The FAVORITES block leads, everything behind it keeps A-Z order (the block
+  // itself stays A-Z too, being a stable partition of a sorted list). Rows in,
+  // same rows out when nothing is pinned, so the caller keeps its array
+  // identity — savShelf leans on that to hand savLibrary back by reference.
+  function savHoistFavs(rows) {
+    if (!rows?.length || !savFavs.size) return rows;
     const favs = [], rest = [];
-    for (const r of savLibrary) (savFavs.has(savFavId(r)) ? favs : rest).push(r);
-    return favs.length ? favs.concat(rest) : savLibrary;
+    for (const r of rows) (savFavs.has(savFavId(r)) ? favs : rest).push(r);
+    return favs.length ? favs.concat(rest) : rows;
+  }
+
+  // What the coverflow actually shows: the search filter, then the favorites
+  // hoist. Derived, so a toggle or a keystroke re-shelves without refetching,
+  // and every picker index — sel, launch, cover prefetch, the alpha rail —
+  // reads this order, never savLibrary's.
+  //
+  // null = not read yet, [] = nothing reachable OR nothing matched; SavPicker
+  // tells those two apart by the query it was given, not by the length.
+  let savShelf = $derived.by(() => {
+    if (!savLibrary?.length) return savLibrary;
+    const terms = savFold(savQuery).split(/\s+/).filter(Boolean);
+    // The filter runs BEFORE the hoist and never reads savFavs. A predicate
+    // that consulted pin state would drop a game out of the shelf on the very
+    // toggle that pinned it, and toggleSavFav's findIndex below would then
+    // strand the cursor on an index that no longer exists.
+    const rows = terms.length
+      ? savLibrary.filter((r) => terms.every((t) => r._hay.includes(t)))
+      : savLibrary;
+    return savHoistFavs(rows);
   });
+
+  // The alpha rail's rows, derived from the shelf so every `at` is a real,
+  // in-range index by construction: a letter with no games simply has no band,
+  // which is why the rail needs no skip logic and no disabled state. Keyed by
+  // first appearance rather than by a fixed A-Z, because localeCompare files
+  // the four punctuation-led titles ("-Devil Dimension- KAKUKAI 2") ahead of A
+  // rather than under their first letter — a fixed alphabet would point # at
+  // the wrong end of the shelf. Letters bucket from the end of the FAVORITES
+  // block so a pinned S hoisted to the front never becomes the S the rail
+  // jumps to.
+  let savBands = $derived.by(() => {
+    const rows = savShelf;
+    if (!rows?.length) return [];
+    let from = 0;
+    while (from < rows.length && savFavs.has(savFavId(rows[from]))) from++;
+    const seen = new Map();
+    for (let i = from; i < rows.length; i++) {
+      const c = String(rows[i].title || '').charAt(0).toUpperCase();
+      const key = c >= 'A' && c <= 'Z' ? c : '#';
+      const band = seen.get(key);
+      if (band) band.n++;
+      else seen.set(key, { key, at: i, n: 1 });
+    }
+    const out = [...seen.values()].sort((a, b) => a.at - b.at);
+    if (from > 0) out.unshift({ key: '★', at: 0, n: from });
+    return out;
+  });
+
+  // The single writer of savPickerSel. It stamps the anchor at the same time,
+  // so the follow effect below always knows which game the cursor was on
+  // before the shelf reshuffled under it.
+  function setSavSel(i) {
+    savPickerSel = i;
+    const item = savShelf?.[i];
+    savAnchorId = item ? savFavId(item) : '';
+  }
 
   function toggleSavFav(i) {
     const item = savShelf?.[i];
@@ -1935,6 +2022,9 @@
     try { localStorage.setItem(SAV_FAVS_KEY, JSON.stringify([...next])); } catch (_) { /* session-only pin */ }
     // The cover just moved into (or out of) the leading favorites block —
     // follow it, so the fan stays centred on the game that was just starred.
+    // The effect below would land the same index a frame later; doing it here
+    // too keeps the fan from visibly jumping through the old position first.
+    savAnchorId = id;
     const at = savShelf ? savShelf.findIndex((r) => savFavId(r) === id) : -1;
     if (at >= 0 && at !== savPickerSel) savPickerSel = at;
     sfx.nav();
@@ -1959,18 +2049,32 @@
 
   // Fetch art for the covers in and just beyond the rendered fan as the
   // cursor moves — the full shelf is 258 × ~9KB, far more than a browse needs.
+  // Held off entirely while a finger is on the alpha rail: one sweep crosses
+  // every band, and 13 fetches per band is the whole library in flight.
   $effect(() => {
-    if (!savPickerOpen || !savShelf?.length) return;
+    if (!savPickerOpen || savScrubbing || !savShelf?.length) return;
     const lo = Math.max(0, savPickerSel - 6);
     const hi = Math.min(savShelf.length - 1, savPickerSel + 6);
     for (let i = lo; i <= hi; i++) fetchSavCover(savShelf[i]);
   });
 
-  // Keep the coverflow cursor in range if the shelf shrinks under it.
+  // The cursor follows the GAME, not the index. A search keystroke, a favorite
+  // toggle and a shelf that shrank under the cursor all reshuffle savShelf, and
+  // this is the one owner that re-points the selection afterwards: find the
+  // anchored game again, else clamp where we are into the new range. Reading
+  // savShelf is what makes a keystroke re-run it — the clamp this replaced read
+  // neither the shelf nor the query, so it could never have fired on one.
   $effect(() => {
-    if (savLibrary && savPickerSel > savLibrary.length - 1) {
-      savPickerSel = Math.max(0, savLibrary.length - 1);
-    }
+    const shelf = savShelf;
+    if (!savLibrary) return;
+    const n = shelf?.length || 0;
+    // untrack so the effect's only dependency is the shelf: reading the value
+    // it also writes would make it retrigger itself.
+    untrack(() => {
+      const at = savAnchorId && n ? shelf.findIndex((r) => savFavId(r) === savAnchorId) : -1;
+      const target = at >= 0 ? at : Math.min(Math.max(0, savPickerSel), Math.max(0, n - 1));
+      if (savPickerSel !== target) savPickerSel = target;
+    });
   });
 
   function openSavPicker(g) {
@@ -1980,6 +2084,11 @@
     if (savPickerOpen || gameOn) return;
     if (g) savPickerGame = g;
     savNav.hDir = 0; savNav.hSeenAt = 0; savNav.hHeldSince = 0; savNav.hLastNav = 0;
+    savNav.vDir = 0; savNav.vSeenAt = 0; savNav.vHeldSince = 0; savNav.vLastNav = 0;
+    // A filter is a browse, not a preference: it never survives a close. The
+    // cursor deliberately does — the anchor puts it back on the same game once
+    // clearing the query restores the full shelf.
+    savQuery = ''; savFindOpen = false; savScrubbing = false;
     // Pins toggled in the editor's drawer (a same-origin iframe away) land
     // between opens — re-read, so both surfaces shelve the same games first.
     savFavs = readSavFavs();
@@ -1993,7 +2102,20 @@
   function closeSavPicker() {
     if (!savPickerOpen) return;
     savPickerOpen = false;
+    savScrubbing = false;
     sfx.back();
+  }
+  // Esc / the ✕ on the field walk one rung at a time: a live query clears
+  // first, then the field goes away, and only then does Esc reach the picker.
+  function savFindEscape() {
+    if (savQuery) savQuery = '';
+    else if (savFindOpen) { savFindOpen = false; sfx.back(); }
+    else closeSavPicker();
+  }
+  function savToggleFind() {
+    savFindOpen = !savFindOpen;
+    if (!savFindOpen) savQuery = '';
+    sfx.nav();
   }
   // The gamepad entry (FBTN_TOP): only while a shelf-owning row is the
   // highlighted row of the games screen.
@@ -2003,12 +2125,45 @@
     openSavPicker(curRow.g);
     return true;
   }
+  // Bounded on the SHELF, not the library: under a search filter the shelf is
+  // the shorter of the two, and every keyboard, gamepad and pointer move on
+  // the picker funnels through here.
   function savPickerJump(i) {
-    if (!savLibrary?.length) return;
-    const next = Math.max(0, Math.min(savLibrary.length - 1, i));
-    if (next !== savPickerSel) { savPickerSel = next; sfx.nav(); }
+    if (!savShelf?.length) return;
+    const next = Math.max(0, Math.min(savShelf.length - 1, i));
+    if (next !== savPickerSel) { setSavSel(next); sfx.nav(); }
   }
   function savPickerMove(dir) { savPickerJump(savPickerSel + dir); }
+  // The alpha rail hands back a band index; the band's `at` is already a valid
+  // shelf index (savBands is derived from savShelf), so there is nothing to
+  // resolve here beyond the shared bounds check.
+  function savBandJump(b) {
+    const band = savBands[b];
+    if (band) savPickerJump(band.at);
+  }
+  // Gamepad/keyboard stepping between bands: which band the cursor is inside
+  // right now, then one along. Bands are ordered by `at`, so the containing
+  // band is the last one that starts at or before the cursor.
+  function savBandAt(i) {
+    let at = 0;
+    for (let b = 0; b < savBands.length; b++) {
+      if (savBands[b].at <= i) at = b; else break;
+    }
+    return at;
+  }
+  function savBandStep(dir) {
+    if (!savBands.length) return;
+    const here = savBandAt(savPickerSel);
+    // Stepping back from inside a band lands on its own first game first —
+    // the same "go to the top of this letter, then the previous letter" feel
+    // a scrollbar's page-up has.
+    const next = dir < 0 && savBands[here].at < savPickerSel ? here : here + dir;
+    // Off either end is a no-op, never a clamp: clamping a forward step back
+    // onto the final band would re-jump to that band's FIRST game, scrubbing
+    // the fan backwards on an input that means "next letter".
+    if (next < 0 || next >= savBands.length) return;
+    savBandJump(next);
+  }
   function launchSavGame(i) {
     const item = savShelf?.[i];
     const g = savPickerGame;
@@ -2074,7 +2229,12 @@
 
   // Gamepad nav state for the picker (edge latch + hold-to-repeat, the same
   // feel as the launcher lists). Plain object — nothing renders off it.
-  const savNav = { hDir: 0, hSeenAt: 0, hHeldSince: 0, hLastNav: 0 };
+  const savNav = {
+    hDir: 0, hSeenAt: 0, hHeldSince: 0, hLastNav: 0,
+    // The alpha channel, on the right stick. Kept as its own latch so a
+    // diagonal never fires both axes.
+    vDir: 0, vSeenAt: 0, vHeldSince: 0, vLastNav: 0,
+  };
   function pollSavPickerPad(pad) {
     padState.axisDir = 0; padState.hAxisDir = 0;
     const pressedNow = new Set();
@@ -2122,6 +2282,39 @@
       }
     }
     savNav.hDir = h;
+
+    // Alpha stepping on the RIGHT stick's Y axis (axes[3]) — the only input
+    // the picker does not already spend, so nothing existing changes meaning:
+    // the d-pad and the left stick keep folding Up/Down into prev/next. Same
+    // five-step edge/dropout/repeat filter as the horizontal channel above.
+    // Dead on Android+SNES by construction (no analog slots to read there,
+    // which is the same reason that branch hijacks L/L2 for prev/next) — the
+    // rail and the keyboard cover that case.
+    let v = 0;
+    if (!selHeld && !isSnes) {
+      const raw = pad.axes[3];
+      if (typeof raw === 'number' && Math.abs(raw) <= 1.05) {
+        if (raw < -PAD_DEADZONE) v = -1;
+        else if (raw > PAD_DEADZONE) v = 1;
+      }
+    }
+    const vReal = v;
+    if (v === 0 && savNav.vDir !== 0 && now - savNav.vSeenAt < 80) v = savNav.vDir;
+    if (vReal !== 0) savNav.vSeenAt = now;
+    if (v !== 0 && v !== savNav.vDir) {
+      if (now - savNav.vLastNav >= 150 || savNav.vLastNav === 0) {
+        savBandStep(v);
+        savNav.vLastNav = now;
+      }
+      savNav.vHeldSince = now;
+    } else if (v !== 0 && v === savNav.vDir) {
+      if (now - savNav.vHeldSince >= padState.initialDelayMs && now - savNav.vLastNav >= padState.repeatMs) {
+        savBandStep(v);
+        savNav.vLastNav = now;
+      }
+    }
+    savNav.vDir = v;
+
     if (IS_ANDROID && isSnes) {
       // Android Chrome + SNES: the D-pad doesn't report and physical R
       // arrives remapped to the L2 slot — L/L2 are the primary prev/next
@@ -2133,7 +2326,7 @@
       if (justPressed(4)) savPickerJump(savPickerSel - 10);
       if (justPressed(5)) savPickerJump(savPickerSel + 10);
       if (justPressed(6)) savPickerJump(0);
-      if (justPressed(7)) savPickerJump(savLibrary ? savLibrary.length - 1 : 0);
+      if (justPressed(7)) savPickerJump(savShelf ? savShelf.length - 1 : 0);
     }
     // FBTN_LEFT (X / square) pins the centred cover to the favorites block.
     if (justPressed(2)) toggleSavFav(savPickerSel);
@@ -2902,6 +3095,21 @@
 
   function onKey(e) {
     lastInput = 'key';
+    // The picker's search field is the only place in the app that wants raw
+    // keystrokes, and the branch below spends Space, f, b, Backspace, the
+    // arrows and Home/End on picker nav — inside a text field every one of
+    // those is a character or a caret move. Bail before completePendingFullscreen
+    // too, or the first letter typed cashes in a pad's pending R3 and throws the
+    // browser into fullscreen. SavPicker's own onkeydown answers the keys the
+    // field needs (Escape, Enter, ArrowDown).
+    // An ALLOW-list of text-entry types, not a deny-list of the rest: the OSD's
+    // volume rows are <input type="range"> and the BYOD button an <input
+    // type="file">, and a focused one of those must keep driving the launcher —
+    // a deny-list would have to name every such type, and miss the next one.
+    const t = e.target;
+    const typing = !!t && (t.isContentEditable || t.tagName === 'TEXTAREA' ||
+      (t.tagName === 'INPUT' && /^(text|search|url|tel|email|password|number)$/.test(t.type)));
+    if (typing) return;
     completePendingFullscreen();
     // The .sav coverflow owns the keyboard while it is up (launcher only —
     // it can never be open over a running game).
@@ -2911,10 +3119,19 @@
       else if (e.key === 'PageUp') { e.preventDefault(); savPickerJump(savPickerSel - 10); }
       else if (e.key === 'PageDown') { e.preventDefault(); savPickerJump(savPickerSel + 10); }
       else if (e.key === 'Home') { e.preventDefault(); savPickerJump(0); }
-      else if (e.key === 'End') { e.preventDefault(); savPickerJump((savLibrary?.length || 1) - 1); }
+      else if (e.key === 'End') { e.preventDefault(); savPickerJump((savShelf?.length || 1) - 1); }
+      // Ctrl/Cmd+F keeps f as favorite: the search field is opened deliberately
+      // (/, ⌘F, the ⌕ button, or a tap), never by a stray letter — type-ahead
+      // would have to steal f, Space, b and Backspace from the bindings below.
+      else if (e.key === '/' || ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F'))) {
+        e.preventDefault();
+        if (!savFindOpen) savToggleFind();
+      }
       else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleSavFav(savPickerSel); }
+      else if (e.key === '[') { e.preventDefault(); savBandStep(-1); }
+      else if (e.key === ']') { e.preventDefault(); savBandStep(1); }
       else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launchSavGame(savPickerSel); }
-      else if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'b' || e.key === 'B') { e.preventDefault(); closeSavPicker(); }
+      else if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'b' || e.key === 'B') { e.preventDefault(); savFindEscape(); }
       return;
     }
     // Nintendo theme lays the catalog lists out as a horizontal coverflow row,
@@ -3924,6 +4141,10 @@
 <SavPicker open={savPickerOpen} items={savShelf || []} sel={savPickerSel}
      favs={savFavs} onfav={toggleSavFav}
      covers={savCovers} loading={savLibraryLoading} error={savLibraryErr}
+     bands={savBands} query={savQuery} findOpen={savFindOpen}
+     onquery={(q) => { savQuery = q; }} onfind={savToggleFind} onescape={savFindEscape}
+     onband={(b) => savBandJump(b)}
+     onscrub={(on) => { savScrubbing = on; }}
      onselect={(i) => savPickerJump(i)} onlaunch={(i) => launchSavGame(i)}
      onclose={closeSavPicker} />
 
