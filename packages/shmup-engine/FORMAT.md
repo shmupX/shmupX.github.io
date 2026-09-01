@@ -314,8 +314,8 @@ start/end/rate/repeat interpolators:
 | Byte | Field |
 |------|-------|
 | 0 | appearance id: indexes the 256-entry pointer table `+0x6088e5c` — whose entries are **BEHAVIOR SCRIPTS, not sprite definitions**. See "Appearance scripts" below. Sprite size, char slot, frame count and hitbox come from the PLACEMENT-ID BAND instead (seven spawn wrappers `+0x16070..+0x165F8`: frame counts 4/4/4/4/2/2/1 and char bases 67/131/163/195/259/267/275 across the seven art bands); `b0>>3` selects the object CLASS from `+0x21FB0` — 0x30 = scripted zako (208 ids, **93.9%** of corpus enemy definitions), 0x31–0x36 = hardcoded special AI on an empty script (48 ids, the rest). |
-| 1 | bits0-2 **hp** index → `[60,30,15,10,5,3,2,1]` (`+0x6085ee8`; index 0 = toughest, 7 = the editor default) — the SAME value is the **animation frame period in ticks** (both counters load from it at spawn `+0x15448`; the anim reload doubles as the pierce-exchange hp, so damaged enemies animate faster); bits4-6 **score** index → `[50,100,200,500,1000,2000,5000,10000]` (`+0x6085ef0`); bit7 **ground** flag |
-| 2 | bits0-2 **speed** index → u32 `[256,12800,…,512000]` (`+0x6085f20`, 16.16 px/frame, ×1.5 at rank ≥2 and again at rank 6); bit3+bits4-5 **movement pattern** (0-7, `((b2>>4)&3)\|((b2&8)>>1)`); bit3 alone is the TERRAIN-RIDE flag the ride helper gates on; bits6-7 **death mode** (see "The death word") |
+| 1 | bits0-2 **animation-frame period in ticks** → `[60,30,15,10,5,3,2,1]` (`+0x6085ee8`; both counters `0x0608DDF0`/`0x06090630` load from it at spawn `+0x15458`). **This is NOT hp** — that reading (corrected 2026-08-31) had index 0, the editor default and 63% of the corpus, as the toughest enemy; hp is byte 2. bits4-6 **score** index → `[50,100,200,500,1000,2000,5000,10000]` (`+0x6085ef0`); bit7 **ground** flag |
+| 2 | bits0-2 **hp** index → u32 `[256,12800,…,512000]` (`+0x6085f20`) in the engine's durability units, index 0 = WEAKEST. The zako initialiser `+0x1546A` scales it through `+0x15358` (×2/3 easy, ×1 normal, ×1.5 hard) into BOTH `0x06095040` (current hp — what the collision resolver subtracts damage from) and `0x06093E50` (max hp). At a full-power weapon-1 bullet of 5120 units that is **1/3/5/10/20/40/50/100 hits**. *(Corrected 2026-08-31: this was read as a 16.16 px/frame SPEED. A scripted zako has no speed field — its motion comes from its appearance script and the change channels. The one per-record speed the engine reads is **byte 0 bits0-2**, and only for the 48 hard-coded AI ids, which remap it through u16 `[128,256,384,512,640,768,1152,1536]` (`+0x20560`) into `0x0608E590`; for class 48 that array is left at 0 and filled from the script row's `+6` word instead.)* bit3+bits4-5 pack the **hit-attribute byte** `0x06091550` (`((b2>>4)&3)\|((b2&8)>>1)`): bit3 → the TERRAIN-RIDE flag, **bit4 → ARMOUR** (indestructible; see "Armour deflection"), bit5 → no-collision; bits6-7 **death mode** (see "The death word") |
 | 3 | **death word parameter** — item slot / child record / chain key, by mode (see "The death word"). NOT fire params: nothing in the firing path reads this byte. |
 | 4 | bits0-1 fire mode; **bits2-3 death presentation** (0 = vanish silently, 2 = small blast, 1/3 = full); bits4-6 **fire rate** index → interval `[119,59,29,19,9,5,3,1]` (`+0x6085f81`; mode 3 uses `[119,59,39,19,11,7,3,1]`) + randomization window `[29,22,16,11,7,4,2,1]` (`+0x6085f61`) — reload = interval + rand(window) |
 | 5 | bits0-4 fire direction (0 = default/aimed), bits5-7 extra (passed to the shooter at `+0x607cfac`) |
@@ -392,6 +392,22 @@ SCROLL component is rescaled ×365/256 (`+0x4E1A`, `+0x1A514`) for the
 across its 56 read sites: masks `0x1` (17x), `0x4` (13x), `0x3` (12x), `0x2`
 (2x), `0x8` (1x). Mode 3 never occurs in the corpus. `decode-enemy.js` now
 exposes `move: {mode, flag}` alongside the packed `movePattern`.
+
+Those reads are **not** movement at all — this is the authored HIT-ATTRIBUTE
+byte (traced 2026-08-31, and the KUMITATE enemy editor exposes bits 4-5 of the
+record byte as a pair of mutually exclusive checkboxes, so only 0, 1 and 2 are
+authorable):
+
+| bit | record | meaning |
+|---|---|---|
+| 0 | b2 bit4 | **ARMOUR** — the target is indestructible (damage is rolled back and hp/maxHp/attack-power are pinned to 0x7FFFFFFF), an ordinary player shot dies on it instead of trading hp, the impact SFX becomes 64 instead of 63, and sub 6's ball deflects. See "Armour deflection" under Player weapons |
+| 1 | b2 bit5 | **NO COLLISION AT ALL** — tested first in both enemy collision drivers (`+0x8B26`) and skips the whole block: no player shot, no bomb, no ship contact |
+| 2 | b2 bit3 | the TERRAIN-RIDE flag documented above; it also suppresses the enemy-vs-ship contact test and shifts the draw-attribute byte `0x06092950` by +32, which is why the death effect id becomes 53/54 instead of 21/22 |
+| 7 | — | not from the enemy record: for an enemy BULLET it comes from the global bullet configs (settings `+0x25`/`+0x26`/`+0x27` bit 7) and means "this bullet joins the full collision system" — it can be shot down, and it shatters player shots |
+
+The four `& 3` reads treat any nonzero value in bits 0-1 as "not a real
+target". `decode-enemy.js` exposes the pair as `move.mode`, so **armour is
+`move.mode & 1`**.
 
 ### Appearance scripts (**decoded** 2026-08-28)
 
@@ -777,14 +793,20 @@ tests in the 320-wide grid space, so an enemy may fire anywhere visible):
   facing-relative shots.
 
 **Durability shares one unit space with damage — and the player-weapon
-damage tables are traced.** Objects live in one pool; enemy LIFE decodes in
-damage units ([60,30,15,10,5,3,2,1]). The player's normal shot carries its
-damage in the same slot zako keep hp in (0x6090630): the spawn at GAME.CMP
-`+0x10bbe` writes it from the five-entry power-level table at `+0x6085e14` =
-**[9, 12, 15, 18, 21]** (its bullets score nothing — 0x6093e50/0x6095040 are
-set to 0x7FFFFFFF at the same spawn). A full-power main shot is therefore 21
-units, and max-LIFE zako die in ceil(60/21) = 3 hits, which is what the
-importer's `ENGINE_SHOT_DAMAGE` now uses.
+damage tables are traced.** Objects live in one pool. Enemy hp is
+`0x06095040` (current) / `0x06093E50` (max), written at spawn from record
+byte 2's `[256,12800,…,512000]` (see the record table above), and the
+collision resolver subtracts a shot's `0x0608C720` attack power straight off
+it — so **hp and damage are the same units**, and a full-power weapon-1
+bullet of 5120 kills the eight LIFE steps in 1/3/5/10/20/40/50/100 hits.
+*(Corrected 2026-08-31. The older reading here — "LIFE decodes in damage
+units [60,30,15,10,5,3,2,1]", the normal shot's damage coming from
+`+0x6085e14` = [9,12,15,18,21], and max-LIFE zako dying in ceil(60/21) = 3
+hits — was built on two mistakes this file already refutes elsewhere: that
+table is the charge-pellet LIFETIME words, and `0x06090630` is the per-slot
+parameter/animation counter, not where a zako keeps hp. The importer's
+`ENGINE_SHOT_DAMAGE = 21` survives only as a fallback divisor for saves whose
+settings block does not decode, where it stands in for weapon 1's 20.)*
 
 Big/pierce shots use a different channel: their power rides in the SCALE
 slot (0x6095930/0x6091a30 — a big shot is literally as strong as it is
@@ -816,10 +838,10 @@ are the channel A/C bytes.
 | `+0x01` | **HUD dressing**: bits4-6 frame-graphic select (7 VDP2 tile sets via kernel `0x0600516C`), bits0-2 HUD palette select (kernel `0x06005138`) |
 | `+0x02`–`+0x0B` | **per-stage flag bytes** (10 stages): bit0 CLEAR = the row starts a NEW numbered stage; bit0 SET = continuation part — the stage number holds and the BGM carries over (`+0x9C4`; polarity adversarially verified against MIYA/DAIOH/RAMS); bit6 = keep the scroll position on player death (`+0x121A`); bit7 = **the final stage** (the game ends after it, `+0xC2C`); bit5 editor-edited, consumer unfound |
 | `+0x0C`–`+0x0F`, `+0x10`–`+0x13` | the two player-ship config blocks (P1/P2) — **decoded** (2026-08-28, verified; REPLACES the earlier "byte +3 low nibble = main weapon" heuristic, which was actually the autofire rate): byte +0 = `0x10 \| startingLoadout` (engine reads only &3); byte +1 = maxSpeedLevel<<4 \| rapid-fire param (manual fire interval = 8−v frames); byte +2 = maxPowerLevel<<4 \| initialPowerLevel (≤4; the power level indexes per-weapon per-level tables); byte +3 low nibble = **autofire rate index** → `[60,30,15,10,5,3,2,1]` frames/volley (`+0x21EE8`), high nibble 0-3 open. Loaded at player init `+0x90EC` into per-player globals. |
-| `+0x14`–`+0x1B` | the four **WEAPON LOADOUT presets** (2 B each) — **decoded**: byte0 bits0-2 = MAIN weapon 0-7 (autofire dispatcher `+0x15128`: 0→none, 1→`+0xf498` … 7→`+0x11ea8`; per-level u32 damage tables, e.g. weapon 1 `+0x21D6C` = [13312..5120] per bullet — per-bullet damage FALLS as the level rises while projectile count grows; enemy LIFE stores as LIFE<<8, so a max-LIFE zako = 15360 units = 3 full-power weapon-1 hits), bits4-6 = SUB weapon 0-7 (dispatcher `+0x1509C` = `0x0607909C`, jump table `+0x150C4`) — **there are NO option pods** (2026-08-28): every handler spawns a transient bullet from the player's own slot window, nothing tracks the ship, so this is simply a second shot type. Max shots per tap `+0x21C50` = `[0,3,3,1,1,6,3,2]`, reload interval `+0x21C58` = `[0,6,5,12,1,3,6,28]`, drained 1/frame — the extra `power+3` drain sits INSIDE the `type == 7` branch (`+0xDD4C` returns to the epilogue otherwise), so types 1-6 fire at the RAW interval independent of power (6/5/12/1/3/6 frames) and only type 7 scales (`ceil(28/(L+3))` = 10/7/6/5/4). NOTE the main/sub labels may be swapped: the bits4-6 weapon is the one sharing the A button with the charge gauge; byte1 bits0-1 = CHARGE type 0-3 (dispatcher `+0x1528C` = `0x0607928C`; gauge +1/frame while held, cap 320, **never decays**, level = `gauge>>6 - 1` so level 0 is a real shot and only level -1 is a no-op; the gauge is zeroed when the ATTACK ends, not at release — busy counters 16/96/160 frames by type; a gauge above 31 SUPPRESSES the sub weapon — the tables `+0x6085EA8/EBC/EC8/EDC` earlier labeled "sub-weapon" belong HERE; gauge 0-320, level = gauge/64−1), bits4-7 = BOMB type + variant flag (16-way dispatcher `+0x151B0` = `0x060791B0`; the table is the low 8 entries duplicated except index 6/14, so bit3 only re-routes base type 6 and adds a 16.875°/frame spin to types 4 and 5. Eight behaviours as object classes 68-75; per-type attack powers `[4096,5632,6144,4608,10240,3584,3584,512]` into the damage word `u32[0x608C720]`; no INSTANT screen-clear — bombs are big piercing contact objects, though type 1 grows to a 344 px radius (wider than the playfield) over ~53 frames and drives a real full-screen flash). The ship byte +0 picks the STARTING loadout; weapon-change items (types 0-3) switch loadouts mid-game. The old `+0x6085E14` "charge damage [9,12,15,18,21]" claim is refuted — that table holds `[0x900..0x1500]` charge-pellet lifetime words. **All three charge handlers and sub-weapon handlers 2-6 are now fully traced — see "Player weapons" below, which supersedes every per-table guess in this row.** |
+| `+0x14`–`+0x1B` | the four **WEAPON LOADOUT presets** (2 B each) — **decoded**: byte0 bits0-2 = MAIN weapon 0-7 (autofire dispatcher `+0x15128`: 0→none, 1→`+0xf498` … 7→`+0x11ea8`; per-level u32 damage tables, e.g. weapon 1 `+0x21D6C` = [13312..5120] per bullet — per-bullet damage FALLS as the level rises while projectile count grows; enemy hp is in these same units — record byte 2's `[256,12800,…,512000]`, so the toughest zako takes 100 full-power weapon-1 hits), bits4-6 = SUB weapon 0-7 (dispatcher `+0x1509C` = `0x0607909C`, jump table `+0x150C4`) — **there are NO option pods** (2026-08-28): every handler spawns a transient bullet from the player's own slot window, nothing tracks the ship, so this is simply a second shot type. Max shots per tap `+0x21C50` = `[0,3,3,1,1,6,3,2]`, reload interval `+0x21C58` = `[0,6,5,12,1,3,6,28]`, drained 1/frame — the extra `power+3` drain sits INSIDE the `type == 7` branch (`+0xDD4C` returns to the epilogue otherwise), so types 1-6 fire at the RAW interval independent of power (6/5/12/1/3/6 frames) and only type 7 scales (`ceil(28/(L+3))` = 10/7/6/5/4). NOTE the main/sub labels may be swapped: the bits4-6 weapon is the one sharing the A button with the charge gauge; byte1 bits0-1 = CHARGE type 0-3 (dispatcher `+0x1528C` = `0x0607928C`; gauge +1/frame while held, cap 320, **never decays**, level = `gauge>>6 - 1` so level 0 is a real shot and only level -1 is a no-op; the gauge is zeroed when the ATTACK ends, not at release — busy counters 16/96/160 frames by type; a gauge above 31 SUPPRESSES the sub weapon — the tables `+0x6085EA8/EBC/EC8/EDC` earlier labeled "sub-weapon" belong HERE; gauge 0-320, level = gauge/64−1), bits4-7 = BOMB type + variant flag (16-way dispatcher `+0x151B0` = `0x060791B0`; the table is the low 8 entries duplicated except index 6/14, so bit3 only re-routes base type 6 and adds a 16.875°/frame spin to types 4 and 5. Eight behaviours as object classes 68-75; per-type attack powers `[4096,5632,6144,4608,10240,3584,3584,512]` into the damage word `u32[0x608C720]`; no INSTANT screen-clear — bombs are big piercing contact objects, though type 1 grows to a 344 px radius (wider than the playfield) over ~53 frames and drives a real full-screen flash). The ship byte +0 picks the STARTING loadout; weapon-change items (types 0-3) switch loadouts mid-game. The old `+0x6085E14` "charge damage [9,12,15,18,21]" claim is refuted — that table holds `[0x900..0x1500]` charge-pellet lifetime words. **All three charge handlers and sub-weapon handlers 2-6 are now fully traced — see "Player weapons" below, which supersedes every per-table guess in this row.** |
 | `+0x1C`–`+0x23` | the 8 **item slots** — **decoded** (2026-08-28, verified): byte = `movement<<4 \| itemType`. Types (effect table `+0x25ACC`): 0-3 = weapon change to loadout preset 0-3, 4 = barrier (persists across respawns), 5 = bomb stock +1 (cap 99), 6 = score bonus, 7 = power-up (+1 shot level, capped by ship byte +2 high nibble), 8 = speed-up (+1, capped by ship byte +1 high nibble). Movement: 0 = launch-and-drift (6 px/f spin-launch, decay v−=v/8, then drift backward; uncollectible during the launch phase), 1 = bouncer (15 frames still, then 45°+k·90° diagonals at ~0.79 px/f per axis, bouncing off the playfield, blink-out after 1024 frames), 2 = scroll-anchored (rides the background). Placement ids 0xE8-0xEF spawn slot id&7; an enemy death-word `(w & 0x300)==0x100` drops item `w&0xFF` (1-8 = slot, 9 = cycling). |
 | `+0x24` | **score-item value index** into the boss score table `[5000..1000000]` (`+0x21F00`) — one game-wide value for every type-6 item |
-| `+0x25`–`+0x27` | the **3 global bullet configs** — **decoded** (2026-08-28, verified): read LIVE via the settings pointer `u32[0x060840C0]` (shooter `+0x19002` adds `0x25 + (record b4&3)`, so **b4&3 == 3 aliases the blast byte** — an engine quirk). Bits 0-2 = bullet **damage** index into u8 `[60,30,15,10,5,3,2,1]` (`+0x21EE8` — the shared durability units); bits 4-5 = **speed add** index into u16 `[128,256,512,896]` (`+0x220B4`); bit 7 = an editor checkbox stored per bullet (`cfg&0x80`, no traced play effect); bits 3/6 never set in the corpus. Bullet speed = `u16[0x608EF30] + add` where the base has exactly one writer: `rank<<2` (see rank below); velocity = `(speed × sin1.15) >> 16` added raw into **25.7** positions (**128 units = 1 px**; the draw path is `if (p<0) p+=127; p>>=7` at `+0x51B4` into the kernel's seven-`shar` helper `0x06010BF6`), so px/frame = speed/256 — the four adds alone are 0.5/1.0/2.0/3.5 px/f. *(Corrected 2026-08-31; the earlier 24.8 reading halved every bullet speed. The runtime still fires these at the old rate — see "Player weapons".)* Bullet sprites: types 0/1/2 draw composition slots 55/59/63 with a 4-frame anim. Decoder: `lib/decode/decode-settings.js` (`bullets`). |
+| `+0x25`–`+0x27` | the **3 global bullet configs** — **decoded** (2026-08-28, verified): read LIVE via the settings pointer `u32[0x060840C0]` (shooter `+0x19002` adds `0x25 + (record b4&3)`, so **b4&3 == 3 aliases the blast byte** — an engine quirk). Bits 0-2 = bullet **damage** index into u8 `[60,30,15,10,5,3,2,1]` (`+0x21EE8` — the shared durability units); bits 4-5 = **speed add** index into u16 `[128,256,512,896]` (`+0x220B4`); bit 7 = an editor checkbox stored per bullet (`cfg&0x80`) that lands in **bit 7 of the hit-attribute byte** `0x06091550` and gates the bullet into the full collision system — it can be shot down, and it shatters player shots (traced 2026-08-31; see the hit-attribute table above); bits 3/6 never set in the corpus. Bullet speed = `u16[0x608EF30] + add` where the base has exactly one writer: `rank<<2` (see rank below); velocity = `(speed × sin1.15) >> 16` added raw into **25.7** positions (**128 units = 1 px**; the draw path is `if (p<0) p+=127; p>>=7` at `+0x51B4` into the kernel's seven-`shar` helper `0x06010BF6`), so px/frame = speed/256 — the four adds alone are 0.5/1.0/2.0/3.5 px/f. *(Corrected 2026-08-31; the earlier 24.8 reading halved every bullet speed. The runtime still fires these at the old rate — see "Player weapons".)* Bullet sprites: types 0/1/2 draw composition slots 55/59/63 with a 4-frame anim. Decoder: `lib/decode/decode-settings.js` (`bullets`). |
 | `+0x28` | **blast byte**: bits 0-2 / bits 4-6 = explosion anim A/B **tick-hold** index into u8 `[8,7,6,5,4,3,2,1]` (`+0x25A98`; spawners `+0x1C104`/`+0x1C1F0`, appearances 43/49) |
 | `+0x2D`–`+0x40` | **per-stage scroll extents** — **decoded** (2026-08-28): one (loop-start, end) byte pair per stage in **parts of 256 px** (16 map rows), read via `u32[0x060840C0]+0x2D/0x2E+2×stage`. Normal play STOPS the scroll one hardware screen short of `end<<8` (lookahead 256 px vertical / 320 horizontal, flag `0x06090A2A`); a boss fight (`u8[0x06084158]`) or game modes ≥ 2 **LOOP the background** from `end<<8` back to `loop<<8` preserving the 16-px row phase. This is why the values are always even ≤ 48. Decoder: `decode-settings.js` (`stageExtents`). |
 | `+0x41`–`+0x58` | **BGM assignment table**: 24 entries, every value ≤ 23 in every game, indexing sec6's 24 song slots. Three special tracks first, then (main, boss) pairs per stage — DAIOH reads `12,11,13, 1,6, 2,7, 3,8, 4,9, 5,10`. No entry ever points at an empty song slot. |
@@ -862,11 +884,11 @@ compensation — the polarity is `tst`/`bf`, easy to invert), and sub handlers
 | sub 3 | `+0xDF20` | level+1 | **lobbed grenades**: launched *downward* at 256 units/f with a fixed lateral drift; the class-40 updater `+0xDFB0` adds **+40/frame** to the scroll velocity, so each dips ~5.4 px, reverses at frame ~6.4 and climbs away accelerating. Drifts ±32/±48/±64 units by level |
 | sub 4 | `+0xD06C` | level+1 chains | **homing whips**: 1 class-39 head + N class-38 links (1×8, 2×7, 3×6, 4×5, 5×4). Head re-acquires inside ±80×±128 px, turns ≤24 units/frame, speed word clamped to [0x600, 0xD00] → 6…13 px/f (velocity = word/2) |
 | sub 5 | `+0xE214` | 1 per 3 frames | **anchored piercing column** planted where the ship *was*, 8 px wide, reaching 320 px up. HP rewritten to 0x7FFFFFFF every frame; dies on its own countdown, `0xA000 / step` with step `+0x21CF8` = 10/14/19/23/28 frames |
-| sub 6 | `+0xE664` | 1 | **one indestructible energy ball**, 1152 units/f, grows from 0.25× to `+0x21D4C` = 0.625…2.125× at a quarter of the cap per frame; damages every frame it overlaps. Armour-flagged targets *deflect* it downward ±45° |
+| sub 6 | `+0xE664` | 1 | **one indestructible energy ball**, 1152 units/f, grows from 0.25× to `+0x21D4C` = 0.625…2.125× at a quarter of the cap per frame; damages every frame it overlaps. A **hard target** (see below) bounces it away downward — see "Armour deflection" |
 | sub 7 | `+0xEBC8` | 2 | aimed pair at `aim ± 8`, speed word 0x800 |
 
-Per-level attack powers (engine durability units, where a max-LIFE zako is
-`60 << 8` = 15360): sub 1 `+0x21C80` [7680…3584], sub 2 `+0x21C94`
+Per-level attack powers (engine durability units — the same space enemy hp
+is in, where the toughest zako step is 512000): sub 1 `+0x21C80` [7680…3584], sub 2 `+0x21C94`
 [6656…2560], sub 3 `+0x21CD0` [15360…7168], sub 4 `+0x21CBC` [320…230],
 sub 5 `+0x21CE4` [448…384], sub 6 `+0x21D24` [1280…1408], sub 7 `+0x21D58`
 [8960…5376]. **Types 4, 5 and 6 bill per FRAME of contact**, which is why
@@ -926,13 +948,106 @@ owns object slots 4-33, P2 34-63) and each handler reserves its whole volley
 up front. That is the real reason sub 4 — nominally an every-frame weapon —
 cannot put a second chain in the air while the first is alive.
 
+**Armour deflection — the hard-target flag (traced 2026-08-31).** Every object
+carries a flag byte `u8[0x06091550 + slot]`, and **bit 0 is the ARMOUR bit**.
+For a zako it is *authored*: the spawn `+0x1548E` writes
+`((b2 >> 4) & 3) | ((b2 & 8) >> 1)` out of enemy-record byte 2, so flag bit 0
+is **record byte 2 bit 4** (bit 1 is byte 2 bit 5; bit 2 is byte 2 bit 3, the
+terrain-ride flag already documented above). A boss's flag byte is written
+once at spawn (`+0x1B018`: `((b1 & 8) >> 1) | 1`, bit 0 always on) and bit 0
+is then cleared on every frame of the normal fight loop, immediately before
+the collision call (`+0x1BF08`). Only the normal fight path
+clears it, so the bit also stands through the whole **entrance** (spawn sets
+the phase byte `u8[0x06084158] = 3` at `+0x1AC94`, which routes the dispatcher
+elsewhere). It comes back on at each **HP-stage transition**: `+0x1BF56`
+clamps hp to the stage threshold, calls the stage advance `+0x1ABD4`, and sets
+bit 0 (`+0x1BF7E`) — so a boss is armoured while it is arriving or changing
+phase and vulnerable the rest of the time. Death is the other branch entirely
+(`hp == 0` at `+0x1BF1A` → the death init `+0x1B330`) and does not touch the
+byte.
+
+**Bit 0 also makes the target INDESTRUCTIBLE.** The per-object collision entry
+`+0x8B08` runs after the resolver every frame, and when it finds
+`hp != maxHp` — i.e. the object was hit — it branches on the same bit
+(`+0x8B80`): unflagged, it commits the new hp (`maxHp = hp`) and toggles the
+damage-flash bit; flagged, it clears the flash and slams **hp, maxHp *and* the
+attack-power word `0x0608C720` to 0x7FFFFFFF** (`+0x8BAE`–`+0x8BB6`), the one
+exception being slot 98, the boss core, which is restored to `maxHp` instead
+(`+0x8B9A`). So an armour-flagged zako is *scenery*: it can never reach hp 0,
+never enters the death path, and its now-enormous contact-damage word kills
+any ordinary bullet that touches it. **Armour and killable are mutually
+exclusive** — sub 6 bounces off exactly the set of targets it could never
+have destroyed.
+
+Bit 0 is also the rule for anything that would otherwise plough through a
+target. An ordinary player bullet is destroyed outright on it instead of
+losing hp to the target's contact damage (`+0x8336`–`+0x8354`); charge 2's
+beam segment retracts (`+0x14C30`); charge 3's orb ricochets 90° either side
+of the target's facing, alternating by slot parity (`+0x14FC6`); and sub 6's
+ball deflects:
+
+- the class-42 branch of the collision resolver (`+0x82E0`) bills the target
+  its frame of damage first, then calls the predicate `+0xE71C`, which wants
+  the flag **and** `|x_target − x_ball| ≤ targetHalfWidth + (scale >> 9)` px —
+  the ball's centre inside the target's span widened by the ball's own radius,
+  so a corner clip damages without bouncing;
+- a yes writes **2** into the ball's own hp, and the class-42 updater's hp test
+  (`+0xE95C`) turns that into the bounce at `+0xE974`: a new heading of
+  `(rand & 63) − 96` in the engine's 0-is-right angle byte — 160…223, i.e.
+  **straight down ±45°**, uniform over 64 headings — written out through the
+  trig table as `(TRIG(a) × 1152) >> 15`, so the ball leaves at **1152
+  units/f = 9 px/f, the same speed it was launched at**. Mind the shift:
+  kernel `0x06010BAA` looks like a `>>16` (`swap.w`/`rotl`/`rotr`/`exts.w`)
+  but the **`rts` delay slot's `rotcl` shifts the saved bit back in**, making
+  it an arithmetic `>>15`. Reading it as `>>16` halves every velocity built
+  through it;
+- its hp then goes to 0, which is what drops it out of the engine's damage
+  pass, and the state branch `+0xE896` spins the rotation register ±6144/frame
+  (**33.75°**). The state byte is **1 for `angle <= 191`** (a bounce to the
+  left, including straight down) and **2 above it**, and only state 1 ADDS —
+  so a bounce to the left spins clockwise and one to the right anticlockwise
+  (the register is clockwise-positive: sub 7's `(64 − aim) << 8` leans a shot
+  left at negative values). It also shrinks the draw zoom `0x06094A40` by
+  64/frame to a quarter and ORs the sprite's translucency bit into
+  `0x0608FB40`. Growth stops. The ball leaves play through the ordinary
+  despawn box.
+- The bounce frame is otherwise an ordinary hit: the damage subtraction at
+  `+0x82E6` precedes the predicate call, and the spark spawner `+0xE7B8` is
+  reached from BOTH predicate outcomes (`+0x8328` is one instruction and falls
+  through into the `jsr` at `+0x832A`).
+- Two smaller tells that a target is armoured, both traced and both skipped in
+  the runtime: the hit-spark cadence drops from one frame in two to one in
+  five (`+0xE7FE`, the counter steps +1 instead of +3 and fires on 0), and the
+  hit SFX id is **64** instead of 63 (`+0x7C9C`'s 4-way table).
+- **The bounce is deferred one frame.** The sentinel is written inside an
+  ENEMY's updater (slots 99-248) and read by the ball's own (slots 4-63),
+  which the object sweep `+0x792C` reaches first, so the ball flies straight —
+  and keeps damaging — for one more frame after the hit that condemned it.
+
 Runtime: `static/games/2028-ai/game.bundle.js`, "Dezaemon CHARGE and SUB
 weapons". It maps engine pixels 1:1 and steps twice per Saturn frame, so
 **runtime px/tick = units/256** and the weapon state machine is gated to one
-call per Saturn frame. Two gaps are deliberate: sub 4's links are drawn as a
-trail rather than simulated (the head carries the whole chain's damage), and
-sub 6's armour deflection has no counterpart because the runtime has no
-armour attribute.
+call per Saturn frame. **Damage divides by the save's own full-power bullet in
+RAW units** (`dezaDamageUnit` = `meta.dezaemonSettings.shotDamage * 256`, or
+the 5120 anchor when a recipe has no decoded settings) — the same divisor the
+importer sizes enemy hp with, so a sub-1 pellet is 1.5 hits and the toughest
+zako still takes 100. *(Fixed 2026-08-31: the recipe's `shotDamage` is the
+unit count >> 8, and reading it raw made every sub, charge and bomb do 256×
+its damage. The main gun's flat 1 hid it.)* The armour DEFLECTION is implemented there in full
+(`dezaArmoured` / `dezaDeflectGate` / `dezaDeflectShot`), reading the flag off
+the decoder's `behavior.move.mode` bit 0. One simplification: it bounces on the
+overlapping tick rather than a Saturn frame later, which costs the ball two
+ticks of extra straight flight and the damage it would have billed in them. Four gaps remain: sub 4's links are
+drawn as a trail rather than simulated (the head carries the whole chain's
+damage); charge 2's retract and charge 3's ricochet still ignore the flag;
+a **boss** never bounces the ball, because the runtime has no
+invulnerable HP-stage transition for the flag to ride on; and — the big one — **armour does not yet make an enemy
+indestructible**. The runtime already has the representation for it
+(`hp === "infinity"`, its "guard" case, with its own impact and `se_guard`),
+so the change is a mapper one: `map-to-game.js` would set `rec.hp` to
+`"infinity"` where `behavior.move.mode & 1`. It is deliberately NOT made here
+because it is a gameplay-wide change — 27 of Ramsie's 160 enemy records and
+18 of Mucha-Kucha's 223 carry the bit — and it deserves its own pass.
 
 ### Boss record — the 0x40 trailer (decoded 2026-08-22)
 
@@ -948,7 +1063,7 @@ offsets; the engine reaches the trailer through the pointer global
 | Byte | Field |
 |------|-------|
 | 0 | bits0-1 core **size class** (placement id `0xF0`–`0xF3`); bits4-5 **HP-stage count** − 1; bit6 rotate-in-place; bit7 death-FX spin variant |
-| 1 | bits0-2 **hp** index → u32 `[1024000, 1536000, 2304000, 3328000, 4608000, 6144000, 7936000, 9984000]` (`+0x21F40`); bit3 option flag, stored **inverted** by the editor; bits4-6 **score** index → `[5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]` (`+0x21F00`) |
+| 1 | bits0-2 **hp** index → u32 `[1024000, 1536000, 2304000, 3328000, 4608000, 6144000, 7936000, 9984000]` (`+0x21F40`), through the same difficulty scaler as a zako's and into the same hp words — **unshifted** at the record-driven spawn `+0x1AFF4`, so a stage boss is **200-1950** full-power weapon-1 hits. (The other caller `+0x1918C` passes the table `>> 2` first, a quarter of that; it is not the record path. The importer's `shotDamage * 1024` matches the shifted figure, i.e. it discounts a stage boss 4× — a playability choice, not the trace.) bit3 option flag, stored **inverted** by the editor; bits4-6 **score** index → `[5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]` (`+0x21F00`) |
 | 2–5 | **pattern playlist**: byte 2+k = HP stage k's loop of four 2-bit pattern ids, consumed LSB-first. HP stages split the HP bar into equal bands; a band change advances to the next byte — the editor's "16-entry phase loop" is these 4 bytes × 4 entries |
 | 6 / 7 | **arrival / death** selectors — **decoded** (2026-08-28; 60% of the corpus's 1,396 bosses author a position and 40% the flourishes). High nibble picks the off-screen START point (byte 6) / the death-drift TARGET (byte 7) out of two 4-entry preset tables per orientation, in the engine's 320×224 px space: vertical-mode arrival lateral `[160,-16,160,336]` (bit6 gates it) and scroll `[56,280,56,-56]` (bits 4∨6 gate it, else the **default entry**: start just off the top and ride in at the scroll speed); vertical-mode death lateral `[160,336,160,-16]` (bit6) and scroll `[56,-56,56,280]` (bit4), with neither set meaning "die where it stands". Entry 0 of each table is the park anchor — lateral 160 = centre, scroll 56. The size class nudges the entry's scroll coordinate by `[0,0,32,32]`. Low nibble = FX, the same pair on both bytes: **bit0 = ZOOM** (scale register `0x06094A40`, neutral `0x1000`) with bit1 its direction, **bit2 = SPIN** (rotation register `0x06094440`) with bit3 its direction. Both entrance flourishes run exactly **256 frames** — the same length as the entry glide, by design: the zoom rides 4.0×→1.0× at −48/frame or 0→1.0× at +16/frame, and the spin turns eight full revolutions with its rate ramping from 22.5°/frame down to nothing, landing upright. On death the scale rate is CONSTANT (+24 grow / −16 shrink) while the spin rate ACCELERATES by 16/frame and never settles; record byte0 bit7 is a 159-frame hold plus a 64-frame **fade-out**, not a second spin channel. The shared approach primitive `+0x1A6B4` sets a CONSTANT velocity of `distance·k/256` px/frame (k = 1 on arrival, 4 on a fast return, ½ on the death glide, floored at 0.5), so a glide takes ~256 frames whatever the distance. |
 | 8–63 | 4 **pattern records** × 14 B |

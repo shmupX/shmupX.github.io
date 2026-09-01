@@ -4495,6 +4495,10 @@
       // Slow free-movers (speed index 0-1, plain mode 0) patrol laterally
       // on hardware — the capture's bat flock enters mid-screen and sweeps
       // out to the walls — instead of hanging motionless in the scroll.
+      // `behavior.speed` only exists on recipes imported before the record's
+      // byte 2 was read as hp rather than speed; a newer import has no speed
+      // field and no need for the heuristic either, since it always carries
+      // entry data and `hasEntry` already switches this off.
       patrols: !hasEntry && !ridesTheMap(behavior.movePattern) && behavior.move.mode === 0 && !behavior.move.flag && behavior.speed < 0.3,
       patrolPhase: Math.random() * Math.PI * 2,
       speedCh: makeChannel(behavior.speedChange, null, behavior.ground, horiz),
@@ -4524,11 +4528,17 @@
       var shadow = enemy.getData("shadow");
       if (shadow) shadow.setVisible(false);
     }
-    // Hardware ties the animation period to the LIFE setting: frame period
-    // in AI ticks = the LIFE value itself (record b1&7 loads both from one
-    // table) — tough enemies animate slowly, fodder flickers.
-    if (Number.isFinite(behavior.hp)) {
-      enemy.setData("animPeriod", Math.max(33, behavior.hp * 1000 / 60));
+    // The animation period is its own record field: b1&7 indexes
+    // [60,30,15,10,5,3,2,1] frames per animation frame (+0x15458 -> the slot
+    // pair 0x0608DDF0/0x06090630). It used to be read off `hp` because the
+    // decoder had b1 and b2 the wrong way round; a recipe imported before that
+    // was fixed carries the same number in `hp` and no `animPeriod`, so fall
+    // back to it — but only when the new field is genuinely absent, since a
+    // corrected `hp` is in durability units and would read as minutes.
+    var period = Number.isFinite(behavior.animPeriod) ? behavior.animPeriod
+      : (behavior.animPeriod == null && Number.isFinite(behavior.hp) ? behavior.hp : null);
+    if (period != null) {
+      enemy.setData("animPeriod", Math.max(33, period * 1000 / 60));
     }
   }
   // The engine's terrain-ride helper (+0x4BFC), both branches. Status bit6 —
@@ -8238,9 +8248,11 @@
   // consume it, and nothing can damage it. Only one may be alive per player,
   // and a press that cannot fire costs no stock.
   //
-  // Engine attack powers are in the same durability units as enemy LIFE, where
-  // a full-power main shot is 5120 — which is one point of the runtime's own
-  // damage scale.
+  // Engine attack powers are in the same durability units as enemy hp, where
+  // weapon 1's full-power bullet is 5120 — one point of the runtime's own
+  // damage scale. This is the FALLBACK anchor for a recipe that carries no
+  // decoded settings; a Dezaemon import divides by its own weapon instead
+  // (dezaDamageUnit).
   var DEZA_BOMB_UNIT = 5120;
   var DEZA_BOMB_POWER = { 1: 4096, 2: 5632, 3: 6144, 4: 4608, 5: 10240, 6: 3584, 7: 3584, 8: 512 };
   // Dispatcher nibble -> behaviour. 0 and 8 fire nothing at all.
@@ -8302,7 +8314,7 @@
       type: type, owner: p.index,
       spin: (nib === 12 || nib === 13) ? DEZA_BOMB_SPIN : 0,
       alive: true, age: 0, x: px, y: py,
-      power: DEZA_BOMB_POWER[type] / DEZA_BOMB_UNIT,
+      power: dezaHitDamage(scene, DEZA_BOMB_POWER[type]),
       damaging: true, shape: "circle", r: 0, dr: 0,
       halfW: 0, halfH: 0, vy: 0, w16: 0, s: 0, ds: 0, life: 0,
       target: null, rot: 0, phase: 0,
@@ -8404,7 +8416,7 @@
       } else {
         b.halfW = Math.min(20480, 1024 + b.age * 1024) / 512;
         b.halfH = 24;
-        if (b.age > 200) b.power = 256 / DEZA_BOMB_UNIT;
+        if (b.age > 200) b.power = dezaHitDamage(scene, 256);
       }
       if (b.age > 256) return false;
     } else if (b.type === 8) {
@@ -8588,6 +8600,38 @@
   // (+0x21D4C, 0x1000 = 1.0) at a quarter of the cap per frame from 0x400.
   var DEZA_SUB6_SCALE = [2560, 4096, 5632, 7168, 8704];
   var DEZA_SUB6_SPEED = 1152;
+  // Type 6's ARMOUR DEFLECTION. Every object carries an engine flag byte
+  // (u8 0x06091550), and for a zako it is authored: the spawn at +0x1548E
+  // packs `((b2 >> 4) & 3) | ((b2 & 8) >> 1)` out of enemy record byte 2, so
+  // bit 0 of the flag byte IS record byte 2 bit 4 — the decoder's
+  // `behavior.move.mode` bit 0. Bit 0 is the engine's HARD-TARGET rule, read
+  // by every weapon that would otherwise plough on: an ordinary bullet is
+  // destroyed outright on it (+0x8336), charge 2's beam retracts, charge 3's
+  // orb ricochets, and the sub-6 ball bounces.
+  //
+  // The bounce itself: the collision resolver's class-42 branch (+0x82E0)
+  // bills the target its frame of damage as usual, then calls the predicate
+  // +0xE71C, which wants the flag AND the ball's centre horizontally inside
+  // the target's span widened by the ball's own radius. On a yes it writes 2
+  // into the ball's hp, and the class-42 updater (+0xE974) turns that into a
+  // new heading of `(rand & 63) - 96` in the engine's 0-is-right angle byte:
+  // 160..223, i.e. straight down give or take 45 degrees. The new velocity
+  // goes out through the trig table as `(TRIG(a) * 1152) >> 15` — the kernel
+  // helper 0x06010BAA is a >>15, not the >>16 its swap.w/rotl/rotr shape
+  // suggests, because the rts delay slot's `rotcl` shifts the saved bit back
+  // in — so the ball leaves at the SAME 9 px/frame it was launched at.
+  // Its hp then goes to 0, which is what drops it out of the engine's damage
+  // pass, and its updater's state branch (+0xE896) spins it 6144 rotation
+  // units a frame (33.75 degrees, CLOCKWISE for a bounce to the left and
+  // anticlockwise for one to the right — the engine's state byte is 1 for
+  // `angle <= 191` and 2 above it, and only state 1 adds), shrinks its draw
+  // zoom by 64 a frame to a quarter, and sets the sprite's translucency bit,
+  // until the despawn box takes it.
+  var DEZA_SUB6_DEFLECT_SPEED = 1152;     // (0x7FFF * 1152) >> 15
+  var DEZA_SUB6_DEFLECT_SPIN = 6144;      // rotation units/frame, 65536 = a turn
+  var DEZA_SUB6_DEFLECT_ZOOM = 4096;      // draw zoom at the bounce, 0x1000 = 1.0
+  var DEZA_SUB6_DEFLECT_ZOOM_MIN = 1024;
+  var DEZA_SUB6_DEFLECT_ZOOM_STEP = 64;   // per frame
 
   // Charge. The gauge fills +1/frame while the fire button is held, caps at 320
   // and never decays; level = gauge/64 - 1, so a release below 64 does nothing.
@@ -8637,13 +8681,21 @@
   function dezaPowerLevel(p) {
     return Math.max(0, Math.min(4, p.dezaPower || 0));
   }
-  // Engine durability units -> this runtime's damage scale. The importer sizes
-  // every enemy's hp as engineLife / shotDamage, where shotDamage is that
-  // save's own full-power main shot, so the weapons have to divide by the same
-  // number or they land on a different scale from the enemies they hit.
+  // Engine durability units -> this runtime's damage scale. Enemy hp, every
+  // weapon's attack power and the bomb's all live in ONE unit space (the u32
+  // 0x0608C720 the collision resolver subtracts straight off 0x06095040), so
+  // the divisor is the save's own full-power main-shot bullet in those same
+  // units — which is what the importer sizes every enemy's hp against.
+  //
+  // The recipe's `shotDamage` is NOT that number: it is the unit count >> 8
+  // (20 for weapon 1's 5120), the LIFE-unit form the importer divides by
+  // AFTER its own >> 8. Reading it raw made every sub, charge and bomb do
+  // 256x its damage — one sub-1 pellet was 384 points against enemies with
+  // 1..100 — and it went unnoticed because the main gun does a flat 1 and the
+  // bomb was hardcoded to the 5120 anchor. Multiply it back.
   function dezaDamageUnit(scene) {
     var m = scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
-    return (m && m.shotDamage) || DEZA_BOMB_UNIT;
+    return m && m.shotDamage ? m.shotDamage * 256 : DEZA_BOMB_UNIT;
   }
   function dezaHitDamage(scene, units) {
     return units / dezaDamageUnit(scene);
@@ -8845,6 +8897,8 @@
         b.setData("dezaPerFrame", true);
         b.setData("dezaGrow", { scale: 1024, cap: DEZA_SUB6_SCALE[L],
           step: DEZA_SUB6_SCALE[L] / 4 / SATURN_TICKS_PER_FRAME });
+        // The only shot that bounces off a hard target.
+        b.setData("dezaDeflects", true);
         b.setScale(1024 / 4096);
       }
       scene.playSound("se_shot", 0.15);
@@ -8971,12 +9025,77 @@
       }
     }
   }
+  // Does this target carry the engine's hard-target flag? For a zako it is
+  // authored — record byte 2 bit 4, which the spawn packs into bit 0 of the
+  // object's flag byte, and which the decoder already carries as bit 0 of
+  // `behavior.move.mode`. A boss instead carries the bit only while it is
+  // changing HP stage (+0x1BF7E, set right after the stage advance +0x1ABD4)
+  // — an invulnerable phase change this runtime does not model, so a boss
+  // here never bounces the ball.
+  function dezaArmoured(enemy) {
+    var d = enemy.getData("deza");
+    var beh = d && d.behavior;
+    return !!(beh && beh.move && (beh.move.mode & 1));
+  }
+  // The deflect predicate's geometry (+0xE73A-+0xE798). The ball's CENTRE has
+  // to sit inside the target's own half-width widened by the ball's radius —
+  // the engine reads that radius as `scale >> 9` engine px, a quarter of the
+  // ball's position-unit size — so a shot that only clips a target's corner
+  // bills its damage and ploughs on instead of bouncing.
+  function dezaDeflectGate(bullet, enemy) {
+    var grow = bullet.getData("dezaGrow");
+    var radius = (grow ? grow.scale : 4096) / 512;
+    return Math.abs(enemy.x - bullet.x) <= enemy.width / 2 + radius;
+  }
+  // Throw the ball off a hard target: a random heading in the engine's angle
+  // byte, 160..223 (down, +/- 45 degrees), at the speed it was launched at,
+  // inert from here on, spinning the way it was thrown and shrinking as it
+  // goes. The damage word is deliberately left alone — the engine bills this
+  // frame's damage BEFORE it tests for the bounce, and takes the ball out of
+  // the damage pass by zeroing its hp, which is what `dezaDeflected` stands
+  // in for at the top of the collision loop.
+  function dezaDeflectShot(bullet) {
+    var a = 160 + Math.floor(Math.random() * 64);
+    var th = a * DEZA_ANG;                    // engine angle byte: 0 = right
+    var v = dezaVel(DEZA_SUB6_DEFLECT_SPEED);
+    bullet.setData("dezaVx", Math.cos(th) * v);
+    bullet.setData("dezaVy", -Math.sin(th) * v);
+    var grow = bullet.getData("dezaGrow");
+    bullet.setData("dezaDeflected", {
+      // The engine picks its spin state with `angle > 191` — state 2 for a
+      // bounce to the right, 1 for one to the left — and only state 1 adds to
+      // the rotation register. The register is clockwise-positive (sub 7's
+      // `(64 - aim) << 8` leans a shot left at negative values), so a bounce
+      // to the LEFT spins clockwise.
+      spin: (a > 191 ? -1 : 1) * DEZA_SUB6_DEFLECT_SPIN * Math.PI * 2 / 65536,
+      angle: bullet.rotation || 0,
+      zoom: DEZA_SUB6_DEFLECT_ZOOM,
+      base: grow ? grow.scale / 4096 : 1
+    });
+    // The updater ORs the sprite's translucency bit for as long as the bounce
+    // lasts — the same bit the draw path sets for oversized objects.
+    bullet.setAlpha(0.6);
+  }
   // One tick of a shot that carries more than a constant velocity.
   function dezaStepShot(scene, bullet) {
     var life = bullet.getData("dezaLife");
     if (life != null) {
       if (life <= 1) return false;
       bullet.setData("dezaLife", life - 1);
+    }
+    // A deflected ball is done growing, homing and billing: its updater's
+    // state branch returns before all of that, leaving only the spin and the
+    // shrink to run out over its flight off the screen.
+    var deflected = bullet.getData("dezaDeflected");
+    if (deflected) {
+      deflected.angle += deflected.spin / SATURN_TICKS_PER_FRAME;
+      bullet.setRotation(deflected.angle);
+      if (deflected.zoom > DEZA_SUB6_DEFLECT_ZOOM_MIN) {
+        deflected.zoom = Math.max(DEZA_SUB6_DEFLECT_ZOOM_MIN,
+          deflected.zoom - DEZA_SUB6_DEFLECT_ZOOM_STEP / SATURN_TICKS_PER_FRAME);
+        bullet.setScale(deflected.base * deflected.zoom / DEZA_SUB6_DEFLECT_ZOOM);
+      }
+      return true;
     }
     var accelY = bullet.getData("dezaAccelY");
     if (accelY) bullet.setData("dezaVy", (bullet.getData("dezaVy") || 0) + accelY);
@@ -12312,6 +12431,9 @@
         for (var bb = this.playerBullets.length - 1; bb >= 0; bb--) {
           var pb = this.playerBullets[bb];
           if (!pb || !pb.active) continue;
+          // A deflected ball is out of the damage pass for good — the engine
+          // zeroes its hp, and its collision loop skips a zero-hp shot.
+          if (pb.getData("dezaDeflected")) continue;
           var bRect = { x: pb.x - pb.width / 2, y: pb.y - pb.height / 2, w: pb.width, h: pb.height };
           if (isBoss && this.bossEntering) continue;
           if (enemy.y >= 40 && rectOverlap(eRect, bRect)) {
@@ -12328,6 +12450,19 @@
             // pool, ploughing on until the pool runs out.
             var pbPerFrame = !!pb.getData("dezaPerFrame");
             var pbPool = pb.getData("dezaPool");
+            // Sub 6's ball bounces off a hard target. The engine bills the
+            // frame's damage first and only then throws the ball clear, which
+            // is why this only rewrites the ball's flight: the damage below
+            // still runs for this contact, and the skip above takes the ball
+            // out of every later one. (The engine defers the bounce itself by
+            // one Saturn frame, because the sentinel it writes here is read by
+            // the ball's own updater, which runs earlier in the slot sweep;
+            // two ticks of extra flight are not worth a pending state.)
+            if (pb.getData("dezaDeflects") && !pb.getData("dezaDeflected") &&
+                dezaArmoured(enemy) && dezaDeflectGate(pb, enemy)) {
+              dezaDeflectShot(pb);
+              this.playSound("se_guard", 0.2);
+            }
             if (pbPool != null) {
               var poolHp = enemy.getData("hp");
               if (poolHp !== "infinity") {

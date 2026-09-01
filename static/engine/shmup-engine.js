@@ -766,9 +766,9 @@ function decodePlayer2Art() {
 }
 
 // packages/shmup-engine/src/decode/decode-enemy.js
-var HP_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
+var ANIM_PERIOD_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
 var SCORE_TABLE = [50, 100, 200, 500, 1e3, 2e3, 5e3, 1e4];
-var SPEED_TABLE = [256, 12800, 25600, 51200, 102400, 204800, 256e3, 512e3];
+var HP_TABLE = [256, 12800, 25600, 51200, 102400, 204800, 256e3, 512e3];
 var FIRE_WINDOW_TABLE = [29, 22, 16, 11, 7, 4, 2, 1];
 var FIRE_INTERVAL_TABLE = [119, 59, 29, 19, 9, 5, 3, 1];
 var FIRE_INTERVAL_TABLE_ALT = [119, 59, 39, 19, 11, 7, 3, 1];
@@ -839,21 +839,32 @@ function decodeEnemyRecord(bytes) {
   const scaleMode = b[12] & 3;
   return {
     appearance: b[0],
-    hp: HP_TABLE[b[1] & 7],
+    // Engine durability units. There is no `speed` field: byte 2's low
+    // bits are hp, and a scripted zako's motion comes from its appearance
+    // script's amplitude words and the change channels below. The one
+    // per-record speed the engine does read is byte 0 bits0-2, and only
+    // for the 48 hard-coded AI appearance ids (classes 0x31-0x36), which
+    // remap it through [128,256,384,512,640,768,1152,1536] units/frame
+    // (+0x20560) — it rides along inside `appearance`, and the runtime
+    // already drives it from there.
+    hp: HP_TABLE[b[2] & 7],
+    animPeriod: ANIM_PERIOD_TABLE[b[1] & 7],
     score: SCORE_TABLE[b[1] >> 4 & 7],
     ground: (b[1] & 128) !== 0,
-    speed: SPEED_TABLE[b[2] & 7] / 65536,
-    // The spawn packs b2 bits 4-5 and bit 3 into one byte (0x6091550), and
-    // the engine reads that byte BITWISE — masks 0x1/0x2/0x3 (the low
-    // two-bit mode) and 0x4 (an independent flag) across its 56 read
-    // sites. So this is a 2-bit mode plus a flag, not an 8-way enum;
-    // movePattern keeps the packed value for continuity.
+    // The spawn packs b2 bits 4-5 and bit 3 into the per-object HIT
+    // ATTRIBUTE byte 0x06091550, which the engine reads BITWISE. Named
+    // (2026-08-31, FORMAT.md "Armour deflection"): bit 0 = ARMOUR — the
+    // target is indestructible, ordinary shots die on it instead of
+    // trading hp, the impact SFX changes, and sub weapon 6's ball bounces
+    // off it; bit 1 = NO COLLISION AT ALL; bit 2 = the terrain-ride flag.
+    // `mode` keeps the two-bit field the editor authors as a pair of
+    // mutually exclusive checkboxes, so armour is `move.mode & 1`.
     movePattern: b[2] >> 4 & 3 | (b[2] & 8) >> 1,
     move: {
       mode: b[2] >> 4 & 3,
-      // engine tests &1, &2, &3
+      // bit0 = armour, bit1 = no collision
       flag: (b[2] & 8) !== 0
-      // engine tests &4 of the packed byte
+      // terrain-ride (&4 of the packed byte)
     },
     fire: {
       // Two gates silence an enemy outright: the appearance's no-fire
@@ -1268,7 +1279,7 @@ var SINGLE_LETTER_ENEMIES = 26;
 var BLANK_WAVES = 8;
 var FRAMES_PER_SOURCE_ROW = 8;
 var PLAYER_SHOT_DAMAGE_BY_LEVEL = [9, 12, 15, 18, 21];
-var ENGINE_SHOT_DAMAGE = PLAYER_SHOT_DAMAGE_BY_LEVEL[PLAYER_SHOT_DAMAGE_BY_LEVEL.length - 1];
+var ENGINE_SHOT_DAMAGE = 20;
 var ENEMY_BULLET_SPEED = 2.5;
 function enemyLetters(index) {
   let n = index;
@@ -1422,9 +1433,9 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
       if (Number.isFinite(e[f])) rec[f] = e[f];
     }
     if (e.behavior) {
-      rec.hp = Math.max(1, Math.ceil(e.behavior.hp / shotDamage));
+      const armoured = !!(e.behavior.move && e.behavior.move.mode & 1);
+      rec.hp = armoured ? "infinity" : Math.max(1, Math.ceil(e.behavior.hp / (shotDamage * 256)));
       rec.score = e.behavior.score;
-      rec.speed = Math.round(e.behavior.speed * 100) / 100;
       rec.interval = e.behavior.fire.enabled ? e.behavior.fire.interval : -1;
       if (e.behavior.fire.enabled && rec.bulletData) {
         const cfg = decoded.settings && decoded.settings.bullets && decoded.settings.bullets.configs[e.behavior.fire.mode];

@@ -36,22 +36,22 @@ export const BLANK_WAVES = 8;
 // stage runs about as long as it did on hardware.
 export const FRAMES_PER_SOURCE_ROW = 8;
 
-// The engine keeps every object's durability in one shared unit space, and
-// the player's main shot carries its damage in the same per-object slot the
-// zako keep their hp in (0x6090630). The shot's value is TRACED, not
-// calibrated: the spawn at GAME.CMP +0x10bbe writes it from the five-entry
-// power-level table at +0x6085e14 —
+// REFUTED, kept only because it ships from mod.js: this was read as the main
+// shot's per-power-level damage out of GAME.CMP +0x6085e14, but that table
+// holds the CHARGE-pellet lifetime words [0x900..0x1500] (FORMAT.md "Player
+// weapons"), and 0x6090630 is the per-slot animation/parameter counter, not
+// where a zako keeps hp. Nothing derives a divisor from it any more.
 export const PLAYER_SHOT_DAMAGE_BY_LEVEL = [9, 12, 15, 18, 21];
-// — so a full-power main shot is worth 21 units. Enemy LIFE decodes in the
-// same units ([60,30,15,10,5,3,2,1]); the Phaser runtime's shots do 1 damage
-// each, so LIFE maps to ceil(units / 21) hits: max-LIFE zako die in 3, like
-// on hardware. (Big/pierce shots use other tables and carry power in the
-// scale slot instead — see FORMAT.md "Player weapons".)
-export const ENGINE_SHOT_DAMAGE =
-    PLAYER_SHOT_DAMAGE_BY_LEVEL[PLAYER_SHOT_DAMAGE_BY_LEVEL.length - 1];
-// A save picks its own weapon (settings +0x0F low nibble, decode-settings.js);
-// decoded.settings.shotDamage carries that weapon's traced full-power value,
-// falling back to ENGINE_SHOT_DAMAGE for weapons whose spawns are untraced.
+// The engine keeps every object's durability and every weapon's attack power
+// in one shared unit space (u32 0x608C720 subtracted straight off the hp word
+// 0x6095040). A save picks its own main weapon (settings +0x0F low nibble),
+// and decode-settings.js hands its full-power bullet over as `shotDamage` in
+// LIFE units — the raw count >> 8, 20 for weapon 1's 5120. Enemy hp is sized
+// as ceil(rawUnits / (shotDamage * 256)) so that one runtime damage point is
+// one full-power main-shot hit, and the runtime's own Dezaemon weapons divide
+// by that same number. This is the fallback when a save's settings block does
+// not decode: weapon 1, i.e. exactly 5120 raw.
+export const ENGINE_SHOT_DAMAGE = 20;
 
 // Saturn zako bullets cross the playfield in a couple of seconds; the
 // runtime default of 1 px/frame takes eight, and slow bullets accumulate
@@ -261,14 +261,29 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
         // the speed/rotation/scale/direction change channels — rides on
         // dezaemon.behavior for the runtime's behavior driver.
         if (e.behavior) {
-            // LIFE decodes in engine damage units; the runtime's shots do 1
-            // damage, so convert to full-power-shot hits
-            // ([60,30,15,10,5,3,2,1] -> [3,2,1,1,1,1,1,1]).
-            rec.hp = Math.max(1, Math.ceil(e.behavior.hp / shotDamage));
+            // The record's hp is in engine durability units and `shotDamage`
+            // is that unit count >> 8 (LIFE units), so the divisor is
+            // shotDamage * 256 — a full-power weapon-1 bullet, 5120 units.
+            // The runtime's shots do 1 damage each, so this is a hit count:
+            // the eight LIFE steps become [1,3,5,10,20,40,50,100].
+            //
+            // ARMOUR (record byte 2 bit 4, `move.mode` bit 0) is the engine's
+            // indestructible attribute: the per-object collision tail
+            // +0x8B80 finds a flagged target that lost hp and slams hp, maxHp
+            // and its attack power back to 0x7FFFFFFF, so it can never reach
+            // 0 and never enters the death path. "infinity" is the runtime's
+            // own sentinel for exactly that (its "guard" case).
+            const armoured = !!(e.behavior.move && (e.behavior.move.mode & 1));
+            rec.hp = armoured
+                ? "infinity"
+                : Math.max(1, Math.ceil(e.behavior.hp / (shotDamage * 256)));
             rec.score = e.behavior.score;
-            // px/frame relative to the scrolling map; near-zero means the
-            // enemy rides the scroll, which the runtime adds on top.
-            rec.speed = Math.round(e.behavior.speed * 100) / 100;
+            // No `rec.speed`: byte 2's low bits are the hp index, not a
+            // speed one, so a scripted zako's motion comes from its appearance
+            // script and the change channels, and the roster default stands
+            // for the fallback mover. (The hard-coded AI classes DO take a
+            // speed from byte 0 bits0-2, but that rides inside `appearance`
+            // and the runtime reads it there — see SPECIAL_SPEED.)
             // Whether an enemy fires is the APPEARANCE's call (decode-enemy
             // .js); the runtime skips interval <= 0. Every fire type is a
             // volley pattern, including 0.

@@ -599,11 +599,12 @@ Deno.test("decoded behavior lands on the runtime fields and rides along whole", 
     bytes: new Uint8Array(18),
     behavior: {
       appearance: 0,
-      hp: 15,
+      hp: 25600,
+      animPeriod: 15,
       score: 500,
       ground: true,
-      speed: 0.78,
       movePattern: 6,
+      move: { mode: 2, flag: true },
       fire: {
         enabled: true,
         type: 2,
@@ -656,11 +657,12 @@ Deno.test("decoded behavior lands on the runtime fields and rides along whole", 
   const { gameJson } = mapSaveToGame(decoded);
   const rec = gameJson.enemyData.enemyA;
   // the fields the Phaser runtime already reads. hp decodes in engine
-  // damage units (a standard shot is worth ~20), so 15 units = 1 hit of
-  // the runtime's 1-damage shot.
-  assertStrictEquals(rec.hp, 1);
+  // durability units and a full-power weapon-1 bullet is 5120 of them, so
+  // 25600 units = 5 hits of the runtime's 1-damage shot.
+  assertStrictEquals(rec.hp, 5);
   assertStrictEquals(rec.score, 500);
-  assertStrictEquals(rec.speed, 0.78);
+  // The record has no speed field; the roster default stands.
+  assertStrictEquals(rec.speed, 0.8);
   assertStrictEquals(rec.interval, 29);
   // firing enemies get Saturn-pace bullets instead of the 1 px/frame crawl
   assertStrictEquals(rec.bulletData.speed, 2.5);
@@ -669,6 +671,82 @@ Deno.test("decoded behavior lands on the runtime fields and rides along whole", 
   assertStrictEquals(rec.dezaemon.behavior.scale.axes, "xy");
   assertStrictEquals(rec.dezaemon.behavior.ground, true);
   assert(validateGameJson(gameJson).ok);
+});
+
+Deno.test("an armoured enemy imports as indestructible", () => {
+  // Record byte 2 bit 4 -> the engine's hit-attribute bit 0. A flagged target
+  // has its hp rolled back to 0x7FFFFFFF the moment it is damaged (+0x8B80),
+  // so it can never die; "infinity" is the runtime's own sentinel for that.
+  const mk = (mode) => {
+    const decoded = emptyDecoded();
+    decoded.enemies = [{
+      name: "zako",
+      stage: 0,
+      record: 3,
+      placements: 2,
+      bytes: new Uint8Array(18),
+      behavior: {
+        appearance: 0,
+        hp: 25600,
+        animPeriod: 15,
+        score: 500,
+        ground: false,
+        movePattern: mode,
+        move: { mode, flag: false },
+        fire: {
+          enabled: false,
+          mode: 0,
+          interval: 29,
+          window: 16,
+          direction: 0,
+          directionEx: 0,
+        },
+        speedChange: {
+          enabled: false,
+          from: 1,
+          to: 1,
+          step: 0,
+          repeat: 0,
+          trigger: 0,
+        },
+        rotation: {
+          enabled: false,
+          from: 0,
+          to: 0,
+          step: 0,
+          repeat: 0,
+          trigger: 0,
+          mode: 0,
+        },
+        scale: {
+          enabled: false,
+          from: 1,
+          to: 1,
+          step: 0,
+          repeat: 0,
+          trigger: 0,
+          axes: "",
+          repeatY: 0,
+        },
+        direction: {
+          enabled: false,
+          from: 0,
+          to: 0,
+          step: 0,
+          repeat: 0,
+          trigger: 0,
+        },
+        death: { mode: 0, param: 0, silent: false },
+      },
+    }];
+    const { gameJson } = mapSaveToGame(decoded);
+    assert(validateGameJson(gameJson).ok, "an infinity hp still validates");
+    return gameJson.enemyData.enemyA.hp;
+  };
+  assertStrictEquals(mk(1), "infinity"); // bit0 set -> armoured
+  assertStrictEquals(mk(3), "infinity"); // bit0 set alongside bit1
+  assertStrictEquals(mk(0), 5); // no bits -> an ordinary 5-hit enemy
+  assertStrictEquals(mk(2), 5); // bit1 only is "no collision", not armour
 });
 
 Deno.test({
@@ -703,12 +781,18 @@ Deno.test("LIFE units convert through the engine's traced shot damage", () => {
   // The normal shot's power-level table, read from GAME.CMP +0x6085e14 by
   // the spawn at +0x10bbe. Full power = 21 units per shot.
   assertEquals(PLAYER_SHOT_DAMAGE_BY_LEVEL, [9, 12, 15, 18, 21]);
-  assertStrictEquals(ENGINE_SHOT_DAMAGE, 21);
-  // The whole LIFE table lands on hardware-pace hits of a 1-damage shot.
-  const HP_UNITS = [60, 30, 15, 10, 5, 3, 2, 1];
+  // The fallback divisor is weapon 1 in LIFE units, not that refuted table's
+  // last entry: with the * 256 rebase it has to land on exactly 5120 raw.
+  assertStrictEquals(ENGINE_SHOT_DAMAGE, 20);
+  assertStrictEquals(ENGINE_SHOT_DAMAGE * 256, 5120);
+  // The hp ladder (record byte 2 bits0-2, in durability units) lands on hit
+  // counts of a 1-damage runtime shot. The divisor is the full-power bullet
+  // in the SAME units — 5120 for weapon 1, i.e. shotDamage << 8 — not the
+  // LIFE-unit shotDamage the enemies used to be sized against.
+  const HP_UNITS = [256, 12800, 25600, 51200, 102400, 204800, 256000, 512000];
   assertEquals(
-    HP_UNITS.map((u) => Math.max(1, Math.ceil(u / ENGINE_SHOT_DAMAGE))),
-    [3, 2, 1, 1, 1, 1, 1, 1],
+    HP_UNITS.map((u) => Math.max(1, Math.ceil(u / (20 * 256)))),
+    [1, 3, 5, 10, 20, 40, 50, 100],
   );
 });
 

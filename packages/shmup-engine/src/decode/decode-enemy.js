@@ -12,9 +12,10 @@
 //
 //   byte 0      appearance id (art class; redundant here — art comes from the
 //               per-stage composition banks)
-//   byte 1      bits0-2 hp index, bits4-6 score index, bit7 ground flag
-//   byte 2      bits0-2 speed index, bit3 terrain-ride flag + bits4-5
-//               movement pattern, bits6-7 DEATH MODE
+//   byte 1      bits0-2 ANIMATION-PERIOD index, bits4-6 score index,
+//               bit7 ground flag
+//   byte 2      bits0-2 HIT-POINT index, bit3 terrain-ride flag + bits4-5 the
+//               hit attributes (bit4 = ARMOUR), bits6-7 DEATH MODE
 //   byte 3      DEATH PARAMETER (item slot / child record / chain key).
 //               NOT fire params: the firing path reads neither byte 3 nor
 //               byte 2's top bits — see decodeDeathWord() below
@@ -37,16 +38,28 @@
 
 // --- engine value tables (GAME.bin literal data, byte-exact) -----------
 
-// b1&7 -> hit points. Index 0 is the TOUGHEST (the editor's LIFE slider
-// runs the other way).
-export const HP_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
+// b1&7 -> ANIMATION PERIOD, in frames per animation frame. The zako record
+// initialiser (+0x15458) reads it out of u8 `+0x21EE8` and writes it to the
+// per-slot pair 0x0608DDF0 / 0x06090630, which the enemy updaters step as an
+// animation counter. It is NOT hit points — that reading had index 0 (the
+// editor's default, and 63% of the corpus) as the TOUGHEST enemy, which is
+// backwards for a LIFE slider. The same eight values serve elsewhere as the
+// boss's fire-tick divider and as the global bullet configs' damage index.
+export const ANIM_PERIOD_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
 
 // (b1>>4)&7 -> score awarded on kill.
 export const SCORE_TABLE = [50, 100, 200, 500, 1000, 2000, 5000, 10000];
 
-// b2&7 -> own movement speed, 16.16 fixed point px/frame (0.004..7.8).
-// Index 0 is effectively stationary — the enemy rides the map scroll.
-export const SPEED_TABLE = [256, 12800, 25600, 51200, 102400, 204800, 256000, 512000];
+// b2&7 -> HIT POINTS, in the engine's durability units — the same units a
+// weapon's attack power is in, where a full-power weapon-1 bullet is 5120.
+// Index 0 is the WEAKEST (one hit from anything), so the editor's LIFE slider
+// runs the natural way. Traced from the zako initialiser +0x1546A: `b2 & 7`
+// indexes u32 `+0x21F20`, the value goes through the difficulty scaler
+// +0x15358 (x2/3 easy, x1 normal, x1.5 hard) and is stored to BOTH the
+// current-HP array 0x06095040 — which the collision resolver subtracts damage
+// from — and the max-HP array 0x06093E50. The decoder reports the NORMAL
+// difficulty value, unscaled.
+export const HP_TABLE = [256, 12800, 25600, 51200, 102400, 204800, 256000, 512000];
 
 // (b4>>4)&7 -> fire interval in frames, by fire mode (b4&3). The engine
 // keeps two pairs of tables; f81/f91 are the common reload intervals, f61
@@ -183,19 +196,30 @@ export function decodeEnemyRecord(bytes) {
     const scaleMode = b[12] & 3;
     return {
         appearance: b[0],
-        hp: HP_TABLE[b[1] & 7],
+        // Engine durability units. There is no `speed` field: byte 2's low
+        // bits are hp, and a scripted zako's motion comes from its appearance
+        // script's amplitude words and the change channels below. The one
+        // per-record speed the engine does read is byte 0 bits0-2, and only
+        // for the 48 hard-coded AI appearance ids (classes 0x31-0x36), which
+        // remap it through [128,256,384,512,640,768,1152,1536] units/frame
+        // (+0x20560) — it rides along inside `appearance`, and the runtime
+        // already drives it from there.
+        hp: HP_TABLE[b[2] & 7],
+        animPeriod: ANIM_PERIOD_TABLE[b[1] & 7],
         score: SCORE_TABLE[(b[1] >> 4) & 7],
         ground: (b[1] & 0x80) !== 0,
-        speed: SPEED_TABLE[b[2] & 7] / 65536,
-        // The spawn packs b2 bits 4-5 and bit 3 into one byte (0x6091550), and
-        // the engine reads that byte BITWISE — masks 0x1/0x2/0x3 (the low
-        // two-bit mode) and 0x4 (an independent flag) across its 56 read
-        // sites. So this is a 2-bit mode plus a flag, not an 8-way enum;
-        // movePattern keeps the packed value for continuity.
+        // The spawn packs b2 bits 4-5 and bit 3 into the per-object HIT
+        // ATTRIBUTE byte 0x06091550, which the engine reads BITWISE. Named
+        // (2026-08-31, FORMAT.md "Armour deflection"): bit 0 = ARMOUR — the
+        // target is indestructible, ordinary shots die on it instead of
+        // trading hp, the impact SFX changes, and sub weapon 6's ball bounces
+        // off it; bit 1 = NO COLLISION AT ALL; bit 2 = the terrain-ride flag.
+        // `mode` keeps the two-bit field the editor authors as a pair of
+        // mutually exclusive checkboxes, so armour is `move.mode & 1`.
         movePattern: ((b[2] >> 4) & 3) | ((b[2] & 8) >> 1),
         move: {
-            mode: (b[2] >> 4) & 3,          // engine tests &1, &2, &3
-            flag: (b[2] & 8) !== 0,         // engine tests &4 of the packed byte
+            mode: (b[2] >> 4) & 3,          // bit0 = armour, bit1 = no collision
+            flag: (b[2] & 8) !== 0,         // terrain-ride (&4 of the packed byte)
         },
         fire: {
             // Two gates silence an enemy outright: the appearance's no-fire

@@ -24,8 +24,9 @@
 import { SEC5_REGIONS } from "./decode-stage.js";
 
 // Full-power (level 4) per-bullet main-shot damage, in the engine's u32
-// attack-power units (0x608C720; enemy LIFE stores as LIFE<<8, so a
-// [60,30,..] zako has 15360..256 units). Read out of the spawn sites
+// attack-power units (0x608C720 — the same units enemy hp is in: record
+// byte 2's [256,12800,..,512000], so weapon 1's 5120 kills the eight steps
+// in 1/3/5/10/20/40/50/100 hits). Read out of the spawn sites
 // (per-level u32 tables; weapons 1/2/3/7 deliberately LOWER per-bullet
 // damage as the power level rises while adding projectiles):
 //   1: +0x21D6C [13312..5120]   2: +0x21D8C [19712..11520]

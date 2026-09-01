@@ -5,12 +5,12 @@
 // DAIOH and Gust saves whose in-game behavior is known.
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import {
+  ANIM_PERIOD_TABLE,
   appearanceFires,
   decodeEnemyRecord,
   hasTransforms,
   HP_TABLE,
   SCORE_TABLE,
-  SPEED_TABLE,
   ZAKO_BAND_BASE,
   zakoRecordFromKey,
 } from "../src/decode/decode-enemy.js";
@@ -32,9 +32,12 @@ const rec = (hex) => {
 };
 
 Deno.test("engine tables are the GAME.bin literals, byte for byte", () => {
-  assertEquals(HP_TABLE, [60, 30, 15, 10, 5, 3, 2, 1]);
+  // b1&7 -> animation period in frames (+0x21EE8); b2&7 -> hit points in
+  // durability units (+0x21F20). The two were read the wrong way round until
+  // the zako initialiser +0x1546A settled it.
+  assertEquals(ANIM_PERIOD_TABLE, [60, 30, 15, 10, 5, 3, 2, 1]);
   assertEquals(SCORE_TABLE, [50, 100, 200, 500, 1000, 2000, 5000, 10000]);
-  assertEquals(SPEED_TABLE, [
+  assertEquals(HP_TABLE, [
     256,
     12800,
     25600,
@@ -46,22 +49,45 @@ Deno.test("engine tables are the GAME.bin literals, byte for byte", () => {
   ]);
 });
 
-Deno.test("head fields: hp, score, ground, speed, death mode", () => {
-  // DAIOH stage 0 record 0 — the most-placed enemy: b1=0x15 -> hp idx 5,
-  // score idx 1; b2=0 -> stationary, no fire.
+Deno.test("head fields: hp, animPeriod, score, ground, death mode", () => {
+  // DAIOH stage 0 record 0 — the most-placed enemy: b1=0x15 -> animation
+  // period idx 5, score idx 1; b2=0 -> the weakest hp step, no fire.
   const d = decodeEnemyRecord(rec("6b1500002811004400000000000000000000"));
-  assertStrictEquals(d.hp, 3);
+  assertStrictEquals(d.hp, 256); // b2&7 = 0 -> one hit from anything
+  assertStrictEquals(d.animPeriod, 3); // b1&7 = 5 -> 3 frames a frame
   assertStrictEquals(d.score, 100);
   assertStrictEquals(d.ground, false);
-  assertStrictEquals(d.speed, SPEED_TABLE[0] / 65536);
+  // The record carries no movement speed at all.
+  assertStrictEquals("speed" in d, false);
   assertStrictEquals(d.death.mode, 0);
   assertStrictEquals(hasTransforms(d), false);
 
-  // b1 bit7 = ground, bits0-2 hp, bits4-6 score
+  // b1 bit7 = ground, bits0-2 animation period, bits4-6 score
   const g = decodeEnemyRecord(rec("00f7000000000000000000000000000000000"));
   assertStrictEquals(g.ground, true);
-  assertStrictEquals(g.hp, 1); // idx 7 -> weakest (the editor default)
+  assertStrictEquals(g.animPeriod, 1); // idx 7 -> fastest animation
   assertStrictEquals(g.score, 10000); // idx 7 -> top score
+});
+
+Deno.test("hp comes from byte 2, and its ladder runs weakest-first", () => {
+  // Only b2's low three bits move hp; b1's move the animation period.
+  const hpOf = (b2) =>
+    decodeEnemyRecord(rec(
+      "00" + "00" + b2.toString(16).padStart(2, "0") +
+        "000000000000000000000000000000",
+    )).hp;
+  assertEquals([0, 1, 2, 3, 4, 5, 6, 7].map(hpOf), HP_TABLE);
+  // ...and a full-power weapon-1 bullet (5120 units) kills them in
+  // 1/3/5/10/20/40/50/100 hits.
+  assertEquals(
+    HP_TABLE.map((u) => Math.max(1, Math.ceil(u / 5120))),
+    [1, 3, 5, 10, 20, 40, 50, 100],
+  );
+  // b1 cannot change hp.
+  assertStrictEquals(
+    decodeEnemyRecord(rec("000700000000000000000000000000000000")).hp,
+    HP_TABLE[0],
+  );
 });
 
 Deno.test("channels: rotation, scale, direction decode to editor units", () => {
@@ -115,8 +141,8 @@ Deno.test({
     for (const e of d.enemies) {
       assert(e.behavior, `${e.key} carries decoded behavior`);
       assert(HP_TABLE.includes(e.behavior.hp));
+      assert(ANIM_PERIOD_TABLE.includes(e.behavior.animPeriod));
       assert(SCORE_TABLE.includes(e.behavior.score));
-      assert(e.behavior.speed >= 0 && e.behavior.speed < 8);
       assert(e.behavior.death.mode >= 0 && e.behavior.death.mode <= 3);
       assert(e.behavior.fire.interval >= 1 && e.behavior.fire.interval <= 119);
       for (const ch of [e.behavior.speedChange, e.behavior.scale]) {
@@ -193,9 +219,11 @@ Deno.test("the fire gate is the appearance, straight from the engine's table", (
 });
 
 Deno.test("the editor-default record (Gust) decodes to the weakest enemy", () => {
-  // Gust's most-placed record bytes: hp idx 7, score idx 0, no fire.
+  // Gust's most-placed record bytes: b1 = 0x07 -> animation period idx 7,
+  // score idx 0; b2 = 0 -> the weakest hp step. No fire.
   const d = decodeEnemyRecord(rec("270700000000000000000000000000000000"));
-  assertStrictEquals(d.hp, 1);
+  assertStrictEquals(d.hp, HP_TABLE[0]);
+  assertStrictEquals(d.animPeriod, 1);
   assertStrictEquals(d.score, 50);
   assertStrictEquals(d.death.mode, 0);
 });
