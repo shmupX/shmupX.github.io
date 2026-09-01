@@ -7267,7 +7267,6 @@
     dezaLoadoutIndex: ["dezaLoadoutIndex", "p2DezaLoadoutIndex"],
     dezaPower: ["dezaPower", "p2DezaPower"],
     dezaWeapons: ["dezaWeapons", "p2DezaWeapons"],
-    dezaChargeBeam: ["dezaChargeBeam", "p2DezaChargeBeam"],
     dezaLastX: ["dezaLastX", "p2DezaLastX"],
     dezaBomb: ["dezaBomb", "p2DezaBomb"],
     dezaBombStock: ["dezaBombStock", "p2DezaBombStock"],
@@ -7532,9 +7531,9 @@
     p.dezaBomb = null;
     p.dezaBombInvuln = false;
     p.dezaWeapons = null;
-    p.dezaChargeBeam = null;
     p.dezaShotLocked = false;
     p.dezaLoadoutIndex = void 0;
+    dezaSeedPower(scene, p);
     p.bossContactAt = 0;
     // A ship starts LOCAL. Anything networked re-attaches through
     // cmgNetSeatGuest; leaving a previous guest's buttons on a fresh ship would
@@ -7572,11 +7571,11 @@
     p.comboCount = 0;
     p.comboTimeCnt = 0;
     p.dezaWeapons = null;
-    p.dezaChargeBeam = null;
     p.dezaShotLocked = false;
     p.dezaBomb = null;
     p.dezaBombInvuln = false;
     p.dezaBombStock = 3;
+    dezaSeedPower(scene, p);
     p.bossContactAt = 0;
     p.remote = null;
     if (p.hpBar) {
@@ -7832,6 +7831,14 @@
       case PLAYER_STATES.SHOOT_NAME_BIG:
         p.shootMode = "big";
         p.shootSpeed = "speed_normal";
+        // A Dezaemon save's power-up item (type 7) reaches the runtime as this
+        // drop. In the engine it is +1 SHOT LEVEL, capped by the ship's own
+        // maxPower nibble, and every sub/charge per-level table reads it.
+        var powSh = dezaShip(scene, p.index);
+        if (powSh) {
+          var cap = Math.max(0, Math.min(4, powSh.maxPower == null ? 4 : powSh.maxPower));
+          p.dezaPower = Math.min(cap, (p.dezaPower || 0) + 1);
+        }
         break;
       case PLAYER_STATES.SHOOT_NAME_3WAY:
         p.shootMode = "3way";
@@ -8239,6 +8246,22 @@
   // Dispatcher nibble -> behaviour. 0 and 8 fire nothing at all.
   var DEZA_BOMB_BY_NIBBLE = [0, 1, 2, 3, 4, 5, 6, 8, 0, 1, 2, 3, 4, 5, 7, 8];
   var DEZA_BOMB_SPIN = 3072 / 65536 * Math.PI * 2; // +16.875 deg/frame on the variants
+  // The save's own ship block (+0x0C for P1, +0x10 for P2): starting loadout,
+  // speed cap, and the two power-level nibbles the per-level weapon tables are
+  // indexed by.
+  function dezaShip(scene, index) {
+    var m = scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
+    var ships = m && m.ships;
+    if (!ships || !ships.length) return null;
+    return ships[index] || ships[0];
+  }
+  // Seed a ship's power level from its own config block. Every per-level table
+  // in the sub and charge weapons is indexed by this, so a level that starts a
+  // ship at power 2 must fire the level-2 spread from the first shot.
+  function dezaSeedPower(scene, p) {
+    var sh = dezaShip(scene, p.index);
+    p.dezaPower = sh ? Math.max(0, Math.min(4, sh.initialPower || 0)) : 0;
+  }
   function dezaLoadout(scene, p) {
     var m = scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
     if (!m || !m.loadouts || !m.loadouts.length) return null;
@@ -8296,8 +8319,7 @@
     if ((type === 6 || type === 7) && p.dezaWeapons) {
       p.dezaWeapons.gauge = 0;
       p.dezaWeapons.busy = 0;
-      p.dezaChargeBeam = null;
-      p.dezaShotLocked = false;
+        p.dezaShotLocked = false;
     }
     scene.playSound("se_bomb", 0.5);
     triggerHaptic("special", p.padIndex);
@@ -8474,20 +8496,136 @@
   }
   // ---- Dezaemon CHARGE and SUB weapons -------------------------------------
   //
-  // The loadout's other two fields, traced from the charge dispatcher +0x1528C
-  // and the sub dispatcher +0x1509C.
+  // Traced 2026-08-31 out of the sub dispatcher +0x1509C (jump table +0x150C4)
+  // and the charge dispatcher +0x1528C (+0x152B4), following each handler into
+  // its per-power-level sub-handlers and each spawned object into its per-class
+  // updater (the class -> handler table at +0x20590, walked by the object loop
+  // +0x791C).
   //
-  // There are NO option pods: the "sub weapon" is simply a second shot type
-  // fired from the ship, with its own burst cap and reload interval. The ship's
-  // power level divides the reload, so power multiplies the fire rate.
-  var DEZA_SUB_BURST = [0, 3, 3, 1, 1, 6, 3, 2];      // max shots per tap, +0x21C50
-  var DEZA_SUB_INTERVAL = [0, 6, 5, 12, 1, 3, 6, 28]; // reload units, +0x21C58
-  // Per-level damage for the two fully traced types, in engine durability units.
-  var DEZA_SUB_DMG1 = [7680, 6656, 5632, 4608, 3584];
-  var DEZA_SUB_DMG7 = [8960, 7680, 6656, 5888, 5376];
-  // Type 1's symmetric spread, in 256-per-turn angle units from straight up.
+  // UNITS. Object positions are 25.7 fixed: the draw path converts them with
+  // `if (p < 0) p += 127; p >>= 7` (+0x51B4 into the kernel's seven-`shar`
+  // helper 0x06010BF6), so 128 units = 1 engine pixel — not the 256 an earlier
+  // note claimed. The despawn box (+0x173A4: x 16..304, y -16..256 px) and the
+  // player's own position clamps agree. This runtime steps twice per Saturn
+  // frame and maps engine pixels 1:1, so
+  //     runtime px per tick = units / 128 / 2 = units / 256
+  // which is why the old half-speed numbers looked plausible.
+  var DEZA_ANG = Math.PI * 2 / 256;                     // one engine angle unit
+  function dezaPx(u) { return u / 128; }                // a distance
+  function dezaVel(u) { return u / (128 * SATURN_TICKS_PER_FRAME); } // a velocity
+
+  // Max shots per tap (+0x21C50) and reload interval in frames (+0x21C58).
+  // The reload drains 1/frame for every type; only sub 7 adds the power-scaled
+  // second drain (that whole block sits inside the `subType == 7` branch at
+  // +0x9D4C, which returns to the epilogue for 1-6).
+  var DEZA_SUB_BURST = [0, 3, 3, 1, 1, 6, 3, 2];
+  var DEZA_SUB_INTERVAL = [0, 6, 5, 12, 1, 3, 6, 28];
+  // Per-power-level attack power in the engine's durability units. Types 4, 5
+  // and 6 are per-FRAME-of-contact weapons, which is why their numbers are two
+  // orders of magnitude smaller than the one-shot types'.
+  var DEZA_SUB_DAMAGE = [
+    null,
+    [7680, 6656, 5632, 4608, 3584],      // 1  +0x21C80
+    [6656, 5632, 4608, 3584, 2560],      // 2  +0x21C94
+    [15360, 13312, 11264, 9216, 7168],   // 3  +0x21CD0
+    [320, 219, 199, 205, 230],           // 4  +0x21CBC  per frame, per chain link
+    [448, 432, 416, 400, 384],           // 5  +0x21CE4  per frame
+    [1280, 1312, 1344, 1376, 1408],      // 6  +0x21D24  per frame
+    [8960, 7680, 6656, 5888, 5376]       // 7  +0x21D58
+  ];
+  // Type 1's symmetric spread, in engine angle units from straight up.
   var DEZA_SUB_SPREAD1 = [[0], [3, -3], [0, 8, -8], [12, -12, 3, -3], [0, 16, -16, 8, -8]];
-  var DEZA_CHARGE_BUSY = [0, 16, 96, 160]; // attack length per charge type
+  // Type 2 — a forward volley. Every shot flies dead straight up at 1280
+  // units/frame; the power level buys barrels, not angles, and the extra ones
+  // sit further out and further BACK, so the volley reads as a widening
+  // arrowhead. [dx, dy] in position units, +y is toward the bottom of the
+  // screen (handlers +0xC470/+0xC520/+0xC61C/+0xC748/+0xC8BC).
+  var DEZA_SUB2_MUZZLES = [
+    [[0, -1280]],
+    [[768, -1280], [-768, -1280]],
+    [[0, -1280], [-1024, 512], [1024, 512]],
+    [[768, -1280], [-768, -1280], [1536, 512], [-1536, 512]],
+    [[1024, 512], [-1024, 512], [0, -1280], [2048, 2304], [-2048, 2304]]
+  ];
+  var DEZA_SUB2_SPEED = 1280;
+  // Type 3 — lobbed grenades. Each is launched DOWNWARD at 256 units/frame with
+  // a fixed sideways drift, and its class-40 updater (+0xDFB0) adds +40 to the
+  // scroll velocity every frame, so it dips ~5.5 px, reverses after ~6 frames
+  // and then climbs away accelerating. [dx, dy, lateral] in units
+  // (handlers +0xDAE4/+0xDB64/+0xDC20/+0xDCFC/+0xDDF4).
+  var DEZA_SUB3_SHOTS = [
+    [[0, -1024, 0]],
+    [[1024, -1024, 0], [-1024, -1024, 0]],
+    [[768, 0, 32], [0, -1024, 0], [-768, 0, -32]],
+    [[1024, -1024, 0], [-1024, -1024, 0], [1536, 0, 48], [-1536, 0, -48]],
+    [[768, 0, 32], [0, -1024, 0], [-768, 0, -32], [1536, 1024, 64], [-1536, 1024, -64]]
+  ];
+  var DEZA_SUB3_LAUNCH = -256;   // scroll velocity: negative = falling
+  var DEZA_SUB3_ACCEL = 40;      // units/frame added to the scroll velocity
+  // Type 4 — homing whips. Each shot is a chain of one steering head plus a
+  // tail of links; the level trades chain length for chain count (1x8, 2x7,
+  // 3x6, 4x5, 5x4). [dx units, angle units, links]
+  // (handlers +0xCCD8/+0xCD34/+0xCDC0/+0xCE64/+0xCF28).
+  var DEZA_SUB4_SHOTS = [
+    [[0, 0, 7]],
+    [[1024, 0, 6], [-1024, 0, 6]],
+    [[0, 0, 5], [1024, 8, 5], [-1024, -8, 5]],
+    [[1024, 0, 4], [-1024, 0, 4], [1024, 8, 4], [-1024, -8, 4]],
+    [[0, 0, 3], [512, 6, 3], [-512, -6, 3], [1024, 12, 3], [-1024, -12, 3]]
+  ];
+  // 0x0D00 is the SPEED WORD in 0x0608E590, not a velocity: the mover forms the
+  // velocity as (SIN * (word & 0x7FFF)) >> 16, so at full amplitude a shot moves
+  // word/2 units a frame. Homing re-clamps the word to [0x600, 0x0D00] from the
+  // Manhattan distance to the target, halved.
+  var DEZA_SUB4_WORD = 3328;
+  var DEZA_SUB4_WORD_MIN = 1536;
+  function dezaSub4Speed(word) { return dezaVel(word / 2); }
+  var DEZA_SUB4_TURN = 24;         // max angle units per frame
+  // Type 5 — a piercing column planted where the ship stands, not carried with
+  // it. Lifetime = 0xA000 / step (+0x21CF8) frames.
+  var DEZA_SUB5_STEP = [4224, 3072, 2176, 1792, 1472];
+  // Type 6 — one indestructible energy ball that grows to a per-level cap
+  // (+0x21D4C, 0x1000 = 1.0) at a quarter of the cap per frame from 0x400.
+  var DEZA_SUB6_SCALE = [2560, 4096, 5632, 7168, 8704];
+  var DEZA_SUB6_SPEED = 1152;
+
+  // Charge. The gauge fills +1/frame while the fire button is held, caps at 320
+  // and never decays; level = gauge/64 - 1, so a release below 64 does nothing.
+  // Release arms a per-type busy counter and fires once; types 2 and 3 then
+  // fire AGAIN on every odd value of that counter — i.e. every other frame for
+  // the whole window — which is what makes them sustained beams and type 1 a
+  // single volley (busy jump table +0xA140 sends types 0 and 1 to the bare
+  // decrement at +0xA218).
+  var DEZA_CHARGE_BUSY = [0, 16, 96, 160];
+  // Type 1 — a fan of weaving piercing orbs. Packed per-shot descriptors at
+  // +0x21E76, five u16 per level: bits 15-8 the initial weave phase, bits 7-4
+  // the weave amplitude in units of 256 (= its peak lateral px/frame), bits 3-0
+  // a launch delay in frames during which the orb hangs at the muzzle.
+  var DEZA_CHARGE1_SHOTS = [
+    [0x0000],
+    [0x4030, 0xC030],
+    [0x0000, 0x4062, 0xC062],
+    [0x4030, 0xC030, 0x4092, 0xC092],
+    [0x0000, 0x4062, 0xC062, 0x40C4, 0xC0C4]
+  ];
+  var DEZA_CHARGE1_SCALE = [4096, 4608, 5120, 5632, 6144]; // +0x21E6C, 0x1000 = 1.0
+  var DEZA_CHARGE1_SPEED = 768;
+  var DEZA_CHARGE1_POOL = 153600;   // the pierce pool, spent as mutual HP
+  // Type 2 — a ship-tracking column: one segment at release and one every other
+  // frame of the 96-frame window, each marching up at 15 px/frame with its X
+  // re-locked to the ship, so the whole beam whips sideways with the player.
+  var DEZA_CHARGE2_DAMAGE = [1536, 2048, 2560, 3072, 3584];  // +0x21EA8, per frame
+  var DEZA_CHARGE2_WIDTH = [2048, 3584, 5120, 6656, 8192];   // +0x21EBC, >>9 = half-width px
+  var DEZA_CHARGE2_RISE = 1920;                              // units/frame
+  // Type 3 — a steerable orb stream. The aim byte starts at 64 (straight up),
+  // wobbles through an 8-step table on each spawn frame and walks +/-2 with the
+  // ship's own drift, clamped to [32, 96] — 45 degrees either side.
+  var DEZA_CHARGE3_DAMAGE = [832, 864, 896, 928, 960];       // +0x21EC8, per frame
+  var DEZA_CHARGE3_SCALE = [12288, 15360, 18432, 21504, 24576]; // +0x21EDC
+  var DEZA_CHARGE3_SPEED = 767;    // (0x7FFF * 0x600) >> 16
+  var DEZA_CHARGE3_WOBBLE = [2, 1, -1, -2, -2, -1, 1, 2];    // +0x21C70
+  var DEZA_CHARGE3_LIFE = 17;      // 10 growth frames + 7 fade
+
   function dezaSubType(scene, p) {
     var lo = dezaLoadout(scene, p);
     return lo ? (lo.sub & 7) : 0;
@@ -8499,31 +8637,62 @@
   function dezaPowerLevel(p) {
     return Math.max(0, Math.min(4, p.dezaPower || 0));
   }
+  // Engine durability units -> this runtime's damage scale. The importer sizes
+  // every enemy's hp as engineLife / shotDamage, where shotDamage is that
+  // save's own full-power main shot, so the weapons have to divide by the same
+  // number or they land on a different scale from the enemies they hit.
+  function dezaDamageUnit(scene) {
+    var m = scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
+    return (m && m.shotDamage) || DEZA_BOMB_UNIT;
+  }
+  function dezaHitDamage(scene, units) {
+    return units / dezaDamageUnit(scene);
+  }
+  // A weapon that damages once per engine FRAME, charged per runtime tick.
+  function dezaFrameDamage(scene, units) {
+    return units / dezaDamageUnit(scene) / SATURN_TICKS_PER_FRAME;
+  }
+
   // One frame of both weapons for one ship. `held` is that player's charge
   // input. Every counter here is per player: a shared gauge would have both
   // SHIFT keys feeding one charge and the sub firing at half its cadence,
-  // alternating owners.
+  // alternating owners. The whole state machine is gated to one call per SATURN
+  // frame — the engine's counters are frame counters, and this runtime steps
+  // twice per frame, so ungated they would all run at double speed.
   function updateDezaWeapons(scene, p, held) {
     if (!dezaLoadout(scene, p) || !p.sprite || p.dead) return;
     var st = p.dezaWeapons || (p.dezaWeapons = {
-      burst: 255, reload: 0, aim: 64, gauge: 0, busy: 0, chargeLevel: -1
+      tick: 0, burst: 255, reload: 0, aim: 64, wobble: 0, gauge: 0, busy: 0,
+      chargeType: 0, chargeLevel: -1, subClock: 0
     });
+    st.tick = (st.tick + 1) % SATURN_TICKS_PER_FRAME;
+    if (st.tick !== 0) return;
     var L = dezaPowerLevel(p);
     var ctype = dezaChargeType(scene, p);
 
     // --- charge gauge: +1 a frame while held, capped at 320, never decays ---
     if (st.busy > 0) {
+      // Types 2 and 3 keep firing on the odd counts of their own busy window.
+      if ((st.chargeType === 2 || st.chargeType === 3) && (st.busy & 1)) {
+        if (st.chargeType === 3) dezaStepChargeAim(scene, p, st, true);
+        fireDezaCharge(scene, p, st.chargeType, st.chargeLevel, st);
+      } else if (st.chargeType === 3) {
+        dezaStepChargeAim(scene, p, st, false);
+      }
       st.busy--;
-      if (st.busy === 0) st.gauge = 0;
+      if (st.busy === 0) { st.gauge = 0; st.chargeLevel = -1; }
     } else if (held && ctype !== 0) {
       if (st.gauge < 320) st.gauge++;
       if (st.gauge === 64) scene.playSound("se_damage", 0.12);
     } else if (!held && st.gauge > 0) {
       var level = (st.gauge >> 6) - 1;
       if (level >= 0 && ctype !== 0) {
-        fireDezaCharge(scene, p, ctype, level);
-        st.busy = DEZA_CHARGE_BUSY[ctype];
+        st.chargeType = ctype;
         st.chargeLevel = level;
+        st.busy = DEZA_CHARGE_BUSY[ctype];
+        st.aim = 64;
+        st.wobble = 0;
+        fireDezaCharge(scene, p, ctype, level, st);
       } else {
         st.gauge = 0;
       }
@@ -8540,102 +8709,347 @@
       // engine's held rapid button: the burst cap never applies.
       st.burst = 0;
       if (st.burst < DEZA_SUB_BURST[stype] && st.reload === 0) {
-        fireDezaSub(scene, p, stype, L);
+        fireDezaSub(scene, p, stype, L, st);
         st.reload = DEZA_SUB_INTERVAL[stype];
       }
       if (st.reload !== 0) st.reload -= 1;
-      // The extra power-scaled drain sits INSIDE the type-7 branch (+0xDD4C
-      // returns to the epilogue for every other type), so types 1-6 fire at a
-      // flat interval and only type 7 speeds up with the ship's power.
+      // Only sub type 7 reaches the second, power-scaled drain: the branch at
+      // +0x9D4C returns to the epilogue for every other type. Its inner test is
+      // on the MAIN weapon, which gets a flat -3 when it is type 7.
       if (stype === 7 && st.reload !== 0) st.reload = Math.max(0, st.reload - (L + 2));
     }
-    updateDezaChargeShots(scene, p);
+    p.dezaLastX = p.sprite.x;
   }
   if (typeof window !== "undefined") {
     window.__updateDezaWeaponsProbe = updateDezaWeapons;
     window.__DEZA_SUB_BURST = DEZA_SUB_BURST;
     window.__DEZA_SUB_INTERVAL = DEZA_SUB_INTERVAL;
+    window.__DEZA_SUB2_MUZZLES = DEZA_SUB2_MUZZLES;
+    window.__DEZA_SUB3_SHOTS = DEZA_SUB3_SHOTS;
+    window.__DEZA_SUB4_SHOTS = DEZA_SUB4_SHOTS;
+    window.__DEZA_CHARGE1_SHOTS = DEZA_CHARGE1_SHOTS;
   }
   function dezaShotDamage(units) {
     return Math.max(1, Math.round(units / DEZA_BOMB_UNIT));
   }
-  function fireDezaSub(scene, p, type, L) {
-    var ship = p.sprite;
-    var muzzleY = ship.y - (type === 5 ? 0 : 8);
-    var shots = [];
-    if (type === 1) {
-      // Symmetric spread; one more projectile per power level.
-      var sp = DEZA_SUB_SPREAD1[L] || DEZA_SUB_SPREAD1[0];
-      for (var i = 0; i < sp.length; i++) shots.push({ a: sp[i], dmg: DEZA_SUB_DMG1[L] });
-    } else if (type === 7) {
-      // The only aimed type, and it is a strafe TILT, not a target lock: the
-      // aim leans against the ship's own drift and recentres when it stops.
-      var st = p.dezaWeapons;
-      var vx = ship.x - (p.dezaLastX == null ? ship.x : p.dezaLastX);
-      st.aim += vx < 0 ? 2 : vx > 0 ? -2 : (st.aim < 64 ? 1 : st.aim > 64 ? -1 : 0);
-      st.aim = Math.max(40, Math.min(88, st.aim));
-      shots.push({ a: st.aim - 64 - 8, dmg: DEZA_SUB_DMG7[L] });
-      shots.push({ a: st.aim - 64 + 8, dmg: DEZA_SUB_DMG7[L] });
-    } else {
-      // Types 2-6: cadence and count are traced, the exact spread of each is
-      // not — they fire their burst straight ahead until it is.
-      var n = Math.min(3, 1 + (L >> 1));
-      for (var k = 0; k < n; k++) shots.push({ a: (k - (n - 1) / 2) * 6, dmg: DEZA_SUB_DMG1[L] });
+  // The shared aim byte the steerable weapons (charge 3, sub 7) point with. It
+  // leans WITH the ship's drift, not against it: the engine adds +2 when the
+  // lateral velocity is negative, and the drawn rotation is (64 - aim) << 8, so
+  // an aim above 64 is a lean to the LEFT.
+  function dezaStepChargeAim(scene, p, st, spawning) {
+    if (spawning) {
+      st.aim += DEZA_CHARGE3_WOBBLE[st.wobble & 7];
+      st.wobble = (st.wobble + 1) & 7;
     }
-    for (var s = 0; s < shots.length; s++) {
-      var th = shots[s].a * Math.PI * 2 / 256;
-      spawnDezaPlayerShot(scene, p, ship.x, muzzleY,
-        Math.sin(th) * 8, -Math.cos(th) * 8, dezaShotDamage(shots[s].dmg));
-    }
-    p.dezaLastX = ship.x;
+    var vx = p.sprite.x - (p.dezaLastX == null ? p.sprite.x : p.dezaLastX);
+    if (vx < 0) st.aim = Math.min(96, st.aim + 2);
+    else if (vx > 0) st.aim = Math.max(32, st.aim - 2);
   }
-  // The charge release. Type 1 throws level+1 orbs, type 2 grows a beam column
-  // anchored to the ship, type 3 is its longer cousin.
-  function fireDezaCharge(scene, p, type, level) {
+  // Every player weapon draws from the same 30-slot bullet window (P1 owns
+  // engine slots 4..33, P2 34..63), and each handler reserves its whole volley
+  // up front — which is the real reason sub 4 cannot put a second chain in the
+  // air while the first is alive, and why a crowded screen thins the others
+  // out. Without the budget an interval-1 weapon like sub 4 floods the runtime
+  // with hundreds of live objects.
+  var DEZA_SLOT_WINDOW = 30;
+  function dezaLiveSlots(scene, p) {
+    var n = 0, i, b;
+    for (i = 0; i < scene.playerBullets.length; i++) {
+      b = scene.playerBullets[i];
+      if (b && b.active && b.getData("owner") === p.index) n += b.getData("dezaSlots") || 0;
+    }
+    // Columns are deliberately NOT counted. They share the window in the
+    // engine but never exhaust it, because a segment clears the top of a
+    // 224-line screen in a handful of frames; this runtime's playfield is twice
+    // as tall, so counting them would throttle a beam the hardware never
+    // throttles. Their own list cap below is the backstop instead.
+    return n;
+  }
+  function dezaClaimSlots(scene, p, need) {
+    return dezaLiveSlots(scene, p) + need <= DEZA_SLOT_WINDOW;
+  }
+  function dezaMarkSlots(shots, weight) {
+    for (var i = 0; i < shots.length; i++) {
+      if (shots[i]) shots[i].setData("dezaSlots", weight);
+    }
+  }
+  function fireDezaSub(scene, p, type, L, st) {
     var ship = p.sprite;
-    scene.playSound("se_sp", 0.35);
+    var dmg = (DEZA_SUB_DAMAGE[type] || DEZA_SUB_DAMAGE[1])[L];
+    var i, sp, th, b;
     if (type === 1) {
-      for (var i = 0; i <= level; i++) {
-        var a = (i - level / 2) * 8 * Math.PI * 2 / 256;
-        spawnDezaPlayerShot(scene, p, ship.x, ship.y - 8,
-          Math.sin(a) * 6, -Math.cos(a) * 6, dezaShotDamage(6656) + level);
+      // Symmetric spread; one more projectile per power level. 1023 units/frame
+      // is COS(0) >> 5 — 8 engine px/frame.
+      sp = DEZA_SUB_SPREAD1[L] || DEZA_SUB_SPREAD1[0];
+      if (!dezaClaimSlots(scene, p, sp.length)) return;
+      for (i = 0; i < sp.length; i++) {
+        th = sp[i] * DEZA_ANG;
+        dezaMarkSlots([spawnDezaPlayerShot(scene, p, ship.x, ship.y - dezaPx(1024),
+          Math.sin(th) * dezaVel(1023), -Math.cos(th) * dezaVel(1023),
+          dezaHitDamage(scene, dmg))], 1);
       }
-    } else {
-      // Types 2 and 3 are a column of segments that stays fixed to the ship and
-      // recedes up the screen while the attack runs.
-      p.dezaChargeBeam = { grow: 0, life: DEZA_CHARGE_BUSY[type], level: level,
-        owner: p.index, dmg: dezaShotDamage(7680) + level * 2 };
+    } else if (type === 2) {
+      sp = DEZA_SUB2_MUZZLES[L];
+      if (!dezaClaimSlots(scene, p, sp.length)) return;
+      for (i = 0; i < sp.length; i++) {
+        dezaMarkSlots([spawnDezaPlayerShot(scene, p, ship.x + dezaPx(sp[i][0]), ship.y + dezaPx(sp[i][1]),
+          0, -dezaVel(DEZA_SUB2_SPEED), dezaHitDamage(scene, dmg))], 1);
+      }
+      scene.playSound("se_shot", 0.12);
+    } else if (type === 3) {
+      sp = DEZA_SUB3_SHOTS[L];
+      if (!dezaClaimSlots(scene, p, sp.length)) return;
+      for (i = 0; i < sp.length; i++) {
+        b = spawnDezaPlayerShot(scene, p, ship.x + dezaPx(sp[i][0]), ship.y + dezaPx(sp[i][1]),
+          dezaVel(sp[i][2]), -dezaVel(DEZA_SUB3_LAUNCH), dezaHitDamage(scene, dmg));
+        // The class-40 updater accelerates the scroll velocity, not the lateral
+        // one, so the drift stays constant and the path is a clean parabola.
+        if (b) b.setData("dezaAccelY", -dezaVel(DEZA_SUB3_ACCEL) / SATURN_TICKS_PER_FRAME);
+        dezaMarkSlots([b], 1);
+      }
+      scene.playSound("se_shot", 0.12);
+    } else if (type === 4) {
+      sp = DEZA_SUB4_SHOTS[L];
+      var chainSlots = 0;
+      for (i = 0; i < sp.length; i++) chainSlots += sp[i][2] + 1;
+      if (!dezaClaimSlots(scene, p, chainSlots)) return;
+      for (i = 0; i < sp.length; i++) {
+        th = sp[i][1] * DEZA_ANG;
+        b = spawnDezaPlayerShot(scene, p, ship.x + dezaPx(sp[i][0]), ship.y,
+          Math.sin(th) * dezaSub4Speed(DEZA_SUB4_WORD),
+          -Math.cos(th) * dezaSub4Speed(DEZA_SUB4_WORD),
+          // The head carries the whole chain's contribution: in the engine every
+          // link has its own hit box and every one of them bills the target.
+          dezaFrameDamage(scene, dmg * (sp[i][2] + 1)));
+        if (b) {
+          b.setData("dezaHome", { heading: sp[i][1], links: sp[i][2], trail: [] });
+          b.setData("dezaPerFrame", true);
+          b.setData("dezaSlots", sp[i][2] + 1);
+        }
+      }
+      scene.playSound("se_shot", 0.12);
+    } else if (type === 5) {
+      // An anchored piercing column, planted where the ship stands.
+      dezaAddColumn(scene, {
+        owner: p.index, x: ship.x, y: ship.y, halfW: 4, height: 320,
+        life: Math.ceil(0xA000 / DEZA_SUB5_STEP[L]), follow: false,
+        dmg: dezaFrameDamage(scene, dmg)
+      });
+      scene.playSound("se_shot", 0.1);
+    } else if (type === 6) {
+      if (!dezaClaimSlots(scene, p, 1)) return;
+      b = spawnDezaPlayerShot(scene, p, ship.x, ship.y - dezaPx(1024),
+        0, -dezaVel(DEZA_SUB6_SPEED), dezaFrameDamage(scene, dmg));
+      if (b) {
+        b.setData("dezaSlots", 1);
+        b.setData("dezaPerFrame", true);
+        b.setData("dezaGrow", { scale: 1024, cap: DEZA_SUB6_SCALE[L],
+          step: DEZA_SUB6_SCALE[L] / 4 / SATURN_TICKS_PER_FRAME });
+        b.setScale(1024 / 4096);
+      }
+      scene.playSound("se_shot", 0.15);
+    } else if (type === 7) {
+      // The only aimed sub, and it is a strafe TILT, not a target lock: the aim
+      // leans WITH the ship's own drift and recentres when it stops. Two shots,
+      // 8 units either side of the aim.
+      dezaStepSub7Aim(p, st);
+      if (!dezaClaimSlots(scene, p, 2)) return;
+      for (i = -1; i <= 1; i += 2) {
+        th = (64 - (st.aim + i * 8)) * DEZA_ANG;
+        // (64 - aim) converts the engine's 0-is-right aim byte into this
+        // runtime's 0-is-up, clockwise-positive shot angle.
+        // Speed word 0x800 in 0x0608E590 -> 1024 units a frame, 8 engine px.
+        dezaMarkSlots([spawnDezaPlayerShot(scene, p, ship.x, ship.y - dezaPx(1024),
+          Math.sin(th) * dezaVel(1024), -Math.cos(th) * dezaVel(1024),
+          dezaHitDamage(scene, dmg))], 1);
+      }
     }
   }
-  function updateDezaChargeShots(scene, p) {
-    var beam = p.dezaChargeBeam;
-    if (!beam) return;
+  // Sub 7's own aim walk (+0x9D50): +2 toward 88 drifting left, -2 toward 40
+  // drifting right, recentring on 64 when the ship is still.
+  function dezaStepSub7Aim(p, st) {
+    var vx = p.sprite.x - (p.dezaLastX == null ? p.sprite.x : p.dezaLastX);
+    if (vx < 0) st.aim = Math.min(88, st.aim + 2);
+    else if (vx > 0) st.aim = Math.max(40, st.aim - 2);
+    else st.aim += st.aim < 64 ? 1 : st.aim > 64 ? -1 : 0;
+  }
+  // The charge release, and — for types 2 and 3 — every other frame of the
+  // attack that follows it.
+  function fireDezaCharge(scene, p, type, level, st) {
     var ship = p.sprite;
-    beam.life--;
-    beam.grow += 15;
-    if (beam.life <= 0 || !ship) {
-      p.dezaChargeBeam = null;
-      return;
+    var i, w, th, b;
+    if (type === 1) {
+      scene.playSound("se_sp", 0.35);
+      var row = DEZA_CHARGE1_SHOTS[level] || DEZA_CHARGE1_SHOTS[0];
+      if (!dezaClaimSlots(scene, p, row.length)) return;
+      for (i = 0; i < row.length; i++) {
+        w = row[i];
+        b = spawnDezaPlayerShot(scene, p, ship.x, ship.y - dezaPx(2560),
+          0, 0, dezaHitDamage(scene, DEZA_CHARGE1_POOL));
+        if (!b) continue;
+        b.setData("dezaWeave", {
+          phase: (w >> 8) & 0xFF, amp: ((w >> 4) & 0xF) * 256,
+          cur: 0, delay: w & 0xF, rise: dezaVel(DEZA_CHARGE1_SPEED)
+        });
+        // The pool is spent as MUTUAL hp: the orb takes the target's remaining
+        // hp off its own pool and gives the target the pool it had on arrival.
+        b.setData("dezaPool", dezaHitDamage(scene, DEZA_CHARGE1_POOL));
+        b.setData("dezaSlots", 1);
+        b.setScale(DEZA_CHARGE1_SCALE[level] / 4096);
+      }
+    } else if (type === 2) {
+      if (st.busy === DEZA_CHARGE_BUSY[2]) scene.playSound("se_sp", 0.35);
+      dezaAddColumn(scene, {
+        owner: p.index, x: ship.x, y: ship.y - dezaPx(1024),
+        halfW: DEZA_CHARGE2_WIDTH[level] >> 9, height: 32,
+        rise: dezaVel(DEZA_CHARGE2_RISE), follow: true, life: 0,
+        dmg: dezaFrameDamage(scene, DEZA_CHARGE2_DAMAGE[level])
+      });
+    } else if (type === 3) {
+      if (st.busy === DEZA_CHARGE_BUSY[3]) scene.playSound("se_sp", 0.35);
+      if (!dezaClaimSlots(scene, p, 1)) return;
+      th = (64 - st.aim) * DEZA_ANG;
+      b = spawnDezaPlayerShot(scene, p, ship.x, ship.y - dezaPx(1024),
+        Math.sin(th) * dezaVel(DEZA_CHARGE3_SPEED),
+        -Math.cos(th) * dezaVel(DEZA_CHARGE3_SPEED),
+        dezaFrameDamage(scene, DEZA_CHARGE3_DAMAGE[level]));
+      if (b) {
+        b.setData("dezaSlots", 1);
+        b.setData("dezaPerFrame", true);
+        b.setData("dezaGrow", { scale: 2048, cap: DEZA_CHARGE3_SCALE[level],
+          step: 1024 / SATURN_TICKS_PER_FRAME });
+        b.setData("dezaLife", DEZA_CHARGE3_LIFE * SATURN_TICKS_PER_FRAME);
+        b.setScale(0.5);
+        b.setAlpha(0.75);
+      }
     }
-    var top = Math.max(-20, ship.y - beam.grow);
-    var halfW = 6 + beam.level * 3;
-    // Shared Graphics: the caller clears it once a frame, before either beam
-    // draws, so two columns can be on screen at the same time.
+  }
+  // ---- the per-tick half of the weapons -------------------------------------
+  // Anchored/tracking columns (sub 5 and charge 2) are not sprites: they are
+  // rectangles drawn into the shared beam Graphics and collided by hand, the
+  // same shape the engine gives them.
+  function dezaAddColumn(scene, col) {
+    var list = scene.dezaColumns || (scene.dezaColumns = []);
+    if (list.length > 32) list.shift();
+    col.age = 0;
+    list.push(col);
+  }
+  function updateDezaColumns(scene) {
+    var list = scene.dezaColumns;
+    if (!list || !list.length) return;
     var g = scene.dezaBeamGfx;
     if (!g) { g = scene.dezaBeamGfx = scene.add.graphics(); g.setDepth(45); }
-    g.fillStyle(9498623, 0.5);
-    g.fillRect(ship.x - halfW, top, halfW * 2, ship.y - top);
-    // The column damages everything it covers, every frame, and pierces.
-    for (var i = scene.enemies.length - 1; i >= 0; i--) {
-      var e = scene.enemies[i];
-      if (!e || !e.active || e.getData("type") === "boss") continue;
-      if (Math.abs(e.x - ship.x) > halfW + e.width / 2) continue;
-      if (e.y > ship.y || e.y < top) continue;
-      var hp = e.getData("hp");
-      if (hp === "infinity") continue;
-      hp -= beam.dmg / 8;
-      e.setData("hp", hp);
-      if (hp <= 0) scene.enemyDie(e, true, beam.owner);
+    for (var i = list.length - 1; i >= 0; i--) {
+      var c = list[i];
+      var owner = scene.players && scene.players[c.owner];
+      c.age++;
+      if (c.follow) {
+        // Charge 2 re-copies the ship's X every frame and marches up.
+        if (owner && owner.sprite && !owner.dead) c.x = owner.sprite.x;
+        c.y -= c.rise;
+        if (c.y < -c.height) { list.splice(i, 1); continue; }
+        // The segment dies with the attack, not on a timer.
+        var st = owner && owner.dezaWeapons;
+        if (!st || st.busy <= 0) { list.splice(i, 1); continue; }
+      } else if (c.age >= c.life * SATURN_TICKS_PER_FRAME) {
+        list.splice(i, 1);
+        continue;
+      }
+      var top = Math.max(-20, c.y - c.height);
+      g.fillStyle(c.follow ? 9498623 : 8965375, 0.45);
+      g.fillRect(c.x - c.halfW, top, c.halfW * 2, c.y - top);
+      for (var e = scene.enemies.length - 1; e >= 0; e--) {
+        var en = scene.enemies[e];
+        if (!en || !en.active) continue;
+        if (Math.abs(en.x - c.x) > c.halfW + en.width / 2) continue;
+        if (en.y > c.y || en.y < top) continue;
+        var hp = en.getData("hp");
+        if (hp === "infinity") continue;
+        hp -= c.dmg;
+        en.setData("hp", hp);
+        if (hp <= 0) scene.enemyDie(en, en.getData("type") !== "boss", c.owner);
+      }
+    }
+  }
+  // One tick of a shot that carries more than a constant velocity.
+  function dezaStepShot(scene, bullet) {
+    var life = bullet.getData("dezaLife");
+    if (life != null) {
+      if (life <= 1) return false;
+      bullet.setData("dezaLife", life - 1);
+    }
+    var accelY = bullet.getData("dezaAccelY");
+    if (accelY) bullet.setData("dezaVy", (bullet.getData("dezaVy") || 0) + accelY);
+    var grow = bullet.getData("dezaGrow");
+    if (grow && grow.scale < grow.cap) {
+      grow.scale = Math.min(grow.cap, grow.scale + grow.step);
+      bullet.setScale(grow.scale / 4096);
+    }
+    var weave = bullet.getData("dezaWeave");
+    if (weave) {
+      if (weave.delay > 0) {
+        weave.delay -= 1 / SATURN_TICKS_PER_FRAME;
+        bullet.setData("dezaVy", 0);
+      } else {
+        bullet.setData("dezaVy", -weave.rise);
+      }
+      if (weave.amp) {
+        weave.phase = (weave.phase + 8 / SATURN_TICKS_PER_FRAME) % 256;
+        weave.cur = Math.min(weave.amp, weave.cur + (weave.amp / 32) / SATURN_TICKS_PER_FRAME);
+        bullet.setData("dezaVx", dezaVel(Math.sin(weave.phase * DEZA_ANG) * weave.cur));
+      }
+    }
+    var home = bullet.getData("dezaHome");
+    if (home) dezaStepHoming(scene, bullet, home);
+    return true;
+  }
+  // The chain head re-acquires a target inside the engine's own +/-80 x +/-128
+  // engine-pixel box and turns toward it at up to 24 angle units a frame.
+  function dezaStepHoming(scene, bullet, home) {
+    var target = home.target;
+    if (!target || !target.active) {
+      target = null;
+      for (var i = 0; i < scene.enemies.length; i++) {
+        var e = scene.enemies[i];
+        if (!e || !e.active || e.getData("hp") === "infinity") continue;
+        if (Math.abs(e.x - bullet.x) > 80 || Math.abs(e.y - bullet.y) > 128) continue;
+        target = e;
+        break;
+      }
+      home.target = target;
+    }
+    var word = DEZA_SUB4_WORD;
+    if (target) {
+      // Engine angle units, 0 = up and clockwise positive.
+      var want = Math.atan2(target.x - bullet.x, bullet.y - target.y) / DEZA_ANG;
+      var d = ((want - home.heading + 384) % 256) - 128;
+      var turn = DEZA_SUB4_TURN / SATURN_TICKS_PER_FRAME;
+      home.heading = (home.heading + Math.max(-turn, Math.min(turn, d)) + 256) % 256;
+      var reach = (Math.abs(target.x - bullet.x) + Math.abs(target.y - bullet.y)) * 128 / 2;
+      word = Math.max(DEZA_SUB4_WORD_MIN, Math.min(DEZA_SUB4_WORD, reach));
+    }
+    var th = home.heading * DEZA_ANG;
+    bullet.setData("dezaVx", Math.sin(th) * dezaSub4Speed(word));
+    bullet.setData("dezaVy", -Math.cos(th) * dezaSub4Speed(word));
+    bullet.setRotation(th - Math.PI / 2);
+    // The tail is drawn, not simulated: in the engine each link just replays the
+    // head's path two frames behind, so a trail of samples reads the same.
+    home.trail.push({ x: bullet.x, y: bullet.y });
+    if (home.trail.length > home.links * 2 * SATURN_TICKS_PER_FRAME) home.trail.shift();
+  }
+  function drawDezaTrails(scene) {
+    var g = scene.dezaBeamGfx;
+    for (var b = 0; b < scene.playerBullets.length; b++) {
+      var pb = scene.playerBullets[b];
+      if (!pb || !pb.active) continue;
+      var home = pb.getData("dezaHome");
+      if (!home || !home.trail.length) continue;
+      if (!g) { g = scene.dezaBeamGfx = scene.add.graphics(); g.setDepth(45); }
+      g.fillStyle(10092543, 0.7);
+      var stride = 2 * SATURN_TICKS_PER_FRAME;
+      for (var k = home.trail.length - 1, n = 0; k >= 0 && n < home.links; k -= stride, n++) {
+        g.fillCircle(home.trail[k].x, home.trail[k].y, 3);
+      }
     }
   }
   // A plain player projectile, reusing the runtime's own bullet pipeline.
@@ -8898,7 +9312,14 @@
       // stock shot keeps its straight-up path with an optional lean.
       var dvx = bullet.getData("dezaVx");
       if (dvx !== undefined && dvx !== null) {
-        bullet.x += dvx;
+        // Sub and charge shots that accelerate, weave, grow or home advance
+        // their own state first, and may retire on their own lifetime word.
+        if (!dezaStepShot(scene, bullet)) {
+          bullet.destroy();
+          scene.playerBullets.splice(b, 1);
+          continue;
+        }
+        bullet.x += bullet.getData("dezaVx") || 0;
         bullet.y += bullet.getData("dezaVy") || 0;
       } else {
         var angle = bullet.getData("angle") || 0;
@@ -10833,6 +11254,7 @@
       // destroyed Graphics.
       this.dezaBombGfx = null;
       this.dezaBeamGfx = null;
+      this.dezaColumns = null;
       this.hudTwoPlayer = false;
       this.hpBarP2 = null;
       this.comboLabelP2 = null;
@@ -11857,6 +12279,8 @@
         }
       }
       updatePlayerBullets(this, step);
+      updateDezaColumns(this);
+      drawDezaTrails(this);
       for (var e = this.enemies.length - 1; e >= 0; e--) {
         var enemy = this.enemies[e];
         if (!enemy || !enemy.active) {
@@ -11895,7 +12319,36 @@
             pb.setData("_tintTimer", 5);
             var applyDamage = true;
             var pbBig = !!pb.getData("big");
-            if (pbBig) {
+            // Two Dezaemon-only contact rules, both traced with the weapons
+            // above. `dezaPerFrame` is the beam/ball model: the shot's own HP
+            // is rewritten every frame, so it is never consumed and it bills
+            // whatever it overlaps on EVERY frame (its damage is already scaled
+            // per tick). `dezaPool` is charge 1's mutual-HP grind: the orb pays
+            // the target its remaining pool and takes the target's hp off that
+            // pool, ploughing on until the pool runs out.
+            var pbPerFrame = !!pb.getData("dezaPerFrame");
+            var pbPool = pb.getData("dezaPool");
+            if (pbPool != null) {
+              var poolHp = enemy.getData("hp");
+              if (poolHp !== "infinity") {
+                enemy.setData("hp", poolHp - pbPool);
+                pb.setData("dezaPool", pbPool - poolHp);
+                if (isBoss) { this.bossHp = poolHp - pbPool; this.checkBossDanger(); }
+                if (poolHp - pbPool <= 0) {
+                  if (isBoss) this.bossDie(enemy, pb.getData("owner"));
+                  else this.enemyDie(enemy, false, pb.getData("owner"));
+                }
+              }
+              if (pb.getData("dezaPool") <= 0) {
+                pb.destroy();
+                this.playerBullets.splice(bb, 1);
+              }
+              if (!enemy.active) break;
+              continue;
+            }
+            if (pbPerFrame) {
+              applyDamage = true;
+            } else if (pbBig) {
               var bid = pb.getData("bulletId");
               var bkey = "bulletid_" + bid;
               var bfkey = "bulletframeCnt_" + bid;
@@ -11951,7 +12404,7 @@
                 }
               }
             }
-            if (!pbBig) {
+            if (!pbBig && !pbPerFrame) {
               pb.destroy();
               this.playerBullets.splice(bb, 1);
             }

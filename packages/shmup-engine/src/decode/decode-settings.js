@@ -62,8 +62,11 @@ export function weaponShotDamage(weapon) {
 // as data (configs[3]). Config byte: bits0-2 damage index into
 // [60,30,15,10,5,3,2,1] (the same durability units enemy LIFE decodes in),
 // bits4-5 speed-add index into [128,256,512,896] engine units — the spawn
-// stores (speed*sin)>>16 into 24.8 positions, so px/frame = units/512:
-// 0.25/0.5/1.0/1.75 on top of the rank-driven base u16[0x608EF30] = 4*rank.
+// stores (speed*sin)>>16 into 25.7 positions, and the draw path divides those
+// by 128 (`if (p<0) p+=127; p>>=7`, +0x51B4 -> kernel 0x06010BF6), so
+// px/frame = units/256: 0.5/1.0/2.0/3.5 on top of the rank-driven base
+// u16[0x608EF30] = 4*rank. (Corrected 2026-08-31: the earlier /512 assumed
+// 24.8 positions. See FORMAT.md "Player weapons".)
 // Bit7 is an editor toggle with no traced play effect. Blast byte: bits0-2 /
 // bits4-6 = explosion anim A/B tick-hold via [8,7,6,5,4,3,2,1] (+0x25A98).
 export const BULLET_DAMAGE_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
