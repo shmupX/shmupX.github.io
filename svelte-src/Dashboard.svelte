@@ -185,6 +185,18 @@
     // on while the worker was coming up. emuState() builds plain arrays of plain
     // strings on purpose — a $state-backed array is not structured-cloneable.
     const state = emuState();
+    // With nothing installed and no worker anywhere, do not register one: a
+    // worker at scope "/" sits in front of every same-origin request on every
+    // page, and a visitor who never opted into a console gains nothing from it.
+    // Install registers it. A worker that already EXISTS still gets the empty
+    // state — that is how uninstalling the last core tells it to stop answering
+    // — whether or not it has claimed this page: a hard reload leaves the page
+    // uncontrolled while the registration stays active.
+    if (
+      !state.prefixes.length &&
+      !navigator.serviceWorker?.controller &&
+      !(await navigator.serviceWorker?.getRegistration())
+    ) return;
     const w = await emuWorker();
     if (!w) return;
     w.postMessage({ type: 'emu-state', state });
@@ -230,7 +242,12 @@
       emuInstalled = [...emuInstalled, id];
       persistEmus();
     }
-    const targets = [core.player, core.manifest, ...emuShared].filter(Boolean);
+    // A catalogue `shared` entry ending in "/" is a PREFIX for the worker to
+    // answer, not a file: the origin 404s it, and without a CORS header, so the
+    // worker's upstream fetch throws and the warm reads as a 504. Nothing to
+    // warm there. Same rule as ensurePs2Core in static/ps2-library.js.
+    const targets = [core.player, core.manifest, ...emuShared]
+      .filter((path) => path && !path.endsWith('/'));
     const set = (v) => (emuStatus = { ...emuStatus, [id]: v });
     set({ busy: true, step: 0, total: targets.length, err: '' });
     await pushEmuState();
@@ -286,10 +303,10 @@
     try { ps2Local = await listPs2Games(); } catch (_) { ps2Local = []; }
   }
 
-  // Boot: read the saved set, read the catalogue, register the worker and hand
-  // it the current state, then fill in the installed cores' shelves. Strictly
-  // sequential — a manifest read before the worker holds the prefixes would
-  // 404 against this origin.
+  // Boot: read the saved set, read the catalogue, hand the worker the current
+  // state (which registers it only when something is installed), then fill in
+  // the installed cores' shelves. Strictly sequential — a manifest read before
+  // the worker holds the prefixes would 404 against this origin.
   async function initEmulators() {
     refreshPs2Local();
     try {

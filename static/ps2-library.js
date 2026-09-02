@@ -342,14 +342,18 @@ const mb = (n) => (n / 1048576).toFixed(1) + ' MB';
  * (routes/api/build-artifact.ts), reporting progress as it arrives.
  *
  * READ THE STREAM, DO NOT CALL res.blob(). `.blob()` is the obvious one line
- * and it is the line that breaks. emu-sw.js registers at scope "/", so from the
- * moment any core is installed it controls this page and every same-origin GET
- * is a pass-through through the worker — and Chrome fails a ~40 MB
+ * and it is the line that broke. emu-sw.js registers at scope "/", and it used
+ * to answer every same-origin GET on the site — and Chrome fails a ~40 MB
  * worker-mediated body handed to `.blob()` outright, with the bare wording
  * "Failed to fetch". Reliably on the first requests after a page load, then
- * intermittently, which is why it reads as a flaky server rather than a fixed
- * rule. It is not the transfer: the same URL, in the same tab, in the same
- * second, delivers all 41,146,368 bytes through the body reader every time.
+ * intermittently, which is why it read as a flaky server rather than a fixed
+ * rule. It was never the transfer: the same URL, in the same tab, in the same
+ * second, delivered all 41,146,368 bytes through the body reader every time.
+ *
+ * The worker no longer touches this path at all — /api/… is outside its
+ * MIRRORABLE set, so it is left to the browser whether or not a core is
+ * installed. The stream stays anyway, so a later change to what the worker
+ * claims cannot quietly bring the failure back.
  *
  * So the bytes are collected here and the Blob is built locally. That also
  * gives this a count, which is what lets a genuinely broken transfer say how
