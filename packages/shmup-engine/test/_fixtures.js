@@ -59,12 +59,23 @@ function readIfPresent(url) {
   }
 }
 
+const discCache = new Map();
+
 /**
- * SNDPAC.BIN bytes, or null when there is nothing local to read. Tests gate on
- * this so the suite stays green on a checkout without the disc.
+ * A named file off the disc, or null when there is nothing local to read:
+ * the given candidate copies first, then dev-fixtures/.cache/<name>, a bare
+ * dev-fixtures/<name>, then every disc image in dev-fixtures/. Tests gate on
+ * this so the suite stays green on a checkout without the disc. Disc images
+ * are opened once per process — the scan reads 7 MB files.
  */
-export function loadSoundBank() {
-  for (const url of BANK_CANDIDATES) {
+export function loadDiscFile(name, candidates = []) {
+  for (
+    const url of [
+      ...candidates,
+      new URL(`.cache/${name}`, DEV_FIXTURES),
+      new URL(name, DEV_FIXTURES),
+    ]
+  ) {
     const bytes = readIfPresent(url);
     if (bytes) return bytes;
   }
@@ -78,15 +89,30 @@ export function loadSoundBank() {
     if (!entry.isFile) continue;
     const lower = entry.name.toLowerCase();
     if (!DISC_EXTENSIONS.some((ext) => lower.endsWith(ext))) continue;
-    const image = readIfPresent(
-      new URL(encodeURIComponent(entry.name), DEV_FIXTURES),
-    );
-    if (!image) continue;
-    const disc = openDisc(image);
-    const found = disc && readFile(disc, "SNDPAC.BIN");
+    let disc = discCache.get(entry.name);
+    if (disc === undefined) {
+      const image = readIfPresent(
+        new URL(encodeURIComponent(entry.name), DEV_FIXTURES),
+      );
+      disc = image ? openDisc(image) : null;
+      discCache.set(entry.name, disc);
+    }
+    const found = disc && readFile(disc, name);
     if (found) return found;
   }
   return null;
+}
+
+const discProbe = new Map();
+/** True when loadDiscFile(name) will return bytes. Cached per name. */
+export function hasDiscFile(name) {
+  if (!discProbe.has(name)) discProbe.set(name, loadDiscFile(name) !== null);
+  return discProbe.get(name);
+}
+
+/** SNDPAC.BIN bytes, or null (see loadDiscFile). */
+export function loadSoundBank() {
+  return loadDiscFile("SNDPAC.BIN", BANK_CANDIDATES);
 }
 
 let bankProbe;
@@ -94,4 +120,29 @@ let bankProbe;
 export function hasSoundBank() {
   if (bankProbe === undefined) bankProbe = loadSoundBank();
   return bankProbe !== null;
+}
+
+// --- Saves that live in dev-fixtures/ rather than fixtures/ ----------------
+//
+// The community collection (and the disc's own sample games) sit in the
+// repo-root dev-fixtures/, also gitignored. Tests that want one of those —
+// DAIOH's six models, say — gate the same way.
+
+export function devFixtureUrl(name) {
+  return new URL(encodeURIComponent(name), DEV_FIXTURES);
+}
+
+export function hasDevFixtures(...names) {
+  return names.every((name) => {
+    try {
+      Deno.statSync(devFixtureUrl(name));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function loadDevFixture(name) {
+  return Deno.readFileSync(devFixtureUrl(name));
 }

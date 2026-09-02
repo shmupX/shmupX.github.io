@@ -2,11 +2,16 @@
 // known region size — the sizes being identical across two DIFFERENT games is
 // the smoking-gun proof that the LZSS variant is correct.
 
-import { assert, assertEquals, assertStrictEquals } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import { deinterleave } from "../src/bup-deinterleave.js";
 import * as bup from "../src/bup-parse.js";
 import { isGameSave, parseSectionTable } from "../src/payload-table.js";
-import { decompress, SECTION_SIZES } from "../src/decompress.js";
+import { decompress, decompressCmp, SECTION_SIZES } from "../src/decompress.js";
 import { hasFixtures, loadFixture } from "./_fixtures.js";
 
 function sectionsOf(name) {
@@ -72,4 +77,19 @@ Deno.test({
       0xde,
     ]);
   },
+});
+
+// --- .CMP disc files: a u32le stream length, then the same LZSS -----------
+
+Deno.test("decompressCmp honours the length header and rejects a short file", () => {
+  // flag 0xff = eight literals
+  const stream = [0xff, 1, 2, 3, 4, 5, 6, 7, 8];
+  const cmp = new Uint8Array([stream.length, 0, 0, 0, ...stream, 0xee, 0xee]);
+  assertEquals(Array.from(decompressCmp(cmp)), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assertThrows(
+    () => decompressCmp(new Uint8Array([20, 0, 0, 0, ...stream])),
+    Error,
+    "header says",
+  );
+  assertThrows(() => decompressCmp(new Uint8Array([1, 0])), Error);
 });

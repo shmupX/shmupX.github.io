@@ -1,10 +1,12 @@
 // sec7 3D-model decoder: the ポリ吉 part compositions.
-import { assert, assertStrictEquals } from "@std/assert";
+import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { normalize } from "../src/bup-source.js";
 import * as bup from "../src/bup-parse.js";
 import { decodeSave } from "../src/decode/index.js";
 import {
   decodeModels,
+  FAMILY_FILE_RANGES,
+  FAMILY_MESH_COUNTS,
   MODEL_SLOTS,
   SEC7_MAGIC,
 } from "../src/decode/decode-model.js";
@@ -51,6 +53,9 @@ Deno.test("decodeModels reads a part record's every field", () => {
   assertStrictEquals(p.shape, 0x1222);
   assertStrictEquals(p.shapeFamily, 1);
   assertStrictEquals(p.shapeVariant, 0x222);
+  assertStrictEquals(p.colorSet, 2);
+  assertStrictEquals(p.meshIndex, 0x22);
+  assertStrictEquals(p.mirrored, true);
   assertStrictEquals(p.position.x, -36);
   assertStrictEquals(p.position.y, 20);
   assertStrictEquals(p.position.z, 0.5);
@@ -60,6 +65,24 @@ Deno.test("decodeModels reads a part record's every field", () => {
   assertStrictEquals(p.scale.x, 2);
   assertStrictEquals(p.scale.y, -1); // negative = mirror
   assertStrictEquals(p.scale.z, 1);
+});
+
+Deno.test("the shape word splits into family, colour set and mesh index", () => {
+  const sec7 = emptySec7();
+  const v = new DataView(sec7.buffer);
+  v.setUint16(4, 1);
+  v.setUint16(4 + 4, 0x5200); // DAIOH's frame bars: cube, colour set 2
+  v.setInt32(4 + 4 + 0x18, 65536);
+  v.setInt32(4 + 4 + 0x1c, 65536);
+  v.setInt32(4 + 4 + 0x20, 65536);
+  const p = decodeModels(sec7).models[0].parts[0];
+  assertStrictEquals(p.shapeFamily, 5);
+  assertStrictEquals(p.colorSet, 2);
+  assertStrictEquals(p.meshIndex, 0);
+  assertStrictEquals(p.mirrored, false);
+  assertEquals(FAMILY_MESH_COUNTS, [32, 72, 36, 36, 36, 12]);
+  assertStrictEquals(FAMILY_FILE_RANGES.length, 6);
+  assertEquals(FAMILY_FILE_RANGES[5], [54, 56]);
 });
 
 Deno.test("decodeModels rejects an uninitialized section", () => {
@@ -79,6 +102,10 @@ Deno.test({
     assertStrictEquals(model.slot, 0);
     assertStrictEquals(model.parts.length, 1);
     assertStrictEquals(model.parts[0].shape, 0x5005);
+    // family 5 index 5: the flatter wedge of MDLDT_55, in colour set 0
+    assertStrictEquals(model.parts[0].shapeFamily, 5);
+    assertStrictEquals(model.parts[0].colorSet, 0);
+    assertStrictEquals(model.parts[0].meshIndex, 5);
     assertStrictEquals(model.parts[0].position.y, -20);
   },
 });

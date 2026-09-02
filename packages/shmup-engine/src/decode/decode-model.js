@@ -16,8 +16,7 @@
 // parts carry zero in both pad words; the other two put a Z rotation where a
 // misaligned read would see a pad, which is what pinned the layout):
 //
-//   +0x00  u16be shape descriptor (primitive family + variant; the mesh data
-//          itself is engine-fixed inside the POLYKITI overlay, not the save)
+//   +0x00  u16be shape word — see below
 //   +0x02  u16be pad (0 in the corpus)
 //   +0x04  s32be x, y, z position, 16.16 fixed point (model units)
 //   +0x10  u16be rotX, rotY, rotZ — full circle = 65536 (0x1999 = 36 deg)
@@ -25,10 +24,36 @@
 //   +0x18  s32be scaleX, scaleY, scaleZ, signed 16.16 — negative mirrors
 //          that axis (0x10000 = x1.0)
 //
-// The models are the 3D editor's user-built part compositions. They never
-// affect play directly — ポリ吉 renders a composition into CG cells, and the
-// game only ever draws those cells — so this decoder serves viewers and
-// re-export tooling, not the runtime.
+// The shape word (decoded 2026-09-02 from 2,814 parts across 77 saves, and
+// from the disc's MDLDT_01-56.CMP part library):
+//
+//   bits 12-14  family     0-5, the six part pages of the ポリ吉 editor
+//   bits  8-9   colour set 0-2, which of a mesh's three colour tables to use
+//   bits  0-6   mesh index into the family's slice of the 224-mesh library
+//   bits 7, 10, 11, 15 are never set in the corpus; bits 8-9 never hold 3.
+//
+// The meshes themselves are NOT in the save: MDLDT_01-56.CMP on the disc are
+// the part library POLYKITI loads by name (its literal pool lists them all),
+// 56 files x 4 meshes, each mesh stored as three SGL PDATA copies that share
+// vertices and polygons and differ only in the per-polygon colour table.
+// The per-family index maxima observed in the corpus (30, 71, 35, 35, 34, 10)
+// round up to whole files as 32+72+36+36+36+12 = 224 exactly, which fixes the
+// slice sizes; family 4 (all flat 43x70x10 plates) and family 5 (cube,
+// sphere, wedge, hex prism, cylinder) are pinned to MDLDT_45-53 and 54-56 by
+// their content, the ascending order of families 0-3 is assumed. DAIOH's
+// picture-frame model uses 0x5000 and 0x5200 for the same cube in two
+// colours, which is what pinned the colour-set field.
+//
+// See src/model/mesh-library.js for the library index and
+// src/model/decode-mdldt.js for the mesh reader.
+//
+// The per-MODEL u16 colour is not a part colour — every polygon carries its
+// own colour in the library — and its meaning is still open; carry it as
+// data and show it as a label.
+//
+// The models never affect play directly — ポリ吉 renders a composition into
+// CG cells, and the game only ever draws those cells — so this decoder
+// serves viewers and re-export tooling, not the runtime.
 //
 // Environment-neutral ESM (Node + browser).
 
@@ -38,37 +63,56 @@ export const MODEL_SLOT_SIZE = 328;
 export const MAX_PARTS = 9;
 const PART_SIZE = 36;
 
+/** The six part pages of the ポリ吉 editor. */
+export const SHAPE_FAMILIES = 6;
+/** Meshes per family in the 224-mesh MDLDT library (forced by corpus maxima). */
+export const FAMILY_MESH_COUNTS = [32, 72, 36, 36, 36, 12];
+/** MDLDT_NN.CMP file ranges per family, 1-based, inclusive (4 meshes/file). */
+export const FAMILY_FILE_RANGES = [
+    [1, 8],
+    [9, 26],
+    [27, 35],
+    [36, 44],
+    [45, 53],
+    [54, 56],
+];
+
 const u16 = (b, o) => (b[o] << 8) | b[o + 1];
 const s32 = (b, o) =>
     (((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) | 0);
 
 function decodePart(bytes, off) {
     const shape = u16(bytes, off);
+    const scale = {
+        x: s32(bytes, off + 0x18) / 65536,
+        y: s32(bytes, off + 0x1c) / 65536,
+        z: s32(bytes, off + 0x20) / 65536,
+    };
     return {
         shape,
-        // Observed families across the disc corpus: 0x0-0x5 in the high
-        // nibble with variant bits below. Which family is which primitive
-        // (cube/cylinder/cone/sphere/plane) awaits a POLYKITI mesh trace, so
-        // the split is carried as data, not names.
         shapeFamily: (shape >> 12) & 0xf,
+        // Kept for compatibility: the low 12 bits as one number. The two
+        // fields below are its decoded halves.
         shapeVariant: shape & 0xfff,
+        colorSet: (shape >> 8) & 3,
+        meshIndex: shape & 0x7f,
         position: {
             x: s32(bytes, off + 0x04) / 65536,
             y: s32(bytes, off + 0x08) / 65536,
             z: s32(bytes, off + 0x0c) / 65536,
         },
-        // degrees, engine-stored as a u16 circle (65536 = 360)
+        // degrees, engine-stored as a u16 circle (65536 = 360). The editor
+        // steps rotations by 18 degrees (65536/20) and stores them with a
+        // rounding drift of one or two raw units — round, never compare.
         rotation: {
             x: (u16(bytes, off + 0x10) * 360) / 65536,
             y: (u16(bytes, off + 0x12) * 360) / 65536,
             z: (u16(bytes, off + 0x14) * 360) / 65536,
         },
-        // x1.0 = 1; a negative scale mirrors its axis
-        scale: {
-            x: s32(bytes, off + 0x18) / 65536,
-            y: s32(bytes, off + 0x1c) / 65536,
-            z: s32(bytes, off + 0x20) / 65536,
-        },
+        // x1.0 = 1; a negative scale mirrors its axis (the editor almost
+        // always mirrors Y)
+        scale,
+        mirrored: scale.x * scale.y * scale.z < 0,
     };
 }
 
@@ -90,7 +134,8 @@ export function decodeModels(sec7) {
         }
         models.push({
             slot,
-            // RGB555 like the palette bank (R bits 0-4, G 5-9, B 10-14)
+            // RGB555 like the palette bank (R bits 0-4, G 5-9, B 10-14) —
+            // the model's own colour word, meaning open (not a part colour)
             color: u16(sec7, base + 2),
             parts,
         });

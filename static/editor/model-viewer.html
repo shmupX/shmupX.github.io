@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Model Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <style>
+        @font-face {
+            font-family: 'Orbitron';
+            src: url('assets/fonts/Orbitron-Variable.woff2') format('woff2'),
+                 url('assets/fonts/Orbitron-Variable.ttf') format('truetype');
+            font-weight: 400 900;
+            font-style: normal;
+            font-display: swap;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { margin: 0; padding: 0; background: #000; }
+        body { color: #fff; font-family: 'Orbitron', system-ui, -apple-system, sans-serif; overflow: hidden; }
+        button, select { font-family: inherit; }
+        .hidden { display: none !important; }
+        .mono { font-family: 'Share Tech Mono', monospace; }
+
+        @keyframes fadeIn { from { opacity: 0; } }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(140,255,110,.28); border-radius: 3px; }
+
+        #app { position: fixed; inset: 0; overflow: hidden; background: #000; color: #fff; }
+        #bg { position: absolute; inset: 0; background: var(--pagebg); transition: background .3s; }
+        #col { position: absolute; inset: 0; display: flex; flex-direction: column; }
+
+        /* ===== STATUS ROW (boss-viewer.html) ===== */
+        #statusbar {
+            flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            padding: calc(12px + env(safe-area-inset-top, 0px)) 14px 6px;
+            font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .18em; color: var(--mono);
+        }
+        .status-left { display: flex; align-items: center; gap: 7px; }
+        .status-right { display: flex; align-items: center; gap: 12px; }
+        .dot { border-radius: 50%; background: var(--dot); box-shadow: 0 0 8px var(--dot); }
+        .dot7 { width: 7px; height: 7px; }
+        #lib-badge { color: var(--sel); text-shadow: 0 0 8px var(--selglow); }
+        #lib-badge.placeholder { color: var(--rsub); text-shadow: none; }
+        .top-link { color: var(--mono); text-decoration: none; }
+        #clock { color: var(--monodim); }
+        .seg { display: flex; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; }
+        .seg button {
+            border: none; cursor: pointer; padding: 4px 8px;
+            font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em;
+            background: transparent; color: var(--mono);
+        }
+        .seg button.on { background: var(--sel); color: #111; }
+        body.theme-nintendo .seg button.on { color: #fff; }
+
+        /* ===== BANNER ===== */
+        #banner {
+            flex-shrink: 0; margin-top: 6px; height: 44px; display: flex; align-items: center;
+            background: var(--banbg); border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge);
+            clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%);
+        }
+        .banner-title {
+            flex: 1; text-align: center; font-size: 17px; font-weight: 800; letter-spacing: .32em;
+            color: var(--ink); text-shadow: 0 0 14px var(--tglow); padding-left: 12px;
+        }
+        #banner-sub { font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: .14em; color: var(--rsub); padding-right: 34px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%; }
+
+        /* ===== SLOT CHIPS ===== */
+        #slot-bar {
+            flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 8px;
+            padding: 8px max(8px, env(safe-area-inset-right, 0px)) 2px max(8px, env(safe-area-inset-left, 0px));
+            overflow: auto; flex-wrap: wrap; max-height: 84px;
+        }
+        .chip {
+            height: 30px; padding: 0 13px; border-radius: 15px; cursor: pointer; white-space: nowrap;
+            text-transform: uppercase; letter-spacing: .08em; font-family: 'Orbitron', sans-serif;
+            font-size: 10px; font-weight: 800; transition: all .15s;
+            border: 2px solid var(--redge); color: var(--rink); background: var(--btnbg); box-shadow: none;
+            display: inline-flex; align-items: center; gap: 8px;
+        }
+        .chip .sw { width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(0,0,0,.5); }
+        .chip.active { border-color: var(--sel); color: var(--sel); background: var(--btnactive); box-shadow: 0 0 16px var(--selglow); }
+        .chip.small { height: 26px; padding: 0 10px; font-size: 9px; font-family: 'Share Tech Mono', monospace; letter-spacing: .12em; font-weight: 400; }
+        .chip.on { border-color: var(--sel); color: var(--sel); }
+
+        /* ===== STAGE ===== */
+        /* The stage keeps the room: in a short window (the desktop's 980x660
+           frame, a phone) the part list gives way, not the model. */
+        #stage { flex: 1 1 auto; min-height: 190px; position: relative; overflow: hidden; touch-action: none; cursor: grab; }
+        #stage.dragging { cursor: grabbing; }
+        #stage canvas { position: absolute; left: 0; top: 0; display: block; }
+        #stage-info, #frame-info {
+            position: absolute; bottom: 8px; font-size: 10px; color: var(--rsub);
+            font-family: 'Share Tech Mono', monospace; pointer-events: none; letter-spacing: .1em;
+        }
+        #stage-info { left: 12px; }
+        #frame-info { right: 12px; }
+        @media (max-width: 900px) { #frame-info { bottom: 24px; } }
+        #empty {
+            position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+            text-align: center; padding: 20px; pointer-events: none;
+            font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: .16em; line-height: 1.9; color: var(--rsub);
+        }
+        #empty b { color: var(--ink); font-size: 13px; letter-spacing: .3em; }
+        body.dragover #stage { outline: 2px dashed var(--sel); outline-offset: -8px; }
+
+        /* ===== OPTIONS + PARTS ===== */
+        #bottom {
+            flex-shrink: 0; border-top: 1px solid var(--edge);
+            padding: 8px max(10px, env(safe-area-inset-right, 0px)) max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+            display: flex; flex-direction: column; gap: 7px; max-height: 34vh; min-height: 0;
+        }
+        #options { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; align-items: center; }
+        #options select {
+            background: rgba(0,0,0,.5); color: var(--bink); border: 1px solid var(--redge); border-radius: 8px;
+            padding: 5px 9px; font-size: 9px; letter-spacing: .1em; font-family: 'Share Tech Mono', monospace; cursor: pointer; height: 26px;
+        }
+        #options select option { background: #04180a; color: var(--rink); }
+        body.theme-nintendo #options select option { background: #10182a; }
+        #parts {
+            flex: 0 1 auto; min-height: 0;
+            overflow-y: auto; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--redge) transparent;
+            font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .06em; line-height: 1.8; color: var(--rink);
+        }
+        #parts table { border-collapse: collapse; margin: 0 auto; }
+        #parts td { padding: 0 8px; white-space: nowrap; }
+        #parts td.dim { color: var(--rsub); }
+        #parts tr.placeholder td { color: var(--rsub); font-style: italic; }
+        #parts .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: middle; margin-right: 6px; border: 1px solid rgba(0,0,0,.5); }
+        #notice { text-align: center; font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .12em; color: var(--rsub); }
+        #notice b { color: var(--sel); font-weight: 400; }
+
+        /* ===== FX OVERLAYS ===== */
+        #fx-scanlines {
+            position: absolute; inset: 0; pointer-events: none; z-index: 50;
+            background: repeating-linear-gradient(180deg, var(--scan) 0 1px, transparent 1px 3px);
+            mix-blend-mode: screen;
+        }
+        #vignette {
+            position: absolute; inset: 0; pointer-events: none; z-index: 51;
+            background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.8) 100%);
+        }
+        #flash {
+            position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); z-index: 300;
+            font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .16em;
+            color: var(--sel); background: rgba(0,0,0,.75); border: 1px solid var(--edge);
+            border-radius: 8px; padding: 8px 16px; white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="bg"></div>
+        <div id="col">
+            <div id="statusbar">
+                <div class="status-left">
+                    <span class="dot dot7"></span>
+                    <span>MODEL VIEWER // MV</span>
+                    <span id="lib-badge" class="hidden"></span>
+                </div>
+                <div class="status-right">
+                    <a id="nav-editor" class="top-link" href="index.html">LEVEL EDITOR</a>
+                    <a id="nav-play" class="top-link" href="/games/2028-ai">PLAY GAME</a>
+                    <div class="seg">
+                        <button id="seg-xbox">XBOX</button>
+                        <button id="seg-nintendo">NINTENDO</button>
+                    </div>
+                    <span id="clock"></span>
+                </div>
+            </div>
+            <div id="banner">
+                <div class="banner-title">MODEL VIEWER</div>
+                <div id="banner-sub"></div>
+            </div>
+            <div id="slot-bar"></div>
+            <div id="stage">
+                <div id="empty">
+                    <b>NO MODELS</b>
+                    <span id="empty-text">IMPORT A .SAV IN THE LEVEL EDITOR AND PRESS VIEW 3D<br>OR DROP A DEZAEMON 2 .SAV HERE</span>
+                </div>
+                <div id="stage-info"></div>
+                <div id="frame-info"></div>
+            </div>
+            <div id="bottom">
+                <div id="options">
+                    <div class="seg" title="Model +Y is up on screen (DAIOH's ship matches its own sprite with no flip); Y DOWN is the opposite reading">
+                        <button id="y-down">Y DOWN</button>
+                        <button id="y-up">Y UP</button>
+                    </div>
+                    <select id="rot-order" title="Rotation order (first letter first) — untraced, so it is switchable"></select>
+                    <button id="opt-snap" class="chip small on" title="Snap rotations to the editor's 18° steps">SNAP 18°</button>
+                    <button id="opt-wire" class="chip small">WIRE</button>
+                    <button id="opt-spin" class="chip small on">SPIN</button>
+                    <button id="opt-reset" class="chip small">RESET VIEW</button>
+                </div>
+                <div id="parts"></div>
+                <div id="notice"></div>
+            </div>
+        </div>
+        <div id="fx-scanlines"></div>
+        <div id="vignette"></div>
+        <div id="flash" class="hidden"></div>
+    </div>
+
+    <!-- Phaser 4.2.1, the same build the game and the editor's voxel export use. Mesh2D is WebGL-only. -->
+    <script src="/games/2028-ai/lib/phaser.min.js"></script>
+    <script type="module">
+    (async function () {
+        'use strict';
+
+        const $ = id => document.getElementById(id);
+        const params = new URLSearchParams(window.location.search);
+
+        // Served from /editor/ like the boss viewer; ?game=<id> follows the
+        // editor's convention and only steers the nav links.
+        const GAME_ID = (params.get('game') || '2028-ai').replace(/[^a-zA-Z0-9_-]/g, '');
+        $('nav-editor').href = 'index.html?game=' + GAME_ID;
+        $('nav-play').href = '/games/' + GAME_ID;
+
+        // ================== THEMES (synced with the CMG launcher; boss-viewer.html) ==================
+        const THEMES = {
+            xbox: { pagebg: 'radial-gradient(ellipse 80% 60% at 38% 55%, rgba(20,90,40,.45), transparent 70%), radial-gradient(ellipse 60% 70% at 50% 50%, rgba(8,40,18,.85), #000 80%), #000', banbg: 'linear-gradient(180deg, rgba(70,180,90,.18), rgba(20,60,30,.7) 50%, rgba(20,60,30,.7) 50%, rgba(70,180,90,.05))', edge: 'rgba(140,255,110,.35)', ink: '#d9ffcb', tglow: 'rgba(124,255,79,.8)', mono: 'rgba(156,255,107,.65)', monodim: 'rgba(220,255,180,.45)', sel: '#F6FF4A', selglow: 'rgba(246,255,74,.55)', dot: '#7CFF4F', rbg: 'rgba(4,24,10,.6)', redge: 'rgba(140,255,110,.28)', rink: '#d6ffc4', rsub: 'rgba(220,255,180,.55)', btnbg: 'radial-gradient(circle at 35% 30%, rgba(40,90,45,.5), rgba(6,30,12,.95) 70%)', btnactive: 'radial-gradient(circle at 35% 30%, rgba(60,120,60,.9), rgba(6,30,12,.95) 70%)', bink: '#9CFF6B', scan: 'rgba(0,255,120,.035)', sheet1: 'rgba(24,64,32,.97)', sheet2: 'rgba(4,18,8,.98)', shedge: 'rgba(246,255,74,.65)', orbA: 'radial-gradient(circle at 35% 30%, #d6ffd0 0%, #6fd06f 25%, #0e6a2b 60%, #04240f 95%)', orbAe: 'rgba(140,255,110,.6)', orbAi: '#04240f', orbB: 'radial-gradient(circle at 35% 30%, #fdf6b0 0%, #cfc23e 30%, #6a6410 65%, #201d02 100%)', orbBe: 'rgba(246,255,74,.5)', orbBi: '#161300', ov1: 'rgba(60,54,8,.55)', ov2: 'rgba(24,22,4,.65)' },
+            nintendo: { pagebg: 'radial-gradient(ellipse 80% 55% at 40% 45%, rgba(228,0,15,.1), transparent 70%), #0d0f1a', banbg: 'linear-gradient(180deg, rgba(139,160,194,.1), rgba(15,22,34,.85) 35%, rgba(15,22,34,.85) 65%, rgba(139,160,194,.08))', edge: 'rgba(213,213,216,.3)', ink: '#e9ecf1', tglow: 'rgba(255,59,73,.7)', mono: 'rgba(139,160,194,.8)', monodim: 'rgba(139,160,194,.55)', sel: '#ff5b66', selglow: 'rgba(228,0,15,.5)', dot: '#ff3b49', rbg: '#0f1622', redge: '#2a3850', rink: '#e9ecf1', rsub: 'rgba(139,160,194,.7)', btnbg: 'radial-gradient(circle at 35% 30%, rgba(49,58,78,.5), rgba(12,16,26,.95) 70%)', btnactive: 'radial-gradient(circle at 35% 30%, rgba(90,20,26,.9), rgba(20,8,12,.95) 70%)', bink: '#e9ecf1', scan: 'rgba(255,70,84,.03)', sheet1: 'rgba(31,42,60,.97)', sheet2: 'rgba(10,13,22,.98)', shedge: 'rgba(255,91,102,.7)', orbA: 'radial-gradient(circle at 35% 30%, #ffd9db 0%, #ff6b76 20%, #e4000f 50%, #4a0308 85%)', orbAe: 'rgba(255,140,148,.75)', orbAi: '#fff', orbB: 'radial-gradient(circle at 35% 30%, #fff 0%, #d5d5d8 25%, #88848b 60%, #2f2f2f 95%)', orbBe: 'rgba(213,213,216,.75)', orbBi: '#e4000f', ov1: 'rgba(74,3,8,.55)', ov2: 'rgba(36,1,4,.65)' }
+        };
+        let theme = 'xbox';
+        function launcherTweaks() {
+            try { return JSON.parse(localStorage.getItem('cmg-tweaks') || '{}'); } catch (e) { return {}; }
+        }
+        function applyTheme(t) {
+            theme = t === 'nintendo' ? 'nintendo' : 'xbox';
+            const T = THEMES[theme];
+            for (const k in T) document.body.style.setProperty('--' + k, T[k]);
+            document.body.classList.toggle('theme-nintendo', theme === 'nintendo');
+            $('seg-xbox').classList.toggle('on', theme !== 'nintendo');
+            $('seg-nintendo').classList.toggle('on', theme === 'nintendo');
+        }
+        function setTheme(t) {
+            applyTheme(t);
+            try {
+                localStorage.setItem('cmg-theme', theme);
+                localStorage.setItem('__editorTheme__', theme); // legacy key
+            } catch (e) {}
+            try { if (window.parent !== window) window.parent.postMessage({ type: 'cmg-theme', theme: theme }, '*'); } catch (e) {}
+            flash(theme === 'nintendo' ? 'THEME: NINTENDO RED · LAUNCHER SYNCED' : 'THEME: XBOX GREEN · LAUNCHER SYNCED');
+        }
+        $('seg-xbox').onclick = () => setTheme('xbox');
+        $('seg-nintendo').onclick = () => setTheme('nintendo');
+        try {
+            const tw = launcherTweaks();
+            const t = localStorage.getItem('cmg-theme') || localStorage.getItem('__editorTheme__') || tw.theme || 'xbox';
+            applyTheme(t);
+            const s = localStorage.getItem('cmg-scanlines');
+            const scanOn = s !== null ? s === '1' : tw.scanlines !== false;
+            $('fx-scanlines').style.display = scanOn ? '' : 'none';
+        } catch (e) { applyTheme('xbox'); }
+
+        // ================== CLOCK / FLASH ==================
+        function now() {
+            const d = new Date(), p = n => String(n).padStart(2, '0');
+            return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+        }
+        function tickClock() { $('clock').textContent = now(); }
+        tickClock();
+        setInterval(tickClock, 1000);
+
+        let flashTimer = null;
+        function flash(msg, ms) {
+            const el = $('flash');
+            el.textContent = msg;
+            el.classList.remove('hidden');
+            clearTimeout(flashTimer);
+            flashTimer = setTimeout(() => el.classList.add('hidden'), ms || 2200);
+        }
+        function fatal(msg) {
+            $('empty').classList.remove('hidden');
+            $('empty').querySelector('b').textContent = 'ERROR';
+            $('empty-text').textContent = msg;
+            flash(msg, 8000);
+        }
+
+        // ================== ENGINE (the same bundle the level editor binds as window.Dezaemon) ==================
+        let D = null;
+        try {
+            D = await import('/engine/shmup-engine.js');
+        } catch (e) {
+            fatal('ENGINE FAILED TO LOAD — ' + (e && e.message));
+            return;
+        }
+        if (typeof D.buildModelMesh !== 'function' || typeof D.packMesh2D !== 'function') {
+            fatal('ENGINE BUNDLE STALE — run deno task engine:bundle');
+            return;
+        }
+        if (typeof Phaser === 'undefined') {
+            fatal('PHASER FAILED TO LOAD');
+            return;
+        }
+
+        // ================== THE PART LIBRARY ==================
+        // The disc's 224 meshes, shipped as JSON (deno task deza:meshlib).
+        // Without it the engine's placeholders stand in: family 5's
+        // primitives regenerated, boxes for the rest.
+        let library = null;
+        try {
+            // Default caching, not force-cache: the library is regenerated by
+            // `deno task deza:meshlib` and a forced cache would keep serving
+            // the old one until it expired.
+            const r = await fetch('/editor/dezaemon/mesh-library.json');
+            if (r.ok) library = D.meshLibraryFromJson(await r.json());
+        } catch (e) { library = null; }
+        if (!library) library = D.placeholderLibrary();
+        const realLibrary = library.source === 'mdldt';
+        const lib = $('lib-badge');
+        lib.textContent = realLibrary ? '· PART LIBRARY · 224 MESHES' : '· PLACEHOLDER GEOMETRY';
+        lib.classList.toggle('placeholder', !realLibrary);
+        lib.classList.remove('hidden');
+
+        // ================== STATE ==================
+        const state = {
+            title: '', fileName: '', from: '',
+            models: [],        // decoded sec7 models: { slot, color, parts }
+            slot: -1,          // index into models
+            yDown: false,
+            rotOrder: D.ROTATION_ORDER,
+            quantize: true,
+            wire: false,
+            spin: true,
+            yaw: 35, pitch: 25, distance: 200, target: [0, 0, 0],
+            radius: 60,
+        };
+        let modelMesh = null, frame = null, table = null;
+        const packed = { vertices: [], indices: [] };
+        let segments = [];
+        let lastVisible = 0, frameMs = 0;
+
+        // ================== DATA SOURCES ==================
+        async function decodeBytes(u8) {
+            const { data } = await D.normalize(u8);
+            const save = D.parse(data).find(s => D.isGameSave(s) && s.payload);
+            if (!save) throw new Error('no game save in this file');
+            const decoded = D.decodeSave(save.payload.buffer);
+            return {
+                title: decoded.title || '',
+                models: decoded.models ? decoded.models.models : [],
+                neverOpened: decoded.models === null,
+                error: decoded.modelError || null,
+            };
+        }
+        function readBridge() {
+            try {
+                const raw = sessionStorage.getItem('editorDezaModels');
+                if (!raw) return null;
+                const p = JSON.parse(raw);
+                if (!p || !Array.isArray(p.models)) return null;
+                return { title: p.title || '', fileName: p.fileName || '', models: p.models, from: 'EDITOR', neverOpened: p.neverOpened === true, slot: p.slot };
+            } catch (e) { return null; }
+        }
+        // The editor also files the last hand-off in IndexedDB so a viewer
+        // window restored after a reload (the desktop persists it) is not empty.
+        function readDurableBridge() {
+            return new Promise(resolve => {
+                let req;
+                try { req = indexedDB.open('editorViewerBridge'); } catch (e) { resolve(null); return; }
+                req.onerror = () => resolve(null);
+                req.onupgradeneeded = () => { try { req.result.createObjectStore('assets'); } catch (e) {} };
+                req.onsuccess = () => {
+                    const db = req.result;
+                    if (!db.objectStoreNames.contains('assets')) { db.close(); resolve(null); return; }
+                    try {
+                        const get = db.transaction('assets', 'readonly').objectStore('assets').get('dezaModels');
+                        get.onsuccess = () => {
+                            const p = get.result;
+                            db.close();
+                            resolve(p && Array.isArray(p.models) ? { title: p.title || '', fileName: p.fileName || '', models: p.models, from: 'EDITOR (RESTORED)', neverOpened: p.neverOpened === true, slot: p.slot } : null);
+                        };
+                        get.onerror = () => { db.close(); resolve(null); };
+                    } catch (e) { db.close(); resolve(null); }
+                };
+            });
+        }
+        // DAIOH's picture frame: four bars and four posts of the same cube in
+        // two colour sets, over a backing plate. Lets the page be checked with
+        // no save at all (?demo=1).
+        function demoModels() {
+            const part = (shape, x, y, z, sx, sy, sz) => ({
+                shape, shapeFamily: shape >> 12, shapeVariant: shape & 0xfff, colorSet: (shape >> 8) & 3, meshIndex: shape & 0x7f,
+                position: { x, y, z }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: sx, y: sy, z: sz }, mirrored: false,
+            });
+            return [{
+                slot: 1, color: 0x6f18, parts: [
+                    part(0x5200, 36, 0, 0, 0.36, 1.64, 1.32), part(0x5200, -36, 0, 0, 0.36, 1.64, 1.32),
+                    part(0x5200, 0, 36, 0, 1.64, 0.36, 1.32), part(0x5200, 0, -36, 0, 1.64, 0.36, 1.32),
+                    part(0x5000, 44, 44, 0, 0.36, 0.36, 2), part(0x5000, -44, 44, 0, 0.36, 0.36, 2),
+                    part(0x5000, 44, -44, 0, 0.36, 0.36, 2), part(0x5000, -44, -44, 0, 0.36, 0.36, 2),
+                    part(0x000c, 0, 0, -40, 1.32, 1.32, 2),
+                ],
+            }];
+        }
+        // An explicit URL wins over whatever the editor last handed over.
+        async function loadInitial() {
+            const sav = params.get('sav');
+            if (sav) {
+                const r = await fetch(sav);
+                if (!r.ok) throw new Error('could not fetch ' + sav + ' (' + r.status + ')');
+                const d = await decodeBytes(new Uint8Array(await r.arrayBuffer()));
+                return { ...d, fileName: sav.split('/').pop(), from: 'URL' };
+            }
+            if (params.get('demo') === '1') {
+                return { title: 'DAIOH FRAME (DEMO)', fileName: '', models: demoModels(), from: 'DEMO' };
+            }
+            return readBridge() || await readDurableBridge();
+        }
+
+        // ================== PHASER ==================
+        const stageEl = $('stage');
+        let game = null, S = null, mesh = null, swatchTex = null, fillG = null, wireG = null;
+        let mesh2dOk = false, ready = false, pendingSelect = null;
+        // Phaser.AUTO, never an explicit Phaser.WEBGL: CreateRenderer.js throws
+        // "Cannot create WebGL context, aborting." on an explicit request when
+        // the browser has no WebGL, and that throw would take the whole page
+        // down before any handler is installed. AUTO picks WebGL when it is
+        // there and falls back to Canvas when it is not, which is exactly the
+        // Mesh2D-or-Graphics split this page already handles.
+        let type = Phaser.AUTO;
+        if (params.get('canvas') === '1') type = Phaser.CANVAS;
+        function dpr() { return Math.min(window.devicePixelRatio || 1, 2); }
+        function stageSize() {
+            const r = stageEl.getBoundingClientRect();
+            return { w: Math.max(64, Math.floor(r.width)), h: Math.max(64, Math.floor(r.height)) };
+        }
+        function fitCanvas() {
+            if (!game || !game.canvas) return;
+            const { w, h } = stageSize();
+            const s = dpr();
+            try { game.scale.resize(Math.round(w * s), Math.round(h * s)); } catch (e) {}
+            game.canvas.style.width = w + 'px';
+            game.canvas.style.height = h + 'px';
+        }
+        const first = stageSize();
+        const gameConfig = {
+            type: type,
+            width: Math.round(first.w * dpr()),
+            height: Math.round(first.h * dpr()),
+            transparent: true,
+            pixelArt: false,
+            roundPixels: false,
+            antialias: true,
+            banner: false,
+            parent: 'stage',
+            scene: { create: create, update: update },
+            callbacks: { postBoot: function () { fitCanvas(); } },
+        };
+        try {
+            game = new Phaser.Game(gameConfig);
+        } catch (e) {
+            fatal('COULD NOT START THE RENDERER — ' + (e && e.message));
+            return;
+        }
+        globalThis.__PHASER_GAME__ = game;
+        window.addEventListener('resize', fitCanvas);
+        // #stage is a flex child: the slot chips and the part list change its
+        // height when data arrives, long after postBoot fitted the canvas once.
+        try { new ResizeObserver(() => fitCanvas()).observe(stageEl); } catch (e) {}
+
+        function create() {
+            S = this;
+            mesh2dOk = false;
+            try {
+                if (game.renderer && Phaser.WEBGL != null && game.renderer.type === Phaser.WEBGL && typeof this.add.mesh2d === 'function') {
+                    if (this.textures.exists('swatches')) this.textures.remove('swatches');
+                    swatchTex = this.textures.createCanvas('swatches', D.SWATCH_LAYOUT.texPx, D.SWATCH_LAYOUT.texPx);
+                    mesh = this.add.mesh2d(0, 0, 'swatches', [], []);
+                    mesh.setRenderAsTriangles(true);
+                    // A CanvasTexture reaches the GPU bottom-up (the renderer's
+                    // canvasToTexture flips Y), so raw UVs measured from the
+                    // canvas's top-left need V flipped or every cell samples
+                    // the unpainted bottom of the atlas — verified: without
+                    // this the mesh draws nothing at all.
+                    mesh.setFlipV(true);
+                    if (mesh.setVertexRoundMode) mesh.setVertexRoundMode('off');
+                    mesh.setDepth(10);
+                    mesh.setVisible(false);
+                    mesh2dOk = !!(swatchTex && mesh);
+                }
+            } catch (e) {
+                console.warn('Mesh2D unavailable:', e);
+                mesh2dOk = false;
+            }
+            fillG = this.add.graphics();
+            fillG.setDepth(5);
+            wireG = this.add.graphics();
+            wireG.setDepth(20);
+            if (!mesh2dOk) flash('CANVAS FALLBACK — MESH2D NEEDS WEBGL', 4000);
+            setupPointer();
+            try { game.canvas.addEventListener('webglcontextrestored', () => paintSwatches()); } catch (e) {}
+            ready = true;
+            if (pendingSelect !== null) { const s = pendingSelect; pendingSelect = null; selectSlot(s); }
+        }
+
+        function hex(c) { return '#' + ('000000' + (c >>> 0).toString(16)).slice(-6); }
+
+        function paintSwatches() {
+            if (!mesh2dOk || !table || !swatchTex) return;
+            const ctx = swatchTex.getContext();
+            const L = D.SWATCH_LAYOUT;
+            ctx.clearRect(0, 0, L.texPx, L.texPx);
+            for (let i = 0; i < table.colors.length; i++) {
+                for (let level = 0; level < D.SHADE_LEVELS; level++) {
+                    const r = D.swatchCellRect(D.swatchCell(i, level), L);
+                    ctx.fillStyle = hex(D.swatchRgb(table.colors[i], level));
+                    ctx.fillRect(r.x, r.y, r.w, r.h);
+                }
+            }
+            swatchTex.refresh();
+        }
+
+        function rebuild() {
+            if (state.slot < 0 || !state.models[state.slot]) { modelMesh = null; return; }
+            const model = state.models[state.slot];
+            modelMesh = D.buildModelMesh(model, { library: library, yDown: state.yDown, rotOrder: state.rotOrder, quantize: state.quantize });
+            frame = D.allocFrame(modelMesh);
+            table = D.buildSwatchTable(modelMesh);
+            state.target = modelMesh.bounds.center.slice();
+            state.radius = Math.max(20, modelMesh.bounds.radius);
+            paintSwatches();
+            renderParts();
+        }
+        function resetView() {
+            state.yaw = 35;
+            state.pitch = 25;
+            state.distance = state.radius * 2.6;
+        }
+        function selectSlot(i) {
+            if (!ready) { pendingSelect = i; return; }
+            state.slot = i;
+            rebuild();
+            resetView();
+            renderChips();
+            if (mesh) mesh.setVisible(!!modelMesh);
+            if (!modelMesh) {
+                if (fillG) fillG.clear();
+                if (wireG) wireG.clear();
+            }
+            $('empty').classList.toggle('hidden', !!modelMesh);
+        }
+
+        function update(time, delta) {
+            if (!modelMesh || !S) return;
+            const t0 = performance.now();
+            if (state.spin && !drag.active) state.yaw = (state.yaw + 0.25 * (delta / 16.7)) % 360;
+            const W = game.scale.width, H = game.scale.height;
+            const cam = D.orbitCamera({
+                yaw: state.yaw, pitch: state.pitch, distance: state.distance,
+                focal: H * 0.9, width: W, height: H, target: state.target,
+            });
+            const n = D.projectModel(modelMesh, cam, frame);
+            lastVisible = n;
+            if (mesh2dOk && !state.wire) {
+                D.packMesh2D(modelMesh, frame, table, D.SWATCH_LAYOUT, packed);
+                mesh.vertices = packed.vertices;
+                mesh.indices = packed.indices;
+                mesh.setVisible(n > 0);
+                fillG.clear();
+            } else {
+                if (mesh) mesh.setVisible(false);
+                fillG.clear();
+                if (!state.wire) {
+                    for (let r = 0; r < n; r++) {
+                        const t = frame.order[r];
+                        fillG.fillStyle(D.swatchRgb(table.colors[table.triColor[t]], frame.shade[t]), 1);
+                        fillG.fillTriangle(
+                            frame.xy[t * 6], frame.xy[t * 6 + 1],
+                            frame.xy[t * 6 + 2], frame.xy[t * 6 + 3],
+                            frame.xy[t * 6 + 4], frame.xy[t * 6 + 5],
+                        );
+                    }
+                }
+            }
+            wireG.clear();
+            if (state.wire) {
+                const sel = Phaser.Display.Color.HexStringToColor(THEMES[theme].sel).color;
+                wireG.lineStyle(Math.max(1, dpr()), sel, 0.9);
+                segments = D.wireframeSegments(modelMesh, frame, segments);
+                for (let i = 0; i < segments.length; i += 4) {
+                    wireG.lineBetween(segments[i], segments[i + 1], segments[i + 2], segments[i + 3]);
+                }
+            }
+            frameMs = frameMs * 0.9 + (performance.now() - t0) * 0.1;
+            $('stage-info').textContent = (modelMesh.triCount + ' TRIS · ' + n + ' VISIBLE · ' + (mesh2dOk && !state.wire ? 'MESH2D' : state.wire ? 'WIRE' : 'CANVAS'));
+            $('frame-info').textContent = 'YAW ' + Math.round(((state.yaw % 360) + 360) % 360) + '° · PITCH ' + Math.round(state.pitch) + '° · ' + frameMs.toFixed(2) + ' MS';
+        }
+
+        // ================== INPUT (pointer only, as boss-viewer.html) ==================
+        const drag = { active: false, id: null, x: 0, y: 0, pointers: new Map(), span: 0 };
+        function clampDistance() {
+            state.distance = Math.min(Math.max(state.distance, state.radius * 1.2 + D.NEAR + 1), state.radius * 8);
+        }
+        function setupPointer() {
+            const el = game.canvas;
+            el.addEventListener('pointerdown', e => {
+                el.setPointerCapture(e.pointerId);
+                drag.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                drag.active = true;
+                drag.x = e.clientX;
+                drag.y = e.clientY;
+                if (drag.pointers.size === 2) drag.span = pinchSpan();
+                stageEl.classList.add('dragging');
+                e.preventDefault();
+            });
+            el.addEventListener('pointermove', e => {
+                if (!drag.pointers.has(e.pointerId)) return;
+                drag.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                if (drag.pointers.size >= 2) {
+                    const span = pinchSpan();
+                    if (drag.span > 0 && span > 0) { state.distance *= drag.span / span; clampDistance(); }
+                    drag.span = span;
+                } else {
+                    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+                    drag.x = e.clientX;
+                    drag.y = e.clientY;
+                    state.yaw += dx * 0.5;
+                    state.pitch = Math.max(-89, Math.min(89, state.pitch + dy * 0.5));
+                }
+                e.preventDefault();
+            });
+            const release = e => {
+                drag.pointers.delete(e.pointerId);
+                if (drag.pointers.size < 2) drag.span = 0;
+                if (drag.pointers.size === 0) { drag.active = false; stageEl.classList.remove('dragging'); }
+                else { const p = [...drag.pointers.values()][0]; drag.x = p.x; drag.y = p.y; }
+            };
+            el.addEventListener('pointerup', release);
+            el.addEventListener('pointercancel', release);
+            el.addEventListener('wheel', e => {
+                state.distance *= e.deltaY > 0 ? 1.1 : 1 / 1.1;
+                clampDistance();
+                e.preventDefault();
+            }, { passive: false });
+        }
+        function pinchSpan() {
+            const p = [...drag.pointers.values()];
+            return p.length < 2 ? 0 : Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+        }
+
+        // ================== UI ==================
+        function renderChips() {
+            const bar = $('slot-bar');
+            bar.innerHTML = '';
+            state.models.forEach((m, i) => {
+                const b = document.createElement('button');
+                b.className = 'chip' + (i === state.slot ? ' active' : '');
+                const sw = document.createElement('span');
+                sw.className = 'sw';
+                sw.style.background = hex(D.rgb555ToHex(m.color));
+                sw.title = 'model colour word 0x' + m.color.toString(16) + ' (meaning open)';
+                b.appendChild(sw);
+                b.appendChild(document.createTextNode('SLOT ' + m.slot + ' · ' + m.parts.length + 'P'));
+                b.onclick = () => selectSlot(i);
+                bar.appendChild(b);
+            });
+        }
+        function fmt(n) { return (Math.round(n * 100) / 100).toString(); }
+        function renderParts() {
+            const host = $('parts');
+            host.innerHTML = '';
+            if (!modelMesh) return;
+            const table_ = document.createElement('table');
+            modelMesh.parts.forEach(info => {
+                const p = info.part;
+                const tr = document.createElement('tr');
+                if (info.source !== 'mdldt') tr.className = 'placeholder';
+                const rot = a => state.quantize ? D.quantizeRotation(a) : Math.round(a * 10) / 10;
+                const c = info.colorSet;
+                const cells = [
+                    '#' + (info.index + 1),
+                    'F' + info.family + ':' + String(info.meshIndex).padStart(2, '0') + ' · SET ' + c + (info.source !== 'mdldt' ? ' · PLACEHOLDER' : ''),
+                    'POS ' + fmt(p.position.x) + ', ' + fmt(p.position.y) + ', ' + fmt(p.position.z),
+                    'ROT ' + rot(p.rotation.x) + '°, ' + rot(p.rotation.y) + '°, ' + rot(p.rotation.z) + '°',
+                    'SCL ' + fmt(p.scale.x) + ', ' + fmt(p.scale.y) + ', ' + fmt(p.scale.z) + (p.mirrored ? ' · MIRROR' : ''),
+                ];
+                cells.forEach((text, k) => {
+                    const td = document.createElement('td');
+                    if (k === 0 || k >= 2) td.className = 'dim';
+                    if (k === 3) td.title = 'raw ' + fmt(p.rotation.x) + ', ' + fmt(p.rotation.y) + ', ' + fmt(p.rotation.z);
+                    if (k === 1) {
+                        const sw = document.createElement('span');
+                        sw.className = 'sw';
+                        sw.style.background = hex(modelMesh.colors[info.triStart] || 0);
+                        td.appendChild(sw);
+                    }
+                    td.appendChild(document.createTextNode(text));
+                    tr.appendChild(td);
+                });
+                table_.appendChild(tr);
+            });
+            host.appendChild(table_);
+        }
+        function renderNotice() {
+            const n = $('notice');
+            const conv = 'Y ' + (state.yDown ? 'DOWN' : 'UP') + ' · ROTATION ' + state.rotOrder.toUpperCase() + ' — Y UP verified against DAIOH\'s own ship sprite; the rotation order is not traced from POLYKITI';
+            n.innerHTML = (realLibrary
+                ? 'REAL PART LIBRARY (MDLDT_01–56) · PAINTER-SORTED, NO DEPTH BUFFER: INTERPENETRATING PARTS CAN POP · '
+                : '<b>PLACEHOLDER GEOMETRY</b> — mesh-library.json did not load; family 5 primitives regenerated, boxes for the rest · ')
+                + conv;
+        }
+        function setYDown(v) {
+            state.yDown = !!v;
+            $('y-down').classList.toggle('on', state.yDown);
+            $('y-up').classList.toggle('on', !state.yDown);
+            rebuild();
+            renderNotice();
+        }
+        $('y-down').onclick = () => setYDown(true);
+        $('y-up').onclick = () => setYDown(false);
+        const sel = $('rot-order');
+        D.ROT_ORDERS.forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o;
+            opt.textContent = 'ROT ' + o.toUpperCase();
+            sel.appendChild(opt);
+        });
+        sel.value = state.rotOrder;
+        sel.onchange = () => { state.rotOrder = sel.value; rebuild(); renderNotice(); };
+        $('opt-snap').onclick = () => { state.quantize = !state.quantize; $('opt-snap').classList.toggle('on', state.quantize); rebuild(); };
+        $('opt-wire').onclick = () => { state.wire = !state.wire; $('opt-wire').classList.toggle('on', state.wire); };
+        $('opt-spin').onclick = () => { state.spin = !state.spin; $('opt-spin').classList.toggle('on', state.spin); };
+        $('opt-reset').onclick = () => resetView();
+        $('y-up').classList.add('on');
+
+        function useData(data) {
+            state.models = (data && data.models) || [];
+            state.title = (data && data.title) || '';
+            state.fileName = (data && data.fileName) || '';
+            state.from = (data && data.from) || '';
+            $('banner-sub').textContent = [state.title, state.fileName, state.from].filter(Boolean).join(' · ');
+            renderChips();
+            if (state.models.length) {
+                const want = data && Number.isInteger(data.slot) ? data.slot : parseInt(params.get('slot') || '0', 10);
+                selectSlot(Math.min(Math.max(want || 0, 0), state.models.length - 1));
+            } else {
+                state.slot = -1;
+                modelMesh = null;
+                if (mesh) mesh.setVisible(false);
+                // Graphics is retained-mode: without this the previous model
+                // stays painted over the empty-state panel.
+                if (fillG) fillG.clear();
+                if (wireG) wireG.clear();
+                $('parts').innerHTML = '';
+                $('empty').classList.remove('hidden');
+                $('empty').querySelector('b').textContent = 'NO MODELS';
+                $('empty-text').textContent = data && data.neverOpened
+                    ? 'THIS SAVE NEVER OPENED THE 3D EDITOR (ポリ吉) — NO SEC7 MODELS TO SHOW'
+                    : data && data.error
+                        ? 'MODEL SECTION FAILED TO DECODE: ' + data.error
+                        : 'IMPORT A .SAV IN THE LEVEL EDITOR AND PRESS VIEW 3D, OR DROP A DEZAEMON 2 .SAV HERE';
+            }
+            renderNotice();
+        }
+
+        // Drag a .sav / .bcr / .bkr onto the page.
+        document.body.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragover'); });
+        document.body.addEventListener('dragleave', () => document.body.classList.remove('dragover'));
+        document.body.addEventListener('drop', async e => {
+            e.preventDefault();
+            document.body.classList.remove('dragover');
+            const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+            if (!file) return;
+            try {
+                const d = await decodeBytes(new Uint8Array(await file.arrayBuffer()));
+                useData({ ...d, fileName: file.name, from: 'DROPPED' });
+                flash('LOADED ' + file.name.toUpperCase());
+            } catch (err) {
+                flash('NOT A DEZAEMON 2 SAVE: ' + (err && err.message));
+            }
+        });
+
+        // ================== BOOT ==================
+        try {
+            useData(await loadInitial());
+        } catch (e) {
+            fatal(String(e && e.message || e));
+        }
+
+        // Test hook, the voxel3d-runtime.js convention: an e2e check can tell
+        // whether the Mesh2D path engaged rather than the fallback.
+        window.__MODEL_VIEWER__ = {
+            getState: () => ({
+                phaser: !!game,
+                renderer: game && game.renderer ? game.renderer.type : -1,
+                mesh2d: mesh2dOk,
+                library: library.source,
+                models: state.models.length,
+                slot: state.slot,
+                parts: modelMesh ? modelMesh.parts.length : 0,
+                triangles: modelMesh ? modelMesh.triCount : 0,
+                visible: lastVisible,
+                placeholder: modelMesh ? modelMesh.placeholder : null,
+                yaw: state.yaw, pitch: state.pitch, distance: state.distance,
+                yDown: state.yDown, rotOrder: state.rotOrder, wire: state.wire,
+                from: state.from, frameMs: frameMs,
+            }),
+            select: selectSlot,
+            setCamera: ({ yaw, pitch, distance }) => {
+                if (yaw != null) state.yaw = yaw;
+                if (pitch != null) state.pitch = pitch;
+                if (distance != null) { state.distance = distance; clampDistance(); }
+            },
+            setOptions: (o) => {
+                if (o.yDown != null) setYDown(o.yDown);
+                if (o.rotOrder) { sel.value = o.rotOrder; sel.onchange(); }
+                if (o.wire != null && o.wire !== state.wire) $('opt-wire').onclick();
+                if (o.spin != null && o.spin !== state.spin) $('opt-spin').onclick();
+                if (o.quantize != null && o.quantize !== state.quantize) $('opt-snap').onclick();
+            },
+            loadSav: async (url) => {
+                const r = await fetch(url);
+                const d = await decodeBytes(new Uint8Array(await r.arrayBuffer()));
+                useData({ ...d, fileName: url.split('/').pop(), from: 'URL' });
+            },
+            useModels: (models, title) => useData({ models, title: title || '', from: 'SCRIPT' }),
+        };
+    })();
+    </script>
+</body>
+</html>

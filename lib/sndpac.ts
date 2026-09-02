@@ -2,19 +2,24 @@
 //
 // SNDPAC.BIN is the Dezaemon 2 disc's sample bank: 505,774 bytes holding every
 // timbre the Saturn's SCSP played. It is disc content, so it is not in this
-// repo and never will be. What IS here is the instrument map that indexes it
+// repo and never will be. Tables DERIVED from the disc's binaries are a
+// different matter and are committed — the instrument map below, and the
+// ポリ吉 part-library JSON the model viewer loads (README.md "PlayStation 2").
+// What IS here is the instrument map that indexes it
 // (packages/shmup-engine/data/bgm-instruments.json), so anyone holding a disc
 // can have the real samples and everyone else falls back to the synthesised
 // voices the runtime has always used.
 //
 // The bank is looked for in dev-fixtures/, which is gitignored: drop a
-// Dezaemon 2 disc image in there and the ISO 9660 reader pulls the file out.
+// Dezaemon 2 disc image in there and the ISO 9660 reader pulls the file out
+// (lib/disc-file.ts, the scan shared with the part library).
 //
 // lib/ps2/tone-bank-pack.ts renders this for the console (audsrv ADPCM);
 // buildWebToneBank() below renders it for the browser (raw PCM plus an index),
 // so the cutting and loop-baking happen once, in the engine, for both.
 
-import { basename, join } from "@std/path";
+import { join } from "@std/path";
+import { findDiscFile } from "./disc-file.ts";
 import {
   cutLayer,
   INSTRUMENT_COUNT,
@@ -23,26 +28,10 @@ import {
   SCSP_BASE_RATE,
   uniqueSlices,
 } from "../packages/shmup-engine/src/audio/tone-bank.js";
-import {
-  openDisc,
-  readFile,
-} from "../packages/shmup-engine/src/cd/iso9660-read.js";
-
-/** Extensions worth opening as a disc image when scanning dev-fixtures/. */
-const DISC_EXTENSIONS = [".bin", ".iso", ".img"];
-
 export interface SndpacSource {
   bytes: Uint8Array;
   /** Human-readable provenance for the build log. */
   from: string;
-}
-
-async function readIfPresent(path: string): Promise<Uint8Array | null> {
-  try {
-    return await Deno.readFile(path);
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -55,39 +44,11 @@ export async function findSndpac(
   root: string,
   explicit?: string | null,
 ): Promise<SndpacSource | null> {
-  if (explicit) {
-    const bytes = await readIfPresent(explicit);
-    if (!bytes) throw new Error(`--sndpac: cannot read ${explicit}`);
-    return { bytes, from: explicit };
-  }
-
-  const fixtures = join(root, "dev-fixtures");
-  const cache = join(fixtures, ".cache", "SNDPAC.BIN");
-  const cached = await readIfPresent(cache);
-  if (cached) return { bytes: cached, from: cache };
-
-  const bare = await readIfPresent(join(fixtures, "SNDPAC.BIN"));
-  if (bare) return { bytes: bare, from: join(fixtures, "SNDPAC.BIN") };
-
-  let entries: Deno.DirEntry[];
-  try {
-    entries = [...Deno.readDirSync(fixtures)];
-  } catch {
-    return null;
-  }
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (!entry.isFile) continue;
-    const lower = entry.name.toLowerCase();
-    if (!DISC_EXTENSIONS.some((ext) => lower.endsWith(ext))) continue;
-    const path = join(fixtures, entry.name);
-    const image = await readIfPresent(path);
-    if (!image) continue;
-    const disc = openDisc(image);
-    if (!disc) continue;
-    const found = readFile(disc, "SNDPAC.BIN");
-    if (found) return { bytes: found, from: `${basename(path)} (ISO 9660)` };
-  }
-  return null;
+  // The scan itself lives in lib/disc-file.ts, shared with the part library.
+  return await findDiscFile(root, "SNDPAC.BIN", {
+    explicit,
+    flag: "--sndpac",
+  });
 }
 
 /** Cache an extracted bank so later builds skip the disc scan. */

@@ -59,6 +59,23 @@ export function decompress(input) {
     return Uint8Array.from(out);
 }
 
+// A disc .CMP file (MDLDT_NN.CMP, GAME.CMP, POLYKITI.CMP ...) is a u32
+// LITTLE-endian header holding the length of the LZSS stream that follows,
+// then the same stream format the save sections use. The header must be
+// honoured: feeding it into the decoder as data corrupts the ring phase and
+// every byte after it comes out subtly wrong (all 56 MDLDT files verify
+// header + 4 == file length).
+export function decompressCmp(raw) {
+    if (!raw || raw.length < 4) {
+        throw new Error("CMP: missing length header");
+    }
+    const len = (raw[0] | (raw[1] << 8) | (raw[2] << 16) | (raw[3] << 24)) >>> 0;
+    if (4 + len > raw.length) {
+        throw new Error(`CMP: header says ${len} bytes, only ${raw.length - 4} follow`);
+    }
+    return decompress(raw.subarray(4, 4 + len));
+}
+
 // Known decompressed sizes of the 8 payload sections — identical for every
 // game seen so far because each section is a fixed-size memory region.
 export const SECTION_SIZES = [65536, 65536, 65536, 65536, 512, 396640, 101472, 5828];

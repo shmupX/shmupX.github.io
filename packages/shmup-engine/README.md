@@ -68,17 +68,40 @@ The root module (`mod.js`) flat-exports the surface the level editor binds as
   `BLANK_WAVES`, `FRAMES_PER_SOURCE_ROW`, `PLAYER_SHOT_DAMAGE_BY_LEVEL`,
   `ENGINE_SHOT_DAMAGE`, `ENEMY_BULLET_SPEED`
 - **`./src/decode/index.js`** — `decodeSave`
+- **`./src/decode/decode-model.js`** — `decodeModels` (sec7, the ポリ吉 3D
+  compositions), `MODEL_SLOTS`, `SEC7_MAGIC`, `SHAPE_FAMILIES`,
+  `FAMILY_MESH_COUNTS`, `FAMILY_FILE_RANGES`
+- **`./src/decode/decode-cg.js`** — `rgb555ToRgb`, `rgb555ToHex` (the CG page
+  decoders themselves stay behind the `./decode` subpath)
+- **`./src/model/mesh-library.js`** — the 224-mesh ポリ吉 part library: the
+  `(family, meshIndex)` index (`libraryIndex`, `mdldtFileFor`, `familyForFile`,
+  `FAMILY_OFFSETS`), `meshFor`, procedural placeholders (`placeholderMesh`,
+  `placeholderLibrary`), `makeMesh`, `polygonNormals`, `meshBounds`, and the
+  JSON form (`serializeMeshLibrary`, `meshLibraryFromJson`)
+- **`./src/model/decode-mdldt.js`** — `decodeMdldt`, `buildMeshLibrary` (SGL
+  `PDATA` out of decompressed `MDLDT_NN.CMP` bytes the caller supplies)
+- **`./src/model/model-mesh.js`** — a model as world-space triangles and a frame
+  of screen-space ones for Phaser's `Mesh2D`: `composeTransform`,
+  `buildModelMesh`, `allocFrame`, `orbitCamera`, `projectModel`,
+  `buildSwatchTable` / `swatchUV` / `swatchRgb`, `packMesh2D`,
+  `wireframeSegments`, `quantizeRotation`, `ROT_ORDERS`, `modelStats`
+- **`./src/audio/tone-bank.js`** — `cutLayer`, `uniqueSlices`, `instrumentAt`,
+  `layerAt`, `pickLayers`, `playbackRate`, `SCSP_BASE_RATE`, … (the Saturn
+  timbres out of a caller-supplied `SNDPAC.BIN`)
+- **`./src/cd/iso9660-read.js`** — `openDisc`, `readFile`, `listFiles`,
+  `findEntry`, `readExtent`
 - **`./src/atlas-pack.js`** — `packShelf`
 - **`./src/game-schema.js`** — `validateGameJson`
-- extras: `decompress`, `SECTION_SIZES`, `SECTION_HINTS` (LZSS + section
-  geometry), `detect`, `deinterleave` (cartridge dumps), `coalesceDiffRanges`,
-  `totalDiffBytes` (byte-range diffing)
+- extras: `decompress`, `decompressCmp` (disc `.CMP` files), `SECTION_SIZES`,
+  `SECTION_HINTS` (LZSS + section geometry), `detect`, `deinterleave` (cartridge
+  dumps), `coalesceDiffRanges`, `totalDiffBytes` (byte-range diffing)
 
 The deeper decoder internals (per-section decoders, player art, and so on) are
 importable through subpath exports: `@shmupx/shmup-engine/decode`,
 `.../map-to-game`, `.../bup-parse`, `.../bup-source`, `.../bup-deinterleave`,
 `.../payload-table`, `.../decompress`, `.../atlas-pack`, `.../game-schema`,
-`.../player-art`, `.../diff-ranges`.
+`.../player-art`, `.../player2-art`, `.../diff-ranges`, `.../tone-bank`,
+`.../iso9660-read`, `.../mesh-library`, `.../decode-mdldt`, `.../model-mesh`.
 
 `FORMAT.md` documents the reverse-engineered save format; `games-db.json` is the
 catalog of known community games.

@@ -32,3 +32,14 @@ live in the game's own ROM/overlays (see FORMAT.md for the traces):
   ships the same 1,206 rows compactly from `src/decode/appearance-table.js`,
   which the mapper attaches to each imported enemy as `dezaemon.entry` and the
   2028-ai runtime interprets.
+
+Not in this directory, but the same kind of thing: the ポリ吉 3D part library
+(`MDLDT_01–56.CMP`, 224 SGL meshes with three colour tables each) is decoded by
+`src/model/decode-mdldt.js` and shipped as
+`static/editor/dezaemon/mesh-library.json` at the repo root rather than as a
+file here (decision 2026-09-02): like the tables above it is derived from the
+disc's binaries and committed, but it is the first one big enough — 626 KB of
+geometry — to be served to the browser instead of bundled into the engine, and
+the level editor's Model Viewer needs it in production where Deploy has no disc
+to rebuild it from. `deno task deza:meshlib` regenerates it from a disc image in
+`dev-fixtures/`.

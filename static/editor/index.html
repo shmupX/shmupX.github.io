@@ -156,6 +156,8 @@
         .badge svg { width: 22px; height: 22px; display: block; }
         /* Boss Viewer: a bigger, meaner invader, still inside the 46px circle */
         #boss-viewer-link svg { width: 28px; height: 28px; }
+        /* Model Viewer: the sec7 3D compositions of an imported .sav */
+        #model-viewer-link svg { width: 26px; height: 26px; }
         /* While a Dezaemon .sav game is loaded the drawer shows only the
            controls that apply to it — directory/cloud/export rows hide. */
         body.sav-loaded .hide-when-sav { display: none !important; }
@@ -382,6 +384,7 @@
         .deza-preview iframe { display: block; width: 100%; height: 100%; border: 0; }
         .deza-summary { font-size: 11px; color: var(--rsub); margin: 10px 6px; line-height: 1.8; }
         .deza-summary .ok { color: var(--sel); }
+        .deza-summary .warn { color: #f87171; }
         .deza-sec {
             display: inline-block; padding: 1px 6px; margin: 1px; border-radius: 3px;
             background: var(--rbg); border: 1px solid var(--redge); color: var(--rink);
@@ -856,6 +859,8 @@
             <button class="badge" title="Play in Phaser" onclick="playCurrentStage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
             <!-- Boss Viewer -->
             <a id="boss-viewer-link" href="boss-viewer.html" class="badge" title="Boss viewer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 2 2 4h12l2-4 2 4v8h-3v3h-3v-3H8v3H5v-3H2V6z"/><path d="m8 9 2.5 1.5M16 9l-2.5 1.5"/><path d="m8 12.5 2 1.5 2-1.5 2 1.5 2-1.5"/></svg></a>
+            <!-- Model Viewer (Lucide box): a Dezaemon save's ポリ吉 3D models -->
+            <a id="model-viewer-link" href="model-viewer.html" class="badge" title="3D model viewer (Dezaemon sec7 compositions)" onclick="openModelViewer(); return false;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></a>
             <!-- Save (Lucide save) -->
             <button class="badge" title="Save" onclick="quickSave()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></button>
             <!-- Menu -->
@@ -936,6 +941,7 @@
         <button class="menu-row hide-when-sav" onclick="exportCurrentLevelJSON();closeMenu()"><span class="mono-badge">EX</span>EXPORT JSON</button>
         <button class="menu-row hide-when-sav" onclick="saveAs3D();closeMenu()"><span class="mono-badge">3D</span>SAVE AS 3D</button>
         <button class="menu-row" onclick="play3D();closeMenu()"><span class="mono-badge">P3</span>PLAY 3D</button>
+        <button class="menu-row" onclick="openModelViewer();closeMenu()" title="View an imported Dezaemon save's ポリ吉 3D models (sec7) on Phaser 4 Mesh2D"><span class="mono-badge">MV</span>MODEL VIEWER</button>
         <button class="menu-row hide-when-sav" onclick="saveAsVoxel3D();closeMenu()" title="Voxelize every atlas frame (Pixel Composer, pitch/yaw 10) and publish a Phaser 4.2.1 dual-mode (2D shooter / 3D super scaler) build at a URL"><span class="mono-badge">V3</span>SAVE AS VOXEL 3D</button>
         <div class="menu-label hide-when-sav">GAME SAVE (CLOUD)</div>
         <input id="firebase-level-name" type="text" placeholder="MY GAME NAME" class="menu-input hide-when-sav" style="margin-bottom:0">
@@ -1303,6 +1309,7 @@
         const GAME_PLAY_URL = '/games/' + GAME_ID;
         // Keep the boss viewer on the same game this editor session authors for.
         document.getElementById('boss-viewer-link').href = 'boss-viewer.html?game=' + GAME_ID;
+        document.getElementById('model-viewer-link').href = 'model-viewer.html?game=' + GAME_ID;
         // The editor's built-in loaders fetch the base game's assets with paths
         // relative to the game dir ("assets/…", "img/…") — a convention from
         // 2019-es7 where the editor was served alongside those assets. In cmg the
@@ -1432,6 +1439,39 @@
         function storeBossDataForViewers() {
             try { sessionStorage.setItem('editorBossData', JSON.stringify(bossData)); } catch (e) {}
             storeAtlasForViewers();
+        }
+        // Publish an imported Dezaemon save's sec7 3D models for
+        // model-viewer.html: sessionStorage for the same tab (and a popup
+        // opened AFTER this write), plus a durable copy in the viewer bridge
+        // so a viewer window the desktop restores after a reload still shows
+        // the last models. The payload is a few KB of numbers.
+        function storeModelsForViewers() {
+            const st = dezaImportState;
+            const d = st && st.decoded;
+            if (!d) return;
+            const payload = {
+                v: 1,
+                gameId: GAME_ID,
+                title: d.title || (st.fileName || '').replace(/\.(sav|bcr|bkr)$/i, '').replace(/^Dez 2 - /, ''),
+                fileName: st.fileName || '',
+                neverOpened: d.models === null,
+                confidence: (d.confidence && d.confidence.models) || null,
+                models: d.models ? d.models.models : [],
+            };
+            try { sessionStorage.setItem('editorDezaModels', JSON.stringify(payload)); } catch (e) {}
+            openViewerBridge().then((db) => {
+                if (!db) return;
+                try {
+                    const tx = db.transaction('assets', 'readwrite');
+                    tx.objectStore('assets').put(payload, 'dezaModels');
+                    tx.oncomplete = () => db.close();
+                    tx.onerror = () => db.close();
+                } catch (e) { try { db.close(); } catch (e2) {} }
+            });
+        }
+        function openModelViewer() {
+            storeModelsForViewers();
+            openExternalUrl(new URL('model-viewer.html?game=' + GAME_ID, location.href).href, 'MODEL VIEWER');
         }
         // Publish the working atlas for the other pages that render this game's
         // art: the boss/attack viewers, and the Phaser runtime when you press
@@ -5348,6 +5388,10 @@
             const save = dezaImportState.saves[i];
             dezaImportState.selectedSlot = i;
             dezaImportState.decoded = window.Dezaemon.decodeSave(save.payload.buffer);
+            // Hand the sec7 models to the model viewer now, before any
+            // window.open — a popup only inherits the sessionStorage it was
+            // opened with (see storeAtlasForViewers).
+            storeModelsForViewers();
             return save;
         }
 
@@ -5384,6 +5428,19 @@
             if (d.sprites && d.sprites.length) {
                 lines.push('SPRITES: <span class="ok">' + d.sprites.length +
                     '</span> enemy animation frames extracted from this save\'s CG pages');
+            }
+            // sec7: the ポリ吉 3D compositions. They never touch play (the
+            // Saturn rendered them to CG cells), so they get a viewer, not
+            // an import.
+            if (d.models && d.models.models && d.models.models.length) {
+                const ms = window.Dezaemon.modelStats ? window.Dezaemon.modelStats(d.models.models)
+                    : { slots: d.models.models.length, parts: d.models.models.reduce((n, m) => n + m.parts.length, 0) };
+                lines.push('MODELS (POLYKITI): <span class="ok">' + ms.slots + '</span> slots · ' + ms.parts +
+                    ' parts — <a href="#" onclick="openModelViewer(); return false;">VIEW 3D &rarr;</a>');
+            } else if (d.models === null && !d.modelError) {
+                lines.push('MODELS: none (this save never opened the 3D editor)');
+            } else if (d.modelError) {
+                lines.push('MODELS: <span class="warn">section failed to decode</span> — ' + d.modelError);
             }
             lines.push('Every stage, enemy type and spawn in this save is imported — enemies are kept apart per stage, ' +
                 'and the grid is the 20 columns of the Saturn placement grid. Enemy <em>attributes</em> are decoded from ' +

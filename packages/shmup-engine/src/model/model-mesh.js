@@ -1,0 +1,492 @@
+// From a decoded sec7 model to screen-space triangles — everything a 3D
+// viewer needs that is not the renderer itself.
+//
+// Phaser 4 has no 3D: its Mesh2D game object draws textured 2D triangles in
+// the order its index list gives them, with no depth test, no face culling
+// and one tint for the whole object. So the 3D work happens here, on the
+// CPU, in plain arrays a Mesh2D (or a canvas, or a PS2 build) can consume:
+//
+//   buildModelMesh()  once per model: every part's library mesh transformed
+//                     into world space as an unshared triangle soup with
+//                     per-triangle normals and colours
+//   orbitCamera()     a yaw / pitch / distance camera looking at a target
+//   projectModel()    once per frame: project the soup, drop back faces
+//                     (by the polygon normal, not by winding — the library's
+//                     normals are authoritative, see mesh-library.js), shade
+//                     flat from a fixed light, and sort far-to-near so a
+//                     painter's draw is right for convex parts
+//   packMesh2D()      write the sorted triangles as Phaser's flat
+//                     [x, y, u, v] vertices and [a, b, c, page] indices,
+//                     colour chosen by pointing every UV at a swatch cell
+//
+// Conventions that are NOT traced from POLYKITI and are therefore options
+// with a documented default (FORMAT.md marks them heuristic):
+//
+//   - rotation order: ROTATION_ORDER = "xyz" means the part is rotated about
+//     X first, then Y, then Z (M = T * Rz * Ry * Rx * S). All six orders are
+//     available so a viewer can switch while the mapping is being confirmed.
+//   - Y direction: model +Y is UP on screen. Settled empirically (2026-09-02):
+//     DAIOH slot 0 rendered with no flip matches the save's own ポリ吉-rendered
+//     ship sprite (needle nose at the top, engine nozzles at the bottom); the
+//     part at y = -52 is the engine block. `yDown: true` negates world Y
+//     after the transform for the opposite reading — positions and normals
+//     flip together, so nothing else changes.
+//   - rotation quantum: the editor steps rotations by 18 degrees and stores
+//     them with a one- or two-unit drift; `quantize: true` snaps them.
+//
+// Environment-neutral ESM (Node + browser).
+
+import { rgb555ToHex } from "../decode/decode-cg.js";
+import { meshFor, placeholderLibrary, polygonCount } from "./mesh-library.js";
+
+export const ROT_ORDERS = ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"];
+export const ROTATION_ORDER = "xyz";
+export const ROTATION_QUANTUM = 18;
+export const SHADE_LEVELS = 8;
+/** Flat shading: brightness = SHADE_MIN + SHADE_RANGE * max(0, n . LIGHT). */
+export const SHADE_MIN = 0.58;
+export const SHADE_RANGE = 0.52;
+export const LIGHT = normalize3([-0.45, 0.78, 0.44]);
+/** Camera-space distance below which a triangle is dropped (near plane). */
+export const NEAR = 4;
+
+function normalize3(v) {
+    const len = Math.hypot(v[0], v[1], v[2]) || 1;
+    return [v[0] / len, v[1] / len, v[2] / len];
+}
+
+const DEG = Math.PI / 180;
+
+/** Snap a rotation to the editor's step; wraps into [0, 360). */
+export function quantizeRotation(deg, step = ROTATION_QUANTUM) {
+    const q = Math.round(deg / step) * step;
+    return ((q % 360) + 360) % 360;
+}
+
+function rotationMatrix(axis, deg) {
+    const c = Math.cos(deg * DEG), s = Math.sin(deg * DEG);
+    switch (axis) {
+        case "x":
+            return [1, 0, 0, 0, c, -s, 0, s, c];
+        case "y":
+            return [c, 0, s, 0, 1, 0, -s, 0, c];
+        default:
+            return [c, -s, 0, s, c, 0, 0, 0, 1];
+    }
+}
+
+function mul3(a, b) {
+    const out = new Array(9);
+    for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 3; c++) {
+            out[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] +
+                a[r * 3 + 2] * b[6 + c];
+        }
+    }
+    return out;
+}
+
+/**
+ * A part's model-to-world transform as a row-major 3x4 matrix
+ * [a b c tx, d e f ty, g h i tz]: scale, then the rotations in `rotOrder`
+ * (first letter first), then the translation.
+ */
+export function composeTransform(part, { rotOrder = ROTATION_ORDER, quantize = true } = {}) {
+    if (!ROT_ORDERS.includes(rotOrder)) {
+        throw new Error(`unknown rotation order ${rotOrder}`);
+    }
+    const rot = part.rotation || { x: 0, y: 0, z: 0 };
+    const angle = (axis) => quantize ? quantizeRotation(rot[axis] || 0) : (rot[axis] || 0);
+    let r = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    for (const axis of rotOrder) {
+        // later rotations are applied after earlier ones: R = R_axis * R
+        r = mul3(rotationMatrix(axis, angle(axis)), r);
+    }
+    const s = part.scale || { x: 1, y: 1, z: 1 };
+    const p = part.position || { x: 0, y: 0, z: 0 };
+    const m = new Float64Array(12);
+    for (let row = 0; row < 3; row++) {
+        m[row * 4] = r[row * 3] * s.x;
+        m[row * 4 + 1] = r[row * 3 + 1] * s.y;
+        m[row * 4 + 2] = r[row * 3 + 2] * s.z;
+    }
+    m[3] = p.x;
+    m[7] = p.y;
+    m[11] = p.z;
+    return m;
+}
+
+export function transformPoint(m, x, y, z, out, o = 0) {
+    out[o] = m[0] * x + m[1] * y + m[2] * z + m[3];
+    out[o + 1] = m[4] * x + m[5] * y + m[6] * z + m[7];
+    out[o + 2] = m[8] * x + m[9] * y + m[10] * z + m[11];
+    return out;
+}
+
+/**
+ * The inverse transpose of the 3x3 block, which carries normals through any
+ * transform — a mirrored (negative-scale) part keeps outward normals with no
+ * special case, because (M^-1)^T n always lies on the same side as M n.
+ */
+export function normalMatrix(m) {
+    const a = m[0], b = m[1], c = m[2];
+    const d = m[4], e = m[5], f = m[6];
+    const g = m[8], h = m[9], i = m[10];
+    const co = [
+        e * i - f * h, -(d * i - f * g), d * h - e * g,
+        -(b * i - c * h), a * i - c * g, -(a * h - b * g),
+        b * f - c * e, -(a * f - c * d), a * e - b * d,
+    ];
+    const det = a * co[0] + b * co[1] + c * co[2];
+    const inv = det === 0 ? 1 : 1 / det;
+    // cofactor matrix / det = inverse transpose
+    return Float64Array.from(co, (v) => v * inv);
+}
+
+/**
+ * Every part of a model as one unshared triangle soup in world space.
+ *
+ *   positions Float32Array(triCount * 9)  three corners per triangle
+ *   normals   Float32Array(triCount * 3)  unit, outward
+ *   colors    Uint32Array(triCount)       0xRRGGBB from the part's colour set
+ *   partOf    Uint8Array(triCount)        index into `parts`
+ *   parts     [{ index, part, family, meshIndex, colorSet, source,
+ *                triStart, triCount }]
+ *   bounds    { min, max, center, radius }  radius = max |p - center|
+ *   placeholder  true when any part fell back to placeholder geometry
+ */
+export function buildModelMesh(model, {
+    library = placeholderLibrary(),
+    yDown = false,
+    rotOrder = ROTATION_ORDER,
+    quantize = true,
+} = {}) {
+    const partList = (model && model.parts) || [];
+    const resolved = partList.map((part) => ({ part, mesh: meshFor(library, part) }));
+    let triCount = 0;
+    for (const { mesh } of resolved) {
+        const polys = polygonCount(mesh);
+        for (let q = 0; q < polys; q++) {
+            triCount += mesh.polygons[q * 4 + 2] === mesh.polygons[q * 4 + 3] ? 1 : 2;
+        }
+    }
+    const positions = new Float32Array(triCount * 9);
+    const normals = new Float32Array(triCount * 3);
+    const colors = new Uint32Array(triCount);
+    const partOf = new Uint8Array(triCount);
+    const parts = [];
+    const tmp = new Float64Array(3);
+    const ySign = yDown ? -1 : 1;
+    let t = 0;
+    let placeholder = false;
+    resolved.forEach(({ part, mesh }, index) => {
+        const m = composeTransform(part, { rotOrder, quantize });
+        const nm = normalMatrix(m);
+        const setIndex = Math.min(Math.max(part.colorSet | 0, 0), mesh.colorSets.length - 1);
+        const colorSet = mesh.colorSets[setIndex];
+        const triStart = t;
+        if (mesh.source !== "mdldt") placeholder = true;
+        const polys = polygonCount(mesh);
+        const emit = (q, a, b, c) => {
+            const corners = [a, b, c];
+            for (let k = 0; k < 3; k++) {
+                const vi = corners[k] * 3;
+                transformPoint(m, mesh.vertices[vi], mesh.vertices[vi + 1], mesh.vertices[vi + 2], tmp, 0);
+                positions[t * 9 + k * 3] = tmp[0];
+                positions[t * 9 + k * 3 + 1] = tmp[1] * ySign;
+                positions[t * 9 + k * 3 + 2] = tmp[2];
+            }
+            const nx0 = mesh.normals[q * 3], ny0 = mesh.normals[q * 3 + 1], nz0 = mesh.normals[q * 3 + 2];
+            let nx = nm[0] * nx0 + nm[1] * ny0 + nm[2] * nz0;
+            let ny = nm[3] * nx0 + nm[4] * ny0 + nm[5] * nz0;
+            let nz = nm[6] * nx0 + nm[7] * ny0 + nm[8] * nz0;
+            const len = Math.hypot(nx, ny, nz) || 1;
+            nx /= len;
+            ny /= len;
+            nz /= len;
+            normals[t * 3] = nx;
+            normals[t * 3 + 1] = ny * ySign;
+            normals[t * 3 + 2] = nz;
+            colors[t] = rgb555ToHex(colorSet[q]);
+            partOf[t] = index;
+            t++;
+        };
+        for (let q = 0; q < polys; q++) {
+            const a = mesh.polygons[q * 4], b = mesh.polygons[q * 4 + 1];
+            const c = mesh.polygons[q * 4 + 2], d = mesh.polygons[q * 4 + 3];
+            emit(q, a, b, c);
+            if (c !== d) emit(q, a, c, d);
+        }
+        parts.push({
+            index,
+            part,
+            family: part.shapeFamily,
+            meshIndex: part.meshIndex,
+            colorSet: setIndex,
+            source: mesh.source,
+            triStart,
+            triCount: t - triStart,
+        });
+    });
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < positions.length; i += 3) {
+        for (let k = 0; k < 3; k++) {
+            if (positions[i + k] < min[k]) min[k] = positions[i + k];
+            if (positions[i + k] > max[k]) max[k] = positions[i + k];
+        }
+    }
+    if (!triCount) {
+        min.fill(0);
+        max.fill(0);
+    }
+    const center = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
+    let radius = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+        radius = Math.max(
+            radius,
+            Math.hypot(positions[i] - center[0], positions[i + 1] - center[1], positions[i + 2] - center[2]),
+        );
+    }
+    return {
+        positions,
+        normals,
+        colors,
+        partOf,
+        parts,
+        triCount,
+        bounds: { min, max, center, radius },
+        placeholder,
+        yDown,
+        rotOrder,
+    };
+}
+
+/** Per-frame scratch buffers for projectModel(), sized to a model. */
+export function allocFrame(mesh) {
+    const n = mesh.triCount;
+    return {
+        triCount: n,
+        xy: new Float32Array(n * 6),
+        depth: new Float32Array(n),
+        shade: new Uint8Array(n),
+        visible: new Uint8Array(n),
+        order: new Uint32Array(n),
+        visibleCount: 0,
+    };
+}
+
+/**
+ * An orbit camera. yaw/pitch in degrees; the eye sits `distance` away from
+ * `target` along the basis pixel-composer uses (yaw 0 / pitch 0 looks down
+ * -Z with Y up). `focal` is the perspective scale in pixels.
+ */
+export function orbitCamera({
+    yaw = 35,
+    pitch = 25,
+    distance = 200,
+    focal = 360,
+    width = 640,
+    height = 400,
+    target = [0, 0, 0],
+    near = NEAR,
+} = {}) {
+    const t = yaw * DEG, p = pitch * DEG;
+    const sinT = Math.sin(t), cosT = Math.cos(t);
+    const sinP = Math.sin(p), cosP = Math.cos(p);
+    const cam = [sinT * cosP, sinP, cosT * cosP];
+    const right = [cosT, 0, -sinT];
+    const up = [-sinT * sinP, cosP, -cosT * sinP];
+    return {
+        eye: [target[0] + cam[0] * distance, target[1] + cam[1] * distance, target[2] + cam[2] * distance],
+        cam,
+        right,
+        up,
+        focal,
+        width,
+        height,
+        near,
+        yaw,
+        pitch,
+        distance,
+    };
+}
+
+/** 0..SHADE_LEVELS-1 from the cosine between a normal and LIGHT. */
+export function shadeLevel(ndotl) {
+    const c = ndotl > 0 ? (ndotl < 1 ? ndotl : 1) : 0;
+    return Math.round(c * (SHADE_LEVELS - 1));
+}
+
+/** Brightness multiplier of a shade level. */
+export function shadeFactor(level) {
+    return SHADE_MIN + SHADE_RANGE * (level / (SHADE_LEVELS - 1));
+}
+
+/**
+ * Project the soup through `cam` into `frame`: screen xy per corner,
+ * visibility (front-facing and in front of the near plane), shade level and
+ * a far-to-near draw order. Returns the visible count. No allocation.
+ */
+export function projectModel(mesh, cam, frame) {
+    const { positions, normals, triCount } = mesh;
+    const { eye, cam: dir, right, up, focal, width, height, near } = cam;
+    const cx = width / 2, cy = height / 2;
+    const { xy, depth, shade, visible, order } = frame;
+    let n = 0;
+    for (let t = 0; t < triCount; t++) {
+        const p = t * 9;
+        let far = -Infinity;
+        let ok = true;
+        let mx = 0, my = 0, mz = 0;
+        for (let k = 0; k < 3 && ok; k++) {
+            const px = positions[p + k * 3], py = positions[p + k * 3 + 1], pz = positions[p + k * 3 + 2];
+            const dx = px - eye[0], dy = py - eye[1], dz = pz - eye[2];
+            const vz = -(dx * dir[0] + dy * dir[1] + dz * dir[2]);
+            if (vz < near) {
+                ok = false;
+                break;
+            }
+            const vx = dx * right[0] + dy * right[1] + dz * right[2];
+            const vy = dx * up[0] + dy * up[1] + dz * up[2];
+            xy[t * 6 + k * 2] = cx + focal * vx / vz;
+            xy[t * 6 + k * 2 + 1] = cy - focal * vy / vz;
+            if (vz > far) far = vz;
+            mx += px;
+            my += py;
+            mz += pz;
+        }
+        if (!ok) {
+            visible[t] = 0;
+            continue;
+        }
+        const nx = normals[t * 3], ny = normals[t * 3 + 1], nz = normals[t * 3 + 2];
+        // back-face: the normal must face the eye
+        const facing = nx * (eye[0] - mx / 3) + ny * (eye[1] - my / 3) + nz * (eye[2] - mz / 3);
+        if (facing <= 0) {
+            visible[t] = 0;
+            continue;
+        }
+        visible[t] = 1;
+        depth[t] = far;
+        shade[t] = shadeLevel(nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]);
+        order[n++] = t;
+    }
+    const slice = order.subarray(0, n);
+    slice.sort((a, b) => depth[b] - depth[a]);
+    frame.visibleCount = n;
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// Colour swatches: Mesh2D tints a whole object, so per-triangle colour comes
+// from the texture. A swatch atlas holds SHADE_LEVELS cells per distinct
+// colour; a triangle's three UVs all point at the centre of its cell.
+
+export const MAX_SWATCH_COLORS = 128;
+export const SWATCH_LAYOUT = { cellPx: 8, cols: 32, rows: 32, texPx: 256 };
+
+/** Distinct colours of a soup (capped) and each triangle's colour index. */
+export function buildSwatchTable(mesh, maxColors = MAX_SWATCH_COLORS) {
+    const index = new Map();
+    const colors = [];
+    const triColor = new Uint16Array(mesh.triCount);
+    for (let t = 0; t < mesh.triCount; t++) {
+        const c = mesh.colors[t];
+        let i = index.get(c);
+        if (i === undefined) {
+            if (colors.length < maxColors) {
+                i = colors.length;
+                colors.push(c);
+            } else {
+                i = 0; // over budget: the first colour stands in
+            }
+            index.set(c, i);
+        }
+        triColor[t] = i;
+    }
+    return { colors: Uint32Array.from(colors), triColor };
+}
+
+export function swatchCell(colorIndex, level) {
+    return colorIndex * SHADE_LEVELS + level;
+}
+
+/** Pixel rectangle of a swatch cell in the atlas. */
+export function swatchCellRect(cell, layout = SWATCH_LAYOUT) {
+    const col = cell % layout.cols;
+    const row = (cell / layout.cols) | 0;
+    return { x: col * layout.cellPx, y: row * layout.cellPx, w: layout.cellPx, h: layout.cellPx };
+}
+
+/** Texture coordinates of a cell's centre (safe under linear filtering). */
+export function swatchUV(cell, layout = SWATCH_LAYOUT) {
+    const r = swatchCellRect(cell, layout);
+    return [(r.x + r.w / 2) / layout.texPx, (r.y + r.h / 2) / layout.texPx];
+}
+
+/** A colour at a shade level, 0xRRGGBB. */
+export function swatchRgb(rgb, level) {
+    const f = shadeFactor(level);
+    const ch = (v) => Math.min(255, Math.round(v * f));
+    return (ch((rgb >> 16) & 0xff) << 16) | (ch((rgb >> 8) & 0xff) << 8) | ch(rgb & 0xff);
+}
+
+/**
+ * Write the projected, sorted triangles as Phaser Mesh2D arrays into `out`:
+ * out.vertices = [x, y, u, v] x 3 per triangle, out.indices = [a, b, c, 0]
+ * (page 0: the swatch atlas has a single texture source). Both arrays are
+ * reused and trimmed to the visible count.
+ */
+export function packMesh2D(mesh, frame, table, layout = SWATCH_LAYOUT, out = {}) {
+    const n = frame.visibleCount;
+    const vertices = out.vertices || (out.vertices = []);
+    const indices = out.indices || (out.indices = []);
+    vertices.length = n * 12;
+    indices.length = n * 4;
+    const { xy, shade, order } = frame;
+    for (let r = 0; r < n; r++) {
+        const t = order[r];
+        const [u, v] = swatchUV(swatchCell(table.triColor[t], shade[t]), layout);
+        for (let k = 0; k < 3; k++) {
+            const o = r * 12 + k * 4;
+            vertices[o] = xy[t * 6 + k * 2];
+            vertices[o + 1] = xy[t * 6 + k * 2 + 1];
+            vertices[o + 2] = u;
+            vertices[o + 3] = v;
+        }
+        indices[r * 4] = r * 3;
+        indices[r * 4 + 1] = r * 3 + 1;
+        indices[r * 4 + 2] = r * 3 + 2;
+        indices[r * 4 + 3] = 0;
+    }
+    out.count = n;
+    return out;
+}
+
+/** Visible triangle edges as [x0, y0, x1, y1] x 3 per triangle, painter order. */
+export function wireframeSegments(mesh, frame, out = []) {
+    const n = frame.visibleCount;
+    out.length = n * 12;
+    const { xy, order } = frame;
+    for (let r = 0; r < n; r++) {
+        const t = order[r];
+        for (let k = 0; k < 3; k++) {
+            const a = t * 6 + k * 2, b = t * 6 + ((k + 1) % 3) * 2;
+            const o = r * 12 + k * 4;
+            out[o] = xy[a];
+            out[o + 1] = xy[a + 1];
+            out[o + 2] = xy[b];
+            out[o + 3] = xy[b + 1];
+        }
+    }
+    return out;
+}
+
+/** Slot and part totals of a decoded model list (for the editor's summary). */
+export function modelStats(models) {
+    const list = models || [];
+    let parts = 0;
+    for (const m of list) parts += (m.parts || []).length;
+    return { slots: list.length, parts };
+}

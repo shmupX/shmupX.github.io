@@ -229,7 +229,15 @@ const APPS = {
       const grid = document.createElement("div");
       grid.className = "folder-window";
       // spriteX deliberately leads — first app of the Tools folder.
-      for (const id of ["spritex", "leveleditor", "pixelcomposer", "bossviewer"]) {
+      for (
+        const id of [
+          "spritex",
+          "leveleditor",
+          "pixelcomposer",
+          "bossviewer",
+          "modelviewer",
+        ]
+      ) {
         const app = APPS[id];
         const cell = document.createElement("button");
         cell.className = "folder-cell";
@@ -311,6 +319,21 @@ const APPS = {
         title: "Boss Viewer",
         icon: { monogram: "BV", hue: 20 },
         url: "/editor/boss-viewer.html",
+        width: 980,
+        height: 660,
+      }),
+  },
+
+  modelviewer: {
+    title: "Model Viewer",
+    icon: { monogram: "MV", hue: 280 },
+    persist: true,
+    open: () =>
+      openIframeWindow({
+        appId: "modelviewer",
+        title: "Model Viewer",
+        icon: { monogram: "MV", hue: 280 },
+        url: "/editor/model-viewer.html",
         width: 980,
         height: 660,
       }),
@@ -731,7 +754,10 @@ function popover(anchor, className, build) {
 const openStartMenu = (e) => {
   popover(e.currentTarget, "start-pop", (pop) => {
     const sections = [
-      ["Tools", ["spritex", "leveleditor", "pixelcomposer", "bossviewer"]],
+      [
+        "Tools",
+        ["spritex", "leveleditor", "pixelcomposer", "bossviewer", "modelviewer"],
+      ],
       ["System", ["files", "editor", "browser", "tools", "help"]],
     ];
     for (const [name, ids] of sections) {

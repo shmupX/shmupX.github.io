@@ -69,9 +69,75 @@ export { decodeSave } from "./src/decode/index.js";
 // --- sec7 3D models (src/decode/decode-model.js) ---
 export {
   decodeModels,
+  FAMILY_FILE_RANGES,
+  FAMILY_MESH_COUNTS,
   MODEL_SLOTS,
   SEC7_MAGIC,
+  SHAPE_FAMILIES,
 } from "./src/decode/decode-model.js";
+
+// --- Saturn RGB555 (src/decode/decode-cg.js; the CG decoders themselves stay
+// behind the ./decode subpath) ---
+export { rgb555ToHex, rgb555ToRgb } from "./src/decode/decode-cg.js";
+
+// --- The ポリ吉 part library: index, placeholders, JSON form (src/model/mesh-library.js) ---
+export {
+  COLOR_SETS,
+  FAMILY_OFFSETS,
+  familyForFile,
+  familyOfLibraryIndex,
+  LIBRARY_MESH_COUNT,
+  libraryIndex,
+  makeMesh,
+  mdldtFileFor,
+  mdldtFileName,
+  meshBounds,
+  meshFor,
+  meshLibraryFromJson,
+  MODEL_UNIT_RADIUS,
+  placeholderLibrary,
+  placeholderMesh,
+  polygonNormals,
+  serializeMeshLibrary,
+} from "./src/model/mesh-library.js";
+
+// --- MDLDT_NN.CMP reader, the real part library off a disc (src/model/decode-mdldt.js) ---
+export {
+  buildMeshLibrary,
+  decodeMdldt,
+  MDLDT_BASE,
+  MDLDT_FILE_COUNT,
+} from "./src/model/decode-mdldt.js";
+
+// --- Model -> triangles: transforms, camera, projection, Mesh2D packing (src/model/model-mesh.js) ---
+export {
+  allocFrame,
+  buildModelMesh,
+  buildSwatchTable,
+  composeTransform,
+  LIGHT,
+  MAX_SWATCH_COLORS,
+  modelStats,
+  NEAR,
+  normalMatrix,
+  orbitCamera,
+  packMesh2D,
+  projectModel,
+  quantizeRotation,
+  ROT_ORDERS,
+  ROTATION_ORDER,
+  ROTATION_QUANTUM,
+  SHADE_LEVELS,
+  shadeFactor,
+  shadeLevel,
+  SWATCH_LAYOUT,
+  swatchCell,
+  swatchCellRect,
+  swatchRgb,
+  swatchUV,
+  transformPoint,
+  wireframeSegments,
+} from "./src/model/model-mesh.js";
 
 // --- Atlas packing (src/atlas-pack.js) ---
 export { packShelf } from "./src/atlas-pack.js";
@@ -80,7 +146,12 @@ export { packShelf } from "./src/atlas-pack.js";
 export { validateGameJson } from "./src/game-schema.js";
 
 // --- Extras: LZSS + section geometry (src/decompress.js) ---
-export { decompress, SECTION_HINTS, SECTION_SIZES } from "./src/decompress.js";
+export {
+  decompress,
+  decompressCmp,
+  SECTION_HINTS,
+  SECTION_SIZES,
+} from "./src/decompress.js";
 
 // --- Extras: cartridge-dump deinterleaving (src/bup-deinterleave.js) ---
 export { deinterleave, detect } from "./src/bup-deinterleave.js";

@@ -29,6 +29,27 @@ export const CG_PAGE_HEIGHT = (CG_CELLS_PER_PAGE / CG_CELLS_PER_ROW) * CG_CELL_D
 export const PALETTE_COUNT = 16;
 export const COLORS_PER_PALETTE = 16;
 
+// Saturn RGB555 (R bits 0-4, G 5-9, B 10-14; bit 15 is the CRAM/ATTR flag
+// and is ignored) -> 8-bit channels, 5->8 with bit replication so pure white
+// is 255,255,255. The same encoding is used by the palette bank, the sec7
+// model colour and the MDLDT part library's polygon colours.
+export function rgb555ToRgb(raw) {
+    const r5 = raw & 0x1f;
+    const g5 = (raw >> 5) & 0x1f;
+    const b5 = (raw >> 10) & 0x1f;
+    return {
+        r: (r5 << 3) | (r5 >> 2),
+        g: (g5 << 3) | (g5 >> 2),
+        b: (b5 << 3) | (b5 >> 2),
+    };
+}
+
+// RGB555 -> 0xRRGGBB.
+export function rgb555ToHex(raw) {
+    const { r, g, b } = rgb555ToRgb(raw);
+    return (r << 16) | (g << 8) | b;
+}
+
 // sec4 -> [{colors: [{r,g,b,raw,empty}] x16}] x16 (8-bit channels).
 export function decodePalettes(sec4) {
     if (sec4.length < PALETTE_COUNT * COLORS_PER_PALETTE * 2) {
@@ -40,15 +61,12 @@ export function decodePalettes(sec4) {
         for (let c = 0; c < COLORS_PER_PALETTE; c++) {
             const off = (p * COLORS_PER_PALETTE + c) * 2;
             const raw = (sec4[off] << 8) | sec4[off + 1];
-            const r5 = raw & 0x1f;
-            const g5 = (raw >> 5) & 0x1f;
-            const b5 = (raw >> 10) & 0x1f;
+            const { r, g, b } = rgb555ToRgb(raw);
             colors.push({
                 raw,
-                // 5->8 bit with bit replication so pure white is 255,255,255
-                r: (r5 << 3) | (r5 >> 2),
-                g: (g5 << 3) | (g5 >> 2),
-                b: (b5 << 3) | (b5 >> 2),
+                r,
+                g,
+                b,
                 empty: raw === 0x0000,
             });
         }

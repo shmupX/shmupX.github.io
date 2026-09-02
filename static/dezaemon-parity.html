@@ -233,8 +233,8 @@
     <p>The weapon <em>system</em> is exact — burst caps <code>[0,3,3,1,1,6,3,2]</code> and reload intervals <code>[0,6,5,12,1,3,6,28]</code>, with the power-scaled drain correctly confined to type 7 (an adversarial verifier caught that: types 1–6 fire at their raw interval no matter the power, and only type 7 speeds up). What is still approximated is the <b>geometry of sub-weapon types 2–6</b>: type 1's symmetric spread and type 7's strafe tilt were traced leaf by leaf, the other five fire their traced count and cadence straight ahead until someone reads their leaves too.</p>
   </li>
   <li><span class="n">3</span>
-    <h3>sec7 part-shape meshes (ポリ吉 primitives)<span class="tag open">MEANING OPEN</span></h3>
-    <p>The model section itself is decoded — 16 slots × 328 B, 9 parts × 36 B, positions/rotations/scales in 16.16, slot stride confirmed against POLYKITI's literal pools (<span class="ref">decode-model.js</span>). What is missing is the other half: the <b>primitive meshes are engine-fixed inside the POLYKITI overlay</b> and untraced, so a model decodes as transforms over shapes named only by number.</p>
+    <h3>sec7 part-shape meshes (ポリ吉 part library)<span class="tag open">ORDER OF PAGES 0–3 ASSUMED</span></h3>
+    <p><i>Mostly closed 2026-09-02.</i> The meshes were never in the overlay: the disc's <code>MDLDT_01–56.CMP</code> are the editor's <b>part library</b>, 56 files × 4 SGL meshes, each with three colour tables, and the shape word decodes as <code>family:3 | colourSet:2 | meshIndex:7</code> (<span class="ref">decode-model.js · decode-mdldt.js</span>). A <b>model viewer</b> (<code>/editor/model-viewer.html</code>, Phaser 4 Mesh2D) draws every composition from the shipped <code>mesh-library.json</code>; DAIOH's ship renders as its own ポリ吉-made sprite. What is still inferred rather than traced: the ascending family → file order for pages 0–3 (pages 4 and 5 are pinned by content), the rotation order (X, then Y, then Z is the default and switchable), and what the per-model colour word is for.</p>
   </li>
   <li><span class="n">4</span>
     <h3>Bullet steering states 17 / 18 / 19<span class="tag open">MEANING OPEN</span></h3>
@@ -269,14 +269,14 @@
   <tr><td class="feat">Title &amp; staff roll</td><td><span class="note">The save's drawn TITLE 1/2 run the <b>authored entrance program</b>: settings <code>+0x29..+0x2C</code> — the editor's two 5×3 icon grids, the "15 slots" per logo — are ten tri-state fields (vertical entry, horizontal entry, spin, height and width scale per logo), each a straight 128-frame line onto the rest pose, then the 32-frame white flash and the blinking PRESS 1P START BUTTON. FORMAT.md's "one fixed sway-in" was wrong. The <b>ending</b> plays the traced staff roll: the three role labels typed at 4 frames a character over the stages' scenery, each of the six 64×16 credit strips flying in from a corner over 128 ticks (3.0×→1.0×, one turn, afterimage trail, 4× on START), and the title's STAFF ROLL card lists the same labels with their strips. Also found on the way: the BGM table has <b>four</b> special tracks, so every stage's music was one entry off.</span> <span class="ref">decode-settings.js · decode-sprites.js · game.bundle.js</span></td></tr>
   <tr><td class="feat">Two players</td><td><span class="note">Settings bit1 is live: a second ship <b>joins in</b> mid-run on a free pad (or player 2's own keys), flying the save's <b>own P2 art</b> from global bank refs 24–47 and its <b>own weapon preset</b> from ship block +0x10. Each ship carries its own HP, combo, powerups, barrier, charge, sub weapon and bomb — the engine's one-bomb-per-player rule included — and enemies aim at a single global target that <b>alternates</b> between them on a timer, as traced. One player's death does not end the other's game; the run ends only when both are gone. <b>One deliberate divergence from hardware:</b> score is <b>shared</b>, not per player, and the HUD splits the HP and combo troughs vertically (player 1 on top) rather than showing two rows.</span> <span class="ref">decode-sprites.js · map-to-game.js · game.bundle.js</span></td></tr>
   <tr><td class="feat">Orientation</td><td><span class="note">A horizontal save is the SAME simulation drawn transposed, so the world needed no rotation — what it needed were its own numbers, and it has them: scroll rate ×365/256, a scroll window reaching 96 px further past the entry edge, and the horizontal change-channel trigger lines (14/48/116 px instead of 62/112/164).</span> <span class="ref">map-to-game.js · game.bundle.js</span></td></tr>
-  <tr><td class="feat">3D</td><td><span class="note">sec7 decodes: magic, 16 model slots, 9 parts each, 16.16 positions / rotations / scales with mirror-by-negative-scale.</span> <span class="ref">decode-model.js</span></td></tr>
+  <tr><td class="feat">3D</td><td><span class="note">sec7 decodes: magic, 16 model slots, 9 parts each, 16.16 positions / rotations / scales with mirror-by-negative-scale, and the shape word's family / colour set / mesh index into the disc's 224-mesh ポリ吉 part library, which ships as <code>mesh-library.json</code> and is drawn by the model viewer on Phaser 4's Mesh2D (CPU projection, painter-sorted, flat-shaded).</span> <span class="ref">decode-model.js · decode-mdldt.js · model-mesh.js · model-viewer.html</span></td></tr>
 </table>
 </div>
 
 <h2><span class="no">03</span>Decoded but not yet used</h2>
 <p class="sub"><span class="band part">Partial</span>&ensp;Bytes extracted and carried through, then nothing reads them — cheap wins once the runtime grows a consumer.</p>
 <ul class="plain">
-  <li><b>3D models</b> decode to transforms, but with no mesh library to draw and no renderer <span class="ref">decode-model.js</span></li>
+  <li><i>Empty as of 2026-09-02.</i> The 3D models were the last entry here, and the model viewer now draws them; the title art and staff-role labels moved up to <b>implemented</b> before them.</li>
 </ul>
 
 <h2><span class="no">04</span>No trace at all</h2>
@@ -284,7 +284,7 @@
 <ul class="plain">
   <li><b>Any write path</b> — LZSS compressor, section-table builder, BUP writer, .sav export (item 1 above)</li>
   <li><b>Save-driven endings</b> beyond the staff roll — no ending picture exists on the disc, so what is left is the ranking/name-entry screen (item 6)</li>
-  <li><b>The POLYKITI primitive mesh library</b> behind sec7's shape descriptors (item 3)</li>
+  <li><b>What the six ポリ吉 part pages are called</b> — POLYHELP.CMP / POLYBTN.CMP carry the labels and icons; the family → MDLDT file order for pages 0–3 is inferred from index maxima, not traced (item 3)</li>
   <li><b>Dev tooling referenced by FORMAT.md</b> — <code>dev/scan-compression.js</code>, <code>dev/decode-corpus.js</code>, <code>dev/diff-saves.js</code> and the controlled-delta capture matrix exist only as plans; only <code>dev-fixtures/debug-tools/render-chamber.ts</code> survives</li>
 </ul>
 

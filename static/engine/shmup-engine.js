@@ -1802,6 +1802,16 @@ function decompress(input) {
   }
   return Uint8Array.from(out);
 }
+function decompressCmp(raw) {
+  if (!raw || raw.length < 4) {
+    throw new Error("CMP: missing length header");
+  }
+  const len = (raw[0] | raw[1] << 8 | raw[2] << 16 | raw[3] << 24) >>> 0;
+  if (4 + len > raw.length) {
+    throw new Error(`CMP: header says ${len} bytes, only ${raw.length - 4} follow`);
+  }
+  return decompress(raw.subarray(4, 4 + len));
+}
 var SECTION_SIZES = [65536, 65536, 65536, 65536, 512, 396640, 101472, 5828];
 var SECTION_HINTS = [
   "CG art page 1 (128x512 8bpp, 16x16 cells, pixel=(pal<<4)|color)",
@@ -1823,6 +1833,20 @@ var CG_PAGE_WIDTH = CG_CELLS_PER_ROW * CG_CELL_DIM;
 var CG_PAGE_HEIGHT = CG_CELLS_PER_PAGE / CG_CELLS_PER_ROW * CG_CELL_DIM;
 var PALETTE_COUNT = 16;
 var COLORS_PER_PALETTE = 16;
+function rgb555ToRgb(raw) {
+  const r5 = raw & 31;
+  const g5 = raw >> 5 & 31;
+  const b5 = raw >> 10 & 31;
+  return {
+    r: r5 << 3 | r5 >> 2,
+    g: g5 << 3 | g5 >> 2,
+    b: b5 << 3 | b5 >> 2
+  };
+}
+function rgb555ToHex(raw) {
+  const { r, g, b } = rgb555ToRgb(raw);
+  return r << 16 | g << 8 | b;
+}
 function decodePalettes(sec4) {
   if (sec4.length < PALETTE_COUNT * COLORS_PER_PALETTE * 2) {
     throw new Error(`palette bank too small: ${sec4.length}`);
@@ -1833,15 +1857,12 @@ function decodePalettes(sec4) {
     for (let c = 0; c < COLORS_PER_PALETTE; c++) {
       const off = (p * COLORS_PER_PALETTE + c) * 2;
       const raw = sec4[off] << 8 | sec4[off + 1];
-      const r5 = raw & 31;
-      const g5 = raw >> 5 & 31;
-      const b5 = raw >> 10 & 31;
+      const { r, g, b } = rgb555ToRgb(raw);
       colors.push({
         raw,
-        // 5->8 bit with bit replication so pure white is 255,255,255
-        r: r5 << 3 | r5 >> 2,
-        g: g5 << 3 | g5 >> 2,
-        b: b5 << 3 | b5 >> 2,
+        r,
+        g,
+        b,
         empty: raw === 0
       });
     }
@@ -2860,35 +2881,50 @@ var MODEL_SLOTS = 16;
 var MODEL_SLOT_SIZE = 328;
 var MAX_PARTS = 9;
 var PART_SIZE = 36;
+var SHAPE_FAMILIES = 6;
+var FAMILY_MESH_COUNTS = [32, 72, 36, 36, 36, 12];
+var FAMILY_FILE_RANGES = [
+  [1, 8],
+  [9, 26],
+  [27, 35],
+  [36, 44],
+  [45, 53],
+  [54, 56]
+];
 var u16 = (b, o) => b[o] << 8 | b[o + 1];
 var s32 = (b, o) => b[o] << 24 | b[o + 1] << 16 | b[o + 2] << 8 | b[o + 3] | 0;
 function decodePart(bytes, off) {
   const shape = u16(bytes, off);
+  const scale = {
+    x: s32(bytes, off + 24) / 65536,
+    y: s32(bytes, off + 28) / 65536,
+    z: s32(bytes, off + 32) / 65536
+  };
   return {
     shape,
-    // Observed families across the disc corpus: 0x0-0x5 in the high
-    // nibble with variant bits below. Which family is which primitive
-    // (cube/cylinder/cone/sphere/plane) awaits a POLYKITI mesh trace, so
-    // the split is carried as data, not names.
     shapeFamily: shape >> 12 & 15,
+    // Kept for compatibility: the low 12 bits as one number. The two
+    // fields below are its decoded halves.
     shapeVariant: shape & 4095,
+    colorSet: shape >> 8 & 3,
+    meshIndex: shape & 127,
     position: {
       x: s32(bytes, off + 4) / 65536,
       y: s32(bytes, off + 8) / 65536,
       z: s32(bytes, off + 12) / 65536
     },
-    // degrees, engine-stored as a u16 circle (65536 = 360)
+    // degrees, engine-stored as a u16 circle (65536 = 360). The editor
+    // steps rotations by 18 degrees (65536/20) and stores them with a
+    // rounding drift of one or two raw units — round, never compare.
     rotation: {
       x: u16(bytes, off + 16) * 360 / 65536,
       y: u16(bytes, off + 18) * 360 / 65536,
       z: u16(bytes, off + 20) * 360 / 65536
     },
-    // x1.0 = 1; a negative scale mirrors its axis
-    scale: {
-      x: s32(bytes, off + 24) / 65536,
-      y: s32(bytes, off + 28) / 65536,
-      z: s32(bytes, off + 32) / 65536
-    }
+    // x1.0 = 1; a negative scale mirrors its axis (the editor almost
+    // always mirrors Y)
+    scale,
+    mirrored: scale.x * scale.y * scale.z < 0
   };
 }
 function decodeModels(sec7) {
@@ -2906,7 +2942,8 @@ function decodeModels(sec7) {
     }
     models.push({
       slot,
-      // RGB555 like the palette bank (R bits 0-4, G 5-9, B 10-14)
+      // RGB555 like the palette bank (R bits 0-4, G 5-9, B 10-14) —
+      // the model's own colour word, meaning open (not a part colour)
       color: u16(sec7, base + 2),
       parts
     });
@@ -3119,6 +3156,877 @@ function decodeSave(payload) {
     result.regions = [{ name: "payload", offset: 0, length: payload.length, decoded: false }];
   }
   return result;
+}
+
+// packages/shmup-engine/src/model/mesh-library.js
+var LIBRARY_MESH_COUNT = 224;
+var COLOR_SETS = 3;
+var MESHES_PER_FILE = 4;
+var MODEL_UNIT_RADIUS = 35;
+var FAMILY_OFFSETS = (() => {
+  const offsets = [];
+  let at = 0;
+  for (const count of FAMILY_MESH_COUNTS) {
+    offsets.push(at);
+    at += count;
+  }
+  return offsets;
+})();
+function libraryIndex(family, meshIndex) {
+  if (family < 0 || family >= SHAPE_FAMILIES) return -1;
+  if (meshIndex < 0 || meshIndex >= FAMILY_MESH_COUNTS[family]) return -1;
+  return FAMILY_OFFSETS[family] + meshIndex;
+}
+function familyOfLibraryIndex(index) {
+  for (let family = SHAPE_FAMILIES - 1; family >= 0; family--) {
+    if (index >= FAMILY_OFFSETS[family]) {
+      return { family, meshIndex: index - FAMILY_OFFSETS[family] };
+    }
+  }
+  return null;
+}
+function mdldtFileFor(family, meshIndex) {
+  if (libraryIndex(family, meshIndex) < 0) return null;
+  return {
+    file: FAMILY_FILE_RANGES[family][0] + (meshIndex >> 2),
+    meshInFile: meshIndex & 3
+  };
+}
+function familyForFile(file) {
+  for (let family = 0; family < SHAPE_FAMILIES; family++) {
+    const [first, last] = FAMILY_FILE_RANGES[family];
+    if (file >= first && file <= last) {
+      return { family, firstMeshIndex: (file - first) * MESHES_PER_FILE };
+    }
+  }
+  return null;
+}
+function mdldtFileName(file) {
+  return `MDLDT_${String(file).padStart(2, "0")}.CMP`;
+}
+function polygonCount(mesh) {
+  return mesh.polygons.length >> 2;
+}
+function polygonNormals(vertices, polygons) {
+  const count = polygons.length >> 2;
+  const normals = new Float32Array(count * 3);
+  for (let q = 0; q < count; q++) {
+    let nx = 0, ny = 0, nz = 0;
+    for (let k = 0; k < 4; k++) {
+      const a = polygons[q * 4 + k] * 3;
+      const b = polygons[q * 4 + (k + 1 & 3)] * 3;
+      const ax = vertices[a], ay = vertices[a + 1], az = vertices[a + 2];
+      const bx = vertices[b], by = vertices[b + 1], bz = vertices[b + 2];
+      nx += (ay - by) * (az + bz);
+      ny += (az - bz) * (ax + bx);
+      nz += (ax - bx) * (ay + by);
+    }
+    const len = Math.hypot(nx, ny, nz) || 1;
+    normals[q * 3] = -nx / len;
+    normals[q * 3 + 1] = -ny / len;
+    normals[q * 3 + 2] = -nz / len;
+  }
+  return normals;
+}
+function makeMesh({
+  vertices,
+  polygons,
+  colorSets,
+  normals,
+  source = "placeholder",
+  family = -1,
+  meshIndex = -1
+}) {
+  const v = vertices instanceof Float32Array ? vertices : Float32Array.from(vertices);
+  const p = polygons instanceof Uint16Array ? polygons : Uint16Array.from(polygons);
+  const count = p.length >> 2;
+  const sets = [];
+  for (let s = 0; s < COLOR_SETS; s++) {
+    const src = colorSets && colorSets[s];
+    const set = new Uint16Array(count);
+    if (src) {
+      for (let q = 0; q < count; q++) set[q] = src[q % src.length] & 32767;
+    }
+    sets.push(set);
+  }
+  return {
+    vertices: v,
+    polygons: p,
+    normals: normals ? Float32Array.from(normals) : polygonNormals(v, p),
+    colorSets: sets,
+    source,
+    family,
+    meshIndex
+  };
+}
+function meshBounds(mesh) {
+  const v = mesh.vertices;
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  let radius = 0;
+  for (let i = 0; i < v.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      if (v[i + k] < min[k]) min[k] = v[i + k];
+      if (v[i + k] > max[k]) max[k] = v[i + k];
+    }
+    radius = Math.max(radius, Math.hypot(v[i], v[i + 1], v[i + 2]));
+  }
+  if (!v.length) return { min: [0, 0, 0], max: [0, 0, 0], radius: 0 };
+  return { min, max, radius };
+}
+var PLACEHOLDER_COLOR_SETS = [
+  [15],
+  [992, 31, 31744, 1023],
+  [21140]
+];
+function orientOutward(vertices, polygons) {
+  const normals = polygonNormals(vertices, polygons);
+  for (let q = 0; q < polygons.length >> 2; q++) {
+    let cx = 0, cy = 0, cz = 0;
+    for (let k = 0; k < 4; k++) {
+      const a = polygons[q * 4 + k] * 3;
+      cx += vertices[a];
+      cy += vertices[a + 1];
+      cz += vertices[a + 2];
+    }
+    const dot = normals[q * 3] * cx + normals[q * 3 + 1] * cy + normals[q * 3 + 2] * cz;
+    if (dot < 0) {
+      const a = polygons[q * 4], b = polygons[q * 4 + 1];
+      const c = polygons[q * 4 + 2], d = polygons[q * 4 + 3];
+      if (c === d) {
+        polygons[q * 4] = a;
+        polygons[q * 4 + 1] = c;
+        polygons[q * 4 + 2] = b;
+        polygons[q * 4 + 3] = b;
+      } else {
+        polygons[q * 4] = d;
+        polygons[q * 4 + 1] = c;
+        polygons[q * 4 + 2] = b;
+        polygons[q * 4 + 3] = a;
+      }
+    }
+  }
+}
+function primitive(vertices, polygons, meta) {
+  const v = Float32Array.from(vertices);
+  const p = Uint16Array.from(polygons);
+  orientOutward(v, p);
+  return makeMesh({
+    vertices: v,
+    polygons: p,
+    colorSets: PLACEHOLDER_COLOR_SETS,
+    source: "placeholder",
+    ...meta
+  });
+}
+function prismMesh(ring, hy, meta) {
+  const n = ring.length;
+  const vertices = [];
+  for (const [x, z] of ring) vertices.push(x, hy, z);
+  for (const [x, z] of ring) vertices.push(x, -hy, z);
+  const polygons = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    polygons.push(i, j, n + j, n + i);
+  }
+  for (const base of [0, n]) {
+    for (let i = 1; i + 1 < n; i += 2) {
+      const c = base + i + 1;
+      const d = i + 2 < n ? base + i + 2 : c;
+      polygons.push(base, base + i, c, d);
+    }
+  }
+  return primitive(vertices, polygons, meta);
+}
+function pyramidMesh(ring, hy, meta) {
+  const n = ring.length;
+  const vertices = [];
+  for (const [x, z] of ring) vertices.push(x, hy, z);
+  vertices.push(0, -hy, 0);
+  const apex = n;
+  const polygons = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    polygons.push(i, j, apex, apex);
+  }
+  for (let i = 1; i + 1 < n; i += 2) {
+    const c = i + 1;
+    const d = i + 2 < n ? i + 2 : c;
+    polygons.push(0, i, c, d);
+  }
+  return primitive(vertices, polygons, meta);
+}
+function frustumMesh(ringTop, ringBottom, hy, meta) {
+  const n = ringTop.length;
+  const vertices = [];
+  for (const [x, z] of ringTop) vertices.push(x, hy, z);
+  for (const [x, z] of ringBottom) vertices.push(x, -hy, z);
+  const polygons = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    polygons.push(i, j, n + j, n + i);
+  }
+  for (const base of [0, n]) {
+    for (let i = 1; i + 1 < n; i += 2) {
+      const c = base + i + 1;
+      const d = i + 2 < n ? base + i + 2 : c;
+      polygons.push(base, base + i, c, d);
+    }
+  }
+  return primitive(vertices, polygons, meta);
+}
+function squareRing(r) {
+  return [[r, r], [-r, r], [-r, -r], [r, -r]];
+}
+function polygonRing(r, segments) {
+  const ring = [];
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2 * Math.PI / segments;
+    ring.push([r * Math.sin(a), r * Math.cos(a)]);
+  }
+  return ring;
+}
+function boxMesh(hx, hy, hz, meta) {
+  return prismMesh([[hx, hz], [-hx, hz], [-hx, -hz], [hx, -hz]], hy, meta);
+}
+function wedgeMesh(hx, hy, zMin, zMax, meta) {
+  return prismMesh([[-hx, zMin], [hx, zMin], [0, zMax]], hy, meta);
+}
+function hexPrismMesh(r, hy, meta) {
+  const ring = [];
+  for (let i = 0; i < 6; i++) {
+    const a = i * Math.PI / 3;
+    ring.push([r * Math.sin(a), r * Math.cos(a)]);
+  }
+  return prismMesh(ring, hy, meta);
+}
+function cylinderMesh(r, hy, segments = 16, meta) {
+  const ring = [];
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2 * Math.PI / segments;
+    ring.push([r * Math.sin(a), r * Math.cos(a)]);
+  }
+  return prismMesh(ring, hy, meta);
+}
+function sphereMesh(r, rings = 9, segments = 10, meta) {
+  const vertices = [0, r, 0];
+  for (let i = 1; i <= rings; i++) {
+    const lat = Math.PI * i / (rings + 1);
+    const y = r * Math.cos(lat);
+    const rr = r * Math.sin(lat);
+    for (let j = 0; j < segments; j++) {
+      const a = 2 * Math.PI * j / segments;
+      vertices.push(rr * Math.sin(a), y, rr * Math.cos(a));
+    }
+  }
+  vertices.push(0, -r, 0);
+  const top = 0;
+  const bottom = 1 + rings * segments;
+  const ringAt = (i, j) => 1 + i * segments + j % segments;
+  const polygons = [];
+  for (let j = 0; j < segments; j++) {
+    polygons.push(top, ringAt(0, j), ringAt(0, j + 1), ringAt(0, j + 1));
+  }
+  for (let i = 0; i + 1 < rings; i++) {
+    for (let j = 0; j < segments; j++) {
+      polygons.push(
+        ringAt(i, j),
+        ringAt(i, j + 1),
+        ringAt(i + 1, j + 1),
+        ringAt(i + 1, j)
+      );
+    }
+  }
+  for (let j = 0; j < segments; j++) {
+    const a = ringAt(rings - 1, j);
+    const b = ringAt(rings - 1, j + 1);
+    polygons.push(bottom, b, a, a);
+  }
+  return primitive(vertices, polygons, meta);
+}
+var TRI_RING = [[-27.5, 15.58], [27.5, 15.58], [0, -31.76]];
+var FAMILY5_TABLE = [
+  (m) => boxMesh(20.5, 20.5, 20.5, m),
+  //                  0  cube
+  (m) => sphereMesh(27.5, 9, 10, m),
+  //                     1  sphere
+  (m) => wedgeMesh(27.5, 27.5, -15.88, 31.76, m),
+  //        2  triangular prism
+  (m) => hexPrismMesh(27.5, 27.5, m),
+  //                    3  hexagonal prism
+  (m) => cylinderMesh(27.5, 27.5, 16, m),
+  //                4  16-gon cylinder
+  (m) => pyramidMesh(TRI_RING, 20, m),
+  //                   5  triangular pyramid
+  (m) => pyramidMesh(squareRing(27.5), 20, m),
+  //           6  square pyramid
+  (m) => frustumMesh(squareRing(27.5), squareRing(15), 15, m),
+  // 7  square frustum
+  (m) => hexPrismMesh(27.5, 15, m),
+  //                      8  flatter hex prism
+  (m) => pyramidMesh(polygonRing(27.5, 16), 20, m),
+  //      9  16-gon cone
+  (m) => cylinderMesh(27.5, 15, 16, m),
+  //                 10  flatter cylinder
+  (m) => (
+    //                                                11  triangular frustum
+    frustumMesh(
+      [[-27.5, -15.88], [27.5, -15.88], [0, 31.76]],
+      [[-17.1875, -9.925], [17.1875, -9.925], [0, 19.85]],
+      15,
+      m
+    )
+  )
+];
+function placeholderMesh(family, meshIndex) {
+  const meta = { family, meshIndex };
+  if (family === 5 && meshIndex >= 0 && meshIndex < FAMILY5_TABLE.length) {
+    return FAMILY5_TABLE[meshIndex](meta);
+  }
+  if (family === 4) return boxMesh(21.34, 35, 5, meta);
+  if (family === 0) return boxMesh(35, 30, 12, meta);
+  if (family >= 1 && family <= 3) return boxMesh(10, 35, 12, meta);
+  return boxMesh(20, 20, 20, meta);
+}
+var placeholderCache = null;
+function placeholderLibrary() {
+  if (placeholderCache) return placeholderCache;
+  const meshes = [];
+  for (let i = 0; i < LIBRARY_MESH_COUNT; i++) {
+    const { family, meshIndex } = familyOfLibraryIndex(i);
+    meshes.push(placeholderMesh(family, meshIndex));
+  }
+  placeholderCache = { meshes, familyOffsets: FAMILY_OFFSETS, source: "placeholder" };
+  return placeholderCache;
+}
+function meshFor(library, part) {
+  const index = libraryIndex(part.shapeFamily, part.meshIndex);
+  const mesh = index >= 0 && library ? library.meshes[index] : null;
+  return mesh || placeholderMesh(part.shapeFamily, part.meshIndex);
+}
+var JSON_UNIT = 256;
+function serializeMeshLibrary(library) {
+  return {
+    v: 1,
+    source: library.source,
+    unit: JSON_UNIT,
+    meshes: library.meshes.map((mesh) => ({
+      f: mesh.family,
+      i: mesh.meshIndex,
+      s: mesh.source,
+      v: Array.from(mesh.vertices, (x) => Math.round(x * JSON_UNIT)),
+      p: Array.from(mesh.polygons),
+      c: mesh.colorSets.map((set) => Array.from(set))
+    }))
+  };
+}
+function meshLibraryFromJson(obj) {
+  if (!obj || obj.v !== 1 || !Array.isArray(obj.meshes)) {
+    throw new Error("mesh library: not a v1 library");
+  }
+  const unit = obj.unit || JSON_UNIT;
+  const meshes = obj.meshes.map(
+    (m) => makeMesh({
+      vertices: Float32Array.from(m.v, (x) => x / unit),
+      polygons: m.p,
+      colorSets: m.c,
+      source: m.s || obj.source || "mdldt",
+      family: m.f,
+      meshIndex: m.i
+    })
+  );
+  return { meshes, familyOffsets: FAMILY_OFFSETS, source: obj.source || "mdldt" };
+}
+
+// packages/shmup-engine/src/model/decode-mdldt.js
+var MDLDT_BASE = 3080192;
+var MDLDT_FILE_COUNT = 56;
+var PDATA_PER_FILE = 12;
+var PDATA_SIZE = 24;
+var POINT_SIZE = 12;
+var POLYGON_SIZE = 20;
+var ATTR_SIZE = 12;
+var COLOR_SETS2 = 3;
+function view(bytes) {
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+}
+function readPdata(dv, at) {
+  return {
+    pntbl: dv.getUint32(at) - MDLDT_BASE,
+    nbPoint: dv.getUint32(at + 4),
+    pltbl: dv.getUint32(at + 8) - MDLDT_BASE,
+    nbPolygon: dv.getUint32(at + 12),
+    attbl: dv.getUint32(at + 16) - MDLDT_BASE
+  };
+}
+function decodeMdldt(bytes, { file = 0 } = {}) {
+  if (!bytes || bytes.length < PDATA_PER_FILE * 4) {
+    throw new Error("MDLDT: too short for a pointer table");
+  }
+  const dv = view(bytes);
+  const slice = file ? familyForFile(file) : null;
+  const meshes = [];
+  for (let m = 0; m < MESHES_PER_FILE; m++) {
+    const sets = [];
+    for (let s = 0; s < COLOR_SETS2; s++) {
+      const ptr = dv.getUint32((m * COLOR_SETS2 + s) * 4) - MDLDT_BASE;
+      if (ptr < 0 || ptr + PDATA_SIZE > bytes.length) {
+        throw new Error(`MDLDT: PDATA ${m * COLOR_SETS2 + s} out of range`);
+      }
+      sets.push(readPdata(dv, ptr));
+    }
+    const base = sets[0];
+    for (const other of sets) {
+      if (other.pntbl !== base.pntbl || other.pltbl !== base.pltbl || other.nbPoint !== base.nbPoint || other.nbPolygon !== base.nbPolygon) {
+        throw new Error(`MDLDT: mesh ${m}'s colour sets disagree on geometry`);
+      }
+    }
+    const end = Math.max(
+      base.pntbl + base.nbPoint * POINT_SIZE,
+      base.pltbl + base.nbPolygon * POLYGON_SIZE,
+      ...sets.map((s) => s.attbl + base.nbPolygon * ATTR_SIZE)
+    );
+    if (end > bytes.length) throw new Error(`MDLDT: mesh ${m} runs past the file`);
+    const vertices = new Float32Array(base.nbPoint * 3);
+    for (let i = 0; i < base.nbPoint * 3; i++) {
+      vertices[i] = dv.getInt32(base.pntbl + i * 4) / 65536;
+    }
+    const polygons = new Uint16Array(base.nbPolygon * 4);
+    const normals = new Float32Array(base.nbPolygon * 3);
+    for (let q = 0; q < base.nbPolygon; q++) {
+      const at = base.pltbl + q * POLYGON_SIZE;
+      normals[q * 3] = dv.getInt32(at) / 65536;
+      normals[q * 3 + 1] = dv.getInt32(at + 4) / 65536;
+      normals[q * 3 + 2] = dv.getInt32(at + 8) / 65536;
+      for (let k = 0; k < 4; k++) {
+        const index = dv.getUint16(at + 12 + k * 2);
+        if (index >= base.nbPoint) {
+          throw new Error(`MDLDT: mesh ${m} polygon ${q} indexes vertex ${index}`);
+        }
+        polygons[q * 4 + k] = index;
+      }
+    }
+    const colorSets = sets.map((s) => {
+      const colors = new Uint16Array(base.nbPolygon);
+      for (let q = 0; q < base.nbPolygon; q++) {
+        colors[q] = dv.getUint16(s.attbl + q * ATTR_SIZE + 6) & 32767;
+      }
+      return colors;
+    });
+    meshes.push(makeMesh({
+      vertices,
+      polygons,
+      normals,
+      colorSets,
+      source: "mdldt",
+      family: slice ? slice.family : -1,
+      meshIndex: slice ? slice.firstMeshIndex + m : -1
+    }));
+  }
+  return meshes;
+}
+function buildMeshLibrary(files) {
+  const meshes = new Array(LIBRARY_MESH_COUNT).fill(null);
+  let real = 0;
+  for (let file = 1; file <= MDLDT_FILE_COUNT; file++) {
+    const bytes = files[file - 1];
+    if (!bytes) continue;
+    const slice = familyForFile(file);
+    const decoded = decodeMdldt(bytes, { file });
+    for (let m = 0; m < decoded.length; m++) {
+      const index = FAMILY_OFFSETS[slice.family] + slice.firstMeshIndex + m;
+      meshes[index] = decoded[m];
+      real++;
+    }
+  }
+  for (let i = 0; i < LIBRARY_MESH_COUNT; i++) {
+    if (meshes[i]) continue;
+    const { family, meshIndex } = familyOfLibraryIndex(i);
+    meshes[i] = placeholderMesh(family, meshIndex);
+  }
+  return {
+    meshes,
+    familyOffsets: FAMILY_OFFSETS,
+    source: real === LIBRARY_MESH_COUNT ? "mdldt" : real ? "partial" : "placeholder",
+    realMeshes: real
+  };
+}
+
+// packages/shmup-engine/src/model/model-mesh.js
+var ROT_ORDERS = ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"];
+var ROTATION_ORDER = "xyz";
+var ROTATION_QUANTUM = 18;
+var SHADE_LEVELS = 8;
+var SHADE_MIN = 0.58;
+var SHADE_RANGE = 0.52;
+var LIGHT = normalize3([-0.45, 0.78, 0.44]);
+var NEAR = 4;
+function normalize3(v) {
+  const len = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / len, v[1] / len, v[2] / len];
+}
+var DEG = Math.PI / 180;
+function quantizeRotation(deg, step = ROTATION_QUANTUM) {
+  const q = Math.round(deg / step) * step;
+  return (q % 360 + 360) % 360;
+}
+function rotationMatrix(axis, deg) {
+  const c = Math.cos(deg * DEG), s = Math.sin(deg * DEG);
+  switch (axis) {
+    case "x":
+      return [1, 0, 0, 0, c, -s, 0, s, c];
+    case "y":
+      return [c, 0, s, 0, 1, 0, -s, 0, c];
+    default:
+      return [c, -s, 0, s, c, 0, 0, 0, 1];
+  }
+}
+function mul3(a, b) {
+  const out = new Array(9);
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      out[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
+    }
+  }
+  return out;
+}
+function composeTransform(part, { rotOrder = ROTATION_ORDER, quantize = true } = {}) {
+  if (!ROT_ORDERS.includes(rotOrder)) {
+    throw new Error(`unknown rotation order ${rotOrder}`);
+  }
+  const rot = part.rotation || { x: 0, y: 0, z: 0 };
+  const angle = (axis) => quantize ? quantizeRotation(rot[axis] || 0) : rot[axis] || 0;
+  let r = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  for (const axis of rotOrder) {
+    r = mul3(rotationMatrix(axis, angle(axis)), r);
+  }
+  const s = part.scale || { x: 1, y: 1, z: 1 };
+  const p = part.position || { x: 0, y: 0, z: 0 };
+  const m = new Float64Array(12);
+  for (let row = 0; row < 3; row++) {
+    m[row * 4] = r[row * 3] * s.x;
+    m[row * 4 + 1] = r[row * 3 + 1] * s.y;
+    m[row * 4 + 2] = r[row * 3 + 2] * s.z;
+  }
+  m[3] = p.x;
+  m[7] = p.y;
+  m[11] = p.z;
+  return m;
+}
+function transformPoint(m, x, y, z, out, o = 0) {
+  out[o] = m[0] * x + m[1] * y + m[2] * z + m[3];
+  out[o + 1] = m[4] * x + m[5] * y + m[6] * z + m[7];
+  out[o + 2] = m[8] * x + m[9] * y + m[10] * z + m[11];
+  return out;
+}
+function normalMatrix(m) {
+  const a = m[0], b = m[1], c = m[2];
+  const d = m[4], e = m[5], f = m[6];
+  const g = m[8], h = m[9], i = m[10];
+  const co = [
+    e * i - f * h,
+    -(d * i - f * g),
+    d * h - e * g,
+    -(b * i - c * h),
+    a * i - c * g,
+    -(a * h - b * g),
+    b * f - c * e,
+    -(a * f - c * d),
+    a * e - b * d
+  ];
+  const det = a * co[0] + b * co[1] + c * co[2];
+  const inv = det === 0 ? 1 : 1 / det;
+  return Float64Array.from(co, (v) => v * inv);
+}
+function buildModelMesh(model, {
+  library = placeholderLibrary(),
+  yDown = false,
+  rotOrder = ROTATION_ORDER,
+  quantize = true
+} = {}) {
+  const partList = model && model.parts || [];
+  const resolved = partList.map((part) => ({ part, mesh: meshFor(library, part) }));
+  let triCount = 0;
+  for (const { mesh } of resolved) {
+    const polys = polygonCount(mesh);
+    for (let q = 0; q < polys; q++) {
+      triCount += mesh.polygons[q * 4 + 2] === mesh.polygons[q * 4 + 3] ? 1 : 2;
+    }
+  }
+  const positions = new Float32Array(triCount * 9);
+  const normals = new Float32Array(triCount * 3);
+  const colors = new Uint32Array(triCount);
+  const partOf = new Uint8Array(triCount);
+  const parts = [];
+  const tmp = new Float64Array(3);
+  const ySign = yDown ? -1 : 1;
+  let t = 0;
+  let placeholder = false;
+  resolved.forEach(({ part, mesh }, index) => {
+    const m = composeTransform(part, { rotOrder, quantize });
+    const nm = normalMatrix(m);
+    const setIndex = Math.min(Math.max(part.colorSet | 0, 0), mesh.colorSets.length - 1);
+    const colorSet = mesh.colorSets[setIndex];
+    const triStart = t;
+    if (mesh.source !== "mdldt") placeholder = true;
+    const polys = polygonCount(mesh);
+    const emit = (q, a, b, c) => {
+      const corners = [a, b, c];
+      for (let k = 0; k < 3; k++) {
+        const vi = corners[k] * 3;
+        transformPoint(m, mesh.vertices[vi], mesh.vertices[vi + 1], mesh.vertices[vi + 2], tmp, 0);
+        positions[t * 9 + k * 3] = tmp[0];
+        positions[t * 9 + k * 3 + 1] = tmp[1] * ySign;
+        positions[t * 9 + k * 3 + 2] = tmp[2];
+      }
+      const nx0 = mesh.normals[q * 3], ny0 = mesh.normals[q * 3 + 1], nz0 = mesh.normals[q * 3 + 2];
+      let nx = nm[0] * nx0 + nm[1] * ny0 + nm[2] * nz0;
+      let ny = nm[3] * nx0 + nm[4] * ny0 + nm[5] * nz0;
+      let nz = nm[6] * nx0 + nm[7] * ny0 + nm[8] * nz0;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len;
+      ny /= len;
+      nz /= len;
+      normals[t * 3] = nx;
+      normals[t * 3 + 1] = ny * ySign;
+      normals[t * 3 + 2] = nz;
+      colors[t] = rgb555ToHex(colorSet[q]);
+      partOf[t] = index;
+      t++;
+    };
+    for (let q = 0; q < polys; q++) {
+      const a = mesh.polygons[q * 4], b = mesh.polygons[q * 4 + 1];
+      const c = mesh.polygons[q * 4 + 2], d = mesh.polygons[q * 4 + 3];
+      emit(q, a, b, c);
+      if (c !== d) emit(q, a, c, d);
+    }
+    parts.push({
+      index,
+      part,
+      family: part.shapeFamily,
+      meshIndex: part.meshIndex,
+      colorSet: setIndex,
+      source: mesh.source,
+      triStart,
+      triCount: t - triStart
+    });
+  });
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < positions.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      if (positions[i + k] < min[k]) min[k] = positions[i + k];
+      if (positions[i + k] > max[k]) max[k] = positions[i + k];
+    }
+  }
+  if (!triCount) {
+    min.fill(0);
+    max.fill(0);
+  }
+  const center = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
+  let radius = 0;
+  for (let i = 0; i < positions.length; i += 3) {
+    radius = Math.max(
+      radius,
+      Math.hypot(positions[i] - center[0], positions[i + 1] - center[1], positions[i + 2] - center[2])
+    );
+  }
+  return {
+    positions,
+    normals,
+    colors,
+    partOf,
+    parts,
+    triCount,
+    bounds: { min, max, center, radius },
+    placeholder,
+    yDown,
+    rotOrder
+  };
+}
+function allocFrame(mesh) {
+  const n = mesh.triCount;
+  return {
+    triCount: n,
+    xy: new Float32Array(n * 6),
+    depth: new Float32Array(n),
+    shade: new Uint8Array(n),
+    visible: new Uint8Array(n),
+    order: new Uint32Array(n),
+    visibleCount: 0
+  };
+}
+function orbitCamera({
+  yaw = 35,
+  pitch = 25,
+  distance = 200,
+  focal = 360,
+  width = 640,
+  height = 400,
+  target = [0, 0, 0],
+  near = NEAR
+} = {}) {
+  const t = yaw * DEG, p = pitch * DEG;
+  const sinT = Math.sin(t), cosT = Math.cos(t);
+  const sinP = Math.sin(p), cosP = Math.cos(p);
+  const cam = [sinT * cosP, sinP, cosT * cosP];
+  const right = [cosT, 0, -sinT];
+  const up = [-sinT * sinP, cosP, -cosT * sinP];
+  return {
+    eye: [target[0] + cam[0] * distance, target[1] + cam[1] * distance, target[2] + cam[2] * distance],
+    cam,
+    right,
+    up,
+    focal,
+    width,
+    height,
+    near,
+    yaw,
+    pitch,
+    distance
+  };
+}
+function shadeLevel(ndotl) {
+  const c = ndotl > 0 ? ndotl < 1 ? ndotl : 1 : 0;
+  return Math.round(c * (SHADE_LEVELS - 1));
+}
+function shadeFactor(level) {
+  return SHADE_MIN + SHADE_RANGE * (level / (SHADE_LEVELS - 1));
+}
+function projectModel(mesh, cam, frame) {
+  const { positions, normals, triCount } = mesh;
+  const { eye, cam: dir, right, up, focal, width, height, near } = cam;
+  const cx = width / 2, cy = height / 2;
+  const { xy, depth, shade, visible, order } = frame;
+  let n = 0;
+  for (let t = 0; t < triCount; t++) {
+    const p = t * 9;
+    let far = -Infinity;
+    let ok = true;
+    let mx = 0, my = 0, mz = 0;
+    for (let k = 0; k < 3 && ok; k++) {
+      const px = positions[p + k * 3], py = positions[p + k * 3 + 1], pz = positions[p + k * 3 + 2];
+      const dx = px - eye[0], dy = py - eye[1], dz = pz - eye[2];
+      const vz = -(dx * dir[0] + dy * dir[1] + dz * dir[2]);
+      if (vz < near) {
+        ok = false;
+        break;
+      }
+      const vx = dx * right[0] + dy * right[1] + dz * right[2];
+      const vy = dx * up[0] + dy * up[1] + dz * up[2];
+      xy[t * 6 + k * 2] = cx + focal * vx / vz;
+      xy[t * 6 + k * 2 + 1] = cy - focal * vy / vz;
+      if (vz > far) far = vz;
+      mx += px;
+      my += py;
+      mz += pz;
+    }
+    if (!ok) {
+      visible[t] = 0;
+      continue;
+    }
+    const nx = normals[t * 3], ny = normals[t * 3 + 1], nz = normals[t * 3 + 2];
+    const facing = nx * (eye[0] - mx / 3) + ny * (eye[1] - my / 3) + nz * (eye[2] - mz / 3);
+    if (facing <= 0) {
+      visible[t] = 0;
+      continue;
+    }
+    visible[t] = 1;
+    depth[t] = far;
+    shade[t] = shadeLevel(nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]);
+    order[n++] = t;
+  }
+  const slice = order.subarray(0, n);
+  slice.sort((a, b) => depth[b] - depth[a]);
+  frame.visibleCount = n;
+  return n;
+}
+var MAX_SWATCH_COLORS = 128;
+var SWATCH_LAYOUT = { cellPx: 8, cols: 32, rows: 32, texPx: 256 };
+function buildSwatchTable(mesh, maxColors = MAX_SWATCH_COLORS) {
+  const index = /* @__PURE__ */ new Map();
+  const colors = [];
+  const triColor = new Uint16Array(mesh.triCount);
+  for (let t = 0; t < mesh.triCount; t++) {
+    const c = mesh.colors[t];
+    let i = index.get(c);
+    if (i === void 0) {
+      if (colors.length < maxColors) {
+        i = colors.length;
+        colors.push(c);
+      } else {
+        i = 0;
+      }
+      index.set(c, i);
+    }
+    triColor[t] = i;
+  }
+  return { colors: Uint32Array.from(colors), triColor };
+}
+function swatchCell(colorIndex, level) {
+  return colorIndex * SHADE_LEVELS + level;
+}
+function swatchCellRect(cell, layout = SWATCH_LAYOUT) {
+  const col = cell % layout.cols;
+  const row = cell / layout.cols | 0;
+  return { x: col * layout.cellPx, y: row * layout.cellPx, w: layout.cellPx, h: layout.cellPx };
+}
+function swatchUV(cell, layout = SWATCH_LAYOUT) {
+  const r = swatchCellRect(cell, layout);
+  return [(r.x + r.w / 2) / layout.texPx, (r.y + r.h / 2) / layout.texPx];
+}
+function swatchRgb(rgb, level) {
+  const f = shadeFactor(level);
+  const ch = (v) => Math.min(255, Math.round(v * f));
+  return ch(rgb >> 16 & 255) << 16 | ch(rgb >> 8 & 255) << 8 | ch(rgb & 255);
+}
+function packMesh2D(mesh, frame, table, layout = SWATCH_LAYOUT, out = {}) {
+  const n = frame.visibleCount;
+  const vertices = out.vertices || (out.vertices = []);
+  const indices = out.indices || (out.indices = []);
+  vertices.length = n * 12;
+  indices.length = n * 4;
+  const { xy, shade, order } = frame;
+  for (let r = 0; r < n; r++) {
+    const t = order[r];
+    const [u, v] = swatchUV(swatchCell(table.triColor[t], shade[t]), layout);
+    for (let k = 0; k < 3; k++) {
+      const o = r * 12 + k * 4;
+      vertices[o] = xy[t * 6 + k * 2];
+      vertices[o + 1] = xy[t * 6 + k * 2 + 1];
+      vertices[o + 2] = u;
+      vertices[o + 3] = v;
+    }
+    indices[r * 4] = r * 3;
+    indices[r * 4 + 1] = r * 3 + 1;
+    indices[r * 4 + 2] = r * 3 + 2;
+    indices[r * 4 + 3] = 0;
+  }
+  out.count = n;
+  return out;
+}
+function wireframeSegments(mesh, frame, out = []) {
+  const n = frame.visibleCount;
+  out.length = n * 12;
+  const { xy, order } = frame;
+  for (let r = 0; r < n; r++) {
+    const t = order[r];
+    for (let k = 0; k < 3; k++) {
+      const a = t * 6 + k * 2, b = t * 6 + (k + 1) % 3 * 2;
+      const o = r * 12 + k * 4;
+      out[o] = xy[a];
+      out[o + 1] = xy[a + 1];
+      out[o + 2] = xy[b];
+      out[o + 3] = xy[b + 1];
+    }
+  }
+  return out;
+}
+function modelStats(models) {
+  const list = models || [];
+  let parts = 0;
+  for (const m of list) parts += (m.parts || []).length;
+  return { slots: list.length, parts };
 }
 
 // packages/shmup-engine/src/atlas-pack.js
@@ -3633,47 +4541,73 @@ function totalDiffBytes(ranges) {
 export {
   BLANK_WAVES,
   BUILTIN_DEFAULTS,
+  COLOR_SETS,
   DUKE_PLAYER,
   ENEMY_BULLET_SPEED,
   ENGINE_SHOT_DAMAGE,
   ENTRY_FLAG,
   EVIL_INVADERS_PLAYER,
+  FAMILY_FILE_RANGES,
+  FAMILY_MESH_COUNTS,
+  FAMILY_OFFSETS,
   FRAMES_PER_SOURCE_ROW,
   GRID_COLS,
   INSTRUMENT_COUNT,
   LAYER_COUNT,
+  LIBRARY_MESH_COUNT,
+  LIGHT,
   LOOP_ALTERNATE,
   LOOP_FORWARD,
   LOOP_OFF,
   LOOP_REVERSE,
   MAGIC,
   MAX_STAGES2 as MAX_STAGES,
+  MAX_SWATCH_COLORS,
+  MDLDT_BASE,
+  MDLDT_FILE_COUNT,
   MODEL_SLOTS,
+  MODEL_UNIT_RADIUS,
+  NEAR,
   PLAYER_SHOT_DAMAGE_BY_LEVEL,
+  ROTATION_ORDER,
+  ROTATION_QUANTUM,
+  ROT_ORDERS,
   SCSP_BASE_RATE,
   SEC7_MAGIC,
   SECTION_COUNT,
   SECTION_HINTS,
   SECTION_SIZES,
+  SHADE_LEVELS,
+  SHAPE_FAMILIES,
   SINGLE_LETTER_ENEMIES,
+  SWATCH_LAYOUT,
   TABLE_SIZE,
   TROOPER_PLAYER,
+  allocFrame,
   buildBlankGame,
+  buildMeshLibrary,
+  buildModelMesh,
+  buildSwatchTable,
   bupDateToDate,
   byteSum,
   coalesceDiffRanges,
+  composeTransform,
   cutLayer,
+  decodeMdldt,
   decodeModels,
   decodePlayer2Art,
   decodePlayerArt,
   decodeSave,
   decompress,
+  decompressCmp,
   deinterleave,
   detect,
   detectPartitions,
   emptyWave,
   enemyLetters,
   extractPayload,
+  familyForFile,
+  familyOfLibraryIndex,
   findEntries,
   findEntry,
   gunzip,
@@ -3682,22 +4616,49 @@ export {
   isGzip,
   layerAt,
   levelGain,
+  libraryIndex,
   listFiles,
+  makeMesh,
   mapSaveToGame,
+  mdldtFileFor,
+  mdldtFileName,
+  meshBounds,
+  meshFor,
+  meshLibraryFromJson,
+  modelStats,
+  normalMatrix,
   normalize,
   openDisc,
+  orbitCamera,
+  packMesh2D,
   packShelf,
   panPosition,
   parse,
   parseEntry,
   parseSectionTable,
   pickLayers,
+  placeholderLibrary,
+  placeholderMesh,
   playbackRate,
+  polygonNormals,
+  projectModel,
+  quantizeRotation,
   readExtent,
   readFile,
+  rgb555ToHex,
+  rgb555ToRgb,
+  serializeMeshLibrary,
+  shadeFactor,
+  shadeLevel,
+  swatchCell,
+  swatchCellRect,
+  swatchRgb,
+  swatchUV,
   toFloat32,
   totalDiffBytes,
+  transformPoint,
   uniqueSlices,
   validateGameJson,
-  validateSectionTable
+  validateSectionTable,
+  wireframeSegments
 };

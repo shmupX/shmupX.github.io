@@ -1,8 +1,11 @@
 {
   "name": "@shmupx/shmup-engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "exports": {
     ".": "./mod.js",
+    "./mesh-library": "./src/model/mesh-library.js",
+    "./decode-mdldt": "./src/model/decode-mdldt.js",
+    "./model-mesh": "./src/model/model-mesh.js",
     "./bup-source": "./src/bup-source.js",
     "./bup-parse": "./src/bup-parse.js",
     "./bup-deinterleave": "./src/bup-deinterleave.js",

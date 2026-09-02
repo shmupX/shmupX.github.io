@@ -155,12 +155,24 @@ ISO9660 files (2048B user data at sector offset 16); findings:
   `M_DATA01..14` concatenated; Ramsie's sec6 matches 12 other presets
   slot-for-slot. Song format: small header (`0c 0f 05 xx …`) then 8-byte
   step rows, `0x80` = rest.
-- **`MDLDT_01–56.CMP` = preset 3D models for ポリ吉** (the 3D-to-sprite
-  editor, overlay `POLYKITI`): SGL-style compiled meshes loaded at LWRAM
-  `0x2F0000` — 12 PDATA pointers, then vertex tables (12 B XYZ) and polygon
-  tables (20 B = normal + 4 vertex indices), verified exactly. This is a
-  *different* format from sec7's part lists (presets render from MDLDT
-  directly; sec7 stores only user-built part compositions).
+- **`MDLDT_01–56.CMP` = the ポリ吉 PART LIBRARY** (the 3D-to-sprite editor,
+  overlay `POLYKITI`, whose literal pool names all 56 plus `POLYBTN` /
+  `POLY_LF` / `POLY_RI` / `POLYHELP`) — corrected 2026-09-02: not "preset
+  models" but the 224 meshes a sec7 part's shape word selects from. `.CMP` =
+  u32 LITTLE-endian compressed-stream length + the sections' Okumura LZSS
+  (`lib/decompress.js` `decompressCmp`). Decompressed = 12 u32be pointers
+  based at LWRAM `0x2F0000` in mesh-major order (mesh 0 colour set 0/1/2,
+  mesh 1 …) → SGL `PDATA {pntbl, nbPoint, pltbl, nbPolygon, attbl, 0}`; the
+  three PDATA of a mesh share `pntbl`/`pltbl` and differ only in `attbl`
+  (verified over all 224). POINT = 3 × s32be 16.16; POLYGON = 20 B = normal
+  (3 × 16.16) + 4 × u16be vertex indices, `v[2] == v[3]` = triangle; ATTR =
+  12 B/polygon `flag, sort, texno, atrb, colno, gstb, dir` = `0, 11, 0, 0xe8,
+  RGB555|0x8000, 0, 4` everywhere, so `colno` is the whole colour model. The
+  stored normal equals `cross(v2 - v0, v1 - v0)` — the Saturn's left-handed
+  rule, the negative of the right-hand one (99.4 % of 15,216 polygons within
+  cos 0.95; one opposite). Totals: 224 meshes, 14,345 vertices, 15,216
+  polygons, 27,124 triangles. Reader: `lib/model/decode-mdldt.js`; shipped as
+  `static/editor/dezaemon/mesh-library.json` (`deno task deza:meshlib`).
 - **`BACK00–14.CMP` = preset backgrounds** (decode to ~72KB); `BACK00` has an
   RGB555 gray-ramp palette at +0x14 (byte-swapped), `BK_CHECK.CMP` opens with
   big-endian RGB555 ramps.
@@ -193,7 +205,7 @@ assembly, 音まろ music, ポリ吉 3D):
 | sec4    | **Palette bank**: 16 palettes × 16 colors, u16be RGB555 (R bits 0–4, G 5–9, B 10–14, bit15 = CRAM RGB-mode flag). Rows 0–11 (0x000–0x17F) = 12 preset ramps, byte-identical across all games, bit15 clear; rows 12–15 (0x180–0x1FF) = the 4 user palettes (= the editor's "192 system + 64 user colors"), stored `0x8000\|color`, 0x0000 empty. u16[0] varies per game (meaning open). | confirmed |
 | sec5    | **Game assembly data** (組み子さん) — see the sec5 region map below. Regions are proven from engine-code multiplications and tile exactly; the background tilemap, placement grid, enemy records, boss record and sprite composition banks are decoded, the scroll curve's field meaning and parts of the settings block remain open. | mostly decoded |
 | sec6    | **BGM**: 24 song slots × 4,228 B (disc `M_DATA*` presets match verbatim). Song = 4-byte header + **32 measures × 132 B**, each measure = 4 control bytes + **4 parts × 32 steps**, part-major. Step: 0x00 empty, 0x01–0x3B note (~5 octaves), 0x80–0x88 sustain. | confirmed |
-| sec7    | **3D models** (ポリ吉): u32be magic `0x12345678` (absent = never opened the 3D editor; section then all-zero or residual RAM — ELFI's "custom" sec7 is just uninitialized garbage), then 16 model slots × 328 B (u16be part count 0–9, u16be model color, 9 part records × 36 B), then 576 residual bytes. Part record, offsets pinned against SGM_DAIO's 37 parts (2026-08-28): `+0x00` u16 shape descriptor (high nibble = primitive family 0–5, rest variant bits), `+0x02` u16 pad (0), `+0x04` s32be×3 X/Y/Z position 16.16, `+0x10` u16be×3 rotations (65536 = 360°), `+0x16` u16 pad (0), `+0x18` s32be×3 scales, signed 16.16, negative = mirror. POLYKITI.bin literal pools confirm the slot stride (HWRAM working base `0x06097E90`, stride 0x148, end 0x1484). Decoder: `lib/decode/decode-model.js` (the part-shape meshes themselves are engine-fixed in the POLYKITI overlay — still untraced, so models decode as transforms over named-by-number primitives). | confirmed |
+| sec7    | **3D models** (ポリ吉): u32be magic `0x12345678` (absent = never opened the 3D editor; section then all-zero or residual RAM — ELFI's "custom" sec7 is just uninitialized garbage), then 16 model slots × 328 B (u16be part count 0–9, u16be model color, 9 part records × 36 B), then 576 residual bytes. Part record, offsets pinned against SGM_DAIO's 37 parts (2026-08-28): `+0x00` u16 **shape word** = `family:3 bits @12` (0–5, the editor's six part pages) \| `colourSet:2 bits @8` (0–2) \| `meshIndex:7 bits @0` (bits 7, 10, 11, 15 never set across 2,814 corpus parts; bits 8–9 never 3), `+0x02` u16 pad (0), `+0x04` s32be×3 X/Y/Z position 16.16, `+0x10` u16be×3 rotations (65536 = 360°), `+0x16` u16 pad (0), `+0x18` s32be×3 scales, signed 16.16, negative = mirror. POLYKITI.bin literal pools confirm the slot stride (HWRAM working base `0x06097E90`, stride 0x148, end 0x1484). The meshes are the disc's `MDLDT_01–56.CMP` part library (above), family slices of 32/72/36/36/36/12 meshes = files 01–08 / 09–26 / 27–35 / 36–44 / 45–53 / 54–56; see "sec7 shape word and the ポリ吉 part library" below. Decoder: `lib/decode/decode-model.js`; library index and renderer maths: `lib/model/mesh-library.js`, `lib/model/model-mesh.js`. | confirmed |
 
 ### sec5 region map
 
@@ -1118,6 +1130,60 @@ Pattern 0 spawns two one-shot turret parts with 32×32 art at (−32,+28) and
 appear in patterns 2/3 (HP ≤ 50%). The chamber goddess is background art —
 there is no giant boss sprite, which is why the boss placement row "lands
 exactly on the boss-chamber artwork" (see Placement ids above).
+
+### sec7 shape word and the ポリ吉 part library (decoded 2026-09-02)
+
+**Confirmed.** A part's u16 shape word is `family:3 bits @12 | colourSet:2 bits
+@8 | meshIndex:7 bits @0`. Bit-usage over 2,814 parts in 77 saves: bits 7, 10,
+11 and 15 are never set; bits 8–9 hold only 0, 1, 2. The meshes are not in the
+save and not in the POLYKITI overlay: they are the disc's `MDLDT_01–56.CMP`
+(see the disc notes above), 56 files × 4 meshes, each mesh three SGL `PDATA`
+copies that share vertices and polygons and differ only in their per-polygon
+colour table — so bits 8–9 pick a **colour set**, not a shape. DAIOH's
+picture-frame model pins it: four `0x5200` bars and four `0x5000` posts are the
+same ±20.5 cube (`MDLDT_54` mesh 0) in colour sets 2 (grey `0xd294`) and 0 (dark
+red `0x800f`). The per-family index maxima observed in the corpus (30, 71, 35,
+35, 34, 10) round up to whole files as 32+72+36+36+36+12 = 224 exactly, which
+fixes the slice sizes: family 4 = `MDLDT_45–53` (every mesh a 43×70×10 plate;
+corpus parts of that family rotate in 14 of 2,991 components and are never
+mirrored) and family 5 = `MDLDT_54–56` (cube, sphere 92v/100p, wedge, hex
+prism, 16-gon cylinder, then flatter re-issues at ±20 and ±15) are pinned by
+their content.
+
+**Editor conventions read off the corpus.** Rotations step by 18° (65536/20;
+88 distinct raw values, 87 % of non-zero components within 2 raw units of a
+multiple of 3276.8 — round, never compare). Positions snap to 4 model units
+(7,353 of 8,442 components), scales to 0.04 in 0.04–2.00 (top values 1.00,
+0.36, 1.32, 0.68, 2.00). Mirroring is almost always a negative Y scale (173 of
+179 negatives). Library meshes are authored inside about ±35; a model's
+bounding radius is median 74, p90 107, max 153.
+
+**Y direction — settled empirically.** Model +Y is UP on screen: DAIOH slot 0
+drawn by the model viewer with no flip matches the save's own
+ポリ吉-rendered ship sprite (global bank refs 0–1: needle nose at the top,
+engine nozzles at the bottom). The earlier reading of "nose at y = −52" was
+wrong — that part (`F3:28` at y = −52) is the engine block. The viewer keeps a
+Y DOWN toggle for the opposite reading.
+
+**Heuristic, still open.** (1) The ascending family → file order for pages
+0–3 (`lib/model/mesh-library.js` `mdldtFileFor` is the one place it lives) —
+consistent with DAIOH's ship rendering as a ship, not traced. (2) The rotation
+order: the viewer applies X, then Y, then Z (`M = T·Rz·Ry·Rx·S`,
+`ROTATION_ORDER = "xyz"`) and offers all six; only parts with two non-zero
+rotations can tell them apart (DAIOH's mirrored wing pair `F1:03` rotX 36° +
+rotY 180° looks right in the default). (3) The per-model u16 colour word (DAIOH:
+`0x4210`, `0x6f18`, `0x7f7b` …): every polygon already carries its own ATTR
+colour, so it is not a part colour — background, ambient, or the CG palette
+row the render targets are the candidates. (4) The six pages' names: likely in
+`POLYHELP.CMP` / `POLYBTN.CMP`, unopened. (5) Why 13 % of position components
+are fractional on a 4-unit grid (a free-move or rotate-selection mode).
+
+**Rendering.** Phaser 4 has no 3D; the viewer projects on the CPU
+(`lib/model/model-mesh.js`) and feeds Phaser's `Mesh2D` in `renderAsTriangles`
+mode, sorted far-to-near each frame (no depth buffer — interpenetrating parts
+can pop), back-faced by the SGL normals, flat-shaded from a fixed light, with
+per-triangle colour via UVs into a swatch `CanvasTexture` (which Phaser uploads
+bottom-up, so the mesh needs `flipV`).
 
 ### Live LWRAM map (from SH-2 disassembly of 0KERNEL/S_OPT/GAME/KUMITATE)
 
