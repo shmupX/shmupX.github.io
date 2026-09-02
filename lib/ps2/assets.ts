@@ -21,7 +21,6 @@ import {
   decodeDataUrl,
   decodePng,
   encodeIndexedPng,
-  encodePng,
   newRaster,
   type Raster,
 } from "./png.ts";

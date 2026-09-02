@@ -24,7 +24,7 @@
 // lands on the disc is the port's path — runtime-sound.ts swaps the effects'
 // extension to `.adp` and nothing else has to agree.
 
-import { basename, dirname, extname, join } from "@std/path";
+import { basename, extname, join } from "@std/path";
 import { encodeAdp, encodeWav, fitToHeadroom } from "./adpcm.ts";
 import type { StagedFile } from "./assets.ts";
 
@@ -289,7 +289,7 @@ export async function buildSfxPack(
     data: Uint8Array;
     seconds: number;
   }[] = [];
-  for (const { key, path } of sfxRequests()) {
+  for (const { key } of sfxRequests()) {
     const source = sources.get(key);
     if (!source) {
       missing.push(key);
