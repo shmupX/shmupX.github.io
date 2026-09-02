@@ -105,9 +105,14 @@ const clampIndex = (v, table) => table[Math.min(v, table.length - 1)];
 
 // One interpolator channel in editor units: from/to are factors (x1.0 = 1)
 // or degrees, step is per-frame in the same unit.
-function channel(a, b, c, { enabled, table, stepTable, angle }) {
-    const rawFrom = angle ? (b & 7) : (b & 0x0f);
-    const rawTo = angle ? ((b >> 4) & 7) : ((b >> 4) & 0x0f);
+function channel(a, b, c, { enabled, table, stepTable, angle, bits3 }) {
+    // Only the ROTATION channel packs 3-bit value indices (its table has 8
+    // angles); direction, like the factor channels, uses the full nibble —
+    // its 9-entry table needs index 8, the editor's default heading of 128 =
+    // straight down (FORMAT.md "Channel byte layout"). Masking direction to
+    // 3 bits read that default as index 0 = straight up.
+    const rawFrom = bits3 ? (b & 7) : (b & 0x0f);
+    const rawTo = bits3 ? ((b >> 4) & 7) : ((b >> 4) & 0x0f);
     const from = clampIndex(rawFrom, table);
     const to = clampIndex(rawTo, table);
     const step = stepTable[(a >> 4) & 7] / 256; // 8.8 -> value units/frame
@@ -270,6 +275,7 @@ export function decodeEnemyRecord(bytes) {
                 table: ROTATION_TABLE,
                 stepTable: ROTATION_STEP_TABLE,
                 angle: true,
+                bits3: true,
             }),
             mode: rotationMode,
         },

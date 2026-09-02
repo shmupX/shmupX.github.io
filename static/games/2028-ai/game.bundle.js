@@ -4870,7 +4870,16 @@
     // flies down the screen; the legacy model kept 0 (up, fighting the
     // scroll it was always given).
     var dirDeg = st.directionCh ? stepChannel(st.directionCh) : entry ? 180 : 0;
-    var speed = b.speed * mult;
+    // A scripted zako has no record speed: byte 2's low bits are hp, and its
+    // velocity is whatever the appearance script last wrote (stepEntryScript
+    // below) — on a zero-amplitude row that is 0, so it HOLDS. `b.speed`
+    // exists only on recipes imported before that decode was corrected, and
+    // this fallback mover is theirs. Multiplying the absent field poisoned
+    // x and y with NaN on the first idle tick: the enemy drew nothing, the
+    // bounds cull never matched it, and it sat in the 48-slot pool forever —
+    // Ramsie's green domes, butterflies and turrets vanished on spawn, and
+    // its roc disappeared the moment its first script row ended.
+    var speed = (Number.isFinite(b.speed) ? b.speed : 0) * mult;
     var scripted = stepEntryScript(enemy, st);
     if (!st.pinned && !scripted) {
       var rad = dirDeg * Math.PI / 180;

@@ -788,9 +788,9 @@ var FACTOR_STEP_TABLE = [16, 32, 64, 128, 256, 384, 512, 1024];
 var ROTATION_STEP_TABLE = [16, 32, 64, 128, 256, 512, 1024, 2048];
 var DIRECTION_STEP_TABLE = [128, 256, 512, 768, 1024, 1536, 2048, 32767];
 var clampIndex = (v, table) => table[Math.min(v, table.length - 1)];
-function channel(a, b, c, { enabled, table, stepTable, angle }) {
-  const rawFrom = angle ? b & 7 : b & 15;
-  const rawTo = angle ? b >> 4 & 7 : b >> 4 & 15;
+function channel(a, b, c, { enabled, table, stepTable, angle, bits3 }) {
+  const rawFrom = bits3 ? b & 7 : b & 15;
+  const rawTo = bits3 ? b >> 4 & 7 : b >> 4 & 15;
   const from = clampIndex(rawFrom, table);
   const to = clampIndex(rawTo, table);
   const step = stepTable[a >> 4 & 7] / 256;
@@ -916,7 +916,8 @@ function decodeEnemyRecord(bytes) {
         enabled: rotationMode !== 0,
         table: ROTATION_TABLE,
         stepTable: ROTATION_STEP_TABLE,
-        angle: true
+        angle: true,
+        bits3: true
       }),
       mode: rotationMode
     },
