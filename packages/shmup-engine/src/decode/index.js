@@ -192,6 +192,9 @@ export function decodeSave(payload) {
                         );
                         if (Object.keys(titleArt.roles).length) {
                             result.titleArt = titleArt.roles;
+                            // Where each trimmed piece sits inside its
+                            // 128x64 / 64x16 slot, for the title scene.
+                            result.titleLayout = titleArt.layout;
                         }
                         // The bank's head: the save's own player ship, item
                         // icons, blast anims and the 3 global bullet types

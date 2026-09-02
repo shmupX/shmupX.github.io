@@ -173,9 +173,17 @@ and 258 carts other people wrote on a Saturn in 1997. `isImportedLevel()` in
 that is 2028.Ai's rather than the game's is keyed off it:
 
 - **No tweet button, anywhere** — title, game over, ending. The staff roll is
-  the cart's own credits from the community table; where there are none the card
-  is empty rather than crediting the cart to 2028.Ai's staff and linking their
+  the cart's own credits: the three role labels and the 64×16 credit strips its
+  author drew (settings `+0x5A..+0x5C`, global bank refs 208-231), plus the
+  community table's row where there is one; where there is neither the card is
+  empty rather than crediting the cart to 2028.Ai's staff and linking their
   Twitter accounts.
+- **Its own title and ending.** The drawn TITLE 1/2 enter the way the author set
+  them up on the editor's effect grids (settings `+0x29..+0x2C`: slide, spin and
+  scale over 128 frames, then the white flash and the blinking PRESS 1P START
+  BUTTON), and clearing the last stage plays the Saturn's staff roll — labels
+  typed out over the stages' scenery, credit strips flying in from the corners,
+  START for 4x — before the score card.
 - **No CONTINUE?** A Dezaemon cart has no continue prompt — losing the last ship
   is GAME OVER and the cart returns to its title, so an imported save goes
   straight to the game-over half of `PhaserContinueScene` (score, high score, GO

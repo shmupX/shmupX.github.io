@@ -316,3 +316,53 @@ Deno.test({
     assert(t2.h > t1.h, "title2 is the taller emblem");
   },
 });
+
+Deno.test({
+  name: "ramsie's credit strips extract one by one, with their slot placement",
+  ignore: !hasFixtures("ramsie.sav"),
+  async fn() {
+    const decoded = await decodedFixture("ramsie.sav");
+    const roles = decoded.titleArt;
+    const layout = decoded.titleLayout;
+    assert(layout, "layout present");
+    assertEquals(layout.title, { w: 128, h: 64 });
+    assertEquals(layout.strip, { w: 64, h: 16 });
+    // Ramsie paints strips 0/2/4 (one author line three times) and points
+    // 1/3/5 at fully transparent cells, which count as unpainted.
+    for (const k of [0, 2, 4]) {
+      const idx = roles[`credit${k}`];
+      assert(Number.isInteger(idx), `credit${k} extracted`);
+      const s = decoded.sprites[idx];
+      assertStrictEquals(s.key, `dezaCredit${k}`);
+      assert(
+        s.w > 0 && s.w <= 64 && s.h > 0 && s.h <= 16,
+        `strip ${k} fits its slot`,
+      );
+      const p = layout.credits[k];
+      assert(
+        p && p.x >= 0 && p.y >= 0 && p.x + p.w <= 64 && p.y + p.h <= 16,
+        `strip ${k} placement`,
+      );
+      assertStrictEquals(p.w, s.w);
+      assertStrictEquals(p.h, s.h);
+    }
+    for (const k of [1, 3, 5]) {
+      assertStrictEquals(roles[`credit${k}`], undefined);
+      assertStrictEquals(layout.credits[k], null);
+    }
+    assertStrictEquals(layout.credits.length, 6);
+    // the stacked line survives for older readers
+    assert(Number.isInteger(roles.credit));
+    // the logos know where they sat inside their 128x64 slots
+    for (const role of ["title1", "title2"]) {
+      const p = layout[role];
+      const s = decoded.sprites[roles[role]];
+      assert(
+        p.x >= 0 && p.y >= 0 && p.x + p.w <= 128 && p.y + p.h <= 64,
+        `${role} placement`,
+      );
+      assertStrictEquals(p.w, s.w);
+      assertStrictEquals(p.h, s.h);
+    }
+  },
+});

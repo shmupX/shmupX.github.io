@@ -23,7 +23,12 @@ import { validateGameJson } from "../src/game-schema.js";
 import { normalize } from "../src/bup-source.js";
 import * as bup from "../src/bup-parse.js";
 import { decodeSave } from "../src/decode/index.js";
+import { decodeSettings } from "../src/decode/decode-settings.js";
 import { hasFixtures, loadFixture } from "./_fixtures.js";
+
+// A settings block decoded out of all zeroes: every field present, nothing
+// authored.
+const decodeSettingsStub = () => decodeSettings(new Uint8Array(0x5a780 + 0x60));
 
 const emptyDecoded = () => ({
   title: null,
@@ -945,4 +950,95 @@ Deno.test("a save with no painted title carries no dezaemonTitle at all", () => 
   const { gameJson } = mapSaveToGame(emptyDecoded());
   assertStrictEquals(gameJson.noStory, true);
   assertStrictEquals(gameJson.dezaemonTitle, undefined);
+});
+
+Deno.test("the title screen record carries the entrance, the layout and the staff labels", () => {
+  const decoded = emptyDecoded();
+  decoded.sprites = [
+    {
+      key: "dezaTitle1",
+      w: 100,
+      h: 30,
+      rgba: new Uint8ClampedArray(100 * 30 * 4),
+    },
+    {
+      key: "dezaCredit0",
+      w: 57,
+      h: 13,
+      rgba: new Uint8ClampedArray(57 * 13 * 4),
+    },
+    {
+      key: "dezaCredit3",
+      w: 40,
+      h: 16,
+      rgba: new Uint8ClampedArray(40 * 16 * 4),
+    },
+  ];
+  decoded.titleArt = { title1: 0, credit0: 1, credit3: 2 };
+  decoded.titleLayout = {
+    title: { w: 128, h: 64 },
+    strip: { w: 64, h: 16 },
+    title1: { x: 14, y: 17, w: 100, h: 30 },
+    credits: [
+      { x: 0, y: 1, w: 57, h: 13 },
+      null,
+      null,
+      { x: 12, y: 0, w: 40, h: 16 },
+      null,
+      null,
+    ],
+  };
+  decoded.settings = {
+    ...decodeSettingsStub(),
+    titleEntrance: {
+      title1: { y: 1, x: 0, spin: 0, scaleH: 0, scaleW: 0, raw: [1, 0] },
+      title2: { y: 0, x: 2, spin: 1, scaleH: 2, scaleW: 2, raw: [0x18, 0x0a] },
+    },
+    staffRoleIndices: [13, 0, 12],
+    staffRoles: ["GRAPHIC", "", "PRESENTED BY"],
+  };
+  const { gameJson } = mapSaveToGame(decoded);
+  assertEquals(gameJson.dezaemonTitle, {
+    title1: "dezaTitle1.gif",
+    credit0: "dezaCredit0.gif",
+    credit3: "dezaCredit3.gif",
+  });
+  const ts = gameJson.dezaemonTitleScreen;
+  assert(ts, "dezaemonTitleScreen present");
+  assertEquals(ts.entrance, decoded.settings.titleEntrance);
+  assertEquals(ts.layout, decoded.titleLayout);
+  assertEquals(ts.staffRoles, [13, 0, 12]);
+  assertEquals(ts.staffLabels, ["GRAPHIC", "", "PRESENTED BY"]);
+  // the same fields ride the meta block the editor-play path sends verbatim
+  assertEquals(
+    gameJson.meta.dezaemonSettings.titleEntrance,
+    decoded.settings.titleEntrance,
+  );
+  assertEquals(gameJson.meta.dezaemonSettings.staffRoleIndices, [13, 0, 12]);
+  assert(validateGameJson(gameJson).ok);
+});
+
+Deno.test("the BGM table splits into four special tracks and per-stage pairs from +0x45", () => {
+  const decoded = emptyDecoded();
+  decoded.stages = Array.from(
+    { length: 3 },
+    () => ({ rows: [new Array(GRID_COLS).fill(null)] }),
+  );
+  decoded.settings = {
+    ...decodeSettingsStub(),
+    bgmTable: Array.from({ length: 24 }, (_, i) => i),
+  };
+  decoded.sections = [];
+  decoded.sections[6] = { decompressed: new Uint8Array(24 * 4228) };
+  decoded.songs = Array.from(
+    { length: 24 },
+    () => ({ noteCount: 1, stepSeconds: 0.1 }),
+  );
+  const { gameJson } = mapSaveToGame(decoded);
+  const bgm = gameJson.dezaemonBgm;
+  assert(bgm, "dezaemonBgm present");
+  // +0x41 title, +0x42 game over, +0x43 stage clear, +0x44 all-clear
+  assertEquals(bgm.special, [0, 1, 2, 3]);
+  // stage row r: main +0x45+2r, boss +0x46+2r
+  assertEquals(bgm.stages, [[4, 5], [6, 7], [8, 9]]);
 });

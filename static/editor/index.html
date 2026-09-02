@@ -8546,6 +8546,9 @@ function GAME3D_RUNTIME(DATA) {
                 // community credits ride the level record; level-loader
                 // carries them into the recipe.
                 payload.dezaemonTitle = (gameData && gameData.dezaemonTitle) || null;
+                // ...and the title's authored entrance program, the art's
+                // placement inside its slots and the staff-roll labels.
+                payload.dezaemonTitleScreen = (gameData && gameData.dezaemonTitleScreen) || null;
                 payload.dezaemonCredits = (gameData && gameData.dezaemonCredits) || null;
                 payload.noStory = !!(gameData && gameData.noStory);
                 payload.godMode = godModeOn;
@@ -8708,6 +8711,8 @@ function GAME3D_RUNTIME(DATA) {
                 else delete gameData.dezaemonItems;
                 if (d.dezaemonTitle) gameData.dezaemonTitle = d.dezaemonTitle;
                 else delete gameData.dezaemonTitle;
+                if (d.dezaemonTitleScreen) gameData.dezaemonTitleScreen = d.dezaemonTitleScreen;
+                else delete gameData.dezaemonTitleScreen;
                 if (d.dezaemonCredits) gameData.dezaemonCredits = d.dezaemonCredits;
                 else delete gameData.dezaemonCredits;
                 if (d.noStory) gameData.noStory = true;

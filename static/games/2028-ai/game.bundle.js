@@ -412,6 +412,9 @@
         if (levelData.dezaemonTitle && typeof levelData.dezaemonTitle === "object") {
           recipe.dezaemonTitle = levelData.dezaemonTitle;
         }
+        if (levelData.dezaemonTitleScreen && typeof levelData.dezaemonTitleScreen === "object") {
+          recipe.dezaemonTitleScreen = levelData.dezaemonTitleScreen;
+        }
         if (levelData.dezaemonCredits && typeof levelData.dezaemonCredits === "object") {
           recipe.dezaemonCredits = levelData.dezaemonCredits;
         }
@@ -2800,6 +2803,213 @@
     }
     return null;
   }
+  // --- Dezaemon 2 title screen and staff roll (engine-traced 2026-09-01) ---
+  // The Saturn draws its title and its ending into a 320x224 screen; the
+  // runtime's logical screen is 256x480. A Saturn point (sx, sy) lands at
+  // (sx - 32, sy + bandY): the middle 256 columns 1:1, the 224-px band placed
+  // by bandY. The title is drawn untransposed in horizontal games as well —
+  // the engine clears its orientation flag for the whole title.
+  var DEZA_SCREEN_W = 320;
+  var DEZA_SCREEN_H = 224;
+  var DEZA_TITLE_BAND_Y = 48;
+  var DEZA_ROLL_BAND_Y = 128;
+  function dezaSatX(sx) {
+    return sx - (DEZA_SCREEN_W - GAME_DIMENSIONS.WIDTH) / 2;
+  }
+  // The title's entrance program (settings +0x29..+0x2C, GAME.CMP +0x1E78C):
+  // per logo five three-way fields — vertical entry, horizontal entry, spin,
+  // height scale, width scale — each a straight line over exactly 128 frames
+  // that lands on the shared rest pose: the 128x64 art at 2.0x, centred on
+  // (160, 80), upright. The KUMITATE editor shows the fields as two 5x3 icon
+  // grids, the "15 slots" per logo. Then a 32-frame white flash on the sprite
+  // layer (+248 fading by 8 a frame), 1200 frames of PRESS 1P START BUTTON
+  // blinking 32 on / 32 off at tile (8,21) = px (64,168), a 32-frame fade to
+  // black, and the entrance again without restarting the BGM.
+  var DEZA_TITLE_FRAMES = 128;
+  var DEZA_TITLE_FX = {
+    y: [null, { from: -64, step: 1.125 }, { from: 304, step: -1.75 }, null],
+    x: [null, { from: 448, step: -2.25 }, { from: -128, step: 2.25 }, null],
+    spin: [0, 1, -1, 0],
+    scale: [null, { from: 2, step: -1 / 128 }, { from: 0, step: 1 / 128 }, null]
+  };
+  var DEZA_TITLE_REST = { x: 160, y: 80, scale: 2 };
+  var DEZA_TITLE_FLASH_FRAMES = 32;
+  var DEZA_TITLE_IDLE_FRAMES = 1200;
+  var DEZA_TITLE_FADE_FRAMES = 32;
+  var DEZA_TITLE_PROMPT = { x: 64, y: 168 };
+  function dezaTitlePose(f, t) {
+    var Y = DEZA_TITLE_FX.y[f.y & 3];
+    var X = DEZA_TITLE_FX.x[f.x & 3];
+    var H = DEZA_TITLE_FX.scale[f.scaleH & 3];
+    var W = DEZA_TITLE_FX.scale[f.scaleW & 3];
+    return {
+      x: X ? X.from + t * X.step : DEZA_TITLE_REST.x,
+      y: Y ? Y.from + t * Y.step : DEZA_TITLE_REST.y,
+      turns: DEZA_TITLE_FX.spin[f.spin & 3] * t / DEZA_TITLE_FRAMES,
+      sw: W ? W.from + t * W.step : 1,
+      sh: H ? H.from + t * H.step : 1
+    };
+  }
+  // The ending's staff roll (GAME.CMP +0x19C4): a 2040-tick timeline over
+  // the numbered stages' scrolling scenery. Role label i (settings +0x5A+i)
+  // is typed out one character every 4 ticks from tick 600*i at text column
+  // 13, rows 3/12/21 (8-px cells); its two 64x16 credit strips fly in 120 and
+  // 360 ticks later from a screen corner, spinning one full turn and shrinking
+  // from 3.0x to 1.0x at constant velocity for exactly 128 ticks, leaving an
+  // opaque afterimage every second tick that lives 64 ticks. START held (a
+  // tap here) locks a 4x tick rate. The all-clear BGM plays through it.
+  var DEZA_ROLL_TICKS = 2040;
+  var DEZA_ROLL_LABELS = [[0, 3], [600, 12], [1200, 21]];
+  var DEZA_ROLL_LABEL_COL = 13;
+  var DEZA_ROLL_STRIPS = [
+    [120, 32, 224, 1, -1.5, 160, 32],
+    [360, 288, 224, -1, -1.3125, 160, 56],
+    [720, 32, 224, 1, -0.9375, 160, 104],
+    [960, 288, 224, -1, -0.75, 160, 128],
+    [1320, 32, 32, 1, 1.125, 160, 176],
+    [1560, 288, 32, -1, 1.3125, 160, 200]
+  ];
+  var DEZA_ROLL_FLIGHT = 128;
+  var DEZA_ROLL_GHOST_LIFE = 64;
+  var DEZA_ROLL_FADE_IN = 128;
+  var DEZA_ROLL_FADE_OUT = 64;
+  var DEZA_ROLL_BG_FADE = 64;
+  function dezaTitleScreen(recipe) {
+    return recipe && recipe.dezaemonTitleScreen && typeof recipe.dezaemonTitleScreen === "object" ? recipe.dezaemonTitleScreen : null;
+  }
+  function dezaSettingsOf(recipe) {
+    return recipe && recipe.meta && recipe.meta.dezaemonSettings || null;
+  }
+  function dezaEntranceFor(recipe, role) {
+    var ts = dezaTitleScreen(recipe);
+    var ds = dezaSettingsOf(recipe);
+    var e = ts && ts.entrance || ds && ds.titleEntrance || null;
+    return e && e[role] || { y: 0, x: 0, spin: 0, scaleH: 0, scaleW: 0 };
+  }
+  function dezaSlotPlacement(recipe, role) {
+    var ts = dezaTitleScreen(recipe);
+    var l = ts && ts.layout;
+    if (!l) return null;
+    if (role.indexOf("credit") === 0) {
+      var k = parseInt(role.slice(6), 10);
+      return l.credits && l.credits[k] || null;
+    }
+    return l[role] || null;
+  }
+  // A sprite anchored on its SLOT's centre rather than its own. The art was
+  // trimmed to its opaque box when it was packed, while the engine draws the
+  // whole 128x64 / 64x16 slot centred on its anchor — so a logo painted in a
+  // corner of its slot keeps that corner, and a strip spins about the slot.
+  function dezaSlotSprite(scene, frame, placement, slotW, slotH) {
+    var spr = scene.add.sprite(0, 0, "game_asset", frame);
+    if (placement && spr.width > 0 && spr.height > 0) {
+      spr.setOrigin((slotW / 2 - placement.x) / spr.width, (slotH / 2 - placement.y) / spr.height);
+    } else {
+      spr.setOrigin(0.5);
+    }
+    return spr;
+  }
+  // Text on the kernel's VDP2 grid: one character to an 8x8 cell, so a line
+  // spans exactly 8 px a character the way the hardware's did.
+  //
+  // Each glyph gets its own cell rather than one string with letter spacing.
+  // Orbitron is proportional — advances run 1.7 to 9.4 px at this size — so a
+  // single spacing value would only put the AVERAGE character on the grid and
+  // let the rest drift off it. Per cell also keeps every Text at spacing 0,
+  // which matters: Phaser 4 abandons its whole-line stroke once spacing is set
+  // and instead strokes then fills glyph by glyph, painting each stroke over
+  // its neighbour's fill. The stroke is 1 px at most for the same reason — 2 px
+  // on an 8 px face drives a pixel of black inside stems that are themselves
+  // about a pixel wide, and the counters fill in. On black it is 0.
+  var DEZA_CELL = 8;
+  function dezaCellText(scene, x, y, str, opts) {
+    var o = opts || {};
+    var stroke = typeof o.stroke === "number" ? o.stroke : 1;
+    var style = {
+      fontFamily: "Orbitron, Arial",
+      fontSize: "8px",
+      fontStyle: "bold",
+      color: o.color || "#ffffff",
+      stroke: "#000000",
+      strokeThickness: stroke,
+      resolution: 1
+    };
+    // The glyph body is held to its cell; the stroke's halo may bleed, as it
+    // does for every character anyway. Only W is wider than a cell at this
+    // size (9.4 px against M's 7.4), and it is condensed rather than allowed
+    // to collide with the character beside it.
+    var limit = DEZA_CELL + stroke;
+    var fit = function(cell) {
+      cell.setScale(cell.width > limit ? limit / cell.width : 1, 1);
+    };
+    var box = scene.add.container(x, y);
+    box.cells = [];
+    box.setText = function(next) {
+      var s = next == null ? "" : String(next);
+      var i;
+      for (i = 0; i < s.length; i++) {
+        var cell = this.cells[i];
+        if (!cell) {
+          cell = scene.add.text(i * DEZA_CELL + DEZA_CELL / 2, 0, "", style);
+          cell.setOrigin(0.5, 0);
+          this.cells[i] = cell;
+          this.add(cell);
+        }
+        if (cell.text !== s[i]) {
+          cell.setText(s[i]);
+          fit(cell);
+        }
+        cell.setVisible(true);
+      }
+      for (i = s.length; i < this.cells.length; i++) this.cells[i].setVisible(false);
+      return this;
+    };
+    // Canvas text does not count as CSS usage of a font, so Orbitron can still
+    // be loading when the title scene builds its prompt — without this the
+    // line stays in the Arial fallback for the life of the scene. The staff
+    // roll's card does the same at its own children; this one has to check the
+    // objects are still alive, because the roll destroys its labels when it
+    // ends.
+    if (typeof document !== "undefined" && document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(function() {
+        if (!box.active) return;
+        for (var i = 0; i < box.cells.length; i++) {
+          var cell = box.cells[i];
+          if (!cell.active) continue;
+          cell.updateText();
+          fit(cell);
+        }
+      });
+    }
+    return box.setText(str);
+  }
+  // The three staff-roll entries a save authors: role label i with the two
+  // 64x16 credit strips 2i / 2i+1 (atlas frame names, or null when the
+  // author left a strip unpainted).
+  function dezaStaffEntries(recipe) {
+    var ts = dezaTitleScreen(recipe);
+    var ds = dezaSettingsOf(recipe);
+    var labels = ts && ts.staffLabels || ds && ds.staffRoles || [];
+    var frames = recipe && recipe.dezaemonTitle && typeof recipe.dezaemonTitle === "object" ? recipe.dezaemonTitle : {};
+    var out = [];
+    for (var i = 0; i < 3; i++) {
+      out.push({
+        label: typeof labels[i] === "string" ? labels[i].trim() : "",
+        strips: [frames["credit" + 2 * i] || null, frames["credit" + (2 * i + 1)] || null]
+      });
+    }
+    return out;
+  }
+  function dezaHasStaffEntries(recipe) {
+    return dezaStaffEntries(recipe).some(function(e) {
+      return e.label || e.strips.some(Boolean);
+    });
+  }
+  // Whether the title's STAFF ROLL card has anything to show for an import:
+  // the community table's row, or the cart's own staff entries.
+  function dezaHasStaffRoll(recipe) {
+    return !!dezaStaffCredits(recipe) || dezaHasStaffEntries(recipe);
+  }
   var StaffRollPanel = class extends Phaser.GameObjects.Container {
     constructor(scene) {
       super(scene, 0, 0);
@@ -2841,11 +3051,13 @@
       this.namePanel = null;
       if (dezaCredits) {
         this.wakingG.setVisible(false);
-        this._addDezaCredits(dezaCredits);
+        this._addDezaCredits(dezaCredits, dezaStaffEntries(recipe));
       } else if (isImportedLevel()) {
-        // No credits to show, but this is somebody else's cart — an empty card
-        // beats crediting them with 2028.Ai's staff and their Twitter handles.
+        // No community row, but the cart may carry its own staff entries —
+        // and an empty card still beats crediting somebody else's cart to
+        // 2028.Ai's staff and their Twitter handles.
         this.wakingG.setVisible(false);
+        this._addDezaStaff(dezaStaffEntries(recipe), 150);
       } else {
         this.namePanel = scene.add.sprite(15, 90, "game_ui", "staffrollName.gif");
         this.namePanel.setOrigin(0, 0);
@@ -2870,6 +3082,8 @@
       this.on("pointerup", function() {
       });
       scene.add.existing(this);
+      // Above everything the title draws, the save's own logos included.
+      this.setDepth(1e3);
       this.showWithAnimation();
       if (document.fonts && document.fonts.ready) {
         document.fonts.ready.then(() => {
@@ -2880,10 +3094,17 @@
         });
       }
     }
-    // The import's credits card: title and developer, English and Japanese.
-    _addDezaCredits(credits) {
+    // The import's credits card: title and developer, English and Japanese,
+    // with the cart's own staff entries between the title and the developer
+    // when it has any (the card is 360 px tall, so the blocks tighten up to
+    // make room for them).
+    _addDezaCredits(credits, entries) {
       var scene = this.scene;
       var y = 140;
+      var hasStaff = !!(entries && entries.some(function(e) {
+        return e.label || e.strips.some(Boolean);
+      }));
+      var gap = hasStaff ? 10 : 24;
       var addLine = (text, style) => {
         if (!text) return null;
         var t = scene.add.text(this.GCX, y, text, style);
@@ -2903,8 +3124,9 @@
       if (credits.titleJa && credits.titleJa !== credits.title) {
         addLine(credits.titleJa, { ...base, fontSize: "12px", fill: "#ffffff" });
       }
+      if (hasStaff) y = this._addDezaStaff(entries, y + gap);
       if (credits.developer) {
-        y += 24;
+        y += gap;
         addLine("DEVELOPER", { ...base, fontSize: "9px", fontStyle: "bold", fill: "#ffff00" });
         addLine(credits.developer, { ...base, fontSize: "12px", fill: "#ffffff" });
         if (credits.developerJa && credits.developerJa !== credits.developer) {
@@ -2912,7 +3134,7 @@
         }
       }
       if (credits.genre || credits.genreJa) {
-        y += 24;
+        y += gap;
         addLine("GENRE", { ...base, fontSize: "9px", fontStyle: "bold", fill: "#ffff00" });
         if (credits.genre) {
           addLine(credits.genre.toUpperCase(), { ...base, fontSize: "10px", fill: "#9be37f" });
@@ -2921,6 +3143,43 @@
           addLine(credits.genreJa, { ...base, fontSize: "11px", fill: "#9be37f" });
         }
       }
+      return y;
+    }
+    // The cart's own staff roll, as the ending shows it: each of the three
+    // role labels the author picked (settings +0x5A..+0x5C, the engine's
+    // fixed 16-name list) with the two 64x16 credit strips drawn for it
+    // (global bank refs 208+8i..), one row per entry — the label on the
+    // left, the strips side by side at their native size on the right. A
+    // blank label or an unpainted strip is simply left out. Returns the y
+    // below the last row.
+    _addDezaStaff(entries, y) {
+      var scene = this.scene;
+      var atlas = scene.textures.get("game_asset");
+      var labelStyle = { fontFamily: "Orbitron, Arial", fontSize: "8px", fontStyle: "bold", fill: "#ffff00", align: "left", stroke: "#000000", strokeThickness: 2, resolution: 1, wordWrap: { width: 78 } };
+      var ROW = 20;
+      var left = 22;
+      var stripX = this.GW - 22 - 64 * 2 - 4;
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        var strips = e.strips.filter(function(f) {
+          return f && atlas && atlas.has(f);
+        });
+        if (!e.label && !strips.length) continue;
+        if (e.label) {
+          var t = scene.add.text(left, y + ROW / 2, e.label, labelStyle);
+          t.setOrigin(0, 0.5);
+          this.add(t);
+        }
+        var x = strips.length === 1 ? stripX + 34 : stripX;
+        for (var s = 0; s < strips.length; s++) {
+          var spr = scene.add.sprite(x, y + ROW / 2, "game_asset", strips[s]);
+          spr.setOrigin(0, 0.5);
+          this.add(spr);
+          x += 64 + 4;
+        }
+        y += ROW;
+      }
+      return y;
     }
     addLinkButton(frameName, x, y, url) {
       var button = this.scene.add.sprite(x, y, "game_ui", frameName);
@@ -5722,8 +5981,11 @@
     var ctx = audioCtx(scene);
     if (!ctx) return false;
     var idx;
-    if (which === "title") {
-      idx = bgm.special ? bgm.special[0] : null;
+    // The table's four special tracks: title, game over, stage clear, and the
+    // all-clear track that plays through the ending's staff roll.
+    var specialSlot = { title: 0, gameover: 1, clear: 2, ending: 3 };
+    if (specialSlot[which] !== void 0) {
+      idx = bgm.special ? bgm.special[specialSlot[which]] : null;
     } else {
       var stageId = typeof scene.bossStageId === "number" ? scene.bossStageId : 0;
       var pair = bgm.stages && bgm.stages[stageId] || null;
@@ -6103,6 +6365,7 @@
       );
       this.subTitle.setScale(3);
       if (this.dezaTitle && !dezaSub) this.subTitle.setVisible(false);
+      if (this.dezaTitle) this._buildDezaTitle(recipe, dezaFrame);
       this.belt = this.add.graphics();
       this.belt.fillStyle(0, 1);
       this.belt.fillRect(0, GAME_DIMENSIONS.HEIGHT - 120, GAME_DIMENSIONS.WIDTH, 120);
@@ -6228,7 +6491,7 @@
         this.twitterBtn.setVisible(false);
         this.twitterBtn.disableInteractive();
       }
-      if ((this.dezaTitle || isImportedLevel()) && !dezaStaffCredits(recipe)) {
+      if ((this.dezaTitle || isImportedLevel()) && !dezaHasStaffRoll(recipe)) {
         this.staffrollBtn.setVisible(false);
         this.staffrollBtn.disableInteractive();
       }
@@ -6277,48 +6540,57 @@
         duration: 2e3,
         ease: "Quint.easeOut"
       });
-      this.tweens.add({
-        targets: this.logo,
-        y: 75,
-        duration: 900,
-        delay: 1200,
-        ease: "Quint.easeIn"
-      });
-      this.tweens.add({
-        targets: this.logo,
-        scaleX: 1,
-        scaleY: 1,
-        duration: 900,
-        delay: 1100,
-        ease: "Quint.easeIn"
-      });
-      this.tweens.add({
-        targets: this.subTitle,
-        y: 130,
-        duration: 900,
-        delay: 1180,
-        ease: "Quint.easeIn"
-      });
-      this.tweens.add({
-        targets: this.subTitle,
-        scaleX: 1,
-        scaleY: 1,
-        duration: 900,
-        delay: 1100,
-        ease: "Quint.easeIn"
-      });
-      this.time.delayedCall(1500, function() {
-        if (!self.dezaTitle) self.playVoice("voice_titlecall");
-      });
-      this.tweens.add({
-        targets: this.startText,
-        alpha: 1,
-        duration: 100,
-        delay: 2200,
-        onComplete: function() {
-          self.startFlashing();
-        }
-      });
+      if (this.dezaTitle) {
+        // A save's own title runs the engine's program instead of the stock
+        // slide-in: entrance, flash, PRESS START idle, fade, and round again
+        // (_stepDezaTitle). Its prompt is the Saturn's text, so the stock
+        // TAP TO START plate stays hidden; the tap zone still starts the game.
+        this.startText.setVisible(false);
+        this._dezaStart();
+      } else {
+        this.tweens.add({
+          targets: this.logo,
+          y: 75,
+          duration: 900,
+          delay: 1200,
+          ease: "Quint.easeIn"
+        });
+        this.tweens.add({
+          targets: this.logo,
+          scaleX: 1,
+          scaleY: 1,
+          duration: 900,
+          delay: 1100,
+          ease: "Quint.easeIn"
+        });
+        this.tweens.add({
+          targets: this.subTitle,
+          y: 130,
+          duration: 900,
+          delay: 1180,
+          ease: "Quint.easeIn"
+        });
+        this.tweens.add({
+          targets: this.subTitle,
+          scaleX: 1,
+          scaleY: 1,
+          duration: 900,
+          delay: 1100,
+          ease: "Quint.easeIn"
+        });
+        this.time.delayedCall(1500, function() {
+          self.playVoice("voice_titlecall");
+        });
+        this.tweens.add({
+          targets: this.startText,
+          alpha: 1,
+          duration: 100,
+          delay: 2200,
+          onComplete: function() {
+            self.startFlashing();
+          }
+        });
+      }
       this.tweens.add({
         targets: this.howtoBtn,
         scaleY: 1,
@@ -6351,11 +6623,130 @@
       });
       return button;
     }
+    // --- the save's own title screen ------------------------------------
+    _buildDezaTitle(recipe, dezaFrame) {
+      var y0 = DEZA_TITLE_BAND_Y;
+      this.dezaLogos = [];
+      // TITLE 2 sits behind TITLE 1: engine sort bytes 4 and 3, and later
+      // layers draw further back. Both rest on the same centre.
+      var order = [["title2", 0], ["title1", 1]];
+      for (var i = 0; i < order.length; i++) {
+        var role = order[i][0];
+        var frame = dezaFrame(role);
+        if (!frame) continue;
+        var placement = dezaSlotPlacement(recipe, role);
+        var spr = dezaSlotSprite(this, frame, placement, 128, 64);
+        spr.setDepth(20 + order[i][1]);
+        // The landing flash: a white-filled twin that fades over the logo.
+        var glow = dezaSlotSprite(this, frame, placement, 128, 64);
+        glow.setTint(16777215);
+        if (Phaser.TintModes && typeof glow.setTintMode === "function") glow.setTintMode(Phaser.TintModes.FILL);
+        glow.setDepth(24 + order[i][1]);
+        glow.setAlpha(0);
+        glow.setVisible(false);
+        this.dezaLogos.push({ sprite: spr, glow, fields: dezaEntranceFor(recipe, role) });
+      }
+      var ds = dezaSettingsOf(recipe);
+      var two = !!(ds && ds.twoPlayer);
+      this.dezaPrompt = dezaCellText(
+        this,
+        dezaSatX(DEZA_TITLE_PROMPT.x),
+        y0 + DEZA_TITLE_PROMPT.y,
+        two ? "PRESS 1P/2P START BUTTON" : " PRESS 1P START BUTTON ",
+        // The prompt sits on black, below the logos: no outline to eat it.
+        { stroke: 0 }
+      );
+      this.dezaPrompt.setDepth(26);
+      this.dezaPrompt.setVisible(false);
+      this.dezaFade = this.add.rectangle(0, 0, GAME_DIMENSIONS.WIDTH, GAME_DIMENSIONS.HEIGHT, 0);
+      this.dezaFade.setOrigin(0, 0);
+      this.dezaFade.setDepth(30);
+      this.dezaFade.setAlpha(0);
+      this._dezaPhase = null;
+      this._dezaHalf = false;
+    }
+    _dezaStart() {
+      this._dezaPhase = "entrance";
+      this._dezaFrame = 0;
+      if (this.dezaFade) this.dezaFade.setAlpha(0);
+      if (this.dezaPrompt) this.dezaPrompt.setVisible(false);
+      this._dezaApply(0);
+    }
+    // Drawn frame t of the entrance shows start + t * velocity; frame 128 is
+    // exactly the rest pose.
+    _dezaApply(t) {
+      var y0 = DEZA_TITLE_BAND_Y;
+      for (var i = 0; i < this.dezaLogos.length; i++) {
+        var L = this.dezaLogos[i];
+        var p = dezaTitlePose(L.fields, t);
+        L.sprite.setPosition(dezaSatX(p.x), y0 + p.y);
+        L.sprite.setScale(DEZA_TITLE_REST.scale * p.sw, DEZA_TITLE_REST.scale * p.sh);
+        L.sprite.setRotation(p.turns * Math.PI * 2);
+      }
+    }
+    _dezaSnap() {
+      if (this._dezaPhase !== "entrance") return;
+      this._dezaFrame = DEZA_TITLE_FRAMES;
+      this._dezaApply(DEZA_TITLE_FRAMES);
+      this._dezaBeginFlash();
+    }
+    _dezaBeginFlash() {
+      this._dezaPhase = "flash";
+      this._dezaFrame = 0;
+      for (var i = 0; i < this.dezaLogos.length; i++) {
+        var L = this.dezaLogos[i];
+        L.glow.setPosition(L.sprite.x, L.sprite.y);
+        L.glow.setScale(L.sprite.scaleX, L.sprite.scaleY);
+        L.glow.setRotation(L.sprite.rotation);
+        L.glow.setVisible(true);
+        L.glow.setAlpha(248 / 255);
+      }
+    }
+    _stepDezaTitle() {
+      var i;
+      switch (this._dezaPhase) {
+        case "entrance":
+          this._dezaFrame++;
+          this._dezaApply(this._dezaFrame);
+          if (this._dezaFrame >= DEZA_TITLE_FRAMES) this._dezaBeginFlash();
+          break;
+        case "flash": {
+          var k = ++this._dezaFrame;
+          var a = Math.max(0, 248 - 8 * k) / 255;
+          for (i = 0; i < this.dezaLogos.length; i++) this.dezaLogos[i].glow.setAlpha(a);
+          if (k >= DEZA_TITLE_FLASH_FRAMES) {
+            for (i = 0; i < this.dezaLogos.length; i++) this.dezaLogos[i].glow.setVisible(false);
+            this._dezaPhase = "idle";
+            this._dezaFrame = 0;
+          }
+          break;
+        }
+        case "idle": {
+          var f = this._dezaFrame++;
+          if (this.dezaPrompt) this.dezaPrompt.setVisible((f & 32) === 0);
+          if (f >= DEZA_TITLE_IDLE_FRAMES) {
+            if (this.dezaPrompt) this.dezaPrompt.setVisible(false);
+            this._dezaPhase = "fade";
+            this._dezaFrame = 0;
+          }
+          break;
+        }
+        case "fade": {
+          // The hardware shows its ranking table here for up to 720 frames;
+          // the runtime keeps its own high score on screen the whole time,
+          // so the fade goes straight back into the entrance.
+          var k2 = ++this._dezaFrame;
+          if (this.dezaFade) this.dezaFade.setAlpha(Math.min(1, k2 / DEZA_TITLE_FADE_FRAMES));
+          if (k2 >= DEZA_TITLE_FADE_FRAMES + 8) this._dezaStart();
+          break;
+        }
+      }
+    }
     showStaffroll() {
       if (this.staffRollPanel && this.staffRollPanel.active) {
         return;
       }
-      if ((this.dezaTitle || isImportedLevel()) && !dezaStaffCredits(gameState._phaserRecipe)) {
+      if ((this.dezaTitle || isImportedLevel()) && !dezaHasStaffRoll(gameState._phaserRecipe)) {
         return;
       }
       this.staffRollPanel = new StaffRollPanel(this);
@@ -6428,6 +6819,12 @@
       if (this.staffRollPanel && this.staffRollPanel.active) {
         return;
       }
+      // A press during the entrance snaps the logos to their rest pose, as
+      // the hardware does; the next press starts the game.
+      if (this.dezaTitle && this._dezaPhase === "entrance") {
+        this._dezaSnap();
+        return;
+      }
       this.transitioning = true;
       this.playSound("se_decision", 0.75);
       this.tweens.killTweensOf(this.startText);
@@ -6489,6 +6886,10 @@
         if (this.bg) {
           this.bg.tilePositionX -= 0.5;
         }
+        // The Saturn title runs at 60 Hz: one of its frames every other step.
+        // It holds while the STAFF ROLL card is up.
+        this._dezaHalf = !this._dezaHalf;
+        if (this._dezaHalf && this.dezaTitle && this._dezaPhase && !(this.staffRollPanel && this.staffRollPanel.active)) this._stepDezaTitle();
       }
       this._stepBoardCycle(delta);
       var daily = this._boardOnShow() === "daily";
@@ -13645,6 +14046,29 @@
           }, 50);
         });
       });
+      // A Dezaemon cart's ending is its staff roll: the author's role labels
+      // and credit strips over the stages' scenery. It runs first; the score
+      // card follows, as the hardware's ranking screen does.
+      this.dezaRoll = null;
+      if (isImportedLevel() && dezaHasStaffEntries(gameState._phaserRecipe)) {
+        var hidden = [this.gotoTitleBtn, this.worldBestText, this.scoreSyncText, this.congraTxt, this.tweetBtn, this.continueNewrecord, this.scoreContainer];
+        hidden.forEach(function(o) {
+          if (o) o.setVisible(false);
+        });
+        this.gotoTitleBtn.disableInteractive();
+        this._dezaStaffRoll(function() {
+          hidden.forEach(function(o) {
+            if (o && o !== self.tweetBtn || o && !self.tweetBtnHidden) o.setVisible(true);
+          });
+          self.gotoTitleBtn.setInteractive({ useHandCursor: true });
+          self._startCongrats(slideTargetX);
+        });
+        return;
+      }
+      this._startCongrats(slideTargetX);
+    }
+    _startCongrats(slideTargetX) {
+      var self = this;
       this.tweens.add({
         targets: this.congraTxt,
         x: slideTargetX,
@@ -13750,6 +14174,244 @@
       });
       return button;
     }
+    // --- the cart's own staff roll ---------------------------------------
+    _dezaStaffRoll(done) {
+      var self = this;
+      var recipe = gameState._phaserRecipe;
+      var roll = this.dezaRoll = {
+        done,
+        tick: 0,
+        speed: 1,
+        phase: "in",
+        fade: 0,
+        frame: 0,
+        labelIdx: 0,
+        stripIdx: 0,
+        labels: [],
+        strips: [],
+        ghosts: [],
+        entries: dezaStaffEntries(recipe),
+        stages: [],
+        stageIdx: 0,
+        stageEvery: DEZA_ROLL_TICKS,
+        bg: null,
+        bgFade: 0,
+        bgPhase: null,
+        acc: 0
+      };
+      // The backdrop: the stages' scenery in order, each for 2040/(n+1) ticks,
+      // scrolling on its own authored curve; a switch fades the scenery alone
+      // through black (64 ticks out, 64 in) while strips and labels stay up.
+      var ids = recipeStageIds(recipe).filter(function(id) {
+        var st = recipe["stage" + id];
+        return st && st.background;
+      });
+      roll.stages = ids;
+      roll.stageEvery = ids.length ? Math.floor(DEZA_ROLL_TICKS / ids.length) : DEZA_ROLL_TICKS;
+      this._dezaRollShowStage(0);
+      roll.bgBlack = this.add.rectangle(0, 0, GW15, GH13, 0);
+      roll.bgBlack.setOrigin(0, 0);
+      roll.bgBlack.setDepth(5);
+      roll.bgBlack.setAlpha(0);
+      // Fade in from the results screen's white-out, fade out to black at
+      // the end.
+      roll.white = this.add.rectangle(0, 0, GW15, GH13, 16777215);
+      roll.white.setOrigin(0, 0);
+      roll.white.setDepth(900);
+      roll.black = this.add.rectangle(0, 0, GW15, GH13, 0);
+      roll.black.setOrigin(0, 0);
+      roll.black.setDepth(901);
+      roll.black.setAlpha(0);
+      if (!gameState.lowModeFlg) startDezaemonBgm(this, "ending");
+      roll.onPointer = function() {
+        roll.speed = 4;
+      };
+      this.input.on("pointerdown", roll.onPointer);
+      try {
+        roll.keys = [
+          this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER),
+          this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE)
+        ];
+      } catch (e) {
+        roll.keys = [];
+      }
+    }
+    _dezaRollShowStage(i) {
+      var roll = this.dezaRoll;
+      var recipe = gameState._phaserRecipe;
+      if (roll.bg) {
+        roll.bg.destroy();
+        roll.bg = null;
+      }
+      var id = roll.stages[i];
+      if (id === void 0) return;
+      this.stageKey = "ending" + id;
+      try {
+        roll.bg = buildStageBackground(this, recipe["stage" + id], recipe, void 0);
+      } catch (e) {
+        roll.bg = null;
+      }
+    }
+    _dezaRollSpawnStrip(k) {
+      var roll = this.dezaRoll;
+      var recipe = gameState._phaserRecipe;
+      var frame = roll.entries[k >> 1].strips[k & 1];
+      var atlas = this.textures.get("game_asset");
+      if (!frame || !atlas || !atlas.has(frame)) return;
+      var row = DEZA_ROLL_STRIPS[k];
+      var spr = dezaSlotSprite(this, frame, dezaSlotPlacement(recipe, "credit" + k), 64, 16);
+      spr.setDepth(100 + k);
+      roll.strips.push({ sprite: spr, row, k: 0, frames: 0, done: false, frame });
+      this._dezaRollPlaceStrip(roll.strips[roll.strips.length - 1]);
+    }
+    _dezaRollPlaceStrip(s) {
+      var row = s.row;
+      var k = Math.min(DEZA_ROLL_FLIGHT, s.k);
+      var y0 = DEZA_ROLL_BAND_Y;
+      if (k >= DEZA_ROLL_FLIGHT) {
+        s.sprite.setPosition(dezaSatX(row[5]), y0 + row[6]);
+        s.sprite.setScale(1);
+        s.sprite.setRotation(0);
+        return;
+      }
+      s.sprite.setPosition(dezaSatX(row[1] + k * row[3]), y0 + row[2] + k * row[4]);
+      var zoom = 3 - 2 * k / DEZA_ROLL_FLIGHT;
+      s.sprite.setScale(zoom);
+      s.sprite.setRotation(Math.PI * 2 * k / DEZA_ROLL_FLIGHT);
+    }
+    _dezaRollGhost(s) {
+      var roll = this.dezaRoll;
+      var recipe = gameState._phaserRecipe;
+      var g = dezaSlotSprite(this, s.frame, dezaSlotPlacement(recipe, "credit" + DEZA_ROLL_STRIPS.indexOf(s.row)), 64, 16);
+      g.setPosition(s.sprite.x, s.sprite.y);
+      g.setScale(s.sprite.scaleX, s.sprite.scaleY);
+      g.setRotation(s.sprite.rotation);
+      g.setDepth(90);
+      roll.ghosts.push({ sprite: g, life: DEZA_ROLL_GHOST_LIFE, depth: 90 });
+    }
+    // One Saturn frame of the roll.
+    _stepDezaRoll() {
+      var roll = this.dezaRoll;
+      if (!roll) return;
+      var y0 = DEZA_ROLL_BAND_Y;
+      var i;
+      // START held (a tap, a pad button, ENTER/SPACE) locks the 4x tick rate.
+      if (roll.phase === "run" && roll.speed === 1) {
+        var gp = pollGamepads();
+        var keyDown = roll.keys.some(function(kk) {
+          return kk && kk.isDown;
+        });
+        if (gp.enterDown || gp.spDown || keyDown || this.input.activePointer && this.input.activePointer.isDown) roll.speed = 4;
+      }
+      // The scenery scrolls one frame per frame whatever the tick rate.
+      if (roll.bg && roll.bg.curve) {
+        roll.bg.tickCurve();
+        roll.bg.setScroll(roll.bg.scrollPos);
+        roll.bg.applyWaveFx();
+      } else if (roll.bg) {
+        roll.bg.setScroll((roll.bg._scroll < 0 ? 0 : roll.bg._scroll) + SCROLL_PX_PER_FRAME / SATURN_TICKS_PER_FRAME);
+      }
+      if (roll.phase === "in") {
+        roll.fade++;
+        roll.white.setAlpha(Math.max(0, 1 - roll.fade / DEZA_ROLL_FADE_IN));
+        if (roll.fade >= DEZA_ROLL_FADE_IN) {
+          roll.white.setVisible(false);
+          roll.phase = "run";
+        }
+        return;
+      }
+      if (roll.phase === "out") {
+        roll.fade += roll.speed;
+        roll.black.setAlpha(Math.min(1, roll.fade / DEZA_ROLL_FADE_OUT));
+        if (roll.fade >= DEZA_ROLL_FADE_OUT + 4) this._dezaRollFinish();
+        return;
+      }
+      roll.tick += roll.speed;
+      // Role labels: typed one character every 4 ticks.
+      while (roll.labelIdx < DEZA_ROLL_LABELS.length && roll.tick > DEZA_ROLL_LABELS[roll.labelIdx][0]) {
+        var li = roll.labelIdx++;
+        var text = roll.entries[li].label;
+        if (text) {
+          // These are drawn over the stages' scenery, which can be bright, so
+          // they keep a hairline outline the title's prompt does not need.
+          var t = dezaCellText(this, dezaSatX(DEZA_ROLL_LABEL_COL * 8), y0 + DEZA_ROLL_LABELS[li][1] * 8, "", { stroke: 1 });
+          t.setDepth(200);
+          roll.labels.push({ text: t, full: text, counter: 0 });
+        }
+      }
+      for (i = 0; i < roll.labels.length; i++) {
+        var lab = roll.labels[i];
+        if (lab.counter > 68) continue;
+        lab.text.setText(lab.full.slice(0, Math.min(lab.full.length, (lab.counter >> 2) + 1)));
+        lab.counter += roll.speed;
+      }
+      // Credit strips: two per label, flying in from a corner.
+      while (roll.stripIdx < DEZA_ROLL_STRIPS.length && roll.tick > DEZA_ROLL_STRIPS[roll.stripIdx][0]) {
+        this._dezaRollSpawnStrip(roll.stripIdx++);
+      }
+      for (i = 0; i < roll.strips.length; i++) {
+        var s = roll.strips[i];
+        if (s.done) continue;
+        s.k += roll.speed;
+        s.frames++;
+        if (s.k >= DEZA_ROLL_FLIGHT) s.done = true;
+        this._dezaRollPlaceStrip(s);
+        // an afterimage every second frame at 1x, every frame at 4x
+        if (!s.done && (roll.speed !== 1 || s.frames % 2 === 0)) this._dezaRollGhost(s);
+      }
+      for (i = roll.ghosts.length - 1; i >= 0; i--) {
+        var g = roll.ghosts[i];
+        g.life -= roll.speed;
+        g.depth -= 0.01;
+        g.sprite.setDepth(g.depth);
+        if (g.life <= 0) {
+          g.sprite.destroy();
+          roll.ghosts.splice(i, 1);
+        }
+      }
+      // Backdrop switches behind a scenery-only fade.
+      if (roll.bgPhase === "out") {
+        roll.bgFade += roll.speed;
+        roll.bgBlack.setAlpha(Math.min(1, roll.bgFade / DEZA_ROLL_BG_FADE));
+        if (roll.bgFade >= DEZA_ROLL_BG_FADE) {
+          this._dezaRollShowStage(++roll.stageIdx);
+          roll.bgPhase = "in";
+          roll.bgFade = 0;
+        }
+      } else if (roll.bgPhase === "in") {
+        roll.bgFade += roll.speed;
+        roll.bgBlack.setAlpha(Math.max(0, 1 - roll.bgFade / DEZA_ROLL_BG_FADE));
+        if (roll.bgFade >= DEZA_ROLL_BG_FADE) roll.bgPhase = null;
+      } else if (roll.stageIdx + 1 < roll.stages.length && roll.tick > roll.stageEvery * (roll.stageIdx + 1)) {
+        roll.bgPhase = "out";
+        roll.bgFade = 0;
+      }
+      if (roll.tick >= DEZA_ROLL_TICKS) {
+        roll.phase = "out";
+        roll.fade = 0;
+      }
+    }
+    _dezaRollFinish() {
+      var roll = this.dezaRoll;
+      if (!roll) return;
+      this.dezaRoll = null;
+      this.input.off("pointerdown", roll.onPointer);
+      stopDezaemonBgm(this);
+      roll.strips.forEach(function(s) {
+        s.sprite.destroy();
+      });
+      roll.ghosts.forEach(function(g) {
+        g.sprite.destroy();
+      });
+      roll.labels.forEach(function(l) {
+        l.text.destroy();
+      });
+      if (roll.bg) roll.bg.destroy();
+      roll.bgBlack.destroy();
+      roll.white.destroy();
+      roll.black.destroy();
+      if (roll.done) roll.done();
+    }
     showStaffRoll() {
       if (this.staffRollContainer) return;
       var self = this;
@@ -13831,7 +14493,15 @@
       } catch (e) {
       }
     }
-    update() {
+    update(time, delta) {
+      if (this.dezaRoll) {
+        var roll = this.dezaRoll;
+        roll.acc += Math.min(delta || 0, 100);
+        while (roll.acc >= 1e3 / 60 && this.dezaRoll) {
+          roll.acc -= 1e3 / 60;
+          this._stepDezaRoll();
+        }
+      }
       if (this.worldBestText) {
         this.worldBestText.setText(getWorldBestLabel() + " " + String(getDisplayedHighScore()));
       }

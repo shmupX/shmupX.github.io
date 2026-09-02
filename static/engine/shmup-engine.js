@@ -1581,6 +1581,16 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
     }
     if (Object.keys(dezaemonTitle).length) gameJson.dezaemonTitle = dezaemonTitle;
   }
+  const titleScreen = {};
+  if (decoded.settings && decoded.settings.titleEntrance) {
+    titleScreen.entrance = clone(decoded.settings.titleEntrance);
+  }
+  if (decoded.titleLayout) titleScreen.layout = clone(decoded.titleLayout);
+  if (decoded.settings && decoded.settings.staffRoleIndices) {
+    titleScreen.staffRoles = [...decoded.settings.staffRoleIndices];
+    titleScreen.staffLabels = [...decoded.settings.staffRoles];
+  }
+  if (Object.keys(titleScreen).length) gameJson.dezaemonTitleScreen = titleScreen;
   gameJson.playerData = clone(DUKE_PLAYER);
   gameJson.playerData2 = clone(TROOPER_PLAYER);
   if (backgroundCells.length) gameJson.backgroundCells = backgroundCells;
@@ -1589,10 +1599,10 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
   const sec6 = decoded.sections && decoded.sections[6] && decoded.sections[6].decompressed;
   if (decoded.settings && sec6 && decoded.songs) {
     const table = decoded.settings.bgmTable;
-    const special = table.slice(0, 3);
+    const special = table.slice(0, 4);
     const stagePairs = [];
-    for (let s2 = 0; s2 * 2 + 4 < table.length && s2 < stageCount; s2++) {
-      stagePairs.push([table[3 + s2 * 2], table[4 + s2 * 2]]);
+    for (let s2 = 0; s2 * 2 + 5 < table.length && s2 < stageCount; s2++) {
+      stagePairs.push([table[4 + s2 * 2], table[5 + s2 * 2]]);
     }
     const used = /* @__PURE__ */ new Set([...special, ...stagePairs.flat()]);
     const songs = {};
@@ -1672,6 +1682,8 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
       horizontal: (decoded.settings.gameMode & 1) !== 0,
       twoPlayer: (decoded.settings.gameMode & 2) !== 0,
       staffRoles: decoded.settings.staffRoles,
+      staffRoleIndices: decoded.settings.staffRoleIndices,
+      titleEntrance: decoded.settings.titleEntrance,
       mainWeapon: decoded.settings.mainWeapon,
       mainWeapon2P: decoded.settings.loadouts ? decoded.settings.loadouts[decoded.settings.ships[1].startLoadout].main : void 0,
       // Both ship config blocks in full (+0x0C P1, +0x10 P2). P2 join-in
@@ -2076,6 +2088,36 @@ function bulletConfig(byte) {
   };
 }
 var AUTOFIRE_RATE_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
+var TITLE_ENTRANCE = {
+  // vertical entry: start y (px) and per-frame step, landing on y = 80
+  y: { 0: null, 1: { from: -64, step: 1.125 }, 2: { from: 304, step: -1.75 }, 3: null },
+  // horizontal entry: start x (px) and per-frame step, landing on x = 160
+  x: { 0: null, 1: { from: 448, step: -2.25 }, 2: { from: -128, step: 2.25 }, 3: null },
+  // spin: whole turns over the 128 frames (+0x200 / -0x200 of 0x10000 a
+  // frame); positive is clockwise on screen
+  spin: { 0: 0, 1: 1, 2: -1, 3: 0 },
+  // scale, as a multiple of the rest scale: from 2x shrinking (0x4000 ->
+  // 0x2000 by -64 a frame) or from 0 growing (+64 a frame)
+  scale: { 0: null, 1: { from: 2, step: -1 / 128 }, 2: { from: 0, step: 1 / 128 }, 3: null }
+};
+function titleEntranceFields(a, b) {
+  return {
+    y: a & 3,
+    x: a >> 2 & 3,
+    spin: a >> 4 & 3,
+    scaleH: b & 3,
+    scaleW: b >> 2 & 3,
+    raw: [a, b]
+  };
+}
+function decodeTitleEntrance(sec5, base) {
+  return {
+    // TITLE 1 is the front logo (sort byte 3 against TITLE 2's 4; the
+    // engine's later layers sit further back)
+    title1: titleEntranceFields(sec5[base + 43], sec5[base + 44]),
+    title2: titleEntranceFields(sec5[base + 41], sec5[base + 42])
+  };
+}
 var STAFF_ROLE_LABELS = [
   "",
   "PLANNING",
@@ -2161,6 +2203,13 @@ function decodeSettings(sec5) {
       }
     },
     stageExtents,
+    // +0x41..+0x58: the 24-entry BGM assignment table. Four special
+    // tracks first — +0x41 title, +0x42 game over, +0x43 stage clear,
+    // +0x44 all-clear (it keeps playing through the staff roll) — then a
+    // (main, boss) pair per stage row from +0x45 (engine-traced
+    // 2026-09-01: the stage start reads settings[+0x45 + 2*row], the boss
+    // spawn +0x46 + 2*row; the earlier "three special tracks" reading
+    // was off by one).
     bgmTable: [...sec5.subarray(base + 65, base + 89)],
     sfxSet: sec5[base + 89],
     // +0x01: HUD dressing — bits4-6 frame-graphic select (7 VDP2 tile
@@ -2182,6 +2231,9 @@ function decodeSettings(sec5) {
     // +0x5A..+0x5C: the staff roll's three role labels — indices into the
     // engine's fixed 16-entry list (GAME.bin +0x20164).
     staffRoles: [90, 91, 92].map((o) => STAFF_ROLE_LABELS[sec5[base + o] & 15]),
+    staffRoleIndices: [90, 91, 92].map((o) => sec5[base + o] & 15),
+    // +0x29..+0x2C: the title screen's entrance program (TITLE_ENTRANCE).
+    titleEntrance: decodeTitleEntrance(sec5, base),
     confidence: {
       mainWeapon: "confirmed",
       loadouts: "confirmed",
@@ -2454,37 +2506,46 @@ function trimRgba(img) {
     const src = ((minY + y) * img.w + minX) * 4;
     rgba.set(img.rgba.subarray(src, src + w * 4), y * w * 4);
   }
-  return { w, h, rgba };
+  return { w, h, rgba, x: minX, y: minY };
 }
 function extractTitleArt(sec5, sections, palettes, baseIndex) {
   const sprites = [];
   const roles = {};
+  const layout = { title: { w: 128, h: 64 }, strip: { w: 64, h: 16 }, credits: [] };
   const placeholder = findPlaceholderCell(sec5).cell;
   const renderSlot = (slot) => {
     const comp = readBankComposition(sec5, slot);
     if (!comp || isUnpainted({ frames: [comp] }, placeholder)) return null;
     return trimRgba(renderFrame(sections, palettes, comp));
   };
+  const place = (img) => ({ x: img.x, y: img.y, w: img.w, h: img.h });
+  const push = (key, img) => {
+    const index = baseIndex + sprites.length;
+    sprites.push({ key, w: img.w, h: img.h, rgba: img.rgba });
+    return index;
+  };
   const title1 = renderSlot(TITLE_SLOTS.title1);
   if (title1) {
-    roles.title1 = baseIndex + sprites.length;
-    sprites.push({ key: "dezaTitle1", ...title1 });
+    roles.title1 = push("dezaTitle1", title1);
+    layout.title1 = place(title1);
   }
   const title2 = renderSlot(TITLE_SLOTS.title2);
   if (title2) {
-    roles.title2 = baseIndex + sprites.length;
-    sprites.push({ key: "dezaTitle2", ...title2 });
+    roles.title2 = push("dezaTitle2", title2);
+    layout.title2 = place(title2);
   }
   const lines = [];
   const seen = /* @__PURE__ */ new Set();
-  for (const slot of TITLE_SLOTS.credits) {
+  TITLE_SLOTS.credits.forEach((slot, k) => {
     const line = renderSlot(slot);
-    if (!line) continue;
+    layout.credits[k] = line ? place(line) : null;
+    if (!line) return;
+    roles[`credit${k}`] = push(`dezaCredit${k}`, line);
     const sig = line.rgba.join();
-    if (seen.has(sig)) continue;
+    if (seen.has(sig)) return;
     seen.add(sig);
     lines.push(line);
-  }
+  });
   if (lines.length) {
     const w = Math.max(...lines.map((l) => l.w));
     const h = lines.reduce((sum, l) => sum + l.h, 0);
@@ -2503,7 +2564,7 @@ function extractTitleArt(sec5, sections, palettes, baseIndex) {
     roles.credit = baseIndex + sprites.length;
     sprites.push({ key: "dezaCredit", w, h, rgba });
   }
-  return { sprites, roles };
+  return { sprites, roles, layout };
 }
 var GLOBAL_ART_SLOTS = {
   playerIdle: { first: 8, w: 2, h: 2, frames: 2 },
@@ -2997,6 +3058,7 @@ function decodeSave(payload) {
             );
             if (Object.keys(titleArt.roles).length) {
               result.titleArt = titleArt.roles;
+              result.titleLayout = titleArt.layout;
             }
             const globalArt = extractGlobalArt(
               assembly.decompressed,

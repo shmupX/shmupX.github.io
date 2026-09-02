@@ -528,6 +528,23 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
         if (Object.keys(dezaemonTitle).length) gameJson.dezaemonTitle = dezaemonTitle;
     }
 
+    // Everything the title scene and the ending's staff roll need beyond frame
+    // names, in one record (dezaemonTitle stays role -> frame name: the editor
+    // renames through it and the PS2 exporter reads it): the authored
+    // entrance program for each logo (settings +0x29..+0x2C), where each
+    // trimmed piece of art sits inside its slot, and the three staff-roll
+    // role labels (+0x5A..+0x5C) as indices and text.
+    const titleScreen = {};
+    if (decoded.settings && decoded.settings.titleEntrance) {
+        titleScreen.entrance = clone(decoded.settings.titleEntrance);
+    }
+    if (decoded.titleLayout) titleScreen.layout = clone(decoded.titleLayout);
+    if (decoded.settings && decoded.settings.staffRoleIndices) {
+        titleScreen.staffRoles = [...decoded.settings.staffRoleIndices];
+        titleScreen.staffLabels = [...decoded.settings.staffRoles];
+    }
+    if (Object.keys(titleScreen).length) gameJson.dezaemonTitleScreen = titleScreen;
+
     // Player + bullets always come from the Duke character, never from
     // `defaults`. The editor derives `defaults` from whatever game is currently
     // open, and its player may be a custom one whose frames live only in that
@@ -542,19 +559,22 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
     if (backgroundCells.length) gameJson.backgroundCells = backgroundCells;
     gameJson.enemyData = enemyData;
     gameJson.bossData = bossData;
-    // The save's own soundtrack. The settings BGM table is three special
-    // tracks then (main, boss) pairs per stage, every entry indexing sec6's
-    // 24 song slots; only the songs the table references (and that hold any
+    // The save's own soundtrack. The settings BGM table is FOUR special
+    // tracks — title, game over, stage clear, all-clear/ending — then a
+    // (main, boss) pair per stage row from +0x45 (engine-traced 2026-09-01;
+    // the earlier three-then-pairs reading shifted every stage's music by one
+    // entry), every entry indexing sec6's 24 song slots; only the songs the
+    // table references (and that hold any
     // notes) ship, as base64 of their raw 4228-byte slot. The runtime
     // (dezaemon-runtime.js) sequences them through WebAudio, and sfxSet picks
     // the synthesized effect bank (1 REAL / 2 COMIC / 3 SF).
     const sec6 = decoded.sections && decoded.sections[6] && decoded.sections[6].decompressed;
     if (decoded.settings && sec6 && decoded.songs) {
         const table = decoded.settings.bgmTable;
-        const special = table.slice(0, 3);
+        const special = table.slice(0, 4);
         const stagePairs = [];
-        for (let s2 = 0; s2 * 2 + 4 < table.length && s2 < stageCount; s2++) {
-            stagePairs.push([table[3 + s2 * 2], table[4 + s2 * 2]]);
+        for (let s2 = 0; s2 * 2 + 5 < table.length && s2 < stageCount; s2++) {
+            stagePairs.push([table[4 + s2 * 2], table[5 + s2 * 2]]);
         }
         const used = new Set([...special, ...stagePairs.flat()]);
         const songs = {};
@@ -660,6 +680,8 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             horizontal: (decoded.settings.gameMode & 1) !== 0,
             twoPlayer: (decoded.settings.gameMode & 2) !== 0,
             staffRoles: decoded.settings.staffRoles,
+            staffRoleIndices: decoded.settings.staffRoleIndices,
+            titleEntrance: decoded.settings.titleEntrance,
             mainWeapon: decoded.settings.mainWeapon,
             mainWeapon2P: decoded.settings.loadouts
                 ? decoded.settings.loadouts[decoded.settings.ships[1].startLoadout].main

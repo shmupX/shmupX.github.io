@@ -3,8 +3,11 @@
 // Field map (FORMAT.md "Settings byte map"): +0x00 game mode, +0x0C..+0x0F and
 // +0x10..+0x13 the two player-ship config blocks, +0x14..+0x1B the four
 // weapon LOADOUT presets, +0x1C..+0x23 the 8 item slots, +0x24 the score-item
-// value, +0x25..+0x28 the bullet configs + blast byte, +0x2D..+0x40 the
-// scroll extents, +0x41..+0x58 the BGM assignment table, +0x59 the SFX set.
+// value, +0x25..+0x28 the bullet configs + blast byte, +0x29..+0x2C the
+// title screen's entrance program, +0x2D..+0x40 the scroll extents,
+// +0x41..+0x58 the BGM assignment table (four special tracks, then a
+// (main, boss) pair per stage row), +0x59 the SFX set, +0x5A..+0x5C the
+// staff roll's three role labels.
 //
 // The weapon system (fully traced 2026-08-28, adversarially verified —
 // REPLACING the earlier heuristic "ship byte +3 low nibble = main weapon"):
@@ -86,8 +89,73 @@ function bulletConfig(byte) {
 
 export const AUTOFIRE_RATE_TABLE = [60, 30, 15, 10, 5, 3, 2, 1];
 
+// The title screen's ENTRANCE program (+0x29..+0x2C) — engine-traced
+// 2026-09-01 from the play engine's title routine (GAME.CMP +0x1E78C) and
+// the KUMITATE editor's effect page (+0x17E64 reader / +0x180B8 writer),
+// adversarially verified. The four bytes are ten 2-bit tri-state fields,
+// five per drawn logo: the editor shows them as two 5x3 icon grids — the
+// "15 slots" per logo the GameFAQs guide describes — and the author picks
+// one icon per column. Object 0 (TITLE 2, bank refs 176-207) reads
+// +0x29/+0x2A; object 1 (TITLE 1, refs 144-175) reads +0x2B/+0x2C. Byte A
+// bits 0-1 = vertical entry, bits 2-3 = horizontal entry, bits 4-5 = spin;
+// byte B bits 0-1 = height scale, bits 2-3 = width scale. In every field 1
+// and 2 are the two directions and 0 is static (3 is never written and takes
+// the engine's static branch). Each animated field is a straight line over
+// exactly 128 frames that lands on the shared rest pose — the 128x64 art
+// drawn at 2.0x (256x128 px) centred on (160, 80) of the 320x224 screen,
+// upright — so every combination arrives together; a new button press
+// snaps both logos to the pose. Then a 32-frame white flash on the sprite
+// layer (+248 fading by 8 a frame), and the title idles for 1200 frames
+// blinking PRESS 1P START BUTTON (32 on / 32 off at tile 8,21 = px 64,168)
+// before replaying the entrance. The title is drawn untransposed in
+// horizontal games too (the engine clears the orientation flag for it).
+export const TITLE_ENTRANCE_FRAMES = 128;
+export const TITLE_ENTRANCE = {
+    // vertical entry: start y (px) and per-frame step, landing on y = 80
+    y: { 0: null, 1: { from: -64, step: 1.125 }, 2: { from: 304, step: -1.75 }, 3: null },
+    // horizontal entry: start x (px) and per-frame step, landing on x = 160
+    x: { 0: null, 1: { from: 448, step: -2.25 }, 2: { from: -128, step: 2.25 }, 3: null },
+    // spin: whole turns over the 128 frames (+0x200 / -0x200 of 0x10000 a
+    // frame); positive is clockwise on screen
+    spin: { 0: 0, 1: 1, 2: -1, 3: 0 },
+    // scale, as a multiple of the rest scale: from 2x shrinking (0x4000 ->
+    // 0x2000 by -64 a frame) or from 0 growing (+64 a frame)
+    scale: { 0: null, 1: { from: 2, step: -1 / 128 }, 2: { from: 0, step: 1 / 128 }, 3: null },
+};
+export const TITLE_ENTRANCE_NAMES = {
+    y: ["none", "fromAbove", "fromBelow", "none"],
+    x: ["none", "fromRight", "fromLeft", "none"],
+    spin: ["none", "clockwise", "counterclockwise", "none"],
+    scale: ["none", "shrink", "grow", "none"],
+};
+
+function titleEntranceFields(a, b) {
+    return {
+        y: a & 3,
+        x: (a >> 2) & 3,
+        spin: (a >> 4) & 3,
+        scaleH: b & 3,
+        scaleW: (b >> 2) & 3,
+        raw: [a, b],
+    };
+}
+
+export function decodeTitleEntrance(sec5, base) {
+    return {
+        // TITLE 1 is the front logo (sort byte 3 against TITLE 2's 4; the
+        // engine's later layers sit further back)
+        title1: titleEntranceFields(sec5[base + 0x2b], sec5[base + 0x2c]),
+        title2: titleEntranceFields(sec5[base + 0x29], sec5[base + 0x2a]),
+    };
+}
+
 // The engine's 16 fixed staff-roll role labels (GAME.bin pointer table
-// +0x20164); settings +0x5A..+0x5C pick three of them for the ending.
+// +0x20164); settings +0x5A..+0x5C pick three of them for the ending's staff
+// roll (GAME.CMP +0x19C4, traced 2026-09-01): label i is typed out one
+// character every 4 frames at tick 600*i on the text layer, and the two
+// 64x16 credit strips 2i / 2i+1 (bank refs 208+8i..) fly in under it 120 and
+// 360 frames later. The roll runs after the final stage's ALL STAGE CLEARED
+// card, never on game over. Index 0 draws a blank line.
 export const STAFF_ROLE_LABELS = [
     "", "PLANNING", "PRODUCE", "SFX PLAY", "ENEMY DESIGN", "MAP DESIGN",
     "CHARACTER DESIGN", "TITLE LOGO", "2D GRAPHIC", "3D GRAPHIC", "DEBUG",
@@ -170,6 +238,13 @@ export function decodeSettings(sec5) {
             },
         },
         stageExtents,
+        // +0x41..+0x58: the 24-entry BGM assignment table. Four special
+        // tracks first — +0x41 title, +0x42 game over, +0x43 stage clear,
+        // +0x44 all-clear (it keeps playing through the staff roll) — then a
+        // (main, boss) pair per stage row from +0x45 (engine-traced
+        // 2026-09-01: the stage start reads settings[+0x45 + 2*row], the boss
+        // spawn +0x46 + 2*row; the earlier "three special tracks" reading
+        // was off by one).
         bgmTable: [...sec5.subarray(base + 0x41, base + 0x59)],
         sfxSet: sec5[base + 0x59],
         // +0x01: HUD dressing — bits4-6 frame-graphic select (7 VDP2 tile
@@ -191,6 +266,9 @@ export function decodeSettings(sec5) {
         // +0x5A..+0x5C: the staff roll's three role labels — indices into the
         // engine's fixed 16-entry list (GAME.bin +0x20164).
         staffRoles: [0x5a, 0x5b, 0x5c].map((o) => STAFF_ROLE_LABELS[sec5[base + o] & 15]),
+        staffRoleIndices: [0x5a, 0x5b, 0x5c].map((o) => sec5[base + o] & 15),
+        // +0x29..+0x2C: the title screen's entrance program (TITLE_ENTRANCE).
+        titleEntrance: decodeTitleEntrance(sec5, base),
         confidence: {
             mainWeapon: "confirmed",
             loadouts: "confirmed",

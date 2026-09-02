@@ -349,7 +349,9 @@ function readBankComposition(sec5, slot) {
 }
 
 // Crop a rendered RGBA to its opaque bounding box so a logo drawn in a
-// corner of its slot still centers cleanly on the title screen.
+// corner of its slot packs tight; x/y record where the crop sat inside the
+// slot, because the engine draws the WHOLE slot centred on its anchor and a
+// faithful title has to keep that corner.
 function trimRgba(img) {
     let minX = img.w, minY = img.h, maxX = -1, maxY = -1;
     for (let y = 0; y < img.h; y++) {
@@ -370,43 +372,61 @@ function trimRgba(img) {
         const src = ((minY + y) * img.w + minX) * 4;
         rgba.set(img.rgba.subarray(src, src + w * 4), y * w * 4);
     }
-    return { w, h, rgba };
+    return { w, h, rgba, x: minX, y: minY };
 }
 
-// Extract the drawn title compositions. Returns {sprites, roles} where roles
-// maps title1/title2/credit onto indices into `sprites` (absolute once the
-// caller adds `baseIndex`). The credit is the save's distinct non-empty
-// credit strips stacked vertically (Ramsie repeats one author line three
-// times; stacking distinct lines keeps a multi-line staff block intact).
+// Extract the drawn title compositions. Returns {sprites, roles, layout}:
+// `roles` maps title1 / title2 / credit0..credit5 / credit onto indices into
+// `sprites` (absolute once the caller adds `baseIndex`); `layout` records
+// where each trimmed image sits inside its slot (x, y, w, h in slot pixels,
+// with the slot sizes) — the engine draws the whole 128x64 / 64x16 slot
+// centred on its anchor, so a logo painted in a corner keeps that corner
+// only if the runtime knows the offset.
+//
+// The six 64x16 credit strips ship one frame each (credit0..credit5, in the
+// order the ending's staff roll spawns them: strips 2i and 2i+1 belong to
+// role label i) because the roll flies every strip in on its own. `credit` —
+// the save's distinct non-empty strips stacked vertically (Ramsie repeats one
+// author line three times) — stays for readers that predate this: the PS2
+// exporter and the editor's import sheet.
 export function extractTitleArt(sec5, sections, palettes, baseIndex) {
     const sprites = [];
     const roles = {};
+    const layout = { title: { w: 128, h: 64 }, strip: { w: 64, h: 16 }, credits: [] };
     const placeholder = findPlaceholderCell(sec5).cell;
     const renderSlot = (slot) => {
         const comp = readBankComposition(sec5, slot);
         if (!comp || isUnpainted({ frames: [comp] }, placeholder)) return null;
         return trimRgba(renderFrame(sections, palettes, comp));
     };
+    const place = (img) => ({ x: img.x, y: img.y, w: img.w, h: img.h });
+    const push = (key, img) => {
+        const index = baseIndex + sprites.length;
+        sprites.push({ key, w: img.w, h: img.h, rgba: img.rgba });
+        return index;
+    };
     const title1 = renderSlot(TITLE_SLOTS.title1);
     if (title1) {
-        roles.title1 = baseIndex + sprites.length;
-        sprites.push({ key: "dezaTitle1", ...title1 });
+        roles.title1 = push("dezaTitle1", title1);
+        layout.title1 = place(title1);
     }
     const title2 = renderSlot(TITLE_SLOTS.title2);
     if (title2) {
-        roles.title2 = baseIndex + sprites.length;
-        sprites.push({ key: "dezaTitle2", ...title2 });
+        roles.title2 = push("dezaTitle2", title2);
+        layout.title2 = place(title2);
     }
     const lines = [];
     const seen = new Set();
-    for (const slot of TITLE_SLOTS.credits) {
+    TITLE_SLOTS.credits.forEach((slot, k) => {
         const line = renderSlot(slot);
-        if (!line) continue;
+        layout.credits[k] = line ? place(line) : null;
+        if (!line) return;
+        roles[`credit${k}`] = push(`dezaCredit${k}`, line);
         const sig = line.rgba.join();
-        if (seen.has(sig)) continue;
+        if (seen.has(sig)) return;
         seen.add(sig);
         lines.push(line);
-    }
+    });
     if (lines.length) {
         const w = Math.max(...lines.map((l) => l.w));
         const h = lines.reduce((sum, l) => sum + l.h, 0);
@@ -425,7 +445,7 @@ export function extractTitleArt(sec5, sections, palettes, baseIndex) {
         roles.credit = baseIndex + sprites.length;
         sprites.push({ key: "dezaCredit", w, h, rgba });
     }
-    return { sprites, roles };
+    return { sprites, roles, layout };
 }
 
 // --- Global bank head: player / item / blast / bullet art --------------

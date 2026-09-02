@@ -540,6 +540,11 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       if (levelData.dezaemonTitle && typeof levelData.dezaemonTitle === "object") {
         recipe.dezaemonTitle = levelData.dezaemonTitle;
       }
+      // The title's entrance program, the art's slot placement and the
+      // staff-roll labels: the title scene and the ending read them.
+      if (levelData.dezaemonTitleScreen && typeof levelData.dezaemonTitleScreen === "object") {
+        recipe.dezaemonTitleScreen = levelData.dezaemonTitleScreen;
+      }
       if (levelData.dezaemonCredits && typeof levelData.dezaemonCredits === "object") {
         recipe.dezaemonCredits = levelData.dezaemonCredits;
       }
