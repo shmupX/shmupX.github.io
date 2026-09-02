@@ -82,6 +82,15 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
     the level has resolved, because the set depends on which level is running —
     see **A Dezaemon save is not 2028.Ai** below. `routes/games/2028-ai.tsx`
     used to send a fixed list from its `<head>` and no longer does.
+  - A boss dies as the boss whatever finished it. `updateDezaColumns` (the
+    Dezaemon sub-weapon 5 / charge 2 columns) used to bill the boss sprite and
+    hand the kill to `enemyDie`, which destroyed the sprite without telling the
+    boss machinery: no death drift, no STAGE CLEAR, and a skull balloon and TIME
+    label left hanging over an empty sky. It now keeps `scene.bossHp` and the
+    danger balloon in step, skips the boss while it is flying in, and routes the
+    kill through `bossDie` — and `enemyDie` itself hands a boss over to
+    `bossDie`, so no other weapon can repeat it. Upstream fix belongs in
+    `2019-es7/src/phaser/game-objects/Enemy.js`.
   - The Dezaemon divergences below, all of them keyed off `isImportedLevel()`.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.

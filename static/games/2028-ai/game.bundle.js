@@ -8595,6 +8595,14 @@
   // one pot both ships feed.
   function enemyDie(scene, enemy, isSp, owner) {
     if (!enemy || !enemy.active) return;
+    // Whichever weapon finished it, the boss dies as the boss. Every kill
+    // path is supposed to branch on the "boss" tag before calling in here,
+    // and one that does not (the sub-weapon columns did not) leaves the
+    // stage waiting on a bossDie that never comes.
+    if (enemy === scene.bossSprite && enemy.getData("type") === "boss") {
+      bossDie(scene, enemy, owner);
+      return;
+    }
     var score = enemy.getData("score") || 100;
     var spgage = enemy.getData("spgage") || 1;
     var p = killer(scene, owner);
@@ -9416,13 +9424,29 @@
       for (var e = scene.enemies.length - 1; e >= 0; e--) {
         var en = scene.enemies[e];
         if (!en || !en.active) continue;
+        var isBoss = en.getData("type") === "boss";
+        // The boss gets the two rules the bullet pass gives it: it is no
+        // target while it is still flying in, and its HP lives in two places
+        // — the sprite's data and scene.bossHp, which the HUD bar and the
+        // danger balloon read. A column used to bill the sprite alone and
+        // then hand the kill to enemyDie, which destroys the sprite without
+        // telling the boss machinery: no death drift, no stage clear, and a
+        // skull balloon and TIME label left over an empty sky.
+        if (isBoss && scene.bossEntering) continue;
         if (Math.abs(en.x - c.x) > c.halfW + en.width / 2) continue;
         if (en.y > c.y || en.y < top) continue;
         var hp = en.getData("hp");
         if (hp === "infinity") continue;
         hp -= c.dmg;
         en.setData("hp", hp);
-        if (hp <= 0) scene.enemyDie(en, en.getData("type") !== "boss", c.owner);
+        if (isBoss) {
+          scene.bossHp = hp;
+          scene.checkBossDanger();
+        }
+        if (hp <= 0) {
+          if (isBoss) scene.bossDie(en, c.owner);
+          else scene.enemyDie(en, true, c.owner);
+        }
       }
     }
   }

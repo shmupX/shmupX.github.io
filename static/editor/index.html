@@ -2008,8 +2008,9 @@
             checkMissingTextures();
         }
 
-        async function checkMissingTextures() {
-            if (!atlasData || !atlasData.frames) return;
+        // Every frame name the records stand on that no loaded atlas carries.
+        async function collectMissingTextures() {
+            if (!atlasData || !atlasData.frames) return new Set();
             const frames = Object.assign({}, atlasData.frames);
 
             // Also load game_ui and game_asset atlases from root for cross-atlas verification
@@ -2058,9 +2059,34 @@
                 }
             }
 
-            if (missing.size > 0) {
-                console.warn('Level editor: missing textures in atlas:', [...missing]);
-                showMissingTexturesPanel([...missing]);
+            return missing;
+        }
+
+        // The MISSING TEXTURES panel is the last resort, not the first: a
+        // record that names art this level lacks is nearly always one that
+        // came out of the shared library — pasted into the CHARACTER EDITOR's
+        // JSON box from the library editor, or typed by hand out of it — and
+        // the library still holds those very frames. Pull them from there
+        // first; the panel only asks for what the library cannot answer.
+        async function checkMissingTextures() {
+            // The atlas rebuild inside the library pass re-enters this check
+            // through buildFrameThumbs; the pass that started it reports.
+            if (libraryResolveBusy) return;
+            const missing = await collectMissingTextures();
+            if (!missing.size || libraryResolveBusy) return;
+            let left = [...missing];
+            try {
+                const r = await resolveMissingTexturesFromLibrary(missing);
+                if (r.resolved) flash(r.resolved + ' FRAME' + (r.resolved === 1 ? '' : 'S') + ' PULLED FROM THE LIBRARY');
+                left = r.left;
+            } catch (e) { console.warn('Level editor: library lookup failed:', e); }
+            if (!left.length) return;
+            console.warn('Level editor: missing textures in atlas:', left);
+            showMissingTexturesPanel(left);
+            const status = document.getElementById('missing-tex-atlas-status');
+            if (status) {
+                status.textContent = 'Not in the shared library either — upload each, or a PNG + JSON atlas.';
+                status.style.color = '#888';
             }
         }
 
@@ -2933,9 +2959,13 @@
             return entryFrameNames(entry).filter((f) => !have[f]);
         }
 
-        function saveCurrentEnemy() {
+        async function saveCurrentEnemy() {
             if (syncEnemyEditorForm(true)) {
                 const tab = currentEditorTab;
+                // A record pasted in out of the library names art the level
+                // lacks — fetch it from there before the checks below.
+                await pullEntryArtFromLibrary(tab === 'player' ? playerData
+                    : (tab === 'bosses' ? bossData : enemyData)[currentEnemyKey]);
                 const label = tab === 'player' ? 'Player' : (tab === 'bosses' ? 'Boss' : 'Enemy');
                 // Persist to Firebase RTDB if a cloud game name is set
                 const fbName = document.getElementById('firebase-level-name').value.trim();
@@ -3028,6 +3058,121 @@
                 if (alt) f = atlas.frames[alt];
             }
             return f && f.frame ? f : null;
+        }
+
+        // ---- the library as the level's safety net for art ----
+        // A record reaches a level in more ways than the + FROM LIBRARY
+        // button, which crops art out of the library atlas as it copies: the
+        // CHARACTER EDITOR's JSON box takes a record verbatim, and a cloud
+        // save can carry a record whose atlas snapshot predates it. Those
+        // arrive naming frames the level does not have, and every one used
+        // to end in the MISSING TEXTURES panel and an upload per frame. The
+        // shared library still holds the art under exactly those names —
+        // `textureKey` on a record says which atlas — so it is fetched from
+        // there instead, and only what the library cannot answer is asked for.
+        let libraryResolveBusy = false;
+        let libraryIndexPromise = null;   // Promise<Map<frameName, atlasKey>>
+
+        // frame name -> the library atlas that carries it, over every
+        // published character. Fetched once per session; a fetch that fails
+        // or finds nothing is not remembered, so a flaky connection retries.
+        function libraryFrameIndex() {
+            if (!libraryIndexPromise) {
+                libraryIndexPromise = (async () => {
+                    const index = new Map();
+                    try {
+                        const res = await fetch(`${FIREBASE_CONFIG.databaseURL}/characters.json`);
+                        if (!res.ok) throw new Error('HTTP ' + res.status);
+                        const all = (await res.json()) || {};
+                        for (const [name, rec] of Object.entries(all)) {
+                            if (!rec || typeof rec !== 'object') continue;
+                            const key = rec.textureKey || name;
+                            for (const f of entryFrameNames(rec)) if (!index.has(f)) index.set(f, key);
+                        }
+                    } catch (e) { /* offline — only the records' own textureKey hints work */ }
+                    if (!index.size) libraryIndexPromise = null;
+                    return index;
+                })();
+            }
+            return libraryIndexPromise;
+        }
+
+        // Crop every frame in `missing` that a library atlas carries into this
+        // level's atlas under its own name, then fold them in. A record's own
+        // textureKey is tried first (a record pasted out of the library keeps
+        // it); the library-wide index answers for one that lost it. Resolves
+        // { resolved, left }: how many landed, and the names nobody had.
+        async function resolveMissingTexturesFromLibrary(missing) {
+            const have = () => (atlasData && atlasData.frames) || {};
+            const names = [...missing].filter((n) => !have()[n]);
+            if (!names.length) return { resolved: 0, left: [] };
+            if (libraryResolveBusy) return { resolved: 0, left: names };
+            libraryResolveBusy = true;
+            try {
+                const hint = new Map();
+                const records = [playerData, ...Object.values(enemyData || {}), ...Object.values(bossData || {})];
+                for (const rec of records) {
+                    if (!rec || typeof rec !== 'object' || !rec.textureKey) continue;
+                    for (const f of entryFrameNames(rec)) if (!hint.has(f)) hint.set(f, rec.textureKey);
+                }
+                let index = null;
+                const byAtlas = new Map();
+                for (const n of names) {
+                    let key = hint.get(n);
+                    if (!key) {
+                        if (!index) index = await libraryFrameIndex();
+                        key = index.get(n);
+                    }
+                    if (!key) continue;
+                    if (!byAtlas.has(key)) byAtlas.set(key, []);
+                    byAtlas.get(key).push(n);
+                }
+                let resolved = 0;
+                for (const [key, list] of byAtlas) {
+                    const atlas = await loadLibraryAtlas(key);
+                    if (!atlas) continue;
+                    const existing = have();
+                    for (const n of list) {
+                        const f = libraryFrameOf(atlas, n);
+                        if (!f) continue;
+                        const c = document.createElement('canvas');
+                        c.width = f.frame.w; c.height = f.frame.h;
+                        c.getContext('2d').drawImage(atlas.img, f.frame.x, f.frame.y, f.frame.w, f.frame.h, 0, 0, f.frame.w, f.frame.h);
+                        const spr = { key: n, canvas: c, w: f.frame.w, h: f.frame.h };
+                        // Same discipline as the library import: a name the
+                        // atlas already has is a replacement, never a second
+                        // sprite on the same slot.
+                        if (existing[n]) replacedFrames[n] = spr;
+                        else if (!extraSprites.find((sp) => sp.key === n)) extraSprites.push(spr);
+                        customFrameKeys.add(n);
+                        resolved++;
+                    }
+                }
+                if (resolved) await mergeExtraSpritesIntoAtlas();
+                return { resolved, left: names.filter((n) => !have()[n]) };
+            } finally {
+                libraryResolveBusy = false;
+            }
+        }
+
+        // One record's dangling art, fetched from the library — the
+        // CHARACTER EDITOR's Save runs this before it judges the record.
+        async function pullEntryArtFromLibrary(entry) {
+            const dangling = entry ? entryFramesMissingFromAtlas(entry) : [];
+            if (!dangling.length) return;
+            try {
+                const r = await resolveMissingTexturesFromLibrary(new Set(dangling));
+                if (r.resolved) flash(r.resolved + ' FRAME' + (r.resolved === 1 ? '' : 'S') + ' PULLED FROM THE LIBRARY');
+            } catch (e) { console.warn('Level editor: library lookup failed:', e); }
+        }
+
+        // Everything every record names, fetched silently — the game-wide
+        // save and PLAY run this so what leaves the editor has its art.
+        async function pullAllArtFromLibrary() {
+            try {
+                const missing = await collectMissingTextures();
+                if (missing.size) await resolveMissingTexturesFromLibrary(missing);
+            } catch (e) { console.warn('Level editor: library lookup failed:', e); }
         }
 
         async function drawLibraryThumb(canvas, rec, name) {
@@ -3451,6 +3596,23 @@
                 // own preview (bossBulletDef) already guards on texture.length, so
                 // nothing was relying on the slot existing.
                 if (entry.hp === undefined) entry.hp = 150;
+                // Where the boss parks is the STAGE's, not the character's:
+                // a Dezaemon boss carries the map row and column of the save
+                // it was drawn in, and the scenery here was laid out around
+                // whatever stood in this slot. Keep the slot's placement, and
+                // drop a foreign one where the slot had none — the runtime
+                // then brings the boss on after the waves, as for any boss
+                // with no row, instead of parking the scroll at a row that
+                // belongs to another cart's map.
+                const prevDeza = bossData[key] && bossData[key].dezaemon;
+                if (prevDeza && typeof prevDeza.row === 'number') {
+                    entry.dezaemon = Object.assign({}, entry.dezaemon || {}, { row: prevDeza.row });
+                    if (typeof prevDeza.col === 'number') entry.dezaemon.col = prevDeza.col;
+                    else delete entry.dezaemon.col;
+                } else if (entry.dezaemon) {
+                    delete entry.dezaemon.row;
+                    delete entry.dezaemon.col;
+                }
                 bossData[key] = entry;
                 gameData.bossData = bossData;
                 storeBossDataForViewers();
@@ -4443,6 +4605,9 @@
             if (!gameData) { alert('Load directory first'); return; }
             if (!syncEnemyEditorForm(true)) return;
             const sid = getCurrentStageId();
+            // A no-op when every record's art is already here; otherwise the
+            // library answers before the atlas is published to the game.
+            await pullAllArtFromLibrary();
             try {
                 // Pre-compile inline TS/Svelte scene scripts so the game gets
                 // ready-to-import JS, then hand them off alongside the recipe.
@@ -8515,6 +8680,9 @@ function GAME3D_RUNTIME(DATA) {
         async function saveToFirebase() {
             // Sync any pending editor form changes into bossData/enemyData before saving
             syncEnemyEditorForm();
+            // ...and give every record its art before the atlas snapshot
+            // below is cut, or a pasted character is saved as names only.
+            await pullAllArtFromLibrary();
             initFirebase();
             if (!firebaseDb) { alert('Firebase not available'); return; }
             let name = document.getElementById('firebase-level-name').value.trim();
