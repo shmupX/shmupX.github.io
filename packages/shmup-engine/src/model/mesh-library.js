@@ -34,11 +34,11 @@
 //     family, meshIndex
 //   }
 //
-// Family -> library slice sizes (32/72/36/36/36/12) are forced by the corpus
-// index maxima; family 4 and 5 are pinned to MDLDT_45-53 / 54-56 by their
-// content, and the ascending order of families 0-3 is an assumption that a
-// rendered DAIOH ship either confirms or refutes. mdldtFileFor() is the one
-// place that order lives.
+// Family -> library slices (32/72/36/36/36/12 meshes, files 01-08 / 09-26 /
+// 27-35 / 36-44 / 45-53 / 54-56) are TRACED from POLYKITI's resolver, which
+// adds 0 / 32 / 104 / 140 / 176 / 212 to the mesh index and loads file
+// (sum >> 2) from a table that runs MDLDT_01 upward (decode-model.js header).
+// mdldtFileFor() is that arithmetic.
 //
 // Environment-neutral ESM (Node + browser).
 
@@ -82,7 +82,7 @@ export function familyOfLibraryIndex(index) {
     return null;
 }
 
-/** Which MDLDT_NN.CMP holds a mesh, and where inside it (0-3). */
+/** Which MDLDT_NN.CMP holds a mesh, and where inside it (0-3) — the engine's own arithmetic. */
 export function mdldtFileFor(family, meshIndex) {
     if (libraryIndex(family, meshIndex) < 0) return null;
     return {

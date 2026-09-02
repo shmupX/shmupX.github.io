@@ -135,6 +135,7 @@ export {
   swatchCellRect,
   swatchRgb,
   swatchUV,
+  tintRgb555,
   transformPoint,
   wireframeSegments,
 } from "./src/model/model-mesh.js";

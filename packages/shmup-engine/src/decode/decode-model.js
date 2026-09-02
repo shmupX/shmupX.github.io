@@ -24,32 +24,34 @@
 //   +0x18  s32be scaleX, scaleY, scaleZ, signed 16.16 — negative mirrors
 //          that axis (0x10000 = x1.0)
 //
-// The shape word (decoded 2026-09-02 from 2,814 parts across 77 saves, and
-// from the disc's MDLDT_01-56.CMP part library):
+// The shape word, TRACED from the POLYKITI overlay's resolver (file +0xce4,
+// 2026-09-02) after a corpus read of 2,814 parts had guessed it:
 //
-//   bits 12-14  family     0-5, the six part pages of the ポリ吉 editor
-//   bits  8-9   colour set 0-2, which of a mesh's three colour tables to use
-//   bits  0-6   mesh index into the family's slice of the 224-mesh library
-//   bits 7, 10, 11, 15 are never set in the corpus; bits 8-9 never hold 3.
+//   bits 12-15  family      0-5, the six part pages (the switch rejects >5)
+//   bits  8-11  colour set  0-2, which of a mesh's three colour tables
+//   bits  0-7   mesh index  into the family's slice of the 224-mesh library
+//   In the corpus bits 7, 10, 11 and 15 are never set and bits 8-9 never
+//   hold 3, so a narrower 3/2/7 reading gives the same values; the widths
+//   above are what the engine masks.
 //
 // The meshes themselves are NOT in the save: MDLDT_01-56.CMP on the disc are
-// the part library POLYKITI loads by name (its literal pool lists them all),
-// 56 files x 4 meshes, each mesh stored as three SGL PDATA copies that share
-// vertices and polygons and differ only in the per-polygon colour table.
-// The per-family index maxima observed in the corpus (30, 71, 35, 35, 34, 10)
-// round up to whole files as 32+72+36+36+36+12 = 224 exactly, which fixes the
-// slice sizes; family 4 (all flat 43x70x10 plates) and family 5 (cube,
-// sphere, wedge, hex prism, cylinder) are pinned to MDLDT_45-53 and 54-56 by
-// their content, the ascending order of families 0-3 is assumed. DAIOH's
-// picture-frame model uses 0x5000 and 0x5200 for the same cube in two
-// colours, which is what pinned the colour-set field.
+// the part library, 56 files x 4 meshes, each mesh stored as three SGL PDATA
+// copies that share vertices and polygons and differ only in the per-polygon
+// colour table. The resolver adds a per-family constant to the mesh index —
+// 0, 32, 104, 140, 176, 212, immediates in a switch — and loads file
+// (sum >> 2) from a table that runs MDLDT_01 upward (+0xdc7c), then picks
+// PDATA (sum & 3) * 3 + colourSet out of the file's twelve. So families 0-5
+// are files 01-08 / 09-26 / 27-35 / 36-44 / 45-53 / 54-56, ascending, which
+// FAMILY_FILE_RANGES records. DAIOH's picture-frame model uses 0x5000 and
+// 0x5200 for the same cube in two colours.
 //
 // See src/model/mesh-library.js for the library index and
 // src/model/decode-mdldt.js for the mesh reader.
 //
-// The per-MODEL u16 colour is not a part colour — every polygon carries its
-// own colour in the library — and its meaning is still open; carry it as
-// data and show it as a label.
+// The per-MODEL u16 colour (RGB555, bit 15 clear; edited by a three-channel
+// picker in the overlay, +0x3ac4) is a whole-model TINT, traced through the
+// shader: each polygon's own channel c renders as
+// clamp(c + tint_c - 31 + light, floor_c, 31). White is neutral.
 //
 // The models never affect play directly — ポリ吉 renders a composition into
 // CG cells, and the game only ever draws those cells — so this decoder
@@ -92,10 +94,11 @@ function decodePart(bytes, off) {
         shape,
         shapeFamily: (shape >> 12) & 0xf,
         // Kept for compatibility: the low 12 bits as one number. The two
-        // fields below are its decoded halves.
+        // fields below are its decoded halves, masked the way the engine
+        // masks them.
         shapeVariant: shape & 0xfff,
-        colorSet: (shape >> 8) & 3,
-        meshIndex: shape & 0x7f,
+        colorSet: (shape >> 8) & 0xf,
+        meshIndex: shape & 0xff,
         position: {
             x: s32(bytes, off + 0x04) / 65536,
             y: s32(bytes, off + 0x08) / 65536,
@@ -134,8 +137,9 @@ export function decodeModels(sec7) {
         }
         models.push({
             slot,
-            // RGB555 like the palette bank (R bits 0-4, G 5-9, B 10-14) —
-            // the model's own colour word, meaning open (not a part colour)
+            // RGB555 like the palette bank (R bits 0-4, G 5-9, B 10-14):
+            // the whole-model tint the renderer folds into every polygon
+            // colour (see the header); 0x7fff is neutral
             color: u16(sec7, base + 2),
             parts,
         });

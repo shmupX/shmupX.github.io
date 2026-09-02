@@ -19,18 +19,34 @@
 //                     [x, y, u, v] vertices and [a, b, c, page] indices,
 //                     colour chosen by pointing every UV at a swatch cell
 //
-// Conventions that are NOT traced from POLYKITI and are therefore options
-// with a documented default (FORMAT.md marks them heuristic):
+// Conventions, and where each one comes from (FORMAT.md "sec7 shape word and
+// the ポリ吉 part library"):
 //
-//   - rotation order: ROTATION_ORDER = "xyz" means the part is rotated about
-//     X first, then Y, then Z (M = T * Rz * Ry * Rx * S). All six orders are
-//     available so a viewer can switch while the mapping is being confirmed.
+//   - rotation order — TRACED from POLYKITI (2026-09-02). Its per-part render
+//     routine (overlay +0x2728) calls the kernel's slTranslate, then slRotX
+//     with the save's rotX, slRotY with rotY, slRotZ with rotZ, then slScale,
+//     then puts the polygons. The kernel routines (0x06011218 / 290 / 308)
+//     post-multiply the current matrix with the standard right-handed
+//     rotation matrices (the sine lookup at 0x060118ac returns +sin for a
+//     positive angle), and points transform as M * p, so the composed matrix
+//     is M = T * Rx * Ry * Rz * S: a vertex sees the scale, then the Z
+//     rotation, then Y, then X, then the translation. In this module's
+//     first-applied-first naming that is ROTATION_ORDER = "zyx". The other
+//     five orders stay selectable for comparison only.
 //   - Y direction: model +Y is UP on screen. Settled empirically (2026-09-02):
 //     DAIOH slot 0 rendered with no flip matches the save's own ポリ吉-rendered
 //     ship sprite (needle nose at the top, engine nozzles at the bottom); the
 //     part at y = -52 is the engine block. `yDown: true` negates world Y
 //     after the transform for the opposite reading — positions and normals
 //     flip together, so nothing else changes.
+//   - the model colour word — TRACED. POLYKITI's shader (+0xa24c builds the
+//     table, +0xb128 reads it) turns each polygon's own RGB555 channel c into
+//     clamp(c + tint_c - 31 + light, floor_c, 31), light being -16..15 from
+//     the normal . light dot product. So the per-model word is a whole-model
+//     tint: white (31,31,31) is neutral and DAIOH's 0x4210 = (16,16,16) pulls
+//     every channel down by 15 of 31 levels. buildModelMesh applies the tint
+//     term by default (`tint: true`); this module's own Lambert shading
+//     stands in for the light term.
 //   - rotation quantum: the editor steps rotations by 18 degrees and stores
 //     them with a one- or two-unit drift; `quantize: true` snaps them.
 //
@@ -40,7 +56,8 @@ import { rgb555ToHex } from "../decode/decode-cg.js";
 import { meshFor, placeholderLibrary, polygonCount } from "./mesh-library.js";
 
 export const ROT_ORDERS = ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"];
-export const ROTATION_ORDER = "xyz";
+/** Traced: the Saturn applies Z, then Y, then X to a part (see the header). */
+export const ROTATION_ORDER = "zyx";
 export const ROTATION_QUANTUM = 18;
 export const SHADE_LEVELS = 8;
 /** Flat shading: brightness = SHADE_MIN + SHADE_RANGE * max(0, n . LIGHT). */
@@ -53,6 +70,22 @@ export const NEAR = 4;
 function normalize3(v) {
     const len = Math.hypot(v[0], v[1], v[2]) || 1;
     return [v[0] / len, v[1] / len, v[2] / len];
+}
+
+/**
+ * The model colour word applied to one polygon colour, both RGB555, the way
+ * POLYKITI's shade table does it without the light term:
+ * out_c = clamp(c + tint_c - 31, 0, 31). White is the identity.
+ */
+export function tintRgb555(color, tint) {
+    let out = 0;
+    for (let shift = 0; shift <= 10; shift += 5) {
+        const c = (color >> shift) & 31;
+        const t = (tint >> shift) & 31;
+        const v = Math.min(31, Math.max(0, c + t - 31));
+        out |= v << shift;
+    }
+    return out;
 }
 
 const DEG = Math.PI / 180;
@@ -160,8 +193,11 @@ export function buildModelMesh(model, {
     yDown = false,
     rotOrder = ROTATION_ORDER,
     quantize = true,
+    tint = true,
 } = {}) {
     const partList = (model && model.parts) || [];
+    // The per-model colour word is the whole-model tint (traced; header).
+    const tintWord = tint && model && Number.isInteger(model.color) ? model.color & 0x7fff : 0x7fff;
     const resolved = partList.map((part) => ({ part, mesh: meshFor(library, part) }));
     let triCount = 0;
     for (const { mesh } of resolved) {
@@ -207,7 +243,7 @@ export function buildModelMesh(model, {
             normals[t * 3] = nx;
             normals[t * 3 + 1] = ny * ySign;
             normals[t * 3 + 2] = nz;
-            colors[t] = rgb555ToHex(colorSet[q]);
+            colors[t] = rgb555ToHex(tintRgb555(colorSet[q], tintWord));
             partOf[t] = index;
             t++;
         };
@@ -259,6 +295,7 @@ export function buildModelMesh(model, {
         placeholder,
         yDown,
         rotOrder,
+        tint: tintWord,
     };
 }
 

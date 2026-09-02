@@ -2904,10 +2904,11 @@ function decodePart(bytes, off) {
     shape,
     shapeFamily: shape >> 12 & 15,
     // Kept for compatibility: the low 12 bits as one number. The two
-    // fields below are its decoded halves.
+    // fields below are its decoded halves, masked the way the engine
+    // masks them.
     shapeVariant: shape & 4095,
-    colorSet: shape >> 8 & 3,
-    meshIndex: shape & 127,
+    colorSet: shape >> 8 & 15,
+    meshIndex: shape & 255,
     position: {
       x: s32(bytes, off + 4) / 65536,
       y: s32(bytes, off + 8) / 65536,
@@ -2942,8 +2943,9 @@ function decodeModels(sec7) {
     }
     models.push({
       slot,
-      // RGB555 like the palette bank (R bits 0-4, G 5-9, B 10-14) —
-      // the model's own colour word, meaning open (not a part colour)
+      // RGB555 like the palette bank (R bits 0-4, G 5-9, B 10-14):
+      // the whole-model tint the renderer folds into every polygon
+      // colour (see the header); 0x7fff is neutral
       color: u16(sec7, base + 2),
       parts
     });
@@ -3654,7 +3656,7 @@ function buildMeshLibrary(files) {
 
 // packages/shmup-engine/src/model/model-mesh.js
 var ROT_ORDERS = ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"];
-var ROTATION_ORDER = "xyz";
+var ROTATION_ORDER = "zyx";
 var ROTATION_QUANTUM = 18;
 var SHADE_LEVELS = 8;
 var SHADE_MIN = 0.58;
@@ -3664,6 +3666,16 @@ var NEAR = 4;
 function normalize3(v) {
   const len = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / len, v[1] / len, v[2] / len];
+}
+function tintRgb555(color, tint) {
+  let out = 0;
+  for (let shift = 0; shift <= 10; shift += 5) {
+    const c = color >> shift & 31;
+    const t = tint >> shift & 31;
+    const v = Math.min(31, Math.max(0, c + t - 31));
+    out |= v << shift;
+  }
+  return out;
 }
 var DEG = Math.PI / 180;
 function quantizeRotation(deg, step = ROTATION_QUANTUM) {
@@ -3742,9 +3754,11 @@ function buildModelMesh(model, {
   library = placeholderLibrary(),
   yDown = false,
   rotOrder = ROTATION_ORDER,
-  quantize = true
+  quantize = true,
+  tint = true
 } = {}) {
   const partList = model && model.parts || [];
+  const tintWord = tint && model && Number.isInteger(model.color) ? model.color & 32767 : 32767;
   const resolved = partList.map((part) => ({ part, mesh: meshFor(library, part) }));
   let triCount = 0;
   for (const { mesh } of resolved) {
@@ -3790,7 +3804,7 @@ function buildModelMesh(model, {
       normals[t * 3] = nx;
       normals[t * 3 + 1] = ny * ySign;
       normals[t * 3 + 2] = nz;
-      colors[t] = rgb555ToHex(colorSet[q]);
+      colors[t] = rgb555ToHex(tintRgb555(colorSet[q], tintWord));
       partOf[t] = index;
       t++;
     };
@@ -3841,7 +3855,8 @@ function buildModelMesh(model, {
     bounds: { min, max, center, radius },
     placeholder,
     yDown,
-    rotOrder
+    rotOrder,
+    tint: tintWord
   };
 }
 function allocFrame(mesh) {
@@ -4654,6 +4669,7 @@ export {
   swatchCellRect,
   swatchRgb,
   swatchUV,
+  tintRgb555,
   toFloat32,
   totalDiffBytes,
   transformPoint,

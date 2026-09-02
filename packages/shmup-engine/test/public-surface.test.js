@@ -37,6 +37,7 @@ const EXPECTED = [
   "swatchCell",
   "swatchRgb",
   "swatchUV",
+  "tintRgb555",
   "wireframeSegments",
 ];
 

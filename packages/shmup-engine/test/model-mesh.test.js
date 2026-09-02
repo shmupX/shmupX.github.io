@@ -19,10 +19,12 @@ import {
   projectModel,
   quantizeRotation,
   ROT_ORDERS,
+  ROTATION_ORDER,
   SHADE_LEVELS,
   swatchCell,
   swatchRgb,
   swatchUV,
+  tintRgb555,
   transformPoint,
   wireframeSegments,
 } from "../src/model/model-mesh.js";
@@ -110,6 +112,38 @@ Deno.test("every rotation order applies its axes first-letter first", () => {
       assert(near(got[k], expect[k]), `${order}: ${got} vs ${expect}`);
     }
   }
+});
+
+Deno.test("the default rotation order is the Saturn's: Z, then Y, then X", () => {
+  // Traced from POLYKITI: slRotX, slRotY, slRotZ are called in that order and
+  // SGL post-multiplies, so the last call is the first the vertex sees.
+  assertStrictEquals(ROTATION_ORDER, "zyx");
+  assert(ROT_ORDERS.includes(ROTATION_ORDER));
+  // and the two orders really differ when two rotations are non-zero
+  const part2 = part({ rotation: { x: 36, y: 180, z: 0 } });
+  const a = point(composeTransform(part2, { rotOrder: "zyx" }), 0, 0, 10);
+  const b = point(composeTransform(part2, { rotOrder: "xyz" }), 0, 0, 10);
+  assert(!near(a[1], b[1]) || !near(a[2], b[2]), `${a} vs ${b}`);
+});
+
+Deno.test("the model colour word tints every polygon colour, white being neutral", () => {
+  assertStrictEquals(tintRgb555(0x03e0, 0x7fff), 0x03e0);
+  assertStrictEquals(tintRgb555(0x7fff, 0x4210), 0x4210); // white polygon takes the tint
+  assertStrictEquals(tintRgb555(0x0000, 0x4210), 0x0000);
+  // DAIOH's 0x4210 = (16,16,16) pulls a (10,16,22) polygon to (0,1,7)
+  const blue = 10 | (16 << 5) | (22 << 10);
+  assertStrictEquals(tintRgb555(blue, 0x4210), 0 | (1 << 5) | (7 << 10));
+  // through buildModelMesh: default on, off when asked, neutral without a colour word
+  const cube = part();
+  const tinted = buildModelMesh({ color: 0x4210, parts: [cube] });
+  const plain = buildModelMesh({ color: 0x4210, parts: [cube] }, {
+    tint: false,
+  });
+  const none = buildModelMesh({ parts: [cube] });
+  assertStrictEquals(tinted.tint, 0x4210);
+  assertStrictEquals(plain.colors[0], rgb555ToHex(0x03e0));
+  assertStrictEquals(none.colors[0], rgb555ToHex(0x03e0));
+  assertStrictEquals(tinted.colors[0], rgb555ToHex(tintRgb555(0x03e0, 0x4210)));
 });
 
 Deno.test("quantizeRotation snaps to the editor's 18-degree steps", () => {

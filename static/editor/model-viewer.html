@@ -189,8 +189,9 @@
                         <button id="y-down">Y DOWN</button>
                         <button id="y-up">Y UP</button>
                     </div>
-                    <select id="rot-order" title="Rotation order (first letter first) — untraced, so it is switchable"></select>
+                    <select id="rot-order" title="Rotation order, first letter applied to the part first. ZYX is the Saturn's (traced: slRotX, slRotY, slRotZ post-multiplied); the others are for comparison"></select>
                     <button id="opt-snap" class="chip small on" title="Snap rotations to the editor's 18° steps">SNAP 18°</button>
+                    <button id="opt-tint" class="chip small on" title="Fold the model's colour word into every polygon colour the way the Saturn's shader does (traced): white is neutral, darker words darken the whole model">TINT</button>
                     <button id="opt-wire" class="chip small">WIRE</button>
                     <button id="opt-spin" class="chip small on">SPIN</button>
                     <button id="opt-reset" class="chip small">RESET VIEW</button>
@@ -324,6 +325,7 @@
             yDown: false,
             rotOrder: D.ROTATION_ORDER,
             quantize: true,
+            tint: true,
             wire: false,
             spin: true,
             yaw: 35, pitch: 25, distance: 200, target: [0, 0, 0],
@@ -518,7 +520,7 @@
         function rebuild() {
             if (state.slot < 0 || !state.models[state.slot]) { modelMesh = null; return; }
             const model = state.models[state.slot];
-            modelMesh = D.buildModelMesh(model, { library: library, yDown: state.yDown, rotOrder: state.rotOrder, quantize: state.quantize });
+            modelMesh = D.buildModelMesh(model, { library: library, yDown: state.yDown, rotOrder: state.rotOrder, quantize: state.quantize, tint: state.tint });
             frame = D.allocFrame(modelMesh);
             table = D.buildSwatchTable(modelMesh);
             state.target = modelMesh.bounds.center.slice();
@@ -653,7 +655,7 @@
                 const sw = document.createElement('span');
                 sw.className = 'sw';
                 sw.style.background = hex(D.rgb555ToHex(m.color));
-                sw.title = 'model colour word 0x' + m.color.toString(16) + ' (meaning open)';
+                sw.title = 'model colour word 0x' + m.color.toString(16) + ' — the whole-model tint (white = neutral)';
                 b.appendChild(sw);
                 b.appendChild(document.createTextNode('SLOT ' + m.slot + ' · ' + m.parts.length + 'P'));
                 b.onclick = () => selectSlot(i);
@@ -698,7 +700,7 @@
         }
         function renderNotice() {
             const n = $('notice');
-            const conv = 'Y ' + (state.yDown ? 'DOWN' : 'UP') + ' · ROTATION ' + state.rotOrder.toUpperCase() + ' — Y UP verified against DAIOH\'s own ship sprite; the rotation order is not traced from POLYKITI';
+            const conv = 'Y ' + (state.yDown ? 'DOWN' : 'UP') + ' · ROTATION ' + state.rotOrder.toUpperCase() + (state.rotOrder === 'zyx' ? ' (TRACED)' : ' (NOT THE SATURN\'S)') + ' · TINT ' + (state.tint ? 'ON' : 'OFF') + ' — Y UP verified against DAIOH\'s own ship sprite; rotation order and tint traced from POLYKITI';
             n.innerHTML = (realLibrary
                 ? 'REAL PART LIBRARY (MDLDT_01–56) · PAINTER-SORTED, NO DEPTH BUFFER: INTERPENETRATING PARTS CAN POP · '
                 : '<b>PLACEHOLDER GEOMETRY</b> — mesh-library.json did not load; family 5 primitives regenerated, boxes for the rest · ')
@@ -723,6 +725,7 @@
         sel.value = state.rotOrder;
         sel.onchange = () => { state.rotOrder = sel.value; rebuild(); renderNotice(); };
         $('opt-snap').onclick = () => { state.quantize = !state.quantize; $('opt-snap').classList.toggle('on', state.quantize); rebuild(); };
+        $('opt-tint').onclick = () => { state.tint = !state.tint; $('opt-tint').classList.toggle('on', state.tint); rebuild(); renderNotice(); };
         $('opt-wire').onclick = () => { state.wire = !state.wire; $('opt-wire').classList.toggle('on', state.wire); };
         $('opt-spin').onclick = () => { state.spin = !state.spin; $('opt-spin').classList.toggle('on', state.spin); };
         $('opt-reset').onclick = () => resetView();
@@ -797,7 +800,7 @@
                 visible: lastVisible,
                 placeholder: modelMesh ? modelMesh.placeholder : null,
                 yaw: state.yaw, pitch: state.pitch, distance: state.distance,
-                yDown: state.yDown, rotOrder: state.rotOrder, wire: state.wire,
+                yDown: state.yDown, rotOrder: state.rotOrder, wire: state.wire, tint: state.tint,
                 from: state.from, frameMs: frameMs,
             }),
             select: selectSlot,
@@ -812,6 +815,7 @@
                 if (o.wire != null && o.wire !== state.wire) $('opt-wire').onclick();
                 if (o.spin != null && o.spin !== state.spin) $('opt-spin').onclick();
                 if (o.quantize != null && o.quantize !== state.quantize) $('opt-snap').onclick();
+                if (o.tint != null && o.tint !== state.tint) $('opt-tint').onclick();
             },
             loadSav: async (url) => {
                 const r = await fetch(url);
