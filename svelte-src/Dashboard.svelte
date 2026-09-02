@@ -129,16 +129,41 @@
     return emuStateFor(emuCatalog, [...emuInstalled]);
   }
 
+  // Registration is not control, and only control puts the worker in front of
+  // THIS page's fetches. A hard reload loads the document outside the worker,
+  // and so does DevTools' "Bypass for network"; either leaves the page
+  // uncontrolled for its whole life while the registration stays active and
+  // perfectly healthy. Every mirrored path 404s against this origin in that
+  // state, so the launcher has to tell it apart from a broken install — the
+  // fix is a plain reload, and reinstalling cannot work because the warm's own
+  // fetches would bypass the worker in exactly the same way.
+  function hasEmuController() {
+    try { return !!navigator.serviceWorker?.controller; } catch (_) { return false; }
+  }
+  let emuControlled = $state(hasEmuController());
+
+  // A claim can land after a shelf has already given up — the worker installed
+  // by this very page load claims it a moment later — so read those again
+  // rather than leaving a note up that is no longer true.
+  function onEmuControllerChange() {
+    if (!hasEmuController()) return;
+    emuControlled = true;
+    for (const c of installedCores) {
+      if (emuManifests[c.id] === null) loadEmuManifest(c, true);
+    }
+  }
+
   // Registering is idempotent — register() on an already-installed worker
   // resolves with the existing one. Resolves once the worker is not merely
-  // active but CONTROLLING this page: an uncontrolled page's fetches never
-  // reach it, so warming would 404 against this origin instead of mirroring.
+  // active but CONTROLLING this page; when a claim never lands the wait gives
+  // up, and emuControlled below is what records that it did.
   let emuSwReady = null;
   function readyEmuWorker() {
     if (emuSwReady) return emuSwReady;
     if (!('serviceWorker' in navigator)) return Promise.resolve(null);
     emuSwReady = (async () => {
       await navigator.serviceWorker.register(EMU_SW);
+      navigator.serviceWorker.addEventListener('controllerchange', onEmuControllerChange);
       const reg = await navigator.serviceWorker.ready;
       if (!navigator.serviceWorker.controller) {
         await new Promise((resolve) => {
@@ -151,6 +176,7 @@
           if (navigator.serviceWorker.controller) done();
         });
       }
+      emuControlled = hasEmuController();
       return reg;
     })().catch(() => null);
     return emuSwReady;
@@ -216,6 +242,11 @@
     emuManifestPending.add(core.id);
     try {
       await readyEmuWorker();
+      // The manifest exists only on the mirror, so with the worker not in front
+      // of this page the fetch is a certain 404 against our own origin. Record
+      // the failure without making it, so the note can say what actually fixes
+      // it rather than blaming the core.
+      if (!emuControlled) throw new Error('the mirror is not in front of this page');
       const r = await fetch(core.manifest, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
@@ -251,6 +282,15 @@
     const set = (v) => (emuStatus = { ...emuStatus, [id]: v });
     set({ busy: true, step: 0, total: targets.length, err: '' });
     await pushEmuState();
+    // Every warm target is a mirrored path, so an uncontrolled page would 404
+    // on all of them and flag a core that is not broken. The state push above
+    // still counts — the next load's worker reads it — so this only has to say
+    // what the user has to do.
+    if (!emuControlled) {
+      set({ busy: false, step: 0, total: targets.length, err: 'RELOAD NEEDED · mirror not in front of this page' });
+      showToast(core.name + ': reload this page first — the mirror is not in front of it.');
+      return;
+    }
     let done = 0;
     for (const path of targets) {
       try {
@@ -318,12 +358,22 @@
     for (const c of installedCores) loadEmuManifest(c);
   }
 
+  // A core is FLAGGED when something it needs did not arrive: a warm that
+  // failed, or a shelf that could not be read. Both are fixed by the same
+  // retry, so both put RETRY on the row rather than leaving Uninstall under
+  // the cursor — the ✕ on the row is still how you uninstall.
+  function emuFlagged(c) {
+    if (!c) return false;
+    if (emuStatus[c.id]?.err) return true;
+    return emuInstalled.includes(c.id) && emuManifests[c.id] === null;
+  }
+
   // Row badge on the Emulators screen — the same GET / ⬇ / INSTALLED vocabulary
   // the network installs use elsewhere in the launcher.
   function emuBadge(c) {
     const st = emuStatus[c.id];
     if (st?.busy) return { cls: 'dl', text: '⬇ ' + st.step + ' / ' + st.total };
-    if (st?.err) return { cls: 'err', text: '! RETRY' };
+    if (emuFlagged(c)) return { cls: 'err', text: '! RETRY' };
     return emuInstalled.includes(c.id)
       ? { cls: 'ok', text: 'INSTALLED' }
       : { cls: 'get', text: 'GET ⬇' };
@@ -335,9 +385,10 @@
     emuSel = i;
     if (emuStatus[c.id]?.busy) return;
     sfx.enter();
-    // A on a flagged row retries the warm rather than uninstalling — the fix
-    // for a half-installed core is the one press already under the cursor.
-    if (emuInstalled.includes(c.id) && !emuStatus[c.id]?.err) uninstallCore(c.id);
+    // A on a flagged row retries rather than uninstalling — the fix for a
+    // half-installed core, or for one whose shelf never arrived, is the one
+    // press already under the cursor. The ✕ on the row still uninstalls.
+    if (emuInstalled.includes(c.id) && !emuFlagged(c)) uninstallCore(c.id);
     else installCore(c.id);
   }
 
@@ -352,6 +403,7 @@
     const st = emuStatus[c.id];
     if (st?.busy) return 'INSTALLING ' + st.step + ' / ' + st.total;
     if (st?.err) return st.err;
+    if (emuFlagged(c)) return 'SHELF UNAVAILABLE';
     return emuInstalled.includes(c.id) ? 'INSTALLED' : 'NOT INSTALLED';
   });
   let emuActionLabel = $derived.by(() => {
@@ -359,7 +411,7 @@
     if (!c) return 'Select';
     const st = emuStatus[c.id];
     if (st?.busy) return 'Working…';
-    if (st?.err) return 'Retry';
+    if (emuFlagged(c)) return 'Retry';
     return emuInstalled.includes(c.id) ? 'Uninstall' : 'Install';
   });
 
@@ -1399,7 +1451,23 @@
   function emuNote(core) {
     const m = emuManifests[core.id];
     if (m === undefined) return { title: 'READING SHELF…', pre: 'Fetching ', path: core.manifest, post: ' from the mirror.', hint: [] };
-    if (m === null) return { title: 'SHELF UNAVAILABLE', pre: 'Could not read ', path: core.manifest, post: '. Reinstall the core from Settings → Emulators.', hint: [] };
+    if (m === null) {
+      // Registration is not control. A hard reload, and DevTools' "Bypass for
+      // network", leave this page outside the worker while the registration
+      // stays active, and then every mirrored path 404s however sound the
+      // install is. Reinstalling cannot fix that — the warm's own fetches would
+      // bypass the worker too — so point at the reload instead.
+      if (!emuControlled) {
+        return {
+          title: 'SHELF UNAVAILABLE',
+          pre: 'The mirror is not in front of this page, so ',
+          path: core.manifest,
+          post: ' cannot be read. Reload the page: a hard reload loads it outside the mirror, and so does DevTools’ “Bypass for network”.',
+          hint: [],
+        };
+      }
+      return { title: 'SHELF UNAVAILABLE', pre: 'Could not read ', path: core.manifest, post: '. Press A on the row in Settings → Emulators to retry.', hint: [] };
+    }
     return { title: 'NO GAMES', pre: 'The mirror lists nothing in ', path: core.manifest, post: ' yet.', hint: [] };
   }
   let SECTIONS = $derived([

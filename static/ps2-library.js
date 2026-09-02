@@ -168,6 +168,20 @@ export async function ensurePs2Core(onStep = () => {}) {
   worker.postMessage({ type: 'emu-state', state });
   await confirmState(state);
 
+  // Registration is not control, and `worker` above is truthy either way: a
+  // hard reload — and DevTools' "Bypass for network" — leaves this page outside
+  // the worker while the registration stays active and healthy, and then every
+  // mirrored path below 404s against this origin. The state push above is still
+  // worth doing (the next load's worker reads it), but nothing here can be
+  // fetched, so name the condition rather than failing on the player page.
+  if (!navigator.serviceWorker.controller) {
+    throw new Error(
+      'the emulator mirror is not in front of this page: the service worker is ' +
+      'registered but is not controlling it, which is what a hard reload leaves ' +
+      'behind. Reload the page and try again.',
+    );
+  }
+
   // Warm what the section needs to be usable at once. The core wasm, BIOS and
   // ROMs stay lazy — the player pulls them as it asks for them, and the worker
   // keeps each one on first use.
