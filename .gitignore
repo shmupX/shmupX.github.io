@@ -32,3 +32,11 @@ static/editor/dezaemon/saves/
 # is a normal `npm install`, not something to commit.
 spacetimedb/module/dist/
 spacetimedb/module/node_modules/
+
+# Cloud level records pulled down before something overwrote them
+# (`levels/<name>` in the Realtime Database). They are user data rather than
+# source, and one is ~7MB — most of it the level's atlas as a data URL — so the
+# records stay out of the repo and out of the deploy. The README that says how
+# to restore one does not.
+backups/*
+!backups/README.md
