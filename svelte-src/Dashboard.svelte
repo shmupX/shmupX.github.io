@@ -125,8 +125,15 @@
   // the PS2 core too, and two copies of it would eventually disagree about what
   // the worker may mirror. It returns plain arrays, which is what postMessage
   // needs — a $state-backed one is not structured-cloneable.
+  //
+  // Read from storage rather than from this tab's `emuInstalled`. The set is
+  // shared: a second tab, and the level editor through static/ps2-library.js
+  // from an iframe of this very page, write it too. A push describes what the
+  // worker should mirror for the WHOLE origin, so it has to be built from the
+  // copy everyone writes, not the one this tab happened to load at boot.
+  // Every writer here persists before it pushes, so storage is never behind.
   function emuState() {
-    return emuStateFor(emuCatalog, [...emuInstalled]);
+    return emuStateFor(emuCatalog, loadInstalledEmus());
   }
 
   // Registration is not control, and only control puts the worker in front of
@@ -145,9 +152,18 @@
   // A claim can land after a shelf has already given up — the worker installed
   // by this very page load claims it a moment later — so read those again
   // rather than leaving a note up that is no longer true.
-  function onEmuControllerChange() {
+  //
+  // The new worker in front of the page also knows only what it read from Cache
+  // Storage when it started, which can pre-date the state this page handed to
+  // the worker it replaced. Nothing in the hand-off tells us which of the two
+  // got it, so re-push rather than trust the race.
+  async function onEmuControllerChange() {
     if (!hasEmuController()) return;
     emuControlled = true;
+    // Catch up with the shared set before describing it: the claim may well be
+    // another tab's install, or the editor's, and this tab's copy predates it.
+    emuInstalled = loadInstalledEmus();
+    await pushEmuState();
     for (const c of installedCores) {
       if (emuManifests[c.id] === null) loadEmuManifest(c, true);
     }
@@ -165,6 +181,11 @@
       await navigator.serviceWorker.register(EMU_SW);
       navigator.serviceWorker.addEventListener('controllerchange', onEmuControllerChange);
       const reg = await navigator.serviceWorker.ready;
+      // A worker this page retired keeps controlling it until it unloads, and
+      // re-registering resurrects that same worker rather than starting a
+      // second one, so there is no later claim to wait for. Being controlled
+      // at all is the condition; the state push that follows is what makes
+      // whoever is in front of the page mirror again.
       if (!navigator.serviceWorker.controller) {
         await new Promise((resolve) => {
           const done = () => { clearTimeout(timer); resolve(); };
@@ -178,13 +199,22 @@
       }
       emuControlled = hasEmuController();
       return reg;
-    })().catch(() => null);
+      // Not cached as a permanent failure: a retire, a reload, or a server that
+      // has come back should get a fresh attempt rather than the stale null.
+      // static/ps2-library.js does the same for the same reason.
+    })().catch(() => { emuSwReady = null; return null; });
     return emuSwReady;
   }
 
+  // The controller comes first: it is the worker that answers THIS page's
+  // fetches, and it is not always registration.active. During an update the two
+  // are different workers for a moment, and a page still controlled by a worker
+  // whose registration has been retired has an active that is already gone.
+  // Sending the state anywhere else acknowledges through Cache Storage, which
+  // both can write, and proves nothing about the one actually serving us.
   async function emuWorker() {
     const reg = await readyEmuWorker();
-    return reg?.active || navigator.serviceWorker?.controller || null;
+    return navigator.serviceWorker?.controller || reg?.active || null;
   }
 
   // The worker handles the message asynchronously, and a fetch that beats it
@@ -218,15 +248,19 @@
     // state — that is how uninstalling the last core tells it to stop answering
     // — whether or not it has claimed this page: a hard reload leaves the page
     // uncontrolled while the registration stays active.
+    //
+    // Returns whether the worker is known to have taken the state. Callers that
+    // are about to act on that — uninstallCore, before it throws the cache away
+    // — have to know the difference between an acknowledgement and a timeout.
     if (
       !state.prefixes.length &&
       !navigator.serviceWorker?.controller &&
       !(await navigator.serviceWorker?.getRegistration())
-    ) return;
+    ) return true; // no worker anywhere, which is the state being asked for
     const w = await emuWorker();
-    if (!w) return;
+    if (!w) return false;
     w.postMessage({ type: 'emu-state', state });
-    await confirmEmuState(state);
+    return await confirmEmuState(state);
   }
 
   function persistEmus() {
@@ -269,8 +303,12 @@
   async function installCore(id) {
     const core = emuCores.find((c) => c.id === id);
     if (!core || emuStatus[id]?.busy) return;
-    if (!emuInstalled.includes(id)) {
-      emuInstalled = [...emuInstalled, id];
+    // Merge with storage rather than append to this tab's copy: the editor
+    // installs the PS2 core straight through static/ps2-library.js, from an
+    // iframe of this page, and appending to a set read at boot would drop it.
+    const installedNow = loadInstalledEmus();
+    if (!installedNow.includes(id) || !emuInstalled.includes(id)) {
+      emuInstalled = [...new Set([...installedNow, id])];
       persistEmus();
     }
     // A catalogue `shared` entry ending in "/" is a PREFIX for the worker to
@@ -310,25 +348,79 @@
     await loadEmuManifest(core, true);
   }
 
+  // Nothing is installed any more, so the worker has no business sitting in
+  // front of every same-origin request on the site for the rest of this
+  // browser's life. This is the mirror of the rule in pushEmuState that
+  // declines to register one for a visitor who never opted in.
+  //
+  // Order matters, and the empty state has to have been pushed already:
+  // unregister() removes the REGISTRATION, but the active worker goes on
+  // controlling pages that are already open until they unload, so the push is
+  // what stops this page's fetches being answered for the rest of its life.
+  // Dropping the cache is a second, independent stop rather than a repetition
+  // of the first — a worker that restarts finds no state entry, and readState
+  // decodes that to an empty set whose origin is "", which mirrors nothing. It
+  // is that redundancy that makes delete-then-unregister safe, so keep both.
+  // The cache goes in one piece rather than prefix by prefix, because an
+  // eviction deliberately keeps the worker's own state entry and there is
+  // nothing left to keep it for.
+  async function retireEmuWorker() {
+    try { await caches.delete(EMU_CACHE); } catch (_) { /* already gone */ }
+    try {
+      // By script, not by scope: getRegistration() with no argument answers for
+      // this document's URL and would hand back whatever registration best
+      // matches it, which need not be ours.
+      for (const reg of await navigator.serviceWorker.getRegistrations()) {
+        const script = reg.active?.scriptURL || reg.waiting?.scriptURL ||
+          reg.installing?.scriptURL || '';
+        if (script.endsWith(EMU_SW)) await reg.unregister();
+      }
+    } catch (_) { /* leave it registered rather than fail the uninstall */ }
+    // Re-installing later in this same page has to register again, so the
+    // memoised "the worker is ready" promise cannot be left standing.
+    //
+    // emuControlled is deliberately NOT forced false. The retired worker goes
+    // on controlling this page, and a re-install re-registers it and hands it a
+    // fresh state, at which point it mirrors again — measured, not assumed.
+    // Declaring the mirror gone here made the next install refuse with
+    // "RELOAD NEEDED" while it was in fact working.
+    emuSwReady = null;
+  }
+
   // Uninstall: drop the id, persist, re-state the worker (so it stops answering
   // those paths) and only then evict — the two messages arrive in order, so the
   // worker is never asked to serve a prefix it has just dropped the bytes for.
   async function uninstallCore(id) {
     const core = emuCores.find((c) => c.id === id);
     if (!core) return;
-    emuInstalled = emuInstalled.filter((x) => x !== id);
+    // Re-read the set first: the level editor installs the PS2 core straight
+    // through static/ps2-library.js, from an iframe of this very page, and this
+    // copy was last read at boot. Writing a stale array back would drop a core
+    // the user installed since — and now that the last one out retires the
+    // worker, that would take the mirror with it.
+    emuInstalled = loadInstalledEmus().filter((x) => x !== id);
     persistEmus();
     const m = { ...emuManifests }; delete m[core.id]; emuManifests = m;
     const s = { ...emuStatus }; delete s[core.id]; emuStatus = s;
+    const acked = await pushEmuState();
+    // Last one out: the shared scripts, the mirrored bytes and the worker
+    // itself all go together, so there is nothing to evict piecemeal.
+    //
+    // Only on a confirmed push, though. A worker that never took the empty set
+    // still believes it is mirroring, and it answers this page until the page
+    // unloads: deleting the cache under it just makes it re-open an empty one
+    // and pull every byte back from the origin, with no registration left to
+    // ever evict them again.
+    if (!installedCores.length) {
+      if (acked) await retireEmuWorker();
+      else showToast(core.name + ': uninstalled, but the mirror did not answer — reload to finish clearing it.');
+      return;
+    }
     // Spread out of the reactive proxy: a $state-backed array is not structured-
     // cloneable and postMessage throws DataCloneError on it, silently leaving
     // every mirrored byte in the cache.
     const gone = [...(core.prefixes || [])];
     if (core.icon) gone.push(core.icon);
-    // The shared scripts belong to whichever cores are installed; with the last
-    // one gone they are dead weight, so they leave with it.
-    if (!installedCores.length) gone.push(...emuShared);
-    await pushEmuState();
     const w = await emuWorker();
     if (w) w.postMessage({ type: 'emu-evict', prefixes: gone });
   }
