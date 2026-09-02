@@ -41,12 +41,28 @@
 //     flip together, so nothing else changes.
 //   - the model colour word — TRACED. POLYKITI's shader (+0xa24c builds the
 //     table, +0xb128 reads it) turns each polygon's own RGB555 channel c into
-//     clamp(c + tint_c - 31 + light, floor_c, 31), light being -16..15 from
-//     the normal . light dot product. So the per-model word is a whole-model
-//     tint: white (31,31,31) is neutral and DAIOH's 0x4210 = (16,16,16) pulls
-//     every channel down by 15 of 31 levels. buildModelMesh applies the tint
-//     term by default (`tint: true`); this module's own Lambert shading
-//     stands in for the light term.
+//     clamp(c + tint_c - 31 + light, floor_c, 31). So the per-model word is a
+//     whole-model tint: white (31,31,31) is neutral and DAIOH's 0x4210 =
+//     (16,16,16) pulls every channel down by 15 of 31 levels. buildModelMesh
+//     applies it by default (`tint: true`).
+//   - the light term — TRACED. The shader takes the 32.32 dot product of the
+//     polygon normal (in view space) with the stored light vector and picks
+//     row 16 + floor(16 * dot), clamped to 0..31; light = row - 16. The
+//     capture path (+0x5018) sets the vector once, before any view or model
+//     transform, as -(Rz(45deg) * Rx(-50deg) * (0, 0, 1)) — so in the
+//     Saturn's view frame (x right, y down, z into the screen) the direction
+//     TOWARD the light is (0.542, -0.542, -0.643): upper right, in front, and
+//     fixed to the screen rather than to the model. LIGHT_VIEW carries that
+//     as (right, up, toward-viewer) components and projectModel() rebuilds
+//     the world-space vector from the camera basis every frame. The preview
+//     lets the user turn the azimuth; the capture does not.
+//   - the floors — TRACED with one caveat. Each channel's floor is a minimum
+//     the shader clamps to. The master init (+0xf14) sets them once from the
+//     word 0x9084 = (4, 4, 4), but the frame-setup handler (+0xa018) zeroes
+//     them and the capture path issues a frame setup every time (kernel
+//     0x06017C18 writes the window command); the sample game's own sprites
+//     contain channels of 0 and 2, so the effective floor is taken as 0
+//     (SHADE_FLOOR), with `floor` an option on buildModelMesh.
 //   - rotation quantum: the editor steps rotations by 18 degrees and stores
 //     them with a one- or two-unit drift; `quantize: true` snaps them.
 //
@@ -59,11 +75,14 @@ export const ROT_ORDERS = ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"];
 /** Traced: the Saturn applies Z, then Y, then X to a part (see the header). */
 export const ROTATION_ORDER = "zyx";
 export const ROTATION_QUANTUM = 18;
-export const SHADE_LEVELS = 8;
-/** Flat shading: brightness = SHADE_MIN + SHADE_RANGE * max(0, n . LIGHT). */
-export const SHADE_MIN = 0.58;
-export const SHADE_RANGE = 0.52;
-export const LIGHT = normalize3([-0.45, 0.78, 0.44]);
+/** Light rows of the Saturn's shade table: row = SHADE_ZERO + floor(16 * n.L). */
+export const SHADE_LEVELS = 32;
+export const SHADE_ZERO = 16;
+/** Per-channel floor the shader clamps to at capture time (see the header). */
+export const SHADE_FLOOR = 0;
+/** The capture light: azimuth about Z, then tilt about X, applied to (0,0,1). */
+export const LIGHT_AZIMUTH = 45;
+export const LIGHT_TILT = -50;
 /** Camera-space distance below which a triangle is dropped (near plane). */
 export const NEAR = 4;
 
@@ -72,23 +91,55 @@ function normalize3(v) {
     return [v[0] / len, v[1] / len, v[2] / len];
 }
 
+const DEG = Math.PI / 180;
+
+/**
+ * The direction TOWARD the light in the camera frame, as (right, up,
+ * toward-viewer) components, the way POLYKITI builds it: the stored vector is
+ * -(Rz(azimuth) * Rx(tilt) * (0, 0, 1)) in the Saturn's view space, whose y
+ * points down and z into the screen, so both of those flip here.
+ */
+export function saturnLightView(azimuthDeg = LIGHT_AZIMUTH, tiltDeg = LIGHT_TILT) {
+    const ca = Math.cos(azimuthDeg * DEG), sa = Math.sin(azimuthDeg * DEG);
+    const ct = Math.cos(tiltDeg * DEG), st = Math.sin(tiltDeg * DEG);
+    // Rx(tilt) * (0, 0, 1) = (0, -st, ct); then Rz(azimuth)
+    const x = -sa * -st, y = ca * -st, z = ct;
+    // stored = -(x, y, z) is the direction toward the light in Saturn view
+    // space; its y (down) and z (into the screen) become up and toward-viewer
+    return normalize3([-x, y, z]);
+}
+export const LIGHT_VIEW = saturnLightView();
+
 /**
  * The model colour word applied to one polygon colour, both RGB555, the way
  * POLYKITI's shade table does it without the light term:
  * out_c = clamp(c + tint_c - 31, 0, 31). White is the identity.
  */
 export function tintRgb555(color, tint) {
+    return shadeRgb555(color, SHADE_ZERO, tint, 0);
+}
+
+/**
+ * The whole shader, per channel: clamp(c + tint_c - 31 + (row - 16), floor, 31).
+ * `row` is a light row 0..31 (SHADE_ZERO = no light term).
+ */
+export function shadeRgb555(color, row, tint = 0x7fff, floor = SHADE_FLOOR) {
+    const light = row - SHADE_ZERO;
     let out = 0;
     for (let shift = 0; shift <= 10; shift += 5) {
         const c = (color >> shift) & 31;
         const t = (tint >> shift) & 31;
-        const v = Math.min(31, Math.max(0, c + t - 31));
+        const v = Math.min(31, Math.max(floor, c + t - 31 + light));
         out |= v << shift;
     }
     return out;
 }
 
-const DEG = Math.PI / 180;
+/** 0..31 light row from the cosine between a normal and the light. */
+export function shadeRow(ndotl) {
+    const row = Math.floor(16 * ndotl) + SHADE_ZERO;
+    return row < 0 ? 0 : row > SHADE_LEVELS - 1 ? SHADE_LEVELS - 1 : row;
+}
 
 /** Snap a rotation to the editor's step; wraps into [0, 360). */
 export function quantizeRotation(deg, step = ROTATION_QUANTUM) {
@@ -181,7 +232,9 @@ export function normalMatrix(m) {
  *
  *   positions Float32Array(triCount * 9)  three corners per triangle
  *   normals   Float32Array(triCount * 3)  unit, outward
- *   colors    Uint32Array(triCount)       0xRRGGBB from the part's colour set
+ *   colors    Uint32Array(triCount)       0xRRGGBB, tinted, for display
+ *   colors555 Uint16Array(triCount)       the polygon's own RGB555, what the
+ *                                         shader starts from
  *   partOf    Uint8Array(triCount)        index into `parts`
  *   parts     [{ index, part, family, meshIndex, colorSet, source,
  *                triStart, triCount }]
@@ -194,6 +247,7 @@ export function buildModelMesh(model, {
     rotOrder = ROTATION_ORDER,
     quantize = true,
     tint = true,
+    floor = SHADE_FLOOR,
 } = {}) {
     const partList = (model && model.parts) || [];
     // The per-model colour word is the whole-model tint (traced; header).
@@ -209,6 +263,7 @@ export function buildModelMesh(model, {
     const positions = new Float32Array(triCount * 9);
     const normals = new Float32Array(triCount * 3);
     const colors = new Uint32Array(triCount);
+    const colors555 = new Uint16Array(triCount);
     const partOf = new Uint8Array(triCount);
     const parts = [];
     const tmp = new Float64Array(3);
@@ -243,7 +298,9 @@ export function buildModelMesh(model, {
             normals[t * 3] = nx;
             normals[t * 3 + 1] = ny * ySign;
             normals[t * 3 + 2] = nz;
-            colors[t] = rgb555ToHex(tintRgb555(colorSet[q], tintWord));
+            colors555[t] = colorSet[q] & 0x7fff;
+            // display colour: tinted, no light term
+            colors[t] = rgb555ToHex(shadeRgb555(colors555[t], SHADE_ZERO, tintWord, floor));
             partOf[t] = index;
             t++;
         };
@@ -296,6 +353,8 @@ export function buildModelMesh(model, {
         yDown,
         rotOrder,
         tint: tintWord,
+        floor,
+        colors555,
     };
 }
 
@@ -349,27 +408,21 @@ export function orbitCamera({
     };
 }
 
-/** 0..SHADE_LEVELS-1 from the cosine between a normal and LIGHT. */
-export function shadeLevel(ndotl) {
-    const c = ndotl > 0 ? (ndotl < 1 ? ndotl : 1) : 0;
-    return Math.round(c * (SHADE_LEVELS - 1));
-}
-
-/** Brightness multiplier of a shade level. */
-export function shadeFactor(level) {
-    return SHADE_MIN + SHADE_RANGE * (level / (SHADE_LEVELS - 1));
-}
-
 /**
  * Project the soup through `cam` into `frame`: screen xy per corner,
  * visibility (front-facing and in front of the near plane), shade level and
  * a far-to-near draw order. Returns the visible count. No allocation.
  */
-export function projectModel(mesh, cam, frame) {
+export function projectModel(mesh, cam, frame, lightView = LIGHT_VIEW) {
     const { positions, normals, triCount } = mesh;
     const { eye, cam: dir, right, up, focal, width, height, near } = cam;
     const cx = width / 2, cy = height / 2;
     const { xy, depth, shade, visible, order } = frame;
+    // the light is fixed to the screen: rebuild it in world space from the
+    // camera basis (dir points from the target toward the viewer)
+    const lx = lightView[0] * right[0] + lightView[1] * up[0] + lightView[2] * dir[0];
+    const ly = lightView[0] * right[1] + lightView[1] * up[1] + lightView[2] * dir[1];
+    const lz = lightView[0] * right[2] + lightView[1] * up[2] + lightView[2] * dir[2];
     let n = 0;
     for (let t = 0; t < triCount; t++) {
         const p = t * 9;
@@ -406,7 +459,7 @@ export function projectModel(mesh, cam, frame) {
         }
         visible[t] = 1;
         depth[t] = far;
-        shade[t] = shadeLevel(nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]);
+        shade[t] = shadeRow(nx * lx + ny * ly + nz * lz);
         order[n++] = t;
     }
     const slice = order.subarray(0, n);
@@ -417,19 +470,20 @@ export function projectModel(mesh, cam, frame) {
 
 // ---------------------------------------------------------------------------
 // Colour swatches: Mesh2D tints a whole object, so per-triangle colour comes
-// from the texture. A swatch atlas holds SHADE_LEVELS cells per distinct
-// colour; a triangle's three UVs all point at the centre of its cell.
+// from the texture. A swatch atlas holds SHADE_LEVELS cells (one per light
+// row) per distinct polygon colour; a triangle's three UVs all point at the
+// centre of its cell. 128 colours x 32 rows = 4096 cells of 4 px in 256 px.
 
 export const MAX_SWATCH_COLORS = 128;
-export const SWATCH_LAYOUT = { cellPx: 8, cols: 32, rows: 32, texPx: 256 };
+export const SWATCH_LAYOUT = { cellPx: 4, cols: 64, rows: 64, texPx: 256 };
 
-/** Distinct colours of a soup (capped) and each triangle's colour index. */
+/** Distinct RGB555 polygon colours of a soup (capped) and each triangle's index. */
 export function buildSwatchTable(mesh, maxColors = MAX_SWATCH_COLORS) {
     const index = new Map();
     const colors = [];
     const triColor = new Uint16Array(mesh.triCount);
     for (let t = 0; t < mesh.triCount; t++) {
-        const c = mesh.colors[t];
+        const c = mesh.colors555[t];
         let i = index.get(c);
         if (i === undefined) {
             if (colors.length < maxColors) {
@@ -442,7 +496,7 @@ export function buildSwatchTable(mesh, maxColors = MAX_SWATCH_COLORS) {
         }
         triColor[t] = i;
     }
-    return { colors: Uint32Array.from(colors), triColor };
+    return { colors: Uint16Array.from(colors), triColor };
 }
 
 export function swatchCell(colorIndex, level) {
@@ -462,11 +516,9 @@ export function swatchUV(cell, layout = SWATCH_LAYOUT) {
     return [(r.x + r.w / 2) / layout.texPx, (r.y + r.h / 2) / layout.texPx];
 }
 
-/** A colour at a shade level, 0xRRGGBB. */
-export function swatchRgb(rgb, level) {
-    const f = shadeFactor(level);
-    const ch = (v) => Math.min(255, Math.round(v * f));
-    return (ch((rgb >> 16) & 0xff) << 16) | (ch((rgb >> 8) & 0xff) << 8) | ch(rgb & 0xff);
+/** A polygon colour (RGB555) at a light row through the shader, 0xRRGGBB. */
+export function swatchRgb(color555, row, tint = 0x7fff, floor = SHADE_FLOOR) {
+    return rgb555ToHex(shadeRgb555(color555, row, tint, floor));
 }
 
 /**

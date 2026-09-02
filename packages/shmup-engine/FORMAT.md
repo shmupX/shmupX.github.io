@@ -1205,26 +1205,47 @@ the pointer in `@(100,gbr)`: for light offset `l` in −16…15 and polygon leve
 `v` in 0…31, `table_c[l][v] = clamp(v + tint_c − 31 + l, floor_c, 31)`
 (the floors come from the render state at `+0xa334 + 28/32/36`). The polygon
 submitter (`+0xb128`) takes each polygon's own ATTR `colno`, splits it into
-R/G/B, picks the row from the normal · light dot product (light vector at
-`@(76,gbr)`, set by `+0xb8e8` from `Rz(angle)·Rx(−50°)·(0,0,1)` with a default
-angle of 45°), looks each channel up, and writes the result as the VDP1
-colour. So white (`0x7fff`) is neutral and DAIOH's `0x4210` = (16,16,16)
-pulls every channel of every polygon down by 15 of 31 levels before the
-±16-level lighting. The viewer applies the tint term (TINT toggle) and keeps
-its own Lambert shading for the light term.
+R/G/B, picks the row from the normal · light dot product, looks each channel
+up, and writes the result as the VDP1 colour. So white (`0x7fff`) is neutral
+and DAIOH's `0x4210` = (16,16,16) pulls every channel of every polygon down
+by 15 of 31 levels before the ±16-level lighting. The viewer applies the tint
+term (TINT toggle).
+
+**The light** (read 2026-09-02). The row is `clamp(16 + floor(16 · n·L), 0,
+31)`, the dot product taken in 32.32 on the view-space normal. `L` lives at
+`@(76..84,gbr)` and is written by `+0xb8e8` as the **negated** column
+`−(Rz(θ)·Rx(−50°)·(0,0,1))`, i.e. the direction *toward* the light. The
+capture path (`+0x5018` → `+0x2b88`) sets θ = `0x2000` = 45° once, before any
+view or model matrix, so the light is fixed to the screen, not the model:
+in the Saturn's view frame (x right, y down, z into the screen) it points to
+`(0.542, −0.542, −0.643)` — upper right and in front of the viewer. The
+interactive preview (`+0x2c08`) uses the user's angle from `0x060993BC`
+instead; the capture never does. `lib/model/model-mesh.js` carries the
+capture light as `LIGHT_VIEW` in (right, up, toward-viewer) components and
+rebuilds it from the camera basis every frame.
+
+**The floors** (read 2026-09-02, one caveat). `floor_c` is a per-channel
+minimum the table clamps to. The master init (`+0xf14` → `+0xa228`) sets the
+three from the word `0x9084` = (4, 4, 4), but the frame-setup handler
+(`+0xa018`) zeroes them, and the capture path's window call (`+0xf84` →
+kernel `0x06017C18`) issues a frame setup every time — so the capture runs
+with floors of 0, which DAIOH's own ポリ吉-made sprites corroborate (their
+cells hold channel values of 0 and 2, below any floor of 4). The engine takes
+`SHADE_FLOOR = 0` and exposes `floor` as a buildModelMesh option; whether the
+(4,4,4) ever survives to a capture is the caveat.
 
 **Still open.** (4) The six pages' names: likely in `POLYHELP.CMP` /
 `POLYBTN.CMP`, unopened. (5) Why 13 % of position components are fractional
-on a 4-unit grid (a free-move or rotate-selection mode). (6) The floors of the
-tint tables and the exact light direction are runtime state, not read.
+on a 4-unit grid (a free-move or rotate-selection mode).
 
 **Rendering.** Phaser 4 has no 3D; the viewer projects on the CPU
 (`lib/model/model-mesh.js`) with the traced `T·Rx·Ry·Rz·S` composition and
 feeds Phaser's `Mesh2D` in `renderAsTriangles` mode, sorted far-to-near each
 frame (no depth buffer — interpenetrating parts can pop), back-faced by the
-SGL normals, tinted by the model colour word, flat-shaded from a fixed light,
-with per-triangle colour via UVs into a swatch `CanvasTexture` (which Phaser
-uploads bottom-up, so the mesh needs `flipV`).
+SGL normals, tinted by the model colour word, shaded through the traced
+32-row table from the capture's screen-fixed light, with per-triangle colour
+via UVs into a swatch `CanvasTexture` of one cell per colour per light row
+(which Phaser uploads bottom-up, so the mesh needs `flipV`).
 
 ### Live LWRAM map (from SH-2 disassembly of 0KERNEL/S_OPT/GAME/KUMITATE)
 

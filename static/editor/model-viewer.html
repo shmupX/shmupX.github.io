@@ -510,7 +510,7 @@
             for (let i = 0; i < table.colors.length; i++) {
                 for (let level = 0; level < D.SHADE_LEVELS; level++) {
                     const r = D.swatchCellRect(D.swatchCell(i, level), L);
-                    ctx.fillStyle = hex(D.swatchRgb(table.colors[i], level));
+                    ctx.fillStyle = hex(D.swatchRgb(table.colors[i], level, modelMesh.tint, modelMesh.floor));
                     ctx.fillRect(r.x, r.y, r.w, r.h);
                 }
             }
@@ -570,7 +570,7 @@
                 if (!state.wire) {
                     for (let r = 0; r < n; r++) {
                         const t = frame.order[r];
-                        fillG.fillStyle(D.swatchRgb(table.colors[table.triColor[t]], frame.shade[t]), 1);
+                        fillG.fillStyle(D.swatchRgb(table.colors[table.triColor[t]], frame.shade[t], modelMesh.tint, modelMesh.floor), 1);
                         fillG.fillTriangle(
                             frame.xy[t * 6], frame.xy[t * 6 + 1],
                             frame.xy[t * 6 + 2], frame.xy[t * 6 + 3],
@@ -700,7 +700,7 @@
         }
         function renderNotice() {
             const n = $('notice');
-            const conv = 'Y ' + (state.yDown ? 'DOWN' : 'UP') + ' · ROTATION ' + state.rotOrder.toUpperCase() + (state.rotOrder === 'zyx' ? ' (TRACED)' : ' (NOT THE SATURN\'S)') + ' · TINT ' + (state.tint ? 'ON' : 'OFF') + ' — Y UP verified against DAIOH\'s own ship sprite; rotation order and tint traced from POLYKITI';
+            const conv = 'Y ' + (state.yDown ? 'DOWN' : 'UP') + ' · ROTATION ' + state.rotOrder.toUpperCase() + (state.rotOrder === 'zyx' ? ' (TRACED)' : ' (NOT THE SATURN\'S)') + ' · TINT ' + (state.tint ? 'ON' : 'OFF') + ' · LIGHT 45°/−50°, FIXED TO THE SCREEN · FLOOR ' + (modelMesh ? modelMesh.floor : D.SHADE_FLOOR) + ' — Y UP verified against DAIOH\'s own ship sprite; rotation order, tint, light and floors traced from POLYKITI';
             n.innerHTML = (realLibrary
                 ? 'REAL PART LIBRARY (MDLDT_01–56) · PAINTER-SORTED, NO DEPTH BUFFER: INTERPENETRATING PARTS CAN POP · '
                 : '<b>PLACEHOLDER GEOMETRY</b> — mesh-library.json did not load; family 5 primitives regenerated, boxes for the rest · ')

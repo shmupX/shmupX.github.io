@@ -3658,26 +3658,42 @@ function buildMeshLibrary(files) {
 var ROT_ORDERS = ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"];
 var ROTATION_ORDER = "zyx";
 var ROTATION_QUANTUM = 18;
-var SHADE_LEVELS = 8;
-var SHADE_MIN = 0.58;
-var SHADE_RANGE = 0.52;
-var LIGHT = normalize3([-0.45, 0.78, 0.44]);
+var SHADE_LEVELS = 32;
+var SHADE_ZERO = 16;
+var SHADE_FLOOR = 0;
+var LIGHT_AZIMUTH = 45;
+var LIGHT_TILT = -50;
 var NEAR = 4;
 function normalize3(v) {
   const len = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / len, v[1] / len, v[2] / len];
 }
+var DEG = Math.PI / 180;
+function saturnLightView(azimuthDeg = LIGHT_AZIMUTH, tiltDeg = LIGHT_TILT) {
+  const ca = Math.cos(azimuthDeg * DEG), sa = Math.sin(azimuthDeg * DEG);
+  const ct = Math.cos(tiltDeg * DEG), st = Math.sin(tiltDeg * DEG);
+  const x = -sa * -st, y = ca * -st, z = ct;
+  return normalize3([-x, y, z]);
+}
+var LIGHT_VIEW = saturnLightView();
 function tintRgb555(color, tint) {
+  return shadeRgb555(color, SHADE_ZERO, tint, 0);
+}
+function shadeRgb555(color, row, tint = 32767, floor = SHADE_FLOOR) {
+  const light = row - SHADE_ZERO;
   let out = 0;
   for (let shift = 0; shift <= 10; shift += 5) {
     const c = color >> shift & 31;
     const t = tint >> shift & 31;
-    const v = Math.min(31, Math.max(0, c + t - 31));
+    const v = Math.min(31, Math.max(floor, c + t - 31 + light));
     out |= v << shift;
   }
   return out;
 }
-var DEG = Math.PI / 180;
+function shadeRow(ndotl) {
+  const row = Math.floor(16 * ndotl) + SHADE_ZERO;
+  return row < 0 ? 0 : row > SHADE_LEVELS - 1 ? SHADE_LEVELS - 1 : row;
+}
 function quantizeRotation(deg, step = ROTATION_QUANTUM) {
   const q = Math.round(deg / step) * step;
   return (q % 360 + 360) % 360;
@@ -3755,7 +3771,8 @@ function buildModelMesh(model, {
   yDown = false,
   rotOrder = ROTATION_ORDER,
   quantize = true,
-  tint = true
+  tint = true,
+  floor = SHADE_FLOOR
 } = {}) {
   const partList = model && model.parts || [];
   const tintWord = tint && model && Number.isInteger(model.color) ? model.color & 32767 : 32767;
@@ -3770,6 +3787,7 @@ function buildModelMesh(model, {
   const positions = new Float32Array(triCount * 9);
   const normals = new Float32Array(triCount * 3);
   const colors = new Uint32Array(triCount);
+  const colors555 = new Uint16Array(triCount);
   const partOf = new Uint8Array(triCount);
   const parts = [];
   const tmp = new Float64Array(3);
@@ -3804,7 +3822,8 @@ function buildModelMesh(model, {
       normals[t * 3] = nx;
       normals[t * 3 + 1] = ny * ySign;
       normals[t * 3 + 2] = nz;
-      colors[t] = rgb555ToHex(tintRgb555(colorSet[q], tintWord));
+      colors555[t] = colorSet[q] & 32767;
+      colors[t] = rgb555ToHex(shadeRgb555(colors555[t], SHADE_ZERO, tintWord, floor));
       partOf[t] = index;
       t++;
     };
@@ -3856,7 +3875,9 @@ function buildModelMesh(model, {
     placeholder,
     yDown,
     rotOrder,
-    tint: tintWord
+    tint: tintWord,
+    floor,
+    colors555
   };
 }
 function allocFrame(mesh) {
@@ -3901,18 +3922,14 @@ function orbitCamera({
     distance
   };
 }
-function shadeLevel(ndotl) {
-  const c = ndotl > 0 ? ndotl < 1 ? ndotl : 1 : 0;
-  return Math.round(c * (SHADE_LEVELS - 1));
-}
-function shadeFactor(level) {
-  return SHADE_MIN + SHADE_RANGE * (level / (SHADE_LEVELS - 1));
-}
-function projectModel(mesh, cam, frame) {
+function projectModel(mesh, cam, frame, lightView = LIGHT_VIEW) {
   const { positions, normals, triCount } = mesh;
   const { eye, cam: dir, right, up, focal, width, height, near } = cam;
   const cx = width / 2, cy = height / 2;
   const { xy, depth, shade, visible, order } = frame;
+  const lx = lightView[0] * right[0] + lightView[1] * up[0] + lightView[2] * dir[0];
+  const ly = lightView[0] * right[1] + lightView[1] * up[1] + lightView[2] * dir[1];
+  const lz = lightView[0] * right[2] + lightView[1] * up[2] + lightView[2] * dir[2];
   let n = 0;
   for (let t = 0; t < triCount; t++) {
     const p = t * 9;
@@ -3948,7 +3965,7 @@ function projectModel(mesh, cam, frame) {
     }
     visible[t] = 1;
     depth[t] = far;
-    shade[t] = shadeLevel(nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]);
+    shade[t] = shadeRow(nx * lx + ny * ly + nz * lz);
     order[n++] = t;
   }
   const slice = order.subarray(0, n);
@@ -3957,13 +3974,13 @@ function projectModel(mesh, cam, frame) {
   return n;
 }
 var MAX_SWATCH_COLORS = 128;
-var SWATCH_LAYOUT = { cellPx: 8, cols: 32, rows: 32, texPx: 256 };
+var SWATCH_LAYOUT = { cellPx: 4, cols: 64, rows: 64, texPx: 256 };
 function buildSwatchTable(mesh, maxColors = MAX_SWATCH_COLORS) {
   const index = /* @__PURE__ */ new Map();
   const colors = [];
   const triColor = new Uint16Array(mesh.triCount);
   for (let t = 0; t < mesh.triCount; t++) {
-    const c = mesh.colors[t];
+    const c = mesh.colors555[t];
     let i = index.get(c);
     if (i === void 0) {
       if (colors.length < maxColors) {
@@ -3976,7 +3993,7 @@ function buildSwatchTable(mesh, maxColors = MAX_SWATCH_COLORS) {
     }
     triColor[t] = i;
   }
-  return { colors: Uint32Array.from(colors), triColor };
+  return { colors: Uint16Array.from(colors), triColor };
 }
 function swatchCell(colorIndex, level) {
   return colorIndex * SHADE_LEVELS + level;
@@ -3990,10 +4007,8 @@ function swatchUV(cell, layout = SWATCH_LAYOUT) {
   const r = swatchCellRect(cell, layout);
   return [(r.x + r.w / 2) / layout.texPx, (r.y + r.h / 2) / layout.texPx];
 }
-function swatchRgb(rgb, level) {
-  const f = shadeFactor(level);
-  const ch = (v) => Math.min(255, Math.round(v * f));
-  return ch(rgb >> 16 & 255) << 16 | ch(rgb >> 8 & 255) << 8 | ch(rgb & 255);
+function swatchRgb(color555, row, tint = 32767, floor = SHADE_FLOOR) {
+  return rgb555ToHex(shadeRgb555(color555, row, tint, floor));
 }
 function packMesh2D(mesh, frame, table, layout = SWATCH_LAYOUT, out = {}) {
   const n = frame.visibleCount;
@@ -4570,7 +4585,9 @@ export {
   INSTRUMENT_COUNT,
   LAYER_COUNT,
   LIBRARY_MESH_COUNT,
-  LIGHT,
+  LIGHT_AZIMUTH,
+  LIGHT_TILT,
+  LIGHT_VIEW,
   LOOP_ALTERNATE,
   LOOP_FORWARD,
   LOOP_OFF,
@@ -4592,7 +4609,9 @@ export {
   SECTION_COUNT,
   SECTION_HINTS,
   SECTION_SIZES,
+  SHADE_FLOOR,
   SHADE_LEVELS,
+  SHADE_ZERO,
   SHAPE_FAMILIES,
   SINGLE_LETTER_ENEMIES,
   SWATCH_LAYOUT,
@@ -4662,9 +4681,10 @@ export {
   readFile,
   rgb555ToHex,
   rgb555ToRgb,
+  saturnLightView,
   serializeMeshLibrary,
-  shadeFactor,
-  shadeLevel,
+  shadeRgb555,
+  shadeRow,
   swatchCell,
   swatchCellRect,
   swatchRgb,

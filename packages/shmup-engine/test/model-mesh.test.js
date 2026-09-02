@@ -1,6 +1,7 @@
 // Model -> triangles: transforms, projection, painter order, Mesh2D packing.
 import {
   assert,
+  assertAlmostEquals,
   assertEquals,
   assertStrictEquals,
   assertThrows,
@@ -12,6 +13,7 @@ import {
   buildModelMesh,
   buildSwatchTable,
   composeTransform,
+  LIGHT_VIEW,
   modelStats,
   normalMatrix,
   orbitCamera,
@@ -20,7 +22,12 @@ import {
   quantizeRotation,
   ROT_ORDERS,
   ROTATION_ORDER,
+  saturnLightView,
+  SHADE_FLOOR,
   SHADE_LEVELS,
+  SHADE_ZERO,
+  shadeRgb555,
+  shadeRow,
   swatchCell,
   swatchRgb,
   swatchUV,
@@ -144,6 +151,80 @@ Deno.test("the model colour word tints every polygon colour, white being neutral
   assertStrictEquals(plain.colors[0], rgb555ToHex(0x03e0));
   assertStrictEquals(none.colors[0], rgb555ToHex(0x03e0));
   assertStrictEquals(tinted.colors[0], rgb555ToHex(tintRgb555(0x03e0, 0x4210)));
+});
+
+Deno.test("the shade table: 32 light rows, per-channel floors, tint first", () => {
+  assertStrictEquals(SHADE_LEVELS, 32);
+  assertStrictEquals(SHADE_ZERO, 16);
+  assertStrictEquals(SHADE_FLOOR, 0);
+  // row = 16 + floor(16 * n.L), clamped
+  assertStrictEquals(shadeRow(1), 31);
+  assertStrictEquals(shadeRow(0), 16);
+  assertStrictEquals(shadeRow(-1), 0);
+  assertStrictEquals(shadeRow(0.5), 24);
+  assertStrictEquals(shadeRow(-0.3), 11);
+  assertStrictEquals(shadeRow(2), 31);
+  // clamp(c + tint_c - 31 + (row - 16), floor, 31) per channel
+  assertStrictEquals(shadeRgb555(0x7fff, SHADE_ZERO), 0x7fff);
+  assertStrictEquals(shadeRgb555(0x7fff, 31), 0x7fff);
+  assertStrictEquals(shadeRgb555(0x7fff, 0), 15 | (15 << 5) | (15 << 10));
+  assertStrictEquals(shadeRgb555(0x7fff, SHADE_ZERO, 0x4210), 0x4210);
+  assertStrictEquals(
+    shadeRgb555(0x7fff, 20, 0x4210),
+    20 | (20 << 5) | (20 << 10),
+  );
+  // the floor is a minimum, not an offset
+  assertStrictEquals(
+    shadeRgb555(0x0000, 0, 0x7fff, 4),
+    4 | (4 << 5) | (4 << 10),
+  );
+  assertStrictEquals(shadeRgb555(0x7fff, 31, 0x7fff, 4), 0x7fff);
+  // through buildModelMesh: the raw polygon colour is kept, the floor applies
+  const floored = buildModelMesh({ parts: [part()] }, { floor: 8 });
+  assertStrictEquals(floored.floor, 8);
+  assertStrictEquals(floored.colors555[0], 0x03e0);
+  assertStrictEquals(floored.colors[0], rgb555ToHex(8 | (31 << 5) | (8 << 10)));
+  assertStrictEquals(buildModelMesh({ parts: [part()] }).floor, SHADE_FLOOR);
+});
+
+Deno.test("the capture light is Rz(45).Rx(-50).(0,0,1), negated, fixed to the screen", () => {
+  // (right, up, toward-viewer) components of the direction toward the light
+  assertAlmostEquals(LIGHT_VIEW[0], 0.5417, 1e-3);
+  assertAlmostEquals(LIGHT_VIEW[1], 0.5417, 1e-3);
+  assertAlmostEquals(LIGHT_VIEW[2], 0.6428, 1e-3);
+  const straight = saturnLightView(0, 0); // no azimuth, no tilt: from the viewer
+  assertAlmostEquals(straight[0], 0, 1e-12);
+  assertAlmostEquals(straight[1], 0, 1e-12);
+  assertAlmostEquals(straight[2], 1, 1e-12);
+  const left = saturnLightView(-45, -50); // azimuth mirrors the right component
+  assertAlmostEquals(left[0], -LIGHT_VIEW[0], 1e-12);
+  assertAlmostEquals(left[1], LIGHT_VIEW[1], 1e-12);
+
+  const mesh = buildModelMesh({ parts: [part()] });
+  const frame = allocFrame(mesh);
+  const rowsAt = (yaw, lightView) => {
+    const cam = orbitCamera({ yaw, pitch: 25, distance: 150 });
+    const n = projectModel(mesh, cam, frame, lightView);
+    const rows = [];
+    for (let r = 0; r < n; r++) rows.push(frame.shade[frame.order[r]]);
+    return rows.sort((a, b) => a - b);
+  };
+  // the cube looks the same from yaw 35 and yaw 125, so a screen-fixed light
+  // shades the visible faces identically
+  assertEquals(rowsAt(35), rowsAt(125));
+  assertEquals(rowsAt(35), rowsAt(215));
+  // the top face (normal +Y) sees 0.5417 * cos 25 + 0.6428 * sin 25 = 0.763
+  // whatever the yaw: row 16 + floor(12.2) = 28
+  for (const yaw of [0, 35, 80, 125]) {
+    const cam = orbitCamera({ yaw, pitch: 25, distance: 150 });
+    projectModel(mesh, cam, frame);
+    for (let t = 0; t < mesh.triCount; t++) {
+      if (!frame.visible[t] || mesh.normals[t * 3 + 1] < 0.99) continue;
+      assertStrictEquals(frame.shade[t], 28, `yaw ${yaw}`);
+    }
+  }
+  // lit straight from the viewer, every visible face is above the zero row
+  for (const row of rowsAt(35, [0, 0, 1])) assert(row > SHADE_ZERO);
 });
 
 Deno.test("quantizeRotation snaps to the editor's 18-degree steps", () => {
@@ -279,17 +360,27 @@ Deno.test("packMesh2D writes step-4 vertices and page-0 indices in painter order
   assertStrictEquals(wire.length, n * 12);
 });
 
-Deno.test("swatch cells sit at texel centres and shade toward the base colour", () => {
+Deno.test("swatch cells sit at texel centres, one per colour per light row", () => {
   const [u, v] = swatchUV(swatchCell(0, 0));
-  assertStrictEquals(u, 4 / 256);
-  assertStrictEquals(v, 4 / 256);
-  const [u2, v2] = swatchUV(swatchCell(3, 7)); // cell 31: last column of row 0
-  assertStrictEquals(u2, (31 * 8 + 4) / 256);
-  assertStrictEquals(v2, 4 / 256);
-  const [, v3] = swatchUV(swatchCell(4, 0)); // cell 32: row 1
-  assertStrictEquals(v3, (8 + 4) / 256);
-  assertStrictEquals(swatchRgb(0x808080, SHADE_LEVELS - 1), 0x8d8d8d);
-  assertStrictEquals(swatchRgb(0xff0000, 0), 0x940000);
+  assertStrictEquals(u, 2 / 256);
+  assertStrictEquals(v, 2 / 256);
+  const [u2, v2] = swatchUV(swatchCell(1, 31)); // cell 63: last column of row 0
+  assertStrictEquals(u2, (63 * 4 + 2) / 256);
+  assertStrictEquals(v2, 2 / 256);
+  const [, v3] = swatchUV(swatchCell(2, 0)); // cell 64: row 1
+  assertStrictEquals(v3, (4 + 2) / 256);
+  // 128 colours x 32 rows fit the 256 px atlas
+  const last = swatchUV(swatchCell(127, 31));
+  assert(last[0] < 1 && last[1] < 1);
+  // the cell colour is the shader's output for that row
+  assertStrictEquals(swatchRgb(0x7fff, SHADE_ZERO), 0xffffff);
+  assertStrictEquals(swatchRgb(0x7fff, 0), 0x7b7b7b);
+  assertStrictEquals(swatchRgb(0x03e0, 0), rgb555ToHex(15 << 5));
+  assertStrictEquals(swatchRgb(0x7fff, SHADE_ZERO, 0x4210), 0x848484);
+  assertStrictEquals(
+    swatchRgb(0x0000, 0, 0x7fff, 4),
+    rgb555ToHex(4 | (4 << 5) | (4 << 10)),
+  );
 });
 
 Deno.test("modelStats counts slots and parts", () => {

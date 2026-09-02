@@ -28,11 +28,17 @@ const EXPECTED = [
   "buildModelMesh",
   "buildSwatchTable",
   "composeTransform",
+  "LIGHT_VIEW",
   "modelStats",
   "orbitCamera",
   "packMesh2D",
   "projectModel",
   "ROT_ORDERS",
+  "saturnLightView",
+  "SHADE_FLOOR",
+  "SHADE_LEVELS",
+  "shadeRgb555",
+  "shadeRow",
   "SWATCH_LAYOUT",
   "swatchCell",
   "swatchRgb",
@@ -48,4 +54,5 @@ Deno.test("mod.js exports the model surface", () => {
   assertStrictEquals(typeof engine.buildModelMesh, "function");
   assertStrictEquals(engine.FAMILY_MESH_COUNTS.length, 6);
   assertStrictEquals(engine.rgb555ToHex(0x7fff), 0xffffff);
+  assertStrictEquals(engine.shadeRow(0), 16);
 });
