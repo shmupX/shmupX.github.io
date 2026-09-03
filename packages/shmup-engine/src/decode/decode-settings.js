@@ -28,8 +28,8 @@
 //   CHARGE 1-3  CANNON, LASER, FIRE
 // Ship block (4 B per player at +0x0C / +0x10):
 //   +0 = 0x10 | starting loadout index (engine reads only &3)
-//   +1 = maxSpeedLevel<<4 | rapid-fire param (manual interval 8-v frames)
-//   +2 = maxPowerLevel<<4 | initialPowerLevel (both <= 4)
+//   +1 = maxPowerLevel<<4 | initialPowerLevel (cap clamped to 7)
+//   +2 = maxOptionCount<<4 | initialOptionCount (cap clamped to 4)
 //   +3 low nibble = AUTOFIRE RATE index -> [60,30,15,10,5,3,2,1] frames/volley
 
 import { SEC5_REGIONS } from "./decode-stage.js";
@@ -184,22 +184,27 @@ export const STAFF_ROLE_LABELS = [
 function shipBlock(sec5, base) {
     return {
         startLoadout: sec5[base] & 3,
-        rapidParam: sec5[base + 1] & 7, // manual fire interval = 8 - v frames
-        maxSpeed: (sec5[base + 1] >> 4) & 7,
-        initialPower: sec5[base + 2] & 7,
-        maxPower: Math.min(4, (sec5[base + 2] >> 4) & 7),
-        // Byte +2 is the OPTION-POD stat, not the shot power level — traced
-        // 2026-09-02 from the two pickup handlers, which read DIFFERENT bytes:
-        // the OPTION item (+0x1D0F4) reads settings +0x0E / +0x12 and clamps
-        // its cap to 4, while the POWER item (+0x1D1A4) reads +0x0D / +0x11
-        // and clamps to 7. The engine seeds its pod-count array from this
-        // byte's low 3 bits at +0x92E6. `initialPower`/`maxPower` above are
-        // the same two nibbles under their old names, kept because callers
-        // predate this; the clamp to 4 was already the OPTION cap by accident.
-        // NOTE the shot power level therefore comes from byte +1, which this
-        // decoder still calls maxSpeed/rapidParam — see FORMAT.md.
+        // Byte +1 is the POWER stat: bits 0-2 the level the ship starts on,
+        // bits 4-7 its cap. Corrected 2026-09-03 — it used to be read off byte
+        // +2, which is the OPTION stat. The two pickup handlers settle it by
+        // reading DIFFERENT bytes: POWER (+0x1D1A4) reads settings +0x0D / +0x11
+        // and clamps to 7, OPTION (+0x1D0F4) reads +0x0E / +0x12 and clamps to
+        // 4. The cap is `>> 4` over the WHOLE nibble and then clamped, so a
+        // nibble of 8-15 caps at 7 rather than wrapping.
+        initialPower: sec5[base + 1] & 7,
+        maxPower: Math.min(7, (sec5[base + 1] >> 4) & 0xf),
+        // Byte +2 is the OPTION-POD stat, same shape. The engine seeds its
+        // pod-count array from these low 3 bits at +0x92E6.
         initialOptions: sec5[base + 2] & 7,
-        maxOptions: Math.min(4, (sec5[base + 2] >> 4) & 7),
+        maxOptions: Math.min(4, (sec5[base + 2] >> 4) & 0xf),
+        // Kept because callers predate the correction, and both still hold the
+        // bits they always held — only their names were wrong. There is no
+        // separate speed stat to read: the ship's velocity table (+0x21A22, 64
+        // bytes per level) is indexed by the POWER level at +0xABE8, so how fast
+        // you fly IS your power level. `rapidParam` is byte +1's low bits, which
+        // are the starting power.
+        maxSpeed: (sec5[base + 1] >> 4) & 7,
+        rapidParam: sec5[base + 1] & 7,
         // frames between autofire volleys
         autofireFrames: AUTOFIRE_RATE_TABLE[sec5[base + 3] & 7],
         raw: [...sec5.subarray(base, base + 4)],

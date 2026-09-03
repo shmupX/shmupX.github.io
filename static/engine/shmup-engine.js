@@ -1699,6 +1699,8 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
         maxSpeed: sh.maxSpeed,
         initialPower: sh.initialPower,
         maxPower: sh.maxPower,
+        // Ship byte +2 under its traced name: the OPTION-pod count
+        // and its cap. Same two nibbles as the pair above.
         initialOptions: sh.initialOptions,
         maxOptions: sh.maxOptions,
         autofireFrames: sh.autofireFrames
@@ -2165,13 +2167,27 @@ var STAFF_ROLE_LABELS = [
 function shipBlock(sec5, base) {
   return {
     startLoadout: sec5[base] & 3,
-    rapidParam: sec5[base + 1] & 7,
-    // manual fire interval = 8 - v frames
-    maxSpeed: sec5[base + 1] >> 4 & 7,
-    initialPower: sec5[base + 2] & 7,
-    maxPower: Math.min(4, sec5[base + 2] >> 4 & 7),
+    // Byte +1 is the POWER stat: bits 0-2 the level the ship starts on,
+    // bits 4-7 its cap. Corrected 2026-09-03 — it used to be read off byte
+    // +2, which is the OPTION stat. The two pickup handlers settle it by
+    // reading DIFFERENT bytes: POWER (+0x1D1A4) reads settings +0x0D / +0x11
+    // and clamps to 7, OPTION (+0x1D0F4) reads +0x0E / +0x12 and clamps to
+    // 4. The cap is `>> 4` over the WHOLE nibble and then clamped, so a
+    // nibble of 8-15 caps at 7 rather than wrapping.
+    initialPower: sec5[base + 1] & 7,
+    maxPower: Math.min(7, sec5[base + 1] >> 4 & 15),
+    // Byte +2 is the OPTION-POD stat, same shape. The engine seeds its
+    // pod-count array from these low 3 bits at +0x92E6.
     initialOptions: sec5[base + 2] & 7,
-    maxOptions: Math.min(4, sec5[base + 2] >> 4 & 7),
+    maxOptions: Math.min(4, sec5[base + 2] >> 4 & 15),
+    // Kept because callers predate the correction, and both still hold the
+    // bits they always held — only their names were wrong. There is no
+    // separate speed stat to read: the ship's velocity table (+0x21A22, 64
+    // bytes per level) is indexed by the POWER level at +0xABE8, so how fast
+    // you fly IS your power level. `rapidParam` is byte +1's low bits, which
+    // are the starting power.
+    maxSpeed: sec5[base + 1] >> 4 & 7,
+    rapidParam: sec5[base + 1] & 7,
     // frames between autofire volleys
     autofireFrames: AUTOFIRE_RATE_TABLE[sec5[base + 3] & 7],
     raw: [...sec5.subarray(base, base + 4)]
@@ -4582,10 +4598,457 @@ function totalDiffBytes(ranges) {
   for (const [s, e] of ranges) total += e - s + 1;
   return total;
 }
+
+// packages/shmup-engine/src/palette/deza2-palette.js
+var DEZA2_PALETTE_COLS = 16;
+var DEZA2_PALETTE_ROWS = 18;
+var DEZA2_PALETTE_SIZE = DEZA2_PALETTE_COLS * DEZA2_PALETTE_ROWS;
+var DEZA2_SYSTEM_ROWS = 12;
+var DEZA2_USER_ROWS = 4;
+var DEZA2_UI_ROWS = 2;
+var DEZA2_CG_COLORS = (DEZA2_SYSTEM_ROWS + DEZA2_USER_ROWS) * DEZA2_PALETTE_COLS;
+var DEZA2_PALETTE_PNG = "/palette.png";
+var DEZA2_PALETTE_WORDS = Object.freeze([
+  // row  0 — system 0
+  0,
+  21470,
+  16350,
+  990,
+  9022,
+  6814,
+  4606,
+  2398,
+  190,
+  30,
+  25,
+  20,
+  15,
+  10,
+  6,
+  3,
+  // row  1 — system 1
+  29692,
+  25592,
+  21492,
+  17392,
+  13292,
+  9192,
+  5092,
+  992,
+  832,
+  736,
+  640,
+  544,
+  448,
+  352,
+  256,
+  160,
+  // row  2 — system 2
+  32756,
+  32741,
+  31620,
+  29507,
+  27394,
+  25281,
+  23168,
+  21056,
+  18944,
+  16832,
+  14720,
+  12608,
+  10496,
+  8384,
+  6272,
+  4160,
+  // row  3 — system 3
+  32764,
+  32665,
+  32567,
+  32468,
+  32369,
+  32303,
+  32204,
+  32106,
+  32007,
+  31908,
+  31809,
+  31744,
+  25600,
+  20480,
+  15360,
+  10240,
+  // row  4 — system 4
+  32767,
+  31710,
+  29596,
+  27482,
+  25368,
+  23254,
+  21140,
+  19026,
+  16912,
+  14798,
+  12684,
+  10570,
+  8456,
+  6342,
+  4228,
+  2114,
+  // row  5 — system 5
+  17115,
+  15001,
+  12887,
+  10773,
+  8660,
+  6546,
+  6513,
+  6480,
+  5423,
+  5390,
+  5389,
+  4331,
+  2250,
+  2184,
+  2150,
+  1092,
+  // row  6 — system 6
+  602,
+  470,
+  338,
+  206,
+  74,
+  6,
+  3,
+  9116,
+  7993,
+  6870,
+  5747,
+  4624,
+  3501,
+  2378,
+  1255,
+  132,
+  // row  7 — system 7
+  30750,
+  26650,
+  22550,
+  18450,
+  14350,
+  10250,
+  6150,
+  31764,
+  31760,
+  28686,
+  24588,
+  20490,
+  16392,
+  12294,
+  8196,
+  4098,
+  // row  8 — system 8
+  29599,
+  25374,
+  23261,
+  19036,
+  14811,
+  10586,
+  6361,
+  22098,
+  19984,
+  17870,
+  15756,
+  13642,
+  11528,
+  9414,
+  7300,
+  5186,
+  // row  9 — system 9
+  26558,
+  21306,
+  18136,
+  13908,
+  6576,
+  1324,
+  136,
+  17215,
+  15101,
+  15067,
+  15034,
+  12921,
+  11863,
+  10805,
+  7601,
+  5386,
+  // row 10 — system 10
+  29695,
+  27614,
+  25500,
+  23386,
+  21272,
+  19158,
+  17044,
+  14930,
+  12816,
+  10702,
+  8588,
+  6474,
+  4360,
+  2246,
+  132,
+  66,
+  // row 11 — system 11
+  30719,
+  28605,
+  26491,
+  24377,
+  22263,
+  20149,
+  18035,
+  15921,
+  13807,
+  11693,
+  9579,
+  7465,
+  5351,
+  3237,
+  1123,
+  33,
+  // row 12 — user 0
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  33,
+  // row 13 — user 1
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  33,
+  // row 14 — user 2
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  33,
+  // row 15 — user 3
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  33,
+  // row 16 — ui 0
+  57,
+  14592,
+  8480,
+  16448,
+  57,
+  0,
+  8480,
+  16448,
+  0,
+  57,
+  8481,
+  16448,
+  0,
+  14647,
+  8512,
+  8512,
+  // row 17 — ui 1
+  0,
+  14647,
+  8512,
+  16448,
+  57,
+  14625,
+  8481,
+  16416,
+  57,
+  33,
+  16417,
+  16416,
+  0,
+  33,
+  13600,
+  16448
+]);
+function deza2PaletteBand(index) {
+  const row = index >> 4;
+  if (index < 0 || index >= DEZA2_PALETTE_SIZE) return null;
+  if (row < DEZA2_SYSTEM_ROWS) return "system";
+  if (row < DEZA2_SYSTEM_ROWS + DEZA2_USER_ROWS) return "user";
+  return "ui";
+}
+function rgb8ToRgb555(r, g, b) {
+  return r >> 3 | g >> 3 << 5 | b >> 3 << 10;
+}
+function deza2PaletteRgb(words = DEZA2_PALETTE_WORDS) {
+  const out = new Array(words.length);
+  for (let i = 0; i < words.length; i++) {
+    const raw = words[i] & 32767;
+    const { r, g, b } = rgb555ToRgb(raw);
+    out[i] = { r, g, b, raw, band: deza2PaletteBand(i) };
+  }
+  return out;
+}
+function deza2PaletteRaster(words = DEZA2_PALETTE_WORDS) {
+  const data = new Uint8Array(words.length * 4);
+  const rgb = deza2PaletteRgb(words);
+  for (let i = 0; i < rgb.length; i++) {
+    data[i * 4] = rgb[i].r;
+    data[i * 4 + 1] = rgb[i].g;
+    data[i * 4 + 2] = rgb[i].b;
+    data[i * 4 + 3] = 255;
+  }
+  return { width: 1, height: words.length, data };
+}
+function paletteWordsFromRgba(rgba, count = rgba.length >> 2) {
+  const words = new Array(count);
+  for (let i = 0; i < count; i++) {
+    words[i] = rgb8ToRgb555(rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]);
+  }
+  return words;
+}
+function nearestPaletteIndex(r, g, b, palette, { cgOnly = true, allowTransparent = false } = {}) {
+  const limit = cgOnly ? Math.min(palette.length, DEZA2_CG_COLORS) : palette.length;
+  let best = -1;
+  let bestD = Infinity;
+  for (let i = allowTransparent ? 0 : 1; i < limit; i++) {
+    const p = palette[i];
+    const dr = p.r - r, dg = p.g - g, db = p.b - b;
+    const d = dr * dr + dg * dg + db * db;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+var CG_CELL = 16;
+var CG_CELL_BYTES = CG_CELL * CG_CELL;
+function indexedToCells(indexed, w, h) {
+  const cw = w / CG_CELL, ch = h / CG_CELL;
+  if (!Number.isInteger(cw) || !Number.isInteger(ch)) {
+    throw new Error(`sprite ${w}x${h} is not a whole number of 16x16 cells`);
+  }
+  const out = new Uint8Array(w * h);
+  for (let cy = 0; cy < ch; cy++) {
+    for (let cx = 0; cx < cw; cx++) {
+      const base = (cy * cw + cx) * CG_CELL_BYTES;
+      for (let y = 0; y < CG_CELL; y++) {
+        const srcRow = (cy * CG_CELL + y) * w + cx * CG_CELL;
+        out.set(indexed.subarray(srcRow, srcRow + CG_CELL), base + y * CG_CELL);
+      }
+    }
+  }
+  return out;
+}
+function cellsToIndexed(cells, w, h) {
+  const cw = w / CG_CELL, ch = h / CG_CELL;
+  const out = new Uint8Array(w * h);
+  for (let cy = 0; cy < ch; cy++) {
+    for (let cx = 0; cx < cw; cx++) {
+      const base = (cy * cw + cx) * CG_CELL_BYTES;
+      for (let y = 0; y < CG_CELL; y++) {
+        const dstRow = (cy * CG_CELL + y) * w + cx * CG_CELL;
+        out.set(cells.subarray(base + y * CG_CELL, base + (y + 1) * CG_CELL), dstRow);
+      }
+    }
+  }
+  return out;
+}
+function indexedToRgbaWith(indexed, palette) {
+  const rgba = new Uint8ClampedArray(indexed.length * 4);
+  for (let i = 0; i < indexed.length; i++) {
+    const v = indexed[i];
+    if (v === 0) continue;
+    const p = palette[v];
+    if (!p) continue;
+    const o = i * 4;
+    rgba[o] = p.r;
+    rgba[o + 1] = p.g;
+    rgba[o + 2] = p.b;
+    rgba[o + 3] = 255;
+  }
+  return rgba;
+}
+function paletteBankWords(words = DEZA2_PALETTE_WORDS) {
+  const bank = new Array(DEZA2_CG_COLORS);
+  for (let i = 0; i < DEZA2_CG_COLORS; i++) {
+    const w = words[i] & 32767;
+    bank[i] = i >> 4 < DEZA2_SYSTEM_ROWS ? w : w ? 32768 | w : 0;
+  }
+  return bank;
+}
+var DEZA2_ZAKO_SIZES = Object.freeze([
+  { w: 16, h: 16, frames: 4, label: "16\xD716" },
+  { w: 32, h: 16, frames: 4, label: "32\xD716" },
+  { w: 16, h: 32, frames: 4, label: "16\xD732" },
+  { w: 32, h: 32, frames: 4, label: "32\xD732" },
+  { w: 64, h: 32, frames: 2, label: "64\xD732" },
+  { w: 32, h: 64, frames: 2, label: "32\xD764" },
+  { w: 64, h: 64, frames: 1, label: "64\xD764" }
+]);
 export {
   BLANK_WAVES,
   BUILTIN_DEFAULTS,
+  CG_CELL,
+  CG_CELL_BYTES,
   COLOR_SETS,
+  DEZA2_CG_COLORS,
+  DEZA2_PALETTE_COLS,
+  DEZA2_PALETTE_PNG,
+  DEZA2_PALETTE_ROWS,
+  DEZA2_PALETTE_SIZE,
+  DEZA2_PALETTE_WORDS,
+  DEZA2_SYSTEM_ROWS,
+  DEZA2_UI_ROWS,
+  DEZA2_USER_ROWS,
+  DEZA2_ZAKO_SIZES,
   DUKE_PLAYER,
   ENEMY_BULLET_SPEED,
   ENGINE_SHOT_DAMAGE,
@@ -4638,6 +5101,7 @@ export {
   buildSwatchTable,
   bupDateToDate,
   byteSum,
+  cellsToIndexed,
   coalesceDiffRanges,
   composeTransform,
   cutLayer,
@@ -4651,6 +5115,9 @@ export {
   deinterleave,
   detect,
   detectPartitions,
+  deza2PaletteBand,
+  deza2PaletteRaster,
+  deza2PaletteRgb,
   emptyWave,
   enemyLetters,
   extractPayload,
@@ -4659,6 +5126,8 @@ export {
   findEntries,
   findEntry,
   gunzip,
+  indexedToCells,
+  indexedToRgbaWith,
   instrumentAt,
   isGameSave,
   isGzip,
@@ -4674,12 +5143,15 @@ export {
   meshFor,
   meshLibraryFromJson,
   modelStats,
+  nearestPaletteIndex,
   normalMatrix,
   normalize,
   openDisc,
   orbitCamera,
   packMesh2D,
   packShelf,
+  paletteBankWords,
+  paletteWordsFromRgba,
   panPosition,
   parse,
   parseEntry,
@@ -4695,6 +5167,7 @@ export {
   readFile,
   rgb555ToHex,
   rgb555ToRgb,
+  rgb8ToRgb555,
   saturnLightView,
   serializeMeshLibrary,
   shadeRgb555,

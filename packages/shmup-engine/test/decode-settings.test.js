@@ -33,7 +33,13 @@ Deno.test({
     // ARMS panel settled it 2026-09-02, which is why these two swapped values.
     assertStrictEquals(d.settings.ships[0].startLoadout, 0);
     assertStrictEquals(d.settings.ships[0].autofireFrames, 1); // rate idx 7
-    assertStrictEquals(d.settings.ships[0].maxPower, 4);
+    // Ship bytes 10 72 40 07. POWER is byte +1 and OPTIONS byte +2 — the two
+    // were read off the same byte until 2026-09-03. Each cap here is its own
+    // maximum: power 7, options 4.
+    assertStrictEquals(d.settings.ships[0].maxPower, 7);
+    assertStrictEquals(d.settings.ships[0].initialPower, 2);
+    assertStrictEquals(d.settings.ships[0].maxOptions, 4);
+    assertStrictEquals(d.settings.ships[0].initialOptions, 0);
     assertStrictEquals(d.settings.mainWeapon, 2);
     assertEquals(d.settings.loadouts[0], {
       main: 2,
