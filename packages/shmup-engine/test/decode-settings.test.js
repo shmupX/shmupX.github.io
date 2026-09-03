@@ -27,15 +27,17 @@ Deno.test({
   ignore: !hasFixtures("ramsie.sav"),
   async fn() {
     const d = await decodedFixture("ramsie.sav");
-    // Ship blocks (weapon-system trace 2026-08-28): starting loadout 0
-    // whose pair 0x21/0xD1 = main 1, sub 2, charge 1, bomb 5 + variant.
+    // Ship blocks (weapon-system trace 2026-08-28): starting loadout 0 whose
+    // pair 0x21/0xD1 = main 2, sub 1, charge 1, bomb 5 + variant. MAIN is
+    // byte0 bits4-6 and SUB byte0 bits0-2 — transposed here until the editor's
+    // ARMS panel settled it 2026-09-02, which is why these two swapped values.
     assertStrictEquals(d.settings.ships[0].startLoadout, 0);
     assertStrictEquals(d.settings.ships[0].autofireFrames, 1); // rate idx 7
     assertStrictEquals(d.settings.ships[0].maxPower, 4);
-    assertStrictEquals(d.settings.mainWeapon, 1);
+    assertStrictEquals(d.settings.mainWeapon, 2);
     assertEquals(d.settings.loadouts[0], {
-      main: 1,
-      sub: 2,
+      main: 2,
+      sub: 1,
       charge: 1,
       bomb: 5,
       bombVariant: true,
@@ -56,9 +58,9 @@ Deno.test({
   ignore: !hasFixtures("mucha-kucha.sav"),
   async fn() {
     const d = await decodedFixture("mucha-kucha.sav");
-    // start loadout 0 = pair 0x13/0x61 -> main 3, sub 1, charge 1, bomb 6
-    assertStrictEquals(d.settings.mainWeapon, 3);
-    assertStrictEquals(d.settings.loadouts[0].sub, 1);
+    // start loadout 0 = pair 0x13/0x61 -> main 1, sub 3, charge 1, bomb 6
+    assertStrictEquals(d.settings.mainWeapon, 1);
+    assertStrictEquals(d.settings.loadouts[0].sub, 3);
     assertStrictEquals(d.settings.loadouts[0].bomb, 6);
     assertStrictEquals(d.settings.sfxSet, 1); // REAL bank
     assertStrictEquals(d.settings.shotDamage, 20);
@@ -106,10 +108,12 @@ Deno.test("decodeSettings reads the block at sec5 +0x5A780", () => {
   assertStrictEquals(st.gameMode, 2);
   assertStrictEquals(st.ships[0].startLoadout, 1);
   assertStrictEquals(st.ships[0].autofireFrames, 2); // rate idx 6
-  // P1 starts on loadout 1 = pair 0x52/0x22 -> main 2, sub 5, charge 2, bomb 2
-  assertStrictEquals(st.mainWeapon, 2);
-  assertStrictEquals(st.loadouts[1].sub, 5);
+  // P1 starts on loadout 1 = pair 0x52/0x22 -> main 5, sub 2, charge 2, bomb 2
+  assertStrictEquals(st.mainWeapon, 5);
+  assertStrictEquals(st.loadouts[1].sub, 2);
   assertStrictEquals(st.loadouts[1].bomb, 2);
+  // Unchanged across the MAIN/SUB correction: shotDamage is keyed on byte0
+  // bits0-2 either way, so every save's difficulty is byte-identical.
   assertStrictEquals(st.shotDamage, 45);
   assertStrictEquals(st.sfxSet, 2);
 });

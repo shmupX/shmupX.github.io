@@ -8944,16 +8944,24 @@
   function dezaPx(u) { return u / 128; }                // a distance
   function dezaVel(u) { return u / (128 * SATURN_TICKS_PER_FRAME); } // a velocity
 
+  // Everything named DEZA_MAIN_* / dezaSub*() below implements byte0 BITS4-6,
+  // which the Dezaemon 2 editor's own ARMS panel calls MAIN, not SUB (settled
+  // 2026-09-02 from KUMITATE's option lists — see FORMAT.md, settings +0x14).
+  // The names are the old transposed ones; the behaviour is right. Its seven
+  // values are VULCAN A, VULCAN B, MISSILE, HOMING, SHADOW, WAVE, BOUND, and
+  // the editor's SUB (byte0 bits0-2) is the field this runtime does NOT
+  // implement — its own autofire stands in for that one.
+  //
   // Max shots per tap (+0x21C50) and reload interval in frames (+0x21C58).
-  // The reload drains 1/frame for every type; only sub 7 adds the power-scaled
-  // second drain (that whole block sits inside the `subType == 7` branch at
-  // +0x9D4C, which returns to the epilogue for 1-6).
-  var DEZA_SUB_BURST = [0, 3, 3, 1, 1, 6, 3, 2];
-  var DEZA_SUB_INTERVAL = [0, 6, 5, 12, 1, 3, 6, 28];
+  // The reload drains 1/frame for every type; only type 7 adds the power-scaled
+  // second drain (that whole block sits inside the `type == 7` branch at
+  // address 0x0606DD4C = file +0x9D4C, which returns to the epilogue for 1-6).
+  var DEZA_MAIN_BURST = [0, 3, 3, 1, 1, 6, 3, 2];
+  var DEZA_MAIN_INTERVAL = [0, 6, 5, 12, 1, 3, 6, 28];
   // Per-power-level attack power in the engine's durability units. Types 4, 5
   // and 6 are per-FRAME-of-contact weapons, which is why their numbers are two
   // orders of magnitude smaller than the one-shot types'.
-  var DEZA_SUB_DAMAGE = [
+  var DEZA_MAIN_DAMAGE = [
     null,
     [7680, 6656, 5632, 4608, 3584],      // 1  +0x21C80
     [6656, 5632, 4608, 3584, 2560],      // 2  +0x21C94
@@ -8964,39 +8972,39 @@
     [8960, 7680, 6656, 5888, 5376]       // 7  +0x21D58
   ];
   // Type 1's symmetric spread, in engine angle units from straight up.
-  var DEZA_SUB_SPREAD1 = [[0], [3, -3], [0, 8, -8], [12, -12, 3, -3], [0, 16, -16, 8, -8]];
+  var DEZA_MAIN_SPREAD1 = [[0], [3, -3], [0, 8, -8], [12, -12, 3, -3], [0, 16, -16, 8, -8]];
   // Type 2 — a forward volley. Every shot flies dead straight up at 1280
   // units/frame; the power level buys barrels, not angles, and the extra ones
   // sit further out and further BACK, so the volley reads as a widening
   // arrowhead. [dx, dy] in position units, +y is toward the bottom of the
   // screen (handlers +0xC470/+0xC520/+0xC61C/+0xC748/+0xC8BC).
-  var DEZA_SUB2_MUZZLES = [
+  var DEZA_MAIN2_MUZZLES = [
     [[0, -1280]],
     [[768, -1280], [-768, -1280]],
     [[0, -1280], [-1024, 512], [1024, 512]],
     [[768, -1280], [-768, -1280], [1536, 512], [-1536, 512]],
     [[1024, 512], [-1024, 512], [0, -1280], [2048, 2304], [-2048, 2304]]
   ];
-  var DEZA_SUB2_SPEED = 1280;
+  var DEZA_MAIN2_SPEED = 1280;
   // Type 3 — lobbed grenades. Each is launched DOWNWARD at 256 units/frame with
   // a fixed sideways drift, and its class-40 updater (+0xDFB0) adds +40 to the
   // scroll velocity every frame, so it dips ~5.5 px, reverses after ~6 frames
   // and then climbs away accelerating. [dx, dy, lateral] in units
   // (handlers +0xDAE4/+0xDB64/+0xDC20/+0xDCFC/+0xDDF4).
-  var DEZA_SUB3_SHOTS = [
+  var DEZA_MAIN3_SHOTS = [
     [[0, -1024, 0]],
     [[1024, -1024, 0], [-1024, -1024, 0]],
     [[768, 0, 32], [0, -1024, 0], [-768, 0, -32]],
     [[1024, -1024, 0], [-1024, -1024, 0], [1536, 0, 48], [-1536, 0, -48]],
     [[768, 0, 32], [0, -1024, 0], [-768, 0, -32], [1536, 1024, 64], [-1536, 1024, -64]]
   ];
-  var DEZA_SUB3_LAUNCH = -256;   // scroll velocity: negative = falling
-  var DEZA_SUB3_ACCEL = 40;      // units/frame added to the scroll velocity
+  var DEZA_MAIN3_LAUNCH = -256;   // scroll velocity: negative = falling
+  var DEZA_MAIN3_ACCEL = 40;      // units/frame added to the scroll velocity
   // Type 4 — homing whips. Each shot is a chain of one steering head plus a
   // tail of links; the level trades chain length for chain count (1x8, 2x7,
   // 3x6, 4x5, 5x4). [dx units, angle units, links]
   // (handlers +0xCCD8/+0xCD34/+0xCDC0/+0xCE64/+0xCF28).
-  var DEZA_SUB4_SHOTS = [
+  var DEZA_MAIN4_SHOTS = [
     [[0, 0, 7]],
     [[1024, 0, 6], [-1024, 0, 6]],
     [[0, 0, 5], [1024, 8, 5], [-1024, -8, 5]],
@@ -9007,17 +9015,17 @@
   // velocity as (SIN * (word & 0x7FFF)) >> 16, so at full amplitude a shot moves
   // word/2 units a frame. Homing re-clamps the word to [0x600, 0x0D00] from the
   // Manhattan distance to the target, halved.
-  var DEZA_SUB4_WORD = 3328;
-  var DEZA_SUB4_WORD_MIN = 1536;
-  function dezaSub4Speed(word) { return dezaVel(word / 2); }
-  var DEZA_SUB4_TURN = 24;         // max angle units per frame
+  var DEZA_MAIN4_WORD = 3328;
+  var DEZA_MAIN4_WORD_MIN = 1536;
+  function dezaMain4Speed(word) { return dezaVel(word / 2); }
+  var DEZA_MAIN4_TURN = 24;         // max angle units per frame
   // Type 5 — a piercing column planted where the ship stands, not carried with
   // it. Lifetime = 0xA000 / step (+0x21CF8) frames.
-  var DEZA_SUB5_STEP = [4224, 3072, 2176, 1792, 1472];
+  var DEZA_MAIN5_STEP = [4224, 3072, 2176, 1792, 1472];
   // Type 6 — one indestructible energy ball that grows to a per-level cap
   // (+0x21D4C, 0x1000 = 1.0) at a quarter of the cap per frame from 0x400.
-  var DEZA_SUB6_SCALE = [2560, 4096, 5632, 7168, 8704];
-  var DEZA_SUB6_SPEED = 1152;
+  var DEZA_MAIN6_SCALE = [2560, 4096, 5632, 7168, 8704];
+  var DEZA_MAIN6_SPEED = 1152;
   // Type 6's ARMOUR DEFLECTION. Every object carries an engine flag byte
   // (u8 0x06091550), and for a zako it is authored: the spawn at +0x1548E
   // packs `((b2 >> 4) & 3) | ((b2 & 8) >> 1)` out of enemy record byte 2, so
@@ -9045,11 +9053,11 @@
   // `angle <= 191` and 2 above it, and only state 1 adds), shrinks its draw
   // zoom by 64 a frame to a quarter, and sets the sprite's translucency bit,
   // until the despawn box takes it.
-  var DEZA_SUB6_DEFLECT_SPEED = 1152;     // (0x7FFF * 1152) >> 15
-  var DEZA_SUB6_DEFLECT_SPIN = 6144;      // rotation units/frame, 65536 = a turn
-  var DEZA_SUB6_DEFLECT_ZOOM = 4096;      // draw zoom at the bounce, 0x1000 = 1.0
-  var DEZA_SUB6_DEFLECT_ZOOM_MIN = 1024;
-  var DEZA_SUB6_DEFLECT_ZOOM_STEP = 64;   // per frame
+  var DEZA_MAIN6_DEFLECT_SPEED = 1152;     // (0x7FFF * 1152) >> 15
+  var DEZA_MAIN6_DEFLECT_SPIN = 6144;      // rotation units/frame, 65536 = a turn
+  var DEZA_MAIN6_DEFLECT_ZOOM = 4096;      // draw zoom at the bounce, 0x1000 = 1.0
+  var DEZA_MAIN6_DEFLECT_ZOOM_MIN = 1024;
+  var DEZA_MAIN6_DEFLECT_ZOOM_STEP = 64;   // per frame
 
   // Charge. The gauge fills +1/frame while the fire button is held, caps at 320
   // and never decays; level = gauge/64 - 1, so a release below 64 does nothing.
@@ -9088,9 +9096,20 @@
   var DEZA_CHARGE3_WOBBLE = [2, 1, -1, -2, -2, -1, 1, 2];    // +0x21C70
   var DEZA_CHARGE3_LIFE = 17;      // 10 growth frames + 7 fade
 
+  // byte0 bits0-2 — the editor's SUB. This runtime does not implement it (its
+  // own autofire stands in), so the only thing that reads it is the charge
+  // lockout rule, which is special-cased on type 7. Values 5/6/7 are the
+  // editor's OPTION A/B/C: option pods, driven from their own per-frame hook
+  // at GAME +0x1CEDE rather than a shot dispatcher, and not implemented here.
   function dezaSubType(scene, p) {
     var lo = dezaLoadout(scene, p);
     return lo ? (lo.sub & 7) : 0;
+  }
+  function dezaMainType(scene, p) {
+    var lo = dezaLoadout(scene, p);
+    // byte0 bits4-6. The decoder called this `sub` until 2026-09-02; the
+    // editor calls it MAIN, so the key moved and the bits did not.
+    return lo ? (lo.main & 7) : 0;
   }
   function dezaChargeType(scene, p) {
     var lo = dezaLoadout(scene, p);
@@ -9167,20 +9186,25 @@
         st.gauge = 0;
       }
     }
-    // A charge past 31 locks out BOTH shot weapons — the main autofire as well
-    // as the sub. (The bomb is unaffected: it runs off its own button.)
+    // A charge past 31 always locks out the MAIN weapon. It locks the SUB —
+    // which this runtime's own autofire stands in for — only when the SUB
+    // type is 7: charge_step +0xA0F0 tests `cmp/eq #7` at +0xA2EA against the
+    // bits0-2 array and stores flag 3 rather than 1 into 0x0608CB10[player],
+    // and only flag bit 1 gates the autofire. (The bomb is never gated: it
+    // runs off its own button.) Corrected 2026-09-02; this used to lock both
+    // unconditionally, which silenced the ship for SUB types 1,2,3,4 and 6.
     var suppressed = st.gauge > 31;
-    p.dezaShotLocked = suppressed;
+    p.dezaShotLocked = suppressed && dezaSubType(scene, p) === 7;
 
-    // --- sub weapon: burst counter + reload, exactly as the gate routine ---
-    var stype = dezaSubType(scene, p);
+    // --- main weapon: burst counter + reload, exactly as the gate routine ---
+    var stype = dezaMainType(scene, p);
     if (stype && !suppressed) {
       // The runtime autofires, so the main shot's cadence stands in for the
       // engine's held rapid button: the burst cap never applies.
       st.burst = 0;
-      if (st.burst < DEZA_SUB_BURST[stype] && st.reload === 0) {
-        fireDezaSub(scene, p, stype, L, st);
-        st.reload = DEZA_SUB_INTERVAL[stype];
+      if (st.burst < DEZA_MAIN_BURST[stype] && st.reload === 0) {
+        fireDezaMain(scene, p, stype, L, st);
+        st.reload = DEZA_MAIN_INTERVAL[stype];
       }
       if (st.reload !== 0) st.reload -= 1;
       // Only sub type 7 reaches the second, power-scaled drain: the branch at
@@ -9192,11 +9216,11 @@
   }
   if (typeof window !== "undefined") {
     window.__updateDezaWeaponsProbe = updateDezaWeapons;
-    window.__DEZA_SUB_BURST = DEZA_SUB_BURST;
-    window.__DEZA_SUB_INTERVAL = DEZA_SUB_INTERVAL;
-    window.__DEZA_SUB2_MUZZLES = DEZA_SUB2_MUZZLES;
-    window.__DEZA_SUB3_SHOTS = DEZA_SUB3_SHOTS;
-    window.__DEZA_SUB4_SHOTS = DEZA_SUB4_SHOTS;
+    window.__DEZA_MAIN_BURST = DEZA_MAIN_BURST;
+    window.__DEZA_MAIN_INTERVAL = DEZA_MAIN_INTERVAL;
+    window.__DEZA_MAIN2_MUZZLES = DEZA_MAIN2_MUZZLES;
+    window.__DEZA_MAIN3_SHOTS = DEZA_MAIN3_SHOTS;
+    window.__DEZA_MAIN4_SHOTS = DEZA_MAIN4_SHOTS;
     window.__DEZA_CHARGE1_SHOTS = DEZA_CHARGE1_SHOTS;
   }
   function dezaShotDamage(units) {
@@ -9243,14 +9267,14 @@
       if (shots[i]) shots[i].setData("dezaSlots", weight);
     }
   }
-  function fireDezaSub(scene, p, type, L, st) {
+  function fireDezaMain(scene, p, type, L, st) {
     var ship = p.sprite;
-    var dmg = (DEZA_SUB_DAMAGE[type] || DEZA_SUB_DAMAGE[1])[L];
+    var dmg = (DEZA_MAIN_DAMAGE[type] || DEZA_MAIN_DAMAGE[1])[L];
     var i, sp, th, b;
     if (type === 1) {
       // Symmetric spread; one more projectile per power level. 1023 units/frame
       // is COS(0) >> 5 — 8 engine px/frame.
-      sp = DEZA_SUB_SPREAD1[L] || DEZA_SUB_SPREAD1[0];
+      sp = DEZA_MAIN_SPREAD1[L] || DEZA_MAIN_SPREAD1[0];
       if (!dezaClaimSlots(scene, p, sp.length)) return;
       for (i = 0; i < sp.length; i++) {
         th = sp[i] * DEZA_ANG;
@@ -9259,35 +9283,35 @@
           dezaHitDamage(scene, dmg))], 1);
       }
     } else if (type === 2) {
-      sp = DEZA_SUB2_MUZZLES[L];
+      sp = DEZA_MAIN2_MUZZLES[L];
       if (!dezaClaimSlots(scene, p, sp.length)) return;
       for (i = 0; i < sp.length; i++) {
         dezaMarkSlots([spawnDezaPlayerShot(scene, p, ship.x + dezaPx(sp[i][0]), ship.y + dezaPx(sp[i][1]),
-          0, -dezaVel(DEZA_SUB2_SPEED), dezaHitDamage(scene, dmg))], 1);
+          0, -dezaVel(DEZA_MAIN2_SPEED), dezaHitDamage(scene, dmg))], 1);
       }
       scene.playSound("se_shot", 0.12);
     } else if (type === 3) {
-      sp = DEZA_SUB3_SHOTS[L];
+      sp = DEZA_MAIN3_SHOTS[L];
       if (!dezaClaimSlots(scene, p, sp.length)) return;
       for (i = 0; i < sp.length; i++) {
         b = spawnDezaPlayerShot(scene, p, ship.x + dezaPx(sp[i][0]), ship.y + dezaPx(sp[i][1]),
-          dezaVel(sp[i][2]), -dezaVel(DEZA_SUB3_LAUNCH), dezaHitDamage(scene, dmg));
+          dezaVel(sp[i][2]), -dezaVel(DEZA_MAIN3_LAUNCH), dezaHitDamage(scene, dmg));
         // The class-40 updater accelerates the scroll velocity, not the lateral
         // one, so the drift stays constant and the path is a clean parabola.
-        if (b) b.setData("dezaAccelY", -dezaVel(DEZA_SUB3_ACCEL) / SATURN_TICKS_PER_FRAME);
+        if (b) b.setData("dezaAccelY", -dezaVel(DEZA_MAIN3_ACCEL) / SATURN_TICKS_PER_FRAME);
         dezaMarkSlots([b], 1);
       }
       scene.playSound("se_shot", 0.12);
     } else if (type === 4) {
-      sp = DEZA_SUB4_SHOTS[L];
+      sp = DEZA_MAIN4_SHOTS[L];
       var chainSlots = 0;
       for (i = 0; i < sp.length; i++) chainSlots += sp[i][2] + 1;
       if (!dezaClaimSlots(scene, p, chainSlots)) return;
       for (i = 0; i < sp.length; i++) {
         th = sp[i][1] * DEZA_ANG;
         b = spawnDezaPlayerShot(scene, p, ship.x + dezaPx(sp[i][0]), ship.y,
-          Math.sin(th) * dezaSub4Speed(DEZA_SUB4_WORD),
-          -Math.cos(th) * dezaSub4Speed(DEZA_SUB4_WORD),
+          Math.sin(th) * dezaMain4Speed(DEZA_MAIN4_WORD),
+          -Math.cos(th) * dezaMain4Speed(DEZA_MAIN4_WORD),
           // The head carries the whole chain's contribution: in the engine every
           // link has its own hit box and every one of them bills the target.
           dezaFrameDamage(scene, dmg * (sp[i][2] + 1)));
@@ -9302,19 +9326,19 @@
       // An anchored piercing column, planted where the ship stands.
       dezaAddColumn(scene, {
         owner: p.index, x: ship.x, y: ship.y, halfW: 4, height: 320,
-        life: Math.ceil(0xA000 / DEZA_SUB5_STEP[L]), follow: false,
+        life: Math.ceil(0xA000 / DEZA_MAIN5_STEP[L]), follow: false,
         dmg: dezaFrameDamage(scene, dmg)
       });
       scene.playSound("se_shot", 0.1);
     } else if (type === 6) {
       if (!dezaClaimSlots(scene, p, 1)) return;
       b = spawnDezaPlayerShot(scene, p, ship.x, ship.y - dezaPx(1024),
-        0, -dezaVel(DEZA_SUB6_SPEED), dezaFrameDamage(scene, dmg));
+        0, -dezaVel(DEZA_MAIN6_SPEED), dezaFrameDamage(scene, dmg));
       if (b) {
         b.setData("dezaSlots", 1);
         b.setData("dezaPerFrame", true);
-        b.setData("dezaGrow", { scale: 1024, cap: DEZA_SUB6_SCALE[L],
-          step: DEZA_SUB6_SCALE[L] / 4 / SATURN_TICKS_PER_FRAME });
+        b.setData("dezaGrow", { scale: 1024, cap: DEZA_MAIN6_SCALE[L],
+          step: DEZA_MAIN6_SCALE[L] / 4 / SATURN_TICKS_PER_FRAME });
         // The only shot that bounces off a hard target.
         b.setData("dezaDeflects", true);
         b.setScale(1024 / 4096);
@@ -9491,7 +9515,7 @@
   function dezaDeflectShot(bullet) {
     var a = 160 + Math.floor(Math.random() * 64);
     var th = a * DEZA_ANG;                    // engine angle byte: 0 = right
-    var v = dezaVel(DEZA_SUB6_DEFLECT_SPEED);
+    var v = dezaVel(DEZA_MAIN6_DEFLECT_SPEED);
     bullet.setData("dezaVx", Math.cos(th) * v);
     bullet.setData("dezaVy", -Math.sin(th) * v);
     var grow = bullet.getData("dezaGrow");
@@ -9501,9 +9525,9 @@
       // the rotation register. The register is clockwise-positive (sub 7's
       // `(64 - aim) << 8` leans a shot left at negative values), so a bounce
       // to the LEFT spins clockwise.
-      spin: (a > 191 ? -1 : 1) * DEZA_SUB6_DEFLECT_SPIN * Math.PI * 2 / 65536,
+      spin: (a > 191 ? -1 : 1) * DEZA_MAIN6_DEFLECT_SPIN * Math.PI * 2 / 65536,
       angle: bullet.rotation || 0,
-      zoom: DEZA_SUB6_DEFLECT_ZOOM,
+      zoom: DEZA_MAIN6_DEFLECT_ZOOM,
       base: grow ? grow.scale / 4096 : 1
     });
     // The updater ORs the sprite's translucency bit for as long as the bounce
@@ -9524,10 +9548,10 @@
     if (deflected) {
       deflected.angle += deflected.spin / SATURN_TICKS_PER_FRAME;
       bullet.setRotation(deflected.angle);
-      if (deflected.zoom > DEZA_SUB6_DEFLECT_ZOOM_MIN) {
-        deflected.zoom = Math.max(DEZA_SUB6_DEFLECT_ZOOM_MIN,
-          deflected.zoom - DEZA_SUB6_DEFLECT_ZOOM_STEP / SATURN_TICKS_PER_FRAME);
-        bullet.setScale(deflected.base * deflected.zoom / DEZA_SUB6_DEFLECT_ZOOM);
+      if (deflected.zoom > DEZA_MAIN6_DEFLECT_ZOOM_MIN) {
+        deflected.zoom = Math.max(DEZA_MAIN6_DEFLECT_ZOOM_MIN,
+          deflected.zoom - DEZA_MAIN6_DEFLECT_ZOOM_STEP / SATURN_TICKS_PER_FRAME);
+        bullet.setScale(deflected.base * deflected.zoom / DEZA_MAIN6_DEFLECT_ZOOM);
       }
       return true;
     }
@@ -9571,19 +9595,19 @@
       }
       home.target = target;
     }
-    var word = DEZA_SUB4_WORD;
+    var word = DEZA_MAIN4_WORD;
     if (target) {
       // Engine angle units, 0 = up and clockwise positive.
       var want = Math.atan2(target.x - bullet.x, bullet.y - target.y) / DEZA_ANG;
       var d = ((want - home.heading + 384) % 256) - 128;
-      var turn = DEZA_SUB4_TURN / SATURN_TICKS_PER_FRAME;
+      var turn = DEZA_MAIN4_TURN / SATURN_TICKS_PER_FRAME;
       home.heading = (home.heading + Math.max(-turn, Math.min(turn, d)) + 256) % 256;
       var reach = (Math.abs(target.x - bullet.x) + Math.abs(target.y - bullet.y)) * 128 / 2;
-      word = Math.max(DEZA_SUB4_WORD_MIN, Math.min(DEZA_SUB4_WORD, reach));
+      word = Math.max(DEZA_MAIN4_WORD_MIN, Math.min(DEZA_MAIN4_WORD, reach));
     }
     var th = home.heading * DEZA_ANG;
-    bullet.setData("dezaVx", Math.sin(th) * dezaSub4Speed(word));
-    bullet.setData("dezaVy", -Math.cos(th) * dezaSub4Speed(word));
+    bullet.setData("dezaVx", Math.sin(th) * dezaMain4Speed(word));
+    bullet.setData("dezaVy", -Math.cos(th) * dezaMain4Speed(word));
     bullet.setRotation(th - Math.PI / 2);
     // The tail is drawn, not simulated: in the engine each link just replays the
     // head's path two frames behind, so a trail of samples reads the same.

@@ -20,6 +20,7 @@
     "games:manifest": "deno run -A scripts/build-games-manifest.ts",
     "deza:manifest": "deno run -A scripts/build-deza-saves-manifest.ts",
     "deza:upload": "deno run -A scripts/upload-deza-saves.ts",
+    "deza:disc": "deno run -A tools/deza-disc/main.ts",
     "deza:tonebank": "deno run -A scripts/build-tone-bank.ts",
     "deza:meshlib": "deno run -A scripts/build-mesh-library.ts",
     "tonebank:table": "deno run -A scripts/build-tone-bank-table.ts",

@@ -689,7 +689,9 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             // Both ship config blocks in full (+0x0C P1, +0x10 P2). P2 join-in
             // reads ships[1] for its own starting loadout, speed cap, power
             // levels and autofire cadence; `mainWeapon2P` above is the same
-            // ship's starting main weapon, kept for callers that predate this.
+            // ship's starting MAIN weapon (byte0 bits4-6 — it followed the
+            // 2026-09-02 MAIN/SUB correction), kept for callers that predate
+            // this.
             ships: decoded.settings.ships
                 ? decoded.settings.ships.map((sh) => ({
                     startLoadout: sh.startLoadout,
@@ -700,8 +702,8 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                     autofireFrames: sh.autofireFrames,
                 }))
                 : undefined,
-            // The four WEAPON LOADOUT presets in full — main, sub/option,
-            // charge and bomb per preset — plus which one each ship starts on.
+            // The four WEAPON LOADOUT presets in full — the editor's MAIN,
+            // SUB, CHARGE and BOMB rows — plus which one each ship starts on.
             // Weapon-change items (types 0-3) switch between them mid-game, so
             // the runtime needs all four, not just the starting set.
             loadouts: decoded.settings.loadouts

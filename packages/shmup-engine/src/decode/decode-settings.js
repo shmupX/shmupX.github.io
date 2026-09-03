@@ -13,11 +13,19 @@
 // REPLACING the earlier heuristic "ship byte +3 low nibble = main weapon"):
 // the four selects live in the LOADOUT pairs at +0x14+2k/+0x15+2k, loaded at
 // player init (+0x90EC) and by weapon-change items (+0x1CF3C):
-//   byte0 bits0-2 = MAIN weapon 0-7 (autofire dispatcher +0x15128)
-//   byte0 bits4-6 = SUB / option weapon 0-7 (dispatcher +0x1509C)
+//   byte0 bits4-6 = MAIN weapon 0-7 (dispatcher +0x1509C)
+//   byte0 bits0-2 = SUB weapon 0-7 (autofire dispatcher +0x15128)
 //   byte1 bits0-1 = CHARGE type 0-3 (dispatcher +0x1528C)
 //   byte1 bits4-7 = BOMB type (bits4-6, bit7 a variant flag; 16-way
 //                   dispatcher +0x151B0)
+// The MAIN/SUB rows were transposed here until 2026-09-02, when the editor's
+// own ARMS panel settled it (see FORMAT.md, settings +0x14). The bit-field to
+// dispatcher wiring above was always right; only these two names were swapped.
+// The editor's names for the values, read out of its option lists:
+//   MAIN   1-7  VULCAN A, VULCAN B, MISSILE, HOMING, SHADOW, WAVE, BOUND
+//   SUB    1-7  H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER, OPTION A/B/C
+//   BOMB   1-7  RED, BLUE, GREEN, EDIT A, EDIT B, BIG, WIPE
+//   CHARGE 1-3  CANNON, LASER, FIRE
 // Ship block (4 B per player at +0x0C / +0x10):
 //   +0 = 0x10 | starting loadout index (engine reads only &3)
 //   +1 = maxSpeedLevel<<4 | rapid-fire param (manual interval 8-v frames)
@@ -26,25 +34,36 @@
 
 import { SEC5_REGIONS } from "./decode-stage.js";
 
-// Full-power (level 4) per-bullet main-shot damage, in the engine's u32
-// attack-power units (0x608C720 — the same units enemy hp is in: record
-// byte 2's [256,12800,..,512000], so weapon 1's 5120 kills the eight steps
-// in 1/3/5/10/20/40/50/100 hits). Read out of the spawn sites
-// (per-level u32 tables; weapons 1/2/3/7 deliberately LOWER per-bullet
-// damage as the power level rises while adding projectiles):
+// Full-power (level 4) per-bullet shot damage for the byte0 bits0-2 field —
+// the one the editor calls SUB (renamed 2026-09-02; this table is keyed on
+// the same bits it always was). Units are the engine's u32 attack power
+// (0x608C720 — the same units enemy hp is in: record byte 2's
+// [256,12800,..,512000], so 5120 kills the eight steps in
+// 1/3/5/10/20/40/50/100 hits). Read out of the spawn sites (per-level u32
+// tables; weapons 1/2/3 deliberately LOWER per-bullet damage as the power
+// level rises while adding projectiles):
 //   1: +0x21D6C [13312..5120]   2: +0x21D8C [19712..11520]
 //   3: +0x21DAC [256..128] (homing, many contacts)
-//   4: +0x21DCC [1024..1152]    5 tap: +0x21DEC [1024..1280]
-//   6: 384 per bullet           7: +0x21C80 [7680..3584] per beam frame
+//   4: +0x21DCC [1024..1152]    5: +0x21DEC [1024..1280]
+//   6: 384 per bullet           7: no table — see below
+// The block runs +0x21D6C + 0x20*(w-1) and STOPS after weapon 5: +0x21E0C
+// holds [5614080, 4227264, 150998016, ...], which is not a damage table.
+// Entry 7 used to cite +0x21C80 [7680..3584]; that is the OTHER dispatcher's
+// weapon 1 and the citation was wrong (removed 2026-09-02, while the two
+// fields' names were being untangled). No value here moved: 7 was already at
+// the floor, as 3, 4, 5 and 6 are. Values 5/6/7 of this field are the
+// editor's OPTION A/B/C — option pods driven from GAME +0x1CEDE, not shots —
+// so "per-bullet shot damage" is the wrong question for them and the floor is
+// the honest answer until the pods themselves are traced.
 export const WEAPON_FULL_POWER_DAMAGE = {
     0: 5120,   // fires no main shot; keep the anchor pace
     1: 5120,
     2: 11520,
     3: 5120,   // homing stream: 128/contact, many contacts/frame — floored
     4: 5120,   // twin 1152 missiles + sub coverage — floored
-    5: 5120,   // 1280 tap + 7168/pellet charge — floored
-    6: 5120,   // 384/bullet at 1-frame intervals — floored
-    7: 5120,   // 3584..7680 per beam frame — floored
+    5: 5120,   // OPTION A: 1280 tap, floored — the pods are untraced
+    6: 5120,   // OPTION B: 384/bullet at 1-frame intervals — floored
+    7: 5120,   // OPTION C: no traced table — floored
 };
 // The importer's divisor works in LIFE units (damage units >> 8): a save's
 // full-power shot of D units kills LIFE L in ceil(L*256/D) hits. The floor
@@ -179,8 +198,8 @@ function loadout(sec5, base) {
     const b0 = sec5[base];
     const b1 = sec5[base + 1];
     return {
-        main: b0 & 7,
-        sub: (b0 >> 4) & 7,
+        main: (b0 >> 4) & 7,
+        sub: b0 & 7,
         charge: b1 & 3,
         bomb: (b1 >> 4) & 7,
         bombVariant: (b1 & 0x80) !== 0,
@@ -212,9 +231,16 @@ export function decodeSettings(sec5) {
         gameMode: sec5[base] & 0x03,
         ships,
         loadouts,
-        // per-save shot damage: player 1's starting main weapon sets the pace
+        // Player 1's starting MAIN weapon (byte0 bits4-6). Metadata only —
+        // nothing downstream branches on it.
         mainWeapon: startWeapons.main,
-        shotDamage: weaponShotDamage(startWeapons.main),
+        // Shot damage stays keyed on byte0 bits0-2, the SUB field, because
+        // that is the weapon the runtime's own autofire stands in for and the
+        // field WEAPON_FULL_POWER_DAMAGE above was calibrated against. The
+        // 2026-09-02 MAIN/SUB correction renamed the field under it and left
+        // the value untouched; whether the pace should instead follow MAIN is
+        // a separate question that would change every save's difficulty.
+        shotDamage: weaponShotDamage(startWeapons.sub),
         // The 8 item slots (+0x1C..+0x23) — decoded 2026-08-28: each byte is
         // (movement << 4) | itemType. Types (effect pointer table +0x25ACC):
         // 0-3 = weapon change to loadout preset 0-3 (presets at +0x14..+0x1B),

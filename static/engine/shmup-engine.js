@@ -1690,7 +1690,9 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
       // Both ship config blocks in full (+0x0C P1, +0x10 P2). P2 join-in
       // reads ships[1] for its own starting loadout, speed cap, power
       // levels and autofire cadence; `mainWeapon2P` above is the same
-      // ship's starting main weapon, kept for callers that predate this.
+      // ship's starting MAIN weapon (byte0 bits4-6 — it followed the
+      // 2026-09-02 MAIN/SUB correction), kept for callers that predate
+      // this.
       ships: decoded.settings.ships ? decoded.settings.ships.map((sh) => ({
         startLoadout: sh.startLoadout,
         rapidParam: sh.rapidParam,
@@ -1699,8 +1701,8 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
         maxPower: sh.maxPower,
         autofireFrames: sh.autofireFrames
       })) : void 0,
-      // The four WEAPON LOADOUT presets in full — main, sub/option,
-      // charge and bomb per preset — plus which one each ship starts on.
+      // The four WEAPON LOADOUT presets in full — the editor's MAIN,
+      // SUB, CHARGE and BOMB rows — plus which one each ship starts on.
       // Weapon-change items (types 0-3) switch between them mid-game, so
       // the runtime needs all four, not just the starting set.
       loadouts: decoded.settings.loadouts ? decoded.settings.loadouts.map((l) => ({
@@ -2086,11 +2088,11 @@ var WEAPON_FULL_POWER_DAMAGE = {
   4: 5120,
   // twin 1152 missiles + sub coverage — floored
   5: 5120,
-  // 1280 tap + 7168/pellet charge — floored
+  // OPTION A: 1280 tap, floored — the pods are untraced
   6: 5120,
-  // 384/bullet at 1-frame intervals — floored
+  // OPTION B: 384/bullet at 1-frame intervals — floored
   7: 5120
-  // 3584..7680 per beam frame — floored
+  // OPTION C: no traced table — floored
 };
 var DEFAULT_SHOT_DAMAGE = 20;
 function weaponShotDamage(weapon) {
@@ -2175,8 +2177,8 @@ function loadout(sec5, base) {
   const b0 = sec5[base];
   const b1 = sec5[base + 1];
   return {
-    main: b0 & 7,
-    sub: b0 >> 4 & 7,
+    main: b0 >> 4 & 7,
+    sub: b0 & 7,
     charge: b1 & 3,
     bomb: b1 >> 4 & 7,
     bombVariant: (b1 & 128) !== 0,
@@ -2199,9 +2201,16 @@ function decodeSettings(sec5) {
     gameMode: sec5[base] & 3,
     ships,
     loadouts,
-    // per-save shot damage: player 1's starting main weapon sets the pace
+    // Player 1's starting MAIN weapon (byte0 bits4-6). Metadata only —
+    // nothing downstream branches on it.
     mainWeapon: startWeapons.main,
-    shotDamage: weaponShotDamage(startWeapons.main),
+    // Shot damage stays keyed on byte0 bits0-2, the SUB field, because
+    // that is the weapon the runtime's own autofire stands in for and the
+    // field WEAPON_FULL_POWER_DAMAGE above was calibrated against. The
+    // 2026-09-02 MAIN/SUB correction renamed the field under it and left
+    // the value untouched; whether the pace should instead follow MAIN is
+    // a separate question that would change every save's difficulty.
+    shotDamage: weaponShotDamage(startWeapons.sub),
     // The 8 item slots (+0x1C..+0x23) — decoded 2026-08-28: each byte is
     // (movement << 4) | itemType. Types (effect pointer table +0x25ACC):
     // 0-3 = weapon change to loadout preset 0-3 (presets at +0x14..+0x1B),

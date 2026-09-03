@@ -12,6 +12,11 @@ environment-neutral ESM — no DOM, no canvas, no fetch; just `DataView`,
 `TextEncoder`/`TextDecoder("shift-jis")` and `DecompressionStream`, all
 available in Deno, browsers, and modern Node.
 
+**New here?** [DECODING.md](DECODING.md) walks one worked example per kind of
+output — a colour, a pixel, a sprite, an enemy, a boss, a background tile, a
+setting, a note, a 3D shape — showing the exact bytes, what they become, and the
+line that does it. [FORMAT.md](FORMAT.md) is the full field reference.
+
 ## The pipeline
 
 ```js
