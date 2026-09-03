@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import { fresh } from "@fresh/plugin-vite";
+import { dirIndexRedirect } from "./lib/static-indexes.ts";
 
 // Dev parity for the cross-origin-isolated players. In production these come
 // from the main.ts middleware (or from emu-sw.js, which serves the opted-in
@@ -17,6 +18,27 @@ function playerIsolationHeaders(): Plugin {
           res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
         }
         next();
+      });
+    },
+  };
+}
+
+// Dev parity for the directory-index redirect in main.ts. Vite serves static/
+// itself in dev, bypassing the Fresh app, so /tilemap-editor would keep serving
+// the page from the wrong base here and the breakage would only show up in
+// production. The list both sides read is lib/static-indexes.ts.
+function staticIndexRedirects(): Plugin {
+  return {
+    name: "static-index-redirects",
+    // Ahead of the Fresh plugin, whose dev middleware would answer first.
+    enforce: "pre",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const to = req.url ? dirIndexRedirect(req.url) : null;
+        if (to === null) return next();
+        res.statusCode = 301;
+        res.setHeader("Location", to);
+        res.end();
       });
     },
   };
@@ -93,7 +115,12 @@ function dezaToneBank(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [dezaToneBank(), fresh(), playerIsolationHeaders()],
+  plugins: [
+    staticIndexRedirects(),
+    dezaToneBank(),
+    fresh(),
+    playerIsolationHeaders(),
+  ],
   server: {
     // Allow ngrok tunnels (and any other host) to reach the dev server.
     // Dev-only — production builds aren't served by Vite.

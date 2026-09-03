@@ -1,6 +1,7 @@
 import { App, staticFiles } from "fresh";
 import { define, type State } from "./utils.ts";
 import { injectLauncherMarker } from "./lib/launcher-inject.ts";
+import { dirIndexRedirect } from "./lib/static-indexes.ts";
 
 export const app = new App<State>();
 
@@ -46,6 +47,18 @@ app.use(async (ctx) => {
     res.headers.set("Cross-Origin-Embedder-Policy", "require-corp");
   }
   return res;
+});
+
+// Send a static directory index to its trailing-slash form before staticFiles()
+// can answer the bare one itself — see lib/static-indexes.ts for what breaks
+// otherwise. GET and HEAD only, so a 301's method rewriting never applies to
+// anything but a page load. vite.config.ts does the same in dev.
+app.use((ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return ctx.next();
+  const url = new URL(ctx.req.url);
+  const to = dirIndexRedirect(url.pathname + url.search);
+  if (to === null) return ctx.next();
+  return new Response(null, { status: 301, headers: { location: to } });
 });
 
 app.use(staticFiles());
