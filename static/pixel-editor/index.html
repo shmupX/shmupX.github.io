@@ -31,6 +31,17 @@
       --sx-checker-sm: conic-gradient(rgba(124,255,79,.06) 25%, transparent 0 50%, rgba(124,255,79,.06) 0 75%, transparent 0) 0 0/16px 16px, #07130a;
     }
     * { box-sizing: border-box; }
+    /* CRT scrollbars, as in the Level Editor: a thin green thumb on a transparent
+       track, turning yellow on hover like every other control here. WebKit takes
+       the pseudo-elements; Firefox implements none of them, so it gets the
+       standard properties instead — scoped to it, because scrollbar-color makes
+       Chrome ignore the pseudo-elements and with them the hover state. */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--sx-line); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--sx-yellow-line); }
+    ::-webkit-scrollbar-corner { background: transparent; }
+    @supports not selector(::-webkit-scrollbar) { * { scrollbar-width: thin; scrollbar-color: var(--sx-line) transparent; } }
     html, body { height: 100%; }
     body {
       margin: 0; min-width: 960px;
@@ -289,6 +300,6 @@
       <span class="sx-status" id="status">PIXEL EDITOR READY</span>
     </div>
   </div>
-  <script type="module" src="pixel-editor.js"></script>
+  <script type="module" src="/pixel-editor/pixel-editor.js"></script>
 </body>
 </html>

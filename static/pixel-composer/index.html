@@ -7,6 +7,17 @@
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* CRT scrollbars, as in the Level Editor: a thin green thumb on a transparent
+       track, turning yellow on hover like every other control here. WebKit takes
+       the pseudo-elements; Firefox implements none of them, so it gets the
+       standard properties instead — scoped to it, because scrollbar-color makes
+       Chrome ignore the pseudo-elements and with them the hover state. */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(140,255,110,.3); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(246,255,74,.5); }
+    ::-webkit-scrollbar-corner { background: transparent; }
+    @supports not selector(::-webkit-scrollbar) { * { scrollbar-width: thin; scrollbar-color: rgba(140,255,110,.3) transparent; } }
     html, body { height: 100%; }
     body {
       background-color: #000;
