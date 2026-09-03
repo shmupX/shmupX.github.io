@@ -7,6 +7,8 @@
 //   deno task deza:upload -- --only "A28" # substring filter on the filename
 //   deno task deza:upload -- --limit 5
 //   deno task deza:upload -- --force      # re-render covers and re-upload blobs
+//   deno task deza:upload -- --covers-only  # re-render covers, leave blobs alone
+//   deno task deza:upload -- --from dev-fixtures  # read the library from here
 //
 // WHY THE SAVE IS STORED DEINTERLEAVED
 // A .sav is a 1,114,112-byte interleaved Saturn cart image whose every even
@@ -247,13 +249,26 @@ const value = (name: string) => {
 
 const dryRun = flag("dry-run");
 const force = flag("force");
+// Re-render and re-upload the COVERS without touching the save blobs. A
+// cover is derived from the decoders, so a decode fix can make every stored
+// cover wrong while the saves themselves stay byte-perfect — which is exactly
+// what the 2026-08-27 tilemap flip-bit fix did to 96 of the 258 covers
+// rendered two days earlier. --force would fix them too, but only by pushing
+// 46 MB of provably identical blobs along with them.
+const coversOnly = flag("covers-only");
 const only = value("only");
 const limit = Number(value("limit") ?? 0);
 
 const { byTitle, aliased } = await loadGamesDb();
 
+// The library is wherever the operator keeps it; this checkout has it in
+// dev-fixtures/ rather than staged under static/.
+const savesDir = value("from")
+  ? new URL(`${value("from")!.replace(/\/?$/, "/")}`, `file://${Deno.cwd()}/`)
+  : SAVES_DIR;
+
 let files: string[] = [];
-for await (const e of Deno.readDir(SAVES_DIR)) {
+for await (const e of Deno.readDir(savesDir)) {
   if (e.isFile && /\.(sav|bcr|bkr)$/i.test(e.name)) files.push(e.name);
 }
 files.sort();
@@ -291,7 +306,7 @@ for (const [i, file] of files.entries()) {
   const fileTitle = fileTitleOf(file);
   const label = `[${i + 1}/${files.length}] ${fileTitle}`;
   try {
-    const sav = await Deno.readFile(new URL(file, SAVES_DIR));
+    const sav = await Deno.readFile(new URL(file, savesDir));
     const savSha256 = await sha256Hex(sav);
     const prev = existing[slug] ?? {};
     const current = prev.schemaVersion === SCHEMA_VERSION &&
@@ -313,7 +328,7 @@ for (const [i, file] of files.entries()) {
     let cover:
       | { png: Uint8Array; w: number; h: number; source: string }
       | null = null;
-    if (!haveCover || force) {
+    if (!haveCover || force || coversOnly) {
       const { data } = await normalize(sav);
       const entry = parse(data).filter(isGameSave)[0];
       if (!entry?.payload) {
@@ -340,7 +355,7 @@ for (const [i, file] of files.entries()) {
 
     // Save blob: gzip of the deinterleaved image (see header).
     const profile = interleaveProfile(sav);
-    const needBlob = !current || force;
+    const needBlob = (!current || force) && !coversOnly;
     let blobB64 = "", blobSha = "", blobBytes = 0;
     if (needBlob) {
       const gz = await gzip(deinterleave(sav));

@@ -3271,7 +3271,11 @@
   var BTN_SELECT = 8;
   var BTN_START = 9;
   var BTN_R3 = 11;
-  var SP_BUTTONS = [FACE_BOTTOM, FACE_RIGHT, FACE_LEFT, FACE_TOP, SHOULDER_L1, SHOULDER_R1, SHOULDER_L2, SHOULDER_R2];
+  // Every face button and the top shoulders fire the bomb. L2/R2 used to as
+  // well, but they are the OPTION ring's input now (see `option` below) — the
+  // bomb still has six buttons, and the ring gets the two nothing else wanted.
+  var SP_BUTTONS = [FACE_BOTTOM, FACE_RIGHT, FACE_LEFT, FACE_TOP, SHOULDER_L1, SHOULDER_R1];
+  var OPTION_BUTTONS = [SHOULDER_L2, SHOULDER_R2];
   var ENTER_BUTTONS = [BTN_START];
   var DPAD_UP = 12;
   var DPAD_DOWN = 13;
@@ -3339,7 +3343,9 @@
       enterDown: false,
       // start button held
       charge: false,
-      // either shoulder held — the pad's stand-in for the keyboard's SHIFT
+      // either top shoulder held — the pad's stand-in for the keyboard's SHIFT
+      option: false,
+      // either bottom trigger held — widens the OPTION A ring, keyboard Z
       left: false,
       right: false,
       up: false,
@@ -3390,9 +3396,13 @@
         if (pressed) state.enterDown = true;
         _prevButtons[idx][bi] = pressed;
       }
-      // A pad has no SHIFT, so the shoulders hold the charge.
+      // A pad has no SHIFT, so the top shoulders hold the charge.
       if (isButtonPressed(gp.buttons[SHOULDER_L1]) || isButtonPressed(gp.buttons[SHOULDER_R1])) {
         state.charge = true;
+      }
+      // ...and no free face button for the OPTION ring, so the triggers take it.
+      for (i = 0; i < OPTION_BUTTONS.length; i++) {
+        if (isButtonPressed(gp.buttons[OPTION_BUTTONS[i]])) { state.option = true; break; }
       }
       var editorBtn = gp.buttons.length > BTN_R3 ? BTN_R3 : BTN_SELECT;
       if (editorBtn < gp.buttons.length) {
@@ -3872,7 +3882,7 @@
     if (!p.remote) {
       p.remote = {
         left: false, right: false, up: false, down: false,
-        sp: false, enter: false, charge: false, fireHeld: false,
+        sp: false, enter: false, charge: false, option: false, fireHeld: false,
       };
     }
     return p;
@@ -8115,9 +8125,8 @@
     // OPTION A widens its ring while the engine's C button is held. This
     // runtime has no held-fire button to inherit, so — exactly as the charge
     // did above — the ring gets an input of its own: Z on a keyboard, M for
-    // player 2. No pad button is free (every face and shoulder button already
-    // fires the bomb), so on a pad the ring stays at its 32 px rest radius.
-    var optionHeld = !!(keys && keys.option && keys.option.isDown);
+    // player 2, or either bottom trigger (L2/R2) on a pad.
+    var optionHeld = !!(keys && keys.option && keys.option.isDown) || gp.option;
     updateDezaPods(scene, p, optionHeld);
   }
   function playerDamage(scene, p, amount) {
