@@ -933,10 +933,10 @@ body.theme-xbox360.osd-music-blade .music-hd {
 
 /* Boot flash */
 .boot { position: fixed; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; z-index: 200; pointer-events: none; animation: bootOut 1.6s ease forwards; }
-/* .b-glyph is an <img> (the voxel X), so it sizes off width/height rather than
-   font-size. pixelated keeps the voxel edges hard when the flash scales it past
-   the source's 399px. */
-.boot .b-glyph { width: 30vmin; height: 30vmin; image-rendering: pixelated; animation: bootIn 1.4s ease forwards; filter: drop-shadow(0 0 30px rgba(120, 255, 80, .8)); }
+/* .b-glyph is the 🐵 emoji in the 30vmin box the voxel X used to fill: the
+   glyph sizes off font-size, centred, with the same bootIn timing and green
+   drop-shadow. */
+.boot .b-glyph { width: 30vmin; height: 30vmin; display: flex; align-items: center; justify-content: center; font-size: 24vmin; line-height: 1; animation: bootIn 1.4s ease forwards; filter: drop-shadow(0 0 30px rgba(120, 255, 80, .8)); }
 @keyframes bootIn { 0% { opacity: 0; transform: scale(.5); } 40% { opacity: 1; transform: scale(1.1); } 70% { transform: scale(1); } 100% { opacity: 0; transform: scale(1.4); } }
 @keyframes bootOut { 0%, 80% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
 

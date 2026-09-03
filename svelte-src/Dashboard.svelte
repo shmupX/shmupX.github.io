@@ -3793,9 +3793,9 @@
 </script>
 
 {#if !bootGone}
-  <!-- Boot flash: the blocky voxel X. Square source, centred on its own canvas,
-       so the mark sits dead centre in the flash. -->
-  <div class="boot"><img class="b-glyph" src="/x-logo.png" alt="" /></div>
+  <!-- Boot flash: the 🐵 glyph, centred in the same 30vmin box the voxel X
+       used to fill (dashboard.css .boot / .b-glyph). -->
+  <div class="boot"><div class="b-glyph" aria-hidden="true">🐵</div></div>
 {/if}
 
 <div class="field" aria-hidden="true">

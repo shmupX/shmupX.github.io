@@ -6,6 +6,10 @@
     <title>Boss Viewer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <!-- The BOSS LAB (window.BossLab): the same live sim + attack-pattern panel
+         the level editor mounts in place of its wave grid. Assignment is the
+         lab's right panel, so this page no longer carries a BP sheet of its own. -->
+    <script src="boss-lab.js"></script>
     <style>
         @font-face {
             font-family: 'Orbitron';
@@ -21,12 +25,6 @@
         button { font-family: inherit; }
         .hidden { display: none !important; }
 
-        @keyframes bossIn { from { opacity: 0; transform: translate(-50%,-50%) scale(1.5); filter: brightness(3); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); filter: brightness(1); } }
-        @keyframes fadeIn { from { opacity: 0; } }
-        @keyframes sheetIn { from { transform: translateY(40px); opacity: 0; } }
-        @keyframes dashDrift { to { stroke-dashoffset: -14; } }
-        @keyframes hitRing { from { opacity: 1; transform: translate(-50%,-50%) scale(.5); } to { opacity: 0; transform: translate(-50%,-50%) scale(1.6); } }
-
         ::-webkit-scrollbar { width: 6px; height: 0; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(140,255,110,.28); border-radius: 3px; }
@@ -35,28 +33,28 @@
         #bg { position: absolute; inset: 0; background: var(--pagebg); transition: background .3s; }
         #col { position: absolute; inset: 0; display: flex; flex-direction: column; }
 
-        /* ===== STATUS ROW ===== */
+        /* ===== STATUS ROW — wraps on narrow screens; the clock drops out below 768px ===== */
         #statusbar {
-            flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 2px 10px;
             padding: calc(12px + env(safe-area-inset-top, 0px)) 14px 6px;
             font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .18em; color: var(--mono);
         }
         .status-left { display: flex; align-items: center; gap: 7px; }
-        .status-right { display: flex; align-items: center; gap: 12px; }
-        .dot { border-radius: 50%; background: var(--dot); box-shadow: 0 0 8px var(--dot); }
-        .dot7 { width: 7px; height: 7px; }
-        .dot6 { width: 6px; height: 6px; }
+        .status-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-left: auto; }
+        .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dot); box-shadow: 0 0 8px var(--dot); }
         #custom-badge { color: var(--sel); text-shadow: 0 0 8px var(--selglow); }
-        .top-link { color: var(--mono); text-decoration: none; }
+        .top-link { color: var(--mono); text-decoration: none; min-height: 44px; display: flex; align-items: center; }
+        .top-link:hover { color: var(--sel); }
         #clock { color: var(--monodim); }
         .seg { display: flex; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; }
         .seg button {
-            border: none; cursor: pointer; padding: 4px 8px;
+            border: none; cursor: pointer; padding: 6px 10px;
             font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em;
             background: transparent; color: var(--mono);
         }
         #seg-xbox.on { background: var(--sel); color: #111; }
         #seg-nintendo.on { background: var(--sel); color: #fff; }
+        @media (max-width: 767px) { #clock { display: none; } }
 
         /* ===== BANNER ===== */
         #banner {
@@ -70,78 +68,11 @@
         }
         #banner-sub { font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: .14em; color: var(--rsub); padding-right: 34px; }
 
-        /* ===== BOSS CHIPS ===== */
-        #boss-bar {
-            flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 8px;
-            padding: 8px max(8px, env(safe-area-inset-right, 0px)) 2px max(8px, env(safe-area-inset-left, 0px));
-            overflow-x: auto; flex-wrap: wrap;
+        /* ===== THE LAB ===== */
+        #lab {
+            flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column;
+            padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
         }
-        .boss-chip {
-            height: 32px; padding: 0 15px; border-radius: 16px; cursor: pointer; white-space: nowrap;
-            text-transform: uppercase; letter-spacing: .08em; font-family: 'Orbitron', sans-serif;
-            font-size: 11px; font-weight: 800; transition: all .15s;
-            border: 2px solid var(--redge); color: var(--rink); background: var(--btnbg); box-shadow: none;
-        }
-        .boss-chip.active { border-color: var(--sel); color: var(--sel); background: var(--btnactive); box-shadow: 0 0 16px var(--selglow); }
-        .chip-divider { width: 1px; height: 20px; background: var(--edge); margin: 0 6px; flex-shrink: 0; }
-        #bp-btn {
-            height: 32px; padding: 0 14px; border-radius: 16px; cursor: pointer; white-space: nowrap;
-            letter-spacing: .14em; font-family: 'Share Tech Mono', monospace; font-size: 10px;
-            background: none; border: 1px dashed var(--edge); color: var(--rink);
-        }
-
-        /* ===== TITLE ROW ===== */
-        #title-row { flex-shrink: 0; display: flex; align-items: baseline; justify-content: center; gap: 14px; padding: 6px 12px 2px; }
-        #boss-title { font-size: 16px; font-weight: 800; letter-spacing: .2em; color: var(--ink); text-shadow: 0 0 12px var(--tglow); }
-        #pattern-tag { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .16em; color: var(--rsub); }
-        #pattern-tag.overridden { color: var(--sel); }
-
-        /* ===== STAGE ===== */
-        #stage { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: none; cursor: crosshair; }
-        #stage-layers { position: absolute; inset: 0; pointer-events: none; }
-        .crop { image-rendering: pixelated; background-repeat: no-repeat; }
-        .boss-sprite { position: absolute; transform: translate(-50%,-50%); animation: bossIn .4s ease-out; }
-        .proj { position: absolute; transform: translate(-50%,-50%); image-rendering: pixelated; background-repeat: no-repeat; }
-        #player { position: absolute; transform: translate(-50%,-50%); }
-        #player-hint {
-            position: absolute; left: 50%; bottom: -18px; transform: translateX(-50%);
-            font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .14em;
-            white-space: nowrap; color: var(--rsub);
-        }
-        .hit-ring {
-            position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
-            border: 2px solid var(--sel); border-radius: 50%;
-            animation: hitRing .3s ease-out forwards;
-        }
-        #hits-info, #frame-info {
-            position: absolute; bottom: 8px; font-size: 10px; color: var(--rsub);
-            font-family: 'Share Tech Mono', monospace; pointer-events: none;
-        }
-        #hits-info { left: 12px; }
-        #frame-info { right: 12px; }
-
-        /* ===== MOVE CARDS ===== */
-        #bottom {
-            flex-shrink: 0; border-top: 1px solid var(--edge);
-            padding: 8px max(10px, env(safe-area-inset-right, 0px)) max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
-            display: flex; flex-direction: column; gap: 7px;
-        }
-        #move-bar { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-        .move-card {
-            display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 14px;
-            border-radius: 10px; cursor: pointer; transition: all .15s;
-            background: rgba(0,0,0,.4); border: 2px solid var(--redge); color: var(--rink); box-shadow: none;
-        }
-        .move-card.active { background: var(--btnactive); border-color: var(--sel); color: var(--sel); box-shadow: 0 0 14px var(--selglow); }
-        .move-title { font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 800; letter-spacing: .08em; white-space: nowrap; }
-        .move-sub { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .08em; opacity: .75; white-space: nowrap; }
-        #extra-bar { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
-        .extra-chip {
-            cursor: pointer; font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .1em;
-            padding: 3px 9px; border-radius: 6px; background: rgba(0,0,0,.3); text-transform: uppercase;
-            transition: all .15s; border: 1px solid var(--redge); color: var(--rsub);
-        }
-        .extra-chip.active { border-color: var(--sel); color: var(--sel); }
 
         /* ===== FX OVERLAYS ===== */
         #fx-scanlines {
@@ -154,99 +85,12 @@
             background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.8) 100%);
         }
         #flash {
-            position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); z-index: 300;
+            position: absolute; bottom: 110px; left: 0; right: 0; margin: 0 auto; width: max-content; max-width: calc(100% - 32px);
+            text-align: center; z-index: 300;
             font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .16em;
             color: var(--sel); background: rgba(0,0,0,.75); border: 1px solid var(--edge);
-            border-radius: 8px; padding: 8px 16px; white-space: nowrap;
+            border-radius: 8px; padding: 8px 16px;
         }
-
-        /* ===== PATTERNS SHEET ===== */
-        #sheet-overlay {
-            position: absolute; inset: 0; z-index: 200; background: rgba(0,0,0,.55);
-            display: flex; align-items: flex-end; justify-content: center; animation: fadeIn .15s;
-        }
-        #sheet {
-            width: min(620px, 100vw); max-height: 92%; display: flex; flex-direction: column;
-            border-radius: 18px 18px 0 0; border: 1px solid var(--shedge); border-bottom: none;
-            background: linear-gradient(180deg, var(--sheet1), var(--sheet2));
-            box-shadow: 0 -8px 40px rgba(0,0,0,.6); animation: sheetIn .2s ease-out; overflow: hidden;
-        }
-        .sheet-status {
-            display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 2px;
-            font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .2em; color: var(--mono);
-        }
-        .sheet-status-left { display: flex; align-items: center; gap: 7px; }
-        .sheet-title-row { display: flex; align-items: baseline; justify-content: space-between; padding: 6px 16px 10px; border-bottom: 1px solid var(--edge); }
-        .sheet-title { font-size: 19px; font-weight: 800; letter-spacing: .22em; color: var(--ink); text-shadow: 0 0 14px var(--tglow); }
-        #sheet-sub { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .16em; color: var(--rsub); }
-        #sheet-scroll {
-            flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
-            scrollbar-width: thin; scrollbar-color: var(--redge) transparent; padding: 12px 14px 4px;
-        }
-
-        #sheet-preview { border: 1px dashed var(--sel); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
-        .preview-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .22em; color: var(--sel); margin-bottom: 6px; }
-        .preview-svg { width: 100%; height: 96px; display: block; }
-        .preview-desc { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .1em; line-height: 1.7; color: var(--rink); margin-top: 6px; }
-        .preview-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-        .chip-old {
-            font-family: 'Share Tech Mono', monospace; font-size: 9px; padding: 3px 8px; border-radius: 6px;
-            border: 1px solid var(--redge); color: var(--rsub); text-decoration: line-through; background: rgba(0,0,0,.3);
-        }
-        .chip-arrow { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--sel); padding: 0 2px; }
-        .chip-new {
-            font-family: 'Share Tech Mono', monospace; font-size: 9px; padding: 3px 8px; border-radius: 6px;
-            border: 1px solid var(--sel); color: var(--sel); background: rgba(0,0,0,.3); box-shadow: 0 0 10px var(--selglow);
-        }
-
-        .prow {
-            border-radius: 12px; margin-bottom: 8px; padding: 10px 12px; transition: all .15s;
-            border: 1px solid var(--redge); background: var(--rbg); box-shadow: none;
-        }
-        .prow.saved { border-color: var(--shedge); background: linear-gradient(90deg, var(--ov1), var(--ov2)); }
-        .prow.pending { border-color: var(--sel); background: linear-gradient(90deg, var(--ov1), var(--ov2)); box-shadow: 0 0 18px var(--selglow); }
-        .prow-main { display: flex; align-items: center; gap: 12px; }
-        .prow-thumb {
-            width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; overflow: hidden;
-            display: flex; align-items: center; justify-content: center;
-            border: 2px solid var(--redge); background: var(--btnbg);
-        }
-        .prow-info { flex: 1; min-width: 0; }
-        .prow-name { font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--rink); }
-        .prow-sub { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .06em; margin-top: 2px; color: var(--rsub); }
-        .prow.saved .prow-name, .prow.saved .prow-sub,
-        .prow.pending .prow-name, .prow.pending .prow-sub { color: var(--sel); }
-        .prow select {
-            background: rgba(0,0,0,.5); color: var(--bink); border: 1px solid var(--redge); border-radius: 8px;
-            padding: 7px 9px; font-size: 9px; letter-spacing: .1em; font-family: 'Share Tech Mono', monospace;
-            cursor: pointer; flex-shrink: 0; max-width: 44%;
-        }
-        .prow select option { background: #04180a; color: var(--rink); }
-        body.theme-nintendo .prow select option { background: #10182a; }
-        .prow-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
-        .prow-chip {
-            font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .08em;
-            padding: 3px 8px; border-radius: 6px; background: rgba(0,0,0,.35);
-            border: 1px solid var(--redge); color: var(--rink);
-        }
-        .prow.pending .prow-chip { border-color: var(--sel); color: var(--sel); }
-
-        .sheet-footer {
-            flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 30px;
-            padding: 13px 16px calc(13px + env(safe-area-inset-bottom, 0px));
-            border-top: 1px solid var(--edge); font-size: 10px; font-weight: 700; letter-spacing: .16em;
-        }
-        .foot-btn {
-            display: flex; align-items: center; gap: 9px; background: none; border: none; padding: 0;
-            color: var(--rink); font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: 700;
-            letter-spacing: .16em; cursor: pointer;
-        }
-        .orb {
-            width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-            font-size: 11px; font-weight: 900;
-        }
-        .orb-a { background: var(--orbA); border: 1px solid var(--orbAe); color: var(--orbAi); }
-        .orb-b { background: var(--orbB); border: 1px solid var(--orbBe); color: var(--orbBi); }
     </style>
 </head>
 <body>
@@ -255,7 +99,7 @@
         <div id="col">
             <div id="statusbar">
                 <div class="status-left">
-                    <span class="dot dot7"></span>
+                    <span class="dot"></span>
                     <span>BOSS VIEWER // BV</span>
                     <span id="custom-badge" class="hidden">· CUSTOM DATA</span>
                 </div>
@@ -273,48 +117,13 @@
                 <div class="banner-title">BOSS VIEWER</div>
                 <div id="banner-sub"></div>
             </div>
-            <div id="boss-bar"></div>
-            <div id="title-row">
-                <div id="boss-title"></div>
-                <div id="pattern-tag"></div>
-            </div>
-            <div id="stage">
-                <div id="stage-layers">
-                    <div id="boss-layer"></div>
-                    <div id="proj-layer"></div>
-                    <div id="player-layer"></div>
-                </div>
-                <div id="hits-info"></div>
-                <div id="frame-info"></div>
-            </div>
-            <div id="bottom">
-                <div id="move-bar"></div>
-                <div id="extra-bar" class="hidden"></div>
-            </div>
+            <!-- The same Boss Lab the editor mounts. APPLY writes back through
+                 the editor bridge, so both pages read one store. -->
+            <div id="lab"></div>
         </div>
         <div id="fx-scanlines"></div>
         <div id="vignette"></div>
         <div id="flash" class="hidden"></div>
-        <div id="sheet-overlay" class="hidden">
-            <div id="sheet">
-                <div class="sheet-status">
-                    <span class="sheet-status-left"><span class="dot dot6"></span>ADVANCED // BP</span>
-                    <span id="sheet-clock"></span>
-                </div>
-                <div class="sheet-title-row">
-                    <span class="sheet-title">BOSS PATTERNS</span>
-                    <span id="sheet-sub"></span>
-                </div>
-                <div id="sheet-scroll">
-                    <div id="sheet-preview" class="hidden"></div>
-                    <div id="sheet-rows"></div>
-                </div>
-                <div class="sheet-footer">
-                    <button id="btn-apply" class="foot-btn"><span class="orb orb-a">A</span><span id="apply-label">APPLY</span></button>
-                    <button id="btn-close" class="foot-btn"><span class="orb orb-b">B</span><span>CLOSE</span></button>
-                </div>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -330,82 +139,11 @@
         document.getElementById('nav-editor').href = 'index.html?game=' + GAME_ID;
         document.getElementById('nav-play').href = '/games/' + GAME_ID;
 
-        const BOSS_ORDER = ['boss0', 'boss1', 'boss2', 'boss3', 'boss4', 'bossExtra'];
-        // Null-prototype: bossName() is called with bossData keys and with a
-        // record's own attackPattern, both of which come straight off a shared
-        // level, so a plain object would let "constructor"/"toString" pull an
-        // inherited value out of Object.prototype and render as function source.
-        const NAMES = Object.assign(Object.create(null), { boss0: 'Bison', boss1: 'Barlog', boss2: 'Sagat', boss3: 'Vega', boss4: 'Fang', bossExtra: 'Goki' });
-        // NAMES is the SHIPPED game's roster, keyed by the slot each boss
-        // occupies. A Dezaemon import fills the same slots with its own bosses,
-        // named dezaBoss0..dezaBossN by map-to-game.js — that name wins, or every
-        // imported save's stage bosses would read as Bison, Barlog, Sagat, Vega, Fang.
-        const IMPORTED_BOSS_NAME = /^dezaBoss\d+$/;
-        const bossName = (k) => {
-            const own = bossData && bossData[k] && bossData[k].name;
-            if (IMPORTED_BOSS_NAME.test(own || '')) return own;
-            return NAMES[k] || own || k;
-        };
-        const BASE = 0.26;          // boss resting y (fraction of stage height)
-        const SPRITE_SCALE = 3;     // boss sprite scale (clamped to fit the stage)
-        const REPEAT_DELAY = 1000;  // ms before a finished pattern move loops
-
         // ================== THEMES (synced with the CMG launcher) ==================
+        // Page chrome only — the lab paints itself from its own token set.
         const THEMES = {
-            xbox: { pagebg: 'radial-gradient(ellipse 80% 60% at 38% 55%, rgba(20,90,40,.45), transparent 70%), radial-gradient(ellipse 60% 70% at 50% 50%, rgba(8,40,18,.85), #000 80%), #000', banbg: 'linear-gradient(180deg, rgba(70,180,90,.18), rgba(20,60,30,.7) 50%, rgba(20,60,30,.7) 50%, rgba(70,180,90,.05))', edge: 'rgba(140,255,110,.35)', ink: '#d9ffcb', tglow: 'rgba(124,255,79,.8)', mono: 'rgba(156,255,107,.65)', monodim: 'rgba(220,255,180,.45)', sel: '#F6FF4A', selglow: 'rgba(246,255,74,.55)', dot: '#7CFF4F', rbg: 'rgba(4,24,10,.6)', redge: 'rgba(140,255,110,.28)', rink: '#d6ffc4', rsub: 'rgba(220,255,180,.55)', btnbg: 'radial-gradient(circle at 35% 30%, rgba(40,90,45,.5), rgba(6,30,12,.95) 70%)', btnactive: 'radial-gradient(circle at 35% 30%, rgba(60,120,60,.9), rgba(6,30,12,.95) 70%)', bink: '#9CFF6B', scan: 'rgba(0,255,120,.035)', sheet1: 'rgba(24,64,32,.97)', sheet2: 'rgba(4,18,8,.98)', shedge: 'rgba(246,255,74,.65)', orbA: 'radial-gradient(circle at 35% 30%, #d6ffd0 0%, #6fd06f 25%, #0e6a2b 60%, #04240f 95%)', orbAe: 'rgba(140,255,110,.6)', orbAi: '#04240f', orbB: 'radial-gradient(circle at 35% 30%, #fdf6b0 0%, #cfc23e 30%, #6a6410 65%, #201d02 100%)', orbBe: 'rgba(246,255,74,.5)', orbBi: '#161300', ov1: 'rgba(60,54,8,.55)', ov2: 'rgba(24,22,4,.65)' },
-            nintendo: { pagebg: 'radial-gradient(ellipse 80% 55% at 40% 45%, rgba(228,0,15,.1), transparent 70%), #0d0f1a', banbg: 'linear-gradient(180deg, rgba(139,160,194,.1), rgba(15,22,34,.85) 35%, rgba(15,22,34,.85) 65%, rgba(139,160,194,.08))', edge: 'rgba(213,213,216,.3)', ink: '#e9ecf1', tglow: 'rgba(255,59,73,.7)', mono: 'rgba(139,160,194,.8)', monodim: 'rgba(139,160,194,.55)', sel: '#ff5b66', selglow: 'rgba(228,0,15,.5)', dot: '#ff3b49', rbg: '#0f1622', redge: '#2a3850', rink: '#e9ecf1', rsub: 'rgba(139,160,194,.7)', btnbg: 'radial-gradient(circle at 35% 30%, rgba(49,58,78,.5), rgba(12,16,26,.95) 70%)', btnactive: 'radial-gradient(circle at 35% 30%, rgba(90,20,26,.9), rgba(20,8,12,.95) 70%)', bink: '#e9ecf1', scan: 'rgba(255,70,84,.03)', sheet1: 'rgba(31,42,60,.97)', sheet2: 'rgba(10,13,22,.98)', shedge: 'rgba(255,91,102,.7)', orbA: 'radial-gradient(circle at 35% 30%, #ffd9db 0%, #ff6b76 20%, #e4000f 50%, #4a0308 85%)', orbAe: 'rgba(255,140,148,.75)', orbAi: '#fff', orbB: 'radial-gradient(circle at 35% 30%, #fff 0%, #d5d5d8 25%, #88848b 60%, #2f2f2f 95%)', orbBe: 'rgba(213,213,216,.75)', orbBi: '#e4000f', ov1: 'rgba(74,3,8,.55)', ov2: 'rgba(36,1,4,.65)' }
-        };
-
-        // Pattern-preview path sketches shown in the sheet when a new pattern is picked.
-        const PREVIEWS = {
-            boss0: { d: 'M30 30 H290', d2: 'M160 30 V88', dots: [[30, 30], [160, 30], [290, 30], [160, 88]] },
-            boss1: { d: 'M20 40 C80 15 130 55 180 35', d2: 'M180 35 L215 88 L255 40', dots: [[20, 40], [180, 35], [255, 40]] },
-            boss2: { d: 'M20 30 H70 V48 H120 V30 H170 V48 H220', d2: 'M268 30 V85', dots: [[20, 30], [220, 48], [268, 85]] },
-            boss3: { d: 'M160 45 L100 90 M160 45 L160 92 M160 45 L220 90', dots: [[30, 28], [290, 28], [160, 45]] },
-            boss4: { d: 'M160 25 L105 88 M160 25 L160 92 M160 25 L215 88', dots: [[160, 25], [105, 88], [160, 92], [215, 88]] },
-            bossExtra: { d: 'M30 62 C85 18 150 92 205 45 S275 24 292 32', dots: [[30, 62], [292, 32]] }
-        };
-
-        // ================== ATTACK PATTERNS ==================
-        // Simulated versions of the game's boss movement/attack patterns.
-        // Step DSL: tw (tween x/y), jump (teleport), fade (alpha), wait (ms),
-        // anim (switch animation), fire (spawn projectiles).
-        // The steps builder gets c = { px: player x, B: BASE, r(a,b): random }.
-        const PAT = {
-            boss0: { label: 'PYRAMID', desc: 'WARP ×3 → STRAFE VOLLEY ×7 → RADIAL FIELD → DIVE CRUSH ON PLAYER X', moves: [
-                { l: 'WARP ×3', sub: 'TELEPORT SWEEP', a: 'idle', steps: c => [{ fade: 0, dur: 90 }, { jump: { x: 0.12 } }, { fade: 1, dur: 90 }, { wait: 260 }, { fade: 0, dur: 90 }, { jump: { x: 0.88 } }, { fade: 1, dur: 90 }, { wait: 260 }, { fade: 0, dur: 90 }, { jump: { x: c.r(0.2, 0.8) } }, { fade: 1, dur: 90 }] },
-                { l: 'STRAFE VOLLEY', sub: 'STRAIGHT ×7', a: 'attack', steps: c => { const s = [{ anim: 'attack' }]; [0.06, 0.94, 0.14, 0.86, 0.28, 0.72, 0.5].forEach(x => s.push({ jump: { x } }, { fire: { type: 'straight' } }, { wait: 130 })); return s; } },
-                { l: 'RADIAL FIELD', sub: 'RADIAL 14 ×3', a: 'attack', steps: c => [{ tw: { x: 0.5, y: c.B + 0.05 }, dur: 400, anim: 'attack' }, { fire: { type: 'radial', count: 14, proj: 'B' } }, { wait: 750 }, { fire: { type: 'radial', count: 14, proj: 'B' } }, { wait: 750 }, { fire: { type: 'radial', count: 14, proj: 'B' } }] },
-                { l: 'DIVE CRUSH', sub: 'LOCK X · DIVE', a: 'attack', steps: c => [{ jump: { x: c.px } }, { anim: 'attack' }, { tw: { y: c.B - 0.07 }, dur: 220 }, { tw: { y: 0.9 }, dur: 800, ease: 'in' }, { fade: 0, dur: 60 }, { jump: { x: 0.5, y: -0.12 } }, { fade: 1, dur: 60 }, { tw: { y: c.B }, dur: 800 }] }
-            ] },
-            boss1: { label: 'BARLOG', desc: 'REPOSITION → STRAIGHT SHOT · TRACK PLAYER X + SHOT · POWER DIVE + RETURN', moves: [
-                { l: 'REPOSITION SHOT', sub: 'STRAIGHT ×1', a: 'shoot', steps: c => [{ tw: { x: c.r(0.1, 0.9), y: c.r(0.15, 0.4) }, dur: 600 }, { anim: 'shoot' }, { fire: { type: 'straight' } }, { wait: 400 }] },
-                { l: 'TRACK + SHOT', sub: 'LOCK X · STRAIGHT', a: 'shoot', steps: c => [{ tw: { x: c.px }, dur: 300 }, { anim: 'shoot' }, { wait: 350 }, { fire: { type: 'straight' } }, { wait: 350 }] },
-                { l: 'POWER DIVE', sub: 'SHOT · DIVE', a: 'attack', steps: c => [{ tw: { x: c.px }, dur: 500 }, { fire: { type: 'straight' } }, { anim: 'attack' }, { tw: { y: c.B - 0.12 }, dur: 300 }, { tw: { y: 0.88 }, dur: 600, ease: 'in' }, { tw: { y: c.B }, dur: 300 }] }
-            ] },
-            boss2: { label: 'SAGAT', desc: 'SWEEP 6 STOPS FIRING → RAPID FIRE ×7 → TIGER SHOT (B) → DIVE + RETURN', moves: [
-                { l: 'SWEEP VOLLEY', sub: 'STRAIGHT ×6', a: 'shoot', steps: c => { const s = [{ anim: 'shoot' }]; [0.05, 0.22, 0.42, 0.62, 0.82, 0.95].forEach(x => s.push({ tw: { x }, dur: 250 }, { fire: { type: 'straight' } })); return s; } },
-                { l: 'RAPID FIRE', sub: 'STRAIGHT ×7', a: 'shoot', steps: c => { const s = [{ tw: { x: c.r(0.15, 0.85) }, dur: 250, anim: 'shoot' }]; for (let i = 0; i < 7; i++) s.push({ fire: { type: 'straight' } }, { wait: 200 }); return s; } },
-                { l: 'TIGER SHOT', sub: 'HEAVY SHOT B', a: 'charge', steps: c => [{ tw: { x: c.r(0.15, 0.85) }, dur: 250, anim: 'charge' }, { wait: 500 }, { anim: 'shoot' }, { fire: { type: 'straight', proj: 'B' } }, { wait: 500 }] },
-                { l: 'DIVE RETURN', sub: 'LOCK X · DIVE', a: 'attack', steps: c => [{ tw: { x: c.px, y: c.B - 0.05 }, dur: 400 }, { fire: { type: 'straight' } }, { wait: 300 }, { anim: 'attack' }, { tw: { y: 0.88 }, dur: 300, ease: 'in' }, { tw: { y: c.B }, dur: 260 }] }
-            ] },
-            boss3: { label: 'VEGA', desc: 'TRIPLE WARP · PSYCHO SHOTS ×7 AIMED · RADIAL FIELD 12×5 · IZUNA DIVE + SPREAD', moves: [
-                { l: 'TRIPLE WARP', sub: 'TELEPORT ×3', a: 'idle', steps: c => [{ fade: 0, dur: 80 }, { jump: { x: 0.08 } }, { fade: 1, dur: 80 }, { wait: 220 }, { fade: 0, dur: 80 }, { jump: { x: 0.92 } }, { fade: 1, dur: 80 }, { wait: 220 }, { fade: 0, dur: 80 }, { jump: { x: c.r(0.2, 0.8) } }, { fade: 1, dur: 80 }] },
-                { l: 'PSYCHO SHOTS', sub: 'AIMED ×7', a: 'shoot', steps: c => { const s = [{ anim: 'shoot' }]; [0.08, 0.85, 0.15, 0.5, 0.9, 0.2, 0.5].forEach(x => s.push({ fade: 0, dur: 80 }, { jump: { x } }, { fade: 1, dur: 80 }, { fire: { type: 'aimed' } }, { wait: 240 })); return s; } },
-                { l: 'RADIAL FIELD', sub: 'RADIAL 12 ×3', a: 'shoot', steps: c => [{ tw: { x: 0.5, y: c.B + 0.03 }, dur: 300, anim: 'shoot' }, { fire: { type: 'radial', count: 12, proj: 'B' } }, { wait: 800 }, { fire: { type: 'radial', count: 12, proj: 'B' } }, { wait: 800 }, { fire: { type: 'radial', count: 12, proj: 'B' } }] },
-                { l: 'IZUNA DIVE', sub: 'SPREAD 3 · DIVE', a: 'attack', steps: c => [{ fade: 0, dur: 80 }, { jump: { x: c.px } }, { fade: 1, dur: 80 }, { anim: 'attack' }, { tw: { y: c.B - 0.06 }, dur: 200 }, { fire: { type: 'spread', count: 3, angle: 30 } }, { tw: { y: 0.92 }, dur: 800, ease: 'in' }, { fade: 0, dur: 60 }, { jump: { x: 0.5, y: -0.12 } }, { fade: 1, dur: 60 }, { tw: { y: c.B }, dur: 800 }] }
-            ] },
-            boss4: { label: 'FANG', desc: 'POISON BEAMS 105°/90°/75° · RADIAL BURST ×8 · SMOKE BARRAGE AIMED', moves: [
-                { l: 'POISON BEAMS', sub: 'BEAMS 105/90/75°', a: 'charge', steps: c => [{ anim: 'charge' }, { wait: 500 }, { anim: 'shoot' }, { fire: { type: 'beam', angle: 105 } }, { wait: 450 }, { fire: { type: 'beam', angle: 90 } }, { wait: 450 }, { fire: { type: 'beam', angle: 75 } }, { wait: 300 }] },
-                { l: 'RADIAL BURST', sub: 'RADIAL ×8', a: 'shoot', steps: c => [{ anim: 'shoot' }, { fire: { type: 'radial', count: 8 } }, { wait: 600 }] },
-                { l: 'SMOKE BARRAGE', sub: 'AIMED ×8 · JITTER', a: 'wait', steps: c => { const s = [{ anim: 'wait' }]; for (let i = 0; i < 8; i++) s.push({ tw: { x: c.r(0.2, 0.8) }, dur: 140 }, { fire: { type: 'aimed', proj: 'B' } }, { wait: 160 }); return s; } }
-            ] },
-            bossExtra: { label: 'GOKI', desc: 'LOCK X ON PLAYER → SHOOT-A VOLLEY ×6 · SHOOT-B HEAVY · ASHURA WARP / DIVE', moves: [
-                { l: 'SHOOT-A VOLLEY', sub: 'LOCK X · STRAIGHT ×6', a: 'shootA', steps: c => { const s = [{ tw: { x: c.px }, dur: 400, anim: 'shootA' }]; for (let i = 0; i < 6; i++) s.push({ fire: { type: 'straight' } }, { wait: 150 }); return s; } },
-                { l: 'SHOOT-B HEAVY', sub: 'LOCK X · HEAVY B', a: 'shootB', steps: c => [{ tw: { x: c.px }, dur: 400, anim: 'shootB' }, { wait: 500 }, { fire: { type: 'straight', proj: 'B' } }, { wait: 600 }] },
-                { l: 'ASHURA DIVE', sub: 'DIVE · WARP TOP', a: 'syngoku', steps: c => [{ anim: 'syngoku' }, { tw: { y: 0.92 }, dur: 1100, ease: 'lin' }, { fade: 0, dur: 60 }, { jump: { x: c.r(0.2, 0.8), y: -0.12 } }, { fade: 1, dur: 60 }, { tw: { y: c.B }, dur: 700 }] },
-                { l: 'ASHURA WARP', sub: 'GLIDE REPOSITION', a: 'syngoku', steps: c => [{ anim: 'syngoku' }, { tw: { x: c.r(0.15, 0.85), y: c.r(0.15, 0.35) }, dur: 700 }] }
-            ] }
+            xbox: { pagebg: 'radial-gradient(ellipse 80% 60% at 38% 55%, rgba(20,90,40,.45), transparent 70%), radial-gradient(ellipse 60% 70% at 50% 50%, rgba(8,40,18,.85), #000 80%), #000', banbg: 'linear-gradient(180deg, rgba(70,180,90,.18), rgba(20,60,30,.7) 50%, rgba(20,60,30,.7) 50%, rgba(70,180,90,.05))', edge: 'rgba(140,255,110,.35)', ink: '#d9ffcb', tglow: 'rgba(124,255,79,.8)', mono: 'rgba(156,255,107,.65)', monodim: 'rgba(220,255,180,.45)', sel: '#F6FF4A', selglow: 'rgba(246,255,74,.55)', dot: '#7CFF4F', rsub: 'rgba(220,255,180,.55)', scan: 'rgba(0,255,120,.035)' },
+            nintendo: { pagebg: 'radial-gradient(ellipse 80% 55% at 40% 45%, rgba(228,0,15,.1), transparent 70%), #0d0f1a', banbg: 'linear-gradient(180deg, rgba(139,160,194,.1), rgba(15,22,34,.85) 35%, rgba(15,22,34,.85) 65%, rgba(139,160,194,.08))', edge: 'rgba(213,213,216,.3)', ink: '#e9ecf1', tglow: 'rgba(255,59,73,.7)', mono: 'rgba(139,160,194,.8)', monodim: 'rgba(139,160,194,.55)', sel: '#ff5b66', selglow: 'rgba(228,0,15,.5)', dot: '#ff3b49', rsub: 'rgba(139,160,194,.7)', scan: 'rgba(255,70,84,.03)' }
         };
 
         // ================== STATE ==================
@@ -414,18 +152,9 @@
         let atlasURL = null;
         let atlasW = 2048, atlasH = 2048;
         let playerFrames = [];
-        const state = {
-            theme: 'xbox', bossKey: 'boss0', patternsOpen: false,
-            pending: {}, previewBoss: null, customData: false, loaded: false
-        };
-        const sim = {
-            x: 0.5, y: BASE, alpha: 1, animKey: 'idle', frame: 0, frameT: 0, projs: [],
-            player: { x: 0.5, y: 0.86 }, hits: 0, hitAt: 0, moveId: 'idle',
-            seq: null, stepIdx: 0, loopAt: 0, dragging: false, dragged: false, nowT: 0
-        };
-
+        let lab = null;
+        const state = { theme: 'xbox', customData: false };
         const $ = id => document.getElementById(id);
-        const stageEl = $('stage'), bossLayer = $('boss-layer'), projLayer = $('proj-layer'), playerLayer = $('player-layer');
 
         // ================== THEME + SCANLINES (synced with the CMG launcher) ==================
         // Persisted under cmg-theme / cmg-scanlines and broadcast to the parent
@@ -440,6 +169,7 @@
             document.body.classList.toggle('theme-nintendo', state.theme === 'nintendo');
             $('seg-xbox').classList.toggle('on', state.theme !== 'nintendo');
             $('seg-nintendo').classList.toggle('on', state.theme === 'nintendo');
+            if (lab) lab.setTheme(state.theme);
         }
         function setTheme(t) {
             applyTheme(t);
@@ -466,7 +196,7 @@
             const d = new Date(), p = n => String(n).padStart(2, '0');
             return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
         }
-        function tickClock() { const v = now(); $('clock').textContent = v; $('sheet-clock').textContent = v; }
+        function tickClock() { $('clock').textContent = now(); }
         tickClock();
         setInterval(tickClock, 1000);
 
@@ -479,504 +209,40 @@
             flashTimer = setTimeout(() => el.classList.add('hidden'), 2200);
         }
 
-        // ================== DATA HELPERS ==================
-        const curBoss = () => bossData && bossData[state.bossKey];
-        const animKeys = b => Object.keys((b && b.anim) || {}).filter(a => !a.startsWith('_'));
-        function idleKey() { const b = curBoss(); return b && b.anim && b.anim.idle ? 'idle' : animKeys(b)[0]; }
-        function mapAnim(key) {
-            const b = curBoss();
-            if (!b || !b.anim) return key;
-            if (b.anim[key]) return key;
-            return b.anim.attack ? 'attack' : (b.anim.shoot ? 'shoot' : animKeys(b)[0]);
+        // ================== EDITOR BRIDGE ==================
+        // The editor publishes bossData as sessionStorage editorBossData (read
+        // below) and announces it on a BroadcastChannel; APPLY here writes the
+        // same key back and sends the attackPattern changes to any open editor,
+        // which commits them through its own bossData path. One store, two views.
+        let channel = null;
+        try { channel = new BroadcastChannel(window.BossLab ? BossLab.CHANNEL : 'editor-viewer-bridge'); } catch (e) {}
+        function orderedKeys() { return lab ? lab.keys() : Object.keys(bossData || {}); }
+        function updateBannerSub() {
+            $('banner-sub').textContent = String(orderedKeys().length).padStart(2, '0') + ' BOSSES · ' + GAME_ID.toUpperCase();
+            $('custom-badge').classList.toggle('hidden', !state.customData);
         }
-        // The pattern a boss actually runs: its own key unless attackPattern
-        // points at another boss (the same override the game engine reads).
-        const effPatternKey = bk => (bossData[bk].attackPattern || '') || bk;
-        function projData(sel) {
-            const pick = b => {
-                if (!b) return null;
-                const d = sel === 'B' ? (b.bulletDataB || b.bulletDataA) : (b.bulletDataA || b.bulletData);
-                return d && d.texture && d.texture.length ? d : null;
-            };
-            return pick(curBoss()) || pick(bossData[effPatternKey(state.bossKey)]) || pick(bossData.bossExtra);
-        }
-
-        // ================== SIM ==================
-        function clearProjs() {
-            sim.projs.forEach(p => { if (p.el) p.el.remove(); });
-            sim.projs = [];
-        }
-        function startMove(id) {
-            sim.moveId = id; sim.loopAt = 0; sim.stepIdx = 0; sim.alpha = 1;
-            clearProjs();
-            if (!bossData) { sim.seq = null; return; }
-            if (id === 'idle') {
-                sim.seq = [{ tw: { x: 0.5, y: BASE }, dur: 500 }, { anim: idleKey() }];
-            } else if (typeof id === 'string' && id.indexOf('anim:') === 0) {
-                sim.seq = [{ tw: { x: 0.5, y: BASE }, dur: 400 }, { anim: id.slice(5) }];
-            } else {
-                sim.seq = buildSeq(id);
+        function applyPatterns(changes, n) {
+            for (const k in changes) {
+                if (!Object.prototype.hasOwnProperty.call(bossData, k)) continue;
+                if (changes[k]) bossData[k].attackPattern = changes[k];
+                else delete bossData[k].attackPattern;
             }
+            state.customData = true;
+            try { sessionStorage.setItem('editorBossData', JSON.stringify(bossData)); } catch (e) {}
+            try { if (channel) channel.postMessage({ type: 'boss-patterns', gameId: GAME_ID, changes }); } catch (e) {}
+            updateBannerSub();
+            flash('PATTERNS APPLIED · ' + n + ' CHANGED · WRITTEN TO EDITOR BRIDGE');
         }
-        function buildSeq(idx) {
-            const pat = PAT[effPatternKey(state.bossKey)];
-            const move = pat.moves[idx];
-            if (!move) return null;
-            const c = { px: Math.max(0.05, Math.min(0.95, sim.player.x)), B: BASE, r: (a, b) => a + Math.random() * (b - a) };
-            let steps = move.steps(c).map(st => {
-                const s2 = Object.assign({}, st);
-                if (s2.anim) s2.anim = mapAnim(s2.anim);
-                return s2;
-            });
-            return [{ anim: mapAnim(move.a) }].concat(steps);
-        }
-        function spawnProj(p) {
-            const el = document.createElement('div');
-            el.className = 'proj';
-            projLayer.appendChild(el);
-            p.el = el;
-            p.lastFrame = null;
-            sim.projs.push(p);
-        }
-        function fire(f) {
-            if (!atlas) return;
-            const W = stageEl.clientWidth, H = stageEl.clientHeight;
-            const d = projData(f.proj || 'A');
-            if (!d) return;
-            const frames = d.texture.filter(t => atlas.frames[t]);
-            if (!frames.length) return;
-            const sp = (d.speed || 1.5) * 0.16;
-            const bx = sim.x * W, by = sim.y * H + 24;
-            const dirs = [];
-            if (f.type === 'straight') dirs.push([0, 1]);
-            else if (f.type === 'aimed') {
-                const dx = sim.player.x * W - bx, dy = sim.player.y * H - by, m = Math.hypot(dx, dy) || 1;
-                dirs.push([dx / m, dy / m]);
-            } else if (f.type === 'radial') {
-                const n = f.count || 8;
-                for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; dirs.push([Math.cos(a), Math.sin(a)]); }
-            } else if (f.type === 'spread') {
-                const n = f.count || 3, span = (f.angle || 30) * Math.PI / 180;
-                for (let i = 0; i < n; i++) { const a = Math.PI / 2 + (i - (n - 1) / 2) * span / Math.max(1, n - 1) * 2; dirs.push([Math.cos(a), Math.sin(a)]); }
-            } else if (f.type === 'beam') {
-                const a = (f.angle || 90) * Math.PI / 180, dx = Math.cos(a), dy = Math.sin(a);
-                for (let i = 0; i < 6; i++) spawnProj({ x: bx + dx * i * 28, y: by + dy * i * 28, vx: dx * sp * 1.4, vy: dy * sp * 1.4, frames, fi: 0, ft: 0 });
-            }
-            dirs.forEach(dir => spawnProj({ x: bx, y: by, vx: dir[0] * sp, vy: dir[1] * sp, frames, fi: 0, ft: 0 }));
-            if (sim.projs.length > 90) {
-                sim.projs.splice(0, sim.projs.length - 90).forEach(p => { if (p.el) p.el.remove(); });
-            }
-        }
-        let prevT = null;
-        function tick(t) {
-            if (prevT === null) { prevT = t; return; }
-            const dt = Math.min(50, t - prevT); prevT = t;
-            if (!state.loaded) return;
-            sim.frameT += dt;
-            if (sim.frameT > 167) { sim.frameT = 0; sim.frame++; }
-            if (sim.seq) {
-                for (let guard = 0; guard < 12 && sim.seq; guard++) {
-                    if (sim.stepIdx >= sim.seq.length) {
-                        sim.seq = null;
-                        if (typeof sim.moveId === 'number') {
-                            sim.animKey = idleKey(); sim.frame = 0;
-                            sim.loopAt = t + REPEAT_DELAY;
-                        }
-                        break;
-                    }
-                    const st = sim.seq[sim.stepIdx];
-                    if (st.t0 === undefined) {
-                        st.t0 = t;
-                        if (st.tw) st.from = { x: sim.x, y: sim.y };
-                        if (st.fade !== undefined) st.fromA = sim.alpha;
-                    }
-                    const el = t - st.t0;
-                    if (st.tw) {
-                        if (st.anim && !st.animSet) { st.animSet = true; sim.animKey = st.anim; sim.frame = 0; }
-                        const d = st.dur || 400, p = Math.min(1, el / d);
-                        const e = st.ease === 'in' ? p * p * p : (st.ease === 'lin' ? p : 1 - Math.pow(1 - p, 3));
-                        if (st.tw.x !== undefined) sim.x = st.from.x + (st.tw.x - st.from.x) * e;
-                        if (st.tw.y !== undefined) sim.y = st.from.y + (st.tw.y - st.from.y) * e;
-                        if (p < 1) break;
-                        sim.stepIdx++; continue;
-                    }
-                    if (st.fade !== undefined) {
-                        const d = st.dur || 100, p = Math.min(1, el / d);
-                        sim.alpha = st.fromA + (st.fade - st.fromA) * p;
-                        if (p < 1) break;
-                        sim.stepIdx++; continue;
-                    }
-                    if (st.wait) { if (el < st.wait) break; sim.stepIdx++; continue; }
-                    if (st.jump) { if (st.jump.x !== undefined) sim.x = st.jump.x; if (st.jump.y !== undefined) sim.y = st.jump.y; sim.stepIdx++; continue; }
-                    if (st.anim) { sim.animKey = st.anim; sim.frame = 0; sim.stepIdx++; continue; }
-                    if (st.fire) { fire(st.fire); sim.stepIdx++; continue; }
-                    sim.stepIdx++;
-                }
-            } else if (sim.loopAt && t >= sim.loopAt && typeof sim.moveId === 'number') {
-                sim.loopAt = 0; sim.stepIdx = 0; sim.seq = buildSeq(sim.moveId);
-            }
-            const W = stageEl.clientWidth, H = stageEl.clientHeight;
-            const pxp = sim.player.x * W, pyp = sim.player.y * H;
-            sim.projs = sim.projs.filter(p => {
-                p.x += p.vx * dt; p.y += p.vy * dt;
-                p.ft += dt; if (p.ft > 250) { p.ft = 0; p.fi++; }
-                if (Math.hypot(p.x - pxp, p.y - pyp) < 22) { sim.hits++; sim.hitAt = t; p.el.remove(); return false; }
-                if (p.x > -50 && p.x < W + 50 && p.y > -50 && p.y < H + 50) return true;
-                p.el.remove(); return false;
-            });
-            sim.nowT = t;
-            renderStage();
-        }
-
-        // ================== SPRITE CROPPING (CSS atlas crops) ==================
-        function applyCrop(el, frameName, scale) {
-            const fd = atlas.frames[frameName];
-            if (!fd) { el.style.width = el.style.height = '0'; return; }
-            const f = fd.frame;
-            el.style.width = (f.w * scale) + 'px';
-            el.style.height = (f.h * scale) + 'px';
-            el.style.backgroundImage = "url('" + atlasURL + "')";
-            el.style.backgroundSize = (atlasW * scale) + 'px ' + (atlasH * scale) + 'px';
-            el.style.backgroundPosition = (-f.x * scale) + 'px ' + (-f.y * scale) + 'px';
-        }
-        function cropFit(el, frameName, box) {
-            const fd = atlas && atlas.frames[frameName];
-            if (!fd) { el.style.width = el.style.height = box + 'px'; return; }
-            const s = Math.min(box / fd.frame.w, box / fd.frame.h);
-            applyCrop(el, frameName, s);
-        }
-
-        // ================== STAGE RENDERING ==================
-        let bossEl = null, bossElKey = null, bossFrame = null, bossScale = 0;
-        let playerEl = null, playerSprite = null, playerHint = null, playerFrame = null, ringAt = 0, lastHit = false;
-        function renderStage() {
-            const boss = curBoss();
-            if (!boss || !atlas) return;
-            const H = stageEl.clientHeight;
-            const frames = (boss.anim && boss.anim[sim.animKey]) || [];
-            let fd = null, fname = null, idx = 0;
-            if (frames.length) {
-                idx = sim.frame % frames.length;
-                fname = frames[idx];
-                fd = atlas.frames[fname];
-            }
-            if (fd) {
-                $('frame-info').textContent = fname + ' [' + (idx + 1) + '/' + frames.length + ']';
-                let s = Math.max(2, Math.min(6, SPRITE_SCALE));
-                s = Math.max(1, Math.min(s, Math.floor((H * 0.34) / fd.frame.h)));
-                if (!bossEl || bossElKey !== state.bossKey) {
-                    if (bossEl) bossEl.remove();
-                    bossEl = document.createElement('div');
-                    bossEl.className = 'boss-sprite';
-                    const inner = document.createElement('div');
-                    inner.className = 'crop';
-                    bossEl.appendChild(inner);
-                    bossLayer.appendChild(bossEl);
-                    bossElKey = state.bossKey;
-                    bossFrame = null;
-                }
-                bossEl.style.display = '';
-                if (bossFrame !== fname || bossScale !== s) { applyCrop(bossEl.firstChild, fname, s); bossFrame = fname; bossScale = s; }
-                bossEl.style.left = (sim.x * 100) + '%';
-                bossEl.style.top = (sim.y * 100) + '%';
-                bossEl.style.opacity = sim.alpha;
-            } else {
-                $('frame-info').textContent = '';
-                if (bossEl) bossEl.style.display = 'none';
-            }
-            sim.projs.forEach(p => {
-                const pf = p.frames[p.fi % p.frames.length];
-                if (p.lastFrame !== pf) { applyCrop(p.el, pf, 2); p.lastFrame = pf; }
-                p.el.style.left = p.x + 'px';
-                p.el.style.top = p.y + 'px';
-            });
-            if (playerFrames.length) {
-                if (!playerEl) {
-                    playerEl = document.createElement('div');
-                    playerEl.id = 'player';
-                    playerSprite = document.createElement('div');
-                    playerSprite.className = 'crop';
-                    playerHint = document.createElement('div');
-                    playerHint.id = 'player-hint';
-                    playerHint.textContent = '◄ DRAG PLAYER ►';
-                    playerEl.appendChild(playerSprite);
-                    playerEl.appendChild(playerHint);
-                    playerLayer.appendChild(playerEl);
-                }
-                const pf = playerFrames[sim.frame % playerFrames.length];
-                if (playerFrame !== pf) { applyCrop(playerSprite, pf, 2); playerFrame = pf; }
-                playerEl.style.left = (sim.player.x * 100) + '%';
-                playerEl.style.top = (sim.player.y * 100) + '%';
-                playerHint.style.display = sim.dragged ? 'none' : '';
-                const hit = sim.nowT && sim.nowT - sim.hitAt < 300;
-                if (hit !== lastHit) {
-                    playerEl.style.filter = hit ? 'brightness(2.5) drop-shadow(0 0 8px var(--sel))' : 'none';
-                    lastHit = hit;
-                }
-                if (hit && ringAt !== sim.hitAt) {
-                    ringAt = sim.hitAt;
-                    const oldRing = playerEl.querySelector('.hit-ring');
-                    if (oldRing) oldRing.remove();
-                    const ring = document.createElement('div');
-                    ring.className = 'hit-ring';
-                    playerEl.appendChild(ring);
-                } else if (!hit) {
-                    const oldRing = playerEl.querySelector('.hit-ring');
-                    if (oldRing) oldRing.remove();
-                }
-            }
-            $('hits-info').textContent = 'HITS ' + String(sim.hits).padStart(2, '0');
-        }
-
-        // ================== PLAYER DRAG ==================
-        function movePlayer(e) {
-            const r = stageEl.getBoundingClientRect();
-            sim.player.x = Math.max(0.03, Math.min(0.97, (e.clientX - r.left) / r.width));
-            sim.player.y = Math.max(0.55, Math.min(0.94, (e.clientY - r.top) / r.height));
-            sim.dragged = true;
-        }
-        stageEl.addEventListener('pointerdown', e => {
-            sim.dragging = true;
-            try { stageEl.setPointerCapture(e.pointerId); } catch (err) {}
-            movePlayer(e);
-        });
-        stageEl.addEventListener('pointermove', e => { if (sim.dragging) movePlayer(e); });
-        stageEl.addEventListener('pointerup', () => { sim.dragging = false; });
-        stageEl.addEventListener('pointercancel', () => { sim.dragging = false; });
-
-        // ================== CHROME (boss chips / title / move cards) ==================
-        const orderedKeys = () => BOSS_ORDER.filter(k => bossData[k]);
-        function selectBoss(k) {
-            Object.assign(sim, { x: 0.5, y: BASE, alpha: 1, frame: 0, hits: 0 });
-            state.bossKey = k;
-            sim.animKey = idleKey();
-            startMove('idle');
-            renderBossBar();
-            renderTitleRow();
-            renderMoveBar();
-        }
-        function renderBossBar() {
-            const bar = $('boss-bar');
-            bar.innerHTML = '';
-            orderedKeys().forEach(k => {
-                const btn = document.createElement('button');
-                btn.className = 'boss-chip' + (k === state.bossKey ? ' active' : '');
-                btn.textContent = bossName(k);
-                btn.onclick = () => selectBoss(k);
-                bar.appendChild(btn);
-            });
-            const div = document.createElement('span');
-            div.className = 'chip-divider';
-            bar.appendChild(div);
-            const bp = document.createElement('button');
-            bp.id = 'bp-btn';
-            bp.textContent = 'BP · PATTERNS';
-            bp.onclick = openPatterns;
-            bar.appendChild(bp);
-        }
-        function renderTitleRow() {
-            const boss = curBoss();
-            if (!boss) return;
-            $('boss-title').textContent = bossName(state.bossKey).toUpperCase();
-            const pat = PAT[effPatternKey(state.bossKey)];
-            const overridden = !!boss.attackPattern;
-            const tag = $('pattern-tag');
-            tag.textContent = 'PATTERN · ' + pat.label + (overridden ? ' — OVERRIDDEN' : ' — DEFAULT');
-            tag.classList.toggle('overridden', overridden);
-        }
-        function renderMoveBar() {
-            const boss = curBoss();
-            if (!boss) return;
-            const bar = $('move-bar');
-            bar.innerHTML = '';
-            const pat = PAT[effPatternKey(state.bossKey)];
-            const card = (title, sub, active, onclick) => {
-                const btn = document.createElement('button');
-                btn.className = 'move-card' + (active ? ' active' : '');
-                const t = document.createElement('span');
-                t.className = 'move-title';
-                t.textContent = title;
-                const s = document.createElement('span');
-                s.className = 'move-sub';
-                s.textContent = sub;
-                btn.appendChild(t);
-                btn.appendChild(s);
-                btn.onclick = onclick;
-                bar.appendChild(btn);
-            };
-            card('IDLE', (idleKey() || '').toUpperCase() + ' ANIM', sim.moveId === 'idle', () => { startMove('idle'); renderMoveBar(); });
-            pat.moves.forEach((m, i) => {
-                card(m.l, m.sub + ' · ' + mapAnim(m.a).toUpperCase(), sim.moveId === i, () => { sim.hits = 0; startMove(i); renderMoveBar(); });
-            });
-            const usedAnims = new Set(['idle', idleKey()].concat(pat.moves.map(m => mapAnim(m.a))));
-            const extras = animKeys(boss).filter(a => !usedAnims.has(a));
-            const extraBar = $('extra-bar');
-            extraBar.innerHTML = '';
-            extraBar.classList.toggle('hidden', extras.length === 0);
-            extras.forEach(a => {
-                const btn = document.createElement('button');
-                btn.className = 'extra-chip' + (sim.moveId === 'anim:' + a ? ' active' : '');
-                btn.textContent = '+ ' + a;
-                btn.onclick = () => { startMove('anim:' + a); renderMoveBar(); };
-                extraBar.appendChild(btn);
-            });
-        }
-
-        // ================== BOSS PATTERNS SHEET ==================
-        function openPatterns() {
-            state.patternsOpen = true;
-            state.pending = {};
-            state.previewBoss = null;
-            renderSheet();
-            $('sheet-overlay').classList.remove('hidden');
-        }
-        function closePatterns() {
-            state.patternsOpen = false;
-            state.pending = {};
-            state.previewBoss = null;
-            $('sheet-overlay').classList.add('hidden');
-        }
-        $('sheet-overlay').addEventListener('click', e => { if (e.target === e.currentTarget) closePatterns(); });
-        $('btn-close').onclick = closePatterns;
-        $('btn-apply').onclick = () => {
-            const keys = orderedKeys();
-            const count = pendingCount();
-            if (count === 0) return;
-            keys.forEach(bk => {
-                if (state.pending[bk] === undefined) return;
-                if (state.pending[bk]) bossData[bk].attackPattern = state.pending[bk];
-                else delete bossData[bk].attackPattern;
-            });
-            state.pending = {};
-            state.previewBoss = null;
-            startMove('idle');
-            renderTitleRow();
-            renderMoveBar();
-            renderSheet();
-            flash('PATTERNS APPLIED · ' + count + ' CHANGED · VIEWER SYNCED');
+        if (channel) channel.onmessage = (ev) => {
+            const m = ev.data;
+            if (!m || m.type !== 'boss-data' || m.gameId !== GAME_ID || !m.bossData || typeof m.bossData !== 'object') return;
+            bossData = m.bossData;
+            state.customData = true;
+            try { sessionStorage.setItem('editorBossData', JSON.stringify(bossData)); } catch (e) {}
+            if (lab) lab.refresh();
+            updateBannerSub();
+            flash('BOSS DATA UPDATED FROM THE EDITOR');
         };
-        function pendingCount() {
-            return orderedKeys().filter(bk =>
-                state.pending[bk] !== undefined && state.pending[bk] !== (bossData[bk].attackPattern || '')
-            ).length;
-        }
-        function renderSheet() {
-            const rowsEl = $('sheet-rows');
-            rowsEl.innerHTML = '';
-            const keys = orderedKeys();
-            keys.forEach(bk => {
-                const b = bossData[bk];
-                const saved = b.attackPattern || '';
-                const pendingVal = state.pending[bk] !== undefined ? state.pending[bk] : saved;
-                const isPending = state.pending[bk] !== undefined && state.pending[bk] !== saved;
-                const pat = PAT[pendingVal || bk];
-
-                const row = document.createElement('div');
-                row.className = 'prow' + (isPending ? ' pending' : (saved ? ' saved' : ''));
-
-                const main = document.createElement('div');
-                main.className = 'prow-main';
-                const thumb = document.createElement('div');
-                thumb.className = 'prow-thumb';
-                const thumbCrop = document.createElement('div');
-                thumbCrop.className = 'crop';
-                const idleFrame = b.anim && b.anim.idle && b.anim.idle[0];
-                if (idleFrame) cropFit(thumbCrop, idleFrame, 28);
-                else { thumbCrop.style.width = thumbCrop.style.height = '28px'; }
-                thumb.appendChild(thumbCrop);
-                main.appendChild(thumb);
-
-                const info = document.createElement('div');
-                info.className = 'prow-info';
-                const name = document.createElement('div');
-                name.className = 'prow-name';
-                name.textContent = bossName(bk);
-                const sub = document.createElement('div');
-                sub.className = 'prow-sub';
-                let subText = bk + ' · HP ' + (b.hp || '?') + ' · ';
-                if (isPending) subText += 'PREVIEW — NOT APPLIED';
-                else if (saved) subText += 'OVERRIDDEN → ' + bossName(saved).toUpperCase();
-                else subText += 'DEFAULT MOVEMENT';
-                sub.textContent = subText;
-                info.appendChild(name);
-                info.appendChild(sub);
-                main.appendChild(info);
-
-                const sel = document.createElement('select');
-                const defOpt = document.createElement('option');
-                defOpt.value = '';
-                defOpt.textContent = '(DEFAULT)';
-                sel.appendChild(defOpt);
-                keys.filter(k => k !== bk).forEach(k => {
-                    const opt = document.createElement('option');
-                    opt.value = k;
-                    opt.textContent = bossName(k).toUpperCase() + ' (' + k + ')';
-                    sel.appendChild(opt);
-                });
-                sel.value = pendingVal;
-                sel.onchange = () => {
-                    state.pending[bk] = sel.value;
-                    state.previewBoss = bk;
-                    renderSheet();
-                };
-                main.appendChild(sel);
-                row.appendChild(main);
-
-                const chips = document.createElement('div');
-                chips.className = 'prow-chips';
-                pat.moves.forEach(m => {
-                    const chip = document.createElement('span');
-                    chip.className = 'prow-chip';
-                    chip.textContent = m.l;
-                    chips.appendChild(chip);
-                });
-                row.appendChild(chips);
-                rowsEl.appendChild(row);
-            });
-
-            const count = pendingCount();
-            $('apply-label').textContent = 'APPLY' + (count > 0 ? ' (' + count + ')' : '');
-            $('btn-apply').style.opacity = count > 0 ? '1' : '0.45';
-
-            const previewEl = $('sheet-preview');
-            const pb = state.previewBoss;
-            const showPreview = pb && state.pending[pb] !== undefined && state.pending[pb] !== (bossData[pb].attackPattern || '');
-            previewEl.classList.toggle('hidden', !showPreview);
-            if (showPreview) {
-                const newKey = state.pending[pb] || pb;
-                const oldKey = (bossData[pb].attackPattern || '') || pb;
-                const newPat = PAT[newKey], oldPat = PAT[oldKey], pv = PREVIEWS[newKey];
-                const pathAttrs = 'fill="none" stroke="var(--sel)" stroke-width="2" stroke-dasharray="6 5" style="animation:dashDrift 1.2s linear infinite"';
-                let svg = '<svg class="preview-svg" viewBox="0 0 320 110" xmlns="http://www.w3.org/2000/svg">';
-                svg += '<path d="' + pv.d + '" ' + pathAttrs + '/>';
-                if (pv.d2) svg += '<path d="' + pv.d2 + '" ' + pathAttrs + '/>';
-                pv.dots.forEach(p => { svg += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="5" fill="var(--sel)"/>'; });
-                svg += '</svg>';
-                previewEl.innerHTML =
-                    '<div class="preview-label">PATTERN PREVIEW · ' + bossName(pb).toUpperCase() + '</div>' +
-                    svg +
-                    '<div class="preview-desc"></div>' +
-                    '<div class="preview-chips"></div>';
-                previewEl.querySelector('.preview-desc').textContent = newPat.label + ': ' + newPat.desc;
-                const chipsEl = previewEl.querySelector('.preview-chips');
-                oldPat.moves.forEach(m => {
-                    const chip = document.createElement('span');
-                    chip.className = 'chip-old';
-                    chip.textContent = m.l;
-                    chipsEl.appendChild(chip);
-                });
-                const arrow = document.createElement('span');
-                arrow.className = 'chip-arrow';
-                arrow.textContent = '→';
-                chipsEl.appendChild(arrow);
-                newPat.moves.forEach(m => {
-                    const chip = document.createElement('span');
-                    chip.className = 'chip-new';
-                    chip.textContent = m.l;
-                    chipsEl.appendChild(chip);
-                });
-            }
-        }
 
         // ================== INIT ==================
         // Load custom atlas from the editor bridge (IndexedDB image +
@@ -1029,12 +295,15 @@
                 const finish = () => {
                     atlasW = img.naturalWidth || (atlas.meta && atlas.meta.size && atlas.meta.size.w) || 2048;
                     atlasH = img.naturalHeight || (atlas.meta && atlas.meta.size && atlas.meta.size.h) || 2048;
-                    state.loaded = true;
-                    if (state.customData) $('custom-badge').classList.remove('hidden');
-                    const keys = orderedKeys();
-                    $('banner-sub').textContent = String(keys.length).padStart(2, '0') + ' BOSSES · ' + GAME_ID.toUpperCase();
-                    $('sheet-sub').textContent = GAME_ID.toUpperCase();
-                    if (keys.length) selectBoss(keys[0]);
+                    if (!window.BossLab) { flash('BOSS-LAB.JS FAILED TO LOAD'); return; }
+                    lab = BossLab.mount($('lab'), {
+                        getBossData: () => bossData,
+                        atlas: () => ({ frames: atlas.frames, url: atlasURL, w: atlasW, h: atlasH }),
+                        playerFrames: () => playerFrames,
+                        theme: state.theme,
+                        onApply: applyPatterns,
+                    });
+                    updateBannerSub();
                 };
                 img.onload = finish;
                 img.onerror = finish;
@@ -1043,11 +312,6 @@
                 console.error('Boss viewer failed to load game data:', err);
                 flash('FAILED TO LOAD GAME DATA');
             });
-        });
-
-        requestAnimationFrame(function loop(t) {
-            tick(t);
-            requestAnimationFrame(loop);
         });
     })();
     </script>

@@ -27,6 +27,10 @@
          shelf packing and the /characters + /atlases publish. The same file
          powers the in-game extract mode on the PAUSE panel. -->
     <script src="/phaser-plugins/extract-mode.js"></script>
+    <!-- Shared BOSS LAB (window.BossLab): the live boss sim + attack-pattern
+         panel this editor mounts in place of the wave grid, and that
+         boss-viewer.html mounts standalone. -->
+    <script src="boss-lab.js"></script>
     <script type="module">
         // Dezaemon 2 (Saturn) save importer. The whole .sav/game.json pipeline
         // lives in the shmup-engine JSR module (packages/shmup-engine), bundled
@@ -154,8 +158,8 @@
         .badge.menu-badge { font-size: 15px; }
         .badge img { width: 30px; height: 30px; image-rendering: pixelated; object-fit: contain; }
         .badge svg { width: 22px; height: 22px; display: block; }
-        /* Boss Viewer: a bigger, meaner invader, still inside the 46px circle */
-        #boss-viewer-link svg { width: 28px; height: 28px; }
+        /* Boss Lab: a bigger, meaner invader, still inside the 46px circle */
+        #boss-lab-btn svg { width: 28px; height: 28px; }
         /* Model Viewer: the sec7 3D compositions of an imported .sav */
         #model-viewer-link svg { width: 26px; height: 26px; }
         /* While a Dezaemon .sav game is loaded the drawer shows only the
@@ -176,6 +180,34 @@
             box-shadow: 0 0 16px rgba(228,0,15,.5);
         }
         .tb-spacer { flex: 1; min-width: 4px; }
+        /* ===== CONTEXTUAL TOOLBAR =====
+           Grid mode: enemy · item · delete · extract | PLAY · BOSS LAB · (3D) · (SAVE) · MENU.
+           With the lab open (body.boss-lab) the left cluster gives way to a
+           status line and the lab stands in for the rail, grid and pad footer.
+           The 3D badge shows only while the loaded game carries sec7 models;
+           SAVE (badge and the pad footer's Y) only while there is somewhere to
+           save to. Both stay reachable from the drawer regardless. */
+        body.boss-lab #toolbar .grid-only { display: none !important; }
+        body.boss-lab #stage-rail, body.boss-lab #grid-area, body.boss-lab #pad-footer, body.boss-lab #nes-stripe { display: none !important; }
+        #lab-status {
+            display: none; align-items: center; gap: 10px; height: 46px; min-width: 0; padding: 0 4px;
+            font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .2em; color: var(--raillbl);
+        }
+        body.boss-lab #lab-status { display: flex; }
+        #lab-status .lab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sel); box-shadow: 0 0 8px var(--selglow); flex-shrink: 0; }
+        #lab-status span:not(.lab-dot) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #lab-status .lab-status-short { display: none; }
+        #boss-lab-host { display: none; flex: 1; min-height: 0; position: relative; }
+        body.boss-lab #boss-lab-host { display: flex; flex-direction: column; }
+        body:not(.has-save-target) #save-badge, body:not(.has-save-target) #pad-hint-y { display: none !important; }
+        body:not(.has-3d-models) #model-viewer-link { display: none !important; }
+        @media (max-width: 767px) {
+            /* Phones: PLAY / 3D / SAVE leave the toolbar — all still in the
+               menu, and SAVE is Y on the pad footer. */
+            #play-badge, #model-viewer-link, #save-badge { display: none !important; }
+            #lab-status .lab-status-long { display: none; }
+            #lab-status .lab-status-short { display: inline; }
+        }
 
         /* ===== STAGE ORB RAIL ===== */
         #stage-rail { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 8px 16px 10px; }
@@ -265,6 +297,9 @@
         }
         .boss-strip img { width: 24px; height: 24px; image-rendering: pixelated; object-fit: contain; }
         .boss-strip .boss-tag { margin-left: auto; opacity: .55; font-size: 8px; }
+        .boss-strip .boss-pat { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .14em; color: var(--rsub); }
+        .boss-strip .boss-pat.on { color: var(--sel); }
+        .boss-strip:not(.empty) { cursor: pointer; }
         .boss-strip.empty { opacity: .4; border-style: dashed; cursor: default; }
         body.theme-nintendo .boss-strip { background: #10182a; border-color: #2a3850; color: #ffd7da; }
         .editor-grid.mode-extract .boss-strip:not(.empty), #grid-icon-view.mode-extract .boss-strip:not(.empty) { cursor: crosshair; }
@@ -497,6 +532,9 @@
             color: var(--rink); cursor: pointer; text-align: left; flex-shrink: 0; transition: background 0.1s;
         }
         .menu-row:active { background: rgba(255,255,255,.06); }
+        .menu-row.hi { border-color: var(--shedge); background: linear-gradient(90deg, rgba(60,54,8,.55), rgba(24,22,4,.65)); color: var(--sel); }
+        .menu-row.hi .mono-badge { color: var(--sel); border-color: var(--shedge); }
+        body.theme-nintendo .menu-row.hi { background: linear-gradient(90deg, rgba(74,3,8,.55), rgba(36,1,4,.65)); }
         .mono-badge {
             width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--bedge);
             display: flex; align-items: center; justify-content: center;
@@ -572,6 +610,7 @@
         @media (min-width: 768px) {
             #toolbar { padding: 12px 16px 4px; gap: 12px; }
             .badge { width: 52px; height: 52px; }
+            #lab-status { height: 52px; }
             .badge img { width: 34px; height: 34px; }
             .tb-pill { width: 30px; height: 30px; font-size: 12px; }
             .editor-grid { gap: 2px; }
@@ -608,30 +647,6 @@
             font-size: 8px; color: var(--rsub); margin-left: 4px; font-weight: 400; font-family: 'Share Tech Mono', monospace;
         }
         .enemy-editor-tab.active .tab-count { color: var(--srsub); }
-
-        /* ===== BOSS PATTERN ASSIGNMENT ===== */
-        .boss-pattern-row {
-            display: flex; align-items: center; gap: 12px; padding: 10px 12px;
-            border-radius: 12px; border: 1px solid var(--redge); margin-bottom: 6px; background: var(--rbg);
-        }
-        .boss-pattern-thumb {
-            width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--bedge2);
-            background: radial-gradient(circle at 35% 30%, var(--b2a), var(--b2b) 70%); flex-shrink: 0;
-            image-rendering: pixelated; object-fit: contain; padding: 5px;
-        }
-        .boss-pattern-info { flex: 1; min-width: 0; }
-        .boss-pattern-name { font-size: 11px; font-weight: 800; letter-spacing: .08em; color: var(--rink); }
-        .boss-pattern-key { font-size: 9px; color: var(--rsub); font-family: 'Share Tech Mono', monospace; }
-        .boss-pattern-select {
-            background: rgba(0,0,0,.5); color: var(--bink); border: 1px solid var(--bedge2); border-radius: 8px;
-            padding: 7px 11px; font-size: 9px; letter-spacing: .1em; font-family: 'Share Tech Mono', monospace;
-            cursor: pointer; flex-shrink: 0;
-        }
-        .boss-pattern-select option { background: #04180a; color: var(--rink); }
-        body.theme-nintendo .boss-pattern-select option { background: #10182a; }
-        .boss-pattern-row.overridden { border-color: var(--tgedge); background: linear-gradient(90deg, rgba(60,54,8,.55), rgba(24,22,4,.65)); box-shadow: 0 0 18px var(--selglow); }
-        body.theme-nintendo .boss-pattern-row.overridden { background: linear-gradient(90deg, rgba(74,3,8,.55), rgba(36,1,4,.65)); }
-        .boss-pattern-row.overridden .boss-pattern-name, .boss-pattern-row.overridden .boss-pattern-key { color: var(--sel); }
 
         /* ===== STORY EDITOR ===== */
         .story-part-row {
@@ -840,29 +855,32 @@
         <!-- TOOLBAR: monogram badges -->
         <div id="toolbar">
             <!-- Enemy picker badge -->
-            <button id="enemy-picker-btn" class="badge" title="Select enemy" onclick="openPicker('enemy')">
+            <button id="enemy-picker-btn" class="badge grid-only" title="Select enemy" onclick="openPicker('enemy')">
                 <span id="enemy-btn-img"></span>
             </button>
             <!-- Item picker badge -->
-            <button id="powerup-picker-btn" class="badge" title="Select item drop" onclick="openPicker('powerup')">
+            <button id="powerup-picker-btn" class="badge grid-only" title="Select item drop" onclick="openPicker('powerup')">
                 <span id="powerup-btn-img"></span>
             </button>
             <!-- Delete badge (Lucide eraser) -->
-            <button id="delete-mode-btn" class="badge" title="Delete mode" onclick="setDeleteMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
+            <button id="delete-mode-btn" class="badge grid-only" title="Delete mode" onclick="setDeleteMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
             <!-- Extract badge (Lucide pipette): click a placed enemy to
                  inspect it and save it to the shared character library -->
-            <button id="extract-mode-btn" class="badge" title="Extract mode — click a placed enemy or the stage boss to save it to the character library" onclick="setExtractMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg></button>
+            <button id="extract-mode-btn" class="badge grid-only" title="Extract mode — click a placed enemy or the stage boss to save it to the character library" onclick="setExtractMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg></button>
+
+            <!-- Boss lab status line: stands in for the tool badges while the lab is open -->
+            <div id="lab-status"><span class="lab-dot"></span><span class="lab-status-long">BOSS LAB · PATTERNS PREVIEW LIVE · APPLY WRITES TO GAME DATA</span><span class="lab-status-short">BOSS LAB · LIVE PREVIEW</span></div>
 
             <div class="tb-spacer"></div>
 
             <!-- Play (Lucide play) -->
-            <button class="badge" title="Play in Phaser" onclick="playCurrentStage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
-            <!-- Boss Viewer -->
-            <a id="boss-viewer-link" href="boss-viewer.html" class="badge" title="Boss viewer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 2 2 4h12l2-4 2 4v8h-3v3h-3v-3H8v3H5v-3H2V6z"/><path d="m8 9 2.5 1.5M16 9l-2.5 1.5"/><path d="m8 12.5 2 1.5 2-1.5 2 1.5 2-1.5"/></svg></a>
+            <button id="play-badge" class="badge" title="Play in Phaser" onclick="playCurrentStage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
+            <!-- Boss Lab toggle: every boss live + attack-pattern assignment, in place of the grid -->
+            <button id="boss-lab-btn" class="badge" title="Boss lab — view every boss live and assign attack patterns" onclick="toggleBossLab()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 2 2 4h12l2-4 2 4v8h-3v3h-3v-3H8v3H5v-3H2V6z"/><path d="m8 9 2.5 1.5M16 9l-2.5 1.5"/><path d="m8 12.5 2 1.5 2-1.5 2 1.5 2-1.5"/></svg></button>
             <!-- Model Viewer (Lucide box): a Dezaemon save's ポリ吉 3D models -->
             <a id="model-viewer-link" href="model-viewer.html" class="badge" title="3D model viewer (Dezaemon sec7 compositions)" onclick="openModelViewer(); return false;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></a>
             <!-- Save (Lucide save) -->
-            <button class="badge" title="Save" onclick="quickSave()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></button>
+            <button id="save-badge" class="badge" title="Save" onclick="quickSave()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></button>
             <!-- Menu -->
             <button class="badge menu-badge" title="Menu" onclick="openMenu()">≡</button>
         </div>
@@ -878,6 +896,9 @@
             <div id="grid-icon-view"></div>
         </div>
 
+        <!-- BOSS LAB (boss-lab.js) — stands in for the rail, grid and pad footer while open -->
+        <div id="boss-lab-host"></div>
+
         <!-- NES CABINET STRIPE (nintendo theme only) -->
         <div id="nes-stripe"></div>
 
@@ -886,7 +907,7 @@
             <button class="pad-hint" id="pad-hint-b" onclick="setDeleteMode()"><span class="pad-orb pad-orb-b">B</span><span>DELETE</span></button>
             <div class="pad-right">
                 <button class="pad-hint" id="pad-hint-a" onclick="openPicker('enemy')"><span class="pad-orb pad-orb-a">A</span><span>PLACE</span></button>
-                <button class="pad-hint" onclick="quickSave()"><span class="pad-orb pad-orb-y">Y</span><span>SAVE</span></button>
+                <button class="pad-hint" id="pad-hint-y" onclick="quickSave()"><span class="pad-orb pad-orb-y">Y</span><span>SAVE</span></button>
             </div>
         </div>
 
@@ -985,12 +1006,13 @@
         <div class="menu-label">ADVANCED EDITORS</div>
         <div class="adv-grid">
             <button class="menu-row" onclick="showCharacterEditor()"><span class="mono-badge sm">CH</span>CHARACTER</button>
-            <button class="menu-row" onclick="showBossPatternEditor()"><span class="mono-badge sm">BP</span>BOSS PATTERNS</button>
+            <button class="menu-row" id="menu-boss-lab" onclick="toggleBossLab()" title="Boss lab — view every boss live and assign attack patterns"><span class="mono-badge sm">BL</span><span id="menu-boss-lab-label">BOSS LAB</span></button>
             <button class="menu-row" onclick="showStoryEditor()"><span class="mono-badge sm">ST</span>STORY</button>
             <button class="menu-row" onclick="showAtlasManager()"><span class="mono-badge sm">AT</span>ATLAS</button>
             <button class="menu-row" onclick="showTitleEditor()"><span class="mono-badge sm">TI</span>TITLE</button>
             <button class="menu-row" onclick="showAudioEditor()"><span class="mono-badge sm">AU</span>AUDIO</button>
         </div>
+        <div class="menu-note">BOSS PATTERNS MOVED TO THE TOOLBAR &rarr; BOSS LAB</div>
         <div class="menu-label">DISPLAY</div>
         <div class="display-row">
             <span class="display-lbl">THEME</span>
@@ -1189,14 +1211,6 @@
         </div>
     </div>
 
-    <!-- BOSS PATTERN ASSIGNMENT MODAL -->
-    <div id="boss-pattern-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
-        <div class="picker-panel" style="max-height:80vh">
-            <div class="picker-title">BOSS PATTERN ASSIGNMENT</div>
-            <div style="font-size:11px;color:#888;margin-bottom:12px;font-family:monospace;">Assign any boss's attack pattern to any stage boss</div>
-            <div id="boss-pattern-list" style="padding:0 4px;"></div>
-        </div>
-    </div>
 
     <!-- STORY EDITOR MODAL -->
     <div id="story-editor-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
@@ -1307,8 +1321,6 @@
         // same __editorPhaser*__ localStorage keys and ?editorPlay/?level params
         // this editor writes, so play links work unchanged).
         const GAME_PLAY_URL = '/games/' + GAME_ID;
-        // Keep the boss viewer on the same game this editor session authors for.
-        document.getElementById('boss-viewer-link').href = 'boss-viewer.html?game=' + GAME_ID;
         document.getElementById('model-viewer-link').href = 'model-viewer.html?game=' + GAME_ID;
         // The editor's built-in loaders fetch the base game's assets with paths
         // relative to the game dir ("assets/…", "img/…") — a convention from
@@ -1438,8 +1450,15 @@
         let playerData = {};
         function storeBossDataForViewers() {
             try { sessionStorage.setItem('editorBossData', JSON.stringify(bossData)); } catch (e) {}
+            // A boss viewer open on this origin follows along live.
+            try { if (viewerBridgeChannel) viewerBridgeChannel.postMessage({ type: 'boss-data', gameId: GAME_ID, bossData }); } catch (e) {}
             storeAtlasForViewers();
         }
+        // Two-way channel with boss-viewer.html: this side announces bossData,
+        // the viewer's APPLY sends attackPattern changes back (handled in the
+        // BOSS LAB section below).
+        let viewerBridgeChannel = null;
+        try { viewerBridgeChannel = new BroadcastChannel(window.BossLab ? BossLab.CHANNEL : 'editor-viewer-bridge'); } catch (e) {}
         // Publish an imported Dezaemon save's sec7 3D models for
         // model-viewer.html: sessionStorage for the same tab (and a popup
         // opened AFTER this write), plus a durable copy in the viewer bridge
@@ -2485,10 +2504,136 @@
             gv.classList.add(currentTool === 'delete' ? 'mode-delete' :
                 currentTool === 'extract' ? 'mode-extract' :
                 (currentTool === 'place' && selectedEnemyLetter) ? 'mode-place' : 'mode-none');
+
+            updateContextualToolbar();
         }
+
+        // ================== BOSS LAB ==================
+        // boss-viewer.html's live sim and the old BOSS PATTERNS sheet as one
+        // panel (static/editor/boss-lab.js), mounted in place of the wave grid.
+        // Opened by the toolbar's invader badge, the drawer's BOSS LAB row and
+        // the boss strip under the last wave. A APPLY writes attackPattern into
+        // bossData through the same storeBossDataForViewers path every other
+        // boss edit takes; B REVERT drops the pending preview, B BACK closes.
+        // `var`: updateStageBanner/updateContextualToolbar run from init code
+        // above this point, so these must not sit in a TDZ.
+        var bossLab = null;
+        var bossLabOpen = false;
+        function labAtlas() {
+            if (!atlasData || !atlasData.frames || !atlasImage || !atlasImage.complete || !atlasImage.naturalWidth) return null;
+            return { frames: atlasData.frames, url: atlasImage.src, w: atlasImage.naturalWidth, h: atlasImage.naturalHeight };
+        }
+        function labPlayerFrames() {
+            const own = libraryFrames(playerData);
+            if (own.length) return own.slice(0, 2);
+            if (!atlasData || !atlasData.frames) return [];
+            return Object.keys(atlasData.frames).filter(k => /^player0[0-9]\.(gif|png)$/.test(k)).sort().slice(0, 2);
+        }
+        // Somewhere to save to: a directory handle or a named cloud game.
+        function hasSaveTarget() {
+            const nameInput = document.getElementById('firebase-level-name');
+            return !!dirHandle || !!(nameInput && nameInput.value.trim());
+        }
+        // sec7 3D models arrive only with a Dezaemon .sav import.
+        function hasSec7Models() {
+            try {
+                const d = dezaImportState && dezaImportState.decoded;
+                return !!(d && d.models && d.models.models && d.models.models.length);
+            } catch (e) { return false; }
+        }
+        function ensureBossLab() {
+            if (bossLab || !window.BossLab) return bossLab;
+            bossLab = BossLab.mount(document.getElementById('boss-lab-host'), {
+                getBossData: () => bossData,
+                atlas: labAtlas,
+                frameUrl: getThumbURL,
+                playerFrames: labPlayerFrames,
+                bossName: bossDisplayName,
+                theme: document.body.classList.contains('theme-nintendo') ? 'nintendo' : 'xbox',
+                onApply: applyBossPatterns,
+                onBack: closeBossLab,
+                onSave: () => quickSave(),
+                canSave: hasSaveTarget,
+            });
+            return bossLab;
+        }
+        function applyBossPatterns(changes, n) {
+            for (const k in changes) {
+                if (!bossData[k]) continue;
+                if (changes[k]) bossData[k].attackPattern = changes[k];
+                else delete bossData[k].attackPattern;
+            }
+            if (gameData) gameData.bossData = bossData;
+            storeBossDataForViewers();
+            flash('PATTERNS APPLIED · ' + n + ' CHANGED · VIEWER SYNCED');
+        }
+        function openBossLab(key) {
+            if (!bossLabOpen) {
+                if (!ensureBossLab()) { alert('boss-lab.js did not load — reload the editor'); return; }
+                bossLabOpen = true;
+                document.body.classList.add('boss-lab');
+                closeMenu();
+                bossLab.refresh();
+                flash('BOSS LAB · ' + Object.keys(bossData || {}).length + ' BOSSES · TAP A PATTERN TO PREVIEW');
+            }
+            if (key && bossData && bossData[key]) bossLab.selectBoss(key);
+            updateStageBanner();
+            updateContextualToolbar();
+        }
+        function closeBossLab() {
+            if (!bossLabOpen) return;
+            bossLabOpen = false;
+            document.body.classList.remove('boss-lab');
+            if (bossLab && bossLab.pendingCount()) bossLab.revert();
+            renderGrid();   // the boss strip picks up whatever was applied
+            updateContextualToolbar();
+            flash('BACK TO STAGE ' + getCurrentStageId());
+        }
+        function toggleBossLab() { if (bossLabOpen) closeBossLab(); else openBossLab(); }
+        // Which badges the toolbar shows follows the loaded game: SAVE needs a
+        // save target, 3D needs sec7 models, and the invader badge lights up
+        // while the lab is open (so does the drawer's BOSS LAB row).
+        function updateContextualToolbar() {
+            document.body.classList.toggle('has-save-target', hasSaveTarget());
+            document.body.classList.toggle('has-3d-models', hasSec7Models());
+            const b = document.getElementById('boss-lab-btn');
+            if (b) b.classList.toggle('active', bossLabOpen);
+            const row = document.getElementById('menu-boss-lab');
+            if (row) row.classList.toggle('hi', bossLabOpen);
+            const lbl = document.getElementById('menu-boss-lab-label');
+            if (lbl) lbl.textContent = bossLabOpen ? 'BOSS LAB · ON' : 'BOSS LAB';
+            if (bossLab) bossLab.updateFoot();
+        }
+        document.getElementById('firebase-level-name').addEventListener('input', updateContextualToolbar);
+        // The standalone viewer's APPLY arrives here; take only attackPattern,
+        // the one field it edits, and only for a pattern this game has.
+        if (viewerBridgeChannel) viewerBridgeChannel.onmessage = (ev) => {
+            const m = ev.data;
+            if (!m || m.type !== 'boss-patterns' || m.gameId !== GAME_ID || !m.changes || !bossData) return;
+            let n = 0;
+            for (const k in m.changes) {
+                if (!Object.prototype.hasOwnProperty.call(bossData, k)) continue;
+                const v = typeof m.changes[k] === 'string' && Object.prototype.hasOwnProperty.call(bossData, m.changes[k]) ? m.changes[k] : '';
+                if ((bossData[k].attackPattern || '') === v) continue;
+                if (v) bossData[k].attackPattern = v; else delete bossData[k].attackPattern;
+                n++;
+            }
+            if (!n) return;
+            if (gameData) gameData.bossData = bossData;
+            storeBossDataForViewers();
+            if (bossLab) bossLab.refresh();
+            if (!bossLabOpen) renderGrid();
+            flash('PATTERNS APPLIED FROM BOSS VIEWER · ' + n + ' CHANGED');
+        };
 
         // ================== OSD CHROME ==================
         function updateStageBanner() {
+            if (bossLabOpen) {
+                document.getElementById('stage-banner-title').textContent = 'BOSS LAB';
+                document.getElementById('stage-banner-waves').textContent =
+                    String(Object.keys(bossData || {}).length).padStart(2, '0') + ' BOSSES · ' + GAME_ID.toUpperCase();
+                return;
+            }
             const id = String(currentStageKey).replace(/^stage/, '');
             document.getElementById('stage-banner-title').textContent =
                 'STAGE ' + (id.length < 2 ? '0' + id : id);
@@ -2524,6 +2669,7 @@
         }
         function applyTheme(t) {
             document.body.classList.toggle('theme-nintendo', t === 'nintendo');
+            if (bossLab) bossLab.setTheme(t === 'nintendo' ? 'nintendo' : 'xbox');
             const x = document.getElementById('seg-xbox'), n = document.getElementById('seg-nintendo');
             if (x && n) {
                 x.classList.toggle('on', t !== 'nintendo');
@@ -2639,10 +2785,12 @@
         }
 
         // The stage boss, rendered where it actually arrives: after the last
-        // wave. Clickable by the EXTRACT tool (bosses never appear in the grid,
-        // so this is their only pipette target); otherwise it opens the
-        // character editor on it. bossExtra is intentionally not reachable
-        // here — it is not stage-bound (only the ?boss=goki swap uses it).
+        // wave, with the attack pattern it runs. Clickable by the EXTRACT tool
+        // (bosses never appear in the grid, so this is their only pipette
+        // target); otherwise it opens the boss lab on it (the character editor
+        // still reaches the record through CHARACTER → Bosses). bossExtra is
+        // intentionally not reachable here — it is not stage-bound (only the
+        // ?boss=goki swap uses it).
         function createBossStrip() {
             const sid = getCurrentStageId();
             const key = 'boss' + sid;
@@ -2669,15 +2817,24 @@
             const label = document.createElement('span');
             label.textContent = bossDisplayName(key, entry);
             strip.appendChild(label);
+            // The pattern this boss runs: its attackPattern override (lit) or
+            // its own (dim) — the same field the lab's APPLY writes.
+            const pat = document.createElement('span');
+            const ap = entry.attackPattern && bossData[entry.attackPattern] ? entry.attackPattern : '';
+            pat.className = 'boss-pat' + (ap ? ' on' : '');
+            const ownLabel = window.BossLab && BossLab.PAT[key] ? BossLab.PAT[key].label : 'OWN';
+            pat.textContent = ap
+                ? 'PATTERN → ' + bossDisplayName(ap, bossData[ap]).toUpperCase()
+                : 'PATTERN · ' + ownLabel + ' (DEFAULT)';
+            strip.appendChild(pat);
             const tag = document.createElement('span');
             tag.className = 'boss-tag';
             tag.textContent = 'BOSS · ' + key;
             strip.appendChild(tag);
+            strip.title = 'Open in the boss lab';
             strip.onclick = () => {
                 if (currentTool === 'extract') { openExtractCard(key); return; }
-                document.getElementById('enemy-editor-modal').classList.remove('hidden');
-                switchEditorTab('bosses');
-                editEnemy(key);
+                openBossLab(key);
             };
             return strip;
         }
@@ -7732,105 +7889,9 @@ function GAME3D_RUNTIME(DATA) {
             return BOSS_PATTERN_NAMES[key] || own || key;
         }
 
-        function showBossPatternEditor() {
-            closeMenu();
-            if (!bossData || Object.keys(bossData).length === 0) {
-                alert('No bossData loaded. Load a game directory or a saved game first.');
-                return;
-            }
-            renderBossPatternList();
-            document.getElementById('boss-pattern-modal').classList.remove('hidden');
-        }
-
-        function renderBossPatternList() {
-            const list = document.getElementById('boss-pattern-list');
-            list.innerHTML = '';
-            const allBossKeys = Object.keys(bossData).sort();
-            // Pattern sources: all bosses available as patterns
-            const patternOptions = allBossKeys.map(k => ({
-                key: k,
-                label: bossDisplayName(k, bossData[k])
-            }));
-
-            for (const bk of allBossKeys) {
-                const b = bossData[bk];
-                const row = document.createElement('div');
-                row.className = 'boss-pattern-row' + (b.attackPattern ? ' overridden' : '');
-
-                // Thumb
-                const thumb = document.createElement('div');
-                thumb.className = 'boss-pattern-thumb';
-                const idleFrame = b.anim && b.anim.idle && b.anim.idle[0];
-                if (idleFrame) {
-                    const url = getThumbURL(idleFrame);
-                    if (url) {
-                        const img = document.createElement('img');
-                        img.src = url;
-                        img.className = 'boss-pattern-thumb';
-                        thumb.replaceWith(img);
-                        row.appendChild(img);
-                    } else {
-                        thumb.style.cssText += 'display:flex;align-items:center;justify-content:center;font-size:20px;';
-                        thumb.textContent = '👹';
-                        row.appendChild(thumb);
-                    }
-                } else {
-                    thumb.style.cssText += 'display:flex;align-items:center;justify-content:center;font-size:20px;';
-                    thumb.textContent = '👹';
-                    row.appendChild(thumb);
-                }
-
-                // Info
-                const info = document.createElement('div');
-                info.className = 'boss-pattern-info';
-                // Build the two lines out of DOM nodes and set the label text via
-                // textContent. `bk` is a bossData key and `b.name` / `b.hp` are its
-                // fields — bossData is taken straight off the record on the SHARED
-                // levels path (see loadFromFirebase), so anyone who can save a game
-                // picks all three, and the only sanitizer anything on that path
-                // passes through (sanitizeLevelName) strips just the five
-                // Firebase-forbidden chars [.#$/[]] and never touches these at all.
-                // Interpolating them into innerHTML is stored XSS on the launcher's
-                // own origin, triggered by opening the Boss Pattern editor.
-                const nameEl = document.createElement('div');
-                nameEl.className = 'boss-pattern-name';
-                nameEl.textContent = bossDisplayName(bk, b);
-                info.appendChild(nameEl);
-                const keyEl = document.createElement('div');
-                keyEl.className = 'boss-pattern-key';
-                keyEl.textContent = bk + ' · HP ' + (b.hp || '?');
-                info.appendChild(keyEl);
-                row.appendChild(info);
-
-                // Select
-                const sel = document.createElement('select');
-                sel.className = 'boss-pattern-select';
-                // Default option = use own pattern
-                const defaultOpt = document.createElement('option');
-                defaultOpt.value = '';
-                defaultOpt.textContent = '(default)';
-                sel.appendChild(defaultOpt);
-                for (const po of patternOptions) {
-                    if (po.key === bk) continue; // skip self
-                    const opt = document.createElement('option');
-                    opt.value = po.key;
-                    opt.textContent = po.label + ' (' + po.key + ')';
-                    sel.appendChild(opt);
-                }
-                sel.value = b.attackPattern || '';
-                sel.onchange = () => {
-                    if (sel.value) {
-                        bossData[bk].attackPattern = sel.value;
-                    } else {
-                        delete bossData[bk].attackPattern;
-                    }
-                    storeBossDataForViewers();
-                    renderBossPatternList();
-                };
-                row.appendChild(sel);
-                list.appendChild(row);
-            }
-        }
+        // Boss pattern assignment lives in the BOSS LAB now (see the BOSS LAB
+        // section): the lab's panel previews a pattern live and APPLY writes it
+        // through applyBossPatterns.
 
         // ================== STORY EDITOR ==================
         function getDefaultStoryData() {
