@@ -1699,6 +1699,8 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
         maxSpeed: sh.maxSpeed,
         initialPower: sh.initialPower,
         maxPower: sh.maxPower,
+        initialOptions: sh.initialOptions,
+        maxOptions: sh.maxOptions,
         autofireFrames: sh.autofireFrames
       })) : void 0,
       // The four WEAPON LOADOUT presets in full — the editor's MAIN,
@@ -2168,6 +2170,8 @@ function shipBlock(sec5, base) {
     maxSpeed: sec5[base + 1] >> 4 & 7,
     initialPower: sec5[base + 2] & 7,
     maxPower: Math.min(4, sec5[base + 2] >> 4 & 7),
+    initialOptions: sec5[base + 2] & 7,
+    maxOptions: Math.min(4, sec5[base + 2] >> 4 & 7),
     // frames between autofire volleys
     autofireFrames: AUTOFIRE_RATE_TABLE[sec5[base + 3] & 7],
     raw: [...sec5.subarray(base, base + 4)]

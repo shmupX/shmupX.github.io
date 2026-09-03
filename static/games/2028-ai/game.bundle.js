@@ -7688,6 +7688,11 @@
     dezaPower: ["dezaPower", "p2DezaPower"],
     dezaWeapons: ["dezaWeapons", "p2DezaWeapons"],
     dezaLastX: ["dezaLastX", "p2DezaLastX"],
+    dezaOptions: ["dezaOptions", "p2DezaOptions"],
+    dezaPods: ["dezaPods", "p2DezaPods"],
+    dezaPodTrail: ["dezaPodTrail", "p2DezaPodTrail"],
+    dezaPodSub: ["dezaPodSub", "p2DezaPodSub"],
+    dezaPodN: ["dezaPodN", "p2DezaPodN"],
     dezaBomb: ["dezaBomb", "p2DezaBomb"],
     dezaBombStock: ["dezaBombStock", "p2DezaBombStock"],
     dezaBombInvuln: ["dezaBombInvuln", "p2DezaBombInvuln"],
@@ -8107,6 +8112,13 @@
     // (I/U for player 2), or either shoulder button on a pad.
     var charging = !!(keys && keys.charge && keys.charge.isDown) || gp.charge;
     updateDezaWeapons(scene, p, charging);
+    // OPTION A widens its ring while the engine's C button is held. This
+    // runtime has no held-fire button to inherit, so — exactly as the charge
+    // did above — the ring gets an input of its own: Z on a keyboard, M for
+    // player 2. No pad button is free (every face and shoulder button already
+    // fires the bomb), so on a pad the ring stays at its 32 px rest radius.
+    var optionHeld = !!(keys && keys.option && keys.option.isDown);
+    updateDezaPods(scene, p, optionHeld);
   }
   function playerDamage(scene, p, amount) {
     // Bomb types 1, 2, 4, 6 and 7 hold the player invincible for their whole run
@@ -8691,6 +8703,12 @@
   function dezaSeedPower(scene, p) {
     var sh = dezaShip(scene, p.index);
     p.dezaPower = sh ? Math.max(0, Math.min(4, sh.initialPower || 0)) : 0;
+    // The OPTION stat is its own byte (ship +2). The engine stores the low
+    // 3 bits uncapped and lets the 4-wide pod slot block do the clamping.
+    p.dezaOptions = sh ? Math.max(0, sh.initialOptions || 0) : 0;
+    p.dezaPodSub = void 0;
+    p.dezaPodN = void 0;
+    p.dezaPodTrail = null;
   }
   function dezaLoadout(scene, p) {
     var m = scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
@@ -9096,11 +9114,265 @@
   var DEZA_CHARGE3_WOBBLE = [2, 1, -1, -2, -2, -1, 1, 2];    // +0x21C70
   var DEZA_CHARGE3_LIFE = 17;      // 10 growth frames + 7 fade
 
-  // byte0 bits0-2 — the editor's SUB. This runtime does not implement it (its
-  // own autofire stands in), so the only thing that reads it is the charge
-  // lockout rule, which is special-cased on type 7. Values 5/6/7 are the
-  // editor's OPTION A/B/C: option pods, driven from their own per-frame hook
-  // at GAME +0x1CEDE rather than a shot dispatcher, and not implemented here.
+  // --- OPTION pods: the editor's SUB values 5, 6 and 7 ----------------------
+  // These never reach the shot dispatcher — +0x15128's jump table entry [5] is
+  // an empty case — because they are not shots. A one-shot rebuild at GAME
+  // +0x1CEB8 spawns persistent pod objects that the engine's generic object
+  // loop (+0x791C) ticks every frame as classes 64 (A), 65 (B) and 66 (C).
+  // Traced 2026-09-02; 359 of 976 presets in the save corpus use one.
+  //
+  // How many pods you get is the OPTION stat, which is NOT the shot power
+  // level: it is ship byte +2 (settings +0x0E / +0x12), seeded from its low 3
+  // bits and capped by its high nibble at 4, and raised by the OPTION item.
+  // The POWER item reads ship byte +1 and caps at 7 — a different byte.
+  var DEZA_POD_TRAIL = 40;              // per-player position history, 1/frame
+  // OPTION A — an orbiting ring. Start angles by pod count (+0x21E00, 4 per
+  // row, 256 units = one turn), so 2 pods sit opposite and 4 make a cross.
+  var DEZA_OPTA_ANGLES = [[], [0], [0, 128], [0, 85, 170], [0, 64, 128, 192]];
+  var DEZA_OPTA_DAMAGE = [1024, 1088, 1152, 1216, 1280];   // +0x21DEC, by count
+  var DEZA_OPTA_SPARK_FADE = [2304, 3072, 3840, 4608, 5376]; // +0x21E14, by count
+  var DEZA_OPTA_REST_R = 32;            // px — engine 0x2000, radius is >>8
+  var DEZA_OPTA_MAX_R = 92;             // px — engine 0x5C00, held ceiling
+  var DEZA_OPTA_SLEW = 2;               // px/frame the radius chases its target
+  var DEZA_OPTA_GROW = 4;               // px/frame the target grows while held
+  var DEZA_OPTA_SPIN = 768 / 65536;     // turns/frame = 4.219 deg
+  var DEZA_OPTA_SPIN_MAX = 1296 / 65536;
+  var DEZA_OPTA_SPIN_ACC = 24 / 65536;
+  var DEZA_OPTA_LAG = 5;                // the ring centres on the ship 5 frames back
+  // OPTION B — a flanking pair, 1 pod at option 1-2 and 2 at 3-4. They anchor
+  // to history entry 3, so they lag the ship by 4 frames rather than being
+  // welded to it, and they aim 180 degrees away from the way you are moving.
+  var DEZA_OPTB_SIDE = 18;              // px lateral, engine 2304 >> 7
+  var DEZA_OPTB_BEHIND = 12;            // px along the scroll axis, engine 1536 >> 7
+  var DEZA_OPTB_DAMAGE = 384;           // per overlapping frame
+  var DEZA_OPTB_LAG = 3;
+  var DEZA_OPTB_TURN = 4096 / 65536;    // turns/frame = 22.5 deg
+  var DEZA_OPTB_RECOIL = 6;             // px kick when the pod fires
+  var DEZA_OPTB_RECOIL_DECAY = 0.5;     // px/frame
+  var DEZA_OPTB_BURST = 3;              // +0x21C60[6]
+  var DEZA_OPTB_RELOAD = 8;             // +0x21C68[6] frames
+  var DEZA_OPTB_SPEED = 1023;           // engine units/frame, as the plain shot
+  // OPTION C — a trail. Pod i rides the ship's path 8i+7 steps back, and the
+  // history only advances on frames the ship actually moves, so the trail
+  // concertinas: it stretches out as you fly and gathers when you stop.
+  var DEZA_OPTC_LAG = [7, 15, 23, 31];
+
+  // Pods are indestructible and, for A and B, bill contact damage every
+  // overlapping frame (`dezaPerFrame`) exactly as the engine does.
+  function dezaPodCount(scene, p) {
+    var t = dezaSubType(scene, p);
+    if (t < 5 || t > 7) return 0;
+    var n = Math.max(0, Math.min(4, p.dezaOptions || 0));
+    if (n === 0) return 0;
+    // OPTION B is the odd one: `pow > 2 ? 2 : 1`, never more than two.
+    if (t === 6) return n > 2 ? 2 : 1;
+    return n;
+  }
+  function dezaPodDamage(scene, p, type) {
+    var n = Math.max(0, Math.min(4, p.dezaOptions || 0));
+    if (type === 5) return dezaHitDamage(scene, DEZA_OPTA_DAMAGE[n]);
+    if (type === 6) return dezaHitDamage(scene, DEZA_OPTB_DAMAGE);
+    return 0;   // OPTION C's pods carry no hitbox and no attack power at all
+  }
+  function dezaSpawnPod(scene, p, index, type) {
+    var pd = scene.recipe && scene.recipe.playerData;
+    var shootData = pd && (pd.shootNormal || pd.shootBig || pd.shoot3way);
+    var frames = playerBulletFrames(scene, shootData, "deza-pod");
+    var pod = scene.add.sprite(p.sprite.x, p.sprite.y, "game_asset", frames[0]);
+    pod.setOrigin(0.5);
+    pod.setDepth(41);
+    pod.setData("dezaPod", type);
+    pod.setData("dezaPodIndex", index);
+    pod.setData("owner", p.index);
+    // Held still by the pod updater; updatePlayerBullets would otherwise walk
+    // it away and then cull it for leaving the screen.
+    pod.setData("dezaVx", 0);
+    pod.setData("dezaVy", 0);
+    pod.setData("bulletId", scene.bulletIdCnt++);
+    attachAnim(pod, frames, (shootData && shootData.frameRate) || 6);
+    // The ring grows out of the ship over its first 16 frames.
+    pod.setData("dezaPodRadius", type === 5 ? 0 : DEZA_OPTA_REST_R);
+    pod.setData("dezaPodTarget", DEZA_OPTA_REST_R);
+    pod.setData("dezaPodAngle", type === 5
+      ? ((DEZA_OPTA_ANGLES[dezaPodCount(scene, p)] || [])[index] || 0) / 256
+      : 0);      // OPTION B's angle is a compass: 0 = up
+    pod.setData("dezaPodSpin", DEZA_OPTA_SPIN);
+    pod.setData("dezaPodRecoil", 0);
+    pod.setData("dezaPodReload", 0);
+    if (type !== 7) {
+      pod.setData("damage", dezaPodDamage(scene, p, type));
+      pod.setData("dezaPerFrame", true);
+      scene.playerBullets.push(pod);
+    }
+    return pod;
+  }
+  function dezaClearPods(scene, p) {
+    var pods = p.dezaPods;
+    if (!pods) return;
+    for (var i = 0; i < pods.length; i++) {
+      var pod = pods[i];
+      if (!pod) continue;
+      var at = scene.playerBullets ? scene.playerBullets.indexOf(pod) : -1;
+      if (at >= 0) scene.playerBullets.splice(at, 1);
+      pod.destroy();
+    }
+    p.dezaPods = null;
+  }
+  // The engine rebuilds on six events — respawn, entrance complete, the end of
+  // either pod-eating bomb, a weapon-change item and an OPTION pickup. All six
+  // reduce to "the SUB type or the option count is no longer what these pods
+  // were built for", which is what this checks.
+  function dezaRebuildPods(scene, p) {
+    dezaClearPods(scene, p);
+    var type = dezaSubType(scene, p);
+    var n = dezaPodCount(scene, p);
+    p.dezaPodSub = type;
+    p.dezaPodN = n;
+    if (!n) return;
+    var pods = [];
+    for (var i = 0; i < n; i++) pods.push(dezaSpawnPod(scene, p, i, type));
+    p.dezaPods = pods;
+  }
+  function dezaPodTrailAt(p, back) {
+    var t = p.dezaPodTrail;
+    if (!t || !t.length) return { x: p.sprite.x, y: p.sprite.y };
+    return t[Math.min(back, t.length - 1)];
+  }
+  function updateDezaPods(scene, p, optionHeld) {
+    if (!p.sprite || !p.sprite.active) return;
+    var type = dezaSubType(scene, p);
+    // Position history. OPTION C alone gates the push on the ship moving, and
+    // that gate is why its trail gathers up when you hold still.
+    if (!p.dezaPodTrail) p.dezaPodTrail = [];
+    var trail = p.dezaPodTrail;
+    var moved = !trail.length ||
+      Math.abs(p.sprite.x - trail[0].x) > 0.01 || Math.abs(p.sprite.y - trail[0].y) > 0.01;
+    if (type !== 7 || moved || trail.length < DEZA_POD_TRAIL) {
+      trail.unshift({ x: p.sprite.x, y: p.sprite.y });
+      if (trail.length > DEZA_POD_TRAIL) trail.length = DEZA_POD_TRAIL;
+    }
+    if (type < 5 || type > 7 || p.dead) {
+      if (p.dezaPods) dezaClearPods(scene, p);
+      p.dezaPodSub = type;
+      return;
+    }
+    var n = dezaPodCount(scene, p);
+    if (p.dezaPodSub !== type || p.dezaPodN !== n || !p.dezaPods) dezaRebuildPods(scene, p);
+    var pods = p.dezaPods;
+    if (!pods || !pods.length) return;
+    if (type === 5) updateDezaPodsRing(scene, p, pods, optionHeld);
+    else if (type === 6) updateDezaPodsFlank(scene, p, pods);
+    else updateDezaPodsTrail(scene, p, pods);
+  }
+  // OPTION A. The ring centres on where the ship was five frames ago, spins at
+  // a fixed rate, and slews its radius toward a target. Holding the option
+  // input pushes that target from 32 px out to 92 px and the spin from 4.2 to
+  // 7.1 deg/frame; while the ring is anywhere but at rest each pod also sheds
+  // one stationary damaging spark per frame.
+  function updateDezaPodsRing(scene, p, pods, held) {
+    var centre = dezaPodTrailAt(p, DEZA_OPTA_LAG);
+    for (var i = 0; i < pods.length; i++) {
+      var pod = pods[i];
+      if (!pod || !pod.active) continue;
+      var target = pod.getData("dezaPodTarget");
+      var spin = pod.getData("dezaPodSpin");
+      if (held) {
+        target = Math.min(DEZA_OPTA_MAX_R, target + DEZA_OPTA_GROW);
+        spin = Math.min(DEZA_OPTA_SPIN_MAX, spin + DEZA_OPTA_SPIN_ACC);
+      } else {
+        target = DEZA_OPTA_REST_R;
+        spin = DEZA_OPTA_SPIN;
+      }
+      var r = pod.getData("dezaPodRadius");
+      var moving = r !== target || target > DEZA_OPTA_REST_R;
+      if (r < target) r = Math.min(target, r + DEZA_OPTA_SLEW);
+      else if (r > target) r = Math.max(target, r - DEZA_OPTA_SLEW);
+      var a = (pod.getData("dezaPodAngle") + spin) % 1;
+      pod.setData("dezaPodTarget", target);
+      pod.setData("dezaPodSpin", spin);
+      pod.setData("dezaPodRadius", r);
+      pod.setData("dezaPodAngle", a);
+      var th = a * Math.PI * 2;
+      pod.x = centre.x + Math.cos(th) * r;
+      pod.y = centre.y + Math.sin(th) * r;
+      pod.setData("damage", dezaPodDamage(scene, p, 5));
+      if (moving) dezaSpawnPodSpark(scene, p, pod);
+    }
+  }
+  // The spark is a stationary object with the pod's own art and attack power,
+  // living out a fade counter: 0x8000 down to 8191 at the per-count rate.
+  function dezaSpawnPodSpark(scene, p, pod) {
+    var n = Math.max(0, Math.min(4, p.dezaOptions || 0));
+    var life = Math.max(1, Math.round((0x8000 - 8191) / DEZA_OPTA_SPARK_FADE[n]));
+    var s = spawnDezaPlayerShot(scene, p, pod.x, pod.y, 0, 0,
+      dezaHitDamage(scene, DEZA_OPTA_DAMAGE[n]));
+    if (s) {
+      s.setData("dezaLife", life);
+      s.setData("dezaPerFrame", true);
+    }
+  }
+  // OPTION B. The pair flanks the ship's four-frame-old position and turns to
+  // face 180 degrees away from the way you are flying, so you sweep their fire
+  // by moving. Each pod fires on its own reload and kicks backwards when it does.
+  function updateDezaPodsFlank(scene, p, pods) {
+    var anchor = dezaPodTrailAt(p, DEZA_OPTB_LAG);
+    var prev = dezaPodTrailAt(p, DEZA_OPTB_LAG + 1);
+    var dx = anchor.x - prev.x, dy = anchor.y - prev.y;
+    // OPTION B's angle is the compass convention — 0 = up, quarter = right —
+    // NOT the ring's 0 = right. A heading a points along (sin, -cos), so the
+    // heading of a screen delta is atan2(dx, -dy), and the pods want the
+    // opposite of the way you are flying (+half a turn).
+    var wants = (dx * dx + dy * dy) > 0.02
+      ? ((Math.atan2(dx, -dy) / (Math.PI * 2)) + 0.5 + 1) % 1
+      : null;
+    for (var i = 0; i < pods.length; i++) {
+      var pod = pods[i];
+      if (!pod || !pod.active) continue;
+      var a = pod.getData("dezaPodAngle");
+      if (wants !== null) {
+        // Turn the short way round, at most 22.5 degrees a frame.
+        var d = ((wants - a) % 1 + 1.5) % 1 - 0.5;
+        a = (a + Math.max(-DEZA_OPTB_TURN, Math.min(DEZA_OPTB_TURN, d)) + 1) % 1;
+        pod.setData("dezaPodAngle", a);
+      }
+      var kick = pod.getData("dezaPodRecoil");
+      var th = a * Math.PI * 2;
+      var fx = Math.sin(th), fy = -Math.cos(th);   // the way the pod is facing
+      pod.x = anchor.x + (i === 0 ? DEZA_OPTB_SIDE : -DEZA_OPTB_SIDE) - fx * kick;
+      pod.y = anchor.y + DEZA_OPTB_BEHIND - fy * kick;
+      // Bullet art points +X at rotation 0, so the pod faces its own heading.
+      pod.setRotation(Math.atan2(fy, fx));
+      if (kick > 0) pod.setData("dezaPodRecoil", Math.max(0, kick - DEZA_OPTB_RECOIL_DECAY));
+      var reload = pod.getData("dezaPodReload");
+      if (reload > 0) {
+        pod.setData("dezaPodReload", reload - 1);
+      } else if (!p.dezaShotLocked) {
+        for (var k = 0; k < DEZA_OPTB_BURST; k++) {
+          var sp = dezaVel(DEZA_OPTB_SPEED);
+          spawnDezaPlayerShot(scene, p, pod.x, pod.y, fx * sp, fy * sp,
+            dezaHitDamage(scene, DEZA_OPTB_DAMAGE));
+        }
+        pod.setData("dezaPodReload", DEZA_OPTB_RELOAD);
+        pod.setData("dezaPodRecoil", DEZA_OPTB_RECOIL);
+      }
+    }
+  }
+  // OPTION C. Pure formation: these pods have no hitbox and no attack power of
+  // their own. Their whole purpose is to be extra muzzles for the MAIN weapon,
+  // which fireDezaMain does through the origin argument.
+  function updateDezaPodsTrail(scene, p, pods) {
+    for (var i = 0; i < pods.length; i++) {
+      var pod = pods[i];
+      if (!pod || !pod.active) continue;
+      var at = dezaPodTrailAt(p, DEZA_OPTC_LAG[i] || DEZA_OPTC_LAG[3]);
+      pod.x = at.x;
+      pod.y = at.y;
+    }
+  }
+  // byte0 bits0-2 — the editor's SUB. Values 1-4 are shot types this runtime
+  // does not implement (its own autofire stands in), and the charge lockout
+  // rule is special-cased on type 7. Values 5/6/7 are OPTION A/B/C, which are
+  // pods rather than shots and are implemented above.
   function dezaSubType(scene, p) {
     var lo = dezaLoadout(scene, p);
     return lo ? (lo.sub & 7) : 0;
@@ -9204,6 +9476,13 @@
       st.burst = 0;
       if (st.burst < DEZA_MAIN_BURST[stype] && st.reload === 0) {
         fireDezaMain(scene, p, stype, L, st);
+        // OPTION C: every pod is another muzzle for that same volley.
+        if (dezaSubType(scene, p) === 7 && p.dezaPods) {
+          for (var pi = 0; pi < p.dezaPods.length; pi++) {
+            var pod = p.dezaPods[pi];
+            if (pod && pod.active) fireDezaMain(scene, p, stype, L, st, pod);
+          }
+        }
         st.reload = DEZA_MAIN_INTERVAL[stype];
       }
       if (st.reload !== 0) st.reload -= 1;
@@ -9267,8 +9546,12 @@
       if (shots[i]) shots[i].setData("dezaSlots", weight);
     }
   }
-  function fireDezaMain(scene, p, type, L, st) {
-    var ship = p.sprite;
+  // `origin` re-muzzles the whole pattern somewhere else. OPTION C uses it to
+  // fire the ship's MAIN weapon out of each trailing pod, which is what the
+  // engine's +0x11EA8 does — it is not a weapon of its own, it is a trigger
+  // that runs the MAIN weapon from the pods.
+  function fireDezaMain(scene, p, type, L, st, origin) {
+    var ship = origin || p.sprite;
     var dmg = (DEZA_MAIN_DAMAGE[type] || DEZA_MAIN_DAMAGE[1])[L];
     var i, sp, th, b;
     if (type === 1) {
@@ -9903,6 +10186,9 @@
         bullet.y -= 3.5;
         bullet.x += angle * 3.5;
       }
+      // A pod is placed by its own updater and lives as long as the loadout
+      // does, so it is exempt from the off-screen cull that retires shots.
+      if (bullet.getData("dezaPod")) continue;
       if (bullet.y < -20 || bullet.y > GH3 + 20 || bullet.x < -20 || bullet.x > GW4 + 20) {
         bullet.destroy();
         scene.playerBullets.splice(b, 1);
@@ -11953,7 +12239,8 @@
           left: Phaser.Input.Keyboard.KeyCodes.A,
           right: Phaser.Input.Keyboard.KeyCodes.D,
           sp: Phaser.Input.Keyboard.KeyCodes.SPACE,
-          charge: Phaser.Input.Keyboard.KeyCodes.SHIFT
+          charge: Phaser.Input.Keyboard.KeyCodes.SHIFT,
+          option: Phaser.Input.Keyboard.KeyCodes.Z
         });
         // Player 2 on a shared keyboard: IJKL to fly, O to bomb, U to charge.
         // Deliberately clear of P1's arrows/WASD/SPACE/SHIFT and of the keys
@@ -11964,7 +12251,8 @@
           left: Phaser.Input.Keyboard.KeyCodes.J,
           right: Phaser.Input.Keyboard.KeyCodes.L,
           sp: Phaser.Input.Keyboard.KeyCodes.O,
-          charge: Phaser.Input.Keyboard.KeyCodes.U
+          charge: Phaser.Input.Keyboard.KeyCodes.U,
+          option: Phaser.Input.Keyboard.KeyCodes.M
         });
       } catch (e) {
       }

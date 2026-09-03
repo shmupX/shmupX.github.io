@@ -699,6 +699,10 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                     maxSpeed: sh.maxSpeed,
                     initialPower: sh.initialPower,
                     maxPower: sh.maxPower,
+                    // Ship byte +2 under its traced name: the OPTION-pod count
+                    // and its cap. Same two nibbles as the pair above.
+                    initialOptions: sh.initialOptions,
+                    maxOptions: sh.maxOptions,
                     autofireFrames: sh.autofireFrames,
                 }))
                 : undefined,

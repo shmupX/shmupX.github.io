@@ -188,6 +188,18 @@ function shipBlock(sec5, base) {
         maxSpeed: (sec5[base + 1] >> 4) & 7,
         initialPower: sec5[base + 2] & 7,
         maxPower: Math.min(4, (sec5[base + 2] >> 4) & 7),
+        // Byte +2 is the OPTION-POD stat, not the shot power level — traced
+        // 2026-09-02 from the two pickup handlers, which read DIFFERENT bytes:
+        // the OPTION item (+0x1D0F4) reads settings +0x0E / +0x12 and clamps
+        // its cap to 4, while the POWER item (+0x1D1A4) reads +0x0D / +0x11
+        // and clamps to 7. The engine seeds its pod-count array from this
+        // byte's low 3 bits at +0x92E6. `initialPower`/`maxPower` above are
+        // the same two nibbles under their old names, kept because callers
+        // predate this; the clamp to 4 was already the OPTION cap by accident.
+        // NOTE the shot power level therefore comes from byte +1, which this
+        // decoder still calls maxSpeed/rapidParam — see FORMAT.md.
+        initialOptions: sec5[base + 2] & 7,
+        maxOptions: Math.min(4, (sec5[base + 2] >> 4) & 7),
         // frames between autofire volleys
         autofireFrames: AUTOFIRE_RATE_TABLE[sec5[base + 3] & 7],
         raw: [...sec5.subarray(base, base + 4)],
