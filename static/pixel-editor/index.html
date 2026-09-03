@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pixel Editor — CG Cells</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/app-icons/icon-32.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@500;700;800&display=swap" rel="stylesheet">
+  <!-- Firebase (compat) + the one shared client config — the sprite records go
+       to the same Realtime Database spriteX and the level editor read. -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+  <script src="/firebase-config.js"></script>
+  <style>
+    :root {
+      --sx-green: #9CFF6B;
+      --sx-green-soft: rgba(156,255,107,.6);
+      --sx-green-dim: rgba(156,255,107,.5);
+      --sx-line: rgba(140,255,110,.3);
+      --sx-line-soft: rgba(140,255,110,.22);
+      --sx-yellow: #F6FF4A;
+      --sx-yellow-line: rgba(246,255,74,.5);
+      --sx-amber: #FFB84A;
+      --sx-title: #dcffc2;
+      --sx-label: #bfffa0;
+      --sx-panel-grad: linear-gradient(180deg, rgba(28,64,34,.35), rgba(8,22,12,.6));
+      --sx-dock-grad: linear-gradient(180deg, rgba(28,64,34,.45), rgba(6,18,10,.8));
+      --sx-btn-bg: rgba(20,50,26,.35);
+      --sx-checker: conic-gradient(rgba(124,255,79,.05) 25%, rgba(124,255,79,.015) 0 50%, rgba(124,255,79,.05) 0 75%, rgba(124,255,79,.015) 0) 0 0/32px 32px, #0a120b;
+      --sx-checker-sm: conic-gradient(rgba(124,255,79,.06) 25%, transparent 0 50%, rgba(124,255,79,.06) 0 75%, transparent 0) 0 0/16px 16px, #07130a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; min-width: 960px;
+      background-color: #000;
+      background-image:
+        radial-gradient(ellipse 70% 55% at 42% 45%, rgba(20,90,40,.42), transparent 70%),
+        radial-gradient(ellipse 60% 70% at 50% 50%, rgba(8,40,18,.85), #000 82%);
+      background-attachment: fixed;
+      color: var(--sx-green);
+      font-family: 'Share Tech Mono', monospace;
+    }
+    .sx-scanlines {
+      position: fixed; inset: 0; pointer-events: none; z-index: 60;
+      background: repeating-linear-gradient(180deg, rgba(0,255,120,.035) 0 1px, transparent 1px 3px);
+      mix-blend-mode: screen;
+    }
+    .sx-app { position: relative; display: flex; flex-direction: column; height: 100vh; z-index: 1; }
+    .sx-topbar {
+      height: 44px; display: flex; justify-content: space-between; align-items: center;
+      padding: 0 24px; flex-shrink: 0; font-size: 13px; letter-spacing: .22em; color: rgba(180,255,140,.72);
+    }
+    .sx-topbar .dot { width: 8px; height: 8px; border-radius: 50%; background: #7CFF4F; box-shadow: 0 0 10px #7CFF4F; }
+    .sx-topbar-left, .sx-topbar-right { display: flex; align-items: center; gap: 12px; }
+    .sx-header {
+      height: 64px; display: flex; align-items: center; gap: 24px; padding: 0 24px; flex-shrink: 0;
+      background: linear-gradient(90deg, rgba(124,255,79,.13), rgba(124,255,79,.02) 60%, transparent);
+      border-bottom: 1px solid var(--sx-line-soft);
+      clip-path: polygon(0 0, 100% 0, calc(100% - 42px) 100%, 0 100%);
+    }
+    .sx-logo { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 26px; letter-spacing: .28em; color: var(--sx-title); text-shadow: 0 0 20px rgba(124,255,79,.45); }
+    .sx-header-info { font-size: 12px; letter-spacing: .2em; color: var(--sx-green-soft); margin-left: auto; padding-right: 60px; }
+    .sx-main { flex: 1; display: flex; gap: 16px; padding: 10px 24px 12px; min-height: 0; }
+    .sx-panel {
+      flex: 1; display: flex; flex-direction: column; min-width: 0;
+      border: 1px solid var(--sx-line); border-radius: 12px; background: var(--sx-panel-grad);
+      box-shadow: inset 0 0 30px rgba(0,60,20,.3); overflow: hidden;
+    }
+    .sx-panel-head {
+      min-height: 40px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding: 4px 16px;
+      border-bottom: 1px solid rgba(140,255,110,.2); font-size: 12px; letter-spacing: .18em; color: var(--sx-green-soft); flex-shrink: 0;
+    }
+    .sx-panel-head .dim { margin-left: auto; color: rgba(156,255,107,.45); }
+    .sx-toolbar {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 14px;
+      border-bottom: 1px solid rgba(140,255,110,.2); flex-shrink: 0;
+    }
+    .sx-toolbar .sep { width: 1px; height: 22px; background: rgba(140,255,110,.25); margin: 0 4px; }
+    .sx-workspace { position: relative; flex: 1; overflow: auto; min-height: 240px; background: var(--sx-checker); }
+    .px-stage { position: relative; display: inline-block; margin: 24px; }
+    canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+    #pxCanvas { background: repeating-conic-gradient(#1e2f21 0 25%, #0b1510 0 50%) 0 0/32px 32px; box-shadow: 0 0 0 1px rgba(140,255,110,.35), 0 0 24px rgba(0,0,0,.6); }
+    #pxOverlay { position: absolute; left: 0; top: 0; cursor: crosshair; touch-action: none; }
+    .sx-workspace-wrap { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 240px; }
+    .sx-zoom-chip {
+      position: absolute; left: 12px; bottom: 10px; z-index: 3; display: inline-flex; align-items: center; gap: 12px;
+      font-size: 12px; letter-spacing: .16em; color: rgba(156,255,107,.8);
+      border: 1px solid rgba(140,255,110,.4); border-radius: 7px; padding: 4px 12px; background: rgba(8,20,10,.8);
+      pointer-events: none;
+    }
+    .btn {
+      cursor: pointer; font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: .1em;
+      color: var(--sx-title); border: 1px solid rgba(140,255,110,.4); border-radius: 8px; padding: 6px 10px; background: var(--sx-btn-bg);
+    }
+    .btn:hover:not(:disabled) { border-color: rgba(246,255,74,.6); color: var(--sx-yellow); box-shadow: 0 0 14px rgba(246,255,74,.15); }
+    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn.primary { border-color: var(--sx-yellow-line); background: rgba(52,56,6,.35); color: #f4ff9e; box-shadow: 0 0 18px rgba(246,255,74,.15); }
+    .btn.active { background: linear-gradient(180deg, #fbff8a, #F6FF4A 45%, #c3cf07); border-color: #fcffb0; color: #141602; }
+    .btn.danger:hover:not(:disabled) { border-color: rgba(255,90,90,.7); color: #ff9a9a; }
+    .btn kbd { font-family: inherit; font-size: 10px; opacity: .6; margin-left: 4px; }
+    .sx-dock {
+      width: 400px; flex-shrink: 0; display: flex; flex-direction: column;
+      border: 1px solid var(--sx-line); border-radius: 12px; background: var(--sx-dock-grad);
+      box-shadow: inset 0 0 30px rgba(0,60,20,.3); overflow: hidden;
+    }
+    .sx-dock-head {
+      height: 48px; display: flex; align-items: center; gap: 14px; padding: 0 18px; flex-shrink: 0;
+      border-bottom: 1px solid var(--sx-line-soft); background: linear-gradient(90deg, rgba(124,255,79,.12), transparent);
+    }
+    .sx-dock-title { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 16px; letter-spacing: .22em; color: var(--sx-title); }
+    .sx-dock-count { margin-left: auto; font-size: 12px; letter-spacing: .16em; color: var(--sx-green-soft); }
+    .sx-dock-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; flex: 1; min-height: 0; }
+    .sx-dock-section {
+      margin: 2px 0 0; border-top: 1px dashed rgba(140,255,110,.25); padding-top: 10px;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; letter-spacing: .2em; color: rgba(156,255,107,.55);
+    }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .subtitle { font-family: 'Orbitron', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: .18em; color: var(--sx-green-soft); }
+    input[type="text"], input[type="number"], select {
+      padding: 6px 10px; border: 1px solid rgba(140,255,110,.4); background: rgba(8,20,10,.75); color: var(--sx-label);
+      border-radius: 7px; font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: .08em; min-width: 0;
+    }
+    input:focus, select:focus { outline: none; border-color: rgba(246,255,74,.6); }
+    select option { background: #0a120b; color: var(--sx-label); }
+    input[type="color"] { width: 34px; height: 30px; padding: 0; border: 1px solid rgba(140,255,110,.4); border-radius: 6px; background: rgba(8,20,10,.75); cursor: pointer; }
+    input[type="file"] { display: none; }
+    .sx-note { min-height: 16px; font-size: 11px; letter-spacing: .1em; color: var(--sx-yellow); }
+    .sx-hint { font-size: 11px; letter-spacing: .08em; color: var(--sx-green-dim); line-height: 1.5; }
+    /* palette */
+    .pal-grid { display: grid; grid-template-columns: repeat(16, 1fr); gap: 2px; padding: 6px; border: 1px solid var(--sx-line); border-radius: 10px; background: rgba(6,16,8,.5); }
+    .pal-swatch {
+      aspect-ratio: 1; border: 1px solid rgba(0,0,0,.6); border-radius: 2px; cursor: pointer; padding: 0; position: relative;
+      background: var(--c, #000);
+    }
+    .pal-swatch.transparent { background: repeating-conic-gradient(#333 0 25%, #111 0 50%) 0 0/8px 8px; }
+    .pal-swatch.ui { opacity: .45; cursor: not-allowed; }
+    .pal-swatch.ui::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(135deg, transparent 0 3px, rgba(0,0,0,.55) 3px 5px); }
+    .pal-swatch.user { box-shadow: inset 0 0 0 1px rgba(255,184,74,.35); }
+    .pal-swatch.selected { outline: 2px solid var(--sx-yellow); outline-offset: 1px; z-index: 1; box-shadow: 0 0 10px rgba(246,255,74,.6); }
+    .pal-swatch.secondary { outline: 2px dashed rgba(156,255,107,.8); outline-offset: 1px; }
+    .pal-band { grid-column: 1 / -1; font-size: 9px; letter-spacing: .2em; color: var(--sx-green-dim); padding: 4px 2px 1px; }
+    .pal-band.first { padding-top: 0; }
+    .color-info { display: flex; align-items: center; gap: 10px; font-size: 11px; letter-spacing: .1em; color: var(--sx-label); }
+    .color-chip { width: 34px; height: 30px; border-radius: 6px; border: 1px solid var(--sx-line); background: var(--c, #000); }
+    /* frames strip */
+    .frame-strip { display: flex; gap: 8px; align-items: center; padding: 8px 14px; border-top: 1px solid rgba(140,255,110,.2); flex-shrink: 0; overflow-x: auto; }
+    .frame-thumb {
+      position: relative; border: 2px solid rgba(140,255,110,.25); border-radius: 6px; padding: 3px; background: var(--sx-checker-sm); cursor: pointer; flex-shrink: 0;
+    }
+    .frame-thumb.active { border-color: var(--sx-yellow); box-shadow: 0 0 12px rgba(246,255,74,.35); }
+    .frame-thumb canvas { width: 48px; height: 48px; object-fit: contain; }
+    .frame-thumb span { position: absolute; left: 3px; top: 1px; font-size: 9px; color: var(--sx-green-dim); }
+    .anim-box { width: 56px; height: 56px; border: 1px solid var(--sx-line); border-radius: 6px; background: var(--sx-checker-sm); display: flex; align-items: center; justify-content: center; margin-left: auto; flex-shrink: 0; }
+    .anim-box canvas { max-width: 100%; max-height: 100%; }
+    /* cloud list */
+    .cloud-list { display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow-y: auto; border: 1px solid var(--sx-line); border-radius: 10px; padding: 6px; background: rgba(6,16,8,.4); }
+    .cloud-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 11px; letter-spacing: .06em; color: var(--sx-label); border: 1px solid transparent; }
+    .cloud-row:hover { border-color: rgba(246,255,74,.5); }
+    .cloud-row.active { border-color: var(--sx-yellow); color: var(--sx-yellow); }
+    .cloud-row img { width: 24px; height: 24px; object-fit: contain; image-rendering: pixelated; background: var(--sx-checker-sm); border-radius: 3px; }
+    .cloud-row .meta { margin-left: auto; color: var(--sx-green-dim); font-size: 10px; }
+    .sx-empty-hint { border: 1px dashed var(--sx-line); border-radius: 10px; padding: 14px; text-align: center; font-size: 11px; letter-spacing: .14em; color: var(--sx-green-dim); }
+    .sx-footer {
+      height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 24px; padding: 0 26px;
+      border-top: 1px solid rgba(140,255,110,.18); background: linear-gradient(180deg, transparent, rgba(6,16,8,.8));
+      font-size: 11px; letter-spacing: .16em; color: rgba(156,255,107,.55);
+    }
+    .sx-status { margin-left: auto; color: rgba(156,255,107,.75); }
+    .sx-footer kbd { border: 1px solid rgba(160,255,120,.4); border-radius: 4px; padding: 1px 5px; font-family: inherit; font-size: 10px; color: #eaffdd; margin-right: 4px; }
+  </style>
+</head>
+<body>
+  <div class="sx-scanlines"></div>
+  <div class="sx-app">
+    <div class="sx-topbar">
+      <div class="sx-topbar-left"><span class="dot"></span><span>PIXEL EDITOR // CG CELLS</span></div>
+      <div class="sx-topbar-right">
+        <span id="cloudState">RTDB · pixelSprites/*</span>
+        <a href="/palette.png" target="_blank" rel="noopener" style="color:inherit">PALETTE.PNG ↗</a>
+      </div>
+    </div>
+    <div class="sx-header">
+      <div class="sx-logo">PIXEL EDITOR</div>
+      <div class="sx-header-info">16×16 CELLS · (PALETTE&lt;&lt;4)|COLOUR BYTES · SAVE-WRITER READY</div>
+    </div>
+
+    <div class="sx-main">
+      <div class="sx-panel">
+        <div class="sx-panel-head">
+          <span>CANVAS</span>
+          <span id="sizeChip">16×16 · 1 CELL</span>
+          <span class="dim">LEFT — PAINT · RIGHT — ERASE · WHEEL — ZOOM</span>
+        </div>
+        <div class="sx-toolbar">
+          <button class="btn tool active" data-tool="pencil" title="Pencil (B)">✎ PENCIL<kbd>B</kbd></button>
+          <button class="btn tool" data-tool="eraser" title="Eraser — index 0, transparent (E)">◻ ERASE<kbd>E</kbd></button>
+          <button class="btn tool" data-tool="fill" title="Flood fill (G)">▣ FILL<kbd>G</kbd></button>
+          <button class="btn tool" data-tool="line" title="Line (L)">╱ LINE<kbd>L</kbd></button>
+          <button class="btn tool" data-tool="rect" title="Rectangle outline (R)">▭ RECT<kbd>R</kbd></button>
+          <button class="btn tool" data-tool="pick" title="Colour picker (I)">⌖ PICK<kbd>I</kbd></button>
+          <span class="sep"></span>
+          <button class="btn" id="btnFlipH" title="Flip horizontally (H)">⇋ H</button>
+          <button class="btn" id="btnFlipV" title="Flip vertically (V)">⇅ V</button>
+          <button class="btn" id="btnShiftL" title="Shift left (←)">←</button>
+          <button class="btn" id="btnShiftR" title="Shift right (→)">→</button>
+          <button class="btn" id="btnShiftU" title="Shift up (↑)">↑</button>
+          <button class="btn" id="btnShiftD" title="Shift down (↓)">↓</button>
+          <span class="sep"></span>
+          <button class="btn" id="btnUndo" title="Undo (Ctrl+Z)">↶ UNDO</button>
+          <button class="btn" id="btnRedo" title="Redo (Ctrl+Y)">↷ REDO</button>
+          <span class="sep"></span>
+          <button class="btn active" id="btnGrid" title="Pixel grid">GRID</button>
+          <button class="btn active" id="btnCells" title="16×16 cell boundaries">CELLS</button>
+          <button class="btn" id="btnZoomOut" title="Zoom out ([)">−</button>
+          <button class="btn" id="btnZoomIn" title="Zoom in (])">+</button>
+          <button class="btn" id="btnClear" title="Clear this frame">CLEAR</button>
+        </div>
+        <div class="sx-workspace-wrap">
+          <div class="sx-workspace" id="workspace">
+            <div class="px-stage" id="stage">
+              <canvas id="pxCanvas" width="16" height="16"></canvas>
+              <canvas id="pxOverlay" width="16" height="16"></canvas>
+            </div>
+          </div>
+          <div class="sx-zoom-chip" id="pxInfo">0,0 · IDX 1</div>
+        </div>
+        <div class="frame-strip">
+          <span class="subtitle">FRAMES</span>
+          <div id="frameStrip" style="display:flex;gap:8px;align-items:center"></div>
+          <button class="btn" id="btnFrameAdd" title="Add a frame">+</button>
+          <button class="btn" id="btnFrameDup" title="Duplicate this frame">⧉</button>
+          <button class="btn danger" id="btnFrameDel" title="Delete this frame">✕</button>
+          <label style="font-size:11px;letter-spacing:.1em;color:var(--sx-green-dim)">FPS <input id="animFps" type="number" min="1" max="30" value="6" style="width:52px"></label>
+          <div class="anim-box"><canvas id="animPreview" width="16" height="16"></canvas></div>
+        </div>
+      </div>
+
+      <div class="sx-dock">
+        <div class="sx-dock-head">
+          <span class="sx-dock-title">SPRITE</span>
+          <span class="sx-dock-count" id="dirtyChip">—</span>
+        </div>
+        <div class="sx-dock-body">
+          <div class="row">
+            <input id="spriteName" type="text" placeholder="SPRITE NAME (e.g. zako_bee)" style="flex:1">
+          </div>
+          <div class="row">
+            <label class="subtitle" for="sizeSelect">SIZE</label>
+            <select id="sizeSelect" style="flex:1"></select>
+            <button class="btn" id="btnNew" title="New sprite at this size">NEW</button>
+          </div>
+          <div class="sx-hint">Zako frame sizes are the sprite bank's own (records 0–59). Every size is whole 16×16 cells, so a sprite drops straight into a CG page.</div>
+
+          <div class="sx-dock-section"><span>PALETTE</span>
+            <select id="paletteSource" style="margin-left:auto;max-width:220px"></select>
+          </div>
+          <div class="pal-grid" id="paletteGrid"></div>
+          <div class="color-info">
+            <div class="color-chip" id="colorChip"></div>
+            <div id="colorInfo">IDX 1 · SYSTEM 0/1</div>
+            <label id="userColorWrap" style="margin-left:auto;display:none;align-items:center;gap:6px" title="Mix this user colour (quantised to 15-bit)">
+              <input id="userColor" type="color" value="#000000"> <span style="font-size:10px;letter-spacing:.1em">MIX</span>
+            </label>
+          </div>
+          <div class="sx-hint">Rows 0–11 are the 192 system colours every save shares; rows 12–15 are the 64 user colours you may mix; the last two rows are the Saturn editor's own UI colours and cannot be painted into a cell.</div>
+
+          <div class="sx-dock-section"><span>CLOUD — pixelSprites/*</span>
+            <button class="btn" id="btnCloudRefresh" style="margin-left:auto" title="Reload the list">↻</button>
+          </div>
+          <div class="cloud-list" id="cloudList"><div class="sx-empty-hint">LOADING…</div></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <button class="btn primary" id="btnCloudSave" title="Save to pixelSprites/{name} and sprites/{name}">☁ SAVE TO CLOUD</button>
+            <button class="btn danger" id="btnCloudDelete" disabled title="Delete the loaded cloud record">DELETE</button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <label class="btn" style="text-align:center" title="Import a PNG — quantised to the palette, padded to whole cells">⬆ IMPORT PNG<input id="fileImport" type="file" accept="image/png,image/gif,image/webp"></label>
+            <button class="btn" id="btnDownload" title="Download the frame strip as a PNG">⬇ PNG STRIP</button>
+          </div>
+          <div class="sx-note" id="note"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sx-footer">
+      <span><kbd>B</kbd>PENCIL <kbd>E</kbd>ERASE <kbd>G</kbd>FILL <kbd>L</kbd>LINE <kbd>R</kbd>RECT <kbd>I</kbd>PICK</span>
+      <span><kbd>H</kbd><kbd>V</kbd>FLIP <kbd>←↑↓→</kbd>SHIFT <kbd>[</kbd><kbd>]</kbd>ZOOM <kbd>,</kbd><kbd>.</kbd>FRAME <kbd>CTRL+Z</kbd>UNDO</span>
+      <span class="sx-status" id="status">PIXEL EDITOR READY</span>
+    </div>
+  </div>
+  <script type="module" src="pixel-editor.js"></script>
+</body>
+</html>

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SpriteX Tilemap Editor</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/app-icons/icon-32.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@500;700;800&display=swap" rel="stylesheet">
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+  <script src="/firebase-config.js"></script>
+  <style>
+    :root {
+      --sx-green: #9CFF6B;
+      --sx-green-soft: rgba(156,255,107,.6);
+      --sx-green-dim: rgba(156,255,107,.5);
+      --sx-line: rgba(140,255,110,.3);
+      --sx-line-soft: rgba(140,255,110,.22);
+      --sx-yellow: #F6FF4A;
+      --sx-yellow-line: rgba(246,255,74,.5);
+      --sx-amber: #FFB84A;
+      --sx-title: #dcffc2;
+      --sx-label: #bfffa0;
+      --sx-panel-grad: linear-gradient(180deg, rgba(28,64,34,.35), rgba(8,22,12,.6));
+      --sx-dock-grad: linear-gradient(180deg, rgba(28,64,34,.45), rgba(6,18,10,.8));
+      --sx-btn-bg: rgba(20,50,26,.35);
+      --sx-checker: conic-gradient(rgba(124,255,79,.05) 25%, rgba(124,255,79,.015) 0 50%, rgba(124,255,79,.05) 0 75%, rgba(124,255,79,.015) 0) 0 0/32px 32px, #0a120b;
+      --sx-checker-sm: conic-gradient(rgba(124,255,79,.06) 25%, transparent 0 50%, rgba(124,255,79,.06) 0 75%, transparent 0) 0 0/24px 24px, #07130a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; min-width: 1100px;
+      background-color: #000;
+      background-image:
+        radial-gradient(ellipse 70% 55% at 42% 45%, rgba(20,90,40,.42), transparent 70%),
+        radial-gradient(ellipse 60% 70% at 50% 50%, rgba(8,40,18,.85), #000 82%);
+      background-attachment: fixed;
+      color: var(--sx-green);
+      font-family: 'Share Tech Mono', monospace;
+    }
+    .sx-scanlines { position: fixed; inset: 0; pointer-events: none; z-index: 60; background: repeating-linear-gradient(180deg, rgba(0,255,120,.035) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
+    .sx-app { position: relative; display: flex; flex-direction: column; height: 100vh; z-index: 1; }
+    .sx-topbar { height: 44px; display: flex; justify-content: space-between; align-items: center; padding: 0 24px; flex-shrink: 0; font-size: 13px; letter-spacing: .22em; color: rgba(180,255,140,.72); }
+    .sx-topbar .dot { width: 8px; height: 8px; border-radius: 50%; background: #7CFF4F; box-shadow: 0 0 10px #7CFF4F; }
+    .sx-topbar-left, .sx-topbar-right { display: flex; align-items: center; gap: 12px; }
+    .sx-header {
+      height: 64px; display: flex; align-items: center; gap: 24px; padding: 0 24px; flex-shrink: 0;
+      background: linear-gradient(90deg, rgba(124,255,79,.13), rgba(124,255,79,.02) 60%, transparent);
+      border-bottom: 1px solid var(--sx-line-soft); clip-path: polygon(0 0, 100% 0, calc(100% - 42px) 100%, 0 100%);
+    }
+    .sx-logo { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 26px; letter-spacing: .28em; color: var(--sx-title); text-shadow: 0 0 20px rgba(124,255,79,.45); }
+    .sx-header-info { font-size: 12px; letter-spacing: .2em; color: var(--sx-green-soft); margin-left: auto; padding-right: 60px; }
+    .sx-tabs { height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 24px; flex-shrink: 0; }
+    .sx-tab {
+      cursor: pointer; font-family: 'Orbitron', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: .14em;
+      color: rgba(191,255,160,.85); border: 1px solid rgba(140,255,110,.35); border-radius: 9px; padding: 8px 22px; background: var(--sx-btn-bg);
+    }
+    .sx-tab:hover { border-color: rgba(246,255,74,.55); color: var(--sx-yellow); }
+    .sx-tab.active { font-weight: 700; color: #141602; cursor: default; background: linear-gradient(180deg, #fbff8a, #F6FF4A 45%, #c3cf07); border: 1px solid #fcffb0; box-shadow: 0 0 26px rgba(246,255,74,.38); }
+    .sx-tab-hint { margin-left: auto; font-size: 12px; letter-spacing: .18em; color: rgba(156,255,107,.55); }
+    .sx-main { flex: 1; display: flex; gap: 16px; padding: 6px 24px 12px; min-height: 0; }
+    .sx-main[hidden] { display: none; }
+    .sx-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--sx-line); border-radius: 12px; background: var(--sx-panel-grad); box-shadow: inset 0 0 30px rgba(0,60,20,.3); overflow: hidden; }
+    .sx-panel-head { min-height: 40px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding: 4px 16px; border-bottom: 1px solid rgba(140,255,110,.2); font-size: 12px; letter-spacing: .18em; color: var(--sx-green-soft); flex-shrink: 0; }
+    .sx-panel-head .dim { margin-left: auto; color: rgba(156,255,107,.45); }
+    .sx-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid rgba(140,255,110,.2); flex-shrink: 0; }
+    .sx-toolbar label { font-size: 11px; letter-spacing: .14em; color: var(--sx-green-dim); display: inline-flex; align-items: center; gap: 5px; }
+    .sx-toolbar .sep { width: 1px; height: 22px; background: rgba(140,255,110,.25); margin: 0 2px; }
+    .sx-toolbar label[hidden], .sx-toolbar [hidden] { display: none; }
+    .sx-workspace { position: relative; flex: 1; overflow: hidden; min-height: 300px; background: var(--sx-checker); }
+    .canv-container { position: absolute; inset: 0; overflow: auto; }
+    .canv-wrap { position: relative; display: inline-block; margin: 16px; }
+    canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+    .overlay { position: absolute; left: 0; top: 0; cursor: crosshair; touch-action: none; }
+    .sx-zoom-chip { position: absolute; left: 12px; bottom: 10px; z-index: 3; display: flex; align-items: center; gap: 12px; font-size: 12px; letter-spacing: .16em; color: rgba(156,255,107,.85); border: 1px solid rgba(140,255,110,.4); border-radius: 7px; padding: 4px 12px; background: rgba(8,20,10,.8); pointer-events: none; }
+    .btn { cursor: pointer; font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: .1em; color: var(--sx-title); border: 1px solid rgba(140,255,110,.4); border-radius: 8px; padding: 6px 10px; background: var(--sx-btn-bg); }
+    .btn:hover:not(:disabled) { border-color: rgba(246,255,74,.6); color: var(--sx-yellow); box-shadow: 0 0 14px rgba(246,255,74,.15); }
+    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn.primary { border-color: var(--sx-yellow-line); background: rgba(52,56,6,.35); color: #f4ff9e; box-shadow: 0 0 18px rgba(246,255,74,.15); }
+    .btn.active { background: linear-gradient(180deg, #fbff8a, #F6FF4A 45%, #c3cf07); border-color: #fcffb0; color: #141602; }
+    .btn.danger:hover:not(:disabled) { border-color: rgba(255,90,90,.7); color: #ff9a9a; }
+    .seg { display: inline-flex; border: 1px solid rgba(140,255,110,.4); border-radius: 8px; overflow: hidden; }
+    .seg .btn { border: 0; border-radius: 0; }
+    .seg .btn + .btn { border-left: 1px solid rgba(140,255,110,.3); }
+    .sx-dock { width: 420px; flex-shrink: 0; display: flex; flex-direction: column; border: 1px solid var(--sx-line); border-radius: 12px; background: var(--sx-dock-grad); box-shadow: inset 0 0 30px rgba(0,60,20,.3); overflow: hidden; }
+    .sx-dock-head { height: 48px; display: flex; align-items: center; gap: 14px; padding: 0 18px; flex-shrink: 0; border-bottom: 1px solid var(--sx-line-soft); background: linear-gradient(90deg, rgba(124,255,79,.12), transparent); }
+    .sx-dock-title { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 16px; letter-spacing: .22em; color: var(--sx-title); }
+    .sx-dock-count { margin-left: auto; font-size: 12px; letter-spacing: .16em; color: var(--sx-green-soft); }
+    .sx-dock-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; flex: 1; min-height: 0; }
+    .sx-dock-section { margin: 2px 0 0; border-top: 1px dashed rgba(140,255,110,.25); padding-top: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; letter-spacing: .2em; color: rgba(156,255,107,.55); }
+    .sx-dock-actions { padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; border-top: 1px solid rgba(140,255,110,.15); }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .subtitle { font-family: 'Orbitron', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: .18em; color: var(--sx-green-soft); }
+    input[type="text"], input[type="number"], select { padding: 6px 10px; border: 1px solid rgba(140,255,110,.4); background: rgba(8,20,10,.75); color: var(--sx-label); border-radius: 7px; font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: .08em; min-width: 0; }
+    input[type="number"] { width: 64px; }
+    input:focus, select:focus { outline: none; border-color: rgba(246,255,74,.6); }
+    select option { background: #0a120b; color: var(--sx-label); }
+    input[type="file"] { color: var(--sx-green-dim); font-family: inherit; font-size: 11px; max-width: 220px; }
+    input[type="file"]::file-selector-button { cursor: pointer; margin-right: 8px; font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: .1em; color: var(--sx-title); border: 1px solid rgba(140,255,110,.4); border-radius: 7px; padding: 5px 10px; background: var(--sx-btn-bg); }
+    .sx-note { min-height: 16px; font-size: 11px; letter-spacing: .1em; color: var(--sx-yellow); }
+    .sx-hint { font-size: 11px; letter-spacing: .08em; color: var(--sx-green-dim); line-height: 1.5; }
+    .sx-empty-hint { border: 1px dashed var(--sx-line); border-radius: 10px; padding: 14px; text-align: center; font-size: 11px; letter-spacing: .14em; color: var(--sx-green-dim); }
+    .tm-layer-row { display: flex; align-items: center; gap: 10px; border: 1px solid var(--sx-line); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 12px; letter-spacing: .1em; color: var(--sx-label); background: rgba(8,20,10,.5); }
+    .tm-layer-row:hover { border-color: rgba(246,255,74,.5); }
+    .tm-layer-row.active { border-color: var(--sx-yellow); box-shadow: 0 0 12px rgba(246,255,74,.2); color: var(--sx-yellow); }
+    .tm-layer-row input[type="checkbox"] { accent-color: #9CFF6B; cursor: pointer; }
+    .tm-layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tm-layer-badge { font-size: 10px; letter-spacing: .14em; border: 1px solid rgba(140,255,110,.35); border-radius: 5px; padding: 2px 6px; color: var(--sx-green-dim); }
+    #tilemapLayersList { display: flex; flex-direction: column; gap: 6px; }
+    #tilemapPaletteWrap { overflow: auto; max-height: 240px; border: 1px solid var(--sx-line); border-radius: 10px; background: var(--sx-checker-sm); padding: 6px; }
+    #tilemapPaletteCanvas { cursor: pointer; }
+    .live-cut { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; padding: 6px; border: 1px solid var(--sx-line); border-radius: 10px; background: var(--sx-checker-sm); max-height: 200px; overflow: auto; }
+    .live-cut canvas { width: 100%; aspect-ratio: 1; border: 1px solid rgba(0,0,0,.6); }
+    .result-sheet { border: 1px solid var(--sx-line); border-radius: 10px; background: var(--sx-checker-sm); padding: 6px; overflow: auto; max-height: 220px; }
+    .result-sheet canvas { max-width: 100%; height: auto; }
+    progress { width: 100%; height: 6px; accent-color: #F6FF4A; }
+    progress[hidden] { display: none; }
+    .sx-footer { height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 24px; padding: 0 26px; border-top: 1px solid rgba(140,255,110,.18); background: linear-gradient(180deg, transparent, rgba(6,16,8,.8)); font-size: 11px; letter-spacing: .16em; color: rgba(156,255,107,.55); }
+    .sx-status { margin-left: auto; color: rgba(156,255,107,.75); }
+    .sx-footer kbd { border: 1px solid rgba(160,255,120,.4); border-radius: 4px; padding: 1px 5px; font-family: inherit; font-size: 10px; color: #eaffdd; margin-right: 4px; }
+    .sx-drop-active::after { content: "DROP MAP JSON · TILESET PNG · TILESET JSON"; position: absolute; inset: 6px; z-index: 6; display: flex; align-items: center; justify-content: center; border: 2px dashed var(--sx-yellow); border-radius: 10px; background: rgba(246,255,74,.08); font-size: 14px; letter-spacing: .18em; color: var(--sx-yellow); pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div class="sx-scanlines"></div>
+  <div class="sx-app">
+    <div class="sx-topbar">
+      <div class="sx-topbar-left"><span class="dot"></span><span>SPRITEX // TILEMAP EDITOR</span></div>
+      <div class="sx-topbar-right"><span id="cloudState">RTDB · tilemaps/* · pixelSprites/* · levels/*</span></div>
+    </div>
+    <div class="sx-header">
+      <div class="sx-logo">TILEMAP</div>
+      <div class="sx-header-info" id="headerInfo">TILED MAPS · LEVEL SCENERY · PIXEL SPRITES LIVE · TILESET EXTRACTOR</div>
+    </div>
+    <div class="sx-tabs">
+      <button class="sx-tab active" data-tab="map">MAP EDITOR</button>
+      <button class="sx-tab" data-tab="extract">TILESET EXTRACTOR</button>
+      <span class="sx-tab-hint" id="tabHint">DROP level.json + tiles.png · OR LOAD A LEVEL'S SCENERY</span>
+    </div>
+
+    <!-- ══════════ MAP EDITOR ══════════ -->
+    <div class="sx-main" data-panel="map">
+      <div class="sx-panel" id="mapPanel">
+        <div class="sx-panel-head">
+          <span>TILEMAP EDITOR</span>
+          <span>CLICK — PLACE</span>
+          <span class="dim">RIGHT-CLICK — DELETE · ARROWS — MOVE · P — PICK · [ ] — LAYER</span>
+        </div>
+        <div class="sx-toolbar">
+          <input id="tilemapFileInput" type="file" multiple accept=".json,.png,application/json,image/png">
+          <span id="tilemapFileStatus" class="sx-note" style="flex:1;min-width:140px">DROP MAP JSON + TILESET PNG (+ TILESET JSON) HERE</span>
+          <span class="seg" id="orientSeg" title="How the scroll axis is laid out on screen">
+            <button class="btn" data-orient="native" title="Tiled map as authored">NATIVE</button>
+            <button class="btn" data-orient="vertical" title="Vertical scroller: stage start at the bottom, play scrolls up">VERTICAL</button>
+            <button class="btn" data-orient="horizontal" title="Horizontal scroller: stage start at the left, play scrolls right">HORIZONTAL</button>
+          </span>
+          <label id="partWrap" hidden>PART <input id="partInput" type="number" min="0" max="47" value="0" style="width:58px"> <span id="partTotal">/48</span></label>
+          <select id="tilemapGameMapSelect" style="display:none;max-width:200px" title="Switch between this game's maps"></select>
+          <button id="tilemapGridBtn" class="btn active" title="Toggle grid (G)">GRID</button>
+          <button id="tilemapZoomBtn" class="btn" title="Cycle zoom (+)">ZOOM: 3x</button>
+        </div>
+        <div class="sx-workspace">
+          <div id="tilemapCanvasContainer" class="canv-container">
+            <div class="canv-wrap">
+              <canvas id="tilemapCanvas" width="640" height="480"></canvas>
+              <canvas id="tilemapOverlayCanvas" class="overlay" width="640" height="480"></canvas>
+            </div>
+          </div>
+          <div class="sx-zoom-chip" id="tilemapInfoChip">NO MAP LOADED</div>
+        </div>
+      </div>
+
+      <div class="sx-dock">
+        <div class="sx-dock-head">
+          <span class="sx-dock-title">TILEMAP</span>
+          <span class="sx-dock-count" id="tilemapDims">—</span>
+        </div>
+        <div class="sx-dock-body">
+          <div class="row" style="justify-content:space-between">
+            <span class="subtitle">LAYERS</span>
+            <button id="tilemapAddObjLayerBtn" class="btn" title="Append a new object layer">+ OBJ LAYER</button>
+          </div>
+          <div id="tilemapLayersList" class="sx-empty-hint">Load a tilemap to see layers.</div>
+
+          <div class="row" style="justify-content:space-between;margin-top:4px">
+            <span class="subtitle">TILE PALETTE</span>
+            <span class="row">
+              <button id="placeFlipH" class="btn" title="Place tiles flipped horizontally (F)">⇋</button>
+              <button id="placeFlipV" class="btn" title="Place tiles flipped vertically (V)">⇅</button>
+              <button id="tilemapEraserBtn" class="btn" title="Toggle eraser (E)">ERASER</button>
+            </span>
+          </div>
+          <div class="row">
+            <select id="tilesetSourceSelect" style="flex:1" title="Where the tiles come from">
+              <option value="tileset">TILESET IMAGE — this map's</option>
+              <option value="pixelSprites">PIXEL SPRITES — RTDB pixelSprites/* (live)</option>
+            </select>
+            <button id="btnAddPixelTiles" class="btn" title="Append the selected pixel sprite's cells to this map's tileset" disabled>+ ADD TO MAP</button>
+          </div>
+          <div id="tilemapPaletteWrap"><canvas id="tilemapPaletteCanvas" width="10" height="10"></canvas></div>
+          <div id="tilemapPaletteInfo" class="sx-hint">NO TILESET LOADED</div>
+          <div id="tilemapObjectInspector" style="display:none;flex-direction:column;gap:8px;border-top:1px dashed rgba(140,255,110,.25);padding-top:10px">
+            <span class="subtitle">OBJECT</span>
+            <span id="tilemapObjInfo" class="sx-hint">NO OBJECT UNDER CURSOR</span>
+            <input id="tilemapObjName" type="text" placeholder="OBJECT NAME" disabled>
+            <input id="tilemapObjType" type="text" placeholder="OBJECT TYPE" disabled>
+          </div>
+
+          <div class="sx-dock-section"><span>LEVEL SCENERY — levels/*</span></div>
+          <div class="row">
+            <select id="levelSelect" style="flex:1"><option value="">-- Cloud level --</option></select>
+            <select id="stageSelect" style="width:96px"><option value="">STAGE</option></select>
+          </div>
+          <div class="sx-hint">A stage's own tile grid (14 columns × 768 rows, 48 parts of 16) over the level's <code>backgroundCells</code> — what the runtime scrolls instead of the stock backdrop. Save writes it back to the level; APPLY hands it to an open Level Editor.</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <button id="btnLevelSave" class="btn primary" disabled title="Write this stage's scenery (and any new tiles) to levels/{name}">☁ SAVE TO LEVEL</button>
+            <button id="btnLevelApply" class="btn" disabled title="Hand the edited scenery to an open Level Editor window (no cloud write)">→ APPLY TO EDITOR</button>
+          </div>
+          <div class="sx-note" id="levelNote"></div>
+
+          <div class="sx-dock-section"><span>CLOUD — tilemaps/*</span></div>
+          <div class="row">
+            <select id="tilemapSelect" style="flex:1"><option value="">-- Load from cloud --</option></select>
+          </div>
+          <input id="tilemapNameInput" type="text" placeholder="TILEMAP NAME (e.g. level4-2)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <button id="tilemapDownloadBtn" class="btn" disabled>DOWNLOAD JSON</button>
+            <button id="tilemapSaveCloudBtn" class="btn primary" disabled>SAVE TO CLOUD</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ TILESET EXTRACTOR ══════════ -->
+    <div class="sx-main" data-panel="extract" hidden>
+      <div class="sx-panel" id="extractPanel">
+        <div class="sx-panel-head">
+          <span>TILESET EXTRACTOR</span>
+          <span>DRAG THE GRID TO LINE IT UP</span>
+          <span class="dim">A LEVEL SCREENSHOT IN → UNIQUE TILES + MAP OUT</span>
+        </div>
+        <div class="sx-toolbar">
+          <input id="exFileInput" type="file" accept="image/png,image/gif,image/webp,image/jpeg">
+          <button id="btnDemoMario" class="btn" title="3392×224 Super Mario Bros. map">DEMO · MARIO</button>
+          <button id="btnDemoZelda" class="btn" title="4096×1408 Zelda map">DEMO · ZELDA</button>
+          <span class="sep"></span>
+          <label>TILE <input id="exTileW" type="number" min="4" max="128" value="16"> × <input id="exTileH" type="number" min="4" max="128" value="16"></label>
+          <label title="Pixels around the whole grid">MARGIN <input id="exMargin" type="number" min="0" max="256" value="0"></label>
+          <label title="Pixels between tiles (padding)">SPACING <input id="exSpacing" type="number" min="0" max="64" value="0"></label>
+          <label title="Where the grid starts — drag the grid on the image">OFFSET <input id="exOffX" type="number" min="-128" max="4096" value="0"> , <input id="exOffY" type="number" min="-128" max="4096" value="0"></label>
+          <label title="Per-tile difference (px × 1024) two tiles may differ by and still count as one">TOLERANCE <input id="exTolerance" type="number" min="0" max="128" value="0"></label>
+          <span class="sep"></span>
+          <button id="exZoomBtn" class="btn" title="Cycle zoom">ZOOM: 2x</button>
+          <button id="btnExtract" class="btn primary" disabled>▶ EXTRACT</button>
+        </div>
+        <div class="sx-workspace">
+          <div id="exContainer" class="canv-container">
+            <div class="canv-wrap">
+              <canvas id="exCanvas" width="640" height="480"></canvas>
+              <canvas id="exOverlay" class="overlay" width="640" height="480" style="cursor:grab"></canvas>
+            </div>
+          </div>
+          <div class="sx-zoom-chip" id="exInfo">NO IMAGE LOADED</div>
+        </div>
+      </div>
+
+      <div class="sx-dock">
+        <div class="sx-dock-head">
+          <span class="sx-dock-title">EXTRACT</span>
+          <span class="sx-dock-count" id="exDims">—</span>
+        </div>
+        <div class="sx-dock-body">
+          <span class="subtitle">LIVE CUT — TILES UNDER THE GRID</span>
+          <div class="live-cut" id="exLiveCut"><div class="sx-empty-hint" style="grid-column:1/-1">Load an image to see how the grid cuts it.</div></div>
+          <div class="sx-hint" id="exCutInfo">The grid's origin follows OFFSET; drag it on the image (or nudge with the arrow keys) until tile edges line up. Cells cut off by the image edge are skipped.</div>
+          <progress id="exProgress" value="0" max="1" hidden></progress>
+          <div class="sx-dock-section"><span>RESULT</span><span id="exStats" style="margin-left:auto"></span></div>
+          <span class="subtitle">UNIQUE TILES</span>
+          <div class="result-sheet"><canvas id="exTilesCanvas" width="1" height="1"></canvas></div>
+          <span class="subtitle">RECREATION</span>
+          <div class="result-sheet"><canvas id="exRecreationCanvas" width="1" height="1"></canvas></div>
+        </div>
+        <div class="sx-dock-actions">
+          <button id="btnOpenAsMap" class="btn primary" disabled title="Open the extracted tiles + map in the MAP EDITOR tab">→ OPEN AS MAP</button>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <button id="btnDlTiles" class="btn" disabled>⬇ tiles.png</button>
+            <button id="btnDlMap" class="btn" disabled>⬇ map.json</button>
+            <button id="btnDlTmx" class="btn" disabled>⬇ tiled.tmx</button>
+            <button id="btnDlRecreation" class="btn" disabled>⬇ tilemap.png</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sx-footer">
+      <span data-hints="map"><kbd>CLICK</kbd>PLACE <kbd>R-CLICK</kbd>DELETE <kbd>P</kbd>PICK <kbd>E</kbd>ERASER <kbd>F</kbd><kbd>V</kbd>FLIP <kbd>[</kbd><kbd>]</kbd>LAYER <kbd>G</kbd>GRID <kbd>+</kbd>ZOOM <kbd>CTRL+Z</kbd>UNDO</span>
+      <span data-hints="extract" hidden><kbd>DRAG</kbd>ALIGN GRID <kbd>←↑↓→</kbd>NUDGE <kbd>ENTER</kbd>EXTRACT</span>
+      <span class="sx-status" id="sxStatusLine">TILEMAP EDITOR READY</span>
+    </div>
+  </div>
+  <script type="module" src="tilemap-editor.js"></script>
+</body>
+</html>

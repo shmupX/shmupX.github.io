@@ -193,3 +193,31 @@ export {
 
 // --- Extras: byte-range diffing (src/diff-ranges.js) ---
 export { coalesceDiffRanges, totalDiffBytes } from "./src/diff-ranges.js";
+
+// --- The editor's 288-colour palette, DEZA2.PAL (src/palette/deza2-palette.js) ---
+// Served as /palette.png (scripts/build-palette.ts); the pixel editor draws
+// against it and stores sprites as CG cells over it.
+export {
+  cellsToIndexed,
+  CG_CELL,
+  CG_CELL_BYTES,
+  DEZA2_CG_COLORS,
+  DEZA2_PALETTE_COLS,
+  DEZA2_PALETTE_PNG,
+  DEZA2_PALETTE_ROWS,
+  DEZA2_PALETTE_SIZE,
+  DEZA2_PALETTE_WORDS,
+  DEZA2_SYSTEM_ROWS,
+  DEZA2_UI_ROWS,
+  DEZA2_USER_ROWS,
+  DEZA2_ZAKO_SIZES,
+  deza2PaletteBand,
+  deza2PaletteRaster,
+  deza2PaletteRgb,
+  indexedToCells,
+  indexedToRgbaWith,
+  nearestPaletteIndex,
+  paletteBankWords,
+  paletteWordsFromRgba,
+  rgb8ToRgb555,
+} from "./src/palette/deza2-palette.js";

@@ -23,6 +23,7 @@
     "deza:disc": "deno run -A tools/deza-disc/main.ts",
     "deza:tonebank": "deno run -A scripts/build-tone-bank.ts",
     "deza:meshlib": "deno run -A scripts/build-mesh-library.ts",
+    "deza:palette": "deno run -A scripts/build-palette.ts",
     "tonebank:table": "deno run -A scripts/build-tone-bank-table.ts",
     "dashboard:build": "deno run -A scripts/build-dashboard.ts",
     "engine:bundle": "deno run -A scripts/build-engine.ts",

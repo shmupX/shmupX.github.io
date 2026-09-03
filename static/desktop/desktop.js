@@ -233,6 +233,8 @@ const APPS = {
         const id of [
           "spritex",
           "leveleditor",
+          "tilemapeditor",
+          "pixeleditor",
           "pixelcomposer",
           "bossviewer",
           "modelviewer",
@@ -290,6 +292,36 @@ const APPS = {
         icon: { monogram: "LE", hue: 130 },
         url: "/editor/?game=2028-ai",
         width: 1100,
+        height: 700,
+      }),
+  },
+
+  tilemapeditor: {
+    title: "Tilemap Editor",
+    icon: { monogram: "TM", hue: 95 },
+    persist: true,
+    open: (data) =>
+      openIframeWindow({
+        appId: "tilemapeditor",
+        title: "SpriteX Tilemap Editor",
+        icon: { monogram: "TM", hue: 95 },
+        url: data?.url ?? "/tilemap-editor/",
+        width: 1180,
+        height: 720,
+      }),
+  },
+
+  pixeleditor: {
+    title: "Pixel Editor",
+    icon: { monogram: "PX", hue: 330 },
+    persist: true,
+    open: (data) =>
+      openIframeWindow({
+        appId: "pixeleditor",
+        title: "Pixel Editor — CG Cells",
+        icon: { monogram: "PX", hue: 330 },
+        url: data?.url ?? "/pixel-editor/",
+        width: 1040,
         height: 700,
       }),
   },
@@ -563,12 +595,46 @@ function isHostedFrame(source) {
   return false;
 }
 
+// Our own tools' pages, by path — a link to one of these opens (or refocuses)
+// the tool's window rather than a Web Browser frame around it. The full URL
+// still travels so a hand-off query (?level=, ?sprite=) lands.
+const TOOL_PATHS = [
+  ["/tilemap-editor/", "tilemapeditor"],
+  ["/pixel-editor/", "pixeleditor"],
+  ["/pixel-composer/", "pixelcomposer"],
+  ["/editor/model-viewer.html", "modelviewer"],
+  ["/editor/boss-viewer.html", "bossviewer"],
+];
+function appForUrl(url) {
+  try {
+    const u = new URL(url, location.href);
+    if (u.origin !== location.origin) return null;
+    const hit = TOOL_PATHS.find(([path]) => u.pathname === path || u.pathname === path.replace(/\/$/, ""));
+    return hit ? hit[1] : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
 globalThis.addEventListener("message", (ev) => {
   const msg = ev.data;
   if (!msg || msg.type !== "cmg-open-url" || typeof msg.url !== "string") return;
   if (ev.origin !== location.origin || !isHostedFrame(ev.source)) return;
   const url = normalizeUrl(msg.url);
   if (!url) return;
+  const toolId = appForUrl(url);
+  if (toolId) {
+    const existing = wm.windows.find((w) => w.appId === toolId);
+    if (existing) {
+      // Same tool, fresh hand-off: reload its frame at the requested URL so
+      // it picks up what the sender just published.
+      const frame = existing.el.querySelector("iframe");
+      if (frame) frame.src = url;
+      wm.focus(existing);
+    } else launch(toolId, { url });
+    notify(`${APPS[toolId].title}: ${msg.title || "opened"}`);
+    return;
+  }
   const open = wm.windows.find((w) => w.appId === "browser" && w.browserGo);
   if (open) {
     open.browserGo(url);
@@ -585,7 +651,8 @@ function openHelpWindow() {
   el.innerHTML = `
     <h2>CMG DESKTOP <span>// WORKSTATION</span></h2>
     <p>A desktop mode for codemonkey.games. Open the <b>Tools</b> folder for
-    the workbench apps (spriteX, Level Editor, Pixel Composer), browse and
+    the workbench apps (spriteX, Level Editor, Tilemap Editor, Pixel Editor,
+    Pixel Composer), browse and
     edit <b>local files</b> with Files + Code Editor, and open any website as
     a draggable window with <b>Web Browser</b>.</p>
 
@@ -756,7 +823,15 @@ const openStartMenu = (e) => {
     const sections = [
       [
         "Tools",
-        ["spritex", "leveleditor", "pixelcomposer", "bossviewer", "modelviewer"],
+        [
+          "spritex",
+          "leveleditor",
+          "tilemapeditor",
+          "pixeleditor",
+          "pixelcomposer",
+          "bossviewer",
+          "modelviewer",
+        ],
       ],
       ["System", ["files", "editor", "browser", "tools", "help"]],
     ];

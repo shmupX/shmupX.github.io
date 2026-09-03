@@ -618,6 +618,12 @@
             .picker-panel { max-width: 560px; }
         }
 
+        /* HORIZONTAL VIEW: the same waves laid out the way a horizontal cart
+           scrolls them — wave 0 at the left, slots top to bottom. */
+        .editor-grid.horizontal { width: max-content; min-width: 100%; }
+        .editor-grid.horizontal .grid-cell { min-width: 44px; }
+        .rail-orient { flex: 0 0 auto; margin-left: auto; display: flex; gap: 4px; }
+        .rail-orient .seg { font-size: 8px; letter-spacing: .1em; padding: 5px 8px; min-width: 0; }
         .hidden { display: none !important; }
 
         /* ===== TOAST (1a) ===== */
@@ -879,6 +885,8 @@
             <button id="boss-lab-btn" class="badge" title="Boss lab — view every boss live and assign attack patterns" onclick="toggleBossLab()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 2 2 4h12l2-4 2 4v8h-3v3h-3v-3H8v3H5v-3H2V6z"/><path d="m8 9 2.5 1.5M16 9l-2.5 1.5"/><path d="m8 12.5 2 1.5 2-1.5 2 1.5 2-1.5"/></svg></button>
             <!-- Model Viewer (Lucide box): a Dezaemon save's ポリ吉 3D models -->
             <a id="model-viewer-link" href="model-viewer.html" class="badge" title="3D model viewer (Dezaemon sec7 compositions)" onclick="openModelViewer(); return false;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></a>
+            <!-- Tilemap Editor (Lucide map): this stage's scenery, vertical or horizontal -->
+            <a id="tilemap-link" href="/tilemap-editor/" class="badge" title="Tilemap editor — this stage's scenery tile grid, vertical or horizontal" onclick="openTilemapEditor(); return false;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/></svg></a>
             <!-- Save (Lucide save) -->
             <button id="save-badge" class="badge" title="Save" onclick="quickSave()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></button>
             <!-- Menu -->
@@ -889,6 +897,13 @@
         <div id="stage-rail">
             <span class="rail-label">STAGE</span>
             <div class="tb-pills" id="stage-pills"></div>
+            <!-- VIEW: the wave grid as a vertical scroller (waves top to bottom,
+                 the way the runtime plays) or a horizontal one (waves left to
+                 right — a Dezaemon horizontal cart, auto-picked on import). -->
+            <div class="rail-orient" id="grid-orient-segs" title="Lay the waves out vertically or horizontally — same data either way">
+                <button class="seg on" data-orient="vertical" onclick="setGridOrientation('vertical')">VERT</button>
+                <button class="seg" data-orient="horizontal" onclick="setGridOrientation('horizontal')">HORIZ</button>
+            </div>
         </div>
 
         <!-- GRID AREA -->
@@ -1011,6 +1026,8 @@
             <button class="menu-row" onclick="showAtlasManager()"><span class="mono-badge sm">AT</span>ATLAS</button>
             <button class="menu-row" onclick="showTitleEditor()"><span class="mono-badge sm">TI</span>TITLE</button>
             <button class="menu-row" onclick="showAudioEditor()"><span class="mono-badge sm">AU</span>AUDIO</button>
+            <button class="menu-row" onclick="openTilemapEditor();closeMenu()" title="This stage's scenery tile grid — vertical or horizontal — in the Tilemap Editor"><span class="mono-badge sm">TM</span>TILEMAP</button>
+            <button class="menu-row" onclick="openPixelEditor();closeMenu()" title="Draw 16×16-cell sprites over the Dezaemon 2 palette; they become tiles in the Tilemap Editor"><span class="mono-badge sm">PX</span>PIXELS</button>
         </div>
         <div class="menu-note">BOSS PATTERNS MOVED TO THE TOOLBAR &rarr; BOSS LAB</div>
         <div class="menu-label">DISPLAY</div>
@@ -2274,7 +2291,7 @@
                 const p = document.createElement('div');
                 p.className = `tb-pill ${key === currentStageKey ? 'on' : 'off'}`;
                 p.textContent = key.replace('stage', '');
-                p.onclick = () => { currentStageKey = key; populateStagePills(); loadCurrentStage(); };
+                p.onclick = () => { commitCurrentGrid(); currentStageKey = key; populateStagePills(); loadCurrentStage(); };
                 c.appendChild(p);
             });
 
@@ -2284,6 +2301,7 @@
             ap.onclick = () => {
                 const nums = keys.map(k => parseInt(k.replace('stage', '')));
                 const next = nums.length ? Math.max(...nums) + 1 : 0;
+                commitCurrentGrid();
                 currentStageKey = `stage${next}`;
                 gameData[currentStageKey] = { enemylist: normalizeGrid([]) };
                 populateStagePills();
@@ -2609,6 +2627,7 @@
         // the one field it edits, and only for a pattern this game has.
         if (viewerBridgeChannel) viewerBridgeChannel.onmessage = (ev) => {
             const m = ev.data;
+            if (m && m.type === 'tilemap-apply' && (!m.gameId || m.gameId === GAME_ID)) { applyTilemapFromEditor(m); return; }
             if (!m || m.type !== 'boss-patterns' || m.gameId !== GAME_ID || !m.changes || !bossData) return;
             let n = 0;
             for (const k in m.changes) {
@@ -2752,32 +2771,59 @@
 
             const COLS = gridWidth(currentGrid);
             const grid = document.createElement('div');
-            grid.className = `editor-grid ${
+            const horizontal = gridOrientation === 'horizontal';
+            grid.className = `editor-grid ${horizontal ? 'horizontal ' : ''}${
                 currentTool === 'delete' ? 'mode-delete' :
                 currentTool === 'extract' ? 'mode-extract' :
                 (currentTool === 'place' && selectedEnemyLetter) ? 'mode-place' : 'mode-none'}`;
-            grid.style.gridTemplateColumns = `18px repeat(${COLS}, 1fr)`;
 
-            // Header
-            grid.appendChild(Object.assign(document.createElement('div'), { className: 'col-hdr' }));
-            for (let c = 0; c < COLS; c++) {
-                const h = document.createElement('div');
-                h.className = 'col-hdr';
-                h.textContent = c;
-                grid.appendChild(h);
-            }
-
-            // Rows
-            currentGrid.forEach((wave, wi) => {
-                const lbl = document.createElement('div');
-                lbl.className = 'row-lbl';
-                lbl.textContent = wi;
-                grid.appendChild(lbl);
-
-                for (let si = 0; si < COLS; si++) {
-                    grid.appendChild(createGridCell(wi, si, wave[si] || '00'));
+            if (horizontal) {
+                // Transposed: one column per wave (wave 0 at the left, the
+                // way a horizontal cart scrolls), one row per slot. The cells
+                // are the same (wave, slot) pairs the vertical view edits.
+                const WAVES = currentGrid.length;
+                grid.style.gridTemplateColumns = `18px repeat(${WAVES}, minmax(44px, 1fr))`;
+                grid.appendChild(Object.assign(document.createElement('div'), { className: 'col-hdr' }));
+                for (let wi = 0; wi < WAVES; wi++) {
+                    const h = document.createElement('div');
+                    h.className = 'col-hdr';
+                    h.textContent = wi;
+                    h.title = 'wave ' + wi;
+                    grid.appendChild(h);
                 }
-            });
+                for (let si = 0; si < COLS; si++) {
+                    const lbl = document.createElement('div');
+                    lbl.className = 'row-lbl';
+                    lbl.textContent = si;
+                    grid.appendChild(lbl);
+                    for (let wi = 0; wi < WAVES; wi++) {
+                        grid.appendChild(createGridCell(wi, si, (currentGrid[wi] || [])[si] || '00'));
+                    }
+                }
+            } else {
+                grid.style.gridTemplateColumns = `18px repeat(${COLS}, 1fr)`;
+
+                // Header
+                grid.appendChild(Object.assign(document.createElement('div'), { className: 'col-hdr' }));
+                for (let c = 0; c < COLS; c++) {
+                    const h = document.createElement('div');
+                    h.className = 'col-hdr';
+                    h.textContent = c;
+                    grid.appendChild(h);
+                }
+
+                // Rows
+                currentGrid.forEach((wave, wi) => {
+                    const lbl = document.createElement('div');
+                    lbl.className = 'row-lbl';
+                    lbl.textContent = wi;
+                    grid.appendChild(lbl);
+
+                    for (let si = 0; si < COLS; si++) {
+                        grid.appendChild(createGridCell(wi, si, wave[si] || '00'));
+                    }
+                });
+            }
 
             grid.appendChild(createBossStrip());
 
@@ -2937,6 +2983,124 @@
             currentGrid = normalizeGrid(obj.enemylist);
             renderGrid();
                        updateToolUI();
+        }
+
+        // ================== GRID ORIENTATION ==================
+        // VERT is the historical wave grid (waves top to bottom); HORIZ is the
+        // same grid transposed, waves left to right — how a Dezaemon horizontal
+        // cart (game mode bit 0) reads. The runtime plays a horizontal save as
+        // the same simulation drawn transposed, so this is a view, not data:
+        // both edit currentGrid[wave][slot].
+        const LS_GRID_ORIENTATION = 'editorGridOrientation';
+        let gridOrientation = 'vertical';
+        try { gridOrientation = localStorage.getItem(LS_GRID_ORIENTATION) === 'horizontal' ? 'horizontal' : 'vertical'; } catch (e) {}
+        function setGridOrientation(o, { persist = true } = {}) {
+            gridOrientation = o === 'horizontal' ? 'horizontal' : 'vertical';
+            if (persist) { try { localStorage.setItem(LS_GRID_ORIENTATION, gridOrientation); } catch (e) {} }
+            document.querySelectorAll('#grid-orient-segs .seg').forEach(b => b.classList.toggle('on', b.dataset.orient === gridOrientation));
+            renderGrid();
+        }
+        // A .sav import says which way it scrolls; follow it (without
+        // overwriting the remembered preference for other games).
+        function applyImportedOrientation() {
+            const m = gameData && gameData.meta && gameData.meta.dezaemonSettings;
+            if (!m) return;
+            setGridOrientation(m.horizontal ? 'horizontal' : 'vertical', { persist: false });
+        }
+        document.querySelectorAll('#grid-orient-segs .seg').forEach(b => b.classList.toggle('on', b.dataset.orient === gridOrientation));
+
+        // The wave grid is edited in currentGrid and only written to the stage
+        // record on save / play / cloud save. Switching stages used to drop
+        // the edits of the stage being left; every switch commits first now.
+        function commitCurrentGrid() {
+            if (!gameData || !currentStageKey) return;
+            gameData[currentStageKey] = gameData[currentStageKey] || {};
+            writeStageGrid(gameData[currentStageKey], currentGrid);
+        }
+
+        // ================== TILEMAP / PIXEL EDITORS ==================
+        // The Tilemap Editor (/tilemap-editor/) edits a stage's scenery — the
+        // 14x768 tile grid over gameData.backgroundCells — in a vertical or
+        // horizontal view, and hands edits back over the viewer bridge channel
+        // (tilemap-apply). The whole game's stages go over so it can swap
+        // between them; the working atlas goes through the same IndexedDB
+        // bridge the model viewer reads (storeAtlasForViewers).
+        function storeTilemapForViewers() {
+            if (!gameData) return Promise.resolve(false);
+            commitCurrentGrid();
+            const stages = {};
+            for (const k of Object.keys(gameData)) {
+                if (/^stage\d+$/.test(k)) stages[k] = { background: (gameData[k] && gameData[k].background) || null };
+            }
+            const m = gameData.meta && gameData.meta.dezaemonSettings;
+            const payload = {
+                v: 1,
+                gameId: GAME_ID,
+                levelName: (document.getElementById('firebase-level-name').value || '').trim() || null,
+                stageKey: currentStageKey,
+                stages,
+                backgroundCells: Array.isArray(gameData.backgroundCells) ? gameData.backgroundCells : [],
+                atlasKey: currentAtlasKey,
+                horizontal: !!(m && m.horizontal),
+            };
+            try { sessionStorage.setItem('editorTilemapBridge', JSON.stringify(payload)); } catch (e) {}
+            return storeAtlasForViewers().then(() => new Promise((resolve) => {
+                openViewerBridge().then((db) => {
+                    if (!db) { resolve(false); return; }
+                    try {
+                        const tx = db.transaction('assets', 'readwrite');
+                        tx.objectStore('assets').put(payload, 'tilemapSession');
+                        tx.oncomplete = () => { db.close(); resolve(true); };
+                        tx.onerror = () => { db.close(); resolve(false); };
+                    } catch (e) { try { db.close(); } catch (e2) {} resolve(false); }
+                });
+            }));
+        }
+        async function openTilemapEditor() {
+            if (!gameData) { alert('Load a game first'); return; }
+            await storeTilemapForViewers();
+            openExternalUrl(new URL('/tilemap-editor/', location.href).href, 'TILEMAP EDITOR');
+        }
+        function openPixelEditor() {
+            openExternalUrl(new URL('/pixel-editor/', location.href).href, 'PIXEL EDITOR');
+        }
+        // The Tilemap Editor's APPLY: take the stage grids it edited, the cell
+        // list, and any cells it added (as atlas extras, then repacked).
+        function applyTilemapFromEditor(m) {
+            if (!gameData) return;
+            const stages = (m && m.stages && typeof m.stages === 'object') ? m.stages : {};
+            for (const k of Object.keys(stages)) {
+                if (!/^stage\d+$/.test(k) || !stages[k]) continue;
+                gameData[k] = gameData[k] || { enemylist: normalizeGrid([]) };
+                gameData[k].background = stages[k];
+            }
+            if (Array.isArray(m.backgroundCells)) gameData.backgroundCells = m.backgroundCells;
+            const newCells = Array.isArray(m.newCells) ? m.newCells : [];
+            let pending = newCells.length;
+            const finish = () => {
+                if (pending > 0) return;
+                const done = () => {
+                    populateStagePills(); loadCurrentStage(); renderAtlas();
+                    flash('SCENERY APPLIED' + (Object.keys(stages).length ? ' · ' + Object.keys(stages).length + ' STAGE' + (Object.keys(stages).length === 1 ? '' : 'S') : '') + (m.saved ? ' (ALSO IN THE CLOUD)' : ''));
+                };
+                if (newCells.length) mergeExtraSpritesIntoAtlas().then(done, done); else done();
+            };
+            if (!pending) { finish(); return; }
+            for (const c of newCells) {
+                if (!c || !c.key || !c.png) { pending--; continue; }
+                const img = new Image();
+                img.onload = () => {
+                    const cv = document.createElement('canvas');
+                    cv.width = img.width; cv.height = img.height;
+                    cv.getContext('2d').drawImage(img, 0, 0);
+                    if (!extraSprites.find(s => s.key === c.key)) extraSprites.push({ key: c.key, canvas: cv, w: img.width, h: img.height });
+                    customFrameKeys.add(c.key);
+                    pending--; finish();
+                };
+                img.onerror = () => { pending--; finish(); };
+                img.src = c.png;
+            }
+            finish();
         }
 
         // ================== WAVES ==================
@@ -5948,6 +6112,7 @@
             updateDezaWebsiteRow();
             currentStageKey = 'stage0';
             storeBossDataForViewers();
+            applyImportedOrientation();
             // Fold the save's sprites into the atlas before the first paint —
             // otherwise the imported enemies reference frames that live only in
             // extraSprites, frameThumbs has no entry for them, and every grid

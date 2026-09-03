@@ -19,7 +19,8 @@
     "./player2-art": "./src/player2-art.js",
     "./diff-ranges": "./src/diff-ranges.js",
     "./tone-bank": "./src/audio/tone-bank.js",
-    "./iso9660-read": "./src/cd/iso9660-read.js"
+    "./iso9660-read": "./src/cd/iso9660-read.js",
+    "./palette": "./src/palette/deza2-palette.js"
   },
   "fmt": {
     "exclude": ["src/**", "FORMAT.md", "games-db.json", "data/*.json"]

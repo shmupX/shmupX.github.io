@@ -23,7 +23,21 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
 - `data/games.json` → `deno task games:manifest` → `static/games.manifest.json`
   — the OTA manifest the dashboard fetches (push to main = every client sees the
   new list, no rebuild).
-- `static/editor/` — the shmupX level editor (single-file app).
+- `static/editor/` — the shmupX level editor (single-file app). Its wave grid
+  has a **VERT / HORIZ** switch on the stage rail: the same waves laid out top
+  to bottom, or left to right the way a Dezaemon horizontal cart scrolls
+  (auto-picked from a `.sav`'s game-mode bit). ADVANCED EDITORS → TILEMAP and
+  PIXELS, and the map badge on the toolbar, open the two tools below on the open
+  game.
+- `static/palette.png` — the 288 Dezaemon 2 palette colours, one pixel each (see
+  **The Dezaemon 2 palette** below); `palette-sheet.png` is the same as a
+  picture. Both from `deno task deza:palette`.
+- `static/pixel-editor/` — the **Pixel Editor**: 16×16-cell sprites drawn as
+  palette indices over that palette and stored Saturn-native (see below).
+- `static/tilemap-editor/` — the **SpriteX Tilemap Editor** mirrored here
+  (spriteX's TILEMAP tab, plus level scenery in vertical/horizontal views, live
+  pixel-sprite tiles and the **Tileset Extractor**). Both tools are in the CMG
+  Desktop's Tools folder.
 - `static/editor/dezaemon/` — the community Dezaemon 2 collection: 258
   `saves/Dez 2 - *.sav` games, `games-db.json` (title/developer/genre metadata,
   each game's page on satakore.com, and the YouTube id of the playthrough on
@@ -118,11 +132,117 @@ deno task build:ps2:iso   # …plus a bootable disc image
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
 deno task deza:meshlib    # decode the ポリ吉 3D part library off a disc image
+deno task deza:palette    # write static/palette.png (+ palette-sheet.png) from DEZA2.PAL
 deno task tonebank:table  # re-pack the instrument map into src/audio/
 deno task netplay:bundle  # bundle the online-2P browser client
 deno task netplay:generate  # regenerate its bindings from the module
 deno task netplay:publish   # publish the module (needs `spacetime login`)
 ```
+
+## The Dezaemon 2 palette
+
+<https://codemonkey.games/palette.png> is the whole colour set the Saturn editor
+paints with — `DEZA2.PAL` off the disc, 18 rows × 16 entries of u16be RGB555 —
+as a **1 × 288 PNG, one pixel per entry in file order**. It is a data file that
+happens to be an image: any tool can `fetch` it, draw it to a canvas and read
+the colours back, and because 5→8-bit replication is lossless, `channel >> 3`
+recovers the exact 5-bit values (the round trip is tested in
+[`tests/palette_png_test.ts`](tests/palette_png_test.ts)). The same 288 words
+ship in the engine as `DEZA2_PALETTE_WORDS`
+([`packages/shmup-engine/src/palette/deza2-palette.js`](packages/shmup-engine/src/palette/deza2-palette.js),
+also on the flat surface and the `./palette` subpath), which is what
+`deno task deza:palette` writes the PNG from; with a disc image in
+`dev-fixtures/` it reads `DEZA2.PAL` too and refuses to build if the two
+disagree.
+
+![The 288 colours, 16 across × 18 down](static/palette-sheet.png)
+
+The rows line up with a save's palette bank (sec4, 16 × 16) and then run two
+past it:
+
+| rows  | entries | what                                                                                                                     |
+| ----- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 0–11  | 0–191   | the **192 system colours** — byte-identical to rows 0–11 of every save's sec4 (verified across the corpus; not editable) |
+| 12–15 | 192–255 | the **4 user palettes** — empty on the disc (`0x0000`, an `0x0021` end marker); a save carries whatever its author mixed |
+| 16–17 | 256–287 | 32 entries the **editor UI** itself draws with — not part of a save, and not addressable by a CG pixel                   |
+
+RGB555 is Saturn order — R in bits 0–4, G in 5–9, B in 10–14, bit 15 is the CRAM
+flag — and a CG pixel byte is `(palette << 4) | colour`, i.e.
+`row * 16 +
+column`: **for the first 256 entries the palette index is the pixel
+byte**, and index 0 (system row 0, colour 0) is the transparent background. That
+is the contract everything below is written to, so a future `.sav` writer gets
+indexed cells whose bytes are already what sec0–3 store.
+
+## Pixel Editor and Tilemap Editor
+
+Two workbench tools alongside spriteX, both in the CMG Desktop's Tools folder
+and the start menu, both reachable from the level editor, both on the same
+Realtime Database as spriteX and the level editor.
+
+**Pixel Editor** (`/pixel-editor/`). A pixel editor whose sprite is _data_, not
+a picture: w × h palette indices over the 288 colours above (the default palette
+source; the source registry has a Super Famicom entry declared for later),
+rendered to RGBA on the way out. Sizes are 16×16 and the seven zako frame sizes
+of the sprite bank (16×16, 32×16, 16×32, 32×32, 64×32, 32×64, 64×64), up to six
+animation frames, pencil / eraser / fill / line / rect / picker, flips, shifts,
+undo, PNG import (quantised to the nearest CG colour, padded to whole cells) and
+a PNG strip download. The 64 user colours are mixable (quantised to 15 bits);
+the UI rows are shown but locked, since a cell cannot carry them.
+
+A save writes, in one update:
+
+| path                      | what                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pixelSprites/{name}`     | the **Saturn-native record**: `format: "deza2-cg-v1"`, `w`, `h`, `cellsW`, `cellsH`, `frames[]` (each frame's w×h bytes in CG **cell order** — 256-byte 16×16 cells in reading order, byte = y·16+x, base64), `paletteBank` (256 u16be words in sec4 layout: system rows raw, user rows `0x8000\|colour`, base64), plus `png` (the frame strip as a data URL) for tools that only read pictures |
+| `sprites/{name}` / `_{i}` | each frame as a data URL — what spriteX's PACKER lists under FIREBASE SPRITES                                                                                                                                                                                                                                                                                                                   |
+
+So a sprite drawn here drops into a CG page unchanged, and the bank it needs
+rides with it. The record is read back the same way (`?sprite=<name>`, or the
+cloud list, which follows the database live).
+
+**SpriteX Tilemap Editor** (`/tilemap-editor/`). spriteX's TILEMAP tab (Tiled
+JSON + tileset PNG, tile and object layers, place / erase / pick, undo per
+stroke, `tilemaps/*` in the cloud) ported here, with three additions:
+
+- **Orientation.** NATIVE is the Tiled map as authored; VERTICAL and HORIZONTAL
+  are the same cells laid out the way the game scrolls them. A Dezaemon stage's
+  scenery is a 14-column × 768-row grid whose row 0 is where the stage _starts_
+  — the runtime draws it at the bottom and scrolls up — and a horizontal cart is
+  that grid a quarter turn over; VERTICAL puts the start at the bottom,
+  HORIZONTAL at the left, PART jumps a 16-row screen at a time, and arrows move
+  on the screen, not in the data.
+- **Level scenery.** LEVEL SCENERY loads a cloud level (`levels/*`) and any of
+  its stages; the level editor's TILEMAP badge hands over the open game instead
+  (every stage, `backgroundCells`, the working atlas — through the same
+  IndexedDB bridge the model viewer reads). The grid is `stage.background`
+  (`{cols, rows, tiles}` — base64 u16be words: bits 0–9 index `backgroundCells`,
+  bit 15 h-flip, bit 14 v-flip as the runtime reads them, `0xFFFF` empty) and
+  edits go back two ways: **SAVE TO LEVEL** writes `stages/{stage}/background`
+  (and the flat `background` when that is the record's open stage), and any new
+  cells to `backgroundCells` and packed onto the level atlas; **APPLY TO
+  EDITOR** posts the same over the editor's bridge channel (`tilemap-apply`),
+  which the open level editor folds into its in-memory game — save there to keep
+  it. Switching stages keeps each stage's unsaved edits, and a stage that had no
+  scenery starts as an empty grid.
+- **Pixel sprites as tiles.** TILE PALETTE → PIXEL SPRITES lists every non-empty
+  16×16 cell of every `pixelSprites/*` record, live: a sprite saved in the Pixel
+  Editor appears without a reload. **+ ADD TO MAP** appends the chosen cell to
+  the map's tileset — for a level, to its `backgroundCells` as `{name}` (or
+  `{name}_f{frame}_c{cell}` for a bigger sprite) — and selects it for placing.
+
+**Tileset Extractor** (the second tab) is André Michelle's
+[Online Tileset Extractor](https://easierbycode.com/tileset-extractor/) brought
+in: load a level screenshot (or the two demos), set the tile size and a
+**tolerance**, and every distinct tile is kept once, with the map of where each
+went. Added here: **margin** and **spacing** (padding), a free grid **offset** —
+drag the grid on the image, nudge it with the arrows, or type it — a **live
+cut** of the tiles under the grid so alignment is checked by eye before running,
+and cells the image edge cuts are skipped rather than refused. Downloads are
+`tiles.png`, `map.json` (the original's `{map,
+numCols, numRows}` plus a Tiled
+map), `tiled.tmx` and the recreation; **→ OPEN AS MAP** puts the result straight
+into the MAP EDITOR tab.
 
 ## Two players
 
