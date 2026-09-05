@@ -159,6 +159,79 @@ export {
   SECTION_SIZES,
 } from "./src/decompress.js";
 
+// --- The .sav WRITER ---------------------------------------------------------
+// The encoder half of the pipeline: LZSS (src/compress.js), the section
+// table + BackUpRam image in the MiSTer/hardware layout (src/bup-write.js),
+// RGBA -> Saturn or Super Famicom palette (src/palette/palette-target.js),
+// CG cell packing (src/write/cg-pack.js), a level record -> the eight raw
+// sections (src/write/game-to-save.js), and the one-call export
+// (src/write/export-sav.js).
+export { compress, compressCmp } from "./src/compress.js";
+export {
+  buildBupImage,
+  buildGameSave,
+  buildPayload,
+  BUP_LANGUAGE,
+  bupDateFromDate,
+  CART_PARTITION_SIZE,
+  dataBlocksFor,
+  DEFAULT_TABLE_ADDR,
+  encodeComment,
+  formatPartition,
+  gameSaveFilename,
+  interleave,
+  INTERNAL_PARTITION_SIZE,
+  MISTER_SAV_SIZE,
+  writeSaveEntry,
+} from "./src/bup-write.js";
+export {
+  ALPHA_CUTOFF,
+  bankToPalettes,
+  bankToSec4,
+  colorHistogram,
+  emptyBank,
+  frameGroup,
+  medianCut,
+  PALETTE_TARGETS,
+  quantizeFrames,
+  snesCgramBytes,
+  USER_ROW_FIRST,
+} from "./src/palette/palette-target.js";
+export {
+  CG_CELL_CAPACITY,
+  CgFullError,
+  CgPacker,
+  REF_HFLIP,
+  REF_VFLIP,
+} from "./src/write/cg-pack.js";
+export {
+  bandFor,
+  blastFrames,
+  bossClassFor,
+  buildSaveFromGame,
+  DEFAULT_BOSS_PATTERNS,
+  DEFAULT_ITEM_TYPES,
+  DROP_TO_SLOT,
+  emptySong,
+  emptySongBank,
+  encodeBossTrailer,
+  encodeEnemyRecord,
+  encodeSettings,
+  enemyRecordFromEditor,
+  fitRgba,
+  itemIcon,
+  levelStages,
+  mapColumn,
+  ROW_STEP,
+  spreadFrames,
+  STRAIGHT_APPEARANCE_BASE,
+} from "./src/write/game-to-save.js";
+export {
+  exportLevelToSav,
+  savComment,
+  savFileName,
+} from "./src/write/export-sav.js";
+
 // --- Extras: cartridge-dump deinterleaving (src/bup-deinterleave.js) ---
 export { deinterleave, detect } from "./src/bup-deinterleave.js";
 

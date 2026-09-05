@@ -3,7 +3,9 @@
 The Dezaemon 2 (Sega Saturn) save-game import pipeline: parse Saturn backup-RAM
 images, decode a user-created game out of its `.sav` (LZSS + per-section
 decoders), map it to the level editor's `game.json` format, pack a texture
-atlas, and validate the result.
+atlas, and validate the result — and, since 2026-09-05, the way back: a level
+record plus its RGBA frames -> a MiSTer-layout `.sav`, with the art reduced to
+the Saturn or Super Famicom palette (`exportLevelToSav`).
 
 This package is the source of truth for the engine that was previously vendored
 into cmg as `static/editor/dezaemon/lib` (and lives upstream as
@@ -57,6 +59,28 @@ const atlas = packShelf(sprites.map((s) => ({ w: s.w, h: s.h, data: s })));
 const { ok, errors, warnings: schemaWarnings } = validateGameJson(gameJson);
 ```
 
+And back again — a level record (the cloud save shape: `enemylist`, `width`,
+`enemyData`, `bossData`, ... or `stages.stageN`) and its atlas frames as RGBA:
+
+```js
+import { exportLevelToSav } from "@shmupx/shmup-engine";
+
+// art: { "redEyeOcto0.png": { w, h, rgba }, ... } — the caller slices the
+// atlas (a canvas in the browser, lib/ps2/png.ts in Deno); the module has no DOM.
+const { sav, fileName, warnings, report } = exportLevelToSav(level, art, {
+  palette: "saturn", // or "snes": one 15-colour row per sprite
+  title1: logoRgba, // optional {w, h, rgba} for the drawn TITLE 1 / TITLE 2
+});
+await Deno.writeFile(fileName, sav); // "Dez 2 - <name>.sav", 1,114,112 bytes
+```
+
+Under the hood: `buildSaveFromGame` (level + art -> the eight raw sections:
+palette target, CG cell packing, stages/records/banks/settings), `buildPayload`
+(LZSS `compress` + the checksummed section table) and `buildBupImage` (a
+formatted 32 KB + 512 KB BackUpRam image, 0xFF-interleaved).
+`deno task build:sav` is the CLI over it; the level editor's DOWNLOAD .SAV runs
+the same code in the page.
+
 ## Export surface
 
 The root module (`mod.js`) flat-exports the surface the level editor binds as
@@ -100,13 +124,33 @@ The root module (`mod.js`) flat-exports the surface the level editor binds as
 - extras: `decompress`, `decompressCmp` (disc `.CMP` files), `SECTION_SIZES`,
   `SECTION_HINTS` (LZSS + section geometry), `detect`, `deinterleave` (cartridge
   dumps), `coalesceDiffRanges`, `totalDiffBytes` (byte-range diffing)
+- **`./src/compress.js`** — `compress`, `compressCmp`: the LZSS encoder, the
+  exact inverse of `decompress`
+- **`./src/bup-write.js`** — `buildPayload`, `buildBupImage`, `buildGameSave`,
+  `formatPartition`, `writeSaveEntry`, `dataBlocksFor`, `interleave`,
+  `bupDateFromDate`, `encodeComment`, `gameSaveFilename`, `BUP_LANGUAGE`,
+  `MISTER_SAV_SIZE`, …: the BackUpRam image writer
+- **`./src/palette/palette-target.js`** — `PALETTE_TARGETS`, `quantizeFrames`
+  (RGBA frames -> CG pixel bytes + the sec4 bank under `saturn` or `snes`),
+  `medianCut`, `colorHistogram`, `emptyBank`, `bankToSec4`, `bankToPalettes`,
+  `snesCgramBytes`, `frameGroup`
+- **`./src/write/cg-pack.js`** — `CgPacker` (shared 16×16 cells over the four
+  pages, mirror-aware), `CgFullError`, `REF_HFLIP`, `REF_VFLIP`
+- **`./src/write/game-to-save.js`** — `buildSaveFromGame`, `levelStages`,
+  `encodeEnemyRecord`, `enemyRecordFromEditor`, `encodeBossTrailer`,
+  `encodeSettings`, `emptySong`, `emptySongBank`, `fitRgba`, `bandFor`,
+  `bossClassFor`, `mapColumn`, `spreadFrames`, `blastFrames`, `itemIcon`, …
+- **`./src/write/export-sav.js`** — `exportLevelToSav`, `savFileName`,
+  `savComment`
 
 The deeper decoder internals (per-section decoders, player art, and so on) are
 importable through subpath exports: `@shmupx/shmup-engine/decode`,
 `.../map-to-game`, `.../bup-parse`, `.../bup-source`, `.../bup-deinterleave`,
 `.../payload-table`, `.../decompress`, `.../atlas-pack`, `.../game-schema`,
 `.../player-art`, `.../player2-art`, `.../diff-ranges`, `.../tone-bank`,
-`.../iso9660-read`, `.../mesh-library`, `.../decode-mdldt`, `.../model-mesh`.
+`.../iso9660-read`, `.../mesh-library`, `.../decode-mdldt`, `.../model-mesh`,
+`.../compress`, `.../bup-write`, `.../palette-target`, `.../cg-pack`,
+`.../game-to-save`, `.../export-sav`.
 
 `FORMAT.md` documents the reverse-engineered save format; `games-db.json` is the
 catalog of known community games.
@@ -118,7 +162,9 @@ deno test -A packages/shmup-engine
 ```
 
 The golden tests run against community-created Saturn saves (`ramsie.sav`,
-`mucha-kucha.sav`, `baseline-cart.bcr`, `baseline-internal.bkr`). Those fixtures
+`mucha-kucha.sav`, `baseline-cart.bcr`, `baseline-internal.bkr`) — the writer's
+among them: each fixture's sections must round-trip through `compress`, and a
+cart rebuilt from Ramsie's own sections must decode identically. Those fixtures
 are **not** committed (see the repo `.gitignore`) — tests that need them are
 fixture-gated and report as `ignored` when the files are absent. Drop the
 fixtures into `packages/shmup-engine/fixtures/` to run the full suite. The

@@ -18,6 +18,12 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
   (`deno task build:windows` / `build:linux` / `build:mac`, see below).
 - `lib/ps2/`, `scripts/build-ps2.ts` — the PlayStation 2 export
   (`deno task build:ps2`, see below). Pure Deno, no toolchain to install.
+- `scripts/build-sav.ts` — the **Dezaemon 2 cart export**
+  (`deno task
+  build:sav`, see **Writing a .sav** below): a cloud level as the
+  1,114,112-byte `.sav` MiSTer's Saturn core reads, its art cut to the Saturn or
+  Super Famicom palette. The editor's DOWNLOAD .SAV / → SAVE SHELF rows run the
+  same engine code in the page.
 - `svelte-src/` — the launcher dashboard (Svelte 5), esbuild-bundled at build
   time into `static/dashboard.bundle.js` by `deno task dashboard:build`.
 - `data/games.json` → `deno task games:manifest` → `static/games.manifest.json`
@@ -128,6 +134,7 @@ deno task build:desktop   # …whichever of those three matches this host
 deno task build:ps2       # a level as a PlayStation 2 USB folder
 deno task build:ps2:zip   # …as one .zip of that folder
 deno task build:ps2:iso   # …plus a bootable disc image
+deno task build:sav       # a level as a Dezaemon 2 cart save (.sav) for MiSTer / hardware
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
@@ -171,8 +178,74 @@ flag — and a CG pixel byte is `(palette << 4) | colour`, i.e.
 `row * 16 +
 column`: **for the first 256 entries the palette index is the pixel
 byte**, and index 0 (system row 0, colour 0) is the transparent background. That
-is the contract everything below is written to, so a future `.sav` writer gets
-indexed cells whose bytes are already what sec0–3 store.
+is the contract everything below is written to, and the one the `.sav` writer
+consumes: indexed cells whose bytes are already what sec0–3 store.
+
+## Writing a .sav
+
+The import pipeline runs backwards too. `packages/shmup-engine/src/write/` turns
+a level record — the shape the editor saves to `levels/<name>` and
+`static/games/2028-ai/foo.json` ships — plus its atlas frames into the eight raw
+sections of a Dezaemon 2 save, and `src/bup-write.js` compresses them
+(`src/compress.js`, the Okumura LZSS the decoder pins, within ~2% of the
+Saturn's own stream sizes), builds the checksummed section table and writes the
+payload into a freshly formatted 32 KB + 512 KB BackUpRam image,
+0xFF-interleaved: the **1,114,112-byte `.sav`** every file in the community
+collection is, dumped from carts for MiSTer's Saturn core. The file re-imports
+through the same `normalize → parse → decodeSave → mapSaveToGame` path as a
+community cart; that round trip — not hardware — is what verifies it today
+([`tests/sav_export_test.ts`](tests/sav_export_test.ts) does it end to end on
+`foo`).
+
+```sh
+deno task build:sav                          # foo.json -> build/sav/Dez 2 - foo.sav
+deno task build:sav "Master Arena Mod"       # that cloud level
+deno task build:sav ./backups/mygame.json    # a level record on disk
+deno task build:sav foo --palette snes --snes-pal build/sav/foo.pal --report
+```
+
+**Palette.** A level's atlas is 24-bit; the cart holds 15-bit colours from a 16
+× 16 bank, so the art is reduced on the way out, under one of two targets
+(`src/palette/palette-target.js`):
+
+| target   | model                                                                                                                                                                                                                                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `saturn` | Dezaemon 2's own: the 192 **system colours** stay, the 64 **user slots** are filled adaptively (median cut) with the atlas colours the system ramps serve worst, and each 8bpp pixel snaps to its nearest of the 255 opaque entries — a sprite draws from every row at once                                                                 |
+| `snes`   | the Super Famicom's: CGRAM is programmable 15-bit BGR in 16-colour rows and sprites are 4bpp, so **one sprite draws from one row** whose entry 0 is transparent. Up to four 15-colour rows (the save's user palettes) are built from the sprites assigned to them; `--snes-pal` also writes the bank as a 512-byte little-endian CGRAM file |
+
+Both write a Saturn save — Saturn RGB555 and SNES BGR555 are the same bit layout
+— the target only decides how the art is cut. In the editor the **SAV PALETTE**
+switch under DEZAEMON 2 (SATURN) picks it.
+
+**What lands where.** Every frame the game needs — the enemies' animation frames
+(in the smallest of the seven zako art bands that holds them, downscaled only
+past 64×64), the boss core (class F0–F3 by size), the ship (the level's own,
+else Duke), item icons and two blast anims (drawn procedurally), up to three
+bullet types from the enemies' projectiles, the logo and subtitle as the drawn
+TITLE 1/2, an import's scenery — is packed into the 1024 shared CG cells
+(mirrors and duplicates cost nothing). Each stage gets its placement grid (json
+rows spawn last-first, so they are reversed into scroll order; an import's
+`waveRows` puts waves back on their rows, an authored level spaces them 12 rows
+apart across the 14-column playfield), its 60 enemy records (an import's 18
+bytes verbatim in their own slot; an authored enemy encoded from
+hp/score/interval/speed as a straight-down flier that fires aimed shots; a
+cell's drop digit becomes the record's death word), the boss trailer (re-encoded
+from an import's decoded record, else four default patterns), scroll curve and
+extents, and the settings block (mode from the grid's VERT/HORIZ switch,
+loadouts, item slots, bullet configs, BGM table). An import's `dezaemonBgm`
+songs go back into sec6; sec7 stays empty. Everything the format does not carry
+— enemy names, story scenes, custom audio, the base game's stock enemies'
+behaviours — is left behind, and the builder says so in its warnings. Not yet
+written: the six credit strips, real item icon art, 3D models.
+
+**In the editor.** Under DEZAEMON 2 (SATURN): **DOWNLOAD .SAV** builds the open
+game in the page (the engine bundle) and downloads `Dez 2 - <name>.sav`; **→
+SAVE SHELF** files the same bytes in this browser's IndexedDB, and the LOAD GAME
+shelf lists them first under **YOUR .SAV EXPORTS** with a ✕ to forget one —
+loading a row runs the normal import, so a save can be exported, reloaded and
+re-edited without leaving the page. Both work on an imported cart as well as an
+authored level, which is how a community game can be edited and written back
+out.
 
 ## Pixel Editor and Tilemap Editor
 

@@ -1306,6 +1306,62 @@ Capture sequence (same game, one change, re-saved; diff with
 | `40_bgm_note`       | change one note               | BGM sequence vs sample bank |
 | `50_title`          | rename the in-game title      | title string location |
 
+## Writing a save (confirmed — `src/compress.js`, `src/bup-write.js`, `src/write/`)
+
+The importer's inverse, added 2026-09-05. Every fact it relies on is one the
+parser confirmed above or one measured against the fixtures and the local
+collection (60 saves scanned) while building it:
+
+- **LZSS**: the encoder mirrors the decoder's ring byte for byte (zero-filled,
+  cursor 0xFEE, absolute 12-bit offsets, lengths 3–18, LSB-first flags with
+  bit 1 = literal) and finds matches with a hash chain over the ring — the zero
+  prefill included, which is how the game's own encoder codes the zero runs
+  every section opens with. Output is within ~2 % of the Saturn's stream sizes
+  (Ramsie sec5: 57,135 B vs 56,643) and `decompress(compress(x)) === x` on
+  every fixture section (`test/compress.test.js`).
+- **Payload**: `buildPayload` writes the 0x6C table with `tableAddr =
+  0x002C8A84`, sections chained from `tableAddr + 0x6C`, plain byte-sum
+  checksums and their total, and validates itself through `parseSectionTable`.
+- **Partition**: block 0 = the magic repeated to fill the block (32 copies at
+  512 B, 4 at 64 B); **block 1 is never used** — Ramsie, Mucha Kucha and the
+  Mednafen internal-RAM baseline all put their first header at block 2; unused
+  blocks are zero. A save's data blocks follow its header contiguously; the
+  stream is the u16be block list + `0x0000`, then the payload, spilling across
+  blocks past each 4-byte tag (`dataBlocksFor(167511, 512) === 331`, payload at
+  `0x86BE` — Ramsie's numbers).
+- **Image**: the MiSTer / hardware `.sav` is the 32 KB internal partition
+  (formatted, empty — Ramsie's is) followed by the 512 KB cart partition, every
+  byte widened to `FF xx`: 1,114,112 bytes. `layout: "cart"` gives the bare
+  512 KB image (Mednafen's `.bcr` before gzip).
+- **Directory**: `DEZA2____NN` (slot 1–5), a 10-byte comment (ASCII subset;
+  the platform has no Shift-JIS encoder), language (0 JP … 5 IT; exports write
+  1), date = minutes since 1980-01-01 as u24, datasize.
+- **sec4**: word 0 is written `0x8000` (46 of 60 collection saves; the rest
+  vary — the meaning is still open); rows 0–11 verbatim from DEZA2.PAL; user
+  colours as `0x8000 | rgb555` (2,911 of 2,912 authored user words in the
+  collection carry the flag), `0x0000` for an empty slot, and the disc's
+  `0x0021` end marker kept in an unused row's last slot — authored saves
+  overwrite that slot with real colours (57 of 60 do), so it is not reserved.
+- **sec5**: unused composition refs are `0xFFFF`, not the placeholder cell —
+  Ramsie's stage banks hold 3,864 `0xFFFF` words out of 7,040, an unused stage's
+  bank is all `0xFFFF`, and its background is all `0xFFFF` while its records
+  and placement grid are zero. The writer packs the boss core in the
+  `coreCellOrder` block layout and stores tilemap flips as bit14 = H / bit15 =
+  V (the runtime's grid words carry them the other way round).
+- **sec6**: an unused song slot is header `00 1F 03 0F` and control bytes
+  `00 00 80 03` in each of the 32 measures (67 non-zero bytes — Ramsie's slots
+  14–23); `emptySong()` reproduces it. The BGM table may name such a slot: it
+  plays silence.
+- **sec7**: all zero — no `0x12345678` magic, which the decoder (and Ramsie's
+  own save) treats as "the 3D editor was never opened".
+
+What the writer does NOT yet reproduce: the six credit strips, real item icon
+art (procedural placeholders are written), the death-word children of records
+whose slot had to move (the record keeps its bytes; a collision is reported),
+and anything the level format has no words for (enemy names, story scenes,
+audio files). Verification so far is the parser round trip and the level
+editor's re-import, not a Saturn or a MiSTer.
+
 ## Cross-check option (high-leverage)
 
 Load a Mednafen savestate taken inside Dezaemon 2 into Ghidra (SH-2, with the

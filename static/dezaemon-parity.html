@@ -204,7 +204,7 @@
 <header>
   <p class="eyebrow">shmupX · packages/shmup-engine · reverse-engineering status</p>
   <h1>Dezaemon 2 Parity Map<span class="jp">デザエモン2</span></h1>
-  <p class="lede">What the importer already decodes of a Sega Saturn <strong>Dezaemon 2</strong> save, and what still stands between it and full feature parity. Target is the Saturn release (big-endian SH-2, <code>BackUpRam Format</code> BUP saves, LZSS-compressed 8-section payloads) — not the SNES original. The canonical RE notes live in <code>packages/shmup-engine/FORMAT.md</code>; the whole pipeline is currently <strong>import-only</strong>.</p>
+  <p class="lede">What the importer already decodes of a Sega Saturn <strong>Dezaemon 2</strong> save, and what still stands between it and full feature parity. Target is the Saturn release (big-endian SH-2, <code>BackUpRam Format</code> BUP saves, LZSS-compressed 8-section payloads) — not the SNES original. The canonical RE notes live in <code>packages/shmup-engine/FORMAT.md</code>; the pipeline imports and, since 2026-09-05, <strong>exports</strong> — <code>exportLevelToSav</code> writes a MiSTer-layout cart, verified so far by the parser round trip rather than on hardware.</p>
 
   <div class="pipeline">.sav → bup-parse → decompress (LZSS) → decode <b>sec0–3 CG</b> · <b>sec4 palettes</b> · <b>sec5 stages</b> · <b>sec6 BGM</b> · settings → mapSaveToGame → editor game.json → Phaser runtime</div>
 
@@ -225,8 +225,8 @@
 
 <ol class="remaining">
   <li><span class="n">1</span>
-    <h3>Write path — .sav export<span class="tag none">NO TRACE</span></h3>
-    <p>Unchanged, and still the single largest missing capability: no LZSS <b>compressor</b>, no section-table/checksum builder, no BUP block allocator anywhere (<span class="ref">grep over src finds only decompress</span>). The real compressor lives in the disc's <code>S_OPT.bin</code>. Until this exists the editor can never round-trip a game back to a Saturn cart, so the pipeline stays <b>import-only</b>.</p>
+    <h3>Write path — .sav export<span class="tag spec">DONE 2026-09-05</span></h3>
+    <p>Landed: an LZSS <b>compressor</b> that mirrors the decoder's ring (<span class="ref">src/compress.js</span>, within ~2% of the Saturn's own stream sizes), the section-table/checksum builder and BUP block allocator (<span class="ref">src/bup-write.js</span> — header at block 2, 0xFF-interleaved 32 KB + 512 KB image, 1,114,112 bytes), and the game assembler (<span class="ref">src/write/game-to-save.js</span>: CG pages under a Saturn or Super Famicom palette target, placement grids, enemy records, boss trailers, sprite banks, settings, songs). Exposed as <code>exportLevelToSav</code>, <code>deno task build:sav</code> and the editor's DOWNLOAD .SAV / → SAVE SHELF rows. Verified by re-import through this very parser and the editor (<span class="ref">tests/sav_export_test.ts</span>); not yet booted on a Saturn or MiSTer. Still unwritten: credit strips, real item-icon art, 3D models.</p>
   </li>
   <li><span class="n">2</span>
     <h3>Charge and main-weapon shot spreads for types 2–6<span class="tag open">MEANING OPEN</span></h3>

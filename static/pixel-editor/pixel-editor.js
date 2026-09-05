@@ -5,7 +5,7 @@
 // packages/shmup-engine/src/palette/deza2-palette.js), and it is stored the
 // way a Saturn save stores art: 16x16 cells of (palette<<4)|colour bytes in
 // reading order, plus the 16x16 RGB555 bank a save's sec4 would carry. That
-// is the contract a future .sav writer needs, so a sprite drawn here can be
+// is the contract the .sav writer consumes (the engine's write/ modules), so a sprite drawn here can be
 // dropped into a CG page unchanged. The RGBA render is derived from it (and
 // also stored, for tools that only read pictures — spriteX's PACKER reads
 // sprites/*, the Tilemap Editor reads pixelSprites/* live).

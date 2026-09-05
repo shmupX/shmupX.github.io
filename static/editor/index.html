@@ -1017,6 +1017,21 @@
         <button class="menu-row" id="deza-library-btn" onclick="openDezaemonLibrary()"><span class="mono-badge">LG</span>LOAD GAME</button>
         <button class="menu-row hidden" id="deza-website-btn" onclick="openLoadedGameWebsite()"
                 title="Open this game's page on satakore.com — inside the CMG Desktop it opens as a Web Browser window"><span class="mono-badge">WB</span>VIEW WEBSITE</button>
+        <!-- EXPORT: the open game as a Dezaemon 2 cart save. Built entirely in
+             the page by the engine bundle (exportLevelToSav) — no build host —
+             and either downloaded or filed under YOUR .SAV EXPORTS on the LOAD
+             GAME shelf (IndexedDB, this browser). The palette picker decides how
+             the atlas is cut down to console colours. -->
+        <div class="display-row" title="How the atlas is reduced to console colours on export. SATURN: Dezaemon 2's 192 system colours plus 64 user colours mixed from the art. SNES: up to four 15-colour rows with every sprite confined to one, the Super Famicom's 4bpp rule.">
+            <span class="display-lbl">SAV PALETTE</span>
+            <div class="seg-wrap" id="deza-sav-palette-segs">
+                <button class="seg xseg on" data-palette="saturn" onclick="setDezaSavPalette('saturn')">SATURN</button>
+                <button class="seg xseg" data-palette="snes" onclick="setDezaSavPalette('snes')">SNES</button>
+            </div>
+        </div>
+        <button class="menu-row" id="deza-sav-download" onclick="exportDezaemonSav('download')" title="Build a Dezaemon 2 cart save of the open game — the 1,114,112-byte .sav MiSTer's Saturn core reads — and download it"><span class="mono-badge">DL</span>DOWNLOAD .SAV</button>
+        <button class="menu-row" id="deza-sav-shelf" onclick="exportDezaemonSav('shelf')" title="Build the .sav and file it in this browser's LOAD GAME shelf, under YOUR .SAV EXPORTS"><span class="mono-badge">SH</span>&rarr; SAVE SHELF</button>
+        <div id="deza-sav-note" class="menu-note"></div>
         <div class="menu-note">SATURN BACKUP SAVES: .SAV / .BCR / .BKR</div>
         <div class="menu-label">ADVANCED EDITORS</div>
         <div class="adv-grid">
@@ -5238,6 +5253,274 @@
             return ok;
         }
 
+        // ============ .SAV EXPORT (the open game as a Dezaemon 2 cart) ============
+        // The writer half of the engine (packages/shmup-engine/src/write/):
+        // the level record this editor would save to the cloud, plus every
+        // atlas frame as RGBA, go into Dezaemon.exportLevelToSav(), which
+        // reduces the art to a console palette, packs the CG pages, assembles
+        // the stages and wraps the LZSS payload in a MiSTer-layout BackUpRam
+        // image — the same 1,114,112-byte file the community collection is
+        // made of. `deno task build:sav` does the identical thing from a shell.
+        const DEZA_SAV_PALETTE_KEY = 'cmg-deza-sav-palette';
+        let dezaSavPalette = 'saturn';
+        try {
+            const saved = localStorage.getItem(DEZA_SAV_PALETTE_KEY);
+            if (saved === 'snes' || saved === 'saturn') dezaSavPalette = saved;
+        } catch (e) { }
+        function updateDezaSavPaletteUI() {
+            document.querySelectorAll('#deza-sav-palette-segs .seg').forEach((b) => {
+                b.classList.toggle('on', b.dataset.palette === dezaSavPalette);
+            });
+        }
+        function setDezaSavPalette(p) {
+            dezaSavPalette = p === 'snes' ? 'snes' : 'saturn';
+            try { localStorage.setItem(DEZA_SAV_PALETTE_KEY, dezaSavPalette); } catch (e) { }
+            updateDezaSavPaletteUI();
+        }
+        updateDezaSavPaletteUI();
+
+        function dezaSavNote(msg, color) {
+            const el = document.getElementById('deza-sav-note');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = color || '';
+        }
+
+        // The name the save is filed under: the cloud name field, the open
+        // game's own, or the imported cart's title.
+        function dezaSavGameName() {
+            const typed = (document.getElementById('firebase-level-name').value || '').trim();
+            if (typed) return sanitizeLevelName(typed);
+            if (gameData && gameData.dezaemonCredits && gameData.dezaemonCredits.title) return String(gameData.dezaemonCredits.title);
+            if (gameData && gameData.name && gameData.name !== 'foo') return String(gameData.name);
+            if (dezaImportState && dezaImportState.fileName) {
+                return String(dezaImportState.fileName).replace(/\.(sav|bcr|bkr)$/i, '').replace(/^Dez 2 - /, '');
+            }
+            return 'my game';
+        }
+
+        // The level as the cloud save would store it — the same whitelist
+        // saveToFirebase() writes, minus the network — so the .sav sees exactly
+        // what a LOAD GAME of this level would.
+        async function buildLevelRecordForSav() {
+            syncEnemyEditorForm();
+            await pullAllArtFromLibrary();
+            const record = {
+                name: dezaSavGameName(),
+                stageKey: currentStageKey,
+                enemylist: normalizeGrid(currentGrid),
+                width: gridWidth(currentGrid),
+                enemyData: enemyData || {},
+                bossData: bossData || {},
+                playerData: playerData || {},
+                stages: buildStagesForCloudSave(),
+            };
+            const stageRec = gameData && gameData[currentStageKey];
+            if (stageRec) {
+                if (Array.isArray(stageRec.waveRows) && stageRec.waveRows.length === record.enemylist.length) record.waveRows = stageRec.waveRows;
+                if (stageRec.scroll) record.scroll = stageRec.scroll;
+                if (stageRec.items) record.items = stageRec.items;
+                if (stageRec.background) record.background = stageRec.background;
+            }
+            if (gameData) {
+                for (const k of ['backgroundCells', 'dezaemonBgm', 'dezaemonBullets', 'dezaemonItems', 'dezaemonTitleScreen', 'meta']) {
+                    if (gameData[k]) record[k] = gameData[k];
+                }
+            }
+            return record;
+        }
+
+        // Every atlas frame as raw RGBA, straight off the working canvas —
+        // pending replacements and pasted extras included, without committing
+        // them to the editor's atlas the way a cloud save does.
+        function collectAtlasArtForSav() {
+            if (!atlasData || !atlasImage) return {};
+            let source = atlasImage;
+            let frames = atlasData.frames || {};
+            if (Object.keys(replacedFrames).length > 0 || extraSprites.length > 0) {
+                const result = buildAtlasWithReplacements();
+                source = result.canvas;
+                frames = result.frames;
+            }
+            const w = source.naturalWidth || source.width, h = source.naturalHeight || source.height;
+            if (!w || !h) return {};
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            const ctx = c.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(source, 0, 0);
+            const art = {};
+            for (const [key, entry] of Object.entries(frames)) {
+                const f = entry && entry.frame;
+                if (!f || !f.w || !f.h) continue;
+                const px = ctx.getImageData(f.x, f.y, f.w, f.h);
+                art[key] = { w: f.w, h: f.h, rgba: px.data };
+            }
+            return art;
+        }
+
+        // A title-screen image (logo / subtitle data URL, any format the
+        // browser decodes) as RGBA for the drawn TITLE 1 / TITLE 2 slots.
+        function dataUrlToRgba(dataUrl) {
+            if (!dataUrl) return Promise.resolve(null);
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    try {
+                        const c = document.createElement('canvas');
+                        c.width = img.naturalWidth; c.height = img.naturalHeight;
+                        const ctx = c.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        const px = ctx.getImageData(0, 0, c.width, c.height);
+                        resolve({ w: c.width, h: c.height, rgba: px.data });
+                    } catch (e) { resolve(null); }
+                };
+                img.onerror = () => resolve(null);
+                img.src = dataUrl;
+            });
+        }
+
+        // settings +0x00: bit0 = horizontal, bit1 = 2P join-in — the grid's
+        // orientation switch and the imported save's own mode bit.
+        function dezaSavGameMode() {
+            let mode = gridOrientation === 'horizontal' ? 1 : 0;
+            const imported = gameData && gameData.meta && gameData.meta.dezaemonSettings && gameData.meta.dezaemonSettings.gameMode;
+            if (Number.isInteger(imported) && (imported & 2)) mode |= 2;
+            return mode;
+        }
+
+        // --- the export shelf: this browser's own .sav builds (IndexedDB) ---
+        const DEZA_EXPORTS_DB = 'shmupxDezaExports';
+        const DEZA_EXPORTS_STORE = 'saves';
+        let dezaExportRows = null; // shelf cache, reloaded on every open
+
+        function dezaExportsDb() {
+            return new Promise((resolve, reject) => {
+                let req;
+                try { req = indexedDB.open(DEZA_EXPORTS_DB, 1); } catch (e) { reject(e); return; }
+                req.onupgradeneeded = () => {
+                    const db = req.result;
+                    if (!db.objectStoreNames.contains(DEZA_EXPORTS_STORE)) db.createObjectStore(DEZA_EXPORTS_STORE, { keyPath: 'id' });
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error || new Error('IndexedDB unavailable'));
+            });
+        }
+        function dezaExportsTx(mode, run) {
+            return dezaExportsDb().then((db) => new Promise((resolve, reject) => {
+                const tx = db.transaction(DEZA_EXPORTS_STORE, mode);
+                const req = run(tx.objectStore(DEZA_EXPORTS_STORE));
+                tx.oncomplete = () => { db.close(); resolve(req ? req.result : undefined); };
+                tx.onerror = () => { db.close(); reject(tx.error || new Error('IndexedDB transaction failed')); };
+                tx.onabort = () => { db.close(); reject(tx.error || new Error('IndexedDB transaction aborted')); };
+            }));
+        }
+        const dezaExportsPut = (rec) => dezaExportsTx('readwrite', (st) => st.put(rec));
+        const dezaExportsGet = (id) => dezaExportsTx('readonly', (st) => st.get(id));
+        const dezaExportsDelete = (id) => dezaExportsTx('readwrite', (st) => st.delete(id));
+        async function dezaExportsAll() {
+            const rows = await dezaExportsTx('readonly', (st) => st.getAll());
+            return (rows || []).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+        }
+        function dezaExportId(title, palette) {
+            return String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + ':' + palette;
+        }
+
+        let dezaSavBusy = false;
+        async function exportDezaemonSav(action) {
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
+            if (typeof window.Dezaemon.exportLevelToSav !== 'function') {
+                alert('This engine bundle predates the .sav writer — run `deno task engine:bundle`.');
+                return;
+            }
+            if (dezaSavBusy) return;
+            dezaSavBusy = true;
+            const buttons = ['deza-sav-download', 'deza-sav-shelf'].map((id) => document.getElementById(id));
+            buttons.forEach((b) => { if (b) b.disabled = true; });
+            try {
+                dezaSavNote('BUILDING THE SAVE…');
+                const record = await buildLevelRecordForSav();
+                const art = collectAtlasArtForSav();
+                const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
+                const out = window.Dezaemon.exportLevelToSav(record, art, {
+                    palette: dezaSavPalette,
+                    gameMode: dezaSavGameMode(),
+                    title1, title2,
+                });
+                const mb = (out.sav.length / 1048576).toFixed(2);
+                const rep = out.report || {};
+                const summary = (rep.stages ? rep.stages.length : 0) + ' STAGE' + (rep.stages && rep.stages.length === 1 ? '' : 'S') +
+                    ' · ' + (rep.cells || 0) + '/1024 CG CELLS · ' + dezaSavPalette.toUpperCase() + ' PALETTE · ' + mb + ' MB';
+                if (action === 'shelf') {
+                    await dezaExportsPut({
+                        id: dezaExportId(record.name, dezaSavPalette),
+                        title: record.name,
+                        file: out.fileName,
+                        palette: dezaSavPalette,
+                        bytes: out.sav,
+                        size: out.sav.length,
+                        savedAt: Date.now(),
+                        warnings: out.warnings,
+                        report: rep,
+                    });
+                    dezaExportRows = null;
+                    dezaSavNote('"' + out.fileName + '" IS ON THE LOAD GAME SHELF UNDER YOUR .SAV EXPORTS. ' + summary +
+                        (out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : ''), '#84cc16');
+                    flash('.SAV FILED ON THE SHELF');
+                } else {
+                    const blob = new Blob([out.sav], { type: 'application/octet-stream' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = out.fileName;
+                    document.body.appendChild(a); a.click(); a.remove();
+                    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+                    dezaSavNote('DOWNLOADING "' + out.fileName + '". ' + summary +
+                        (out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : ''), '#84cc16');
+                    flash('.SAV EXPORTED ⬇');
+                }
+                if (out.warnings.length) console.warn('.sav export warnings:', out.warnings);
+            } catch (e) {
+                console.error('.sav export failed:', e);
+                dezaSavNote('COULD NOT BUILD THE .SAV: ' + (e && e.message || e), '#f87171');
+            } finally {
+                dezaSavBusy = false;
+                buttons.forEach((b) => { if (b) b.disabled = false; });
+            }
+        }
+
+        // A shelf row's ✕: forget one export (this browser only).
+        function dezaExportDeleteChip(item) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'deza-fav';
+            btn.textContent = '✕';
+            btn.title = 'REMOVE THIS EXPORT FROM THE SHELF';
+            btn.setAttribute('aria-label', btn.title);
+            btn.onclick = async (ev) => {
+                ev.stopPropagation();
+                if (!confirm('Remove "' + item.file + '" from the shelf? (The download, if you made one, is unaffected.)')) return;
+                try { await dezaExportsDelete(item.exportId); } catch (e) { alert('Could not remove it: ' + (e.message || e)); return; }
+                dezaExportRows = (dezaExportRows || []).filter((r) => r.id !== item.exportId);
+                const panel = document.getElementById('deza-library-list').closest('.picker-panel');
+                const top = panel ? panel.scrollTop : 0;
+                renderDezaemonLibrary();
+                if (panel) panel.scrollTop = top;
+            };
+            return btn;
+        }
+
+        async function loadDezaemonExport(item) {
+            let rec = null;
+            try { rec = await dezaExportsGet(item.exportId); } catch (e) { }
+            if (!rec || !rec.bytes) {
+                flash('THAT EXPORT IS NO LONGER HERE');
+                dezaExportRows = null;
+                renderDezaemonLibrary();
+                return;
+            }
+            hideDezaPreview();
+            await loadDezaemonLibraryGame(rec.file, rec.title, null, null, { bytes: new Uint8Array(rec.bytes) });
+        }
+
         // ============ SAVED GAMES (community save collection) ============
         // The shelf reads the collection from the Realtime Database
         // (/dezaemon/index, written by `deno task deza:upload`): one GET brings
@@ -5690,6 +5973,8 @@
             }
             // Pick up pins toggled on the launcher's shelf since the last open.
             dezaFavs = loadDezaFavs();
+            // This browser's own .sav exports lead the shelf.
+            try { dezaExportRows = await dezaExportsAll(); } catch (e) { dezaExportRows = []; }
             renderDezaemonLibrary();
         }
 
@@ -5705,12 +5990,19 @@
             }
             list.innerHTML = '';
             count.textContent = st.saves.length ? st.saves.length + ' GAMES' : '';
+            const exportRows = (dezaExportRows || []).map((r) => ({
+                exportId: r.id, file: r.file, title: r.title, meta: null, slug: null, hasCover: false,
+                palette: r.palette, size: r.size, savedAt: r.savedAt,
+            }));
             if (!st.available || !st.saves.length) {
-                const note = document.createElement('div');
-                note.className = 'menu-note';
-                note.textContent = 'NO SAVE COLLECTION REACHABLE — THE DATABASE COULD NOT BE READ, AND THIS BUILD HAS NO "Dez 2 - *.sav" FILES IN static/editor/dezaemon/saves/.';
-                list.appendChild(note);
-                return;
+                if (!exportRows.length) {
+                    const note = document.createElement('div');
+                    note.className = 'menu-note';
+                    note.textContent = 'NO SAVE COLLECTION REACHABLE — THE DATABASE COULD NOT BE READ, AND THIS BUILD HAS NO "Dez 2 - *.sav" FILES IN static/editor/dezaemon/saves/.';
+                    list.appendChild(note);
+                    return;
+                }
+                count.textContent = exportRows.length + ' OF YOURS';
             }
             const groups = new Map();
             const favRows = [];
@@ -5736,12 +6028,15 @@
             if (groups.has('Unknown')) genres.push('Unknown');
             const sections = genres.map((g) => [g.toUpperCase(), groups.get(g)]);
             if (favRows.length) sections.unshift(['★ FAVORITES', favRows]);
+            // The player's own builds (→ SAVE SHELF) come first: newest at
+            // the top, each with a ✕ instead of a star.
+            if (exportRows.length) sections.unshift(['YOUR .SAV EXPORTS', exportRows]);
             for (const [label, unsorted] of sections) {
                 const head = document.createElement('div');
                 head.className = 'menu-label';
                 head.textContent = label;
                 list.appendChild(head);
-                const rows = unsorted.sort((a, b) =>
+                const rows = label === 'YOUR .SAV EXPORTS' ? unsorted : unsorted.sort((a, b) =>
                     (a.meta ? a.meta.title : a.title).localeCompare(b.meta ? b.meta.title : b.title));
                 for (const item of rows) {
                     const card = document.createElement('div');
@@ -5771,6 +6066,13 @@
                         dev.textContent = item.meta.developer +
                             (item.meta.developerJa && item.meta.developerJa !== item.meta.developer ? ' · ' + item.meta.developerJa : '');
                         body.appendChild(dev);
+                    } else if (item.exportId) {
+                        const dev = document.createElement('div');
+                        dev.className = 'deza-slot-meta';
+                        dev.textContent = item.file + ' · ' + String(item.palette || 'saturn').toUpperCase() + ' PALETTE · ' +
+                            (item.size ? (item.size / 1048576).toFixed(2) + ' MB' : '') +
+                            (item.savedAt ? ' · ' + new Date(item.savedAt).toLocaleString() : '');
+                        body.appendChild(dev);
                     }
                     card.appendChild(body);
                     // A row whose game has a video gets the ▶: hover (or hold)
@@ -5779,14 +6081,15 @@
                     if (item.meta && item.meta.video) {
                         card.appendChild(dezaPlayChip(item.meta.video, item.meta.title));
                     }
-                    card.appendChild(dezaFavChip(item));
+                    card.appendChild(item.exportId ? dezaExportDeleteChip(item) : dezaFavChip(item));
                     const go = document.createElement('div');
                     go.className = 'deza-slot-go';
                     go.textContent = 'LOAD ›';
                     card.appendChild(go);
                     card.onclick = () => {
                         hideDezaPreview();
-                        loadDezaemonLibraryGame(item.file, item.title, item.meta, item.slug);
+                        if (item.exportId) loadDezaemonExport(item);
+                        else loadDezaemonLibraryGame(item.file, item.title, item.meta, item.slug);
                     };
                     list.appendChild(card);
                 }
@@ -5801,7 +6104,11 @@
             // A database row carries the cart as gzip in base64 — hand the
             // bytes straight to the same ingest the file path uses, since
             // Dezaemon.normalize() unwraps gzip itself.
-            const ok = slug
+            // opts.bytes: a save this browser built itself (YOUR .SAV EXPORTS),
+            // handed over as the cart image it already holds.
+            const ok = (opts && opts.bytes)
+                ? await ingestDezaemonBytes(opts.bytes, file, { openModal: false })
+                : slug
                 ? await loadDezaemonFromRtdb(slug, file, { openModal: false })
                 : await loadDezaemonFromUrl('dezaemon/saves/' + encodeURIComponent(file), { openModal: false });
             if (!ok) return;

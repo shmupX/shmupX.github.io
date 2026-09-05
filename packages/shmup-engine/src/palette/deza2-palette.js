@@ -16,9 +16,10 @@
 //
 // A CG pixel byte is (palette << 4) | colour, i.e. row*16 + column, so for the
 // first 256 entries the palette index IS the pixel byte, and index 0 (system
-// row 0, colour 0) is the transparent background. That is the contract a
-// future .sav writer needs: indexed cells whose bytes are palette indices
-// 0..255, plus the 16x16 bank (system rows fixed, user rows authored).
+// row 0, colour 0) is the transparent background. That is the contract the
+// .sav writer consumes (src/write/game-to-save.js, via palette-target.js):
+// indexed cells whose bytes are palette indices 0..255, plus the 16x16 bank
+// (system rows fixed, user rows authored).
 //
 // Served flat as /palette.png (1 x 288, one pixel per entry in this order —
 // scripts/build-palette.ts) so a tool can load the palette as an image;

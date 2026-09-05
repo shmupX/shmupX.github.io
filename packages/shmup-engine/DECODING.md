@@ -228,6 +228,18 @@ console.log("bytes:  ", box5[0x5A794].toString(16), box5[0x5A795].toString(16));
 Every `d.sections[i].decompressed` is the un-squashed box, so you can check any
 offset on this page by hand.
 
+## And back again
+
+Every step on this page has an inverse in `src/write/` and `src/bup-write.js`: a
+level's art is reduced to the paint set (examples 1 and 2 in reverse —
+`src/palette/palette-target.js`, under the Saturn's own palette or the Super
+Famicom's one-row-per-sprite rule), cut into 16x16 cells (example 3 —
+`CgPacker`), the enemies, bosses, tiles and settings are written into their
+boxes (examples 4-7 — `game-to-save.js`), the boxes are squashed flat again
+(`compress.js`) and put in a chest a Saturn, or MiSTer's Saturn core, opens
+(`bup-write.js`). `deno task build:sav` does it from a level record; FORMAT.md
+"Writing a save" lists what the writer reproduces byte for byte.
+
 ## Notes
 
 - Line numbers drift as the code changes. The quoted line is the real anchor —
