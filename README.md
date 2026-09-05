@@ -477,7 +477,22 @@ Everything else in the export is data, produced by `lib/ps2/`:
 - The level's custom atlas is merged over the base one exactly as the browser
   player composites it, and the result is made **self-sufficient**: a frame the
   level names but never customised is pulled from the base sheet, because the
-  PS2 port looks for every one of a level's own sprites in the level atlas.
+  PS2 port looks for every one of a level's own sprites in the level atlas. Only
+  the sprites **the exported stage can spawn** go in — the enemy types its wave
+  grid names, plus that stage's boss (`stageRecipes` in
+  [`lib/ps2/assets.ts`](lib/ps2/assets.ts)). A Dezaemon save carries every type
+  of every stage (Master Arena Mod has 443), and packing them all forced the
+  sheet down to 1/4 scale, where a 16x16 enemy is a 4x4-texel smudge you can
+  shoot but not see. The build log says how many types the stage uses.
+- The wave grid goes out with **one-character enemy codes** (`discStage`, same
+  file). A cell is `<type><item>` and the browser reads the type as everything
+  but the last character, so a save with more than 26 types spawns `CM0` as
+  enemyCM; the PS2 port (svelte-ps2 1.1.0) takes only the first character and
+  spawned enemyC instead — in Master Arena Mod a single-pixel "star", which is
+  what the console showed in place of every enemy. Each type the stage uses is
+  re-coded (A–Z, then a–z, then 1–9; `0` never, since `00` is the empty cell)
+  and enemyData is re-keyed to match, so both readings agree. Only those records
+  ship, which also takes level.json from hundreds of entries to a few dozen.
 - The ISO is written here too ([`lib/ps2/iso9660.ts`](lib/ps2/iso9660.ts)) — no
   mkisofs, no xorriso. Names are uppercase ISO 9660 level 2 with a `;1` suffix,
   which ps2sdk's `cdfs` driver matches case-insensitively against the lowercase
@@ -670,7 +685,12 @@ a `tonebank.json` saying which instrument layer plays which at what root pitch,
 level and pan. Nothing plays it on the console yet: `Sound.Sfx` has no
 playback-rate control, so sounding a note off the bank means rendering it ahead
 of time rather than pitching a sample live the way the browser does.
-`athena.ini` gets `audsrv = true` when any pack is staged.
+`athena.ini` gets `audsrv = true` when any pack is staged. A silent build
+(`--no-audio`, or no ffmpeg) also puts `__PS2_AUDSRV__ = false` in main.js's
+preamble, because AthenaEnv defines `Sound` whether or not audsrv was loaded,
+and the first call into it without the module — `Sound.setVolume` at init —
+never returns: the console sat on a black screen. The runtime reads the flag and
+stays silent.
 
 The samples come from `SNDPAC.BIN`, which is disc content: it is not in this
 repo and is never published. Drop a Dezaemon 2 disc image into the gitignored

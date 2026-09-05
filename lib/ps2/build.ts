@@ -500,10 +500,19 @@ export async function buildPs2(
   const sfxKeys = sfx && sfx.files.length
     ? `globalThis.__PS2_SFX__ = ${JSON.stringify(sfx.keys)};`
     : "";
+  // A silent build has to say so. AthenaEnv defines the `Sound` global
+  // whether or not athena.ini loaded audsrv (it is compiled in, ath_env.c);
+  // only the IOP module behind it is optional. So `typeof Sound.Sfx` tells
+  // the runtime nothing, and its first call into a module that was never
+  // loaded — `Sound.setVolume` at init — waits on an RPC that never answers:
+  // a `--no-audio` disc sat on a black screen forever. runtime-sound.ts reads
+  // this and stays silent instead.
+  const audsrvFlag = hasAudio ? "" : "globalThis.__PS2_AUDSRV__ = false;";
   const preamble = [
     options.uncapped ? "globalThis.__PS2_UNCAPPED__ = true;" : "",
     gameFps === 30 ? "" : `globalThis.__PS2_GAME_FPS__ = ${gameFps};`,
     sfxKeys,
+    audsrvFlag,
   ].filter(Boolean).join("\n");
   const uncappedMainJs = preamble
     ? new Uint8Array([...encoder.encode(preamble + "\n"), ...mainJs])

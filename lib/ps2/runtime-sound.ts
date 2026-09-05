@@ -12,11 +12,16 @@
 //   Sound.Sfx("x.adp").play(ch)     ADPCM only, and NO playback-rate control
 //   Sound.Stream("x.wav")           play/pause/playing/rewind/free, position
 //
-// `Sound` exists only when athena.ini says `audsrv = true`, which lib/ps2/
-// build.ts writes only when the export actually carries audio. Everything here
-// degrades to silence rather than throwing: a build with no sound pack, an
-// older AthenaEnv, or a single track that failed to encode all end up as a
-// backend whose methods do nothing, which is exactly the port's default.
+// `Sound` is always defined — AthenaEnv compiles the module in (ath_env.c) —
+// but the audsrv IOP module behind it loads only when athena.ini says
+// `audsrv = true`, which lib/ps2/build.ts writes only when the export carries
+// audio. Calling into `Sound` without it does not throw: `Sound.setVolume`
+// waits on an RPC nobody answers, and the console sits on a black screen. So
+// a silent build announces itself with `__PS2_AUDSRV__ = false` in main.js's
+// preamble and this backend never touches `Sound` at all. Everything else
+// degrades to silence rather than throwing: an older AthenaEnv, or a single
+// track that failed to encode, ends up as a method that does nothing, which is
+// exactly the port's default.
 //
 // STREAMS. Two things about `Sound.Stream` shape the code below.
 //
@@ -164,6 +169,10 @@ export function createAthenaSound(): PumpedSoundPlayer {
     stopAllSounds() {},
     pump() {},
   };
+  // The build's word comes first: with audsrv not loaded, `Sound.Sfx` is still
+  // a function, and the first call into it never returns.
+  const audsrv = (globalThis as { __PS2_AUDSRV__?: unknown }).__PS2_AUDSRV__;
+  if (audsrv === false) return silent;
   if (!Sound || typeof Sound.Sfx !== "function") return silent;
 
   const canStream = typeof Sound.Stream === "function";
