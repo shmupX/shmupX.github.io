@@ -2655,13 +2655,15 @@
   // hint so the open-chord it advertises is the one that actually works on
   // this pad/platform (the hardcoded 'SELECT + ↓' was wrong on Android+SNES,
   // where the D-pad doesn't report and the real chord is SELECT + L2).
-  let activePadKind = $state('none'); // 'none' | 'pad' | 'snes' | 'snes-android'
+  let activePadKind = $state('none'); // 'none' | 'pad' | 'snes' | 'snes-android' | 'stadia'
   let osdHint = $derived(
     activePadKind === 'snes-android'
       ? 'SELECT + L2 (R) · two-corner tap'
       : activePadKind === 'snes'
         ? 'SELECT + ↓ or R · two-corner tap'
-        : 'SELECT + ↓ · two-corner tap'
+        : activePadKind === 'stadia'
+          ? 'ASSISTANT, or OPTIONS (⋯) + ↓ · two-corner tap'
+          : 'SELECT + ↓ · two-corner tap'
   );
   // Chrome on Android: the compat plugin remaps the SNES pad's R shoulder to
   // the L2 slot there, and the launcher pairs it with L/L2 nav + SELECT+L2.
@@ -2670,11 +2672,18 @@
   const IS_ANDROID = typeof navigator !== 'undefined' &&
     (navigator.userAgentData?.platform === 'Android' || /Android/i.test(navigator.userAgent || ''));
   const XBOX_PAD_RE = /Xbox|XInput|Microsoft|Legion Go/i;
+  // Google Stadia controller (Chrome: "Stadia Controller rev. A (STANDARD
+  // GAMEPAD Vendor: 18d1 Product: 9400)"). Standard mapping; its SELECT slot
+  // is the Options (⋯) button and its Assistant button rides slot 18.
+  const STADIA_PAD_RE = /Stadia|18d1.{0,8}9400/i;
+  // Chrome appends the Stadia pad's extra buttons after the standard 17:
+  // 17 = Capture, 18 = Assistant.
+  const STADIA_ASSISTANT_BTN = 18;
 
   function padPriority(p) {
     const id = p?.id || '';
     if (SNES_PAD_RE.test(id)) return 3;
-    if (XBOX_PAD_RE.test(id)) return 2;
+    if (XBOX_PAD_RE.test(id) || STADIA_PAD_RE.test(id)) return 2;
     return 1;
   }
 
@@ -2896,7 +2905,9 @@
       ? 'none'
       : SNES_PAD_RE.test(pad.id || '')
         ? (IS_ANDROID ? 'snes-android' : 'snes')
-        : 'pad';
+        : STADIA_PAD_RE.test(pad.id || '')
+          ? 'stadia'
+          : 'pad';
     if (kindNow !== activePadKind) activePadKind = kindNow;
     // R3 anywhere — launcher or mid-game — asks for fullscreen. Latched on its
     // own so the early returns below (and the OSD branch) can't swallow it.
@@ -2933,6 +2944,15 @@
       // A SELECT released while a game runs must not leave the launcher's
       // chord latches armed — they'd eat (or forge) the next launcher Back.
       if (!pressedNow.has(8)) { padState.selArmed = false; padState.selChordFired = false; }
+
+      // Stadia: the Assistant button opens the Guide by itself. The pad has
+      // no button labelled SELECT to chord with (slot 8 is Options ⋯), and a
+      // dedicated key beside the sticks is what the Guide button is for.
+      if (!osdOpen && STADIA_PAD_RE.test(pad.id || '') && justPressed(STADIA_ASSISTANT_BTN)) {
+        padState.btn = pressedNow;
+        openOsd();
+        return;
+      }
 
       if (osdOpen) {
         // Vertical: D-pad 12/13 or left-stick Y → move selection (edge-latched).

@@ -12,6 +12,54 @@
  *     auto-created at window.gamepadManager, with the class at window.GamepadManager.
  */
 
+// Google Stadia controller, as Chrome names it over USB and Bluetooth:
+// "Stadia Controller rev. A (STANDARD GAMEPAD Vendor: 18d1 Product: 9400)".
+// Firefox spells the same pad "18d1-9400-Stadia Controller rev. A".
+const STADIA_PAD_RE = /Stadia|18d1.{0,8}9400/i;
+
+// Default controller mapping (Standard Gamepad API). Module-level so tests and
+// other games can read the shipped defaults without constructing a manager.
+const DEFAULT_MAPPING = {
+  dpad: {
+    up: { gamepadButton: 12, keyboardKey: 'ArrowUp', keyCode: 38 },
+    down: { gamepadButton: 13, keyboardKey: 'ArrowDown', keyCode: 40 },
+    left: { gamepadButton: 14, keyboardKey: 'ArrowLeft', keyCode: 37 },
+    right: { gamepadButton: 15, keyboardKey: 'ArrowRight', keyCode: 39 }
+  },
+  // Face buttons are named by POSITION, not by vendor letter, because the
+  // same standard-mapping index is a different glyph per vendor: index 0 is
+  // Xbox A / PlayStation Cross but Nintendo B, and index 1 is Xbox B but
+  // Nintendo A. "Press A" is therefore ambiguous across pads; FBTN_BOTTOM
+  // is not. The indices themselves follow the W3C standard gamepad mapping.
+  face: {
+    btnBottom: { gamepadButton: 0, keyboardKey: ' ', keyCode: 32 }, // FBTN_BOTTOM
+    btnRight: { gamepadButton: 1, keyboardKey: 'c', keyCode: 67 }, // FBTN_RIGHT
+    btnLeft: { gamepadButton: 2, keyboardKey: 'c', keyCode: 67 }, // FBTN_LEFT
+    btnTop: { gamepadButton: 3, keyboardKey: ' ', keyCode: 32 } // FBTN_TOP
+  },
+  shoulder: {
+    leftShoulder: { gamepadButton: 4, keyboardKey: 'q', keyCode: 81 },
+    rightShoulder: { gamepadButton: 5, keyboardKey: 'e', keyCode: 69 },
+    leftTrigger: { gamepadButton: 6, keyboardKey: 'r', keyCode: 82 },
+    rightTrigger: { gamepadButton: 7, keyboardKey: 't', keyCode: 84 }
+  },
+  special: {
+    select: { gamepadButton: 8, keyboardKey: 'Backspace', keyCode: 8 },
+    start: { gamepadButton: 9, keyboardKey: 'Enter', keyCode: 13 },
+    leftStick: { gamepadButton: 10, keyboardKey: 'f', keyCode: 70 },
+    rightStick: { gamepadButton: 11, keyboardKey: 'g', keyCode: 71 },
+    home: { gamepadButton: 16, keyboardKey: 'h', keyCode: 72 },
+    // The Stadia controller's two extra buttons. Chrome's standard mapping
+    // appends them after the 17 standard slots: 17 = Capture, 18 = Assistant.
+    // Capture goes to F9 (the snapshot key emulator players and Mednafen use;
+    // free for a game to pick up), Assistant doubles as Home. The launcher
+    // itself also opens the Guide on Assistant in-game (Dashboard.svelte).
+    // Pads without these buttons simply never press them.
+    capture: { gamepadButton: 17, keyboardKey: 'F9', keyCode: 120 },
+    assistant: { gamepadButton: 18, keyboardKey: 'h', keyCode: 72 }
+  }
+};
+
 class GamepadManager {
   constructor() {
     this.MAX_PLAYERS = 4;
@@ -27,39 +75,9 @@ class GamepadManager {
     this._detecting = false; // { ui: { selectEl, buttonEl, hintEl } } | false
     this._detectSnapshot = {}; // controllerIndex -> [bool]
 
-    // Default controller mapping (Standard Gamepad API)
-    this.defaultMapping = {
-      dpad: {
-        up: { gamepadButton: 12, keyboardKey: 'ArrowUp', keyCode: 38 },
-        down: { gamepadButton: 13, keyboardKey: 'ArrowDown', keyCode: 40 },
-        left: { gamepadButton: 14, keyboardKey: 'ArrowLeft', keyCode: 37 },
-        right: { gamepadButton: 15, keyboardKey: 'ArrowRight', keyCode: 39 }
-      },
-      // Face buttons are named by POSITION, not by vendor letter, because the
-      // same standard-mapping index is a different glyph per vendor: index 0 is
-      // Xbox A / PlayStation Cross but Nintendo B, and index 1 is Xbox B but
-      // Nintendo A. "Press A" is therefore ambiguous across pads; FBTN_BOTTOM
-      // is not. The indices themselves follow the W3C standard gamepad mapping.
-      face: {
-        btnBottom: { gamepadButton: 0, keyboardKey: ' ', keyCode: 32 }, // FBTN_BOTTOM
-        btnRight: { gamepadButton: 1, keyboardKey: 'c', keyCode: 67 }, // FBTN_RIGHT
-        btnLeft: { gamepadButton: 2, keyboardKey: 'c', keyCode: 67 }, // FBTN_LEFT
-        btnTop: { gamepadButton: 3, keyboardKey: ' ', keyCode: 32 } // FBTN_TOP
-      },
-      shoulder: {
-        leftShoulder: { gamepadButton: 4, keyboardKey: 'q', keyCode: 81 },
-        rightShoulder: { gamepadButton: 5, keyboardKey: 'e', keyCode: 69 },
-        leftTrigger: { gamepadButton: 6, keyboardKey: 'r', keyCode: 82 },
-        rightTrigger: { gamepadButton: 7, keyboardKey: 't', keyCode: 84 }
-      },
-      special: {
-        select: { gamepadButton: 8, keyboardKey: 'Backspace', keyCode: 8 },
-        start: { gamepadButton: 9, keyboardKey: 'Enter', keyCode: 13 },
-        leftStick: { gamepadButton: 10, keyboardKey: 'f', keyCode: 70 },
-        rightStick: { gamepadButton: 11, keyboardKey: 'g', keyCode: 71 },
-        home: { gamepadButton: 16, keyboardKey: 'h', keyCode: 72 }
-      }
-    };
+    // Default controller mapping (Standard Gamepad API) — a private copy of
+    // DEFAULT_MAPPING, since the configurator edits it in place.
+    this.defaultMapping = JSON.parse(JSON.stringify(DEFAULT_MAPPING));
 
     // Load saved mapping or use default
     this.controllerMappings = {}; // Maps controller ID to mapping object
@@ -161,9 +179,15 @@ class GamepadManager {
     return /Xbox|X-Box|XInput|Microsoft|Legion/i.test((controller && controller.id) || "");
   }
 
+  isStadiaController(controller) {
+    return STADIA_PAD_RE.test((controller && controller.id) || "");
+  }
+
   controllerPriority(controller) {
     if (this.isSnesController(controller)) return 3;
-    if (this.isXboxController(controller)) return 2;
+    // Stadia sits with Xbox: a standard-mapping first-party pad that should
+    // win over a generic "Wireless Controller" left paired in the background.
+    if (this.isXboxController(controller) || this.isStadiaController(controller)) return 2;
     return 1;
   }
 
@@ -981,6 +1005,17 @@ class GamepadManager {
     if (!mapping) {
       mapping = JSON.parse(JSON.stringify(this.defaultMapping));
     }
+    // A mapping saved before a button existed (Stadia's Capture/Assistant were
+    // added 2026-09) keeps its own bindings and gains the new defaults, so an
+    // old save never leaves a button unmapped.
+    try {
+      for (const g in this.defaultMapping) {
+        if (!mapping[g] || typeof mapping[g] !== 'object') mapping[g] = {};
+        for (const name in this.defaultMapping[g]) {
+          if (!mapping[g][name]) mapping[g][name] = { ...this.defaultMapping[g][name] };
+        }
+      }
+    } catch (_) { /* ignore completion errors */ }
     // Migrate old face button keys (north/east/south/west) to new names
     try {
       if (mapping && mapping.face) {
@@ -1012,5 +1047,5 @@ if (typeof window !== 'undefined') {
 }
 
 // ES module exports so other web games can import this class.
-export { GamepadManager };
+export { GamepadManager, DEFAULT_MAPPING, STADIA_PAD_RE };
 export default GamepadManager;

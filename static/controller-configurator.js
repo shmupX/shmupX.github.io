@@ -120,6 +120,14 @@ import { GamepadManager } from './gamepad-support.js';
                   <rect x="220" y="120" width="20" height="10" rx="5" fill="#1f5c34" class="config-btn special-start" data-group="special" data-button="start"></rect>
                   <text x="170" y="127" text-anchor="middle" fill="#dfffc4" font-size="7">SEL</text>
                   <text x="230" y="127" text-anchor="middle" fill="#dfffc4" font-size="7">STR</text>
+                  <!-- Stadia's extra pair (standard slots 17/18): Capture and Assistant.
+                       Other pads never press them; they light up only on a Stadia. -->
+                  <rect x="152" y="140" width="36" height="22" rx="6" fill="transparent" class="config-hit" data-group="special" data-button="capture"></rect>
+                  <rect x="212" y="140" width="36" height="22" rx="6" fill="transparent" class="config-hit" data-group="special" data-button="assistant"></rect>
+                  <circle cx="170" cy="150" r="5" fill="#1f5c34" class="config-btn special-capture" data-group="special" data-button="capture"></circle>
+                  <circle cx="230" cy="150" r="5" fill="#1f5c34" class="config-btn special-assistant" data-group="special" data-button="assistant"></circle>
+                  <text x="170" y="161" text-anchor="middle" fill="#dfffc4" font-size="6">CAP</text>
+                  <text x="230" y="161" text-anchor="middle" fill="#dfffc4" font-size="6">AST</text>
                 </g>
                 
                 <!-- Analog sticks -->
@@ -756,6 +764,8 @@ import { GamepadManager } from './gamepad-support.js';
       { sel: '.trigger-right', key: 'rightTrigger' },
       { sel: '.special-select', key: 'select' },
       { sel: '.special-start', key: 'start' },
+      { sel: '.special-capture', key: 'capture' },
+      { sel: '.special-assistant', key: 'assistant' },
       { sel: '.stick-left', key: 'leftStick' },
       { sel: '.stick-right', key: 'rightStick' },
     ];
@@ -886,6 +896,7 @@ import { GamepadManager } from './gamepad-support.js';
       btnTop: init(), btnBottom: init(), btnLeft: init(), btnRight: init(),
       leftShoulder: init(), rightShoulder: init(), leftTrigger: init(), rightTrigger: init(),
       select: init(), start: init(), leftStick: init(), rightStick: init(),
+      capture: init(), assistant: init(),
     };
 
     const targetId = this.testingController; // This is now a controller ID string or 'all'

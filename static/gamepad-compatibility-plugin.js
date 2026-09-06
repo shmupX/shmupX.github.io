@@ -16,6 +16,12 @@
   // Xbox 360 controllers on some stacks and as "Legion Controller" on others;
   // "X-Box" is the Linux xpad driver's spelling.
   const XBOX_PAD_RE = /Xbox|X-Box|XInput|Microsoft|Legion/i;
+  // Google Stadia controller: Chrome names it "Stadia Controller rev. A
+  // (STANDARD GAMEPAD Vendor: 18d1 Product: 9400)", Firefox
+  // "18d1-9400-Stadia Controller rev. A". Standard mapping, so it needs no
+  // button rebuild here — only the priority that makes it win over a generic
+  // pad still paired in the background.
+  const STADIA_PAD_RE = /Stadia|18d1.{0,8}9400/i;
   // Chrome on Android gets pad-layout tweaks of its own (see snesButtons).
   // userAgentData first: "Request desktop site" strips Android from the UA
   // string, which would silently disable every Android pad accommodation.
@@ -54,10 +60,14 @@
     return !!(pad && SNES_PAD_RE.test(pad.id || ""));
   }
 
+  function isStadiaPad(pad) {
+    return !!(pad && STADIA_PAD_RE.test(pad.id || ""));
+  }
+
   function padPriority(pad) {
     const id = (pad && pad.id) || "";
     if (SNES_PAD_RE.test(id)) return 3;
-    if (XBOX_PAD_RE.test(id)) return 2;
+    if (XBOX_PAD_RE.test(id) || STADIA_PAD_RE.test(id)) return 2;
     return 1;
   }
 
@@ -635,9 +645,11 @@
   }
 
   const api = {
-    version: "1.3.0",
+    version: "1.4.0",
     install,
     isSnesPad,
+    isStadiaPad,
+    padPriority,
     decodeHat,
     selectPreferredPad,
     // Mapping-profile helpers (used by the Button Mapping Wizard).

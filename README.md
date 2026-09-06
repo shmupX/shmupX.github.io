@@ -797,6 +797,43 @@ built `main.js` against a stand-in for AthenaEnv's globals (including the
 what catches an asset the game opens but the exporter never wrote — sheets and
 sounds alike. It tests the newest export in `build/ps2/`, not the largest.
 
+## Controllers
+
+Pads reach every surface the same way: `static/gamepad-support.js` polls the
+Gamepad API and turns the W3C standard mapping into keyboard events for the game
+frame (the launcher's own menus read pads directly in
+`svelte-src/Dashboard.svelte`), `static/gamepad-compatibility-plugin.js`
+normalises pads whose browser reports them oddly (the Switch Online SNES pad,
+generic USB adapters with a hat-switch D-pad) and picks which pad drives when
+several are connected, and `static/controller-configurator.js` plus the mapping
+wizard let a player remap or teach an unknown pad. Priority when more than one
+pad is plugged in: SNES pads first, then Xbox-style and Stadia pads, then
+anything else, so a controller left paired in the background never steals the
+menus. `tests/gamepad_pads_test.ts` pins the three copies of that rule to each
+other and to the committed dashboard bundle.
+
+The default mapping, by standard-mapping slot:
+
+| slot   | control                    | key sent to the game                                    |
+| ------ | -------------------------- | ------------------------------------------------------- |
+| 12–15  | D-pad                      | arrows (or WASD per pad)                                |
+| 0–3    | face bottom/right/left/top | Space / C / C / Space                                   |
+| 4–7    | LB / RB / LT / RT          | Q / E / R / T                                           |
+| 8, 9   | Select, Start              | Backspace, Enter (Start also taps the game to start it) |
+| 10, 11 | L3, R3                     | F, G (R3 enters fullscreen)                             |
+| 16     | Home / Guide               | H                                                       |
+| 17, 18 | Stadia Capture, Assistant  | F9, H                                                   |
+
+**Google Stadia controller.** Chrome and Firefox both expose it with the
+standard mapping (vendor `18d1`, product `9400`), so its sticks, D-pad, A/B/X/Y,
+bumpers, triggers, Options (⋯, slot 8) and Menu (≡, slot 9) work with no
+profile. What the layer adds is recognition: it ranks with Xbox pads, its two
+extra buttons have defaults (Capture → F9, Assistant → Home's key), and in-game
+the **Assistant button opens the Guide** on its own, since the pad has no SELECT
+to chord with — the Guide footer says so when a Stadia pad is the active one.
+Both extra buttons appear in the configurator (CAP / AST) and can be remapped
+like any other.
+
 ## Emulators (opt-in)
 
 shmupX ships no emulators. Settings → EMULATORS lists the eight cores in
