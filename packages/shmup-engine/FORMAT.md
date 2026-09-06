@@ -1359,8 +1359,12 @@ What the writer does NOT yet reproduce: the six credit strips, real item icon
 art (procedural placeholders are written), the death-word children of records
 whose slot had to move (the record keeps its bytes; a collision is reported),
 and anything the level format has no words for (enemy names, story scenes,
-audio files). Verification so far is the parser round trip and the level
-editor's re-import, not a Saturn or a MiSTer.
+audio files). Verified 2026-09-05 in Mednafen 1.29 with the Japanese BIOS:
+the exported `foo` cart boots, the Saturn's backup library leaves every byte
+of it untouched and writes its `DEZA2___SYS` record into internal RAM, the LOAD
+screen lists the cartridge with free space and loads the game, and the stage
+plays (enemies, score, item drops, bombs). Real hardware and MiSTer are still
+untested.
 
 ## Cross-check option (high-leverage)
 

@@ -193,9 +193,11 @@ payload into a freshly formatted 32 KB + 512 KB BackUpRam image,
 0xFF-interleaved: the **1,114,112-byte `.sav`** every file in the community
 collection is, dumped from carts for MiSTer's Saturn core. The file re-imports
 through the same `normalize → parse → decodeSave → mapSaveToGame` path as a
-community cart; that round trip — not hardware — is what verifies it today
-([`tests/sav_export_test.ts`](tests/sav_export_test.ts) does it end to end on
-`foo`).
+community cart ([`tests/sav_export_test.ts`](tests/sav_export_test.ts) does it
+end to end on `foo`), and on 2026-09-05 the exported `foo` cart was loaded and
+played in Mednafen 1.29 with the real Saturn BIOS: the backup library accepted
+the cart untouched, LOAD listed the slot, and the stage ran with its enemies,
+drops and bombs. Real hardware and MiSTer remain untested.
 
 ```sh
 deno task build:sav                          # foo.json -> build/sav/Dez 2 - foo.sav
