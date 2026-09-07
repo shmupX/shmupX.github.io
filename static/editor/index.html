@@ -996,6 +996,21 @@
         </div>
         <button class="menu-row hide-when-sav" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
         <div id="export-apk-status" class="menu-note hide-when-sav"></div>
+        <!-- Build somewhere else. On the hosted site and the PWA there is no
+             /api/build-apk to post to, so exportGameToApk() queues the export
+             for a desktop running shmupX instead, paired by the BUILD CODE
+             that desktop shows in Settings → BUILD SERVER (the browser half is
+             static/export-queue.js, the desktop half lib/export-worker.ts).
+             The panel lists every job this browser has queued, live, and
+             offers what a finished one can do: download, install, file it in
+             the PS2 shelf. -->
+        <div class="display-row hide-when-sav" title="Eight letters from the desktop that should build this: open shmupX there and read them off Settings → BUILD SERVER (the app prints them at launch too). Exports from this browser go to that desktop whenever they cannot be built here.">
+            <span class="display-lbl">DESKTOP</span>
+            <input id="export-builder-code" type="text" placeholder="BUILD CODE" class="menu-input" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="9" style="margin-bottom:0;flex:1;min-width:0"
+                   oninput="onBuilderCodeInput(this.value)">
+        </div>
+        <div id="export-builder-status" class="menu-note hide-when-sav"></div>
+        <div id="export-queue-panel" class="hide-when-sav hidden"></div>
         <!-- What to do with a finished PS2 build. Hidden until one exists;
              filled in by showPs2ExportActions(). The disc and the USB folder
              are both downloadable, and "PS2 LIBRARY" files the disc in the
@@ -5389,38 +5404,22 @@
         }
 
         // --- the export shelf: this browser's own .sav builds (IndexedDB) ---
-        const DEZA_EXPORTS_DB = 'shmupxDezaExports';
-        const DEZA_EXPORTS_STORE = 'saves';
+        // The store itself is static/deza-exports.js, shared with the
+        // launcher's SAVED GAMES coverflow: it shelves these builds ahead of
+        // the community collection and hears about every filing, so a game
+        // exported here is on both shelves at once. Imported on demand, like
+        // ps2-library.js. dezaExportsAll() leaves the cart bytes out — a shelf
+        // row does not need them; dezaExportsGet() brings them for a load.
         let dezaExportRows = null; // shelf cache, reloaded on every open
-
-        function dezaExportsDb() {
-            return new Promise((resolve, reject) => {
-                let req;
-                try { req = indexedDB.open(DEZA_EXPORTS_DB, 1); } catch (e) { reject(e); return; }
-                req.onupgradeneeded = () => {
-                    const db = req.result;
-                    if (!db.objectStoreNames.contains(DEZA_EXPORTS_STORE)) db.createObjectStore(DEZA_EXPORTS_STORE, { keyPath: 'id' });
-                };
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => reject(req.error || new Error('IndexedDB unavailable'));
-            });
+        let dezaExportsPending = null;
+        function dezaExportsModule() {
+            if (!dezaExportsPending) dezaExportsPending = import('/deza-exports.js');
+            return dezaExportsPending;
         }
-        function dezaExportsTx(mode, run) {
-            return dezaExportsDb().then((db) => new Promise((resolve, reject) => {
-                const tx = db.transaction(DEZA_EXPORTS_STORE, mode);
-                const req = run(tx.objectStore(DEZA_EXPORTS_STORE));
-                tx.oncomplete = () => { db.close(); resolve(req ? req.result : undefined); };
-                tx.onerror = () => { db.close(); reject(tx.error || new Error('IndexedDB transaction failed')); };
-                tx.onabort = () => { db.close(); reject(tx.error || new Error('IndexedDB transaction aborted')); };
-            }));
-        }
-        const dezaExportsPut = (rec) => dezaExportsTx('readwrite', (st) => st.put(rec));
-        const dezaExportsGet = (id) => dezaExportsTx('readonly', (st) => st.get(id));
-        const dezaExportsDelete = (id) => dezaExportsTx('readwrite', (st) => st.delete(id));
-        async function dezaExportsAll() {
-            const rows = await dezaExportsTx('readonly', (st) => st.getAll());
-            return (rows || []).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
-        }
+        const dezaExportsPut = (rec) => dezaExportsModule().then((m) => m.putDezaExport(rec));
+        const dezaExportsGet = (id) => dezaExportsModule().then((m) => m.getDezaExport(id));
+        const dezaExportsDelete = (id) => dezaExportsModule().then((m) => m.deleteDezaExport(id));
+        const dezaExportsAll = () => dezaExportsModule().then((m) => m.listDezaExports());
         function dezaExportId(title, palette) {
             return String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + ':' + palette;
         }
@@ -5463,7 +5462,7 @@
                         report: rep,
                     });
                     dezaExportRows = null;
-                    dezaSavNote('"' + out.fileName + '" IS ON THE LOAD GAME SHELF UNDER YOUR .SAV EXPORTS. ' + summary +
+                    dezaSavNote('"' + out.fileName + '" IS ON THE LOAD GAME SHELF UNDER YOUR .SAV EXPORTS, AND ON THE LAUNCHER\'S SAVED GAMES SHELF. ' + summary +
                         (out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : ''), '#84cc16');
                     flash('.SAV FILED ON THE SHELF');
                 } else {
@@ -6501,6 +6500,14 @@
             if (!row) { flash('NO SUCH SAVED GAME: ' + slug); return; }
             loadDezaemonLibraryGame(row.file, row.title, row.meta, row.slug, { forcePlay: true });
         }
+        async function playDezaemonExport(id) {
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
+            await editorBaselineReady;
+            let rec = null;
+            try { rec = await dezaExportsGet(id); } catch (e) { }
+            if (!rec || !rec.bytes) { flash('THAT EXPORT IS NO LONGER ON THIS BROWSER\'S SHELF'); return; }
+            loadDezaemonLibraryGame(rec.file, rec.title, null, null, { bytes: new Uint8Array(rec.bytes), forcePlay: true });
+        }
 
         // ?sav=<url> opens the importer straight from a link, so the launcher (or
         // a bookmark) can hand the editor a save to open.
@@ -6509,7 +6516,11 @@
             const sav = params.get('sav');
             if (sav) { loadDezaemonFromUrl(sav); return; }
             const play = params.get('play');
-            if (play) playDezaemonLibrarySlug(play);
+            if (play) { playDezaemonLibrarySlug(play); return; }
+            // The launcher's coverflow handing over one of this browser's own
+            // builds (static/deza-exports.js) rather than a collection slug.
+            const playExport = params.get('playExport');
+            if (playExport) playDezaemonExport(playExport);
         });
 
         // Test hook for the e2e suite (and console debugging).
@@ -9700,6 +9711,14 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                 });
                 const data = await resp.json().catch(() => ({}));
                 if (!resp.ok || !data.ok) {
+                    // No builder on this origin: the hosted site refuses (403)
+                    // and a static host has no route at all (404). Hand the job
+                    // to the paired desktop instead of stopping at the error —
+                    // see REMOTE EXPORTS below.
+                    if (resp.status === 403 || resp.status === 404) {
+                        await queueRemoteExport(name, setStatus);
+                        return;
+                    }
                     setStatus('Export failed: ' + (data.error || ('HTTP ' + resp.status)), '#f87171');
                     return;
                 }
@@ -9853,6 +9872,297 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                 ps2Note('Could not start the player: ' + (e.message || e), '#f87171');
             }
         }
+
+        // ================== REMOTE EXPORTS (build on a paired desktop) ==================
+        // The hosted site, the PWA and a phone have no toolchain: /api/build-apk
+        // answers 403 there (404 on a static host). A desktop running shmupX
+        // runs a build server (lib/export-worker.ts) that picks jobs up from
+        // the Realtime Database, and static/export-queue.js is the browser
+        // half. This block wires that module into the export menu: the BUILD
+        // CODE row, the fallback exportGameToApk() takes when the local route
+        // is not there, and the live list of this browser's jobs with what a
+        // finished one offers. The module is imported on demand, like
+        // ps2-library.js, so a page that never exports never loads it.
+
+        let exportQueuePending = null;
+        function exportQueue() {
+            if (!exportQueuePending) exportQueuePending = import('/export-queue.js');
+            return exportQueuePending;
+        }
+
+        let exportJobs = [];             // live records, newest first
+        let exportJobBusy = {};          // jobId -> true while a fetch or filing runs
+        let exportJobNotes = {};         // jobId -> { text, color } under the row
+        let exportPs2Filed = {};         // jobId -> PS2 library record id once filed
+        let exportJobsSeen = {};         // jobId -> last status, to notice a finish
+        let exportWorkerInfo = null;     // { online, text } for the paired desktop
+        let stopWorkerWatch = null;
+
+        function builderStatus(msg, color) {
+            const el = document.getElementById('export-builder-status');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = color || '';
+        }
+
+        // Typed, pasted, or arrived on the URL (?builder=ABCD-EFGH — the
+        // desktop's Settings row offers that link): normalise, keep, and start
+        // watching that desktop's heartbeat.
+        function onBuilderCodeInput(value) {
+            exportQueue().then((q) => {
+                const code = q.setBuilderCode(value);
+                const input = document.getElementById('export-builder-code');
+                if (input && code && input.value !== q.formatBuilderCode(code)) input.value = q.formatBuilderCode(code);
+                watchPairedDesktop(q);
+            }).catch(() => {});
+        }
+
+        function watchPairedDesktop(q) {
+            if (stopWorkerWatch) { stopWorkerWatch(); stopWorkerWatch = null; }
+            exportWorkerInfo = null;
+            const code = q.getBuilderCode();
+            if (!code) {
+                builderStatus('no desktop paired — an export that cannot build here needs the BUILD CODE of one');
+                return;
+            }
+            builderStatus('looking for desktop ' + q.formatBuilderCode(code) + '…');
+            stopWorkerWatch = q.watchWorker(code, (info) => {
+                exportWorkerInfo = info;
+                builderStatus(info.text, info.online ? '#84cc16' : '#f59e0b');
+            });
+        }
+
+        // The fallback exportGameToApk() takes when this origin cannot build.
+        // The level is already saved to the cloud by then, which is all the
+        // desktop needs — it reads the record the same way a local build does.
+        async function queueRemoteExport(name, setStatus) {
+            const q = await exportQueue();
+            let code = q.getBuilderCode();
+            if (!code) {
+                const typed = prompt('This site cannot build apps itself. Type the BUILD CODE from a desktop running shmupX (Settings → BUILD SERVER) and the export is built there:');
+                if (!typed) { setStatus('Export needs a desktop to build on — no BUILD CODE given.', '#f87171'); return; }
+                code = q.setBuilderCode(typed);
+                if (!code) { setStatus('That is not a BUILD CODE (eight letters, like ABCD-EFGH).', '#f87171'); return; }
+                const input = document.getElementById('export-builder-code');
+                if (input) input.value = q.formatBuilderCode(code);
+                watchPairedDesktop(q);
+            }
+            const cfg = EXPORT_PLATFORMS[exportPlatform];
+            const worker = exportWorkerInfo && exportWorkerInfo.worker;
+            if (worker && worker.platforms && worker.platforms[exportPlatform] === false) {
+                if (!confirm('Desktop ' + q.formatBuilderCode(code) + ' reports no ' + cfg.artifact + ' toolchain (it builds ' +
+                    (q.workerTargets(worker).join(', ') || 'nothing it could detect') + '). Queue it anyway?')) {
+                    setStatus('Export not queued.', '');
+                    return;
+                }
+            }
+            q.requestNotifications();
+            try {
+                const job = await q.queueExport({ code, level: name, platform: exportPlatform });
+                exportJobsSeen[job.id] = 'queued';
+                const online = exportWorkerInfo && exportWorkerInfo.online;
+                setStatus(cfg.artifact + ' for "' + name + '" queued on desktop ' + q.formatBuilderCode(code) +
+                    (online ? ' — it is online, so the build starts now.' : ' — it builds as soon as that desktop opens shmupX.'), '#84cc16');
+            } catch (e) {
+                setStatus('Could not queue the export: ' + (e.message || e), '#f87171');
+            }
+        }
+
+        function renderExportQueue() {
+            const panel = document.getElementById('export-queue-panel');
+            if (!panel) return;
+            if (!exportJobs.length) { panel.classList.add('hidden'); panel.innerHTML = ''; return; }
+            exportQueue().then((q) => {
+                panel.classList.remove('hidden');
+                panel.innerHTML = '';
+                const label = document.createElement('div');
+                label.className = 'menu-label';
+                label.textContent = 'DESKTOP EXPORTS';
+                panel.appendChild(label);
+                for (const job of exportJobs) panel.appendChild(renderExportJob(q, job));
+            }).catch(() => {});
+        }
+
+        // One job: title, status line, the buttons its state earns, and the
+        // note under them. Level names come out of an open-write path, so
+        // textContent only — never innerHTML.
+        function renderExportJob(q, job) {
+            const box = document.createElement('div');
+            box.className = 'export-job';
+            box.style.cssText = 'display:flex;flex-direction:column;gap:4px;padding:6px 8px;border:1px solid var(--redge);border-radius:8px;background:rgba(0,0,0,.35);margin-bottom:4px;';
+            const head = document.createElement('div');
+            head.style.cssText = "font-family:'Orbitron',sans-serif;font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--rink);";
+            head.textContent = q.jobTitle(job).toUpperCase();
+            box.appendChild(head);
+            const st = document.createElement('div');
+            st.className = 'menu-note';
+            st.style.margin = '0';
+            st.textContent = q.jobStatusText(job);
+            st.style.color = job.status === 'done' ? '#84cc16' : job.status === 'failed' ? '#f87171' : job.status === 'building' ? '#f59e0b' : '';
+            box.appendChild(st);
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;';
+            const busy = !!exportJobBusy[job.id];
+            const btn = (text, onclick) => {
+                const b = document.createElement('button');
+                b.className = 'menu-btn';
+                b.style.cssText = 'flex:1 1 auto;margin:0;padding:6px 8px;font-size:9px;';
+                b.textContent = text;
+                b.disabled = busy;
+                b.onclick = onclick;
+                row.appendChild(b);
+            };
+            if (job.status === 'done' && !job.blobsFreed && Array.isArray(job.artifacts)) {
+                job.artifacts.forEach((art, i) => btn(q.artifactActionLabel(art), () => collectExportArtifact(job, i)));
+                if (job.platform === 'ps2' && q.ps2DiscArtifact(job)) {
+                    if (exportPs2Filed[job.id]) btn('PLAY ON PS2', () => playQueuedPs2(job));
+                    else btn('→ PS2 LIBRARY', () => fileQueuedPs2(job));
+                }
+            }
+            if (job.status === 'queued') btn('CANCEL', () => cancelQueuedExport(job));
+            if (job.status === 'failed' && job.log) btn('SHOW LOG', () => alert(job.log));
+            if (job.status !== 'building') btn('DISMISS', () => dismissQueuedExport(job));
+            if (row.children.length) box.appendChild(row);
+            const note = exportJobNotes[job.id];
+            if (note && note.text) {
+                const n = document.createElement('div');
+                n.className = 'menu-note';
+                n.style.margin = '0';
+                n.textContent = note.text;
+                n.style.color = note.color || '';
+                box.appendChild(n);
+            }
+            return box;
+        }
+
+        function exportJobNote(job, text, color) {
+            exportJobNotes[job.id] = { text, color };
+            renderExportQueue();
+        }
+
+        const exportMb = (n) => (n / 1048576).toFixed(1);
+
+        // Pull the bytes out of the database and hand them to the browser's
+        // download. On Android an .apk goes on to the package installer from
+        // there; everything else is a plain file.
+        async function collectExportArtifact(job, index) {
+            const q = await exportQueue();
+            const art = job.artifacts[index];
+            exportJobBusy[job.id] = true;
+            try {
+                exportJobNote(job, 'Fetching ' + art.name + '… 0 / ' + exportMb(art.size) + ' MB');
+                const blob = await q.fetchQueuedArtifact(job, index, (got, total) => {
+                    exportJobNote(job, 'Fetching ' + art.name + '… ' + exportMb(got) + ' / ' + exportMb(total) + ' MB');
+                });
+                q.downloadBlob(blob, art.name);
+                q.markReceived(job.code, job.id);
+                exportJobNote(job, art.kind === 'apk'
+                    ? art.name + ' downloaded — open it from the browser’s downloads to install (Android asks once to allow installs from this app).'
+                    : art.name + ' downloaded.', '#84cc16');
+            } catch (e) {
+                exportJobNote(job, 'Could not fetch it: ' + (e.message || e), '#f87171');
+            } finally {
+                delete exportJobBusy[job.id];
+                renderExportQueue();
+            }
+        }
+
+        // The same hand-off addPs2ExportToLibrary() makes for a local build,
+        // with the disc read out of the database instead of off the build
+        // host. Deliberately does not launch — see playPs2Export for why the
+        // PLAY row is a separate press.
+        async function fileQueuedPs2(job) {
+            const q = await exportQueue();
+            const disc = q.ps2DiscArtifact(job);
+            if (!disc) return;
+            exportJobBusy[job.id] = true;
+            try {
+                const lib = await ps2Library();
+                exportJobNote(job, 'Fetching the disc… 0 / ' + exportMb(disc.artifact.size) + ' MB');
+                const blob = await q.fetchQueuedArtifact(job, disc.index, (got, total) => {
+                    exportJobNote(job, 'Fetching the disc… ' + exportMb(got) + ' / ' + exportMb(total) + ' MB');
+                });
+                await lib.ensurePs2Core((step) => exportJobNote(job, step));
+                exportJobNote(job, 'Filing it in the PS2 shelf…');
+                const record = await lib.addPs2Game({
+                    name: job.level,
+                    blob,
+                    source: 'built on ' + (job.workerName || 'the desktop'),
+                });
+                exportPs2Filed[job.id] = record.id;
+                q.markReceived(job.code, job.id);
+                exportJobNote(job, '"' + record.name + '" is in the PS2 library (' + exportMb(record.size) +
+                    ' MB). It is in the launcher’s PLAYSTATION 2 section too.', '#84cc16');
+            } catch (e) {
+                exportJobNote(job, 'Could not add it: ' + (e.message || e), '#f87171');
+            } finally {
+                delete exportJobBusy[job.id];
+                renderExportQueue();
+            }
+        }
+
+        async function playQueuedPs2(job) {
+            const id = exportPs2Filed[job.id];
+            if (!id) return;
+            try {
+                const lib = await ps2Library();
+                const record = await lib.getPs2Game(id);
+                if (!record) { exportJobNote(job, 'That game is no longer in the library.', '#f87171'); return; }
+                const url = await lib.ps2PlayerUrl(record);
+                exportJobNote(job, 'Booting Play!…');
+                const opened = window.open(url, '_blank');
+                if (!opened) (window.top || window).location.href = url;
+            } catch (e) {
+                exportJobNote(job, 'Could not start the player: ' + (e.message || e), '#f87171');
+            }
+        }
+
+        async function cancelQueuedExport(job) {
+            const q = await exportQueue();
+            try {
+                const ok = await q.cancelJob(job.code, job.id);
+                exportJobNote(job, ok ? 'Cancelled.' : 'Too late — the desktop already picked it up.', ok ? '' : '#f59e0b');
+            } catch (e) {
+                exportJobNote(job, 'Could not cancel: ' + (e.message || e), '#f87171');
+            }
+        }
+
+        async function dismissQueuedExport(job) {
+            const q = await exportQueue();
+            delete exportJobNotes[job.id];
+            delete exportPs2Filed[job.id];
+            delete exportJobsSeen[job.id];
+            await q.dismissJob(job.code, job.id);
+        }
+
+        // Boot: the paired desktop's presence, and every job this browser has
+        // queued — a phone that closed the editor mid-build finds the finished
+        // build waiting here. A job that finishes while the page is open also
+        // flashes and, where the page already may, posts a system notification.
+        function initExportQueue() {
+            exportQueue().then((q) => {
+                let fromUrl = '';
+                try { fromUrl = new URLSearchParams(location.search).get('builder') || ''; } catch (e) {}
+                if (fromUrl) q.setBuilderCode(fromUrl);
+                const input = document.getElementById('export-builder-code');
+                const code = q.getBuilderCode();
+                if (input && code) input.value = q.formatBuilderCode(code);
+                watchPairedDesktop(q);
+                q.watchJobs((jobs) => {
+                    for (const job of jobs) {
+                        const was = exportJobsSeen[job.id];
+                        if (was && was !== job.status && job.status === 'done') {
+                            flash(q.jobArtifactLabel(job).toUpperCase() + ' READY: ' + job.level);
+                            q.notifyJobDone(job);
+                        }
+                        exportJobsSeen[job.id] = job.status;
+                    }
+                    exportJobs = jobs;
+                    renderExportQueue();
+                });
+            }).catch((e) => console.warn('export queue unavailable:', e));
+        }
+        try { initExportQueue(); } catch (e) { console.warn('export queue init failed:', e); }
 
         // ================== AUTO-LOAD FROM SERVER ==================
         async function autoLoadFromServer() {

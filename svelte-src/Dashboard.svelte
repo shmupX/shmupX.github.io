@@ -7,10 +7,35 @@
   // (which imports the same module at runtime) so the two cannot drift — see
   // static/ps2-library.js.
   import {
+    addPs2Game,
     emuStateFor,
+    ensurePs2Core,
+    getPs2Game,
     listPs2Games,
     ps2PlayerUrl,
   } from '../static/ps2-library.js';
+  // The remote export queue: builds queued from this browser (the editor it
+  // embeds queues them) for a desktop to make, and this machine's own build
+  // server when it is a local install. Shared with the editor the same way —
+  // static/export-queue.js is the one module both read.
+  // This browser's own .sav builds — what the editor's → SAVE SHELF files.
+  // The coverflow shelves them ahead of the community collection; the same
+  // module is what the editor writes through (static/deza-exports.js).
+  import { listDezaExports, watchDezaExports } from '../static/deza-exports.js';
+  import {
+    cancelJob as cancelExportJob,
+    dismissJob as dismissExportJob,
+    downloadBlob,
+    fetchQueuedArtifact,
+    formatBuilderCode,
+    jobArtifactLabel as exportJobArtifactLabel,
+    jobStatusText as exportJobStatusText,
+    jobTitle as exportJobTitle,
+    markReceived as markExportReceived,
+    notifyJobDone,
+    ps2DiscArtifact,
+    watchJobs as watchExportJobs,
+  } from '../static/export-queue.js';
 
   const MAIN_MENU = [
     { id: 'games',    label: 'Games',    tag: '01 / disc.io',  num: '0x01' },
@@ -518,6 +543,232 @@
     { id: 'xbox360', label: 'XBOX 360' },
     { id: 'nintendo', label: 'NINTENDO' },
   ];
+  // ─── Settings → Exports / Build Server ─────────────────────────────────────
+  // Exports queued from this browser — the editor's EXPORT button does that
+  // wherever it is served from somewhere that cannot build (the hosted site,
+  // the installed PWA, a phone) — and, when THIS launcher is a local install,
+  // the build server that makes such builds for other devices. Both halves
+  // are static/export-queue.js + lib/export-worker.ts; the launcher lists,
+  // collects and toggles.
+  let exportJobs = $state([]);          // live job records, newest first
+  let exportsSel = $state(0);
+  let exportsRowEls = $state([]);
+  let exportBusy = $state({});          // jobId → what is happening to it right now
+  let exportFiled = $state({});         // jobId → PS2 library id once the disc is filed
+  let exportSeen = {};                  // jobId → last status, to toast a finish
+  let stopExportWatch = null;
+  let builder = $state(null);           // /api/export-worker status; null off a local host
+  let builderBusy = $state(false);
+  let builderTimer = null;
+
+  let exportsSummary = $derived.by(() => {
+    if (!exportJobs.length) return 'nothing queued  ·  export from the editor';
+    const n = (s) => exportJobs.filter((j) => j.status === s).length;
+    const parts = [];
+    if (n('building')) parts.push(n('building') + ' building');
+    if (n('queued')) parts.push(n('queued') + ' queued');
+    if (n('done')) parts.push(n('done') + ' ready');
+    if (n('failed')) parts.push(n('failed') + ' failed');
+    return parts.join('  ·  ') || exportJobs.length + ' listed';
+  });
+  let builderSummary = $derived.by(() => {
+    if (!builder) return '';
+    if (!builder.running) return 'OFF  ·  code ' + formatBuilderCode(builder.code) + '  ·  press to switch on';
+    const targets = Object.entries(builder.platforms || {}).filter(([, ok]) => ok).map(([p]) => p.toUpperCase());
+    const doing = builder.current
+      ? '  ·  building "' + builder.current.level + '"'
+      : builder.queued ? '  ·  ' + builder.queued + ' queued' : '';
+    return 'ON  ·  code ' + formatBuilderCode(builder.code) + '  ·  ' + (targets.join(' ') || 'no targets detected') + doing;
+  });
+
+  // The route answers 403 on the hosted origin, which is how the launcher
+  // learns it is not a local install: `builder` stays null and the BUILD
+  // SERVER row never appears. The first GET starts the worker (unless the
+  // user switched it off); later ones only look.
+  async function refreshBuilder(autostart) {
+    try {
+      const r = await fetch('/api/export-worker' + (autostart ? '' : '?autostart=0'), { cache: 'no-store' });
+      if (!r.ok) { builder = null; return; }
+      const data = await r.json();
+      builder = data && data.ok ? data : null;
+    } catch (_) { builder = null; }
+  }
+
+  async function builderAction(action) {
+    if (builderBusy) return;
+    builderBusy = true;
+    try {
+      const r = await fetch('/api/export-worker', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data && typeof data.code === 'string') builder = data;
+      if (!r.ok || !data.ok) showToast('Build server: ' + (data.error || 'HTTP ' + r.status));
+      else if (action === 'stop') showToast('Build server off — nothing more is built here until it is switched back on.');
+      else showToast('Build server on — type BUILD CODE ' + formatBuilderCode(data.code) + ' into the editor on the other device.');
+    } catch (e) {
+      showToast('Build server: ' + (e?.message || e));
+    } finally {
+      builderBusy = false;
+    }
+  }
+
+  function initExports() {
+    stopExportWatch = watchExportJobs((jobs) => {
+      for (const job of jobs) {
+        const was = exportSeen[job.id];
+        if (was && was !== job.status && job.status === 'done') {
+          showToast(exportJobArtifactLabel(job).toUpperCase() + ' for "' + job.level + '" is ready — Settings › EXPORTS');
+          sfx.enter();
+          notifyJobDone(job);
+        }
+        exportSeen[job.id] = job.status;
+      }
+      exportJobs = jobs;
+    });
+    refreshBuilder(true);
+    builderTimer = setInterval(() => { if (builder) refreshBuilder(false); }, 15000);
+  }
+
+  let exportCurrent = $derived(exportJobs[exportsSel]);
+  let exportsCounterText = $derived(
+    String(Math.min(exportsSel + 1, exportJobs.length)).padStart(2, '0') + ' / ' +
+    String(exportJobs.length).padStart(2, '0')
+  );
+  // Row badge — the same GET / ⬇ / INSTALLED vocabulary the emulator rows use.
+  function exportBadge(job) {
+    if (exportBusy[job.id]) return { cls: 'dl', text: '⬇ ' + exportBusy[job.id] };
+    switch (job.status) {
+      case 'done':
+        if (job.blobsFreed) return { cls: 'err', text: 'EXPIRED' };
+        return { cls: 'ok', text: exportFiled[job.id] ? 'IN LIBRARY' : 'READY' };
+      case 'failed': return { cls: 'err', text: '! FAILED' };
+      case 'building': return { cls: 'dl', text: 'BUILDING' };
+      case 'queued': return { cls: '', text: 'QUEUED' };
+      default: return { cls: '', text: String(job.status || '').toUpperCase() };
+    }
+  }
+  function exportMark(job) {
+    return { ps2: 'P2', android: 'AP', windows: 'EX', linux: 'LX', ios: 'IP' }[job.platform] || '◧';
+  }
+  let exportsActionLabel = $derived.by(() => {
+    const j = exportCurrent;
+    if (!j) return 'Select';
+    if (exportBusy[j.id]) return 'Working…';
+    if (j.status === 'done' && !j.blobsFreed) {
+      if (j.platform === 'ps2') return exportFiled[j.id] ? 'Play' : 'Add to PS2 library';
+      return j.platform === 'android' ? 'Install' : 'Download';
+    }
+    if (j.status === 'failed' && j.log) return 'Show log';
+    if (j.status === 'queued') return 'Cancel';
+    return j.status === 'building' ? 'Building…' : 'Dismiss';
+  });
+
+  function setExportBusy(job, text) {
+    if (text) exportBusy = { ...exportBusy, [job.id]: text };
+    else {
+      const next = { ...exportBusy };
+      delete next[job.id];
+      exportBusy = next;
+    }
+  }
+  const exportMb = (n) => (n / 1048576).toFixed(1);
+
+  // A on a row: collect a finished build (a PS2 disc is filed in the
+  // PlayStation 2 shelf, anything else downloads — on Android an .apk goes on
+  // to the installer), read a failure's log, cancel a job still waiting, or
+  // dismiss what is left.
+  async function activateExport(i) {
+    const job = exportJobs[i];
+    if (!job) return;
+    exportsSel = i;
+    if (exportBusy[job.id]) return;
+    sfx.enter();
+    if (job.status === 'done' && !job.blobsFreed) {
+      if (job.platform !== 'ps2') await downloadExport(job);
+      else if (exportFiled[job.id]) await playFiledExport(job);
+      else await fileExportToPs2(job);
+      return;
+    }
+    if (job.status === 'failed' && job.log) { alert(job.log); return; }
+    if (job.status === 'queued') {
+      try {
+        showToast((await cancelExportJob(job.code, job.id)) ? 'Cancelled.' : 'Too late — the desktop already picked it up.');
+      } catch (e) { showToast('Could not cancel: ' + (e?.message || e)); }
+      return;
+    }
+    if (job.status !== 'building') dismissExport(job);
+  }
+
+  async function dismissExport(job) {
+    delete exportSeen[job.id];
+    await dismissExportJob(job.code, job.id);
+    if (exportsSel > 0 && exportsSel >= exportJobs.length - 1) exportsSel = exportJobs.length - 2;
+  }
+
+  async function downloadExport(job) {
+    const arts = job.artifacts || [];
+    // The app itself first (.apk / .exe / .AppImage); a USB folder is a
+    // second artifact the editor's own panel offers separately.
+    let index = arts.findIndex((a) => a.kind !== 'usb-zip' && a.kind !== 'zip');
+    if (index < 0) index = 0;
+    const art = arts[index];
+    if (!art) { showToast('That build has nothing to download.'); return; }
+    setExportBusy(job, '0 / ' + exportMb(art.size) + ' MB');
+    try {
+      const blob = await fetchQueuedArtifact(job, index, (got, total) => setExportBusy(job, exportMb(got) + ' / ' + exportMb(total) + ' MB'));
+      downloadBlob(blob, art.name);
+      markExportReceived(job.code, job.id);
+      showToast(art.kind === 'apk'
+        ? art.name + ' downloaded — open it from your downloads to install.'
+        : art.name + ' downloaded.');
+    } catch (e) {
+      showToast('Could not fetch ' + art.name + ': ' + (e?.message || e));
+    } finally {
+      setExportBusy(job, '');
+    }
+  }
+
+  // The same hand-off the editor's "→ PS2 LIBRARY" makes: install the core if
+  // it is not here, file the disc, and let the PlayStation 2 section show it.
+  async function fileExportToPs2(job) {
+    const disc = ps2DiscArtifact(job);
+    if (!disc) { showToast('That build has no disc image.'); return; }
+    setExportBusy(job, '0 / ' + exportMb(disc.artifact.size) + ' MB');
+    try {
+      const blob = await fetchQueuedArtifact(job, disc.index, (got, total) => setExportBusy(job, exportMb(got) + ' / ' + exportMb(total) + ' MB'));
+      await ensurePs2Core((step) => setExportBusy(job, step));
+      const record = await addPs2Game({ name: job.level, blob, source: 'built on ' + (job.workerName || 'the desktop') });
+      exportFiled = { ...exportFiled, [job.id]: record.id };
+      markExportReceived(job.code, job.id);
+      // ensurePs2Core wrote the installed set to storage; merge it into this
+      // tab's copy the way installCore does, so the section appears at once.
+      emuInstalled = [...new Set([...loadInstalledEmus(), 'ps2'])];
+      persistEmus();
+      await pushEmuState();
+      const core = emuCores.find((c) => c.id === 'ps2');
+      if (core && emuManifests[core.id] === undefined) loadEmuManifest(core);
+      await refreshPs2Local();
+      showToast('"' + record.name + '" is in the PS2 library — see the PLAYSTATION 2 section, or press A to play it.');
+    } catch (e) {
+      showToast('Could not add it: ' + (e?.message || e));
+    } finally {
+      setExportBusy(job, '');
+    }
+  }
+
+  async function playFiledExport(job) {
+    try {
+      const record = await getPs2Game(exportFiled[job.id]);
+      if (!record) { showToast('That game is no longer in the library.'); return; }
+      launchLocalPs2(record);
+    } catch (e) {
+      showToast('Could not start the PS2 player: ' + (e?.message || e));
+    }
+  }
+
   let SETTINGS_ITEMS = $derived([
     {
       id: 'theme',
@@ -531,6 +782,13 @@
         ? installedCores.map((c) => c.mark).join('  ·  ')
         : 'none installed  ·  add a console',
     },
+    {
+      id: 'exports',
+      label: 'EXPORTS',
+      sub: exportsSummary,
+    },
+    // Only a local install is a build server (see refreshBuilder).
+    ...(builder ? [{ id: 'builder', label: 'BUILD SERVER', sub: builderSummary }] : []),
   ]);
   let settingsSel = $state(0);
   let settingsRowEls = $state([]);
@@ -1499,6 +1757,11 @@
     const el = emuRowEls[emuSel];
     if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
+  $effect(() => {
+    if (screen !== 'exports') return;
+    const el = exportsRowEls[exportsSel];
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
 
   // ─── Strip sections ────────────────────────────────────────────────────────
   // One descriptor per strip tile. shmupX ships a single section — the games
@@ -1868,6 +2131,11 @@
     } else if (it.id === 'emulators') {
       screen = 'emulators';
       emuSel = 0;
+    } else if (it.id === 'exports') {
+      screen = 'exports';
+      exportsSel = 0;
+    } else if (it.id === 'builder') {
+      builderAction(builder?.running ? 'stop' : 'start');
     }
   }
 
@@ -1997,6 +2265,36 @@
   // cannot drift.
   let savAnchorId = '';
   let savLibrary = $state(null);      // null until first open; [] = nothing reachable
+  // The player's own .sav builds (the editor's → SAVE SHELF), read out of the
+  // shared IndexedDB store: re-read on every open and whenever the editor —
+  // a same-origin iframe away — announces a filing, so a game just exported
+  // is on the shelf the moment the coverflow opens. Never fetched: nothing of
+  // it leaves this browser.
+  let savExports = $state([]);
+  let stopSavExportsWatch = null;
+  async function refreshSavExports() {
+    try { savExports = await listDezaExports(); } catch (_) { savExports = []; }
+  }
+  // The same row shape as a collection entry, so the fan, the search and the
+  // rail treat it as one more game — with `yours` for what differs: it leads
+  // the shelf, it launches from the store rather than by slug, and it has no
+  // star (the editor's drawer gives these a ✕ instead).
+  let savExportRows = $derived.by(() =>
+    savBuildHaystacks(savExports.map((r) => ({
+      slug: 'yours:' + r.id,
+      exportId: r.id,
+      file: r.file,
+      title: r.title,
+      titleJa: '',
+      developer: 'YOUR .SAV EXPORT',
+      developerJa: '',
+      genre: String(r.palette || 'saturn').toUpperCase() + ' PALETTE' +
+        (r.size ? ' · ' + (r.size / 1048576).toFixed(2) + ' MB' : '') +
+        (r.savedAt ? ' · ' + new Date(r.savedAt).toLocaleDateString() : ''),
+      hasCover: false,
+      yours: true,
+    }))),
+  );
   let savLibraryLoading = $state(false);
   let savLibraryErr = $state('');
   let savCovers = $state({});         // slug -> data URL | null (fetch failed)
@@ -2141,16 +2439,21 @@
   // null = not read yet, [] = nothing reachable OR nothing matched; SavPicker
   // tells those two apart by the query it was given, not by the length.
   let savShelf = $derived.by(() => {
-    if (!savLibrary?.length) return savLibrary;
+    const yours = savExportRows;
+    if (!savLibrary?.length && !yours.length) return savLibrary;
     const terms = savFold(savQuery).split(/\s+/).filter(Boolean);
+    const hit = (r) => terms.every((t) => r._hay.includes(t));
     // The filter runs BEFORE the hoist and never reads savFavs. A predicate
     // that consulted pin state would drop a game out of the shelf on the very
     // toggle that pinned it, and toggleSavFav's findIndex below would then
     // strand the cursor on an index that no longer exists.
-    const rows = terms.length
-      ? savLibrary.filter((r) => terms.every((t) => r._hay.includes(t)))
-      : savLibrary;
-    return savHoistFavs(rows);
+    const library = savLibrary?.length ? savLibrary : [];
+    const rows = terms.length ? library.filter(hit) : library;
+    const mine = terms.length ? yours.filter(hit) : yours;
+    // The player's own builds lead, then the pinned games, then the rest —
+    // the same order the editor's drawer shelves them in.
+    const rest = savHoistFavs(rows);
+    return mine.length ? mine.concat(rest) : rest;
   });
 
   // The alpha rail's rows, derived from the shelf so every `at` is a real,
@@ -2165,7 +2468,11 @@
   let savBands = $derived.by(() => {
     const rows = savShelf;
     if (!rows?.length) return [];
-    let from = 0;
+    // The player's own builds lead the shelf under their own rail stop, then
+    // the FAVORITES block, then the letters.
+    let mine = 0;
+    while (mine < rows.length && rows[mine].yours) mine++;
+    let from = mine;
     while (from < rows.length && savFavs.has(savFavId(rows[from]))) from++;
     const seen = new Map();
     for (let i = from; i < rows.length; i++) {
@@ -2176,7 +2483,8 @@
       else seen.set(key, { key, at: i, n: 1 });
     }
     const out = [...seen.values()].sort((a, b) => a.at - b.at);
-    if (from > 0) out.unshift({ key: '★', at: 0, n: from });
+    if (from > mine) out.unshift({ key: '★', at: mine, n: from - mine });
+    if (mine > 0) out.unshift({ key: '✎', at: 0, n: mine });
     return out;
   });
 
@@ -2192,6 +2500,9 @@
   function toggleSavFav(i) {
     const item = savShelf?.[i];
     if (!item) return;
+    // A build of your own already leads the shelf; it has nothing to pin
+    // (the editor's drawer gives it a ✕ to forget it instead).
+    if (item.yours) { sfx.back(); return; }
     const id = savFavId(item);
     const next = new Set(savFavs);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -2275,6 +2586,7 @@
     // on the next open instead of caching the failure for the session.
     if (savLibrary && !savLibrary.length) savLibrary = null;
     loadSavLibrary();
+    refreshSavExports();
   }
   function closeSavPicker() {
     if (!savPickerOpen) return;
@@ -2349,7 +2661,11 @@
     let url;
     try {
       const u = new URL(g.url, window.location.origin);
-      u.searchParams.set('play', item.slug || savSlugOf(item.title));
+      // A build of your own is handed over by its store id — the editor reads
+      // the cart image straight out of the shared IndexedDB shelf, the same
+      // way its own drawer loads one — rather than by a collection slug.
+      if (item.yours) u.searchParams.set('playExport', item.exportId);
+      else u.searchParams.set('play', item.slug || savSlugOf(item.title));
       url = u.pathname + u.search + u.hash;
     } catch (_) { return; }
     launchGame(g.id, url);
@@ -2842,6 +3158,7 @@
     settings: { sel: () => settingsSel, setSel: (v) => (settingsSel = v), len: () => SETTINGS_ITEMS.length, activate: (i) => activateSettings(i) },
     // Reached from Settings, so B goes back there rather than to the dashboard.
     emulators: { sel: () => emuSel, setSel: (v) => (emuSel = v), len: () => emuCores.length, activate: (i) => activateEmulator(i), back: 'settings' },
+    exports: { sel: () => exportsSel, setSel: (v) => (exportsSel = v), len: () => exportJobs.length, activate: (i) => activateExport(i), back: 'settings' },
   };
 
   // Shared vertical nav. `fresh` marks a deliberate new press (gamepad edge /
@@ -3659,6 +3976,9 @@
     loadManifest();
     initNetplayPresence();
     initEmulators();
+    initExports();
+    refreshSavExports();
+    stopSavExportsWatch = watchDezaExports(refreshSavExports);
   });
 
   function refreshPadConnected() {
@@ -3806,6 +4126,9 @@
     endStripDrag();
     window.removeEventListener('gamepadconnected', onPadConnect);
     window.removeEventListener('gamepaddisconnected', onPadDisconnect);
+    if (stopExportWatch) stopExportWatch();
+    if (builderTimer) clearInterval(builderTimer);
+    if (stopSavExportsWatch) stopSavExportsWatch();
     document.body.classList.remove('playing');
     document.body.classList.remove('pad-on');
     document.body.classList.remove('osd-open');
@@ -4246,6 +4569,68 @@
     </div>
   </div>
 
+  <!-- Exports — builds queued for a desktop, reached from Settings. Rows are
+       the jobs this browser asked for; A collects a finished one (a PS2 disc
+       goes into the PlayStation 2 shelf, anything else downloads), ✕ drops it. -->
+  <div class="games-screen {screen === 'exports' ? 'shown' : ''}">
+    <div class="games-panel">
+      <div class="strip-top">
+        <span>sys // exports</span>
+        <span>{exportJobs.length} listed</span>
+        <span>{clockStr}</span>
+      </div>
+      <div class="disc-col">
+        <div class="disc net"></div>
+        <div class="meta">
+          <div><span class="k">game</span><b>{exportCurrent?.level ?? '—'}</b></div>
+          <div><span class="k">target</span><b>{exportCurrent ? exportJobArtifactLabel(exportCurrent).toUpperCase() : '—'}</b></div>
+          <div><span class="k">desktop</span><b>{exportCurrent ? (exportCurrent.workerName || formatBuilderCode(exportCurrent.code)) : '—'}</b></div>
+          <div><span class="k">state</span><b>{exportCurrent ? exportBadge(exportCurrent).text : '—'}</b></div>
+        </div>
+      </div>
+      <div class="games-right">
+        <div class="games-header">
+          <div class="title-bar">EXPORTS</div>
+          <div class="counter">{exportsCounterText}</div>
+        </div>
+        <div class="games-list">
+          {#each exportJobs as job, i (job.code + '/' + job.id)}
+            <div
+              bind:this={exportsRowEls[i]}
+              class="game-row {i === exportsSel ? 'sel' : ''}"
+              role="button"
+              tabindex="-1"
+              onmouseenter={() => { if (i !== exportsSel) { exportsSel = i; sfx.nav(); } }}
+              onclick={() => activateExport(i)}
+              onkeydown={chipKeyHandler(() => activateExport(i))}
+            >
+              <div class="game-icon"><div class="glass"><span class="ph">{exportMark(job)}</span></div></div>
+              <div class="game-bar">
+                <span class="name">{exportJobTitle(job).toUpperCase()}</span>
+                <span class="sub">{exportJobStatusText(job)}</span>
+              </div>
+              <span class="net-badge {exportBadge(job).cls}">{exportBadge(job).text}</span>
+              {#if job.status !== 'building' && !exportBusy[job.id]}
+                <button
+                  type="button"
+                  class="uninstall-btn"
+                  title="Dismiss this export"
+                  onclick={(e) => { e.stopPropagation(); exportsSel = i; sfx.back(); dismissExport(job); }}
+                >✕</button>
+              {/if}
+            </div>
+          {/each}
+          {#if !exportJobs.length}
+            <div class="byod">
+              <div class="byod-title">NOTHING QUEUED</div>
+              <div class="byod-sub">Open a game in the editor and press EXPORT. Where this launcher cannot build itself — the hosted site, the installed app on a phone — the export is queued for a desktop running shmupX, paired by the BUILD CODE that desktop shows under Settings → BUILD SERVER, and the finished build turns up here.</div>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+
   {#if screen !== 'dashboard'}
     <div class="footer left tap" role="button" tabindex="0" onpointerup={tapHandler(goBack)} onkeydown={chipKeyHandler(goBack)}>
       <div class="btn-hint b">B</div>
@@ -4254,7 +4639,7 @@
   {/if}
   <div class="footer tap" role="button" tabindex="0" onpointerup={tapHandler(actFbtnBottom)} onkeydown={chipKeyHandler(actFbtnBottom)}>
     <div class="btn-hint">A</div>
-    <span>{screen === 'games' ? gamesActionLabel : screen === 'emulators' ? emuActionLabel : 'Select'}</span>
+    <span>{screen === 'games' ? gamesActionLabel : screen === 'emulators' ? emuActionLabel : screen === 'exports' ? exportsActionLabel : 'Select'}</span>
   </div>
 </div>
 

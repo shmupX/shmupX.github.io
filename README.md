@@ -247,7 +247,13 @@ shelf lists them first under **YOUR .SAV EXPORTS** with a ✕ to forget one —
 loading a row runs the normal import, so a save can be exported, reloaded and
 re-edited without leaving the page. Both work on an imported cart as well as an
 authored level, which is how a community game can be edited and written back
-out.
+out. The store is [`static/deza-exports.js`](static/deza-exports.js), shared
+with the launcher: its SAVED GAMES coverflow shelves the same builds ahead of
+the collection under a ✎ stop on the rail, captioned YOUR .SAV EXPORT, finds
+them by search, and re-reads the shelf on every open and whenever the editor (an
+iframe of the launcher) files one. PLAY on such a cover hands the editor
+`?playExport=<id>` and the cart comes straight out of the store — nothing of it
+is ever uploaded.
 
 ## Pixel Editor and Tilemap Editor
 
@@ -489,6 +495,67 @@ becomes its `--win-arch` / `--mac-arch`. This path needs Node and
 electron-builder, a **Windows build from Linux needs `wine` on `PATH`** —
 electron-builder rcedits the packaged `.exe` through it whatever the target is —
 and a **Mac build needs a Mac**, for `hdiutil` and `codesign`.
+
+## Remote exports (build on your desktop)
+
+The editor's EXPORT button only builds where it is served from a local host:
+`/api/build-apk` refuses on the read-only Deploy origin, and a phone has no
+cordova or electron-builder anyway. So the hosted site, the installed PWA and
+any browser without a toolchain **queue the export for a desktop instead**, and
+a desktop running shmupX — the packaged app or `deno task dev` — picks it up,
+builds it with the very same code the local button uses, and hands the result
+back to the device that asked.
+
+Pairing is one code. Every local install runs a **build server**
+(`lib/export-worker.ts`) that mints an eight-letter **BUILD CODE** on first run
+(kept in `~/Library/Application Support/shmupX/export-worker.json`,
+`%APPDATA%\shmupX\`, or `~/.config/shmupx/`), prints it at launch and shows it
+under Settings → BUILD SERVER, where the row also switches the server off and
+on. On the other device the editor's export menu has a DESKTOP row: type the
+code there once (or open the editor with `?builder=ABCD-EFGH`), and the row
+reports live whether that desktop is online and which targets its toolchain can
+build. An export that cannot build locally then goes to that desktop — whether
+it is online or not; a queued job waits until it opens shmupX.
+
+Everything travels through the Realtime Database, which every surface here
+already talks to:
+
+| path                          | what                                                                                                |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `exportWorkers/<code>`        | the desktop's heartbeat every 20 s — name, OS, detected targets, what it is building                |
+| `exportQueue/<code>/<jobId>`  | one job: level, platform, requester, status, the last build line, the log tail, the artifact list   |
+| `exportBlobs/<jobId>/<i>/<n>` | the artifact bytes as 512 KB base64 chunks (the disc _and_ a zip of the USB folder for a PS2 build) |
+
+The worker streams its queue over the REST API's server-sent events, claims the
+oldest queued job with an ETag-conditional write (two desktops sharing a copied
+config never build the same job twice), runs `lib/export-build.ts` — the builder
+extracted out of `routes/api/build-apk.ts` — and uploads what came out. A job
+the desktop was building when it was closed is queued again once, then failed.
+The requester's page watches the job and, when it is done, offers what that
+artifact can do: **INSTALL APK** (the download hands the file to Android's
+installer), **DOWNLOAD** for an `.exe` / AppImage, and for a PS2 build
+**DOWNLOAD DISC**, **DOWNLOAD USB FOLDER** and **→ PS2 LIBRARY**, which files
+the disc in the launcher's PlayStation 2 shelf and installs the Play! core if it
+is not there — the same hand-off a local build gets. The launcher lists the same
+jobs under Settings → EXPORTS (A collects, ✕ dismisses), toasts when one
+finishes, and posts a system notification where the page may.
+
+Chunks are freed once the requester reports the bytes landed, or after a day;
+finished jobs are dropped after a week; a requester can DISMISS at any time. The
+bytes ride the database rather than Firebase Storage because the project has no
+Storage bucket provisioned (`storageBucket` in the config names one, but it
+404s, and the editor's custom-audio upload already warns about it). If one
+appears, an artifact record can carry a `url` instead of chunks and the client
+falls through to `fetch()`. Nothing here needs database rules beyond what
+`levels/` already has — the queue paths are open-write like the rest.
+
+`SHMUPX_EXPORT_WORKER=0` keeps a local host from ever starting the server;
+`SHMUPX_BUILD_CODE=ABCDEFGH` pins the code for a test rig without touching the
+config file. `GET /api/export-worker` is the status (and what starts it), `POST`
+with `{ action: "start" | "stop" | "regenerate" | "rename" }` drives it.
+[`tests/export_queue_test.ts`](tests/export_queue_test.ts) pins the seams
+between the two ends: the paths, the codes, the stream parser and the chunk
+codec.
 
 ## PlayStation 2
 

@@ -110,6 +110,32 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   Deno.addSignalListener(signal, () => shutdown.abort());
 }
 
+// Turn this desktop into a build server for exports queued from a phone, the
+// hosted site or the PWA (lib/export-worker.ts). Asked of the built server
+// through its own route rather than by importing the worker here: the route
+// module inside _fresh/server.js is the copy the dashboard talks to, and going
+// through it keeps exactly one worker in the process. The dashboard would do
+// the same GET when it opens; this covers --no-open and a closed browser tab.
+// Nothing in the request names an origin, so the route's cross-site gate lets
+// it through; a worker the user switched off in Settings stays off.
+async function startBuildServer(): Promise<void> {
+  try {
+    const res = await server.fetch(
+      new Request("http://127.0.0.1/api/export-worker"),
+    );
+    const status = await res.json();
+    if (!res.ok || !status.ok) {
+      console.error(`  Build server: ${status.error ?? `HTTP ${res.status}`}`);
+    } else if (!status.running) {
+      console.log(
+        "  Build server: off (switch it on in Settings → BUILD SERVER)\n",
+      );
+    }
+  } catch (err) {
+    console.error(`  Build server: ${(err as Error).message}`);
+  }
+}
+
 const httpServer = Deno.serve({
   hostname: HOSTNAME,
   port,
@@ -119,6 +145,7 @@ const httpServer = Deno.serve({
     console.log(`\n  shmupX — codemonkey.games\n  ${url}\n`);
     console.log("  Press Ctrl+C to quit.\n");
     if (open) openInBrowser(url);
+    startBuildServer();
   },
 }, (req, info) => server.fetch(req, info));
 
