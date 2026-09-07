@@ -78,14 +78,18 @@ async function buildElectron(opts) {
   }
 
   // Patch main.js: prepend Chromium perf flags + F11/Cmd+F fullscreen toggle.
+  // No disable-frame-rate-limit / disable-gpu-vsync here: the game ticks on
+  // a fixed 120 Hz accumulator, so an uncapped rAF buys nothing, and at the
+  // 800+ frames/s it reached on an M-series Mac the renderer starved the
+  // compositor — the screen updated a few times a second while the game's
+  // own loop ran at full speed (measured 2026-09-05 on the "fighter" build:
+  // a 25 s screen capture got 80 frames with the switches, 1438 without).
   let mainJs = fs.readFileSync(path.join(electronSrc, "main.js"), "utf8");
   const perfPreamble = [
     "// ----- Performance Mode (injected by tools/build-level) -----",
     "if (process.env.GEMSHELL_PERF !== '0') {",
     "    try {",
     "        const { app } = require('electron');",
-    "        app.commandLine.appendSwitch('disable-frame-rate-limit');",
-    "        app.commandLine.appendSwitch('disable-gpu-vsync');",
     "        app.commandLine.appendSwitch('disable-renderer-backgrounding');",
     "        app.commandLine.appendSwitch('enable-zero-copy');",
     "    } catch (e) {}",

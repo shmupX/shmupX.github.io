@@ -4432,6 +4432,16 @@
   function ridesTheMap(movePattern) {
     return movePattern === 4 || (movePattern & 3) === 2;
   }
+  // The record's packed hit-attribute byte, as `{mode, flag}`. Recipes
+  // imported before the decoder split it out carry only `movePattern`,
+  // whose low two bits are the mode and whose bit 2 is the terrain-ride
+  // flag (decode-enemy.js packs it as mode | (flag << 2)); deriving it
+  // here keeps a level saved under that format playable.
+  function dezaMove(behavior) {
+    if (behavior && behavior.move) return behavior.move;
+    var mp = behavior && Number.isFinite(behavior.movePattern) ? behavior.movePattern : 0;
+    return { mode: mp & 3, flag: (mp & 4) !== 0 };
+  }
   // ---- Appearance scripts (enemy record byte 0) -------------------------
   //
   // Every zako carries an ENTRY CHOREOGRAPHY from the engine's 256-entry
@@ -4492,7 +4502,7 @@
       // it can never drift off the piece of terrain it was placed on.
       anchorY: enemy.y,
       anchorScroll: scene && scene.dezaBg ? scene.dezaBg._scroll : 0,
-      moveFlag: !!(dz.behavior && dz.behavior.move && dz.behavior.move.flag),
+      moveFlag: !!(dz.behavior && dezaMove(dz.behavior).flag),
       vx: 0,
       vy: 0,
       active: false,
@@ -4585,7 +4595,7 @@
       curS: SPECIAL_SPEED[pIdx],
       side: 0,
       noFire: false,
-      moveFlag: !!(behavior.move && behavior.move.flag),
+      moveFlag: dezaMove(behavior).flag,
       vx: 0,
       vy: 0
     };
@@ -4768,7 +4778,7 @@
       // byte 2 was read as hp rather than speed; a newer import has no speed
       // field and no need for the heuristic either, since it always carries
       // entry data and `hasEntry` already switches this off.
-      patrols: !hasEntry && !ridesTheMap(behavior.movePattern) && behavior.move.mode === 0 && !behavior.move.flag && behavior.speed < 0.3,
+      patrols: !hasEntry && !ridesTheMap(behavior.movePattern) && dezaMove(behavior).mode === 0 && !dezaMove(behavior).flag && behavior.speed < 0.3,
       patrolPhase: Math.random() * Math.PI * 2,
       speedCh: makeChannel(behavior.speedChange, null, behavior.ground, horiz),
       rotationCh: facesPlayer ? null : makeChannel(behavior.rotation, {
@@ -9785,7 +9795,7 @@
   function dezaArmoured(enemy) {
     var d = enemy.getData("deza");
     var beh = d && d.behavior;
-    return !!(beh && beh.move && (beh.move.mode & 1));
+    return !!(beh && (dezaMove(beh).mode & 1));
   }
   // The deflect predicate's geometry (+0xE73A-+0xE798). The ball's CENTRE has
   // to sit inside the target's own half-width widened by the ball's radius —
