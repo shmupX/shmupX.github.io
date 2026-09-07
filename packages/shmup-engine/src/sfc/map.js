@@ -3,9 +3,11 @@
 // MAP DATA is 0x3600 bytes, one byte per 16x16 chip: 6 stages x 0x900. A
 // stage is 18 chips across and 128 down — 288 x 2048 pixels, a playfield two
 // chips wider than the 256-pixel screen. The width is measured, not assumed:
-// vertical continuity (cell == cell one row down) peaks at 18 in all six
-// sample stages, with harmonics at 36 and 54, and 16 scores no better than
-// noise; 0x900 / 18 is exactly 128. Rendered at 18 the scenery stands upright
+// vertical continuity (cell == cell one row down) beats every non-multiple
+// width in all six sample stages, its multiples 36 and 54 trailing as
+// harmonics (36 edges 18 by 0.002 in stage 4, the one stage where 18 is not
+// the outright peak), while 16 scores no better than noise; 0x900 / 18 is
+// exactly 128. Rendered at 18 the scenery stands upright
 // and its two rightmost columns are sparse in every stage — per-row markers
 // rather than scenery, possibly, which is open. Cell values index MAP GROUP;
 // bit 7 is set on some cells in the sample and is left uninterpreted.

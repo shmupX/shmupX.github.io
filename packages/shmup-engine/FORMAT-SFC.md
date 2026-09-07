@@ -117,13 +117,14 @@ MAP DATA, `0x340-0x393F`, is 0x3600 bytes = **6 stages × 0x900**, one byte per
 16×16 chip indexing MAP GROUP. A stage is **18 columns × 128 rows** — a
 288-pixel playfield, two chips wider than the 256-pixel screen, 2,048 pixels
 tall. The width is measured (`rowContinuity()` in `map.js`): the share of cells
-equal to the cell one row down peaks at 18 in every sample stage (0.17-0.40,
-with harmonics at 36 and 54) while 16 scores 0.01-0.19, and 0x900 / 18 is
-exactly 128. Rendering the cells at 16 columns shears the scenery into
-diagonals; at 18 it stands upright (`sfc:probe png map`), and the two rightmost
-columns are sparse in every stage — per-row markers rather than scenery,
-possibly, which is open. Bit 7 is set on some cells (`0x9C` below) and is not
-interpreted; the chip index masks to `0x7F`, and no sample cell exceeds 127.
+equal to the cell one row down beats every non-multiple width in every sample
+stage (0.17-0.40) while 16 scores 0.01-0.20; its multiples 36 and 54 trail as
+harmonics, 36 edging 18 by 0.002 in stage 4, and 0x900 / 18 is exactly 128.
+Rendering the cells at 16 columns shears the scenery into diagonals; at 18 it
+stands upright (`sfc:probe png map`), and the two rightmost columns are sparse
+in every stage — per-row markers rather than scenery, possibly, which is open.
+Bit 7 is set on some cells (`0x9C` below) and is not interpreted; the chip index
+masks to `0x7F`, and no sample cell exceeds 127.
 
 ```
 00340  00 9c 1b 1b 1b 1b 1b 1b 00 1b 1b 1b 1b 1b 1b 1b 00 00   stage 0, row 0 (18 cells)
@@ -152,12 +153,12 @@ priority, 14 horizontal flip, 15 vertical flip. An unused slot is `0xFFFF` or
 
 | Region        | Quads  | Sample                                          |
 | ------------- | ------ | ----------------------------------------------- |
-| MAP GROUP     | 192    | free-form picks of tiles 0x2C0-0x35F; 119 empty |
-| ENEMY GROUP   | 24 × 4 | tiles 0x3A0-0x3DF, some slots empty             |
-| BOSS GROUP    | 6 × 8  | mirrored strips `[n, n+1, n+1\|H, n\|H]`        |
+| MAP GROUP     | 192    | free-form picks of tiles 0x2C0-0x373; 119 empty |
+| ENEMY GROUP   | 24 × 4 | mostly 0x360-0x3FB, a few from 0x200 and 0x2B8  |
+| BOSS GROUP    | 6 × 8  | 16 of 48 mirrored `[n, n+1, n+1\|H, n\|H]`      |
 | TITLE GROUP   | 8      | tiles 0x2A0-0x2BF, consecutive                  |
 | ENDING GROUP  | 3      | all empty                                       |
-| MY SHIP GROUP | 16     | 2×2 chips `[n, n+1, n+8, n+9]` from 0x200       |
+| MY SHIP GROUP | 16     | 5 of 16 are 2×2 chips `[n, n+1, n+8, n+9]`      |
 
 ```
 0ff80  00 02 01 02 08 02 09 02 02 02 03 02 0a 02 0b 02   MY SHIP GROUP quads 0-1
@@ -194,7 +195,7 @@ quantise in 4/4 with two voices and changeable instruments; BGM PATCH (below) is
 | 0x7E7C | u16  | EDIT BGM    | 0                                                    |
 | 0x7E7E | 16   | BGM PATCH   | `11 12 13 14 15 16 16 17 18 16 19 1a 10 1c 1d 1b`    |
 | 0x7FCE | 4    | KEY CONFIG  | `20 08 10 20`                                        |
-| 0x7FD2 | 38   | RESERVED    | mostly `0xFF`                                        |
+| 0x7FD2 | 38   | RESERVED    | 20 of 38 bytes `0xFF`                                |
 | 0x0020 | 32   | RESERVED    | zero but for `0x3160` at 0x3E                        |
 
 ## HIGH SCORE (confirmed — `src/sfc/tables.js`)
