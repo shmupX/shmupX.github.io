@@ -6,17 +6,28 @@ export default define.page(function Home() {
     <>
       <Head>
         <title>codemonkey.games — shmupX</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        {
+          /* Self-hosted (static/fonts/) so the packaged launcher paints the
+             same offline; a Google Fonts <link> here blocked first paint for
+             as long as an unreachable host took to time out. */
+        }
         <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
+          key="font-orbitron"
+          rel="preload"
+          as="font"
+          type="font/woff2"
+          href="/fonts/orbitron-latin.woff2"
           crossorigin="anonymous"
         />
         <link
-          key="fonts"
-          href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@500;700;800&display=swap"
-          rel="stylesheet"
+          key="font-share-tech-mono"
+          rel="preload"
+          as="font"
+          type="font/woff2"
+          href="/fonts/share-tech-mono-latin.woff2"
+          crossorigin="anonymous"
         />
+        <link key="fonts" rel="stylesheet" href="/fonts/launcher.css" />
         <link key="dashboard-css" rel="stylesheet" href="/dashboard.css" />
         <link
           key="manifest"

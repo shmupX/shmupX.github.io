@@ -1,0 +1,23 @@
+/* The launcher's two display faces, served from this origin so the packaged
+   desktop app looks the same with no network as with one — routes/index.tsx
+   used to load them from Google Fonts through a render-blocking <link>, which
+   held the first paint for as long as an unreachable host takes to time out.
+   Latin subsets, exactly as fonts.gstatic.com serves them; Orbitron is the
+   variable font (wght 400–900). Both are SIL Open Font License 1.1 — see
+   OFL-Orbitron.txt and OFL-ShareTechMono.txt beside this file. */
+
+@font-face {
+  font-family: "Orbitron";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url(orbitron-latin.woff2) format("woff2");
+}
+
+@font-face {
+  font-family: "Share Tech Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(share-tech-mono-latin.woff2) format("woff2");
+}

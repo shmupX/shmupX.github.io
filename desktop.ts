@@ -2,7 +2,11 @@
 //
 // `deno task build:windows` / `build:linux` / `build:mac` compile this file with
 // `deno compile` (see scripts/build-desktop.ts) into one self-contained binary
-// that serves the built Fresh app on loopback and opens it in the browser. The
+// that serves the built Fresh app on loopback and opens it in a browser window
+// of its own — a kiosk on a dedicated profile where it can (lib/desktop-browser.ts
+// says how one is chosen), the system default otherwise. When the launcher owns
+// that window, closing it quits the launcher too, which is what Steam needs to
+// see the "game" end; --keep-serving keeps the build server up regardless. The
 // same binary is what routes/api/build-apk.ts calls "the packaged desktop app":
 // the tool + game it stages out of the read-only deno-compile VFS are embedded
 // here by the `--include` flags the build script passes.
@@ -15,6 +19,12 @@
 // (server-entry.mjs + the per-route chunks it imports) into the binary's VFS,
 // where the specifier below resolves at startup.
 
+import {
+  type DesktopOs,
+  launcherDataDir,
+  openLauncherWindow,
+} from "./lib/desktop-browser.ts";
+
 interface FetchServer {
   fetch(
     req: Request,
@@ -24,19 +34,44 @@ interface FetchServer {
 
 const DEFAULT_PORT = 8787;
 const HOSTNAME = Deno.env.get("SHMUPX_HOST") ?? "127.0.0.1";
+const OS: DesktopOs = Deno.build.os === "windows"
+  ? "windows"
+  : Deno.build.os === "darwin"
+  ? "darwin"
+  : "linux";
 
-function parseArgs(argv: string[]): { port?: number; open: boolean } {
-  let port: number | undefined;
-  let open = !Deno.env.get("SHMUPX_NO_OPEN");
+interface Args {
+  port?: number;
+  open: boolean;
+  /** A normal window rather than a fullscreen kiosk (SHMUPX_WINDOWED). */
+  windowed: boolean;
+  /** Stay up after the window closes (SHMUPX_KEEP_SERVING). */
+  keepServing: boolean;
+}
+
+function parseArgs(argv: string[]): Args {
+  const env = Deno.env;
+  const args: Args = {
+    open: !env.get("SHMUPX_NO_OPEN"),
+    windowed: !!env.get("SHMUPX_WINDOWED"),
+    keepServing: !!env.get("SHMUPX_KEEP_SERVING"),
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--no-open") open = false;
-    else if (arg === "--port" && argv[i + 1]) port = Number(argv[++i]);
+    if (arg === "--no-open") args.open = false;
+    else if (arg === "--windowed") args.windowed = true;
+    else if (arg === "--keep-serving") args.keepServing = true;
+    else if (arg === "--browser" && argv[i + 1]) {
+      // Same knob as the environment variable; the module reads it from there.
+      env.set("SHMUPX_BROWSER", argv[++i]);
+    } else if (arg.startsWith("--browser=")) {
+      env.set("SHMUPX_BROWSER", arg.slice("--browser=".length));
+    } else if (arg === "--port" && argv[i + 1]) args.port = Number(argv[++i]);
     else if (arg.startsWith("--port=")) {
-      port = Number(arg.slice("--port=".length));
+      args.port = Number(arg.slice("--port=".length));
     }
   }
-  return { port, open };
+  return args;
 }
 
 // First port in [start, start+range) nothing else is listening on. A bound-then-
@@ -53,26 +88,6 @@ function pickPort(start: number, range = 32): number {
     }
   }
   return 0; // let the OS assign one
-}
-
-function openInBrowser(url: string): void {
-  const [cmd, args] = Deno.build.os === "windows"
-    ? ["cmd", ["/c", "start", "", url]]
-    : Deno.build.os === "darwin"
-    ? ["open", [url]]
-    : ["xdg-open", [url]];
-  try {
-    const child = new Deno.Command(cmd as string, {
-      args: args as string[],
-      stdout: "null",
-      stderr: "null",
-    }).spawn();
-    // Don't let a browser that stays attached to its launcher keep us alive.
-    child.unref();
-  } catch (err) {
-    console.error(`Could not open a browser (${(err as Error).message}).`);
-    console.error(`Open ${url} yourself.`);
-  }
 }
 
 async function loadServer(): Promise<FetchServer> {
@@ -93,7 +108,7 @@ async function loadServer(): Promise<FetchServer> {
   }
 }
 
-const { port: portArg, open } = parseArgs(Deno.args);
+const { port: portArg, open, windowed, keepServing } = parseArgs(Deno.args);
 const envPort = Number(Deno.env.get("SHMUPX_PORT") ?? "");
 const requested = portArg ??
   (Number.isFinite(envPort) && envPort > 0 ? envPort : undefined);
@@ -136,6 +151,27 @@ async function startBuildServer(): Promise<void> {
   }
 }
 
+// The window. A browser this process owns reports back when the player closes
+// it, and that ends the launcher — unless it is meant to stay up as a build
+// server (--keep-serving). The system opener reports nothing, so that path
+// keeps the old behaviour: the server runs until Ctrl+C.
+async function openWindow(url: string): Promise<void> {
+  const outcome = await openLauncherWindow(url, {
+    os: OS,
+    env: Deno.env.toObject(),
+    dataDir: launcherDataDir(OS, Deno.env.toObject()),
+    windowed,
+    log: console.log,
+  });
+  if (outcome !== "closed") return;
+  if (keepServing) {
+    console.log("\n  Window closed; still serving (--keep-serving).\n");
+    return;
+  }
+  console.log("\n  Window closed — quitting.\n");
+  shutdown.abort();
+}
+
 const httpServer = Deno.serve({
   hostname: HOSTNAME,
   port,
@@ -144,7 +180,7 @@ const httpServer = Deno.serve({
     const url = `http://${hostname}:${port}/`;
     console.log(`\n  shmupX — codemonkey.games\n  ${url}\n`);
     console.log("  Press Ctrl+C to quit.\n");
-    if (open) openInBrowser(url);
+    if (open) openWindow(url);
     startBuildServer();
   },
 }, (req, info) => server.fetch(req, info));

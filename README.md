@@ -551,12 +551,58 @@ the ROM are committed: the tests gate on
 `deno task build:windows` / `build:linux` / `build:mac` package the launcher
 itself into `build/desktop/` (git-ignored). `deno compile` embeds the Vite
 build, so one file is the whole thing: it serves the app on `127.0.0.1:8787` (or
-the next free port) and opens your browser at it. `--port N`, `--no-open` and
-`SHMUPX_PORT` / `SHMUPX_HOST` / `SHMUPX_NO_OPEN` work on the artifact itself.
+the next free port) and opens it in a window of its own (below). `--port N`,
+`--no-open` and `SHMUPX_PORT` / `SHMUPX_HOST` / `SHMUPX_NO_OPEN` work on the
+artifact itself.
 
-- `desktop.ts` — what gets compiled: the local server + browser launch.
+- `desktop.ts` — what gets compiled: the local server + the window.
+- `lib/desktop-browser.ts` — which browser becomes that window, and how.
 - `scripts/build-desktop.ts` — the packaging (Vite build → `deno compile` →
   AppDir → `appimagetool`, or → `.app` bundle).
+
+### The window
+
+The launcher has no browser engine of its own; it borrows one, in kiosk mode, on
+a profile of its own — so the player gets a fullscreen game rather than a tab
+with `127.0.0.1` in the address bar, and so the browser process lives exactly as
+long as the window does. Closing the window quits the launcher, which is what
+lets Steam see the game end; `--keep-serving` / `SHMUPX_KEEP_SERVING=1` keeps it
+up as a build server instead. In order of preference:
+
+- **Linux** — Chrome / Chromium / Brave / Edge / Vivaldi in `--app --kiosk`
+  mode, native or Flatpak; then Firefox in `--kiosk` mode, native or Flatpak;
+  then `xdg-open`, the system default the old way.
+- **Windows** — Chrome, then Edge, in `--app --kiosk` mode; then `start`.
+- **macOS** — `open`, unless `SHMUPX_BROWSER` names a browser binary.
+
+Profiles — and with them the saves — live under
+`~/.local/share/shmupX/browser/<browser>/` (Windows
+`%LOCALAPPDATA%\shmupX\browser\`, macOS
+`~/Library/Application Support/shmupX/browser/`), one per browser, so switching
+browsers starts a fresh shelf. Knobs on the artifact: `--windowed` /
+`SHMUPX_WINDOWED=1` for a normal window instead of a kiosk; `--browser <cmd>` /
+`SHMUPX_BROWSER` to name the browser (a command, a path, or a Flatpak id such as
+`org.chromium.Chromium`), or `SHMUPX_BROWSER=default` for the system opener. A
+Firefox profile gets a `user.js` that skips the first-run tabs and turns off the
+offline mode that once refused loopback URLs when Wi-Fi is down. Whatever runs
+is spawned without Steam's `LD_PRELOAD`, runtime `LD_LIBRARY_PATH` and Vulkan
+overlay layer, which can crash a native browser started from inside a Steam
+launch — the same scrub `tools/build-level`'s Electron shell does.
+
+### Steam, Bazzite and handhelds
+
+Add the AppImage (or the `.exe`) as a non-Steam game — **Games → Add a
+Non-Steam Game → Browse** — and it wears the monkey icon by itself
+(`static/app-icons/README.md`). Bazzite ships Firefox as a Flatpak and no other
+browser, so there the launcher runs in Firefox's kiosk mode on its own profile;
+installing a Chromium-family Flatpak (Chrome, Chromium, Brave) from Discover or
+the Bazzite Portal moves it to the `--app` kiosk, the better engine for the
+Phaser games. The launcher's first paint no longer leaves the machine — its
+fonts are self-hosted in `static/fonts/` rather than fetched from Google — and
+every request that does is optional: the games manifest is same-origin, the
+shipped Dezaemon shelf is embedded, and the editor needs nothing remote. The
+2028.Ai leaderboard's Firebase SDK still comes from Google's CDN and fails soft
+without it.
 
 |                 | artifact                                                       | default arch                                                        |
 | --------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
