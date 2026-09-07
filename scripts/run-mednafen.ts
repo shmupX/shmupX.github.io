@@ -12,6 +12,13 @@
 //   deno task sav:run --install-only       # seed the cart save, do not launch
 //   deno task sav:run -- -sound 0          # pass extra args straight to Mednafen
 //
+// From WSL, point MEDNAFEN_BIN at a mednafen.exe to launch the Windows Mednafen
+// over interop — the only one that sees a USB/Bluetooth pad (e.g. a Stadia
+// controller); WSL exposes no /dev/input. The disc path is translated with
+// wslpath, and saves land beside the exe:
+//   MEDNAFEN_BIN=/mnt/c/.../mednafen.exe \
+//   DEZAEMON_DISC=/mnt/c/.../'Dezaemon 2 (Japan).cue' deno task sav:run
+//
 // The Mednafen binary, the disc image and the BIOS are the user's own (the disc
 // and BIOS are community content, never in the repo), so their locations come
 // from flags or env vars — the launcher prints what it resolved and fails with
@@ -114,14 +121,35 @@ function findBin(flag: string | null): string {
     (IS_WINDOWS ? "mednafen.exe" : "mednafen");
 }
 
+/** Running a Windows mednafen.exe from WSL, via binfmt interop — the way a WSL
+ * user reaches the Windows Mednafen (the only one that sees a USB/Bluetooth pad,
+ * e.g. a Stadia controller; WSL exposes no /dev/input). Path arguments handed to
+ * the .exe must be Windows paths, and it lays its saves out portably (beside the
+ * exe) like a native Windows install. */
+function isWslExe(bin: string): boolean {
+  return !IS_WINDOWS && /\.exe$/i.test(bin);
+}
+
+/** Translate a WSL path to the Windows form a Windows .exe understands. */
+function toWinPath(p: string): string {
+  try {
+    const { stdout, success } = new Deno.Command("wslpath", {
+      args: ["-w", p],
+    }).outputSync();
+    if (success) return new TextDecoder().decode(stdout).trim();
+  } catch { /* fall through */ }
+  return p;
+}
+
 /** Mednafen's save directory: --sav-dir, then MEDNAFEN_SAV, else <base>/sav. */
 function savDir(flag: string | null, bin: string): string {
   const explicit = flag || Deno.env.get("MEDNAFEN_SAV");
   if (explicit) return resolve(explicit);
-  const base = IS_WINDOWS
-    ? dirname(bin) // Windows Mednafen is portable: base dir = exe dir
+  const portable = IS_WINDOWS || isWslExe(bin); // Windows Mednafen keeps saves beside the exe
+  const base = portable
+    ? dirname(bin)
     : (Deno.env.get("MEDNAFEN_HOME") || join(home(), ".mednafen"));
-  if (IS_WINDOWS && (base === "." || !base)) {
+  if (portable && (base === "." || !base)) {
     fail(
       "cannot tell where Mednafen keeps saves. Give MEDNAFEN_BIN a full path to " +
         "mednafen.exe, or set MEDNAFEN_SAV to the sav directory.",
@@ -212,13 +240,15 @@ async function main() {
     const cur = Deno.env.get("LD_LIBRARY_PATH");
     env.LD_LIBRARY_PATH = cur ? `${extraLib}:${cur}` : extraLib;
   }
+  // A Windows .exe launched from WSL needs the disc as a Windows path.
+  const discArg = isWslExe(bin) ? toWinPath(disc) : disc;
   const args = [
     "-filesys.fname_sav",
     "%f.%x",
     "-cd.image_memcache",
     "1",
     ...passThrough,
-    disc,
+    discArg,
   ];
   console.log(`launching: ${bin} ${args.join(" ")}`);
   try {
