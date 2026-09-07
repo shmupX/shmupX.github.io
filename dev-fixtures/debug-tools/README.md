@@ -19,6 +19,7 @@ prefers the same checkout `scripts/build-2028-ai.ts` bundles from.
 | `contact-sheet.mjs <save.sav>` | Which record is that creature? A labeled sprite grid in first-spawn order. `--frames` draws whole animations.                                                                                                                             |
 | `dump-sprites.mjs <save.sav>`  | Boss core/part art, and any slice of the zako record bank, as individual PNGs.                                                                                                                                                            |
 | `dump-bg.mjs <save.sav>`       | The stage background tilemap, including a crop of the boss chamber.                                                                                                                                                                       |
+| `sav-to-mednafen.ts <sav> <out-base>` | Turns an exported `.sav` (`deno task build:sav`) into Mednafen's `<name>.bcr` + `<name>.bkr` so the game loads it from the cartridge in an emulator — the round trip that checks the writer on a real engine. Deno, not node. |
 
 Read them together: `contact-sheet.mjs` tells you record 22 is the winged
 statue, `dump-behavior.mjs` tells you record 22 is ground, max-LIFE, and carries
