@@ -88,6 +88,23 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
   - `LEVEL_DATA_URL` fetches `foo.json` same-origin instead of from cmg's deploy
     origin. `tools/build-level/lib/stage.js` matches that exact string when it
     stages an offline export, so the two must change together.
+  - Every font stack that read `Orbitron` — the Dezaemon title prompt
+    (`dezaCellText`), the STAFF ROLL card's thanks and credit labels, and the
+    standalone PAUSE panel — reads `athenaFont`: Dezaemon 2's own 8×8 game
+    font, the one its kernel sets SCORE, PAUSE! and ESCAPE in. It is font 0 of
+    the disc's `GFONT.BIN` (8bpp 8×8 cells from `0x800`, ASCII order; each
+    body pixel carries its row index for the palette gradient and `0x0A` is
+    a baked 1 px drop shadow), lifted with `deno task deza:disc get` into
+    spriteX's catalog as `atlases/athenaFont` (body pixels only, TEXT_SET1
+    order) and traced to TrueType by spriteX's `scripts/export-font.mjs` —
+    one em per 8 px cell, so at the prompt's 8 px every glyph pixel is one
+    canvas pixel and every glyph advances one grid cell. The runtime redraws
+    the shadow with Phaser's text shadow (offset 1,1) rather than an outline
+    stroke, which would fill a pixel face's counters in, and keeps fontStyle
+    normal so no bold is synthesised. Shipped as `assets/fonts/athenaFont.ttf`
+    beside its glyph sheet; `routes/games/2028-ai.tsx` and
+    `tools/build-level/lib/shell-template.js` declare and preload it. The
+    Orbitron files stay for the launcher and editor chrome, which still use it.
   - `tryNavigatorVibrate` returns early when
     `navigator.userActivation.hasBeenActive` is false. Chrome blocks
     `navigator.vibrate()` before the frame has been tapped and logs an

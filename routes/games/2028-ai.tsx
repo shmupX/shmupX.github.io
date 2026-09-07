@@ -104,7 +104,7 @@ const LEVEL_EDITOR_BROADCAST = `
 // document.fonts.ready hook.
 const FONT_PRELOAD = `
 if (document.fonts && document.fonts.load) {
-  document.fonts.load("700 16px Orbitron").catch(function () {});
+  document.fonts.load("8px athenaFont").catch(function () {});
 }
 `;
 
@@ -265,14 +265,17 @@ export default define.page(function Game2028() {
         />
         <style>
           {`
-          /* The runtime's STAFF ROLL card renders canvas text in Orbitron;
-             declared here because canvas usage alone never fetches a CSS
-             font — FONT_PRELOAD below starts the load. */
+          /* The runtime's text over gameplay — the Dezaemon title prompt,
+             the STAFF ROLL card and the PAUSE panel — is set in athenaFont:
+             Dezaemon 2's own 8x8 game font (the disc's GFONT.BIN, font 0),
+             kept in spriteX's catalog and traced to TrueType by its
+             scripts/export-font.mjs, one em per 8 px cell so it is
+             pixel-exact at 8 px (the sheet sits beside the .ttf). Declared
+             here because canvas usage alone never fetches a CSS font —
+             FONT_PRELOAD below starts the load. */
           @font-face {
-            font-family: 'Orbitron';
-            src: url('/games/2028-ai/assets/fonts/Orbitron-Variable.woff2') format('woff2'),
-                 url('/games/2028-ai/assets/fonts/Orbitron-Variable.ttf') format('truetype');
-            font-weight: 400 900;
+            font-family: 'athenaFont';
+            src: url('/games/2028-ai/assets/fonts/athenaFont.ttf') format('truetype');
             font-display: swap;
           }
           html, body {
