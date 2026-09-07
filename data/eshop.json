@@ -1,0 +1,18 @@
+[
+  {
+    "id": "shmup-party-phaser4",
+    "kind": "web",
+    "name": "Sh'M↑ Party",
+    "title": "SH'M↑ PARTY",
+    "sub": "Phaser 4 // 1-4 players · attract mode",
+    "icon": "/icons/shmup-party-icon.png",
+    "source": "github",
+    "repo": "easierbycode/shmup-party-phaser4",
+    "branch": "main",
+    "entry": "index.html",
+    "downloadUrl": "https://raw.githubusercontent.com/easierbycode/shmup-party-phaser4/main/shmup-party-phaser4.zip",
+    "size": "8 MB",
+    "date": "07.28.26",
+    "twinStick": { "default": true }
+  }
+]

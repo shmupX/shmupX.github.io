@@ -1,6 +1,7 @@
 {
   "name": "@shmupx/shmup-engine",
   "version": "0.2.0",
+  "license": "MIT",
   "exports": {
     ".": "./mod.js",
     "./mesh-library": "./src/model/mesh-library.js",
@@ -23,6 +24,7 @@
     "./palette": "./src/palette/deza2-palette.js",
     "./compress": "./src/compress.js",
     "./bup-write": "./src/bup-write.js",
+    "./bup-place": "./src/bup-place.js",
     "./palette-target": "./src/palette/palette-target.js",
     "./cg-pack": "./src/write/cg-pack.js",
     "./game-to-save": "./src/write/game-to-save.js",

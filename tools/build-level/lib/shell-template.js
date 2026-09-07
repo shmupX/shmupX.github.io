@@ -160,15 +160,14 @@ const FIT_PORTRAIT = `
 })();
 `;
 
-// The runtime's STAFF ROLL card renders canvas text in Orbitron (the file is
-// staged with the wholesale assets/ copy). Canvas usage alone never fetches a
-// CSS font, so FONT_PRELOAD starts the load explicitly.
+// The runtime's text over gameplay (Dezaemon title prompt, STAFF ROLL card,
+// PAUSE panel) is set in athenaFont, Dezaemon 2's own 8x8 game font as
+// TrueType (the file is staged with the wholesale assets/ copy). Canvas usage
+// alone never fetches a CSS font, so FONT_PRELOAD starts the load explicitly.
 const STYLE = `
 @font-face {
-  font-family: 'Orbitron';
-  src: url('assets/fonts/Orbitron-Variable.woff2') format('woff2'),
-       url('assets/fonts/Orbitron-Variable.ttf') format('truetype');
-  font-weight: 400 900;
+  font-family: 'athenaFont';
+  src: url('assets/fonts/athenaFont.ttf') format('truetype');
   font-display: swap;
 }
 html, body { margin: 0; padding: 0; width: 100%; height: 100%; height: 100dvh; background: #000; overflow: hidden; overscroll-behavior: none; touch-action: none; }
@@ -183,7 +182,7 @@ html, body { margin: 0; padding: 0; width: 100%; height: 100%; height: 100dvh; b
 
 const FONT_PRELOAD = `
 if (document.fonts && document.fonts.load) {
-  document.fonts.load("700 16px Orbitron").catch(function () {});
+  document.fonts.load("8px athenaFont").catch(function () {});
 }
 `;
 

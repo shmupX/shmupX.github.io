@@ -2633,27 +2633,33 @@ var GLOBAL_ART_SLOTS = {
 var GLOBAL_WEAPON_SLOTS = [
   { first: 48, w: 2, h: 2, role: "charge" },
   // slot 12: charge glow
+  // The player weapon SHOT refs (traced 2026-09-07, GAME 0x060790C4 ->
+  // 0x0606F080; FORMAT.md "Player shot sprites"): weapons 1-7 draw from refs
+  // 53/54/55/57/59/61/68. The roles below only steer the placeholder art the
+  // writer paints; the actual player bolt is placed by game-to-save.js
+  // (PLAYER_SHOT_SLOTS) over these cells.
   { first: 52, w: 1, h: 1, role: "shot" },
   { first: 53, w: 1, h: 1, role: "shot" },
+  // weapon 1 (VULCAN A) shot
   { first: 54, w: 1, h: 1, role: "shot" },
+  // weapon 2 shot
   { first: 55, w: 1, h: 1, role: "shot" },
+  // weapon 3 shot
   { first: 56, w: 1, h: 1, role: "shot" },
   { first: 57, w: 1, h: 2, role: "beamV" },
-  // slot 18: 16x32 beam segment
+  // slot 18: weapon 4 shot (16x32)
   { first: 59, w: 2, h: 1, role: "beamH" },
-  // slot 19: 32x16 beam segment
+  // slot 19: weapon 5 shot (32x16)
   { first: 61, w: 1, h: 1, role: "shot" },
+  // weapon 6 shot
   { first: 62, w: 1, h: 1, role: "shot" },
   { first: 63, w: 1, h: 1, role: "shot" },
-  // weapon 1
   { first: 64, w: 1, h: 1, role: "shot" },
   { first: 65, w: 1, h: 1, role: "shot" },
-  // weapon 2
   { first: 66, w: 1, h: 1, role: "missile" },
-  // weapon 3 object
   { first: 67, w: 1, h: 1, role: "shot" },
   { first: 68, w: 1, h: 1, role: "missile" },
-  // weapon 4 missiles
+  // slot 24: weapon 7 shot
   ...Array.from({ length: 10 }, (_, i) => ({ first: 69 + i, w: 1, h: 1, role: "option" })),
   { first: 79, w: 2, h: 2, role: "bomb" },
   // slot 38: bomb 4
@@ -4600,6 +4606,196 @@ function buildGameSave(sections, {
   return { sav: built.image, logical: built.logical || built.image, payload, entry: built.entries[0], filename };
 }
 
+// packages/shmup-engine/src/bup-place.js
+var INTERNAL_SRM_SIZE = INTERNAL_PARTITION_SIZE * 2;
+var MISTER_LOGICAL_SIZE = INTERNAL_PARTITION_SIZE + CART_PARTITION_SIZE;
+var PartitionFullError = class extends Error {
+  constructor({ payloadBytes, freeBytes, capacityBytes, freeBlocks, neededBlocks, blockSize }) {
+    super(
+      `a ${payloadBytes}-byte save needs ${neededBlocks} ${blockSize}-byte blocks; the ${capacityBytes}-byte partition has room for a ${freeBytes}-byte save at most`
+    );
+    this.name = "PartitionFullError";
+    this.payloadBytes = payloadBytes;
+    this.freeBytes = freeBytes;
+    this.capacityBytes = capacityBytes;
+    this.freeBlocks = freeBlocks;
+    this.neededBlocks = neededBlocks;
+    this.blockSize = blockSize;
+  }
+};
+function payloadCapacity(blocks, blockSize) {
+  if (blocks < 1) return 0;
+  return blockSize - STREAM_OFFSET - 2 + (blocks - 1) * (blockSize - 6);
+}
+var INTERNAL_RAM_PAYLOAD_CAPACITY = payloadCapacity(
+  INTERNAL_PARTITION_SIZE / INTERNAL_BLOCK_SIZE - FIRST_SAVE_BLOCK,
+  INTERNAL_BLOCK_SIZE
+);
+var MIN_GAME_PAYLOAD_BYTES = SECTION_SIZES.reduce((sum, n) => {
+  const items = Math.ceil(n / 18);
+  return sum + items * 2 + Math.ceil(items / 8);
+}, TABLE_SIZE);
+function partitionOf(partition, blockSize) {
+  const parts = detectPartitions(partition);
+  if (parts.length === 0 || parts[0].base !== 0) {
+    throw new Error('partition is not formatted ("BackUpRam Format" magic missing from block 0)');
+  }
+  if (parts.length > 1) {
+    throw new Error(`expected one partition, found ${parts.length}; pass a bare partition`);
+  }
+  if (parts[0].blockSize !== blockSize) {
+    throw new Error(
+      `${blockSize}-byte blocks do not match a ${partition.length}-byte partition (${parts[0].blockSize}-byte blocks)`
+    );
+  }
+  return parts[0];
+}
+function placeSaveInPartition(partition, blockSize, save, { replace } = {}) {
+  if (!(save?.payload instanceof Uint8Array)) throw new Error("save.payload must be a Uint8Array");
+  partitionOf(partition, blockSize);
+  const numBlocks = Math.floor(partition.length / blockSize);
+  const entries = parse(partition);
+  let replaced = null;
+  const doomed = new Set([save.filename, replace].filter((n) => typeof n === "string" && n));
+  const kept = [];
+  for (const entry of entries) {
+    if (!doomed.has(entry.filename)) {
+      kept.push(entry);
+      continue;
+    }
+    const header = entry.offset / blockSize;
+    for (const n of [header, ...entry.blocks]) {
+      if (n < numBlocks) partition.fill(0, n * blockSize, (n + 1) * blockSize);
+    }
+    if (replaced === null || entry.filename === replace) replaced = entry.filename;
+  }
+  const used = new Uint8Array(numBlocks);
+  used[0] = 1;
+  used[1] = 1;
+  for (const entry of kept) {
+    used[entry.offset / blockSize] = 1;
+    for (const n of entry.blocks) if (n < numBlocks) used[n] = 1;
+  }
+  const needed = 1 + dataBlocksFor(save.payload.length, blockSize);
+  let start = -1;
+  let run = 0;
+  let longest = 0;
+  let freeBlocks = 0;
+  for (let n = FIRST_SAVE_BLOCK; n < numBlocks; n++) {
+    if (used[n]) {
+      run = 0;
+      continue;
+    }
+    freeBlocks++;
+    run++;
+    if (run > longest) longest = run;
+    if (run === needed && start === -1) start = n - needed + 1;
+  }
+  if (start === -1) {
+    throw new PartitionFullError({
+      payloadBytes: save.payload.length,
+      freeBytes: payloadCapacity(longest, blockSize),
+      capacityBytes: partition.length,
+      freeBlocks,
+      neededBlocks: needed,
+      blockSize
+    });
+  }
+  partition.fill(0, start * blockSize, (start + needed) * blockSize);
+  const placed = writeSaveEntry(partition, blockSize, save, start);
+  return { ...placed, replaced };
+}
+function bytesOf(input) {
+  if (input instanceof Uint8Array) return input;
+  if (input instanceof ArrayBuffer) return new Uint8Array(input);
+  if (ArrayBuffer.isView(input)) return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+  throw new Error("expected bytes (Uint8Array or ArrayBuffer)");
+}
+function isBlank(logical) {
+  const first = logical[0];
+  if (first !== 0 && first !== 255) return false;
+  return logical.every((b) => b === first);
+}
+function internalRamFromImage(bytes) {
+  if (bytes == null) return formatPartition(INTERNAL_PARTITION_SIZE, INTERNAL_BLOCK_SIZE);
+  const buf = bytesOf(bytes);
+  let logical;
+  if (buf.length === INTERNAL_SRM_SIZE) {
+    if (detect(buf)) logical = deinterleave(buf);
+    else if (isBlank(buf)) logical = buf.slice(0, INTERNAL_PARTITION_SIZE);
+    else throw new Error("a 65,536-byte image should be 0xFF-interleaved (yabause .srm); this one is not");
+  } else if (buf.length === INTERNAL_PARTITION_SIZE) {
+    logical = buf.slice();
+  } else if (buf.length === MISTER_SAV_SIZE) {
+    if (!detect(buf)) throw new Error("a 1,114,112-byte .sav should be 0xFF-interleaved; this one is not");
+    logical = deinterleave(buf.subarray(0, INTERNAL_SRM_SIZE));
+  } else if (buf.length === MISTER_LOGICAL_SIZE) {
+    logical = buf.slice(0, INTERNAL_PARTITION_SIZE);
+  } else {
+    throw new Error(
+      `${buf.length} bytes is not a Saturn internal memory image (expected 32,768 logical, 65,536 interleaved, or a 557,056 / 1,114,112-byte .sav)`
+    );
+  }
+  if (isBlank(logical)) return formatPartition(INTERNAL_PARTITION_SIZE, INTERNAL_BLOCK_SIZE);
+  return logical;
+}
+function commentKey(comment) {
+  if (comment === void 0 || comment === null) return null;
+  let s = "";
+  for (const b of encodeComment(comment)) {
+    if (b === 0) break;
+    s += String.fromCharCode(b);
+  }
+  return s;
+}
+function stageSaveInInternalRam(existing, { payload, filename, comment, language, date, slot } = {}) {
+  if (!(payload instanceof Uint8Array)) throw new Error("payload must be a Uint8Array");
+  const image = internalRamFromImage(existing);
+  let name = filename;
+  if (!name && slot !== void 0 && slot !== null) name = gameSaveFilename(slot);
+  if (!name) {
+    const games = parse(image).filter(isGameSave);
+    const key = commentKey(comment);
+    const same = key === null ? void 0 : games.find((g) => g.comment === key);
+    if (same) name = same.filename;
+    else {
+      const taken = new Set(games.map((g) => g.filename));
+      for (let s = 1; s <= GAME_SAVE_SLOTS && !name; s++) {
+        if (!taken.has(gameSaveFilename(s))) name = gameSaveFilename(s);
+      }
+    }
+    if (!name) {
+      throw new Error(
+        `all ${GAME_SAVE_SLOTS} DEZA2____NN slots are in use and none carries the comment ${JSON.stringify(key ?? "")}; pass slot to replace one`
+      );
+    }
+  }
+  const placed = placeSaveInPartition(
+    image,
+    INTERNAL_BLOCK_SIZE,
+    { filename: name, comment, language, date, payload },
+    { replace: name }
+  );
+  const { replaced, ...entry } = placed;
+  return { image, interleaved: interleave(image), entry, filename: name, replaced };
+}
+function gamePayloadFromSav(bytes, { filename } = {}) {
+  const buf = bytesOf(bytes);
+  if (buf.length >= 2 && buf[0] === 31 && buf[1] === 139) {
+    throw new Error("gzip-wrapped image: await normalize(bytes) and pass .data");
+  }
+  const data = detect(buf) ? deinterleave(buf) : buf;
+  const games = parse(data).filter(isGameSave);
+  const entry = filename ? games.find((g) => g.filename === filename) : games.find((g) => g.payload) ?? games[0];
+  if (!entry) {
+    throw new Error(
+      filename ? `no ${filename} save in this image` : "no DEZA2____NN game save in this image"
+    );
+  }
+  if (!entry.payload) throw new Error(`${entry.filename}: ${entry.payloadError}`);
+  return { payload: entry.payload.buffer, entry };
+}
+
 // packages/shmup-engine/src/palette/deza2-palette.js
 var DEZA2_PALETTE_COLS = 16;
 var DEZA2_PALETTE_ROWS = 18;
@@ -5497,6 +5693,22 @@ var BULLET_ENGINE_SLOTS = [
   [{ ref: 108, w: 2, h: 2 }, { ref: 112, w: 2, h: 2 }, { ref: 116, w: 2, h: 2 }, { ref: 120, w: 2, h: 2 }],
   [{ ref: 124, w: 2, h: 2 }, { ref: 128, w: 2, h: 2 }, { ref: 132, w: 1, h: 1 }, { ref: 136, w: 1, h: 1 }]
 ];
+var PLAYER_SHOT_SLOTS = [
+  { ref: 53, w: 1, h: 1 },
+  // weapon 1 (VULCAN A) — the default
+  { ref: 54, w: 1, h: 1 },
+  // weapon 2
+  { ref: 55, w: 1, h: 1 },
+  // weapon 3
+  { ref: 57, w: 1, h: 2 },
+  // weapon 4 (16x32)
+  { ref: 59, w: 2, h: 1 },
+  // weapon 5 (32x16)
+  { ref: 61, w: 1, h: 1 },
+  // weapon 6
+  { ref: 68, w: 1, h: 1 }
+  // weapon 7
+];
 var GLOBAL_SLOTS = {
   shipBankA: 0,
   shipIdle: 8,
@@ -6253,6 +6465,12 @@ function buildSaveFromGame(level, art, options = {}) {
         return null;
     }
   });
+  const playerShotKeys = PLAYER_SHOT_SLOTS.map((slot, i) => {
+    const w = slot.w * CG_CELL, h = slot.h * CG_CELL;
+    const f = shotFrames.length ? shotFrames[i % shotFrames.length] : null;
+    const tint = SHOT_TINTS[i % SHOT_TINTS.length];
+    return f ? planFrame(`pshot:${i}:${f.key}:${w}x${h}`, f, w, h, "weapon", 3) : planFrame(`pshot:${i}:${w}x${h}`, shotSprite(w, h, tint), w, h, "weapon", 3);
+  });
   const planned = [...plan.values()];
   const q = quantizeFrames(planned, opts.palette);
   const indexedByKey = new Map(q.frames.map((f) => [f.key, f]));
@@ -6359,6 +6577,10 @@ function buildSaveFromGame(level, art, options = {}) {
   weaponKeys.forEach((key, i) => {
     const slot = GLOBAL_WEAPON_SLOTS[i];
     putRefs(slot.first, refsOf(key, slot.w * slot.h));
+  });
+  playerShotKeys.forEach((key, i) => {
+    const slot = PLAYER_SHOT_SLOTS[i];
+    putRefs(slot.ref, refsOf(key, slot.w * slot.h));
   });
   for (const pose of [GLOBAL_SLOTS.ship2BankA, GLOBAL_SLOTS.ship2Idle, GLOBAL_SLOTS.ship2BankB]) {
     ship2Idle.forEach((key, f) => putRefs(pose + f * 4, refsOf(key, 4)));
@@ -6853,6 +7075,8 @@ export {
   GRID_COLS,
   INSTRUMENT_COUNT,
   INTERNAL_PARTITION_SIZE,
+  INTERNAL_RAM_PAYLOAD_CAPACITY,
+  INTERNAL_SRM_SIZE,
   LAYER_COUNT,
   LIBRARY_MESH_COUNT,
   LIGHT_AZIMUTH,
@@ -6867,12 +7091,15 @@ export {
   MAX_SWATCH_COLORS,
   MDLDT_BASE,
   MDLDT_FILE_COUNT,
+  MIN_GAME_PAYLOAD_BYTES,
+  MISTER_LOGICAL_SIZE,
   MISTER_SAV_SIZE,
   MODEL_SLOTS,
   MODEL_UNIT_RADIUS,
   NEAR,
   PALETTE_TARGETS,
   PLAYER_SHOT_DAMAGE_BY_LEVEL,
+  PartitionFullError,
   REF_HFLIP,
   REF_VFLIP,
   ROTATION_ORDER,
@@ -6951,12 +7178,14 @@ export {
   fitRgba,
   formatPartition,
   frameGroup,
+  gamePayloadFromSav,
   gameSaveFilename,
   gunzip,
   indexedToCells,
   indexedToRgbaWith,
   instrumentAt,
   interleave,
+  internalRamFromImage,
   isGameSave,
   isGzip,
   itemIcon,
@@ -6988,7 +7217,9 @@ export {
   parse,
   parseEntry,
   parseSectionTable,
+  payloadCapacity,
   pickLayers,
+  placeSaveInPartition,
   placeholderLibrary,
   placeholderMesh,
   playbackRate,
@@ -7009,6 +7240,7 @@ export {
   shadeRow,
   snesCgramBytes,
   spreadFrames,
+  stageSaveInInternalRam,
   swatchCell,
   swatchCellRect,
   swatchRgb,

@@ -1023,6 +1023,16 @@
             <button class="menu-row hidden" id="export-ps2-play" onclick="playPs2Export()"><span class="mono-badge">PL</span>PLAY ON PS2</button>
             <div id="export-ps2-note" class="menu-note"></div>
         </div>
+        <!-- ESHOP: the global game list every launcher reads. Publishing
+             builds the open game as a Dezaemon 2 cart (the same .sav writer as
+             the Saturn export below) and files it in the Realtime Database
+             through /eshop-library.js, which also puts it on this browser's
+             shelf so the publisher sees it at once. Not hide-when-sav: an
+             imported cart may be republished, the note just asks for your
+             own games. -->
+        <div class="menu-label">ESHOP</div>
+        <button class="menu-row" id="eshop-publish-btn" onclick="publishToEshop()" title="Build the open game as a Dezaemon 2 cart save and publish it to the eShop — the global game list every shmupX launcher sees. It lands on your own LOAD GAME shelf too."><span class="mono-badge">ES</span>PUBLISH TO ESHOP</button>
+        <div id="eshop-publish-note" class="menu-note"></div>
         <div class="menu-label">DEZAEMON 2 (SATURN)</div>
         <button class="menu-row" onclick="startNewGame();closeMenu()"><span class="mono-badge">NG</span>NEW GAME</button>
         <button class="menu-row hide-when-sav" onclick="openDezaemonImport()"><span class="mono-badge">SV</span>IMPORT .SAV</button>
@@ -1046,6 +1056,15 @@
         </div>
         <button class="menu-row" id="deza-sav-download" onclick="exportDezaemonSav('download')" title="Build a Dezaemon 2 cart save of the open game — the 1,114,112-byte .sav MiSTer's Saturn core reads — and download it"><span class="mono-badge">DL</span>DOWNLOAD .SAV</button>
         <button class="menu-row" id="deza-sav-shelf" onclick="exportDezaemonSav('shelf')" title="Build the .sav and file it in this browser's LOAD GAME shelf, under YOUR .SAV EXPORTS"><span class="mono-badge">SH</span>&rarr; SAVE SHELF</button>
+        <!-- The two Saturn user-save targets. The browser core (the launcher's
+             Sega Saturn shelf) keeps only the 32 KB internal memory — no backup
+             cart — so most games will not fit and the note says so, with the
+             numbers; Mednafen on this machine has the 512 KB cart, and its row
+             appears only once /api/saturn-save says it is reachable (probed
+             the first time the drawer opens). Neither is hide-when-sav: an
+             imported cart can be staged for play too. -->
+        <button class="menu-row" id="deza-sav-emu" onclick="exportDezaemonSav('emu')" title="Build the save and stage it in the browser Saturn core's internal backup memory (32 KB, no cart) so Dezaemon 2 on the launcher's Sega Saturn shelf can load it from 本体 memory. Saves over ~30 KB do not fit — use Mednafen or MiSTer for those."><span class="mono-badge">EM</span>&rarr; SATURN EMU (USER SAVE)</button>
+        <button class="menu-row hidden" id="deza-sav-mednafen" onclick="exportDezaemonSav('mednafen')" title="Build the save, install it as Mednafen's cartridge (.bcr) and internal (.bkr) backup files beside the Dezaemon 2 disc on this machine, and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN CART</button>
         <div id="deza-sav-note" class="menu-note"></div>
         <div class="menu-note">SATURN BACKUP SAVES: .SAV / .BCR / .BKR</div>
         <div class="menu-label">ADVANCED EDITORS</div>
@@ -1801,6 +1820,7 @@
             document.getElementById('menu-backdrop').classList.remove('hidden');
             document.getElementById('menu-panel').classList.remove('hidden');
             updateDezaWebsiteRow();
+            probeSaturnSaveRoute();
         }
         function closeMenu() {
             document.getElementById('menu-backdrop').classList.add('hidden');
@@ -5403,25 +5423,68 @@
             return mode;
         }
 
-        // --- the export shelf: this browser's own .sav builds (IndexedDB) ---
-        // The store itself is static/deza-exports.js, shared with the
-        // launcher's SAVED GAMES coverflow: it shelves these builds ahead of
-        // the community collection and hears about every filing, so a game
-        // exported here is on both shelves at once. Imported on demand, like
-        // ps2-library.js. dezaExportsAll() leaves the cart bytes out — a shelf
-        // row does not need them; dezaExportsGet() brings them for a load.
+        // --- the shelf: this browser's own .sav builds and its installed
+        // eShop games (IndexedDB "shmupxDezaExports") ---
+        // static/deza-shelf.js owns the store; the launcher's coverflow and
+        // the eShop installer read and write the very same records, so the
+        // helpers below are thin wrappers that keep this file's call sites
+        // where they were. Each shared module is imported on first use, the
+        // way /ps2-library.js already is, and a rejected import is forgotten
+        // so the next press retries instead of failing forever on a blip.
         let dezaExportRows = null; // shelf cache, reloaded on every open
-        let dezaExportsPending = null;
-        function dezaExportsModule() {
-            if (!dezaExportsPending) dezaExportsPending = import('/deza-exports.js');
-            return dezaExportsPending;
+        function lazyModule(url) {
+            let pending = null;
+            return () => {
+                if (!pending) pending = import(url).catch((e) => { pending = null; throw e; });
+                return pending;
+            };
         }
-        const dezaExportsPut = (rec) => dezaExportsModule().then((m) => m.putDezaExport(rec));
-        const dezaExportsGet = (id) => dezaExportsModule().then((m) => m.getDezaExport(id));
-        const dezaExportsDelete = (id) => dezaExportsModule().then((m) => m.deleteDezaExport(id));
-        const dezaExportsAll = () => dezaExportsModule().then((m) => m.listDezaExports());
-        function dezaExportId(title, palette) {
-            return String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + ':' + palette;
+        const dezaShelf = lazyModule('/deza-shelf.js');
+        const eshopLibrary = lazyModule('/eshop-library.js');
+        const saturnSaves = lazyModule('/saturn-saves.js');
+
+        const dezaExportsPut = (rec) => dezaShelf().then((m) => m.putDezaShelfEntry(rec));
+        const dezaExportsGet = (id) => dezaShelf().then((m) => m.getDezaShelfEntry(id));
+        const dezaExportsDelete = (id) => dezaShelf().then((m) => m.removeDezaShelfEntry(id));
+        // Newest first, each row flagged so the shelf can split ESHOP GAMES
+        // from YOUR .SAV EXPORTS without re-deriving the rule.
+        async function dezaExportsAll() {
+            const m = await dezaShelf();
+            const rows = await m.listDezaShelf();
+            return (rows || []).map((r) => Object.assign(r, { eshop: m.isEshopShelfEntry(r) }));
+        }
+
+        // A Uint8Array as base64 in 32 KB slices: String.fromCharCode over a
+        // whole 1.1 MB cart blows the argument limit.
+        function bytesToBase64(u8) {
+            let s = '';
+            for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+            return btoa(s);
+        }
+
+        // The eShop cover: the title logo (or the title background) scaled to
+        // fit the 256x480 portrait the shelf's covers use, never enlarged,
+        // as a PNG data URL. Null when there is no art or it will not decode.
+        function eshopCoverDataUrl(dataUrl) {
+            if (!dataUrl) return Promise.resolve(null);
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    try {
+                        const w = img.naturalWidth, h = img.naturalHeight;
+                        if (!w || !h) { resolve(null); return; }
+                        const scale = Math.min(1, 256 / w, 480 / h);
+                        const c = document.createElement('canvas');
+                        c.width = Math.max(1, Math.round(w * scale));
+                        c.height = Math.max(1, Math.round(h * scale));
+                        const ctx = c.getContext('2d');
+                        ctx.drawImage(img, 0, 0, c.width, c.height);
+                        resolve(c.toDataURL('image/png'));
+                    } catch (e) { resolve(null); }
+                };
+                img.onerror = () => resolve(null);
+                img.src = dataUrl;
+            });
         }
 
         let dezaSavBusy = false;
@@ -5433,25 +5496,38 @@
             }
             if (dezaSavBusy) return;
             dezaSavBusy = true;
-            const buttons = ['deza-sav-download', 'deza-sav-shelf'].map((id) => document.getElementById(id));
+            const buttons = ['deza-sav-download', 'deza-sav-shelf', 'deza-sav-emu', 'deza-sav-mednafen'].map((id) => document.getElementById(id));
             buttons.forEach((b) => { if (b) b.disabled = true; });
+            let out = null, record = null;
             try {
                 dezaSavNote('BUILDING THE SAVE…');
-                const record = await buildLevelRecordForSav();
+                record = await buildLevelRecordForSav();
                 const art = collectAtlasArtForSav();
                 const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
-                const out = window.Dezaemon.exportLevelToSav(record, art, {
+                out = window.Dezaemon.exportLevelToSav(record, art, {
                     palette: dezaSavPalette,
                     gameMode: dezaSavGameMode(),
                     title1, title2,
                 });
+            } catch (e) {
+                console.error('.sav export failed:', e);
+                dezaSavNote('COULD NOT BUILD THE .SAV: ' + (e && e.message || e), '#f87171');
+                dezaSavBusy = false;
+                buttons.forEach((b) => { if (b) b.disabled = false; });
+                return;
+            }
+            // Built. What follows is the destination's own failure, worded as
+            // such — the .sav itself is fine and the other targets still work.
+            try {
                 const mb = (out.sav.length / 1048576).toFixed(2);
                 const rep = out.report || {};
                 const summary = (rep.stages ? rep.stages.length : 0) + ' STAGE' + (rep.stages && rep.stages.length === 1 ? '' : 'S') +
                     ' · ' + (rep.cells || 0) + '/1024 CG CELLS · ' + dezaSavPalette.toUpperCase() + ' PALETTE · ' + mb + ' MB';
+                const warn = out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : '';
                 if (action === 'shelf') {
-                    await dezaExportsPut({
-                        id: dezaExportId(record.name, dezaSavPalette),
+                    const shelf = await dezaShelf();
+                    await shelf.putDezaShelfEntry({
+                        id: shelf.dezaShelfIdForExport(record.name, dezaSavPalette),
                         title: record.name,
                         file: out.fileName,
                         palette: dezaSavPalette,
@@ -5460,11 +5536,15 @@
                         savedAt: Date.now(),
                         warnings: out.warnings,
                         report: rep,
+                        source: 'export',
                     });
                     dezaExportRows = null;
-                    dezaSavNote('"' + out.fileName + '" IS ON THE LOAD GAME SHELF UNDER YOUR .SAV EXPORTS, AND ON THE LAUNCHER\'S SAVED GAMES SHELF. ' + summary +
-                        (out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : ''), '#84cc16');
+                    dezaSavNote('"' + out.fileName + '" IS ON THE LOAD GAME SHELF UNDER YOUR .SAV EXPORTS. ' + summary + warn, '#84cc16');
                     flash('.SAV FILED ON THE SHELF');
+                } else if (action === 'emu') {
+                    await stageSavInSaturnEmu(out, record, summary + warn);
+                } else if (action === 'mednafen') {
+                    await installSavInMednafen(out, record, summary + warn);
                 } else {
                     const blob = new Blob([out.sav], { type: 'application/octet-stream' });
                     const a = document.createElement('a');
@@ -5472,32 +5552,211 @@
                     a.download = out.fileName;
                     document.body.appendChild(a); a.click(); a.remove();
                     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-                    dezaSavNote('DOWNLOADING "' + out.fileName + '". ' + summary +
-                        (out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : ''), '#84cc16');
+                    dezaSavNote('DOWNLOADING "' + out.fileName + '". ' + summary + warn, '#84cc16');
                     flash('.SAV EXPORTED ⬇');
                 }
                 if (out.warnings.length) console.warn('.sav export warnings:', out.warnings);
             } catch (e) {
-                console.error('.sav export failed:', e);
-                dezaSavNote('COULD NOT BUILD THE .SAV: ' + (e && e.message || e), '#f87171');
+                console.error('.sav export (' + action + ') failed:', e);
+                dezaSavNote(dezaSavTargetLabel(action) + ': ' + (e && e.message || e), '#f87171');
             } finally {
                 dezaSavBusy = false;
                 buttons.forEach((b) => { if (b) b.disabled = false; });
             }
         }
+        function dezaSavTargetLabel(action) {
+            return action === 'shelf' ? 'COULD NOT FILE IT ON THE SHELF'
+                : action === 'emu' ? 'COULD NOT STAGE IT IN THE SATURN CORE'
+                : action === 'mednafen' ? 'COULD NOT INSTALL IT FOR MEDNAFEN'
+                : 'COULD NOT DOWNLOAD IT';
+        }
 
-        // A shelf row's ✕: forget one export (this browser only).
+        // → SATURN EMU (USER SAVE). The browser core (yabause, on the
+        // launcher's Sega Saturn shelf) persists only the console's 32 KB
+        // internal backup memory — it has no cartridge slot — as an IDBFS
+        // file this page can reach. /saturn-saves.js reads that image (or
+        // formats a fresh one), places the game entry with the engine's
+        // partition writer and writes it back, so the next boot of Dezaemon
+        // 2 finds the game under 本体 memory. Most games are far bigger than
+        // the ~30 KB free there: the partition writer says so with numbers,
+        // and the note passes them on rather than a vague "too big".
+        async function stageSavInSaturnEmu(out, record, summary) {
+            dezaSavNote('STAGING IT IN THE SATURN CORE’S INTERNAL MEMORY…');
+            const mod = await saturnSaves();
+            const comment = typeof window.Dezaemon.savComment === 'function' ? window.Dezaemon.savComment(record.name) : undefined;
+            let res;
+            try {
+                res = await mod.stageDezaemonUserSave({ sav: out.sav, payload: out.payload, comment });
+            } catch (e) {
+                if (!e || e.name !== 'PartitionFullError') throw e;
+                const kb = (n) => Math.ceil((n || 0) / 1024);
+                // Not "this save is unusually large": the engine proves that
+                // the smallest possible Dezaemon 2 game (MIN_GAME_PAYLOAD_BYTES,
+                // eight sections at the LZSS floor) is three times the whole
+                // internal memory, so the note states the fact with the numbers.
+                const floor = window.Dezaemon.MIN_GAME_PAYLOAD_BYTES || 0;
+                dezaSavNote((floor ? 'A DEZAEMON 2 GAME IS ' + kb(floor) + ' KB AT THE VERY LEAST (THIS ONE: ' : 'SAVE IS ') +
+                    kb(e.payloadBytes || out.payload && out.payload.length) + ' KB' + (floor ? ')' : '') +
+                    ' — THE BROWSER SATURN CORE HAS ONLY THE ' + kb(e.capacityBytes || 32768) +
+                    ' KB INTERNAL MEMORY (NO BACKUP CART, ' + kb(e.freeBytes) + ' KB FREE). ' +
+                    'USE → MEDNAFEN CART OR DOWNLOAD .SAV FOR MISTER.', '#f87171');
+                flash('TOO BIG FOR THE SATURN CORE');
+                return;
+            }
+            dezaSavNote('STAGED AS ' + (res.filename || 'DEZA2____01') + ' IN THE SATURN CORE’S INTERNAL MEMORY' +
+                (res.replaced ? ' (REPLACED ' + res.replaced + ')' : '') +
+                ' — START DEZAEMON 2 FROM THE LAUNCHER’S SEGA SATURN SHELF AND LOAD IT FROM 本体 (INTERNAL) MEMORY. ' +
+                'CLOSE A RUNNING SATURN PLAYER FIRST. ' + summary, '#84cc16');
+            flash('STAGED IN THE SATURN CORE');
+        }
+
+        // → MEDNAFEN CART. The local Fresh server (never Deploy) installs the
+        // cart as Mednafen's <disc>.bcr / .bkr beside the Dezaemon 2 disc it
+        // found in dev-fixtures/ and launches the emulator — the desktop
+        // route for saves the browser core cannot hold.
+        async function installSavInMednafen(out, record, summary) {
+            dezaSavNote('INSTALLING THE CART FOR MEDNAFEN…');
+            const resp = await fetch('/api/saturn-save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sav: bytesToBase64(out.sav), name: record.name, launch: true }),
+            });
+            let body = null;
+            try { body = await resp.json(); } catch (e) { body = null; }
+            if (!resp.ok || !body || body.ok === false) {
+                throw new Error((body && (body.error || body.reason)) || ('HTTP ' + resp.status));
+            }
+            dezaSavNote('MEDNAFEN CART INSTALLED: ' + (body.bcr || '?') + (body.bkr ? ' + ' + body.bkr : '') +
+                (body.backup ? ' · PREVIOUS CART BACKED UP TO ' + body.backup : '') +
+                (body.launched ? ' · MEDNAFEN LAUNCHED' : ' · START MEDNAFEN WITH `deno task sav:run`') +
+                '. ' + summary, '#84cc16');
+            flash(body.launched ? 'MEDNAFEN LAUNCHED' : 'MEDNAFEN CART INSTALLED');
+        }
+
+        // The MEDNAFEN row only means something where a local server can see
+        // a Dezaemon 2 disc and a Mednafen binary, so it stays hidden until
+        // GET /api/saturn-save says so — asked once, the first time the
+        // drawer opens, and never on Deploy's { available: false }.
+        let saturnSaveProbe = null;
+        function probeSaturnSaveRoute() {
+            if (saturnSaveProbe) return saturnSaveProbe;
+            saturnSaveProbe = fetch('/api/saturn-save', { cache: 'no-store' })
+                .then((r) => r.ok ? r.json() : null)
+                .then((info) => {
+                    const row = document.getElementById('deza-sav-mednafen');
+                    if (row) row.classList.toggle('hidden', !(info && info.available));
+                    return info;
+                })
+                .catch(() => null);
+            return saturnSaveProbe;
+        }
+
+        // ================== PUBLISH TO ESHOP ==================
+        // The same cart the Saturn export builds, sent to the global game
+        // list (RTDB /eshop/*, via /eshop-library.js) under the cloud name,
+        // with the title art as its cover. The library files it on this
+        // browser's shelf as an installed eShop game too, which is why the
+        // shelf cache is dropped afterwards.
+        function eshopNote(msg, color) {
+            const el = document.getElementById('eshop-publish-note');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = color || '';
+        }
+        let eshopPublishBusy = false;
+        async function publishToEshop() {
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
+            if (typeof window.Dezaemon.exportLevelToSav !== 'function') {
+                alert('This engine bundle predates the .sav writer — run `deno task engine:bundle`.');
+                return;
+            }
+            if (eshopPublishBusy) return;
+            // The cloud name field names the game. An imported cart hides that
+            // field, so ask instead — pre-filled with the cart's own title.
+            let name = (document.getElementById('firebase-level-name').value || '').trim();
+            if (!name) {
+                name = prompt('GAME NAME FOR THE ESHOP:', dezaSavGameName());
+                name = name ? name.trim() : '';
+                if (!name) return;
+            }
+            name = sanitizeLevelName(name);
+            const imported = document.body.classList.contains('sav-loaded');
+            eshopPublishBusy = true;
+            const btn = document.getElementById('eshop-publish-btn');
+            if (btn) btn.disabled = true;
+            try {
+                eshopNote('BUILDING THE SAVE…');
+                const record = await buildLevelRecordForSav();
+                record.name = name;
+                const art = collectAtlasArtForSav();
+                const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
+                const out = window.Dezaemon.exportLevelToSav(record, art, {
+                    palette: dezaSavPalette,
+                    gameMode: dezaSavGameMode(),
+                    title1, title2,
+                });
+                eshopNote('RENDERING THE COVER…');
+                const cover = await eshopCoverDataUrl(logoDataURL || titleBgDataURL);
+                eshopNote('PUBLISHING "' + name + '"…');
+                const lib = await eshopLibrary();
+                const rep = out.report || {};
+                const stages = rep.stages ? rep.stages.length : 0;
+                const res = await lib.publishDezaGame({
+                    name,
+                    sav: out.sav,
+                    palette: dezaSavPalette,
+                    report: rep,
+                    cover,
+                    sub: 'Dezaemon 2 // ' + stages + ' stage' + (stages === 1 ? '' : 's') + ' · ' + dezaSavPalette + ' palette',
+                });
+                dezaExportRows = null;
+                eshopNote('PUBLISHED TO THE ESHOP AS ' + (res && res.id || name) + ' · ON YOUR SHELF' +
+                    (imported ? ' · THAT WAS AN IMPORTED CART — THE ESHOP IS FOR YOUR OWN GAMES, PLEASE PUBLISH THOSE' : '') +
+                    (out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : ''), '#84cc16');
+                flash('PUBLISHED TO THE ESHOP');
+                if (out.warnings.length) console.warn('.sav export warnings:', out.warnings);
+            } catch (e) {
+                console.error('eShop publish failed:', e);
+                eshopNote('COULD NOT PUBLISH: ' + (e && e.message || e), '#f87171');
+            } finally {
+                eshopPublishBusy = false;
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        // A shelf row's ✕: forget one export, or uninstall one eShop game
+        // (this browser only — the eShop listing itself is untouched).
         function dezaExportDeleteChip(item) {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'deza-fav';
             btn.textContent = '✕';
-            btn.title = 'REMOVE THIS EXPORT FROM THE SHELF';
+            btn.title = item.eshop ? 'UNINSTALL THIS ESHOP GAME FROM THE SHELF' : 'REMOVE THIS EXPORT FROM THE SHELF';
             btn.setAttribute('aria-label', btn.title);
             btn.onclick = async (ev) => {
                 ev.stopPropagation();
-                if (!confirm('Remove "' + item.file + '" from the shelf? (The download, if you made one, is unaffected.)')) return;
-                try { await dezaExportsDelete(item.exportId); } catch (e) { alert('Could not remove it: ' + (e.message || e)); return; }
+                const question = item.eshop
+                    ? 'Uninstall "' + item.title + '" from the shelf? (The eShop still has it — GET it again any time.)'
+                    : 'Remove "' + item.file + '" from the shelf? (The download, if you made one, is unaffected.)';
+                if (!confirm(question)) return;
+                try {
+                    if (item.eshop) {
+                        // The library's own uninstall also tells the launcher's
+                        // eShop screen, whose INSTALLED badge flips back to GET.
+                        // It is keyed by the catalog id; if the record is still
+                        // on the shelf afterwards (library missing or keyed the
+                        // other way), the store is cleared directly.
+                        const lib = await eshopLibrary().catch(() => null);
+                        if (lib && typeof lib.uninstallDezaGame === 'function') {
+                            try {
+                                await lib.uninstallDezaGame(item.eshopId || String(item.exportId).replace(/^eshop:/, ''));
+                            } catch (e) { console.warn('eShop uninstall did not go through the library:', e); }
+                        }
+                        if (await dezaExportsGet(item.exportId)) await dezaExportsDelete(item.exportId);
+                    } else {
+                        await dezaExportsDelete(item.exportId);
+                    }
+                } catch (e) { alert('Could not remove it: ' + (e.message || e)); return; }
                 dezaExportRows = (dezaExportRows || []).filter((r) => r.id !== item.exportId);
                 const panel = document.getElementById('deza-library-list').closest('.picker-panel');
                 const top = panel ? panel.scrollTop : 0;
@@ -5511,7 +5770,7 @@
             let rec = null;
             try { rec = await dezaExportsGet(item.exportId); } catch (e) { }
             if (!rec || !rec.bytes) {
-                flash('THAT EXPORT IS NO LONGER HERE');
+                flash(item.eshop ? 'THAT ESHOP GAME IS NO LONGER ON THE SHELF' : 'THAT EXPORT IS NO LONGER HERE');
                 dezaExportRows = null;
                 renderDezaemonLibrary();
                 return;
@@ -5972,9 +6231,34 @@
             }
             // Pick up pins toggled on the launcher's shelf since the last open.
             dezaFavs = loadDezaFavs();
-            // This browser's own .sav exports lead the shelf.
+            // This browser's installed eShop games and its own .sav exports
+            // lead the shelf.
             try { dezaExportRows = await dezaExportsAll(); } catch (e) { dezaExportRows = []; }
             renderDezaemonLibrary();
+            watchDezaShelf();
+        }
+
+        // Re-read the shelf when another surface writes it — the launcher's
+        // eShop installing or uninstalling a game, PUBLISH TO ESHOP here,
+        // another tab's export — while the shelf is open, scroll held. A
+        // closed shelf just drops its cache; the next open re-reads anyway.
+        let dezaShelfWatching = false;
+        async function watchDezaShelf() {
+            if (dezaShelfWatching) return;
+            dezaShelfWatching = true;
+            let m;
+            try { m = await dezaShelf(); } catch (e) { dezaShelfWatching = false; return; }
+            if (typeof m.onDezaShelfChanged !== 'function') return;
+            m.onDezaShelfChanged(async () => {
+                dezaExportRows = null;
+                const modal = document.getElementById('dezaemon-library-modal');
+                if (!modal || modal.classList.contains('hidden') || !dezaLibraryState) return;
+                try { dezaExportRows = await dezaExportsAll(); } catch (e) { dezaExportRows = []; }
+                const panel = document.getElementById('deza-library-list').closest('.picker-panel');
+                const top = panel ? panel.scrollTop : 0;
+                renderDezaemonLibrary();
+                if (panel) panel.scrollTop = top;
+            });
         }
 
         function renderDezaemonLibrary() {
@@ -5989,19 +6273,24 @@
             }
             list.innerHTML = '';
             count.textContent = st.saves.length ? st.saves.length + ' GAMES' : '';
-            const exportRows = (dezaExportRows || []).map((r) => ({
+            // Shelf records (deza-shelf.js) as rows: installed eShop games in
+            // one bucket, this browser's own builds in the other.
+            const shelfRows = (dezaExportRows || []).map((r) => ({
                 exportId: r.id, file: r.file, title: r.title, meta: null, slug: null, hasCover: false,
                 palette: r.palette, size: r.size, savedAt: r.savedAt,
+                eshop: !!r.eshop, eshopId: r.eshopId || null, cover: r.cover || null,
             }));
+            const eshopRows = shelfRows.filter((r) => r.eshop);
+            const exportRows = shelfRows.filter((r) => !r.eshop);
             if (!st.available || !st.saves.length) {
-                if (!exportRows.length) {
+                if (!shelfRows.length) {
                     const note = document.createElement('div');
                     note.className = 'menu-note';
                     note.textContent = 'NO SAVE COLLECTION REACHABLE — THE DATABASE COULD NOT BE READ, AND THIS BUILD HAS NO "Dez 2 - *.sav" FILES IN static/editor/dezaemon/saves/.';
                     list.appendChild(note);
                     return;
                 }
-                count.textContent = exportRows.length + ' OF YOURS';
+                count.textContent = shelfRows.length + ' ON YOUR SHELF';
             }
             const groups = new Map();
             const favRows = [];
@@ -6028,19 +6317,23 @@
             const sections = genres.map((g) => [g.toUpperCase(), groups.get(g)]);
             if (favRows.length) sections.unshift(['★ FAVORITES', favRows]);
             // The player's own builds (→ SAVE SHELF) come first: newest at
-            // the top, each with a ✕ instead of a star.
+            // the top, each with a ✕ instead of a star — and the eShop games
+            // installed in this browser lead even those, since they are what
+            // the launcher's shelf shows first too.
             if (exportRows.length) sections.unshift(['YOUR .SAV EXPORTS', exportRows]);
+            if (eshopRows.length) sections.unshift(['ESHOP GAMES', eshopRows]);
+            const LOCAL_SECTIONS = new Set(['ESHOP GAMES', 'YOUR .SAV EXPORTS']);
             for (const [label, unsorted] of sections) {
                 const head = document.createElement('div');
                 head.className = 'menu-label';
                 head.textContent = label;
                 list.appendChild(head);
-                const rows = label === 'YOUR .SAV EXPORTS' ? unsorted : unsorted.sort((a, b) =>
+                const rows = LOCAL_SECTIONS.has(label) ? unsorted : unsorted.sort((a, b) =>
                     (a.meta ? a.meta.title : a.title).localeCompare(b.meta ? b.meta.title : b.title));
                 for (const item of rows) {
                     const card = document.createElement('div');
                     card.className = 'deza-slot selectable';
-                    if (item.slug && item.hasCover) {
+                    if ((item.slug && item.hasCover) || item.cover) {
                         const thumb = document.createElement('img');
                         thumb.alt = '';
                         thumb.loading = 'lazy';
@@ -6048,7 +6341,10 @@
                         // do not jump as art arrives.
                         thumb.style.cssText = 'width:32px;height:60px;flex:0 0 auto;margin-right:10px;' +
                             'object-fit:cover;image-rendering:pixelated;background:#000;border:1px solid rgba(255,255,255,.15);';
-                        dezaAttachCover(thumb, item.slug);
+                        // A shelf record carries its cover inline; a database
+                        // row's is fetched as it scrolls into view.
+                        if (item.cover) thumb.src = item.cover;
+                        else dezaAttachCover(thumb, item.slug);
                         card.appendChild(thumb);
                     }
                     const body = document.createElement('div');
@@ -6068,9 +6364,9 @@
                     } else if (item.exportId) {
                         const dev = document.createElement('div');
                         dev.className = 'deza-slot-meta';
-                        dev.textContent = item.file + ' · ' + String(item.palette || 'saturn').toUpperCase() + ' PALETTE · ' +
+                        dev.textContent = item.file + (item.eshop ? ' · ESHOP' : '') + ' · ' + String(item.palette || 'saturn').toUpperCase() + ' PALETTE · ' +
                             (item.size ? (item.size / 1048576).toFixed(2) + ' MB' : '') +
-                            (item.savedAt ? ' · ' + new Date(item.savedAt).toLocaleString() : '');
+                            (item.savedAt ? ' · ' + (item.eshop ? 'INSTALLED ' : '') + new Date(item.savedAt).toLocaleString() : '');
                         body.appendChild(dev);
                     }
                     card.appendChild(body);
@@ -6500,12 +6796,21 @@
             if (!row) { flash('NO SUCH SAVED GAME: ' + slug); return; }
             loadDezaemonLibraryGame(row.file, row.title, row.meta, row.slug, { forcePlay: true });
         }
-        async function playDezaemonExport(id) {
+
+        // ?playExport=<shelfId> — the launcher's shelf hands over one of the
+        // rows only this browser has (its "⬇" bucket: installed eShop games,
+        // "eshop:<id>", and its own exports, "<slug>:<palette>") by the id of
+        // the record in the shared IndexedDB store. Same baseline wait and
+        // same player-mode path as ?play=.
+        async function playDezaemonShelfExport(id) {
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
             await editorBaselineReady;
             let rec = null;
-            try { rec = await dezaExportsGet(id); } catch (e) { }
-            if (!rec || !rec.bytes) { flash('THAT EXPORT IS NO LONGER ON THIS BROWSER\'S SHELF'); return; }
+            try { rec = await dezaExportsGet(id); } catch (err) {
+                flash('COULD NOT OPEN THE SHELF: ' + (err.message || err));
+                return;
+            }
+            if (!rec || !rec.bytes) { flash('THAT SHELF GAME IS NO LONGER HERE'); return; }
             loadDezaemonLibraryGame(rec.file, rec.title, null, null, { bytes: new Uint8Array(rec.bytes), forcePlay: true });
         }
 
@@ -6515,12 +6820,10 @@
             const params = new URLSearchParams(location.search);
             const sav = params.get('sav');
             if (sav) { loadDezaemonFromUrl(sav); return; }
-            const play = params.get('play');
-            if (play) { playDezaemonLibrarySlug(play); return; }
-            // The launcher's coverflow handing over one of this browser's own
-            // builds (static/deza-exports.js) rather than a collection slug.
             const playExport = params.get('playExport');
-            if (playExport) playDezaemonExport(playExport);
+            if (playExport) { playDezaemonShelfExport(playExport); return; }
+            const play = params.get('play');
+            if (play) playDezaemonLibrarySlug(play);
         });
 
         // Test hook for the e2e suite (and console debugging).

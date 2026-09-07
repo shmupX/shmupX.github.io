@@ -2913,31 +2913,38 @@
   // spans exactly 8 px a character the way the hardware's did.
   //
   // Each glyph gets its own cell rather than one string with letter spacing.
-  // Orbitron is proportional — advances run 1.7 to 9.4 px at this size — so a
-  // single spacing value would only put the AVERAGE character on the grid and
-  // let the rest drift off it. Per cell also keeps every Text at spacing 0,
-  // which matters: Phaser 4 abandons its whole-line stroke once spacing is set
-  // and instead strokes then fills glyph by glyph, painting each stroke over
-  // its neighbour's fill. The stroke is 1 px at most for the same reason — 2 px
-  // on an 8 px face drives a pixel of black inside stems that are themselves
-  // about a pixel wide, and the counters fill in. On black it is 0.
+  // The face is athenaFont: Dezaemon 2's own 8x8 game font (GFONT.BIN, font 0
+  // — the one the kernel's HUD, PAUSE! and ESCAPE prompts are set in), lifted
+  // off the disc into spriteX's catalog and traced to TrueType with one em =
+  // one 8 px cell. At 8 px every glyph pixel is one canvas pixel and every
+  // glyph advances exactly one cell, so the text sits on the grid pixel-exact
+  // (its Arial fallback, and Orbitron before it, are proportional and would
+  // drift). fontStyle stays normal: a synthesised bold smears a pixel face.
+  // The hardware bakes a 1 px drop shadow into the tiles; the shadow style
+  // reproduces it, and the outline stroke defaults to 0 because a halo around
+  // 1 px stems fills the counters in. Per cell also keeps every Text at
+  // spacing 0, which matters: Phaser 4 abandons its whole-line stroke once
+  // spacing is set and instead strokes then fills glyph by glyph, painting
+  // each stroke over its neighbour's fill.
   var DEZA_CELL = 8;
   function dezaCellText(scene, x, y, str, opts) {
     var o = opts || {};
-    var stroke = typeof o.stroke === "number" ? o.stroke : 1;
+    var stroke = typeof o.stroke === "number" ? o.stroke : 0;
     var style = {
-      fontFamily: "Orbitron, Arial",
+      fontFamily: "athenaFont, Arial",
       fontSize: "8px",
-      fontStyle: "bold",
+      fontStyle: "normal",
       color: o.color || "#ffffff",
       stroke: "#000000",
       strokeThickness: stroke,
+      shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true },
       resolution: 1
     };
     // The glyph body is held to its cell; the stroke's halo may bleed, as it
-    // does for every character anyway. Only W is wider than a cell at this
-    // size (9.4 px against M's 7.4), and it is condensed rather than allowed
-    // to collide with the character beside it.
+    // does for every character anyway. athenaFont's glyphs all fit (a cell is
+    // exactly one em), so this only bites on the Arial fallback before the
+    // font lands, where W is wider than a cell and is condensed rather than
+    // allowed to collide with the character beside it.
     var limit = DEZA_CELL + stroke;
     var fit = function(cell) {
       cell.setScale(cell.width > limit ? limit / cell.width : 1, 1);
@@ -2964,7 +2971,7 @@
       for (i = s.length; i < this.cells.length; i++) this.cells[i].setVisible(false);
       return this;
     };
-    // Canvas text does not count as CSS usage of a font, so Orbitron can still
+    // Canvas text does not count as CSS usage of a font, so athenaFont can still
     // be loading when the title scene builds its prompt — without this the
     // line stays in the Arial fallback for the life of the scene. The staff
     // roll's card does the same at its own children; this one has to check the
@@ -3068,8 +3075,11 @@
         this.addLinkButton("staffrollTwitterBtn.gif", 178, 304, "https://twitter.com/rereibara");
         this.addLinkButton("staffrollLinkBtn.gif", 153, 329, "https://magazine.jp.square-enix.com/biggangan/introduction/highscoregirl/");
         this.addLinkButton("staffrollLinkBtn.gif", 161, 355, "http://hi-score-girl.com/");
-        var thanksLabelStyle = { fontSize: "8px", fontFamily: "Orbitron, Arial", fill: "#ffff00", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 1 };
-        var thanksNameStyle = { fontSize: "7px", fontFamily: "Orbitron, Arial", fill: "#ffffff", align: "center", stroke: "#000000", strokeThickness: 2, resolution: 1 };
+        // athenaFont is pixel-exact at 8 px (one em = one 8 px cell), so both
+        // labels sit at that size with the game's 1 px drop shadow instead of an
+        // outline, which would fill a pixel face's counters in.
+        var thanksLabelStyle = { fontSize: "8px", fontFamily: "athenaFont, Arial", fill: "#ffff00", align: "center", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1 };
+        var thanksNameStyle = { fontSize: "8px", fontFamily: "athenaFont, Arial", fill: "#ffffff", align: "center", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1 };
         this.thanksLabel = scene.add.text(this.GCX, 393, "SPECIAL THANKS", thanksLabelStyle);
         this.thanksLabel.setOrigin(0.5, 0);
         this.add(this.thanksLabel);
@@ -3113,31 +3123,34 @@
         y += t.height + 6;
         return t;
       };
-      // Orbitron carries no Japanese glyphs — the JP families take over
+      // athenaFont carries no Japanese glyphs — the JP families take over
       // per-glyph for kana/kanji. No stroke: the dark card supplies the
-      // contrast, and a 2px stroke fills small kanji in solid. resolution
-      // stays 1: the 256px framebuffer draws these 1:1, and a higher-res
-      // raster only gets minified back down (pixelArt NEAREST), which
-      // shreds kanji strokes — native-ppem hinting beats supersampling.
-      var base = { fontFamily: 'Orbitron, "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", Meiryo, sans-serif', align: "center", resolution: 1, wordWrap: { width: this.GW - 44 } };
-      addLine(credits.title, { ...base, fontSize: "14px", fontStyle: "bold", fill: "#ffd700" });
+      // contrast, and a 2px stroke fills small kanji in solid; the game's
+      // 1 px drop shadow is enough. resolution stays 1: the 256px
+      // framebuffer draws these 1:1, and a higher-res raster only gets
+      // minified back down (pixelArt NEAREST), which shreds kanji strokes —
+      // native-ppem hinting beats supersampling. Latin lines sit at 8 px or
+      // 16 px so the pixel face stays pixel-exact, and never bold (a
+      // synthesised bold smears it); the JP lines keep their own sizes.
+      var base = { fontFamily: 'athenaFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", Meiryo, sans-serif', align: "center", resolution: 1, shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, wordWrap: { width: this.GW - 44 } };
+      addLine(credits.title, { ...base, fontSize: "16px", fill: "#ffd700" });
       if (credits.titleJa && credits.titleJa !== credits.title) {
         addLine(credits.titleJa, { ...base, fontSize: "12px", fill: "#ffffff" });
       }
       if (hasStaff) y = this._addDezaStaff(entries, y + gap);
       if (credits.developer) {
         y += gap;
-        addLine("DEVELOPER", { ...base, fontSize: "9px", fontStyle: "bold", fill: "#ffff00" });
-        addLine(credits.developer, { ...base, fontSize: "12px", fill: "#ffffff" });
+        addLine("DEVELOPER", { ...base, fontSize: "8px", fill: "#ffff00" });
+        addLine(credits.developer, { ...base, fontSize: "8px", fill: "#ffffff" });
         if (credits.developerJa && credits.developerJa !== credits.developer) {
           addLine(credits.developerJa, { ...base, fontSize: "11px", fill: "#cccccc" });
         }
       }
       if (credits.genre || credits.genreJa) {
         y += gap;
-        addLine("GENRE", { ...base, fontSize: "9px", fontStyle: "bold", fill: "#ffff00" });
+        addLine("GENRE", { ...base, fontSize: "8px", fill: "#ffff00" });
         if (credits.genre) {
-          addLine(credits.genre.toUpperCase(), { ...base, fontSize: "10px", fill: "#9be37f" });
+          addLine(credits.genre.toUpperCase(), { ...base, fontSize: "8px", fill: "#9be37f" });
         }
         if (credits.genreJa && credits.genreJa !== credits.genre) {
           addLine(credits.genreJa, { ...base, fontSize: "11px", fill: "#9be37f" });
@@ -3155,7 +3168,7 @@
     _addDezaStaff(entries, y) {
       var scene = this.scene;
       var atlas = scene.textures.get("game_asset");
-      var labelStyle = { fontFamily: "Orbitron, Arial", fontSize: "8px", fontStyle: "bold", fill: "#ffff00", align: "left", stroke: "#000000", strokeThickness: 2, resolution: 1, wordWrap: { width: 78 } };
+      var labelStyle = { fontFamily: "athenaFont, Arial", fontSize: "8px", fontStyle: "normal", fill: "#ffff00", align: "left", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1, wordWrap: { width: 78 } };
       var ROW = 20;
       var left = 22;
       var stripX = this.GW - 22 - 64 * 2 - 4;
@@ -3584,9 +3597,9 @@
     row.style.cssText = "display:flex;align-items:center;gap:10px;margin:14px 0;font-size:11px;letter-spacing:.15em;";
     var lbl = document.createElement("span");
     lbl.textContent = label;
-    lbl.style.cssText = "width:38px;text-align:left;";
+    lbl.style.cssText = "width:56px;text-align:left;";
     var val = document.createElement("span");
-    val.style.cssText = "width:44px;text-align:right;font-family:monospace;";
+    val.style.cssText = "width:72px;text-align:right;font-family:inherit;";
     var input = document.createElement("input");
     input.type = "range";
     input.min = "0";
@@ -3609,19 +3622,19 @@
     if (cmgPanelEl) return;
     var wrap = document.createElement("div");
     wrap.id = "cmg-pause-panel";
-    wrap.style.cssText = "position:fixed;inset:0;z-index:10000;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'Orbitron',system-ui,sans-serif;color:#fff;";
+    wrap.style.cssText = "position:fixed;inset:0;z-index:10000;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'athenaFont',system-ui,sans-serif;font-size:16px;text-shadow:2px 2px 0 #000;color:#fff;";
     // The same gray card as the STAFF ROLL panel (0x464646, rounded corners).
     var card = document.createElement("div");
     card.style.cssText = "background:rgba(70,70,70,.9);border-radius:8px;padding:20px 24px 22px;width:min(320px,84vw);text-align:center;box-shadow:0 10px 44px rgba(0,0,0,.65);";
     var title = document.createElement("div");
     title.textContent = "PAUSE";
-    title.style.cssText = "font-size:16px;font-weight:700;letter-spacing:.34em;text-indent:.34em;margin-bottom:10px;";
+    title.style.cssText = "font-size:16px;font-weight:400;letter-spacing:.34em;text-indent:.34em;margin-bottom:10px;";
     card.appendChild(title);
     card.appendChild(cmgSliderRow("BGM", "bgm"));
     card.appendChild(cmgSliderRow("SFX", "sfx"));
     var btn = document.createElement("button");
     btn.textContent = "RESUME";
-    btn.style.cssText = "margin-top:14px;padding:9px 26px;border-radius:6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;font-family:inherit;font-size:11px;letter-spacing:.24em;text-indent:.24em;cursor:pointer;";
+    btn.style.cssText = "margin-top:14px;padding:9px 26px;border-radius:6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;font-family:inherit;font-size:16px;letter-spacing:.24em;text-indent:.24em;cursor:pointer;";
     btn.addEventListener("click", function () {
       cmgTogglePausePanel();
     });

@@ -2,7 +2,8 @@
   "origin": "https://cmg.easierbycode.deno.net",
   "shared": [
     "/emulator-controls.js",
-    "/shaders/"
+    "/shaders/",
+    "/bios/"
   ],
   "cores": [
     {

@@ -77,6 +77,8 @@ Deno.test("the site's own pages are outside MIRRORABLE", async () => {
       "/dashboard.bundle.js",
       "/icons/2028-icon.png",
       "/phaser-plugins/level-loader.js",
+      "/api/eshop/zip?repo=easierbycode/shmup-party-phaser4&branch=main",
+      "/api/dezaemon-disc?zip=1",
     ]
   ) {
     assertEquals(
@@ -85,4 +87,49 @@ Deno.test("the site's own pages are outside MIRRORABLE", async () => {
       `${pathname} must not be claimed by MIRRORABLE`,
     );
   }
+});
+
+// The eShop's installed web games are served by the same worker, from their
+// own cache (C3 of the redesign: "/eshop/<id>/<relpath>" keys in
+// "shmupx-eshop-v1"). That is a separate branch of the fetch handler, not a
+// MIRRORABLE prefix: MIRRORABLE gates the emulator mirror, which fetches
+// misses from the cmg origin, and an eShop path must never be sent there.
+// So the invariant has two halves — the prefix is outside MIRRORABLE, and the
+// worker still handles it, ahead of the MIRRORABLE check.
+Deno.test("/eshop/ is outside MIRRORABLE but handled by the eshop branch", async () => {
+  const worker = await read("emu-sw.js");
+  const mirrorable = mirrorableList(worker);
+
+  const eshopPath = "/eshop/shmup-party-phaser4/index.html";
+  assertEquals(
+    matchPrefix(mirrorable, eshopPath),
+    false,
+    "an installed eShop game must not be mirrored from the cmg origin",
+  );
+
+  // The names the library side (static/eshop-library.js) shares with the
+  // worker: the cache it fills and the URL space the worker answers from it.
+  assertEquals(
+    /const ESHOP_CACHE = "shmupx-eshop-v1";/.test(worker),
+    true,
+    "emu-sw.js must read the eShop cache eshop-library.js writes",
+  );
+  assertEquals(
+    /const ESHOP_PREFIX = "\/eshop\/";/.test(worker),
+    true,
+    "emu-sw.js must answer the /eshop/ prefix",
+  );
+
+  // Inside the fetch handler, the eShop branch has to come before the
+  // MIRRORABLE check — that check returns without respondWith(), which would
+  // hand every /eshop/ request to the browser (a 404 on this origin).
+  const fetchHandler = worker.slice(worker.indexOf('addEventListener("fetch"'));
+  const eshopAt = fetchHandler.indexOf("startsWith(ESHOP_PREFIX)");
+  const mirrorableAt = fetchHandler.indexOf("matchPrefix(MIRRORABLE");
+  assertEquals(eshopAt > 0, true, "the fetch handler must test ESHOP_PREFIX");
+  assertEquals(
+    eshopAt < mirrorableAt,
+    true,
+    "the eshop branch must run before the MIRRORABLE check",
+  );
 });

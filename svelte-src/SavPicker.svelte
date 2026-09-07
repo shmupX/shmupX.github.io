@@ -9,6 +9,9 @@
   //   YouTube id the Dashboard joins on from games-db.json. `covers` maps
   //   slug -> data URL (256x480 PNG), null for a failed fetch, undefined while
   //   not fetched; anything falsy renders the cartridge placeholder.
+  //   A row from this browser's own shelf (an eShop install, an editor export)
+  //   additionally carries { local: true, shelfId, cover?, eshop } — its art
+  //   travels on the row itself, and it cannot be pinned (it already leads).
   let {
     open = false,
     items = [],
@@ -400,13 +403,18 @@
                   title="{v.item.title} — gameplay"
                   allow="autoplay; encrypted-media; picture-in-picture"
                 ></iframe>
-              {:else if v.item.slug && covers[v.item.slug]}
+              {:else if v.item.local && v.item.cover}
+                <img class="cf-art" src={v.item.cover} alt={v.item.title} draggable="false" />
+              {:else if !v.item.local && v.item.slug && covers[v.item.slug]}
                 <img class="cf-art" src={covers[v.item.slug]} alt={v.item.title} draggable="false" />
               {:else}
-                <div class="cf-ph">
+                <div class="cf-ph {v.item.local ? 'local' : ''}">
                   <span class="cf-ph-mark">DEZAEMON 2</span>
                   <span class="cf-ph-title">{v.item.title}</span>
-                  <span class="cf-ph-foot">.SAV</span>
+                  <!-- A local row says where it came from in place of the
+                       extension — that is what tells it from the database
+                       shelf behind it. -->
+                  <span class="cf-ph-foot">{v.item.local ? (v.item.eshop ? 'ESHOP' : 'YOUR EXPORT') : '.SAV'}</span>
                 </div>
               {/if}
               {#if v.item.video && previewId !== favId(v.item)}
@@ -415,7 +423,7 @@
               <!-- The centred card wears the live ★ toggle; the rest only mark
                    membership. pointerdown stops here so pressing the star never
                    starts a stage drag or arms the hold-preview underneath. -->
-              {#if v.off === 0}
+              {#if v.off === 0 && !v.item.local}
                 <button
                   type="button"
                   class="cf-fav {curFav ? 'on' : ''}"
@@ -619,6 +627,14 @@
       linear-gradient(180deg, #101c10, #060b06 78%);
   }
   .cf-ph-mark, .cf-ph-foot { font-family: 'Share Tech Mono', monospace; font-size: clamp(7px, 1.3vmin, 10px); letter-spacing: .3em; opacity: .5; }
+  /* A local row's placeholder leans yellow, the launcher's "yours" colour, so
+     the ⬇ bucket reads as a different shelf even before its footer is legible. */
+  .cf-ph.local {
+    background:
+      linear-gradient(160deg, color-mix(in srgb, var(--yellow, #F6FF4A) 18%, transparent), transparent 42%),
+      linear-gradient(180deg, #1a1a08, #0b0b04 78%);
+  }
+  .cf-ph.local .cf-ph-foot { opacity: .85; color: var(--yellow, #F6FF4A); }
   .cf-ph-title {
     font-weight: 700; font-size: clamp(10px, 2vmin, 15px); line-height: 1.35;
     letter-spacing: .08em; overflow-wrap: anywhere;

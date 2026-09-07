@@ -1,5 +1,7 @@
 # shmupX — codemonkey.games
 
+![A shmupX level playing in Dezaemon 2 on the Saturn](static/preview.gif)
+
 The final CMG launcher, rebuilt as **shmupX**: a Deno Fresh 2 + Vite app for
 [Deno Deploy](https://deploy.deno.com) with a single built-in game — the shmupX
 level editor, a standalone version of the cmg level editor.
@@ -29,6 +31,9 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
 - `data/games.json` → `deno task games:manifest` → `static/games.manifest.json`
   — the OTA manifest the dashboard fetches (push to main = every client sees the
   new list, no rebuild).
+- `data/eshop.json` — the **eShop** catalog, the global game list (see **The
+  eShop** below). Baked into the same manifest as its `eshop` array; a game is
+  added by pull request, and `deno task eshop:check` validates the entries.
 - `static/editor/` — the shmupX level editor (single-file app). Its wave grid
   has a **VERT / HORIZ** switch on the stage rail: the same waves laid out top
   to bottom, or left to right the way a Dezaemon horizontal cart scrolls
@@ -86,6 +91,23 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
   - `LEVEL_DATA_URL` fetches `foo.json` same-origin instead of from cmg's deploy
     origin. `tools/build-level/lib/stage.js` matches that exact string when it
     stages an offline export, so the two must change together.
+  - Every font stack that read `Orbitron` — the Dezaemon title prompt
+    (`dezaCellText`), the STAFF ROLL card's thanks and credit labels, and the
+    standalone PAUSE panel — reads `athenaFont`: Dezaemon 2's own 8×8 game font,
+    the one its kernel sets SCORE, PAUSE! and ESCAPE in. It is font 0 of the
+    disc's `GFONT.BIN` (8bpp 8×8 cells from `0x800`, ASCII order; each body
+    pixel carries its row index for the palette gradient and `0x0A` is a baked 1
+    px drop shadow), lifted with `deno task deza:disc get` into spriteX's
+    catalog as `atlases/athenaFont` (body pixels only, TEXT_SET1 order) and
+    traced to TrueType by spriteX's `scripts/export-font.mjs` — one em per 8 px
+    cell, so at the prompt's 8 px every glyph pixel is one canvas pixel and
+    every glyph advances one grid cell. The runtime redraws the shadow with
+    Phaser's text shadow (offset 1,1) rather than an outline stroke, which would
+    fill a pixel face's counters in, and keeps fontStyle normal so no bold is
+    synthesised. Shipped as `assets/fonts/athenaFont.ttf` beside its glyph
+    sheet; `routes/games/2028-ai.tsx` and
+    `tools/build-level/lib/shell-template.js` declare and preload it. The
+    Orbitron files stay for the launcher and editor chrome, which still use it.
   - `tryNavigatorVibrate` returns early when
     `navigator.userActivation.hasBeenActive` is false. Chrome blocks
     `navigator.vibrate()` before the frame has been tapped and logs an
@@ -135,6 +157,8 @@ deno task build:ps2       # a level as a PlayStation 2 USB folder
 deno task build:ps2:zip   # …as one .zip of that folder
 deno task build:ps2:iso   # …plus a bootable disc image
 deno task build:sav       # a level as a Dezaemon 2 cart save (.sav) for MiSTer / hardware
+deno task sav:run         # …then launch it in Mednafen, cart preloaded (Windows / Linux / WSL→Windows)
+deno task eshop:check     # validate data/eshop.json against the built manifest
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
@@ -206,6 +230,26 @@ deno task build:sav ./backups/mygame.json    # a level record on disk
 deno task build:sav foo --palette snes --snes-pal build/sav/foo.pal --report
 ```
 
+**Run it in an emulator.** `deno task sav:run [level]` builds the `.sav`,
+installs it as Mednafen's cartridge save (converting to the `<disc>.bcr/.bkr`
+pair, backing up any existing cart) and launches Mednafen on the disc — the
+in-repo, cross-platform stand-in for the ad-hoc launcher scripts, driven by
+[`scripts/run-mednafen.ts`](scripts/run-mednafen.ts). It runs the host's own
+Mednafen (native Windows launches `mednafen.exe`, Linux/macOS `mednafen`); from
+WSL, point `MEDNAFEN_BIN` at a `mednafen.exe` and it launches the Windows build
+over interop — the only one that sees a USB/Bluetooth pad. The emulator, the
+disc image and the BIOS are the user's own (the disc and BIOS are community
+content, never in the repo), so their paths come from flags or env vars
+(`MEDNAFEN_BIN`, `DEZAEMON_DISC`, `MEDNAFEN_SAV`); the task prints what it
+resolved and fails with a clear message when one is missing.
+
+```sh
+deno task sav:run                       # build foo, seed the cart, launch Mednafen
+deno task sav:run "Master Arena Mod"    # that cloud level
+deno task sav:run --install-only        # seed the cart save, do not launch
+DEZAEMON_DISC=/path/to/Dez2.cue deno task sav:run   # point it at your disc
+```
+
 **Palette.** A level's atlas is 24-bit; the cart holds 15-bit colours from a 16
 × 16 bank, so the art is reduced on the way out, under one of two targets
 (`src/palette/palette-target.js`):
@@ -247,13 +291,13 @@ shelf lists them first under **YOUR .SAV EXPORTS** with a ✕ to forget one —
 loading a row runs the normal import, so a save can be exported, reloaded and
 re-edited without leaving the page. Both work on an imported cart as well as an
 authored level, which is how a community game can be edited and written back
-out. The store is [`static/deza-exports.js`](static/deza-exports.js), shared
-with the launcher: its SAVED GAMES coverflow shelves the same builds ahead of
-the collection under a ✎ stop on the rail, captioned YOUR .SAV EXPORT, finds
-them by search, and re-reads the shelf on every open and whenever the editor (an
-iframe of the launcher) files one. PLAY on such a cover hands the editor
-`?playExport=<id>` and the cart comes straight out of the store — nothing of it
-is ever uploaded.
+out. The store is [`static/deza-shelf.js`](static/deza-shelf.js), shared with
+the launcher: its SAVED GAMES coverflow shelves the same builds ahead of the
+collection under the ⬇ stop on the rail, finds them by search, re-reads the
+shelf whenever the editor (an iframe of the launcher) files one, and PLAY on
+such a cover hands the editor `?playExport=<id>` so the cart comes straight out
+of the store — see **The eShop** below, which installs published Dezaemon games
+onto the same shelf.
 
 ## Pixel Editor and Tilemap Editor
 
@@ -933,6 +977,46 @@ outside every core prefix, so the dashboard adds them to the prefix set it hands
 the worker. And PS2's web builds live under `/games/<slug>/`, which is listed
 per slug rather than as a bare `/games/` — that prefix would shadow shmupX's own
 `/games/2028-ai` with cmg's copy.
+
+## The eShop
+
+The launcher has two game lists. **Games** is this player's: shmupX, then the
+eShop games installed here, then an ESHOP row. **eShop** is the global one —
+every game anyone can get — and it is read from two places by
+[`static/eshop-library.js`](static/eshop-library.js):
+
+- [`data/eshop.json`](data/eshop.json), served through `games.manifest.json`. A
+  pull request adds a game: a `web` entry names a zip of a finished browser
+  build (a GitHub `repo` + `branch`, optionally a `downloadUrl`; the first entry
+  is `easierbycode/shmup-party-phaser4`, installed at its latest commit), a
+  `deza` entry names a Dezaemon 2 `.sav`. `deno task eshop:check` is the gate
+  ([`.github/workflows/eshop.yml`](.github/workflows/eshop.yml) runs it).
+- The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU → PUBLISH
+  TO ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`, cover under
+  `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last). A
+  static entry wins over a published one of the same id.
+
+What "install" means depends on the kind. A **web** game is unzipped into Cache
+Storage (`shmupx-eshop-v1`, keys `/eshop/<id>/…`) and served from there by the
+same service worker as the emulators, so it runs same-origin — which is what
+lets the launcher's mapped gamepad input reach it — and offline. A GitHub entry
+with no `downloadUrl` streams its zipball through `/api/eshop/zip`; a
+`raw.githubusercontent.com` URL is pinned to the branch's newest commit so the
+install is never a stale CDN copy. A **Dezaemon** game goes onto the shelf
+([`static/deza-shelf.js`](static/deza-shelf.js), the same IndexedDB the editor's
+→ SAVE SHELF writes), where the coverflow's leading ⬇ bucket and the editor's
+LOAD GAME drawer list it; playing it hands the editor `?playExport=<shelf id>`.
+
+**Sega Saturn, automatically.** With a Dezaemon 2 disc image in `dev-fixtures/`
+the local server's `/api/dezaemon-disc` says so, the launcher installs the
+Saturn core by itself (until you uninstall it) and the console's shelf leads
+with the disc, posted into the browser player as a file. That core keeps only
+the console's 32 KB internal memory — no backup cartridge — so the editor's →
+SATURN EMU (USER SAVE) row can only ever stage what fits there, and a Dezaemon 2
+game never does (the smallest possible one is ~89 KB); the row says so with the
+numbers. → MEDNAFEN CART (`POST /api/saturn-save`, the same code as
+`deno task sav:run`) installs the cart for the desktop emulator, which has the
+512 KB cartridge, and launches it.
 
 ## Deploy
 

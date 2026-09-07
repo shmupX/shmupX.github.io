@@ -184,6 +184,20 @@ export {
   MISTER_SAV_SIZE,
   writeSaveEntry,
 } from "./src/bup-write.js";
+// Placing a save into a partition that already holds saves — the browser
+// Saturn core's 32 KB internal memory, which has no cartridge (src/bup-place.js).
+export {
+  gamePayloadFromSav,
+  INTERNAL_RAM_PAYLOAD_CAPACITY,
+  INTERNAL_SRM_SIZE,
+  internalRamFromImage,
+  MIN_GAME_PAYLOAD_BYTES,
+  MISTER_LOGICAL_SIZE,
+  PartitionFullError,
+  payloadCapacity,
+  placeSaveInPartition,
+  stageSaveInInternalRam,
+} from "./src/bup-place.js";
 export {
   ALPHA_CUTOFF,
   bankToPalettes,

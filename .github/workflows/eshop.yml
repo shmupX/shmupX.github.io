@@ -1,0 +1,37 @@
+# The eShop catalog gate.
+#
+# Games join the eShop by pull request against data/eshop.json (data/games.json
+# is the launcher's own list, checked the same way). A row the installer cannot
+# act on ships as a tile that never installs, so every PR that touches data/ has
+# to (1) still build the manifest — scripts/build-games-manifest.ts validates
+# each entry and exits non-zero on a bad one — and (2) pass the catalog test,
+# which enforces the same rules and that static/games.manifest.json carries the
+# array. The worker test rides along because /eshop/ is served by
+# static/emu-sw.js and its prefix set is checked, not trusted.
+name: eshop
+
+on:
+  pull_request:
+    paths:
+      - "data/**"
+      - "scripts/build-games-manifest.ts"
+      - "static/games.manifest.json"
+      - "static/emu-sw.js"
+      - "static/emulators.json"
+      - "tests/eshop_catalog_test.ts"
+      - "tests/emu_sw_universe_test.ts"
+      - ".github/workflows/eshop.yml"
+  workflow_dispatch:
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Build the manifest from data/
+        run: deno task games:manifest
+      - name: Check the catalog and the worker's prefix set
+        run: deno test -A tests/eshop_catalog_test.ts tests/emu_sw_universe_test.ts
