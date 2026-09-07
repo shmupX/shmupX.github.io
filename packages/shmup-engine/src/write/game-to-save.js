@@ -18,7 +18,9 @@
 //   sec4    the palette bank that target produced
 //   sec5    per stage: placement grid (20 x 768 bytes), the 60 enemy records
 //           + boss trailer, the sprite composition bank, the scroll curve
-//           and the background tilemap; the global bank (ship, item icons,
+//           and the background tilemap; the global bank (ship, the player's
+//           weapon art — refs 48-93, every shot/beam/pod/bomb the engine
+//           draws for the player, invisible when left empty — item icons,
 //           blast anims, bullet anims, title logos); the settings block
 //   sec6    24 song slots — the level's own Dezaemon soundtrack when it has
 //           one, else the engine's empty-song template
@@ -58,6 +60,7 @@ import {
     BOSS_CORE_OFFSET,
     coreCellOrder,
     EMPTY_REF,
+    GLOBAL_WEAPON_SLOTS,
     RECORD_ART,
     TITLE_SLOTS,
 } from "../decode/decode-sprites.js";
@@ -114,10 +117,27 @@ export const DEFAULT_SHIP_BLOCK = [0x10, 0x41, 0x21, 0x04];
 export const DEFAULT_TITLE_ENTRANCE = [0x05, 0x00, 0x0a, 0x00];
 export const DEFAULT_STAFF_ROLES = [12, 0, 0]; // PRESENTED BY
 
+// Enemy bullets are drawn from char slots 55/59/63 (by bullet type 0/1/2), traced in
+// GAME.CMP: the shot spawn's setup 0x0607C520 stores that char group into the object
+// sprite-index array 0x0608EA90, the renderer resolves it through 0x0608B1FC, and the
+// global-art upload 0x06067EEC fills VRAM from these global-bank refs. Per type the four
+// animation frames and their cell geometry (w,h in 16px cells): type 0 is four 16x16 at
+// refs 104-107, type 1 four 32x32 at 108/112/116/120, type 2 two 32x32 then two 16x16.
+// This is where a visible enemy bullet's art MUST live; refs 132-143 (what the decoder
+// labels "bullets") are not what the engine draws for shots.
+export const BULLET_ENGINE_SLOTS = [
+    [{ ref: 104, w: 1, h: 1 }, { ref: 105, w: 1, h: 1 }, { ref: 106, w: 1, h: 1 }, { ref: 107, w: 1, h: 1 }],
+    [{ ref: 108, w: 2, h: 2 }, { ref: 112, w: 2, h: 2 }, { ref: 116, w: 2, h: 2 }, { ref: 120, w: 2, h: 2 }],
+    [{ ref: 124, w: 2, h: 2 }, { ref: 128, w: 2, h: 2 }, { ref: 132, w: 1, h: 1 }, { ref: 136, w: 1, h: 1 }],
+];
+
 const GLOBAL_SLOTS = {
     shipBankA: 0,
     shipIdle: 8,
     shipBankB: 16,
+    ship2BankA: 24,
+    ship2Idle: 32,
+    ship2BankB: 40,
     items: 94,
     blastA: 102,
     blastB: 108,
@@ -486,6 +506,163 @@ export function itemIcon(type) {
     return fr;
 }
 
+/** `frame` turned a quarter turn anticlockwise: its right edge becomes the top. */
+export function rotateCcwRgba(frame) {
+    const w = frame.h, h = frame.w;
+    const out = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            // destination (x, y) <- source (sx, sy) = (h - 1 - y, x)
+            const s = (x * frame.w + (h - 1 - y)) * 4;
+            const d = (y * w + x) * 4;
+            out[d] = frame.rgba[s];
+            out[d + 1] = frame.rgba[s + 1];
+            out[d + 2] = frame.rgba[s + 2];
+            out[d + 3] = frame.rgba[s + 3];
+        }
+    }
+    return { w, h, rgba: out };
+}
+
+/**
+ * Fit `frame` into a boxW x boxH box (fitRgba) and paste that box into a
+ * slotW x slotH frame at (ox, oy) — art placed inside a bigger bank slot.
+ */
+export function placeRgba(frame, boxW, boxH, slotW, slotH, ox, oy) {
+    const fitted = fitRgba(frame, boxW, boxH);
+    const out = new Uint8Array(slotW * slotH * 4);
+    for (let y = 0; y < boxH; y++) {
+        const ty = oy + y;
+        if (ty < 0 || ty >= slotH) continue;
+        for (let x = 0; x < boxW; x++) {
+            const tx = ox + x;
+            if (tx < 0 || tx >= slotW) continue;
+            const s = (y * boxW + x) * 4;
+            const d = (ty * slotW + tx) * 4;
+            out[d] = fitted.rgba[s];
+            out[d + 1] = fitted.rgba[s + 1];
+            out[d + 2] = fitted.rgba[s + 2];
+            out[d + 3] = fitted.rgba[s + 3];
+        }
+    }
+    return { w: slotW, h: slotH, rgba: out, scaled: fitted.scaled };
+}
+
+// Procedural player-weapon art, for the bank slots a level has no frames
+// for. Every one is a bright shape on transparency in the slot's own size.
+export const SHOT_TINTS = [[255, 240, 120], [120, 200, 255], [255, 120, 200], [140, 255, 140], [255, 170, 60]];
+
+/** A bolt pointing up: white core, tinted edge, tapering to the nose. */
+export function shotSprite(w = 16, h = 16, tint = SHOT_TINTS[0]) {
+    const fr = rgbaFrame(w, h);
+    const cx = (w - 1) / 2;
+    const [r, g, b] = tint;
+    for (let y = 1; y < h - 1; y++) {
+        const t = (y - 1) / Math.max(1, h - 3);
+        const half = Math.max(0.5, (w / 6) * (0.3 + 0.7 * t));
+        for (let x = 0; x < w; x++) {
+            const d = Math.abs(x - cx);
+            if (d > half) continue;
+            if (d <= half / 2 && y > 2) plot(fr, x, y, 255, 255, 255);
+            else plot(fr, x, y, r, g, b);
+        }
+    }
+    return fr;
+}
+
+/** A beam segment along the long axis: tinted bar with a white centre line. */
+export function beamSprite(w, h, tint = SHOT_TINTS[1]) {
+    const fr = rgbaFrame(w, h);
+    const vertical = h >= w;
+    const [r, g, b] = tint;
+    const span = vertical ? w : h;
+    const c = (span - 1) / 2;
+    const half = Math.max(1, span / 4);
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const d = Math.abs((vertical ? x : y) - c);
+            if (d > half) continue;
+            if (d <= half / 2) plot(fr, x, y, 255, 255, 255);
+            else plot(fr, x, y, r, g, b);
+        }
+    }
+    return fr;
+}
+
+/** A small rocket: grey body, dark nose cone, tinted fins and exhaust. */
+export function missileSprite(w = 16, h = 16, tint = SHOT_TINTS[4]) {
+    const fr = rgbaFrame(w, h);
+    const cx = Math.floor(w / 2) - 1;
+    const bodyW = Math.max(2, Math.round(w / 5));
+    const nose = Math.max(2, Math.round(h / 5));
+    const tail = h - Math.max(2, Math.round(h / 6));
+    const [r, g, b] = tint;
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const dx = x - cx;
+            if (y < nose) {
+                if (Math.abs(dx - 0.5) <= (bodyW / 2) * (y / nose) + 0.5) plot(fr, x, y, 90, 90, 110);
+            } else if (y < tail) {
+                if (dx >= -Math.floor(bodyW / 2) && dx <= Math.ceil(bodyW / 2)) plot(fr, x, y, 200, 200, 215);
+                // fins on the last body rows
+                if (y >= tail - 3 && Math.abs(dx) <= bodyW + 1 && Math.abs(dx) > bodyW / 2) plot(fr, x, y, r, g, b);
+            } else if (Math.abs(dx - 0.5) <= 1) {
+                plot(fr, x, y, 255, 255, 200);
+            }
+        }
+    }
+    return fr;
+}
+
+/** A radial glow `size` px square: white heart, tinted halo fading out. */
+export function glowSprite(size = 32, tint = SHOT_TINTS[1]) {
+    const fr = rgbaFrame(size, size);
+    const c = size / 2 - 0.5;
+    const [r, g, b] = tint;
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            const d = Math.hypot(x - c, y - c) / (size / 2);
+            if (d > 0.95) continue;
+            if (d < 0.35) plot(fr, x, y, 255, 255, 255);
+            else if (d < 0.7) plot(fr, x, y, r, g, b);
+            else if (((x + y) & 1) === 0) plot(fr, x, y, r >> 1, g >> 1, b >> 1);
+        }
+    }
+    return fr;
+}
+
+/** An arc filling the top of a w x h slot — a bomb dome. */
+export function domeSprite(w = 32, h = 16, tint = SHOT_TINTS[1]) {
+    const fr = rgbaFrame(w, h);
+    const cx = (w - 1) / 2;
+    const [r, g, b] = tint;
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const nx = (x - cx) / (w / 2), ny = (h - 1 - y) / h;
+            const d = Math.hypot(nx, ny);
+            if (d > 1) continue;
+            if (d > 0.8) plot(fr, x, y, 255, 255, 255);
+            else if (d > 0.6) plot(fr, x, y, r, g, b);
+            else if (((x + y) & 1) === 0) plot(fr, x, y, r >> 1, g >> 1, b >> 1);
+        }
+    }
+    return fr;
+}
+
+/** A soft grey puff — missile smoke. */
+export function puffSprite(size = 16) {
+    const fr = rgbaFrame(size, size);
+    const c = size / 2 - 0.5;
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            const d = Math.hypot(x - c, y - c) / (size / 2);
+            if (d < 0.45) plot(fr, x, y, 200, 200, 200);
+            else if (d < 0.8 && ((x + y) & 1) === 0) plot(fr, x, y, 140, 140, 150);
+        }
+    }
+    return fr;
+}
+
 // --- the assembler -----------------------------------------------------------------
 
 /**
@@ -553,6 +730,15 @@ export function buildSaveFromGame(level, art, options = {}) {
         shipFrames = duke.slice(0, 2);
     }
     const shipIdle = spreadFrames(shipFrames, 2).map((f, i) => planFrame(`ship:${i}:${f.key}`, f, 32, 32, "player", 0));
+    // The second ship (refs 24-47) only for a 2P join-in game: its own
+    // frames when the level carries them, else P1's. Painting it in a 1P
+    // save would make a re-import read the game as 2P.
+    const ship2Frames = ((level.playerData2 && level.playerData2.texture) || []).map(lookup).filter(Boolean);
+    const ship2Idle = (opts.gameMode & 2)
+        ? (ship2Frames.length
+            ? spreadFrames(ship2Frames, 2).map((f, i) => planFrame(`ship2:${i}:${f.key}`, f, 32, 32, "player2", 0))
+            : shipIdle)
+        : [];
 
     // Global bullet types: the first three distinct projectile textures.
     const bulletTypes = []; // [{first, frames: planKeys}]
@@ -571,7 +757,12 @@ export function buildSaveFromGame(level, art, options = {}) {
             bulletTypes.push({
                 first: tex[0],
                 speed: Number(rec.projectileData.speed) || 1,
+                src: frames,
                 frames: frames.map((f, i) => planFrame(`bullet:${t}:${i}:${f.key}`, f, 16, 16, `bullet${t}`, 1)),
+                // The same projectile, fitted to each engine char-slot frame's geometry, so
+                // the bullet the hardware actually draws (char slots 55/59/63) shows it.
+                engine: BULLET_ENGINE_SLOTS[t].map((slot, i) =>
+                    planFrame(`bulletE:${t}:${i}:${frames[i % frames.length].key}`, frames[i % frames.length], slot.w * CG_CELL, slot.h * CG_CELL, `bulletE${t}`, 1)),
             });
         }
         if (t >= 0) bulletTypeOf.set(letter, t);
@@ -767,8 +958,90 @@ export function buildSaveFromGame(level, art, options = {}) {
     const itemKeys = itemSlotBytes.map((b, i) => planFrame(`item:${i}:${b & 15}`, itemIcon(b & 15), 16, 16, "items", 3));
     const blastAKeys = blastFrames(16).map((f, i) => planFrame(`blastA:${i}`, f, 16, 16, "blast", 3));
     const blastBKeys = blastFrames(32).map((f, i) => planFrame(`blastB:${i}`, f, 32, 32, "blast", 3));
-    const title1Key = opts.title1 && opts.title1.rgba ? planFrame("title1", opts.title1, 128, 64, "title1", 4) : null;
-    const title2Key = opts.title2 && opts.title2.rgba ? planFrame("title2", opts.title2, 128, 64, "title2", 4) : null;
+    // The two title logos share one anchor on the Saturn — both 128x64 slots
+    // are drawn at 2x centred on (160,80) — so a level with both gets the
+    // logo in the top 48 rows of its slot and the subtitle in the bottom 16,
+    // stacked the way the runtime's title scene shows them, instead of the
+    // two landing centred on top of each other.
+    const hasTitle1 = !!(opts.title1 && opts.title1.rgba);
+    const hasTitle2 = !!(opts.title2 && opts.title2.rgba);
+    const titleW = TITLE_SLOTS.title1.w * CG_CELL, titleH = TITLE_SLOTS.title1.h * CG_CELL;
+    const subtitleH = CG_CELL;
+    const title1Key = hasTitle1
+        ? planFrame(
+            "title1",
+            hasTitle2 ? placeRgba(opts.title1, titleW, titleH - subtitleH, titleW, titleH, 0, 0) : opts.title1,
+            titleW,
+            titleH,
+            "title1",
+            4,
+        )
+        : null;
+    const title2Key = hasTitle2
+        ? planFrame(
+            "title2",
+            hasTitle1 ? placeRgba(opts.title2, titleW, subtitleH, titleW, titleH, 0, titleH - subtitleH) : opts.title2,
+            titleW,
+            titleH,
+            "title2",
+            4,
+        )
+        : null;
+
+    // The player's weapon art (refs 48-93, GLOBAL_WEAPON_SLOTS): the level's
+    // own projectile frames where it has them — shootNormal / shoot3way /
+    // shootBig, the runtime's three shot modes — cycled over the shot-sized
+    // slots; procedural bolts, beams, missiles, glow, dome and smoke
+    // otherwise. Option pods are the ship shrunk to one cell, bombs reuse
+    // the blast rings. The engine draws every player shot out of these cells,
+    // so an empty slot is an invisible weapon.
+    const pd = level.playerData || {};
+    const shotFrames = [];
+    const seenShots = new Set();
+    for (const mode of ["shootNormal", "shoot3way", "shootBig"]) {
+        const tex = pd[mode] && Array.isArray(pd[mode].texture) ? pd[mode].texture : [];
+        for (const f of tex.map(lookup).filter(Boolean)) {
+            if (seenShots.has(f.key)) continue;
+            seenShots.add(f.key);
+            // The runtime's shots are drawn travelling to the right and
+            // rotated in flight; the Saturn fires them straight up, so a
+            // sideways bolt is stood on end.
+            shotFrames.push(f.w > f.h ? { ...rotateCcwRgba(f), key: f.key } : f);
+        }
+    }
+    let shotN = 0, bombN = 0, sparkN = 0;
+    const weaponKeys = GLOBAL_WEAPON_SLOTS.map((slot, i) => {
+        const w = slot.w * CG_CELL, h = slot.h * CG_CELL;
+        const tint = SHOT_TINTS[i % SHOT_TINTS.length];
+        switch (slot.role) {
+            case "shot": {
+                const f = shotFrames.length ? shotFrames[shotN++ % shotFrames.length] : null;
+                return f
+                    ? planFrame(`weapon:${f.key}:${w}x${h}`, f, w, h, "weapon", 3)
+                    : planFrame(`weapon:shot:${i}`, shotSprite(w, h, tint), w, h, "weapon", 3);
+            }
+            case "missile":
+            case "missileTall":
+                return planFrame(`weapon:missile:${w}x${h}`, missileSprite(w, h), w, h, "weapon", 3);
+            case "beamV":
+            case "beamH":
+                return planFrame(`weapon:beam:${w}x${h}`, beamSprite(w, h), w, h, "weapon", 3);
+            case "charge":
+                return planFrame("weapon:charge", glowSprite(w), w, h, "weapon", 3);
+            case "dome":
+                return planFrame("weapon:dome", domeSprite(w, h), w, h, "weapon", 3);
+            case "smoke":
+                return planFrame("weapon:smoke", puffSprite(w), w, h, "weapon", 3);
+            case "option":
+                return planFrame(`weapon:option:${shipFrames[0].key}`, shipFrames[0], w, h, "player", 3);
+            case "bomb":
+                return blastBKeys[bombN++ % 2 ? 4 : 2];
+            case "spark":
+                return blastAKeys[sparkN++ % 2 ? 2 : 0];
+            default:
+                return null;
+        }
+    });
 
     // --- reduce to the palette target, pack the cells ---
     const planned = [...plan.values()];
@@ -876,6 +1149,19 @@ export function buildSaveFromGame(level, art, options = {}) {
     blastAKeys.forEach((key, i) => putRefs(GLOBAL_SLOTS.blastA + i, refsOf(key, 1)));
     blastBKeys.forEach((key, i) => putRefs(GLOBAL_SLOTS.blastB + i * 4, refsOf(key, 4)));
     bulletTypes.forEach((b, t) => b.frames.forEach((key, f) => putRefs(GLOBAL_SLOTS.bullets + t * 4 + f, refsOf(key, 1))));
+    // The refs the engine's shot renderer actually reads (char slots 55/59/63), painted
+    // LAST so they own their cells over the procedural blast anim that shares this region.
+    bulletTypes.forEach((b, t) => {
+        if (!b.engine) return;
+        BULLET_ENGINE_SLOTS[t].forEach((slot, f) => putRefs(slot.ref, refsOf(b.engine[f], slot.w * slot.h)));
+    });
+    weaponKeys.forEach((key, i) => {
+        const slot = GLOBAL_WEAPON_SLOTS[i];
+        putRefs(slot.first, refsOf(key, slot.w * slot.h));
+    });
+    for (const pose of [GLOBAL_SLOTS.ship2BankA, GLOBAL_SLOTS.ship2Idle, GLOBAL_SLOTS.ship2BankB]) {
+        ship2Idle.forEach((key, f) => putRefs(pose + f * 4, refsOf(key, 4)));
+    }
     if (title1Key) putRefs(TITLE_SLOTS.title1.first, refsOf(title1Key, 32));
     if (title2Key) putRefs(TITLE_SLOTS.title2.first, refsOf(title2Key, 32));
 
@@ -953,7 +1239,9 @@ export function buildSaveFromGame(level, art, options = {}) {
                 extent: b.extent,
             })),
             ship: shipSource,
+            player2: ship2Idle.length > 0,
             bulletTypes: bulletTypes.length,
+            weaponArt: { slots: weaponKeys.filter(Boolean).length, levelShotFrames: shotFrames.length },
             frames: planned.length,
             cells: packer.used,
             sharedCells: packer.shared,

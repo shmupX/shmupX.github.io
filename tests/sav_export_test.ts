@@ -159,6 +159,23 @@ Deno.test("deno task build:sav turns foo into foo.sav, a cart MiSTer can read", 
     assertStrictEquals(decoded.globalArt.blastA.length, 6);
     assertStrictEquals(decoded.globalArt.blastB.length, 6);
     assert(decoded.globalArt.bullets.some(Boolean));
+    // the player's weapon art (bank refs 48-93) is painted — left empty, the
+    // Saturn fires invisible shots — and both drawn title logos are there:
+    // foo's logo is a GIF, its subtitle a PNG
+    const sec5 = decoded.sections[5].decompressed as Uint8Array;
+    const bank = SEC5_REGIONS.spriteBank.offset;
+    for (let ref = 48; ref <= 93; ref++) {
+      const word = (sec5[bank + ref * 2] << 8) | sec5[bank + ref * 2 + 1];
+      assert(word !== 0xffff, `weapon ref ${ref} is painted`);
+    }
+    assert(decoded.titleArt, "the title screen is drawn");
+    assert(decoded.titleArt.title1 !== undefined, "TITLE 1 holds the logo");
+    assert(decoded.titleArt.title2 !== undefined, "TITLE 2 holds the subtitle");
+    assert(
+      decoded.titleLayout.title1.y + decoded.titleLayout.title1.h <=
+        decoded.titleLayout.title2.y,
+      "the logo sits above the subtitle",
+    );
     // settings: vertical 1P, the stage is the final one, extents cover the boss
     assertStrictEquals(decoded.settings.gameMode, 0);
     assert(decoded.settings.stageFlags[0].finalStage);

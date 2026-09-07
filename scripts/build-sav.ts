@@ -29,6 +29,7 @@
 import { dirname, fromFileUrl, join, relative, resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { decodeDataUrl, decodePng, type Raster } from "../lib/ps2/png.ts";
+import { decodeGif, isGif } from "../lib/ps2/gif.ts";
 import { cut } from "../lib/ps2/raster.ts";
 import {
   exportLevelToSav,
@@ -36,6 +37,16 @@ import {
   savFileName,
   snesCgramBytes,
 } from "../packages/shmup-engine/mod.js";
+
+/** The bytes behind a base64 data URL, whatever its MIME type. */
+function dataUrlBytes(dataUrl: string): Uint8Array<ArrayBuffer> {
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) throw new Error("not a data URL");
+  const binary = atob(dataUrl.slice(comma + 1));
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 
 const ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 const FIREBASE_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
@@ -218,15 +229,20 @@ export async function buildSav(
   }
 
   // The drawn title screen: the level's logo and subtitle images, if any.
-  // Only PNG data URLs decode here; a JPEG logo leaves the title unpainted.
+  // PNG and GIF data URLs decode here (the editor stores logos as either);
+  // a JPEG logo leaves its slot unpainted.
   const titleArt = async (dataUrl: string | null | undefined, what: string) => {
     if (!dataUrl) return null;
-    if (!/^data:image\/png[;,]/i.test(dataUrl)) {
-      log(`title: ${what} is not a PNG data URL — left unpainted`);
-      return null;
-    }
     try {
-      return toFrame(await decodeDataUrl(dataUrl));
+      const bytes = dataUrlBytes(dataUrl);
+      if (isGif(bytes)) return toFrame(decodeGif(bytes));
+      if (/^data:image\/png[;,]/i.test(dataUrl)) {
+        return toFrame(await decodePng(bytes));
+      }
+      log(
+        `title: ${what} is neither a PNG nor a GIF data URL — left unpainted`,
+      );
+      return null;
     } catch (e) {
       log(`title: ${what} could not be decoded (${(e as Error).message})`);
       return null;

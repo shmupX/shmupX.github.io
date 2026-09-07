@@ -1355,11 +1355,34 @@ collection (60 saves scanned) while building it:
 - **sec7**: all zero — no `0x12345678` magic, which the decoder (and Ramsie's
   own save) treats as "the 3D editor was never opened".
 
+- **Global bank refs 48-93 — the player's weapon art (added 2026-09-06).**
+  The 85-entry global char-slot table (GAME `+0x27F1C`: u16 geometry index,
+  u16 bank byte offset; sizes from `+0x25CFC`, 8 bytes each: w, h, VRAM
+  address, VDP1 size word) pins char slots 12-44 to refs 48-93: 48-51 one
+  32×32 (charge glow), 52-56 five 16×16, 57-58 one 16×32, 59-60 one 32×16
+  (the beam segments), 61-68 eight 16×16 (63 = weapon 1, 65 = weapon 2, 66 =
+  weapon 3, 68 = weapon 4), 69-78 ten 16×16 option figures, 79-82 and 83-86
+  two 32×32 bombs, 87 and 90 16×16, 88-89 one 32×16 dome, 91-92 one 16×32,
+  93 16×16 smoke (`decode-sprites.js` `GLOBAL_WEAPON_SLOTS`). Every player
+  shot the engine spawns is drawn out of these cells, so a save that leaves
+  them `0xFFFF` fires **invisible** bullets — which the first exports did.
+  The writer now paints all 46 refs: the level's own `shootNormal` /
+  `shoot3way` / `shootBig` frames (stood on end when drawn sideways) cycled
+  over the shot-sized slots, the ship shrunk to a cell for the option pods,
+  the blast rings for the bombs, procedural beams / missiles / glow / dome /
+  smoke for the rest. The second ship (refs 24-47) is painted only for a 2P
+  game (settings `+0x00` bit 1), P1's frames standing in when the level has
+  no `playerData2`. Both title logos share one anchor on the Saturn, so when
+  a level has both, TITLE 1 gets the logo in its top 48 rows and TITLE 2 the
+  subtitle in its bottom 16, the way the runtime stacks them.
+
 What the writer does NOT yet reproduce: the six credit strips, real item icon
 art (procedural placeholders are written), the death-word children of records
 whose slot had to move (the record keeps its bytes; a collision is reported),
 and anything the level format has no words for (enemy names, story scenes,
-audio files). Verified 2026-09-05 in Mednafen 1.29 with the Japanese BIOS:
+audio files). The weapon-slot art is placed by the traced geometry, not by a
+trace of which slot each of the 7×5 weapon levels reads, so a shot may wear a
+neighbouring slot's frame; it is never invisible. Verified 2026-09-05 in Mednafen 1.29 with the Japanese BIOS:
 the exported `foo` cart boots, the Saturn's backup library leaves every byte
 of it untouched and writes its `DEZA2___SYS` record into internal RAM, the LOAD
 screen lists the cartridge with free space and loads the game, and the stage

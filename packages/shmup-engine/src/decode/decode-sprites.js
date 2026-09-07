@@ -474,6 +474,44 @@ const GLOBAL_ART_SLOTS = {
     blastB: { first: 108, w: 2, h: 2, frames: 6 },
 };
 
+// Refs 48-93: the player's weapon art, one entry per char slot 12-44 of the
+// global char-slot table (GAME `+0x27F1C`, 4 bytes each = geometry index,
+// bank byte offset; sizes from the geometry table `+0x25CFC`, read off the
+// disc 2026-09-06). Every shot, beam, option pod and bomb the engine draws
+// for the player comes out of these cells, so a save that leaves them
+// 0xFFFF fires INVISIBLE bullets — which is what the writer did until then.
+// `role` is the writer's hint for what to paint there; the engine does not
+// read it. The slot-to-weapon wiring in FORMAT.md ("63 = weapon-1 fire FX,
+// 65 = weapon-2, 66 = weapon-3 object, 68 = weapon-4 missiles, 57-60 the
+// beam segments, 69-78 option figures, 79-93 bombs and smoke") is what the
+// roles follow; the rest are shot-sized cells the other weapons pick from.
+export const GLOBAL_WEAPON_SLOTS = [
+    { first: 48, w: 2, h: 2, role: "charge" }, // slot 12: charge glow
+    { first: 52, w: 1, h: 1, role: "shot" },
+    { first: 53, w: 1, h: 1, role: "shot" },
+    { first: 54, w: 1, h: 1, role: "shot" },
+    { first: 55, w: 1, h: 1, role: "shot" },
+    { first: 56, w: 1, h: 1, role: "shot" },
+    { first: 57, w: 1, h: 2, role: "beamV" }, // slot 18: 16x32 beam segment
+    { first: 59, w: 2, h: 1, role: "beamH" }, // slot 19: 32x16 beam segment
+    { first: 61, w: 1, h: 1, role: "shot" },
+    { first: 62, w: 1, h: 1, role: "shot" },
+    { first: 63, w: 1, h: 1, role: "shot" }, // weapon 1
+    { first: 64, w: 1, h: 1, role: "shot" },
+    { first: 65, w: 1, h: 1, role: "shot" }, // weapon 2
+    { first: 66, w: 1, h: 1, role: "missile" }, // weapon 3 object
+    { first: 67, w: 1, h: 1, role: "shot" },
+    { first: 68, w: 1, h: 1, role: "missile" }, // weapon 4 missiles
+    ...Array.from({ length: 10 }, (_, i) => ({ first: 69 + i, w: 1, h: 1, role: "option" })),
+    { first: 79, w: 2, h: 2, role: "bomb" }, // slot 38: bomb 4
+    { first: 83, w: 2, h: 2, role: "bomb" }, // slot 39
+    { first: 87, w: 1, h: 1, role: "spark" }, // slot 40: bomb 5
+    { first: 88, w: 2, h: 1, role: "dome" }, // slot 41: bomb-7 dome
+    { first: 90, w: 1, h: 1, role: "spark" }, // slot 42
+    { first: 91, w: 1, h: 2, role: "missileTall" }, // slot 43: sub-2 object
+    { first: 93, w: 1, h: 1, role: "smoke" }, // slot 44: missile smoke
+];
+
 // Extract the head of the global bank. Returns {sprites, roles}; roles maps
 // player/items/blasts/bullets onto absolute sprite indices (with baseIndex
 // added), each only when its refs are painted.

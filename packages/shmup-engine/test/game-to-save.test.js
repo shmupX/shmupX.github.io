@@ -28,8 +28,15 @@ import {
   fitRgba,
   levelStages,
   mapColumn,
+  placeRgba,
+  rotateCcwRgba,
   spreadFrames,
 } from "../src/write/game-to-save.js";
+import {
+  GLOBAL_WEAPON_SLOTS,
+  renderFrame,
+  TITLE_SLOTS,
+} from "../src/decode/decode-sprites.js";
 import { exportLevelToSav, savFileName } from "../src/write/export-sav.js";
 // decodeSave wants a payload; the writer's own table builder makes one.
 import { buildPayload } from "../src/bup-write.js";
@@ -331,6 +338,135 @@ Deno.test("a tiny level assembles, and decodeSave reads it back", () => {
   assert(v.ok, v.errors.join("; "));
   assertStrictEquals(gameJson.stage0.enemylist.length, 3);
   assertStrictEquals(gameJson.stage0.enemylist[0].length, 20);
+});
+
+function bankWord(sections, ref) {
+  const at = SEC5_REGIONS.spriteBank.offset + ref * 2;
+  return (sections[5][at] << 8) | sections[5][at + 1];
+}
+
+Deno.test("the player's weapon art fills refs 48-93, the level's shots stood on end", () => {
+  const lv = level();
+  // a sideways bolt, 12x4, the way the runtime draws a shot travelling right
+  lv.playerData = { texture: [], shootNormal: { texture: ["bolt.png"] } };
+  const a = art();
+  a["bolt.png"] = frame(12, 4, [255, 255, 255]);
+  const { sections, report } = buildSaveFromGame(lv, a);
+  assertStrictEquals(report.weaponArt.levelShotFrames, 1);
+  assertStrictEquals(report.weaponArt.slots, GLOBAL_WEAPON_SLOTS.length);
+  assertStrictEquals(report.player2, false);
+  // every char slot the engine draws player shots, beams, pods and bombs
+  // from is painted — an empty one is an invisible weapon
+  for (const slot of GLOBAL_WEAPON_SLOTS) {
+    for (let k = 0; k < slot.w * slot.h; k++) {
+      assert(
+        bankWord(sections, slot.first + k) !== 0xffff,
+        `ref ${slot.first + k} (${slot.role}) is painted`,
+      );
+    }
+  }
+  // a 1P save leaves the second ship (refs 24-47) empty
+  for (let ref = 24; ref < 48; ref++) {
+    assertStrictEquals(bankWord(sections, ref), 0xffff);
+  }
+  // weapon 1's cell (ref 63) holds the bolt, rotated to fly upward: its
+  // opaque box is taller than it is wide
+  const decoded = decodeSave(buildPayload(sections));
+  const sec = decoded.sections.map((s) => s.decompressed);
+  const w = bankWord(sections, 63);
+  const img = renderFrame(sec, decoded.cg.palettes, {
+    w: 1,
+    h: 1,
+    cells: [{
+      empty: false,
+      cell: w & 0x3ff,
+      hflip: (w & 0x4000) !== 0,
+      vflip: (w & 0x8000) !== 0,
+    }],
+  });
+  let minX = 16, maxX = -1, minY = 16, maxY = -1;
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 16; x++) {
+      if (!img.rgba[(y * 16 + x) * 4 + 3]) continue;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  assert(maxX >= 0, "ref 63 draws something");
+  assert(maxY - minY > maxX - minX, "the bolt stands on end");
+});
+
+Deno.test("a 2P game paints the second ship from the first when it has none of its own", () => {
+  const { sections, report } = buildSaveFromGame(level(), art(), {
+    gameMode: 2,
+  });
+  assertStrictEquals(report.player2, true);
+  for (let ref = 24; ref < 48; ref++) {
+    assertStrictEquals(bankWord(sections, ref), bankWord(sections, ref - 24));
+  }
+  const decoded = decodeSave(buildPayload(sections));
+  assert(
+    decoded.globalArt.player2 && decoded.globalArt.player2.idle.length === 2,
+  );
+});
+
+Deno.test("both title logos stack: the logo on top, the subtitle in the bottom row", () => {
+  const title1 = frame(256, 91, [200, 200, 200]);
+  const title2 = frame(256, 20, [100, 200, 255]);
+  const { sections, report } = buildSaveFromGame(level(), art(), {
+    title1,
+    title2,
+  });
+  assert(report.title.title1 && report.title.title2);
+  const painted = (slot) =>
+    Array.from(
+      { length: slot.w * slot.h },
+      (_, i) => bankWord(sections, slot.first + i) !== 0xffff,
+    );
+  const t1 = painted(TITLE_SLOTS.title1);
+  const t2 = painted(TITLE_SLOTS.title2);
+  assert(t1.slice(0, 24).every(Boolean), "the logo fills rows 0-2 of TITLE 1");
+  assert(t1.slice(24).every((p) => !p), "and leaves row 3 for the subtitle");
+  assert(
+    t2.slice(0, 24).every((p) => !p),
+    "the subtitle stays out of rows 0-2 of TITLE 2",
+  );
+  assert(t2.slice(24).every(Boolean), "and fills row 3");
+  // alone, a logo is centred in its slot: 256x91 halves to 128x46, which
+  // touches all four cell rows
+  const only = buildSaveFromGame(level(), art(), { title1 });
+  const c = Array.from(
+    { length: 32 },
+    (_, i) => bankWord(only.sections, TITLE_SLOTS.title1.first + i) !== 0xffff,
+  );
+  assert(c.every(Boolean));
+  assert(
+    Array.from(
+      { length: 32 },
+      (_, i) => bankWord(only.sections, TITLE_SLOTS.title2.first + i),
+    )
+      .every((w) => w === 0xffff),
+    "no subtitle, no TITLE 2",
+  );
+});
+
+Deno.test("rotateCcwRgba and placeRgba move pixels where they say", () => {
+  const src = {
+    w: 3,
+    h: 1,
+    rgba: new Uint8Array([1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255]),
+  };
+  const rot = rotateCcwRgba(src);
+  assertEquals([rot.w, rot.h], [1, 3]);
+  // the right end (3) is now on top
+  assertEquals([rot.rgba[0], rot.rgba[4], rot.rgba[8]], [3, 2, 1]);
+  const placed = placeRgba(src, 3, 1, 8, 4, 2, 3);
+  assertEquals([placed.w, placed.h], [8, 4]);
+  assertStrictEquals(placed.rgba[((3 * 8) + 2) * 4], 1);
+  assertStrictEquals(placed.rgba[((3 * 8) + 4) * 4], 3);
+  assertStrictEquals(placed.rgba[((2 * 8) + 2) * 4 + 3], 0);
 });
 
 Deno.test("an import's own record bytes go back verbatim, in their own slot", () => {
