@@ -356,11 +356,32 @@ weapon-shot char slots occupy 12-24, landing in the refs 48-65 band that
 So the player's shot art is drawn from refs the writer already paints
 (`GLOBAL_WEAPON_SLOTS`, refs 48-93; see the writer note near the end of this
 file). The 132-143 caveat that bites enemy bullets does NOT apply here — the
-player path never touches 132-143. Only VULCAN A power 0 = index 14 is spelled
-out above; each weapon's five power cases push their own indices, so a full
-per-weapon/per-power map means walking each handler's power-dispatch table
-(`0x06070398` and its siblings reached through `0x060790C4`) and recording the
-index each case passes to `0x0606F9A0`.
+player path never touches 132-143.
+
+Walking all seven weapon handlers off `0x060790C4` (each either dispatches five
+power cases through its own word-table like `0x06070398`, or is a single path)
+gives the complete shot map. The sprite index is **hardcoded per weapon** — in
+the shot setup's `mov #N,r5` feeding `0x0606F080` (often the jsr delay slot) for
+weapons 3-7, or pushed as the spawn's `@(40)` arg for weapons 1-2 — and is
+**invariant across power level**: power changes shot count, spread and damage
+(damage from a parallel table, e.g. `0x06085C80` for weapon 1), not the sprite.
+
+| weapon (`&7`) | handler | shot idx | char slot | global-bank ref | frame size |
+|---------------|--------------|----------|-----------|-----------------|------------|
+| 1 (VULCAN A) | `0x06070354` | 14 | 14 | 53 | 16×16 |
+| 2 | `0x06070A7C` | 15 | 15 | 54 | 16×16 |
+| 3 | `0x06071F20` | 16 | 16 | 55 | 16×16 |
+| 4 | `0x0607106C` | 18 | 18 | 57 | 16×32 |
+| 5 | `0x06072214` | 19 | 19 | 59 | 32×16 |
+| 6 | `0x06072664` | 20 | 20 | 61 | 16×16 |
+| 7 | `0x06072BC8` | 27 | 27 | 68 | 16×16 |
+
+So the player's base shots occupy refs 53/54/55/57/59/61/68 — NOT the per-weapon
+refs the decoder's `GLOBAL_WEAPON_SLOTS` comment guesses (63 = weapon 1, 65 =
+weapon 2, …), which describe fire/effect cells, not the projectile object the
+dispatcher spawns. Charged shots, sub-weapons, options' own bullets and bombs
+spawn other indices (e.g. 17, 21, 23, 25, 28, 29, 33, 34 → refs
+56/62/64/66/69/70/74/75) through separate dispatchers, not `0x060790C4`.
 
 **Placement ids** — exactly 72 distinct non-zero values in eight disjoint
 ranges across all 17 games:
