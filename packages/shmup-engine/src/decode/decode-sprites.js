@@ -487,21 +487,26 @@ const GLOBAL_ART_SLOTS = {
 // roles follow; the rest are shot-sized cells the other weapons pick from.
 export const GLOBAL_WEAPON_SLOTS = [
     { first: 48, w: 2, h: 2, role: "charge" }, // slot 12: charge glow
+    // The player weapon SHOT refs (traced 2026-09-07, GAME 0x060790C4 ->
+    // 0x0606F080; FORMAT.md "Player shot sprites"): weapons 1-7 draw from refs
+    // 53/54/55/57/59/61/68. The roles below only steer the placeholder art the
+    // writer paints; the actual player bolt is placed by game-to-save.js
+    // (PLAYER_SHOT_SLOTS) over these cells.
     { first: 52, w: 1, h: 1, role: "shot" },
-    { first: 53, w: 1, h: 1, role: "shot" },
-    { first: 54, w: 1, h: 1, role: "shot" },
-    { first: 55, w: 1, h: 1, role: "shot" },
+    { first: 53, w: 1, h: 1, role: "shot" }, // weapon 1 (VULCAN A) shot
+    { first: 54, w: 1, h: 1, role: "shot" }, // weapon 2 shot
+    { first: 55, w: 1, h: 1, role: "shot" }, // weapon 3 shot
     { first: 56, w: 1, h: 1, role: "shot" },
-    { first: 57, w: 1, h: 2, role: "beamV" }, // slot 18: 16x32 beam segment
-    { first: 59, w: 2, h: 1, role: "beamH" }, // slot 19: 32x16 beam segment
-    { first: 61, w: 1, h: 1, role: "shot" },
+    { first: 57, w: 1, h: 2, role: "beamV" }, // slot 18: weapon 4 shot (16x32)
+    { first: 59, w: 2, h: 1, role: "beamH" }, // slot 19: weapon 5 shot (32x16)
+    { first: 61, w: 1, h: 1, role: "shot" }, // weapon 6 shot
     { first: 62, w: 1, h: 1, role: "shot" },
-    { first: 63, w: 1, h: 1, role: "shot" }, // weapon 1
+    { first: 63, w: 1, h: 1, role: "shot" },
     { first: 64, w: 1, h: 1, role: "shot" },
-    { first: 65, w: 1, h: 1, role: "shot" }, // weapon 2
-    { first: 66, w: 1, h: 1, role: "missile" }, // weapon 3 object
+    { first: 65, w: 1, h: 1, role: "shot" },
+    { first: 66, w: 1, h: 1, role: "missile" },
     { first: 67, w: 1, h: 1, role: "shot" },
-    { first: 68, w: 1, h: 1, role: "missile" }, // weapon 4 missiles
+    { first: 68, w: 1, h: 1, role: "missile" }, // slot 24: weapon 7 shot
     ...Array.from({ length: 10 }, (_, i) => ({ first: 69 + i, w: 1, h: 1, role: "option" })),
     { first: 79, w: 2, h: 2, role: "bomb" }, // slot 38: bomb 4
     { first: 83, w: 2, h: 2, role: "bomb" }, // slot 39

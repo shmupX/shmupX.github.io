@@ -131,6 +131,24 @@ export const BULLET_ENGINE_SLOTS = [
     [{ ref: 124, w: 2, h: 2 }, { ref: 128, w: 2, h: 2 }, { ref: 132, w: 1, h: 1 }, { ref: 136, w: 1, h: 1 }],
 ];
 
+// The player's OWN shots draw from a different set of global-bank refs, one per
+// equipped weapon (0x0608410C & 7). The MAIN weapon dispatcher GAME 0x060790C4
+// hands each weapon handler a hardcoded sprite index (invariant across power
+// level) that its shot setup 0x0606F080 writes to the same object sprite-index
+// array 0x0608EA90 the enemy path uses; the renderer resolves it through
+// 0x0608B1FC to these refs (traced 2026-09-07, FORMAT.md "Player shot sprites").
+// Index here = weapon - 1. The slot table (GLOBAL_WEAPON_SLOTS) assigns 57/59/68
+// beam/missile roles, so the player's bolt is painted here LAST to own its cell.
+export const PLAYER_SHOT_SLOTS = [
+    { ref: 53, w: 1, h: 1 }, // weapon 1 (VULCAN A) — the default
+    { ref: 54, w: 1, h: 1 }, // weapon 2
+    { ref: 55, w: 1, h: 1 }, // weapon 3
+    { ref: 57, w: 1, h: 2 }, // weapon 4 (16x32)
+    { ref: 59, w: 2, h: 1 }, // weapon 5 (32x16)
+    { ref: 61, w: 1, h: 1 }, // weapon 6
+    { ref: 68, w: 1, h: 1 }, // weapon 7
+];
+
 const GLOBAL_SLOTS = {
     shipBankA: 0,
     shipIdle: 8,
@@ -1043,6 +1061,20 @@ export function buildSaveFromGame(level, art, options = {}) {
         }
     });
 
+    // The player's own shot, planned for the exact refs the weapon dispatcher
+    // reads (PLAYER_SHOT_SLOTS = 53/54/55/57/59/61/68 for weapons 1-7). Weapon 1
+    // — the weapon the player starts with — takes the primary bolt; the rest
+    // cycle any further shot frames the level supplies, falling back to a
+    // procedural bolt so no weapon fires an empty cell.
+    const playerShotKeys = PLAYER_SHOT_SLOTS.map((slot, i) => {
+        const w = slot.w * CG_CELL, h = slot.h * CG_CELL;
+        const f = shotFrames.length ? shotFrames[i % shotFrames.length] : null;
+        const tint = SHOT_TINTS[i % SHOT_TINTS.length];
+        return f
+            ? planFrame(`pshot:${i}:${f.key}:${w}x${h}`, f, w, h, "weapon", 3)
+            : planFrame(`pshot:${i}:${w}x${h}`, shotSprite(w, h, tint), w, h, "weapon", 3);
+    });
+
     // --- reduce to the palette target, pack the cells ---
     const planned = [...plan.values()];
     const q = quantizeFrames(planned, opts.palette);
@@ -1158,6 +1190,14 @@ export function buildSaveFromGame(level, art, options = {}) {
     weaponKeys.forEach((key, i) => {
         const slot = GLOBAL_WEAPON_SLOTS[i];
         putRefs(slot.first, refsOf(key, slot.w * slot.h));
+    });
+    // The player's shot at the refs the weapon dispatcher actually reads,
+    // painted LAST so it owns 57/59/68 over the beam/missile role art and
+    // re-affirms 53/54/55/61 with the primary bolt (the same "own the cell
+    // last" trick BULLET_ENGINE_SLOTS uses for enemy bullets above).
+    playerShotKeys.forEach((key, i) => {
+        const slot = PLAYER_SHOT_SLOTS[i];
+        putRefs(slot.ref, refsOf(key, slot.w * slot.h));
     });
     for (const pose of [GLOBAL_SLOTS.ship2BankA, GLOBAL_SLOTS.ship2Idle, GLOBAL_SLOTS.ship2BankB]) {
         ship2Idle.forEach((key, f) => putRefs(pose + f * 4, refsOf(key, 4)));

@@ -16,6 +16,7 @@ import { decodeDataUrl } from "../lib/ps2/png.ts";
 import { cut } from "../lib/ps2/raster.ts";
 import * as deza from "../packages/shmup-engine/mod.js";
 import { SEC5_REGIONS } from "../packages/shmup-engine/src/decode/decode-stage.js";
+import { PLAYER_SHOT_SLOTS } from "../packages/shmup-engine/src/write/game-to-save.js";
 import { buildSav } from "../scripts/build-sav.ts";
 
 const ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
@@ -167,6 +168,18 @@ Deno.test("deno task build:sav turns foo into foo.sav, a cart MiSTer can read", 
     for (let ref = 48; ref <= 93; ref++) {
       const word = (sec5[bank + ref * 2] << 8) | sec5[bank + ref * 2 + 1];
       assert(word !== 0xffff, `weapon ref ${ref} is painted`);
+    }
+    // The specific refs the weapon dispatcher reads for each equipped weapon
+    // (traced GAME 0x060790C4 -> 0x0606F080): every one carries the player's
+    // shot, so no weapon the player picks up fires a blank cell.
+    assertEquals(
+      PLAYER_SHOT_SLOTS.map((s) => s.ref),
+      [53, 54, 55, 57, 59, 61, 68],
+      "the player-shot refs are the traced weapon slots",
+    );
+    for (const { ref } of PLAYER_SHOT_SLOTS) {
+      const word = (sec5[bank + ref * 2] << 8) | sec5[bank + ref * 2 + 1];
+      assert(word !== 0xffff, `player shot ref ${ref} is painted`);
     }
     assert(decoded.titleArt, "the title screen is drawn");
     assert(decoded.titleArt.title1 !== undefined, "TITLE 1 holds the logo");
