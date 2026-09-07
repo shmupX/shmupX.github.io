@@ -315,7 +315,52 @@ bullet sprites the hardware draws. Refs 132-143, which the decoder extracts as
 each firing enemy's projectile to the char-slot refs above (and keeps 132-143
 for decoder round-trip), which makes exported enemy shots visible on hardware
 (confirmed in Mednafen 2026-09-07). What the player's own weapon dispatcher uses
-for its shot art (refs 48-93) was not traced here.
+for its shot art is the **same mechanism** — see "Player shot sprites" below.
+
+**Player shot sprites — the same path, from the weapon dispatcher** (traced
+2026-09-07 through GAME.bin; base `0x06064000`). A player shot is the same kind
+of object as an enemy bullet, and its sprite is chosen the same way. The MAIN
+weapon dispatcher `0x0607909C` reads the equipped weapon from
+`0x0608410C[player] & 7` and jumps through table `0x060790C4` to that weapon's
+handler (weapon 1 = VULCAN A at `0x06070354`); the handler reads the power level
+from `0x06084110[player]` and dispatches through its own table (`0x06070398` for
+weapon 1) to one spawn per power level. Each power case (VULCAN A power 0 =
+`0x0606FA6C`) pushes a **sprite index** as an argument and calls the player-shot
+spawn `0x0606F9A0`, which forwards it as `r5` into the shared setup `0x0606F080`
+— the same `mov.w r5,@(0x0608EA90 + slot*2)` write the enemy path uses. The
+object renderer then resolves that index through the same sprite-command table
+`0x0608B1FC` (stride 10, word 0 echoes the char slot), and the global-art VRAM
+upload `+0x3EEC` fills the tile from the char-slot table `+0x27F1C`.
+
+For VULCAN A base (weapon 1, power 0) the pushed index is **14** → char slot 14
+→ geom 15 (16×16, VRAM `0x26C0`) → global-bank ref **53**. The player
+weapon-shot char slots occupy 12-24, landing in the refs 48-65 band that
+`+0x27F1C` otherwise labels "per-weapon shot/effect art":
+
+| char slot | frame size | global-bank ref |
+|-----------|------------|-----------------|
+| 12 | 32×32 | 48 |
+| 13 | 16×16 | 52 |
+| 14 | 16×16 | **53** (VULCAN A base) |
+| 15 | 16×16 | 54 |
+| 16 | 16×16 | 55 |
+| 17 | 16×16 | 56 |
+| 18 | 16×32 | 57 |
+| 19 | 32×16 | 59 |
+| 20 | 16×16 | 61 |
+| 21 | 16×16 | 62 |
+| 22 | 16×16 | 63 |
+| 23 | 16×16 | 64 |
+| 24 | 16×16 | 65 |
+
+So the player's shot art is drawn from refs the writer already paints
+(`GLOBAL_WEAPON_SLOTS`, refs 48-93; see the writer note near the end of this
+file). The 132-143 caveat that bites enemy bullets does NOT apply here — the
+player path never touches 132-143. Only VULCAN A power 0 = index 14 is spelled
+out above; each weapon's five power cases push their own indices, so a full
+per-weapon/per-power map means walking each handler's power-dispatch table
+(`0x06070398` and its siblings reached through `0x060790C4`) and recording the
+index each case passes to `0x0606F9A0`.
 
 **Placement ids** — exactly 72 distinct non-zero values in eight disjoint
 ranges across all 17 games:
