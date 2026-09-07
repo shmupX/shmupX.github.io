@@ -1,0 +1,325 @@
+<title>Dezaemon SFC Parity Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #F3F6F3;
+    --surface: #FFFFFF;
+    --ink: #17211C;
+    --muted: #5A6B62;
+    --line: #D8E0DA;
+    --accent: #1F7A52;
+    --accent-ink: #FFFFFF;
+    --ok: #1F7A52;
+    --ok-bg: #E3F0E8;
+    --part: #96661A;
+    --part-bg: #F5ECD9;
+    --miss: #A8433A;
+    --miss-bg: #F6E4E1;
+    --chip-bg: #EAF0EB;
+    --code-bg: #EDF2EE;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F1512;
+      --surface: #161F1A;
+      --ink: #DCE6DF;
+      --muted: #8FA398;
+      --line: #263229;
+      --accent: #58C08C;
+      --accent-ink: #0F1512;
+      --ok: #6CC79A;
+      --ok-bg: #1A2E23;
+      --part: #D3A557;
+      --part-bg: #2E2618;
+      --miss: #D98077;
+      --miss-bg: #331E1B;
+      --chip-bg: #1D2822;
+      --code-bg: #1A241E;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1512;
+    --surface: #161F1A;
+    --ink: #DCE6DF;
+    --muted: #8FA398;
+    --line: #263229;
+    --accent: #58C08C;
+    --accent-ink: #0F1512;
+    --ok: #6CC79A;
+    --ok-bg: #1A2E23;
+    --part: #D3A557;
+    --part-bg: #2E2618;
+    --miss: #D98077;
+    --miss-bg: #331E1B;
+    --chip-bg: #1D2822;
+    --code-bg: #1A241E;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 20px 96px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header { padding: 56px 0 8px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 44px);
+    font-weight: 900;
+    line-height: 1.15;
+    letter-spacing: -.01em;
+    margin: 0 0 4px;
+    text-wrap: balance;
+  }
+  h1 .jp { color: var(--muted); font-weight: 700; font-size: .55em; letter-spacing: .04em; vertical-align: .35em; margin-left: .5em; }
+  .lede { color: var(--muted); max-width: 62ch; margin: 12px 0 0; }
+  .lede strong { color: var(--ink); font-weight: 700; }
+
+  .meterline {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin: 28px 0 0; padding: 14px 16px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .meter { flex: 1 1 260px; height: 10px; border-radius: 5px; overflow: hidden; display: flex; }
+  .meter i { display: block; height: 100%; }
+  .meter .m-ok { background: var(--ok); }
+  .meter .m-part { background: var(--part); }
+  .meter .m-miss { background: var(--miss); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .legend b { color: var(--ink); font-weight: 700; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+
+  h2 {
+    font-size: 22px; font-weight: 900; letter-spacing: -.005em;
+    margin: 56px 0 6px; text-wrap: balance;
+  }
+  h2 .no {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    color: var(--accent); font-weight: 600; font-size: 15px; margin-right: 10px;
+  }
+  .sub { color: var(--muted); margin: 0 0 20px; max-width: 66ch; }
+
+  code, .ref {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .86em;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  .ref { color: var(--muted); }
+
+  /* ── remaining-work list ── */
+  ol.remaining { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  ol.remaining li {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px 14px 14px;
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 4px 12px;
+  }
+  ol.remaining .n {
+    grid-row: 1 / 3;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600; font-size: 14px;
+    color: var(--accent);
+    background: var(--chip-bg);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    height: 34px;
+  }
+  ol.remaining h3 { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.4; }
+  ol.remaining h3 .tag {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 500; letter-spacing: .05em;
+    border-radius: 999px; padding: 2px 9px; margin-left: 8px;
+    vertical-align: 2px; white-space: nowrap;
+  }
+  .tag.spec { background: var(--ok-bg); color: var(--ok); }
+  .tag.open { background: var(--part-bg); color: var(--part); }
+  .tag.none { background: var(--miss-bg); color: var(--miss); }
+  ol.remaining p { margin: 0; font-size: 14px; color: var(--muted); max-width: 72ch; }
+  ol.remaining p b { color: var(--ink); font-weight: 700; }
+
+  /* ── status tables ── */
+  .band {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    border-radius: 999px; padding: 3px 12px;
+  }
+  .band.ok { background: var(--ok-bg); color: var(--ok); }
+  .band.part { background: var(--part-bg); color: var(--part); }
+  .band.miss { background: var(--miss-bg); color: var(--miss); }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th {
+    text-align: left; font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); padding: 12px 16px 8px; border-bottom: 1px solid var(--line);
+  }
+  td { padding: 10px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.feat { font-weight: 700; white-space: nowrap; }
+  td .note { color: var(--muted); }
+  .tablegroup { display: grid; gap: 12px; margin-top: 14px; }
+
+  ul.plain { margin: 10px 0 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
+  ul.plain li { margin: 6px 0; max-width: 72ch; }
+  ul.plain b { color: var(--ink); font-weight: 700; }
+
+  .pipeline {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13px; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto; white-space: nowrap;
+    margin: 18px 0 0;
+  }
+  .pipeline b { color: var(--accent); font-weight: 600; }
+
+  footer { margin-top: 64px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; max-width: 72ch; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .meter i { transition: width .6s ease; }
+  }
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">shmupX · packages/shmup-engine/src/sfc · reverse-engineering status</p>
+  <h1>Dezaemon SFC Parity Map<span class="jp">描いて・作って・遊べる デザエモン</span></h1>
+  <p class="lede">What <code>@shmupx/shmup-engine/sfc</code> decodes of a 1994 <strong>Super Famicom Dezaemon</strong> battery-SRAM save, and what stands between it and the parity <a href="dezaemon-parity.html">the Saturn map</a> reports. Target is the original cart (Athena, SHVC-66): a little-endian 65C816, 512 KB of LoROM and <strong>128 KB of battery SRAM</strong> dumped raw — no header, no interleave, no compression, nothing like the Saturn's BUP image. The ROM <strong>documents its own SRAM map</strong>, a 26-row <code>ADDRESS NAME</code> debug table at ROM <code>0x66A5</code>, so every byte is labelled and the parser reads all 26 regions; but the only fixture is the factory sample with its <strong>graphics bank all zero</strong>, nothing has been traced through an emulator, and as of 2026-09-07 the parser is a <strong>read-only structural pass</strong>: nothing is played, mapped into <code>game.json</code> or written back. Canonical notes: <code>packages/shmup-engine/FORMAT-SFC.md</code>.</p>
+
+  <div class="pipeline">.sav / .srm (raw 128 KB, no header) → sram.js <b>T.TABATA</b> magic · 4 segments → regions.js (the ROM's 26 rows) → decode <b>palettes</b> · <b>stage maps</b> · <b>scroll</b> · <b>groups / ODR</b> · <b>high scores + config</b> · raw <b>enemy / appear / sound</b> · <b>graphics</b> (blank) → parseSfcSav → sfc:probe report · png · hex · diff ‖ no game.json · no runtime · no write path</div>
+
+  <div class="meterline">
+    <div class="meter" role="img" aria-label="By region count: eleven of twenty-six decoded, twelve located but not understood, three open — a little under half, a little under half, an eighth">
+      <i class="m-ok" style="width:42%"></i><i class="m-part" style="width:46%"></i><i class="m-miss" style="width:12%"></i>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--ok)"></i><b>Decoded</b> 11 regions · container magic · two reserved ranges · palettes · checksum copy · high scores · the five configuration words — 1,224 bytes, 0.9% of the cart</span>
+      <span><i class="dot" style="background:var(--part)"></i><b>Located</b> 12 regions · stage maps · scroll tables · six GROUP tables · two ODR tables · enemy data · appear data — 52,504 bytes, 40.1%</span>
+      <span><i class="dot" style="background:var(--miss)"></i><b>Open</b> 3 regions · CHECK SUM · SOUND DATA · GRAPIC DATA — 77,344 bytes, 59.0%: counted by bytes the bar inverts, since the graphics bank alone is half the cart</span>
+    </div>
+  </div>
+</header>
+
+<h2><span class="no">01</span>What remains</h2>
+<p class="sub">The SFC parser landed in one pass (2026-09-07): the container, the ROM's own map, every fixed table, a probe and 31 tests, with the factory sample cart as the only fixture; what follows is what that pass could not settle. <span class="tag spec" style="margin-left:0">SPEC WRITTEN</span> means the layout is documented in FORMAT-SFC.md and only a consumer is missing — no SFC item has earned it yet; <span class="tag open" style="margin-left:0">MEANING OPEN</span> means the bytes are located and sliced at the ROM's stride but their semantics are untraced; <span class="tag none" style="margin-left:0">NO TRACE</span> means nothing exists yet. Each item ends with what would close it — FORMAT-SFC.md's phase B: the ROM in Mesen 2 (SNES) or bsnes-plus with the fixture as its <code>.srm</code>.</p>
+
+<ol class="remaining">
+  <li><span class="n">1</span>
+    <h3>The CHECK SUM algorithm<span class="tag open">MEANING OPEN</span></h3>
+    <p>32 bytes at <code>0x0000</code>, repeated byte for byte at <code>0x7E5A</code> as <b>CHECK SUM COPY</b>; <code>readChecksumBlocks()</code> compares the two, and that is the <b>only integrity check today</b>. It is no per-block sum: byte sums, word sums, negated and XOR variants over 2/4/8 KB blocks of 32/64/128 KB all miss. One lead, not proof — word 0 read big-endian (<code>0x52AD</code>) equals the 16-bit sum of the little-endian words of PALETTE DATA; no other word matches any run of labelled regions. <span class="ref">sram.js · FORMAT-SFC.md</span></p>
+    <p><b>What closes it:</b> a write breakpoint on <code>$700000-$70001F</code> during an in-editor save lands in the routine, which lives near the <code>S-RAM CHECK!</code> strings at ROM <code>0x521</code>. The write path (item 8) waits on this.</p>
+  </li>
+  <li><span class="n">2</span>
+    <h3>GRAPIC DATA banking, and where the sample's art lives<span class="tag open">MEANING OPEN</span></h3>
+    <p><code>0x10000-0x20000</code>, the upper two segments, is by size 2,048 SNES 4bpp planar 8×8 tiles of 32 bytes, and the codec is done and locked (<span class="ref">tiles.js</span>, section 02). Unknown is <b>which 32 bytes a group word's 10-bit tile number points at</b>: 64 KB is more than VRAM holds at once, so the game must bank it, and the only fixture has the region zeroed, so nothing has ever been drawn through it — the probe's <code>png graphics</code> and <code>png groups</code> renders are a guess at the bank layout. The ROM's last 128 KB (<code>0x60000+</code>) renders as editor UI icon tiles, not as the sample's bank, so <b>where the factory game's art comes from when played is open too</b>. <span class="ref">graphics.js · tools/sfc-sav/main.ts</span></p>
+    <p><b>What closes it:</b> a dump with graphics (item 9), then the emulator's DMA log — SRAM to VRAM gives the banking, SRAM to CGRAM says which palette rows are real and which group feeds which layer.</p>
+  </li>
+  <li><span class="n">3</span>
+    <h3>SOUND DATA<span class="tag open">MEANING OPEN</span></h3>
+    <p><code>0x5058-0x7E58</code>: 11,776 bytes at 7.45 bits/byte of entropy — a bit-packed stream, not tiles and not a byte-per-step sequencer; <code>sliceSound()</code> hands it out as stored. What the composer holds is known only from outside (16 bars at a 1/16 quantise in 4/4, two voices, changeable instruments — Japanese Wikipedia), and <b>BGM PATCH</b> is one instrument number per BGM slot; the stream's own layout is not. Against the Saturn side, where sec6 is decoded and synthesised live in WebAudio, this is the widest single gap — this side plays nothing. <span class="ref">tables.js · regions.js</span></p>
+    <p><b>What closes it:</b> reads of the region during the APU upload (<code>$2140-$2143</code>) show what the driver unpacks and in what order; one note added in the composer, saved and diffed, shows which bits moved.</p>
+  </li>
+  <li><span class="n">4</span>
+    <h3>ENEMY DATA, APPEAR DATA and the ODR frame lists<span class="tag open">MEANING OPEN</span></h3>
+    <p>The strides are the ROM's and the code applies them — <b>ENEMY DATA</b> 24 records × 128 bytes from <code>0x8000</code> (the sample fills 23; record 21 is blank), <b>APPEAR DATA</b> 6 stages × <code>0x1200</code> from <code>0x8C00</code> (every sample stage opens with fourteen <code>0x00</code> then fourteen <code>0xFF</code>), <b>ENEMY ODR</b> 24 × 80 bytes = 20 four-byte quads per enemy, <b>MY SHIP ODR</b> 16 quads (zero in the sample) — but <b>no field inside any of them is traced</b>: no position, timing, HP or fire byte is named, and the ODR quads that repeat merely <em>look like</em> animation frame lists. On the Saturn map the 18-byte record, the 256 behaviour scripts and the death word are done; here a record is 128 opaque bytes. <span class="ref">enemy.js · groups.js</span></p>
+    <p><b>What closes it:</b> controlled deltas — change one thing in the editor, save, <code>sfc:probe diff</code> — pin fields to offsets and confirm the APPEAR record shape; the ROM under a debugger says what the engine does with them.</p>
+  </li>
+  <li><span class="n">5</span>
+    <h3>SCROLL EFECT, MAP DATA bit 7 and the two sparse columns<span class="tag open">MEANING OPEN</span></h3>
+    <p><b>SCROLL EFECT</b> (<code>0x3940-0x4540</code>) is split 6 × <code>0x200</code> by size, and that split is a placeholder: the sample opens with <code>0x100</code> bytes of small integers (<code>18 18 18 00 01 02 19 11 …</code>), then smooth curves of bytes around <code>0x40</code> (<code>0x38-0x47</code>) padded with <code>0x1F</code> / <code>0x1D</code> recur every <code>0x200</code> from <code>+0x100</code> — a per-stage scroll-speed or offset table by the label; what indexes it is open. In <b>MAP DATA</b> the width is measured (18 columns, section 02) but bit 7 is set on some cells — <code>0x9C</code> at cell 1 of stage 0 — and uninterpreted: the chip index masks to <code>0x7F</code> and no sample cell exceeds 127. Columns 16-17 are sparse in every stage — per-row markers rather than scenery, possibly. <span class="ref">map.js</span></p>
+    <p><b>What closes it:</b> reads of SCROLL EFECT while a stage scrolls; the map rendered through real graphics (item 2); one flagged cell toggled in the editor and diffed.</p>
+  </li>
+  <li><span class="n">6</span>
+    <h3>The game.json mapping<span class="tag none">NO TRACE</span></h3>
+    <p>The Saturn side has <span class="ref">map-to-game.js</span>; nothing SFC exists, and <code>parseSfcSav()</code> is kept behind the <code>./sfc</code> subpath on purpose — <code>mod.js</code> is the Saturn editor bundle. Nothing decoded here — not the 24 palette rows, not the six 18 × 128 stage maps, not a GROUP table — reaches the editor's <code>game.json</code> or anything the Phaser runtime reads. Even a scenery-only import waits on item 2: a chip's quad is four VRAM tile numbers with no SRAM bytes behind them, and an enemy would arrive as 128 unnamed bytes (item 4). Already on the shelf is the palette rule: the writer's <code>snes</code> target and <code>snesCgramBytes()</code> speak one 15-colour row per sprite, and <code>cgram.js</code> is that function's reader half. <span class="ref">index.js · palette-target.js</span></p>
+    <p><b>What closes it:</b> items 2 and 4. Until then a mapper could carry only palettes, six chip grids without their art, and the high-score table.</p>
+  </li>
+  <li><span class="n">7</span>
+    <h3>Playing it<span class="tag none">NO TRACE</span></h3>
+    <p>Nothing here plays a Super Famicom cart: <span class="ref">static/emulators.json</span> has no SNES core, so the launcher cannot boot the ROM with a save as its <code>.srm</code>; there is no <code>game.json</code> to hand the Phaser runtime; nothing in this repo runs the 65C816 or its APU. Every claim on this page is therefore a measurement of bytes or a label read out of the ROM — <b>nothing has been traced through emulation</b>, which is exactly what the Saturn map's confirmed rows rest on. That side's exported cart boots and plays in Mednafen; this side has never been booted from this repo at all.</p>
+    <p><b>What closes it:</b> an SNES core in the launcher for the cart itself, or item 6 for the runtime. Playing it is also the Method: the ROM in Mesen 2 or bsnes-plus with the fixture as its <code>.srm</code> is where items 1-5 get closed.</p>
+  </li>
+  <li><span class="n">8</span>
+    <h3>The write path<span class="tag none">NO TRACE</span></h3>
+    <p>No SFC writer. The container needs no builder — a save is the raw 131,072 bytes, four 32 KB segments in banks <code>$70-$73</code>, <code>T.TABATA</code> at <code>0x7FF8</code> — and <code>encodeTile4bpp</code> / <code>encodeTile2bpp</code> and <span class="ref">palette-target.js</span>'s <code>snesCgramBytes()</code> already produce tiles and a 512-byte CGRAM bank. Beyond those no encoder exists for any region, and item 1 blocks the whole: an edited image needs a valid CHECK SUM block nobody here can compute, and until the routine is traced there is no knowing what the cart does with a wrong one. <span class="ref">sram.js · tiles.js</span></p>
+    <p><b>What closes it:</b> item 1, then one round trip — write, boot in the emulator, see the sample play.</p>
+  </li>
+  <li><span class="n">9</span>
+    <h3>A second fixture<span class="tag none">NO TRACE</span></h3>
+    <p>Everything above rests on one dump, <span class="ref">fixtures/dezaemon-sfc-sample.sav</span>, whose lower 64 KB equals ROM <code>0x50000-0x5FFFF</code> byte for byte — the factory sample game, never edited — and whose upper 64 KB is zero. So the tile codec is locked by synthetic bytes only, the 18-column width has never been seen through real graphics, MY SHIP ODR and ENDING GROUP are empty, and every measured shape is one game's. Neither the save nor the ROM is committed (<span class="ref">fixtures/</span> and <span class="ref">dev-fixtures/</span> are gitignored), so the fixture-gated tests report <code>ignored</code> without them. <span class="ref">test/_fixtures.js</span></p>
+    <p><b>What closes it:</b> any save written by a real session, or the freely shared “Shooting Monner” <code>.srm</code>; <code>sfc:probe report</code> says at once whether its graphics bank is present, and <code>sfc:probe diff</code> is built for the pair. It is the first thing to add: items 2, 4 and 5 all start from a diff against it.</p>
+  </li>
+</ol>
+
+<h2><span class="no">02</span>Already decoded</h2>
+<p class="sub"><span class="band ok">Confirmed</span>&ensp;The bytes decode as the ROM's label says and a test locks it — never that a runtime consumes them. Where <span class="ref">regions.js</span> says <em>likely</em> rather than <em>confirmed</em> the row says so: the stride is what the code applies, the semantics belong to section 03.</p>
+<div class="tablewrap">
+<table>
+  <tr><th>Area</th><th>Coverage</th></tr>
+  <tr><td class="feat">Container</td><td><span class="note">A raw 131,072-byte dump — no header, no interleave, no compression — of the 128 KB battery SRAM that LoROM maps as four 32 KB segments in banks <code>$70-$73</code>; integers little-endian. Recognised by size plus the ASCII magic <code>T.TABATA</code> at <code>0x7FF8</code>, the programmer's initials (ROM credits <code>TSUTOMU TABATA 94/01/27</code>) as the formatted-SRAM mark; a 65,536-byte file is accepted too, everything but GRAPIC DATA lying below <code>0x10000</code>. The boot code insists on exactly 128 KB — it writes <code>$707E7B</code>, the MOUSE SPEED word, and reads it back through the mirror — which is why copiers with more SRAM fail its <code>S-RAM CHECK!</code>. <code>isSfcSav()</code>; <code>splitSegments()</code>, four views tagged with their bank, present / blank; <code>readChecksumBlocks()</code>.</span> <span class="ref">sram.js</span></td></tr>
+  <tr><td class="feat">The ROM's own map</td><td><span class="note">At ROM <code>0x66A5</code> the game keeps a debug table <code>ADDRESS NAME</code>, 26 rows of <code>XXXXX-XXXXX NAME</code>; <span class="ref">regions.js</span> is that table verbatim, spelling included (<code>SCROLL EFECT</code>, <code>GRAPIC DATA</code>), with a confidence and a note per row, and <code>coverage()</code> proves the 26 tile <code>0x00000-0x20000</code> with no gap or overlap. <code>parseRomRegionTable()</code> reads the table back and <code>regionTableMatches()</code> holds the two equal; <code>readRomHeader()</code> reads the internal header at <code>0x7FC0</code> — title <code>DEZAEMON</code>, map mode <code>0x30</code> (LoROM, FastROM), cart type <code>0x02</code> (ROM + SRAM + battery), size codes <code>0x09</code> / <code>0x07</code> for 512 KB / 128 KB, checksum valid — skipping a 512-byte copier header; <code>romDefaultImage()</code> / <code>compareWithRomDefault()</code> pull the 64 KB factory image at <code>0x50000</code>, the one the game copies into fresh SRAM, and score a save against it.</span> <span class="ref">rom.js · regions.js</span></td></tr>
+  <tr><td class="feat">Palettes</td><td><span class="note">PALETTE DATA <code>0x40-0x340</code>: 24 rows × 16 BGR555 little-endian words, R bits 0-4, G 5-9, B 10-14 — the Saturn's own layout, so <code>rgb555ToRgb()</code> from <span class="ref">decode-cg.js</span> converts unchanged and <code>rowsToPalettes()</code> feeds <code>indexedToRgba()</code>; colour 0 of a row is transparent. Rows 0-21 are colour (bit 15 clear): five identical default rows at <code>0x100-0x180</code>, a blue-grey ramp from <code>0x2A0</code>, a red-to-yellow-to-white one from <code>0x2C0</code>. Rows 22-23 (<code>0x300-0x340</code>) carry R/G/B ramps and primaries and each ends in a bit-15 word (<code>0x87F7</code>, <code>0xB76E</code>) — the editor's own colour picker, by the look of it — so <code>decodePaletteData()</code> reports <code>colorRowCount</code> (22 in the sample) rather than assuming.</span> <span class="ref">cgram.js</span></td></tr>
+  <tr><td class="feat">Stage maps</td><td><span class="note"><em>Likely.</em> MAP DATA <code>0x340-0x3940</code>: 6 stages × <code>0x900</code>, one byte per 16×16 chip indexing MAP GROUP, decoded as 18 columns × 128 rows (288 × 2,048 px, two chips wider than the 256-px screen). The width is measured, not assumed: <code>rowContinuity()</code>, the share of cells equal to the cell one row down, peaks at 18 in every sample stage (0.17-0.40, harmonics at 36 and 54) while 16 scores 0.01-0.19; <code>0x900 / 18</code> is exactly 128; rendered at 16 the scenery shears into diagonals, at 18 it stands upright; a fixture test asserts 18 beats 8, 12, 16, 20, 24, 32 and 64 in every stage. Per stage: <code>used</code>, <code>flagged</code>, <code>maxChip</code> — the sample's non-zero cells run 1823 / 1794 / 1931 / 1495 / 712 / 698.</span> <span class="ref">map.js</span></td></tr>
+  <tr><td class="feat">Scroll tables</td><td><span class="note"><em>Likely.</em> SCROLL EFECT <code>0x3940-0x4540</code> as 6 × <code>0x200</code> views with per-stage <code>min</code> / <code>max</code>; <code>sfc:probe png scroll</code> plots one as a 256-tall curve. The split is by size only (item 5).</span> <span class="ref">map.js</span></td></tr>
+  <tr><td class="feat">Tile groups</td><td><span class="note"><em>Likely.</em> Every GROUP region is a table of quads — four SNES BG tilemap words (8 bytes) per 16×16 object; word = bits 0-9 tile, 10-12 palette row, 13 priority, 14 hflip, 15 vflip; <code>0xFFFF</code> or <code>0x03FF</code> is an empty slot — MAP GROUP 192 chips, ENEMY GROUP 24 × 4, BOSS GROUP 6 × 8, TITLE GROUP 8, ENDING GROUP 3, MY SHIP GROUP 16; the two ODR regions are the same in 8-bit, ENEMY ODR 24 × 20 and MY SHIP ODR 16. <code>classifyQuad()</code> names a <i>chip</i> <code>[n, n+1, n+8, n+9]</code>, a <i>strip</i> <code>[n, n+1, n+1|H, n|H]</code> or <i>empty</i>, else <code>null</code>. The counts are the ROM's and a test holds them to the region boundaries; the tile numbers are VRAM numbers with no bytes behind them (item 2).</span> <span class="ref">tilemap.js · groups.js</span></td></tr>
+  <tr><td class="feat">High scores and configuration</td><td><span class="note">HIGH SCORE <code>0x7E8E-0x7FCE</code>: 20 × 16 bytes — u32 score, four bytes not yet understood, <code>char[8]</code> name — two tables of ten; the sample holds the factory ladder 1000, 900 … 100 twice with <code>........</code> names. TITLE TYPE u16 (<code>0x020A</code>), MOUSE SPEED (0 — the cart supports the SNES Mouse; ROM string <code>MODIFIED FROM SHVC MOUSE BIOS</code>), EDIT BGM (0), BGM PATCH 16 bytes (<code>11 12 13 14 15 16 16 17 18 16 19 1a 10 1c 1d 1b</code>, one instrument per BGM slot), KEY CONFIG <code>20 08 10 20</code>, RESERVED <code>0x7FD2-0x7FF8</code> mostly <code>0xFF</code>, RESERVED <code>0x20-0x40</code> zero but for <code>0x3160</code> at <code>0x3E</code>. All fixture-locked.</span> <span class="ref">tables.js</span></td></tr>
+  <tr><td class="feat">Enemy and appearance tables</td><td><span class="note"><em>Likely.</em> ENEMY DATA as 24 × 128-byte views with a <code>blank</code> flag (23 in use in the sample); APPEAR DATA as 6 × <code>0x1200</code> stage views with a <code>used</code> count (no sample stage is blank). Raw slices at the ROM's strides, nothing inside read (item 4).</span> <span class="ref">enemy.js</span></td></tr>
+  <tr><td class="feat">Tile codec</td><td><span class="note">SNES 4bpp planar 8×8 tiles, 32 bytes — rows of bitplanes 0+1 interleaved, then rows of 2+3, leftmost pixel in bit 7 — and 2bpp at 16; decode and encode both ways, <code>flipTile</code>, <code>assemble2x2</code>, <code>tilesToIndexed</code>, <code>withPaletteRow</code> (index 0 stays transparent). <code>decodeGraphics()</code> reads GRAPIC DATA as 2,048 tiles by size and reports <code>present</code> / <code>blank</code> / <code>usedCount</code>, telling a 64 KB dump from a zeroed bank from real art. Locked by synthetic round-trip tests only: no fixture has graphics.</span> <span class="ref">tiles.js · graphics.js</span></td></tr>
+  <tr><td class="feat">Probe tool</td><td><span class="note"><code>deno task sfc:probe</code>: <code>report</code> (per-region entropy, zero and <code>0xFF</code> share, blank or absent, the checksum copy, the ROM cross-check, <code>report.json</code>), <code>png palettes|graphics|map|scroll|groups</code> (a map draws chip indices as hashed colours at 4 px while graphics are blank, chips through the bank at 16 px once they are not; the graphics and groups renders are a guess at the bank layout), <code>hex --range</code> with the region named, <code>diff a.sav b.sav</code> (<code>coalesceDiffRanges</code> by region, for controlled-delta captures) and <code>all</code>.</span> <span class="ref">tools/sfc-sav/main.ts · src/diff-ranges.js</span></td></tr>
+  <tr><td class="feat">Tests</td><td><span class="note">Seven files, 31 tests: tiles, cgram, tilemap, sram, regions, tables, index. The synthetic ones always run — the 26 regions tile <code>0x00000-0x20000</code> with no gaps or overlaps, every table's last stride lands on the next region's offset, the codec round-trips every index, <code>decodeCgramRow</code> inverts <code>snesCgramBytes</code>; the fixture-gated ones need the sample save in <span class="ref">fixtures/</span> and the ROM in <span class="ref">dev-fixtures/</span>, both gitignored, and hold <span class="ref">regions.js</span> equal to the ROM's table and the fixture's lower half equal to the ROM's default image. Whole repo suite: 369 passed.</span> <span class="ref">test/sfc-*.test.js</span></td></tr>
+</table>
+</div>
+
+<h2><span class="no">03</span>Located but not yet understood</h2>
+<p class="sub"><span class="band part">Likely</span>&ensp;The twelve regions whose stride and shape match the ROM's label and whose semantics nobody has traced — 52,504 bytes, sliced at the right boundaries and read no further. The measurements are all of the one sample.</p>
+<ul class="plain">
+  <li><b>MAP DATA</b> <code>0x340-0x3940</code> — 6 × <code>0x900</code>, 18 × 128 chips by vertical continuity; bit 7 uninterpreted, columns 16-17 sparse in every stage (item 5); no cell exceeds chip 127 of MAP GROUP's 192</li>
+  <li><b>SCROLL EFECT</b> <code>0x3940-0x4540</code> — 6 × <code>0x200</code> by size only; <code>0x100</code> bytes of small integers, then <code>0x38-0x47</code> curves padded <code>0x1F</code> / <code>0x1D</code> every <code>0x200</code> from <code>+0x100</code>; a per-stage scroll table by the label, its index unknown</li>
+  <li><b>MAP GROUP</b> <code>0x4540-0x4B40</code> — 192 quads, free-form picks of tiles <code>0x2C0-0x35F</code>, 119 wholly empty</li>
+  <li><b>MY SHIP ODR</b> <code>0x4B40-0x4B80</code> — 16 four-byte quads, zero throughout the sample</li>
+  <li><b>ENEMY GROUP</b> <code>0x4B80-0x4E80</code> — 24 enemies × 4 quads, tiles <code>0x3A0-0x3DF</code>, some slots empty</li>
+  <li><b>BOSS GROUP</b> <code>0x4E80-0x5000</code> — 6 bosses × 8 quads, mirrored strips <code>[n, n+1, n+1|H, n|H]</code></li>
+  <li><b>TITLE GROUP</b> <code>0x5000-0x5040</code> — 8 quads, tiles <code>0x2A0-0x2BF</code>, consecutive</li>
+  <li><b>ENDING GROUP</b> <code>0x5040-0x5058</code> — 3 quads, all empty in the sample</li>
+  <li><b>ENEMY DATA</b> <code>0x8000-0x8C00</code> — 24 × 128 bytes, 23 in use, record 21 blank; no field named</li>
+  <li><b>APPEAR DATA</b> <code>0x8C00-0xF800</code> — 6 × <code>0x1200</code>; every stage opens with fourteen <code>0x00</code> then fourteen <code>0xFF</code>, then sparse entries; no record shape named</li>
+  <li><b>ENEMY ODR</b> <code>0xF800-0xFF80</code> — 24 × 80 bytes = 20 four-byte quads per enemy; quads repeat (<code>19 1b 1d 5b 19 1b 1d 5b</code> in enemy 0), which looks like an animation frame list</li>
+  <li><b>MY SHIP GROUP</b> <code>0xFF80-0x10000</code> — 16 quads, 2×2 chips <code>[n, n+1, n+8, n+9]</code> from tile <code>0x200</code>, which suggests a sheet eight tiles wide; the numbers are VRAM tile numbers, and which SRAM bytes they load from is item 2</li>
+  <li><b>Loose ends inside confirmed regions</b> — the four bytes after each high score (zero in the sample); palette rows 22-23 and their bit-15 tails; the bit meanings of TITLE TYPE and KEY CONFIG; the word <code>0x3160</code> at <code>0x3E</code> in the first RESERVED range; why CHECK SUM word 0 equals the palette word-sum</li>
+</ul>
+
+<h2><span class="no">04</span>No trace at all</h2>
+<p class="sub"><span class="band miss">Absent</span>&ensp;What the Saturn pipeline has and the SFC side has no code for.</p>
+<ul class="plain">
+  <li><b>Any write path</b> — no SFC counterpart to <span class="ref">bup-write.js</span> / <span class="ref">game-to-save.js</span>; the tile and CGRAM encoders exist, the checksum does not (items 1, 8)</li>
+  <li><b>The game.json mapping</b> — no SFC <span class="ref">map-to-game.js</span>; the parser stays behind the <code>./sfc</code> subpath and nothing in the editor or the Phaser runtime reads it (item 6)</li>
+  <li><b>An SNES core in the launcher</b> — <span class="ref">static/emulators.json</span> has none, so no Super Famicom cart can be played here, edited or not, and no engine trace stands behind any claim above (item 7)</li>
+  <li><b>The sound format</b> — SOUND DATA is sliced and nothing more; no note, bar or instrument has been read out of its 11,776 bytes, and nothing is synthesised (item 3)</li>
+  <li><b>The graphics bank</b> — no fixture carries one, the tile-number-to-offset banking is unknown, and the sample game's art has not been located in the ROM either (item 2)</li>
+  <li><b>A second fixture</b> — a save from a real session or the shared “Shooting Monner” <code>.srm</code>; every measurement above is of the factory image (item 9)</li>
+</ul>
+
+<footer>
+  Sources: <code>packages/shmup-engine/FORMAT-SFC.md</code> (the canonical notes, split confirmed / likely / open), the ROM's own <code>ADDRESS NAME</code> table at <code>0x66A5</code>, <code>src/sfc/regions.js</code> (that table verbatim, a confidence per row) and the <code>sfc:probe</code> report of the fixture. Method: the region names and spans are the ROM's own labels, read out of the image rather than inferred; the strides are the region sizes; widths were measured — <code>rowContinuity()</code> on every stage, region entropy and zero share — then locked by tests; spans use exclusive ends as <span class="ref">regions.js</span> stores them, where the ROM prints inclusive last bytes. Nothing has been traced through emulation yet, so nothing here claims engine-traced semantics — <em>confirmed</em> means “the bytes decode as the label says and a fixture test locks it”, never “the game was watched using them”; where the Saturn map says <em>traced</em>, this page can only say <em>labelled</em> or <em>measured</em>. Fixture: <code>packages/shmup-engine/fixtures/dezaemon-sfc-sample.sav</code>, 131,072 bytes, <code>T.TABATA</code> at <code>0x7FF8</code>, checksum copy matching, lower half identical to ROM <code>0x50000-0x5FFFF</code>, upper half zero; the ROM is <em>Kaite Tsukutte Asoberu Dezaemon</em> (Athena, 1994, SHVC-66), 512 KB LoROM, an English-patched build, in <code>dev-fixtures/</code>; both gitignored. Surveyed 2026-09-07, the day the parser, notes, probe and tests landed; the Saturn map it mirrors was surveyed 2026-08-28 with updates to 2026-09-05.
+</footer>
+</div>

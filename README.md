@@ -502,8 +502,10 @@ the dump carries one. It does not yet map a cart into `game.json` — the enemy
 records, appearance tables, sound data and the graphics banking are still
 open, and `packages/shmup-engine/FORMAT-SFC.md` says what is known and how to
 close the rest. `deno task sfc:probe all <sav> --rom <sfc> --out build/sfc/x/`
-renders what a dump holds. Neither saves nor the ROM are committed: the tests
-gate on `packages/shmup-engine/fixtures/dezaemon-sfc-sample.sav` and a ROM in
+renders what a dump holds, and `static/dezaemon-parity-sfc.html` is the
+parity map — the Super Famicom counterpart of `static/dezaemon-parity.html`.
+Neither saves nor the ROM are committed: the tests gate on
+`packages/shmup-engine/fixtures/dezaemon-sfc-sample.sav` and a ROM in
 `dev-fixtures/`.
 
 ## Desktop app

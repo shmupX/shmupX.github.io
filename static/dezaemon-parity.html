@@ -204,7 +204,7 @@
 <header>
   <p class="eyebrow">shmupX · packages/shmup-engine · reverse-engineering status</p>
   <h1>Dezaemon 2 Parity Map<span class="jp">デザエモン2</span></h1>
-  <p class="lede">What the importer already decodes of a Sega Saturn <strong>Dezaemon 2</strong> save, and what still stands between it and full feature parity. Target is the Saturn release (big-endian SH-2, <code>BackUpRam Format</code> BUP saves, LZSS-compressed 8-section payloads) — not the SNES original. The canonical RE notes live in <code>packages/shmup-engine/FORMAT.md</code>; the pipeline imports and, since 2026-09-05, <strong>exports</strong> — <code>exportLevelToSav</code> writes a MiSTer-layout cart that boots and plays in Mednafen; real hardware is still untested.</p>
+  <p class="lede">What the importer already decodes of a Sega Saturn <strong>Dezaemon 2</strong> save, and what still stands between it and full feature parity. Target is the Saturn release (big-endian SH-2, <code>BackUpRam Format</code> BUP saves, LZSS-compressed 8-section payloads) — not the SNES original, which has <a href="dezaemon-parity-sfc.html">its own map</a>. The canonical RE notes live in <code>packages/shmup-engine/FORMAT.md</code>; the pipeline imports and, since 2026-09-05, <strong>exports</strong> — <code>exportLevelToSav</code> writes a MiSTer-layout cart that boots and plays in Mednafen; real hardware is still untested.</p>
 
   <div class="pipeline">.sav → bup-parse → decompress (LZSS) → decode <b>sec0–3 CG</b> · <b>sec4 palettes</b> · <b>sec5 stages</b> · <b>sec6 BGM</b> · settings → mapSaveToGame → editor game.json → Phaser runtime</div>
 
