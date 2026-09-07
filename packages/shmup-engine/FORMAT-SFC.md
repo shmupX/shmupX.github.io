@@ -121,10 +121,12 @@ equal to the cell one row down beats every non-multiple width in every sample
 stage (0.17-0.40) while 16 scores 0.01-0.20; its multiples 36 and 54 trail as
 harmonics, 36 edging 18 by 0.002 in stage 4, and 0x900 / 18 is exactly 128.
 Rendering the cells at 16 columns shears the scenery into diagonals; at 18 it
-stands upright (`sfc:probe png map`), and the two rightmost columns are sparse
-in every stage — per-row markers rather than scenery, possibly, which is open.
-Bit 7 is set on some cells (`0x9C` below) and is not interpreted; the chip index
-masks to `0x7F`, and no sample cell exceeds 127.
+stands upright (`sfc:probe png map`). Columns 0 and 16 hold no non-zero cell in
+any stage and columns 8 and 17 are sparse, roughly a third as full as the rest,
+so the drawn field is narrower than the stride — per-row markers rather than
+scenery, possibly, which is open. Bit 7 is set on some cells (`0x9C` below) and
+is not interpreted; the chip index masks to `0x7F`, and no sample cell
+exceeds 127.
 
 ```
 00340  00 9c 1b 1b 1b 1b 1b 1b 00 1b 1b 1b 1b 1b 1b 1b 00 00   stage 0, row 0 (18 cells)
@@ -156,7 +158,7 @@ priority, 14 horizontal flip, 15 vertical flip. An unused slot is `0xFFFF` or
 | MAP GROUP     | 192    | free-form picks of tiles 0x2C0-0x373; 119 empty |
 | ENEMY GROUP   | 24 × 4 | mostly 0x360-0x3FB, a few from 0x200 and 0x2B8  |
 | BOSS GROUP    | 6 × 8  | 16 of 48 mirrored `[n, n+1, n+1\|H, n\|H]`      |
-| TITLE GROUP   | 8      | tiles 0x2A0-0x2BF, consecutive                  |
+| TITLE GROUP   | 8      | 0x2A0-0x2BF in order, 0x2B8-0x2BA absent        |
 | ENDING GROUP  | 3      | all empty                                       |
 | MY SHIP GROUP | 16     | 5 of 16 are 2×2 chips `[n, n+1, n+8, n+9]`      |
 

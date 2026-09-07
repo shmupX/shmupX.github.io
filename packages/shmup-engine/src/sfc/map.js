@@ -8,9 +8,11 @@
 // harmonics (36 edges 18 by 0.002 in stage 4, the one stage where 18 is not
 // the outright peak), while 16 scores no better than noise; 0x900 / 18 is
 // exactly 128. Rendered at 18 the scenery stands upright
-// and its two rightmost columns are sparse in every stage — per-row markers
-// rather than scenery, possibly, which is open. Cell values index MAP GROUP;
-// bit 7 is set on some cells in the sample and is left uninterpreted.
+// Columns 0 and 16 hold no non-zero cell in any stage and columns 8 and 17 are
+// sparse, roughly a third as full as the rest, so the drawn field is narrower
+// than the stride — per-row markers rather than scenery, possibly, which is
+// open. Cell values index MAP GROUP; bit 7 is set on some cells in the sample
+// and is left uninterpreted.
 //
 // SCROLL EFECT is 6 x 0x200 bytes of per-stage scroll tables by size. In the
 // sample the region opens with 0x100 bytes of small integers, and smooth
