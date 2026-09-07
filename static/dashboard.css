@@ -931,6 +931,26 @@ body.theme-xbox360.osd-music-blade .music-hd {
 }
 .net-prog-fill { height: 100%; width: 0; background: linear-gradient(90deg, #55eeff, #bdf48c); transition: width .2s ease; box-shadow: 0 0 8px rgba(120, 255, 90, .6); }
 
+/* eShop kind chip (WEB / DEZA) — inside the bar after the subtitle, in the
+   same mono voice as .net-badge but flat and quieter: it says what the row IS
+   where the badge says what state it is in. Yields nothing to the name: the
+   sub shrinks first (flex: 0 100 auto above), the chip never does. */
+.eshop-kind {
+  font-family: 'Share Tech Mono', monospace; font-weight: 700;
+  font-size: .56em; letter-spacing: .18em; margin-left: 1.2em;
+  padding: 1px 8px; border-radius: 3px; white-space: nowrap; flex-shrink: 0;
+  border: 1px solid rgba(180, 255, 140, .35); color: rgba(220, 255, 180, .8);
+  background: rgba(0, 0, 0, .25);
+}
+.eshop-kind.deza { color: #ffd07a; border-color: rgba(255, 208, 122, .45); }
+.game-row.sel .eshop-kind { color: #1a1400; border-color: rgba(20, 20, 0, .45); background: rgba(255, 255, 255, .3); }
+/* A row can carry the sub, the chip AND a badge; let the sub give way first
+   on a phone rather than pushing the badge out of the bar's chevron. */
+.game-bar .eshop-kind + .net-badge { margin-left: 1em; }
+/* The Nintendo card lays the bar out as a grid: the chip takes the slot next
+   to the sub instead of floating in the name row. */
+body.theme-nintendo .eshop-kind { margin-left: 0; justify-self: start; }
+
 /* Boot flash */
 .boot { position: fixed; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; z-index: 200; pointer-events: none; animation: bootOut 1.6s ease forwards; }
 /* .b-glyph is the 🐵 emoji in the 30vmin box the voxel X used to fill: the

@@ -101,6 +101,10 @@ function readyWorker() {
   });
   return swReady;
 }
+// The eShop's installed web games are served by the same worker (see
+// static/eshop-library.js), so it waits on this very promise rather than
+// racing a second register() against it.
+export { readyWorker as readyEmuWorker };
 
 // The worker sends no reply, but it persists the state it applied — which is
 // the only acknowledgement available, and the thing to wait for before treating

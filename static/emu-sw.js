@@ -17,6 +17,17 @@
 //      COOP/COEP the isolated players need, plus CORP on every mirrored
 //      subresource so require-corp does not reject them.
 //
+// The worker also serves the eShop's installed web games. Those live in a
+// second cache, "shmupx-eshop-v1", filled by static/eshop-library.js
+// (installWebGame unzips a build and stores every file under
+// "/eshop/<id>/<relpath>"); the launcher then points the game frame at
+// /eshop/<id>/<entry> and the ESHOP branch of the fetch handler answers it
+// from that cache. Same-origin is the point, exactly as for the emulators:
+// a game served from our own origin is one the launcher's synthesised
+// gamepad input can reach. The branch is independent of the emulator state
+// above — it never reads it, never waits for it — so an installed game keeps
+// loading whatever the installed-core set turns out to be.
+//
 // Requests outside the installed prefixes are left to the browser, and two
 // checks keep them there. A path outside MIRRORABLE below — the fixed set of
 // paths the catalogue could ever hand this worker — is returned to the
@@ -33,6 +44,13 @@
 const CACHE = "shmupx-emu-v1";
 const STATE_URL = "/__emu-state.json";
 const CONFIG_URL = "/emulators.json";
+
+// The eShop's install cache and the URL space it answers. Keep in step with
+// ESHOP_CACHE / ESHOP_PREFIX in static/eshop-library.js, which writes the
+// entries this worker reads; tests/emu_sw_universe_test.ts checks the prefix
+// is here and stays outside MIRRORABLE.
+const ESHOP_CACHE = "shmupx-eshop-v1";
+const ESHOP_PREFIX = "/eshop/";
 
 // Every path static/emulators.json could ever hand this worker: each core's
 // prefixes and icon, plus the catalogue's shared entries (the rule lives in
@@ -51,7 +69,7 @@ const MIRRORABLE = [
   "/ps2/", "/PlayStation2/",
   "/games/ps2-mario/", "/games/racer-intro/", "/games/shmup-party-ps2/",
   "/switch/", "/NintendoSwitch/",
-  "/emulator-controls.js", "/shaders/",
+  "/emulator-controls.js", "/shaders/", "/bios/",
 ];
 
 let state = null; // { origin, prefixes: [], isolated: [] }; null until read
@@ -185,6 +203,30 @@ async function mirrorOrFail(request, url) {
   }
 }
 
+// An installed eShop game's file, from the eShop cache. A path ending in "/"
+// is a folder request and gets the folder's index.html, the way a static
+// server would answer it. A miss goes to the network as the request came:
+// there is nothing on this origin under /eshop/ for it to find, but a 404
+// from the server is the answer the page can show, and a fetch that fails
+// outright becomes a 504 rather than a rejected promise (which the browser
+// reports as a network error it cannot retry).
+async function eshopFile(request, pathname) {
+  try {
+    const cache = await caches.open(ESHOP_CACHE);
+    const hit = await cache.match(pathname) ||
+      (pathname.endsWith("/") && await cache.match(pathname + "index.html"));
+    if (hit) return hit;
+  } catch { /* no Cache Storage — fall through to the network */ }
+  try {
+    return await fetch(request);
+  } catch (err) {
+    return new Response(
+      "eshop file not installed: " + pathname + "\n" + err,
+      { status: 504, headers: { "content-type": "text/plain" } },
+    );
+  }
+}
+
 self.addEventListener("install", (e) => {
   self.skipWaiting();
 });
@@ -234,6 +276,15 @@ self.addEventListener("fetch", (e) => {
   if (url.origin !== self.location.origin) return;
   if (e.request.method !== "GET" && e.request.method !== "HEAD") return;
   if (url.pathname === STATE_URL || url.pathname === CONFIG_URL) return;
+
+  // The eShop's installed games, decided before anything about the emulators:
+  // /eshop/ is only ever filled by an install, so there is no installed set to
+  // consult and nothing to wait for. GET only — the pages' own subresource
+  // loads — a HEAD is left to the browser like any other request.
+  if (e.request.method === "GET" && url.pathname.startsWith(ESHOP_PREFIX)) {
+    e.respondWith(eshopFile(e.request, url.pathname));
+    return;
+  }
 
   // Not a path any core could claim, so it is not this worker's business
   // whatever the installed set says. Decided here, before anything awaits,

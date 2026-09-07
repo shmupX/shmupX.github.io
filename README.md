@@ -31,6 +31,9 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
 - `data/games.json` → `deno task games:manifest` → `static/games.manifest.json`
   — the OTA manifest the dashboard fetches (push to main = every client sees the
   new list, no rebuild).
+- `data/eshop.json` — the **eShop** catalog, the global game list (see **The
+  eShop** below). Baked into the same manifest as its `eshop` array; a game is
+  added by pull request, and `deno task eshop:check` validates the entries.
 - `static/editor/` — the shmupX level editor (single-file app). Its wave grid
   has a **VERT / HORIZ** switch on the stage rail: the same waves laid out top
   to bottom, or left to right the way a Dezaemon horizontal cart scrolls
@@ -155,6 +158,7 @@ deno task build:ps2:zip   # …as one .zip of that folder
 deno task build:ps2:iso   # …plus a bootable disc image
 deno task build:sav       # a level as a Dezaemon 2 cart save (.sav) for MiSTer / hardware
 deno task sav:run         # …then launch it in Mednafen, cart preloaded (Windows / Linux / WSL→Windows)
+deno task eshop:check     # validate data/eshop.json against the built manifest
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
@@ -906,6 +910,47 @@ outside every core prefix, so the dashboard adds them to the prefix set it hands
 the worker. And PS2's web builds live under `/games/<slug>/`, which is listed
 per slug rather than as a bare `/games/` — that prefix would shadow shmupX's own
 `/games/2028-ai` with cmg's copy.
+
+## The eShop
+
+The launcher has two game lists. **Games** is this player's: shmupX, then the
+eShop games installed here, then an ESHOP row. **eShop** is the global one —
+every game anyone can get — and it is read from two places by
+[`static/eshop-library.js`](static/eshop-library.js):
+
+- [`data/eshop.json`](data/eshop.json), served through `games.manifest.json`.
+  A pull request adds a game: a `web` entry names a zip of a finished browser
+  build (a GitHub `repo` + `branch`, optionally a `downloadUrl`; the first
+  entry is `easierbycode/shmup-party-phaser4`, installed at its latest commit),
+  a `deza` entry names a Dezaemon 2 `.sav`. `deno task eshop:check` is the
+  gate ([`.github/workflows/eshop.yml`](.github/workflows/eshop.yml) runs it).
+- The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU →
+  PUBLISH TO ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`,
+  cover under `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>`
+  last). A static entry wins over a published one of the same id.
+
+What "install" means depends on the kind. A **web** game is unzipped into
+Cache Storage (`shmupx-eshop-v1`, keys `/eshop/<id>/…`) and served from there
+by the same service worker as the emulators, so it runs same-origin — which is
+what lets the launcher's mapped gamepad input reach it — and offline. A GitHub
+entry with no `downloadUrl` streams its zipball through `/api/eshop/zip`;
+a `raw.githubusercontent.com` URL is pinned to the branch's newest commit so
+the install is never a stale CDN copy. A **Dezaemon** game goes onto the
+shelf ([`static/deza-shelf.js`](static/deza-shelf.js), the same IndexedDB the
+editor's → SAVE SHELF writes), where the coverflow's leading ⬇ bucket and the
+editor's LOAD GAME drawer list it; playing it hands the editor
+`?playExport=<shelf id>`.
+
+**Sega Saturn, automatically.** With a Dezaemon 2 disc image in
+`dev-fixtures/` the local server's `/api/dezaemon-disc` says so, the launcher
+installs the Saturn core by itself (until you uninstall it) and the console's
+shelf leads with the disc, posted into the browser player as a file. That core
+keeps only the console's 32 KB internal memory — no backup cartridge — so the
+editor's → SATURN EMU (USER SAVE) row can only ever stage what fits there, and
+a Dezaemon 2 game never does (the smallest possible one is ~89 KB); the row
+says so with the numbers. → MEDNAFEN CART (`POST /api/saturn-save`, the same
+code as `deno task sav:run`) installs the cart for the desktop emulator, which
+has the 512 KB cartridge, and launches it.
 
 ## Deploy
 

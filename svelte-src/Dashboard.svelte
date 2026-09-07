@@ -11,11 +11,36 @@
     listPs2Games,
     ps2PlayerUrl,
   } from '../static/ps2-library.js';
+  // The eShop: the global game list (data/eshop.json via the manifest, plus
+  // games published from the level editor to the database), the Cache Storage
+  // installs of its web builds, and the Dezaemon shelf its .sav games land on.
+  // Both modules are shared with static/editor/index.html the same way
+  // ps2-library.js is — the editor publishes, this list installs — so the two
+  // read one store and one catalog. See static/eshop-library.js and
+  // static/deza-shelf.js.
+  import {
+    ESHOP_PREFIX,
+    checkWebUpdate,
+    entryUrl,
+    githubRepo,
+    hasInstalledWebGames,
+    installDezaGame,
+    installWebGame,
+    installedDezaGames,
+    installedWebGames,
+    loadEshopCatalog,
+    loadEshopCover,
+    onEshopChanged,
+    uninstallDezaGame,
+    uninstallWebGame,
+  } from '../static/eshop-library.js';
+  import { listDezaShelf, onDezaShelfChanged } from '../static/deza-shelf.js';
 
   const MAIN_MENU = [
     { id: 'games',    label: 'Games',    tag: '01 / disc.io',  num: '0x01' },
-    { id: 'settings', label: 'Settings', tag: '02 / config',   num: '0x02' },
-    { id: 'desktop',  label: 'Desktop',  tag: '03 / wkstn.ui', num: '0x03' },
+    { id: 'eshop',    label: 'eShop',    tag: '02 / net.shop', num: '0x02' },
+    { id: 'settings', label: 'Settings', tag: '03 / config',   num: '0x03' },
+    { id: 'desktop',  label: 'Desktop',  tag: '04 / wkstn.ui', num: '0x04' },
   ];
 
   // Baked-in fallback snapshot of the game list — the offline / pre-manifest
@@ -35,7 +60,7 @@
   // root-relative so mapped gamepad→keyboard input injection works).
   let manifestOrigin = $state('');
 
-  let screen = $state('dashboard'); // 'dashboard' | 'games' | 'settings' | 'emulators'
+  let screen = $state('dashboard'); // 'dashboard' | 'games' | 'eshop' | 'settings' | 'emulators'
   let menuSel = $state(0);           // start on Games
   let gameSel = $state(0);
   let clockStr = $state('--:--:--');
@@ -366,16 +391,25 @@
   // nothing left to keep it for.
   async function retireEmuWorker() {
     try { await caches.delete(EMU_CACHE); } catch (_) { /* already gone */ }
-    try {
-      // By script, not by scope: getRegistration() with no argument answers for
-      // this document's URL and would hand back whatever registration best
-      // matches it, which need not be ours.
-      for (const reg of await navigator.serviceWorker.getRegistrations()) {
-        const script = reg.active?.scriptURL || reg.waiting?.scriptURL ||
-          reg.installing?.scriptURL || '';
-        if (script.endsWith(EMU_SW)) await reg.unregister();
-      }
-    } catch (_) { /* leave it registered rather than fail the uninstall */ }
+    // The same worker serves the eShop's installed web games out of their own
+    // cache (static/eshop-library.js), and those do not go away with the last
+    // emulator core. While any is installed the registration stays — the emu
+    // cache is still evicted above, and the empty state already pushed is what
+    // stops the mirroring — and only the emulator half of the worker retires.
+    let keep = false;
+    try { keep = await hasInstalledWebGames(); } catch (_) { keep = false; }
+    if (!keep) {
+      try {
+        // By script, not by scope: getRegistration() with no argument answers
+        // for this document's URL and would hand back whatever registration
+        // best matches it, which need not be ours.
+        for (const reg of await navigator.serviceWorker.getRegistrations()) {
+          const script = reg.active?.scriptURL || reg.waiting?.scriptURL ||
+            reg.installing?.scriptURL || '';
+          if (script.endsWith(EMU_SW)) await reg.unregister();
+        }
+      } catch (_) { /* leave it registered rather than fail the uninstall */ }
+    }
     // Re-installing later in this same page has to register again, so the
     // memoised "the worker is ready" promise cannot be left standing.
     //
@@ -400,6 +434,12 @@
     // worker, that would take the mirror with it.
     emuInstalled = loadInstalledEmus().filter((x) => x !== id);
     persistEmus();
+    // A Saturn the local Dezaemon 2 disc auto-installed (see initDezaemonDisc)
+    // must not come straight back on the next boot once the user has taken it
+    // off — "off" is the one value the auto-add leaves alone.
+    if (id === SATURN_CORE_ID) {
+      try { localStorage.setItem(SATURN_AUTO_KEY, 'off'); } catch (_) { /* session-only */ }
+    }
     const m = { ...emuManifests }; delete m[core.id]; emuManifests = m;
     const s = { ...emuStatus }; delete s[core.id]; emuStatus = s;
     const acked = await pushEmuState();
@@ -433,6 +473,92 @@
   let ps2Local = $state([]);
   async function refreshPs2Local() {
     try { ps2Local = await listPs2Games(); } catch (_) { ps2Local = []; }
+  }
+
+  // ─── The local Dezaemon 2 disc ─────────────────────────────────────────────
+  // A Dezaemon 2 image in dev-fixtures/ (routes/api/dezaemon-disc) turns the
+  // Sega Saturn section on by itself: the disc is what the level editor's .sav
+  // exports run on, so a checkout that has it wants the console without a trip
+  // through Settings. The route answers { available: false } on Deploy and the
+  // whole thing stays dormant there.
+  //
+  // The section then leads with two local rows: the disc itself, handed to the
+  // browser core as a bring-your-own file (see launchLocalSaturn), and — when
+  // the route found a Mednafen — the desktop emulator, which has the 512 KB
+  // cartridge the browser core lacks and so takes any exported game.
+  const DEZA_DISC_URL = '/api/dezaemon-disc';
+  const SATURN_SAVE_URL = '/api/saturn-save';
+  const SATURN_CORE_ID = 'saturn';
+  // "1" = this launcher auto-installed the core, "off" = the user uninstalled
+  // it and the auto-add must not force it back. Unset = never decided.
+  const SATURN_AUTO_KEY = 'shmupx-saturn-auto';
+  let dezaDisc = $state(null); // the route's answer, null until read / unavailable
+  async function initDezaemonDisc() {
+    try {
+      const r = await fetch(DEZA_DISC_URL, { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+      dezaDisc = d && d.available ? d : null;
+    } catch (_) { dezaDisc = null; }
+    if (!dezaDisc || !emuCatalog) return;
+    let auto = null;
+    try { auto = localStorage.getItem(SATURN_AUTO_KEY); } catch (_) { /* unreadable */ }
+    if (auto === 'off' || loadInstalledEmus().includes(SATURN_CORE_ID)) return;
+    await installCore(SATURN_CORE_ID);
+    try { localStorage.setItem(SATURN_AUTO_KEY, '1'); } catch (_) { /* session-only */ }
+  }
+  // The disc row's subtitle and size come straight from what the route found.
+  let dezaDiscFiles = $derived((dezaDisc?.files || []).map((f) => f.name).join(' · '));
+  let dezaDiscSize = $derived.by(() => {
+    const bytes = (dezaDisc?.files || []).reduce((n, f) => n + (f.size || 0), 0);
+    return bytes ? (bytes / 1048576).toFixed(1) + ' MB' : '—';
+  });
+
+  // The browser Saturn player's bring-your-own-disc mode: the player boots on a
+  // File posted to it from its parent, never on a URL, because EmulatorJS
+  // wants a File of the frame's own realm. So the launcher opens the player
+  // with ?byod=1, waits for its "saturn-byod-ready", then fetches the disc as
+  // a zip (cue + bin) and posts it in. The cue inside names the content
+  // "Dezaemon 2", which is what names the core's internal-memory .srm — the
+  // file static/saturn-saves.js stages exported games into.
+  const SATURN_BYOD_PLAYER = '/saturn/play.html?byod=1';
+  const SATURN_BYOD_NAME = 'Dezaemon 2';
+  function launchLocalSaturn() {
+    chromeDismissed = false;
+    frameUrl = null;
+    gameSrc = SATURN_BYOD_PLAYER;
+    setTimeout(() => { gameOn = true; }, 30);
+  }
+  async function deliverSaturnDisc(frame) {
+    try {
+      const r = await fetch(DEZA_DISC_URL + '?zip=1', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      const file = new File([blob], SATURN_BYOD_NAME + '.zip', { type: 'application/zip' });
+      // Same-origin only: the player is ours (the worker mirrors it under our
+      // origin) and the disc is the user's own file, not for anyone else.
+      frame.postMessage({ type: 'saturn-byod-file', file, name: SATURN_BYOD_NAME }, location.origin);
+    } catch (e) {
+      showToast('Could not hand the Dezaemon 2 disc to the Saturn player: ' + (e?.message || e));
+    }
+  }
+  // The Mednafen row: nothing to show in the frame, the route starts the
+  // desktop emulator with whatever cartridge save is already installed beside
+  // the disc (the editor's → MEDNAFEN CART writes that one).
+  async function launchMednafen() {
+    showToast('Starting Mednafen…');
+    try {
+      const r = await fetch(SATURN_SAVE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ launch: true }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || d.reason || ('HTTP ' + r.status));
+      showToast(d.launched ? 'Mednafen launched with Dezaemon 2.' : 'Mednafen: nothing launched — ' + (d.reason || 'see the server log'));
+    } catch (e) {
+      showToast('Mednafen: ' + (e?.message || e));
+    }
   }
 
   // Boot: read the saved set, read the catalogue, hand the worker the current
@@ -534,8 +660,411 @@
   ]);
   let settingsSel = $state(0);
   let settingsRowEls = $state([]);
-  // The rendered Games list. Reassigning manifestGames re-derives this.
+  // The catalog's own games. Reassigning manifestGames re-derives this; the
+  // rendered Games list is gamesRows below, which puts the installed eShop
+  // builds and the way into the shop after these.
   let GAMES = $derived([...manifestGames]);
+
+  // ─── eShop ─────────────────────────────────────────────────────────────────
+  // The global game list: data/eshop.json (baked into games.manifest.json) plus
+  // whatever the level editor has published to the database, merged and
+  // normalised by static/eshop-library.js. Two kinds of entry, two kinds of
+  // install: a WEB build (a zip of a browser game) is unpacked into Cache
+  // Storage and served same-origin under /eshop/<id>/ by emu-sw.js — it then
+  // graduates into the Games list as a row of its own; a DEZA game (a Dezaemon
+  // 2 .sav) is filed on the local shelf (static/deza-shelf.js), where the
+  // coverflow and the editor's LOAD GAME drawer both read it.
+  let eshopEntries = $state([]);     // the merged catalog, in catalog order
+  let eshopErrors = $state([]);      // one line per source that did not answer
+  let eshopLoaded = $state(false);   // the first read has finished (either way)
+  let eshopOffline = $state(false);  // NEITHER source answered on the last read
+  let eshopLoading = false;          // in-flight guard; nothing renders off it
+  // id -> { busy, pct, label, err, updateAvailable, installedSha, latestSha }
+  let eshopStatus = $state({});
+  // id -> { kind, source, shelfId } for every installed game. Rebuilt from the
+  // stores (Cache Storage, the shelf) rather than remembered, so an install the
+  // editor made from its own frame shows up here too.
+  let eshopInstalled = $state({});
+  let eshopSel = $state(0);
+  let eshopRowEls = $state([]);
+  // Which screen B returns to: the shop is reachable from the main menu and
+  // from the trailing ESHOP row of the Games list.
+  let eshopFrom = $state('dashboard');
+  // Ids whose GitHub head was compared this session. api.github.com allows 60
+  // unauthenticated calls an hour, so one per installed game per session, and
+  // again after that game is (re)installed.
+  const eshopUpdatesChecked = new Set();
+
+  // Keyed by id in the markup, so a catalog that ever handed two rows the same
+  // id would throw at render — dedupe here as the belt to the library's braces.
+  let eshopRows = $derived.by(() => {
+    const seen = new Set();
+    return eshopEntries.filter((g) => {
+      if (!g || !g.id || seen.has(g.id)) return false;
+      seen.add(g.id);
+      return true;
+    });
+  });
+
+  function setEshopStatus(id, patch) {
+    eshopStatus = { ...eshopStatus, [id]: { ...(eshopStatus[id] || {}), ...patch } };
+  }
+
+  // Cover art for the published Dezaemon games, which have no icon of their
+  // own: the database keeps each under its own node, so they are read one at
+  // a time and only while the shop is on screen. id -> data URL | null (no art
+  // or a failed read — either way, the row keeps its initials).
+  let eshopCovers = $state({});
+  const eshopCoverPending = new Set();
+  function fetchEshopCover(g) {
+    if (!g || g.icon || !g.hasCover || g.id in eshopCovers || eshopCoverPending.has(g.id)) return;
+    eshopCoverPending.add(g.id);
+    loadEshopCover($state.snapshot(g))
+      .then((url) => { eshopCovers = { ...eshopCovers, [g.id]: typeof url === 'string' && url ? url : null }; })
+      .catch(() => { eshopCovers = { ...eshopCovers, [g.id]: null }; })
+      .finally(() => eshopCoverPending.delete(g.id));
+  }
+  $effect(() => {
+    if (screen !== 'eshop') return;
+    for (const g of eshopRows) fetchEshopCover(g);
+  });
+  // Never coverUrl directly: for a published game that is the database's JSON
+  // node, not an image — loadEshopCover is what turns it into one.
+  function eshopIcon(g) {
+    return g?.icon || eshopCovers[g?.id] || null;
+  }
+
+  async function refreshEshop() {
+    if (eshopLoading) return;
+    eshopLoading = true;
+    try {
+      const { entries, errors, offline } = await loadEshopCatalog();
+      eshopEntries = Array.isArray(entries) ? entries : [];
+      eshopErrors = (Array.isArray(errors) ? errors : []).map((e) => String(e?.message || e));
+      // The library's verdict, not "no rows": one source answering with an
+      // empty list is a quiet shop, not an offline one.
+      eshopOffline = !!offline;
+    } catch (e) {
+      // Keep whatever the last read gave us; only the note changes.
+      eshopErrors = [String(e?.message || e)];
+      eshopOffline = true;
+    } finally {
+      eshopLoaded = true;
+      eshopLoading = false;
+    }
+    await refreshEshopInstalled();
+  }
+
+  // What is installed, read back from the stores. Plain copies go to the
+  // library: it may stamp `.state` on what it is handed, and a $state proxy
+  // has no business being written to from outside.
+  async function refreshEshopInstalled() {
+    const next = {};
+    try {
+      const rows = await installedWebGames(eshopEntries.map((g) => $state.snapshot(g)));
+      for (const g of rows || []) next[g.id] = { kind: 'web', source: g.state?.source || null };
+    } catch (_) { /* no Cache Storage — nothing web is installed */ }
+    try {
+      for (const rec of (await installedDezaGames()) || []) {
+        if (rec?.eshopId) next[rec.eshopId] = { kind: 'deza', shelfId: rec.id };
+      }
+    } catch (_) { /* no IndexedDB — nothing deza is installed */ }
+    eshopInstalled = next;
+    checkEshopUpdates();
+  }
+
+  // Compare each installed web build against its repo's head, once. Only a
+  // known-and-different sha (or a catalog whose download URL / date moved on)
+  // flags UPDATE — the library keeps a missing baseline quiet.
+  function checkEshopUpdates() {
+    for (const g of eshopRows) {
+      if (g.kind !== 'web' || !eshopInstalled[g.id] || eshopUpdatesChecked.has(g.id)) continue;
+      eshopUpdatesChecked.add(g.id);
+      checkWebUpdate($state.snapshot(g)).then((r) => {
+        if (!r) return;
+        setEshopStatus(g.id, {
+          updateAvailable: !!r.updateAvailable,
+          installedSha: r.installedSha || null,
+          latestSha: r.latestSha || null,
+        });
+      }).catch(() => { /* offline or rate-limited — stays INSTALLED */ });
+    }
+  }
+
+  // The row vocabulary. Kind chip + net badge, same GET / ⬇ / INSTALLED / RETRY
+  // set the Emulators screen uses, plus UPDATE when a newer build is known.
+  function eshopBadge(g) {
+    const st = eshopStatus[g.id];
+    if (st?.busy) return { cls: 'dl', text: '⬇ ' + (st.pct || 0) + '%' };
+    if (st?.err) return { cls: 'err', text: '! RETRY' };
+    if (eshopInstalled[g.id]) {
+      return st?.updateAvailable ? { cls: 'upd', text: 'UPDATE' } : { cls: 'ok', text: 'INSTALLED' };
+    }
+    return { cls: 'get', text: 'GET ⬇' };
+  }
+  function eshopKindLabel(g) { return g?.kind === 'deza' ? 'DEZA' : 'WEB'; }
+  function eshopTypeLabel(g) {
+    if (!g) return '—';
+    if (g.kind === 'deza') return 'DEZA / .SAV';
+    return 'WEB / ' + (g.source === 'github' ? 'GITHUB' : 'ZIP');
+  }
+  // Where a game came from, for the disc panel and the graduated row's sub:
+  // the repo for a GitHub build, the host for a plain zip, the editor for a
+  // published cart.
+  function eshopSourceLabel(g) {
+    if (!g) return '—';
+    if (g.origin === 'rtdb' || g.source === 'editor') return 'published from the editor';
+    const r = githubRepo(g);
+    if (r) return r.owner + '/' + r.repo;
+    try {
+      const u = new URL(g.downloadUrl || g.streamUrl || g.sav || '', window.location.origin);
+      return u.origin === window.location.origin ? 'shmupx' : u.host;
+    } catch (_) { return '—'; }
+  }
+
+  // Install (or, with force, reinstall — that is what UPDATE is). Progress
+  // rides on the row badge; the result on a toast. A web build launches the
+  // moment it is in, since the A that installed it meant "play"; a deza game
+  // goes to the shelf and says so. A failure flags the row RETRY and leaves
+  // whatever was installed before in place.
+  async function eshopInstall(g, { launch = true, force = false } = {}) {
+    const id = g.id;
+    if (eshopStatus[id]?.busy) return;
+    setEshopStatus(id, { busy: true, pct: 0, label: '', err: '' });
+    const onProgress = (pct, label) => setEshopStatus(id, {
+      busy: true,
+      pct: Math.max(0, Math.min(100, Math.round(Number(pct) || 0))),
+      label: typeof label === 'string' ? label : '',
+    });
+    const entry = $state.snapshot(g);
+    try {
+      if (g.kind === 'deza') await installDezaGame(entry, { onProgress });
+      else await installWebGame(entry, { onProgress, force: force || !!eshopInstalled[id] });
+      eshopUpdatesChecked.delete(id);
+      setEshopStatus(id, { busy: false, pct: 100, err: '', updateAvailable: false });
+      await refreshEshopInstalled();
+      if (g.kind === 'deza') {
+        refreshDezaShelf();
+        showToast(g.name + ': ON THE SHELF');
+      } else if (launch && !gameOn) {
+        // The A that started the install meant "play" — unless something else
+        // has been launched in the meantime, which the new build must not
+        // shove out of the frame.
+        launchEshopWeb(g);
+      } else if (gameOn && typeof gameSrc === 'string' && gameSrc.startsWith(ESHOP_PREFIX + id + '/')) {
+        // Updated the game that is on screen — bring the new build up.
+        const iframe = document.getElementById('gameframe');
+        try { if (iframe) iframe.src = entryUrl(g); } catch (_) { /* ignore */ }
+      }
+    } catch (e) {
+      const msg = e?.message || String(e);
+      setEshopStatus(id, { busy: false, err: msg });
+      showToast(g.name + ': ' + msg);
+    }
+  }
+  function eshopUpdate(g) {
+    if (!g || eshopStatus[g.id]?.busy) return;
+    sfx.enter();
+    eshopInstall(g, { launch: false, force: true });
+  }
+  // Confirm-free, like the emulator rows: the ✕ IS the confirmation, and a
+  // reinstall is one press away on the shop screen.
+  async function eshopUninstall(g) {
+    const id = g?.id;
+    if (!id || eshopStatus[id]?.busy) return;
+    sfx.back();
+    try {
+      if (g.kind === 'deza') await uninstallDezaGame(id);
+      else await uninstallWebGame(id);
+    } catch (e) {
+      showToast(g.name + ': could not uninstall — ' + (e?.message || e));
+    }
+    const s = { ...eshopStatus }; delete s[id]; eshopStatus = s;
+    eshopUpdatesChecked.delete(id);
+    await refreshEshopInstalled();
+    if (g.kind === 'deza') refreshDezaShelf();
+  }
+
+  // A web build runs from its install: entryUrl is root-relative
+  // ("/eshop/<id>/<entry>") and the worker answers it from Cache Storage, so
+  // the frame is same-origin and the launcher's mapped pad input reaches it.
+  // Per-game capabilities come off the catalog entry exactly as they do for a
+  // manifest game.
+  function launchEshopWeb(g) {
+    if (!g) return;
+    sfx.enter();
+    chromeDismissed = false;
+    frameUrl = null;
+    rowPressCancel();
+    initTwinStick(g.id, g);
+    initTouchControls(g.id, g);
+    osdLevelEditor = g.levelEditor ? sanitizeLevelEditor(g.levelEditor, g.id) : null;
+    gameSrc = entryUrl(g);
+    setTimeout(() => { gameOn = true; }, 30);
+  }
+  // A Dezaemon game plays through the level editor's instant-play hand-off —
+  // the road the coverflow already takes for a community cart — with
+  // &playExport=<shelfId> in place of &play=<slug>, so the editor reads the
+  // local shelf instead of the database. Launched as the shelf-owning catalog
+  // entry (shmupX) so its capabilities stay keyed to it.
+  function launchDezaShelfGame(shelfId) {
+    if (!shelfId) return;
+    const owner = GAMES.find((g) => rowHasSavPicker({ g })) || null;
+    let url;
+    try {
+      const u = new URL(owner?.url || '/editor/?game=2028-ai', window.location.origin);
+      u.searchParams.set('playExport', shelfId);
+      url = u.pathname + u.search + u.hash;
+    } catch (_) { return; }
+    if (owner) { launchGame(owner.id, url); return; }
+    sfx.enter();
+    chromeDismissed = false;
+    frameUrl = null;
+    gameSrc = url;
+    setTimeout(() => { gameOn = true; }, 30);
+  }
+
+  function activateEshop(i) {
+    const g = eshopRows[i];
+    if (!g) return;
+    eshopSel = i;
+    if (eshopStatus[g.id]?.busy) return;
+    sfx.enter();
+    // A on a flagged row retries the install, as on the Emulators screen.
+    if (eshopInstalled[g.id] && !eshopStatus[g.id]?.err) {
+      if (g.kind === 'deza') launchDezaShelfGame(eshopInstalled[g.id].shelfId);
+      else launchEshopWeb(g);
+      return;
+    }
+    eshopInstall(g);
+  }
+
+  function openEshop(from) {
+    eshopFrom = from === 'games' ? 'games' : 'dashboard';
+    screen = 'eshop';
+    // Re-read on every visit: the editor may have published since boot, and a
+    // catalog that was offline the first time deserves another go.
+    refreshEshop();
+  }
+
+  // The row an eShop action applies to from the pad or the keyboard: the shop
+  // screen's own row, or an installed build's row in the Games list.
+  function eshopRowInFocus() {
+    if (gameOn) return null;
+    if (screen === 'eshop') return eshopCurrent || null;
+    if (screen === 'games' && !stripOn && curSection.id === 'games' && curRow?.kind === 'eshop-web') return curRow.g;
+    return null;
+  }
+  function actEshopUpdate() {
+    const g = eshopRowInFocus();
+    if (!g || !eshopInstalled[g.id] || !eshopStatus[g.id]?.updateAvailable) return false;
+    eshopUpdate(g);
+    return true;
+  }
+  function actEshopUninstall() {
+    const g = eshopRowInFocus();
+    if (!g || !eshopInstalled[g.id]) return false;
+    eshopUninstall(g);
+    return true;
+  }
+
+  let eshopCurrent = $derived(eshopRows[eshopSel]);
+  let eshopCounterText = $derived(
+    String(Math.min(eshopSel + 1, eshopRows.length)).padStart(2, '0') + ' / ' +
+    String(eshopRows.length).padStart(2, '0')
+  );
+  let eshopStateLabel = $derived.by(() => {
+    const g = eshopCurrent;
+    if (!g) return !eshopLoaded ? 'READING…' : eshopOffline ? 'OFFLINE' : 'EMPTY';
+    const st = eshopStatus[g.id];
+    if (st?.busy) return 'INSTALLING ' + (st.pct || 0) + '%' + (st.label ? ' · ' + st.label : '');
+    if (st?.err) return st.err;
+    if (eshopInstalled[g.id]) return st?.updateAvailable ? 'UPDATE AVAILABLE' : 'INSTALLED';
+    return 'NOT INSTALLED';
+  });
+  let eshopActionLabel = $derived.by(() => {
+    const g = eshopCurrent;
+    if (!g) return 'Select';
+    const st = eshopStatus[g.id];
+    if (st?.busy) return 'Working…';
+    if (st?.err) return 'Retry';
+    if (eshopInstalled[g.id]) return g.kind === 'deza' ? 'Play' : 'Launch';
+    return 'Get';
+  });
+
+  // Installed web builds graduate into the Games list, right under the
+  // catalog: a game you installed is a game you own. Deduped against the
+  // manifest so the keyed {#each} never sees one id twice.
+  let eshopWebGames = $derived(
+    eshopRows.filter((g) =>
+      g.kind === 'web' && !!eshopInstalled[g.id] && !manifestGames.some((m) => m.id === g.id))
+  );
+  let eshopMenuSub = $derived(
+    eshopRows.length ? eshopRows.length + ' games · get more' : (eshopLoaded && eshopOffline ? 'catalog offline · retry' : 'get more games')
+  );
+  // The rendered Games list: shmupX's own catalog, the installed eShop builds,
+  // then the way into the shop as a trailing submenu-style row.
+  let gamesRows = $derived([
+    ...GAMES.map((g) => ({
+      key: g.id, name: g.name, title: g.title, sub: g.sub,
+      icon: g.icon, size: g.size, date: g.date,
+      type: 'GAME / IFRAME',
+      g,
+    })),
+    ...eshopWebGames.map((g) => ({
+      key: g.id, name: g.name, title: g.title || String(g.name).toUpperCase(),
+      sub: 'ESHOP // ' + eshopSourceLabel(g),
+      icon: g.icon || null, size: g.size || '— MB', date: g.date || '—',
+      type: 'ESHOP / INSTALLED', kind: 'eshop-web',
+      g,
+    })),
+    {
+      key: 'eshop-menu', name: 'eShop', title: 'ESHOP', sub: eshopMenuSub,
+      icon: null, size: '— MB', date: 'NET', type: 'NET / ESHOP',
+      submenu: true, kind: 'eshop-menu',
+    },
+  ]);
+  function activateGamesRow(i) {
+    const r = gamesRows[i];
+    if (!r) return;
+    if (r.kind === 'eshop-menu') { sfx.enter(); openEshop('games'); return; }
+    if (r.kind === 'eshop-web') { launchEshopWeb(r.g); return; }
+    launchGame(r.g?.id);
+  }
+
+  // ─── The local Dezaemon shelf, for the coverflow ───────────────────────────
+  // Every record on the shelf — this browser's own .sav exports and the eShop's
+  // installed Dezaemon games — as light rows the coverflow can lead with. The
+  // bytes stay in IndexedDB: a row carries the id the editor's hand-off wants
+  // (&playExport=<shelfId>) and the cover art, nothing heavier.
+  let dezaShelfRows = $state([]);
+  function dezaShelfRowOf(rec) {
+    const eshop = rec.source === 'eshop';
+    const row = {
+      local: true,
+      shelfId: rec.id,
+      // The picker keys, anchors and pins by slug; a shelf id always carries a
+      // ":" and so can never collide with a database slug.
+      slug: rec.id,
+      file: rec.file || '',
+      title: rec.title || rec.id,
+      titleJa: '',
+      developer: eshop ? 'ESHOP' : 'YOUR EXPORT',
+      developerJa: '',
+      genre: rec.palette ? String(rec.palette).toUpperCase() + ' PALETTE' : '',
+      hasCover: false,
+      cover: typeof rec.cover === 'string' ? rec.cover : '',
+      video: '',
+      url: '',
+      eshop,
+    };
+    row._hay = savFold([row.title, row.developer, row.genre, 'shelf local'].join(' '));
+    return row;
+  }
+  async function refreshDezaShelf() {
+    try { dezaShelfRows = ((await listDezaShelf()) || []).map(dezaShelfRowOf); }
+    catch (_) { dezaShelfRows = []; }
+  }
 
   // --- online 2P presence -------------------------------------------------
   //
@@ -1462,7 +1991,18 @@
 
   // Keep the selection in range if the Games list shrinks under it.
   $effect(() => {
-    if (gameSel > GAMES.length - 1) gameSel = Math.max(GAMES.length - 1, 0);
+    if (gameSel > gamesRows.length - 1) gameSel = Math.max(gamesRows.length - 1, 0);
+  });
+
+  // eShop screen: keep the cursor on screen, and in range when the catalog
+  // re-reads shorter than it was.
+  $effect(() => {
+    if (screen !== 'eshop') return;
+    const el = eshopRowEls[eshopSel];
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+  $effect(() => {
+    if (eshopSel > eshopRows.length - 1) eshopSel = Math.max(eshopRows.length - 1, 0);
   });
 
   // Auto-focus the BYOD button when landing on an empty console section so
@@ -1523,14 +2063,35 @@
   // the record (blob included) straight through to launchEmuRow, so the row is
   // the only thing that has to know where the game came from.
   function localRows(core) {
-    if (core.id !== 'ps2') return [];
-    return ps2Local.map((g) => ({
-      key: 'local:' + g.id, name: g.name, title: String(g.name).toUpperCase(),
-      sub: g.source || 'built here', icon: null,
-      size: (g.size / 1048576).toFixed(1) + ' MB',
-      date: 'LOCAL', type: 'PS2 / BUILT HERE',
-      kind: 'local', local: g,
-    }));
+    if (core.id === 'ps2') {
+      return ps2Local.map((g) => ({
+        key: 'local:' + g.id, name: g.name, title: String(g.name).toUpperCase(),
+        sub: g.source || 'built here', icon: null,
+        size: (g.size / 1048576).toFixed(1) + ' MB',
+        date: 'LOCAL', type: 'PS2 / BUILT HERE',
+        kind: 'local', local: g,
+      }));
+    }
+    // The Dezaemon 2 disc found in dev-fixtures/ (see initDezaemonDisc): the
+    // browser core's bring-your-own-disc row, and the desktop Mednafen when the
+    // route found one — its cartridge save is where the editor's bigger
+    // exports go.
+    if (core.id === SATURN_CORE_ID && dezaDisc) {
+      const rows = [{
+        key: 'local-saturn', kind: 'local-saturn', name: 'Dezaemon 2', title: 'DEZAEMON 2',
+        sub: 'dev-fixtures · ' + dezaDiscFiles, icon: null,
+        size: dezaDiscSize, date: 'LOCAL', type: 'SATURN / LOCAL DISC',
+      }];
+      if (dezaDisc.mednafen?.available) {
+        rows.push({
+          key: 'local-mednafen', kind: 'mednafen', name: 'Dezaemon 2 · Mednafen', title: 'DEZAEMON 2 · MEDNAFEN',
+          sub: 'cartridge saves · desktop emulator', icon: null,
+          size: dezaDiscSize, date: 'LOCAL', type: 'SATURN / MEDNAFEN',
+        });
+      }
+      return rows;
+    }
+    return [];
   }
   // Rows for an installed core: what this machine built first, then the mirror's
   // shelf. A build you just made is the one you came here to play.
@@ -1568,13 +2129,8 @@
       title: 'GAMES', metaType: 'SHMUPX / CATALOG', date: 'SX',
       coreA: 'boot.0728', coreB: 'signal // ok',
       sel: () => gameSel, setSel: (v) => (gameSel = v),
-      activate: (i) => launchGame(GAMES[i]?.id),
-      rows: GAMES.map((g) => ({
-        key: g.id, name: g.name, title: g.title, sub: g.sub,
-        icon: g.icon, size: g.size, date: g.date,
-        type: 'GAME / IFRAME',
-        g,
-      })),
+      activate: (i) => activateGamesRow(i),
+      rows: gamesRows,
     },
     ...installedCores.map((c) => ({
       id: 'emu-' + c.id, name: c.name, mark: c.mark, icon: c.icon || null,
@@ -1607,7 +2163,9 @@
   // (the collapsed tiles have dropped their labels) and how to get back to it.
   let stripHint = $derived(stripOn ? 'swipe ↔' : curSection.name + ' · ↑ expand');
 
-  let currentGame = $derived(GAMES[gameSel]);
+  // The catalog entry under the Games cursor (an installed eShop build counts;
+  // the trailing ESHOP row has none).
+  let currentGame = $derived(gamesRows[gameSel]?.g || null);
   // Section header counter. A pinned BYO row labels itself (BYOB / BYOC) rather
   // than claiming an index in the ROM count it isn't part of.
   let counterText = $derived(
@@ -1628,7 +2186,7 @@
   let gamesActionLabel = $derived(
     stripOn
       ? (sectionEmpty ? (curSection.picker ? 'Browse' : 'Open') : 'Open')
-      : (curRow?.pinned ? 'Browse' : 'Launch')
+      : (curRow?.pinned ? 'Browse' : curRow?.kind === 'eshop-menu' ? 'Open' : 'Launch')
   );
   // WebAudio blips
   let ac = null;
@@ -1671,6 +2229,8 @@
     menuSel = idx;
     if (m.id === 'games') {
       screen = 'games';
+    } else if (m.id === 'eshop') {
+      openEshop('dashboard');
     } else if (m.id === 'settings') {
       screen = 'settings';
       settingsSel = 0;
@@ -1684,8 +2244,10 @@
   function goBack() {
     sfx.back();
     // A screen reached from another screen names its parent in SCREEN_DEFS
-    // (Emulators → Settings); everything else returns to the dashboard.
-    screen = SCREEN_DEFS[screen]?.back || 'dashboard';
+    // (Emulators → Settings; the eShop, which has two doors, answers with a
+    // function); everything else returns to the dashboard.
+    const back = SCREEN_DEFS[screen]?.back;
+    screen = (typeof back === 'function' ? back() : back) || 'dashboard';
   }
 
   // ─── Strip navigation ──────────────────────────────────────────────────────
@@ -1927,6 +2489,10 @@
       launchLocalPs2(row.local);
       return;
     }
+    // The local Dezaemon 2 disc: the browser core takes it as a File posted
+    // into its frame, the desktop Mednafen is started by the server.
+    if (row.kind === 'local-saturn') { launchLocalSaturn(); return; }
+    if (row.kind === 'mednafen') { launchMednafen(); return; }
     // A ps2 "web" row is a browser build living beside the ISOs, not a disc —
     // launch its own url rather than handing the filename to the emulator.
     if (row.kind === 'web' && row.url) {
@@ -2140,18 +2706,26 @@
   //
   // null = not read yet, [] = nothing reachable OR nothing matched; SavPicker
   // tells those two apart by the query it was given, not by the length.
+  //
+  // This browser's own games lead the whole shelf — the eShop's installed
+  // Dezaemon games and the editor's .sav exports (dezaShelfRows), in their own
+  // "⬇" bucket ahead of the favorites. They are filtered by the same query but
+  // never hoisted: a pin on a local row would only move it within a bucket it
+  // already heads.
   let savShelf = $derived.by(() => {
-    if (!savLibrary?.length) return savLibrary;
+    const locals = dezaShelfRows;
+    if (!savLibrary?.length && !locals.length) return savLibrary;
     const terms = savFold(savQuery).split(/\s+/).filter(Boolean);
+    const filt = (rows) => (terms.length ? rows.filter((r) => terms.every((t) => r._hay.includes(t))) : rows);
     // The filter runs BEFORE the hoist and never reads savFavs. A predicate
     // that consulted pin state would drop a game out of the shelf on the very
     // toggle that pinned it, and toggleSavFav's findIndex below would then
     // strand the cursor on an index that no longer exists.
-    const rows = terms.length
-      ? savLibrary.filter((r) => terms.every((t) => r._hay.includes(t)))
-      : savLibrary;
-    return savHoistFavs(rows);
+    const rows = savHoistFavs(filt(savLibrary || []));
+    return locals.length ? [...filt(locals), ...rows] : rows;
   });
+  // Everything the badge counts: the database shelf plus the local rows.
+  let savShelfTotal = $derived((savLibrary?.length || 0) + dezaShelfRows.length);
 
   // The alpha rail's rows, derived from the shelf so every `at` is a real,
   // in-range index by construction: a letter with no games simply has no band,
@@ -2162,10 +2736,14 @@
   // the wrong end of the shelf. Letters bucket from the end of the FAVORITES
   // block so a pinned S hoisted to the front never becomes the S the rail
   // jumps to.
+  // The local rows lead everything as their own "⬇" band, so the favorites
+  // block — and the letters after it — count from where they end.
   let savBands = $derived.by(() => {
     const rows = savShelf;
     if (!rows?.length) return [];
-    let from = 0;
+    let local = 0;
+    while (local < rows.length && rows[local].local) local++;
+    let from = local;
     while (from < rows.length && savFavs.has(savFavId(rows[from]))) from++;
     const seen = new Map();
     for (let i = from; i < rows.length; i++) {
@@ -2176,7 +2754,8 @@
       else seen.set(key, { key, at: i, n: 1 });
     }
     const out = [...seen.values()].sort((a, b) => a.at - b.at);
-    if (from > 0) out.unshift({ key: '★', at: 0, n: from });
+    if (from > local) out.unshift({ key: '★', at: local, n: from - local });
+    if (local > 0) out.unshift({ key: '⬇', at: 0, n: local });
     return out;
   });
 
@@ -2192,6 +2771,9 @@
   function toggleSavFav(i) {
     const item = savShelf?.[i];
     if (!item) return;
+    // A local row already leads the shelf; pinning it would only write a shelf
+    // id into a favorites list the editor's drawer keys by database slug.
+    if (item.local) return;
     const id = savFavId(item);
     const next = new Set(savFavs);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -2208,7 +2790,8 @@
   }
 
   function fetchSavCover(item) {
-    if (!item || !item.slug || !item.hasCover) return;
+    // A local row carries its own art (item.cover); nothing to fetch.
+    if (!item || item.local || !item.slug || !item.hasCover) return;
     if (item.slug in savCovers || savCoverPending.has(item.slug)) return;
     savCoverPending.add(item.slug);
     (async () => {
@@ -2269,6 +2852,9 @@
     // Pins toggled in the editor's drawer (a same-origin iframe away) land
     // between opens — re-read, so both surfaces shelve the same games first.
     savFavs = readSavFavs();
+    // Same for the local rows: the editor files exports and the shop files
+    // installs between opens too.
+    refreshDezaShelf();
     savPickerOpen = true;
     sfx.enter();
     // A shelf that came up empty (offline at the time, fetch error) retries
@@ -2349,7 +2935,10 @@
     let url;
     try {
       const u = new URL(g.url, window.location.origin);
-      u.searchParams.set('play', item.slug || savSlugOf(item.title));
+      // A local row lives on this browser's shelf, not in the database: the
+      // editor's hand-off reads it by shelf id instead of by slug.
+      if (item.local) u.searchParams.set('playExport', item.shelfId);
+      else u.searchParams.set('play', item.slug || savSlugOf(item.title));
       url = u.pathname + u.search + u.hash;
     } catch (_) { return; }
     launchGame(g.id, url);
@@ -2525,7 +3114,9 @@
       const r = await fetch(base + '/games.manifest.json?ts=' + Date.now(), { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
-      // Accept { games, demos } or a bare games array (older manifest shape).
+      // Accept { games, eshop } or a bare games array (older manifest shape).
+      // The eShop half is read by loadEshopCatalog (static/eshop-library.js),
+      // not here.
       const games = asList(data) || asList(data && data.games);
       if (!games || !games.length) throw new Error('empty manifest');
       return { games, base };
@@ -2842,6 +3433,9 @@
     settings: { sel: () => settingsSel, setSel: (v) => (settingsSel = v), len: () => SETTINGS_ITEMS.length, activate: (i) => activateSettings(i) },
     // Reached from Settings, so B goes back there rather than to the dashboard.
     emulators: { sel: () => emuSel, setSel: (v) => (emuSel = v), len: () => emuCores.length, activate: (i) => activateEmulator(i), back: 'settings' },
+    // Reached from the main menu OR the Games list's trailing row; B returns
+    // to whichever it was (openEshop records it).
+    eshop: { sel: () => eshopSel, setSel: (v) => (eshopSel = v), len: () => eshopRows.length, activate: (i) => activateEshop(i), back: () => eshopFrom },
   };
 
   // Shared vertical nav. `fresh` marks a deliberate new press (gamepad edge /
@@ -3256,10 +3850,16 @@
     const justPressed = (i) => pressedNow.has(i) && !padState.btn.has(i);
     if (justPressed(0) || justPressed(9)) actFbtnBottom(); // FBTN_BOTTOM or Start
     if (justPressed(1)) actFbtnRight();                    // FBTN_RIGHT
+    // FBTN_LEFT (X / square) uninstalls the eShop game under the cursor — on
+    // the shop screen, or an installed build's row in Games. Confirm-free,
+    // like the ✕ on the row; nowhere else does X mean anything.
+    if (justPressed(2)) actEshopUninstall();
     // FBTN_TOP (Y / triangle) opens the highlighted row's .sav shelf — the
-    // one-button replacement for the old SELECT + Up chord.
+    // one-button replacement for the old SELECT + Up chord — and, on a row
+    // with no shelf, pulls a waiting eShop update.
     if (justPressed(3)) {
       if (openSavPickerForRow()) lastInput = 'pad';
+      else actEshopUpdate();
     }
     // SELECT backs out on its RELEASE edge, so SELECT + Up can chord (above)
     // without Back firing the moment SELECT goes down. Only a press that
@@ -3385,6 +3985,9 @@
       screen !== 'dashboard' &&
       (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'b' || e.key === 'B' || e.key === 'c' || e.key === 'C')
     ) goBack();
+    // Keyboard twins of FBTN_LEFT / FBTN_TOP for the eShop rows.
+    else if (e.key === 'Delete') actEshopUninstall();
+    else if (e.key === 'u' || e.key === 'U') actEshopUpdate();
   }
 
   // Inject a capture-phase OSD-trigger forwarder INTO a same-origin game frame.
@@ -3622,7 +4225,20 @@
     // honor them from a cross-origin frame.
     if (!sameOrigin) return;
     if (d.type === 'tg16-exit') closeGame();
+    // The Saturn player opened with ?byod=1 is asking for its disc (see
+    // launchLocalSaturn). Same-origin by construction — the worker mirrors it
+    // under our origin — and the answer is a File of the user's own disc.
+    else if (d.type === 'saturn-byod-ready') deliverSaturnDisc(e.source);
+    // The level editor, in our frame, published or installed something
+    // through static/eshop-library.js: the catalog, the installed set and the
+    // shelf may all have moved.
+    else if (d.type === 'cmg-eshop-changed') { refreshEshop(); refreshDezaShelf(); }
   }
+
+  // The eShop / shelf change subscriptions (static/eshop-library.js,
+  // static/deza-shelf.js), kept for teardown.
+  let unsubEshop = null;
+  let unsubDezaShelf = null;
 
   onMount(() => {
     // 12-hour wall clock, the way the phone's own status bar reads it — the
@@ -3658,7 +4274,16 @@
 
     loadManifest();
     initNetplayPresence();
-    initEmulators();
+    // The disc check waits for the catalogue: auto-installing the Saturn core
+    // needs its catalogue entry, and installCore looks the core up in it.
+    initEmulators().then(initDezaemonDisc);
+    refreshEshop();
+    refreshDezaShelf();
+    // Other writers of the same stores — the editor in our frame, a second
+    // tab — announce themselves on their channels; re-read rather than trust
+    // this tab's copy. Each returns its unsubscribe.
+    try { unsubEshop = onEshopChanged(() => { refreshEshop(); refreshDezaShelf(); }); } catch (_) { unsubEshop = null; }
+    try { unsubDezaShelf = onDezaShelfChanged(() => { refreshDezaShelf(); refreshEshopInstalled(); }); } catch (_) { unsubDezaShelf = null; }
   });
 
   function refreshPadConnected() {
@@ -3806,6 +4431,8 @@
     endStripDrag();
     window.removeEventListener('gamepadconnected', onPadConnect);
     window.removeEventListener('gamepaddisconnected', onPadDisconnect);
+    try { unsubEshop?.(); } catch (_) { /* already closed */ }
+    try { unsubDezaShelf?.(); } catch (_) { /* already closed */ }
     document.body.classList.remove('playing');
     document.body.classList.remove('pad-on');
     document.body.classList.remove('osd-open');
@@ -4098,7 +4725,7 @@
                       <span class="shelf-spines" aria-hidden="true"><i></i><i></i><i></i></span>
                       <span class="shelf-copy">
                         <b>SHELF</b>
-                        <em>{savLibrary?.length ? `${savLibrary.length} GAMES` : 'browse'}</em>
+                        <em>{savShelfTotal ? `${savShelfTotal} GAMES` : 'browse'}</em>
                       </span>
                       {#if !stripOn && i === curSel && padConnected}
                         <span class="shelf-key" aria-hidden="true">Y</span>
@@ -4115,12 +4742,148 @@
                       {liveFor(r).joinable ? 'LIVE · OPEN' : 'LIVE'}
                     </b>
                   {/if}
+                  {#if r.kind === 'eshop-web'}
+                    <!-- A graduated eShop build: its kind, and its update
+                         when one is known. The badge is its own click target
+                         (stopPropagation) so pulling the update never launches
+                         the row too. -->
+                    <span class="eshop-kind">WEB</span>
+                    {#if eshopStatus[r.g.id]?.busy}
+                      <span class="net-badge dl">⬇ {eshopStatus[r.g.id].pct}%</span>
+                    {:else if eshopStatus[r.g.id]?.updateAvailable}
+                      <span class="net-badge upd" role="button" tabindex="0"
+                            onclick={(e) => { e.stopPropagation(); eshopUpdate(r.g); }}
+                            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); eshopUpdate(r.g); } }}>↻ UPDATE</span>
+                    {/if}
+                  {/if}
                 </div>
+                {#if r.kind === 'eshop-web'}
+                  <!-- Same ✕ as the Emulators screen: stopPropagation keeps the
+                       row's own click (launch) out of it. -->
+                  <button
+                    type="button"
+                    class="uninstall-btn"
+                    title="Uninstall {r.name}"
+                    aria-label="Uninstall {r.name}"
+                    onclick={(e) => { e.stopPropagation(); stripFocus = false; curSection.setSel(i); eshopUninstall(r.g); }}
+                  >✕</button>
+                  {#if eshopStatus[r.g.id]?.busy}
+                    <div class="net-prog"><div class="net-prog-fill" style="width:{eshopStatus[r.g.id].pct}%"></div></div>
+                  {/if}
+                {/if}
               </div>
             {/each}
             {#if curSection.err}
               <div class="byod-err">{curSection.err}</div>
             {/if}
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- eShop — the global game list, entered from the main menu or the Games
+       list's trailing ESHOP row. Every catalog entry (the repo's data/eshop.json
+       by way of the manifest, plus games published from the level editor) with
+       the GET / ⬇ / INSTALLED / RETRY / UPDATE badge vocabulary of the
+       Emulators screen and a kind chip: a WEB build installs into Cache Storage
+       and graduates into Games, a DEZA game installs onto the shelf. -->
+  <div class="games-screen {screen === 'eshop' ? 'shown' : ''}">
+    <div class="games-panel">
+      <div class="strip-top">
+        <span>core // network</span>
+        <span>eshop · {Object.keys(eshopInstalled).length} installed</span>
+        <span>{clockShort}</span>
+      </div>
+      <div class="disc-col">
+        <div class="disc net"></div>
+        <div class="meta">
+          <div><span class="k">name</span><b>{eshopCurrent?.name ?? '—'}</b></div>
+          <div><span class="k">kind</span><b>{eshopCurrent ? eshopTypeLabel(eshopCurrent) : '—'}</b></div>
+          <div><span class="k">size</span><b>{eshopCurrent?.size ?? '—'}</b></div>
+          <div><span class="k">date</span><b>{eshopCurrent?.date ?? '—'}</b></div>
+          <div><span class="k">source</span><b>{eshopCurrent ? eshopSourceLabel(eshopCurrent) : '—'}</b></div>
+          <div><span class="k">state</span><b>{eshopStateLabel}</b></div>
+        </div>
+      </div>
+      <div class="games-right">
+        <div class="games-header">
+          <div class="title-bar">ESHOP</div>
+          <div class="counter">{eshopCounterText}</div>
+        </div>
+        <div class="games-list">
+          {#each eshopRows as g, i (g.id)}
+            <div
+              bind:this={eshopRowEls[i]}
+              class="game-row {i === eshopSel ? 'sel' : ''}"
+              role="button"
+              tabindex="-1"
+              onmouseenter={() => { if (i !== eshopSel) { eshopSel = i; sfx.nav(); } }}
+              onclick={() => activateEshop(i)}
+              onkeydown={chipKeyHandler(() => activateEshop(i))}
+            >
+              <div class="game-icon">
+                <div class="glass">
+                  {#if eshopIcon(g)}
+                    <img src={eshopIcon(g)} alt={g.name} onerror={(e) => onIconError(e, g.name)} />
+                  {:else}
+                    <span class="ph">{initial(g.name || g.id)}</span>
+                  {/if}
+                </div>
+              </div>
+              <div class="game-bar">
+                <span class="name">{g.title || String(g.name).toUpperCase()}</span>
+                <span class="sub">{g.sub || eshopSourceLabel(g)}</span>
+                <span class="eshop-kind {g.kind === 'deza' ? 'deza' : 'web'}">{eshopKindLabel(g)}</span>
+              </div>
+              <!-- UPDATE is its own click target: A on the row launches the
+                   build that is installed, the badge pulls the new one. -->
+              {#if eshopBadge(g).cls === 'upd'}
+                <span class="net-badge upd" role="button" tabindex="0"
+                      onclick={(e) => { e.stopPropagation(); eshopSel = i; eshopUpdate(g); }}
+                      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); eshopSel = i; eshopUpdate(g); } }}>↻ UPDATE</span>
+              {:else}
+                <span class="net-badge {eshopBadge(g).cls}">{eshopBadge(g).text}</span>
+              {/if}
+              {#if eshopInstalled[g.id] && !eshopStatus[g.id]?.busy}
+                <!-- stopPropagation: the row's own click launches, so without
+                     it the ✕ would fire the row handler too. -->
+                <button
+                  type="button"
+                  class="uninstall-btn"
+                  title="Uninstall {g.name}"
+                  aria-label="Uninstall {g.name}"
+                  onclick={(e) => { e.stopPropagation(); eshopSel = i; eshopUninstall(g); }}
+                >✕</button>
+              {/if}
+              {#if eshopStatus[g.id]?.busy}
+                <div class="net-prog"><div class="net-prog-fill" style="width:{eshopStatus[g.id].pct}%"></div></div>
+              {/if}
+            </div>
+          {/each}
+          {#if !eshopRows.length}
+            <div class="byod">
+              {#if !eshopLoaded}
+                <div class="byod-title">READING CATALOG…</div>
+                <div class="byod-sub">Fetching <code>/games.manifest.json</code> and the published games.</div>
+              {:else if eshopOffline}
+                <!-- Neither source answered — the same-origin manifest nor the
+                     database. Each failure is listed so the fix is obvious. -->
+                <div class="byod-title">CATALOG OFFLINE</div>
+                <div class="byod-sub">No eShop catalog reachable. Reopen this screen to retry.</div>
+                {#if eshopErrors.length}
+                  <div class="byod-err">{eshopErrors.join(' · ')}</div>
+                {/if}
+              {:else}
+                <!-- A source answered and listed nothing (a manifest built
+                     without data/eshop.json, no game published yet). -->
+                <div class="byod-title">NOTHING IN THE CATALOG YET</div>
+                <div class="byod-sub">Add a game to <code>data/eshop.json</code> by pull request, or publish one from the level editor.</div>
+                {#if eshopErrors.length}
+                  <div class="byod-err">{eshopErrors.join(' · ')}</div>
+                {/if}
+              {/if}
+            </div>
           {/if}
         </div>
       </div>
@@ -4254,7 +5017,7 @@
   {/if}
   <div class="footer tap" role="button" tabindex="0" onpointerup={tapHandler(actFbtnBottom)} onkeydown={chipKeyHandler(actFbtnBottom)}>
     <div class="btn-hint">A</div>
-    <span>{screen === 'games' ? gamesActionLabel : screen === 'emulators' ? emuActionLabel : 'Select'}</span>
+    <span>{screen === 'games' ? gamesActionLabel : screen === 'emulators' ? emuActionLabel : screen === 'eshop' ? eshopActionLabel : 'Select'}</span>
   </div>
 </div>
 
@@ -4335,9 +5098,11 @@
   <div class="cmg-toast" role="status">{toastMsg}</div>
 {/if}
 
+<!-- loading / error yield to a shelf that already has rows: the local ones are
+     read from IndexedDB before the database answers, and stay when it does not. -->
 <SavPicker open={savPickerOpen} items={savShelf || []} sel={savPickerSel}
      favs={savFavs} onfav={toggleSavFav}
-     covers={savCovers} loading={savLibraryLoading} error={savLibraryErr}
+     covers={savCovers} loading={savLibraryLoading && !savShelf?.length} error={savShelf?.length ? '' : savLibraryErr}
      bands={savBands} query={savQuery} findOpen={savFindOpen}
      onquery={(q) => { savQuery = q; }} onfind={savToggleFind} onescape={savFindEscape}
      onband={(b) => savBandJump(b)}
