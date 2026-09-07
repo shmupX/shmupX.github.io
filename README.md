@@ -1,6 +1,6 @@
 # shmupX — codemonkey.games
 
-![A shmupX level playing in Dezaemon 2 on the Saturn](static/preview.png)
+![A shmupX level playing in Dezaemon 2 on the Saturn](static/preview.gif)
 
 The final CMG launcher, rebuilt as **shmupX**: a Deno Fresh 2 + Vite app for
 [Deno Deploy](https://deploy.deno.com) with a single built-in game — the shmupX
