@@ -137,6 +137,7 @@ deno task build:ps2       # a level as a PlayStation 2 USB folder
 deno task build:ps2:zip   # …as one .zip of that folder
 deno task build:ps2:iso   # …plus a bootable disc image
 deno task build:sav       # a level as a Dezaemon 2 cart save (.sav) for MiSTer / hardware
+deno task sav:run         # …then launch it in Mednafen, cart preloaded (Windows / Linux / WSL→Windows)
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
@@ -206,6 +207,26 @@ deno task build:sav                          # foo.json -> build/sav/Dez 2 - foo
 deno task build:sav "Master Arena Mod"       # that cloud level
 deno task build:sav ./backups/mygame.json    # a level record on disk
 deno task build:sav foo --palette snes --snes-pal build/sav/foo.pal --report
+```
+
+**Run it in an emulator.** `deno task sav:run [level]` builds the `.sav`,
+installs it as Mednafen's cartridge save (converting to the `<disc>.bcr/.bkr`
+pair, backing up any existing cart) and launches Mednafen on the disc — the
+in-repo, cross-platform stand-in for the ad-hoc launcher scripts, driven by
+[`scripts/run-mednafen.ts`](scripts/run-mednafen.ts). It runs the host's own
+Mednafen (native Windows launches `mednafen.exe`, Linux/macOS `mednafen`); from
+WSL, point `MEDNAFEN_BIN` at a `mednafen.exe` and it launches the Windows build
+over interop — the only one that sees a USB/Bluetooth pad. The emulator, the
+disc image and the BIOS are the user's own (the disc and BIOS are community
+content, never in the repo), so their paths come from flags or env vars
+(`MEDNAFEN_BIN`, `DEZAEMON_DISC`, `MEDNAFEN_SAV`); the task prints what it
+resolved and fails with a clear message when one is missing.
+
+```sh
+deno task sav:run                       # build foo, seed the cart, launch Mednafen
+deno task sav:run "Master Arena Mod"    # that cloud level
+deno task sav:run --install-only        # seed the cart save, do not launch
+DEZAEMON_DISC=/path/to/Dez2.cue deno task sav:run   # point it at your disc
 ```
 
 **Palette.** A level's atlas is 24-bit; the cart holds 15-bit colours from a 16
