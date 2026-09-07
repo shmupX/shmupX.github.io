@@ -182,6 +182,7 @@ deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
 deno task deza:meshlib    # decode the ポリ吉 3D part library off a disc image
 deno task deza:palette    # write static/palette.png (+ palette-sheet.png) from DEZA2.PAL
+deno task sfc:probe       # look inside a Super Famicom Dezaemon SRAM dump (report / png / hex / diff)
 deno task tonebank:table  # re-pack the instrument map into src/audio/
 deno task netplay:bundle  # bundle the online-2P browser client
 deno task netplay:generate  # regenerate its bindings from the module
@@ -486,6 +487,24 @@ that is 2028.Ai's rather than the game's is keyed off it:
   Rush, a Start Stage slider bounded by the cart's real stage count, **Final
   Boss** (`?finalBoss=1` — the cart's last stage, opened at its boss) and Allow
   Continues. 2028.Ai keeps its own set, Akuma (`?boss=goki`) included.
+
+### The Super Famicom cart
+
+The 1994 Super Famicom Dezaemon (SHVC-66) saves nothing like the Saturn's
+BackUpRam image: its battery SRAM is a raw 128 KB dump, four 32 KB segments,
+no compression. `@shmupx/shmup-engine/sfc` reads it structurally —
+`parseSfcSav(bytes, { rom })` gives every region the ROM's own memory map
+names (the ROM keeps a labelled `ADDRESS NAME` table at `0x66A5`, which the
+parser's region list is held equal to by a test): 24 BGR555 palette rows, six
+18×128-chip stage maps and their scroll tables, the tile groups, two
+high-score tables, the configuration words, and the 4bpp graphics bank when
+the dump carries one. It does not yet map a cart into `game.json` — the enemy
+records, appearance tables, sound data and the graphics banking are still
+open, and `packages/shmup-engine/FORMAT-SFC.md` says what is known and how to
+close the rest. `deno task sfc:probe all <sav> --rom <sfc> --out build/sfc/x/`
+renders what a dump holds. Neither saves nor the ROM are committed: the tests
+gate on `packages/shmup-engine/fixtures/dezaemon-sfc-sample.sav` and a ROM in
+`dev-fixtures/`.
 
 ## Desktop app
 

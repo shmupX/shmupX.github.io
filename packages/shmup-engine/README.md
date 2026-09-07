@@ -155,6 +155,22 @@ importable through subpath exports: `@shmupx/shmup-engine/decode`,
 `FORMAT.md` documents the reverse-engineered save format; `games-db.json` is the
 catalog of known community games.
 
+## Super Famicom Dezaemon (`./sfc`)
+
+`@shmupx/shmup-engine/sfc` reads the 1994 Super Famicom cart's battery SRAM — a
+raw 128 KB dump, nothing like the Saturn image above. It is a structural parser:
+`parseSfcSav(bytes, {rom})` returns every region the ROM's own memory map names
+(palette rows, the six stage maps and scroll tables, the tile groups, high
+scores, configuration words, the graphics bank when the dump has one) with a
+confidence per block, and never throws on content. Pieces: `sram.js` (container,
+`T.TABATA` magic, checksum copy), `regions.js` (the map), `cgram.js` (BGR555
+rows), `tiles.js` (4bpp/2bpp planar codec), `tilemap.js` and `groups.js`
+(tilemap-word quads), `map.js`, `tables.js`, `enemy.js`, `graphics.js`, and
+`rom.js` (header, the ROM's region table, its default SRAM image). It stays
+behind the subpath — `mod.js` is the Saturn editor bundle. `FORMAT-SFC.md` holds
+the notes; `deno task sfc:probe` (`tools/sfc-sav/`) renders what a dump
+contains.
+
 ## Tests
 
 ```
