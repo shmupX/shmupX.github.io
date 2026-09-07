@@ -219,7 +219,7 @@ literal pools; they tile the 396,640 bytes exactly, with no gaps:
 | `+0x34F80` | 10 × `0x3C00` | **Object placement grid**: 20 columns × 768 rows of *bytes* over the 320-px screen (the 224-px playfield sits at columns 3–16), sharing the background's rows and 48-part division. See the id table below. | **decoded** |
 | `+0x5A780` | `0x60` | **Global settings** — see the byte map below | mostly decoded |
 | `+0x5A7E0` | 10 × `0x478` | **Per-stage enemy definitions**: 60 records × 18 B (`0x438`) + the `0x40` **boss record** trailer. Record N defines the Nth zako id — see "Enemy record" and "Boss record" below. | **decoded** |
-| `+0x5D490` | `0x1D0` | **Global sprite composition bank**: 232 u16be cell refs — **fully decoded** (2026-08-28, via the global-art VRAM upload GAME `+0x3EEC` over the 85-entry char-slot table `+0x27F1C` and the spawners that pick each char). Refs 0-23 = P1 ship (bank-A / idle / bank-B pairs of 2 × 32×32 frames), 24-47 = P2 ship, 48-51 charge glow, 52-68 per-weapon shot/effect art (63 = weapon-1 fire FX, 65 = weapon-2, 66 = weapon-3 object, 68 = weapon-4 missiles; 57-60 the beam segments), 69-78 = weapons 6/7 option figures (10 × 16×16), 79-92 = bomb art (79-82 bomb 4, 87 bomb 5, 88-89 bomb-7 dome, 91-92 sub-2 object), 93 missile smoke, 94-101 = the **8 item icons**, 102-107 = **blast anim A** (6 × 16×16), 108-131 = **blast anim B** (6 × 32×32), 132-143 = the **3 global bullet types** (4 × 16×16 frames each, drawn by char slots 55/59/63), 144-175 / 176-207 = **TITLE 1 / TITLE 2** (each 8×4 cells = 128×64 px), 208-231 = **six 64×16 credit strips** (an earlier 8×3/8×5/three-8×1 title split covered the same refs but mis-cut the pieces). Bombs 1/2/3 draw system chars, not save cells — every save gets them free. Decoder: `lib/decode/decode-sprites.js` (`extractGlobalArt`, `TITLE_SLOTS`). | **decoded** |
+| `+0x5D490` | `0x1D0` | **Global sprite composition bank**: 232 u16be cell refs — **fully decoded** (2026-08-28, via the global-art VRAM upload GAME `+0x3EEC` over the 85-entry char-slot table `+0x27F1C` and the spawners that pick each char). Refs 0-23 = P1 ship (bank-A / idle / bank-B pairs of 2 × 32×32 frames), 24-47 = P2 ship, 48-51 charge glow, 52-68 per-weapon shot/effect art (63 = weapon-1 fire FX, 65 = weapon-2, 66 = weapon-3 object, 68 = weapon-4 missiles; 57-60 the beam segments), 69-78 = weapons 6/7 option figures (10 × 16×16), 79-92 = bomb art (79-82 bomb 4, 87 bomb 5, 88-89 bomb-7 dome, 91-92 sub-2 object), 93 missile smoke, 94-101 = the **8 item icons**; 102-143 is what `extractGlobalArt` RENDERS as blast anim A (102-107, 6 × 16×16), blast anim B (108-131, 6 × 32×32) and 3 bullet types (132-143, 4 × 16×16) — but **the play engine draws player/enemy SHOTS from a different set of these refs**, not 132-143 (traced 2026-09-07; see "Shot sprites" below); 144-175 / 176-207 = **TITLE 1 / TITLE 2** (each 8×4 cells = 128×64 px), 208-231 = **six 64×16 credit strips** (an earlier 8×3/8×5/three-8×1 title split covered the same refs but mis-cut the pieces). Bombs 1/2/3 draw system chars, not save cells — every save gets them free. Decoder: `lib/decode/decode-sprites.js` (`extractGlobalArt`, `TITLE_SLOTS`). | **decoded** |
 | `+0x5D660` | 10 × `0x580` | **Per-stage sprite composition**: 704 u16be cell refs — the flat bank GAME.CMP's stage-art VRAM upload walks slot by slot. Records 0–59 map onto seven art bands, the last 64 refs (`+0x500`) are the boss core; layout below. | **engine-traced** |
 
 The bank layout is engine-traced (2026-08-22), replacing an earlier geometry
@@ -287,6 +287,35 @@ garbled right-of-boss tiles reported from the level editor's play mode
 (confirmed against a Saturn capture of the same chamber). The two banks
 close the section exactly (`0x5D490 + 232·2 = 0x5D660`; `0x5D660 + 10·1408 =
 0x60D60`), and both bases are SH-2 literals in the engine.
+
+**Shot sprites — where the engine actually draws bullets from** (traced
+2026-09-07 through GAME.CMP; base `0x06064000`). A fired shot is a normal
+object, and the play engine picks its sprite by BULLET TYPE, not from the
+132-143 refs `extractGlobalArt` labels "bullet types". The single-shot spawn
+`+0x18578` calls the setup `+0x18520`, which chooses a **char group by type**
+— type 0 → char slot **55**, type 1 → **59**, type 2 → **63** — and writes it
+to the per-object sprite-index array `0x0608EA90`; the object renderer resolves
+that index through the sprite-command table `0x0608B1FC` (stride 10, its word 0
+being the char slot), and the global-art VRAM upload `+0x3EEC` fills the tile
+from the char-slot table `+0x27F1C`. Those char slots (and the object's anim
+frame, which steps the slot) map to global-bank refs:
+
+| type | char slots | global-bank refs | frame size |
+|------|-----------|------------------|------------|
+| 0 | 55–58 | 104, 105, 106, 107 | 16×16 |
+| 1 | 59–62 | 108, 112, 116, 120 | 32×32 |
+| 2 | 63–66 | 124, 128, 132, 136 | 32×32, 32×32, 16×16, 16×16 |
+
+So a **visible** bullet's art must live at those refs — 104/108/124 and their
+animation frames — which overlap what the table above calls "blast anim A/B",
+meaning that blast labeling is at best partial: refs 104/108/124 are the enemy
+bullet sprites the hardware draws. Refs 132-143, which the decoder extracts as
+"3 bullet types", are NOT where the engine reads shot art. Painting art only at
+132-143 leaves shots invisible; `game-to-save.js` (`BULLET_ENGINE_SLOTS`) writes
+each firing enemy's projectile to the char-slot refs above (and keeps 132-143
+for decoder round-trip), which makes exported enemy shots visible on hardware
+(confirmed in Mednafen 2026-09-07). What the player's own weapon dispatcher uses
+for its shot art (refs 48-93) was not traced here.
 
 **Placement ids** — exactly 72 distinct non-zero values in eight disjoint
 ranges across all 17 games:
