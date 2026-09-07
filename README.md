@@ -133,6 +133,24 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
     kill through `bossDie` — and `enemyDie` itself hands a boss over to
     `bossDie`, so no other weapon can repeat it. Upstream fix belongs in
     `2019-es7/src/phaser/game-objects/Enemy.js`.
+  - Akuma stays 2028.Ai's. `bossAdd` armed the hidden-boss sequence on stage 3
+    of any run played without a continue — which every imported cart is, since
+    it has no CONTINUE? — and `_startGokiSequence` then stopped time
+    (`theWorldFlg`), found no `bossExtra` record in the cart's `bossData`
+    (`mergeRecipe` replaces the base game's wholesale) and handed straight back
+    to `bossShootStart` with the flag still set: the boss never fired, TIME sat
+    at 99 and the ship could neither shoot nor bomb. The sequence is now armed
+    only when the level is not a Dezaemon import and actually carries a
+    `bossExtra`, and the no-record fallback lifts the time-stop before it hands
+    over. Upstream fix belongs in `2019-es7/src/phaser/game-objects/Boss.js`.
+  - The true ending is 2028.Ai's too. `decideEnding` sent any run whose last
+    stage is index 4 to the credits from stage 3's clear unless four akebono
+    finishes and no continue had unlocked it. NO STORY, which every import
+    arrives with, skips that rule — but an author who turns the story scenes
+    on for a five-stage cart lost its fifth stage, and a cart's bomb never
+    counts as an akebono finish, so nothing could earn it back. The rule now
+    applies only when the level is not a Dezaemon import. Upstream fix belongs
+    in `2019-es7/src/phaser/AdvScene.js`.
   - The Dezaemon divergences below, all of them keyed off `isImportedLevel()`.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
@@ -460,7 +478,10 @@ that is 2028.Ai's rather than the game's is keyed off it:
   Continues** (`?continues=1`) puts the prompt back, and a continue there
   resumes on the stage that killed you rather than restarting the run.
 - **G is replaced by the ship.** When the prompt is on, the save's own player
-  sprite idles in the portrait box G would have filled.
+  sprite idles in the portrait box G would have filled. The CONGRATULATIONS
+  card's three background frames are G taking a bow, so an imported save keeps
+  those hidden and idles the ship in the same box at the top of the card
+  instead, fading in on the cue his bow had.
 - **Its own cheats.** The Guide's Cheats submenu is broadcast per level: Boss
   Rush, a Start Stage slider bounded by the cart's real stage count, **Final
   Boss** (`?finalBoss=1` — the cart's last stage, opened at its boss) and Allow

@@ -7054,7 +7054,12 @@
   function decideEnding(recipe) {
     var finalStage = recipe ? lastStageId(recipe) : 4;
     if (gameState.stageId > finalStage) return true;
-    if (gameState.stageId === finalStage && finalStage === 4 && !(recipe && recipe.noStory) && !(gameState.akebonoCnt >= 4 && gameState.continueCnt === 0)) {
+    // 2028.Ai's true ending: its stage 4 is only fought after four akebono
+    // finishes without a continue. That is the base game's rule, not a cart's
+    // — an imported save's stage 4 is simply its fifth stage, whichever way
+    // the editor's NO STORY toggle is set (and a cart's bomb never counts as
+    // an akebono finish, so the unlock could never be earned).
+    if (!isImportedLevel() && gameState.stageId === finalStage && finalStage === 4 && !(recipe && recipe.noStory) && !(gameState.akebonoCnt >= 4 && gameState.continueCnt === 0)) {
       return true;
     }
     return false;
@@ -11115,7 +11120,15 @@
     scene.bossStageId = stageId;
     scene.gokiFlg = false;
     scene.bossIsGoki = false;
-    var isGokiStage = stageId === 3 && Number(gameState.continueCnt || 0) === 0 || gameState.forceBossName === "goki" && stageId === 3;
+    // Akuma is 2028.Ai's hidden boss, not the level's. He only exists where the
+    // recipe carries his bossExtra record — never in an imported Dezaemon cart,
+    // whose bossData replaces the base game's wholesale (and which, having no
+    // CONTINUE?, always reaches stage 3 with continueCnt at 0). Arming the
+    // sequence without the record used to freeze the game: _startGokiSequence
+    // stopped time, found nobody to bring on, and handed back to bossShootStart
+    // with theWorldFlg still set.
+    var gokiRecord = !isImportedLevel() && scene.recipe.bossData ? scene.recipe.bossData.bossExtra : null;
+    var isGokiStage = !!gokiRecord && (stageId === 3 && Number(gameState.continueCnt || 0) === 0 || gameState.forceBossName === "goki" && stageId === 3);
     if (isGokiStage) {
       scene.gokiFlg = true;
     }
@@ -11270,7 +11283,12 @@
     var preBoss = scene.bossSprite;
     var gokiData = scene.recipe.bossData ? scene.recipe.bossData.bossExtra : null;
     if (!gokiData) {
+      // Nobody to bring on: give the world back before the boss is told to
+      // fire. bossShootStart re-arms itself every 500 ms while theWorldFlg is
+      // set, so leaving it up here was a time-stop nothing would ever lift.
       scene.gokiFlg = false;
+      scene.theWorldFlg = false;
+      scene.spBtn.setAlpha(1);
       bossShootStart(scene);
       return;
     }
@@ -13724,6 +13742,46 @@
     if (!list.length) return "";
     return String(list[Math.floor(Math.random() * list.length)] || "");
   }
+  // The save's own ship, idling, sized to fill a portrait box G left — the
+  // continue card's face box, or the spot his bow takes on the CONGRATULATIONS
+  // card. Null when the recipe names frames this atlas does not have — G stays
+  // up rather than leaving a hole. `animKey` is per scene, so one card's
+  // animation is never torn down under the other.
+  function dezaShipFace(scene, box, animKey) {
+    var recipe = gameState._phaserRecipe;
+    var pd = recipe && recipe.playerData;
+    var wanted = pd && Array.isArray(pd.texture) ? pd.texture : [];
+    var atlas = scene.textures.get("game_asset");
+    var frames = [];
+    for (var i = 0; i < wanted.length; i++) {
+      if (atlas && atlas.has(wanted[i])) frames.push(wanted[i]);
+    }
+    if (!frames.length) return null;
+    var ship = scene.add.sprite(
+      box.x + box.width / 2,
+      box.y + box.height / 2,
+      "game_asset",
+      frames[0]
+    );
+    ship.setOrigin(0.5);
+    var fit = Math.min(box.width / ship.width, box.height / ship.height);
+    // Whole-pixel scaling only: this is a pixel-art ship blown up ~3x from a
+    // 32px sprite, and a fractional factor shimmers.
+    ship.setScale(Math.max(1, Math.floor(fit)));
+    if (frames.length > 1) {
+      if (scene.anims.exists(animKey)) scene.anims.remove(animKey);
+      scene.anims.create({
+        key: animKey,
+        frames: frames.map(function(f) {
+          return { key: "game_asset", frame: f };
+        }),
+        frameRate: 6,
+        repeat: -1
+      });
+      ship.play(animKey);
+    }
+    return ship;
+  }
   var PhaserContinueScene = class extends Phaser.Scene {
     constructor() {
       super({ key: "PhaserContinueScene" });
@@ -13774,7 +13832,7 @@
       // idles its own ship in his place. His sprite stays (hidden) because the
       // whole card is laid out against that box, and selectYes/selectNo still
       // swap its frames.
-      this.shipFace = isImportedLevel() ? this._addShipFace(this.loseFace) : null;
+      this.shipFace = isImportedLevel() ? dezaShipFace(this, this.loseFace, "continue_ship_idle") : null;
       if (this.shipFace) this.loseFace.setVisible(false);
       this.cntTextBg = this.add.sprite(
         this.loseFace.x + this.loseFace.width + 20,
@@ -13847,45 +13905,6 @@
         callback: this.onCountDown,
         callbackScope: this
       });
-    }
-    // The save's own ship, idling, sized to fill the portrait box G left. Null
-    // when the recipe names frames this atlas does not have — G stays up rather
-    // than leaving a hole.
-    _addShipFace(box) {
-      var recipe = gameState._phaserRecipe;
-      var pd = recipe && recipe.playerData;
-      var wanted = pd && Array.isArray(pd.texture) ? pd.texture : [];
-      var atlas = this.textures.get("game_asset");
-      var frames = [];
-      for (var i = 0; i < wanted.length; i++) {
-        if (atlas && atlas.has(wanted[i])) frames.push(wanted[i]);
-      }
-      if (!frames.length) return null;
-      var ship = this.add.sprite(
-        box.x + box.width / 2,
-        box.y + box.height / 2,
-        "game_asset",
-        frames[0]
-      );
-      ship.setOrigin(0.5);
-      var fit = Math.min(box.width / ship.width, box.height / ship.height);
-      // Whole-pixel scaling only: this is a pixel-art ship blown up ~3x from a
-      // 32px sprite, and a fractional factor shimmers.
-      ship.setScale(Math.max(1, Math.floor(fit)));
-      if (frames.length > 1) {
-        var key = "continue_ship_idle";
-        if (this.anims.exists(key)) this.anims.remove(key);
-        this.anims.create({
-          key: key,
-          frames: frames.map(function(f) {
-            return { key: "game_asset", frame: f };
-          }),
-          frameRate: 6,
-          repeat: -1
-        });
-        ship.play(key);
-      }
-      return ship;
     }
     setupContinueButton(button, framePrefix, onPress) {
       button.setInteractive({ useHandCursor: true });
@@ -14313,6 +14332,19 @@
       this.bg.setOrigin(0, 0);
       this.bg.setAlpha(0);
       this.bg.play("congra_bg_anim");
+      // The three congraBg frames ARE G, taking his bow, so an imported cart
+      // cannot show any of them: they stay hidden and the save's own ship
+      // idles where his portrait was — the continue card's box, set at the top
+      // of the screen clear of the CONGRATULATIONS strip and the score panel —
+      // fading in on the cue the bow would have. G stays up when the atlas
+      // lacks the ship's frames, as on the continue card.
+      this.shipFace = isImportedLevel()
+        ? dezaShipFace(this, { x: GCX8 - 50, y: 0, width: 100, height: 131 }, "congra_ship_idle")
+        : null;
+      if (this.shipFace) {
+        this.bg.setVisible(false);
+        this.shipFace.setAlpha(0);
+      }
       this.congraInfoBg = this.add.sprite(0, 210, "game_ui", "congraInfoBg.gif");
       this.congraInfoBg.setOrigin(0, 0.5);
       this.congraInfoBg.setAlpha(0);
@@ -14457,7 +14489,7 @@
       });
       this.time.delayedCall(2200, function() {
         self.tweens.add({
-          targets: self.bg,
+          targets: self.shipFace || self.bg,
           alpha: 1,
           duration: 800
         });
