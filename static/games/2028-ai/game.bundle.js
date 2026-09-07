@@ -2320,6 +2320,10 @@
         ea.game_asset ? "assets/img/_game_asset.png" : "assets/img/game_asset.png",
         ea.game_asset ? "assets/_game_asset.json" : "assets/game_asset.json"
       );
+      // The winged powerup emblems keep their own texture on purpose: an
+      // import swaps game_asset for the level's own atlas, which would take
+      // the animated pickups away with it. Built by `deno task powerups:atlas`.
+      this.load.atlas("powerups", "assets/img/powerups.png", "assets/powerups.json");
       this.load.json("recipe", "assets/game.json");
       this.load.json("custom-bgm-manifest", "assets/custom-bgm/manifest.json");
       this.load.image("title_bg", "assets/img/title_bg.jpg");
@@ -12988,7 +12992,40 @@
           tint = 0;
         }
       }
-      var item = this.add.sprite(x, y, "game_asset", frameKey);
+      // The winged letter emblems, four frames apiece at the GIF's own 5fps.
+      // The letters read S=speed, B=bomb, F=firepower, R=rapid, so they land
+      // on the drops that mean those things — the same reading the cart
+      // writer uses for its item icons (lib/powerup-emblems.ts). A save that
+      // carries its own icon for this drop keeps it: that art is the cart
+      // author's, and it already won above. Barrier and score have no letter.
+      var emblemByItem = { big: "F", "3way": "R", speed_high: "S", dezaSp: "B" };
+      var letter = own ? null : emblemByItem[itemName];
+      var item = null;
+      if (letter && this.textures.exists("powerups")) {
+        var emblemTex = this.textures.get("powerups");
+        var emblemFrames = [];
+        for (var ef = 0; ef < 4; ef++) {
+          var efName = "emblem" + letter + ef + ".gif";
+          if (emblemTex.has(efName)) {
+            emblemFrames.push({ key: "powerups", frame: efName });
+          }
+        }
+        if (emblemFrames.length) {
+          var emblemAnim = "powerupEmblem" + letter;
+          if (!this.anims.exists(emblemAnim)) {
+            this.anims.create({
+              key: emblemAnim,
+              frames: emblemFrames,
+              frameRate: 5,
+              repeat: -1
+            });
+          }
+          item = this.add.sprite(x, y, "powerups", emblemFrames[0].frame);
+          item.play(emblemAnim);
+          tint = 0;
+        }
+      }
+      if (!item) item = this.add.sprite(x, y, "game_asset", frameKey);
       item.setOrigin(0.5);
       item.setDepth(55);
       item.setData("itemName", itemName);

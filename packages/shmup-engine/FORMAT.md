@@ -1471,13 +1471,22 @@ collection (60 saves scanned) while building it:
   a level has both, TITLE 1 gets the logo in its top 48 rows and TITLE 2 the
   subtitle in its bottom 16, the way the runtime stacks them.
 
-What the writer does NOT yet reproduce: the six credit strips, real item icon
-art (procedural placeholders are written), the death-word children of records
-whose slot had to move (the record keeps its bytes; a collision is reported),
-and anything the level format has no words for (enemy names, story scenes,
-audio files). The weapon-slot art is placed by the traced geometry, not by a
-trace of which slot each of the 7×5 weapon levels reads, so a shot may wear a
-neighbouring slot's frame; it is never invisible. Verified 2026-09-05 in Mednafen 1.29 with the Japanese BIOS:
+What the writer does NOT yet reproduce: the six credit strips, the death-word
+children of records whose slot had to move (the record keeps its bytes; a
+collision is reported), and anything the level format has no words for (enemy
+names, story scenes, audio files). Item icons are half-closed (2026-09-07):
+`buildSaveFromGame` takes an `itemEmblems` option — a map from item type
+(0-3 weapon change, 4 barrier, 5 bomb, 6 score, 7 power, 8 speed) to one
+`{w, h, rgba}` frame, fitted into the cell — and each of the eight slots draws
+the emblem for its type, falling back to the procedural coloured square for a
+type the caller left out, and for every slot when the option is omitted (the
+default). The art is the caller's: neither the engine nor this repo ships any.
+Refs 94-101 give an item slot exactly ONE 16×16 cell, so a pickup's icon is
+necessarily a still — animated source art has to be cut down to a single frame
+before it is handed over. The weapon-slot art is placed by the traced geometry,
+not by a trace of which slot each of the 7×5 weapon levels reads, so a shot may
+wear a neighbouring slot's frame; it is never invisible.
+Verified 2026-09-05 in Mednafen 1.29 with the Japanese BIOS:
 the exported `foo` cart boots, the Saturn's backup library leaves every byte
 of it untouched and writes its `DEZA2___SYS` record into internal RAM, the LOAD
 screen lists the cartridge with free space and loads the game, and the stage

@@ -1,0 +1,335 @@
+{
+  "frames": {
+    "emblemS0.gif": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemS1.gif": {
+      "frame": {
+        "x": 28,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemS2.gif": {
+      "frame": {
+        "x": 56,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemS3.gif": {
+      "frame": {
+        "x": 84,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemB0.gif": {
+      "frame": {
+        "x": 0,
+        "y": 17,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemB1.gif": {
+      "frame": {
+        "x": 28,
+        "y": 17,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemB2.gif": {
+      "frame": {
+        "x": 56,
+        "y": 17,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemB3.gif": {
+      "frame": {
+        "x": 84,
+        "y": 17,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemF0.gif": {
+      "frame": {
+        "x": 0,
+        "y": 34,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemF1.gif": {
+      "frame": {
+        "x": 28,
+        "y": 34,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemF2.gif": {
+      "frame": {
+        "x": 56,
+        "y": 34,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemF3.gif": {
+      "frame": {
+        "x": 84,
+        "y": 34,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemR0.gif": {
+      "frame": {
+        "x": 0,
+        "y": 51,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemR1.gif": {
+      "frame": {
+        "x": 28,
+        "y": 51,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemR2.gif": {
+      "frame": {
+        "x": 56,
+        "y": 51,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    },
+    "emblemR3.gif": {
+      "frame": {
+        "x": 84,
+        "y": 51,
+        "w": 26,
+        "h": 15
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 26,
+        "h": 15
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 26,
+        "h": 15
+      },
+      "trimmed": false
+    }
+  },
+  "meta": {
+    "app": "scripts/build-powerup-atlas.ts",
+    "format": "RGBA8888",
+    "image": "img/powerups.png",
+    "scale": "1",
+    "size": {
+      "w": 110,
+      "h": 66
+    },
+    "version": "1.0"
+  }
+}

@@ -31,6 +31,7 @@ import { ensureDir } from "@std/fs";
 import { decodeDataUrl, decodePng, type Raster } from "../lib/ps2/png.ts";
 import { decodeGif, isGif } from "../lib/ps2/gif.ts";
 import { cut } from "../lib/ps2/raster.ts";
+import { EMBLEM_DIR, loadItemEmblems } from "../lib/powerup-emblems.ts";
 import {
   exportLevelToSav,
   PALETTE_TARGETS,
@@ -251,6 +252,21 @@ export async function buildSav(
   const title1 = await titleArt(record.logoDataURL, "logo");
   const title2 = await titleArt(record.subTitleDataURL, "subtitle");
 
+  // Real item icons when the powerup GIFs are sitting in dev-fixtures, the
+  // coloured squares when they are not. A cart holds one 16x16 cell per item
+  // slot, so these are stills — the GIFs' own animation has nowhere to go.
+  const itemEmblems = await loadItemEmblems(
+    join(ROOT, EMBLEM_DIR),
+    (m) => log(`warning: ${m}`),
+  );
+  log(
+    itemEmblems
+      ? `item icons: ${
+        Object.keys(itemEmblems).length
+      } of 9 types wear a powerup emblem`
+      : `item icons: no powerup GIFs in ${EMBLEM_DIR} — drawing coloured squares`,
+  );
+
   const result = exportLevelToSav(record, art, {
     palette,
     slot: options.slot ?? 1,
@@ -258,6 +274,7 @@ export async function buildSav(
     gameMode: options.gameMode ?? 0,
     title1,
     title2,
+    itemEmblems,
   });
   for (const w of result.warnings) log(`warning: ${w}`);
 

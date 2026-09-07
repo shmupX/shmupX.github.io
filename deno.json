@@ -25,6 +25,7 @@
     "deza:upload": "deno run -A scripts/upload-deza-saves.ts",
     "deza:disc": "deno run -A tools/deza-disc/main.ts",
     "sfc:probe": "deno run -A tools/sfc-sav/main.ts",
+    "powerups:atlas": "deno run -A scripts/build-powerup-atlas.ts",
     "deza:tonebank": "deno run -A scripts/build-tone-bank.ts",
     "deza:meshlib": "deno run -A scripts/build-mesh-library.ts",
     "deza:palette": "deno run -A scripts/build-palette.ts",

@@ -1,10 +1,13 @@
-// A GIF decoder for the one thing the build scripts need: the first frame of
-// a logo the editor stored as a `data:image/gif` URL, as RGBA. GIF87a and
-// GIF89a, global and local colour tables, interlacing, and the graphic
-// control extension's transparent index (alpha 0). Later frames, disposal and
-// loops are ignored — a title logo is a still.
+// A GIF decoder: GIF87a and GIF89a, global and local colour tables,
+// interlacing, and the graphic control extension's transparent index
+// (alpha 0), as RGBA.
 //
-// The output raster has the logical screen size, with the frame blitted at
+// `decodeGif` returns the first frame, which is all a still logo stored as a
+// `data:image/gif` URL needs. `decodeGifFrames` walks the whole file and
+// composites every frame — honouring the three disposal methods and carrying
+// each frame's delay — which is what an animated sprite needs.
+//
+// Output rasters have the logical screen size, with each frame composited at
 // its own offset and everything outside it transparent.
 
 import { newRaster, type Raster } from "./png.ts";
@@ -134,8 +137,39 @@ export function isGif(bytes: Uint8Array): boolean {
     bytes[2] === 0x46 && bytes[3] === 0x38;
 }
 
-/** Decode the first frame of a GIF to an RGBA raster of the logical screen. */
-export function decodeGif(bytes: Uint8Array): Raster {
+/** One composited frame of an animated GIF. */
+export interface GifFrame {
+  /** The logical screen after this frame is drawn, RGBA. */
+  raster: Raster;
+  /** Delay before the next frame, in milliseconds. */
+  delayMs: number;
+  /** The frame's own rectangle inside the logical screen. */
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  /** GIF disposal method: 0 unspecified, 1 keep, 2 background, 3 previous. */
+  disposal: number;
+}
+
+export interface GifImage {
+  width: number;
+  height: number;
+  frames: GifFrame[];
+  /** Netscape loop count; 0 means forever, -1 when the file says nothing. */
+  loopCount: number;
+}
+
+/**
+ * Every frame of a GIF, composited onto the logical screen in order.
+ *
+ * Disposal is honoured between frames: method 2 clears the frame's own
+ * rectangle to transparent before the next one draws, method 3 restores the
+ * canvas as it stood before the frame, and 0/1 leave it in place. A frame's
+ * transparent index leaves the canvas showing through rather than punching a
+ * hole, which is what makes partial-update GIFs composite correctly.
+ */
+export function decodeGifFrames(bytes: Uint8Array): GifImage {
   if (!isGif(bytes)) throw new Error("gif: not a GIF");
   const width = u16le(bytes, 6);
   const height = u16le(bytes, 8);
@@ -147,8 +181,16 @@ export function decodeGif(bytes: Uint8Array): Raster {
     globalTable = bytes.subarray(p, p + n);
     p += n;
   }
-  const out = newRaster(width, height);
+
+  const frames: GifFrame[] = [];
+  let loopCount = -1;
+  // The running canvas every frame composites onto.
+  const canvas = newRaster(width, height);
+  // Graphic control state, which applies to the next image block only.
   let transparent = -1;
+  let delayMs = 0;
+  let disposal = 0;
+
   while (p < bytes.length) {
     const tag = bytes[p++];
     if (tag === 0x3b) break; // trailer
@@ -157,12 +199,24 @@ export function decodeGif(bytes: Uint8Array): Raster {
       if (label === 0xf9) {
         const size = bytes[p];
         const flags = bytes[p + 1];
-        if (flags & 1) transparent = bytes[p + 4];
+        transparent = flags & 1 ? bytes[p + 4] : -1;
+        disposal = (flags >> 2) & 7;
+        delayMs = u16le(bytes, p + 2) * 10;
         p += size + 1;
         if (bytes[p] !== 0) {
           throw new Error("gif: bad graphic control extension");
         }
         p++;
+      } else if (label === 0xff) {
+        const nameLen = bytes[p];
+        let name = "";
+        for (let i = 1; i <= nameLen; i++) name += String.fromCharCode(bytes[p + i]);
+        const [app, next] = subBlocks(bytes, p + nameLen + 1);
+        // NETSCAPE2.0's sub-block 1 is [1, loop lo, loop hi].
+        if (name.startsWith("NETSCAPE") && app.length >= 3 && app[0] === 1) {
+          loopCount = app[1] | (app[2] << 8);
+        }
+        p = next;
       } else {
         [, p] = subBlocks(bytes, p);
       }
@@ -196,6 +250,10 @@ export function decodeGif(bytes: Uint8Array): Raster {
     } else {
       for (let y = 0; y < h; y++) rowOrder.push(y);
     }
+
+    // Disposal 3 restores what stood here before this frame drew.
+    const saved = disposal === 3 ? canvas.data.slice() : null;
+
     for (let r = 0; r < h; r++) {
       const y = rowOrder[r];
       const ty = top + y;
@@ -206,13 +264,37 @@ export function decodeGif(bytes: Uint8Array): Raster {
         const idx = indices[r * w + x];
         if (idx === transparent || idx * 3 + 2 >= table.length) continue;
         const d = (ty * width + tx) * 4;
-        out.data[d] = table[idx * 3];
-        out.data[d + 1] = table[idx * 3 + 1];
-        out.data[d + 2] = table[idx * 3 + 2];
-        out.data[d + 3] = 255;
+        canvas.data[d] = table[idx * 3];
+        canvas.data[d + 1] = table[idx * 3 + 1];
+        canvas.data[d + 2] = table[idx * 3 + 2];
+        canvas.data[d + 3] = 255;
       }
     }
-    return out; // first frame only
+
+    const shot = newRaster(width, height);
+    shot.data.set(canvas.data);
+    frames.push({ raster: shot, delayMs, left, top, width: w, height: h, disposal });
+
+    if (disposal === 2) {
+      for (let y = top; y < top + h && y < height; y++) {
+        for (let x = left; x < left + w && x < width; x++) {
+          const d = (y * width + x) * 4;
+          canvas.data[d] = canvas.data[d + 1] = canvas.data[d + 2] = canvas.data[d + 3] = 0;
+        }
+      }
+    } else if (disposal === 3 && saved) {
+      canvas.data.set(saved);
+    }
+    // The control block applies to one image; reset until the next one.
+    transparent = -1;
+    delayMs = 0;
+    disposal = 0;
   }
-  return out;
+  return { width, height, frames, loopCount };
+}
+
+/** Decode the first frame of a GIF to an RGBA raster of the logical screen. */
+export function decodeGif(bytes: Uint8Array): Raster {
+  const { width, height, frames } = decodeGifFrames(bytes);
+  return frames.length ? frames[0].raster : newRaster(width, height);
 }

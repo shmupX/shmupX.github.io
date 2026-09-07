@@ -70,6 +70,7 @@ import { exportLevelToSav } from "@shmupx/shmup-engine";
 const { sav, fileName, warnings, report } = exportLevelToSav(level, art, {
   palette: "saturn", // or "snes": one 15-colour row per sprite
   title1: logoRgba, // optional {w, h, rgba} for the drawn TITLE 1 / TITLE 2
+  itemEmblems: { 8: speedIcon }, // optional 16×16 icon per type; else a square
 });
 await Deno.writeFile(fileName, sav); // "Dez 2 - <name>.sav", 1,114,112 bytes
 ```

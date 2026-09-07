@@ -146,11 +146,11 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
   - The true ending is 2028.Ai's too. `decideEnding` sent any run whose last
     stage is index 4 to the credits from stage 3's clear unless four akebono
     finishes and no continue had unlocked it. NO STORY, which every import
-    arrives with, skips that rule — but an author who turns the story scenes
-    on for a five-stage cart lost its fifth stage, and a cart's bomb never
-    counts as an akebono finish, so nothing could earn it back. The rule now
-    applies only when the level is not a Dezaemon import. Upstream fix belongs
-    in `2019-es7/src/phaser/AdvScene.js`.
+    arrives with, skips that rule — but an author who turns the story scenes on
+    for a five-stage cart lost its fifth stage, and a cart's bomb never counts
+    as an akebono finish, so nothing could earn it back. The rule now applies
+    only when the level is not a Dezaemon import. Upstream fix belongs in
+    `2019-es7/src/phaser/AdvScene.js`.
   - The Dezaemon divergences below, all of them keyed off `isImportedLevel()`.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
@@ -183,6 +183,7 @@ deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
 deno task deza:meshlib    # decode the ポリ吉 3D part library off a disc image
 deno task deza:palette    # write static/palette.png (+ palette-sheet.png) from DEZA2.PAL
 deno task sfc:probe       # look inside a Super Famicom Dezaemon SRAM dump (report / png / hex / diff)
+deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task tonebank:table  # re-pack the instrument map into src/audio/
 deno task netplay:bundle  # bundle the online-2P browser client
 deno task netplay:generate  # regenerate its bindings from the module
@@ -285,23 +286,60 @@ switch under DEZAEMON 2 (SATURN) picks it.
 **What lands where.** Every frame the game needs — the enemies' animation frames
 (in the smallest of the seven zako art bands that holds them, downscaled only
 past 64×64), the boss core (class F0–F3 by size), the ship (the level's own,
-else Duke), item icons and two blast anims (drawn procedurally), up to three
-bullet types from the enemies' projectiles, the logo and subtitle as the drawn
-TITLE 1/2, an import's scenery — is packed into the 1024 shared CG cells
-(mirrors and duplicates cost nothing). Each stage gets its placement grid (json
-rows spawn last-first, so they are reversed into scroll order; an import's
-`waveRows` puts waves back on their rows, an authored level spaces them 12 rows
-apart across the 14-column playfield), its 60 enemy records (an import's 18
-bytes verbatim in their own slot; an authored enemy encoded from
-hp/score/interval/speed as a straight-down flier that fires aimed shots; a
-cell's drop digit becomes the record's death word), the boss trailer (re-encoded
-from an import's decoded record, else four default patterns), scroll curve and
-extents, and the settings block (mode from the grid's VERT/HORIZ switch,
-loadouts, item slots, bullet configs, BGM table). An import's `dezaemonBgm`
-songs go back into sec6; sec7 stays empty. Everything the format does not carry
-— enemy names, story scenes, custom audio, the base game's stock enemies'
-behaviours — is left behind, and the builder says so in its warnings. Not yet
-written: the six credit strips, real item icon art, 3D models.
+else Duke), the eight item icons (**Item icons** below) and two blast anims
+(drawn procedurally), up to three bullet types from the enemies' projectiles,
+the logo and subtitle as the drawn TITLE 1/2, an import's scenery — is packed
+into the 1024 shared CG cells (mirrors and duplicates cost nothing). Each stage
+gets its placement grid (json rows spawn last-first, so they are reversed into
+scroll order; an import's `waveRows` puts waves back on their rows, an authored
+level spaces them 12 rows apart across the 14-column playfield), its 60 enemy
+records (an import's 18 bytes verbatim in their own slot; an authored enemy
+encoded from hp/score/interval/speed as a straight-down flier that fires aimed
+shots; a cell's drop digit becomes the record's death word), the boss trailer
+(re-encoded from an import's decoded record, else four default patterns), scroll
+curve and extents, and the settings block (mode from the grid's VERT/HORIZ
+switch, loadouts, item slots, bullet configs, BGM table). An import's
+`dezaemonBgm` songs go back into sec6; sec7 stays empty. Everything the format
+does not carry — enemy names, story scenes, custom audio, the base game's stock
+enemies' behaviours — is left behind, and the builder says so in its warnings.
+Not yet written: the six credit strips and the 3D models.
+
+**Item icons.** A save gives each of its eight item slots exactly one 16×16 cell
+of the global sprite bank (refs 94–101), so a pickup in a cart is a **still** —
+there is nowhere for a second frame to go. With the four winged letter emblems
+sitting in `dev-fixtures/powerups/` as `powerup-s.gif`, `powerup-b.gif`,
+`powerup-f.gif` and `powerup-r.gif`, `deno task build:sav` draws those rather
+than the procedural coloured squares it otherwise falls back to. The letters map
+**S = speed**, **B = bomb**, **F = power** and **R = all four weapon-change
+slots**; barrier and score have no letter and keep their squares.
+[`lib/powerup-emblems.ts`](lib/powerup-emblems.ts) takes the largest frame of
+each GIF that fits the cell at native resolution — the art is stored blown up,
+and the factor is measured rather than assumed — and centres it there, so
+nothing is ever resampled; a letter this small does not survive it.
+([`lib/ps2/gif.ts`](lib/ps2/gif.ts) decodes every frame of a GIF, disposal
+methods and loop count included, rather than only the first.) The GIFs
+themselves are **not in the repo** — `dev-fixtures/` is gitignored — so the
+build reports how many of the nine item types wear an emblem, or that it is
+drawing squares; a GIF that will not decode costs only its own letter, and a
+checkout without the art exports exactly what it always did. Import the cart
+back and its icons dress its drops again (`dezaemonItems.iconByDrop`), which is
+what the runtime then draws for its pickups — the same path a community save's
+own icons take.
+
+**Animated pickups in the runtime.** What a cart cannot hold, the game can.
+`deno task powerups:atlas` cuts the same four GIFs into
+`static/games/2028-ai/assets/powerups.json` + `img/powerups.png` — 16 frames,
+one row per letter, at the art's **native** resolution (it is drawn at 2×, and
+the factor is measured, not assumed), which is 26×15, exactly the size of every
+other pickup in the game. That atlas **is** committed: it is the derived
+artefact, the way the tone bank and the mesh library are. It is deliberately a
+texture of its own rather than part of `game_asset`, because an import swaps
+`game_asset` for the level's atlas and would otherwise take the pickups away
+just as a cart starts. `dropItem` plays the four-frame flap at the GIF's own
+5fps on the drops the letters name — **F** on the power-up, **R** on the weapon
+change, **S** on the speed-up, **B** on the bomb stock — while barrier and score
+keep their stock art, and a save that carries its own icon for a drop still
+wins, because that art is the cart author's.
 
 **In the editor.** Under DEZAEMON 2 (SATURN): **DOWNLOAD .SAV** builds the open
 game in the page (the engine bundle) and downloads `Dez 2 - <name>.sav`; **→
@@ -491,20 +529,20 @@ that is 2028.Ai's rather than the game's is keyed off it:
 ### The Super Famicom cart
 
 The 1994 Super Famicom Dezaemon (SHVC-66) saves nothing like the Saturn's
-BackUpRam image: its battery SRAM is a raw 128 KB dump, four 32 KB segments,
-no compression. `@shmupx/shmup-engine/sfc` reads it structurally —
-`parseSfcSav(bytes, { rom })` gives every region the ROM's own memory map
-names (the ROM keeps a labelled `ADDRESS NAME` table at `0x66A5`, which the
-parser's region list is held equal to by a test): 24 BGR555 palette rows, six
-18×128-chip stage maps and their scroll tables, the tile groups, two
-high-score tables, the configuration words, and the 4bpp graphics bank when
-the dump carries one. It does not yet map a cart into `game.json` — the enemy
-records, appearance tables, sound data and the graphics banking are still
-open, and `packages/shmup-engine/FORMAT-SFC.md` says what is known and how to
-close the rest. `deno task sfc:probe all <sav> --rom <sfc> --out build/sfc/x/`
-renders what a dump holds, and `static/dezaemon-parity-sfc.html` is the
-parity map — the Super Famicom counterpart of `static/dezaemon-parity.html`.
-Neither saves nor the ROM are committed: the tests gate on
+BackUpRam image: its battery SRAM is a raw 128 KB dump, four 32 KB segments, no
+compression. `@shmupx/shmup-engine/sfc` reads it structurally —
+`parseSfcSav(bytes, { rom })` gives every region the ROM's own memory map names
+(the ROM keeps a labelled `ADDRESS NAME` table at `0x66A5`, which the parser's
+region list is held equal to by a test): 24 BGR555 palette rows, six 18×128-chip
+stage maps and their scroll tables, the tile groups, two high-score tables, the
+configuration words, and the 4bpp graphics bank when the dump carries one. It
+does not yet map a cart into `game.json` — the enemy records, appearance tables,
+sound data and the graphics banking are still open, and
+`packages/shmup-engine/FORMAT-SFC.md` says what is known and how to close the
+rest. `deno task sfc:probe all <sav> --rom <sfc> --out build/sfc/x/` renders
+what a dump holds, and `static/dezaemon-parity-sfc.html` is the parity map — the
+Super Famicom counterpart of `static/dezaemon-parity.html`. Neither saves nor
+the ROM are committed: the tests gate on
 `packages/shmup-engine/fixtures/dezaemon-sfc-sample.sav` and a ROM in
 `dev-fixtures/`.
 
@@ -1023,12 +1061,11 @@ per slug rather than as a bare `/games/` — that prefix would shadow shmupX's o
 ## Customising the launcher
 
 Settings holds the look: **THEME** (Xbox, Xbox 360, Nintendo) and **AVATAR**,
-the glyph in the dashboard's orb and the boot flash. A picks the next preset
-and ◀ ▶ step through them on either row; the AVATAR row's field takes any
-emoji typed or pasted (👩🏼‍💻 is one glyph — the field keeps one or two grapheme
-clusters, so a skin tone + ZWJ sequence stays whole). Both persist in the
-launcher's `cmg-tweaks` localStorage record, beside the OSD's hue and scanline
-choices.
+the glyph in the dashboard's orb and the boot flash. A picks the next preset and
+◀ ▶ step through them on either row; the AVATAR row's field takes any emoji
+typed or pasted (👩🏼‍💻 is one glyph — the field keeps one or two grapheme clusters,
+so a skin tone + ZWJ sequence stays whole). Both persist in the launcher's
+`cmg-tweaks` localStorage record, beside the OSD's hue and scanline choices.
 
 ## The eShop
 
@@ -1044,12 +1081,12 @@ every game anyone can get — and it is read from two places by
   ([`.github/workflows/eshop.yml`](.github/workflows/eshop.yml) runs it). The
   first entry is Sh'M↑ Party's PlayStation 2 port,
   [`easierbycode/shmup-party-ps2`](https://github.com/easierbycode/shmup-party-ps2):
-  its Pages deploy builds the browser game once more at a relative base path
-  and publishes it beside the site as `shmup-party-ps2-web.zip`, so what the
+  its Pages deploy builds the browser game once more at a relative base path and
+  publishes it beside the site as `shmup-party-ps2-web.zip`, so what the
   launcher installs (entry `play/index.html`) is the build
   [easierbycode.com/shmup-party-ps2](https://easierbycode.com/shmup-party-ps2/)'s
-  own PLAY IN BROWSER runs; a newer commit on `main` flags UPDATE. That
-  deploy also carries the game's **Wave Editor**
+  own PLAY IN BROWSER runs; a newer commit on `main` flags UPDATE. That deploy
+  also carries the game's **Wave Editor**
   ([`/wave-editor/`](https://easierbycode.com/shmup-party-ps2/wave-editor/),
   which authors its `ps2/data/waves.js`), framed in the CMG Desktop's Tools
   folder beside spriteX.
@@ -1057,13 +1094,13 @@ every game anyone can get — and it is read from two places by
   launcher has always let a game ship at its root — read off the tracked branch
   (`raw.githubusercontent.com/<owner>/<repo>/<branch>/codemonkey.json`) after
   the two halves above. Today it supplies the game's **release status**: an
-  UPPER_SNAKE token such as `EARLY_ACCESS` or `BETA` (blank reads as
-  RELEASED), shown as an amber chip on the row and in the disc panel, and
-  recorded with the install so it survives the catalog going unreachable. A
-  `status` on the `data/eshop.json` row pins it instead. The eShop header
-  carries a filter over whatever statuses the catalog holds — ALL by default;
-  ◀ ▶ (or F) cycles it, a chip picks one, nothing is remembered between
-  visits. shmup-party-ps2 ships `{ "status": "EARLY_ACCESS" }`.
+  UPPER_SNAKE token such as `EARLY_ACCESS` or `BETA` (blank reads as RELEASED),
+  shown as an amber chip on the row and in the disc panel, and recorded with the
+  install so it survives the catalog going unreachable. A `status` on the
+  `data/eshop.json` row pins it instead. The eShop header carries a filter over
+  whatever statuses the catalog holds — ALL by default; ◀ ▶ (or F) cycles it, a
+  chip picks one, nothing is remembered between visits. shmup-party-ps2 ships
+  `{ "status": "EARLY_ACCESS" }`.
 - The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU → PUBLISH
   TO ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`, cover under
   `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last). A

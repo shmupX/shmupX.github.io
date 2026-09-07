@@ -6157,7 +6157,7 @@ function puffSprite(size = 16) {
   return fr;
 }
 function buildSaveFromGame(level, art, options = {}) {
-  const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, useBackground: true, ...options };
+  const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, useBackground: true, ...options };
   const warnings = [];
   const warn = (m) => warnings.push(m);
   const artMap = /* @__PURE__ */ new Map();
@@ -6400,7 +6400,12 @@ function buildSaveFromGame(level, art, options = {}) {
     }
     return { key: st.key, placements, records, boss, items, background, curve, extent, lastRow };
   });
-  const itemKeys = itemSlotBytes.map((b, i) => planFrame(`item:${i}:${b & 15}`, itemIcon(b & 15), 16, 16, "items", 3));
+  const itemKeys = itemSlotBytes.map((b, i) => {
+    const type = b & 15;
+    const supplied = opts.itemEmblems ? opts.itemEmblems[type] : null;
+    const frame = supplied && supplied.rgba && supplied.w > 0 && supplied.h > 0 ? supplied : itemIcon(type);
+    return planFrame(`item:${i}:${type}`, frame, 16, 16, "items", 3);
+  });
   const blastAKeys = blastFrames(16).map((f, i) => planFrame(`blastA:${i}`, f, 16, 16, "blast", 3));
   const blastBKeys = blastFrames(32).map((f, i) => planFrame(`blastB:${i}`, f, 32, 32, "blast", 3));
   const hasTitle1 = !!(opts.title1 && opts.title1.rgba);
