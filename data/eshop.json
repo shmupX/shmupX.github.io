@@ -1,18 +1,18 @@
 [
   {
-    "id": "shmup-party-phaser4",
+    "id": "shmup-party-ps2",
     "kind": "web",
     "name": "Sh'M↑ Party",
     "title": "SH'M↑ PARTY",
-    "sub": "Phaser 4 // 1-4 players · attract mode",
+    "sub": "5velte-ps2 // 1-4 players · attract mode",
     "icon": "/icons/shmup-party-icon.png",
     "source": "github",
-    "repo": "easierbycode/shmup-party-phaser4",
+    "repo": "easierbycode/shmup-party-ps2",
     "branch": "main",
-    "entry": "index.html",
-    "downloadUrl": "https://raw.githubusercontent.com/easierbycode/shmup-party-phaser4/main/shmup-party-phaser4.zip",
-    "size": "8 MB",
-    "date": "07.28.26",
+    "entry": "play/index.html",
+    "downloadUrl": "https://easierbycode.com/shmup-party-ps2/shmup-party-ps2-web.zip",
+    "size": "4 MB",
+    "date": "09.07.26",
     "twinStick": { "default": true }
   }
 ]

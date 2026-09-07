@@ -77,7 +77,7 @@ Deno.test("the site's own pages are outside MIRRORABLE", async () => {
       "/dashboard.bundle.js",
       "/icons/2028-icon.png",
       "/phaser-plugins/level-loader.js",
-      "/api/eshop/zip?repo=easierbycode/shmup-party-phaser4&branch=main",
+      "/api/eshop/zip?repo=easierbycode/shmup-party-ps2&branch=main",
       "/api/dezaemon-disc?zip=1",
     ]
   ) {
@@ -100,7 +100,7 @@ Deno.test("/eshop/ is outside MIRRORABLE but handled by the eshop branch", async
   const worker = await read("emu-sw.js");
   const mirrorable = mirrorableList(worker);
 
-  const eshopPath = "/eshop/shmup-party-phaser4/index.html";
+  const eshopPath = "/eshop/shmup-party-ps2/play/index.html";
   assertEquals(
     matchPrefix(mirrorable, eshopPath),
     false,
