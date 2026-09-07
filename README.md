@@ -978,6 +978,16 @@ the worker. And PS2's web builds live under `/games/<slug>/`, which is listed
 per slug rather than as a bare `/games/` — that prefix would shadow shmupX's own
 `/games/2028-ai` with cmg's copy.
 
+## Customising the launcher
+
+Settings holds the look: **THEME** (Xbox, Xbox 360, Nintendo) and **AVATAR**,
+the glyph in the dashboard's orb and the boot flash. A picks the next preset
+and ◀ ▶ step through them on either row; the AVATAR row's field takes any
+emoji typed or pasted (👩🏼‍💻 is one glyph — the field keeps one or two grapheme
+clusters, so a skin tone + ZWJ sequence stays whole). Both persist in the
+launcher's `cmg-tweaks` localStorage record, beside the OSD's hue and scanline
+choices.
+
 ## The eShop
 
 The launcher has two game lists. **Games** is this player's: shmupX, then the
@@ -987,10 +997,31 @@ every game anyone can get — and it is read from two places by
 
 - [`data/eshop.json`](data/eshop.json), served through `games.manifest.json`. A
   pull request adds a game: a `web` entry names a zip of a finished browser
-  build (a GitHub `repo` + `branch`, optionally a `downloadUrl`; the first entry
-  is `easierbycode/shmup-party-phaser4`, installed at its latest commit), a
-  `deza` entry names a Dezaemon 2 `.sav`. `deno task eshop:check` is the gate
-  ([`.github/workflows/eshop.yml`](.github/workflows/eshop.yml) runs it).
+  build (a GitHub `repo` + `branch`, optionally a `downloadUrl`), a `deza` entry
+  names a Dezaemon 2 `.sav`. `deno task eshop:check` is the gate
+  ([`.github/workflows/eshop.yml`](.github/workflows/eshop.yml) runs it). The
+  first entry is Sh'M↑ Party's PlayStation 2 port,
+  [`easierbycode/shmup-party-ps2`](https://github.com/easierbycode/shmup-party-ps2):
+  its Pages deploy builds the browser game once more at a relative base path
+  and publishes it beside the site as `shmup-party-ps2-web.zip`, so what the
+  launcher installs (entry `play/index.html`) is the build
+  [easierbycode.com/shmup-party-ps2](https://easierbycode.com/shmup-party-ps2/)'s
+  own PLAY IN BROWSER runs; a newer commit on `main` flags UPDATE. That
+  deploy also carries the game's **Wave Editor**
+  ([`/wave-editor/`](https://easierbycode.com/shmup-party-ps2/wave-editor/),
+  which authors its `ps2/data/waves.js`), framed in the CMG Desktop's Tools
+  folder beside spriteX.
+- Each GitHub-tracked build's own **`codemonkey.json`** — the file the cmg
+  launcher has always let a game ship at its root — read off the tracked branch
+  (`raw.githubusercontent.com/<owner>/<repo>/<branch>/codemonkey.json`) after
+  the two halves above. Today it supplies the game's **release status**: an
+  UPPER_SNAKE token such as `EARLY_ACCESS` or `BETA` (blank reads as
+  RELEASED), shown as an amber chip on the row and in the disc panel, and
+  recorded with the install so it survives the catalog going unreachable. A
+  `status` on the `data/eshop.json` row pins it instead. The eShop header
+  carries a filter over whatever statuses the catalog holds — ALL by default;
+  ◀ ▶ (or F) cycles it, a chip picks one, nothing is remembered between
+  visits. shmup-party-ps2 ships `{ "status": "EARLY_ACCESS" }`.
 - The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU → PUBLISH
   TO ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`, cover under
   `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last). A

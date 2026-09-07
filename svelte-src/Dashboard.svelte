@@ -34,6 +34,7 @@
     loadEshopCatalog,
     loadEshopCover,
     onEshopChanged,
+    statusLabel,
     uninstallDezaGame,
     uninstallWebGame,
   } from '../static/eshop-library.js';
@@ -898,6 +899,11 @@
       sub: THEMES.map((t) => (t.id === tweaks.theme ? `[ ${t.label} ]` : t.label)).join('  ·  '),
     },
     {
+      id: 'avatar',
+      label: 'AVATAR',
+      sub: (AVATARS.includes(avatar) ? AVATARS : [avatar, ...AVATARS]).map((a) => (a === avatar ? `[ ${a} ]` : a)).join('  ') + '  ·  or type one',
+    },
+    {
       id: 'emulators',
       label: 'EMULATORS',
       sub: installedCores.length
@@ -951,7 +957,7 @@
 
   // Keyed by id in the markup, so a catalog that ever handed two rows the same
   // id would throw at render — dedupe here as the belt to the library's braces.
-  let eshopRows = $derived.by(() => {
+  let eshopCatalogRows = $derived.by(() => {
     const seen = new Set();
     return eshopEntries.filter((g) => {
       if (!g || !g.id || seen.has(g.id)) return false;
@@ -959,6 +965,42 @@
       return true;
     });
   });
+
+  // ─── Release status, and the filter over it ───────────────────────────────
+  // A game's status — RELEASED, EARLY_ACCESS, … — comes off its catalog row,
+  // or its own codemonkey.json (static/eshop-library.js reads that off the
+  // repo), or its install record when the catalog is unreachable; a blank one
+  // reads as RELEASED. The filter's choices are whatever statuses the catalog
+  // actually holds. ◀ ▶ (this screen's horizontal axis, or F on a keyboard)
+  // cycles it and the chips in the header pick one; ALL is the default and
+  // nothing is remembered between visits.
+  let eshopFilter = $state('ALL');
+  function eshopStatusOf(g) {
+    return (g && (g.status || eshopInstalled[g.id]?.source?.status)) || '';
+  }
+  const eshopStatusKey = (g) => eshopStatusOf(g) || 'RELEASED';
+  let eshopFilters = $derived.by(() => {
+    const seen = new Set(eshopCatalogRows.map(eshopStatusKey));
+    const rest = [...seen].filter((s) => s !== 'RELEASED').sort();
+    return ['ALL', ...(seen.has('RELEASED') ? ['RELEASED'] : []), ...rest];
+  });
+  // A filter whose games have left the catalog shows everything again.
+  let eshopRows = $derived(
+    eshopFilter === 'ALL' || !eshopFilters.includes(eshopFilter)
+      ? eshopCatalogRows
+      : eshopCatalogRows.filter((g) => eshopStatusKey(g) === eshopFilter)
+  );
+  function eshopSetFilter(f) {
+    if (!eshopFilters.includes(f) || f === eshopFilter) return;
+    eshopFilter = f;
+    eshopSel = 0;
+    sfx.nav();
+  }
+  function eshopCycleFilter(dir) {
+    const i = Math.max(0, eshopFilters.indexOf(eshopFilter));
+    const n = eshopFilters.length;
+    eshopSetFilter(eshopFilters[(i + dir + n) % n]);
+  }
 
   function setEshopStatus(id, patch) {
     eshopStatus = { ...eshopStatus, [id]: { ...(eshopStatus[id] || {}), ...patch } };
@@ -1031,7 +1073,7 @@
   // known-and-different sha (or a catalog whose download URL / date moved on)
   // flags UPDATE — the library keeps a missing baseline quiet.
   function checkEshopUpdates() {
-    for (const g of eshopRows) {
+    for (const g of eshopCatalogRows) {
       if (g.kind !== 'web' || !eshopInstalled[g.id] || eshopUpdatesChecked.has(g.id)) continue;
       eshopUpdatesChecked.add(g.id);
       checkWebUpdate($state.snapshot(g)).then((r) => {
@@ -1250,11 +1292,11 @@
   // catalog: a game you installed is a game you own. Deduped against the
   // manifest so the keyed {#each} never sees one id twice.
   let eshopWebGames = $derived(
-    eshopRows.filter((g) =>
+    eshopCatalogRows.filter((g) =>
       g.kind === 'web' && !!eshopInstalled[g.id] && !manifestGames.some((m) => m.id === g.id))
   );
   let eshopMenuSub = $derived(
-    eshopRows.length ? eshopRows.length + ' games · get more' : (eshopLoaded && eshopOffline ? 'catalog offline · retry' : 'get more games')
+    eshopCatalogRows.length ? eshopCatalogRows.length + ' games · get more' : (eshopLoaded && eshopOffline ? 'catalog offline · retry' : 'get more games')
   );
   // The rendered Games list: shmupX's own catalog, the installed eShop builds,
   // then the way into the shop as a trailing submenu-style row.
@@ -1267,7 +1309,7 @@
     })),
     ...eshopWebGames.map((g) => ({
       key: g.id, name: g.name, title: g.title || String(g.name).toUpperCase(),
-      sub: 'ESHOP // ' + eshopSourceLabel(g),
+      sub: 'ESHOP // ' + eshopSourceLabel(g) + (eshopStatusOf(g) ? ' · ' + statusLabel(eshopStatusOf(g)) : ''),
       icon: g.icon || null, size: g.size || '— MB', date: g.date || '—',
       type: 'ESHOP / INSTALLED', kind: 'eshop-web',
       g,
@@ -1739,7 +1781,7 @@
   // Cross-origin games can't be patched; they receive
   // { type: 'cmg-twinstick-set', value } (sent in both cases) and apply it
   // themselves. The choice persists per game in localStorage.
-  const TWIN_STICK_DEFAULT_IDS = new Set(['shmup-party-phaser3', 'shmup-party-phaser4']);
+  const TWIN_STICK_DEFAULT_IDS = new Set(['shmup-party-phaser3', 'shmup-party-ps2']);
   let twinStickAvail = $state(false);
   let twinStickOn = $state(false);
   let twinTouchOn = $state(false);
@@ -1952,7 +1994,7 @@
     { hex: '#56F0E2', hue: 190 }, // cyan
   ];
   const TWEAK_KEY = 'cmg-tweaks';
-  const TWEAK_DEFAULTS = { hue: 130, breatheSpeed: 1, scanlines: true, discoMode: false, theme: 'xbox' };
+  const TWEAK_DEFAULTS = { hue: 130, breatheSpeed: 1, scanlines: true, discoMode: false, theme: 'xbox', avatar: '🐵' };
   function loadTweaks() {
     try { return { ...TWEAK_DEFAULTS, ...JSON.parse(localStorage.getItem(TWEAK_KEY) || '{}') }; }
     catch (_) { return { ...TWEAK_DEFAULTS }; }
@@ -1967,6 +2009,45 @@
       if (key === 'theme') { localStorage.setItem('cmg-theme', value); applyGameTheme(); }
       if (key === 'scanlines') localStorage.setItem('cmg-scanlines', value ? '1' : '0');
     } catch (_) {}
+  }
+
+  // ─── Avatar ───────────────────────────────────────────────────────────────
+  // The glyph in the dashboard's orb and the boot flash — the player's, not
+  // the monkey's, if they say so. The presets cycle on the Settings row (A,
+  // or ◀ ▶); the row's field takes any emoji, kept to one or two grapheme
+  // clusters so a skin tone + ZWJ sequence like 👩🏼‍💻 counts as one glyph and
+  // a pasted paragraph does not become the orb.
+  const AVATARS = ['🐵', '👩🏼‍💻', '👨🏻‍💻', '🧑🏾‍💻', '👾', '🤖', '🎮', '🕹️', '👽', '🐱', '🦊', '🐸', '🦄', '🍄', '⭐', '🔥'];
+  function sanitizeAvatar(v) {
+    const s = String(v || '').trim();
+    if (!s) return TWEAK_DEFAULTS.avatar;
+    try {
+      if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+        const parts = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(s)].map((x) => x.segment);
+        return parts.slice(0, 2).join('');
+      }
+    } catch (_) { /* no segmenter — fall through to a code-unit cap */ }
+    return s.slice(0, 16);
+  }
+  let avatar = $derived(sanitizeAvatar(tweaks.avatar));
+  function setAvatar(v) { setTweak('avatar', sanitizeAvatar(v)); }
+  function cycleAvatar(dir) {
+    const i = AVATARS.indexOf(avatar);
+    const n = AVATARS.length;
+    setAvatar(i === -1 ? AVATARS[dir < 0 ? n - 1 : 0] : AVATARS[(i + dir + n) % n]);
+  }
+  // ◀ ▶ on a Settings row turns its value: the theme, or the avatar.
+  function settingsMoveH(dir) {
+    const it = SETTINGS_ITEMS[settingsSel];
+    if (!it) return;
+    if (it.id === 'theme') {
+      const cur = THEMES.findIndex((t) => t.id === tweaks.theme);
+      setTweak('theme', THEMES[(cur + dir + THEMES.length) % THEMES.length].id);
+      sfx.nav();
+    } else if (it.id === 'avatar') {
+      cycleAvatar(dir);
+      sfx.nav();
+    }
   }
 
   // Flat, ordered list the OSD renders and gamepad/keyboard nav indexes into.
@@ -2686,6 +2767,8 @@
     if (it.id === 'theme') {
       const cur = THEMES.findIndex((t) => t.id === tweaks.theme);
       setTweak('theme', THEMES[(cur + 1) % THEMES.length].id);
+    } else if (it.id === 'avatar') {
+      cycleAvatar(1);
     } else if (it.id === 'emulators') {
       screen = 'emulators';
       emuSel = 0;
@@ -3694,13 +3777,15 @@
         curSection.activate(i);
       },
     },
-    settings: { sel: () => settingsSel, setSel: (v) => (settingsSel = v), len: () => SETTINGS_ITEMS.length, activate: (i) => activateSettings(i) },
+    // ◀ ▶ turns the highlighted row's value (theme, avatar).
+    settings: { sel: () => settingsSel, setSel: (v) => (settingsSel = v), len: () => SETTINGS_ITEMS.length, activate: (i) => activateSettings(i), moveH: (dir) => settingsMoveH(dir) },
     // Reached from Settings, so B goes back there rather than to the dashboard.
     emulators: { sel: () => emuSel, setSel: (v) => (emuSel = v), len: () => emuCores.length, activate: (i) => activateEmulator(i), back: 'settings' },
     exports: { sel: () => exportsSel, setSel: (v) => (exportsSel = v), len: () => exportJobs.length, activate: (i) => activateExport(i), back: 'settings' },
     // Reached from the main menu OR the Games list's trailing row; B returns
     // to whichever it was (openEshop records it).
-    eshop: { sel: () => eshopSel, setSel: (v) => (eshopSel = v), len: () => eshopRows.length, activate: (i) => activateEshop(i), back: () => eshopFrom },
+    // ◀ ▶ cycles the release-status filter (see eshopCycleFilter).
+    eshop: { sel: () => eshopSel, setSel: (v) => (eshopSel = v), len: () => eshopRows.length, activate: (i) => activateEshop(i), moveH: (dir) => eshopCycleFilter(dir), back: () => eshopFrom },
   };
 
   // Shared vertical nav. `fresh` marks a deliberate new press (gamepad edge /
@@ -4253,6 +4338,8 @@
     // Keyboard twins of FBTN_LEFT / FBTN_TOP for the eShop rows.
     else if (e.key === 'Delete') actEshopUninstall();
     else if (e.key === 'u' || e.key === 'U') actEshopUpdate();
+    // F steps the eShop's status filter, the way ◀ ▶ do.
+    else if (screen === 'eshop' && (e.key === 'f' || e.key === 'F')) eshopCycleFilter(1);
   }
 
   // Inject a capture-phase OSD-trigger forwarder INTO a same-origin game frame.
@@ -4710,7 +4797,7 @@
 {#if !bootGone}
   <!-- Boot flash: the 🐵 glyph, centred in the same 30vmin box the voxel X
        used to fill (dashboard.css .boot / .b-glyph). -->
-  <div class="boot"><div class="b-glyph" aria-hidden="true">🐵</div></div>
+  <div class="boot"><div class="b-glyph" aria-hidden="true">{avatar}</div></div>
 {/if}
 
 <div class="field" aria-hidden="true">
@@ -4777,7 +4864,7 @@
         <div class="ring b"></div>
         <div class="ring a"></div>
         <div class="core"></div>
-        <div class="glyph">🐵</div>
+        <div class="glyph">{avatar}</div>
       </div>
     </div>
     <div class="menu" role="menu" aria-label="Main menu">
@@ -5068,6 +5155,7 @@
         <div class="meta">
           <div><span class="k">name</span><b>{eshopCurrent?.name ?? '—'}</b></div>
           <div><span class="k">kind</span><b>{eshopCurrent ? eshopTypeLabel(eshopCurrent) : '—'}</b></div>
+          <div><span class="k">status</span><b>{eshopCurrent ? statusLabel(eshopStatusKey(eshopCurrent)) : '—'}</b></div>
           <div><span class="k">size</span><b>{eshopCurrent?.size ?? '—'}</b></div>
           <div><span class="k">date</span><b>{eshopCurrent?.date ?? '—'}</b></div>
           <div><span class="k">source</span><b>{eshopCurrent ? eshopSourceLabel(eshopCurrent) : '—'}</b></div>
@@ -5077,6 +5165,22 @@
       <div class="games-right">
         <div class="games-header">
           <div class="title-bar">ESHOP</div>
+          {#if eshopCatalogRows.length}
+            <!-- The release-status filter: ◀ ▶ (or F) cycles it, a chip picks
+                 one. ALL is the default. -->
+            <div class="eshop-filters" role="tablist" aria-label="Filter by release status">
+              {#each eshopFilters as f (f)}
+                <span
+                  class="eshop-filter {f === eshopFilter ? 'on' : ''}"
+                  role="tab"
+                  aria-selected={f === eshopFilter}
+                  tabindex="0"
+                  onclick={() => eshopSetFilter(f)}
+                  onkeydown={chipKeyHandler(() => eshopSetFilter(f))}
+                >{f === 'ALL' ? 'ALL' : statusLabel(f)}</span>
+              {/each}
+            </div>
+          {/if}
           <div class="counter">{eshopCounterText}</div>
         </div>
         <div class="games-list">
@@ -5103,6 +5207,9 @@
                 <span class="name">{g.title || String(g.name).toUpperCase()}</span>
                 <span class="sub">{g.sub || eshopSourceLabel(g)}</span>
                 <span class="eshop-kind {g.kind === 'deza' ? 'deza' : 'web'}">{eshopKindLabel(g)}</span>
+                {#if eshopStatusOf(g)}
+                  <span class="eshop-kind status">{statusLabel(eshopStatusOf(g))}</span>
+                {/if}
               </div>
               <!-- UPDATE is its own click target: A on the row launches the
                    build that is installed, the badge pulls the new one. -->
@@ -5134,6 +5241,10 @@
               {#if !eshopLoaded}
                 <div class="byod-title">READING CATALOG…</div>
                 <div class="byod-sub">Fetching <code>/games.manifest.json</code> and the published games.</div>
+              {:else if eshopFilter !== 'ALL' && eshopCatalogRows.length}
+                <!-- The catalog has games, just none with this status. -->
+                <div class="byod-title">NO {statusLabel(eshopFilter)} GAMES</div>
+                <div class="byod-sub">◀ ▶ picks another filter · ALL shows every game.</div>
               {:else if eshopOffline}
                 <!-- Neither source answered — the same-origin manifest nor the
                      database. Each failure is listed so the fix is obvious. -->
@@ -5190,11 +5301,29 @@
               onclick={() => activateSettings(i)}
               onkeydown={chipKeyHandler(() => activateSettings(i))}
             >
-              <div class="game-icon"><div class="glass"><span class="ph">◧</span></div></div>
+              <div class="game-icon"><div class="glass"><span class="ph">{it.id === 'avatar' ? avatar : '◧'}</span></div></div>
               <div class="game-bar">
                 <span class="name">{it.label}</span>
                 <span class="sub">{it.sub}</span>
               </div>
+              {#if it.id === 'avatar'}
+                <!-- Any emoji. A text-entry input, so onKey's typing guard keeps
+                     the launcher's shortcuts out of it; stopPropagation keeps a
+                     click in the field from cycling the presets, and Enter /
+                     Escape leave it instead of activating the row. -->
+                <input
+                  class="avatar-input"
+                  type="text"
+                  value={avatar}
+                  maxlength="16"
+                  aria-label="Avatar — type or paste any emoji"
+                  title="Type or paste any emoji"
+                  onclick={(e) => e.stopPropagation()}
+                  onpointerup={(e) => e.stopPropagation()}
+                  onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.currentTarget.blur(); } }}
+                  onchange={(e) => { setAvatar(e.currentTarget.value); e.currentTarget.value = avatar; }}
+                />
+              {/if}
             </div>
           {/each}
         </div>

@@ -48,6 +48,10 @@ interface ManifestEntry {
 // pass through with the same meaning as on a Games entry.
 interface EshopEntry extends ManifestEntry {
   kind: "web" | "deza";
+  // Release status, an UPPER_SNAKE token (EARLY_ACCESS, BETA, …). Optional:
+  // left out, the installer reads the game's own codemonkey.json; set here,
+  // the row pins it. Blank reads as RELEASED.
+  status?: string;
   // web
   source?: "github" | "url";
   repo?: string;
@@ -64,6 +68,7 @@ interface EshopEntry extends ManifestEntry {
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const DATE_RE = /^\d{2}\.\d{2}\.\d{2}$/;
+const STATUS_RE = /^[A-Z][A-Z0-9_]{0,31}$/;
 
 /** https, or root-relative on this origin — the only URLs the installer fetches. */
 function isFetchableUrl(v: unknown): boolean {
@@ -90,6 +95,11 @@ export function eshopEntryProblems(e: EshopEntry, i: number): string[] {
   }
   if (e.size != null && typeof e.size !== "string") {
     problems.push(`${at}: size must be a label like "8 MB"`);
+  }
+  if (e.status != null && !STATUS_RE.test(String(e.status))) {
+    problems.push(
+      `${at}: status must be an UPPER_SNAKE token like "EARLY_ACCESS"`,
+    );
   }
   if (e.kind === "web") {
     if (e.source !== "github" && e.source !== "url") {

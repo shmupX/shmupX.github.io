@@ -283,6 +283,28 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   transition: color .25s ease, border-color .25s ease;
 }
 .counter { font-family: 'Share Tech Mono'; font-size: clamp(11px, 1.5vmin, 16px); letter-spacing: .14em; color: rgba(220, 255, 180, .7); text-transform: uppercase; min-width: 5em; text-align: right; flex-shrink: 0; }
+/* The eShop's release-status filter: chips between the title and the counter.
+   ◀ ▶ cycles them, a tap picks one; the lit chip is the filter in force. A
+   long row scrolls sideways on a phone rather than pushing the counter out. */
+.eshop-filters { display: flex; gap: .6vmin; min-width: 0; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; }
+.eshop-filters::-webkit-scrollbar { display: none; }
+.eshop-filter {
+  font-family: 'Share Tech Mono', monospace; font-size: clamp(10px, 1.4vmin, 15px); letter-spacing: .16em;
+  padding: .5em 1em; border-radius: 3px; white-space: nowrap; cursor: pointer; flex-shrink: 0;
+  border: 1px solid rgba(180, 255, 140, .3); color: rgba(220, 255, 180, .7); background: rgba(0, 0, 0, .25);
+  transition: color .15s ease, background .15s ease, border-color .15s ease;
+}
+.eshop-filter:hover { border-color: rgba(180, 255, 140, .6); color: #dfffc4; }
+.eshop-filter.on { color: #1a1400; background: #ffe06a; border-color: #ffe06a; }
+.eshop-filter:focus-visible { outline: 2px solid #ffe06a; outline-offset: 2px; }
+/* Settings › AVATAR: the free-entry field at the end of the row. */
+.avatar-input {
+  flex-shrink: 0; width: 3.2em; height: 2.2em; margin-right: 1.5vmin;
+  font: inherit; font-size: clamp(16px, 2.6vmin, 30px); text-align: center; line-height: 1;
+  color: #dfffc4; background: rgba(0, 0, 0, .35); border: 1px solid rgba(180, 255, 140, .35); border-radius: 4px;
+}
+.avatar-input:focus { outline: none; border-color: #ffe06a; box-shadow: 0 0 12px rgba(255, 224, 106, .4); }
+.game-row.sel .avatar-input { color: #1a1400; background: rgba(255, 255, 255, .35); border-color: rgba(20, 20, 0, .45); }
 /* The catalog header carries a third element (the Add button), so the title
    gives back a little size and the row can shrink further before it wraps. */
 .games-panel.with-strip .games-header { min-height: 56px; }
@@ -943,6 +965,9 @@ body.theme-xbox360.osd-music-blade .music-hd {
   background: rgba(0, 0, 0, .25);
 }
 .eshop-kind.deza { color: #ffd07a; border-color: rgba(255, 208, 122, .45); }
+/* A game's release status (its codemonkey.json, or the catalog row): amber,
+   so EARLY ACCESS reads as a caution beside the kind chip, not as a kind. */
+.eshop-kind.status { color: #ffb45e; border-color: rgba(255, 180, 94, .5); }
 .game-row.sel .eshop-kind { color: #1a1400; border-color: rgba(20, 20, 0, .45); background: rgba(255, 255, 255, .3); }
 /* A row can carry the sub, the chip AND a badge; let the sub give way first
    on a phone rather than pushing the badge out of the bar's chevron. */

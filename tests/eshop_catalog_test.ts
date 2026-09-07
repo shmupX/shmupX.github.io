@@ -60,27 +60,35 @@ Deno.test("static/games.manifest.json carries the same eshop array", async () =>
   assertEquals(Array.isArray(manifest.games), true);
 });
 
-Deno.test("the first global game is shmup-party-phaser4 at its latest build", async () => {
+Deno.test("the first global game is Sh'M↑ Party's PS2 port, from its Pages deploy", async () => {
   const eshop = await read("data/eshop.json");
-  const first = eshop.find((e: { id: string }) =>
-    e.id === "shmup-party-phaser4"
-  );
+  const first = eshop.find((e: { id: string }) => e.id === "shmup-party-ps2");
   assertEquals(first?.kind, "web");
   assertEquals(first?.source, "github");
-  assertEquals(first?.repo, "easierbycode/shmup-party-phaser4");
+  // The repo is what the update check follows (a newer commit on main flags
+  // UPDATE); the zip is what that repo's deploy publishes beside
+  // https://easierbycode.com/shmup-party-ps2/ — the site's own browser build
+  // once more at a relative base path, so it runs from /eshop/<id>/. Not a
+  // raw.githubusercontent.com URL, so the installer takes it as is: every
+  // install is the build the site's PLAY IN BROWSER button runs.
+  assertEquals(first?.repo, "easierbycode/shmup-party-ps2");
   assertEquals(first?.branch, "main");
-  // A raw.githubusercontent.com URL on the branch: the installer swaps
-  // "/main/" for the latest commit sha when it knows it, so the install is
-  // pinned to the newest build rather than whatever the CDN still holds.
   assertEquals(
     first?.downloadUrl,
-    "https://raw.githubusercontent.com/easierbycode/shmup-party-phaser4/main/shmup-party-phaser4.zip",
+    "https://easierbycode.com/shmup-party-ps2/shmup-party-ps2-web.zip",
   );
+  // The game is the site's /play/ page, so that is the entry inside the zip.
+  assertEquals(first?.entry, "play/index.html");
   assertEquals(first?.icon, "/icons/shmup-party-icon.png");
   const icon = await Deno.stat(
     new URL("../static/icons/shmup-party-icon.png", import.meta.url),
   );
   assertEquals(icon.isFile, true, "the icon the catalog points at must ship");
+  // The Phaser 4 build it replaced is gone, not merely second.
+  assertEquals(
+    eshop.some((e: { id: string }) => e.id === "shmup-party-phaser4"),
+    false,
+  );
 });
 
 Deno.test("eshopEntryProblems rejects what the installer cannot act on", () => {
@@ -117,6 +125,13 @@ Deno.test("eshopEntryProblems rejects what the installer cannot act on", () => {
   );
   assertEquals(bad({ icon: "icons/x.png" }), true, "relative icon");
   assertEquals(bad({ date: "2026-07-28" }), true, "date not MM.DD.YY");
+  assertEquals(bad({ status: "early access" }), true, "status not UPPER_SNAKE");
+  assertEquals(bad({ status: "" }), true, "empty status");
+  assertEquals(
+    eshopEntryProblems({ ...ok, status: "EARLY_ACCESS" }, 0),
+    [],
+    "a pinned status",
+  );
   assertEquals(bad({ subdir: "../x" }), true, "subdir climbing out");
   assertEquals(bad({ title: "" }), true, "empty title");
 

@@ -46,6 +46,24 @@ export const ESHOP_CHANNEL = 'shmupx-eshop';
 /** A catalog id: RTDB-key safe, URL safe, and the folder name under /eshop/. */
 export const ESHOP_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+/**
+ * A release status, as a game's own codemonkey.json (or a catalog row) spells
+ * it: an UPPER_SNAKE token — RELEASED, EARLY_ACCESS, BETA, … A blank one
+ * reads as RELEASED everywhere it is shown.
+ */
+export const STATUS_RE = /^[A-Z][A-Z0-9_]{0,31}$/;
+
+/** "early access" / "Early-Access" / "EARLY_ACCESS" → "EARLY_ACCESS"; anything else "". */
+export function normalizeStatus(v) {
+  const s = String(v || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  return STATUS_RE.test(s) ? s : '';
+}
+
+/** "EARLY_ACCESS" → "EARLY ACCESS": what a chip, a filter or the disc panel shows. */
+export function statusLabel(status) {
+  return String(status || '').replace(/_/g, ' ');
+}
+
 /** A Dezaemon 2 cart as MiSTer writes it: (32 KB + 512 KB) x 2 for the 0xFF interleave. */
 export const MISTER_SAV_BYTES = 1114112;
 /** The same cart with the filler stripped — what the RTDB stores gzipped. */
@@ -100,6 +118,9 @@ export function normalizeEshopEntry(raw, origin = 'manifest', key = '') {
     origin,
     hasCover: false,
     coverUrl: null,
+    // Pinned on the row, or — when the row leaves it blank — read from the
+    // game's own codemonkey.json by applyGameManifests().
+    status: normalizeStatus(raw.status),
   };
   if (kind === 'web') {
     entry.repo = str(raw.repo);
@@ -147,6 +168,7 @@ export async function loadEshopCatalog({
   manifestUrl = '/games.manifest.json',
   rtdb = ESHOP_RTDB,
   fetchImpl = defaultFetch,
+  gameManifests = true,
 } = {}) {
   const entries = [];
   const errors = [];
@@ -195,6 +217,11 @@ export async function loadEshopCatalog({
   } catch (e) {
     errors.push('rtdb: ' + msg(e) + ' (' + indexUrl + ')');
   }
+
+  // What each GitHub-tracked build says about itself, from its repo's own
+  // codemonkey.json — its release status. After both halves, so a status a
+  // static row pinned is already in place to win.
+  if (gameManifests) errors.push(...await applyGameManifests(entries, fetchImpl));
 
   return { entries, errors, sources, offline: sources.manifest !== 'ok' && sources.rtdb !== 'ok' };
 }
@@ -284,6 +311,55 @@ export async function latestSha(entry, fetchImpl = defaultFetch) {
   } catch (_) {
     return null;
   }
+}
+
+/**
+ * The game's own codemonkey.json — the file the cmg launcher has always let a
+ * game ship at its root — as raw.githubusercontent.com serves it off the
+ * tracked branch; null for anything that tracks no GitHub repo.
+ */
+export function gameManifestUrl(entry) {
+  const r = githubRepo(entry);
+  if (!r || entry?.kind !== 'web') return null;
+  return 'https://raw.githubusercontent.com/' + r.owner + '/' + r.repo + '/' + String(entry.branch || 'main') + '/codemonkey.json';
+}
+
+/**
+ * Take from a game's codemonkey.json what the catalog row left blank: its
+ * release status today. A static row's own value wins, so a pull request can
+ * pin one. Mutates and returns the entry.
+ */
+export function mergeGameManifest(entry, manifest) {
+  if (!entry || !manifest || typeof manifest !== 'object') return entry;
+  if (!entry.status) entry.status = normalizeStatus(manifest.status);
+  return entry;
+}
+
+/**
+ * Read every GitHub-tracked web entry's own codemonkey.json, in parallel, and
+ * merge it (mergeGameManifest). Fails soft per entry: a repo without the file
+ * (404) is the normal case and says nothing; a host that will not answer, or
+ * a file that is not JSON, leaves the entry as it was and is reported in the
+ * returned error lines.
+ */
+export async function applyGameManifests(entries, fetchImpl = defaultFetch) {
+  const errors = [];
+  await Promise.all((entries || []).map(async (entry) => {
+    const url = gameManifestUrl(entry);
+    if (!url) return;
+    let manifest;
+    try {
+      const res = await fetchImpl(url, { cache: 'no-store' });
+      if (res.status === 404) return;
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      manifest = await res.json();
+    } catch (e) {
+      errors.push(entry.id + ': codemonkey.json ' + msg(e) + ' (' + url + ')');
+      return;
+    }
+    mergeGameManifest(entry, manifest);
+  }));
+  return errors;
 }
 
 /**
@@ -601,6 +677,17 @@ function applySubdir(files, subdir) {
   return kept;
 }
 
+// The archive's root codemonkey.json as an object, or null (absent, or not JSON).
+function readShippedManifest(files) {
+  const f = files.find((x) => x.path === 'codemonkey.json');
+  if (!f) return null;
+  try {
+    return JSON.parse(new TextDecoder().decode(f.data));
+  } catch (_) {
+    return null;
+  }
+}
+
 function topLevel(files) {
   const names = [...new Set(files.map((f) => f.path.split('/')[0]))];
   if (!names.length) return 'nothing';
@@ -661,6 +748,10 @@ export async function installWebGame(entry, { onProgress = noop, force = false }
   if (!files.some((f) => f.path === page)) {
     throw new Error(page + ' is not in the archive (its top level holds ' + topLevel(files) + ')');
   }
+  // The build's own codemonkey.json, when it ships one at the archive root:
+  // its release status is recorded with the install, so the launcher can
+  // still show it with the catalog unreachable.
+  const shipped = readShippedManifest(files);
 
   const cache = await openCache();
   // Invalidate before writing: if this (re)install dies mid-way the game must
@@ -693,6 +784,7 @@ export async function installWebGame(entry, { onProgress = noop, force = false }
     files: n,
     repo: entry.repo || '',
     branch: entry.branch || 'main',
+    status: entry.status || normalizeStatus(shipped?.status),
   };
   await cache.put(sourceKey(id), textResponse(JSON.stringify(source), 'application/json'));
   // Every file landed — only now does the install count.

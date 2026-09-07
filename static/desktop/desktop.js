@@ -14,6 +14,10 @@ import { glyphIcon, tileIcon } from "./icons.js";
 
 const STORE_KEY = "cmg-desktop";
 const SPRITEX_URL = "https://easierbycode.com/spriteX/";
+// Sh'M↑ Party's Wave Editor lives with the game it authors waves for — the
+// shmup-party-ps2 Pages deploy, beside the /play/ build the eShop installs
+// — so, like spriteX, it is framed from there rather than mirrored here.
+const WAVE_EDITOR_URL = "https://easierbycode.com/shmup-party-ps2/wave-editor/";
 const IFRAME_ALLOW = "autoplay; fullscreen; gamepad; xr-spatial-tracking";
 
 const desktopEl = document.getElementById("desktop");
@@ -238,6 +242,7 @@ const APPS = {
           "pixelcomposer",
           "bossviewer",
           "modelviewer",
+          "waveeditor",
         ]
       ) {
         const app = APPS[id];
@@ -368,6 +373,21 @@ const APPS = {
         url: "/editor/model-viewer.html",
         width: 980,
         height: 660,
+      }),
+  },
+
+  waveeditor: {
+    title: "Wave Editor",
+    icon: { monogram: "WE", hue: 15 },
+    persist: true,
+    open: () =>
+      openIframeWindow({
+        appId: "waveeditor",
+        title: "Sh'M↑ Party Wave Editor",
+        icon: { monogram: "WE", hue: 15 },
+        url: WAVE_EDITOR_URL,
+        width: 1180,
+        height: 760,
       }),
   },
 

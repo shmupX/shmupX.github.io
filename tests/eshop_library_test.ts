@@ -38,7 +38,12 @@ interface EshopLib {
     key?: string,
   ): { entry?: Any; error?: string };
   loadEshopCatalog(
-    opts?: { manifestUrl?: string; rtdb?: string; fetchImpl?: Fetch },
+    opts?: {
+      manifestUrl?: string;
+      rtdb?: string;
+      fetchImpl?: Fetch;
+      gameManifests?: boolean;
+    },
   ): Promise<
     {
       entries: Any[];
@@ -49,6 +54,11 @@ interface EshopLib {
   >;
   githubRepo(entry: unknown): { owner: string; repo: string } | null;
   latestSha(entry: unknown, fetchImpl?: Fetch): Promise<string | null>;
+  normalizeStatus(v: unknown): string;
+  statusLabel(status: unknown): string;
+  gameManifestUrl(entry: unknown): string | null;
+  mergeGameManifest(entry: Any, manifest: unknown): Any;
+  applyGameManifests(entries: Any[], fetchImpl?: Fetch): Promise<string[]>;
   resolveDownloadUrl(entry: unknown, sha?: string | null): string;
   entryUrl(entry: unknown): string;
   contentTypeFor(path: string): string;
@@ -80,22 +90,35 @@ const lib = eshopModule as unknown as EshopLib;
 const shelf = shelfModule as unknown as ShelfLib;
 
 const SHA = "390bb98a5975c614b6658f4210d3a05288a42b98";
+// The catalog's first entry: a build the repo's own Pages deploy publishes
+// beside the site (not a raw.githubusercontent.com URL), tracked for updates
+// through the repo.
 const PARTY = {
-  id: "shmup-party-phaser4",
+  id: "shmup-party-ps2",
   kind: "web",
   name: "Sh'M↑ Party",
   title: "SH'M↑ PARTY",
-  sub: "Phaser 4 // 1-4 players · attract mode",
+  sub: "5velte-ps2 // 1-4 players · attract mode",
   icon: "/icons/shmup-party-icon.png",
   source: "github",
-  repo: "easierbycode/shmup-party-phaser4",
+  repo: "easierbycode/shmup-party-ps2",
   branch: "main",
+  entry: "play/index.html",
+  downloadUrl:
+    "https://easierbycode.com/shmup-party-ps2/shmup-party-ps2-web.zip",
+  size: "4 MB",
+  date: "09.07.26",
+  twinStick: { default: true },
+};
+// A build committed to its own repo as a zip: the raw URL the installer pins
+// to the branch's newest commit.
+const RAW = {
+  ...PARTY,
+  id: "raw-build",
+  repo: "easierbycode/raw-build",
   entry: "index.html",
   downloadUrl:
-    "https://raw.githubusercontent.com/easierbycode/shmup-party-phaser4/main/shmup-party-phaser4.zip",
-  size: "8 MB",
-  date: "07.28.26",
-  twinStick: { default: true },
+    "https://raw.githubusercontent.com/easierbycode/raw-build/main/raw-build.zip",
 };
 
 /** A fetch stub: routes by URL prefix, logs every call in order. */
@@ -129,16 +152,16 @@ const down = (): Response => {
 // ── GitHub ───────────────────────────────────────────────────────────────────
 
 Deno.test("githubRepo reads every GitHub spelling and nothing else", () => {
-  const want = { owner: "easierbycode", repo: "shmup-party-phaser4" };
+  const want = { owner: "easierbycode", repo: "shmup-party-ps2" };
   for (
     const repo of [
-      "easierbycode/shmup-party-phaser4",
-      "easierbycode/shmup-party-phaser4.git",
-      "https://github.com/easierbycode/shmup-party-phaser4",
-      "https://www.github.com/easierbycode/shmup-party-phaser4.git",
-      "github.com/easierbycode/shmup-party-phaser4",
-      "git@github.com:easierbycode/shmup-party-phaser4.git",
-      "  easierbycode/shmup-party-phaser4  ",
+      "easierbycode/shmup-party-ps2",
+      "easierbycode/shmup-party-ps2.git",
+      "https://github.com/easierbycode/shmup-party-ps2",
+      "https://www.github.com/easierbycode/shmup-party-ps2.git",
+      "github.com/easierbycode/shmup-party-ps2",
+      "git@github.com:easierbycode/shmup-party-ps2.git",
+      "  easierbycode/shmup-party-ps2  ",
     ]
   ) {
     assertEquals(lib.githubRepo({ repo }), want, repo);
@@ -147,7 +170,7 @@ Deno.test("githubRepo reads every GitHub spelling and nothing else", () => {
   for (
     const repo of [
       "",
-      "shmup-party-phaser4",
+      "shmup-party-ps2",
       "https://easierbycode.com/mario-sp", // a deploy URL, not a repo
       "easierbycode.com/mario-sp", // scheme-less deploy URL
       "git@gitlab.com:owner/name.git",
@@ -161,7 +184,7 @@ Deno.test("githubRepo reads every GitHub spelling and nothing else", () => {
 });
 
 Deno.test("latestSha accepts only a full sha from a GitHub entry", async () => {
-  const api = "https://api.github.com/repos/easierbycode/shmup-party-phaser4/";
+  const api = "https://api.github.com/repos/easierbycode/shmup-party-ps2/";
   const ok = stubFetch({ [api]: () => new Response(SHA.toUpperCase() + "\n") });
   assertStrictEquals(await lib.latestSha(PARTY, ok.fetchImpl), SHA);
   assertEquals(ok.calls[0].url, api + "commits/main");
@@ -192,67 +215,72 @@ Deno.test("latestSha accepts only a full sha from a GitHub entry", async () => {
 
 Deno.test("resolveDownloadUrl pins a raw URL to the sha and otherwise leaves it", () => {
   assertEquals(
-    lib.resolveDownloadUrl(PARTY, SHA),
-    "https://raw.githubusercontent.com/easierbycode/shmup-party-phaser4/" +
-      SHA + "/shmup-party-phaser4.zip",
+    lib.resolveDownloadUrl(RAW, SHA),
+    "https://raw.githubusercontent.com/easierbycode/raw-build/" + SHA +
+      "/raw-build.zip",
   );
-  assertEquals(lib.resolveDownloadUrl(PARTY, null), PARTY.downloadUrl);
-  assertEquals(lib.resolveDownloadUrl(PARTY, "390bb98"), PARTY.downloadUrl);
+  assertEquals(lib.resolveDownloadUrl(RAW, null), RAW.downloadUrl);
+  assertEquals(lib.resolveDownloadUrl(RAW, "390bb98"), RAW.downloadUrl);
   // The refs/heads/ spelling of the same URL pins too.
   assertEquals(
     lib.resolveDownloadUrl({
-      ...PARTY,
+      ...RAW,
       downloadUrl:
-        "https://raw.githubusercontent.com/easierbycode/shmup-party-phaser4/refs/heads/main/dist/game.zip",
+        "https://raw.githubusercontent.com/easierbycode/raw-build/refs/heads/main/dist/game.zip",
     }, SHA),
-    "https://raw.githubusercontent.com/easierbycode/shmup-party-phaser4/" +
-      SHA + "/dist/game.zip",
+    "https://raw.githubusercontent.com/easierbycode/raw-build/" + SHA +
+      "/dist/game.zip",
   );
   // A slashed branch is matched whole.
   assertEquals(
     lib.resolveDownloadUrl({
-      ...PARTY,
+      ...RAW,
       branch: "release/1.0",
       downloadUrl:
-        "https://raw.githubusercontent.com/easierbycode/shmup-party-phaser4/release/1.0/game.zip",
+        "https://raw.githubusercontent.com/easierbycode/raw-build/release/1.0/game.zip",
     }, SHA),
-    "https://raw.githubusercontent.com/easierbycode/shmup-party-phaser4/" +
-      SHA + "/game.zip",
+    "https://raw.githubusercontent.com/easierbycode/raw-build/" + SHA +
+      "/game.zip",
   );
   // Another repo's raw file, a different branch, or a non-raw host: untouched.
   const other =
-    "https://raw.githubusercontent.com/someone/else/main/shmup-party-phaser4.zip";
+    "https://raw.githubusercontent.com/someone/else/main/raw-build.zip";
   assertEquals(
-    lib.resolveDownloadUrl({ ...PARTY, downloadUrl: other }, SHA),
+    lib.resolveDownloadUrl({ ...RAW, downloadUrl: other }, SHA),
     other,
   );
   const dev =
-    "https://raw.githubusercontent.com/easierbycode/shmup-party-phaser4/dev/x.zip";
+    "https://raw.githubusercontent.com/easierbycode/raw-build/dev/x.zip";
   assertEquals(
-    lib.resolveDownloadUrl({ ...PARTY, downloadUrl: dev }, SHA),
+    lib.resolveDownloadUrl({ ...RAW, downloadUrl: dev }, SHA),
     dev,
   );
   const cdn = "https://cdn.example.com/builds/party.zip";
   assertEquals(
-    lib.resolveDownloadUrl({ ...PARTY, downloadUrl: cdn }, SHA),
+    lib.resolveDownloadUrl({ ...RAW, downloadUrl: cdn }, SHA),
     cdn,
   );
+  // The catalog's first entry downloads from its repo's Pages site. The sha
+  // is still fetched — it is what the update check compares — but it is
+  // never spliced into a URL that is not raw.githubusercontent.com's.
+  assertEquals(lib.resolveDownloadUrl(PARTY, SHA), PARTY.downloadUrl);
+  assertEquals(lib.resolveDownloadUrl(PARTY, null), PARTY.downloadUrl);
 });
 
 Deno.test("resolveDownloadUrl falls back to the local zip route for a GitHub entry", () => {
   const bare = { ...PARTY, downloadUrl: "" };
   assertEquals(
     lib.resolveDownloadUrl(bare, null),
-    "/api/eshop/zip?repo=easierbycode/shmup-party-phaser4&branch=main",
+    "/api/eshop/zip?repo=easierbycode/shmup-party-ps2&branch=main",
   );
   assertEquals(
     lib.resolveDownloadUrl(bare, SHA),
-    "/api/eshop/zip?repo=easierbycode/shmup-party-phaser4&branch=main&ref=" +
+    "/api/eshop/zip?repo=easierbycode/shmup-party-ps2&branch=main&ref=" +
       SHA,
   );
   assertEquals(
     lib.resolveDownloadUrl({ ...bare, branch: "release/1.0" }, null),
-    "/api/eshop/zip?repo=easierbycode/shmup-party-phaser4&branch=release/1.0",
+    "/api/eshop/zip?repo=easierbycode/shmup-party-ps2&branch=release/1.0",
   );
   assertThrows(
     () =>
@@ -268,7 +296,10 @@ Deno.test("resolveDownloadUrl falls back to the local zip route for a GitHub ent
 });
 
 Deno.test("entryUrl is the same-origin page under /eshop/<id>/", () => {
-  assertEquals(lib.entryUrl(PARTY), "/eshop/shmup-party-phaser4/index.html");
+  assertEquals(
+    lib.entryUrl(PARTY),
+    "/eshop/shmup-party-ps2/play/index.html",
+  );
   assertEquals(
     lib.entryUrl({ id: "g", entry: "./dist/play.html" }),
     "/eshop/g/dist/play.html",
@@ -361,6 +392,10 @@ Deno.test("loadEshopCatalog merges the manifest and the database; a static id wi
           slug: "shared",
         }],
       }),
+    // The game's own codemonkey.json, off its repo: the status the row left
+    // blank comes from here.
+    "https://raw.githubusercontent.com/easierbycode/shmup-party-ps2/main/codemonkey.json":
+      () => json({ name: "Sh'M↑ Party", status: "EARLY_ACCESS" }),
     "https://db.test/eshop/index.json": () =>
       json({
         older: { kind: "deza", name: "Older", publishedAt: 1, size: 1114112 },
@@ -380,7 +415,7 @@ Deno.test("loadEshopCatalog merges the manifest and the database; a static id wi
     fetchImpl,
   });
   assertEquals(got.entries.map((e) => e.id), [
-    "shmup-party-phaser4",
+    "shmup-party-ps2",
     "shared",
     "newer",
     "older",
@@ -394,13 +429,129 @@ Deno.test("loadEshopCatalog merges the manifest and the database; a static id wi
   );
   assertEquals(got.entries[3].coverUrl, null);
   assertEquals(got.entries[0].twinStick, { default: true });
+  assertEquals(got.entries[0].status, "EARLY_ACCESS");
+  assertEquals(got.entries[1].status, "");
   assertEquals(got.errors, ["rtdb/broken: broken: no name"]);
   assertEquals(got.sources, { manifest: "ok", rtdb: "ok" });
   assertEquals(got.offline, false);
   assertEquals(calls.map((c) => c.url), [
     "/games.manifest.json",
     "https://db.test/eshop/index.json",
+    "https://raw.githubusercontent.com/easierbycode/shmup-party-ps2/main/codemonkey.json",
   ]);
+
+  // gameManifests: false skips the repo read altogether.
+  const quiet = stubFetch({
+    "/games.manifest.json": () => json({ eshop: [PARTY] }),
+    "https://db.test/eshop/index.json": () => json(null),
+  });
+  const q = await lib.loadEshopCatalog({
+    rtdb: "https://db.test",
+    fetchImpl: quiet.fetchImpl,
+    gameManifests: false,
+  });
+  assertEquals(q.entries[0].status, "");
+  assertEquals(quiet.calls.length, 2);
+});
+
+// ── Release status ───────────────────────────────────────────────────────────
+
+Deno.test("normalizeStatus takes any spelling of an UPPER_SNAKE token; statusLabel shows it", () => {
+  assertEquals(lib.normalizeStatus("EARLY_ACCESS"), "EARLY_ACCESS");
+  assertEquals(lib.normalizeStatus("early access"), "EARLY_ACCESS");
+  assertEquals(lib.normalizeStatus(" Early-Access "), "EARLY_ACCESS");
+  assertEquals(lib.normalizeStatus("released"), "RELEASED");
+  assertEquals(lib.normalizeStatus(""), "");
+  assertEquals(lib.normalizeStatus(undefined), "");
+  assertEquals(lib.normalizeStatus("1st"), "", "must start with a letter");
+  assertEquals(lib.normalizeStatus("x".repeat(40)), "", "too long");
+  assertEquals(lib.normalizeStatus({ status: "BETA" }), "");
+  assertEquals(lib.statusLabel("EARLY_ACCESS"), "EARLY ACCESS");
+  assertEquals(lib.statusLabel(""), "");
+  // A row's own status survives normalisation into the entry.
+  const { entry } = lib.normalizeEshopEntry({ ...PARTY, status: "beta" });
+  assertEquals(entry.status, "BETA");
+  assertEquals(lib.normalizeEshopEntry(PARTY).entry.status, "");
+});
+
+Deno.test("gameManifestUrl is the repo's raw codemonkey.json on the tracked branch", () => {
+  assertEquals(
+    lib.gameManifestUrl(PARTY),
+    "https://raw.githubusercontent.com/easierbycode/shmup-party-ps2/main/codemonkey.json",
+  );
+  assertEquals(
+    lib.gameManifestUrl({ ...PARTY, branch: "release/1.0" }),
+    "https://raw.githubusercontent.com/easierbycode/shmup-party-ps2/release/1.0/codemonkey.json",
+  );
+  // No repo, or not a web build: nothing to read.
+  assertStrictEquals(
+    lib.gameManifestUrl({ ...PARTY, repo: "", downloadUrl: PARTY.downloadUrl }),
+    null,
+  );
+  assertStrictEquals(
+    lib.gameManifestUrl({ id: "d", kind: "deza", repo: "easierbycode/x" }),
+    null,
+  );
+});
+
+Deno.test("applyGameManifests fills a blank status and fails soft per entry", async () => {
+  const raw = "https://raw.githubusercontent.com/easierbycode/";
+  const entries = [
+    lib.normalizeEshopEntry(PARTY).entry,
+    // A status the row pinned is kept over the file's.
+    lib.normalizeEshopEntry({
+      ...PARTY,
+      id: "pinned",
+      repo: "easierbycode/pinned",
+      status: "RELEASED",
+    }).entry,
+    // A repo without the file — the normal case.
+    lib.normalizeEshopEntry({ ...PARTY, id: "bare", repo: "easierbycode/bare" })
+      .entry,
+    // A file that is not JSON, and a host that will not answer.
+    lib.normalizeEshopEntry({ ...PARTY, id: "junk", repo: "easierbycode/junk" })
+      .entry,
+    lib.normalizeEshopEntry({ ...PARTY, id: "gone", repo: "easierbycode/gone" })
+      .entry,
+    // Nothing GitHub tracks: never asked about.
+    lib.normalizeEshopEntry({ id: "d", kind: "deza", name: "D", slug: "d" })
+      .entry,
+  ];
+  const { fetchImpl, calls } = stubFetch({
+    [raw + "shmup-party-ps2/"]: () => json({ status: "early access" }),
+    [raw + "pinned/"]: () => json({ status: "EARLY_ACCESS" }),
+    [raw + "junk/"]: () => new Response("{not json", { status: 200 }),
+    [raw + "gone/"]: down,
+  });
+  const errors = await lib.applyGameManifests(entries, fetchImpl);
+  assertEquals(entries.map((e) => e.status), [
+    "EARLY_ACCESS",
+    "RELEASED",
+    "",
+    "",
+    "",
+    "",
+  ]);
+  // The reads run in parallel, so the two failures land in either order.
+  const sorted = [...errors].sort();
+  assertEquals(sorted.length, 2);
+  assertMatch(sorted[0], /^gone: codemonkey\.json Failed to fetch/);
+  assertMatch(sorted[1], /^junk: codemonkey\.json .*codemonkey\.json\)$/);
+  // One read per GitHub web entry, each pinned to no-store.
+  assertEquals(calls.length, 5);
+  assert(calls.every((c) => c.method === "GET"));
+
+  // mergeGameManifest on its own: bad input leaves the entry alone.
+  const e = lib.normalizeEshopEntry(PARTY).entry;
+  assertStrictEquals(lib.mergeGameManifest(e, null), e);
+  assertStrictEquals(lib.mergeGameManifest(e, "BETA"), e);
+  assertEquals(e.status, "");
+  assertEquals(lib.mergeGameManifest(e, { status: "beta" }).status, "BETA");
+  assertEquals(
+    lib.mergeGameManifest(e, { status: "EARLY_ACCESS" }).status,
+    "BETA",
+    "the first status found stays",
+  );
 });
 
 Deno.test("loadEshopCatalog fails soft: old manifest, dead database, both down", async () => {
@@ -426,7 +577,7 @@ Deno.test("loadEshopCatalog fails soft: old manifest, dead database, both down",
     rtdb: "https://db.test",
     fetchImpl: half.fetchImpl,
   });
-  assertEquals(b.entries.map((e) => e.id), ["shmup-party-phaser4"]);
+  assertEquals(b.entries.map((e) => e.id), ["shmup-party-ps2"]);
   assertEquals(b.errors, [
     "rtdb: Failed to fetch (https://db.test/eshop/index.json)",
   ]);
@@ -461,10 +612,10 @@ Deno.test("loadEshopCatalog fails soft: old manifest, dead database, both down",
     rtdb: "https://db.test",
     fetchImpl: mixed.fetchImpl,
   });
-  assertEquals(d.entries.map((e) => e.id), ["shmup-party-phaser4"]);
+  assertEquals(d.entries.map((e) => e.id), ["shmup-party-ps2"]);
   assertEquals(d.errors, [
     "manifest[0]: x: a web entry needs a downloadUrl or a GitHub repo",
-    "manifest[2]: duplicate id shmup-party-phaser4",
+    "manifest[2]: duplicate id shmup-party-ps2",
   ]);
 });
 
