@@ -171,6 +171,9 @@ deno task build:windows   # the launcher as a Windows .exe
 deno task build:linux     # the launcher as a Linux .AppImage
 deno task build:mac       # the launcher as a macOS .app
 deno task build:desktop   # …whichever of those three matches this host
+deno task shelf:list      # every game name the five build targets accept
+deno task build:android   # one game from the shelf as an .apk (needs a name)
+deno task build:ios       # …as an Xcode project (needs a name, and a Mac)
 deno task build:ps2       # a level as a PlayStation 2 USB folder
 deno task build:ps2:zip   # …as one .zip of that folder
 deno task build:ps2:iso   # …plus a bootable disc image
@@ -355,6 +358,19 @@ shelf whenever the editor (an iframe of the launcher) files one, and PLAY on
 such a cover hands the editor `?playExport=<id>` so the cart comes straight out
 of the store — see **The eShop** below, which installs published Dezaemon games
 onto the same shelf.
+
+**Exporting a loaded cart as an app.** EXPORT AS AN APP — the TARGET picker and
+the EXPORT button — is not hidden while a `.sav` is open, so a cart loaded from
+a file, from the LOAD GAME shelf or from the database exports to all five
+targets (ANDROID / IOS / LINUX / WIN / PS2) exactly as a cloud level does. A
+cloud level is saved first and built from its name; an imported cart has no
+cloud record and never will, so the editor hands the **record itself** over
+instead (`levelRecord` on `/api/build-apk`, written to disk for `--level-file`),
+which means the export carries whatever you have just edited rather than
+whatever the database last saw. The one thing that does not work from a cart is
+the remote build queue: it pairs a desktop with a level _name_, and a cart has
+none — the status line says so and names the `deno task build:<target>` to run
+instead.
 
 ## Pixel Editor and Tilemap Editor
 
@@ -647,24 +663,62 @@ stages them out of the read-only `deno compile` VFS onto disk before spawning
 `node`. It costs ~0.3MB, since Deno dedupes the game against the identical copy
 Vite already put in `_fresh/client`.
 
-### One level as a desktop app
+### One game as an app — from anywhere on the shelf
 
-Passing a level name builds _that game_ instead of the launcher, through the
-same per-level Electron export the editor drives:
+Passing a **name** builds _that game_ instead of the launcher, through the same
+per-game export the editor drives. The name is not assumed to be a cloud level:
+it is resolved against the whole shelf, so the game this repo ships, the
+262-save community Dezaemon library and anything published to the eShop all
+build the same way a Firebase level always has.
 
 ```sh
-deno task build:windows "My Level"   # → build/<slug>/dist/<slug>.exe
-deno task build:linux "My Level"     # → build/<slug>/dist/<slug>.AppImage
-deno task build:mac "My Level"       # → build/<slug>/dist/<slug>.dmg
-deno task build:desktop "My Level"   # → whichever this host builds natively
+deno task build:windows 2028_ai        # → build/2028ai/dist/2028ai.exe
+deno task build:android dezaFoo        # → build/dezafoo/dist/dezafoo-app-debug.apk
+deno task build:linux g-fencer-755     # → build/gfencer755/dist/gfencer755.AppImage
+deno task build:mac "My Level"         # → build/mylevel/dist/mylevel.dmg
+deno task build:desktop 2028_ai        # → whichever this host builds natively
+deno task shelf:list                   # every name the above will accept
 ```
 
-Extra flags go straight to `tools/build-level` (`--skip-bgm`, `--level-file`,
-`--package-id`, `--win-target`, `--mac-target`, `--stage-only`); `--arch`
-becomes its `--win-arch` / `--mac-arch`. This path needs Node and
-electron-builder, a **Windows build from Linux needs `wine` on `PATH`** —
-electron-builder rcedits the packaged `.exe` through it whatever the target is —
-and a **Mac build needs a Mac**, for `hdiutil` and `codesign`.
+`deno task shelf:list` prints the four shelves it searches, in the order it
+searches them:
+
+| Shelf | Where it lives | Example |
+| --- | --- | --- |
+| this repo's own games | `static/games/<slug>/foo.json` | `2028_ai` |
+| the local `.sav` collection | `static/editor/dezaemon/saves/` (gitignored — usually empty) | `air-streamer-ver-a` |
+| the eShop | `data/eshop.json`, then `/eshop/index` in the database | `dezaFoo` |
+| the community library | `/dezaemon/index` in the database (262 saves) | `g-fencer-755` |
+| a cloud level | `/levels/<name>` — **last**, so every name that worked before still does | `"My Level"` |
+
+A name matches on its **slug**, so `2028_ai`, `2028-ai` and `2028 AI` are one
+game, and a Dezaemon save answers to its title as readily as its slug
+(`"Shadow Force"` → `shadow-force`). A name on two shelves is refused rather
+than guessed, naming both spellings; `game:` / `sav:` / `eshop:` / `deza:` /
+`cloud:` force a single shelf. A miss lists near matches.
+
+Everything that is not a cloud level is decoded here, cached under
+`build/shelf/<slug>/`, and handed to `tools/build-level` as `--level-file` — a
+shape it already accepted — so a second build of the same game is offline. A
+Dezaemon cart becomes the record the runtime expects, **whole**: every stage the
+cart holds (not just the one the PS2 port runs), its music, scenery tiles,
+bullet and item tables, drawn title screen and packed sprite sheet.
+
+Own flags: `--sav <path>` (a cart anywhere on disk), `--slot <n>` and
+`--stage <n>` (which game and stage inside it), `--name <title>` (what to call
+the app), `--offline` (this checkout only, no network), `--refresh` (re-decode
+rather than reuse the cache), `--list`. Everything else goes straight to
+`tools/build-level` (`--skip-bgm`, `--level-file`, `--package-id`,
+`--win-target`, `--mac-target`, `--stage-only`); `--arch` becomes its
+`--win-arch` / `--mac-arch`.
+
+Toolchains: all of this needs Node. Desktop targets need electron-builder, a
+**Windows build from Linux needs `wine` on `PATH`** — electron-builder rcedits
+the packaged `.exe` through it whatever the target is — and a **Mac build needs
+a Mac**, for `hdiutil` and `codesign`. `build:android` needs cordova and the
+Android SDK (`ANDROID_SDK_ROOT` is filled in from the default install path when
+it is unset) and produces a **debug-signed** APK. `build:ios` needs a Mac and
+stops at an Xcode project to archive — there is no `.ipa` at the end of it.
 
 ## Remote exports (build on your desktop)
 

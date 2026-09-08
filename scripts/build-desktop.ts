@@ -1,29 +1,38 @@
-// scripts/build-desktop.ts — package shmupX as a desktop app.
+// scripts/build-desktop.ts — package shmupX as an app.
 //
 //   deno task build:windows              → build/desktop/shmupX-windows-<arch>.exe
 //   deno task build:linux                → build/desktop/shmupX-linux-<arch>.AppImage
 //   deno task build:mac                  → build/desktop/shmupX-mac-<arch>.app
 //   deno task build:desktop              → whichever of those three matches this host
-//   deno task build:windows "My Level"   → that one Firebase level as a Windows app
-//   deno task build:linux "My Level"     → …as a Linux AppImage
-//   deno task build:mac "My Level"       → …as a macOS .dmg
+//   deno task build:windows 2028_ai      → the game this repo ships, as a Windows app
+//   deno task build:android g-fencer-755 → a community Dezaemon cart, as an APK
+//   deno task build:linux "My Level"     → that one Firebase level, as an AppImage
+//   deno task shelf:list                 → every name the three above accept
 //
-// Two different products share these tasks, picked by whether a level name is
+// Two different products share these tasks, picked by whether a game name is
 // given:
 //
-//   * No level name — the launcher itself. `deno task build` (Vite) and then
+//   * No name — the launcher itself. `deno task build` (Vite) and then
 //     `deno compile desktop.ts` with the built app embedded, plus the export
 //     tool and the 2028-ai game so the editor's "Export to APK" button works
 //     inside the packaged app (routes/api/build-apk.ts stages those out of the
 //     binary's read-only VFS). Linux is then wrapped in an AppImage, macOS in a
-//     .app bundle.
+//     .app bundle. android and ios have no launcher, so they always need a name.
 //
-//   * A level name — one game, through the per-level Electron export in
-//     tools/build-level (the same pipeline the editor's export button drives).
-//     Needs Node + the electron-builder toolchain; building the Windows app
-//     from a Linux host additionally needs wine on PATH (electron-builder
-//     rcedits the packaged .exe through it whatever the target is), and the
-//     macOS app has to be built on a Mac.
+//   * A name — one game, through the per-level export in tools/build-level (the
+//     same pipeline the editor's export button drives). Needs Node + the
+//     platform toolchain; building the Windows app from a Linux host
+//     additionally needs wine on PATH (electron-builder rcedits the packaged
+//     .exe through it whatever the target is), the macOS app has to be built on
+//     a Mac, and android needs cordova + the Android SDK.
+//
+//     The name is resolved against the whole shelf by lib/shelf.ts, not assumed
+//     to be a Firebase level: this repo's own games, the local .sav collection,
+//     the eShop and the 262-save community Dezaemon library all answer to it,
+//     and a cloud level is the last rung — so every name that worked before
+//     still means what it did. Anything that is not a cloud level reaches the
+//     Node tool as `--level-file <path>`, which is a shape it already accepts,
+//     so the tool itself is untouched.
 //
 // Flags (launcher):
 //   --arch x86_64|aarch64  target architecture (default: x86_64 for Windows,
@@ -38,19 +47,32 @@
 //   --no-appimage          Linux: stop at the raw binary + AppDir
 //   --no-bundle            macOS: stop at the raw binary, no .app around it
 //
-// Flags (level builds) are forwarded verbatim to tools/build-level — e.g.
-// --skip-bgm, --package-id, --level-file, --stage-only, --win-target,
-// --mac-target. --arch is translated to its --win-arch / --mac-arch.
+// Flags (game builds):
+//   --sav <path>           build this Dezaemon 2 cart, whatever the name says
+//   --slot <n>             which game in a cart that holds more than one
+//   --stage <n>            which of the cart's stages to build
+//   --name <title>         what to call the app, overriding the shelf's title
+//   --offline              resolve against this checkout only, never the network
+//   --refresh              re-decode the cart instead of reusing build/shelf
+//   --list                 print every buildable name and exit
+// Everything else is forwarded verbatim to tools/build-level — e.g. --skip-bgm,
+// --package-id, --level-file, --stage-only, --win-target, --mac-target. --arch
+// is translated to its --win-arch / --mac-arch.
 
 import { basename, dirname, fromFileUrl, join, resolve } from "@std/path";
 import { ensureDir, walk } from "@std/fs";
 import { buildRuntimeBundle } from "../lib/ps2/build.ts";
 import { resolveAthenaElf } from "../lib/ps2/athena.ts";
+import { guessAndroidSdk } from "../lib/export-build.ts";
+import { listShelf, resolveShelfName, ShelfError } from "../lib/shelf.ts";
 
 const ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 
-type Platform = "windows" | "linux" | "mac";
+type Platform = "windows" | "linux" | "mac" | "android" | "ios";
 type Arch = "x86_64" | "aarch64";
+
+/** The two Cordova targets: no launcher product, and no --arch of their own. */
+const MOBILE = new Set<Platform>(["android", "ios"]);
 
 const APPIMAGETOOL_URL = (arch: string) =>
   `https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${arch}.AppImage`;
@@ -60,7 +82,7 @@ const APPIMAGETOOL_URL = (arch: string) =>
 const RUNTIME_URL = (arch: string) =>
   `https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${arch}`;
 
-// Flags this script consumes itself; everything else on a level build is passed
+// Flags this script consumes itself; everything else on a game build is passed
 // straight through to tools/build-level.
 const OWN_FLAGS = new Set([
   "--arch",
@@ -69,6 +91,15 @@ const OWN_FLAGS = new Set([
   "--no-terminal",
   "--no-appimage",
   "--no-bundle",
+  "--sav",
+  "--slot",
+  "--stage",
+  "--name",
+  "--offline",
+  "--refresh",
+  "--list",
+  "--out",
+  "--level",
 ]);
 
 // tools/build-level flags that take a value. Forwarding the value together with
@@ -91,6 +122,15 @@ interface Options {
   noTerminal: boolean;
   appImage: boolean;
   appBundle: boolean;
+  /** --sav: build this cart whatever the positional says. */
+  sav: string | null;
+  slot: number | null;
+  stage: string | null;
+  /** --name: what to call the app, overriding whatever the shelf calls it. */
+  name: string | null;
+  offline: boolean;
+  refresh: boolean;
+  list: boolean;
   passthrough: string[];
 }
 
@@ -117,11 +157,13 @@ function parseArgs(argv: string[]): Options {
     mac: "mac",
     macos: "mac",
     darwin: "mac",
+    android: "android",
+    ios: "ios",
   };
   if (first !== "desktop" && !(first in named)) {
     fail(
-      "usage: deno run -A scripts/build-desktop.ts <windows|linux|mac|desktop> " +
-        "[levelName] [flags]",
+      "usage: deno run -A scripts/build-desktop.ts " +
+        "<windows|linux|mac|android|ios|desktop> [gameName] [flags]",
     );
   }
   const platform = first === "desktop" ? hostPlatform() : named[first];
@@ -145,25 +187,57 @@ function parseArgs(argv: string[]): Options {
     noTerminal: false,
     appImage: true,
     appBundle: true,
+    sav: null,
+    slot: null,
+    stage: null,
+    name: null,
+    offline: false,
+    refresh: false,
+    list: false,
     passthrough: [],
   };
 
   for (let i = 1; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--arch") {
-      const value = argv[++i];
-      if (value !== "x86_64" && value !== "aarch64") {
-        fail(`--arch must be x86_64 or aarch64 (got ${value ?? "nothing"})`);
+    // Both spellings for the flags this script owns, because a cart path with
+    // spaces reads better attached — --sav="./Dez 2 - Foo.sav" — which is the
+    // same accommodation scripts/build-ps2.ts makes.
+    let arg = argv[i];
+    let inline: string | null = null;
+    const eq = arg.startsWith("--") ? arg.indexOf("=") : -1;
+    if (eq > 0 && OWN_FLAGS.has(arg.slice(0, eq))) {
+      inline = arg.slice(eq + 1);
+      arg = arg.slice(0, eq);
+    }
+    const flagValue = () => {
+      const v = inline ?? argv[++i];
+      if (v === undefined) fail(`${arg} needs a value`);
+      return v;
+    };
+
+    if (arg === "--sav") opts.sav = resolve(flagValue());
+    else if (arg === "--name") opts.name = flagValue();
+    else if (arg === "--stage") opts.stage = flagValue();
+    else if (arg === "--slot") {
+      const n = Number(flagValue());
+      if (!Number.isInteger(n) || n < 0) fail("--slot takes a whole number");
+      opts.slot = n;
+    } else if (arg === "--offline") opts.offline = true;
+    else if (arg === "--refresh") opts.refresh = true;
+    else if (arg === "--list") opts.list = true;
+    else if (arg === "--arch") {
+      const arch = flagValue();
+      if (arch !== "x86_64" && arch !== "aarch64") {
+        fail(`--arch must be x86_64 or aarch64 (got ${arch})`);
       }
-      opts.arch = value;
+      opts.arch = arch;
     } else if (arg === "--out") {
-      const value = argv[++i];
+      const value = flagValue();
       if (!value) fail("--out needs a directory");
       opts.outDir = resolve(value);
       // A level build gets its own build root, so the tool needs to see this too.
       opts.passthrough.push("--out", value);
     } else if (arg === "--level") {
-      opts.level = argv[++i] ?? fail("--level needs a name");
+      opts.level = flagValue();
     } else if (arg === "--skip-build") opts.skipBuild = true;
     else if (arg === "--no-export-tools") opts.exportTools = false;
     else if (arg === "--no-terminal") opts.noTerminal = true;
@@ -177,6 +251,25 @@ function parseArgs(argv: string[]): Options {
       }
     } else if (opts.level === null) opts.level = arg;
     else opts.passthrough.push(arg);
+  }
+
+  // A cart named outright is the game, so the positional (if any) is free to
+  // be the title instead — which is how `build:ps2 "Chohsoku Stringer" --sav …`
+  // already reads.
+  if (opts.sav && opts.level && !opts.name) {
+    opts.name = opts.level;
+    opts.level = null;
+  }
+
+  // android and ios have no launcher product to fall back on: tools/build-level
+  // is the only thing that builds them, and it needs a game. Catching this here
+  // beats compiling a launcher nobody asked for, or spawning node to be told.
+  if (MOBILE.has(opts.platform) && !opts.level && !opts.sav && !opts.list) {
+    fail(
+      `build:${opts.platform} builds one game — name it, e.g.\n  ` +
+        `deno task build:${opts.platform} 2028_ai\n` +
+        `  deno task shelf:list   lists every name it accepts`,
+    );
   }
   return opts;
 }
@@ -611,6 +704,44 @@ async function buildAppBundle(opts: Options, binary: string): Promise<string> {
 
 // ------------------------------------------------------------ level builds
 
+/**
+ * What the shelf name means, and the file (if any) the tool should stage it
+ * from.
+ *
+ * `--level-file` passed by hand wins outright and skips resolution entirely,
+ * so the escape hatch every shelf build prints — "this is the record I built,
+ * pass it yourself to reproduce me" — keeps working.
+ */
+async function resolveGame(
+  opts: Options,
+): Promise<{ levelName: string; levelFile: string | null }> {
+  const explicit = opts.passthrough.indexOf("--level-file");
+  if (explicit >= 0) {
+    return {
+      levelName: opts.name ?? opts.level ?? "level",
+      levelFile: null, // already in passthrough; don't add it twice
+    };
+  }
+  // --sav names the cart outright, so it is resolved as a path rather than
+  // against the shelf — mirroring `build:ps2 --sav`.
+  const target = opts.sav ?? opts.level!;
+  try {
+    const hit = await resolveShelfName(target, {
+      root: ROOT,
+      slot: opts.slot,
+      stage: opts.stage,
+      name: opts.name,
+      offline: opts.offline,
+      refresh: opts.refresh,
+      log: (message) => console.log(message),
+    });
+    return { levelName: hit.levelName, levelFile: hit.levelFile };
+  } catch (err) {
+    if (err instanceof ShelfError) fail(err.message);
+    throw err;
+  }
+}
+
 async function buildLevel(opts: Options): Promise<void> {
   const tool = join(ROOT, "tools", "build-level", "index.js");
   if (!(await exists(tool))) fail(`build tool not found at ${tool}`);
@@ -622,16 +753,26 @@ async function buildLevel(opts: Options): Promise<void> {
     }).output();
     if (!probe.success) throw new Error("node --version failed");
   } catch (_err) {
-    fail("Node is required for per-level builds but is not on PATH.");
+    fail("Node is required for per-game builds but is not on PATH.");
   }
+  if (opts.platform === "ios" && Deno.build.os !== "darwin") {
+    fail(
+      "an iOS build needs a macOS host (Xcode + CocoaPods). Everything up to " +
+        "the native compile works anywhere: add --stage-only to check the " +
+        "staged www/.",
+    );
+  }
+
+  const { levelName, levelFile } = await resolveGame(opts);
   console.log(
-    `Building level "${opts.level}" as a ${opts.platform} app ` +
+    `\nBuilding "${levelName}" as a ${opts.platform} app ` +
       "(tools/build-level)…\n",
   );
-  const args = ["tools/build-level", opts.level!, opts.platform];
+  const args = ["tools/build-level", levelName, opts.platform];
+  if (levelFile) args.push("--level-file", levelFile);
   // One --arch knob for both products, translated to whichever the tool hands
   // electron-builder. Both default the same way it does, so this only ever
-  // matters when --arch was passed explicitly.
+  // matters when --arch was passed explicitly. Cordova picks its own ABIs.
   const ebArch = opts.arch === "aarch64" ? "arm64" : "x64";
   if (opts.platform === "windows" && !opts.passthrough.includes("--win-arch")) {
     args.push("--win-arch", ebArch);
@@ -639,7 +780,110 @@ async function buildLevel(opts: Options): Promise<void> {
   if (opts.platform === "mac" && !opts.passthrough.includes("--mac-arch")) {
     args.push("--mac-arch", ebArch);
   }
-  await run("node", args.concat(opts.passthrough));
+
+  // The same default lib/export-build.ts gives the editor's export button, so
+  // a fresh shell with no ANDROID_SDK_ROOT builds here too.
+  const env = Deno.env.toObject();
+  if (opts.platform === "android") {
+    const sdk = await guessAndroidSdk(env);
+    if (sdk) {
+      env.ANDROID_SDK_ROOT = sdk;
+      env.ANDROID_HOME = sdk;
+    } else {
+      console.warn(
+        "  warning: no Android SDK found (ANDROID_SDK_ROOT / ANDROID_HOME " +
+          "unset, and none at the default install path) — cordova will say " +
+          "so if it cannot proceed.",
+      );
+    }
+  }
+  await run("node", args.concat(opts.passthrough), { env });
+
+  if (opts.passthrough.includes("--stage-only")) return;
+  // --out moves the tool's whole build root, and it was forwarded verbatim, so
+  // the summary has to look where the artifact actually landed.
+  const outAt = opts.passthrough.indexOf("--out");
+  const buildRoot = outAt >= 0 && opts.passthrough[outAt + 1]
+    ? resolve(opts.passthrough[outAt + 1])
+    : join(ROOT, "build", slugFor(levelName));
+  await reportArtifacts(buildRoot, opts.platform);
+}
+
+/** Mirrors tools/build-level's own output layout: build/<slug>/dist/. */
+function slugFor(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 30) || "level";
+}
+
+/**
+ * Say what was built and where, the way the launcher branch signs off.
+ *
+ * The tool prints its own per-platform chatter, but not one line naming the
+ * file — which on a ten-minute Android build is the only line anyone is
+ * waiting for.
+ */
+async function reportArtifacts(
+  buildRoot: string,
+  platform: Platform,
+): Promise<void> {
+  const dist = join(buildRoot, "dist");
+  // What the DEFAULT target yields — used only to order the listing. A
+  // --win-target zip/nsis/dir (or a --mac-target zip) is just as much the
+  // artifact, and reporting "no .exe turned up" while a perfectly good .zip
+  // sits next to it reads as a failure when nothing failed.
+  const usual = platform === "linux"
+    ? ".appimage"
+    : platform === "windows"
+    ? ".exe"
+    : platform === "mac"
+    ? ".dmg"
+    : platform === "ios"
+    ? ".ipa"
+    : ".apk";
+  const found: string[] = [];
+  try {
+    for await (const entry of Deno.readDir(dist)) {
+      if (entry.isFile || entry.isDirectory) found.push(join(dist, entry.name));
+    }
+  } catch (_e) { /* no dist dir — the tool already said why */ }
+  if (!found.length) {
+    if (platform === "ios") {
+      console.log(
+        `\nDone. iOS stops at an Xcode project — open ` +
+          `${join(buildRoot, "cordova", "platforms", "ios")} and archive it ` +
+          `there for an .ipa.`,
+      );
+      return;
+    }
+    console.log(`\nDone, but ${dist} is empty — expected a ${usual}.`);
+    return;
+  }
+  found.sort((a, b) =>
+    Number(b.toLowerCase().endsWith(usual)) -
+    Number(a.toLowerCase().endsWith(usual))
+  );
+  for (const path of found) {
+    const size = await artifactSize(path) / 1024 / 1024;
+    console.log(`\nDone. ${path} (${size.toFixed(1)} MB)`);
+  }
+}
+
+/** `deno task shelf:list` — every name a build will accept. */
+async function printShelf(opts: Options): Promise<void> {
+  const sections = await listShelf({ root: ROOT, offline: opts.offline });
+  for (const section of sections) {
+    console.log(`\n${section.section}`);
+    if (section.note) console.log(`  (${section.note})`);
+    for (const row of section.rows) {
+      console.log(`  ${row.slug.padEnd(34)} ${row.title}`);
+    }
+    if (!section.rows.length && !section.note) console.log("  (none)");
+  }
+  const total = sections.reduce((n, s) => n + s.rows.length, 0);
+  console.log(
+    `\n${total} name(s). Build one with e.g. ` +
+      `\`deno task build:android <name>\`; a name that is on two shelves ` +
+      `takes a game:/eshop:/deza:/cloud: prefix.`,
+  );
 }
 
 // ------------------------------------------------------------------- main
@@ -647,7 +891,9 @@ async function buildLevel(opts: Options): Promise<void> {
 const opts = parseArgs(Deno.args);
 
 try {
-  if (opts.level) {
+  if (opts.list) {
+    await printShelf(opts);
+  } else if (opts.level || opts.sav) {
     await buildLevel(opts);
   } else {
     console.log(

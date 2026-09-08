@@ -55,6 +55,17 @@ export class ExportError extends Error {
 export interface ExportRequest {
   level: string;
   platform: string;
+  /**
+   * The level record to build, instead of the one `level` names in Firebase.
+   *
+   * A Dezaemon cart open in the editor is not a cloud level and never will be:
+   * it was imported from a .sav (a file, or the shelf) and lives in the
+   * browser, so there is no `/levels/<name>` for a build to fetch. The editor
+   * therefore hands the record over directly — the same shape it would have
+   * saved — and it is written to disk here for `--level-file`. That is the one
+   * thing that lets the .SAV half of the editor export to all five platforms.
+   */
+  levelRecord?: unknown;
   /** Called with each line of build output as it is produced. */
   log?: (line: string) => void;
   /** Aborting kills a running `node tools/build-level`. */
@@ -289,7 +300,11 @@ async function findArtifacts(
 
 // Where the Android SDK is, when the environment does not say. A fresh shell
 // (where ANDROID_SDK_ROOT is unset) can still find the default install.
-async function guessAndroidSdk(
+//
+// Exported because scripts/build-desktop.ts spawns the same Node tool for
+// `deno task build:android` and needs the same default; a second copy there
+// would be one more place for the search list to drift.
+export async function guessAndroidSdk(
   env: Record<string, string>,
 ): Promise<string | null> {
   if (env.ANDROID_SDK_ROOT) return env.ANDROID_SDK_ROOT;
@@ -310,23 +325,48 @@ async function guessAndroidSdk(
 
 // Read a child's stream line by line, handing each non-blank line on as it
 // completes, and return the whole text for the log tail.
+//
+// `stop` is what keeps an Android build from hanging forever. `node
+// tools/build-level` shells out to gradle, which leaves DAEMONS running — they
+// inherit the pipes, so stdout and stderr stay open long after the tool itself
+// has exited and the .apk is sitting on disk. Waiting for the streams to end
+// therefore waits on a process nobody is waiting for: the build succeeds and
+// the request never returns. So the caller stops the read once the child is
+// gone and the tail has had a moment to flush.
 async function readLines(
   stream: ReadableStream<Uint8Array>,
   onLine: (line: string) => void,
+  stop?: Promise<unknown>,
 ): Promise<string> {
   const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  const STOP = Symbol("stop");
   let all = "";
   let buf = "";
-  for await (const chunk of stream) {
-    const text = decoder.decode(chunk, { stream: true });
-    all += text;
-    buf += text;
-    let nl: number;
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, nl).replace(/\r$/, "");
-      buf = buf.slice(nl + 1);
-      if (line.trim()) onLine(line);
+  try {
+    for (;;) {
+      const next = stop
+        ? await Promise.race([reader.read(), stop.then(() => STOP)])
+        : await reader.read();
+      if (next === STOP) break;
+      const { done, value } = next as ReadableStreamReadResult<Uint8Array>;
+      if (done) break;
+      const text = decoder.decode(value, { stream: true });
+      all += text;
+      buf += text;
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).replace(/\r$/, "");
+        buf = buf.slice(nl + 1);
+        if (line.trim()) onLine(line);
+      }
     }
+  } finally {
+    // Releases this end of the pipe whether the stream ended on its own or a
+    // daemon is still holding the other end open.
+    try {
+      await reader.cancel();
+    } catch (_e) { /* already closed */ }
   }
   if (buf.trim()) onLine(buf);
   return all;
@@ -334,6 +374,7 @@ async function readLines(
 
 async function runPs2Export(
   level: string,
+  levelFile: string | null,
   log: (line: string) => void,
 ): Promise<ExportOutcome> {
   const root = await findPs2Root();
@@ -362,6 +403,9 @@ async function runPs2Export(
     const built = await buildPs2({
       root: packaged ? await stagePs2Game(root) : root,
       levelName: level,
+      // A record handed over by the editor wins over the cloud lookup the name
+      // would otherwise trigger — see ExportRequest.levelRecord.
+      ...(levelFile ? { levelFile } : {}),
       ...(workRoot
         ? { outDir: workRoot, cacheDir: join(workRoot, ".cache") }
         : {}),
@@ -405,6 +449,7 @@ async function runPs2Export(
 async function runNodeExport(
   level: string,
   platform: string,
+  levelFile: string | null,
   log: (line: string) => void,
   signal?: AbortSignal,
 ): Promise<ExportOutcome> {
@@ -454,17 +499,26 @@ async function runNodeExport(
 
   let stdout = "", stderr = "", code = -1;
   try {
+    const args = ["tools/build-level", level, platform];
+    if (levelFile) args.push("--level-file", levelFile);
     const child = new Deno.Command("node", {
-      args: ["tools/build-level", level, platform],
+      args,
       cwd: runRoot,
       env,
       stdout: "piped",
       stderr: "piped",
       signal,
     }).spawn();
+    // The child exiting is the end of the build; the pipes outliving it is
+    // gradle's daemons, not output still to come (see readLines). Give the
+    // tail a beat to flush after the exit, then stop reading.
+    const exited = child.status.then(async (s) => {
+      await new Promise((r) => setTimeout(r, 1500));
+      return s;
+    });
     const [out, err, status] = await Promise.all([
-      readLines(child.stdout, log),
-      readLines(child.stderr, log),
+      readLines(child.stdout, log, exited),
+      readLines(child.stderr, log, exited),
       child.status,
     ]);
     stdout = out;
@@ -513,8 +567,48 @@ export async function runExport(req: ExportRequest): Promise<ExportOutcome> {
     throw new ExportError(`Unknown platform '${platform}'.`, 400);
   }
   platform = resolveDesktopPlatform(platform);
-  if (platform === "ps2") return await runPs2Export(level, log);
-  return await runNodeExport(level, platform, log, req.signal);
+  const levelFile = req.levelRecord === undefined
+    ? null
+    : await stageLevelRecord(level, req.levelRecord, log);
+  if (platform === "ps2") return await runPs2Export(level, levelFile, log);
+  return await runNodeExport(level, platform, levelFile, log, req.signal);
+}
+
+/**
+ * Write a caller-supplied level record where both builders can read it.
+ *
+ * Under the same roof as everything else a build produces, so it is cleaned up
+ * with them and a packaged app (whose tree is a read-only VFS) has somewhere
+ * writable to put it.
+ */
+async function stageLevelRecord(
+  level: string,
+  record: unknown,
+  log: (line: string) => void,
+): Promise<string> {
+  if (!record || typeof record !== "object") {
+    throw new ExportError(
+      "'levelRecord' must be the level object itself.",
+      400,
+    );
+  }
+  if (!Array.isArray((record as { enemylist?: unknown }).enemylist)) {
+    throw new ExportError(
+      "'levelRecord' has no enemylist — that is not a level.",
+      400,
+    );
+  }
+  const dir = join(packagedBuildRoot(), "records");
+  await Deno.mkdir(dir, { recursive: true });
+  const path = join(dir, `${slugFor(level)}.json`);
+  const json = JSON.stringify(record);
+  await Deno.writeTextFile(path, json);
+  log(
+    `Building from the record the editor supplied (${
+      (json.length / 1048576).toFixed(2)
+    } MB) rather than from the cloud.`,
+  );
+  return path;
 }
 
 // ── What this host can build ──────────────────────────────────────────────────

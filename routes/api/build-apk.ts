@@ -33,7 +33,7 @@ export const handler = define.handlers({
       );
     }
 
-    let body: { level?: string; platform?: string };
+    let body: { level?: string; platform?: string; levelRecord?: unknown };
     try {
       body = await ctx.req.json();
     } catch (_e) {
@@ -46,6 +46,12 @@ export const handler = define.handlers({
       const built = await runExport({
         level: body.level || "",
         platform: body.platform || "android",
+        // A Dezaemon cart open in the editor has no cloud record to fetch, so
+        // the editor sends the record itself. Absent for a normal cloud level,
+        // which is fetched exactly as before.
+        ...(body.levelRecord === undefined
+          ? {}
+          : { levelRecord: body.levelRecord }),
       });
       // `ps2` rides along only for a PS2 build — named rather than positional,
       // so the editor can offer the disc and the USB folder as separate

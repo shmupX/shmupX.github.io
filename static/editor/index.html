@@ -984,7 +984,14 @@
         <button class="menu-row hide-when-sav" onclick="saveToFirebase()"><span class="mono-badge">SG</span>SAVE GAME</button>
         <button class="menu-row hide-when-sav" onclick="loadFromFirebasePrompt()"><span class="mono-badge">LG</span>LOAD GAME</button>
         <button class="menu-row hide-when-sav" onclick="playFirebaseLevel()"><span class="mono-badge">PG</span>PLAY GAME</button>
-        <div class="display-row hide-when-sav" title="Which app the export builds. Linux/Windows are Electron desktop builds; a Windows build from a Linux host needs wine on PATH. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
+        <!-- EXPORT AS AN APP: not hide-when-sav, and its own group rather than
+             the cloud one's tail, because it is the one export that works for
+             BOTH halves of the editor. A cloud level is saved and then built
+             from its name; an imported .sav has no cloud record and never will,
+             so exportGameToApk() hands the record over directly instead
+             (ExportRequest.levelRecord). All five targets work either way. -->
+        <div class="menu-label">EXPORT AS AN APP</div>
+        <div class="display-row" title="Which app the export builds. Linux/Windows are Electron desktop builds; a Windows build from a Linux host needs wine on PATH. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
             <span class="display-lbl">TARGET</span>
             <div class="seg-wrap" id="export-platform-segs">
                 <button class="seg xseg" data-platform="android" onclick="setExportPlatform('android')">ANDROID</button>
@@ -994,8 +1001,8 @@
                 <button class="seg xseg" data-platform="ps2" onclick="setExportPlatform('ps2')">PS2</button>
             </div>
         </div>
-        <button class="menu-row hide-when-sav" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
-        <div id="export-apk-status" class="menu-note hide-when-sav"></div>
+        <button class="menu-row" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
+        <div id="export-apk-status" class="menu-note"></div>
         <!-- Build somewhere else. On the hosted site and the PWA there is no
              /api/build-apk to post to, so exportGameToApk() queues the export
              for a desktop running shmupX instead, paired by the BUILD CODE
@@ -9988,21 +9995,110 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
         // and the packaged desktop app (which stages the embedded tool onto disk
         // first); the route refuses only on the deployed (read-only) origin, and
         // needs Node + the platform toolchain installed on the machine.
+        // True while an imported Dezaemon cart is the open game — the half of
+        // the editor with no cloud record behind it.
+        function savModeLoaded() {
+            return document.body.classList.contains('sav-loaded');
+        }
+
+        // The open atlas as the `atlasImageDataURL` + `atlasFrames` pair a
+        // level record carries, over EVERY frame rather than only the
+        // customized ones saveToFirebase() packs. A .sav import replaced the
+        // atlas wholesale, so all of it is this game's art; keeping only the
+        // "custom" frames would export a game whose sprites had all vanished.
+        // Keys stay exactly as the editor holds them — level-loader.js runs
+        // them through decodeFirebaseKey, which is a no-op on an unencoded one.
+        function atlasPayloadForAppExport() {
+            if (!atlasData || !atlasImage) return null;
+            let source = atlasImage;
+            let frames = atlasData.frames || {};
+            if (Object.keys(replacedFrames).length > 0 || extraSprites.length > 0) {
+                const built = buildAtlasWithReplacements();
+                source = built.canvas;
+                frames = built.frames;
+            }
+            const w = source.naturalWidth || source.width;
+            const h = source.naturalHeight || source.height;
+            if (!w || !h) return null;
+            let canvas = source;
+            if (typeof HTMLCanvasElement === 'undefined' || !(source instanceof HTMLCanvasElement)) {
+                canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(source, 0, 0);
+            }
+            try {
+                return { dataUrl: canvas.toDataURL('image/png'), frames };
+            } catch (e) {
+                console.warn('Could not read the atlas for export:', e);
+                return null;
+            }
+        }
+
+        // What an app build reads off the record but the .sav writer does not
+        // need, so buildLevelRecordForSav()'s whitelist leaves it out: the cart
+        // writer redraws the title screen and the story from the art it is
+        // handed, while game.bundle.js and level-loader.js read them as data.
+        // Dropping these ships a cart that plays 2028-AI's title screen and
+        // story instead of its own — dezaemonTitle alone is read 19 times by
+        // the bundle. Kept in step with WHOLE_GAME_KEYS in lib/shelf.ts, which
+        // is the same list for the command-line half.
+        const APP_EXPORT_KEYS = [
+            'dezaemonTitle', 'dezaemonCredits', 'playerData2', 'noStory',
+            'storyData', 'continueComment', 'continueCommentEn',
+        ];
+
+        // The open .sav game as the level record a build stages from — the same
+        // shape buildLevelRecordForSav() hands the cart writer, plus the keys
+        // above and the atlas the cart writer takes separately.
+        async function levelRecordForAppExport() {
+            const record = await buildLevelRecordForSav();
+            if (gameData) {
+                for (const k of APP_EXPORT_KEYS) {
+                    if (gameData[k] !== undefined) record[k] = gameData[k];
+                }
+            }
+            const atlas = atlasPayloadForAppExport();
+            if (atlas) {
+                record.atlasImageDataURL = atlas.dataUrl;
+                record.atlasFrames = atlas.frames;
+            }
+            return record;
+        }
+
         async function exportGameToApk() {
             const statusEl = document.getElementById('export-apk-status');
             const setStatus = (msg, color) => {
                 statusEl.textContent = msg;
                 statusEl.style.color = color || '#888';
             };
-            let name = document.getElementById('firebase-level-name').value.trim();
-            if (!name) { name = prompt('Game name to export:'); if (!name) return; }
-            name = sanitizeLevelName(name);
-            document.getElementById('firebase-level-name').value = name;
-            // Persist current edits first so the build pulls the latest record.
-            setStatus('Saving game before export…');
-            try { await saveToFirebase(); } catch (e) { /* saveToFirebase alerts on its own */ }
             const btn = document.getElementById('export-apk-btn');
             const cfg = EXPORT_PLATFORMS[exportPlatform];
+            const sav = savModeLoaded();
+            let name, levelRecord = undefined;
+
+            if (sav) {
+                // An imported cart has no cloud record and nothing to save to,
+                // so the record travels with the request instead of being
+                // fetched by name. Every target works; nothing is saved anywhere.
+                name = sanitizeLevelName(dezaSavGameName());
+                if (!name) { setStatus('This game has no name to build under.', '#f87171'); return; }
+                setStatus('Reading the open game…');
+                try {
+                    levelRecord = await levelRecordForAppExport();
+                } catch (e) {
+                    setStatus('Could not read the open game: ' + (e && e.message || e), '#f87171');
+                    return;
+                }
+            } else {
+                name = document.getElementById('firebase-level-name').value.trim();
+                if (!name) { name = prompt('Game name to export:'); if (!name) return; }
+                name = sanitizeLevelName(name);
+                document.getElementById('firebase-level-name').value = name;
+                // Persist current edits first so the build pulls the latest record.
+                setStatus('Saving game before export…');
+                try { await saveToFirebase(); } catch (e) { /* saveToFirebase alerts on its own */ }
+            }
+
             hidePs2ExportActions();
             btn.disabled = true;
             setStatus('Building ' + cfg.artifact + ' for "' + name + '" — this can take several minutes…', '#f59e0b');
@@ -10010,7 +10106,10 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                 const resp = await fetch('/api/build-apk', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ level: name, platform: exportPlatform }),
+                    body: JSON.stringify(
+                        levelRecord === undefined
+                            ? { level: name, platform: exportPlatform }
+                            : { level: name, platform: exportPlatform, levelRecord }),
                 });
                 const data = await resp.json().catch(() => ({}));
                 if (!resp.ok || !data.ok) {
@@ -10019,6 +10118,24 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                     // to the paired desktop instead of stopping at the error —
                     // see REMOTE EXPORTS below.
                     if (resp.status === 403 || resp.status === 404) {
+                        // The queue pairs a desktop with a level NAME, which a
+                        // cart has none of — the record only exists in this
+                        // browser. Say what to do instead of queueing a job
+                        // that desktop could never resolve.
+                        if (sav) {
+                            // The cart is what a checkout would have to be given —
+                            // NOT this name. There is no cloud level called this,
+                            // so `build:<target> "<name>"` would fail to find one;
+                            // every target takes --sav instead. DOWNLOAD .SAV
+                            // above writes the file that command wants.
+                            setStatus(
+                                'This origin has no builder, and an imported .sav cannot be queued to a ' +
+                                'desktop (there is no cloud record for it to fetch). Open this game in ' +
+                                'shmupX on a desktop and export there, or use DOWNLOAD .SAV and build ' +
+                                'the file from a checkout: deno task build:' + exportPlatform +
+                                ' --sav "Dez 2 - ' + name + '.sav"', '#f59e0b');
+                            return;
+                        }
                         await queueRemoteExport(name, setStatus);
                         return;
                     }

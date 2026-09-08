@@ -125,5 +125,14 @@ export default defineConfig({
     // Allow ngrok tunnels (and any other host) to reach the dev server.
     // Dev-only — production builds aren't served by Vite.
     allowedHosts: true,
+    watch: {
+      // build/ is where every export lands, and an export is tens of thousands
+      // of files — a staged www/, a whole cordova project, an unpacked Electron
+      // app. Watching it means a build kicked off from the editor's EXPORT
+      // button spends its minutes making the dev server churn and telling every
+      // client to reload, over files no client ever loads. Nothing under build/
+      // is served, so there is nothing to watch it for.
+      ignored: ["**/build/**"],
+    },
   },
 });

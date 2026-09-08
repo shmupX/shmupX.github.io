@@ -43,14 +43,14 @@ interface Sprite {
 }
 
 /** One stage of a mapped game — the only part the console stages. */
-interface StageRecord {
+export interface StageRecord {
   enemylist?: string[][];
   waveRows?: number[];
   waveInterval?: number;
 }
 
 /** `mapSaveToGame`'s game.json, narrowed to the fields a level record needs. */
-interface GameJson {
+export interface GameJson {
   enemyData?: Record<string, Record<string, unknown>>;
   bossData?: Record<string, Record<string, unknown>>;
   playerData?: Record<string, unknown>;
@@ -96,6 +96,12 @@ export interface SavLevelOptions {
   slot?: number | null;
   /** Overrides the name derived from the filename. */
   name?: string | null;
+  /**
+   * What to call this cart in an error message when it did not come from a
+   * file — a shelf slug, a URL, "the uploaded save". Defaults to the filename
+   * for `loadSavLevel`, which is what every message here used to hard-code.
+   */
+  label?: string | null;
 }
 
 export interface SavLevel {
@@ -108,6 +114,20 @@ export interface SavLevel {
   /** The display name: the caller's, else the one the filename implies. */
   name: string;
   notes: string[];
+  /**
+   * The whole decoded game, before `record` narrows it to the one stage the
+   * PS2 runs.
+   *
+   * `record` is deliberately a subset: the console stages exactly one stage and
+   * has no use for the rest. A browser build is the opposite — it plays every
+   * stage and reads the music, the scenery tiles, the bullet and item tables
+   * and the drawn title screen straight off the record — so lib/shelf.ts builds
+   * its own, fuller record from this. Handed over rather than re-decoded
+   * because decoding a cart is the expensive half.
+   */
+  game: GameJson;
+  /** Which stage `record` was narrowed to, so a caller can say so. */
+  stageKey: string;
 }
 
 /**
@@ -188,22 +208,41 @@ export async function loadSavLevel(
   path: string,
   options: SavLevelOptions = {},
 ): Promise<SavLevel> {
+  return await loadSavLevelFromBytes(await Deno.readFile(path), {
+    ...options,
+    label: options.label ?? basename(path),
+    name: options.name ?? savTitle(path),
+  });
+}
+
+/**
+ * The same thing for a cart that never touched the disk.
+ *
+ * The shelf hands its saves over the wire (gzipped and deinterleaved — see
+ * lib/shelf.ts), and writing a megabyte to a temp file only to read it back is
+ * both slower and one more thing to clean up. `label` is what error messages
+ * name instead of a filename, and `name` is required here rather than derived,
+ * since there is no filename to derive it from.
+ */
+export async function loadSavLevelFromBytes(
+  bytes: Uint8Array,
+  options: SavLevelOptions = {},
+): Promise<SavLevel> {
   const notes: string[] = [];
-  const normalized = await normalize(await Deno.readFile(path));
+  const label = options.label?.trim() || "the save";
+  const normalized = await normalize(bytes);
   const entries = parse(normalized.data);
   const games = entries.filter((entry) => isGameSave(entry) && entry.payload);
   if (games.length === 0) {
     throw new Error(
-      `${basename(path)} holds no Dezaemon 2 game save (looked for ` +
+      `${label} holds no Dezaemon 2 game save (looked for ` +
         `DEZA2____NN across ${entries.length} backup entries)`,
     );
   }
   const slot = options.slot ?? 0;
   if (slot < 0 || slot >= games.length) {
     throw new Error(
-      `--slot ${slot} is out of range: ${
-        basename(path)
-      } holds ${games.length} ` +
+      `--slot ${slot} is out of range: ${label} holds ${games.length} ` +
         `game save(s) (0..${games.length - 1})`,
     );
   }
@@ -232,11 +271,11 @@ export async function loadSavLevel(
   const stageKey = wanted ?? populated[0] ?? DEFAULT_STAGE;
   const stage = stageOf(stageKey);
   if (!stage || !Array.isArray(stage.enemylist)) {
-    throw new Error(`${basename(path)} has no ${stageKey}`);
+    throw new Error(`${label} has no ${stageKey}`);
   }
   if (spawnCount(stage.enemylist) === 0) {
     throw new Error(
-      `${stageKey} of ${basename(path)} places no enemies` +
+      `${stageKey} of ${label} places no enemies` +
         (populated.length
           ? ` — try --stage ${populated.join(" / --stage ")}`
           : " (nor does any other stage)"),
@@ -261,7 +300,7 @@ export async function loadSavLevel(
     );
   }
 
-  const name = options.name?.trim() || savTitle(path);
+  const name = options.name?.trim() || savTitle(label);
   const record: LevelRecord = {
     name,
     stageKey,
@@ -286,5 +325,5 @@ export async function loadSavLevel(
       `${Object.keys(record.enemyData ?? {}).length} enemy types, ` +
       `${Object.keys(record.bossData ?? {}).length} bosses`,
   );
-  return { record, atlas, name, notes };
+  return { record, atlas, name, notes, game: gameJson, stageKey };
 }
