@@ -21,7 +21,10 @@ Flags: `--stage-only` (stage `www/` and stop — no native compile),
 `--out <dir>`, `--package-id <id>`, `--skip-bgm`,
 `--win-target <portable|nsis|zip|dir>` (default `portable` — one self-contained
 `.exe`, the closest thing to the AppImage), `--win-arch <x64|arm64|ia32>`
-(default `x64`, *not* the host arch), `--mac-target <dmg|zip|dir>` (default
+(default `x64`, *not* the host arch), `--linux-arch <x64|arm64|armv7l>`
+(default: this host's when building **on** Linux, `x64` when cross-building,
+where the host arch says nothing about where the AppImage will run),
+`--mac-target <dmg|zip|dir>` (default
 `dmg`), `--mac-arch <x64|arm64|universal>` (default this host's, since a Mac
 build only happens on a Mac), `--level-file <path>` (read the level from a local
 JSON file instead of Firebase).
@@ -56,6 +59,11 @@ game renders identically in the exported build.
 - **Node** on PATH (the route spawns `node`).
 - **Android:** cordova + Android SDK + Gradle + JDK, `ANDROID_SDK_ROOT`.
 - **Linux:** `electron-builder` toolchain (installed on demand into the build).
+  On a **Windows host** it also needs **WSL with `squashfs-tools`**: the AppImage
+  is assembled by `mksquashfs`, and every copy electron-builder ships is a Linux
+  binary Windows cannot execute, so `lib/appimage-bridge.js` points it at
+  `bin/mksquashfs.cmd`, which forwards the call into WSL. No distro, no
+  AppImage — the build refuses up front and says why.
 - **Windows:** the same electron-builder toolchain, plus `wine` on `PATH` when
   building from Linux/macOS — electron-builder rcedits the packaged `.exe`
   (icon + version resources) through it for every target, `zip` included.

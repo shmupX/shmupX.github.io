@@ -22,6 +22,10 @@
 //   --win-target <t>  Windows electron-builder target: portable (default,
 //                     one self-contained .exe), nsis, zip or dir.
 //   --win-arch <a>    Windows CPU architecture: x64 (default), arm64 or ia32.
+//   --linux-arch <a>  Linux CPU architecture: x64, arm64 or armv7l. Defaults
+//                     to this host's when building ON Linux, to x64 when
+//                     cross-building (where the host arch says nothing about
+//                     where the AppImage will run).
 //   --level-file <p>  Read the level record from a local JSON file instead of
 //                     Firebase (offline staging / tests).
 //
@@ -86,6 +90,7 @@ function parseArgs(argv) {
     "level-file",
     "win-target",
     "win-arch",
+    "linux-arch",
     "mac-target",
     "mac-arch",
     "editor-origin",
@@ -117,7 +122,7 @@ async function main() {
         "[--stage-only] [--out DIR] [--package-id ID] [--skip-bgm] " +
         "[--win-target portable|nsis|zip|dir] [--win-arch x64|arm64|ia32] " +
         "[--mac-target dmg|zip|dir] [--mac-arch x64|arm64|universal] " +
-        "[--level-file PATH]",
+        "[--linux-arch x64|arm64|armv7l] [--level-file PATH]",
     );
     process.exit(2);
   }
@@ -153,6 +158,14 @@ async function main() {
     (process.arch === "arm64" ? "arm64" : "x64");
   if (!["x64", "arm64", "universal"].includes(macArch)) {
     console.error("Unknown --mac-arch: " + macArch);
+    process.exit(2);
+  }
+  // Left undefined when not passed: run-electron.js is the one place that knows
+  // the default is host-dependent, and a second copy of that rule here would be
+  // one more thing to keep in sync.
+  const linuxArch = args.flags["linux-arch"];
+  if (linuxArch && !["x64", "arm64", "armv7l"].includes(linuxArch)) {
+    console.error("Unknown --linux-arch: " + linuxArch);
     process.exit(2);
   }
   // "all" stays the three platforms it always meant: adding windows or mac here
@@ -280,6 +293,7 @@ async function main() {
           winArch: winArch,
           macTarget: macTarget,
           macArch: macArch,
+          linuxArch: linuxArch,
         });
       } else {
         results[p] = await buildCordova({

@@ -8,14 +8,19 @@
 // vendored scaffold/ dir. main.js loads phaser-game.html over a custom app://
 // protocol, so the staged shell name matches.
 //
-// Cross-building: an AppImage needs a Linux host, ANY Windows target built from
-// Linux needs wine on PATH — electron-builder rcedits the packaged .exe (icon +
-// version resources) through it, before the target even matters — and a Mac app
-// needs a Mac: hdiutil builds the .dmg and codesign signs what goes in it.
+// Cross-building: an AppImage needs a Linux mksquashfs — a Linux host has one,
+// a Mac has electron-builder's own copy, and a Windows host borrows WSL's (see
+// lib/appimage-bridge.js, which is also what refuses the build when there is no
+// WSL to borrow from). ANY Windows target built from Linux needs wine on PATH —
+// electron-builder rcedits the packaged .exe (icon + version resources) through
+// it, before the target even matters — and a Mac app needs a Mac: hdiutil
+// builds the .dmg and codesign signs what goes in it.
 
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+
+const { appImageBridge } = require("./appimage-bridge");
 
 function copyFile(src, dst) {
   fs.mkdirSync(path.dirname(dst), { recursive: true });
@@ -62,12 +67,25 @@ async function buildElectron(opts) {
       "building the macOS app needs a macOS host (hdiutil + codesign).",
     );
   }
+  // Settled here rather than at the electron-builder call so a host that cannot
+  // finish an AppImage says so now, instead of after two npm installs and a
+  // full Electron download.
+  const bridge = platform === "linux" ? appImageBridge() : null;
+  if (bridge && !bridge.ok) throw new Error(bridge.reason);
+  if (bridge) console.log(bridge.note);
   const winTarget = opts.winTarget || "portable";
   // electron-builder otherwise packs for the *host* arch, which on an arm64
   // machine silently yields a win32-arm64 app almost nobody can run.
   const winArch = opts.winArch || "x64";
   const macTarget = opts.macTarget || "dmg";
   const macArch = opts.macArch || (process.arch === "arm64" ? "arm64" : "x64");
+  // Same trap as winArch, with one difference: a Linux target built ON Linux is
+  // normally meant for the machine that built it, so the host arch is the right
+  // default there. Cross-built from Windows or a Mac it says nothing about
+  // where the AppImage will run — this used to hand a Windows-on-ARM laptop a
+  // linux-arm64 AppImage — so x64 is what everyone else gets.
+  const linuxArch = opts.linuxArch ||
+    (process.platform === "linux" && process.arch === "arm64" ? "arm64" : "x64");
   const perfMode = opts.perfMode !== false;
   const electronSrc = path.join(scaffoldRoot, "electron");
   const electronDir = path.join(buildRoot, "electron");
@@ -138,9 +156,12 @@ async function buildElectron(opts) {
     ? ["--win", winTarget, "--" + winArch]
     : platform === "mac"
     ? ["--mac", macTarget, "--" + macArch]
-    : ["--linux", "AppImage"];
+    : ["--linux", "AppImage", "--" + linuxArch];
   run("npx", ["electron-builder"].concat(targetArgs, ["--publish", "never"]), {
     cwd: electronDir,
+    // MKSQUASHFS_PATH, on Windows, so app-builder reaches the WSL stand-in
+    // instead of a Linux binary it cannot exec. Nothing to add anywhere else.
+    env: Object.assign({}, process.env, (bridge && bridge.env) || {}),
   });
 
   const distDir = path.join(electronDir, "dist");

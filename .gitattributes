@@ -3,3 +3,8 @@
 *.sav binary
 *.bcr binary
 *.bkr binary
+
+# Batch files are only ever run by cmd.exe, which wants CRLF. autocrlf=true
+# already gives a Windows checkout that, but say it outright so a clone with
+# autocrlf off (or one made on Linux and copied over) gets it too.
+*.cmd text eol=crlf

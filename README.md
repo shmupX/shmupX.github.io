@@ -767,13 +767,20 @@ Own flags: `--sav <path>` (a cart anywhere on disk), `--slot <n>` and
 the app), `--offline` (this checkout only, no network), `--refresh` (re-decode
 rather than reuse the cache), `--list`. Everything else goes straight to
 `tools/build-level` (`--skip-bgm`, `--level-file`, `--package-id`,
-`--win-target`, `--mac-target`, `--stage-only`); `--arch` becomes its
-`--win-arch` / `--mac-arch`.
+`--win-target`, `--mac-target`, `--win-arch`, `--linux-arch`, `--stage-only`);
+`--arch` becomes its `--win-arch` / `--mac-arch`, but not its `--linux-arch` —
+this script's `--arch` defaults to the host's, and for a Linux target
+cross-built from Windows that is the wrong answer.
 
 Toolchains: all of this needs Node. Desktop targets need electron-builder, a
 **Windows build from Linux needs `wine` on `PATH`** — electron-builder rcedits
-the packaged `.exe` through it whatever the target is — and a **Mac build needs
-a Mac**, for `hdiutil` and `codesign`. `build:android` needs cordova and the
+the packaged `.exe` through it whatever the target is — a **Mac build needs
+a Mac**, for `hdiutil` and `codesign`, and an **AppImage built from Windows
+needs WSL** with `squashfs-tools` in it: electron-builder assembles the image
+with `mksquashfs`, and every copy it ships is a Linux binary Windows cannot run,
+so the build borrows the one inside WSL (see
+`tools/build-level/lib/appimage-bridge.js`). Without a distro the linux target
+refuses up front and says so, rather than failing several minutes in. `build:android` needs cordova and the
 Android SDK (`ANDROID_SDK_ROOT` is filled in from the default install path when
 it is unset) and produces a **debug-signed** APK. `build:ios` needs a Mac and
 stops at an Xcode project to archive — there is no `.ipa` at the end of it.

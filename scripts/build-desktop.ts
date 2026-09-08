@@ -110,6 +110,14 @@ const PASSTHROUGH_VALUE_FLAGS = new Set([
   "--win-target",
   "--mac-target",
   "--mac-arch",
+  // --win-arch belongs here too and never was: line 777 already reads it back
+  // out of passthrough, but without an entry here its value fell through as a
+  // bare argument and was taken for the level name. --linux-arch is the third
+  // of the set; unlike the other two, --arch is not translated into it (this
+  // script's --arch defaults to the host's, which for a Linux target built on
+  // Windows is exactly the wrong answer — see run-electron.js).
+  "--win-arch",
+  "--linux-arch",
 ]);
 
 interface Options {

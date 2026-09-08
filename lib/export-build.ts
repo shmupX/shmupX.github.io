@@ -722,7 +722,27 @@ export async function detectExportCapabilities(): Promise<ExportCapabilities> {
   platforms.android = ready && sdk !== null;
 
   platforms.ios = ready && Deno.build.os === "darwin";
-  platforms.linux = ready;
+  // electron-builder assembles the AppImage with mksquashfs. Linux has one and
+  // the toolchain carries a macOS one, but every copy it would reach for on
+  // Windows is a Linux binary that host cannot exec — so there the target is
+  // only available through WSL, which is exactly what
+  // tools/build-level/lib/appimage-bridge.js hands it.
+  if (ready) {
+    if (Deno.build.os !== "windows") platforms.linux = true;
+    else {
+      const squash = await commandVersion("wsl.exe", [
+        "-e",
+        "mksquashfs",
+        "-version",
+      ]);
+      platforms.linux = squash !== null;
+      if (!squash) {
+        notes.push(
+          "WSL + squashfs-tools not found (needed for AppImage builds)",
+        );
+      }
+    }
+  }
   // electron-builder rcedits a Windows .exe through wine on every other host.
   if (ready) {
     if (Deno.build.os === "windows") platforms.windows = true;

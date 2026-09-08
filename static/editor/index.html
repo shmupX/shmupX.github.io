@@ -10080,6 +10080,22 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             return record;
         }
 
+        // Why a build failed, out of the log tail the server sends with the
+        // error. /api/build-apk has always returned it and this panel has
+        // always dropped it, so "build-level exited 1" was the whole story a
+        // failed export ever told — the reason (a missing toolchain, a host
+        // that cannot build that target at all) sat one field away, unread.
+        // The status line holds one sentence, so take the one the tool writes
+        // for a target that threw and put the rest on the console.
+        function exportFailureReason(data) {
+            const tail = String((data && data.log) || '');
+            if (!tail.trim()) return '';
+            console.warn('[export] build output tail:\n' + tail);
+            const lines = tail.split('\n').map(l => l.trim()).filter(Boolean);
+            const said = lines.filter(l => /build failed:/i.test(l)).pop();
+            return said || lines[lines.length - 1] || '';
+        }
+
         async function exportGameToApk() {
             const statusEl = document.getElementById('export-apk-status');
             const setStatus = (msg, color) => {
@@ -10154,7 +10170,9 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                         await queueRemoteExport(name, setStatus);
                         return;
                     }
-                    setStatus('Export failed: ' + (data.error || ('HTTP ' + resp.status)), '#f87171');
+                    const why = exportFailureReason(data);
+                    setStatus('Export failed: ' + (data.error || ('HTTP ' + resp.status)) +
+                        (why ? ' — ' + why : ''), '#f87171');
                     return;
                 }
                 // A PS2 build lands on disk rather than in the browser, and the
