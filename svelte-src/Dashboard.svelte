@@ -38,7 +38,7 @@
     uninstallDezaGame,
     uninstallWebGame,
   } from '../static/eshop-library.js';
-  import { listDezaShelf, onDezaShelfChanged } from '../static/deza-shelf.js';
+  import { backfillDezaShelfCovers, listDezaShelf, onDezaShelfChanged } from '../static/deza-shelf.js';
   // The remote export queue: builds queued from this browser (the editor it
   // embeds queues them) for a desktop to make, and this machine's own build
   // server when it is a local install. Shared with the editor the same way —
@@ -1360,6 +1360,12 @@
   async function refreshDezaShelf() {
     try { dezaShelfRows = ((await listDezaShelf()) || []).map(dezaShelfRowOf); }
     catch (_) { dezaShelfRows = []; }
+    // Rows filed before covers existed still show the "YOUR EXPORT" text card.
+    // Render their title screens from the carts themselves and re-file them;
+    // each one that lands notifies the shelf, which brings us back through
+    // here, so they fade in one by one. Free once the shelf is covered, and a
+    // failure leaves the row exactly as it is (static/deza-shelf.js).
+    backfillDezaShelfCovers().catch(() => {});
   }
 
   // --- online 2P presence -------------------------------------------------

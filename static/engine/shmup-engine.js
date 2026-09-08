@@ -3236,6 +3236,365 @@ function decodeSave(payload) {
   return result;
 }
 
+// packages/shmup-engine/src/cover/compose-cover.js
+var COVER_W = 256;
+var COVER_H = 480;
+var TILE = 16;
+var BG_X = 16;
+var BG_SCREEN_ROWS = COVER_H / TILE;
+var TITLE_BLOCK = { first: 144, w: 8, h: 11 };
+var TITLE_SCALE = 2;
+var TITLE_Y = 40;
+var BACKDROP_DIM = 0.45;
+var DARK_INK_LUMA = 40;
+var DARK_INK_MAX = 0.65;
+var PLATE_RGB = [176, 176, 176];
+function makeCanvas(w, h, rgb = [0, 0, 0]) {
+  const px = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    px[i * 4] = rgb[0];
+    px[i * 4 + 1] = rgb[1];
+    px[i * 4 + 2] = rgb[2];
+    px[i * 4 + 3] = 255;
+  }
+  return px;
+}
+function blit(dst, dw, dh, src, sw, sh, dx, dy, opts = {}) {
+  const { scale = 1, hflip = false, vflip = false } = opts;
+  for (let y = 0; y < sh * scale; y++) {
+    const ty = dy + y;
+    if (ty < 0 || ty >= dh) continue;
+    let sy = y / scale | 0;
+    if (vflip) sy = sh - 1 - sy;
+    for (let x = 0; x < sw * scale; x++) {
+      const tx = dx + x;
+      if (tx < 0 || tx >= dw) continue;
+      let sx = x / scale | 0;
+      if (hflip) sx = sw - 1 - sx;
+      const so = (sy * sw + sx) * 4;
+      const a = src[so + 3];
+      if (!a) continue;
+      const to = (ty * dw + tx) * 4;
+      if (a === 255) {
+        dst[to] = src[so];
+        dst[to + 1] = src[so + 1];
+        dst[to + 2] = src[so + 2];
+        dst[to + 3] = 255;
+      } else {
+        const ia = 255 - a;
+        dst[to] = (src[so] * a + dst[to] * ia) / 255;
+        dst[to + 1] = (src[so + 1] * a + dst[to + 1] * ia) / 255;
+        dst[to + 2] = (src[so + 2] * a + dst[to + 2] * ia) / 255;
+        dst[to + 3] = Math.max(dst[to + 3], a);
+      }
+    }
+  }
+}
+function dim(px, f) {
+  for (let i = 0; i < px.length; i += 4) {
+    px[i] *= f;
+    px[i + 1] *= f;
+    px[i + 2] *= f;
+  }
+}
+function readBankBlock(sec5, first, w, h) {
+  const { offset } = SEC5_REGIONS.spriteBank;
+  const cells = [];
+  for (let i = 0; i < w * h; i++) {
+    const at = offset + (first + i) * 2;
+    const word = sec5[at] << 8 | sec5[at + 1];
+    cells.push({
+      empty: word === 65535,
+      cell: word & 1023,
+      hflip: (word & 16384) !== 0,
+      vflip: (word & 32768) !== 0
+    });
+  }
+  return { w, h, cells };
+}
+function renderTitlePage(decoded, block = TITLE_BLOCK) {
+  const sec5 = decoded.sections?.[5]?.decompressed;
+  const pages = decoded.sections?.slice(0, 4).map((s) => s.decompressed);
+  const palettes = decoded.cg?.palettes;
+  if (!sec5 || !palettes || !pages || pages.some((p) => !p)) return null;
+  return renderFrame(
+    pages,
+    palettes,
+    readBankBlock(sec5, block.first, block.w, block.h)
+  );
+}
+function imgInk(img) {
+  let minX = img.w, minY = img.h, maxX = -1, maxY = -1, n = 0, luma = 0;
+  for (let y = 0; y < img.h; y++) {
+    for (let x = 0; x < img.w; x++) {
+      const o = (y * img.w + x) * 4;
+      if (!img.rgba[o + 3]) continue;
+      n++;
+      luma += 0.299 * img.rgba[o] + 0.587 * img.rgba[o + 1] + 0.114 * img.rgba[o + 2];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (!n) return null;
+  return { minX, minY, maxX, maxY, opaque: n, meanLuma: luma / n };
+}
+function pickBackdrop(bgStages) {
+  let best = { stage: -1, row: 0, tiles: 0 };
+  for (let s = 0; s < bgStages.length; s++) {
+    const g = bgStages[s];
+    if (!g) continue;
+    const perRow = new Int32Array(g.rows);
+    for (let r = 0; r < g.rows; r++) {
+      let n = 0;
+      for (let c = 0; c < g.cols; c++) {
+        if (g.words[r * g.cols + c] !== 65535) n++;
+      }
+      perRow[r] = n;
+    }
+    const win = Math.min(BG_SCREEN_ROWS, g.rows);
+    let sum = 0;
+    for (let r = 0; r < win; r++) sum += perRow[r];
+    let bestRow = 0, bestSum = sum;
+    for (let r0 = 1; r0 + win <= g.rows; r0++) {
+      sum += perRow[r0 + win - 1] - perRow[r0 - 1];
+      if (sum > bestSum) {
+        bestSum = sum;
+        bestRow = r0;
+      }
+    }
+    if (bestSum > best.tiles) best = { stage: s, row: bestRow, tiles: bestSum };
+  }
+  return best;
+}
+function drawBackdrop(canvas, decoded, stageIdx, row0 = 0) {
+  const g = decoded.bgStages[stageIdx];
+  if (!g) return 0;
+  let drawn = 0;
+  const rows = Math.min(BG_SCREEN_ROWS, g.rows - row0);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < g.cols; c++) {
+      const word = g.words[(row0 + r) * g.cols + c];
+      if (word === 65535) continue;
+      const cell = decoded.bgCells[word & 1023];
+      if (!cell) continue;
+      blit(
+        canvas,
+        COVER_W,
+        COVER_H,
+        cell.rgba,
+        cell.w,
+        cell.h,
+        BG_X + c * TILE,
+        (BG_SCREEN_ROWS - 1 - r) * TILE,
+        { hflip: (word & 32768) !== 0, vflip: (word & 16384) !== 0 }
+      );
+      drawn++;
+    }
+  }
+  return drawn;
+}
+function bestBossSprite(decoded) {
+  let best = null, area = 0;
+  for (const b of decoded.bosses || []) {
+    const k = (b.spriteKeys || [])[0];
+    const s = k === void 0 ? null : decoded.sprites[k];
+    if (s && s.w * s.h > area) {
+      area = s.w * s.h;
+      best = s;
+    }
+  }
+  return best;
+}
+function enemyStrip(decoded, max = 12) {
+  const seen = /* @__PURE__ */ new Set(), out = [];
+  for (const e of decoded.enemies || []) {
+    const k = (e.spriteKeys || [])[0];
+    if (k === void 0 || seen.has(k)) continue;
+    const s = decoded.sprites[k];
+    if (!s) continue;
+    seen.add(k);
+    out.push(s);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+function composeCover(decoded, opts = {}) {
+  const {
+    dimFactor = BACKDROP_DIM,
+    titleScale = TITLE_SCALE,
+    titleY = TITLE_Y,
+    upscale = 1,
+    backdrop = true
+  } = opts;
+  let canvas = makeCanvas(COVER_W, COVER_H);
+  const layers = [];
+  const pick = backdrop ? pickBackdrop(decoded.bgStages || []) : { stage: -1, row: 0, tiles: 0 };
+  let bgTiles = 0;
+  if (pick.stage >= 0) {
+    bgTiles = drawBackdrop(canvas, decoded, pick.stage, pick.row);
+    layers.push({
+      layer: "backdrop",
+      stage: pick.stage,
+      row: pick.row,
+      tiles: bgTiles
+    });
+  }
+  const page = renderTitlePage(decoded);
+  const ink = page ? imgInk(page) : null;
+  const hasTitle = !!ink;
+  if (bgTiles && hasTitle) dim(canvas, dimFactor);
+  if (hasTitle) {
+    const pageX = Math.round(COVER_W / 2 - page.w * titleScale / 2);
+    let darkInk = 0, behindDark = 0, seen = 0;
+    for (let y = 0; y < page.h; y++) {
+      for (let x = 0; x < page.w; x++) {
+        const so = (y * page.w + x) * 4;
+        if (!page.rgba[so + 3]) continue;
+        const li = 0.299 * page.rgba[so] + 0.587 * page.rgba[so + 1] + 0.114 * page.rgba[so + 2];
+        if (li < DARK_INK_LUMA) darkInk++;
+        const tx = pageX + x * titleScale, ty = titleY + y * titleScale;
+        if (tx < 0 || tx >= COVER_W || ty < 0 || ty >= COVER_H) continue;
+        const to = (ty * COVER_W + tx) * 4;
+        seen++;
+        const lb = 0.299 * canvas[to] + 0.587 * canvas[to + 1] + 0.114 * canvas[to + 2];
+        if (lb < DARK_INK_LUMA) behindDark++;
+      }
+    }
+    const darkInkFraction = darkInk / ink.opaque;
+    const darkBehindFraction = seen ? behindDark / seen : 1;
+    if (darkInkFraction > DARK_INK_MAX && darkBehindFraction > 0.5) {
+      const rx = pageX + ink.minX * titleScale - 4;
+      const ry = titleY + ink.minY * titleScale - 4;
+      const rw = (ink.maxX - ink.minX + 1) * titleScale + 8;
+      const rh = (ink.maxY - ink.minY + 1) * titleScale + 8;
+      for (let y = Math.max(0, ry); y < Math.min(COVER_H, ry + rh); y++) {
+        for (let x = Math.max(0, rx); x < Math.min(COVER_W, rx + rw); x++) {
+          const o = (y * COVER_W + x) * 4;
+          canvas[o] = PLATE_RGB[0];
+          canvas[o + 1] = PLATE_RGB[1];
+          canvas[o + 2] = PLATE_RGB[2];
+        }
+      }
+      layers.push({
+        layer: "plate",
+        darkInkFraction: +darkInkFraction.toFixed(3),
+        darkBehindFraction: +darkBehindFraction.toFixed(3),
+        meanLuma: +ink.meanLuma.toFixed(1)
+      });
+    }
+    blit(canvas, COVER_W, COVER_H, page.rgba, page.w, page.h, pageX, titleY, {
+      scale: titleScale
+    });
+    layers.push({
+      layer: "titlePage",
+      w: page.w,
+      h: page.h,
+      scale: titleScale,
+      opaque: ink.opaque,
+      meanLuma: +ink.meanLuma.toFixed(1)
+    });
+  } else {
+    const boss = bestBossSprite(decoded);
+    if (boss) {
+      const k = Math.max(1, Math.min(224 / boss.w | 0, 300 / boss.h | 0));
+      if (bgTiles) dim(canvas, dimFactor);
+      blit(
+        canvas,
+        COVER_W,
+        COVER_H,
+        boss.rgba,
+        boss.w,
+        boss.h,
+        Math.round(COVER_W / 2 - boss.w * k / 2),
+        Math.round(190 - boss.h * k / 2),
+        { scale: k }
+      );
+      layers.push({
+        layer: "fallback-boss",
+        key: boss.key,
+        w: boss.w,
+        h: boss.h,
+        scale: k
+      });
+    }
+    const strip = enemyStrip(decoded);
+    if (strip.length) {
+      if (!boss && bgTiles) dim(canvas, dimFactor);
+      const CELL = 56, PER_ROW = 4;
+      const rows = Math.ceil(strip.length / PER_ROW);
+      const x0 = Math.round(COVER_W / 2 - PER_ROW * CELL / 2);
+      const y0 = Math.round(340 - rows * CELL / 2);
+      strip.forEach((s, i) => {
+        const k = Math.max(
+          1,
+          Math.min((CELL - 4) / s.w | 0, (CELL - 4) / s.h | 0)
+        );
+        blit(
+          canvas,
+          COVER_W,
+          COVER_H,
+          s.rgba,
+          s.w,
+          s.h,
+          Math.round(x0 + i % PER_ROW * CELL + CELL / 2 - s.w * k / 2),
+          Math.round(y0 + (i / PER_ROW | 0) * CELL + CELL / 2 - s.h * k / 2),
+          { scale: k }
+        );
+      });
+      layers.push({ layer: "fallback-enemies", count: strip.length });
+    }
+    if (!boss && !strip.length && !bgTiles && decoded.cg?.pages?.[0]) {
+      const p = decoded.cg.pages[0];
+      blit(canvas, COVER_W, COVER_H, p.rgba, p.width, p.height, 64, 0);
+      layers.push({ layer: "fallback-cgpage", w: p.width, h: p.height });
+    }
+  }
+  let w = COVER_W, h = COVER_H;
+  if (upscale > 1) {
+    const up = makeCanvas(COVER_W * upscale, COVER_H * upscale);
+    blit(
+      up,
+      COVER_W * upscale,
+      COVER_H * upscale,
+      canvas,
+      COVER_W,
+      COVER_H,
+      0,
+      0,
+      { scale: upscale }
+    );
+    canvas = up;
+    w *= upscale;
+    h *= upscale;
+  }
+  return {
+    w,
+    h,
+    rgba: canvas,
+    layers,
+    backdropStage: pick.stage,
+    backdropRow: pick.row,
+    hasTitleArt: hasTitle
+  };
+}
+function inkStats(rgba) {
+  let ink = 0, lumaSum = 0, alpha = 0;
+  const n = rgba.length / 4;
+  for (let i = 0; i < rgba.length; i += 4) {
+    lumaSum += 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
+    if (rgba[i] || rgba[i + 1] || rgba[i + 2]) ink++;
+    if (rgba[i + 3]) alpha++;
+  }
+  return {
+    pixels: n,
+    inkFraction: ink / n,
+    alphaFraction: alpha / n,
+    meanLuma: lumaSum / n
+  };
+}
+
 // packages/shmup-engine/src/model/mesh-library.js
 var LIBRARY_MESH_COUNT = 224;
 var COLOR_SETS = 3;
@@ -6408,13 +6767,26 @@ function buildSaveFromGame(level, art, options = {}) {
   });
   const blastAKeys = blastFrames(16).map((f, i) => planFrame(`blastA:${i}`, f, 16, 16, "blast", 3));
   const blastBKeys = blastFrames(32).map((f, i) => planFrame(`blastB:${i}`, f, 32, 32, "blast", 3));
-  const hasTitle1 = !!(opts.title1 && opts.title1.rgba);
-  const hasTitle2 = !!(opts.title2 && opts.title2.rgba);
+  const titleLayout = level.dezaemonTitleScreen && level.dezaemonTitleScreen.layout || {};
+  const drawnTitle = (role) => lookup(level.dezaemonTitle && level.dezaemonTitle[role]);
   const titleW = TITLE_SLOTS.title1.w * CG_CELL, titleH = TITLE_SLOTS.title1.h * CG_CELL;
   const subtitleH = CG_CELL;
+  const uploaded1 = opts.title1 && opts.title1.rgba ? opts.title1 : null;
+  const uploaded2 = opts.title2 && opts.title2.rgba ? opts.title2 : null;
+  const title1Art = uploaded1 || drawnTitle("title1");
+  const title2Art = uploaded2 || drawnTitle("title2");
+  const hasTitle1 = !!title1Art;
+  const hasTitle2 = !!title2Art;
+  const placed = (art2, role, box) => {
+    const at = !uploaded1 && !uploaded2 ? titleLayout[role] : null;
+    if (at && Number.isInteger(at.x) && Number.isInteger(at.y)) {
+      return placeRgba(art2, Math.min(art2.w, titleW), Math.min(art2.h, titleH), titleW, titleH, at.x, at.y);
+    }
+    return box ? placeRgba(art2, titleW, box.h, titleW, titleH, 0, box.y) : art2;
+  };
   const title1Key = hasTitle1 ? planFrame(
     "title1",
-    hasTitle2 ? placeRgba(opts.title1, titleW, titleH - subtitleH, titleW, titleH, 0, 0) : opts.title1,
+    placed(title1Art, "title1", hasTitle2 ? { h: titleH - subtitleH, y: 0 } : null),
     titleW,
     titleH,
     "title1",
@@ -6422,12 +6794,20 @@ function buildSaveFromGame(level, art, options = {}) {
   ) : null;
   const title2Key = hasTitle2 ? planFrame(
     "title2",
-    hasTitle1 ? placeRgba(opts.title2, titleW, subtitleH, titleW, titleH, 0, titleH - subtitleH) : opts.title2,
+    placed(title2Art, "title2", hasTitle1 ? { h: subtitleH, y: titleH - subtitleH } : null),
     titleW,
     titleH,
     "title2",
     4
   ) : null;
+  const stripW = TITLE_SLOTS.credits[0].w * CG_CELL, stripH = TITLE_SLOTS.credits[0].h * CG_CELL;
+  const creditKeys = TITLE_SLOTS.credits.map((_slot, i) => {
+    const art2 = drawnTitle(`credit${i}`);
+    if (!art2) return null;
+    const at = titleLayout.credits && titleLayout.credits[i];
+    const frame = at && Number.isInteger(at.x) && Number.isInteger(at.y) ? placeRgba(art2, Math.min(art2.w, stripW), Math.min(art2.h, stripH), stripW, stripH, at.x, at.y) : art2;
+    return planFrame(`credit${i}`, frame, stripW, stripH, "credits", 4);
+  });
   const pd = level.playerData || {};
   const shotFrames = [];
   const seenShots = /* @__PURE__ */ new Set();
@@ -6499,6 +6879,7 @@ function buildSaveFromGame(level, art, options = {}) {
     const r = key ? refsByKey.get(key) : null;
     return r || new Uint16Array(count).fill(EMPTY_REF);
   };
+  const painted = (key) => !!(key && refsByKey.get(key));
   const sec5 = new Uint8Array(SECTION_SIZES[5]);
   const putWord = (at, w) => {
     sec5[at] = w >> 8;
@@ -6592,6 +6973,11 @@ function buildSaveFromGame(level, art, options = {}) {
   }
   if (title1Key) putRefs(TITLE_SLOTS.title1.first, refsOf(title1Key, 32));
   if (title2Key) putRefs(TITLE_SLOTS.title2.first, refsOf(title2Key, 32));
+  creditKeys.forEach((key, i) => {
+    if (!key) return;
+    const slot = TITLE_SLOTS.credits[i];
+    putRefs(slot.first, refsOf(key, slot.w * slot.h));
+  });
   const bgm = level.dezaemonBgm && typeof level.dezaemonBgm === "object" ? level.dezaemonBgm : null;
   const bgmTable = new Array(24).fill(0);
   if (bgm) {
@@ -6670,7 +7056,17 @@ function buildSaveFromGame(level, art, options = {}) {
       frames: planned.length,
       cells: packer.used,
       sharedCells: packer.shared,
-      title: { title1: !!title1Key, title2: !!title2Key }
+      title: {
+        // What actually landed on the cart, not what was planned: on a
+        // save dense enough to fill the CG pages the packer drops these
+        // last and says so, and the report must agree with the bytes.
+        title1: painted(title1Key),
+        title2: painted(title2Key),
+        credits: creditKeys.filter(painted).length,
+        // Where the art came from, so a caller can say whether the cart
+        // kept its own title screen or wears an uploaded one.
+        source: uploaded1 || uploaded2 ? "uploaded" : painted(title1Key) || painted(title2Key) ? "cart" : "none"
+      }
     }
   };
 }
@@ -7052,6 +7448,8 @@ export {
   CG_CELL_BYTES,
   CG_CELL_CAPACITY,
   COLOR_SETS,
+  COVER_H,
+  COVER_W,
   CgFullError,
   CgPacker,
   DEFAULT_BOSS_PATTERNS,
@@ -7146,6 +7544,7 @@ export {
   cellsToIndexed,
   coalesceDiffRanges,
   colorHistogram,
+  composeCover,
   composeTransform,
   compress,
   compressCmp,
@@ -7188,6 +7587,7 @@ export {
   gunzip,
   indexedToCells,
   indexedToRgbaWith,
+  inkStats,
   instrumentAt,
   interleave,
   internalRamFromImage,
@@ -7234,6 +7634,7 @@ export {
   quantizeRotation,
   readExtent,
   readFile,
+  renderTitlePage,
   rgb555ToHex,
   rgb555ToRgb,
   rgb8ToRgb555,

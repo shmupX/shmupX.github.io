@@ -232,6 +232,12 @@ export async function buildSav(
   // The drawn title screen: the level's logo and subtitle images, if any.
   // PNG and GIF data URLs decode here (the editor stores logos as either);
   // a JPEG logo leaves its slot unpainted.
+  //
+  // A record decoded from a cart has neither — its title lives in
+  // `dezaemonTitle` as atlas frame names, which the writer reads for itself
+  // (buildSaveFromGame) when nothing is passed here. That is what carries a
+  // Dezaemon game's own title and credits through the round trip; `report.title`
+  // says which of the two the cart came out wearing.
   const titleArt = async (dataUrl: string | null | undefined, what: string) => {
     if (!dataUrl) return null;
     try {
@@ -276,6 +282,26 @@ export async function buildSav(
     title2,
     itemEmblems,
   });
+  const t = result.report.title;
+  log(
+    t.source === "none"
+      ? "title: no title screen — this cart boots on the runtime's own logo"
+      : `title: ${
+        t.source === "cart"
+          ? "the game's own drawn title page"
+          : "the level's uploaded logo art"
+      }` +
+        ` (${
+          [t.title1 && "TITLE 1", t.title2 && "TITLE 2"].filter(Boolean).join(
+            " + ",
+          ) || "no logo"
+        }` +
+        `${
+          t.credits
+            ? `, ${t.credits} credit strip${t.credits === 1 ? "" : "s"}`
+            : ""
+        })`,
+  );
   for (const w of result.warnings) log(`warning: ${w}`);
 
   const fileName = savFileName(record.name || options.level || "game");

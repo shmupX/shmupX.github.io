@@ -691,6 +691,11 @@ export function puffSprite(size = 16) {
  * `title1` / `title2` ({w, h, rgba} logos for the drawn title screen),
  * `useBackground` (pack imported scenery; default true).
  *
+ * With no `title1`/`title2` the title screen is taken from the level's own
+ * `dezaemonTitle` (role -> atlas frame name) and `dezaemonTitleScreen.layout`,
+ * which is what lets a cart imported from a .sav keep its title and credits
+ * when it is written back out.
+ *
  * Returns {sections, bank, warnings, report}.
  */
 export function buildSaveFromGame(level, art, options = {}) {
@@ -988,19 +993,58 @@ export function buildSaveFromGame(level, art, options = {}) {
     });
     const blastAKeys = blastFrames(16).map((f, i) => planFrame(`blastA:${i}`, f, 16, 16, "blast", 3));
     const blastBKeys = blastFrames(32).map((f, i) => planFrame(`blastB:${i}`, f, 32, 32, "blast", 3));
+    // THE DRAWN TITLE SCREEN.
+    //
+    // Two sources, in this order:
+    //
+    //   1. `opts.title1` / `opts.title2` — an image the author put in the
+    //      TITLE EDITOR (or a cloud level's logoDataURL / subTitleDataURL).
+    //   2. `level.dezaemonTitle` — the title a save this game was IMPORTED
+    //      from already had, as atlas frame names ("dezaTitle1.gif") that
+    //      `art` carries the pixels for.
+    //
+    // (2) is why a cart survives the round trip. Without it, a Dezaemon save
+    // opened in the editor and written back out came away with an empty title
+    // page — the author never uploaded a logo, so both options were null — and
+    // the runtime, finding no `dezaemonTitle` when it read that cart back,
+    // fell through to 2028-AI's own logo and title background. The game showed
+    // the base game's title screen instead of its own.
+    //
+    // The credit strips (refs 208-231, six 64x16 lines under the logo) come
+    // from the same place and were never written at all, so KUMITATE's credits
+    // vanished on the first re-export too. `dezaemonTitleScreen.layout` records
+    // where each trimmed piece sat inside its slot, so the art goes back where
+    // its author put it rather than centred.
+    const titleLayout = (level.dezaemonTitleScreen && level.dezaemonTitleScreen.layout) || {};
+    const drawnTitle = (role) => lookup(level.dezaemonTitle && level.dezaemonTitle[role]);
     // The two title logos share one anchor on the Saturn — both 128x64 slots
     // are drawn at 2x centred on (160,80) — so a level with both gets the
     // logo in the top 48 rows of its slot and the subtitle in the bottom 16,
     // stacked the way the runtime's title scene shows them, instead of the
-    // two landing centred on top of each other.
-    const hasTitle1 = !!(opts.title1 && opts.title1.rgba);
-    const hasTitle2 = !!(opts.title2 && opts.title2.rgba);
+    // two landing centred on top of each other. Art that comes back from a
+    // cart keeps its recorded placement instead, which is that stacking as its
+    // author actually drew it.
     const titleW = TITLE_SLOTS.title1.w * CG_CELL, titleH = TITLE_SLOTS.title1.h * CG_CELL;
     const subtitleH = CG_CELL;
+    const uploaded1 = opts.title1 && opts.title1.rgba ? opts.title1 : null;
+    const uploaded2 = opts.title2 && opts.title2.rgba ? opts.title2 : null;
+    const title1Art = uploaded1 || drawnTitle("title1");
+    const title2Art = uploaded2 || drawnTitle("title2");
+    const hasTitle1 = !!title1Art;
+    const hasTitle2 = !!title2Art;
+    // Trimmed art with a recorded home goes back at those coordinates; an
+    // uploaded image (no placement to honour) keeps the stacking rule above.
+    const placed = (art, role, box) => {
+        const at = !uploaded1 && !uploaded2 ? titleLayout[role] : null;
+        if (at && Number.isInteger(at.x) && Number.isInteger(at.y)) {
+            return placeRgba(art, Math.min(art.w, titleW), Math.min(art.h, titleH), titleW, titleH, at.x, at.y);
+        }
+        return box ? placeRgba(art, titleW, box.h, titleW, titleH, 0, box.y) : art;
+    };
     const title1Key = hasTitle1
         ? planFrame(
             "title1",
-            hasTitle2 ? placeRgba(opts.title1, titleW, titleH - subtitleH, titleW, titleH, 0, 0) : opts.title1,
+            placed(title1Art, "title1", hasTitle2 ? { h: titleH - subtitleH, y: 0 } : null),
             titleW,
             titleH,
             "title1",
@@ -1010,13 +1054,29 @@ export function buildSaveFromGame(level, art, options = {}) {
     const title2Key = hasTitle2
         ? planFrame(
             "title2",
-            hasTitle1 ? placeRgba(opts.title2, titleW, subtitleH, titleW, titleH, 0, titleH - subtitleH) : opts.title2,
+            placed(title2Art, "title2", hasTitle1 ? { h: subtitleH, y: titleH - subtitleH } : null),
             titleW,
             titleH,
             "title2",
             4,
         )
         : null;
+    // The six credit strips, each 4x1 cells. Only the ones the game actually
+    // carries: an unpainted slot must stay unpainted or a re-import reads six
+    // blank lines as credits.
+    const stripW = TITLE_SLOTS.credits[0].w * CG_CELL, stripH = TITLE_SLOTS.credits[0].h * CG_CELL;
+    const creditKeys = TITLE_SLOTS.credits.map((_slot, i) => {
+        const art = drawnTitle(`credit${i}`);
+        if (!art) return null;
+        const at = titleLayout.credits && titleLayout.credits[i];
+        const frame = at && Number.isInteger(at.x) && Number.isInteger(at.y)
+            ? placeRgba(art, Math.min(art.w, stripW), Math.min(art.h, stripH), stripW, stripH, at.x, at.y)
+            : art;
+        // Their own group, and the same lowest priority as the logos: on a cart
+        // dense enough to fill the 1024 CG cells these are what the packer gives
+        // up first, and the warning should name them rather than the title.
+        return planFrame(`credit${i}`, frame, stripW, stripH, "credits", 4);
+    });
 
     // The player's weapon art (refs 48-93, GLOBAL_WEAPON_SLOTS): the level's
     // own projectile frames where it has them — shootNormal / shoot3way /
@@ -1111,6 +1171,8 @@ export function buildSaveFromGame(level, art, options = {}) {
         const r = key ? refsByKey.get(key) : null;
         return r || new Uint16Array(count).fill(EMPTY_REF);
     };
+    /** True when a planned frame really got cells — the CG pages can fill up. */
+    const painted = (key) => !!(key && refsByKey.get(key));
 
     // --- sec5 ---
     const sec5 = new Uint8Array(SECTION_SIZES[5]);
@@ -1216,6 +1278,11 @@ export function buildSaveFromGame(level, art, options = {}) {
     }
     if (title1Key) putRefs(TITLE_SLOTS.title1.first, refsOf(title1Key, 32));
     if (title2Key) putRefs(TITLE_SLOTS.title2.first, refsOf(title2Key, 32));
+    creditKeys.forEach((key, i) => {
+        if (!key) return;
+        const slot = TITLE_SLOTS.credits[i];
+        putRefs(slot.first, refsOf(key, slot.w * slot.h));
+    });
 
     // Settings.
     const bgm = level.dezaemonBgm && typeof level.dezaemonBgm === "object" ? level.dezaemonBgm : null;
@@ -1297,7 +1364,19 @@ export function buildSaveFromGame(level, art, options = {}) {
             frames: planned.length,
             cells: packer.used,
             sharedCells: packer.shared,
-            title: { title1: !!title1Key, title2: !!title2Key },
+            title: {
+                // What actually landed on the cart, not what was planned: on a
+                // save dense enough to fill the CG pages the packer drops these
+                // last and says so, and the report must agree with the bytes.
+                title1: painted(title1Key),
+                title2: painted(title2Key),
+                credits: creditKeys.filter(painted).length,
+                // Where the art came from, so a caller can say whether the cart
+                // kept its own title screen or wears an uploaded one.
+                source: (uploaded1 || uploaded2)
+                    ? "uploaded"
+                    : (painted(title1Key) || painted(title2Key) ? "cart" : "none"),
+            },
         },
     };
 }

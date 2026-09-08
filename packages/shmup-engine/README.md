@@ -98,6 +98,16 @@ The root module (`mod.js`) flat-exports the surface the level editor binds as
   `BLANK_WAVES`, `FRAMES_PER_SOURCE_ROW`, `PLAYER_SHOT_DAMAGE_BY_LEVEL`,
   `ENGINE_SHOT_DAMAGE`, `ENEMY_BULLET_SPEED`
 - **`./src/decode/index.js`** — `decodeSave`
+- **`./src/cover/compose-cover.js`** — `composeCover`, `COVER_W`, `COVER_H`,
+  `renderTitlePage`, `inkStats`: a decoded save → the 256×480 title-screen shot
+  every shelf in the app wears, as raw RGBA (the caller encodes it — Deno with
+  `jsr:@img/png`, a browser with a canvas). The drawn KUMITATE TITLE page over
+  the busiest screenful of the game's own scenery, falling back to the biggest
+  boss, then a strip of enemies, then CG page 0, so every save gets a picture of
+  itself. The drawing internals (`blit`, `makeCanvas`, `drawBackdrop`,
+  `pickBackdrop`, `readBankBlock`, `imgInk`, the geometry constants) stay behind
+  the `./cover` subpath — their names are too general for a flat surface that
+  becomes `window.Dezaemon`.
 - **`./src/decode/decode-model.js`** — `decodeModels` (sec7, the ポリ吉 3D
   compositions), `MODEL_SLOTS`, `SEC7_MAGIC`, `SHAPE_FAMILIES`,
   `FAMILY_MESH_COUNTS`, `FAMILY_FILE_RANGES`
@@ -144,6 +154,15 @@ The root module (`mod.js`) flat-exports the surface the level editor binds as
 - **`./src/write/export-sav.js`** — `exportLevelToSav`, `savFileName`,
   `savComment`
 
+`buildSaveFromGame` paints the drawn title screen from `title1`/`title2` when
+the caller has images (the editor's TITLE EDITOR uploads), and otherwise from
+the level's own `dezaemonTitle` + `dezaemonTitleScreen.layout` — the atlas frame
+names and slot placements `mapSaveToGame` produced when the game was imported
+from a cart. That fallback, plus the six credit strips it writes alongside, is
+what lets a community save go import → export → play without losing its title
+to the host runtime's own. `report.title.source` is `"cart"`, `"uploaded"` or
+`"none"`.
+
 The deeper decoder internals (per-section decoders, player art, and so on) are
 importable through subpath exports: `@shmupx/shmup-engine/decode`,
 `.../map-to-game`, `.../bup-parse`, `.../bup-source`, `.../bup-deinterleave`,
@@ -151,7 +170,7 @@ importable through subpath exports: `@shmupx/shmup-engine/decode`,
 `.../player-art`, `.../player2-art`, `.../diff-ranges`, `.../tone-bank`,
 `.../iso9660-read`, `.../mesh-library`, `.../decode-mdldt`, `.../model-mesh`,
 `.../compress`, `.../bup-write`, `.../palette-target`, `.../cg-pack`,
-`.../game-to-save`, `.../export-sav`.
+`.../game-to-save`, `.../export-sav`, `.../cover`.
 
 `FORMAT.md` documents the reverse-engineered save format; `games-db.json` is the
 catalog of known community games.

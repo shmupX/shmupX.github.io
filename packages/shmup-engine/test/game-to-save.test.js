@@ -522,3 +522,88 @@ Deno.test("exportLevelToSav wraps it all into a MiSTer cart named the collection
   assertStrictEquals(decoded.enemies.length, 2);
   assertEquals(out.report.stages[0].boss.sizeClass, 3);
 });
+
+// A cart the editor imported and wrote straight back out has to come back the
+// same game — that is what the shelf plays and what a desktop/APK build stages
+// from. It did not: the writer painted TITLE 1/2 only from an image the author
+// had uploaded, and a .sav import never has one, so the drawn title page and
+// the six credit strips were dropped on the floor. Re-imported, such a cart had
+// no `dezaemonTitle` for the runtime's title scene to gate on, and 2028-AI's
+// own logo and background were drawn over somebody else's game.
+Deno.test("a cart keeps its own drawn title and credits on the way back out", async () => {
+  const withTitle = {
+    ...level(),
+    // What mapSaveToGame writes for an imported save: roles -> atlas frames,
+    // plus where each trimmed piece sat inside its 128x64 / 64x16 slot.
+    dezaemonTitle: {
+      title1: "dezaTitle1.gif",
+      title2: "dezaTitle2.gif",
+      credit1: "dezaCredit1.gif",
+      credit5: "dezaCredit5.gif",
+    },
+    dezaemonTitleScreen: {
+      layout: {
+        title1: { x: 8, y: 17, w: 120, h: 44 },
+        title2: { x: 1, y: 0, w: 127, h: 48 },
+        credits: [null, { x: 0, y: 0, w: 64, h: 16 }, null, null, null, {
+          x: 0,
+          y: 0,
+          w: 64,
+          h: 16,
+        }],
+      },
+    },
+  };
+  const titleArt = {
+    ...art(),
+    "dezaTitle1.gif": frame(120, 44, [240, 220, 40]),
+    "dezaTitle2.gif": frame(127, 48, [40, 200, 240]),
+    "dezaCredit1.gif": frame(64, 16, [220, 220, 220]),
+    "dezaCredit5.gif": frame(64, 16, [180, 180, 255]),
+  };
+
+  const out = exportLevelToSav(withTitle, titleArt, { comment: "titled" });
+  assertStrictEquals(out.report.title.source, "cart");
+  assert(out.report.title.title1 && out.report.title.title2);
+  assertStrictEquals(out.report.title.credits, 2);
+
+  const [save] = bup.parse((await normalize(out.sav)).data).filter(isGameSave);
+  const decoded = decodeSave(save.payload.buffer);
+  // The decoders find a painted title page where before they found nothing.
+  assert(decoded.titleArt, "the written cart has a title page");
+  assert(
+    decoded.titleArt.title1 !== undefined &&
+      decoded.titleArt.title2 !== undefined,
+    "both logos survive",
+  );
+  // Only the two strips the game actually carries: an unpainted slot must stay
+  // unpainted or a re-import reads six blank lines as credits.
+  assertEquals(
+    Object.keys(decoded.titleArt).filter((r) => /^credit\d$/.test(r)).sort(),
+    ["credit1", "credit5"],
+  );
+
+  // …and that is what the runtime gates its own title scene on.
+  const { gameJson } = mapSaveToGame(decoded);
+  assert(gameJson.dezaemonTitle, "the round trip lands back on dezaemonTitle");
+  assert(gameJson.dezaemonTitle.title1 && gameJson.dezaemonTitle.title2);
+  // Every import skips the AdvScene interludes, imported title or not — the
+  // other half of "a shelf .sav plays as its own game".
+  assertStrictEquals(gameJson.noStory, true);
+
+  // An uploaded logo still wins: putting one in the TITLE EDITOR is an
+  // explicit act, and the report says which of the two the cart is wearing.
+  const uploaded = exportLevelToSav(withTitle, titleArt, {
+    title1: frame(256, 91, [255, 0, 255]),
+  });
+  assertStrictEquals(uploaded.report.title.source, "uploaded");
+
+  // A level with neither is unchanged: no title page, and no credit strips.
+  const bare = exportLevelToSav(level(), art(), {});
+  assertStrictEquals(bare.report.title.source, "none");
+  assertStrictEquals(bare.report.title.credits, 0);
+  const [bareSave] = bup.parse((await normalize(bare.sav)).data).filter(
+    isGameSave,
+  );
+  assertStrictEquals(decodeSave(bareSave.payload.buffer).titleArt, undefined);
+});

@@ -66,6 +66,22 @@ export {
 // --- Save decoding (src/decode/index.js) ---
 export { decodeSave } from "./src/decode/index.js";
 
+// --- The shelf cover: a 256x480 title-screen shot from a decoded save
+// (src/cover/compose-cover.js). `deno task deza:upload` renders the community
+// library's covers with it; the editor renders its own exports' covers with the
+// same function in the page, so both shelves are shot the same way. ---
+// Only the five names a caller outside the module needs: the rest (blit,
+// makeCanvas, TILE, BG_X…) are drawing internals whose names are far too
+// general for a flat surface that becomes `window.Dezaemon`. They stay
+// reachable through the ./cover subpath.
+export {
+  composeCover,
+  COVER_H,
+  COVER_W,
+  inkStats,
+  renderTitlePage,
+} from "./src/cover/compose-cover.js";
+
 // --- sec7 3D models (src/decode/decode-model.js) ---
 export {
   decodeModels,

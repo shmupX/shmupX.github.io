@@ -29,12 +29,12 @@
 // the whole shelf (~120 KB) without touching the ~46 MB of save blobs.
 import { encodeBase64 } from "@std/encoding/base64";
 import {
+  composeCover,
   decodeSave,
   isGameSave,
   normalize,
   parse,
 } from "../packages/shmup-engine/mod.js";
-import { composeCover } from "./lib/deza-cover.js";
 import { encodePNG } from "jsr:@img/png@^0.1.6";
 
 const DB = "https://evil-invaders-default-rtdb.firebaseio.com";

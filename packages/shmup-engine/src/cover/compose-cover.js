@@ -1,6 +1,14 @@
 // Compose a 256x480 title-screen cover from decodeSave() output.
 // Pure data -> RGBA. No browser, no canvas API, no game engine, no network.
 //
+// This is the shot every game on the shelf wears. `deno task deza:upload` runs
+// it over the 258 community saves and files the PNGs under /dezaemon/covers;
+// the editor runs the very same function in the page (via window.Dezaemon)
+// over a cart it has just written, so a save this browser made gets the same
+// picture by the same rule as one somebody dumped off a Saturn cart. It lives
+// in the engine rather than in scripts/ for exactly that reason — a cover is
+// derived from the decoders, so it belongs beside them.
+//
 // Canvas is the runtime's own portrait viewport (game.bundle.js
 // GAME_DIMENSIONS = {WIDTH:256, HEIGHT:480, CENTER_X:128}). The background
 // map is 14 cols x 16px tiles centred at x=16, with map row 0 on the BOTTOM
@@ -13,8 +21,8 @@
 // KUMITATE TITLE page exactly as drawn (TITLE 1 = rows 0-2, TITLE 2 = rows
 // 3-7, the three credit strips = rows 8-10).
 
-import { renderFrame } from "../../packages/shmup-engine/src/decode/decode-sprites.js";
-import { SEC5_REGIONS } from "../../packages/shmup-engine/src/decode/decode-stage.js";
+import { renderFrame } from "../decode/decode-sprites.js";
+import { SEC5_REGIONS } from "../decode/decode-stage.js";
 
 export const COVER_W = 256;
 export const COVER_H = 480;

@@ -14,12 +14,22 @@
 //
 //   { id, title, file, palette, bytes (Uint8Array: the full 1,114,112-byte
 //     MiSTer-layout .sav), size, savedAt, warnings?, report?,
-//     source: "export" | "eshop", eshopId?, cover? (data URL) }
+//     source: "export" | "eshop", eshopId?, cover (data URL) }
 //
 // Ids: an export keeps the editor's "<slug>:<palette>", so re-exporting the
 // same level replaces its row instead of growing the shelf; an eShop install
 // is "eshop:<catalog id>", so the two can never collide and the launcher can
 // tell them apart without a lookup.
+//
+// COVERS
+// `cover` used to be optional and, for the editor's own exports, always
+// missing: the coverflow drew a text card reading "DEZAEMON 2 / <title> / YOUR
+// EXPORT" where every community save has its title screen. It is filled in
+// here now, from the cart itself, by the same `composeCover` the 258 community
+// covers are rendered with (`deno task deza:upload`) — so a game this browser
+// made is shot by the same rule as one dumped off a Saturn cart, and no caller
+// has to remember to supply one. `backfillDezaShelfCovers()` does the same for
+// records filed before this existed.
 
 export const DEZA_SHELF_DB = 'shmupxDezaExports';
 export const DEZA_SHELF_STORE = 'saves';
@@ -51,6 +61,73 @@ export function dezaShelfIdForEshop(id) {
 
 export function isEshopShelfEntry(rec) {
   return !!rec && (rec.source === 'eshop' || String(rec.id || '').startsWith('eshop:'));
+}
+
+// ── The cover ────────────────────────────────────────────────────────────────
+// The 256x480 title-screen shot a shelf row wears. It is composed from the
+// cart's own bytes rather than from anything the editor happened to have on
+// screen, which is what makes it the game's OWN title: `composeCover` reads the
+// drawn KUMITATE TITLE page straight out of the sprite bank over the busiest
+// screenful of the game's scenery, and falls back to the biggest boss, then a
+// strip of enemies, then CG page 0 — so a cart with no drawn title still gets a
+// picture of itself instead of the base game's logo.
+//
+// The engine is imported lazily, exactly the way static/eshop-library.js does
+// it (`new URL(...).href` keeps the specifier out of esbuild's reach, so the
+// dashboard bundle leaves the import alone), and a rejected import is forgotten
+// so the next shelf write retries rather than failing forever on a blip.
+
+const ENGINE_URL = new URL('./engine/shmup-engine.js', import.meta.url).href;
+let enginePending = null;
+function loadEngine() {
+  if (!enginePending) {
+    enginePending = import(ENGINE_URL).catch((e) => { enginePending = null; throw e; });
+  }
+  return enginePending;
+}
+
+/** RGBA -> a PNG data URL, through a canvas. Null where there is no DOM. */
+function rgbaToPngDataUrl(composed) {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = composed.w;
+  c.height = composed.h;
+  const ctx = c.getContext('2d');
+  if (!ctx) return null;
+  // composed.rgba is already a Uint8ClampedArray, which is what ImageData wants.
+  ctx.putImageData(new ImageData(composed.rgba, composed.w, composed.h), 0, 0);
+  return c.toDataURL('image/png');
+}
+
+/**
+ * The cover for one cart image, as a PNG data URL, or null when the bytes hold
+ * no readable game save.
+ *
+ * The chain is `normalize -> parse -> isGameSave -> decodeSave -> composeCover`
+ * — the same four calls scripts/upload-deza-saves.ts makes for the community
+ * library, so both shelves are shot by one process. It is done from the CART
+ * rather than from the editor's in-memory game on purpose: whatever the browser
+ * can play back out of this record is exactly what the picture shows.
+ */
+export async function composeShelfCover(bytes) {
+  const engine = await loadEngine();
+  const { data } = await engine.normalize(bytes);
+  const entry = engine.parse(data).filter(engine.isGameSave)[0];
+  if (!entry || !entry.payload) return null;
+  return rgbaToPngDataUrl(engine.composeCover(engine.decodeSave(entry.payload.buffer)));
+}
+
+/** A record already carrying a cover, or null when one could not be made. */
+async function coverOrNull(rec) {
+  if (typeof rec.cover === 'string' && rec.cover) return rec.cover;
+  try {
+    return await composeShelfCover(rec.bytes);
+  } catch (e) {
+    // A shelf game with no picture is a worse row, not a broken one — never
+    // let this stop a cart being filed or read.
+    console.warn('could not render a cover for "' + rec.id + '":', e);
+    return null;
+  }
 }
 
 // ── The store ────────────────────────────────────────────────────────────────
@@ -123,12 +200,19 @@ export async function getDezaShelfEntry(id) {
  * File a record (replacing any with the same id) and tell the other surface.
  * `bytes` must be the full MiSTer-layout cart: that is what the editor's
  * playExport hand-off and the Saturn export paths expect to find.
+ *
+ * A caller that has no `cover` gets one rendered here from those very bytes, so
+ * every road onto the shelf — the editor's → SAVE SHELF, an eShop install whose
+ * listing carries no art, a backfill — ends with a row that has its own title
+ * screen on it. A caller WITH one (an eShop install that fetched the published
+ * cover) keeps it untouched.
  */
 export async function putDezaShelfEntry(rec) {
   if (!rec || typeof rec.id !== 'string' || !rec.id) throw new Error('a shelf record needs a string id');
   if (!(rec.bytes instanceof Uint8Array) || !rec.bytes.length) {
     throw new Error('a shelf record needs the .sav bytes themselves (a Uint8Array)');
   }
+  const cover = await coverOrNull(rec);
   const record = {
     ...rec,
     title: String(rec.title || rec.id),
@@ -137,10 +221,52 @@ export async function putDezaShelfEntry(rec) {
     size: rec.size || rec.bytes.length,
     savedAt: rec.savedAt || Date.now(),
     source: rec.source || (rec.id.startsWith('eshop:') ? 'eshop' : 'export'),
+    ...(cover ? { cover } : {}),
   };
   await tx('readwrite', 'written', (store) => store.put(record));
   notifyDezaShelfChanged();
   return record;
+}
+
+// Ids this session has already tried and failed to cover, so a cart the
+// decoders cannot read is not re-decoded on every refresh.
+const uncoverable = new Set();
+let backfillPending = null;
+
+/**
+ * Give every coverless row on the shelf its title screen, and say how many got
+ * one. For the records filed before covers existed — including the ones the
+ * eShop installed from a listing published without art.
+ *
+ * Idempotent and free on a shelf that is already covered, so both readers can
+ * call it every time they open. Each row is written as it is rendered rather
+ * than in one batch at the end, which is what makes covers appear one by one in
+ * a coverflow that is already on screen — and since that notification brings
+ * the readers straight back here, concurrent calls share the one run.
+ */
+export function backfillDezaShelfCovers() {
+  if (!backfillPending) {
+    backfillPending = runBackfill().finally(() => { backfillPending = null; });
+  }
+  return backfillPending;
+}
+
+async function runBackfill() {
+  let filled = 0;
+  for (const rec of await listDezaShelf()) {
+    if (typeof rec.cover === 'string' && rec.cover) continue;
+    if (uncoverable.has(rec.id)) continue;
+    if (!(rec.bytes instanceof Uint8Array) || !rec.bytes.length) continue;
+    const cover = await coverOrNull(rec);
+    if (!cover) {
+      uncoverable.add(rec.id);
+      continue;
+    }
+    await tx('readwrite', 'written', (store) => store.put({ ...rec, cover }));
+    filled += 1;
+    notifyDezaShelfChanged();
+  }
+  return filled;
 }
 
 export async function removeDezaShelfEntry(id) {

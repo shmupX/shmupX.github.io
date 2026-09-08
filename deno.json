@@ -24,6 +24,7 @@
     "2028-ai:bgm": "deno run -A scripts/2028-ai/download-custom-bgm.ts",
     "games:manifest": "deno run -A scripts/build-games-manifest.ts",
     "eshop:check": "deno test -A tests/eshop_catalog_test.ts",
+    "eshop:covers": "deno run -A scripts/backfill-eshop-covers.ts",
     "deza:manifest": "deno run -A scripts/build-deza-saves-manifest.ts",
     "deza:upload": "deno run -A scripts/upload-deza-saves.ts",
     "deza:disc": "deno run -A tools/deza-disc/main.ts",

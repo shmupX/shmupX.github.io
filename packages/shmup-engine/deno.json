@@ -13,6 +13,7 @@
     "./payload-table": "./src/payload-table.js",
     "./decompress": "./src/decompress.js",
     "./decode": "./src/decode/index.js",
+    "./cover": "./src/cover/compose-cover.js",
     "./map-to-game": "./src/map-to-game.js",
     "./atlas-pack": "./src/atlas-pack.js",
     "./game-schema": "./src/game-schema.js",

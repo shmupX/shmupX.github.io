@@ -180,6 +180,7 @@ deno task build:ps2:iso   # …plus a bootable disc image
 deno task build:sav       # a level as a Dezaemon 2 cart save (.sav) for MiSTer / hardware
 deno task sav:run         # …then launch it in Mednafen, cart preloaded (Windows / Linux / WSL→Windows)
 deno task eshop:check     # validate data/eshop.json against the built manifest
+deno task eshop:covers    # cover a published eShop game that went out without one (dry run; --write uploads)
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
@@ -358,6 +359,43 @@ shelf whenever the editor (an iframe of the launcher) files one, and PLAY on
 such a cover hands the editor `?playExport=<id>` so the cart comes straight out
 of the store — see **The eShop** below, which installs published Dezaemon games
 onto the same shelf.
+
+**Every shelf row wears its own title screen.** A record filed here gets a
+`cover` rendered from its own cart bytes by `composeCover`
+([`packages/shmup-engine/src/cover/compose-cover.js`](packages/shmup-engine/src/cover/compose-cover.js)) —
+the very function `deno task deza:upload` renders the 258 community covers with,
+so a game you made is shot by the same rule as one dumped off a Saturn cart and
+a coverflow of both is one shelf. It is pure data → RGBA: the drawn KUMITATE
+TITLE page (bank refs 144..231, untrimmed, as the author laid it out) over the
+busiest screenful of the game's own scenery, dimmed, with a light plate behind a
+logo that would otherwise vanish into a dark backdrop; a cart with no drawn
+title falls back to its biggest boss, then a strip of up to twelve enemies, then
+CG page 0 — so every save gets a picture of *itself*. The 256×480 canvas is the
+runtime's own portrait viewport. Deno encodes the result with
+`jsr:@img/png`, the browser with a canvas `toDataURL`; the pixels agree, the
+bytes do not, so never compare their hashes.
+
+The shelf fills it in inside `putDezaShelfEntry`, so every road on gets one:
+→ SAVE SHELF, an eShop install whose listing was published without art, and
+`backfillDezaShelfCovers()` for anything filed before covers existed (both
+readers call it when they open; it is free once the shelf is covered). Before
+this, the editor's own exports drew a text card reading "DEZAEMON 2 / <title> /
+YOUR EXPORT" where every community game had a picture, and PUBLISH TO ESHOP sent
+whatever the TITLE EDITOR happened to be holding — nothing, for an import.
+
+**A cart keeps its own title on the way back out.** The `.sav` writer paints
+TITLE 1/2 from an image the TITLE EDITOR was given, and a `.sav` import never
+has one — its title lives in the cart as bank refs 144..231. So an imported
+game written back out used to come away with an **empty** title page: re-loaded,
+it carried no `dezaemonTitle` for the runtime's title scene to gate on, and
+2028-AI's own logo and background were drawn over somebody else's game. The
+writer now falls back to the level's `dezaemonTitle` + `dezaemonTitleScreen.layout`
+(atlas frame names and where each trimmed piece sat in its slot), and writes the
+six credit strips it never wrote at all, so a community cart survives
+import → export → play unchanged. `report.title.source` says which of the two
+the cart came out wearing — `"cart"`, `"uploaded"` or `"none"` — and
+`deno task build:sav` prints it. Story scenes were already right: every import
+carries `noStory`, so the runtime's AdvScene hands straight on to the stage.
 
 **Exporting a loaded cart as an app.** EXPORT AS AN APP — the TARGET picker and
 the EXPORT button — is not hidden while a `.sav` is open, so a cart loaded from
@@ -703,6 +741,26 @@ shape it already accepted — so a second build of the same game is offline. A
 Dezaemon cart becomes the record the runtime expects, **whole**: every stage the
 cart holds (not just the one the PS2 port runs), its music, scenery tiles,
 bullet and item tables, drawn title screen and packed sprite sheet.
+
+**The build slug is a different slug.** The one above is a *lookup* and may come
+out empty (an all-Japanese title is then a clean miss rather than a game called
+"save"). The one that names `build/<slug>/`, `<slug>.exe` / `.AppImage` /
+`-app-debug.apk` and `com.easierbycode.<slug>` is an *identity*, and it is
+`slugify` in [`tools/build-level/lib/slug.js`](tools/build-level/lib/slug.js),
+mirrored for the server by `slugFor` in
+[`lib/export-build.ts`](lib/export-build.ts) — the two are cross-checked by
+[`tests/build_level_slug_test.ts`](tests/build_level_slug_test.ts), which runs
+the Node copy for real. It keeps its plain shape whenever it still *spells* the
+name, and otherwise carries an 8-hex FNV-1a digest of the whole name, the way
+`gameIdForLevel` keeps two same-slug leaderboards apart and `cacheKey` above
+keeps two same-title carts apart. That matters because stripping everything
+outside `[a-z0-9]` leaves nothing at all for 111 of the 228 Japanese titles in
+`games-db.json` — all of which used to build into one shared `build/level/`,
+overwrite one another's artifact and claim one `com.easierbycode.level` — and
+leaves a bare `"2"` for eight more. `sanitizeLevelName` was ASCII-only for the
+same reason and rejected those names outright with a 400, so the editor's EXPORT
+button never even reached the builder for them; it now keeps Unicode letters,
+numbers and marks while still mapping `. # $ / [ ]` to `_`.
 
 Own flags: `--sav <path>` (a cart anywhere on disk), `--slot <n>` and
 `--stage <n>` (which game and stage inside it), `--name <title>` (what to call
@@ -1204,7 +1262,14 @@ every game anyone can get — and it is read from two places by
 - The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU → PUBLISH
   TO ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`, cover under
   `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last). A
-  static entry wins over a published one of the same id.
+  static entry wins over a published one of the same id. The cover is
+  `composeCover` over the cart it just wrote, the same shot the shelf and the
+  community library wear. A game published before that — it used to send the
+  TITLE EDITOR's uploaded logo, which an import never has — is listed with
+  `hasCover: false`; `deno task eshop:covers` renders one from the stored save
+  and writes just the cover node and that one field (dry run unless `--write`).
+  Installing such a game already puts a cover on the local shelf either way,
+  because the shelf composes its own.
 
 What "install" means depends on the kind. A **web** game is unzipped into Cache
 Storage (`shmupx-eshop-v1`, keys `/eshop/<id>/…`) and served from there by the

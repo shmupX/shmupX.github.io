@@ -63,7 +63,7 @@ import { basename, dirname, fromFileUrl, join, resolve } from "@std/path";
 import { ensureDir, walk } from "@std/fs";
 import { buildRuntimeBundle } from "../lib/ps2/build.ts";
 import { resolveAthenaElf } from "../lib/ps2/athena.ts";
-import { guessAndroidSdk } from "../lib/export-build.ts";
+import { guessAndroidSdk, slugFor } from "../lib/export-build.ts";
 import { listShelf, resolveShelfName, ShelfError } from "../lib/shelf.ts";
 
 const ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
@@ -807,11 +807,6 @@ async function buildLevel(opts: Options): Promise<void> {
     ? resolve(opts.passthrough[outAt + 1])
     : join(ROOT, "build", slugFor(levelName));
   await reportArtifacts(buildRoot, opts.platform);
-}
-
-/** Mirrors tools/build-level's own output layout: build/<slug>/dist/. */
-function slugFor(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 30) || "level";
 }
 
 /**

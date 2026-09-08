@@ -95,17 +95,64 @@ export interface ExportOutcome {
   ps2?: Ps2Outcome;
 }
 
-// Mirror the tool's slugify: keep the arg to a benign charset. Args are passed
-// to Deno.Command as an array (no shell), so this is belt-and-suspenders.
+/**
+ * Keep a level name to a benign charset. Args reach the tool through
+ * Deno.Command as an array (no shell), so this is belt-and-suspenders — but it
+ * is also the gate that decides whether a build happens at all, since
+ * `runExport` rejects an empty result with a 400.
+ *
+ * It used to strip `[^\w \-]`, and `\w` without the `u` flag is ASCII only: a
+ * title written in kana, hanzi, Cyrillic or Greek was emptied here and refused
+ * before it ever reached the builder, so "Export to APK" simply did not work
+ * for most of the community's own games. Unicode letters, numbers and combining
+ * marks are content and are kept; what is dropped is what makes a name
+ * dangerous as a path or an RTDB key — separators, control characters, and the
+ * `. # $ / [ ]` the Realtime Database forbids (mapped to `_`, as before).
+ * The name is XML-escaped again downstream by tools/build-level/lib/rebrand.js
+ * before it reaches config.xml.
+ */
 export function sanitizeLevelName(raw: string): string {
-  return String(raw).replace(/[.#$/\[\]]/g, "_").replace(/[^\w \-]/g, "").trim()
+  return String(raw)
+    .replace(/[.#$/\[\]]/g, "_")
+    // deno-lint-ignore no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/[^\p{L}\p{N}\p{M}_ \-]/gu, "")
+    .trim()
     .slice(0, 64);
 }
 
-// Mirror tools/build-level/lib/slug.js slugify EXACTLY (incl. the "level"
-// fallback) so findArtifacts looks in the same build/<slug>/dist the tool wrote.
+/**
+ * Mirror tools/build-level/lib/slug.js `slugify` EXACTLY, so findArtifacts
+ * looks in the same build/<slug>/dist the tool wrote. The two are cross-checked
+ * by tests/build_level_slug_test.ts, which runs the Node copy and compares.
+ *
+ * See that file for why some slugs carry an 8-hex digest: a name the slug
+ * cannot spell (any title with no ASCII alphanumerics — 111 of the 228 Japanese
+ * titles in the shipped catalogue) used to collapse to the bare constant
+ * "level", so every one of them shared one build tree and one artifact name.
+ */
 export function slugFor(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 30) || "level";
+  const raw = String(name ?? "");
+  if (!raw.trim()) return "level";
+  const letters = raw.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const slug = letters.slice(0, SLUG_MAX);
+  const lost = raw.replace(SEPARATORS, "").replace(/[a-zA-Z0-9]+/g, "");
+  if (slug && !lost && letters.length <= SLUG_MAX) return slug;
+  return `${slug || "level"}-${nameDigest(raw)}`;
+}
+
+/** ASCII whitespace and punctuation: they separate words rather than spell them. */
+const SEPARATORS = /[\s!-\/:-@\[-`{-~]+/g;
+const SLUG_MAX = 30;
+
+/** FNV-1a as 8 hex digits — the digest tools/build-level/lib/slug.js appends. */
+function nameDigest(name: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < name.length; i += 1) {
+    h ^= name.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
 }
 
 export function resolveDesktopPlatform(platform: string): string {

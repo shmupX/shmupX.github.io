@@ -5365,7 +5365,13 @@
                 if (stageRec.background) record.background = stageRec.background;
             }
             if (gameData) {
-                for (const k of ['backgroundCells', 'dezaemonBgm', 'dezaemonBullets', 'dezaemonItems', 'dezaemonTitleScreen', 'meta']) {
+                // dezaemonTitle + dezaemonTitleScreen ride the record because
+                // the cart writer reads the game's OWN drawn title screen off
+                // them (buildSaveFromGame) when the TITLE EDITOR has no
+                // uploaded logo — which is every .sav import. Without them a
+                // cart came back out with an empty title page and the runtime
+                // drew 2028-AI's logo over somebody else's game.
+                for (const k of ['backgroundCells', 'dezaemonBgm', 'dezaemonBullets', 'dezaemonItems', 'dezaemonTitle', 'dezaemonTitleScreen', 'meta']) {
                     if (gameData[k]) record[k] = gameData[k];
                 }
             }
@@ -5454,10 +5460,15 @@
         const dezaExportsGet = (id) => dezaShelf().then((m) => m.getDezaShelfEntry(id));
         const dezaExportsDelete = (id) => dezaShelf().then((m) => m.removeDezaShelfEntry(id));
         // Newest first, each row flagged so the shelf can split ESHOP GAMES
-        // from YOUR .SAV EXPORTS without re-deriving the rule.
+        // from YOUR .SAV EXPORTS without re-deriving the rule. Anything filed
+        // before covers existed gets its title screen rendered here (the
+        // shelf's own backfill, free once every row has one); the drawer is
+        // subscribed to shelf changes, so a cover that lands mid-browse
+        // redraws the row it belongs to.
         async function dezaExportsAll() {
             const m = await dezaShelf();
             const rows = await m.listDezaShelf();
+            m.backfillDezaShelfCovers().catch(() => {});
             return (rows || []).map((r) => Object.assign(r, { eshop: m.isEshopShelfEntry(r) }));
         }
 
@@ -5469,29 +5480,26 @@
             return btoa(s);
         }
 
-        // The eShop cover: the title logo (or the title background) scaled to
-        // fit the 256x480 portrait the shelf's covers use, never enlarged,
-        // as a PNG data URL. Null when there is no art or it will not decode.
-        function eshopCoverDataUrl(dataUrl) {
-            if (!dataUrl) return Promise.resolve(null);
-            return new Promise((resolve) => {
-                const img = new Image();
-                img.onload = () => {
-                    try {
-                        const w = img.naturalWidth, h = img.naturalHeight;
-                        if (!w || !h) { resolve(null); return; }
-                        const scale = Math.min(1, 256 / w, 480 / h);
-                        const c = document.createElement('canvas');
-                        c.width = Math.max(1, Math.round(w * scale));
-                        c.height = Math.max(1, Math.round(h * scale));
-                        const ctx = c.getContext('2d');
-                        ctx.drawImage(img, 0, 0, c.width, c.height);
-                        resolve(c.toDataURL('image/png'));
-                    } catch (e) { resolve(null); }
-                };
-                img.onerror = () => resolve(null);
-                img.src = dataUrl;
-            });
+        // The cover a published game (and its shelf row) wears: the cart's own
+        // 256x480 title screen, composed from the bytes just written by the
+        // very function that renders the 258 community covers
+        // (packages/shmup-engine/src/cover/compose-cover.js, run by
+        // `deno task deza:upload`) — so every shelf in the app is shot the
+        // same way. Null only when the cart holds no readable game save.
+        //
+        // It used to be `logoDataURL || titleBgDataURL` scaled down: art the
+        // TITLE EDITOR uploads, which a .sav import never sets and the stock
+        // game only carries because foo.json ships 2028-AI's own logo. That is
+        // why the two games already in the eShop went out with hasCover:false,
+        // and why an export that did get one wore the base game's title.
+        async function dezaCoverDataUrl(sav) {
+            try {
+                const shelf = await dezaShelf();
+                return await shelf.composeShelfCover(sav);
+            } catch (e) {
+                console.warn('could not render the cover:', e);
+                return null;
+            }
         }
 
         let dezaSavBusy = false;
@@ -5703,7 +5711,7 @@
                     title1, title2,
                 });
                 eshopNote('RENDERING THE COVER…');
-                const cover = await eshopCoverDataUrl(logoDataURL || titleBgDataURL);
+                const cover = await dezaCoverDataUrl(out.sav);
                 eshopNote('PUBLISHING "' + name + '"…');
                 const lib = await eshopLibrary();
                 const rep = out.report || {};
@@ -6637,6 +6645,13 @@
             // Reset per-level atlas customization state (same discipline as
             // loadFromFirebase) BEFORE adding this import's sprites.
             replacedFrames = {}; extraSprites = []; customFrameKeys = new Set();
+            // The TITLE EDITOR's four uploaded images belong to whatever game
+            // was open before, exactly as the atlas snapshot below does. A
+            // cart carries its own drawn title (gameJson.dezaemonTitle), and
+            // leaving the last game's logo loaded meant a → SAVE SHELF wrote
+            // THAT onto the imported cart's title page.
+            titleBgDataURL = null; logoDataURL = null;
+            subTitleDataURL = null; titleStartTextDataURL = null;
             // And restore the atlas that stood before the first import: without
             // this, each back-to-back load repacked every earlier game's frames
             // into an ever-taller atlas — plus a 64x64 thumb canvas per frame —
