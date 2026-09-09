@@ -314,8 +314,8 @@ there is nowhere for a second frame to go. With the four winged letter emblems
 sitting in `dev-fixtures/powerups/` as `powerup-s.gif`, `powerup-b.gif`,
 `powerup-f.gif` and `powerup-r.gif`, `deno task build:sav` draws those rather
 than the procedural coloured squares it otherwise falls back to. The letters map
-**S = speed**, **B = bomb**, **F = power** and **R = all four weapon-change
-slots**; barrier and score have no letter and keep their squares.
+**S = speed**, **B = barrier**, **F = power** and **R = all four weapon-change
+slots**; bomb and score have no letter and keep their squares.
 [`lib/powerup-emblems.ts`](lib/powerup-emblems.ts) takes the largest frame of
 each GIF that fits the cell at native resolution — the art is stored blown up,
 and the factor is measured rather than assumed — and centres it there, so
@@ -341,8 +341,8 @@ texture of its own rather than part of `game_asset`, because an import swaps
 `game_asset` for the level's atlas and would otherwise take the pickups away
 just as a cart starts. `dropItem` runs the four-frame flap at the GIF's own 5fps
 on the drops the letters name — **F** on the power-up, **R** on the weapon
-change, **S** on the speed-up, **B** on the bomb stock — while barrier and score
-keep their stock art.
+change, **S** on the speed-up, **B** on the barrier — while bomb and score keep
+their stock art.
 
 A cart that drew its own item icons keeps them, because that art is its author's
 — **unless the icon is one of these emblems**, which is exactly what a

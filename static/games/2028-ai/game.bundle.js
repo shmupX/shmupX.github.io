@@ -13061,9 +13061,9 @@
         }
       }
       // The winged letter emblems, four frames apiece at the GIF's own 5fps.
-      // The letters read S=speed, B=bomb, F=firepower, R=rapid, so they land
-      // on the drops that mean those things — the same reading the cart
-      // writer uses for its item icons (lib/powerup-emblems.ts). Barrier and
+      // The letters read S=speed, B=barrier, F=firepower, R=rapid, so they
+      // land on the drops that mean those things — the same reading the cart
+      // writer uses for its item icons (lib/powerup-emblems.ts). Bomb and
       // score have no letter and keep their stock art.
       //
       // A cart that drew its own icon keeps it, because that art is its
@@ -13071,7 +13071,7 @@
       // export from this repo writes into the cell. A save holds one 16x16
       // still per item slot and cannot animate; recognising our own still
       // lets the pickup flap anyway.
-      var emblemByItem = { big: "F", "3way": "R", speed_high: "S", dezaSp: "B" };
+      var emblemByItem = { big: "F", "3way": "R", speed_high: "S", barrier: "B" };
       var letter = emblemByItem[itemName];
       if (letter && usingOwn && !this.emblemSilhouetteMatches(own, letter)) {
         letter = null;
@@ -13092,7 +13092,7 @@
           // way. Driving the frame from the item loop is the one place that
           // is guaranteed to run, because it is what makes items fall.
           item.setData("emblemFrames", emblemFrames);
-          item.setData("emblemTick", 0);
+          item.setData("emblemIdx", 0);
           tint = 0;
         }
       }
@@ -13611,14 +13611,25 @@
           continue;
         }
         item.y += 1;
-        // The winged emblems flap here rather than through anims.play(); the
-        // GIFs run at 5fps and this loop ticks at 60, so a frame every 12.
+        // The winged emblems flap here rather than through anims.play(), on
+        // elapsed time rather than on ticks: this loop does not run at the
+        // renderer's rate (about 24Hz against 60), so counting ticks would
+        // pin the flap to whatever that happens to be. 200ms a frame is the
+        // GIFs' own 5fps.
         var emblemFrames = item.getData("emblemFrames");
         if (emblemFrames && emblemFrames.length > 1) {
-          var emblemTick = (item.getData("emblemTick") || 0) + 1;
-          item.setData("emblemTick", emblemTick);
-          if (emblemTick % 12 === 0) {
-            item.setFrame(emblemFrames[(emblemTick / 12) % emblemFrames.length]);
+          var emblemDue = item.getData("emblemDue");
+          if (emblemDue == null) {
+            item.setData("emblemDue", time + 200);
+          } else if (time >= emblemDue) {
+            var emblemIdx = ((item.getData("emblemIdx") || 0) + 1) % emblemFrames.length;
+            item.setData("emblemIdx", emblemIdx);
+            item.setFrame(emblemFrames[emblemIdx]);
+            // Catch up after a stall without replaying the missed frames.
+            do {
+              emblemDue += 200;
+            } while (emblemDue <= time);
+            item.setData("emblemDue", emblemDue);
           }
         }
         var iRect = { x: item.x - item.width / 2, y: item.y - item.height / 2, w: item.width, h: item.height };

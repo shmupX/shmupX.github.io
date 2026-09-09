@@ -37,16 +37,16 @@ export const EMBLEM_CELL = 16;
  * Which emblem each item type wears.
  *
  * Item types are 0-3 weapon change, 4 barrier, 5 bomb, 6 score, 7 power,
- * 8 speed (`itemIcon()`), and the letters read S=speed, B=bomb, F=firepower,
- * R=rapid — so R covers all four weapon-change slots. Barrier and score have
- * no letter and keep their coloured squares.
+ * 8 speed (`itemIcon()`), and the letters read S=speed, B=barrier,
+ * F=firepower, R=rapid — so R covers all four weapon-change slots. Bomb and
+ * score have no letter and keep their coloured squares.
  */
 export const EMBLEM_BY_TYPE: Readonly<Record<number, string>> = Object.freeze({
   0: "r",
   1: "r",
   2: "r",
   3: "r",
-  5: "b",
+  4: "b",
   7: "f",
   8: "s",
 });

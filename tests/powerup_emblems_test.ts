@@ -445,16 +445,16 @@ Deno.test("EMBLEM_BY_TYPE letters the item types that have a letter", () => {
     1: "r",
     2: "r",
     3: "r",
-    5: "b",
+    4: "b",
     7: "f",
     8: "s",
   });
 });
 
-Deno.test("EMBLEM_BY_TYPE leaves barrier and score their coloured squares", () => {
-  // Types 4 (barrier) and 6 (score) wear no letter, and the writer falls back
+Deno.test("EMBLEM_BY_TYPE leaves bomb and score their coloured squares", () => {
+  // Types 5 (bomb) and 6 (score) wear no letter, and the writer falls back
   // to itemIcon() for them. Their absence is the contract, not an oversight.
-  assert(!(4 in EMBLEM_BY_TYPE), "barrier has no emblem");
+  assert(!(5 in EMBLEM_BY_TYPE), "bomb has no emblem");
   assert(!(6 in EMBLEM_BY_TYPE), "score has no emblem");
   assertEquals(Object.keys(EMBLEM_BY_TYPE).length, 7);
   // All four weapon-change slots share the one R emblem.
@@ -605,9 +605,9 @@ Deno.test(
     assertEquals(warnings, []);
     assertEquals(
       Object.keys(out).map(Number).sort((a, b) => a - b),
-      [0, 1, 2, 3, 5, 7, 8],
+      [0, 1, 2, 3, 4, 7, 8],
     );
-    assert(!(4 in out) && !(6 in out), "barrier and score keep their squares");
+    assert(!(5 in out) && !(6 in out), "bomb and score keep their squares");
     for (const frame of Object.values(out)) {
       assertEquals(frame.rgba.length, EMBLEM_CELL * EMBLEM_CELL * 4);
     }
