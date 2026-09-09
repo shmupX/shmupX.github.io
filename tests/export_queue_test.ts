@@ -227,6 +227,15 @@ Deno.test("artifact kinds come off the extension", () => {
   assertEquals(artifactKind("foo.AppImage"), "appimage");
   assertEquals(artifactKind("foo.iso"), "iso");
   assertEquals(artifactKind("foo"), "file");
+  // The per-game Windows export is an .msi rather than a portable .exe, since
+  // `deno desktop` has no single-file Windows output. Without its own kind it
+  // would fall through to "file" and lose its download label.
+  assertEquals(artifactKind("foo.msi"), "msi");
+  assertEquals(artifactKind("FOO.MSI"), "msi");
+  assertEquals(
+    client.artifactActionLabel({ kind: "msi" }),
+    "DOWNLOAD INSTALLER (.MSI)",
+  );
   assertEquals(client.artifactActionLabel({ kind: "apk" }), "INSTALL APK");
   assertEquals(
     client.artifactActionLabel({ kind: "usb-zip" }),

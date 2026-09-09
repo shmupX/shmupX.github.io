@@ -603,16 +603,32 @@ the ROM are committed: the tests gate on
 ## Desktop app
 
 `deno task build:windows` / `build:linux` / `build:mac` package the launcher
-itself into `build/desktop/` (git-ignored). `deno compile` embeds the Vite
-build, so one file is the whole thing: it serves the app on `127.0.0.1:8787` (or
-the next free port) and opens it in a window of its own (below). `--port N`,
-`--no-open` and `SHMUPX_PORT` / `SHMUPX_HOST` / `SHMUPX_NO_OPEN` work on the
-artifact itself.
+itself into `build/desktop/` (git-ignored). Either way the Vite build is
+embedded, so the artifact is the whole thing: it serves the app on loopback and
+opens it in a window of its own (below).
 
-- `desktop.ts` — what gets compiled: the local server + the window.
-- `lib/desktop-browser.ts` — which browser becomes that window, and how.
-- `scripts/build-desktop.ts` — the packaging (Vite build → `deno compile` →
-  AppDir → `appimagetool`, or → `.app` bundle).
+Two routes, because they are good at different things:
+
+- **Windows → `deno compile`.** The only one that still yields a single file.
+  `deno desktop` always lays a Windows app out as a directory (a launcher
+  `.exe` beside `denort.dll` and the backend), and its `--compress` form is a
+  `.bat` over an archive — both worse for **Add a Non-Steam Game**. Serves on
+  `127.0.0.1:8787`, or the next free port. `--port N`, `--no-open` and
+  `SHMUPX_PORT` / `SHMUPX_HOST` / `SHMUPX_NO_OPEN` all work on the artifact.
+- **Linux and macOS → `deno desktop --backend cef`.** Brings its own Chromium
+  and writes the `.AppImage` / `.app` itself. Neither is host-gated, so both
+  cross-build from anywhere Deno runs — including from Windows. `deno desktop`
+  picks the port itself, so `--port` / `SHMUPX_PORT` are no-ops there.
+
+CEF rather than the default OS webview because this is a controller-driven
+Phaser game and the native webviews do not agree about the Gamepad API:
+WebKitGTK exposes it only where the distro compiled against libmanette, and
+WKWebView delivers pad input only to the view holding first responder.
+
+- `desktop.ts` — what gets packaged: the local server + the window.
+- `lib/desktop-browser.ts` — which browser becomes that window on the
+  `deno compile` route, and how.
+- `scripts/build-desktop.ts` — the packaging.
 
 ### The window
 
@@ -665,15 +681,18 @@ without it.
 | `build:mac`     | `shmupX-mac-<arch>.app` (icon: built from `icon-*.png`)        | this host's on a Mac, else `aarch64` — Rosetta covers the other way |
 
 All three artifacts carry the whole Dezaemon collection, so the save shelf works
-offline in the packaged app — that is most of their size: ~426MB for the `.exe`
-(deno compile does not compress the embedded VFS) against ~136MB for the
-AppImage (whose squashfs does). Narrow `--include ./_fresh/client` to the
+offline in the packaged app — that is most of their size: ~435MB for the `.exe`
+(deno compile does not compress the embedded VFS) against ~345MB for the
+AppImage (whose squashfs does) and ~670MB for the unwrapped `.app`. CEF is
+~150MB of the Linux and macOS figures; `--backend webview` in
+`scripts/build-desktop.ts` would take the AppImage to roughly 200MB, at the cost
+of the Gamepad API guarantee above. Narrow `--include ./_fresh/client` to the
 subtrees you need for a lean build.
 
 Flags: `--arch x86_64|aarch64`, `--out <dir>`, `--skip-build` (reuse the
 existing `_fresh/`), `--no-terminal` (Windows: no console window),
-`--no-appimage` (stop at the raw Linux binary), `--no-bundle` (stop at the raw
-macOS binary), `--no-export-tools`.
+`--no-appimage` (Linux: stop at the plain app directory), `--no-bundle` (macOS:
+no-op — a mac target always lands in a `.app`), `--no-export-tools`.
 
 `--no-export-tools` is what the editor's export button rides on. It leaves out
 `tools/build-level` and the base game (which the APK/desktop targets stage onto
@@ -683,23 +702,107 @@ app has no sources to bundle and no Deno CLI to bundle with, so
 (`buildRuntimeBundle`) and embeds it beside a cached `athena.elf` — ~5MB, and
 the difference between a PS2 export that works in the app and one that refuses.
 
-The AppImage step needs a **Linux host**: `appimagetool` plus the type-2 runtime
-for the target arch are downloaded into `build/desktop/.cache/` on first use
-(`$APPIMAGETOOL` or one on `PATH` wins). Cross-compiling the binary itself works
-from anywhere Deno runs.
+**Nothing here needs a matching host.** `deno desktop` packs the AppImage's
+SquashFS in-process and prepends the type-2 runtime itself, so there is no
+`appimagetool`, no `mksquashfs` and no WSL — the Linux artifact builds on
+Windows. It writes the `.app` too, and `deno compile` cross-compiles the
+Windows `.exe` from anywhere. Only a `.dmg` would need a Mac (it shells out to
+`hdiutil`), which is why the macOS artifact is a `.app`.
 
-The `.app` is assembled by the script itself — `Info.plist`, `PkgInfo` and an
-`.icns` built out of `static/app-icons/icon-{32,128,256,512}.png` (an icns is
-just a container of PNGs, so no `iconutil` and no Mac needed). On a Mac it is
-then sealed with `codesign --force --sign -`; a bundle cross-built elsewhere
-arrives unsigned and the build prints the one command to run on the Mac it lands
-on.
+The one thing built here is the macOS icon: `scripts/build-desktop.ts` assembles
+an `.icns` out of `static/app-icons/icon-{32,128,256,512}.png` (an icns is just
+a container of PNGs, so no `iconutil` and no Mac needed). That is not a
+nicety — `deno desktop` converts a `--icon` **PNG** for a mac target through a
+Mac-only tool and fails with a bare `program not found` anywhere else.
+
+`deno desktop` has no `--app-name`: it takes the app's identity — the macOS
+`CFBundleName`, the Linux `.desktop` entry, the name in the Dock — from the
+output file's stem. So the launcher builds as plain `shmupX` and is renamed to
+its arch-tagged artifact name afterwards, and `deno.json`'s
+`desktop.app.identifier` pins the bundle id to `games.codemonkey.shmupx`.
+Without that the identifier would be derived from the file name, and the
+underscore in `x86_64` is not legal in a reverse-DNS id — which makes the build
+**silently skip the `.desktop` entry** rather than fail.
 
 The packaged app embeds `tools/build-level` + `static/games/2028-ai`, so the
 editor's **Export to APK** button works inside it — `routes/api/build-apk.ts`
 stages them out of the read-only `deno compile` VFS onto disk before spawning
 `node`. It costs ~0.3MB, since Deno dedupes the game against the identical copy
 Vite already put in `_fresh/client`.
+
+### Why it is packaged this way
+
+Three ways of shipping a web app as a desktop app were on the table. What each
+one actually costs, measured on this repo rather than quoted from a docs page:
+
+| | `deno compile` | `deno desktop` | Electron |
+| --- | --- | --- | --- |
+| what you get | an executable, **no window** | executable **+ window** | Chromium + Node + `app.asar` |
+| engine | none — borrows an installed browser | OS webview, or bundled CEF | bundled Chromium |
+| hello-world | — | 34MB webview / 180MB CEF (AppImage) | ~109MB compressed, 268MB unpacked (win32-x64) |
+| cross-build | all 6 targets from any host | all 6 targets from any host | **no**: AppImage needs Linux, `.dmg` needs a Mac, Windows needs wine off-Windows |
+| single-file Windows | **yes** | no — a directory, or `.msi` | yes (`portable`) |
+| host↔page | you write it (loopback HTTP) | `window.bind()` → `bindings.*`, in-process | preload + `contextBridge` + `ipcMain` |
+
+**Why the split.** `deno desktop` wins everywhere except one thing, and that one
+thing is why Windows still uses `deno compile`: there is no single-file Windows
+output. `-o Foo.exe` does not produce `Foo.exe` — it produces a *directory named*
+`Foo.exe` holding `Foo.exe.exe` and `Foo.exe.dll`, because the extension is not
+special-cased at all. `--compress` makes it worse for a handheld: a directory
+holding `payload.xz` and a `.bat`. **Add a Non-Steam Game** wants one file.
+
+**Why CEF and not the default webview**, at a 145MB premium per artifact:
+
+- **WebKitGTK (Linux)** exposes the Gamepad API only where the distro compiled
+  against libmanette. It is a build flag, so it is the distro's call and not
+  ours — and where it is off, `navigator.getGamepads` is **`undefined`**, not
+  an empty list. (Ubuntu 22.04's webkit2gtk 2.50.4 does still link it, so this
+  is version- and distro-specific rather than universal.)
+- **WKWebView (macOS)** delivers pad input only to the view holding first
+  responder; anything else in front yields an empty array, silently.
+- **`Gamepad.id` is not portable.** WebKit emits `"<vendor> Extended Gamepad"`,
+  WebKitGTK the bare libmanette device name, Chromium the
+  `Vendor: xxxx Product: xxxx` form — and on Windows every XInput pad collapses
+  to one fixed literal. `static/gamepad-support.js` matches on exactly those
+  vendor strings (see **Controllers**), so per-pad mapping would break on two
+  platforms out of three.
+
+The concrete case driving it: on **Bazzite, a Legion Go's built-in controller is
+not seen until it is disconnected and reconnected**. Bazzite ships Firefox and
+no Chromium browser, so the borrowed-browser launcher lands on Gecko there, and
+that is where the symptom lives. Bundling CEF replaces "whichever engine the
+handheld happens to have" with one known Chromium on every platform, which is
+the point: it is the only way to debug pad enumeration once instead of per
+engine, per distro, per Flatpak. Whether it actually fixes the Legion Go is
+**unverified** — it needs testing on the device.
+
+**Trade-offs accepted.** CEF takes the AppImage from ~136MB to ~345MB;
+`--backend webview` in `scripts/build-desktop.ts` is a one-word change back, and
+would land near 200MB. Switching the Linux/macOS window from a borrowed browser
+to CEF also **moves where saves live** — out of the browser profile under
+`~/.local/share/shmupX/browser/<browser>/` and into CEF's own storage — so an
+existing shelf will look empty after upgrading. Nothing is deleted, but there is
+no migration path yet.
+
+**What went wrong on the way**, since none of it is guessable from the docs:
+
+- `--icon <png>` on a **mac target dies with a bare `program not found`** — it
+  converts through a Mac-only tool. Hand it an `.icns` instead, which is why
+  `buildIcns` still exists on both the launcher and per-game sides.
+- There is **no `--app-name` and no `--identifier`**. Identity comes from the
+  output file's stem plus `desktop.app.identifier` in the nearest `deno.json` —
+  and a per-game build with no `deno.json` of its own walks up and inherits the
+  *launcher's* id, giving every exported game one shared identity and one shared
+  storage. `tools/build-level/lib/run-deno-desktop.js` writes one per build.
+- An invalid bundle id **does not fail the build** — it silently skips the
+  `.desktop` entry, so the AppImage loses its name and icon.
+- A mac target **appends `.app` itself**; passing one gives you `….app.app`.
+- `--exclude ./node_modules` only reaches the *root* one. `spacetimedb/module`'s
+  tree was riding along at 44MB.
+- `deno desktop` **overrides the port** (it sets `DENO_SERVE_ADDRESS`), so
+  `--port` / `SHMUPX_PORT` are no-ops there. `desktop.ts` detects the runtime by
+  `Deno.BrowserWindow`, which exists only under `deno desktop`, and skips both
+  the port scan and the browser it would otherwise borrow.
 
 ### One game as an app — from anywhere on the shelf
 
@@ -772,15 +875,17 @@ rather than reuse the cache), `--list`. Everything else goes straight to
 this script's `--arch` defaults to the host's, and for a Linux target
 cross-built from Windows that is the wrong answer.
 
-Toolchains: all of this needs Node. Desktop targets need electron-builder, a
-**Windows build from Linux needs `wine` on `PATH`** — electron-builder rcedits
-the packaged `.exe` through it whatever the target is — a **Mac build needs
-a Mac**, for `hdiutil` and `codesign`, and an **AppImage built from Windows
-needs WSL** with `squashfs-tools` in it: electron-builder assembles the image
-with `mksquashfs`, and every copy it ships is a Linux binary Windows cannot run,
-so the build borrows the one inside WSL (see
-`tools/build-level/lib/appimage-bridge.js`). Without a distro the linux target
-refuses up front and says so, rather than failing several minutes in. `build:android` needs cordova and the
+Toolchains: the Cordova targets need Node. The **desktop targets need nothing
+but Deno** — `tools/build-level/lib/run-deno-desktop.js` hands the staged `www/`
+to `deno desktop`, which cross-compiles all three from any host. That is new:
+under electron-builder a Windows build from Linux needed `wine`, a Mac build
+needed a Mac, and an AppImage built from Windows had to borrow WSL's
+`mksquashfs` through a shim, because electron-builder's own docs say AppImages
+"cannot be cross-compiled from macOS or Windows". None of that applies now, so
+`all` builds the desktop three as well. The Windows artifact is an **`.msi`**
+rather than a portable `.exe`: `deno desktop` has no single-file Windows output,
+and an installer is the closest thing to one file you can hand someone.
+`build:android` needs cordova and the
 Android SDK (`ANDROID_SDK_ROOT` is filled in from the default install path when
 it is unset) and produces a **debug-signed** APK. `build:ios` needs a Mac and
 stops at an Xcode project to archive — there is no `.ipa` at the end of it.
@@ -1167,6 +1272,17 @@ pad is plugged in: SNES pads first, then Xbox-style and Stadia pads, then
 anything else, so a controller left paired in the background never steals the
 menus. `tests/gamepad_pads_test.ts` pins the three copies of that rule to each
 other and to the committed dashboard bundle.
+
+**Which engine sees the pad matters as much as the mapping.** The three browser
+engines disagree about the Gamepad API — WebKitGTK exposes it only where the
+distro built against libmanette, WKWebView only feeds the view holding first
+responder, and all three spell `Gamepad.id` differently, which is what the
+vendor-string matching above depends on. On **Bazzite** the launcher lands on
+Firefox (it ships no Chromium browser), and there a **Legion Go's built-in
+controller is not seen until it is disconnected and reconnected**. That is why
+the packaged Linux and macOS builds bundle CEF rather than using the OS
+webview — one known Chromium everywhere, so pad enumeration is debugged once
+instead of per engine and per distro. See **Why it is packaged this way**.
 
 The default mapping, by standard-mapping slot:
 

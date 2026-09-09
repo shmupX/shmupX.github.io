@@ -1,12 +1,18 @@
 // desktop.ts — entry point of the packaged desktop launcher.
 //
-// `deno task build:windows` / `build:linux` / `build:mac` compile this file with
-// `deno compile` (see scripts/build-desktop.ts) into one self-contained binary
-// that serves the built Fresh app on loopback and opens it in a browser window
-// of its own — a kiosk on a dedicated profile where it can (lib/desktop-browser.ts
-// says how one is chosen), the system default otherwise. When the launcher owns
-// that window, closing it quits the launcher too, which is what Steam needs to
-// see the "game" end; --keep-serving keeps the build server up regardless. The
+// `deno task build:windows` / `build:linux` / `build:mac` package this file
+// (see scripts/build-desktop.ts), by one of two routes:
+//
+//   * Windows — `deno compile`, into one self-contained .exe. It has no engine
+//     of its own, so it borrows a browser for its window: a kiosk on a
+//     dedicated profile where it can (lib/desktop-browser.ts says how one is
+//     chosen), the system default otherwise.
+//   * Linux and macOS — `deno desktop --backend cef`, which brings its own
+//     Chromium and points it at the Deno.serve below. Nothing is borrowed, and
+//     the artifact is an .AppImage or a .app that cross-builds from any host.
+//
+// Either way, closing the window quits the launcher, which is what Steam needs
+// to see the "game" end; --keep-serving keeps the build server up regardless. The
 // same binary is what routes/api/build-apk.ts calls "the packaged desktop app":
 // the tool + game it stages out of the read-only deno-compile VFS are embedded
 // here by the `--include` flags the build script passes.
@@ -39,6 +45,18 @@ const OS: DesktopOs = Deno.build.os === "windows"
   : Deno.build.os === "darwin"
   ? "darwin"
   : "linux";
+
+// `deno desktop` (Linux and macOS, see scripts/build-desktop.ts) supplies the
+// window itself: it binds this file's Deno.serve to an address of its own and
+// points a CEF window at it. Only the `deno compile` builds — Windows, and any
+// --no-window run — still have to go and find a browser to borrow.
+//
+// Deno.BrowserWindow is the tell: it exists only under `deno desktop`. The same
+// runtime also exports DENO_SERVE_ADDRESS, which Deno.serve honours over the
+// port below — so --port / SHMUPX_PORT are no-ops there, and pickPort would be
+// scanning for a port nothing is going to use.
+const UNDER_DENO_DESKTOP =
+  typeof (Deno as { BrowserWindow?: unknown }).BrowserWindow === "function";
 
 interface Args {
   port?: number;
@@ -114,7 +132,11 @@ const requested = portArg ??
   (Number.isFinite(envPort) && envPort > 0 ? envPort : undefined);
 // An explicitly requested port is used as-is (and fails loudly if taken); only
 // the default gets the scan-for-a-free-one treatment.
-const port = requested ?? pickPort(DEFAULT_PORT);
+// Under `deno desktop` the address is DENO_SERVE_ADDRESS's to choose, so there
+// is nothing to scan for and nothing to honour.
+const port = UNDER_DENO_DESKTOP ? DEFAULT_PORT : requested ?? pickPort(
+  DEFAULT_PORT,
+);
 
 const server = await loadServer();
 
@@ -180,7 +202,10 @@ const httpServer = Deno.serve({
     const url = `http://${hostname}:${port}/`;
     console.log(`\n  shmupX — codemonkey.games\n  ${url}\n`);
     console.log("  Press Ctrl+C to quit.\n");
-    if (open) openWindow(url);
+    // Under `deno desktop` the window is already on screen and owns the
+    // process' lifetime; borrowing a browser on top of it would put the
+    // launcher up twice.
+    if (open && !UNDER_DENO_DESKTOP) openWindow(url);
     startBuildServer();
   },
 }, (req, info) => server.fetch(req, info));

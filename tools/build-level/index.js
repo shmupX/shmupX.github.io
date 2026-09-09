@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 "use strict";
 
-// Build a standalone Cordova (android/ios) or Electron (linux/windows/mac) app from
-// a single Firebase level, using cmg's OWN in-repo game (static/games/2028-ai)
-// as the source — no external 2019-es7 checkout, no CMG_ES7_REPO. Invoked by
+// Build a standalone Cordova (android/ios) or `deno desktop` (linux/windows/mac)
+// app from a single Firebase level, using cmg's OWN in-repo game
+// (static/games/2028-ai) as the source — no external 2019-es7 checkout, no
+// CMG_ES7_REPO. The desktop half used to be Electron, vendored from 2019-es7
+// along with the rest of the scaffold; lib/run-deno-desktop.js says what
+// replaced it and why. Invoked by
 // routes/api/build-apk.ts (the level editor's "Export to APK" button) and by
 // `deno task build:windows <levelName>` / `build:linux` / `build:mac`.
 //
@@ -47,11 +50,10 @@ const { stageWww } = require("./lib/stage");
 const { gameIdForLevel } = require("./lib/game-id");
 const {
   rebrandConfigXml,
-  rebrandElectronPackageJson,
   rebrandManifestJson,
 } = require("./lib/rebrand");
 const { buildCordova } = require("./lib/run-cordova");
-const { buildElectron } = require("./lib/run-electron");
+const { buildDenoDesktop } = require("./lib/run-deno-desktop");
 
 const CMG_ROOT = path.resolve(__dirname, "..", "..");
 const GAME_DIR = process.env.CMG_GAME_DIR ||
@@ -168,10 +170,13 @@ async function main() {
     console.error("Unknown --linux-arch: " + linuxArch);
     process.exit(2);
   }
-  // "all" stays the three platforms it always meant: adding windows or mac here
-  // would turn a green run red on any host without wine, or without a Mac.
+  // "all" now includes the desktop three. It used to mean linux/android/ios
+  // because electron-builder made the other two host-dependent — a Windows
+  // target needed wine off Windows, and a Mac app needed a Mac — but
+  // `deno desktop` cross-compiles all three from any host, so the only
+  // remaining host gates are Cordova's (the Android SDK, and Xcode for ios).
   const platforms = platformArg === "all"
-    ? ["linux", "android", "ios"]
+    ? ["linux", "windows", "mac", "android", "ios"]
     : [platformArg];
   for (const p of platforms) {
     if (!["ios", "android", "linux", "windows", "mac"].includes(p)) {
@@ -276,22 +281,14 @@ async function main() {
     console.log("\n--- " + p.toUpperCase() + " ---");
     try {
       if (p === "linux" || p === "windows" || p === "mac") {
-        const pkg = rebrandElectronPackageJson(
-          path.join(SCAFFOLD_ROOT, "electron", "package.json"),
-          levelName,
-          packageId,
-          slug,
-          { winTarget: winTarget, macTarget: macTarget },
-        );
-        results[p] = await buildElectron({
+        results[p] = await buildDenoDesktop({
           scaffoldRoot: SCAFFOLD_ROOT,
           wwwRoot,
           buildRoot,
-          rebrandedPackageJson: pkg,
+          slug: slug,
+          packageId: packageId,
           platform: p,
-          winTarget: winTarget,
           winArch: winArch,
-          macTarget: macTarget,
           macArch: macArch,
           linuxArch: linuxArch,
         });

@@ -75,7 +75,7 @@ export type JobStatus = "queued" | "building" | "done" | "failed" | "cancelled";
 export interface JobArtifact {
   name: string;
   size: number;
-  /** iso | usb-zip | apk | exe | appimage | ipa | dmg | zip | file */
+  /** iso | usb-zip | apk | exe | msi | appimage | ipa | dmg | zip | file */
   kind: string;
   contentType: string;
   chunks: number;
@@ -280,6 +280,9 @@ export function artifactKind(name: string): string {
   if (ext === "iso") return "iso";
   if (ext === "apk") return "apk";
   if (ext === "exe") return "exe";
+  // The per-game Windows export is an .msi: deno desktop has no single-file
+  // .exe output, so an installer is what stands in for the portable one.
+  if (ext === "msi") return "msi";
   if (ext === "appimage") return "appimage";
   if (ext === "ipa") return "ipa";
   if (ext === "dmg") return "dmg";
@@ -290,6 +293,7 @@ export function artifactKind(name: string): string {
 const CONTENT_TYPES: Record<string, string> = {
   iso: "application/x-iso9660-image",
   apk: "application/vnd.android.package-archive",
+  msi: "application/x-msi",
   zip: "application/zip",
   "usb-zip": "application/zip",
 };

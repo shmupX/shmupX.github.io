@@ -40,7 +40,7 @@ export const PLATFORM_ARTIFACTS = {
   android: 'APK',
   ios: 'iOS app',
   linux: 'AppImage',
-  windows: 'EXE',
+  windows: 'MSI',
   ps2: 'PS2 disc',
   desktop: 'desktop app',
 };
@@ -462,6 +462,7 @@ export function artifactActionLabel(art) {
     case 'usb-zip': return 'DOWNLOAD USB FOLDER (.ZIP)';
     case 'apk': return 'INSTALL APK';
     case 'exe': return 'DOWNLOAD .EXE';
+    case 'msi': return 'DOWNLOAD INSTALLER (.MSI)';
     case 'appimage': return 'DOWNLOAD APPIMAGE';
     case 'ipa': return 'DOWNLOAD .IPA';
     case 'dmg': return 'DOWNLOAD .DMG';

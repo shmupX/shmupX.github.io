@@ -13,11 +13,23 @@
 // given:
 //
 //   * No name — the launcher itself. `deno task build` (Vite) and then
-//     `deno compile desktop.ts` with the built app embedded, plus the export
-//     tool and the 2028-ai game so the editor's "Export to APK" button works
-//     inside the packaged app (routes/api/build-apk.ts stages those out of the
-//     binary's read-only VFS). Linux is then wrapped in an AppImage, macOS in a
-//     .app bundle. android and ios have no launcher, so they always need a name.
+//     desktop.ts packaged with the built app embedded, plus the export tool and
+//     the 2028-ai game so the editor's "Export to APK" button works inside the
+//     packaged app (routes/api/build-apk.ts stages those out of the binary's
+//     read-only VFS). android and ios have no launcher, so they always need a
+//     name.
+//
+//     Two routes, because they are good at different things:
+//       - Windows → `deno compile`. The only one that still yields a single
+//         file. `deno desktop` always lays Windows out as a directory (a
+//         launcher .exe beside denort.dll and the backend), and its --compress
+//         form is a .bat over an archive — both worse for "add a non-Steam
+//         game". The .exe has no engine, so it borrows a browser at runtime.
+//       - Linux and macOS → `deno desktop --backend cef`, which brings its own
+//         Chromium and writes the .AppImage / .app itself. Neither is
+//         host-gated: the AppImage is packed in-process (no appimagetool, no
+//         mksquashfs, no WSL) and the .app needs no Mac, so both cross-build
+//         from here. Only a .dmg would need a Mac, and this builds a .app.
 //
 //   * A name — one game, through the per-level export in tools/build-level (the
 //     same pipeline the editor's export button drives). Needs Node + the
@@ -44,8 +56,8 @@
 //                          (they cost ~0.3MB: deno dedupes the game against the
 //                          identical copy Vite put in _fresh/client)
 //   --no-terminal          Windows: no console window behind the app
-//   --no-appimage          Linux: stop at the raw binary + AppDir
-//   --no-bundle            macOS: stop at the raw binary, no .app around it
+//   --no-appimage          Linux: stop at the plain app directory, unwrapped
+//   --no-bundle            macOS: stop at the plain app directory, no .app
 //
 // Flags (game builds):
 //   --sav <path>           build this Dezaemon 2 cart, whatever the name says
@@ -59,7 +71,7 @@
 // --package-id, --level-file, --stage-only, --win-target, --mac-target. --arch
 // is translated to its --win-arch / --mac-arch.
 
-import { basename, dirname, fromFileUrl, join, resolve } from "@std/path";
+import { dirname, fromFileUrl, join, resolve } from "@std/path";
 import { ensureDir, walk } from "@std/fs";
 import { buildRuntimeBundle } from "../lib/ps2/build.ts";
 import { resolveAthenaElf } from "../lib/ps2/athena.ts";
@@ -73,14 +85,6 @@ type Arch = "x86_64" | "aarch64";
 
 /** The two Cordova targets: no launcher product, and no --arch of their own. */
 const MOBILE = new Set<Platform>(["android", "ios"]);
-
-const APPIMAGETOOL_URL = (arch: string) =>
-  `https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${arch}.AppImage`;
-// The type-2 runtime appimagetool prepends to the squashfs image. Passing it
-// explicitly (rather than letting appimagetool fetch its own) is what makes an
-// AppImage for a foreign architecture reproducible from this host.
-const RUNTIME_URL = (arch: string) =>
-  `https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${arch}`;
 
 // Flags this script consumes itself; everything else on a game build is passed
 // straight through to tools/build-level.
@@ -381,46 +385,25 @@ async function stagePs2Runtime(): Promise<string[]> {
   return includes;
 }
 
-async function compileLauncher(opts: Options): Promise<string> {
-  const target = opts.platform === "windows"
+/** The target triple for a platform/arch pair. Shared by both build routes. */
+function targetTriple(opts: Options): string {
+  return opts.platform === "windows"
     ? `${opts.arch}-pc-windows-msvc`
     : opts.platform === "mac"
     ? `${opts.arch}-apple-darwin`
     : `${opts.arch}-unknown-linux-gnu`;
-  const output = opts.platform === "windows"
-    ? join(opts.outDir, `shmupX-windows-${opts.arch}.exe`)
-    : opts.platform === "mac"
-    // macOS lands inside the .app it will be launched from; --no-bundle drops
-    // the wrapper and leaves a plain, runnable binary next to it.
-    ? (opts.appBundle
-      ? join(
-        opts.outDir,
-        `shmupX-mac-${opts.arch}.app`,
-        "Contents",
-        "MacOS",
-        "shmupx",
-      )
-      : join(opts.outDir, `shmupX-mac-${opts.arch}`))
-    // Linux lands in the AppDir the AppImage is built from; a --no-appimage run
-    // leaves it there as a plain, runnable binary.
-    : join(
-      opts.outDir,
-      `shmupX-linux-${opts.arch}.AppDir`,
-      "usr",
-      "bin",
-      "shmupx",
-    );
+}
 
+/**
+ * What both `deno compile` and `deno desktop` embed. The two subcommands take
+ * the same --include/--exclude flags, so the payload is described once.
+ *
+ * The one flag they do not share is --app-name: `deno desktop` rejects it and
+ * derives the storage identity from the output file name instead, which is why
+ * the artifact names below are worth keeping stable.
+ */
+async function embedArgs(opts: Options): Promise<string[]> {
   const args = [
-    "compile",
-    "--allow-all",
-    "--target",
-    target,
-    // Storage identity (localStorage/caches) that survives renaming the binary.
-    "--app-name",
-    "shmupX",
-    "--output",
-    output,
     // The built server, and the client assets its ProdBuildCache reads at
     // runtime out of _fresh/client.
     "--include",
@@ -432,6 +415,12 @@ async function compileLauncher(opts: Options): Promise<string> {
     // add ~90MB of dead weight.
     "--exclude",
     "./node_modules",
+    // The SpacetimeDB module's own tree is the same story, and worth naming
+    // separately because the exclude above only reaches the root one: it is
+    // what `spacetime publish` builds from, never something the launcher runs.
+    // ~44MB.
+    "--exclude",
+    "./spacetimedb/module/node_modules",
   ];
   if (opts.exportTools) {
     // What routes/api/build-apk.ts copies out of the VFS onto real disk before
@@ -454,136 +443,8 @@ async function compileLauncher(opts: Options): Promise<string> {
     console.log("\n  Staging the PS2 runtime…");
     args.push(...await stagePs2Runtime());
   }
-  if (opts.platform === "windows") {
-    args.push("--icon", "./static/app-icons/cmg.ico");
-    if (opts.noTerminal) args.push("--no-terminal");
-  }
-  args.push("./desktop.ts");
-
-  console.log(`\n[2/3] Compiling the launcher for ${target}…`);
-  await ensureDir(dirname(output));
-  await run(Deno.execPath(), args);
-  return output;
+  return args;
 }
-
-// ---------------------------------------------------------------- AppImage
-
-async function download(url: string, dest: string): Promise<string> {
-  if (await exists(dest)) return dest;
-  console.log(`  fetching ${url}`);
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`GET ${url} failed with HTTP ${res.status}`);
-  }
-  await ensureDir(dirname(dest));
-  await Deno.writeFile(dest, new Uint8Array(await res.arrayBuffer()));
-  return dest;
-}
-
-// appimagetool itself is an AppImage, so it has to match the *host* arch — only
-// the runtime it embeds has to match the target arch.
-async function findAppimagetool(cacheDir: string): Promise<string> {
-  const override = Deno.env.get("APPIMAGETOOL");
-  if (override) return override;
-  try {
-    const probe = await new Deno.Command("appimagetool", {
-      args: ["--version"],
-      stdout: "null",
-      stderr: "null",
-    }).output();
-    if (probe.success) return "appimagetool";
-  } catch (_err) { /* not on PATH — fall through to the download */ }
-  const cached = join(cacheDir, `appimagetool-${hostArch()}.AppImage`);
-  await download(APPIMAGETOOL_URL(hostArch()), cached);
-  await Deno.chmod(cached, 0o755);
-  return cached;
-}
-
-const DESKTOP_ENTRY = `[Desktop Entry]
-Type=Application
-Name=shmupX
-GenericName=Game launcher
-Comment=The codemonkey.games launcher and shmupX level editor
-Exec=shmupx
-Icon=shmupx
-Categories=Game;
-Terminal=false
-`;
-
-// AppRun is what the AppImage runtime executes after mounting the image; $HERE
-// is the mount point, which changes every launch.
-const APP_RUN = `#!/bin/sh
-HERE="$(dirname "$(readlink -f "$0")")"
-exec "$HERE/usr/bin/shmupx" "$@"
-`;
-
-async function buildAppImage(opts: Options, binary: string): Promise<string> {
-  if (Deno.build.os !== "linux") {
-    fail(
-      "building an AppImage needs a Linux host (appimagetool is a Linux " +
-        "binary). Pass --no-appimage to stop at the raw binary.",
-    );
-  }
-  const appDir = resolve(binary, "..", "..", ".."); // <out>/shmupX-linux-<arch>.AppDir
-  const cacheDir = join(opts.outDir, ".cache");
-
-  console.log("\n[3/3] Packaging the AppImage…");
-  await Deno.writeTextFile(join(appDir, "AppRun"), APP_RUN);
-  await Deno.chmod(join(appDir, "AppRun"), 0o755);
-  await Deno.writeTextFile(join(appDir, "shmupx.desktop"), DESKTOP_ENTRY);
-  await ensureDir(join(appDir, "usr", "share", "applications"));
-  await Deno.copyFile(
-    join(appDir, "shmupx.desktop"),
-    join(appDir, "usr", "share", "applications", "shmupx.desktop"),
-  );
-
-  // The icon has to sit at the AppDir root under the name the desktop entry's
-  // Icon= key uses, and again as .DirIcon (what file managers and Steam read).
-  const icon = join(ROOT, "static", "app-icons", "launcher-256.png");
-  const iconDir = join(
-    appDir,
-    "usr",
-    "share",
-    "icons",
-    "hicolor",
-    "256x256",
-    "apps",
-  );
-  await ensureDir(iconDir);
-  for (
-    const dest of [
-      join(appDir, "shmupx.png"),
-      join(appDir, ".DirIcon"),
-      join(iconDir, "shmupx.png"),
-    ]
-  ) {
-    await Deno.copyFile(icon, dest);
-  }
-
-  const tool = await findAppimagetool(cacheDir);
-  const runtime = await download(
-    RUNTIME_URL(opts.arch),
-    join(cacheDir, `runtime-${opts.arch}`),
-  );
-  const output = join(opts.outDir, `shmupX-linux-${opts.arch}.AppImage`);
-  await run(
-    tool,
-    ["--runtime-file", runtime, "--no-appstream", appDir, output],
-    {
-      env: {
-        ...Deno.env.toObject(),
-        ARCH: opts.arch,
-        // WSL, containers and most CI images have no FUSE, which appimagetool
-        // needs to mount *itself*. Extracting instead works everywhere.
-        APPIMAGE_EXTRACT_AND_RUN: "1",
-      },
-    },
-  );
-  await Deno.chmod(output, 0o755);
-  return output;
-}
-
-// ---------------------------------------------------------------- .app bundle
 
 // The icns chunk type each PNG edge length belongs to. macOS only renders a
 // PNG-backed entry whose pixels match the size its type promises, so the set is
@@ -597,30 +458,6 @@ const ICNS_TYPES: Record<number, string[]> = {
 
 const ICNS_SOURCES = [32, 128, 256, 512];
 
-const INFO_PLIST = (arch: Arch) =>
-  `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key><string>en</string>
-  <key>CFBundleDisplayName</key><string>shmupX</string>
-  <key>CFBundleExecutable</key><string>shmupx</string>
-  <key>CFBundleIconFile</key><string>shmupx</string>
-  <key>CFBundleIdentifier</key><string>games.codemonkey.shmupx</string>
-  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>CFBundleName</key><string>shmupX</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0.0</string>
-  <key>CFBundleVersion</key><string>1.0.0</string>
-  <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
-  <key>LSMinimumSystemVersion</key><string>${
-    arch === "aarch64" ? "11.0" : "10.15"
-  }</string>
-  <key>NSHighResolutionCapable</key><true/>
-</dict>
-</plist>
-`;
-
 // A PNG's IHDR is always its first chunk: 8-byte signature, 4-byte length,
 // "IHDR", then width and height as big-endian uint32s.
 function pngSize(png: Uint8Array): number | null {
@@ -630,10 +467,17 @@ function pngSize(png: Uint8Array): number | null {
   return width === view.getUint32(20) ? width : null;
 }
 
-// An .icns is a flat container: "icns" + total length, then one 8-byte-headed
-// chunk per image. PNG payloads have been legal since 10.7, so the icon can be
-// assembled straight from static/app-icons — no iconutil, and therefore no
-// macOS host, required.
+/**
+ * An .icns is a flat container: "icns" + total length, then one 8-byte-headed
+ * chunk per image. PNG payloads have been legal since 10.7, so the icon can be
+ * assembled straight from static/app-icons — no iconutil, and therefore no
+ * macOS host, required.
+ *
+ * `deno desktop` accepts either .icns or .png for a macOS target, but the PNG
+ * path converts through a tool that only exists on a Mac: cross-building with
+ * `--icon <png>` fails with a bare "program not found". Handing it a .icns
+ * built here sidesteps that, which is the same reason this existed before.
+ */
 async function buildIcns(sources: string[]): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   for (const source of sources) {
@@ -641,11 +485,7 @@ async function buildIcns(sources: string[]): Promise<Uint8Array> {
     const size = pngSize(png);
     const types = size === null ? undefined : ICNS_TYPES[size];
     if (!types) {
-      console.warn(
-        `  skipping ${basename(source)}: no icns type for a ${
-          size ?? "?"
-        }px PNG`,
-      );
+      console.warn(`  skipping ${source}: no icns type for a ${size ?? "?"}px PNG`);
       continue;
     }
     for (const type of types) {
@@ -668,46 +508,119 @@ async function buildIcns(sources: string[]): Promise<Uint8Array> {
   return icns;
 }
 
-// `deno compile` ad-hoc signs the binary it emits, which is what lets it run on
-// Apple Silicon at all. Sealing the bundle on top of that is what keeps the
-// icon, Info.plist and identity from being swappable, and gives the app a
-// stable identity for per-app permissions. codesign is macOS-only, so a bundle
-// cross-built from anywhere else stays unsealed until it lands on a Mac.
-async function sealBundle(appDir: string): Promise<void> {
-  if (Deno.build.os !== "darwin") {
-    console.log(
-      "  no codesign on this host — the bundle is unsigned. On the Mac it " +
-        `lands on:\n    codesign --force --sign - "${basename(appDir)}"`,
-    );
-    return;
-  }
-  try {
-    await run("codesign", ["--force", "--sign", "-", appDir]);
-  } catch (err) {
-    console.warn(`  codesign failed (non-fatal): ${(err as Error).message}`);
-  }
+/** The icon file to hand `deno desktop`, built for the target if need be. */
+async function iconFor(opts: Options): Promise<string> {
+  const icons = join(ROOT, "static", "app-icons");
+  if (opts.platform !== "mac") return join(icons, "icon-512.png");
+  const icns = await buildIcns(
+    ICNS_SOURCES.map((size) => join(icons, `icon-${size}.png`)),
+  );
+  const path = join(opts.outDir, "shmupX.icns");
+  await Deno.writeFile(path, icns);
+  return path;
 }
 
-async function buildAppBundle(opts: Options, binary: string): Promise<string> {
-  const appDir = resolve(binary, "..", "..", ".."); // <out>/shmupX-mac-<arch>.app
-  const contents = join(appDir, "Contents");
-  const resources = join(contents, "Resources");
-
-  console.log("\n[3/3] Assembling the .app bundle…");
-  await ensureDir(resources);
-  await Deno.writeTextFile(join(contents, "Info.plist"), INFO_PLIST(opts.arch));
-  // The eight bytes Finder reads to type a bundle without parsing its plist.
-  await Deno.writeTextFile(join(contents, "PkgInfo"), "APPL????");
-  await Deno.writeFile(
-    join(resources, "shmupx.icns"),
-    await buildIcns(
-      ICNS_SOURCES.map((size) =>
-        join(ROOT, "static", "app-icons", `icon-${size}.png`)
-      ),
-    ),
+/**
+ * Linux and macOS: `deno desktop`, which brings its own window.
+ *
+ * The backend is CEF rather than the default OS webview. The launcher is a
+ * Phaser game driven by a controller, and the native webviews cannot be relied
+ * on for that: WebKitGTK only exposes the Gamepad API when the distro compiled
+ * it against libmanette (Fedora and Arch do, so Bazzite is fine — but it is the
+ * distro's call, not ours), and WKWebView only delivers gamepad input to the
+ * view holding first responder. CEF costs ~150MB over the webview backend and
+ * removes the question.
+ *
+ * Nothing here is host-gated. `deno desktop` writes the AppImage in-process —
+ * it packs the SquashFS itself and prepends the type-2 runtime — so a Linux
+ * artifact cross-builds from Windows with no appimagetool, no mksquashfs and no
+ * WSL. Only a .dmg would need a Mac, and this builds a .app instead.
+ */
+async function buildDesktopApp(opts: Options): Promise<string> {
+  const target = targetTriple(opts);
+  // `deno desktop` has no --app-name: it derives the app name, and from that
+  // the reverse-DNS bundle identifier, from this file name. Identifiers are
+  // [A-Za-z0-9.-], so the underscore in "x86_64" would make it invalid — and
+  // rather than fail, the build silently skips writing the .desktop entry,
+  // which is what gives the AppImage its name and monkey icon in a desktop
+  // environment (and in Steam, added as a non-Steam game). Hence "x86-64".
+  // `deno desktop` has no --app-name: the app's own identity — the macOS
+  // CFBundleName, the Linux .desktop entry, the process name in the Dock and
+  // Cmd-Tab — is the *output file's stem*. So it builds as plain "shmupX" and
+  // the arch-tagged artifact name is applied afterwards by renaming: the
+  // identity is baked into Info.plist / the .desktop entry at build time and
+  // does not follow the file. That also keeps the identifier free of the
+  // underscore in "x86_64", which is not legal in a reverse-DNS bundle id and
+  // makes the build skip the .desktop entry rather than fail.
+  //
+  // A macOS target always lands in a bundle and `deno desktop` appends the
+  // .app itself, so passing one would name it "….app.app"; --no-bundle has
+  // nothing to turn off there. On Linux the .AppImage extension *is* the
+  // request to wrap, and --no-appimage leaves the plain app directory.
+  const wrap = opts.platform === "mac"
+    ? ".app"
+    : opts.appImage
+    ? ".AppImage"
+    : "";
+  const output = join(opts.outDir, opts.platform === "mac" ? "shmupX" : `shmupX${wrap}`);
+  const built = join(opts.outDir, `shmupX${wrap}`);
+  const artifact = join(
+    opts.outDir,
+    `shmupX-${opts.platform === "mac" ? "mac" : "linux"}-${opts.arch}${wrap}`,
   );
-  await sealBundle(appDir);
-  return appDir;
+
+  const args = [
+    "desktop",
+    "--allow-all",
+    "--backend",
+    "cef",
+    "--target",
+    target,
+    "--output",
+    output,
+    ...await embedArgs(opts),
+  ];
+  args.push("--icon", await iconFor(opts));
+  args.push("./desktop.ts");
+
+  console.log(
+    `\n[2/2] Building the launcher for ${target} with \`deno desktop\` (CEF)…`,
+  );
+  await ensureDir(dirname(output));
+  await run(Deno.execPath(), args);
+  // Rename into the documented, arch-tagged artifact name. Both forms are
+  // rebuilt from scratch each run, so an artifact left over from a previous
+  // build of the same target has to go first or the rename fails.
+  await Deno.remove(artifact, { recursive: true }).catch(() => {});
+  await Deno.rename(built, artifact);
+  return artifact;
+}
+
+/** Windows: `deno compile`, which keeps the single-file .exe. */
+async function compileLauncher(opts: Options): Promise<string> {
+  const target = targetTriple(opts);
+  const output = join(opts.outDir, `shmupX-windows-${opts.arch}.exe`);
+
+  const args = [
+    "compile",
+    "--allow-all",
+    "--target",
+    target,
+    // Storage identity (localStorage/caches) that survives renaming the binary.
+    "--app-name",
+    "shmupX",
+    "--output",
+    output,
+    ...await embedArgs(opts),
+  ];
+  args.push("--icon", "./static/app-icons/cmg.ico");
+  if (opts.noTerminal) args.push("--no-terminal");
+  args.push("./desktop.ts");
+
+  console.log(`\n[2/2] Compiling the launcher for ${target}…`);
+  await ensureDir(dirname(output));
+  await run(Deno.execPath(), args);
+  return output;
 }
 
 // ------------------------------------------------------------ level builds
@@ -904,12 +817,14 @@ try {
     );
     await ensureDir(opts.outDir);
     await buildWeb(opts.skipBuild);
-    const binary = await compileLauncher(opts);
-    const artifact = opts.platform === "linux" && opts.appImage
-      ? await buildAppImage(opts, binary)
-      : opts.platform === "mac" && opts.appBundle
-      ? await buildAppBundle(opts, binary)
-      : binary;
+    // Windows keeps `deno compile`, which is the only route that still yields a
+    // single-file .exe — `deno desktop` always lays a Windows app out as a
+    // directory (a launcher .exe beside denort.dll and the backend), and its
+    // --compress form is a .bat over a payload archive, which is worse for
+    // "add a non-Steam game". Linux and macOS take `deno desktop`.
+    const artifact = opts.platform === "windows"
+      ? await compileLauncher(opts)
+      : await buildDesktopApp(opts);
     const size = await artifactSize(artifact) / 1024 / 1024;
     console.log(`\nDone. ${artifact} (${size.toFixed(1)} MB)`);
   }

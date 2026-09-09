@@ -722,35 +722,17 @@ export async function detectExportCapabilities(): Promise<ExportCapabilities> {
   platforms.android = ready && sdk !== null;
 
   platforms.ios = ready && Deno.build.os === "darwin";
-  // electron-builder assembles the AppImage with mksquashfs. Linux has one and
-  // the toolchain carries a macOS one, but every copy it would reach for on
-  // Windows is a Linux binary that host cannot exec — so there the target is
-  // only available through WSL, which is exactly what
-  // tools/build-level/lib/appimage-bridge.js hands it.
+  // The desktop targets have no host requirement any more. They did under
+  // electron-builder: an AppImage needed a Linux mksquashfs (which is why a
+  // Windows host had to borrow WSL's), a Windows .exe was rcedited through wine
+  // off Windows, and a Mac app needed a Mac. `deno desktop` packs the SquashFS
+  // and authors the MSI in-process and writes the .app itself, so all three
+  // cross-compile from wherever this is running — only a .dmg would need a Mac,
+  // and the per-game build makes a .app. What they do still need is Deno
+  // itself, which is what is running this.
   if (ready) {
-    if (Deno.build.os !== "windows") platforms.linux = true;
-    else {
-      const squash = await commandVersion("wsl.exe", [
-        "-e",
-        "mksquashfs",
-        "-version",
-      ]);
-      platforms.linux = squash !== null;
-      if (!squash) {
-        notes.push(
-          "WSL + squashfs-tools not found (needed for AppImage builds)",
-        );
-      }
-    }
-  }
-  // electron-builder rcedits a Windows .exe through wine on every other host.
-  if (ready) {
-    if (Deno.build.os === "windows") platforms.windows = true;
-    else {
-      const wine = await commandVersion("wine");
-      platforms.windows = wine !== null;
-      if (!wine) notes.push("wine not on PATH (needed for Windows builds)");
-    }
+    platforms.linux = true;
+    platforms.windows = true;
   }
   return { platforms, notes };
 }

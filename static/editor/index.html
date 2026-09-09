@@ -991,7 +991,7 @@
              so exportGameToApk() hands the record over directly instead
              (ExportRequest.levelRecord). All five targets work either way. -->
         <div class="menu-label">EXPORT AS AN APP</div>
-        <div class="display-row" title="Which app the export builds. Linux/Windows are Electron desktop builds; a Windows build from a Linux host needs wine on PATH. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
+        <div class="display-row" title="Which app the export builds. Linux/Windows/macOS are deno desktop builds and cross-compile from any host. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
             <span class="display-lbl">TARGET</span>
             <div class="seg-wrap" id="export-platform-segs">
                 <button class="seg xseg" data-platform="android" onclick="setExportPlatform('android')">ANDROID</button>
@@ -9972,8 +9972,8 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
 
         // TARGET picker: which platform the export is compiled for. Persisted
         // like the other editor toggles. android needs cordova + the SDK, ios
-        // macOS + Xcode; linux/windows are Electron desktop builds (a Windows
-        // build from a Linux host additionally needs wine on PATH). PS2 needs
+        // macOS + Xcode; linux/windows are deno desktop builds, which need
+        // nothing installed beyond Deno and cross-compile anywhere. PS2 needs
         // nothing installed — it runs on a JavaScript interpreter for the
         // console (AthenaEnv), which the build downloads once and caches — and
         // yields both a bootable .iso and a folder to drop on a USB stick.
@@ -9981,7 +9981,7 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             android: { label: 'EXPORT TO APK',   badge: 'AP', artifact: 'APK' },
             ios:     { label: 'EXPORT IOS APP',  badge: 'IP', artifact: 'iOS app' },
             linux:   { label: 'EXPORT APPIMAGE', badge: 'LX', artifact: 'AppImage' },
-            windows: { label: 'EXPORT TO EXE',   badge: 'EX', artifact: 'EXE' },
+            windows: { label: 'EXPORT INSTALLER', badge: 'EX', artifact: 'MSI' },
             ps2:     { label: 'EXPORT PS2 DISC', badge: 'P2', artifact: 'PS2 disc' },
         };
         let exportPlatform = 'android';
