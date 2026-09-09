@@ -4,8 +4,9 @@
 // It is TypeScript rather than a shell script for one reason: native Windows
 // has no `sh`, so it cannot run scripts/inject-openemu.sh the way the Linux leg
 // does. It therefore imports the very same merge those two use —
-// scripts/inject-cart.ts — and adds only what differs per platform: finding the
-// cart, refusing while Mednafen is running, and starting the game.
+// lib/cart-inject.ts, through scripts/inject-cart.ts — and adds only what
+// differs per platform: finding the cart, refusing while Mednafen is running,
+// and starting the game.
 //
 // The cart is the one the user's own "Dezaemon 2.bat" launcher points Mednafen
 // at. That .bat is:
@@ -485,6 +486,7 @@ async function main(): Promise<number> {
       slot: args.slot,
       dryRun: args.dryRun,
       emulator: "Mednafen",
+      log: (line) => console.log(line),
     });
   } finally {
     if (temporary) await Deno.remove(sav).catch(() => {});

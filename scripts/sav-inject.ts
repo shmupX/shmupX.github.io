@@ -7,11 +7,13 @@
 //   Linux / WSL  Mednafen, ~/.mednafen/sav          (the user's dezaemon2.sh)
 //   Windows      Mednafen, <base>\mednafen\sav      (the user's "Dezaemon 2.bat")
 //
-// This file is only the router. The merge is one file, scripts/inject-cart.ts,
-// which all three legs share: the level goes into one DEZA2____NN slot and
-// every other save on the cart stays byte-identical, only the .bcr is written,
-// the .bkr and .smpc are never touched. Every leg takes the same flags, so
-// `--help` is worth reading from any of them. What differs is only where the
+// This file is only the router. The merge is one file, lib/cart-inject.ts,
+// which all three legs share (through scripts/inject-cart.ts, their command
+// line) and which `deno task sav:run` and the editor's route use too: the
+// level goes into one DEZA2____NN slot and every other save on the cart stays
+// byte-identical, only the .bcr is written, and the .bkr and .smpc are never
+// touched. Every leg takes the same flags, so `--help` is worth reading from
+// any of them. What differs is only where the
 // cart is, how to tell the emulator is running, and what to start afterwards.
 //
 // Why a .ts and not `sh scripts/inject-*.sh` in deno.json: `deno task` runs its

@@ -255,10 +255,11 @@ deno task build:sav ./backups/mygame.json    # a level record on disk
 deno task build:sav foo --palette snes --snes-pal build/sav/foo.pal --report
 ```
 
-**Run it in an emulator.** `deno task sav:run [level]` builds the `.sav`,
-installs it as Mednafen's cartridge save (converting to the `<disc>.bcr/.bkr`
-pair, backing up any existing cart) and launches Mednafen on the disc — the
-in-repo, cross-platform stand-in for the ad-hoc launcher scripts, driven by
+**Run it in an emulator.** `deno task sav:run [level]` builds the `.sav`, merges
+it into one Dezaemon 2 slot of Mednafen's `<disc>.bcr` cartridge save (backing
+that cart up first, and leaving the other four slots and the `.bkr`
+byte-identical) and launches Mednafen on the disc — the in-repo, cross-platform
+stand-in for the ad-hoc launcher scripts, driven by
 [`scripts/run-mednafen.ts`](scripts/run-mednafen.ts). It runs the host's own
 Mednafen (native Windows launches `mednafen.exe`, Linux/macOS `mednafen`); from
 WSL, point `MEDNAFEN_BIN` at a `mednafen.exe` and it launches the Windows build
@@ -269,9 +270,9 @@ content, never in the repo), so their paths come from flags or env vars
 resolved and fails with a clear message when one is missing.
 
 ```sh
-deno task sav:run                       # build foo, seed the cart, launch Mednafen
+deno task sav:run                       # build foo, merge into the cart, launch Mednafen
 deno task sav:run "Master Arena Mod"    # that cloud level
-deno task sav:run --install-only        # seed the cart save, do not launch
+deno task sav:run --install-only        # merge into the cart, do not launch
 DEZAEMON_DISC=/path/to/Dez2.cue deno task sav:run   # point it at your disc
 ```
 
@@ -282,13 +283,17 @@ by the operating system. Wherever it runs it does the same thing: the level goes
 into one `DEZA2____NN` slot and **every other save on the cart stays
 byte-identical**. Only the `.bcr` is written, never the `.bkr` (the console's
 own memory, which holds Dezaemon 2's `DEZA2___SYS` options record) or the
-`.smpc` (the emulated clock). The previous cart is copied to `backup/` (restore
-one with `cp backup/<name>.<timestamp>.bcr <name>.bcr`) and the new one is read
-back — every save that was already there compared byte for byte, and a cart
-carrying a save the parser cannot follow refused rather than merged over —
-before the task reports success. Quit the emulator first: they all rewrite their
-battery saves on close, so an injection made while one is open would be thrown
-away; the task refuses rather than do that, and `--force` overrides.
+`.smpc` (the emulated clock). Mednafen formats internal RAM itself when there is
+no `.bkr`, so there is nothing to seed there either. `sav:run` and the editor's
+`→ MEDNAFEN CART` row merge through the very same code and keep the same
+guarantees; what they do not share is the refusal below, which is each leg's
+own. The previous cart is copied to `backup/` (restore one with
+`cp backup/<name>.<timestamp>.bcr <name>.bcr`) and the new one is read back —
+every save that was already there compared byte for byte, and a cart carrying a
+save the parser cannot follow refused rather than merged over — before the task
+reports success. Quit the emulator first: they all rewrite their battery saves
+on close, so an injection made while one is open would be thrown away; the task
+refuses rather than do that, and `--force` overrides.
 
 |                 | the cart                                                                                                                              | the leg                                                    |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
@@ -296,10 +301,11 @@ away; the task refuses rather than do that, and `--force` overrides.
 | **Linux / WSL** | Mednafen: `$MEDNAFEN_HOME/sav`, else `~/.mednafen/sav` — or `$MEDNAFEN_SAV` to override                                               | [`inject-mednafen.sh`](scripts/inject-mednafen.sh)         |
 | **Windows**     | Mednafen: `%MEDNAFEN_HOME%\sav`, `%HOME%\.mednafen\sav`, `<base>\mednafen\sav` beside your `Dezaemon 2.bat` — first with a cart in it | [`inject-mednafen-win.ts`](scripts/inject-mednafen-win.ts) |
 
-The merge itself is one file,
-[`scripts/inject-cart.ts`](scripts/inject-cart.ts), which all three share; a leg
-only finds the cart, says when the emulator is running, and starts the game
-afterwards.
+The merge itself is one file, [`lib/cart-inject.ts`](lib/cart-inject.ts) —
+shared by all three legs (through
+[`scripts/inject-cart.ts`](scripts/inject-cart.ts), their command line) and by
+`sav:run` and the editor's route; a leg only finds the cart, says when the
+emulator is running, and starts the game afterwards.
 
 The save file is found by **globbing**, never by a name built here. Mednafen
 names saves from its `filesys.fname_sav`, whose stock `%f.%M%x` opens

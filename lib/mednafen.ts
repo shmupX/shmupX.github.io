@@ -3,9 +3,20 @@
 // The browser's Saturn core (yabause, EmulatorJS) keeps only the console's
 // 32 KB internal backup memory, and a level exported from the editor is a
 // ~110 KB save — most games do not fit. Mednafen does have the 512 KB
-// cartridge, so it is where a level goes to be played on a desktop: convert
-// the MiSTer-layout .sav to Mednafen's <disc>.bcr/.bkr save pair, drop it in
-// Mednafen's save directory under the disc's name, start Mednafen on the disc.
+// cartridge, so it is where a level goes to be played on a desktop: merge the
+// level from a MiSTer-layout .sav into one slot of Mednafen's <disc>.bcr, in
+// Mednafen's save directory under the disc's name, and start Mednafen on the
+// disc.
+//
+// ONLY the .bcr is written, and only one slot of it. Dezaemon 2 keeps five
+// (DEZA2____01 .. 05), so the cart is merged into, never replaced. The .bkr —
+// the console's own 32 KB internal memory, which holds Dezaemon 2's
+// DEZA2___SYS options record — is not written at all: a freshly built .sav's
+// internal partition is formatted but EMPTY, so installing it could only ever
+// destroy that record, and there is nothing to seed either, because Mednafen
+// formats internal RAM itself the first time it boots a disc with no .bkr
+// beside it. The merge, the backup and the read-back live in lib/cart-inject.ts,
+// shared with `deno task sav:inject`.
 //
 // Two callers share this: `deno task sav:run` (scripts/run-mednafen.ts, the
 // CLI, which builds the .sav first) and POST /api/saturn-save (the editor's
@@ -28,18 +39,19 @@
 //                           Mednafen unpacked outside the system libs, as on WSL)
 //
 // Mednafen is launched with `-filesys.fname_sav %f.%x`, so the save file is
-// named after the disc (<disc-basename>.bcr/.bkr) regardless of the user's
-// mednafen.cfg — that is the name written here. An existing .bcr is backed up
-// to <sav>/backup/ first. Close Mednafen before installing: it rewrites its
+// named after the disc (<disc-basename>.bcr) regardless of the user's
+// mednafen.cfg — that is the name written here, and it is why this side never
+// has to guess between the plain and the MD5-hashed name the way sav:inject's
+// discovery does. A save directory holding only the hashed cart is the one case
+// where that costs something: the merge writes the un-hashed name Mednafen will
+// open, which is a second cart, so it says so rather than report one save on a
+// cart the user remembers filling. The cart merged into is backed up to
+// <sav>/backup/ first, and close Mednafen before installing: it rewrites its
 // save files on exit.
 
 import { dirname, isAbsolute, join, resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
-import {
-  CART_PARTITION_SIZE,
-  INTERNAL_PARTITION_SIZE,
-  normalize,
-} from "../packages/shmup-engine/mod.js";
+import { injectCart, InjectError } from "./cart-inject.ts";
 
 const IS_WINDOWS = Deno.build.os === "windows";
 
@@ -67,12 +79,22 @@ export interface MednafenResolution extends MednafenPaths {
 }
 
 export interface CartInstall {
+  /** The cart written. There is no .bkr here on purpose: see the header. */
   bcrPath: string;
-  bkrPath: string;
-  /** Where the previous .bcr went, or null when there was none. */
+  /** Where the previous cart went, or null when there was none. */
   backupPath: string | null;
-  bcrBytes: number;
-  bkrBytes: number;
+  /** The size of the gzip written — a cart file, not the 512 KB it unpacks to. */
+  gzipBytes: number;
+  /** The slot the level went into, 1-5, and its DEZA2____NN name. */
+  slot: number;
+  filename: string;
+  /** Saves already on the cart that stayed byte-identical. */
+  kept: number;
+  /** Whether that slot was occupied before. */
+  replaced: boolean;
+  /** A heads-up for the caller to pass on, or null. So far: a save directory
+   * whose only cart is under Mednafen's other, MD5-hashed name. */
+  note: string | null;
 }
 
 function home(): string {
@@ -87,30 +109,6 @@ async function exists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-/** The MiSTer-layout .sav → Mednafen's cart (.bcr, gzip of the 512 KB cart) and
- * internal RAM (.bkr, raw 32 KB), the shape Mednafen reads and writes. Accepts
- * anything normalize() does — the interleaved 1,114,112-byte image, a gzip of
- * it, or the 557,056-byte logical bytes. */
-export async function toMednafenPair(
-  sav: Uint8Array,
-): Promise<{ bcr: Uint8Array; bkr: Uint8Array }> {
-  const { data } = await normalize(sav);
-  const expected = INTERNAL_PARTITION_SIZE + CART_PARTITION_SIZE;
-  if (data.length !== expected) {
-    throw new MednafenError(
-      `the .sav normalizes to ${data.length} bytes, expected ${expected} ` +
-        `(32 KB internal + 512 KB cart)`,
-    );
-  }
-  const cart = data.subarray(INTERNAL_PARTITION_SIZE);
-  const bcr = new Uint8Array(
-    await new Response(
-      new Blob([cart]).stream().pipeThrough(new CompressionStream("gzip")),
-    ).arrayBuffer(),
-  );
-  return { bcr, bkr: data.slice(0, INTERNAL_PARTITION_SIZE) };
 }
 
 /** The disc image: an explicit path, then DEZAEMON_DISC, then a few common
@@ -256,41 +254,96 @@ export async function resolveMednafen(
   };
 }
 
-/** The name an existing cart is backed up under, beside the save directory. */
-export function backupFileName(name: string, now: Date): string {
-  return `${name}.${now.toISOString().replace(/[:.]/g, "-")}.bcr`;
+/**
+ * A save directory whose cart is under Mednafen's OTHER name.
+ *
+ * Mednafen's stock filesys.fname_sav is `%f.%M%x`, which writes
+ * <disc>.<md5>.bcr, and that hashed name is the only one OpenEmu ever uses.
+ * sav:run starts Mednafen with `-filesys.fname_sav %f.%x`, so the cart it opens
+ * is the un-hashed <disc>.bcr — and where that file does not exist yet, merging
+ * creates a SECOND cart holding only this level. Nothing is destroyed, but the
+ * LOAD screen would show one game where the user has five, and the closing
+ * "1 save on the cart" line would read as this having flattened them. Say it
+ * instead.
+ */
+async function otherCartNote(
+  savDir: string,
+  name: string,
+): Promise<string | null> {
+  if (await exists(join(savDir, `${name}.bcr`))) return null;
+  const others: string[] = [];
+  try {
+    for await (const e of Deno.readDir(savDir)) {
+      if (
+        e.isFile && e.name.startsWith(`${name}.`) && e.name.endsWith(".bcr")
+      ) {
+        others.push(e.name);
+      }
+    }
+  } catch {
+    return null; // no directory yet: nothing can be there to confuse anyone
+  }
+  if (!others.length) return null;
+  others.sort();
+  return `"${others[0]}" is here but "${name}.bcr" is not. Mednafen is ` +
+    `started with -filesys.fname_sav %f.%x, so it opens "${name}.bcr" — the ` +
+    `saves in that other file are a different cart and will not be on the ` +
+    `LOAD screen. To merge into that one instead: deno task sav:inject --cart ` +
+    JSON.stringify(join(savDir, others[0]));
 }
 
 /**
- * Convert `sav` and write it as <savDir>/<name>.bcr + .bkr, backing up an
- * existing .bcr to <savDir>/backup/ first. Nothing is written until the
- * conversion has succeeded, so a bad .sav leaves the save directory alone.
+ * Merge the level in `sav` into one slot of <savDir>/<name>.bcr, backing the
+ * cart up to <savDir>/backup/ first. Every other save on the cart stays
+ * byte-identical, and the .bkr is not touched — the whole job is
+ * lib/cart-inject.ts's, which reads the cart back and compares it before
+ * reporting success.
+ *
+ * The slot is the one already holding this level, else the lowest free one, so
+ * rebuilding a level replaces itself rather than filling the cart with copies.
+ * `sav` is the built save's bytes, or a path to read them from — the CLI has a
+ * file and names it in its refusals; the editor's route only ever has bytes.
+ * Every refusal — a .sav that is not one, a cart that cannot be read, five
+ * occupied slots — arrives as MednafenError, which is what this module's
+ * callers already catch and what the route turns into a 400.
  */
 export async function installCartSave(
-  sav: Uint8Array,
+  sav: Uint8Array | string,
   paths: Pick<MednafenPaths, "savDir" | "name">,
-  { now = new Date() }: { now?: Date } = {},
+  { log }: { log?: (line: string) => void } = {},
 ): Promise<CartInstall> {
-  const { bcr, bkr } = await toMednafenPair(sav);
   await ensureDir(paths.savDir);
   const bcrPath = join(paths.savDir, `${paths.name}.bcr`);
-  const bkrPath = join(paths.savDir, `${paths.name}.bkr`);
-  let backupPath: string | null = null;
-  if (await exists(bcrPath)) {
-    const backup = join(paths.savDir, "backup");
-    await ensureDir(backup);
-    backupPath = join(backup, backupFileName(paths.name, now));
-    await Deno.copyFile(bcrPath, backupPath);
+  const note = await otherCartNote(paths.savDir, paths.name);
+  if (note) log?.(`note     : ${note}`);
+  try {
+    const r = await injectCart({
+      sav,
+      cart: bcrPath,
+      emulator: "Mednafen",
+      // Neither of this module's callers has a --slot flag, and on macOS
+      // sav:inject writes OpenEmu's cart rather than this one, so the merge's
+      // own advice would send them to fill a slot on the wrong cartridge.
+      advice: "delete one with the Saturn BIOS backup manager first",
+      log,
+    });
+    return {
+      bcrPath: r.cart,
+      backupPath: r.backup,
+      gzipBytes: r.gzipBytes,
+      slot: r.slot,
+      filename: r.filename,
+      kept: r.kept,
+      replaced: r.replaced,
+      note,
+    };
+  } catch (e) {
+    // One error type crosses this boundary: run-mednafen.ts prints a
+    // MednafenError and exits, and the route answers 400 for one and 500 for
+    // anything else. A refusal from the merge belongs on the 400 side.
+    if (e instanceof InjectError) throw new MednafenError(e.message);
+    throw e;
   }
-  await Deno.writeFile(bcrPath, bcr);
-  await Deno.writeFile(bkrPath, bkr);
-  return {
-    bcrPath,
-    bkrPath,
-    backupPath,
-    bcrBytes: bcr.length,
-    bkrBytes: bkr.length,
-  };
 }
 
 /** The argument list Mednafen is started with: the save name forced to match

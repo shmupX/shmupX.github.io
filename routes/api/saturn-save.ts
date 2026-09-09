@@ -23,18 +23,20 @@ import {
 // The browser's Saturn core has only the console's 32 KB internal memory, and
 // a level exported from the editor is a ~110 KB save, so the editor's
 // DEZAEMON 2 (SATURN) menu offers "→ MEDNAFEN CART": the .sav it just built
-// comes here as base64, lib/mednafen.ts converts it to the <disc>.bcr/.bkr
-// pair and drops it in Mednafen's save directory (backing up the cart that
-// was there), and Mednafen starts with the level loadable from the cartridge
-// in the game's own LOAD menu. The launcher's "Dezaemon 2 · Mednafen" row
-// POSTs { launch: true } alone to start the emulator on whatever is installed.
+// comes here as base64, lib/mednafen.ts merges it into one Dezaemon 2 slot of
+// the <disc>.bcr in Mednafen's save directory (backing that cart up first, and
+// keeping every other save on it byte-identical), and Mednafen starts with the
+// level loadable from the cartridge in the game's own LOAD menu. The .bkr, the
+// console's own memory, is never written — see lib/cart-inject.ts. The
+// launcher's "Dezaemon 2 · Mednafen" row POSTs { launch: true } alone to start
+// the emulator on whatever is installed.
 // The same code path as `deno task sav:run` (scripts/run-mednafen.ts).
 //
 // The save is checked before anything touches the disk: it has to decode to
 // exactly the 1,114,112-byte MiSTer image (32 KB internal + 512 KB cart,
 // 0xFF-interleaved) — or its 557,056 logical bytes, which are interleaved
-// here — because a wrong-sized image would be written as a cart Mednafen then
-// silently reformats.
+// here — because a wrong-sized image is not a level, and the merge should
+// refuse it before it has read the user's cart at all.
 //
 // LOCAL-ONLY: it spawns a process and writes into the user's Mednafen
 // directory, so the hosted deploy refuses it, and the POST is behind the
@@ -138,8 +140,9 @@ export const handler = define.handlers({
       name: typeof body.name === "string" ? body.name : null,
       disc: r.disc,
       bcr: null,
-      bkr: null,
       backup: null,
+      slot: null,
+      note: null,
       launched: false,
     };
     try {
@@ -149,8 +152,15 @@ export const handler = define.handlers({
           name: r.name,
         });
         out.bcr = installed.bcrPath;
-        out.bkr = installed.bkrPath;
         out.backup = installed.backupPath;
+        out.slot = installed.slot;
+        out.filename = installed.filename;
+        out.kept = installed.kept;
+        out.replaced = installed.replaced;
+        // Set when the save directory's only cart is under Mednafen's other,
+        // MD5-hashed name, so the editor can say why the LOAD screen is about
+        // to look emptier than the user remembers.
+        out.note = installed.note;
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

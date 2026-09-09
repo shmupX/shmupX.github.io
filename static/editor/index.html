@@ -1071,7 +1071,7 @@
              the first time the drawer opens). Neither is hide-when-sav: an
              imported cart can be staged for play too. -->
         <button class="menu-row" id="deza-sav-emu" onclick="exportDezaemonSav('emu')" title="Build the save and stage it in the browser Saturn core's internal backup memory (32 KB, no cart) so Dezaemon 2 on the launcher's Sega Saturn shelf can load it from 本体 memory. Saves over ~30 KB do not fit — use Mednafen or MiSTer for those."><span class="mono-badge">EM</span>&rarr; SATURN EMU (USER SAVE)</button>
-        <button class="menu-row hidden" id="deza-sav-mednafen" onclick="exportDezaemonSav('mednafen')" title="Build the save, install it as Mednafen's cartridge (.bcr) and internal (.bkr) backup files beside the Dezaemon 2 disc on this machine, and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN CART</button>
+        <button class="menu-row hidden" id="deza-sav-mednafen" onclick="exportDezaemonSav('mednafen')" title="Build the save, merge it into one Dezaemon 2 slot of Mednafen's cartridge (.bcr) beside the disc on this machine — the cart's other saves and the console's own .bkr memory untouched — and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN CART</button>
         <div id="deza-sav-note" class="menu-note"></div>
         <div class="menu-note">SATURN BACKUP SAVES: .SAV / .BCR / .BKR</div>
         <div class="menu-label">ADVANCED EDITORS</div>
@@ -5625,10 +5625,11 @@
             flash('STAGED IN THE SATURN CORE');
         }
 
-        // → MEDNAFEN CART. The local Fresh server (never Deploy) installs the
-        // cart as Mednafen's <disc>.bcr / .bkr beside the Dezaemon 2 disc it
-        // found in dev-fixtures/ and launches the emulator — the desktop
-        // route for saves the browser core cannot hold.
+        // → MEDNAFEN CART. The local Fresh server (never Deploy) merges the
+        // level into one slot of Mednafen's <disc>.bcr beside the Dezaemon 2
+        // disc it found in dev-fixtures/ and launches the emulator — the
+        // desktop route for saves the browser core cannot hold. The cart's
+        // other slots, and the console's own .bkr memory, are left alone.
         async function installSavInMednafen(out, record, summary) {
             dezaSavNote('INSTALLING THE CART FOR MEDNAFEN…');
             const resp = await fetch('/api/saturn-save', {
@@ -5641,9 +5642,14 @@
             if (!resp.ok || !body || body.ok === false) {
                 throw new Error((body && (body.error || body.reason)) || ('HTTP ' + resp.status));
             }
-            dezaSavNote('MEDNAFEN CART INSTALLED: ' + (body.bcr || '?') + (body.bkr ? ' + ' + body.bkr : '') +
+            dezaSavNote('MEDNAFEN CART INSTALLED: ' + (body.bcr || '?') +
+                (body.slot ? ' · SLOT ' + body.slot + (body.replaced ? ' (REPLACED)' : '') : '') +
+                (body.kept ? ' · ' + body.kept + ' OTHER SAVE' + (body.kept === 1 ? '' : 'S') + ' KEPT' : '') +
                 (body.backup ? ' · PREVIOUS CART BACKED UP TO ' + body.backup : '') +
-                (body.launched ? ' · MEDNAFEN LAUNCHED' : ' · START MEDNAFEN WITH `deno task sav:run`') +
+                (body.note ? ' · ' + body.note : '') +
+                (body.launched ? ' · MEDNAFEN LAUNCHED'
+                    : body.error ? ' · MEDNAFEN DID NOT START: ' + body.error
+                    : ' · START MEDNAFEN WITH `deno task sav:run`') +
                 '. ' + summary, '#84cc16');
             flash(body.launched ? 'MEDNAFEN LAUNCHED' : 'MEDNAFEN CART INSTALLED');
         }

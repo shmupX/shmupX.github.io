@@ -7,8 +7,9 @@
 # 32 KB memory) + .smpc (the SMPC clock).
 #
 # This is the macOS leg of `deno task sav:inject` (scripts/sav-inject.ts picks
-# the leg); the merge itself is scripts/inject-cart.ts, shared with the Linux
-# and Windows legs, which reach the same cartridge through Mednafen.
+# the leg); the merge itself is lib/cart-inject.ts, reached through
+# scripts/inject-cart.ts and shared with the Linux and Windows legs, which
+# reach the same cartridge through Mednafen.
 #
 #   deno task sav:inject foo               # the cloud level "foo" -> the first free slot
 #   deno task sav:inject foo --slot 3      # ...into slot 3, replacing what is there
@@ -20,11 +21,11 @@
 # Only the .bcr is written, and it is MERGED: the level goes into one slot and
 # every other save on the cart is left byte-identical. The .bkr holds Dezaemon
 # 2's own DEZA2___SYS options record and a built .sav's internal partition is
-# empty, so writing it could only ever destroy something — this is why
-# installCartSave() from lib/mednafen.ts is not reused here. The .smpc is the
-# emulated RTC and is never touched. The previous cart is copied to backup/
-# first (restore it with `cp backup/<name>.<timestamp>.bcr <name>.bcr`), and the
-# new one is read back — every save that was already there is compared byte for
+# empty, so writing it could only ever destroy something — it is never opened.
+# The .smpc is the emulated RTC and is never touched. The previous cart is
+# copied to backup/ first (restore it with
+# `cp backup/<name>.<timestamp>.bcr <name>.bcr`), and the new one is read back
+# — every save that was already there is compared byte for
 # byte — before the task reports success.
 #
 # The md5 in the file name is Mednafen's own game hash, computed inside the
@@ -136,7 +137,8 @@ cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 [ -f lib/mednafen.ts ] || fail "cannot find the repo from $0 — run this as: deno task sav:inject"
 # The merge lives in a file of its own now, so a checkout missing it would fail
 # as a module-resolution stack trace some way into the run. Say it here instead.
-[ -f scripts/inject-cart.ts ] || fail "scripts/inject-cart.ts is missing — that is the merge itself, shared by all three platforms. Is the checkout complete?"
+[ -f scripts/inject-cart.ts ] || fail "scripts/inject-cart.ts is missing — that is this leg's command line onto the merge in lib/cart-inject.ts. Is the checkout complete?"
+[ -f lib/cart-inject.ts ] || fail "lib/cart-inject.ts is missing — that is the merge itself, shared by every leg and by sav:run. Is the checkout complete?"
 
 # --- the cart file ---------------------------------------------------------
 AUTOSTATE=""
@@ -207,8 +209,9 @@ fi
 # --- merge, back up, write, verify ----------------------------------------
 # The byte work is Deno's: the .sav is 0xFF-interleaved, the .bcr is gzip, and
 # the placement is packages/shmup-engine's, already unit-tested. It lives in
-# scripts/inject-cart.ts rather than in this file so the Windows leg, which has
-# no `sh` to run this script with, imports the very same merge. The same four
+# lib/cart-inject.ts rather than in this file so the Windows leg, which has no
+# `sh` to run this script with, imports the very same merge, and so the
+# editor's route — which may not import a script — can too. The same four
 # arguments the heredoc it replaced took, plus the emulator name: SAV_INJECT_EMU
 # only names the emulator in the closing "load it" line, for the legs that
 # delegate here.

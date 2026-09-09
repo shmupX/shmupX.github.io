@@ -6,7 +6,7 @@
 # afterwards) and hands the merge itself to scripts/inject-openemu.sh through
 # its --cart flag, which skips every OpenEmu-specific step: same flags, same
 # guarantees, the same --help (with Mednafen named in it rather than OpenEmu —
-# see SAV_INJECT_EMU below), and the same scripts/inject-cart.ts underneath.
+# see SAV_INJECT_EMU below), and the same lib/cart-inject.ts underneath.
 #
 # Mednafen keeps Saturn battery saves in $MEDNAFEN_HOME/sav, i.e.
 # ~/.mednafen/sav — the directory the user's own dezaemon2.sh points the

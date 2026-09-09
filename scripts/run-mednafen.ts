@@ -1,15 +1,22 @@
 // Launch Mednafen with a level preloaded as the Saturn cartridge save — the
 // cross-platform, in-repo equivalent of the ad-hoc dezaemon2.sh / "Dezaemon 2.bat"
-// launchers. It builds the level's .sav (scripts/build-sav.ts), converts it to
-// Mednafen's <disc>.bcr/.bkr save pair (the same de-interleave + gzip the
-// dev-fixtures/debug-tools/sav-to-mednafen.ts converter does), drops it in
-// Mednafen's save directory under the disc's name, then starts Mednafen on the
-// disc. Runs the platform's own Mednafen: native Windows Deno launches
-// mednafen.exe, Linux/macOS Deno launches mednafen.
+// launchers. It builds the level's .sav (scripts/build-sav.ts), merges it into
+// one Dezaemon 2 slot of Mednafen's <disc>.bcr in the save directory under the
+// disc's name, then starts Mednafen on the disc. Runs the platform's own
+// Mednafen: native Windows Deno launches mednafen.exe, Linux/macOS Deno
+// launches mednafen.
+//
+// Same rules as `deno task sav:inject`, and the same code: the level goes into
+// ONE slot and the cart's other four stay byte-identical, only the .bcr is
+// written, and the .bkr — the console's own memory, holding Dezaemon 2's
+// DEZA2___SYS options record — is left alone. The difference between the two
+// tasks is which cart they aim at: this one forces the un-hashed <disc>.bcr
+// with -filesys.fname_sav, sav:inject finds whichever name your emulator
+// already keeps.
 //
 //   deno task sav:run                      # level "foo", auto-detected paths
 //   deno task sav:run air-streamer         # a different cloud level or JSON file
-//   deno task sav:run --install-only       # seed the cart save, do not launch
+//   deno task sav:run --install-only       # merge into the cart, do not launch
 //   deno task sav:run -- -sound 0          # pass extra args straight to Mednafen
 //
 // From WSL, point MEDNAFEN_BIN at a mednafen.exe to launch the Windows Mednafen
@@ -20,8 +27,8 @@
 //   DEZAEMON_DISC=/mnt/c/.../'Dezaemon 2 (Japan).cue' deno task sav:run
 //
 // The resolution of the binary, disc and save directory (MEDNAFEN_BIN,
-// DEZAEMON_DISC, MEDNAFEN_SAV, MEDNAFEN_LD_LIBRARY_PATH), the conversion and
-// the launch live in lib/mednafen.ts, shared with POST /api/saturn-save (the
+// DEZAEMON_DISC, MEDNAFEN_SAV, MEDNAFEN_LD_LIBRARY_PATH), the merge and the
+// launch live in lib/mednafen.ts, shared with POST /api/saturn-save (the
 // editor's "→ MEDNAFEN CART" row). This file is the command line around them:
 // it prints what was resolved and fails with a clear message when something is
 // missing. Close Mednafen before running: it rewrites its save files on exit.
@@ -104,29 +111,20 @@ async function main() {
   const name = baseName(disc);
   console.log(`mednafen : ${bin}`);
   console.log(`disc     : ${disc}`);
-  console.log(`save dir : ${dir}  (as "${name}.bcr" / ".bkr")`);
+  console.log(`save dir : ${dir}  (as "${name}.bcr")`);
 
-  // 3. convert and seed, backing up any existing cart first.
-  let installed;
+  // 3. merge the level into a slot, backing the cart up first. The merge prints
+  // its own report — the cart, the slot, the backup, what it kept.
   try {
-    installed = await installCartSave(await Deno.readFile(savPath), {
+    // The path, not the bytes: a .sav that is not one is refused by name.
+    await installCartSave(savPath, {
       savDir: dir,
       name,
-    });
+    }, { log: (line) => console.log(line) });
   } catch (e) {
     if (e instanceof MednafenError) fail(e.message);
     throw e;
   }
-  if (installed.backupPath) {
-    console.log(
-      `backed up the old cart to backup/${
-        installed.backupPath.replace(/\\/g, "/").split("/").pop()
-      }`,
-    );
-  }
-  console.log(
-    `seeded the cart save (${installed.bcrBytes} B cart, ${installed.bkrBytes} B internal)`,
-  );
 
   if (installOnly) {
     console.log("--install-only: not launching Mednafen.");

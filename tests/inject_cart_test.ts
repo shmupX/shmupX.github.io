@@ -23,44 +23,8 @@ import {
   probeBases,
 } from "../scripts/inject-mednafen-win.ts";
 import { legFor, unsupportedMessage } from "../scripts/sav-inject.ts";
-import { CART_BLOCK_SIZE } from "../packages/shmup-engine/src/bup-write.js";
-import {
-  CART_PARTITION_SIZE,
-  formatPartition,
-  gameSaveFilename,
-  normalize,
-  parse,
-  placeSaveInPartition,
-} from "../packages/shmup-engine/mod.js";
-
-/** A cart partition holding one save, as a real cartridge would. */
-function cartWith(
-  slot: number,
-  comment: string,
-  size: number,
-): Uint8Array {
-  const part = formatPartition(CART_PARTITION_SIZE, CART_BLOCK_SIZE);
-  const payload = new Uint8Array(size);
-  for (let i = 0; i < size; i++) payload[i] = (i * 7 + slot) & 0xff;
-  placeSaveInPartition(part, CART_BLOCK_SIZE, {
-    filename: gameSaveFilename(slot),
-    comment,
-    language: 0,
-    date: 0,
-    payload,
-  });
-  return part;
-}
-
-async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(
-    await new Response(
-      new Blob([bytes as unknown as BlobPart]).stream().pipeThrough(
-        new CompressionStream("gzip"),
-      ),
-    ).arrayBuffer(),
-  );
-}
+import { normalize, parse } from "../packages/shmup-engine/mod.js";
+import { cartWith, gzip, markerPayload } from "./support/cart_fixtures.ts";
 
 Deno.test("injectCart merges into a free slot and leaves the neighbour alone", async () => {
   const dir = await Deno.makeTempDir();
@@ -92,8 +56,7 @@ Deno.test("injectCart merges into a free slot and leaves the neighbour alone", a
     assertEquals(mine?.comment, "foo");
     assertEquals(mine?.datasize, 3000);
     const neighbour = after.find((g) => g.filename === "DEZA2____04");
-    const was = parse(before).find((g) => g.filename === "DEZA2____04");
-    assertEquals(neighbour?.payload?.buffer, was?.payload?.buffer);
+    assertEquals(neighbour?.payload?.buffer, markerPayload("neighbour", 4096));
     assertEquals(await Deno.readFile(bkr), new Uint8Array([1, 2, 3, 4]));
     assert(
       lines.some((l) =>
@@ -351,7 +314,18 @@ Deno.test({
           level,
           "--no-launch",
         ],
-        env: { HOME: home },
+        // Deno.Command MERGES env with this process's, and the leg reads
+        // MEDNAFEN_SAV and MEDNAFEN_HOME before $HOME/.mednafen/sav — which is
+        // exactly what the script tells WSL users to export. Blank them, or a
+        // developer who has one set watches this test merge a level into their
+        // own live cart. The script's guards are [ -n "${VAR:-}" ], so "" is
+        // as good as unset.
+        env: {
+          HOME: home,
+          MEDNAFEN_SAV: "",
+          MEDNAFEN_HOME: "",
+          MEDNAFEN_BIN: "",
+        },
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -379,10 +353,9 @@ Deno.test({
         "foo",
       );
       // The neighbour, the other name, and the .bkr are all untouched.
-      const was = parse(cartWith(3, "NEIGHBOUR", 4096));
       assertEquals(
         after.find((g) => g.filename === "DEZA2____03")?.payload?.buffer,
-        was.find((g) => g.filename === "DEZA2____03")?.payload?.buffer,
+        markerPayload("NEIGHBOUR", 4096),
       );
       assertEquals(await Deno.readFile(hashed), cart);
       assertEquals(await Deno.readFile(bkr), new Uint8Array([9, 9, 9, 9]));
