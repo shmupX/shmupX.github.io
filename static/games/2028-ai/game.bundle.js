@@ -7074,7 +7074,16 @@
     }
     create() {
       var recipe = gameState._phaserRecipe;
-      if (recipe && recipe.noStory && !this.__advSceneScripted) {
+      // A cart with no story of its own must never be dressed in 2028.Ai's.
+      // noStory normally catches that a step earlier, but it is gated on
+      // !__advSceneScripted, and ScriptedAdvScene sets that from
+      // hasSceneScript("adv") — which an adv scene script left in
+      // localStorage by the editor turns on. The gate then falls open and
+      // the scenario below picks the hardcoded world-map story, because an
+      // import carries no storyData. Skipping on that fact directly closes
+      // the hole whichever way the flag went.
+      var advNoOwnStory = !!(recipe && !recipe.storyData && isImportedLevel());
+      if (recipe && ((recipe.noStory && !this.__advSceneScripted) || advNoOwnStory)) {
         this.endingFlg = decideEnding(recipe);
         var nextScene = this.endingFlg ? "PhaserEndingScene" : "PhaserGameScene";
         var game = this.game;
