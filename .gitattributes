@@ -8,3 +8,14 @@
 # already gives a Windows checkout that, but say it outright so a clone with
 # autocrlf off (or one made on Linux and copied over) gets it too.
 *.cmd text eol=crlf
+
+# Shell scripts are run by dash on Ubuntu / WSL, which rejects a CR at the end
+# of a line ("Syntax error: word unexpected", pointing at the wrong thing). A
+# Git-for-Windows clone with the installer's default core.autocrlf=true would
+# otherwise hand the WSL half of the same machine an unrunnable
+# `deno task sav:inject` — and one Surface Pro is both target machines at once.
+*.sh text eol=lf
+*.ts text eol=lf
+
+# ...and the other way for the launchers cmd.exe reads.
+*.bat text eol=crlf

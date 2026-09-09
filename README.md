@@ -179,6 +179,7 @@ deno task build:ps2:zip   # …as one .zip of that folder
 deno task build:ps2:iso   # …plus a bootable disc image
 deno task build:sav       # a level as a Dezaemon 2 cart save (.sav) for MiSTer / hardware
 deno task sav:run         # …then launch it in Mednafen, cart preloaded (Windows / Linux / WSL→Windows)
+deno task sav:inject      # …or merge it into one of the five save slots on the cart this machine's emulator keeps
 deno task eshop:check     # validate data/eshop.json against the built manifest
 deno task eshop:covers    # cover a published eShop game that went out without one (dry run; --write uploads)
 
@@ -273,6 +274,138 @@ deno task sav:run "Master Arena Mod"    # that cloud level
 deno task sav:run --install-only        # seed the cart save, do not launch
 DEZAEMON_DISC=/path/to/Dez2.cue deno task sav:run   # point it at your disc
 ```
+
+**Into the cart you already have.** `deno task sav:inject [level]` puts a level
+in one of Dezaemon 2's five save slots on whichever cartridge this machine's
+emulator keeps — [`scripts/sav-inject.ts`](scripts/sav-inject.ts) picks the leg
+by the operating system. Wherever it runs it does the same thing: the level goes
+into one `DEZA2____NN` slot and **every other save on the cart stays
+byte-identical**. Only the `.bcr` is written, never the `.bkr` (the console's
+own memory, which holds Dezaemon 2's `DEZA2___SYS` options record) or the
+`.smpc` (the emulated clock). The previous cart is copied to `backup/` (restore
+one with `cp backup/<name>.<timestamp>.bcr <name>.bcr`) and the new one is read
+back — every save that was already there compared byte for byte, and a cart
+carrying a save the parser cannot follow refused rather than merged over —
+before the task reports success. Quit the emulator first: they all rewrite their
+battery saves on close, so an injection made while one is open would be thrown
+away; the task refuses rather than do that, and `--force` overrides.
+
+|                 | the cart                                                                                                                              | the leg                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| **macOS**       | OpenEmu's Mednafen core, `~/Library/Application Support/OpenEmu/Mednafen/Battery Saves`                                               | [`inject-openemu.sh`](scripts/inject-openemu.sh)           |
+| **Linux / WSL** | Mednafen: `$MEDNAFEN_HOME/sav`, else `~/.mednafen/sav` — or `$MEDNAFEN_SAV` to override                                               | [`inject-mednafen.sh`](scripts/inject-mednafen.sh)         |
+| **Windows**     | Mednafen: `%MEDNAFEN_HOME%\sav`, `%HOME%\.mednafen\sav`, `<base>\mednafen\sav` beside your `Dezaemon 2.bat` — first with a cart in it | [`inject-mednafen-win.ts`](scripts/inject-mednafen-win.ts) |
+
+The merge itself is one file,
+[`scripts/inject-cart.ts`](scripts/inject-cart.ts), which all three share; a leg
+only finds the cart, says when the emulator is running, and starts the game
+afterwards.
+
+The save file is found by **globbing**, never by a name built here. Mednafen
+names saves from its `filesys.fname_sav`, whose stock `%f.%M%x` opens
+`<disc>.bcr` when that file exists and `<disc>.<md5>.bcr` when it does not — and
+that md5 is the core's own game hash, computed inside the emulator and derivable
+from nothing else. Either name works, and when both are there the un-hashed one
+is the live cart and the one written. The game must have written its cart once,
+so start Dezaemon 2 and quit it before the first injection.
+
+The **folder** is found the way Mednafen finds it: its base directory is
+`$MEDNAFEN_HOME`, else `$HOME/.mednafen`, and — only when neither is set, which
+is usual on Windows but not in Git Bash, MSYS2 or WSL interop — the folder
+`mednafen.exe` is in. All of those are looked in and the first with a cart wins,
+so a shell that happens to export `HOME` cannot send the level to a cart the
+LOAD screen never shows.
+
+```sh
+deno task sav:inject foo                 # build foo, put it in the first free slot
+deno task sav:inject foo --slot 1        # ...in slot 1, the top row of the LOAD screen
+deno task sav:inject foo --dry-run       # say what would happen, write nothing
+deno task sav:inject foo --no-launch     # inject only, do not start the game
+deno task sav:inject --sav build/sav/'Dez 2 - foo.sav'   # a .sav you already have
+deno task sav:inject foo --palette snes  # extra flags go straight to build:sav
+```
+
+(Those are `sh` quotes. In `cmd.exe` write `--sav "build/sav/Dez 2 - foo.sav"` —
+single quotes are literal characters there.)
+
+**On macOS** nothing is launched — OpenEmu is a library, so the run ends by
+naming the slot to LOAD. A **save state** carries its own copy of the cartridge,
+so resuming one hides the injection and writes the old cart back on quit; the
+task says so when the disc has an Auto Save State, and leaves it alone (OpenEmu
+tracks save states in its library database).
+
+**On Linux and WSL** the game is started once the injection has been verified,
+with your own `dezaemon2.sh` — `$DEZAEMON_SH`, else the one in `~/saturn`, `~`,
+`~/bin` or beside the checkout. From WSL you may instead be driving the
+_Windows_ Mednafen over interop, the only one that sees a USB pad; that one
+keeps its saves beside `mednafen.exe`, so point `MEDNAFEN_SAV` at them — and
+close it yourself, because no Linux process list can see it.
+
+**On Windows** the cart is normally the one beside your `Dezaemon 2.bat`; set
+`DEZAEMON_BAT` (`set DEZAEMON_BAT=C:\Users\you\Desktop\Dezaemon 2.bat` in `cmd`,
+`$env:DEZAEMON_BAT=...` in PowerShell) when it is somewhere unobvious. That
+`.bat` runs `install-cart.ps1` first, which **replaces** the whole cart with any
+`.sav` waiting in `incoming\` or `Downloads\Dez 2 - *.sav`, flattening every
+slot. `sav:inject` merges instead, and starts the `.bat`'s own second line —
+`mednafen\mednafen.exe` on the `.cue`, same folder, same `mednafen.cfg`, same
+pad mapping — rather than the `.bat` itself, so `install-cart.ps1` cannot undo
+the injection. The `.bat` is the fallback when no `mednafen.exe` or disc is
+found beside it. Anything waiting for `install-cart.ps1` is named in a warning
+either way, `--dry-run` included.
+
+Launching holds the terminal until Mednafen quits (as on Linux); the `.bat`
+fallback ends in `start` and returns straight away. Whichever it is, the game is
+**not** started when the cart written is not the one that emulator would read —
+`--cart` somewhere else, `%MEDNAFEN_SAV%` outside a base directory — because a
+LOAD screen without the level is worse than none. The run says which happened.
+
+### Loading it in Dezaemon 2
+
+`sav:inject` writes the cartridge; the game still has to read it. Dezaemon 2
+keeps five save slots, and the task fills the slot whose name already matches
+the level, else the lowest free one — slot 1 on a fresh cart — so the level
+arrives at the top of the LOAD list under its own name. That name is the 10-byte
+save comment, taken from the level's `name`, which is why a level called `foo`
+reads `foo` on this screen.
+
+**1. OPTION → LOAD** on the title screen. The prompt reads
+「データを読み込みます」— _this loads data_.
+
+![Dezaemon 2's title screen, the OPTION panel with LOAD highlighted](static/deza-load/1-load.webp)
+
+**2. Pick the cartridge.** `カートリッジRAM` is the 512 KB backup cart — the one
+`sav:inject` wrote, and the only one big enough for a level.
+`拡張メモリー 接続なし` just means no expansion memory is attached, which is
+normal.
+
+![The load-source dialog offering cartridge RAM or expansion memory](static/deza-load/2-cartridge.webp)
+
+**3. Choose the slot.** The level sits in slot 1 under its own name — `foo` here
+— beside the date it was written and its size in blocks. The remaining slots
+read `NO DATA` on a fresh cart, and the list scrolls, since there are five. The
+column on the right (ALL / グラフィック / 組立 / MUSIC / 3D) picks which _parts_
+of the save to read; leave it on ALL.
+
+![The slot list, slot 1 holding a save named foo, the rest NO DATA](static/deza-load/3-slots.webp)
+
+**4. Confirm.**
+「読み込むと、作成中の全データが消されてしまいます。よろしいですか?」 — loading
+throws away whatever is currently in the editor. `はい` to go ahead, `いいえ` to
+back out.
+
+![The confirmation dialog warning that loading discards the work in progress](static/deza-load/4-confirm.webp)
+
+**5. Play it.** Back at the title, the PLAY panel's `U` is the _user_ slot — the
+level you just loaded. `S1`–`S3` are the disc's own sample games, and are not
+what you want here.
+
+![The PLAY panel: sample slots S1 to S3, and U for the loaded level](static/deza-load/5-play-user.webp)
+
+If the LOAD list says `NO DATA` where the level should be, the cartridge the
+game read is not the one the task wrote — check the `cart :` line the run
+printed against the emulator notes above, and check that nothing rewrote the
+cart afterwards (a running emulator, or a save state carrying its own copy of
+the cartridge, both do).
 
 **Palette.** A level's atlas is 24-bit; the cart holds 15-bit colours from a 16
 × 16 bank, so the art is reduced on the way out, under one of two targets
