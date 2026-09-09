@@ -1194,6 +1194,7 @@
     rowPressCancel();
     initTwinStick(g.id, g);
     initTouchControls(g.id, g);
+    initSplitPads(g.id, g);
     osdLevelEditor = g.levelEditor ? sanitizeLevelEditor(g.levelEditor, g.id) : null;
     gameSrc = entryUrl(g);
     setTimeout(() => { gameOn = true; }, 30);
@@ -1441,6 +1442,26 @@
   let isTouch = $state(false);
   let padHadConnection = $state(false);
   let padConnected = $state(false);
+  // ── Lenovo Legion Go ──────────────────────────────────────────────────────
+  // Two things tell the launcher it is on a Legion Go: the desktop/dev server's
+  // /api/host (the machine's DMI strings — the only tell on Windows, where the
+  // built-in pad is XInput's anonymous "Xbox 360 Controller"), and a pad whose
+  // id names itself (Linux, see LEGION_PAD_RE). A Legion whose controller
+  // comes apart defaults Split Controller mode on (initSplitPads).
+  let hostDevice = $state(null);        // /api/host answer, or null
+  let legionPadSeen = $state(false);    // a detachable Legion pad has connected this session
+  // A host answer that recognised the machine outranks the pad id: the Legion
+  // Go S's built-in pad names itself "Legion" too, and its halves do not
+  // come off.
+  let legionDetected = $derived(hostDevice?.legionGo ? !!hostDevice.detachable : legionPadSeen);
+  // FPS mode: the Legion Go's right half becomes a mouse and its left half a
+  // keyboard (stick → WASD), and the gamepad vanishes. Detected as a Legion's
+  // pad going away followed by the keyboard speaking up — see onPadDisconnect
+  // and noteKeyActivity. While it holds, WASD steers the launcher, nothing is
+  // split, and the game frame is told over cmg-legion-fps-set.
+  let legionFpsMode = $state(false);
+  let legionPadLostAt = 0;
+  const LEGION_FPS_WINDOW_MS = 30000;
   // Which device last drove the UI — 'mouse' | 'touch' | 'key' | 'pad'. Only
   // consumed by the cursor policy (see the no-cursor effect), so it is a plain
   // let, not $state: nothing renders off it. Defaults to 'pad' because a
@@ -1761,6 +1782,7 @@
     // linger in the OSD while the editor is the active frame.
     osdLevelEditor = null;
     twinStickAvail = false; twinStickOn = false;
+    resetSplitPads();
     touchCtlAvail = false; touchCtlOn = false;
     // Deliberately root-relative (NOT resolved against manifestOrigin like games):
     // the editor must stay on the launcher's own origin so its /api/build-apk
@@ -1838,6 +1860,189 @@
     }
     if (!twinTouchOn) resetTwinTouch();
     applyTwinStick();
+  }
+
+  // ── Split Controller mode (Lenovo Legion Go) ──────────────────────────────
+  // The Legion Go's controller detaches into two halves that keep reporting
+  // as ONE pad, so two players holding a half each look to a game like one
+  // player. Split Controller mode re-expresses that pad, inside the game
+  // frame, as two standard pads — left half (left stick, D-pad, LB, LT, View)
+  // and right half (right stick as its movement stick, ABXY, RB, RT, Menu) —
+  // by patching the frame's navigator.getGamepads with
+  // CMGGamepadCompat.splitPads, the same seam Twin-Stick Mode uses. Twin-Stick
+  // Mode's own D-pad/face re-expression stands down while the pad is split:
+  // the halves already are that expression, and its faces→aim rewrite would
+  // turn the halves' buttons into aim. The right half exists only once one of
+  // its buttons has been pressed; until then the left pad is the whole
+  // controller, so a solo player on a Legion — where the mode is the default,
+  // attached or not, since nothing can tell — loses nothing until a second
+  // player actually presses something on the right half.
+  //
+  // 2028-ai: player 1 flies the left stick and bombs with LB, player 2 joins
+  // with any right-half button, flies the right stick, bombs with RB or A,
+  // and A/View return either player to the title from the results. The
+  // game's own two-player gate (?players=2, or a save's 2P bit) is opened for
+  // it over cmg-splitpads-set. Sh'M↑ Party (a Twin-Stick game) gets the
+  // "twinstick" profile: dash on LB/RB, weapon cycle on LT/Y, and
+  // auto-aim-and-fire held for each half while its player is at the controls,
+  // since a half has no stick left to aim with.
+  //
+  // gamepad-support.js is told too (setSplitPadsActive), so the keys it
+  // synthesizes for the right half's buttons — player 1's Space, C, E, T, G,
+  // and Start's synthetic tap — stay home while the mode is on.
+  //
+  // Offered the way Twin-Stick Mode is: a built-in list, a `splitPads` flag
+  // on the catalog/manifest entry (true, or { default: bool }), or a boot-time
+  // postMessage { type: 'cmg-splitpads', default?: bool }. A game that reads
+  // only the keys this launcher synthesizes has no use for a split view and
+  // would just lose player 1's face buttons, so nothing is split elsewhere.
+  // The default is ON on a Legion Go whose controller comes apart
+  // (legionDetected — followed as /api/host answers or the pad shows up), the
+  // choice persists per game, and cross-origin games receive
+  // { type: 'cmg-splitpads-set', value, profile } to apply themselves.
+  const SPLIT_PADS_DEFAULT_IDS = new Set(['shmupx', 'games/2028-ai', 'shmup-party-phaser3', 'shmup-party-ps2']);
+  let splitPadsAvail = $state(false);
+  let splitPadsOn = $state(false);
+  let splitGameId = null;
+  let splitPadsUserSet = false;
+  // What the list/catalog/broadcast said the default should be, and the saved
+  // per-game choice if any — the re-default effect below needs both.
+  let splitDefaultWanted = false;
+  let splitSaved = null;
+
+  function splitPadsKey(id) { return 'cmg-splitpads:' + id; }
+
+  function initSplitPads(id, item) {
+    splitGameId = id || null;
+    splitPadsUserSet = false;
+    const flag = item ? item.splitPads : undefined;
+    const catalogAvail = flag === true || (!!flag && typeof flag === 'object');
+    const builtin = !!id && SPLIT_PADS_DEFAULT_IDS.has(id);
+    splitPadsAvail = builtin || catalogAvail;
+    splitDefaultWanted = builtin || flag === true || !!(flag && flag.default);
+    splitSaved = null;
+    try { splitSaved = id ? localStorage.getItem(splitPadsKey(id)) : null; } catch (_) { /* ignore */ }
+    splitPadsOn = splitPadsAvail &&
+      (splitSaved !== null ? splitSaved === '1' : (splitDefaultWanted && legionDetected));
+    // A fresh game starts with no right half claimed.
+    try { window.CMGGamepadCompat?.splitReset?.(); } catch (_) { /* ignore */ }
+  }
+
+  // Legion detection can land after a launch — /api/host answers
+  // asynchronously, and Chrome withholds a pad until it is touched — so the
+  // default follows it until the player, or a saved choice, has spoken.
+  $effect(() => {
+    const want = splitPadsAvail && splitDefaultWanted && legionDetected;
+    if (!splitPadsAvail || splitPadsUserSet || splitSaved !== null) return;
+    if (splitPadsOn === want) return;
+    splitPadsOn = want;
+    if (gameOn) applySplitPads();
+  });
+
+  function setSplitPads(v) {
+    splitPadsOn = !!v;
+    splitPadsUserSet = true;
+    splitSaved = splitPadsOn ? '1' : '0';
+    if (splitGameId) {
+      try { localStorage.setItem(splitPadsKey(splitGameId), splitSaved); } catch (_) { /* ignore */ }
+    }
+    if (!splitPadsOn) {
+      try { window.CMGGamepadCompat?.splitReset?.(); } catch (_) { /* ignore */ }
+    }
+    applySplitPads();
+  }
+
+  function resetSplitPads() {
+    splitPadsAvail = false;
+    splitPadsOn = false;
+    splitGameId = null;
+    splitPadsUserSet = false;
+    splitDefaultWanted = false;
+    splitSaved = null;
+    try { window.CMGGamepadCompat?.splitReset?.(); } catch (_) { /* ignore */ }
+  }
+
+  // Is the split view in force right now: the mode on, the frame a game
+  // rather than the level editor (whose own UI reads the one pad), and the
+  // Legion's pad not away in FPS mode.
+  function splitPadsLive() {
+    return splitPadsOn && !legionFpsMode && !editorFrameActive;
+  }
+
+  // Patch (same-origin) and/or notify (any origin) the running game frame —
+  // the same shape as applyTwinStick, sharing its one-time patch.
+  function applySplitPads() {
+    const iframe = document.getElementById('gameframe') ||
+      document.querySelector('.game-iframe iframe');
+    const w = iframe && iframe.contentWindow;
+    if (!w) return;
+    patchFrameGamepads(iframe);
+    const value = splitPadsLive();
+    const profile = twinStickAvail ? 'twinstick' : 'generic';
+    try { w.postMessage({ type: 'cmg-splitpads-set', value, profile }, '*'); } catch (_) { /* ignore */ }
+  }
+
+  // Keep gamepad-support.js's right-half hold-back in step with the mode.
+  $effect(() => {
+    const on = gameOn && splitPadsLive();
+    const gm = typeof window !== 'undefined' ? window.gamepadManager : null;
+    if (gm && typeof gm.setSplitPadsActive === 'function') {
+      try { gm.setSplitPadsActive(on); } catch (_) { /* ignore */ }
+    }
+  });
+
+  // What machine this is, from the desktop/dev server (routes/api/host.ts).
+  // The answer describes the machine SERVING the launcher, so the route only
+  // gives it to that machine's own browser — a phone on the dev tunnel or a
+  // second PC on the LAN address is told "not available", as is the hosted
+  // deploy — and hostDevice stays null everywhere else.
+  const HOST_URL = '/api/host';
+  async function initHostDevice() {
+    try {
+      const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined;
+      const r = await fetch(HOST_URL, { cache: 'no-store', signal });
+      if (!r.ok) return;
+      const d = await r.json();
+      hostDevice = d && d.available ? d : null;
+    } catch (_) { hostDevice = null; }
+  }
+
+  function setLegionFpsMode(on) {
+    on = !!on;
+    if (legionFpsMode === on) return;
+    legionFpsMode = on;
+    if (on) showToast('LEGION FPS MODE · left half is the keyboard, right half the mouse');
+    const iframe = document.getElementById('gameframe') ||
+      document.querySelector('.game-iframe iframe');
+    try { iframe?.contentWindow?.postMessage({ type: 'cmg-legion-fps-set', value: on }, '*'); } catch (_) { /* ignore */ }
+    if (gameOn) applySplitPads();
+  }
+
+  // A key arriving soon after a Legion's pad went away is the left half
+  // typing: FPS mode. Bounded to LEGION_FPS_WINDOW_MS after the disconnect, so
+  // a pad switched off hours ago does not turn the first keystroke of the
+  // evening into a mode announcement. (Within the window, a pad merely
+  // switched off followed by a real keyboard reads the same, and wants the
+  // same: keyboard steering, a hint, nothing split.)
+  function noteKeyActivity() {
+    if (legionFpsMode || !legionDetected || padConnected || !legionPadLostAt) return;
+    if (performance.now() - legionPadLostAt > LEGION_FPS_WINDOW_MS) return;
+    setLegionFpsMode(true);
+  }
+
+  // A same-origin game frame holds keyboard focus, so the launcher's own
+  // window never hears the keys the left half types in FPS mode: a passive
+  // capture-phase listener inside the frame reports them instead. Nothing is
+  // consumed — the game still gets every key.
+  function injectKeyActivityProbe(e) {
+    const iframe = e?.currentTarget || document.getElementById('gameframe');
+    if (!iframe || !frameIsSameOrigin(iframe)) return;
+    try {
+      const w = iframe.contentWindow;
+      if (!w || w.__cmgKeyProbe) return;
+      w.__cmgKeyProbe = true;
+      w.addEventListener('keydown', () => noteKeyActivity(), { capture: true, passive: true });
+    } catch (_) { /* cross-origin frame — the launcher's own onKey still covers the menus */ }
   }
 
   // ── Touch Controls ────────────────────────────────────────────────────────
@@ -1952,9 +2157,44 @@
     } catch (_) { return false; }
   }
 
+  // Patch a same-origin game frame's navigator.getGamepads. The patched
+  // function reads twinStickOn and splitPadsOn live, so it installs once per
+  // frame document and either toggle takes effect without a reload. Shared by
+  // applyTwinStick and applySplitPads.
+  function patchFrameGamepads(iframe) {
+    const w = iframe && iframe.contentWindow;
+    if (!w || !frameIsSameOrigin(iframe)) return;
+    try {
+      if (w.__cmgTwinStickWrapped) return;
+      w.__cmgTwinStickWrapped = true;
+      const orig = typeof w.navigator.getGamepads === 'function'
+        ? w.navigator.getGamepads.bind(w.navigator)
+        : () => [];
+      w.navigator.getGamepads = () => {
+        if (!twinStickOn && !splitPadsOn) return orig();
+        try { return frameGamepads(); }
+        catch (_) { return orig(); }
+      };
+    } catch (_) { /* frame navigated mid-flight — the postMessages still land */ }
+  }
+
+  // The launcher's (SNES-normalized) pads as the game frame should see them:
+  // split into halves first (Split Controller mode), then re-expressed as
+  // twin-stick pads, then the touch analogs laid over pad 0.
+  function frameGamepads() {
+    const compat = window.CMGGamepadCompat;
+    let pads = navigator.getGamepads() || [];
+    if (splitPadsLive()) {
+      pads = compat.splitPads(pads, { profile: twinStickAvail ? 'twinstick' : 'generic' });
+    }
+    // The halves pass through twinStick untouched (they already are the
+    // twin-stick expression); any other pad still gets its D-pad/faces
+    // re-expressed as sticks.
+    if (twinStickOn) pads = compat.twinStick(pads);
+    return twinTouchGamepad(pads);
+  }
+
   // Patch (same-origin) and/or notify (any origin) the running game frame.
-  // The patched getGamepads reads twinStickOn live, so it installs once per
-  // frame document and the toggle takes effect without a reload.
   function applyTwinStick() {
     // Fall back to the class selector: on the iframe's own load event the
     // gameOn-gated id may not be applied yet.
@@ -1963,19 +2203,7 @@
     const w = iframe && iframe.contentWindow;
     if (!w) return;
     if (frameIsSameOrigin(iframe)) {
-      try {
-        if (!w.__cmgTwinStickWrapped) {
-          w.__cmgTwinStickWrapped = true;
-          const orig = typeof w.navigator.getGamepads === 'function'
-            ? w.navigator.getGamepads.bind(w.navigator)
-            : () => [];
-          w.navigator.getGamepads = () => {
-            if (!twinStickOn) return orig();
-            try { return twinTouchGamepad(window.CMGGamepadCompat.twinStick(navigator.getGamepads() || [])); }
-            catch (_) { return orig(); }
-          };
-        }
-      } catch (_) { /* frame navigated mid-flight — the postMessage below still lands */ }
+      patchFrameGamepads(iframe);
     } else {
       // Cross-origin frames can't be patched, so the launcher's own touch
       // zones/virtual pad never reach them. Tell the game to run its own
@@ -2094,6 +2322,12 @@
     for (const a of osdActions) game.push({ key: a.key, kind: 'button', label: a.label, action: a.id });
     // Twin-Stick mode appears only for games that opt in (built-in list,
     // catalog `twinStick` flag, or a cmg-twinstick broadcast).
+    // Split Controller (Lenovo Legion Go): each half of one pad as its own
+    // player. Offered for every game the launcher itself runs; defaults ON on
+    // a Legion Go whose controller comes apart (initSplitPads).
+    if (splitPadsAvail) {
+      game.push({ key: 'splitpads', kind: 'toggle', label: 'Split Controller · 2P', value: splitPadsOn });
+    }
     if (twinStickAvail) {
       game.push({ key: 'twinstick', kind: 'toggle', label: 'Twin-Stick Mode', value: twinStickOn });
       // Gate on device capability, not on how THIS Guide was opened — a hybrid
@@ -2202,6 +2436,7 @@
     else if (it.key === 'breathe') setTweak('breatheSpeed', Math.round(v * 10) / 10);
     else if (it.key === 'scanlines') setTweak('scanlines', !!v);
     else if (it.key === 'disco') setTweak('discoMode', !!v);
+    else if (it.key === 'splitpads') setSplitPads(!!v);
     else if (it.key === 'twinstick') setTwinStick(!!v);
     else if (it.key === 'twinstick-touch') setTwinTouch(!!v);
     else if (it.key === 'touchcontrols') setTouchControls(!!v);
@@ -2800,6 +3035,7 @@
     if (!item || !(urlOverride || item.url)) return;
     initTwinStick(id, item);
     initTouchControls(id, item);
+    initSplitPads(id, item);
     // Level-editor availability from the catalog entry (games that broadcast
     // cmg-level-editor on boot override this in onWindowMessage).
     osdLevelEditor = (item && item.levelEditor)
@@ -3507,6 +3743,7 @@
     twinStickOn = false;
     twinGameId = null;
     twinStickUserSet = false;
+    resetSplitPads();
     touchCtlAvail = false;
     touchCtlOn = false;
     touchCtlGameId = null;
@@ -3560,6 +3797,9 @@
         if (s) lines.push(s);
       }
     } catch (_) { /* ignore */ }
+    if (legionDetected || splitPadsOn || legionFpsMode) {
+      lines.push(`legion: ${hostDevice?.model || (legionPadSeen ? 'pad id' : 'no')} · split: ${splitPadsOn ? 'on' : 'off'} · fps mode: ${legionFpsMode ? 'on' : 'off'}`);
+    }
     padDebugText = lines.join('\n') || 'no pads detected';
   }
   const padState = {
@@ -3601,7 +3841,9 @@
   // where the D-pad doesn't report and the real chord is SELECT + L2).
   let activePadKind = $state('none'); // 'none' | 'pad' | 'snes' | 'snes-android' | 'stadia'
   let osdHint = $derived(
-    activePadKind === 'snes-android'
+    legionFpsMode
+      ? 'LEGION FPS MODE · Esc or ` · two-corner tap'
+      : activePadKind === 'snes-android'
       ? 'SELECT + L2 (R) · two-corner tap'
       : activePadKind === 'snes'
         ? 'SELECT + ↓ or R · two-corner tap'
@@ -3615,7 +3857,23 @@
   // string, which would silently disable those accommodations.
   const IS_ANDROID = typeof navigator !== 'undefined' &&
     (navigator.userAgentData?.platform === 'Android' || /Android/i.test(navigator.userAgent || ''));
-  const XBOX_PAD_RE = /Xbox|XInput|Microsoft|Legion Go/i;
+  // "Legion" (not just "Legion Go") — the built-in pad is "Lenovo Legion
+  // Controller for Windows" on Linux; "X-Box" is the xpad driver's spelling.
+  // Same regex as the compat plugin and gamepad-support.js.
+  const XBOX_PAD_RE = /Xbox|X-Box|XInput|Microsoft|Legion/i;
+  // Lenovo Legion Go built-in controller, vendor 17ef product 6182 (XInput
+  // mode): Chrome "… (STANDARD GAMEPAD Vendor: 17ef Product: 6182)", Firefox
+  // "17ef-6182-…". Pinned to the plugin's copy by tests/gamepad_pads_test.ts.
+  const LEGION_PAD_RE = /Legion|Vendor:\s*17ef\s+Product:\s*61[0-9a-f]{2}|\b17ef-61[0-9a-f]{2}-/i;
+  // ...of which the Legion Go S (product 61eb, "Lenovo Legion Go S") has a
+  // fixed controller: never a split-mode tell. Note the Linux distros built
+  // around Handheld Daemon (Bazzite, ChimeraOS) hide the raw pad behind an
+  // emulated Xbox/DualSense one, where only /api/host can tell.
+  const LEGION_FIXED_PAD_RE = /Legion Go S|17ef.{0,12}61eb|\b17ef-61eb-/i;
+  // FPS mode's own product id (6185). Should the halves keep enumerating as
+  // a gamepad in that mode, this is the direct tell; the usual one is the pad
+  // vanishing followed by keystrokes (see onPadDisconnect).
+  const LEGION_FPS_PAD_RE = /17ef.{0,12}6185|\b17ef-6185-/i;
   // Google Stadia controller (Chrome: "Stadia Controller rev. A (STANDARD
   // GAMEPAD Vendor: 18d1 Product: 9400)"). Standard mapping; its SELECT slot
   // is the Options (⋯) button and its Assistant button rides slot 18.
@@ -3627,7 +3885,8 @@
   function padPriority(p) {
     const id = p?.id || '';
     if (SNES_PAD_RE.test(id)) return 3;
-    if (XBOX_PAD_RE.test(id) || STADIA_PAD_RE.test(id)) return 2;
+    // A Legion pad ranks with Xbox pads under every spelling (LEGION_PAD_RE).
+    if (XBOX_PAD_RE.test(id) || STADIA_PAD_RE.test(id) || LEGION_PAD_RE.test(id)) return 2;
     return 1;
   }
 
@@ -4263,7 +4522,24 @@
     const typing = !!t && (t.isContentEditable || t.tagName === 'TEXTAREA' ||
       (t.tagName === 'INPUT' && /^(text|search|url|tel|email|password|number)$/.test(t.type)));
     if (typing) return;
+    noteKeyActivity();
     completePendingFullscreen();
+    // Legion Go FPS mode: the left half is now a keyboard whose stick types
+    // WASD, so those letters steer the launcher and the Guide like the arrows
+    // (Space and Enter already select, Escape already backs out). Re-entered
+    // as the arrow so the two paths cannot drift, like the Nintendo branch.
+    if (legionFpsMode && typeof e.key === 'string' && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const arrow = { w: 'ArrowUp', s: 'ArrowDown', a: 'ArrowLeft', d: 'ArrowRight' }[e.key.toLowerCase()];
+      if (arrow) {
+        onKey({
+          key: arrow,
+          repeat: e.repeat,
+          preventDefault: () => e.preventDefault(),
+          stopImmediatePropagation: () => e.stopImmediatePropagation?.(),
+        });
+        return;
+      }
+    }
     // The .sav coverflow owns the keyboard while it is up (launcher only —
     // it can never be open over a running game).
     if (savPickerOpen) {
@@ -4522,6 +4798,22 @@
         twinStickOn = on;
       }
       applyTwinStick();
+      // The split profile keys off twinStickAvail, which just changed.
+      applySplitPads();
+      return;
+    }
+    if (d.type === 'cmg-splitpads') {
+      // The running game advertises that it reads pads per index and can
+      // seat a second player from the split view (optionally with a
+      // default). Same trust posture as cmg-twinstick — benign, worst case a
+      // toggle appears whose split view the game ignores. A saved per-game
+      // choice or an in-session toggle wins over the advertised default.
+      splitPadsAvail = true;
+      if (!splitPadsUserSet) {
+        splitDefaultWanted = d.default !== false;
+        splitPadsOn = splitSaved !== null ? splitSaved === '1' : (splitDefaultWanted && legionDetected);
+      }
+      applySplitPads();
       return;
     }
     if (d.type === 'cmg-touchcontrols') {
@@ -4630,6 +4922,7 @@
     refreshPadConnected();
     padRaf = requestAnimationFrame(pollPad);
 
+    initHostDevice();
     loadManifest();
     initNetplayPresence();
     // The disc check waits for the catalogue: auto-installing the Saturn core
@@ -4648,11 +4941,33 @@
   function refreshPadConnected() {
     const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
     let any = false;
-    for (const p of pads) { if (p && p.connected) { any = true; break; } }
+    let fpsPad = false;
+    for (const p of pads) {
+      if (!p || !p.connected) continue;
+      any = true;
+      const id = p.id || '';
+      if (LEGION_FPS_PAD_RE.test(id)) fpsPad = true;
+      else if (LEGION_PAD_RE.test(id) && !LEGION_FIXED_PAD_RE.test(id)) legionPadSeen = true;
+    }
     padConnected = any;
+    if (fpsPad) {
+      // The halves enumerate under FPS mode's own id: that IS the mode.
+      setLegionFpsMode(true);
+    } else if (any) {
+      // A pad is back: whatever FPS mode the Legion was in is over.
+      legionPadLostAt = 0;
+      if (legionFpsMode) setLegionFpsMode(false);
+    }
   }
   function onPadConnect() { padHadConnection = true; refreshPadConnected(); }
-  function onPadDisconnect() { refreshPadConnected(); }
+  function onPadDisconnect(e) {
+    refreshPadConnected();
+    // On a Legion Go the built-in pad vanishing is how FPS mode announces
+    // itself (the halves re-enumerate as a keyboard and a mouse); the
+    // keyboard speaking up next confirms it — see noteKeyActivity.
+    const id = e?.gamepad?.id || '';
+    if (!padConnected && (legionDetected || LEGION_PAD_RE.test(id))) legionPadLostAt = performance.now();
+  }
   // A pen counts as a pointer the player is aiming by hand, like touch — only a
   // real mouse earns the cursor back in the Controller Layout.
   function onPointerDown(e) {
@@ -5498,7 +5813,7 @@
       src={gameSrc}
       title="game"
       allow="autoplay; fullscreen; gamepad; xr-spatial-tracking"
-      onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); applyTwinStick(); applyTouchControls(); applyGameTheme(); postVolume(); }}
+      onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); injectKeyActivityProbe(e); applyTwinStick(); applySplitPads(); applyTouchControls(); applyGameTheme(); postVolume(); }}
     ></iframe>
   </div>
 {/if}

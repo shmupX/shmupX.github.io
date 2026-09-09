@@ -3680,6 +3680,10 @@
       if (!d || typeof d !== "object") return;
       if (d.type === "cmg-volume") cmgSetVolumes(d.bgm, d.sfx, false);
       else if (d.type === "cmg-pause") cmgSetPaused(!!d.paused);
+      // cmg: the launcher's Split Controller mode (a Legion Go's halves as
+      // two pads, static/gamepad-compatibility-plugin.js) — a second player
+      // asking to be let in; twoPlayerAllowed reads it.
+      else if (d.type === "cmg-splitpads-set") gameState.cmgSplitPads = !!d.value;
     });
     var standalone;
     try {
@@ -7886,6 +7890,10 @@
     // run — deliberately NOT playerCount, which counts the ships currently in
     // play and drops to 1 the moment one of them is lost.
     if (gameState.twoPlayerForced) return true;
+    // cmg: the launcher's Split Controller mode is a second pad by
+    // construction (cmg-splitpads-set above), so it opens the gate the way
+    // ?players=2 does — including on the stock game, which has no settings.
+    if (gameState.cmgSplitPads) return true;
     if (gameState.onlineFlg === true) return true;
     var m = scene && scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
     return !!(m && m.twoPlayer);
