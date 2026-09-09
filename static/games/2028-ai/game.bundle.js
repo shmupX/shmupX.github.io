@@ -12969,6 +12969,72 @@
     // =================================================================
     // Items
     // =================================================================
+    // The alpha mask of one atlas frame, read in a single canvas pass and
+    // remembered. Phaser's own getPixelAlpha costs a canvas draw per pixel,
+    // which a 16x16 compare would pay 256 times over.
+    frameAlphaMask(key, frameName) {
+      if (!this.alphaMaskCache) this.alphaMaskCache = {};
+      var cacheKey = key + "|" + frameName;
+      if (this.alphaMaskCache[cacheKey] !== undefined) {
+        return this.alphaMaskCache[cacheKey];
+      }
+      var mask = null;
+      try {
+        var frame = this.textures.getFrame(key, frameName);
+        var img = frame && frame.source && frame.source.image;
+        if (frame && img) {
+          var c = document.createElement("canvas");
+          c.width = frame.width;
+          c.height = frame.height;
+          var ctx = c.getContext("2d", { willReadFrequently: true });
+          ctx.drawImage(
+            img,
+            frame.cutX, frame.cutY, frame.width, frame.height,
+            0, 0, frame.width, frame.height
+          );
+          var d = ctx.getImageData(0, 0, frame.width, frame.height).data;
+          var bits = new Uint8Array(frame.width * frame.height);
+          for (var i = 0; i < bits.length; i++) bits[i] = d[i * 4 + 3] > 0 ? 1 : 0;
+          mask = { data: bits, width: frame.width, height: frame.height };
+        }
+      } catch (e) {
+        mask = null; // a tainted or WebGL-only source: fall back to the still
+      }
+      this.alphaMaskCache[cacheKey] = mask;
+      return mask;
+    }
+
+    // Whether a cart's own item icon IS this repo's emblem still, silhouette
+    // for silhouette. Colours cannot be compared: the writer repaints them
+    // into the save's own palette on the way in, so every one of them differs
+    // while the shape survives exactly.
+    emblemSilhouetteMatches(ownFrame, letter) {
+      if (!this.emblemMatchCache) this.emblemMatchCache = {};
+      var cacheKey = letter + "|" + ownFrame;
+      if (this.emblemMatchCache[cacheKey] !== undefined) {
+        return this.emblemMatchCache[cacheKey];
+      }
+      var match = false;
+      if (this.textures.exists("powerups")) {
+        var mine = this.frameAlphaMask("powerups", "emblemStill" + letter + ".gif");
+        var theirs = this.frameAlphaMask("game_asset", ownFrame);
+        if (
+          mine && theirs && mine.width === theirs.width &&
+          mine.height === theirs.height
+        ) {
+          match = true;
+          for (var i = 0; i < mine.data.length; i++) {
+            if (mine.data[i] !== theirs.data[i]) {
+              match = false;
+              break;
+            }
+          }
+        }
+      }
+      this.emblemMatchCache[cacheKey] = match;
+      return match;
+    }
+
     dropItem(x, y, itemName) {
       var frameMap = {
         big: "powerupBig0.gif",
@@ -12985,43 +13051,48 @@
       var dropByName = { big: 1, "3way": 2, speed_high: 3, dezaScore: 4, dezaSp: 5, barrier: 9 };
       var icons = this.recipe && this.recipe.dezaemonItems && this.recipe.dezaemonItems.iconByDrop;
       var own = icons && icons[dropByName[itemName]];
+      var usingOwn = false;
       if (own) {
         var atlas = this.textures.get("game_asset");
         if (atlas && atlas.has(own)) {
           frameKey = own;
           tint = 0;
+          usingOwn = true;
         }
       }
       // The winged letter emblems, four frames apiece at the GIF's own 5fps.
       // The letters read S=speed, B=bomb, F=firepower, R=rapid, so they land
       // on the drops that mean those things — the same reading the cart
-      // writer uses for its item icons (lib/powerup-emblems.ts). A save that
-      // carries its own icon for this drop keeps it: that art is the cart
-      // author's, and it already won above. Barrier and score have no letter.
+      // writer uses for its item icons (lib/powerup-emblems.ts). Barrier and
+      // score have no letter and keep their stock art.
+      //
+      // A cart that drew its own icon keeps it, because that art is its
+      // author's — unless the icon IS this emblem, which is exactly what an
+      // export from this repo writes into the cell. A save holds one 16x16
+      // still per item slot and cannot animate; recognising our own still
+      // lets the pickup flap anyway.
       var emblemByItem = { big: "F", "3way": "R", speed_high: "S", dezaSp: "B" };
-      var letter = own ? null : emblemByItem[itemName];
+      var letter = emblemByItem[itemName];
+      if (letter && usingOwn && !this.emblemSilhouetteMatches(own, letter)) {
+        letter = null;
+      }
       var item = null;
       if (letter && this.textures.exists("powerups")) {
         var emblemTex = this.textures.get("powerups");
         var emblemFrames = [];
         for (var ef = 0; ef < 4; ef++) {
           var efName = "emblem" + letter + ef + ".gif";
-          if (emblemTex.has(efName)) {
-            emblemFrames.push({ key: "powerups", frame: efName });
-          }
+          if (emblemTex.has(efName)) emblemFrames.push(efName);
         }
         if (emblemFrames.length) {
-          var emblemAnim = "powerupEmblem" + letter;
-          if (!this.anims.exists(emblemAnim)) {
-            this.anims.create({
-              key: emblemAnim,
-              frames: emblemFrames,
-              frameRate: 5,
-              repeat: -1
-            });
-          }
-          item = this.add.sprite(x, y, "powerups", emblemFrames[0].frame);
-          item.play(emblemAnim);
+          item = this.add.sprite(x, y, "powerups", emblemFrames[0]);
+          // Stepped by hand from update(), NOT by anims.play(): this scene's
+          // update list never runs, so Phaser never calls preUpdate and no
+          // animation ticks — a stock explosion freezes on frame 0 the same
+          // way. Driving the frame from the item loop is the one place that
+          // is guaranteed to run, because it is what makes items fall.
+          item.setData("emblemFrames", emblemFrames);
+          item.setData("emblemTick", 0);
           tint = 0;
         }
       }
@@ -13540,6 +13611,16 @@
           continue;
         }
         item.y += 1;
+        // The winged emblems flap here rather than through anims.play(); the
+        // GIFs run at 5fps and this loop ticks at 60, so a frame every 12.
+        var emblemFrames = item.getData("emblemFrames");
+        if (emblemFrames && emblemFrames.length > 1) {
+          var emblemTick = (item.getData("emblemTick") || 0) + 1;
+          item.setData("emblemTick", emblemTick);
+          if (emblemTick % 12 === 0) {
+            item.setFrame(emblemFrames[(emblemTick / 12) % emblemFrames.length]);
+          }
+        }
         var iRect = { x: item.x - item.width / 2, y: item.y - item.height / 2, w: item.width, h: item.height };
         var taken = false;
         for (pi = 0; pi < alive.length; pi++) {

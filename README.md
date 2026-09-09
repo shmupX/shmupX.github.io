@@ -339,11 +339,27 @@ other pickup in the game. That atlas **is** committed: it is the derived
 artefact, the way the tone bank and the mesh library are. It is deliberately a
 texture of its own rather than part of `game_asset`, because an import swaps
 `game_asset` for the level's atlas and would otherwise take the pickups away
-just as a cart starts. `dropItem` plays the four-frame flap at the GIF's own
-5fps on the drops the letters name — **F** on the power-up, **R** on the weapon
+just as a cart starts. `dropItem` runs the four-frame flap at the GIF's own 5fps
+on the drops the letters name — **F** on the power-up, **R** on the weapon
 change, **S** on the speed-up, **B** on the bomb stock — while barrier and score
-keep their stock art, and a save that carries its own icon for a drop still
-wins, because that art is the cart author's.
+keep their stock art.
+
+A cart that drew its own item icons keeps them, because that art is its author's
+— **unless the icon is one of these emblems**, which is exactly what a
+`build:sav` export writes into the cell. That is how a shelf cart animates at
+all: it carries a still per slot and would otherwise never flap. The writer
+repaints every colour into the save's own palette on the way in, so colours
+cannot identify it; the **silhouette** can, and survives exactly. The atlas
+therefore also carries a 16×16 `emblemStill<L>.gif` per letter — the very still
+the writer would have used — and the runtime compares alpha masks against it
+once per drop and remembers the answer.
+
+The flap is stepped by hand from the item loop rather than by `anims.play()`,
+because **this runtime never ticks a sprite animation**: its scene update list
+stays empty under Phaser 4, so `preUpdate` never runs and a stock explosion
+freezes on frame 0 too. That is a pre-existing port regression worth its own
+fix; until then, the one loop guaranteed to run is the one that makes items
+fall.
 
 **In the editor.** Under DEZAEMON 2 (SATURN): **DOWNLOAD .SAV** builds the open
 game in the page (the engine bundle) and downloads `Dez 2 - <name>.sav`; **→
@@ -362,21 +378,21 @@ onto the same shelf.
 
 **Every shelf row wears its own title screen.** A record filed here gets a
 `cover` rendered from its own cart bytes by `composeCover`
-([`packages/shmup-engine/src/cover/compose-cover.js`](packages/shmup-engine/src/cover/compose-cover.js)) —
-the very function `deno task deza:upload` renders the 258 community covers with,
-so a game you made is shot by the same rule as one dumped off a Saturn cart and
-a coverflow of both is one shelf. It is pure data → RGBA: the drawn KUMITATE
-TITLE page (bank refs 144..231, untrimmed, as the author laid it out) over the
-busiest screenful of the game's own scenery, dimmed, with a light plate behind a
-logo that would otherwise vanish into a dark backdrop; a cart with no drawn
-title falls back to its biggest boss, then a strip of up to twelve enemies, then
-CG page 0 — so every save gets a picture of *itself*. The 256×480 canvas is the
-runtime's own portrait viewport. Deno encodes the result with
+([`packages/shmup-engine/src/cover/compose-cover.js`](packages/shmup-engine/src/cover/compose-cover.js))
+— the very function `deno task deza:upload` renders the 258 community covers
+with, so a game you made is shot by the same rule as one dumped off a Saturn
+cart and a coverflow of both is one shelf. It is pure data → RGBA: the drawn
+KUMITATE TITLE page (bank refs 144..231, untrimmed, as the author laid it out)
+over the busiest screenful of the game's own scenery, dimmed, with a light plate
+behind a logo that would otherwise vanish into a dark backdrop; a cart with no
+drawn title falls back to its biggest boss, then a strip of up to twelve
+enemies, then CG page 0 — so every save gets a picture of _itself_. The 256×480
+canvas is the runtime's own portrait viewport. Deno encodes the result with
 `jsr:@img/png`, the browser with a canvas `toDataURL`; the pixels agree, the
 bytes do not, so never compare their hashes.
 
-The shelf fills it in inside `putDezaShelfEntry`, so every road on gets one:
-→ SAVE SHELF, an eShop install whose listing was published without art, and
+The shelf fills it in inside `putDezaShelfEntry`, so every road on gets one: →
+SAVE SHELF, an eShop install whose listing was published without art, and
 `backfillDezaShelfCovers()` for anything filed before covers existed (both
 readers call it when they open; it is free once the shelf is covered). Before
 this, the editor's own exports drew a text card reading "DEZAEMON 2 / <title> /
@@ -385,17 +401,18 @@ whatever the TITLE EDITOR happened to be holding — nothing, for an import.
 
 **A cart keeps its own title on the way back out.** The `.sav` writer paints
 TITLE 1/2 from an image the TITLE EDITOR was given, and a `.sav` import never
-has one — its title lives in the cart as bank refs 144..231. So an imported
-game written back out used to come away with an **empty** title page: re-loaded,
-it carried no `dezaemonTitle` for the runtime's title scene to gate on, and
+has one — its title lives in the cart as bank refs 144..231. So an imported game
+written back out used to come away with an **empty** title page: re-loaded, it
+carried no `dezaemonTitle` for the runtime's title scene to gate on, and
 2028-AI's own logo and background were drawn over somebody else's game. The
-writer now falls back to the level's `dezaemonTitle` + `dezaemonTitleScreen.layout`
-(atlas frame names and where each trimmed piece sat in its slot), and writes the
-six credit strips it never wrote at all, so a community cart survives
-import → export → play unchanged. `report.title.source` says which of the two
-the cart came out wearing — `"cart"`, `"uploaded"` or `"none"` — and
-`deno task build:sav` prints it. Story scenes were already right: every import
-carries `noStory`, so the runtime's AdvScene hands straight on to the stage.
+writer now falls back to the level's `dezaemonTitle` +
+`dezaemonTitleScreen.layout` (atlas frame names and where each trimmed piece sat
+in its slot), and writes the six credit strips it never wrote at all, so a
+community cart survives import → export → play unchanged. `report.title.source`
+says which of the two the cart came out wearing — `"cart"`, `"uploaded"` or
+`"none"` — and `deno task build:sav` prints it. Story scenes were already right:
+every import carries `noStory`, so the runtime's AdvScene hands straight on to
+the stage.
 
 **Exporting a loaded cart as an app.** EXPORT AS AN APP — the TARGET picker and
 the EXPORT button — is not hidden while a `.sav` is open, so a cart loaded from
@@ -610,9 +627,9 @@ opens it in a window of its own (below).
 Two routes, because they are good at different things:
 
 - **Windows → `deno compile`.** The only one that still yields a single file.
-  `deno desktop` always lays a Windows app out as a directory (a launcher
-  `.exe` beside `denort.dll` and the backend), and its `--compress` form is a
-  `.bat` over an archive — both worse for **Add a Non-Steam Game**. Serves on
+  `deno desktop` always lays a Windows app out as a directory (a launcher `.exe`
+  beside `denort.dll` and the backend), and its `--compress` form is a `.bat`
+  over an archive — both worse for **Add a Non-Steam Game**. Serves on
   `127.0.0.1:8787`, or the next free port. `--port N`, `--no-open` and
   `SHMUPX_PORT` / `SHMUPX_HOST` / `SHMUPX_NO_OPEN` all work on the artifact.
 - **Linux and macOS → `deno desktop --backend cef`.** Brings its own Chromium
@@ -661,8 +678,8 @@ launch — the same scrub `tools/build-level`'s Electron shell does.
 
 ### Steam, Bazzite and handhelds
 
-Add the AppImage (or the `.exe`) as a non-Steam game — **Games → Add a
-Non-Steam Game → Browse** — and it wears the monkey icon by itself
+Add the AppImage (or the `.exe`) as a non-Steam game — **Games → Add a Non-Steam
+Game → Browse** — and it wears the monkey icon by itself
 (`static/app-icons/README.md`). Bazzite ships Firefox as a Flatpak and no other
 browser, so there the launcher runs in Firefox's kiosk mode on its own profile;
 installing a Chromium-family Flatpak (Chrome, Chromium, Brave) from Discover or
@@ -705,15 +722,15 @@ the difference between a PS2 export that works in the app and one that refuses.
 **Nothing here needs a matching host.** `deno desktop` packs the AppImage's
 SquashFS in-process and prepends the type-2 runtime itself, so there is no
 `appimagetool`, no `mksquashfs` and no WSL — the Linux artifact builds on
-Windows. It writes the `.app` too, and `deno compile` cross-compiles the
-Windows `.exe` from anywhere. Only a `.dmg` would need a Mac (it shells out to
+Windows. It writes the `.app` too, and `deno compile` cross-compiles the Windows
+`.exe` from anywhere. Only a `.dmg` would need a Mac (it shells out to
 `hdiutil`), which is why the macOS artifact is a `.app`.
 
 The one thing built here is the macOS icon: `scripts/build-desktop.ts` assembles
 an `.icns` out of `static/app-icons/icon-{32,128,256,512}.png` (an icns is just
-a container of PNGs, so no `iconutil` and no Mac needed). That is not a
-nicety — `deno desktop` converts a `--icon` **PNG** for a mac target through a
-Mac-only tool and fails with a bare `program not found` anywhere else.
+a container of PNGs, so no `iconutil` and no Mac needed). That is not a nicety —
+`deno desktop` converts a `--icon` **PNG** for a mac target through a Mac-only
+tool and fails with a bare `program not found` anywhere else.
 
 `deno desktop` has no `--app-name`: it takes the app's identity — the macOS
 `CFBundleName`, the Linux `.desktop` entry, the name in the Dock — from the
@@ -735,29 +752,30 @@ Vite already put in `_fresh/client`.
 Three ways of shipping a web app as a desktop app were on the table. What each
 one actually costs, measured on this repo rather than quoted from a docs page:
 
-| | `deno compile` | `deno desktop` | Electron |
-| --- | --- | --- | --- |
-| what you get | an executable, **no window** | executable **+ window** | Chromium + Node + `app.asar` |
-| engine | none — borrows an installed browser | OS webview, or bundled CEF | bundled Chromium |
-| hello-world | — | 34MB webview / 180MB CEF (AppImage) | ~109MB compressed, 268MB unpacked (win32-x64) |
-| cross-build | all 6 targets from any host | all 6 targets from any host | **no**: AppImage needs Linux, `.dmg` needs a Mac, Windows needs wine off-Windows |
-| single-file Windows | **yes** | no — a directory, or `.msi` | yes (`portable`) |
-| host↔page | you write it (loopback HTTP) | `window.bind()` → `bindings.*`, in-process | preload + `contextBridge` + `ipcMain` |
+|                     | `deno compile`                      | `deno desktop`                             | Electron                                                                         |
+| ------------------- | ----------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
+| what you get        | an executable, **no window**        | executable **+ window**                    | Chromium + Node + `app.asar`                                                     |
+| engine              | none — borrows an installed browser | OS webview, or bundled CEF                 | bundled Chromium                                                                 |
+| hello-world         | —                                   | 34MB webview / 180MB CEF (AppImage)        | ~109MB compressed, 268MB unpacked (win32-x64)                                    |
+| cross-build         | all 6 targets from any host         | all 6 targets from any host                | **no**: AppImage needs Linux, `.dmg` needs a Mac, Windows needs wine off-Windows |
+| single-file Windows | **yes**                             | no — a directory, or `.msi`                | yes (`portable`)                                                                 |
+| host↔page           | you write it (loopback HTTP)        | `window.bind()` → `bindings.*`, in-process | preload + `contextBridge` + `ipcMain`                                            |
 
 **Why the split.** `deno desktop` wins everywhere except one thing, and that one
 thing is why Windows still uses `deno compile`: there is no single-file Windows
-output. `-o Foo.exe` does not produce `Foo.exe` — it produces a *directory named*
-`Foo.exe` holding `Foo.exe.exe` and `Foo.exe.dll`, because the extension is not
-special-cased at all. `--compress` makes it worse for a handheld: a directory
-holding `payload.xz` and a `.bat`. **Add a Non-Steam Game** wants one file.
+output. `-o Foo.exe` does not produce `Foo.exe` — it produces a _directory
+named_ `Foo.exe` holding `Foo.exe.exe` and `Foo.exe.dll`, because the extension
+is not special-cased at all. `--compress` makes it worse for a handheld: a
+directory holding `payload.xz` and a `.bat`. **Add a Non-Steam Game** wants one
+file.
 
 **Why CEF and not the default webview**, at a 145MB premium per artifact:
 
 - **WebKitGTK (Linux)** exposes the Gamepad API only where the distro compiled
   against libmanette. It is a build flag, so it is the distro's call and not
-  ours — and where it is off, `navigator.getGamepads` is **`undefined`**, not
-  an empty list. (Ubuntu 22.04's webkit2gtk 2.50.4 does still link it, so this
-  is version- and distro-specific rather than universal.)
+  ours — and where it is off, `navigator.getGamepads` is **`undefined`**, not an
+  empty list. (Ubuntu 22.04's webkit2gtk 2.50.4 does still link it, so this is
+  version- and distro-specific rather than universal.)
 - **WKWebView (macOS)** delivers pad input only to the view holding first
   responder; anything else in front yields an empty array, silently.
 - **`Gamepad.id` is not portable.** WebKit emits `"<vendor> Extended Gamepad"`,
@@ -792,12 +810,12 @@ no migration path yet.
 - There is **no `--app-name` and no `--identifier`**. Identity comes from the
   output file's stem plus `desktop.app.identifier` in the nearest `deno.json` —
   and a per-game build with no `deno.json` of its own walks up and inherits the
-  *launcher's* id, giving every exported game one shared identity and one shared
+  _launcher's_ id, giving every exported game one shared identity and one shared
   storage. `tools/build-level/lib/run-deno-desktop.js` writes one per build.
 - An invalid bundle id **does not fail the build** — it silently skips the
   `.desktop` entry, so the AppImage loses its name and icon.
 - A mac target **appends `.app` itself**; passing one gives you `….app.app`.
-- `--exclude ./node_modules` only reaches the *root* one. `spacetimedb/module`'s
+- `--exclude ./node_modules` only reaches the _root_ one. `spacetimedb/module`'s
   tree was riding along at 44MB.
 - `deno desktop` **overrides the port** (it sets `DENO_SERVE_ADDRESS`), so
   `--port` / `SHMUPX_PORT` are no-ops there. `desktop.ts` detects the runtime by
@@ -824,13 +842,13 @@ deno task shelf:list                   # every name the above will accept
 `deno task shelf:list` prints the four shelves it searches, in the order it
 searches them:
 
-| Shelf | Where it lives | Example |
-| --- | --- | --- |
-| this repo's own games | `static/games/<slug>/foo.json` | `2028_ai` |
-| the local `.sav` collection | `static/editor/dezaemon/saves/` (gitignored — usually empty) | `air-streamer-ver-a` |
-| the eShop | `data/eshop.json`, then `/eshop/index` in the database | `dezaFoo` |
-| the community library | `/dezaemon/index` in the database (262 saves) | `g-fencer-755` |
-| a cloud level | `/levels/<name>` — **last**, so every name that worked before still does | `"My Level"` |
+| Shelf                       | Where it lives                                                           | Example              |
+| --------------------------- | ------------------------------------------------------------------------ | -------------------- |
+| this repo's own games       | `static/games/<slug>/foo.json`                                           | `2028_ai`            |
+| the local `.sav` collection | `static/editor/dezaemon/saves/` (gitignored — usually empty)             | `air-streamer-ver-a` |
+| the eShop                   | `data/eshop.json`, then `/eshop/index` in the database                   | `dezaFoo`            |
+| the community library       | `/dezaemon/index` in the database (262 saves)                            | `g-fencer-755`       |
+| a cloud level               | `/levels/<name>` — **last**, so every name that worked before still does | `"My Level"`         |
 
 A name matches on its **slug**, so `2028_ai`, `2028-ai` and `2028 AI` are one
 game, and a Dezaemon save answers to its title as readily as its slug
@@ -845,15 +863,15 @@ Dezaemon cart becomes the record the runtime expects, **whole**: every stage the
 cart holds (not just the one the PS2 port runs), its music, scenery tiles,
 bullet and item tables, drawn title screen and packed sprite sheet.
 
-**The build slug is a different slug.** The one above is a *lookup* and may come
+**The build slug is a different slug.** The one above is a _lookup_ and may come
 out empty (an all-Japanese title is then a clean miss rather than a game called
 "save"). The one that names `build/<slug>/`, `<slug>.exe` / `.AppImage` /
-`-app-debug.apk` and `com.easierbycode.<slug>` is an *identity*, and it is
+`-app-debug.apk` and `com.easierbycode.<slug>` is an _identity_, and it is
 `slugify` in [`tools/build-level/lib/slug.js`](tools/build-level/lib/slug.js),
 mirrored for the server by `slugFor` in
 [`lib/export-build.ts`](lib/export-build.ts) — the two are cross-checked by
 [`tests/build_level_slug_test.ts`](tests/build_level_slug_test.ts), which runs
-the Node copy for real. It keeps its plain shape whenever it still *spells* the
+the Node copy for real. It keeps its plain shape whenever it still _spells_ the
 name, and otherwise carries an 8-hex FNV-1a digest of the whole name, the way
 `gameIdForLevel` keeps two same-slug leaderboards apart and `cacheKey` above
 keeps two same-title carts apart. That matters because stripping everything
@@ -885,9 +903,9 @@ needed a Mac, and an AppImage built from Windows had to borrow WSL's
 `all` builds the desktop three as well. The Windows artifact is an **`.msi`**
 rather than a portable `.exe`: `deno desktop` has no single-file Windows output,
 and an installer is the closest thing to one file you can hand someone.
-`build:android` needs cordova and the
-Android SDK (`ANDROID_SDK_ROOT` is filled in from the default install path when
-it is unset) and produces a **debug-signed** APK.
+`build:android` needs cordova and the Android SDK (`ANDROID_SDK_ROOT` is filled
+in from the default install path when it is unset) and produces a
+**debug-signed** APK.
 
 `build:ios` needs cordova everywhere and Xcode on top of it to finish. On a Mac
 it compiles the staged project with `xcodebuild` and wraps the result as an
@@ -1297,9 +1315,9 @@ responder, and all three spell `Gamepad.id` differently, which is what the
 vendor-string matching above depends on. On **Bazzite** the launcher lands on
 Firefox (it ships no Chromium browser), and there a **Legion Go's built-in
 controller is not seen until it is disconnected and reconnected**. That is why
-the packaged Linux and macOS builds bundle CEF rather than using the OS
-webview — one known Chromium everywhere, so pad enumeration is debugged once
-instead of per engine and per distro. See **Why it is packaged this way**.
+the packaged Linux and macOS builds bundle CEF rather than using the OS webview
+— one known Chromium everywhere, so pad enumeration is debugged once instead of
+per engine and per distro. See **Why it is packaged this way**.
 
 The default mapping, by standard-mapping slot:
 

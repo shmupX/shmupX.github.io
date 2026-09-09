@@ -24,7 +24,12 @@ import { dirname, fromFileUrl, join, relative, resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { encodePng, newRaster } from "../lib/ps2/png.ts";
 import { decodeGifFrames } from "../lib/ps2/gif.ts";
-import { EMBLEM_DIR, pixelScale } from "../lib/powerup-emblems.ts";
+import {
+  EMBLEM_CELL,
+  EMBLEM_DIR,
+  emblemFromGif,
+  pixelScale,
+} from "../lib/powerup-emblems.ts";
 
 const ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 const OUT_PNG = join(ROOT, "static/games/2028-ai/assets/img/powerups.png");
@@ -47,7 +52,11 @@ export async function buildPowerupAtlas(
   log: (message: string) => void = console.log,
 ): Promise<{ png: string; json: string; frames: number } | null> {
   const dir = join(ROOT, EMBLEM_DIR);
-  const sets: { letter: string; frames: { data: Uint8Array }[] }[] = [];
+  const sets: {
+    letter: string;
+    frames: { data: Uint8Array }[];
+    still: { w: number; h: number; rgba: Uint8Array };
+  }[] = [];
   let width = 0, height = 0;
 
   for (const letter of LETTERS) {
@@ -60,7 +69,9 @@ export async function buildPowerupAtlas(
       return null;
     }
     const gif = decodeGifFrames(bytes);
-    if (!gif.frames.length) throw new Error(`powerup-${letter}.gif has no frames`);
+    if (!gif.frames.length) {
+      throw new Error(`powerup-${letter}.gif has no frames`);
+    }
     if (!width) {
       width = gif.width;
       height = gif.height;
@@ -73,6 +84,11 @@ export async function buildPowerupAtlas(
     sets.push({
       letter,
       frames: gif.frames.map((f) => ({ data: f.raster.data as Uint8Array })),
+      // The very still the cart writer puts in a save's item cell. The
+      // runtime compares an imported icon's silhouette against this to tell
+      // its own art from a cart author's: the Saturn palette repaints every
+      // colour on the way into a save, but the shape survives exactly.
+      still: emblemFromGif(bytes),
     });
   }
 
@@ -89,13 +105,20 @@ export async function buildPowerupAtlas(
   const cellW = Math.floor(width / scale);
   const cellH = Math.floor(height / scale);
   if (scale > 1) {
-    log(`emblems are a ${scale}x blowup of ${cellW}x${cellH} — emitting native`);
+    log(
+      `emblems are a ${scale}x blowup of ${cellW}x${cellH} — emitting native`,
+    );
   }
 
+  // The animation grid, with a strip of 16x16 stills underneath it.
   const cols = Math.max(...sets.map((s) => s.frames.length));
+  const gridW = cols * (cellW + PAD) - PAD;
+  const gridH = sets.length * (cellH + PAD) - PAD;
+  const stillsW = sets.length * (EMBLEM_CELL + PAD) - PAD;
+  const stillY = gridH + PAD;
   const sheet = newRaster(
-    cols * (cellW + PAD) - PAD,
-    sets.length * (cellH + PAD) - PAD,
+    Math.max(gridW, stillsW),
+    stillY + EMBLEM_CELL,
   );
   const frames: Record<string, FrameRect> = {};
 
@@ -125,6 +148,29 @@ export async function buildPowerupAtlas(
     });
   });
 
+  sets.forEach((set, i) => {
+    const ox = i * (EMBLEM_CELL + PAD);
+    const { still } = set;
+    for (let y = 0; y < EMBLEM_CELL; y++) {
+      for (let x = 0; x < EMBLEM_CELL; x++) {
+        const s2 = (y * still.w + x) * 4;
+        if (!still.rgba[s2 + 3]) continue;
+        const d = ((stillY + y) * sheet.width + ox + x) * 4;
+        sheet.data[d] = still.rgba[s2];
+        sheet.data[d + 1] = still.rgba[s2 + 1];
+        sheet.data[d + 2] = still.rgba[s2 + 2];
+        sheet.data[d + 3] = still.rgba[s2 + 3];
+      }
+    }
+    frames[`emblemStill${set.letter.toUpperCase()}.gif`] = {
+      frame: { x: ox, y: stillY, w: EMBLEM_CELL, h: EMBLEM_CELL },
+      rotated: false,
+      sourceSize: { w: EMBLEM_CELL, h: EMBLEM_CELL },
+      spriteSourceSize: { x: 0, y: 0, w: EMBLEM_CELL, h: EMBLEM_CELL },
+      trimmed: false,
+    };
+  });
+
   const atlas = {
     frames,
     meta: {
@@ -142,8 +188,12 @@ export async function buildPowerupAtlas(
   await Deno.writeFile(OUT_PNG, await encodePng(sheet));
   await Deno.writeTextFile(OUT_JSON, JSON.stringify(atlas, null, 2) + "\n");
   log(
-    `powerups atlas: ${Object.keys(frames).length} frames of ${cellW}x${cellH} ` +
-      `-> ${relative(ROOT, OUT_PNG)} (${sheet.width}x${sheet.height}), ${relative(ROOT, OUT_JSON)}`,
+    `powerups atlas: ${
+      Object.keys(frames).length
+    } frames of ${cellW}x${cellH} ` +
+      `-> ${relative(ROOT, OUT_PNG)} (${sheet.width}x${sheet.height}), ${
+        relative(ROOT, OUT_JSON)
+      }`,
   );
   return { png: OUT_PNG, json: OUT_JSON, frames: Object.keys(frames).length };
 }

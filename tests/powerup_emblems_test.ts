@@ -613,3 +613,55 @@ Deno.test(
     }
   },
 );
+
+// The committed atlas is what the runtime actually loads, so it is worth
+// holding to shape without needing the (gitignored) source art.
+Deno.test("the committed powerups atlas animates four letters and carries their stills", async () => {
+  const atlas = JSON.parse(
+    await Deno.readTextFile(
+      new URL("../static/games/2028-ai/assets/powerups.json", import.meta.url),
+    ),
+  );
+  const names = Object.keys(atlas.frames);
+  const sizeOf = (n: string) =>
+    `${atlas.frames[n].frame.w}x${atlas.frames[n].frame.h}`;
+
+  for (const letter of ["S", "B", "F", "R"]) {
+    const anim = [0, 1, 2, 3].map((i) => `emblem${letter}${i}.gif`)
+      .filter((n) => names.includes(n));
+    assertEquals(anim.length, 4, `${letter} has four animation frames`);
+    // One canvas for every frame, so the wings do not shift the anchor.
+    assertEquals(
+      new Set(anim.map(sizeOf)).size,
+      1,
+      `${letter} frames share a size`,
+    );
+    const still = `emblemStill${letter}.gif`;
+    assert(
+      names.includes(still),
+      `${still} is present for silhouette matching`,
+    );
+    // The still has to be the cart's cell size, or the compare cannot run.
+    assertEquals(sizeOf(still), `${EMBLEM_CELL}x${EMBLEM_CELL}`);
+  }
+
+  const animated = ["S", "B", "F", "R"]
+    .flatMap((L) => [0, 1, 2, 3].map((i) => `emblem${L}${i}.gif`))
+    .filter((n) => names.includes(n));
+  assertEquals(
+    new Set(animated.map(sizeOf)).size,
+    1,
+    "every emblem frame is one size",
+  );
+  assertEquals(animated.length, 16);
+
+  // Every frame must sit inside the sheet the meta declares.
+  for (const n of names) {
+    const f = atlas.frames[n].frame;
+    assert(
+      f.x >= 0 && f.y >= 0 && f.x + f.w <= atlas.meta.size.w &&
+        f.y + f.h <= atlas.meta.size.h,
+      `${n} lies inside the sheet`,
+    );
+  }
+});

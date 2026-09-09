@@ -319,6 +319,86 @@
         "h": 15
       },
       "trimmed": false
+    },
+    "emblemStillS.gif": {
+      "frame": {
+        "x": 0,
+        "y": 68,
+        "w": 16,
+        "h": 16
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 16,
+        "h": 16
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 16,
+        "h": 16
+      },
+      "trimmed": false
+    },
+    "emblemStillB.gif": {
+      "frame": {
+        "x": 18,
+        "y": 68,
+        "w": 16,
+        "h": 16
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 16,
+        "h": 16
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 16,
+        "h": 16
+      },
+      "trimmed": false
+    },
+    "emblemStillF.gif": {
+      "frame": {
+        "x": 36,
+        "y": 68,
+        "w": 16,
+        "h": 16
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 16,
+        "h": 16
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 16,
+        "h": 16
+      },
+      "trimmed": false
+    },
+    "emblemStillR.gif": {
+      "frame": {
+        "x": 54,
+        "y": 68,
+        "w": 16,
+        "h": 16
+      },
+      "rotated": false,
+      "sourceSize": {
+        "w": 16,
+        "h": 16
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 16,
+        "h": 16
+      },
+      "trimmed": false
     }
   },
   "meta": {
@@ -328,7 +408,7 @@
     "scale": "1",
     "size": {
       "w": 110,
-      "h": 66
+      "h": 84
     },
     "version": "1.0"
   }
