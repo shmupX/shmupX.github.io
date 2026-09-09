@@ -17,6 +17,24 @@
 // Firefox spells the same pad "18d1-9400-Stadia Controller rev. A".
 const STADIA_PAD_RE = /Stadia|18d1.{0,8}9400/i;
 
+// Lenovo Legion Go built-in controller: "Lenovo Legion Controller for
+// Windows", vendor 17ef, product 6182 (XInput mode) — see the same regex in
+// gamepad-compatibility-plugin.js for the spellings. On Windows it is XInput's
+// anonymous "Xbox 360 Controller", which the Xbox rule below still ranks.
+const LEGION_PAD_RE = /Legion|Vendor:\s*17ef\s+Product:\s*61[0-9a-f]{2}|\b17ef-61[0-9a-f]{2}-/i;
+
+// Standard-mapping slots that live on the Legion Go's RIGHT half: ABXY, RB,
+// RT, Menu, R3. In Split Controller mode (the launcher sets splitPadsActive;
+// see CMGGamepadCompat.splitPads) that half is player 2's, so the keys this
+// layer would synthesize for those slots — Space, C, E, T, G, all player 1's
+// — stay home, and the game reads the half as its own pad through the split
+// view instead. Menu (9) is held back too, synthetic tap included: the split
+// view hands Start to the halves itself, and the tap lands on the game canvas
+// as a pointer press, which in 2028-ai drags player 1's ship to wherever it
+// fell. Scoped to the pads the split view actually splits
+// (CMGGamepadCompat.splitTargets), so a second, unsplit pad keeps its keys.
+const SPLIT_RIGHT_HALF_SLOTS = new Set([0, 1, 2, 3, 5, 7, 9, 11]);
+
 // Default controller mapping (Standard Gamepad API). Module-level so tests and
 // other games can read the shipped defaults without constructing a manager.
 const DEFAULT_MAPPING = {
@@ -87,6 +105,14 @@ class GamepadManager {
     this.simulateTouchOnStart = this.loadStartTouchPreference();
     this.touchTargetSelector = this.loadTouchTargetPreference();
     this.startSceneName = this.loadStartScenePreference();
+
+    // Split Controller mode: the launcher (Dashboard.svelte, applySplitPads)
+    // sets this while a game runs with the pad split into halves. Right-half
+    // buttons then synthesize no keys — see SPLIT_RIGHT_HALF_SLOTS. Which
+    // pads that applies to is re-read from the compat plugin each poll
+    // (_splitTargets: a Set of pad indices, or null for every pad).
+    this.splitPadsActive = false;
+    this._splitTargets = null;
 
     this.init();
   }
@@ -187,7 +213,9 @@ class GamepadManager {
     if (this.isSnesController(controller)) return 3;
     // Stadia sits with Xbox: a standard-mapping first-party pad that should
     // win over a generic "Wireless Controller" left paired in the background.
-    if (this.isXboxController(controller) || this.isStadiaController(controller)) return 2;
+    // A Legion pad ranks here under every spelling, not only the ones that
+    // say "Legion" (see LEGION_PAD_RE).
+    if (this.isXboxController(controller) || this.isStadiaController(controller) || this.isLegionController(controller)) return 2;
     return 1;
   }
 
@@ -303,6 +331,7 @@ class GamepadManager {
   }
 
   processInputs() {
+    this._splitTargets = this.splitPadsActive ? this.readSplitTargets() : null;
     for (let controllerIndex in this.controllers) {
       const controller = this.controllers[controllerIndex];
       if (!controller || !controller.id) continue;
@@ -348,11 +377,16 @@ class GamepadManager {
         const isPressed = dpadDirs ? !!dpadDirs[buttonName] : button.pressed;
 
         const swallow = this.shouldSwallowFor(controllerIndex);
+        // Split Controller mode: this slot is on player 2's half, so it
+        // reaches the game as that half's own pad button, never as one of
+        // player 1's keys (nor as Start's synthetic tap). State still latches
+        // below so the edge is spent.
+        const heldBack = this.isHeldBackSlot(controllerIndex, buttonMapping.gamepadButton);
 
         // Button press (rising edge)
         if (isPressed && !wasPressed) {
           // Intercept Start while in-game for custom actions (simulate touch / Phaser scene start)
-          if (!swallow && groupName === 'special' && buttonName === 'start') {
+          if (!swallow && !heldBack && groupName === 'special' && buttonName === 'start') {
             const handled = this.handleStartInGame();
             if (handled) {
               // Latch state and skip default dispatch — continue (not return)
@@ -383,6 +417,8 @@ class GamepadManager {
             if (groupName === 'face' && buttonName === 'btnBottom') this.buttonState[controllerIndex].faceSouth = true;
             if (groupName === 'face' && buttonName === 'btnRight') this.buttonState[controllerIndex].faceEast = true;
             // Overlay-specific handling handled elsewhere
+          } else if (heldBack) {
+            // player 2's half — no key for player 1
           } else {
             const eff = this.getEffectiveMappingForLayout(groupName, buttonName, buttonMapping, useWASD);
             this.dispatchKeyboardEvent('keydown', eff);
@@ -396,6 +432,8 @@ class GamepadManager {
           } else if (this.isAnyOverlayOpen && this.isAnyOverlayOpen() && (groupName === 'dpad' || groupName === 'face' || groupName === 'shoulder')) {
             if (groupName === 'face' && buttonName === 'btnBottom') this.buttonState[controllerIndex].faceSouth = false;
             if (groupName === 'face' && buttonName === 'btnRight') this.buttonState[controllerIndex].faceEast = false;
+          } else if (heldBack) {
+            // its keydown never went out either (or setSplitPadsActive released it)
           } else {
             const eff = this.getEffectiveMappingForLayout(groupName, buttonName, buttonMapping, useWASD);
             this.dispatchKeyboardEvent('keyup', eff);
@@ -409,6 +447,60 @@ class GamepadManager {
         }
       }
     }
+  }
+
+  // The pads the split view splits right now, as a Set of pad indices — or
+  // null when the compat plugin is not around to say, which holds every pad
+  // back rather than leak player 1's keys from the one that is split.
+  readSplitTargets() {
+    try {
+      const compat = typeof window !== 'undefined' ? window.CMGGamepadCompat : null;
+      if (!compat || typeof compat.splitTargets !== 'function') return null;
+      return new Set(compat.splitTargets(navigator.getGamepads() || []));
+    } catch (_) { return null; }
+  }
+
+  // Is this pad's slot one Split Controller mode keeps from the game's keys?
+  isHeldBackSlot(controllerIndex, slot) {
+    if (!this.splitPadsActive || !SPLIT_RIGHT_HALF_SLOTS.has(slot)) return false;
+    const targets = this._splitTargets;
+    return !targets || targets.has(Number(controllerIndex));
+  }
+
+  // Split Controller mode on or off. Switching it ON while a right-half button
+  // is held releases that button's key first: its keydown already reached the
+  // game as player 1's, and the release edge would otherwise be held back too,
+  // leaving the game with a key it thinks is still down.
+  setSplitPadsActive(on) {
+    on = !!on;
+    if (on && !this.splitPadsActive) {
+      this.splitPadsActive = true;
+      this._splitTargets = this.readSplitTargets();
+      for (const controllerIndex in this.controllers) {
+        const controller = this.controllers[controllerIndex];
+        if (!controller || !controller.id) continue;
+        const mapping = this.controllerMappings[this.getControllerId(controller)];
+        const state = this.buttonState[controllerIndex];
+        if (!mapping || !state) continue;
+        for (const groupName of ['face', 'shoulder', 'special']) {
+          const group = mapping[groupName] || {};
+          for (const buttonName in group) {
+            const m = group[buttonName];
+            if (!m || !this.isHeldBackSlot(controllerIndex, m.gamepadButton)) continue;
+            const isStick = buttonName === 'leftStick' || buttonName === 'rightStick';
+            const held = isStick ? !!(state[buttonName] && state[buttonName].pressed) : !!state[buttonName];
+            if (!held) continue;
+            try { this.dispatchKeyboardEvent('keyup', m); } catch (_) { /* ignore */ }
+          }
+        }
+      }
+    }
+    this.splitPadsActive = on;
+    if (!on) this._splitTargets = null;
+  }
+
+  isLegionController(controller) {
+    return LEGION_PAD_RE.test((controller && controller.id) || "");
   }
 
   // Map Arrow keys to WASD when enabled for D-pad only
@@ -1047,5 +1139,5 @@ if (typeof window !== 'undefined') {
 }
 
 // ES module exports so other web games can import this class.
-export { GamepadManager, DEFAULT_MAPPING, STADIA_PAD_RE };
+export { GamepadManager, DEFAULT_MAPPING, STADIA_PAD_RE, LEGION_PAD_RE, SPLIT_RIGHT_HALF_SLOTS };
 export default GamepadManager;

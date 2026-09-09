@@ -151,6 +151,14 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
     as an akebono finish, so nothing could earn it back. The rule now applies
     only when the level is not a Dezaemon import. Upstream fix belongs in
     `2019-es7/src/phaser/AdvScene.js`.
+  - Split Controller mode opens the two-player gate. `twoPlayerAllowed` admits a
+    second ship only on `?players=2` or a save's own 2P bit, so the stock game
+    could never seat the second half of a Legion Go's controller. The bundle's
+    `cmg-*` message listener now takes `{ type: "cmg-splitpads-set", value }`
+    from the launcher (see **Lenovo Legion Go** under **Controllers**) into
+    `gameState.cmgSplitPads`, which `twoPlayerAllowed` honours like the URL
+    override. Upstream home would be
+    `2019-es7/src/phaser/game-objects/Player.js`.
   - The Dezaemon divergences below, all of them keyed off `isImportedLevel()`.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
@@ -1475,6 +1483,85 @@ the **Assistant button opens the Guide** on its own, since the pad has no SELECT
 to chord with — the Guide footer says so when a Stadia pad is the active one.
 Both extra buttons appear in the configurator (CAP / AST) and can be remapped
 like any other.
+
+### Lenovo Legion Go
+
+The Go's TrueStrike controller comes apart, and the two halves keep reporting as
+_one_ pad — so two players holding a half each look to a game like a single
+player: player 1 flies on the left stick while the right half's face buttons
+bomb for player 1 too. **Split Controller mode** fixes that in the launcher.
+Inside the game frame the pad is re-expressed as two standard pads, one per half
+(`CMGGamepadCompat.splitPads` in `static/gamepad-compatibility-plugin.js`,
+riding the same `navigator.getGamepads` patch as Twin-Stick Mode, whose own
+D-pad/face re-expression stands down while the pad is split — the halves already
+are that expression), and `static/gamepad-support.js` stops synthesising player
+1's keys for the right half's buttons, Start's synthetic tap included
+(`setSplitPadsActive`, scoped to the pads actually split). The Guide shows it as
+**Split Controller · 2P** for the games that read pads per index — the built-in
+list (shmupX / 2028.Ai, Sh'M↑ Party), a `splitPads` flag on a catalog entry, or
+a boot-time `{ type: 'cmg-splitpads', default? }` message, the same three ways
+as Twin-Stick Mode — the choice persists per game, and it defaults **on** when
+the launcher knows it is on a Legion Go whose controller detaches: from the
+machine's DMI strings over `GET /api/host` (`routes/api/host.ts`,
+`lib/host-device.ts`; desktop and dev servers, answered to the serving machine's
+own browser only — never through the dev tunnel or to another machine on the
+LAN), or from the pad's own id (`Lenovo Legion Controller for
+Windows`, vendor
+`17ef`, product `6182`) where the browser sees it — on Windows the built-in pad
+is XInput's anonymous "Xbox 360 Controller", and the Linux distros built around
+Handheld Daemon (Bazzite, ChimeraOS) hide it behind an emulated Xbox pad, so
+there `/api/host` is the only tell. The Legion Go S, whose controller is fixed,
+never defaults on (its host answer wins over its pad id); the Go 2 does.
+
+| half  | virtual pad            | 2028.Ai                                                                    | Sh'M↑ Party (twin-stick profile)                              |
+| ----- | ---------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| left  | `<id> [L]`, same index | left stick / D-pad fly · LB bomb (and confirm) · Menu pause · View → title | left stick move · LB dash · LT weapon · auto-aim              |
+| right | `<id> [R]`, index + 4  | right stick flies · RB or A/B/X/Y bomb · A confirm and → title             | right stick move · RB dash · Y weapon · Menu pause · auto-aim |
+
+The right half exists only once one of its buttons — A/B/X/Y, RB, RT, R3 — has
+been pressed; until then the left pad is the whole controller (the right stick
+rides on its axes 2/3, Menu on its slot 9), so a solo player on a Legion with
+the halves still attached, where the mode is nonetheless the default, loses
+nothing until somebody presses something on the right half. Player 2 joins the
+way a second pad always has — that first press — and the launcher opens
+2028.Ai's own two-player gate for it over `cmg-splitpads-set` (the stock game
+otherwise wants `?players=2`; a hand edit to `game.bundle.js`, listed above).
+Each half's trigger reads as both L2 and R2, so 2028.Ai's OPTION ring is on LT
+for player 1 and RT for player 2; L3 doubles as R3, the level-editor button.
+Sh'M↑ Party's auto-aim is its own CROSS/R2 cabinet mode: the split view holds R2
+on a half for as long as that half has been touched in the last 10 s (a half has
+no second stick to aim with) and lets go after, so the title still idles into
+attract mode; the right half's stick also writes the D-pad past 0.7, so the perk
+picker (LEFT/RIGHT) can be worked from it; and Menu sits on the right half alone
+there, because the game toggles pause once per port and two ports pressing START
+in one frame would cancel out. In the demo reel, the right half joins on RB + Y
+(its L1 + R1); the left half's chord is LT first, then LB. Rumble follows the
+halves — XInput's strong motor is the left grip, the weak one the right — and a
+half's effect carries the other's still running magnitude along, so a game-wide
+buzz reaches both grips. Every Legion-id pad is split, or, when nothing names
+itself, the lowest-index standard pad; every other pad passes through at its
+index with all its keys, and cross-origin games get
+`{ type: 'cmg-splitpads-set', value, profile }` to apply it themselves. Legion
+Space's _dual DInput_ mode, where the halves enumerate as two DirectInput pads
+of their own, is a different animal: those arrive non-standard and want the
+mapping wizard.
+
+**FPS mode.** The switch on the Go's right half turns it into a mouse and the
+left half into a keyboard (stick → WASD), and the gamepad disappears. The
+launcher reads a Legion's pad going away followed, within 30 s, by the keyboard
+speaking up as that mode (a pad enumerating under FPS mode's own product id,
+`6185`, is the same verdict at once): it says so in a toast and the Guide's
+footer, steers its menus and the Guide on WASD as well as the arrows, splits
+nothing, and tells the frame over `{ type: 'cmg-legion-fps-set', value }`. The
+next pad to connect ends it. The games need nothing: 2028.Ai already flies on
+WASD and bombs on Space, and the right half as a mouse drags the ship; Sh'M↑
+Party's port 0 reads WASD too. A same-origin game holds keyboard focus, so a
+passive listener inside the frame is what hears those keys; on the hosted site
+under Windows nothing identifies the machine at all, and there the mode is only
+a heuristic the pad id cannot feed. `?paddebug=1` prints the launcher's Legion /
+split / FPS-mode verdict, `tests/gamepad_pads_test.ts` pins the split view's
+slots to 2028.Ai's own button tables (and Sh'M↑ Party's, as constants), and
+`tests/host_device_test.ts` the machine classification.
 
 ## Emulators (opt-in)
 

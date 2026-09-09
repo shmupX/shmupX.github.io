@@ -22,6 +22,16 @@
   // button rebuild here — only the priority that makes it win over a generic
   // pad still paired in the background.
   const STADIA_PAD_RE = /Stadia|18d1.{0,8}9400/i;
+  // Lenovo Legion Go family. The built-in TrueStrike controller enumerates as
+  // "Lenovo Legion Controller for Windows", vendor 17ef, product 6182 in
+  // XInput mode (6183 DInput, 6184 dual DInput, 6185 FPS mode): Linux Chrome
+  // spells it "… (STANDARD GAMEPAD Vendor: 17ef Product: 6182)", Firefox
+  // "17ef-6182-…". On Windows the pad rides XInput and collapses to the
+  // anonymous Xbox 360 literal, so the launcher also asks the desktop host
+  // which machine it is on (routes/api/host.ts) before defaulting Split
+  // Controller mode on.
+  const LEGION_PAD_RE =
+    /Legion|Vendor:\s*17ef\s+Product:\s*61[0-9a-f]{2}|\b17ef-61[0-9a-f]{2}-/i;
   // Chrome on Android gets pad-layout tweaks of its own (see snesButtons).
   // userAgentData first: "Request desktop site" strips Android from the UA
   // string, which would silently disable every Android pad accommodation.
@@ -64,10 +74,16 @@
     return !!(pad && STADIA_PAD_RE.test(pad.id || ""));
   }
 
+  function isLegionPad(pad) {
+    return !!(pad && LEGION_PAD_RE.test(pad.id || ""));
+  }
+
   function padPriority(pad) {
     const id = (pad && pad.id) || "";
     if (SNES_PAD_RE.test(id)) return 3;
-    if (XBOX_PAD_RE.test(id) || STADIA_PAD_RE.test(id)) return 2;
+    // A Legion pad ranks with Xbox pads under every spelling, not only the
+    // ones that say "Legion" — see LEGION_PAD_RE.
+    if (XBOX_PAD_RE.test(id) || STADIA_PAD_RE.test(id) || LEGION_PAD_RE.test(id)) return 2;
     return 1;
   }
 
@@ -604,6 +620,13 @@
         out.push(null);
         continue;
       }
+      // A half of a split pad (splitPads above) already is the twin-stick
+      // expression, and its faces are confirm/bomb/weapon buttons, not aim:
+      // pass it through untouched.
+      if (p.__cmgSplitHalf) {
+        out.push(p);
+        continue;
+      }
       const b = p.buttons || [];
       const pr = (j) => !!(b[j] && b[j].pressed);
       const axes = [];
@@ -633,6 +656,290 @@
     return out;
   }
 
+  // ==== Split Controller mode (Lenovo Legion Go) ====
+  //
+  // The Legion Go's TrueStrike controller detaches into two halves that keep
+  // reporting as ONE standard pad: left stick, D-pad, LB, LT, L3 and View on
+  // the left half; right stick, ABXY, RB, RT, R3 and Menu on the right. Two
+  // players holding a half each therefore look to a game like one player —
+  // player 1 flies on the left stick while the right half's buttons bomb for
+  // player 1 too. splitPads() re-expresses such a pad as two standard-layout
+  // virtual pads, one per half, so games that read the Gamepad API per pad —
+  // 2028-ai's join-in (a second pad pressing a face or shoulder button),
+  // Sh'M↑ Party's one-player-per-port — see two controllers:
+  //
+  //   left half  → "<id> [L]" at the pad's own index. axes 0/1 = left stick;
+  //                12-15 = D-pad; 4 = LB, and 0 = LB as well so the half has
+  //                a confirm button; 6 AND 7 = LT (both triggers, so a game
+  //                reading either finds it); 8 = View; 10 = L3, and 11 = L3
+  //                as well (2028-ai's level-editor button is R3).
+  //   right half → "<id> [R]" at index + SPLIT_INDEX_OFFSET (Chrome hands
+  //                real pads 0-3, so it never collides). axes 0/1 = the RIGHT
+  //                stick — it is this player's movement stick; 0-3 = ABXY;
+  //                5 = RB; 6 AND 7 = RT; 9 = Menu; 11 = R3.
+  //
+  // The right half exists only once it has been CLAIMED — a press on one of
+  // its buttons (ABXY, RB, RT, R3; the sticks never claim, nor does Menu) —
+  // and then stays for as long as the physical pad does. Until then the left
+  // pad is the whole controller for the one player holding it: the right
+  // stick rides on its axes 2/3 (Sh'M↑ Party's aim stick) and Menu on its
+  // slot 9. Split mode is the launcher's default on a Legion Go whether or
+  // not the halves are apart — nothing can tell — so a solo player who keeps
+  // to the sticks, the D-pad and the left half's buttons never spawns a
+  // player 2; a face or right-shoulder press hands that half to player 2,
+  // which is exactly what a second player's first press must do.
+  //
+  // Menu: on both halves in the generic profile (2028-ai pauses only on
+  // player 1's Start and ignores player 2's during play); on the right half
+  // alone in the twinstick profile (Sh'M↑ Party toggles pause per port, and
+  // two ports pressing START in one frame would cancel out).
+  //
+  // profile "twinstick" (Sh'M↑ Party, and any game the launcher knows as a
+  // twin-stick game) reshapes each half for a one-stick twin-stick player:
+  // dash (L1) is LB on the left half and RB on the right; the weapon cycle
+  // (R1) is LT on the left and Y on the right; the right half's stick also
+  // writes the D-pad (12-15) past SPLIT_DPAD_AT, so a menu that reads only
+  // LEFT/RIGHT (the perk picker) can be worked from it; and R2 — the game's
+  // auto-aim-and-fire button — is held on a half while its player is at the
+  // controls (any input within AUTO_FIRE_IDLE_MS), since a half has no
+  // second stick to aim with. It lets go after that idle window so the title
+  // can still fall into attract mode.
+  //
+  // Rumble splits with the halves: XInput's strong motor is the left grip and
+  // the weak one the right, so each virtual pad's actuator drives its own
+  // motor — and, because both wrap the SAME physical actuator, whose
+  // playEffect preempts whatever is playing, a half's effect carries the
+  // other half's still-live magnitude along instead of cancelling it.
+  //
+  // Which pads split (splitTargets): every Legion-id pad; or, where the pad
+  // hides behind the XInput literal, the lowest-index standard pad when
+  // nothing identifies itself as a Legion. Other pads pass through untouched,
+  // at their index. Returns plain snapshot objects, like twinStickPads, so
+  // they can cross into a same-origin game frame's realm.
+  const SPLIT_INDEX_OFFSET = 4;
+  // A stick this far off centre counts as a hand on that half...
+  const SPLIT_STICK_LIVE = 0.3;
+  // ...and this far is a D-pad press, for the right half's synthesized D-pad.
+  const SPLIT_DPAD_AT = 0.7;
+  const AUTO_FIRE_IDLE_MS = 10000;
+  const LEFT_HALF_SLOTS = [4, 6, 8, 10, 12, 13, 14, 15];
+  const RIGHT_HALF_CLAIM_SLOTS = [0, 1, 2, 3, 5, 7, 11];
+  // "index:id" -> { rightLive, leftAt, rightAt }. Pads gone from the list are
+  // forgotten, so a reconnected controller starts over with no right half.
+  const splitState = new Map();
+
+  function snapshotButton(b) {
+    return {
+      pressed: !!(b && b.pressed),
+      touched: !!(b && (b.touched || b.pressed)),
+      value: b && typeof b.value === "number" ? b.value : (b && b.pressed ? 1 : 0),
+    };
+  }
+
+  // One half's share of the pad's dual-rumble actuator. Each half sets only
+  // its own motor; the other motor keeps whatever its half last asked for
+  // while that effect is still running, so 2028-ai's game-wide buzz (both
+  // halves, back to back, in one tick) reaches both grips instead of the
+  // second call cancelling the first. Firefox's pulse() has no per-motor
+  // form and passes straight through.
+  const actuatorShares = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function halfActuator(real, side) {
+    if (!real || typeof real.playEffect !== "function") return null;
+    let share = actuatorShares ? actuatorShares.get(real) : null;
+    if (!share) {
+      share = { strong: 0, weak: 0, strongUntil: 0, weakUntil: 0 };
+      if (actuatorShares) actuatorShares.set(real, share);
+    }
+    const mine = side === "left" ? "strong" : "weak";
+    const other = side === "left" ? "weak" : "strong";
+    const type = real.type || "dual-rumble";
+    const half = {
+      type,
+      playEffect(effectType, params) {
+        const p = merge({}, params || {});
+        const now = Date.now();
+        const duration = typeof p.duration === "number" ? p.duration : 0;
+        const mag = p[mine + "Magnitude"];
+        share[mine] = typeof mag === "number" ? mag : 0;
+        share[mine + "Until"] = now + duration;
+        if (share[other + "Until"] <= now) share[other] = 0;
+        p.strongMagnitude = share.strong;
+        p.weakMagnitude = share.weak;
+        return real.playEffect(effectType, p);
+      },
+      reset() {
+        const now = Date.now();
+        share[mine] = 0;
+        share[mine + "Until"] = 0;
+        const remaining = share[other + "Until"] - now;
+        if (remaining > 0 && share[other] > 0) {
+          // The other half is still buzzing: play its remainder alone.
+          return real.playEffect(type, {
+            duration: remaining,
+            strongMagnitude: share.strong,
+            weakMagnitude: share.weak,
+          });
+        }
+        return typeof real.reset === "function" ? real.reset() : Promise.resolve("complete");
+      },
+    };
+    if (typeof real.pulse === "function") {
+      half.pulse = (value, duration) => real.pulse(value, duration);
+    }
+    return half;
+  }
+
+  function splittablePad(pad) {
+    if (!pad || !pad.connected) return false;
+    if (pad.mapping === "standard") return true;
+    return (pad.axes || []).length >= 4 && (pad.buttons || []).length >= 12;
+  }
+
+  // The pads splitPads() would split, as their indices. The launcher's
+  // key-synthesis layer (gamepad-support.js) scopes its right-half hold-back
+  // to exactly these, so a second, unsplit pad keeps all of its keys.
+  function splitTargets(pads) {
+    const list = pads ? Array.prototype.slice.call(pads) : [];
+    let targets = list.filter((p) => splittablePad(p) && isLegionPad(p));
+    if (!targets.length) {
+      const candidates = list.filter(splittablePad).sort((a, b) => a.index - b.index);
+      if (candidates.length) targets = [candidates[0]];
+    }
+    return targets.map((p) => p.index);
+  }
+
+  function splitOne(pad, profile, now) {
+    const key = pad.index + ":" + (pad.id || "");
+    let st = splitState.get(key);
+    if (!st) {
+      st = { rightLive: false, leftAt: -Infinity, rightAt: -Infinity };
+      splitState.set(key, st);
+    }
+    const b = pad.buttons || [];
+    const ax = pad.axes || [];
+    const pr = (i) => !!(b[i] && b[i].pressed);
+    const axis = (i) => (typeof ax[i] === "number" && Math.abs(ax[i]) <= 1.05 ? ax[i] : 0);
+    const lx = axis(0), ly = axis(1), rx = axis(2), ry = axis(3);
+    const claimNow = RIGHT_HALF_CLAIM_SLOTS.some(pr);
+    // Menu belongs to the left pad until the right half is claimed (see
+    // below), so until then a Menu press is that player at the controls.
+    const leftActive = LEFT_HALF_SLOTS.some(pr) || (!st.rightLive && pr(9)) ||
+      Math.abs(lx) > SPLIT_STICK_LIVE || Math.abs(ly) > SPLIT_STICK_LIVE;
+    const rightActive = claimNow || pr(9) ||
+      Math.abs(rx) > SPLIT_STICK_LIVE || Math.abs(ry) > SPLIT_STICK_LIVE;
+    if (leftActive) st.leftAt = now;
+    if (rightActive) st.rightAt = now;
+    if (claimNow) st.rightLive = true;
+    const claimed = st.rightLive;
+    const twin = profile === "twinstick";
+    const fireL = twin && now - st.leftAt < AUTO_FIRE_IDLE_MS;
+    const fireR = twin && now - st.rightAt < AUTO_FIRE_IDLE_MS;
+
+    const n = Math.max(b.length, 17);
+    const left = new Array(n);
+    const right = new Array(n);
+    for (let i = 0; i < n; i++) {
+      left[i] = button(false);
+      right[i] = button(false);
+    }
+    // Left half.
+    left[0] = snapshotButton(b[4]); // LB doubles as this half's confirm
+    left[4] = snapshotButton(b[4]);
+    left[8] = snapshotButton(b[8]);
+    left[10] = snapshotButton(b[10]);
+    left[11] = snapshotButton(b[10]); // ...and as R3, the level-editor button
+    for (let d = 12; d <= 15; d++) left[d] = snapshotButton(b[d]);
+    if (twin) {
+      left[5] = snapshotButton(b[6]); // LT → weapon cycle
+      left[7] = button(fireL); // auto-aim and fire while at the controls
+    } else {
+      left[6] = snapshotButton(b[6]);
+      left[7] = snapshotButton(b[6]);
+    }
+    // Menu: player 1's pause in the generic profile, and the whole pad's
+    // Start until the right half has been claimed.
+    if (!twin || !claimed) left[9] = snapshotButton(b[9]);
+    // Anything past the standard 17 (a Stadia's Capture/Assistant, a pad's
+    // Home) belongs to player 1's half.
+    for (let i = 16; i < b.length; i++) left[i] = snapshotButton(b[i]);
+    // Right half.
+    for (let f = 0; f <= 3; f++) right[f] = snapshotButton(b[f]);
+    right[9] = snapshotButton(b[9]);
+    right[11] = snapshotButton(b[11]);
+    if (twin) {
+      right[4] = snapshotButton(b[5]); // RB → dash
+      right[5] = snapshotButton(b[3]); // Y → weapon cycle (still Y at slot 3)
+      right[7] = button(fireR || pr(7));
+      // The stick as a D-pad too, for menus that read only LEFT/RIGHT.
+      right[12] = button(ry < -SPLIT_DPAD_AT);
+      right[13] = button(ry > SPLIT_DPAD_AT);
+      right[14] = button(rx < -SPLIT_DPAD_AT);
+      right[15] = button(rx > SPLIT_DPAD_AT);
+    } else {
+      right[5] = snapshotButton(b[5]);
+      right[6] = snapshotButton(b[7]);
+      right[7] = snapshotButton(b[7]);
+    }
+
+    const half = (suffix, index, axes, buttons, side) => ({
+      id: (pad.id || "") + " [" + suffix + "]",
+      index,
+      connected: true,
+      mapping: "standard",
+      timestamp: pad.timestamp || 0,
+      axes,
+      buttons,
+      vibrationActuator: halfActuator(pad.vibrationActuator, side),
+      __cmgSplitHalf: suffix,
+    });
+    return {
+      // Unclaimed, the left pad still carries the right stick: it is the
+      // whole controller for the one player holding it.
+      leftPad: half("L", pad.index, claimed ? [lx, ly, 0, 0] : [lx, ly, rx, ry], left, "left"),
+      rightPad: claimed
+        ? half("R", pad.index + SPLIT_INDEX_OFFSET, [rx, ry, 0, 0], right, "right")
+        : null,
+    };
+  }
+
+  function splitPads(pads, opts) {
+    const o = opts || {};
+    const profile = o.profile === "twinstick" ? "twinstick" : "generic";
+    const now = typeof o.now === "number" ? o.now : Date.now();
+    const list = pads ? Array.prototype.slice.call(pads) : [];
+    const targetIndices = new Set(splitTargets(list));
+    const targets = list.filter((p) => p && targetIndices.has(p.index));
+
+    let size = Math.max(list.length, SPLIT_INDEX_OFFSET * 2);
+    for (const p of list) {
+      if (p && typeof p.index === "number" && p.index + 1 > size) size = p.index + 1;
+    }
+    const out = new Array(size);
+    for (let i = 0; i < size; i++) out[i] = null;
+    for (const p of list) {
+      if (p && typeof p.index === "number" && p.index >= 0) out[p.index] = p;
+    }
+
+    const seen = new Set();
+    for (const p of targets) {
+      seen.add(p.index + ":" + (p.id || ""));
+      const halves = splitOne(p, profile, now);
+      out[p.index] = halves.leftPad;
+      const r = halves.rightPad;
+      if (!r) continue;
+      // A real pad already sitting at index + 4 (Firefox numbers pads
+      // freely) keeps its slot; the half takes the next free one.
+      while (out[r.index] && !out[r.index].__cmgSplitHalf) r.index++;
+      out[r.index] = r;
+    }
+    for (let i = 0; i < out.length; i++) if (out[i] === undefined) out[i] = null;
+    for (const key of splitState.keys()) {
+      if (!seen.has(key)) splitState.delete(key);
+    }
+    return out;
+  }
+
   function install(nextOptions) {
     options = merge({}, options, nextOptions || {});
 
@@ -645,10 +952,11 @@
   }
 
   const api = {
-    version: "1.4.0",
+    version: "1.5.0",
     install,
     isSnesPad,
     isStadiaPad,
+    isLegionPad,
     padPriority,
     decodeHat,
     selectPreferredPad,
@@ -660,6 +968,16 @@
       return merge({}, options);
     },
     twinStick: twinStickPads,
+    // Split Controller mode (see above): one pad as two half-pads, and
+    // which pads it would split.
+    splitPads,
+    splitTargets,
+    // Forget every pad's split state — a right half seen, a hand's last
+    // input — so the next splitPads call starts over (tests, and the
+    // launcher when the mode is switched off).
+    splitReset() {
+      splitState.clear();
+    },
     // Unwrapped pads, for diagnostics (e.g. the dashboard's ?paddebug=1
     // overlay) — shows what the browser actually reports before this plugin
     // normalizes it.
