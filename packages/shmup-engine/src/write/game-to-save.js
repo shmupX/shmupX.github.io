@@ -899,13 +899,17 @@ export function buildSaveFromGame(level, art, options = {}) {
             ? opts.storyPanels.find((p) => p.stage === s)
             : null;
         if (panel) {
-            // A piece never fires, never drops, and takes a few hits: long
-            // enough to read, and still something the player can shoot away.
+            // A piece never fires and never drops. Its hit points are the
+            // reading time: a player holding the fire button puts five
+            // full-power shots into a quarter in well under a second, which
+            // tore the picture up before it could be read, so this is the
+            // table's 102,400 — about twenty — and the panel still comes
+            // apart for anyone who wants to shoot it.
             const storyBytes = encodeEnemyRecord({
                 appearance: STRAIGHT_APPEARANCE_BASE,
                 animIndex: 3,
                 scoreIndex: 1,
-                hpIndex: 2,
+                hpIndex: 4,
                 deathMode: 0,
                 fireGeometry: 0,
                 aimed: false,

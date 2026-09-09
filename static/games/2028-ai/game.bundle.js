@@ -8452,7 +8452,9 @@
     var cols = row.length || 8;
     var cellW = GW2 / cols;
     var deza = scene.dezaBg && scene.stageWaveRows;
-    var dezaRow = deza ? scene.stageWaveRows[scene.waveCount] : 0;
+    // The wave's authored row, scenery or not: a cart without a background
+    // still places by it (see the branch below).
+    var dezaRow = scene.stageWaveRows ? (scene.stageWaveRows[scene.waveCount] || 0) : 0;
     var gridLeft = (GW2 - cols * 16) / 2;
     for (var i = 0; i < row.length; i++) {
       var code = String(row[i]);
@@ -8502,6 +8504,15 @@
         // Otherwise the enemy appears AT its map row: rows inside the
         // window at stage start pop in place (a hardware static arena);
         // rows crossed by the scroll spawn ~40 px above the screen top.
+      } else if (scene.stageWaveRows) {
+        // A cart without scenery. The columns are still the cart's own 16 px
+        // grid — dividing the row evenly instead squeezes a 20-column
+        // placement into 12.8 px steps and nothing lands where it was drawn —
+        // and a row inside the opening screen still says where its wave
+        // stands, which is what lets a story panel assemble.
+        ex = gridLeft + i * 16 + 16;
+        var standY = GH2 - (dezaRow * 16 + 8);
+        ey = standY > 0 && standY < GH2 ? standY : -16;
       } else {
         ex = cellW * i + cellW / 2;
         ey = -16;
@@ -12232,7 +12243,16 @@
           // due when the scroll reaches r*16 - 512 px — the same window the
           // tick formula below encodes at the legacy constant 2 px/frame.
           if (self0.waveDueByScroll) return Math.max(0, row * 16 - 512);
-          return self0.dezaBg ? Math.max(0, (row * perRow - 256) * SATURN_TICKS_PER_FRAME) : (row - firstRow) * perRow;
+          if (self0.dezaBg) {
+            return Math.max(0, (row * perRow - 256) * SATURN_TICKS_PER_FRAME);
+          }
+          // A cart with no scenery has no scroll to hang its rows off, but
+          // the rows still say where a wave STANDS. Anything inside the
+          // opening screen is due at once and placed where it was authored —
+          // the hardware's static arena — so a stage that opens on a story
+          // panel shows the whole panel rather than dealing it out a row at
+          // a time. Everything past the first screen keeps flying in.
+          return row * 16 + 8 < GH11 ? 0 : (row - firstRow) * perRow;
         });
       }
       this.bossDueTick = this.dezaBg && dezaBossRow !== null
