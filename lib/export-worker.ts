@@ -39,8 +39,8 @@
 // served locally — and by desktop.ts at launch. It never starts on Deploy.
 
 import { encodeBase64 } from "@std/encoding/base64";
-import { basename, join, relative, SEPARATOR } from "@std/path";
-import { buildZip, type ZipEntry } from "./ps2/zip.ts";
+import { basename, join } from "@std/path";
+import { buildZip, treeEntries } from "./ps2/zip.ts";
 import {
   detectExportCapabilities,
   type ExportCapabilities,
@@ -425,27 +425,6 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     }
     signal?.addEventListener("abort", done, { once: true });
   });
-}
-
-/** Every file under `dir`, as archive entries prefixed with the folder's name. */
-async function treeEntries(dir: string): Promise<ZipEntry[]> {
-  const name = basename(dir);
-  const out: ZipEntry[] = [];
-  const walk = async (at: string) => {
-    for await (const entry of Deno.readDir(at)) {
-      const path = join(at, entry.name);
-      if (entry.isDirectory) await walk(path);
-      else if (entry.isFile) {
-        out.push({
-          path: `${name}/${relative(dir, path).replaceAll(SEPARATOR, "/")}`,
-          data: await Deno.readFile(path),
-        });
-      }
-    }
-  };
-  await walk(dir);
-  out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return out;
 }
 
 // ── The worker ────────────────────────────────────────────────────────────────
@@ -910,6 +889,25 @@ export class ExportWorker {
       return uploads;
     }
     for (const path of built.artifacts) {
+      // Not every artifact is a file: a macOS `deno desktop` build is a
+      // <slug>.app BUNDLE, and Deno.readFile on a directory throws — so the job
+      // died at the upload with an IsADirectory error after the build itself had
+      // gone perfectly. Zip a directory the way the PS2 USB folder above is
+      // zipped; unpacking it anywhere reproduces the folder.
+      const stat = await Deno.stat(path);
+      if (stat.isDirectory) {
+        log(`zipping ${basename(path)}`);
+        const zip = await buildZip(
+          await treeEntries(path),
+          new Date("2000-03-04T00:00:00Z"),
+        );
+        uploads.push({
+          name: `${basename(path)}.zip`,
+          kind: "zip",
+          bytes: zip,
+        });
+        continue;
+      }
       uploads.push({
         name: basename(path),
         kind: artifactKind(path),

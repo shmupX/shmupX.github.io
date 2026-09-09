@@ -676,11 +676,14 @@ async function buildLevel(opts: Options): Promise<void> {
   } catch (_err) {
     fail("Node is required for per-game builds but is not on PATH.");
   }
+  // Off a Mac an iOS build stops at the Xcode project — which is a real
+  // artifact worth having, so say so and carry on rather than refusing. This
+  // used to fail outright, which meant the only way to get the project cordova
+  // can perfectly well stage on Windows or Linux was to not ask for it.
   if (opts.platform === "ios" && Deno.build.os !== "darwin") {
-    fail(
-      "an iOS build needs a macOS host (Xcode + CocoaPods). Everything up to " +
-        "the native compile works anywhere: add --stage-only to check the " +
-        "staged www/.",
+    console.log(
+      "Note: compiling an iOS app needs Xcode, so this host stops at the " +
+        "Xcode project. Open it on a Mac to get an .ipa.\n",
     );
   }
 
@@ -749,9 +752,14 @@ async function reportArtifacts(
   const usual = platform === "linux"
     ? ".appimage"
     : platform === "windows"
-    ? ".exe"
+    // An .msi, not a portable .exe, and a .app bundle, not a .dmg — that is
+    // what run-deno-desktop.js writes. Both said otherwise here since the
+    // electron-builder swap, which only ever mis-sorted the listing, but the
+    // same stale table in lib/export-build.ts was FILTERING on it and so
+    // reported a finished Windows build as having produced nothing.
+    ? ".msi"
     : platform === "mac"
-    ? ".dmg"
+    ? ".app"
     : platform === "ios"
     ? ".ipa"
     : ".apk";

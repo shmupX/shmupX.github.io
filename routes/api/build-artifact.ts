@@ -1,13 +1,15 @@
 import { define } from "../../utils.ts";
 import { localWriteGuard } from "../../lib/local-guards.ts";
-import { buildZip, type ZipEntry } from "../../lib/ps2/zip.ts";
-import { packagedBuildRoot } from "../../lib/build-workspace.ts";
+import { buildZip, treeEntries } from "../../lib/ps2/zip.ts";
+import {
+  packagedBuildRoot,
+  stagedRuntimeRoot,
+} from "../../lib/build-workspace.ts";
 import {
   basename,
   dirname,
   fromFileUrl,
   join,
-  relative,
   resolve,
   SEPARATOR,
 } from "jsr:@std/path@^1.1.2";
@@ -67,6 +69,12 @@ async function allowedRoots(): Promise<string[]> {
     dir = parent;
   }
   roots.push(packagedBuildRoot());
+  // The packaged app's THIRD root. lib/ps2 writes into packagedBuildRoot, but
+  // `node tools/build-level` runs against the staged copy of the tool and puts
+  // every android/ios/desktop artifact under <staged>/build/<slug>/dist — which
+  // was not on this list, so the export panel handed out paths that this route
+  // then refused with a 403.
+  roots.push(join(stagedRuntimeRoot(), "build"));
   const real: string[] = [];
   for (const root of roots) {
     real.push(await Deno.realPath(root).catch(() => root));
@@ -74,26 +82,25 @@ async function allowedRoots(): Promise<string[]> {
   return real;
 }
 
-/** Every file under `dir`, as archive entries prefixed with the folder's name. */
-async function treeEntries(dir: string): Promise<ZipEntry[]> {
-  const name = basename(dir);
-  const out: ZipEntry[] = [];
-  const walk = async (at: string) => {
-    for await (const entry of Deno.readDir(at)) {
-      const path = join(at, entry.name);
-      if (entry.isDirectory) {
-        await walk(path);
-      } else if (entry.isFile) {
-        out.push({
-          path: `${name}/${relative(dir, path).replaceAll(SEPARATOR, "/")}`,
-          data: await Deno.readFile(path),
-        });
-      }
-    }
-  };
-  await walk(dir);
-  out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return out;
+/**
+ * What a zipped directory should be CALLED once it is in someone's downloads.
+ *
+ * Its own basename is usually right — the PS2 USB folder is named for the game,
+ * a macOS bundle is <slug>.app. The iOS Xcode project is the exception: cordova
+ * calls its folder "ios", so the download landed as a nameless "ios.zip" that
+ * said nothing about which game it held. The game's slug is the directory two
+ * levels above cordova/.
+ */
+function downloadName(path: string): string {
+  const parts = path.replaceAll("\\", "/").split("/").filter(Boolean);
+  const n = parts.length;
+  if (
+    n >= 4 && parts[n - 1] === "ios" && parts[n - 2] === "platforms" &&
+    parts[n - 3] === "cordova"
+  ) {
+    return `${parts[n - 4]}-ios-xcode-project`;
+  }
+  return basename(path);
 }
 
 export const handler = define.handlers({
@@ -140,7 +147,9 @@ export const handler = define.handlers({
         headers: {
           "content-type": "application/zip",
           "content-length": String(zip.length),
-          "content-disposition": `attachment; filename="${basename(path)}.zip"`,
+          "content-disposition": `attachment; filename="${
+            downloadName(path)
+          }.zip"`,
         },
       });
     }

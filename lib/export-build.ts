@@ -21,8 +21,9 @@
 // and run there.
 
 import { dirname, fromFileUrl, join } from "@std/path";
+import { buildZip, treeEntries } from "./ps2/zip.ts";
 import { buildPs2 } from "./ps2/build.ts";
-import { packagedBuildRoot } from "./build-workspace.ts";
+import { packagedBuildRoot, stagedRuntimeRoot } from "./build-workspace.ts";
 
 export const EXPORT_PLATFORMS = new Set([
   "android",
@@ -88,6 +89,15 @@ export interface ExportOutcome {
   artifacts: string[];
   /** Tail of the build output. */
   log: string;
+  /**
+   * What was produced, when it is not simply "the app, ready to install" — the
+   * one sentence the editor should show instead of announcing a finished app.
+   *
+   * Set for an iOS build off a Mac, which stops at an Xcode project. Without it
+   * the only honest options were to fail a build that did everything it could
+   * or to call a project an app, and the UI chose the second for months.
+   */
+  note?: string;
   /**
    * Named rather than positional, so a caller can offer the disc and the USB
    * folder as separate downloads. PS2 builds only.
@@ -282,8 +292,7 @@ async function copyTree(src: string, dst: string): Promise<void> {
 // Re-copied each run so an app update propagates. The tool derives its game dir
 // as <root>/static/games/2028-ai, so the layout here must mirror the repo.
 async function stageEmbeddedRuntime(vfsRoot: string): Promise<string> {
-  const tmp = Deno.env.get("TEMP") ?? Deno.env.get("TMPDIR") ?? "/tmp";
-  const work = join(tmp, "cmg-build-level");
+  const work = stagedRuntimeRoot();
   await copyTree(
     join(vfsRoot, "tools", "build-level"),
     join(work, "tools", "build-level"),
@@ -316,33 +325,215 @@ async function stageEmbeddedRuntime(vfsRoot: string): Promise<string> {
 
 // After a successful build, find the produced artifact(s) for the given slug.
 // The tool writes to build/<slug>/dist/.
-async function findArtifacts(
+//
+// What a target's artifact is NAMED is the tool's business, not this function's.
+// Matching on one hard-coded extension per platform meant that every time the
+// builder renamed its output this quietly returned nothing — and "nothing" is
+// indistinguishable here from "the build produced nothing", so the export
+// reported success with an empty artifact list and the editor painted the green
+// "see build/ output" line over a build that had left the user nothing to open.
+// The electron-builder → `deno desktop` swap did exactly that to three targets
+// at once: windows became <slug>.msi while this still looked for ".exe", mac
+// became <slug>.app which is a DIRECTORY and so failed the isFile test, and ios
+// has never once written a .ipa (see the iOS fallback below).
+//
+// Widening the scan to "anything in dist" is not the answer either: dist is
+// shared by every target for a game, so an iOS build would hand back the .exe a
+// Windows build left there last week. Only the tool knows which file belongs to
+// which target, so it writes build/<slug>/artifacts.json saying so, and that is
+// what this reads. The scan survives underneath it for a tree built by an older
+// copy of the tool — but scoped to the extensions the platform can actually
+// produce, never one guess and never everything.
+export async function findArtifacts(
   cmgRoot: string,
   slug: string,
   platform: string,
 ): Promise<string[]> {
-  const distDir = join(cmgRoot, "build", slug, "dist");
-  if (!(await pathExists(distDir))) return [];
-  const wantExt = platform === "linux"
-    ? ".appimage"
-    : platform === "windows"
-    ? ".exe"
-    : platform === "ios"
-    ? ".ipa"
-    : platform === "ps2"
-    ? ".iso"
-    : ".apk";
+  const buildRoot = join(cmgRoot, "build", slug);
+  const recorded = await recordedArtifacts(buildRoot, platform);
+  if (recorded.length) return recorded;
+
+  const wanted = knownExtensions(platform);
+  const distDir = join(buildRoot, "dist");
   const out: string[] = [];
   try {
     for await (const entry of Deno.readDir(distDir)) {
-      if (!entry.isFile) continue;
+      // Directories count: a macOS `deno desktop` build is a <slug>.app bundle,
+      // and /api/build-artifact serves a directory by zipping it on the way out.
+      if (!entry.isFile && !entry.isDirectory) continue;
       const lower = entry.name.toLowerCase();
-      if (platform === "all" || lower.endsWith(wantExt)) {
+      if (platform === "all" || wanted.some((ext) => lower.endsWith(ext))) {
         out.push(join(distDir, entry.name));
       }
     }
-  } catch (_e) { /* dir vanished mid-read — treat as none */ }
+  } catch (_e) { /* no dist, or it vanished mid-read — treat as none */ }
+  // iOS is the one target whose build legitimately stops short of an installable
+  // file, and it stops there on every host that is not a Mac: `cordova prepare
+  // ios` stages a complete Xcode project and only `xcodebuild` can turn that
+  // into an app. The project is a real, useful artifact — zip it, move it to a
+  // Mac, open the workspace — so hand it back rather than reporting nothing.
+  // It lives beside dist/ rather than in it because copying a multi-hundred-MB
+  // project into dist to satisfy this lookup would be pure waste.
+  if (!out.length && (platform === "ios" || platform === "all")) {
+    const project = join(buildRoot, "cordova", "platforms", "ios");
+    if (await pathExists(project)) out.push(project);
+  }
   return out;
+}
+
+/**
+ * What tools/build-level recorded for this platform on its last run, minus
+ * anything that has since been deleted.
+ *
+ * "all" is the union, in the tool's own order, because that is the one request
+ * whose answer legitimately spans targets.
+ */
+async function recordedArtifacts(
+  buildRoot: string,
+  platform: string,
+): Promise<string[]> {
+  let manifest: Record<string, unknown>;
+  try {
+    manifest = JSON.parse(
+      await Deno.readTextFile(join(buildRoot, "artifacts.json")),
+    );
+  } catch (_e) {
+    return [];
+  }
+  if (!manifest || typeof manifest !== "object") return [];
+  const keys = platform === "all" ? Object.keys(manifest) : [platform];
+  const out: string[] = [];
+  for (const key of keys) {
+    const paths = manifest[key];
+    if (!Array.isArray(paths)) continue;
+    for (const path of paths) {
+      if (typeof path !== "string" || !path) continue;
+      // A recorded path that is no longer on disk is a build somebody has since
+      // cleaned up; offering it would hand the editor a download that 404s.
+      if (await pathExists(path)) out.push(path);
+    }
+  }
+  return out;
+}
+
+/**
+ * Every extension a target's artifact may carry, for the fallback scan only.
+ * Kept in step with tools/build-level/lib/run-deno-desktop.js and
+ * run-cordova.js, which are what actually name these files — though the
+ * manifest above is what makes that drift stop mattering.
+ */
+function knownExtensions(platform: string): string[] {
+  switch (platform) {
+    case "linux":
+      return [".appimage"];
+    // .msi is what `deno desktop` writes; .exe and .zip are what the
+    // electron-builder path and a non-default --win-target left behind.
+    case "windows":
+      return [".msi", ".exe", ".zip"];
+    case "mac":
+      return [".app", ".dmg", ".zip"];
+    case "ios":
+      return [".ipa", IOS_PROJECT_SUFFIX];
+    case "ps2":
+      return [".iso"];
+    default:
+      return [".apk"];
+  }
+}
+
+/** True when this path is the staged Xcode project rather than an installable app. */
+export function isIosProject(path: string): boolean {
+  const p = path.replaceAll("\\", "/");
+  return p.endsWith("/cordova/platforms/ios");
+}
+
+/** What the zipped Xcode project is called in dist/. */
+export const IOS_PROJECT_SUFFIX = "-ios-xcode.zip";
+
+/**
+ * Replace a staged Xcode project with one zip of it in dist/, and say what was
+ * produced.
+ *
+ * Handing back the project's own path looked fine and was not: buildCordova
+ * begins every run with `rm -rf <buildRoot>/cordova`, so the artifact the editor
+ * had just been given was deleted by the next export of the same game — the
+ * download link went to a 404 and the queue's upload died on a missing path.
+ * dist/ is never cleaned between runs, so that is where the artifact has to
+ * live. Zipping it here rather than in the Node tool reuses the writer the PS2
+ * export already leans on, and writing it once beats /api/build-artifact
+ * re-zipping 65 MB in memory on every click.
+ */
+export async function packageIosProject(
+  buildRoot: string,
+  slug: string,
+  artifacts: string[],
+  log: (line: string) => void,
+): Promise<{ artifacts: string[]; note?: string }> {
+  const at = artifacts.findIndex(isIosProject);
+  if (at < 0) {
+    // A Mac compiled one, and it is deliberately unsigned (see buildIosIpa in
+    // run-cordova.js). Saying so is the difference between a download that
+    // works and one that fails on the device with nothing to explain it.
+    if (artifacts.some((p) => p.toLowerCase().endsWith(".ipa"))) {
+      return {
+        artifacts,
+        note: "Unsigned .ipa — iOS will not install it as it stands. " +
+          "Re-sign it with your own Apple ID (Sideloadly, AltStore or Xcode) " +
+          "first.",
+      };
+    }
+    return { artifacts };
+  }
+  const project = artifacts[at];
+  let workspace: string | null = null;
+  try {
+    for await (const e of Deno.readDir(project)) {
+      if (e.name.endsWith(".xcworkspace")) {
+        workspace = e.name;
+        break;
+      }
+    }
+  } catch (_e) { /* named generically below */ }
+  const zipPath = join(buildRoot, "dist", `${slug}${IOS_PROJECT_SUFFIX}`);
+  log(`Packing the Xcode project as ${zipPath} …`);
+  const entries = await treeEntries(project, `${slug}-ios`);
+  // The only thing that still speaks to whoever opens this zip on a Mac a week
+  // from now, on a machine that has never seen this editor.
+  entries.push({
+    path: `${slug}-ios/HOW-TO-BUILD.txt`,
+    data: new TextEncoder().encode(
+      [
+        "This is an Xcode project, not an installable app.",
+        "",
+        "It was staged by shmupX on a machine without Xcode, which is as far",
+        "as anything but Xcode can take an iOS build.",
+        "",
+        "  1. Unzip this folder on a Mac.",
+        `  2. Open ${workspace ?? "the .xcworkspace"} in Xcode.`,
+        "  3. Pick your team under Signing & Capabilities, then Product > Run",
+        "     to put it on a device, or Product > Archive for an .ipa.",
+        "",
+        "Exporting from shmupX ON a Mac skips all of this and hands you an",
+        "unsigned .ipa directly.",
+        "",
+      ].join("\n"),
+    ),
+  });
+  await Deno.mkdir(dirname(zipPath), { recursive: true });
+  // Fixed timestamp, like every other archive this repo writes, so the same
+  // export packed twice is the same file.
+  await Deno.writeFile(
+    zipPath,
+    await buildZip(entries, new Date("2000-03-04T00:00:00Z")),
+  );
+  const out = artifacts.slice();
+  out[at] = zipPath;
+  return {
+    artifacts: out,
+    note: "iOS stops at an Xcode project on this host — only Xcode can turn " +
+      "it into an app. Unzip it on a Mac, open the .xcworkspace and archive " +
+      "it there.",
+  };
 }
 
 // Where the Android SDK is, when the environment does not say. A fresh shell
@@ -591,8 +782,35 @@ async function runNodeExport(
     );
   }
 
-  const artifacts = await findArtifacts(runRoot, slugFor(level), platform);
-  return { level, platform, slug: slugFor(level), artifacts, log: tail };
+  const slug = slugFor(level);
+  const found = await findArtifacts(runRoot, slug, platform);
+  const { artifacts, note } = await packageIosProject(
+    join(runRoot, "build", slug),
+    slug,
+    found,
+    log,
+  );
+  // A build that exits 0 having written nothing is a failure, and until now it
+  // was the one failure this pipeline reported as a success: runExport resolved
+  // ok, the route answered 200, and the editor painted a green "built: see
+  // build/ output" over an empty dist. lib/export-worker.ts has always refused
+  // this case ("produced nothing to upload") — the local route just never did.
+  if (!artifacts.length) {
+    throw new ExportError(
+      `The ${platform} build finished without producing anything. Look at ` +
+        "the build log for the step that gave up.",
+      500,
+      tail,
+    );
+  }
+  return {
+    level,
+    platform,
+    slug,
+    artifacts,
+    log: tail,
+    ...(note ? { note } : {}),
+  };
 }
 
 /**
@@ -721,7 +939,15 @@ export async function detectExportCapabilities(): Promise<ExportCapabilities> {
   if (ready && !sdk) notes.push("Android SDK not found");
   platforms.android = ready && sdk !== null;
 
+  // Deliberately darwin-only, even though `cordova prepare ios` now hands back
+  // a usable Xcode project from any host: this flag is what the queue routes a
+  // REMOTE job by, and somebody who asked a paired desktop for an iOS app
+  // should not be handed a project to compile themselves. A local export made
+  // on this machine still gets the project — see the fallback in findArtifacts.
   platforms.ios = ready && Deno.build.os === "darwin";
+  if (ready && !platforms.ios) {
+    notes.push("iOS: not a Mac — a local export stops at an Xcode project");
+  }
   // The desktop targets have no host requirement any more. They did under
   // electron-builder: an AppImage needed a Linux mksquashfs (which is why a
   // Windows host had to borrow WSL's), a Windows .exe was rcedited through wine

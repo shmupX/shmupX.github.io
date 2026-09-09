@@ -11,12 +11,47 @@
 // stored rather than deflated when compression does not actually pay — mostly
 // the .adp/.ogg audio, which is already compressed.
 
+import { join, relative, SEPARATOR } from "@std/path";
+import { basename } from "@std/path";
 import { type Bytes, deflateRaw } from "./deflate.ts";
 
 export interface ZipEntry {
   /** Path inside the archive, `/`-separated. */
   path: string;
   data: Uint8Array;
+}
+
+/**
+ * Every file under `dir`, as archive entries under one named folder — so
+ * unpacking the archive anywhere reproduces that folder rather than spraying
+ * its contents over the current directory.
+ *
+ * `prefix` overrides the folder's own name, which matters for the one directory
+ * whose name says nothing: cordova calls the staged Xcode project "ios".
+ *
+ * Sorted, so the same tree zipped twice is the same archive — the same reason
+ * every caller passes a fixed timestamp to buildZip.
+ */
+export async function treeEntries(
+  dir: string,
+  prefix = basename(dir),
+): Promise<ZipEntry[]> {
+  const out: ZipEntry[] = [];
+  const walk = async (at: string) => {
+    for await (const entry of Deno.readDir(at)) {
+      const path = join(at, entry.name);
+      if (entry.isDirectory) await walk(path);
+      else if (entry.isFile) {
+        out.push({
+          path: `${prefix}/${relative(dir, path).replaceAll(SEPARATOR, "/")}`,
+          data: await Deno.readFile(path),
+        });
+      }
+    }
+  };
+  await walk(dir);
+  out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return out;
 }
 
 const LOCAL_SIG = 0x04034b50;

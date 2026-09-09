@@ -322,6 +322,35 @@ async function main() {
     );
   } catch (_e) { /* manifest optional */ }
 
+  // What this run produced, per platform, where the caller can read it.
+  //
+  // The Deno half (lib/export-build.ts) used to re-derive this by scanning
+  // build/<slug>/dist for one hard-coded extension per platform, which broke in
+  // both directions. It found NOTHING whenever the builder renamed its output —
+  // windows became .msi, mac became a .app directory, ios has no .ipa off a Mac
+  // — and reported a finished build as having produced nothing. Widen the scan
+  // to "anything in dist" and it finds TOO MUCH instead, because dist is shared
+  // by every target for a game: an iOS build would hand back the .exe a Windows
+  // build left there last week.
+  //
+  // Only this process knows which files belong to which target, so write it
+  // down. Merged with what is already on disk so building android today does
+  // not erase what an ios build recorded yesterday, and the whole thing is
+  // best-effort — the scan is still there as a fallback.
+  const manifestPath = path.join(buildRoot, "artifacts.json");
+  try {
+    let manifest = {};
+    if (fs.existsSync(manifestPath)) {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) || {};
+    }
+    for (const p of Object.keys(results)) {
+      manifest[p] = results[p].artifacts || [];
+    }
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  } catch (err) {
+    console.warn("Could not record artifacts.json: " + err.message);
+  }
+
   console.log("\nDone. Artifacts:");
   for (const p of Object.keys(results)) {
     for (const a of (results[p].artifacts || [])) {

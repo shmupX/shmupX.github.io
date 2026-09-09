@@ -10190,8 +10190,20 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                     const m = /(\.[A-Za-z0-9]+)$/.exec(String(artifact || data.downloadUrl));
                     a.download = base + (m ? m[1] : '');
                     document.body.appendChild(a); a.click(); a.remove();
+                } else if (artifact) {
+                    // A local build leaves its artifact on the build host's disk,
+                    // and naming the path was all this ever did with it — fine
+                    // when the host IS this machine, useless otherwise, and no
+                    // help at all when the artifact is a folder. /api/build-artifact
+                    // serves the file (and zips a directory on the way out), so
+                    // offer the download the way the PS2 panel already does.
+                    // `note` is set when what was built is not a finished app —
+                    // an iOS export off a Mac stops at an Xcode project — and
+                    // saying so is the whole point: this line used to read
+                    // "iOS app built" over a build with nothing in dist/ at all.
+                    showBuiltArtifact(cfg, artifact, data.note);
                 } else {
-                    setStatus(cfg.artifact + ' built: ' + (artifact || 'see build/ output'), '#84cc16');
+                    setStatus(cfg.artifact + ' built: see build/ output', '#84cc16');
                 }
             } catch (e) {
                 setStatus('Export error: ' + e.message, '#f87171');
@@ -10232,6 +10244,27 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             const play = document.getElementById('export-ps2-play');
             if (play) play.classList.add('hidden');
             ps2Note('');
+        }
+
+        // What a finished local build looks like in the status line: what was
+        // produced, where it landed on the build host, and a link that fetches
+        // it. /api/build-artifact streams a file with its own content-disposition
+        // and zips a DIRECTORY on the way out, so one anchor covers an .apk, an
+        // .msi, a mac .app bundle and an iOS Xcode project alike.
+        function showBuiltArtifact(cfg, artifact, note) {
+            const statusEl = document.getElementById('export-apk-status');
+            if (!statusEl) return;
+            const esc = (s) => String(s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const href = '/api/build-artifact?path=' + encodeURIComponent(artifact);
+            statusEl.style.color = note ? '#f59e0b' : '#84cc16';
+            statusEl.innerHTML =
+                esc(note || (cfg.artifact + ' built.')) +
+                ' <a href="' + esc(href) + '" style="color:inherit;text-decoration:underline">DOWNLOAD</a>' +
+                // A Windows build path has no spaces to break at, so without
+                // overflow-wrap it runs straight out of the menu panel.
+                '<br><span style="opacity:.7;overflow-wrap:anywhere">' +
+                esc(artifact) + '</span>';
         }
 
         function showPs2ExportActions(data, setStatus) {

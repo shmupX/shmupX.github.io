@@ -173,7 +173,7 @@ deno task build:mac       # the launcher as a macOS .app
 deno task build:desktop   # …whichever of those three matches this host
 deno task shelf:list      # every game name the five build targets accept
 deno task build:android   # one game from the shelf as an .apk (needs a name)
-deno task build:ios       # …as an Xcode project (needs a name, and a Mac)
+deno task build:ios       # …as an unsigned .ipa (needs a name, and a Mac)
 deno task build:ps2       # a level as a PlayStation 2 USB folder
 deno task build:ps2:zip   # …as one .zip of that folder
 deno task build:ps2:iso   # …plus a bootable disc image
@@ -887,8 +887,25 @@ rather than a portable `.exe`: `deno desktop` has no single-file Windows output,
 and an installer is the closest thing to one file you can hand someone.
 `build:android` needs cordova and the
 Android SDK (`ANDROID_SDK_ROOT` is filled in from the default install path when
-it is unset) and produces a **debug-signed** APK. `build:ios` needs a Mac and
-stops at an Xcode project to archive — there is no `.ipa` at the end of it.
+it is unset) and produces a **debug-signed** APK.
+
+`build:ios` needs cordova everywhere and Xcode on top of it to finish. On a Mac
+it compiles the staged project with `xcodebuild` and wraps the result as an
+**unsigned `.ipa`** — signing is switched off rather than demanded, because the
+point of the button is that you press it and get a file, and an unsigned `.ipa`
+is what every sideloading route (AltStore, Sideloadly, TrollStore) re-signs
+anyway — the export says so rather than letting the install fail on the device
+with nothing to explain it. Anywhere else the build stops at the **Xcode
+project**, which is as far as anything but Xcode can take it; that project is
+zipped into `build/<slug>/dist/<slug>-ios-xcode.zip` — with a `HOW-TO-BUILD.txt`
+inside it — so the trip to a Mac is unzip, open the `.xcworkspace`, archive.
+
+What it will not do any more is call either of those outcomes "built" and leave
+you with nothing. An export that produces no artifact now fails and says which
+step gave up, and what each target produced is recorded in
+`build/<slug>/artifacts.json` by the tool itself rather than guessed at from
+file extensions afterwards — which is how three targets came to report success
+over an empty `dist/`.
 
 ## Remote exports (build on your desktop)
 
