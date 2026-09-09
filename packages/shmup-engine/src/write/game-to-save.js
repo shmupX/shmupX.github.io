@@ -101,6 +101,16 @@ export const DROP_TO_SLOT = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 9: 5 };
 
 /** Appearance ids 0x20-0x27: straight-down fliers at these speeds (units/frame, 256 = 1 px). */
 export const STRAIGHT_APPEARANCE_BASE = 0x20;
+/** Band 6 (4x4 cells, 64x64) carries a story picture's quarters. */
+export const STORY_PICTURE_BAND = 6;
+/** Band 4 (4x2 cells, 64x32) carries the story strip's quarters. */
+export const STORY_TEXT_BAND = 4;
+/**
+ * Scroll rows the stage's own waves are pushed back by, so the story has the
+ * opening to itself. At 16 px a row this is a little over a screen and a half
+ * of scroll — time to read the line before anything is shooting.
+ */
+export const STORY_QUIET_ROWS = 48;
 export const STRAIGHT_SPEEDS = [128, 256, 384, 512, 640, 768, 1152, 1536];
 /** One full-power weapon-1 bullet, the unit the importer sizes hp in. */
 export const SHOT_UNITS = 5120;
@@ -699,7 +709,7 @@ export function puffSprite(size = 16) {
  * Returns {sections, bank, warnings, report}.
  */
 export function buildSaveFromGame(level, art, options = {}) {
-    const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, useBackground: true, ...options };
+    const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, storyPanels: null, useBackground: true, ...options };
     const warnings = [];
     const warn = (m) => warnings.push(m);
 
@@ -870,6 +880,87 @@ export function buildSaveFromGame(level, art, options = {}) {
                 bytes = enemyRecordFromEditor(rec, { bulletType: bulletTypeOf.get(letter) || 0, dropSlot: dropToSlot(drop) });
             }
             records.set(letter, { index, band, frames: planKeys, bytes, name: rec.name || `enemy${letter}` });
+        }
+
+        // The story panel: a stage's opening picture and its words, placed as
+        // objects the stage opens on. A .sav has no words for a cutscene, but
+        // it has enemies and a scroll, so the story becomes something that
+        // hangs in the playfield and descends through it.
+        //
+        // The geometry is the runtime's: a Dezaemon cart spawns a placement
+        // at `gridLeft + col * 16 + 16` across and `-(row * 16 + 8)` down, so
+        // a cell is 16 px each way and a 64 px tile is four of them. An
+        // imported grid is PLACEMENT_COLS wide, which puts column c at
+        // x = c * 16 - 16; columns 7 and 11 therefore centre a 128-wide
+        // picture on the 256-wide playfield, and 3/7/11/15 lay a 256-wide
+        // strip across it. Rows count UP the screen, so the top half of the
+        // picture takes the HIGHER row.
+        const panel = opts.storyPanels
+            ? opts.storyPanels.find((p) => p.stage === s)
+            : null;
+        if (panel) {
+            // A piece never fires, never drops, and takes a few hits: long
+            // enough to read, and still something the player can shoot away.
+            const storyBytes = encodeEnemyRecord({
+                appearance: STRAIGHT_APPEARANCE_BASE,
+                animIndex: 3,
+                scoreIndex: 1,
+                hpIndex: 2,
+                deathMode: 0,
+                fireGeometry: 0,
+                aimed: false,
+            });
+            const place = (tiles, band, cols, colBase, rowBase, what) => {
+                const def = RECORD_ART[band];
+                const stepCol = def.w, stepRow = def.h;
+                const rows = Math.max(1, Math.ceil(tiles.length / cols));
+                // All of a picture or none of it: half a panel reads as a bug,
+                // where none at all just reads as a stage without a story.
+                const free = [];
+                for (let i = def.first; i < def.first + def.count; i++) {
+                    if (!taken.has(i)) free.push(i);
+                }
+                if (free.length < tiles.length) {
+                    warn(
+                        `${st.key}: the story ${what} needs ${tiles.length} ${def.w * CG_CELL}x${def.h * CG_CELL} records and the stage has ${free.length} free — panel dropped`,
+                    );
+                    return;
+                }
+                for (const tile of tiles) {
+                    const index = free.shift();
+                    taken.add(index);
+                    const key = `story:${s}:${what}:${tile.col},${tile.row}`;
+                    const frame = { key, w: tile.w, h: tile.h, rgba: tile.rgba };
+                    const planKeys = Array.from(
+                        { length: def.frames },
+                        (_, f) => planFrame(`${key}:${f}`, frame, def.w * CG_CELL, def.h * CG_CELL, "story", 2),
+                    );
+                    const letter = ` ${key}`;
+                    records.set(letter, { index, band, frames: planKeys, bytes: storyBytes, name: key });
+                    placements.push({
+                        row: rowBase + (rows - 1 - tile.row) * stepRow,
+                        col: colBase + tile.col * stepCol,
+                        letter,
+                        drop: 0,
+                    });
+                }
+            };
+            // Everything the stage already spawns moves down, so the opening
+            // belongs to the story rather than to the first wave.
+            for (const p of placements) {
+                p.row = Math.min(PLACEMENT_ROWS - 1, p.row + STORY_QUIET_ROWS);
+            }
+            lastRow = Math.min(PLACEMENT_ROWS - 1, lastRow + STORY_QUIET_ROWS);
+            // Text lowest, then the picture stacked above it (see the table
+            // in the panel builder): rows 8, 12 and 16 put the block between
+            // y 184 and y 360 of a 480-tall screen at stage start.
+            if (panel.text && panel.text.length) {
+                place(panel.text, STORY_TEXT_BAND, panel.text.length, 3, FIRST_SPAWN_ROW, "text");
+            }
+            if (panel.picture && panel.picture.length) {
+                place(panel.picture, STORY_PICTURE_BAND, 2, 7, FIRST_SPAWN_ROW + 4, "picture");
+            }
+            lastRow = Math.max(lastRow, FIRST_SPAWN_ROW + 16);
         }
 
         // The boss: this stage's bossData entry, if any.

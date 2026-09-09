@@ -23,6 +23,7 @@
 
 import { decodeGifFrames, isGif } from "./ps2/gif.ts";
 import { decodePng, newRaster, type Raster } from "./ps2/png.ts";
+import { type BitmapFont, renderText } from "./bitmap-font.ts";
 
 /** One 64x64 piece of a panel, and where it sits in the block. */
 export interface PanelTile {
@@ -43,10 +44,29 @@ export interface StoryPanel {
   picture: Raster;
   /** The picture cut into band-sized tiles, reading order. */
   tiles: PanelTile[];
+  /** The story line this stage opens on, as authored. */
+  text: string;
+  /**
+   * That line set in the cart's own face across the full playfield —
+   * TEXT_W x TEXT_H — or null when the stage carries no words.
+   */
+  textStrip: Raster | null;
+  /** The strip cut into band-4 (64x32) pieces, left to right. */
+  textTiles: PanelTile[];
 }
 
 /** The side of one band-6 record's art, in pixels. */
 export const TILE = 64;
+
+/**
+ * The text strip: the full 256-pixel playfield by one band-4 record's 32
+ * rows, which is four records of 64x32 side by side. At the face's 8px that
+ * is 32 characters across and three lines down — enough for a story line
+ * without spilling onto the picture.
+ */
+export const TEXT_W = 256;
+export const TEXT_H = 32;
+export const TEXT_TILE_W = 64;
 
 /** The bytes behind a base64 data URL. */
 function dataUrlBytes(dataUrl: string): Uint8Array<ArrayBuffer> {
@@ -124,16 +144,20 @@ export function fitPanel(src: Raster, w: number, h: number): Raster {
   return out;
 }
 
-/** A panel cut into `TILE`-sized pieces, reading order, left to right. */
-export function splitIntoTiles(panel: Raster, tile = TILE): PanelTile[] {
+/** A panel cut into tile-sized pieces, reading order, left to right. */
+export function splitIntoTiles(
+  panel: Raster,
+  tile = TILE,
+  tileH = tile,
+): PanelTile[] {
   const cols = Math.ceil(panel.width / tile);
-  const rows = Math.ceil(panel.height / tile);
+  const rows = Math.ceil(panel.height / tileH);
   const out: PanelTile[] = [];
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      const rgba = new Uint8Array(tile * tile * 4);
-      for (let y = 0; y < tile; y++) {
-        const sy = row * tile + y;
+      const rgba = new Uint8Array(tile * tileH * 4);
+      for (let y = 0; y < tileH; y++) {
+        const sy = row * tileH + y;
         if (sy >= panel.height) break;
         for (let x = 0; x < tile; x++) {
           const sx = col * tile + x;
@@ -146,7 +170,7 @@ export function splitIntoTiles(panel: Raster, tile = TILE): PanelTile[] {
           rgba[d + 3] = panel.data[s + 3];
         }
       }
-      out.push({ col, row, w: tile, h: tile, rgba });
+      out.push({ col, row, w: tile, h: tileH, rgba });
     }
   }
   return out;
@@ -159,11 +183,22 @@ export function splitIntoTiles(panel: Raster, tile = TILE): PanelTile[] {
  * panel, and a picture that will not decode costs only its own stage — the
  * export must never fail over cutscene art.
  */
+/** The words a stage opens on: the first part's text, as the author typed it. */
+export function openingText(storyData: unknown, stage: number): string {
+  const sd = storyData as Record<string, unknown> | null;
+  const st = sd &&
+    (sd[`stage${stage}`] as { part?: { text?: string }[] } | undefined);
+  const part = st && Array.isArray(st.part) ? st.part[0] : null;
+  return (part && typeof part.text === "string") ? part.text : "";
+}
+
 export async function storyPanels(
   storyData: unknown,
-  { cols = 2, rows = 2, onWarn = () => {} }: {
+  { cols = 2, rows = 2, font = null, onWarn = () => {} }: {
     cols?: number;
     rows?: number;
+    /** The face to set the text in; without one a panel is picture only. */
+    font?: BitmapFont | null;
     onWarn?: (message: string) => void;
   } = {},
 ): Promise<StoryPanel[]> {
@@ -186,11 +221,20 @@ export async function storyPanels(
         cols * TILE,
         rows * TILE,
       );
+      const text = openingText(storyData, stage);
+      const textStrip = font && text.trim()
+        ? renderText(font, text, TEXT_W, TEXT_H, { shadow: true })
+        : null;
       out.push({
         stage,
         sourceKey: key,
         picture,
         tiles: splitIntoTiles(picture),
+        text,
+        textStrip,
+        textTiles: textStrip
+          ? splitIntoTiles(textStrip, TEXT_TILE_W, TEXT_H)
+          : [],
       });
     } catch (e) {
       onWarn(

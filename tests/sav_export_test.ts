@@ -38,6 +38,10 @@ interface Foo {
 }
 
 const foo: Foo = JSON.parse(await Deno.readTextFile(FOO));
+// The stage's story panel is exported as objects too: four 64x64 quarters of
+// the picture and four 64x32 quarters of the text strip, each its own record.
+// foo carries a story, so every count below allows for them.
+const STORY_PANEL_RECORDS = 8;
 const lettersUsed = new Set<string>();
 let placedCells = 0;
 for (const row of foo.enemylist) {
@@ -127,17 +131,26 @@ Deno.test("deno task build:sav turns foo into foo.sav, a cart MiSTer can read", 
 
     // one stage, the letters foo's grid names, one placement per cell
     assertStrictEquals(decoded.stageCount, 1);
-    assertStrictEquals(decoded.enemies.length, lettersUsed.size);
+    assertStrictEquals(
+      decoded.enemies.length,
+      lettersUsed.size + STORY_PANEL_RECORDS,
+    );
     const placements = decoded.enemies.reduce(
       (n: number, e: { placements: number }) => n + e.placements,
       0,
     );
-    assertStrictEquals(placements, placedCells);
+    // One placement per grid cell, plus the panel's eight pieces.
+    assertStrictEquals(placements, placedCells + STORY_PANEL_RECORDS);
+    // How many frames a record carries is its band's business: the small
+    // bands hold four, the 64x32 and 32x64 bands two, and the 64x64 band —
+    // where the story picture's quarters live — one.
+    const framesForRecord = (index: number) =>
+      index < 48 ? 4 : index < 56 ? 2 : 1;
     for (const e of decoded.enemies) {
       assertStrictEquals(
         e.spriteKeys.length,
-        4,
-        `${e.name} has its four frames`,
+        framesForRecord(e.record),
+        `${e.name} has the frames its band holds`,
       );
       assert(e.behavior, `${e.name} decodes a record`);
     }
@@ -202,7 +215,19 @@ Deno.test("deno task build:sav turns foo into foo.sav, a cart MiSTer can read", 
     const v = engine.validateGameJson(gameJson);
     assert(v.ok, v.errors.join("; "));
     const fooWaves = foo.enemylist.filter((row) => row.some((c) => c !== "00"));
-    const backWaves = gameJson.stage0.enemylist as string[][];
+    const allBack = gameJson.stage0.enemylist as string[][];
+    // The story opens the stage, and an enemylist is stored last-first, so
+    // the panel is the last three rows: read backwards they are the text
+    // strip (four pieces, lowest on screen) then the picture's lower and
+    // upper halves (two each). foo's own waves precede them.
+    const STORY_WAVES = 3;
+    const storyWaves = allBack.slice(-STORY_WAVES);
+    const backWaves = allBack.slice(0, -STORY_WAVES);
+    assertEquals(
+      storyWaves.map((row) => row.filter((c) => c !== "00").length),
+      [2, 2, 4],
+      "the panel is two picture halves over a four-piece text strip",
+    );
     assertStrictEquals(
       backWaves.length,
       fooWaves.length,
@@ -215,7 +240,7 @@ Deno.test("deno task build:sav turns foo into foo.sav, a cart MiSTer can read", 
     );
     assertStrictEquals(
       Object.keys(gameJson.enemyData).length,
-      lettersUsed.size,
+      lettersUsed.size + STORY_PANEL_RECORDS,
     );
 
     // colour fidelity: enemy A's first frame comes back within 15-bit rounding
@@ -308,7 +333,10 @@ Deno.test("the Super Famicom palette target: one 15-colour row per sprite, plus 
     // still a valid game
     const { gameJson } = engine.mapSaveToGame(decoded);
     assert(engine.validateGameJson(gameJson).ok);
-    assertStrictEquals(decoded.enemies.length, lettersUsed.size);
+    assertStrictEquals(
+      decoded.enemies.length,
+      lettersUsed.size + STORY_PANEL_RECORDS,
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -32,6 +32,8 @@ import { decodeDataUrl, decodePng, type Raster } from "../lib/ps2/png.ts";
 import { decodeGif, isGif } from "../lib/ps2/gif.ts";
 import { cut } from "../lib/ps2/raster.ts";
 import { EMBLEM_DIR, loadItemEmblems } from "../lib/powerup-emblems.ts";
+import { loadAthenaFont } from "../lib/bitmap-font.ts";
+import { storyPanels } from "../lib/story-panels.ts";
 import {
   exportLevelToSav,
   PALETTE_TARGETS,
@@ -273,6 +275,35 @@ export async function buildSav(
       : `item icons: no powerup GIFs in ${EMBLEM_DIR} — drawing coloured squares`,
   );
 
+  // The story, as objects the stage opens on: a .sav cannot carry a cutscene,
+  // but it can carry a picture that hangs in the playfield and descends.
+  let panels: { stage: number; picture: unknown[]; text: unknown[] }[] = [];
+  try {
+    const font = await loadAthenaFont(ROOT);
+    const built = await storyPanels(record.storyData, {
+      font,
+      onWarn: (m) => log(`warning: ${m}`),
+    });
+    panels = built.map((p) => ({
+      stage: p.stage,
+      picture: p.tiles,
+      text: p.textTiles,
+    }));
+    log(
+      panels.length
+        ? `story: ${panels.length} stage${
+          panels.length === 1 ? "" : "s"
+        } open on a panel (${
+          built.map((p) =>
+            `${p.stage}:${p.tiles.length}pic+${p.textTiles.length}txt`
+          ).join(" ")
+        })`
+        : "story: the level carries no cutscene pictures — stages open as they are",
+    );
+  } catch (e) {
+    log(`warning: story panels could not be built (${(e as Error).message})`);
+  }
+
   const result = exportLevelToSav(record, art, {
     palette,
     slot: options.slot ?? 1,
@@ -281,6 +312,7 @@ export async function buildSav(
     title1,
     title2,
     itemEmblems,
+    storyPanels: panels,
   });
   const t = result.report.title;
   log(
