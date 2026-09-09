@@ -13085,14 +13085,19 @@
           if (emblemTex.has(efName)) emblemFrames.push(efName);
         }
         if (emblemFrames.length) {
+          var emblemAnim = "powerupEmblem" + letter;
+          if (!this.anims.exists(emblemAnim)) {
+            this.anims.create({
+              key: emblemAnim,
+              frames: emblemFrames.map(function (f) {
+                return { key: "powerups", frame: f };
+              }),
+              frameRate: 5, // the GIFs' own 200ms a frame
+              repeat: -1
+            });
+          }
           item = this.add.sprite(x, y, "powerups", emblemFrames[0]);
-          // Stepped by hand from update(), NOT by anims.play(): this scene's
-          // update list never runs, so Phaser never calls preUpdate and no
-          // animation ticks — a stock explosion freezes on frame 0 the same
-          // way. Driving the frame from the item loop is the one place that
-          // is guaranteed to run, because it is what makes items fall.
-          item.setData("emblemFrames", emblemFrames);
-          item.setData("emblemIdx", 0);
+          item.play(emblemAnim);
           tint = 0;
         }
       }
@@ -13611,27 +13616,6 @@
           continue;
         }
         item.y += 1;
-        // The winged emblems flap here rather than through anims.play(), on
-        // elapsed time rather than on ticks: this loop does not run at the
-        // renderer's rate (about 24Hz against 60), so counting ticks would
-        // pin the flap to whatever that happens to be. 200ms a frame is the
-        // GIFs' own 5fps.
-        var emblemFrames = item.getData("emblemFrames");
-        if (emblemFrames && emblemFrames.length > 1) {
-          var emblemDue = item.getData("emblemDue");
-          if (emblemDue == null) {
-            item.setData("emblemDue", time + 200);
-          } else if (time >= emblemDue) {
-            var emblemIdx = ((item.getData("emblemIdx") || 0) + 1) % emblemFrames.length;
-            item.setData("emblemIdx", emblemIdx);
-            item.setFrame(emblemFrames[emblemIdx]);
-            // Catch up after a stall without replaying the missed frames.
-            do {
-              emblemDue += 200;
-            } while (emblemDue <= time);
-            item.setData("emblemDue", emblemDue);
-          }
-        }
         var iRect = { x: item.x - item.width / 2, y: item.y - item.height / 2, w: item.width, h: item.height };
         var taken = false;
         for (pi = 0; pi < alive.length; pi++) {

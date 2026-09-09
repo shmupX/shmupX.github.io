@@ -354,12 +354,8 @@ therefore also carries a 16×16 `emblemStill<L>.gif` per letter — the very sti
 the writer would have used — and the runtime compares alpha masks against it
 once per drop and remembers the answer.
 
-The flap is stepped by hand from the item loop rather than by `anims.play()`,
-because **this runtime never ticks a sprite animation**: its scene update list
-stays empty under Phaser 4, so `preUpdate` never runs and a stock explosion
-freezes on frame 0 too. That is a pre-existing port regression worth its own
-fix; until then, the one loop guaranteed to run is the one that makes items
-fall.
+The flap is an ordinary `anims.play()` at `frameRate: 5`, the same path the
+stock explosions take.
 
 **In the editor.** Under DEZAEMON 2 (SATURN): **DOWNLOAD .SAV** builds the open
 game in the page (the engine bundle) and downloads `Dez 2 - <name>.sav`; **→
