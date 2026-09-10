@@ -1461,7 +1461,18 @@
   // split, and the game frame is told over cmg-legion-fps-set.
   let legionFpsMode = $state(false);
   let legionPadLostAt = 0;
-  const LEGION_FPS_WINDOW_MS = 30000;
+  // FPS mode is read from the keyboard: stick-shaped keys (WASD / arrows)
+  // arriving while the pad is gone or has been quiet this long. Two such keys
+  // within LEGION_FPS_KEY_SPAN_MS make the call; any pad activity ends it.
+  const LEGION_FPS_QUIET_MS = 3000;
+  const LEGION_FPS_KEY_SPAN_MS = 2000;
+  let padActivityAt = 0;
+  let legionKeyHits = 0;
+  let legionKeyLastAt = 0;
+  // ?paddebug=1 diagnostics for the split view: what the frame was last
+  // handed, and the game's acknowledgement of the two-player gate.
+  const splitDiag = { source: '', pads: 0, halves: '', error: '', at: 0 };
+  let splitAck = null;
   // Which device last drove the UI — 'mouse' | 'touch' | 'key' | 'pad'. Only
   // consumed by the cursor policy (see the no-cursor effect), so it is a plain
   // let, not $state: nothing renders off it. Defaults to 'pad' because a
@@ -1959,6 +1970,8 @@
     splitPadsUserSet = false;
     splitDefaultWanted = false;
     splitSaved = null;
+    splitAck = null;
+    splitDiag.source = ''; splitDiag.pads = 0; splitDiag.halves = ''; splitDiag.error = ''; splitDiag.at = 0;
     try { window.CMGGamepadCompat?.splitReset?.(); } catch (_) { /* ignore */ }
   }
 
@@ -2018,16 +2031,22 @@
     if (gameOn) applySplitPads();
   }
 
-  // A key arriving soon after a Legion's pad went away is the left half
-  // typing: FPS mode. Bounded to LEGION_FPS_WINDOW_MS after the disconnect, so
-  // a pad switched off hours ago does not turn the first keystroke of the
-  // evening into a mode announcement. (Within the window, a pad merely
-  // switched off followed by a real keyboard reads the same, and wants the
-  // same: keyboard steering, a hint, nothing split.)
-  function noteKeyActivity() {
-    if (legionFpsMode || !legionDetected || padConnected || !legionPadLostAt) return;
-    if (performance.now() - legionPadLostAt > LEGION_FPS_WINDOW_MS) return;
-    setLegionFpsMode(true);
+  // In FPS mode the left half types its stick as WASD. So on a Legion, stick-
+  // shaped keys arriving while the pad is gone — or connected but quiet for
+  // LEGION_FPS_QUIET_MS, since the switch need not re-enumerate the pad at
+  // all — are the left half talking: two of them within LEGION_FPS_KEY_SPAN_MS
+  // make the call. A real keyboard on a docked Legion reads the same and gets
+  // the same, which is harmless (keyboard steering, a hint, nothing split),
+  // and the pad's first press ends it (pollPad).
+  const STICK_KEY_RE = /^(w|a|s|d|arrowup|arrowdown|arrowleft|arrowright)$/i;
+  function noteKeyActivity(key) {
+    if (legionFpsMode || !legionDetected) return;
+    if (typeof key !== 'string' || !STICK_KEY_RE.test(key)) return;
+    const now = performance.now();
+    if (padConnected && now - padActivityAt < LEGION_FPS_QUIET_MS) return;
+    legionKeyHits = now - legionKeyLastAt < LEGION_FPS_KEY_SPAN_MS ? legionKeyHits + 1 : 1;
+    legionKeyLastAt = now;
+    if (legionKeyHits >= 2) setLegionFpsMode(true);
   }
 
   // A same-origin game frame holds keyboard focus, so the launcher's own
@@ -2041,7 +2060,7 @@
       const w = iframe.contentWindow;
       if (!w || w.__cmgKeyProbe) return;
       w.__cmgKeyProbe = true;
-      w.addEventListener('keydown', () => noteKeyActivity(), { capture: true, passive: true });
+      w.addEventListener('keydown', (ev) => noteKeyActivity(ev && ev.key), { capture: true, passive: true });
     } catch (_) { /* cross-origin frame — the launcher's own onKey still covers the menus */ }
   }
 
@@ -2170,10 +2189,16 @@
       const orig = typeof w.navigator.getGamepads === 'function'
         ? w.navigator.getGamepads.bind(w.navigator)
         : () => [];
+      // The frame's own view, for frameGamepads's fallback and the
+      // ?paddebug=1 overlay.
+      w.__cmgOrigGetGamepads = orig;
       w.navigator.getGamepads = () => {
         if (!twinStickOn && !splitPadsOn) return orig();
-        try { return frameGamepads(); }
-        catch (_) { return orig(); }
+        try { return frameGamepads(orig); }
+        catch (err) {
+          splitDiag.error = String((err && err.message) || err);
+          return orig();
+        }
       };
     } catch (_) { /* frame navigated mid-flight — the postMessages still land */ }
   }
@@ -2181,12 +2206,30 @@
   // The launcher's (SNES-normalized) pads as the game frame should see them:
   // split into halves first (Split Controller mode), then re-expressed as
   // twin-stick pads, then the touch analogs laid over pad 0.
-  function frameGamepads() {
+  function frameGamepads(orig) {
     const compat = window.CMGGamepadCompat;
+    const anyConnected = (list) => { for (const p of list) if (p && p.connected) return true; return false; };
+    // The launcher's own view first (SNES-normalized, wizard profiles applied).
+    // Some engines hand gamepad data only to the focused document, which
+    // in-game is the frame, not this window — then the frame's own view is
+    // the one that has the pads, and it is used as-is.
     let pads = navigator.getGamepads() || [];
+    let source = 'launcher';
+    if (!anyConnected(pads) && typeof orig === 'function') {
+      const own = orig() || [];
+      if (anyConnected(own)) { pads = own; source = 'frame'; }
+    }
+    splitDiag.source = source;
+    splitDiag.pads = Array.prototype.filter.call(pads, (p) => p && p.connected).length;
     if (splitPadsLive()) {
       pads = compat.splitPads(pads, { profile: twinStickAvail ? 'twinstick' : 'generic' });
+      const halves = [];
+      for (const p of pads) if (p && p.__cmgSplitHalf) halves.push('#' + p.index + p.__cmgSplitHalf);
+      splitDiag.halves = halves.join(' ');
+    } else {
+      splitDiag.halves = '';
     }
+    splitDiag.at = performance.now();
     // The halves pass through twinStick untouched (they already are the
     // twin-stick expression); any other pad still gets its D-pad/faces
     // re-expressed as sticks.
@@ -3798,7 +3841,26 @@
       }
     } catch (_) { /* ignore */ }
     if (legionDetected || splitPadsOn || legionFpsMode) {
-      lines.push(`legion: ${hostDevice?.model || (legionPadSeen ? 'pad id' : 'no')} · split: ${splitPadsOn ? 'on' : 'off'} · fps mode: ${legionFpsMode ? 'on' : 'off'}`);
+      let targets = '';
+      let claimed = '';
+      try { targets = (window.CMGGamepadCompat?.splitTargets?.(navigator.getGamepads?.() || []) || []).join(','); } catch (_) { /* ignore */ }
+      try { claimed = (window.CMGGamepadCompat?.splitStatus?.() || []).map((s) => s.key.split(':')[0] + (s.claimed ? ':R' : ':-')).join(' '); } catch (_) { /* ignore */ }
+      const why = !splitPadsOn ? 'off' : legionFpsMode ? 'fps' : editorFrameActive ? 'editor' : 'yes';
+      lines.push(`legion: ${hostDevice?.model || (legionPadSeen ? 'pad id' : 'no')} · split: ${splitPadsOn ? 'on' : 'off'} · live: ${why} · fps mode: ${legionFpsMode ? 'on' : 'off'}`);
+      lines.push(`targets: [${targets}] · claimed: [${claimed}] · pad quiet: ${padActivityAt ? ((performance.now() - padActivityAt) / 1000).toFixed(0) + 's' : 'never used'}`);
+      if (gameOn) {
+        const iframe = document.getElementById('gameframe') || document.querySelector('.game-iframe iframe');
+        let patched = '?', own = '?';
+        try {
+          const w = iframe?.contentWindow;
+          patched = w?.__cmgTwinStickWrapped ? 'yes' : 'no';
+          const list = typeof w?.__cmgOrigGetGamepads === 'function' ? (w.__cmgOrigGetGamepads() || []) : null;
+          own = list ? String(Array.prototype.filter.call(list, (p) => p && p.connected).length) : '?';
+        } catch (_) { patched = 'x-origin'; }
+        const age = splitDiag.at ? ((performance.now() - splitDiag.at) / 1000).toFixed(1) + 's ago' : 'never';
+        lines.push(`frame: ${frameUrl || gameSrc || '?'} · patched: ${patched} · pads: launcher ${Array.prototype.filter.call(navigator.getGamepads?.() || [], (p) => p && p.connected).length} / frame ${own}`);
+        lines.push(`frame read: ${age} · from: ${splitDiag.source || '—'} (${splitDiag.pads}) · halves: [${splitDiag.halves}] · gate: ${splitAck ? (splitAck.value ? 'open' : 'closed') : 'no ack'}${splitDiag.error ? ' · error: ' + splitDiag.error : ''}`);
+      }
     }
     padDebugText = lines.join('\n') || 'no pads detected';
   }
@@ -4110,6 +4172,15 @@
     padDebugTick();
     const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
     let pad = pickActivePad(pads);
+    // Any pad being used: the last time a hand was on a controller (the FPS
+    // mode heuristic's quiet clock), and the end of FPS mode if it was on.
+    for (const p of pads) {
+      if (p && p.connected && padHasActivity(p)) {
+        padActivityAt = performance.now();
+        if (legionFpsMode) setLegionFpsMode(false);
+        break;
+      }
+    }
     const kindNow = !pad
       ? 'none'
       : SNES_PAD_RE.test(pad.id || '')
@@ -4522,7 +4593,7 @@
     const typing = !!t && (t.isContentEditable || t.tagName === 'TEXTAREA' ||
       (t.tagName === 'INPUT' && /^(text|search|url|tel|email|password|number)$/.test(t.type)));
     if (typing) return;
-    noteKeyActivity();
+    noteKeyActivity(e.key);
     completePendingFullscreen();
     // Legion Go FPS mode: the left half is now a keyboard whose stick types
     // WASD, so those letters steer the launcher and the Guide like the arrows
@@ -4764,6 +4835,15 @@
       // shows toggles that reload the same game — so accept it from our own
       // frame at any origin (like tg16-toggle-controls). Payload is sanitized.
       osdCheats = sanitizeCheats(d.cheats);
+      // The game is listening now: repeat the split-mode toggle in case the
+      // onload copy ran ahead of its listener.
+      applySplitPads();
+      return;
+    }
+    if (d.type === 'cmg-splitpads-ack') {
+      // The 2028-ai bundle confirming the two-player gate it was told
+      // (?paddebug=1 shows it). Benign, from our own frame.
+      splitAck = { value: !!d.value, at: performance.now() };
       return;
     }
     if (d.type === 'cmg-plugins') {

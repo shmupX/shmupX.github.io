@@ -290,6 +290,7 @@ Deno.test("the Legion Go's built-in pad is recognised under both browsers' spell
       ["Split Controller", "the Guide's Split Controller row"],
       ["cmg-splitpads-set", "the split-mode frame message"],
       ["cmg-splitpads", "the cmg-splitpads broadcast handler"],
+      ["cmg-splitpads-ack", "the gate acknowledgement handler"],
       ["LEGION FPS MODE", "the FPS-mode hint"],
       ["/api/host", "the host-device fetch"],
     ] as const
@@ -305,6 +306,10 @@ Deno.test("2028-ai's bundle reads the split view: the launcher's message opens i
   assert(
     game.includes('"cmg-splitpads-set"'),
     "the bundle no longer listens for cmg-splitpads-set",
+  );
+  assert(
+    game.includes('"cmg-splitpads-ack"'),
+    "the bundle no longer acknowledges the gate",
   );
   assert(
     /if \(gameState\.cmgSplitPads\) return true;/.test(game),
@@ -403,6 +408,9 @@ Deno.test("split: a right-half button claims the right half — the sticks and M
   // Hands off: the right half stays.
   out = split([fakePad()], { now: 48 });
   assert(out[4], "the right half stays once claimed");
+  assertEquals(compat.splitStatus(), [
+    { key: "0:" + LEGION_PADS.chromeLinux.id, claimed: true },
+  ]);
   // A different pad starts over.
   out = split([fakePad({ id: LEGION_PADS.firefox.id })], { now: 64 });
   assertStrictEquals(out[4], null);
@@ -431,9 +439,10 @@ Deno.test("split, twinstick profile: dash on LB/RB, weapon cycle on LT/Y, auto-f
   compat.splitReset();
   // Y, LB, RB, LT, Menu
   let out = split([fakePad({ pressed: [3, 4, 5, 6, 9] })], { ...twin, now: 0 });
-  // left: confirm (LB), dash (LB), weapon (LT), auto-fire — no Menu once the
-  // right half is claimed (Sh'M↑ Party would pause twice in one frame)
-  assertEquals(pressedSlots(out[0]), [0, 4, 5, 7]);
+  // left: dash (LB), weapon (LT), auto-fire — no Menu once the right half is
+  // claimed (Sh'M↑ Party would pause twice in one frame), and LB is not a
+  // confirm here (that is L3)
+  assertEquals(pressedSlots(out[0]), [4, 5, 7]);
   // right: Y itself, dash (RB), weapon (Y), auto-fire, Menu
   assertEquals(pressedSlots(out[4]), [3, 4, 5, 7, 9]);
   // Hands off inside the idle window: both halves keep firing...
@@ -467,6 +476,21 @@ Deno.test("split, twinstick profile: dash on LB/RB, weapon cycle on LT/Y, auto-f
   out = split([fakePad({ pressed: [0] })], { now: 0 });
   assertEquals(pressedSlots(out[0]), []);
   assertEquals(pressedSlots(out[4]), [0]);
+  // The demo reel's L1+R1 join chord is a half's two shoulders: LB+LT on the
+  // left, RB+RT on the right — RT alone is only R2.
+  compat.splitReset();
+  out = split([fakePad({ pressed: [4, 6] })], { ...twin, now: 0 });
+  assertEquals(pressedSlots(out[0]), [4, 5, 7]);
+  compat.splitReset();
+  out = split([fakePad({ pressed: [7] })], { ...twin, now: 0 });
+  assertEquals(pressedSlots(out[4]), [7]);
+  out = split([fakePad({ pressed: [5, 7] })], { ...twin, now: 16 });
+  assertEquals(pressedSlots(out[4]), [4, 5, 7]);
+  // Confirm on the left half is L3 (also L3 and R3), so an LB pressed a frame
+  // before LT cannot back out of the reel as CROSS.
+  compat.splitReset();
+  out = split([fakePad({ pressed: [10] })], { ...twin, now: 0 });
+  assertEquals(pressedSlots(out[0]), [0, 7, 10, 11]);
 });
 
 Deno.test("split: rumble goes to the half's own motor, without cancelling the other half's", async () => {

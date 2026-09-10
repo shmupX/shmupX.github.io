@@ -697,7 +697,11 @@
   // profile "twinstick" (Sh'M↑ Party, and any game the launcher knows as a
   // twin-stick game) reshapes each half for a one-stick twin-stick player:
   // dash (L1) is LB on the left half and RB on the right; the weapon cycle
-  // (R1) is LT on the left and Y on the right; the right half's stick also
+  // (R1) is LT on the left and Y on the right — and RB+RT together, so the
+  // demo reel's "L1+R1: JOIN" chord is a half's two shoulder buttons on
+  // either side; confirm (CROSS) is L3 on the left half rather than LB,
+  // because CROSS also backs out of that reel and an LB pressed a frame
+  // before LT would leave it instead of joining; the right half's stick also
   // writes the D-pad (12-15) past SPLIT_DPAD_AT, so a menu that reads only
   // LEFT/RIGHT (the perk picker) can be worked from it; and R2 — the game's
   // auto-aim-and-fire button — is held on a half while its player is at the
@@ -843,8 +847,9 @@
       left[i] = button(false);
       right[i] = button(false);
     }
-    // Left half.
-    left[0] = snapshotButton(b[4]); // LB doubles as this half's confirm
+    // Left half. Its confirm (slot 0) is LB in the generic profile — a bomb
+    // in 2028-ai either way — and L3 in the twinstick profile (see above).
+    left[0] = snapshotButton(twin ? b[10] : b[4]);
     left[4] = snapshotButton(b[4]);
     left[8] = snapshotButton(b[8]);
     left[10] = snapshotButton(b[10]);
@@ -869,7 +874,9 @@
     right[11] = snapshotButton(b[11]);
     if (twin) {
       right[4] = snapshotButton(b[5]); // RB → dash
-      right[5] = snapshotButton(b[3]); // Y → weapon cycle (still Y at slot 3)
+      // Y → weapon cycle (still Y at slot 3); RB+RT together read as R1 too,
+      // so the pair is this half's L1+R1 chord.
+      right[5] = button(pr(3) || (pr(5) && pr(7)));
       right[7] = button(fireR || pr(7));
       // The stick as a D-pad too, for menus that read only LEFT/RIGHT.
       right[12] = button(ry < -SPLIT_DPAD_AT);
@@ -901,6 +908,16 @@
         ? half("R", pad.index + SPLIT_INDEX_OFFSET, [rx, ry, 0, 0], right, "right")
         : null,
     };
+  }
+
+  // The split state as it stands — which pads have a right half claimed —
+  // read-only, for the launcher's ?paddebug=1 overlay.
+  function splitStatus() {
+    const out = [];
+    for (const entry of splitState) {
+      out.push({ key: entry[0], claimed: !!entry[1].rightLive });
+    }
+    return out;
   }
 
   function splitPads(pads, opts) {
@@ -972,6 +989,7 @@
     // which pads it would split.
     splitPads,
     splitTargets,
+    splitStatus,
     // Forget every pad's split state — a right half seen, a hand's last
     // input — so the next splitPads call starts over (tests, and the
     // launcher when the mode is switched off).

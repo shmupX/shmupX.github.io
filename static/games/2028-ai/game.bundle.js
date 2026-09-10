@@ -3683,7 +3683,14 @@
       // cmg: the launcher's Split Controller mode (a Legion Go's halves as
       // two pads, static/gamepad-compatibility-plugin.js) — a second player
       // asking to be let in; twoPlayerAllowed reads it.
-      else if (d.type === "cmg-splitpads-set") gameState.cmgSplitPads = !!d.value;
+      else if (d.type === "cmg-splitpads-set") {
+        gameState.cmgSplitPads = !!d.value;
+        // ...and say so back, for the launcher's ?paddebug=1 overlay.
+        try {
+          window.parent.postMessage({ type: "cmg-splitpads-ack", value: gameState.cmgSplitPads }, "*");
+        } catch (e2) {
+        }
+      }
     });
     var standalone;
     try {

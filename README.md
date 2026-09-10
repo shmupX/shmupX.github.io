@@ -1515,7 +1515,7 @@ never defaults on (its host answer wins over its pad id); the Go 2 does.
 
 | half  | virtual pad            | 2028.Ai                                                                    | Sh'M↑ Party (twin-stick profile)                              |
 | ----- | ---------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| left  | `<id> [L]`, same index | left stick / D-pad fly · LB bomb (and confirm) · Menu pause · View → title | left stick move · LB dash · LT weapon · auto-aim              |
+| left  | `<id> [L]`, same index | left stick / D-pad fly · LB bomb (and confirm) · Menu pause · View → title | left stick move · LB dash · LT weapon · L3 confirm · auto-aim |
 | right | `<id> [R]`, index + 4  | right stick flies · RB or A/B/X/Y bomb · A confirm and → title             | right stick move · RB dash · Y weapon · Menu pause · auto-aim |
 
 The right half exists only once one of its buttons — A/B/X/Y, RB, RT, R3 — has
@@ -1534,32 +1534,42 @@ no second stick to aim with) and lets go after, so the title still idles into
 attract mode; the right half's stick also writes the D-pad past 0.7, so the perk
 picker (LEFT/RIGHT) can be worked from it; and Menu sits on the right half alone
 there, because the game toggles pause once per port and two ports pressing START
-in one frame would cancel out. In the demo reel, the right half joins on RB + Y
-(its L1 + R1); the left half's chord is LT first, then LB. Rumble follows the
-halves — XInput's strong motor is the left grip, the weak one the right — and a
-half's effect carries the other's still running magnitude along, so a game-wide
-buzz reaches both grips. Every Legion-id pad is split, or, when nothing names
-itself, the lowest-index standard pad; every other pad passes through at its
-index with all its keys, and cross-origin games get
+in one frame would cancel out. In the demo reel a half joins with its two
+shoulder buttons together — LB+LT on the left, RB+RT on the right (RB+RT reads
+as R1 as well as the dash and R2) — and confirm (CROSS) on the left half is L3
+rather than LB there, since CROSS also backs a spectator out of the reel. Rumble
+follows the halves — XInput's strong motor is the left grip, the weak one the
+right — and a half's effect carries the other's still running magnitude along,
+so a game-wide buzz reaches both grips. Every Legion-id pad is split, or, when
+nothing names itself, the lowest-index standard pad; every other pad passes
+through at its index with all its keys, and cross-origin games get
 `{ type: 'cmg-splitpads-set', value, profile }` to apply it themselves. Legion
 Space's _dual DInput_ mode, where the halves enumerate as two DirectInput pads
 of their own, is a different animal: those arrive non-standard and want the
 mapping wizard.
 
 **FPS mode.** The switch on the Go's right half turns it into a mouse and the
-left half into a keyboard (stick → WASD), and the gamepad disappears. The
-launcher reads a Legion's pad going away followed, within 30 s, by the keyboard
-speaking up as that mode (a pad enumerating under FPS mode's own product id,
-`6185`, is the same verdict at once): it says so in a toast and the Guide's
-footer, steers its menus and the Guide on WASD as well as the arrows, splits
-nothing, and tells the frame over `{ type: 'cmg-legion-fps-set', value }`. The
-next pad to connect ends it. The games need nothing: 2028.Ai already flies on
-WASD and bombs on Space, and the right half as a mouse drags the ship; Sh'M↑
-Party's port 0 reads WASD too. A same-origin game holds keyboard focus, so a
-passive listener inside the frame is what hears those keys; on the hosted site
-under Windows nothing identifies the machine at all, and there the mode is only
-a heuristic the pad id cannot feed. `?paddebug=1` prints the launcher's Legion /
-split / FPS-mode verdict, `tests/gamepad_pads_test.ts` pins the split view's
+left half into a keyboard (stick → WASD). Whether the gamepad disappears when
+that happens is the firmware's business and not observable from here, so the
+launcher reads the mode from the keys themselves: on a Legion, two stick-shaped
+keys (WASD or the arrows) within 2 s while the pad is gone — or connected but
+untouched for 3 s — mean the left half is typing (a pad enumerating under FPS
+mode's own product id, `6185`, is the same verdict at once). It says so in a
+toast and the Guide's footer, steers its menus and the Guide on WASD as well as
+the arrows, splits nothing, and tells the frame over
+`{ type: 'cmg-legion-fps-set', value }`. The pad's next press or stick move ends
+it. The games need nothing: 2028.Ai already flies on WASD and bombs on Space,
+and the right half as a mouse drags the ship; Sh'M↑ Party's port 0 reads WASD
+too. A same-origin game holds keyboard focus, so a passive listener inside the
+frame is what hears those keys; a real keyboard on a docked Legion reads the
+same and gets the same, harmlessly. `?paddebug=1` prints the launcher's Legion /
+split / FPS-mode verdict, which pads the split view targets and which right
+halves are claimed, and — in-game — the frame's URL, whether its `getGamepads`
+is patched, how many pads the launcher and the frame each see, where the last
+split read took its pads from (some engines hand gamepad data only to the
+focused document, so the frame falls back to its own view when the launcher's is
+empty), the halves it produced, and whether 2028.Ai acknowledged the two-player
+gate (`cmg-splitpads-ack`); `tests/gamepad_pads_test.ts` pins the split view's
 slots to 2028.Ai's own button tables (and Sh'M↑ Party's, as constants), and
 `tests/host_device_test.ts` the machine classification.
 
