@@ -1549,45 +1549,49 @@ never defaults on (its host answer wins over its pad id); the Go 2 does.
 
 **Two players: tap View (Select) instead of Menu.** That one tap is the whole
 gesture — the launcher never guesses from what the buttons are doing. It claims
-the right half for player 2 and presses Start on the players' behalf (a 150 ms
-hold on the left pad, one edge for a game polling per frame): Sh'M↑ Party starts
-a run with a player on each stick and auto-aim on; in 2028.Ai the same pulse
-presses A on the new right half, which seats player 2 through the game's own
-join-in, with its two-player gate opened over `cmg-splitpads-set` (the stock
-game otherwise wants `?players=2`; a hand edit to `game.bundle.js`, listed
-above). The tap is the _release_: View is also the launcher's chord button
-(View + Down, R or L2 opens the Guide in-game, View alone backs out of it) and
-the frame sees View the moment it goes down, so a hold that ever carried a
-partner, or ran while the Guide was open, claims nothing. Until View is tapped
-the left pad is the whole controller (the right stick rides on its axes 2/3,
-Menu on its slot 9), so Menu alone is single-player exactly as before and a solo
-player on a Legion with the halves still attached, where the mode is nonetheless
-the default, loses nothing. Tapped mid-run, it is a join-in: player 2 appears
-and the Start it presses pauses the game, which Menu resumes. View itself never
-reaches the game while the pad is split — it is the launcher's — so a stray
-press cannot restart a Sh'M↑ Party run; Menu does the results-screen and
-continue-screen jobs View used to. The claim lasts as long as the pad does; the
-Guide toggle starts over. Each half's trigger reads as both L2 and R2, so
-2028.Ai's OPTION ring is on LT for player 1 and RT for player 2; L3 doubles as
-R3, the level-editor button. Sh'M↑ Party's auto-aim is its own CROSS/R2 cabinet
-mode: the split view holds R2 on a half for as long as that half has been
-touched in the last 10 s (a half has no second stick to aim with) and lets go
-after, so the title still idles into attract mode; the right half's stick also
-writes the D-pad past 0.7, so the perk picker (LEFT/RIGHT) can be worked from
-it; and Menu sits on the right half alone there, because the game toggles pause
-once per port and two ports pressing START in one frame would cancel out. In the
-demo reel a half joins with its two shoulder buttons together — LB+LT on the
-left, RB+RT on the right (RB+RT reads as R1 as well as the dash and R2) — and
-confirm (CROSS) on the left half is L3 rather than LB there, since CROSS also
-backs a spectator out of the reel. Rumble follows the halves — XInput's strong
-motor is the left grip, the weak one the right — and a half's effect carries the
-other's still running magnitude along, so a game-wide buzz reaches both grips.
-Every Legion-id pad is split, or, when nothing names itself, the lowest-index
-standard pad; every other pad passes through at its index with all its keys, and
-cross-origin games get `{ type: 'cmg-splitpads-set', value, profile }` to apply
-it themselves. Legion Space's _dual DInput_ mode, where the halves enumerate as
-two DirectInput pads of their own, is a different animal: those arrive
-non-standard and want the mapping wizard.
+the right half for player 2 and presses a button on the players' behalf (a 150
+ms hold, one edge for a game polling per frame): for Sh'M↑ Party, Start on the
+left pad, and a run starts with a player on each stick and auto-aim on; for
+2028.Ai, A on the new right half — the title starts on any pad's face button,
+and the run then opens with player 2 seated because the right half is there
+(`cmgSplitTwoPlayer` in `game.bundle.js`, a hand edit beside the two-player gate
+the launcher opens over `cmg-splitpads-set`; the stock game otherwise wants
+`?players=2`). The tap is the _release_: View is also the launcher's chord
+button (View + Down, R or L2 opens the Guide in-game, View alone backs out of
+it) and the frame sees View the moment it goes down, so a hold that ever carried
+a partner, or was the launcher's at any poll (the Guide open, or the View that
+closed it, until let go), claims nothing. Until View is tapped the left pad is
+the whole controller (the right stick rides on its axes 2/3, Menu on its slot
+9), so Menu alone is single-player exactly as before and a solo player on a
+Legion with the halves still attached, where the mode is nonetheless the
+default, loses nothing. Tapped mid-run it is a join-in: in 2028.Ai the A press
+is the game's own join-in (Start there would be player 1's pause, which raises
+the Guide); in Sh'M↑ Party the new port joins by itself and the Start pauses the
+run, which Menu on the right half resumes. View itself never reaches the game
+while the pad is split — it is the launcher's — so a stray press cannot restart
+a Sh'M↑ Party run; Menu does the results-screen job View used to in 2028.Ai. The
+claim lasts as long as the pad does; the Guide toggle starts over. Each half's
+trigger reads as both L2 and R2, so 2028.Ai's OPTION ring is on LT for player 1
+and RT for player 2; L3 doubles as R3, the level-editor button. Sh'M↑ Party's
+auto-aim is its own CROSS/R2 cabinet mode: the split view holds R2 on a half for
+as long as that half has been touched in the last 10 s (a half has no second
+stick to aim with) and lets go after, so the title still idles into attract
+mode; the right half's stick also writes the D-pad past 0.7, so the perk picker
+(LEFT/RIGHT) can be worked from it; and Menu sits on the right half alone there,
+because the game toggles pause once per port and two ports pressing START in one
+frame would cancel out. In the demo reel a half joins with its two shoulder
+buttons together — LB+LT on the left, RB+RT on the right (RB+RT reads as R1 as
+well as the dash and R2) — and confirm (CROSS) on the left half is L3 rather
+than LB there, since CROSS also backs a spectator out of the reel. Rumble
+follows the halves — XInput's strong motor is the left grip, the weak one the
+right — and a half's effect carries the other's still running magnitude along,
+so a game-wide buzz reaches both grips. Every Legion-id pad is split, or, when
+nothing names itself, the lowest-index standard pad; every other pad passes
+through at its index with all its keys, and cross-origin games get
+`{ type: 'cmg-splitpads-set', value, profile }` to apply it themselves. Legion
+Space's _dual DInput_ mode, where the halves enumerate as two DirectInput pads
+of their own, is a different animal: those arrive non-standard and want the
+mapping wizard.
 
 **FPS mode.** The switch on the Go's right half turns it into a mouse and the
 left half into a keyboard (stick → WASD). Whether the gamepad disappears when

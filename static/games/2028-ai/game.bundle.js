@@ -1406,6 +1406,24 @@
   // the normal gate; this is how you reach 2P on a level that carries no
   // decoded Dezaemon settings at all — the stock 2028-ai game among them — and
   // how an exported shell pre-seeds a two-player build.
+  // cmg: the launcher's Split Controller mode hands this frame a Legion Go's
+  // halves as two pads, and the right one — "<id> [R]" — exists only once
+  // the launcher's View tap has claimed it for player 2. A run that starts
+  // with it there starts with two players, as ?players=2 would.
+  function cmgSplitTwoPlayer() {
+    if (!gameState.cmgSplitPads) return false;
+    var pads;
+    try {
+      pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    } catch (e) {
+      return false;
+    }
+    for (var i = 0; pads && i < pads.length; i++) {
+      var gp = pads[i];
+      if (gp && gp.connected && (gp.__cmgSplitHalf === "R" || /\s\[R\]$/.test(gp.id || ""))) return true;
+    }
+    return false;
+  }
   function readPlayerCountParam(defaultValue) {
     var raw = readSearchParam("players");
     if (raw == null || raw === "") return defaultValue;
@@ -6919,6 +6937,8 @@
         gameState.player2Spgage = 0;
       }
       gameState.playerCount = readPlayerCountParam(1);
+      // cmg: a claimed split right half is player 2 from the first stage.
+      if (cmgSplitTwoPlayer()) gameState.playerCount = 2;
     gameState.twoPlayerForced = gameState.playerCount === 2;
       gameState.combo = 0;
       gameState.maxCombo = 0;

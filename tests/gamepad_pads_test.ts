@@ -370,15 +370,33 @@ Deno.test("2028-ai's bundle reads the split view: the launcher's message opens i
   }
   assert(toTitle.includes(0));
   assert(option.some((s) => right.buttons[s].pressed));
-  // The claim itself: Start on the left pad (2028-ai's title starts on it)
-  // and A on the right pad (its join-in seats player 2 on a second pad's
-  // face button), both bomb-free for player 1.
+  // The claim itself: A on the right pad — 2028-ai's title starts on any
+  // pad's face button, mid-run its join-in seats player 2 on a second pad's
+  // face button — and nothing on the left pad, since Start there would be
+  // player 1's pause.
   compat.splitReset();
   const claim = tapView({}, { now: 0 });
-  assertEquals(pressedSlots(claim[0]), [9]);
-  assert(enter.includes(9));
+  assertEquals(pressedSlots(claim[0]), []);
   assertEquals(pressedSlots(claim[4]), [0]);
   assert(sp.includes(0));
+  assert(
+    /gp\.sp \|\| gp\.enter\)/.test(game),
+    "the title no longer starts on a face button",
+  );
+  // ...and a run that starts with the right half there starts with two
+  // players: the bundle's own hand edit, for the launcher's tap.
+  assert(
+    game.includes("function cmgSplitTwoPlayer()"),
+    "cmgSplitTwoPlayer is gone from the bundle",
+  );
+  assert(
+    /if \(cmgSplitTwoPlayer\(\)\) gameState\.playerCount = 2;/.test(game),
+    "goToAdvScene no longer seats player 2 for the split right half",
+  );
+  assert(
+    game.includes('gp.__cmgSplitHalf === "R"'),
+    "cmgSplitTwoPlayer no longer looks for the right half",
+  );
   // Nothing on the left half is a bomb the right half could also be pressing
   // for player 1: the halves' bomb slots come from different physical
   // buttons (LB → 0/4 on the left; A, RB → 0/5 on the right).
@@ -432,8 +450,9 @@ Deno.test("split: a View tap claims the right half, presses Start once on the pl
   assertEquals(pressedSlots(out[0]), []);
   assertEquals(out[0].axes, [0, 0, 0.5, -0.4]);
   assertStrictEquals(out[4], null);
-  // View up: the right half appears with an A press (2028-ai's join-in) and
-  // the right stick as its own, and the left pad presses Start.
+  // View up: the right half appears with an A press (2028-ai's title start
+  // and join-in) and the right stick as its own; the left pad presses
+  // nothing in the generic profile (Start would be player 1's pause).
   out = split([fakePad({ axes: [0, 0, 0.5, -0.4] })], { now: 50 });
   const right = out[4];
   assertEquals(right.id, LEGION_PADS.chromeLinux.id + " [R]");
@@ -441,11 +460,11 @@ Deno.test("split: a View tap claims the right half, presses Start once on the pl
   assertEquals(right.mapping, "standard");
   assertEquals(right.axes, [0.5, -0.4, 0, 0]);
   assertEquals(pressedSlots(right), [0]);
-  assertEquals(pressedSlots(out[0]), [9]);
+  assertEquals(pressedSlots(out[0]), []);
   assertEquals(out[0].axes, [0, 0, 0, 0]);
   // The pulse holds a few frames (one edge for a game polling per frame)...
   out = split([fakePad()], { now: 150 });
-  assertEquals(pressedSlots(out[0]), [9]);
+  assertEquals(pressedSlots(out[0]), []);
   assertEquals(pressedSlots(out[4]), [0]);
   // ...and is over by START_PULSE_MS.
   out = split([fakePad()], { now: 200 });
@@ -465,9 +484,18 @@ Deno.test("split: a View tap claims the right half, presses Start once on the pl
   assertEquals(compat.splitStatus(), [
     { key: "0:" + LEGION_PADS.chromeLinux.id, claimed: true },
   ]);
-  // A different pad starts over.
+  // A different pad starts over — and so does the same pad after it has
+  // been gone from the list (a reconnect).
   out = split([fakePad({ id: LEGION_PADS.firefox.id })], { now: 700 });
   assertStrictEquals(out[4], null);
+  compat.splitReset();
+  tapView({}, { now: 0 });
+  assert(split([fakePad()], { now: 100 })[4]);
+  split([], { now: 200 });
+  assertStrictEquals(split([fakePad()], { now: 300 })[4], null);
+  assertEquals(compat.splitStatus(), [
+    { key: "0:" + LEGION_PADS.chromeLinux.id, claimed: false },
+  ]);
 });
 
 Deno.test("split: a View hold that carried a launcher chord, or ran while the Guide was open, is no tap", () => {
@@ -499,8 +527,9 @@ Deno.test("split: a View hold that carried a launcher chord, or ran while the Gu
   split([fakePad({ pressed: [8, 13] })], { now: 16 });
   let out = split([fakePad()], { now: 32 });
   assertStrictEquals(out[4], null);
-  // Held alone but with the Guide open (View backs out of it) — including a
-  // hold that began before the Guide opened and ended after it closed.
+  // Held alone but the launcher's (its Guide open, or the View that closed
+  // it and is not yet let go of) at any poll — the first, a middle one, or
+  // the release itself.
   compat.splitReset();
   split([fakePad({ pressed: [8] })], { now: 0, viewTaken: true });
   out = split([fakePad()], { now: 50, viewTaken: true });
@@ -511,10 +540,14 @@ Deno.test("split: a View hold that carried a launcher chord, or ran while the Gu
   out = split([fakePad()], { now: 50 });
   assertStrictEquals(out[4], null);
   assertEquals(pressedSlots(out[0]), []);
+  compat.splitReset();
+  split([fakePad({ pressed: [8] })], { now: 0 });
+  out = split([fakePad()], { now: 50, viewTaken: true });
+  assertStrictEquals(out[4], null, "the launcher's at the release");
   // The chord verdict is per hold: a clean tap afterwards still claims.
   out = tapView({}, { now: 200 });
   assert(out[4], "a clean tap after a chord claims");
-  assertEquals(pressedSlots(out[0]), [9]);
+  assertEquals(pressedSlots(out[4]), [0]);
   // Other left-half buttons, the D-pad's other ways and the right stick are
   // not chord partners: a tap next to them is still a tap.
   for (const along of [[4], [12], [14], [15], [10], [0], [3]]) {

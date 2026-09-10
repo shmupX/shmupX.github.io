@@ -1877,25 +1877,29 @@
   // The Legion Go's controller detaches into two halves that keep reporting
   // as ONE pad, so two players holding a half each look to a game like one
   // player. Split Controller mode re-expresses that pad, inside the game
-  // frame, as two standard pads — left half (left stick, D-pad, LB, LT, View)
-  // and right half (right stick as its movement stick, ABXY, RB, RT, Menu) —
+  // frame, as two standard pads — left half (left stick, D-pad, LB, LT) and
+  // right half (right stick as its movement stick, ABXY, RB, RT, Menu) —
   // by patching the frame's navigator.getGamepads with
   // CMGGamepadCompat.splitPads, the same seam Twin-Stick Mode uses. Twin-Stick
   // Mode's own D-pad/face re-expression stands down while the pad is split:
   // the halves already are that expression, and its faces→aim rewrite would
   // turn the halves' buttons into aim. The right half exists only once View
   // (Select) has been tapped instead of Menu — the two-player gesture, which
-  // also presses Start on the players' behalf (the tap is the release, so
-  // the launcher's own View + Down Guide chord is never mistaken for it);
+  // also presses a button on the players' behalf, Start or A by profile (the
+  // tap is the release, so the launcher's own View + Down Guide chord is
+  // never mistaken for it);
   // until then the left pad is the whole controller, so a solo player on a
   // Legion — where the mode is the default, attached or not, since nothing
   // can tell — loses nothing, and Menu alone is single-player as ever.
   //
-  // 2028-ai: player 1 flies the left stick and bombs with LB, player 2 (seated
-  // by the claim's own A press through the game's join-in) flies the right
-  // stick, bombs with RB or A, and A/Menu return either player to the title
-  // from the results. The game's own two-player gate (?players=2, or a save's
-  // 2P bit) is opened for it over cmg-splitpads-set. Sh'M↑ Party (a
+  // 2028-ai: player 1 flies the left stick and bombs with LB, player 2 flies
+  // the right stick, bombs with RB or A, and A/Menu return either player to
+  // the title from the results. The claim presses A on the new right half —
+  // the game's title starts on any pad's face button, and its run then opens
+  // with player 2 seated because the right half is there (a hand edit in the
+  // bundle); mid-run that A press is the game's own join-in. The game's
+  // two-player gate (?players=2, or a save's 2P bit) is opened for it over
+  // cmg-splitpads-set. Sh'M↑ Party (a
   // Twin-Stick game) gets the "twinstick" profile: dash on LB/RB, weapon
   // cycle on LT/Y, and auto-aim-and-fire held for each half while its player
   // is at the controls, since a half has no stick left to aim with.
@@ -2226,8 +2230,11 @@
     if (splitPadsLive()) {
       // View is the two-player tap in the split view — and this launcher's
       // own chord button (View + Down opens the Guide in-game, View alone
-      // backs out of it), so while the Guide is up View is spoken for.
-      pads = compat.splitPads(pads, { profile: twinStickAvail ? 'twinstick' : 'generic', viewTaken: osdOpen });
+      // backs out of it), so while the Guide is up View is spoken for, and
+      // so is a View the Guide closed on until it is released (pollPad
+      // runs before this frame's poll, so the Guide is already down by the
+      // time the frame sees that press).
+      pads = compat.splitPads(pads, { profile: twinStickAvail ? 'twinstick' : 'generic', viewTaken: osdOpen || padState.viewOwned });
       const halves = [];
       for (const p of pads) if (p && p.__cmgSplitHalf) halves.push('#' + p.index + p.__cmgSplitHalf);
       splitDiag.halves = halves.join(' ');
@@ -3885,6 +3892,11 @@
     // the hold (so its release doesn't ALSO fire Back).
     selArmed: false,
     selChordFired: false,
+    // View is the split view's two-player tap (see frameGamepads). A View
+    // that closed the Guide is this launcher's until it is released — the
+    // frame polls after this document in a frame, so it would otherwise
+    // see a hold the Guide had already let go of as a clean tap.
+    viewOwned: false,
     rawDirPrev: 0,
     r3Latched: false,
     dirSeenAt: 0,
@@ -4222,13 +4234,17 @@
       // drive OSD navigation while it's open — body.osd-open makes
       // gamepad-support yield, so these presses don't leak into the game.
       padState.axisDir = 0; padState.hAxisDir = 0;
-      if (!pad) { padState.btn.clear(); padState.comboLatched = false; padState.selArmed = false; padState.selChordFired = false; osdNav.vDir = 0; osdNav.hDir = 0; return; }
+      if (!pad) { padState.btn.clear(); padState.comboLatched = false; padState.selArmed = false; padState.selChordFired = false; padState.viewOwned = false; osdNav.vDir = 0; osdNav.hDir = 0; return; }
       const pressedNow = new Set();
       pad.buttons.forEach((btn, i) => { if (btn?.pressed) pressedNow.add(i); });
       const justPressed = (i) => pressedNow.has(i) && !padState.btn.has(i);
       // A SELECT released while a game runs must not leave the launcher's
       // chord latches armed — they'd eat (or forge) the next launcher Back.
-      if (!pressedNow.has(8)) { padState.selArmed = false; padState.selChordFired = false; }
+      if (!pressedNow.has(8)) { padState.selArmed = false; padState.selChordFired = false; padState.viewOwned = false; }
+      // ...and a SELECT held while the Guide is up is the Guide's (it closes
+      // on it) for as long as it stays down, so the split view's two-player
+      // tap cannot fire off the release.
+      else if (osdOpen) padState.viewOwned = true;
 
       // Stadia: the Assistant button opens the Guide by itself. The pad has
       // no button labelled SELECT to chord with (slot 8 is Options ⋯), and a

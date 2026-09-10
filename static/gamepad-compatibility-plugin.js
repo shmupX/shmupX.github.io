@@ -671,8 +671,9 @@
   //   left half  → "<id> [L]" at the pad's own index. axes 0/1 = left stick;
   //                12-15 = D-pad; 4 = LB, and 0 = LB as well so the half has
   //                a confirm button; 6 AND 7 = LT (both triggers, so a game
-  //                reading either finds it); 8 = View; 10 = L3, and 11 = L3
-  //                as well (2028-ai's level-editor button is R3).
+  //                reading either finds it); 10 = L3, and 11 = L3 as well
+  //                (2028-ai's level-editor button is R3). View is not here:
+  //                it is the launcher's (below).
   //   right half → "<id> [R]" at index + SPLIT_INDEX_OFFSET (Chrome hands
   //                real pads 0-3, so it never collides). axes 0/1 = the RIGHT
   //                stick — it is this player's movement stick; 0-3 = ABXY;
@@ -682,12 +683,15 @@
   // deliberate gesture rather than a guess from what the buttons are doing:
   // VIEW (Select) tapped instead of Menu. The tap — View released with
   // nothing chorded onto it — claims the right half for player 2 and presses
-  // Start on the players' behalf — a START_PULSE_MS hold on the left pad, so
-  // the game sees one edge — and Sh'M↑ Party then starts a run with a player
-  // on each stick; in the generic profile the same pulse presses A on the new
-  // right half, which joins player 2 through 2028-ai's own join-in. The half
-  // then stays for as long as the physical pad does (the launcher's Guide
-  // toggle starts over). Until it is claimed the left pad is the whole
+  // a button on the players' behalf for START_PULSE_MS, so the game sees one
+  // edge: in the twinstick profile Start on the left pad, and Sh'M↑ Party
+  // starts a run with a player on each stick; in the generic profile A on
+  // the new right half, on which 2028-ai's title starts (any pad's face
+  // button does) and whose run then opens with player 2 seated because the
+  // right half is there — while mid-run that same A press is the game's own
+  // join-in, and Start would only raise the launcher's Guide. The half then
+  // stays for as long as the physical pad does (the launcher's Guide toggle
+  // starts over). Until it is claimed the left pad is the whole
   // controller for the one player holding it: the right stick rides on its
   // axes 2/3 (Sh'M↑ Party's aim stick) and Menu on its slot 9, and Menu alone
   // starts single-player exactly as before. Split mode is the launcher's
@@ -698,10 +702,11 @@
   // the Guide in-game, and View alone backs out of it — and the game frame
   // is handed the pad the moment View goes down, before any partner. So the
   // claim waits for the release, and a hold that ever carried a partner, or
-  // that began or ran while the launcher had the Guide open (`viewTaken`),
-  // is no tap. View itself never reaches the game while the pad is split —
-  // it is the launcher's — so a stray press cannot restart a Sh'M↑ Party run;
-  // Menu does the results-screen and continue-screen jobs View used to.
+  // that was the launcher's at any poll, the release included (`viewTaken`:
+  // its Guide open, or a View the Guide closed on and not yet let go of), is
+  // no tap. View itself never reaches the game while the pad is split — it
+  // is the launcher's — so a stray press cannot restart a Sh'M↑ Party run;
+  // Menu does the results-screen job View used to in 2028-ai.
   //
   // Menu: on both halves in the generic profile (2028-ai pauses only on
   // player 1's Start and ignores player 2's during play); on the right half
@@ -740,8 +745,9 @@
   // ...and this far is a D-pad press, for the right half's synthesized D-pad.
   const SPLIT_DPAD_AT = 0.7;
   const AUTO_FIRE_IDLE_MS = 10000;
-  // How long the Start that View presses on the players' behalf is held: a
-  // few frames, so a game polling once a frame sees exactly one edge.
+  // How long the press View makes on the players' behalf (Start or A, by
+  // profile) is held: a few frames, so a game polling once a frame sees
+  // exactly one edge.
   const START_PULSE_MS = 150;
   const LEFT_HALF_SLOTS = [4, 6, 10, 12, 13, 14, 15];
   const RIGHT_HALF_SLOTS = [0, 1, 2, 3, 5, 7, 11];
@@ -855,16 +861,16 @@
     const pr = (i) => !!(b[i] && b[i].pressed);
     const axis = (i) => (typeof ax[i] === "number" && Math.abs(ax[i]) <= 1.05 ? ax[i] : 0);
     const lx = axis(0), ly = axis(1), rx = axis(2), ry = axis(3);
-    // View tapped instead of Menu: the claim, and Start on their behalf. A
-    // hold is a tap only if nothing was ever chorded onto it and the
-    // launcher never had the Guide open during it (see above).
+    // View tapped instead of Menu: the claim, and a press on their behalf.
+    // A hold is a tap only if nothing was ever chorded onto it and it was
+    // never the launcher's, the release included (see above).
     const viewNow = pr(8);
     if (viewNow) {
       if (!st.viewWas) st.viewChord = false;
       if (viewTaken || VIEW_CHORD_SLOTS.some(pr) || ly > VIEW_CHORD_STICK) {
         st.viewChord = true;
       }
-    } else if (st.viewWas && !st.viewChord && !st.rightLive) {
+    } else if (st.viewWas && !st.viewChord && !viewTaken && !st.rightLive) {
       st.rightLive = true;
       st.leftAt = now;
       st.rightAt = now;
@@ -908,9 +914,11 @@
       left[7] = snapshotButton(b[6]);
     }
     // Menu: player 1's pause in the generic profile, the whole pad's Start
-    // until the right half has been claimed — and, for START_PULSE_MS after
-    // the claim, the Start that View pressed on the players' behalf.
-    left[9] = button(pulse || ((!twin || !claimed) && pr(9)));
+    // until the right half has been claimed — and, in the twinstick profile
+    // for START_PULSE_MS after the claim, the Start that View pressed on the
+    // players' behalf (Sh'M↑ Party's title starts on it, and a run in
+    // progress takes a hotplugged port by itself).
+    left[9] = button((twin && pulse) || ((!twin || !claimed) && pr(9)));
     // Anything past the standard 17 (a Stadia's Capture/Assistant, a pad's
     // Home) belongs to player 1's half.
     for (let i = 16; i < b.length; i++) left[i] = snapshotButton(b[i]);
@@ -933,8 +941,10 @@
       right[5] = snapshotButton(b[5]);
       right[6] = snapshotButton(b[7]);
       right[7] = snapshotButton(b[7]);
-      // The claim's A press: 2028-ai seats player 2 on a second pad's face
-      // or shoulder button, so the new half presses one itself.
+      // The claim's A press: 2028-ai's title starts on any pad's face button
+      // and its run then seats player 2 for the right half that is there;
+      // mid-run, a second pad's face button is its join-in. (Start instead
+      // would be player 1's pause, which raises the launcher's Guide.)
       if (pulse) right[0] = button(true);
     }
 
