@@ -257,6 +257,19 @@ const pressedSlots = (p: FakePad | null) =>
 // Every fresh test starts with no right half claimed.
 const split = (pads: unknown[] | null, opts: Record<string, unknown>) =>
   compat.splitPads(pads, opts);
+// A View tap — down, then up 50 ms later; the claim lands on the release —
+// on a pad otherwise as described, returning the release's view.
+const tapView = (
+  pad: NonNullable<Parameters<typeof fakePad>[0]>,
+  opts: Record<string, unknown>,
+) => {
+  const now = opts.now as number;
+  split([fakePad({ ...pad, pressed: [...(pad.pressed ?? []), 8] })], {
+    ...opts,
+    now: now - 50,
+  });
+  return split([fakePad(pad)], opts);
+};
 
 Deno.test("the Legion Go's built-in pad is recognised under both browsers' spellings, in all three copies", async () => {
   const proto = GamepadManager.prototype;
@@ -334,16 +347,20 @@ Deno.test("2028-ai's bundle reads the split view: the launcher's message opens i
   const toTitle = title[1].split(",").map((s) => Number(s.trim()));
 
   compat.splitReset();
-  // LB, LT, View, Menu on the left; A, RB, RT, Menu on the right (claimed).
-  const out = split([fakePad({ pressed: [0, 4, 5, 6, 7, 8, 9] })], { now: 0 });
+  // A View tap claims the right half; then LB, LT, Menu on the left and A,
+  // RB, RT, Menu on the right, well after the claim's own pulse.
+  tapView({}, { now: 0 });
+  const out = split([fakePad({ pressed: [0, 4, 5, 6, 7, 9] })], {
+    now: 1000,
+  });
   const left = out[0], right = out[4];
   // Player 1 bombs on LB — both slots LB lands in are bomb buttons.
   for (const s of [0, 4]) {
     assert(sp.includes(s) && left.buttons[s].pressed, `left slot ${s}`);
   }
-  // ...pauses on Menu, and returns to the title on View.
+  // ...pauses on Menu, which also returns to the title from the results.
   assert(enter.includes(9) && left.buttons[9].pressed);
-  assert(toTitle.includes(8) && left.buttons[8].pressed);
+  assert(toTitle.includes(9));
   // ...and LT reaches the OPTION ring.
   assert(option.some((s) => left.buttons[s].pressed));
   // Player 2 bombs on RB and A, confirms and returns to the title on A, and
@@ -353,21 +370,29 @@ Deno.test("2028-ai's bundle reads the split view: the launcher's message opens i
   }
   assert(toTitle.includes(0));
   assert(option.some((s) => right.buttons[s].pressed));
+  // The claim itself: Start on the left pad (2028-ai's title starts on it)
+  // and A on the right pad (its join-in seats player 2 on a second pad's
+  // face button), both bomb-free for player 1.
+  compat.splitReset();
+  const claim = tapView({}, { now: 0 });
+  assertEquals(pressedSlots(claim[0]), [9]);
+  assert(enter.includes(9));
+  assertEquals(pressedSlots(claim[4]), [0]);
+  assert(sp.includes(0));
   // Nothing on the left half is a bomb the right half could also be pressing
   // for player 1: the halves' bomb slots come from different physical
   // buttons (LB → 0/4 on the left; A, RB → 0/5 on the right).
-  compat.splitReset();
-  const only = split([fakePad({ pressed: [0, 5] })], { now: 0 });
+  const only = split([fakePad({ pressed: [0, 5] })], { now: 1000 });
   assertEquals(pressedSlots(only[0]), []);
   assertEquals(pressedSlots(only[4]), [0, 5]);
 });
 
-Deno.test("split: until the right half is claimed the left pad is the whole controller", () => {
+Deno.test("split: until View is tapped the left pad is the whole controller", () => {
   compat.splitReset();
-  // Sticks, D-pad, LB, LT, View, Menu, L3: the one player's inputs.
+  // Sticks, D-pad, LB, LT, Menu, L3: the one player's inputs.
   const raw = fakePad({
     axes: [-0.8, 0.2, 0.5, -0.4],
-    pressed: [4, 6, 8, 9, 10, 13],
+    pressed: [4, 6, 9, 10, 13],
   });
   const out = split([raw, null, null, null], { now: 1000 });
   assert(out.length >= 8);
@@ -377,50 +402,131 @@ Deno.test("split: until the right half is claimed the left pad is the whole cont
   assertEquals(left.mapping, "standard");
   // The right stick rides along on axes 2/3 — Sh'M↑ Party's aim stick.
   assertEquals(left.axes, [-0.8, 0.2, 0.5, -0.4]);
-  // LB as confirm (0) and LB (4); LT as both triggers; View; Menu; L3 as L3
-  // and as R3 (2028-ai's editor button); D-pad down.
-  assertEquals(pressedSlots(left), [0, 4, 6, 7, 8, 9, 10, 11, 13]);
+  // LB as confirm (0) and LB (4); LT as both triggers; Menu; L3 as L3 and
+  // as R3 (2028-ai's editor button); D-pad down.
+  assertEquals(pressedSlots(left), [0, 4, 6, 7, 9, 10, 11, 13]);
   // No right half yet, and no stray pads.
   for (const i of [1, 2, 3, 4, 5, 6, 7]) assertStrictEquals(out[i], null);
+  // Right-half buttons and the right stick change nothing: they are not
+  // the gesture. Menu alone is single-player, as ever.
+  for (const pressed of [[0], [1], [2], [3], [5], [7], [11], [9]]) {
+    assertStrictEquals(
+      split([fakePad({ pressed })], { now: 2000 })[4],
+      null,
+      `slot ${pressed[0]}`,
+    );
+  }
+  assertStrictEquals(
+    split([fakePad({ axes: [0, 0, 0.9, 0.9] })], { now: 3000 })[4],
+    null,
+  );
 });
 
-Deno.test("split: a right-half button claims the right half — the sticks and Menu never do", () => {
+Deno.test("split: a View tap claims the right half, presses Start once on the players' behalf, and never reaches the game", () => {
   compat.splitReset();
-  // The right stick alone: still one pad.
-  let out = split([fakePad({ axes: [0, 0, 0.9, 0.9] })], { now: 0 });
-  assertStrictEquals(out[4], null);
-  // Menu alone: still one pad (it is player 1's pause).
-  out = split([fakePad({ pressed: [9] })], { now: 16 });
-  assertStrictEquals(out[4], null);
-  // RB: claimed, with a fresh RB edge on the brand-new pad, the right stick
-  // now its own, and the left pad's axes 2/3 gone quiet.
-  out = split([fakePad({ axes: [0, 0, 0.5, -0.4], pressed: [5, 9] })], {
-    now: 32,
+  // View down: nothing yet — the tap is the release — and View itself is
+  // nowhere. The right stick still rides on the left pad meanwhile.
+  let out = split([fakePad({ axes: [0, 0, 0.5, -0.4], pressed: [8] })], {
+    now: 0,
   });
+  assertEquals(pressedSlots(out[0]), []);
+  assertEquals(out[0].axes, [0, 0, 0.5, -0.4]);
+  assertStrictEquals(out[4], null);
+  // View up: the right half appears with an A press (2028-ai's join-in) and
+  // the right stick as its own, and the left pad presses Start.
+  out = split([fakePad({ axes: [0, 0, 0.5, -0.4] })], { now: 50 });
   const right = out[4];
   assertEquals(right.id, LEGION_PADS.chromeLinux.id + " [R]");
   assertStrictEquals(right.index, 4);
+  assertEquals(right.mapping, "standard");
   assertEquals(right.axes, [0.5, -0.4, 0, 0]);
-  assertEquals(pressedSlots(right), [5, 9]);
-  assertEquals(out[0].axes, [0, 0, 0, 0]);
-  // Menu on both halves in the generic profile.
+  assertEquals(pressedSlots(right), [0]);
   assertEquals(pressedSlots(out[0]), [9]);
-  // Hands off: the right half stays.
-  out = split([fakePad()], { now: 48 });
+  assertEquals(out[0].axes, [0, 0, 0, 0]);
+  // The pulse holds a few frames (one edge for a game polling per frame)...
+  out = split([fakePad()], { now: 150 });
+  assertEquals(pressedSlots(out[0]), [9]);
+  assertEquals(pressedSlots(out[4]), [0]);
+  // ...and is over by START_PULSE_MS.
+  out = split([fakePad()], { now: 200 });
+  assertEquals(pressedSlots(out[0]), []);
+  assertEquals(pressedSlots(out[4]), []);
+  // Menu on both halves in the generic profile.
+  out = split([fakePad({ pressed: [9] })], { now: 300 });
+  assertEquals(pressedSlots(out[0]), [9]);
+  assertEquals(pressedSlots(out[4]), [9]);
+  // A second View tap does nothing at all — no Start, no restart.
+  out = tapView({}, { now: 500 });
+  assertEquals(pressedSlots(out[0]), []);
+  assertEquals(pressedSlots(out[4]), []);
+  // Hands off: the right half stays — and splitStatus says so.
+  out = split([fakePad()], { now: 600 });
   assert(out[4], "the right half stays once claimed");
   assertEquals(compat.splitStatus(), [
     { key: "0:" + LEGION_PADS.chromeLinux.id, claimed: true },
   ]);
   // A different pad starts over.
-  out = split([fakePad({ id: LEGION_PADS.firefox.id })], { now: 64 });
+  out = split([fakePad({ id: LEGION_PADS.firefox.id })], { now: 700 });
   assertStrictEquals(out[4], null);
-  // Each face button claims too.
-  for (const f of [0, 1, 2, 3]) {
+});
+
+Deno.test("split: a View hold that carried a launcher chord, or ran while the Guide was open, is no tap", () => {
+  // The launcher's Guide opens on View + Down (or R, or L2) in-game, and the
+  // frame sees View the moment it goes down — before the partner.
+  const chords: Array<[Record<string, unknown>, string]> = [
+    [{ pressed: [13] }, "D-pad down"],
+    [{ axes: [0, 0.8, 0, 0] }, "left stick down"],
+    [{ pressed: [5] }, "R"],
+    [{ pressed: [6] }, "L2"],
+  ];
+  for (const [partner, name] of chords) {
     compat.splitReset();
-    out = split([fakePad({ pressed: [f] })], { now: 0 });
-    assertEquals(pressedSlots(out[4]), [f]);
-    assertEquals(pressedSlots(out[0]), []);
+    split([fakePad({ pressed: [8] })], { now: 0 });
+    split([
+      fakePad({
+        ...partner,
+        pressed: [8, ...(partner.pressed as number[] ?? [])],
+      }),
+    ], { now: 16 });
+    split([fakePad(partner)], { now: 32 });
+    const out = split([fakePad()], { now: 48 });
+    assertStrictEquals(out[4], null, name + " after View");
+    assertEquals(pressedSlots(out[0]), [], name + " after View");
   }
+  // The partner already down when View arrives is the same chord.
+  compat.splitReset();
+  split([fakePad({ pressed: [13] })], { now: 0 });
+  split([fakePad({ pressed: [8, 13] })], { now: 16 });
+  let out = split([fakePad()], { now: 32 });
+  assertStrictEquals(out[4], null);
+  // Held alone but with the Guide open (View backs out of it) — including a
+  // hold that began before the Guide opened and ended after it closed.
+  compat.splitReset();
+  split([fakePad({ pressed: [8] })], { now: 0, viewTaken: true });
+  out = split([fakePad()], { now: 50, viewTaken: true });
+  assertStrictEquals(out[4], null);
+  compat.splitReset();
+  split([fakePad({ pressed: [8] })], { now: 0 });
+  split([fakePad({ pressed: [8] })], { now: 16, viewTaken: true });
+  out = split([fakePad()], { now: 50 });
+  assertStrictEquals(out[4], null);
+  assertEquals(pressedSlots(out[0]), []);
+  // The chord verdict is per hold: a clean tap afterwards still claims.
+  out = tapView({}, { now: 200 });
+  assert(out[4], "a clean tap after a chord claims");
+  assertEquals(pressedSlots(out[0]), [9]);
+  // Other left-half buttons, the D-pad's other ways and the right stick are
+  // not chord partners: a tap next to them is still a tap.
+  for (const along of [[4], [12], [14], [15], [10], [0], [3]]) {
+    compat.splitReset();
+    split([fakePad({ pressed: [8, ...along] })], { now: 0 });
+    out = split([fakePad({ pressed: along })], { now: 50 });
+    assert(out[4], "tap alongside slot " + along[0]);
+  }
+  compat.splitReset();
+  split([fakePad({ axes: [0.8, -0.8, 0.8, 0.8], pressed: [8] })], { now: 0 });
+  out = split([fakePad({ axes: [0.8, -0.8, 0.8, 0.8] })], { now: 50 });
+  assert(out[4], "tap with the sticks anywhere but down-left");
 });
 
 Deno.test("split: each half's trigger feeds only its own half, as both triggers", () => {
@@ -429,7 +535,8 @@ Deno.test("split: each half's trigger feeds only its own half, as both triggers"
   assertEquals(pressedSlots(out[0]), [6, 7]);
   assertStrictEquals(out[4], null);
   compat.splitReset();
-  out = split([fakePad({ pressed: [7] })], { now: 0 });
+  tapView({}, { now: 0 });
+  out = split([fakePad({ pressed: [7] })], { now: 1000 });
   assertEquals(pressedSlots(out[0]), []);
   assertEquals(pressedSlots(out[4]), [6, 7]);
 });
@@ -437,8 +544,13 @@ Deno.test("split: each half's trigger feeds only its own half, as both triggers"
 Deno.test("split, twinstick profile: dash on LB/RB, weapon cycle on LT/Y, auto-fire while at the controls", () => {
   const twin = { profile: "twinstick" };
   compat.splitReset();
+  // A View tap: the claim, Start on the left pad, and no A press — Sh'M↑
+  // Party seats a player per port by itself.
+  let out = tapView({}, { ...twin, now: 0 });
+  assertEquals(pressedSlots(out[0]), [7, 9]);
+  assertEquals(pressedSlots(out[4]), [7]);
   // Y, LB, RB, LT, Menu
-  let out = split([fakePad({ pressed: [3, 4, 5, 6, 9] })], { ...twin, now: 0 });
+  out = split([fakePad({ pressed: [3, 4, 5, 6, 9] })], { ...twin, now: 1000 });
   // left: dash (LB), weapon (LT), auto-fire — no Menu once the right half is
   // claimed (Sh'M↑ Party would pause twice in one frame), and LB is not a
   // confirm here (that is L3)
@@ -473,7 +585,8 @@ Deno.test("split, twinstick profile: dash on LB/RB, weapon cycle on LT/Y, auto-f
   assertStrictEquals(out[4], null);
   // The generic profile never invents a press.
   compat.splitReset();
-  out = split([fakePad({ pressed: [0] })], { now: 0 });
+  tapView({}, { now: 0 });
+  out = split([fakePad({ pressed: [0] })], { now: 1000 });
   assertEquals(pressedSlots(out[0]), []);
   assertEquals(pressedSlots(out[4]), [0]);
   // The demo reel's L1+R1 join chord is a half's two shoulders: LB+LT on the
@@ -482,9 +595,10 @@ Deno.test("split, twinstick profile: dash on LB/RB, weapon cycle on LT/Y, auto-f
   out = split([fakePad({ pressed: [4, 6] })], { ...twin, now: 0 });
   assertEquals(pressedSlots(out[0]), [4, 5, 7]);
   compat.splitReset();
-  out = split([fakePad({ pressed: [7] })], { ...twin, now: 0 });
+  tapView({}, { ...twin, now: 0 });
+  out = split([fakePad({ pressed: [7] })], { ...twin, now: 1000 });
   assertEquals(pressedSlots(out[4]), [7]);
-  out = split([fakePad({ pressed: [5, 7] })], { ...twin, now: 16 });
+  out = split([fakePad({ pressed: [5, 7] })], { ...twin, now: 1016 });
   assertEquals(pressedSlots(out[4]), [4, 5, 7]);
   // Confirm on the left half is L3 (also L3 and R3), so an LB pressed a frame
   // before LT cannot back out of the reel as CROSS.
@@ -507,7 +621,7 @@ Deno.test("split: rumble goes to the half's own motor, without cancelling the ot
       return Promise.resolve("complete");
     },
   };
-  const out = split([fakePad({ pressed: [0], actuator })], { now: 0 });
+  const out = tapView({ actuator }, { now: 0 });
   const effect = { duration: 0, strongMagnitude: 1, weakMagnitude: 1 };
   // Finished (zero-length) buzzes, one per half: each reaches only its own
   // motor, and neither lingers into the next.
@@ -556,17 +670,18 @@ Deno.test("split: rumble goes to the half's own motor, without cancelling the ot
   assertStrictEquals(out[0].vibrationActuator.type, "dual-rumble");
   // No actuator on the pad, none on the halves.
   compat.splitReset();
-  const bare = split([fakePad({ pressed: [0] })], { now: 0 });
+  const bare = tapView({}, { now: 0 });
   assertStrictEquals(bare[0].vibrationActuator, null);
   assertStrictEquals(bare[4].vibrationActuator, null);
 });
 
 Deno.test("split: Legion-id pads split; without one the lowest-index standard pad does; the rest pass through", () => {
   compat.splitReset();
-  const ds4 = fakePad({ id: PADS.ds4.id, index: 0, pressed: [0] });
-  const legion = fakePad({ index: 1, pressed: [0] });
+  const ds4 = fakePad({ id: PADS.ds4.id, index: 0, pressed: [8] });
+  const legion = fakePad({ index: 1 });
   assertEquals(compat.splitTargets([ds4, legion]), [1]);
-  let out = split([ds4, legion], { now: 0 });
+  split([ds4, fakePad({ index: 1, pressed: [8] })], { now: 0 });
+  let out = split([ds4, legion], { now: 50 });
   assertStrictEquals(out[0], ds4); // untouched, the same object
   assertEquals(out[1].id, legion.id + " [L]");
   assertEquals(out[5].id, legion.id + " [R]");
@@ -599,9 +714,12 @@ Deno.test("split: Legion-id pads split; without one the lowest-index standard pa
 
 Deno.test("split: a real pad already at index + 4 keeps its slot; the right half takes the next", () => {
   compat.splitReset();
-  const legion = fakePad({ index: 0, pressed: [0] });
+  const legion = fakePad({ index: 0 });
   const other = fakePad({ id: PADS.ds4.id, index: 4 });
-  const out = split([legion, null, null, null, other], { now: 0 });
+  split([fakePad({ index: 0, pressed: [8] }), null, null, null, other], {
+    now: 0,
+  });
+  const out = split([legion, null, null, null, other], { now: 50 });
   assertStrictEquals(out[4], other);
   assertEquals(out[5].id, legion.id + " [R]");
   assertStrictEquals(out[5].index, 5);

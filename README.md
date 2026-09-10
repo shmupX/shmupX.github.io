@@ -1542,40 +1542,52 @@ Handheld Daemon (Bazzite, ChimeraOS) hide it behind an emulated Xbox pad, so
 there `/api/host` is the only tell. The Legion Go S, whose controller is fixed,
 never defaults on (its host answer wins over its pad id); the Go 2 does.
 
-| half  | virtual pad            | 2028.Ai                                                                    | Sh'M↑ Party (twin-stick profile)                              |
-| ----- | ---------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| left  | `<id> [L]`, same index | left stick / D-pad fly · LB bomb (and confirm) · Menu pause · View → title | left stick move · LB dash · LT weapon · L3 confirm · auto-aim |
-| right | `<id> [R]`, index + 4  | right stick flies · RB or A/B/X/Y bomb · A confirm and → title             | right stick move · RB dash · Y weapon · Menu pause · auto-aim |
+| half  | virtual pad            | 2028.Ai                                                                 | Sh'M↑ Party (twin-stick profile)                              |
+| ----- | ---------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------- |
+| left  | `<id> [L]`, same index | left stick / D-pad fly · LB bomb (and confirm) · Menu pause and → title | left stick move · LB dash · LT weapon · L3 confirm · auto-aim |
+| right | `<id> [R]`, index + 4  | right stick flies · RB or A/B/X/Y bomb · A confirm and → title          | right stick move · RB dash · Y weapon · Menu pause · auto-aim |
 
-The right half exists only once one of its buttons — A/B/X/Y, RB, RT, R3 — has
-been pressed; until then the left pad is the whole controller (the right stick
-rides on its axes 2/3, Menu on its slot 9), so a solo player on a Legion with
-the halves still attached, where the mode is nonetheless the default, loses
-nothing until somebody presses something on the right half. Player 2 joins the
-way a second pad always has — that first press — and the launcher opens
-2028.Ai's own two-player gate for it over `cmg-splitpads-set` (the stock game
-otherwise wants `?players=2`; a hand edit to `game.bundle.js`, listed above).
-Each half's trigger reads as both L2 and R2, so 2028.Ai's OPTION ring is on LT
-for player 1 and RT for player 2; L3 doubles as R3, the level-editor button.
-Sh'M↑ Party's auto-aim is its own CROSS/R2 cabinet mode: the split view holds R2
-on a half for as long as that half has been touched in the last 10 s (a half has
-no second stick to aim with) and lets go after, so the title still idles into
-attract mode; the right half's stick also writes the D-pad past 0.7, so the perk
-picker (LEFT/RIGHT) can be worked from it; and Menu sits on the right half alone
-there, because the game toggles pause once per port and two ports pressing START
-in one frame would cancel out. In the demo reel a half joins with its two
-shoulder buttons together — LB+LT on the left, RB+RT on the right (RB+RT reads
-as R1 as well as the dash and R2) — and confirm (CROSS) on the left half is L3
-rather than LB there, since CROSS also backs a spectator out of the reel. Rumble
-follows the halves — XInput's strong motor is the left grip, the weak one the
-right — and a half's effect carries the other's still running magnitude along,
-so a game-wide buzz reaches both grips. Every Legion-id pad is split, or, when
-nothing names itself, the lowest-index standard pad; every other pad passes
-through at its index with all its keys, and cross-origin games get
-`{ type: 'cmg-splitpads-set', value, profile }` to apply it themselves. Legion
-Space's _dual DInput_ mode, where the halves enumerate as two DirectInput pads
-of their own, is a different animal: those arrive non-standard and want the
-mapping wizard.
+**Two players: tap View (Select) instead of Menu.** That one tap is the whole
+gesture — the launcher never guesses from what the buttons are doing. It claims
+the right half for player 2 and presses Start on the players' behalf (a 150 ms
+hold on the left pad, one edge for a game polling per frame): Sh'M↑ Party starts
+a run with a player on each stick and auto-aim on; in 2028.Ai the same pulse
+presses A on the new right half, which seats player 2 through the game's own
+join-in, with its two-player gate opened over `cmg-splitpads-set` (the stock
+game otherwise wants `?players=2`; a hand edit to `game.bundle.js`, listed
+above). The tap is the _release_: View is also the launcher's chord button
+(View + Down, R or L2 opens the Guide in-game, View alone backs out of it) and
+the frame sees View the moment it goes down, so a hold that ever carried a
+partner, or ran while the Guide was open, claims nothing. Until View is tapped
+the left pad is the whole controller (the right stick rides on its axes 2/3,
+Menu on its slot 9), so Menu alone is single-player exactly as before and a solo
+player on a Legion with the halves still attached, where the mode is nonetheless
+the default, loses nothing. Tapped mid-run, it is a join-in: player 2 appears
+and the Start it presses pauses the game, which Menu resumes. View itself never
+reaches the game while the pad is split — it is the launcher's — so a stray
+press cannot restart a Sh'M↑ Party run; Menu does the results-screen and
+continue-screen jobs View used to. The claim lasts as long as the pad does; the
+Guide toggle starts over. Each half's trigger reads as both L2 and R2, so
+2028.Ai's OPTION ring is on LT for player 1 and RT for player 2; L3 doubles as
+R3, the level-editor button. Sh'M↑ Party's auto-aim is its own CROSS/R2 cabinet
+mode: the split view holds R2 on a half for as long as that half has been
+touched in the last 10 s (a half has no second stick to aim with) and lets go
+after, so the title still idles into attract mode; the right half's stick also
+writes the D-pad past 0.7, so the perk picker (LEFT/RIGHT) can be worked from
+it; and Menu sits on the right half alone there, because the game toggles pause
+once per port and two ports pressing START in one frame would cancel out. In the
+demo reel a half joins with its two shoulder buttons together — LB+LT on the
+left, RB+RT on the right (RB+RT reads as R1 as well as the dash and R2) — and
+confirm (CROSS) on the left half is L3 rather than LB there, since CROSS also
+backs a spectator out of the reel. Rumble follows the halves — XInput's strong
+motor is the left grip, the weak one the right — and a half's effect carries the
+other's still running magnitude along, so a game-wide buzz reaches both grips.
+Every Legion-id pad is split, or, when nothing names itself, the lowest-index
+standard pad; every other pad passes through at its index with all its keys, and
+cross-origin games get `{ type: 'cmg-splitpads-set', value, profile }` to apply
+it themselves. Legion Space's _dual DInput_ mode, where the halves enumerate as
+two DirectInput pads of their own, is a different animal: those arrive
+non-standard and want the mapping wizard.
 
 **FPS mode.** The switch on the Go's right half turns it into a mouse and the
 left half into a keyboard (stick → WASD). Whether the gamepad disappears when
@@ -1593,14 +1605,14 @@ too. A same-origin game holds keyboard focus, so a passive listener inside the
 frame is what hears those keys; a real keyboard on a docked Legion reads the
 same and gets the same, harmlessly. `?paddebug=1` prints the launcher's Legion /
 split / FPS-mode verdict, which pads the split view targets and which right
-halves are claimed, and — in-game — the frame's URL, whether its `getGamepads`
-is patched, how many pads the launcher and the frame each see, where the last
-split read took its pads from (some engines hand gamepad data only to the
-focused document, so the frame falls back to its own view when the launcher's is
-empty), the halves it produced, and whether 2028.Ai acknowledged the two-player
-gate (`cmg-splitpads-ack`); `tests/gamepad_pads_test.ts` pins the split view's
-slots to 2028.Ai's own button tables (and Sh'M↑ Party's, as constants), and
-`tests/host_device_test.ts` the machine classification.
+halves View has claimed, and — in-game — the frame's URL, whether its
+`getGamepads` is patched, how many pads the launcher and the frame each see,
+where the last split read took its pads from (some engines hand gamepad data
+only to the focused document, so the frame falls back to its own view when the
+launcher's is empty), the halves it produced, and whether 2028.Ai acknowledged
+the two-player gate (`cmg-splitpads-ack`); `tests/gamepad_pads_test.ts` pins the
+split view's slots to 2028.Ai's own button tables (and Sh'M↑ Party's, as
+constants), and `tests/host_device_test.ts` the machine classification.
 
 ## Emulators (opt-in)
 

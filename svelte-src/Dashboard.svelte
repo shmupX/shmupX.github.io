@@ -1883,20 +1883,22 @@
   // CMGGamepadCompat.splitPads, the same seam Twin-Stick Mode uses. Twin-Stick
   // Mode's own D-pad/face re-expression stands down while the pad is split:
   // the halves already are that expression, and its faces→aim rewrite would
-  // turn the halves' buttons into aim. The right half exists only once one of
-  // its buttons has been pressed; until then the left pad is the whole
-  // controller, so a solo player on a Legion — where the mode is the default,
-  // attached or not, since nothing can tell — loses nothing until a second
-  // player actually presses something on the right half.
+  // turn the halves' buttons into aim. The right half exists only once View
+  // (Select) has been tapped instead of Menu — the two-player gesture, which
+  // also presses Start on the players' behalf (the tap is the release, so
+  // the launcher's own View + Down Guide chord is never mistaken for it);
+  // until then the left pad is the whole controller, so a solo player on a
+  // Legion — where the mode is the default, attached or not, since nothing
+  // can tell — loses nothing, and Menu alone is single-player as ever.
   //
-  // 2028-ai: player 1 flies the left stick and bombs with LB, player 2 joins
-  // with any right-half button, flies the right stick, bombs with RB or A,
-  // and A/View return either player to the title from the results. The
-  // game's own two-player gate (?players=2, or a save's 2P bit) is opened for
-  // it over cmg-splitpads-set. Sh'M↑ Party (a Twin-Stick game) gets the
-  // "twinstick" profile: dash on LB/RB, weapon cycle on LT/Y, and
-  // auto-aim-and-fire held for each half while its player is at the controls,
-  // since a half has no stick left to aim with.
+  // 2028-ai: player 1 flies the left stick and bombs with LB, player 2 (seated
+  // by the claim's own A press through the game's join-in) flies the right
+  // stick, bombs with RB or A, and A/Menu return either player to the title
+  // from the results. The game's own two-player gate (?players=2, or a save's
+  // 2P bit) is opened for it over cmg-splitpads-set. Sh'M↑ Party (a
+  // Twin-Stick game) gets the "twinstick" profile: dash on LB/RB, weapon
+  // cycle on LT/Y, and auto-aim-and-fire held for each half while its player
+  // is at the controls, since a half has no stick left to aim with.
   //
   // gamepad-support.js is told too (setSplitPadsActive), so the keys it
   // synthesizes for the right half's buttons — player 1's Space, C, E, T, G,
@@ -2222,7 +2224,10 @@
     splitDiag.source = source;
     splitDiag.pads = Array.prototype.filter.call(pads, (p) => p && p.connected).length;
     if (splitPadsLive()) {
-      pads = compat.splitPads(pads, { profile: twinStickAvail ? 'twinstick' : 'generic' });
+      // View is the two-player tap in the split view — and this launcher's
+      // own chord button (View + Down opens the Guide in-game, View alone
+      // backs out of it), so while the Guide is up View is spoken for.
+      pads = compat.splitPads(pads, { profile: twinStickAvail ? 'twinstick' : 'generic', viewTaken: osdOpen });
       const halves = [];
       for (const p of pads) if (p && p.__cmgSplitHalf) halves.push('#' + p.index + p.__cmgSplitHalf);
       splitDiag.halves = halves.join(' ');
