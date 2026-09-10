@@ -18,8 +18,8 @@ import { detectHostDevice } from "../../lib/host-device.ts";
 // answers that box alone: a client on loopback, or one whose address is the
 // very address it asked for (the desktop binary bound to a LAN address with
 // SHMUPX_HOST, opened in its own window), and never a request that came
-// through a proxy (the dev tunnel's ngrok agent connects from loopback but
-// stamps X-Forwarded-For). A phone on the tunnel, or a second PC on the LAN
+// through a proxy (the dev tunnel — Tailscale Funnel or Serve, scripts/dev.ts
+// — connects from the local daemon but stamps X-Forwarded-For). A phone on the tunnel, or a second PC on the LAN
 // address, is told "not available" rather than the Legion's verdict. The
 // hosted deploy answers "not available" without looking, and the Fetch
 // Metadata gate keeps a cross-site page from reading which hardware the user
