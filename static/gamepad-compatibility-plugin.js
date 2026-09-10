@@ -671,23 +671,42 @@
   //   left half  → "<id> [L]" at the pad's own index. axes 0/1 = left stick;
   //                12-15 = D-pad; 4 = LB, and 0 = LB as well so the half has
   //                a confirm button; 6 AND 7 = LT (both triggers, so a game
-  //                reading either finds it); 8 = View; 10 = L3, and 11 = L3
-  //                as well (2028-ai's level-editor button is R3).
+  //                reading either finds it); 10 = L3, and 11 = L3 as well
+  //                (2028-ai's level-editor button is R3). View is not here:
+  //                it is the launcher's (below).
   //   right half → "<id> [R]" at index + SPLIT_INDEX_OFFSET (Chrome hands
   //                real pads 0-3, so it never collides). axes 0/1 = the RIGHT
   //                stick — it is this player's movement stick; 0-3 = ABXY;
   //                5 = RB; 6 AND 7 = RT; 9 = Menu; 11 = R3.
   //
-  // The right half exists only once it has been CLAIMED — a press on one of
-  // its buttons (ABXY, RB, RT, R3; the sticks never claim, nor does Menu) —
-  // and then stays for as long as the physical pad does. Until then the left
-  // pad is the whole controller for the one player holding it: the right
-  // stick rides on its axes 2/3 (Sh'M↑ Party's aim stick) and Menu on its
-  // slot 9. Split mode is the launcher's default on a Legion Go whether or
-  // not the halves are apart — nothing can tell — so a solo player who keeps
-  // to the sticks, the D-pad and the left half's buttons never spawns a
-  // player 2; a face or right-shoulder press hands that half to player 2,
-  // which is exactly what a second player's first press must do.
+  // The right half exists only once it has been CLAIMED, and the claim is a
+  // deliberate gesture rather than a guess from what the buttons are doing:
+  // VIEW (Select) tapped instead of Menu. The tap — View released with
+  // nothing chorded onto it — claims the right half for player 2 and presses
+  // a button on the players' behalf for START_PULSE_MS, so the game sees one
+  // edge: in the twinstick profile Start on the left pad, and Sh'M↑ Party
+  // starts a run with a player on each stick; in the generic profile A on
+  // the new right half, on which 2028-ai's title starts (any pad's face
+  // button does) and whose run then opens with player 2 seated because the
+  // right half is there — while mid-run that same A press is the game's own
+  // join-in, and Start would only raise the launcher's Guide. The half then
+  // stays for as long as the physical pad does (the launcher's Guide toggle
+  // starts over). Until it is claimed the left pad is the whole
+  // controller for the one player holding it: the right stick rides on its
+  // axes 2/3 (Sh'M↑ Party's aim stick) and Menu on its slot 9, and Menu alone
+  // starts single-player exactly as before. Split mode is the launcher's
+  // default on a Legion Go whether or not the halves are apart — nothing can
+  // tell — and that is fine: nothing changes until somebody taps View.
+  //
+  // View is the launcher's own chord button — View + Down (or R / L2) opens
+  // the Guide in-game, and View alone backs out of it — and the game frame
+  // is handed the pad the moment View goes down, before any partner. So the
+  // claim waits for the release, and a hold that ever carried a partner, or
+  // that was the launcher's at any poll, the release included (`viewTaken`:
+  // its Guide open, or a View the Guide closed on and not yet let go of), is
+  // no tap. View itself never reaches the game while the pad is split — it
+  // is the launcher's — so a stray press cannot restart a Sh'M↑ Party run;
+  // Menu does the results-screen job View used to in 2028-ai.
   //
   // Menu: on both halves in the generic profile (2028-ai pauses only on
   // player 1's Start and ignores player 2's during play); on the right half
@@ -726,10 +745,20 @@
   // ...and this far is a D-pad press, for the right half's synthesized D-pad.
   const SPLIT_DPAD_AT = 0.7;
   const AUTO_FIRE_IDLE_MS = 10000;
-  const LEFT_HALF_SLOTS = [4, 6, 8, 10, 12, 13, 14, 15];
-  const RIGHT_HALF_CLAIM_SLOTS = [0, 1, 2, 3, 5, 7, 11];
-  // "index:id" -> { rightLive, leftAt, rightAt }. Pads gone from the list are
-  // forgotten, so a reconnected controller starts over with no right half.
+  // How long the press View makes on the players' behalf (Start or A, by
+  // profile) is held: a few frames, so a game polling once a frame sees
+  // exactly one edge.
+  const START_PULSE_MS = 150;
+  const LEFT_HALF_SLOTS = [4, 6, 10, 12, 13, 14, 15];
+  const RIGHT_HALF_SLOTS = [0, 1, 2, 3, 5, 7, 11];
+  // The launcher's View chords: View + D-pad Down (or the left stick down),
+  // View + R, View + L2 — held with View, they make the hold a chord, not
+  // the two-player tap.
+  const VIEW_CHORD_SLOTS = [5, 6, 13];
+  const VIEW_CHORD_STICK = 0.5;
+  // "index:id" -> { rightLive, leftAt, rightAt, viewWas, viewChord,
+  // pulseUntil }. Pads gone from the list are forgotten, so a reconnected
+  // controller starts over with no right half.
   const splitState = new Map();
 
   function snapshotButton(b) {
@@ -813,11 +842,18 @@
     return targets.map((p) => p.index);
   }
 
-  function splitOne(pad, profile, now) {
+  function splitOne(pad, profile, now, viewTaken) {
     const key = pad.index + ":" + (pad.id || "");
     let st = splitState.get(key);
     if (!st) {
-      st = { rightLive: false, leftAt: -Infinity, rightAt: -Infinity };
+      st = {
+        rightLive: false,
+        leftAt: -Infinity,
+        rightAt: -Infinity,
+        viewWas: false,
+        viewChord: false,
+        pulseUntil: 0,
+      };
       splitState.set(key, st);
     }
     const b = pad.buttons || [];
@@ -825,16 +861,31 @@
     const pr = (i) => !!(b[i] && b[i].pressed);
     const axis = (i) => (typeof ax[i] === "number" && Math.abs(ax[i]) <= 1.05 ? ax[i] : 0);
     const lx = axis(0), ly = axis(1), rx = axis(2), ry = axis(3);
-    const claimNow = RIGHT_HALF_CLAIM_SLOTS.some(pr);
+    // View tapped instead of Menu: the claim, and a press on their behalf.
+    // A hold is a tap only if nothing was ever chorded onto it and it was
+    // never the launcher's, the release included (see above).
+    const viewNow = pr(8);
+    if (viewNow) {
+      if (!st.viewWas) st.viewChord = false;
+      if (viewTaken || VIEW_CHORD_SLOTS.some(pr) || ly > VIEW_CHORD_STICK) {
+        st.viewChord = true;
+      }
+    } else if (st.viewWas && !st.viewChord && !viewTaken && !st.rightLive) {
+      st.rightLive = true;
+      st.leftAt = now;
+      st.rightAt = now;
+      st.pulseUntil = now + START_PULSE_MS;
+    }
+    st.viewWas = viewNow;
+    const pulse = now < st.pulseUntil;
     // Menu belongs to the left pad until the right half is claimed (see
     // below), so until then a Menu press is that player at the controls.
     const leftActive = LEFT_HALF_SLOTS.some(pr) || (!st.rightLive && pr(9)) ||
       Math.abs(lx) > SPLIT_STICK_LIVE || Math.abs(ly) > SPLIT_STICK_LIVE;
-    const rightActive = claimNow || pr(9) ||
+    const rightActive = RIGHT_HALF_SLOTS.some(pr) || pr(9) ||
       Math.abs(rx) > SPLIT_STICK_LIVE || Math.abs(ry) > SPLIT_STICK_LIVE;
     if (leftActive) st.leftAt = now;
     if (rightActive) st.rightAt = now;
-    if (claimNow) st.rightLive = true;
     const claimed = st.rightLive;
     const twin = profile === "twinstick";
     const fireL = twin && now - st.leftAt < AUTO_FIRE_IDLE_MS;
@@ -851,7 +902,7 @@
     // in 2028-ai either way — and L3 in the twinstick profile (see above).
     left[0] = snapshotButton(twin ? b[10] : b[4]);
     left[4] = snapshotButton(b[4]);
-    left[8] = snapshotButton(b[8]);
+    // View (8) stays with the launcher — it is the two-player gesture.
     left[10] = snapshotButton(b[10]);
     left[11] = snapshotButton(b[10]); // ...and as R3, the level-editor button
     for (let d = 12; d <= 15; d++) left[d] = snapshotButton(b[d]);
@@ -862,9 +913,12 @@
       left[6] = snapshotButton(b[6]);
       left[7] = snapshotButton(b[6]);
     }
-    // Menu: player 1's pause in the generic profile, and the whole pad's
-    // Start until the right half has been claimed.
-    if (!twin || !claimed) left[9] = snapshotButton(b[9]);
+    // Menu: player 1's pause in the generic profile, the whole pad's Start
+    // until the right half has been claimed — and, in the twinstick profile
+    // for START_PULSE_MS after the claim, the Start that View pressed on the
+    // players' behalf (Sh'M↑ Party's title starts on it, and a run in
+    // progress takes a hotplugged port by itself).
+    left[9] = button((twin && pulse) || ((!twin || !claimed) && pr(9)));
     // Anything past the standard 17 (a Stadia's Capture/Assistant, a pad's
     // Home) belongs to player 1's half.
     for (let i = 16; i < b.length; i++) left[i] = snapshotButton(b[i]);
@@ -887,6 +941,11 @@
       right[5] = snapshotButton(b[5]);
       right[6] = snapshotButton(b[7]);
       right[7] = snapshotButton(b[7]);
+      // The claim's A press: 2028-ai's title starts on any pad's face button
+      // and its run then seats player 2 for the right half that is there;
+      // mid-run, a second pad's face button is its join-in. (Start instead
+      // would be player 1's pause, which raises the launcher's Guide.)
+      if (pulse) right[0] = button(true);
     }
 
     const half = (suffix, index, axes, buttons, side) => ({
@@ -924,6 +983,8 @@
     const o = opts || {};
     const profile = o.profile === "twinstick" ? "twinstick" : "generic";
     const now = typeof o.now === "number" ? o.now : Date.now();
+    // The launcher has View for itself right now (its Guide is open).
+    const viewTaken = !!o.viewTaken;
     const list = pads ? Array.prototype.slice.call(pads) : [];
     const targetIndices = new Set(splitTargets(list));
     const targets = list.filter((p) => p && targetIndices.has(p.index));
@@ -941,7 +1002,7 @@
     const seen = new Set();
     for (const p of targets) {
       seen.add(p.index + ":" + (p.id || ""));
-      const halves = splitOne(p, profile, now);
+      const halves = splitOne(p, profile, now, viewTaken);
       out[p.index] = halves.leftPad;
       const r = halves.rightPad;
       if (!r) continue;
@@ -969,7 +1030,7 @@
   }
 
   const api = {
-    version: "1.5.0",
+    version: "1.6.0",
     install,
     isSnesPad,
     isStadiaPad,
