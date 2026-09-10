@@ -169,7 +169,7 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
 ## Tasks
 
 ```sh
-deno task dev             # vite dev server (+ ngrok tunnel when available)
+deno task dev             # vite dev server (+ a Tailscale Funnel URL when available)
 deno task build           # manifest + dashboard + engine bundle + vite build
 deno task start           # serve the production build (_fresh/server.js)
 deno task test            # shmup-engine tests
@@ -202,6 +202,35 @@ deno task netplay:bundle  # bundle the online-2P browser client
 deno task netplay:generate  # regenerate its bindings from the module
 deno task netplay:publish   # publish the module (needs `spacetime login`)
 ```
+
+### Sharing the dev server
+
+`deno task dev` publishes the Vite server through
+[Tailscale](https://tailscale.com) once it is up, so a phone or a handheld can
+open it over HTTPS (the Gamepad API wants a secure context) — the tunnel that
+ngrok used to provide, with nobody else in the path. `scripts/dev.ts` runs
+`tailscale funnel <port>` in the foreground, which publishes
+`https://<machine>.<tailnet>.ts.net` to the internet for exactly as long as the
+dev server runs, and prints it in the banner; `lib/tailscale.ts` is the pure
+half (`tests/tailscale_test.ts`). It is best-effort: with Tailscale missing,
+logged out, or Funnel not enabled, the console says what to do and localhost
+still works.
+
+- Install Tailscale on the dev machine and log in (`tailscale up`). The macOS
+  app and the Windows installer keep the CLI off PATH; both places are tried.
+- **Funnel** (the default, public) needs HTTPS certificates enabled for the
+  tailnet (admin console → DNS) and the `funnel` node attribute in the tailnet
+  policy; when it is missing, the CLI's own enable link is printed and the dev
+  server falls back to **Serve**.
+- **Serve** (`SHMUPX_TUNNEL=serve`) gives the same URL to devices on your
+  tailnet only. The other device joins the tailnet with an invite from the admin
+  console (Users → Invite); put that link in `TAILSCALE_INVITE_URL` and the
+  banner prints it beside the URL. It is a credential — environment only, never
+  the repo.
+- `SHMUPX_TUNNEL=off` skips the tunnel.
+
+Through either tunnel `/api/host` answers "not available" — the request is
+forwarded, and the machine it would describe is the server's, not the phone's.
 
 ## The Dezaemon 2 palette
 
