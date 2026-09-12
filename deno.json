@@ -38,6 +38,7 @@
     "deza:meshlib": "deno run -A scripts/build-mesh-library.ts",
     "deza:palette": "deno run -A scripts/build-palette.ts",
     "tonebank:table": "deno run -A scripts/build-tone-bank-table.ts",
+    "mcp:character": "deno run -A --node-modules-dir=none mcp/server.ts",
     "dashboard:build": "deno run -A scripts/build-dashboard.ts",
     "engine:bundle": "deno run -A scripts/build-engine.ts",
     "netplay:bundle": "deno run -A scripts/build-netplay.ts",
@@ -86,7 +87,9 @@
     "@std/fs": "jsr:@std/fs@^1.0.0",
     "@std/http": "jsr:@std/http@^1.1.3",
     "@std/encoding": "jsr:@std/encoding@^1.0.0",
-    "@std/cli": "jsr:@std/cli@^1.0.0"
+    "@std/cli": "jsr:@std/cli@^1.0.0",
+    "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@~1.29.0",
+    "zod": "npm:zod@^4.4.3"
   },
   "compilerOptions": {
     "lib": [
