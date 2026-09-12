@@ -2132,6 +2132,7 @@
       "packages/shmup-harbor": {
         "dependencies": [
           "jsr:@easierbycode/svelte-ps2@^1.1.0",
+          "jsr:@shmupx/shmup-engine@0.4",
           "jsr:@std/assert@1",
           "jsr:@std/cli@1",
           "jsr:@std/encoding@1",
