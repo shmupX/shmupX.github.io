@@ -13,6 +13,8 @@ import {
   ANIM_PERIOD_TABLE,
   appearanceFires,
   BIG_SHOT_BANDS,
+  BULLET_STEERING,
+  bulletSteering,
   decodeBigShot,
   decodeEnemyRecord,
   DIRECTION_TABLE,
@@ -197,6 +199,47 @@ Deno.test("rotation: start == end is a whole circle, and modes 3-4 seize the rep
   const track = decodeEnemyRecord(rec("000000000000000000240420000000000000"));
   assertStrictEquals(track.rotation.repeat, 4);
   assertStrictEquals(track.rotation.repeatName, "track");
+});
+
+Deno.test("geometries 8 and 9 hand their shots a steering state", () => {
+  // Neither one homes. 8 stamps state 19 on all five of its fan — fly 64 px,
+  // then snap to the volley's centre heading. 9 fires one shot and stamps 17
+  // or 18 by the aim bit: a facing shot splits along its own heading at
+  // 64 px, an aimed one re-aims and splits wider at 96 px.
+  assertStrictEquals(bulletSteering(8, false), BULLET_STEERING.KINK);
+  assertStrictEquals(bulletSteering(8, true), BULLET_STEERING.KINK);
+  assertStrictEquals(bulletSteering(9, false), BULLET_STEERING.SPLIT);
+  assertStrictEquals(bulletSteering(9, true), BULLET_STEERING.SPLIT_AIMED);
+  for (const g of [0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 15]) {
+    assertStrictEquals(bulletSteering(g, false), null, `geometry ${g}`);
+  }
+
+  // b5 = 0x08 -> geometry 8, aim bit clear; b5 = 0x19 -> geometry 9 aimed.
+  const kink = decodeEnemyRecord(rec("000000000008000000000000000000000000"));
+  assertStrictEquals(kink.fire.geometry, 8);
+  assertStrictEquals(kink.fire.steering, 19);
+  const aimedSplit = decodeEnemyRecord(
+    rec("000000000019000000000000000000000000"),
+  );
+  assertStrictEquals(aimedSplit.fire.geometry, 9);
+  assertStrictEquals(aimedSplit.fire.aimed, true);
+  assertStrictEquals(aimedSplit.fire.steering, 18);
+  const facingSplit = decodeEnemyRecord(
+    rec("000000000009000000000000000000000000"),
+  );
+  assertStrictEquals(facingSplit.fire.steering, 17);
+  // An ordinary geometry carries none, and neither does a big shot, whose
+  // byte 5 is art rather than a geometry selector.
+  assertStrictEquals(
+    decodeEnemyRecord(rec("000000000003000000000000000000000000")).fire
+      .steering,
+    null,
+  );
+  assertStrictEquals(
+    decodeEnemyRecord(rec("000000000308000000000000000000000000")).fire
+      .steering,
+    null,
+  );
 });
 
 Deno.test("fire config: interval tables select on mode", () => {

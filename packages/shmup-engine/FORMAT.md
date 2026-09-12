@@ -972,13 +972,45 @@ tests in the 320-wide grid space, so an enemy may fire anywhere visible):
   1/256-circle units, every shot same origin and speed): **0** = empty (the
   enemy never fires — most of a stage's roster); **1/10** = single; **2** =
   ±8 pair; **3** = 0,±8; **4** = 0,±16; **5** = ±8,±24 (no center); **6** =
-  0,±8,±16; **7** = 0,±16,±32; **8** = the same 5-fan with bullet state 19 +
-  a stored steer target (curving shots); **9** = single with homing state
-  (18 aimed / 17 facing); **11** = single, jitter `(rand&31)−16`; **12** =
+  0,±8,±16; **7** = 0,±16,±32; **8** = the same 5-fan, every shot in
+  **bullet state 19** with the volley's CENTRE heading stored beside it;
+  **9** = a single **delayed-split** shot, not a homing one (state 18 aimed,
+  17 facing) — see "Bullet steering states" below; **11** = single, jitter `(rand&31)−16`; **12** =
   single stepping the `+0x22064` spiral table; **13** = ±64 perpendicular
   pair; **14** = 0,±64,128 cross; **15** = 8-way star (0,±32,±64,±96,128).
   This same table serves the BOSS fire-point "shot function" (executor
-  `+0x19FF4`; boss nibbles 9/10/11 route to boss burst handlers instead).
+  `+0x19FF4`; boss nibbles **10/11/12** route to boss burst handlers instead,
+  exactly like the zako path — this file said 9/10/11 until 2026-09-12, which
+  wrongly put geometry 9 out of a boss's reach. The dispatcher table at
+  `0x0607E050` sends 1-9 to the ordinary shot routine, and the corpus has 84
+  boss fire points on geometry 8 and 43 on geometry 9 across 62 saves).
+**Bullet steering states 17 / 18 / 19.** Every object carries a STATE byte at
+`0x0608F340[slot]`, and the master walker (`0x0606B91C`) runs
+`u32[0x06084590 + 4*(state & 0x7F)]` on it every frame. State 16
+(`0x0607B410`) is the plain bullet; 17, 18 and 19 each call state 16 first and
+act only if it reports the bullet still alive. **None of them homes.** Each is
+one action fired ONCE, on a fixed distance TRAVELLED: the per-bullet
+accumulator `0x0608DFF0[slot*2]` (zero at spawn) gains the speed word
+`0x0608E590[slot*2]` every alive frame, and a position unit is 1/128 px, so
+the thresholds are plain pixel counts. No acceleration, no turn rate, no
+tracking between spawn and the trigger.
+
+| State | Trigger | Action |
+|-------|---------|--------|
+| **19** | 64 px (`> 0x4000`) | heading := the stored steer target, velocity recomputed at the same speed, then state := 16. One kink, and it flies straight for ever after. Position and speed untouched. |
+| **17** | 64 px | the bullet DIES and becomes geometry 6's 0,±8,±16 five-fan along its own heading, at its own speed, in the next bullet config. |
+| **18** | 96 px (`> 0x5FFF`) | the same split RE-AIMED at the player and wider — aim, aim±16, aim±32 — re-running the aim helper at the split point. With no player object (`u16[0x06094238]` zero) it falls back to exactly 17. |
+
+Only two geometries stamp them. **Geometry 8** writes 19 into all five of its
+shots plus the volley's centre heading into `0x06091350[slot*2]`, so its fan
+opens for 64 px and then every shot snaps parallel — the "curve" this file
+used to describe. **Geometry 9** fires one shot and writes 17 or 18 by the aim
+bit, which is self-consistent: an aimed shot re-aims when it splits, a facing
+shot splits along its own heading. Children spawn in state 16 and never split
+again, so the burst does not compound. Nothing else in the engine writes these
+three values. *(Traced 2026-09-12; the runtime flew all of them straight
+until then.)*
+
   **`b5 & 0x10` aims the volley at the player** (octant-folded atan2 via
   `+0x183d0`, re-computed EVERY volley so bursts track a moving player;
   suppressed within a (size+36) px point-blank box of the player); without

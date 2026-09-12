@@ -154,6 +154,38 @@ export function decodeBigShot(b5) {
 // still open, so they are numbered rather than named.
 export const SPECIAL_FIRE_PATTERNS = { 10: 0, 11: 1, 12: 2 };
 
+// BULLET STEERING STATE. Two of the sixteen fire geometries do not hand the
+// engine an ordinary bullet: they stamp a steering state into the object's
+// state byte `0x0608F340`, and the master walker then runs that state's
+// handler out of the 128-entry table at `0x06084590` instead of the plain
+// bullet's. Three states exist, and none of them homes — each is the plain
+// bullet plus ONE action fired once, on a fixed distance TRAVELLED (the
+// per-bullet accumulator `0x0608DFF0` gains the speed word every alive frame,
+// and position units are 1/128 px, so the thresholds are plain pixel counts):
+//
+//   19  at 64 px, snap the heading to the volley's CENTRE and revert to the
+//       plain bullet. One kink, not a curve. Geometry 8 stamps this into all
+//       five of its shots and stores that centre heading alongside.
+//   17  at 64 px, the bullet DIES and becomes geometry 6's 0/±8/±16 five-fan
+//       along its own heading, at its own speed, in the next bullet config.
+//   18  at 96 px, the same split but RE-AIMED at the player, and wider:
+//       aim, aim±16, aim±32. With no player object it falls back to 17.
+//
+// Geometry 9 fires one shot and stamps 17 or 18 by the aim bit: an aimed shot
+// re-aims when it splits, a facing shot splits along its own heading.
+export const BULLET_STEERING = Object.freeze({ KINK: 19, SPLIT: 17, SPLIT_AIMED: 18 });
+
+/**
+ * The steering state a geometry hands its shots, or null for the plain bullet.
+ * @param {number} geometry `b5 & 0xF`
+ * @param {boolean} aimed   the `b5 & 0x10` aim bit
+ */
+export function bulletSteering(geometry, aimed) {
+    if (geometry === 8) return BULLET_STEERING.KINK;
+    if (geometry === 9) return aimed ? BULLET_STEERING.SPLIT_AIMED : BULLET_STEERING.SPLIT;
+    return null;
+}
+
 // Per-channel step tables, 8.8 fixed point value-units per frame.
 export const FACTOR_STEP_TABLE = [16, 32, 64, 128, 256, 384, 512, 1024];
 export const ROTATION_STEP_TABLE = [16, 32, 64, 128, 256, 512, 1024, 2048];
@@ -398,6 +430,11 @@ export function decodeEnemyRecord(bytes) {
             // the fire routine to burst handlers (+0x193d0/+0x19538/+0x196a8):
             // 10 = 4 volleys one fire-tick apart, 11 = 5 jittered volleys,
             // 12 = 16 shots on consecutive frames — the rotating spiral.
+            // 8 and 9 additionally stamp a STEERING STATE on what they fire:
+            // 8's fan flies 64 px and then snaps parallel to the volley's
+            // centre, and 9's single shot bursts into five after 64 px (96 px
+            // and re-aimed when the aim bit is set). Neither one homes — see
+            // bulletSteering() above.
             // Bit 4 (0x10) aims the volley at the player (re-aimed every
             // shot); otherwise shots leave along the enemy's facing.
             geometry: (b[4] & 3) === BIG_SHOT_TYPE ? null : (b[5] & 0x0f),
@@ -407,6 +444,10 @@ export function decodeEnemyRecord(bytes) {
                 ? 0
                 : (SPECIAL_FIRE_PATTERNS[b[5] & 0x0f] !== undefined ? 0 : (b[5] & 0x1f)),
             directionEx: (b[5] >> 5) & 7,
+            // Which steering state this geometry's shots carry, if any.
+            steering: (b[4] & 3) === BIG_SHOT_TYPE
+                ? null
+                : bulletSteering(b[5] & 0x0f, (b[5] & 0x10) !== 0),
         },
         death: decodeDeathWord(b),
         zoom: channel(b[6], b[7], b[8], {

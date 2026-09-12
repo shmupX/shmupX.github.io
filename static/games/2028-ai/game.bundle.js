@@ -4487,9 +4487,9 @@
     return ((fire.direction || 0) & 16) !== 0;
   }
   // The engine's 16-entry bullet-geometry table (0x6086074), angle deltas in
-  // 1/256-circle units. 8 fires the same fan as 7 but with curving bullets
-  // and 9 is a homing single — both fly straight here until the bullet
-  // steering states (17/18/19) are traced. 11 jitters, 12 spirals (below).
+  // 1/256-circle units. 11 jitters, 12 spirals (below). 8 and 9 additionally
+  // stamp a STEERING STATE on what they fire — see DEZA_STEER below; neither
+  // of them homes, which is what this file assumed until 2026-09-12.
   var GEOMETRY_SPREADS = {
     1: [0],
     2: [-8, 8],
@@ -4509,6 +4509,25 @@
   // stepping 22.5 degrees per shot through the full circle.
   var SPIRAL_DELTAS = [192, 208, 224, 240, 0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176];
   var ANGLE_UNIT = Math.PI * 2 / 256;
+  // BULLET STEERING STATES 17 / 18 / 19 — the engine's per-object state table
+  // at 0x06084590, entries 17-19, each of which wraps the plain bullet
+  // (state 16) and adds ONE action. None of them homes: the action is a
+  // one-shot trigger on a fixed distance TRAVELLED. The per-bullet
+  // accumulator 0x0608DFF0 gains the speed word every frame the bullet is
+  // alive, and a position unit is 1/128 px, so the thresholds 0x4000 and
+  // 0x5FFF are 64 px and 96 px of flight. There is no acceleration, no turn
+  // rate and no target tracking between spawn and the trigger.
+  //
+  // This runtime's bullets fly at twice the engine's pixel rate to cross a
+  // playfield twice as tall, so the same distances are 128 and 192 px here.
+  var DEZA_STEER = { KINK: 19, SPLIT: 17, SPLIT_AIMED: 18 };
+  var DEZA_STEER_PX = 2;                  // runtime px per engine px of flight
+  var DEZA_STEER_DIST = 64 * DEZA_STEER_PX;
+  var DEZA_STEER_DIST_AIMED = 96 * DEZA_STEER_PX;
+  // State 17 and state 18's no-player fallback both burst into geometry 6.
+  var DEZA_STEER_SPLIT_SPREAD = [0, -8, 8, -16, 16];
+  // State 18's aimed burst is wider, and is NOT geometry 6.
+  var DEZA_STEER_AIMED_SPREAD = [0, -16, 16, -32, 32];
   function ridesTheMap(movePattern) {
     return movePattern === 4 || (movePattern & 3) === 2;
   }
@@ -5106,6 +5125,14 @@
     var atlas = art && art.length ? scene.textures.get("game_asset") : null;
     if (!(atlas && atlas.has(art[0]))) art = null;
     if (!art) ensureZakoBulletTexture(scene);
+    // A steering state is a property of the GEOMETRY, so a volley re-fired by
+    // one of the burst handlers carries whatever its own geometry says. The
+    // decoder hands it over on the record; derive it when an older recipe
+    // does not carry the field.
+    var steerState = fire.steering != null ? fire.steering
+      : geom === 8 ? DEZA_STEER.KINK
+      : geom === 9 ? (aimed ? DEZA_STEER.SPLIT_AIMED : DEZA_STEER.SPLIT)
+      : null;
     var fireOne = function(a) {
       var bullet = shootFn(scene, enemy, Math.sin(a), -Math.cos(a));
       if (!bullet) return;
@@ -5119,6 +5146,19 @@
         bullet.setData("frames", null);
       }
       bullet.setData("speed", speed / SATURN_TICKS_PER_FRAME);
+      // Geometries 8 and 9 stamp a steering state on what they fire. The
+      // state needs the volley's CENTRE heading, not the shot's own, because
+      // that is what state 19 snaps to — the engine stores it per shot in
+      // 0x06091350 at spawn time for exactly this reason.
+      if (steerState) {
+        bullet.setData("dezaSteer", {
+          state: steerState,
+          target: base,
+          dist: 0,
+          cfg: fire.mode,
+          owner: enemy
+        });
+      }
     };
     if (geom === 11) {
       // burst handler 11: each shot jittered by (rand&31)-16 units
@@ -5130,6 +5170,75 @@
       var spread = GEOMETRY_SPREADS[geom] || [0];
       for (var i = 0; i < spread.length; i++) fireOne(base + spread[i] * ANGLE_UNIT);
     }
+  }
+  // Run one alive frame of a steered bullet. Returns false when the bullet
+  // has consumed itself (states 17 and 18 kill the parent), true otherwise.
+  //
+  // The engine accumulates the SPEED WORD per frame and compares it against a
+  // distance; the same thing here is the runtime distance flown, because the
+  // runtime moves the bullet by its own speed each tick. The trigger fires
+  // exactly once: state 19 reverts the bullet to a plain one, and 17 and 18
+  // destroy it.
+  function stepDezaSteeredBullet(scene, bullet) {
+    var sd = bullet.getData("dezaSteer");
+    if (!sd) return true;
+    var spd = bullet.getData("speed") || 1;
+    sd.dist += Math.abs(spd);
+    var trigger = sd.state === DEZA_STEER.SPLIT_AIMED
+      ? DEZA_STEER_DIST_AIMED : DEZA_STEER_DIST;
+    if (sd.dist < trigger) return true;
+    if (sd.state === DEZA_STEER.KINK) {
+      // Snap the heading to the volley's centre and become a plain bullet.
+      // Speed and position are untouched.
+      bullet.setData("rotX", Math.sin(sd.target));
+      bullet.setData("rotY", -Math.cos(sd.target));
+      bullet.setData("dezaSteer", null);
+      return true;
+    }
+    // States 17 and 18: the parent dies and becomes five children. They take
+    // the NEXT bullet config's art, fly at the parent's speed, and are plain
+    // bullets that never split again.
+    var aimAt = null;
+    if (sd.state === DEZA_STEER.SPLIT_AIMED) {
+      var tgt = aimPlayer(scene);
+      // With no player object the engine falls back to state 17 exactly.
+      if (tgt) aimAt = Math.atan2(tgt.x - bullet.x, -(tgt.y - bullet.y));
+    }
+    var base = aimAt == null
+      ? Math.atan2(bullet.getData("rotX") || 0, -(bullet.getData("rotY") || 1))
+      : aimAt;
+    var spread = aimAt == null ? DEZA_STEER_SPLIT_SPREAD : DEZA_STEER_AIMED_SPREAD;
+    // The children take the NEXT bullet config's art (the engine cycles
+    // 0->1->2->0 at +0x1754A), and inherit everything else from the parent.
+    var nextCfg = ((sd.cfg || 0) + 1) % 3;
+    var artAll = scene.recipe && scene.recipe.dezaemonBullets && scene.recipe.dezaemonBullets.art;
+    var art = artAll && artAll[nextCfg];
+    var atlas = art && art.length ? scene.textures.get("game_asset") : null;
+    if (!(atlas && atlas.has(art[0]))) art = null;
+    for (var i = 0; i < spread.length; i++) {
+      var a = base + spread[i] * ANGLE_UNIT;
+      var kid = scene.add.sprite(bullet.x, bullet.y, bullet.texture.key, bullet.frame.name);
+      kid.setOrigin(0.5);
+      kid.setDepth(bullet.depth);
+      kid.setData("speed", spd);
+      kid.setData("damage", bullet.getData("damage"));
+      kid.setData("hp", bullet.getData("hp"));
+      kid.setData("score", bullet.getData("score"));
+      kid.setData("spgage", bullet.getData("spgage"));
+      if (bullet.getData("frameRate")) kid.setData("frameRate", bullet.getData("frameRate"));
+      kid.setData("rotX", Math.sin(a));
+      kid.setData("rotY", -Math.cos(a));
+      kid.setData("animIdx", 0);
+      kid.setData("animTimer", 0);
+      if (art) {
+        kid.setTexture("game_asset", art[0]);
+        kid.setData("frames", art.length > 1 ? art : null);
+      } else {
+        kid.setData("frames", bullet.getData("frames"));
+      }
+      scene.enemyBullets.push(kid);
+    }
+    return false;
   }
   function updateEnemyFire(scene, enemy, shootFn) {
     var st = enemy.getData("deza");
@@ -9776,6 +9885,10 @@
     window.__DEZA_MAIN5_STEP = DEZA_MAIN5_STEP;
     window.__DEZA_MAIN5_STEP_OPTC = DEZA_MAIN5_STEP_OPTC;
     window.__DEZA_MAIN6_SCALE = DEZA_MAIN6_SCALE;
+    window.__dezaVolley = dezaVolley;
+    window.__DEZA_STEER = DEZA_STEER;
+    window.__DEZA_STEER_DIST = DEZA_STEER_DIST;
+    window.__DEZA_STEER_DIST_AIMED = DEZA_STEER_DIST_AIMED;
   }
   function dezaShotDamage(units) {
     return Math.max(1, Math.round(units / DEZA_BOMB_UNIT));
@@ -13826,6 +13939,13 @@
         var spd = eBullet.getData("speed") || 1;
         eBullet.x += rotX * spd;
         eBullet.y += rotY * spd;
+        // Bullet steering states 17/18/19: one action on a fixed distance
+        // flown. 17 and 18 consume the bullet, so bail out of its frame.
+        if (eBullet.getData("dezaSteer") && !stepDezaSteeredBullet(this, eBullet)) {
+          eBullet.destroy();
+          this.enemyBullets.splice(eb, 1);
+          continue;
+        }
         var ebFrames = eBullet.getData("frames");
         if (ebFrames && ebFrames.length > 1) {
           var ebFrameRate = eBullet.getData("frameRate");

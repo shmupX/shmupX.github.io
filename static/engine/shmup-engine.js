@@ -838,6 +838,12 @@ function decodeBigShot(b5) {
   return { band, index, character: spec.base + index * spec.frames, frames: spec.frames };
 }
 var SPECIAL_FIRE_PATTERNS = { 10: 0, 11: 1, 12: 2 };
+var BULLET_STEERING = Object.freeze({ KINK: 19, SPLIT: 17, SPLIT_AIMED: 18 });
+function bulletSteering(geometry, aimed) {
+  if (geometry === 8) return BULLET_STEERING.KINK;
+  if (geometry === 9) return aimed ? BULLET_STEERING.SPLIT_AIMED : BULLET_STEERING.SPLIT;
+  return null;
+}
 var FACTOR_STEP_TABLE = [16, 32, 64, 128, 256, 384, 512, 1024];
 var ROTATION_STEP_TABLE = [16, 32, 64, 128, 256, 512, 1024, 2048];
 var DIRECTION_STEP_TABLE = [128, 256, 512, 768, 1024, 1536, 2048, 32767];
@@ -988,13 +994,20 @@ function decodeEnemyRecord(bytes) {
       // the fire routine to burst handlers (+0x193d0/+0x19538/+0x196a8):
       // 10 = 4 volleys one fire-tick apart, 11 = 5 jittered volleys,
       // 12 = 16 shots on consecutive frames — the rotating spiral.
+      // 8 and 9 additionally stamp a STEERING STATE on what they fire:
+      // 8's fan flies 64 px and then snaps parallel to the volley's
+      // centre, and 9's single shot bursts into five after 64 px (96 px
+      // and re-aimed when the aim bit is set). Neither one homes — see
+      // bulletSteering() above.
       // Bit 4 (0x10) aims the volley at the player (re-aimed every
       // shot); otherwise shots leave along the enemy's facing.
       geometry: (b[4] & 3) === BIG_SHOT_TYPE ? null : b[5] & 15,
       aimed: (b[4] & 3) === BIG_SHOT_TYPE ? false : (b[5] & 16) !== 0,
       pattern: (b[4] & 3) === BIG_SHOT_TYPE ? null : SPECIAL_FIRE_PATTERNS[b[5] & 15] ?? null,
       direction: (b[4] & 3) === BIG_SHOT_TYPE ? 0 : SPECIAL_FIRE_PATTERNS[b[5] & 15] !== void 0 ? 0 : b[5] & 31,
-      directionEx: b[5] >> 5 & 7
+      directionEx: b[5] >> 5 & 7,
+      // Which steering state this geometry's shots carry, if any.
+      steering: (b[4] & 3) === BIG_SHOT_TYPE ? null : bulletSteering(b[5] & 15, (b[5] & 16) !== 0)
     },
     death: decodeDeathWord(b),
     zoom: channel(b[6], b[7], b[8], {
