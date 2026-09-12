@@ -166,12 +166,25 @@ ISO9660 files (2048B user data at sector offset 16); findings:
   three PDATA of a mesh share `pntbl`/`pltbl` and differ only in `attbl`
   (verified over all 224). POINT = 3 × s32be 16.16; POLYGON = 20 B = normal
   (3 × 16.16) + 4 × u16be vertex indices, `v[2] == v[3]` = triangle; ATTR =
-  12 B/polygon `flag, sort, texno, atrb, colno, gstb, dir` = `0, 11, 0, 0xe8,
-  RGB555|0x8000, 0, 4` everywhere, so `colno` is the whole colour model. The
-  stored normal equals `cross(v2 - v0, v1 - v0)` — the Saturn's left-handed
-  rule, the negative of the right-hand one (99.4 % of 15,216 polygons within
-  cos 0.95; one opposite). Totals: 224 meshes, 14,345 vertices, 15,216
-  polygons, 27,124 triangles. Reader: `lib/model/decode-mdldt.js`; shipped as
+  12 B/polygon `flag, sort, texno, atrb, colno, gstb, dir`. Over all 45,648
+  records `sort, texno, atrb, gstb, dir` are constant at `11, 0, 0xe8, 0, 4`
+  — but `flag` is NOT (corrected 2026-09-12; it was read as constant 0): it
+  is 1 on 132 records = **44 polygons**, identical in all three colour sets,
+  in exactly two meshes — library 148 (`F3:8`, `MDLDT_38` mesh 0, 32 of 96)
+  and library 171 (`F3:31`, `MDLDT_43` mesh 3, 12 of 72), both open shells.
+  Every polygon owning a boundary edge is flagged (8/8 in mesh 148, 12/12 in
+  171; no unflagged polygon in either touches one), but not only those —
+  mesh 148 flags 24 more that own no boundary edge. `flag` bit 0 is SGL
+  Single_Plane/**Dual_Plane** and `sort` = 11 = **SORT_CEN** (bits 0–1 = 3)
+  | `0x08` (use the light table); see "sec7 shape word" below for both
+  traces. The stored normal is close to `cross(v2 - v0, v1 - v0)` — the
+  Saturn's left-handed rule, the negative of the right-hand one (99.4 % of
+  15,216 polygons within cos 0.95) — but it is authored data, not derivable:
+  one polygon (`F1:30` polygon 73, a non-planar quad) comes out **opposite**
+  and 18 recompute to the **zero vector**, so the shipped JSON carries the
+  disc's normals rather than recomputing them. Totals: 224 meshes, 14,345
+  vertices, 15,216 polygons, 27,124 triangles. Reader:
+  `lib/model/decode-mdldt.js`; shipped as
   `static/editor/dezaemon/mesh-library.json` (`deno task deza:meshlib`).
 - **`BACK00–14.CMP` = preset backgrounds** (decode to ~72KB); `BACK00` has an
   RGB555 gray-ramp palette at +0x14 (byte-swapped), `BK_CHECK.CMP` opens with
@@ -1634,6 +1647,47 @@ cells hold channel values of 0 and 2, below any floor of 4). The engine takes
 `SHADE_FLOOR = 0` and exposes `floor` as a buildModelMesh option; whether the
 (4,4,4) ever survives to a capture is the caveat.
 
+**(6) Two-sided polygons, and the depth key** (traced 2026-09-12, same
+method). Both live in the per-polygon SGL `ATTR` that `MDLDT` already stores
+and the reader used to discard as constant.
+
+The polygon loop reads the ATTR's first WORD at overlay `+0xa868`
+(`mov.w @r8,r12` — `flag` in the high byte, `sort` in the low), masks
+`sort & 0x7f` and uses it to index a **16-byte-per-entry stage table at
+`+0xa928`**. Column 0 of an entry is its depth-key routine and column 3 its
+polygon submitter. The four key routines are `+0xb710` (reuse the previous
+key), `+0xb648` (min), `+0xb6cc` (max) and `+0xb68c` (centroid), selected by
+`sort` bits 0–1 — SGL's `SORT_BFR / SORT_MIN / SORT_MAX / SORT_CEN` in their
+documented order. Bit 3 (`0x08`) switches the submitter from the kernel's
+(`0x0601e814/820`) to POLYKITI's own `+0xb128`, the shader already traced
+above. Every library polygon carries `sort = 11 = SORT_CEN | 0x08`, so **the
+painter's key is the polygon's centroid, not its farthest corner**: `+0xb68c`
+sums the **four** vertices' z and divides by 4 (`shlr16`, `exts.w`, two
+`shar`), which counts a triangle's repeated last corner twice and truncates
+the result to a whole model unit. A quad's two triangles therefore share one
+key and can never be drawn on either side of a third polygon.
+
+The `flag` byte is tested only *after* the back-face test fails. `+0xa894`
+`cmp/ge` is the facing test; on failure it branches to `+0xa8a2` `tst #1,r0`
+(`r0` = the flag byte, swapped in from that same ATTR word). Bit **clear**
+branches to `+0xa8ba`, whose `bra` skips the polygon — the cull. Bit **set**
+falls into `+0xa8a8`, which `neg`s the three view-space normal components and
+submits the polygon anyway. So a Dual_Plane polygon is drawn from both sides,
+and its back side is shaded through the normal *negated* — with the light
+fixed to the screen, that makes the back of a face shade exactly as its front
+does. 44 polygons in library meshes 148 (`F3:8`) and 171 (`F3:31`) are
+flagged. Both meshes are open shells, so the flag buys the **back** side of
+polygons already visible from the front: over 252 sampled viewpoints, mesh
+148 averages 108.6 visible triangles a view with it and 72.1 without, mesh
+171 78.1 against 66.2. It makes no triangle newly *reachable* — measured with
+the flag suppressed, neither mesh has a triangle that is invisible from every
+viewpoint. (Mesh 148 did have 20 such triangles, but they came from
+recomputing the normals, which collapsed 20 of its polygons to a zero-length
+normal; that is the separate defect above, and the two were conflated when
+this was first written.) `lib/model/model-mesh.js` carries the flag
+per triangle (`twoSided`) and the centroid per polygon (`polyOf` /
+`polyCenter`); `sortKey: "max"` keeps the pre-trace ordering for comparison.
+
 **Still open.** (4) The six pages' names: likely in `POLYHELP.CMP` /
 `POLYBTN.CMP`, unopened. (5) Why 13 % of position components are fractional
 on a 4-unit grid (a free-move or rotate-selection mode).
@@ -1641,8 +1695,10 @@ on a 4-unit grid (a free-move or rotate-selection mode).
 **Rendering.** Phaser 4 has no 3D; the viewer projects on the CPU
 (`lib/model/model-mesh.js`) with the traced `T·Rx·Ry·Rz·S` composition and
 feeds Phaser's `Mesh2D` in `renderAsTriangles` mode, sorted far-to-near each
-frame (no depth buffer — interpenetrating parts can pop), back-faced by the
-SGL normals, tinted by the model colour word, shaded through the traced
+frame on the source polygon's centroid (the traced `SORT_CEN`; still no depth
+buffer, so interpenetrating parts can pop), back-faced by the SGL normals
+except the 44 Dual_Plane polygons, which draw from both sides with the normal
+negated, tinted by the model colour word, shaded through the traced
 32-row table from the capture's screen-fixed light, with per-triangle colour
 via UVs into a swatch `CanvasTexture` of one cell per colour per light row
 (which Phaser uploads bottom-up, so the mesh needs `flipV`).

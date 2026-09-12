@@ -12,9 +12,10 @@
 //   orbitCamera()     a yaw / pitch / distance camera looking at a target
 //   projectModel()    once per frame: project the soup, drop back faces
 //                     (by the polygon normal, not by winding — the library's
-//                     normals are authoritative, see mesh-library.js), shade
-//                     flat from a fixed light, and sort far-to-near so a
-//                     painter's draw is right for convex parts
+//                     normals are authoritative, see mesh-library.js) unless
+//                     the polygon is two-sided, shade flat from a fixed
+//                     light, and sort far-to-near on the SOURCE POLYGON's
+//                     centroid so a painter's draw is right for convex parts
 //   packMesh2D()      write the sorted triangles as Phaser's flat
 //                     [x, y, u, v] vertices and [a, b, c, page] indices,
 //                     colour chosen by pointing every UV at a swatch cell
@@ -65,6 +66,34 @@
 //     (SHADE_FLOOR), with `floor` an option on buildModelMesh.
 //   - rotation quantum: the editor steps rotations by 18 degrees and stores
 //     them with a one- or two-unit drift; `quantize: true` snaps them.
+//   - two-sided polygons — TRACED (see src/model/decode-mdldt.js for the
+//     full read). Each library polygon carries an SGL ATTR whose flag bit 0
+//     is Single_Plane(0) / Dual_Plane(1). POLYKITI's polygon loop tests it
+//     only after the back-face test fails: at overlay +0xa8a2 `tst #1,r0`,
+//     a clear bit branches to +0xa8ba and skips the polygon, a set bit falls
+//     into +0xa8a8, which negates the three view-space normal components and
+//     submits it anyway. 44 polygons in library meshes 148 (F3:8) and 171
+//     (F3:31) are flagged; both are open shells, so what the flag adds is the
+//     BACK side of polygons that are already visible from the front. Over the
+//     252 viewpoints tests/mesh_library_test.ts sweeps, honouring it takes
+//     mesh 148 from 72.1 to 108.6 visible triangles a view and mesh 171 from
+//     66.2 to 78.1; it rescues no triangle that was unreachable. (Mesh 148
+//     DID have 20 triangles invisible from every one of those viewpoints —
+//     but that was the recomputed normals collapsing to zero length, a
+//     separate defect; see mesh-library.js.) projectModel skips the cull and
+//     flips the normal, so the back side shades as the Saturn shades it.
+//   - the depth key — TRACED. The same ATTR's sort byte is 11 on all 45,648
+//     library records = SORT_CEN (bits 0-1 = 3) | 0x08 (use the light
+//     table). (sort & 0x7f) indexes a 16-byte-per-entry stage table at
+//     overlay +0xa928; entry 11's key routine +0xb68c sums the polygon's
+//     FOUR vertex z values and divides by 4, and its colour stage is
+//     +0xb128, the shader traced above. Entries 1, 2 and 0 point at the min,
+//     max and reuse-previous routines, matching SGL's SORT_MIN / SORT_MAX /
+//     SORT_BFR. So the key is the polygon's centroid, not the triangle's
+//     farthest corner, and a quad's two triangles share it. `sortKey: "max"`
+//     keeps the pre-trace behaviour for comparison. The Saturn truncates the
+//     key to an integer (`shlr16` then two `shar`); this module keeps the
+//     float, which only differs inside a one-unit tie.
 //
 // Environment-neutral ESM (Node + browser).
 
@@ -74,6 +103,10 @@ import { meshFor, placeholderLibrary, polygonCount } from "./mesh-library.js";
 export const ROT_ORDERS = ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"];
 /** Traced: the Saturn applies Z, then Y, then X to a part (see the header). */
 export const ROTATION_ORDER = "zyx";
+/** Painter's depth keys. "cen" is the Saturn's; "max" is what this module used before the trace. */
+export const SORT_KEYS = ["cen", "max"];
+/** Traced: every library polygon's ATTR sort byte is SORT_CEN (see the header). */
+export const SORT_KEY = "cen";
 export const ROTATION_QUANTUM = 18;
 /** Light rows of the Saturn's shade table: row = SHADE_ZERO + floor(16 * n.L). */
 export const SHADE_LEVELS = 32;
@@ -236,6 +269,13 @@ export function normalMatrix(m) {
  *   colors555 Uint16Array(triCount)       the polygon's own RGB555, what the
  *                                         shader starts from
  *   partOf    Uint8Array(triCount)        index into `parts`
+ *   twoSided  Uint8Array(triCount)        1 when the source polygon is SGL
+ *                                         Dual_Plane: never back-face culled
+ *   polyOf    Uint32Array(triCount)       index into polyCenter — a split
+ *                                         quad's two triangles share one
+ *   polyCenter Float32Array(polyCount*3)  the source polygon's four-corner
+ *                                         mean in world space, the Saturn's
+ *                                         SORT_CEN depth key
  *   parts     [{ index, part, family, meshIndex, colorSet, source,
  *                triStart, triCount }]
  *   bounds    { min, max, center, radius }  radius = max |p - center|
@@ -254,8 +294,10 @@ export function buildModelMesh(model, {
     const tintWord = tint && model && Number.isInteger(model.color) ? model.color & 0x7fff : 0x7fff;
     const resolved = partList.map((part) => ({ part, mesh: meshFor(library, part) }));
     let triCount = 0;
+    let polyCount = 0;
     for (const { mesh } of resolved) {
         const polys = polygonCount(mesh);
+        polyCount += polys;
         for (let q = 0; q < polys; q++) {
             triCount += mesh.polygons[q * 4 + 2] === mesh.polygons[q * 4 + 3] ? 1 : 2;
         }
@@ -265,10 +307,21 @@ export function buildModelMesh(model, {
     const colors = new Uint32Array(triCount);
     const colors555 = new Uint16Array(triCount);
     const partOf = new Uint8Array(triCount);
+    // Two-sided (SGL Dual_Plane) polygons must not be back-face culled, and
+    // the Saturn sorts by the POLYGON's centroid — so a quad's two triangles
+    // share one depth key and must not drift apart in the painter's order.
+    // polyOf indexes polyCenter, which holds the mean of the polygon's four
+    // corners in world space (a triangle's repeated last corner counts twice,
+    // exactly as the traced +0xb68c routine sums four vertices and halves
+    // twice). See src/model/decode-mdldt.js for the trace.
+    const twoSided = new Uint8Array(triCount);
+    const polyOf = new Uint32Array(triCount);
+    const polyCenter = new Float32Array(polyCount * 3);
     const parts = [];
     const tmp = new Float64Array(3);
     const ySign = yDown ? -1 : 1;
     let t = 0;
+    let poly = 0;
     let placeholder = false;
     resolved.forEach(({ part, mesh }, index) => {
         const m = composeTransform(part, { rotOrder, quantize });
@@ -302,13 +355,31 @@ export function buildModelMesh(model, {
             // display colour: tinted, no light term
             colors[t] = rgb555ToHex(shadeRgb555(colors555[t], SHADE_ZERO, tintWord, floor));
             partOf[t] = index;
+            twoSided[t] = mesh.dualPlane && mesh.dualPlane[q] ? 1 : 0;
+            polyOf[t] = poly;
             t++;
         };
         for (let q = 0; q < polys; q++) {
             const a = mesh.polygons[q * 4], b = mesh.polygons[q * 4 + 1];
             const c = mesh.polygons[q * 4 + 2], d = mesh.polygons[q * 4 + 3];
+            // The polygon's own centroid, before it is split into triangles:
+            // the mean of all four stored corners, so a triangle (c === d)
+            // weights its last corner twice the way the Saturn's sum of four
+            // vertices does.
+            let sx = 0, sy = 0, sz = 0;
+            for (const vi of [a, b, c, d]) {
+                const at = vi * 3;
+                transformPoint(m, mesh.vertices[at], mesh.vertices[at + 1], mesh.vertices[at + 2], tmp, 0);
+                sx += tmp[0];
+                sy += tmp[1] * ySign;
+                sz += tmp[2];
+            }
+            polyCenter[poly * 3] = sx / 4;
+            polyCenter[poly * 3 + 1] = sy / 4;
+            polyCenter[poly * 3 + 2] = sz / 4;
             emit(q, a, b, c);
             if (c !== d) emit(q, a, c, d);
+            poly++;
         }
         parts.push({
             index,
@@ -346,6 +417,10 @@ export function buildModelMesh(model, {
         normals,
         colors,
         partOf,
+        twoSided,
+        polyOf,
+        polyCenter,
+        polyCount,
         parts,
         triCount,
         bounds: { min, max, center, radius },
@@ -413,8 +488,8 @@ export function orbitCamera({
  * visibility (front-facing and in front of the near plane), shade level and
  * a far-to-near draw order. Returns the visible count. No allocation.
  */
-export function projectModel(mesh, cam, frame, lightView = LIGHT_VIEW) {
-    const { positions, normals, triCount } = mesh;
+export function projectModel(mesh, cam, frame, lightView = LIGHT_VIEW, { sortKey = SORT_KEY } = {}) {
+    const { positions, normals, triCount, twoSided, polyOf, polyCenter } = mesh;
     const { eye, cam: dir, right, up, focal, width, height, near } = cam;
     const cx = width / 2, cy = height / 2;
     const { xy, depth, shade, visible, order } = frame;
@@ -450,15 +525,35 @@ export function projectModel(mesh, cam, frame, lightView = LIGHT_VIEW) {
             visible[t] = 0;
             continue;
         }
-        const nx = normals[t * 3], ny = normals[t * 3 + 1], nz = normals[t * 3 + 2];
+        let nx = normals[t * 3], ny = normals[t * 3 + 1], nz = normals[t * 3 + 2];
         // back-face: the normal must face the eye
         const facing = nx * (eye[0] - mx / 3) + ny * (eye[1] - my / 3) + nz * (eye[2] - mz / 3);
         if (facing <= 0) {
-            visible[t] = 0;
-            continue;
+            // A Dual_Plane polygon is drawn from behind too, with its normal
+            // negated — traced at overlay +0xa8a2/+0xa8a8, where the flag bit
+            // being set skips the cull and negates the three view-space
+            // normal components before submitting. Everything else is culled.
+            if (!(twoSided && twoSided[t])) {
+                visible[t] = 0;
+                continue;
+            }
+            nx = -nx;
+            ny = -ny;
+            nz = -nz;
         }
         visible[t] = 1;
-        depth[t] = far;
+        // SORT_CEN (the library's own ATTR sort byte): the key is the
+        // polygon's four-corner mean, so both halves of a split quad sort
+        // together. `far` is the pre-trace max-corner key, kept selectable.
+        if (sortKey === "cen" && polyOf && polyCenter) {
+            const c = polyOf[t] * 3;
+            const dx = polyCenter[c] - eye[0];
+            const dy = polyCenter[c + 1] - eye[1];
+            const dz = polyCenter[c + 2] - eye[2];
+            depth[t] = -(dx * dir[0] + dy * dir[1] + dz * dir[2]);
+        } else {
+            depth[t] = far;
+        }
         shade[t] = shadeRow(nx * lx + ny * ly + nz * lz);
         order[n++] = t;
     }

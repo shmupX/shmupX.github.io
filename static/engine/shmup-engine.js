@@ -3845,6 +3845,7 @@ function makeMesh({
   polygons,
   colorSets,
   normals,
+  dualPlane,
   source = "placeholder",
   family = -1,
   meshIndex = -1
@@ -3861,10 +3862,15 @@ function makeMesh({
     }
     sets.push(set);
   }
+  const flags = new Uint8Array(count);
+  if (dualPlane) {
+    for (let q = 0; q < count; q++) flags[q] = dualPlane[q] ? 1 : 0;
+  }
   return {
     vertices: v,
     polygons: p,
     normals: normals ? Float32Array.from(normals) : polygonNormals(v, p),
+    dualPlane: flags,
     colorSets: sets,
     source,
     family,
@@ -4117,19 +4123,31 @@ function meshFor(library, part) {
   return mesh || placeholderMesh(part.shapeFamily, part.meshIndex);
 }
 var JSON_UNIT = 256;
+var JSON_NORMAL_UNIT = 4096;
 function serializeMeshLibrary(library) {
   return {
     v: 1,
     source: library.source,
     unit: JSON_UNIT,
-    meshes: library.meshes.map((mesh) => ({
-      f: mesh.family,
-      i: mesh.meshIndex,
-      s: mesh.source,
-      v: Array.from(mesh.vertices, (x) => Math.round(x * JSON_UNIT)),
-      p: Array.from(mesh.polygons),
-      c: mesh.colorSets.map((set) => Array.from(set))
-    }))
+    normalUnit: JSON_NORMAL_UNIT,
+    meshes: library.meshes.map((mesh) => {
+      const out = {
+        f: mesh.family,
+        i: mesh.meshIndex,
+        s: mesh.source,
+        v: Array.from(mesh.vertices, (x) => Math.round(x * JSON_UNIT)),
+        p: Array.from(mesh.polygons),
+        n: Array.from(mesh.normals, (x) => Math.round(x * JSON_NORMAL_UNIT)),
+        c: mesh.colorSets.map((set) => Array.from(set))
+      };
+      const flagged = [];
+      const flags = mesh.dualPlane;
+      if (flags) {
+        for (let q = 0; q < flags.length; q++) if (flags[q]) flagged.push(q);
+      }
+      if (flagged.length) out.d = flagged;
+      return out;
+    })
   };
 }
 function meshLibraryFromJson(obj) {
@@ -4137,16 +4155,25 @@ function meshLibraryFromJson(obj) {
     throw new Error("mesh library: not a v1 library");
   }
   const unit = obj.unit || JSON_UNIT;
-  const meshes = obj.meshes.map(
-    (m) => makeMesh({
+  const normalUnit = obj.normalUnit || JSON_NORMAL_UNIT;
+  const meshes = obj.meshes.map((m) => {
+    const polygonCount2 = m.p.length >> 2;
+    const dualPlane = new Uint8Array(polygonCount2);
+    if (Array.isArray(m.d)) {
+      for (const q of m.d) if (q >= 0 && q < polygonCount2) dualPlane[q] = 1;
+    }
+    return makeMesh({
       vertices: Float32Array.from(m.v, (x) => x / unit),
       polygons: m.p,
+      // Older libraries carry no `n`; makeMesh recomputes when it is absent.
+      normals: m.n ? Float32Array.from(m.n, (x) => x / normalUnit) : void 0,
+      dualPlane,
       colorSets: m.c,
       source: m.s || obj.source || "mdldt",
       family: m.f,
       meshIndex: m.i
-    })
-  );
+    });
+  });
   return { meshes, familyOffsets: FAMILY_OFFSETS, source: obj.source || "mdldt" };
 }
 
@@ -4225,11 +4252,25 @@ function decodeMdldt(bytes, { file = 0 } = {}) {
       }
       return colors;
     });
+    const dualPlane = new Uint8Array(base.nbPolygon);
+    for (let q = 0; q < base.nbPolygon; q++) {
+      dualPlane[q] = dv.getUint8(sets[0].attbl + q * ATTR_SIZE) & 1;
+    }
+    for (const other of sets) {
+      for (let q = 0; q < base.nbPolygon; q++) {
+        if ((dv.getUint8(other.attbl + q * ATTR_SIZE) & 1) !== dualPlane[q]) {
+          throw new Error(
+            `MDLDT: mesh ${m} polygon ${q} disagrees on the dual-plane flag between colour sets`
+          );
+        }
+      }
+    }
     meshes.push(makeMesh({
       vertices,
       polygons,
       normals,
       colorSets,
+      dualPlane,
       source: "mdldt",
       family: slice ? slice.family : -1,
       meshIndex: slice ? slice.firstMeshIndex + m : -1
@@ -4267,6 +4308,7 @@ function buildMeshLibrary(files) {
 // packages/shmup-engine/src/model/model-mesh.js
 var ROT_ORDERS = ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"];
 var ROTATION_ORDER = "zyx";
+var SORT_KEY = "cen";
 var ROTATION_QUANTUM = 18;
 var SHADE_LEVELS = 32;
 var SHADE_ZERO = 16;
@@ -4388,8 +4430,10 @@ function buildModelMesh(model, {
   const tintWord = tint && model && Number.isInteger(model.color) ? model.color & 32767 : 32767;
   const resolved = partList.map((part) => ({ part, mesh: meshFor(library, part) }));
   let triCount = 0;
+  let polyCount = 0;
   for (const { mesh } of resolved) {
     const polys = polygonCount(mesh);
+    polyCount += polys;
     for (let q = 0; q < polys; q++) {
       triCount += mesh.polygons[q * 4 + 2] === mesh.polygons[q * 4 + 3] ? 1 : 2;
     }
@@ -4399,10 +4443,14 @@ function buildModelMesh(model, {
   const colors = new Uint32Array(triCount);
   const colors555 = new Uint16Array(triCount);
   const partOf = new Uint8Array(triCount);
+  const twoSided = new Uint8Array(triCount);
+  const polyOf = new Uint32Array(triCount);
+  const polyCenter = new Float32Array(polyCount * 3);
   const parts = [];
   const tmp = new Float64Array(3);
   const ySign = yDown ? -1 : 1;
   let t = 0;
+  let poly = 0;
   let placeholder = false;
   resolved.forEach(({ part, mesh }, index) => {
     const m = composeTransform(part, { rotOrder, quantize });
@@ -4435,13 +4483,27 @@ function buildModelMesh(model, {
       colors555[t] = colorSet[q] & 32767;
       colors[t] = rgb555ToHex(shadeRgb555(colors555[t], SHADE_ZERO, tintWord, floor));
       partOf[t] = index;
+      twoSided[t] = mesh.dualPlane && mesh.dualPlane[q] ? 1 : 0;
+      polyOf[t] = poly;
       t++;
     };
     for (let q = 0; q < polys; q++) {
       const a = mesh.polygons[q * 4], b = mesh.polygons[q * 4 + 1];
       const c = mesh.polygons[q * 4 + 2], d = mesh.polygons[q * 4 + 3];
+      let sx = 0, sy = 0, sz = 0;
+      for (const vi of [a, b, c, d]) {
+        const at = vi * 3;
+        transformPoint(m, mesh.vertices[at], mesh.vertices[at + 1], mesh.vertices[at + 2], tmp, 0);
+        sx += tmp[0];
+        sy += tmp[1] * ySign;
+        sz += tmp[2];
+      }
+      polyCenter[poly * 3] = sx / 4;
+      polyCenter[poly * 3 + 1] = sy / 4;
+      polyCenter[poly * 3 + 2] = sz / 4;
       emit(q, a, b, c);
       if (c !== d) emit(q, a, c, d);
+      poly++;
     }
     parts.push({
       index,
@@ -4479,6 +4541,10 @@ function buildModelMesh(model, {
     normals,
     colors,
     partOf,
+    twoSided,
+    polyOf,
+    polyCenter,
+    polyCount,
     parts,
     triCount,
     bounds: { min, max, center, radius },
@@ -4532,8 +4598,8 @@ function orbitCamera({
     distance
   };
 }
-function projectModel(mesh, cam, frame, lightView = LIGHT_VIEW) {
-  const { positions, normals, triCount } = mesh;
+function projectModel(mesh, cam, frame, lightView = LIGHT_VIEW, { sortKey = SORT_KEY } = {}) {
+  const { positions, normals, triCount, twoSided, polyOf, polyCenter } = mesh;
   const { eye, cam: dir, right, up, focal, width, height, near } = cam;
   const cx = width / 2, cy = height / 2;
   const { xy, depth, shade, visible, order } = frame;
@@ -4567,14 +4633,27 @@ function projectModel(mesh, cam, frame, lightView = LIGHT_VIEW) {
       visible[t] = 0;
       continue;
     }
-    const nx = normals[t * 3], ny = normals[t * 3 + 1], nz = normals[t * 3 + 2];
+    let nx = normals[t * 3], ny = normals[t * 3 + 1], nz = normals[t * 3 + 2];
     const facing = nx * (eye[0] - mx / 3) + ny * (eye[1] - my / 3) + nz * (eye[2] - mz / 3);
     if (facing <= 0) {
-      visible[t] = 0;
-      continue;
+      if (!(twoSided && twoSided[t])) {
+        visible[t] = 0;
+        continue;
+      }
+      nx = -nx;
+      ny = -ny;
+      nz = -nz;
     }
     visible[t] = 1;
-    depth[t] = far;
+    if (sortKey === "cen" && polyOf && polyCenter) {
+      const c = polyOf[t] * 3;
+      const dx = polyCenter[c] - eye[0];
+      const dy = polyCenter[c + 1] - eye[1];
+      const dz = polyCenter[c + 2] - eye[2];
+      depth[t] = -(dx * dir[0] + dy * dir[1] + dz * dir[2]);
+    } else {
+      depth[t] = far;
+    }
     shade[t] = shadeRow(nx * lx + ny * ly + nz * lz);
     order[n++] = t;
   }

@@ -674,9 +674,19 @@
                 if (info.source !== 'mdldt') tr.className = 'placeholder';
                 const rot = a => state.quantize ? D.quantizeRotation(a) : Math.round(a * 10) / 10;
                 const c = info.colorSet;
+                // Dual_Plane polygons draw from both sides (only F3:8 and
+                // F3:31 have any) — worth showing, since it is the difference
+                // between an open shell reading as solid and as half-missing.
+                // guarded: a cached older engine bundle has no twoSided array
+                let twoSided = 0;
+                if (modelMesh.twoSided) {
+                    for (let t = info.triStart; t < info.triStart + info.triCount; t++) {
+                        if (modelMesh.twoSided[t]) twoSided++;
+                    }
+                }
                 const cells = [
                     '#' + (info.index + 1),
-                    'F' + info.family + ':' + String(info.meshIndex).padStart(2, '0') + ' · SET ' + c + (info.source !== 'mdldt' ? ' · PLACEHOLDER' : ''),
+                    'F' + info.family + ':' + String(info.meshIndex).padStart(2, '0') + ' · SET ' + c + (info.source !== 'mdldt' ? ' · PLACEHOLDER' : '') + (twoSided ? ' · ' + twoSided + ' 2-SIDED' : ''),
                     'POS ' + fmt(p.position.x) + ', ' + fmt(p.position.y) + ', ' + fmt(p.position.z),
                     'ROT ' + rot(p.rotation.x) + '°, ' + rot(p.rotation.y) + '°, ' + rot(p.rotation.z) + '°',
                     'SCL ' + fmt(p.scale.x) + ', ' + fmt(p.scale.y) + ', ' + fmt(p.scale.z) + (p.mirrored ? ' · MIRROR' : ''),
@@ -702,7 +712,7 @@
             const n = $('notice');
             const conv = 'Y ' + (state.yDown ? 'DOWN' : 'UP') + ' · ROTATION ' + state.rotOrder.toUpperCase() + (state.rotOrder === 'zyx' ? ' (TRACED)' : ' (NOT THE SATURN\'S)') + ' · TINT ' + (state.tint ? 'ON' : 'OFF') + ' · LIGHT 45°/−50°, FIXED TO THE SCREEN · FLOOR ' + (modelMesh ? modelMesh.floor : D.SHADE_FLOOR) + ' — Y UP verified against DAIOH\'s own ship sprite; rotation order, tint, light and floors traced from POLYKITI';
             n.innerHTML = (realLibrary
-                ? 'REAL PART LIBRARY (MDLDT_01–56) · PAINTER-SORTED, NO DEPTH BUFFER: INTERPENETRATING PARTS CAN POP · '
+                ? 'REAL PART LIBRARY (MDLDT_01–56) · SORT_CEN PAINTER ORDER, NO DEPTH BUFFER: INTERPENETRATING PARTS CAN POP · '
                 : '<b>PLACEHOLDER GEOMETRY</b> — mesh-library.json did not load; family 5 primitives regenerated, boxes for the rest · ')
                 + conv;
         }

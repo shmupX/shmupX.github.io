@@ -24,11 +24,25 @@
 //                about +-35; the cube is +-20.5)
 //     polygons:  Uint16Array, 4 vertex indices per polygon; v[2] === v[3]
 //                marks a triangle (the SGL POLYGON convention)
-//     normals:   Float32Array, xyz per polygon. SGL stores them, and they
-//                equal cross(v2 - v0, v1 - v0) normalised — the Saturn's
-//                left-handed convention, i.e. the NEGATIVE of the right-hand
-//                rule. polygonNormals() reproduces that, so a mesh built
-//                here and a mesh read off the disc agree.
+//     normals:   Float32Array, xyz per polygon, in the Saturn's left-handed
+//                convention (the NEGATIVE of the right-hand rule).
+//                polygonNormals() derives that shape from the winding and is
+//                what the placeholders use, but it is NOT a substitute for
+//                the disc's own normals: over the library's 15,216 polygons
+//                the two agree exactly on 4,362, within 1e-4 on 6,319 and
+//                within 1e-3 on 2,276, but 2,241 differ by more than 1e-3
+//                (1,434 of those by more than 1e-2), one comes out OPPOSITE
+//                (F1:30 polygon 73, a non-planar quad) and 18 recompute to
+//                the zero vector, which culls them from every angle — that
+//                last group is what blacked out 20 of mesh 148's 154
+//                triangles from every viewpoint until this was fixed.
+//                The disc's normals are authored data and
+//                are carried through the JSON form; recomputing is only the
+//                fallback when a mesh arrives without them.
+//     dualPlane: Uint8Array, 1 per polygon when the disc's ATTR flag bit 0
+//                is set (SGL Dual_Plane): the polygon is two-sided and must
+//                not be back-face culled. Only library meshes 148 and 171
+//                carry any — see src/model/decode-mdldt.js for the trace.
 //     colorSets: [Uint16Array x3], RGB555 per polygon, bit 15 masked
 //     source:    "mdldt" | "placeholder"
 //     family, meshIndex
@@ -145,6 +159,7 @@ export function makeMesh({
     polygons,
     colorSets,
     normals,
+    dualPlane,
     source = "placeholder",
     family = -1,
     meshIndex = -1,
@@ -161,10 +176,15 @@ export function makeMesh({
         }
         sets.push(set);
     }
+    const flags = new Uint8Array(count);
+    if (dualPlane) {
+        for (let q = 0; q < count; q++) flags[q] = dualPlane[q] ? 1 : 0;
+    }
     return {
         vertices: v,
         polygons: p,
         normals: normals ? Float32Array.from(normals) : polygonNormals(v, p),
+        dualPlane: flags,
         colorSets: sets,
         source,
         family,
@@ -477,23 +497,50 @@ export function meshFor(library, part) {
 //
 // Vertices are stored as integers in 1/256 model unit (the 16.16 sources are
 // exact multiples of 1/65536, and 1/256 keeps every measured dimension to two
-// decimals in a fraction of the bytes); normals are recomputed on load.
+// decimals in a fraction of the bytes).
+//
+// Normals (`n`) are the disc's OWN per-polygon normals, in 1/4096 — not
+// recomputed. They used to be, and that was wrong: see the Mesh shape above
+// for the measured damage (one flipped face, 18 polygons culled from every
+// angle). 1/4096 is two orders of magnitude finer than the 32-row shade table
+// can express and keeps the facing sign exact. A mesh without `n` — an older
+// library, or a placeholder — falls back to polygonNormals().
+//
+// The dual-plane flags (`d`) are stored SPARSELY, as the list of polygon
+// indices whose ATTR flag bit 0 is set, and the key is omitted entirely on a
+// mesh with none. Only 2 of the 224 meshes have any, so this costs 44 numbers
+// for the whole library instead of 15,216.
+//
+// Both keys are additive, so this is still a `v: 1` document: a reader that
+// predates them ignores them and recomputes as before.
 
 export const JSON_UNIT = 256;
+export const JSON_NORMAL_UNIT = 4096;
 
 export function serializeMeshLibrary(library) {
     return {
         v: 1,
         source: library.source,
         unit: JSON_UNIT,
-        meshes: library.meshes.map((mesh) => ({
-            f: mesh.family,
-            i: mesh.meshIndex,
-            s: mesh.source,
-            v: Array.from(mesh.vertices, (x) => Math.round(x * JSON_UNIT)),
-            p: Array.from(mesh.polygons),
-            c: mesh.colorSets.map((set) => Array.from(set)),
-        })),
+        normalUnit: JSON_NORMAL_UNIT,
+        meshes: library.meshes.map((mesh) => {
+            const out = {
+                f: mesh.family,
+                i: mesh.meshIndex,
+                s: mesh.source,
+                v: Array.from(mesh.vertices, (x) => Math.round(x * JSON_UNIT)),
+                p: Array.from(mesh.polygons),
+                n: Array.from(mesh.normals, (x) => Math.round(x * JSON_NORMAL_UNIT)),
+                c: mesh.colorSets.map((set) => Array.from(set)),
+            };
+            const flagged = [];
+            const flags = mesh.dualPlane;
+            if (flags) {
+                for (let q = 0; q < flags.length; q++) if (flags[q]) flagged.push(q);
+            }
+            if (flagged.length) out.d = flagged;
+            return out;
+        }),
     };
 }
 
@@ -502,15 +549,24 @@ export function meshLibraryFromJson(obj) {
         throw new Error("mesh library: not a v1 library");
     }
     const unit = obj.unit || JSON_UNIT;
-    const meshes = obj.meshes.map((m) =>
-        makeMesh({
+    const normalUnit = obj.normalUnit || JSON_NORMAL_UNIT;
+    const meshes = obj.meshes.map((m) => {
+        const polygonCount = m.p.length >> 2;
+        const dualPlane = new Uint8Array(polygonCount);
+        if (Array.isArray(m.d)) {
+            for (const q of m.d) if (q >= 0 && q < polygonCount) dualPlane[q] = 1;
+        }
+        return makeMesh({
             vertices: Float32Array.from(m.v, (x) => x / unit),
             polygons: m.p,
+            // Older libraries carry no `n`; makeMesh recomputes when it is absent.
+            normals: m.n ? Float32Array.from(m.n, (x) => x / normalUnit) : undefined,
+            dualPlane,
             colorSets: m.c,
             source: m.s || obj.source || "mdldt",
             family: m.f,
             meshIndex: m.i,
-        })
-    );
+        });
+    });
     return { meshes, familyOffsets: FAMILY_OFFSETS, source: obj.source || "mdldt" };
 }

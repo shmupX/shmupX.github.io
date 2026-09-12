@@ -7,7 +7,11 @@ import {
   assertThrows,
 } from "@std/assert";
 import { rgb555ToHex } from "../src/decode/decode-cg.js";
-import { placeholderLibrary } from "../src/model/mesh-library.js";
+import {
+  FAMILY_OFFSETS,
+  makeMesh,
+  placeholderLibrary,
+} from "../src/model/mesh-library.js";
 import {
   allocFrame,
   buildModelMesh,
@@ -292,6 +296,110 @@ Deno.test("a mirrored part keeps outward normals, with and without yDown", () =>
   }
 });
 
+// A one-quad library whose single polygon can be flagged two-sided, so the
+// cull and the depth key can be tested without the disc.
+function quadLibrary({ dualPlane = [1], vertices, polygons } = {}) {
+  const mesh = makeMesh({
+    vertices: vertices ?? [-10, -10, 0, 10, -10, 0, 10, 10, 0, -10, 10, 0],
+    polygons: polygons ?? [0, 1, 2, 3],
+    normals: [0, 0, 1],
+    dualPlane,
+    colorSets: [[0x7fff], [0x7fff], [0x7fff]],
+    source: "mdldt",
+    family: 3,
+    meshIndex: 8,
+  });
+  const meshes = [];
+  for (let i = 0; i < 224; i++) meshes.push(mesh);
+  return { meshes, familyOffsets: FAMILY_OFFSETS, source: "mdldt" };
+}
+
+Deno.test("a two-sided polygon survives the back-face cull, flipped; a single-plane one does not", () => {
+  const facing = part({ shapeFamily: 3, meshIndex: 8, colorSet: 0 });
+  for (const two of [true, false]) {
+    const mesh = buildModelMesh({ parts: [facing] }, {
+      library: quadLibrary({ dualPlane: two ? [1] : [0] }),
+    });
+    assertStrictEquals(mesh.twoSided.length, mesh.triCount);
+    assertStrictEquals(mesh.twoSided[0], two ? 1 : 0);
+    const frame = allocFrame(mesh);
+    // the quad's normal is +Z, so yaw 0 looks straight at its face...
+    assertStrictEquals(
+      projectModel(mesh, orbitCamera({ yaw: 0, pitch: 0 }), frame),
+      2,
+    );
+    // ...and yaw 180 looks at its back
+    const behind = projectModel(
+      mesh,
+      orbitCamera({ yaw: 180, pitch: 0 }),
+      frame,
+    );
+    assertStrictEquals(behind, two ? 2 : 0, `dualPlane=${two}`);
+    if (two) {
+      // The Saturn negates the normal before shading a back-facing dual-plane
+      // polygon, and the light is fixed to the SCREEN — so the back side must
+      // land on exactly the row the front side does. Without the negation the
+      // dot product flips sign and the row mirrors about SHADE_ZERO into the
+      // unlit half, which is what the second assertion rules out.
+      const front = allocFrame(mesh);
+      projectModel(mesh, orbitCamera({ yaw: 0, pitch: 0 }), front);
+      assertStrictEquals(
+        frame.shade[frame.order[0]],
+        front.shade[front.order[0]],
+      );
+      assert(
+        frame.shade[frame.order[0]] > SHADE_ZERO,
+        String(frame.shade[frame.order[0]]),
+      );
+    }
+  }
+});
+
+Deno.test("the depth key is the source polygon's centroid, shared by a split quad", () => {
+  // One corner (v1) trails far AWAY from the viewer. A quad splits into
+  // (v0,v1,v2) and (v0,v2,v3), so v1 belongs to the FIRST triangle only:
+  // under a max-corner key the two halves of one polygon get different depths
+  // and can be drawn either side of an unrelated triangle. The centroid key
+  // cannot separate them.
+  const library = quadLibrary({
+    vertices: [-10, -10, 0, 10, -10, -60, 10, 10, 0, -10, 10, 0],
+  });
+  const mesh = buildModelMesh({
+    parts: [part({ shapeFamily: 3, meshIndex: 8, colorSet: 0 })],
+  }, {
+    library,
+  });
+  assertStrictEquals(mesh.triCount, 2);
+  assertStrictEquals(mesh.polyCount, 1);
+  // both triangles belong to one polygon
+  assertEquals(Array.from(mesh.polyOf), [0, 0]);
+  // whose centre is the mean of all four corners — -60/4 = -15 in z
+  assertEquals(Array.from(mesh.polyCenter), [0, 0, -15]);
+
+  const cam = orbitCamera({ yaw: 20, pitch: 15, distance: 200 });
+  const frame = allocFrame(mesh);
+  assertStrictEquals(projectModel(mesh, cam, frame), 2);
+  // SORT_CEN: one key for the polygon, so the halves cannot separate
+  assertStrictEquals(frame.depth[0], frame.depth[1]);
+  // and that key is the view depth of the centroid
+  const expected = -(
+    (mesh.polyCenter[0] - cam.eye[0]) * cam.cam[0] +
+    (mesh.polyCenter[1] - cam.eye[1]) * cam.cam[1] +
+    (mesh.polyCenter[2] - cam.eye[2]) * cam.cam[2]
+  );
+  assert(
+    near(frame.depth[0], expected, 1e-3),
+    `${frame.depth[0]} vs ${expected}`,
+  );
+  // the pre-trace key is per-triangle, and here it does split the quad
+  const max = allocFrame(mesh);
+  projectModel(mesh, cam, max, LIGHT_VIEW, { sortKey: "max" });
+  assert(
+    max.depth[0] !== max.depth[1],
+    `max key should split this quad: ${max.depth[0]} ${max.depth[1]}`,
+  );
+});
+
 Deno.test("a cube shows exactly three faces from a generic viewpoint", () => {
   for (const yDown of [true, false]) {
     for (const sx of [1, -1]) {
@@ -430,6 +538,11 @@ Deno.test({
     const plate = frame.parts.find((p) => p.shape === 0x000c);
     assertStrictEquals(plate.shapeFamily, 0);
     assertStrictEquals(plate.meshIndex, 12);
+    // Deliberately the PLACEHOLDER library, so this test pins the decode and
+    // not the disc-built artifact: eight box cubes of 12 triangles each, plus
+    // the family-0 plate's stand-in box. The real F0:12 is 98 polygons, so
+    // this count is not what production renders — tests/mesh_library_test.ts
+    // covers the shipped library through the same path.
     const mesh = buildModelMesh(frame, { library: placeholderLibrary() });
     assertStrictEquals(mesh.triCount, 8 * 12 + 12);
     // slot 0 is the ship: nine parts, with the engine block at y = -52

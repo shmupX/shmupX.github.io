@@ -14,9 +14,41 @@
 //   POLYGON (20 B): s32be normal x, y, z (16.16) + 4 x u16be vertex index;
 //          v[2] == v[3] marks a triangle.
 //   ATTR (12 B per polygon): u8 flag, u8 sort, u16 texno, u16 atrb,
-//          u16 colno (RGB555 | 0x8000), u16 gstb, u16 dir. Every polygon in
-//          the library reads 0 / 11 / 0 / 0xe8 / colour / 0 / 4, so colno is
-//          the only field a renderer needs.
+//          u16 colno (RGB555 | 0x8000), u16 gstb, u16 dir. Over the whole
+//          library (45,648 records = 15,216 polygons x 3 colour sets) sort,
+//          texno, atrb, gstb and dir are constant at 11 / 0 / 0xe8 / 0 / 4.
+//          `flag` is NOT: it reads 0 on 45,516 records and 1 on 132. Those
+//          132 are 44 distinct polygons, flagged identically in all three
+//          colour sets, in exactly two meshes — library 148 (F3:8,
+//          MDLDT_38 mesh 0, 32 of its 96 polygons) and library 171 (F3:31,
+//          MDLDT_43 mesh 3, 12 of 72). Both meshes are open shells, and the
+//          flagging tracks that: every polygon owning a boundary edge is
+//          flagged (8 of 8 in mesh 148, 12 of 12 in mesh 171, and no
+//          UNflagged polygon in either mesh touches one). The converse does
+//          not hold — mesh 148 flags 24 further polygons that own no
+//          boundary edge, so the rule is not simply "the open rim".
+//
+//          flag bit 0 is SGL's Single_Plane(0) / Dual_Plane(1), TRACED in
+//          POLYKITI's own polygon loop rather than taken from the SGL
+//          headers: at overlay +0xa894 `cmp/ge` is the back-face test, and
+//          on failure it falls to +0xa8a2 `tst #1,r0` (r0 = the flag byte,
+//          swapped in from the ATTR word at +0xa868). Bit clear branches to
+//          +0xa8ba `bra`, which skips the polygon; bit set falls through to
+//          +0xa8a8, which NEGATES the three view-space normal components
+//          and submits the polygon anyway. So a dual-plane polygon is drawn
+//          from both sides, and its back side is shaded with the flipped
+//          normal — which is what src/model/model-mesh.js reproduces.
+//
+//          `sort` = 11 = SORT_CEN (bits 0-1 = 3) | 0x08 (use the light
+//          table). Also traced: the ATTR word indexes a 16-byte-per-entry
+//          stage table at overlay +0xa928 by (sort & 0x7f); entry 11's
+//          depth-key routine is +0xb68c, which sums the FOUR vertices' z
+//          and divides by 4 (`shlr16` / `exts.w` / two `shar`), while
+//          entries 1, 2 and 0 point at +0xb648 (min), +0xb6cc (max) and
+//          +0xb710 (reuse the previous key) — SGL's SORT_MIN / SORT_MAX /
+//          SORT_BFR in their documented order. Entry 11's colour stage is
+//          +0xb128, the shader FORMAT.md already traced. A renderer
+//          therefore needs colno, the flag, and a centroid depth key.
 //
 // Totals over the library: 224 meshes, 14,345 vertices, 15,216 polygons
 // (27,124 triangles). MDLDT_54 mesh 0 is the +-20.5 cube; its colour sets
@@ -124,11 +156,29 @@ export function decodeMdldt(bytes, { file = 0 } = {}) {
             }
             return colors;
         });
+        // The dual-plane flag belongs to the polygon, not to a colour set:
+        // the library agrees across all three copies on every flagged
+        // polygon, so read it from the first and check the others rather
+        // than assume it (the same way the geometry is cross-checked above).
+        const dualPlane = new Uint8Array(base.nbPolygon);
+        for (let q = 0; q < base.nbPolygon; q++) {
+            dualPlane[q] = dv.getUint8(sets[0].attbl + q * ATTR_SIZE) & 1;
+        }
+        for (const other of sets) {
+            for (let q = 0; q < base.nbPolygon; q++) {
+                if ((dv.getUint8(other.attbl + q * ATTR_SIZE) & 1) !== dualPlane[q]) {
+                    throw new Error(
+                        `MDLDT: mesh ${m} polygon ${q} disagrees on the dual-plane flag between colour sets`,
+                    );
+                }
+            }
+        }
         meshes.push(makeMesh({
             vertices,
             polygons,
             normals,
             colorSets,
+            dualPlane,
             source: "mdldt",
             family: slice ? slice.family : -1,
             meshIndex: slice ? slice.firstMeshIndex + m : -1,

@@ -14,6 +14,7 @@ import {
   hexPrismMesh,
   LIBRARY_MESH_COUNT,
   libraryIndex,
+  makeMesh,
   mdldtFileFor,
   mdldtFileName,
   meshBounds,
@@ -176,5 +177,71 @@ Deno.test("a library survives the JSON round trip", () => {
     for (let k = 0; k < a.normals.length; k++) {
       assert(near(a.normals[k], b.normals[k], 0.02));
     }
+  }
+});
+
+Deno.test("the JSON form carries the normals and the dual-plane flags, not a recompute", () => {
+  // A mesh whose stored normals deliberately do NOT follow its winding — the
+  // case the disc has 15,216 of and recomputation gets wrong. If serialize
+  // dropped them the round trip would silently substitute Newell's answer.
+  const source = makeMesh({
+    vertices: [0, 0, 0, 10, 0, 0, 10, 10, 0, 0, 10, 0, 0, 0, 10, 10, 0, 10],
+    polygons: [0, 1, 2, 3, 0, 1, 4, 4],
+    normals: [0.6, 0.8, 0, 0, 0, -1],
+    dualPlane: [0, 1],
+    colorSets: [[1], [2], [3]],
+    source: "mdldt",
+    family: 3,
+    meshIndex: 8,
+  });
+  const lib = {
+    meshes: [source],
+    familyOffsets: FAMILY_OFFSETS,
+    source: "mdldt",
+  };
+  const json = JSON.parse(JSON.stringify(serializeMeshLibrary(lib)));
+  // sparse: only the flagged polygon indices, and no key at all when none
+  assertEquals(json.meshes[0].d, [1]);
+  assertStrictEquals(
+    Object.prototype.hasOwnProperty.call(
+      JSON.parse(JSON.stringify(serializeMeshLibrary(placeholderLibrary())))
+        .meshes[0],
+      "d",
+    ),
+    false,
+  );
+  const back = meshLibraryFromJson(json).meshes[0];
+  assertEquals(Array.from(back.dualPlane), [0, 1]);
+  for (let k = 0; k < source.normals.length; k++) {
+    assert(
+      near(source.normals[k], back.normals[k], 1 / 4096),
+      `normal ${k}: ${source.normals[k]} -> ${back.normals[k]}`,
+    );
+  }
+  // and it really is the stored normal, not the winding's
+  const computed = polygonNormals(source.vertices, source.polygons);
+  assert(!near(computed[0], back.normals[0], 0.05));
+});
+
+Deno.test("a library written before normals and flags still loads", () => {
+  // `n` and `d` are additive to v:1, so the committed artifact can be
+  // regenerated without breaking a reader — or a file — that predates them.
+  const json = JSON.parse(
+    JSON.stringify(serializeMeshLibrary(placeholderLibrary())),
+  );
+  for (const mesh of json.meshes) {
+    delete mesh.n;
+    delete mesh.d;
+  }
+  delete json.normalUnit;
+  const back = meshLibraryFromJson(json);
+  assertStrictEquals(back.meshes.length, LIBRARY_MESH_COUNT);
+  const cube = back.meshes[libraryIndex(5, 0)];
+  assertStrictEquals(cube.dualPlane.length, cube.polygons.length >> 2);
+  assertStrictEquals(cube.dualPlane.reduce((a, b) => a + b, 0), 0);
+  // falls back to recomputing, which for a convex placeholder is the answer
+  const expected = polygonNormals(cube.vertices, cube.polygons);
+  for (let k = 0; k < expected.length; k++) {
+    assert(near(expected[k], cube.normals[k], 1e-6));
   }
 });

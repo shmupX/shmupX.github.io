@@ -24,7 +24,10 @@ import { hasDiscFile, loadDiscFile } from "./_fixtures.js";
 // A one-mesh bank in the disc's layout: 12 pointers, three PDATA sharing
 // pntbl/pltbl, a cube, three ATTR tables. Only mesh 0 is populated; the
 // other three pointer triples alias it, which the reader tolerates.
-function syntheticBank() {
+// `dualPlane` flags those polygon indices with ATTR flag bit 0 in every
+// colour set; `disagreeAt` flags one polygon in set 0 only, which the reader
+// must reject.
+function syntheticBank({ dualPlane = [], disagreeAt = -1 } = {}) {
   const nbPoint = 8, nbPolygon = 6;
   const headerSize = 12 * 4;
   const pdataAt = headerSize;
@@ -80,7 +83,8 @@ function syntheticBank() {
   sets.forEach((set, s) =>
     set.forEach((c, q) => {
       const at = attrAt + s * nbPolygon * 12 + q * 12;
-      dv.setUint8(at, 0);
+      const flagged = dualPlane.includes(q) || (s === 0 && q === disagreeAt);
+      dv.setUint8(at, flagged ? 1 : 0);
       dv.setUint8(at + 1, 11);
       dv.setUint16(at + 4, 0xe8);
       dv.setUint16(at + 6, c);
@@ -223,11 +227,72 @@ Deno.test({
   },
 });
 
+Deno.test("the ATTR flag decodes as the per-polygon dual-plane bit", () => {
+  const plain = decodeMdldt(syntheticBank(), { file: 54 })[0];
+  assertStrictEquals(plain.dualPlane.length, 6);
+  assertStrictEquals(plain.dualPlane.reduce((a, b) => a + b, 0), 0);
+
+  const flagged =
+    decodeMdldt(syntheticBank({ dualPlane: [1, 4] }), { file: 54 })[0];
+  assertEquals(Array.from(flagged.dualPlane), [0, 1, 0, 0, 1, 0]);
+
+  // The flag belongs to the polygon, so the three colour sets must agree;
+  // a bank where they do not is a misread, not something to paper over.
+  assertThrows(
+    () => decodeMdldt(syntheticBank({ disagreeAt: 2 }), { file: 54 }),
+    Error,
+    "dual-plane",
+  );
+});
+
+Deno.test({
+  name:
+    "the disc's ATTR: sort is always SORT_CEN, and 44 polygons are dual-plane",
+  ignore: !DISC,
+  fn() {
+    // Pins the two facts src/model/decode-mdldt.js's header states and the
+    // renderer relies on. `sort` constant means the depth key is SORT_CEN for
+    // the whole library; the flag is not constant, which is the correction.
+    const flaggedByLibIndex = new Map();
+    let polygons = 0, flagged = 0;
+    for (let n = 1; n <= MDLDT_FILE_COUNT; n++) {
+      const bytes = discFile(n);
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      for (const mesh of decodeMdldt(bytes, { file: n })) {
+        const count = mesh.dualPlane.reduce((a, b) => a + b, 0);
+        polygons += mesh.dualPlane.length;
+        flagged += count;
+        if (count) {
+          flaggedByLibIndex.set(
+            libraryIndex(mesh.family, mesh.meshIndex),
+            count,
+          );
+        }
+      }
+      // every ATTR record in the file, all three colour sets
+      for (let p = 0; p < 12; p++) {
+        const at = dv.getUint32(p * 4) - MDLDT_BASE;
+        const nbPolygon = dv.getUint32(at + 12);
+        const attbl = dv.getUint32(at + 16) - MDLDT_BASE;
+        for (let q = 0; q < nbPolygon; q++) {
+          assertStrictEquals(dv.getUint8(attbl + q * 12 + 1), 0x0b);
+        }
+      }
+    }
+    assertStrictEquals(polygons, 15216);
+    assertStrictEquals(flagged, 44);
+    assertEquals([...flaggedByLibIndex].sort((a, b) => a[0] - b[0]), [
+      [148, 32],
+      [171, 12],
+    ]);
+  },
+});
+
 Deno.test({
   name: "the disc's stored normals follow the rule polygonNormals reproduces",
   ignore: !DISC,
   fn() {
-    let total = 0, agree = 0, opposite = 0;
+    let total = 0, agree = 0, opposite = 0, zeroComputed = 0;
     for (let n = 1; n <= MDLDT_FILE_COUNT; n++) {
       for (const mesh of decodeMdldt(discFile(n), { file: n })) {
         const computed = polygonNormals(mesh.vertices, mesh.polygons);
@@ -238,10 +303,33 @@ Deno.test({
           total++;
           if (dot > 0.9) agree++;
           if (dot < 0) opposite++;
+          const len = Math.hypot(
+            computed[q * 3],
+            computed[q * 3 + 1],
+            computed[q * 3 + 2],
+          );
+          if (len < 1e-6) zeroComputed++;
+          // whatever the winding says, the DISC's normal is always a unit vector
+          assert(
+            Math.abs(
+              Math.hypot(
+                mesh.normals[q * 3],
+                mesh.normals[q * 3 + 1],
+                mesh.normals[q * 3 + 2],
+              ) - 1,
+            ) < 1e-3,
+          );
         }
       }
     }
     assert(agree / total > 0.97, `${agree}/${total} agree`);
     assert(opposite / total < 0.01, `${opposite}/${total} opposite`);
+    // ...but "mostly agrees" is not "is a substitute", which is why the JSON
+    // form carries the disc's own normals rather than recomputing them. These
+    // are the polygons recomputation gets WRONG: one comes out facing the
+    // other way, and 18 collapse to the zero vector, which culls them from
+    // every angle. Both figures are exact — if they move, the library changed.
+    assertStrictEquals(opposite, 1);
+    assertStrictEquals(zeroComputed, 18);
   },
 });
