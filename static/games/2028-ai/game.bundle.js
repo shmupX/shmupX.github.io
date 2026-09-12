@@ -9076,6 +9076,106 @@
   function dezaBombArmed(scene, p) {
     return DEZA_BOMB_BY_NIBBLE[dezaBombNibble(scene, p)] !== 0;
   }
+  // --- The SP button's two faces ------------------------------------
+  //
+  // The meter this button draws IS the bomb meter on an import — stock
+  // while a bomb is armed, SP charge otherwise — and either way it is item
+  // type 5, "bomb stock +1" (FORMAT.md, settings +0x1C), that fills it. So
+  // the button can wear the game's own pickup instead of 2028-AI's CA BOMB
+  // disc: the mapper hands that slot's 16x16 icon over as
+  // dezaemonItems.iconByDrop[5].
+  //
+  // It has to come from the save, because there is no shared bomb graphic
+  // to hard-code instead: across the community collection, 203 saves that
+  // stock a bomb draw 109 distinct icons (87 distinct silhouettes). A boxed
+  // letter B is the convention most authors follow, not a fixed sprite.
+  //
+  // The shipped pair is one picture in two treatments — hudCabtn0per lit,
+  // hudCabtn100per the same disc in dark greyscale, the lit one cropped
+  // over the dim one as the meter fills. These keep that, at the shipped
+  // 67x67 so updateSpGauge()'s crop rect and the hit circle are untouched:
+  // same rim, the game's icon in the middle, on a warm ground when charged
+  // and a neutral one when spent.
+  var SP_FACE_SIZE = 67;      // hudCabtn0per.gif, and the frame the crop assumes
+  var SP_FACE_ICON_ZOOM = 3;  // 16px art -> 48px, whole pixels, never resampled
+  // The save's bomb icon as an atlas frame name, or null when this game has
+  // none — 2028-AI itself, an import whose author configured no bomb item,
+  // and one who left that slot's cell unpainted. Those keep the CA BOMB art.
+  function dezaSpIconFrame(scene) {
+    var items = scene.recipe && scene.recipe.dezaemonItems;
+    // Drop code 5 is the bomb/SP pickup (ITEM_TYPE_DROPS, decode-stage.js).
+    var frame = items && items.iconByDrop && items.iconByDrop[5];
+    if (!frame || !scene.textures.exists("game_asset")) return null;
+    return scene.textures.get("game_asset").has(frame) ? frame : null;
+  }
+  function drawSpFace(scene, key, frameName, lit) {
+    var size = SP_FACE_SIZE, r = size / 2;
+    var f = scene.textures.getFrame("game_asset", frameName);
+    var img = f && f.source && f.source.image;
+    if (!img) return false;
+    var w = f.width * SP_FACE_ICON_ZOOM, h = f.height * SP_FACE_ICON_ZOOM;
+    // The icon lands on its own scratch canvas first: the spent face
+    // flattens it to dark greyscale, and filtering it in place would take
+    // the rim and the ground down with it.
+    var scratch = document.createElement("canvas");
+    scratch.width = w;
+    scratch.height = h;
+    var sctx = scratch.getContext("2d", { willReadFrequently: !lit });
+    sctx.imageSmoothingEnabled = false;
+    sctx.drawImage(img, f.cutX, f.cutY, f.width, f.height, 0, 0, w, h);
+    if (!lit) {
+      var px = sctx.getImageData(0, 0, w, h);
+      for (var i = 0; i < px.data.length; i += 4) {
+        var v = (px.data[i] * 77 + px.data[i + 1] * 150 + px.data[i + 2] * 29) >> 8;
+        px.data[i] = px.data[i + 1] = px.data[i + 2] = (v * 0.42) | 0;
+      }
+      sctx.putImageData(px, 0, 0);
+    }
+    var tex = scene.textures.createCanvas(key, size, size);
+    var ctx = tex.getContext();
+    var disc = function (radius) {
+      ctx.beginPath();
+      ctx.arc(r, r, radius, 0, Math.PI * 2);
+    };
+    ctx.fillStyle = "#a2a2a2"; // the shipped rim, identical on both faces
+    disc(r - 0.5);
+    ctx.fill();
+    ctx.fillStyle = "#000000";
+    disc(r - 3.5);
+    ctx.fill();
+    var ground = ctx.createLinearGradient(0, 6, 0, size - 6);
+    ground.addColorStop(0, lit ? "#6e2216" : "#18181c");
+    ground.addColorStop(1, lit ? "#be6826" : "#2c2c30");
+    ctx.fillStyle = ground;
+    disc(r - 5.5);
+    ctx.fill();
+    // Clipped to the ground, so a full-bleed 16x16 square's corners follow
+    // the disc rather than squaring it off.
+    ctx.save();
+    disc(r - 5.5);
+    ctx.clip();
+    ctx.drawImage(scratch, Math.round(r - w / 2), Math.round(r - h / 2));
+    ctx.restore();
+    tex.refresh();
+    return true;
+  }
+  // {full, empty} texture keys for this game's own SP button, or null to
+  // keep the shipped one. Keyed by the icon's frame so a level change cannot
+  // hand back another game's button.
+  function dezaSpFaces(scene) {
+    var frameName = dezaSpIconFrame(scene);
+    if (!frameName) return null;
+    var faces = { full: "dezaSpFull:" + frameName, empty: "dezaSpEmpty:" + frameName };
+    if (scene.textures.exists(faces.full)) return faces;
+    try {
+      if (!drawSpFace(scene, faces.full, frameName, true)) return null;
+      if (!drawSpFace(scene, faces.empty, frameName, false)) return null;
+    } catch (e) {
+      // A tainted or WebGL-only atlas source: the CA BOMB disc still works.
+      return null;
+    }
+    return faces;
+  }
   function fireDezaBomb(scene, p) {
     var nib = dezaBombNibble(scene, p);
     var type = DEZA_BOMB_BY_NIBBLE[nib];
@@ -12783,9 +12883,17 @@
       this.spBtnReadyBg = this.add.sprite(-18, -18, "game_ui", "hudCabtnBg0.gif");
       this.spBtnReadyBg.setOrigin(0, 0);
       this.spBtnReadyBg.setAlpha(0);
-      this.spBtnBarBg = this.add.sprite(0, 0, "game_ui", "hudCabtn100per.gif");
+      // A Dezaemon import wears its own bomb pickup here (dezaSpFaces); the
+      // faces are the shipped size, so the crop, the hit circle and the glow
+      // behind them are unchanged.
+      var spFaces = dezaSpFaces(this);
+      this.spBtnBarBg = spFaces
+        ? this.add.sprite(0, 0, spFaces.empty)
+        : this.add.sprite(0, 0, "game_ui", "hudCabtn100per.gif");
       this.spBtnBarBg.setOrigin(0, 0);
-      this.spBtnBar = this.add.sprite(0, 0, "game_ui", "hudCabtn0per.gif");
+      this.spBtnBar = spFaces
+        ? this.add.sprite(0, 0, spFaces.full)
+        : this.add.sprite(0, 0, "game_ui", "hudCabtn0per.gif");
       this.spBtnBar.setOrigin(0, 0);
       this.spBtnWrap.add([this.spBtnPulse, this.spBtnReadyBg, this.spBtnBarBg, this.spBtnBar]);
       this.spBtnWrap.setSize(this.spBtnBarBg.width, this.spBtnBarBg.height);
