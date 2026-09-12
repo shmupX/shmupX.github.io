@@ -3105,6 +3105,17 @@
     if (liveFor({ key: item.id, g: item }) && url.indexOf('online=') === -1) {
       url += (url.indexOf('?') === -1 ? '?' : '&') + 'online=1';
     }
+    // Debug flags ride into the game: ?debug=1 on the launcher turns the
+    // game page's engine comparison on, and ?builder=CODE names the desktop
+    // that runs it (static/phaser-plugins/engine-compare.js).
+    const lq = new URLSearchParams(location.search);
+    if (lq.get('debug') === '1' && url.indexOf('debug=') === -1) {
+      url += (url.indexOf('?') === -1 ? '?' : '&') + 'debug=1';
+    }
+    const builderCode = lq.get('builder') || '';
+    if (builderCode && url.indexOf('builder=') === -1) {
+      url += (url.indexOf('?') === -1 ? '?' : '&') + 'builder=' + encodeURIComponent(builderCode);
+    }
     gameSrc = manifestOrigin ? new URL(url, manifestOrigin).href : url;
     setTimeout(() => { gameOn = true; }, 30);
   }

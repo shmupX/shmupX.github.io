@@ -492,6 +492,14 @@
         if (levelData.storyData) {
           recipe.storyData = levelData.storyData;
         }
+        // The import's own metadata (meta.source, meta.dezaemonSettings: the
+        // game mode, the ship configs, the per-stage flags) — the editor path
+        // hands the whole recipe over, and a fetched or offline record has
+        // to keep it too, or the runtime plays a horizontal cart vertically
+        // and draws no stage's drop-shadow pass.
+        if (levelData.meta && typeof levelData.meta === "object") {
+          recipe.meta = deepClone(levelData.meta);
+        }
         if (levelData.sceneScripts && typeof levelData.sceneScripts === "object") {
           recipe.sceneScripts = levelData.sceneScripts;
         }
@@ -1443,6 +1451,9 @@
     }
   }
   var gameState = ensureGameState();
+  // Read-only handle for the debug tooling in static/phaser-plugins
+  // (engine-compare.js names the running level by its recipe's title).
+  globalThis.__CMG_GAME_STATE__ = gameState;
   ensureScoreState(gameState);
   ensureRuntimeState(gameState);
   function syncRuntimeFlagsFromLocation(state = gameState) {
@@ -4849,6 +4860,12 @@
     var pending = [dzst.speedCh, dzst.rotationCh, dzst.scaleCh, dzst.directionCh]
       .filter(function(c) { return c && c.armAt !== null; });
     dzst.pendingChannels = pending.length ? pending : null;
+    // A scale channel that runs from spawn starts AT its first value — an
+    // object authored to come in at x3 (a rock falling in from above) is x3
+    // on its first frame, not x1 until updateEnemyBehavior's first tick.
+    if (dzst.scaleCh && dzst.scaleCh.armAt === null) {
+      applyDezaScale(enemy, dzst, dzst.scaleCh.value);
+    }
     if (behavior.ground) {
       var shadow = enemy.getData("shadow");
       if (shadow) shadow.setVisible(false);
@@ -4911,8 +4928,7 @@
       st.age++;
       stepSpecialClass(scene, enemy, st);
       if (st.scaleCh) {
-        var fSp = stepChannel(st.scaleCh);
-        enemy.setScale(fSp, fSp);
+        applyDezaScale(enemy, st, stepChannel(st.scaleCh));
       }
       return true;
     }
@@ -4970,24 +4986,22 @@
       enemy.rotation = stepChannel(st.rotationCh) * Math.PI / 180;
     }
     if (st.scaleCh) {
-      var f = stepChannel(st.scaleCh);
-      var axes = b.scale.axes || "xy";
-      enemy.setScale(
-        axes.indexOf("x") >= 0 ? f : enemy.scaleX,
-        axes.indexOf("y") >= 0 ? f : enemy.scaleY
-      );
-      if (axes === "xy") {
-        var a = 1;
-        if (f > 1.5) a = Math.max(0.45, 1 - (f - 1.5) * 0.45);
-        else if (f < 0.45) a = Math.max(0.3, f / 0.45);
-        enemy.setAlpha(a);
-        enemy.setData("dezaNoContact", f > 1.5 || f < 0.45);
-        if (st.scaleCh.done && (f > 1.5 || f < 0.45)) {
-          enemy.setData("dezaGone", true);
-        }
-      }
+      applyDezaScale(enemy, st, stepChannel(st.scaleCh));
     }
     return true;
+  }
+  // The scale channel as the Saturn draws it (FORMAT.md, record bytes
+  // 12-14, and the 2026-09-12 sav-profiler measurements): every mode zooms
+  // BOTH axes, the object stays opaque, and while the zoom is off unity the
+  // status word's bit15 stops it firing and colliding; reaching x0 or x4
+  // removes it silently (+0x632A). The "falling from above" look is the
+  // zoom riding down plus, on stages with the drop-shadow pass, the mesh
+  // shadow converging on the object — not an alpha ramp on the object.
+  function applyDezaScale(enemy, st, f) {
+    enemy.setScale(f, f);
+    var offUnity = Math.abs(f - 1) > 0.02;
+    enemy.setData("dezaNoContact", offUnity);
+    if (f <= 0.001 || f >= 3.999) enemy.setData("dezaGone", true);
   }
   var ZAKO_BULLET_KEY = "dezaZakoBullet";
   var ZAKO_BULLET_SPEED = 1.35;
@@ -7727,9 +7741,35 @@
     return shadow;
   }
   function updateShadowPosition(shadow, sprite) {
+    if (shadow.getData("dezaShadowPass")) {
+      // The Saturn's pass (+0x473E..+0x47D0) draws the object again at an
+      // offset of (zoom - threshold) << 10 in x and y: +20 px at zoom 1.0,
+      // which pins the threshold at 0.6875 and the slope at 64 px per unit
+      // of zoom. A rock riding x1.5 -> x0 therefore throws its shadow 52 px
+      // away and pulls it back through the object as it lands — the depth
+      // cue the alpha ramp used to stand in for.
+      var zoom = sprite.scaleX;
+      var off = 64 * (zoom - 0.6875);
+      shadow.setScale(sprite.scaleX, sprite.scaleY);
+      shadow.rotation = sprite.rotation;
+      shadow.x = sprite.x + off;
+      shadow.y = sprite.y + off;
+      return;
+    }
     shadow.x = sprite.x;
     var offsetY = shadow.getData("shadowOffsetY") || 0;
     shadow.y = sprite.y + sprite.height - offsetY;
+  }
+  // Whether the running Dezaemon stage asks for the drop-shadow pass; null
+  // for a level that is not an import.
+  function dezaStageDropShadow(scene) {
+    var recipe = scene && scene.recipe || gameState._phaserRecipe;
+    var m = recipe && recipe.meta && recipe.meta.dezaemonSettings;
+    if (!m) return null;
+    var flags = m.stageFlags;
+    if (!flags) return false;
+    var f = flags[gameState.stageId || 0];
+    return !!(f && f.dropShadow);
   }
 
   // --- two-player plumbing -------------------------------------------------
@@ -8469,9 +8509,20 @@
     var shadowReverse = data.shadowReverse !== false;
     var shadowOffsetY = data.shadowOffsetY || 10;
     var enemyNameLower = String(data.name || "").toLowerCase();
+    // A Dezaemon stage draws shadows only when its flag byte asks for the
+    // renderer's drop-shadow pass (settings +0x02..+0x0B bit5): Ramsie and
+    // DAIOH do, Neo-Gaia and Master Arena do not. 2028.Ai's own enemies
+    // keep their shadows as before.
+    var dezaShadowPass = data.dezaemon ? dezaStageDropShadow(scene) : null;
     var shadow = createShadow(scene, enemy, frameKey, shadowReverse, shadowOffsetY);
     if (enemyNameLower === "baraa" || enemyNameLower === "barab") {
       shadow.setVisible(false);
+    }
+    if (dezaShadowPass === false) shadow.setVisible(false);
+    if (dezaShadowPass === true) {
+      // A mesh on the Saturn: the black cut-out at half alpha is the
+      // nearest the canvas has.
+      shadow.setData("dezaShadowPass", true);
     }
     enemy.setData("shadow", shadow);
     updateShadowPosition(shadow, enemy);
@@ -10061,7 +10112,12 @@
       if (dShadow && dShadow.active) {
         updateShadowPosition(dShadow, enemy);
       }
-      updateEnemyFire(scene, enemy, spawnEnemyBullet);
+      // Status bit15 (FORMAT.md, change-channel triggers): while the scale is
+      // off unity the object neither collides nor FIRES. The collision half
+      // already honours dezaNoContact; this is the firing half.
+      if (!enemy.getData("dezaNoContact")) {
+        updateEnemyFire(scene, enemy, spawnEnemyBullet);
+      }
       return;
     }
     var speed = enemy.getData("speed") || 0.8;
@@ -12640,6 +12696,16 @@
     showTitle() {
       var stageId = gameState.stageId || 0;
       var self = this;
+      // Dezaemon 2 has no ROUND / FIGHT card: on hardware the level starts
+      // as the title fades out, the scroll running and the ship flying in.
+      // The 2.5 s card below is 2028.Ai's own, and it put every imported
+      // cart that long behind the Saturn (measured with tools/sav-profiler).
+      if (isImportedLevel()) {
+        this.time.delayedCall(0, function() {
+          self.startGame();
+        });
+        return;
+      }
       var preDelay = 0;
       var preOverlay = null;
       if (stageId === lastStageId(this.recipe) && stageId > 0) {

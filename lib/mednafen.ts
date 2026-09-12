@@ -54,6 +54,7 @@ import { ensureDir } from "@std/fs";
 import { injectCart, InjectError } from "./cart-inject.ts";
 
 const IS_WINDOWS = Deno.build.os === "windows";
+const REPO_ROOT = new URL("../", import.meta.url).pathname;
 
 /** Every failure this module reports; `message` is meant for the user. */
 export class MednafenError extends Error {
@@ -121,6 +122,11 @@ export async function findDisc(
     flag,
     Deno.env.get("DEZAEMON_DISC"),
     join(home(), "saturn", "Dezaemon 2 (Japan)", "Dezaemon 2 (Japan).cue"),
+    // The gitignored fixtures folder, where a checkout on a Mac keeps it —
+    // beside this module in a checkout, beside the working directory when
+    // this runs out of the built server bundle.
+    join(REPO_ROOT, "dev-fixtures", "Dezaemon 2 (Japan).cue"),
+    join(Deno.cwd(), "dev-fixtures", "Dezaemon 2 (Japan).cue"),
   ].filter((p): p is string => !!p);
   for (const c of candidates) {
     if (await exists(c)) return resolve(c);

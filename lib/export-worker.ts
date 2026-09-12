@@ -48,6 +48,7 @@ import {
   type ExportOutcome,
   runExport,
 } from "./export-build.ts";
+import { compareSlug, resultFiles, runCompare } from "./engine-compare.ts";
 
 export const EXPORT_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 // Keep in step with static/export-queue.js (tests/export_queue_test.ts checks).
@@ -88,6 +89,15 @@ export interface ExportJob {
   id: string;
   level: string;
   platform: string;
+  /**
+   * What the desktop should do with `level`: build it (absent, or "export"),
+   * or "engine-compare" — play it on the Saturn and in the runtime at once
+   * and upload the recording pair (lib/engine-compare.ts). `platform` reads
+   * "compare" for those, which no build target answers to.
+   */
+  kind?: "export" | "engine-compare";
+  /** The kind's own parameters (a comparison's `from` and `for`, seconds). */
+  options?: Record<string, unknown>;
   requester?: string;
   requesterLabel?: string;
   requestedAt: number;
@@ -287,6 +297,11 @@ export function artifactKind(name: string): string {
   if (ext === "ipa") return "ipa";
   if (ext === "dmg") return "dmg";
   if (ext === "zip") return "zip";
+  // An engine comparison's files: the side-by-side clip, its contact sheet
+  // and the strongest moment, and the written report.
+  if (ext === "mp4") return "video";
+  if (ext === "png") return "image";
+  if (ext === "md") return "text";
   return "file";
 }
 
@@ -296,6 +311,9 @@ const CONTENT_TYPES: Record<string, string> = {
   msi: "application/x-msi",
   zip: "application/zip",
   "usb-zip": "application/zip",
+  video: "video/mp4",
+  image: "image/png",
+  text: "text/markdown; charset=utf-8",
 };
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -433,6 +451,33 @@ interface Upload {
   name: string;
   kind: string;
   bytes: Uint8Array;
+}
+
+/**
+ * An engine comparison as the worker's outcome: the same shape a build
+ * answers with, so the upload, the verdict and the history need no second
+ * path. The paired desktop plays the level on its own screen.
+ */
+async function runCompareOutcome(
+  job: ExportJob,
+  log: (line: string) => void,
+  signal?: AbortSignal,
+): Promise<ExportOutcome> {
+  const o = job.options ?? {};
+  const r = await runCompare({
+    source: job.level,
+    from: typeof o.from === "number" ? o.from : undefined,
+    len: typeof o.for === "number" ? o.for : undefined,
+    log,
+    signal,
+  });
+  return {
+    level: job.level,
+    platform: "compare",
+    slug: compareSlug(job.level),
+    artifacts: resultFiles(r),
+    log: "",
+  } as ExportOutcome;
 }
 
 export class ExportWorker {
@@ -791,13 +836,19 @@ export class ExportWorker {
     let outcome: "done" | "failed" | "requeued" = "failed";
     let error = "";
     try {
-      log(`building "${job.level}" for ${job.platform}`);
-      const built = await runExport({
-        level: job.level,
-        platform: job.platform,
-        log,
-        signal,
-      });
+      let built: ExportOutcome;
+      if (job.kind === "engine-compare") {
+        log(`comparing "${job.level}" on the Saturn and in the runtime`);
+        built = await runCompareOutcome(job, log, signal);
+      } else {
+        log(`building "${job.level}" for ${job.platform}`);
+        built = await runExport({
+          level: job.level,
+          platform: job.platform,
+          log,
+          signal,
+        });
+      }
       const artifacts = await this.uploadArtifacts(job, built, log);
       await settle();
       await this.patchJob(job.id, {

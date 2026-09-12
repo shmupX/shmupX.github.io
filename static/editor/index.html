@@ -4979,6 +4979,21 @@
             return r;
         }
 
+        // Debug flags the game page inherits: ?debug=1 turns its engine
+        // comparison on (static/phaser-plugins/engine-compare.js), ?builder=
+        // names the desktop to run it on, and `source` says which cart this is.
+        function debugPlayParams() {
+            let out = '';
+            try {
+                const q = new URLSearchParams(location.search);
+                if (q.get('debug') === '1') out += '&debug=1';
+                const b = q.get('builder') || '';
+                if (b) out += '&builder=' + encodeURIComponent(b);
+                const src = window.__dezaPlaySource || '';
+                if (src) out += '&source=' + encodeURIComponent(src);
+            } catch (_e) { /* no URL to read */ }
+            return out;
+        }
         async function playCurrentStage(opts) {
             if (!gameData) { alert('Load directory first'); return; }
             if (!syncEnemyEditorForm(true)) return;
@@ -5002,7 +5017,7 @@
             // this is normally a fast no-op rewrite; it settles well inside the
             // window where a click still authorizes window.open.
             await storeAtlasForViewers();
-            const playUrl = `${GAME_PLAY_URL}?editorPlay=1&stage=${sid}${godModeParam()}`;
+            const playUrl = `${GAME_PLAY_URL}?editorPlay=1&stage=${sid}${godModeParam()}${debugPlayParams()}`;
             // navigate: swap this page (or this launcher frame) for the game
             // instead of opening a tab — the shelf's player mode uses it so a
             // slow cart fetch can't outlive the click's popup allowance.
@@ -6428,6 +6443,11 @@
                 ? await loadDezaemonFromRtdb(slug, file, { openModal: false })
                 : await loadDezaemonFromUrl('dezaemon/saves/' + encodeURIComponent(file), { openModal: false });
             if (!ok) return;
+            // What the game page should call this cart when the debug engine
+            // comparison asks a desktop to fetch it again: the library slug
+            // (a browser-built export has none — the desktop cannot reach
+            // this browser's IndexedDB, so it gets the title to look up).
+            window.__dezaPlaySource = slug || dezaSlugOfTitle(fallbackTitle || file) || '';
             document.getElementById('dezaemon-library-modal').classList.add('hidden');
             // One click from the shelf into the editor: when the cart holds
             // exactly one game save, import it straight away — the slot sheet

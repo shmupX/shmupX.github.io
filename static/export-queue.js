@@ -43,6 +43,9 @@ export const PLATFORM_ARTIFACTS = {
   windows: 'MSI',
   ps2: 'PS2 disc',
   desktop: 'desktop app',
+  // Not a build: the desktop plays the level on the Saturn and in the
+  // runtime at once and sends the recording pair back (kind 'engine-compare').
+  compare: 'Saturn comparison',
 };
 
 // ── Codes and identity ──────────────────────────────────────────────────────
@@ -273,7 +276,7 @@ export function forgetJob(code, id) {
  * already be saved to the cloud — the desktop reads it from there, exactly as
  * a local export does. Answers the job record.
  */
-export async function queueExport({ code, level, platform }) {
+export async function queueExport({ code, level, platform, kind, options }) {
   code = normalizeBuilderCode(code);
   if (!code) throw new Error('a BUILD CODE is needed — open shmupX on the desktop that should build this and read it off Settings');
   if (!level) throw new Error('the game needs a name');
@@ -289,6 +292,10 @@ export async function queueExport({ code, level, platform }) {
     progress: 'waiting for the desktop',
     attempts: 0,
   };
+  // A job kind other than a build (the engine comparison) rides along with
+  // its own parameters; a plain export leaves both out, as it always has.
+  if (kind && kind !== 'export') job.kind = String(kind);
+  if (options && typeof options === 'object') job.options = options;
   await dbRequest('PUT', EXPORT_PATHS.queue + '/' + code + '/' + id, job);
   const list = readJobs();
   list.push({ code, id, level: job.level, platform: job.platform, requestedAt: job.requestedAt });
@@ -466,6 +473,9 @@ export function artifactActionLabel(art) {
     case 'appimage': return 'DOWNLOAD APPIMAGE';
     case 'ipa': return 'DOWNLOAD .IPA';
     case 'dmg': return 'DOWNLOAD .DMG';
+    case 'video': return 'WATCH THE COMPARISON (.MP4)';
+    case 'image': return 'VIEW ' + ((art && art.name) || 'IMAGE').toUpperCase();
+    case 'text': return 'READ ' + ((art && art.name) || 'REPORT').toUpperCase();
     default: return 'DOWNLOAD ' + ((art && art.name) || 'FILE');
   }
 }

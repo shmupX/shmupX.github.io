@@ -675,6 +675,10 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
     if (decoded.settings) {
         gameJson.meta.dezaemonSettings = {
             gameMode: decoded.settings.gameMode,
+            // Per-stage flag bytes (+0x02..+0x0B); the runtime reads
+            // `dropShadow` to draw the Saturn's zoom-offset shadow pass on
+            // the stages that ask for it, and none on the stages that don't.
+            stageFlags: decoded.settings.stageFlags,
             // gameMode decoded (2026-08-28): bit0 = horizontal scroller,
             // bit1 = two players
             horizontal: (decoded.settings.gameMode & 1) !== 0,

@@ -633,6 +633,14 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       if (levelData.storyData) {
         recipe.storyData = levelData.storyData;
       }
+      // The import's own metadata (meta.source, meta.dezaemonSettings: the
+      // game mode, the ship configs, the per-stage flags) — the editor path
+      // hands the whole recipe over, and a fetched or offline record has to
+      // keep it too, or the runtime plays a horizontal cart vertically and
+      // draws no stage's drop-shadow pass.
+      if (levelData.meta && typeof levelData.meta === "object") {
+        recipe.meta = deepClone(levelData.meta);
+      }
 
       // Player scene scripts (title/adv hooks or replacements) ride along the
       // recipe; the scene-script runtime reads recipe.sceneScripts.

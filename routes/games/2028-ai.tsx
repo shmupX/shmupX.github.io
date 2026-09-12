@@ -387,6 +387,14 @@ export default define.page(function Game2028() {
       }
       <script src="/phaser-plugins/netplay-lobby.js" type="module" defer>
       </script>
+
+      {
+        /* ENGINE COMPARISON (debug): with ?debug=1 the page can play its
+          level on the Saturn (Mednafen) and here at the same moment and show
+          the two side by side — on this machine, or on the desktop paired
+          with ?builder=CODE. Inert otherwise. */
+      }
+      <script src="/phaser-plugins/engine-compare.js" defer></script>
     </>
   );
 });

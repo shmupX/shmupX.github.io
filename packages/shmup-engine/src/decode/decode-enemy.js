@@ -25,7 +25,10 @@
 //   bytes 6-8   speed-change channel   (enable b6&1)
 //   bytes 9-11  rotation channel       (mode b9&7: 0 off, 1 cw, 2 ccw,
 //                                       3/4 engine-special)
-//   bytes 12-14 scale channel          (mode b12&3: 0 off, 1 XY, 2 X, 3 Y)
+//   bytes 12-14 scale channel          (mode b12&3: 0 off, 1-3 on; the mode was read as
+//                                      XY / X / Y, but on hardware all three scale both
+//                                      axes — measured 2026-09-12 with tools/sav-profiler
+//                                      on Neo-Gaia (1), Master Arena (2) and Ramsie (3))
 //   bytes 15-17 direction channel      (enable b15&1)
 //
 // Channel layout (A = first byte, B = second, C = third):
@@ -286,8 +289,13 @@ export function decodeEnemyRecord(bytes) {
                 stepTable: FACTOR_STEP_TABLE,
                 angle: false,
             }),
-            // which axes the channel drives
-            axes: scaleMode === 1 ? "xy" : scaleMode === 2 ? "x" : scaleMode === 3 ? "y" : "",
+            // The mode nibble's meaning beyond on/off is still open: the
+            // editor names the three values as if they picked axes, but the
+            // Saturn zooms both axes for every one of them (see the header),
+            // so `axes` is "xy" whenever the channel is on. `mode` keeps the
+            // raw value for whoever traces the difference.
+            axes: scaleMode ? "xy" : "",
+            mode: scaleMode,
             repeatY: (b[14] >> 2) & 3,
         },
         direction: channel(b[15], b[16], b[17], {

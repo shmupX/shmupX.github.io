@@ -928,8 +928,13 @@ function decodeEnemyRecord(bytes) {
         stepTable: FACTOR_STEP_TABLE,
         angle: false
       }),
-      // which axes the channel drives
-      axes: scaleMode === 1 ? "xy" : scaleMode === 2 ? "x" : scaleMode === 3 ? "y" : "",
+      // The mode nibble's meaning beyond on/off is still open: the
+      // editor names the three values as if they picked axes, but the
+      // Saturn zooms both axes for every one of them (see the header),
+      // so `axes` is "xy" whenever the channel is on. `mode` keeps the
+      // raw value for whoever traces the difference.
+      axes: scaleMode ? "xy" : "",
+      mode: scaleMode,
       repeatY: b[14] >> 2 & 3
     },
     direction: channel(b[15], b[16], b[17], {
@@ -1678,6 +1683,10 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
   if (decoded.settings) {
     gameJson.meta.dezaemonSettings = {
       gameMode: decoded.settings.gameMode,
+      // Per-stage flag bytes (+0x02..+0x0B); the runtime reads
+      // `dropShadow` to draw the Saturn's zoom-offset shadow pass on
+      // the stages that ask for it, and none on the stages that don't.
+      stageFlags: decoded.settings.stageFlags,
       // gameMode decoded (2026-08-28): bit0 = horizontal scroller,
       // bit1 = two players
       horizontal: (decoded.settings.gameMode & 1) !== 0,
@@ -2277,7 +2286,12 @@ function decodeSettings(sec5) {
     stageFlags: [...sec5.subarray(base + 2, base + 12)].map((b) => ({
       newStage: (b & 1) === 0,
       keepScrollOnDeath: (b & 64) !== 0,
-      finalStage: (b & 128) !== 0
+      finalStage: (b & 128) !== 0,
+      // bit5: the renderer's drop-shadow pass (FORMAT.md, settings
+      // +0x02..+0x0B) — every visible object drawn a second time, a
+      // mesh shadow offset by its zoom. 35 of 262 corpus saves set it
+      // on stage 0 (Ramsie, DAIOH, Laire II, ...).
+      dropShadow: (b & 32) !== 0
     })),
     // +0x5A..+0x5C: the staff roll's three role labels — indices into the
     // engine's fixed 16-entry list (GAME.bin +0x20164).
@@ -6036,6 +6050,9 @@ var DEFAULT_ITEM_TYPES = [7, 0, 8, 6, 5, 4, 1, 2];
 var DEFAULT_ITEM_MOVEMENT = 1;
 var DROP_TO_SLOT = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 9: 5 };
 var STRAIGHT_APPEARANCE_BASE = 32;
+var STORY_PICTURE_BAND = 6;
+var STORY_TEXT_BAND = 4;
+var STORY_QUIET_ROWS = 48;
 var STRAIGHT_SPEEDS = [128, 256, 384, 512, 640, 768, 1152, 1536];
 var SHOT_UNITS = 5120;
 var BOSS_UNITS_PER_HIT = 20480;
@@ -6516,7 +6533,7 @@ function puffSprite(size = 16) {
   return fr;
 }
 function buildSaveFromGame(level, art, options = {}) {
-  const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, useBackground: true, ...options };
+  const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, storyPanels: null, useBackground: true, ...options };
   const warnings = [];
   const warn = (m) => warnings.push(m);
   const artMap = /* @__PURE__ */ new Map();
@@ -6661,6 +6678,62 @@ function buildSaveFromGame(level, art, options = {}) {
         bytes = enemyRecordFromEditor(rec, { bulletType: bulletTypeOf.get(letter) || 0, dropSlot: dropToSlot(drop) });
       }
       records.set(letter, { index, band, frames: planKeys, bytes, name: rec.name || `enemy${letter}` });
+    }
+    const panel = opts.storyPanels ? opts.storyPanels.find((p) => p.stage === s) : null;
+    if (panel) {
+      const storyBytes = encodeEnemyRecord({
+        appearance: STRAIGHT_APPEARANCE_BASE,
+        animIndex: 3,
+        scoreIndex: 1,
+        hpIndex: 4,
+        deathMode: 0,
+        fireGeometry: 0,
+        aimed: false
+      });
+      const place = (tiles, band, cols, colBase, rowBase, what) => {
+        const def = RECORD_ART[band];
+        const stepCol = def.w, stepRow = def.h;
+        const rows = Math.max(1, Math.ceil(tiles.length / cols));
+        const free = [];
+        for (let i = def.first; i < def.first + def.count; i++) {
+          if (!taken.has(i)) free.push(i);
+        }
+        if (free.length < tiles.length) {
+          warn(
+            `${st.key}: the story ${what} needs ${tiles.length} ${def.w * CG_CELL}x${def.h * CG_CELL} records and the stage has ${free.length} free \u2014 panel dropped`
+          );
+          return;
+        }
+        for (const tile of tiles) {
+          const index = free.shift();
+          taken.add(index);
+          const key = `story:${s}:${what}:${tile.col},${tile.row}`;
+          const frame = { key, w: tile.w, h: tile.h, rgba: tile.rgba };
+          const planKeys = Array.from(
+            { length: def.frames },
+            (_, f) => planFrame(`${key}:${f}`, frame, def.w * CG_CELL, def.h * CG_CELL, "story", 2)
+          );
+          const letter = `\0${key}`;
+          records.set(letter, { index, band, frames: planKeys, bytes: storyBytes, name: key });
+          placements.push({
+            row: rowBase + (rows - 1 - tile.row) * stepRow,
+            col: colBase + tile.col * stepCol,
+            letter,
+            drop: 0
+          });
+        }
+      };
+      for (const p of placements) {
+        p.row = Math.min(PLACEMENT_ROWS - 1, p.row + STORY_QUIET_ROWS);
+      }
+      lastRow = Math.min(PLACEMENT_ROWS - 1, lastRow + STORY_QUIET_ROWS);
+      if (panel.text && panel.text.length) {
+        place(panel.text, STORY_TEXT_BAND, panel.text.length, 3, FIRST_SPAWN_ROW, "text");
+      }
+      if (panel.picture && panel.picture.length) {
+        place(panel.picture, STORY_PICTURE_BAND, 2, 7, FIRST_SPAWN_ROW + 4, "picture");
+      }
+      lastRow = Math.max(lastRow, FIRST_SPAWN_ROW + 16);
     }
     let boss = null;
     const bossRec = bossData[`boss${s}`] || (s === 0 && !bossData.boss0 ? null : null);

@@ -428,7 +428,7 @@ start/end/rate/repeat interpolators:
 | 5 | bits0-4 fire direction (0 = default/aimed), bits5-7 extra (passed to the shooter at `+0x607cfac`) |
 | 6-8 | **speed-change channel** (enable `b6&1`) — values `[0,4,8,12,16,24,32,48,64]`/16 = ×0..×4 (`+0x6086004`), steps `[16..1024]`/256 (`+0x608600e`) |
 | 9-11 | **rotation channel** (mode `b9&7`: 0 off, 1 cw, 2 ccw, 3/4 engine-special) — angles `[0,32,…,224]` of the 256-circle (`+0x6085fec`), steps `[16..2048]`/256 (`+0x6085ff4`) |
-| 12-14 | **scale channel** (mode `b12&3`: 0 off, 1 XY, 2 X, 3 Y) — values ×0..×4 (`+0x6085fd0`, 16 = ×1.0, the spawn default `0x1000` = 16<<8), steps `[16..1024]`/256 (`+0x6085fda`); `b14` bits4-5 repeat X, bits2-3 repeat Y |
+| 12-14 | **scale channel** (mode `b12&3`: 0 off, 1-3 on — the editor labels the three as XY / X / Y, but on hardware **all three zoom both axes**: measured 2026-09-12 with `tools/sav-profiler` against Mednafen on Neo-Gaia (mode 1), Master Arena (mode 2, the ×4 ship at 44 s) and Ramsie (mode 3, the ×1.5→0 rock at 44 s); no half-transparency on the object itself in any of them — Ramsie's translucent companion is the stage's drop-shadow pass, settings `+0x02` bit5) — values ×0..×4 (`+0x6085fd0`, 16 = ×1.0, the spawn default `0x1000` = 16<<8), steps `[16..1024]`/256 (`+0x6085fda`); `b14` bits4-5 repeat X, bits2-3 repeat Y |
 | 15-17 | **direction channel** (enable `b15&1`) — movement angles `[0,16,…,128]` (`+0x6086020`; default 0x80 = 128 = straight down), steps `[128..32767]`/256 (`+0x608602a`) |
 
 Channel byte layout (A,B,C): A bits4-6 step index; B low/high nibble start/end

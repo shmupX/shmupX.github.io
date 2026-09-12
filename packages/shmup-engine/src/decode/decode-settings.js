@@ -305,6 +305,11 @@ export function decodeSettings(sec5) {
             newStage: (b & 1) === 0,
             keepScrollOnDeath: (b & 0x40) !== 0,
             finalStage: (b & 0x80) !== 0,
+            // bit5: the renderer's drop-shadow pass (FORMAT.md, settings
+            // +0x02..+0x0B) — every visible object drawn a second time, a
+            // mesh shadow offset by its zoom. 35 of 262 corpus saves set it
+            // on stage 0 (Ramsie, DAIOH, Laire II, ...).
+            dropShadow: (b & 0x20) !== 0,
         })),
         // +0x5A..+0x5C: the staff roll's three role labels — indices into the
         // engine's fixed 16-entry list (GAME.bin +0x20164).

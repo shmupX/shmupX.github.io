@@ -159,6 +159,27 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
     `gameState.cmgSplitPads`, which `twoPlayerAllowed` honours like the URL
     override. Upstream home would be
     `2019-es7/src/phaser/game-objects/Player.js`.
+  - The scale channel as the Saturn draws it (`applyDezaScale`): every mode
+    zooms both axes and leaves the object opaque; the alpha ramp the runtime
+    used to invent for large zooms is gone. Stages whose flag byte asks for the
+    renderer's drop-shadow pass (`stageFlags[].dropShadow`) draw each enemy's
+    shadow scaled with it and offset `64 × (zoom − 0.6875)` px in x and y — +20
+    px at ×1, as FORMAT.md traced — and stages that do not get no enemy shadows.
+    `globalThis.__CMG_GAME_STATE__` exposes the game state to the debug plugin.
+    Upstream home: `2019-es7/src/phaser/game-objects/Enemy.js` and `Shadow.js`.
+  - The level loader's `mergeRecipe` (inlined here from
+    `static/phaser-plugins/level-loader.js`, patched in both) now carries a
+    fetched or offline record's `meta` into the recipe. It never did, so
+    everything keyed off `meta.dezaemonSettings` — the horizontal game mode, the
+    ship configs, the per-stage flags — only worked through the editor's PLAY
+    hand-off, and a cart served as `foo.json` (an export, the profiler) played
+    with none of it.
+  - Two rules of the Saturn's change channels that the behaviour driver skipped:
+    a scale channel that runs from spawn now seeds the sprite's scale at its
+    first value (`initEnemyBehavior`), so an object authored to come in at ×3 is
+    ×3 on its first frame; and an enemy flagged `dezaNoContact` (scale off unity
+    — status bit15 in FORMAT.md) no longer fires, as it already did not collide.
+    Upstream home for both is `2019-es7/src/phaser/game-objects/Enemy.js`.
   - The Dezaemon divergences below, all of them keyed off `isImportedLevel()`.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
@@ -188,6 +209,7 @@ deno task build:ps2:iso   # …plus a bootable disc image
 deno task build:sav       # a level as a Dezaemon 2 cart save (.sav) for MiSTer / hardware
 deno task sav:run         # …then launch it in Mednafen, cart preloaded (Windows / Linux / WSL→Windows)
 deno task sav:inject      # …or merge it into one of the five save slots on the cart this machine's emulator keeps
+deno task sav:profile     # play a .sav in Mednafen and in the runtime at once and record a window of both (macOS)
 deno task eshop:check     # validate data/eshop.json against the built manifest
 deno task eshop:covers    # cover a published eShop game that went out without one (dry run; --write uploads)
 
@@ -784,6 +806,48 @@ that is 2028.Ai's rather than the game's is keyed off it:
   Rush, a Start Stage slider bounded by the cart's real stage count, **Final
   Boss** (`?finalBoss=1` — the cart's last stage, opened at its boss) and Allow
   Continues. 2028.Ai keeps its own set, Akuma (`?boss=goki`) included.
+- **No ROUND / FIGHT card.** Dezaemon 2 starts the level as its title fades —
+  the scroll runs and the ship flies in inside a second. 2028.Ai's 2.5 s stage
+  card (`showTitle()` in `PhaserGameScene`) put every imported cart that far
+  behind the Saturn, measured with `deno task sav:profile`; an imported level
+  now goes straight to `startGame()`.
+
+### Profiling a cart against the Saturn
+
+`deno task sav:profile <level.sav> --from 44 --for 5` (macOS) plays the save in
+Mednafen and in the runtime on the same Start press and records both sides over
+the window — frame pairs in `sheet.png`, the strongest zoom sighting in
+`moment.png`, the two side by side in `compare.mp4`, and every enemy the runtime
+drew off unity scale listed with its numbers and its shadow's travel. The
+runtime gets the save through `lib/shelf.ts`'s `levelRecordFromCart`, served as
+its `foo.json` by a local server, so the level editor is never involved; the
+Saturn side builds its own cart and walks Dezaemon 2's menus once per level —
+LOAD, then 組立 → EDIT START → TEST with MUTEKI switched on — to save a state on
+the TEST PLAY panel, so the ship is invincible there the way `?god=1` makes it
+here. `tools/sav-profiler/README.md` has the details and
+`tests/sav_profiler_e2e_test.ts` (gated on `SAV_PROFILER_E2E=1`) runs one window
+end to end: Ramsie's rock at 44 s, a zoom channel riding ×1.5 → ×0 with the
+stage's drop shadow under it.
+
+Two things it settled about the scale channel (record bytes 12-14): every mode
+value zooms **both** axes on hardware, whatever the editor's XY / X / Y labels
+say, and the object stays opaque — the translucent companion a falling rock has
+in Ramsie is the stage's **drop-shadow pass** (settings `+0x02` bit5, decoded as
+`stageFlags[].dropShadow`), a mesh shadow drawn at an offset that grows with the
+zoom. The runtime now does both, and draws no shadow at all on the stages that
+do not ask for one.
+
+**Engine comparison from the launcher (debug).** Open the launcher, the editor
+or the game page with `?debug=1` and the Guide gains a **Saturn Compare** row
+(the game page draws its own button when it stands alone). It runs the same
+comparison for the level that is playing and shows the split view in place — on
+the machine serving the page when that machine can run it (macOS with Mednafen,
+the disc and Chrome: `POST /api/engine-compare`, local-only), or on a paired
+desktop named with `?builder=ABCX-DEFY`, through the same export queue an APK
+build takes (job kind `engine-compare`; the desktop uploads `compare.mp4`, the
+sheet, the moment and the report as the job's artifacts).
+`static/phaser-plugins/engine-compare.js` is the page side,
+`lib/engine-compare.ts` the job.
 
 ### The Super Famicom cart
 
