@@ -622,7 +622,7 @@ Deno.test("decoded behavior lands on the runtime fields and rides along whole", 
         direction: 0,
         directionEx: 0,
       },
-      speedChange: {
+      zoom: {
         enabled: false,
         from: 1,
         to: 1,
@@ -706,7 +706,7 @@ Deno.test("an armoured enemy imports as indestructible", () => {
           direction: 0,
           directionEx: 0,
         },
-        speedChange: {
+        zoom: {
           enabled: false,
           from: 1,
           to: 1,
@@ -828,7 +828,7 @@ Deno.test("an appearance that cannot fire maps to interval -1", () => {
         direction: 0,
         directionEx: 0,
       },
-      speedChange: {
+      zoom: {
         enabled: false,
         from: 1,
         to: 1,

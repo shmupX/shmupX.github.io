@@ -262,3 +262,30 @@ Deno.test("a save with no placed objects reports zero stages", () => {
   assert(stages.every((s) => s.empty && s.usedTiles === 0));
   assert(stages.every((s) => s.placement.objects.length === 0));
 });
+
+Deno.test("the sec5 region map tiles the section exactly, with no gap and no overlap", () => {
+  const rows = Object.entries(SEC5_REGIONS)
+    .map(([name, r]) => ({ name, ...r, bytes: r.stride * (r.count ?? 1) }))
+    .sort((a, b) => a.offset - b.offset);
+  let at = 0;
+  for (const r of rows) {
+    assertEquals(
+      r.offset,
+      at,
+      `${r.name} starts where the previous region ends`,
+    );
+    at = r.offset + r.bytes;
+  }
+  // Every byte of the decompressed game-assembly section is claimed by one
+  // region: the map is a partition, not a set of landmarks.
+  assertEquals(at, SECTION_SIZES[5]);
+  assertEquals(rows.map((r) => r.name), [
+    "stageBanks",
+    "scrollCurves",
+    "placement",
+    "settings",
+    "enemies",
+    "spriteBank",
+    "spriteStages",
+  ]);
+});

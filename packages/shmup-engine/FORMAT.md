@@ -426,14 +426,113 @@ start/end/rate/repeat interpolators:
 | 3 | **death word parameter** — item slot / child record / chain key, by mode (see "The death word"). NOT fire params: nothing in the firing path reads this byte. |
 | 4 | bits0-1 fire mode; **bits2-3 death presentation** (0 = vanish silently, 2 = small blast, 1/3 = full); bits4-6 **fire rate** index → interval `[119,59,29,19,9,5,3,1]` (`+0x6085f81`; mode 3 uses `[119,59,39,19,11,7,3,1]`) + randomization window `[29,22,16,11,7,4,2,1]` (`+0x6085f61`) — reload = interval + rand(window) |
 | 5 | bits0-4 fire direction (0 = default/aimed), bits5-7 extra (passed to the shooter at `+0x607cfac`) |
-| 6-8 | **speed-change channel** (enable `b6&1`) — values `[0,4,8,12,16,24,32,48,64]`/16 = ×0..×4 (`+0x6086004`), steps `[16..1024]`/256 (`+0x608600e`) |
-| 9-11 | **rotation channel** (mode `b9&7`: 0 off, 1 cw, 2 ccw, 3/4 engine-special) — angles `[0,32,…,224]` of the 256-circle (`+0x6085fec`), steps `[16..2048]`/256 (`+0x6085ff4`) |
-| 12-14 | **scale channel** (mode `b12&3`: 0 off, 1-3 on — the editor labels the three as XY / X / Y, but on hardware **all three zoom both axes**: measured 2026-09-12 with `tools/sav-profiler` against Mednafen on Neo-Gaia (mode 1), Master Arena (mode 2, the ×4 ship at 44 s) and Ramsie (mode 3, the ×1.5→0 rock at 44 s); no half-transparency on the object itself in any of them — Ramsie's translucent companion is the stage's drop-shadow pass, settings `+0x02` bit5) — values ×0..×4 (`+0x6085fd0`, 16 = ×1.0, the spawn default `0x1000` = 16<<8), steps `[16..1024]`/256 (`+0x6085fda`); `b14` bits4-5 repeat X, bits2-3 repeat Y |
+| 6-8 | **uniform zoom channel** (enable `b6&1`) — values `[0,4,8,12,16,24,32,48,64]`/16 = ×0..×4 (`+0x6086004`), steps `[16..1024]`/256 (`+0x608600e`). Drives `0x06094A40`, the third register of the scale triple (see "The zoom channel" below). *(Corrected 2026-09-12: read as a SPEED multiplier until then.)* |
+| 9-11 | **rotation channel** (mode `b9&7`: 0 off, 1 cw, 2 ccw, 3/4 engine-special) — angles `[0,32,…,224]` of the 256-circle (`+0x6085fec`), steps `[16..2048]`/256 (`+0x6085ff4`). The direction is the MODE, not the endpoints: the step is negated for mode 2 alone (`+0x15A44`). Modes 3 and 4 **overwrite the repeat byte** — see "Rotation modes 3 and 4" below |
+| 12-14 | **per-axis scale channel** (mode `b12&3`: 0 off, 1 = both axes, 2 = the first, 3 = the second — exactly the editor's XY / X / Y list) — values ×0..×4 (`+0x6085fd0`, 16 = ×1.0, the spawn default `0x1000` = 16<<8), steps `[16..1024]`/256 (`+0x6085fda`). One authored ramp, armed onto one or both registers; `b14` bits4-5 are the repeat for BOTH axes |
 | 15-17 | **direction channel** (enable `b15&1`) — movement angles `[0,16,…,128]` (`+0x6086020`; default 0x80 = 128 = straight down), steps `[128..32767]`/256 (`+0x608602a`) |
 
 Channel byte layout (A,B,C): A bits4-6 step index; B low/high nibble start/end
-value index (rotation: 3-bit); C bits4-5 repeat (0 once, 1 loop, 2 ping-pong),
-bits0-2 a trigger mode packed into a per-enemy status word (semantics open).
+value index (rotation: 3-bit); C bits4-5 repeat, bits0-2 a trigger mode packed
+into a per-enemy status word (semantics open).
+
+**Repeat (C bits4-5).** The jump table at `0x6069FFC` has four arms, and every
+channel's stepper falls into it:
+
+| Value | Arm | What it does |
+|-------|-----|--------------|
+| 0 | **hold** | step := 0, accumulator := 0, start := end. Frozen on the end value. |
+| 1 | **ping-pong** | accumulator := 0, step negated, start and end swapped. |
+| 2 | **loop** | accumulator := 0, the live value re-seeded from start. |
+| 3 | — | unreachable from this field on rotation, whose stepper claims 3 and 4 for its own modes. |
+
+*(Corrected 2026-09-12: 1 and 2 were documented, decoded and played the other
+way round. 16,131 of the corpus's 75,502 defined records carry a 1 or a 2.)*
+
+**A ramp is measured by DISTANCE, not by reaching the end value.** The engine
+never compares the live value against the end. It keeps a signed 8.8
+accumulator per channel, adds the step to it every frame, and compares its
+whole part against the **unsigned byte distance** from start to end taken in
+the direction of travel — `+0x5F9C` for a rising ramp, `+0x5FC0` for a falling
+one — while the live value is `start + (accumulator >> 8)`, truncated to a
+byte on the two angle channels. That is what lets an angle sweep run the long
+way round: counter-clockwise from 0 to 90° is 270° of travel, not −90°.
+
+**Rotation start == end is a whole circle.** Because the distance is unsigned,
+a flat ramp would measure 0 and end on its first frame — so the spawn routine
+nudges it (`+0x159FA`): when the two angle indices are equal it moves the end
+one unit the *other* way (`+1` for mode 2, `−1` otherwise), making the distance
+255 units = 358.6°. 9,664 corpus records rely on this.
+
+**Rotation modes 3 and 4** do not merely preset an angle. Each **overwrites the
+channel's repeat byte** at `0x06091910` with its own number — `3` at `+0x15A50`,
+`4` at `+0x15A74` — which routes the per-frame stepper past all four repeat arms
+into a target-tracking one (`+0x5CD0` computes the angle to the player through
+`0x606B9A4` and turns toward it by at most one step). Whatever the record
+authored in the repeat field is dead on these two modes, which is 8,490 corpus
+records. Mode 3 also seeds the accumulator to `0xC0 − start`, mode 4 to `start`.
+
+**A value index past the table reads on.** Each channel's value table is nine
+bytes and a pad, and the channel's own step table is the very next thing in the
+literal pool — but the two factor channels and the direction channel index with
+the whole nibble. So index 9 reads the pad and 10-15 read step-table bytes:
+the factor tables continue `[0, 0, 16, 0, 32, 0, 64]` and direction
+`[0, 0, 128, 1, 0, 2, 0]`. Index 9 means factor **0**, and an object whose scale
+reaches zero is deleted (`+0x5C8C`) — so clamping to the last authored value
+turns a self-erasing enemy into an ×4 one. No save in the 258-save corpus
+authors an index past 8; the decoder reproduces the spill anyway.
+
+**The zoom channel — bytes 6-8 are the third scale register.** Two of the four
+channels are scale. Bytes 12-14 arm the per-axis pair `0x06095930` and
+`0x06091A30`; bytes 6-8 arm `0x06094A40`, which is the third member of the same
+triple. Five things say so, and nothing says otherwise:
+
+- **Every object initialiser seeds all three together** to `0x1000` (×1.0) in
+  one run of stores — `+0x15790`, `+0x16CE`, `+0xB0C4`, `+0x1CD18`, `+0x1D6F4`
+  and more, always the same three addresses in the same order.
+- **Both channels index the same tables.** `0x6086004`/`0x608600E` (zoom) and
+  `0x6085FD0`/`0x6085FDA` (scale) are byte-for-byte identical: two copies of the
+  same nine factors and the same eight steps.
+- **The per-frame consumer treats it as a size.** `+0x11034` copies
+  `0x06094A40 >> 9` into BOTH hitbox half-extents `0x0608D7F0` and `0x06094E40`,
+  where `+0x13DC8` copies one axis register into each.
+- **`+0xE898` shrinks it toward `0x400` and then sets the object's death bit** —
+  an explosion scaling away, which is meaningless for a speed.
+- **Nothing multiplies a velocity by it.** None of its 65 literal-pool readers
+  touches a velocity array.
+
+*(Corrected 2026-09-12. 23,552 of 75,502 corpus records enable this channel,
+so this is the largest single behaviour change in this pass. The earlier
+reading — "speed-change channel", a ×0..×4 multiplier on the appearance
+script's amplitude — came from the editor's own channel list and was never
+traced to a register.)*
+
+**A retracted hardware measurement.** A `tools/sav-profiler` session on
+2026-09-12 measured Neo-Gaia, Master Arena and Ramsie against Mednafen and
+concluded that all three scale modes zoom both axes, which is why the row above
+said so until now. The spawn trace refutes it: `+0x157B0` arms the first
+register for modes 1 and 2 only, `+0x158D8` the second for modes 1 and 3 only.
+
+The measurement is explained by a confound, and the confound is visible in the
+very enemy it used. Ramsie's mode-3 case — "the ×1.5→0 rock at 44 s" — is stage
+0 records 25 and 26, and each carries **both** channels: the per-axis ramp
+×1.5→0 that the note describes, and a bytes 6-8 zoom of ×4→0 underneath it. The
+zoom is uniform, so the rock shrinks on screen in both directions even though
+its scale channel drives one axis. The same overlap covers the rest of the
+sample: of Neo-Gaia's mode-2 records 69 of 74 also run the zoom channel, and
+Master Arena's 70 of 85. 10,591 corpus records carry mode 2 or 3.
+
+The two axis registers are plainly distinct in the trace, but nothing there
+says outright which is the horizontal. The decoder's `axes` field reports
+`"x"` for mode 2 and `"y"` for mode 3, following the editor's own XY / X / Y
+list in its order. **Open:** confirm that assignment on hardware.
+
+The **drop-shadow pass** reads the zoom register, not the axis pair: `+0x4562`
+loads `0x06094A40` into the register the pass at `+0x475C` compares against its
+threshold (`0x1000` = ×1.0, or `0xB00` = ×0.6875 when status bit5 is set) and
+then shifts left by 10 into both the x and the y offset — 64 px per unit of
+zoom. An object whose per-axis channel has stretched one side throws the same
+shadow as one that has not.
+
 
 **Byte 5's low nibble is a GEOMETRY selector, used twice** (fully traced
 2026-08-28, adversarially verified). The fire dispatcher (`+0x1989e`) masks
@@ -444,7 +543,7 @@ counter `u8[0x608DCF0]`: **10 = 4 volleys** one fire tick apart (counter
 serviced frames** (counter `&15`; its counter check precedes the fire-tick
 gate, so a started spiral finishes even with global fire off). Every other
 value falls through to the default handler (`+0x192d4`). All paths call the
-same SHOOTER `+0x18FAC(slot, type=b4&3, b5&0x1F, Y; stack X, heading>>8)`
+same SHOOTER `+0x18FAC(slot, type=b4&3, b5, X; stack Y, heading>>8)`
 (the "kernel shot-spawn helper 0x6010be6" of the earlier note is just an
 arithmetic `>>8`), which dispatches the nibble AGAIN through the 16-pointer
 geometry table `0x6086074` — so the burst nibbles also pick their geometry:
@@ -837,9 +936,19 @@ bin. This is a calibration of the bank against the sequencer's note scale, not
 a claim about the SCSP's DAC clock.
 
 **Zako firing, re-traced 2026-08-24** (fire routine `+0x19810`, dispatcher
-`+0x1989e`, shooter `+0x18fac`, spawn fill `+0x1548e`; supersedes the earlier
+`+0x1989e`, shooter `+0x18fac`, spawn fill `+0x154ac`; supersedes the earlier
 "band near the top" reading — those clamps at `+0x1985e` are on-screen X/Y
 tests in the 320-wide grid space, so an enemy may fire anywhere visible):
+
+> **Everything below is the BULLET TYPE 0/1/2 path only** (adversarially
+> re-verified 2026-09-12, which is when the precondition turned up). Record
+> byte 4 bits 0-1 are cached at spawn to `0x0608CB10[slot]`, and two gates —
+> `+0x19826`/`+0x19828` and `+0x19898`/`+0x1989A`, both `cmp/hi #2` over that
+> byte — jump past the "low nibble 0 never fires" early-out AND past the whole
+> 16-way dispatcher when the type is 3. The shooter's own jump table at
+> `0x0607CFE4` sends type 3 to `+0x190AE` as well, and `--xref 0x6086074`
+> returns exactly two sites, both inside the type-0/1/2 arm, so **type 3 never
+> reads the geometry table at all**. See "Bullet type 3" below.
 
 - **`b5 & 0xF` picks a bullet-GEOMETRY function** from the 16-pointer table
   at `0x6086074` — ALL 16 traced (2026-08-28, verified; angle deltas in
@@ -899,6 +1008,39 @@ tests in the 320-wide grid space, so an enemy may fire anywhere visible):
   tracks the player rather than spinning, and its facing carries into
   facing-relative shots.
 
+**Bullet type 3 — the big shot** (traced 2026-09-12). When record byte 4 bits
+0-1 are 3 the enemy does not fire bullets: `+0x190AE` allocates one object of
+class 99 and hands byte 5 to `+0x18E7C`, whose seven-way jump table at
+`0x0607CEAC` picks an ART BAND from bits 4-6 (value 7 folds to band 0) and a
+character inside it from the low bits:
+
+| band | char base | step | index bits | wrapper |
+|------|-----------|------|-----------|---------|
+| 0 | `0x43` | 4 | `b5 & 0xF` | `+0x16070` |
+| 1 | `0x83` | 4 | `b5 & 0xF` | `+0x16148` |
+| 2 | `0xA3` | 4 | `b5 & 0xF` | `+0x16238` |
+| 3 | `0xC3` | 4 | `b5 & 0xF` | `+0x16328` |
+| 4 | `0x103` | 2 | `b5 & 3` | `+0x16400` |
+| 5 | `0x10B` | 2 | `b5 & 3` | `+0x164F0` |
+| 6 | `0x113` | 1 | `b5 & 3` | `+0x165E0` |
+
+`character = base + index * step`, the steps being the 4/4/4/4/2/2/1 frame
+counts those wrappers already carry. Three further rules follow from the same
+gates: there is **no aim bit** (`b5 & 0x10` is the low bit of the band, and
+`+0x190AE` never calls the aim helper), **a low nibble of 0 does not silence
+the enemy**, and the reload is **deterministic** — the type-3 arm at `+0x19986`
+decrements every serviced frame with no reference to the fire-tick flag and
+refills from the interval alone, where the type-0/1/2 path adds `rand % window`.
+
+Across the 262 community saves that is 8,376 of 58,249 placed definitions
+(14.4%), of which 1,018 have a zero low nibble and were read as silent. Band 7
+never occurs in any of them, which is the field's own signature: it is a
+seven-value selector, not the `bit4 = aim / bits5-7 = extra` split byte 5 has
+on the other path. The seven bands' per-frame updaters
+(`+0x16070`/`148`/`238`/`328`/`400`/`4F0`/`5E0`) are **still untraced**, so the
+runtime flies the object straight; decoder: `decodeBigShot` in
+`src/decode/decode-enemy.js`.
+
 **Durability shares one unit space with damage — and the player-weapon
 damage tables are traced.** Objects live in one pool. Enemy hp is
 `0x06095040` (current) / `0x06093E50` (max), written at spawn from record
@@ -945,10 +1087,10 @@ are the channel A/C bytes.
 | `+0x01` | **HUD dressing**: bits4-6 frame-graphic select (7 VDP2 tile sets via kernel `0x0600516C`), bits0-2 HUD palette select (kernel `0x06005138`) |
 | `+0x02`–`+0x0B` | **per-stage flag bytes** (10 stages): bit0 CLEAR = the row starts a NEW numbered stage; bit0 SET = continuation part — the stage number holds and the BGM carries over (`+0x9C4`; polarity adversarially verified against MIYA/DAIOH/RAMS); bit6 = keep the scroll position on player death (`+0x121A`); bit7 = **the final stage** (the game ends after it, `+0xC2C`); bit5 = **drop-shadow pass** (consumer found 2026-09-01: the renderer `+0x473E`..`+0x47D0` draws every visible object a second time, offset `(zoom − threshold) << 10` = +20 px in x and y at zoom 0x1000, sort key +0x400000, with a shadow colour word — including the title logos, which run on stage 0's byte) |
 | `+0x0C`–`+0x0F`, `+0x10`–`+0x13` | the two player-ship config blocks (P1/P2) — **decoded** (2026-08-28, verified; REPLACES the earlier "byte +3 low nibble = main weapon" heuristic, which was actually the autofire rate): byte +0 = `0x10 \| startingLoadout` (engine reads only &3); byte +1 = **maxPowerLevel<<4 \| initialPowerLevel** and byte +2 = **maxOptionCount<<4 \| initialOptionCount** — corrected 2026-09-03, these two were read off the same byte until then. The two pickup handlers settle it by reading DIFFERENT bytes: POWER (`+0x1D1A4`) reads settings `+0x0D`/`+0x11` and clamps its cap to 7, OPTION (`+0x1D0F4`) reads `+0x0E`/`+0x12` and clamps to 4; the init at `+0x92E6` stores `settings[+0x0D] & 7` as the starting power and then seeds the pod-count array from `+0x0E`, and the cap check at `+0xA85E` compares `settings[+0x0D] >> 4` against the POWER array `*0x06084120`. Both caps are `>> 4` over the whole nibble THEN clamped, so 8-15 saturates rather than wrapping. **There is no separate speed stat**: the ship's velocity table `+0x21A22` (64 bytes per level, 16 direction entries each) is indexed by that same POWER level at `+0xABE8`, so how fast you fly IS your power level — the old "maxSpeedLevel" was this byte's high nibble misread. There is likewise no speed ITEM: effect-table entries 20-23 are an immediate `rts`; byte +3 low nibble = **autofire rate index** → `[60,30,15,10,5,3,2,1]` frames/volley (`+0x21EE8`), high nibble 0-3 open. Loaded at player init `+0x90EC` into per-player globals. |
-| `+0x14`–`+0x1B` | the four **WEAPON LOADOUT presets** (2 B each) — **decoded**: byte0 bits0-2 = MAIN weapon 0-7 (autofire dispatcher `+0x15128`: 0→none, 1→`+0xf498` … 7→`+0x11ea8`; per-level u32 damage tables, e.g. weapon 1 `+0x21D6C` = [13312..5120] per bullet — per-bullet damage FALLS as the level rises while projectile count grows; enemy hp is in these same units — record byte 2's `[256,12800,…,512000]`, so the toughest zako takes 100 full-power weapon-1 hits), bits4-6 = SUB weapon 0-7 (dispatcher `+0x1509C` = `0x0607909C`, jump table `+0x150C4`) — every handler here spawns a transient bullet from the player's own slot window and nothing tracks the ship, so THIS field is simply a shot type (2026-08-28). **The "there are NO option pods" conclusion drawn from that has been RETRACTED (2026-09-02): it generalised from this field to the whole weapon system, and it was looking at the wrong one.** Option pods live on the OTHER byte0 field — bits0-2, the editor's SUB, whose values 5/6/7 the editor literally names OPTION A / OPTION B / OPTION C. They never reach a shot dispatcher at all: a per-frame hook at `+0x1CEDE` reads the bits0-2 array `*0x06084110`, and dispatches value 5 to `+0x10A6C`, 6 to `+0x113FC`, 7 to `+0x1204C` (bomb type 6 short-circuits the hook first, at `+0x1CECC`). `+0x10A6C` walks a PERSISTENT four-slot object block per player — slots 64-67 for P1, 80-83 for P2 — rather than spawning anything, which is why `+0x15128`'s jump table entry [5] is an empty case falling into the bare epilogue: OPTION A fires no shot because it is not a shot. All three are now traced AND implemented (2026-09-02). **A**: a ring of up to 4 indestructible pods orbiting the ship's position 5 frames ago — rest radius 32 px, 4.219 deg/frame, contact damage `+0x21DEC` = [1024,1088,1152,1216,1280] by option count, start angles `+0x21E00`, widening to 92 px and 7.119 deg/frame while the C button is held and shedding one damaging spark per pod per frame whenever it is not at rest (spark fade rates `+0x21E14`). **B**: a flanking pair (1 pod at option 1-2, 2 at 3-4) at ±18 px lateral / +12 px scroll off a 4-frame-lagged anchor, turning 22.5 deg/frame to face 180° away from the stick, 384 damage per overlapping frame, firing 3 shots per press on an 8-frame reload (`+0x21C60`/`+0x21C68` index 6) with a 6 px recoil decaying 0.5 px/frame. **C**: a trail of up to 4 pods riding the ship's path at 8i+7 history steps — the history advances only on frames the ship moves, so the trail freezes when you stop — with NO hitbox and NO attack power; its whole offense is `+0x11EA8`, which is not a weapon but a trigger that re-muzzles the ship's MAIN weapon through each pod. The count for all three is the OPTION stat (ship byte +2), NOT the power level. Max shots per tap `+0x21C50` = `[0,3,3,1,1,6,3,2]`, reload interval `+0x21C58` = `[0,6,5,12,1,3,6,28]`, drained 1/frame — the extra `power+3` drain sits INSIDE the `type == 7` branch (`+0xDD4C` returns to the epilogue otherwise), so types 1-6 fire at the RAW interval independent of power (6/5/12/1/3/6 frames) and only type 7 scales (`ceil(28/(L+3))` = 10/7/6/5/4). **The MAIN/SUB labels WERE swapped here, and are now corrected** (2026-09-02): the editor's own ARMS panel calls **bits4-6 MAIN and bits0-2 SUB**, the opposite of what this row and `decode-settings.js` said until now. Settled from the editor itself, not inferred: `KUMITATE.CMP` draws the 初期設定 / ARMS page from four row widgets at `0x06089860 + 0x38*i` carrying label ids 81-84, which render out of `DEZA2SW.CMP` as **MAIN, SUB, BOMB, CHARGE** top to bottom, and the dropdown handler `0x0606CF5C` binds row 0 to `(byte0>>4)&7`, row 1 to `byte0&7`, row 2 to `(byte1>>4)&7` and row 3 to `byte1&3` (write-back handlers `0x0606D048`..`0x0606D334` agree, masking 0x8F for rows 0/2 and 0xF8 for rows 1/3, clamping 8/8/8/4). Each row's option list gives the editor's NAME per value — MAIN `0x06089A08` = [OFF, VULCAN A, VULCAN B, MISSILE, HOMING, SHADOW, WAVE, BOUND]; SUB `0x06089A18` = [OFF, H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER, OPTION A, OPTION B, OPTION C]; BOMB `0x06089A28` = [OFF, RED, BLUE, GREEN, EDIT A, EDIT B, BIG, WIPE]; CHARGE `0x06089A38` = [OFF, CANNON, LASER, FIRE]. KUMITATE loads at the same base 0x06064000 as GAME. **The bit-field to dispatcher wiring in this row was always right** — only the two human names were transposed — so the "sub 1-7" behaviours traced below are the editor's MAIN weapon, and its untraced bits0-2 counterpart is the SUB. The behaviour icons the same panel draws corroborate it independently: MAIN 1-7 render as fan spread, twin parallel columns, lobbed arc, chained homing whip, solid vertical column, dome arc and a shot bouncing off the wall — which is the traced list in order. The old note's PREMISE was also correct and is now proven from the binary: the button-config builder `+0x8FA0` over the mask table `+0x21A10` = {A 0x0400, B 0x0100, C 0x0200, L 0x0008, R 0x0080} maps **A = bits4-6 weapon + charge, B = bits0-2 weapon, C = bomb, R = rapid for both**; no config function yields charge without also binding the bits4-6 press, while bits0-2 can be bound alone. (That default map at `+0x21A1C` is read only in game mode 6, DEMO PLAY; other modes read a per-player remap from 0x0605698D/0x06056992, below this image's base.) Two further corrections from the same trace: the bits0-2 dispatcher's jump table entry [5] falls into the bare epilogue, so **SUB type 5 fires nothing**; and this file's "+0xDD4C" for the type-7 drain is an ADDRESS (0x0606DD4C), i.e. file offset +0x9D4C — most offsets here are file offsets against base 0x06064000, that one is not; byte1 bits0-1 = CHARGE type 0-3 (dispatcher `+0x1528C` = `0x0607928C`; gauge +1/frame while held, cap 320, **never decays**, level = `gauge>>6 - 1` so level 0 is a real shot and only level -1 is a no-op; the gauge is zeroed when the ATTACK ends, not at release — busy counters 16/96/160 frames by type; a gauge above 31 SUPPRESSES the bits4-6 weapon ALWAYS, and the bits0-2 weapon only when the bits0-2 type is 7 — `charge_step +0xA0F0` tests `cmp/eq #7` at +0xA2EA against the bits0-2 array and stores flag 3 vs 1 into 0x0608CB10[player]; the bomb is never gated. The runtime in this repo locked BOTH unconditionally until 2026-09-02, which silenced the ship for bits0-2 types 1,2,3,4 and 6; `game.bundle.js` `updateDezaWeapons` now applies the type-7 test — the tables `+0x6085EA8/EBC/EC8/EDC` earlier labeled "sub-weapon" belong HERE; gauge 0-320, level = gauge/64−1), bits4-7 = BOMB type + variant flag (16-way dispatcher `+0x151B0` = `0x060791B0`; the table is the low 8 entries duplicated except index 6/14, so bit3 only re-routes base type 6 and adds a 16.875°/frame spin to types 4 and 5. Eight behaviours as object classes 68-75; per-type attack powers `[4096,5632,6144,4608,10240,3584,3584,512]` into the damage word `u32[0x608C720]`; no INSTANT screen-clear — bombs are big piercing contact objects, though type 1 grows to a 344 px radius (wider than the playfield) over ~53 frames and drives a real full-screen flash). The ship byte +0 picks the STARTING loadout; weapon-change items (types 0-3) switch loadouts mid-game. The old `+0x6085E14` "charge damage [9,12,15,18,21]" claim is refuted — that table holds `[0x900..0x1500]` charge-pellet lifetime words. **All three charge handlers and sub-weapon handlers 2-6 are now fully traced — see "Player weapons" below, which supersedes every per-table guess in this row.** |
+| `+0x14`–`+0x1B` | the four **WEAPON LOADOUT presets** (2 B each) — **decoded**: byte0 bits0-2 = SUB weapon 0-7 (autofire dispatcher `+0x15128`: 0→none, 1→`+0xf498` … 7→`+0x11ea8`; per-level u32 damage tables, e.g. weapon 1 `+0x21D6C` = [13312..5120] per bullet — per-bullet damage FALLS as the level rises while projectile count grows; enemy hp is in these same units — record byte 2's `[256,12800,…,512000]`, so the toughest zako takes 100 full-power weapon-1 hits), bits4-6 = MAIN weapon 0-7 (dispatcher `+0x1509C` = `0x0607909C`, jump table `+0x150C4`, array `0x0608410C`) — every handler here spawns a transient bullet from the player's own slot window and nothing tracks the ship, so THIS field is simply a shot type (2026-08-28). **The "there are NO option pods" conclusion drawn from that has been RETRACTED (2026-09-02): it generalised from this field to the whole weapon system, and it was looking at the wrong one.** Option pods live on the OTHER byte0 field — bits0-2, the editor's SUB, whose values 5/6/7 the editor literally names OPTION A / OPTION B / OPTION C. They never reach a shot dispatcher at all: a per-frame hook at `+0x1CEDE` reads the bits0-2 array `*0x06084110`, and dispatches value 5 to `+0x10A6C`, 6 to `+0x113FC`, 7 to `+0x1204C` (bomb type 6 short-circuits the hook first, at `+0x1CECC`). `+0x10A6C` walks a PERSISTENT four-slot object block per player — slots 64-67 for P1, 80-83 for P2 — rather than spawning anything, which is why `+0x15128`'s jump table entry [5] is an empty case falling into the bare epilogue: OPTION A fires no shot because it is not a shot. All three are now traced AND implemented (2026-09-02). **A**: a ring of up to 4 indestructible pods orbiting the ship's position 5 frames ago — rest radius 32 px, 4.219 deg/frame, contact damage `+0x21DEC` = [1024,1088,1152,1216,1280] by option count, start angles `+0x21E00`, widening to 92 px and 7.119 deg/frame while the C button is held and shedding one damaging spark per pod per frame whenever it is not at rest (spark fade rates `+0x21E14`). **B**: a flanking pair (1 pod at option 1-2, 2 at 3-4) at ±18 px lateral / +12 px scroll off a 4-frame-lagged anchor, turning 22.5 deg/frame to face 180° away from the stick, 384 damage per overlapping frame, firing 3 shots per press on an 8-frame reload (`+0x21C60`/`+0x21C68` index 6) with a 6 px recoil decaying 0.5 px/frame. **C**: a trail of up to 4 pods riding the ship's path at 8i+7 history steps — the history advances only on frames the ship moves, so the trail freezes when you stop — with NO hitbox and NO attack power; its whole offense is `+0x11EA8`, which is not a weapon but a trigger that re-muzzles the ship's MAIN weapon through each pod. The count for all three is the OPTION stat (ship byte +2), NOT the power level. Max shots per tap `+0x21C50` = `[0,3,3,1,1,6,3,2]`, reload interval `+0x21C58` = `[0,6,5,12,1,3,6,28]`, drained 1/frame — the extra `power+3` drain sits INSIDE the `type == 7` branch (`+0xDD4C` returns to the epilogue otherwise), so types 1-6 fire at the RAW interval independent of power (6/5/12/1/3/6 frames) and only type 7 scales (`ceil(28/(L+3))` = 10/7/6/5/4). **The MAIN/SUB labels WERE swapped here, and are now corrected** (2026-09-02): the editor's own ARMS panel calls **bits4-6 MAIN and bits0-2 SUB**, the opposite of what this row and `decode-settings.js` said until now. Settled from the editor itself, not inferred: `KUMITATE.CMP` draws the 初期設定 / ARMS page from four row widgets at `0x06089860 + 0x38*i` carrying label ids 81-84, which render out of `DEZA2SW.CMP` as **MAIN, SUB, BOMB, CHARGE** top to bottom, and the dropdown handler `0x0606CF5C` binds row 0 to `(byte0>>4)&7`, row 1 to `byte0&7`, row 2 to `(byte1>>4)&7` and row 3 to `byte1&3` (write-back handlers `0x0606D048`..`0x0606D334` agree, masking 0x8F for rows 0/2 and 0xF8 for rows 1/3, clamping 8/8/8/4). Each row's option list gives the editor's NAME per value — MAIN `0x06089A08` = [OFF, VULCAN A, VULCAN B, MISSILE, HOMING, SHADOW, WAVE, BOUND]; SUB `0x06089A18` = [OFF, H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER, OPTION A, OPTION B, OPTION C]; BOMB `0x06089A28` = [OFF, RED, BLUE, GREEN, EDIT A, EDIT B, BIG, WIPE]; CHARGE `0x06089A38` = [OFF, CANNON, LASER, FIRE]. KUMITATE loads at the same base 0x06064000 as GAME. **The bit-field to dispatcher wiring in this row was always right** — only the two human names were transposed — so the "sub 1-7" behaviours traced below are the editor's MAIN weapon, and its untraced bits0-2 counterpart is the SUB. The behaviour icons the same panel draws corroborate it independently: MAIN 1-7 render as fan spread, twin parallel columns, lobbed arc, chained homing whip, solid vertical column, dome arc and a shot bouncing off the wall — which is the traced list in order. The old note's PREMISE was also correct and is now proven from the binary: the button-config builder `+0x8FA0` over the mask table `+0x21A10` = {A 0x0400, B 0x0100, C 0x0200, L 0x0008, R 0x0080} maps **A = bits4-6 weapon + charge, B = bits0-2 weapon, C = bomb, R = rapid for both**; no config function yields charge without also binding the bits4-6 press, while bits0-2 can be bound alone. (That default map at `+0x21A1C` is read only in game mode 6, DEMO PLAY; other modes read a per-player remap from 0x0605698D/0x06056992, below this image's base.) Two further corrections from the same trace: the bits0-2 dispatcher's jump table entry [5] falls into the bare epilogue, so **SUB type 5 fires nothing**; and this file's "+0xDD4C" for the type-7 drain is an ADDRESS (0x0606DD4C), i.e. file offset +0x9D4C — most offsets here are file offsets against base 0x06064000, that one is not; byte1 bits0-1 = CHARGE type 0-3 (dispatcher `+0x1528C` = `0x0607928C`; gauge +1/frame while held, cap 320, **never decays**, level = `gauge>>6 - 1` so level 0 is a real shot and only level -1 is a no-op; the gauge is zeroed when the ATTACK ends, not at release — busy counters 16/96/160 frames by type; a gauge above 31 SUPPRESSES the bits4-6 weapon ALWAYS, and the bits0-2 weapon only when the bits0-2 type is 7 — `charge_step +0xA0F0` tests `cmp/eq #7` at +0xA2EA against the bits0-2 array and stores flag 3 vs 1 into 0x0608CB10[player]; the bomb is never gated. The runtime in this repo locked BOTH unconditionally until 2026-09-02, which silenced the ship for bits0-2 types 1,2,3,4 and 6; `game.bundle.js` `updateDezaWeapons` now applies the type-7 test — the tables `+0x6085EA8/EBC/EC8/EDC` earlier labeled "sub-weapon" belong HERE; gauge 0-320, level = gauge/64−1), bits4-7 = BOMB type + variant flag (16-way dispatcher `+0x151B0` = `0x060791B0`; the table is the low 8 entries duplicated except index 6/14, so bit3 only re-routes base type 6 and adds a 16.875°/frame spin to types 4 and 5. Eight behaviours as object classes 68-75; per-type attack powers `[4096,5632,6144,4608,10240,3584,3584,512]` into the damage word `u32[0x608C720]`; no INSTANT screen-clear — bombs are big piercing contact objects, though type 1 grows to a 344 px radius (wider than the playfield) over ~53 frames and drives a real full-screen flash). The ship byte +0 picks the STARTING loadout; weapon-change items (types 0-3) switch loadouts mid-game. The old `+0x6085E14` "charge damage [9,12,15,18,21]" claim is refuted — that table holds `[0x900..0x1500]` charge-pellet lifetime words. **All three charge handlers and sub-weapon handlers 2-6 are now fully traced — see "Player weapons" below, which supersedes every per-table guess in this row.** **The two names were transposed here until 2026-09-12** — the bit-field/dispatcher wiring in this row was always right, only MAIN and SUB were swapped; the editor's own ARMS panel, rendered out of its sprite bank, reads MAIN over the bits4-6 row. |
 | `+0x1C`–`+0x23` | the 8 **item slots** — **decoded** (2026-08-28, verified): byte = `movement<<4 \| itemType`. Types (effect table `+0x25ACC`): 0-3 = weapon change to loadout preset 0-3, 4 = barrier (persists across respawns), 5 = bomb stock +1 (cap 99), 6 = score bonus, 7 = power-up (+1 shot level, capped by ship byte +2 high nibble), 8 = speed-up (+1, capped by ship byte +1 high nibble). Movement: 0 = launch-and-drift (6 px/f spin-launch, decay v−=v/8, then drift backward; uncollectible during the launch phase), 1 = bouncer (15 frames still, then 45°+k·90° diagonals at ~0.79 px/f per axis, bouncing off the playfield, blink-out after 1024 frames), 2 = scroll-anchored (rides the background). Placement ids 0xE8-0xEF spawn slot id&7; an enemy death-word `(w & 0x300)==0x100` drops item `w&0xFF` (1-8 = slot, 9 = cycling). |
 | `+0x24` | **score-item value index** into the boss score table `[5000..1000000]` (`+0x21F00`) — one game-wide value for every type-6 item |
-| `+0x25`–`+0x27` | the **3 global bullet configs** — **decoded** (2026-08-28, verified): read LIVE via the settings pointer `u32[0x060840C0]` (shooter `+0x19002` adds `0x25 + (record b4&3)`, so **b4&3 == 3 aliases the blast byte** — an engine quirk). Bits 0-2 = bullet **damage** index into u8 `[60,30,15,10,5,3,2,1]` (`+0x21EE8` — the shared durability units); bits 4-5 = **speed add** index into u16 `[128,256,512,896]` (`+0x220B4`); bit 7 = an editor checkbox stored per bullet (`cfg&0x80`) that lands in **bit 7 of the hit-attribute byte** `0x06091550` and gates the bullet into the full collision system — it can be shot down, and it shatters player shots (traced 2026-08-31; see the hit-attribute table above); bits 3/6 never set in the corpus. Bullet speed = `u16[0x608EF30] + add` where the base has exactly one writer: `rank<<2` (see rank below); velocity = `(speed × sin1.15) >> 16` added raw into **25.7** positions (**128 units = 1 px**; the draw path is `if (p<0) p+=127; p>>=7` at `+0x51B4` into the kernel's seven-`shar` helper `0x06010BF6`), so px/frame = speed/256 — the four adds alone are 0.5/1.0/2.0/3.5 px/f. *(Corrected 2026-08-31; the earlier 24.8 reading halved every bullet speed. The runtime still fires these at the old rate — see "Player weapons".)* Bullet sprites: types 0/1/2 draw composition slots 55/59/63 with a 4-frame anim. Decoder: `lib/decode/decode-settings.js` (`bullets`). |
+| `+0x25`–`+0x27` | the **3 global bullet configs** — **decoded** (2026-08-28, verified): read LIVE via the settings pointer `u32[0x060840C0]` (shooter `+0x19002` adds `0x25 + (record b4&3)`; the "b4&3 == 3 aliases the blast byte" quirk this row used to claim is **refuted** — `+0x19002` sits inside the type-0/1/2 arm, which a type-3 record never reaches, so nothing ever reads `+0x28` as a bullet config). Bits 0-2 = bullet **damage** index into u8 `[60,30,15,10,5,3,2,1]` (`+0x21EE8` — the shared durability units); bits 4-5 = **speed add** index into u16 `[128,256,512,896]` (`+0x220B4`); bit 7 = an editor checkbox stored per bullet (`cfg&0x80`) that lands in **bit 7 of the hit-attribute byte** `0x06091550` and gates the bullet into the full collision system — it can be shot down, and it shatters player shots (traced 2026-08-31; see the hit-attribute table above); bits 3/6 never set in the corpus. Bullet speed = `u16[0x608EF30] + add` where the base has exactly one writer: `rank<<2` (see rank below); velocity = `(speed × sin1.15) >> 16` added raw into **25.7** positions (**128 units = 1 px**; the draw path is `if (p<0) p+=127; p>>=7` at `+0x51B4` into the kernel's seven-`shar` helper `0x06010BF6`), so px/frame = speed/256 — the four adds alone are 0.5/1.0/2.0/3.5 px/f. *(Corrected 2026-08-31; the earlier 24.8 reading halved every bullet speed. The runtime still fires these at the old rate — see "Player weapons".)* Bullet sprites: types 0/1/2 draw composition slots 55/59/63 with a 4-frame anim. Decoder: `lib/decode/decode-settings.js` (`bullets`). |
 | `+0x28` | **blast byte**: bits 0-2 / bits 4-6 = explosion anim A/B **tick-hold** index into u8 `[8,7,6,5,4,3,2,1]` (`+0x25A98`; spawners `+0x1C104`/`+0x1C1F0`, appearances 43/49) |
 | `+0x29`–`+0x2C` | **title-screen entrance program** — **decoded** (2026-09-01; SH-2 traced from the title routine GAME `+0x1E78C` and the KUMITATE effect page, reader `+0x17E64` / writer `+0x180B8`, adversarially verified): ten 2-bit tri-state fields, five per drawn logo — the editor's two 5×3 icon grids, the "15 slots" per logo the GameFAQs guide describes. Object 0 = TITLE 2 (bank refs 176-207) reads `+0x29`/`+0x2A`; object 1 = TITLE 1 (refs 144-175, sort byte 3 against TITLE 2's 4, i.e. in front) reads `+0x2B`/`+0x2C`. Byte A: bits 0-1 vertical entry (1 = from y −64 px at +1.125 px/frame, 2 = from 304 px at −1.75), bits 2-3 horizontal entry (1 = from x 448 at −2.25, 2 = from −128 at +2.25), bits 4-5 spin (1 = +0x200/frame of 0x10000 = one clockwise turn, 2 = the other way); byte B: bits 0-1 height scale, bits 2-3 width scale (1 = from 0x4000 shrinking 64/frame, 2 = from 0 growing 64/frame; rest 0x2000). 0 — and the never-written 3 — takes the static branch. Every field is a straight line over exactly **128 frames** landing on the shared rest pose: the 128×64 art at 2.0× (256×128 px) centred on (160,80) of the 320×224 screen, upright; a newly pressed button snaps both logos to it. Then a 32-frame white flash on the sprite layer (colour offset +248 fading 8/frame, `+0x1E6C8`), the 96×16 system char 0x149 (GSYS_CHA, not save content) at (160,200), and 1200 frames of `PRESS 1P START BUTTON` / `PRESS 1P/2P START BUTTON` (settings `+0x00` bit1) at tile (8,21) = px (64,168), 32 frames on / 32 off, before a 32-frame fade, the ranking table (≤720 frames) and the entrance again without restarting the BGM (`+0x41`). START opens GAME START / OPTION / EXIT. The title clears the orientation flag `0x060840C9` for its duration, so horizontal games get the identical untransposed title. Corpus (271 entries): never a 3 in any field, bits 6-7 always 0; only 12 saves leave all four bytes 0. Decoder: `decode-settings.js` (`titleEntrance`, `TITLE_ENTRANCE`); runtime: `PhaserTitleScene` (`_stepDezaTitle`). |
 | `+0x2D`–`+0x40` | **per-stage scroll extents** — **decoded** (2026-08-28): one (loop-start, end) byte pair per stage in **parts of 256 px** (16 map rows), read via `u32[0x060840C0]+0x2D/0x2E+2×stage`. Normal play STOPS the scroll one hardware screen short of `end<<8` (lookahead 256 px vertical / 320 horizontal, flag `0x06090A2A`); a boss fight (`u8[0x06084158]`) or game modes ≥ 2 **LOOP the background** from `end<<8` back to `loop<<8` preserving the 16-px row phase. This is why the values are always even ≤ 48. Decoder: `decode-settings.js` (`stageExtents`). |
@@ -984,13 +1126,19 @@ scale→hitbox conversion `scale >> 9`, which yields 8 px for the 1.0 scale the
 init helper writes. Every earlier "px" figure derived from a /256 reading was
 therefore half the truth.
 
-**Dispatch.** `u8[u32[0x0608410C] + p] & 7` selects the SUB handler through
+**Dispatch.** `u8[u32[0x0608410C] + p] & 7` selects the MAIN handler through
 the jump table at `+0x150C4`; `u8[u32[0x06084118] + p] & 3` selects the CHARGE
-handler through `+0x152B4`. `u32[0x06084110]` is the MAIN weapon array, and it
+handler through `+0x152B4`. `u32[0x06084110]` is the SUB weapon array, and it
 appears in two rules worth knowing: the shared spawner `+0xB9A0` multiplies a
-shot's damage by **1.5 when the main weapon is 0** (a no-main-gun
-compensation — the polarity is `tst`/`bf`, easy to invert), and sub handlers
-1-4 force their dispatch level to 0 when it is 7.
+shot's damage by **1.5 when the SUB weapon is 0** (the polarity is `tst`/`bf`,
+easy to invert), and MAIN handlers 1-4 force their dispatch level to 0 when the
+SUB is 7 — OPTION C, which re-muzzles the main gun through its pods.
+
+*(Both sentences were transposed until 2026-09-12: the array at `0x06084110`
+that they key on is byte0 bits0-2, the SUB field, not MAIN. The 2026-09-02
+naming pass corrected the settings row and missed this paragraph, so the "no
+main gun" reading of the 1.5x bonus was wrong in a way that changes which
+loadouts get it.)*
 
 | | handler | shots | geometry |
 |---|---|---|---|

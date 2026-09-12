@@ -7,8 +7,8 @@
 // FORMAT.md "Enemy record (18 B)" for the annotated disassembly summary.
 //
 // The record is a 6-byte head plus four 3-byte "change" channels — the
-// editor's start/end/rate/repeat interpolators that drive an enemy's speed,
-// rotation, scale and movement direction over its lifetime:
+// editor's start/end/rate/repeat interpolators that drive an enemy's zoom,
+// rotation, per-axis scale and movement direction over its lifetime:
 //
 //   byte 0      appearance id (art class; redundant here — art comes from the
 //               per-stage composition banks)
@@ -22,20 +22,27 @@
 //   byte 4      bits0-1 fire mode, bits2-3 death presentation,
 //               bits4-6 fire rate index
 //   byte 5      bits0-4 fire direction, bits5-7 extra
-//   bytes 6-8   speed-change channel   (enable b6&1)
-//   bytes 9-11  rotation channel       (mode b9&7: 0 off, 1 cw, 2 ccw,
-//                                       3/4 engine-special)
-//   bytes 12-14 scale channel          (mode b12&3: 0 off, 1-3 on; the mode was read as
-//                                      XY / X / Y, but on hardware all three scale both
-//                                      axes — measured 2026-09-12 with tools/sav-profiler
-//                                      on Neo-Gaia (1), Master Arena (2) and Ramsie (3))
+//   bytes 6-8   uniform zoom channel   (enable b6&1)
+//   bytes 9-11  rotation channel       (mode b9&7, see ROTATION_MODE)
+//   bytes 12-14 per-axis scale channel (mode b12&3, see SCALE_AXES)
 //   bytes 15-17 direction channel      (enable b15&1)
 //
 // Channel layout (A = first byte, B = second, C = third):
 //   A bits4-6 -> step table index      B bits0-3 -> start value index
-//   B bits4-7 -> end value index       C bits4-5 -> repeat (0 once, 1 loop,
-//   C bits0-2 -> trigger mode                       2 ping-pong)
+//   B bits4-7 -> end value index       C bits4-5 -> repeat (see
+//   C bits0-2 -> trigger mode                       CHANNEL_REPEAT)
 // (rotation uses 3-bit value indices, B bits0-2 / bits4-6)
+//
+// TWO of these four are scale. Bytes 12-14 drive the pair of per-axis
+// registers `0x06095930` and `0x06091A30`; bytes 6-8 drive `0x06094A40`,
+// which is the third member of the same triple — every object initializer
+// in the engine seeds all three to 0x1000 (x1.0) together, both channels
+// index the same nine-entry factor table and the same step table, and the
+// per-frame consumer at +0x11034 copies `0x06094A40` into BOTH hitbox
+// half-extents where +0x13DC8 copies one axis register into each. So bytes
+// 6-8 zoom the object uniformly; they are not the speed channel this file
+// called them until 2026-09-12, and nothing in the engine multiplies a
+// velocity by that register.
 //
 // Environment-neutral ESM (Node + browser).
 
@@ -72,12 +79,29 @@ export const FIRE_BASE_TABLE = [14, 12, 10, 8, 6, 4, 2, 1];
 export const FIRE_INTERVAL_TABLE = [119, 59, 29, 19, 9, 5, 3, 1];
 export const FIRE_INTERVAL_TABLE_ALT = [119, 59, 39, 19, 11, 7, 3, 1];
 
-// Channel value tables. Scale and speed-change share one domain where
-// 16 = x1.0 (so 0..64 = x0..x4); rotation and direction are angles in the
-// engine's 256-unit circle (x1.40625 for degrees).
-export const FACTOR_TABLE = [0, 4, 8, 12, 16, 24, 32, 48, 64];
+// Channel value tables, transcribed from GAME.bin. The two factor channels
+// (uniform zoom, per-axis scale) share one domain where 16 = x1.0 (so
+// 0..64 = x0..x4); rotation and direction are angles in the engine's
+// 256-unit circle (x1.40625 for degrees).
+//
+// These are SIXTEEN entries long because the engine indexes them with a
+// whole nibble and its tables are only nine bytes. `0x6085FD0` (scale) and
+// `0x6086004` (zoom) are both nine factor bytes followed by a pad zero,
+// and the very next bytes are the channel's own step table, read as u16be
+// words — so index 9 reads the pad, and 10-15 read step-table bytes. The
+// decoder reproduces the spill rather than clamping, because index 9 means
+// FACTOR 0 and the engine deletes an object whose scale reaches zero: a
+// clamp turned a self-erasing enemy into an x4 one. Rotation is the one
+// channel with a 3-bit index, so its 8-entry table cannot overrun.
+export const FACTOR_TABLE = [
+    0, 4, 8, 12, 16, 24, 32, 48, 64, // the nine authored factors
+    0, 0, 16, 0, 32, 0, 64, // the pad byte, then FACTOR_STEP_TABLE's bytes
+];
 export const ROTATION_TABLE = [0, 32, 64, 96, 128, 160, 192, 224];
-export const DIRECTION_TABLE = [0, 16, 32, 48, 64, 80, 96, 112, 128];
+export const DIRECTION_TABLE = [
+    0, 16, 32, 48, 64, 80, 96, 112, 128, // the nine authored headings
+    0, 0, 128, 1, 0, 2, 0, // pad, then DIRECTION_STEP_TABLE's bytes
+];
 
 // Whether an appearance (byte 0) can fire at all. The engine's fire
 // dispatcher (+0x19882) tests bit 4 of the appearance definition word — the
@@ -94,6 +118,37 @@ export function appearanceFires(appearance) {
     return (byte & (1 << (appearance & 7))) === 0;
 }
 
+/**
+ * Bullet type 3 does not fire bullets at all: it spawns one object of class 99
+ * drawn from the enemy art, and byte 5 stops being a geometry selector. Bits
+ * 4-6 pick one of seven art bands (value 7 folds to 0) and the low bits pick a
+ * character inside it — `base + index * frames`, the frame counts being the
+ * 4/4/4/4/2/2/1 the seven spawn wrappers +0x16070..+0x165e0 use.
+ * Dispatch: GAME.bin 0x0607CE7C, wrappers 0x0607A070/148/238/328/400/4F0/5E0.
+ */
+export const BIG_SHOT_BANDS = Object.freeze([
+    { base: 0x43, frames: 4, mask: 0x0f },
+    { base: 0x83, frames: 4, mask: 0x0f },
+    { base: 0xa3, frames: 4, mask: 0x0f },
+    { base: 0xc3, frames: 4, mask: 0x0f },
+    { base: 0x103, frames: 2, mask: 0x03 },
+    { base: 0x10b, frames: 2, mask: 0x03 },
+    { base: 0x113, frames: 1, mask: 0x03 },
+]);
+/** The bullet type whose byte 5 is art, not geometry. */
+export const BIG_SHOT_TYPE = 3;
+
+/**
+ * Record byte 5 read the way the engine reads it for bullet type 3.
+ * @param {number} b5
+ */
+export function decodeBigShot(b5) {
+    const band = ((b5 >> 4) & 7) % BIG_SHOT_BANDS.length; // 7 folds to 0
+    const spec = BIG_SHOT_BANDS[band];
+    const index = b5 & spec.mask;
+    return { band, index, character: spec.base + index * spec.frames, frames: spec.frames };
+}
+
 // `b5 & 0xF` values the fire dispatcher routes away from the angle path.
 // Their handlers are three variants of one routine; which shape each draws is
 // still open, so they are numbered rather than named.
@@ -106,28 +161,103 @@ export const DIRECTION_STEP_TABLE = [128, 256, 512, 768, 1024, 1536, 2048, 32767
 
 const clampIndex = (v, table) => table[Math.min(v, table.length - 1)];
 
+// What a channel does when its ramp reaches the end value. Read off the
+// four-entry jump table at `0x6069FFC`, the tail of every channel stepper:
+//
+//   0  HOLD      step := 0, accumulator := 0, start := end. Frozen at the end.
+//   1  PING-PONG accumulator := 0, step negated, start and end swapped.
+//   2  LOOP      accumulator := 0, the live value re-seeded from start.
+//   3  unreachable from this field on rotation, whose stepper claims 3 and 4
+//      for its two engine-special modes (see ROTATION_MODE below).
+//
+// This file and the runtime long had 1 and 2 the other way round.
+export const CHANNEL_REPEAT = Object.freeze(["hold", "pingpong", "loop", "special"]);
+
+// How far a ramp actually travels, and why a channel needs a `sweep` at all.
+// The engine never compares the live value against the end value. It keeps a
+// signed 8.8 accumulator, adds the step to it every frame, and compares the
+// accumulator's whole part against the UNSIGNED BYTE distance between start
+// and end taken in the direction of travel (+0x5F9C for a rising ramp,
+// +0x5FC0 for a falling one). On the angle channels, where the live heading
+// is that sum truncated to a byte, that is what lets a sweep run the long way
+// round: counter-clockwise from 0 to 64 is 192 units of travel, not -64.
+function sweepUnits(from, to, negative) {
+    return (negative ? (from - to) & 0xff : (to - from) & 0xff);
+}
+
 // One interpolator channel in editor units: from/to are factors (x1.0 = 1)
 // or degrees, step is per-frame in the same unit.
-function channel(a, b, c, { enabled, table, stepTable, angle, bits3 }) {
+//
+// `negative` forces the step's sign instead of deriving it from start > end;
+// rotation needs it, because its direction is the mode, not the endpoints.
+// `fullCircle` applies the engine's start == end nudge (see ROTATION_MODE).
+function channel(a, b, c, { enabled, table, stepTable, angle, bits3, negative, fullCircle }) {
     // Only the ROTATION channel packs 3-bit value indices (its table has 8
-    // angles); direction, like the factor channels, uses the full nibble —
-    // its 9-entry table needs index 8, the editor's default heading of 128 =
-    // straight down (FORMAT.md "Channel byte layout"). Masking direction to
-    // 3 bits read that default as index 0 = straight up.
+    // angles); every other channel indexes with the whole nibble, and
+    // FACTOR_TABLE and DIRECTION_TABLE carry all sixteen entries the engine
+    // can reach — nine authored values and the documented spill past them.
     const rawFrom = bits3 ? (b & 7) : (b & 0x0f);
     const rawTo = bits3 ? ((b >> 4) & 7) : ((b >> 4) & 0x0f);
-    const from = clampIndex(rawFrom, table);
-    const to = clampIndex(rawTo, table);
+    const from = table[rawFrom];
+    // The start == end nudge: one unit the other way, so the unsigned
+    // distance becomes 255 and the sweep is very nearly a whole circle.
+    const to = fullCircle && table[rawTo] === from
+        ? (negative ? (from + 1) & 0xff : (from - 1) & 0xff)
+        : table[rawTo];
+    // sign follows the engine: unless the caller forces it, the step is
+    // negated when start > end
+    const down = negative === undefined ? from > to : negative;
     const step = stepTable[(a >> 4) & 7] / 256; // 8.8 -> value units/frame
     const scale = angle ? 360 / 256 : 1 / 16;   // engine units -> deg / factor
+    const repeat = (c >> 4) & 3;
     return {
         enabled,
         from: from * scale,
         to: to * scale,
-        // sign follows the engine: it negates the step when start > end
-        step: (from > to ? -step : step) * scale,
-        repeat: (c >> 4) & 3, // 0 once, 1 loop, 2 ping-pong
+        sweep: (step === 0 ? 0 : sweepUnits(from, to, down)) * scale,
+        step: (down ? -step : step) * scale,
+        repeat,
+        repeatName: CHANNEL_REPEAT[repeat],
         trigger: c & 7,
+    };
+}
+
+// Which registers the scale mode arms. The spawn routine tests the mode
+// twice: `+0x157B0` sets up the first axis for modes 1 and 2, `+0x158D8`
+// the second for modes 1 and 3 — one authored ramp, armed onto one or both.
+// The axis names come from the editor's own XY / X / Y list, in its order;
+// the two registers are plainly distinct in the trace, but nothing there
+// says outright which one is the horizontal.
+export const SCALE_AXES = ["", "xy", "x", "y"];
+
+// Rotation mode, record byte 9 bits 0-2.
+//
+//   0  off
+//   1  clockwise, 2  counter-clockwise (the step is negated, +0x15A44)
+//   3  and 4 are the engine specials. They do not merely preset an angle:
+//      each OVERWRITES the channel's repeat byte at `0x06091910` with its own
+//      number (+0x15A50, +0x15A74), which routes the per-frame stepper to a
+//      target-tracking arm instead of the four repeat arms. Whatever the
+//      record authored in the repeat field is dead on these two modes.
+export const ROTATION_MODE = ["off", "cw", "ccw", "home", "track"];
+
+function decodeRotationChannel(b, mode) {
+    const ch = channel(b[9], b[10], b[11], {
+        enabled: mode !== 0,
+        table: ROTATION_TABLE,
+        stepTable: ROTATION_STEP_TABLE,
+        angle: true,
+        bits3: true,
+        negative: mode === 2,
+        fullCircle: true,
+    });
+    if (mode < 3) return ch;
+    return {
+        ...ch,
+        repeat: mode,
+        repeatName: ROTATION_MODE[mode],
+        // the authored bits, kept for anyone diffing records
+        authoredRepeat: ch.repeat,
     };
 }
 
@@ -245,6 +375,17 @@ export function decodeEnemyRecord(bytes) {
             interval: clampIndex((b[4] >> 4) & 7,
                 (b[4] & 3) === 3 ? FIRE_INTERVAL_TABLE_ALT : FIRE_INTERVAL_TABLE),
             window: FIRE_WINDOW_TABLE[(b[4] >> 4) & 7],
+            // Bullet type 3 is a different weapon entirely, and the two gates
+            // that make it so are at 0x0607D828 and 0x0607D89A: both compare
+            // the spawn-cached b4 & 3 against 2 and, when it is greater, jump
+            // past the "low nibble 0 = never fires" early-out AND past the
+            // whole 16-way geometry dispatcher. The shooter's own jump table
+            // (0x0607CFE4) sends it to 0x0607D0AE, which spawns ONE object of
+            // class 99 out of the enemy art. So for this type byte 5 is art,
+            // there is no aim bit, the reload is deterministic (no random
+            // window, and it ticks every serviced frame rather than on the
+            // fire pulse), and a low nibble of 0 does not silence anything.
+            bigShot: (b[4] & 3) === BIG_SHOT_TYPE ? decodeBigShot(b[5]) : null,
             // Byte 5's low nibble picks a bullet-geometry function from the
             // 16-pointer table at 0x6086074 — all 16 traced (2026-08-28):
             // 0 silent, 1/10 single, 2 = ±8-unit pair, 3 = 0,±8 fan,
@@ -259,27 +400,23 @@ export function decodeEnemyRecord(bytes) {
             // 12 = 16 shots on consecutive frames — the rotating spiral.
             // Bit 4 (0x10) aims the volley at the player (re-aimed every
             // shot); otherwise shots leave along the enemy's facing.
-            geometry: b[5] & 0x0f,
-            aimed: (b[5] & 0x10) !== 0,
-            pattern: SPECIAL_FIRE_PATTERNS[b[5] & 0x0f] ?? null,
-            direction: SPECIAL_FIRE_PATTERNS[b[5] & 0x0f] !== undefined ? 0 : (b[5] & 0x1f),
+            geometry: (b[4] & 3) === BIG_SHOT_TYPE ? null : (b[5] & 0x0f),
+            aimed: (b[4] & 3) === BIG_SHOT_TYPE ? false : (b[5] & 0x10) !== 0,
+            pattern: (b[4] & 3) === BIG_SHOT_TYPE ? null : (SPECIAL_FIRE_PATTERNS[b[5] & 0x0f] ?? null),
+            direction: (b[4] & 3) === BIG_SHOT_TYPE
+                ? 0
+                : (SPECIAL_FIRE_PATTERNS[b[5] & 0x0f] !== undefined ? 0 : (b[5] & 0x1f)),
             directionEx: (b[5] >> 5) & 7,
         },
         death: decodeDeathWord(b),
-        speedChange: channel(b[6], b[7], b[8], {
+        zoom: channel(b[6], b[7], b[8], {
             enabled: (b[6] & 1) !== 0,
             table: FACTOR_TABLE,
             stepTable: FACTOR_STEP_TABLE,
             angle: false,
         }),
         rotation: {
-            ...channel(b[9], b[10], b[11], {
-                enabled: rotationMode !== 0,
-                table: ROTATION_TABLE,
-                stepTable: ROTATION_STEP_TABLE,
-                angle: true,
-                bits3: true,
-            }),
+            ...decodeRotationChannel(b, rotationMode),
             mode: rotationMode,
         },
         scale: {
@@ -289,14 +426,11 @@ export function decodeEnemyRecord(bytes) {
                 stepTable: FACTOR_STEP_TABLE,
                 angle: false,
             }),
-            // The mode nibble's meaning beyond on/off is still open: the
-            // editor names the three values as if they picked axes, but the
-            // Saturn zooms both axes for every one of them (see the header),
-            // so `axes` is "xy" whenever the channel is on. `mode` keeps the
-            // raw value for whoever traces the difference.
-            axes: scaleMode ? "xy" : "",
+            // The mode really does pick axes, exactly as the editor's
+            // XY / X / Y list says. One ramp, armed onto one or both
+            // registers (see SCALE_AXES).
+            axes: SCALE_AXES[scaleMode],
             mode: scaleMode,
-            repeatY: (b[14] >> 2) & 3,
         },
         direction: channel(b[15], b[16], b[17], {
             enabled: (b[15] & 1) !== 0,
@@ -310,6 +444,6 @@ export function decodeEnemyRecord(bytes) {
 // True when a record drives any visual transform — used by the editor to
 // report how much of a save's behavior data is in play.
 export function hasTransforms(decoded) {
-    return decoded.speedChange.enabled || decoded.rotation.enabled ||
+    return decoded.zoom.enabled || decoded.rotation.enabled ||
         decoded.scale.enabled || decoded.direction.enabled;
 }

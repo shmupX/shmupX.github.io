@@ -3,11 +3,20 @@
 // Field offsets and tables come from the play engine's own spawn routine
 // (GAME.CMP +0x153c8); the golden records below are real bytes from the
 // DAIOH and Gust saves whose in-game behavior is known.
-import { assert, assertEquals, assertStrictEquals } from "@std/assert";
+import {
+  assert,
+  assertAlmostEquals,
+  assertEquals,
+  assertStrictEquals,
+} from "@std/assert";
 import {
   ANIM_PERIOD_TABLE,
   appearanceFires,
+  BIG_SHOT_BANDS,
+  decodeBigShot,
   decodeEnemyRecord,
+  DIRECTION_TABLE,
+  FACTOR_TABLE,
   hasTransforms,
   HP_TABLE,
   SCORE_TABLE,
@@ -91,15 +100,26 @@ Deno.test("hp comes from byte 2, and its ladder runs weakest-first", () => {
 });
 
 Deno.test("channels: rotation, scale, direction decode to editor units", () => {
-  // rotation: b9=0x21 -> mode 1, step idx 2 (64/256 units/f);
+  // rotation: b9=0x21 -> mode 1 (clockwise), step idx 2 (64/256 units/f);
   // b10=0x04 -> from angle idx 4 (180deg), to idx 0 (0deg); b11=0x20 repeat 2
   const d = decodeEnemyRecord(rec("000000000000000000210420000000000000"));
   assertStrictEquals(d.rotation.enabled, true);
   assertStrictEquals(d.rotation.mode, 1);
   assertStrictEquals(d.rotation.from, 180);
   assertStrictEquals(d.rotation.to, 0);
-  assert(d.rotation.step < 0, "start > end steps downward");
+  // The MODE is the direction of travel, not the endpoints: mode 1 turns
+  // clockwise even when the start angle is the larger number, and the sweep
+  // is the unsigned distance that way round.
+  assert(d.rotation.step > 0, "mode 1 turns clockwise");
+  assertStrictEquals(d.rotation.sweep, 180);
   assertStrictEquals(d.rotation.repeat, 2);
+  assertStrictEquals(d.rotation.repeatName, "loop");
+
+  // Mode 2 is the same endpoints the other way round: 180 degrees of travel
+  // counter-clockwise, so the step is negative.
+  const ccw = decodeEnemyRecord(rec("000000000000000000220420000000000000"));
+  assert(ccw.rotation.step < 0, "mode 2 turns counter-clockwise");
+  assertStrictEquals(ccw.rotation.sweep, 180);
 
   // scale: b12=0x11 -> mode 1 (XY) step idx 1; b13=0x82 -> from idx 2
   // (x0.5) to idx 8 (x4); b14=0x10 repeat 1
@@ -109,7 +129,9 @@ Deno.test("channels: rotation, scale, direction decode to editor units", () => {
   assertStrictEquals(sc.scale.from, 0.5);
   assertStrictEquals(sc.scale.to, 4);
   assert(sc.scale.step > 0);
+  assertStrictEquals(sc.scale.sweep, 3.5);
   assertStrictEquals(sc.scale.repeat, 1);
+  assertStrictEquals(sc.scale.repeatName, "pingpong");
 
   // direction: b15=0x11 -> enabled, step idx 1; b16=0x40 -> from idx 0
   // (0deg = up) to idx 4 (90deg = right)
@@ -118,6 +140,63 @@ Deno.test("channels: rotation, scale, direction decode to editor units", () => {
   assertStrictEquals(dir.direction.from, 0);
   assertStrictEquals(dir.direction.to, 90);
   assert(hasTransforms(dir));
+});
+
+Deno.test("the scale mode picks axes, and the two axes share one ramp", () => {
+  // Same channel bytes, only the mode nibble changes: 1 arms both scale
+  // registers, 2 arms the first, 3 the second (+0x157B0 and +0x158D8).
+  const xy = decodeEnemyRecord(rec("000000000000000000000000118210000000"));
+  const x = decodeEnemyRecord(rec("000000000000000000000000128210000000"));
+  const y = decodeEnemyRecord(rec("000000000000000000000000138210000000"));
+  const off = decodeEnemyRecord(rec("000000000000000000000000108210000000"));
+  assertStrictEquals(xy.scale.axes, "xy");
+  assertStrictEquals(x.scale.axes, "x");
+  assertStrictEquals(y.scale.axes, "y");
+  assertStrictEquals(off.scale.axes, "");
+  assertStrictEquals(off.scale.enabled, false);
+  // one authored ramp, whichever axes it lands on
+  assertStrictEquals(x.scale.from, xy.scale.from);
+  assertStrictEquals(y.scale.to, xy.scale.to);
+  // and no second repeat field hiding in byte 14: both axes read bits 4-5
+  assertStrictEquals(xy.scale.repeatY, undefined);
+});
+
+Deno.test("a value index past the table reads on, as the engine does", () => {
+  // The factor table is nine bytes, a pad, then the step table. Index 9 is
+  // the pad — factor 0 — and the engine deletes an object whose scale
+  // reaches zero, so clamping this to the last authored value (x4) turned a
+  // self-erasing enemy into a giant one.
+  assertStrictEquals(FACTOR_TABLE.length, 16);
+  assertStrictEquals(FACTOR_TABLE[9], 0);
+  assertStrictEquals(FACTOR_TABLE[11], 16);
+  assertStrictEquals(DIRECTION_TABLE.length, 16);
+  assertStrictEquals(DIRECTION_TABLE[11], 128);
+  const d = decodeEnemyRecord(rec("000000000000000000000000110910000000"));
+  assertStrictEquals(d.scale.from, 0 / 16);
+  assertStrictEquals(d.scale.to, 0 / 16);
+});
+
+Deno.test("rotation: start == end is a whole circle, and modes 3-4 seize the repeat byte", () => {
+  // b10 = 0x00 -> start and end both angle index 0. The engine nudges the
+  // endpoint one unit the other way (+0x159FA), which makes the unsigned
+  // distance 255 and the sweep all but a full turn.
+  const cw = decodeEnemyRecord(rec("000000000000000000210000000000000000"));
+  assertStrictEquals(cw.rotation.from, 0);
+  assertAlmostEquals(cw.rotation.sweep, 255 * 360 / 256, 1e-9);
+  const ccw = decodeEnemyRecord(rec("000000000000000000220000000000000000"));
+  assertAlmostEquals(ccw.rotation.sweep, 255 * 360 / 256, 1e-9);
+
+  // Modes 3 and 4 overwrite the repeat byte at 0x06091910 with their own
+  // number, which routes the stepper to a target-tracking arm. Byte 11's
+  // repeat bits say 2 here and are dead.
+  const home = decodeEnemyRecord(rec("000000000000000000230420000000000000"));
+  assertStrictEquals(home.rotation.mode, 3);
+  assertStrictEquals(home.rotation.repeat, 3);
+  assertStrictEquals(home.rotation.repeatName, "home");
+  assertStrictEquals(home.rotation.authoredRepeat, 2);
+  const track = decodeEnemyRecord(rec("000000000000000000240420000000000000"));
+  assertStrictEquals(track.rotation.repeat, 4);
+  assertStrictEquals(track.rotation.repeatName, "track");
 });
 
 Deno.test("fire config: interval tables select on mode", () => {
@@ -145,7 +224,7 @@ Deno.test({
       assert(SCORE_TABLE.includes(e.behavior.score));
       assert(e.behavior.death.mode >= 0 && e.behavior.death.mode <= 3);
       assert(e.behavior.fire.interval >= 1 && e.behavior.fire.interval <= 119);
-      for (const ch of [e.behavior.speedChange, e.behavior.scale]) {
+      for (const ch of [e.behavior.zoom, e.behavior.scale]) {
         assert(ch.from >= 0 && ch.from <= 4, "factor channels stay in x0..x4");
         assert(ch.to >= 0 && ch.to <= 4);
       }
@@ -291,4 +370,70 @@ Deno.test("placement cell byte <-> record index is the engine's band math", () =
   assertStrictEquals(zakoRecordFromKey(0x9c), 0x1c);
   // Band 7 is unreachable on the death path: +0x18E98 clamps it to band 0.
   assertStrictEquals(zakoRecordFromKey(0xf5), 5);
+});
+
+// Bullet type 3 is not a bullet: byte 4 bits 0-1 gate two jumps in the fire
+// routine (0x0607D828 and 0x0607D89A) that skip both the "low nibble 0 never
+// fires" early-out and the whole 16-way geometry dispatcher, and the shooter's
+// own jump table (0x0607CFE4) sends the type to 0x0607D0AE, which spawns one
+// class-99 object out of the enemy art. So byte 5 changes meaning underneath
+// it, and a decoder that reads it as geometry is wrong for one record in
+// seven across the community collection.
+Deno.test("bullet type 3 reads byte 5 as art, not as a fire geometry", () => {
+  const bytes = new Uint8Array(18);
+  bytes[4] = 0x43; // interval index 4, bullet type 3
+  bytes[5] = 0x3e; // band 3, character index 14
+  const fire = decodeEnemyRecord(bytes).fire;
+  assertEquals(fire.mode, 3);
+  assertEquals(fire.bigShot, {
+    band: 3,
+    index: 14,
+    character: 0xc3 + 14 * 4,
+    frames: 4,
+  });
+  // Nothing may still claim a geometry, an aim or a direction for this record.
+  assertStrictEquals(fire.geometry, null);
+  assertStrictEquals(fire.aimed, false);
+  assertStrictEquals(fire.pattern, null);
+  assertEquals(fire.direction, 0);
+});
+
+Deno.test("a zero low nibble silences an ordinary bullet type but not type 3", () => {
+  const quiet = new Uint8Array(18);
+  quiet[4] = 0x40; // bullet type 0
+  quiet[5] = 0x30; // low nibble 0 -> the empty routine
+  assertEquals(decodeEnemyRecord(quiet).fire.geometry, 0);
+  assertStrictEquals(decodeEnemyRecord(quiet).fire.bigShot, null);
+
+  const loud = new Uint8Array(18);
+  loud[4] = 0x43; // the same byte 5, but bullet type 3
+  loud[5] = 0x30;
+  const fire = decodeEnemyRecord(loud).fire;
+  assertStrictEquals(fire.geometry, null);
+  // Band 3, character index 0 — it fires, and the old reading called it silent.
+  assertEquals(fire.bigShot, { band: 3, index: 0, character: 0xc3, frames: 4 });
+});
+
+Deno.test("the seven art bands fold band 7 onto band 0 and mask their index", () => {
+  assertEquals(decodeBigShot(0x00), {
+    band: 0,
+    index: 0,
+    character: 0x43,
+    frames: 4,
+  });
+  assertEquals(decodeBigShot(0x70), decodeBigShot(0x00)); // 7 folds to 0
+  // Bands 4 and 5 step two frames and mask to 2 bits, band 6 steps one.
+  assertEquals(decodeBigShot(0x4f), {
+    band: 4,
+    index: 3,
+    character: 0x103 + 6,
+    frames: 2,
+  });
+  assertEquals(decodeBigShot(0x6f), {
+    band: 6,
+    index: 3,
+    character: 0x113 + 3,
+    frames: 1,
+  });
+  assertEquals(BIG_SHOT_BANDS.length, 7);
 });

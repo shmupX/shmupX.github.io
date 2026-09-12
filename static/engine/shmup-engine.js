@@ -772,9 +772,47 @@ var HP_TABLE = [256, 12800, 25600, 51200, 102400, 204800, 256e3, 512e3];
 var FIRE_WINDOW_TABLE = [29, 22, 16, 11, 7, 4, 2, 1];
 var FIRE_INTERVAL_TABLE = [119, 59, 29, 19, 9, 5, 3, 1];
 var FIRE_INTERVAL_TABLE_ALT = [119, 59, 39, 19, 11, 7, 3, 1];
-var FACTOR_TABLE = [0, 4, 8, 12, 16, 24, 32, 48, 64];
+var FACTOR_TABLE = [
+  0,
+  4,
+  8,
+  12,
+  16,
+  24,
+  32,
+  48,
+  64,
+  // the nine authored factors
+  0,
+  0,
+  16,
+  0,
+  32,
+  0,
+  64
+  // the pad byte, then FACTOR_STEP_TABLE's bytes
+];
 var ROTATION_TABLE = [0, 32, 64, 96, 128, 160, 192, 224];
-var DIRECTION_TABLE = [0, 16, 32, 48, 64, 80, 96, 112, 128];
+var DIRECTION_TABLE = [
+  0,
+  16,
+  32,
+  48,
+  64,
+  80,
+  96,
+  112,
+  128,
+  // the nine authored headings
+  0,
+  0,
+  128,
+  1,
+  0,
+  2,
+  0
+  // pad, then DIRECTION_STEP_TABLE's bytes
+];
 var APPEARANCE_NOFIRE_HEX = "0000000000ffff00000000ff000000ffff000000ff0000000000000000000000";
 function appearanceFires(appearance) {
   const byte = parseInt(
@@ -783,27 +821,70 @@ function appearanceFires(appearance) {
   );
   return (byte & 1 << (appearance & 7)) === 0;
 }
+var BIG_SHOT_BANDS = Object.freeze([
+  { base: 67, frames: 4, mask: 15 },
+  { base: 131, frames: 4, mask: 15 },
+  { base: 163, frames: 4, mask: 15 },
+  { base: 195, frames: 4, mask: 15 },
+  { base: 259, frames: 2, mask: 3 },
+  { base: 267, frames: 2, mask: 3 },
+  { base: 275, frames: 1, mask: 3 }
+]);
+var BIG_SHOT_TYPE = 3;
+function decodeBigShot(b5) {
+  const band = (b5 >> 4 & 7) % BIG_SHOT_BANDS.length;
+  const spec = BIG_SHOT_BANDS[band];
+  const index = b5 & spec.mask;
+  return { band, index, character: spec.base + index * spec.frames, frames: spec.frames };
+}
 var SPECIAL_FIRE_PATTERNS = { 10: 0, 11: 1, 12: 2 };
 var FACTOR_STEP_TABLE = [16, 32, 64, 128, 256, 384, 512, 1024];
 var ROTATION_STEP_TABLE = [16, 32, 64, 128, 256, 512, 1024, 2048];
 var DIRECTION_STEP_TABLE = [128, 256, 512, 768, 1024, 1536, 2048, 32767];
 var clampIndex = (v, table) => table[Math.min(v, table.length - 1)];
-function channel(a, b, c, { enabled, table, stepTable, angle, bits3 }) {
+var CHANNEL_REPEAT = Object.freeze(["hold", "pingpong", "loop", "special"]);
+function sweepUnits(from, to, negative) {
+  return negative ? from - to & 255 : to - from & 255;
+}
+function channel(a, b, c, { enabled, table, stepTable, angle, bits3, negative, fullCircle }) {
   const rawFrom = bits3 ? b & 7 : b & 15;
   const rawTo = bits3 ? b >> 4 & 7 : b >> 4 & 15;
-  const from = clampIndex(rawFrom, table);
-  const to = clampIndex(rawTo, table);
+  const from = table[rawFrom];
+  const to = fullCircle && table[rawTo] === from ? negative ? from + 1 & 255 : from - 1 & 255 : table[rawTo];
+  const down = negative === void 0 ? from > to : negative;
   const step = stepTable[a >> 4 & 7] / 256;
   const scale = angle ? 360 / 256 : 1 / 16;
+  const repeat = c >> 4 & 3;
   return {
     enabled,
     from: from * scale,
     to: to * scale,
-    // sign follows the engine: it negates the step when start > end
-    step: (from > to ? -step : step) * scale,
-    repeat: c >> 4 & 3,
-    // 0 once, 1 loop, 2 ping-pong
+    sweep: (step === 0 ? 0 : sweepUnits(from, to, down)) * scale,
+    step: (down ? -step : step) * scale,
+    repeat,
+    repeatName: CHANNEL_REPEAT[repeat],
     trigger: c & 7
+  };
+}
+var SCALE_AXES = ["", "xy", "x", "y"];
+var ROTATION_MODE = ["off", "cw", "ccw", "home", "track"];
+function decodeRotationChannel(b, mode) {
+  const ch = channel(b[9], b[10], b[11], {
+    enabled: mode !== 0,
+    table: ROTATION_TABLE,
+    stepTable: ROTATION_STEP_TABLE,
+    angle: true,
+    bits3: true,
+    negative: mode === 2,
+    fullCircle: true
+  });
+  if (mode < 3) return ch;
+  return {
+    ...ch,
+    repeat: mode,
+    repeatName: ROTATION_MODE[mode],
+    // the authored bits, kept for anyone diffing records
+    authoredRepeat: ch.repeat
   };
 }
 var ZAKO_BAND_BASE = [0, 16, 24, 32, 48, 52, 56];
@@ -884,6 +965,17 @@ function decodeEnemyRecord(bytes) {
         (b[4] & 3) === 3 ? FIRE_INTERVAL_TABLE_ALT : FIRE_INTERVAL_TABLE
       ),
       window: FIRE_WINDOW_TABLE[b[4] >> 4 & 7],
+      // Bullet type 3 is a different weapon entirely, and the two gates
+      // that make it so are at 0x0607D828 and 0x0607D89A: both compare
+      // the spawn-cached b4 & 3 against 2 and, when it is greater, jump
+      // past the "low nibble 0 = never fires" early-out AND past the
+      // whole 16-way geometry dispatcher. The shooter's own jump table
+      // (0x0607CFE4) sends it to 0x0607D0AE, which spawns ONE object of
+      // class 99 out of the enemy art. So for this type byte 5 is art,
+      // there is no aim bit, the reload is deterministic (no random
+      // window, and it ticks every serviced frame rather than on the
+      // fire pulse), and a low nibble of 0 does not silence anything.
+      bigShot: (b[4] & 3) === BIG_SHOT_TYPE ? decodeBigShot(b[5]) : null,
       // Byte 5's low nibble picks a bullet-geometry function from the
       // 16-pointer table at 0x6086074 — all 16 traced (2026-08-28):
       // 0 silent, 1/10 single, 2 = ±8-unit pair, 3 = 0,±8 fan,
@@ -898,27 +990,21 @@ function decodeEnemyRecord(bytes) {
       // 12 = 16 shots on consecutive frames — the rotating spiral.
       // Bit 4 (0x10) aims the volley at the player (re-aimed every
       // shot); otherwise shots leave along the enemy's facing.
-      geometry: b[5] & 15,
-      aimed: (b[5] & 16) !== 0,
-      pattern: SPECIAL_FIRE_PATTERNS[b[5] & 15] ?? null,
-      direction: SPECIAL_FIRE_PATTERNS[b[5] & 15] !== void 0 ? 0 : b[5] & 31,
+      geometry: (b[4] & 3) === BIG_SHOT_TYPE ? null : b[5] & 15,
+      aimed: (b[4] & 3) === BIG_SHOT_TYPE ? false : (b[5] & 16) !== 0,
+      pattern: (b[4] & 3) === BIG_SHOT_TYPE ? null : SPECIAL_FIRE_PATTERNS[b[5] & 15] ?? null,
+      direction: (b[4] & 3) === BIG_SHOT_TYPE ? 0 : SPECIAL_FIRE_PATTERNS[b[5] & 15] !== void 0 ? 0 : b[5] & 31,
       directionEx: b[5] >> 5 & 7
     },
     death: decodeDeathWord(b),
-    speedChange: channel(b[6], b[7], b[8], {
+    zoom: channel(b[6], b[7], b[8], {
       enabled: (b[6] & 1) !== 0,
       table: FACTOR_TABLE,
       stepTable: FACTOR_STEP_TABLE,
       angle: false
     }),
     rotation: {
-      ...channel(b[9], b[10], b[11], {
-        enabled: rotationMode !== 0,
-        table: ROTATION_TABLE,
-        stepTable: ROTATION_STEP_TABLE,
-        angle: true,
-        bits3: true
-      }),
+      ...decodeRotationChannel(b, rotationMode),
       mode: rotationMode
     },
     scale: {
@@ -928,14 +1014,11 @@ function decodeEnemyRecord(bytes) {
         stepTable: FACTOR_STEP_TABLE,
         angle: false
       }),
-      // The mode nibble's meaning beyond on/off is still open: the
-      // editor names the three values as if they picked axes, but the
-      // Saturn zooms both axes for every one of them (see the header),
-      // so `axes` is "xy" whenever the channel is on. `mode` keeps the
-      // raw value for whoever traces the difference.
-      axes: scaleMode ? "xy" : "",
-      mode: scaleMode,
-      repeatY: b[14] >> 2 & 3
+      // The mode really does pick axes, exactly as the editor's
+      // XY / X / Y list says. One ramp, armed onto one or both
+      // registers (see SCALE_AXES).
+      axes: SCALE_AXES[scaleMode],
+      mode: scaleMode
     },
     direction: channel(b[15], b[16], b[17], {
       enabled: (b[15] & 1) !== 0,

@@ -134,7 +134,8 @@
     gap: 4px 12px;
   }
   ol.remaining .n {
-    grid-row: 1 / 3;
+    grid-column: 1;
+    grid-row: 1 / -1;
     font-family: "IBM Plex Mono", ui-monospace, monospace;
     font-weight: 600; font-size: 14px;
     color: var(--accent);
@@ -153,6 +154,11 @@
   .tag.spec { background: var(--ok-bg); color: var(--ok); }
   .tag.open { background: var(--part-bg); color: var(--part); }
   .tag.none { background: var(--miss-bg); color: var(--miss); }
+  /* The number sits in the first column and spans the whole card; every
+     heading and paragraph belongs in the second, however many there are.
+     Without this only the first two children land in the content column and
+     a third wraps one word per line down the 34px number gutter. */
+  ol.remaining h3, ol.remaining p { grid-column: 2; }
   ol.remaining p { margin: 0; font-size: 14px; color: var(--muted); max-width: 72ch; }
   ol.remaining p b { color: var(--ink); font-weight: 700; }
 
@@ -246,6 +252,11 @@
     <p>What is left: <b>bosses are discounted 4× against zako, and it now shows.</b> <code>map-to-game.js</code> sizes a boss at <code>ceil(units / (shotDamage × 1024))</code> where a zako gets <code>× 256</code> — a gap that has always been there (the old zako path divided LIFE by <code>shotDamage</code>, the same <code>raw / 5120</code>), chosen when boss durability was untraced. It is traced now, and the discount is real: the record-driven boss spawn <code>+0x1AFF4</code> passes its HP table through the <i>same</i> difficulty scaler a zako's goes through, <b>unshifted</b>, so a stage boss is 200–1950 full-power hits on hardware against the importer's 50–487. (A second, non-record caller <code>+0x1918C</code> shifts the table <code>&gt;&gt; 2</code> first, which is exactly the figure the <code>× 1024</code> reproduces.) With zako hp finally reading off the right table the ordering is visible too: the toughest zako at 100 hits now outlasts the weakest boss at 50. Closing it is a tuning decision, not a trace question any more.</p>
   </li>
   <li><span class="n">6</span>
+    <h3>Which scale register is the horizontal one<span class="tag open">MEANING OPEN</span></h3>
+    <p><i>Opened 2026-09-12, while closing a larger item.</i> The four <b>change channels</b> were re-traced end to end against <code>GAME.bin</code> and four readings turned out to be wrong. Record <b>bytes 6&ndash;8 are not a speed channel</b>: they drive <code>0x06094A40</code>, the third register of the engine's scale triple, which every object initialiser seeds to &times;1.0 beside the per-axis pair and which the per-frame pass copies into <i>both</i> hitbox half-extents &mdash; a <b>uniform zoom</b>, on 23,552 of the corpus's 75,502 records. The <b>repeat codes 1 and 2 were the wrong way round</b> (1 is ping-pong, 2 is loop; 16,131 records). A ramp is measured by <b>unsigned distance travelled</b>, not by reaching the end value, which is how an angle sweeps the long way round and how a rotation whose start equals its end makes a whole circle (9,664 records). And <b>rotation modes 3 and 4 overwrite the channel's repeat byte</b> with their own number, routing the stepper to a target-tracking arm and killing whatever the record authored (8,490 records).</p>
+    <p>That pass also <b>retracted a hardware measurement</b> this page and FORMAT.md had carried since 2026-09-12: that all three scale modes zoom both axes. The spawn routine arms the first register for modes 1 and 2 and the second for modes 1 and 3 &mdash; exactly the editor's XY / X / Y labels &mdash; and the confound is visible in the very enemy the measurement used, Ramsie's falling rock, which runs a &times;1.5&rarr;0 <i>one-axis</i> ramp and a &times;4&rarr;0 <i>uniform</i> zoom at the same time. What is left open is small and cosmetic: the two axis registers are plainly distinct in the trace, but nothing there says outright which of them is the horizontal. The decoder follows the editor's list order; confirming it needs one hardware capture.</p>
+  </li>
+  <li><span class="n">7</span>
     <h3>Save-driven endings<span class="tag none">NO TRACE</span></h3>
     <p>The ending scene is still stock 2028-AI. Demo/attract recordings live on the retail disc rather than in saves, so this is bounded work — but nothing is decoded for it yet.</p>
   </li>
@@ -259,7 +270,7 @@
   <tr><td class="feat">Container</td><td><span class="note">gzip <code>.bcr</code> / interleaved cart dumps / raw <code>.bkr</code> → BUP partitions, directory entries (Shift-JIS names, dates), fragmented block-chain reassembly, full 0x6C section-table + checksum validation, Okumura LZSS.</span> <span class="ref">bup-parse.js · payload-table.js · decompress.js</span></td></tr>
   <tr><td class="feat">Graphics</td><td><span class="note">sec0–3 CG pages (8bpp, 16×16 cells), sec4 RGB555 palettes, background tilemaps with corrected flip bits, per-stage sprite composition bank with boss-core geometry, drawn title screens, and the save's own global art — player ship, item icons, bullet animations, blast frames.</span> <span class="ref">decode-cg.js · decode-sprites.js</span></td></tr>
   <tr><td class="feat">Levels</td><td><span class="note">Placement grid (72 ids), stage count, per-(stage, record) enemy identity, and the authored scroll curve: speed table with easing, wave amplitude and type, per-stage extents. Spawns are scroll-<em>position</em> locked, so pacing survives the round trip.</span> <span class="ref">decode-stage.js · map-to-game.js</span></td></tr>
-  <tr><td class="feat">Enemy AI</td><td><span class="note">The 18-byte record plus the engine's own choreography: all 256 <b>appearance behaviour scripts</b> (1,206 rows) interpreted live, the six hardcoded <b>special classes 0x31–0x36</b>, the 16-entry fire-geometry table with the 10/11/12 burst handlers, change-channel triggers at the traced pixel thresholds, and the hardware <b>terrain-ride</b> model — anchored riders recomputed absolutely from a map anchor, plain riders stepped by the frame's whole pixels, everything else holding station.</span> <span class="ref">decode-enemy.js · appearance-table.js · game.bundle.js</span></td></tr>
+  <tr><td class="feat">Enemy AI</td><td><span class="note">The 18-byte record plus the engine's own choreography: all 256 <b>appearance behaviour scripts</b> (1,206 rows) interpreted live, the six hardcoded <b>special classes 0x31–0x36</b>, the 16-entry fire-geometry table with the 10/11/12 burst handlers, the four <b>change channels</b> run the engine's way — a signed accumulator against an unsigned sweep, so an angle can turn the long way round — with their triggers at the traced pixel thresholds, and the hardware <b>terrain-ride</b> model — anchored riders recomputed absolutely from a map anchor, plain riders stepped by the frame's whole pixels, everything else holding station.</span> <span class="ref">decode-enemy.js · appearance-table.js · game.bundle.js</span></td></tr>
   <tr><td class="feat">Death word</td><td><span class="note">Record bytes 2–3 — long mis-read as "fire type / fire params" — are the death word, now implemented in full: <b>item drops</b> by authored slot, <b>child spawn</b> of a successor at the dying enemy's exact position (inheriting an anchored parent's terrain anchor), and <b>chain-kill</b> of every object sharing a formation key in a four-tick ripple where each link runs its own death word. Byte 4 selects silent / small / full blast.</span> <span class="ref">decode-enemy.js · game.bundle.js</span></td></tr>
   <tr><td class="feat">Bosses</td><td><span class="note">0x40 trailer decoded (size class, HP bands, pattern playlist, 4×14-byte patterns with 3 fire points) <em>and</em> all 32 engine movement scripts embedded with their step interpreter, including the arrive/death selectors that place the authored off-screen start, the death-drift target and the zoom/spin flourishes.</span> <span class="ref">decode-boss.js · data/boss-move-scripts.json</span></td></tr>
   <tr><td class="feat">Items &amp; weapons</td><td><span class="note">Eight item slots decoded as <code>movement&lt;&lt;4 | type</code> across nine types with their three launch behaviours, drops dressed in the save's own icons; weapon loadout presets and real per-level damage tables replace the refuted "+3 nibble = main weapon" reading.</span> <span class="ref">decode-settings.js · map-to-game.js</span></td></tr>
@@ -283,12 +294,12 @@
 <p class="sub"><span class="band miss">Absent</span>&ensp;Real Dezaemon 2 features with no code behind them.</p>
 <ul class="plain">
   <li><b>Any write path</b> — LZSS compressor, section-table builder, BUP writer, .sav export (item 1 above)</li>
-  <li><b>Save-driven endings</b> beyond the staff roll — no ending picture exists on the disc, so what is left is the ranking/name-entry screen (item 6)</li>
+  <li><b>Save-driven endings</b> beyond the staff roll — no ending picture exists on the disc, so what is left is the ranking/name-entry screen (item 7)</li>
   <li><b>What the six ポリ吉 part pages are called</b> — POLYHELP.CMP / POLYBTN.CMP carry the labels and icons, unopened (item 3)</li>
   <li><b>Dev tooling referenced by FORMAT.md</b> — <code>dev/scan-compression.js</code>, <code>dev/decode-corpus.js</code>, <code>dev/diff-saves.js</code> and the controlled-delta capture matrix exist only as plans; only <code>dev-fixtures/debug-tools/render-chamber.ts</code> survives</li>
 </ul>
 
 <footer>
-  Sources: <code>packages/shmup-engine/FORMAT.md</code> (930-line canonical notes, split confirmed vs open), the decoder suite under <code>packages/shmup-engine/src/decode/</code>, and the 2028-ai runtime bundle. Everything marked implemented above was traced from SH-2 disassembly of <code>GAME.CMP</code> / <code>0KERNEL.BIN</code> / <code>KUMITATE</code> and adversarially verified — verifiers caught real errors every round (inverted bit polarities, 90° angle conventions, unit scales), so no trace ships unverified. Confidence plumbing distinguishes <em>confirmed / heuristic</em> per section and the import sheet surfaces it in the editor. Surveyed 2026-08-28, after the third RE blitz (weapons, orientation and the BGM driver); title screen and staff roll traced 2026-09-01.
+  Sources: <code>packages/shmup-engine/FORMAT.md</code> (930-line canonical notes, split confirmed vs open), the decoder suite under <code>packages/shmup-engine/src/decode/</code>, and the 2028-ai runtime bundle. Everything marked implemented above was traced from SH-2 disassembly of <code>GAME.CMP</code> / <code>0KERNEL.BIN</code> / <code>KUMITATE</code> and adversarially verified — verifiers caught real errors every round (inverted bit polarities, 90° angle conventions, unit scales), so no trace ships unverified. Confidence plumbing distinguishes <em>confirmed / heuristic</em> per section and the import sheet surfaces it in the editor. Surveyed 2026-08-28, after the third RE blitz (weapons, orientation and the BGM driver); title screen and staff roll traced 2026-09-01; the change channels re-traced and four readings corrected 2026-09-12.
 </footer>
 </div>

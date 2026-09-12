@@ -4349,18 +4349,26 @@
     var table = horizontal ? CHANNEL_TRIGGER_PX_H : CHANNEL_TRIGGER_PX;
     return table[mode] * CHANNEL_TRIGGER_SCALE;
   }
+  // A change channel as the Saturn runs it. The engine never compares the
+  // live value against the end value: it keeps a signed accumulator, adds
+  // the step to it every frame, and compares its whole part against the
+  // UNSIGNED distance from start to end in the direction of travel
+  // (+0x5F9C rising, +0x5FC0 falling). The decoder hands that distance over
+  // as `sweep`, which is what lets an angle sweep run the long way round —
+  // counter-clockwise from 0 to 90 is 270 degrees of travel, and a channel
+  // whose start equals its end is a whole circle, not a channel that never
+  // moves. The step already carries its own sign: on the angle channel the
+  // direction is the MODE, not which endpoint is the larger number.
   function makeChannel(ch, extra, ground, horizontal) {
     if (!ch || !ch.enabled) return null;
-    var step = Math.abs(ch.step);
-    if (extra && extra.reverse) step = -step;
     return {
       value: ch.from,
       from: ch.from,
-      to: ch.to,
-      step: ch.from > ch.to ? -step : step,
+      progress: 0,
+      sweep: Number.isFinite(ch.sweep) ? ch.sweep : Math.abs(ch.to - ch.from),
+      step: ch.step,
       repeat: ch.repeat,
-      // 0 once, 1 loop, 2 ping-pong
-      spin: !!(extra && extra.spin) || ch.from === ch.to && ch.step !== 0 && !!(extra && extra.wrap),
+      // 0 hold at the end, 1 ping-pong, 2 loop back to the start
       wrap: !!(extra && extra.wrap),
       armAt: channelTrigger(ch, ground, horizontal),
       done: false
@@ -4379,35 +4387,40 @@
       if (y >= ch.armAt) {
         ch.armAt = null;
         ch.value = ch.from;
+        ch.progress = 0;
       } else {
         still = true;
       }
     }
     if (!still) st.pendingChannels = null;
   }
+  // What a channel does at the end of its ramp, from the four-entry jump
+  // table at 0x6069FFC: 0 freezes on the end value, 1 PING-PONGS (step
+  // negated, endpoints swapped), 2 LOOPS back to the start. This runtime
+  // had 1 and 2 the other way round until 2026-09-12.
+  function channelEnd(st) {
+    var end = st.from + (st.step > 0 ? st.sweep : -st.sweep);
+    st.progress = 0;
+    if (st.repeat === 1) {
+      st.from = end;
+      st.step = -st.step;
+      return end;
+    }
+    if (st.repeat === 2) return st.from;
+    st.from = end;
+    st.step = 0;
+    st.done = true;
+    return end;
+  }
   function stepChannel(st) {
     if (!st || st.done) return st ? st.value : 0;
     if (st.armAt !== null && st.armAt !== undefined) return st.value;
-    if (st.spin) {
-      st.value += st.step || 1;
-      return st.value;
-    }
-    if (st.step === 0 || st.from === st.to) return st.value;
-    st.value += st.step;
-    var arrived = st.step > 0 ? st.value >= st.to : st.value <= st.to;
-    if (arrived) {
-      st.value = st.to;
-      if (st.repeat === 1) {
-        st.value = st.from;
-      } else if (st.repeat === 2) {
-        var f = st.from;
-        st.from = st.to;
-        st.to = f;
-        st.step = -st.step;
-      } else {
-        st.done = true;
-      }
-    }
+    if (st.step === 0 || st.sweep === 0) return st.value;
+    st.progress += st.step;
+    st.value = Math.abs(st.progress) >= st.sweep
+      ? channelEnd(st)
+      : st.from + st.progress;
+    if (st.wrap) st.value = (st.value % 360 + 360) % 360;
     return st.value;
   }
   var TYPE012_INTERVAL = [14, 12, 10, 8, 6, 4, 2, 1];
@@ -4421,6 +4434,10 @@
     var rate = FIRE_WINDOW.indexOf(fire.window);
     if (rate < 0) rate = 0;
     var interval = fire.mode === 3 ? fire.interval : TYPE012_INTERVAL[rate];
+    // Bullet type 3 refills from its interval alone: the engine's type-3 arm
+    // (0x0607D986) has no `rand % window` term, so its cadence is
+    // deterministic rather than rank-pulsed.
+    if (fire.bigShot) return interval;
     return interval + Math.floor(Math.random() * (fire.window || 1));
   }
   // Dynamic difficulty (engine +0x4AD8 at the boot rank): the level ramps
@@ -4606,9 +4623,11 @@
     }
     if (recompute) {
       var th = (e.angle >>> 8) * (Math.PI * 2 / 256);
-      // The record's speed-change channel is a x0..x4 multiplier on the
-      // script's own amplitude.
-      var v = e.amp / 256 * (st.speedCh ? st.speedCh.value : 1);
+      // The script's own amplitude, and nothing else. Record bytes 6-8 used
+      // to scale it here, on the reading that they were a speed channel;
+      // they are a uniform ZOOM (see applyDezaScale) and the engine never
+      // multiplies a velocity by that register.
+      var v = e.amp / 256;
       e.vx = e.flags & ENTRY_NO_COS ? 0 : Math.cos(th) * v;
       if (e.mirror) e.vx = -e.vx;
       e.vy = e.flags & ENTRY_NO_SIN ? 0 : -Math.sin(th) * v;
@@ -4821,7 +4840,10 @@
   function initEnemyBehavior(enemy, behavior, dezaemon, scene) {
     // Geometry 0 is the engine's empty routine — most of a roster never
     // fires. Everything else fires, the burst patterns 10-12 included.
-    var fires = behavior.fire.enabled && zakoGeometry(behavior.fire) !== 0;
+    // Bullet type 3 is the exception: its two gates skip the nibble-0
+    // early-out, so it fires whatever byte 5 says (0x0607D828).
+    var fires = behavior.fire.enabled &&
+      (behavior.fire.bigShot != null || zakoGeometry(behavior.fire) !== 0);
     var facesPlayer = behavior.rotation.enabled && behavior.rotation.mode >= 3;
     var horiz = dezaHorizontal(scene);
     var hasEntry = !!(dezaemon && dezaemon.entry && dezaemon.entry.rows && dezaemon.entry.rows.length);
@@ -4843,12 +4865,20 @@
       // entry data and `hasEntry` already switches this off.
       patrols: !hasEntry && !ridesTheMap(behavior.movePattern) && dezaMove(behavior).mode === 0 && !dezaMove(behavior).flag && behavior.speed < 0.3,
       patrolPhase: Math.random() * Math.PI * 2,
-      speedCh: makeChannel(behavior.speedChange, null, behavior.ground, horiz),
+      // Record bytes 6-8. Long read as a speed multiplier; it is the third
+      // member of the engine's scale triple — a UNIFORM zoom on register
+      // 0x06094A40, which the per-frame pass copies into both hitbox
+      // half-extents where bytes 12-14 give each axis its own. A recipe
+      // imported before 2026-09-12 carries the old field name.
+      zoomCh: makeChannel(behavior.zoom || behavior.speedChange, null, behavior.ground, horiz),
       rotationCh: facesPlayer ? null : makeChannel(behavior.rotation, {
-        wrap: true,
-        reverse: behavior.rotation.mode === 2
+        wrap: true
       }, behavior.ground, horiz),
       scaleCh: makeChannel(behavior.scale, null, behavior.ground, horiz),
+      // "xy", "x" or "y" — the mode really does pick axes, exactly as the
+      // editor's list says. An older recipe has no axes field; treat it as
+      // the both-axes case it was imported under.
+      scaleAxes: behavior.scale && behavior.scale.axes ? behavior.scale.axes : "xy",
       // No wrap: a flat direction channel (from == to) HOLDS its heading.
       // Spun as a circle it sent Ramsie's roc riding the scroll to the
       // screen bottom; held at 0 (up-map, fighting the scroll) the roc
@@ -4863,14 +4893,15 @@
     var dzst0 = enemy.getData("deza");
     if (dzst0.special) initSpecialClass(dzst0, behavior, dzst0.special);
     var dzst = enemy.getData("deza");
-    var pending = [dzst.speedCh, dzst.rotationCh, dzst.scaleCh, dzst.directionCh]
+    var pending = [dzst.zoomCh, dzst.rotationCh, dzst.scaleCh, dzst.directionCh]
       .filter(function(c) { return c && c.armAt !== null; });
     dzst.pendingChannels = pending.length ? pending : null;
     // A scale channel that runs from spawn starts AT its first value — an
     // object authored to come in at x3 (a rock falling in from above) is x3
     // on its first frame, not x1 until updateEnemyBehavior's first tick.
-    if (dzst.scaleCh && dzst.scaleCh.armAt === null) {
-      applyDezaScale(enemy, dzst, dzst.scaleCh.value);
+    if ((dzst.scaleCh && dzst.scaleCh.armAt === null) ||
+        (dzst.zoomCh && dzst.zoomCh.armAt === null)) {
+      applyDezaScale(enemy, dzst);
     }
     if (behavior.ground) {
       var shadow = enemy.getData("shadow");
@@ -4933,8 +4964,10 @@
       if (st.tick % SATURN_TICKS_PER_FRAME) return true;
       st.age++;
       stepSpecialClass(scene, enemy, st);
-      if (st.scaleCh) {
-        applyDezaScale(enemy, st, stepChannel(st.scaleCh));
+      if (st.scaleCh || st.zoomCh) {
+        stepChannel(st.scaleCh);
+        stepChannel(st.zoomCh);
+        applyDezaScale(enemy, st);
       }
       return true;
     }
@@ -4952,7 +4985,6 @@
       st.hiddenT = 0;
     }
     armChannels(st, enemy);
-    var mult = st.speedCh ? stepChannel(st.speedCh) : 1;
     // With no direction channel the engine seeds the heading from the
     // editor default (straight down), so an entry-model enemy with a speed
     // flies down the screen; the legacy model kept 0 (up, fighting the
@@ -4967,7 +4999,7 @@
     // bounds cull never matched it, and it sat in the 48-slot pool forever —
     // Ramsie's green domes, butterflies and turrets vanished on spawn, and
     // its roc disappeared the moment its first script row ended.
-    var speed = (Number.isFinite(b.speed) ? b.speed : 0) * mult;
+    var speed = Number.isFinite(b.speed) ? b.speed : 0;
     var scripted = stepEntryScript(enemy, st);
     if (!st.pinned && !scripted) {
       var rad = dirDeg * Math.PI / 180;
@@ -4991,23 +5023,35 @@
     } else if (st.rotationCh) {
       enemy.rotation = stepChannel(st.rotationCh) * Math.PI / 180;
     }
-    if (st.scaleCh) {
-      applyDezaScale(enemy, st, stepChannel(st.scaleCh));
+    if (st.scaleCh || st.zoomCh) {
+      stepChannel(st.scaleCh);
+      stepChannel(st.zoomCh);
+      applyDezaScale(enemy, st);
     }
     return true;
   }
-  // The scale channel as the Saturn draws it (FORMAT.md, record bytes
-  // 12-14, and the 2026-09-12 sav-profiler measurements): every mode zooms
-  // BOTH axes, the object stays opaque, and while the zoom is off unity the
-  // status word's bit15 stops it firing and colliding; reaching x0 or x4
-  // removes it silently (+0x632A). The "falling from above" look is the
+  // Scale as the Saturn draws it: THREE registers, not one. Bytes 12-14
+  // arm the per-axis pair 0x06095930 / 0x06091A30 — mode 1 both, mode 2 the
+  // first, mode 3 the second, exactly the editor's XY / X / Y list — and
+  // bytes 6-8 arm the uniform 0x06094A40 that multiplies on top of both.
+  // Either axis reaching zero deletes the object (+0x5C8C). The object
+  // stays opaque, and while the zoom is off unity the status word's bit15
+  // stops it firing and colliding; the "falling from above" look is the
   // zoom riding down plus, on stages with the drop-shadow pass, the mesh
   // shadow converging on the object — not an alpha ramp on the object.
-  function applyDezaScale(enemy, st, f) {
-    enemy.setScale(f, f);
-    var offUnity = Math.abs(f - 1) > 0.02;
+  function applyDezaScale(enemy, st) {
+    var zoom = st.zoomCh ? st.zoomCh.value : 1;
+    var axis = st.scaleCh ? st.scaleCh.value : 1;
+    var axes = st.scaleCh ? st.scaleAxes || "xy" : "";
+    var sx = zoom * (axes.indexOf("x") >= 0 ? axis : 1);
+    var sy = zoom * (axes.indexOf("y") >= 0 ? axis : 1);
+    enemy.setScale(sx, sy);
+    enemy.setData("dezaZoom", zoom);
+    var offUnity = Math.abs(sx - 1) > 0.02 || Math.abs(sy - 1) > 0.02;
     enemy.setData("dezaNoContact", offUnity);
-    if (f <= 0.001 || f >= 3.999) enemy.setData("dezaGone", true);
+    if (sx <= 0.001 || sy <= 0.001 || sx >= 3.999 || sy >= 3.999) {
+      enemy.setData("dezaGone", true);
+    }
   }
   var ZAKO_BULLET_KEY = "dezaZakoBullet";
   var ZAKO_BULLET_SPEED = 1.35;
@@ -5092,7 +5136,9 @@
     if (!st) return false;
     var fire = st.behavior.fire;
     var geom = zakoGeometry(fire);
-    if (!fire.enabled || geom === 0 || st.reload < 0) return true;
+    var big = fire.bigShot || null;
+    if (!fire.enabled || st.reload < 0) return true;
+    if (!big && geom === 0) return true;
     if (st.sp && st.sp.noFire) return true; // 0x32 mid-dash: fire suppressed
     if (st.tick % SATURN_TICKS_PER_FRAME) return true;
     var GH14 = scene.scale ? scene.scale.height : 480;
@@ -5109,6 +5155,18 @@
         st.burst = (st.burst + 1) % burstLen;
         firedMidBurst = true;
       }
+    } else if (big) {
+      // Type 3 is not on the fire pulse: it counts down every serviced frame
+      // and spawns ONE class-99 object drawn from the enemy art, where the
+      // other types spread bullets. The seven bands' own updaters
+      // (0x0607A070..5E0) are untraced, so the object flies straight — but one
+      // shot on a deterministic reload is what hardware does, and an N-way
+      // spread of ordinary bullets, which is what this used to do, is not.
+      if (st.reload <= 0 && onScreen) {
+        st.reload = zakoReload(fire);
+        dezaVolley(scene, enemy, st, 1, shootFn);
+      } else if (st.reload > 0) st.reload -= 1;
+      return true;
     } else if (pulse && st.reload <= 0 && onScreen) {
       st.reload = zakoReload(fire);
       dezaVolley(scene, enemy, st, geom, shootFn);
@@ -7749,12 +7807,18 @@
   function updateShadowPosition(shadow, sprite) {
     if (shadow.getData("dezaShadowPass")) {
       // The Saturn's pass (+0x473E..+0x47D0) draws the object again at an
-      // offset of (zoom - threshold) << 10 in x and y: +20 px at zoom 1.0,
-      // which pins the threshold at 0.6875 and the slope at 64 px per unit
-      // of zoom. A rock riding x1.5 -> x0 therefore throws its shadow 52 px
-      // away and pulls it back through the object as it lands — the depth
-      // cue the alpha ramp used to stand in for.
-      var zoom = sprite.scaleX;
+      // offset of (zoom - threshold) << 10 in x and y, the slope working out
+      // at 64 px per unit of zoom. The threshold is 1.0 or 0.6875 by status
+      // bit5 (+0x475C); this takes the lower one. A rock riding x4 -> x0
+      // therefore throws its shadow far out and pulls it back through the
+      // object as it lands — the depth cue the alpha ramp stood in for.
+      //
+      // The zoom it reads is the UNIFORM register 0x06094A40 (record bytes
+      // 6-8), loaded into r8 at +0x4562 — not the per-axis pair, and so not
+      // the sprite's own scale once a mode-2 or mode-3 channel has stretched
+      // one axis. applyDezaScale parks that value on the sprite.
+      var zoom = sprite.getData("dezaZoom");
+      if (!Number.isFinite(zoom)) zoom = sprite.scaleX;
       var off = 64 * (zoom - 0.6875);
       shadow.setScale(sprite.scaleX, sprite.scaleY);
       shadow.rotation = sprite.rotation;

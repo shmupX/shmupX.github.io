@@ -159,7 +159,7 @@ for (const [idx, rows] of byFirstRow) {
       `rot=${b.rotation.enabled ? b.rotation.mode : "-"}`,
       `scl=${b.scale.enabled ? b.scale.axes : "-"}`,
       `dir=${chan(b.direction)}`,
-      `spdCh=${chan(b.speedChange)}`,
+      `zoom=${chan(b.zoom)}`,
       `| app=${b.appearance}`,
     ].join(" "),
   );

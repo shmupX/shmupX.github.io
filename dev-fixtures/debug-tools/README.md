@@ -31,25 +31,40 @@ When record fields and captures disagree, the answer is in the play engine's
 SH-2 code:
 
 ```sh
-# pull GAME.CMP off the disc image and decompress it (4-byte LE length
-# header, then the saves' Okumura LZSS) -> GAME.bin, load address 0x06064000
-node dev-fixtures/debug-tools/extract-cmp.mjs GAME.CMP --out /tmp/deza
+# unpack the whole disc once: every ISO 9660 file, every .CMP decompressed
+# beside it, and a check that the addresses in FORMAT.md still land
+deno run -A dev-fixtures/debug-tools/extract-disc.ts
+#   -> dev-fixtures/.cache/saturn-disc/{GAME.CMP,0KERNEL.BIN,SGM_*.CMP,…}
+#      dev-fixtures/.cache/saturn-disc/unpacked/{GAME.bin,KUMITATE.bin,…}
 
 # disassemble; PC-relative literal pools are resolved inline
-cd /tmp/deza
-node ~/CODE/cmg/dev-fixtures/debug-tools/sh2dis.mjs 0x0607d810 0x0607d8e0
+SH2DIS_BIN=dev-fixtures/.cache/saturn-disc/unpacked/GAME.bin \
+  node dev-fixtures/debug-tools/sh2dis.mjs 0x0607d810 0x0607d8e0
 
 # who touches a RAM array? (readers, writers, and jsr-via-literal callers)
-node ~/CODE/cmg/dev-fixtures/debug-tools/sh2dis.mjs --xref 0x06090830
+SH2DIS_BIN=… node dev-fixtures/debug-tools/sh2dis.mjs --xref 0x06090830
 ```
 
-File offset = RAM address − 0x06064000. FORMAT.md's "Zako firing, re-traced"
-section (in the 2019-es7 importer) is the worked example: the fire dispatcher at
-`+0x1989e`, the bullet-geometry table at `0x6086074`, and the spawn-time
-interval fill at `+0x1548e` all came out of these two tools. Verify a fresh
-extraction before trusting offsets — the byte-exact anchors (interval tables at
-`0x6085f60..f9x`, u16be, values in the low bytes) must match, or the LZSS phase
-is off.
+`extract-cmp.mjs` is still the way to pull ONE file out when you know which;
+`extract-disc.ts` is the other half, because most questions turn out to need a
+file nobody predicted — an editor overlay for the editor's own labels, a sample
+game to hold a save against, a preset song, the part library.
+
+File offset = RAM address − 0x06064000, which is why FORMAT.md writes the play
+engine's addresses as `+0x19810` and means RAM `0x0607D810`. Its "Zako firing,
+re-traced" section is the worked example: the fire dispatcher at `+0x1989e`, the
+bullet-geometry table at `0x6086074` and the spawn-time interval fill at
+`+0x1548e` all came out of these two tools. Verify a fresh extraction before
+trusting an offset — GAME.bin must be 165,628 bytes and the interval table at
+`0x6085f60` must read `00 1d 00 16 00 10 00 0b …` (u16be, values in the low
+bytes), or the LZSS phase is off and every address is wrong. `extract-disc.ts`
+checks both itself and exits non-zero if either fails.
+
+The disc is also what makes the container provable rather than merely plausible:
+its six `SGM_*.CMP` sample games are complete games, and two of them are in the
+community save collection as well, so
+`packages/shmup-engine/test/disc-sample-games.test.js` holds the two paths equal
+byte for byte across all eight sections.
 
 ## The PlayStation discs and saves
 

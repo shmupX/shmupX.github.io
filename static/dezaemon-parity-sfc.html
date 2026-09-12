@@ -134,7 +134,8 @@
     gap: 4px 12px;
   }
   ol.remaining .n {
-    grid-row: 1 / 3;
+    grid-column: 1;
+    grid-row: 1 / -1;
     font-family: "IBM Plex Mono", ui-monospace, monospace;
     font-weight: 600; font-size: 14px;
     color: var(--accent);
@@ -153,6 +154,11 @@
   .tag.spec { background: var(--ok-bg); color: var(--ok); }
   .tag.open { background: var(--part-bg); color: var(--part); }
   .tag.none { background: var(--miss-bg); color: var(--miss); }
+  /* The number sits in the first column and spans the whole card; every
+     heading and paragraph belongs in the second, however many there are.
+     Without this only the first two children land in the content column and
+     a third wraps one word per line down the 34px number gutter. */
+  ol.remaining h3, ol.remaining p { grid-column: 2; }
   ol.remaining p { margin: 0; font-size: 14px; color: var(--muted); max-width: 72ch; }
   ol.remaining p b { color: var(--ink); font-weight: 700; }
 
