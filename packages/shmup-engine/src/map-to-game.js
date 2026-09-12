@@ -22,6 +22,7 @@
 
 import { DUKE_PLAYER, decodePlayerArt } from "./player-art.js";
 import { decodePlayer2Art, TROOPER_PLAYER } from "./player2-art.js";
+import { BOSS_HP_TABLE } from "./decode/decode-boss.js";
 import { ITEM_TYPE_DROPS, zakoPlacementId } from "./decode/decode-stage.js";
 import { APPEARANCE_SCRIPTS, appearanceScript } from "./decode/appearance-table.js";
 
@@ -49,8 +50,10 @@ export const PLAYER_SHOT_DAMAGE_BY_LEVEL = [9, 12, 15, 18, 21];
 // LIFE units — the raw count >> 8, 20 for weapon 1's 5120. Enemy hp is sized
 // as ceil(rawUnits / (shotDamage * 256)) so that one runtime damage point is
 // one full-power main-shot hit, and the runtime's own Dezaemon weapons divide
-// by that same number. This is the fallback when a save's settings block does
-// not decode: weapon 1, i.e. exactly 5120 raw.
+// by that same number. Bosses take the SAME divisor — they are the same units
+// through the same scaler into the same hp words, and only their table differs
+// (see the boss block below). This is the fallback when a save's settings
+// block does not decode: weapon 1, i.e. exactly 5120 raw.
 export const ENGINE_SHOT_DAMAGE = 20;
 
 // Saturn zako bullets cross the playfield in a couple of seconds; the
@@ -467,14 +470,50 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                 // land on the fields the runtime reads, and the full record
                 // (HP-stage playlist, patterns, fire points, part spawns)
                 // rides on dezaemon.boss for a future parts-aware runtime.
-                // Boss HP sits in a different damage regime than the zako
-                // (millions of units; how player shots scale against it is
-                // untraced), so /1024 normalizes the 8-step ladder onto hit
-                // counts around the stock bosses' 100-500 — still scaled by
-                // the save's own weapon like the zako are.
+                // Boss hp takes the SAME divisor as a zako's, because the
+                // engine gives it the same treatment: the record-driven boss
+                // spawn `+0x1AFF4` reads `0x06085F40` UNSHIFTED, hands it to
+                // the same difficulty scaler `+0x15358` a zako's goes through,
+                // and stores it in the same two hp words. So a stage boss is
+                // 200-1950 full-power weapon-1 hits (FORMAT.md, boss trailer
+                // byte 1) and the ladder lands in the same unit space as every
+                // weapon the runtime fires.
+                //
+                // This used to be `* 1024` — a 4x discount picked to land near
+                // the stock game's 100-500 back when "how player shots scale
+                // against boss hp" was untraced. Both halves of that premise
+                // are gone: the scaling is traced, and the stock anchor was
+                // measured on the wrong axis (2028-ai's own zako stop at 30 hp
+                // against its 200-500 bosses, while an imported zako runs the
+                // full ladder to 100, so matching the absolute hit count while
+                // leaving zako undiscounted is exactly what broke the ratio).
+                // The discount left 31 of the corpus's 1,455 comparable
+                // bosses WEAKER in hits than the toughest SHOOTABLE zako of
+                // their own stage (36 no tougher; 0 either way at this
+                // divisor) — "shootable" because only 40.5% of the 58,249
+                // zako records can be hit at all, the rest carrying ARMOUR or
+                // the NO-COLLISION attribute. It also killed a
+                // median boss in 8.6 s — a third of them inside their first
+                // movement script, so most of the authored 4-patterns-per-band
+                // choreography never played. At this divisor the median fight
+                // is 34.3 s, there are no inversions, and hpStages still bands
+                // one bar rather than multiplying it (spawn `+0x1B038` fills
+                // the threshold table with hp/2, 2hp/3+hp/3, 3hp/4+2hp/4+hp/4).
                 rec.dezaemon.boss = decodedBoss.behavior;
-                rec.hp = Math.max(1, Math.ceil(decodedBoss.behavior.hp / (shotDamage * 1024)));
+                rec.hp = Math.max(1, Math.ceil(decodedBoss.behavior.hp / (shotDamage * 256)));
                 rec.score = decodedBoss.behavior.score;
+            } else {
+                // The stage PLACES a boss but its 0x40 trailer is all zeroes —
+                // 137 records across the corpus, a slot placed and never
+                // edited. decodeBossTrailer reports that as null, but the
+                // engine does not check: the spawn just reads the bytes, so
+                // `byte1 & 7` is 0 and the boss gets BOSS_HP_TABLE[0]. Size it
+                // that way rather than leaving the stock starter's 150, which
+                // was only ever coincidentally near the old discounted band and
+                // would now drop an unedited boss to a sixth of its neighbours.
+                // (Its score stays the starter's: byte 1's score nibble is a
+                // separate field and this item is the hp ladder.)
+                rec.hp = Math.max(1, Math.ceil(BOSS_HP_TABLE[0] / (shotDamage * 256)));
             }
             if (decodedBoss.partArt) {
                 // Fire-point part art (types 3/4): record -> atlas frame

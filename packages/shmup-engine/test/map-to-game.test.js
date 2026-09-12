@@ -23,8 +23,14 @@ import { validateGameJson } from "../src/game-schema.js";
 import { normalize } from "../src/bup-source.js";
 import * as bup from "../src/bup-parse.js";
 import { decodeSave } from "../src/decode/index.js";
+import { isGameSave } from "../src/payload-table.js";
 import { decodeSettings } from "../src/decode/decode-settings.js";
-import { hasFixtures, loadFixture } from "./_fixtures.js";
+import {
+  devFixtureUrl,
+  hasFixtures,
+  loadDevFixture,
+  loadFixture,
+} from "./_fixtures.js";
 
 // A settings block decoded out of all zeroes: every field present, nothing
 // authored.
@@ -801,6 +807,62 @@ Deno.test("LIFE units convert through the engine's traced shot damage", () => {
   );
 });
 
+Deno.test("a boss takes the zako's divisor, not a discounted one", () => {
+  // The boss core is spawned through the SAME scaler into the SAME hp words as
+  // a zako (`+0x1AFF4` reading `0x06085F40` unshifted — FORMAT.md, boss trailer
+  // byte 1), so the only thing that differs is which table the index came from.
+  // The whole eight-step boss ladder therefore lands on 200-1950 full-power
+  // weapon-1 hits, which is what the runtime's own engine-unit weapons are
+  // sized against. Nothing asserted this until 2026-09-12: the divisor could be
+  // — and was — set by feel, and the suite stayed green.
+  const BOSS_HP_UNITS = [
+    1024000,
+    1536000,
+    2304000,
+    3328000,
+    4608000,
+    6144000,
+    7936000,
+    9984000,
+  ];
+  assertEquals(
+    BOSS_HP_UNITS.map((u) =>
+      Math.max(1, Math.ceil(u / (ENGINE_SHOT_DAMAGE * 256)))
+    ),
+    [200, 300, 450, 650, 900, 1200, 1550, 1950],
+  );
+
+  // …and the importer really does use it. A boss at table index 4 is 900 hits,
+  // not the 225 the old `shotDamage * 1024` produced.
+  const decoded = emptyDecoded();
+  decoded.stages = [{ rows: [new Array(GRID_COLS).fill(null)] }];
+  decoded.bosses = [{
+    stage: 0,
+    sizeClass: 0,
+    row: 479,
+    col: 8,
+    behavior: { hp: 4608000, score: 100000, hpStages: 4 },
+  }];
+  const { gameJson } = mapSaveToGame(decoded);
+  assertStrictEquals(gameJson.bossData.boss0.hp, 900);
+  assertStrictEquals(gameJson.bossData.boss0.score, 100000);
+  // hpStages BANDS one bar rather than multiplying it (spawn `+0x1B038` fills
+  // the threshold table from this same hp word), so it must not reach rec.hp.
+  assertStrictEquals(gameJson.bossData.boss0.dezaemon.boss.hpStages, 4);
+  assert(validateGameJson(gameJson).ok);
+
+  // The divisor is the save's own weapon, exactly as the zako's is: a save on
+  // sub weapon 2 (11520 units, shotDamage 45) gets proportionally fewer hits.
+  const heavier = emptyDecoded();
+  heavier.settings = { ...decodeSettingsStub(), shotDamage: 45 };
+  heavier.stages = decoded.stages;
+  heavier.bosses = decoded.bosses;
+  assertStrictEquals(
+    mapSaveToGame(heavier).gameJson.bossData.boss0.hp,
+    Math.ceil(4608000 / (45 * 256)),
+  );
+});
+
 Deno.test("an appearance that cannot fire maps to interval -1", () => {
   const decoded = emptyDecoded();
   decoded.enemies = [{
@@ -1041,4 +1103,85 @@ Deno.test("the BGM table splits into four special tracks and per-stage pairs fro
   assertEquals(bgm.special, [0, 1, 2, 3]);
   // stage row r: main +0x45+2r, boss +0x46+2r
   assertEquals(bgm.stages, [[4, 5], [6, 7], [8, 9]]);
+});
+
+// The invariant the 2026-09-12 tuning decision rests on, checked against the
+// whole community corpus rather than a synthetic fixture: no imported boss is
+// easier to kill than the toughest enemy the player has to shoot through to
+// reach it. That is 0-violation at the traced divisor and 31-violation at the
+// old `shotDamage * 1024`, so this pins the decision in a way no hand-built
+// record can — and it is asserted on mapSaveToGame's OWN output, not on a
+// re-derivation of it.
+//
+// "Toughest zako" means the toughest SHOOTABLE one. Only 40.5% of the corpus's
+// 58,249 placed records can be hit at all: the rest carry ARMOUR (move.mode
+// bit0, imported as hp "infinity") or NO-COLLISION (move.mode bit1, which both
+// engine collision drivers early-out on). Counting those would compare a boss
+// against something the player can never damage.
+//
+// dev-fixtures/ is the gitignored community collection, so this skips when the
+// saves are absent, exactly as the other dev-fixture tests do.
+const corpusSaves = () => {
+  try {
+    return [...Deno.readDirSync(devFixtureUrl("."))]
+      .filter((e) => e.isFile && e.name.endsWith(".sav"))
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    return [];
+  }
+};
+
+Deno.test({
+  name:
+    "no imported boss is weaker than its own stage's toughest shootable zako",
+  ignore: corpusSaves().length === 0,
+  async fn() {
+    const violations = [];
+    let bosses = 0, compared = 0, saves = 0;
+    for (const name of corpusSaves()) {
+      const image = await normalize(loadDevFixture(name));
+      const [save] = bup.parse(image.data).filter(isGameSave);
+      if (!save) continue;
+      saves++;
+      const { gameJson } = mapSaveToGame(decodeSave(save.payload.buffer));
+
+      // Toughest shootable zako per stage, off the mapped records.
+      const toughest = new Map();
+      for (const rec of Object.values(gameJson.enemyData || {})) {
+        const dz = rec.dezaemon;
+        if (!dz || dz.stage === undefined || !dz.behavior) continue;
+        if (rec.hp === "infinity") continue; // ARMOUR: indestructible
+        const mode = (dz.behavior.move && dz.behavior.move.mode) || 0;
+        if (mode & 2) continue; // NO-COLLISION: cannot be hit
+        const hp = Number(rec.hp);
+        if (!Number.isFinite(hp)) continue;
+        if (hp > (toughest.get(dz.stage) ?? 0)) toughest.set(dz.stage, hp);
+      }
+
+      for (const [key, rec] of Object.entries(gameJson.bossData || {})) {
+        if (!rec.dezaemon || !rec.dezaemon.boss) continue; // no authored trailer
+        bosses++;
+        const stage = Number(key.replace("boss", ""));
+        const tz = toughest.get(stage);
+        if (tz === undefined) continue;
+        compared++;
+        if (Number(rec.hp) <= tz) {
+          violations.push(`${name} ${key}: boss ${rec.hp} hits vs zako ${tz}`);
+        }
+      }
+    }
+    // Guard the guard: if the corpus stopped decoding, an empty comparison set
+    // would make this pass vacuously.
+    assert(saves > 0, "no game saves decoded out of dev-fixtures/");
+    assert(
+      compared > 0,
+      `no boss had a shootable same-stage zako to compare against (${bosses} bosses over ${saves} saves)`,
+    );
+    assertEquals(
+      violations.slice(0, 10),
+      [],
+      `${violations.length} boss(es) no tougher than their own stage's toughest shootable zako`,
+    );
+  },
 });

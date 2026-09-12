@@ -720,14 +720,19 @@ second player: a Legion Go's halves in Split Controller mode
 shipped game are two ships without the query string.
 
 Each ship carries its own HP, combo, powerups, barrier, charge, sub weapon and
-bomb — including the engine's one-bomb-per-player rule. **Score is shared**,
-which is a deliberate divergence from the hardware (see
-`static/dezaemon-parity.html`). The HUD splits the HP and combo troughs
-vertically, player 1 on top; the split animates in when player 2 joins and is a
-one-way latch for the stage, so a ship going down leaves an empty slot rather
-than resizing the bar player 1 has been reading all fight. One death does not
-end the run — only losing every ship does, and a downed player can take the seat
-back.
+bomb — including the engine's one-bomb-per-player rule. A second ship also makes
+the game **tougher**, as it does on hardware: every enemy and boss the engine
+spawns while both players are in play gets **×1.5 hp**, applied at spawn only
+(`+0x15398`, testing the play-state byte `0x060840C8 & 6 == 6`), so whatever is
+already on screen keeps the hp it was given and a ship joining or going down
+changes only what spawns next. Imports only — the stock game's records were
+never sized in the engine's durability units. **Score is shared**, which is a
+deliberate divergence from the hardware (see `static/dezaemon-parity.html`). The
+HUD splits the HP and combo troughs vertically, player 1 on top; the split
+animates in when player 2 joins and is a one-way latch for the stage, so a ship
+going down leaves an empty slot rather than resizing the bar player 1 has been
+reading all fight. One death does not end the run — only losing every ship does,
+and a downed player can take the seat back.
 
 Player 2 flies the **trooper** from shmup-party-phaser4, baked into the
 `game_asset` atlas beside Duke by `deno task player2:art` (idempotent, and it

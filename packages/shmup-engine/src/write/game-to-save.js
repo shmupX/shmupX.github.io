@@ -114,8 +114,11 @@ export const STORY_QUIET_ROWS = 48;
 export const STRAIGHT_SPEEDS = [128, 256, 384, 512, 640, 768, 1152, 1536];
 /** One full-power weapon-1 bullet, the unit the importer sizes hp in. */
 export const SHOT_UNITS = 5120;
-/** The importer's boss divisor (shotDamage 20 x 1024). */
-export const BOSS_UNITS_PER_HIT = 20480;
+/** The importer's boss divisor. Bosses and zako share one unit space and one
+ *  divisor: the engine spawns a boss core through the same scaler into the
+ *  same hp words as a zako, so this is SHOT_UNITS. It was 20480 (a 4x
+ *  discount) while map-to-game.js divided boss hp by shotDamage*1024. */
+export const BOSS_UNITS_PER_HIT = SHOT_UNITS;
 /** A Saturn px/frame is half a runtime px/frame (the playfield is 2x). */
 export const RUNTIME_TO_SATURN_SPEED = 0.5;
 
