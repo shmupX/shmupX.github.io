@@ -24,8 +24,8 @@
 // Both are COMMITTED and served from static/, like mesh-library.json.
 
 import { dirname, fromFileUrl, join, relative, resolve } from "@std/path";
-import { findDiscFile } from "../lib/disc-file.ts";
-import { encodePng, newRaster } from "../lib/ps2/png.ts";
+import { findDiscFile } from "@shmupx/shmup-harbor/disc-file";
+import { encodePng, newRaster } from "@shmupx/shmup-harbor/png";
 import {
   DEZA2_PALETTE_COLS,
   DEZA2_PALETTE_ROWS,

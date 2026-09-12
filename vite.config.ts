@@ -66,7 +66,9 @@ function dezaToneBank(): Plugin {
   async function build() {
     if (cache !== undefined) return cache;
     const root = new URL(".", import.meta.url).pathname;
-    const { buildWebToneBank, findSndpac } = await import("./lib/sndpac.ts");
+    const { buildWebToneBank, findSndpac } = await import(
+      "@shmupx/shmup-harbor/sndpac"
+    );
     const source = await findSndpac(root, null);
     if (!source) {
       cache = null;

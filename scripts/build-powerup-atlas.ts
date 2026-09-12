@@ -22,14 +22,14 @@
 
 import { dirname, fromFileUrl, join, relative, resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
-import { encodePng, newRaster } from "../lib/ps2/png.ts";
-import { decodeGifFrames } from "../lib/ps2/gif.ts";
+import { encodePng, newRaster } from "@shmupx/shmup-harbor/png";
+import { decodeGifFrames } from "@shmupx/shmup-harbor/gif";
 import {
   EMBLEM_CELL,
   EMBLEM_DIR,
   emblemFromGif,
   pixelScale,
-} from "../lib/powerup-emblems.ts";
+} from "@shmupx/shmup-harbor/powerup-emblems";
 
 const ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 const OUT_PNG = join(ROOT, "static/games/2028-ai/assets/img/powerups.png");

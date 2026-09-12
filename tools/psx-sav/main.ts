@@ -46,7 +46,7 @@ import {
   PSX_GAMES,
   summarizePsxSav,
 } from "../../packages/shmup-engine/src/psx/index.js";
-import { encodePng, newRaster, type Raster } from "../../lib/ps2/png.ts";
+import { encodePng, newRaster, type Raster } from "@shmupx/shmup-harbor/png";
 
 function fail(message: string): never {
   console.error(`error: ${message}`);

@@ -36,8 +36,8 @@ import {
   findEntry,
   openDisc,
 } from "../packages/shmup-engine/src/cd/iso9660-read.js";
-import { crc32 } from "./ps2/zip.ts";
-import { fixturesDir } from "./disc-file.ts";
+import { crc32 } from "@shmupx/shmup-harbor/zip";
+import { fixturesDir } from "@shmupx/shmup-harbor/disc-file";
 
 /** The disc's title, and the content name the cue inside the zip carries. */
 export const DEZAEMON_TITLE = "Dezaemon 2";

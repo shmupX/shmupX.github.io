@@ -19,7 +19,7 @@ import * as eshopModule from "../static/eshop-library.js";
 import * as shelfModule from "../static/deza-shelf.js";
 import { gunzip, interleave } from "../packages/shmup-engine/mod.js";
 import { join } from "@std/path";
-import { buildSav } from "../scripts/build-sav.ts";
+import { buildSav } from "@shmupx/shmup-harbor/build-sav";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

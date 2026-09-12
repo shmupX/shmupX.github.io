@@ -1,6 +1,6 @@
 {
   "name": "@shmupx/shmup-engine",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.js",
@@ -13,6 +13,7 @@
     "./payload-table": "./src/payload-table.js",
     "./decompress": "./src/decompress.js",
     "./decode": "./src/decode/index.js",
+    "./decode-stage": "./src/decode/decode-stage.js",
     "./cover": "./src/cover/compose-cover.js",
     "./map-to-game": "./src/map-to-game.js",
     "./atlas-pack": "./src/atlas-pack.js",

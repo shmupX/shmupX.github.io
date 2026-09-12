@@ -9,7 +9,7 @@
 // with, so the same code runs here and in the page.
 
 import { assertEquals, assertRejects } from "@std/assert";
-import { buildZip } from "../lib/ps2/zip.ts";
+import { buildZip } from "@shmupx/shmup-harbor/zip";
 import { normalizeZipPath, unzip } from "../static/zip-read.js";
 
 const encoder = new TextEncoder();

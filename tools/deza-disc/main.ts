@@ -16,7 +16,7 @@
 // they say so and exit 0, like the other disc tasks.
 
 import { dirname, fromFileUrl, resolve } from "@std/path";
-import { openDiscImages } from "../../lib/disc-file.ts";
+import { openDiscImages } from "@shmupx/shmup-harbor/disc-file";
 import {
   listFiles,
   readFile,
