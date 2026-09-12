@@ -8811,6 +8811,79 @@
     var kept = keep(frames);
     return kept.length ? kept : keep(fallback);
   }
+  // A boss record's own stage-end backdrop. `stageBgEnd` on bossData.boss<N>
+  // raises the author's art behind the boss instead of the shipped
+  // stage_end0..4, so a cart can end on any sprite, atlas cell or rasterised
+  // tilemap it carries. Three spellings, all resolved the same way:
+  //
+  //   "myEnd.png"                a frame of the merged game_asset atlas — what
+  //                              a level record's atlasFrames put there
+  //   "stage_end4"               a texture key that is already loaded
+  //   {texture: k, frame: f}     either of the above, said outright
+  //
+  // The object form also takes `alpha` (`opacity` is accepted for the same
+  // thing), 0..1, so a backdrop can be laid over the starfield rather than
+  // hiding it. On its own — {alpha: 0.45} with no art named — it draws the
+  // SHIPPED backdrop translucent. Art that is named but does not resolve
+  // falls back opaque: a half-applied spec reads as a rendering bug, while
+  // the shipped backdrop reads as art that did not travel.
+  //
+  // Resolved HERE and not at the call site because the caller measures
+  // `.height` on the very next line: Phaser answers an unregistered key with
+  // the 32 px __MISSING checkerboard, which would park the backdrop at y = -32
+  // and play the whole reveal as a black band. Anything that does not resolve
+  // now falls back to the shipped backdrop — the same trade
+  // bulletFramesInAtlas makes just above, for the same reason.
+  function resolveStageBgEnd(scene, stageId, fallbackKey) {
+    var fallback = { key: fallbackKey, frame: null, alpha: null };
+    var bossData = scene.recipe && scene.recipe.bossData;
+    var rec = bossData && bossData["boss" + String(stageId)];
+    var spec = rec && rec.stageBgEnd;
+    if (!spec) return fallback;
+    var wantKey = null;
+    var wantFrame = null;
+    var alpha = null;
+    if (typeof spec === "string") {
+      wantFrame = spec;
+    } else if (typeof spec === "object") {
+      wantKey = typeof spec.texture === "string" ? spec.texture : null;
+      wantFrame = typeof spec.frame === "string" ? spec.frame : null;
+      var a = typeof spec.alpha === "number" ? spec.alpha : spec.opacity;
+      if (typeof a === "number" && isFinite(a)) {
+        alpha = Math.max(0, Math.min(1, a));
+      }
+    }
+    var exists = function(key) {
+      try {
+        return !!key && scene.textures.exists(key);
+      } catch (e) {
+        return false;
+      }
+    };
+    if (wantKey) {
+      if (!exists(wantKey)) return fallback;
+      if (!wantFrame) return { key: wantKey, frame: null, alpha: alpha };
+      var named = resolveFrame(scene, wantKey, wantFrame);
+      return scene.textures.get(wantKey).has(named)
+        ? { key: wantKey, frame: named, alpha: alpha }
+        : fallback;
+    }
+    // An alpha on its own asks for the shipped backdrop, drawn translucent.
+    if (!wantFrame) {
+      return alpha === null ? fallback
+        : { key: fallbackKey, frame: null, alpha: alpha };
+    }
+    // A bare string: a loaded texture key wins over an atlas frame of the same
+    // name. "stage_end4" is a key, and a level atlas never carries one.
+    if (exists(wantFrame)) return { key: wantFrame, frame: null, alpha: alpha };
+    if (exists("game_asset")) {
+      var f = resolveFrame(scene, "game_asset", wantFrame);
+      if (scene.textures.get("game_asset").has(f)) {
+        return { key: "game_asset", frame: f, alpha: alpha };
+      }
+    }
+    return fallback;
+  }
   function createEnemy(scene, data, x, y, itemName) {
     var frames = resolveFrames(scene, "game_asset", data.texture || []);
     var frameKey = frames[0] || "soliderA0.gif";
@@ -12956,8 +13029,12 @@
       var bgEndSuffix = gameState.hasCustomEnemies ? "stage_end_c" : "stage_end";
       this.stageBg = this.add.tileSprite(0, 0, GW13, GH11, bgSuffix + assetStage);
       this.stageBg.setOrigin(0, 0);
-      this.stageEndBg = this.add.image(0, 0, bgEndSuffix + assetStage);
+      var bgEnd = resolveStageBgEnd(this, stageId, bgEndSuffix + assetStage);
+      this.stageEndBg = bgEnd.frame === null
+        ? this.add.image(0, 0, bgEnd.key)
+        : this.add.image(0, 0, bgEnd.key, bgEnd.frame);
       this.stageEndBg.setOrigin(0, 0);
+      if (bgEnd.alpha !== null) this.stageEndBg.setAlpha(bgEnd.alpha);
       this.stageEndBg.y = -this.stageEndBg.height;
       this.stageEndBg.setVisible(false);
       this.worldTime = 0;

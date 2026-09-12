@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "shmupx-character": {
+      "command": "deno",
+      "args": ["run", "-A", "--node-modules-dir=none", "mcp/server.ts"]
+    }
+  }
+}

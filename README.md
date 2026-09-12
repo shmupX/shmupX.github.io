@@ -193,6 +193,27 @@ they are written out in full.
     — status bit15 in FORMAT.md) no longer fires, as it already did not collide.
     Upstream home for both is `2019-es7/src/phaser/game-objects/Enemy.js`.
   - The Dezaemon divergences below, all of them keyed off `isImportedLevel()`.
+  - A boss record can name its own stage-end backdrop. `stageBgEnd` on
+    `bossData.boss<N>` raises the author's art behind the boss instead of the
+    shipped `stage_end0..4`, so a cart can end on any sprite, atlas cell or
+    rasterised tilemap it carries — see **Creating a character** below.
+    `resolveStageBgEnd` takes a frame of the merged `game_asset` atlas, a
+    texture key that is already loaded, or `{texture, frame}`, and falls back to
+    the shipped backdrop when none of them resolve. The object form also takes
+    an `alpha` (`opacity` is a synonym), 0..1, applied before the measure below
+    so it is part of the object's initial state; on its own it draws the
+    _shipped_ backdrop translucent, and a spec whose art does not resolve falls
+    back opaque rather than half-applied. It runs where the image is created
+    rather than later because the next line measures `.height`: Phaser answers
+    an unregistered key with the 32 px `__MISSING` checkerboard, and the reveal
+    would play as a black band. A stage with Dezaemon scenery (`dezaBg`) never
+    shows a stage-end backdrop at all, so the field is inert there. Upstream
+    home is `2019-es7/src/phaser/GameScene.js`.
+- `mcp/` — the **character MCP server** (`deno task mcp:character`, registered
+  for this repo by `.mcp.json`): clone a character out of the catalog, swap any
+  frame of any sprite or atlas into its animations, its projectiles or its
+  stage-end backdrop, play it, publish it. `.claude/skills/create-character/` is
+  the skill that drives it from a sentence. See **Creating a character** below.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
 - `packages/shmup-harbor/` — the other JSR module: everything for **porting**
@@ -729,6 +750,91 @@ and cells the image edge cuts are skipped rather than refused. Downloads are
 numCols, numRows}` plus a Tiled
 map), `tiled.tmx` and the recreation; **→ OPEN AS MAP** puts the result straight
 into the MAP EDITOR tab.
+
+## Creating a character
+
+`deno task mcp:character` serves the tools behind this over MCP; `.mcp.json`
+registers it for the repo, so an MCP client in this checkout has them already.
+`.claude/skills/create-character/SKILL.md` is the skill that drives them, and
+the whole thing answers a sentence like _"a character that mirrors the
+attributes of dezaBoss0, main projectile set to hadouken"_.
+
+A **character** is what the catalog already stores at `characters/{name}`,
+paired with its art at `atlases/{name}` — the record the level editor's ADD
+button folds into a level as `bossData.boss<N>`, and the shape the runtime reads
+when the boss arrives. `dezaBoss0` is one of them: the record a Dezaemon 2 cart
+import writes for stage 0, carrying `anim`, the projectile slots, the decoded
+`dezaemon` trailer, and `hp`/`score`/`interval`/`spgage`/`shadow*`. So **cloning
+is a deep copy plus a new `textureKey`**, and swapping art is a matter of
+repacking the atlas that key points at.
+
+| tool                       | what it does                                            |
+| -------------------------- | ------------------------------------------------------- |
+| `shmupx_list_characters`   | the catalog's characters                                |
+| `shmupx_get_character`     | one record, its fields and every frame it references    |
+| `shmupx_list_atlases`      | the ~400 atlases frames can come from                   |
+| `shmupx_list_frames`       | frame names and sizes inside one atlas                  |
+| `shmupx_list_sprites`      | whole-image sprites, each usable as one frame           |
+| `shmupx_create_character`  | clone + swap + pack; writes nothing unless `apply`      |
+| `shmupx_preview_character` | serves the real runtime with that character as the boss |
+| `shmupx_place_character`   | replaces a cloud level's `boss<N>` with a character     |
+| `shmupx_stop_preview`      | stops that server                                       |
+
+Frames are referenced as `"<atlas>/<frame>"`, and the names are worth listing
+rather than guessing: the `hadouken` atlas's two frames are `atlas_s0` and
+`hadouken1`, and `bg-great-hall`'s only frame is _also_ called `atlas_s0`. Art
+that is not in the catalog goes in as `{file: "dev-fixtures/x.png"}` — that
+directory is gitignored by design, the same local-only drop the powerup atlas
+and the disc tasks read from.
+
+**Stage-end backdrops.** `stageBgEnd` on a character replaces the shipped
+`stage_end0..4` art that rises behind the boss, from any frame reference — the
+tool packs that art into the character's own atlas, which is what makes it
+resolvable at the moment the runtime measures it. `stageBgEndAlpha` (0..1) lays
+it over the starfield rather than hiding it, and becomes
+`stageBgEnd: {frame, alpha}` in the record; on its own it makes the shipped
+backdrop translucent. A stage with Dezaemon scenery never shows a stage-end
+backdrop at all, so the field is inert there.
+
+Three rules the tools enforce, because the runtime does not:
+
+- **The main projectile is `bulletDataA`.** A record carrying `dezaemon.boss`
+  and no `attackPattern` arms the Dezaemon engine, whose only weapon resolver
+  reads `bossProjDataA/B/C` — the unsuffixed `bulletData` is never consulted,
+  and on the stock path every pattern starts `bossProjDataA || bossProjData`
+  anyway. Writing `bulletData` on a `dezaBoss0` clone changes nothing visible.
+  The `mainProjectile` argument spells it correctly for you.
+- **A multi-frame bullet is a list, not an animation.** Bullets carry no Phaser
+  animation; `spawnDezaBossBullet` hand-flips `texture` with `setFrame()`, at
+  `frameRate` if the slot names one.
+- **Nothing publishes with frames that have no pixels.** The runtime filters
+  unknown frame names out silently and falls back to stock art, so a record
+  naming art that never travelled with it is a bug that reports itself nowhere.
+  A build reports `unresolved`, and `apply` refuses while it is non-empty.
+
+Publishing writes `atlases/{name}` and `characters/{name}`, and that database is
+the one spriteX, the Pixel Editor, the Tilemap Editor and the level editor all
+read — and it is open-write. So a build is a dry run by default, and
+`apply: true` is the only way to reach a write.
+
+**Placing** a character into a cloud level (`shmupx_place_character`) moves two
+things together: the record into `levels/<name>/bossData/boss<N>`, and any frame
+the level's atlas lacks into that atlas. Frames the level already has are left
+alone — a level's art is its author's — and the record is renamed to match how
+that level spells them. The rename is load-bearing: `mergeRecipe`'s repair pass
+tests each animation's first frame against the atlas _exactly_, with none of
+`resolveFrame`'s `.gif`/`.png` forgiveness, and reverts the record to the base
+game's boss on a miss — so a record placed under the wrong extension silently
+renders as 2028.Ai's Bison. The result's `replaced` field is the previous
+record: the way back.
+
+**Previewing** does not publish at all. The runtime fetches one fixed URL before
+Phaser boots — `/games/2028-ai/foo.json` — and plays whatever record it gets, so
+`shmupx_preview_character` builds a level record around the character and serves
+exactly that URL, reusing the profiler's server. The record starts from the
+shipped `foo.json` so everything except the boss is a known-playable level, and
+the character's atlas is stacked onto `game_asset` the same way the level loader
+stacks a level's own sheet. Open the `playUrl` it answers with.
 
 ## Two players
 
