@@ -296,8 +296,38 @@ async function copyTree(src: string, dst: string): Promise<void> {
   }
 }
 
+/**
+ * Loose files the Node tool reads straight off the root it derives, as
+ * repo-relative path segments. They live at the CHECKOUT root, not under
+ * packages/shmup-harbor — which is why stageEmbeddedRuntime reads them from
+ * gameVfsRoot rather than from the tree the tool itself came out of.
+ *
+ * Every one is existsSync-guarded on the tool's side, so a file missing from
+ * the packaged app degrades the export SILENTLY — no controller shim, or a
+ * scene script's `import Phaser from "phaser"` failing to resolve offline, or
+ * no leaderboard, or no EXTRACT MODE — rather than failing the build. Nothing
+ * downstream can tell you a name is missing here, which is why the list is one
+ * constant rather than two: scripts/build-desktop.ts turns it into the
+ * `deno compile --include` arguments that put the files in the binary's VFS,
+ * and stageEmbeddedRuntime below copies the same names back out onto real
+ * disk. When those were two hand-kept lists, extract-mode.js was added to the
+ * tool and to neither of them, and every app exported from inside the packaged
+ * app lost EXTRACT MODE for as long as that lasted.
+ */
+export const EMBEDDED_LOOSE_FILES: readonly string[][] = [
+  ["static", "gamepad-compatibility-plugin.js"],
+  // Shim the offline shell's import map points "phaser" at.
+  ["static", "phaser-plugins", "phaser-global.js"],
+  // Leaderboard credentials — without these the exported app plays fine but
+  // scores nowhere.
+  ["static", "firebase-config.js"],
+  // EXTRACT MODE — the exported app's PAUSE panel publishes sprites to the
+  // shared character library through it.
+  ["static", "phaser-plugins", "extract-mode.js"],
+];
+
 // Materialise the embedded tools/build-level + static/games/2028-ai (+ the
-// gamepad shim) into a reused real working dir and return its root, so the
+// loose files above) into a reused real working dir and return its root, so the
 // packaged desktop app can spawn `node tools/build-level` against real files.
 // Re-copied each run so an app update propagates. The tool derives its own root
 // by walking up for the base game, so the layout written here must mirror the
@@ -317,19 +347,7 @@ async function stageEmbeddedRuntime(
     join(vfsRoot, "static", "games", "2028-ai"),
     join(work, "static", "games", "2028-ai"),
   );
-  // Loose files the tool reads straight off CMG_ROOT. Each is existsSync-
-  // guarded on its side, so leaving one behind degrades the export silently
-  // (no controller shim / a scene script's `import Phaser from "phaser"`
-  // failing to resolve offline / no leaderboard) rather than failing the build.
-  for (
-    const rel of [
-      ["static", "gamepad-compatibility-plugin.js"],
-      ["static", "phaser-plugins", "phaser-global.js"],
-      // Leaderboard credentials — without these the exported app plays fine but
-      // scores nowhere.
-      ["static", "firebase-config.js"],
-    ]
-  ) {
+  for (const rel of EMBEDDED_LOOSE_FILES) {
     const src = join(vfsRoot, ...rel);
     if (!(await pathExists(src))) continue;
     const dst = join(work, ...rel);
