@@ -8050,6 +8050,56 @@
   function allPlayersDead(scene) {
     return livePlayers(scene).length === 0;
   }
+  // The engine's own hp scaler, the half of it a save cannot author away.
+  //
+  // Every hp the engine hands a spawning object goes through `+0x15358`, which
+  // multiplies by the difficulty (x2/3 EASY, x1 NORMAL, x1.5 HARD *and*
+  // MANIAC) and then by a further x1.5 when BOTH players are in play —
+  // `+0x15398` testing `u8[0x060840C8] & 6 == 6`, where bit1 is P1 and bit2 is
+  // P2, set when a player starts or joins and cleared on that player's game
+  // over. It has exactly three callers, all spawn-time initialisers: the zako
+  // initialiser `+0x15478`, the boss core `+0x1AFF4` and the boss type-4 part
+  // `+0x1917C`. Nothing re-reads the flag in any damage or per-frame path, so
+  // this is SPAWN-TIME ONLY: whatever is already on screen keeps the hp it was
+  // given, and a ship joining or going down changes only what spawns next.
+  //
+  // Difficulty is a hardware menu choice (u8 `0x0608C712`, boot value 1 =
+  // NORMAL) with no per-save byte, and this runtime has no difficulty setting —
+  // so the NORMAL x1 is already what the importer's hit counts encode, and the
+  // only factor left to apply here is the two-player one.
+  //
+  // `livePlayers` is the faithful reading of "in play" HERE, and the reason is
+  // specific to this runtime: there is no auto-respawn. `playerDie` releases
+  // the pad and the network seat and dims the bar to advertise the slot as
+  // free, and the only way back is a deliberate rejoin through `joinPlayer` —
+  // so a downed ship is out of the run until someone takes the seat, which is
+  // exactly when the engine clears that player's bit (`+0xAE9C` / `+0xAEA4`,
+  // on that player's game over). If this runtime ever grows a respawn timer,
+  // the two stop coinciding and this predicate has to become "still in the
+  // run" rather than "currently alive", or a spawn during the respawn window
+  // would take x1 where hardware keeps x1.5.
+  //
+  // NOT `gameState.playerCount` (recomputed from live ships only at stage
+  // boundaries, so it keeps saying 2 after P2 goes down mid-stage) and NOT
+  // `twoPlayerAllowed` (a permission gate, true on a SOLO run of any
+  // 2P-enabled cart).
+  //
+  // Imports only. The stock game's own records were never sized in engine
+  // durability units and must not be scaled by an engine rule.
+  function isDezaImport(scene) {
+    return !!(scene && scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings);
+  }
+  function dezaSpawnHpScale(scene) {
+    if (!isDezaImport(scene)) return 1;
+    return livePlayers(scene).length > 1 ? 1.5 : 1;
+  }
+  // Apply it to an hp field, leaving the "infinity" sentinel (ARMOUR) alone —
+  // an indestructible object has no hp to scale.
+  function dezaScaleHp(scene, hp) {
+    if (typeof hp !== "number" || !isFinite(hp)) return hp;
+    var k = dezaSpawnHpScale(scene);
+    return k === 1 ? hp : Math.max(1, Math.round(hp * k));
+  }
   // Enemies aim at ONE global target that ALTERNATES between the ships on a
   // timer while both are alive — not at whichever is nearest (traced; see
   // dezaemon-parity.html item 2). The swap period itself is not traced, so this
@@ -8675,8 +8725,11 @@
     enemy.setDepth(40);
     enemy.setData("type", "enemy");
     enemy.setData("name", data.name || "");
-    enemy.setData("hp", data.hp || 1);
-    enemy.setData("maxHp", data.hp || 1);
+    // The one funnel every zako spawn reaches (grid waves and death-children
+    // alike), so it is where the engine's spawn-time hp scaler belongs.
+    var zakoHp = dezaScaleHp(scene, data.hp || 1);
+    enemy.setData("hp", zakoHp);
+    enemy.setData("maxHp", zakoHp);
     enemy.setData("speed", data.speed || 0.8);
     enemy.setData("score", data.score || 100);
     enemy.setData("spgage", data.spgage || 1);
@@ -11639,7 +11692,10 @@
       scene.stageClear();
       return;
     }
-    scene.bossHp = bossData.hp || 100;
+    // Same spawn-time scaler the zako get: the boss core is initialised
+    // through it too (`+0x1AFF4`). bossMaxHp follows, so the HP-stage bands —
+    // which are fractions of one bar, never a multiplier — are unaffected.
+    scene.bossHp = dezaScaleHp(scene, bossData.hp || 100);
     scene.bossMaxHp = scene.bossHp;
     scene.bossScore = bossData.score || 5e3;
     scene.bossInterval = bossData.interval || 60;
@@ -11760,9 +11816,27 @@
           });
         }
         scene.time.delayedCall(3e3, function() {
-          scene.bossTimerStartFlg = true;
-          scene.bossTimerLabel.setVisible(true);
-          scene.bossTimerNum.container.setVisible(true);
+          // The 99-second countdown is 2028-ai's own rule, and it does not end
+          // the fight politely: `timeoverComplete()` is a GAME OVER that sends
+          // the run to the continue screen. Dezaemon 2 has no boss time limit
+          // — nothing in the traced boss code (spawn `+0x1AFF4`, HP-stage
+          // advance `+0x1ABD4`, per-frame dispatcher `+0x1BDCC`, death init
+          // `+0x1B330`) counts down, and the engine parks the scroll looping
+          // between the stage's loop and end parts for as long as the fight
+          // lasts. So an imported cart does not get one: its boss ends when its
+          // hp does, or when the player does.
+          //
+          // This mattered the moment boss hp stopped being discounted 4x. At
+          // the traced figures a 1,950-hit boss measures ~93 s against a
+          // weak loadout — inside 99 s only by six seconds, and the whole
+          // MAIN-type-5 tail sits past it. Importing a Saturn game and then
+          // killing the run with a timer its author never wrote is the wrong
+          // half of that trade.
+          if (!isDezaImport(scene)) {
+            scene.bossTimerStartFlg = true;
+            scene.bossTimerLabel.setVisible(true);
+            scene.bossTimerNum.container.setVisible(true);
+          }
           scene.spBtn.setAlpha(1);
         });
       }
