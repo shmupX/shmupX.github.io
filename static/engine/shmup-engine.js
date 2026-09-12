@@ -1976,11 +1976,14 @@ var BOSS_HP_TABLE = [1024e3, 1536e3, 2304e3, 3328e3, 4608e3, 6144e3, 7936e3, 998
 var BOSS_SCORE_TABLE = [5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 5e5, 1e6];
 var BOSS_FIRE_TICK_FRAMES = [60, 30, 15, 10, 5, 3, 2, 1];
 var PART_GROUPS = ["zako16x16", "zako32x16", "zako16x32", "zako32x32", "part64x32", "part32x64", "part64x64"];
+var PART_RESPAWN_FRAMES = [119, 59, 29, 19, 9, 5, 3, 1];
+var PART_RESPAWN_FRAMES_F0 = [119, 59, 39, 19, 11, 7, 3, 1];
 var s8 = (b) => b >= 128 ? b - 256 : b;
+var RECORD_BAND_BASE = RECORD_ART.map((band) => band.first);
 function partRecord(group, piece) {
-  const band = RECORD_ART[group];
-  if (!band) return null;
-  return band.first + piece % band.count;
+  const base = RECORD_BAND_BASE[group];
+  if (base === void 0) return null;
+  return base | piece;
 }
 function decodeFirePoint(f) {
   const type = f[2] & 7;
@@ -1997,8 +2000,13 @@ function decodeFirePoint(f) {
       group: PART_GROUPS[group],
       piece: f[3] & 15,
       record: partRecord(group, f[3] & 15),
-      oneShot: type === 4
+      oneShot: type === 4,
+      // Where this part's hp comes from. A turret's is decided here,
+      // by the rate nibble off the BOSS table; a mobile part's needs
+      // the record, so it is filled in by readBossTrailer.
+      hpSource: type === 4 ? "boss" : "record"
     };
+    if (type === 4) fp.spawn.hp = BOSS_HP_TABLE[fp.rate] >> 2;
   } else if (type <= 2) {
     fp.shot = {
       weapon: type,
@@ -2065,6 +2073,12 @@ function decodeBossTrailer(t) {
       firePoints: [0, 1, 2].map((i) => decodeFirePoint(r.subarray ? r.subarray(2 + i * 4, 6 + i * 4) : r.slice(2 + i * 4, 6 + i * 4)))
     });
   }
+  const respawn = (t[0] & 3) === 0 ? PART_RESPAWN_FRAMES_F0 : PART_RESPAWN_FRAMES;
+  for (const pattern of patterns) {
+    for (const fp of pattern.firePoints) {
+      if (fp.type === 3 && fp.spawn) fp.spawn.respawnFrames = respawn[fp.rate];
+    }
+  }
   return {
     sizeClass: t[0] & 3,
     hpStages: (t[0] >> 4 & 3) + 1,
@@ -2086,10 +2100,37 @@ function decodeBossTrailer(t) {
     patterns
   };
 }
+var RECORDS_PER_STAGE = BOSS_TRAILER_OFFSET / ENEMY_RECORD_SIZE;
+function resolvePartRecords(sec5, stage, boss) {
+  const { offset, stride } = SEC5_REGIONS.enemies;
+  const recordBase = offset + stage * stride;
+  const cache = /* @__PURE__ */ new Map();
+  const readRecord = (record) => {
+    if (!Number.isInteger(record) || record < 0 || record >= RECORDS_PER_STAGE) return null;
+    if (!cache.has(record)) {
+      const at = recordBase + record * ENEMY_RECORD_SIZE;
+      cache.set(record, decodeEnemyRecord(sec5.subarray(at, at + ENEMY_RECORD_SIZE)));
+    }
+    return cache.get(record);
+  };
+  for (const pattern of boss.patterns) {
+    for (const fp of pattern.firePoints) {
+      const spawn = fp.spawn;
+      if (!spawn) continue;
+      const rec = readRecord(spawn.record);
+      if (!rec) continue;
+      spawn.score = rec.score;
+      spawn.armour = (rec.move.mode & 1) !== 0;
+      if (spawn.hpSource === "record") spawn.hp = rec.hp;
+    }
+  }
+}
 function readBossTrailer(sec5, stage) {
   const { offset, stride } = SEC5_REGIONS.enemies;
   const base = offset + stage * stride + BOSS_TRAILER_OFFSET;
-  return decodeBossTrailer(sec5.subarray(base, base + BOSS_TRAILER_SIZE));
+  const boss = decodeBossTrailer(sec5.subarray(base, base + BOSS_TRAILER_SIZE));
+  if (boss) resolvePartRecords(sec5, stage, boss);
+  return boss;
 }
 
 // packages/shmup-engine/src/decode/appearance-table.js
@@ -2257,6 +2298,19 @@ function sanitizeSpriteKey(raw, used) {
 var NUMERIC_ENEMY_FIELDS = ["score", "spgage", "hp", "speed", "interval", "shadowOffsetY"];
 var toHex = (bytes) => bytes ? Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("") : null;
 var B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function sizePartHp(boss, shotDamage) {
+  for (const pattern of boss.patterns || []) {
+    for (const fp of pattern.firePoints || []) {
+      const spawn = fp.spawn;
+      if (!spawn) continue;
+      if (spawn.armour) {
+        spawn.hp = "infinity";
+      } else if (Number.isFinite(spawn.hp)) {
+        spawn.hp = Math.max(1, Math.ceil(spawn.hp / (shotDamage * 256)));
+      }
+    }
+  }
+}
 function bytesToBase64(bytes) {
   let out = "";
   for (let i = 0; i < bytes.length; i += 3) {
@@ -2420,9 +2474,10 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
     if (decodedBoss) {
       rec.dezaemon = { sizeClass: decodedBoss.sizeClass, row: decodedBoss.row, col: decodedBoss.col };
       if (decodedBoss.behavior) {
-        rec.dezaemon.boss = decodedBoss.behavior;
+        rec.dezaemon.boss = clone(decodedBoss.behavior);
         rec.hp = Math.max(1, Math.ceil(decodedBoss.behavior.hp / (shotDamage * 256)));
         rec.score = decodedBoss.behavior.score;
+        sizePartHp(rec.dezaemon.boss, shotDamage);
       } else {
         rec.hp = Math.max(1, Math.ceil(BOSS_HP_TABLE[0] / (shotDamage * 256)));
       }

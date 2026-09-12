@@ -5549,14 +5549,27 @@
     var frames = partFrames(scene, st, fp.spawn.record);
     if (!frames) return null;
     var large = fp.spawn.record >= 48;
+    // A part is not a bespoke object on hardware: the fire-point spawner hands
+    // the record its (group, piece) names to the same initialiser a grid-placed
+    // zako goes through, so score and the armour attribute come off that
+    // record. HP splits by type — a type-3 mobile part keeps the record's own
+    // zako hp, while a type-4 turret has it overwritten from the BOSS table at
+    // the fire point's rate nibble (decode-boss.js). The importer has already
+    // sized both onto this runtime's hit scale; the old flat 16/32 stands only
+    // for a level exported before any of that was decoded.
+    // The same spawn-time difficulty scaler a zako and a boss core go through
+    // (dezaScaleHp): a part is spawned by the shared initialiser, so the
+    // two-player x1.5 reaches it identically.
+    var hp = dezaScaleHp(scene, fp.spawn.hp != null ? fp.spawn.hp : (large ? 32 : 16));
+    var score = fp.spawn.score != null ? fp.spawn.score : (large ? 2e3 : 800);
     var part = scene.add.sprite(boss.x + fp.dx, boss.y + fp.dy, "game_asset", frames[0]);
     part.setOrigin(0.5);
     part.setDepth(46);
     part.setData("type", "enemy");
     part.setData("name", "dezaPart");
-    part.setData("hp", large ? 32 : 16);
-    part.setData("maxHp", large ? 32 : 16);
-    part.setData("score", large ? 2e3 : 800);
+    part.setData("hp", hp);
+    part.setData("maxHp", hp);
+    part.setData("score", score);
     part.setData("spgage", large ? 4 : 2);
     part.setData("interval", -1);
     part.setData("shootCnt", 0);
@@ -9361,6 +9374,7 @@
     return true;
   }
   // Debug probe: defaults to player 1's bomb, so a console call still works.
+  // Two calls advance the bomb one Saturn frame — the gate in updateDezaBomb.
   if (typeof window !== "undefined") {
     window.__updateDezaBombProbe = function (sc, p) { updateDezaBomb(sc, p || sc.players[0]); };
   }
@@ -9403,13 +9417,34 @@
   function updateDezaBomb(scene, p) {
     var b = p.dezaBomb;
     if (!b || !b.alive) return;
-    if (!stepDezaBomb(scene, b)) {
-      b.alive = false;
-      p.dezaBomb = null;
-      p.dezaBombInvuln = false;
-      return;
+    // Types 6 and 7 ARE the ship, and the ship moves every runtime tick — so
+    // the follow stays outside the gate below or the bomb trails a tick behind
+    // it. (stepDezaBomb does this too; on a stepped tick it is a no-op repeat.)
+    if (b.type === 6 || b.type === 7) {
+      var ship = p.sprite;
+      if (ship) { b.x = ship.x; b.y = ship.y; }
     }
-    dezaBombDamage(scene, b);
+    // Every counter in the bomb is an engine FRAME counter — the growth
+    // curves, the lifetimes, the flash cue, the sound cadences — and it bills
+    // its attack power to everything it overlaps once per frame. This runtime
+    // steps twice per Saturn frame, so ungated the whole state machine ran at
+    // double speed and a bomb did exactly twice the hardware's damage. Gate it
+    // the way the other frame-semantics state machines are gated
+    // (updateDezaWeapons, updateDezaBoss): the thresholds here are discrete
+    // (age === 54, age % 48, age & 2) rather than rates, so they cannot be
+    // converted per-tick the way a contact weapon's dezaFrameDamage is.
+    b.tick = (b.tick || 0) + 1;
+    if (b.tick % SATURN_TICKS_PER_FRAME === 0) {
+      if (!stepDezaBomb(scene, b)) {
+        b.alive = false;
+        p.dezaBomb = null;
+        p.dezaBombInvuln = false;
+        return;
+      }
+      dezaBombDamage(scene, b);
+    }
+    // Drawn every tick: the caller clears the shared Graphics once per tick,
+    // so skipping the draw would strobe the bomb at 60 Hz.
     drawDezaBomb(scene, b);
   }
   // The bombs have no art in the imported atlas, so they are drawn as shapes —

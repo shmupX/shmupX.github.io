@@ -310,6 +310,79 @@ Deno.test("boss part art maps sprite indices to atlas frame names", () => {
   assert(validateGameJson(gameJson).ok);
 });
 
+Deno.test("boss part hp is sized onto the runtime's hit scale", () => {
+  const decoded = emptyDecoded();
+  decoded.stages = [{ rows: [new Array(GRID_COLS).fill(null)] }];
+  decoded.settings = { shotDamage: 20 }; // a full-power weapon-1 bullet
+  decoded.bosses = [{
+    stage: 0,
+    sizeClass: 2,
+    row: 479,
+    col: 8,
+    behavior: {
+      hp: 4608000,
+      score: 20000,
+      patterns: [{
+        firePoints: [
+          // a turret off the boss table (2496000 >> nothing, already shifted)
+          {
+            type: 4,
+            spawn: {
+              record: 46,
+              hpSource: "boss",
+              hp: 2496000,
+              score: 500,
+              armour: false,
+            },
+          },
+          // a mobile part off its own zako record
+          {
+            type: 3,
+            spawn: {
+              record: 12,
+              hpSource: "record",
+              hp: 51200,
+              score: 200,
+              armour: false,
+            },
+          },
+          // armour outranks whatever the hp word says
+          {
+            type: 4,
+            spawn: {
+              record: 47,
+              hpSource: "boss",
+              hp: 256000,
+              score: 50,
+              armour: true,
+            },
+          },
+        ],
+      }],
+    },
+  }];
+  const { gameJson } = mapSaveToGame(decoded);
+  const fps = gameJson.bossData.boss0.dezaemon.boss.patterns[0].firePoints;
+  // One divisor for the whole unit space, so every ratio the author wrote
+  // survives: a turret stays its traced fraction of its own core.
+  assertStrictEquals(fps[0].spawn.hp, Math.ceil(2496000 / (20 * 256)));
+  assertStrictEquals(
+    gameJson.bossData.boss0.hp,
+    Math.ceil(4608000 / (20 * 256)),
+  );
+  assertStrictEquals(fps[0].spawn.hp / gameJson.bossData.boss0.hp < 0.55, true);
+  // A mobile part is a zako — 51200 is ladder step 3, which every other zako
+  // in the game reads as 10 hits.
+  assertStrictEquals(fps[1].spawn.hp, 10);
+  assertStrictEquals(fps[2].spawn.hp, "infinity");
+  // The decode is not mutated by the sizing.
+  assertStrictEquals(
+    decoded.bosses[0].behavior.patterns[0].firePoints[0].spawn.hp,
+    2496000,
+  );
+  assert(validateGameJson(gameJson).ok);
+});
+
 Deno.test("fallback boss pieces become idle/attack forms, not an animation", () => {
   const decoded = emptyDecoded();
   decoded.sprites = [

@@ -29,9 +29,26 @@
 //   group 0-3 = the zako banks (16x16 / 32x16 / 16x32 / 32x32),
 //   group 4-6 = the large banks (64x32 / 32x64 / 64x64, i.e. records 48-59).
 //
+// A part is not a bespoke object: the fire-point spawner +0x18FAC hands the
+// resolved record index to the SAME initialiser +0x153C8 that grid-placed
+// zako go through, so score, the death word, the hit attributes and the fire
+// configuration all come from that 18-byte record (see "Boss parts" in
+// FORMAT.md). HP is where the two types part company — and the RATE nibble
+// means something different on each arm:
+//
+//   type 3  hp = the record's own zako hp (0x06085F20[b2 & 7]); the rate
+//           nibble is a RESPAWN PERIOD, indexing 0x06085F80 (or 0x06085F90
+//           when the boss core is size class F0).
+//   type 4  hp is OVERWRITTEN right after the shared spawn (+0x1916E..
+//           +0x19190) from the BOSS table 0x06085F40 at the rate nibble,
+//           shifted >>2. The record's hp field is not read at all, and the
+//           rate nibble is never consumed as a period because the executor
+//           skips the countdown for type 4.
+//
 // Environment-neutral ESM (Node + browser).
 
-import { SEC5_REGIONS } from "./decode-stage.js";
+import { ENEMY_RECORD_SIZE, SEC5_REGIONS } from "./decode-stage.js";
+import { decodeEnemyRecord } from "./decode-enemy.js";
 import { RECORD_ART } from "./decode-sprites.js";
 
 export const BOSS_TRAILER_OFFSET = 0x438; // after the 60 x 18-byte records
@@ -43,16 +60,32 @@ export const BOSS_SCORE_TABLE = [5000, 10000, 20000, 50000, 100000, 200000, 5000
 export const BOSS_FIRE_TICK_FRAMES = [60, 30, 15, 10, 5, 3, 2, 1];
 export const PART_GROUPS = ["zako16x16", "zako32x16", "zako16x32", "zako32x32", "part64x32", "part32x64", "part64x64"];
 
+// Type-3 respawn period in frames, indexed by the fire point's rate nibble.
+// The engine keeps two tables (0x06085F80 / 0x06085F90) and picks the second
+// only when the boss core's size class is F0. The part respawns on this fixed
+// cadence with no check that the previous one is still alive.
+export const PART_RESPAWN_FRAMES = [119, 59, 29, 19, 9, 5, 3, 1];
+export const PART_RESPAWN_FRAMES_F0 = [119, 59, 39, 19, 11, 7, 3, 1];
+
 const s8 = (b) => (b >= 128 ? b - 256 : b);
 
+// The engine's band-base table 0x0608603C — the same seven bytes the
+// death-word mode-2 successor spawn uses.
+const RECORD_BAND_BASE = RECORD_ART.map((band) => band.first);
+
 // A part's (group, piece) names a zako/large enemy record: the group IS the
-// art band index (RECORD_ART) and the piece its slot within the band. The
-// piece field is 4 bits but the small bands hold 8 or 4 records, so overflow
-// wraps — the editor never writes past the band size.
+// art band index (RECORD_ART) and the piece its slot within the band.
+//
+// The engine ORs the piece in UNMASKED (`or r4,r5` in each of the seven
+// per-band constructors), so a piece past the band's size runs on into the
+// next band rather than wrapping: group 1 piece 8 is record 24, not 16. This
+// used to be modelled as `first + piece % count`, which differs on exactly 2
+// of the 10,895 part references in the 268-game corpus — both in one author's
+// game — but the engine's arithmetic is the one to reproduce.
 export function partRecord(group, piece) {
-    const band = RECORD_ART[group];
-    if (!band) return null;
-    return band.first + (piece % band.count);
+    const base = RECORD_BAND_BASE[group];
+    if (base === undefined) return null;
+    return base | piece;
 }
 
 // Decode one fire point's 4 bytes.
@@ -72,7 +105,12 @@ function decodeFirePoint(f) {
             piece: f[3] & 15,
             record: partRecord(group, f[3] & 15),
             oneShot: type === 4,
+            // Where this part's hp comes from. A turret's is decided here,
+            // by the rate nibble off the BOSS table; a mobile part's needs
+            // the record, so it is filled in by readBossTrailer.
+            hpSource: type === 4 ? "boss" : "record",
         };
+        if (type === 4) fp.spawn.hp = BOSS_HP_TABLE[fp.rate] >> 2;
     } else if (type <= 2) {
         fp.shot = {
             weapon: type, // A/B/C
@@ -165,6 +203,14 @@ export function decodeBossTrailer(t) {
                 : r.slice(2 + i * 4, 6 + i * 4))),
         });
     }
+    // The type-3 respawn period needs the core's size class, which is only
+    // known once the whole trailer is read.
+    const respawn = (t[0] & 3) === 0 ? PART_RESPAWN_FRAMES_F0 : PART_RESPAWN_FRAMES;
+    for (const pattern of patterns) {
+        for (const fp of pattern.firePoints) {
+            if (fp.type === 3 && fp.spawn) fp.spawn.respawnFrames = respawn[fp.rate];
+        }
+    }
     return {
         sizeClass: t[0] & 3,
         hpStages: ((t[0] >> 4) & 3) + 1,
@@ -187,9 +233,53 @@ export function decodeBossTrailer(t) {
     };
 }
 
+// The 60 zako records that precede the trailer in a stage's enemy block.
+const RECORDS_PER_STAGE = BOSS_TRAILER_OFFSET / ENEMY_RECORD_SIZE;
+
+// Fill in what each type-3/4 part inherits from the 18-byte record its
+// (group, piece) names — the record the shared spawn +0x153C8 builds it from.
+//
+// Score and the armour attribute come off that record for BOTH types; hp only
+// for type 3, since a type-4 turret's is overwritten from the boss table
+// before the object ever runs a frame.
+//
+// The part record is usually NOT in the editor roster — 91% of the corpus's
+// part references name a record the stage never places — so this reads sec5
+// directly rather than going through the projected enemy list, exactly as
+// `extractBossPartSprites` does for part art.
+function resolvePartRecords(sec5, stage, boss) {
+    const { offset, stride } = SEC5_REGIONS.enemies;
+    const recordBase = offset + stage * stride;
+    const cache = new Map();
+    const readRecord = (record) => {
+        if (!Number.isInteger(record) || record < 0 || record >= RECORDS_PER_STAGE) return null;
+        if (!cache.has(record)) {
+            const at = recordBase + record * ENEMY_RECORD_SIZE;
+            cache.set(record, decodeEnemyRecord(sec5.subarray(at, at + ENEMY_RECORD_SIZE)));
+        }
+        return cache.get(record);
+    };
+    for (const pattern of boss.patterns) {
+        for (const fp of pattern.firePoints) {
+            const spawn = fp.spawn;
+            if (!spawn) continue;
+            const rec = readRecord(spawn.record);
+            if (!rec) continue;
+            spawn.score = rec.score;
+            // Hit attributes are set by the shared spawn and never overridden
+            // on either arm, so an armoured part is indestructible whatever
+            // its hp word says.
+            spawn.armour = (rec.move.mode & 1) !== 0;
+            if (spawn.hpSource === "record") spawn.hp = rec.hp;
+        }
+    }
+}
+
 // Read stage `stage`'s boss trailer out of sec5.
 export function readBossTrailer(sec5, stage) {
     const { offset, stride } = SEC5_REGIONS.enemies;
     const base = offset + stage * stride + BOSS_TRAILER_OFFSET;
-    return decodeBossTrailer(sec5.subarray(base, base + BOSS_TRAILER_SIZE));
+    const boss = decodeBossTrailer(sec5.subarray(base, base + BOSS_TRAILER_SIZE));
+    if (boss) resolvePartRecords(sec5, stage, boss);
+    return boss;
 }

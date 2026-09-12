@@ -1457,13 +1457,79 @@ art from param: bits4-6 = art group (0–3 = the four zako bands, 4–6 = the
 64×32 / 32×64 / 64×64 bands), bits0-3 = piece; the engine's spriteIndex =
 charSlot + 67.
 
+### Boss part hp, and what the rate nibble means (traced 2026-09-12)
+
+**A part is a zako.** Pattern activation (`+0x1A878`) spawns nothing for types
+3 and 4 — it only arms a per-fire-point word. The per-frame executor
+`+0x19FF4` calls the fire-point spawner `+0x18FAC`, which takes a slot out of
+the ordinary 99-248 enemy pool, splits param into group/piece, and hands the
+resolved record index to one of seven per-band constructors — each of which
+ends in a `jsr` to `0x060793C8` (`+0x153C8`), **the same initialiser a
+grid-placed zako goes through** (`--xref` on it returns exactly those seven
+sites). The index is `BASE[group] | piece` off the band-base table
+`0x0608603C` = `[0,16,24,32,48,52,56]` — the same table the death word's
+mode-2 successor uses — **OR-ed in unmasked**, so a piece past its band's size
+runs on into the next band rather than wrapping (group 1 piece 8 is record 24,
+not 16; `decode-boss.js` modelled this as `first + piece % count` until now,
+which differs on 2 of the corpus's 10,895 part references).
+
+So score, the **death word**, the **hit attributes** (armour included), the
+fire interval, the bullet config and the movement descriptor all come off that
+18-byte record, unchanged. What the boss path overrides is the hitbox, sprite
+base, contact damage and size class (from the fire-point **group** nibble, not
+the record's art band) and, for type 4 only, the object class (forced to 55)
+and the hp.
+
+**The rate nibble (byte2 bits4-6) means something different on each arm:**
+
+| type | hp | rate nibble |
+|------|----|-------------|
+| 3 — respawning mobile part | the record's own zako hp, `0x06085F20[b2&7]`, through the difficulty scaler like any zako | a **respawn period** in frames: `0x06085F80` = [119,59,29,19,9,5,3,1], or `0x06085F90` = [119,59,39,19,11,7,3,1] when the core is size class F0. It respawns on that fixed cadence with no check that the previous one is still alive |
+| 4 — one-shot turret | the **BOSS** table `0x06085F40` at the rate nibble, **`>>2`** — `[256000, 384000, 576000, 832000, 1152000, 1536000, 1984000, 2496000]` — written over both hp words at `+0x1916E`–`+0x19190` right after the shared spawn. The record's hp field is never read | the hp index above. It is never consumed as a period because the executor skips the countdown for type 4 (`cmp/eq #4` at `+0x1A208`), which is what frees those bits |
+
+The type-4 fill reads its index out of `0x06095B28[k]`, which pattern
+activation packed as `counter<<4 | rate`; `&7` at `+0x19172` recovers the rate.
+Table exclusivity settles which is which: `--xref 0x06085F20` has exactly one
+reader (`+0x15472`, the zako fill) and `--xref 0x06085F40` exactly two
+(`+0x19176`, this; `+0x1AFEE`, the boss core — the same code without the
+shift).
+
+This is the section the boss-trailer row above points at when it retracts
+"`+0x1918C` is not a boss path". Two independent traces reached it the same
+way and agree on the cause of the original error: the dispatcher `+0x18FAC`
+has two arms and they were conflated. The **type-3** arm reads no hp table at
+all and stores the parent's heading into `0x06091E30` — that is the "facing
+angle" the retracted sentence described — while the **type-4** arm is the one
+that reads `0x06085F40`.
+
+Corroborated in the corpus independently of the code: across 268 games and
+20,220 boss fire points, a type-4 fire point's rate nibble matches the boss
+trailer's **own** hp index 40.1% of the time against 21.4% expected by chance
+(n=5057, ×1.87), while type 3 — the same byte, the same nibble, the same
+editor widget — sits at ×0.98 and types 0/1/2/5/6 at ×1.18/×1.02/×1.17/×1.20/
+×0.81. Only the arm that reads the boss hp table tracks the boss's hp class. A
+fire *rate* would have no reason to. The old "a part's hp is its record's hp"
+reading also implied that 69.2% of every turret in the corpus dies to the first
+bullet that touches it (their records sit at hp index 0 = 256 units) and that a
+turret's toughness is an uncontrollable side effect of which sprite the author
+picked — 91.8% of the referenced records are never placed in their stage.
+
+Two smaller labels corrected with it: `+0x1548E` is the hit-attribute write
+into `0x06091550`, **not** the interval fill (that is `+0x154BE`–`+0x154C6`);
+and every surviving type-4 turret is destroyed through the *full* death handler
+— awarding its score and running its death word — when the boss advances an HP
+stage or its core reaches 0.
+
 Worked example — Ramsie stage 0 (trailer at sec5 `+0x5A7E0 + 0x438`): class
 F2, hp 4,608,000, score 20,000, 4 HP stages, first-band playlist 0,0,1,1.
 Pattern 0 spawns two one-shot turret parts with 32×32 art at (−32,+28) and
 (+30,+28) and runs the type-5 beam at (0,−25); the 64×64 figure pieces only
-appear in patterns 2/3 (HP ≤ 50%). The chamber goddess is background art —
-there is no giant boss sprite, which is why the boss placement row "lands
-exactly on the boss-chamber artwork" (see Placement ids above).
+appear in patterns 2/3 (HP ≤ 50%). Both turrets are rate 7 — 2,496,000 units,
+a boss-class figure — and both carry their record's **armour** attribute, so on
+hardware they are indestructible contact hazards rather than something to shoot
+off. The chamber goddess is background art — there is no giant boss sprite,
+which is why the boss placement row "lands exactly on the boss-chamber artwork"
+(see Placement ids above).
 
 ### sec7 shape word and the ポリ吉 part library (decoded 2026-09-02)
 

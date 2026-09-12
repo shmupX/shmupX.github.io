@@ -185,6 +185,36 @@ const toHex = (bytes) =>
 // Environment-neutral base64 (Node has no btoa on old versions, browsers no
 // Buffer). Used for the background tile grids.
 const B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+// Size a boss part's hp onto the runtime's hit-count scale, in place on the
+// `dezaemon.boss` record the runtime reads its fire points from.
+//
+// The two part types draw their hp from different TABLES — a type-3 mobile
+// part from the record's own zako hp, a type-4 turret from the boss table
+// shifted >>2 (decode-boss.js "Boss parts") — but both land in the same
+// durability units, through the same scaler, in the same two hp words. So
+// there is one divisor here, the same `shotDamage * 256` a zako and a boss
+// core take, and every ratio the engine authored survives the import: the
+// traced median turret is exactly 0.250 of its own core, and a mobile part
+// reads as the same 1/3/5/10/20/40/50/100 hits every other zako does.
+//
+// Armour outranks the number. It is the record's own hit attribute, and the
+// collision tail pins an armoured object's hp word so it can never reach 0 —
+// "infinity" is the runtime's sentinel for exactly that, the same one an
+// armoured zako gets.
+function sizePartHp(boss, shotDamage) {
+    for (const pattern of boss.patterns || []) {
+        for (const fp of pattern.firePoints || []) {
+            const spawn = fp.spawn;
+            if (!spawn) continue;
+            if (spawn.armour) {
+                spawn.hp = "infinity";
+            } else if (Number.isFinite(spawn.hp)) {
+                spawn.hp = Math.max(1, Math.ceil(spawn.hp / (shotDamage * 256)));
+            }
+        }
+    }
+}
+
 function bytesToBase64(bytes) {
     let out = "";
     for (let i = 0; i < bytes.length; i += 3) {
@@ -499,9 +529,10 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                 // is 34.3 s, there are no inversions, and hpStages still bands
                 // one bar rather than multiplying it (spawn `+0x1B038` fills
                 // the threshold table with hp/2, 2hp/3+hp/3, 3hp/4+2hp/4+hp/4).
-                rec.dezaemon.boss = decodedBoss.behavior;
+                rec.dezaemon.boss = clone(decodedBoss.behavior);
                 rec.hp = Math.max(1, Math.ceil(decodedBoss.behavior.hp / (shotDamage * 256)));
                 rec.score = decodedBoss.behavior.score;
+                sizePartHp(rec.dezaemon.boss, shotDamage);
             } else {
                 // The stage PLACES a boss but its 0x40 trailer is all zeroes —
                 // 137 records across the corpus, a slot placed and never
