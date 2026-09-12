@@ -39,6 +39,12 @@
     uninstallWebGame,
   } from '../static/eshop-library.js';
   import { backfillDezaShelfCovers, listDezaShelf, onDezaShelfChanged } from '../static/deza-shelf.js';
+  // Two players at the launcher — two used pads, or a Legion Go's halves both
+  // in hand — and the eShop's 2P filter that follows from it. Pure, so the
+  // rule is tested under Deno (tests/two_player_presence_test.ts).
+  import {
+    createFilterAuto, createPresence, filterPickedByHand, notePad, stepFilterAuto, verdict as twoPlayerVerdict,
+  } from '../static/two-player-presence.js';
   // The remote export queue: builds queued from this browser (the editor it
   // embeds queues them) for a desktop to make, and this machine's own build
   // server when it is a local install. Shared with the editor the same way —
@@ -979,28 +985,108 @@
     return (g && (g.status || eshopInstalled[g.id]?.source?.status)) || '';
   }
   const eshopStatusKey = (g) => eshopStatusOf(g) || 'RELEASED';
+  // How many can play: the catalog row's word (a web build's `players`, a
+  // published cart's game-mode bit recorded at publish), or — for a Dezaemon
+  // game on the shelf — what the shelf read off the cart itself. 0 = unknown,
+  // and unknown is not two-player: the 2P chip lists games that say so.
+  function eshopPlayersOf(g) {
+    return (g && (g.players || eshopInstalled[g.id]?.players)) || 0;
+  }
+  const eshopTwoPlayer = (g) => eshopPlayersOf(g) >= 2;
+  let eshopHasTwoPlayer = $derived(eshopCatalogRows.some(eshopTwoPlayer));
+  // The chips: ALL, then 2P (when any game is), then the statuses. 2P sits
+  // beside ALL so the automatic flip below reads as one switch.
   let eshopFilters = $derived.by(() => {
     const seen = new Set(eshopCatalogRows.map(eshopStatusKey));
     const rest = [...seen].filter((s) => s !== 'RELEASED').sort();
-    return ['ALL', ...(seen.has('RELEASED') ? ['RELEASED'] : []), ...rest];
+    return ['ALL', ...(eshopHasTwoPlayer ? ['2P'] : []), ...(seen.has('RELEASED') ? ['RELEASED'] : []), ...rest];
   });
   // A filter whose games have left the catalog shows everything again.
   let eshopRows = $derived(
     eshopFilter === 'ALL' || !eshopFilters.includes(eshopFilter)
       ? eshopCatalogRows
-      : eshopCatalogRows.filter((g) => eshopStatusKey(g) === eshopFilter)
+      : eshopFilter === '2P'
+        ? eshopCatalogRows.filter(eshopTwoPlayer)
+        : eshopCatalogRows.filter((g) => eshopStatusKey(g) === eshopFilter)
   );
-  function eshopSetFilter(f) {
-    if (!eshopFilters.includes(f) || f === eshopFilter) return;
+  function eshopApplyFilter(f) {
+    if (!eshopFilters.includes(f) || f === eshopFilter) return false;
     eshopFilter = f;
     eshopSel = 0;
     sfx.nav();
+    return true;
+  }
+  // A filter picked by hand (a chip, ◀ ▶, F) wins over the automatic 2P
+  // trim, and brings the chips back out so the choice can be seen.
+  function eshopSetFilter(f) {
+    eshopFilterAuto = filterPickedByHand(eshopFilterAuto);
+    eshopChipsTucked = false;
+    eshopApplyFilter(f);
   }
   function eshopCycleFilter(dir) {
     const i = Math.max(0, eshopFilters.indexOf(eshopFilter));
     const n = eshopFilters.length;
     eshopSetFilter(eshopFilters[(i + dir + n) % n]);
   }
+
+  // ─── Two players at the launcher, and the 2P trim ────────────────────────
+  // pollPad feeds every controller it sees to static/two-player-presence.js;
+  // its verdict — two used pads, or a Legion Go's two halves both in hand —
+  // trims the shop to two-player games by itself. The first time that ever
+  // happens the chips do it in front of the player (ALL lit, a beat, 2P lit,
+  // the list shorter) and then tuck away; afterwards it is silent. The
+  // verdict also opens 2028.Ai's two-player gate for two real pads
+  // (cmg-players-set), the way Split Controller mode opens it for halves.
+  const TWO_PLAYER_SEEN_KEY = 'cmg-2p-filter-seen';
+  const presence = createPresence();
+  let twoPlayers = $state({ two: false, pads: 0, halves: false });
+  let eshopFilterAuto = createFilterAuto();
+  let eshopChipsTucked = $state(false);
+  function twoPlayerFilterSeen() {
+    try { return localStorage.getItem(TWO_PLAYER_SEEN_KEY) === '1'; } catch (_) { return true; }
+  }
+  function markTwoPlayerFilterSeen() {
+    try { localStorage.setItem(TWO_PLAYER_SEEN_KEY, '1'); } catch (_) { /* ignore */ }
+  }
+  // One poll: note the pads, take the verdict, step the filter.
+  function noteTwoPlayers(pads, now) {
+    let targets = null;
+    if (legionDetected) {
+      try { targets = new Set(window.CMGGamepadCompat?.splitTargets?.(pads) || []); } catch (_) { targets = null; }
+    }
+    notePad(presence, pads, now, {
+      legion: legionDetected,
+      isLegionPad: (p) => !targets || targets.has(p.index),
+      fps: legionFpsMode,
+    });
+    const v = twoPlayerVerdict(presence, now, { fps: legionFpsMode });
+    if (v.two !== twoPlayers.two || v.pads !== twoPlayers.pads || v.halves !== twoPlayers.halves) twoPlayers = v;
+    const { state, actions } = stepFilterAuto(eshopFilterAuto, {
+      two: v.two,
+      has2P: eshopHasTwoPlayer,
+      onScreen: screen === 'eshop' && !gameOn,
+      filter: eshopFilter,
+      seen: twoPlayerFilterSeen(),
+      now,
+    });
+    eshopFilterAuto = state;
+    if (actions.showChips) eshopChipsTucked = false;
+    if (actions.setFilter) eshopApplyFilter(actions.setFilter);
+    if (actions.markSeen) markTwoPlayerFilterSeen();
+    if (actions.hideChips) eshopChipsTucked = true;
+  }
+  // Tell the running game about two real pads (halves go by cmg-splitpads-set).
+  function applyTwoPlayers() {
+    const iframe = document.getElementById('gameframe') ||
+      document.querySelector('.game-iframe iframe');
+    const w = iframe && iframe.contentWindow;
+    if (!w) return;
+    try { w.postMessage({ type: 'cmg-players-set', value: twoPlayers.pads >= 2 ? 2 : 1 }, '*'); } catch (_) { /* ignore */ }
+  }
+  $effect(() => {
+    void twoPlayers.pads;
+    if (gameOn) applyTwoPlayers();
+  });
 
   function setEshopStatus(id, patch) {
     eshopStatus = { ...eshopStatus, [id]: { ...(eshopStatus[id] || {}), ...patch } };
@@ -1062,7 +1148,7 @@
     } catch (_) { /* no Cache Storage — nothing web is installed */ }
     try {
       for (const rec of (await installedDezaGames()) || []) {
-        if (rec?.eshopId) next[rec.eshopId] = { kind: 'deza', shelfId: rec.id };
+        if (rec?.eshopId) next[rec.eshopId] = { kind: 'deza', shelfId: rec.id, players: Number(rec.players) || 0 };
       }
     } catch (_) { /* no IndexedDB — nothing deza is installed */ }
     eshopInstalled = next;
@@ -1999,6 +2085,7 @@
     const value = splitPadsLive();
     const profile = twinStickAvail ? 'twinstick' : 'generic';
     try { w.postMessage({ type: 'cmg-splitpads-set', value, profile }, '*'); } catch (_) { /* ignore */ }
+    applyTwoPlayers();
   }
 
   // Keep gamepad-support.js's right-half hold-back in step with the mode.
@@ -3871,6 +3958,7 @@
       const why = !splitPadsOn ? 'off' : legionFpsMode ? 'fps' : editorFrameActive ? 'editor' : 'yes';
       lines.push(`legion: ${hostDevice?.model || (legionPadSeen ? 'pad id' : 'no')} · split: ${splitPadsOn ? 'on' : 'off'} · live: ${why} · fps mode: ${legionFpsMode ? 'on' : 'off'}`);
       lines.push(`targets: [${targets}] · claimed: [${claimed}] · pad quiet: ${padActivityAt ? ((performance.now() - padActivityAt) / 1000).toFixed(0) + 's' : 'never used'}`);
+      lines.push(`two players: ${twoPlayers.two ? 'yes' : 'no'} · pads used: ${twoPlayers.pads} · halves: ${twoPlayers.halves ? 'both' : 'no'} · 2P filter: ${eshopFilter === '2P' ? 'on' : 'off'}${eshopChipsTucked ? ' (chips tucked)' : ''}`);
       if (gameOn) {
         const iframe = document.getElementById('gameframe') || document.querySelector('.game-iframe iframe');
         let patched = '?', own = '?';
@@ -4200,6 +4288,7 @@
     padDebugTick();
     const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
     let pad = pickActivePad(pads);
+    noteTwoPlayers(pads, performance.now());
     // Any pad being used: the last time a hand was on a controller (the FPS
     // mode heuristic's quiet clock), and the end of FPS mode if it was on.
     for (const p of pads) {
@@ -5599,9 +5688,11 @@
         <div class="games-header">
           <div class="title-bar">ESHOP</div>
           {#if eshopCatalogRows.length}
-            <!-- The release-status filter: ◀ ▶ (or F) cycles it, a chip picks
-                 one. ALL is the default. -->
-            <div class="eshop-filters" role="tablist" aria-label="Filter by release status">
+            <!-- The filter: ALL, 2P (games for two), then the release
+                 statuses. ◀ ▶ (or F) cycles it, a chip picks one. ALL is the
+                 default; 2P applies itself when two players are at the
+                 launcher, and the chips tuck away once it has. -->
+            <div class="eshop-filters {eshopChipsTucked ? 'tucked' : ''}" role="tablist" aria-label="Filter the catalog" aria-hidden={eshopChipsTucked}>
               {#each eshopFilters as f (f)}
                 <span
                   class="eshop-filter {f === eshopFilter ? 'on' : ''}"

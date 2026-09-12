@@ -13,6 +13,7 @@
     "downloadUrl": "https://easierbycode.com/shmup-party-ps2/shmup-party-ps2-web.zip",
     "size": "4 MB",
     "date": "09.07.26",
+    "players": 4,
     "twinStick": { "default": true }
   }
 ]

@@ -286,8 +286,11 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 /* The eShop's release-status filter: chips between the title and the counter.
    ◀ ▶ cycles them, a tap picks one; the lit chip is the filter in force. A
    long row scrolls sideways on a phone rather than pushing the counter out. */
-.eshop-filters { display: flex; gap: .6vmin; min-width: 0; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; }
+.eshop-filters { display: flex; gap: .6vmin; min-width: 0; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; transition: opacity .4s ease, transform .4s ease; }
 .eshop-filters::-webkit-scrollbar { display: none; }
+/* Tucked away once the 2P filter has applied itself (two players at the
+   launcher): out of the way, still in the row so nothing else moves. */
+.eshop-filters.tucked { opacity: 0; transform: translateX(1.5vmin); pointer-events: none; }
 .eshop-filter {
   font-family: 'Share Tech Mono', monospace; font-size: clamp(10px, 1.4vmin, 15px); letter-spacing: .16em;
   padding: .5em 1em; border-radius: 3px; white-space: nowrap; cursor: pointer; flex-shrink: 0;

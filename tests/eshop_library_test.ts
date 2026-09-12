@@ -18,6 +18,8 @@ import {
 import * as eshopModule from "../static/eshop-library.js";
 import * as shelfModule from "../static/deza-shelf.js";
 import { gunzip, interleave } from "../packages/shmup-engine/mod.js";
+import { join } from "@std/path";
+import { buildSav } from "../scripts/build-sav.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -63,6 +65,8 @@ interface EshopLib {
   entryUrl(entry: unknown): string;
   contentTypeFor(path: string): string;
   dezaBytesForShelf(bytes: Uint8Array, engine?: Any): Promise<Uint8Array>;
+  dezaCartPlayers(bytes: Uint8Array, engine?: Any): Promise<number>;
+  normalizePlayers(v: unknown): number;
   publishDezaGame(opts: Record<string, unknown>): Promise<
     { id: string; index: Any; shelf: Any; shelfError: string }
   >;
@@ -85,6 +89,7 @@ interface ShelfLib {
   listDezaShelf(): Promise<Any[]>;
   notifyDezaShelfChanged(): void;
   onDezaShelfChanged(cb: () => void): () => void;
+  shelfCartPlayers(bytes: Uint8Array): Promise<number>;
 }
 const lib = eshopModule as unknown as EshopLib;
 const shelf = shelfModule as unknown as ShelfLib;
@@ -854,4 +859,102 @@ Deno.test("change notification works with no browser around it", () => {
     lib.ESHOP_RTDB,
     "https://evil-invaders-default-rtdb.firebaseio.com",
   );
+});
+
+// ── How many can play ────────────────────────────────────────────────────────
+
+Deno.test("normalizePlayers reads a number or the largest number in a string; anything else is 0", () => {
+  assertEquals(lib.normalizePlayers(2), 2);
+  assertEquals(lib.normalizePlayers(4.7), 4);
+  assertEquals(lib.normalizePlayers("2"), 2);
+  assertEquals(lib.normalizePlayers("1-4"), 4);
+  assertEquals(lib.normalizePlayers("1 to 2 players"), 2);
+  for (const v of [0, -1, NaN, "", "solo", null, undefined, {}, true]) {
+    assertEquals(lib.normalizePlayers(v), 0, JSON.stringify(v));
+  }
+  // On a row: carried for both kinds, 0 when the row says nothing.
+  const web = lib.normalizeEshopEntry({ ...PARTY, players: "1-4" }).entry;
+  assertEquals(web.players, 4);
+  assertEquals(lib.normalizeEshopEntry(PARTY).entry.players, 0);
+  const deza = lib.normalizeEshopEntry(
+    { kind: "deza", name: "Foo", players: 2 },
+    "rtdb",
+    "foo",
+  ).entry;
+  assertEquals(deza.players, 2);
+});
+
+// Two real carts, built the way `deno task build:sav` builds one: one with
+// Dezaemon 2's "2P join-in" bit, one without. Built once for the tests below.
+let cartsPending: Promise<{ two: Uint8Array; one: Uint8Array }> | null = null;
+function carts() {
+  if (!cartsPending) {
+    cartsPending = (async () => {
+      const dir = await Deno.makeTempDir({ prefix: "shmupx-players-" });
+      const two = await buildSav({
+        out: join(dir, "Dez 2 - Two.sav"),
+        gameMode: 2,
+      });
+      const one = await buildSav({ out: join(dir, "Dez 2 - One.sav") });
+      return {
+        two: await Deno.readFile(two.outPath),
+        one: await Deno.readFile(one.outPath),
+      };
+    })();
+  }
+  return cartsPending;
+}
+
+Deno.test("dezaCartPlayers reads the cart's own 2P bit — 2 with it, 1 without, 0 for no cart", async () => {
+  const { two, one } = await carts();
+  assertEquals(await lib.dezaCartPlayers(two), 2);
+  assertEquals(await lib.dezaCartPlayers(one), 1);
+  // Any wrapping the shelf or the database use: the logical image, and the
+  // database's gzip of it.
+  const engine = await import("../static/engine/shmup-engine.js") as Any;
+  const logical = engine.deinterleave(two);
+  assertEquals(await lib.dezaCartPlayers(logical), 2);
+  const gz = new Uint8Array(
+    await new Response(
+      new Blob([logical]).stream().pipeThrough(new CompressionStream("gzip")),
+    ).arrayBuffer(),
+  );
+  assertEquals(await lib.dezaCartPlayers(gz), 2);
+  // Not a cart: 0, never a throw.
+  assertEquals(await lib.dezaCartPlayers(new Uint8Array(0x8000)), 0);
+  assertEquals(await lib.dezaCartPlayers(logicalCart()), 0);
+  // The shelf reads the same bit.
+  assertEquals(await shelf.shelfCartPlayers(two), 2);
+  assertEquals(await shelf.shelfCartPlayers(one), 1);
+  assertEquals(await shelf.shelfCartPlayers(new Uint8Array(0x8000)), 0);
+});
+
+Deno.test("publishDezaGame records how many can play, from the cart, and leaves it out when unreadable", async () => {
+  const { two, one } = await carts();
+  for (const [sav, players] of [[two, 2], [one, 1]] as [Uint8Array, number][]) {
+    const { fetchImpl, calls } = stubFetch({
+      "https://db.test/": () => new Response(null, { status: 204 }),
+    });
+    await lib.publishDezaGame({
+      name: "Players " + players,
+      sav,
+      fetchImpl,
+      rtdb: "https://db.test/",
+    });
+    const index = JSON.parse(calls[calls.length - 1].body!);
+    assertEquals(index.players, players);
+  }
+  // A cart the decoder cannot read publishes without a count rather than
+  // with a wrong one.
+  const { fetchImpl, calls } = stubFetch({
+    "https://db.test/": () => new Response(null, { status: 204 }),
+  });
+  await lib.publishDezaGame({
+    name: "Unreadable",
+    sav: interleave(logicalCart()),
+    fetchImpl,
+    rtdb: "https://db.test/",
+  });
+  const index = JSON.parse(calls[calls.length - 1].body!);
+  assertStrictEquals(index.players, undefined);
 });

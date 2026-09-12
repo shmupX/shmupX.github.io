@@ -328,6 +328,15 @@ Deno.test("2028-ai's bundle reads the split view: the launcher's message opens i
     /if \(gameState\.cmgSplitPads\) return true;/.test(game),
     "twoPlayerAllowed no longer honours split mode",
   );
+  // Two real pads at the launcher open the same gate (cmg-players-set).
+  assert(
+    game.includes('"cmg-players-set"'),
+    "the bundle no longer listens for cmg-players-set",
+  );
+  assert(
+    /if \(gameState\.cmgPlayers >= 2\) return true;/.test(game),
+    "twoPlayerAllowed no longer honours two pads",
+  );
   const table = (name: string): number[] => {
     const m = new RegExp("var " + name + " = \\[([^\\]]*)\\];").exec(game);
     assert(m, `${name} not found in the bundle`);

@@ -64,6 +64,19 @@ export function statusLabel(status) {
   return String(status || '').replace(/_/g, ' ');
 }
 
+/**
+ * How many can play, as a catalog row spells it: a number, or a string such as
+ * "2" or "1-4" (the largest number in it). 0 means the row does not say. The
+ * dashboard's 2P filter shows the rows that say 2 or more.
+ */
+export function normalizePlayers(v) {
+  if (typeof v === 'number') return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 0;
+  if (typeof v !== 'string') return 0;
+  let best = 0;
+  for (const m of v.matchAll(/\d+/g)) best = Math.max(best, Number(m[0]));
+  return best;
+}
+
 /** A Dezaemon 2 cart as MiSTer writes it: (32 KB + 512 KB) x 2 for the 0xFF interleave. */
 export const MISTER_SAV_BYTES = 1114112;
 /** The same cart with the filler stripped — what the RTDB stores gzipped. */
@@ -121,6 +134,10 @@ export function normalizeEshopEntry(raw, origin = 'manifest', key = '') {
     // Pinned on the row, or — when the row leaves it blank — read from the
     // game's own codemonkey.json by applyGameManifests().
     status: normalizeStatus(raw.status),
+    // How many can play (0 = the row does not say). A published Dezaemon
+    // game carries what its cart's game-mode bit says; a web build what its
+    // row says.
+    players: normalizePlayers(raw.players),
   };
   if (kind === 'web') {
     entry.repo = str(raw.repo);
@@ -916,6 +933,27 @@ export async function dezaBytesForShelf(bytes, engine = null) {
 }
 
 /**
+ * How many can play a cart: 2 when its game-mode bit1 (Dezaemon 2's "2P
+ * join-in", the bit 2028.Ai's twoPlayerAllowed reads) is set, else 1 — or 0
+ * when the bytes hold no readable game save. Any wrapping the shelf or the
+ * database use is fine: normalize() unwraps it.
+ */
+export async function dezaCartPlayers(bytes, engine = null) {
+  try {
+    const eng = engine || await loadEngine();
+    const { data } = await eng.normalize(bytes);
+    const entry = eng.parse(data).filter(eng.isGameSave)[0];
+    if (!entry || !entry.payload) return 0;
+    const decoded = eng.decodeSave(entry.payload.buffer);
+    const mode = decoded && decoded.settings && decoded.settings.gameMode;
+    if (typeof mode !== 'number') return 0;
+    return (mode & 2) !== 0 ? 2 : 1;
+  } catch (_) {
+    return 0;
+  }
+}
+
+/**
  * Put a Dezaemon game on the shelf as an installed eShop entry
  * ("eshop:<id>"). Resolves to the shelf record. `onProgress(pct, label)`.
  */
@@ -943,6 +981,9 @@ export async function installDezaGame(entry, { onProgress = noop, fetchImpl = de
     source: 'eshop',
     eshopId: id,
     ...(cover ? { cover } : {}),
+    // The listing's player count spares the shelf a decode; a listing
+    // published before counts existed leaves it to the shelf to read.
+    ...(entry.players ? { players: entry.players } : {}),
   });
   notifyEshopChanged();
   progress(100, 'ON THE SHELF');
@@ -1084,6 +1125,9 @@ export async function publishDezaGame({
   const png = await coverNode(cover);
   const stages = Array.isArray(report?.stages) ? report.stages.length : Number(report?.stages) || 0;
   const cells = Number(report?.cells) || 0;
+  // The cart's own word on how many can play, so the shop can trim itself
+  // to two-player games without downloading every save.
+  const players = await dezaCartPlayers(logical, eng);
   const file = 'Dez 2 - ' + title + '.sav';
   const index = {
     schemaVersion: 1,
@@ -1101,6 +1145,7 @@ export async function publishDezaGame({
     hasCover: !!png,
     stages,
     cells,
+    ...(players ? { players } : {}),
     source: 'editor',
   };
 
