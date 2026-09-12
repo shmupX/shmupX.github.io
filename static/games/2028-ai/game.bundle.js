@@ -9780,8 +9780,30 @@
   var DEZA_OPTB_TURN = 4096 / 65536;    // turns/frame = 22.5 deg
   var DEZA_OPTB_RECOIL = 6;             // px kick when the pod fires
   var DEZA_OPTB_RECOIL_DECAY = 0.5;     // px/frame
-  var DEZA_OPTB_BURST = 3;              // +0x21C60[6]
-  var DEZA_OPTB_RELOAD = 8;             // +0x21C68[6] frames
+  // +0x21C60[6] = 3 is MAX SHOTS PER TAP, not a burst. The weapons gate reads
+  // the SUB type from `*0x6084110` (+0x9EDA) and, for anything but type 7,
+  // indexes +0x21C60 with it as a CAP: `mov.b @(r0,r3),r1 ; cmp/hs r1,r2 ;
+  // bt/s` at +0x9EF8 compares it against the per-player shot counter
+  // `*0x6084144` and SKIPS the shot, then makes exactly ONE dispatcher call
+  // (+0x9F12) and adds 1 to that counter (+0x9FDC). The counter is zeroed on a
+  // fresh press (+0x9EBE) and again every frame the rapid mask is held
+  // (+0x9E92, which also suppresses the increment at +0x9FD0) — so, exactly as
+  // with DEZA_MAIN_BURST above where this runtime's autofire stands in for the
+  // held rapid button, the cap never applies. Kept declared and deliberately
+  // UNREAD so the byte stays on the record; unlike MAIN's there is no counter
+  // here to zero, because nothing counts taps.
+  var DEZA_OPTB_BURST = 3;              // +0x21C60[6], max shots per TAP
+  // +0x21C68[6] = 8 frames, HALVED on an EVEN option count: the gate
+  // special-cases sub 6 (`cmp/eq #6` at +0x9F26), tests `and #1` against the
+  // option-count array `*0x608411C` (+0x9F32), and only the even path — the
+  // one the `bt/s` takes when the count is even — reaches `shlr` at +0x9F76.
+  var DEZA_OPTB_RELOAD = [0, 8, 4, 8, 4];   // Saturn frames, by option count
+  // What each pod BULLET hits for: +0x21E20 by option count, loaded into r5 at
+  // +0x111E6 and +0x11274 for the shared spawner +0xB9A0 — the same argument
+  // slot a MAIN handler fills from its documented +0x21C94 at +0xC4B4. This is
+  // NOT the pods' contact number (DEZA_OPTB_DAMAGE above); they are different
+  // figures on different billing periods.
+  var DEZA_OPTB_SHOT_DAMAGE = [0, 7680, 4608, 5120, 3584];
   var DEZA_OPTB_SPEED = 1023;           // engine units/frame, as the plain shot
   // OPTION C — a trail. Pod i rides the ship's path 8i+7 steps back, and the
   // history only advances on frames the ship actually moves, so the trail
@@ -10003,18 +10025,37 @@
       // Bullet art points +X at rotation 0, so the pod faces its own heading.
       pod.setRotation(Math.atan2(fy, fx));
       if (kick > 0) pod.setData("dezaPodRecoil", Math.max(0, kick - DEZA_OPTB_RECOIL_DECAY));
+      // ONE bullet per pod per re-arm, not three. +0x21C60[6] = 3 is the
+      // engine's max-shots-per-TAP cap (see the constant), and the gate calls
+      // the SUB dispatcher once per re-arm — and OPTION B IS a dispatcher
+      // entry, whatever the old "never reach a shot dispatcher" note said:
+      // jump table +0x15150 word [6] = 0x0028 lands on 0x6079178 -> +0x1110C.
+      // That handler spawns from pod slot 64/80 once (jsr the shared spawner
+      // +0xB9A0 at +0x11210), then tests bit 7 of +0x21E34[option count] =
+      // [0,0x04,0x07,0x84,0x87] and spawns ONE more from slot 65/81 only when
+      // a second pod exists (+0x1129C). There is no third spawn and no loop
+      // around either — the one backward branch, +0x112B4, is the free-slot
+      // search retrying an occupied pair. So the per-call bullet count is the
+      // POD count, which this updater already gets right by running per pod.
+      // The old `for (k < DEZA_OPTB_BURST)` put three bullets on one position
+      // and one velocity: they flew as a single bullet and billed every enemy
+      // they overlapped three times. (Traced from GAME.bin, 2026-09-12.)
+      //
+      // Load-then-drain, as the engine does and as updateDezaWeapons already
+      // does for MAIN: the gate writes the interval (+0x9F7C) and falls
+      // straight into the unconditional drain at +0x9FE0, so the period is
+      // exactly the interval. Decrementing in an else made it interval + 1.
+      var n = Math.max(0, Math.min(4, p.dezaOptions || 0));
       var reload = pod.getData("dezaPodReload");
-      if (reload > 0) {
-        pod.setData("dezaPodReload", reload - 1);
-      } else if (!p.dezaShotLocked) {
-        for (var k = 0; k < DEZA_OPTB_BURST; k++) {
-          var sp = dezaVel(DEZA_OPTB_SPEED);
-          spawnDezaPlayerShot(scene, p, pod.x, pod.y, fx * sp, fy * sp,
-            dezaHitDamage(scene, DEZA_OPTB_DAMAGE));
-        }
-        pod.setData("dezaPodReload", DEZA_OPTB_RELOAD);
+      if (reload === 0 && !p.dezaShotLocked) {
+        var sp = dezaVel(DEZA_OPTB_SPEED);
+        spawnDezaPlayerShot(scene, p, pod.x, pod.y, fx * sp, fy * sp,
+          dezaHitDamage(scene, DEZA_OPTB_SHOT_DAMAGE[n]));
+        reload = DEZA_OPTB_RELOAD[n];
         pod.setData("dezaPodRecoil", DEZA_OPTB_RECOIL);
       }
+      if (reload !== 0) reload -= 1;
+      pod.setData("dezaPodReload", reload);
     }
   }
   // OPTION C. Pure formation: these pods have no hitbox and no attack power of
