@@ -5570,7 +5570,18 @@
     part.setData("hp", hp);
     part.setData("maxHp", hp);
     part.setData("score", score);
-    part.setData("spgage", large ? 4 : 2);
+    // The SP-gauge award. NOT a hardware field: the record's only award is byte
+    // 1's score nibble, and Dezaemon 2 has no kill-fed gauge at all — its bomb
+    // is a STOCK topped up by item type 5, and its CHARGE gauge fills from the
+    // button, not from kills. So there is nothing on the record for a part to
+    // inherit the way it inherits score. What a part IS, is a zako, so it pays
+    // what this level's zako pay: the importer stamps that number onto the
+    // spawn (map-to-game.js setPartSpgage), the same number every imported
+    // enemy carries. Raw gauge units against the 100 cap in enemyDie — nothing
+    // scales it. The old 4/2 size split was invented here and matched nothing
+    // on hardware; it stays only as the fallback for a level exported before
+    // the stamp existed.
+    part.setData("spgage", fp.spawn.spgage != null ? fp.spawn.spgage : (large ? 4 : 2));
     part.setData("interval", -1);
     part.setData("shootCnt", 0);
     part.setData("itemName", null);
@@ -5799,6 +5810,84 @@
       }
     }
   }
+  // A type-3 fire point's RATE nibble is not a rate: it is a RESPAWN PERIOD in
+  // Saturn FRAMES. FORMAT.md, "Boss part hp, and what the rate nibble means
+  // (traced 2026-09-12)": "a **respawn period** in frames: `0x06085F80` =
+  // [119,59,29,19,9,5,3,1], or `0x06085F90` = [119,59,39,19,11,7,3,1] when the
+  // core is size class F0. It respawns on that fixed cadence with no check that
+  // the previous one is still alive". The countdown belongs to the PER-FRAME
+  // executor +0x19FF4 — type 4 is the arm that SKIPS it (`cmp/eq #4` at
+  // +0x1A208) — not to the pattern's fire-tick divider, which is the
+  // bullet/beam/flame clock and has nothing to do with this period.
+  //
+  // The decoder resolves the period onto fp.spawn.respawnFrames. These tables
+  // are the fallback for a level exported before it did (dezaemon.boss has
+  // carried patterns since 2026-08-25, respawnFrames only since 2026-09-12),
+  // and unlike the flat 16/32 hp fallback in spawnDezaPart they are EXACT: the
+  // runtime already holds both of the engine's own index inputs — the fire
+  // point's rate and the core's size class. (F0 IS size class 0: FORMAT.md,
+  // "the placement id's size class (`0xF0`-`0xF3`) picks the geometry — F0 =
+  // four 64x64 frames".)
+  var PART_RESPAWN_FRAMES = [119, 59, 29, 19, 9, 5, 3, 1];
+  var PART_RESPAWN_FRAMES_F0 = [119, 59, 39, 19, 11, 7, 3, 1];
+  function partRespawnFrames(st, fp) {
+    var p = fp.spawn && fp.spawn.respawnFrames;
+    if (p > 0) return p;
+    // A record with NO sizeClass falls to the common table, not F0 — the two
+    // differ at rates 2, 4 and 5, and F0 is the minority class.
+    var sc = st.boss && st.boss.sizeClass;
+    var table = sc === 0 ? PART_RESPAWN_FRAMES_F0 : PART_RESPAWN_FRAMES;
+    return table[(fp.rate || 0) & 7];
+  }
+  // Counted once per SATURN FRAME: called from inside updateDezaBoss's
+  // per-Saturn-frame gate and BEFORE its fire-tick gate.
+  function updateDezaPartRespawn(scene, st, pattern) {
+    // st.parts was only ever compacted by activatePattern; now that parts can
+    // accumulate, dead entries have to be dropped every frame.
+    for (var i = st.parts.length - 1; i >= 0; i--) {
+      if (!st.parts[i] || !st.parts[i].active) st.parts.splice(i, 1);
+    }
+    for (var j = 0; j < pattern.firePoints.length; j++) {
+      var fp = pattern.firePoints[j];
+      if (fp.type !== 3 || !fp.spawn) continue;
+      // Keyed by POSITION IN THE PATTERN, not by fpKey. fpKey is
+      // type:record:dx:dy and is not unique: type-3 points in the corpus do
+      // collide with a sibling in the same pattern, and this loop visits every
+      // point every frame, so a shared key would be decremented twice a frame
+      // (halving the period) and spawn one part where two were authored.
+      // st.partRespawn is wiped per pattern at activatePattern, so a
+      // pattern-local index is a safe key.
+      var period = partRespawnFrames(st, fp);
+      var wait = st.partRespawn[j];
+      if (wait === void 0) wait = period;
+      if (wait > 1) {
+        st.partRespawn[j] = wait - 1;
+        continue;
+      }
+      st.partRespawn[j] = period;
+      // DELIBERATE DEPARTURE from "with no check that the previous one is still
+      // alive", for armoured parts only. The importer pins an armoured part to
+      // hp "infinity" (map-to-game.js sizePartHp) and neither damage path in
+      // this runtime can take that below zero, so an unconditional respawn
+      // would pile up objects the player cannot remove and hold the shared
+      // enemy array at its cap for the rest of the pattern. Roughly a sixth of
+      // the corpus's type-3 points are armoured. Hardware's armoured part is
+      // equally undying, so whether the engine really stacks them is UNTRACED;
+      // one-per-key is at least as defensible as the stack.
+      if (fp.spawn.hp === "infinity" && findLiveDezaPart(st, fpKey(fp))) continue;
+      // The hardware bound that replaces the liveness check: the fire-point
+      // spawner "takes a slot out of the ordinary 99-248 enemy pool" — 150
+      // slots, shared with grid-placed zako. This runtime ALREADY models that
+      // pool with one cap (DEZA_MAX_LIVE_ZAKO, whose own comment says it stands
+      // in for the engine's 150-slot pool), and parts live in the same
+      // scene.enemies array the zako spawner and the death-word successor gate
+      // on — so reuse it rather than inventing a second number. Reading
+      // scene.enemies.length from inside the enemy sweep means it is an upper
+      // bound one tick stale (destroyed parts below the cursor are not swept
+      // yet), which is the safe direction.
+      if (scene.enemies.length < DEZA_MAX_LIVE_ZAKO) spawnDezaPart(scene, st, fp);
+    }
+  }
   function updateDezaBoss(scene) {
     var st = scene.dezaBossState;
     if (!st || !st.active) return;
@@ -5840,6 +5929,11 @@
     var pattern = st.pattern;
     updateDezaBeams(scene, st);
     if (!pattern) return;
+    // Type-3 part respawn is a per-SATURN-FRAME cadence, so it runs HERE:
+    // inside the `st.tick % SATURN_TICKS_PER_FRAME` gate above, and outside
+    // (before) the fire-tick divider below. Putting it after the divider is
+    // what multiplied the period by pattern.fireTickFrames.
+    updateDezaPartRespawn(scene, st, pattern);
     st.tickCnt++;
     if (st.tickCnt < (pattern.fireTickFrames || 60)) return;
     st.tickCnt = 0;
@@ -5849,19 +5943,6 @@
       var due = st.tickIdx % ((fp.rate || 0) + 1) === 0;
       if (fp.type <= 2) {
         if (due) fireDezaBullet(scene, fp);
-      } else if (fp.type === 3) {
-        var key = fpKey(fp);
-        if (!findLiveDezaPart(st, key)) {
-          var wait = st.partRespawn[key];
-          if (wait === void 0) {
-            st.partRespawn[key] = (fp.rate || 0) + 2;
-          } else if (wait <= 1) {
-            delete st.partRespawn[key];
-            spawnDezaPart(scene, st, fp);
-          } else {
-            st.partRespawn[key] = wait - 1;
-          }
-        }
       } else if (fp.type === 5) {
         if (due) startDezaBeam(scene, st, fp);
       } else if (fp.type === 6) {
@@ -9720,8 +9801,17 @@
   }
   function dezaPodDamage(scene, p, type) {
     var n = Math.max(0, Math.min(4, p.dezaOptions || 0));
-    if (type === 5) return dezaHitDamage(scene, DEZA_OPTA_DAMAGE[n]);
-    if (type === 6) return dezaHitDamage(scene, DEZA_OPTB_DAMAGE);
+    // Both tables feed a `dezaPerFrame` object, which the collision loop bills
+    // on EVERY runtime tick without consuming it — so they must convert with
+    // the per-tick converter, not the one-shot one. With dezaHitDamage the pods
+    // did exactly 2x. B is traced explicitly ("384 damage per overlapping
+    // frame"); A's table (+0x21DEC by option count) is traced without a stated
+    // billing period, and per-frame is the least-wrong reading — the pod is a
+    // persistent indestructible contact body the collision loop cannot consume,
+    // so a per-hit reading has no cooldown to hang on. Either way, the previous
+    // code (one-shot converter + dezaPerFrame) matched NEITHER reading.
+    if (type === 5) return dezaFrameDamage(scene, DEZA_OPTA_DAMAGE[n]);
+    if (type === 6) return dezaFrameDamage(scene, DEZA_OPTB_DAMAGE);
     return 0;   // OPTION C's pods carry no hitbox and no attack power at all
   }
   function dezaSpawnPod(scene, p, index, type) {
@@ -9790,6 +9880,21 @@
   }
   function updateDezaPods(scene, p, optionHeld) {
     if (!p.sprite || !p.sprite.active) return;
+    // Every quantity below is a Saturn-FRAME quantity: the trail push (1/frame)
+    // and the LAG indices that read it in frames, the ring's SLEW/GROW/SPIN and
+    // its spin cap, OPTION B's 22.5 deg/frame turn, its 0.5 px/frame recoil
+    // decay and its reload, and the one-spark-per-pod-per-frame shed. So the
+    // whole updater gates to one call per Saturn frame, exactly as
+    // updateDezaWeapons, updateEnemyBehavior, updateDezaBoss and (since
+    // c531f3d) updateDezaBomb gate theirs. Ungated, all of it ran at 2x.
+    //
+    // Gated on the scene's own tick rather than a per-player counter: worldTime
+    // is bumped once per fixedUpdate (before handleKeyboardInput reaches here),
+    // dividing it by SATURN_TICKS_PER_FRAME is already this file's idiom
+    // (updateDezaBossPart), and it keeps both seats in phase — a per-player
+    // counter would drift against updateDezaWeapons' own tick, which
+    // revivePlayer resets by nulling p.dezaWeapons.
+    if (scene.worldTime % SATURN_TICKS_PER_FRAME) return;
     var type = dezaSubType(scene, p);
     // Position history. OPTION C alone gates the push on the ship moving, and
     // that gate is why its trail gathers up when you hold still.
@@ -9853,11 +9958,16 @@
   // living out a fade counter: 0x8000 down to 8191 at the per-count rate.
   function dezaSpawnPodSpark(scene, p, pod) {
     var n = Math.max(0, Math.min(4, p.dezaOptions || 0));
+    // The fade counter runs in Saturn FRAMES (8/6/5/5 by option count), but
+    // dezaStepShot ticks dezaLife once per RUNTIME tick, so it is stored in
+    // ticks the way charge 3's lifetime is. The spark is an additional damaging
+    // object on top of the pod — the engine sheds one per pod per frame — and,
+    // being `dezaPerFrame` too, its damage is per-tick like the pod's.
     var life = Math.max(1, Math.round((0x8000 - 8191) / DEZA_OPTA_SPARK_FADE[n]));
     var s = spawnDezaPlayerShot(scene, p, pod.x, pod.y, 0, 0,
-      dezaHitDamage(scene, DEZA_OPTA_DAMAGE[n]));
+      dezaFrameDamage(scene, DEZA_OPTA_DAMAGE[n]));
     if (s) {
-      s.setData("dezaLife", life);
+      s.setData("dezaLife", life * SATURN_TICKS_PER_FRAME);
       s.setData("dezaPerFrame", true);
     }
   }

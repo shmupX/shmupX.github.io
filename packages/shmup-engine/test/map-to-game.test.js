@@ -380,6 +380,23 @@ Deno.test("boss part hp is sized onto the runtime's hit scale", () => {
     decoded.bosses[0].behavior.patterns[0].firePoints[0].spawn.hp,
     2496000,
   );
+  // The SP-gauge award. There is no record field to inherit — the 18-byte
+  // layout's only award is byte 1's score nibble, and Dezaemon 2's bomb is a
+  // stock, not a kill-fed meter — so a part pays what this import's zako pay.
+  const zakoSpgage = BUILTIN_DEFAULTS.starterEnemy.spgage;
+  // Type 4 and type 3 agree: only hp parts company between the two arms.
+  assertStrictEquals(fps[0].spawn.spgage, zakoSpgage);
+  assertStrictEquals(fps[1].spawn.spgage, zakoSpgage);
+  // An armoured part is unkillable in this runtime, but it is still stamped.
+  assertStrictEquals(fps[2].spawn.spgage, zakoSpgage);
+  // RAW. A gauge award is not a durability unit, so shotDamage never divides it
+  // the way it divides hp — no import pass touches a zako's either.
+  assertStrictEquals(fps[0].spawn.spgage, 4);
+  // The stamp does not mutate the decode.
+  assertStrictEquals(
+    decoded.bosses[0].behavior.patterns[0].firePoints[0].spawn.spgage,
+    undefined,
+  );
   assert(validateGameJson(gameJson).ok);
 });
 

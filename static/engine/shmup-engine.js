@@ -2311,6 +2311,15 @@ function sizePartHp(boss, shotDamage) {
     }
   }
 }
+function setPartSpgage(boss, defaults) {
+  const zako = defaults && defaults.starterEnemy ? defaults.starterEnemy.spgage : void 0;
+  const spgage = Number.isFinite(zako) ? zako : BUILTIN_DEFAULTS.starterEnemy.spgage;
+  for (const pattern of boss.patterns || []) {
+    for (const fp of pattern.firePoints || []) {
+      if (fp.spawn) fp.spawn.spgage = spgage;
+    }
+  }
+}
 function bytesToBase64(bytes) {
   let out = "";
   for (let i = 0; i < bytes.length; i += 3) {
@@ -2478,6 +2487,7 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
         rec.hp = Math.max(1, Math.ceil(decodedBoss.behavior.hp / (shotDamage * 256)));
         rec.score = decodedBoss.behavior.score;
         sizePartHp(rec.dezaemon.boss, shotDamage);
+        setPartSpgage(rec.dezaemon.boss, defaults);
       } else {
         rec.hp = Math.max(1, Math.ceil(BOSS_HP_TABLE[0] / (shotDamage * 256)));
       }

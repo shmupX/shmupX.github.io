@@ -215,6 +215,42 @@ function sizePartHp(boss, shotDamage) {
     }
 }
 
+// The SP-gauge award a boss part pays on death.
+//
+// Unlike score, there is NO record field to inherit. FORMAT.md's "Boss part hp"
+// section enumerates what a part DOES inherit — "So score, the **death word**,
+// the **hit attributes** (armour included), the fire interval, the bullet
+// config and the movement descriptor all come off that 18-byte record,
+// unchanged" — and no award beyond SCORE is in that list; byte 1's score nibble
+// is the record's only award field. Dezaemon 2 has no KILL-FED gauge either:
+// its bomb is a STOCK raised only by item type 5, "bomb stock +1 (cap 99)", and
+// the one gauge it does have (CHARGE, "+1/frame while held, cap 320, never
+// decays") is filled by the button, not by kills. `spgage` is the 2028-AI
+// runtime's own quantity.
+//
+// So the honest reading of "**A part is a zako.** ... the same initialiser a
+// grid-placed zako goes through" is that a part pays what THIS import's zako
+// pay. Nothing in decode/ emits spgage — NUMERIC_ENEMY_FIELDS only copies a
+// finite decoded value and there never is one — so every imported zako carries
+// the flat default off `defaults.starterEnemy`, and that one number is the
+// answer for both part types. Only hp parts company between the type-3 and
+// type-4 arms (plus, on hardware, the object class — neither is an award).
+//
+// RAW, no scaling. spgage is a 0-100 gauge quantity in the runtime's own units;
+// hp needs the `shotDamage * 256` divisor above only because the record's hp is
+// in engine damage units. No import pass touches a zako's spgage.
+function setPartSpgage(boss, defaults) {
+    const zako = defaults && defaults.starterEnemy
+        ? defaults.starterEnemy.spgage
+        : undefined;
+    const spgage = Number.isFinite(zako) ? zako : BUILTIN_DEFAULTS.starterEnemy.spgage;
+    for (const pattern of boss.patterns || []) {
+        for (const fp of pattern.firePoints || []) {
+            if (fp.spawn) fp.spawn.spgage = spgage;
+        }
+    }
+}
+
 function bytesToBase64(bytes) {
     let out = "";
     for (let i = 0; i < bytes.length; i += 3) {
@@ -533,6 +569,10 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                 rec.hp = Math.max(1, Math.ceil(decodedBoss.behavior.hp / (shotDamage * 256)));
                 rec.score = decodedBoss.behavior.score;
                 sizePartHp(rec.dezaemon.boss, shotDamage);
+                // The SP-gauge award, which is NOT a record field and so is
+                // stamped rather than decoded — see setPartSpgage. Raw gauge
+                // units, both part types, no divisor.
+                setPartSpgage(rec.dezaemon.boss, defaults);
             } else {
                 // The stage PLACES a boss but its 0x40 trailer is all zeroes —
                 // 137 records across the corpus, a slot placed and never

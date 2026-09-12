@@ -241,7 +241,20 @@ const RECORDS_PER_STAGE = BOSS_TRAILER_OFFSET / ENEMY_RECORD_SIZE;
 //
 // Score and the armour attribute come off that record for BOTH types; hp only
 // for type 3, since a type-4 turret's is overwritten from the boss table
-// before the object ever runs a frame.
+// before the object ever runs a frame. (For type 4 the boss path also forces
+// the object class to 55; for both arms it overrides the hitbox, sprite base,
+// contact damage and size class — none of which is an award.)
+//
+// There is deliberately NO SP-gauge award copied here, and there never can be.
+// FORMAT.md's "Boss part hp" section enumerates what a part inherits — "So
+// score, the **death word**, the **hit attributes** (armour included), the fire
+// interval, the bullet config and the movement descriptor all come off that
+// 18-byte record, unchanged" — and the record's only award field is byte 1's
+// SCORE nibble. Dezaemon 2 has no kill-fed gauge at all: its bomb is a STOCK
+// raised only by item type 5, "bomb stock +1 (cap 99)", and its CHARGE gauge is
+// filled by holding the button, not by kills. `spgage` is the 2028-AI runtime's
+// own quantity, so a part cannot INHERIT one; the importer stamps a part with
+// what this import's zako pay instead (map-to-game.js, setPartSpgage).
 //
 // The part record is usually NOT in the editor roster — 91% of the corpus's
 // part references name a record the stage never places — so this reads sec5
