@@ -5,10 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pixel Editor — CG Cells</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/app-icons/icon-32.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@500;700;800&display=swap" rel="stylesheet">
+  <!-- The launcher's two faces, served from this origin (static/fonts/) so the
+       page looks the same inside the packaged desktop app with no network. -->
+  <link rel="stylesheet" href="/fonts/launcher.css">
   <!-- Firebase (compat) + the one shared client config — the sprite records go
-       to the same Realtime Database spriteX and the level editor read. -->
+       to the same Realtime Database spriteX and the level editor read, and the
+       live rooms (pixelRooms/*) ride the same connection. -->
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
   <script src="/firebase-config.js"></script>
@@ -19,11 +21,13 @@
       --sx-green-dim: rgba(156,255,107,.5);
       --sx-line: rgba(140,255,110,.3);
       --sx-line-soft: rgba(140,255,110,.22);
+      --sx-line-btn: rgba(140,255,110,.4);
       --sx-yellow: #F6FF4A;
       --sx-yellow-line: rgba(246,255,74,.5);
       --sx-amber: #FFB84A;
       --sx-title: #dcffc2;
       --sx-label: #bfffa0;
+      --sx-field: rgba(8,20,10,.75);
       --sx-panel-grad: linear-gradient(180deg, rgba(28,64,34,.35), rgba(8,22,12,.6));
       --sx-dock-grad: linear-gradient(180deg, rgba(28,64,34,.45), rgba(6,18,10,.8));
       --sx-btn-bg: rgba(20,50,26,.35);
@@ -44,7 +48,7 @@
     @supports not selector(::-webkit-scrollbar) { * { scrollbar-width: thin; scrollbar-color: var(--sx-line) transparent; } }
     html, body { height: 100%; }
     body {
-      margin: 0; min-width: 960px;
+      margin: 0; overflow: hidden;
       background-color: #000;
       background-image:
         radial-gradient(ellipse 70% 55% at 42% 45%, rgba(20,90,40,.42), transparent 70%),
@@ -53,252 +57,383 @@
       color: var(--sx-green);
       font-family: 'Share Tech Mono', monospace;
     }
+    a { color: inherit; } a:hover { color: var(--sx-yellow); }
+    [hidden] { display: none !important; }
     .sx-scanlines {
       position: fixed; inset: 0; pointer-events: none; z-index: 60;
       background: repeating-linear-gradient(180deg, rgba(0,255,120,.035) 0 1px, transparent 1px 3px);
       mix-blend-mode: screen;
     }
-    .sx-app { position: relative; display: flex; flex-direction: column; height: 100vh; z-index: 1; }
+    .sx-app { position: relative; display: flex; flex-direction: column; height: 100vh; height: 100dvh; z-index: 1; min-width: 0; }
+
+    /* ---- top bar ---- */
     .sx-topbar {
-      height: 44px; display: flex; justify-content: space-between; align-items: center;
-      padding: 0 24px; flex-shrink: 0; font-size: 13px; letter-spacing: .22em; color: rgba(180,255,140,.72);
-    }
-    .sx-topbar .dot { width: 8px; height: 8px; border-radius: 50%; background: #7CFF4F; box-shadow: 0 0 10px #7CFF4F; }
-    .sx-topbar-left, .sx-topbar-right { display: flex; align-items: center; gap: 12px; }
-    .sx-header {
-      height: 64px; display: flex; align-items: center; gap: 24px; padding: 0 24px; flex-shrink: 0;
-      background: linear-gradient(90deg, rgba(124,255,79,.13), rgba(124,255,79,.02) 60%, transparent);
+      height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 12px; flex-shrink: 0;
       border-bottom: 1px solid var(--sx-line-soft);
-      clip-path: polygon(0 0, 100% 0, calc(100% - 42px) 100%, 0 100%);
+      background: linear-gradient(90deg, rgba(124,255,79,.13), rgba(124,255,79,.02) 60%, transparent);
     }
-    .sx-logo { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 26px; letter-spacing: .28em; color: var(--sx-title); text-shadow: 0 0 20px rgba(124,255,79,.45); }
-    .sx-header-info { font-size: 12px; letter-spacing: .2em; color: var(--sx-green-soft); margin-left: auto; padding-right: 60px; }
-    .sx-main { flex: 1; display: flex; gap: 16px; padding: 10px 24px 12px; min-height: 0; }
-    .sx-panel {
-      flex: 1; display: flex; flex-direction: column; min-width: 0;
-      border: 1px solid var(--sx-line); border-radius: 12px; background: var(--sx-panel-grad);
-      box-shadow: inset 0 0 30px rgba(0,60,20,.3); overflow: hidden;
+    .sx-topbar .dot { width: 8px; height: 8px; border-radius: 50%; background: #7CFF4F; box-shadow: 0 0 10px #7CFF4F; flex-shrink: 0; }
+    .sx-logo { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 15px; letter-spacing: .22em; color: var(--sx-title); text-shadow: 0 0 20px rgba(124,255,79,.45); white-space: nowrap; }
+    .sx-tag { font-size: 11px; letter-spacing: .2em; color: var(--sx-green-soft); white-space: nowrap; }
+    .sx-share { flex: 1; display: flex; align-items: center; gap: 6px; max-width: 600px; margin: 0 auto; min-width: 0; }
+    .sx-share input { flex: 1; letter-spacing: .04em; text-overflow: ellipsis; }
+    .sx-topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .sx-peers { display: flex; align-items: center; }
+    .sx-peer {
+      width: 26px; height: 26px; border-radius: 50%; margin-left: -6px; display: flex; align-items: center; justify-content: center;
+      font-size: 10px; letter-spacing: .04em; font-weight: 700; color: #0a120b;
     }
-    .sx-panel-head {
-      min-height: 40px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding: 4px 16px;
-      border-bottom: 1px solid rgba(140,255,110,.2); font-size: 12px; letter-spacing: .18em; color: var(--sx-green-soft); flex-shrink: 0;
-    }
-    .sx-panel-head .dim { margin-left: auto; color: rgba(156,255,107,.45); }
-    .sx-toolbar {
-      display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 14px;
-      border-bottom: 1px solid rgba(140,255,110,.2); flex-shrink: 0;
-    }
-    .sx-toolbar .sep { width: 1px; height: 22px; background: rgba(140,255,110,.25); margin: 0 4px; }
-    .sx-workspace { position: relative; flex: 1; overflow: auto; min-height: 240px; background: var(--sx-checker); }
-    .px-stage { position: relative; display: inline-block; margin: 24px; }
-    canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
-    #pxCanvas { background: repeating-conic-gradient(#1e2f21 0 25%, #0b1510 0 50%) 0 0/32px 32px; box-shadow: 0 0 0 1px rgba(140,255,110,.35), 0 0 24px rgba(0,0,0,.6); }
-    #pxOverlay { position: absolute; left: 0; top: 0; cursor: crosshair; touch-action: none; }
-    .sx-workspace-wrap { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 240px; }
-    .sx-zoom-chip {
-      position: absolute; left: 12px; bottom: 10px; z-index: 3; display: inline-flex; align-items: center; gap: 12px;
-      font-size: 12px; letter-spacing: .16em; color: rgba(156,255,107,.8);
-      border: 1px solid rgba(140,255,110,.4); border-radius: 7px; padding: 4px 12px; background: rgba(8,20,10,.8);
-      pointer-events: none;
-    }
-    .btn {
-      cursor: pointer; font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: .1em;
-      color: var(--sx-title); border: 1px solid rgba(140,255,110,.4); border-radius: 8px; padding: 6px 10px; background: var(--sx-btn-bg);
-    }
-    .btn:hover:not(:disabled) { border-color: rgba(246,255,74,.6); color: var(--sx-yellow); box-shadow: 0 0 14px rgba(246,255,74,.15); }
-    .btn:disabled { opacity: .35; cursor: not-allowed; }
-    .btn.primary { border-color: var(--sx-yellow-line); background: rgba(52,56,6,.35); color: #f4ff9e; box-shadow: 0 0 18px rgba(246,255,74,.15); }
-    .btn.active { background: linear-gradient(180deg, #fbff8a, #F6FF4A 45%, #c3cf07); border-color: #fcffb0; color: #141602; }
-    .btn.danger:hover:not(:disabled) { border-color: rgba(255,90,90,.7); color: #ff9a9a; }
-    .btn kbd { font-family: inherit; font-size: 10px; opacity: .6; margin-left: 4px; }
+    .sx-net { font-size: 11px; letter-spacing: .18em; color: rgba(180,255,140,.72); white-space: nowrap; }
+
+    /* ---- main: two docks around the canvas; on a narrow window they become
+            drawers over it (see BREAKPOINT in pixel-editor.js) ---- */
+    .sx-main { flex: 1; display: flex; gap: 12px; padding: 10px 12px; min-height: 0; }
+    .sx-shell { position: relative; height: 100%; flex-shrink: 0; z-index: 40; transition: transform .25s ease; }
+    .sx-shell.left { width: 280px; }
+    .sx-shell.right { width: 300px; }
+    .sx-app.narrow .sx-shell { position: fixed; top: 0; bottom: 0; height: auto; padding: 8px; background: rgba(4,12,6,.94); backdrop-filter: blur(6px); }
+    .sx-app.narrow .sx-shell.left { left: 0; width: clamp(240px, calc(100vw - 44px), 296px); transform: translateX(-105%); }
+    .sx-app.narrow .sx-shell.right { right: 0; width: clamp(240px, calc(100vw - 44px), 316px); transform: translateX(105%); }
+    .sx-app.narrow.left-open .sx-shell.left, .sx-app.narrow.right-open .sx-shell.right { transform: translateX(0); box-shadow: 0 0 40px rgba(0,0,0,.6); }
+    .sx-scrim { position: fixed; inset: 0; z-index: 35; background: rgba(0,0,0,.55); }
+
     .sx-dock {
-      width: 400px; flex-shrink: 0; display: flex; flex-direction: column;
+      width: 100%; height: 100%; display: flex; flex-direction: column;
       border: 1px solid var(--sx-line); border-radius: 12px; background: var(--sx-dock-grad);
       box-shadow: inset 0 0 30px rgba(0,60,20,.3); overflow: hidden;
     }
     .sx-dock-head {
-      height: 48px; display: flex; align-items: center; gap: 14px; padding: 0 18px; flex-shrink: 0;
+      height: 48px; display: flex; align-items: center; gap: 14px; padding: 0 16px; flex-shrink: 0;
       border-bottom: 1px solid var(--sx-line-soft); background: linear-gradient(90deg, rgba(124,255,79,.12), transparent);
     }
-    .sx-dock-title { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 16px; letter-spacing: .22em; color: var(--sx-title); }
-    .sx-dock-count { margin-left: auto; font-size: 12px; letter-spacing: .16em; color: var(--sx-green-soft); }
-    .sx-dock-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; flex: 1; min-height: 0; }
+    .sx-dock-title { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 15px; letter-spacing: .22em; color: var(--sx-title); }
+    .sx-dock-meta { margin-left: auto; font-size: 11px; letter-spacing: .16em; color: var(--sx-green-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sx-dock-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; overflow-x: hidden; flex: 1; min-height: 0; }
     .sx-dock-section {
       margin: 2px 0 0; border-top: 1px dashed rgba(140,255,110,.25); padding-top: 10px;
       display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; letter-spacing: .2em; color: rgba(156,255,107,.55);
     }
-    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .sx-dock-section.first { margin: 0; border-top: 0; padding-top: 0; }
+    .sx-dock-section .count { margin-left: auto; font-size: 11px; color: rgba(156,255,107,.45); }
+    .grid6 { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; align-items: center; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .zoom-label {
+      grid-column: span 2; height: 44px; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; letter-spacing: .14em; color: rgba(156,255,107,.8);
+      border: 1px solid rgba(140,255,110,.25); border-radius: 8px; background: rgba(8,20,10,.5);
+    }
+    .row { display: flex; gap: 8px; align-items: center; }
     .subtitle { font-family: 'Orbitron', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: .18em; color: var(--sx-green-soft); }
-    input[type="text"], input[type="number"], select {
-      padding: 6px 10px; border: 1px solid rgba(140,255,110,.4); background: rgba(8,20,10,.75); color: var(--sx-label);
-      border-radius: 7px; font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: .08em; min-width: 0;
-    }
-    input:focus, select:focus { outline: none; border-color: rgba(246,255,74,.6); }
-    select option { background: #0a120b; color: var(--sx-label); }
-    input[type="color"] { width: 34px; height: 30px; padding: 0; border: 1px solid rgba(140,255,110,.4); border-radius: 6px; background: rgba(8,20,10,.75); cursor: pointer; }
-    input[type="file"] { display: none; }
-    .sx-note { min-height: 16px; font-size: 11px; letter-spacing: .1em; color: var(--sx-yellow); }
     .sx-hint { font-size: 11px; letter-spacing: .08em; color: var(--sx-green-dim); line-height: 1.5; }
-    /* palette */
-    .pal-grid { display: grid; grid-template-columns: repeat(16, 1fr); gap: 2px; padding: 6px; border: 1px solid var(--sx-line); border-radius: 10px; background: rgba(6,16,8,.5); }
-    .pal-swatch {
-      aspect-ratio: 1; border: 1px solid rgba(0,0,0,.6); border-radius: 2px; cursor: pointer; padding: 0; position: relative;
-      background: var(--c, #000);
+    .sx-note { min-height: 16px; font-size: 11px; letter-spacing: .1em; color: var(--sx-yellow); }
+    .sx-note.warn { color: #ff9a9a; }
+
+    /* ---- buttons ---- */
+    .btn {
+      cursor: pointer; font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: .1em; white-space: nowrap;
+      color: var(--sx-title); border: 1px solid var(--sx-line-btn); border-radius: 8px; padding: 6px 10px; background: var(--sx-btn-bg);
     }
+    .btn:hover:not(:disabled) { border-color: rgba(246,255,74,.6); color: var(--sx-yellow); box-shadow: 0 0 14px rgba(246,255,74,.15); }
+    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn.primary { border-color: var(--sx-yellow-line); background: rgba(52,56,6,.35); color: #f4ff9e; box-shadow: 0 0 18px rgba(246,255,74,.15); }
+    .btn.primary:hover:not(:disabled) { border-color: rgba(246,255,74,.9); color: var(--sx-yellow); }
+    .btn.active { background: linear-gradient(180deg, #fbff8a, #F6FF4A 45%, #c3cf07); border-color: #fcffb0; color: #141602; }
+    .btn.active:hover:not(:disabled) { border-color: #fcffb0; color: #141602; }
+    .btn.tool.active { box-shadow: 0 0 14px rgba(246,255,74,.25); }
+    /* GRID / CELLS / the shortcuts dot only glow on hover; their colours say on/off. */
+    .btn.toggle:not(.active):hover:not(:disabled) { border-color: var(--sx-line-btn); color: var(--sx-title); }
+    .btn.danger:hover:not(:disabled) { border-color: rgba(255,90,90,.7); color: #ff9a9a; box-shadow: none; }
+    .btn.sq { height: 44px; padding: 0; display: flex; align-items: center; justify-content: center; font-size: 16px; letter-spacing: 0; }
+    .btn.sq.tool { font-size: 17px; }
+    .btn.sq36 { width: 36px; height: 36px; padding: 0; font-size: 14px; letter-spacing: 0; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
+    .btn.bar { height: 36px; padding: 0 10px; font-size: 11px; letter-spacing: .14em; align-items: center; justify-content: center; }
+    .btn.h36 { height: 36px; }
+    .btn.opt { height: 36px; padding: 0 8px; }
+    .btn.wide { padding: 8px 6px; font-size: 11px; letter-spacing: .08em; }
+    .btn.round { width: 30px; height: 30px; padding: 0; border-radius: 50%; font-size: 14px; letter-spacing: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .btn.round:hover:not(:disabled) { box-shadow: 0 0 14px rgba(246,255,74,.2); }
+
+    /* ---- fields ---- */
+    input[type="text"], input[type="number"], select {
+      padding: 6px 10px; border: 1px solid var(--sx-line-btn); background: var(--sx-field); color: var(--sx-label);
+      border-radius: 7px; font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: .08em; min-width: 0; outline: none;
+    }
+    input:focus, select:focus { border-color: rgba(246,255,74,.6); }
+    select option { background: #0a120b; color: var(--sx-label); }
+    input[type="color"] { width: 34px; height: 30px; padding: 0; border: 1px solid var(--sx-line-btn); border-radius: 6px; background: var(--sx-field); cursor: pointer; }
+    input[type="file"] { display: none; }
+    #paletteSource { margin-left: auto; max-width: 170px; padding: 6px 8px; font-size: 11px; letter-spacing: .06em; }
+    #animFps { width: 52px; padding: 6px 8px; letter-spacing: 0; }
+    #selfName { flex: 1; padding: 4px 8px; border-color: rgba(140,255,110,.25); background: rgba(8,20,10,.6); border-radius: 6px; font-size: 11px; text-transform: uppercase; }
+
+    /* ---- canvas panel ---- */
+    .sx-panel {
+      flex: 1; min-width: 0; display: flex; flex-direction: column;
+      border: 1px solid var(--sx-line); border-radius: 12px; background: var(--sx-panel-grad);
+      box-shadow: inset 0 0 30px rgba(0,60,20,.3); overflow: hidden;
+    }
+    .sx-panel-head {
+      min-height: 40px; display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; padding: 4px 16px;
+      border-bottom: 1px solid rgba(140,255,110,.2); font-size: 12px; letter-spacing: .18em; color: var(--sx-green-soft); flex-shrink: 0; text-align: center;
+    }
+    .sx-panel-head .title { font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: .2em; color: var(--sx-title); }
+    .sx-panel-head .dim { color: rgba(156,255,107,.45); }
+    .sx-workspace-wrap { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 200px; }
+    .sx-workspace { position: relative; flex: 1; overflow: auto; min-height: 200px; display: flex; background: var(--sx-checker); }
+    .px-stage { position: relative; margin: auto; padding: 24px; flex-shrink: 0; }
+    canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+    #pxCanvas { display: block; background: repeating-conic-gradient(#1e2f21 0 25%, #0b1510 0 50%) 0 0/32px 32px; box-shadow: 0 0 0 1px rgba(140,255,110,.35), 0 0 24px rgba(0,0,0,.6); }
+    #pxOverlay { position: absolute; left: 24px; top: 24px; display: block; cursor: crosshair; touch-action: none; }
+    .sx-info-chip {
+      position: absolute; left: 12px; bottom: 10px; z-index: 3; display: inline-flex; align-items: center; gap: 12px;
+      font-size: 12px; letter-spacing: .16em; color: rgba(156,255,107,.8);
+      border: 1px solid var(--sx-line-btn); border-radius: 7px; padding: 4px 12px; background: rgba(8,20,10,.8);
+      pointer-events: none; white-space: nowrap;
+    }
+    /* frames strip */
+    .frame-strip { display: flex; gap: 8px; align-items: center; padding: 8px 14px; border-top: 1px solid rgba(140,255,110,.2); flex-shrink: 0; overflow-x: auto; }
+    .frame-strip .subtitle { white-space: nowrap; }
+    .frame-strip label { font-size: 11px; letter-spacing: .1em; color: var(--sx-green-dim); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+    #frameStrip { display: flex; gap: 8px; align-items: center; }
+    .frame-thumb { position: relative; border: 2px solid rgba(140,255,110,.25); border-radius: 6px; padding: 3px; background: var(--sx-checker-sm); cursor: pointer; flex-shrink: 0; }
+    .frame-thumb.active { border-color: var(--sx-yellow); box-shadow: 0 0 12px rgba(246,255,74,.35); }
+    .frame-thumb canvas { display: block; width: 48px; height: 48px; object-fit: contain; }
+    .frame-thumb span { position: absolute; left: 3px; top: 1px; font-size: 9px; color: var(--sx-green-dim); }
+    .anim-box { width: 56px; height: 56px; border: 1px solid var(--sx-line); border-radius: 6px; background: var(--sx-checker-sm); display: flex; align-items: center; justify-content: center; margin-left: auto; flex-shrink: 0; }
+    .anim-box canvas { max-width: 100%; max-height: 100%; }
+
+    /* ---- palette ---- */
+    .pal-grid { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 2px; padding: 6px; border: 1px solid var(--sx-line); border-radius: 10px; background: rgba(6,16,8,.5); }
+    .pal-swatch { aspect-ratio: 1; border: 1px solid rgba(0,0,0,.6); border-radius: 2px; cursor: pointer; padding: 0; position: relative; background: var(--c, #000); }
     .pal-swatch.transparent { background: repeating-conic-gradient(#333 0 25%, #111 0 50%) 0 0/8px 8px; }
     .pal-swatch.ui { opacity: .45; cursor: not-allowed; }
     .pal-swatch.ui::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(135deg, transparent 0 3px, rgba(0,0,0,.55) 3px 5px); }
     .pal-swatch.user { box-shadow: inset 0 0 0 1px rgba(255,184,74,.35); }
-    .pal-swatch.selected { outline: 2px solid var(--sx-yellow); outline-offset: 1px; z-index: 1; box-shadow: 0 0 10px rgba(246,255,74,.6); }
     .pal-swatch.secondary { outline: 2px dashed rgba(156,255,107,.8); outline-offset: 1px; }
+    .pal-swatch.selected { outline: 2px solid var(--sx-yellow); outline-offset: 1px; z-index: 1; box-shadow: 0 0 10px rgba(246,255,74,.6); }
     .pal-band { grid-column: 1 / -1; font-size: 9px; letter-spacing: .2em; color: var(--sx-green-dim); padding: 4px 2px 1px; }
     .pal-band.first { padding-top: 0; }
-    .color-info { display: flex; align-items: center; gap: 10px; font-size: 11px; letter-spacing: .1em; color: var(--sx-label); }
-    .color-chip { width: 34px; height: 30px; border-radius: 6px; border: 1px solid var(--sx-line); background: var(--c, #000); }
-    /* frames strip */
-    .frame-strip { display: flex; gap: 8px; align-items: center; padding: 8px 14px; border-top: 1px solid rgba(140,255,110,.2); flex-shrink: 0; overflow-x: auto; }
-    .frame-thumb {
-      position: relative; border: 2px solid rgba(140,255,110,.25); border-radius: 6px; padding: 3px; background: var(--sx-checker-sm); cursor: pointer; flex-shrink: 0;
-    }
-    .frame-thumb.active { border-color: var(--sx-yellow); box-shadow: 0 0 12px rgba(246,255,74,.35); }
-    .frame-thumb canvas { width: 48px; height: 48px; object-fit: contain; }
-    .frame-thumb span { position: absolute; left: 3px; top: 1px; font-size: 9px; color: var(--sx-green-dim); }
-    .anim-box { width: 56px; height: 56px; border: 1px solid var(--sx-line); border-radius: 6px; background: var(--sx-checker-sm); display: flex; align-items: center; justify-content: center; margin-left: auto; flex-shrink: 0; }
-    .anim-box canvas { max-width: 100%; max-height: 100%; }
-    /* cloud list */
-    .cloud-list { display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow-y: auto; border: 1px solid var(--sx-line); border-radius: 10px; padding: 6px; background: rgba(6,16,8,.4); }
+    .color-info { display: flex; align-items: center; gap: 10px; font-size: 11px; letter-spacing: .1em; color: var(--sx-label); flex-wrap: wrap; }
+    .color-info .text { flex: 1; min-width: 0; }
+    .color-chip { width: 34px; height: 30px; border-radius: 6px; border: 1px solid var(--sx-line); background: var(--c, #000); flex-shrink: 0; }
+    .color-chip.transparent { background: repeating-conic-gradient(#333 0 25%, #111 0 50%) 0 0/8px 8px; }
+    #userColorWrap { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+    #userColorWrap span { font-size: 10px; letter-spacing: .1em; }
+
+    /* ---- room ---- */
+    .room-code { flex: 1; padding: 6px 10px; border: 1px solid var(--sx-line-btn); border-radius: 7px; background: var(--sx-field); font-size: 14px; letter-spacing: .3em; color: var(--sx-yellow); text-align: center; white-space: nowrap; }
+    .roster { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; border: 1px solid var(--sx-line); border-radius: 10px; padding: 6px; background: rgba(6,16,8,.4); }
+    .roster-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; font-size: 11px; letter-spacing: .06em; color: var(--sx-label); }
+    .roster-row.self { padding: 2px 6px; }
+    .roster-row .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .roster-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .roster-row .meta { font-size: 10px; letter-spacing: .14em; color: var(--sx-green-dim); }
+    .roster-alone { padding: 4px 6px; font-size: 10px; letter-spacing: .14em; color: rgba(156,255,107,.45); }
+
+    /* ---- cloud list ---- */
+    .cloud-list { display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow-y: auto; flex-shrink: 0; border: 1px solid var(--sx-line); border-radius: 10px; padding: 6px; background: rgba(6,16,8,.4); }
     .cloud-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 11px; letter-spacing: .06em; color: var(--sx-label); border: 1px solid transparent; }
     .cloud-row:hover { border-color: rgba(246,255,74,.5); }
     .cloud-row.active { border-color: var(--sx-yellow); color: var(--sx-yellow); }
-    .cloud-row img { width: 24px; height: 24px; object-fit: contain; image-rendering: pixelated; background: var(--sx-checker-sm); border-radius: 3px; }
-    .cloud-row .meta { margin-left: auto; color: var(--sx-green-dim); font-size: 10px; }
+    .cloud-row img { width: 24px; height: 24px; object-fit: contain; image-rendering: pixelated; background: #07130a; border-radius: 3px; flex-shrink: 0; }
+    .cloud-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cloud-row .meta { color: var(--sx-green-dim); font-size: 10px; white-space: nowrap; }
     .sx-empty-hint { border: 1px dashed var(--sx-line); border-radius: 10px; padding: 14px; text-align: center; font-size: 11px; letter-spacing: .14em; color: var(--sx-green-dim); }
+
+    /* ---- footer + shortcuts ---- */
     .sx-footer {
-      height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 24px; padding: 0 26px;
+      height: 38px; flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 0 8px 0 16px;
       border-top: 1px solid rgba(140,255,110,.18); background: linear-gradient(180deg, transparent, rgba(6,16,8,.8));
       font-size: 11px; letter-spacing: .16em; color: rgba(156,255,107,.55);
     }
-    .sx-status { margin-left: auto; color: rgba(156,255,107,.75); }
-    .sx-footer kbd { border: 1px solid rgba(160,255,120,.4); border-radius: 4px; padding: 1px 5px; font-family: inherit; font-size: 10px; color: #eaffdd; margin-right: 4px; }
+    .sx-status { flex: 1; min-width: 0; color: rgba(156,255,107,.75); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sx-room-label { white-space: nowrap; }
+    .sx-shortcuts {
+      position: absolute; left: 50%; bottom: 48px; transform: translateX(-50%); z-index: 30; width: max-content; max-width: calc(100% - 24px);
+      border: 1px solid var(--sx-line-btn); border-radius: 10px; background: rgba(8,20,10,.95); padding: 12px 16px;
+      display: flex; flex-wrap: wrap; gap: 10px 22px; font-size: 11px; letter-spacing: .16em; color: rgba(156,255,107,.7); box-shadow: 0 0 30px rgba(0,0,0,.7);
+    }
+    .sx-shortcuts span { white-space: nowrap; }
+    .sx-shortcuts .dim { color: rgba(156,255,107,.45); }
+    kbd { border: 1px solid rgba(160,255,120,.4); border-radius: 4px; padding: 1px 5px; font-family: inherit; font-size: 10px; color: #eaffdd; margin-right: 4px; }
+
+    /* Wide vs narrow — the class is set from the window width by the script;
+       an iframe (the CMG Desktop) gets the same treatment as a small window. */
+    .narrow-only { display: none !important; }
+    .sx-app.narrow .narrow-only { display: inline-flex !important; }
+    .sx-app.narrow .wide-only { display: none !important; }
   </style>
 </head>
 <body>
   <div class="sx-scanlines"></div>
-  <div class="sx-app">
+  <div class="sx-app" id="app">
+
     <div class="sx-topbar">
-      <div class="sx-topbar-left"><span class="dot"></span><span>PIXEL EDITOR // CG CELLS</span></div>
-      <div class="sx-topbar-right">
-        <span id="cloudState">RTDB · pixelSprites/*</span>
-        <a href="/palette.png" target="_blank" rel="noopener" style="color:inherit">PALETTE.PNG ↗</a>
+      <button class="btn bar narrow-only" id="btnToolsDrawer" title="Tools &amp; palette">TOOLS</button>
+      <span class="dot"></span>
+      <span class="sx-logo">PIXEL EDITOR</span>
+      <span class="sx-tag wide-only">// CG CELLS</span>
+      <div class="sx-share wide-only">
+        <input id="shareUrl" type="text" readonly title="Share this link — everyone on it draws the same sprite live">
+        <button class="btn" id="btnCopyTop" title="Copy the room link">COPY</button>
       </div>
-    </div>
-    <div class="sx-header">
-      <div class="sx-logo">PIXEL EDITOR</div>
-      <div class="sx-header-info">16×16 CELLS · (PALETTE&lt;&lt;4)|COLOUR BYTES · SAVE-WRITER READY</div>
+      <div class="sx-topbar-right">
+        <div class="sx-peers" id="peers" title=""></div>
+        <span class="sx-net wide-only" id="netLabel">RTDB · CONNECTING…</span>
+        <button class="btn bar narrow-only" id="btnSpriteDrawer" title="Sprite, room &amp; cloud">SPRITE</button>
+      </div>
     </div>
 
     <div class="sx-main">
+
+      <div class="sx-shell left" id="leftShell">
+        <div class="sx-dock">
+          <div class="sx-dock-head">
+            <span class="sx-dock-title">TOOLS</span>
+            <span class="sx-dock-meta" id="toolLabel">PENCIL</span>
+            <button class="btn sq36 danger narrow-only" id="btnCloseLeft" title="Close">✕</button>
+          </div>
+          <div class="sx-dock-body">
+            <div class="grid6">
+              <button class="btn sq tool active" data-tool="pencil" title="Pencil (B)">✎</button>
+              <button class="btn sq tool" data-tool="eraser" title="Eraser — index 0, transparent (E)">◻</button>
+              <button class="btn sq tool" data-tool="fill" title="Flood fill (G)">▣</button>
+              <button class="btn sq tool" data-tool="line" title="Line (L)">╱</button>
+              <button class="btn sq tool" data-tool="rect" title="Rectangle outline (R)">▭</button>
+              <button class="btn sq tool" data-tool="pick" title="Colour picker (I)">⌖</button>
+            </div>
+            <div class="grid6">
+              <button class="btn sq" id="btnFlipH" title="Flip horizontally (H)">⇋</button>
+              <button class="btn sq" id="btnFlipV" title="Flip vertically (V)">⇅</button>
+              <button class="btn sq" id="btnShiftL" title="Shift left (←)">←</button>
+              <button class="btn sq" id="btnShiftR" title="Shift right (→)">→</button>
+              <button class="btn sq" id="btnShiftU" title="Shift up (↑)">↑</button>
+              <button class="btn sq" id="btnShiftD" title="Shift down (↓)">↓</button>
+            </div>
+            <div class="grid6">
+              <button class="btn sq" id="btnUndo" title="Undo your last stroke (Ctrl+Z)" disabled>↶</button>
+              <button class="btn sq" id="btnRedo" title="Redo (Ctrl+Y)" disabled>↷</button>
+              <button class="btn sq" id="btnZoomOut" title="Zoom out ([)">−</button>
+              <span class="zoom-label" id="zoomLabel" title="Zoom">16×</span>
+              <button class="btn sq" id="btnZoomIn" title="Zoom in (])">+</button>
+            </div>
+            <div class="grid3">
+              <button class="btn opt toggle active" id="btnGrid" title="Pixel grid">GRID</button>
+              <button class="btn opt toggle active" id="btnCells" title="16×16 cell boundaries">CELLS</button>
+              <button class="btn opt danger" id="btnClear" title="Clear this frame">CLEAR</button>
+            </div>
+
+            <div class="sx-dock-section"><span>PALETTE</span>
+              <select id="paletteSource"></select>
+            </div>
+            <div class="pal-grid" id="paletteGrid"></div>
+            <div class="color-info">
+              <div class="color-chip" id="colorChip"></div>
+              <div class="text" id="colorInfo">IDX 1 · SYSTEM 0/1</div>
+              <label id="userColorWrap" hidden title="Mix this user colour (quantised to 15-bit)">
+                <input id="userColor" type="color" value="#000000"><span>MIX</span>
+              </label>
+            </div>
+            <div class="sx-hint">Rows 0–11 are the 192 system colours every save shares; rows 12–15 are the 64 user colours you may mix; the last two rows are the Saturn editor's own UI colours and cannot be painted into a cell. Right-click a swatch for the secondary (X swaps).</div>
+          </div>
+        </div>
+      </div>
+
       <div class="sx-panel">
         <div class="sx-panel-head">
-          <span>CANVAS</span>
-          <span id="sizeChip">16×16 · 1 CELL</span>
-          <span class="dim">LEFT — PAINT · RIGHT — ERASE · WHEEL — ZOOM</span>
-        </div>
-        <div class="sx-toolbar">
-          <button class="btn tool active" data-tool="pencil" title="Pencil (B)">✎ PENCIL<kbd>B</kbd></button>
-          <button class="btn tool" data-tool="eraser" title="Eraser — index 0, transparent (E)">◻ ERASE<kbd>E</kbd></button>
-          <button class="btn tool" data-tool="fill" title="Flood fill (G)">▣ FILL<kbd>G</kbd></button>
-          <button class="btn tool" data-tool="line" title="Line (L)">╱ LINE<kbd>L</kbd></button>
-          <button class="btn tool" data-tool="rect" title="Rectangle outline (R)">▭ RECT<kbd>R</kbd></button>
-          <button class="btn tool" data-tool="pick" title="Colour picker (I)">⌖ PICK<kbd>I</kbd></button>
-          <span class="sep"></span>
-          <button class="btn" id="btnFlipH" title="Flip horizontally (H)">⇋ H</button>
-          <button class="btn" id="btnFlipV" title="Flip vertically (V)">⇅ V</button>
-          <button class="btn" id="btnShiftL" title="Shift left (←)">←</button>
-          <button class="btn" id="btnShiftR" title="Shift right (→)">→</button>
-          <button class="btn" id="btnShiftU" title="Shift up (↑)">↑</button>
-          <button class="btn" id="btnShiftD" title="Shift down (↓)">↓</button>
-          <span class="sep"></span>
-          <button class="btn" id="btnUndo" title="Undo (Ctrl+Z)">↶ UNDO</button>
-          <button class="btn" id="btnRedo" title="Redo (Ctrl+Y)">↷ REDO</button>
-          <span class="sep"></span>
-          <button class="btn active" id="btnGrid" title="Pixel grid">GRID</button>
-          <button class="btn active" id="btnCells" title="16×16 cell boundaries">CELLS</button>
-          <button class="btn" id="btnZoomOut" title="Zoom out ([)">−</button>
-          <button class="btn" id="btnZoomIn" title="Zoom in (])">+</button>
-          <button class="btn" id="btnClear" title="Clear this frame">CLEAR</button>
+          <span class="title" id="titleName">UNTITLED SPRITE</span>
+          <span id="sizeChip">16×16 · 1 CELL · FRAME 1/1</span>
+          <span class="dim" id="dirtyChip">—</span>
         </div>
         <div class="sx-workspace-wrap">
           <div class="sx-workspace" id="workspace">
             <div class="px-stage" id="stage">
               <canvas id="pxCanvas" width="16" height="16"></canvas>
-              <canvas id="pxOverlay" width="16" height="16"></canvas>
+              <canvas id="pxOverlay" width="256" height="256"></canvas>
             </div>
           </div>
-          <div class="sx-zoom-chip" id="pxInfo">0,0 · IDX 1</div>
+          <div class="sx-info-chip" id="pxInfo">0,0 · IDX 1</div>
         </div>
         <div class="frame-strip">
           <span class="subtitle">FRAMES</span>
-          <div id="frameStrip" style="display:flex;gap:8px;align-items:center"></div>
-          <button class="btn" id="btnFrameAdd" title="Add a frame">+</button>
-          <button class="btn" id="btnFrameDup" title="Duplicate this frame">⧉</button>
-          <button class="btn danger" id="btnFrameDel" title="Delete this frame">✕</button>
-          <label style="font-size:11px;letter-spacing:.1em;color:var(--sx-green-dim)">FPS <input id="animFps" type="number" min="1" max="30" value="6" style="width:52px"></label>
-          <div class="anim-box"><canvas id="animPreview" width="16" height="16"></canvas></div>
+          <div id="frameStrip"></div>
+          <button class="btn sq36" id="btnFrameAdd" title="Add a frame">+</button>
+          <button class="btn sq36" id="btnFrameDup" title="Duplicate this frame">⧉</button>
+          <button class="btn sq36 danger" id="btnFrameDel" title="Delete this frame" disabled>✕</button>
+          <label>FPS <input id="animFps" type="number" min="1" max="30" value="6"></label>
+          <div class="anim-box" title="Animation preview"><canvas id="animPreview" width="16" height="16"></canvas></div>
         </div>
       </div>
 
-      <div class="sx-dock">
-        <div class="sx-dock-head">
-          <span class="sx-dock-title">SPRITE</span>
-          <span class="sx-dock-count" id="dirtyChip">—</span>
-        </div>
-        <div class="sx-dock-body">
-          <div class="row">
-            <input id="spriteName" type="text" placeholder="SPRITE NAME (e.g. zako_bee)" style="flex:1">
+      <div class="sx-shell right" id="rightShell">
+        <div class="sx-dock">
+          <div class="sx-dock-head">
+            <span class="sx-dock-title">SPRITE</span>
+            <span class="sx-dock-meta" id="dirtyChipDock">—</span>
+            <button class="btn sq36 danger narrow-only" id="btnCloseRight" title="Close">✕</button>
           </div>
-          <div class="row">
-            <label class="subtitle" for="sizeSelect">SIZE</label>
-            <select id="sizeSelect" style="flex:1"></select>
-            <button class="btn" id="btnNew" title="New sprite at this size">NEW</button>
-          </div>
-          <div class="sx-hint">Zako frame sizes are the sprite bank's own (records 0–59). Every size is whole 16×16 cells, so a sprite drops straight into a CG page.</div>
+          <div class="sx-dock-body">
+            <div class="sx-dock-section first"><span>ROOM</span><span class="count" id="roomState">CONNECTING</span></div>
+            <div class="row">
+              <span class="room-code" id="roomId" title="Room code">——————</span>
+              <button class="btn h36" id="btnCopyLink" title="Copy the room link">COPY LINK</button>
+              <button class="btn h36" id="btnFork" title="Start a fresh room with a copy of this sprite">FORK</button>
+            </div>
+            <div class="roster">
+              <div class="roster-row self">
+                <span class="dot" id="selfDot"></span>
+                <input id="selfName" type="text" maxlength="12" placeholder="YOUR NAME" title="Your name on other people's canvases">
+                <span class="meta">YOU</span>
+              </div>
+              <div id="roster"></div>
+              <div class="roster-alone" id="alone">NOBODY ELSE YET — SEND THE LINK</div>
+            </div>
+            <div class="sx-hint">Everyone on the link draws this sprite live; the last pixel written wins. Undo only rewinds your own strokes.</div>
 
-          <div class="sx-dock-section"><span>PALETTE</span>
-            <select id="paletteSource" style="margin-left:auto;max-width:220px"></select>
-          </div>
-          <div class="pal-grid" id="paletteGrid"></div>
-          <div class="color-info">
-            <div class="color-chip" id="colorChip"></div>
-            <div id="colorInfo">IDX 1 · SYSTEM 0/1</div>
-            <label id="userColorWrap" style="margin-left:auto;display:none;align-items:center;gap:6px" title="Mix this user colour (quantised to 15-bit)">
-              <input id="userColor" type="color" value="#000000"> <span style="font-size:10px;letter-spacing:.1em">MIX</span>
-            </label>
-          </div>
-          <div class="sx-hint">Rows 0–11 are the 192 system colours every save shares; rows 12–15 are the 64 user colours you may mix; the last two rows are the Saturn editor's own UI colours and cannot be painted into a cell.</div>
+            <div class="sx-dock-section"><span>SPRITE</span></div>
+            <div class="row"><input id="spriteName" type="text" placeholder="SPRITE NAME (e.g. zako_bee)" style="flex:1"></div>
+            <div class="row">
+              <label class="subtitle" for="sizeSelect">SIZE</label>
+              <select id="sizeSelect" style="flex:1"></select>
+              <button class="btn h36" id="btnNew" title="New sprite at this size, in a fresh room">NEW</button>
+            </div>
+            <div class="sx-hint">Zako frame sizes are the sprite bank's own (records 0–59). Every size is whole 16×16 cells, so a sprite drops straight into a CG page.</div>
 
-          <div class="sx-dock-section"><span>CLOUD — pixelSprites/*</span>
-            <button class="btn" id="btnCloudRefresh" style="margin-left:auto" title="Reload the list">↻</button>
+            <div class="sx-dock-section"><span>CLOUD — pixelSprites/*</span><span class="count" id="cloudCount"></span></div>
+            <div class="cloud-list" id="cloudList">
+              <div id="cloudRows" style="display:contents"></div>
+              <div class="sx-empty-hint" id="cloudEmpty">LOADING…</div>
+            </div>
+            <div class="grid2">
+              <button class="btn wide primary" id="btnCloudSave" title="Save to pixelSprites/{name} and sprites/{name}">☁ SAVE TO CLOUD</button>
+              <button class="btn wide danger" id="btnCloudDelete" disabled title="Delete the loaded cloud record">DELETE</button>
+            </div>
+            <div class="grid2">
+              <button class="btn wide" id="btnImport" title="Import a PNG — quantised to the palette, padded to whole cells">⬆ IMPORT PNG</button>
+              <button class="btn wide" id="btnDownload" title="Download the frame strip as a PNG">⬇ PNG STRIP</button>
+            </div>
+            <input id="fileImport" type="file" accept="image/png,image/gif,image/webp">
+            <div class="sx-note" id="note"></div>
           </div>
-          <div class="cloud-list" id="cloudList"><div class="sx-empty-hint">LOADING…</div></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <button class="btn primary" id="btnCloudSave" title="Save to pixelSprites/{name} and sprites/{name}">☁ SAVE TO CLOUD</button>
-            <button class="btn danger" id="btnCloudDelete" disabled title="Delete the loaded cloud record">DELETE</button>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <label class="btn" style="text-align:center" title="Import a PNG — quantised to the palette, padded to whole cells">⬆ IMPORT PNG<input id="fileImport" type="file" accept="image/png,image/gif,image/webp"></label>
-            <button class="btn" id="btnDownload" title="Download the frame strip as a PNG">⬇ PNG STRIP</button>
-          </div>
-          <div class="sx-note" id="note"></div>
         </div>
       </div>
     </div>
 
     <div class="sx-footer">
-      <span><kbd>B</kbd>PENCIL <kbd>E</kbd>ERASE <kbd>G</kbd>FILL <kbd>L</kbd>LINE <kbd>R</kbd>RECT <kbd>I</kbd>PICK</span>
-      <span><kbd>H</kbd><kbd>V</kbd>FLIP <kbd>←↑↓→</kbd>SHIFT <kbd>[</kbd><kbd>]</kbd>ZOOM <kbd>,</kbd><kbd>.</kbd>FRAME <kbd>CTRL+Z</kbd>UNDO</span>
       <span class="sx-status" id="status">PIXEL EDITOR READY</span>
+      <span class="sx-room-label" id="roomLabel"></span>
+      <button class="btn round toggle" id="btnShortcuts" title="Keyboard shortcuts">i</button>
     </div>
+
+    <div class="sx-shortcuts" id="shortcuts" hidden>
+      <span><kbd>B</kbd>PENCIL <kbd>E</kbd>ERASE <kbd>G</kbd>FILL <kbd>L</kbd>LINE <kbd>R</kbd>RECT <kbd>I</kbd>PICK</span>
+      <span><kbd>H</kbd><kbd>V</kbd>FLIP <kbd>←↑↓→</kbd>SHIFT <kbd>[</kbd><kbd>]</kbd>ZOOM <kbd>,</kbd><kbd>.</kbd>FRAME</span>
+      <span><kbd>X</kbd>SWAP COLOURS <kbd>CTRL+Z</kbd>UNDO <kbd>CTRL+S</kbd>SAVE <kbd>ESC</kbd>CLOSE</span>
+      <span class="dim">LEFT — PAINT · RIGHT — ERASE · CTRL+WHEEL — ZOOM</span>
+    </div>
+
+    <div class="sx-scrim" id="scrim" hidden></div>
   </div>
   <script type="module" src="/pixel-editor/pixel-editor.js"></script>
 </body>
