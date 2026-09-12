@@ -39,6 +39,7 @@ export {
 // ── The app targets: APK, iOS, and the three desktops ───────────────────────
 export {
   detectExportCapabilities,
+  EMBEDDED_LOOSE_FILES,
   EXPORT_PLATFORMS,
   type ExportCapabilities,
   ExportError,
