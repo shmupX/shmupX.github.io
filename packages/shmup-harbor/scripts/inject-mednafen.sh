@@ -221,7 +221,7 @@ if [ -n "${DEZAEMON_SH:-}" ]; then
     LAUNCHER=$DEZAEMON_SH
 else
     LAUNCHER=""
-    for c in "${HOME:-}/saturn/dezaemon2.sh" "${HOME:-}/dezaemon2.sh" "${HOME:-}/bin/dezaemon2.sh" "$DIR/../../dezaemon2.sh"; do
+    for c in "${HOME:-}/saturn/dezaemon2.sh" "${HOME:-}/dezaemon2.sh" "${HOME:-}/bin/dezaemon2.sh" "$DIR/../../../../dezaemon2.sh"; do
         if [ -f "$c" ]; then LAUNCHER=$c; break; fi
     done
     if [ -z "$LAUNCHER" ]; then

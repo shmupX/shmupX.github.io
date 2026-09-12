@@ -76,7 +76,11 @@ function cmgRoot() {
     if (parent === dir) break;
     dir = parent;
   }
-  return path.resolve(__dirname, "..", "..");
+  // Nothing above us holds the game. Fall back to where a checkout keeps it:
+  // packages/shmup-harbor/tools/build-level, four levels down — not the two
+  // this said while the tool lived at the root, which now names the package
+  // itself and is guaranteed wrong.
+  return path.resolve(__dirname, "..", "..", "..", "..");
 }
 const GAME_DIR = process.env.CMG_GAME_DIR ||
   path.join(CMG_ROOT, "static", "games", "2028-ai");

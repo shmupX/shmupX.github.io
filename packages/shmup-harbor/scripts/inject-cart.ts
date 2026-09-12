@@ -17,7 +17,7 @@
 // Everything that touches a byte is in lib/cart-inject.ts, once.
 import { join } from "@std/path";
 import { injectCart, InjectError } from "../lib/cart-inject.ts";
-import { repoRoot } from "../lib/repo-root.ts";
+import { harborRoot, repoRoot } from "../lib/repo-root.ts";
 
 export {
   backupFileName,
@@ -147,7 +147,11 @@ export async function buildSav(rest: string[], out: string): Promise<number> {
     args: [
       "run",
       "-A",
-      join(ROOT, "scripts", "build-sav.ts"),
+      // harbor's, not the checkout's: ROOT is where the .sav lands and what
+      // the child runs in, but the builder itself moved down here with this
+      // file. The shell legs spell the same thing as `scripts/build-sav.ts`
+      // relative to their own cd.
+      join(harborRoot(), "scripts", "build-sav.ts"),
       "--out",
       out,
       ...rest,

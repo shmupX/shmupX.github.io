@@ -757,6 +757,12 @@ async function runNodeExport(
   // fresh shell (where ANDROID_SDK_ROOT is unset) can still find it. Missing
   // toolchains surface as the tool's own error in the returned log.
   const env = Deno.env.toObject();
+  // Pin the child to the tree we are actually handing it. The tool honours
+  // $SHMUPX_ROOT ahead of its own search, so a user who exported that variable
+  // would otherwise send the packaged app's staged copy off to a different
+  // checkout than the one it just staged — and runRoot is the right answer in
+  // the source case too, where it is what the search would have found anyway.
+  env.SHMUPX_ROOT = runRoot;
   if (platform === "android" || platform === "all") {
     const sdk = await guessAndroidSdk(env);
     if (sdk) {

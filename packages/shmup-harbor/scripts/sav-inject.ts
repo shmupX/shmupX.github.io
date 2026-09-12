@@ -78,12 +78,12 @@ Nothing about the merge is macOS-only, though. If you use Mednafen, the Linux
 leg has no uname check and nothing Linux-specific in it — the ~/.mednafen/sav
 glob, the pgrep guard and the launcher search all work on any Unix with sh:
 
-  sh scripts/inject-mednafen.sh foo
+  sh packages/shmup-harbor/scripts/inject-mednafen.sh foo
 
 Or point the injector at your own .bcr and skip discovery altogether:
 
   deno task build:sav --out /tmp/level.sav foo
-  sh scripts/inject-openemu.sh --sav /tmp/level.sav --cart ~/.mednafen/sav/'Dezaemon 2 (Japan).bcr'
+  sh packages/shmup-harbor/scripts/inject-openemu.sh --sav /tmp/level.sav --cart ~/.mednafen/sav/'Dezaemon 2 (Japan).bcr'
 
 --cart skips every OpenEmu-specific step; only the .bcr is written.`;
 

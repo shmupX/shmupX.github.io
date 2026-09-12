@@ -128,17 +128,19 @@ if [ -n "$SAV" ] && [ $# -gt 0 ]; then
 fi
 
 # Resolve the caller's paths against the caller's directory, then work from the
-# repo root — the Deno step below imports ./lib and ./packages by relative path,
-# and `deno task` is not the only way this gets run.
+# harbor package root — the two Deno steps below are its own scripts/, named
+# relatively, and `deno task` is not the only way this gets run. REPO is kept
+# separately because build/ belongs to the checkout, not to the package.
 [ -z "$SAV" ] || SAV=$(abspath "$SAV")
 [ -z "$CART" ] || CART=$(abspath "$CART")
 [ -z "$SAV" ] || [ -f "$SAV" ] || fail "no such .sav: $SAV"
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-[ -f lib/mednafen.ts ] || fail "cannot find the repo from $0 — run this as: deno task sav:inject"
+REPO=$(CDPATH= cd -- ../.. && pwd)
+[ -f lib/mednafen.ts ] || fail "cannot find shmup-harbor from $0 — run this as: deno task sav:inject"
 # The merge lives in a file of its own now, so a checkout missing it would fail
 # as a module-resolution stack trace some way into the run. Say it here instead.
-[ -f scripts/inject-cart.ts ] || fail "scripts/inject-cart.ts is missing — that is this leg's command line onto the merge in lib/cart-inject.ts. Is the checkout complete?"
-[ -f lib/cart-inject.ts ] || fail "lib/cart-inject.ts is missing — that is the merge itself, shared by every leg and by sav:run. Is the checkout complete?"
+[ -f scripts/inject-cart.ts ] || fail "packages/shmup-harbor/scripts/inject-cart.ts is missing — that is this leg's command line onto the merge in lib/cart-inject.ts. Is the checkout complete?"
+[ -f lib/cart-inject.ts ] || fail "packages/shmup-harbor/lib/cart-inject.ts is missing — that is the merge itself, shared by every leg and by sav:run. Is the checkout complete?"
 
 # --- the cart file ---------------------------------------------------------
 AUTOSTATE=""
@@ -201,7 +203,7 @@ fi
 
 # --- build ----------------------------------------------------------------
 if [ -z "$SAV" ]; then
-    SAV=build/sav/.inject.sav
+    SAV=$REPO/build/sav/.inject.sav
     trap 'rm -f "$SAV"' EXIT INT TERM
     deno run -A scripts/build-sav.ts --out "$SAV" "$@"
 fi
