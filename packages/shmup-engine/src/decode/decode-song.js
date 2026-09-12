@@ -18,21 +18,30 @@
 // +0x1bfc) advances a 0..15 cursor and reads, per part, byte [cursor] and
 // byte [cursor + 16]; its note sender (+0x15bc) shows what each column is:
 //
-//   bytes 0-15  = VOICE column: 0 = rest (key off), bit 7 set = tie (hold
-//                 the sounding note: the sender writes gate 0x10 and leaves
-//                 the pitch register alone), any other value = a note ONSET
-//                 whose value selects the instrument (it lands on the
-//                 companion channel bank 4-7 as command 4).
-//   bytes 16-31 = PITCH column, stored to the per-part note register
-//                 0x601F418 on every onset (+0x36, a constant bank offset).
-//                 During a tie the composer repeats the same pitch byte and
-//                 the driver ignores it.
+//   bytes 16-31 = PITCH column, and IT ALONE decides whether a step sounds.
+//                 The sender tests this byte: non-zero -> gate 1, key on, and
+//                 the value goes to the per-part note register 0x601F418
+//                 (+0x36, a constant bank offset); zero -> gate 0x40, key off.
+//   bytes 0-15  = VOICE column, which selects an INSTRUMENT and nothing else.
+//                 Bit 7 set = tie (gate 0x10, the pitch register untouched),
+//                 and the rest of the byte lands on the companion channel
+//                 bank 4-7 as command 4. Byte 0 is INSTRUMENT 0, a real
+//                 tone-bank voice — it is not a rest.
 //
-// The save data agrees on every count: across Ramsie's 14 songs a tie in the
-// voice column is accompanied by a pitch byte 6427/6427 times and that pitch
-// is the identical value 6401/6427 times; the voice column carries only a
-// handful of distinct values per song (instruments) while the pitch column
-// lands on a diatonic scale with five near-empty pitch classes.
+// Order matters, and it is the sender's: the tie bit is tested first
+// (0x06005696), then the pitch byte's zero-ness picks gate 1 or gate 0x40
+// (0x060056a2). This file read the gate off the VOICE column until
+// 2026-09-12, which is not a subtle difference — over the 258-save corpus it
+// dropped 72,282 sounding steps and rendered 25 songs completely silent,
+// because a part whose composer left the instrument column at 0 throughout
+// is perfectly ordinary. `game.bundle.js` always read the pitch column, so
+// the editor's preview was the one that disagreed with the hardware.
+//
+// What the save data DOES show is that the two columns are not two melodies:
+// across Ramsie's 14 songs a tie is accompanied by a pitch byte 6427/6427
+// times and that pitch is the identical value 6401/6427 times, the voice
+// column carries only a handful of distinct values per song, and the pitch
+// column lands on a diatonic scale with five near-empty pitch classes.
 //
 // Environment-neutral ESM (Node + browser).
 
@@ -52,20 +61,29 @@ export const STEP_EMPTY = 0x00;
 export const NOTE_MIN = 0x01;
 export const NOTE_MAX = 0x3b;
 
-// A pitch-column byte that sounds.
+// A pitch-column byte that sounds. The ENGINE only tests non-zero; the upper
+// bound is ours. 0x3b is the top of the editor's keyboard, and the 951 bytes
+// above it in the whole corpus (83, 127 and a tail of 231-255) all sit in
+// 0xFF-filled garbage measures, so clamping keeps those from shrieking.
 export function isNote(step) {
     return step >= NOTE_MIN && step <= NOTE_MAX;
 }
 
 // A voice-column byte that holds the note already sounding. Only bit 7 is
-// tested by the engine; saves use 0x80-0x88.
+// tested by the engine, and in practice only 0x80 ever appears: across every
+// non-empty song in the 258-save corpus the bit-7 voice values are 0x80
+// (2,357,850) and 0xFF (732), every 0xFF sitting inside a measure whose
+// control bytes are 0xFF garbage. The 0x80-0x88 range this file used to
+// claim does not occur.
 export function isSustain(step) {
     return (step & 0x80) !== 0;
 }
 
-// A voice-column byte that starts a note (and picks its instrument).
-export function isOnset(step) {
-    return step !== STEP_EMPTY && (step & 0x80) === 0;
+// A voice-column byte that carries an instrument rather than a tie. It does
+// NOT decide whether the step sounds — the pitch column does that — so this
+// is only useful for reading the instrument stream on its own.
+export function isInstrument(step) {
+    return (step & 0x80) === 0;
 }
 
 // One part's 16 steps of a measure -> [{step, note, instrument, len}].
@@ -79,9 +97,10 @@ export function readPartEvents(bytes, part) {
             const voice = bytes[base + VOICE_OFFSET + st];
             const pitch = bytes[base + PITCH_OFFSET + st];
             const at = m * STEPS_PER_MEASURE + st;
-            if (voice === STEP_EMPTY) {
-                current = null;
-            } else if (isSustain(voice)) {
+            // The sender's own order: tie first, then the PITCH column
+            // alone decides key-on against key-off. A zero VOICE byte is
+            // instrument 0, not a rest.
+            if (isSustain(voice)) {
                 if (current) current.len = at - current.step + 1;
             } else if (isNote(pitch)) {
                 current = { step: at, note: pitch, instrument: voice, len: 1 };
@@ -144,7 +163,9 @@ export function decodeSong(bytes, slot = 0) {
             // 32 bytes: the voice column (0-15) then the pitch column (16-31)
             const steps = bytes.subarray(at, at + PART_BLOCK);
             for (let st = 0; st < STEPS_PER_MEASURE; st++) {
-                if (steps[VOICE_OFFSET + st] !== STEP_EMPTY) soundingSteps++;
+                // A step sounds when its PITCH byte is non-zero, whatever
+                // the voice column says (see readPartEvents).
+                if (steps[PITCH_OFFSET + st] !== STEP_EMPTY) soundingSteps++;
             }
             parts.push(steps);
         }

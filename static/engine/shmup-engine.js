@@ -2067,9 +2067,7 @@ function readPartEvents(bytes, part) {
       const voice = bytes[base + VOICE_OFFSET + st];
       const pitch = bytes[base + PITCH_OFFSET + st];
       const at = m * STEPS_PER_MEASURE + st;
-      if (voice === STEP_EMPTY) {
-        current = null;
-      } else if (isSustain(voice)) {
+      if (isSustain(voice)) {
         if (current) current.len = at - current.step + 1;
       } else if (isNote(pitch)) {
         current = { step: at, note: pitch, instrument: voice, len: 1 };
@@ -2134,7 +2132,7 @@ function decodeSong(bytes, slot = 0) {
       const at = base + MEASURE_HEADER + p * PART_BLOCK;
       const steps = bytes.subarray(at, at + PART_BLOCK);
       for (let st = 0; st < STEPS_PER_MEASURE; st++) {
-        if (steps[VOICE_OFFSET + st] !== STEP_EMPTY) soundingSteps++;
+        if (steps[PITCH_OFFSET + st] !== STEP_EMPTY) soundingSteps++;
       }
       parts.push(steps);
     }

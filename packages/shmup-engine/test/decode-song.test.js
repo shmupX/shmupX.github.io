@@ -6,8 +6,8 @@ import { decodeSave } from "../src/decode/index.js";
 import {
   decodeSong,
   decodeSongs,
+  isInstrument,
   isNote,
-  isOnset,
   isSustain,
   MEASURE_HEADER,
   MEASURE_SIZE,
@@ -37,9 +37,9 @@ Deno.test("step classification: onsets, ties and rests are disjoint", () => {
   assert(isNote(0x01) && isNote(0x3b));
   assert(!isNote(0x00) && !isNote(0x3c) && !isNote(0x80));
   // only bit 7 marks a tie — that is all the engine tests
-  assert(isSustain(0x80) && isSustain(0x88) && isSustain(0xff));
+  assert(isSustain(0x80) && isSustain(0xff));
   assert(!isSustain(0x7f) && !isSustain(0x00));
-  assert(isOnset(0x08) && !isOnset(0x00) && !isOnset(0x80));
+  assert(isInstrument(0x08) && isInstrument(0x00) && !isInstrument(0x80));
 });
 
 Deno.test("a note takes its pitch from the pitch column and holds through ties", () => {
@@ -70,6 +70,41 @@ Deno.test("a note takes its pitch from the pitch column and holds through ties",
   assertStrictEquals(song.noteCount, 3); // three sounding steps
   assertStrictEquals(song.empty, false);
   assert(decodeSong(new Uint8Array(SONG_SIZE)).empty);
+});
+
+Deno.test("instrument 0 is an instrument, not a rest", () => {
+  // The bug this replaced: the decoder gated key-on on the VOICE byte, so a
+  // part whose composer never left instrument 0 decoded as pure silence.
+  // The kernel's sender gates on the PITCH byte alone (0x060056a2) and only
+  // consults the voice column for the tie bit (0x06005696). Over the
+  // 258-save corpus the old reading dropped 72,282 sounding steps and left
+  // 25 songs completely silent.
+  const bytes = new Uint8Array(SONG_SIZE);
+  const part1 = SONG_HEADER + MEASURE_HEADER + PART_BLOCK;
+  bytes[part1 + PITCH_OFFSET + 0] = 0x20; // voice column stays 0 throughout
+  bytes[part1 + PITCH_OFFSET + 1] = 0x22;
+  bytes[part1 + VOICE_OFFSET + 2] = 0x80; // tie holds the second note
+  bytes[part1 + PITCH_OFFSET + 2] = 0x22;
+  const song = decodeSong(bytes);
+  const events = song.events[1];
+  assertStrictEquals(events.length, 2, "both notes sound on instrument 0");
+  assertEquals(events[0], { step: 0, note: 0x20, instrument: 0, len: 1 });
+  assertEquals(events[1], { step: 1, note: 0x22, instrument: 0, len: 2 });
+  assertStrictEquals(song.empty, false);
+  assertStrictEquals(song.noteCount, 3);
+});
+
+Deno.test("a tie outranks the pitch column, as the sender orders it", () => {
+  // The sender tests bit 7 BEFORE it looks at the pitch byte, so a tie with
+  // a zero pitch beside it still holds rather than keying off.
+  const bytes = new Uint8Array(SONG_SIZE);
+  const part0 = SONG_HEADER + MEASURE_HEADER;
+  bytes[part0 + VOICE_OFFSET + 0] = 0x05;
+  bytes[part0 + PITCH_OFFSET + 0] = 0x30;
+  bytes[part0 + VOICE_OFFSET + 1] = 0x80; // tie, pitch column left at 0
+  const events = decodeSong(bytes).events[0];
+  assertStrictEquals(events.length, 1);
+  assertStrictEquals(events[0].len, 2);
 });
 
 Deno.test("a voice byte with no pitch beside it sounds nothing", () => {

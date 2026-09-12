@@ -861,10 +861,11 @@ itself, and the whole timing chain is now engine-exact:
         register untouched). **Voice `0` is instrument 0, a real tone-bank
         voice — it is not a rest.** *(Corrected 2026-09-12. This file and
         `decode-song.js` both had the gate on the voice column; over the
-        258-save corpus that drops 72,282 sounding steps and renders 25
-        songs completely silent. `game.bundle.js` already reads the pitch
-        column, so the two readers in this repo disagree — see the parity
-        map's item 6.)*
+        258-save corpus that dropped 72,282 sounding steps and rendered 25
+        songs completely silent. `game.bundle.js` always read the pitch
+        column. The decoder now matches it: 4,311 of the corpus's 4,312
+        non-empty songs decode to notes, the remaining one being a slot
+        whose only pitch bytes are the 231-255 garbage tail.)*
       - the sustain byte is only ever `0x80`. The `0x80-0x88` range this
         file used to give does not occur: across every non-empty song in
         the corpus the only bit-7 voice values are `0x80` and `0xFF`, and
