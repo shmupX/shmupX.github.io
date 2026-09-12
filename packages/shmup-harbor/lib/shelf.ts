@@ -105,7 +105,7 @@ export class ShelfError extends Error {
   }
 }
 
-const MODULE_ROOT = repoRoot();
+const MODULE_ROOT: string = repoRoot();
 
 /**
  * The slug the whole library keys on: lowercase, every run of non-alphanumerics

@@ -34,7 +34,7 @@ export interface ZipEntry {
  */
 export async function treeEntries(
   dir: string,
-  prefix = basename(dir),
+  prefix: string = basename(dir),
 ): Promise<ZipEntry[]> {
   const out: ZipEntry[] = [];
   const walk = async (at: string) => {

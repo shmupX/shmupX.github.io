@@ -39,7 +39,10 @@ map of the package.
   played in Mednafen and in the browser at once, recorded side by side.
 - `tools/build-level/` — the Node half: Cordova (android/ios) and `deno desktop`
   (linux/windows/mac), with its scaffold. It has its own
-  [README](tools/build-level/README.md).
+  [README](tools/build-level/README.md). Deliberately **not published**: those
+  targets need the checkout's base game to stage from, so a copy of the package
+  pulled off JSR could not run them anyway, and the Android/iOS scaffolding is
+  60-odd files of icons, Kotlin and Swift that no importer would ever reach.
 - `scripts/` — the CLI front ends the root's `deno task`s call.
 
 ## Importing it

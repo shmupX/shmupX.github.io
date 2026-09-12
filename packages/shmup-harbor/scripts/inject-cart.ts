@@ -29,7 +29,7 @@ export {
 } from "../lib/cart-inject.ts";
 
 /** The repo root, from this file — never from the cwd. */
-export const ROOT = repoRoot();
+export const ROOT: string = repoRoot();
 
 /** Stop with a message meant for the person who ran the task. */
 function fail(m: string): never {

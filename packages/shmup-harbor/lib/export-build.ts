@@ -26,7 +26,7 @@ import { buildPs2 } from "./ps2/build.ts";
 import { packagedBuildRoot, stagedRuntimeRoot } from "./build-workspace.ts";
 import { repoRoot } from "./repo-root.ts";
 
-export const EXPORT_PLATFORMS = new Set([
+export const EXPORT_PLATFORMS: Set<string> = new Set([
   "android",
   "ios",
   "linux",
