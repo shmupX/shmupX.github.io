@@ -3720,6 +3720,12 @@
         } catch (e2) {
         }
       }
+      // cmg: two controllers in use at the launcher (static/two-player-
+      // presence.js) — the second player is there, whether or not this cart
+      // says so; twoPlayerAllowed reads it the way it reads ?players=2.
+      else if (d.type === "cmg-players-set") {
+        gameState.cmgPlayers = Number(d.value) || 1;
+      }
     });
     var standalone;
     try {
@@ -7961,6 +7967,8 @@
     // construction (cmg-splitpads-set above), so it opens the gate the way
     // ?players=2 does — including on the stock game, which has no settings.
     if (gameState.cmgSplitPads) return true;
+    // cmg: two controllers at the launcher (cmg-players-set above).
+    if (gameState.cmgPlayers >= 2) return true;
     if (gameState.onlineFlg === true) return true;
     var m = scene && scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
     return !!(m && m.twoPlayer);

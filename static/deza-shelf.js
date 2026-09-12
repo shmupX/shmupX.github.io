@@ -117,6 +117,34 @@ export async function composeShelfCover(bytes) {
   return rgbaToPngDataUrl(engine.composeCover(engine.decodeSave(entry.payload.buffer)));
 }
 
+/**
+ * How many can play the cart in this record: 2 when its game-mode bit1
+ * (Dezaemon 2's "2P join-in") is set, 1 when not, 0 when the bytes hold no
+ * readable game save. The dashboard's 2P filter reads it off the shelf for
+ * the eShop's installed Dezaemon games.
+ */
+export async function shelfCartPlayers(bytes) {
+  try {
+    const engine = await loadEngine();
+    const { data } = await engine.normalize(bytes);
+    const entry = engine.parse(data).filter(engine.isGameSave)[0];
+    if (!entry || !entry.payload) return 0;
+    const decoded = engine.decodeSave(entry.payload.buffer);
+    const mode = decoded && decoded.settings && decoded.settings.gameMode;
+    if (typeof mode !== 'number') return 0;
+    return (mode & 2) !== 0 ? 2 : 1;
+  } catch (e) {
+    console.warn('could not read the player count of a cart:', e);
+    return 0;
+  }
+}
+
+/** A record's player count, kept when it has one and read from the cart when not. */
+async function playersOf(rec) {
+  if (typeof rec.players === 'number' && rec.players > 0) return rec.players;
+  return shelfCartPlayers(rec.bytes);
+}
+
 /** A record already carrying a cover, or null when one could not be made. */
 async function coverOrNull(rec) {
   if (typeof rec.cover === 'string' && rec.cover) return rec.cover;
@@ -213,6 +241,7 @@ export async function putDezaShelfEntry(rec) {
     throw new Error('a shelf record needs the .sav bytes themselves (a Uint8Array)');
   }
   const cover = await coverOrNull(rec);
+  const players = await playersOf(rec);
   const record = {
     ...rec,
     title: String(rec.title || rec.id),
@@ -222,6 +251,7 @@ export async function putDezaShelfEntry(rec) {
     savedAt: rec.savedAt || Date.now(),
     source: rec.source || (rec.id.startsWith('eshop:') ? 'eshop' : 'export'),
     ...(cover ? { cover } : {}),
+    ...(players ? { players } : {}),
   };
   await tx('readwrite', 'written', (store) => store.put(record));
   notifyDezaShelfChanged();
@@ -234,15 +264,17 @@ const uncoverable = new Set();
 let backfillPending = null;
 
 /**
- * Give every coverless row on the shelf its title screen, and say how many got
- * one. For the records filed before covers existed — including the ones the
- * eShop installed from a listing published without art.
+ * Give every coverless row on the shelf its title screen — and every row
+ * filed before player counts existed its count — and say how many rows
+ * changed. For the records filed before covers existed — including the ones
+ * the eShop installed from a listing published without art.
  *
- * Idempotent and free on a shelf that is already covered, so both readers can
- * call it every time they open. Each row is written as it is rendered rather
- * than in one batch at the end, which is what makes covers appear one by one in
- * a coverflow that is already on screen — and since that notification brings
- * the readers straight back here, concurrent calls share the one run.
+ * Idempotent and free on a shelf that is already covered and counted, so both
+ * readers can call it every time they open. Each row is written as it is
+ * rendered rather than in one batch at the end, which is what makes covers
+ * appear one by one in a coverflow that is already on screen — and since that
+ * notification brings the readers straight back here, concurrent calls share
+ * the one run.
  */
 export function backfillDezaShelfCovers() {
   if (!backfillPending) {
@@ -254,15 +286,25 @@ export function backfillDezaShelfCovers() {
 async function runBackfill() {
   let filled = 0;
   for (const rec of await listDezaShelf()) {
-    if (typeof rec.cover === 'string' && rec.cover) continue;
-    if (uncoverable.has(rec.id)) continue;
+    const covered = typeof rec.cover === 'string' && rec.cover;
+    const counted = typeof rec.players === 'number' && rec.players > 0;
+    if ((covered || uncoverable.has(rec.id)) && counted) continue;
     if (!(rec.bytes instanceof Uint8Array) || !rec.bytes.length) continue;
-    const cover = await coverOrNull(rec);
-    if (!cover) {
-      uncoverable.add(rec.id);
-      continue;
+    const patch = {};
+    if (!covered && !uncoverable.has(rec.id)) {
+      const cover = await coverOrNull(rec);
+      if (cover) patch.cover = cover;
+      else uncoverable.add(rec.id);
     }
-    await tx('readwrite', 'written', (store) => store.put({ ...rec, cover }));
+    if (!counted) {
+      const players = await shelfCartPlayers(rec.bytes);
+      // An unreadable cart is left uncounted, not retried: the cover pass
+      // has already given up on it by now.
+      if (players) patch.players = players;
+      else if (!uncoverable.has(rec.id)) uncoverable.add(rec.id);
+    }
+    if (!Object.keys(patch).length) continue;
+    await tx('readwrite', 'written', (store) => store.put({ ...rec, ...patch }));
     filled += 1;
     notifyDezaShelfChanged();
   }

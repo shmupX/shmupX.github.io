@@ -713,7 +713,11 @@ Local 2P is join-in: a second pad pressing any face or shoulder button — or `O
 on a shared keyboard — puts a second ship in the air mid-run. It is gated on the
 save's own game-mode bit1 (Dezaemon 2's "2P join-in"), with `?players=2` forcing
 it on for levels that carry no decoded settings, the shipped 2028-ai game among
-them.
+them. Under the launcher the gate also opens when the launcher vouches for a
+second player: a Legion Go's halves in Split Controller mode
+(`cmg-splitpads-set`), or two controllers that have each been used
+(`cmg-players-set`, from `static/two-player-presence.js`) — so two pads on the
+shipped game are two ships without the query string.
 
 Each ship carries its own HP, combo, powerups, barrier, charge, sub weapon and
 bomb — including the engine's one-bomb-per-player rule. **Score is shared**,
@@ -1805,10 +1809,29 @@ every game anyone can get — and it is read from two places by
   UPPER_SNAKE token such as `EARLY_ACCESS` or `BETA` (blank reads as RELEASED),
   shown as an amber chip on the row and in the disc panel, and recorded with the
   install so it survives the catalog going unreachable. A `status` on the
-  `data/eshop.json` row pins it instead. The eShop header carries a filter over
-  whatever statuses the catalog holds — ALL by default; ◀ ▶ (or F) cycles it, a
-  chip picks one, nothing is remembered between visits. shmup-party-ps2 ships
+  `data/eshop.json` row pins it instead. The eShop header carries a filter: ALL
+  by default, then **2P** (the games for two — see below), then whatever
+  statuses the catalog holds; ◀ ▶ (or F) cycles it, a chip picks one, nothing is
+  remembered between visits. shmup-party-ps2 ships
   `{ "status": "EARLY_ACCESS" }`.
+- **How many can play** rides on the row as `players` — a number, or a string
+  such as `"1-4"` (the largest number in it counts); a Dezaemon game published
+  from the editor carries what its cart's game-mode bit1 (Dezaemon 2's "2P
+  join-in") says, read at publish time, and the shelf reads the same bit off any
+  cart filed on it (`shelfCartPlayers` in `static/deza-shelf.js`, backfilled for
+  carts filed before). A row that says nothing is not two-player. The **2P**
+  chip lists the games that say 2 or more, and it applies itself: when two
+  players are at the launcher — two controllers that have each been used, or a
+  Legion Go's two halves both in hand (`static/two-player-presence.js`; the
+  `?paddebug=1` overlay prints the verdict) — the shop trims itself to them. The
+  first time that ever happens in a browser the chips do it in front of the
+  player, ALL lit, a beat, then 2P lit and the list shorter, and then tuck
+  themselves out of the header so the picking can go on; every later time the
+  trim is silent with the chips already tucked. A filter picked by hand (a chip,
+  ◀ ▶, F) wins and brings the chips back; when the second player goes — a pad
+  unplugged, or the halves quiet for ten minutes — an automatic 2P goes back to
+  ALL. shmupX's own row (`data/games.json`) says `"players": 2` and Sh'M↑
+  Party's `4`.
 - The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU → PUBLISH
   TO ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`, cover under
   `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last). A

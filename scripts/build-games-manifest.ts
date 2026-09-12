@@ -39,6 +39,10 @@ interface ManifestEntry {
   // documentation of the shape the dashboard understands, not a filter.
   twinStick?: boolean | { default?: boolean };
   levelEditor?: boolean | string | { game?: string; url?: string };
+  // How many can play — a number, or a string such as "1-4". The dashboard's
+  // 2P filter lists the games that say 2 or more; left out, a game is not
+  // listed there.
+  players?: number | string;
 }
 
 // An eShop catalog entry (data/eshop.json). Two kinds: a "web" build the
