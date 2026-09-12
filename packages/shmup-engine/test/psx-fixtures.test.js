@@ -158,6 +158,67 @@ Deno.test({
 
 Deno.test({
   name:
+    "Kids! footprint marks resolve to the enemy that covers them, once the scroll direction is honoured",
+  ignore: KIDS.length === 0,
+  fn() {
+    let marks = 0, resolved = 0;
+    for (const url of KIDS) {
+      const save = parsePsxSav(Deno.readFileSync(url)).saves[0];
+      for (const stage of save.appear) {
+        marks += stage.marks.length;
+        resolved += stage.marks.length - stage.orphanMarks;
+      }
+    }
+    assert(marks > 100_000, `only ${marks} marks seen`);
+    // The stragglers are cells a resized boss left behind: the editor erases
+    // the old rectangle from a size it caches in RAM, which no save carries.
+    const rate = resolved / marks;
+    assert(
+      rate > 0.995,
+      `only ${(rate * 100).toFixed(2)}% of marks found an owner`,
+    );
+  },
+});
+
+Deno.test({
+  name:
+    "Kids! config names a background set and a BGM file that exist on the disc",
+  ignore: KIDS.length === 0,
+  fn() {
+    for (const url of KIDS) {
+      const save = parsePsxSav(Deno.readFileSync(url)).saves[0];
+      const label = fromFileUrl(url);
+      const config = save.config;
+      assertEquals(config.stages.length, 6, label);
+      assert(config.stageCount >= 1 && config.stageCount <= 6, label);
+      assert(config.soundBank <= 4, `${label}: sound bank ${config.soundBank}`);
+      for (const stage of config.stages) {
+        assert(
+          stage.backgroundSet <= 38,
+          `${label}: background set ${stage.backgroundSet}`,
+        );
+        assertEquals(
+          stage.backgroundFile === null,
+          stage.backgroundSet === 0,
+          `${label}: stage ${stage.stage} background`,
+        );
+        assert([0, 0.25, 1, 4].includes(stage.scrollSpeed), label);
+      }
+      for (const entry of config.sound.slice(0, config.liveSoundEntries)) {
+        if (entry.preset) continue;
+        assertEquals(
+          entry.file === null,
+          entry.bgm === 0,
+          `${label}: bgm ${entry.bgm}`,
+        );
+        assert(entry.bgm <= 99, `${label}: bgm number ${entry.bgm}`);
+      }
+    }
+  },
+});
+
+Deno.test({
+  name:
     "every Dezaemon+ card: one raw save whose twenty group checksums verify",
   ignore: PLUS.length === 0,
   fn() {
@@ -176,6 +237,35 @@ Deno.test({
       assertEquals(save.hiScores?.length, 20, label);
       assertEquals(save.stages?.length, PLUS_STAGES, label);
       assertEquals(save.sound?.length, 16, label);
+    }
+  },
+});
+
+Deno.test({
+  name: "Dezaemon+ globals name real items, songs and buttons",
+  ignore: PLUS.length === 0,
+  fn() {
+    for (const url of PLUS) {
+      const save = parsePsxSav(Deno.readFileSync(url)).saves[0];
+      const label = fromFileUrl(url);
+      const g = save.globals;
+      assert(
+        g.stageCount >= 1 && g.stageCount <= 6,
+        `${label}: ${g.stageCount} stages`,
+      );
+      assertEquals(g.items.length, 7, label);
+      for (const item of g.items) {
+        assert(item.effect <= 11, `${label}: item effect ${item.effect}`);
+        assertEquals(item.name === null, item.effect === 0, label);
+      }
+      assertEquals(g.bgm.length, 16, label);
+      for (const slot of g.bgm) {
+        assert(slot.song <= 50, `${label}: song ${slot.song}`);
+      }
+      // The two paired key-config actions must differ, as the menu enforces.
+      const keys = save.settings.keys.map((k) => k.mask);
+      assert(keys[0] !== keys[1], `${label}: keys 0 and 1 both ${keys[0]}`);
+      assert(keys[2] !== keys[3], `${label}: keys 2 and 3 both ${keys[2]}`);
     }
   },
 });

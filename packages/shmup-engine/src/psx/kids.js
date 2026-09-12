@@ -133,6 +133,8 @@ export const KIDS_APPEAR_CLASSES = Object.freeze([
     { klass: 2, size: "32x64", count: 8 },
     { klass: 3, size: "64x64", count: 8 },
 ]);
+/** Cell sizes per class, from the editor's own table 0x800B2FBC. */
+export const KIDS_APPEAR_CELLS = Object.freeze([[1, 1], [2, 1], [1, 2], [2, 2]]);
 export const KIDS_APPEAR_PRESENT = 0x80;
 export const KIDS_APPEAR_CLASS_MASK = 0x70;
 export const KIDS_APPEAR_ID_MASK = 0x0f;
@@ -164,6 +166,18 @@ export const KIDS_SPRITE_ENTRY_WORDS = 16;
 export const KIDS_SPRITE_BOSS_OFFSETS = Object.freeze([0x500, 0x580]);
 export const KIDS_SPRITE_BOSS_WORDS = 64;
 
+// --- config ------------------------------------------------------------------
+
+/** Point-item values the config indexes (GAMES.bin 0x80149BFC / 0x80149C0C). */
+export const KIDS_POINT_SMALL = Object.freeze([100, 500, 1000, 0]);
+export const KIDS_POINT_LARGE = Object.freeze([5000, 10000, 50000, 0]);
+/** Background-motion speeds bits 4-5 of the per-stage byte pick; 0 is static. */
+export const KIDS_BG_SPEEDS = Object.freeze([0, 4, 12, 24]);
+/** The four glyph files, which are also the glyph cell sizes. */
+export const KIDS_FONT_FILES = Object.freeze(["FN1", "FN2", "FN3", "FN4"]);
+/** A sound entry plays a BGM file unless bit 7 of its first byte is set. */
+export const KIDS_BGM_BANKS = Object.freeze(["G_BGM1", "G_BGM2", "G_BGM3", "G_BGM4"]);
+
 export const CONFIDENCES = Object.freeze(["confirmed", "likely", "open"]);
 
 function region(name, label, offset, end, stride, confidence, note) {
@@ -181,7 +195,7 @@ export const KIDS_REGIONS = Object.freeze([
     region("scroll", "SCROLL", 0x7e00, 0x8040, KIDS_SCROLL_STAGE_BYTES, "confirmed",
         "6 x 0x60: one nibble per 64 px of map, low nibble first. value & 3 picks 0, 0.25, 1 or 4 px per frame; 0x22 is the fill."),
     region("appear", "APPEAR", 0x8040, 0xd140, KIDS_APPEAR_STAGE_BYTES, "confirmed",
-        "6 x 0xD80: 384 rows of 9 slot bytes, one per 32 px across and down. A byte is present(bit 7) | class(bits 4-6) | id(bits 0-3); classes 0-3 are the enemy sizes, 4 the boss, 5 a footprint mark."),
+        "6 x 0xD80: 384 rows of 9 slot bytes, one per 32 px across and down. A byte is present(bit 7) | class(bits 4-6) | id(bits 0-3); classes 0-3 are the enemy sizes, 4 the boss, and 5 a footprint mark (0x50 | dx << 2 | dy) giving the cell offset inside the owning enemy rectangle."),
     region("config", "CONFIG", 0xd140, 0xd1b0, 0, "confirmed",
         "0x70 bytes of game-wide settings (RAM 0x8005D140): scroll direction, the last stage, sixteen 4-byte sound entries, per-stage ship speed and background set."),
     region("records", "RECORDS", 0xd1b0, 0xd714, KIDS_RECORDS_STAGE_BYTES, "confirmed",
@@ -360,9 +374,10 @@ export function decodeKidsScroll(data) {
 /**
  * One APPEAR slot byte -> what it places. A byte whose class is 5 and whose
  * present bit is clear is an editor footprint: a cell covered by a bigger
- * enemy placed elsewhere. Its low nibble looks like a back-pointer to the
- * owner, but no offset convention fits more than 60% of the 105,489 marks in
- * the collection, so it is carried raw (see FORMAT-PSX.md).
+ * enemy placed elsewhere, stamped `0x50 | (dx << 2) | dy` with the cell's
+ * offset inside the owner's rectangle (KIDS.EXE 0x8008A3D0). Which way that
+ * offset runs depends on the game's scroll direction, so `decodeKidsAppear`
+ * resolves the owner and this only splits the byte.
  */
 export function decodeKidsAppearSlot(byte) {
     if (byte === 0) return null;
@@ -372,66 +387,185 @@ export function decodeKidsAppearSlot(byte) {
         return { raw: byte, boss: true, klass: null, id: null };
     }
     if ((byte & KIDS_APPEAR_PRESENT) === 0) {
-        return { raw: byte, boss: false, klass: null, id: null, footprint: klass === KIDS_APPEAR_FOOTPRINT_CLASS, mark: id };
+        const footprint = klass === KIDS_APPEAR_FOOTPRINT_CLASS;
+        return { raw: byte, boss: false, klass: null, id: null, footprint, dx: (id >> 2) & 3, dy: id & 3 };
     }
     const spec = KIDS_APPEAR_CLASSES[klass];
     if (!spec) return { raw: byte, boss: false, klass: null, id: null, unknown: true };
     return { raw: byte, boss: false, klass, id, size: spec.size };
 }
 
-/** The six placement grids: per stage 384 rows of 9 slots, plus its spawns. */
-export function decodeKidsAppear(data) {
+/**
+ * The cell a footprint mark belongs to. The editor stamps a mark at
+ * `anchor + dx - 9*dy` in a vertically scrolling game and `anchor + 9*dx + dy`
+ * in a horizontal one (KIDS.EXE 0x8008A3D0 branches on the config's bit 0), so
+ * inverting it needs the same flag. Returns null when the owner falls outside
+ * the block — 0.13% of marks in the collection are orphans a resized boss left.
+ */
+export function kidsFootprintOwner(index, dx, dy, horizontal) {
+    const owner = horizontal ? index - 9 * dx - dy : index + 9 * dy - dx;
+    return owner >= 0 && owner < KIDS_APPEAR_STAGE_BYTES ? owner : null;
+}
+
+/**
+ * The six placement grids: per stage 384 rows of 9 slots, its spawns, and the
+ * footprint marks each spawn covers. Footprints never become spawns.
+ * @param {Uint8Array} data
+ * @param {{horizontal?: boolean}} [options] the config's scroll direction,
+ *   which decides which way a footprint's offset runs.
+ */
+export function decodeKidsAppear(data, { horizontal = false } = {}) {
     const stages = [];
     for (let s = 0; s < KIDS_STAGES; s++) {
         const base = KIDS_REGION.appear.offset + s * KIDS_APPEAR_STAGE_BYTES;
         const bytes = data.subarray(base, base + KIDS_APPEAR_STAGE_BYTES);
         const spawns = [];
+        const byIndex = new Map();
+        const marks = [];
         let boss = null;
-        for (let row = 0; row < KIDS_APPEAR_ROWS; row++) {
-            for (let col = 0; col < KIDS_APPEAR_COLUMNS; col++) {
-                const byte = bytes[row * KIDS_APPEAR_COLUMNS + col];
-                if ((byte & KIDS_APPEAR_PRESENT) === 0) continue; // empty, or a footprint mark
-                const slot = decodeKidsAppearSlot(byte);
-                if (!slot) continue;
-                const placed = { ...slot, row, col, x: col * KIDS_APPEAR_ROW_PIXELS, y: row * KIDS_APPEAR_ROW_PIXELS };
-                if (slot.boss) boss = placed;
-                else spawns.push(placed);
+        for (let i = 0; i < bytes.length; i++) {
+            const byte = bytes[i];
+            if (byte === 0) continue;
+            const row = (i / KIDS_APPEAR_COLUMNS) | 0;
+            const col = i % KIDS_APPEAR_COLUMNS;
+            const slot = decodeKidsAppearSlot(byte);
+            if (!slot) continue;
+            if ((byte & KIDS_APPEAR_PRESENT) === 0) {
+                if (slot.footprint) marks.push({ ...slot, index: i, row, col });
+                continue;
             }
+            const placed = {
+                ...slot,
+                row,
+                col,
+                x: col * KIDS_APPEAR_ROW_PIXELS,
+                y: row * KIDS_APPEAR_ROW_PIXELS,
+                covers: [],
+            };
+            byIndex.set(i, placed);
+            if (slot.boss) boss = placed;
+            else spawns.push(placed);
         }
-        stages.push({ stage: s, columns: KIDS_APPEAR_COLUMNS, rows: KIDS_APPEAR_ROWS, bytes, spawns, boss });
+        let orphans = 0;
+        for (const mark of marks) {
+            const at = kidsFootprintOwner(mark.index, mark.dx, mark.dy, horizontal);
+            const owner = at === null ? undefined : byIndex.get(at);
+            if (!owner) {
+                orphans++;
+                continue;
+            }
+            mark.owner = { row: owner.row, col: owner.col };
+            owner.covers.push({ row: mark.row, col: mark.col });
+        }
+        stages.push({
+            stage: s,
+            columns: KIDS_APPEAR_COLUMNS,
+            rows: KIDS_APPEAR_ROWS,
+            bytes,
+            spawns,
+            boss,
+            marks,
+            orphanMarks: orphans,
+        });
     }
     return stages;
 }
 
+/** The disc file a stage's background-set byte names, or null for none. */
+export function kidsBackgroundFile(set, horizontal) {
+    const value = set & 0x7f;
+    if (value === 0 || value > 38) return null;
+    const second = value > 16;
+    const dir = `${horizontal ? "SIDE" : "LENGTH"}${second ? 2 : 1}`;
+    const name = horizontal ? "BGY" : "BGT";
+    const number = second ? value + 34 : value;
+    return `GAME\\${dir}\\${name}${String(number).padStart(2, "0")}.CMP`;
+}
+
+function kidsSoundEntry(bytes, at) {
+    const b0 = bytes[at];
+    return {
+        preset: (b0 & 0x80) !== 0,
+        sequenceVolume: b0 & 0x7f,
+        bgm: bytes[at + 1],
+        presetNumber: bytes[at + 2] & 0x7f,
+        volume: bytes[at + 3] & 0x7f,
+    };
+}
+
+/** The BGM file a sound entry's number names, or null when it plays nothing. */
+export function kidsBgmFile(number) {
+    if (number === 0 || number > 99) return null;
+    const bank = number < 30 ? 0 : number < 60 ? 1 : number < 90 ? 2 : 3;
+    return `SOUND\\${KIDS_BGM_BANKS[bank]}\\BGM${String(number).padStart(2, "0")}.CMP`;
+}
+
 /**
- * The 0x70 config header. `bytes` is the whole thing; the named fields are
- * the ones whose readers were traced.
+ * The 0x70 config header: the game's own settings, written by KIDS.EXE's two
+ * initialisers (0x800760E8 global, 0x80075E30 per stage). Every field below
+ * has a traced reader; the ones whose *meaning* is still open come back as
+ * raw byte groups (`ships`, `items`, `shots`, `unknown1A`). The last byte is
+ * an always-zero pad no routine forms.
  */
 export function decodeKidsConfig(data) {
     const r = KIDS_REGION.config;
     const bytes = data.subarray(r.offset, r.end);
+    const horizontal = (bytes[0] & 1) !== 0;
     const stages = [];
     for (let s = 0; s < KIDS_STAGES; s++) {
-        const set = bytes[105 + s];
+        const flags = bytes[3 + s];
+        const motion = bytes[0x63 + s];
+        const set = bytes[0x69 + s];
         stages.push({
             stage: s,
-            last: (bytes[3 + s] & 0x80) !== 0,
-            shipSpeed: bytes[99 + s] & 3,
+            last: (flags & 0x80) !== 0,
+            chained: (flags & 0x01) !== 0,
+            flags,
+            scrollSpeed: KIDS_SCROLL_SPEEDS[motion & 3],
+            scrollReverse: (motion & 4) !== 0,
+            backgroundSpeed: KIDS_BG_SPEEDS[(motion >> 4) & 3],
             backgroundSet: set & 0x7f,
+            backgroundFile: kidsBackgroundFile(set, horizontal),
         });
     }
+    const lastStage = stages.findIndex((st) => st.last);
+    const stageCount = (lastStage + 1) || KIDS_STAGES;
     const sound = [];
     for (let i = 0; i < 16; i++) {
-        const at = 0x23 + i * 4;
-        sound.push({ enabled: (bytes[at] & 0x80) !== 0, value: bytes[at] & 0x7f, a: bytes[at + 1], b: bytes[at + 2] });
+        const entry = kidsSoundEntry(bytes, 0x23 + i * 4);
+        // Entries 0-3 belong to the game, then two per stage.
+        entry.scope = i < 4 ? "game" : `stage ${(i - 4) >> 1}`;
+        entry.file = entry.preset ? null : kidsBgmFile(entry.bgm);
+        sound.push(entry);
     }
     return {
         bytes,
-        horizontal: (bytes[0] & 1) !== 0,
+        horizontal,
+        font: {
+            typeface: bytes[1] & 7,
+            colour: (bytes[1] >> 3) & 7,
+            file: KIDS_FONT_FILES[bytes[1] >> 6],
+        },
+        soundBank: bytes[2],
         stages,
+        stageCount,
+        pointItems: {
+            small: KIDS_POINT_SMALL[bytes[0x0f] & 3],
+            large: KIDS_POINT_LARGE[bytes[0x10] & 3],
+        },
+        /** Two three-byte player-ship records; only byte 2 has a play-mode reader. */
+        ships: [bytes.subarray(0x09, 0x0c), bytes.subarray(0x0c, 0x0f)],
+        /** Seven item records and two more of the same shape. */
+        items: Array.from({ length: 9 }, (_, i) => ({
+            a: bytes[0x11 + i] & 3,
+            b: (bytes[0x11 + i] >> 2) & 3,
+        })),
+        unknown1A: bytes[0x1a],
+        /** Two four-byte player-shot records, one per ship. */
+        shots: [bytes.subarray(0x1b, 0x1f), bytes.subarray(0x1f, 0x23)],
         sound,
-        /** The stage the game ends on: the first flagged one, or the last. */
-        stageCount: (stages.findIndex((s) => s.last) + 1) || KIDS_STAGES,
+        /** Sound entries past this are zeroed when the game loads. */
+        liveSoundEntries: 2 * stageCount + 4,
     };
 }
 
@@ -602,8 +736,8 @@ export function parseKidsSave(block, { filename = "" } = {}) {
     if (result.data) {
         attempt(result, "map", () => decodeKidsMap(result.data));
         attempt(result, "scroll", () => decodeKidsScroll(result.data));
-        attempt(result, "appear", () => decodeKidsAppear(result.data));
         attempt(result, "config", () => decodeKidsConfig(result.data));
+        attempt(result, "appear", () => decodeKidsAppear(result.data, { horizontal: result.config?.horizontal ?? false }));
         attempt(result, "records", () => decodeKidsRecords(result.data));
         attempt(result, "sprites", () => decodeKidsSprites(result.data));
     }

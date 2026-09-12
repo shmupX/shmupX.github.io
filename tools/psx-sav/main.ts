@@ -512,10 +512,18 @@ function kidsReport(save: Save) {
       } scrolling, ${c.stageCount} stages`,
     );
     for (const s of c.stages) {
+      const scroll = `${s.scrollSpeed} px/frame${
+        s.scrollReverse ? " reversed" : ""
+      }`;
+      const bg = s.backgroundFile
+        ? `${s.backgroundFile}${
+          s.backgroundSpeed ? ` at ${s.backgroundSpeed}` : " static"
+        }`
+        : "no background";
       console.log(
-        `    stage ${s.stage}: ship speed ${s.shipSpeed}, background set ${s.backgroundSet}${
+        `    stage ${s.stage}: scroll ${scroll}, ${bg}${
           s.last ? ", LAST" : ""
-        }`,
+        }${s.chained ? ", chained" : ""}`,
       );
     }
   }
@@ -535,6 +543,24 @@ function kidsReport(save: Save) {
         }`,
       );
     });
+  }
+  if (save.config?.sound) {
+    const live = save.config.sound.slice(0, save.config.liveSoundEntries);
+    console.log(`  music (${live.length} live entries):`);
+    for (const [i, e] of live.entries()) {
+      const what = e.preset ? `preset ${e.presetNumber}` : e.file ?? "none";
+      console.log(
+        `    ${String(i).padStart(2)}  ${
+          String(e.scope).padEnd(8)
+        } ${what}, volume ${e.volume}`,
+      );
+    }
+  }
+  if (save.config?.font) {
+    const c = save.config;
+    console.log(
+      `  font ${c.font.file} typeface ${c.font.typeface} colour ${c.font.colour}, sound bank ${c.soundBank}, items ${c.pointItems.small}/${c.pointItems.large} pts`,
+    );
   }
   if (save.options) {
     const o = save.options;

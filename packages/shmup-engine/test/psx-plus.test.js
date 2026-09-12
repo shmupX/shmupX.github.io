@@ -249,8 +249,11 @@ Deno.test("the high-score ladder reads back as two tables of ten, and palette ro
   assertEquals(scores[0], {
     rank: 1,
     table: 0,
+    owner: "built-in",
     score: 1000,
-    extra: [0, 0, 0, 0],
+    stage: 0,
+    allClear: false,
+    pad: [0, 0, 0],
     name: "........",
   });
   assertEquals(scores[10].table, 1);

@@ -237,29 +237,68 @@ earlier statistical pass called an unused gap, is simply the sixth stage's tail
 and is non-zero in 27 of the 98 saves.
 
 The footprint marks (`0x51`..`0x5F`, 105,489 across the collection) sit on cells
-a bigger enemy covers, and the spawner skips them. Their low nibble looks like a
-back-pointer to the owning cell, but no offset convention fits: the best of the
-six sign and axis orderings, `owner = (row + (n & 3), col - (n >> 2))`, lands on
-a present byte for only 60.4 % of them, and the misses point at other
-footprints. Carried raw as `mark` until an editor trace settles it.
+a bigger enemy covers, and the spawner skips them. A mark is
+`0x50 | (dx << 2) | dy`, the cell's own offset inside the owner's rectangle: the
+editor stamps the whole rectangle at `0x8008A3D0` (`ori v0,v0,0x50`, then `sb`)
+and the caller overwrites the (0,0) cell with the owner byte, which is why
+`0x50` never occurs while `0x51`..`0x5F` all do.
+
+**Which way the offset runs depends on the game's scroll direction**, and that
+is what makes the rule look broken if you miss it. The stamp lands at
+`anchor + dx - 9*dy` in a vertical game and `anchor + 9*dx + dy` in a horizontal
+one — `0x8008A3D0` branches on the config's bit 0 — so inverted, the owner of a
+mark at index `i` is `i + 9*dy - dx` or `i - 9*dx - dy`. Honouring the flag
+resolves **99.87 %** of the 105,489 marks to a present owner; forcing either
+rule on every save gives 60.8 % and 58.4 %. The 0.13 % that do not resolve are
+orphans in 24 of the 588 stage blocks, all boss-shaped, left when a boss moved
+or was resized: the editor erases the old rectangle using a size it caches in
+RAM at `0x800B4094`, which no save carries.
+
+Rectangle sizes come from the editor's table `0x800B2FBC` — 1x1, 2x1, 1x2, 2x2
+for classes 0-3 — and for the boss from `0x80063688`, indexed by bits 6-7 of the
+boss record. Two routines read the marks back, the editor's cursor pick-up
+(`0x80083670`) and the pre-placement overlap clear (`0x8008A110`, which erases
+the displaced enemy entirely); the play engine never sees them. A writer has to
+regenerate them: without them the editor will not displace an overlapping enemy
+and its grid corrupts.
 
 ### CONFIG
 
-0x70 bytes at `0xD140` (RAM `0x8005D140`, pointer `*0x800BC34C`). Named so far:
+0x70 bytes at `0xD140` (RAM `0x8005D140`, pointer `*0x800BC34C`), written by two
+initialisers — `0x800760E8` for the game and `0x80075E30` per stage — and now
+named almost throughout:
 
-| Offset       | Meaning                                                                                         |
-| ------------ | ----------------------------------------------------------------------------------------------- |
-| +0x00 bit 0  | horizontal-scrolling game                                                                       |
-| +0x03..+0x08 | bit 7 marks the last stage (the stage list ends there)                                          |
-| +0x23..+0x63 | sixteen 4-byte entries `[0x7F\|enabled, a, b, 0x20]`, sound-like                                |
-| +0x63+stage  | packed byte, read at play init (default 0x22)                                                   |
-| +0x99+stage  | bits 0-1 ship speed                                                                             |
-| +0x105+stage | `& 0x7F` = background set — a backdrop picture on the disc, not part of the save (see Graphics) |
+| Offset       | Meaning                                                                                                                                                               |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| +0x00 bit 0  | horizontal-scrolling game (SIDE), else vertical (LENGTH)                                                                                                              |
+| +0x01        | font: bits 0-2 typeface, 3-5 palette, 6-7 the file FN1..FN4 (also the cell size)                                                                                      |
+| +0x02        | sound bank 0..4 (`AUDIO%d0.VH`/`.VB`)                                                                                                                                 |
+| +0x03..+0x08 | per stage: bit 7 = the last stage, bit 0 = a chained stage that does not advance the number; bits 5-6 read but unnamed                                                |
+| +0x09..+0x0E | two three-byte player-ship records; only byte 2 (masked to 2 bits) has a play-mode reader                                                                             |
+| +0x0F, +0x10 | point-item values: `[100, 500, 1000, 0]` and `[5000, 10000, 50000, 0]`                                                                                                |
+| +0x11..+0x19 | nine item records, two 2-bit fields each                                                                                                                              |
+| +0x1A        | two small fields, both read at play init, meaning open                                                                                                                |
+| +0x1B..+0x22 | two four-byte player-shot records: pattern (0..8), a second selector (0..6), a third (0..8), and a speed class (0..2)                                                 |
+| +0x23..+0x62 | sixteen 4-byte sound entries (below)                                                                                                                                  |
+| +0x63..+0x68 | per stage: bits 0-1 scroll speed into the same `[0, 0.25, 1, 4]` table the SCROLL nibbles use, bit 2 its direction, bits 4-5 a background speed into `[0, 4, 12, 24]` |
+| +0x69..+0x6E | per stage: the background set (below)                                                                                                                                 |
+| +0x6F        | pad; no routine forms it and it is zero in all 98 saves and 13 disc samples                                                                                           |
 
-The rest have readers but no verified label (see "Unresolved"). 0x70 is the gap
-to the record base rather than the used size: the highest offset any routine
-touches is +0x6E, and the last byte is zero in all 98 saves and all 13 disc
-samples.
+A **sound entry** is `[mode|volume, bgm, preset, master]`: bit 7 of byte 0 plays
+a preset instead of a file, bits 0-6 are the sequence volume, byte 1 is the BGM
+file number 1..99 (`SOUND\G_BGM1..4\BGM%02d.CMP`, banked 1-29 / 30-59 / 60-89 /
+90-99), byte 2 the preset number and byte 3 the master volume. Entries 0-3
+belong to the game and entries `4+2s` and `5+2s` to stage `s`; everything past
+`2 × stageCount + 4` is zeroed when the game loads.
+
+A **background set** is 0 for none, 1..16 for `GAME\{SIDE,LENGTH}1\` and 17..38
+for `…2\` at number+34, as `BGY%02d.CMP` (horizontal) or `BGT%02d.CMP`
+(vertical). Every one of the 1,422 BGM files and 520 background files the 98
+saves name is present in the disc's archive, which is the cross-check that the
+banking arithmetic and the SIDE/LENGTH rule are right.
+
+Still unnamed inside the block: the two ship records' first two bytes, `+0x1A`,
+and bits 5-6 of the per-stage flag byte.
 
 ### RECORDS
 
@@ -481,19 +520,81 @@ comes out as the game's own scenery.
 
 ## GLOBAL, SOUND, HIGH SCORE, SETTINGS
 
-The 0x164 global block is eight pieces in file order: TITLE TYPE (2), TITLE
-GROUP (0x40), ENDING GROUP (0x18), MY SHIP GROUP (0x9A), MY SHIP ODR (0x4D), a
-16-byte stage list (0x8014A740), 3 bytes of game config, and BGM PATCH (0x10) —
-the same set of names the Super Famicom cart has.
+The 0x164 global block is eight pieces in file order. Five carry the Super
+Famicom cart's own names; two do not, and were misread as the cart's until their
+readers were traced:
+
+| Offset  | Size | Piece              | Contents                                                         |
+| ------- | ---- | ------------------ | ---------------------------------------------------------------- |
+| 0x1AF2C | 2    | TITLE TYPE         | six 2-bit entry-animation selectors, three per byte, values 0..2 |
+| 0x1AF2E | 0x40 | TITLE GROUP        | 32 tile words (`w & 0x3FFF` index, 0x4000 h-flip, 0x8000 v-flip) |
+| 0x1AF6E | 0x18 | ENDING GROUP       | 12 tile words, drawn only on the user game's ending              |
+| 0x1AF86 | 0x9A | MY SHIP GROUP      | 77 tile words; the runtime forces words 61-63 to 0x3FC..0x3FE    |
+| 0x1B020 | 0x4D | MY SHIP ODR        | 77 bytes, OR'd over the program's default sheet                  |
+| 0x1B06D | 0x10 | **ITEM TABLE**     | seven item slots, _not_ a stage list                             |
+| 0x1B07D | 3    | three settings     | _not_ one game-config field                                      |
+| 0x1B080 | 0x10 | **BGM ASSIGNMENT** | sixteen song numbers, _not_ the cart's BGM PATCH                 |
+
+The **ITEM TABLE** is a leading unused word then seven `u16` slots: the low byte
+is an effect id 1..11 through the handler table `0x8007DC54` (1-6 set weapon
+0-5, 7 bomb, 8 score bonus, 9 power up, 10 speed up, 11 option) and the high
+byte an enable flag. Slot 0's id also seeds the weapon a new game starts with.
+The three bytes after it are unrelated to each other: a SCORE-item bonus index
+into `{5000 … 1000000}`, a charge time 0..5 worth `(5-v)*45+40` frames, and the
+**stage count minus one**. **BGM ASSIGNMENT** is sixteen song numbers 0..50 —
+0-15 this save's own songs, 16-31 a second bank, 32-50 songs inside the program
+— for stages 0-5, their bosses, the title, game over, the ending and one song
+decoded at session start.
 
 **SOUND** is 0x2E00 = **16 songs of 0x2E0 bytes**, bit-packed rather than a
 byte-per-step sequencer: MAIN.EXE `0x8002E49C` unpacks a song as 16 bars of a
 14-bit header and 32 steps of 11 bits (5 + 6), then a 16-bit tail — 734 bytes of
 the 736 available.
 
-**HIGH SCORE** is two tables of ten 16-byte entries (u32le score, four bytes, an
-8-character name); the factory ladder 1000..100 fills both. **SETTINGS** is
-eight bytes gathered from four separate variables (u8, u8, u16, u32).
+**HIGH SCORE** is two tables of ten 16-byte entries: `u32le` score, the 0-based
+stage reached, three always-zero bytes, an 8-character name. A stage equal to
+the stage count prints as ALL. Table A (0x1DE90) is the built-in Athena game's
+ladder and table B (0x1DF30) the user game's — only B is swapped in and out as
+games are loaded, so a tool that rewrites scores should touch B and leave A
+alone (likely: the selector is a RAM flag, not a saved byte).
+
+**SETTINGS**, the eight bytes at 0x1DFD0, are per byte rather than the four
+variables the table gathers them from: a cursor speed 0..2, a font bank, the
+menu BGM track (0-3 = `BGM01..04.SEQ`, higher = off), a mono/stereo flag, and
+then **four button bitmasks** for the key configuration — `0x01` circle, `0x02`
+cross, `0x04` triangle, `0x08` square, `0x10` L1, `0x20` L2, `0x40` R1, `0x80`
+R2, not indices. The factory value is `00 00 00 00 02 01 08 02`.
+
+## ENEMY DATA, field by field (confirmed)
+
+The 8-byte definition, as MAIN.EXE `0x8001B210` splits it. Each field indexes a
+table the reader owns, which is what fixes the widths:
+
+| Byte | Bits | Field                                                                               |
+| ---- | ---- | ----------------------------------------------------------------------------------- |
+| 0    | all  | movement script, 0..159, into the pointer table `0x8007D760`                        |
+| 1    | 0-4  | shot pattern, 0..19, into the spawner's function table `0x8007DCA4`                 |
+| 1    | 5-7  | fire rate — a random mask and a base, `0x8007B374` / `0x8007B384`                   |
+| 2    | 0-1  | shot mode                                                                           |
+| 2    | 2    | drops an item on death                                                              |
+| 2    | 3-5  | scale rate `{32, 64, 128, 256, 384, 512, 640, 768}` per frame                       |
+| 2    | 6, 7 | animate the x and y scale                                                           |
+| 3    | 0-2  | hit points `{1, 50, 100, 200, 400, 800, 1000, 2000}`                                |
+| 3    | 3-4  | what happens at the scale limit: stop, reverse, restart, despawn                    |
+| 3    | 5-7  | hit flags — the hit sound, immunity to shots, and a collision mask                  |
+| 4    | 0-2  | score `{50, 100, 200, 500, 1000, 2000, 5000, 10000}`                                |
+| 4    | 3-4  | what happens at the end of a turn: stop, sweep back, restart                        |
+| 4    | 5-7  | animation interval `{59, 29, 14, 9, 5, 2, 1, 0}` frames                             |
+| 5    | 0-6  | a parameter for shot mode 2, split 3 + 4 bits (halves unnamed)                      |
+| 5    | 7    | a depth gate that bands shooting, collision and the CLUT by scale                   |
+| 6    | 0-1  | rotation: none, one way, the other, or aim at the player                            |
+| 6    | 2-4  | end scale, and bits 5-7 the start scale: `{0, 6, 8, 16, 24, 32, 48, 64}`, 16 = 100% |
+| 7    | 0-1  | start trigger: immediately, or when y reaches 31 or 70 px                           |
+| 7    | 2-4  | start heading `{0, 224, 192, 160, 128, 96, 64, 32}` of 256                          |
+| 7    | 5-7  | turn rate `{16, 32, 64, 128, 256, 384, 512, 2048}`                                  |
+
+The stage config byte that goes with a definition is at `stage*60 + index` in
+the 0x3C piece, not beside the record.
 
 ## Select 100 (confirmed)
 
@@ -509,30 +610,27 @@ named `BISLPS-00335DEZA`.
 
 ## Unresolved
 
-- **Kids! CONFIG**: bytes 1, 2, 26, 51-58, the sixteen 4-byte sound-like
-  entries, and the packed byte at +0x63+stage have known readers but no verified
-  labels. The editor's settings menu is drawn from PELON glyph structures rather
-  than stored strings, so a screenshot of that screen (or rendering those
-  glyphs) is the cheap way in.
-- **Kids! options**: most of the 0x60 bytes, including `+0xB8` bit 1, which is
+- **Kids! CONFIG, what is left**: the first two bytes of each player-ship
+  record, `+0x1A`, and bits 5-6 of the per-stage flag byte. The rest of the
+  block is named above. The editor's settings menu is drawn from PELON glyph
+  structures rather than stored strings, so a screenshot of that screen (or
+  rendering those glyphs) is the cheap way in.
+- **Kids! options**: most of the 0x1C bytes, including `+0xB8` bit 1, which is
   set in 96 of 98 saves and in every disc sample but has no reader found.
-- **Kids! APPEAR footprint marks** (`0x51`..`0x5F`): they mark cells a bigger
-  enemy covers, but the low nibble's meaning is open — the obvious back-pointer
-  readings fit at most 60 % of the 105,489 marks (above). The editor routine
-  that stamps them, near `0x8008A5AC`, is the place to look.
 - **Kids! record fields**: byte 3's bits 4-7 and byte 4 entirely; the boss
   record's three 4-byte sub-records.
-- **Dezaemon+ enemy definition**: the 8 bytes' field split beyond the bit groups
-  the reader `0x8001B210` makes, and the boss's 32 bytes.
-- **Dezaemon+ settings and global config**: which option each of the eight
-  settings bytes and the 3 game-config bytes is, and which game mode owns
-  high-score table A versus B.
+- **Dezaemon+ boss definition**: the 32 bytes at `+0x1E0`. The 60 ordinary
+  definitions are named above; the boss's are not.
 - **Dezaemon+ SPRITE LAYOUT**: the blit geometry is traced but not a single
   byte's meaning; three of its four sub-blocks use interleaved addressing.
-- **Dezaemon+ graphics pages**: the page pointers span two 64 KB buffers while a
-  save carries one, so whether pages 2-3 are ever reachable from a save is open.
+- **Dezaemon+ graphics pages**: which pair of the program's four tile buffers a
+  save occupies is edition-dependent, and the reason the two populations differ
+  is inferred from the two load paths rather than traced.
 - **Dezaemon+ song fields**: the bar header's 4/2/4/4 bits and the tail's
   3/5/4/4, and the note table `0x8007E4EC`.
+- **Dezaemon+ high-score tables**: which of the two the game writes is a RAM
+  flag no save carries, so the A/B ownership above rests on which one the
+  community saves actually vary (53 of 67 for B against 8 for A).
 
 ## Method
 

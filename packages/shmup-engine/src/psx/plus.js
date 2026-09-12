@@ -111,6 +111,41 @@ export const PLUS_APPEAR_CLASSES = Object.freeze([
 ]);
 export const PLUS_APPEAR_BOSS_NIBBLE = 0xd;
 
+/** What an item slot's effect id does (MAIN.EXE handler table 0x8007DC54). */
+export const PLUS_ITEM_EFFECTS = Object.freeze([
+    null,
+    "weapon 0",
+    "weapon 1",
+    "weapon 2",
+    "weapon 3",
+    "weapon 4",
+    "weapon 5",
+    "bomb",
+    "score",
+    "power up",
+    "speed up",
+    "option",
+]);
+/** The SCORE item's bonus, indexed by the first game-settings byte. */
+export const PLUS_SCORE_BONUS = Object.freeze([5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]);
+/** What each of the sixteen BGM-assignment slots is played for. */
+export const PLUS_BGM_SLOTS = Object.freeze([
+    "stage 0", "stage 1", "stage 2", "stage 3", "stage 4", "stage 5",
+    "boss 0", "boss 1", "boss 2", "boss 3", "boss 4", "boss 5",
+    "title", "game over", "ending", "preloaded",
+]);
+/** A key-config byte is a button bitmask, not an index. */
+export const PLUS_BUTTONS = Object.freeze(["circle", "cross", "triangle", "square", "L1", "L2", "R1", "R2"]);
+/** Enemy hit points, score, scale rates and so on, as the reader's tables give them. */
+export const PLUS_ENEMY_HP = Object.freeze([1, 50, 100, 200, 400, 800, 1000, 2000]);
+export const PLUS_ENEMY_SCORE = Object.freeze([50, 100, 200, 500, 1000, 2000, 5000, 10000]);
+export const PLUS_SCALE_RATES = Object.freeze([32, 64, 128, 256, 384, 512, 640, 768]);
+export const PLUS_SCALES = Object.freeze([0, 6, 8, 16, 24, 32, 48, 64]);
+export const PLUS_TURN_RATES = Object.freeze([16, 32, 64, 128, 256, 384, 512, 2048]);
+/** Start headings, in the game's 256-unit turn (table 0x8007B3D0). */
+export const PLUS_START_ANGLES = Object.freeze([0x00, 0xe0, 0xc0, 0xa0, 0x80, 0x60, 0x40, 0x20]);
+export const PLUS_ANIM_INTERVALS = Object.freeze([59, 29, 14, 9, 5, 2, 1, 0]);
+
 export const CONFIDENCES = Object.freeze(["confirmed", "likely", "open"]);
 
 function region(name, label, offset, end, confidence, note) {
@@ -143,9 +178,9 @@ const GLOBAL_PIECES = [
     ["endingGroup", "ENDING GROUP", 0x18, 0x8014a0e8],
     ["shipGroup", "MY SHIP GROUP", 0x9a, 0x8018c9e8],
     ["shipOdr", "MY SHIP ODR", 0x4d, 0x801211c0],
-    ["stageList", "STAGE LIST", 0x10, 0x8014a740],
-    ["gameConfig", "GAME CONFIG", 0x03, 0x80112a52],
-    ["bgmPatch", "BGM PATCH", 0x10, 0x8018cc18],
+    ["itemTable", "ITEM TABLE", 0x10, 0x8014a740],
+    ["gameSettings", "GAME SETTINGS", 0x03, 0x80112a52],
+    ["bgmAssignment", "BGM ASSIGNMENT", 0x10, 0x8018cc18],
 ];
 
 const HEADER_PIECES = [
@@ -444,17 +479,51 @@ export function decodePlusMapGroup(stage) {
     return words;
 }
 
+/**
+ * One 8-byte enemy definition, split the way MAIN.EXE 0x8001B210 splits it.
+ * Every field below feeds a table the reader indexes; the two halves of
+ * byte 5's shot parameter are the only part still unnamed.
+ */
+export function decodePlusEnemy(bytes, at, index, config) {
+    const b = Array.from(bytes.subarray(at, at + PLUS_ENEMY_SIZE));
+    return {
+        index,
+        bytes: bytes.subarray(at, at + PLUS_ENEMY_SIZE),
+        config,
+        /** Index into the 160-entry movement-script table. */
+        movement: b[0],
+        shotPattern: b[1] & 0x1f,
+        fireRate: b[1] >> 5,
+        shotMode: b[2] & 3,
+        dropsItem: (b[2] & 4) !== 0,
+        scaleRate: PLUS_SCALE_RATES[(b[2] >> 3) & 7],
+        scalesX: (b[2] & 0x40) !== 0,
+        scalesY: (b[2] & 0x80) !== 0,
+        hitPoints: PLUS_ENEMY_HP[b[3] & 7],
+        scaleLimitAction: (b[3] >> 3) & 3,
+        hitFlags: b[3] >> 5,
+        immuneToShots: (b[3] & 0x40) !== 0,
+        score: PLUS_ENEMY_SCORE[b[4] & 7],
+        turnEndAction: (b[4] >> 3) & 3,
+        animationInterval: PLUS_ANIM_INTERVALS[b[4] >> 5],
+        shotParameter: b[5] & 0x7f,
+        depthGate: (b[5] & 0x80) !== 0,
+        rotation: b[6] & 3,
+        endScale: PLUS_SCALES[(b[6] >> 2) & 7],
+        startScale: PLUS_SCALES[b[6] >> 5],
+        startTrigger: b[7] & 3,
+        startAngle: PLUS_START_ANGLES[(b[7] >> 2) & 7],
+        turnRate: PLUS_TURN_RATES[b[7] >> 5],
+    };
+}
+
 /** A stage's ENEMY DATA: 60 definitions of 8 bytes, then a 32-byte boss. */
 export function decodePlusEnemyData(stage) {
     const bytes = stage.parts.enemyData;
     const config = stage.parts.config;
     const enemies = [];
     for (let i = 0; i < PLUS_ENEMY_COUNT; i++) {
-        enemies.push({
-            index: i,
-            bytes: bytes.subarray(i * PLUS_ENEMY_SIZE, (i + 1) * PLUS_ENEMY_SIZE),
-            config: config[i],
-        });
+        enemies.push(decodePlusEnemy(bytes, i * PLUS_ENEMY_SIZE, i, config[i]));
     }
     return { enemies, boss: bytes.subarray(PLUS_BOSS_OFFSET, PLUS_BOSS_OFFSET + PLUS_BOSS_SIZE) };
 }
@@ -496,13 +565,35 @@ export function decodePlusScroll(stage) {
     return { blocks: bytes.subarray(0, 256), effects: bytes.subarray(256, 512) };
 }
 
-/** The 0x164 global block, piece by piece. */
+/**
+ * The 0x164 global block: every piece as a view, plus the three that are
+ * decoded — the seven item slots, the sixteen BGM assignments and the three
+ * game settings that sit between them.
+ */
 export function decodePlusGlobals(block) {
-    const out = {};
+    const parts = {};
     for (const p of PLUS_GLOBAL_LAYOUT) {
-        out[p.name] = block.subarray(PLUS_GLOBAL_OFFSET + p.offset, PLUS_GLOBAL_OFFSET + p.end);
+        parts[p.name] = block.subarray(PLUS_GLOBAL_OFFSET + p.offset, PLUS_GLOBAL_OFFSET + p.end);
     }
-    return out;
+    const items = [];
+    for (let i = 1; i < 8; i++) {
+        const word = u16le(parts.itemTable, i * 2);
+        const effect = word & 0xff;
+        items.push({ slot: i - 1, effect, name: PLUS_ITEM_EFFECTS[effect] ?? null, enabled: (word >> 8) !== 0 });
+    }
+    const settings = parts.gameSettings;
+    const bgm = Array.from(parts.bgmAssignment, (song, i) => ({ slot: PLUS_BGM_SLOTS[i], song }));
+    return {
+        parts,
+        items,
+        /** The weapon a new game starts with, from item slot 0. */
+        startingWeapon: (u16le(parts.itemTable, 2) & 0xff) - 1,
+        bgm,
+        scoreBonus: PLUS_SCORE_BONUS[settings[0] & 7],
+        /** Frames the hold-to-charge weapon needs. */
+        chargeFrames: (5 - Math.min(settings[1], 5)) * 45 + 40,
+        stageCount: settings[2] + 1,
+    };
 }
 
 /** The sixteen 0x2E0-byte songs, as views. */
@@ -515,17 +606,28 @@ export function decodePlusSound(block) {
     return songs;
 }
 
-/** Two tables of ten entries: u32le score, four bytes, an 8-character name. */
-export function decodePlusHiScores(block) {
+/**
+ * Two tables of ten entries: u32le score, the 0-based stage reached, three
+ * always-zero bytes, an 8-character name. Table 0 is the built-in Athena
+ * game's ladder and table 1 the user game's — only table 1 is swapped in and
+ * out when another game is loaded, so a tool that rewrites scores should
+ * touch that one (likely: the selector lives in RAM, not in the save).
+ * `stageCount`, when known, turns the last stage into an all-clear.
+ */
+export function decodePlusHiScores(block, { stageCount = null } = {}) {
     const entries = [];
     for (let t = 0; t < PLUS_HISCORE_TABLES; t++) {
         for (let i = 0; i < PLUS_HISCORE_COUNT; i++) {
             const at = PLUS_HISCORE_OFFSET + t * PLUS_HISCORE_TABLE_BYTES + i * PLUS_HISCORE_SIZE;
+            const stage = block[at + 4];
             entries.push({
                 rank: i + 1,
                 table: t,
+                owner: t === 0 ? "built-in" : "user game",
                 score: u32le(block, at),
-                extra: Array.from(block.subarray(at + 4, at + 8)),
+                stage,
+                allClear: stageCount !== null && stage >= stageCount,
+                pad: Array.from(block.subarray(at + 5, at + 8)),
                 name: latin1(block, at + 8, 8),
             });
         }
@@ -533,15 +635,30 @@ export function decodePlusHiScores(block) {
     return entries;
 }
 
-/** The eight settings bytes, as the four variables the table names. */
+/** The names a key-config bitmask sets. */
+export function plusButtons(mask) {
+    return PLUS_BUTTONS.filter((_, i) => (mask >> i) & 1);
+}
+
+/**
+ * The eight settings bytes. The table gathers them from four variables, but
+ * each variable is really per-byte: a cursor speed, a font bank, the menu BGM
+ * track and the stereo flag, then four button bitmasks.
+ */
 export function decodePlusSettings(block) {
     const at = PLUS_SETTINGS_OFFSET;
+    const keys = [];
+    for (let i = 0; i < 4; i++) {
+        const mask = block[at + 4 + i];
+        keys.push({ action: i, mask, buttons: plusButtons(mask) });
+    }
     return {
         bytes: block.subarray(at, at + PLUS_SETTINGS_SIZE),
-        a: block[at],
-        b: block[at + 1],
-        c: u16le(block, at + 2),
-        d: u32le(block, at + 4),
+        cursorSpeed: block[at],
+        fontBank: block[at + 1],
+        menuBgm: block[at + 2] < 4 ? block[at + 2] : null,
+        stereo: block[at + 3] !== 0,
+        keys,
     };
 }
 
@@ -592,7 +709,7 @@ export function parsePlusSave(block, { filename = "" } = {}) {
     attempt(result, "stages", () => decodePlusStages(block));
     attempt(result, "globals", () => decodePlusGlobals(block));
     attempt(result, "sound", () => decodePlusSound(block));
-    attempt(result, "hiScores", () => decodePlusHiScores(block));
+    attempt(result, "hiScores", () => decodePlusHiScores(block, { stageCount: result.globals?.stageCount ?? null }));
     attempt(result, "settings", () => decodePlusSettings(block));
     return result;
 }

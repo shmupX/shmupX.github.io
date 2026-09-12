@@ -120,8 +120,16 @@ Deno.test("an appear slot names a class and an id; a bit-7-clear byte is an edit
   });
   assertEquals(decodeKidsAppearSlot(0xb9).klass, 3);
   assertEquals(decodeKidsAppearSlot(0xc0).boss, true);
+  // A footprint mark carries the cell's offset inside its owner's rectangle.
   assertEquals(decodeKidsAppearSlot(0x51).footprint, true);
-  assertEquals(decodeKidsAppearSlot(0x51).mark, 1);
+  assertEquals([decodeKidsAppearSlot(0x51).dx, decodeKidsAppearSlot(0x51).dy], [
+    0,
+    1,
+  ]);
+  assertEquals([decodeKidsAppearSlot(0x5e).dx, decodeKidsAppearSlot(0x5e).dy], [
+    3,
+    2,
+  ]);
   assertEquals(decodeKidsAppearSlot(0xc0), {
     raw: 0xc0,
     boss: true,
