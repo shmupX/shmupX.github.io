@@ -939,7 +939,7 @@ export function buildSaveFromGame(level, art, options = {}) {
                         { length: def.frames },
                         (_, f) => planFrame(`${key}:${f}`, frame, def.w * CG_CELL, def.h * CG_CELL, "story", 2),
                     );
-                    const letter = ` ${key}`;
+                    const letter = `\x00${key}`;
                     records.set(letter, { index, band, frames: planKeys, bytes: storyBytes, name: key });
                     placements.push({
                         row: rowBase + (rows - 1 - tile.row) * stepRow,
