@@ -1009,10 +1009,15 @@
         ? eshopCatalogRows.filter(eshopTwoPlayer)
         : eshopCatalogRows.filter((g) => eshopStatusKey(g) === eshopFilter)
   );
-  function eshopApplyFilter(f) {
+  // `keep` holds the highlighted game across the change where it survives —
+  // what an automatic trim wants, so a press meant for the row under the
+  // cursor cannot land on whatever slid into its place.
+  function eshopApplyFilter(f, keep) {
     if (!eshopFilters.includes(f) || f === eshopFilter) return false;
+    const wasId = keep ? eshopCurrent?.id : null;
     eshopFilter = f;
-    eshopSel = 0;
+    const next = wasId ? eshopRows.findIndex((g) => g.id === wasId) : -1;
+    eshopSel = next >= 0 ? next : 0;
     sfx.nav();
     return true;
   }
@@ -1042,24 +1047,43 @@
   let twoPlayers = $state({ two: false, pads: 0, halves: false });
   let eshopFilterAuto = createFilterAuto();
   let eshopChipsTucked = $state(false);
+  // Read once (this runs every animation frame) and remembered in the tab: a
+  // browser that cannot store it shows the reveal rather than trimming behind
+  // the player's back — the one thing the reveal exists to prevent.
+  let twoPlayerSeen = null;
   function twoPlayerFilterSeen() {
-    try { return localStorage.getItem(TWO_PLAYER_SEEN_KEY) === '1'; } catch (_) { return true; }
+    if (twoPlayerSeen === null) {
+      try { twoPlayerSeen = localStorage.getItem(TWO_PLAYER_SEEN_KEY) === '1'; } catch (_) { twoPlayerSeen = false; }
+    }
+    return twoPlayerSeen;
   }
   function markTwoPlayerFilterSeen() {
+    twoPlayerSeen = true;
     try { localStorage.setItem(TWO_PLAYER_SEEN_KEY, '1'); } catch (_) { /* ignore */ }
   }
   // One poll: note the pads, take the verdict, step the filter.
   function noteTwoPlayers(pads, now) {
+    // The halves count only while they ARE two pads — Split Controller mode
+    // live — and only on the split view's claim (the View tap) or both
+    // sticks at once. A solo player's D-pad-then-A is not two players.
+    const split = splitPadsOn && !legionFpsMode;
     let targets = null;
+    let claimed = false;
     if (legionDetected) {
-      try { targets = new Set(window.CMGGamepadCompat?.splitTargets?.(pads) || []); } catch (_) { targets = null; }
+      try {
+        const compat = window.CMGGamepadCompat;
+        targets = new Set(compat?.splitTargets?.(pads) || []);
+        claimed = !!compat?.splitStatus?.().some((s) => s.claimed);
+      } catch (_) { targets = null; }
     }
     notePad(presence, pads, now, {
       legion: legionDetected,
+      split,
+      claimed,
       isLegionPad: (p) => !targets || targets.has(p.index),
       fps: legionFpsMode,
     });
-    const v = twoPlayerVerdict(presence, now, { fps: legionFpsMode });
+    const v = twoPlayerVerdict(presence, now, { split, fps: legionFpsMode });
     if (v.two !== twoPlayers.two || v.pads !== twoPlayers.pads || v.halves !== twoPlayers.halves) twoPlayers = v;
     const { state, actions } = stepFilterAuto(eshopFilterAuto, {
       two: v.two,
@@ -1071,7 +1095,7 @@
     });
     eshopFilterAuto = state;
     if (actions.showChips) eshopChipsTucked = false;
-    if (actions.setFilter) eshopApplyFilter(actions.setFilter);
+    if (actions.setFilter) eshopApplyFilter(actions.setFilter, true);
     if (actions.markSeen) markTwoPlayerFilterSeen();
     if (actions.hideChips) eshopChipsTucked = true;
   }
@@ -3950,6 +3974,10 @@
         if (s) lines.push(s);
       }
     } catch (_) { /* ignore */ }
+    // Two players is not a Legion matter alone — two pads say it anywhere.
+    if (legionDetected || splitPadsOn || legionFpsMode || twoPlayers.pads > 1 || eshopFilter === '2P') {
+      lines.push(`two players: ${twoPlayers.two ? 'yes' : 'no'} · pads used: ${twoPlayers.pads} · halves: ${twoPlayers.halves ? 'both' : 'no'} · 2P filter: ${eshopFilter === '2P' ? 'on' : 'off'}${eshopChipsTucked ? ' (chips tucked)' : ''}`);
+    }
     if (legionDetected || splitPadsOn || legionFpsMode) {
       let targets = '';
       let claimed = '';
@@ -3958,7 +3986,6 @@
       const why = !splitPadsOn ? 'off' : legionFpsMode ? 'fps' : editorFrameActive ? 'editor' : 'yes';
       lines.push(`legion: ${hostDevice?.model || (legionPadSeen ? 'pad id' : 'no')} · split: ${splitPadsOn ? 'on' : 'off'} · live: ${why} · fps mode: ${legionFpsMode ? 'on' : 'off'}`);
       lines.push(`targets: [${targets}] · claimed: [${claimed}] · pad quiet: ${padActivityAt ? ((performance.now() - padActivityAt) / 1000).toFixed(0) + 's' : 'never used'}`);
-      lines.push(`two players: ${twoPlayers.two ? 'yes' : 'no'} · pads used: ${twoPlayers.pads} · halves: ${twoPlayers.halves ? 'both' : 'no'} · 2P filter: ${eshopFilter === '2P' ? 'on' : 'off'}${eshopChipsTucked ? ' (chips tucked)' : ''}`);
       if (gameOn) {
         const iframe = document.getElementById('gameframe') || document.querySelector('.game-iframe iframe');
         let patched = '?', own = '?';
@@ -5698,7 +5725,7 @@
                   class="eshop-filter {f === eshopFilter ? 'on' : ''}"
                   role="tab"
                   aria-selected={f === eshopFilter}
-                  tabindex="0"
+                  tabindex={eshopChipsTucked ? -1 : 0}
                   onclick={() => eshopSetFilter(f)}
                   onkeydown={chipKeyHandler(() => eshopSetFilter(f))}
                 >{f === 'ALL' ? 'ALL' : statusLabel(f)}</span>

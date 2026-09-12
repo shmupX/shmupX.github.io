@@ -10,21 +10,25 @@
 //     second pad on Firefox. A pad counts from its first press or stick move
 //     and keeps counting while it stays connected.
 //
-//   - A LEGION GO IN HALVES. Its detached controller is still ONE pad, so two
-//     players holding a half each look like one; but each half owns its own
-//     buttons and stick, and a controller whose left half AND right half are
-//     both being worked is in two pairs of hands. Each half's last use is
-//     remembered, and the pair counts once both have been used within
-//     PAIR_WINDOW_MS of each other — then it stays counted (a pair browsing a
-//     list does not keep both sticks busy) until the pad goes away, the
-//     right half goes to FPS mode, or the halves have been quiet for
-//     PAIR_QUIET_MS.
+//   - A LEGION GO IN HALVES, while Split Controller mode is live. Its detached
+//     controller is still ONE pad, so two players holding a half each look
+//     like one. What says there are two is a gesture ONE PLAYER CANNOT MAKE
+//     while working a menu:
+//       · the split view's right half has been CLAIMED (the View tap — a
+//         deliberate "we are two", see gamepad-compatibility-plugin.js), or
+//       · both sticks are deflected in the SAME poll, which is a hand on each
+//         half.
+//     Buttons never say it. The launcher's own navigation is a left-half press
+//     (D-pad) and then a right-half press (A to confirm), so counting each
+//     half's last press would make every solo player a pair.
+//     Once said, it stays said — a pair reading a list holds nothing — until
+//     the pad goes away, split mode ends, the right half goes to FPS mode, or
+//     the halves have been quiet for PAIR_QUIET_MS.
 //
 // The dashboard feeds `notePad` every poll with the raw controllers it sees
 // (never the split halves — those exist only inside the game frame), and asks
 // `verdict` for the answer.
 
-export const PAIR_WINDOW_MS = 30_000;
 export const PAIR_QUIET_MS = 10 * 60_000;
 export const STICK_LIVE = 0.55;
 
@@ -51,6 +55,14 @@ export function halvesActive(pad) {
   };
 }
 
+/**
+ * A hand on each half, right now: both sticks deflected in the same poll.
+ * One player at a menu moves one stick at a time; two players each have one.
+ */
+export function bothSticksLive(pad) {
+  return (axisLive(pad, 0) || axisLive(pad, 1)) && (axisLive(pad, 2) || axisLive(pad, 3));
+}
+
 /** Any button or stick (axes 0-3) live on this pad. */
 export function padActive(pad) {
   const h = halvesActive(pad);
@@ -66,9 +78,7 @@ export function createPresence() {
   return {
     // "index:id" -> last time that pad was used, for the pads seen used.
     used: new Map(),
-    // The Legion pad's halves: last use of each, and when the pair last held.
-    leftAt: -Infinity,
-    rightAt: -Infinity,
+    // The Legion pad: when its two halves were last both in hand.
     pairAt: -Infinity,
     legionKey: null,
   };
@@ -76,10 +86,13 @@ export function createPresence() {
 
 /**
  * One poll's worth of pads. `pads` is navigator.getGamepads() as the launcher
- * sees it; `opts.legion` says the machine is a Legion Go with a detachable
- * controller, `opts.isLegionPad(pad)` names the pad that is its controller
- * (any standard pad when nothing says — the same rule the split view uses),
- * and `opts.fps` that the right half is a mouse right now.
+ * sees it; `opts.split` says Split Controller mode is live right now (without
+ * it the halves are one player's two hands and are never read), `opts.legion`
+ * that the machine is a Legion Go with a detachable controller,
+ * `opts.isLegionPad(pad)` names the pad that is its controller (any standard
+ * pad when nothing says — the same rule the split view uses), `opts.claimed`
+ * that the split view's right half has been claimed for player 2, and
+ * `opts.fps` that the right half is a mouse right now.
  */
 export function notePad(state, pads, now, opts = {}) {
   const list = pads ? Array.prototype.filter.call(pads, (p) => p && p.connected) : [];
@@ -97,13 +110,12 @@ export function notePad(state, pads, now, opts = {}) {
   const legionKey = legion ? padKey(legion) : null;
   if (legionKey !== state.legionKey) {
     state.legionKey = legionKey;
-    state.leftAt = state.rightAt = state.pairAt = -Infinity;
+    state.pairAt = -Infinity;
   }
-  if (legion && !opts.fps) {
-    const h = halvesActive(legion);
-    if (h.left) state.leftAt = now;
-    if (h.right) state.rightAt = now;
-    if (now - state.leftAt <= PAIR_WINDOW_MS && now - state.rightAt <= PAIR_WINDOW_MS) state.pairAt = now;
+  // Only while the halves ARE two pads, and only on a gesture one player
+  // cannot make (see the header).
+  if (legion && opts.split && !opts.fps && (opts.claimed || bothSticksLive(legion))) {
+    state.pairAt = now;
   }
   return state;
 }
@@ -115,7 +127,8 @@ export function notePad(state, pads, now, opts = {}) {
  */
 export function verdict(state, now, opts = {}) {
   const pads = state.used.size;
-  const halves = !!state.legionKey && !opts.fps && now - state.pairAt <= PAIR_QUIET_MS;
+  const halves = !!state.legionKey && !!opts.split && !opts.fps &&
+    now - state.pairAt <= PAIR_QUIET_MS;
   return { two: pads >= 2 || halves, pads, halves };
 }
 
@@ -153,13 +166,23 @@ export function stepFilterAuto(state, input) {
   const out = {};
   const { two, has2P, onScreen, filter, seen, now } = input;
   if (!onScreen) {
-    // Off the shop screen a running reveal is abandoned; the trim itself
-    // stands (a return to the screen shows the trimmed list).
+    // Off the shop screen a running reveal is abandoned. One that had not
+    // flipped yet applied NOTHING, so the trim is not owed to it either:
+    // clear the latch, and the next visit starts the reveal over.
+    if (s.flipAt) s.auto = false;
     s.flipAt = 0;
     s.tuckAt = 0;
     return { state: s, actions: out };
   }
   if (s.flipAt) {
+    // The reason for the trim can go while the beat runs — the second player
+    // puts their pad down, the player picks a filter. Never flip into a
+    // trim nobody asked for, and never spend the one-time reveal on it.
+    if (!two || !has2P || filter !== 'ALL') {
+      s.flipAt = 0;
+      s.auto = false;
+      return { state: s, actions: out };
+    }
     if (now >= s.flipAt) {
       s.flipAt = 0;
       s.tuckAt = now + REVEAL_HOLD_MS;

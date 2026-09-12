@@ -258,9 +258,11 @@ export async function putDezaShelfEntry(rec) {
   return record;
 }
 
-// Ids this session has already tried and failed to cover, so a cart the
-// decoders cannot read is not re-decoded on every refresh.
+// Ids this session has already tried and failed to cover — and, separately,
+// to count — so a cart the decoders cannot read is not re-decoded on every
+// refresh. Two sets, because a cart can be coverless and still countable.
 const uncoverable = new Set();
+const uncountable = new Set();
 let backfillPending = null;
 
 /**
@@ -286,22 +288,22 @@ export function backfillDezaShelfCovers() {
 async function runBackfill() {
   let filled = 0;
   for (const rec of await listDezaShelf()) {
-    const covered = typeof rec.cover === 'string' && rec.cover;
-    const counted = typeof rec.players === 'number' && rec.players > 0;
-    if ((covered || uncoverable.has(rec.id)) && counted) continue;
+    const covered = (typeof rec.cover === 'string' && rec.cover) || uncoverable.has(rec.id);
+    const counted = (typeof rec.players === 'number' && rec.players > 0) || uncountable.has(rec.id);
+    if (covered && counted) continue;
     if (!(rec.bytes instanceof Uint8Array) || !rec.bytes.length) continue;
     const patch = {};
-    if (!covered && !uncoverable.has(rec.id)) {
+    if (!covered) {
       const cover = await coverOrNull(rec);
       if (cover) patch.cover = cover;
       else uncoverable.add(rec.id);
     }
     if (!counted) {
       const players = await shelfCartPlayers(rec.bytes);
-      // An unreadable cart is left uncounted, not retried: the cover pass
-      // has already given up on it by now.
+      // A cart the decoder cannot read is given up on rather than re-read on
+      // every refresh — the same bargain the covers make.
       if (players) patch.players = players;
-      else if (!uncoverable.has(rec.id)) uncoverable.add(rec.id);
+      else uncountable.add(rec.id);
     }
     if (!Object.keys(patch).length) continue;
     await tx('readwrite', 'written', (store) => store.put({ ...rec, ...patch }));
