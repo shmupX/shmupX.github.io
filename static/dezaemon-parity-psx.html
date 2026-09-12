@@ -1,0 +1,333 @@
+<title>Dezaemon PSX Parity Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #F3F6F3;
+    --surface: #FFFFFF;
+    --ink: #17211C;
+    --muted: #5A6B62;
+    --line: #D8E0DA;
+    --accent: #1F7A52;
+    --accent-ink: #FFFFFF;
+    --ok: #1F7A52;
+    --ok-bg: #E3F0E8;
+    --part: #96661A;
+    --part-bg: #F5ECD9;
+    --miss: #A8433A;
+    --miss-bg: #F6E4E1;
+    --chip-bg: #EAF0EB;
+    --code-bg: #EDF2EE;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F1512;
+      --surface: #161F1A;
+      --ink: #DCE6DF;
+      --muted: #8FA398;
+      --line: #263229;
+      --accent: #58C08C;
+      --accent-ink: #0F1512;
+      --ok: #6CC79A;
+      --ok-bg: #1A2E23;
+      --part: #D3A557;
+      --part-bg: #2E2618;
+      --miss: #D98077;
+      --miss-bg: #331E1B;
+      --chip-bg: #1D2822;
+      --code-bg: #1A241E;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1512;
+    --surface: #161F1A;
+    --ink: #DCE6DF;
+    --muted: #8FA398;
+    --line: #263229;
+    --accent: #58C08C;
+    --accent-ink: #0F1512;
+    --ok: #6CC79A;
+    --ok-bg: #1A2E23;
+    --part: #D3A557;
+    --part-bg: #2E2618;
+    --miss: #D98077;
+    --miss-bg: #331E1B;
+    --chip-bg: #1D2822;
+    --code-bg: #1A241E;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 20px 96px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header { padding: 56px 0 8px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 44px);
+    font-weight: 900;
+    line-height: 1.15;
+    letter-spacing: -.01em;
+    margin: 0 0 4px;
+    text-wrap: balance;
+  }
+  h1 .jp { color: var(--muted); font-weight: 700; font-size: .55em; letter-spacing: .04em; vertical-align: .35em; margin-left: .5em; }
+  .lede { color: var(--muted); max-width: 62ch; margin: 12px 0 0; }
+  .lede strong { color: var(--ink); font-weight: 700; }
+
+  .meterline {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin: 28px 0 0; padding: 14px 16px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .meter { flex: 1 1 260px; height: 10px; border-radius: 5px; overflow: hidden; display: flex; }
+  .meter i { display: block; height: 100%; }
+  .meter .m-ok { background: var(--ok); }
+  .meter .m-part { background: var(--part); }
+  .meter .m-miss { background: var(--miss); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .legend b { color: var(--ink); font-weight: 700; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+
+  h2 {
+    font-size: 22px; font-weight: 900; letter-spacing: -.005em;
+    margin: 56px 0 6px; text-wrap: balance;
+  }
+  h2 .no {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    color: var(--accent); font-weight: 600; font-size: 15px; margin-right: 10px;
+  }
+  .sub { color: var(--muted); margin: 0 0 20px; max-width: 66ch; }
+
+  code, .ref {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .86em;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  .ref { color: var(--muted); }
+
+  /* ── remaining-work list ── */
+  ol.remaining { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  ol.remaining li {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px 14px 14px;
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 4px 12px;
+  }
+  ol.remaining .n {
+    grid-row: 1 / 3;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600; font-size: 14px;
+    color: var(--accent);
+    background: var(--chip-bg);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    height: 34px;
+  }
+  ol.remaining h3 { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.4; }
+  ol.remaining h3 .tag {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 500; letter-spacing: .05em;
+    border-radius: 999px; padding: 2px 9px; margin-left: 8px;
+    vertical-align: 2px; white-space: nowrap;
+  }
+  .tag.spec { background: var(--ok-bg); color: var(--ok); }
+  .tag.open { background: var(--part-bg); color: var(--part); }
+  .tag.none { background: var(--miss-bg); color: var(--miss); }
+  ol.remaining p { margin: 0; font-size: 14px; color: var(--muted); max-width: 72ch; }
+  ol.remaining p b { color: var(--ink); font-weight: 700; }
+
+  /* ── status tables ── */
+  .band {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    border-radius: 999px; padding: 3px 12px;
+  }
+  .band.ok { background: var(--ok-bg); color: var(--ok); }
+  .band.part { background: var(--part-bg); color: var(--part); }
+  .band.miss { background: var(--miss-bg); color: var(--miss); }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th {
+    text-align: left; font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); padding: 12px 16px 8px; border-bottom: 1px solid var(--line);
+  }
+  td { padding: 10px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.feat { font-weight: 700; white-space: nowrap; }
+  td .note { color: var(--muted); }
+  .tablegroup { display: grid; gap: 12px; margin-top: 14px; }
+
+  ul.plain { margin: 10px 0 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
+  ul.plain li { margin: 6px 0; max-width: 72ch; }
+  ul.plain b { color: var(--ink); font-weight: 700; }
+
+  .pipeline {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13px; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto; white-space: normal; /* the sibling's strip is nowrap; this page's pipeline is twice its length, so it wraps and its tail is seen without a sideways scroll */
+    margin: 18px 0 0;
+  }
+  .pipeline b { color: var(--accent); font-weight: 600; }
+
+  footer { margin-top: 64px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; max-width: 72ch; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .meter i { transition: width .6s ease; }
+  }
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">shmupX · packages/shmup-engine/src/psx · reverse-engineering status</p>
+  <h1>Dezaemon PSX Parity Map<span class="jp">デザエモン</span></h1>
+  <p class="lede">What <code>@shmupx/shmup-engine/psx</code> decodes of the two PlayStation Dezaemons, and what stands between it and the parity <a href="dezaemon-parity.html">the Saturn map</a> reports. Two games, one memory-card file each: <strong>Dezaemon+</strong> (Athena, 1996, SLPS-00335 — the port of the <a href="dezaemon-parity-sfc.html">Super Famicom cart</a>) writes its 120 KB raw, and <strong>Dezaemon Kids!</strong> (1998, SLPS-01503) packs its two sections with the Saturn sequel's own LZSS. Unlike the SFC side, <strong>both discs are here</strong>, so this is not a statistical reading: every layout below comes out of <code>KIDS.EXE</code>, its play overlay <code>GAMES.bin</code> and <code>MAIN.EXE</code>, and is then held against <strong>165 community saves</strong>. What it is not is a consumer — as of 2026-09-12 the parser is a <strong>read-only structural pass</strong>: nothing is played, mapped into <code>game.json</code> or written back. Canonical notes: <code>packages/shmup-engine/FORMAT-PSX.md</code>.</p>
+
+  <div class="pipeline">.sav / .mcr / .gme / .mcs / .psv → memcard.js <b>MC</b> directory · block chain → save-header.js <b>SC</b> frame · Shift-JIS title · icon → <b>Kids!</b> 11-word directory → 2 × Okumura LZSS + 3 byte sums → <b>graphics</b> (4 CG pages) · <b>data</b> (map · scroll · appear · config · records · sprites) · <b>tail</b> ‖ <b>Dezaemon+</b> the program's 74-entry table → 20 group checksums · <b>graphics</b> · <b>palettes</b> · 5 × 9 stage pieces · <b>global</b> · <b>sound</b> · <b>scores</b> → parsePsxSav → psx:probe report · png · hex · diff ‖ no game.json · no runtime · no write path</div>
+
+  <div class="meterline">
+    <div class="meter" role="img" aria-label="Dezaemon Kids: seven of eleven regions confirmed, three likely, one open">
+      <i class="m-ok" style="width:64%"></i><i class="m-part" style="width:27%"></i><i class="m-miss" style="width:9%"></i>
+    </div>
+    <div class="legend">
+      <span><b>Dezaemon Kids!</b>&ensp;<i class="dot" style="background:var(--ok)"></i><b>Confirmed</b> 7 regions · container and directory · the four CG pages and the disc's palette bank · map · scroll · appear · sprite tables · high scores — 325,472 bytes of the 327,496 a save decodes to, 99.4%, because the graphics are four fifths of it</span>
+      <span><i class="dot" style="background:var(--part)"></i><b>Likely</b> 3 regions · the config header · the enemy and boss records · the ship table — 1,928 bytes, 0.6%: every one is sliced at a boundary the code gives and read only as far as its fields are named</span>
+      <span><i class="dot" style="background:var(--miss)"></i><b>Open</b> 1 region · the settings bytes, of which seven are named — 0x1C of them, with 0x44 more that nothing initialises or reads</span>
+    </div>
+  </div>
+
+  <div class="meterline">
+    <div class="meter" role="img" aria-label="Dezaemon Plus: seven of seventeen regions confirmed, eight likely, two open">
+      <i class="m-ok" style="width:41%"></i><i class="m-part" style="width:47%"></i><i class="m-miss" style="width:12%"></i>
+    </div>
+    <div class="legend">
+      <span><b>Dezaemon+</b>&ensp;<i class="dot" style="background:var(--ok)"></i><b>Confirmed</b> 7 regions · the SC header · two 4bpp texture pages · 24 palette rows · the stage maps and their tile tables · high scores · the twenty group checksums — 79,720 of 122,880 bytes, 64.9%</span>
+      <span><i class="dot" style="background:var(--part)"></i><b>Likely</b> 8 regions · scroll · enemy group and data · appear · stage config · boss group · the global tables · sound — 41,552 bytes, 33.8%: the program names each array it scatters them into, and the play code reads most of their shapes</span>
+      <span><i class="dot" style="background:var(--miss)"></i><b>Open</b> 2 regions · the stage sprite-sheet layout · the eight settings bytes — 1,608 bytes, 1.3%</span>
+    </div>
+  </div>
+</header>
+
+<h2><span class="no">01</span>What remains</h2>
+<p class="sub">The trace landed in one pass (2026-09-11/12) once both discs were in <code>dev-fixtures/</code>: the containers, both directories, every region boundary, the palette bank, a probe that renders stages as the games draw them, and 29 tests over all 165 saves. What follows is what that pass could not settle. <span class="tag open" style="margin-left:0">MEANING OPEN</span> means the bytes are located at a stride the code gives but their semantics are untraced; <span class="tag none" style="margin-left:0">NO TRACE</span> means nothing exists yet. Each item ends with what would close it — and for almost all of them that is the same cheap thing, a controlled delta: change one setting in the editor under an emulator, save, and <code>psx:probe diff</code> the two.</p>
+
+<ol class="remaining">
+  <li><span class="n">1</span>
+    <h3>The Kids! option bytes, and most of its config header<span class="tag open">MEANING OPEN</span></h3>
+    <p>The tail's settings are <code>0x1C</code> bytes at <code>+0xA0</code> — the factory initialiser stops at <code>+0xBB</code> and no instruction anywhere forms an address past it, so the <code>0x44</code> bytes after them are uninitialised RAM the saver copies out with the rest — and seven of them have traced readers — screen width, stereo, preset BGM, SE mute, the BGM file number and volume, and <code>+0xB8</code> bit 0, which is the backdrop colour because it is index 0 of the map CLUT. The rest have structure and no names, including <code>+0xB8</code> bit 1, which is set in 96 of the 98 saves and in every disc sample and has <em>no reader anywhere</em>. The <code>0x70</code>-byte config header at data offset <code>0xD140</code> is the same story from the other end: scroll direction, the last-stage flags, ship speed and the background set are named; bytes 1, 2, 26, 51-58 and the sixteen four-byte sound-like entries at <code>+0x23</code> are not. Closing it needs the editor's settings screen on screen — its labels are drawn from PELON glyph structures, not stored as Shift-JIS strings, so no amount of static reading will produce a name.</p>
+  </li>
+  <li><span class="n">2</span>
+    <h3>The Kids! footprint marks<span class="tag open">MEANING OPEN</span></h3>
+    <p>105,489 bytes across the collection sit in APPEAR with the present bit clear and a class of 5, on cells that a bigger enemy covers; the play spawner skips them. Their low nibble looks exactly like a back-pointer to the owning cell — and it is not, or not in any of the six sign and axis orderings: the best, <code>owner = (row + (n &amp; 3), col − (n &gt;&gt; 2))</code>, lands on a present byte for 60.4% of them and the misses point at other footprints. The parser carries the nibble raw as <code>mark</code>. The editor routine that stamps them, near <code>0x8008A5AC</code>, is the place to look.</p>
+  </li>
+  <li><span class="n">3</span>
+    <h3>The behaviour fields on both sides<span class="tag open">MEANING OPEN</span></h3>
+    <p>Kids!'s five-byte enemy record is traced as far as what its bits feed — movement pattern and variant, hit points, score class, shot timing, fire interval, shot pattern — with byte 3's top bits and byte 4 unnamed, and the boss record's three four-byte sub-records untouched beyond the size class in byte 0. Dezaemon+'s 60 eight-byte definitions are sliced and their consumers listed and nothing more, and its 32-byte boss definition likewise. This is the one place the Saturn map is far ahead: <span class="ref">decode-enemy.js</span> and <span class="ref">decode-boss.js</span> name every field of a Dezaemon 2 record because the SH-2 trace went that deep.</p>
+  </li>
+  <li><span class="n">4</span>
+    <h3>Dezaemon+'s sprite-sheet layout, settings and global config<span class="tag open">MEANING OPEN</span></h3>
+    <p>The <code>0x140</code> piece per stage is the chip layout of the stage's 256×320 sprite sheet, which <code>0x8001C82C</code> blits to VRAM in four sub-blocks — one a plain 16-wide grid, three with interleaved addressing. The geometry is traced; not one byte's meaning is. (It was first taken for the Super Famicom's ODR by analogy, which it is not.) The eight <b>settings</b> bytes come from four separate variables (<code>u8</code>, <code>u8</code>, <code>u16</code>, <code>u32</code>) and none is named; the three <b>game config</b> bytes inside the global block are claimed to carry a pointer-table index, a level and a stage count, which is plausible and unverified. Nor is it settled which of the two <code>0xA0</code> high-score tables belongs to which game mode.</p>
+  </li>
+  <li><span class="n">5</span>
+    <h3>Which tile buffer a save's graphics are<span class="tag open">MEANING OPEN</span></h3>
+    <p>A Dezaemon+ MAP GROUP word is clamped to 1023 by its reader, so it is a ten-bit tile number over the program's <em>four</em> 256×256 tile buffers, while a save carries 64 KB — two of them. Which two is edition-dependent and unresolved: the community saves name buffers 0 and 1, the Select 100 disc's own sample game names 2 and 3, and both render correctly only when the buffer's low bit picks the half of the save's 512-row bitmap. That rule is what the parser uses and what the renders vindicate, but the reason the two populations differ — two builds loading the graphics to different RAM — is inference, not trace.</p>
+  </li>
+  <li><span class="n">6</span>
+    <h3>The sound streams<span class="tag open">MEANING OPEN</span></h3>
+    <p>Dezaemon+'s <code>0x2E00</code> is sixteen songs of <code>0x2E0</code>, and the bit layout is read off the unpacker: 16 bars of a 14-bit header and 32 steps of 11 bits, then a 16-bit tail, 734 bytes of the 736 available. What the fields <em>mean</em> — the bar header's 4/2/4/4 bits, the tail's 3/5/4/4, the note table at <code>0x8007E4EC</code> — is not read, and nothing is synthesised. Kids! keeps no song data in the save at all: its BGM is a file number into the disc.</p>
+  </li>
+  <li><span class="n">7</span>
+    <h3>The game.json mapping<span class="tag none">NO TRACE</span></h3>
+    <p>The Saturn side has <span class="ref">map-to-game.js</span>, and a Dezaemon 2 save becomes a playable level here. Nothing PSX exists: <code>parsePsxSav()</code> stays behind the <code>./psx</code> subpath and nothing in the editor or the Phaser runtime reads it. The blocker is item 3 — a map is only worth writing when the records it carries are named — not the geometry, which is done for both games.</p>
+  </li>
+  <li><span class="n">8</span>
+    <h3>Playing one<span class="tag none">NO TRACE</span></h3>
+    <p>Here the PSX side starts ahead of the SFC and stops short anyway. The launcher <em>has</em> a PlayStation core — <span class="ref">static/emulators.json</span> lists mednafen psx under EmulatorJS at <code>/psx/play.html</code> — so unlike a Super Famicom cart, a Dezaemon disc could boot. What is missing is the wiring: no counterpart to <code>/api/dezaemon-disc</code> to hand the player a bring-your-own disc, and no counterpart to <span class="ref">static/saturn-saves.js</span> to write a memory-card image into the core's save file. Until one exists, no claim on this page has ever been checked against a running game.</p>
+  </li>
+  <li><span class="n">9</span>
+    <h3>The write path<span class="tag none">NO TRACE</span></h3>
+    <p>No PSX writer, and the two games ask for very different work. Dezaemon+ is nearly free: the layout is a table and <code>plusChecksums()</code> already computes what the last <code>0x28</code> bytes must be, so a writer is a scatter and a sum. Kids! needs the LZSS <em>encoder</em> — the Saturn's <span class="ref">compress.js</span> emits the same stream, so that part exists — plus the three byte sums and the sector padding, which is stale buffer content in a real save and would be zero in a written one. Neither is built.</p>
+  </li>
+  <li><span class="n">10</span>
+    <h3>A save written by a real session<span class="tag none">NO TRACE</span></h3>
+    <p>Every measurement here is of saves the community made with the retail games, which is a far better corpus than the SFC side's single factory image — but it is still all observation. Nothing has been round-tripped: no save has been loaded into an emulator, edited by one setting, saved back and diffed. That one experiment would close most of items 1, 4 and 5 at once, and it is what <code>psx:probe diff</code> was built for.</p>
+  </li>
+</ol>
+
+<h2><span class="no">02</span>Already decoded</h2>
+<p class="sub"><span class="band ok">Confirmed</span>&ensp;The code says it and the data agrees — never that a runtime consumes the result, which nothing yet does. "All 98" and "all 67" mean the whole community collection; the discs' own sample games are counted separately where they matter.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Feature</th><th>What is decoded, and what pins it</th></tr></thead>
+  <tbody>
+  <tr><td class="feat">Container</td><td><span class="note">A PlayStation memory card: 128 KB, 16 blocks of 8 KB, block 0 the directory — <code>MC</code>, then fifteen 128-byte frames of status, size, next-block link and a 20-byte file name, each ending in the XOR of its first 127 bytes. Both games write <b>one 15-block file</b> taking the whole card, <code>BISLPS-00335DEZA</code> or <code>BISLPS-01503DEZAKIDS</code>. <code>locateSaves()</code> also peels a DexDrive <code>.gme</code>, a single-save <code>.mcs</code>, a PS3 <code>.psv</code> and bare blocks.</span></td></tr>
+  <tr><td class="feat">Save header</td><td><span class="note">The standard <code>SC</code> title frame and one 16×16 4bpp icon with its own CLUT. Kids! writes the user's game name into the Shift-JIS title between 『 』 and <code>bracketedName()</code> reads it back; Dezaemon+'s title is fixed text assembled from five pieces of a template in the program, so its game name exists only as a logo drawn in the graphics.</span></td></tr>
+  <tr><td class="feat">Kids! directory and checksums</td><td><span class="note">Eleven <code>u32</code> at <code>0x100</code>: two compressed sizes, three offsets, three byte sums and two sector-padded lengths. Every arithmetic relation and all three checksums hold on <b>all 98 saves</b>. The sums run over the <em>padded</em> span, which matters: the padding is stale staging-buffer content and is non-zero in 96 of them.</span></td></tr>
+  <tr><td class="feat">Kids! compression</td><td><span class="note">The Saturn Dezaemon 2's Okumura LZSS, unchanged — <code>src/decompress.js</code> opens every section of every save, and KIDS.EXE carries both halves of the codec (encoder <code>0x8006C904</code>, decoder <code>0x8006CD10</code>). The two sections decompress to exactly 262,144 and 64,712 bytes, always, and land in RAM back to back, which is why the disc's thirteen <code>SGM_*</code> sample games are literally those two blocks concatenated.</span></td></tr>
+  <tr><td class="feat">Kids! graphics and the palette</td><td><span class="note">Four 64 KB Dezaemon 2 CG pages, 256 cells of 16×16 at 8bpp. <b>The colours are not in the save</b>: the bank is <code>G256PAL.CLT</code> in the disc's <code>KIDS_DAT.BIN</code>, 256 RGB555 words that KIDS.EXE uploads as one 256×1 VRAM row, so a pixel byte <em>is</em> the index — no <code>(row&lt;&lt;4)|colour</code> indirection as on the Saturn. Embedded in <span class="ref">kids-palette.js</span>; the twin <code>G256PAL2</code> differs in one word, index 0, which is the backdrop for the map and transparent for sprites.</span></td></tr>
+  <tr><td class="feat">Kids! stage maps</td><td><span class="note">6 × <code>0x1500</code>: 384 rows of <b>7 chips</b>, one <code>u16</code> each. A chip is 32×32 px drawn from the CG cells <code>n, n+1, n+8, n+9</code> with h- and v-flip bits and a blank bit. Pinned by 530,520 non-blank chips across all 98 saves in which bits 0 and 3 of the cell number are <em>never</em> set — the 2×2 alignment that reading requires and that a flat 16×16 reading would not produce — and by the renders, which come out as real scenery where the flat reading doubles every feature side by side.</span></td></tr>
+  <tr><td class="feat">Kids! scroll and placement</td><td><span class="note">SCROLL is one nibble per 64 px, 192 per stage, indexing 0, 0.25, 1 and 4 px per frame for a vertical game; APPEAR is 6 × <code>0xD80</code>, 384 rows of 9 slot bytes of <code>present | class | id</code>. Three independent agreements: 384 map rows × 32 px, 192 scroll units × 64 px and 384 appear rows × 32 px are all 12,288 px, the wrap the renderer uses. No nibble above 3 and never two bosses in a stage, over all 588 stage blocks.</span></td></tr>
+  <tr><td class="feat">Dezaemon+ region table</td><td><span class="note">The 74-entry scatter/gather table at <code>MAIN.EXE 0x8005A380</code>, reproduced in <span class="ref">plus.js</span>; its lengths sum to exactly <code>0x1E000</code> and every region is named by the RAM array it loads into. A stage block is <b><code>0x223C</code></b>, not the <code>0x2240</code> a byte-stride guess gives.</span></td></tr>
+  <tr><td class="feat">Dezaemon+ checksums</td><td><span class="note">Twenty <code>u16</code>, one per flag group, accumulated while the file is gathered: <code>cs[flag] += byte × (offset &amp; 0x1F) + entryIndex</code>, plus the entry index again at every 128-byte frame. <code>plusChecksums()</code> reproduces the stored <code>0x28</code> bytes of <b>all 67 saves</b> and of <b>none</b> under a 0x2240 stride — which is what makes the table self-proving rather than merely plausible, since the sum depends on each byte's offset inside its own entry. It is also the parser's integrity check: a corrupt save names the group, and the probe names the regions that group covers. One quirk: a byte at an offset that is a multiple of 32 is multiplied by zero, so one byte in 32 is invisible to it.</span></td></tr>
+  <tr><td class="feat">Dezaemon+ maps and graphics</td><td><span class="note">64 KB of 4bpp at a 128-byte pitch — 256 px wide, 512 rows, two texture pages — and 24 palette rows of RGB555, which the draw code picks by what it is drawing (the map takes the stage's own row, enemies 6+stage, the boss 12+stage). A map row is eight chip bytes, a byte of v-flip bits for them, then the same again: 16 chips of 16×16 px. <b>Bit 7 of the flip byte is the leftmost chip</b> — over 43,520 rows the bits belonging to the two columns that never carry a chip are the two that are never set, and the opposite order would put a fifth of the flips on empty chips instead of 4.7%.</span></td></tr>
+  <tr><td class="feat">Dezaemon+ stage pieces</td><td><span class="note">The nine pieces of a stage block, in file order, each named by its RAM array: MAP, SCROLL, MAP GROUP, ENEMY GROUP, ENEMY DATA, SPRITE LAYOUT, APPEAR, stage config, BOSS GROUP. APPEAR is 256 records of 14 bytes and a 1,024-entry row table; its <code>0xFF</code> end mark sits in record 1 of <b>all 335 stage blocks</b>, and of 113,756 spawn bytes not one carries a class nibble outside 8-C or D, nor an index past the 60 definitions.</span></td></tr>
+  <tr><td class="feat">Probe tool</td><td><span class="note"><code>deno task psx:probe</code>: <code>report</code> (regions with a confidence, per-stage contents, checksums, high scores with the stage each run reached), <code>png</code> (icon, the graphics bank, the palette bank, and <b>stage maps drawn the way each game draws them</b> — Kids! as 32×32 chips through the disc palette, Dezaemon+ through the stage's tile table), <code>hex</code> (region-aware, and <code>--section</code> reaches inside Kids!'s decompressed sections), <code>diff</code> (which compares those sections, not the compressed bytes), <code>all</code>.</span></td></tr>
+  <tr><td class="feat">Tests</td><td><span class="note">Four files, 29 tests. The synthetic ones always run — a card, a Kids! block packed with the engine's own LZSS encoder, a Dezaemon+ block whose checksums are written the way the game writes them. The fixture-gated ones run the whole collection when it is present: every directory, every checksum, the chip alignment, the scroll range, one boss per stage, and every Dezaemon+ map row's empty first and last column.</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2><span class="no">03</span>Located but not yet understood</h2>
+<p class="sub"><span class="band part">Likely</span>&ensp;Eleven regions across the two games whose boundaries the program gives and whose contents are read only as far as a field has a name. Every one is sliced at the right offset; none is guessed at from byte statistics.</p>
+<ul class="plain">
+  <li><b>Kids! CONFIG</b> <code>0xD140-0xD1B0</code> — 0x70 bytes, of which the scroll direction, the last-stage flags, ship speed and the background set are named; <code>0x70</code> is the gap to the record base rather than the used size, since nothing touches past <code>+0x6E</code> (item 1)</li>
+  <li><b>Kids! RECORDS</b> <code>0xD1B0-0xD714</code> — 6 × 0xE6: 40 five-byte enemy records at class bases 0/16/24/32, then two 15-byte boss records at <code>+0xC8</code> that pair with the two boss sprite tables; the fields are partly named (item 3)</li>
+  <li><b>Kids! SHIP</b> <code>0xD714-0xD8C8</code> — 0x1B4 bytes of cell words in the map's encoding: the two ships' three poses each, their shots, the item icons and the title blocks, at offsets the VRAM uploader gives</li>
+  <li><b>Dezaemon+ SCROLL EFECT</b> — 256 steps of 64 px naming one of the 32 four-row map blocks, then 256 effect bytes; 256 × 64 px is the same 16,384 px of stage the appear row table covers, which is the strongest thing said about it</li>
+  <li><b>Dezaemon+ APPEAR</b> — 256 × 14-byte records plus a 0x400 row table indexed by scroll ÷ 16; the class nibble picks a size and a definition, and the arithmetic never overflows the 60 definitions in any save</li>
+  <li><b>Dezaemon+ ENEMY DATA</b> — 60 × 8 bytes and a 32-byte boss at <code>+0x1E0</code>, with one stage-config byte per definition; sliced, and the fields unnamed (item 3)</li>
+  <li><b>Dezaemon+ ENEMY GROUP and BOSS GROUP</b> — 64 and 32 <code>u16</code> tile words per stage, the same word format MAP GROUP uses</li>
+  <li><b>Dezaemon+ GLOBAL</b> — 0x164 in eight pieces carrying the Super Famicom's own names: TITLE TYPE, TITLE GROUP, ENDING GROUP, MY SHIP GROUP, MY SHIP ODR, a 16-byte stage list, three config bytes and BGM PATCH (item 4)</li>
+  <li><b>Dezaemon+ SOUND</b> — sixteen 0x2E0 songs whose bit layout is read off the unpacker and whose fields are not (item 6)</li>
+  <li><b>Kids! and Dezaemon+ sprite and tile tables</b> — Kids!'s 6 × 0x600 per-stage tables are confirmed to the cell, but which of an entry's 16 cells is which animation frame is read from the uploader's geometry alone</li>
+  <li><b>Loose ends inside confirmed regions</b> — the four bytes after each Dezaemon+ high score; the Kids! high-score level byte beyond its 0..3 range and the 4 a test play writes; the fourteen distinct blank map words, of which the two fills are only the commonest</li>
+</ul>
+
+<h2><span class="no">04</span>No trace at all</h2>
+<p class="sub"><span class="band miss">Absent</span>&ensp;What the Saturn pipeline has that the PSX side has no code for, and the two regions nothing has read.</p>
+<ul class="plain">
+  <li><b>The game.json mapping</b> — no PSX <span class="ref">map-to-game.js</span>; the parser stays behind the <code>./psx</code> subpath and nothing in the editor or the runtime reads it (item 7)</li>
+  <li><b>Any write path</b> — no counterpart to <span class="ref">bup-write.js</span> / <span class="ref">game-to-save.js</span>. Dezaemon+ is a scatter and a checksum away; Kids! also needs the LZSS encoder, which exists (item 9)</li>
+  <li><b>A disc or a card in the launcher</b> — the PlayStation core is there, but nothing hands it a Dezaemon disc or a memory-card image, so no claim here has been checked against a running game (item 8)</li>
+  <li><b>Dezaemon+ SPRITE LAYOUT</b> — 0x140 bytes per stage whose blit geometry is traced and whose contents are not: the sheet is 256×320 and three of its four sub-blocks are interleaved (item 4)</li>
+  <li><b>The Dezaemon+ settings bytes</b> — eight bytes from four variables, none named (item 4)</li>
+  <li><b>A round trip</b> — no save has been edited under an emulator and diffed, which is the experiment most of the open items are waiting on (item 10)</li>
+</ul>
+
+<footer>
+  Sources: <code>packages/shmup-engine/FORMAT-PSX.md</code> (the canonical notes, split confirmed / likely / open), the two programs — <code>KIDS.EXE</code> with its overlays <code>GAMES.bin</code>, <code>GRAPH.bin</code>, <code>PELON.bin</code> and <code>OVK1..9.bin</code>, and <code>MAIN.EXE</code> — read with <span class="ref">dev-fixtures/debug-tools/mipsdis.mjs</span>, and the <code>psx:probe</code> reports of the collection. Method: every region boundary and stride is what an instruction does, not what a byte histogram suggests; each was then checked against all 165 saves, and where code and data could disagree they were made to argue — the Dezaemon+ table is confirmed by a checksum that reproduces 67 of 67 saves and 0 of 67 under a perturbed table, the Kids! map geometry by 530,520 chips none of which breaks its 2×2 alignment and by the rendered result. Fixtures: <code>Dezaemon Kids! (Japan)</code> and <code>Dezaemon Plus Select 100 (Japan)</code> (MODE2/2352), 98 Kids! and 67 Dezaemon+ memory-card images, all in <code>dev-fixtures/</code> and all gitignored — community content that never ships with the repo. Surveyed 2026-09-12, the day the parser was rewritten against the discs; the Saturn map it mirrors was surveyed 2026-08-28 with updates to 2026-09-05, and the Super Famicom one 2026-09-07.
+</footer>
+</div>

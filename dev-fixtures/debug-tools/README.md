@@ -13,13 +13,13 @@ prefers the same checkout `scripts/build-2028-ai.ts` bundles from.
 
 ## Inspecting a save
 
-| Tool                           | Answers                                                                                                                                                                                                                                   |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dump-behavior.mjs <save.sav>` | What does each enemy record _do_? Fire config, speed, movement mode, change channels, and the scroll rows it is placed on. `--summary` adds fire-mode distribution and the ground turrets; `--enemy N` lists exact row/column placements. |
-| `contact-sheet.mjs <save.sav>` | Which record is that creature? A labeled sprite grid in first-spawn order. `--frames` draws whole animations.                                                                                                                             |
-| `dump-sprites.mjs <save.sav>`  | Boss core/part art, and any slice of the zako record bank, as individual PNGs.                                                                                                                                                            |
-| `dump-bg.mjs <save.sav>`       | The stage background tilemap, including a crop of the boss chamber.                                                                                                                                                                       |
-| `sav-to-mednafen.ts <sav> <out-base>` | Turns an exported `.sav` (`deno task build:sav`) into Mednafen's `<name>.bcr` + `<name>.bkr` so the game loads it from the cartridge in an emulator — the round trip that checks the writer on a real engine. Deno, not node. |
+| Tool                                  | Answers                                                                                                                                                                                                                                   |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dump-behavior.mjs <save.sav>`        | What does each enemy record _do_? Fire config, speed, movement mode, change channels, and the scroll rows it is placed on. `--summary` adds fire-mode distribution and the ground turrets; `--enemy N` lists exact row/column placements. |
+| `contact-sheet.mjs <save.sav>`        | Which record is that creature? A labeled sprite grid in first-spawn order. `--frames` draws whole animations.                                                                                                                             |
+| `dump-sprites.mjs <save.sav>`         | Boss core/part art, and any slice of the zako record bank, as individual PNGs.                                                                                                                                                            |
+| `dump-bg.mjs <save.sav>`              | The stage background tilemap, including a crop of the boss chamber.                                                                                                                                                                       |
+| `sav-to-mednafen.ts <sav> <out-base>` | Turns an exported `.sav` (`deno task build:sav`) into Mednafen's `<name>.bcr` + `<name>.bkr` so the game loads it from the cartridge in an emulator — the round trip that checks the writer on a real engine. Deno, not node.             |
 
 Read them together: `contact-sheet.mjs` tells you record 22 is the winged
 statue, `dump-behavior.mjs` tells you record 22 is ground, max-LIFE, and carries
@@ -50,6 +50,41 @@ interval fill at `+0x1548e` all came out of these two tools. Verify a fresh
 extraction before trusting offsets — the byte-exact anchors (interval tables at
 `0x6085f60..f9x`, u16be, values in the low bytes) must match, or the LZSS phase
 is off.
+
+## The PlayStation discs and saves
+
+`dev-fixtures/Dezaemon Kids!/` and `dev-fixtures/Dezaemon+/` hold the
+PlayStation collection — memory-card images, one game each — and the two disc
+images sit beside them (`Dezaemon Kids! (Japan).bin/.cue`,
+`Dezaemon Plus
+Select 100 (Japan).bin/.cue`, MODE2/2352). The save parser is
+`packages/shmup-engine/src/psx/`, the probe `deno task psx:probe`
+(`tools/psx-sav/`), the notes `packages/shmup-engine/FORMAT-PSX.md`. Kids! packs
+its save sections and its disc `.CMP` files with the same Okumura LZSS as the
+Saturn, so the engine's `decompress.js` (`decompressCmp`) opens them unchanged.
+
+The CPU is a MIPS R3000, so the SH-2 tool above does not apply; its counterpart
+is:
+
+```sh
+# the executables come straight off the ISO 9660 track (the engine's
+# iso9660-read.js handles MODE2/2352): SLPS015.03 boots KIDS.EXE,
+# SLPS_015.04 boots MAIN.EXE
+MIPSDIS_BIN=dev-fixtures/.cache/psx-disc/kids/KIDS.EXE \
+  node dev-fixtures/debug-tools/mipsdis.mjs 0x80064524 0x80064580
+
+# who touches a RAM address? (lui/addiu/lw address synthesis is resolved
+# inline, so readers, writers and address-of sites all show up)
+MIPSDIS_BIN=... node dev-fixtures/debug-tools/mipsdis.mjs --xref 0x800bc820 0x100
+
+# find a routine by a constant it uses (0xfee = the LZSS ring start)
+MIPSDIS_BIN=... node dev-fixtures/debug-tools/mipsdis.mjs --imm 0xfee
+```
+
+A file that starts with `PS-X EXE` is opened at its header's load address; a raw
+overlay (the decompressed `.CMP` blobs) needs `MIPSDIS_BASE`. The lui tracking
+restarts at every function prologue, so an address assembled across a branch is
+missed — grep the `lui` half by hand when `--xref` comes up empty.
 
 ## Comparing against hardware
 

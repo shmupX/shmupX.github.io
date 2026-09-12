@@ -196,6 +196,7 @@ deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
 deno task deza:meshlib    # decode the ポリ吉 3D part library off a disc image
 deno task deza:palette    # write static/palette.png (+ palette-sheet.png) from DEZA2.PAL
 deno task sfc:probe       # look inside a Super Famicom Dezaemon SRAM dump (report / png / hex / diff)
+deno task psx:probe       # look inside a PlayStation Dezaemon+ / Dezaemon Kids! save (report / png / hex / diff / all)
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task tonebank:table  # re-pack the instrument map into src/audio/
 deno task netplay:bundle  # bundle the online-2P browser client
@@ -803,6 +804,41 @@ Super Famicom counterpart of `static/dezaemon-parity.html`. Neither saves nor
 the ROM are committed: the tests gate on
 `packages/shmup-engine/fixtures/dezaemon-sfc-sample.sav` and a ROM in
 `dev-fixtures/`.
+
+### The PlayStation ports
+
+Dezaemon+ (1996) and Dezaemon Kids! (1998) save to a PlayStation memory card:
+one 15-block, 120 KB file that takes the whole card. `@shmupx/shmup-engine/psx`
+reads a card image (or a DexDrive `.gme`, a single-save `.mcs`, a PS3 `.psv`, or
+the bare blocks), finds the Dezaemon file and decodes it. Both layouts are
+traced from the games' own code off the discs, not inferred:
+
+- **Dezaemon Kids!** keeps an eleven-word directory at `0x100` over two Okumura
+  LZSS sections — the Saturn Dezaemon 2's own compressor, `decompress.js` — with
+  byte-sum checksums. They unpack to the game's live RAM: four Dezaemon 2 CG
+  pages, then a 64,712-byte block of six stage maps (384 rows of seven 32×32
+  chips, each drawn from a 2×2 group of CG cells), the scroll speeds, the
+  placement grids, the enemy records and the sprite tables. The colours are not
+  in the save at all — they are a fixed 256-entry bank on the disc, which the
+  engine carries.
+- **Dezaemon+** is raw, and its directory is a 74-entry scatter/gather table in
+  the program: two 4bpp texture pages, 24 palette rows, five 0x223C stage blocks
+  (map, scroll, the tile and enemy groups, enemy data, ODR, placements, config),
+  the global tables, sixteen bit-packed songs, two high-score tables and the
+  settings. The file ends in twenty group checksums, and `plusChecksums()`
+  recomputes them — which both integrity-checks a save and pins every boundary
+  in the table, since it reproduces all 67 community saves and none under a
+  wrong stride.
+
+`packages/shmup-engine/FORMAT-PSX.md` holds the notes, with a confidence on
+every claim and the open items listed at the end, and
+`static/dezaemon-parity-psx.html` is the parity map — the PlayStation
+counterpart of `static/dezaemon-parity.html` and
+`static/dezaemon-parity-sfc.html`.
+`deno task psx:probe all
+<sav> --out build/psx/x/` renders what a save holds,
+including every stage map drawn the way the game draws it. Saves and discs stay
+in the gitignored `dev-fixtures/`; the tests gate on them.
 
 ## Desktop app
 

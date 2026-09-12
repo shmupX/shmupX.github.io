@@ -30,7 +30,8 @@
     "./cg-pack": "./src/write/cg-pack.js",
     "./game-to-save": "./src/write/game-to-save.js",
     "./export-sav": "./src/write/export-sav.js",
-    "./sfc": "./src/sfc/index.js"
+    "./sfc": "./src/sfc/index.js",
+    "./psx": "./src/psx/index.js"
   },
   "fmt": {
     "exclude": ["src/**", "FORMAT.md", "games-db.json", "data/*.json"]

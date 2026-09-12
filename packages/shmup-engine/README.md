@@ -159,8 +159,8 @@ the caller has images (the editor's TITLE EDITOR uploads), and otherwise from
 the level's own `dezaemonTitle` + `dezaemonTitleScreen.layout` — the atlas frame
 names and slot placements `mapSaveToGame` produced when the game was imported
 from a cart. That fallback, plus the six credit strips it writes alongside, is
-what lets a community save go import → export → play without losing its title
-to the host runtime's own. `report.title.source` is `"cart"`, `"uploaded"` or
+what lets a community save go import → export → play without losing its title to
+the host runtime's own. `report.title.source` is `"cart"`, `"uploaded"` or
 `"none"`.
 
 The deeper decoder internals (per-section decoders, player art, and so on) are
@@ -170,7 +170,7 @@ importable through subpath exports: `@shmupx/shmup-engine/decode`,
 `.../player-art`, `.../player2-art`, `.../diff-ranges`, `.../tone-bank`,
 `.../iso9660-read`, `.../mesh-library`, `.../decode-mdldt`, `.../model-mesh`,
 `.../compress`, `.../bup-write`, `.../palette-target`, `.../cg-pack`,
-`.../game-to-save`, `.../export-sav`, `.../cover`.
+`.../game-to-save`, `.../export-sav`, `.../cover`, `.../sfc`, `.../psx`.
 
 `FORMAT.md` documents the reverse-engineered save format; `games-db.json` is the
 catalog of known community games.
@@ -190,6 +190,30 @@ rows), `tiles.js` (4bpp/2bpp planar codec), `tilemap.js` and `groups.js`
 behind the subpath — `mod.js` is the Saturn editor bundle. `FORMAT-SFC.md` holds
 the notes; `deno task sfc:probe` (`tools/sfc-sav/`) renders what a dump
 contains.
+
+## PlayStation Dezaemons (`./psx`)
+
+`@shmupx/shmup-engine/psx` reads Dezaemon+ (1996) and Dezaemon Kids! (1998)
+saves: a 128 KB memory-card image, a DexDrive `.gme`, a single-save `.mcs`, a
+PS3 `.psv` or the bare blocks. `parsePsxSav(bytes)` locates the Dezaemon file
+(`BISLPS-00335DEZA` / `BISLPS-01503DEZAKIDS`) and decodes it with a confidence
+per block, never throwing on content.
+
+Pieces: `memcard.js` (directory frames, block chains, the wrappings),
+`save-header.js` (the `SC` frame, Shift-JIS title, icon), `kids.js` (the
+eleven-word directory, the two Okumura LZSS sections with their byte-sum
+checksums, four CG pages, and the seven regions of the data section — map,
+scroll, placements, config, enemy records, ship and sprite tables),
+`kids-palette.js` (the 256-colour bank the game keeps on the disc rather than in
+the save) and `plus.js` (the program's 74-entry region table, the twenty group
+checksums `plusChecksums()` recomputes, the graphics pages and palette rows, and
+each stage block's nine pieces).
+
+Both layouts are traced from the games' code; `FORMAT-PSX.md` marks each claim
+confirmed, likely or open. Like `./sfc`, this is a structural reader: it does
+not map a PlayStation game into `game.json`, because the enemy behaviour fields
+are only partly named. `deno task psx:probe` (`tools/psx-sav/`) renders what a
+save contains, maps included.
 
 ## Tests
 
