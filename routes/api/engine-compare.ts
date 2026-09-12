@@ -12,7 +12,7 @@ import {
   getCompareJob,
   publicCompareJob,
   startCompare,
-} from "../../lib/engine-compare.ts";
+} from "@shmupx/shmup-harbor/engine-compare";
 
 // GET  /api/engine-compare                 — can this machine run one?
 // GET  /api/engine-compare?job=ID          — a job's status, log and files

@@ -23,7 +23,7 @@ import {
   normalizeBuilderCode,
   parseSseChunk,
   pickNextJob,
-} from "../lib/export-worker.ts";
+} from "@shmupx/shmup-harbor/export-worker";
 import * as client from "../static/export-queue.js";
 
 Deno.test("both ends name the same database and paths", () => {

@@ -10,7 +10,7 @@ import {
   findDezaemonDisc,
   repoRoot,
 } from "../../lib/dezaemon-disc.ts";
-import { resolveMednafen } from "../../lib/mednafen.ts";
+import { resolveMednafen } from "@shmupx/shmup-harbor/mednafen";
 
 // GET /api/dezaemon-disc — is there a Dezaemon 2 disc on this machine, and
 // GET /api/dezaemon-disc?zip=1 — that disc, as the zip the Saturn player boots.

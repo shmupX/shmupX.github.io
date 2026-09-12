@@ -1,10 +1,10 @@
 import { define } from "../../utils.ts";
 import { localWriteGuard } from "../../lib/local-guards.ts";
-import { buildZip, treeEntries } from "../../lib/ps2/zip.ts";
+import { buildZip, treeEntries } from "@shmupx/shmup-harbor/zip";
 import {
   packagedBuildRoot,
   stagedRuntimeRoot,
-} from "../../lib/build-workspace.ts";
+} from "@shmupx/shmup-harbor/build-workspace";
 import {
   basename,
   dirname,

@@ -21,7 +21,7 @@
 // task says so and exits 0.
 
 import { dirname, fromFileUrl, join, relative, resolve } from "@std/path";
-import { findDiscFiles } from "../lib/disc-file.ts";
+import { findDiscFiles } from "@shmupx/shmup-harbor/disc-file";
 import { decompressCmp } from "../packages/shmup-engine/src/decompress.js";
 import {
   buildMeshLibrary,

@@ -10,7 +10,7 @@ import {
   launchMednafen,
   MednafenError,
   resolveMednafen,
-} from "../../lib/mednafen.ts";
+} from "@shmupx/shmup-harbor/mednafen";
 import {
   interleave,
   MISTER_SAV_SIZE,

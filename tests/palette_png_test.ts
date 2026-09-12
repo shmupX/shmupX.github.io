@@ -6,7 +6,7 @@
 // carries in its sec4, byte for byte.
 
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
-import { decodePng } from "../lib/ps2/png.ts";
+import { decodePng } from "@shmupx/shmup-harbor/png";
 import * as deza from "../packages/shmup-engine/mod.js";
 import {
   cellsToIndexed,

@@ -1,6 +1,6 @@
 import { define } from "../../utils.ts";
 import { crossSiteGuard } from "../../lib/local-guards.ts";
-import { ExportError, runExport } from "../../lib/export-build.ts";
+import { ExportError, runExport } from "@shmupx/shmup-harbor/export";
 
 // POST /api/build-apk — export a custom Firebase "Game" to an installable app.
 //

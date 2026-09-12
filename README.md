@@ -12,12 +12,24 @@ mapping, atlas packing, schema validation) lives in the
 JSR as `@shmupx/shmup-engine`. The editor consumes it as a same-origin bundle
 built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
 
+Everything that takes what the engine produces and makes it **run somewhere
+else** — the PlayStation 2 export, the packaged Windows / Linux / macOS
+launchers, the Android and iOS apps, the Saturn cart, the emulator injection and
+the parity profiler — is the second workspace member,
+[`packages/shmup-harbor`](packages/shmup-harbor), published as
+`@shmupx/shmup-harbor`. The `deno task`s below are unchanged; the app imports
+what it needs of it back by name (`@shmupx/shmup-harbor/zip`, `/png`, `/export`,
+…). **Port file paths in this document are relative to that package** unless
+they are written out in full.
+
 ## Layout
 
 - `main.ts`, `routes/`, `vite.config.ts` — the Fresh shell (launcher marker
   injection + static files + fs routes).
-- `desktop.ts`, `scripts/build-desktop.ts` — the packaged desktop launcher
-  (`deno task build:windows` / `build:linux` / `build:mac`, see below).
+- `desktop.ts` — the packaged desktop launcher's own runtime: the loopback
+  server and the window it opens. `scripts/build-desktop.ts` (in harbor) is what
+  packages it (`deno task build:windows` / `build:linux` / `build:mac`, see
+  below).
 - `lib/ps2/`, `scripts/build-ps2.ts` — the PlayStation 2 export
   (`deno task build:ps2`, see below). Pure Deno, no toolchain to install.
 - `scripts/build-sav.ts` — the **Dezaemon 2 cart export**
@@ -183,6 +195,13 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
   - The Dezaemon divergences below, all of them keyed off `isImportedLevel()`.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
+- `packages/shmup-harbor/` — the other JSR module: everything for **porting**
+  one of them to a console, a desktop, a phone or a cartridge. `lib/ps2/`,
+  `lib/export-build.ts`, `lib/export-worker.ts`, `lib/shelf.ts`,
+  `lib/cart-inject.ts`, `lib/mednafen.ts`, `tools/build-level/`,
+  `tools/sav-profiler/` and the `scripts/build-*` / `scripts/inject-*` CLIs
+  behind the tasks below all live there, with their tests. Its own
+  [README](packages/shmup-harbor/README.md) is the map.
 - `spacetimedb/` — the online-2P module (see **Two players** below), published
   to SpacetimeDB. `static/netplay/` holds its generated client bindings and the
   bundled browser client.
@@ -193,7 +212,7 @@ built by `deno task engine:bundle` into `static/engine/shmup-engine.js`.
 deno task dev             # vite dev server (+ a Tailscale Funnel URL when available)
 deno task build           # manifest + dashboard + engine bundle + vite build
 deno task start           # serve the production build (_fresh/server.js)
-deno task test            # shmup-engine tests
+deno task test            # shmup-engine + shmup-harbor + app tests
 deno task check           # fmt + lint + type-check
 
 deno task build:windows   # the launcher as a Windows .exe
@@ -302,11 +321,12 @@ payload into a freshly formatted 32 KB + 512 KB BackUpRam image,
 0xFF-interleaved: the **1,114,112-byte `.sav`** every file in the community
 collection is, dumped from carts for MiSTer's Saturn core. The file re-imports
 through the same `normalize → parse → decodeSave → mapSaveToGame` path as a
-community cart ([`tests/sav_export_test.ts`](tests/sav_export_test.ts) does it
-end to end on `foo`), and on 2026-09-05 the exported `foo` cart was loaded and
-played in Mednafen 1.29 with the real Saturn BIOS: the backup library accepted
-the cart untouched, LOAD listed the slot, and the stage ran with its enemies,
-drops and bombs. Real hardware and MiSTer remain untested.
+community cart
+([`tests/sav_export_test.ts`](packages/shmup-harbor/tests/sav_export_test.ts)
+does it end to end on `foo`), and on 2026-09-05 the exported `foo` cart was
+loaded and played in Mednafen 1.29 with the real Saturn BIOS: the backup library
+accepted the cart untouched, LOAD listed the slot, and the stage ran with its
+enemies, drops and bombs. Real hardware and MiSTer remain untested.
 
 ```sh
 deno task build:sav                          # foo.json -> build/sav/Dez 2 - foo.sav
@@ -320,14 +340,15 @@ it into one Dezaemon 2 slot of Mednafen's `<disc>.bcr` cartridge save (backing
 that cart up first, and leaving the other four slots and the `.bkr`
 byte-identical) and launches Mednafen on the disc — the in-repo, cross-platform
 stand-in for the ad-hoc launcher scripts, driven by
-[`scripts/run-mednafen.ts`](scripts/run-mednafen.ts). It runs the host's own
-Mednafen (native Windows launches `mednafen.exe`, Linux/macOS `mednafen`); from
-WSL, point `MEDNAFEN_BIN` at a `mednafen.exe` and it launches the Windows build
-over interop — the only one that sees a USB/Bluetooth pad. The emulator, the
-disc image and the BIOS are the user's own (the disc and BIOS are community
-content, never in the repo), so their paths come from flags or env vars
-(`MEDNAFEN_BIN`, `DEZAEMON_DISC`, `MEDNAFEN_SAV`); the task prints what it
-resolved and fails with a clear message when one is missing.
+[`scripts/run-mednafen.ts`](packages/shmup-harbor/scripts/run-mednafen.ts). It
+runs the host's own Mednafen (native Windows launches `mednafen.exe`,
+Linux/macOS `mednafen`); from WSL, point `MEDNAFEN_BIN` at a `mednafen.exe` and
+it launches the Windows build over interop — the only one that sees a
+USB/Bluetooth pad. The emulator, the disc image and the BIOS are the user's own
+(the disc and BIOS are community content, never in the repo), so their paths
+come from flags or env vars (`MEDNAFEN_BIN`, `DEZAEMON_DISC`, `MEDNAFEN_SAV`);
+the task prints what it resolved and fails with a clear message when one is
+missing.
 
 ```sh
 deno task sav:run                       # build foo, merge into the cart, launch Mednafen
@@ -338,9 +359,10 @@ DEZAEMON_DISC=/path/to/Dez2.cue deno task sav:run   # point it at your disc
 
 **Into the cart you already have.** `deno task sav:inject [level]` puts a level
 in one of Dezaemon 2's five save slots on whichever cartridge this machine's
-emulator keeps — [`scripts/sav-inject.ts`](scripts/sav-inject.ts) picks the leg
-by the operating system. Wherever it runs it does the same thing: the level goes
-into one `DEZA2____NN` slot and **every other save on the cart stays
+emulator keeps —
+[`scripts/sav-inject.ts`](packages/shmup-harbor/scripts/sav-inject.ts) picks the
+leg by the operating system. Wherever it runs it does the same thing: the level
+goes into one `DEZA2____NN` slot and **every other save on the cart stays
 byte-identical**. Only the `.bcr` is written, never the `.bkr` (the console's
 own memory, which holds Dezaemon 2's `DEZA2___SYS` options record) or the
 `.smpc` (the emulated clock). Mednafen formats internal RAM itself when there is
@@ -355,17 +377,18 @@ reports success. Quit the emulator first: they all rewrite their battery saves
 on close, so an injection made while one is open would be thrown away; the task
 refuses rather than do that, and `--force` overrides.
 
-|                 | the cart                                                                                                                              | the leg                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| **macOS**       | OpenEmu's Mednafen core, `~/Library/Application Support/OpenEmu/Mednafen/Battery Saves`                                               | [`inject-openemu.sh`](scripts/inject-openemu.sh)           |
-| **Linux / WSL** | Mednafen: `$MEDNAFEN_HOME/sav`, else `~/.mednafen/sav` — or `$MEDNAFEN_SAV` to override                                               | [`inject-mednafen.sh`](scripts/inject-mednafen.sh)         |
-| **Windows**     | Mednafen: `%MEDNAFEN_HOME%\sav`, `%HOME%\.mednafen\sav`, `<base>\mednafen\sav` beside your `Dezaemon 2.bat` — first with a cart in it | [`inject-mednafen-win.ts`](scripts/inject-mednafen-win.ts) |
+|                 | the cart                                                                                                                              | the leg                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **macOS**       | OpenEmu's Mednafen core, `~/Library/Application Support/OpenEmu/Mednafen/Battery Saves`                                               | [`inject-openemu.sh`](packages/shmup-harbor/scripts/inject-openemu.sh)           |
+| **Linux / WSL** | Mednafen: `$MEDNAFEN_HOME/sav`, else `~/.mednafen/sav` — or `$MEDNAFEN_SAV` to override                                               | [`inject-mednafen.sh`](packages/shmup-harbor/scripts/inject-mednafen.sh)         |
+| **Windows**     | Mednafen: `%MEDNAFEN_HOME%\sav`, `%HOME%\.mednafen\sav`, `<base>\mednafen\sav` beside your `Dezaemon 2.bat` — first with a cart in it | [`inject-mednafen-win.ts`](packages/shmup-harbor/scripts/inject-mednafen-win.ts) |
 
-The merge itself is one file, [`lib/cart-inject.ts`](lib/cart-inject.ts) —
-shared by all three legs (through
-[`scripts/inject-cart.ts`](scripts/inject-cart.ts), their command line) and by
-`sav:run` and the editor's route; a leg only finds the cart, says when the
-emulator is running, and starts the game afterwards.
+The merge itself is one file,
+[`lib/cart-inject.ts`](packages/shmup-harbor/lib/cart-inject.ts) — shared by all
+three legs (through
+[`scripts/inject-cart.ts`](packages/shmup-harbor/scripts/inject-cart.ts), their
+command line) and by `sav:run` and the editor's route; a leg only finds the
+cart, says when the emulator is running, and starts the game afterwards.
 
 The save file is found by **globbing**, never by a name built here. Mednafen
 names saves from its `filesys.fname_sav`, whose stock `%f.%M%x` opens
@@ -515,14 +538,14 @@ sitting in `dev-fixtures/powerups/` as `powerup-s.gif`, `powerup-b.gif`,
 than the procedural coloured squares it otherwise falls back to. The letters map
 **S = speed**, **B = barrier**, **F = power** and **R = all four weapon-change
 slots**; bomb and score have no letter and keep their squares.
-[`lib/powerup-emblems.ts`](lib/powerup-emblems.ts) takes the largest frame of
-each GIF that fits the cell at native resolution — the art is stored blown up,
-and the factor is measured rather than assumed — and centres it there, so
-nothing is ever resampled; a letter this small does not survive it.
-([`lib/ps2/gif.ts`](lib/ps2/gif.ts) decodes every frame of a GIF, disposal
-methods and loop count included, rather than only the first.) The GIFs
-themselves are **not in the repo** — `dev-fixtures/` is gitignored — so the
-build reports how many of the nine item types wear an emblem, or that it is
+[`lib/powerup-emblems.ts`](packages/shmup-harbor/lib/powerup-emblems.ts) takes
+the largest frame of each GIF that fits the cell at native resolution — the art
+is stored blown up, and the factor is measured rather than assumed — and centres
+it there, so nothing is ever resampled; a letter this small does not survive it.
+([`lib/ps2/gif.ts`](packages/shmup-harbor/lib/ps2/gif.ts) decodes every frame of
+a GIF, disposal methods and loop count included, rather than only the first.)
+The GIFs themselves are **not in the repo** — `dev-fixtures/` is gitignored — so
+the build reports how many of the nine item types wear an emblem, or that it is
 drawing squares; a GIF that will not decode costs only its own letter, and a
 checkout without the art exports exactly what it always did. Import the cart
 back and its icons dress its drops again (`dezaemonItems.iconByDrop`), which is
@@ -941,7 +964,7 @@ WKWebView delivers pad input only to the view holding first responder.
 - `desktop.ts` — what gets packaged: the local server + the window.
 - `lib/desktop-browser.ts` — which browser becomes that window on the
   `deno compile` route, and how.
-- `scripts/build-desktop.ts` — the packaging.
+- `packages/shmup-harbor/scripts/build-desktop.ts` — the packaging.
 
 ### The window
 
@@ -1163,21 +1186,24 @@ bullet and item tables, drawn title screen and packed sprite sheet.
 out empty (an all-Japanese title is then a clean miss rather than a game called
 "save"). The one that names `build/<slug>/`, `<slug>.exe` / `.AppImage` /
 `-app-debug.apk` and `com.easierbycode.<slug>` is an _identity_, and it is
-`slugify` in [`tools/build-level/lib/slug.js`](tools/build-level/lib/slug.js),
+`slugify` in
+[`tools/build-level/lib/slug.js`](packages/shmup-harbor/tools/build-level/lib/slug.js),
 mirrored for the server by `slugFor` in
-[`lib/export-build.ts`](lib/export-build.ts) — the two are cross-checked by
-[`tests/build_level_slug_test.ts`](tests/build_level_slug_test.ts), which runs
-the Node copy for real. It keeps its plain shape whenever it still _spells_ the
-name, and otherwise carries an 8-hex FNV-1a digest of the whole name, the way
-`gameIdForLevel` keeps two same-slug leaderboards apart and `cacheKey` above
-keeps two same-title carts apart. That matters because stripping everything
-outside `[a-z0-9]` leaves nothing at all for 111 of the 228 Japanese titles in
-`games-db.json` — all of which used to build into one shared `build/level/`,
-overwrite one another's artifact and claim one `com.easierbycode.level` — and
-leaves a bare `"2"` for eight more. `sanitizeLevelName` was ASCII-only for the
-same reason and rejected those names outright with a 400, so the editor's EXPORT
-button never even reached the builder for them; it now keeps Unicode letters,
-numbers and marks while still mapping `. # $ / [ ]` to `_`.
+[`lib/export-build.ts`](packages/shmup-harbor/lib/export-build.ts) — the two are
+cross-checked by
+[`tests/build_level_slug_test.ts`](packages/shmup-harbor/tests/build_level_slug_test.ts),
+which runs the Node copy for real. It keeps its plain shape whenever it still
+_spells_ the name, and otherwise carries an 8-hex FNV-1a digest of the whole
+name, the way `gameIdForLevel` keeps two same-slug leaderboards apart and
+`cacheKey` above keeps two same-title carts apart. That matters because
+stripping everything outside `[a-z0-9]` leaves nothing at all for 111 of the 228
+Japanese titles in `games-db.json` — all of which used to build into one shared
+`build/level/`, overwrite one another's artifact and claim one
+`com.easierbycode.level` — and leaves a bare `"2"` for eight more.
+`sanitizeLevelName` was ASCII-only for the same reason and rejected those names
+outright with a 400, so the editor's EXPORT button never even reached the
+builder for them; it now keeps Unicode letters, numbers and marks while still
+mapping `. # $ / [ ]` to `_`.
 
 Own flags: `--sav <path>` (a cart anywhere on disk), `--slot <n>` and
 `--stage <n>` (which game and stage inside it), `--name <title>` (what to call
@@ -1309,17 +1335,18 @@ deno task build:ps2:iso --sav="./Dez 2 - Chohsoku Stringer.sav"
 ```
 
 **Straight from a `.sav`.** `--sav <path>` skips the editor and Firebase
-entirely: [`lib/ps2/sav.ts`](lib/ps2/sav.ts) runs the same pipeline the editor's
-importer does — `normalize` → `parse` → `decodeSave` → `mapSaveToGame` out of
-[`packages/shmup-engine`](packages/shmup-engine) — and lands on the same level
-record the Firebase reader produces, so nothing downstream can tell the two
-apart. The name is then optional, as the second command above shows: leave it
-off and the filename supplies it, with the shelf's own `Dez 2 -` prefix stripped
-("Dez 2 - Chohsoku Stringer.sav" → "Chohsoku Stringer"). A save holds up to ten
-stages and the console runs one, so the export takes the first stage with
-anything placed on it; `--stage <n>` picks another, and `--slot <n>` picks
-between games in a cart image that holds more than one. Pair it with
-`--cover <slug>` (below) to put that save's shelf shot on the title screen.
+entirely: [`lib/ps2/sav.ts`](packages/shmup-harbor/lib/ps2/sav.ts) runs the same
+pipeline the editor's importer does — `normalize` → `parse` → `decodeSave` →
+`mapSaveToGame` out of [`packages/shmup-engine`](packages/shmup-engine) — and
+lands on the same level record the Firebase reader produces, so nothing
+downstream can tell the two apart. The name is then optional, as the second
+command above shows: leave it off and the filename supplies it, with the shelf's
+own `Dez 2 -` prefix stripped ("Dez 2 - Chohsoku Stringer.sav" → "Chohsoku
+Stringer"). A save holds up to ten stages and the console runs one, so the
+export takes the first stage with anything placed on it; `--stage <n>` picks
+another, and `--slot <n>` picks between games in a cart image that holds more
+than one. Pair it with `--cover <slug>` (below) to put that save's shelf shot on
+the title screen.
 
 There is nothing to install: no ps2dev, no C compiler, not even Node. The
 console runs the game as **JavaScript**, because `athena.elf` is
@@ -1347,10 +1374,11 @@ Everything else in the export is data, produced by `lib/ps2/`:
   PS2 port looks for every one of a level's own sprites in the level atlas. Only
   the sprites **the exported stage can spawn** go in — the enemy types its wave
   grid names, plus that stage's boss (`stageRecipes` in
-  [`lib/ps2/assets.ts`](lib/ps2/assets.ts)). A Dezaemon save carries every type
-  of every stage (Master Arena Mod has 443), and packing them all forced the
-  sheet down to 1/4 scale, where a 16x16 enemy is a 4x4-texel smudge you can
-  shoot but not see. The build log says how many types the stage uses.
+  [`lib/ps2/assets.ts`](packages/shmup-harbor/lib/ps2/assets.ts)). A Dezaemon
+  save carries every type of every stage (Master Arena Mod has 443), and packing
+  them all forced the sheet down to 1/4 scale, where a 16x16 enemy is a
+  4x4-texel smudge you can shoot but not see. The build log says how many types
+  the stage uses.
 - The wave grid goes out with **one-character enemy codes** (`discStage`, same
   file). A cell is `<type><item>` and the browser reads the type as everything
   but the last character, so a save with more than 26 types spawns `CM0` as
@@ -1360,7 +1388,8 @@ Everything else in the export is data, produced by `lib/ps2/`:
   re-coded (A–Z, then a–z, then 1–9; `0` never, since `00` is the empty cell)
   and enemyData is re-keyed to match, so both readings agree. Only those records
   ship, which also takes level.json from hundreds of entries to a few dozen.
-- The ISO is written here too ([`lib/ps2/iso9660.ts`](lib/ps2/iso9660.ts)) — no
+- The ISO is written here too
+  ([`lib/ps2/iso9660.ts`](packages/shmup-harbor/lib/ps2/iso9660.ts)) — no
   mkisofs, no xorriso. Names are uppercase ISO 9660 level 2 with a `;1` suffix,
   which ps2sdk's `cdfs` driver matches case-insensitively against the lowercase
   paths the game opens.
@@ -1412,13 +1441,13 @@ is the difference between fitting in the GS's 4 MB and not: the three sheets are
 2.19 MB of the 4, so the RGBA build over-committed and AthenaEnv's texture
 manager had to evict and re-upload sheets over DMA every frame. Paletted they
 come to 0.63 MB and everything stays resident.
-[`lib/ps2/palette.ts`](lib/ps2/palette.ts) does the median cut — the sheets hold
-17k-32k distinct colours, so it is lossy, at a measured mean error under 3.2 of
-255 — and the build log reports the count and error per sheet. The palette is
-ordered with every non-opaque entry first, because AthenaEnv defaults palette
-alpha to PS2-opaque `0x80` and halves whatever `tRNS` covers: an opaque 255
-inside that run would come back as 127 and make solid pixels faintly
-see-through.
+[`lib/ps2/palette.ts`](packages/shmup-harbor/lib/ps2/palette.ts) does the median
+cut — the sheets hold 17k-32k distinct colours, so it is lossy, at a measured
+mean error under 3.2 of 255 — and the build log reports the count and error per
+sheet. The palette is ordered with every non-opaque entry first, because
+AthenaEnv defaults palette alpha to PS2-opaque `0x80` and halves whatever `tRNS`
+covers: an opaque 255 inside that run would come back as 127 and make solid
+pixels faintly see-through.
 
 **Booting the disc.** If you do build one, boot it **with fast boot enabled** —
 this is a homebrew disc, and a full BIOS boot will not run one. The retail BIOS
@@ -1442,7 +1471,7 @@ memory card or an HDD partition, launched from wLaunchELF, OPL or FMCB.
 with no Z-buffer behind it, which blanks every other flip, and leaves VSync off,
 which puts the flip mid-scanout. Either one alone is a console that draws
 nothing at all while every other check still passes. So
-[`runtime-entry.ts`](lib/ps2/runtime-entry.ts) does
+[`runtime-entry.ts`](packages/shmup-harbor/lib/ps2/runtime-entry.ts) does
 `Screen.setParam(Screen.DEPTH_TEST_ENABLE, 0)` and `Screen.setVSync(true)`
 before anything else, and the smoke test asserts both — this is a 2D game drawn
 in painter's order and it wants neither. (Credit to
@@ -1463,8 +1492,9 @@ Deno CLI beside it:
   back as `runtimeJs` and no `deno bundle` is needed. A checkout still bundles
   on every build, so an edit to `lib/ps2` lands in the very next disc.
 - everything written goes to
-  [`lib/build-workspace.ts`](lib/build-workspace.ts)'s directory on real disk,
-  and [`routes/api/build-artifact.ts`](routes/api/build-artifact.ts) serves from
+  [`lib/build-workspace.ts`](packages/shmup-harbor/lib/build-workspace.ts)'s
+  directory on real disk, and
+  [`routes/api/build-artifact.ts`](routes/api/build-artifact.ts) serves from
   there as well as from a checkout's `build/`.
 - the base game is **staged out of the VFS first**. Deno reads the VFS happily,
   but the sound packs shell out to `ffmpeg`, and a separate process cannot see
@@ -1503,18 +1533,20 @@ which an iframe cannot be unless its embedder is too. That is the mode
 two held corners) included.
 
 **Audio.** audsrv splits sound in two, and so does the export.
-[`lib/ps2/sound-pack.ts`](lib/ps2/sound-pack.ts) builds both packs and
-[`lib/ps2/runtime-sound.ts`](lib/ps2/runtime-sound.ts) is the console-side
-`SoundPlayer` that plays them; both need **ffmpeg on the build host**, and
-without it the export is silent as it always was.
+[`lib/ps2/sound-pack.ts`](packages/shmup-harbor/lib/ps2/sound-pack.ts) builds
+both packs and
+[`lib/ps2/runtime-sound.ts`](packages/shmup-harbor/lib/ps2/runtime-sound.ts) is
+the console-side `SoundPlayer` that plays them; both need **ffmpeg on the build
+host**, and without it the export is silent as it always was.
 
 - **Effects and voices** are one-shots, which the SPU2 takes only as PS2 ADPCM
   (`Sound.Sfx`). All 60 keys the port loads are re-encoded through
-  [`lib/ps2/adpcm.ts`](lib/ps2/adpcm.ts) — a transliteration of ps2sdk's
-  `adpenc`, checked byte-for-byte against a golden vector in
-  [`tests/adpcm_test.ts`](tests/adpcm_test.ts). The port's baked-in paths do not
-  match the base game's layout, so each key is resolved against the game's tree
-  and staged where the port will look; the runtime swaps `.wav` for `.adp`.
+  [`lib/ps2/adpcm.ts`](packages/shmup-harbor/lib/ps2/adpcm.ts) — a
+  transliteration of ps2sdk's `adpenc`, checked byte-for-byte against a golden
+  vector in [`tests/adpcm_test.ts`](packages/shmup-harbor/tests/adpcm_test.ts).
+  The port's baked-in paths do not match the base game's layout, so each key is
+  resolved against the game's tree and staged where the port will look; the
+  runtime swaps `.wav` for `.adp`.
 
   Not all 60 make it onto the disc. audsrv keeps samples in **IOP RAM**, of
   which there are 2 MB in total, so the pack has a **1 MB budget**
@@ -1526,10 +1558,12 @@ without it the export is silent as it always was.
   one is not free: cdfs answers a miss by scanning the whole directory and
   printing `***** FILE ... CAN NOT FOUND ******`, which costs real boot time and
   reads like a broken disc. So the build bakes the staged list into `main.js` as
-  `__PS2_SFX__` and [`runtime-sound.ts`](lib/ps2/runtime-sound.ts) skips
+  `__PS2_SFX__` and
+  [`runtime-sound.ts`](packages/shmup-harbor/lib/ps2/runtime-sound.ts) skips
   anything absent from it rather than going looking.
-  [`tests/ps2_runtime_smoke_test.ts`](tests/ps2_runtime_smoke_test.ts) boots the
-  newest export and asserts the runtime probes for nothing the disc lacks.
+  [`tests/ps2_runtime_smoke_test.ts`](packages/shmup-harbor/tests/ps2_runtime_smoke_test.ts)
+  boots the newest export and asserts the runtime probes for nothing the disc
+  lacks.
 - **Music** is streamed, as 22.05 kHz mono **WAV** — 31.9 MB of the export, so
   `--no-music` drops it and keeps the effects. Not Ogg, even though the port
   asks for `.ogg` and AthenaEnv does link libVorbis: Vorbis gets decoded inside
@@ -1545,28 +1579,28 @@ without it the export is silent as it always was.
   its own frame loop rather than the package's `runNativeLoop`.
 
 Then there is the Dezaemon 2 tone bank:
-[`lib/ps2/tone-bank-pack.ts`](lib/ps2/tone-bank-pack.ts) runs the 116-instrument
-map through the same encoder to produce `assets/sounds/tonebank/` — one `.adp`
-per distinct sample, with the loop points carried in the SPU2 block flags, plus
-a `tonebank.json` saying which instrument layer plays which at what root pitch,
-level and pan. Nothing plays it on the console yet: `Sound.Sfx` has no
-playback-rate control, so sounding a note off the bank means rendering it ahead
-of time rather than pitching a sample live the way the browser does.
-`athena.ini` gets `audsrv = true` when any pack is staged. A silent build
-(`--no-audio`, or no ffmpeg) also puts `__PS2_AUDSRV__ = false` in main.js's
-preamble, because AthenaEnv defines `Sound` whether or not audsrv was loaded,
-and the first call into it without the module — `Sound.setVolume` at init —
-never returns: the console sat on a black screen. The runtime reads the flag and
-stays silent.
+[`lib/ps2/tone-bank-pack.ts`](packages/shmup-harbor/lib/ps2/tone-bank-pack.ts)
+runs the 116-instrument map through the same encoder to produce
+`assets/sounds/tonebank/` — one `.adp` per distinct sample, with the loop points
+carried in the SPU2 block flags, plus a `tonebank.json` saying which instrument
+layer plays which at what root pitch, level and pan. Nothing plays it on the
+console yet: `Sound.Sfx` has no playback-rate control, so sounding a note off
+the bank means rendering it ahead of time rather than pitching a sample live the
+way the browser does. `athena.ini` gets `audsrv = true` when any pack is staged.
+A silent build (`--no-audio`, or no ffmpeg) also puts `__PS2_AUDSRV__ = false`
+in main.js's preamble, because AthenaEnv defines `Sound` whether or not audsrv
+was loaded, and the first call into it without the module — `Sound.setVolume` at
+init — never returns: the console sat on a black screen. The runtime reads the
+flag and stays silent.
 
 The samples come from `SNDPAC.BIN`, which is disc content: it is not in this
 repo and is never published. Drop a Dezaemon 2 disc image into the gitignored
-`dev-fixtures/` and [`lib/sndpac.ts`](lib/sndpac.ts) pulls the file out of it
-with the engine's ISO 9660 reader ([`lib/disc-file.ts`](lib/disc-file.ts) is the
-shared scan); `--sndpac <path>` points at a bank directly and `--no-audio`
-forces a silent build. **A fresh checkout has no disc, so it gets no tone bank**
-— the effects and the music still come through, since they are the game's own
-files.
+`dev-fixtures/` and [`lib/sndpac.ts`](packages/shmup-harbor/lib/sndpac.ts) pulls
+the file out of it with the engine's ISO 9660 reader
+([`lib/disc-file.ts`](packages/shmup-harbor/lib/disc-file.ts) is the shared
+scan); `--sndpac <path>` points at a bank directly and `--no-audio` forces a
+silent build. **A fresh checkout has no disc, so it gets no tone bank** — the
+effects and the music still come through, since they are the game's own files.
 
 **Derived tables are a different matter**, and one of them is new (decided
 2026-09-02): the ポリ吉 3D part library. Reverse-engineered tables extracted
@@ -1583,9 +1617,9 @@ rather than bundled into the engine. Like `saves.manifest.json` it is
 regenerated by hand and committed; Deploy has no disc to rebuild it from, and
 the task exits 0 with a note when it finds none.
 
-[`tests/ps2_runtime_smoke_test.ts`](tests/ps2_runtime_smoke_test.ts) boots the
-built `main.js` against a stand-in for AthenaEnv's globals (including the
-`Sound` binding audsrv publishes) and plays several hundred frames, which is
+[`tests/ps2_runtime_smoke_test.ts`](packages/shmup-harbor/tests/ps2_runtime_smoke_test.ts)
+boots the built `main.js` against a stand-in for AthenaEnv's globals (including
+the `Sound` binding audsrv publishes) and plays several hundred frames, which is
 what catches an asset the game opens but the exporter never wrote — sheets and
 sounds alike. It tests the newest export in `build/ps2/`, not the largest.
 

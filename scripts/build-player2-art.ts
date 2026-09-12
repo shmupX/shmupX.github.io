@@ -24,7 +24,7 @@
 //
 // Defaults to ../shmup-party-phaser4 next to this checkout.
 
-import { decodePng, encodePng, type Raster } from "../lib/ps2/png.ts";
+import { decodePng, encodePng, type Raster } from "@shmupx/shmup-harbor/png";
 import { fromFileUrl } from "@std/path";
 
 // Every 8th frame of the 64-frame cycle: eight phases is a readable stride at

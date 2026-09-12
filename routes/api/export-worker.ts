@@ -1,6 +1,6 @@
 import { define } from "../../utils.ts";
 import { crossSiteGuard, isDeploy } from "../../lib/local-guards.ts";
-import { exportWorker } from "../../lib/export-worker.ts";
+import { exportWorker } from "@shmupx/shmup-harbor/export-worker";
 
 // /api/export-worker — the build server that picks up exports queued from a
 // phone, the hosted site or the PWA (lib/export-worker.ts).

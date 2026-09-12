@@ -1613,6 +1613,19 @@
       "npm:preact@^10.29.1",
       "npm:svelte@^5.16.0",
       "npm:vite@^7.1.3"
-    ]
+    ],
+    "members": {
+      "packages/shmup-harbor": {
+        "dependencies": [
+          "jsr:@easierbycode/svelte-ps2@^1.1.0",
+          "jsr:@std/assert@1",
+          "jsr:@std/cli@1",
+          "jsr:@std/encoding@1",
+          "jsr:@std/fs@1",
+          "jsr:@std/http@^1.1.3",
+          "jsr:@std/path@1"
+        ]
+      }
+    }
   }
 }

@@ -11,7 +11,7 @@
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { buildIso } from "../lib/ps2/iso9660.ts";
+import { buildIso } from "@shmupx/shmup-harbor/iso9660";
 import {
   buildDezaemonDiscZip,
   buildStoredZip,
@@ -26,7 +26,7 @@ import {
   rewriteCueFiles,
   trackModeFor,
 } from "../lib/dezaemon-disc.ts";
-import { crc32 } from "../lib/ps2/zip.ts";
+import { crc32 } from "@shmupx/shmup-harbor/zip";
 import { unzip } from "../static/zip-read.js";
 
 const encoder = new TextEncoder();
