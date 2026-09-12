@@ -75,7 +75,11 @@ import { dirname, join, resolve } from "@std/path";
 import { ensureDir, walk } from "@std/fs";
 import { buildRuntimeBundle } from "../lib/ps2/build.ts";
 import { resolveAthenaElf } from "../lib/ps2/athena.ts";
-import { guessAndroidSdk, slugFor } from "../lib/export-build.ts";
+import {
+  EMBEDDED_LOOSE_FILES,
+  guessAndroidSdk,
+  slugFor,
+} from "../lib/export-build.ts";
 import { listShelf, resolveShelfName, ShelfError } from "../lib/shelf.ts";
 import { harborRoot, repoRoot } from "../lib/repo-root.ts";
 
@@ -434,13 +438,16 @@ async function embedArgs(opts: Options): Promise<string[]> {
       "./packages/shmup-harbor/tools/build-level",
       "--include",
       "./static/games/2028-ai",
-      "--include",
-      "./static/gamepad-compatibility-plugin.js",
-      "--include",
-      "./static/phaser-plugins/phaser-global.js",
-      "--include",
-      "./static/firebase-config.js",
     );
+    // The loose files the tool reads off the root it derives — repo paths, so
+    // they stay beside the game rather than following the tool down into the
+    // package. Named by lib/export-build.ts, which is also what copies them
+    // back out of the VFS onto real disk, so the two halves of "embed it /
+    // stage it" cannot drift: a file embedded but never staged, or staged but
+    // never embedded, is missing at export time and nothing says so.
+    for (const rel of EMBEDDED_LOOSE_FILES) {
+      args.push("--include", "./" + rel.join("/"));
+    }
     // And what the PS2 export needs, which is not a Node tool at all: the
     // compiled runtime plus the interpreter that runs it.
     console.log("\n  Staging the PS2 runtime…");
