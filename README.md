@@ -626,6 +626,21 @@ So a sprite drawn here drops into a CG page unchanged, and the bank it needs
 rides with it. The record is read back the same way (`?sprite=<name>`, or the
 cloud list, which follows the database live).
 
+Every window is in a **room** (`?room=<code>`, minted when absent — the address
+bar is the share link), and the room is the sprite being drawn: everyone on the
+link edits the same pixels live. `pixelRooms/{code}` holds the structure
+(`meta`: size, frame count, name), the pixels (`frames/{f}/{i}`, sparse), the
+mixed user colours (`palette/{i}`) and who is here (`presence/{client}`: name,
+colour, cursor). Pixel writes are batched every 40 ms and the last one wins;
+size, frames, name and the user palette are pushed whole and adopted by all;
+each window's undo rewinds only its own strokes and is dropped when the sprite
+changes shape underneath it. Everyone's cursor and name show on every canvas,
+FORK copies the sprite into a fresh room, NEW starts an empty one, and loading a
+cloud sprite loads it into the room (a cloud sprite is a snapshot; the room is
+the live copy). Above 1080 px the TOOLS and SPRITE docks sit beside the canvas;
+below it (the CMG Desktop window, a phone) they are drawers over it, and the
+shortcut legend is behind the ⓘ in the footer.
+
 **SpriteX Tilemap Editor** (`/tilemap-editor/`). spriteX's TILEMAP tab (Tiled
 JSON + tileset PNG, tile and object layers, place / erase / pick, undo per
 stroke, `tilemaps/*` in the cloud) ported here, with three additions:
