@@ -422,7 +422,7 @@ start/end/rate/repeat interpolators:
 |------|-------|
 | 0 | appearance id: indexes the 256-entry pointer table `+0x6088e5c` — whose entries are **BEHAVIOR SCRIPTS, not sprite definitions**. See "Appearance scripts" below. Sprite size, char slot, frame count and hitbox come from the PLACEMENT-ID BAND instead (seven spawn wrappers `+0x16070..+0x165F8`: frame counts 4/4/4/4/2/2/1 and char bases 67/131/163/195/259/267/275 across the seven art bands); `b0>>3` selects the object CLASS from `+0x21FB0` — 0x30 = scripted zako (208 ids, **93.9%** of corpus enemy definitions), 0x31–0x36 = hardcoded special AI on an empty script (48 ids, the rest). |
 | 1 | bits0-2 **animation-frame period in ticks** → `[60,30,15,10,5,3,2,1]` (`+0x6085ee8`; both counters `0x0608DDF0`/`0x06090630` load from it at spawn `+0x15458`). **This is NOT hp** — that reading (corrected 2026-08-31) had index 0, the editor default and 63% of the corpus, as the toughest enemy; hp is byte 2. bits4-6 **score** index → `[50,100,200,500,1000,2000,5000,10000]` (`+0x6085ef0`); bit7 **ground** flag |
-| 2 | bits0-2 **hp** index → u32 `[256,12800,…,512000]` (`+0x6085f20`) in the engine's durability units, index 0 = WEAKEST. The zako initialiser `+0x1546A` scales it through `+0x15358` (×2/3 easy, ×1 normal, ×1.5 hard) into BOTH `0x06095040` (current hp — what the collision resolver subtracts damage from) and `0x06093E50` (max hp). At a full-power weapon-1 bullet of 5120 units that is **1/3/5/10/20/40/50/100 hits**. *(Corrected 2026-08-31: this was read as a 16.16 px/frame SPEED. A scripted zako has no speed field — its motion comes from its appearance script and the change channels. The one per-record speed the engine reads is **byte 0 bits0-2**, and only for the 48 hard-coded AI ids, which remap it through u16 `[128,256,384,512,640,768,1152,1536]` (`+0x20560`) into `0x0608E590`; for class 48 that array is left at 0 and filled from the script row's `+6` word instead.)* bit3+bits4-5 pack the **hit-attribute byte** `0x06091550` (`((b2>>4)&3)\|((b2&8)>>1)`): bit3 → the TERRAIN-RIDE flag, **bit4 → ARMOUR** (indestructible; see "Armour deflection"), bit5 → no-collision; bits6-7 **death mode** (see "The death word") |
+| 2 | bits0-2 **hp** index → u32 `[256,12800,…,512000]` (`+0x6085f20`) in the engine's durability units, index 0 = WEAKEST. The zako initialiser `+0x1546A` scales it through `+0x15358` (×2/3 easy, ×1 normal, ×1.5 hard — **and then a further ×1.5 when both players are in play**, `+0x15398` testing `u8[0x060840C8] & 6 == 6`, found 2026-09-12 and applying to bosses identically, so every hit figure in this file is the one-player normal case and the real zako envelope is 1-67 easy to 1-150 hard) into BOTH `0x06095040` (current hp — what the collision resolver subtracts damage from) and `0x06093E50` (max hp). At a full-power weapon-1 bullet of 5120 units that is **1/3/5/10/20/40/50/100 hits**. *(Corrected 2026-08-31: this was read as a 16.16 px/frame SPEED. A scripted zako has no speed field — its motion comes from its appearance script and the change channels. The one per-record speed the engine reads is **byte 0 bits0-2**, and only for the 48 hard-coded AI ids, which remap it through u16 `[128,256,384,512,640,768,1152,1536]` (`+0x20560`) into `0x0608E590`; for class 48 that array is left at 0 and filled from the script row's `+6` word instead.)* bit3+bits4-5 pack the **hit-attribute byte** `0x06091550` (`((b2>>4)&3)\|((b2&8)>>1)`): bit3 → the TERRAIN-RIDE flag, **bit4 → ARMOUR** (indestructible; see "Armour deflection"), bit5 → no-collision; bits6-7 **death mode** (see "The death word") |
 | 3 | **death word parameter** — item slot / child record / chain key, by mode (see "The death word"). NOT fire params: nothing in the firing path reads this byte. |
 | 4 | bits0-1 fire mode; **bits2-3 death presentation** (0 = vanish silently, 2 = small blast, 1/3 = full); bits4-6 **fire rate** index → interval `[119,59,29,19,9,5,3,1]` (`+0x6085f81`; mode 3 uses `[119,59,39,19,11,7,3,1]`) + randomization window `[29,22,16,11,7,4,2,1]` (`+0x6085f61`) — reload = interval + rand(window) |
 | 5 | bits0-4 fire direction (0 = default/aimed), bits5-7 extra (passed to the shooter at `+0x607cfac`) |
@@ -849,15 +849,27 @@ itself, and the whole timing chain is now engine-exact:
     `[8 + part*32 + cursor]` AND byte `[24 + part*32 + cursor]`. Those are
     two COLUMNS of the same 16 steps, and the note sender (`+0x15bc`) says
     what each one is:
-      - **bytes 0-15 = the voice column.** `0` rests (the sender writes gate
-        `0x40`, key off); **bit 7 set = tie** (gate `0x10`, and the pitch
-        register is left untouched); any other value is a note **onset**
-        whose value picks the instrument — it is forwarded on the companion
-        channel bank 4-7 as command 4.
-      - **bytes 16-31 = the pitch column**, stored to the per-part note
-        register `0x601F418` on each onset (`+0x36` is a constant bank
-        offset, so it does not change relative pitch). The composer repeats
-        the pitch byte on every held step; the driver ignores it there.
+      - **bytes 16-31 = the pitch column, and it alone decides key-on.**
+        The sender tests THIS byte: non-zero → gate `1` (key on) and the
+        value is stored to the per-part note register `0x601F418` (`+0x36`
+        is a constant bank offset, so it does not change relative pitch);
+        zero → gate `0x40` (key off). Nothing else in the sender gates a
+        note.
+      - **bytes 0-15 = the voice column**, which selects an INSTRUMENT and
+        nothing else: the value is forwarded on the companion channel bank
+        4-7 as command 4, and **bit 7 set = tie** (gate `0x10`, pitch
+        register untouched). **Voice `0` is instrument 0, a real tone-bank
+        voice — it is not a rest.** *(Corrected 2026-09-12. This file and
+        `decode-song.js` both had the gate on the voice column; over the
+        258-save corpus that drops 72,282 sounding steps and renders 25
+        songs completely silent. `game.bundle.js` already reads the pitch
+        column, so the two readers in this repo disagree — see the parity
+        map's item 6.)*
+      - the sustain byte is only ever `0x80`. The `0x80-0x88` range this
+        file used to give does not occur: across every non-empty song in
+        the corpus the only bit-7 voice values are `0x80` and `0xFF`, and
+        every `0xFF` sits inside a measure whose control bytes are `0xFF`
+        garbage.
 
     The save data confirms this over Ramsie's 14 songs: a tie always has a
     pitch byte beside it (6427/6427) and that pitch is the identical value
@@ -878,8 +890,12 @@ itself, and the whole timing chain is now engine-exact:
     master volume, MVOL at `$401(a5)`.)
   - measure control byte 3 = **accompaniment transpose**: indexes the
     signed semitone table at `0x601F3C8` (`-3 -2 -1 0 +1 +2 +3 +4 +5 +6 -5
-    -4`). The sender adds it (`+0x16fc`) only to the seven auto-accompaniment
-    channels the measure selects out of the kernel pattern table at
+    -4`). The sender adds it (`+0x16fc`) to
+    accompaniment channels **0-3 only** — the pitched ones; `+0x16c0`
+    routes channels 4-6, the three percussion channels, to `+0x16c8`, which
+    takes the raw byte with no transpose. *(Corrected 2026-09-12; the
+    accompaniment JSON and the runtime already said 0-3.)* Those channels
+    come out of the kernel pattern table at
     `0x601F490` (row = `ctrl0*140 + (ctrl1*5 + (ctrl2&0x7F)>>1)*7 + channel`,
     16 bytes per row = the measure's 16 steps) — never to the four composed
     parts. The editor default control `00 00 80 03` selects pattern row 0
@@ -1060,7 +1076,7 @@ settings block does not decode, where it stands in for weapon 1's 20.)*
 Big/pierce shots use a different channel: their power rides in the SCALE
 slot (0x6095930/0x6091a30 — a big shot is literally as strong as it is
 large), drained by each enemy's hp as it pierces (`+0xb8ec`:
-`scale -= enemyHp`). The three per-level tables alongside the normal shot's
+`scale -= enemyHp`). **The “level” every weapon table is indexed by is the OPTION count, not the power level** (corrected 2026-09-12): both dispatchers read `u8[*0x0608411C + p]`, which player init fills from `settings[+0x0E] & 7` and the OPTION pickup increments with a cap of 4, while POWER lives in the other array `*0x06084120` and caps at 7. The corpus settles it — initial OPTION never exceeds 4 across 262 saves while initial POWER reaches 7, and every one of these tables has five entries. This also re-reads MAIN type 7's extra reload drain as `option+3`, not `power+3`. The three per-level tables alongside the normal shot's
 belong to the CHARGE weapons, and all four of the readings below were wrong —
 each was a **u16** table read a byte at a time, so the published values were
 its high bytes. Corrected 2026-08-31 (full spec in "Player weapons" below):
@@ -1326,7 +1342,7 @@ offsets; the engine reaches the trailer through the pointer global
 | Byte | Field |
 |------|-------|
 | 0 | bits0-1 core **size class** (placement id `0xF0`–`0xF3`); bits4-5 **HP-stage count** − 1; bit6 rotate-in-place; bit7 death-FX spin variant |
-| 1 | bits0-2 **hp** index → u32 `[1024000, 1536000, 2304000, 3328000, 4608000, 6144000, 7936000, 9984000]` (`+0x21F40`), through the same difficulty scaler as a zako's and into the same hp words — **unshifted** at the record-driven spawn `+0x1AFF4`, so a stage boss is **200-1950** full-power weapon-1 hits. (The other caller `+0x1918C` passes the table `>> 2` first, a quarter of that; it is not the record path. The importer's `shotDamage * 1024` matches the shifted figure, i.e. it discounts a stage boss 4× — a playability choice, not the trace.) bit3 option flag, stored **inverted** by the editor; bits4-6 **score** index → `[5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]` (`+0x21F00`) |
+| 1 | bits0-2 **hp** index → u32 `[1024000, 1536000, 2304000, 3328000, 4608000, 6144000, 7936000, 9984000]` (`+0x21F40`), through the same difficulty scaler as a zako's and into the same hp words — **unshifted** at the record-driven spawn `+0x1AFF4`, so a stage boss is **200-1950** full-power weapon-1 hits at one player on normal. *(Two corrections, 2026-09-12, both lenses of an adversarial pass agreeing.* **This is not the zako table at another scale.** Bosses read `0x06085F40` and zako read `0x06085F20`; each address has readers only on its own side, and the per-index ratio runs 4000× down to 19.5×, so no shift or scale relates them — what they share is the scaler and the editor's eight labels. *And* **`+0x1918C` is not a boss path.** The shifted read sits inside the fire-point dispatcher `+0x18FAC`, and its index is not an hp field at all: it is the parent's facing angle masked to three bits, which for a boss core is always a multiple of 8, so the engine never computes the shifted figure for a boss. The importer's `shotDamage * 1024` lands within 4× of the hardware number — median ratio exactly 4.0 across every boss record in the corpus — but it reproduces no engine path; `map-to-game.js`'s own comment says the divisor was chosen to land near the stock bosses' 100-500.) bit3 option flag, stored **inverted** by the editor; bits4-6 **score** index → `[5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]` (`+0x21F00`) |
 | 2–5 | **pattern playlist**: byte 2+k = HP stage k's loop of four 2-bit pattern ids, consumed LSB-first. HP stages split the HP bar into equal bands; a band change advances to the next byte — the editor's "16-entry phase loop" is these 4 bytes × 4 entries |
 | 6 / 7 | **arrival / death** selectors — **decoded** (2026-08-28; 60% of the corpus's 1,396 bosses author a position and 40% the flourishes). High nibble picks the off-screen START point (byte 6) / the death-drift TARGET (byte 7) out of two 4-entry preset tables per orientation, in the engine's 320×224 px space: vertical-mode arrival lateral `[160,-16,160,336]` (bit6 gates it) and scroll `[56,280,56,-56]` (bits 4∨6 gate it, else the **default entry**: start just off the top and ride in at the scroll speed); vertical-mode death lateral `[160,336,160,-16]` (bit6) and scroll `[56,-56,56,280]` (bit4), with neither set meaning "die where it stands". Entry 0 of each table is the park anchor — lateral 160 = centre, scroll 56. The size class nudges the entry's scroll coordinate by `[0,0,32,32]`. Low nibble = FX, the same pair on both bytes: **bit0 = ZOOM** (scale register `0x06094A40`, neutral `0x1000`) with bit1 its direction, **bit2 = SPIN** (rotation register `0x06094440`) with bit3 its direction. Both entrance flourishes run exactly **256 frames** — the same length as the entry glide, by design: the zoom rides 4.0×→1.0× at −48/frame or 0→1.0× at +16/frame, and the spin turns eight full revolutions with its rate ramping from 22.5°/frame down to nothing, landing upright. On death the scale rate is CONSTANT (+24 grow / −16 shrink) while the spin rate ACCELERATES by 16/frame and never settles; record byte0 bit7 is a 159-frame hold plus a 64-frame **fade-out**, not a second spin channel. The shared approach primitive `+0x1A6B4` sets a CONSTANT velocity of `distance·k/256` px/frame (k = 1 on arrival, 4 on a fast return, ½ on the death glide, floored at 0.5), so a glide takes ~256 frames whatever the distance. |
 | 8–63 | 4 **pattern records** × 14 B |
