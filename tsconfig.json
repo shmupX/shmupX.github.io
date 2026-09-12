@@ -30,6 +30,14 @@
 // and it is a real behaviour change, so it is pinned to the false the build
 // already had. Flipping it is a deliberate decision for another day, not a side
 // effect of ending a directory walk.
+// package.json beside this file is the same hazard in Node's half of the
+// toolchain, and the reason it exists: Vite asks the nearest package.json
+// whether the tree is ESM, and finding none in the checkout it read the
+// parent's "type": "module" — then, once that neighbour was deleted, found
+// nothing and defensively named every server chunk .mjs instead. Same build,
+// same bytes, different filenames depending on a directory the repo does not
+// own. Declaring it here settles that from inside. It carries no comment of
+// its own because package.json must be strict JSON.
 {
   "compilerOptions": {
     "target": "esnext",
