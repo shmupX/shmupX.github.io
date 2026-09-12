@@ -9848,7 +9848,11 @@
   // welded to it, and they aim 180 degrees away from the way you are moving.
   var DEZA_OPTB_SIDE = 18;              // px lateral, engine 2304 >> 7
   var DEZA_OPTB_BEHIND = 12;            // px along the scroll axis, engine 1536 >> 7
-  var DEZA_OPTB_DAMAGE = 384;           // per overlapping frame
+  // +0x21DEC is a table; B's is an immediate — `mov.w @(68,pc),r1` at +0x11366
+  // pulls 0x0180 from +0x113AE and +0x11368 stores it into the resolver's own
+  // attack word u32[0x0608C720 + slot*4]. Flat: it does not scale with the
+  // option count the way A's does.
+  var DEZA_OPTB_DAMAGE = 384;           // +0x11366, per overlapping frame
   var DEZA_OPTB_LAG = 3;
   var DEZA_OPTB_TURN = 4096 / 65536;    // turns/frame = 22.5 deg
   var DEZA_OPTB_RECOIL = 6;             // px kick when the pod fires
@@ -9899,12 +9903,17 @@
     // Both tables feed a `dezaPerFrame` object, which the collision loop bills
     // on EVERY runtime tick without consuming it — so they must convert with
     // the per-tick converter, not the one-shot one. With dezaHitDamage the pods
-    // did exactly 2x. B is traced explicitly ("384 damage per overlapping
-    // frame"); A's table (+0x21DEC by option count) is traced without a stated
-    // billing period, and per-frame is the least-wrong reading — the pod is a
-    // persistent indestructible contact body the collision loop cannot consume,
-    // so a per-hit reading has no cooldown to hang on. Either way, the previous
-    // code (one-shot converter + dezaPerFrame) matched NEITHER reading.
+    // did exactly 2x. Per-frame is the ENGINE's period, not a guess: the
+    // resolver's generic arm (+0x08336) subtracts atk[attacker] from the
+    // target's hp and then, unconditionally, atk[target] from the attacker's,
+    // with no cooldown latch — u16[0x06094240 + slot*2] is written before the
+    // subtraction and never read back as a gate — so an overlap bills again
+    // every frame, and the pod survives it on hp = 0x7FFFFFFF. Both pods take
+    // their number from their constructor (A +0x1092C indexes +0x21DEC by
+    // option count, B +0x1130C writes a flat 384), never from the class-64/65
+    // per-frame updaters. The 7168 those updaters write (+0x10CF8, +0x115D6)
+    // is the death-state arm — the parting shot when the ship explodes and the
+    // pods are flung away — not the contact figure.
     if (type === 5) return dezaFrameDamage(scene, DEZA_OPTA_DAMAGE[n]);
     if (type === 6) return dezaFrameDamage(scene, DEZA_OPTB_DAMAGE);
     return 0;   // OPTION C's pods carry no hitbox and no attack power at all
