@@ -1,0 +1,38 @@
+// Not Deno's config — deno.json holds the real compilerOptions and Deno never
+// reads this file. It exists for esbuild, which Vite transforms TypeScript
+// through.
+//
+// esbuild finds a tsconfig by walking UP from each source file and stopping at
+// the first one it meets. With no tsconfig anywhere in the checkout that walk
+// left the repo entirely and picked up whatever happened to sit above it — on
+// one machine a Svelte config at ~/CODE/tsconfig.json, whose `extends` esbuild
+// then could not resolve (no node_modules up there), so `deno task build` died
+// with
+//
+//   [vite:esbuild] failed to resolve "extends":"@tsconfig/svelte/tsconfig.json"
+//     in /Users/danieljohnson/CODE/tsconfig.json
+//   file: <repo>/client.ts
+//
+// naming a file the repo does not contain. Whether the build worked at all
+// depended on where the checkout happened to live, and the error pointed away
+// from the checkout rather than into it. This file ends the walk at the repo.
+//
+// Deliberately minimal, and both fields are here to CHANGE NOTHING rather than
+// to express a preference — the emitted bundle is byte for byte what it was
+// when the walk found nothing. useDefineForClassFields is the one that has to
+// be said out loud: esbuild derives it from `target`, and at esnext it flips to
+// true, which stops class fields being lowered —
+//
+//   -  constructor() { super(...arguments); this.name = "InjectError"; }
+//   +  name = "InjectError";
+//
+// across eleven server chunks. That is [[Define]] rather than [[Set]] semantics
+// and it is a real behaviour change, so it is pinned to the false the build
+// already had. Flipping it is a deliberate decision for another day, not a side
+// effect of ending a directory walk.
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "useDefineForClassFields": false
+  }
+}
