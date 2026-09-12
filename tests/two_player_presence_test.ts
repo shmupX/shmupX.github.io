@@ -3,13 +3,13 @@
 
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import {
+  bothSticksLive,
   createFilterAuto,
   createPresence,
   filterPickedByHand,
   halvesActive,
   notePad,
   PAIR_QUIET_MS,
-  PAIR_WINDOW_MS,
   REVEAL_FLIP_MS,
   REVEAL_HOLD_MS,
   stepFilterAuto,
@@ -109,64 +109,94 @@ Deno.test("two pads count only once each has been used, and a pad gone is forgot
   assertEquals(verdict(st, 63_000).pads, 1);
 });
 
-Deno.test("a Legion's halves make two once both have been worked close together — and only on a Legion", () => {
-  const legion = { legion: true };
+Deno.test("bothSticksLive: a hand on each half, in the same poll", () => {
+  assert(bothSticksLive(pad({ axes: [0.9, 0, 0, -0.9] })));
+  assert(bothSticksLive(pad({ axes: [0, -0.8, 0.8, 0] })));
+  // One stick alone is one player, however hard it is pushed.
+  assert(!bothSticksLive(pad({ axes: [1, 0, 0, 0] })));
+  assert(!bothSticksLive(pad({ axes: [0, 0, 0, 1] })));
+  // Buttons never say it, and the dead zone is not a hand.
+  assert(!bothSticksLive(pad({ pressed: [4, 0] })));
+  assert(!bothSticksLive(pad({ axes: [0.3, 0, 0.3, 0] })));
+});
+
+Deno.test("a Legion's halves make two on the split view's claim or both sticks — never on a solo player's buttons", () => {
+  const split = { legion: true, split: true };
+  const ask = { split: true };
   let st = createPresence();
-  // The left half alone, for a long while: one player.
-  notePad(st, [pad({ axes: [0.9, 0, 0, 0] })], 0, legion);
-  notePad(st, [pad({ pressed: [4] })], 20_000, legion);
-  assertEquals(verdict(st, 20_000), { two: false, pads: 1, halves: false });
-  // The right half, within the window: a pair.
-  notePad(st, [pad({ axes: [0, 0, 0, 0.9] })], 25_000, legion);
-  assertEquals(verdict(st, 25_000), { two: true, pads: 1, halves: true });
-  // Quiet for a good while: still a pair (nobody holds a stick while reading)...
-  notePad(st, [pad()], 25_000 + PAIR_QUIET_MS - 1, legion);
-  assertEquals(verdict(st, 25_000 + PAIR_QUIET_MS - 1).two, true);
-  // ...until the halves have been quiet for PAIR_QUIET_MS.
-  notePad(st, [pad()], 25_000 + PAIR_QUIET_MS + 1, legion);
-  assertEquals(verdict(st, 25_000 + PAIR_QUIET_MS + 1).two, false);
-  // Right then left, too far apart, is one player switching hands.
+  // THE false positive this rule exists to refuse: the launcher's own
+  // navigation is a left-half press (D-pad) and then a right-half one (A).
+  notePad(st, [pad({ pressed: [13] })], 0, split);
+  notePad(st, [pad({ pressed: [0] })], 500, split);
+  assertEquals(verdict(st, 500, ask), { two: false, pads: 1, halves: false });
+  // ...however long they keep at it, and whichever buttons they use.
+  for (
+    const [t, b] of [[1000, 12], [1500, 3], [2000, 4], [2500, 1]] as [
+      number,
+      number,
+    ][]
+  ) {
+    notePad(st, [pad({ pressed: [b] })], t, split);
+  }
+  assertEquals(verdict(st, 2500, ask).two, false);
+  // One stick at a time is one player too.
+  notePad(st, [pad({ axes: [0.9, 0, 0, 0] })], 3000, split);
+  notePad(st, [pad({ axes: [0, 0, 0, 0.9] })], 3100, split);
+  assertEquals(verdict(st, 3100, ask).two, false);
+  // Both sticks in one poll: a hand on each half.
+  notePad(st, [pad({ axes: [0.9, 0, 0, -0.9] })], 4000, split);
+  assertEquals(verdict(st, 4000, ask), { two: true, pads: 1, halves: true });
+  // It stays said while they read the list...
+  notePad(st, [pad()], 4000 + PAIR_QUIET_MS - 1, split);
+  assertEquals(verdict(st, 4000 + PAIR_QUIET_MS - 1, ask).two, true);
+  // ...and lapses after PAIR_QUIET_MS of quiet halves.
+  notePad(st, [pad()], 4000 + PAIR_QUIET_MS + 1, split);
+  assertEquals(verdict(st, 4000 + PAIR_QUIET_MS + 1, ask).two, false);
+  // The split view's own claim (the View tap) says it without any sticks.
   st = createPresence();
-  notePad(st, [pad({ pressed: [0] })], 0, legion);
-  notePad(st, [pad({ pressed: [4] })], PAIR_WINDOW_MS + 1, legion);
-  assertEquals(verdict(st, PAIR_WINDOW_MS + 1).two, false);
-  // ...and close enough is a pair, whichever half went first.
-  notePad(st, [pad({ pressed: [0] })], PAIR_WINDOW_MS + 100, legion);
-  assertEquals(verdict(st, PAIR_WINDOW_MS + 100).two, true);
-  // Not a Legion: the same pad's two halves are one player's two hands.
+  notePad(st, [pad()], 0, { ...split, claimed: true });
+  assertEquals(verdict(st, 0, ask), { two: true, pads: 0, halves: true });
+  // Split Controller mode off: the halves are one player's two hands, both
+  // when asked and when told.
   st = createPresence();
-  notePad(st, [pad({ pressed: [4, 0] })], 0);
-  assertEquals(verdict(st, 0), { two: false, pads: 1, halves: false });
+  notePad(st, [pad({ axes: [0.9, 0, 0, -0.9] })], 0, { legion: true });
+  assertEquals(verdict(st, 0, ask).two, false);
+  notePad(st, [pad({ axes: [0.9, 0, 0, -0.9] })], 100, split);
+  assertEquals(verdict(st, 100, {}).two, false, "split mode ended: no pair");
+  // Not a Legion at all: nothing is read for halves.
+  st = createPresence();
+  notePad(st, [pad({ axes: [0.9, 0, 0, -0.9] })], 0, { split: true });
+  assertEquals(verdict(st, 0, ask), { two: false, pads: 1, halves: false });
   // FPS mode: the right half is a mouse, so no pair — and a pair already
-  // counted stops counting while it lasts.
+  // said stops counting while it lasts.
   st = createPresence();
-  notePad(st, [pad({ pressed: [4, 0] })], 0, legion);
-  assertEquals(verdict(st, 0).two, true);
-  assertEquals(verdict(st, 0, { fps: true }).two, false);
-  notePad(st, [pad({ pressed: [4, 0] })], 1000, { ...legion, fps: true });
-  assertEquals(verdict(st, 1000, { fps: true }).two, false);
+  notePad(st, [pad({ axes: [0.9, 0, 0, -0.9] })], 0, split);
+  assertEquals(verdict(st, 0, ask).two, true);
+  assertEquals(verdict(st, 0, { ...ask, fps: true }).two, false);
+  notePad(st, [pad({ axes: [0.9, 0, 0, -0.9] })], 1000, {
+    ...split,
+    fps: true,
+    claimed: true,
+  });
+  assertEquals(verdict(st, 1000, { ...ask, fps: true }).two, false);
   // The pad going away forgets the pair; a different pad starts over.
   st = createPresence();
-  notePad(st, [pad({ pressed: [4, 0] })], 0, legion);
+  notePad(st, [pad({ axes: [0.9, 0, 0, -0.9] })], 0, split);
   notePad(st, [], 10);
-  notePad(st, [pad()], 20, legion);
-  assertEquals(verdict(st, 20).two, false);
+  notePad(st, [pad()], 20, split);
+  assertEquals(verdict(st, 20, ask).two, false);
   st = createPresence();
-  notePad(st, [pad({ pressed: [4, 0] })], 0, legion);
-  notePad(st, [pad({ id: XBOX })], 10, legion);
-  assertEquals(verdict(st, 10).two, false);
+  notePad(st, [pad({ axes: [0.9, 0, 0, -0.9] })], 0, split);
+  notePad(st, [pad({ id: XBOX })], 10, split);
+  assertEquals(verdict(st, 10, ask).two, false);
   // Only the pad named as the Legion's is read for halves.
   st = createPresence();
-  const opts = { ...legion, isLegionPad: (p: Any) => p.index === 1 };
-  notePad(st, [pad({ index: 0, pressed: [4, 0] }), pad({ index: 1 })], 0, opts);
-  assertEquals(verdict(st, 0), { two: false, pads: 1, halves: false });
-  notePad(
-    st,
-    [pad({ index: 0 }), pad({ index: 1, pressed: [4, 0] })],
-    10,
-    opts,
-  );
-  assertEquals(verdict(st, 10), { two: true, pads: 2, halves: true });
+  const opts = { ...split, isLegionPad: (p: Any) => p.index === 1 };
+  const sticks = [0.9, 0, 0, -0.9];
+  notePad(st, [pad({ index: 0, axes: sticks }), pad({ index: 1 })], 0, opts);
+  assertEquals(verdict(st, 0, ask), { two: false, pads: 1, halves: false });
+  notePad(st, [pad({ index: 0 }), pad({ index: 1, axes: sticks })], 10, opts);
+  assertEquals(verdict(st, 10, ask), { two: true, pads: 2, halves: true });
 });
 
 // ── The 2P trim ──────────────────────────────────────────────────────────────
@@ -269,18 +299,34 @@ Deno.test("no 2P games, or off the shop screen: nothing happens; a reveal left m
   r = run(s, { seen: false, now: 200 });
   s = r.state;
   assertEquals(r.actions, { showChips: true });
-  // ...and leaving the screen mid-beat abandons it; coming back with the
-  // filter still ALL starts a fresh one rather than flipping late.
+  // ...and leaving the screen mid-beat abandons it. A reveal that never
+  // flipped applied nothing, so the next visit starts one over rather than
+  // leaving the shop untrimmed for the rest of the pair's session.
   r = run(s, { onScreen: false, seen: false, now: 300 });
   s = r.state;
   assertEquals(r.actions, {});
   assertEquals([s.flipAt, s.tuckAt], [0, 0]);
-  assertStrictEquals(s.auto, true);
+  assertStrictEquals(s.auto, false);
   r = run(s, { seen: false, now: 400 });
+  s = r.state;
+  assertEquals(r.actions, { showChips: true });
+  // The second player putting their pad down mid-beat abandons it too, and
+  // does not spend the one-time reveal...
+  r = run(s, { two: false, seen: false, now: 500 });
+  s = r.state;
   assertEquals(r.actions, {});
-  // The pair leaving resets, so a later pair reveals from the top.
-  s = run(s, { two: false, now: 500 }).state;
+  assertStrictEquals(s.auto, false);
+  // ...nor does a filter picked by hand while the beat runs.
   r = run(s, { seen: false, now: 600 });
+  s = r.state;
+  assertEquals(r.actions, { showChips: true });
+  r = run(s, { seen: false, filter: "RELEASED", now: 700 });
+  s = r.state;
+  assertEquals(r.actions, {});
+  assertStrictEquals(s.auto, false);
+  // So a later pair still reveals from the top.
+  s = run(s, { two: false, now: 800 }).state;
+  r = run(s, { seen: false, now: 900 });
   assertEquals(r.actions, { showChips: true });
   // A filter already 2P by hand when the pair arrives is left alone — and
   // stays when the pair leaves (it was never ours).

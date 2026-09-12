@@ -1830,8 +1830,11 @@ every game anyone can get — and it is read from two places by
   trim is silent with the chips already tucked. A filter picked by hand (a chip,
   ◀ ▶, F) wins and brings the chips back; when the second player goes — a pad
   unplugged, or the halves quiet for ten minutes — an automatic 2P goes back to
-  ALL. shmupX's own row (`data/games.json`) says `"players": 2` and Sh'M↑
-  Party's `4`.
+  ALL. An automatic trim keeps the highlighted game under the cursor where it
+  survives, so a press meant for that row cannot land on whatever slid into its
+  place. Only this screen filters: the field on a Games row (`data/games.json`,
+  where shmupX says `"players": 2`) is catalog metadata the manifest carries,
+  and Sh'M↑ Party's eShop row says `4`.
 - The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU → PUBLISH
   TO ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`, cover under
   `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last). A
