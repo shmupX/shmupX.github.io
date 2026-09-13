@@ -9662,6 +9662,9 @@ function GAME3D_RUNTIME(DATA) {
                 // record for the whole game, like the soundtrack.
                 payload.dezaemonBullets = (gameData && gameData.dezaemonBullets) || null;
                 payload.dezaemonItems = (gameData && gameData.dezaemonItems) || null;
+                // The ポリ吉 3D models, so a cloud round trip keeps what the
+                // import carried and the next .SAV export can write sec7.
+                payload.dezaemonModels = (gameData && gameData.dezaemonModels) || null;
                 // The import's drawn title screen, the no-story flag and the
                 // community credits ride the level record; level-loader
                 // carries them into the recipe.
@@ -9829,6 +9832,12 @@ function GAME3D_RUNTIME(DATA) {
                 else delete gameData.dezaemonBullets;
                 if (d.dezaemonItems) gameData.dezaemonItems = d.dezaemonItems;
                 else delete gameData.dezaemonItems;
+                // Models come back the same way, and must be DELETED when the
+                // level has none: gameData is mutated in place, so a cart with
+                // 3D models would otherwise leave them on the next level loaded
+                // and write them into that cart's sec7.
+                if (d.dezaemonModels) gameData.dezaemonModels = d.dezaemonModels;
+                else delete gameData.dezaemonModels;
                 if (d.dezaemonTitle) gameData.dezaemonTitle = d.dezaemonTitle;
                 else delete gameData.dezaemonTitle;
                 if (d.dezaemonTitleScreen) gameData.dezaemonTitleScreen = d.dezaemonTitleScreen;

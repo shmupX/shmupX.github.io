@@ -1612,8 +1612,11 @@ was the reverse and is kept only as a comparison option.
 
 (3) **The per-model colour word** is a whole-model **tint**. It is RGB555 with
 bit 15 IGNORED rather than clear — 119 of the corpus's 564 models set it
-(`0xf39c` recurs), and the shader masks to `0x7fff` when it reads the word, so
-a writer must store it back unmasked. Edited by a three-channel picker
+(`0xf39c` recurs). The shader never consults it: it pulls three 5-bit channels
+out of bits 0–4, 5–9 and 10–14 and bit 15 falls outside all three, so nothing
+masks it off — it is simply never read. A writer must therefore store the word
+back unmasked (`lib/model/model-mesh.js` is what applies an explicit
+`& 0x7fff`, on our side, not the Saturn's). Edited by a three-channel picker
 (`+0x3ac4`: R = bits 0–4, G =
 5–9, B = 10–14, masks `0x7fe0 / 0x7c1f / 0x3ff`). Its one consumer
 (`+0x2b70` → `+0xa24c`) builds three 1,024-byte tables, one per channel, at
@@ -1804,8 +1807,10 @@ collection (60 saves scanned) while building it:
   `00 00 80 03` in each of the 32 measures (67 non-zero bytes — Ramsie's slots
   14–23); `emptySong()` reproduces it. The BGM table may name such a slot: it
   plays silence.
-- **sec7**: all zero — no `0x12345678` magic, which the decoder (and Ramsie's
-  own save) treats as "the 3D editor was never opened".
+- **sec7**: all zero when the level carries no models — no `0x12345678` magic,
+  which the decoder (and Ramsie's own save) treats as "the 3D editor was never
+  opened". A level that DOES carry them (`dezaemonModels`) has the section
+  encoded by `lib/write/encode-model.js` instead.
 
 - **Global bank refs 48-93 — the player's weapon art (added 2026-09-06).**
   The 85-entry global char-slot table (GAME `+0x27F1C`: u16 geometry index,

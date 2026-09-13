@@ -552,7 +552,8 @@ switch, loadouts, item slots, bullet configs, BGM table). An import's
 cart keeps them on the way out instead of having the section zeroed. Everything
 the format does not carry — enemy names, story scenes, custom audio, the base
 game's stock enemies' behaviours — is left behind, and the builder says so in
-its warnings. Not yet written: the six credit strips.
+its warnings. The six credit strips are written too, from the same drawn title
+art (`tests` cover a cart keeping both on the way back out).
 
 **Item icons.** A save gives each of its eight item slots exactly one 16×16 cell
 of the global sprite bank (refs 94–101), so a pickup in a cart is a **still** —

@@ -17,11 +17,14 @@
 // rewrite 119 of 564 models).
 //
 // What does NOT round-trip byte-for-byte is the residue the Saturn ignores.
-// Measured over dev-fixtures: 289 decodable saves, 176 carrying the magic, of
+// Measured over dev-fixtures: 271 saves with a parsed section table (of 289
+// payload-bearing BUP entries; the other 18 are not Dezaemon 2 game saves),
+// 176 carrying the magic, of
 // which 84 hold at least one model (564 models, 3,165 parts) and 92 opened the
 // 3D editor without keeping anything. Among those 84:
 //
-//   - part records past a slot's part count keep stale bytes in 218 slots
+//   - 218 part records past a slot's part count keep stale bytes, in 83 slots
+//     across 28 saves
 //   - the 576 trailing bytes are non-zero in 32 saves
 //
 // Both are dead to the reader — part count bounds the parts, and nothing
