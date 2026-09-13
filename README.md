@@ -1068,7 +1068,7 @@ a .srm on your own disk
   shelf refuses one outright.
 - **The cover** is `composeSfcCover` — the busiest 30-row screenful of the
   game's own scenery, at the same 256×480 every Saturn cover uses so one shelf
-  can show both. TITLE GROUP is *not* used: its tile numbers index the flat
+  can show both. TITLE GROUP is _not_ used: its tile numbers index the flat
   graphics bank, whose layout is still open, so it renders fragments rather than
   a logo. A cart with a blank graphics bank has no picture of itself and is
   published without one.
@@ -1988,8 +1988,8 @@ One of the nine is ahead of the mirror: `snes` is listed, and the SUPER FAMICOM
 section it opens is real — it holds this browser's Dezaemon `.srm` shelf — but
 the cmg origin does not serve `/snes/play.html` yet, so its warm fails and its
 rows cannot boot. A failed warm leaves a core installed and flags the row, which
-is what keeps the shelf reachable while the player is missing. See *The Super
-Famicom library and shelf*.
+is what keeps the shelf reachable while the player is missing. See _The Super
+Famicom library and shelf_.
 
 Nothing is vendored here. [`static/emu-sw.js`](static/emu-sw.js) is a service
 worker that mirrors an installed core's path prefixes from the cmg origin into
