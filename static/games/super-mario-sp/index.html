@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Super Mario SP</title>
+
+<!--
+  Super Mario SP — a Super Famicom cartridge, played in the page.
+
+  THE ONE RULE: every URL in this file is RELATIVE. This same page is served
+  from two different depths and has to work at both —
+
+    /games/super-mario-sp/          Fresh's staticFiles(), off this repo's static/
+    /eshop/super-mario-sp/          Cache Storage, after an eShop install
+                                    (static/emu-sw.js's eshopFile)
+
+  A single root-relative src/href would resolve to the origin root at both, and
+  the 404 comes back as text/html, so the browser reports a MIME-type error
+  rather than a missing file and the search starts in the wrong place. The
+  bare /games/super-mario-sp is redirected to the trailing slash by
+  lib/static-indexes.ts for the same reason: without it every relative URL here
+  resolves one level too high.
+-->
+
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden;
+    overscroll-behavior: none; touch-action: none;
+    font: 14px/1.4 system-ui, -apple-system, sans-serif; color: #cfe;
+  }
+  #game { position: fixed; inset: 0; }
+  /* The SNES is 256x224. Keep it crisp when EmulatorJS scales it up. */
+  #game canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+</style>
+
+<script>
+// Audio unlock, the same shape as routes/games/2028-ai.tsx.
+//
+// EJS_startOnLoaded boots the core without waiting for a click, so the
+// AudioContext the emulator creates during init is born suspended on every
+// browser that gates audio on a gesture. Wrapping the constructor collects
+// every context, whenever it is made, and the first real input resumes them
+// all. Without this the game runs silently until something else happens to
+// resume it.
+(function () {
+  var ctxs = [];
+  var OrigAC = window.AudioContext || window.webkitAudioContext;
+  if (!OrigAC) return;
+  function Patched() { var c = new OrigAC(); ctxs.push(c); return c; }
+  Patched.prototype = OrigAC.prototype;
+  if (window.AudioContext) window.AudioContext = Patched;
+  if (window.webkitAudioContext) window.webkitAudioContext = Patched;
+  function unlock() {
+    for (var i = 0; i < ctxs.length; i++) {
+      var c = ctxs[i];
+      if (c && (c.state === "suspended" || c.state === "interrupted")) c.resume().catch(function () {});
+    }
+  }
+  ["pointerdown", "touchstart", "mousedown", "keydown"].forEach(function (ev) {
+    window.addEventListener(ev, unlock, { passive: true });
+  });
+})();
+
+// Launcher OSD bridge, ported from routes/games/2028-ai.tsx.
+//
+// Once the game has keyboard focus the launcher stops seeing keydowns, so its
+// own ` / ~ / Esc handler never fires. Forward those keys to the parent so it
+// can still open the Guide. Registered here in <head>, i.e. before the
+// launcher's own injectOsdKeyForwarder (which it adds at iframe onload), and
+// stopImmediatePropagation means exactly one of the two fires rather than
+// both. No-op when the page is opened standalone.
+(function () {
+  if (window.parent === window) return;
+  window.addEventListener("keydown", function (e) {
+    if (e.code === "Backquote" || e.key === "`" || e.key === "~" ||
+        e.keyCode === 192 || e.key === "Escape") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      try { window.parent.postMessage({ type: "tg16-toggle-controls" }, "*"); } catch (_) {}
+    }
+  }, true);
+})();
+</script>
+</head>
+<body>
+<div id="game"></div>
+
+<script>
+// Controls.
+//
+// Two input paths reach this page at once and both have to land on the same
+// SNES button, or a single press does two things. The launcher synthesises
+// keyboard events from the pad (static/gamepad-support.js), and EmulatorJS
+// also reads the pad natively through navigator.getGamepads(). So each row
+// below pairs the key the launcher sends with the pad button EmulatorJS sees,
+// and a button held by both paths is just a button held once.
+//
+// This overrides EmulatorJS's stock mapping, which puts SNES B — jump — on the
+// RIGHT face button. On a Mario game jump belongs on the bottom one.
+//
+// RetroPad indices: 0 B, 1 Y, 2 SELECT, 3 START, 4 UP, 5 DOWN, 6 LEFT,
+// 7 RIGHT, 8 A, 9 X, 10 L, 11 R, then triggers and sticks the SNES has no
+// buttons for — those are blanked so the launcher's stray synthesised keys
+// for them cannot reach the game.
+var PAD = {
+  0:  { value: "space",     value2: "BUTTON_1" },            // B — jump
+  1:  { value: "x",         value2: "BUTTON_3" },            // Y — run
+  2:  { value: "backspace", value2: "SELECT" },
+  3:  { value: "enter",     value2: "START" },
+  4:  { value: "up arrow",  value2: "DPAD_UP" },
+  5:  { value: "down arrow",value2: "DPAD_DOWN" },
+  6:  { value: "left arrow",value2: "DPAD_LEFT" },
+  7:  { value: "right arrow",value2: "DPAD_RIGHT" },
+  8:  { value: "c",         value2: "BUTTON_2" },            // A
+  9:  { value: "z",         value2: "BUTTON_4" },            // X
+  10: { value: "q",         value2: "LEFT_TOP_SHOULDER" },   // L
+  11: { value: "e",         value2: "RIGHT_TOP_SHOULDER" },  // R
+};
+for (var i = 12; i <= 23; i++) PAD[i] = { value: "", value2: "" };
+
+window.EJS_player = "#game";
+window.EJS_core = "snes";
+// Relative, and explicitly set: loader.js otherwise derives this from its own
+// script src as an ABSOLUTE pathname, which would bake in whichever of the two
+// mount points the page happened to be served from.
+window.EJS_pathtodata = "emulatorjs/";
+window.EJS_gameUrl = "super-mario-sp.sfc";
+window.EJS_gameName = "Super Mario SP";
+window.EJS_startOnLoaded = true;
+
+// Never true. An eShop-installed page is not cross-origin isolated — emu-sw.js's
+// eshopFile stamps no COOP/COEP, and ISOLATED_PLAYERS in main.ts covers only
+// /ps2/ and /switch/ — so SharedArrayBuffer does not exist here and
+// downloadGameCore() turns a threads:true into a hard start error.
+window.EJS_threads = false;
+
+// EmulatorJS otherwise HEADs the ROM to compare content-length against its own
+// IndexedDB copy. emu-sw.js answers /eshop/ for GET only, and /eshop/ is
+// outside MIRRORABLE, so that HEAD escapes to the origin and 404s: the first
+// run survives it, but on the second the cached entry is truthy and the
+// comparison reads a property of undefined inside an un-awaited promise, and
+// the loader hangs on "Download Game Data" forever. Turning the ROM/BIOS/core
+// databases off keeps that lookup falsy. Save states and battery saves are
+// unaffected — they go through EJS_STORAGE and IDBFS, neither of which this
+// flag touches.
+window.EJS_disableDatabases = true;
+
+// Do not fetch localization/<lang>.json (the flag's polarity is inverted).
+window.EJS_disableAutoLang = false;
+window.EJS_color = "#8cff5a";
+window.EJS_startButtonName = "PRESS START";
+window.EJS_defaultControls = { 0: PAD, 1: {}, 2: {}, 3: {} };
+</script>
+<script src="emulatorjs/loader.js"></script>
+</body>
+</html>

@@ -19,3 +19,14 @@
 
 # ...and the other way for the launchers cmd.exe reads.
 *.bat text eol=crlf
+
+# Super Famicom ROMs, the emulator core that runs them and the eShop
+# archive they ship in. Same reasoning as the Saturn images above: git's
+# is-it-text guess only looks at the first 8000 bytes, and a ROM that
+# guessed wrong under core.autocrlf would present as a black screen
+# rather than as a corrupt file.
+*.sfc binary
+*.smc binary
+*.wasm binary
+*.data binary
+*.zip binary

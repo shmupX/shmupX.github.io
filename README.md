@@ -46,6 +46,22 @@ they are written out in full.
 - `data/eshop.json` — the **eShop** catalog, the global game list (see **The
   eShop** below). Baked into the same manifest as its `eshop` array; a game is
   added by pull request, and `deno task eshop:check` validates the entries.
+- `static/games/super-mario-sp/` — **Super Mario SP**, a Super Famicom cartridge
+  this project can actually hand a player: a HiROM homebrew built from
+  NovaSquirrel's MIT
+  [snes-platformer-example](https://github.com/NovaSquirrel/snes-platformer-example)
+  and rethemed with [mario-sp](https://github.com/easierbycode/mario-sp)'s art
+  and its level 1. The source and the build are in `tools/super-mario-sp/`
+  (`deno task super-mario-sp:rom`); only the finished `.sfc` lands here, beside
+  a **vendored single-threaded EmulatorJS 4.2.3** and the page that boots it.
+  Every URL in that page is relative, so the same bytes play at
+  `/games/super-mario-sp/` off the static server and at `/eshop/super-mario-sp/`
+  out of Cache Storage after an install — which is also why
+  `/games/super-mario-sp` is listed in `lib/static-indexes.ts`, since the bare
+  URL would resolve every relative URL one level too high. Single-threaded
+  because an installed page is never cross-origin isolated: `emu-sw.js`'s
+  `eshopFile` stamps no COOP/COEP, so there is no `SharedArrayBuffer`. Licensing
+  is not this repo's MIT — see `VENDOR.md` and `NOTICE.md`.
 - `static/editor/` — the shmupX level editor (single-file app). Its wave grid
   has a **VERT / HORIZ** switch on the stage rail: the same waves laid out top
   to bottom, or left to right the way a Dezaemon horizontal cart scrolls
@@ -235,6 +251,10 @@ deno task build           # manifest + dashboard + engine bundle + vite build
 deno task start           # serve the production build (_fresh/server.js)
 deno task test            # shmup-engine + shmup-harbor + app tests
 deno task check           # fmt + lint + type-check
+
+deno task super-mario-sp:rom     # build the Super Famicom ROM (needs cc65)
+deno task super-mario-sp:zip     # pack it into the eShop's install archive
+deno task super-mario-sp:vendor  # re-fetch the pinned EmulatorJS files
 
 deno task build:windows   # the launcher as a Windows .exe
 deno task build:linux     # the launcher as a Linux .AppImage
@@ -1091,6 +1111,19 @@ is written to the contract the Saturn player already implements — a `?byod=1`
 page that announces itself with `snes-byod-ready` and is posted its files as
 `snes-byod-file` — so the day that page appears, every row already on a shelf
 starts working with no change here.
+
+**A Super Famicom game does boot here, though — one.**
+[`static/games/super-mario-sp/`](static/games/super-mario-sp/) vendors
+EmulatorJS and the snes9x core _inside the game folder_, so **Super Mario SP**
+plays with no core install, no cmg origin and nothing on your own disk (see
+**Layout** above, and `tools/super-mario-sp/` for how the ROM is built). It is
+not the `?byod=1` player this section is waiting for — it hard-codes its own ROM
+and announces nothing, so it cannot be posted a `.srm`/ROM pair — and it is
+deliberately not at `/snes/`, because that prefix is in `emu-sw.js`'s
+`MIRRORABLE` list and a local file there would be shadowed by the mirror the
+moment anyone installed the core. But the vendored bytes are the ones a real
+`/snes/play.html` needs, so that page is now a question of wiring rather than of
+finding a core.
 
 ### The PlayStation ports
 
@@ -2049,6 +2082,17 @@ every game anyone can get — and it is read from two places by
   ([`/wave-editor/`](https://easierbycode.com/shmup-party-ps2/wave-editor/),
   which authors its `ps2/data/waves.js`), framed in the CMG Desktop's Tools
   folder beside spriteX.
+- A `web` entry does not have to come from GitHub. **Super Mario SP** is the
+  in-repo shape: `source: "url"` with a **root-relative** `downloadUrl`
+  (`/games/super-mario-sp-web.zip`), which `isFetchableUrl` accepts alongside
+  `https://`, so the install never leaves this origin — no CORS, no third host,
+  and it works offline and inside a packaged desktop launcher. There is no repo
+  to follow, so there is no sha and no `codemonkey.json` fetch: **bumping `date`
+  in `data/eshop.json` is the only thing that flags UPDATE** (`checkWebUpdate`
+  compares the catalog's `downloadUrl` and `date` against what the install
+  recorded), and `status` is pinned on the row rather than read off a branch.
+  The archive is a build artifact — `deno task super-mario-sp:zip`, which
+  `deno task build` runs — so the repo does not carry the game's bytes twice.
 - Each GitHub-tracked build's own **`codemonkey.json`** — the file the cmg
   launcher has always let a game ship at its root — read off the tracked branch
   (`raw.githubusercontent.com/<owner>/<repo>/<branch>/codemonkey.json`) after

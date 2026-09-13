@@ -13,9 +13,16 @@
 // at runtime — the same reason games.manifest.json is committed. The copy is
 // checked instead of trusted: tests/static_index_test.ts walks static/ and
 // fails if a directory index is missing here or listed without one.
+// /games/super-mario-sp is the first nested entry, and the first one where the
+// redirect is load-bearing rather than tidy: that page is served both from here
+// and, after an eShop install, from Cache Storage at /eshop/super-mario-sp/, so
+// every URL in it is relative. Served at the bare /games/super-mario-sp they
+// would all resolve against /games/ and the emulator would fetch its core from
+// one directory too high.
 export const STATIC_INDEXES = [
   "/desktop",
   "/editor",
+  "/games/super-mario-sp",
   "/pixel-composer",
   "/pixel-editor",
   "/tilemap-editor",

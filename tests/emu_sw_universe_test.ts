@@ -73,6 +73,14 @@ Deno.test("the site's own pages are outside MIRRORABLE", async () => {
       "/editor/",
       "/games/2028-ai",
       "/games/2028-ai?editorPlay=1&stage=0&god=1",
+      // Super Mario SP vendors its own snes9x core inside the game folder. The
+      // tempting move is to file it under the `snes` core's prefixes the way
+      // the PS2 games are filed -- but those live on the cmg origin and ours
+      // lives here, so mirroring would send every request for our own files to
+      // an origin that has never heard of them, and only for the players who
+      // installed the Super Famicom core.
+      "/games/super-mario-sp/",
+      "/games/super-mario-sp/emulatorjs/cores/snes9x-legacy-wasm.data",
       "/api/build-artifact",
       "/dashboard.bundle.js",
       "/icons/2028-icon.png",
