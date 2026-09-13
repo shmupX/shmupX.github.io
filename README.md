@@ -665,10 +665,25 @@ cloud level is saved first and built from its name; an imported cart has no
 cloud record and never will, so the editor hands the **record itself** over
 instead (`levelRecord` on `/api/build-apk`, written to disk for `--level-file`),
 which means the export carries whatever you have just edited rather than
-whatever the database last saw. The one thing that does not work from a cart is
-the remote build queue: it pairs a desktop with a level _name_, and a cart has
-none — the status line says so and names the `deno task build:<target>` to run
-instead.
+whatever the database last saw.
+
+**A cart builds on a paired desktop too.** The remote build queue used to pair a
+desktop with a level _name_, which a cart has none of, so the one export that
+did not work from an import was the one a phone or codemonkey.games needs most.
+A job can now carry the game with it: `queueExport`'s `levelRecord` goes up
+gzipped as 512 KB base64 chunks under `exportInputs/<jobId>` — the same
+transport the finished app comes back on, in the other direction — and the job
+itself is written only once every chunk has landed, so a desktop watching the
+queue can never claim a build whose game is still on the wire. The worker reads
+the chunks back, parses them and passes the record straight to `runExport`,
+which is the door `/api/build-apk` already used; the bytes are deleted the
+moment the job stops being buildable. So opening
+`https://codemonkey.games/?builder=ABCD-EFGH` on a phone, importing a `.sav` and
+pressing **EXPORT** builds that cart on the desktop with that BUILD CODE and
+hands the APK / disc / app back to the phone. The DESKTOP row, its status line
+and the job list are no longer hidden while a cart is open, and if no code is
+given the status line still names the `deno task build:<target> --sav` to run
+from a checkout instead.
 
 ## Pixel Editor and Tilemap Editor
 
@@ -956,8 +971,8 @@ that is 2028.Ai's rather than the game's is keyed off it:
 
 The additions travel the other way too. The Dezaemon behaviour this runtime grew
 in order to play the carts — the weapon handlers firing off the right level, the
-option pods, the bomb billed per Saturn frame, boss parts carrying their own hp —
-is the runtime's own rather than any one cart's, so a level has it whether it
+option pods, the bomb billed per Saturn frame, boss parts carrying their own hp
+— is the runtime's own rather than any one cart's, so a level has it whether it
 arrived as a `.sav` or out of the web catalog:
 
 ![The extended runtime in play: the boxer boss worked over mid-screen, the ship's fire raking sideways along the bottom, HP and COMBO across the top](static/extended-runtime.webp)
@@ -1387,7 +1402,11 @@ on. On the other device the editor's export menu has a DESKTOP row: type the
 code there once (or open the editor with `?builder=ABCD-EFGH`), and the row
 reports live whether that desktop is online and which targets its toolchain can
 build. An export that cannot build locally then goes to that desktop — whether
-it is online or not; a queued job waits until it opens shmupX.
+it is online or not; a queued job waits until it opens shmupX. An imported
+`.sav` queues too: it has no cloud level for the desktop to fetch, so the record
+goes up with the job (gzipped, chunked, written before the job is, so a
+half-uploaded game can never be claimed) and the worker hands it to `runExport`
+as `levelRecord` — the same door the local button uses.
 
 Everything travels through the Realtime Database, which every surface here
 already talks to:
@@ -1397,6 +1416,7 @@ already talks to:
 | `exportWorkers/<code>`        | the desktop's heartbeat every 20 s — name, OS, detected targets, what it is building                |
 | `exportQueue/<code>/<jobId>`  | one job: level, platform, requester, status, the last build line, the log tail, the artifact list   |
 | `exportBlobs/<jobId>/<i>/<n>` | the artifact bytes as 512 KB base64 chunks (the disc _and_ a zip of the USB folder for a PS2 build) |
+| `exportInputs/<jobId>/<n>`    | the game itself, same chunking, for a job with no cloud level behind it — an imported `.sav`        |
 
 The worker streams its queue over the REST API's server-sent events, claims the
 oldest queued job with an ETag-conditional write (two desktops sharing a copied
@@ -1412,9 +1432,10 @@ is not there — the same hand-off a local build gets. The launcher lists the sa
 jobs under Settings → EXPORTS (A collects, ✕ dismisses), toasts when one
 finishes, and posts a system notification where the page may.
 
-Chunks are freed once the requester reports the bytes landed, or after a day;
-finished jobs are dropped after a week; a requester can DISMISS at any time. The
-bytes ride the database rather than Firebase Storage because the project has no
+Chunks are freed once the requester reports the bytes landed, or after a day; a
+job's uploaded game is freed the moment that job stops being buildable; finished
+jobs are dropped after a week; a requester can DISMISS at any time. The bytes
+ride the database rather than Firebase Storage because the project has no
 Storage bucket provisioned (`storageBucket` in the config names one, but it
 404s, and the editor's custom-audio upload already warns about it). If one
 appears, an artifact record can carry a `url` instead of chunks and the client

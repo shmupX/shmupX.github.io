@@ -13,6 +13,13 @@
 //   * A requester who knows the code writes a job under
 //     `exportQueue/<code>/<jobId>` (static/export-queue.js). The code is the
 //     whole pairing: whoever has it can queue builds on that desktop.
+//   * A job usually names a cloud level the desktop fetches for itself. A
+//     Dezaemon cart imported in the browser has no cloud record and never
+//     will, so that job carries the game instead: the record goes up as
+//     gzipped, base64-chunked bytes under `exportInputs/<jobId>` before the
+//     job is written, and the worker reads it back and hands it to
+//     `runExport` as `levelRecord` — the same door /api/build-apk uses when
+//     the editor is running on a desktop that can build for itself.
 //   * The worker streams that path over the REST API's server-sent events,
 //     claims the oldest queued job with an ETag-conditional write, builds it
 //     through lib/export-build.ts — the same code the local EXPORT button
@@ -38,7 +45,7 @@
 // by routes/api/export-worker.ts — which the dashboard GETs on boot when it is
 // served locally — and by desktop.ts at launch. It never starts on Deploy.
 
-import { encodeBase64 } from "@std/encoding/base64";
+import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
 import { basename, join } from "@std/path";
 import { buildZip, treeEntries } from "./ps2/zip.ts";
 import {
@@ -56,6 +63,7 @@ export const EXPORT_PATHS = {
   workers: "exportWorkers",
   queue: "exportQueue",
   blobs: "exportBlobs",
+  inputs: "exportInputs",
 } as const;
 export const CHUNK_BYTES = 512 * 1024;
 export const HEARTBEAT_MS = 20_000;
@@ -85,10 +93,31 @@ export interface JobArtifact {
   path: string;
 }
 
+/**
+ * The game a job brought with it, for a requester with no cloud level to
+ * name. Written by static/export-queue.js before the job itself, so a
+ * descriptor on a claimable job is always complete.
+ */
+export interface JobInput {
+  /** Bytes as stored — after gzip, before base64. */
+  size: number;
+  chunks: number;
+  chunkBytes: number;
+  /** How the JSON was packed: "gzip", or "none" where the browser had none. */
+  encoding?: string;
+  /** Database path holding the chunk list: exportInputs/<jobId>. */
+  path: string;
+}
+
 export interface ExportJob {
   id: string;
   level: string;
   platform: string;
+  /**
+   * The level record to build, instead of the one `level` names in the
+   * cloud — an imported .sav, which exists only in the requester's browser.
+   */
+  record?: JobInput;
   /**
    * What the desktop should do with `level`: build it (absent, or "export"),
    * or "engine-compare" — play it on the Saturn and in the runtime at once
@@ -283,6 +312,37 @@ export function jobsToPrune(
     }
   }
   return { freeBlobs, remove };
+}
+
+/**
+ * The level record a job brought with it, out of the bytes its chunks held.
+ *
+ * The mirror of static/export-queue.js's `encodeLevelRecord`: gunzip unless
+ * the browser had no CompressionStream to pack it with, then parse. A record
+ * that does not survive the round trip is a bad job, not a bad build — the
+ * error says so rather than letting `runExport` reject an undefined level.
+ */
+export async function decodeJobRecord(
+  bytes: Uint8Array,
+  encoding?: string,
+): Promise<unknown> {
+  let raw = bytes;
+  if (encoding === "gzip") {
+    const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(
+      new DecompressionStream("gzip"),
+    );
+    raw = new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(raw));
+  } catch (e) {
+    throw new ExportError(
+      `The game that came with this job is not readable JSON: ${
+        (e as Error).message
+      }`,
+      400,
+    );
+  }
 }
 
 export function artifactKind(name: string): string {
@@ -791,6 +851,64 @@ export class ExportWorker {
     return ok;
   }
 
+  /**
+   * Pull the game a job carried out of `exportInputs/<jobId>` and parse it.
+   * Three chunks in flight, like the upload the other way; a short read is
+   * a job whose requester went away mid-upload, which is worth saying.
+   */
+  private async fetchJobRecord(
+    job: ExportJob,
+    log: (line: string) => void,
+  ): Promise<unknown> {
+    const input = job.record!;
+    const path = input.path || `${EXPORT_PATHS.inputs}/${job.id}`;
+    const parts = new Array<Uint8Array>(input.chunks);
+    let next = 0;
+    let got = 0;
+    const mb = (input.size / 1048576).toFixed(2);
+    log(`reading the game this job brought with it (${mb} MB)`);
+    const pull = async () => {
+      while (next < input.chunks) {
+        const ci = next++;
+        const { data } = await dbGet<string>(`${path}/${ci}`);
+        if (typeof data !== "string") {
+          throw new ExportError(
+            `The game that came with this job is incomplete — chunk ${ci} of ${input.chunks} is missing. Export it again.`,
+            400,
+          );
+        }
+        parts[ci] = decodeBase64(data);
+        got += parts[ci].length;
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(UPLOAD_PARALLEL, input.chunks) }, pull),
+    );
+    if (got !== input.size) {
+      throw new ExportError(
+        `The game that came with this job arrived short — ${got} of ${input.size} bytes. Export it again.`,
+        400,
+      );
+    }
+    const bytes = new Uint8Array(got);
+    let at = 0;
+    for (const part of parts) {
+      bytes.set(part, at);
+      at += part.length;
+    }
+    return await decodeJobRecord(bytes, input.encoding);
+  }
+
+  /** The bytes a job brought are dead the moment it stops being buildable. */
+  private async freeJobInput(job: ExportJob): Promise<void> {
+    if (!job.record) return;
+    try {
+      await dbDelete(`${EXPORT_PATHS.inputs}/${job.id}`);
+    } catch (e) {
+      this.lastError = `input: ${(e as Error).message}`;
+    }
+  }
+
   private patchJob(id: string, patch: Tree): Promise<void> {
     const existing = this.snapshot[id];
     if (existing) Object.assign(existing, patch);
@@ -841,10 +959,17 @@ export class ExportWorker {
         log(`comparing "${job.level}" on the Saturn and in the runtime`);
         built = await runCompareOutcome(job, log, signal);
       } else {
+        // A job that brought its own game builds from that; one that only
+        // names a level leaves `levelRecord` absent, and runExport fetches
+        // the cloud record itself exactly as it always has.
+        const levelRecord = job.record
+          ? await this.fetchJobRecord(job, log)
+          : undefined;
         log(`building "${job.level}" for ${job.platform}`);
         built = await runExport({
           level: job.level,
           platform: job.platform,
+          ...(levelRecord === undefined ? {} : { levelRecord }),
           log,
           signal,
         });
@@ -891,6 +1016,7 @@ export class ExportWorker {
       }
     } finally {
       if (outcome !== "requeued") {
+        await this.freeJobInput(job);
         this.history.unshift({
           id: job.id,
           level: job.level,
@@ -1041,6 +1167,9 @@ export class ExportWorker {
     for (const id of remove) {
       try {
         await dbDelete(`${EXPORT_PATHS.blobs}/${id}`);
+        // A job cancelled before it was ever claimed still has its game
+        // sitting here, since no build ever ran to free it.
+        await dbDelete(`${EXPORT_PATHS.inputs}/${id}`);
         await dbDelete(`${EXPORT_PATHS.queue}/${this.code}/${id}`);
         delete this.snapshot[id];
       } catch (e) {

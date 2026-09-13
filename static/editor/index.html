@@ -989,7 +989,9 @@
              BOTH halves of the editor. A cloud level is saved and then built
              from its name; an imported .sav has no cloud record and never will,
              so exportGameToApk() hands the record over directly instead
-             (ExportRequest.levelRecord). All five targets work either way. -->
+             (ExportRequest.levelRecord) — to this origin's builder when it has
+             one, and to the paired desktop's when it does not. All five
+             targets work either way, from either half. -->
         <div class="menu-label">EXPORT AS AN APP</div>
         <div class="display-row" title="Which app the export builds. Linux/Windows/macOS are deno desktop builds and cross-compile from any host. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
             <span class="display-lbl">TARGET</span>
@@ -1010,14 +1012,19 @@
              static/export-queue.js, the desktop half lib/export-worker.ts).
              The panel lists every job this browser has queued, live, and
              offers what a finished one can do: download, install, file it in
-             the PS2 shelf. -->
-        <div class="display-row hide-when-sav" title="Eight letters from the desktop that should build this: open shmupX there and read them off Settings → BUILD SERVER (the app prints them at launch too). Exports from this browser go to that desktop whenever they cannot be built here.">
+             the PS2 shelf.
+
+             Not hide-when-sav, for the same reason EXPORT AS AN APP above is
+             not: a cart queues too. It has no cloud level for the desktop to
+             fetch, so the record rides up with the job (queueExport's
+             `levelRecord`) and the desktop builds from that. -->
+        <div class="display-row" title="Eight letters from the desktop that should build this: open shmupX there and read them off Settings → BUILD SERVER (the app prints them at launch too). Exports from this browser go to that desktop whenever they cannot be built here — an imported .sav included, which travels up with the job.">
             <span class="display-lbl">DESKTOP</span>
             <input id="export-builder-code" type="text" placeholder="BUILD CODE" class="menu-input" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="9" style="margin-bottom:0;flex:1;min-width:0"
                    oninput="onBuilderCodeInput(this.value)">
         </div>
-        <div id="export-builder-status" class="menu-note hide-when-sav"></div>
-        <div id="export-queue-panel" class="hide-when-sav hidden"></div>
+        <div id="export-builder-status" class="menu-note"></div>
+        <div id="export-queue-panel" class="hidden"></div>
         <!-- What to do with a finished PS2 build. Hidden until one exists;
              filled in by showPs2ExportActions(). The disc and the USB folder
              are both downloadable, and "PS2 LIBRARY" files the disc in the
@@ -10184,25 +10191,12 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                     // to the paired desktop instead of stopping at the error —
                     // see REMOTE EXPORTS below.
                     if (resp.status === 403 || resp.status === 404) {
-                        // The queue pairs a desktop with a level NAME, which a
-                        // cart has none of — the record only exists in this
-                        // browser. Say what to do instead of queueing a job
-                        // that desktop could never resolve.
-                        if (sav) {
-                            // The cart is what a checkout would have to be given —
-                            // NOT this name. There is no cloud level called this,
-                            // so `build:<target> "<name>"` would fail to find one;
-                            // every target takes --sav instead. DOWNLOAD .SAV
-                            // above writes the file that command wants.
-                            setStatus(
-                                'This origin has no builder, and an imported .sav cannot be queued to a ' +
-                                'desktop (there is no cloud record for it to fetch). Open this game in ' +
-                                'shmupX on a desktop and export there, or use DOWNLOAD .SAV and build ' +
-                                'the file from a checkout: deno task build:' + exportPlatform +
-                                ' --sav "Dez 2 - ' + name + '.sav"', '#f59e0b');
-                            return;
-                        }
-                        await queueRemoteExport(name, setStatus);
+                        // A cloud level is queued by NAME and the desktop reads
+                        // the record itself. A cart has no cloud record to read,
+                        // so the record we just built for this request goes up
+                        // with the job instead — the same bytes this origin's
+                        // builder would have been handed, had it had one.
+                        await queueRemoteExport(name, setStatus, levelRecord);
                         return;
                     }
                     const why = exportFailureReason(data);
@@ -10454,14 +10448,26 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
         }
 
         // The fallback exportGameToApk() takes when this origin cannot build.
-        // The level is already saved to the cloud by then, which is all the
-        // desktop needs — it reads the record the same way a local build does.
-        async function queueRemoteExport(name, setStatus) {
+        // A cloud level is already saved by then, which is all the desktop
+        // needs — it reads the record the same way a local build does. A cart
+        // is not saved anywhere and never will be, so `levelRecord` is the
+        // game itself and travels with the job (gzipped, chunked; see
+        // static/export-queue.js). Everything after the upload is identical.
+        async function queueRemoteExport(name, setStatus, levelRecord) {
             const q = await exportQueue();
             let code = q.getBuilderCode();
             if (!code) {
                 const typed = prompt('This site cannot build apps itself. Type the BUILD CODE from a desktop running shmupX (Settings → BUILD SERVER) and the export is built there:');
-                if (!typed) { setStatus('Export needs a desktop to build on — no BUILD CODE given.', '#f87171'); return; }
+                if (!typed) {
+                    // A cart has one more way out than a cloud level does: the
+                    // file itself, built from a checkout. Say so rather than
+                    // leaving "no BUILD CODE given" as the whole answer.
+                    setStatus('Export needs a desktop to build on — no BUILD CODE given.' +
+                        (levelRecord === undefined ? '' :
+                            ' Or use DOWNLOAD .SAV and build the file from a checkout: deno task build:' +
+                            exportPlatform + ' --sav "Dez 2 - ' + name + '.sav"'), '#f87171');
+                    return;
+                }
                 code = q.setBuilderCode(typed);
                 if (!code) { setStatus('That is not a BUILD CODE (eight letters, like ABCD-EFGH).', '#f87171'); return; }
                 const input = document.getElementById('export-builder-code');
@@ -10479,7 +10485,15 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             }
             q.requestNotifications();
             try {
-                const job = await q.queueExport({ code, level: name, platform: exportPlatform });
+                const sending = levelRecord !== undefined;
+                if (sending) setStatus('Sending "' + name + '" to desktop ' + q.formatBuilderCode(code) + '…', '#f59e0b');
+                const job = await q.queueExport({
+                    code, level: name, platform: exportPlatform, levelRecord,
+                    onProgress: sending
+                        ? (sent, total) => setStatus('Sending "' + name + '" to desktop ' +
+                            q.formatBuilderCode(code) + ' — ' + Math.round(sent / total * 100) + '%', '#f59e0b')
+                        : undefined,
+                });
                 exportJobsSeen[job.id] = 'queued';
                 const online = exportWorkerInfo && exportWorkerInfo.online;
                 setStatus(cfg.artifact + ' for "' + name + '" queued on desktop ' + q.formatBuilderCode(code) +

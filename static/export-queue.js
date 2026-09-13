@@ -12,6 +12,15 @@
 //   exportQueue/<code>/<jobId>      one job: level, platform, status,
 //                                   progress line, log tail, artifact list
 //   exportBlobs/<jobId>/<i>/<n>     the artifact bytes, 512 KB base64 chunks
+//   exportInputs/<jobId>/<n>        the level record to build, same chunking,
+//                                   when the job carries its own game
+//
+// A job names a cloud level and the desktop fetches it — except when there is
+// no cloud level to fetch. An imported .sav lives in this browser and nowhere
+// else, so the game itself rides up with the job (gzipped JSON, chunked like
+// an artifact but in the other direction) and the desktop builds from the
+// record instead of from the name. That is the same `levelRecord` a local
+// /api/build-apk takes, which is why a cart exports to every target here too.
 //
 // The BUILD CODE — eight letters the desktop shows in Settings and prints at
 // launch — is the pairing. Type it once here and every export from this
@@ -25,7 +34,9 @@
 
 export const EXPORT_DB = 'https://evil-invaders-default-rtdb.firebaseio.com';
 // Keep in step with lib/export-worker.ts (tests/export_queue_test.ts checks).
-export const EXPORT_PATHS = { workers: 'exportWorkers', queue: 'exportQueue', blobs: 'exportBlobs' };
+export const EXPORT_PATHS = { workers: 'exportWorkers', queue: 'exportQueue', blobs: 'exportBlobs', inputs: 'exportInputs' };
+// One chunk of anything crossing the database, in raw bytes before base64.
+export const CHUNK_BYTES = 512 * 1024;
 export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const CODE_LENGTH = 8;
 // A worker heartbeats every 20 s; three missed beats is gone.
@@ -271,12 +282,84 @@ export function forgetJob(code, id) {
   writeJobs(readJobs().filter((j) => !(j.code === code && j.id === id)));
 }
 
+// ── Sending the game itself ─────────────────────────────────────────────────
+// A cloud level is a name the desktop looks up. An imported cart is not: it
+// was read off a file or the shelf and edited here, so the only copy is in
+// this page. The record therefore travels with the job, the way the finished
+// app travels back — gzipped where the browser has CompressionStream (which
+// is most of the JSON; the atlas PNG inside it is already compressed), base64
+// in 512 KB chunks under exportInputs/<jobId>, and the job is not written
+// until every chunk has landed, so the desktop can never claim a job whose
+// game is still on the wire.
+
+/** How big a record may get before this is the wrong transport. */
+export const MAX_RECORD_BYTES = 48 * 1024 * 1024;
+const UPLOAD_PARALLEL = 3;
+
 /**
- * Queue `level` for `platform` on the desktop with `code`. The level must
- * already be saved to the cloud — the desktop reads it from there, exactly as
- * a local export does. Answers the job record.
+ * A level record as the bytes that go up, and how they were packed.
+ * @param {unknown} record
+ * @returns {Promise<{ bytes: Uint8Array, encoding: string }>}
  */
-export async function queueExport({ code, level, platform, kind, options }) {
+export async function encodeLevelRecord(record) {
+  const raw = new TextEncoder().encode(JSON.stringify(record));
+  try {
+    if (typeof CompressionStream === 'undefined') return { bytes: raw, encoding: 'none' };
+    const packed = new Blob([raw]).stream().pipeThrough(new CompressionStream('gzip'));
+    const gz = new Uint8Array(await new Response(packed).arrayBuffer());
+    return { bytes: gz, encoding: 'gzip' };
+  } catch (_) {
+    // No gzip here (an old Safari, a locked-down context): send it plain.
+    return { bytes: raw, encoding: 'none' };
+  }
+}
+
+/**
+ * Put `record` under exportInputs/<jobId> and answer the descriptor the job
+ * carries, which is everything the desktop needs to read it back.
+ * `onProgress(sent, total)` runs as chunks land.
+ *
+ * @param {string} id
+ * @param {unknown} record
+ * @param {(sent: number, total: number) => void} [onProgress]
+ * @returns {Promise<{ size: number, chunks: number, chunkBytes: number, encoding: string, path: string }>}
+ */
+export async function uploadJobRecord(id, record, onProgress = () => {}) {
+  const { bytes, encoding } = await encodeLevelRecord(record);
+  if (bytes.length > MAX_RECORD_BYTES) {
+    throw new Error('this game is ' + (bytes.length / 1048576).toFixed(1) +
+      ' MB — too big to send to a desktop; build it from a checkout instead');
+  }
+  const path = EXPORT_PATHS.inputs + '/' + id;
+  const chunks = Math.max(1, Math.ceil(bytes.length / CHUNK_BYTES));
+  let next = 0;
+  let sent = 0;
+  const send = async () => {
+    while (next < chunks) {
+      const ci = next++;
+      const slice = bytes.subarray(ci * CHUNK_BYTES, Math.min((ci + 1) * CHUNK_BYTES, bytes.length));
+      await dbRequest('PUT', path + '/' + ci, encodeChunk(slice));
+      sent += slice.length;
+      onProgress(sent, bytes.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(UPLOAD_PARALLEL, chunks) }, send));
+  return { size: bytes.length, chunks, chunkBytes: CHUNK_BYTES, encoding, path };
+}
+
+/**
+ * Queue `level` for `platform` on the desktop with `code`.
+ *
+ * Either the level is already saved to the cloud and the desktop reads it
+ * from there — exactly as a local export does — or `levelRecord` is the game
+ * itself, for a cart that has no cloud record to read. Answers the job.
+ *
+ * @param {{ code: string, level: string, platform?: string, kind?: string,
+ *   options?: Record<string, unknown>, levelRecord?: unknown,
+ *   onProgress?: (sent: number, total: number) => void }} request
+ * @returns {Promise<Record<string, any>>}
+ */
+export async function queueExport({ code, level, platform, kind, options, levelRecord, onProgress }) {
   code = normalizeBuilderCode(code);
   if (!code) throw new Error('a BUILD CODE is needed — open shmupX on the desktop that should build this and read it off Settings');
   if (!level) throw new Error('the game needs a name');
@@ -296,7 +379,21 @@ export async function queueExport({ code, level, platform, kind, options }) {
   // its own parameters; a plain export leaves both out, as it always has.
   if (kind && kind !== 'export') job.kind = String(kind);
   if (options && typeof options === 'object') job.options = options;
-  await dbRequest('PUT', EXPORT_PATHS.queue + '/' + code + '/' + id, job);
+  if (levelRecord !== undefined && levelRecord !== null) {
+    try {
+      job.record = await uploadJobRecord(id, levelRecord, onProgress || (() => {}));
+    } catch (e) {
+      // Nothing is queued, so nothing will ever read what did land.
+      try { await dbRequest('DELETE', EXPORT_PATHS.inputs + '/' + id); } catch (_) {}
+      throw e;
+    }
+  }
+  try {
+    await dbRequest('PUT', EXPORT_PATHS.queue + '/' + code + '/' + id, job);
+  } catch (e) {
+    if (job.record) { try { await dbRequest('DELETE', EXPORT_PATHS.inputs + '/' + id); } catch (_) {} }
+    throw e;
+  }
   const list = readJobs();
   list.push({ code, id, level: job.level, platform: job.platform, requestedAt: job.requestedAt });
   writeJobs(list);
@@ -318,6 +415,7 @@ export async function cancelJob(code, id) {
 export async function dismissJob(code, id) {
   forgetJob(code, id);
   try { await dbRequest('DELETE', EXPORT_PATHS.blobs + '/' + id); } catch (_) {}
+  try { await dbRequest('DELETE', EXPORT_PATHS.inputs + '/' + id); } catch (_) {}
   try { await dbRequest('DELETE', EXPORT_PATHS.queue + '/' + code + '/' + id); } catch (_) {}
 }
 
@@ -376,6 +474,16 @@ export function watchJobs(cb) {
 }
 
 // ── Collecting an artifact ──────────────────────────────────────────────────
+
+// btoa wants a binary string, and fromCharCode over a whole 512 KB slice
+// overflows the argument list — so build it 32 KB at a time.
+function encodeChunk(bytes) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 0x8000, bytes.length)));
+  }
+  return btoa(bin);
+}
 
 function decodeChunk(b64) {
   const bin = atob(b64);
