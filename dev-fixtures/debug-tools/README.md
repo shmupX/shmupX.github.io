@@ -45,13 +45,13 @@ deno run -A dev-fixtures/debug-tools/model-roundtrip.mjs [count]   # default 6
 `model-survey.mjs` is where the corpus figures quoted in FORMAT.md and the
 commit log come from — re-run it rather than carrying a number forward. In its
 output `roundBad` is the count that must stay 0: it means a decode → encode →
-decode cycle changed the models' *meaning*. `differ` is weaker, counting sec7
+decode cycle changed the models' _meaning_. `differ` is weaker, counting sec7
 blocks that are not byte-identical on re-encode, which a normalising writer can
 cause without losing anything.
 
 Read the two together. The survey checks sec7 in isolation, so it stays green
-when a model encodes correctly but is lost on the way through the editor's
-level record — exactly the defect `model-roundtrip.mjs` catches, and did.
+when a model encodes correctly but is lost on the way through the editor's level
+record — exactly the defect `model-roundtrip.mjs` catches, and did.
 
 ## Reading the engine itself
 

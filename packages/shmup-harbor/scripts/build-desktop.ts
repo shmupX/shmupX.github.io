@@ -71,8 +71,8 @@
 // --package-id, --level-file, --stage-only, --win-target, --mac-target. --arch
 // is translated to its --win-arch / --mac-arch.
 
-import { dirname, join, resolve } from "@std/path";
-import { ensureDir, walk } from "@std/fs";
+import { basename, dirname, join, resolve } from "@std/path";
+import { copy, ensureDir, walk } from "@std/fs";
 import { buildRuntimeBundle } from "../lib/ps2/build.ts";
 import { resolveAthenaElf } from "../lib/ps2/athena.ts";
 import {
@@ -533,6 +533,48 @@ async function iconFor(opts: Options): Promise<string> {
 }
 
 /**
+ * Whether macOS would store extended attributes under `dir` in an AppleDouble
+ * `._<name>` sidecar rather than in the file itself — what it falls back to on
+ * a filesystem that has no native xattrs, such as the exFAT of a USB checkout.
+ *
+ * It matters because codesign reads a sidecar inside a bundle as an unsigned
+ * code object and refuses the whole bundle. Probed rather than inferred from
+ * the filesystem's name: the behaviour is the thing, and FAT and some network
+ * mounts do it too.
+ */
+async function materialisesAppleDouble(dir: string): Promise<boolean> {
+  if (Deno.build.os !== "darwin") return false;
+  await ensureDir(dir);
+  const probe = await Deno.makeTempFile({ dir });
+  const sidecar = join(dirname(probe), `._${basename(probe)}`);
+  try {
+    const written = await new Deno.Command("xattr", {
+      args: ["-w", "games.codemonkey.shmupx.probe", "1", probe],
+      stdout: "null",
+      stderr: "null",
+    }).output();
+    if (!written.success) return false;
+    return await Deno.stat(sidecar).then(() => true).catch(() => false);
+  } catch {
+    // No xattr binary to ask. Assume a filesystem that behaves.
+    return false;
+  } finally {
+    await Deno.remove(probe).catch(() => {});
+    await Deno.remove(sidecar).catch(() => {});
+  }
+}
+
+/** `Deno.rename` cannot cross filesystems, and a staged build always does. */
+async function moveInto(from: string, to: string): Promise<void> {
+  try {
+    await Deno.rename(from, to);
+  } catch {
+    await copy(from, to);
+    await Deno.remove(from, { recursive: true });
+  }
+}
+
+/**
  * Linux and macOS: `deno desktop`, which brings its own window.
  *
  * The backend is CEF rather than the default OS webview. The launcher is a
@@ -574,11 +616,29 @@ async function buildDesktopApp(opts: Options): Promise<string> {
     : opts.appImage
     ? ".AppImage"
     : "";
+  // `deno desktop` codesigns the macOS bundle in-process, so there is no window
+  // in which to sweep the AppleDouble sidecars macOS leaves beside every file it
+  // writes to a filesystem without native xattrs — the run dies partway through
+  // with "code object is not signed at all / In subcomponent: …/._laufey Helper
+  // (GPU)". Assemble it on a filesystem that has them and move the signed bundle
+  // back afterwards: that copy makes sidecars again, but they land beside an
+  // already-sealed bundle and `codesign --verify --strict` still passes.
+  const stageDir = opts.platform === "mac" &&
+      await materialisesAppleDouble(opts.outDir)
+    ? await Deno.makeTempDir({ prefix: "shmupx-mac-" })
+    : null;
+  if (stageDir !== null) {
+    console.log(
+      `${opts.outDir} has no native extended attributes, so codesign would ` +
+        `reject the bundle built there. Staging it in ${stageDir}.`,
+    );
+  }
+  const buildDir = stageDir ?? opts.outDir;
   const output = join(
-    opts.outDir,
+    buildDir,
     opts.platform === "mac" ? "shmupX" : `shmupX${wrap}`,
   );
-  const built = join(opts.outDir, `shmupX${wrap}`);
+  const built = join(buildDir, `shmupX${wrap}`);
   const artifact = join(
     opts.outDir,
     `shmupX-${opts.platform === "mac" ? "mac" : "linux"}-${opts.arch}${wrap}`,
@@ -607,7 +667,10 @@ async function buildDesktopApp(opts: Options): Promise<string> {
   // rebuilt from scratch each run, so an artifact left over from a previous
   // build of the same target has to go first or the rename fails.
   await Deno.remove(artifact, { recursive: true }).catch(() => {});
-  await Deno.rename(built, artifact);
+  await moveInto(built, artifact);
+  if (stageDir !== null) {
+    await Deno.remove(stageDir, { recursive: true }).catch(() => {});
+  }
   return artifact;
 }
 

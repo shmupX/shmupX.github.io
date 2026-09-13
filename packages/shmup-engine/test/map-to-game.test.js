@@ -1214,7 +1214,12 @@ Deno.test("the BGM table splits into four special tracks and per-stage pairs fro
 const corpusSaves = () => {
   try {
     return [...Deno.readDirSync(devFixtureUrl("."))]
-      .filter((e) => e.isFile && e.name.endsWith(".sav"))
+      // Skip the AppleDouble `._<name>` sidecars macOS leaves beside each
+      // fixture on a filesystem without native xattrs — they end in .sav
+      // but hold no save.
+      .filter((e) =>
+        e.isFile && !e.name.startsWith("._") && e.name.endsWith(".sav")
+      )
       .map((e) => e.name)
       .sort();
   } catch {

@@ -1,6 +1,15 @@
 import { defineConfig, type Plugin } from "vite";
 import { fresh } from "@fresh/plugin-vite";
+import { TEST_FILE_PATTERN } from "fresh/internal-dev";
 import { dirIndexRedirect } from "./lib/static-indexes.ts";
+
+// On an exFAT volume (a USB checkout, say) macOS writes an AppleDouble sidecar
+// named `._<name>` beside every file it touches, and re-creates it on the next
+// write. The sidecars are binary, but `routes/games/._2028-ai.tsx` still matches
+// the .tsx filter on the Fresh plugin's route crawl, so the scan handed one to
+// the Deno loader and the build died on `Unexpected character '\0'`. The same
+// pattern keeps the crawl off the sidecars in islands/ and static/.
+const APPLE_DOUBLE = /(^|[\\/])\._/;
 
 // Dev parity for the cross-origin-isolated players. In production these come
 // from the main.ts middleware (or from emu-sw.js, which serves the opted-in
@@ -120,7 +129,10 @@ export default defineConfig({
   plugins: [
     staticIndexRedirects(),
     dezaToneBank(),
-    fresh(),
+    // `ignore` replaces the plugin's default list rather than extending it, so
+    // the test-file pattern has to be carried over — dropping it would turn
+    // `routes/foo_test.ts` into a route.
+    fresh({ ignore: [TEST_FILE_PATTERN, APPLE_DOUBLE] }),
     playerIsolationHeaders(),
   ],
   server: {

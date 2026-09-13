@@ -20,7 +20,13 @@ async function findSav(): Promise<string | null> {
   try {
     const names: string[] = [];
     for await (const entry of Deno.readDir(join(ROOT, "dev-fixtures"))) {
-      if (entry.isFile && entry.name.toLowerCase().endsWith(".sav")) {
+      // `._<name>` is the AppleDouble sidecar macOS leaves beside every
+      // fixture on a filesystem without native xattrs. It ends in .sav and
+      // sorts first, so unfiltered it is always the save this picks.
+      if (
+        entry.isFile && !entry.name.startsWith("._") &&
+        entry.name.toLowerCase().endsWith(".sav")
+      ) {
         names.push(entry.name);
       }
     }

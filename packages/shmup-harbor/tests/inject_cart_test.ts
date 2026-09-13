@@ -10,7 +10,7 @@
 // out of reach: nothing in CI has one, or a disc.
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   injectCart,
   InjectError,
@@ -309,7 +309,10 @@ Deno.test({
       const leg = new URL("../scripts/inject-mednafen.sh", import.meta.url);
       const { code, stdout } = await new Deno.Command("sh", {
         args: [
-          leg.pathname,
+          // Not `leg.pathname`: a URL keeps its path percent-encoded, so a
+          // checkout under a directory with a space in it (a "SANDISK USB"
+          // volume, say) would hand sh a `%20` and take a 127 back.
+          fromFileUrl(leg),
           "--sav",
           level,
           "--no-launch",

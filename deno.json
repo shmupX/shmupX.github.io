@@ -60,6 +60,8 @@
     }
   },
   "exclude": [
+    "**/._*",
+    "dev-fixtures/.cache/**",
     "**/_fresh/*",
     ".claude/**",
     ".deno/**",

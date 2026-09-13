@@ -48,7 +48,11 @@ function savesUnder(folder) {
         dir,
       );
       if (e.isDirectory) walk(url);
-      else if (e.name.toLowerCase().endsWith(".sav")) out.push(url);
+      // The AppleDouble `._<name>` sidecars macOS leaves beside each fixture
+      // end in .sav but hold no save.
+      else if (
+        !e.name.startsWith("._") && e.name.toLowerCase().endsWith(".sav")
+      ) out.push(url);
     }
   };
   walk(root);

@@ -18,20 +18,34 @@ import { mapSaveToGame } from "../../packages/shmup-engine/src/map-to-game.js";
 import { buildSaveFromGame } from "../../packages/shmup-engine/src/write/game-to-save.js";
 import { buildPayload } from "../../packages/shmup-engine/src/bup-write.js";
 
-const SURVEY_JSON = fileURLToPath(new URL("../.cache/model-survey.json", import.meta.url));
+const SURVEY_JSON = fileURLToPath(
+  new URL("../.cache/model-survey.json", import.meta.url),
+);
 let targets;
 try {
   targets = JSON.parse(await Deno.readTextFile(SURVEY_JSON));
 } catch {
-  console.error(`no ${SURVEY_JSON}\nrun model-survey.mjs first — it writes the list of saves that carry models.`);
+  console.error(
+    `no ${SURVEY_JSON}\nrun model-survey.mjs first — it writes the list of saves that carry models.`,
+  );
   Deno.exit(1);
 }
 targets = targets.slice(0, Number(Deno.args[0] || 6));
 
 // The editor's buildLevelRecordForSav(), minus the DOM.
-const WHOLE = ['backgroundCells','dezaemonBgm','dezaemonBullets','dezaemonItems','dezaemonModels','dezaemonTitle','dezaemonTitleScreen','meta'];
+const WHOLE = [
+  "backgroundCells",
+  "dezaemonBgm",
+  "dezaemonBullets",
+  "dezaemonItems",
+  "dezaemonModels",
+  "dezaemonTitle",
+  "dezaemonTitleScreen",
+  "meta",
+];
 function levelRecord(g) {
-  const stageKey = Object.keys(g).filter(k=>/^stage\d+$/.test(k)).sort()[0] || "stage0";
+  const stageKey =
+    Object.keys(g).filter((k) => /^stage\d+$/.test(k)).sort()[0] || "stage0";
   const stages = {};
   for (const k of Object.keys(g)) if (/^stage\d+$/.test(k)) stages[k] = g[k];
   const rec = {
@@ -70,13 +84,30 @@ for (const t of targets) {
   same ? ok++ : failed++;
   console.log(
     (same ? "OK  " : "FAIL") + "  " + t.f.split("/dev-fixtures/").pop(),
-    "models", before.models.length, "->", after ? after.models.length : null,
-    "| warn(3D):", warnings.filter(w=>/3D/.test(w)).length,
-    "| sec7 len", sections[7].length,
+    "models",
+    before.models.length,
+    "->",
+    after ? after.models.length : null,
+    "| warn(3D):",
+    warnings.filter((w) => /3D/.test(w)).length,
+    "| sec7 len",
+    sections[7].length,
   );
   if (!same) {
-    const b = JSON.stringify(before), a = JSON.stringify(after||null);
-    for (let i=0;i<Math.max(a.length,b.length);i++) if (a[i]!==b[i]) { console.log("  first diff @", i, "\n   before:", b.slice(Math.max(0,i-80), i+120), "\n   after :", a.slice(Math.max(0,i-80), i+120)); break; }
+    const b = JSON.stringify(before), a = JSON.stringify(after || null);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      if (a[i] !== b[i]) {
+        console.log(
+          "  first diff @",
+          i,
+          "\n   before:",
+          b.slice(Math.max(0, i - 80), i + 120),
+          "\n   after :",
+          a.slice(Math.max(0, i - 80), i + 120),
+        );
+        break;
+      }
+    }
   }
 }
 console.log(`\n${ok} ok, ${failed} failed`);

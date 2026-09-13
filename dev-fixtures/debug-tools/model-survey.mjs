@@ -16,7 +16,11 @@ import { normalize } from "../../packages/shmup-engine/src/bup-source.js";
 import * as bup from "../../packages/shmup-engine/src/bup-parse.js";
 import { isGameSave } from "../../packages/shmup-engine/src/payload-table.js";
 import { decodeSave } from "../../packages/shmup-engine/src/decode/index.js";
-import { decodeModels, MODEL_SLOTS, MODEL_SLOT_SIZE } from "../../packages/shmup-engine/src/decode/decode-model.js";
+import {
+  decodeModels,
+  MODEL_SLOT_SIZE,
+  MODEL_SLOTS,
+} from "../../packages/shmup-engine/src/decode/decode-model.js";
 import { encodeModels } from "../../packages/shmup-engine/src/write/encode-model.js";
 
 // Resolved from this file, not the cwd: the checkout can live on a path with
@@ -45,15 +49,25 @@ let bit15 = 0, padNonZero = 0, overCount = 0;
 const withModelFiles = [];
 for (const f of files) {
   let bytes;
-  try { bytes = await Deno.readFile(f); } catch { continue; }
+  try {
+    bytes = await Deno.readFile(f);
+  } catch {
+    continue;
+  }
   let saves;
   try {
     const n = await normalize(bytes);
     saves = bup.parse(n.data).filter(isGameSave);
-  } catch { continue; }
+  } catch {
+    continue;
+  }
   for (const s of saves) {
     let d;
-    try { d = decodeSave(s.payload.buffer ?? s.payload); } catch { continue; }
+    try {
+      d = decodeSave(s.payload.buffer ?? s.payload);
+    } catch {
+      continue;
+    }
     entries++;
     const sec = d.sections && d.sections[7];
     if (!sec || !sec.decompressed) continue;
@@ -75,19 +89,53 @@ for (const f of files) {
       if (pc > 9) overCount++;
       for (let p = 0; p < Math.min(pc, 9); p++) {
         const at = base + 4 + p * 36;
-        if (raw[at + 2] || raw[at + 3] || raw[at + 0x16] || raw[at + 0x17]) padNonZero++;
+        if (raw[at + 2] || raw[at + 3] || raw[at + 0x16] || raw[at + 0x17]) {
+          padNonZero++;
+        }
       }
     }
     withModelFiles.push({ f, file: s.filename, count: m.models.length });
     const re = encodeModels(m);
     let same = re.length === raw.length;
-    if (same) for (let i = 0; i < re.length; i++) if (re[i] !== raw[i]) { same = false; break; }
-    if (same) identical++; else differ++;
+    if (same) {
+      for (let i = 0; i < re.length; i++) {
+        if (re[i] !== raw[i]) {
+          same = false;
+          break;
+        }
+      }
+    }
+    if (same) identical++;
+    else differ++;
     const back = decodeModels(re);
-    if (JSON.stringify(back) === JSON.stringify(m)) roundOk++; else { roundBad++; console.log("ROUNDTRIP MISMATCH", f); }
+    if (JSON.stringify(back) === JSON.stringify(m)) roundOk++;
+    else {
+      roundBad++;
+      console.log("ROUNDTRIP MISMATCH", f);
+    }
   }
 }
-console.log(JSON.stringify({ files: files.length, entries, magic, withModels, models, parts, identical, differ, roundOk, roundBad, bit15, padNonZero, overCount }, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      files: files.length,
+      entries,
+      magic,
+      withModels,
+      models,
+      parts,
+      identical,
+      differ,
+      roundOk,
+      roundBad,
+      bit15,
+      padNonZero,
+      overCount,
+    },
+    null,
+    2,
+  ),
+);
 await Deno.mkdir(CACHE, { recursive: true });
 await Deno.writeTextFile(SURVEY_JSON, JSON.stringify(withModelFiles, null, 1));
 console.log(`\nsaves carrying models -> ${SURVEY_JSON}`);
