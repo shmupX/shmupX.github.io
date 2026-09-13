@@ -119,6 +119,148 @@ export function startServer(
   return { url, close: () => server.shutdown() };
 }
 
+// ---- The deployed site -----------------------------------------------------
+//
+// `--live` drives the real https://codemonkey.games alongside the local
+// runtime, so a run shows the Saturn, this checkout, and what players actually
+// get — the third pane catches a deploy that is behind the checkout, or a
+// bundle that only breaks when it is served from Deploy.
+//
+// The level still has to be the SAME level, or the panes are not comparable.
+// The deployed bundle fetches one fixed same-origin URL for it —
+// `LEVEL_DATA_URL = "/games/2028-ai/foo.json"`, verified in the served
+// game.bundle.js — so instead of a server we answer that one request inside
+// the browser, over CDP's Fetch domain. Everything else (the bundle, the
+// atlases, the fonts) comes from Deploy untouched, which is the point.
+
+/** The deployed game page a `--live` run drives. */
+export const LIVE_URL = "https://codemonkey.games/games/2028-ai";
+/** The one request the runtime makes for its level, relative to the origin. */
+export const LEVEL_PATH = "/games/2028-ai/foo.json";
+
+function b64(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+/**
+ * Answer the deployed page's level fetch with `record`, leaving every other
+ * request to the network.
+ *
+ * Must be armed BEFORE the page navigates — the bundle asks for the level as
+ * it boots — so the caller launches Chrome on about:blank and navigates after
+ * this resolves. Returns a stop() that disables the interception again.
+ */
+export async function interceptLevel(
+  cdp: Cdp,
+  record: Record<string, unknown>,
+  { path = LEVEL_PATH, log = () => {} }: { path?: string; log?: Log } = {},
+): Promise<
+  {
+    served: () => number;
+    error: () => string | null;
+    stop: () => Promise<void>;
+  }
+> {
+  const json = JSON.stringify(record);
+  const body = b64(json);
+  let served = 0;
+  let failure: string | null = null;
+  // The record travels to Chrome as one DevTools message (a real cart is
+  // 1-3 MB of JSON, half as much again once base64'd), so say how big when
+  // it is worth knowing why a fulfil was slow or refused.
+  log(
+    `live: level record ${(json.length / 1024 / 1024).toFixed(2)} MB (${
+      (body.length / 1024 / 1024).toFixed(2)
+    } MB encoded)`,
+  );
+  const onPaused = (params: Record<string, unknown>) => {
+    const id = params.requestId as string;
+    const url =
+      ((params.request as Record<string, unknown>)?.url ?? "") as string;
+    if (!url.includes(path)) {
+      // Not ours: let it go to the network untouched.
+      cdp.send("Fetch.continueRequest", { requestId: id }).catch(() => {});
+      return;
+    }
+    // Counted only once it has actually been handed over: a fulfil that
+    // fails leaves the page waiting on its level, and a pane playing
+    // something else must never be reported as this cart.
+    cdp.send("Fetch.fulfillRequest", {
+      requestId: id,
+      responseCode: 200,
+      responseHeaders: [
+        { name: "content-type", value: "application/json" },
+        { name: "cache-control", value: "no-store" },
+        { name: "access-control-allow-origin", value: "*" },
+      ],
+      body,
+    }).then(() => {
+      served++;
+      log(`live: served the cart's level for ${url}`);
+    }).catch((e) => {
+      failure = e instanceof Error ? e.message : String(e);
+      log(
+        `live: COULD NOT serve the level (${failure}) — the pane is not this cart`,
+      );
+    });
+  };
+  cdp.on("Fetch.requestPaused", onPaused);
+  // Request-stage only: we replace a response wholesale rather than edit one,
+  // so there is no reason to pause every response on the page as well.
+  await cdp.send("Fetch.enable", {
+    patterns: [{ urlPattern: `*${path}*`, requestStage: "Request" }],
+  });
+  return {
+    served: () => served,
+    error: () => failure,
+    stop: async () => {
+      cdp.off("Fetch.requestPaused", onPaused);
+      await cdp.send("Fetch.disable", {}).catch(() => {});
+    },
+  };
+}
+
+/**
+ * Nudge a window back onto the display if it was placed past the edge.
+ *
+ * Page.startScreencast frames come from the compositor, so a window with no
+ * visible surface is the one configuration where a pane captures nothing at
+ * all — silently. The profiler's own layout puts the second browser to the
+ * right of the first, which runs off a narrow display.
+ */
+export async function clampWindowToScreen(
+  cdp: Cdp,
+  { log = () => {} }: { log?: Log } = {},
+): Promise<void> {
+  try {
+    const screen = await cdp.eval<{ w: number; h: number }>(
+      `({ w: screen.availWidth, h: screen.availHeight })`,
+    );
+    const { windowId } = await cdp.send<{ windowId: number }>(
+      "Browser.getWindowForTarget",
+    );
+    const { bounds } = await cdp.send<
+      { bounds: { left: number; top: number; width: number; height: number } }
+    >("Browser.getWindowBounds", { windowId });
+    const left = Math.max(0, Math.min(bounds.left, screen.w - bounds.width));
+    const top = Math.max(0, Math.min(bounds.top, screen.h - bounds.height));
+    if (left === bounds.left && top === bounds.top) return;
+    await cdp.send("Browser.setWindowBounds", {
+      windowId,
+      bounds: { left, top },
+    });
+    log(
+      `window moved onto the display: ${bounds.left},${bounds.top} -> ${left},${top} (screen ${screen.w}x${screen.h})`,
+    );
+  } catch (e) {
+    // Placement is a nicety; a failure here must not cost the run.
+    log(`could not place the window (${e instanceof Error ? e.message : e})`);
+  }
+}
+
 // ---- Chrome + DevTools -----------------------------------------------------
 
 const CHROME_CANDIDATES = [

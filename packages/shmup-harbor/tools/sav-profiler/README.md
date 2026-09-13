@@ -30,7 +30,8 @@ compared by eye and by number.
    the screen it should produce. Every later run loads that state a few seconds
    after launch.
 4. **Arms the runtime** on its title screen (the Dezaemon logo entrance has to
-   finish before a press counts).
+   finish before a press counts), and with `--live` a second browser on the
+   deployed site the same way.
 5. **Presses Start on both at once** — that is `t = 0`. Mednafen records its own
    video from launch (`-qtrecord`); Chrome's screencast captures the canvas over
    the window; the game scene is sampled every 50 ms for every enemy's position,
@@ -60,6 +61,59 @@ compared by eye and by number.
 | `--no-god`                 |                                                             | run the web side without `?god=1` (the Saturn ship is always mortal) |
 | `--keep-video`             |                                                             | keep `saturn.mov` (about 1 MB/s)                                     |
 | `--no-saturn` / `--no-web` |                                                             | one side only                                                        |
+| `--live`                   |                                                             | also drive the DEPLOYED site as a third pane                         |
+| `--live-url URL`           | `https://codemonkey.games/games/2028-ai`                    | the page `--live` drives                                             |
+
+## The deployed site as a third pane
+
+`--live` adds a third browser on the real
+**https://codemonkey.games/games/2028-ai**, armed and started in the same
+`Promise.all` as the other two, so a run shows the Saturn, this checkout, and
+what players actually get. It is what catches a deploy that is behind the
+checkout, or a bundle that only misbehaves when Deploy serves it.
+
+The pane is only worth looking at if it is playing the SAME level, and the
+deployed origin will not serve a level this tool built. So the level is answered
+inside the browser instead: the deployed bundle fetches one fixed same-origin
+URL for it (`LEVEL_DATA_URL = "/games/2028-ai/foo.json"`, which you can read in
+the served `game.bundle.js`), and `interceptLevel()` in `lib/web.ts` fulfils
+exactly that request over CDP's `Fetch` domain with the cart's record.
+Everything else — the bundle, the atlases, the fonts — comes from Deploy
+untouched, which is the whole point. Chrome is therefore launched on
+`about:blank` and navigated only once the interception is armed, since the
+bundle asks for its level as it boots. `report.md` says whether the injection
+actually landed; if it did not, the pane is prod's own level and is **not**
+comparable.
+
+Things to know before using it:
+
+- **`--live --no-god` against codemonkey.games is refused**, before anything is
+  read or booted. `?god=1` is the only thing keeping a run off the production
+  leaderboard — mortal, the deployed bundle counts the score as a record and
+  stamps the profiled cart's name on the board for the injected level's id.
+  Point `--live-url` at a staging host to run mortal.
+- **It is slow to arm.** Deploy serves everything `no-store` and Chrome runs
+  with a 1-byte disk cache, so the live pane re-fetches ~127 loader items and
+  the multi-MB record every run: measured at 11–13 s for the local shell against
+  still-not-ready at 61 s for the live origin. The live pane gets a four-minute
+  arming timeout of its own, and both browsers are re-checked on the idle title
+  immediately before Start — the Dezaemon title loops every ~23 s and a press
+  during its 2.1 s entrance only snaps the logos.
+- **A live pane that will not arm is dropped, not fatal.** The run continues as
+  Saturn vs this checkout, and `report.md` says why the pane is missing.
+- It needs the network, so it is off by default and the in-page `?debug=1` path
+  never turns it on.
+- It is a third browser on a machine already running an emulator under a
+  closed-loop driver — `saturn.ts` re-fronts Mednafen every 2.5 s and the run
+  already fails loudly when the emulator falls behind the wall clock, so expect
+  `--live` to make that likelier on a busy machine.
+- The live pane's own enemy samples are kept, in `samples.json` under
+  `liveSamples`, so a deploy that is behind the checkout can be diffed rather
+  than eyeballed.
+
+With `--live` the contact sheet's cells and `compare.mp4` become three panes
+(Saturn | this checkout | deployed, 1116x480) instead of two (860x480); without
+it every output is exactly what it was.
 
 ## Needs
 

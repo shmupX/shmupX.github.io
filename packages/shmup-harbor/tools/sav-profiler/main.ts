@@ -5,6 +5,7 @@
 //                         [--slot N] [--out build/profiler] [--disc PATH]
 //                         [--bin PATH] [--chrome PATH] [--prepare] [--reset]
 //                         [--no-god] [--keep-video] [--no-saturn] [--no-web]
+//                         [--live] [--live-url URL]
 //
 // The Saturn side is Mednafen on the user's own disc image, with the level in
 // slot 1 of a cart the profiler builds for itself; the first run of a level
@@ -50,8 +51,11 @@ import {
 } from "./lib/saturn.ts";
 import {
   Browser,
+  clampWindowToScreen,
   findChrome,
   fitViewport,
+  interceptLevel,
+  LIVE_URL,
   Runtime,
   type Sample,
   startServer,
@@ -61,7 +65,7 @@ import {
   grid,
   loadRaster,
   nearest,
-  pair,
+  row,
   scaledEnemies,
   summarizeSightings,
   type TimedFrame,
@@ -75,6 +79,24 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // The checkout root (lib/engine-compare.ts passes its own `out`, but the disc
 // probe below still needs the tree).
 const REPO_ROOT = repoRoot();
+
+/**
+ * How long the DEPLOYED pane gets to reach its title. Measured: the local
+ * shell is up in 11-13 s, the live origin was still short of it at 61 s and
+ * up by 137 s — Deploy serves everything `no-store` and the profiler runs
+ * Chrome with a 1-byte disk cache, so ~127 loader items and the level record
+ * are re-fetched every run.
+ */
+const LIVE_TITLE_TIMEOUT_MS = 240_000;
+
+/** codemonkey.games and its subdomains — the deployment with a real board. */
+function isProductionHost(url: string): boolean {
+  try {
+    return /(^|\.)codemonkey\.games$/i.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
 
 export interface ProfileOptions {
   sav: string;
@@ -94,6 +116,11 @@ export interface ProfileOptions {
   keepVideo: boolean;
   saturn: boolean;
   web: boolean;
+  /** Also drive the DEPLOYED site, as a third pane. Off by default: it needs
+   * the network, and a run without it is unchanged. */
+  live: boolean;
+  /** The deployed game page `--live` drives. */
+  liveUrl: string;
   log: (line: string) => void;
 }
 
@@ -108,6 +135,12 @@ export interface ProfileResult {
   saturnLagSec: number;
   saturnFrames: TimedFrame[];
   webFrames: TimedFrame[];
+  /** Frames from the deployed site — empty unless `--live`. */
+  liveFrames: TimedFrame[];
+  /** Whether the deployed page took the cart's level (vs whatever it serves). */
+  liveLevelServed: boolean;
+  /** Why the deployed pane was abandoned, when it was. */
+  liveDropped: string | null;
   samples: Sample[];
   gameStartedAfterMs: number | null;
   sightings: ReturnType<typeof summarizeSightings>;
@@ -136,6 +169,8 @@ export function defaults(): Omit<ProfileOptions, "sav"> {
     keepVideo: false,
     saturn: true,
     web: true,
+    live: false,
+    liveUrl: LIVE_URL,
     log: (line) => console.log(line),
   };
 }
@@ -158,6 +193,19 @@ function stamp(): string {
 
 export async function profile(opts: ProfileOptions): Promise<ProfileResult> {
   const log = opts.log;
+  // Checked before anything is read, built or booted: `?god=1` is the ONLY
+  // thing keeping a live run out of the production leaderboard. The deployed
+  // bundle counts a score as a record when godFlg is clear, and would stamp
+  // the profiled cart's name onto the board for the injected level's own id.
+  // The local shell cannot do this — it never loads the Firebase SDK — so the
+  // hazard arrives with this pane. Refuse rather than write to production; a
+  // staging --live-url is still free to run mortal.
+  if (opts.live && !opts.god && isProductionHost(opts.liveUrl)) {
+    throw new WebError(
+      "--live --no-god would submit a score to the PRODUCTION leaderboard at " +
+        `${opts.liveUrl} — drop --no-god, or point --live-url at a staging host`,
+    );
+  }
   const savPath = resolve(opts.sav);
   const sav = await Deno.readFile(savPath);
   const slug = `${
@@ -223,6 +271,12 @@ export async function profile(opts: ProfileOptions): Promise<ProfileResult> {
   let samples: Sample[] = [];
   let gameStartedAt: number | null = null;
   let webFrames: TimedFrame[] = [];
+  let liveBrowser: Browser | null = null;
+  let liveRuntime: Runtime | null = null;
+  let liveLevel: Awaited<ReturnType<typeof interceptLevel>> | null = null;
+  let liveFrames: TimedFrame[] = [];
+  let liveSamples: Sample[] = [];
+  let liveDropped: string | null = null;
   try {
     if (opts.web) {
       server = startServer(record, { port: opts.port, log });
@@ -244,19 +298,79 @@ export async function profile(opts: ProfileOptions): Promise<ProfileResult> {
       await runtime.waitForTitle();
       log("web: armed on the title");
     }
+    if (opts.live) {
+      // Its own Chrome: a second profile, a second debugging port and a
+      // window beside the first, so both panes are visible and neither
+      // steals the other's input.
+      const chromeBin = await findChrome(opts.chrome);
+      liveBrowser = await Browser.launch({
+        bin: chromeBin,
+        userDataDir: join(profileDir, "chrome-live"),
+        // Armed on a blank page: the level interception has to exist before
+        // the deployed bundle asks for it, which it does as it boots.
+        url: "about:blank",
+        port: opts.cdpPort + 1,
+        window: { x: 1250, y: 40, w: 300, h: 560 },
+        log,
+      });
+      // The deployed pane is the OPTIONAL one. If it will not arm — a slow
+      // deploy, a wedged loader, a cart whose title data did not decode —
+      // that must cost its pane and nothing else, so the Saturn-vs-checkout
+      // comparison the tool exists for still happens.
+      try {
+        liveRuntime = new Runtime(liveBrowser.cdp, log);
+        await clampWindowToScreen(liveBrowser.cdp, { log });
+        await fitViewport(liveBrowser.cdp);
+        liveLevel = await interceptLevel(liveBrowser.cdp, record, { log });
+        await liveRuntime.install();
+        const liveUrl = `${opts.liveUrl}?level=foo${opts.god ? "&god=1" : ""}`;
+        log(`live: ${liveUrl}`);
+        await liveBrowser.cdp.send("Page.navigate", { url: liveUrl });
+        // Deploy serves every asset no-store and Chrome runs with a 1-byte
+        // disk cache, so the live pane re-fetches ~127 loader items and the
+        // record on every run: measured still short of the title at 61 s
+        // where the local shell took 11-13 s. 60 s is not enough here.
+        log("live: waiting for the title to take input (this is the slow one)");
+        await liveRuntime.waitForTitle(LIVE_TITLE_TIMEOUT_MS);
+        log("live: armed on the title");
+      } catch (e) {
+        liveRuntime = null;
+        liveDropped = e instanceof Error ? e.message : String(e);
+        log(`live: DROPPED — ${liveDropped}; the run continues without it`);
+      }
+    }
     if (sat) {
       log("saturn: launching and loading the armed state");
       saturn = await armRun(sat, mov, log);
       log("saturn: armed on GAME START");
     }
     if (runtime) await runtime.setSampling(true);
+    if (liveRuntime) await liveRuntime.setSampling(true);
 
-    // t = 0: one Start to both.
+    // t = 0: one Start to every pane.
+    //
+    // Re-confirm the browsers are still ON the idle title first. The Dezaemon
+    // title loops — 20 s idle, a fade, then a 2.1 s entrance — and titleStart()
+    // returns early during the entrance, so a press landing there only snaps
+    // the logos and the level never starts. Arming a pane and pressing a
+    // moment later was safe; arming the local pane and then waiting out the
+    // live pane's boot (which can take minutes) is not, so both are checked
+    // again here rather than trusted from when they were armed.
+    for (
+      const [what, r] of [["web", runtime], ["live", liveRuntime]] as const
+    ) {
+      if (!r) continue;
+      const again = await r.waitForTitle(60_000).catch(() => null);
+      if (again !== "ready") {
+        log(`${what}: title drifted while arming — pressing anyway`);
+      }
+    }
     await sleep(500);
     t0 = Date.now();
     await Promise.all([
       saturn ? saturn.kb.pad(saturn.startButton, 100) : Promise.resolve(),
       runtime ? runtime.pressStart() : Promise.resolve(),
+      liveRuntime ? liveRuntime.pressStart() : Promise.resolve(),
     ]);
     log(
       `t=0 at ${new Date(t0).toISOString()} — recording ${opts.from}s..${
@@ -268,21 +382,47 @@ export async function profile(opts: ProfileOptions): Promise<ProfileResult> {
     const windowEnd = windowStart + opts.len * 1000;
     const untilWindow = windowStart - 1000 - Date.now();
     if (untilWindow > 0) await sleep(untilWindow);
-    if (runtime) {
-      const frames = await runtime.screencast(
-        join(runDir, "web"),
-        () => Date.now() < windowEnd + 200,
-      );
-      webFrames = frames
+    const active = () => Date.now() < windowEnd + 200;
+    const capture = async (r: Runtime, dir: string): Promise<TimedFrame[]> =>
+      (await r.screencast(join(runDir, dir), active))
         .filter((f) => f.t >= windowStart && f.t <= windowEnd)
         .map((f) => ({ file: f.file, t: (f.t - t0!) / 1000 }));
-      await runtime.setSampling(false);
-      const got = await runtime.samples();
-      samples = got.samples;
-      gameStartedAt = got.gameStartedAt;
-      log(
-        `web: ${webFrames.length} frames in the window, ${samples.length} samples`,
-      );
+    if (runtime || liveRuntime) {
+      // Both browsers record the SAME window, so they have to record it at
+      // the same time — capturing one and then the other would leave the
+      // second with nothing but the window's aftermath.
+      const [w, l] = await Promise.all([
+        runtime ? capture(runtime, "web") : Promise.resolve([] as TimedFrame[]),
+        liveRuntime
+          ? capture(liveRuntime, "live")
+          : Promise.resolve([] as TimedFrame[]),
+      ]);
+      webFrames = w;
+      liveFrames = l;
+      if (runtime) {
+        await runtime.setSampling(false);
+        const got = await runtime.samples();
+        samples = got.samples;
+        gameStartedAt = got.gameStartedAt;
+        log(
+          `web: ${webFrames.length} frames in the window, ${samples.length} samples`,
+        );
+      }
+      if (liveRuntime) {
+        await liveRuntime.setSampling(false);
+        // The deployed pane samples its own enemies exactly as the local one
+        // does. Keeping them is the difference between a third pane you have
+        // to eyeball and one you can diff: they land in samples.json beside
+        // the local run's.
+        liveSamples = (await liveRuntime.samples().catch(() =>
+          null
+        ))?.samples ?? [];
+        log(
+          `live: ${liveFrames.length} frames in the window, ${liveSamples.length} samples${
+            liveLevel ? `, level served ${liveLevel.served()}x` : ""
+          }`,
+        );
+      }
     } else {
       const wait = windowEnd + 500 - Date.now();
       if (wait > 0) await sleep(wait);
@@ -295,6 +435,8 @@ export async function profile(opts: ProfileOptions): Promise<ProfileResult> {
     }
   } finally {
     if (saturn) await saturn.quit();
+    if (liveLevel) await liveLevel.stop().catch(() => {});
+    if (liveBrowser) await liveBrowser.close();
     if (browser) await browser.close();
     if (server) await server.close();
   }
@@ -368,7 +510,11 @@ export async function profile(opts: ProfileOptions): Promise<ProfileResult> {
   const summary = summarizeSightings(sightings);
   await Deno.writeTextFile(
     join(runDir, "samples.json"),
-    JSON.stringify({ t0, samples }, null, 0),
+    JSON.stringify(
+      liveSamples.length ? { t0, samples, liveSamples } : { t0, samples },
+      null,
+      0,
+    ),
   );
 
   // Pictures.
@@ -376,41 +522,45 @@ export async function profile(opts: ProfileOptions): Promise<ProfileResult> {
   let moment: string | null = null;
   const times = saturnFrames.length
     ? saturnFrames.map((f) => f.t)
-    : webFrames.map((f) => f.t);
+    : webFrames.length
+    ? webFrames.map((f) => f.t)
+    : liveFrames.map((f) => f.t);
+  // One cell per moment: Saturn, this checkout, and — with --live — the
+  // deployed site. A run without --live stacks two, exactly as before.
+  const cellAt = async (t: number) => {
+    const cells = [];
+    const s = nearest(saturnFrames, t);
+    cells.push(s ? await loadRaster(s.file) : blank(330, 240));
+    const w = nearest(webFrames, t);
+    cells.push(w ? await loadRaster(w.file) : blank(256, 480));
+    if (opts.live) {
+      const l = nearest(liveFrames, t);
+      cells.push(l ? await loadRaster(l.file) : blank(256, 480));
+    }
+    return cells;
+  };
   if (times.length) {
     const every = Math.max(1, Math.ceil(times.length / 24));
     const cells = [];
     for (let i = 0; i < times.length; i += every) {
-      const t = times[i];
-      const s = nearest(saturnFrames, t);
-      const w = nearest(webFrames, t);
-      const left = s ? await loadRaster(s.file) : blank(330, 240);
-      const right = w ? await loadRaster(w.file) : blank(256, 480);
-      cells.push(pair(left, right, 240));
+      cells.push(row(await cellAt(times[i]), 240));
     }
     sheet = join(runDir, "sheet.png");
     await writePng(sheet, grid(cells, 2));
     const focus = strongest ? strongest.t : times[Math.floor(times.length / 2)];
-    const s = nearest(saturnFrames, focus);
-    const w = nearest(webFrames, focus);
-    if (s || w) {
-      moment = join(runDir, "moment.png");
-      await writePng(
-        moment,
-        pair(
-          s ? await loadRaster(s.file) : blank(330, 240),
-          w ? await loadRaster(w.file) : blank(256, 480),
-          480,
-        ),
-      );
-    }
+    moment = join(runDir, "moment.png");
+    await writePng(moment, row(await cellAt(focus), 480));
   }
 
   // The split view as one clip: the Saturn's frames on the left, the
   // runtime's nearest frame on the right, at the extraction rate.
   let video: string | null = null;
-  if (saturnFrames.length && webFrames.length) {
-    video = await writeCompareVideo(runDir, saturnFrames, webFrames, opts.fps);
+  {
+    video = await writeCompareVideo(runDir, [
+      { tag: "s", frames: saturnFrames },
+      { tag: "w", frames: webFrames },
+      ...(opts.live ? [{ tag: "l", frames: liveFrames }] : []),
+    ], opts.fps);
     if (video) log(`video: ${video}`);
   }
 
@@ -424,6 +574,9 @@ export async function profile(opts: ProfileOptions): Promise<ProfileResult> {
     saturnLagSec,
     saturnFrames,
     webFrames,
+    liveFrames,
+    liveLevelServed: (liveLevel?.served() ?? 0) > 0,
+    liveDropped,
     samples,
     gameStartedAfterMs: gameStartedAt !== null && t0 !== null
       ? gameStartedAt - t0
@@ -447,36 +600,60 @@ export async function profile(opts: ProfileOptions): Promise<ProfileResult> {
  * Side-by-side clip of the window: for each Saturn frame, the web frame
  * nearest in time, scaled to the same height and stacked left/right.
  */
+/**
+ * The window as one clip, one pane per stream that has frames. The FIRST
+ * stream drives the timeline — every other pane shows its nearest frame to
+ * that moment — so it must be the Saturn's, which is the recording the Start
+ * press was located inside.
+ *
+ * With the Saturn and the runtime this is the two-pane clip it has always
+ * been; `--live` adds a third pane, and a run with one side turned off still
+ * gets a clip of whatever is left.
+ */
 async function writeCompareVideo(
   runDir: string,
-  saturn: TimedFrame[],
-  web: TimedFrame[],
+  streams: { tag: string; frames: TimedFrame[] }[],
   fps: number,
 ): Promise<string | null> {
+  const live = streams.filter((s) => s.frames.length);
+  if (live.length < 2) return null;
+  const [master, ...rest] = live;
   const pairsDir = join(runDir, "pairs");
   await ensureDir(pairsDir);
-  for (let i = 0; i < saturn.length; i++) {
-    const w = nearest(web, saturn[i].t)!;
+  for (let i = 0; i < master.frames.length; i++) {
     const n = String(i).padStart(5, "0");
-    await Deno.copyFile(saturn[i].file, join(pairsDir, `s${n}.png`));
-    await Deno.copyFile(w.file, join(pairsDir, `w${n}.png`));
+    await Deno.copyFile(
+      master.frames[i].file,
+      join(pairsDir, `${master.tag}${n}.png`),
+    );
+    for (const s of rest) {
+      const f = nearest(s.frames, master.frames[i].t)!;
+      await Deno.copyFile(f.file, join(pairsDir, `${s.tag}${n}.png`));
+    }
   }
   const out = join(runDir, "compare.mp4");
+  const inputs = live.flatMap((s) => [
+    "-framerate",
+    String(fps),
+    "-i",
+    join(pairsDir, `${s.tag}%05d.png`),
+  ]);
+  // Every pane to a common 480 height, nearest-neighbour so the Saturn's
+  // pixels stay pixels, then one hstack.
+  const scales = live
+    .map((_s, i) => `[${i}:v]scale=-2:480:flags=neighbor[p${i}]`)
+    .join(";");
+  const chain = live.map((_s, i) => `[p${i}]`).join("");
+  const filter =
+    `${scales};${chain}hstack=inputs=${live.length},format=yuv420p`;
   const ff = await new Deno.Command("ffmpeg", {
     args: [
       "-v",
       "error",
       "-y",
-      "-framerate",
-      String(fps),
-      "-i",
-      join(pairsDir, "s%05d.png"),
-      "-framerate",
-      String(fps),
-      "-i",
-      join(pairsDir, "w%05d.png"),
+      ...inputs,
       "-filter_complex",
-      "[0:v]scale=-2:480:flags=neighbor[l];[1:v]scale=-2:480:flags=neighbor[r];[l][r]hstack=inputs=2,format=yuv420p",
+      filter,
       "-c:v",
       "libx264",
       "-crf",
@@ -513,6 +690,9 @@ function emptyResult(
     saturnLagSec: 0,
     saturnFrames: [],
     webFrames: [],
+    liveFrames: [],
+    liveLevelServed: false,
+    liveDropped: null,
     samples: [],
     gameStartedAfterMs: null,
     sightings: [],
@@ -549,6 +729,20 @@ function reportMd(r: ProfileResult, o: ProfileOptions): string {
         }s after Start`
         : ""
     }`,
+    ...(o.live && r.liveDropped
+      ? [
+        `- live: **dropped** — ${r.liveDropped}; this run is Saturn vs this checkout only`,
+      ]
+      : []),
+    ...(o.live && !r.liveDropped
+      ? [
+        `- live: ${r.liveFrames.length} screencast frames from ${o.liveUrl}${
+          r.liveLevelServed
+            ? " — playing this cart's level (the deployed page's own level fetch was answered with it)"
+            : " — **the level was NOT injected**, so this pane is whatever the deployed page serves, not this cart"
+        }`,
+      ]
+      : []),
     `- pictures: ${r.sheet ? "sheet.png" : "no sheet"}${
       r.moment ? ", moment.png" : ""
     }${r.video ? ", compare.mp4" : ""}`,
@@ -605,6 +799,7 @@ if (import.meta.main) {
       "chrome",
       "port",
       "cdp-port",
+      "live-url",
     ],
     boolean: [
       "prepare",
@@ -613,12 +808,13 @@ if (import.meta.main) {
       "keep-video",
       "no-saturn",
       "no-web",
+      "live",
       "help",
     ],
   });
   if (a.help || !a._[0]) {
     console.log(
-      "usage: deno task sav:profile <level.sav> [--from 44] [--for 5] [--fps 10] [--slot N] [--out DIR] [--disc PATH] [--bin PATH] [--chrome PATH] [--prepare] [--reset] [--no-god] [--keep-video] [--no-saturn] [--no-web]",
+      "usage: deno task sav:profile <level.sav> [--from 44] [--for 5] [--fps 10] [--slot N] [--out DIR] [--disc PATH] [--bin PATH] [--chrome PATH] [--prepare] [--reset] [--no-god] [--keep-video] [--no-saturn] [--no-web] [--live] [--live-url URL]",
     );
     Deno.exit(a.help ? 0 : 2);
   }
@@ -642,6 +838,8 @@ if (import.meta.main) {
     keepVideo: a["keep-video"],
     saturn: !a["no-saturn"],
     web: !a["no-web"],
+    live: a.live,
+    liveUrl: a["live-url"] ?? d.liveUrl,
   };
   try {
     const r = await profile(opts);

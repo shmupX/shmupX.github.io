@@ -60,19 +60,33 @@ function fill(r: Raster, rgb: [number, number, number]): void {
 }
 
 /** Left and right, same height, a gap between. */
+/**
+ * Frames of one moment, side by side at a common height. Any number of them:
+ * the Saturn and the runtime are two, and `--live` adds the deployed site as
+ * a third. With two cells this is byte-for-byte what `pair()` produced.
+ */
+export function row(cells: Raster[], height: number, gap = 8): Raster {
+  if (!cells.length) return newRaster(0, height);
+  const fitted = cells.map((c) => fitHeight(c, height));
+  const width = fitted.reduce((a, c) => a + c.width, 0) +
+    gap * (fitted.length - 1);
+  const out = newRaster(width, height);
+  fill(out, [24, 24, 24]);
+  let x = 0;
+  for (const c of fitted) {
+    blit(out, c, x, 0);
+    x += c.width + gap;
+  }
+  return out;
+}
+
 export function pair(
   left: Raster,
   right: Raster,
   height: number,
   gap = 8,
 ): Raster {
-  const l = fitHeight(left, height);
-  const r = fitHeight(right, height);
-  const out = newRaster(l.width + gap + r.width, height);
-  fill(out, [24, 24, 24]);
-  blit(out, l, 0, 0);
-  blit(out, r, l.width + gap, 0);
-  return out;
+  return row([left, right], height, gap);
 }
 
 /** Rows stacked, with a gutter. */
