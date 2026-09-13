@@ -2,12 +2,16 @@ _fresh/
 node_modules/
 vendor/
 # Claude Code's directory is local: a launch.json pointing at this machine's
-# ports, and the worktrees sessions run in. skills/ is the exception — a skill
-# is a shared repo asset, checked in so a clone gets it. The negation needs the
-# glob rather than the bare directory: git cannot re-include anything inside an
-# excluded DIRECTORY, only inside an excluded set of paths.
+# ports, and the worktrees sessions run in. skills/, hooks/ and settings.json
+# are the exceptions — a skill is a shared repo asset, checked in so a clone
+# gets it, and the SessionStart hook has to reach a web session's container to
+# do its job at all. The negations need the glob rather than the bare
+# directory: git cannot re-include anything inside an excluded DIRECTORY, only
+# inside an excluded set of paths.
 .claude/*
 !.claude/skills/
+!.claude/hooks/
+!.claude/settings.json
 .deno/
 build/
 static/games/2028-ai/assets/custom-bgm/
