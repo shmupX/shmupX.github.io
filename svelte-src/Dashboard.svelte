@@ -750,6 +750,70 @@
     } catch (_) { return ''; }
   });
 
+  // ─── Add to Steam ──────────────────────────────────────────────────────────
+  // Adding the launcher as a non-Steam game is six steps in a desktop session
+  // the player may not even be in — on a handheld in Game Mode it means leaving
+  // Game Mode for a file picker that hides AppImages. /api/steam does it in one
+  // press (lib/steam-shortcut.ts). The row only exists where there is something
+  // to add: the route answers 403 on the hosted origin, and reports no binary
+  // in a source checkout, so `steam` stays null in both.
+  let steam = $state(null);
+  let steamBusy = $state(false);
+  let steamDone = $state('');
+  let steamSummary = $derived.by(() => {
+    if (!steam) return '';
+    if (steamDone) return steamDone;
+    if (!steam.binary) return steam.reason || 'nothing to add from a source checkout';
+    if (!steam.steamFound) return 'Steam is not installed on this machine';
+    const what = steam.binary.kind === 'appimage'
+      ? 'this AppImage'
+      : steam.binary.kind === 'macos-app' ? 'this app bundle' : 'this launcher';
+    return 'press to add ' + what + ' to your Steam library';
+  });
+
+  async function refreshSteam() {
+    try {
+      const r = await fetch('/api/steam', { cache: 'no-store' });
+      if (!r.ok) { steam = null; return; }
+      const data = await r.json();
+      // A launcher with nothing to add is still worth a row when Steam IS here
+      // — it says why — but a source checkout with no Steam has nothing to say.
+      steam = data && data.ok && (data.binary || data.steamFound) ? data : null;
+    } catch (_) { steam = null; }
+  }
+
+  async function addToSteam() {
+    if (steamBusy || !steam) return;
+    if (!steam.binary || !steam.steamFound) { showToast(steamSummary); return; }
+    steamBusy = true;
+    try {
+      const r = await fetch('/api/steam', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'add' }),
+      });
+      const data = await r.json();
+      if (!data || !data.ok) {
+        steamDone = '';
+        showToast('Could not add to Steam: ' + ((data && (data.error || (data.problems || [])[0])) || ('HTTP ' + r.status)));
+        return;
+      }
+      steam = { ...steam, ...data };
+      const already = (data.installed || []).every((i) => i.action === 'unchanged');
+      // Steam reads shortcuts.vdf at startup and writes its own copy back when
+      // it quits, so a shortcut added under a running client is discarded on
+      // exit. There is no way around that — only a way to say so.
+      steamDone = (already ? 'already in your library' : 'added to your library') +
+        (data.steamRunning ? '  ·  RESTART STEAM to see it' : '') +
+        (data.installed.length > 1 ? '  ·  ' + data.installed.length + ' accounts' : '');
+      showToast(steamDone.replace(/\s+·\s+/g, ' — '));
+    } catch (e) {
+      showToast('Could not add to Steam: ' + (e?.message || e));
+    } finally {
+      steamBusy = false;
+    }
+  }
+
   // The route answers 403 on the hosted origin, which is how the launcher
   // learns it is not a local install: `builder` stays null and the BUILD
   // SERVER row never appears. The first GET starts the worker (unless the
@@ -963,6 +1027,8 @@
     },
     // Only a local install is a build server (see refreshBuilder).
     ...(builder ? [{ id: 'builder', label: 'BUILD SERVER', sub: builderSummary }] : []),
+    // ...and only a packaged launcher has a file to add (see refreshSteam).
+    ...(steam ? [{ id: 'steam', label: 'ADD TO STEAM', sub: steamSummary }] : []),
   ]);
   let settingsSel = $state(0);
   let settingsRowEls = $state([]);
@@ -3224,6 +3290,8 @@
       exportsSel = 0;
     } else if (it.id === 'builder') {
       builderAction(builder?.running ? 'stop' : 'start');
+    } else if (it.id === 'steam') {
+      addToSteam();
     }
   }
 
@@ -5191,6 +5259,7 @@
     padRaf = requestAnimationFrame(pollPad);
 
     initHostDevice();
+    refreshSteam();
     loadManifest();
     initNetplayPresence();
     // The disc check waits for the catalogue: auto-installing the Saturn core
