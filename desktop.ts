@@ -30,6 +30,7 @@ import {
   launcherDataDir,
   openLauncherWindow,
 } from "./lib/desktop-browser.ts";
+import { startAutoUpdate } from "./lib/self-update.ts";
 
 interface FetchServer {
   fetch(
@@ -200,8 +201,25 @@ const httpServer = Deno.serve({
   signal: shutdown.signal,
   onListen: ({ hostname, port }) => {
     const url = `http://${hostname}:${port}/`;
-    console.log(`\n  shmupX — codemonkey.games\n  ${url}\n`);
+    const version = (Deno as { desktopVersion?: string | null }).desktopVersion;
+    console.log(
+      `\n  shmupX${
+        version ? ` ${version}` : ""
+      } — codemonkey.games\n  ${url}\n`,
+    );
     console.log("  Press Ctrl+C to quit.\n");
+    // Keep this copy current on its own. `deno desktop` fetches a signed bsdiff
+    // of the runtime rather than a whole download and stages it for the next
+    // launch, rolling back by itself if that launch fails — so the player who
+    // added this file to Steam once never has to think about it again. Off in
+    // a source checkout and in the Windows `deno compile` build, which has no
+    // updater; lib/self-update.ts says which cases and why.
+    startAutoUpdate({
+      env: Deno.env.toObject(),
+      target: Deno.build.target,
+      version: version ?? null,
+      underDesktop: UNDER_DENO_DESKTOP,
+    });
     // Under `deno desktop` the window is already on screen and owns the
     // process' lifetime; borrowing a browser on top of it would put the
     // launcher up twice.
