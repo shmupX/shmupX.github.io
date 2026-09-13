@@ -125,31 +125,38 @@ async function confirmState(state) {
 }
 
 /**
- * Install the Play! core if it is not already there, and leave it usable
- * offline.
+ * Install a core if it is not already there, and leave it usable offline.
  *
- * Adding `ps2` to the installed set is what makes the dashboard's PlayStation 2
- * section appear as well, so a game filed from the editor is reachable from the
- * launcher without a second install.
+ * Adding the id to the installed set is what makes the dashboard's section for
+ * that console appear as well, so a game filed from the editor is reachable
+ * from the launcher without a second install.
+ *
+ * Written for the PS2 and generalised when the SNES shelf became the second
+ * thing the editor files a game onto (static/snes-library.js). The console-
+ * specific part is only the id and the name in the messages; everything that
+ * is hard — waiting for the worker to CONTROL the page, confirming it took the
+ * state, warming the right paths, telling the four failure modes apart — is
+ * identical whichever core is being installed, and a second copy of it would
+ * be a second set of those bugs.
  *
  * `onStep(message)` is called as it goes; the whole thing is a no-op beyond a
  * state push when the core is already installed.
  */
-export async function ensurePs2Core(onStep = () => {}) {
+export async function ensureEmuCore(coreId, label, onStep = () => {}) {
   const response = await getOrExplain(EMU_CATALOG, 'emulator catalogue');
   if (!response.ok) {
     throw new Error('could not read ' + EMU_CATALOG + ' (HTTP ' + response.status + ')');
   }
   const catalog = await response.json();
-  const core = (catalog.cores || []).find((c) => c.id === PS2_CORE_ID);
-  if (!core) throw new Error('the emulator catalogue lists no PlayStation 2 core');
+  const core = (catalog.cores || []).find((c) => c.id === coreId);
+  if (!core) throw new Error('the emulator catalogue lists no ' + label + ' core');
 
   const installed = readInstalledCores();
-  const already = installed.includes(PS2_CORE_ID);
-  const next = already ? installed : [...installed, PS2_CORE_ID];
+  const already = installed.includes(coreId);
+  const next = already ? installed : [...installed, coreId];
   try { localStorage.setItem(EMU_KEY, JSON.stringify(next)); } catch (_) {}
 
-  onStep(already ? 'PlayStation 2 core: already installed' : 'installing the PlayStation 2 core…');
+  onStep(already ? label + ' core: already installed' : 'installing the ' + label + ' core…');
   const state = emuStateFor(catalog, next);
   const reg = await readyWorker();
   const worker = reg?.active || navigator.serviceWorker?.controller || null;
@@ -208,13 +215,18 @@ export async function ensurePs2Core(onStep = () => {}) {
       await res.arrayBuffer();
     } catch (e) {
       if (path === core.player) {
-        throw new Error('could not fetch the PS2 player (' + path + '): ' + (e.message || e));
+        throw new Error('could not fetch the ' + label + ' player (' + path + '): ' + (e.message || e));
       }
       cold.push(path);
     }
     onStep('warming ' + (++done) + ' / ' + targets.length);
   }
   return { core, installed: !already, cold };
+}
+
+/** The Play! core, by the name the editor's → PS2 LIBRARY has always used. */
+export function ensurePs2Core(onStep = () => {}) {
+  return ensureEmuCore(PS2_CORE_ID, 'PlayStation 2', onStep);
 }
 
 // ── The library store ────────────────────────────────────────────────────────

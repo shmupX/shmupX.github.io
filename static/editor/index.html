@@ -1074,6 +1074,21 @@
         <button class="menu-row hidden" id="deza-sav-mednafen" onclick="exportDezaemonSav('mednafen')" title="Build the save, merge it into one Dezaemon 2 slot of Mednafen's cartridge (.bcr) beside the disc on this machine — the cart's other saves and the console's own .bkr memory untouched — and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN CART</button>
         <div id="deza-sav-note" class="menu-note"></div>
         <div class="menu-note">SATURN BACKUP SAVES: .SAV / .BCR / .BKR</div>
+        <!-- DEZAEMON (SUPER FAMICOM). The other Dezaemon: Athena's 1994 cart,
+             whose games are 128 KB SRAM dumps. The editor cannot yet OPEN one —
+             the SFC decoders read a save, and nothing maps one to a level — so
+             this block is a shelf door rather than an import: "→ SNES LIBRARY"
+             files a dump on the launcher's SUPER FAMICOM shelf (IndexedDB,
+             this browser), exactly as "→ SAVE SHELF" above files a Saturn cart
+             on the Dezaemon one. static/snes-shelf.js owns the store and
+             static/snes-library.js the core and the published library, and the
+             launcher's dashboard reads the same store, so a cart filed here
+             turns up in its section. Not hide-when-sav: what is open in the
+             editor has no bearing on filing a cart from disk. -->
+        <div class="menu-label">DEZAEMON (SUPER FAMICOM)</div>
+        <button class="menu-row" id="snes-lib-btn" onclick="openSnesCartImport()" title="Pick a Super Famicom Dezaemon SRAM dump (.srm) and file it on this browser's SNES shelf, where the launcher's SUPER FAMICOM section plays it"><span class="mono-badge">SF</span>&rarr; SNES LIBRARY</button>
+        <div id="snes-lib-note" class="menu-note"></div>
+        <div class="menu-note">SUPER FAMICOM SRAM: .SRM (128 KB)</div>
         <div class="menu-label">ADVANCED EDITORS</div>
         <div class="adv-grid">
             <button class="menu-row" onclick="showCharacterEditor()"><span class="mono-badge sm">CH</span>CHARACTER</button>
@@ -1106,6 +1121,11 @@
     <!-- DEZAEMON 2 IMPORT -->
     <input id="deza-file-input" type="file" accept=".sav,.bcr,.bkr" style="display:none"
            onchange="if(this.files[0])handleDezaemonFile(this.files[0]);this.value=''">
+    <!-- DEZAEMON (SUPER FAMICOM) IMPORT. Deliberately accepts .sav as well as
+         .srm: dumpers disagree about the extension, and the bytes decide (the
+         "T.TABATA" magic) rather than the name — see fileSnesCartToLibrary. -->
+    <input id="snes-file-input" type="file" accept=".srm,.sav" style="display:none"
+           onchange="if(this.files[0])fileSnesCartToLibrary(this.files[0]);this.value=''">
     <div id="dezaemon-import-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:84vh">
             <div class="picker-title">DEZAEMON 2 IMPORT
@@ -10244,6 +10264,102 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                 setStatus('Export error: ' + e.message, '#f87171');
             } finally {
                 btn.disabled = false;
+            }
+        }
+
+        // ================== DEZAEMON (SUPER FAMICOM) ==================
+        // "→ SNES LIBRARY": a Super Famicom Dezaemon SRAM dump off the player's
+        // own disk, onto the launcher's SNES shelf.
+        //
+        // The same shape as → PS2 LIBRARY below (file it, make sure the core is
+        // there, say where it went) with one deliberate difference: the FILING
+        // is the thing, and the core install is allowed to fail. The cmg origin
+        // does not publish /snes/play.html yet, so warming the core 404s today;
+        // refusing to shelve a cart over that would make the button useless for
+        // the thing it is actually for, and the day the player appears every
+        // row already on the shelf starts working with no change here.
+        //
+        // static/snes-shelf.js owns the store — including the "is this really a
+        // Dezaemon SRAM dump" gate and the cover — so this function does no
+        // decoding of its own; it reads a File and hands over bytes.
+
+        let snesLibraryPending = null;  // the shared modules, imported once on demand
+        function snesLibrary() {
+            if (!snesLibraryPending) {
+                snesLibraryPending = Promise.all([
+                    import('/snes-shelf.js'),
+                    import('/snes-library.js'),
+                ]).then(([shelf, library]) => ({ shelf, library }))
+                  .catch((e) => { snesLibraryPending = null; throw e; });
+            }
+            return snesLibraryPending;
+        }
+
+        function snesNote(msg, color) {
+            const el = document.getElementById('snes-lib-note');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = color || '';
+        }
+
+        function openSnesCartImport() {
+            snesNote('');
+            document.getElementById('snes-file-input').click();
+        }
+
+        async function fileSnesCartToLibrary(file) {
+            const btn = document.getElementById('snes-lib-btn');
+            if (btn) btn.disabled = true;
+            try {
+                snesNote('Reading ' + file.name + '…');
+                const { shelf, library } = await snesLibrary();
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                // The title and the dump date come off the filename by the same
+                // rule the publisher uses, so a cart imported here and the same
+                // game installed from the library agree on their slug.
+                const { title, dumpedAt } = shelf.sfcTitleFromFileName(file.name);
+                snesNote('Shelving "' + (title || file.name) + '"…');
+                const record = await shelf.putSnesShelfEntry({
+                    id: shelf.snesShelfIdForImport(title || file.name),
+                    title: title || file.name,
+                    file: file.name,
+                    bytes,
+                    size: bytes.length,
+                    savedAt: Date.now(),
+                    source: 'import',
+                    ...(dumpedAt ? { dumpedAt } : {}),
+                });
+                // Tell the launcher above this frame, the same way an eShop
+                // install does: its SUPER FAMICOM section is reading this store.
+                try { window.parent.postMessage({ type: 'cmg-snes-shelf-changed' }, '*'); } catch (_) {}
+
+                const kb = (record.size / 1024).toFixed(0) + ' KB';
+                const cover = record.cover ? '' : ' No cover: this dump has no graphics bank.';
+                let note = '"' + record.title + '" is on the SNES shelf (' + kb + ').' + cover;
+                let color = '#84cc16';
+
+                // The cartridge, then the core — both advisory, both reported
+                // rather than thrown, because the cart is already filed.
+                try {
+                    const rom = await library.findSnesRom();
+                    if (!rom.available) {
+                        note += ' No Dezaemon ROM on this machine yet, so the launcher ' +
+                            'cannot boot it: put one in dev-fixtures/.';
+                        color = '#f59e0b';
+                    }
+                } catch (_) { /* the route is local-only; silence is an answer */ }
+                try {
+                    await library.ensureSnesCore((step) => snesNote(note + ' ' + step));
+                } catch (e) {
+                    note += ' The Super Famicom core is not published yet (' +
+                        (e.message || e) + ').';
+                    color = '#f59e0b';
+                }
+                snesNote(note, color);
+            } catch (e) {
+                snesNote('Could not shelve it: ' + (e.message || e), '#f87171');
+            } finally {
+                if (btn) btn.disabled = false;
             }
         }
 

@@ -258,6 +258,7 @@ deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
 deno task deza:meshlib    # decode the ポリ吉 3D part library off a disc image
 deno task deza:palette    # write static/palette.png (+ palette-sheet.png) from DEZA2.PAL
 deno task sfc:probe       # look inside a Super Famicom Dezaemon SRAM dump (report / png / hex / diff)
+deno task sfc:upload      # publish the Super Famicom library (dumps + covers + metadata) to the database
 deno task psx:probe       # look inside a PlayStation Dezaemon+ / Dezaemon Kids! save (report / png / hex / diff / all)
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task tonebank:table  # re-pack the instrument map into src/audio/
@@ -1021,6 +1022,60 @@ Super Famicom counterpart of `static/dezaemon-parity.html`. Neither saves nor
 the ROM are committed: the tests gate on
 `packages/shmup-engine/fixtures/dezaemon-sfc-sample.sav` and a ROM in
 `dev-fixtures/`.
+
+#### The Super Famicom library and shelf
+
+A cart can be published, installed and shelved even though the editor cannot
+open one, because none of that needs a `game.json` — it needs the bytes, a name
+and a picture. The pipeline mirrors the Saturn one file for file:
+
+```
+dev-fixtures/…/ALDI Adventure (2026-08-22).srm
+      │  deno task sfc:upload          scripts/upload-sfc-saves.ts
+      ▼
+RTDB /dezaemonSfc/{meta,index,covers,saves}
+      │  install                       static/snes-library.js
+      ▼
+the SNES shelf (IndexedDB)             static/snes-shelf.js
+      ▲  → SNES LIBRARY                static/editor/index.html
+a .srm on your own disk
+```
+
+- **Metadata** comes from `static/editor/dezaemon/games-db-sfc.json`, the Super
+  Famicom sibling of `games-db.json`: the same seven fields, so one loader reads
+  both, in its own file because that one is a verbatim copy of the satakore
+  Dezaemon 2 table. Genre is always vertical here — SFC Dezaemon has no
+  horizontal mode.
+- **Recognition is by content, not extension.** Both consoles' dumps get called
+  `.sav` by somebody, so `isSfcSav` (128 KB — or 64 KB from a dumper that stops
+  early — plus `T.TABATA` at `0x7FF8`) decides what is a Super Famicom cart,
+  everywhere: the publisher skips a Saturn cart in a mixed directory, and the
+  shelf refuses one outright.
+- **The cover** is `composeSfcCover` — the busiest 30-row screenful of the
+  game's own scenery, at the same 256×480 every Saturn cover uses so one shelf
+  can show both. TITLE GROUP is *not* used: its tile numbers index the flat
+  graphics bank, whose layout is still open, so it renders fragments rather than
+  a logo. A cart with a blank graphics bank has no picture of itself and is
+  published without one.
+- **A save is not a game.** This is the one thing the SNES shelf does that no
+  other shelf here has to. A PS2 row is a disc and a Saturn row is a cart the
+  disc in the drive can load; a SNES row is 128 KB of SRAM belonging to a
+  cartridge that is not ours to ship. `GET /api/dezaemon-sfc` finds Athena's ROM
+  on your own disk the way `/api/dezaemon-disc` finds the Saturn disc — by its
+  internal header, in `dev-fixtures/` or one level below it, or
+  `$DEZAEMON_SFC_ROM` — and launching hands the player both files, the save
+  named after the ROM because that is how a libretro core pairs a `.srm` with
+  its cart. Without a ROM the section still fills, browses and exports; it just
+  says so instead of offering a Play that could only fail.
+
+**The player page does not exist yet.** Every core in `static/emulators.json` is
+served by the cmg origin and mirrored onto this one by `static/emu-sw.js`, and
+that origin does not publish `/snes/play.html`, so installing the `snes` core
+warms paths that 404 and the section's rows cannot boot. Everything on this side
+is written to the contract the Saturn player already implements — a `?byod=1`
+page that announces itself with `snes-byod-ready` and is posted its files as
+`snes-byod-file` — so the day that page appears, every row already on a shelf
+starts working with no change here.
 
 ### The PlayStation ports
 
@@ -1903,10 +1958,17 @@ constants), and `tests/host_device_test.ts` the machine classification.
 
 ## Emulators (opt-in)
 
-shmupX ships no emulators. Settings → EMULATORS lists the eight cores in
+shmupX ships no emulators. Settings → EMULATORS lists the nine cores in
 [`static/emulators.json`](static/emulators.json); enabling one downloads it, and
 the console then appears as a tile in the top strip. With nothing installed
 there is only one section, so the strip hides itself entirely.
+
+One of the nine is ahead of the mirror: `snes` is listed, and the SUPER FAMICOM
+section it opens is real — it holds this browser's Dezaemon `.srm` shelf — but
+the cmg origin does not serve `/snes/play.html` yet, so its warm fails and its
+rows cannot boot. A failed warm leaves a core installed and flags the row, which
+is what keeps the shelf reachable while the player is missing. See *The Super
+Famicom library and shelf*.
 
 Nothing is vendored here. [`static/emu-sw.js`](static/emu-sw.js) is a service
 worker that mirrors an installed core's path prefixes from the cmg origin into
