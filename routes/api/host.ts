@@ -1,6 +1,7 @@
 import { define } from "../../utils.ts";
 import { crossSiteGuard, isDeploy } from "../../lib/local-guards.ts";
 import { detectHostDevice } from "../../lib/host-device.ts";
+import { lanOrigin, localInterfaces } from "../../lib/lan-address.ts";
 
 // GET /api/host — what machine is the launcher running on?
 //
@@ -68,7 +69,16 @@ export const handler = define.handlers({
     if (!isOwnMachine(info?.remoteAddr, ctx.req.headers)) {
       return Response.json({ available: false, reason: "remote client" });
     }
-    return Response.json(await detectHostDevice(), {
+    // The address another device on this network can open. The launcher hands
+    // it to a phone — as the link under a finished build, and as the QR code
+    // beside it — because the loopback address this usually serves on is not
+    // something a phone can fetch an APK from. Null when this machine has no
+    // network address worth offering (lib/lan-address.ts chooses).
+    const port = Number(new URL(ctx.req.url).port) || 80;
+    return Response.json({
+      ...await detectHostDevice(),
+      lanOrigin: lanOrigin(localInterfaces(), port),
+    }, {
       headers: { "cache-control": "no-store" },
     });
   },

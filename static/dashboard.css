@@ -308,6 +308,16 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 }
 .avatar-input:focus { outline: none; border-color: #ffe06a; box-shadow: 0 0 12px rgba(255, 224, 106, .4); }
 .game-row.sel .avatar-input { color: #1a1400; background: rgba(255, 255, 255, .35); border-color: rgba(20, 20, 0, .45); }
+/* Settings › BUILD SERVER: the pairing code as something a camera can read,
+   in the row beside the letters. On a white ground whatever the theme — a
+   phone's scanner wants the contrast that way round — and sized to stay
+   readable across a desk without crowding the code out of the row. */
+.pair-qr {
+  flex-shrink: 0; width: clamp(56px, 9vmin, 104px); height: clamp(56px, 9vmin, 104px);
+  margin-right: 1.5vmin; padding: 3px; box-sizing: border-box;
+  background: #fff; border-radius: 3px; line-height: 0;
+}
+.pair-qr svg { display: block; width: 100%; height: 100%; }
 /* The catalog header carries a third element (the Add button), so the title
    gives back a little size and the row can shrink further before it wraps. */
 .games-panel.with-strip .games-header { min-height: 56px; }

@@ -21,6 +21,9 @@
   // ps2-library.js is — the editor publishes, this list installs — so the two
   // read one store and one catalog. See static/eshop-library.js and
   // static/deza-shelf.js.
+  // The pairing QR under the BUILD CODE. Shared with the editor the same way
+  // the modules above are — see static/qr.js.
+  import { builderPairUrl, qrSvg } from '../static/qr.js';
   import {
     ESHOP_PREFIX,
     checkWebUpdate,
@@ -708,6 +711,43 @@
       ? '  ·  building "' + builder.current.level + '"'
       : builder.queued ? '  ·  ' + builder.queued + ' queued' : '';
     return 'ON  ·  code ' + formatBuilderCode(builder.code) + '  ·  ' + (targets.join(' ') || 'no targets detected') + doing;
+  });
+
+  // The address to put in the pairing QR. This machine's own, where it has one
+  // another device can reach (/api/host works it out — lib/lan-address.ts), so
+  // the phone lands on THIS launcher's editor and needs no internet to get
+  // there. Loopback is no use to anything but this screen, so when there is no
+  // LAN address the code points at the hosted editor instead, which is where a
+  // phone would otherwise have had to go looking.
+  const HOSTED_EDITOR_ORIGIN = 'https://codemonkey.games';
+  let pairOrigin = $derived.by(() => {
+    if (hostDevice && hostDevice.lanOrigin) return hostDevice.lanOrigin;
+    try {
+      const here = new URL(location.href);
+      const loopback = here.hostname === 'localhost' || here.hostname === '::1' ||
+        here.hostname.startsWith('127.');
+      if (!loopback) return here.origin;
+    } catch (_) { /* fall through */ }
+    return HOSTED_EDITOR_ORIGIN;
+  });
+
+  // The BUILD CODE as something a camera can read: the editor with ?builder=
+  // already on it, which that page reads on boot and stores. Printed BESIDE the
+  // letters rather than instead of them — the point is that both ways in are on
+  // screen at the moment the code is needed, so pairing costs one glance and
+  // either eight keystrokes or none. Only while the server is actually on:
+  // a code for a worker that is off pairs a device to nothing.
+  let builderQr = $derived.by(() => {
+    if (!builder || !builder.running || !builder.code) return '';
+    try {
+      return qrSvg(builderPairUrl(builder.code, pairOrigin), {
+        ecc: 'M',
+        // A camera wants dark-on-light whatever theme the launcher is wearing.
+        dark: '#000',
+        light: '#fff',
+        label: 'Pair a device with this build server',
+      });
+    } catch (_) { return ''; }
   });
 
   // The route answers 403 on the hosted origin, which is how the launcher
@@ -5857,6 +5897,14 @@
                 <span class="name">{it.label}</span>
                 <span class="sub">{it.sub}</span>
               </div>
+              {#if it.id === 'builder' && builderQr}
+                <!-- Scan instead of typing. Sits in the row beside the code so
+                     both ways in are read at once; it appears only while the
+                     build server is on, and goes when it is switched off. -->
+                <div class="pair-qr" title="Scan to pair a phone with this build server">
+                  {@html builderQr}
+                </div>
+              {/if}
               {#if it.id === 'avatar'}
                 <!-- Any emoji. A text-entry input, so onKey's typing guard keeps
                      the launcher's shortcuts out of it; stopPropagation keeps a

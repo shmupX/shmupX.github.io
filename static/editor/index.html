@@ -10304,7 +10304,44 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                 // A Windows build path has no spaces to break at, so without
                 // overflow-wrap it runs straight out of the menu panel.
                 '<br><span style="opacity:.7;overflow-wrap:anywhere">' +
-                esc(artifact) + '</span>';
+                esc(artifact) + '</span>' +
+                '<div id="export-artifact-qr" style="margin-top:6px"></div>';
+            // An APK is built on a desktop and installed on a phone, and those
+            // are not the same machine. The link above is same-origin, which on
+            // the usual loopback address is a link the phone cannot follow — so
+            // offer the same file at this machine's address on the local
+            // network, as a code its camera can read. Only for android: nothing
+            // else here is something you install by pointing a phone at it.
+            if (exportPlatform === 'android' && !note) {
+                showArtifactQr(document.getElementById('export-artifact-qr'), artifact);
+            }
+        }
+
+        // The finished APK as a QR code of its own download URL, so the phone
+        // that will run it can fetch it straight off this machine. Best-effort
+        // in every direction: no /api/host (the hosted site), no address worth
+        // offering (a desktop with only loopback), or no qr.js and the panel
+        // simply keeps the link it already had.
+        async function showArtifactQr(host, artifact) {
+            if (!host) return;
+            try {
+                const res = await fetch('/api/host', { cache: 'no-store' });
+                if (!res.ok) return;
+                const info = await res.json();
+                if (!info || !info.lanOrigin) return;
+                const url = info.lanOrigin + '/api/build-artifact?path=' +
+                    encodeURIComponent(artifact);
+                const { qrSvg } = await import('/qr.js');
+                host.innerHTML =
+                    '<div style="display:flex;gap:8px;align-items:center">' +
+                    '<div style="width:104px;height:104px;flex:0 0 auto;background:#fff;padding:4px;box-sizing:border-box">' +
+                    // Dark on white: a camera needs the contrast that way round,
+                    // whatever theme the menu is wearing.
+                    qrSvg(url, { ecc: 'M', dark: '#000', light: '#fff', label: 'Install on a phone' }) +
+                    '</div><div style="min-width:0;opacity:.85;line-height:1.4">' +
+                    'SCAN TO INSTALL<br><span style="opacity:.7;overflow-wrap:anywhere">' +
+                    url.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</span></div></div>';
+            } catch (_e) { /* the link above is still there */ }
         }
 
         function showPs2ExportActions(data, setStatus) {
@@ -10448,7 +10485,12 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             exportWorkerInfo = null;
             const code = q.getBuilderCode();
             if (!code) {
-                builderStatus('no desktop paired — an export that cannot build here needs the BUILD CODE of one');
+                // Both ways in, said together: the desktop prints the code and
+                // a QR of this same page with ?builder= already on it, so the
+                // choice is eight keystrokes or one camera — and neither costs
+                // a trip into a different screen to discover the other exists.
+                builderStatus('no desktop paired — type the BUILD CODE from a desktop running shmupX ' +
+                    '(Settings → BUILD SERVER), or point this device’s camera at the QR code printed beside it');
                 return;
             }
             builderStatus('looking for desktop ' + q.formatBuilderCode(code) + '…');
@@ -10468,7 +10510,7 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             const q = await exportQueue();
             let code = q.getBuilderCode();
             if (!code) {
-                const typed = prompt('This site cannot build apps itself. Type the BUILD CODE from a desktop running shmupX (Settings → BUILD SERVER) and the export is built there:');
+                const typed = prompt('This site cannot build apps itself. Type the BUILD CODE from a desktop running shmupX (Settings → BUILD SERVER) and the export is built there — or cancel and scan the QR code printed beside that code instead:');
                 if (!typed) {
                     // A cart has one more way out than a cloud level does: the
                     // file itself, built from a checkout. Say so rather than
