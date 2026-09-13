@@ -290,6 +290,13 @@ async function ps2Runtime(
 async function copyTree(src: string, dst: string): Promise<void> {
   await Deno.mkdir(dst, { recursive: true });
   for await (const entry of Deno.readDir(src)) {
+    // `deno desktop --include <dir>` embeds a directory wholesale, and on the
+    // exFAT volume this repo is built from that sweeps up macOS's AppleDouble
+    // fork of every file — there is no glob form of --exclude to stop it at
+    // embedArgs (scripts/build-desktop.ts), so the staging boundary is where
+    // they get dropped. Node reads this tree; a "._foo.js" beside foo.js is
+    // 4 KB of binary that is not the module it appears to be.
+    if (entry.name.startsWith("._")) continue;
     const s = join(src, entry.name);
     const d = join(dst, entry.name);
     if (entry.isDirectory) await copyTree(s, d);
@@ -396,6 +403,10 @@ export async function findArtifacts(
       // Directories count: a macOS `deno desktop` build is a <slug>.app bundle,
       // and /api/build-artifact serves a directory by zipping it on the way out.
       if (!entry.isFile && !entry.isDirectory) continue;
+      // An AppleDouble fork inherits the artifact's extension, so "._foo.apk"
+      // passes the `wanted` test and gets offered as a build result — and
+      // under platform "all", which tests nothing, every fork in dist/ does.
+      if (entry.name.startsWith("._")) continue;
       const lower = entry.name.toLowerCase();
       if (platform === "all" || wanted.some((ext) => lower.endsWith(ext))) {
         out.push(join(distDir, entry.name));

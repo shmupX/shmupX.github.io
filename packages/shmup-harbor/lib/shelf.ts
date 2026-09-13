@@ -645,7 +645,20 @@ async function localCollection(
       continue;
     }
     for (const entry of entries) {
-      if (!entry.isFile || !/\.(sav|bcr|bkr)$/i.test(entry.name)) continue;
+      // "._Dez SNES.sav" is macOS's AppleDouble fork of the save beside it —
+      // the collection lives on an exFAT volume here, which has nowhere to
+      // keep extended attributes, so every save has a 4 KB sidecar carrying
+      // its extension. Either way the fork is buildable and must not be:
+      // shelfSlug drops the leading "._" as punctuation, so a fork whose name
+      // savTitle finds no "Dez 2 - " prefix to strip from takes the SAME slug
+      // as the real save and readDir order alone decides which one
+      // `build:<platform> <name>` gets — while a prefixed one instead takes a
+      // slug of its own ("dez-2-avenge" beside "avenge"). Both end in the
+      // exporter being handed 4 KB of AppleDouble as if it were the cart.
+      if (
+        !entry.isFile || entry.name.startsWith("._") ||
+        !/\.(sav|bcr|bkr)$/i.test(entry.name)
+      ) continue;
       if (shelfSlug(savTitle(entry.name)) !== slug) continue;
       const path = join(dir, entry.name);
       return await hitFromSavFile(
@@ -1061,7 +1074,13 @@ export async function listShelf(
   ) {
     try {
       for await (const entry of Deno.readDir(dir)) {
-        if (!entry.isFile || !/\.(sav|bcr|bkr)$/i.test(entry.name)) continue;
+        // The same AppleDouble forks localCollection skips. Here each one
+        // inflates the count with a row that is not a game — either doubling
+        // the real save's slug or adding a "dez-2-<title>" of its own.
+        if (
+          !entry.isFile || entry.name.startsWith("._") ||
+          !/\.(sav|bcr|bkr)$/i.test(entry.name)
+        ) continue;
         const title = savTitle(entry.name);
         local.push({ slug: shelfSlug(title), title });
       }

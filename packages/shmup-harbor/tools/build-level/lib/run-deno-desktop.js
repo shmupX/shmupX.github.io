@@ -282,7 +282,13 @@ async function buildDenoDesktop(opts) {
   // at the path the entry resolves against import.meta.url.
   const stagedWww = path.join(appDir, "www");
   fs.rmSync(stagedWww, { recursive: true, force: true });
-  fs.cpSync(wwwRoot, stagedWww, { recursive: true });
+  // Without the filter this copies macOS's AppleDouble fork of every asset,
+  // and `--include ./www` then embeds each one in the binary: the shipped app
+  // carries a 4 KB "._foo.png" beside every real foo.png.
+  fs.cpSync(wwwRoot, stagedWww, {
+    recursive: true,
+    filter: (src) => !path.basename(src).startsWith("._"),
+  });
 
   const shell = opts.shell || "phaser-game.html";
   const entry = path.join(appDir, "app.ts");

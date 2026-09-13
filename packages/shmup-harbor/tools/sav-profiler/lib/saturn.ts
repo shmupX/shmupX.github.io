@@ -592,7 +592,16 @@ export async function armRun(
 async function listPngs(dir: string): Promise<string[]> {
   const out: string[] = [];
   for await (const e of Deno.readDir(dir)) {
-    if (e.isFile && e.name.toLowerCase().endsWith(".png")) {
+    // "._snap-001.png" is macOS's AppleDouble fork, not a shot: on this exFAT
+    // volume one appears beside every snapshot Mednafen writes, carrying the
+    // .png extension. snapshot() diffs two of these listings to find the file
+    // that just appeared, and a fork can surface in that diff on its own —
+    // whereupon the caller waits for an IEND that a 4 KB sidecar will never
+    // have, then fails to decode it as a raster.
+    if (
+      e.isFile && !e.name.startsWith("._") &&
+      e.name.toLowerCase().endsWith(".png")
+    ) {
       out.push(join(dir, e.name));
     }
   }

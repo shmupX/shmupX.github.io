@@ -203,6 +203,10 @@ async function buildCordova(opts) {
     (function findApks(dir) {
       if (!fs.existsSync(dir)) return;
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        // "._app-debug.apk" ends with .apk like the real thing, so an
+        // unfiltered walk copies macOS's 4 KB fork into dist/ and reports it
+        // as a built app alongside — or instead of — the APK.
+        if (e.name.startsWith("._")) continue;
         const full = path.join(dir, e.name);
         if (e.isDirectory()) findApks(full);
         else if (e.isFile() && full.endsWith(".apk")) {

@@ -39,6 +39,11 @@ export async function treeEntries(
   const out: ZipEntry[] = [];
   const walk = async (at: string) => {
     for await (const entry of Deno.readDir(at)) {
+      // macOS writes an AppleDouble fork beside every file on the exFAT volume
+      // this repo sits on. They are build litter, not part of the export, and
+      // zipping them ships a 4 KB "._foo" next to each real entry in every
+      // archive /api/build-artifact hands a user.
+      if (entry.name.startsWith("._")) continue;
       const path = join(at, entry.name);
       if (entry.isDirectory) await walk(path);
       else if (entry.isFile) {

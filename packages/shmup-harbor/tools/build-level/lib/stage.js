@@ -20,6 +20,11 @@ function copyDir(src, dst) {
   if (!fs.existsSync(src)) return;
   fs.mkdirSync(dst, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    // macOS's AppleDouble fork of every file, which exFAT gives us no way
+    // to avoid. Staged into www/ they become 4 KB of binary wearing an
+    // asset's extension, and everything downstream — the cordova copy, the
+    // zip, the embedded VFS — carries them into the shipped app.
+    if (entry.name.startsWith("._")) continue;
     const s = path.join(src, entry.name);
     const d = path.join(dst, entry.name);
     if (entry.isDirectory()) copyDir(s, d);

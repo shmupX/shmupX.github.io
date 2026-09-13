@@ -33,7 +33,13 @@ const outUrl = new URL(
 const saves: SaveEntry[] = [];
 try {
   for await (const entry of Deno.readDir(savesDir)) {
-    if (!entry.isFile || !SAVE_EXT.test(entry.name)) continue;
+    // macOS's AppleDouble forks carry the save's own extension on the exFAT
+    // volume this library lives on, so SAVE_EXT matches them; unfiltered they
+    // would list a 4 KB sidecar beside every real save. Same guard as
+    // scripts/upload-deza-saves.ts, which publishes from this directory.
+    if (
+      !entry.isFile || entry.name.startsWith("._") || !SAVE_EXT.test(entry.name)
+    ) continue;
     const { size } = await Deno.stat(new URL(entry.name, savesDir));
     saves.push({
       file: entry.name,
