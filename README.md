@@ -954,6 +954,17 @@ that is 2028.Ai's rather than the game's is keyed off it:
   behind the Saturn, measured with `deno task sav:profile`; an imported level
   now goes straight to `startGame()`.
 
+The additions travel the other way too. The Dezaemon behaviour this runtime grew
+in order to play the carts — the weapon handlers firing off the right level, the
+option pods, the bomb billed per Saturn frame, boss parts carrying their own hp —
+is the runtime's own rather than any one cart's, so a level has it whether it
+arrived as a `.sav` or out of the web catalog:
+
+![The extended runtime in play: the boxer boss worked over mid-screen, the ship's fire raking sideways along the bottom, HP and COMBO across the top](static/extended-runtime.webp)
+
+That is the runtime's own half of a `sav:profile` window — the visual profiler
+recorded it while the comparison harness below was being built.
+
 ### Profiling a cart against the Saturn
 
 `deno task sav:profile <level.sav> --from 44 --for 5` (macOS) plays the save in
