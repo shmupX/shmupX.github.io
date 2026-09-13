@@ -84,118 +84,101 @@ and `parseRomRegionTable()` reads it back so a test can hold the two equal:
 Ranges are inclusive in the ROM; `regions.js` stores exclusive ends. The 26
 regions tile the 128 KB exactly (`sfc-regions.test.js`).
 
-## CHECK SUM (open — `src/sfc/sram.js` reads it)
+## CHECK SUM (confirmed — traced in the ROM; `src/sfc/sram.js` reads it)
 
-32 bytes at `0x0000`, repeated byte-for-byte at `0x7E5A` (CHECK SUM COPY). The
-sample's block:
+32 bytes at `0x0000`, repeated byte-for-byte at `0x7E5A` (CHECK SUM COPY), read
+as sixteen little-endian words. The routine is at ROM `0x47B` (`$00:847B`,
+compute) and ROM `0x482` (`$00:8482`, verify); both set a mode flag and fall
+into one body at `$00:848A`. Disassembled with
+`dev-fixtures/debug-tools/w65c816dis.mjs`.
+
+Each word is
+
+    word = 0xFFFF - Σ segments ( Σ the segment's 16-bit little-endian words )
+
+with every addition truncated to 16 bits. Two details decide it, and both are
+visible in the loop:
 
 ```
-00000  52 ad 65 15 6b fb 85 e6 e3 07 57 74 1c 6b a0 94
-00010  83 66 46 e7 b3 30 c9 49 5b 03 9a 25 bb f7 6d f6
+0x4B2  LDY #$0000
+0x4B5  LDA #$0000
+0x4B8  CLC                          <- inside the loop; the branch lands here
+0x4B9  ADC [$2C],Y
+0x4BB  INY / INY
+0x4BD  DEX
+0x4BE  BNE $00:84B8
+0x4C0  CLC / ADC $00 / STA $00      ; running total across segments
+ …
+0x4C8  LDA #$FFFF / SEC / SBC $00   ; one's complement
+0x4CE  LDX $A8
+0x4D2  STA [$A0]                    ; compute mode ($A8 = 0)
+0x4D6  CMP [$A0]                    ; verify mode ($A8 = 1), else $D8 = 1
 ```
 
-Read as sixteen words it is not a per-block sum: byte sums, word sums, negated
-and XOR variants over 2/4/8 KB blocks of 32/64/128 KB all miss.
+The `CLC` is the branch target, so carry is discarded on every add rather than
+propagating — the accumulator is a plain mod-2^16 sum. The tail is
+`0xFFFF - total`, which is the one's complement, settling a question the saves
+alone could not: word 0's bytes are `52 AD`, and because `0x52 + 0xAD = 0xFF`
+byte-swapping and complementing produce identical bytes there, so the dumps were
+consistent with either. The ROM complements.
 
-The block holds exactly **one** surprising number, which can be stated three
-ways:
+A word is **not** a checksum of one contiguous span. Each is a scatter/gather
+over a list of segments, which is why sweeping contiguous ranges across two
+dumps found nothing. `$80:8665` (ROM `0x665`) is a table of seventeen pointers;
+each descriptor is a 3-byte target pointer followed by
+`{3-byte source, 2-byte
+length}` segments terminated by `0xFFFF`. SRAM banks
+`$70-$73` are linear, so `$71:0000` is offset `0x8000` and `$72:0000` is
+`0x10000`.
 
-- the sixteen little-endian words sum to `0xFFFF`;
-- words 1-15 sum to `0x52AD`, the 16-bit sum of the little-endian words of
-  PALETTE DATA (`0x40-0x33F`);
-- word 0 (`0xAD52`) is therefore the one's complement of that palette sum.
+| Word | At       | Covers                                                                                                                                                               |
+| ---- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | `0x00`   | GRAPIC DATA (`0x10000-0x20000`, as two bank-sized segments) + PALETTE DATA (`0x40`, `0x300`)                                                                         |
+| 1-6  | `0x02`   | stage _n_: MAP DATA `0x340 + n*0x900` (`0x900`), SCROLL `0x3940 + n*0x200` (`0x200`), MAP GROUP `0x4540 + n*0x100` (`0x100`)                                         |
+| 7-C  | `0x0E`   | stage _n_: ENEMY GROUP `0x4B80 + n*0x80`, ENEMY ODR `0xF800 + n*0x140`, BOSS GROUP `0x4E80 + n*0x40`, ENEMY DATA `0x8000 + n*0x200`, APPEAR DATA `0x8C00 + n*0x1200` |
+| D    | `0x1A`   | MY SHIP ODR, MY SHIP GROUP, TITLE GROUP, TITLE TYPE, ENDING GROUP, MOUSE SPEED, EDIT BGM, both HIGH SCORE tables, KEY CONFIG                                         |
+| E    | `0x1C`   | SOUND DATA (`0x5058`, `0x2E00`) + BGM PATCH (`0x7E7E`, `0x10`)                                                                                                       |
+| F    | `0x1E`   | the block's own first fifteen words (`0x0000`, `0x1E`)                                                                                                               |
+| —    | `0x7E78` | the copy's first fifteen words (`0x7E5A`, `0x1E`) — descriptor 0x10, the copy's equivalent of word F                                                                 |
 
-Any two of the three imply the third, so they are one observation with one
-degree of freedom, not three corroborating leads. Earlier notes recorded the
-third form as "word 0 read big-endian equals the palette sum"; that is the same
-bytes. `0x52 + 0xAD = 0xFF`, and byte-swapping and one's-complementing coincide
-exactly when a word's halves sum to `0xFF`, so this dump cannot tell which
-operation the ROM performs. Word 0 is the only one of the sixteen with that byte
-property. One's complement (`EOR #$FFFF`) is the more idiomatic 65C816
-construction — the SNES ROM header stores its own checksum/complement pair at
-`$FFDC`/`$FFDE` — but that is an argument from platform convention, not from
-this save.
+Word F explains the totalling property: it is `0xFFFF` minus the sum of words
+0-14, so the sixteen words sum to `0xFFFF` in every valid save, by construction
+rather than by coincidence. `readChecksumBlocks()` returns the words
+little-endian, so that is assertable directly.
 
-**A second dump settles both halves, and they fall opposite ways.** ALDI
-Adventure (NovaSquirrel, 2026-08-22 — the SFC library's first cart, 1,947 of
-2,048 graphics tiles used, 61,374 of 131,072 bytes different from the sample):
+Everything in the save is covered except CHECK SUM's own word F, RESERVED
+(`0x20-0x40`), RESERVED2 (`0x7FD2-0x7FF8`) and CHECK STRINGS — which is why the
+`T.TABATA` magic can be checked independently of the block.
 
-- the `0xFFFF` total **holds** — and it is not a rearrangement of anything else
-  there, since ALDI's own palette relation fails. Two independent saves landing
-  on the same 16-bit constant is 2^-32 by chance, so the total is **confirmed**;
-- the palette relation is **refuted**. ALDI's PALETTE DATA sums to `0x87AB`,
-  whose complement is `0x7854`, and its word 0 is `0x42D4`. Nor do its words
-  1-15 (`0xBD2B`) equal its palette sum. The match in the factory sample was
-  coincidence, as its statistics already suggested: across 20,000 random control
-  blocks the sweep space that found it hits something 30.7% of the time, and an
-  exact sweep of 31 accumulator models over 351 region runs returned 13
-  single-word hits against a chance expectation of 13.3.
+**For a writer:** compute the sixteen words in order, 0 through E, then F last
+over the fifteen already written, then copy all 32 bytes to `0x7E5A` and write
+the copy's own word at `0x7E78`. Nothing else is needed; there is no CRC, no
+seed and no table.
 
-So the block carries one real invariant — the total — and the palette lead is
-gone. (A second exact match in the original sweep, `0x04E80-0x07E8E` summing
-big-endian to `0x6B1C` = word 6, was always rejected: the range contains the
-CHECK SUM COPY block, and ~1.2 chance hits were expected.)
+### What the boot check does with it
 
-**It is also not a sum over a contiguous range, of any of the obvious kinds.**
-With two dumps a range must hit its target in both, which is a 2^-32 filter.
-Over every contiguous range in the 128 KB, discarding any that touches either
-checksum block as self-referential:
+`$00:8462` wraps the verify entry, taking a descriptor index in A, and the boot
+path calls it with `#$0F` then `#$10` — the block's own word, then the copy's.
+If the block fails and the copy passes, `$00:82F0` copies the 32 bytes back from
+`0x7E5A` over `0x0000`; if both fail the save is rejected. So the block and its
+copy are each self-checking, and the copy is a repair source rather than a
+second opinion.
 
-| Accumulator                       | Surviving ranges, all 16 words |                    |
-| --------------------------------- | ------------------------------ | ------------------ |
-| sum of LE words                   | **0**                          | nothing at all     |
-| sum of BE words                   | 1                              | at chance          |
-| sum of bytes (1-byte granularity) | 31                             | at or below chance |
+### Structure the table settles
 
-Zero survivors for the little-endian word sum is the strong one: whatever the
-routine does, it is not accumulating LE words over one contiguous span. That
-rules out the shape every earlier attempt assumed. What remains open is a
-strided or interleaved scan, a masked or transformed stream, or a polynomial
-(CRC/LFSR) — and the `0xFFFF` total is the constraint any candidate must
-satisfy.
+The descriptor strides answer four questions the region map left open, because
+the ROM is striding the regions it checksums:
 
-Two further results are structural rather than statistical:
-
-- **A per-region checksum table is refuted outright.** Four regions have a
-  little-endian word sum of `0x0000` (MY SHIP ODR, MOUSE SPEED, EDIT BGM, GRAPIC
-  DATA). Under any `word == sum(region)` or `word == ~sum(region)` scheme those
-  four would collide on one value; all sixteen words are pairwise distinct. No
-  assignment of regions to words can exist. The tiling variant fails too: it
-  needs the sixteen region sums to total `0xFFF1` (complement form) or `0x0001`
-  (negation), and the real totals are nowhere near — `0xDA35` whole-file,
-  `0xA8D6` from `0x40`, `0x50DA` over the lower 32 KB.
-- **The accumulator discards carry.** As integers the sixteen words sum to
-  `0x7FFFF` in the sample and `0x8FFFF` in ALDI — `0xFFFF` with seven and eight
-  overflows past 2^16 — so the total holds only for a carry-discarding sum, not
-  for a 65C816 `ADC` chain that propagates carry between iterations (which lands
-  mod `0xFFFF`, not mod 2^16). That the overflow count differs while the residue
-  does not is itself the confirmation.
-
-Why a single dump could never have settled this, for the record, since the
-temptation is to keep sweeping one file: a 32-byte block carries at most 240
-independent bits, and naming sixteen word-aligned ranges inside 64 KB costs 464
-before any algorithm choice. Measured on the sample alone, each target word was
-produced by a mean of **7,264 distinct ranges** — word 0 included, where 3,942
-ranges other than `0x40-0x33F` fit `0xAD52` equally well — and a CRC-16/CCITT
-sweep of 2.1M ranges yielded 1,080 spurious hits, within 2.3% of the 2^-16
-prediction. No single-word "match" from one file means anything.
-
-A second dump is worth what it differs by, so it is worth asking for the right
-one: measured against the sample, a save with every region edited collapses
-those 7,264 candidates to ~1.1, one with only the data regions edited to 58, one
-with only MAP DATA edited to 2,409, one that has merely been played to 3,751,
-and one that only fills in GRAPIC DATA to none at all. ALDI is the first kind,
-which is why it was decisive. If the remaining shapes need separating, the next
-step is not a third cart but controlled deltas — one byte written, saved,
-re-dumped — since each probe yields a membership bit for all sixteen words at
-once, and a probe also tells additive from polynomial for free: if a word moves
-by exactly the delta the rule is a sum, and if it moves by anything else it is a
-CRC or LFSR.
-
-Until the routine is traced (it lives near the `S-RAM CHECK!` strings at ROM
-`0x521`), comparing block and copy is the only integrity check, and
-`readChecksumBlocks()` does that — it returns the sixteen words little-endian,
-so the `0xFFFF` total is assertable without any new parsing.
+- **SCROLL EFECT really is 6 × `0x200`.** `map.js` called that split a
+  placeholder; descriptors 1-6 walk it at exactly that stride.
+- **MAP GROUP is per-stage**, 6 × `0x100` — 32 quads a stage, not one shared
+  table of 192.
+- **ENEMY DATA is per-stage**, 6 × `0x200` — four 128-byte records a stage,
+  which is the 24 the region holds, but grouped rather than pooled. ENEMY ODR
+  strides with it at 6 × `0x140` (20 four-byte quads per record), and ENEMY
+  GROUP at 6 × `0x80`.
+- **BOSS GROUP is 6 × `0x40`**, one boss of eight quads per stage, which is what
+  `groups.js` already assumed.
 
 ## PALETTE DATA (confirmed — `src/sfc/cgram.js`)
 
@@ -344,13 +327,11 @@ from when it is played is also open.
 
 ## Unresolved
 
-- the CHECK SUM algorithm — the palette lead is refuted and a contiguous range
-  sum is ruled out, so what is left is a strided, masked or polynomial scan,
-  with the `0xFFFF` total as the one constraint any candidate must satisfy;
 - the two flagged palette rows at 0x300;
 - the meaning of MAP DATA cell bit 7 (the 18-column width is measured, not yet
   seen rendered through real graphics);
-- SCROLL EFECT and SOUND DATA layouts;
+- the SOUND DATA layout (SCROLL EFECT's 6 x 0x200 split is now confirmed by the
+  checksum descriptors, but what indexes a curve is still open);
 - ENEMY DATA fields, APPEAR DATA records, the ODR frame lists;
 - GRAPIC DATA banking and where the sample's graphics live;
 - the four bytes after each high score, TITLE TYPE, KEY CONFIG bit meanings.
@@ -367,11 +348,10 @@ and the graphics bank and group renders when the dump has graphics).
 Closing the open items needs the ROM in a debugging emulator (Mesen 2's SNES
 core, or bsnes-plus) with the fixture as its `.srm`:
 
-1. a write breakpoint on `$700000-$70001F` during an in-editor save lands in the
-   checksum routine — the only route that settles it outright. Short of the
-   trace, the checksum needs controlled deltas rather than another dump: one
-   byte changed, saved, re-dumped, repeated 30-60 times (see CHECK SUM above for
-   what each kind of evidence is worth);
+1. the CHECK SUM is done — disassembled statically rather than traced, with
+   `dev-fixtures/debug-tools/w65c816dis.mjs`, and the routine reproduces all
+   seventeen words on both known dumps. Static disassembly is worth trying
+   before reaching for the emulator on the rest of these;
 2. the DMA log (SRAM source → VRAM/CGRAM destination) gives the GRAPIC DATA
    banking, which palette rows reach CGRAM, and which group feeds which layer;
 3. reads of SCROLL EFECT while scrolling, and of SOUND DATA during the APU
@@ -380,6 +360,8 @@ core, or bsnes-plus) with the fixture as its `.srm`:
    MAP DATA width, the APPEAR record shape and the ENEMY DATA fields.
 
 A second fixture with graphics has arrived: ALDI Adventure, in the SFC library.
-It has already decided the CHECK SUM's two open claims, and it is the diff the
-GRAPIC DATA, ENEMY DATA and SCROLL EFECT questions start from — 1,947 of 2,048
-tiles used and all 24 enemy records filled, against a sample whose bank is zero.
+It is the diff the GRAPIC DATA, ENEMY DATA and SCROLL EFECT questions start from
+— 1,947 of 2,048 tiles used and all 24 enemy records filled, against a sample
+whose bank is zero — and it is what proved the CHECK SUM routine, since the
+sample alone cannot tell a correct rule from one that merely fits a save whose
+graphics bank is empty.

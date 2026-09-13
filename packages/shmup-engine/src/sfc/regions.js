@@ -21,8 +21,8 @@ function region(name, label, offset, end, confidence, note) {
 }
 
 export const SFC_REGIONS = Object.freeze([
-    region("checksum", "CHECK SUM", 0x00000, 0x00020, "open",
-        "16 words, copied verbatim at 0x7E5A. Algorithm unknown, but the 16 little-endian words sum to 0xFFFF in both known dumps (confirmed). The sample's word 0 matching the PALETTE DATA word sum was coincidence — it fails on ALDI Adventure. Not a contiguous range sum either: across both dumps no range of LE words explains any word. A per-region table is ruled out too, since four regions sum to 0x0000 and all 16 words differ."),
+    region("checksum", "CHECK SUM", 0x00000, 0x00020, "confirmed",
+        "16 words, copied verbatim at 0x7E5A. Traced in the ROM ($00:847B computes, $00:8482 verifies): each word is 0xFFFF minus the mod-2^16 sum of the 16-bit little-endian words over a scatter/gather segment list, the descriptors being a 17-pointer table at $80:8665. Word 15 covers the first fifteen, so the block always totals 0xFFFF. See FORMAT-SFC.md for the segment map."),
     region("reserved0", "RESERVED", 0x00020, 0x00040, "confirmed",
         "Zero apart from the word 0x3160 at 0x3E in the sample."),
     region("palette", "PALETTE DATA", 0x00040, 0x00340, "confirmed",
