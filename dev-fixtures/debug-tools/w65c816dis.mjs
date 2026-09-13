@@ -160,7 +160,6 @@ set({
   0x0b: ["PHD", IMP],
   0x2b: ["PLD", IMP],
   0x4b: ["PHK", IMP],
-  0x6b: ["RTL", IMP],
   0x8b: ["PHB", IMP],
   0xab: ["PLB", IMP],
   0x5a: ["PHY", IMP],
