@@ -5,9 +5,9 @@
 // filing every entry in Cache Storage (static/eshop-library.js). The old
 // launcher pulled JSZip off a CDN for that step, which made an install depend
 // on a third origin being up; this is the part of JSZip the install actually
-// uses, on the platform's own DecompressionStream. lib/ps2/zip.ts is the
-// matching WRITER, and tests/zip_read_test.ts reads its archives back through
-// here.
+// uses, on the platform's own DecompressionStream.
+// packages/shmup-harbor/lib/ps2/zip.ts is the matching WRITER, and
+// tests/zip_read_test.ts reads its archives back through here.
 //
 // Scope: PKZip 2.0 — stored (0) and deflated (8) entries, read through the
 // central directory (the local headers are consulted only for where each

@@ -23,9 +23,9 @@ import {
 // use — a disc image the in-browser player boots, a folder that belongs on a
 // USB stick — so there has to be a way to fetch one. This is it.
 //
-// A DIRECTORY is served as a .zip of itself (lib/ps2/zip.ts), which is the only
-// shape a download can take and, for the athena.elf build, exactly the shape it
-// wants: unpack it and the folder is back.
+// A DIRECTORY is served as a .zip of itself (@shmupx/shmup-harbor/zip), which
+// is the only shape a download can take and, for the athena.elf build, exactly
+// the shape it wants: unpack it and the folder is back.
 //
 // LOCAL-ONLY, and confined to build/. The query names a path on disk, so the
 // containment check below is the whole security boundary — everything else

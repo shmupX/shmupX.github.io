@@ -300,12 +300,12 @@ function dosStamp(date: Date): { time: number; date: number } {
 }
 
 /**
- * A ZIP of `entries`, every one STORED. The same layout lib/ps2/zip.ts
- * writes, minus the deflate: that writer compresses whatever shrinks, and a
- * raw CD image shrinks a little, which would cost a 7.6 MB deflate here and
- * an inflate in the player's JavaScript for nothing — the core reads the
- * sectors straight out of the stored bytes. `date` is fixed by the caller so
- * the same disc zips to the same bytes.
+ * A ZIP of `entries`, every one STORED. The same layout
+ * `@shmupx/shmup-harbor/zip` writes, minus the deflate: that writer
+ * compresses whatever shrinks, and a raw CD image shrinks a little, which
+ * would cost a 7.6 MB deflate here and an inflate in the player's JavaScript
+ * for nothing — the core reads the sectors straight out of the stored bytes.
+ * `date` is fixed by the caller so the same disc zips to the same bytes.
  */
 export function buildStoredZip(
   entries: { path: string; data: Uint8Array }[],
