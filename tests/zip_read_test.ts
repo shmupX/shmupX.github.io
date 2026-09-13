@@ -4,9 +4,9 @@
 // what has to hold is that an archive comes back out as the files that went
 // in — stored or deflated — and that the archive shapes it refuses (zip64,
 // encryption, not a zip at all) fail with a reason rather than a wrong tree.
-// lib/ps2/zip.ts writes both kinds of entry (it stores what does not shrink),
-// so it is the witness; Deno has the DecompressionStream the reader inflates
-// with, so the same code runs here and in the page.
+// @shmupx/shmup-harbor/zip writes both kinds of entry (it stores what does
+// not shrink), so it is the witness; Deno has the DecompressionStream the
+// reader inflates with, so the same code runs here and in the page.
 
 import { assertEquals, assertRejects } from "@std/assert";
 import { buildZip } from "@shmupx/shmup-harbor/zip";
