@@ -3040,6 +3040,26 @@
     }
     return out;
   }
+  // The ship the player is about to fly, as stand-in title art.
+  //
+  // An import whose own TITLE 1/2 never decoded — the save drew none, or the
+  // frame names it carries are not in this atlas — has no logo of its own, and
+  // 2028.Ai's logo.gif is the wrong answer: it puts somebody else's name on
+  // this cart. The ship is the one piece of art every cart is guaranteed to
+  // have, because map-to-game.js gives every import a playerData whose frames
+  // travel with it. Null when none of them are in the atlas, so the caller can
+  // fall through rather than draw the atlas's placeholder frame.
+  function dezaPlayerTitleFrames(scene) {
+    var recipe = gameState._phaserRecipe;
+    var player = recipe && recipe.playerData;
+    var wanted = player && Array.isArray(player.texture) ? player.texture : [];
+    var atlas = scene.textures.get("game_asset");
+    var frames = [];
+    for (var i = 0; i < wanted.length; i++) {
+      if (atlas && atlas.has(wanted[i])) frames.push(wanted[i]);
+    }
+    return frames.length ? frames : null;
+  }
   function dezaHasStaffEntries(recipe) {
     return dezaStaffEntries(recipe).some(function(e) {
       return e.label || e.strips.some(Boolean);
@@ -3050,6 +3070,18 @@
   function dezaHasStaffRoll(recipe) {
     return !!dezaStaffCredits(recipe) || dezaHasStaffEntries(recipe);
   }
+  // Who made this. Read by both rolls — the title screen's panel and the
+  // ending's — so there is one place to change a name. Role labels wear the
+  // Dezaemon staff-roll decoration the carts themselves use.
+  var SHMUPX_STAFF_ROLL = [
+    [".: GAME TESTING :.", "SEAMUS MCNAMARA"],
+    [".: MAKER TESTING :.", "AGENT BASS, AGENT SMITH"],
+    [".: PLAN :.", "JC BUSTILLOS"],
+    [".: PROGRAM :.", "CODEMONKEY.GAMES"],
+    [".: R&D :.", "FABLE 5.1"],
+    [".: SOUND :.", "2-D"],
+    [".: STORY :.", "BRANDON"]
+  ];
   var StaffRollPanel = class extends Phaser.GameObjects.Container {
     constructor(scene) {
       super(scene, 0, 0);
@@ -3099,26 +3131,33 @@
         this.wakingG.setVisible(false);
         this._addDezaStaff(dezaStaffEntries(recipe), 150);
       } else {
-        this.namePanel = scene.add.sprite(15, 90, "game_ui", "staffrollName.gif");
-        this.namePanel.setOrigin(0, 0);
-        this.add(this.namePanel);
-        this.bringToTop(this.closeBtn);
-        this.addLinkButton("staffrollTwitterBtn.gif", 165, 118, "https://twitter.com/takaNakayama");
-        this.addLinkButton("staffrollTwitterBtn.gif", 131, 276, "https://twitter.com/bengasu");
-        this.addLinkButton("staffrollTwitterBtn.gif", 178, 304, "https://twitter.com/rereibara");
-        this.addLinkButton("staffrollLinkBtn.gif", 153, 329, "https://magazine.jp.square-enix.com/biggangan/introduction/highscoregirl/");
-        this.addLinkButton("staffrollLinkBtn.gif", 161, 355, "http://hi-score-girl.com/");
+        // shmupX's own staff roll. What this drew before was staffrollName.gif
+        // — a plate with 2028.Ai's credits baked into it — with that team's
+        // Twitter handles and two tie-in links positioned over the art. None of
+        // that is this project's team, and the links are the same share surface
+        // the title screen's TWEET button was removed for. Set as text in the
+        // game's own face instead, so a name can be changed without redrawing a
+        // plate and the roll stays legible at any scale.
+        //
         // athenaFont is pixel-exact at 8 px (one em = one 8 px cell), so both
-        // labels sit at that size with the game's 1 px drop shadow instead of an
+        // rows sit at that size with the game's 1 px drop shadow rather than an
         // outline, which would fill a pixel face's counters in.
-        var thanksLabelStyle = { fontSize: "8px", fontFamily: "athenaFont, Arial", fill: "#ffff00", align: "center", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1 };
-        var thanksNameStyle = { fontSize: "8px", fontFamily: "athenaFont, Arial", fill: "#ffffff", align: "center", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1 };
-        this.thanksLabel = scene.add.text(this.GCX, 393, "SPECIAL THANKS", thanksLabelStyle);
-        this.thanksLabel.setOrigin(0.5, 0);
-        this.add(this.thanksLabel);
-        this.thanksName = scene.add.text(this.GCX, 405, "SEAMUS MCNAMARA", thanksNameStyle);
-        this.thanksName.setOrigin(0.5, 0);
-        this.add(this.thanksName);
+        this.bringToTop(this.closeBtn);
+        var roleStyle = { fontSize: "8px", fontFamily: "athenaFont, Arial", fill: "#ffff00", align: "center", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1 };
+        var nameStyle = { fontSize: "8px", fontFamily: "athenaFont, Arial", fill: "#ffffff", align: "center", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1 };
+        this.staffLines = [];
+        var staffY = 108;
+        for (var si = 0; si < SHMUPX_STAFF_ROLL.length; si++) {
+          var roleText = scene.add.text(this.GCX, staffY, SHMUPX_STAFF_ROLL[si][0], roleStyle);
+          roleText.setOrigin(0.5, 0);
+          this.add(roleText);
+          this.staffLines.push(roleText);
+          var nameText = scene.add.text(this.GCX, staffY + 14, SHMUPX_STAFF_ROLL[si][1], nameStyle);
+          nameText.setOrigin(0.5, 0);
+          this.add(nameText);
+          this.staffLines.push(nameText);
+          staffY += 40;
+        }
       }
       this.setSize(this.GW, this.GH);
       this.setInteractive(new Phaser.Geom.Rectangle(0, 0, this.GW, this.GH), Phaser.Geom.Rectangle.Contains);
@@ -6678,6 +6717,14 @@
       var dezaFrame = (role) => deza && deza[role] && atlas.has(deza[role]) ? deza[role] : null;
       this.dezaTitle = !!(dezaFrame("title1") || dezaFrame("title2") || dezaFrame("credit"));
       var dezaLogo = dezaFrame("title1") || dezaFrame("title2");
+      // An import with no title art of its own flies its ship as the logo
+      // rather than wearing 2028.Ai's. A cart that DID draw a title keeps it
+      // (dezaTitle wins), a level that uploaded its own logo keeps that
+      // (custom_logo wins, below), and a stock level never gets here at all.
+      var shipFrames = !this.dezaTitle && isImportedLevel() &&
+          !this.textures.exists("custom_logo")
+        ? dezaPlayerTitleFrames(this)
+        : null;
       this.bg = this.add.tileSprite(
         0,
         0,
@@ -6686,24 +6733,64 @@
         "title_bg"
       );
       this.bg.setOrigin(0, 0);
-      if (this.dezaTitle) this.bg.setVisible(false);
+      // title_bg is 2028.Ai's own tiled backdrop, down to the year printed
+      // across it. A cart that drew its own title never shows it, and a cart
+      // flying its ship instead of a title must not either: black is what a
+      // Dezaemon title screen sits on anyway.
+      if (this.dezaTitle || shipFrames) this.bg.setVisible(false);
       this.titleG = this.add.sprite(0, 0, "game_ui", "titleG.gif");
       this.titleG.setOrigin(0, 0);
       this.titleG.setPosition(GAME_DIMENSIONS.WIDTH, 100);
-      if (this.dezaTitle) this.titleG.setVisible(false);
+      // titleG is 2028.Ai's own wordmark strip; a ship logo replaces the whole
+      // plate, so it goes with the rest.
+      if (this.dezaTitle || shipFrames) this.titleG.setVisible(false);
       if (this.dezaTitle && dezaLogo) {
         this.logo = this.add.sprite(0, 0, "game_asset", dezaLogo);
       } else if (!this.dezaTitle && this.textures.exists("custom_logo")) {
         this.logo = this.add.sprite(0, 0, "custom_logo");
+      } else if (shipFrames) {
+        this.logo = this.add.sprite(0, 0, "game_asset", shipFrames[0]);
       } else {
         this.logo = this.add.sprite(0, 0, "game_ui", "logo.gif");
       }
       this.logo.setOrigin(0.5);
-      this.logo.setPosition(
-        this.dezaTitle ? GAME_DIMENSIONS.CENTER_X : this.logo.width / 2,
-        this.dezaTitle ? -this.logo.height - 8 : -this.logo.height / 2
-      );
-      this.logo.setScale(2);
+      // Every stock plate rests at 1:1 and drops in from twice that. A ship
+      // cannot: it is a ~32px sprite where logo.gif is a full-width banner, so
+      // it rests at the largest WHOLE-pixel factor that still fits the logo
+      // band — a fractional one shimmers on pixel art — and drops in centred.
+      this.logoRest = 1;
+      if (shipFrames) {
+        this.logoRest = Math.max(
+          2,
+          Math.min(
+            5,
+            Math.floor(160 / Math.max(1, this.logo.width)),
+            Math.floor(110 / Math.max(1, this.logo.height))
+          )
+        );
+        if (shipFrames.length > 1 && !this.anims.exists("title_ship")) {
+          this.anims.create({
+            key: "title_ship",
+            frames: shipFrames.map(function (frame) {
+              return { key: "game_asset", frame: frame };
+            }),
+            frameRate: 6,
+            repeat: -1
+          });
+        }
+        if (shipFrames.length > 1) this.logo.play("title_ship");
+        // Clear of the top edge at the entry scale, whichever frame is showing.
+        this.logo.setPosition(
+          GAME_DIMENSIONS.CENTER_X,
+          -this.logo.height * this.logoRest * 2
+        );
+      } else {
+        this.logo.setPosition(
+          this.dezaTitle ? GAME_DIMENSIONS.CENTER_X : this.logo.width / 2,
+          this.dezaTitle ? -this.logo.height - 8 : -this.logo.height / 2
+        );
+      }
+      this.logo.setScale(this.logoRest * 2);
       if (this.dezaTitle && !dezaLogo) this.logo.setVisible(false);
       var dezaSub = this.dezaTitle && dezaFrame("title1") ? dezaFrame("title2") : null;
       if (dezaSub) {
@@ -6714,6 +6801,11 @@
         var subtitleKey = "subTitle" + (LANG === "ja" ? "" : "En") + ".gif";
         this.subTitle = this.add.sprite(0, 0, "game_ui", subtitleKey);
       }
+      // 2028.Ai's subtitle plate names 2028.Ai, which under a ship logo is the
+      // same borrowed branding the swap exists to avoid. An author who uploaded
+      // their own subtitle keeps it — that is this cart's name, not someone
+      // else's.
+      var shipOnlyLogo = !!shipFrames && !this.textures.exists("custom_subTitle");
       this.subTitle.setOrigin(0.5);
       this.subTitle.setPosition(
         this.dezaTitle ? GAME_DIMENSIONS.CENTER_X : this.subTitle.width / 2,
@@ -6721,6 +6813,7 @@
       );
       this.subTitle.setScale(3);
       if (this.dezaTitle && !dezaSub) this.subTitle.setVisible(false);
+      if (shipOnlyLogo) this.subTitle.setVisible(false);
       if (this.dezaTitle) this._buildDezaTitle(recipe, dezaFrame);
       this.belt = this.add.graphics();
       this.belt.fillStyle(0, 1);
@@ -6749,7 +6842,10 @@
       } else {
         this.copyright = this.add.sprite(0, 0, "game_ui", "titleCopyright.gif");
         this.copyright.setOrigin(0, 0);
-        if (this.dezaTitle) this.copyright.setVisible(false);
+        // 2028.Ai's copyright line names a rights holder who has nothing to do
+        // with an imported cart. It is already hidden for a cart that drew its
+        // own title; a cart flying its ship is the same case.
+        if (this.dezaTitle || shipFrames) this.copyright.setVisible(false);
       }
       this.copyright.y = GAME_DIMENSIONS.HEIGHT - this.copyright.height - 6;
       this.scoreTitleImg = this.add.sprite(32, 0, "game_ui", "hiScoreTxt.gif");
@@ -6837,15 +6933,17 @@
       this.staffrollBtn.setOrigin(1, 0);
       this.staffrollBtn.setScale(1, 0);
       this.staffrollBtn.on("pointerup", this.showStaffroll, this);
+      // TWEET is gone from every build. It was already hidden for a cart, for
+      // an imported level and inside an exported app — three conditions for a
+      // button nothing here wants to offer — and the share it opened names a
+      // service and a hashtag this project does not post to. The sprite is
+      // still created so the layout code below (and the ending's tweetBtnHidden
+      // arithmetic) keeps its reference point.
+      this.twitterBtn.setVisible(false);
+      this.twitterBtn.disableInteractive();
       if (this.dezaTitle) {
-        this.twitterBtn.setVisible(false);
-        this.twitterBtn.disableInteractive();
         this.howtoBtn.setVisible(false);
         this.howtoBtn.disableInteractive();
-      }
-      if (isExportedLevelApp() || isImportedLevel()) {
-        this.twitterBtn.setVisible(false);
-        this.twitterBtn.disableInteractive();
       }
       if ((this.dezaTitle || isImportedLevel()) && !dezaHasStaffRoll(recipe)) {
         this.staffrollBtn.setVisible(false);
@@ -6913,8 +7011,10 @@
         });
         this.tweens.add({
           targets: this.logo,
-          scaleX: 1,
-          scaleY: 1,
+          // 1 for every stock plate; a ship logo rests at the whole-pixel
+          // factor create() sized it to.
+          scaleX: this.logoRest,
+          scaleY: this.logoRest,
           duration: 900,
           delay: 1100,
           ease: "Quint.easeIn"
@@ -7395,7 +7495,20 @@
       // import carries no storyData. Skipping on that fact directly closes
       // the hole whichever way the flag went.
       var advNoOwnStory = !!(recipe && !recipe.storyData && isImportedLevel());
-      if (recipe && ((recipe.noStory && !this.__advSceneScripted) || advNoOwnStory)) {
+      // And on an import the NO STORY flag is honoured whatever scene scripts
+      // are loaded. Story off is the Dezaemon default — map-to-game.js stamps
+      // noStory on every save it imports, since the format has nowhere to put
+      // a cutscene — so an import that still carries a storyData got one from
+      // the editor, and only the author's own toggle should bring it back. The
+      // !__advSceneScripted escape below only ever served HOOK-mode adv
+      // scripts (a replace-mode one has already returned in
+      // ScriptedAdvScene.create), and hooking a scene an import has no story
+      // for rendered 2028.Ai's hardcoded scenario underneath the hooks.
+      var advImported = !!(recipe && isImportedLevel());
+      if (
+        recipe &&
+        ((recipe.noStory && (advImported || !this.__advSceneScripted)) || advNoOwnStory)
+      ) {
         this.endingFlg = decideEnding(recipe);
         var nextScene = this.endingFlg ? "PhaserEndingScene" : "PhaserGameScene";
         var game = this.game;
@@ -15084,11 +15197,12 @@
         self.tweetBtn.setFrame("twitterBtn1.gif");
         openUrl(buildTweetUrl());
       });
-      if (isExportedLevelApp() || isImportedLevel()) {
-        this.tweetBtn.setVisible(false);
-        this.tweetBtn.disableInteractive();
-        this.tweetBtnHidden = true;
-      }
+      // Gone from every build — see the title scene. tweetBtnHidden is what the
+      // buttons below measure their position from, so the flag is set rather
+      // than the sprite removed.
+      this.tweetBtn.setVisible(false);
+      this.tweetBtn.disableInteractive();
+      this.tweetBtnHidden = true;
       this.gotoTitleBtn = this.add.sprite(0, 0, "game_ui", "gotoTitleBtn0.gif");
       this.gotoTitleBtn.setOrigin(0.5);
       this.gotoTitleBtn.x = GCX7;
@@ -15418,11 +15532,12 @@
       this.tweetBtn.on("pointerup", function() {
         openUrl2(buildTweetUrl2());
       });
-      if (isExportedLevelApp() || isImportedLevel()) {
-        this.tweetBtn.setVisible(false);
-        this.tweetBtn.disableInteractive();
-        this.tweetBtnHidden = true;
-      }
+      // Gone from every build — see the title scene. tweetBtnHidden is what the
+      // buttons below measure their position from, so the flag is set rather
+      // than the sprite removed.
+      this.tweetBtn.setVisible(false);
+      this.tweetBtn.disableInteractive();
+      this.tweetBtnHidden = true;
       this.gotoTitleBtn = this.add.sprite(0, 0, "game_ui", "gotoTitleBtn0.gif");
       this.gotoTitleBtn.setOrigin(0, 0);
       this.gotoTitleBtn.x = GCX8 - this.gotoTitleBtn.width / 2;
@@ -15845,11 +15960,20 @@
         staffG.play("staffroll_waking");
       } catch (e) {
       }
-      try {
-        var namePanel = this.add.sprite(15, 90, "game_ui", "staffrollName.gif");
-        namePanel.setOrigin(0, 0);
-        this.staffRollContainer.add(namePanel);
-      } catch (e) {
+      // The same roll the title screen shows (StaffRollPanel), set as text for
+      // the same reason: staffrollName.gif is a plate with 2028.Ai's own
+      // credits drawn into it.
+      var rollRoleStyle = { fontSize: "8px", fontFamily: "athenaFont, Arial", fill: "#ffff00", align: "center", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1 };
+      var rollNameStyle = { fontSize: "8px", fontFamily: "athenaFont, Arial", fill: "#ffffff", align: "center", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1 };
+      var rollY = 100;
+      for (var ri = 0; ri < SHMUPX_STAFF_ROLL.length; ri++) {
+        var rollRole = this.add.text(GCX8, rollY, SHMUPX_STAFF_ROLL[ri][0], rollRoleStyle);
+        rollRole.setOrigin(0.5, 0);
+        this.staffRollContainer.add(rollRole);
+        var rollName = this.add.text(GCX8, rollY + 14, SHMUPX_STAFF_ROLL[ri][1], rollNameStyle);
+        rollName.setOrigin(0.5, 0);
+        this.staffRollContainer.add(rollName);
+        rollY += 40;
       }
       var closeText = this.add.text(GCX8, GH13 - 30, "TAP TO CLOSE", {
         fontFamily: "sans-serif",

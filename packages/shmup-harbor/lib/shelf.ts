@@ -44,6 +44,7 @@ import { loadSavLevelFromBytes, savTitle } from "./ps2/sav.ts";
 import { encodePng } from "./ps2/png.ts";
 import * as deza from "@shmupx/shmup-engine";
 import { repoRoot } from "./repo-root.ts";
+import { forceImportedNoStory } from "./imported-level.ts";
 
 const interleave = deza.interleave as (data: Uint8Array) => Uint8Array;
 
@@ -353,6 +354,9 @@ export async function levelRecordFromCart(
   // mints the leaderboard id (gameIdForLevel in tools/build-level). Keeping
   // them the same is what makes two builds of one cart share a board.
   record.name = level.name;
+  if (forceImportedNoStory(record)) {
+    notes.push("no story of its own — the app skips the story scenes");
+  }
   return { record, name: level.name, notes };
 }
 
@@ -418,7 +422,11 @@ async function cacheLevelFile(
 async function renameCached(path: string, name: string): Promise<boolean> {
   try {
     const record = JSON.parse(await Deno.readTextFile(path));
-    if (record?.name === name) return true;
+    // A record cached before `forceImportedNoStory` existed has no noStory on
+    // it, and a cache hit never goes near the decoder that would add one. Repair
+    // it on the way out rather than making every old entry a --refresh.
+    const repaired = forceImportedNoStory(record);
+    if (record?.name === name && !repaired) return true;
     record.name = name;
     await Deno.writeTextFile(path, JSON.stringify(record));
     return true;

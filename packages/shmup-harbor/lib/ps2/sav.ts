@@ -55,6 +55,8 @@ export interface GameJson {
   bossData?: Record<string, Record<string, unknown>>;
   playerData?: Record<string, unknown>;
   dezaemonTitle?: Record<string, string>;
+  meta?: Record<string, unknown>;
+  noStory?: boolean;
   [stage: string]: unknown;
 }
 
@@ -310,6 +312,12 @@ export async function loadSavLevelFromBytes(
     bossData: gameJson.bossData ?? {},
     playerData: gameJson.playerData ?? {},
     dezaemonTitle: gameJson.dezaemonTitle,
+    // Neither of these is anything the console reads. They ride along so that
+    // this record — the narrow one, one stage of one game — cannot be handed to
+    // a browser or app build looking like a stock level and be dressed in
+    // 2028.Ai's story (lib/imported-level.ts says what that costs).
+    meta: gameJson.meta as Record<string, unknown> | undefined,
+    noStory: gameJson.noStory as boolean | undefined,
   };
   // The editor only carries these when they line up with the grid, and the
   // runtime pairs them by index — a mismatch would silently re-time the stage.

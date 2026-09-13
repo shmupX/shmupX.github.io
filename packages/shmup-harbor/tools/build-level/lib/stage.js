@@ -65,6 +65,42 @@ function patchBundleForOffline(bundleSrc) {
   return js;
 }
 
+// The whole-game records only a Dezaemon import carries, and the three
+// questions the runtime's isImportedLevel() asks. A hand-kept mirror of
+// packages/shmup-harbor/lib/imported-level.ts: that module is Deno TypeScript
+// and this tool is plain Node with no build step, so the rule is written twice
+// rather than shared. tests/imported_level_test.ts pins the two together.
+const DEZAEMON_KEYS = [
+  "dezaemonBgm",
+  "dezaemonTitle",
+  "dezaemonTitleScreen",
+  "dezaemonModels",
+  "dezaemonBullets",
+  "dezaemonItems",
+  "dezaemonCredits",
+];
+
+function isImportedRecord(record) {
+  if (!record || typeof record !== "object") return false;
+  const meta = record.meta;
+  if (meta && (meta.source === "dezaemon2" || meta.dezaemonSettings)) return true;
+  for (const key of DEZAEMON_KEYS) if (record[key]) return true;
+  const enemies = record.enemyData || {};
+  for (const key in enemies) if (enemies[key] && enemies[key].dezaemon) return true;
+  return false;
+}
+
+// A Dezaemon cart has no story, and a record that does not say so opens the app
+// on 2028.Ai's hardcoded one. Returns the record to write — a copy when the flag
+// had to be added, so nothing else holding it is surprised.
+function withImportedNoStory(levelData) {
+  if (!levelData || typeof levelData !== "object") return levelData;
+  if (levelData.noStory === true || levelData.storyData) return levelData;
+  if (!isImportedRecord(levelData)) return levelData;
+  console.log("  story: a Dezaemon cart with no story of its own — scenes off.");
+  return Object.assign({}, levelData, { noStory: true });
+}
+
 // gameDir  = <cmg>/static/games/2028-ai
 // gamepad  = <cmg>/static/gamepad-compatibility-plugin.js (optional)
 // phaserGlobalShim = <cmg>/static/phaser-plugins/phaser-global.js (optional);
@@ -138,9 +174,15 @@ function stageWww(opts) {
 
   // The level the patched bundle fetches as foo.json. Keep the full record
   // (including atlasImageDataURL) so the plugin can merge the custom atlas.
+  //
+  // This is the last door every build goes through, including the one the Deno
+  // side cannot reach: `--level-file` is normalized before it gets here, but a
+  // record this tool fetched from Firebase itself (index.js's fetchLevel) has
+  // touched nothing else. So the no-story rule is applied here too — see
+  // packages/shmup-harbor/lib/imported-level.ts for what it is and why.
   fs.writeFileSync(
     path.join(wwwRoot, "foo.json"),
-    JSON.stringify(levelData),
+    JSON.stringify(withImportedNoStory(levelData)),
   );
 
   // Offline entry document. The editor's GOD MODE toggle rides the level
@@ -159,4 +201,11 @@ function stageWww(opts) {
   );
 }
 
-module.exports = { stageWww, patchBundleForOffline, copyDir, copyFile };
+module.exports = {
+  stageWww,
+  patchBundleForOffline,
+  copyDir,
+  copyFile,
+  isImportedRecord,
+  withImportedNoStory,
+};

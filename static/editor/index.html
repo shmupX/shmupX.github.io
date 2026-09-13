@@ -9680,6 +9680,15 @@ function GAME3D_RUNTIME(DATA) {
                 // placement inside its slots and the staff-roll labels.
                 payload.dezaemonTitleScreen = (gameData && gameData.dezaemonTitleScreen) || null;
                 payload.dezaemonCredits = (gameData && gameData.dezaemonCredits) || null;
+                // Where this game came from. meta.source === "dezaemon2" is what
+                // the runtime's isImportedLevel() asks first — it decides the
+                // AdvScene skip, the CONTINUE? prompt and the title screen's
+                // fallback art — and meta.dezaemonSettings carries the cart's
+                // own game mode (level-loader.js's mergeRecipe reads it to play
+                // a horizontal cart horizontally). Unlisted until now, so every
+                // import lost both on its first cloud round trip and came back
+                // looking like a stock level.
+                payload.meta = (gameData && gameData.meta) || null;
                 payload.noStory = !!(gameData && gameData.noStory);
                 payload.godMode = godModeOn;
                 // Save audio URL overrides
@@ -9851,6 +9860,8 @@ function GAME3D_RUNTIME(DATA) {
                 else delete gameData.dezaemonTitleScreen;
                 if (d.dezaemonCredits) gameData.dezaemonCredits = d.dezaemonCredits;
                 else delete gameData.dezaemonCredits;
+                if (d.meta && typeof d.meta === 'object') gameData.meta = d.meta;
+                else delete gameData.meta;
                 if (d.noStory) gameData.noStory = true;
                 else delete gameData.noStory;
                 syncNoStoryKnob();

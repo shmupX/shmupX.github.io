@@ -25,6 +25,7 @@ import { buildZip, treeEntries } from "./ps2/zip.ts";
 import { buildPs2 } from "./ps2/build.ts";
 import { packagedBuildRoot, stagedRuntimeRoot } from "./build-workspace.ts";
 import { repoRoot } from "./repo-root.ts";
+import { forceImportedNoStory } from "./imported-level.ts";
 
 export const EXPORT_PLATFORMS: Set<string> = new Set([
   "android",
@@ -916,6 +917,14 @@ async function stageLevelRecord(
       "'levelRecord' has no enemylist — that is not a level.",
       400,
     );
+  }
+  // A cart has no story, and a record that does not say so opens the app on
+  // 2028.Ai's — see forceImportedNoStory. This is the door both browser-side
+  // paths come through (the editor's own POST, and a job the worker picked up
+  // off the queue), so a phone running a months-old editor bundle is covered
+  // here rather than not at all.
+  if (forceImportedNoStory(record as Record<string, unknown>)) {
+    log("This is a Dezaemon cart with no story of its own — story scenes off.");
   }
   const dir = join(packagedBuildRoot(), "records");
   await Deno.mkdir(dir, { recursive: true });

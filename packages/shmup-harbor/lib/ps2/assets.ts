@@ -50,6 +50,15 @@ export interface LevelRecord {
    * credit strips.
    */
   dezaemonTitle?: Record<string, string>;
+  /**
+   * Where the game came from — `{ source: "dezaemon2", … }` for an import.
+   * The console has no use for it; it is here so this record cannot be handed
+   * to a browser or app build looking like a stock level (see
+   * lib/imported-level.ts).
+   */
+  meta?: Record<string, unknown>;
+  /** No adventure interludes, which is every Dezaemon import. */
+  noStory?: boolean;
 }
 
 export interface StagedFile {
