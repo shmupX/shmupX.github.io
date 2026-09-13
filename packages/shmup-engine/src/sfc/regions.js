@@ -22,7 +22,7 @@ function region(name, label, offset, end, confidence, note) {
 
 export const SFC_REGIONS = Object.freeze([
     region("checksum", "CHECK SUM", 0x00000, 0x00020, "open",
-        "16 words, copied verbatim at 0x7E5A. Algorithm unknown; word 0 read big-endian equals the 16-bit word sum of PALETTE DATA in the sample (a lead, not proof)."),
+        "16 words, copied verbatim at 0x7E5A. Algorithm unknown; the 16 little-endian words sum to 0xFFFF, and word 0 is the complement (equivalently the byte-swap) of the PALETTE DATA word sum — one observation, not two, and not separable from coincidence in a single dump. A per-region table is ruled out: four regions sum to 0x0000 and all 16 words differ."),
     region("reserved0", "RESERVED", 0x00020, 0x00040, "confirmed",
         "Zero apart from the word 0x3160 at 0x3E in the sample."),
     region("palette", "PALETTE DATA", 0x00040, 0x00340, "confirmed",

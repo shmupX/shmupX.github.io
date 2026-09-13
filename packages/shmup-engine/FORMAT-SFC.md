@@ -8,16 +8,25 @@ layout whose stride and shape match the ROM's own label but whose semantics are
 unverified. The Saturn sequel's notes are in `FORMAT.md`; the two formats share
 nothing but the palette word.
 
-Two reference files, both gitignored:
+Three reference files:
 
-| File                                      | Where                     | What it is                                |
-| ----------------------------------------- | ------------------------- | ----------------------------------------- |
-| `dezaemon-sfc-sample.sav`                 | `fixtures/`               | 128 KB emulator dump — the factory sample |
-| `Kaite Tsukutte Asoberu - Dezaemon ….sfc` | repo-root `dev-fixtures/` | the 512 KB ROM (an English-patched build) |
+| File                                      | Where                                  | What it is                                |
+| ----------------------------------------- | -------------------------------------- | ----------------------------------------- |
+| `dezaemon-sfc-sample.sav`                 | `fixtures/` (gitignored)               | 128 KB emulator dump — the factory sample |
+| `Dez SNES.sav`                            | repo-root `dev-fixtures/debug-tools/`  | the same factory sample, committed        |
+| `Kaite Tsukutte Asoberu - Dezaemon ….sfc` | repo-root `dev-fixtures/` (gitignored) | the 512 KB ROM (an English-patched build) |
 
 The sample dump's first 64 KB is byte-identical to ROM `0x50000-0x5FFFF`, the
 image the game copies into fresh SRAM, so it is the built-in sample game as
 shipped and has never been edited. Its upper 64 KB is all zero.
+
+`Dez SNES.sav` is that same dump byte for byte (every documented value below
+reproduces from it, down to the per-stage map counts). It is a duplicate, not a
+second fixture: for the open questions it carries no information the sample did
+not, and for the CHECK SUM specifically it is worth exactly zero bits. Note also
+that it sits inside the one path the repo's `.gitignore` exempts — a directory
+whose own comment scopes it to "scripts that read the fixtures, not the fixtures
+themselves" — and that its lower 64 KB is a verbatim copy of the commercial ROM.
 
 All multi-byte integers are **little-endian** (the 65C816 is little-endian), the
 opposite of the Saturn notes.
@@ -84,12 +93,89 @@ sample's block:
 ```
 
 Read as sixteen words it is not a per-block sum: byte sums, word sums, negated
-and XOR variants over 2/4/8 KB blocks of 32/64/128 KB all miss. One lead: word 0
-read big-endian (`0x52AD`) equals the 16-bit sum of the little-endian words of
-PALETTE DATA (`0x40-0x33F`). No other word matches the sum of any run of
-labelled regions. Until the routine is traced (it lives near the `S-RAM CHECK!`
-strings at ROM `0x521`), comparing block and copy is the only integrity check,
-and `readChecksumBlocks()` does that.
+and XOR variants over 2/4/8 KB blocks of 32/64/128 KB all miss.
+
+The block holds exactly **one** surprising number, which can be stated three
+ways:
+
+- the sixteen little-endian words sum to `0xFFFF`;
+- words 1-15 sum to `0x52AD`, the 16-bit sum of the little-endian words of
+  PALETTE DATA (`0x40-0x33F`);
+- word 0 (`0xAD52`) is therefore the one's complement of that palette sum.
+
+Any two of the three imply the third, so they are one observation with one
+degree of freedom, not three corroborating leads. Earlier notes recorded the
+third form as "word 0 read big-endian equals the palette sum"; that is the same
+bytes. `0x52 + 0xAD = 0xFF`, and byte-swapping and one's-complementing coincide
+exactly when a word's halves sum to `0xFF`, so this dump cannot tell which
+operation the ROM performs. Word 0 is the only one of the sixteen with that byte
+property. One's complement (`EOR #$FFFF`) is the more idiomatic 65C816
+construction — the SNES ROM header stores its own checksum/complement pair at
+`$FFDC`/`$FFDE` — but that is an argument from platform convention, not from
+this save.
+
+Treat the palette attribution itself as **unconfirmed**. It is not
+distinguishable from a search artifact: across 20,000 random control blocks, the
+sweep space that found it hits something 30.7% of the time, and an exact sweep of
+31 accumulator models over 351 region runs returned 13 single-word hits against a
+chance expectation of 13.3 — word 0's is one of them. Under the sweep as
+originally run there is also a second exact match, `0x04E80-0x07E8E` (BOSS GROUP
+through BGM PATCH) whose big-endian word sum is `0x6B1C` = word 6; it is rejected
+because the range contains the CHECK SUM COPY block and so cannot be a source,
+and because ~1.2 chance hits are expected. Neither survives as evidence on its
+own.
+
+Two results are firmer, and both are structural rather than statistical:
+
+- **A per-region checksum table is refuted outright.** Four regions have a
+  little-endian word sum of `0x0000` (MY SHIP ODR, MOUSE SPEED, EDIT BGM, GRAPIC
+  DATA). Under any `word == sum(region)` or `word == ~sum(region)` scheme those
+  four would collide on one value; all sixteen words are pairwise distinct. No
+  assignment of regions to words can exist. The tiling variant fails too: it
+  needs the sixteen region sums to total `0xFFF1` (complement form) or `0x0001`
+  (negation), and the real totals are nowhere near — `0xDA35` whole-file,
+  `0xA8D6` from `0x40`, `0x50DA` over the lower 32 KB.
+- **The accumulator discards carry.** As integers the sixteen words sum to
+  `0x7FFFF` — `0xFFFF` with seven overflows past 2^16 — so the `0xFFFF` total
+  holds only for a carry-discarding sum, not for a 65C816 `ADC` chain that
+  propagates carry between iterations (which lands mod `0xFFFF`, not mod 2^16).
+
+**The remaining fifteen words are not identifiable from this dump, and that is
+provable rather than a matter of effort.** The block carries at most 240
+independent bits; naming sixteen word-aligned ranges inside 64 KB costs 464 bits
+before any algorithm choice. Measured on this file, under the one rule we think
+is in play, each target word is produced by a mean of **7,264 distinct ranges** —
+word 0 included, where 3,942 ranges other than `0x40-0x33F` fit `0xAD52` equally
+well. A CRC-16/CCITT sweep of 2.1M ranges yielded 1,080 spurious hits against
+these targets, within 2.3% of the 2^-16 prediction. Any future single-word
+"match" is therefore worth nothing on its own; only a rule explaining two or more
+words at once counts.
+
+What further evidence buys, measured on this file:
+
+| Evidence | Candidates per word | Gain |
+| --- | --- | --- |
+| this dump alone | 7,264 | — |
+| a second save with **every** region edited | 1.1 | 12.6 bits — decisive |
+| a second save with the data regions edited | 58 | 7.0 bits |
+| a second save with only MAP DATA edited | 2,409 | 1.7 bits |
+| a second save that has only been played (HIGH SCORE moved) | 3,751 | 1.0 bits |
+| a dump that only fills in GRAPIC DATA | 7,264 | **zero** |
+
+So "any second fixture" is not the ask: a save differing in one region is worth
+one or two bits and leaves thousands of candidates. What closes this is either
+one maximally-different save, or — better, because it also settles the algorithm
+family — a series of single-byte writes with a re-dump after each. Each probe
+yields a membership bit for all sixteen words at once ("is this byte inside that
+word's range"), so roughly 30-60 shared probe-dumps pin every range, and 12-14
+per word adaptively. A probe also distinguishes additive from polynomial for
+free: if the word moves by exactly the delta the rule is a sum, and if it moves
+by anything else it is a CRC or LFSR.
+
+Until the routine is traced (it lives near the `S-RAM CHECK!` strings at ROM
+`0x521`), comparing block and copy is the only integrity check, and
+`readChecksumBlocks()` does that — it returns the sixteen words little-endian, so
+the `0xFFFF` total is assertable without any new parsing.
 
 ## PALETTE DATA (confirmed — `src/sfc/cgram.js`)
 
@@ -238,7 +324,9 @@ from when it is played is also open.
 
 ## Unresolved
 
-- the CHECK SUM algorithm (and why word 0 matches the palette word-sum);
+- the CHECK SUM algorithm — and whether word 0's palette match is real at all,
+  since one dump cannot separate it from the ~13 chance hits its own sweep
+  produces;
 - the two flagged palette rows at 0x300;
 - the meaning of MAP DATA cell bit 7 (the 18-column width is measured, not yet
   seen rendered through real graphics);
@@ -260,7 +348,10 @@ Closing the open items needs the ROM in a debugging emulator (Mesen 2's SNES
 core, or bsnes-plus) with the fixture as its `.srm`:
 
 1. a write breakpoint on `$700000-$70001F` during an in-editor save lands in the
-   checksum routine;
+   checksum routine — the only route that settles it outright. Short of the
+   trace, the checksum needs controlled deltas rather than another dump: one
+   byte changed, saved, re-dumped, repeated 30-60 times (see CHECK SUM above for
+   what each kind of evidence is worth);
 2. the DMA log (SRAM source → VRAM/CGRAM destination) gives the GRAPIC DATA
    banking, which palette rows reach CGRAM, and which group feeds which layer;
 3. reads of SCROLL EFECT while scrolling, and of SOUND DATA during the APU
@@ -269,4 +360,6 @@ core, or bsnes-plus) with the fixture as its `.srm`:
    MAP DATA width, the APPEAR record shape and the ENEMY DATA fields.
 
 A second fixture with graphics (any save written by a real session, or the
-freely shared "Shooting Monner" `.srm`) is the first thing to add.
+freely shared "Shooting Monner" `.srm`) is the first thing to add — but for the
+CHECK SUM it is only worth what it differs by, so prefer one that edits every
+region over one that has merely been played.
