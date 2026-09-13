@@ -1,0 +1,177 @@
+{
+  "anims": [
+    {
+      "key": "smallMarioWalk",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "mario",
+        "start": 0,
+        "end": 3
+      },
+      "repeat": -1,
+      "frameRate": 18
+    },
+    {
+      "key": "bigMarioWalk",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "mario",
+        "start": 6,
+        "end": 9
+      },
+      "repeat": -1,
+      "frameRate": 18
+    },
+    {
+      "key": "smallSpaceMarioWalk",
+      "frames": [
+        { "key": "space-mario", "frame": "atlas_s3" },
+        { "key": "space-mario", "frame": "atlas_s0" },
+        { "key": "space-mario", "frame": "atlas_s4" },
+        { "key": "space-mario", "frame": "atlas_s0" }
+      ],
+      "repeat": -1,
+      "frameRate": 18
+    },
+    {
+      "key": "bigSpaceMarioWalk",
+      "frames": [
+        { "key": "space-mario", "frame": "atlas_s8" },
+        { "key": "space-mario", "frame": "atlas_s9" }
+      ],
+      "repeat": -1,
+      "frameRate": 9
+    },
+    {
+      "key": "rotatingCoin",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "rotatingCoin",
+        "start": 0,
+        "end": 1
+      },
+      "repeat": -1,
+      "frameRate": 18
+    },
+    {
+      "key": "goombaWalk",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "goomba",
+        "start": 0,
+        "end": 1
+      },
+      "repeat": -1,
+      "frameRate": 9
+    },
+    {
+      "key": "coin",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "coin",
+        "start": 0,
+        "end": 0
+      },
+      "repeat": -1,
+      "frameRate": 18
+    },
+    {
+      "key": "flower",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "flower",
+        "start": 0,
+        "end": 1
+      },
+      "repeat": -1,
+      "frameRate": 18
+    },
+    {
+      "key": "turtleWalk",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "turtle-red",
+        "start": 0,
+        "end": 1
+      },
+      "repeat": -1,
+      "frameRate": 9
+    },
+    {
+      "key": "coin-impact",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "coin-impact",
+        "start": 0,
+        "end": 4
+      },
+      "frameRate": 18
+    },
+    {
+      "key": "neon",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "neon",
+        "start": 0,
+        "end": 2
+      },
+      "repeat": -1,
+      "frameRate": 4
+    },
+    {
+      "key": "arcade",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "arcade",
+        "start": 0,
+        "end": 1
+      },
+      "repeat": -1,
+      "frameRate": 4
+    },
+    {
+      "key": "bar-cat",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "bar-cat",
+        "start": 0,
+        "end": 3
+      },
+      "repeat": -1,
+      "frameRate": 4
+    },
+    {
+      "key": "disco-ball",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "disco-ball",
+        "start": 0,
+        "end": 9
+      },
+      "repeat": -1,
+      "frameRate": 8
+    },
+    {
+      "key": "goomba-concierge",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "goomba-concierge",
+        "start": 0,
+        "end": 4
+      },
+      "repeat": -1,
+      "frameRate": 4
+    },
+    {
+      "key": "yoshi",
+      "frames": {
+        "typeOfGeneration": "generateFrameNumbers",
+        "key": "yoshi",
+        "start": 0,
+        "end": 1
+      },
+      "repeat": -1,
+      "frameRate": 3
+    }
+  ]
+}
