@@ -25,9 +25,9 @@ shipped and has never been edited. Its upper 64 KB is all zero.
 reproduces from it, down to the per-stage map counts). It is a duplicate, not a
 second fixture: for the open questions it carries no information the sample did
 not, and for the CHECK SUM specifically it is worth exactly zero bits. The real
-second dump is ALDI Adventure, which the SFC library publishes. Note also
-that it sits inside the one path the repo's `.gitignore` exempts — a directory
-whose own comment scopes it to "scripts that read the fixtures, not the fixtures
+second dump is ALDI Adventure, which the SFC library publishes. Note also that
+it sits inside the one path the repo's `.gitignore` exempts — a directory whose
+own comment scopes it to "scripts that read the fixtures, not the fixtures
 themselves" — and that its lower 64 KB is a verbatim copy of the commercial ROM.
 
 All multi-byte integers are **little-endian** (the 65C816 is little-endian), the
@@ -124,8 +124,8 @@ Adventure (NovaSquirrel, 2026-08-22 — the SFC library's first cart, 1,947 of
   there, since ALDI's own palette relation fails. Two independent saves landing
   on the same 16-bit constant is 2^-32 by chance, so the total is **confirmed**;
 - the palette relation is **refuted**. ALDI's PALETTE DATA sums to `0x87AB`,
-  whose complement is `0x7854`, and its word 0 is `0x42D4`. Nor do its words 1-15
-  (`0xBD2B`) equal its palette sum. The match in the factory sample was
+  whose complement is `0x7854`, and its word 0 is `0x42D4`. Nor do its words
+  1-15 (`0xBD2B`) equal its palette sum. The match in the factory sample was
   coincidence, as its statistics already suggested: across 20,000 random control
   blocks the sweep space that found it hits something 30.7% of the time, and an
   exact sweep of 31 accumulator models over 351 region runs returned 13
@@ -141,17 +141,18 @@ With two dumps a range must hit its target in both, which is a 2^-32 filter.
 Over every contiguous range in the 128 KB, discarding any that touches either
 checksum block as self-referential:
 
-| Accumulator | Surviving ranges, all 16 words | |
-| --- | --- | --- |
-| sum of LE words | **0** | nothing at all |
-| sum of BE words | 1 | at chance |
-| sum of bytes (1-byte granularity) | 31 | at or below chance |
+| Accumulator                       | Surviving ranges, all 16 words |                    |
+| --------------------------------- | ------------------------------ | ------------------ |
+| sum of LE words                   | **0**                          | nothing at all     |
+| sum of BE words                   | 1                              | at chance          |
+| sum of bytes (1-byte granularity) | 31                             | at or below chance |
 
 Zero survivors for the little-endian word sum is the strong one: whatever the
 routine does, it is not accumulating LE words over one contiguous span. That
 rules out the shape every earlier attempt assumed. What remains open is a
 strided or interleaved scan, a masked or transformed stream, or a polynomial
-(CRC/LFSR) — and the `0xFFFF` total is the constraint any candidate must satisfy.
+(CRC/LFSR) — and the `0xFFFF` total is the constraint any candidate must
+satisfy.
 
 Two further results are structural rather than statistical:
 
@@ -180,21 +181,21 @@ sweep of 2.1M ranges yielded 1,080 spurious hits, within 2.3% of the 2^-16
 prediction. No single-word "match" from one file means anything.
 
 A second dump is worth what it differs by, so it is worth asking for the right
-one: measured against the sample, a save with every region edited collapses those
-7,264 candidates to ~1.1, one with only the data regions edited to 58, one with
-only MAP DATA edited to 2,409, one that has merely been played to 3,751, and one
-that only fills in GRAPIC DATA to none at all. ALDI is the first kind, which is
-why it was decisive. If the remaining shapes need separating, the next step is
-not a third cart but controlled deltas — one byte written, saved, re-dumped —
-since each probe yields a membership bit for all sixteen words at once, and a
-probe also tells additive from polynomial for free: if a word moves by exactly
-the delta the rule is a sum, and if it moves by anything else it is a CRC or
-LFSR.
+one: measured against the sample, a save with every region edited collapses
+those 7,264 candidates to ~1.1, one with only the data regions edited to 58, one
+with only MAP DATA edited to 2,409, one that has merely been played to 3,751,
+and one that only fills in GRAPIC DATA to none at all. ALDI is the first kind,
+which is why it was decisive. If the remaining shapes need separating, the next
+step is not a third cart but controlled deltas — one byte written, saved,
+re-dumped — since each probe yields a membership bit for all sixteen words at
+once, and a probe also tells additive from polynomial for free: if a word moves
+by exactly the delta the rule is a sum, and if it moves by anything else it is a
+CRC or LFSR.
 
 Until the routine is traced (it lives near the `S-RAM CHECK!` strings at ROM
 `0x521`), comparing block and copy is the only integrity check, and
-`readChecksumBlocks()` does that — it returns the sixteen words little-endian, so
-the `0xFFFF` total is assertable without any new parsing.
+`readChecksumBlocks()` does that — it returns the sixteen words little-endian,
+so the `0xFFFF` total is assertable without any new parsing.
 
 ## PALETTE DATA (confirmed — `src/sfc/cgram.js`)
 
@@ -344,8 +345,8 @@ from when it is played is also open.
 ## Unresolved
 
 - the CHECK SUM algorithm — the palette lead is refuted and a contiguous range
-  sum is ruled out, so what is left is a strided, masked or polynomial scan, with
-  the `0xFFFF` total as the one constraint any candidate must satisfy;
+  sum is ruled out, so what is left is a strided, masked or polynomial scan,
+  with the `0xFFFF` total as the one constraint any candidate must satisfy;
 - the two flagged palette rows at 0x300;
 - the meaning of MAP DATA cell bit 7 (the 18-column width is measured, not yet
   seen rendered through real graphics);

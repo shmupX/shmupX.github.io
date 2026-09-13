@@ -7869,7 +7869,7 @@ var SFC_REGIONS = Object.freeze([
     0,
     32,
     "open",
-    "16 words, copied verbatim at 0x7E5A. Algorithm unknown; word 0 read big-endian equals the 16-bit word sum of PALETTE DATA in the sample (a lead, not proof)."
+    "16 words, copied verbatim at 0x7E5A. Algorithm unknown, but the 16 little-endian words sum to 0xFFFF in both known dumps (confirmed). The sample's word 0 matching the PALETTE DATA word sum was coincidence \u2014 it fails on ALDI Adventure. Not a contiguous range sum either: across both dumps no range of LE words explains any word. A per-region table is ruled out too, since four regions sum to 0x0000 and all 16 words differ."
   ),
   region(
     "reserved0",
