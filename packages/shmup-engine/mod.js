@@ -334,3 +334,30 @@ export {
   paletteWordsFromRgba,
   rgb8ToRgb555,
 } from "./src/palette/deza2-palette.js";
+
+// --- Dezaemon on the Super Famicom (src/sfc/) -------------------------------
+// The other Dezaemon: Athena's 1994 cart (SHVC-66), whose games are 128 KB SRAM
+// dumps rather than Saturn backup-RAM images. The two formats "share nothing
+// but the palette word" (FORMAT-SFC.md), so none of the pipeline above touches
+// one — parseSfcSav is its own front door, and the pair of recognisers is what
+// lets a surface that takes both tell a .srm from a .sav before it decides
+// which decoder to call.
+//
+// Only the surface the BROWSER needs is flattened here (recognise, parse,
+// summarise, cover). The rest of the SFC decoders — every region, the tile and
+// tilemap primitives, the ROM cross-check — stay behind the ./sfc subpath,
+// where tools/sfc-sav reads them; flattening all of it would collide with the
+// Saturn names above (both halves have a `decodeGraphics`-shaped idea of most
+// things) for no gain on a page that only files carts on a shelf.
+export {
+  ACCEPTED_SIZES as SFC_ACCEPTED_SIZES,
+  CHECK_STRING as SFC_CHECK_STRING,
+  composeSfcCover,
+  isSfcSav,
+  parseSfcSav,
+  pickSfcCoverWindow,
+  SFC_COVER_H,
+  SFC_COVER_W,
+  SRAM_SIZE as SFC_SRAM_SIZE,
+  summarizeSfcSav,
+} from "./src/sfc/index.js";

@@ -36,6 +36,7 @@ import {
   parse,
 } from "../packages/shmup-engine/mod.js";
 import { encodePNG } from "jsr:@img/png@^0.1.6";
+import { GENRE_JA, gzip, makePut, sha256Hex } from "./lib/rtdb-publish.ts";
 
 const DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 const ROOT = "dezaemon";
@@ -46,9 +47,9 @@ const GAMES_DB = new URL(
   import.meta.url,
 );
 
-// RTDB documents a 64 MB/minute bytes-written cap. Stay well under it: the
-// save blobs alone are ~46 MB, so an unthrottled run would ride the ceiling.
-const WRITE_BUDGET_BYTES_PER_MIN = 36 * 1024 * 1024;
+// The save blobs alone are ~46 MB, so this run in particular would ride RTDB's
+// bytes-written ceiling unthrottled; makePut applies the shared default budget.
+const put = makePut({ db: DB });
 
 // ---------------------------------------------------------------- metadata --
 
@@ -57,28 +58,6 @@ const WRITE_BUDGET_BYTES_PER_MIN = 36 * 1024 * 1024;
 function dezaNormTitle(s: string): string {
   return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
-
-// Japanese genre names, mirroring DEZA_GENRE_JA in the editor. Covers all 15
-// genre values games-db.json uses.
-const GENRE_JA: Record<string, string> = {
-  "Vertical Shoot-em-up": "縦スクロールシューティング",
-  "Horizontal Shoot-em-up": "横スクロールシューティング",
-  "Vertical Shoot-em-up / Danmaku": "縦スクロールシューティング／弾幕",
-  "Horizontal Shoot-em-up / Danmaku": "横スクロールシューティング／弾幕",
-  "Vertical Shoot-em-up / Story": "縦スクロールシューティング／ストーリー",
-  "Horizontal Shoot-em-up / Story": "横スクロールシューティング／ストーリー",
-  "Score Attack Vertical Shoot-em-up":
-    "スコアアタック縦スクロールシューティング",
-  "Score Attack Horizontal Shoot-em-up":
-    "スコアアタック横スクロールシューティング",
-  "Action - Shoot-em-up": "アクションシューティング",
-  "Action - Racing": "アクションレーシング",
-  "Action - Puzzle": "アクションパズル",
-  "Action": "アクション",
-  "Tool": "ツール",
-  "Movie": "ムービー",
-  "Avant-Garde Art": "前衛アート",
-};
 
 // Extra normalized-key -> normalized-key aliases, on top of the four that ship
 // in games-db.json. Every one is a version/mode/stage variant or a parenthetical
@@ -159,18 +138,6 @@ function slugOf(file: string): string {
 
 // ------------------------------------------------------------------ binary --
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([bytes as BlobPart]).stream()
-    .pipeThrough(new CompressionStream("gzip"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
 // The even bytes of the cart image are filler. Exactly two profiles occur
 // across the library; recording which one lets the original .sav be rebuilt
 // byte-for-byte from the deinterleaved half we store.
@@ -190,52 +157,6 @@ function deinterleave(sav: Uint8Array): Uint8Array {
   const out = new Uint8Array(sav.length >> 1);
   for (let i = 0; i < out.length; i++) out[i] = sav[i * 2 + 1];
   return out;
-}
-
-// --------------------------------------------------------------- transport --
-
-let writtenWindow: { at: number; bytes: number }[] = [];
-
-async function throttle(nextBytes: number) {
-  for (;;) {
-    const cutoff = Date.now() - 60_000;
-    writtenWindow = writtenWindow.filter((w) => w.at > cutoff);
-    const inWindow = writtenWindow.reduce((n, w) => n + w.bytes, 0);
-    if (inWindow + nextBytes <= WRITE_BUDGET_BYTES_PER_MIN) return;
-    const oldest = writtenWindow[0];
-    const waitMs = Math.max(250, oldest.at + 60_000 - Date.now());
-    await new Promise((r) => setTimeout(r, Math.min(waitMs, 5_000)));
-  }
-}
-
-// print=silent matters: without it RTDB echoes every written value back, which
-// would burn tens of MB of the project's monthly download quota for nothing.
-async function put(path: string, value: unknown): Promise<number> {
-  const body = JSON.stringify(value);
-  const bytes = new TextEncoder().encode(body).length;
-  await throttle(bytes);
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    try {
-      const res = await fetch(`${DB}/${path}.json?print=silent`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body,
-      });
-      if (res.ok) {
-        await res.body?.cancel();
-        writtenWindow.push({ at: Date.now(), bytes });
-        return bytes;
-      }
-      const text = (await res.text()).slice(0, 300);
-      if (attempt === 4) throw new Error(`HTTP ${res.status}: ${text}`);
-      console.warn(`  ! ${path} HTTP ${res.status} — retry ${attempt}/3`);
-    } catch (e) {
-      if (attempt === 4) throw e;
-      console.warn(`  ! ${path} ${(e as Error).message} — retry ${attempt}/3`);
-    }
-    await new Promise((r) => setTimeout(r, 1000 * attempt));
-  }
-  return bytes;
 }
 
 // ------------------------------------------------------------------- main ---
@@ -269,7 +190,16 @@ const savesDir = value("from")
 
 let files: string[] = [];
 for await (const e of Deno.readDir(savesDir)) {
-  if (e.isFile && /\.(sav|bcr|bkr)$/i.test(e.name)) files.push(e.name);
+  // "._Dez 2 - A28.sav" is macOS's AppleDouble fork, not a save: the library
+  // lives on an exFAT volume here, which has no native place to keep extended
+  // attributes, so every file in it has a 4 KB sidecar beside it that matches
+  // the extension test exactly. Unfiltered, a run reports 262 failures and —
+  // worse — would file a fork under the real game's slug if one ever parsed.
+  if (
+    e.isFile && !e.name.startsWith("._") && /\.(sav|bcr|bkr)$/i.test(e.name)
+  ) {
+    files.push(e.name);
+  }
 }
 files.sort();
 if (only) {

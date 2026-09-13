@@ -21,6 +21,20 @@
       "prefixes": ["/nes/", "/Nintendo/"]
     },
     {
+      "id": "snes",
+      "name": "Super Famicom",
+      "mark": "SFC",
+      "title": "SUPER FAMICOM",
+      "metaType": "SFC / .SFC",
+      "date": "SFC",
+      "coreA": "core // snes9x",
+      "coreB": "emulatorjs",
+      "size": "~8 MB",
+      "player": "/snes/play.html",
+      "manifest": "/SuperNintendo/manifest.json",
+      "prefixes": ["/snes/", "/SuperNintendo/"]
+    },
+    {
       "id": "tg16",
       "name": "TurboGrafx-16",
       "mark": "PCE",

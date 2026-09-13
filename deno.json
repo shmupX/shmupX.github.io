@@ -31,6 +31,7 @@
     "eshop:covers": "deno run -A scripts/backfill-eshop-covers.ts",
     "deza:manifest": "deno run -A scripts/build-deza-saves-manifest.ts",
     "deza:upload": "deno run -A scripts/upload-deza-saves.ts",
+    "sfc:upload": "deno run -A scripts/upload-sfc-saves.ts",
     "deza:disc": "deno run -A tools/deza-disc/main.ts",
     "sfc:probe": "deno run -A tools/sfc-sav/main.ts",
     "psx:probe": "deno run -A tools/psx-sav/main.ts",

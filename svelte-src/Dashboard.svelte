@@ -42,6 +42,23 @@
     uninstallWebGame,
   } from '../static/eshop-library.js';
   import { backfillDezaShelfCovers, listDezaShelf, onDezaShelfChanged } from '../static/deza-shelf.js';
+  // The SNES shelf: Super Famicom Dezaemon dumps this browser holds, and the
+  // published library they can be installed from. Shared with the editor the
+  // same way — its "→ SNES LIBRARY" files onto the very store this section
+  // reads. See static/snes-shelf.js and static/snes-library.js.
+  import {
+    backfillSnesShelfCovers,
+    listSnesShelf,
+    onSnesShelfChanged,
+  } from '../static/snes-shelf.js';
+  import {
+    findSnesRom,
+    SNES_BYOD_FILE,
+    SNES_BYOD_PLAYER,
+    SNES_BYOD_READY,
+    SNES_CORE_ID,
+    snesBootFiles,
+  } from '../static/snes-library.js';
   // Two players at the launcher — two used pads, or a Legion Go's halves both
   // in hand — and the eShop's 2P filter that follows from it. Pure, so the
   // rule is tested under Deno (tests/two_player_presence_test.ts).
@@ -471,6 +488,11 @@
     if (id === SATURN_CORE_ID) {
       try { localStorage.setItem(SATURN_AUTO_KEY, 'off'); } catch (_) { /* session-only */ }
     }
+    // Same bargain for the Super Famicom: a shelf with carts on it would
+    // otherwise re-add the core on the next boot.
+    if (id === SNES_CORE_ID) {
+      try { localStorage.setItem(SNES_AUTO_KEY, 'off'); } catch (_) { /* session-only */ }
+    }
     const m = { ...emuManifests }; delete m[core.id]; emuManifests = m;
     const s = { ...emuStatus }; delete s[core.id]; emuStatus = s;
     const acked = await pushEmuState();
@@ -504,6 +526,51 @@
   let ps2Local = $state([]);
   async function refreshPs2Local() {
     try { ps2Local = await listPs2Games(); } catch (_) { ps2Local = []; }
+  }
+
+  // ─── The local SNES shelf ──────────────────────────────────────────────────
+  // Super Famicom Dezaemon dumps this browser holds: imported from disk by the
+  // editor's "→ SNES LIBRARY", or installed off the published library. They
+  // live in IndexedDB, like the PS2 discs above, so they are read here rather
+  // than off the mirror.
+  //
+  // Unlike every other shelf in this launcher, a row here is not enough to play
+  // with: the dump is a SAVE, and the cartridge it belongs to is not ours to
+  // ship. /api/dezaemon-sfc says whether this machine has one — snesRom holds
+  // that answer, and the section's rows say "no cartridge" rather than offering
+  // a Play that could only fail.
+  //
+  // The section turns itself on the way the Sega Saturn one does (see
+  // initDezaemonDisc): a machine that has the cartridge, or a shelf that
+  // already holds a cart, wants the console without a trip through Settings.
+  // "off" is the one value the auto-add leaves alone, so a core the user took
+  // off does not come straight back on the next boot.
+  const SNES_AUTO_KEY = 'shmupx-snes-auto';
+  let snesLocal = $state([]);
+  let snesRom = $state(null);
+  async function refreshSnesLocal() {
+    try { snesLocal = await listSnesShelf(); } catch (_) { snesLocal = []; }
+    // Covers render one by one into a list that is already on screen; the
+    // subscription below brings each one back here as it lands.
+    if (snesLocal.length) backfillSnesShelfCovers().catch(() => {});
+    autoAddSnesCore();
+  }
+  async function initSnesRom() {
+    snesRom = await findSnesRom();
+    autoAddSnesCore();
+  }
+  async function autoAddSnesCore() {
+    if (!emuCatalog) return;
+    if (!snesRom?.available && !snesLocal.length) return;
+    let auto = null;
+    try { auto = localStorage.getItem(SNES_AUTO_KEY); } catch (_) { /* unreadable */ }
+    if (auto === 'off' || loadInstalledEmus().includes(SNES_CORE_ID)) return;
+    // The warm inside installCore will fail until the mirror publishes
+    // /snes/play.html, and that is fine: a failed warm leaves the core
+    // INSTALLED and flags the row, so the section appears with its shelf on it
+    // and emuNote says what is actually missing.
+    await installCore(SNES_CORE_ID);
+    try { localStorage.setItem(SNES_AUTO_KEY, '1'); } catch (_) { /* session-only */ }
   }
 
   // ─── The local Dezaemon 2 disc ─────────────────────────────────────────────
@@ -573,6 +640,45 @@
       showToast('Could not hand the Dezaemon 2 disc to the Saturn player: ' + (e?.message || e));
     }
   }
+  // The SNES player's bring-your-own-cart mode, the same shape as the Saturn
+  // disc above and for the same reason: EmulatorJS wants Files of the frame's
+  // own realm, so the launcher opens the player with ?byod=1, waits for its
+  // "snes-byod-ready" and posts what it asked for.
+  //
+  // TWO files, which is what makes this different. A Saturn row is a disc that
+  // boots on its own; a SNES row is 128 KB of SRAM that means nothing without
+  // Athena's cartridge under it, so the ROM (off this machine, via
+  // /api/dezaemon-sfc) goes in beside the save, and the save is named after the
+  // ROM because that is how a libretro core pairs a .srm with its cart.
+  let snesPending = null; // the record the player about to open is asking for
+  function launchLocalSnes(record) {
+    if (!snesRom?.available) {
+      showToast(
+        'No Dezaemon (Super Famicom) ROM on this machine, so there is no ' +
+        'cartridge to run "' + (record?.title || 'this save') + '" in. Put one ' +
+        'in dev-fixtures/ (or set $DEZAEMON_SFC_ROM) and reopen this section.',
+      );
+      return;
+    }
+    snesPending = record;
+    chromeDismissed = false;
+    frameUrl = null;
+    gameSrc = SNES_BYOD_PLAYER;
+    setTimeout(() => { gameOn = true; }, 30);
+  }
+  async function deliverSnesCart(frame) {
+    const record = snesPending;
+    if (!record) return;
+    try {
+      const { rom, sram, title } = await snesBootFiles(record);
+      // Same-origin only: the player is ours (the worker mirrors it under our
+      // origin), and both files are the user's own.
+      frame.postMessage({ type: SNES_BYOD_FILE, rom, sram, name: title }, location.origin);
+    } catch (e) {
+      showToast('Could not hand "' + (record.title || 'the cart') + '" to the SNES player: ' + (e?.message || e));
+    }
+  }
+
   // The Mednafen row: nothing to show in the frame, the route starts the
   // desktop emulator with whatever cartridge save is already installed beside
   // the disc (the editor's → MEDNAFEN CART writes that one).
@@ -2925,6 +3031,28 @@
         kind: 'local', local: g,
       }));
     }
+    // This browser's own Super Famicom dumps. Every one of them is local —
+    // there is no mirror shelf for this console — so unlike the PS2's these are
+    // not a prefix to a hosted list but the whole section.
+    if (core.id === SNES_CORE_ID) {
+      return snesLocal.map((g) => ({
+        key: 'snes:' + g.id,
+        name: g.title,
+        title: String(g.title).toUpperCase(),
+        sub: (g.developer ? g.developer + ' · ' : '') +
+          (g.source === 'library' ? 'SNES LIBRARY' : 'imported') +
+          (snesRom?.available ? '' : ' · no cartridge'),
+        // The cover is a PNG data URL composed from the cart's own scenery
+        // (composeSfcCover), so it goes in as the row's icon and letterboxes
+        // in the glass like any other. A dump with a blank graphics bank has
+        // none, and falls back to the initials every iconless row wears.
+        icon: g.cover || null,
+        size: (g.size / 1024).toFixed(0) + ' KB',
+        date: g.dumpedAt || 'LOCAL',
+        type: 'SFC / ' + (g.source === 'library' ? 'LIBRARY' : 'IMPORTED'),
+        kind: 'snes', local: g,
+      }));
+    }
     // The Dezaemon 2 disc found in dev-fixtures/ (see initDezaemonDisc): the
     // browser core's bring-your-own-disc row, and the desktop Mednafen when the
     // route found one — its cartridge save is where the editor's bigger
@@ -2955,6 +3083,29 @@
   // purpose: a manifest that has not arrived is not the same as one that failed,
   // and neither is the same as a console that genuinely deploys no titles.
   function emuNote(core) {
+    // The Super Famicom section has no mirror shelf to read — every row on it
+    // is a dump this browser holds — so the manifest states below say nothing
+    // about it. What it needs said is how to get a game onto it, and whether
+    // the cartridge those games need is here.
+    if (core.id === SNES_CORE_ID) {
+      return snesRom?.available
+        ? {
+          title: 'NO CARTS YET',
+          pre: 'Import a Dezaemon .srm with the level editor\u2019s ',
+          path: '→ SNES LIBRARY',
+          post: ', or install one from the published library. The cartridge is here: ' +
+            (snesRom.name || 'Dezaemon.sfc') + '.',
+          hint: [],
+        }
+        : {
+          title: 'NO CARTRIDGE',
+          pre: 'A Super Famicom save needs the game it was saved by. Put the Dezaemon ROM in ',
+          path: 'dev-fixtures/',
+          post: ' (or name one in $DEZAEMON_SFC_ROM) and reopen this section. ' +
+            'Carts can be shelved and exported without it.',
+          hint: [],
+        };
+    }
     const m = emuManifests[core.id];
     if (m === undefined) return { title: 'READING SHELF…', pre: 'Fetching ', path: core.manifest, post: ' from the mirror.', hint: [] };
     if (m === null) {
@@ -3366,6 +3517,8 @@
     // The local Dezaemon 2 disc: the browser core takes it as a File posted
     // into its frame, the desktop Mednafen is started by the server.
     if (row.kind === 'local-saturn') { launchLocalSaturn(); return; }
+    // A SNES row is a save; launchLocalSnes is what finds it a cartridge.
+    if (row.kind === 'snes' && row.local) { launchLocalSnes(row.local); return; }
     if (row.kind === 'mednafen') { launchMednafen(); return; }
     // A ps2 "web" row is a browser build living beside the ISOs, not a disc —
     // launch its own url rather than handing the filename to the emulator.
@@ -5215,16 +5368,24 @@
     // launchLocalSaturn). Same-origin by construction — the worker mirrors it
     // under our origin — and the answer is a File of the user's own disc.
     else if (d.type === 'saturn-byod-ready') deliverSaturnDisc(e.source);
+    // The SNES player opened with ?byod=1 is asking for its cartridge and save
+    // (see launchLocalSnes). Same-origin by construction, same as the Saturn.
+    else if (d.type === SNES_BYOD_READY) deliverSnesCart(e.source);
     // The level editor, in our frame, published or installed something
     // through static/eshop-library.js: the catalog, the installed set and the
     // shelf may all have moved.
     else if (d.type === 'cmg-eshop-changed') { refreshEshop(); refreshDezaShelf(); }
+    // The editor's → SNES LIBRARY filed a cart. The shelf's BroadcastChannel
+    // already reaches this page while the editor is same-origin, which it is
+    // today; this covers the case it stops being, and costs one re-read.
+    else if (d.type === 'cmg-snes-shelf-changed') refreshSnesLocal();
   }
 
   // The eShop / shelf change subscriptions (static/eshop-library.js,
   // static/deza-shelf.js), kept for teardown.
   let unsubEshop = null;
   let unsubDezaShelf = null;
+  let unsubSnesShelf = null;
 
   onMount(() => {
     // 12-hour wall clock, the way the phone's own status bar reads it — the
@@ -5264,7 +5425,14 @@
     initNetplayPresence();
     // The disc check waits for the catalogue: auto-installing the Saturn core
     // needs its catalogue entry, and installCore looks the core up in it.
-    initEmulators().then(initDezaemonDisc);
+    // Both console probes wait on the catalogue, and for the same reason: each
+    // auto-installs a core when this machine turns out to have its media, and
+    // installCore looks the core up in the catalogue. One read, then both.
+    initEmulators().then(() => {
+      initDezaemonDisc();
+      refreshSnesLocal();
+      initSnesRom();
+    });
     initExports();
     refreshEshop();
     refreshDezaShelf();
@@ -5273,6 +5441,7 @@
     // this tab's copy. Each returns its unsubscribe.
     try { unsubEshop = onEshopChanged(() => { refreshEshop(); refreshDezaShelf(); }); } catch (_) { unsubEshop = null; }
     try { unsubDezaShelf = onDezaShelfChanged(() => { refreshDezaShelf(); refreshEshopInstalled(); }); } catch (_) { unsubDezaShelf = null; }
+    try { unsubSnesShelf = onSnesShelfChanged(() => { refreshSnesLocal(); }); } catch (_) { unsubSnesShelf = null; }
   });
 
   function refreshPadConnected() {
@@ -5444,6 +5613,7 @@
     window.removeEventListener('gamepaddisconnected', onPadDisconnect);
     try { unsubEshop?.(); } catch (_) { /* already closed */ }
     try { unsubDezaShelf?.(); } catch (_) { /* already closed */ }
+    try { unsubSnesShelf?.(); } catch (_) { /* already closed */ }
     if (stopExportWatch) stopExportWatch();
     if (builderTimer) clearInterval(builderTimer);
     document.body.classList.remove('playing');
