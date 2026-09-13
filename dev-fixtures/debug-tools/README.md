@@ -25,6 +25,34 @@ Read them together: `contact-sheet.mjs` tells you record 22 is the winged
 statue, `dump-behavior.mjs` tells you record 22 is ground, max-LIFE, and carries
 an untraced special fire pattern.
 
+## Checking the writer against the corpus
+
+One save proves the decoder reads it; the corpus proves the writer does not
+quietly drop anything. Both tools are Deno, not node, and both read the local
+fixtures — so the numbers are only as complete as the saves on this machine.
+
+```sh
+# every 3D model in dev-fixtures: model/part totals, the stale-byte tallies,
+# and whether each sec7 re-encodes to the bytes it was decoded from
+deno run -A dev-fixtures/debug-tools/model-survey.mjs
+#   -> dev-fixtures/.cache/model-survey.json   (the saves that carry models)
+
+# then drive the whole editor path over those saves — mapSaveToGame, the
+# export whitelist, buildSaveFromGame — and diff the models that come back
+deno run -A dev-fixtures/debug-tools/model-roundtrip.mjs [count]   # default 6
+```
+
+`model-survey.mjs` is where the corpus figures quoted in FORMAT.md and the
+commit log come from — re-run it rather than carrying a number forward. In its
+output `roundBad` is the count that must stay 0: it means a decode → encode →
+decode cycle changed the models' *meaning*. `differ` is weaker, counting sec7
+blocks that are not byte-identical on re-encode, which a normalising writer can
+cause without losing anything.
+
+Read the two together. The survey checks sec7 in isolation, so it stays green
+when a model encodes correctly but is lost on the way through the editor's
+level record — exactly the defect `model-roundtrip.mjs` catches, and did.
+
 ## Reading the engine itself
 
 When record fields and captures disagree, the answer is in the play engine's
