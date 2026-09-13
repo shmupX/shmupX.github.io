@@ -61,6 +61,7 @@ const ESHOP_PREFIX = "/eshop/";
 // path stops being covered.
 const MIRRORABLE = [
   "/nes/", "/Nintendo/",
+  "/snes/", "/SuperNintendo/",
   "/turbografx16/", "/TurboGrafx-16/",
   "/psx/", "/PlayStation/",
   "/saturn/", "/SegaSaturn/",

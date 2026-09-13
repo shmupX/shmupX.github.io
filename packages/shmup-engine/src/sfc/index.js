@@ -43,6 +43,7 @@ export * from "./map.js";
 export * from "./tables.js";
 export * from "./enemy.js";
 export * from "./graphics.js";
+export * from "./cover.js";
 export * from "./rom.js";
 
 /**

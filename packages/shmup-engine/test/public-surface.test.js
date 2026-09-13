@@ -47,6 +47,22 @@ const EXPECTED = [
   "wireframeSegments",
 ];
 
+// The Super Famicom half. Namespaced where the Saturn surface already owns the
+// bare name (SFC_SRAM_SIZE, SFC_CHECK_STRING), which is the whole reason only a
+// chosen few of src/sfc/ are flattened — see the block at the end of mod.js.
+const EXPECTED_SFC = [
+  "composeSfcCover",
+  "isSfcSav",
+  "parseSfcSav",
+  "pickSfcCoverWindow",
+  "SFC_ACCEPTED_SIZES",
+  "SFC_CHECK_STRING",
+  "SFC_COVER_H",
+  "SFC_COVER_W",
+  "SFC_SRAM_SIZE",
+  "summarizeSfcSav",
+];
+
 Deno.test("mod.js exports the model surface", () => {
   for (const name of EXPECTED) {
     assert(name in engine, `missing export ${name}`);
@@ -55,4 +71,18 @@ Deno.test("mod.js exports the model surface", () => {
   assertStrictEquals(engine.FAMILY_MESH_COUNTS.length, 6);
   assertStrictEquals(engine.rgb555ToHex(0x7fff), 0xffffff);
   assertStrictEquals(engine.shadeRow(0), 16);
+});
+
+Deno.test("mod.js exports the Super Famicom surface", () => {
+  for (const name of EXPECTED_SFC) {
+    assert(name in engine, `missing export ${name}`);
+  }
+  assertStrictEquals(engine.SFC_SRAM_SIZE, 0x20000);
+  assertStrictEquals(engine.SFC_CHECK_STRING, "T.TABATA");
+  assertStrictEquals(engine.SFC_COVER_W, 256);
+  assertStrictEquals(engine.SFC_COVER_H, 480);
+  // The Saturn cover's own constants are untouched by the SFC ones beside them.
+  assertStrictEquals(engine.COVER_W, 256);
+  assertStrictEquals(engine.COVER_H, 480);
+  assertStrictEquals(engine.isSfcSav(new Uint8Array(16)), false);
 });

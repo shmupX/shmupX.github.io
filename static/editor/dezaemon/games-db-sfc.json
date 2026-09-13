@@ -1,0 +1,9 @@
+{
+  "fields": ["title", "titleJa", "developer", "developerJa", "genre", "url", "video"],
+  "system": "Kaite Tsukutte Asoberu Dezaemon (Super Famicom, Athena 1994, SHVC-66)",
+  "note": "The Super Famicom sibling of games-db.json. Same seven fields, so one loader reads both; a separate file because that one is a verbatim copy of the satakore Dezaemon 2 (Saturn) table and a Super Famicom cart is not in it. Genre is always a vertical shoot-em-up here: SFC Dezaemon has no horizontal mode — MAP DATA is 18 columns by 128 rows, scrolling up (FORMAT-SFC.md). titleJa/developerJa are null for authors who never published a Japanese name; the editor falls back to the Latin one.",
+  "aliases": {},
+  "games": [
+    ["ALDI Adventure", null, "NovaSquirrel", null, "Vertical Shoot-em-up", null, "yF5rLrzLY0U"]
+  ]
+}
