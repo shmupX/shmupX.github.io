@@ -16,6 +16,12 @@ static/games/2028-ai/assets/custom-bgm/
 # depth — macOS drops one into any folder it has been browsed in.
 .DS_Store
 
+# AppleDouble resource forks. macOS writes a ._<name> sidecar beside every
+# file it touches on a filesystem that cannot hold extended attributes, and
+# this checkout lives on an exFAT volume — so they appear by the hundred.
+# No leading slash, for the same reason .DS_Store has none.
+._*
+
 # Local .sav test fixtures (community Dezaemon 2 saves — never committed).
 # Drop .sav/.bcr/.bkr files here to enable the fixture-gated engine tests.
 # debug-tools/ is the exception — scripts that read the fixtures, not the
