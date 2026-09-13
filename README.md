@@ -546,10 +546,13 @@ shots; a cell's drop digit becomes the record's death word), the boss trailer
 (re-encoded from an import's decoded record, else four default patterns), scroll
 curve and extents, and the settings block (mode from the grid's VERT/HORIZ
 switch, loadouts, item slots, bullet configs, BGM table). An import's
-`dezaemonBgm` songs go back into sec6; sec7 stays empty. Everything the format
-does not carry — enemy names, story scenes, custom audio, the base game's stock
-enemies' behaviours — is left behind, and the builder says so in its warnings.
-Not yet written: the six credit strips and the 3D models.
+`dezaemonBgm` songs go back into sec6, and `dezaemonModels` back into sec7 — the
+ポリ吉 3D models an import carried, re-encoded by
+[`write/encode-model.js`](packages/shmup-engine/src/write/encode-model.js) so a
+cart keeps them on the way out instead of having the section zeroed. Everything
+the format does not carry — enemy names, story scenes, custom audio, the base
+game's stock enemies' behaviours — is left behind, and the builder says so in
+its warnings. Not yet written: the six credit strips.
 
 **Item icons.** A save gives each of its eight item slots exactly one 16×16 cell
 of the global sprite bank (refs 94–101), so a pickup in a cart is a **still** —

@@ -252,6 +252,7 @@ const WHOLE_GAME_KEYS = [
   "dezaemonBgm",
   "dezaemonBullets",
   "dezaemonItems",
+  "dezaemonModels",
   "dezaemonTitle",
   "dezaemonTitleScreen",
   "dezaemonCredits",

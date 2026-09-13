@@ -719,6 +719,16 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
         gameJson.dezaemonBullets = clone(decoded.settings.bullets);
     }
 
+    // The save's ポリ吉 3D models (sec7): up to 16 slots of up to 9 parts,
+    // each part a transform over one of the disc's 224 library meshes. Play
+    // never touches them — the Saturn rendered a composition into CG cells
+    // and the game only ever drew those cells — so this is carried for the
+    // Model Viewer and, through write/encode-model.js, so that an export puts
+    // them back in sec7 instead of zeroing the section.
+    if (decoded.models && decoded.models.models && decoded.models.models.length) {
+        gameJson.dezaemonModels = clone(decoded.models.models);
+    }
+
     // Item data the runtime needs beyond the per-cell drop digits: the
     // game-wide score-item value (settings +0x24) and the decoded slot table.
     if (decoded.settings && decoded.settings.itemSlots) {

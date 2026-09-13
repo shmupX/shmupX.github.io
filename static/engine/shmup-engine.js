@@ -2564,6 +2564,9 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
   if (decoded.settings && decoded.settings.bullets) {
     gameJson.dezaemonBullets = clone(decoded.settings.bullets);
   }
+  if (decoded.models && decoded.models.models && decoded.models.models.length) {
+    gameJson.dezaemonModels = clone(decoded.models.models);
+  }
   if (decoded.settings && decoded.settings.itemSlots) {
     gameJson.dezaemonItems = {
       score: decoded.settings.scoreItemValue,
@@ -3768,6 +3771,108 @@ function inkStats(rgba) {
     alphaFraction: alpha / n,
     meanLuma: lumaSum / n
   };
+}
+
+// packages/shmup-engine/src/write/encode-model.js
+var SEC7_SIZE = 4 + MODEL_SLOTS * MODEL_SLOT_SIZE + 576;
+var PART_SIZE2 = 36;
+var NEUTRAL_COLOR = 32767;
+var S32_MIN = -2147483648;
+var S32_MAX = 2147483647;
+function putU16(bytes, at, v) {
+  bytes[at] = v >> 8 & 255;
+  bytes[at + 1] = v & 255;
+}
+function putS32(bytes, at, v) {
+  bytes[at] = v >> 24 & 255;
+  bytes[at + 1] = v >> 16 & 255;
+  bytes[at + 2] = v >> 8 & 255;
+  bytes[at + 3] = v & 255;
+}
+function fixed16(value) {
+  if (!Number.isFinite(value)) return 0;
+  const raw = Math.round(value * 65536);
+  return raw < S32_MIN ? S32_MIN : raw > S32_MAX ? S32_MAX : raw;
+}
+function encodeRotation(deg) {
+  if (!Number.isFinite(deg)) return 0;
+  const raw = Math.round(deg * 65536 / 360);
+  return (raw % 65536 + 65536) % 65536;
+}
+function encodeShapeWord(part) {
+  if (Number.isInteger(part.shape)) return part.shape & 65535;
+  const family = (part.shapeFamily | 0) & 15;
+  const colorSet = (part.colorSet | 0) & 15;
+  const meshIndex = (part.meshIndex | 0) & 255;
+  return family << 12 | colorSet << 8 | meshIndex;
+}
+function encodePart(bytes, at, part) {
+  const pos = part.position || {};
+  const rot = part.rotation || {};
+  const scale = part.scale || {};
+  putU16(bytes, at, encodeShapeWord(part));
+  putS32(bytes, at + 4, fixed16(pos.x));
+  putS32(bytes, at + 8, fixed16(pos.y));
+  putS32(bytes, at + 12, fixed16(pos.z));
+  putU16(bytes, at + 16, encodeRotation(rot.x));
+  putU16(bytes, at + 18, encodeRotation(rot.y));
+  putU16(bytes, at + 20, encodeRotation(rot.z));
+  putS32(bytes, at + 24, fixed16(scale.x === void 0 ? 1 : scale.x));
+  putS32(bytes, at + 28, fixed16(scale.y === void 0 ? 1 : scale.y));
+  putS32(bytes, at + 32, fixed16(scale.z === void 0 ? 1 : scale.z));
+}
+function encodeModels(models, { warn } = {}) {
+  const bytes = new Uint8Array(SEC7_SIZE);
+  const list = Array.isArray(models) ? models : models && models.models;
+  if (!Array.isArray(list) || !list.length) return bytes;
+  const say = typeof warn === "function" ? warn : () => {
+  };
+  const taken = /* @__PURE__ */ new Map();
+  let written = 0;
+  list.forEach((model, index) => {
+    if (!model || typeof model !== "object") return;
+    let slot = Number.isInteger(model.slot) ? model.slot : -1;
+    if (slot < 0 || slot >= MODEL_SLOTS) {
+      if (Number.isInteger(model.slot)) {
+        say(`3D model ${index}: slot ${model.slot} is outside 0-${MODEL_SLOTS - 1} \u2014 skipped`);
+        return;
+      }
+      slot = 0;
+      while (slot < MODEL_SLOTS && taken.has(slot)) slot++;
+      if (slot >= MODEL_SLOTS) {
+        say(`3D model ${index}: no free slot among ${MODEL_SLOTS} \u2014 skipped`);
+        return;
+      }
+    }
+    const parts = Array.isArray(model.parts) ? model.parts : [];
+    if (!parts.length) {
+      say(`3D model ${index} (slot ${slot}): no parts \u2014 skipped`);
+      return;
+    }
+    if (taken.has(slot)) {
+      say(`3D model ${index}: slot ${slot} already holds model ${taken.get(slot)} \u2014 skipped`);
+      return;
+    }
+    let use = parts;
+    if (parts.length > MAX_PARTS) {
+      say(
+        `3D model ${index} (slot ${slot}): ${parts.length} parts, the format holds ${MAX_PARTS} \u2014 the rest are dropped`
+      );
+      use = parts.slice(0, MAX_PARTS);
+    }
+    taken.set(slot, index);
+    const base = 4 + slot * MODEL_SLOT_SIZE;
+    putU16(bytes, base, use.length);
+    putU16(bytes, base + 2, Number.isInteger(model.color) ? model.color & 65535 : NEUTRAL_COLOR);
+    use.forEach((part, p) => {
+      if (part && typeof part === "object") {
+        encodePart(bytes, base + 4 + p * PART_SIZE2, part);
+      }
+    });
+    written++;
+  });
+  if (written) putS32(bytes, 0, SEC7_MAGIC | 0);
+  return bytes;
 }
 
 // packages/shmup-engine/src/model/mesh-library.js
@@ -7340,12 +7445,13 @@ function buildSaveFromGame(level, art, options = {}) {
       }
     }
   }
+  const sec7 = encodeModels(level.dezaemonModels, { warn });
   const sections = [
     ...packer.pages,
     bankToSec4(q.bank),
     sec5,
     sec6,
-    new Uint8Array(SECTION_SIZES[7])
+    sec7
   ];
   return {
     sections,
@@ -7803,6 +7909,7 @@ export {
   LOOP_OFF,
   LOOP_REVERSE,
   MAGIC,
+  MAX_PARTS,
   MAX_STAGES2 as MAX_STAGES,
   MAX_SWATCH_COLORS,
   MDLDT_BASE,
@@ -7811,8 +7918,10 @@ export {
   MISTER_LOGICAL_SIZE,
   MISTER_SAV_SIZE,
   MODEL_SLOTS,
+  MODEL_SLOT_SIZE,
   MODEL_UNIT_RADIUS,
   NEAR,
+  NEUTRAL_COLOR,
   PALETTE_TARGETS,
   PLAYER_SHOT_DAMAGE_BY_LEVEL,
   PartitionFullError,
@@ -7824,6 +7933,7 @@ export {
   ROW_STEP,
   SCSP_BASE_RATE,
   SEC7_MAGIC,
+  SEC7_SIZE,
   SECTION_COUNT,
   SECTION_HINTS,
   SECTION_SIZES,
@@ -7883,7 +7993,10 @@ export {
   encodeBossTrailer,
   encodeComment,
   encodeEnemyRecord,
+  encodeModels,
+  encodeRotation,
   encodeSettings,
+  encodeShapeWord,
   enemyLetters,
   enemyRecordFromEditor,
   exportLevelToSav,

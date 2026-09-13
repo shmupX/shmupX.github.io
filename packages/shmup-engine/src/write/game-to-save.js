@@ -24,8 +24,10 @@
 //           blast anims, bullet anims, title logos); the settings block
 //   sec6    24 song slots — the level's own Dezaemon soundtrack when it has
 //           one, else the engine's empty-song template
-//   sec7    all zero: no 3D models (the decoder treats a missing magic as
-//           "the 3D editor was never opened", the way Ramsie's save reads)
+//   sec7    the ポリ吉 3D models an import carried back in `dezaemonModels`
+//           (write/encode-model.js). A level with none writes the section
+//           all zero, which the decoder reads as "the 3D editor was never
+//           opened", the way Ramsie's save does
 //
 // Grid geometry: a stage's json rows spawn LAST ROW FIRST (the runtime
 // reverses them), so they are reversed here into scroll order; `waveRows`
@@ -78,6 +80,7 @@ import { decodePlayerArt } from "../player-art.js";
 import { bankToSec4, frameGroup, quantizeFrames } from "../palette/palette-target.js";
 import { CG_CELL } from "../palette/deza2-palette.js";
 import { CgFullError, CgPacker, REF_HFLIP, REF_VFLIP } from "./cg-pack.js";
+import { encodeModels } from "./encode-model.js";
 
 // --- layout constants ------------------------------------------------------------
 
@@ -1433,12 +1436,18 @@ export function buildSaveFromGame(level, art, options = {}) {
         }
     }
 
+    // --- sec7: the level's ポリ吉 3D models, or the never-opened section ---
+    // An import carries them back verbatim in `dezaemonModels`; a level that
+    // has none encodes to all zero, which is what the 3D editor leaves behind
+    // when it was never opened (write/encode-model.js).
+    const sec7 = encodeModels(level.dezaemonModels, { warn });
+
     const sections = [
         ...packer.pages,
         bankToSec4(q.bank),
         sec5,
         sec6,
-        new Uint8Array(SECTION_SIZES[7]),
+        sec7,
     ];
     return {
         sections,

@@ -48,7 +48,10 @@
 // See src/model/mesh-library.js for the library index and
 // src/model/decode-mdldt.js for the mesh reader.
 //
-// The per-MODEL u16 colour (RGB555, bit 15 clear; edited by a three-channel
+// The per-MODEL u16 colour (RGB555, but bit 15 is NOT reliably clear — 119 of
+// the corpus's 564 models set it, and the shader masks to 0x7fff on read, so
+// this decoder returns the word unmasked and write/encode-model.js stores it
+// back unmasked; edited by a three-channel
 // picker in the overlay, +0x3ac4) is a whole-model TINT, traced through the
 // shader: each polygon's own channel c renders as
 // clamp(c + tint_c - 31 + light, floor_c, 31). White is neutral.

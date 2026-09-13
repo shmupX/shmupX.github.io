@@ -607,3 +607,95 @@ Deno.test("a cart keeps its own drawn title and credits on the way back out", as
   );
   assertStrictEquals(decodeSave(bareSave.payload.buffer).titleArt, undefined);
 });
+
+// sec7 was written as 5,828 zero bytes no matter what the level carried, so a
+// cart imported from a save that had ポリ吉 models came back out with none: of
+// the dev-fixtures corpus, 84 saves / 564 models / 3,165 parts were dropped on
+// every round trip. The writer now encodes them (write/encode-model.js) and
+// map-to-game.js carries them as `dezaemonModels`.
+Deno.test("a cart keeps its 3D models on the way back out", () => {
+  const models = [
+    {
+      slot: 0,
+      color: 0x4210,
+      parts: [
+        {
+          shape: 0x5000,
+          shapeFamily: 5,
+          colorSet: 0,
+          meshIndex: 0,
+          position: { x: 0, y: -20, z: 0 },
+          rotation: { x: 0, y: 0, z: 0 },
+          scale: { x: 1, y: 1, z: 1 },
+        },
+        {
+          shape: 0x5200,
+          shapeFamily: 5,
+          colorSet: 2,
+          meshIndex: 0,
+          position: { x: 12, y: 8, z: -4 },
+          rotation: { x: 0, y: 18, z: 342 },
+          scale: { x: 2, y: -1, z: 0.5 },
+        },
+      ],
+    },
+    {
+      slot: 5,
+      color: 0xf39c, // bit 15 set, as a fifth of the corpus is
+      parts: [{
+        shape: 0x3008,
+        shapeFamily: 3,
+        colorSet: 0,
+        meshIndex: 8,
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+      }],
+    },
+  ];
+  const { sections, warnings } = buildSaveFromGame(
+    { ...level(), dezaemonModels: models },
+    art(),
+  );
+  assertEquals(sections.map((s) => s.length), SECTION_SIZES);
+  assertEquals(warnings.filter((w) => /3D model/.test(w)), []);
+
+  const decoded = decodeSave(buildPayload(sections));
+  assert(decoded.models, "sec7 carries the magic");
+  assertStrictEquals(decoded.models.models.length, 2);
+  assertEquals(decoded.models.models.map((m) => m.slot), [0, 5]);
+  // the colour word survives unmasked
+  assertStrictEquals(decoded.models.models[1].color, 0xf39c);
+  const parts = decoded.models.models[0].parts;
+  assertStrictEquals(parts.length, 2);
+  assertStrictEquals(parts[0].shape, 0x5000);
+  assertStrictEquals(parts[1].shape, 0x5200);
+  assertStrictEquals(parts[1].colorSet, 2);
+  assertEquals(parts[1].position, { x: 12, y: 8, z: -4 });
+  assertStrictEquals(parts[1].scale.x, 2);
+  assertStrictEquals(parts[1].scale.y, -1);
+  assert(parts[1].mirrored);
+
+  // and it survives the trip on to game.json, so the next export keeps them
+  const { gameJson } = mapSaveToGame(decoded);
+  assert(Array.isArray(gameJson.dezaemonModels));
+  assertStrictEquals(gameJson.dezaemonModels.length, 2);
+  const round = decodeSave(
+    buildPayload(
+      buildSaveFromGame(
+        { ...level(), dezaemonModels: gameJson.dezaemonModels },
+        art(),
+      ).sections,
+    ),
+  );
+  assertEquals(round.models, decoded.models);
+});
+
+// A level that never had models must still read as "the 3D editor was never
+// opened" — the state Ramsie's save is in — rather than as sixteen empty slots.
+Deno.test("a level with no 3D models leaves sec7 zeroed", () => {
+  const { sections } = buildSaveFromGame(level(), art());
+  assertStrictEquals(sections[7].length, SECTION_SIZES[7]);
+  assert(sections[7].every((b) => b === 0));
+  assertStrictEquals(decodeSave(buildPayload(sections)).models, null);
+});

@@ -87,10 +87,20 @@ export {
   decodeModels,
   FAMILY_FILE_RANGES,
   FAMILY_MESH_COUNTS,
+  MAX_PARTS,
+  MODEL_SLOT_SIZE,
   MODEL_SLOTS,
   SEC7_MAGIC,
   SHAPE_FAMILIES,
 } from "./src/decode/decode-model.js";
+// ...and back again (src/write/encode-model.js)
+export {
+  encodeModels,
+  encodeRotation,
+  encodeShapeWord,
+  NEUTRAL_COLOR,
+  SEC7_SIZE,
+} from "./src/write/encode-model.js";
 
 // --- Saturn RGB555 (src/decode/decode-cg.js; the CG decoders themselves stay
 // behind the ./decode subpath) ---
