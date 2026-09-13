@@ -2187,3 +2187,40 @@ The `deploy` block in `deno.json` is what that build follows:
   deployment.
 
 Point the `codemonkey.games` domain at the app in the Deploy dashboard.
+
+## Claude Code on the web
+
+The remote container a web session starts in ships node and bun, and no deno —
+so a session opened against this repo used to arrive with nothing that could run
+it. `deno task check` and `deno task test` were both "command not found", every
+`deno run` task in the list above was unreachable, and the `shmupx-character`
+MCP server in `.mcp.json` died at startup on a missing `deno` executable, taking
+→ CREATE A CHARACTER with it.
+
+[`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh) is the
+SessionStart hook that fixes that, registered in
+[`.claude/settings.json`](.claude/settings.json). It installs a pinned Deno
+(v2.5.3, the same v2.x line `.github/workflows/eshop.yml` asks for), then runs
+`deno install` — `nodeModulesDir` is `manual`, so vite, esbuild and svelte are
+absent until something asks for them by name.
+
+Two details are load-bearing:
+
+- **The binary is symlinked into `/usr/local/bin`,** not just put on the hook's
+  own `PATH`. MCP servers are spawned by the CLI rather than by the hook's shell
+  and never read `$CLAUDE_ENV_FILE`, so an exported `PATH` alone still leaves
+  `shmupx-character` unable to find deno. `/usr/local/bin` is already on the
+  default `PATH`, which reaches every child process however it was started.
+- **The hook is a no-op outside the web.** It returns immediately unless
+  `$CLAUDE_CODE_REMOTE` is `true`, because a local checkout has its own deno and
+  its version is not this script's to move.
+
+It is synchronous: the session waits for the toolchain instead of racing it, at
+the cost of a few seconds' startup. A resumed session finds the binary already
+in place and skips to the dependency warm-up, and the install is retried three
+times before giving up with a warning rather than failing the session — deno
+itself is there by then, so a registry blip should cost one command, not the
+whole container.
+
+`.gitignore` keeps `.claude/*` local except for `skills/`, `hooks/` and
+`settings.json`; a hook that never reaches the container cannot set one up.
