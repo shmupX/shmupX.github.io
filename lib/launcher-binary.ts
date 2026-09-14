@@ -15,8 +15,17 @@
 //     so the answer there is "there is nothing to add" — `Deno.build.standalone`
 //     is what tells the two apart.
 //
-// Pure, so tests/launcher_binary_test.ts can check all three without being any
+// A fourth answer appeared with the updater: an AppImage that has been INSTALLED
+// (lib/launcher-install.ts copies its mounted tree into the launcher's data
+// directory) runs from an ordinary writable directory, so it is the one Linux
+// shape `Deno.autoUpdate` can patch. Nothing in execPath says so — the binary
+// inside the installed tree looks like any other — which is why the install
+// directory is part of the context rather than something inferred here.
+//
+// Pure, so tests/launcher_binary_test.ts can check all four without being any
 // of them.
+
+import { installDir } from "./launcher-install.ts";
 
 export interface BinaryContext {
   env: Record<string, string>;
@@ -24,13 +33,34 @@ export interface BinaryContext {
   /** Deno.build.standalone: this is a packaged app rather than a checkout. */
   standalone: boolean;
   os: "linux" | "darwin" | "windows";
+  /**
+   * Where an installed copy would live (`installDir()`), when the caller knows.
+   *
+   * Running from inside it is what "installed" means, and it is the only kind
+   * whose consequences reach past the shortcut: lib/self-update.ts arms the
+   * updater for it. Optional, so a caller that does not care still gets the
+   * other three answers.
+   */
+  installDir?: string;
 }
 
 export interface LauncherBinary {
   /** The file to run. */
   path: string;
   /** How it was identified, for the message when something looks wrong. */
-  kind: "appimage" | "macos-app" | "executable";
+  kind: "appimage" | "macos-app" | "executable" | "installed";
+}
+
+/** Is `path` the directory `dir`, or something under it? */
+function isInside(path: string, dir: string, os: BinaryContext["os"]): boolean {
+  const norm = (value: string) => {
+    const slashed = os === "windows" ? value.replace(/\\/g, "/") : value;
+    const trimmed = slashed.replace(/\/+$/, "");
+    return os === "windows" ? trimmed.toLowerCase() : trimmed;
+  };
+  const inside = norm(path);
+  const root = norm(dir);
+  return inside === root || inside.startsWith(`${root}/`);
 }
 
 /**
@@ -48,6 +78,14 @@ export function launcherBinary(ctx: BinaryContext): LauncherBinary | null {
   if (appImage) return { path: appImage, kind: "appimage" };
   if (!ctx.standalone) return null;
   if (!ctx.execPath) return null;
+  // An installed tree is entered through its AppRun, not through whatever
+  // execPath reports from inside it: AppRun is the only file the AppImage
+  // layout guarantees, and it is what sets the tree up before handing over.
+  const installed = (ctx.installDir ?? "").trim();
+  if (installed && isInside(ctx.execPath, installed, ctx.os)) {
+    const sep = ctx.os === "windows" ? "\\" : "/";
+    return { path: `${installed}${sep}AppRun`, kind: "installed" };
+  }
   if (ctx.os === "darwin") {
     // Steam wants the bundle, not the Mach-O buried in it: pointing a shortcut
     // at Contents/MacOS/shmupX launches it without the bundle's Info.plist, so
@@ -81,5 +119,6 @@ export function currentLauncherBinary(): LauncherBinary | null {
     execPath,
     standalone: (Deno.build as { standalone?: boolean }).standalone === true,
     os,
+    installDir: installDir(os, env),
   });
 }

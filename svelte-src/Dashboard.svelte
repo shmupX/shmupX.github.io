@@ -964,9 +964,15 @@
   let steamDone = $state('');
   let steamSummary = $derived.by(() => {
     if (!steam) return '';
+    if (steamBusy) return steam.install && steam.install.can ? 'installing…' : 'adding…';
     if (steamDone) return steamDone;
     if (!steam.binary) return steam.reason || 'nothing to add from a source checkout';
     if (!steam.steamFound) return 'Steam is not installed on this machine';
+    // An AppImage is added by INSTALLING it first: it cannot patch itself where
+    // it sits, so the copy is what the updater writes into later
+    // (lib/launcher-install.ts). Worth saying before the press, because it
+    // copies about a gigabyte rather than writing one file.
+    if (steam.install && steam.install.can) return 'press to install it and add it to your Steam library';
     const what = steam.binary.kind === 'appimage'
       ? 'this AppImage'
       : steam.binary.kind === 'macos-app' ? 'this app bundle' : 'this launcher';
@@ -1005,9 +1011,17 @@
       // Steam reads shortcuts.vdf at startup and writes its own copy back when
       // it quits, so a shortcut added under a running client is discarded on
       // exit. There is no way around that — only a way to say so.
+      // `installedApp` is the copy on disk; `installed` is the list of Steam
+      // accounts written. Both are reported, and neither is the other.
+      const app = data.installedApp;
       steamDone = (already ? 'already in your library' : 'added to your library') +
+        (app && app.ok ? '  ·  installed, and updates from now on' : '') +
+        (app && !app.ok ? '  ·  not installed, so it will not update' : '') +
         (data.steamRunning ? '  ·  RESTART STEAM to see it' : '') +
         (data.installed.length > 1 ? '  ·  ' + data.installed.length + ' accounts' : '');
+      // The install failing is not the press failing — the shortcut is there —
+      // but it is the reason updates stay off, so it does not pass silently.
+      if (app && !app.ok && app.error) showToast('Added to Steam, but not installed: ' + app.error);
       showToast(steamDone.replace(/\s+·\s+/g, ' — '));
     } catch (e) {
       showToast('Could not add to Steam: ' + (e?.message || e));
