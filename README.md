@@ -2200,9 +2200,21 @@ MCP server in `.mcp.json` died at startup on a missing `deno` executable, taking
 [`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh) is the
 SessionStart hook that fixes that, registered in
 [`.claude/settings.json`](.claude/settings.json). It installs a pinned Deno
-(v2.5.3, the same v2.x line `.github/workflows/eshop.yml` asks for), then runs
-`deno install` — `nodeModulesDir` is `manual`, so vite, esbuild and svelte are
-absent until something asks for them by name.
+(v2.9.6, on the same v2.x line `.github/workflows/eshop.yml` asks for), then
+runs `deno install` — `nodeModulesDir` is `manual`, so vite, esbuild and svelte
+are absent until something asks for them by name.
+
+**The pin must not go below v2.8,** and that is worth spelling out because the
+symptom is so unhelpful. Up to and including v2.7, `deno fmt` and `deno lint`
+walking from the workspace root ignored a member's own `fmt.exclude` and
+`lint.exclude`. `packages/shmup-engine` excludes `src/**`, `FORMAT.md`,
+`games-db.json` and `data/*.json` for good reason: five of those files carry a
+single line of 12K–258K characters, and `deno fmt` costs about the square of a
+line's length — 4x the time for 2x the characters. So `deno task check` walked
+into `data/bgm-instruments.json`, spent its life there, and never printed a
+thing. Naming the member directly (`deno fmt --check packages/shmup-engine`) was
+always fine, which is what made it look like a repo problem rather than a
+toolchain one. v2.8.0 is clean on the same tree.
 
 Two details are load-bearing:
 

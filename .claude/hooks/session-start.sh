@@ -19,7 +19,17 @@ fi
 # Pinned rather than "latest" so a session a month from now resolves the same
 # toolchain a session today did. .github/workflows/eshop.yml asks for v2.x and
 # deno.json's tasks assume Deno 2, so this tracks that line.
-DENO_VERSION="${DENO_VERSION:-v2.5.3}"
+#
+# Never below v2.8, which is where this was fixed (2.7.0 still hangs, 2.8.0 is
+# clean on the same tree): before it, `deno fmt`/`deno lint` walking
+# from the workspace root ignored a member's own fmt.exclude and lint.exclude.
+# packages/shmup-engine excludes src/**, FORMAT.md, games-db.json and
+# data/*.json for good reason: five of those files carry a single line of
+# 12K-258K characters and a sixth is 448K of generated JSON, and deno fmt
+# costs roughly the square of a line's length (4x the time per 2x the
+# characters, measured). `deno task check` walked straight into them from the
+# repo root and never came back.
+DENO_VERSION="${DENO_VERSION:-v2.9.6}"
 export DENO_INSTALL="${DENO_INSTALL:-$HOME/.deno}"
 DENO_BIN="$DENO_INSTALL/bin/deno"
 
