@@ -24,9 +24,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// spacetimedb/module/node_modules/base64-js/index.js
+// spacetimedb/module/node_modules/.deno/base64-js@1.5.1/node_modules/base64-js/index.js
 var require_base64_js = __commonJS({
-  "spacetimedb/module/node_modules/base64-js/index.js"(exports) {
+  "spacetimedb/module/node_modules/.deno/base64-js@1.5.1/node_modules/base64-js/index.js"(exports) {
     "use strict";
     exports.byteLength = byteLength;
     exports.toByteArray = toByteArray;
@@ -125,9 +125,9 @@ var require_base64_js = __commonJS({
   }
 });
 
-// spacetimedb/module/node_modules/safe-stable-stringify/index.js
+// spacetimedb/module/node_modules/.deno/safe-stable-stringify@2.5.0/node_modules/safe-stable-stringify/index.js
 var require_safe_stable_stringify = __commonJS({
-  "spacetimedb/module/node_modules/safe-stable-stringify/index.js"(exports, module) {
+  "spacetimedb/module/node_modules/.deno/safe-stable-stringify@2.5.0/node_modules/safe-stable-stringify/index.js"(exports, module) {
     "use strict";
     var { hasOwnProperty } = Object.prototype;
     var stringify3 = configure2();
@@ -721,15 +721,15 @@ ${originalIndentation}`;
   }
 });
 
-// spacetimedb/module/node_modules/spacetimedb/dist/index.browser.mjs
+// spacetimedb/module/node_modules/.deno/spacetimedb@2.8.3/node_modules/spacetimedb/dist/index.browser.mjs
 var import_base64_js = __toESM(require_base64_js(), 1);
 
-// spacetimedb/module/node_modules/safe-stable-stringify/esm/wrapper.js
+// spacetimedb/module/node_modules/.deno/safe-stable-stringify@2.5.0/node_modules/safe-stable-stringify/esm/wrapper.js
 var import__ = __toESM(require_safe_stable_stringify(), 1);
 var configure = import__.default.configure;
 var stringify = import__.default;
 
-// spacetimedb/module/node_modules/spacetimedb/dist/index.browser.mjs
+// spacetimedb/module/node_modules/.deno/spacetimedb@2.8.3/node_modules/spacetimedb/dist/index.browser.mjs
 var BinaryReader = class {
   /**
    * The DataView used to read values from the binary data.
@@ -8467,14 +8467,19 @@ var SubscriptionBuilder = class extends SubscriptionBuilderImpl {
 var DbConnectionBuilder2 = class extends DbConnectionBuilder {
 };
 var DbConnection = class _DbConnection extends DbConnectionImpl {
-  /** Creates a new {@link DbConnectionBuilder} to configure and connect to the remote SpacetimeDB instance. */
-  static builder = () => {
-    return new DbConnectionBuilder2(REMOTE_MODULE, (config) => new _DbConnection(config));
-  };
-  /** Creates a new {@link SubscriptionBuilder} to configure a subscription to the remote SpacetimeDB instance. */
-  subscriptionBuilder = () => {
-    return new SubscriptionBuilder(this);
-  };
+  constructor() {
+    super(...arguments);
+    /** Creates a new {@link SubscriptionBuilder} to configure a subscription to the remote SpacetimeDB instance. */
+    this.subscriptionBuilder = () => {
+      return new SubscriptionBuilder(this);
+    };
+  }
+  static {
+    /** Creates a new {@link DbConnectionBuilder} to configure and connect to the remote SpacetimeDB instance. */
+    this.builder = () => {
+      return new DbConnectionBuilder2(REMOTE_MODULE, (config) => new _DbConnection(config));
+    };
+  }
 };
 
 // static/netplay/src/snapshot.ts
@@ -8658,22 +8663,22 @@ function emit(set2, value) {
   }
 }
 var Netplay = class {
-  conn = null;
-  identity = null;
-  sessionListeners = /* @__PURE__ */ new Set();
-  snapshotListeners = /* @__PURE__ */ new Map();
-  inputListeners = /* @__PURE__ */ new Set();
-  seatListeners = /* @__PURE__ */ new Set();
-  gameId;
-  status = "offline";
-  onStatus;
-  hosting = false;
-  seatedOn = null;
-  inputSeq = 0;
-  snapshotSeq = 0;
-  lastSentBits = -1;
-  lastOpen = null;
-  reopening = false;
+  constructor() {
+    this.conn = null;
+    this.identity = null;
+    this.sessionListeners = /* @__PURE__ */ new Set();
+    this.snapshotListeners = /* @__PURE__ */ new Map();
+    this.inputListeners = /* @__PURE__ */ new Set();
+    this.seatListeners = /* @__PURE__ */ new Set();
+    this.status = "offline";
+    this.hosting = false;
+    this.seatedOn = null;
+    this.inputSeq = 0;
+    this.snapshotSeq = 0;
+    this.lastSentBits = -1;
+    this.lastOpen = null;
+    this.reopening = false;
+  }
   get online() {
     return this.status === "online";
   }
