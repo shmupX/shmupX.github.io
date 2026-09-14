@@ -42,7 +42,7 @@ const DEFAULT_BASE_URL = "https://codemonkey.games/desktop";
  * key this build would not accept — the one mistake that ships a release no
  * launcher on earth can verify, and whose only symptom is silence.
  */
-export const BUILD_PUBLIC_KEY = "";
+export const BUILD_PUBLIC_KEY = "jXb38LQPcrCtyxzg/evjb2LmnS1aeK5V3zKtXpADc60=";
 
 /**
  * Is this a well-formed Ed25519 public key?
