@@ -28,7 +28,7 @@
 // as not installed rather than boot to a black frame with half its assets —
 // the launcher upstream learned that the hard way.
 
-import { readyEmuWorker, EMU_SW } from './ps2-library.js';
+import { ensureEmuCore, readyEmuWorker, EMU_SW } from './ps2-library.js';
 import {
   dezaShelfIdForEshop,
   isEshopShelfEntry,
@@ -112,8 +112,10 @@ export function normalizeEshopEntry(raw, origin = 'manifest', key = '') {
   if (!raw || typeof raw !== 'object') return { error: 'not an object' };
   const id = origin === 'rtdb' ? String(key || raw.id || '') : String(raw.id || '');
   if (!ESHOP_ID_RE.test(id)) return { error: 'bad id ' + JSON.stringify(id) };
-  const kind = raw.kind === 'web' || raw.kind === 'deza' ? raw.kind : null;
-  if (!kind) return { error: id + ': kind ' + JSON.stringify(raw.kind) + ' is not web or deza' };
+  const kind = raw.kind === 'web' || raw.kind === 'deza' || raw.kind === 'arcade' ? raw.kind : null;
+  if (!kind) {
+    return { error: id + ': kind ' + JSON.stringify(raw.kind) + ' is not web, deza or arcade' };
+  }
   const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : '';
   if (!name) return { error: id + ': no name' };
   const str = (v) => (typeof v === 'string' ? v : '');
@@ -155,6 +157,19 @@ export function normalizeEshopEntry(raw, origin = 'manifest', key = '') {
     if (!entry.downloadUrl && !githubRepo(entry)) {
       return { error: id + ': a web entry needs a downloadUrl or a GitHub repo' };
     }
+  } else if (kind === 'arcade') {
+    // An arcade row is a romset filed against an emulator core, not a build to
+    // unpack: `core` is the section it lands in (an id in emulators.json),
+    // `rom` the romset/driver name the player is asked for, `romUrl` where
+    // this origin serves the zip. The core wasm and the per-game recipe are
+    // the player's to find — ours is the board.
+    entry.source = entry.source || 'manifest';
+    entry.core = str(raw.core);
+    entry.rom = str(raw.rom);
+    entry.romUrl = str(raw.romUrl);
+    if (!entry.core) return { error: id + ': an arcade entry needs a core id' };
+    if (!entry.rom) return { error: id + ': an arcade entry needs a rom name' };
+    if (!entry.romUrl) return { error: id + ': an arcade entry needs a romUrl' };
   } else {
     entry.source = entry.source || (origin === 'rtdb' ? 'editor' : 'manifest');
     entry.sav = str(raw.sav);
@@ -1000,6 +1015,116 @@ export async function uninstallDezaGame(id) {
 /** The shelf rows that came from the eShop (source "eshop"), newest first. */
 export async function installedDezaGames() {
   return (await listDezaShelf()).filter(isEshopShelfEntry);
+}
+
+// ── The arcade shelf ─────────────────────────────────────────────────────────
+// An arcade row is neither a build to unpack nor a save to decode. The romset
+// is a zip this origin already serves, and what makes it playable is the
+// emulator core whose section it belongs to — so "installing" one is two facts
+// written down (that core is on, this board is shelved) and no bytes moved.
+//
+// localStorage rather than IndexedDB, unlike the Dezaemon shelf: a record is a
+// few hundred bytes echoing the catalog row, and the launcher reads the shelf
+// synchronously while deriving its section rows.
+export const ARCADE_SHELF_KEY = 'shmupx-arcade-shelf';
+
+function readArcadeShelf() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ARCADE_SHELF_KEY) || '[]');
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((r) => r && typeof r.id === 'string' && typeof r.rom === 'string');
+  } catch (_) {
+    return []; // unreadable or unparseable reads as an empty shelf, never a throw
+  }
+}
+
+function writeArcadeShelf(rows) {
+  try {
+    localStorage.setItem(ARCADE_SHELF_KEY, JSON.stringify(rows));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Shelve an arcade romset and make sure its core's section is on.
+ * Resolves to the shelf record. `onProgress(pct, label)`.
+ */
+export async function installArcadeGame(entry, { onProgress = noop, fetchImpl = defaultFetch } = {}) {
+  if (!entry || entry.kind !== 'arcade') {
+    throw new Error('only an arcade entry can go on the arcade shelf');
+  }
+  const id = String(entry.id || '');
+  if (!ESHOP_ID_RE.test(id)) throw new Error('bad catalog id ' + JSON.stringify(id));
+  const core = String(entry.core || '');
+  const rom = String(entry.rom || '');
+  const romUrl = String(entry.romUrl || '');
+  if (!core || !rom || !romUrl) {
+    throw new Error('this arcade entry is missing its core, rom or romUrl');
+  }
+  const progress = typeof onProgress === 'function' ? onProgress : noop;
+
+  // Confirm the board is actually there before turning a whole section on for
+  // it. A ranged GET rather than HEAD: every static host here answers ranges,
+  // and not all of them answer HEAD.
+  progress(5, '⬇ BOARD');
+  let res;
+  try {
+    res = await fetchImpl(romUrl, { headers: { range: 'bytes=0-0' }, cache: 'no-store' });
+  } catch (e) {
+    throw new Error('could not reach the romset at ' + romUrl + ': ' + (e?.message || e));
+  }
+  if (!res || (!res.ok && res.status !== 206)) {
+    throw new Error(
+      'the romset at ' + romUrl + ' is not there (HTTP ' + (res ? res.status : '?') + ')',
+    );
+  }
+
+  // The core IS the section: ensureEmuCore writes its id into the installed set,
+  // which is the only thing the launcher turns into a strip tile. For a
+  // mirrored core this also registers the emulator worker and warms the player.
+  progress(30, 'CORE');
+  await ensureEmuCore(core, core, (step) => progress(60, String(step || '').toUpperCase()));
+
+  progress(90, 'SHELVING');
+  const record = {
+    id,
+    core,
+    rom,
+    romUrl,
+    name: entry.name || entry.title || id,
+    title: entry.title || String(entry.name || id).toUpperCase(),
+    sub: entry.sub || '',
+    size: entry.size || '',
+    date: entry.date || '',
+    players: Number(entry.players) || 0,
+    addedAt: Date.now(),
+  };
+  const rows = readArcadeShelf().filter((r) => r.id !== id);
+  rows.unshift(record);
+  if (!writeArcadeShelf(rows)) {
+    throw new Error('the arcade shelf could not be written — this browser is blocking storage');
+  }
+  notifyEshopChanged();
+  progress(100, 'ON THE SHELF');
+  return record;
+}
+
+/** The arcade boards this browser has shelved, newest first. */
+export async function installedArcadeGames() {
+  return readArcadeShelf();
+}
+
+/**
+ * Take an arcade board off the shelf. The core stays installed: its section may
+ * still hold the mirror's own games, and a core is uninstalled from
+ * Settings → Emulators, not by removing one game from it.
+ */
+export async function uninstallArcadeGame(id) {
+  const key = String(id || '');
+  writeArcadeShelf(readArcadeShelf().filter((r) => r.id !== key));
+  notifyEshopChanged();
 }
 
 // ── Publishing from the editor ───────────────────────────────────────────────

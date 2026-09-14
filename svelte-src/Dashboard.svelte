@@ -30,14 +30,17 @@
     entryUrl,
     githubRepo,
     hasInstalledWebGames,
+    installArcadeGame,
     installDezaGame,
     installWebGame,
+    installedArcadeGames,
     installedDezaGames,
     installedWebGames,
     loadEshopCatalog,
     loadEshopCover,
     onEshopChanged,
     statusLabel,
+    uninstallArcadeGame,
     uninstallDezaGame,
     uninstallWebGame,
   } from '../static/eshop-library.js';
@@ -557,6 +560,17 @@
     try { ps2Local = await listPs2Games(); } catch (_) { ps2Local = []; }
   }
 
+  // ─── The local arcade shelf ────────────────────────────────────────────────
+  // Arcade boards installed from the eShop. Unlike the PS2 and SNES shelves
+  // these hold no bytes — the romset is a zip this origin serves and the record
+  // is the catalog row that points at it (static/eshop-library.js). They are
+  // shown ahead of whatever the core's own mirrored manifest lists, so a board
+  // installed here sits above the hosted shelf in the same section.
+  let arcadeLocal = $state([]);
+  async function refreshArcadeLocal() {
+    try { arcadeLocal = await installedArcadeGames(); } catch (_) { arcadeLocal = []; }
+  }
+
   // ─── The local SNES shelf ──────────────────────────────────────────────────
   // Super Famicom Dezaemon dumps this browser holds: imported from disk by the
   // editor's "→ SNES LIBRARY", or installed off the published library. They
@@ -656,6 +670,41 @@
     gameSrc = SATURN_BYOD_PLAYER;
     setTimeout(() => { gameOn = true; }, 30);
   }
+  // An arcade board the mirror has never heard of. Same shape as the Saturn
+  // disc below and for the same reason: the player wants a File of its own
+  // frame's realm, so the launcher opens it with ?byob=1, waits for its
+  // "arcade-byob-ready" and posts the romset it asked for. The player then
+  // resolves the game's recipe and MAME core itself.
+  let arcadePending = null; // the board the player about to open is asking for
+  function launchArcadeBoard(record, core) {
+    if (!record) { showToast('That arcade board is no longer on the shelf.'); return; }
+    const player = core?.player || emuCores.find((c) => c.id === record.core)?.player;
+    if (!player) {
+      showToast('No player for the ' + record.core + ' core — install it from Settings → Emulators.');
+      return;
+    }
+    arcadePending = record;
+    chromeDismissed = false;
+    frameUrl = null;
+    gameSrc = player + '?byob=1';
+    setTimeout(() => { gameOn = true; }, 30);
+  }
+  async function deliverArcadeBoard(frame) {
+    const record = arcadePending;
+    if (!record) return;
+    arcadePending = null;
+    try {
+      const r = await fetch(record.romUrl, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      const file = new File([blob], record.rom + '.zip', { type: 'application/zip' });
+      // Same-origin only: the player is ours (the worker mirrors it under our
+      // origin) and the board is a file this origin already serves.
+      frame.postMessage({ type: 'arcade-byob-file', file, name: record.rom }, location.origin);
+    } catch (e) {
+      showToast('Could not hand "' + record.name + '" to the arcade player: ' + (e?.message || e));
+    }
+  }
   async function deliverSaturnDisc(frame) {
     try {
       const r = await fetch(DEZA_DISC_URL + '?zip=1', { cache: 'no-store' });
@@ -742,6 +791,7 @@
   // the worker holds the prefixes would 404 against this origin.
   async function initEmulators() {
     refreshPs2Local();
+    refreshArcadeLocal();
     try {
       const r = await fetch(EMU_CATALOG, { cache: 'no-store' });
       if (r.ok) emuCatalog = await r.json();
@@ -1425,6 +1475,11 @@
         if (rec?.eshopId) next[rec.eshopId] = { kind: 'deza', shelfId: rec.id, players: Number(rec.players) || 0 };
       }
     } catch (_) { /* no IndexedDB — nothing deza is installed */ }
+    try {
+      for (const rec of (await installedArcadeGames()) || []) {
+        next[rec.id] = { kind: 'arcade', core: rec.core, rom: rec.rom, players: Number(rec.players) || 0 };
+      }
+    } catch (_) { /* no localStorage — nothing arcade is installed */ }
     eshopInstalled = next;
     checkEshopUpdates();
   }
@@ -1458,10 +1513,15 @@
     }
     return { cls: 'get', text: 'GET ⬇' };
   }
-  function eshopKindLabel(g) { return g?.kind === 'deza' ? 'DEZA' : 'WEB'; }
+  function eshopKindLabel(g) {
+    if (g?.kind === 'deza') return 'DEZA';
+    if (g?.kind === 'arcade') return 'ARCADE';
+    return 'WEB';
+  }
   function eshopTypeLabel(g) {
     if (!g) return '—';
     if (g.kind === 'deza') return 'DEZA / .SAV';
+    if (g.kind === 'arcade') return 'ARCADE / ' + String(g.rom || 'MAME').toUpperCase();
     return 'WEB / ' + (g.source === 'github' ? 'GITHUB' : 'ZIP');
   }
   // Where a game came from, for the disc panel and the graduated row's sub:
@@ -1495,6 +1555,7 @@
     const entry = $state.snapshot(g);
     try {
       if (g.kind === 'deza') await installDezaGame(entry, { onProgress });
+      else if (g.kind === 'arcade') await installArcadeGame(entry, { onProgress });
       else await installWebGame(entry, { onProgress, force: force || !!eshopInstalled[id] });
       eshopUpdatesChecked.delete(id);
       setEshopStatus(id, { busy: false, pct: 100, err: '', updateAvailable: false });
@@ -1502,6 +1563,18 @@
       if (g.kind === 'deza') {
         refreshDezaShelf();
         showToast(g.name + ': ON THE SHELF');
+      } else if (g.kind === 'arcade') {
+        // installArcadeGame wrote the core into storage; merge it into this
+        // tab's copy the way the PS2 export hand-off does, so the section
+        // appears without a reload.
+        const core = String(entry.core || '');
+        emuInstalled = [...new Set([...loadInstalledEmus(), core])];
+        persistEmus();
+        await pushEmuState();
+        const c = emuCores.find((x) => x.id === core);
+        if (c && emuManifests[c.id] === undefined) loadEmuManifest(c);
+        await refreshArcadeLocal();
+        showToast(g.name + ' is in the ' + (c?.title || core.toUpperCase()) + ' section — press A there to play it.');
       } else if (launch && !gameOn) {
         // The A that started the install meant "play" — unless something else
         // has been launched in the meantime, which the new build must not
@@ -1531,6 +1604,7 @@
     sfx.back();
     try {
       if (g.kind === 'deza') await uninstallDezaGame(id);
+      else if (g.kind === 'arcade') await uninstallArcadeGame(id);
       else await uninstallWebGame(id);
     } catch (e) {
       showToast(g.name + ': could not uninstall — ' + (e?.message || e));
@@ -1539,6 +1613,9 @@
     eshopUpdatesChecked.delete(id);
     await refreshEshopInstalled();
     if (g.kind === 'deza') refreshDezaShelf();
+    // The core stays installed — its section may still hold the mirror's own
+    // games — so only the board leaves.
+    if (g.kind === 'arcade') await refreshArcadeLocal();
   }
 
   // A web build runs from its install: entryUrl is root-relative
@@ -1590,6 +1667,7 @@
     // A on a flagged row retries the install, as on the Emulators screen.
     if (eshopInstalled[g.id] && !eshopStatus[g.id]?.err) {
       if (g.kind === 'deza') launchDezaShelfGame(eshopInstalled[g.id].shelfId);
+      else if (g.kind === 'arcade') launchArcadeBoard(arcadeLocal.find((r) => r.id === g.id) || null);
       else launchEshopWeb(g);
       return;
     }
@@ -3127,6 +3205,24 @@
       }
       return rows;
     }
+    // Arcade boards installed from the eShop. Keyed on the core the record
+    // names rather than on a hardcoded id, so a second arcade-ish core costs
+    // nothing here. The bytes stay on this origin; the row carries the romset
+    // URL and launchEmuRow hands it to the player.
+    const boards = arcadeLocal.filter((g) => g.core === core.id);
+    if (boards.length) {
+      return boards.map((g) => ({
+        key: 'arcade:' + g.id,
+        name: g.name,
+        title: g.title || String(g.name).toUpperCase(),
+        sub: g.sub || 'installed here',
+        icon: null,
+        size: g.size || '—',
+        date: g.date || 'LOCAL',
+        type: core.metaType,
+        kind: 'arcade-local', local: g,
+      }));
+    }
     return [];
   }
   // Rows for an installed core: what this machine built first, then the mirror's
@@ -3582,6 +3678,10 @@
     // cartridge row itself is the same launch with nothing to put under it.
     if (row.kind === 'snes' && row.local) { launchLocalSnes(row.local); return; }
     if (row.kind === 'snes-rom') { launchLocalSnes(null); return; }
+    // An arcade board installed from the eShop: the romset is ours, the player
+    // is the core's (mirrored under this origin), so it goes in through the
+    // player's bring-your-own-board mode rather than by filename.
+    if (row.kind === 'arcade-local') { launchArcadeBoard(row.local, core); return; }
     if (row.kind === 'mednafen') { launchMednafen(); return; }
     // A ps2 "web" row is a browser build living beside the ISOs, not a disc —
     // launch its own url rather than handing the filename to the emulator.
@@ -5434,10 +5534,13 @@
     // The SNES player opened with ?byod=1 is asking for its cartridge and save
     // (see launchLocalSnes). Same-origin by construction, same as the Saturn.
     else if (d.type === SNES_BYOD_READY) deliverSnesCart(e.source);
+    // The arcade player opened with ?byob=1 is asking for its board (see
+    // launchArcadeBoard). Same-origin by construction, same as the two above.
+    else if (d.type === 'arcade-byob-ready') deliverArcadeBoard(e.source);
     // The level editor, in our frame, published or installed something
     // through static/eshop-library.js: the catalog, the installed set and the
     // shelf may all have moved.
-    else if (d.type === 'cmg-eshop-changed') { refreshEshop(); refreshDezaShelf(); }
+    else if (d.type === 'cmg-eshop-changed') { refreshEshop(); refreshDezaShelf(); refreshArcadeLocal(); }
     // The editor's → SNES LIBRARY filed a cart. The shelf's BroadcastChannel
     // already reaches this page while the editor is same-origin, which it is
     // today; this covers the case it stops being, and costs one re-read.
@@ -5502,7 +5605,7 @@
     // Other writers of the same stores — the editor in our frame, a second
     // tab — announce themselves on their channels; re-read rather than trust
     // this tab's copy. Each returns its unsubscribe.
-    try { unsubEshop = onEshopChanged(() => { refreshEshop(); refreshDezaShelf(); }); } catch (_) { unsubEshop = null; }
+    try { unsubEshop = onEshopChanged(() => { refreshEshop(); refreshDezaShelf(); refreshArcadeLocal(); }); } catch (_) { unsubEshop = null; }
     try { unsubDezaShelf = onDezaShelfChanged(() => { refreshDezaShelf(); refreshEshopInstalled(); }); } catch (_) { unsubDezaShelf = null; }
     try { unsubSnesShelf = onSnesShelfChanged(() => { refreshSnesLocal(); }); } catch (_) { unsubSnesShelf = null; }
   });

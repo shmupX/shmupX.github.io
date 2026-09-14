@@ -91,6 +91,52 @@ Deno.test("the first global game is Sh'M↑ Party's PS2 port, from its Pages dep
   );
 });
 
+Deno.test("the arcade board ships with the romset the catalog points at", async () => {
+  const eshop = await read("data/eshop.json");
+  const zun = eshop.find((e: { id: string }) => e.id === "zunzunkyou-no-yabou");
+  assertEquals(zun?.kind, "arcade");
+  // `core` is the section it lands in — an id in static/emulators.json, or
+  // installing it turns on a section the launcher cannot draw.
+  assertEquals(zun?.core, "arcade");
+  const cores = JSON.parse(
+    await Deno.readTextFile(
+      new URL("../static/emulators.json", import.meta.url),
+    ),
+  ).cores as { id: string }[];
+  assertEquals(
+    cores.some((c) => c.id === zun?.core),
+    true,
+    "the core the entry names must be in static/emulators.json",
+  );
+  // `rom` is the romset/driver name the player is asked for, and the zip it
+  // fetches has to be named for it: the player takes the name on faith and
+  // resolves the recipe and MAME core from it.
+  assertEquals(zun?.rom, "zunkyou");
+  assertEquals(zun?.romUrl, "/games/zunzunkyou-no-yabou/zunkyou.zip");
+  const rom = await Deno.stat(
+    new URL("../static/games/zunzunkyou-no-yabou/zunkyou.zip", import.meta.url),
+  );
+  assertEquals(rom.isFile, true, "the romset the catalog points at must ship");
+  // The MAME core and the per-game recipe are NOT ours: the player resolves
+  // them from the Emularity engine, the same way the mirror's own arcade rows
+  // do. Committing a copy here would be 21 MB of bytes archive.org already
+  // serves — see the entry's sub line.
+  for (const stray of ["mamesegac2.js.gz", "mamesegac2.wasm.gz"]) {
+    let found = true;
+    try {
+      await Deno.stat(
+        new URL(
+          "../static/games/zunzunkyou-no-yabou/" + stray,
+          import.meta.url,
+        ),
+      );
+    } catch {
+      found = false;
+    }
+    assertEquals(found, false, stray + " is the engine's to serve, not ours");
+  }
+});
+
 Deno.test("eshopEntryProblems rejects what the installer cannot act on", () => {
   const ok = {
     id: "ok-game",
@@ -107,6 +153,30 @@ Deno.test("eshopEntryProblems rejects what the installer cannot act on", () => {
   assertEquals(bad({ id: "Ok Game" }), true, "id with spaces/case");
   assertEquals(bad({ id: "-leading" }), true, "id starting with -");
   assertEquals(bad({ kind: "rom" }), true, "unknown kind");
+  // An arcade row needs all three of core/rom/romUrl — each one is something
+  // the launcher cannot guess.
+  const arcade = {
+    id: "ok-board",
+    kind: "arcade" as const,
+    name: "Ok",
+    title: "OK",
+    core: "arcade",
+    rom: "okrom",
+    romUrl: "/games/ok/okrom.zip",
+  };
+  assertEquals(eshopEntryProblems(arcade, 0), []);
+  const badArcade = (patch: Record<string, unknown>) =>
+    eshopEntryProblems({ ...arcade, ...patch } as typeof arcade, 0).length > 0;
+  assertEquals(badArcade({ core: undefined }), true, "no core");
+  assertEquals(badArcade({ rom: undefined }), true, "no rom");
+  assertEquals(badArcade({ romUrl: undefined }), true, "no romUrl");
+  assertEquals(badArcade({ core: "Arcade" }), true, "core must be an id");
+  assertEquals(badArcade({ rom: "Zun Kyou" }), true, "rom must be an id");
+  assertEquals(
+    badArcade({ romUrl: "http://insecure/x.zip" }),
+    true,
+    "http romUrl",
+  );
   assertEquals(
     bad({ repo: "https://github.com/easierbycode/ok" }),
     true,

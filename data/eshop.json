@@ -30,5 +30,18 @@
     "date": "09.13.26",
     "players": 1,
     "status": "EARLY_ACCESS"
+  },
+  {
+    "id": "zunzunkyou-no-yabou",
+    "kind": "arcade",
+    "name": "Zunzunkyou No Yabou",
+    "title": "ZUNZUNKYOU NO YABOU",
+    "sub": "ARCADE / MAME // Sega System C2 · 1994",
+    "core": "arcade",
+    "rom": "zunkyou",
+    "romUrl": "/games/zunzunkyou-no-yabou/zunkyou.zip",
+    "size": "928 KB",
+    "date": "09.14.26",
+    "players": 2
   }
 ]

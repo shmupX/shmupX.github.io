@@ -365,10 +365,52 @@ Deno.test("normalizeEshopEntry fills the defaults and refuses a malformed row", 
   assertEquals(deza.source, "editor");
   assertEquals(deza.hasCover, true);
 
+  const arcade = lib.normalizeEshopEntry({
+    id: "zunzunkyou-no-yabou",
+    kind: "arcade",
+    name: "Zunzunkyou No Yabou",
+    core: "arcade",
+    rom: "zunkyou",
+    romUrl: "/games/zunzunkyou-no-yabou/zunkyou.zip",
+    size: "928 KB",
+    date: "09.14.26",
+    players: 2,
+  }).entry;
+  assertEquals(arcade.kind, "arcade");
+  assertEquals(arcade.core, "arcade");
+  assertEquals(arcade.rom, "zunkyou");
+  assertEquals(arcade.romUrl, "/games/zunzunkyou-no-yabou/zunkyou.zip");
+  // Title is still derived from the name, and the size stays the label it was.
+  assertEquals(arcade.title, "ZUNZUNKYOU NO YABOU");
+  assertEquals(arcade.size, "928 KB");
+  assertEquals(arcade.players, 2);
+  // Nothing deza-shaped leaks in: an arcade row carries no save.
+  assertEquals(arcade.sav, undefined);
+
   for (
     const [raw, why] of [
       [{ id: "Bad Id", kind: "web", name: "n", repo: "o/r" }, "bad id"],
-      [{ id: "x", kind: "rom", name: "n" }, "not web or deza"],
+      [{ id: "x", kind: "rom", name: "n" }, "not web, deza or arcade"],
+      // An arcade row is only as good as the three fields the launcher needs
+      // to file it: which section, which romset, and where the zip is.
+      [
+        { id: "x", kind: "arcade", name: "n", rom: "z", romUrl: "/z.zip" },
+        "needs a core id",
+      ],
+      [
+        {
+          id: "x",
+          kind: "arcade",
+          name: "n",
+          core: "arcade",
+          romUrl: "/z.zip",
+        },
+        "needs a rom name",
+      ],
+      [
+        { id: "x", kind: "arcade", name: "n", core: "arcade", rom: "z" },
+        "needs a romUrl",
+      ],
       [{ id: "x", kind: "web", repo: "o/r" }, "no name"],
       [
         { id: "x", kind: "web", name: "n", source: "url" },

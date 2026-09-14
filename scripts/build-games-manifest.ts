@@ -45,13 +45,15 @@ interface ManifestEntry {
   players?: number | string;
 }
 
-// An eShop catalog entry (data/eshop.json). Two kinds: a "web" build the
-// installer unzips into Cache Storage and serves from /eshop/<id>/, and a
-// "deza" Dezaemon 2 save that goes onto the shelf. The per-kind fields the
-// installer reads are checked below; twinStick / touchControls / levelEditor
-// pass through with the same meaning as on a Games entry.
+// An eShop catalog entry (data/eshop.json). Three kinds: a "web" build the
+// installer unzips into Cache Storage and serves from /eshop/<id>/, a "deza"
+// Dezaemon 2 save that goes onto the shelf, and an "arcade" romset that is
+// filed against an emulator core in static/emulators.json — installing one
+// turns that core's launcher section on and puts the game in it. The per-kind
+// fields the installer reads are checked below; twinStick / touchControls /
+// levelEditor pass through with the same meaning as on a Games entry.
 interface EshopEntry extends ManifestEntry {
-  kind: "web" | "deza";
+  kind: "web" | "deza" | "arcade";
   // Release status, an UPPER_SNAKE token (EARLY_ACCESS, BETA, …). Optional:
   // left out, the installer reads the game's own codemonkey.json; set here,
   // the row pins it. Blank reads as RELEASED.
@@ -67,6 +69,13 @@ interface EshopEntry extends ManifestEntry {
   // deza
   sav?: string;
   slug?: string;
+  // arcade. `core` is the id of a core in static/emulators.json (the section
+  // the game lands in); `rom` is the MAME romset/driver short name the player
+  // is asked for; `romUrl` is where this origin serves the zip. The core wasm
+  // and the per-game recipe are the player's business, not ours.
+  core?: string;
+  rom?: string;
+  romUrl?: string;
 }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -139,8 +148,24 @@ export function eshopEntryProblems(e: EshopEntry, i: number): string[] {
     if (e.slug != null && !ID_RE.test(e.slug)) {
       problems.push(`${at}: slug must match ${ID_RE}`);
     }
+  } else if (e.kind === "arcade") {
+    // No default for `core`: which section a game lands in is the whole point
+    // of the kind, so an entry that does not say is a mistake, not a shrug.
+    if (!ID_RE.test(e.core ?? "")) {
+      problems.push(
+        `${at}: arcade entries need a core id from static/emulators.json`,
+      );
+    }
+    if (!ID_RE.test(e.rom ?? "")) {
+      problems.push(`${at}: arcade entries need a rom name matching ${ID_RE}`);
+    }
+    if (!isFetchableUrl(e.romUrl)) {
+      problems.push(
+        `${at}: arcade entries need an https or root-relative romUrl`,
+      );
+    }
   } else {
-    problems.push(`${at}: kind must be "web" or "deza"`);
+    problems.push(`${at}: kind must be "web", "deza" or "arcade"`);
   }
   return problems;
 }
