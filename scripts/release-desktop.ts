@@ -615,9 +615,18 @@ if (import.meta.main) {
   if (args["check-key"]) {
     const secret = (Deno.env.get("SHMUPX_UPDATE_SECRET") ?? "").trim();
     if (!secret) {
+      // Deliberately an error rather than a skip. A key check that passes when
+      // there is no key to check is the thing this exists to prevent: it would
+      // go green forever while nothing had ever verified the pair.
       console.error(
-        "\n  SHMUPX_UPDATE_SECRET is not set, so there is nothing to check " +
-          "against.\n",
+        "\n  SHMUPX_UPDATE_SECRET is not set, so there is nothing to check\n" +
+          "  against. It is the 32-byte base64 seed `deno task release:keygen`\n" +
+          "  labelled PRIVATE, and it belongs in exactly one place:\n\n" +
+          "    Settings -> Secrets and variables -> Actions -> New repository\n" +
+          "    secret, named SHMUPX_UPDATE_SECRET\n\n" +
+          "  An organisation secret not granted to this repository, or an\n" +
+          "  environment secret without a matching `environment:` on the job,\n" +
+          "  both arrive here looking exactly like this.\n",
       );
       Deno.exit(1);
     }

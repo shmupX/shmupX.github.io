@@ -1372,13 +1372,16 @@ every release those builds will ever accept, and there is no revoking it short
 of handing everybody a new build.
 
 `release:checkkey` derives the public half of `SHMUPX_UPDATE_SECRET` and
-compares it to `BUILD_PUBLIC_KEY`. `release:desktop` does the same comparison,
-but only once a build exists — so the first proof the pair matched would
-otherwise arrive ~450MB into cutting a release, and a mismatch is not a degraded
-channel but no channel at all, in every copy already installed. The
-`release-key` workflow runs it on every push that touches either side. It never
-prints the seed; it prints the derived public key, which is what makes a
-mismatch diagnosable rather than just red.
+compares it to `BUILD_PUBLIC_KEY`. The secret is a **repository** secret —
+Settings → Secrets and variables → Actions — because an organisation secret not
+granted to this repo, or an environment secret without a matching `environment:`
+on the job, reaches a workflow looking exactly like one that was never set.
+`release:desktop` does the same comparison, but only once a build exists — so
+the first proof the pair matched would otherwise arrive ~450MB into cutting a
+release, and a mismatch is not a degraded channel but no channel at all, in
+every copy already installed. The `release-key` workflow runs it on every push
+that touches either side. It never prints the seed; it prints the derived public
+key, which is what makes a mismatch diagnosable rather than just red.
 
 `release:desktop` needs `bsdiff` and `bspatch` on PATH (`dnf install bsdiff`,
 `apt install bsdiff`, `brew install bsdiff`) and refuses three ways rather than
