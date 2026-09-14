@@ -592,20 +592,21 @@ async function moveInto(from: string, to: string): Promise<void> {
  */
 async function buildDesktopApp(opts: Options): Promise<string> {
   const target = targetTriple(opts);
-  // `deno desktop` has no --app-name: it derives the app name, and from that
-  // the reverse-DNS bundle identifier, from this file name. Identifiers are
-  // [A-Za-z0-9.-], so the underscore in "x86_64" would make it invalid — and
-  // rather than fail, the build silently skips writing the .desktop entry,
-  // which is what gives the AppImage its name and monkey icon in a desktop
-  // environment (and in Steam, added as a non-Steam game). Hence "x86-64".
   // `deno desktop` has no --app-name: the app's own identity — the macOS
-  // CFBundleName, the Linux .desktop entry, the process name in the Dock and
-  // Cmd-Tab — is the *output file's stem*. So it builds as plain "shmupX" and
-  // the arch-tagged artifact name is applied afterwards by renaming: the
-  // identity is baked into Info.plist / the .desktop entry at build time and
-  // does not follow the file. That also keeps the identifier free of the
-  // underscore in "x86_64", which is not legal in a reverse-DNS bundle id and
-  // makes the build skip the .desktop entry rather than fail.
+  // CFBundleName, the Linux .desktop entry's Name and Exec, the process name
+  // in the Dock and Cmd-Tab — is the *output file's stem*. So it builds as
+  // plain "shmupX" and the arch-tagged artifact name is applied afterwards by
+  // renaming: the identity is baked into Info.plist / the .desktop entry at
+  // build time and does not follow the file.
+  //
+  // The bundle identifier does NOT come from the stem. deno.json pins it
+  // (desktop.app.identifier), which is what leaves the artifact name free to
+  // carry the underscore in "x86_64" — illegal in a reverse-DNS id, and if one
+  // were ever derived from the stem the build would silently skip the .desktop
+  // entry rather than fail. Read off a built AppImage: its
+  // games.codemonkey.shmupx.desktop carries Name=shmupX, Exec=shmupX and
+  // StartupWMClass=games.codemonkey.shmupx, while the artifact beside it is
+  // shmupX-linux-x86_64.AppImage.
   //
   // A macOS target always lands in a bundle and `deno desktop` appends the
   // .app itself, so passing one would name it "….app.app"; --no-bundle has
