@@ -37,8 +37,12 @@ const DEFAULT_BASE_URL = "https://codemonkey.games/desktop";
  * line of text repoint the updater at another origin and hand it a matching
  * key, which is a self-repairing implant rather than a setting. Tests pass a
  * key through `UpdateContext.publicKey` instead.
+ *
+ * Exported so scripts/release-desktop.ts can refuse to sign a manifest with a
+ * key this build would not accept — the one mistake that ships a release no
+ * launcher on earth can verify, and whose only symptom is silence.
  */
-const DEFAULT_PUBLIC_KEY = "";
+export const BUILD_PUBLIC_KEY = "";
 
 /**
  * Is this a well-formed Ed25519 public key?
@@ -152,7 +156,7 @@ export function updatePlan(ctx: UpdateContext): UpdatePlan {
       badOverride = true;
     }
   }
-  const publicKey = (ctx.publicKey ?? DEFAULT_PUBLIC_KEY).trim();
+  const publicKey = (ctx.publicKey ?? BUILD_PUBLIC_KEY).trim();
   const channel = updateChannel(ctx.target);
   const off = (reason: string): UpdatePlan => ({
     enabled: false,
