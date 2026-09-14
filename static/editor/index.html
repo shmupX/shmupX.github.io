@@ -5021,6 +5021,52 @@
             } catch (_e) { /* no URL to read */ }
             return out;
         }
+        // ================== OPENING THE GAME (LAUNCHER AWARE) ==================
+        // The hand-off to the game travels entirely through this origin's
+        // storage: the recipe in localStorage, the atlas in IndexedDB. So the
+        // game has to open somewhere that shares them.
+        //
+        // A browser tab does. The packaged desktop's own window does not: under
+        // `deno desktop --backend cef` window.open() returns null to the page,
+        // and the window that does appear is outside the app's storage jar with
+        // no opener — so the game finds no recipe and plays the shipped
+        // foo.json instead of the save sitting in the editor. There the
+        // launcher opens the window for us (routes/api/desktop-window.ts), in
+        // its own profile, where both stores are the same ones.
+        //
+        // Asked once at boot so a click never waits on it. Anywhere without the
+        // route — the hosted site, a static build, a source checkout open in an
+        // ordinary browser — the answer is false and window.open is used as
+        // before.
+        let launcherWindows = false;
+        (async () => {
+            try {
+                const res = await fetch('/api/desktop-window', { headers: { 'accept': 'application/json' } });
+                if (!res.ok) return;
+                const info = await res.json();
+                launcherWindows = !!(info && info.available);
+            } catch (_e) { /* no route here — window.open it is */ }
+        })();
+
+        // Put `url` on screen as a game window. Repeat plays reuse one window
+        // rather than stacking them up; `key` is what they share.
+        async function openGameWindow(url, title, key) {
+            if (launcherWindows) {
+                try {
+                    const res = await fetch('/api/desktop-window', {
+                        method: 'POST',
+                        headers: { 'content-type': 'application/json' },
+                        body: JSON.stringify({ url, title: title || '2028.Ai', key: key || 'play' }),
+                    });
+                    if (res.ok && (await res.json()).ok) return;
+                } catch (_e) { /* launcher could not, so ask the browser */ }
+            }
+            const opened = window.open(url, '_blank');
+            // A blocked popup is not a dead end: this window goes there
+            // instead, the way the PS2 player already does.
+            if (!opened) (window.top || window).location.href = url;
+        }
+
         async function playCurrentStage(opts) {
             if (!gameData) { alert('Load directory first'); return; }
             if (!syncEnemyEditorForm(true)) return;
@@ -5049,7 +5095,7 @@
             // instead of opening a tab — the shelf's player mode uses it so a
             // slow cart fetch can't outlive the click's popup allowance.
             if (opts && opts.navigate) { location.assign(playUrl); return; }
-            window.open(playUrl, '_blank');
+            await openGameWindow(playUrl, '2028.Ai', 'play');
         }
 
         function exportCurrentLevelJSON() {
@@ -10040,7 +10086,7 @@ function GAME3D_RUNTIME(DATA) {
 if (!name) { name = prompt('Level name:'); if (!name) return; }
             name = sanitizeLevelName(name);
             document.getElementById('firebase-level-name').value = name;
-            window.open(`${GAME_PLAY_URL}?level=${encodeURIComponent(name)}&stage=${getCurrentStageId()}${godModeParam()}`, '_blank');
+            openGameWindow(`${GAME_PLAY_URL}?level=${encodeURIComponent(name)}&stage=${getCurrentStageId()}${godModeParam()}`, name, 'play');
         }
 
         // TARGET picker: which platform the export is compiled for. Persisted
