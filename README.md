@@ -1309,6 +1309,86 @@ stages them out of the read-only `deno compile` VFS onto disk before spawning
 `node`. It costs ~0.3MB, since Deno dedupes the game against the identical copy
 Vite already put in `_fresh/client`.
 
+### Keeping it current
+
+A launcher somebody downloaded once is a frozen copy: every canary feature since
+then lives in this repo, deploys on push to main, and never reaches that file.
+`deno desktop` closes that by itself — `Deno.autoUpdate()` polls a release
+manifest, fetches an Ed25519-signed **bsdiff of the app's runtime dylib** rather
+than a ~350MB download, stages it as `<dylib>.update`, swaps it in on the next
+launch and rolls back by itself if that launch fails. What this repo holds is
+the policy (`lib/self-update.ts`), the install that gives it somewhere to write
+(`lib/launcher-install.ts`), the row that says what it is doing
+(`routes/api/update.ts`, Settings → **UPDATES**) and the publisher
+(`scripts/release-desktop.ts`).
+
+**An AppImage cannot update, and that is not a bug to fix.** A type-2 AppImage
+is a read-only squashfs mounted at `/tmp/.mount_*`, and the runtime patches its
+dylib in place — there is nowhere to put `<dylib>.update`. So **ADD TO STEAM
+installs it**: the mounted tree ( `$APPDIR`, already readable, so no
+`--appimage-extract` and no FUSE) is copied to `~/.local/share/shmupX/app` and
+the shortcut points at the `AppRun` in there. That copy is an ordinary
+directory, so it updates from then on. It costs ~1GB, and briefly twice that
+while the copy is verified before it replaces the old one.
+
+Everything else is off, with a reason the UPDATES row prints:
+
+| off when                    | why                                                                                                                                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a source checkout           | no `Deno.desktopVersion`, so nothing to patch _from_ — and the binary it would patch is the `deno` you are developing with                                                                          |
+| the Windows `.exe`          | `deno compile`, no `Deno.autoUpdate` at all. The runtime's own support stops short of Windows anyway: a loaded DLL cannot be replaced in place, so patches stage and never apply                    |
+| the macOS `.app`            | the bundle is code-signed and its library hashed page by page; a bsdiff patch invalidates that and nothing re-signs, so it would stage, swap, fail to load and roll back on every poll              |
+| a build with no signing key | there is no way to tell a release from whatever else answers that URL. It stops rather than trusting the fetch                                                                                      |
+| a key that is not 32 bytes  | an Ed25519 _private_ seed is also 32 bytes and so the same base64 length, and a truncated key is the same shape as a real one. Either mistake ships a ~450MB artifact whose only symptom is silence |
+| `SHMUPX_NO_UPDATE`          | for a run you do not want touching itself                                                                                                                                                           |
+
+The signing key is a **compile-time constant**, not an environment variable. It
+is public and there is nothing to hide — but a launcher added to Steam inherits
+that shortcut's Launch Options, a text field a player can edit from Game Mode
+with a controller, and a key settable there turns one line of text into a
+repointable updater. `SHMUPX_UPDATE_URL` stays an env var because it is useless
+on its own: without the matching private key nothing it serves verifies. It must
+be `https`.
+
+The row says **when the updater was armed, not when it last checked**, because
+`Deno.autoUpdate` reports nothing per poll: a channel that 404s every hour is
+indistinguishable from one that is up to date. There is no CHECK NOW for the
+same reason — calling `autoUpdate` again arms a second poller rather than
+forcing a check.
+
+#### Cutting a release
+
+```
+deno task release:keygen         # once, ever
+deno task release:desktop -- --new build/desktop/shmupX-linux-x86_64 \
+    --old 2026.9.13=build/old/shmupX-linux-x86_64.AppImage
+```
+
+`release:keygen` prints both halves, labelled, and writes neither to disk: the
+public one goes in `lib/self-update.ts` as `BUILD_PUBLIC_KEY`, the private seed
+into the `SHMUPX_UPDATE_SECRET` repository secret and nowhere else. It signs
+every release those builds will ever accept, and there is no revoking it short
+of handing everybody a new build.
+
+`release:desktop` needs `bsdiff` and `bspatch` on PATH (`dnf install bsdiff`,
+`apt install bsdiff`, `brew install bsdiff`) and refuses three ways rather than
+publishing something silently dead: a key whose public half is not the one the
+builds carry, a tree where the name does not say which library is the runtime
+(CEF's is the biggest file and is not it — `--dylib` settles it), and a patch
+that does not reproduce the new library byte for byte when `bspatch` applies it.
+Output lands in `build/release/<os>-<arch>/`: `latest.json` (the signed
+envelope) and one `patch-<from>-to-<to>.bin` per older build still supported. A
+version with no patch listed is not broken, it just stays where it is, so
+dropping old builds off the end is fine.
+
+Serving it from `https://codemonkey.games/desktop/<os>-<arch>/` — the `baseUrl`
+`deno.json` pins — means copying that directory into `static/desktop/` and
+deploying, which commits a few MB per release into this repo. That is a decision
+about the repo's size, so the script does not make it.
+
+**Nothing is published yet.** `BUILD_PUBLIC_KEY` is empty until a key exists, so
+every build refuses to update — which is the safe direction to be wrong in.
+
 ### Why it is packaged this way
 
 Three ways of shipping a web app as a desktop app were on the table. What each

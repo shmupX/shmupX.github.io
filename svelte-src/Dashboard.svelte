@@ -964,9 +964,15 @@
   let steamDone = $state('');
   let steamSummary = $derived.by(() => {
     if (!steam) return '';
+    if (steamBusy) return steam.install && steam.install.can ? 'installing…' : 'adding…';
     if (steamDone) return steamDone;
     if (!steam.binary) return steam.reason || 'nothing to add from a source checkout';
     if (!steam.steamFound) return 'Steam is not installed on this machine';
+    // An AppImage is added by INSTALLING it first: it cannot patch itself where
+    // it sits, so the copy is what the updater writes into later
+    // (lib/launcher-install.ts). Worth saying before the press, because it
+    // copies about a gigabyte rather than writing one file.
+    if (steam.install && steam.install.can) return 'press to install it and add it to your Steam library';
     const what = steam.binary.kind === 'appimage'
       ? 'this AppImage'
       : steam.binary.kind === 'macos-app' ? 'this app bundle' : 'this launcher';
@@ -1005,15 +1011,57 @@
       // Steam reads shortcuts.vdf at startup and writes its own copy back when
       // it quits, so a shortcut added under a running client is discarded on
       // exit. There is no way around that — only a way to say so.
+      // `installedApp` is the copy on disk; `installed` is the list of Steam
+      // accounts written. Both are reported, and neither is the other.
+      const app = data.installedApp;
       steamDone = (already ? 'already in your library' : 'added to your library') +
+        (app && app.ok ? '  ·  installed, and updates from now on' : '') +
+        (app && !app.ok ? '  ·  not installed, so it will not update' : '') +
         (data.steamRunning ? '  ·  RESTART STEAM to see it' : '') +
         (data.installed.length > 1 ? '  ·  ' + data.installed.length + ' accounts' : '');
+      // The install failing is not the press failing — the shortcut is there —
+      // but it is the reason updates stay off, so it does not pass silently.
+      if (app && !app.ok && app.error) showToast('Added to Steam, but not installed: ' + app.error);
       showToast(steamDone.replace(/\s+·\s+/g, ' — '));
     } catch (e) {
       showToast('Could not add to Steam: ' + (e?.message || e));
     } finally {
       steamBusy = false;
     }
+  }
+
+  // ─── Updates ───────────────────────────────────────────────────────────────
+  // The updater has no surface of its own: it polls on the runtime's timer,
+  // patches a dylib nobody sees, and takes effect on a launch that has not
+  // happened yet. Every refusal in lib/self-update.ts is therefore invisible —
+  // a launcher that will never update again looks exactly like a current one —
+  // so the row exists to say which of the two this is. /api/update has no POST
+  // and neither does this: `Deno.autoUpdate` has no "check now", and a button
+  // that armed a second poller instead would be a lie with a spinner on it.
+  let updates = $state(null);
+  let updatesSummary = $derived.by(() => {
+    if (!updates) return '';
+    // A staged update is the only state with news in it, so it wins.
+    if (updates.staged) return 'shmupX ' + updates.staged + ' is ready  ·  it starts next time you open this';
+    if (!updates.enabled) return 'off  ·  ' + (updates.reason || 'no reason given');
+    const on = updates.version ? '  ·  on ' + updates.version : '';
+    // armedAt, not "last checked": the runtime reports nothing per poll, so a
+    // channel that 404s every hour looks exactly like one that is up to date.
+    // Claiming a check that nothing performed would be the same sin the
+    // refusals undid.
+    return 'watching ' + (updates.channel || 'this build') + on +
+      (updates.rolledBack ? '  ·  last update rolled back' : '');
+  });
+
+  async function refreshUpdates() {
+    try {
+      const r = await fetch('/api/update', { cache: 'no-store' });
+      if (!r.ok) { updates = null; return; }
+      const data = await r.json();
+      // A source checkout never armed anything and has nothing to say about a
+      // binary it is not; the hosted origin answered 403 above.
+      updates = data && data.ok && (data.started || data.enabled) ? data : null;
+    } catch (_) { updates = null; }
   }
 
   // The route answers 403 on the hosted origin, which is how the launcher
@@ -1231,6 +1279,8 @@
     ...(builder ? [{ id: 'builder', label: 'BUILD SERVER', sub: builderSummary }] : []),
     // ...and only a packaged launcher has a file to add (see refreshSteam).
     ...(steam ? [{ id: 'steam', label: 'ADD TO STEAM', sub: steamSummary }] : []),
+    // ...and only one that armed an updater has a channel to report.
+    ...(updates ? [{ id: 'updates', label: 'UPDATES', sub: updatesSummary }] : []),
   ]);
   let settingsSel = $state(0);
   let settingsRowEls = $state([]);
@@ -3648,6 +3698,10 @@
       builderAction(builder?.running ? 'stop' : 'start');
     } else if (it.id === 'steam') {
       addToSteam();
+    } else if (it.id === 'updates') {
+      // Nothing to press: re-read, and say the whole line, which the row itself
+      // may have had to cut short.
+      refreshUpdates().then(() => showToast('Updates: ' + (updatesSummary || 'off')));
     }
   }
 
@@ -5635,6 +5689,7 @@
 
     initHostDevice();
     refreshSteam();
+    refreshUpdates();
     loadManifest();
     initNetplayPresence();
     // The disc check waits for the catalogue: auto-installing the Saturn core
