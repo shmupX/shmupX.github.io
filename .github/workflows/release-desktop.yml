@@ -1,0 +1,154 @@
+# Cutting a release: build the Linux launcher, diff it against the last one, and
+# publish the manifest the installed copies are already polling for.
+#
+# Manual dispatch only. Every run replaces what a fleet of launchers will fetch
+# and apply to themselves, so nothing here fires off a push.
+#
+# THE VERSION IS deno.json's, AND IS NOT AN INPUT. `deno desktop` bakes that
+# value into the build as Deno.desktopVersion, and the runtime compares the
+# manifest's `version` against it. A manifest announcing a version the build
+# does not report is not a mislabel — it is a patch that installs, reports the
+# old version, and is downloaded again on the next poll, forever. So the one
+# value is read from the file both halves already come from, and cutting a new
+# version means bumping deno.json in a pull request first.
+#
+# WHERE THE OLD BUILD COMES FROM. A patch is a bsdiff of one exact runtime dylib
+# against another, so publishing one needs the PREVIOUS release's app, not just
+# its version number. Each run therefore attaches its .AppImage to a GitHub
+# release tagged v<version>, and the next run pulls that down as the thing to
+# diff from. The upload happens before the manifest is committed: a tag with no
+# manifest is a re-runnable nuisance, while a manifest with no baseline behind it
+# leaves the NEXT release with nothing to patch from.
+#
+# The first run therefore publishes no patches at all — there is nothing before
+# it — and only plants the baseline. Two runs are needed before any installed
+# launcher updates itself, which is a property of the first release rather than
+# a bug in it.
+#
+# The manifest and patches are committed to static/desktop/<channel>/, which is
+# what https://codemonkey.games/desktop/<channel>/ serves — the baseUrl deno.json
+# pins and every build already carries. That does add a few MB per release to
+# this repo; dropping old patches later is supported, since a version with no
+# patch listed simply stays where it is.
+
+name: release-desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      previous:
+        description: >-
+          The version to patch from. Blank means the newest existing release,
+          which is almost always right.
+        required: false
+        default: ""
+      dry_run:
+        description: >-
+          Build, diff and sign, but publish nothing: no tag, no commit.
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-latest
+    env:
+      CHANNEL: linux-x86_64
+      SHMUPX_UPDATE_SECRET: ${{ secrets.SHMUPX_UPDATE_SECRET }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # Before a ~350MB build rather than after it: a secret that is not the
+      # private half of the key the builds carry signs releases no install will
+      # ever accept, and the only symptom is silence.
+      - name: The secret still matches the key the builds carry
+        run: deno task release:checkkey
+
+      - name: bsdiff
+        run: sudo apt-get update && sudo apt-get install -y bsdiff
+
+      - name: Which version this is, and that it is not one already released
+        id: v
+        run: |
+          set -euo pipefail
+          version="$(deno eval 'console.log(JSON.parse(Deno.readTextFileSync("deno.json")).version ?? "")')"
+          if [ -z "$version" ]; then
+            echo "::error::deno.json has no version, so there is nothing to bake into a build."
+            exit 1
+          fi
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "::error::v$version is already released. Bump deno.json's version first — republishing one would hand every install a patch to the version it is already on."
+            exit 1
+          fi
+          previous="${{ inputs.previous }}"
+          if [ -z "$previous" ]; then
+            previous="$(gh release list --limit 1 --json tagName --jq '.[0].tagName // ""' | sed 's/^v//')"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          if [ -z "$previous" ]; then
+            echo "::notice::No previous release. This run plants the baseline; the next one carries the first patch."
+          else
+            echo "::notice::$previous -> $version"
+          fi
+
+      - name: Build the launcher
+        run: deno task build:linux
+
+      - name: The build that is being patched from
+        if: steps.v.outputs.previous != ''
+        run: |
+          set -euo pipefail
+          mkdir -p build/previous
+          gh release download "v${{ steps.v.outputs.previous }}" \
+            --pattern '*.AppImage' --dir build/previous
+          chmod +x build/previous/*.AppImage
+
+      - name: Diff, sign, and write the manifest
+        run: |
+          set -euo pipefail
+          chmod +x build/desktop/shmupX-linux-x86_64.AppImage
+          args=(--new "build/desktop/shmupX-linux-x86_64.AppImage" --channel "$CHANNEL")
+          if [ -n "${{ steps.v.outputs.previous }}" ]; then
+            old="$(ls build/previous/*.AppImage | head -n 1)"
+            args+=(--old "${{ steps.v.outputs.previous }}=$old")
+          fi
+          deno run -A scripts/release-desktop.ts "${args[@]}"
+
+      # The baseline first: a tag with no manifest is re-runnable, a manifest
+      # with no artifact behind it leaves the next release nothing to diff.
+      - name: Publish the build
+        if: ${{ !inputs.dry_run }}
+        run: |
+          gh release create "v${{ steps.v.outputs.version }}" \
+            "build/desktop/shmupX-linux-x86_64.AppImage" \
+            --title "shmupX ${{ steps.v.outputs.version }}" \
+            --notes "The Linux launcher, and the baseline the next release's patch is cut against. Manifest: https://codemonkey.games/desktop/$CHANNEL/latest.json"
+
+      - name: Serve it from codemonkey.games
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          mkdir -p "static/desktop/$CHANNEL"
+          cp "build/release/$CHANNEL/"* "static/desktop/$CHANNEL/"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "static/desktop/$CHANNEL"
+          git commit \
+            -m "Publish shmupX ${{ steps.v.outputs.version }} to the $CHANNEL channel" \
+            -m "Built and signed by .github/workflows/release-desktop.yml, against the launcher attached to the v${{ steps.v.outputs.previous }} release."
+          git push
+
+      - name: What a dry run would have published
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "Nothing was published. Built and signed:"
+          ls -la "build/release/$CHANNEL"
+          cat "build/release/$CHANNEL/latest.json"
