@@ -45,9 +45,14 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      # Before the key check, and not after it. These tests need nothing from
+      # outside the runner, while the key check depends on a repository setting
+      # — so with the key first, a missing secret meant the signing and manifest
+      # rules were never exercised in CI at all. Nothing else runs them: eshop.yml
+      # is the only other workflow and it runs the catalog's tests.
+      - name: The signing and manifest rules still hold
+        run: deno test -A tests/release_desktop_test.ts tests/self_update_test.ts
       - name: The secret is the private half of the key the builds carry
         env:
           SHMUPX_UPDATE_SECRET: ${{ secrets.SHMUPX_UPDATE_SECRET }}
         run: deno task release:checkkey
-      - name: The signing and manifest rules still hold
-        run: deno test -A tests/release_desktop_test.ts tests/self_update_test.ts
