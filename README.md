@@ -1360,6 +1360,7 @@ forcing a check.
 
 ```
 deno task release:keygen         # once, ever
+deno task release:checkkey       # the two halves are still one pair
 deno task release:desktop -- --new build/desktop/shmupX-linux-x86_64 \
     --old 2026.9.13=build/old/shmupX-linux-x86_64.AppImage
 ```
@@ -1369,6 +1370,18 @@ public one goes in `lib/self-update.ts` as `BUILD_PUBLIC_KEY`, the private seed
 into the `SHMUPX_UPDATE_SECRET` repository secret and nowhere else. It signs
 every release those builds will ever accept, and there is no revoking it short
 of handing everybody a new build.
+
+`release:checkkey` derives the public half of `SHMUPX_UPDATE_SECRET` and
+compares it to `BUILD_PUBLIC_KEY`. The secret is a **repository** secret —
+Settings → Secrets and variables → Actions — because an organisation secret not
+granted to this repo, or an environment secret without a matching `environment:`
+on the job, reaches a workflow looking exactly like one that was never set.
+`release:desktop` does the same comparison, but only once a build exists — so
+the first proof the pair matched would otherwise arrive ~450MB into cutting a
+release, and a mismatch is not a degraded channel but no channel at all, in
+every copy already installed. The `release-key` workflow runs it on every push
+that touches either side. It never prints the seed; it prints the derived public
+key, which is what makes a mismatch diagnosable rather than just red.
 
 `release:desktop` needs `bsdiff` and `bspatch` on PATH (`dnf install bsdiff`,
 `apt install bsdiff`, `brew install bsdiff`) and refuses three ways rather than
@@ -1381,13 +1394,47 @@ envelope) and one `patch-<from>-to-<to>.bin` per older build still supported. A
 version with no patch listed is not broken, it just stays where it is, so
 dropping old builds off the end is fine.
 
-Serving it from `https://codemonkey.games/desktop/<os>-<arch>/` — the `baseUrl`
-`deno.json` pins — means copying that directory into `static/desktop/` and
-deploying, which commits a few MB per release into this repo. That is a decision
-about the repo's size, so the script does not make it.
+Served from `https://codemonkey.games/desktop/<os>-<arch>/` — the `baseUrl`
+`deno.json` pins, so no installed build has to be re-baked — which means the
+directory is copied into `static/desktop/` and deployed with the site. That adds
+a few MB per release to this repo; dropping old patches later is supported,
+since a version with no patch listed just stays where it is.
 
-**Nothing is published yet.** `BUILD_PUBLIC_KEY` is empty until a key exists, so
-every build refuses to update — which is the safe direction to be wrong in.
+#### The release workflow
+
+In practice none of that is run by hand: **Actions → release-desktop → Run
+workflow** does it, and it is `workflow_dispatch` only, because every run
+replaces what a fleet of launchers is already polling for.
+
+**The version is `deno.json`'s and is not an input.** `deno desktop` bakes that
+value in as `Deno.desktopVersion` and the runtime compares the manifest's
+`version` against it, so a manifest announcing a version the build does not
+report is not a mislabel — it is a patch that installs, reports the old version,
+and is fetched again on every poll forever. Cutting a new version means bumping
+`deno.json` in a pull request first; the workflow refuses outright if a release
+for that version already exists.
+
+A patch is a diff of one exact runtime dylib against another, so it needs the
+previous release's _app_, not just its version. Each run attaches its
+`.AppImage` to a GitHub release tagged `v<version>` and the next run diffs
+against that — which is also where a player downloads the launcher from. The
+upload happens before the manifest is committed: a tag with no manifest is a
+re-runnable nuisance, a manifest with no artifact behind it leaves the next
+release nothing to patch from.
+
+So **the first run publishes no patches** — there is nothing before it — and
+only plants the baseline. Two runs are needed before any installed launcher
+updates itself. `dry_run` builds, diffs and signs without tagging or committing
+anything.
+
+**The key is in, nothing is published yet.** `BUILD_PUBLIC_KEY` carries a real
+key, so a packaged Linux build now arms its updater and polls hourly — against a
+URL that 404s until the first release goes up, which the runtime treats as
+"nothing new" and nothing else. The UPDATES row will read
+`watching
+linux-x86_64` throughout, because an armed channel with no manifest
+and an armed channel that is current are the same thing from inside the process;
+see `armedAt` above.
 
 ### Why it is packaged this way
 
