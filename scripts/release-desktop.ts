@@ -84,8 +84,18 @@ export function encodeBase64(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes));
 }
 
-/** The signing key, from the 32-byte seed the release secret holds. */
-export async function importSeed(seedB64: string): Promise<CryptoKey> {
+/**
+ * The PKCS#8 wrapper around a seed — and the length check, in the one place
+ * both callers go through.
+ *
+ * `Uint8Array.set` pads rather than complains: a 29-byte seed written into a
+ * 32-byte buffer is a perfectly valid key for a pair nobody has, and derives a
+ * public half that simply is not the one the builds carry. That is the same
+ * "a truncated key is the same shape as a real one" hazard the whole key
+ * discipline exists for, so it cannot live in only one of the two paths that
+ * read a seed — which is what it did until this shared it.
+ */
+function seedToPkcs8(seedB64: string): Uint8Array {
   const seed = decodeBase64(seedB64);
   if (seed.length !== 32) {
     throw new Error(
@@ -97,14 +107,17 @@ export async function importSeed(seedB64: string): Promise<CryptoKey> {
   const pkcs8 = new Uint8Array(PKCS8_PREFIX.length + 32);
   pkcs8.set(PKCS8_PREFIX);
   pkcs8.set(seed, PKCS8_PREFIX.length);
+  return pkcs8;
+}
+
+/** The signing key, from the 32-byte seed the release secret holds. */
+export async function importSeed(seedB64: string): Promise<CryptoKey> {
   return await crypto.subtle.importKey(
     "pkcs8",
-    pkcs8,
+    seedToPkcs8(seedB64) as BufferSource,
     { name: "Ed25519" },
     false,
-    [
-      "sign",
-    ],
+    ["sign"],
   );
 }
 
@@ -116,13 +129,9 @@ export async function importSeed(seedB64: string): Promise<CryptoKey> {
  * apart, and nothing but a dead update channel ever says they stopped matching.
  */
 export async function publicKeyFromSeed(seedB64: string): Promise<string> {
-  const seed = decodeBase64(seedB64);
-  const pkcs8 = new Uint8Array(PKCS8_PREFIX.length + 32);
-  pkcs8.set(PKCS8_PREFIX);
-  pkcs8.set(seed, PKCS8_PREFIX.length);
   const priv = await crypto.subtle.importKey(
     "pkcs8",
-    pkcs8,
+    seedToPkcs8(seedB64) as BufferSource,
     { name: "Ed25519" },
     true,
     ["sign"],
@@ -399,6 +408,59 @@ async function keygen(): Promise<void> {
 `);
 }
 
+/**
+ * Prove the secret and the source file are two halves of one key pair.
+ *
+ * Until something does this, nothing has: `publish` compares them, but only
+ * after a build exists, so the first proof that the pair matches would arrive
+ * ~450MB into cutting a release. And the mistake it catches is total — a
+ * launcher verifies against the key compiled into it, so a mismatch is not a
+ * degraded channel, it is no channel at all, in every copy already out there,
+ * with silence as the only symptom.
+ *
+ * It is cheap enough to run on every push that touches either: derive the
+ * public half of the seed and compare. Nothing prints the seed — the derived
+ * key is the public one, and saying it is what makes a mismatch diagnosable
+ * rather than just red.
+ */
+async function checkKey(seed: string): Promise<boolean> {
+  let derived: string;
+  try {
+    derived = await publicKeyFromSeed(seed);
+  } catch (e) {
+    console.error(
+      `\n  SHMUPX_UPDATE_SECRET is not a signing seed: ${
+        (e as Error).message
+      }\n`,
+    );
+    return false;
+  }
+  if (!BUILD_PUBLIC_KEY) {
+    console.error(
+      `\n  lib/self-update.ts carries no key, so every build refuses to update.\n` +
+        `  The secret's public half is:\n\n` +
+        `    export const BUILD_PUBLIC_KEY = "${derived}";\n`,
+    );
+    return false;
+  }
+  if (derived !== BUILD_PUBLIC_KEY) {
+    console.error(
+      `\n  The secret and the build do not match.\n\n` +
+        `    SHMUPX_UPDATE_SECRET signs for  ${derived}\n` +
+        `    lib/self-update.ts carries      ${BUILD_PUBLIC_KEY}\n\n` +
+        `  Every release this secret signs would be ignored by every install.\n` +
+        `  Both halves are 32 bytes and the same base64 length, so the usual\n` +
+        `  cause is one of them being the wrong half of its pair.\n`,
+    );
+    return false;
+  }
+  console.log(
+    `\n  The secret is the private half of ${derived} — the key the builds\n` +
+      `  carry. A release signed with it verifies.\n`,
+  );
+  return true;
+}
+
 interface PublishOptions {
   newApp: string;
   olds: { version: string; app: string }[];
@@ -516,7 +578,7 @@ async function repoVersion(): Promise<string> {
 if (import.meta.main) {
   const args = parseArgs(Deno.args, {
     string: ["new", "old", "version", "channel", "target", "out", "dylib"],
-    boolean: ["keygen", "help"],
+    boolean: ["keygen", "check-key", "help"],
     collect: ["old"],
     default: { out: "build/release" },
   });
@@ -524,6 +586,7 @@ if (import.meta.main) {
   if (args.help) {
     console.log(`
   deno task release:keygen
+  deno task release:checkkey
   deno task release:desktop -- --new <app> [--old <version>=<app> ...] [flags]
 
     --new <app>             the build being released: an app directory, or an
@@ -537,7 +600,9 @@ if (import.meta.main) {
                             app does not decide it
     --out <dir>             where to write (default: build/release)
 
-  The signing seed comes from SHMUPX_UPDATE_SECRET.
+  The signing seed comes from SHMUPX_UPDATE_SECRET. release:checkkey proves it
+  is the private half of the key lib/self-update.ts carries, and nothing else
+  reads a release key without building one first.
 `);
     Deno.exit(0);
   }
@@ -545,6 +610,18 @@ if (import.meta.main) {
   if (args.keygen) {
     await keygen();
     Deno.exit(0);
+  }
+
+  if (args["check-key"]) {
+    const secret = (Deno.env.get("SHMUPX_UPDATE_SECRET") ?? "").trim();
+    if (!secret) {
+      console.error(
+        "\n  SHMUPX_UPDATE_SECRET is not set, so there is nothing to check " +
+          "against.\n",
+      );
+      Deno.exit(1);
+    }
+    Deno.exit(await checkKey(secret) ? 0 : 1);
   }
 
   // Annotated rather than inferred: TypeScript only narrows past a call that

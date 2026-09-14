@@ -19,6 +19,7 @@
     "build:ios": "deno run -A packages/shmup-harbor/scripts/build-desktop.ts ios",
     "shelf:list": "deno run -A packages/shmup-harbor/scripts/build-desktop.ts android --list",
     "release:keygen": "deno run -A scripts/release-desktop.ts --keygen",
+    "release:checkkey": "deno run -A scripts/release-desktop.ts --check-key",
     "release:desktop": "deno run -A scripts/release-desktop.ts",
     "build:ps2": "deno run -A packages/shmup-harbor/scripts/build-ps2.ts",
     "build:ps2:zip": "deno run -A packages/shmup-harbor/scripts/build-ps2.ts --zip",

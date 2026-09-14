@@ -1,0 +1,53 @@
+# The one thing about the update channel that nothing else checks.
+#
+# A launcher verifies a release against the Ed25519 key compiled into it
+# (lib/self-update.ts's BUILD_PUBLIC_KEY), and signs releases with the seed in
+# the SHMUPX_UPDATE_SECRET repository secret. If those two stop being halves of
+# one pair, the channel is not degraded — it is gone, in every copy already
+# installed, and the only symptom is that no update ever arrives. Both halves
+# are 32 bytes and therefore the same base64 length, so the usual cause is one
+# of them being the wrong half, which looks exactly right in a diff.
+#
+# scripts/release-desktop.ts already refuses to publish on a mismatch, but that
+# is ~450MB into cutting a release. This is the same comparison for free, on
+# every push that touches either side of it.
+#
+# The secret is never printed — the DERIVED public key is, because it is public
+# and it is what makes a mismatch diagnosable rather than just red. A pull
+# request from a fork cannot read repository secrets at all, so the job is
+# skipped there rather than failing for the wrong reason; the push to main
+# still catches it.
+
+name: release-key
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lib/self-update.ts"
+      - "scripts/release-desktop.ts"
+      - ".github/workflows/release-key.yml"
+  pull_request:
+    paths:
+      - "lib/self-update.ts"
+      - "scripts/release-desktop.ts"
+      - ".github/workflows/release-key.yml"
+  workflow_dispatch:
+
+jobs:
+  pair:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: The secret is the private half of the key the builds carry
+        env:
+          SHMUPX_UPDATE_SECRET: ${{ secrets.SHMUPX_UPDATE_SECRET }}
+        run: deno task release:checkkey
+      - name: The signing and manifest rules still hold
+        run: deno test -A tests/release_desktop_test.ts tests/self_update_test.ts

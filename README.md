@@ -1360,6 +1360,7 @@ forcing a check.
 
 ```
 deno task release:keygen         # once, ever
+deno task release:checkkey       # the two halves are still one pair
 deno task release:desktop -- --new build/desktop/shmupX-linux-x86_64 \
     --old 2026.9.13=build/old/shmupX-linux-x86_64.AppImage
 ```
@@ -1369,6 +1370,15 @@ public one goes in `lib/self-update.ts` as `BUILD_PUBLIC_KEY`, the private seed
 into the `SHMUPX_UPDATE_SECRET` repository secret and nowhere else. It signs
 every release those builds will ever accept, and there is no revoking it short
 of handing everybody a new build.
+
+`release:checkkey` derives the public half of `SHMUPX_UPDATE_SECRET` and
+compares it to `BUILD_PUBLIC_KEY`. `release:desktop` does the same comparison,
+but only once a build exists — so the first proof the pair matched would
+otherwise arrive ~450MB into cutting a release, and a mismatch is not a degraded
+channel but no channel at all, in every copy already installed. The
+`release-key` workflow runs it on every push that touches either side. It never
+prints the seed; it prints the derived public key, which is what makes a
+mismatch diagnosable rather than just red.
 
 `release:desktop` needs `bsdiff` and `bspatch` on PATH (`dnf install bsdiff`,
 `apt install bsdiff`, `brew install bsdiff`) and refuses three ways rather than
@@ -1386,8 +1396,14 @@ Serving it from `https://codemonkey.games/desktop/<os>-<arch>/` — the `baseUrl
 deploying, which commits a few MB per release into this repo. That is a decision
 about the repo's size, so the script does not make it.
 
-**Nothing is published yet.** `BUILD_PUBLIC_KEY` is empty until a key exists, so
-every build refuses to update — which is the safe direction to be wrong in.
+**The key is in, nothing is published yet.** `BUILD_PUBLIC_KEY` carries a real
+key, so a packaged Linux build now arms its updater and polls hourly — against a
+URL that 404s until the first release goes up, which the runtime treats as
+"nothing new" and nothing else. The UPDATES row will read
+`watching
+linux-x86_64` throughout, because an armed channel with no manifest
+and an armed channel that is current are the same thing from inside the process;
+see `armedAt` above.
 
 ### Why it is packaged this way
 

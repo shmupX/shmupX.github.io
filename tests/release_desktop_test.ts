@@ -126,6 +126,15 @@ Deno.test("half a key pair is not the other half", async () => {
     Error,
     "32 bytes",
   );
+  // And the same refusal on the way IN, because `Uint8Array.set` pads rather
+  // than complains: a short seed zero-filled to 32 bytes is a valid key for a
+  // pair nobody has, and derives a public half that is simply not the one the
+  // builds carry. Reported as "not a seed", never as a mismatch.
+  await assertRejects(
+    () => publicKeyFromSeed("dG9vIHNob3J0"),
+    Error,
+    "32 bytes",
+  );
 });
 
 Deno.test("the runtime library is picked by name, never by size", () => {
