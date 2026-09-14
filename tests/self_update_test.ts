@@ -12,18 +12,25 @@
 // own updater.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { updateChannel, updatePlan } from "../lib/self-update.ts";
+import {
+  isEd25519PublicKey,
+  updateChannel,
+  updatePlan,
+} from "../lib/self-update.ts";
 
 const LINUX = "x86_64-unknown-linux-gnu";
-const SIGNED = {
-  SHMUPX_UPDATE_KEY: "Zm9vYmFyYmF6cXV1eGZvb2JhcmJhenF1dXhmb28=",
-};
+// 32 bytes, because that is the only length an Ed25519 public key has. The key
+// arrives through the context rather than the environment: a launcher added to
+// Steam inherits that shortcut's Launch Options, which a player can edit from
+// Game Mode, and a key settable there would make the updater repointable.
+const KEY = "Zm9vYmFyYmF6cXV1eGZvb2JhcmJhenF1dXhmb29iYXI=";
 
 const packaged = (env: Record<string, string> = {}) => ({
-  env: { ...SIGNED, ...env },
+  env,
   target: LINUX,
   version: "2026.9.13",
   underDesktop: true,
+  publicKey: KEY,
 });
 
 Deno.test("a signed, versioned desktop build watches its own architecture", () => {
@@ -38,9 +45,75 @@ Deno.test("a signed, versioned desktop build watches its own architecture", () =
 Deno.test("a build with no signing key does not update at all", () => {
   // The refusal that matters: without a key there is no way to tell a release
   // from anything else that answers, so the answer is off, not unverified.
-  const plan = updatePlan({ ...packaged(), env: {} });
+  const plan = updatePlan({ ...packaged(), publicKey: "" });
   assert(!plan.enabled);
   assertEquals(plan.url, null);
+  assertStringIncludes(plan.reason ?? "", "signing key");
+});
+
+Deno.test("a key that is not 32 bytes is refused, not trusted", () => {
+  // The hazard this guards: an Ed25519 PRIVATE seed is also 32 bytes and so the
+  // same base64 length as the public half, and a truncated key looks like a
+  // real one. Either mistake ships a ~450 MB public artifact whose only symptom
+  // is that no release ever verifies.
+  assert(isEd25519PublicKey(KEY));
+  // The fixture this suite used to carry: 29 bytes, and it asserted `enabled`.
+  assert(!isEd25519PublicKey("Zm9vYmFyYmF6cXV1eGZvb2JhcmJhenF1dXhmb28="));
+  assert(!isEd25519PublicKey("not base64 at all !!"));
+  assert(!isEd25519PublicKey(""));
+
+  const plan = updatePlan({
+    ...packaged(),
+    publicKey: "Zm9vYmFyYmF6cXV1eGZvb2JhcmJhenF1dXhmb28=",
+  });
+  assert(!plan.enabled);
+  assertStringIncludes(plan.reason ?? "", "Ed25519");
+});
+
+Deno.test("an AppImage is off, because it cannot write to its own mount", () => {
+  // Not a capability that is missing — one that cannot exist: the AppImage is a
+  // read-only squashfs, and the runtime patches its library in place. The
+  // refusal names the way out rather than just reporting the wall.
+  const plan = updatePlan({ ...packaged(), binaryKind: "appimage" });
+  assert(!plan.enabled);
+  assertEquals(plan.url, null);
+  assertStringIncludes(plan.reason ?? "", "ADD TO STEAM");
+
+  // The copy it installs is an ordinary file tree and does update.
+  for (const kind of ["installed", "executable", null] as const) {
+    assert(updatePlan({ ...packaged(), binaryKind: kind }).enabled, `${kind}`);
+  }
+});
+
+Deno.test("macOS is off while a patched bundle would not load", () => {
+  // The bundle is code-signed and its library hashed page by page; a bsdiff
+  // patch invalidates that and nothing re-signs, so the update would stage,
+  // swap, fail to load and roll back on every poll.
+  for (const target of ["aarch64-apple-darwin", "x86_64-apple-darwin"]) {
+    const plan = updatePlan({ ...packaged(), target });
+    assert(!plan.enabled, target);
+    assertStringIncludes(plan.reason ?? "", "code-signed");
+  }
+});
+
+Deno.test("a staging URL that is not https is refused, not silently ignored", () => {
+  // Falling back to the production channel would make a staging run look like
+  // it worked against the wrong origin.
+  for (const url of ["http://staging.example/d", "ftp://x/y", "not a url"]) {
+    const plan = updatePlan(packaged({ SHMUPX_UPDATE_URL: url }));
+    assert(!plan.enabled, url);
+    assertStringIncludes(plan.reason ?? "", "https");
+  }
+});
+
+Deno.test("the signing key is not reachable from the environment", () => {
+  // Steam Launch Options are environment. If this ever passes again, the
+  // updater is repointable from a text field on a handheld.
+  const plan = updatePlan({
+    ...packaged({ SHMUPX_UPDATE_KEY: KEY }),
+    publicKey: "",
+  });
+  assert(!plan.enabled);
   assertStringIncludes(plan.reason ?? "", "signing key");
 });
 

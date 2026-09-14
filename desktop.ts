@@ -30,6 +30,7 @@ import {
   launcherDataDir,
   openLauncherWindow,
 } from "./lib/desktop-browser.ts";
+import { currentLauncherBinary } from "./lib/launcher-binary.ts";
 import { startAutoUpdate } from "./lib/self-update.ts";
 
 interface FetchServer {
@@ -195,6 +196,16 @@ async function openWindow(url: string): Promise<void> {
   shutdown.abort();
 }
 
+// Which file this launcher is, read once and outside the handler: it decides
+// whether the updater can patch in place (an AppImage cannot) and it is what
+// "Add to Steam" would point at. Cheap, and a throw here must not sink boot.
+let launcherFile: ReturnType<typeof currentLauncherBinary> = null;
+try {
+  launcherFile = currentLauncherBinary();
+} catch (_e) {
+  launcherFile = null;
+}
+
 const httpServer = Deno.serve({
   hostname: HOSTNAME,
   port,
@@ -219,6 +230,9 @@ const httpServer = Deno.serve({
       target: Deno.build.target,
       version: version ?? null,
       underDesktop: UNDER_DENO_DESKTOP,
+      // Which file this is running from decides whether it CAN patch itself:
+      // an AppImage is a read-only mount and cannot.
+      binaryKind: launcherFile?.kind ?? null,
     });
     // Under `deno desktop` the window is already on screen and owns the
     // process' lifetime; borrowing a browser on top of it would put the

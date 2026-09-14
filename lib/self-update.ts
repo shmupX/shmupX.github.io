@@ -28,10 +28,36 @@ const DEFAULT_BASE_URL = "https://codemonkey.games/desktop";
  *
  * Empty means "unsigned manifests are acceptable", which this deliberately does
  * NOT default to: an empty key here disables updates rather than weakening
- * them (see `updatePlan`). Set SHMUPX_UPDATE_KEY at build time, or paste the
- * key the release script prints.
+ * them (see `updatePlan`).
+ *
+ * It is a compile-time constant and NOT an environment variable. The key is
+ * public, so there is nothing to hide — but a launcher added to Steam takes its
+ * environment from that shortcut's Launch Options, a text field a player can
+ * edit from Game Mode with a controller. An env override there would let one
+ * line of text repoint the updater at another origin and hand it a matching
+ * key, which is a self-repairing implant rather than a setting. Tests pass a
+ * key through `UpdateContext.publicKey` instead.
  */
 const DEFAULT_PUBLIC_KEY = "";
+
+/**
+ * Is this a well-formed Ed25519 public key?
+ *
+ * Exactly 32 bytes, because the alternative is a channel that is silently dead:
+ * an Ed25519 *private* seed is also 32 bytes and therefore the same base64
+ * length, and a truncated key is the same shape as a real one. Getting this
+ * wrong ships a ~450 MB public artifact whose only symptom is that no update
+ * ever verifies.
+ */
+export function isEd25519PublicKey(key: string): boolean {
+  if (!key) return false;
+  try {
+    const raw = atob(key);
+    return raw.length === 32;
+  } catch {
+    return false;
+  }
+}
 
 /** Once an hour. A launcher left open for a week should not still be stale. */
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
@@ -44,6 +70,18 @@ export interface UpdateContext {
   version: string | null;
   /** Whether this process is a `deno desktop` app at all. */
   underDesktop: boolean;
+  /**
+   * How this launcher was started, from `currentLauncherBinary()`. An AppImage
+   * cannot patch itself (see `updatePlan`); anything else here can. Optional so
+   * a caller that does not know stays on the old behaviour.
+   */
+  binaryKind?: "appimage" | "macos-app" | "executable" | "installed" | null;
+  /**
+   * The signing key this build carries. Defaults to the compile-time constant;
+   * passed explicitly only by tests, which is why it is here rather than read
+   * from the environment.
+   */
+  publicKey?: string;
 }
 
 export interface UpdatePlan {
@@ -93,11 +131,28 @@ export function updateChannel(target: string): string | null {
  * way to tell a real release from whatever answers that URL.
  */
 export function updatePlan(ctx: UpdateContext): UpdatePlan {
-  const base = (ctx.env.SHMUPX_UPDATE_URL || DEFAULT_BASE_URL).replace(
-    /\/+$/,
-    "",
-  );
-  const publicKey = (ctx.env.SHMUPX_UPDATE_KEY || DEFAULT_PUBLIC_KEY).trim();
+  // SHMUPX_UPDATE_URL redirects the check at a staging channel, and stays an
+  // env var because it is useless on its own: without a matching private key
+  // nothing it serves will verify. It must still be https — the runtime refuses
+  // anything else anyway, and failing here says so instead of leaving a staging
+  // run looking like a silent no-op.
+  const override = (ctx.env.SHMUPX_UPDATE_URL || "").trim();
+  let base = DEFAULT_BASE_URL;
+  let badOverride = false;
+  if (override) {
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(override);
+    } catch {
+      parsed = null;
+    }
+    if (parsed && parsed.protocol === "https:") {
+      base = override.replace(/\/+$/, "");
+    } else {
+      badOverride = true;
+    }
+  }
+  const publicKey = (ctx.publicKey ?? DEFAULT_PUBLIC_KEY).trim();
   const channel = updateChannel(ctx.target);
   const off = (reason: string): UpdatePlan => ({
     enabled: false,
@@ -118,10 +173,38 @@ export function updatePlan(ctx: UpdateContext): UpdatePlan {
     );
   }
   if (!channel) return off(`no release channel for ${ctx.target}`);
+  // macOS is cut for now. The bundle is code-signed and the runtime library is
+  // hashed page by page in Contents/_CodeSignature; a bsdiff patch invalidates
+  // that, and nothing in the update path re-signs. The patch would stage, swap,
+  // fail to load, roll back, and do it again on every poll.
+  if (ctx.target.includes("darwin")) {
+    return off(
+      "the macOS app is code-signed, and a patched bundle would not load — " +
+        "download a new build instead",
+    );
+  }
+  if (badOverride) {
+    return off("SHMUPX_UPDATE_URL is not an https URL, so it was not used");
+  }
   if (!publicKey) {
     return off(
       "this build carries no update signing key, so it will not replace " +
         "itself from the network",
+    );
+  }
+  if (!isEd25519PublicKey(publicKey)) {
+    return off(
+      "this build's update key is not a valid Ed25519 public key, so no " +
+        "release could ever verify",
+    );
+  }
+  // An AppImage is one file that mounts itself read-only: the runtime patches
+  // its library in place, and there is nowhere to write. Installing it (Settings
+  // -> ADD TO STEAM) copies it somewhere writable, and that copy updates.
+  if (ctx.binaryKind === "appimage") {
+    return off(
+      "an AppImage is mounted read-only and cannot patch itself — install it " +
+        "from Settings -> ADD TO STEAM and it updates from then on",
     );
   }
   if (ctx.env.SHMUPX_NO_UPDATE) {
@@ -147,6 +230,19 @@ export interface UpdateState {
   staged: string | null;
   /** Why the previous launch was rolled back, if it was. */
   rolledBack: string | null;
+  /**
+   * When the updater was armed, or null when it never was.
+   *
+   * Deliberately NOT "last checked": `Deno.autoUpdate` polls on its own timer
+   * and reports nothing per poll — there is no callback for "checked, still
+   * current" or for "the manifest 404s". So a channel that is armed and failing
+   * every hour looks exactly like one that is armed and up to date, and
+   * /api/update must not pretend otherwise. Closing that gap needs a hook the
+   * runtime does not expose.
+   */
+  armedAt: number | null;
+  /** Why arming failed, when it did. */
+  lastError: string | null;
 }
 
 let state: UpdateState | null = null;
@@ -168,7 +264,13 @@ export function startAutoUpdate(
   log: (line: string) => void = console.log,
 ): UpdateState {
   const plan = updatePlan(ctx);
-  state = { plan, staged: null, rolledBack: null };
+  state = {
+    plan,
+    staged: null,
+    rolledBack: null,
+    armedAt: null,
+    lastError: null,
+  };
   if (!plan.enabled || !plan.url) {
     if (plan.reason) log(`  Updates: off — ${plan.reason}`);
     return state;
@@ -208,6 +310,7 @@ export function startAutoUpdate(
         );
       },
     });
+    state.armedAt = Date.now();
     log(`  Updates: watching ${plan.url} (now on ${plan.version}).`);
   } catch (e) {
     state.plan = {
@@ -215,6 +318,7 @@ export function startAutoUpdate(
       enabled: false,
       reason: `the updater would not start: ${(e as Error).message}`,
     };
+    state.lastError = (e as Error).message;
     log(`  Updates: off — ${state.plan.reason}`);
   }
   return state;
