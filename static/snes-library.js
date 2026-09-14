@@ -22,15 +22,21 @@
 // a shelf it can fill, browse and export from, and cannot boot; the section
 // says so rather than offering a Play that could only fail.
 //
-// WHAT IS NOT HERE YET
-// The player page itself. Every core in static/emulators.json is served by the
-// cmg origin and mirrored onto this one by static/emu-sw.js, and that origin
-// does not publish /snes/play.html yet — installing the core warms its paths
-// and they 404. Everything on this side is written to the contract the Saturn
-// player already implements (a `?byod=1` page that announces itself and is
-// posted its files), so the day that page appears the shelf boots with no
-// change here; until then installSnesCore reports the miss and the shelf stays
-// a shelf. See the SUPER FAMICOM section in svelte-src/Dashboard.svelte.
+// WHERE THE PLAYER IS
+// static/snes/play.html, on this origin. Every OTHER core in
+// static/emulators.json is served by the cmg origin and mirrored onto this one
+// by static/emu-sw.js, and this shelf waited on that mirror for as long as it
+// has existed — cmg answers /snes/play.html with a 404, so the core installed
+// and none of its rows could boot. The player is ours now, running on the
+// EmulatorJS snes9x already vendored for Super Mario SP, and the catalogue
+// entry is flagged `local` so the worker leaves this origin's own files alone.
+//
+// WHERE THE CARTRIDGE IS
+// Two answers, tried in that order by findSnesRom. /api/dezaemon-sfc reads the
+// operator's own disk and is what a source checkout uses. A PACKAGED launcher
+// has no dev-fixtures/ to read (a compiled binary embeds _fresh/client, which
+// is static/, and nothing else), so `deno task sfc:stage` copies the cart to
+// SNES_STATIC_ROM below and the same shelf boots there too.
 
 import { ensureEmuCore, readInstalledCores } from './ps2-library.js';
 import {
@@ -50,6 +56,16 @@ export const SNES_CORE_ID = 'snes';
 export const SNES_CORE_LABEL = 'Super Famicom';
 /** Where the launcher asks whether this machine has the cartridge. */
 export const SNES_ROM_URL = '/api/dezaemon-sfc';
+/**
+ * The cart staged into static/ by `deno task sfc:stage`, for the builds the
+ * route cannot answer in — it reads dev-fixtures/ off real disk, and a
+ * packaged launcher carries no such directory. Keep in step with DEFAULT_OUT
+ * in scripts/stage-dezaemon-sfc.ts; tests/snes_player_test.ts checks the pair.
+ */
+export const SNES_STATIC_ROM = '/snes/Dezaemon.sfc';
+/** What the launcher calls the cart. Mirrors DEZAEMON_SFC_TITLE in
+ * lib/dezaemon-sfc.ts, which static/ cannot import (plain browser ESM). */
+export const SNES_ROM_TITLE = 'Dezaemon (Super Famicom)';
 /** Bring-your-own-cart: the player is posted the ROM and the SRAM. */
 export const SNES_BYOD_PLAYER = '/snes/play.html?byod=1';
 export const SNES_BYOD_READY = 'snes-byod-ready';
@@ -278,12 +294,8 @@ export async function installedSnesGames() {
 
 // ── The cartridge ────────────────────────────────────────────────────────────
 
-/**
- * What /api/dezaemon-sfc says about this machine: `{ available, ... }`, or a
- * not-available answer when the route is not there at all (the deployed origin
- * has no dev-fixtures/, and neither has a packaged build).
- */
-export async function findSnesRom({ fetchImpl = defaultFetch } = {}) {
+/** What /api/dezaemon-sfc says about this machine, or why it said nothing. */
+async function askRomRoute(fetchImpl) {
   try {
     const res = await fetchImpl(SNES_ROM_URL, { cache: 'no-store' });
     if (!res.ok) return { available: false, reason: SNES_ROM_URL + ' answered HTTP ' + res.status };
@@ -294,10 +306,60 @@ export async function findSnesRom({ fetchImpl = defaultFetch } = {}) {
   }
 }
 
-/** The ROM itself, as a File in THIS realm, for posting into the player frame. */
-export async function fetchSnesRomFile({ fetchImpl = defaultFetch, name = 'Dezaemon.sfc' } = {}) {
-  const res = await fetchImpl(SNES_ROM_URL + '?rom=1', { cache: 'no-store' });
-  if (!res.ok) throw new Error(SNES_ROM_URL + '?rom=1 answered HTTP ' + res.status);
+/**
+ * The staged cart, if this build carries one. A HEAD rather than a GET: the
+ * answer wanted here is "is it there", and the ROM is half a megabyte that
+ * only a launch has any use for.
+ */
+async function findStagedRom(fetchImpl) {
+  try {
+    const res = await fetchImpl(SNES_STATIC_ROM, { method: 'HEAD', cache: 'no-store' });
+    if (!res.ok) return null;
+    await res.body?.cancel?.();
+    return {
+      available: true,
+      title: SNES_ROM_TITLE,
+      name: SNES_STATIC_ROM.split('/').pop(),
+      size: Number(res.headers.get('content-length')) || 0,
+      // Staged by `deno task sfc:stage`, which strips the copier header for
+      // the same reason the route does.
+      copierHeader: 0,
+      rom: SNES_STATIC_ROM,
+      romName: 'Dezaemon.sfc',
+      source: 'staged',
+    };
+  } catch (_) {
+    return null; // no server, no such file: the route's answer is the answer
+  }
+}
+
+/**
+ * The cartridge this machine can boot: `{ available, ... }`, or a
+ * not-available answer when there is none.
+ *
+ * Two places, in order. /api/dezaemon-sfc reads the operator's own disk and is
+ * the live answer in a source checkout — a ROM dropped into dev-fixtures/ is
+ * found without rebuilding anything. A packaged launcher has no such directory
+ * (and the deployed origin answers "local only"), so the staged copy under
+ * static/ is the fallback, and the one that makes the shelf boot there. The
+ * route wins when both are present: it is the file the operator is actually
+ * editing, and the staged copy may be a build old.
+ */
+export async function findSnesRom({ fetchImpl = defaultFetch } = {}) {
+  const asked = await askRomRoute(fetchImpl);
+  if (asked.available) return asked;
+  return await findStagedRom(fetchImpl) || asked;
+}
+
+/**
+ * The ROM itself, as a File in THIS realm, for posting into the player frame.
+ * `url` is whichever of the two sources findSnesRom settled on.
+ */
+export async function fetchSnesRomFile(
+  { fetchImpl = defaultFetch, name = 'Dezaemon.sfc', url = SNES_ROM_URL + '?rom=1' } = {},
+) {
+  const res = await fetchImpl(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(url + ' answered HTTP ' + res.status);
   const blob = await res.blob();
   return new File([blob], name, { type: 'application/octet-stream' });
 }
@@ -306,13 +368,14 @@ export async function fetchSnesRomFile({ fetchImpl = defaultFetch, name = 'Dezae
 
 /**
  * Install the Super Famicom core. Shares every hard part with the PS2's
- * installer — see ensureEmuCore in static/ps2-library.js.
+ * installer — see ensureEmuCore in static/ps2-library.js — but takes the short
+ * path through it: the catalogue entry is flagged `local`, so all that happens
+ * is the id being recorded and static/snes/play.html being fetched once to
+ * prove it is there. No mirror, no service worker, nothing downloaded.
  *
- * Expect this to throw until the mirror publishes /snes/play.html: the
- * catalogue entry names paths the cmg origin does not serve yet, and the warm
- * is what finds that out. Callers file the cart FIRST and treat a failure here
- * as a note on the row rather than a failed filing — a shelf that cannot boot
- * yet is still a shelf, and the day the player appears every row on it works.
+ * It can still throw (a player that 404s is a core that cannot boot), and
+ * callers should go on filing the cart FIRST and treating a failure here as a
+ * note on the row: a shelf that cannot boot is still a shelf.
  */
 export function ensureSnesCore(onStep = () => {}) {
   return ensureEmuCore(SNES_CORE_ID, SNES_CORE_LABEL, onStep);
@@ -325,16 +388,23 @@ export function isSnesCoreInstalled() {
 // ── Handing a cart to the player ─────────────────────────────────────────────
 
 /**
- * The two Files the player needs, in this realm.
+ * The Files the player needs, in this realm.
  *
  * A File built in the LAUNCHER's realm fails EmulatorJS's `instanceof File`
  * check inside the player frame, which is why the Saturn hand-off posts a File
  * the frame then re-wraps; here both files are built by whoever is about to
  * post them, and the caller is the launcher, so they are made here and the
  * player is expected to accept them as it accepts the Saturn disc.
+ *
+ * `record` is a shelf row, and passing NOTHING means the bare cartridge: the
+ * Dezaemon ROM with no save under it, which is the row the section leads with
+ * on a machine that has the cart. A row that is present but carries no bytes is
+ * still an error — that is a shelf entry that failed to load, not a request to
+ * boot the cart empty.
  */
 export async function snesBootFiles(record, { fetchImpl = defaultFetch } = {}) {
-  if (!record || !(record.bytes instanceof Uint8Array)) {
+  const bare = record === null || record === undefined;
+  if (!bare && !(record.bytes instanceof Uint8Array)) {
     throw new Error('that shelf row has no cart bytes');
   }
   const rom = await findSnesRom({ fetchImpl });
@@ -344,7 +414,14 @@ export async function snesBootFiles(record, { fetchImpl = defaultFetch } = {}) {
       'cartridge to run the save in: ' + (rom.reason || 'not found'),
     );
   }
-  const romFile = await fetchSnesRomFile({ fetchImpl, name: rom.romName || 'Dezaemon.sfc' });
+  const romFile = await fetchSnesRomFile({
+    fetchImpl,
+    name: rom.romName || 'Dezaemon.sfc',
+    url: rom.rom || SNES_ROM_URL + '?rom=1',
+  });
+  if (bare) {
+    return { rom: romFile, sram: null, title: rom.title || SNES_ROM_TITLE };
+  }
   // The save file's base name has to match the ROM's, because that is how every
   // libretro core pairs a .srm with the cartridge it belongs to.
   const sramName = romFile.name.replace(/\.[^.]+$/, '') + '.srm';

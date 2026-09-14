@@ -81,6 +81,15 @@ Deno.test("the site's own pages are outside MIRRORABLE", async () => {
       // installed the Super Famicom core.
       "/games/super-mario-sp/",
       "/games/super-mario-sp/emulatorjs/cores/snes9x-legacy-wasm.data",
+      // And the Super Famicom player itself, which runs on that same vendored
+      // core. Its catalogue entry is flagged `local` and carries no prefixes,
+      // so the two tests above already keep /snes/ out of MIRRORABLE — this
+      // names the page, because the failure it prevents is specific: cmg has
+      // never served /snes/play.html, and answers it with a 404 that carries
+      // no CORS header, so a mirrored request REJECTS and the player reads as
+      // a 504 rather than as a missing file.
+      "/snes/play.html",
+      "/snes/Dezaemon.sfc",
       "/api/build-artifact",
       "/dashboard.bundle.js",
       "/icons/2028-icon.png",

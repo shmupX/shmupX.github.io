@@ -29,10 +29,10 @@
       "date": "SFC",
       "coreA": "core // snes9x",
       "coreB": "emulatorjs",
-      "size": "~8 MB",
+      "size": "on this origin",
+      "local": true,
       "player": "/snes/play.html",
-      "manifest": "/SuperNintendo/manifest.json",
-      "prefixes": ["/snes/", "/SuperNintendo/"]
+      "prefixes": []
     },
     {
       "id": "tg16",

@@ -50,9 +50,19 @@ const LIB_VERSION = 1;
  *
  * The dashboard calls this too — it is the one rule for what the worker is
  * allowed to mirror, and a second copy of it would eventually disagree.
+ *
+ * A core flagged `local` in the catalogue is served by THIS origin rather than
+ * by the mirror (the Super Famicom one is: static/snes/play.html), so it is
+ * filtered out here entirely. It has no prefixes to answer, and it must not
+ * drag the catalogue's shared scripts in either — a visitor whose only core is
+ * local has nothing to mirror at all, and the worker should be told exactly
+ * that. Mirroring a local prefix would send our own files to an origin that
+ * has never heard of them; MIRRORABLE in static/emu-sw.js is the second half
+ * of the same guard.
  */
 export function emuStateFor(catalog, installedIds) {
-  const cores = (catalog?.cores || []).filter((c) => installedIds.includes(c.id));
+  const cores = (catalog?.cores || [])
+    .filter((c) => installedIds.includes(c.id) && !c.local);
   const prefixes = [];
   for (const core of cores) {
     prefixes.push(...(core.prefixes || []));
@@ -157,6 +167,28 @@ export async function ensureEmuCore(coreId, label, onStep = () => {}) {
   try { localStorage.setItem(EMU_KEY, JSON.stringify(next)); } catch (_) {}
 
   onStep(already ? label + ' core: already installed' : 'installing the ' + label + ' core…');
+
+  // A local core is already here — its player and its wasm are files this
+  // origin serves — so there is nothing to mirror, nothing to warm but the
+  // page about to be opened, and no state worth pushing. Deliberately ahead of
+  // readyWorker(): registering a service worker for a visitor whose only core
+  // needs none would put it in front of every same-origin request on the site
+  // for the rest of this browser's life, which is the very thing the uninstall
+  // path goes out of its way to undo.
+  if (core.local) {
+    onStep('checking the ' + label + ' player…');
+    try {
+      const res = await fetch(core.player, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      await res.arrayBuffer();
+    } catch (e) {
+      throw new Error(
+        'could not fetch the ' + label + ' player (' + core.player + '): ' + (e.message || e),
+      );
+    }
+    return { core, installed: !already, cold: [] };
+  }
+
   const state = emuStateFor(catalog, next);
   const reg = await readyWorker();
   const worker = reg?.active || navigator.serviceWorker?.controller || null;

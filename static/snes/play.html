@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Super Famicom</title>
+
+<!--
+  The Super Famicom player: the core the SUPER FAMICOM section launches into.
+
+  WHY THIS PAGE EXISTS ON THIS ORIGIN
+  Every other core in static/emulators.json is served by the cmg origin and
+  mirrored onto ours by static/emu-sw.js. This one is not, and the shelf said
+  so for as long as it has existed: cmg answers /snes/play.html with a 404 (and
+  a 404 with no Access-Control-Allow-Origin, so the worker's cross-origin fetch
+  REJECTS rather than passing the status on, and the install reads as a 504).
+  So the section installed, listed its carts, and could not boot one of them.
+
+  The repo already had the missing half. static/games/super-mario-sp/ vendors
+  EmulatorJS and the snes9x core — the same core this page wants — for a game
+  that ships here, and those files are on this origin, pinned by
+  scripts/vendor-emulatorjs.ts and checked by tests/super_mario_sp_test.ts. So
+  this page borrows them rather than committing a second 2.2 MB copy of the
+  same wasm. tests/snes_player_test.ts pins the dependency, so pruning the game
+  fails a test here instead of a black screen in a player's browser.
+
+  Because the core is served from this origin, the `snes` catalogue entry has
+  NO prefixes and /snes/ is not in the worker's MIRRORABLE list. That is not a
+  detail: a mirrored /snes/ would send every request on this page to an origin
+  that has never heard of it, and only for the people who installed the core.
+  tests/emu_sw_universe_test.ts records the same trap for the game folder.
+
+  URLS ARE ABSOLUTE HERE, which is the opposite of the rule in
+  static/games/super-mario-sp/index.html. That page is served from two depths
+  (static/ and, after an eShop install, Cache Storage at /eshop/<id>/) and has
+  to work at both. This one has exactly one mount point — /snes/play.html, off
+  static/ in dev and off _fresh/client in a packaged app — and the data it
+  needs lives in another directory entirely.
+
+  TWO WAYS IN
+    /snes/play.html?byod=1        the launcher posts the cart in (see below)
+    /snes/play.html?rom=<path>    a ROM on this origin, the contract every
+                                  other player in the catalogue takes
+
+  BRING YOUR OWN CART is what the SUPER FAMICOM section actually uses, because
+  a row on that shelf is 128 KB of SRAM and the cartridge it belongs to is a
+  file on the operator's own disk. So the page announces "snes-byod-ready" to
+  its parent and waits to be posted { rom, sram, name } — Files of the parent's
+  realm, which EmulatorJS takes directly (its toData() accepts a File, Blob,
+  ArrayBuffer or Uint8Array as the game). The save is optional: the Dezaemon
+  cart row boots with no SRAM at all. See launchLocalSnes and deliverSnesCart
+  in svelte-src/Dashboard.svelte, and SNES_BYOD_* in static/snes-library.js.
+-->
+
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden;
+    overscroll-behavior: none; touch-action: none;
+    font: 14px/1.4 system-ui, -apple-system, sans-serif; color: #cfe;
+  }
+  #game { position: fixed; inset: 0; }
+  /* The SNES is 256x224. Keep it crisp when EmulatorJS scales it up. */
+  #game canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+  /* Shown only while the launcher has not posted the cart yet, and replaced by
+     the emulator's own UI the moment it has. A page that sat black would be
+     indistinguishable from the 404 this file exists to end. */
+  #wait {
+    position: fixed; inset: 0; display: grid; place-content: center;
+    text-align: center; letter-spacing: .08em; color: #8cff5a;
+    font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #wait small { display: block; color: #6a8; letter-spacing: 0; margin-top: 8px; }
+</style>
+
+<script>
+// Audio unlock, the same shape as static/games/super-mario-sp/index.html.
+//
+// EJS_startOnLoaded boots the core without waiting for a click, so the
+// AudioContext the emulator creates during init is born suspended on every
+// browser that gates audio on a gesture. Wrapping the constructor collects
+// every context, whenever it is made, and the first real input resumes them
+// all. Without this the cart runs silently until something else happens to
+// resume it.
+(function () {
+  var ctxs = [];
+  var OrigAC = window.AudioContext || window.webkitAudioContext;
+  if (!OrigAC) return;
+  function Patched() { var c = new OrigAC(); ctxs.push(c); return c; }
+  Patched.prototype = OrigAC.prototype;
+  if (window.AudioContext) window.AudioContext = Patched;
+  if (window.webkitAudioContext) window.webkitAudioContext = Patched;
+  function unlock() {
+    for (var i = 0; i < ctxs.length; i++) {
+      var c = ctxs[i];
+      if (c && (c.state === "suspended" || c.state === "interrupted")) c.resume().catch(function () {});
+    }
+  }
+  ["pointerdown", "touchstart", "mousedown", "keydown"].forEach(function (ev) {
+    window.addEventListener(ev, unlock, { passive: true });
+  });
+})();
+
+// Launcher OSD bridge, ported from static/games/super-mario-sp/index.html.
+//
+// Once the cart has keyboard focus the launcher stops seeing keydowns, so its
+// own ` / ~ / Esc handler never fires. Forward those keys to the parent so it
+// can still open the Guide. Registered here in <head>, i.e. before the
+// launcher's own injectOsdKeyForwarder, and stopImmediatePropagation means
+// exactly one of the two fires rather than both. No-op when the page is opened
+// standalone.
+(function () {
+  if (window.parent === window) return;
+  window.addEventListener("keydown", function (e) {
+    if (e.code === "Backquote" || e.key === "`" || e.key === "~" ||
+        e.keyCode === 192 || e.key === "Escape") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      try { window.parent.postMessage({ type: "tg16-toggle-controls" }, "*"); } catch (_) {}
+    }
+  }, true);
+})();
+</script>
+</head>
+<body>
+<div id="game"></div>
+<div id="wait">WAITING FOR THE CARTRIDGE<small>the launcher is fetching the ROM</small></div>
+
+<script>
+// Controls.
+//
+// Two input paths reach this page at once and both have to land on the same
+// SNES button, or a single press does two things. The launcher synthesises
+// keyboard events from the pad (static/gamepad-support.js), and EmulatorJS
+// also reads the pad natively through navigator.getGamepads(). So each row
+// below pairs the key the launcher sends with the pad button EmulatorJS sees,
+// and a button held by both paths is just a button held once.
+//
+// The pairing is the physical Super Famicom layout — B on the BOTTOM face, A
+// on the right, Y on the left, X on top — which is also what Super Mario SP
+// settled on. EmulatorJS's stock mapping puts B on the right face instead, and
+// on Dezaemon that is not cosmetic: the editor's B is cancel and its A is
+// confirm, so a swapped pair backs out of every menu it is asked to enter.
+//
+// RetroPad indices: 0 B, 1 Y, 2 SELECT, 3 START, 4 UP, 5 DOWN, 6 LEFT,
+// 7 RIGHT, 8 A, 9 X, 10 L, 11 R, then triggers and sticks the SNES has no
+// buttons for — those are blanked so the launcher's stray synthesised keys
+// for them cannot reach the cart.
+var PAD = {
+  0:  { value: "space",      value2: "BUTTON_1" },            // B
+  1:  { value: "x",          value2: "BUTTON_3" },            // Y
+  2:  { value: "backspace",  value2: "SELECT" },
+  3:  { value: "enter",      value2: "START" },
+  4:  { value: "up arrow",   value2: "DPAD_UP" },
+  5:  { value: "down arrow", value2: "DPAD_DOWN" },
+  6:  { value: "left arrow", value2: "DPAD_LEFT" },
+  7:  { value: "right arrow",value2: "DPAD_RIGHT" },
+  8:  { value: "c",          value2: "BUTTON_2" },            // A
+  9:  { value: "z",          value2: "BUTTON_4" },            // X
+  10: { value: "q",          value2: "LEFT_TOP_SHOULDER" },   // L
+  11: { value: "e",          value2: "RIGHT_TOP_SHOULDER" },  // R
+};
+for (var i = 12; i <= 23; i++) PAD[i] = { value: "", value2: "" };
+
+// Where the vendored EmulatorJS and the snes9x core actually live. Absolute,
+// because they are in another directory and this page is only ever served from
+// one place. Keep in step with scripts/vendor-emulatorjs.ts, which writes them.
+var EJS_DATA = "/games/super-mario-sp/emulatorjs/";
+
+var params = new URLSearchParams(location.search);
+var wait = document.getElementById("wait");
+
+window.EJS_player = "#game";
+window.EJS_core = "snes";
+window.EJS_pathtodata = EJS_DATA;
+window.EJS_startOnLoaded = true;
+
+// Never true. This page is not cross-origin isolated — ISOLATED_PLAYERS in
+// main.ts and vite.config.ts covers only /ps2/ and /switch/ — so
+// SharedArrayBuffer does not exist here and downloadGameCore() turns a
+// threads:true into a hard start error.
+window.EJS_threads = false;
+
+// EmulatorJS otherwise HEADs the ROM to compare content-length against its own
+// IndexedDB copy, and caches the ROM and the core there. Neither is worth it
+// for a cart that arrives as bytes in a postMessage (there is no URL to key a
+// cache on) or as a static file this origin already serves. Save states and
+// battery saves are unaffected — they go through EJS_STORAGE and IDBFS,
+// neither of which this flag touches.
+window.EJS_disableDatabases = true;
+
+// Do not fetch localization/<lang>.json (the flag's polarity is inverted, and
+// the vendored tree carries no localization/ directory).
+window.EJS_disableAutoLang = false;
+window.EJS_color = "#8cff5a";
+window.EJS_startButtonName = "PRESS START";
+window.EJS_defaultControls = { 0: PAD, 1: {}, 2: {}, 3: {} };
+
+// The save the launcher handed us, held until the core is running. A libretro
+// core reads its .srm when the game loads, so there is nothing to write before
+// then — this is the same write-then-reload the emulator's own "load save file"
+// menu button performs, which is why it takes effect on a running cart.
+var pendingSram = null;
+window.EJS_onGameStart = function () {
+  var sram = pendingSram;
+  pendingSram = null;
+  if (!sram) return;
+  Promise.resolve(sram.arrayBuffer ? sram.arrayBuffer() : sram).then(function (buf) {
+    var gm = window.EJS_emulator && window.EJS_emulator.gameManager;
+    if (!gm) return;
+    var bytes = new Uint8Array(buf);
+    var path = gm.getSaveFilePath();
+    var parts = path.split("/");
+    var at = "";
+    for (var i = 0; i < parts.length - 1; i++) {
+      if (parts[i] === "") continue;
+      at += "/" + parts[i];
+      if (!gm.FS.analyzePath(at).exists) gm.FS.mkdir(at);
+    }
+    if (gm.FS.analyzePath(path).exists) gm.FS.unlink(path);
+    gm.FS.writeFile(path, bytes);
+    gm.loadSaveFiles();
+  }).catch(function (e) {
+    console.error("could not install the cartridge save", e);
+  });
+};
+
+// The loader reads every EJS_* global when it runs, so it is appended only
+// once the cart is in hand — a static <script src> would race the postMessage
+// and boot with no game.
+function boot() {
+  if (wait) wait.remove();
+  var s = document.createElement("script");
+  s.src = EJS_DATA + "loader.js";
+  document.body.appendChild(s);
+}
+
+var byod = params.get("byod") === "1";
+if (byod) {
+  // Same-origin only, both ways: the launcher is this page's parent on this
+  // very origin, and the cart is the operator's own file.
+  window.addEventListener("message", function (e) {
+    if (e.origin !== location.origin) return;
+    var d = e.data || {};
+    if (d.type !== "snes-byod-file" || !d.rom) return;
+    window.EJS_gameUrl = d.rom;
+    window.EJS_gameName = d.name || "Dezaemon";
+    pendingSram = d.sram || null;
+    boot();
+  });
+  try {
+    window.parent.postMessage({ type: "snes-byod-ready" }, location.origin);
+  } catch (_) { /* opened standalone: the ?rom= form below is the way in */ }
+  if (window.parent === window) {
+    wait.innerHTML = "NO CARTRIDGE POSTED" +
+      "<small>open this page from the launcher, or pass ?rom=&lt;path&gt;</small>";
+  }
+} else {
+  var rom = params.get("rom") || "";
+  // Same-origin paths only. The ROM is named in a URL anyone can edit, and a
+  // player that would fetch an absolute URL is a page that will fetch one from
+  // wherever a link says.
+  if (!/^\/[^/]/.test(rom)) {
+    wait.innerHTML = "NO CARTRIDGE" +
+      "<small>?rom= needs a path on this site, e.g. /snes/Dezaemon.sfc</small>";
+  } else {
+    window.EJS_gameUrl = rom;
+    window.EJS_gameName = decodeURIComponent(rom.split("/").pop()).replace(/\.[^.]+$/, "");
+    boot();
+  }
+}
+</script>
+</body>
+</html>

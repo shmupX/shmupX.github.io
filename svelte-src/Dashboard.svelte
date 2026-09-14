@@ -344,6 +344,11 @@
   // stored as-is and the section renders its shelf note rather than an error.
   async function loadEmuManifest(core, force = false) {
     if (!core) return;
+    // A local core has no mirror shelf to read, and therefore no manifest in
+    // its catalogue entry. Leaving the id unset is the right answer rather than
+    // a null: emuNote's manifest states are about the mirror, and the sections
+    // that have no mirror write their own note (see the Super Famicom one).
+    if (!core.manifest) return;
     if (emuManifestPending.has(core.id)) return;
     if (!force && emuManifests[core.id] !== undefined) return;
     emuManifestPending.add(core.id);
@@ -373,6 +378,9 @@
   // A failed warm leaves the core INSTALLED and flags the row instead of rolling
   // back: the worker is already primed, so nothing is broken by keeping it, and
   // A on the flagged row retries the same warm.
+  //
+  // A core flagged `local` in the catalogue skips all of that — see the branch
+  // below. It is served from this origin, so there is no mirror to prime.
   async function installCore(id) {
     const core = emuCores.find((c) => c.id === id);
     if (!core || emuStatus[id]?.busy) return;
@@ -384,13 +392,34 @@
       emuInstalled = [...new Set([...installedNow, id])];
       persistEmus();
     }
+    const set = (v) => (emuStatus = { ...emuStatus, [id]: v });
+    // A core flagged `local` is served by this origin — the Super Famicom one
+    // is static/snes/play.html — so there is no mirror in the picture at all:
+    // nothing to push, no worker to wait on being in front of the page, and
+    // nothing to warm but the player itself, which is a plain static file. The
+    // early return matters as much as the shorter list: a visitor whose only
+    // core is local should not end up with a service worker in front of every
+    // request on the site to serve a page this origin already serves.
+    if (core.local) {
+      set({ busy: true, step: 0, total: 1, err: '' });
+      try {
+        const r = await fetch(core.player, { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        await r.arrayBuffer();
+      } catch (e) {
+        set({ busy: false, step: 0, total: 1, err: 'MISSING · ' + core.player });
+        showToast(core.name + ': could not fetch ' + core.player + ' — press A to retry.');
+        return;
+      }
+      set({ busy: false, step: 1, total: 1, err: '' });
+      return;
+    }
     // A catalogue `shared` entry ending in "/" is a PREFIX for the worker to
     // answer, not a file: the origin 404s it, and without a CORS header, so the
     // worker's upstream fetch throws and the warm reads as a 504. Nothing to
     // warm there. Same rule as ensurePs2Core in static/ps2-library.js.
     const targets = [core.player, core.manifest, ...emuShared]
       .filter((path) => path && !path.endsWith('/'));
-    const set = (v) => (emuStatus = { ...emuStatus, [id]: v });
     set({ busy: true, step: 0, total: targets.length, err: '' });
     await pushEmuState();
     // Every warm target is a mirrored path, so an uncontrolled page would 404
@@ -565,10 +594,10 @@
     let auto = null;
     try { auto = localStorage.getItem(SNES_AUTO_KEY); } catch (_) { /* unreadable */ }
     if (auto === 'off' || loadInstalledEmus().includes(SNES_CORE_ID)) return;
-    // The warm inside installCore will fail until the mirror publishes
-    // /snes/play.html, and that is fine: a failed warm leaves the core
-    // INSTALLED and flags the row, so the section appears with its shelf on it
-    // and emuNote says what is actually missing.
+    // Cheap now that the core is local: installCore records the id and fetches
+    // static/snes/play.html once to prove it is there. Nothing is downloaded
+    // and no service worker is registered, so auto-adding the section costs a
+    // machine with a cartridge on it nothing it would not pay to open it.
     await installCore(SNES_CORE_ID);
     try { localStorage.setItem(SNES_AUTO_KEY, '1'); } catch (_) { /* session-only */ }
   }
@@ -648,9 +677,16 @@
   // TWO files, which is what makes this different. A Saturn row is a disc that
   // boots on its own; a SNES row is 128 KB of SRAM that means nothing without
   // Athena's cartridge under it, so the ROM (off this machine, via
-  // /api/dezaemon-sfc) goes in beside the save, and the save is named after the
-  // ROM because that is how a libretro core pairs a .srm with its cart.
+  // /api/dezaemon-sfc, or out of static/ in a packaged build) goes in beside
+  // the save, and the save is named after the ROM because that is how a
+  // libretro core pairs a .srm with its cart.
+  //
+  // A null record is the CART ITSELF — the Dezaemon row the section leads with
+  // — which boots the ROM with no save under it. That is the one row here that
+  // does not need a shelf, and the reason the section is worth opening on a
+  // machine that has just found the cartridge and shelved nothing yet.
   let snesPending = null; // the record the player about to open is asking for
+  let snesPendingBare = false; // ...or the bare cartridge, which has no record
   function launchLocalSnes(record) {
     if (!snesRom?.available) {
       showToast(
@@ -660,7 +696,8 @@
       );
       return;
     }
-    snesPending = record;
+    snesPending = record || null;
+    snesPendingBare = !record;
     chromeDismissed = false;
     frameUrl = null;
     gameSrc = SNES_BYOD_PLAYER;
@@ -668,14 +705,15 @@
   }
   async function deliverSnesCart(frame) {
     const record = snesPending;
-    if (!record) return;
+    if (!record && !snesPendingBare) return;
     try {
       const { rom, sram, title } = await snesBootFiles(record);
-      // Same-origin only: the player is ours (the worker mirrors it under our
-      // origin), and both files are the user's own.
+      // Same-origin only: the player is ours (static/snes/play.html, off this
+      // very origin), and both files are the user's own.
       frame.postMessage({ type: SNES_BYOD_FILE, rom, sram, name: title }, location.origin);
     } catch (e) {
-      showToast('Could not hand "' + (record.title || 'the cart') + '" to the SNES player: ' + (e?.message || e));
+      const what = record ? '"' + (record.title || 'the cart') + '"' : 'the Dezaemon cartridge';
+      showToast('Could not hand ' + what + ' to the SNES player: ' + (e?.message || e));
     }
   }
 
@@ -3034,8 +3072,25 @@
     // This browser's own Super Famicom dumps. Every one of them is local —
     // there is no mirror shelf for this console — so unlike the PS2's these are
     // not a prefix to a hosted list but the whole section.
+    //
+    // The cartridge leads, when this machine has one, the way the Dezaemon 2
+    // disc leads the Saturn section below: it is a game in its own right (the
+    // editor every cart on this shelf was drawn in), it is the one row that
+    // needs no shelf at all, and a section whose every other row says "no
+    // cartridge" should be able to say what a cartridge would be.
     if (core.id === SNES_CORE_ID) {
-      return snesLocal.map((g) => ({
+      const carts = snesRom?.available
+        ? [{
+          key: 'snes-rom', kind: 'snes-rom',
+          name: snesRom.title || 'Dezaemon', title: 'DEZAEMON',
+          sub: 'the cartridge · ' + (snesRom.name || 'Dezaemon.sfc') +
+            (snesRom.source === 'staged' ? ' · staged' : ' · dev-fixtures'),
+          icon: null,
+          size: snesRom.size ? (snesRom.size / 1024).toFixed(0) + ' KB' : '—',
+          date: 'LOCAL', type: 'SFC / CARTRIDGE',
+        }]
+        : [];
+      return carts.concat(snesLocal.map((g) => ({
         key: 'snes:' + g.id,
         name: g.title,
         title: String(g.title).toUpperCase(),
@@ -3051,7 +3106,7 @@
         date: g.dumpedAt || 'LOCAL',
         type: 'SFC / ' + (g.source === 'library' ? 'LIBRARY' : 'IMPORTED'),
         kind: 'snes', local: g,
-      }));
+      })));
     }
     // The Dezaemon 2 disc found in dev-fixtures/ (see initDezaemonDisc): the
     // browser core's bring-your-own-disc row, and the desktop Mednafen when the
@@ -3084,9 +3139,14 @@
   // and neither is the same as a console that genuinely deploys no titles.
   function emuNote(core) {
     // The Super Famicom section has no mirror shelf to read — every row on it
-    // is a dump this browser holds — so the manifest states below say nothing
-    // about it. What it needs said is how to get a game onto it, and whether
-    // the cartridge those games need is here.
+    // is a dump this browser holds, plus the cartridge itself — so the manifest
+    // states below say nothing about it.
+    //
+    // The first of the two is barely reachable now. A machine with the
+    // cartridge always has at least the cartridge row (see localRows), so the
+    // section is empty there only for as long as the ROM probe is in flight;
+    // after that an empty section means no cartridge, which is the state that
+    // needs explaining.
     if (core.id === SNES_CORE_ID) {
       return snesRom?.available
         ? {
@@ -3101,8 +3161,9 @@
           title: 'NO CARTRIDGE',
           pre: 'A Super Famicom save needs the game it was saved by. Put the Dezaemon ROM in ',
           path: 'dev-fixtures/',
-          post: ' (or name one in $DEZAEMON_SFC_ROM) and reopen this section. ' +
-            'Carts can be shelved and exported without it.',
+          post: ' (or name one in $DEZAEMON_SFC_ROM) and reopen this section; ' +
+            'a packaged launcher reads the copy `deno task sfc:stage` leaves ' +
+            'under static/ instead. Carts can be shelved and exported without it.',
           hint: [],
         };
     }
@@ -3517,8 +3578,10 @@
     // The local Dezaemon 2 disc: the browser core takes it as a File posted
     // into its frame, the desktop Mednafen is started by the server.
     if (row.kind === 'local-saturn') { launchLocalSaturn(); return; }
-    // A SNES row is a save; launchLocalSnes is what finds it a cartridge.
+    // A SNES row is a save; launchLocalSnes is what finds it a cartridge. The
+    // cartridge row itself is the same launch with nothing to put under it.
     if (row.kind === 'snes' && row.local) { launchLocalSnes(row.local); return; }
+    if (row.kind === 'snes-rom') { launchLocalSnes(null); return; }
     if (row.kind === 'mednafen') { launchMednafen(); return; }
     // A ps2 "web" row is a browser build living beside the ISOs, not a disc —
     // launch its own url rather than handing the filename to the emulator.

@@ -33,6 +33,15 @@ static/games/super-mario-sp-web.zip
 # No leading slash, for the same reason .DS_Store has none.
 ._*
 
+# The Dezaemon cartridge, staged under static/ by `deno task sfc:stage` so the
+# Super Famicom player can boot it in a packaged launcher as well as in dev
+# (a compiled binary embeds _fresh/client, which is static/, and never
+# dev-fixtures/). Athena's ROM is not ours to ship, and this is what keeps the
+# copy local: Deno Deploy builds from this repository, so a file git does not
+# carry is a file `vite build` cannot copy into the deployed site.
+static/snes/*.sfc
+static/snes/*.smc
+
 # Local .sav test fixtures (community Dezaemon 2 saves — never committed).
 # Drop .sav/.bcr/.bkr files here to enable the fixture-gated engine tests.
 # debug-tools/ is the exception — scripts that read the fixtures, not the

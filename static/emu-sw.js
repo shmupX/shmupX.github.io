@@ -58,10 +58,18 @@ const ESHOP_PREFIX = "/eshop/";
 // the installed set turns out to be, which is what lets the fetch handler
 // rule a path out before it has read that set. Keep in step with
 // static/emulators.json — tests/emu_sw_universe_test.ts fails if a catalogue
-// path stops being covered.
+// path stops being covered, and equally if an entry here belongs to no core.
+//
+// /snes/ is deliberately absent. The Super Famicom core is served from THIS
+// origin (static/snes/play.html, on EmulatorJS vendored for Super Mario SP),
+// because cmg answers /snes/play.html with a 404 and has never served it. A
+// core flagged `local` in the catalogue carries no prefixes for exactly this
+// reason: mirroring one would send every request for our own files to an
+// origin that has never heard of them, and only for the people who installed
+// it. Same trap, same answer as /games/super-mario-sp/ — see the third test in
+// tests/emu_sw_universe_test.ts.
 const MIRRORABLE = [
   "/nes/", "/Nintendo/",
-  "/snes/", "/SuperNintendo/",
   "/turbografx16/", "/TurboGrafx-16/",
   "/psx/", "/PlayStation/",
   "/saturn/", "/SegaSaturn/",

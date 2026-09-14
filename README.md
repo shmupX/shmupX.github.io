@@ -278,6 +278,7 @@ deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
 deno task deza:meshlib    # decode the ポリ吉 3D part library off a disc image
 deno task deza:palette    # write static/palette.png (+ palette-sheet.png) from DEZA2.PAL
 deno task sfc:probe       # look inside a Super Famicom Dezaemon SRAM dump (report / png / hex / diff)
+deno task sfc:stage       # copy the Dezaemon cart into static/ so a packaged launcher can boot it
 deno task sfc:upload      # publish the Super Famicom library (dumps + covers + metadata) to the database
 deno task psx:probe       # look inside a PlayStation Dezaemon+ / Dezaemon Kids! save (report / png / hex / diff / all)
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
@@ -1103,27 +1104,45 @@ a .srm on your own disk
   its cart. Without a ROM the section still fills, browses and exports; it just
   says so instead of offering a Play that could only fail.
 
-**The player page does not exist yet.** Every core in `static/emulators.json` is
+**The player page is ours.** Every other core in `static/emulators.json` is
 served by the cmg origin and mirrored onto this one by `static/emu-sw.js`, and
-that origin does not publish `/snes/play.html`, so installing the `snes` core
-warms paths that 404 and the section's rows cannot boot. Everything on this side
-is written to the contract the Saturn player already implements — a `?byod=1`
-page that announces itself with `snes-byod-ready` and is posted its files as
-`snes-byod-file` — so the day that page appears, every row already on a shelf
-starts working with no change here.
+this shelf waited on that mirror for as long as it existed: cmg answers
+`/snes/play.html` with a 404 — and a 404 carrying no
+`Access-Control-Allow-Origin`, so the worker's cross-origin fetch _rejects_
+rather than passing the status on and the install reads as a 504. So
+[`static/snes/play.html`](static/snes/play.html) is served from this origin
+instead, on the **EmulatorJS 4.2.3 and snes9x already vendored for Super Mario
+SP** (see **Layout** above) rather than a second 2.2 MB copy of the same wasm.
+`tests/snes_player_test.ts` pins that dependency, so pruning the game folder
+fails a test here instead of blacking out a player's screen.
 
-**A Super Famicom game does boot here, though — one.**
-[`static/games/super-mario-sp/`](static/games/super-mario-sp/) vendors
-EmulatorJS and the snes9x core _inside the game folder_, so **Super Mario SP**
-plays with no core install, no cmg origin and nothing on your own disk (see
-**Layout** above, and `tools/super-mario-sp/` for how the ROM is built). It is
-not the `?byod=1` player this section is waiting for — it hard-codes its own ROM
-and announces nothing, so it cannot be posted a `.srm`/ROM pair — and it is
-deliberately not at `/snes/`, because that prefix is in `emu-sw.js`'s
-`MIRRORABLE` list and a local file there would be shadowed by the mirror the
-moment anyone installed the core. But the vendored bytes are the ones a real
-`/snes/play.html` needs, so that page is now a question of wiring rather than of
-finding a core.
+Three things follow from the player being local, and all three are checked
+rather than trusted:
+
+- The `snes` catalogue entry is flagged **`local`** and carries **no
+  `prefixes`**. `emuStateFor` drops a local core from the mirror state entirely,
+  so installing the Super Famicom registers no service worker, downloads nothing
+  and warms only the player page — it is already here.
+- `/snes/` is **out of** `emu-sw.js`'s `MIRRORABLE` list. A prefix there would
+  send every request for our own page to an origin that has never served it, and
+  only for the people who installed the core — the same trap that keeps Super
+  Mario SP out of `/snes/`, recorded in `tests/emu_sw_universe_test.ts`.
+- The page answers the `?byod=1` contract the Saturn player implements: it
+  announces `snes-byod-ready` and is posted its files as `snes-byod-file`, so
+  every row already on a shelf boots with no change to the shelf. A post with no
+  `sram` is the **cartridge itself**, which is the row the section now leads
+  with. `?rom=<path>` is the other way in, for a ROM this origin serves.
+
+**The cartridge reaches a packaged launcher too.** The route above reads
+`dev-fixtures/` off real disk, and a compiled binary embeds `_fresh/server.js`
+and `_fresh/client` and nothing else — so there is no `dev-fixtures/` in it to
+read. `deno task sfc:stage` copies the ROM (copier header stripped) to
+`static/snes/Dezaemon.sfc`, which `vite build` carries into `_fresh/client`, and
+`deno task build` runs it on every build. `findSnesRom` asks the route first and
+falls back to that copy, so a source checkout tracks the file you are actually
+editing and a packaged app boots the one it shipped with. The staged copy is
+**gitignored**: Athena's cart is not ours to ship, and git not carrying it is
+what keeps Deploy — which builds from this repository — from publishing it.
 
 ### The PlayStation ports
 
@@ -2017,19 +2036,20 @@ shmupX ships no emulators. Settings → EMULATORS lists the nine cores in
 the console then appears as a tile in the top strip. With nothing installed
 there is only one section, so the strip hides itself entirely.
 
-One of the nine is ahead of the mirror: `snes` is listed, and the SUPER FAMICOM
-section it opens is real — it holds this browser's Dezaemon `.srm` shelf — but
-the cmg origin does not serve `/snes/play.html` yet, so its warm fails and its
-rows cannot boot. A failed warm leaves a core installed and flags the row, which
-is what keeps the shelf reachable while the player is missing. See _The Super
-Famicom library and shelf_.
+One of the nine is not on the mirror at all: `snes` is flagged **`local`** and
+carries no path prefixes, because its player is
+[`static/snes/play.html`](static/snes/play.html) on this very origin — cmg has
+never served `/snes/play.html`. Installing it therefore downloads nothing,
+registers no service worker and warms only that page. See _The Super Famicom
+library and shelf_.
 
-Nothing is vendored here. [`static/emu-sw.js`](static/emu-sw.js) is a service
-worker that mirrors an installed core's path prefixes from the cmg origin into
-Cache Storage, fetching each file the first time it is asked for. That is why
-installing needs no file list — the players pull their own cores, BIOS and ROMs,
-and each request materialises on use. Installing only pre-warms the player page,
-the console's manifest and the shared assets so the shelf is usable at once.
+Nothing else is vendored here. [`static/emu-sw.js`](static/emu-sw.js) is a
+service worker that mirrors an installed core's path prefixes from the cmg
+origin into Cache Storage, fetching each file the first time it is asked for.
+That is why installing needs no file list — the players pull their own cores,
+BIOS and ROMs, and each request materialises on use. Installing only pre-warms
+the player page, the console's manifest and the shared assets so the shelf is
+usable at once.
 
 It has to be a worker rather than plain fetches:
 
