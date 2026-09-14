@@ -17,7 +17,14 @@ await import("../static/gamepad-compatibility-plugin.js");
 const compat = (globalThis as any).CMGGamepadCompat;
 // deno-lint-ignore no-explicit-any
 const support = await import("../static/gamepad-support.js") as any;
-const { GamepadManager, DEFAULT_MAPPING, STADIA_PAD_RE } = support;
+const {
+  GamepadManager,
+  DEFAULT_MAPPING,
+  STADIA_PAD_RE,
+  ARCADE_COIN_KEY,
+  ARCADE_COIN_TAP_MS,
+  ARCADE_P1_KEYS,
+} = support;
 
 const PADS = {
   stadiaChrome: {
@@ -795,6 +802,12 @@ function fakeManager() {
       return true;
     },
     handleSpecialActions() {},
+    // Flipped per-test: "is an arcade board on screen right now".
+    arcadeFrame: false,
+    arcadeCoinArmedAt: 0,
+    isArcadeFrame: () => self.arcadeFrame === true,
+    arcadeKeyFor: proto.arcadeKeyFor,
+    pulseArcadeCoin: proto.pulseArcadeCoin,
     dispatchKeyboardEvent(type: string, m: { keyboardKey: string }) {
       sent.push(type + ":" + m.keyboardKey);
     },
@@ -802,6 +815,141 @@ function fakeManager() {
   };
   return { self, sent, state };
 }
+
+// ── Select as the coin slot ──────────────────────────────────────────────────
+// The mirrored arcade player binds nothing to Select, on the grounds that the
+// boards IT ships run on Free Play. A board installed from our eShop does not:
+// it boots on the driver's stock DIPs at 1 Coin/1 Credit, so the launcher has
+// to provide the coin slot.
+
+// Press and release Select on a pad, and report what reached the game.
+function tapSelect(
+  opts: { arcade: boolean; overlayOnRelease?: boolean; armedAt?: number } = {
+    arcade: true,
+  },
+) {
+  const { self, sent } = fakeManager();
+  self.arcadeFrame = opts.arcade;
+  const index = 0;
+  const run = (pressed: number[]) =>
+    GamepadManager.prototype.processButtonGroup.call(
+      self,
+      "special",
+      fakePad({ id: PADS.stadiaChrome.id, index, pressed }),
+      index,
+      { ...self.buttonState[index] },
+      DEFAULT_MAPPING,
+      false,
+    );
+  run([8]); // Select down
+  if (opts.armedAt !== undefined) self.arcadeCoinArmedAt = opts.armedAt;
+  if (opts.overlayOnRelease) self.isAnyOverlayOpen = () => true;
+  self.buttonState[index].select = true;
+  run([]); // Select up
+  return sent;
+}
+
+Deno.test("the coin key is MAME's, spelled with a real KeyboardEvent code", () => {
+  // "5" would otherwise be derived as the code "Key5" by dispatchKeyboardEvent.
+  assertEquals(ARCADE_COIN_KEY.keyboardKey, "5");
+  assertEquals(ARCADE_COIN_KEY.keyCode, 53);
+  assertEquals(ARCADE_COIN_KEY.code, "Digit5");
+});
+
+Deno.test("Select inserts a coin over an arcade board — on release, and nowhere else", async () => {
+  // Not an arcade board: Select is the Backspace the mapping table gives it,
+  // pressed and released like any other slot.
+  assertEquals(tapSelect({ arcade: false }), [
+    "keydown:Backspace",
+    "keyup:Backspace",
+  ]);
+
+  // An arcade board: no Backspace at all, and the coin goes out on the
+  // RELEASE — nothing is sent while the button is still down.
+  const sent = tapSelect({ arcade: true });
+  assertEquals(sent, ["keydown:5"]);
+  // ...and the key is let go a few frames later, or MAME may never sample it.
+  await new Promise((r) => setTimeout(r, 200));
+  assertEquals(sent, ["keydown:5", "keyup:5"]);
+});
+
+Deno.test("on an arcade board the face buttons become MAME's P1 panel", () => {
+  const run = (arcade: boolean) => {
+    const { self, sent } = fakeManager();
+    self.arcadeFrame = arcade;
+    const index = 0;
+    // FBTN_BOTTOM/RIGHT/LEFT/TOP and both shoulders.
+    const pressed = [0, 1, 2, 3, 4, 5];
+    for (const group of ["face", "shoulder"]) {
+      GamepadManager.prototype.processButtonGroup.call(
+        self,
+        group,
+        fakePad({ id: PADS.stadiaChrome.id, index, pressed }),
+        index,
+        { ...self.buttonState[index] },
+        DEFAULT_MAPPING,
+        false,
+      );
+    }
+    return sent;
+  };
+  // Off an arcade board nothing changes: the table's own keys, where two of
+  // the four face buttons are the same key and none is a MAME button 1.
+  assertEquals(run(false), [
+    "keydown: ",
+    "keydown:c",
+    "keydown:c",
+    "keydown: ",
+    "keydown:q",
+    "keydown:e",
+  ]);
+  // On one, every slot is a distinct P1 button, and the thumb button is
+  // button 1 — the one zunkyou (and most boards) shoots with.
+  assertEquals(run(true), [
+    "keydown:Control",
+    "keydown:Alt",
+    "keydown: ",
+    "keydown:Shift",
+    "keydown:z",
+    "keydown:x",
+  ]);
+});
+
+Deno.test("the P1 keys carry explicit codes, since MAME reads them", () => {
+  // 'Control' would otherwise be dispatched with the code "Control" rather
+  // than "ControlLeft", and ' ' as "Space" only by the dispatcher's own
+  // special case. Spell every one of them out.
+  assertEquals(ARCADE_P1_KEYS.face.btnBottom.code, "ControlLeft");
+  assertEquals(ARCADE_P1_KEYS.face.btnRight.code, "AltLeft");
+  assertEquals(ARCADE_P1_KEYS.face.btnLeft.code, "Space");
+  assertEquals(ARCADE_P1_KEYS.face.btnTop.code, "ShiftLeft");
+  assertEquals(ARCADE_P1_KEYS.shoulder.leftShoulder.code, "KeyZ");
+  assertEquals(ARCADE_P1_KEYS.shoulder.rightShoulder.code, "KeyX");
+  // No slot doubles up — four distinct fire buttons plus two shoulders.
+  const codes = [
+    ...Object.values(ARCADE_P1_KEYS.face),
+    ...Object.values(ARCADE_P1_KEYS.shoulder),
+  ].map((m) => (m as { code: string }).code);
+  assertEquals(new Set(codes).size, codes.length);
+});
+
+Deno.test("a Select chord pays no coin", async () => {
+  // SELECT + Down / R / L2 opens the Guide (Dashboard.svelte). By the time
+  // Select comes back up the overlay is open, and an open overlay is the tell.
+  assertEquals(tapSelect({ arcade: true, overlayOnRelease: true }), []);
+  // A Select held past the tap window was a chord too, whatever it opened.
+  assertEquals(
+    tapSelect({
+      arcade: true,
+      armedAt: Date.now() - (ARCADE_COIN_TAP_MS + 50),
+    }),
+    [],
+  );
+  // And a release with nothing armed — the button was already down when the
+  // board came up — is not a coin either.
+  assertEquals(tapSelect({ arcade: true, armedAt: 0 }), []);
+  await new Promise((r) => setTimeout(r, 200));
+});
 
 Deno.test("split mode holds back the keys for the right half's buttons — and Start's tap — on the split pads only", () => {
   assertEquals([...support.SPLIT_RIGHT_HALF_SLOTS].sort((a, b) => a - b), [

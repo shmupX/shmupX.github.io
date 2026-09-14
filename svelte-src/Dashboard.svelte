@@ -686,7 +686,11 @@
     arcadePending = record;
     chromeDismissed = false;
     frameUrl = null;
-    gameSrc = player + '?byob=1';
+    // -coin_impulse 1: MAME counts a credit for every frame the coin line is
+    // held, so the launcher's Select tap (which holds the key long enough for
+    // MAME to sample it at all) would otherwise buy five or six at a time.
+    // One frame's impulse makes one tap one credit, whatever the hold.
+    gameSrc = player + '?byob=1&args=' + encodeURIComponent('-coin_impulse 1');
     setTimeout(() => { gameOn = true; }, 30);
   }
   async function deliverArcadeBoard(frame) {

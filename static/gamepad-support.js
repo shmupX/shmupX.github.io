@@ -37,6 +37,50 @@ const SPLIT_RIGHT_HALF_SLOTS = new Set([0, 1, 2, 3, 5, 7, 9, 11]);
 
 // Default controller mapping (Standard Gamepad API). Module-level so tests and
 // other games can read the shipped defaults without constructing a manager.
+// ── Arcade coin ──────────────────────────────────────────────────────────────
+// An arcade board in the frame has no coin slot on the pad. The mirrored
+// player (/arcade/play.html) deliberately binds nothing to Select — its own
+// comment says "no coin is needed, since the boards we ship run on Free Play"
+// — which is true of the boards IT ships and false of one installed from our
+// eShop: those boot on the driver's stock DIPs, at 1 Coin/1 Credit.
+//
+// So Select becomes the coin slot while an arcade board is up, and only then;
+// every other game keeps the Backspace the mapping table gives it. MAME's
+// coin-1 is KEYCODE_5, and `code` has to be spelled out because the dispatcher
+// derives a code from the key name and would call "5" a KeyboardEvent code of
+// "Key5".
+//
+// It fires on a clean RELEASE, not on the press: Select is also the launcher's
+// Guide chord (SELECT + Down / R / L2, see Dashboard.svelte), and a coin on the
+// press edge would drop a credit every time the Guide was opened. A tap that
+// ran long, or one that left an overlay open, is a chord and pays nothing.
+const ARCADE_COIN_KEY = { keyboardKey: '5', keyCode: 53, code: 'Digit5' };
+// The rest of the panel. The player mirrors Start and the D-pad into keys but
+// deliberately leaves the face buttons to MAME's own joystick bindings, and
+// those do not survive the numbering problems its comments describe — so on a
+// pad there is simply no fire button. These are MAME's STOCK P1 keys, so they
+// work on any board without a cfg: LCtrl/LAlt/Space/LShift are buttons 1-4 and
+// Z/X are 5-6. Mapped by POSITION like the table above, so FBTN_BOTTOM — the
+// thumb's button, A on a Stadia or Xbox pad — is button 1, the one almost
+// every game shoots with.
+const ARCADE_P1_KEYS = {
+  face: {
+    btnBottom: { keyboardKey: 'Control', keyCode: 17, code: 'ControlLeft' },
+    btnRight: { keyboardKey: 'Alt', keyCode: 18, code: 'AltLeft' },
+    btnLeft: { keyboardKey: ' ', keyCode: 32, code: 'Space' },
+    btnTop: { keyboardKey: 'Shift', keyCode: 16, code: 'ShiftLeft' },
+  },
+  shoulder: {
+    leftShoulder: { keyboardKey: 'z', keyCode: 90, code: 'KeyZ' },
+    rightShoulder: { keyboardKey: 'x', keyCode: 88, code: 'KeyX' },
+  },
+};
+// Longer than this and it was a chord, not a coin.
+const ARCADE_COIN_TAP_MS = 600;
+// MAME samples input at the emulated frame rate, so the key has to be held
+// across a few frames to be seen at all.
+const ARCADE_COIN_HOLD_MS = 100;
+
 const DEFAULT_MAPPING = {
   dpad: {
     up: { gamepadButton: 12, keyboardKey: 'ArrowUp', keyCode: 38 },
@@ -419,8 +463,13 @@ class GamepadManager {
             // Overlay-specific handling handled elsewhere
           } else if (heldBack) {
             // player 2's half — no key for player 1
+          }
+          // Select over an arcade board arms the coin; nothing goes out yet.
+          else if (groupName === 'special' && buttonName === 'select' && this.isArcadeFrame()) {
+            this.arcadeCoinArmedAt = Date.now();
           } else {
-            const eff = this.getEffectiveMappingForLayout(groupName, buttonName, buttonMapping, useWASD);
+            const eff = this.arcadeKeyFor(groupName, buttonName) ||
+              this.getEffectiveMappingForLayout(groupName, buttonName, buttonMapping, useWASD);
             this.dispatchKeyboardEvent('keydown', eff);
             this.handleSpecialActions(groupName, buttonName, controllerIndex);
           }
@@ -434,8 +483,18 @@ class GamepadManager {
             if (groupName === 'face' && buttonName === 'btnRight') this.buttonState[controllerIndex].faceEast = false;
           } else if (heldBack) {
             // its keydown never went out either (or setSplitPadsActive released it)
+          }
+          // ...and releasing it inserts the coin, unless it was a chord.
+          else if (groupName === 'special' && buttonName === 'select' && this.isArcadeFrame()) {
+            const armedAt = this.arcadeCoinArmedAt || 0;
+            this.arcadeCoinArmedAt = 0;
+            const overlayOpen = !!(this.isAnyOverlayOpen && this.isAnyOverlayOpen());
+            if (armedAt && (Date.now() - armedAt) <= ARCADE_COIN_TAP_MS && !overlayOpen) {
+              this.pulseArcadeCoin();
+            }
           } else {
-            const eff = this.getEffectiveMappingForLayout(groupName, buttonName, buttonMapping, useWASD);
+            const eff = this.arcadeKeyFor(groupName, buttonName) ||
+              this.getEffectiveMappingForLayout(groupName, buttonName, buttonMapping, useWASD);
             this.dispatchKeyboardEvent('keyup', eff);
           }
         }
@@ -871,6 +930,40 @@ class GamepadManager {
     return this.getKeydownOnlyForGame(id);
   }
 
+  // Which key this slot presses on an arcade board, or null when the game on
+  // screen is not one and the ordinary mapping table applies.
+  arcadeKeyFor(groupName, buttonName) {
+    const group = ARCADE_P1_KEYS[groupName];
+    if (!group || !group[buttonName]) return null;
+    return this.isArcadeFrame() ? group[buttonName] : null;
+  }
+
+  // Is the game on screen an arcade board? The player is mirrored under our
+  // own origin, so its pathname is readable; iframe.src is the fallback for the
+  // moment before the frame has navigated.
+  isArcadeFrame() {
+    try {
+      const iframe = document.querySelector('iframe#gameframe');
+      if (!iframe) return false;
+      let path = '';
+      try { path = iframe.contentWindow?.location?.pathname || ''; } catch (_) {}
+      if (!path) {
+        try { path = new URL(iframe.src, location.origin).pathname; } catch (_) {}
+      }
+      return path.startsWith('/arcade/');
+    } catch (_) { return false; }
+  }
+
+  // Drop a coin: press MAME's coin-1 key and let go of it a few frames later.
+  pulseArcadeCoin() {
+    this.dispatchKeyboardEvent('keydown', ARCADE_COIN_KEY);
+    try {
+      setTimeout(() => {
+        try { this.dispatchKeyboardEvent('keyup', ARCADE_COIN_KEY); } catch (_) { /* ignore */ }
+      }, ARCADE_COIN_HOLD_MS);
+    } catch (_) { /* no timers — the keydown alone still reads as a coin */ }
+  }
+
   handleSpecialActions(_groupName, _buttonName, _controllerIndex) {
     // Home used to toggle fullscreen from here. It doesn't any more:
     //   - fullscreen is R3's job now, and it only ever ENTERS (see
@@ -909,7 +1002,10 @@ class GamepadManager {
     if (targetWin && !sameOrigin) return;
 
     const key = mapping.keyboardKey;
-    const code = key === ' ' ? 'Space' : (key.length === 1 ? `Key${key.toUpperCase()}` : key);
+    // An explicit code wins: deriving one from the key name is right for
+    // letters and wrong for everything else (a digit would come out "Key5").
+    const code = mapping.code ||
+      (key === ' ' ? 'Space' : (key.length === 1 ? `Key${key.toUpperCase()}` : key));
 
     const setLegacyProps = (event, codeVal) => {
       try {
@@ -1139,5 +1235,5 @@ if (typeof window !== 'undefined') {
 }
 
 // ES module exports so other web games can import this class.
-export { GamepadManager, DEFAULT_MAPPING, STADIA_PAD_RE, LEGION_PAD_RE, SPLIT_RIGHT_HALF_SLOTS };
+export { GamepadManager, DEFAULT_MAPPING, STADIA_PAD_RE, LEGION_PAD_RE, SPLIT_RIGHT_HALF_SLOTS, ARCADE_COIN_KEY, ARCADE_COIN_TAP_MS, ARCADE_P1_KEYS };
 export default GamepadManager;
