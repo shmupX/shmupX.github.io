@@ -35,12 +35,24 @@ DENO_BIN="$DENO_INSTALL/bin/deno"
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
-# Idempotent: the container state is snapshotted after a successful hook run, so
-# a resumed session finds the binary already here and skips straight to the
-# dependency warm-up.
+# Idempotent, but on the VERSION rather than on the mere presence of a binary.
+# The container state is snapshotted after a successful hook run, so a resumed
+# session finds whatever the last one installed -- and a `[ -x "$DENO_BIN" ]`
+# test alone would then keep that copy forever, which makes raising the pin
+# above a no-op on exactly the containers that already carry the old, broken
+# one. Compare and replace instead.
+want="${DENO_VERSION#v}"
+have=""
 if [ -x "$DENO_BIN" ]; then
-  echo "deno already installed: $("$DENO_BIN" --version | head -1)"
+  have="$("$DENO_BIN" --version 2>/dev/null | head -1 | awk '{print $2}')"
+fi
+
+if [ "$have" = "$want" ]; then
+  echo "deno $have already installed"
 else
+  if [ -n "$have" ]; then
+    echo "deno $have is installed but this repo pins $want; replacing it."
+  fi
   echo "Installing Deno $DENO_VERSION ..."
   # -s keeps curl's progress bar out of the hook's stdout; the installer itself
   # needs unzip, which the base image has.
@@ -59,7 +71,7 @@ export PATH="$DENO_INSTALL/bin:$PATH"
 # shmupx-character server unable to find deno. /usr/local/bin is already on the
 # default PATH, so a link there reaches every child process regardless of how
 # it was started, and of whether it started before this hook finished.
-if [ -w /usr/local/bin ] && [ ! -e /usr/local/bin/deno ]; then
+if [ -w /usr/local/bin ] && [ "$(readlink -f /usr/local/bin/deno 2>/dev/null)" != "$(readlink -f "$DENO_BIN")" ]; then
   ln -sf "$DENO_BIN" /usr/local/bin/deno
 fi
 

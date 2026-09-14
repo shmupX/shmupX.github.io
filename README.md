@@ -2248,11 +2248,21 @@ Two details are load-bearing:
   its version is not this script's to move.
 
 It is synchronous: the session waits for the toolchain instead of racing it, at
-the cost of a few seconds' startup. A resumed session finds the binary already
-in place and skips to the dependency warm-up, and the install is retried three
-times before giving up with a warning rather than failing the session — deno
-itself is there by then, so a registry blip should cost one command, not the
-whole container.
+the cost of a few seconds' startup. A resumed session whose deno already matches
+the pin skips to the dependency warm-up, and the install is retried three times
+before giving up with a warning rather than failing the session — deno itself is
+there by then, so a registry blip should cost one command, not the whole
+container.
+
+The skip is keyed on the **version**, not on a binary merely existing, and that
+distinction is load-bearing. The container state is snapshotted after each
+successful run, so a resumed session inherits whatever the last one installed. A
+presence-only test would keep that copy forever — which would make raising the
+pin a no-op on precisely the containers still carrying the old, broken one, the
+only place raising it accomplishes anything. So the hook compares the installed
+version against the pin and reinstalls over the top when they differ. The
+`/usr/local/bin` link is re-pointed on the same terms rather than only when
+absent.
 
 `.gitignore` keeps `.claude/*` local except for `skills/`, `hooks/` and
 `settings.json`; a hook that never reaches the container cannot set one up.
