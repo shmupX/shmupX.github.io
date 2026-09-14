@@ -568,7 +568,11 @@
   // installed here sits above the hosted shelf in the same section.
   let arcadeLocal = $state([]);
   async function refreshArcadeLocal() {
-    try { arcadeLocal = await installedArcadeGames(); } catch (_) { arcadeLocal = []; }
+    // The shelf is localStorage and outlives the catalog read, so a board
+    // installed while debug was on would otherwise still have a row in the
+    // ARCADE section with it off. installArcadeGame records the status for
+    // exactly this.
+    try { arcadeLocal = withoutDebug(await installedArcadeGames()); } catch (_) { arcadeLocal = []; }
   }
 
   // ─── The local SNES shelf ──────────────────────────────────────────────────
@@ -1276,6 +1280,41 @@
     });
   });
 
+  // ─── DEBUG games ──────────────────────────────────────────────────────────
+  // A game whose status is DEBUG is not in the shop at all unless debug is on,
+  // and does not appear on a console shelf either once installed. It is the
+  // status itself that hides it, so a future one needs no code here.
+  //
+  // Same flag the engine comparison already reads (see
+  // static/phaser-plugins/engine-compare.js): `?debug=1` in the URL, or
+  // localStorage['shmupx-debug']. The URL SEEDS the store rather than replacing
+  // it, because the packaged launcher opens at the server root with no query
+  // string and no address bar (desktop.ts) — a flag that lived only in the URL
+  // could never be switched on there, and `?debug=0` is the only way back off
+  // in that window.
+  //
+  // Read once at boot, like padDebugOn: turning it on takes a reload, which is
+  // how every other ?flag=1 in this launcher already behaves. It hides rows
+  // from a screen; it is not a secret — data/eshop.json is served to anyone.
+  const DEBUG_STATUS = 'DEBUG';
+  const DEBUG_KEY = 'shmupx-debug';
+  function readDebugFlag() {
+    const q = qs('debug');
+    if (q === '1' || q === '0') {
+      try {
+        if (q === '1') localStorage.setItem(DEBUG_KEY, '1');
+        else localStorage.removeItem(DEBUG_KEY);
+      } catch (_) { /* storage blocked — the URL still holds for this session */ }
+      return q === '1';
+    }
+    try { return localStorage.getItem(DEBUG_KEY) === '1'; } catch (_) { return false; }
+  }
+  const debugOn = readDebugFlag();
+  const isDebugEntry = (g) => String(g?.status || '') === DEBUG_STATUS;
+  /** The rows a non-debug launcher is allowed to see. */
+  const withoutDebug = (rows) =>
+    debugOn ? rows : (rows || []).filter((g) => !isDebugEntry(g));
+
   // ─── Release status, and the filter over it ───────────────────────────────
   // A game's status — RELEASED, EARLY_ACCESS, … — comes off its catalog row,
   // or its own codemonkey.json (static/eshop-library.js reads that off the
@@ -1449,7 +1488,12 @@
     eshopLoading = true;
     try {
       const { entries, errors, offline } = await loadEshopCatalog();
-      eshopEntries = Array.isArray(entries) ? entries : [];
+      // Gated here, at the one assignment to eshopEntries, rather than at
+      // eshopCatalogRows: refreshEshopInstalled reads eshopEntries directly, so
+      // a DEBUG install would otherwise still be counted in "N installed".
+      // loadEshopCatalog has already applied each game's codemonkey.json, so a
+      // status that came from the build rather than the row is stamped by now.
+      eshopEntries = withoutDebug(Array.isArray(entries) ? entries : []);
       eshopErrors = (Array.isArray(errors) ? errors : []).map((e) => String(e?.message || e));
       // The library's verdict, not "no rows": one source answering with an
       // empty list is a quiet shop, not an offline one.

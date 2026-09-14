@@ -137,6 +137,51 @@ Deno.test("the arcade board ships with the romset the catalog points at", async 
   }
 });
 
+Deno.test("the second arcade board ships its romset and not the engine", async () => {
+  const eshop = await read("data/eshop.json");
+  const m = eshop.find((e: { id: string }) => e.id === "metamoqester");
+  assertEquals(m?.kind, "arcade");
+  assertEquals(m?.core, "arcade");
+  // The driver name, not the pretty id: deliverArcadeBoard posts it as the
+  // board's name and the player resolves the recipe and MAME core from it.
+  assertEquals(m?.rom, "metmqstr");
+  assertEquals(m?.romUrl, "/games/metamoqester/metmqstr.zip");
+  const rom = await Deno.stat(
+    new URL("../static/games/metamoqester/metmqstr.zip", import.meta.url),
+  );
+  assertEquals(rom.isFile, true, "the romset the catalog points at must ship");
+  // Same bargain as zunkyou: the mamecave core and the per-game recipe are the
+  // Emularity engine's to serve, byte for byte, so committing them would be
+  // 22 MB archive.org already has.
+  for (const stray of ["mamecave.js.gz", "mamecave.wasm.gz", "metmqstr.json"]) {
+    let found = true;
+    try {
+      await Deno.stat(
+        new URL("../static/games/metamoqester/" + stray, import.meta.url),
+      );
+    } catch {
+      found = false;
+    }
+    assertEquals(found, false, stray + " is the engine's to serve, not ours");
+  }
+});
+
+Deno.test("a DEBUG game stays DEBUG, or it walks into the shop", async () => {
+  // The launcher hides DEBUG rows unless it was opened with ?debug=1
+  // (svelte-src/Dashboard.svelte). Nothing else hides them, so dropping the
+  // status here is all it takes to publish a work in progress to everyone.
+  const eshop = await read("data/eshop.json");
+  const statusOf = (id: string) =>
+    eshop.find((e: { id: string }) => e.id === id)?.status ?? null;
+  assertEquals(statusOf("metamoqester"), "DEBUG");
+  assertEquals(statusOf("super-mario-sp"), "DEBUG");
+  // ...and the ones meant to be visible carry no status, which reads as
+  // RELEASED. If a row ever needs hiding, give it DEBUG rather than inventing
+  // a second mechanism.
+  assertEquals(statusOf("shmup-party-ps2"), null);
+  assertEquals(statusOf("zunzunkyou-no-yabou"), null);
+});
+
 Deno.test("eshopEntryProblems rejects what the installer cannot act on", () => {
   const ok = {
     id: "ok-game",

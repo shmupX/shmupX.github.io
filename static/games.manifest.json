@@ -1,6 +1,6 @@
 {
-  "version": "0716a09",
-  "generatedAt": "2026-09-14T15:31:06.750Z",
+  "version": "d2c4500",
+  "generatedAt": "2026-09-14T17:10:27.610Z",
   "games": [
     {
       "id": "shmupx",
@@ -45,7 +45,7 @@
       "size": "2.3 MB",
       "date": "09.13.26",
       "players": 1,
-      "status": "EARLY_ACCESS"
+      "status": "DEBUG"
     },
     {
       "id": "zunzunkyou-no-yabou",
@@ -59,6 +59,20 @@
       "size": "928 KB",
       "date": "09.14.26",
       "players": 2
+    },
+    {
+      "id": "metamoqester",
+      "kind": "arcade",
+      "name": "Metamoqester",
+      "title": "METAMOQESTER",
+      "sub": "ARCADE / MAME // Cave hardware · Banpresto 1995",
+      "core": "arcade",
+      "rom": "metmqstr",
+      "romUrl": "/games/metamoqester/metmqstr.zip",
+      "size": "7.9 MB",
+      "date": "09.14.26",
+      "players": 2,
+      "status": "DEBUG"
     }
   ]
 }

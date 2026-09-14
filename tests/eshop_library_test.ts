@@ -387,6 +387,22 @@ Deno.test("normalizeEshopEntry fills the defaults and refuses a malformed row", 
   // Nothing deza-shaped leaks in: an arcade row carries no save.
   assertEquals(arcade.sav, undefined);
 
+  // A DEBUG status survives normalization on an arcade row — it is what the
+  // launcher hides on, and installArcadeGame copies it onto the shelf so an
+  // installed board stays hidden too.
+  assertEquals(
+    lib.normalizeEshopEntry({
+      id: "wip-board",
+      kind: "arcade",
+      name: "WIP",
+      core: "arcade",
+      rom: "wip",
+      romUrl: "/games/wip/wip.zip",
+      status: "debug",
+    }).entry.status,
+    "DEBUG",
+  );
+
   for (
     const [raw, why] of [
       [{ id: "Bad Id", kind: "web", name: "n", repo: "o/r" }, "bad id"],

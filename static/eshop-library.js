@@ -1093,6 +1093,10 @@ export async function installArcadeGame(entry, { onProgress = noop, fetchImpl = 
     core,
     rom,
     romUrl,
+    // Carried onto the shelf so the launcher can tell a DEBUG board from an
+    // ordinary one without the catalog: the shelf outlives the catalog read,
+    // and a board installed with debug on must not reappear with it off.
+    status: normalizeStatus(entry.status),
     name: entry.name || entry.title || id,
     title: entry.title || String(entry.name || id).toUpperCase(),
     sub: entry.sub || '',
