@@ -99,6 +99,15 @@ jobs:
             echo "::notice::$previous -> $version"
           fi
 
+      # deno.json pins `nodeModulesDir: "manual"`, so npm packages are resolved
+      # out of node_modules and nothing populates it on its own: a fresh
+      # checkout fails on the first npm import with "Could not find a matching
+      # package … run `deno install`". That is the dashboard bundle, Vite and
+      # Fresh, which is to say the whole web half of the build — so without
+      # this the launcher never gets as far as being packaged.
+      - name: Dependencies
+        run: deno install
+
       - name: Build the launcher
         run: deno task build:linux
 
