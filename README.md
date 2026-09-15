@@ -877,6 +877,44 @@ shipped `foo.json` so everything except the boss is a known-playable level, and
 the character's atlas is stacked onto `game_asset` the same way the level loader
 stacks a level's own sheet. Open the `playUrl` it answers with.
 
+### Verifying a preview
+
+`deno task preview:verify` is that same sequence with a machine checking it:
+build a character, serve the preview level, boot the real bundle in a headless
+Chromium, and compare the frames the runtime ended up holding against the ones
+the character was packed with. It exits non-zero on a frame that never arrived.
+
+Every cheaper check passes on art that never renders. The record can name a
+frame the atlas does not carry, the atlas can carry a frame the level's sheet
+does not stack, and `resolveFrame` drops a name it does not recognise in silence
+— so the boss simply wears stock art and nothing anywhere says a word. Only the
+runtime's own texture knows which frames arrived, which is why this boots a
+browser to ask it.
+
+Two details decide whether such a check works at all:
+
+- **The frames are looked for in `game_asset`, not in a texture named after the
+  character.** `buildPreviewLevel` stacks the character's sheet under the
+  level's own and merges the two frame maps, exactly as the level loader does,
+  so by the time the game holds them they are part of the level's one sheet.
+  Looking for a `<character>` texture finds nothing and reports every frame
+  missing — a clean false negative.
+- **`game_asset` exists long before it holds the level's art.** It is created
+  early with the base game's own frames (221 of them) and the stacked sheet is
+  merged in later, as the level loads, taking the count to 588. So the wait is
+  for the expected frames to _arrive_, not for the texture to be non-empty; that
+  also makes the timeout the assertion, which is the point.
+
+`--play` adds the part a texture cannot answer: it taps through the intro, stops
+the moment the boss draws one of its animation frames — the taps are also the
+fire button, and a boss the player is shooting dies before it runs a fire
+pattern — and then waits for the main projectile to be drawn. `--shots <dir>`
+writes screenshots at each step. The runtime reads only `bossRush` and `stage`,
+so there is no way to skip the intro; budget a few minutes.
+
+It needs a Chromium and downloads nothing: `$CHROME_BIN` wins, otherwise the
+Playwright cache and the usual system installs are searched.
+
 ## Two players
 
 Local 2P is join-in: a second pad pressing any face or shoulder button — or `O`

@@ -23,6 +23,7 @@ import {
   nodeUrl,
 } from "../mcp/lib/rtdb.ts";
 import { type AtlasJson, frameMap, packFrames } from "../mcp/lib/art.ts";
+import { missingFrames } from "../scripts/verify-preview.ts";
 import {
   MAIN_PROJECTILE_KEY,
   PROJECTILE_KEYS,
@@ -99,6 +100,28 @@ Deno.test("the .json suffix lands on the node, not after the query", () => {
     if (db === undefined) Deno.env.delete("SHMUPX_DB");
     else Deno.env.set("SHMUPX_DB", db);
   }
+});
+
+Deno.test("missingFrames names what the runtime never received", () => {
+  // The contract behind `deno task preview:verify`: the packed atlas is the
+  // list of frames the character was built with, and the runtime's game_asset
+  // is what actually arrived after the level loader stacked the sheets. What
+  // the second lacks is a character wearing stock art with nothing reporting
+  // it -- the failure this task exists to turn into an exit code.
+  assertEquals(missingFrames(["a", "b"], ["a", "b", "extra"]), []);
+  assertEquals(missingFrames(["a", "b"], ["a"]), ["b"]);
+  assertEquals(missingFrames([], ["a"]), []);
+  assertEquals(missingFrames(["a"], []), ["a"]);
+  // Order follows the expected list, not the runtime's, so the message reads
+  // the way the atlas was packed.
+  assertEquals(missingFrames(["x", "y", "z"], ["y"]), ["x", "z"]);
+  // Frame names are compared exactly: the level record Firebase-encodes the
+  // dot on write and the loader decodes it back, so a name that still carries
+  // the one-dot-leader here is a genuine mismatch, not a near miss.
+  assertEquals(
+    missingFrames(["boss0.gif"], ["boss0\u2024gif"]),
+    ["boss0.gif"],
+  );
 });
 
 Deno.test("frameMap reads all three atlas layouts", () => {
