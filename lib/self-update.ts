@@ -41,8 +41,16 @@ const DEFAULT_BASE_URL = "https://codemonkey.games/desktop";
  * Exported so scripts/release-desktop.ts can refuse to sign a manifest with a
  * key this build would not accept — the one mistake that ships a release no
  * launcher on earth can verify, and whose only symptom is silence.
+ *
+ * ROTATED from jXb38LQPcrCtyxzg/evjb2LmnS1aeK5V3zKtXpADc60=, whose private half
+ * was never in SHMUPX_UPDATE_SECRET and is gone. That key signed nothing: no
+ * release was ever cut, so no install has ever accepted an update from it and
+ * none is losing one now. What a rotation does cost is any copy already
+ * downloaded — it carries the old key, and will refuse every release under this
+ * one — but that is the state those copies were already in, permanently, with
+ * a seed nobody has.
  */
-export const BUILD_PUBLIC_KEY = "jXb38LQPcrCtyxzg/evjb2LmnS1aeK5V3zKtXpADc60=";
+export const BUILD_PUBLIC_KEY = "EvwPCNNaTxjtBQpdlBcJYlZjuATeAD9tdkEbnSAF/uc=";
 
 /**
  * Is this a well-formed Ed25519 public key?
