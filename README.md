@@ -2363,8 +2363,20 @@ thing. Naming the member directly (`deno fmt --check packages/shmup-engine`) was
 always fine, which is what made it look like a repo problem rather than a
 toolchain one. v2.8.0 is clean on the same tree.
 
-Two details are load-bearing:
+Three details are load-bearing:
 
+- **There are two download sources for the one pinned binary.** The canonical
+  installer is tried first: `deno.land/install.sh`, which redirects the actual
+  download to `dl.deno.land`. A session behind a policy-enforcing egress proxy
+  can have both of those denied — they answer `403` to `CONNECT` — while
+  `github.com` stays allowed, since that is where this repo lives. The hook then
+  falls back to `denoland/deno`'s GitHub release, which publishes the identical
+  artifact, so only the transport differs. Without the fallback the hook aborted
+  on a bare `curl: (22)` and the session arrived with no deno at all, which
+  reads at the other end as `shmupx-character` being broken rather than the
+  toolchain being absent. Each source is judged by the binary it was supposed to
+  leave behind rather than by an exit code, because the official installer
+  fetches its payload well after the script itself was retrieved.
 - **The binary is symlinked into `/usr/local/bin`,** not just put on the hook's
   own `PATH`. MCP servers are spawned by the CLI rather than by the hook's shell
   and never read `$CLAUDE_ENV_FILE`, so an exported `PATH` alone still leaves
@@ -2393,3 +2405,22 @@ absent.
 
 `.gitignore` keeps `.claude/*` local except for `skills/`, `hooks/` and
 `settings.json`; a hook that never reaches the container cannot set one up.
+
+### What the egress policy still has to allow
+
+The hook gets a toolchain into the container, and the offline half of the work
+follows from there: `deno task check`, `deno task test`, and
+`deno test -A tests/character_mcp_test.ts` all pass with no network beyond the
+module registries, and the MCP server itself initializes and answers
+`tools/list` over stdio.
+
+Its _tools_ are another matter. Every one that reads or writes the catalog goes
+to the Firebase RTDB at `evil-invaders-default-rtdb.firebaseio.com`, so a
+session whose egress policy denies that host gets
+`GET characters?shallow=true failed: fetch failed` from `shmupx_list_characters`
+and cannot get past step 1 of → CREATE A CHARACTER. That is a proxy denial
+rather than a certificate problem — `DENO_CERT` makes no difference to it — and
+it has to be fixed in the environment's network policy, not in this repo. An
+environment meant to build characters on the web needs `*.firebaseio.com`
+reachable, and wants `deno.land` and `dl.deno.land` too, so the hook takes its
+canonical path instead of the fallback.

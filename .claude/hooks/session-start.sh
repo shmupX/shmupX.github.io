@@ -35,17 +35,72 @@ DENO_BIN="$DENO_INSTALL/bin/deno"
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
+want="${DENO_VERSION#v}"
+
+installed_deno_version() {
+  [ -x "$DENO_BIN" ] || return 1
+  "$DENO_BIN" --version 2>/dev/null | head -1 | awk '{print $2}'
+}
+
+# Two sources for the same pinned binary, because the canonical one is not
+# always reachable. install.sh comes from deno.land and redirects the actual
+# download to dl.deno.land, and a session behind a policy-enforcing egress
+# proxy can have both denied -- they answer 403 to CONNECT -- while github.com
+# stays allowed, since that is where the repo itself lives. That is how this
+# hook died on a bare `curl: (22)` and left .mcp.json's shmupx-character
+# server with no interpreter to spawn, which reads at the other end as the MCP
+# server being broken rather than the toolchain being absent. The GitHub
+# release is denoland's own publication of the identical artifact, so the
+# fallback changes the transport and nothing else.
+#
+# Both helpers judge themselves by the binary they were supposed to leave
+# behind rather than by an exit code: the official installer fetches its own
+# payload after the script has already been retrieved successfully, so its
+# status says nothing about whether the download that matters landed.
+install_from_deno_land() {
+  # -s keeps curl's progress bar out of the hook's stdout; the installer itself
+  # needs unzip, which the base image has.
+  curl -fsSL --retry 2 https://deno.land/install.sh -o /tmp/deno-install.sh || return 1
+  # DENO_NO_MODIFY_PATH: the installer would otherwise append to ~/.bashrc,
+  # which a non-interactive hook shell never reads. PATH is handled below.
+  DENO_NO_MODIFY_PATH=1 sh /tmp/deno-install.sh "$DENO_VERSION" >/dev/null 2>&1 || true
+  rm -f /tmp/deno-install.sh
+  [ "$(installed_deno_version || true)" = "$want" ]
+}
+
+install_from_github() {
+  local triple
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) triple="x86_64-unknown-linux-gnu" ;;
+    Linux-aarch64 | Linux-arm64) triple="aarch64-unknown-linux-gnu" ;;
+    *)
+      # Only the remote container reaches this far, and it is Linux; anything
+      # else is a surprise worth naming rather than guessing an asset for.
+      echo "  no Deno release asset for $(uname -s)-$(uname -m)" >&2
+      return 1
+      ;;
+  esac
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL --retry 2 -o "$tmp/deno.zip" \
+    "https://github.com/denoland/deno/releases/download/$DENO_VERSION/deno-$triple.zip"; then
+    mkdir -p "$DENO_INSTALL/bin"
+    # The archive is a single top-level `deno`. -o because replacing an old pin
+    # would otherwise stop on an overwrite prompt this shell cannot answer.
+    unzip -oq "$tmp/deno.zip" -d "$DENO_INSTALL/bin" || true
+    chmod +x "$DENO_BIN" 2>/dev/null || true
+  fi
+  rm -rf "$tmp"
+  [ "$(installed_deno_version || true)" = "$want" ]
+}
+
 # Idempotent, but on the VERSION rather than on the mere presence of a binary.
 # The container state is snapshotted after a successful hook run, so a resumed
 # session finds whatever the last one installed -- and a `[ -x "$DENO_BIN" ]`
 # test alone would then keep that copy forever, which makes raising the pin
 # above a no-op on exactly the containers that already carry the old, broken
 # one. Compare and replace instead.
-want="${DENO_VERSION#v}"
-have=""
-if [ -x "$DENO_BIN" ]; then
-  have="$("$DENO_BIN" --version 2>/dev/null | head -1 | awk '{print $2}')"
-fi
+have="$(installed_deno_version || true)"
 
 if [ "$have" = "$want" ]; then
   echo "deno $have already installed"
@@ -54,13 +109,17 @@ else
     echo "deno $have is installed but this repo pins $want; replacing it."
   fi
   echo "Installing Deno $DENO_VERSION ..."
-  # -s keeps curl's progress bar out of the hook's stdout; the installer itself
-  # needs unzip, which the base image has.
-  curl -fsSL https://deno.land/install.sh -o /tmp/deno-install.sh
-  # DENO_NO_MODIFY_PATH: the installer would otherwise append to ~/.bashrc,
-  # which a non-interactive hook shell never reads. PATH is handled below.
-  DENO_NO_MODIFY_PATH=1 sh /tmp/deno-install.sh "$DENO_VERSION" >/dev/null 2>&1
-  rm -f /tmp/deno-install.sh
+  if ! install_from_deno_land; then
+    echo "  deno.land did not yield $want; trying the GitHub release ..." >&2
+    if ! install_from_github; then
+      echo "ERROR: could not install Deno $DENO_VERSION from deno.land or github.com." >&2
+      echo "       Behind an egress policy, this needs deno.land and dl.deno.land," >&2
+      echo "       or github.com and release-assets.githubusercontent.com, reachable." >&2
+      echo "       Without deno, 'deno task' and the shmupx-character MCP server in" >&2
+      echo "       .mcp.json cannot run at all." >&2
+      exit 1
+    fi
+  fi
   echo "Installed $("$DENO_BIN" --version | head -1)"
 fi
 
