@@ -1,4 +1,4 @@
 {
-  "signed": "{\"version\":\"2026.9.13\",\"patches\":{}}",
-  "signature": "Zf92W866+2av1QwhJUuitLXieFqslopgumUVy09ByilKHeG9LdxR4bSU9Mkw5H8ZQzuv7OzGZe68bejswDhNBQ=="
+  "signed": "{\"version\":\"2026.9.14\",\"patches\":{\"2026.9.13\":{\"name\":\"patch-2026.9.13-to-2026.9.14.bin\",\"sha256\":\"de11cdbc472d2c8380ea6d9cd322bba6931d6f5ee164d3430949cb78586e1636\"}}}",
+  "signature": "DF+97dzcnGrW++ENH5ikWnNenbznwZ/Wnoa0N+6z0saaKVJdM+qfR/FGNO91MsVMZwmssaIC/78QOeJQdzvTBg=="
 }
