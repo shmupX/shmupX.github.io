@@ -20,6 +20,7 @@ import {
   decodeKey,
   encodeFrameKey,
   encodeKey,
+  nodeUrl,
 } from "../mcp/lib/rtdb.ts";
 import { type AtlasJson, frameMap, packFrames } from "../mcp/lib/art.ts";
 import {
@@ -66,6 +67,38 @@ Deno.test("the k_-hex encoding round-trips and leaves other names alone", () => 
   assertEquals(decodeFrameKey("plain0.png"), "plain0.png");
   // Both encodings at once, outermost first.
   assertEquals(decodeFrameName(encodeFrameKey("boss0.gif")), "boss0.gif");
+});
+
+Deno.test("the .json suffix lands on the node, not after the query", () => {
+  // Every listing tool goes through listKeys, which asks for "?shallow=true".
+  // Appending the suffix to the finished URL put it inside the query value and
+  // left the path without one, which is how the database tells a REST call from
+  // a request for its web console: it 301s to console.firebase.google.com, and
+  // shmupx_list_characters reported that as a bare "fetch failed" with nothing
+  // naming the redirect. A literal is enough to hold the shape.
+  const db = Deno.env.get("SHMUPX_DB");
+  Deno.env.set("SHMUPX_DB", "https://db.test");
+  try {
+    assertEquals(nodeUrl("characters"), "https://db.test/characters.json");
+    assertEquals(
+      nodeUrl("characters?shallow=true"),
+      "https://db.test/characters.json?shallow=true",
+    );
+    // The shape the bug produced, spelled out so it cannot come back quietly.
+    assert(!nodeUrl("atlases?shallow=true").includes("true.json"));
+    // A query is optional, never invented, and only the first "?" splits.
+    assertEquals(
+      nodeUrl("characters/dezaBoss0"),
+      "https://db.test/characters/dezaBoss0.json",
+    );
+    assertEquals(
+      nodeUrl("a?x=1?y=2"),
+      "https://db.test/a.json?x=1?y=2",
+    );
+  } finally {
+    if (db === undefined) Deno.env.delete("SHMUPX_DB");
+    else Deno.env.set("SHMUPX_DB", db);
+  }
 });
 
 Deno.test("frameMap reads all three atlas layouts", () => {

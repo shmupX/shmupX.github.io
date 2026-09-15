@@ -91,11 +91,31 @@ export function assertSafeKey(kind: string, key: string): void {
   }
 }
 
+/**
+ * The REST URL for a node, with `.json` where Firebase needs it.
+ *
+ * The suffix belongs to the PATH, not to the end of the whole URL: it is what
+ * tells the database to answer with the node's JSON, and a request without it
+ * is a request for the console's web UI, which it answers with a 301 to
+ * console.firebase.google.com. `listKeys` passes "<node>?shallow=true", so
+ * appending blindly built "/characters?shallow=true.json" -- a path carrying no
+ * suffix at all, whose redirect then decided the outcome: a session that cannot
+ * reach the console failed the fetch outright, and one that could got the
+ * console's HTML and threw on .json(). Neither names the cause, and both land
+ * in the first step of creating a character.
+ */
+export function nodeUrl(path: string): string {
+  const cut = path.indexOf("?");
+  const node = cut === -1 ? path : path.slice(0, cut);
+  const query = cut === -1 ? "" : path.slice(cut);
+  return `${databaseUrl()}/${node}.json${query}`;
+}
+
 async function request(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
-  const url = `${databaseUrl()}/${path}.json`;
+  const url = nodeUrl(path);
   let res: Response;
   try {
     res = await fetch(url, { signal: AbortSignal.timeout(30_000), ...init });
