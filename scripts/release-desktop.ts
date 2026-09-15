@@ -28,8 +28,10 @@
 //     one shared library and the biggest is CEF's, not the runtime's. Patching
 //     the wrong one produces a patch that applies cleanly and then fails to
 //     boot — recoverable, because the launcher rolls back, but every player
-//     sees a failed launch first. So the pick is by name, and anything
-//     ambiguous is an error with --dylib as the way through.
+//     sees a failed launch first. So the pick is by name — the runtime is named
+//     after the APP (shmupX.so), so it is found by setting CEF's own aside and
+//     seeing what is left — and anything still ambiguous is an error with
+//     --dylib as the way through, never a guess at the largest.
 //   * Publishing a patch without applying it. `bspatch` is right there, so the
 //     patch is applied to the old dylib and the result compared to the new one
 //     byte for byte before the manifest names it.
@@ -252,6 +254,31 @@ export function pickDylib(
       error: `more than one library looks like the Deno runtime, so none was ` +
         `picked. Pass --dylib <path relative to the app> with the right one:\n` +
         denoish.map((f) => `    ${f.rel}`).join("\n"),
+    };
+  }
+  // Nothing says "deno" — which is the normal case, not a broken tree. A
+  // `deno desktop` app names its runtime library after the APP: the first real
+  // run of this produced shmupX.so beside libcef.so, and the name rule above
+  // could not have matched any app ever built here.
+  //
+  // So: take out what CEF brings with it, which is a fixed and published set of
+  // names, and see what is left. Exactly one file left is not a guess about
+  // which is biggest — it is the only candidate there is, and the run prints
+  // the pick before it patches anything. More than one is ambiguity again, and
+  // goes back to --dylib.
+  const cefish =
+    /^(libcef|libEGL|libGLESv2|libvk_swiftshader|libvulkan|libGLX|libOSMesa)\b/i;
+  const rest = files.filter((f) => !cefish.test(basename(f.rel)));
+  if (rest.length === 1) return { pick: rest[0], error: null };
+  if (rest.length > 1) {
+    return {
+      pick: null,
+      error: `no library here names the Deno runtime, and more than one is ` +
+        `left once CEF's own are set aside, so none was picked. Pass --dylib ` +
+        `<path relative to the app> with the right one:\n` +
+        rest.map((f) => `    ${f.rel} (${(f.size / 1e6).toFixed(1)}MB)`).join(
+          "\n",
+        ),
     };
   }
   return {
