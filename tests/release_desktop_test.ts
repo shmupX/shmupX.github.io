@@ -161,6 +161,38 @@ Deno.test("the runtime library is picked by name, never by size", () => {
   assertStringIncludes(two.error ?? "", "more than one");
 });
 
+Deno.test("the runtime library of a real `deno desktop` app is named after the app", () => {
+  // What the first release run actually built. Not one of these says "deno":
+  // `deno desktop` names the runtime library after the app, so the name rule
+  // above could never have matched any build this repo produces, and the run
+  // stopped with "no library in this app names the Deno runtime".
+  const shipped: LibraryFile[] = [
+    { rel: "libcef.so", size: 256_300_000 },
+    { rel: "libEGL.so", size: 800_000 },
+    { rel: "libGLESv2.so", size: 20_000_000 },
+    { rel: "libvk_swiftshader.so", size: 16_700_000 },
+    { rel: "libvulkan.so.1", size: 1_500_000 },
+    { rel: "shmupX.so", size: 192_200_000 },
+  ];
+  assertEquals(pickDylib(shipped).pick?.rel, "shmupX.so");
+
+  // Still by elimination and never by size: CEF is the biggest file here and
+  // is set aside by name, along with the rest of what it brings with it.
+  const noApp = pickDylib(shipped.filter((f) => f.rel !== "shmupX.so"));
+  assertEquals(noApp.pick, null);
+  assertStringIncludes(noApp.error ?? "", "--dylib");
+
+  // A second unrecognised library is ambiguity again — a plugin beside the
+  // runtime must not be patched on a coin toss.
+  const plugin = pickDylib([...shipped, {
+    rel: "libsomething.so",
+    size: 40_000,
+  }]);
+  assertEquals(plugin.pick, null);
+  assertStringIncludes(plugin.error ?? "", "--dylib");
+  assertStringIncludes(plugin.error ?? "", "libsomething.so");
+});
+
 Deno.test("a patch is named and hashed the way the manifest reads it", async () => {
   assertEquals(
     patchName("2026.9.13", "2026.9.20"),
