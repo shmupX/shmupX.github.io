@@ -1064,6 +1064,52 @@
     } catch (_) { updates = null; }
   }
 
+  // ─── Version ───────────────────────────────────────────────────────────────
+  // Which copy this is, in the three terms that actually identify one: the
+  // release it reports as, the commit its content was built from, and when that
+  // build happened.
+  //
+  // They come from two places because they answer two different questions. The
+  // release is Deno.desktopVersion, over /api/update — the value `deno desktop`
+  // baked in from deno.json, and the exact string the updater compares a
+  // manifest's `version` against, so it is what decides whether a release
+  // applies to this copy. Only a packaged launcher has one. The commit and the
+  // timestamp are the manifest's own stamp (scripts/build-games-manifest.ts:
+  // `git rev-parse --short HEAD` at build time, and the moment of the build),
+  // and the manifest is refetched on every load and redeployed on every push to
+  // main — so it, not the binary, is the half of this launcher that moves.
+  //
+  // The two disagreeing is a real and readable state, not a bug to paper over:
+  // a launcher that has not patched itself in months still fetches today's
+  // manifest, and this row is where that shows.
+  let manifestStamp = $state(null);
+
+  // MM.DD.YY HH:MM, local — the same date shape the catalog rows use, plus the
+  // clock, because "which build of today" is the usual question here.
+  function stampTime(iso) {
+    const at = new Date(iso ?? '');
+    if (Number.isNaN(at.getTime())) return null;
+    const p = (n) => String(n).padStart(2, '0');
+    return p(at.getMonth() + 1) + '.' + p(at.getDate()) + '.' +
+      String(at.getFullYear()).slice(2) + '  ' + p(at.getHours()) + ':' + p(at.getMinutes());
+  }
+
+  let versionSummary = $derived.by(() => {
+    const parts = [];
+    if (updates?.version) parts.push('shmupX ' + updates.version);
+    // No stamp means loadManifest never got one: the rows on screen are the
+    // baked-in seeds, which is worth saying outright — a stale list that looks
+    // current is exactly what a version row exists to catch.
+    if (!manifestStamp) {
+      parts.push('the manifest did not load  ·  showing the baked-in list');
+      return parts.join('  ·  ');
+    }
+    if (manifestStamp.version) parts.push('build ' + manifestStamp.version);
+    const at = stampTime(manifestStamp.generatedAt);
+    if (at) parts.push('updated ' + at);
+    return parts.join('  ·  ') || 'unknown';
+  });
+
   // The route answers 403 on the hosted origin, which is how the launcher
   // learns it is not a local install: `builder` stays null and the BUILD
   // SERVER row never appears. The first GET starts the worker (unless the
@@ -1281,6 +1327,10 @@
     ...(steam ? [{ id: 'steam', label: 'ADD TO STEAM', sub: steamSummary }] : []),
     // ...and only one that armed an updater has a channel to report.
     ...(updates ? [{ id: 'updates', label: 'UPDATES', sub: updatesSummary }] : []),
+    // Last, and unconditional: every copy — hosted tab, source checkout,
+    // packaged launcher — is some build of something, and this is the line a
+    // bug report is read out of.
+    { id: 'version', label: 'VERSION', sub: versionSummary },
   ]);
   let settingsSel = $state(0);
   let settingsRowEls = $state([]);
@@ -3702,6 +3752,12 @@
       // Nothing to press: re-read, and say the whole line, which the row itself
       // may have had to cut short.
       refreshUpdates().then(() => showToast('Updates: ' + (updatesSummary || 'off')));
+    } else if (it.id === 'version') {
+      // Also nothing to press — but refetching the manifest is how this copy
+      // learns it has been redeployed under it, so the press is a check for new
+      // content as much as it is a way to read the whole line.
+      Promise.all([loadManifest(), refreshUpdates()])
+        .then(() => showToast('Version: ' + (versionSummary || 'unknown')));
     }
   }
 
@@ -4411,7 +4467,13 @@
       // not here.
       const games = asList(data) || asList(data && data.games);
       if (!games || !games.length) throw new Error('empty manifest');
-      return { games, base };
+      // The stamp rides along with the games rather than being fetched again:
+      // it describes THIS response, and a second GET could land on a different
+      // deploy. A bare-array manifest (the older shape) carries none, which
+      // reads as "unknown" rather than as a failure.
+      return { games, base, stamp: data && !Array.isArray(data) && data.version
+        ? { version: String(data.version), generatedAt: data.generatedAt ?? null }
+        : null };
     };
     let res = null;
     try {
@@ -4422,6 +4484,7 @@
     manifestOrigin = res.base;
     // Write the backing $state; GAMES is a $derived over it.
     manifestGames = res.games;
+    manifestStamp = res.stamp;
     if (gameSel >= GAMES.length) gameSel = 0;
   }
 
