@@ -28,7 +28,7 @@ import {
   PLUS_PRODUCT,
   PLUS_STAGES,
 } from "../src/psx/plus.js";
-import { parsePsxSav } from "../src/psx/index.js";
+import { identifyGame, locateSaves, parsePsxSav } from "../src/psx/index.js";
 
 const DEV_FIXTURES = new URL("../../../dev-fixtures/", import.meta.url);
 
@@ -59,8 +59,46 @@ function savesUnder(folder) {
   return out.sort((a, b) => a.href.localeCompare(b.href));
 }
 
-const KIDS = savesUnder("Dezaemon Kids!");
-const PLUS = savesUnder("Dezaemon+");
+/**
+ * Which game a dump actually holds, by the cheap path: peel the container and
+ * read the directory entry's name. No decompression — a full parse of a Kids!
+ * card costs 5.6 ms against 0.013 ms for this, and the answer is the same.
+ * null for anything that is not a Dezaemon card.
+ */
+function gameOf(url) {
+  const located = locateSaves(Deno.readFileSync(url));
+  if (located.container === "unknown") return null;
+  const save = located.saves[0];
+  return save ? identifyGame(save.data, save.filename) : null;
+}
+
+// Partitioned by CONTENT, never by the folder a dump sits in. The collection
+// files by game, but not reliably: 20 of the 97 dumps under "Dezaemon Kids!/"
+// are Dezaemon+ saves, mostly in its two subfolders — "Games Thought Lost To
+// Time/AAAA_no_Boiken.sav" is one. Keying these suites on the folder asserted
+// `game === "kids"` on a Dezaemon+ save and then read `.map`, `.scroll`,
+// `.appear` and `.config` off a record that has none of them, so the day the
+// collection arrived, five tests failed for a reason that was never about the
+// reader. The directory entry's own name — BISLPS-01503DEZAKIDS against
+// BISLPS-00335DEZA — is the only thing that says which game a card holds, and
+// it is what `identifyGame` reads.
+const DUMPS = [...savesUnder("Dezaemon Kids!"), ...savesUnder("Dezaemon+")];
+const KIDS = DUMPS.filter((u) => gameOf(u) === "kids");
+const PLUS = DUMPS.filter((u) => gameOf(u) === "plus");
+const UNREADABLE = DUMPS.filter((u) => gameOf(u) === null);
+
+Deno.test({
+  name:
+    "every .sav in the collection is a Dezaemon card, and each suite gets the game it is about",
+  ignore: DUMPS.length === 0,
+  fn() {
+    // Loud rather than silent: a dump that stops being readable would
+    // otherwise just leave both partitions one shorter and every suite green.
+    assertEquals(UNREADABLE.map((u) => fromFileUrl(u)), []);
+    assertEquals(KIDS.length + PLUS.length, DUMPS.length);
+    assert(KIDS.length > 0 || PLUS.length > 0);
+  },
+});
 
 Deno.test({
   name:
@@ -128,7 +166,16 @@ Deno.test({
         }
       }
     }
-    assert(chips > 100_000, `only ${chips} chips seen`);
+    // Proportional to the collection, not an absolute number. The floor is
+    // guarding against a loop that silently walked nothing, and the corpus
+    // here averages 5,247 chips a save, so 2,000 is a wide margin that still
+    // fails loudly if the walk stops finding data. An absolute floor instead
+    // measures how many saves someone happens to own — see the marks floor
+    // below, which is exactly how that goes wrong.
+    assert(
+      chips > KIDS.length * 2_000,
+      `only ${chips} chips over ${KIDS.length} saves`,
+    );
   },
 });
 
@@ -173,7 +220,15 @@ Deno.test({
         resolved += stage.marks.length - stage.orphanMarks;
       }
     }
-    assert(marks > 100_000, `only ${marks} marks seen`);
+    // This was `marks > 100_000`, a number calibrated to a 98-save collection.
+    // A 77-save one produces 82,512 and the test failed the day the fixtures
+    // arrived — for having fewer saves, not for anything about the format. The
+    // corpus averages 1,072 marks a save; 500 keeps the guard and drops the
+    // accidental assertion about collection size.
+    assert(
+      marks > KIDS.length * 500,
+      `only ${marks} marks over ${KIDS.length} saves`,
+    );
     // The stragglers are cells a resized boss left behind: the editor erases
     // the old rectangle from a size it caches in RAM, which no save carries.
     const rate = resolved / marks;

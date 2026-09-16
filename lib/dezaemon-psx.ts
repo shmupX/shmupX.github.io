@@ -424,13 +424,24 @@ export async function readDiscPrefix(
 
 /**
  * Every file that could be, or describe, a PlayStation disc: the cues and
- * images in dev-fixtures/ plus `extra` (the route passes $DEZAEMON_PSX_DISC).
- * Stat'd, so the result doubles as the change key for the memo below.
+ * images in dev-fixtures/ AND one level below it, plus `extra` (the route
+ * passes $DEZAEMON_PSX_DISC). Stat'd, so the result doubles as the change key
+ * for the memo below.
  *
- * The same directory and the same extensions as discCandidates
- * (lib/dezaemon-disc.ts:161-186), copied rather than imported: the glob is
- * console-neutral but the name says Saturn, and the two differ entirely in what
- * they then open — that one reads each image whole, this one reads a prefix.
+ * The same extensions as discCandidates (lib/dezaemon-disc.ts:161-186), copied
+ * rather than imported: the glob is console-neutral but the name says Saturn,
+ * and the two differ entirely in what they then open — that one reads each
+ * image whole, this one reads a prefix.
+ *
+ * ONE LEVEL DOWN, because that is where a disc actually turns up. The Saturn's
+ * glob is flat and the SFC's is not — findDezaemonSfcRom looks in "dev-fixtures/
+ * and one level below it, because the collection keeps a console per folder"
+ * (lib/dezaemon-sfc.ts:19). The PlayStation collection keeps a GAME per folder:
+ * the cards arrive as dev-fixtures/Dezaemon Kids!/*.sav with the disc sitting
+ * beside them, which a flat glob walks straight past. Only one level, and only
+ * these extensions, so this stays a listing of two directories and not a walk
+ * of whatever else is in there — the cards have their own deeper walk with its
+ * own cap (psxCardCandidates).
  */
 export async function psxDiscCandidates(
   root: string,
@@ -438,14 +449,24 @@ export async function psxDiscCandidates(
 ): Promise<DiscFile[]> {
   const fixtures = fixturesDir(root);
   const paths = new Set<string>();
-  try {
-    for (const entry of Deno.readDirSync(fixtures)) {
-      if (!entry.isFile) continue;
-      if (hasExtension(entry.name, [CUE_EXTENSION, ...IMAGE_EXTENSIONS])) {
-        paths.add(join(fixtures, entry.name));
+  const wanted = [CUE_EXTENSION, ...IMAGE_EXTENSIONS];
+  const scan = (dir: string, descend: boolean) => {
+    try {
+      for (const entry of Deno.readDirSync(dir)) {
+        // A dot-directory is someone's cache and a `._name` is the AppleDouble
+        // sidecar macOS leaves on this project's exFAT volume; neither holds a
+        // disc and both cost a stat to find that out.
+        if (entry.name.startsWith(".")) continue;
+        if (entry.isDirectory) {
+          if (descend) scan(join(dir, entry.name), false);
+          continue;
+        }
+        if (!entry.isFile) continue;
+        if (hasExtension(entry.name, wanted)) paths.add(join(dir, entry.name));
       }
-    }
-  } catch { /* no fixtures directory — the normal state of a fresh checkout */ }
+    } catch { /* unreadable, or absent — a fresh checkout has neither */ }
+  };
+  scan(fixtures, true);
   for (const p of extra) {
     if (p && hasExtension(p, [CUE_EXTENSION, ...IMAGE_EXTENSIONS])) {
       paths.add(isAbsolute(p) ? p : resolve(root, p));
