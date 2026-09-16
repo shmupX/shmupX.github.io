@@ -25,6 +25,7 @@ export * from "./memcard.js";
 export * from "./save-header.js";
 export * from "./kids.js";
 export * from "./plus.js";
+export * from "./plus-edit.js";
 
 /** The two games, by the product code their save file is named after. */
 export const PSX_GAMES = Object.freeze({

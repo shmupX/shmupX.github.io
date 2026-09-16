@@ -8,25 +8,34 @@
 //   deno task psx:probe hex <sav> --range A:B [--section header|graphics|data|tail]
 //   deno task psx:probe diff <a.sav> <b.sav>
 //   deno task psx:probe all <sav> --out <dir>
+//   deno task psx:probe edit <sav> --out <path> [--set <field>=<value>]...
 //
 // The parser is packages/shmup-engine/src/psx/ and the notes are FORMAT-PSX.md.
 // Both games' maps render as the real thing: a Kids! stage is 7 chips of 32x32
 // px drawn from the save's CG cells through the disc's fixed palette bank, and
 // a Dezaemon+ stage is 16 chips of 16x16 px drawn through the stage's MAP
-// GROUP table into the save's own 4bpp graphics bank and palette row. Saves
-// are community content and are never committed.
+// GROUP table into the save's own 4bpp graphics bank and palette row.
+//
+// `edit` is the only verb that writes, and it is surgical: each --set goes
+// through exactly one setter in src/psx/plus-edit.js, and the nineteen
+// checksum groups the game verifies are sealed once at the end, so an N-byte
+// edit writes N + 2 bytes per checksum group it dirties. It never writes over
+// its input. Saves are community content and are never committed.
 
-import { basename, dirname } from "@std/path";
+import { basename, dirname, resolve } from "@std/path";
 import {
   coalesceDiffRanges,
   totalDiffBytes,
 } from "../../packages/shmup-engine/src/diff-ranges.js";
 import { rgb555ToRgb } from "../../packages/shmup-engine/src/decode/decode-cg.js";
 import {
+  copyPlusSong,
   decodeKidsChip,
   decodePlusAppear,
   decodePlusEnemyData,
   decodePlusMapGroup,
+  GME_HEADER_SIZE,
+  isPlusBlock,
   KIDS_CHIP_DIM,
   KIDS_MAP_COLUMNS,
   KIDS_MAP_ROWS,
@@ -34,16 +43,35 @@ import {
   kidsCell,
   kidsDisplayName,
   kidsPalette,
+  MCS_HEADER_SIZE,
   parsePsxSav,
+  placePlusSave,
+  PLUS_BLOCK_SIZE,
   PLUS_CHIP_DIM,
   PLUS_GRAPHICS_WIDTH,
   PLUS_MAP_COLUMNS,
   PLUS_MAP_ROWS,
+  PLUS_MENU_BGM_OFF,
   PLUS_REGIONS,
   PLUS_STAGE_LAYOUT,
+  PLUS_UNSEALED_GROUP,
+  PLUS_UNSEALED_OFFSET,
+  plusChecksums,
+  plusEntryAt,
   plusGroupRegions,
   plusPaletteRow,
   PSX_GAMES,
+  sealPlusChecksums,
+  setPlusBgmSlot,
+  setPlusChargeTime,
+  setPlusCursorSpeed,
+  setPlusHiScore,
+  setPlusItemSlot,
+  setPlusKeyConfig,
+  setPlusMenuBgm,
+  setPlusScoreBonus,
+  setPlusStageCount,
+  setPlusStereo,
   summarizePsxSav,
 } from "../../packages/shmup-engine/src/psx/index.js";
 import { encodePng, newRaster, type Raster } from "@shmupx/shmup-harbor/png";
@@ -60,6 +88,7 @@ const USAGE = `usage:
   psx:probe hex <sav> --range A:B [--section header|graphics|data|tail]
   psx:probe diff <a.sav> <b.sav>
   psx:probe all <sav> --out <dir>
+  psx:probe edit <sav> --out <path> [--set <field>=<value>]... [--force]
 
   --stage   stage for map renders (default 0)
   --page    Kids! CG page for graphics renders (default: all four side by side)
@@ -68,7 +97,10 @@ const USAGE = `usage:
   --scale   integer upscale (default 1; icons default to 8)
   --range   offsets, half-open, e.g. 0x10100:0x10400
   --section which part of a Kids! save --range addresses (default header, the
-            raw file; graphics and data are the decompressed sections)`;
+            raw file; graphics and data are the decompressed sections)
+  --set     a Dezaemon+ field to write; repeats, applied in order (edit)
+  --force   edit a save whose checksums already fail, or one carrying no "SC"
+            Dezaemon+ frame (edit)`;
 
 const args = [...Deno.args];
 const command = args.shift();
@@ -87,14 +119,18 @@ const VALUE_FLAGS = new Set([
   "--rows",
   "--section",
 ]);
+/** Flags that may be given more than once; their values collect in order. */
+const REPEATED_FLAGS = new Set(["--set"]);
 const flags: Record<string, string | true> = {};
+const repeated: Record<string, string[]> = {};
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
-  if (VALUE_FLAGS.has(arg)) {
+  if (VALUE_FLAGS.has(arg) || REPEATED_FLAGS.has(arg)) {
     const value = args[++i];
     if (value === undefined) fail(`${arg} needs a value`);
-    flags[arg] = value;
+    if (REPEATED_FLAGS.has(arg)) (repeated[arg] ??= []).push(value);
+    else flags[arg] = value;
   } else if (arg.startsWith("--")) flags[arg] = true;
   else positional.push(arg);
 }
@@ -124,11 +160,55 @@ async function write(path: string, bytes: Uint8Array) {
   await Deno.writeFile(path, bytes);
 }
 
+/**
+ * Whether two paths name ONE file — what `edit` asks before it writes.
+ *
+ * resolve() alone is not that question. It is pure string arithmetic: it
+ * collapses ".." and makes a path absolute without ever reading the
+ * filesystem, so it folds neither case nor symlinks. Both holes were
+ * reproduced on this machine against a card built by buildPlusBlock/buildCard:
+ * `--out ORIG.MCR` for Orig.mcr compared unequal on case-insensitive APFS and
+ * left ONE file on disk — the input, overwritten — and an --out symlink
+ * pointing back at the input was followed by write() onto the input. What that
+ * destroys is the before-image the whole diff workflow rests on (README.md),
+ * and a community save has no committed copy to restore from.
+ *
+ * dev+ino is what the kernel calls identity, so it survives every spelling and
+ * closes hardlinks too. statSync, never lstatSync: it must follow a symlink
+ * because Deno.writeFile does. A stat that throws means --out names nothing
+ * yet and so cannot BE the input, but the canonical directory is then still
+ * worth comparing — realPathSync resolves a symlinked or case-different parent
+ * that resolve() would miss — and the string compare stays for an --out whose
+ * directory does not exist either, which write() is about to mkdir.
+ */
+function sameFile(out: string, path: string): boolean {
+  try {
+    const a = Deno.statSync(out);
+    const b = Deno.statSync(path);
+    if (a.ino !== null && b.ino !== null) {
+      return a.dev === b.dev && a.ino === b.ino;
+    }
+  } catch {
+    // --out does not exist (or cannot be stat'd); fall through.
+  }
+  try {
+    return resolve(Deno.realPathSync(dirname(out)), basename(out)) ===
+      resolve(Deno.realPathSync(dirname(path)), basename(path));
+  } catch {
+    return resolve(out) === resolve(path);
+  }
+}
+
 // deno-lint-ignore no-explicit-any
 type Save = any;
 interface Parsed {
   container: string;
-  card: { files: { filename: string; data: Uint8Array }[] } | null;
+  card:
+    | {
+      files: { filename: string; data: Uint8Array }[];
+      freeBlocks: number;
+    }
+    | null;
   saves: Save[];
   others: { filename: string; size: number }[];
   errors: { block: string; message: string }[];
@@ -136,7 +216,13 @@ interface Parsed {
 
 function load(
   path: string | undefined,
-): { path: string; parsed: Parsed; save: Save; block: Uint8Array } {
+): {
+  path: string;
+  parsed: Parsed;
+  save: Save;
+  bytes: Uint8Array;
+  block: Uint8Array;
+} {
   if (!path) fail(`name a save file\n\n${USAGE}`);
   let bytes: Uint8Array;
   try {
@@ -152,9 +238,21 @@ function load(
       })`,
     );
   }
-  return { path, parsed, save: parsed.saves[0], block: blockOf(bytes, parsed) };
+  return {
+    path,
+    parsed,
+    save: parsed.saves[0],
+    bytes,
+    block: blockOf(bytes, parsed),
+  };
 }
 
+/**
+ * The save's bytes for READING. For a card and a .gme this is the copy
+ * parseMemoryCard joined out of the chained blocks (memcard.js:161-172), not a
+ * view of the file: writing through it edits nothing. `edit` uses
+ * editableBlock() instead.
+ */
 function blockOf(bytes: Uint8Array, parsed: Parsed): Uint8Array {
   if (parsed.card) {
     const file = parsed.card.files.find((f) =>
@@ -654,6 +752,374 @@ function report(path: string, parsed: Parsed, save: Save) {
   else plusReport(save);
 }
 
+// --- edit ---------------------------------------------------------------------
+
+// Writing a Dezaemon+ save back is a different problem from reading one, and
+// the whole difference is two sentences.
+//
+// The only derived bytes in the format are the twenty u16 at 0x1DFD8, of which
+// the game verifies nineteen (PLUS_CHECKED_GROUPS = 0x13, plus.js:79), so one
+// seal after the last --set is everything the file owes: an N-byte edit writes
+// N + 2 bytes PER CHECKSUM GROUP it dirties, and fewer than that differ. Both
+// halves of that are measured, not arithmetic: a 16x16 repaint at pixel row
+// 120 crosses the graphics quarter boundary at 0x100 + 0x4000 = 0x4100, dirties
+// groups 1 and 2 and seals four bytes, not two ("a repaint that straddles a
+// graphics quarter dirties two groups", test/psx-plus-edit.test.js), while a
+// sealed word whose high byte already held the right value differs in one byte
+// where two were written — for a single poked byte at 0x1041, 184 of the 255
+// other values (FORMAT-PSX.md). The verb reports the seal's own byte count and
+// then counts the diff, so what it prints is measured. Word 0x13 covers the
+// checksum array itself, does not converge, and is never written — a seal that
+// touched it would change the block on every pass and idempotence would be gone.
+//
+// And locateSaves() hands back a COPY of a card's blocks (parseMemoryCard joins
+// the chain into a fresh buffer, memcard.js:161-172), so blockOf() above — what
+// every read verb uses — is exactly the wrong thing to write through: the poke
+// lands in the copy and the file on disk is untouched. Cards and .gme images go
+// back block by block through placePlusSave(); an .mcs and a bare run already
+// alias the caller's bytes and are sliced to exactly PLUS_BLOCK_SIZE, because
+// plusChecksums accepts an oversized buffer and silently checksums the first
+// 0x1E000 of it. A .psv is refused outright: its 0x84-byte header carries a
+// console signature this package can neither read nor regenerate.
+
+/** One setter's report — PlusWrite, as src/psx/plus-edit.js hands it back. */
+interface PlusWrite {
+  field: string;
+  offset: number;
+  length: number;
+  before: number[];
+  after: number[];
+  groups: number[];
+  changed: boolean;
+  checksumBlind: boolean;
+  warnings: string[];
+}
+
+/** What sealPlusChecksums() reports — only the words that actually changed. */
+interface PlusSeal {
+  words: { group: number; offset: number; before: number; after: number }[];
+  bytes: number;
+  ok: boolean;
+}
+
+/** What placePlusSave() reports about the card it wrote into. */
+interface PlusPlacement {
+  filename: string;
+  blocks: number[];
+  bytes: number;
+  framesOk: boolean;
+  warnings: string[];
+}
+
+interface EditField {
+  /** How the slot part of the field name is spelled, for the listing. */
+  slot?: string;
+  /** What goes after the `=`, for the listing and the refusal. */
+  value: string;
+  /** Calls exactly one library setter. Every range is the library's to refuse. */
+  apply(block: Uint8Array, slot: string, value: string): unknown;
+  /** How the bytes this write touched read back as the field's own value. */
+  show?(bytes: number[]): string;
+}
+
+const DETAIL_COLUMN = 39;
+
+function byte(n: number): string {
+  return n.toString(16).padStart(2, "0");
+}
+
+function editInt(what: string, text: string | undefined): number {
+  if (text === undefined || text === "") fail(`${what} needs a number`);
+  const n = Number(text);
+  if (!Number.isInteger(n)) fail(`${what} wants an integer, not ${text}`);
+  return n;
+}
+
+function editOnOff(what: string, text: string): boolean {
+  if (text === "on" || text === "1") return true;
+  if (text === "off" || text === "0") return false;
+  return fail(`${what} wants on or off, not ${text}`);
+}
+
+/**
+ * A high-score name as sixteen hex digits, never as text. plus.js:631 decodes
+ * the field with latin1(), a raw byte-to-charCode pass-through, and the
+ * Dezaemon+ font is untraced — typing letters would write bytes whose glyphs
+ * nobody has seen.
+ */
+function editName(text: string): Uint8Array {
+  if (!/^[0-9a-f]{16}$/i.test(text)) {
+    fail(`a high-score name is sixteen hex digits (eight bytes), not ${text}`);
+  }
+  const out = new Uint8Array(8);
+  for (let i = 0; i < 8; i++) {
+    out[i] = Number.parseInt(text.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+/** Only fields whose value is a single scalar. Bulk work belongs in a script. */
+const EDIT_FIELDS: Record<string, EditField> = {
+  "stage-count": {
+    value: "1..5",
+    apply: (b, _s, v) => setPlusStageCount(b, editInt("stage-count", v)),
+    show: (b) => String(b[0] + 1),
+  },
+  "score-bonus": {
+    value: "0..7, an index into PLUS_SCORE_BONUS",
+    apply: (b, _s, v) => setPlusScoreBonus(b, editInt("score-bonus", v)),
+    show: (b) => String(b[0] & 7),
+  },
+  "charge-time": {
+    value: "0..5",
+    apply: (b, _s, v) => setPlusChargeTime(b, editInt("charge-time", v)),
+    show: (b) => String(b[0]),
+  },
+  "cursor-speed": {
+    value: "0..2",
+    apply: (b, _s, v) => setPlusCursorSpeed(b, editInt("cursor-speed", v)),
+    show: (b) => String(b[0]),
+  },
+  "menu-bgm": {
+    value: "0..3, or off",
+    apply: (b, _s, v) =>
+      setPlusMenuBgm(
+        b,
+        v === "off" ? PLUS_MENU_BGM_OFF : editInt("menu-bgm", v),
+      ),
+    show: (b) => (b[0] >= PLUS_MENU_BGM_OFF ? "off" : String(b[0])),
+  },
+  "stereo": {
+    value: "on or off",
+    apply: (b, _s, v) => setPlusStereo(b, editOnOff("stereo", v)),
+    show: (b) => (b[0] ? "on" : "off"),
+  },
+  "keys": {
+    value: "<m0>,<m1>,<m2>,<m3> button bitmasks (0x.. or decimal)",
+    apply: (b, _s, v) => {
+      const masks = v.split(",");
+      if (masks.length !== 4) {
+        fail(`keys wants four masks, got ${masks.length}: ${v}`);
+      }
+      return setPlusKeyConfig(
+        b,
+        masks.map((m, i) => editInt(`keys mask ${i}`, m)),
+      );
+    },
+    show: (b) => b.map(byte).join(","),
+  },
+  "bgm": {
+    slot: "<slot>",
+    value: "0..50; slot 0..15 or a PLUS_BGM_SLOTS name",
+    apply: (b, s, v) =>
+      setPlusBgmSlot(
+        b,
+        /^\d+$/.test(s) ? Number(s) : s,
+        editInt("bgm song", v),
+      ),
+    show: (b) => String(b[0]),
+  },
+  "item": {
+    slot: "<slot>",
+    value: "0..11, an effect id; slot 0..6",
+    apply: (b, s, v) =>
+      setPlusItemSlot(b, editInt("item slot", s), {
+        effect: editInt("item effect", v),
+      }),
+    show: (b) => String(b[0]),
+  },
+  "hiscore": {
+    slot: "<rank>",
+    value: "<score>[:<stage>[:<16 hex digits>]]; rank 1..10, table B only",
+    // Only what the caller typed is passed on. An omitted stage or name is
+    // preserved by setPlusHiScore itself, unvalidated, the way it preserves
+    // setPlusItemSlot's enableByte and setPlusMapGroupTile's page — so the CLI
+    // neither re-reads the entry nor needs a rank guard to index it safely.
+    // Re-reading it here was a measured trap: `edit` can lower the stage count
+    // after a record is set (--set hiscore.1=5000:4, then --set stage-count=1),
+    // and handing the stored 4 back through the setter's range check refused
+    // --set hiscore.1=6000 over a value nobody typed.
+    apply: (b, s, v) => {
+      const parts = v.split(":");
+      return setPlusHiScore(b, editInt("hiscore rank", s), {
+        score: editInt("hiscore score", parts[0]),
+        ...(parts[1] ? { stage: editInt("hiscore stage", parts[1]) } : {}),
+        ...(parts[2] ? { name: editName(parts[2]) } : {}),
+      });
+    },
+    show: (b) =>
+      `${((b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)) >>> 0)}:${b[4]}:${
+        b.slice(8, 16).map(byte).join("")
+      }`,
+  },
+  "song": {
+    slot: "<to>",
+    value: "<from>; both 0..15, a whole 0x2E0 slot",
+    apply: (b, s, v) =>
+      copyPlusSong(b, editInt("song slot", s), editInt("song source", v)),
+  },
+};
+
+function editFieldList(): string {
+  const rows = Object.entries(EDIT_FIELDS).map(([name, f]) =>
+    `  ${(name + (f.slot ? `.${f.slot}` : "")).padEnd(16)} ${f.value}`
+  );
+  return `fields, each exactly one library setter:\n${rows.join("\n")}`;
+}
+
+/**
+ * How many of a write's bytes cannot move a checksum. Every byte contributes
+ * `value * (offsetWithinEntry & 0x1F)` (plus.js:244), so each 32nd byte of a
+ * table entry is multiplied by zero and its value never reaches the sum —
+ * 3,850 of the file's 122,880 bytes, cursor speed, font bank, menu BGM and
+ * keys[0] among them. A clean checksum is never proof an edit landed.
+ *
+ * null when the write is visibly not one run, which is why this takes the
+ * record and not two numbers. A PlusWrite carries no list of ranges: `offset`
+ * is only the FIRST byte written and `length` only how many, and a few setters
+ * own bytes that are not contiguous — a map cell is a chip byte and a flip byte
+ * up to nine apart, a pixel rectangle is one run per scanline (applyWrite's doc
+ * comment in plus-edit.js). Walking [offset, offset + length) for one of those
+ * weighs bytes the write never touched: setPlusMapCell over stage 0, column 1,
+ * row 7 writes 0x1047f and 0x10486, the span walks 0x1047f and 0x10480, and it
+ * counts one blind byte where the truth is none.
+ *
+ * Every EDIT_FIELDS setter writes a single run today — all eleven measured —
+ * and `after` re-checks that per write rather than trusting the list stays that
+ * way: for one run it IS the block's own slice, so a mismatch is proof the
+ * record is not a span and the count would be fiction. A match is NOT the
+ * converse, so this narrows the trap rather than closing it: measured,
+ * swapPlusGroupWords("ship", 0, 76) writes 0x1af86-7 and 0x1b01e-f, all four
+ * bytes are zero on a synthetic block, the untouched 0x1af88-9 therefore match
+ * `after`, and it slips through to report 1. Only the library closes it —
+ * applyWrite already visits every written offset and already calls
+ * checksumWeightAt on each, so the count belongs on PlusWrite beside
+ * checksumBlind, which is computed that way and is right for every setter.
+ */
+function blindBytes(block: Uint8Array, w: PlusWrite): number | null {
+  if (w.after.some((b, i) => block[w.offset + i] !== b)) return null;
+  let blind = 0;
+  for (let at = w.offset; at < w.offset + w.length; at++) {
+    const row = plusEntryAt(at) as { offset: number } | null;
+    if (row && ((at - row.offset) & 0x1f) === 0) blind++;
+  }
+  return blind;
+}
+
+/** A line with its offsets in a fixed column, wrapped when the left runs long. */
+function detail(left: string, right: string) {
+  if (left.length >= DETAIL_COLUMN) {
+    console.log(left);
+    console.log(" ".repeat(DETAIL_COLUMN) + right);
+  } else console.log(left.padEnd(DETAIL_COLUMN) + right);
+}
+
+/** One --set, applied. A refusal carries the library's own message. */
+function applyEdit(
+  block: Uint8Array,
+  text: string,
+): { key: string; value: string; field: EditField; write: PlusWrite } {
+  const eq = text.indexOf("=");
+  if (eq < 0) {
+    fail(`--set wants <field>=<value>, not ${text}\n\n${editFieldList()}`);
+  }
+  const key = text.slice(0, eq);
+  const value = text.slice(eq + 1);
+  const dot = key.indexOf(".");
+  const field = EDIT_FIELDS[dot < 0 ? key : key.slice(0, dot)];
+  if (!field) fail(`--set ${key}: no such field\n\n${editFieldList()}`);
+  try {
+    const write = field.apply(
+      block,
+      dot < 0 ? "" : key.slice(dot + 1),
+      value,
+    ) as PlusWrite;
+    return { key, value, field, write };
+  } catch (err) {
+    return fail(`--set ${text}: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Prints what one write landed, and returns its checksum-blind byte count —
+ * null when blindBytes() cannot know it, which no field reaches today.
+ */
+function reportEdit(
+  block: Uint8Array,
+  key: string,
+  value: string,
+  field: EditField,
+  w: PlusWrite,
+): number | null {
+  const blind = blindBytes(block, w);
+  const region = regionFor(PLUS_REGIONS, w.offset);
+  const groups = w.groups.length === 1
+    ? `group ${hex(w.groups[0], 2)}`
+    : `groups ${w.groups.map((g) => hex(g, 2)).join(" ")}`;
+  // The all-or-nothing label is the library's own: applyWrite weighs each byte
+  // it writes, so checksumBlind holds for a run and for a scattered write
+  // alike. Only the partial label needs the count, and `blind === w.length`
+  // would be the same answer as checksumBlind over the same bytes.
+  const seen = w.checksumBlind
+    ? "  checksum-blind"
+    : blind !== null && blind > 0
+    ? "  checksum-blind in part"
+    : "";
+  // A field with no show() is a bulk write — a whole song slot — whose bytes
+  // say nothing a reader wants; echo what was asked for and how much moved.
+  const said = field.show
+    ? `${field.show(w.after)}${
+      w.changed ? ` (was ${field.show(w.before)})` : " (unchanged)"
+    }`
+    : `${value} (${w.length} bytes${w.changed ? "" : ", unchanged"})`;
+  detail(
+    `  set ${key} = ${said}`,
+    `${hex(w.offset)}  ${(region?.label ?? "").padEnd(12)}${groups}${seen}`,
+  );
+  for (const warning of w.warnings) console.log(`    ${warning}`);
+  return blind;
+}
+
+/**
+ * The 0x1E000 bytes an edit writes through — deliberately not blockOf(). For a
+ * card and a .gme the save parseMemoryCard hands back is a copy, so the edit
+ * happens in an explicit copy of it and placePlusSave() puts it back; an .mcs
+ * (memcard.js:209) and a bare run (:222) already alias the file's own bytes.
+ */
+function editableBlock(
+  bytes: Uint8Array,
+  parsed: Parsed,
+  save: Save,
+): Uint8Array {
+  if (parsed.container === "mcs" || parsed.container === "bare") {
+    const at = parsed.container === "mcs" ? MCS_HEADER_SIZE : 0;
+    if (bytes.length - at < PLUS_BLOCK_SIZE) {
+      fail(
+        `${parsed.container}: ${
+          bytes.length - at
+        } bytes of save; a Dezaemon+ block is ${PLUS_BLOCK_SIZE}`,
+      );
+    }
+    return bytes.subarray(at, at + PLUS_BLOCK_SIZE);
+  }
+  const file = parsed.card?.files.find((f) => f.filename === save.filename);
+  if (!file) fail(`${save.filename || "the save"} is not a file on this card`);
+  if (file.data.length < PLUS_BLOCK_SIZE) {
+    fail(
+      `${file.filename}: ${file.data.length} bytes on the card; a Dezaemon+ block is ${PLUS_BLOCK_SIZE}`,
+    );
+  }
+  return Uint8Array.from(file.data.subarray(0, PLUS_BLOCK_SIZE));
+}
+
+/** Card blocks as the chain reads: a run collapses, anything else lists. */
+function blockRun(blocks: number[]): string {
+  const run = blocks.every((b, i) => i === 0 || b === blocks[i - 1] + 1);
+  return run && blocks.length > 1
+    ? `${blocks[0]}-${blocks[blocks.length - 1]}`
+    : blocks.join(", ");
+}
+
 // --- commands -----------------------------------------------------------------
 
 if (command === "report") {
@@ -796,6 +1262,153 @@ if (command === "report") {
     )),
   );
   console.log(`report.json -> ${dir}/report.json`);
+} else if (command === "edit") {
+  const { path, parsed, save, bytes } = load(positional[0]);
+  const out = need("--out");
+  const force = flags["--force"] === true;
+  const sets = repeated["--set"] ?? [];
+  if (save.game !== "plus") {
+    fail(
+      `edit writes Dezaemon+ saves only; ${basename(path)} is Dezaemon Kids!`,
+    );
+  }
+  // Not a warning and not overridable by --force: a PS3 .psv carries a
+  // signature over the save in its 0x84-byte header, and nothing in
+  // src/psx/ reads, checks or can regenerate it (memcard.js:214-219 slices
+  // past it and reads the filename). An edited one would be a file this
+  // package reads back happily and a real PS3 rejects.
+  if (parsed.container === "psv") {
+    fail(
+      `a .psv carries a signature this package cannot regenerate; convert it to a card image or an .mcs first`,
+    );
+  }
+  if (sameFile(out, path)) {
+    fail(`--out must name a different file; edit never writes over its input`);
+  }
+  const block = editableBlock(bytes, parsed, save);
+  if (!isPlusBlock(block) && !force) {
+    fail(
+      `${
+        basename(path)
+      } carries no "SC" Dezaemon+ frame — a Select 100 block has it stripped; --force edits it anyway`,
+    );
+  }
+  const opening = plusChecksums(block);
+  if (!opening.ok && !force) {
+    fail(
+      `${basename(path)} already fails checksum groups ${
+        opening.bad.map((g: number) => hex(g, 2)).join(", ")
+      }; --force edits it anyway, and --force with no --set just reseals it`,
+    );
+  }
+  const before = Uint8Array.from(block);
+  console.log(
+    `${basename(path)}: ${PSX_GAMES.plus.title} (${parsed.container}${
+      parsed.card
+        ? `, ${parsed.card.files.length} file${
+          parsed.card.files.length === 1 ? "" : "s"
+        }, ${parsed.card.freeBlocks} free blocks`
+        : ""
+    })`,
+  );
+  if (!opening.ok) {
+    console.log(
+      `  the input already failed groups ${
+        opening.bad.map((g: number) => hex(g, 2)).join(" ")
+      }; --force accepted it and the seal below rewrites them`,
+    );
+  }
+  if (sets.length === 0) console.log(`  no --set given: resealing only`);
+  // null the moment one write cannot be counted: a total that quietly dropped
+  // that write would read as "and the rest are fine", which is the one thing
+  // this line exists to stop a caller believing.
+  let blind: number | null = 0;
+  for (const text of sets) {
+    const { key, value, field, write: w } = applyEdit(block, text);
+    const n = reportEdit(block, key, value, field, w);
+    blind = blind === null || n === null ? null : blind + n;
+  }
+  // Once, after every --set: nineteen groups cost 1.35 ms and delete a whole
+  // class of bug, because a write that straddles a graphics quarter dirties
+  // two groups at once and a partial seal would miss one.
+  const seal = sealPlusChecksums(block) as PlusSeal;
+  if (seal.words.length === 0) {
+    console.log(`  nothing to reseal: every verified group already matched`);
+  } else {
+    detail(
+      `  sealed groups ${
+        [...new Set(seal.words.map((w) => w.group))].map((g) => hex(g, 2)).join(
+          " ",
+        )
+      }`,
+      `${
+        seal.words.map((w) => hex(w.offset)).join(", ")
+      } (${seal.bytes} bytes)`,
+    );
+  }
+  console.log(
+    `  group ${hex(PLUS_UNSEALED_GROUP, 2)} at ${
+      hex(PLUS_UNSEALED_OFFSET)
+    } left as found — the game does not verify it`,
+  );
+  if (!seal.ok) {
+    fail(
+      `the reseal did not verify; nothing written. This is a bug in sealPlusChecksums, not in the save`,
+    );
+  }
+  let changed = 0;
+  for (let i = 0; i < PLUS_BLOCK_SIZE; i++) {
+    if (before[i] !== block[i]) changed++;
+  }
+  console.log(`  ${changed} bytes of ${PLUS_BLOCK_SIZE} changed in the block`);
+  if (blind === null) {
+    console.log(
+      `  a write's bytes are not one contiguous run and its record does not`,
+    );
+    console.log(
+      `  carry the offsets it wrote, so no checksum-blind count is possible`,
+    );
+    console.log(`  for this edit — diff the bytes instead`);
+  } else if (blind > 0) {
+    console.log(
+      `  ${blind} of the written bytes cannot move a checksum: a byte whose offset`,
+    );
+    console.log(
+      `  within its table entry is a multiple of 32 is multiplied by zero, so a`,
+    );
+    console.log(
+      `  clean checksum is not proof the edit landed — diff the bytes instead`,
+    );
+  }
+  let placement: PlusPlacement | null = null;
+  if (parsed.container === "card" || parsed.container === "gme") {
+    const card = parsed.container === "gme"
+      ? bytes.subarray(GME_HEADER_SIZE)
+      : bytes;
+    try {
+      placement = placePlusSave(card, block, {
+        filename: save.filename,
+        requirePlus: !force,
+      }) as PlusPlacement;
+    } catch (err) {
+      fail(`${basename(path)}: ${(err as Error).message}`);
+    }
+  }
+  await write(out, bytes);
+  console.log(
+    `  wrote ${out} (${
+      placement
+        ? `block placed in card blocks ${blockRun(placement.blocks)}, ${
+          placement.framesOk
+            ? "all frames ok"
+            : "A DIRECTORY FRAME NO LONGER CHECKSUMS"
+        }`
+        : `${parsed.container}, ${PLUS_BLOCK_SIZE} bytes edited in place`
+    })`,
+  );
+  for (const warning of placement?.warnings ?? []) {
+    console.log(`    ${warning}`);
+  }
 } else {
   fail(`unknown command ${command}\n\n${USAGE}`);
 }

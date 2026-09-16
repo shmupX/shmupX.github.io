@@ -427,10 +427,14 @@ is self-referential, so nothing checks it.
 
 **This is what pins the layout.** A group's checksum depends on each byte's
 offset _within its table entry_ and on the entry's _index_, so it is wrong
-unless every boundary is right. `plusChecksums()` reproduces the stored 0x28
-bytes of **all 67 community saves**; a table with the stage stride changed to
-0x2240 reproduces **none**. It is also the parser's integrity check: a corrupt
-save names the group that failed.
+unless every boundary is right. `plusChecksums()` reproduces the **verified**
+0x26 bytes — groups `0x00..0x12`, the nineteen words the load routine actually
+compares — of **all 67 community saves**; a table with the stage stride changed
+to 0x2240 reproduces **none**. (The assertion is that `checksums.bad` is empty,
+`psx-fixtures.test.js:239`, and that is the same nineteen-word comparison.) The
+twentieth word is **open**: nothing in the suite ever compares it, and on a
+block sealed with all twenty it does not converge — see Editing, below. It is
+also the parser's integrity check: a corrupt save names the group that failed.
 
 One quirk worth knowing: a byte whose offset within its entry is a multiple of
 32 is multiplied by zero, so its _value_ does not reach the sum — one byte in 32
@@ -546,6 +550,25 @@ into `{5000 … 1000000}`, a charge time 0..5 worth `(5-v)*45+40` frames, and th
 — for stages 0-5, their bosses, the title, game over, the ending and one song
 decoded at session start.
 
+**The stage-count ceiling is 5, not 6** (**likely** — derived from the table's
+own RAM bases, not from a traced load). The file carries five stage blocks:
+`PLUS_STAGES = 5` (plus.js:58), and 5 × 0x223C = 0xAB2C lands exactly on
+`PLUS_GLOBAL_OFFSET`, so there is no sixth block to read. The program's arrays
+are six deep, and their own addresses say so: MAP's base
+`0x80145C88 + 6 × 0x900 = 0x80149288`, which is SCROLL's base (plus.js:163-164),
+and ENEMY GROUP's `0x801212E0 + 6 × 0x80 = 0x801215E0`, which is TITLE GROUP's
+(plus.js:166, :177). Neither adjacency comes out right at a depth of 5 or 7. The
+palette map is six wide too — enemies `6+stage`, the boss `12+stage` over 24
+rows (plus.js:342-361) — and BGM ASSIGNMENT names stage 5 and boss 5. So slot 5
+exists in RAM and the file never fills it: a save whose count byte holds 5 asks
+for a sixth stage whose data is whatever RAM held before, and it passes every
+checksum and every parser check, because `stageCount` is `settings[2] + 1` with
+no clamp (plus.js:595). A tool should refuse to write 6. Note that
+`psx-fixtures.test.js:256-259` asserts `stageCount >= 1 && stageCount <= 6`,
+which points the other way: that is a bound on what the corpus holds, not a
+claim about what loads, and the corpus has not been searched for a save that
+holds 6.
+
 **SOUND** is 0x2E00 = **16 songs of 0x2E0 bytes**, bit-packed rather than a
 byte-per-step sequencer: MAIN.EXE `0x8002E49C` unpacks a song as 16 bars of a
 14-bit header and 32 steps of 11 bits (5 + 6), then a 16-bit tail — 734 bytes of
@@ -596,6 +619,79 @@ table the reader owns, which is what fixes the widths:
 The stage config byte that goes with a definition is at `stage*60 + index` in
 the 0x3C piece, not beside the record.
 
+## Editing (confirmed — `plusChecksums`, `plus-edit.js`)
+
+The twenty u16 at `0x1DFD8` — 0x28 bytes, the file's tail — are the only bytes
+in a Dezaemon+ save derived from any other byte. Everything else sits at a fixed
+offset and is read as it stands, so editing is surgical by construction: write
+the bytes a field owns, reseal, and not one of the other 122,840 bytes has to
+move. A **seal** rewrites the nineteen words the load routine verifies — groups
+`0x00..0x12`, 0x26 bytes at `0x1DFD8..0x1DFFD` — and leaves the twentieth, at
+`0x1DFFE`, exactly as it found it.
+
+**The twentieth word must not be written**, because it is not a fixed point: it
+covers the checksum array itself, so writing it changes bytes it is computed
+over and the next pass computes something else again. Measured on the synthetic
+block (`_psx-synthetic.js:142`): stored 2920, computed 13002; write 13002 and it
+computes 13863; write that and 12913; write that and 13329. Four passes, four
+values. Nothing reads it — `PLUS_CHECKED_GROUPS = 0x13` (plus.js:79), and the
+load routine stops there — so leaving it alone costs nothing and is what keeps a
+seal idempotent.
+
+**A seal is idempotent, and an edit costs N + 2 bytes per checksum group it
+dirties.** Sealing a block whose nineteen words already agree changes zero bytes
+(measured). One poked byte falls in exactly one group, so the seal rewrites
+exactly one 2-byte word and touches nothing else: over all 255 other values a
+byte at `0x12345` can take, the only offsets that ever move are `0x12345` and
+that group's word at `0x1DFE4`-`0x1DFE5` — both its bytes 223 times, its low
+byte alone the other 32.
+
+**The per-group qualifier is not pedantry** — a write that straddles a boundary
+costs more, and is the whole reason a seal is never partial. A 16x16 repaint at
+pixel row 120 is one 128-byte write that crosses the graphics quarter at
+`0x100 + 0x4000` = `0x4100`, so it dirties groups `0x01` and `0x02`
+(`plus.js:204`) and seals four bytes, not two — measured, and pinned by
+`psx-plus-edit.test.js`, "a repaint that straddles a graphics quarter dirties
+two groups, and one seal fixes both".
+
+N + 2 is what the seal _writes_; what _differs_ is N + 1 whenever the word's
+high byte already holds the right value, which for the 255 values a byte at
+`0x1041` can take happens 184 times against 71.
+
+**Two fields reach an indirect jump.** ENEMY DATA byte 0 is a movement script
+0..159 into the pointer table `0x8007D760`, and byte 1's low five bits a shot
+pattern 0..19 into the spawner's function table `0x8007DCA4` (both confirmed, in
+the table above). Neither is bounded on the way in: `movement: b[0]`
+(plus.js:494) takes the whole byte, and `b[1] & 0x1f` (plus.js:495) admits 0..31
+against twenty entries. A value past the end fetches a word past the table and
+the program calls through it (**likely** — the tables and their lengths are
+traced, the out-of-range path is not), so these are the two an editor should
+refuse rather than warn about. The item table's effect id is a third index into
+a handler table (`0x8007DC54`, above), but the corpus stays inside it:
+`psx-fixtures.test.js:262` asserts 0..11 over all 67 saves.
+
+**Checksums cannot confirm an edit landed.** The sum multiplies every byte by
+`offsetWithinEntry & 0x1F` (plus.js:244), so a byte whose offset within its
+table entry is a multiple of 32 is multiplied by zero and its value never
+reaches any group — the quirk above, counted over `PLUS_TABLE`: **3,850 of the
+122,880 bytes, 3.13 %**. They are not obscure corners. Measured, poking the
+cursor speed (`0x1DFD0`), the font bank (`0x1DFD1`), the menu BGM (`0x1DFD2`),
+key mask 0 (`0x1DFD4`), the SCORE bonus (`0x1B07D`) or TITLE TYPE's first byte
+(`0x1AF2C`) each leaves `plusChecksums().bad` empty, while `0x1DFD3` and
+`0x1DFD5..7` do move group `0x12`. A clean checksum proves the file will load,
+not that the write happened; verify an edit by diffing bytes.
+
+**Nothing above the save is derived from it.** A card's only other checksums are
+the XOR each directory frame carries over its own first 127 bytes
+(`frameChecksum`, memcard.js:71), which never covers a data block, and frame 0's
+size and chain link do not change because the file is always 0x1E000 — so an
+edited block written back over blocks 1..15 leaves every frame valid. The trap
+is on the way out, not in: for a card and a `.gme`, `parseMemoryCard` copies the
+chained blocks into a fresh buffer (memcard.js:162-163, :172), so the `data` a
+parse hands back is not a view of the image and poking it edits nothing. Write
+through `blockBytes(card, block)` instead. Only `.mcs`, `.psv` and a bare block
+alias the caller's bytes (memcard.js:209, :218, :222).
+
 ## Select 100 (confirmed)
 
 The disc read here is _Dezaemon Plus Select 100_ (SLPS-01504), a re-release that
@@ -623,6 +719,25 @@ named `BISLPS-00335DEZA`.
   definitions are named above; the boss's are not.
 - **Dezaemon+ SPRITE LAYOUT**: the blit geometry is traced but not a single
   byte's meaning; three of its four sub-blocks use interleaved addressing.
+- **Dezaemon+ SCROLL effects**: the 256 bytes that follow the 256 block numbers.
+  `decodePlusScroll` hands them back as a raw view and names nothing
+  (plus.js:565); no reader for them has been traced, so neither their meaning
+  nor their range is known.
+- **Dezaemon+ STAGE CONFIG**: the 60 bytes at `+0x21C0`. The shape is confirmed
+  — one byte per enemy definition, which is how the reader pairs them
+  (plus.js:526) — and the meaning is not: nothing says what the byte does to the
+  definition it belongs to.
+- **Dezaemon+ ENEMY GROUP and BOSS GROUP**: named as tile tables (64 and 32 u16)
+  with no traced word encoding. The format carries two incompatible ones — MAP
+  GROUP's 10-bit column/row/page, clamped by the reader (`decodePlusGroupWord`,
+  plus.js:401-406), and the global groups' `w & 0x3FFF` index with `0x4000` /
+  `0x8000` flips — and nothing says which of the two these use.
+  `decodePlusGroupWord` is exported and will decode either into
+  plausible-looking values, so a wrong guess rescrambles enemy graphics quietly.
+- **Dezaemon+ shot mode**: ENEMY DATA byte 2 bits 0-1. The field is read
+  (`shotMode: b[2] & 3`, plus.js:497) and its four values are never enumerated,
+  although byte 5's parameter is defined relative to mode 2 — so mode 2 shoots
+  and the other three are unnamed.
 - **Dezaemon+ graphics pages**: which pair of the program's four tile buffers a
   save occupies is edition-dependent, and the reason the two populations differ
   is inferred from the two load paths rather than traced.

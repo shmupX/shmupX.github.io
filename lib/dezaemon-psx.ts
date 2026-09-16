@@ -29,9 +29,10 @@
 //
 // Two discs can be the same game. The one this project actually traced is
 // Dezaemon Plus Select 100, SLPS-01504, a 1998 re-release whose saves are still
-// SLPS-00335's (packages/shmup-engine/FORMAT-PSX.md:599-607). Both are game
-// "plus", and each disc reports the code it really carries, so a row never
-// tells the operator they have SLPS-00335 when they have the re-release.
+// SLPS-00335's (packages/shmup-engine/FORMAT-PSX.md:695-703, "Select 100").
+// Both are game "plus", and each disc reports the code it really carries, so a
+// row never tells the operator they have SLPS-00335 when they have the
+// re-release.
 //
 // WHERE IT LOOKS
 // dev-fixtures/ flat, for .cue/.bin/.iso/.img, plus $DEZAEMON_PSX_DISC for an
