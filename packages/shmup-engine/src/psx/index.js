@@ -24,6 +24,7 @@ import { PLUS_PRODUCT, PLUS_TITLE_PREFIX, parsePlusSave } from "./plus.js";
 export * from "./memcard.js";
 export * from "./save-header.js";
 export * from "./kids.js";
+export * from "./kids-edit.js";
 export * from "./plus.js";
 export * from "./plus-edit.js";
 

@@ -38,27 +38,36 @@ dump has — a raw 128 KB memory-card image, a DexDrive `.gme`, a single-save
 - `diff` lists the ranges two saves differ in, comparing Kids!'s decompressed
   sections rather than its compressed bytes — the tool for controlled-delta
   captures, which is how the open items in FORMAT-PSX.md get closed: change one
-  thing in the editor, save, diff.
+  thing in the editor, save, diff. For a Kids! save it also diffs the `header`,
+  the raw bytes below the first section: the `SC` title frame the game name
+  lives in and the eleven directory words. Nothing else shows a name change,
+  because no Kids! checksum reaches below `0x180`.
 - `all` writes everything above plus `report.json` into one directory.
-- `edit` is the only verb that writes, and it is surgical. Each `--set` goes
-  through exactly one setter in `packages/shmup-engine/src/psx/plus-edit.js`,
-  which refuses a value the traced tables cannot hold rather than clamping it;
-  the nineteen checksum groups the game verifies are sealed once after the last
-  `--set`, so an edit writes two more bytes per checksum group it dirties — a
-  one-byte edit inside one group writes three bytes and usually differs in two,
-  and a write that straddles a graphics quarter dirties two groups and seals
-  four. The verb prints the counts it measured. The twentieth word covers the
-  checksum array itself, does not converge, and is left as found. A card or a
-  `.gme` goes back block by block along its directory chain — the save a parse
-  hands you is a copy of those blocks, not a view of them — while an `.mcs` or a
-  bare block run is patched in place and a `.psv` is refused outright, because
-  its header carries a console signature this package can neither read nor
-  regenerate. `--out` is required and never names the input — the refusal is by
-  file identity, so another spelling of the same name, a symlink or a hard link
-  is refused too, and the before-image a `diff` needs survives. With no `--set`
-  it only reseals, which is the repair path for a save whose checksums fail;
-  that and a Select 100 block with no `SC` frame both need `--force`. The fields
-  are the ones whose value is a single scalar:
+- `edit` is the only verb that writes, and each `--set` goes through exactly one
+  setter — `packages/shmup-engine/src/psx/plus-edit.js` for Dezaemon+,
+  `packages/shmup-engine/src/psx/kids-edit.js` for Kids! — which refuses a value
+  the traced tables cannot hold rather than clamping it. `--out` is required and
+  never names the input — the refusal is by file identity, so another spelling
+  of the same name, a symlink or a hard link is refused too, and the
+  before-image a `diff` needs survives. A card or a `.gme` goes back block by
+  block along its directory chain — the save a parse hands you is a copy of
+  those blocks, not a view of them — while an `.mcs` or a bare block run is
+  patched in place and a `.psv` is refused outright, because its header carries
+  a console signature this package can neither read nor regenerate. With no
+  `--set` the verb only reseals, which is the repair path for a save whose
+  checksums fail, and on a healthy save it is a byte-identical round trip. Bulk
+  work — pixels, palette rows, map cells and chips, appear records, enemy
+  definitions — is the library's, not `argv`'s; the fields are the ones whose
+  value is a single scalar.
+
+  **Dezaemon+.** The nineteen checksum groups the game verifies are sealed once
+  after the last `--set`, so an edit writes two more bytes per checksum group it
+  dirties — a one-byte edit inside one group writes three bytes and usually
+  differs in two, and a write that straddles a graphics quarter dirties two
+  groups and seals four. The verb prints the counts it measured. The twentieth
+  word covers the checksum array itself, does not converge, and is left as
+  found. A save whose groups already fail, and a Select 100 block with no `SC`
+  frame, both need `--force`.
 
   ```
   stage-count=1..5      score-bonus=0..7       charge-time=0..5
@@ -68,17 +77,62 @@ dump has — a raw 128 KB memory-card image, a DexDrive `.gme`, a single-save
   hiscore.<rank>=<score>[:<stage>[:<16 hex digits>]]
   ```
 
-  Bulk work — pixels, palette rows, map cells, appear records, enemy definitions
-  — is the library's, not `argv`'s. A high-score name is eight bytes spelled as
-  sixteen hex digits and never as text, because the field decodes
-  byte-for-charCode and the Dezaemon+ font is untraced. An omitted `:<stage>` or
-  `:<name>` preserves what the entry already holds and is not range-checked, so
-  correcting a score never touches the stage a run reached — not even on a save
-  whose stage count has since been lowered past it. A stage you do pass is
-  checked. And a written byte whose offset within its table entry is a multiple
-  of 32 is multiplied by zero, so no checksum can confirm it landed: the tool
-  prints `checksum-blind` on those writes, and the answer there is `diff`, not
-  the checksums.
+  A high-score name is eight bytes spelled as sixteen hex digits and never as
+  text, because the field decodes byte-for-charCode and the Dezaemon+ font is
+  untraced. An omitted `:<stage>` or `:<name>` preserves what the entry already
+  holds and is not range-checked, so correcting a score never touches the stage
+  a run reached — not even on a save whose stage count has since been lowered
+  past it. A stage you do pass is checked. And a written byte whose offset
+  within its table entry is a multiple of 32 is multiplied by zero, so no
+  checksum can confirm it landed: the tool prints `checksum-blind` on those
+  writes, and the answer there is `diff`, not the checksums.
+
+  **Dezaemon Kids!** is a different problem, and the report says so line by
+  line. Two thirds of the file is LZSS (FORMAT-PSX.md, "Compression"), so the
+  seal is not a checksum word but the whole eleven-word directory at `0x100`:
+  the sections are relaid graphics → data → tail on `0x80` sector boundaries and
+  the three byte sums are taken **over the sector-padded span**, whose padding
+  is stale staging content and is non-zero in most real saves.
+
+  ```
+  name=<text>                          up to 10 characters, ASCII or fullwidth
+  hiscore.<rank>=<score>[:<stage>|all[:<name>[:<level>]]]
+  ```
+
+  A section the edit touches is **recompressed**, and `src/compress.js` is not
+  the encoder `KIDS.EXE` shipped: measured over the 77 real Kids! saves in
+  `dev-fixtures/Dezaemon Kids!/` (the folder holds 97 dumps; the other 20 are
+  Dezaemon+ saves, told apart by the card directory entry's name and never by
+  the folder), 0 of 77 recompress byte-identically and the two sections together
+  come back a mean 796 bytes larger — worst +2,495. So such a save differs from
+  its input in far more bytes than the edit asked for, and the verb says which
+  section came back and why the count is large rather than leaving it looking
+  like corruption. An **untouched section keeps its original stream, copied
+  verbatim**, which is what makes the no-`--set` round trip byte-identical;
+  neither field above writes a stream, so a run of this verb re-encodes nothing.
+  The file is `0x1E000` bytes whatever the streams weigh — slack across the 77
+  is 4,864..74,880 bytes as found and 4,224 at the tightest once both sections
+  are re-encoded ("Cronos (Keroyon) (D25).sav") — so every run prints the slack
+  left, and a relay that would not fit is refused with the arithmetic rather
+  than truncated.
+
+  The game name is the one either game keeps as text: Kids! stores it in the
+  `SC` title frame between `『 』`, ten fullwidth characters at `0x2E`. **No
+  checksum covers it** — the three sums start at `0x180` and a card's frame
+  checksums never reach a data block — so the write is final the moment it lands
+  and the verb prints `no checksum covers it`; `diff`'s `header` pair is what
+  confirms it. `name=` takes ASCII or its fullwidth twins and refuses anything
+  else by character; a katakana or kanji name — 54 of the 77, so this field
+  types 23 of them — is raw Shift-JIS bytes through the library. A high-score
+  name here IS text, unlike Dezaemon+'s: the corpus is plain ASCII, and a short
+  one is padded with the dots the editor's own entry screen pre-fills. An
+  omitted `:<stage>`, `:<name>` or `:<level>` preserves what the entry holds,
+  `all` writes the all-clear mark instead of a stage number, and a name with a
+  `:` in it has to go through the library. A save whose directory does not
+  cross-check is refused outright and `--force` cannot help — an LZSS stream
+  carries no length, so nothing can recover where a section ends; a save whose
+  three sums merely fail needs `--force`, and `--force` with no `--set` reseals
+  it.
 
 Saves are community content and never committed; the fixture-gated tests read
 the collection in the repo-root `dev-fixtures/` (`Dezaemon Kids!/`,

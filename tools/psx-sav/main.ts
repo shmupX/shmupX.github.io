@@ -16,11 +16,18 @@
 // a Dezaemon+ stage is 16 chips of 16x16 px drawn through the stage's MAP
 // GROUP table into the save's own 4bpp graphics bank and palette row.
 //
-// `edit` is the only verb that writes, and it is surgical: each --set goes
-// through exactly one setter in src/psx/plus-edit.js, and the nineteen
-// checksum groups the game verifies are sealed once at the end, so an N-byte
-// edit writes N + 2 bytes per checksum group it dirties. It never writes over
-// its input. Saves are community content and are never committed.
+// `edit` is the only verb that writes, and each --set goes through exactly one
+// setter — src/psx/plus-edit.js for Dezaemon+, src/psx/kids-edit.js for Kids!.
+// What "surgical" costs differs by game, because the two formats derive
+// different things. A Dezaemon+ save is raw, so an N-byte edit writes N + 2
+// bytes per checksum group it dirties and nothing else moves. A Kids! save
+// keeps its graphics and data LZSS-packed, so a section the edit touches is
+// RECOMPRESSED with src/compress.js, which is not the encoder KIDS.EXE used:
+// measured here over the 77 community Kids! saves, 0 recompress byte-identically
+// and the two sections together come back a mean 796 bytes larger. An untouched
+// section is copied verbatim, which is what keeps an edit-nothing round trip
+// byte-identical. It never writes over its input. Saves are community content
+// and are never committed.
 
 import { basename, dirname, resolve } from "@std/path";
 import {
@@ -34,17 +41,27 @@ import {
   decodePlusAppear,
   decodePlusEnemyData,
   decodePlusMapGroup,
+  decodeShiftJis,
+  editKidsSave,
   GME_HEADER_SIZE,
   isPlusBlock,
+  KIDS_ALL_CLEAR,
+  KIDS_BLOCK_SIZE,
   KIDS_CHIP_DIM,
+  KIDS_FIRST_SECTION,
   KIDS_MAP_COLUMNS,
   KIDS_MAP_ROWS,
   KIDS_REGIONS,
+  KIDS_TAIL_SIZE,
   kidsCell,
   kidsDisplayName,
   kidsPalette,
+  kidsScoreName,
   MCS_HEADER_SIZE,
+  narrow,
+  parseKidsTable,
   parsePsxSav,
+  placeKidsSave,
   placePlusSave,
   PLUS_BLOCK_SIZE,
   PLUS_CHIP_DIM,
@@ -62,6 +79,8 @@ import {
   plusPaletteRow,
   PSX_GAMES,
   sealPlusChecksums,
+  setKidsGameName,
+  setKidsHiScore,
   setPlusBgmSlot,
   setPlusChargeTime,
   setPlusCursorSpeed,
@@ -73,6 +92,7 @@ import {
   setPlusStageCount,
   setPlusStereo,
   summarizePsxSav,
+  validateKidsTable,
 } from "../../packages/shmup-engine/src/psx/index.js";
 import { encodePng, newRaster, type Raster } from "@shmupx/shmup-harbor/png";
 
@@ -98,9 +118,10 @@ const USAGE = `usage:
   --range   offsets, half-open, e.g. 0x10100:0x10400
   --section which part of a Kids! save --range addresses (default header, the
             raw file; graphics and data are the decompressed sections)
-  --set     a Dezaemon+ field to write; repeats, applied in order (edit)
-  --force   edit a save whose checksums already fail, or one carrying no "SC"
-            Dezaemon+ frame (edit)`;
+  --set     a field to write, from the set the save's own game has; repeats,
+            applied in order (edit). An unknown field prints that set
+  --force   edit a save whose checksums already fail, or a Dezaemon+ one
+            carrying no "SC" frame (edit)`;
 
 const args = [...Deno.args];
 const command = args.shift();
@@ -802,8 +823,8 @@ interface PlusSeal {
   ok: boolean;
 }
 
-/** What placePlusSave() reports about the card it wrote into. */
-interface PlusPlacement {
+/** What placePlusSave() and placeKidsSave() report about the card. */
+interface CardPlacement {
   filename: string;
   blocks: number[];
   bytes: number;
@@ -859,7 +880,7 @@ function editName(text: string): Uint8Array {
 }
 
 /** Only fields whose value is a single scalar. Bulk work belongs in a script. */
-const EDIT_FIELDS: Record<string, EditField> = {
+const PLUS_EDIT_FIELDS: Record<string, EditField> = {
   "stage-count": {
     value: "1..5",
     apply: (b, _s, v) => setPlusStageCount(b, editInt("stage-count", v)),
@@ -960,8 +981,8 @@ const EDIT_FIELDS: Record<string, EditField> = {
   },
 };
 
-function editFieldList(): string {
-  const rows = Object.entries(EDIT_FIELDS).map(([name, f]) =>
+function plusEditFieldList(): string {
+  const rows = Object.entries(PLUS_EDIT_FIELDS).map(([name, f]) =>
     `  ${(name + (f.slot ? `.${f.slot}` : "")).padEnd(16)} ${f.value}`
   );
   return `fields, each exactly one library setter:\n${rows.join("\n")}`;
@@ -984,7 +1005,7 @@ function editFieldList(): string {
  * row 7 writes 0x1047f and 0x10486, the span walks 0x1047f and 0x10480, and it
  * counts one blind byte where the truth is none.
  *
- * Every EDIT_FIELDS setter writes a single run today — all eleven measured —
+ * Every PLUS_EDIT_FIELDS setter writes a single run today — all eleven measured —
  * and `after` re-checks that per write rather than trusting the list stays that
  * way: for one run it IS the block's own slice, so a mismatch is proof the
  * record is not a span and the count would be fiction. A match is NOT the
@@ -1015,19 +1036,19 @@ function detail(left: string, right: string) {
 }
 
 /** One --set, applied. A refusal carries the library's own message. */
-function applyEdit(
+function applyPlusEdit(
   block: Uint8Array,
   text: string,
 ): { key: string; value: string; field: EditField; write: PlusWrite } {
   const eq = text.indexOf("=");
   if (eq < 0) {
-    fail(`--set wants <field>=<value>, not ${text}\n\n${editFieldList()}`);
+    fail(`--set wants <field>=<value>, not ${text}\n\n${plusEditFieldList()}`);
   }
   const key = text.slice(0, eq);
   const value = text.slice(eq + 1);
   const dot = key.indexOf(".");
-  const field = EDIT_FIELDS[dot < 0 ? key : key.slice(0, dot)];
-  if (!field) fail(`--set ${key}: no such field\n\n${editFieldList()}`);
+  const field = PLUS_EDIT_FIELDS[dot < 0 ? key : key.slice(0, dot)];
+  if (!field) fail(`--set ${key}: no such field\n\n${plusEditFieldList()}`);
   try {
     const write = field.apply(
       block,
@@ -1044,7 +1065,7 @@ function applyEdit(
  * Prints what one write landed, and returns its checksum-blind byte count —
  * null when blindBytes() cannot know it, which no field reaches today.
  */
-function reportEdit(
+function reportPlusEdit(
   block: Uint8Array,
   key: string,
   value: string,
@@ -1091,25 +1112,30 @@ function editableBlock(
   parsed: Parsed,
   save: Save,
 ): Uint8Array {
+  // The two games' blocks are the same length — PLUS_BLOCK_SIZE and
+  // KIDS_BLOCK_SIZE are both 0x1E000, fifteen card blocks — so this slices the
+  // same span either way and only the refusal names a game.
+  const size = save.game === "kids" ? KIDS_BLOCK_SIZE : PLUS_BLOCK_SIZE;
+  const what = `a ${PSX_GAMES[save.game as "kids" | "plus"].title} block`;
   if (parsed.container === "mcs" || parsed.container === "bare") {
     const at = parsed.container === "mcs" ? MCS_HEADER_SIZE : 0;
-    if (bytes.length - at < PLUS_BLOCK_SIZE) {
+    if (bytes.length - at < size) {
       fail(
         `${parsed.container}: ${
           bytes.length - at
-        } bytes of save; a Dezaemon+ block is ${PLUS_BLOCK_SIZE}`,
+        } bytes of save; ${what} is ${size}`,
       );
     }
-    return bytes.subarray(at, at + PLUS_BLOCK_SIZE);
+    return bytes.subarray(at, at + size);
   }
   const file = parsed.card?.files.find((f) => f.filename === save.filename);
   if (!file) fail(`${save.filename || "the save"} is not a file on this card`);
-  if (file.data.length < PLUS_BLOCK_SIZE) {
+  if (file.data.length < size) {
     fail(
-      `${file.filename}: ${file.data.length} bytes on the card; a Dezaemon+ block is ${PLUS_BLOCK_SIZE}`,
+      `${file.filename}: ${file.data.length} bytes on the card; ${what} is ${size}`,
     );
   }
-  return Uint8Array.from(file.data.subarray(0, PLUS_BLOCK_SIZE));
+  return Uint8Array.from(file.data.subarray(0, size));
 }
 
 /** Card blocks as the chain reads: a run collapses, anything else lists. */
@@ -1118,6 +1144,585 @@ function blockRun(blocks: number[]): string {
   return run && blocks.length > 1
     ? `${blocks[0]}-${blocks[blocks.length - 1]}`
     : blocks.join(", ");
+}
+
+/** What every arm of `edit` starts from: the parse, the flags, the target. */
+interface EditRun {
+  path: string;
+  parsed: Parsed;
+  save: Save;
+  bytes: Uint8Array;
+  out: string;
+  force: boolean;
+  sets: string[];
+}
+
+/** `edit` for a Dezaemon+ save: every --set, then one seal, then the card. */
+async function editPlus(run: EditRun, block: Uint8Array) {
+  const { path, parsed, save, bytes, out, force, sets } = run;
+  if (!isPlusBlock(block) && !force) {
+    fail(
+      `${
+        basename(path)
+      } carries no "SC" Dezaemon+ frame — a Select 100 block has it stripped; --force edits it anyway`,
+    );
+  }
+  const opening = plusChecksums(block);
+  if (!opening.ok && !force) {
+    fail(
+      `${basename(path)} already fails checksum groups ${
+        opening.bad.map((g: number) => hex(g, 2)).join(", ")
+      }; --force edits it anyway, and --force with no --set just reseals it`,
+    );
+  }
+  const before = Uint8Array.from(block);
+  console.log(
+    `${basename(path)}: ${PSX_GAMES.plus.title} (${parsed.container}${
+      parsed.card
+        ? `, ${parsed.card.files.length} file${
+          parsed.card.files.length === 1 ? "" : "s"
+        }, ${parsed.card.freeBlocks} free blocks`
+        : ""
+    })`,
+  );
+  if (!opening.ok) {
+    console.log(
+      `  the input already failed groups ${
+        opening.bad.map((g: number) => hex(g, 2)).join(" ")
+      }; --force accepted it and the seal below rewrites them`,
+    );
+  }
+  if (sets.length === 0) console.log(`  no --set given: resealing only`);
+  // null the moment one write cannot be counted: a total that quietly dropped
+  // that write would read as "and the rest are fine", which is the one thing
+  // this line exists to stop a caller believing.
+  let blind: number | null = 0;
+  for (const text of sets) {
+    const { key, value, field, write: w } = applyPlusEdit(block, text);
+    const n = reportPlusEdit(block, key, value, field, w);
+    blind = blind === null || n === null ? null : blind + n;
+  }
+  // Once, after every --set: nineteen groups cost 1.35 ms and delete a whole
+  // class of bug, because a write that straddles a graphics quarter dirties
+  // two groups at once and a partial seal would miss one.
+  const seal = sealPlusChecksums(block) as PlusSeal;
+  if (seal.words.length === 0) {
+    console.log(`  nothing to reseal: every verified group already matched`);
+  } else {
+    detail(
+      `  sealed groups ${
+        [...new Set(seal.words.map((w) => w.group))].map((g) => hex(g, 2)).join(
+          " ",
+        )
+      }`,
+      `${
+        seal.words.map((w) => hex(w.offset)).join(", ")
+      } (${seal.bytes} bytes)`,
+    );
+  }
+  console.log(
+    `  group ${hex(PLUS_UNSEALED_GROUP, 2)} at ${
+      hex(PLUS_UNSEALED_OFFSET)
+    } left as found — the game does not verify it`,
+  );
+  if (!seal.ok) {
+    fail(
+      `the reseal did not verify; nothing written. This is a bug in sealPlusChecksums, not in the save`,
+    );
+  }
+  let changed = 0;
+  for (let i = 0; i < PLUS_BLOCK_SIZE; i++) {
+    if (before[i] !== block[i]) changed++;
+  }
+  console.log(`  ${changed} bytes of ${PLUS_BLOCK_SIZE} changed in the block`);
+  if (blind === null) {
+    console.log(
+      `  a write's bytes are not one contiguous run and its record does not`,
+    );
+    console.log(
+      `  carry the offsets it wrote, so no checksum-blind count is possible`,
+    );
+    console.log(`  for this edit — diff the bytes instead`);
+  } else if (blind > 0) {
+    console.log(
+      `  ${blind} of the written bytes cannot move a checksum: a byte whose offset`,
+    );
+    console.log(
+      `  within its table entry is a multiple of 32 is multiplied by zero, so a`,
+    );
+    console.log(
+      `  clean checksum is not proof the edit landed — diff the bytes instead`,
+    );
+  }
+  let placement: CardPlacement | null = null;
+  if (parsed.container === "card" || parsed.container === "gme") {
+    const card = parsed.container === "gme"
+      ? bytes.subarray(GME_HEADER_SIZE)
+      : bytes;
+    try {
+      placement = placePlusSave(card, block, {
+        filename: save.filename,
+        requirePlus: !force,
+      }) as CardPlacement;
+    } catch (err) {
+      fail(`${basename(path)}: ${(err as Error).message}`);
+    }
+  }
+  await write(out, bytes);
+  console.log(
+    `  wrote ${out} (${
+      placement
+        ? `block placed in card blocks ${blockRun(placement.blocks)}, ${
+          placement.framesOk
+            ? "all frames ok"
+            : "A DIRECTORY FRAME NO LONGER CHECKSUMS"
+        }`
+        : `${parsed.container}, ${PLUS_BLOCK_SIZE} bytes edited in place`
+    })`,
+  );
+  for (const warning of placement?.warnings ?? []) {
+    console.log(`    ${warning}`);
+  }
+}
+
+// --- edit: Dezaemon Kids! -----------------------------------------------------
+
+// The Kids! arm is not the Dezaemon+ one with different offsets, and the extra
+// lines it prints are the difference.
+//
+// A Kids! block is not raw. From 0x180 it is two Okumura-LZSS streams —
+// graphics, 0x40000 decompressed, and data, 0xFCC8 — then a raw 0x100 tail,
+// with eleven u32 at 0x100 giving each section's offset, exact size,
+// sector-rounded size and 32-bit byte sum over the PADDED span (FORMAT-PSX.md,
+// "Section directory"). So an edit inside a section is never a poke: the
+// section goes back through src/compress.js, which is NOT the encoder KIDS.EXE
+// shipped. Measured here over the 77 real Kids! saves in dev-fixtures/ — the
+// folder holds 97 dumps and the other 20 are Dezaemon+ saves, told apart by the
+// card directory entry's name and never by the folder — 0 of 77 recompress
+// byte-identically and the two sections together come back a mean 796 bytes
+// larger (min -2,322, max +2,495). An edited section therefore changes far more
+// bytes than the edit asked for, which is why the report names every section it
+// re-encoded and says so in prose: the byte count alone reads as corruption.
+//
+// An UNTOUCHED section keeps its original stream, copied verbatim, and that is
+// editKidsSave()'s contract rather than this file's choice — it is the only way
+// an edit-nothing run comes back byte-identical, the property the Dezaemon+ arm
+// gets for free. Both fields below write outside the two streams (the tail is
+// stored raw, the game name is in the "SC" frame), so a normal run here
+// re-encodes nothing at all.
+//
+// And the file is 0x1E000 bytes whatever the streams weigh. Slack as found
+// across the 77 runs 4,864..74,880 bytes (mean 37,147); with BOTH sections
+// re-encoded the tightest left is 4,224 ("Cronos (Keroyon) (D25).sav"). All 77
+// still fit, but 4,224 against an encoder that can cost 2,495 is not a margin
+// to assume, so every run prints the slack it measured and editKidsSave()
+// refuses with the arithmetic rather than truncating.
+
+/** One setter's report — KidsFieldWrite, as src/psx/kids-edit.js returns it. */
+interface KidsFieldWrite {
+  field: string;
+  section: string;
+  offset: number;
+  length: number;
+  before: number[];
+  after: number[];
+  changed: boolean;
+  inBlock: boolean;
+  warnings: string[];
+}
+
+/** One section, as editKidsSave() reports where it put it. */
+interface KidsSectionMove {
+  name: string;
+  offset: number;
+  size: number;
+  padded: number;
+  supplied: boolean;
+  recompressed: boolean;
+  moved: boolean;
+  sizeDelta: number;
+  paddingKept: boolean;
+  was: { offset: number; size: number; padded: number };
+}
+
+/** What editKidsSave() reports about the block it relaid and resealed. */
+interface KidsRelay {
+  sections: KidsSectionMove[];
+  end: number;
+  wasEnd: number;
+  slack: number;
+  seal: {
+    words: { index: number; name: string; offset: number }[];
+    bytes: number;
+    checksums: { graphics: boolean; data: boolean; tail: boolean; ok: boolean };
+    consistent: boolean;
+  };
+  identical: boolean;
+  changedBytes: number;
+  warnings: string[];
+}
+
+/** The buffers a Kids! --set writes into. */
+interface KidsTarget {
+  block: Uint8Array;
+  /** A COPY of the block's tail; editKidsSave() puts it back. */
+  tail: Uint8Array;
+}
+
+interface KidsEditField {
+  /** How the slot part of the field name is spelled, for the listing. */
+  slot?: string;
+  /** What goes after the `=`, for the listing and the refusal. */
+  value: string;
+  /**
+   * Calls exactly one library setter. Every range is the library's to refuse.
+   * The return type is KidsFieldWrite and not `unknown` — the Dezaemon+ arm's
+   * choice above — so that `deno check` compares each setter's own record
+   * against the shape this file prints from, instead of a cast asserting it.
+   */
+  apply(target: KidsTarget, slot: string, value: string): KidsFieldWrite;
+  /** How the bytes this write touched read back as the field's own value. */
+  show(bytes: number[]): string;
+}
+
+/**
+ * Which of the three byte sums covers a write — the Kids! answer to the
+ * Dezaemon+ arm's `checksum-blind`.
+ *
+ * "block" is everything below 0x180: the "SC" title frame the game name lives
+ * in, and the directory itself. Words 4, 6 and 8 sum the graphics, data and
+ * tail spans and nothing else (kids.js:258-264), and a memory card's only other
+ * checksum is the XOR each directory frame takes over its own 128 bytes
+ * (memcard.js:71), which never covers a data block. So a name write is final
+ * the moment it lands and no checksum can confirm it. `diff` is what does: its
+ * Kids! header pair covers 0x00..0x180, which is where the name is.
+ */
+const KIDS_COVER: Record<string, string> = {
+  tail: "word 8 covers it",
+  data: "word 6 covers it",
+  graphics: "word 4 covers it",
+  block: "no checksum covers it",
+};
+
+/** The game name as text: the field is Shift-JIS, and kids.js:713 narrows it. */
+function kidsTitleText(bytes: number[]): string {
+  return narrow(decodeShiftJis(Uint8Array.from(bytes))).replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Only fields whose value is a single scalar. Bulk work belongs in a script. */
+const KIDS_EDIT_FIELDS: Record<string, KidsEditField> = {
+  "name": {
+    value: "up to 10 characters, ASCII or its fullwidth twins",
+    // A string, where a Dezaemon+ high-score name has to be hex: this field IS
+    // traced. The title is Shift-JIS, save-header.js decodes it with
+    // TextDecoder, and kidsNameBytes() refuses every character it cannot encode
+    // rather than substituting one (kids-edit.js:1048-1053). A katakana or
+    // kanji name is raw Shift-JIS bytes and goes through the library, not
+    // argv: measured here, 54 of the 77 real names have a character with no
+    // ASCII form, so this field types 23 of them.
+    apply: (t, _s, v) => setKidsGameName(t.block, v),
+    show: kidsTitleText,
+  },
+  "hiscore": {
+    slot: "<rank>",
+    value: "<score>[:<stage>|all[:<name>[:<level>]]]; rank 1..10",
+    // Only what the caller typed is passed on, for the reason plus-edit.js
+    // arrived at the hard way: an omitted part is preserved by the setter,
+    // unvalidated, so correcting a score never touches the stage a run reached.
+    apply: (t, s, v) => {
+      const parts = v.split(":");
+      if (parts.length > 4) {
+        fail(
+          `--set hiscore.${s}: ${v} has ${
+            parts.length - 1
+          } colons; the value is <score>[:<stage>|all[:<name>[:<level>]]] and a name with a colon in it has to go through the library`,
+        );
+      }
+      const [score, where, name, level] = parts;
+      return setKidsHiScore(t.tail, editInt("hiscore rank", s), {
+        score: editInt("hiscore score", score),
+        ...(where === "all" ? { allClear: true } : {}),
+        ...(where && where !== "all"
+          ? { stage: editInt("hiscore stage", where) }
+          : {}),
+        ...(name ? { name: kidsScoreName(name) } : {}),
+        ...(level ? { level: editInt("hiscore level", level) } : {}),
+      });
+    },
+    show: (b) =>
+      `${((b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)) >>> 0)}:${
+        b[4] === KIDS_ALL_CLEAR ? "all" : b[4]
+      }:${b.slice(8, 16).map((c) => String.fromCharCode(c)).join("")}:${b[5]}`,
+  },
+};
+
+function kidsEditFieldList(): string {
+  const rows = Object.entries(KIDS_EDIT_FIELDS).map(([name, f]) =>
+    `  ${(name + (f.slot ? `.${f.slot}` : "")).padEnd(16)} ${f.value}`
+  );
+  return `fields, each exactly one library setter:\n${rows.join("\n")}`;
+}
+
+/** One --set, applied. A refusal carries the library's own message. */
+function applyKidsEdit(
+  target: KidsTarget,
+  text: string,
+): {
+  key: string;
+  value: string;
+  field: KidsEditField;
+  write: KidsFieldWrite;
+} {
+  const eq = text.indexOf("=");
+  if (eq < 0) {
+    fail(`--set wants <field>=<value>, not ${text}\n\n${kidsEditFieldList()}`);
+  }
+  const key = text.slice(0, eq);
+  const value = text.slice(eq + 1);
+  const dot = key.indexOf(".");
+  const field = KIDS_EDIT_FIELDS[dot < 0 ? key : key.slice(0, dot)];
+  if (!field) fail(`--set ${key}: no such field\n\n${kidsEditFieldList()}`);
+  try {
+    const write = field.apply(target, dot < 0 ? "" : key.slice(dot + 1), value);
+    return { key, value, field, write };
+  } catch (err) {
+    return fail(`--set ${text}: ${(err as Error).message}`);
+  }
+}
+
+/** Prints what one write landed, and where a checksum can confirm it. */
+function reportKidsEdit(
+  key: string,
+  field: KidsEditField,
+  w: KidsFieldWrite,
+) {
+  const where = w.section === "block"
+    ? hex(w.offset)
+    : `${w.section}+${hex(w.offset, 4)}`;
+  detail(
+    `  set ${key} = ${field.show(w.after)}${
+      w.changed ? ` (was ${field.show(w.before)})` : " (unchanged)"
+    }`,
+    `${where}  ${KIDS_COVER[w.section] ?? ""}`,
+  );
+  for (const warning of w.warnings) console.log(`    ${warning}`);
+}
+
+/** Where each section ended up, and what putting it there cost. */
+function reportKidsSections(relay: KidsRelay) {
+  for (const s of relay.sections) {
+    const size = s.sizeDelta === 0
+      ? `${String(s.size).padStart(6)} B`
+      : `${s.was.size} -> ${s.size} B`;
+    const how = s.recompressed
+      ? `recompressed (${s.sizeDelta >= 0 ? "+" : ""}${s.sizeDelta})`
+      : s.supplied
+      ? "rewritten raw"
+      : "copied verbatim";
+    detail(
+      `  ${s.name.padEnd(8)} ${size} ${how}${
+        s.moved ? `, moved from ${hex(s.was.offset)}` : ""
+      }`,
+      `${hex(s.offset)}${
+        s.padded > s.size ? `  padded to ${hex(s.padded, 4)}` : ""
+      }${s.paddingKept || s.padded === s.size ? "" : ", padding zeroed"}`,
+    );
+  }
+}
+
+/** editKidsSave(), with the library's refusal as the CLI's. */
+function kidsRelay(
+  block: Uint8Array,
+  sections: { tail?: Uint8Array },
+  path: string,
+): KidsRelay {
+  try {
+    return editKidsSave(block, sections) as KidsRelay;
+  } catch (err) {
+    return fail(`${basename(path)}: ${(err as Error).message}`);
+  }
+}
+
+/** `edit` for a Kids! save: every --set, then one relay, then the card. */
+async function editKids(run: EditRun, block: Uint8Array) {
+  const { path, parsed, save, bytes, out, force, sets } = run;
+  // Not overridable, and --force says so rather than staying silent: an LZSS
+  // stream carries no length (decompress() stops when its input runs out,
+  // decompress.js:27), so a directory that does not cross-check leaves nothing
+  // able to say where a section ends — not this verb and not editKidsSave.
+  const table = parseKidsTable(block);
+  if (!table.consistent) {
+    fail(
+      `${basename(path)}: the eleven-word directory at ${
+        hex(0x100)
+      } does not cross-check (${
+        table.problems.join("; ")
+      }); an LZSS stream carries no length, so nothing here can recover where the sections end — --force cannot help`,
+    );
+  }
+  const opening = validateKidsTable(block, table);
+  const sums = (v: { graphics: boolean; data: boolean; tail: boolean }) =>
+    `graphics ${v.graphics ? "ok" : "BAD"}, data ${
+      v.data ? "ok" : "BAD"
+    }, tail ${v.tail ? "ok" : "BAD"}`;
+  if (!opening.ok && !force) {
+    fail(
+      `${basename(path)} already fails its byte sums (${
+        sums(opening)
+      }); --force edits it anyway, and --force with no --set just reseals the directory`,
+    );
+  }
+  const before = Uint8Array.from(block);
+  console.log(
+    `${basename(path)}: ${PSX_GAMES.kids.title} (${parsed.container}${
+      parsed.card
+        ? `, ${parsed.card.files.length} file${
+          parsed.card.files.length === 1 ? "" : "s"
+        }, ${parsed.card.freeBlocks} free blocks`
+        : ""
+    })`,
+  );
+  console.log(`  game name: ${kidsDisplayName(save)}`);
+  if (!opening.ok) {
+    console.log(
+      `  the input's own sums did not verify (${
+        sums(opening)
+      }); --force accepted it and the seal below heals them`,
+    );
+  }
+  if (sets.length === 0) {
+    console.log(`  no --set given: relaying and resealing only`);
+  }
+  // The tail is taken from THIS block and not from save.tail, which is a view
+  // into the parse's own buffer — for a card and a .gme that buffer is a COPY
+  // (memcard.js:161-163), so an edit there would land nowhere. It is a copy
+  // either way, because editKidsSave() writes it back itself.
+  const at = table.sections.tail.offset;
+  const target: KidsTarget = {
+    block,
+    tail: Uint8Array.from(block.subarray(at, at + KIDS_TAIL_SIZE)),
+  };
+  const dirty = new Set<string>();
+  for (const text of sets) {
+    const { key, field, write: w } = applyKidsEdit(target, text);
+    reportKidsEdit(key, field, w);
+    if (w.changed) dirty.add(w.section);
+  }
+  // Both fields today write "block" (final where it lands) or "tail" (handed
+  // back below). This refusal cannot fire now and is not decoration: a field
+  // that wrote a decompressed section and was not passed on would be dropped
+  // silently, and the save would come out sealed, loadable and unedited.
+  for (const section of dirty) {
+    if (section !== "block" && section !== "tail") {
+      fail(
+        `--set wrote the ${section} section, which this verb does not hand to editKidsSave — the edit would be dropped`,
+      );
+    }
+  }
+  const relay = kidsRelay(
+    block,
+    dirty.has("tail") ? { tail: target.tail } : {},
+    path,
+  );
+  reportKidsSections(relay);
+  if (relay.seal.words.length === 0) {
+    console.log(`  the directory already agreed: nothing to reseal`);
+  } else {
+    detail(
+      `  sealed directory words ${
+        relay.seal.words.map((w) => `${w.index} ${w.name}`).join(", ")
+      }`,
+      `${
+        relay.seal.words.map((w) => hex(w.offset)).join(", ")
+      } (${relay.seal.bytes} bytes)`,
+    );
+  }
+  detail(
+    `  end ${
+      relay.end === relay.wasEnd
+        ? `${hex(relay.end)} unchanged`
+        : `${hex(relay.wasEnd)} -> ${hex(relay.end)}`
+    }`,
+    `${relay.slack} bytes of slack in the ${hex(KIDS_BLOCK_SIZE)} file`,
+  );
+  for (const warning of relay.warnings) console.log(`    ${warning}`);
+  if (!relay.seal.consistent || !relay.seal.checksums.ok) {
+    fail(
+      `the reseal did not verify (${sums(relay.seal.checksums)}${
+        relay.seal.consistent ? "" : ", directory inconsistent"
+      }); nothing written. This is a bug in editKidsSave, not in the save`,
+    );
+  }
+  let changed = 0;
+  for (let i = 0; i < KIDS_BLOCK_SIZE; i++) {
+    if (before[i] !== block[i]) changed++;
+  }
+  console.log(`  ${changed} bytes of ${KIDS_BLOCK_SIZE} changed in the block`);
+  // How to read that number, which is not the Dezaemon+ arm's answer. There an
+  // N-byte edit writes N + 2 bytes per dirtied group and nothing else moves.
+  // Here a section the edit supplied is replaced whole, so the count is mostly
+  // the new stream. No --set writes a section today — both fields are the tail
+  // and the title frame — so a run of this verb prints the second line; the
+  // first is what it owes a caller the moment a stream comes back from
+  // src/compress.js, whether that is a new field here or a script driving
+  // editKidsSave() directly.
+  const redone = relay.sections.filter((s) => s.recompressed);
+  if (redone.length > 0) {
+    console.log(
+      `  ${
+        redone.map((s) => s.name).join(" and ")
+      } came back through src/compress.js, which is not the`,
+    );
+    console.log(
+      `  encoder the game used: 0 of the 77 community saves recompress`,
+    );
+    console.log(
+      `  byte-identically, mean +796 bytes over the two sections. So most of`,
+    );
+    console.log(
+      `  that count is the new stream and not the edit, and it is not`,
+    );
+    console.log(
+      `  corruption — diff the decompressed sections, not the file`,
+    );
+  } else {
+    console.log(
+      `  both LZSS streams were copied verbatim — no --set writes one — so`,
+    );
+    console.log(
+      `  every changed byte is one the edit or the directory asked for`,
+    );
+  }
+  let placement: CardPlacement | null = null;
+  if (parsed.container === "card" || parsed.container === "gme") {
+    const card = parsed.container === "gme"
+      ? bytes.subarray(GME_HEADER_SIZE)
+      : bytes;
+    try {
+      placement = placeKidsSave(card, block, {
+        filename: save.filename,
+        requireKids: !force,
+      }) as CardPlacement;
+    } catch (err) {
+      fail(`${basename(path)}: ${(err as Error).message}`);
+    }
+  }
+  await write(out, bytes);
+  console.log(
+    `  wrote ${out} (${
+      placement
+        ? `block placed in card blocks ${blockRun(placement.blocks)}, ${
+          placement.framesOk
+            ? "all frames ok"
+            : "A DIRECTORY FRAME NO LONGER CHECKSUMS"
+        }`
+        : `${parsed.container}, ${KIDS_BLOCK_SIZE} bytes edited in place`
+    })`,
+  );
+  for (const warning of placement?.warnings ?? []) {
+    console.log(`    ${warning}`);
+  }
 }
 
 // --- commands -----------------------------------------------------------------
@@ -1187,7 +1792,18 @@ if (command === "report") {
     Uint8Array | null,
     readonly Region[] | null,
   ][] = a.save.game === "kids"
+    // The header goes first and is the raw bytes below the first section: the
+    // "SC" title frame the game name lives in, the icon, the eleven directory
+    // words and the 84 stale staging bytes at 0x12C. Without it two saves that
+    // differ only in their name diff as identical, and `edit --set name` is a
+    // write no Kids! checksum covers, so this is the only place it shows.
     ? [
+      [
+        "header",
+        a.block.subarray(0, KIDS_FIRST_SECTION),
+        b.block.subarray(0, KIDS_FIRST_SECTION),
+        null,
+      ],
       ["graphics", bytes(a.save.graphics), bytes(b.save.graphics), null],
       ["data", bytes(a.save.data), bytes(b.save.data), KIDS_REGIONS],
       ["tail", bytes(a.save.tail), bytes(b.save.tail), null],
@@ -1264,151 +1880,31 @@ if (command === "report") {
   console.log(`report.json -> ${dir}/report.json`);
 } else if (command === "edit") {
   const { path, parsed, save, bytes } = load(positional[0]);
-  const out = need("--out");
-  const force = flags["--force"] === true;
-  const sets = repeated["--set"] ?? [];
-  if (save.game !== "plus") {
-    fail(
-      `edit writes Dezaemon+ saves only; ${basename(path)} is Dezaemon Kids!`,
-    );
-  }
-  // Not a warning and not overridable by --force: a PS3 .psv carries a
-  // signature over the save in its 0x84-byte header, and nothing in
-  // src/psx/ reads, checks or can regenerate it (memcard.js:214-219 slices
-  // past it and reads the filename). An edited one would be a file this
+  const run: EditRun = {
+    path,
+    parsed,
+    save,
+    bytes,
+    out: need("--out"),
+    force: flags["--force"] === true,
+    sets: repeated["--set"] ?? [],
+  };
+  // Not a warning and not overridable by --force, and true of both games: a
+  // PS3 .psv carries a signature over the save in its 0x84-byte header, and
+  // nothing in src/psx/ reads, checks or can regenerate it (memcard.js:214-219
+  // slices past it and reads the filename). An edited one would be a file this
   // package reads back happily and a real PS3 rejects.
   if (parsed.container === "psv") {
     fail(
       `a .psv carries a signature this package cannot regenerate; convert it to a card image or an .mcs first`,
     );
   }
-  if (sameFile(out, path)) {
+  if (sameFile(run.out, path)) {
     fail(`--out must name a different file; edit never writes over its input`);
   }
   const block = editableBlock(bytes, parsed, save);
-  if (!isPlusBlock(block) && !force) {
-    fail(
-      `${
-        basename(path)
-      } carries no "SC" Dezaemon+ frame — a Select 100 block has it stripped; --force edits it anyway`,
-    );
-  }
-  const opening = plusChecksums(block);
-  if (!opening.ok && !force) {
-    fail(
-      `${basename(path)} already fails checksum groups ${
-        opening.bad.map((g: number) => hex(g, 2)).join(", ")
-      }; --force edits it anyway, and --force with no --set just reseals it`,
-    );
-  }
-  const before = Uint8Array.from(block);
-  console.log(
-    `${basename(path)}: ${PSX_GAMES.plus.title} (${parsed.container}${
-      parsed.card
-        ? `, ${parsed.card.files.length} file${
-          parsed.card.files.length === 1 ? "" : "s"
-        }, ${parsed.card.freeBlocks} free blocks`
-        : ""
-    })`,
-  );
-  if (!opening.ok) {
-    console.log(
-      `  the input already failed groups ${
-        opening.bad.map((g: number) => hex(g, 2)).join(" ")
-      }; --force accepted it and the seal below rewrites them`,
-    );
-  }
-  if (sets.length === 0) console.log(`  no --set given: resealing only`);
-  // null the moment one write cannot be counted: a total that quietly dropped
-  // that write would read as "and the rest are fine", which is the one thing
-  // this line exists to stop a caller believing.
-  let blind: number | null = 0;
-  for (const text of sets) {
-    const { key, value, field, write: w } = applyEdit(block, text);
-    const n = reportEdit(block, key, value, field, w);
-    blind = blind === null || n === null ? null : blind + n;
-  }
-  // Once, after every --set: nineteen groups cost 1.35 ms and delete a whole
-  // class of bug, because a write that straddles a graphics quarter dirties
-  // two groups at once and a partial seal would miss one.
-  const seal = sealPlusChecksums(block) as PlusSeal;
-  if (seal.words.length === 0) {
-    console.log(`  nothing to reseal: every verified group already matched`);
-  } else {
-    detail(
-      `  sealed groups ${
-        [...new Set(seal.words.map((w) => w.group))].map((g) => hex(g, 2)).join(
-          " ",
-        )
-      }`,
-      `${
-        seal.words.map((w) => hex(w.offset)).join(", ")
-      } (${seal.bytes} bytes)`,
-    );
-  }
-  console.log(
-    `  group ${hex(PLUS_UNSEALED_GROUP, 2)} at ${
-      hex(PLUS_UNSEALED_OFFSET)
-    } left as found — the game does not verify it`,
-  );
-  if (!seal.ok) {
-    fail(
-      `the reseal did not verify; nothing written. This is a bug in sealPlusChecksums, not in the save`,
-    );
-  }
-  let changed = 0;
-  for (let i = 0; i < PLUS_BLOCK_SIZE; i++) {
-    if (before[i] !== block[i]) changed++;
-  }
-  console.log(`  ${changed} bytes of ${PLUS_BLOCK_SIZE} changed in the block`);
-  if (blind === null) {
-    console.log(
-      `  a write's bytes are not one contiguous run and its record does not`,
-    );
-    console.log(
-      `  carry the offsets it wrote, so no checksum-blind count is possible`,
-    );
-    console.log(`  for this edit — diff the bytes instead`);
-  } else if (blind > 0) {
-    console.log(
-      `  ${blind} of the written bytes cannot move a checksum: a byte whose offset`,
-    );
-    console.log(
-      `  within its table entry is a multiple of 32 is multiplied by zero, so a`,
-    );
-    console.log(
-      `  clean checksum is not proof the edit landed — diff the bytes instead`,
-    );
-  }
-  let placement: PlusPlacement | null = null;
-  if (parsed.container === "card" || parsed.container === "gme") {
-    const card = parsed.container === "gme"
-      ? bytes.subarray(GME_HEADER_SIZE)
-      : bytes;
-    try {
-      placement = placePlusSave(card, block, {
-        filename: save.filename,
-        requirePlus: !force,
-      }) as PlusPlacement;
-    } catch (err) {
-      fail(`${basename(path)}: ${(err as Error).message}`);
-    }
-  }
-  await write(out, bytes);
-  console.log(
-    `  wrote ${out} (${
-      placement
-        ? `block placed in card blocks ${blockRun(placement.blocks)}, ${
-          placement.framesOk
-            ? "all frames ok"
-            : "A DIRECTORY FRAME NO LONGER CHECKSUMS"
-        }`
-        : `${parsed.container}, ${PLUS_BLOCK_SIZE} bytes edited in place`
-    })`,
-  );
-  for (const warning of placement?.warnings ?? []) {
-    console.log(`    ${warning}`);
-  }
+  if (save.game === "kids") await editKids(run, block);
+  else await editPlus(run, block);
 } else {
   fail(`unknown command ${command}\n\n${USAGE}`);
 }
