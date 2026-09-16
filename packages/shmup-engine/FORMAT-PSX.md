@@ -432,9 +432,14 @@ unless every boundary is right. `plusChecksums()` reproduces the **verified**
 compares — of **all 67 community saves**; a table with the stage stride changed
 to 0x2240 reproduces **none**. (The assertion is that `checksums.bad` is empty,
 `psx-fixtures.test.js:239`, and that is the same nineteen-word comparison.) The
-twentieth word is **open**: nothing in the suite ever compares it, and on a
-block sealed with all twenty it does not converge — see Editing, below. It is
-also the parser's integrity check: a corrupt save names the group that failed.
+twentieth word is **open**, and now measured on real saves as well as synthetic
+ones: nothing in the suite compares it, on a block sealed with all twenty it
+does not converge (see Editing, below), and across the 24 community saves this
+checkout holds, the stored word matches the computed one in **none** of them.
+The one finding that would have reopened the question — real saves satisfying
+it, which would mean the program writes the array in a second pass — did not
+happen. It is also the parser's integrity check: a corrupt save names the group
+that failed.
 
 One quirk worth knowing: a byte whose offset within its entry is a multiple of
 32 is multiplied by zero, so its _value_ does not reach the sum — one byte in 32
@@ -566,8 +571,11 @@ checksum and every parser check, because `stageCount` is `settings[2] + 1` with
 no clamp (plus.js:595). A tool should refuse to write 6. Note that
 `psx-fixtures.test.js:256-259` asserts `stageCount >= 1 && stageCount <= 6`,
 which points the other way: that is a bound on what the corpus holds, not a
-claim about what loads, and the corpus has not been searched for a save that
-holds 6.
+claim about what loads. The corpus has now been searched, and **none** of the 24
+Dezaemon+ saves in this checkout holds 6 (`psx-plus-edit.test.js`, the
+fixture-gated case, prints the count). That is consistent with the ceiling and
+does not prove it: 24 saves by people who never had a sixth stage to fill would
+look exactly the same.
 
 **SOUND** is 0x2E00 = **16 songs of 0x2E0 bytes**, bit-packed rather than a
 byte-per-step sequencer: MAIN.EXE `0x8002E49C` unpacks a song as 16 bars of a
@@ -637,6 +645,14 @@ computes 13863; write that and 12913; write that and 13329. Four passes, four
 values. Nothing reads it — `PLUS_CHECKED_GROUPS = 0x13` (plus.js:79), and the
 load routine stops there — so leaving it alone costs nothing and is what keeps a
 seal idempotent.
+
+**The seal is corpus-verified.** All 24 Dezaemon+ saves in this checkout reseal
+to themselves byte for byte — parse, seal, compare, zero bytes move
+(`psx-plus-edit.test.js`, the fixture-gated case at the end, which skips when
+the collection is absent). That is what makes "surgical" a measurement rather
+than an intention, and it is the case to run before trusting this on a save you
+cannot replace. The wider collection these notes cite is 67 saves; a checkout
+holding all of them proves correspondingly more.
 
 **A seal is idempotent, and an edit costs N + 2 bytes per checksum group it
 dirties.** Sealing a block whose nineteen words already agree changes zero bytes

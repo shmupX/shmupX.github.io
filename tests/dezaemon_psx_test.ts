@@ -40,6 +40,7 @@ import {
   dezaemonGeometry,
   findDezaemonDiscs,
   parseCueFiles,
+  trackModeFor,
 } from "../lib/dezaemon-disc.ts";
 import {
   detectPsxCards,
@@ -51,6 +52,7 @@ import {
   identifyPsxDisc,
   parsePsxBootCode,
   PSX_CONTENT_NAMES as PSX_CONTENT_NAMES_TS,
+  PSX_DISC_CODES,
   PSX_PLAYER_BIOS as PSX_PLAYER_BIOS_TS,
   psxCardCandidates,
   type PsxDisc,
@@ -1202,15 +1204,6 @@ Deno.test("the psx core is mirrored, not local", async () => {
 
 const REPO_ROOT = new URL("../", import.meta.url);
 
-const FIXTURE_DISCS = [
-  { file: "Dezaemon Kids! (Japan).bin", game: "kids", code: "SLPS-01503" },
-  {
-    file: "Dezaemon Plus Select 100 (Japan).bin",
-    game: "plus",
-    code: "SLPS-01504",
-  },
-] as const;
-
 const FIXTURE_CARD_DIRS = ["Dezaemon Kids!/", "Dezaemon+/"] as const;
 
 async function inFixtures(p: string): Promise<boolean> {
@@ -1222,38 +1215,63 @@ async function inFixtures(p: string): Promise<boolean> {
   }
 }
 
-const haveDiscs = await inFixtures(FIXTURE_DISCS[0].file) ||
-  await inFixtures(FIXTURE_DISCS[1].file);
 const haveCardDirs = [
   await inFixtures(FIXTURE_CARD_DIRS[0]),
   await inFixtures(FIXTURE_CARD_DIRS[1]),
 ];
 
+// Gated on what the detector FINDS, never on a file name — which is the rule
+// lib/dezaemon-psx.ts is written to, and this gate used to break it. It named
+// two dumps ("Dezaemon Kids! (Japan).bin" and "Dezaemon Plus Select 100
+// (Japan).bin") and skipped silently for anything else, so the first real rip
+// to land here — a CHD extracted as "Dezaemon Plus (Japan).bin", SLPS-00335,
+// neither of those names and neither of those codes — read as "no fixtures"
+// and the suite stayed green without testing a single genuine pressing. A gate
+// that identifies by name in a feature that identifies by content is the one
+// place that mistake costs the most, because its symptom is a skip.
+const realDiscs = await findPsxDiscs(fromFileUrl(REPO_ROOT), { cache: false });
+
 Deno.test({
-  name: "the dev-fixtures PlayStation discs are MODE2/2352 and say their codes",
-  ignore: !haveDiscs,
+  name:
+    "a real PlayStation Dezaemon rip says its own code, and its zip is the length the route promises",
+  ignore: realDiscs.length === 0,
   async fn() {
-    const root = fromFileUrl(REPO_ROOT);
-    const discs = await findPsxDiscs(root, { cache: false });
-    for (const want of FIXTURE_DISCS) {
-      if (!(await inFixtures(want.file))) continue;
-      const disc = discs.find((d) => d.code === want.code);
-      assert(disc, `${want.file} was not recognised as ${want.code}`);
-      assertEquals(disc.game, want.game);
-      assertEquals(disc.id, want.code.toLowerCase());
+    for (const disc of realDiscs) {
+      // Whatever pressing a checkout has, these hold: the three product codes
+      // are the only ones the detector accepts, a pressed disc carries a
+      // SYSTEM.CNF, and both games are Japanese.
+      assert(
+        disc.code in PSX_DISC_CODES,
+        `${disc.files[0].name} reports ${disc.code}, which is not a Dezaemon`,
+      );
+      assertEquals(disc.id, disc.code.toLowerCase());
       assertEquals(disc.codeFrom, "system.cnf");
       assertEquals(disc.region, "JP");
-      assertEquals(disc.content, PSX_CONTENT_NAMES_TS[want.game]);
+      assertEquals(disc.content, PSX_CONTENT_NAMES_TS[disc.game]);
+
+      // The prefix read is the whole point of the module: this file is
+      // hundreds of megabytes and detection must never open it.
       const prefix = await readDiscPrefix(disc.files[0].path);
-      assert(prefix, `${want.file} could not be opened`);
-      assertEquals(identifyPsxDisc(prefix), {
-        game: want.game,
-        code: want.code,
-        codeFrom: "system.cnf",
-        region: "JP",
-        sectorSize: 2352,
-        dataOffset: 24,
-      });
+      assert(prefix, `${disc.files[0].name} could not be opened`);
+      const seen = identifyPsxDisc(prefix);
+      assert(seen, `${disc.files[0].name} was not identified from a prefix`);
+      assertEquals(seen.code, disc.code);
+      assertEquals(seen.game, disc.game);
+      assert(
+        trackModeFor(seen),
+        `${disc.code}: ${seen.sectorSize}-byte sectors cannot be put in a cue`,
+      );
+      // A pressed CD ripped to .bin is Mode 2 Form 1. Asserting it here is what
+      // checks mode2form1() above against a genuine pressing rather than
+      // against my own idea of one; a cooked .iso is the other legal shape and
+      // is exempt.
+      if (disc.files[0].name.toLowerCase().endsWith(".bin")) {
+        assertEquals(
+          [seen.sectorSize, seen.dataOffset],
+          [2352, 24],
+          `${disc.files[0].name} is a .bin rip and should be MODE2/2352`,
+        );
+      }
 
       // The content-length the route sends, against the body it then streams.
       // Counted rather than buffered: this disc is half a gigabyte.
@@ -1262,7 +1280,9 @@ Deno.test({
       assertEquals(
         psxDiscZipLength(disc),
         n,
-        `${want.file}: a content-length that disagrees is a truncated disc`,
+        `${
+          disc.files[0].name
+        }: a content-length that disagrees is a truncated disc`,
       );
     }
   },
