@@ -21,8 +21,9 @@
  *   deno task preview:verify -- --play        # also play to the boss and watch it fire
  *   deno task preview:verify -- --help
  *
- * Needs a Chromium. $CHROME_BIN wins; otherwise the Playwright cache and the
- * usual system installs are searched. Nothing is downloaded.
+ * Needs a Chromium, found by the profiler's own findChrome(): $CHROME_BIN
+ * wins; otherwise the Playwright cache and the usual system installs are
+ * searched. Nothing is downloaded.
  */
 
 import { parseArgs } from "@std/cli/parse-args";
@@ -37,6 +38,15 @@ import {
   servePreview,
   stopPreview,
 } from "../mcp/lib/preview.ts";
+// The profiler's browser layer, rather than a second copy of it here. Its
+// findChrome() searches the Playwright cache and the Linux installs this file
+// used to have to search for itself, and its Cdp propagates page exceptions,
+// carries events, and rejects a command the browser refused — all three of
+// which the private client that used to live below did not.
+import {
+  Cdp,
+  findChrome,
+} from "../packages/shmup-harbor/tools/sav-profiler/lib/web.ts";
 
 /** Frames the character was packed with that the runtime did not end up holding. */
 export function missingFrames(expected: string[], actual: string[]): string[] {
@@ -45,44 +55,6 @@ export function missingFrames(expected: string[], actual: string[]): string[] {
 }
 
 /** ─── the browser ───────────────────────────────────────────────────────── */
-
-function candidateBrowsers(): string[] {
-  const env = Deno.env.get("CHROME_BIN");
-  if (env) return [env];
-  const out: string[] = [];
-  const pw = Deno.env.get("PLAYWRIGHT_BROWSERS_PATH") ??
-    `${Deno.env.get("HOME")}/.cache/ms-playwright`;
-  try {
-    for (const e of Deno.readDirSync(pw)) {
-      if (!e.name.startsWith("chromium-")) continue;
-      out.push(
-        `${pw}/${e.name}/chrome-linux/chrome`,
-        `${pw}/${e.name}/chrome-mac/Chromium.app/Contents/MacOS/Chromium`,
-      );
-    }
-  } catch { /* no playwright cache; fall through to the system installs */ }
-  out.push(
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  );
-  return out;
-}
-
-function findBrowser(): string {
-  for (const path of candidateBrowsers()) {
-    try {
-      if (Deno.statSync(path).isFile) return path;
-    } catch { /* next */ }
-  }
-  throw new Error(
-    "no Chromium found. Set CHROME_BIN to a Chrome or Chromium binary, or " +
-      "install one where Playwright keeps them ($PLAYWRIGHT_BROWSERS_PATH). " +
-      "Nothing is downloaded by this task.",
-  );
-}
 
 /** A port nobody is on, asked for rather than guessed. */
 function freePort(): number {
@@ -94,102 +66,88 @@ function freePort(): number {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** The slice of CDP this needs: evaluate, type, and screenshot. */
-class Devtools {
-  #ws: WebSocket;
-  #id = 0;
-  #pending = new Map<number, (v: Record<string, unknown>) => void>();
-
-  private constructor(ws: WebSocket) {
-    this.#ws = ws;
-    ws.onmessage = (e) => {
-      const m = JSON.parse(e.data);
-      if (m.id && this.#pending.has(m.id)) {
-        this.#pending.get(m.id)!(m.result ?? {});
-        this.#pending.delete(m.id);
-      }
-    };
+/**
+ * Attach to the page of the Chrome this task just spawned.
+ *
+ * Polled because nothing was waited for: /json/list refuses connections until
+ * the DevTools endpoint is listening, and then answers with no page target for
+ * a moment after that.
+ */
+async function attach(port: number, timeoutMs = 30_000): Promise<Cdp> {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    await sleep(400);
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`))
+        .json();
+      const page = list.find((t: Record<string, string>) => t.type === "page");
+      if (!page?.webSocketDebuggerUrl) continue;
+      return await Cdp.connect(page.webSocketDebuggerUrl);
+    } catch { /* browser still coming up */ }
   }
+  throw new Error("could not attach to the browser's devtools");
+}
 
-  static async attach(port: number, timeoutMs = 30_000): Promise<Devtools> {
-    const until = Date.now() + timeoutMs;
-    while (Date.now() < until) {
-      await sleep(400);
-      try {
-        const list = await (await fetch(`http://127.0.0.1:${port}/json/list`))
-          .json();
-        const page = list.find((t: Record<string, string>) =>
-          t.type === "page"
-        );
-        if (!page?.webSocketDebuggerUrl) continue;
-        const ws = new WebSocket(page.webSocketDebuggerUrl);
-        await new Promise((res, rej) => {
-          ws.onopen = () => res(null);
-          ws.onerror = () => rej(new Error("devtools socket failed"));
-        });
-        return new Devtools(ws);
-      } catch { /* browser still coming up */ }
-    }
-    throw new Error("could not attach to the browser's devtools");
+/**
+ * Evaluate, treating every kind of failure as "not there yet".
+ *
+ * Cdp.eval THROWS on a page exception, where the hand-rolled client this file
+ * used to carry returned undefined. Throwing is the better default everywhere
+ * except in the two polling loops below, which by design interrogate a page
+ * that is still booting: FIND_GAME walks every window key and a getter on one
+ * of them can throw, framesIn() and drawing() index into a game object and a
+ * texture list that do not exist until the level has loaded, and
+ * Runtime.evaluate is itself refused while a navigation is swapping the
+ * execution context out. Each of those means "ask again in a second", so they
+ * come back as null and the loop's own deadline stays the only thing that can
+ * fail the run — which is the whole assertion this task is built on.
+ */
+async function poll<T>(cdp: Cdp, expression: string): Promise<T | null> {
+  try {
+    return await cdp.eval<T>(expression);
+  } catch {
+    return null;
   }
+}
 
-  send(method: string, params: Record<string, unknown> = {}) {
-    return new Promise<Record<string, unknown>>((res) => {
-      const id = ++this.#id;
-      this.#pending.set(id, res);
-      this.#ws.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async eval<T>(expression: string): Promise<T> {
-    const r = await this.send("Runtime.evaluate", {
-      expression,
-      returnByValue: true,
-    });
-    return (r.result as Record<string, unknown>)?.value as T;
-  }
-
-  /** Enter/Space/Z and a tap: whatever this build listens for, one of these is it. */
-  async nudge() {
-    for (
-      const [key, code, vk] of [["Enter", "Enter", 13], [" ", "Space", 32], [
-        "z",
-        "KeyZ",
-        90,
-      ]] as const
-    ) {
-      for (const type of ["keyDown", "keyUp"]) {
-        await this.send("Input.dispatchKeyEvent", {
-          type,
-          key,
-          code,
-          windowsVirtualKeyCode: vk,
-          nativeVirtualKeyCode: vk,
-        });
-      }
-    }
-    for (const type of ["mousePressed", "mouseReleased"]) {
-      await this.send("Input.dispatchMouseEvent", {
+/** Enter/Space/Z and a tap: whatever this build listens for, one of these is it. */
+async function nudge(cdp: Cdp) {
+  for (
+    const [key, code, vk] of [["Enter", "Enter", 13], [" ", "Space", 32], [
+      "z",
+      "KeyZ",
+      90,
+    ]] as const
+  ) {
+    for (const type of ["keyDown", "keyUp"]) {
+      await cdp.send("Input.dispatchKeyEvent", {
         type,
-        x: 240,
-        y: 400,
-        button: "left",
-        clickCount: 1,
+        key,
+        code,
+        windowsVirtualKeyCode: vk,
+        nativeVirtualKeyCode: vk,
       });
     }
   }
-
-  async screenshot(path: string) {
-    const r = await this.send("Page.captureScreenshot", { format: "png" });
-    await Deno.writeFile(
-      path,
-      Uint8Array.from(atob(r.data as string), (c) => c.charCodeAt(0)),
-    );
+  for (const type of ["mousePressed", "mouseReleased"]) {
+    await cdp.send("Input.dispatchMouseEvent", {
+      type,
+      x: 240,
+      y: 400,
+      button: "left",
+      clickCount: 1,
+    });
   }
+}
 
-  close() {
-    this.#ws.close();
-  }
+async function screenshot(cdp: Cdp, path: string) {
+  const r = await cdp.send<{ data: string }>("Page.captureScreenshot", {
+    format: "png",
+  });
+  await Deno.writeFile(
+    path,
+    Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0)),
+  );
 }
 
 /** ─── what we ask the running game ──────────────────────────────────────── */
@@ -294,8 +252,8 @@ async function main(): Promise<number> {
 
   const shots = args.shots;
   if (shots) await Deno.mkdir(shots, { recursive: true });
-  const shot = async (dt: Devtools, name: string) => {
-    if (shots) await dt.screenshot(`${shots}/${name}.png`);
+  const shot = async (dt: Cdp, name: string) => {
+    if (shots) await screenshot(dt, `${shots}/${name}.png`);
   };
 
   // `mainProjectile` is sugar the TOOL layer owns, not a CreateRequest field:
@@ -355,26 +313,38 @@ async function main(): Promise<number> {
   const served = await servePreview(level, { port: Number(args.port), stage });
   console.log(`ok    serving ${served.playUrl}`);
 
-  const browser = findBrowser();
-  const cdpPort = freePort();
-  const chrome = new Deno.Command(browser, {
-    args: [
-      "--headless=new",
-      "--disable-gpu",
-      "--no-sandbox",
-      "--disable-dev-shm-usage",
-      "--window-size=480,720",
-      `--remote-debugging-port=${cdpPort}`,
-      "--autoplay-policy=no-user-gesture-required",
-      served.playUrl,
-    ],
-    stdout: "null",
-    stderr: "null",
-  }).spawn();
-
-  let dt: Devtools | null = null;
+  let dt: Cdp | null = null;
+  let chrome: Deno.ChildProcess | null = null;
   try {
-    dt = await Devtools.attach(cdpPort);
+    // Discovery lives INSIDE the try: the preview server is already listening
+    // by now, so a throw out here would leave it bound and print a stack trace
+    // instead of the FAIL line every other failure in this task produces.
+    let browser: string;
+    try {
+      browser = await findChrome();
+    } catch (err) {
+      console.error(
+        `FAIL  ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 1;
+    }
+    const cdpPort = freePort();
+    chrome = new Deno.Command(browser, {
+      args: [
+        "--headless=new",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--window-size=480,720",
+        `--remote-debugging-port=${cdpPort}`,
+        "--autoplay-policy=no-user-gesture-required",
+        served.playUrl,
+      ],
+      stdout: "null",
+      stderr: "null",
+    }).spawn();
+
+    dt = await attach(cdpPort);
     await dt.send("Page.enable");
     await dt.send("Runtime.enable");
 
@@ -390,11 +360,9 @@ async function main(): Promise<number> {
     let missing = expected;
     const bootBy = Date.now() + Number(args["boot-timeout"]) * 1000;
     while (Date.now() < bootBy) {
-      game ??= await dt.eval<string | null>(FIND_GAME);
+      game ??= await poll<string>(dt, FIND_GAME);
       if (game) {
-        runtime =
-          await dt.eval<string[] | null>(framesIn(game, "game_asset")) ??
-            [];
+        runtime = await poll<string[]>(dt, framesIn(game, "game_asset")) ?? [];
         missing = missingFrames(expected, runtime);
         if (!missing.length) break;
       }
@@ -445,11 +413,12 @@ async function main(): Promise<number> {
       Date.now() < playBy && !(bossSeen && (shotSeen || !shotFrames.length))
     ) {
       if (!bossSeen && Date.now() - lastTap > 450) {
-        await dt.nudge();
+        await nudge(dt);
         lastTap = Date.now();
       }
       if (!bossSeen) {
-        const hits = await dt.eval<Record<string, unknown>[]>(
+        const hits = await poll<Record<string, unknown>[]>(
+          dt,
           drawing(game, bossFrames),
         );
         if (hits?.length) {
@@ -458,7 +427,8 @@ async function main(): Promise<number> {
           await shot(dt, "boss");
         }
       } else if (shotFrames.length && !shotSeen) {
-        const hits = await dt.eval<Record<string, unknown>[]>(
+        const hits = await poll<Record<string, unknown>[]>(
+          dt,
           drawing(game, shotFrames),
         );
         if (hits?.length) {
@@ -491,12 +461,23 @@ async function main(): Promise<number> {
     return 0;
   } finally {
     dt?.close();
-    try {
-      chrome.kill();
-    } catch { /* already gone */ }
-    await chrome.status;
+    if (chrome) {
+      try {
+        chrome.kill();
+      } catch { /* already gone */ }
+      await chrome.status;
+    }
     await stopPreview();
   }
 }
 
-if (import.meta.main) Deno.exit(await main());
+if (import.meta.main) {
+  Deno.exit(
+    await main().catch((err) => {
+      console.error(
+        `FAIL  ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 1;
+    }),
+  );
+}

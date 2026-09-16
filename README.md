@@ -915,6 +915,131 @@ so there is no way to skip the intro; budget a few minutes.
 It needs a Chromium and downloads nothing: `$CHROME_BIN` wins, otherwise the
 Playwright cache and the usual system installs are searched.
 
+## Debugging the game, one frame at a time
+
+`deno task game:debug` serves the shipped level
+(`static/games/2028-ai/foo.json`), boots it in a Chromium with a DevTools port
+open, taps through the title screen and the story, pauses on the first frame of
+the stage — and then stops and waits, holding the browser and the server open.
+That last part is the point. The frame worth looking at in this runtime is about
+25-90s of typewriter story away from boot, and once you are there a _running_
+game is useless for inspection: by the time you have read one screenshot the
+world has moved on a hundred frames. So the task does the boring part once and
+hands the game over frozen, with you as the clock.
+
+It stays in the foreground because it owns both halves of the session — the
+level server (`Deno.serve`, in-process) and the Chromium child. If it returns,
+the socket the page was loaded from closes and the child is orphaned against a
+dead origin, so the paused page it just advertised stops existing. The prompt is
+therefore not a convenience wrapper around the work, it _is_ the process's
+reason to stay alive; `q`, Ctrl-C and end-of-input all tear the pair down
+together.
+
+`--character <name>` (with `--clone-from`, default `dezaBoss0`, and
+`--main-projectile`) serves a built character's preview level instead of the
+shipped one, through the same build-and-stack path the character tools use — so
+a boss can be stepped through frame by frame before it is published anywhere.
+`--stage <n>` picks the boss slot, `--no-boss-rush` keeps the wave list (by
+default `bossRush=1` empties it so the boss arrives immediately), `--headed`
+opens a window instead of running headless, `--shots <dir>` moves where
+screenshots land (default `build/debug-shots/<timestamp>/`, gitignored).
+Chromium is found the usual way: `--chrome` wins, then `$CHROME_BIN`, then the
+Playwright cache and the system installs.
+
+Single letters at the prompt, because you type them a lot:
+
+| key         | what it does                                                  |
+| ----------- | ------------------------------------------------------------- |
+| `s [n]`     | step `n` frames (default 1); pauses first if it was running   |
+| `r` / `p`   | resume / pause                                                |
+| `c [path]`  | screenshot this frame, 1:1 at the game's own 256×480          |
+| `b <names>` | hold pad buttons for a couple of frames (`b a`, `b up,a`)     |
+| `k <names>` | send real key events (`k enter`, `k z,space`)                 |
+| `i`         | inspect: active scenes, the player, a count per visible frame |
+| `e <expr>`  | evaluate an expression in the page                            |
+| `?` / `q`   | help / quit, which ends the session for everything else too   |
+
+### What a frame is here
+
+The probe is installed with `Page.addScriptToEvaluateOnNewDocument`, so it runs
+before the bundle does, and it takes over `requestAnimationFrame` outright:
+every callback the page registers lands in a queue the probe owns, and a
+**frame** is the batch of callbacks standing in that queue at the moment it is
+drained. Phaser registers one callback per tick, so one drain is exactly one
+tick. While the game is running the real animation frame is only a pump — it
+drains one batch per tick, which is what the page would have done unaided — and
+while it is paused nothing drains until something asks. `cancelAnimationFrame`
+goes with it, because the ids now come from the probe's own counter and handing
+one to the browser's implementation cancels something else.
+
+The clock those callbacks are handed is **synthetic** and advances a fixed 1/60s
+per frame, and that is what makes stepping usable rather than merely possible.
+Hand Phaser a real timestamp after a pause of any length and it arrives as one
+enormous delta; the engine answers it by lurching the whole world forward to
+catch up, which is precisely what you paused to avoid. With the synthetic clock,
+`game.loop.time` moves 17ms per step and nothing jumps across a pause of any
+duration — measured on the real bundle.
+
+Phaser's own `game.loop.sleep()` is the obvious thing to reach for and it does
+not do the job: it stops the clock but offers no way to advance it by exactly
+one tick, and Phaser 4's `TimeStep` internals are not a contract worth building
+a tool on. Owning the animation-frame queue sits a layer _below_ the engine, so
+it does not care what the engine does with it.
+
+### Driving it from an agent
+
+Everything the prompt can do is a DevTools call against `window.__dbg`, so the
+debug state lives in the **page** rather than in either process, and the same
+paused page is equally drivable from outside while the prompt sits idle. The
+character MCP server carries nine tools that attach over that port —
+`shmupx_debug_status`, `_inspect`, `_step`, `_pause`, `_resume`, `_press`,
+`_keys`, `_screenshot`, `_eval`, each taking an optional `port` defaulting to
+9223 — and `.mcp.json` already registers that server for the repo, so an MCP
+client in this checkout has them alongside the character tools. Nobody hands a
+session object to anybody; the port is the whole handle, which is why the
+handover banner prints it.
+
+`.claude/skills/debug-game/SKILL.md` is the skill that drives them, and the
+first thing it says is the thing an agent gets wrong: **do not start the task
+yourself.** It is a long-lived foreground process holding a server and a
+browser, so launching it from a tool call kills the session the moment the call
+returns — and every start costs that walk again. Ask for it to be run in a
+terminal and left running.
+
+### Traps
+
+Four of them, and each one reads as a bug in the game:
+
+- **There is no story skip.** The runtime reads only `bossRush` and `stage` off
+  the URL; the title waits on a press, and the story boxes are a typewriter
+  where a press completes the line it is on rather than jumping ahead. So the
+  walk to the stage is 25-90s of taps every time (measured across three runs on
+  the shipped level with `bossRush=1`) and nothing shortens it — which also
+  means a death or a stage clear that loops back to the story is a reason to
+  restart the task, not to hammer Enter. (Enter _and_ Space are both sent,
+  because the title and the story boxes do not read the same one.)
+- **Stepping is in frames, not seconds.** 60 frames is a second. The ship
+  autofires about every 23 frames and a boss acts on a 60-frame interval, so a
+  5-frame step is usually too small to show anything and reads as "nothing
+  happened".
+- **A one-frame press can look like a button that does nothing.** Much of the
+  runtime looks for a JustDown edge — `Phaser.Input.Keyboard.JustDown` on the
+  keyboard, a per-tick rising edge against the previous sample on the pad — and
+  a button held for a single tick can fall between those reads. Two frames is
+  the default for that reason. Holding longer does _not_ repeat: the edge is
+  rising-only, so 30 frames still fires one bomb.
+- **The synthetic pad's id must not end in `[R]`.** The probe answers
+  `navigator.getGamepads()` with one fabricated pad and fires `gamepadconnected`
+  so `static/gamepad-support.js` latches onto it — but `cmgSplitTwoPlayer()`
+  reads a pad id ending in `[R]` as the right half of a split controller and
+  sets `playerCount = 2`. A carelessly named debug pad puts a second ship in the
+  air and ×1.5 hp on everything that spawns, changing the game being debugged
+  and saying nothing about it.
+
+`tests/game_debug_test.ts` pins the parts of all this that fail silently — the
+button and key tables, and the probe's own self-consistency including that `[R]`
+rule — without touching the network or starting a browser.
+
 ## Two players
 
 Local 2P is join-in: a second pad pressing any face or shoulder button — or `O`

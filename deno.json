@@ -49,6 +49,7 @@
     "tonebank:table": "deno run -A scripts/build-tone-bank-table.ts",
     "mcp:character": "deno run -A --node-modules-dir=none mcp/server.ts",
     "preview:verify": "deno run -A scripts/verify-preview.ts",
+    "game:debug": "deno run -A scripts/debug-game.ts",
     "dashboard:build": "deno run -A scripts/build-dashboard.ts",
     "engine:bundle": "deno run -A scripts/build-engine.ts",
     "netplay:bundle": "deno run -A scripts/build-netplay.ts",

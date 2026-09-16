@@ -38,6 +38,7 @@ import { join } from "@std/path";
 import {
   Cdp,
   findChrome,
+  fitViewport,
   startServer,
 } from "../../packages/shmup-harbor/tools/sav-profiler/lib/web.ts";
 
@@ -295,6 +296,24 @@ export interface DebugStatus {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/**
+ * The pixel size a PNG declares, or 0x0 if it is not a PNG at all.
+ *
+ * A PNG's first chunk is always IHDR, whose two big-endian u32s sit at a fixed
+ * offset, so this is a read of twelve bytes rather than a decode. It exists so
+ * a capture can report its own dimensions instead of trusting the window to be
+ * the size it was asked for, which it is not (see launchDebugBrowser).
+ */
+export function pngSize(bytes: Uint8Array): { width: number; height: number } {
+  const header = PNG_SIGNATURE.every((b, i) => bytes[i] === b) &&
+    String.fromCharCode(...bytes.subarray(12, 16)) === "IHDR";
+  if (!header || bytes.length < 24) return { width: 0, height: 0 };
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: dv.getUint32(16), height: dv.getUint32(20) };
+}
+
 /** Find the debug browser's page target and connect to it. */
 export async function attachCdp(
   port = DEFAULT_CDP_PORT,
@@ -505,17 +524,47 @@ export class GameDebug {
     return st;
   }
 
+  /**
+   * Write the current frame to a PNG, and say how big it came out.
+   *
+   * WHY THE VIEWPORT IS RE-FITTED ON EVERY CAPTURE. Chrome's emulation
+   * overrides are per DEVTOOLS SESSION, not per page. launchDebugBrowser fits
+   * the viewport on its own connection, which is enough for the game to boot
+   * at 256x480 — but this GameDebug is a different connection (and each MCP
+   * tool call is a third, a fourth...), and a capture taken on a session with
+   * no override of its own composites the page against the real OS window
+   * instead. Measured: the launching session captured 256x480 while a second
+   * session on the same paused page captured 500x340 of letterboxed, scaled
+   * game, and one fitViewport call with no delay at all made that second
+   * session's PNG byte-for-byte identical to the first's. Re-fitting is
+   * therefore not belt-and-braces, it is the only thing that makes a capture
+   * 1:1 from whoever happens to be holding the wire.
+   *
+   * The size is reported for the same reason: a PNG that is not
+   * GAME_WIDTH x GAME_HEIGHT is a scaled render of the game rather than the
+   * game's pixels, and nothing in the file itself says so.
+   */
   async screenshot(
     path: string,
-  ): Promise<{ path: string; bytes: number; frame: number }> {
+  ): Promise<
+    {
+      path: string;
+      bytes: number;
+      frame: number;
+      width: number;
+      height: number;
+    }
+  > {
     const st = await this.status();
+    await fitViewport(this.cdp, GAME_WIDTH, GAME_HEIGHT);
     const r = await this.cdp.send<{ data: string }>("Page.captureScreenshot", {
       format: "png",
     });
     const bytes = Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0));
     await Deno.mkdir(join(path, ".."), { recursive: true }).catch(() => {});
     await Deno.writeFile(path, bytes);
-    return { path, bytes: bytes.length, frame: st.frame };
+    const { width, height } = pngSize(bytes);
+    return { path, bytes: bytes.length, frame: st.frame, width, height };
   }
 
   close(): void {
@@ -582,6 +631,17 @@ export async function launchDebugBrowser(opts: {
   }).spawn();
 
   const cdp = await attachCdp(cdpPort, 40_000);
+  // WHY THE VIEWPORT IS OVERRIDDEN AND --window-size IS NOT ENOUGH.
+  // --window-size asks for an OS WINDOW, and Chrome clamps its width to a
+  // minimum — measured in this container, `--window-size=256,480` produced an
+  // innerWidth/innerHeight of 500x340. The page then does the right thing with
+  // a window that shape and fits the 256x480 game into it, letterboxed and
+  // scaled DOWN to about 182x340, so the game boots believing it has a
+  // landscape-ish viewport. fitViewport sizes the viewport itself instead, and
+  // it is done BEFORE the boot reload so the bundle sizes itself once on the
+  // way up rather than being resized underneath a paused game that cannot
+  // repaint until the next step.
+  await fitViewport(cdp, GAME_WIDTH, GAME_HEIGHT);
   // Install, then reload: the document Chrome first answers with has already
   // run its scripts, so only a fresh one is owned from before the bundle boots.
   await installProbe(cdp);

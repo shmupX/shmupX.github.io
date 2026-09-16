@@ -1,0 +1,107 @@
+# The character-preview gate.
+#
+# `deno task preview:verify` is the only check in this repo that proves a
+# previewed character's art actually reaches the running game. Every cheaper
+# check passes on art that never renders: the catalog record can name a frame
+# its atlas does not carry, the atlas can carry a frame the level's sheet does
+# not stack, and the runtime filters frame names it does not recognise out in
+# silence. The character then wears stock art and nothing anywhere says so —
+# no exception, no warning, no failing test. So this boots the real bundle in a
+# headless Chromium and asks the runtime's own `game_asset` texture which
+# frames arrived. Without this gate, a refactor of the packer, the atlas frame
+# decoding, the preview level stacker or the preview server can ship green and
+# only be discovered by a person looking at a boss that is wearing the wrong
+# sprite.
+#
+# ── The honest tradeoff ──────────────────────────────────────────────────────
+#
+# This gate is NOT hermetic, and that is worth stating plainly rather than
+# discovering during a release. preview:verify clones dezaBoss0, and it reads
+# that character out of the live Firebase catalog at
+# evil-invaders-default-rtdb.firebaseio.com (mcp/lib/rtdb.ts). That database is
+# shared with spriteX, the Pixel Editor and the level editor, it is mutable,
+# and it is open-write with no auth. Two consequences follow:
+#
+#   1. This job can go red because somebody edited or deleted dezaBoss0, or
+#      because one of its atlases changed, and not because the pull request
+#      broke anything. A red run here means "look at the log", not "the diff is
+#      wrong" — the failure message names the frames and the atlas involved.
+#   2. It needs outbound network at merge time, so a Firebase outage or a
+#      throttled runner reads as a failure too.
+#
+# It is still worth gating on: the check catches a whole class of silent
+# breakage that nothing else in CI can see, and the alternative — a fixture
+# snapshot of the catalog — would pass happily while the real catalog that
+# every artist actually publishes into had drifted out from under the loader.
+# Chasing hermeticity here would gate on the wrong thing. If it becomes noisy,
+# the fix is `SHMUPX_DB` (rtdb.ts honours it) pointed at a pinned mirror, not
+# deleting the gate.
+name: preview-verify
+
+on:
+  pull_request:
+    paths:
+      # The builder, the packer, the catalog reader and the preview server.
+      - "mcp/**"
+      - "scripts/verify-preview.ts"
+      # Reached through mcp/lib/debug.ts, and the debug half of the same probe.
+      - "scripts/lib/game-debug.ts"
+      # The bundle the check boots, and the base level record it starts from.
+      - "static/games/2028-ai/**"
+      # mcp/lib/preview.ts serves the preview record with this module's
+      # startServer, so a change in here takes the check down with it.
+      - "packages/shmup-harbor/tools/sav-profiler/lib/web.ts"
+      - ".github/workflows/preview-verify.yml"
+  workflow_dispatch:
+
+jobs:
+  frames:
+    runs-on: ubuntu-latest
+    # A browser that never boots, a story that never advances or a Firebase
+    # read that hangs all present as "still running". The fast path finishes in
+    # a couple of minutes; the script's own --boot-timeout is 180s and it needs
+    # room to build, serve and report on top of that. Past this, something is
+    # wrong and a person should read the log rather than wait.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # Printed BEFORE the check, on purpose. verify-preview.ts searches for a
+      # browser and, finding none, fails with a clean message — but if the
+      # runner image moves or renames Chrome, the far more likely shape of the
+      # failure is a browser that launches and never answers on the DevTools
+      # port, which surfaces 180s later as "frames never reached the runtime".
+      # That reads as a broken packer. One version line up front makes a runner
+      # image change fail loudly with its real cause attached.
+      - name: Show the browser this will drive
+        run: |
+          echo "CHROME_BIN=/usr/bin/google-chrome"
+          /usr/bin/google-chrome --version
+
+      # The FAST path only: no --play.
+      #
+      # --play taps Enter/Space every 450ms through the intro to get a boss on
+      # screen, and there is no way to shorten it — the runtime reads only
+      # bossRush and stage from the URL, there is no story skip, and the story
+      # boxes are a typewriter where a press completes the current line rather
+      # than skipping ahead. That is roughly three minutes of presses before
+      # the first assertion can even be attempted, and what it then asserts
+      # depends on gameplay timing: it watches for the boss to draw and to fire
+      # its main projectile, and it stops tapping the moment the boss appears
+      # precisely because the tap is also the fire button and a boss being shot
+      # at dies before it runs a fire pattern. A merge gate should not hang on
+      # that. The fast path asks the runtime which frames it is holding, which
+      # is the question that actually catches missing art, and it answers in
+      # seconds once the bundle is up.
+      #
+      # CHROME_BIN is set explicitly rather than left to the script's search
+      # order: ubuntu-latest ships Google Chrome at /usr/bin/google-chrome, and
+      # naming it means this job drives a known browser instead of whichever
+      # candidate happened to exist on the image that week.
+      - name: Verify a previewed character's frames reach the runtime
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+        run: deno task preview:verify

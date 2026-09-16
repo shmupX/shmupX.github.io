@@ -262,7 +262,24 @@ export async function clampWindowToScreen(
 }
 
 // ---- Chrome + DevTools -----------------------------------------------------
+//
+// Finding a browser has to work in two places that look nothing alike: a
+// developer's laptop, and a CI job or an agent container. For as long as this
+// module only ever ran on the laptop, the search below WAS the seven
+// /Applications paths — so on Linux findChrome() threw "no Chrome found" every
+// single time, and scripts/verify-preview.ts grew a second, Linux-aware copy of
+// the same search to get itself a browser. That second copy is gone; this is
+// the one search now, and it answers on both.
 
+/**
+ * The macOS application paths, tried ahead of anything discovered on disk.
+ *
+ * They stay first because they used to be the whole list: a laptop carrying
+ * both Google Chrome and a Playwright cache has always launched Google Chrome,
+ * and a profiler run that silently switched to a bundled Chromium — different
+ * build, different flags honoured — is not a change teaching this function
+ * about Linux should make.
+ */
 const CHROME_CANDIDATES = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev",
@@ -273,16 +290,113 @@ const CHROME_CANDIDATES = [
   "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 ];
 
+/** Linux system installs — the answer on a plain box with no Playwright. */
+const LINUX_CANDIDATES = [
+  "/usr/bin/google-chrome",
+  "/usr/bin/google-chrome-stable",
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+];
+
+const PLAYWRIGHT_PREFIX = "chromium-";
+const revision = (dir: string) =>
+  Number(dir.slice(PLAYWRIGHT_PREFIX.length)) || 0;
+
+/**
+ * Chromium binaries sitting in the Playwright browser cache.
+ *
+ * This is the entry that makes a container work at all, and the reason it is
+ * worth searching rather than just documenting $CHROME_BIN: an image built for
+ * browser work has ALREADY paid for a Chromium, and Playwright keeps it under
+ * $PLAYWRIGHT_BROWSERS_PATH (or ~/.cache/ms-playwright when that is unset) in a
+ * per-revision `chromium-<n>` directory. Looking there is the difference
+ * between a run and "no Chrome found" in CI, in the agent containers, and on
+ * any machine where `npx playwright install` has happened once.
+ *
+ * Nothing here downloads anything. A task that quietly pulled a few hundred
+ * megabytes of browser into the middle of a run would be worse than the error
+ * it replaced, so an empty or absent cache simply contributes no candidates.
+ *
+ * Both per-platform layouts inside a revision are offered, because the cache is
+ * laid out by the platform that POPULATED it, and a shared or mounted cache is
+ * not always the platform reading it.
+ *
+ * Revisions are tried newest first and compared as numbers: as strings
+ * "chromium-1194" sorts before "chromium-999", which would hand back the older
+ * browser on any image carrying two.
+ */
+function playwrightCandidates(): string[] {
+  const home = Deno.env.get("HOME");
+  const root = Deno.env.get("PLAYWRIGHT_BROWSERS_PATH") ??
+    (home ? join(home, ".cache", "ms-playwright") : null);
+  if (!root) return [];
+  let revisions: string[];
+  try {
+    revisions = [...Deno.readDirSync(root)]
+      .map((e) => e.name)
+      .filter((name) => name.startsWith(PLAYWRIGHT_PREFIX))
+      .sort((a, b) => revision(b) - revision(a));
+  } catch {
+    // No cache, or one this process may not read. The other candidates stand.
+    return [];
+  }
+  return revisions.flatMap((dir) => [
+    join(root, dir, "chrome-linux", "chrome"),
+    join(
+      root,
+      dir,
+      "chrome-mac",
+      "Chromium.app",
+      "Contents",
+      "MacOS",
+      "Chromium",
+    ),
+  ]);
+}
+
+/**
+ * The browser to drive.
+ *
+ * `flag` (a --chrome on someone's command line) and $CHROME_BIN come first and
+ * are taken at their word: a caller who names a binary means that binary,
+ * including one none of the searches below would ever have turned up.
+ */
 export async function findChrome(flag: string | null = null): Promise<string> {
-  const candidates = [flag, Deno.env.get("CHROME_BIN"), ...CHROME_CANDIDATES]
-    .filter((p): p is string => !!p);
+  // A browser named OUTRIGHT is a instruction, not a suggestion: if --chrome or
+  // $CHROME_BIN points at something that is not there, say so instead of
+  // quietly searching on and running a different browser than the one asked
+  // for. Falling through silently is how a typo'd $CHROME_BIN turns into an
+  // afternoon of wondering why a fix "did nothing" in the browser under test.
+  for (
+    const [named, how] of [[flag, "--chrome"], [
+      Deno.env.get("CHROME_BIN"),
+      "$CHROME_BIN",
+    ]] as const
+  ) {
+    if (!named) continue;
+    try {
+      if ((await Deno.stat(named)).isFile) return named;
+    } catch { /* fall through to the throw below */ }
+    throw new WebError(`${how} points at ${named}, which is not a file`);
+  }
+  const candidates = [
+    ...CHROME_CANDIDATES,
+    ...playwrightCandidates(),
+    ...LINUX_CANDIDATES,
+  ].filter((p): p is string => !!p);
   for (const c of candidates) {
     try {
       if ((await Deno.stat(c)).isFile) return c;
     } catch { /* next */ }
   }
+  // Every path is listed rather than summarised: when this throws, the only
+  // useful question is "where did you look", and on a container the answer is
+  // usually one wrong revision directory away from working.
   throw new WebError(
-    "no Chrome found — set CHROME_BIN to a Chrome/Chromium executable",
+    "no Chrome found — set CHROME_BIN to a Chrome/Chromium executable, or " +
+      "install one where Playwright keeps them ($PLAYWRIGHT_BROWSERS_PATH, " +
+      "default ~/.cache/ms-playwright). Nothing is downloaded. Looked at: " +
+      candidates.join(", "),
   );
 }
 
