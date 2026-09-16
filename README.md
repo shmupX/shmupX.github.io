@@ -1342,6 +1342,41 @@ counterpart of `static/dezaemon-parity.html` and
 including every stage map drawn the way the game draws it. Saves and discs stay
 in the gitignored `dev-fixtures/`; the tests gate on them.
 
+**And the launcher plays them.** `GET /api/dezaemon-psx` finds the discs the way
+`/api/dezaemon-disc` finds the Saturn one — by their contents, never by their
+file names: `SYSTEM.CNF`'s `BOOT=` line first, normalised to a product code, and
+the ISO 9660 root's own markers (`KIDS.EXE` + `KIDS_DAT.BIN`, or `MAIN.EXE` + an
+`UPLOAD` directory) when a rip's `SYSTEM.CNF` cannot be read.
+`$DEZAEMON_PSX_DISC` is looked at too. A PlayStation rip is MODE2/2352 and runs
+to hundreds of megabytes, so two things differ from the Saturn's 7.6 MB image:
+detection opens a **16 MiB prefix** rather than the file, and
+`?zip=<product code>` streams the player's zip instead of building it — every
+entry STORED, so its exact length is known before a byte is read and the
+response carries a real `content-length`. A **product code**, because there are
+three discs and two of them are Dezaemon+: SLPS-01504 is _Dezaemon Plus Select
+100_, the re-release, and a row must not claim you have SLPS-00335 when you have
+that.
+
+The discs turn the **PLAYSTATION** section on by themselves and its rows boot
+through cmg's `/psx/play.html?byod=1`, mirrored onto this origin — the same
+bring-your-own-disc handshake the Saturn uses, with its own message names
+(`psx-byod-ready` / `psx-byod-file`). Two caveats the row states rather than
+hides. A bare `.bin` gets a one-track cue written for it, so **any audio tracks
+are lost**. And that player hardcodes `EJS_biosUrl = /bios/scph5501.bin`, the US
+BIOS, while both Dezaemons are Japanese SLPS discs: the route reports which BIOS
+the disc's region wants against which one the page will load, and the row says
+`JP disc, US BIOS`. It cannot do more than say it — the page is on the cmg
+origin and the byod message it reads carries only a file and a name.
+
+The memory cards are **listed, not played**. `/api/dezaemon-psx` walks
+`dev-fixtures/` for them and names each one from its `SC` title frame (the
+engine's cheap path: peel the container, identify the game, read the 256-byte
+header — nothing decompresses), and the section shows one row per game saying
+so. Booting a particular card needs a writer that can put it into the emulator's
+memory card, and there isn't one; the row explains that instead of offering a
+Play that could only fail, the way the Super Famicom section does for a save
+with no cartridge under it.
+
 ## Desktop app
 
 `deno task build:windows` / `build:linux` / `build:mac` package the launcher

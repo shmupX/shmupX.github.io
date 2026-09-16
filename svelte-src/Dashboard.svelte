@@ -62,6 +62,20 @@
     SNES_CORE_ID,
     snesBootFiles,
   } from '../static/snes-library.js';
+  // The PlayStation Dezaemons: Dezaemon+ (1996) and Dezaemon Kids! (1998),
+  // found on this machine by /api/dezaemon-psx. Unlike the SNES's, the player
+  // is not ours — it is cmg's, mirrored under this origin — so the constants
+  // that have to match it live in one place. See static/psx-library.js.
+  import {
+    findPsxDiscs,
+    psxBiosCaveat,
+    psxBootFile,
+    psxCardsByGame,
+    PSX_BYOD_FILE,
+    PSX_BYOD_PLAYER,
+    PSX_BYOD_READY,
+    PSX_CORE_ID,
+  } from '../static/psx-library.js';
   // Two players at the launcher — two used pads, or a Legion Go's halves both
   // in hand — and the eShop's 2P filter that follows from it. Pure, so the
   // rule is tested under Deno (tests/two_player_presence_test.ts).
@@ -525,6 +539,12 @@
     if (id === SNES_CORE_ID) {
       try { localStorage.setItem(SNES_AUTO_KEY, 'off'); } catch (_) { /* session-only */ }
     }
+    // And for the PlayStation. This one matters more than the other two: the
+    // psx core is MIRRORED, so auto-adding it registers the service worker
+    // and warms ~12 MB. A user who takes it off must be able to keep it off.
+    if (id === PSX_CORE_ID) {
+      try { localStorage.setItem(PSX_AUTO_KEY, 'off'); } catch (_) { /* session-only */ }
+    }
     const m = { ...emuManifests }; delete m[core.id]; emuManifests = m;
     const s = { ...emuStatus }; delete s[core.id]; emuStatus = s;
     const acked = await pushEmuState();
@@ -659,6 +679,39 @@
     return bytes ? (bytes / 1048576).toFixed(1) + ' MB' : '—';
   });
 
+  // ─── The local PlayStation discs ───────────────────────────────────────────
+  // /api/dezaemon-psx answers with every PlayStation Dezaemon in dev-fixtures/
+  // and every memory card beside them. The discs turn the PLAYSTATION section
+  // on the way the Dezaemon 2 image turns on the Sega Saturn one; the cards do
+  // NOT, because a card is not bootable — nothing here can write one into the
+  // emulator's memory card yet — and auto-installing a MIRRORED core costs a
+  // permanent service-worker registration and ~12 MB, which is not a price to
+  // pay for rows you cannot press A on.
+
+  // "1" = this launcher auto-installed the core, "off" = the user uninstalled
+  // it and the auto-add must not force it back. Unset = never decided.
+  const PSX_AUTO_KEY = 'shmupx-psx-auto';
+  let psxMedia = $state(null); // the route's answer, null until read / unavailable
+  async function initDezaemonPsx() {
+    try {
+      const d = await findPsxDiscs();
+      psxMedia = d && d.available ? d : null;
+    } catch (_) { psxMedia = null; }
+    if (!psxMedia || !emuCatalog) return;
+    let auto = null;
+    try { auto = localStorage.getItem(PSX_AUTO_KEY); } catch (_) { /* unreadable */ }
+    if (auto === 'off' || loadInstalledEmus().includes(PSX_CORE_ID)) return;
+    await installCore(PSX_CORE_ID);
+    try { localStorage.setItem(PSX_AUTO_KEY, '1'); } catch (_) { /* session-only */ }
+  }
+  // Per-disc, because there are two of them and either may be here alone.
+  function psxDiscFiles(d) { return (d?.files || []).map((f) => f.name).join(' · '); }
+  function psxDiscSize(d) {
+    const bytes = d?.zipSize || (d?.files || []).reduce((n, f) => n + (f.size || 0), 0);
+    return bytes ? (bytes / 1048576).toFixed(1) + ' MB' : '—';
+  }
+  let psxCardGroups = $derived(psxCardsByGame(psxMedia));
+
   // The browser Saturn player's bring-your-own-disc mode: the player boots on a
   // File posted to it from its parent, never on a URL, because EmulatorJS
   // wants a File of the frame's own realm. So the launcher opens the player
@@ -772,6 +825,67 @@
       const what = record ? '"' + (record.title || 'the cart') + '"' : 'the Dezaemon cartridge';
       showToast('Could not hand ' + what + ' to the SNES player: ' + (e?.message || e));
     }
+  }
+  // The PlayStation player's bring-your-own-disc mode. Shaped like the
+  // Saturn's, not the SNES's: ONE file, because that is what the player takes
+  // ({ type: 'psx-byod-file', file, name }), and the file is a zip holding the
+  // cue and its track files. The cue's base name is the content name, which is
+  // what will name the core's memory card when a writer for it exists.
+  //
+  // It checks the mirror first, which the Saturn's does not. This player is not
+  // ours: /psx/play.html only resolves while the worker is in front of the
+  // page, and without it the iframe loads a 404 with no error path at all.
+  let psxPending = null; // the disc record the player about to open asked for
+  function launchLocalPsx(disc) {
+    if (!disc) return;
+    if (!emuControlled) {
+      showToast(
+        'The PlayStation player is mirrored from another origin and the mirror ' +
+        'is not in front of this page. Reload and try again.',
+      );
+      return;
+    }
+    psxPending = disc;
+    chromeDismissed = false;
+    frameUrl = null;
+    gameSrc = PSX_BYOD_PLAYER;
+    setTimeout(() => { gameOn = true; }, 30);
+  }
+  async function deliverPsxDisc(frame) {
+    const disc = psxPending;
+    if (!disc) return;
+    try {
+      const { file, name } = await psxBootFile(disc);
+      // Same-origin only: the player is ours (the worker mirrors it under our
+      // origin) and the disc is the user's own file, not for anyone else.
+      frame.postMessage({ type: PSX_BYOD_FILE, file, name }, location.origin);
+    } catch (e) {
+      showToast('Could not hand ' + disc.title + ' to the PlayStation player: ' + (e?.message || e));
+    }
+  }
+  // A memory-card row is not a game. The cards are on disk and readable, and
+  // nothing in this launcher can put one into the emulator's card — that is the
+  // writer, and it does not exist yet. So the row says what it is and what is
+  // missing rather than offering a Play that could only fail, exactly as the
+  // SNES section does for a save with no cartridge under it.
+  function explainPsxCards(row) {
+    // "The disc row above" only when there is one for THIS game. The cards are
+    // walked out of dev-fixtures/ whatever discs are beside them — the route
+    // looks for the two separately — so a machine holding the Dezaemon+ image
+    // and a folder of Kids! cards gets this row with no Kids! disc above it,
+    // and sending someone to a row that boots the other game is worse than
+    // telling them which image is missing.
+    const disc = (psxMedia?.discs || []).some((d) => d.game === row.game);
+    showToast(
+      row.count + ' ' + row.gameTitle + ' memory-card ' +
+      (row.count === 1 ? 'save' : 'saves') + ' in dev-fixtures/. The launcher ' +
+      'can find and read them; writing one into the emulator’s memory card is ' +
+      'not built yet, so there is nothing to boot. ' +
+      (disc
+        ? 'The ' + row.gameTitle + ' disc row runs the game itself.'
+        : 'No ' + row.gameTitle + ' disc on this machine either — put its image ' +
+          'in dev-fixtures/ to play it.'),
+    );
   }
 
   // The Mednafen row: nothing to show in the frame, the route starts the
@@ -3353,6 +3467,40 @@
       }
       return rows;
     }
+    // The PlayStation Dezaemons found in dev-fixtures/ (see initDezaemonPsx):
+    // one bring-your-own-disc row each, then ONE row per game for the memory
+    // cards beside them. One row per card would be 165 rows you cannot press A
+    // on; they become worth listing individually when something can load one.
+    //
+    // These lead the psx mirror shelf rather than replacing it — the psx core
+    // carries /PlayStation/manifest.json and that shelf is real, which is what
+    // makes this different from the Saturn's branch above. Returning rows is
+    // what leads it: coreRows just below spreads romRows in after whatever
+    // localRows hands back, so the shelf is appended here for free and
+    // concatenating it in as well would list every mirrored title twice.
+    if (core.id === PSX_CORE_ID && psxMedia) {
+      const rows = (psxMedia.discs || []).map((d) => ({
+        key: 'local-psx:' + d.id, kind: 'local-psx',
+        name: d.title, title: String(d.title).toUpperCase(),
+        sub: 'dev-fixtures · ' + d.code + ' · ' + psxDiscFiles(d) +
+          (d.cueFrom === 'generated' ? ' · cue written here, any audio tracks are lost' : '') +
+          (psxBiosCaveat(d) ? ' · ' + psxBiosCaveat(d) : ''),
+        icon: null,
+        size: psxDiscSize(d), date: 'LOCAL', type: 'PSX / LOCAL DISC',
+        local: d,
+      }));
+      for (const g of psxCardGroups) {
+        rows.push({
+          key: 'local-psx-cards:' + g.game, kind: 'psx-cards',
+          name: g.title + ' · memory cards', title: String(g.title).toUpperCase() + ' · MEMORY CARDS',
+          sub: g.count + ' ' + (g.count === 1 ? 'card' : 'cards') + ' · read only, nothing writes them yet',
+          icon: null,
+          size: g.count + (g.count === 1 ? ' CARD' : ' CARDS'), date: 'LOCAL', type: 'PSX / MEMORY CARDS',
+          count: g.count, gameTitle: g.title, game: g.game,
+        });
+      }
+      return rows;
+    }
     // Arcade boards installed from the eShop. Keyed on the core the record
     // names rather than on a hardcoded id, so a second arcade-ish core costs
     // nothing here. The bytes stay on this origin; the row carries the romset
@@ -3410,6 +3558,28 @@
             'under static/ instead. Carts can be shelved and exported without it.',
           hint: [],
         };
+    }
+    // The PlayStation section has a real mirror shelf, so the manifest states
+    // below are not nonsense here the way they were for the Super Famicom —
+    // they just never mention dev-fixtures/, which is where this section's own
+    // rows come from. One branch, for the one state the default cannot explain:
+    // the core is installed and this machine has no disc.
+    // The guard is Array.isArray and not `!== undefined` because loadEmuManifest
+    // writes null for a shelf that could not be read, and null !== undefined —
+    // so the looser test would answer a failed mirror read with NO LOCAL DISC
+    // and send the user to dev-fixtures/ over a network error. undefined still
+    // reaches READING SHELF…, null still reaches the two SHELF UNAVAILABLE arms
+    // below, and a shelf that arrived — empty or not — reaches this.
+    if (core.id === PSX_CORE_ID && !psxMedia && Array.isArray(emuManifests[core.id])) {
+      return {
+        title: 'NO LOCAL DISC',
+        pre: 'Put a Dezaemon Kids! (SLPS-01503) or Dezaemon+ (SLPS-00335 / SLPS-01504) image in ',
+        path: 'dev-fixtures/',
+        post: ' (or name one in $DEZAEMON_PSX_DISC) and reopen this section. ' +
+          'A .cue beside the image is used as it is; a bare .bin gets a ' +
+          'one-track cue written for it, which loses any audio tracks.',
+        hint: [],
+      };
     }
     const m = emuManifests[core.id];
     if (m === undefined) return { title: 'READING SHELF…', pre: 'Fetching ', path: core.manifest, post: ' from the mirror.', hint: [] };
@@ -3836,6 +4006,12 @@
     // cartridge row itself is the same launch with nothing to put under it.
     if (row.kind === 'snes' && row.local) { launchLocalSnes(row.local); return; }
     if (row.kind === 'snes-rom') { launchLocalSnes(null); return; }
+    // The local PlayStation discs, handed to the mirrored player as one zip.
+    if (row.kind === 'local-psx') { launchLocalPsx(row.local); return; }
+    // A memory-card row is deliberately here and deliberately not a launch: a
+    // kind that falls off this ladder reaches the row.file branch below and
+    // does nothing at all, and a dead row is worse than one that says why.
+    if (row.kind === 'psx-cards') { explainPsxCards(row); return; }
     // An arcade board installed from the eShop: the romset is ours, the player
     // is the core's (mirrored under this origin), so it goes in through the
     // player's bring-your-own-board mode rather than by filename.
@@ -5699,6 +5875,10 @@
     // The SNES player opened with ?byod=1 is asking for its cartridge and save
     // (see launchLocalSnes). Same-origin by construction, same as the Saturn.
     else if (d.type === SNES_BYOD_READY) deliverSnesCart(e.source);
+    // The PlayStation player opened with ?byod=1 is asking for its disc (see
+    // launchLocalPsx). Same-origin by construction, same as the two above —
+    // and below the `if (!sameOrigin) return;` at the top of this chain.
+    else if (d.type === PSX_BYOD_READY) deliverPsxDisc(e.source);
     // The arcade player opened with ?byob=1 is asking for its board (see
     // launchArcadeBoard). Same-origin by construction, same as the two above.
     else if (d.type === 'arcade-byob-ready') deliverArcadeBoard(e.source);
@@ -5755,15 +5935,15 @@
     refreshUpdates();
     loadManifest();
     initNetplayPresence();
-    // The disc check waits for the catalogue: auto-installing the Saturn core
-    // needs its catalogue entry, and installCore looks the core up in it.
-    // Both console probes wait on the catalogue, and for the same reason: each
-    // auto-installs a core when this machine turns out to have its media, and
-    // installCore looks the core up in the catalogue. One read, then both.
+    // The disc check waits for the catalogue: auto-installing a core needs its
+    // catalogue entry, and installCore looks the core up in it. All three
+    // console probes wait for the same reason — each auto-installs a core when
+    // this machine turns out to have its media. One read, then all three.
     initEmulators().then(() => {
       initDezaemonDisc();
       refreshSnesLocal();
       initSnesRom();
+      initDezaemonPsx();
     });
     initExports();
     refreshEshop();

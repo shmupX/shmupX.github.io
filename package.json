@@ -1,5 +1,8 @@
 {
   "name": "shmupx",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "esbuild-svelte": "^0.9.5"
+  }
 }
