@@ -763,6 +763,43 @@ named `BISLPS-00335DEZA`.
   flag no save carries, so the A/B ownership above rests on which one the
   community saves actually vary (53 of 67 for B against 8 for A).
 
+## The round trip through the games themselves (confirmed)
+
+Both editors have now been closed against the programs that own the format,
+under Mednafen 1.32.1 with a Japanese BIOS — the only check that tests our bytes
+against something we did not write.
+
+**Dezaemon+ (SLPS-00335), 2026-09-16.** `plus-edit.js` set the stage count to 2
+and table-B rank 1 to 9,999,990 "CLAUDE!." on stage 1 of _Devil Blade Complete
+Edition_; the card went into slot 1, LOAD/SAVE → ロード read it and printed
+ロードOK, and セーブ wrote the loaded state back to the empty card in slot 2.
+That second card parses with the same stageCount 2 and the same rank 1, and the
+nineteen group checksums verify on both.
+
+**Dezaemon Kids! (SLPS-01503), 2026-09-16.** `kids-edit.js` renamed _Air Story_
+to SKY TALE and put 1,234,500 "CLAUDE.." at rank 1; the PERON MENU's ロード read
+it (ロードが終わったよ) and セーブ wrote the loaded state back to the card in
+slot 2. The two saves agree everywhere the format reaches. The directory is
+identical, including the three byte sums (7,055,200 / 1,398,636 / 12,879) and
+`end` 0x11D80; both compressed sections are identical byte for byte, and so are
+their decompressed forms (262,144 and 64,712 bytes, zero differing); the tail's
+ten high-score rows match, ours among them, and so do all 112 option bytes. Only
+two things differ: the 14 bytes of the name window — the save screen takes the
+title from the card it is overwriting, and slot 2 was empty — and the slack past
+`end`, which the format does not define and which carries whatever the editor's
+RAM held.
+
+That the game's own compressor reproduces the stream our editor copied verbatim
+is the second result: for data it did not change, Athena's encoder is
+deterministic and lands on the bytes already in the section.
+
+**A trap in the harness, not in the format.** Mednafen writes a memory-card file
+only when it decides the card is dirty, so a save the game reports as finished
+can sit in the emulator and never reach the `.mcr`. Trust the file's mtime, not
+セーブが終わったよ: in this session two saves onto an occupied slot-1 card never
+reached disk, while the save onto the empty slot-2 card was flushed about five
+seconds after the game finished writing it.
+
 ## Method
 
 The layouts above came from the two programs: `mipsdis.mjs` over `KIDS.EXE`, its
@@ -783,9 +820,9 @@ in, comparing Kids!'s decompressed sections rather than its compressed bytes —
 the tool for a controlled delta, which is still the cheapest way to move any of
 the open items above.
 
-What a live run would add, none of it needed for the format itself: booting
-either game in a debugging emulator (DuckStation, PCSX-Redux, no$psx) and
-watching the editor's settings screen would name the option bytes in an
+What a debugger would still add, none of it needed for the format itself:
+booting either game in a debugging emulator (DuckStation, PCSX-Redux, no$psx)
+and watching the editor's settings screen would name the option bytes in an
 afternoon; dumping VRAM rows 482/483 during play would close the last caveat on
 the Kids! palette bank, which rests on the boot loader plus the absence of any
 other writer.
