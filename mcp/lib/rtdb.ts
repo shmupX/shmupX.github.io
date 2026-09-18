@@ -10,9 +10,21 @@
 
 const DEFAULT_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 
+let overrideUrl: string | null = null;
+
+/**
+ * Point this module at another database for the rest of the process, or
+ * back at the environment with null. Tests use it instead of Deno.env so two
+ * test files running in parallel isolates cannot redirect each other's
+ * fetches through the one process-wide environment.
+ */
+export function setDatabaseUrl(url: string | null): void {
+  overrideUrl = url;
+}
+
 /** The database this server talks to. `SHMUPX_DB` overrides it for testing. */
 export function databaseUrl(): string {
-  return Deno.env.get("SHMUPX_DB") ?? DEFAULT_DB;
+  return overrideUrl ?? Deno.env.get("SHMUPX_DB") ?? DEFAULT_DB;
 }
 
 export class RtdbError extends Error {
@@ -141,6 +153,27 @@ export async function get<T = unknown>(path: string): Promise<T | null> {
   return (await (await request(path)).json()) as T | null;
 }
 
+export interface Fetched<T> {
+  value: T | null;
+  /** The node's ETag at the moment it was read, for a conditional write. */
+  etag: string | null;
+}
+
+/**
+ * Read a node together with its ETag. Asking with `X-Firebase-ETag: true`
+ * makes the database stamp the answer; handing that stamp back on a PUT as
+ * `if-match` turns a lost-update race into a refusal.
+ */
+export async function getWithEtag<T = unknown>(
+  path: string,
+): Promise<Fetched<T>> {
+  const res = await request(path, { headers: { "X-Firebase-ETag": "true" } });
+  return {
+    value: (await res.json()) as T | null,
+    etag: res.headers.get("etag"),
+  };
+}
+
 /**
  * List a node's immediate child keys without downloading their bodies.
  * `?shallow=true` answers with `{key: true}` — the only sane way to list
@@ -151,11 +184,45 @@ export async function listKeys(path: string): Promise<string[]> {
   return data && typeof data === "object" ? Object.keys(data).sort() : [];
 }
 
-/** Replace a node. */
-export async function put(path: string, value: unknown): Promise<void> {
-  await request(path, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(value),
-  });
+/**
+ * Replace a node. With `ifMatch` — an ETag from getWithEtag — the database
+ * refuses (412) when the node has changed since that read, and the refusal
+ * arrives as an error that says so rather than as a silent overwrite. The
+ * atlases are shared with spriteX and both editors, so an in-place rewrite
+ * of one is exactly the write that needs this.
+ */
+export async function put(
+  path: string,
+  value: unknown,
+  { ifMatch }: { ifMatch?: string | null } = {},
+): Promise<void> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  if (ifMatch) headers["if-match"] = ifMatch;
+  const url = nodeUrl(path);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(value),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (err) {
+    throw new RtdbError(
+      `PUT ${path} failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (res.status === 412) {
+    throw new RtdbError(
+      `PUT ${path} refused: the node changed since it was read (ETag mismatch). ` +
+        `Something else wrote it in the meantime — read it again and redo the edit.`,
+    );
+  }
+  if (!res.ok) {
+    throw new RtdbError(
+      `PUT ${path} failed: HTTP ${res.status} ${res.statusText}`,
+    );
+  }
 }

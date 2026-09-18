@@ -22,9 +22,11 @@ import { blit, cut } from "@shmupx/shmup-harbor/raster";
 import {
   assertSafeKey,
   decodeFrameName,
+  decodeKey,
   encodeFrameKey,
   encodeKey,
   get,
+  getWithEtag,
 } from "./rtdb.ts";
 
 /** Gap between packed cells, so no sampling can bleed across a frame edge. */
@@ -109,6 +111,32 @@ function normalizeAtlasJson(value: unknown): AtlasJson | null {
  */
 export function frameMap(json: AtlasJson | null): Record<string, FrameRect> {
   const out: Record<string, FrameRect> = {};
+  walkFrames(json, (name, rect) => {
+    out[decodeFrameName(name)] = rect;
+  });
+  return out;
+}
+
+/**
+ * How each frame's key is actually spelled where it is stored, by the
+ * decoded name frameMap answers with — `atlas_s0` →
+ * `k_00610074006c00610073005f00730030` for an atlas spriteX wrote as an
+ * object tree. An in-place rewrite hands these back so a reader that matches
+ * the raw key (the level editor's library loader does no decoding) keeps
+ * finding what it found before.
+ */
+export function frameKeyMap(json: AtlasJson | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  walkFrames(json, (name) => {
+    out[decodeFrameName(name)] = name;
+  });
+  return out;
+}
+
+function walkFrames(
+  json: AtlasJson | null,
+  visit: (storedName: string, rect: FrameRect) => void,
+): void {
   // Hand-maintained atlases carry keys that are not frames at all — the
   // catalog's own 2028_game_asset has a "comment" holding a section divider
   // among its 190 real entries — so entries are admitted by shape, not by
@@ -124,14 +152,12 @@ export function frameMap(json: AtlasJson | null): Record<string, FrameRect> {
     if (Array.isArray(frames)) {
       for (const entry of frames) {
         const name = (entry as { filename?: unknown }).filename;
-        if (typeof name === "string" && isRect(entry)) {
-          out[decodeFrameName(name)] = entry;
-        }
+        if (typeof name === "string" && isRect(entry)) visit(name, entry);
       }
     } else if (frames && typeof frames === "object") {
       for (const [name, rect] of Object.entries(frames)) {
         if (name === "__BASE" || !isRect(rect)) continue;
-        out[decodeFrameName(name)] = rect;
+        visit(name, rect);
       }
     }
   };
@@ -140,7 +166,22 @@ export function frameMap(json: AtlasJson | null): Record<string, FrameRect> {
   if (Array.isArray(textures)) {
     for (const tex of textures) absorb((tex as { frames?: unknown })?.frames);
   }
-  return out;
+}
+
+/**
+ * The spelling a frame key should keep when its atlas is rewritten in place.
+ *
+ * Verbatim, with one exception: the one-dot-leader (U+2024) spelling. Only
+ * this server ever wrote that inside an atlas's json string — a habit carried
+ * over from the level records, where frame names really are database keys
+ * and "." really is forbidden. Inside a JSON string nothing forbids a dot,
+ * and the level editor's library loader looks frames up by the record's own
+ * plain-dot name with no decoding, so a leader key is a frame the editor
+ * cannot find. Rewriting is the chance to spell it the way everything reads
+ * it. The k_-hex spelling is left alone: spriteX wrote it and reads it back.
+ */
+export function storedFrameKey(stored: string): string {
+  return stored.includes("․") ? decodeKey(stored) : stored;
 }
 
 /** Base64 leaf to bytes. Sheets may or may not carry a data: prefix. */
@@ -159,7 +200,11 @@ export interface LoadedAtlas {
   name: string;
   json: AtlasJson | null;
   frames: Record<string, FrameRect>;
+  /** Each frame's stored key spelling, by decoded name. */
+  storedKeys: Record<string, string>;
   sheet: Raster | null;
+  /** The node's ETag when it was read; a conditional rewrite hands it back. */
+  etag: string | null;
 }
 
 const atlasCache = new Map<string, LoadedAtlas>();
@@ -172,9 +217,9 @@ export async function loadAtlas(
   assertSafeKey("Atlas name", name);
   const cached = atlasCache.get(name);
   if (cached && (!sheet || cached.sheet)) return cached;
-  const record = await get<{ json?: unknown; png?: unknown }>(
-    `atlases/${name}`,
-  );
+  const { value: record, etag } = await getWithEtag<
+    { json?: unknown; png?: unknown }
+  >(`atlases/${name}`);
   if (!record || typeof record !== "object") {
     throw new ArtError(
       `No atlas at atlases/${name}. Use shmupx_list_atlases to see valid names.`,
@@ -185,12 +230,37 @@ export async function loadAtlas(
     name,
     json,
     frames: frameMap(json),
+    storedKeys: frameKeyMap(json),
     sheet: sheet && typeof record.png === "string"
       ? await decodePng(decodeBase64(record.png))
       : null,
+    etag,
   };
   atlasCache.set(name, loaded);
   return loaded;
+}
+
+/**
+ * Only an atlas's frame map, read from the `atlases/<name>/json` leaf so the
+ * megabyte of base64 sheet beside it never crosses the wire. What a listing
+ * that wants every character's sprite size calls, 27 times, concurrently.
+ */
+export async function loadAtlasJson(name: string): Promise<AtlasJson | null> {
+  assertSafeKey("Atlas name", name);
+  const cached = atlasCache.get(name);
+  if (cached) return cached.json;
+  return normalizeAtlasJson(await get<unknown>(`atlases/${name}/json`));
+}
+
+/**
+ * Forget a cached atlas — every one, with no name. Called after a publish
+ * rewrites `atlases/<name>`, so the next read in this process sees the pixels
+ * that were just written rather than the ones the edit started from; without
+ * it a second "redder" recolours the original again and nothing compounds.
+ */
+export function invalidateAtlas(name?: string): void {
+  if (name === undefined) atlasCache.clear();
+  else atlasCache.delete(name);
 }
 
 function parseRef(ref: FrameRef): Exclude<FrameRef, string> {

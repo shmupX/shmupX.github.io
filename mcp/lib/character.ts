@@ -12,8 +12,8 @@
 import {
   ArtError,
   type AtlasJson,
-  encodeFrameMap,
   type FrameRef,
+  invalidateAtlas,
   loadAtlas,
   packFrames,
   type ResolvedFrame,
@@ -423,24 +423,65 @@ export async function buildCharacter(
   };
 }
 
+export interface PublishOptions {
+  /**
+   * How to spell each frame's key in the stored json, by frame name. Frames
+   * not named here are stored under their plain name. An in-place rewrite
+   * passes the spellings the atlas already had, so readers that match the
+   * raw key keep finding them.
+   */
+  frameKeys?: Record<string, string>;
+  /**
+   * The atlas node's ETag from the read this write was computed from. The
+   * database then refuses the write if anything else touched the node in
+   * between, instead of letting the stale copy win.
+   */
+  atlasIfMatch?: string | null;
+}
+
 /**
  * Publish a built character: the record, and the atlas its textureKey names.
  *
  * Two writes rather than one multi-path update, because the catalog stores
  * them as siblings of unrelated trees and a PUT to the root would replace far
  * more than this character.
+ *
+ * Frame keys inside the json STRING are stored plain. Nothing forbids a dot
+ * inside a JSON string — that rule is for real database keys, and it is why
+ * a level's atlasFrames go through encodeKey — and the level editor's
+ * library loader matches a record's plain-dot names against these keys with
+ * no decoding, so a dot-encoded key here is a frame the editor cannot find.
  */
 export async function publishCharacter(
   result: CreateResult,
+  { frameKeys = {}, atlasIfMatch = null }: PublishOptions = {},
 ): Promise<string[]> {
+  const frames: Record<string, unknown> = {};
+  for (const [name, rect] of Object.entries(result.atlas.json.frames)) {
+    frames[frameKeys[name] ?? name] = rect;
+  }
   const atlasRecord = {
-    json: JSON.stringify({
-      ...result.atlas.json,
-      frames: encodeFrameMap(result.atlas.json.frames),
-    }),
+    json: JSON.stringify({ ...result.atlas.json, frames }),
     png: result.atlas.dataUrl,
   };
-  await put(`atlases/${result.name}`, atlasRecord);
-  await put(`characters/${result.name}`, result.character);
+  try {
+    await put(`atlases/${result.name}`, atlasRecord, {
+      ifMatch: atlasIfMatch,
+    });
+    await put(`characters/${result.name}`, result.character);
+  } finally {
+    // Whatever happened, the cache no longer matches the database.
+    invalidateAtlas(result.name);
+  }
   return [`atlases/${result.name}`, `characters/${result.name}`];
+}
+
+/** Publish only a character's record, leaving whatever atlas it names alone. */
+export async function publishRecord(
+  name: string,
+  record: Character,
+): Promise<string[]> {
+  assertSafeKey("Character name", name);
+  await put(`characters/${name}`, record);
+  return [`characters/${name}`];
 }

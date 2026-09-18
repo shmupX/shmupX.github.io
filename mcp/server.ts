@@ -17,6 +17,15 @@
  *   shmupx_place_character  — drop it into a cloud level's boss slot
  *   shmupx_stop_preview      — stop that server
  *
+ * Four more address those same records the way a person speaks about them,
+ * for a voice session that cannot dictate an id — "make the second boss
+ * bulkier" — and answer with the sprite as a PNG rather than a URL:
+ *
+ *   shmupx_list_objects      — every object with a role and an ordinal; a phrase resolves
+ *   shmupx_get_object        — one object's state and what each dial would move
+ *   shmupx_update_object     — aggression / silhouette / palette dials; writes on apply
+ *   shmupx_preview_object    — one frame as bare base64 PNG (the watch's shape)
+ *
  * It also drives the browser `deno task game:debug` opens — the real runtime,
  * paused on one frame, steppable and pokeable over the DevTools port:
  *
@@ -74,6 +83,14 @@ import {
   stopPreview,
 } from "./lib/preview.ts";
 import { placeCharacter } from "./lib/place.ts";
+import {
+  describeObject,
+  EDIT_SCOPES,
+  listObjects,
+  renderObject,
+  ROLES,
+  updateObject,
+} from "./lib/objects.ts";
 import {
   debugEval,
   debugInspect,
@@ -319,6 +336,122 @@ const debugEvalShape = {
       "pad — is window.__dbg.",
   ),
   port: debugPort,
+};
+
+/**
+ * The object tools. An object is a catalog character addressed by role and
+ * ordinal instead of by id, so a spoken phrase can reach it; the id every
+ * other tool takes is what `shmupx_list_objects` resolves the phrase to.
+ */
+const listObjectsShape = {
+  query: z.string().optional().describe(
+    "The phrase naming one object, as a person says it: 'the second boss', " +
+      "'boss 2', 'the last boss', 'stage 1 boss', 'the pyramid', 'hadouken'. " +
+      "Resolved deterministically — ordinals count stages where the names carry " +
+      "them (the second boss is stage 1) — and the result's `resolved` is the one " +
+      "match, `candidates` the shortlist when there are several, `ignored` the " +
+      "words that named nothing.",
+  ),
+  role: z.enum(ROLES).optional().describe(
+    "Only objects of this kind. Roles are read off the record's shape: boss, " +
+      "enemy (zako), player, projectile, art.",
+  ),
+  level: z.string().optional().describe(
+    "List a cloud level's boss slots (levels/<name>/bossData/boss<N>) instead of " +
+      "the catalog — 'the second boss' there is boss1. Each slot names the catalog " +
+      "character it came from, when there is one; THAT is the id the edit tools " +
+      "take, since a level's copy is edited by editing the character and placing " +
+      "it again with shmupx_place_character.",
+  ),
+};
+
+const getObjectShape = {
+  id: z.string().describe(
+    "Object id — a catalog character name such as 'dezaBoss1', usually the " +
+      "`resolved.id` shmupx_list_objects answered with.",
+  ),
+};
+
+const previewObjectShape = {
+  id: getObjectShape.id,
+  state: z.string().optional().describe(
+    "Which frames: an animation state ('idle' — the default, and what the runtime " +
+      "spawns it with — 'attack', ...), 'projectile' for its main shot, or " +
+      "'backdrop' for its stage-end art. The result lists the states it has.",
+  ),
+  frame: z.number().int().min(0).optional().describe(
+    "Frame index within the state (default 0).",
+  ),
+  scale: z.number().int().min(1).max(8).optional().describe(
+    "Integer nearest-neighbour upscale (default 1). The watch scales for itself, " +
+      "so leave this alone unless a bigger PNG is wanted for its own sake.",
+  ),
+};
+
+const paletteShape = z.object({
+  hue: z.number().min(-360).max(360).optional().describe(
+    "Degrees to rotate every hue by; 120 turns red into green.",
+  ),
+  saturation: z.number().min(-1).max(1).optional().describe(
+    "-1 is greyscale, +1 doubles saturation.",
+  ),
+  lightness: z.number().min(-1).max(1).optional().describe(
+    "-1 is black, +1 is white; 0.3 lifts every tone 30% of the way.",
+  ),
+  toward: z.string().optional().describe(
+    "Pull every hue toward this colour, keeping the shading: '#f00', '#00ff00', " +
+      "'red', 'blue', 'purple', 'gold'... Grey pixels take the colour outright.",
+  ),
+  amount: z.number().min(0).max(1).optional().describe(
+    "How far toward it (default 1, all the way).",
+  ),
+});
+
+const updateObjectShape = {
+  id: getObjectShape.id,
+  aggression: z.number().min(-1).max(1).optional().describe(
+    "-1..1. The shots, and a zako's cadence: +1 multiplies every projectile slot's " +
+      "speed and damage by 1.5, and halves a zako's `interval` (the ticks between " +
+      "its shots); -1 does the reverse. A boss's interval is left alone — the " +
+      "runtime never reads it, a boss fires on its pattern script's clock — and the " +
+      "result says so. Arithmetic on the current values, so a second 'more " +
+      "aggressive' compounds. hp is not aggression — use stats for that.",
+  ),
+  silhouette: z.number().min(-1).max(1).optional().describe(
+    "-1..1. Resamples the body art to 1 + 0.5 × this: +1 is half again as big " +
+      "(64px becomes 96px), -1 is half size. Nearest-neighbour, so pixel art stays " +
+      "pixel art; the sprite's hitbox follows its frame size.",
+  ),
+  palette: paletteShape.optional().describe(
+    "Recolour the body art. Shading survives a hue, saturation or toward edit — " +
+      "outlines stay dark, highlights stay light — because lightness is kept unless " +
+      "`lightness` itself is set. Toward white, black or grey drains colour instead " +
+      "of moving hue.",
+  ),
+  scope: z.enum(EDIT_SCOPES).optional().describe(
+    "Which frames silhouette and palette touch: 'body' (default — the object " +
+      "itself, not its shots or backdrop), 'projectiles', or 'all'. Silhouette " +
+      "never resamples a Dezaemon boss's part frames (turrets sit at the cart's " +
+      "fixed offsets); palette recolours them with the rest of the body.",
+  ),
+  stats: z.record(z.string(), z.union([z.number(), z.boolean()])).optional()
+    .describe(
+      "Exact field values, applied after the dials: hp, score, spgage, " +
+        "shadowOffsetY, shadowReverse — and interval, which only a stock zako's " +
+        "runtime reads (the result warns when it is written anywhere else).",
+    ),
+  saveAs: z.string().optional().describe(
+    "Write the result as a NEW character under this name and leave the original " +
+      "untouched — the safe way to try an edit on a shared catalog. The name must " +
+      "not already exist; an apply that would replace a character is refused.",
+  ),
+  apply: z.boolean().optional().describe(
+    "Write the result to the catalog. Default false — a dry run that answers with " +
+      "the changes and a preview PNG of the result and writes nothing. A hands-free " +
+      "session runs a fresh server per utterance, so an edit that is not applied " +
+      "is gone by the next sentence: pass apply=true when the player has asked for " +
+      "the change to happen, and prefer saveAs when they have not said where.",
+  ),
 };
 
 function toRequest(args: Record<string, unknown>): CreateRequest {
@@ -567,6 +700,99 @@ server.registerTool(
   },
   (args: Args<typeof placeShape>) =>
     guard(async () => ok(await placeCharacter(args))),
+);
+
+server.registerTool(
+  "shmupx_list_objects",
+  {
+    title: "List objects, and resolve a phrase to one",
+    description:
+      "The catalog's characters as objects a person can point at without an id: each with a " +
+      "role read off its shape (boss, enemy, player, projectile, art), an ordinal within that " +
+      "role, the stage number its name carries, its animation states, its projectile slots and " +
+      "the pixel size of the frame it spawns with. Pass `query` to resolve a phrase — 'the " +
+      "second boss', 'boss 2', 'the last boss', 'the pyramid' — to one object: `resolved` is the " +
+      "answer, `candidates` the shortlist when it is ambiguous, `explanation` how it was read. " +
+      "Ordinals count stages where the names carry them: the second boss is stage 1, and a " +
+      "stage nobody has resolves to nothing rather than to a guess. Pass `level` to list a cloud " +
+      "level's boss slots instead; each names the catalog character to edit. Start every " +
+      "spoken edit here.",
+    inputSchema: listObjectsShape,
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  (args: Args<typeof listObjectsShape>) =>
+    guard(async () => ok(await listObjects(args))),
+);
+
+server.registerTool(
+  "shmupx_get_object",
+  {
+    title: "Get an object's current state",
+    description:
+      "One object before editing it: its summary, every frame each state and projectile slot " +
+      "draws, the frames the record names that its atlas lacks, and under `dials` what " +
+      "shmupx_update_object would move and whether the runtime would notice: for aggression " +
+      "the current interval with `intervalRead` (true only for a stock zako — a boss fires on " +
+      "its pattern script, a Dezaemon zako on the cart's fire table), each slot's " +
+      "speed/damage with `shotsRead`; for silhouette the body frames and their size (parts " +
+      "listed apart, they keep their size); for palette the body frames and the colours the " +
+      "idle frame is made of, so 'redder' can be judged against what is there. `character` " +
+      "is the full record.",
+    inputSchema: getObjectShape,
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  ({ id }: Args<typeof getObjectShape>) =>
+    guard(async () => ok(await describeObject(id))),
+);
+
+server.registerTool(
+  "shmupx_update_object",
+  {
+    title: "Edit an object with dials",
+    description:
+      "Turn semantic dials on an object — aggression (shot speed and damage, plus a zako's " +
+      "fire cadence), silhouette (body art resampled bigger or smaller), palette (a recolour that keeps the " +
+      "shading) — plus exact `stats` for anything precise, and answer with the field changes, " +
+      "the frames transformed, and a preview PNG of the result (`png_base64`) whether or not " +
+      "anything was written. Writes NOTHING unless apply=true. Then: numbers-only edits " +
+      "write characters/<id> alone; pixel edits on a character with its own atlas rewrite " +
+      "atlases/<id> in place — every frame the atlas held is kept, edited or not, under its " +
+      "existing key spelling, conditionally on the ETag it was read with — while an object " +
+      "whose art lives in a shared atlas never has that atlas touched: its edited frames go to " +
+      "their own atlases/<id>. saveAs writes a new character (the name must be free) and " +
+      "leaves the original alone. An apply with nothing changed writes nothing. The catalog " +
+      "is shared and open-write, so say what will change before applying, and refuse to apply " +
+      "while `unresolved` is non-empty. Every dial reports what the runtime would NOT notice " +
+      "in `warnings` — a boss's interval, a Dezaemon zako's shot speed — rather than moving it.",
+    inputSchema: updateObjectShape,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  },
+  (args: Args<typeof updateObjectShape>) =>
+    guard(async () => ok(await updateObject(args))),
+);
+
+server.registerTool(
+  "shmupx_preview_object",
+  {
+    title: "Preview an object as a PNG",
+    description:
+      "Render one frame of an object as it is in the catalog right now, cut from its own atlas " +
+      "at 1:1, and answer in the shape the watch bridge reads: object_id, label, png_base64 " +
+      "(bare base64, no data: prefix), width_px, height_px, note. Default is the first idle " +
+      "frame — the one the runtime spawns it with; `state` picks another animation, " +
+      "'projectile' its main shot, 'backdrop' its stage-end art. This is the picture of what " +
+      "is there; shmupx_update_object answers with the picture of what an edit would make. " +
+      "For playing it in the real runtime use shmupx_preview_character instead.",
+    inputSchema: previewObjectShape,
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  (args: Args<typeof previewObjectShape>) =>
+    guard(async () => ok(await renderObject(args))),
 );
 
 server.registerTool("shmupx_stop_preview", {

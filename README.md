@@ -809,17 +809,21 @@ import writes for stage 0, carrying `anim`, the projectile slots, the decoded
 is a deep copy plus a new `textureKey`**, and swapping art is a matter of
 repacking the atlas that key points at.
 
-| tool                       | what it does                                            |
-| -------------------------- | ------------------------------------------------------- |
-| `shmupx_list_characters`   | the catalog's characters                                |
-| `shmupx_get_character`     | one record, its fields and every frame it references    |
-| `shmupx_list_atlases`      | the ~400 atlases frames can come from                   |
-| `shmupx_list_frames`       | frame names and sizes inside one atlas                  |
-| `shmupx_list_sprites`      | whole-image sprites, each usable as one frame           |
-| `shmupx_create_character`  | clone + swap + pack; writes nothing unless `apply`      |
-| `shmupx_preview_character` | serves the real runtime with that character as the boss |
-| `shmupx_place_character`   | replaces a cloud level's `boss<N>` with a character     |
-| `shmupx_stop_preview`      | stops that server                                       |
+| tool                       | what it does                                             |
+| -------------------------- | -------------------------------------------------------- |
+| `shmupx_list_characters`   | the catalog's characters                                 |
+| `shmupx_get_character`     | one record, its fields and every frame it references     |
+| `shmupx_list_atlases`      | the ~400 atlases frames can come from                    |
+| `shmupx_list_frames`       | frame names and sizes inside one atlas                   |
+| `shmupx_list_sprites`      | whole-image sprites, each usable as one frame            |
+| `shmupx_create_character`  | clone + swap + pack; writes nothing unless `apply`       |
+| `shmupx_preview_character` | serves the real runtime with that character as the boss  |
+| `shmupx_place_character`   | replaces a cloud level's `boss<N>` with a character      |
+| `shmupx_stop_preview`      | stops that server                                        |
+| `shmupx_list_objects`      | the same records by role and ordinal; a phrase resolves  |
+| `shmupx_get_object`        | one object's state and what each dial would move         |
+| `shmupx_update_object`     | aggression / silhouette / palette dials; writes on apply |
+| `shmupx_preview_object`    | one frame as bare base64 PNG, the watch bridge's shape   |
 
 Frames are referenced as `"<atlas>/<frame>"`, and the names are worth listing
 rather than guessing: the `hadouken` atlas's two frames are `atlas_s0` and
@@ -914,6 +918,110 @@ so there is no way to skip the intro; budget a few minutes.
 
 It needs a Chromium and downloads nothing: `$CHROME_BIN` wins, otherwise the
 Playwright cache and the usual system installs are searched.
+
+### Objects: the same records, by phrase
+
+Voice is good at intent and bad at precision. _"Make the second boss bulkier"_
+carries no id, no field name and no number, and the character tools above need
+all three. Four more tools address the catalog's characters as **objects** so an
+agent can get from that sentence to a write without asking the player to spell
+anything — and they answer with the sprite as a PNG, which is the shape the
+shmupX watch bridge draws
+(`{object_id, label, png_base64, width_px, height_px,
+note}`, bare base64 with
+no `data:` prefix).
+
+An object is still exactly a `characters/<id>` record with its art at
+`atlases/<textureKey>`. What is added:
+
+- **A role, read off the record's shape.** The catalog is one flat tree holding
+  bosses beside zako, a player, a bullet and a backdrop, and none of them say
+  what they are. A player carries `maxHp` and its shoot tables; a boss arms the
+  Dezaemon engine (`dezaemon.boss`), has animation states, fires from a suffixed
+  slot, or is simply too tough to be a zako; a bullet has a speed and no hp; a
+  backdrop has nothing but art. The role is a hint for the resolver, never a
+  gate — every tool takes any id.
+- **An ordinal a person can count by.** A numbered boss's ordinal is its stage
+  plus one — `dezaBoss1` is _the second boss_ whether it is read off the catalog
+  or off the level it came from — and a catalog missing `dezaBoss2` has no third
+  boss: the phrase answers nothing rather than whichever boss is listed third.
+  The unnumbered bosses (`akuma`, `pyramid`…) follow after the highest stage,
+  and a role with no numbers at all (the zako) counts by position. The listing's
+  `ordinal` and `ordinalWord` are exactly what the resolver accepts, so what the
+  list says is what a phrase gets. `"boss 2"`, `"stage 2"` and `"level 2"` all
+  mean the second — the HUD shows STAGE 1 over the boss in slot `boss0` — while
+  `"slot 2"` names the zero-based key itself; `"the last boss"` is the highest
+  numbered one. A stage number only counts on a boss, so a bullet saved as
+  `dezaBoss1_shot` is not the second anything.
+- **A resolver.** `shmupx_list_objects` takes the phrase as `query`. An exact id
+  wins, spaces or not — speech renders `dezaBoss1` as _"deza boss 1"_. Otherwise
+  names come first: each remaining word narrows to the objects whose name
+  contains it and is dropped if it matches nothing (_bulkier_ names nothing); a
+  role word then narrows what the names left, unless it would leave nothing, in
+  which case the name wins and the role comes back as a `hint` (_"akuma's
+  bullets"_ is `akuma`, about its shots); the ordinal decides last. `resolved`
+  is the one answer, `candidates` the shortlist when there are several,
+  `explanation` how the phrase was read. With `level` it lists a cloud level's
+  `boss<N>` slots instead — the name must be the exact key under `/levels`,
+  `"Daioh P!"` included, and a miss lists what is there — each slot naming the
+  catalog character it came from, since a level's copy is edited by editing the
+  character and placing it again.
+- **Three dials, as arithmetic on what is there — and only on what the runtime
+  reads.** `shmupx_update_object` moves numbers and pixels relative to their
+  current values, so a second _"more aggressive"_ compounds on the first, and it
+  says in `warnings` what it left alone because the runtime would never notice:
+  - _aggression_ (-1..1): every projectile slot's `damage` is multiplied by 1 +
+    0.5a, and so is its `speed` — every bullet spawner reads them — except on a
+    Dezaemon zako, whose `dezaVolley` takes shot speed and art from the level's
+    bullet bank after the spawn. A stock zako's `interval`
+    (`getData("interval") || 300`, the ticks between its shots) is multiplied by
+    1 − 0.5a. Nobody else's interval is read: a Dezaemon zako fires on the
+    cart's fire table (`zakoReload`) and a boss on its pattern script (`bossAdd`
+    copies `bossData.interval` into the scene and nothing reads it back), so
+    those are left as they are. hp is not aggression; `stats` sets it exactly.
+    `shmupx_get_object` reports `intervalRead` and `shotsRead` per object so an
+    agent knows before it turns the dial.
+  - _silhouette_ (-1..1): the body art is resampled to 1 + 0.5s with
+    nearest-neighbour sampling, so pixel art stays pixel art; the hitbox follows
+    the frame size. A Dezaemon boss's part frames keep their size — the runtime
+    anchors turrets at the cart's fixed offsets from the core, so scaling them
+    would only grow them in place.
+  - _palette_: hue rotation, a pull `toward` a colour, saturation and lightness
+    — with lightness otherwise kept, so outlines stay dark and highlights stay
+    light and the mid-tones change colour rather than flattening. Toward white,
+    black or grey drains colour (and moves the tone part of the way) instead of
+    rotating hue toward red.
+  - `scope` says which frames the art dials touch: `body` (default — the object
+    itself, not its shots or its backdrop), `projectiles`, or `all`.
+
+**What a write touches.** Nothing but numbers changed: only `characters/<id>` is
+written, whoever owns the atlas. Pixels changed on a character whose
+`textureKey` is its own name — everything the character tools create, and every
+cart import — and its atlas is rewritten in place with _every_ frame it held,
+edited or not, under the key spellings it already had, and conditionally on the
+ETag it was read with (`if-match`): nothing another record names disappears, and
+a write that raced spriteX or the editor is refused rather than winning. Pixels
+changed on a character whose `textureKey` points elsewhere (`dukeNukem` →
+`duke_atlas`) and that shared sheet is never touched: the edited frames go to a
+new `atlases/<id>` and the record is repointed, exactly as a freshly created
+character is laid out. `saveAs` writes a new record and a new atlas under a name
+that must not exist yet, and leaves the original alone. Frame keys inside an
+atlas's `json` string are written plain — `foo.gif`, not the one-dot-leader the
+level records need for real database keys — because the level editor's library
+loader matches a record's plain names against them with no decoding, so a
+leader-spelled key is a frame the editor cannot find. (`shmupx_create_character`
+now writes them plain for the same reason.)
+
+**Nothing writes without `apply`**, as everywhere in this server — and it
+matters more here. A hands-free session spawns a fresh `claude -p`, and with it
+a fresh MCP server, per utterance, so an edit that was not applied has not
+happened by the next sentence. That is the caller's cue to pass `apply: true`
+once the player has asked for the change, not the server's cue to write on its
+own; `unresolved` still refuses a write, and an apply with nothing changed
+writes nothing.
+
+`.claude/skills/edit-object/SKILL.md` is the skill that drives these, including
+how spoken degrees — _a bit_, _much_, _way_ — become dial values.
 
 ## Debugging the game, one frame at a time
 
