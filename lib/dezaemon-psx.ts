@@ -80,6 +80,7 @@ import {
   cueForImage,
   type DiscFile,
   parseCueFiles,
+  readDiscPrefix,
   repoRoot,
   rewriteCueFiles,
   trackModeFor,
@@ -184,12 +185,6 @@ const CARD_EXTENSIONS = [
   ".mcs",
   ".psv",
 ];
-
-/** Detection opens a prefix, never the image: the PVD is at LBA 16 and the root
- * directory and SYSTEM.CNF sit within the first few thousand sectors of every
- * PlayStation master, while the image itself runs to 700 MB. The reader clamps
- * on a short buffer rather than throwing. */
-const DISC_PREFIX_BYTES = 16 * 1024 * 1024;
 
 /** A card is 128 KB; nothing far off that is worth opening. .gme adds a 0xF40
  * header, .psv 0x84, so the window is generous at the top. */
@@ -387,39 +382,6 @@ export function identifyPsxDisc(bytes: Uint8Array): {
     };
   }
   return null;
-}
-
-/** The first `bytes` of a file, or null. Deno.open plus a read loop: a 700 MB
- * Deno.readFile is what this whole module exists to avoid. */
-export async function readDiscPrefix(
-  path: string,
-  bytes = DISC_PREFIX_BYTES,
-): Promise<Uint8Array | null> {
-  let file: Deno.FsFile;
-  try {
-    file = await Deno.open(path, { read: true });
-  } catch {
-    return null; /* vanished, or not ours to read */
-  }
-  try {
-    // Sized to the file rather than to the cap, because a fixtures directory
-    // holds cue sheets and 128 KB memory cards next to the images and a flat
-    // 16 MiB allocation per candidate is paid on every one of them.
-    const size = (await file.stat()).size;
-    const want = size > 0 ? Math.min(bytes, size) : bytes;
-    const buf = new Uint8Array(want);
-    let at = 0;
-    while (at < buf.length) {
-      const n = await file.read(buf.subarray(at));
-      if (n === null || n === 0) break; // short file: the reader clamps anyway
-      at += n;
-    }
-    return at > 0 ? buf.subarray(0, at) : null;
-  } catch {
-    return null; /* an I/O error mid-read is "not here", like an absent file */
-  } finally {
-    file.close();
-  }
 }
 
 /**

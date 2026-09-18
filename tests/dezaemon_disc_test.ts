@@ -23,6 +23,7 @@ import {
   findDezaemonDisc,
   findDezaemonDiscs,
   parseCueFiles,
+  readDiscPrefix,
   rewriteCueFiles,
   trackModeFor,
 } from "../lib/dezaemon-disc.ts";
@@ -122,6 +123,46 @@ async function tree(files: Record<string, Uint8Array | string>) {
   }
   return { root, fixtures, done: () => Deno.remove(root, { recursive: true }) };
 }
+
+Deno.test("detection reads a prefix, not the image", async () => {
+  // Detection must not read a candidate whole: dev-fixtures/ is globbed for
+  // the same extensions by lib/dezaemon-psx.ts, and a MODE2/2352 PlayStation
+  // rip there runs 300-700 MB. Everything the markers need is in the root
+  // directory, which this 25-sector image puts at LBA 20 — 21 sectors, 43 KB
+  // of the 51 KB file, already identifies the disc.
+  const full = image(true);
+  const cut = 21 * 2048;
+  const prefix = full.subarray(0, cut);
+  assert(prefix.length < full.length, "the prefix must be a prefix");
+  assertEquals(dezaemonGeometry(prefix), { sectorSize: 2048, dataOffset: 0 });
+
+  const t = await tree({ "deza.iso": full, "short.iso": prefix });
+  try {
+    const path = join(t.fixtures, "deza.iso");
+    const read = await readDiscPrefix(path, cut);
+    assert(read);
+    assertEquals(read.length, cut, "the cap bounds the read");
+    assertEquals(dezaemonGeometry(read), { sectorSize: 2048, dataOffset: 0 });
+    // Sized to the file, not the cap: a 128 KB memory card lying beside the
+    // images must not cost a 16 MiB allocation.
+    const whole = await readDiscPrefix(path);
+    assert(whole);
+    assertEquals(whole.length, full.length);
+    assertEquals(await readDiscPrefix(join(t.fixtures, "gone.iso")), null);
+
+    // And the same contract through the entry point the route calls: a disc
+    // carrying only its prefix still reaches the launcher, because the ISO
+    // reader clamps on a short buffer rather than throwing
+    // (packages/shmup-engine/src/cd/iso9660-read.js:36).
+    const discs = await findDezaemonDiscs(t.root, { cache: false });
+    assertEquals(discs.map((d) => d.files[0].name).sort(), [
+      "deza.iso",
+      "short.iso",
+    ]);
+  } finally {
+    await t.done();
+  }
+});
 
 Deno.test("a bare Dezaemon image is found and described by a generated cue; decoys are not", async () => {
   const t = await tree({

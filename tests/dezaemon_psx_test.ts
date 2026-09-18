@@ -62,9 +62,9 @@ import {
   psxDiscZipStream,
   type PsxGameId,
   psxZipEntries,
-  readDiscPrefix,
   repoRoot,
 } from "../lib/dezaemon-psx.ts";
+import { readDiscPrefix } from "../lib/dezaemon-disc.ts";
 import {
   findPsxDiscs as browserFindPsxDiscs,
   PSX_BYOD_FILE,

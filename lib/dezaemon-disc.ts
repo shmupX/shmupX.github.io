@@ -19,10 +19,11 @@
 // off the disc). lib/disc-file.ts opens the images; this adds the names,
 // sizes and cue handling that the zip needs.
 //
-// The image is 7.6 MB and detection has to open it, so both the detection and
-// the built zip are memoised in module memory against the fixture directory's
-// listing (names, sizes, mtimes): a launcher polling the route costs a stat
-// pass, not a read of the tree, and the zip is built once per change.
+// Detection reads a prefix of each candidate rather than the whole file (see
+// DISC_PREFIX_BYTES), and both the detection and the built zip are memoised in
+// module memory against the fixture directory's listing (names, sizes,
+// mtimes): a launcher polling the route costs a stat pass, not a read of the
+// tree, and the 7.6 MB zip is built once per change.
 
 import {
   basename,
@@ -133,6 +134,57 @@ export function dezaemonGeometry(
   return { sectorSize: disc.sectorSize, dataOffset: disc.dataOffset };
 }
 
+/** Detection reads a prefix, never the image. Both detectors sharing this need
+ * only the front of a disc: the PVD is at LBA 16, and the root directory
+ * record it names — plus the SYSTEM.CNF lib/dezaemon-psx.ts reads — sits
+ * within the first few thousand sectors of any master, so 16 MiB clears
+ * everything either one looks at. The cap is not for Dezaemon 2, which is
+ * 7.6 MB and fits under it whole. It is for the neighbours: this module and
+ * lib/dezaemon-psx.ts glob the same dev-fixtures/ for the same
+ * .cue/.bin/.iso/.img, and a MODE2/2352 PlayStation rip runs 300-700 MB, so a
+ * cache-missing GET /api/dezaemon-disc used to read one of those end to end
+ * only to decide it is not Dezaemon 2. */
+const DISC_PREFIX_BYTES = 16 * 1024 * 1024;
+
+/** The first `bytes` of a file, or null. Deno.open plus a read loop, because
+ * Deno.readFile on a 700 MB rip is the whole point of this.
+ *
+ * It lives here rather than in lib/dezaemon-psx.ts, which needs it just as
+ * much, because that module already takes parseCueFiles, rewriteCueFiles,
+ * cueForImage, trackModeFor and candidatesKey from this one: importing back
+ * the other way would close a cycle, and a third module for twenty lines buys
+ * nothing over the shared base both already point at. */
+export async function readDiscPrefix(
+  path: string,
+  bytes = DISC_PREFIX_BYTES,
+): Promise<Uint8Array | null> {
+  let file: Deno.FsFile;
+  try {
+    file = await Deno.open(path, { read: true });
+  } catch {
+    return null; /* vanished, or not ours to read */
+  }
+  try {
+    // Sized to the file rather than to the cap, because a fixtures directory
+    // holds cue sheets and 128 KB memory cards next to the images and a flat
+    // 16 MiB allocation per candidate is paid on every one of them.
+    const size = (await file.stat()).size;
+    const want = size > 0 ? Math.min(bytes, size) : bytes;
+    const buf = new Uint8Array(want);
+    let at = 0;
+    while (at < buf.length) {
+      const n = await file.read(buf.subarray(at));
+      if (n === null || n === 0) break; // short file: the reader clamps anyway
+      at += n;
+    }
+    return at > 0 ? buf.subarray(0, at) : null;
+  } catch {
+    return null; /* an I/O error mid-read is "not here", like an absent file */
+  } finally {
+    file.close();
+  }
+}
+
 async function statFile(path: string): Promise<DiscFile | null> {
   try {
     const st = await Deno.stat(path);
@@ -191,7 +243,7 @@ export function candidatesKey(files: DiscFile[]): string {
   return files.map((f) => `${f.path}|${f.size}|${f.mtime}`).join("\n");
 }
 
-/** Detect without the memo: open every candidate once. */
+/** Detect without the memo: read a prefix of every candidate once. */
 export async function detectDezaemonDiscs(
   candidates: DiscFile[],
 ): Promise<DezaemonDisc[]> {
@@ -218,13 +270,9 @@ export async function detectDezaemonDiscs(
       files.push(f);
     }
     if (files.length !== names.length) continue; // a FILE that is not there
-    let image: Uint8Array;
-    try {
-      image = await Deno.readFile(files[0].path);
-    } catch {
-      continue;
-    }
-    if (!dezaemonGeometry(image)) continue;
+    const prefix = await readDiscPrefix(files[0].path);
+    if (!prefix) continue;
+    if (!dezaemonGeometry(prefix)) continue;
     // Renamed to base names: the zip is flat, and the two must agree.
     const renamed = rewriteCueFiles(text, (n) => basename(n));
     discs.push({
@@ -240,13 +288,9 @@ export async function detectDezaemonDiscs(
     if (!hasExtension(img.name, IMAGE_EXTENSIONS) || claimed.has(img.path)) {
       continue;
     }
-    let bytes: Uint8Array;
-    try {
-      bytes = await Deno.readFile(img.path);
-    } catch {
-      continue;
-    }
-    const geometry = dezaemonGeometry(bytes);
+    const prefix = await readDiscPrefix(img.path);
+    if (!prefix) continue;
+    const geometry = dezaemonGeometry(prefix);
     if (!geometry || !trackModeFor(geometry)) continue;
     discs.push({
       cue: cueForImage(img.name, geometry),
