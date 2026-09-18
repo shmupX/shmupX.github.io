@@ -230,6 +230,11 @@ they are written out in full.
   frame of any sprite or atlas into its animations, its projectiles or its
   stage-end backdrop, play it, publish it. `.claude/skills/create-character/` is
   the skill that drives it from a sentence. See **Creating a character** below.
+- `tools/watch-bridge/` — the desktop side of the **shmupX watch**: a Node
+  daemon that reads what was dictated on the wrist, runs it through `claude -p`
+  with the character MCP attached, and writes the sprite back for the wrist to
+  draw. Its own [README](tools/watch-bridge/README.md) has the run steps and the
+  three CLI flags the whole thing hinges on.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
 - `packages/shmup-harbor/` — the other JSR module: everything for **porting**
@@ -929,7 +934,8 @@ anything — and they answer with the sprite as a PNG, which is the shape the
 shmupX watch bridge draws
 (`{object_id, label, png_base64, width_px, height_px,
 note}`, bare base64 with
-no `data:` prefix).
+no `data:` prefix). The daemon that turns a dictated sentence into that PNG is
+`tools/watch-bridge/`.
 
 An object is still exactly a `characters/<id>` record with its art at
 `atlases/<textureKey>`. What is added:
@@ -1013,12 +1019,12 @@ leader-spelled key is a frame the editor cannot find. (`shmupx_create_character`
 now writes them plain for the same reason.)
 
 **Nothing writes without `apply`**, as everywhere in this server — and it
-matters more here. A hands-free session spawns a fresh `claude -p`, and with it
-a fresh MCP server, per utterance, so an edit that was not applied has not
-happened by the next sentence. That is the caller's cue to pass `apply: true`
-once the player has asked for the change, not the server's cue to write on its
-own; `unresolved` still refuses a write, and an apply with nothing changed
-writes nothing.
+matters more here. A hands-free session — `tools/watch-bridge/` — spawns a fresh
+`claude -p`, and with it a fresh MCP server, per utterance, so an edit that was
+not applied has not happened by the next sentence. That is the caller's cue to
+pass `apply: true` once the player has asked for the change, not the server's
+cue to write on its own; `unresolved` still refuses a write, and an apply with
+nothing changed writes nothing.
 
 `.claude/skills/edit-object/SKILL.md` is the skill that drives these, including
 how spoken degrees — _a bit_, _much_, _way_ — become dial values.

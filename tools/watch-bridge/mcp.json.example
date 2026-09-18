@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "shmupx-character": {
+      "command": "deno",
+      "args": [
+        "run",
+        "-A",
+        "--node-modules-dir=none",
+        "/path/to/shmupX.github.io/mcp/server.ts"
+      ],
+      "env": {}
+    }
+  }
+}

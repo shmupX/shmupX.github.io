@@ -1,0 +1,12 @@
+{
+  "name": "shmupx-watch-bridge",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Desktop side of the shmupX watch bridge: RTDB utterances in, sprite previews out.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node bridge.mjs",
+    "test": "node --test"
+  }
+}
