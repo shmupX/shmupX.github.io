@@ -978,9 +978,14 @@ export function setPlusEnemyDefinition(block, stage, definition, bytes) {
  * Whole-slot is the ONLY granularity, and there is no setPlusSongByte. The
  * container is exact — 0xB80 / 0x2E0 = 4, so every song lies wholly inside one
  * checksum entry (songs 0-3 are group 0x0c, 4-7 0x0d, 8-11 0x0e, 12-15 0x0f) —
- * but the interior is open: FORMAT-PSX.md:744-745, "Unresolved", lists the bar
- * header's 4/2/4/4 bits, the tail's 3/5/4/4 and the note table 0x8007E4EC
- * among the untraced, and 2 of each 736 bytes are slack (734 used).
+ * and 2 of each 736 bytes are slack (734 used).
+ *
+ * The interior IS traced now, in src/psx/plus-song.js and FORMAT-PSX.md's
+ * "SOUND, the song format": the bar header's 4/2/4/4 bits are a backing-pattern
+ * index, the tail's 3/5/4/4 are volume, tempo and the two loop bars, and the
+ * note table is DEZA.EXE (SLPS-00335) 0x800F03BA. A whole-slot copy still needs
+ * nothing from that, so this stays byte-level; use decodePlusSongs and
+ * encodePlusSong to build a slot from anything but another slot.
  *
  * @param {Uint8Array} block
  * @param {number} to                        0..15

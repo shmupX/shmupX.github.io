@@ -27,6 +27,10 @@ export * from "./kids.js";
 export * from "./kids-edit.js";
 export * from "./plus.js";
 export * from "./plus-edit.js";
+// The interior of a Dezaemon+ song, which plus.js hands back as raw 0x2E0-byte
+// views. Separate because every address in it is a DEZA.EXE (SLPS-00335) one,
+// where plus.js cites the Select 100 MAIN.EXE build — see its header.
+export * from "./plus-song.js";
 
 /** The two games, by the product code their save file is named after. */
 export const PSX_GAMES = Object.freeze({

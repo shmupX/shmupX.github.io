@@ -12,12 +12,30 @@ Everything here is traced from the two games' own code, off the discs, and then
 checked against the community collection. Split into **confirmed** (the code
 says it and the data agrees), **likely** (one of the two) and **open**.
 
-| Material                   | Where                                                                                                   |
-| -------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `Dezaemon Kids! (Japan)`   | `dev-fixtures/*.bin` + `.cue` — `KIDS.EXE`, `GAMES.CMP` (play engine), `KIDS_DAT.BIN` (a 13 MB archive) |
-| `Dezaemon Plus Select 100` | `dev-fixtures/*.bin` + `.cue` — `MAIN.EXE`, `UPLOAD/SAMP?.BIN`, `STRDATA.`                              |
-| `Dezaemon Kids!/**/*.sav`  | 98 memory-card images, one Kids! game each                                                              |
-| `Dezaemon+/**/*.sav`       | 67 memory-card images, one Dezaemon+ game each                                                          |
+| Material                   | Where                                                                                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Dezaemon Kids! (Japan)`   | `dev-fixtures/Dezaemon Kids!/*.bin` + `.cue` — `KIDS.EXE`, `GAMES.CMP` (play engine), `KIDS_DAT.BIN` (a 13 MB archive)                                  |
+| `Dezaemon Plus (Japan)`    | `dev-fixtures/*.bin` + `.cue` — SLPS-00335, boot `SLPS_003.35`, which loads `DEZA.EXE` at `0x80010000`; also `ALLBGMSE.VH`/`.VB` and `UPLOAD/SAMP?.BIN` |
+| `Dezaemon Plus Select 100` | **not in `dev-fixtures`** — SLPS-01504, `MAIN.EXE`, `STRDATA.`                                                                                          |
+| `Dezaemon Kids!/**/*.sav`  | 98 memory-card images, one Kids! game each                                                                                                              |
+| `Dezaemon+/**/*.sav`       | 67 memory-card images, one Dezaemon+ game each                                                                                                          |
+
+**The Dezaemon+ disc in `dev-fixtures` is SLPS-00335, not Select 100**, and the
+difference matters because the two editions are different builds with different
+addresses (below). `dev-fixtures/Dezaemon+/playstationdisc.chd` extracts
+byte-identical to `dev-fixtures/Dezaemon Plus (Japan).bin` — both 438,589,200
+bytes, `cmp` exit 0 — so there is one Dezaemon+ image here in two containers and
+**no Select 100 image at all**. `UPLOAD/SAMP?.BIN` is on both editions and so is
+here; only `MAIN.EXE` and `STRDATA.` are Select-100-only.
+
+**Nothing in the `MAIN.EXE` column below can be re-checked from anything in
+`dev-fixtures`.** Those addresses were read off a Select 100 image obtained
+outside the repo, as community disc images always are, and a reader with only
+this checkout has to take them on trust or find an image of their own. Treat a
+file's name as no evidence of which edition it is: a disc image named _Select
+100_ turned up during this work that was byte-identical to the SLPS-00335 image
+above. The test is `SYSTEM.CNF` — `BOOT = cdrom:\SLPS_015.04;1` for Select 100,
+`SLPS_003.35` for the original.
 
 All of `dev-fixtures/` is gitignored: the discs and the saves are community
 content and never ship with the repo. Counts below ("all 98", "all 67") are
@@ -387,10 +405,11 @@ which shares only 24 of 949 cells with it.
 # Dezaemon+
 
 Raw — no directory in the file, no compression. The directory is a **74-entry
-scatter/gather table at MAIN.EXE `0x8005A380`**, entries
-`{u32 destRAM, u32 length, u8 flag, u8 kind}`, walked by the save routine
-`0x80035CF8` and the load routine `0x80036334`; its lengths sum to exactly
-0x1E000. `PLUS_TABLE` in `src/psx/plus.js` is that table.
+scatter/gather table**, entries `{u32 destRAM, u32 length, u8 flag, u8 kind}`,
+walked by the save routine `0x80035CF8` and the load routine `0x80036334`; its
+lengths sum to exactly 0x1E000. `PLUS_TABLE` in `src/psx/plus.js` is that table.
+It lives at MAIN.EXE `0x8005A380` and at DEZA.EXE `0x800DE2B8` — see the next
+section before you go looking for either.
 
 ```
 00000-000FF   SC HEADER    5 template pieces
@@ -403,6 +422,50 @@ scatter/gather table at MAIN.EXE `0x8005A380`**, entries
 1DFD0-1DFD7   SETTINGS     8 bytes from four variables
 1DFD8-1DFFF   CHECKSUMS    20 u16, one per flag group
 ```
+
+## Two editions, two sets of addresses (confirmed)
+
+**Dezaemon+ was read here as two different programs, and their addresses do not
+transfer.** The original SLPS-00335 boots `SLPS_003.35`, which loads
+**`DEZA.EXE` at `0x80010000`**; the Select 100 re-release SLPS-01504 boots
+**`MAIN.EXE`**. They implement the same save format — the file is still named
+`BISLPS-00335DEZA` — but they are separate builds, so the same routine sits at a
+different address in each:
+
+| Thing                    | `DEZA.EXE` (SLPS-00335) | `MAIN.EXE` (Select 100) |
+| ------------------------ | ----------------------- | ----------------------- |
+| scatter/gather table     | `0x800DE2B8`            | `0x8005A380`            |
+| song unpacker            | `0x80057760`            | `0x8002E49C`            |
+| melody sequencer         | `0x80057E70`            | `0x8002EBD4`            |
+| instrument permutation   | `0x800F03A8`            | `0x8007E4EC`            |
+| instrument map, flag set | `0x800F03E8`            | `0x8007E52C`            |
+| instrument map, clear    | `0x800F0408`            | `0x8007E54C`            |
+| song note table          | `0x800F03BA`            | `0x8007E4FE`            |
+| song tempo table         | `0x800F0484`            | `0x8007E5C8`            |
+| `STRDATA.` index table   | —                       | `0x8009DC7C`            |
+
+**In this Dezaemon+ part of the document, an address is a `MAIN.EXE` address
+unless it says `DEZA.EXE`.** Everything but the SOUND section below was traced
+in `MAIN.EXE`; the SOUND section was traced in `DEZA.EXE` and labels itself
+throughout. For `DEZA.EXE`, `gp = 0x8014E140`, set at `0x80013B40` — without
+that the `N(gp)` globals the sound code uses do not resolve.
+
+**The sound-table block corresponds by a constant `-0x71EBC`, and the whole
+block was checked byte for byte**: the permutation, its inverse (`0x800F03C8` →
+`0x8007E50C`), both instrument maps, the note table's 200 addressed bytes and
+the tempo table are byte-identical between the two builds at that offset. The
+two ends are anchored by their cross-references rather than by the offset alone
+— `0x8007E4EC` is loaded only from `0x8002E4C8`, inside MAIN.EXE's unpacker,
+exactly as `0x800F03A8` is loaded from `0x80057864` inside DEZA.EXE's; and
+`0x8007E4FE` is loaded from `0x8002ECB0`, inside MAIN.EXE's melody sequencer
+`0x8002EBD4`, exactly as `0x800F03BA` is loaded from `0x80057F5C` inside
+DEZA.EXE's `0x80057E70`.
+
+**Earlier notes gave `0x8007E4EC` as the note table. That was wrong** — it is
+the instrument permutation. The note base sits `0x12` bytes further on in both
+builds, inside the permutation's own 32 bytes, which is how the two got
+confused: the note table is a base for `base + code * 2` arithmetic and only
+codes 55 and up address anything of its own (below).
 
 ## Checksums (confirmed — `plusChecksums`)
 
@@ -578,9 +641,8 @@ does not prove it: 24 saves by people who never had a sixth stage to fill would
 look exactly the same.
 
 **SOUND** is 0x2E00 = **16 songs of 0x2E0 bytes**, bit-packed rather than a
-byte-per-step sequencer: MAIN.EXE `0x8002E49C` unpacks a song as 16 bars of a
-14-bit header and 32 steps of 11 bits (5 + 6), then a 16-bit tail — 734 bytes of
-the 736 available.
+byte-per-step sequencer. BGM ASSIGNMENT's numbers 0-15 name these sixteen. The
+whole format is decoded in the next section.
 
 **HIGH SCORE** is two tables of ten 16-byte entries: `u32le` score, the 0-based
 stage reached, three always-zero bytes, an 8-character name. A stage equal to
@@ -595,6 +657,272 @@ menu BGM track (0-3 = `BGM01..04.SEQ`, higher = off), a mono/stereo flag, and
 then **four button bitmasks** for the key configuration — `0x01` circle, `0x02`
 cross, `0x04` triangle, `0x08` square, `0x10` L1, `0x20` L2, `0x40` R1, `0x80`
 R2, not indices. The factory value is `00 00 00 00 02 01 08 02`.
+
+## SOUND, the song format (confirmed — `src/psx/plus-song.js`)
+
+**Every RAM address in this section is a `DEZA.EXE` (SLPS-00335) address** — the
+`MAIN.EXE` build of Select 100 has the same code somewhere else, and the
+correspondences that are known are the table above. The few numbers here that
+are _not_ RAM are offsets into the 0x1E000 save block and say so.
+`gp = 0x8014E140`, set at `0x80013B40`, is what makes the `N(gp)` globals below
+resolve.
+
+The save's `0x1B090` holds sixteen songs of 0x2E0 = 736 bytes, **734 of which
+carry bits**. A song is one bit stream read **MSB first**, and it unpacks into a
+flat 1,092-byte buffer at `0x801F05F4`: 16 bars of 68 bytes, then 4 tail bytes.
+Six routines carry the whole format:
+
+| Routine      | What it is                                                           |
+| ------------ | -------------------------------------------------------------------- |
+| `0x80057650` | the bit reader — MSB first out of a one-byte refilled register       |
+| `0x800576CC` | the same loop for the 6-bit note field, with its own tail arithmetic |
+| `0x80057760` | the unpacker: bit stream → the 1,092-byte buffer                     |
+| `0x80057B04` | the packer, the way back                                             |
+| `0x80057E70` | the melody sequencer, called once per step                           |
+| `0x80058130` | the accompaniment player, called twice per step                      |
+
+`src/psx/plus-song.js` is those routines transcribed, each export carrying the
+address it was read from.
+
+### The bit stream
+
+Per bar, in order: a **4/2/4/4 header** (`0x800577A0`..`0x8005781C`), then 32
+cells of **5 + 6** bits. After the sixteenth bar, a **3/5/4/4 tail**
+(`0x800578A0`..`0x80057918`). That is 16 × (14 + 32 × 11) + 16 = 5,872 bits =
+734 bytes, which is why 736 bytes hold a song with two to spare.
+
+### The 32 cells are two 16-step voices, not 32 steps
+
+The earlier note here read a bar as "32 steps of 11 bits". That is true of the
+bits and wrong about the music. The melody sequencer `0x80057E70` addresses a
+cell as
+
+```
+offset = bar * 68 + 4 + step * 2 + voice * 32     note at +1, instrument at +0
+```
+
+— its loop at `0x80058020` runs `s3 < 2`, so there are **two voices**;
+`0x80057ECC` takes the step as `pos & 0xF`, so each is **16 steps**; and
+`0x80057EE0` is what puts voice 1 thirty-two bytes further into the bar. The bar
+stride 68 is `bar * (16 + 1) * 4` at `0x80057EBC`.
+
+**Of the 5 + 6 split, the 6-bit field is the note and it comes second.** This is
+the one thing worth pinning hardest, because reversing the split still produces
+plausible-looking output — a stream of small numbers either way — and only the
+sequencer's `+1` / `+0` says which is which.
+
+### A cell
+
+The **5-bit field** passes through the permutation at `0x800F03A8` to become the
+editor's instrument number, and the packer `0x80057B04` applies the inverse at
+`0x800F03C8` on the way back in, so the byte in the unpacked buffer is the
+editor's numbering and the raw bits are the driver's:
+
+```
+0  1  2  3  4  5  6 16  8  9 10 11 12 13 14 15
+7 17 18 19 20 21 22 23 31 24 28 27 25 29 26 30
+```
+
+At play time the instrument byte goes through one more map — `0x800F0408` with
+the flag at `0x8014E844` clear, `0x800F03E8` with it set, the second being the
+inverse permutation again, so with the flag set the driver program is the raw
+5-bit field. **Voice 0 plays program `map[i] + 1` (`0x80057FE8`) and voice 1
+`map[i] + 91` (`0x80057FDC`)**: two banks, not two channels of one.
+
+The **6-bit field** becomes a note byte through the tail of reader `0x800576CC`
+— `sltiu 62`, then `+7`, then `+55`, so `v + 55` and `v + 62` once `v >= 62`.
+Codes 0..61 become 55..116 and the top two become **`0x7C` = 124, key off
+(`0x80057EF8`)** and **`0x7D` = 125, tie — do nothing, let the note ring
+(`0x80057F18`)**. The extra +7 exists to lift those two control codes clear of
+the note range.
+
+**There is no duration field anywhere in the format.** A note rings until the
+next note byte, the next key off, or the end of the song; tie steps are what
+extend it, and the sequencer extends a note by simply skipping the step.
+
+### The note table
+
+`0x800F03BA`, read as a `u16` at `base + noteByte * 2`. **The high byte is
+SsUtKeyOn's `note` argument** and the low byte its `fine`, always zero. What
+pins that is the accompaniment path `0x800582E8`, which forms `a1 = note << 8`;
+the two libsnd wrappers are `0x800C79F4`, which unpacks two words into
+`SsUtKeyOn(vabId, prog, note, fine, volL, volR)`, and `0x800D0864` for the
+matching key-off.
+
+**Only codes 55..99 have entries** — the same range the sequencer's gate
+`0x80057F20` admits (`note - 55 < 45`) — and the holes inside it are the codes
+whose low nibble would be 12..15, which leaves **33 live codes**. The closed
+form
+
+```
+key = (b >> 4) * 12 + (b & 15) + 12
+```
+
+reproduces all 33 non-zero entries exactly: a note byte is a key packed as an
+octave nibble and a semitone nibble, and the output runs 55..87. **`key` is a
+number in the driver's own key space.** Every absolute key quoted from here on
+is in that space; whether it is concert pitch — whether 60 is middle C — is
+open, and is the last subsection of this section.
+
+`0x800F03BA` is a base for that arithmetic, not the start of the data — the
+entries actually addressed begin at `0x800F0428` (code 55) and end at
+`0x800F0481` (code 99). The sound tables run from `0x800F03A8` in one block:
+permutation, inverse, the two instrument maps, the note entries, then the tempo
+table at `0x800F0484`, which is a check on each of the four 32-entry widths
+(`0x800F03A8 + 4 * 0x20 = 0x800F0428`, and `0x800F0484 + 0x20 = 0x800F04A4`, the
+volume table). The one seam that is not flush is the note entries' own: they end
+at `0x800F0482` exclusive, and `0x800F0482`..`0x800F0483` hold `00 00` — a zero
+entry for code 100 — before the tempo table begins.
+
+### Tempo and volume
+
+**TEMPO** is the 32-entry table at `0x800F0484`, indexed by the tail's 5-bit
+field:
+
+```
+92 82 73 67 61 56 52 49 46 43 41 38 36 35 33 32
+31 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16
+```
+
+Thirty-two byte entries from `0x800F0484` run exactly up to the volume table at
+`0x800F04A4`, which is the check on the width. The value is a **step period in
+units of 4 per frame**: `0x80058F20` adds 4 to a counter each frame and
+`0x80058FD8` fires a step when it passes the period. A step is a sixteenth, so
+at 60 Hz the tempo is **3600 / period BPM** — 39 at the slow end, 225 at the
+fast one. The 3600 is `60 s × 60 fps × 4 ticks-per-frame / 4 steps-per-beat`;
+`plusSongSettings` derives it from those constants rather than writing it out.
+
+**VOLUME** is the 8-entry table at `0x800F04A4`, indexed by the tail's 3-bit
+field: `[0, 8, 16, 24, 32, 40, 48, 56]`, a level on the driver's 0..127 scale,
+which `0x800C73A8` multiplies by 32767/127 into the master-volume command (code
+6).
+
+### The tail
+
+The four tail fields, named from `0x800583E4` and the tick at `0x80058F18`
+(`0x80058EC0`..`0x80058F14` is a second copy of `0x800583E4`'s store-and-set-
+volume block, and it ends `j 0x80059010` — it jumps past the tick, so it is not
+the routine to read this off):
+
+| Field | Bits | Meaning                                                                       |
+| ----- | ---- | ----------------------------------------------------------------------------- |
+| 0     | 3    | volume index into `0x800F04A4`                                                |
+| 1     | 5    | tempo index into `0x800F0484`                                                 |
+| 2     | 4    | loop bar (`gp+1652`) — the song resumes at step `loopBar * 16`                |
+| 3     | 4    | last bar (`gp+912`) — it loops after this bar, so it plays `lastBar + 1` bars |
+
+The compare against `lastBar + 1` is `bne v1,v0,0x80058FCC` at `0x80058FB4`, and
+the reset to `loopBar * 16` is `sll v0,v0,4` at `0x80058FC4` followed by
+`sw v0,452(gp)`.
+
+### The bar header is a backing pattern
+
+The four header fields are not melody at all: they pick a backing pattern out of
+a **92,160-byte ROM at `0x800F4BAC`** and transpose it. The accompaniment player
+`0x80058130` is what says so, and the clamps are at `0x800580C4`:
+
+| Field | Bits | Meaning                                                                                                       |
+| ----- | ---- | ------------------------------------------------------------------------------------------------------------- |
+| 0     | 4    | pattern A, `< 9` (`0x800580CC` — 9 or more reads as 0)                                                        |
+| 1     | 2    | pattern B, `< 4` (`0x800580E4`)                                                                               |
+| 2     | 4    | pattern C, `< 10` (`0x800580FC`), then `>> 1` (`0x80058198`); the low bit gates an extra track (`0x8005820C`) |
+| 3     | 4    | transpose, added to every ROM note (`0x80058270`)                                                             |
+
+```
+romOffset = patternA * 10240 + patternB * 2560 + (patternC >> 1) * 512
+```
+
+(`0x80058174`..`0x800581A0`). 9 × 10240 is 92,160 exactly, so the three strides
+account for the whole ROM: 9 × 4 × 5 patterns of 512 bytes, each pattern 8
+tracks × 16 steps × 2 half-steps × (instrument, note).
+
+### The backing tracks are octave-folded
+
+After the transpose, every ROM note is folded through three per-track `u32`
+tables (`0x80058278`..`0x800582D8`):
+
+| Table | Address      | Tracks 0..4         |
+| ----- | ------------ | ------------------- |
+| LO    | `0x800F0504` | 56, 32, 44, 44, 15  |
+| MID   | `0x800F0518` | 81, 57, 69, 69, 255 |
+| HI    | `0x800F052C` | 92, 68, 80, 80, 255 |
+
+The rule, read off the branches and not tidied:
+
+```
+if (note > HI[track])                              note -= 12;
+else if (LO[track] < note && note < MID[track])    note -= 12;
+otherwise                                          unchanged
+```
+
+That is **not** a fold into a register: a note between MID and HI is left alone
+while one between LO and MID drops an octave, so the two tests are not two
+halves of one range test. Track 4's row is `15 / 255 / 255`, which no note byte
+can exceed, so for that track the first test never fires and the second fires
+for anything above 15. The tables are five entries long while the pattern shape
+above counts eight track slots, and the reason is `slti v0,s3,5` at
+`0x80058258`, whose `beq` jumps to `0x800582DC`: past the transpose at
+`0x80058270` **and** past the whole fold. **Tracks 5-7 get neither.** Only five
+tracks are pitched, so five entries is the whole of it — not three tracks
+unaccounted for. The three tables are `u32` and laid end to end — MID starts
+`0x14` after LO, which is exactly five words — so the gate is load-bearing
+rather than defensive: without it the read for track 5 would walk off LO into
+MID and come back with 81. The fold belongs to the backing: it sits inside the
+accompaniment player, between its transpose at `0x80058270` and its key-on at
+`0x800582E8`, and the melody sequencer's own range (`0x80057E70`..`0x80058130`)
+has nothing like it.
+
+### What the corpus says
+
+Two independent checks, neither of them from the code:
+
+- Across **the 1,072 songs in the 67 Dezaemon+ saves** (949 of which carry a
+  note at all; no slot is all-zero), the only note bytes that occur are those 33
+  table codes plus 124 and 125. Not one table hole, not one value above 99 —
+  which is what a decode that had the 5 + 6 split backwards, or the `+55` wrong,
+  would not produce. **This is the strongest evidence the layout is right**,
+  because it is the one check real data can falsify: a reversed 5 + 6 split, a
+  moved note base and a bar header widened to 15 bits each make it fail.
+- The disc's `ALLBGMSE.VH` multisamples melody programs **1-34** and **91-124**
+  over exactly **keys 55..87**, the table's output range. Those are precisely
+  the two program ranges the `+1` / `+91` voice bias lands on over a 0..33
+  instrument map, which is the cross-check that the bias names two 34-program
+  banks rather than an offset into one.
+
+### Still open: whether the key numbers are concert-absolute
+
+**Whether a Dezaemon+ key number is absolute pitch — whether key 60 really is
+middle C — is not settled here.** That depends on the recorded pitch of the VAGs
+against each tone's centre note, which has not been measured. What is _not_ in
+doubt is the `+12` in the closed form: the table's own high bytes are 55 for
+code 55 and 60 for code `0x40`, so the constant is a measurement. The open
+question is only whether the driver's key space is concert-absolute.
+
+The key space is at least internally consistent, program by program. The melody
+side is the `1-34` / `91-124` check above. On the backing side, the pattern ROM
+names driver programs **35-43 and 125** (plus 0, which occurs only in cells
+whose note is already key-off or tie), and the accompaniment applies no bias —
+the ROM byte goes to `SsUtKeyOn` as the program directly (`0x8005824C` loads it,
+`0x800582F8` passes it). Against `ALLBGMSE.VH`, **every one of those ten
+programs is multisampled over a key range that contains the notes the ROM
+actually plays under it**, untransposed. Three are exact rather than merely
+containing: 35 is 4..51 against ROM notes 4..51, 40 is 4..105 against 4..105,
+and — sharpest of the three, because it is the narrowest — 125 appears on track
+5 only, with notes 100..107, against a VH program of exactly eight tones
+spanning exactly 100..107. The other seven are strict containments. A wrong
+anchor shifts every note by the same constant; it does not distort anything, and
+it changes nothing above. `plusNoteToMidi()` hedges the same way in its comment.
+
+### Reading a save
+
+The sixteen songs start at the save's `0x1B090`, 0x2E0 apart (`decodePlusSongs`,
+which takes a 0x1E000 save block, not a whole card), and BGM ASSIGNMENT's
+sixteen bytes at the save's `0x1B080` say which plays where. `encodePlusSong()`
+is the packer, and re-packing every decode lands on the original bytes for all
+1,072 songs in the collection — which says the two are mutual inverses and that
+the slot's two slack bytes are always zero. It does _not_ say the bit layout is
+right: a round trip is symmetric, so any re-slicing applied to both sides
+survives it. The note-byte check above is what the layout rests on.
 
 ## ENEMY DATA, field by field (confirmed)
 
@@ -710,13 +1038,17 @@ alias the caller's bytes (memcard.js:209, :218, :222).
 
 ## Select 100 (confirmed)
 
-The disc read here is _Dezaemon Plus Select 100_ (SLPS-01504), a re-release that
-bundles 100 selected user games. Its `STRDATA.` holds **106 headerless save
-blocks** (the `SC` frame stripped, the high-score and option tail zeroed)
-interleaved with 444 TIM readme pages, indexed by an 88-byte-per-entry table at
-MAIN.EXE `0x8009DC7C`. All 106 parse cleanly as Dezaemon+ saves once an `SC`
-frame is put back. The save format itself is SLPS-00335's: the file is still
-named `BISLPS-00335DEZA`.
+_Dezaemon Plus Select 100_ (SLPS-01504) is a **second, different disc**: a
+re-release that bundles 100 selected user games, and the `MAIN.EXE` build every
+unlabelled address in this part belongs to. **It is not in `dev-fixtures`** —
+the Dezaemon+ image there is SLPS-00335 in two containers (see the material
+table at the top), and these notes were read off a Select 100 image obtained
+outside the repo, so nothing in this section can be re-checked from this
+checkout alone. Its `STRDATA.` holds **106 headerless save blocks** (the `SC`
+frame stripped, the high-score and option tail zeroed) interleaved with 444 TIM
+readme pages, indexed by an 88-byte-per-entry table at MAIN.EXE `0x8009DC7C`.
+All 106 parse cleanly as Dezaemon+ saves once an `SC` frame is put back. The
+save format itself is SLPS-00335's: the file is still named `BISLPS-00335DEZA`.
 
 ---
 
@@ -757,8 +1089,11 @@ named `BISLPS-00335DEZA`.
 - **Dezaemon+ graphics pages**: which pair of the program's four tile buffers a
   save occupies is edition-dependent, and the reason the two populations differ
   is inferred from the two load paths rather than traced.
-- **Dezaemon+ song fields**: the bar header's 4/2/4/4 bits and the tail's
-  3/5/4/4, and the note table `0x8007E4EC`.
+- **Dezaemon+ octave anchor**: whether a song's key numbers are concert-absolute
+  — whether key 60 is middle C. The song format itself is decoded (SOUND,
+  above); what is open is one constant, the pitch the VAGs are actually recorded
+  at against each tone's centre note. Getting it wrong transposes a
+  reconstruction as a whole and distorts nothing inside it.
 - **Dezaemon+ high-score tables**: which of the two the game writes is a RAM
   flag no save carries, so the A/B ownership above rests on which one the
   community saves actually vary (53 of 67 for B against 8 for A).
@@ -802,15 +1137,16 @@ seconds after the game finished writing it.
 
 ## Method
 
-The layouts above came from the two programs: `mipsdis.mjs` over `KIDS.EXE`, its
-overlays (`GAMES.bin` at 0x801131A0, `GRAPH.bin`, `PELON.bin` at 0x80176820,
-`OVK1..9.bin` at 0x80101CE0) and `MAIN.EXE`, following the save and load
-routines out to every reader of every region, then checking each stride and mask
-against the whole community collection. Where code and data could disagree they
-were made to argue: the Dezaemon+ region table is confirmed by a checksum that
-reproduces 67 of 67 saves and 0 of 67 under a perturbed table; the Kids! map
-geometry is confirmed by 530,520 chips none of which straddles a CG row, and by
-the rendered result.
+The layouts above came from the games' own programs: `mipsdis.mjs` over
+`KIDS.EXE`, its overlays (`GAMES.bin` at 0x801131A0, `GRAPH.bin`, `PELON.bin` at
+0x80176820, `OVK1..9.bin` at 0x80101CE0), Select 100's `MAIN.EXE` and — for the
+song format, and only that — SLPS-00335's `DEZA.EXE`, following the save and
+load routines out to every reader of every region, then checking each stride and
+mask against the whole community collection. Where code and data could disagree
+they were made to argue: the Dezaemon+ region table is confirmed by a checksum
+that reproduces 67 of 67 saves and 0 of 67 under a perturbed table; the Kids!
+map geometry is confirmed by 530,520 chips none of which straddles a CG row, and
+by the rendered result.
 
 The probe writes what a save holds:
 `deno task psx:probe all <sav> --out build/psx/<name>/` (report, icon, the
