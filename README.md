@@ -230,11 +230,25 @@ they are written out in full.
   frame of any sprite or atlas into its animations, its projectiles or its
   stage-end backdrop, play it, publish it. `.claude/skills/create-character/` is
   the skill that drives it from a sentence. See **Creating a character** below.
-- `tools/watch-bridge/` — the desktop side of the **shmupX watch**: a Node
-  daemon that reads what was dictated on the wrist, runs it through `claude -p`
-  with the character MCP attached, and writes the sprite back for the wrist to
-  draw. Its own [README](tools/watch-bridge/README.md) has the run steps and the
-  three CLI flags the whole thing hinges on.
+- `tools/shmupx-watch/` — the **shmupX watch** itself: a Wear OS app (Kotlin,
+  Compose for Wear OS) that is two things on one wrist. A **game launcher** —
+  browse the catalog, send a game to the paired desktop, drive it from there —
+  built from the Claude Design handoff, and the older **agent screens** that
+  dictate a sprite edit and show the preview. Its own
+  [README](tools/shmupx-watch/README.md) has the screen map, the launch
+  protocol, and which of the design's gestures a Pixel Watch can actually do
+  (three of the five cannot).
+- `tools/watch-bridge/` — one desktop side of that watch: a Node daemon that
+  reads what was dictated on the wrist, runs it through `claude -p` with the
+  character MCP attached, and writes the sprite back for the wrist to draw. Its
+  own [README](tools/watch-bridge/README.md) has the run steps and the three CLI
+  flags the whole thing hinges on.
+- `static/watch-launch.js` — the _other_ desktop side: the launcher page's half
+  of the watch protocol. A game picked on the wrist is started by
+  `svelte-src/Dashboard.svelte`, not by the daemon, because three of the six
+  kinds (arcade, SFC, PS2) live in that page's own Cache Storage and IndexedDB
+  and cannot be started from a shell at all. The rules that decide whether to
+  act on an incoming record are pure and tested in `tests/watch_launch_test.ts`.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
 - `packages/shmup-harbor/` — the other JSR module: everything for **porting**

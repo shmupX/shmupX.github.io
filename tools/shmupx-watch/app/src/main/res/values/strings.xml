@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">shmupX</string>
+
+    <string name="nav_agents">Agents</string>
+    <string name="nav_preview">Preview</string>
+
+    <string name="speak_prompt">Describe the change</string>
+    <string name="speak">Speak</string>
+    <string name="listening">Listening</string>
+    <string name="no_recognizer">No dictation available on this watch</string>
+
+    <string name="session_channel_name">Editing session</string>
+    <string name="session_channel_desc">Keeps the current shmupX session reachable from the watch face</string>
+    <string name="session_title">shmupX session</string>
+    <string name="session_stop">Stop session</string>
+
+    <string name="agents_empty">No agents yet. Start a session on the desktop.</string>
+    <string name="preview_empty">No object selected. Say what you want to build.</string>
+    <string name="reconnecting">Reconnecting</string>
+    <string name="offline">Bridge offline</string>
+    <string name="fake_bridge">Demo data — set SHMUPX_RTDB_URL to go live</string>
+</resources>

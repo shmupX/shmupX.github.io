@@ -15,9 +15,17 @@ sprite  <─────────────────   /preview     <─
 states  <─────────────────   /agents      <────────────────────┘
 ```
 
-The watch app itself (a Wear OS project, `shmupx-watch`) lives outside this
-repo; this directory is its `daemon/`, kept here because everything it talks to
-— the four `shmupx_*_object` tools in `mcp/` — is here.
+The watch app itself is now in this repo too, at
+[`tools/shmupx-watch/`](../shmupx-watch/README.md); this directory is its
+`daemon/`, kept beside it because everything it talks to — the four
+`shmupx_*_object` tools in `mcp/` — is here as well.
+
+Note that this daemon is only **one** of the watch's two desktop halves, and the
+smaller one. It handles the sprite-editing side (`/utterances`, `/preview`,
+`/agents`). The launcher side — a game picked on the wrist actually starting —
+is handled by the launcher page through `static/watch-launch.js`, because an
+arcade board and a PS2 build live in that page's own storage and cannot be
+started from a shell.
 
 ## Run it
 

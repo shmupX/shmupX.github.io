@@ -1,0 +1,23 @@
+# Copy to local.properties and fill in. Never commit local.properties.
+sdk.dir=/Users/you/Library/Android/sdk
+
+# The desktop this watch drives. Leave SHMUPX_RTDB_URL blank to run against the
+# built-in fake bridge instead — every screen works, and a launch answers
+# itself, so the whole app can be walked on an emulator with nothing set up.
+SHMUPX_RTDB_URL=https://your-project-default-rtdb.firebaseio.com
+SHMUPX_RTDB_AUTH=
+
+# The BUILD CODE the desktop shows in Settings › BUILD SERVER. Eight characters
+# from ABCDEFGHJKLMNPQRSTUVWXYZ23456789 — no I, O, 0 or 1, because the code gets
+# read off a screen and typed.
+#
+# UNHYPHENATED. It is displayed as ABCD-EFGH and stored as ABCDEFGH, and the
+# hyphen is for reading only: it is part of a database path, so a code with one
+# in it addresses a real node that no desktop is watching. Nothing reports an
+# error — the watch simply never meets the desktop. (This file used to show a
+# hyphenated example, which is exactly that bug.)
+SHMUPX_BUILDER_CODE=ABCDEFGH
+
+# Where the games catalog is served from. The default is the deployed origin;
+# point it at a machine running `deno task dev` to use a local catalog.
+SHMUPX_CATALOG_ORIGIN=https://codemonkey.games

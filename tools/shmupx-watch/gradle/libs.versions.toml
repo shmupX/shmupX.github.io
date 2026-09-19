@@ -1,0 +1,66 @@
+[versions]
+# Bump these with Android Studio's AGP Upgrade Assistant and "Check for
+# updates" on the version catalog. See README > Versions.
+agp = "8.7.3"
+kotlin = "2.1.0"
+ksp = "2.1.0-1.0.29"
+coreKtx = "1.15.0"
+lifecycle = "2.8.7"
+activityCompose = "1.9.3"
+composeBom = "2024.12.01"
+# Wear Compose unified its version line at 1.5.0: foundation, material3,
+# navigation, material and material-core all ship as ONE number now, so these
+# two keys must stay equal. 1.6.2 is the newest stable.
+#
+# They used to read 1.4.1 / 1.0.0-alpha28, which was a fiction: material3
+# alpha28's module metadata requires foundation 1.5.0-alpha05, and Gradle
+# resolves the max — so 1.4.1 never reached the classpath, and the app was
+# really being built against three separate alphas (wear foundation
+# 1.5.0-alpha05, wear m3 1.0.0-alpha28, compose 1.8.0-alpha05, the last pulled
+# up past composeBom by m3's animation-graphics). Check with
+# `./gradlew :app:dependencies --configuration debugRuntimeClasspath` before
+# believing any pin in this file.
+wearCompose = "1.6.2"
+wearComposeM3 = "1.6.2"
+wear = "1.3.0"
+wearOngoing = "1.0.0"
+okhttp = "4.12.0"
+kotlinxSerialization = "1.7.3"
+kotlinxCoroutines = "1.9.0"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+
+# Compose BOM governs the platform-agnostic Compose artifacts (ui, runtime, animation).
+# The Wear artifacts below are versioned separately — see README > Wear vs mobile Compose.
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+
+# Wear-specific Compose. Note these are NOT the mobile Material 3 artifacts.
+androidx-wear-compose-material3 = { group = "androidx.wear.compose", name = "compose-material3", version.ref = "wearComposeM3" }
+androidx-wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wearCompose" }
+androidx-wear-compose-navigation = { group = "androidx.wear.compose", name = "compose-navigation", version.ref = "wearCompose" }
+androidx-wear-compose-ui-tooling = { group = "androidx.wear.compose", name = "compose-ui-tooling", version.ref = "wearCompose" }
+
+# AmbientLifecycleObserver lives here.
+androidx-wear = { group = "androidx.wear", name = "wear", version.ref = "wear" }
+# OngoingActivity / Status live here.
+androidx-wear-ongoing = { group = "androidx.wear", name = "wear-ongoing", version.ref = "wearOngoing" }
+
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

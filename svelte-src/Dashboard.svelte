@@ -106,6 +106,16 @@
     ps2DiscArtifact,
     watchJobs as watchExportJobs,
   } from '../static/export-queue.js';
+  // The watch's half of the same pairing: a game picked on the wrist starts
+  // here. Shares the BUILD CODE with the export queue above but a different
+  // subtree — see static/watch-launch.js for why this page, and not the
+  // daemon in tools/watch-bridge/, is what listens.
+  import {
+    publishPlaying,
+    publishShelves,
+    sameOriginPath,
+    watchLaunches,
+  } from '../static/watch-launch.js';
 
   const MAIN_MENU = [
     { id: 'games',    label: 'Games',    tag: '01 / disc.io',  num: '0x01' },
@@ -1341,6 +1351,238 @@
     refreshBuilder(true);
     builderTimer = setInterval(() => { if (builder) refreshBuilder(false); }, 15000);
   }
+
+  // ── The watch ─────────────────────────────────────────────────────────────
+
+  let stopWatchChannel = null;
+  let watchCode = null;
+
+  // The code arrives asynchronously from /api/export-worker and changes if it
+  // is regenerated in Settings, so the subscription follows it rather than
+  // being made once at mount. On the hosted origin `builder` stays null and
+  // nothing here ever runs — there is no desktop to launch anything on.
+  $effect(() => {
+    const code = builder?.code || null;
+    if (code === watchCode) return;
+    initWatchChannel(code);
+  });
+
+  // Tell the watch what this page is doing, in both directions.
+  //
+  // Ending matters because otherwise the wrist sits on NOW PLAYING for
+  // something that stopped minutes ago. STARTING matters just as much and was
+  // the subtler half: a game begun at the desktop's own keyboard used to leave
+  // /playing on "idle", so the watch offered no controls for it. And a
+  // watch-initiated launch that REPLACED a running game saw closeGame() flip
+  // gameOn false and publish "idle" over the record the launch had only just
+  // written — `watchLaunchPending` covers that window.
+  let watchLaunchPending = false;
+  $effect(() => {
+    const on = gameOn;
+    if (!watchCode) return;
+    if (on) {
+      watchLaunchPending = false;
+      publishPlaying(watchCode, { state: 'playing', volume: Math.round(volBgm / 10) });
+    } else if (!watchLaunchPending) {
+      publishPlaying(watchCode, { state: 'idle' }, { replace: true });
+    }
+  });
+
+  /**
+   * Start a game because a watch asked for it.
+   *
+   * Every kind is resolved against a catalog this page already holds rather
+   * than by building a path out of what arrived: the database is open-write, so
+   * `game_id` is a key to look up, never a string to interpolate. A request
+   * naming something we do not have is dropped with a toast, which is also what
+   * happens when a game was uninstalled since the watch last refreshed.
+   */
+  function dispatchLaunch(req) {
+    // Resolve FIRST, tear down second. Closing the running game before knowing
+    // whether the request can be honoured means a watch asking for something
+    // this desktop does not have — a game uninstalled since the wrist last
+    // refreshed — kills what you were playing and puts nothing in its place.
+    const target = resolveLaunch(req);
+    if (!target) {
+      showToast('Watch asked for ' + describeLaunch(req) + ', which is not installed here.');
+      publishPlaying(watchCode, { state: 'error', id: req.id, detail: 'not installed here' });
+      return;
+    }
+
+    // One at a time. The arcade and SFC paths hand a File to an emulator and
+    // are singletons; starting a second on top of the first loses the first.
+    if (gameOn) {
+      if (req.replace === false) return;
+      // closeGame() flips gameOn false, and the effect that watches it would
+      // publish "idle" over the record this launch is about to write.
+      watchLaunchPending = true;
+      closeGame();
+    }
+
+    // A launch is a fresh record, so it replaces rather than merges — the
+    // previous game's title must not survive into this one.
+    publishPlaying(watchCode, {
+      state: 'playing',
+      detail: target.title,
+      id: req.id,
+      kind: req.kind,
+      game_id: req.game_id || req.shelf_id || req.slug || null,
+      title: target.title,
+      started_at: Date.now(),
+      volume: Math.round(volBgm / 10),
+    }, { replace: true });
+
+    target.run();
+  }
+
+  /** A human name for a request we could not honour. */
+  function describeLaunch(req) {
+    return req.game_id || req.shelf_id || req.slug || req.url || req.kind || 'a game';
+  }
+
+  /**
+   * Turn a launch request into `{ title, run }`, or null when this desktop has
+   * nothing to run for it.
+   *
+   * It resolves; it does not start anything. Every kind is matched against a
+   * catalog this page already holds rather than by building a path out of what
+   * arrived — the database is open-write, so `game_id` is a key to look up,
+   * never a string to interpolate.
+   */
+  function resolveLaunch(req) {
+    switch (req.kind) {
+      case 'game': {
+        const item = GAMES.find((g) => g.id === req.game_id);
+        if (!item) return null;
+        const url = sameOriginPath(req.url, window.location.origin) || undefined;
+        if (!(url || item.url)) return null;
+        return { title: item.title || item.name || item.id, run: () => launchGame(item.id, url) };
+      }
+      case 'eshop-web': {
+        const g = eshopRows.find((r) => r.id === req.game_id);
+        if (!g || !eshopInstalled[g.id]) return null;
+        return { title: g.title || g.name || g.id, run: () => launchEshopWeb(g) };
+      }
+      case 'arcade': {
+        const record = arcadeLocal.find((r) => r.id === req.game_id) || null;
+        if (!record) return null;
+        return { title: record.title || record.name || record.id, run: () => launchArcadeBoard(record) };
+      }
+      case 'deza': {
+        const shelfId = req.shelf_id || req.slug;
+        if (!shelfId) return null;
+        // A local shelf export takes the editor's &playExport=<id> hand-off; a
+        // cloud .sav takes &play=<slug>. Shelf rows carry the id as `shelfId`.
+        const local = dezaShelfRows.find((r) => r.shelfId === shelfId || r.id === shelfId);
+        if (local) {
+          const id = local.shelfId || local.id || shelfId;
+          return { title: local.title || shelfId, run: () => launchDezaShelfGame(id) };
+        }
+        return {
+          title: shelfId,
+          run: () => launchGame('shmupx', '/editor/?game=2028-ai&play=' + encodeURIComponent(shelfId)),
+        };
+      }
+      case 'snes': {
+        const record = snesLocal.find((r) => r.id === req.shelf_id) || null;
+        if (!record) return null;
+        return { title: record.title || record.id, run: () => launchLocalSnes(record) };
+      }
+      case 'ps2': {
+        const record = ps2Local.find((r) => r.id === req.shelf_id) || null;
+        if (!record) return null;
+        return {
+          title: record.title || record.id,
+          run: () => {
+            // The PS2 player takes over the tab, so this page — and with it the
+            // watch channel — is about to stop existing. Say so before going,
+            // or the wrist sits on NOW PLAYING for a launcher that is gone.
+            publishPlaying(
+              watchCode,
+              { state: 'idle', detail: 'the PS2 player took over the desktop' },
+              { replace: true },
+            );
+            launchLocalPs2(record);
+          },
+        };
+      }
+      case 'url': {
+        // The one field that is a capability rather than a name, so it is
+        // clamped to this origin before it goes anywhere near the frame.
+        const path = sameOriginPath(req.url, window.location.origin);
+        if (!path) return null;
+        return {
+          title: path,
+          run: () => {
+            chromeDismissed = false;
+            frameUrl = null;
+            gameSrc = path;
+            setTimeout(() => { gameOn = true; }, 30);
+          },
+        };
+      }
+      default:
+        return null;
+    }
+  }
+
+
+  /** Pause, resume, stop or set the volume of whatever the watch started. */
+  function dispatchControl(cmd) {
+    switch (cmd.action) {
+      case 'pause':
+      case 'resume': {
+        if (!gameOn) return;
+        const paused = cmd.action === 'pause';
+        const iframe = document.getElementById('gameframe');
+        try { iframe?.contentWindow?.postMessage({ type: 'cmg-pause', paused }, '*'); } catch (_) {}
+        publishPlaying(watchCode, { state: paused ? 'paused' : 'playing', volume: Math.round(volBgm / 10) });
+        return;
+      }
+      case 'stop':
+        if (gameOn) closeGame();
+        publishPlaying(watchCode, { state: 'idle' }, { replace: true });
+        return;
+      case 'volume': {
+        // The watch's meter is ten segments; this page stores a percentage.
+        const pct = Math.max(0, Math.min(10, Number(cmd.value) || 0)) * 10;
+        setVolume('vol-bgm', pct);
+        publishPlaying(watchCode, {
+          state: gameOn ? 'playing' : 'idle',
+          volume: Math.round(pct / 10),
+        });
+        return;
+      }
+    }
+  }
+
+  function initWatchChannel(code) {
+    stopWatchChannel?.();
+    stopWatchChannel = null;
+    watchCode = code || null;
+    if (!watchCode) return;
+    stopWatchChannel = watchLaunches(watchCode, {
+      onLaunch: dispatchLaunch,
+      onControl: dispatchControl,
+    });
+    // Say what we are up to now, so a watch opened later is not told "idle"
+    // about a game that is already running.
+    publishPlaying(
+      watchCode,
+      { state: gameOn ? 'playing' : 'idle', volume: Math.round(volBgm / 10) },
+      { replace: !gameOn },
+    );
+  }
+
+  // The two shelves the watch cannot see: both live in this browser's own
+  // IndexedDB. Republished whenever they change, so the wrist shows a count
+  // that moves instead of the design's hardcoded 6 and 3.
+  $effect(() => {
+    const snes = snesLocal.length;
+    const ps2 = ps2Local.length;
+    if (!watchCode) return;
+    publishShelves(watchCode, { snes, ps2 });
+  });
 
   let exportCurrent = $derived(exportJobs[exportsSel]);
   let exportsCounterText = $derived(
@@ -6244,6 +6486,8 @@
   });
 
   onDestroy(() => {
+    stopWatchChannel?.();
+    stopWatchChannel = null;
     if (clockTimer) clearInterval(clockTimer);
     if (bootTimer) clearTimeout(bootTimer);
     if (toastTimer) clearTimeout(toastTimer);

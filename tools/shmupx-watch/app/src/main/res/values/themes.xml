@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Black window background: avoids a white flash on launch and costs
+         nothing on OLED. Compose supplies the real theme. -->
+    <style name="MainActivityTheme" parent="@android:style/Theme.DeviceDefault">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorBackground">@android:color/black</item>
+    </style>
+</resources>
