@@ -6089,6 +6089,86 @@
     } catch (_) { /* cross-origin frame — can't stamp from here */ }
   }
 
+  // The mirrored arcade player sizes its canvas for a CRT, not for the screen
+  // it lands on: MAMELoader.scale(2) fixes the backing store at twice the
+  // board's native resolution — 608x464 for Guardians' 304x232 — and its own
+  // sheet only caps it (`max-width/max-height: 100%`), never grows it. So the
+  // game sits at a postcard in the middle of the television with black all
+  // around, whatever the board or the display.
+  //
+  // /arcade/play.html is the mirror's page, not ours, so the fix cannot go
+  // where the problem is. It goes in from this side instead: the frame is
+  // same-origin — that is the whole point of the mirror — so a stylesheet
+  // appended to its document lets the canvas fill the frame.
+  //
+  // The box is sized to the board's own shape rather than simply set to
+  // 100%/100%, because MAME does not letterbox inside its window: whatever
+  // the canvas measures, it renders the screen across all of it. Stretched to
+  // this pane it is a 4% squash nobody sees; stretched to 1600x620 the cast
+  // goes visibly wide, and a 16:9 television is most of that. So we compute
+  // the largest box of the board's aspect that fits and hand MAME that. What
+  // is left over is the display disagreeing with the cabinet, not padding we
+  // chose — and on a 4:3 panel there is none.
+  //
+  // The aspect has to be read off Emularity before we overrule it. It sizes
+  // the canvas inline to nativeResolution x scale — `width: 608px;
+  // height: 464px` for Guardians' 304x232 at scale 2 — and that inline
+  // declaration is also why every rule below is !important: a plain one loses
+  // to it however specific the selector. The inline values stay put once our
+  // rule wins, so they remain a safe record of the board's shape, but we latch
+  // the ratio on first sight regardless.
+  //
+  // The canvas does not exist at load and is re-sized as the core boots, so a
+  // MutationObserver re-fits. It also sees our own write, hence the
+  // no-op guard — without it the rule rewrites itself forever.
+  function injectArcadeFill(e) {
+    const iframe = e?.currentTarget || document.getElementById('gameframe');
+    if (!iframe || !frameIsSameOrigin(iframe)) return;
+    try {
+      const src = iframe.getAttribute('src') || '';
+      if (!new URL(src, window.location.href).pathname.startsWith('/arcade/')) return;
+      const w = iframe.contentWindow;
+      const doc = w?.document;
+      if (!doc || w.__cmgArcadeFill) return;
+      w.__cmgArcadeFill = true;
+
+      const st = doc.createElement('style');
+      st.id = 'cmg-arcade-fill';
+      (doc.head || doc.documentElement).appendChild(st);
+
+      let aspect = 0;
+      const fit = () => {
+        const c = doc.getElementById('canvas');
+        if (!c) return;
+        if (!aspect) {
+          // Only Emularity's inline sizing counts. An un-sized canvas still
+          // reports the 300x150 default, and latching that would lock the
+          // board to 2:1 for the rest of the session.
+          const iw = parseFloat(c.style.width);
+          const ih = parseFloat(c.style.height);
+          if (!(iw > 0 && ih > 0)) return;
+          aspect = iw / ih;
+        }
+        const vw = w.innerWidth, vh = w.innerHeight;
+        if (!(vw > 0 && vh > 0)) return;
+        const bw = vw / vh > aspect ? Math.round(vh * aspect) : vw;
+        const bh = vw / vh > aspect ? vh : Math.round(vw / aspect);
+        const next = '#emu canvas{width:' + bw + 'px!important;height:' + bh +
+          'px!important;max-width:none!important;max-height:none!important}';
+        if (st.textContent !== next) st.textContent = next;
+      };
+
+      fit();
+      w.addEventListener('resize', fit);
+      new w.MutationObserver(fit).observe(doc.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'width', 'height'],
+      });
+    } catch (_) { /* cross-origin frame — the player keeps its own sizing */ }
+  }
+
   // The level editor frame gets no .osd-corner overlay zones (they'd swallow
   // taps on its toolbar corners — see editorFrameActive), so the two-finger
   // corner gestures are detected from INSIDE the frame instead: passive
@@ -7257,7 +7337,7 @@
       src={gameSrc}
       title="game"
       allow="autoplay; fullscreen; gamepad; xr-spatial-tracking"
-      onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); injectKeyActivityProbe(e); applyTwinStick(); applySplitPads(); applyTouchControls(); applyGameTheme(); postVolume(); }}
+      onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); injectKeyActivityProbe(e); injectArcadeFill(e); applyTwinStick(); applySplitPads(); applyTouchControls(); applyGameTheme(); postVolume(); }}
     ></iframe>
   </div>
 {/if}
