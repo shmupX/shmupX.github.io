@@ -1,7 +1,7 @@
 {
-  "version": "fb654a9",
+  "version": "980f8ee",
   "versionSource": "git",
-  "generatedAt": "2026-09-19T11:02:50.558Z",
+  "generatedAt": "2026-09-19T13:00:06.755Z",
   "games": [
     {
       "id": "shmupx",
@@ -85,6 +85,20 @@
       "rom": "searchar",
       "romUrl": "/games/sar-search-and-rescue/searchar.zip",
       "size": "1.8 MB",
+      "date": "09.19.26",
+      "players": 2,
+      "status": "DEBUG"
+    },
+    {
+      "id": "guardians-denjin-makai-ii",
+      "kind": "arcade",
+      "name": "Guardians - Denjin Makai II",
+      "title": "GUARDIANS - DENJIN MAKAI II",
+      "sub": "ARCADE / MAME // Seta 2 hardware · Banpresto 1995",
+      "core": "arcade",
+      "rom": "grdians",
+      "romUrl": "/games/guardians-denjin-makai-ii/grdians.zip",
+      "size": "13.5 MB",
       "date": "09.19.26",
       "players": 2,
       "status": "DEBUG"

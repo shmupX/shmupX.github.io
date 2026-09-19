@@ -214,6 +214,59 @@ Deno.test("the third arcade board ships its romset and not the engine", async ()
   }
 });
 
+Deno.test("the fourth arcade board ships its romset and not the engine", async () => {
+  const eshop = await read("data/eshop.json");
+  const g = eshop.find((e: { id: string }) =>
+    e.id === "guardians-denjin-makai-ii"
+  );
+  assertEquals(g?.kind, "arcade");
+  // Same shelf as the other three, and for the same reason: "arcade" is the
+  // section, and the player loads whatever MAME the recipe names -- mameseta2
+  // here, where searchar asks for mamesnk68 and metmqstr for mamecave.
+  assertEquals(g?.core, "arcade");
+  assertEquals(g?.rom, "grdians");
+  assertEquals(
+    g?.romUrl,
+    "/games/guardians-denjin-makai-ii/grdians.zip",
+  );
+  const rom = await Deno.stat(
+    new URL(
+      "../static/games/guardians-denjin-makai-ii/grdians.zip",
+      import.meta.url,
+    ),
+  );
+  assertEquals(rom.isFile, true, "the romset the catalog points at must ship");
+  // The zip is the 13-file grdians set and nothing else. The fixture it came
+  // from also carried a grdiansa/ directory -- nine ka2-001-* mask ROMs from
+  // another set, 8.6 MB compressed, under a path no grdians ROM entry asks
+  // for -- so they were dropped rather than committed. The 13 that remain
+  // keep their original CRCs.
+  assertEquals(
+    rom.size,
+    14199857,
+    "grdians.zip is the trimmed 13-file set — a size change means the nested set came back",
+  );
+  // The mameseta2 core and grdians.json are the Emularity engine's to serve,
+  // byte-identical by sha256 to archive.org's, so committing them would be
+  // 22 MB that origin already has. Same bargain as the first three.
+  for (
+    const stray of ["mameseta2.js.gz", "mameseta2.wasm.gz", "grdians.json"]
+  ) {
+    let found = true;
+    try {
+      await Deno.stat(
+        new URL(
+          "../static/games/guardians-denjin-makai-ii/" + stray,
+          import.meta.url,
+        ),
+      );
+    } catch {
+      found = false;
+    }
+    assertEquals(found, false, stray + " is the engine's to serve, not ours");
+  }
+});
+
 Deno.test("a DEBUG game stays DEBUG, or it walks into the shop", async () => {
   // The launcher hides DEBUG rows unless it was opened with ?debug=1
   // (svelte-src/Dashboard.svelte). Nothing else hides them, so dropping the
@@ -224,6 +277,7 @@ Deno.test("a DEBUG game stays DEBUG, or it walks into the shop", async () => {
   assertEquals(statusOf("metamoqester"), "DEBUG");
   assertEquals(statusOf("super-mario-sp"), "DEBUG");
   assertEquals(statusOf("sar-search-and-rescue"), "DEBUG");
+  assertEquals(statusOf("guardians-denjin-makai-ii"), "DEBUG");
   // ...and the ones meant to be visible carry no status, which reads as
   // RELEASED. If a row ever needs hiding, give it DEBUG rather than inventing
   // a second mechanism.

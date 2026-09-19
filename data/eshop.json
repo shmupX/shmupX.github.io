@@ -71,5 +71,19 @@
     "date": "09.19.26",
     "players": 2,
     "status": "DEBUG"
+  },
+  {
+    "id": "guardians-denjin-makai-ii",
+    "kind": "arcade",
+    "name": "Guardians - Denjin Makai II",
+    "title": "GUARDIANS - DENJIN MAKAI II",
+    "sub": "ARCADE / MAME // Seta 2 hardware \u00b7 Banpresto 1995",
+    "core": "arcade",
+    "rom": "grdians",
+    "romUrl": "/games/guardians-denjin-makai-ii/grdians.zip",
+    "size": "13.5 MB",
+    "date": "09.19.26",
+    "players": 2,
+    "status": "DEBUG"
   }
 ]
