@@ -2716,6 +2716,19 @@ The `deploy` block in `deno.json` is what that build follows:
   to auto-detect an entrypoint yields a build that never produces a working
   deployment.
 
+**The build container has no git and no commit SHA.** There is no `.git` to
+read, and Deploy's build environment exposes only `CI`, `DENO_DEPLOY`, the
+org/app ids and slugs, and `DENO_DEPLOY_BUILD_ID` — no commit anywhere. So
+`git rev-parse` fails during `deno task games:manifest`, and the manifest's
+`version` falls to the next source that is available (see `resolveVersion` in
+`scripts/build-games-manifest.ts`): `DENO_DEPLOY_BUILD_ID` here, which is unique
+per build. The last resort below it is a hash of `data/games.json` +
+`data/eshop.json`, and that one does NOT move unless the catalog changes — it
+once sat on the hosted site for five days and ~15 commits looking exactly like a
+commit SHA. The manifest carries `versionSource` so the launcher's VERSION row
+can say which of the four it is showing: only a commit is printed as `build`, a
+build id as `deploy`, a content hash as `catalog`.
+
 Point the `codemonkey.games` domain at the app in the Deploy dashboard.
 
 ## Claude Code on the web

@@ -214,11 +214,39 @@ async function readEntries<T extends ManifestEntry>(
   return entries;
 }
 
-// Version is informational (observability/debugging) — the client never
-// gates on it, unlike TokScrape's sha256/minNativeVersion. Prefer the git
-// short SHA for human readability; fall back to a content hash (over both
-// lists, so the version changes whenever either does) where git is
-// unavailable.
+// Version is informational (observability/debugging) — the client never gates
+// on it, unlike TokScrape's sha256/minNativeVersion. What it does have to do is
+// MOVE whenever the deployed copy moves, because the launcher's VERSION row is
+// where a stale deploy is supposed to show.
+//
+// Four sources, best first. A commit is the only one a human can act on, so it
+// wins wherever it can be had: CI hands it over in the environment, and any
+// checkout that still has its .git can be asked directly. Deno Deploy's build
+// container has neither — no .git to read, and no commit anywhere in its
+// environment (it exposes CI, the org/app ids and slugs, and
+// DENO_DEPLOY_BUILD_ID, and that is the lot) — so the build id stands in there.
+// It is opaque, but it is unique per build, which is the property this row
+// actually needs.
+//
+// The content hash is last, and it is the weak one: it covers the two catalog
+// files and nothing else, so it holds still across every commit that does not
+// touch data/. It was the hosted site's version for five days and ~15 commits
+// while looking exactly like a commit SHA, which is the failure this ordering
+// exists to prevent. `source` travels with the value so the launcher can say
+// which of the four it is showing instead of implying a commit.
+type VersionSource = "env" | "git" | "deploy-build" | "content";
+
+// Reading the environment is itself a permission; a caller without it should
+// fall through to the next source rather than die.
+function env(name: string): string | null {
+  try {
+    const v = Deno.env.get(name);
+    return v && v.trim() ? v.trim() : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
 async function gitShortSha(): Promise<string | null> {
   try {
     const { code, stdout } = await new Deno.Command("git", {
@@ -245,6 +273,28 @@ async function contentHash(text: string): Promise<string> {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")
     .slice(0, 7);
+}
+
+async function resolveVersion(
+  lists: unknown,
+): Promise<{ version: string; source: VersionSource }> {
+  // GITHUB_SHA is set on every Actions runner, including the ones that build
+  // from an export with no .git. On a pull_request event it is the synthetic
+  // merge commit — which is also exactly what actions/checkout puts at HEAD,
+  // so this agrees with git rather than diverging from it.
+  const ciSha = env("GITHUB_SHA");
+  if (ciSha) return { version: ciSha.slice(0, 7), source: "env" };
+
+  const sha = await gitShortSha();
+  if (sha) return { version: sha, source: "git" };
+
+  const buildId = env("DENO_DEPLOY_BUILD_ID");
+  if (buildId) return { version: buildId.slice(0, 8), source: "deploy-build" };
+
+  return {
+    version: await contentHash(JSON.stringify(lists)),
+    source: "content",
+  };
 }
 
 if (import.meta.main) {
@@ -276,11 +326,14 @@ if (import.meta.main) {
     Deno.exit(1);
   }
 
-  const version = (await gitShortSha()) ??
-    await contentHash(JSON.stringify({ games, eshop }));
+  const { version, source: versionSource } = await resolveVersion({
+    games,
+    eshop,
+  });
 
   const manifest = {
     version,
+    versionSource,
     generatedAt: new Date().toISOString(),
     games,
     eshop,
@@ -290,6 +343,6 @@ if (import.meta.main) {
   console.log(
     `[games-manifest] wrote ${games.length} game(s) + ${eshop.length} eShop entr${
       eshop.length === 1 ? "y" : "ies"
-    } (version ${version}) to ${outUrl.pathname}`,
+    } (version ${version}, from ${versionSource}) to ${outUrl.pathname}`,
   );
 }

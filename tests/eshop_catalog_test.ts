@@ -58,6 +58,14 @@ Deno.test("static/games.manifest.json carries the same eshop array", async () =>
   );
   assertEquals(typeof manifest.version, "string");
   assertEquals(Array.isArray(manifest.games), true);
+  // The launcher prints the version differently per source — only a commit is
+  // called a build — so an unrecognised source would silently fall back to
+  // saying "build" over something that is not one.
+  assertEquals(
+    ["env", "git", "deploy-build", "content"].includes(manifest.versionSource),
+    true,
+    `unknown versionSource ${JSON.stringify(manifest.versionSource)}`,
+  );
 });
 
 Deno.test("the first global game is Sh'M↑ Party's PS2 port, from its Pages deploy", async () => {

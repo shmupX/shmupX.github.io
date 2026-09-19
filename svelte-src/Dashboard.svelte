@@ -1264,11 +1264,17 @@
   // release is Deno.desktopVersion, over /api/update — the value `deno desktop`
   // baked in from deno.json, and the exact string the updater compares a
   // manifest's `version` against, so it is what decides whether a release
-  // applies to this copy. Only a packaged launcher has one. The commit and the
-  // timestamp are the manifest's own stamp (scripts/build-games-manifest.ts:
-  // `git rev-parse --short HEAD` at build time, and the moment of the build),
-  // and the manifest is refetched on every load and redeployed on every push to
-  // main — so it, not the binary, is the half of this launcher that moves.
+  // applies to this copy. Only a packaged launcher has one. The build id and
+  // the timestamp are the manifest's own stamp (scripts/build-games-manifest.ts
+  // at build time, and the moment of the build), and the manifest is refetched
+  // on every load and redeployed on every push to main — so it, not the binary,
+  // is the half of this launcher that moves.
+  //
+  // What that id IS depends on where the build ran, and the manifest says which
+  // (`versionSource`) precisely because the shapes are not distinguishable by
+  // eye: a commit SHA and the catalog content hash are both seven hex
+  // characters, and the hosted site quietly showed the latter — frozen since
+  // the last data/ change — for days while reading as the former.
   //
   // The two disagreeing is a real and readable state, not a bug to paper over:
   // a launcher that has not patched itself in months still fetches today's
@@ -1285,6 +1291,22 @@
       String(at.getFullYear()).slice(2) + '  ' + p(at.getHours()) + ':' + p(at.getMinutes());
   }
 
+  // Only a commit gets called a build. A deploy's own id and a hash of the
+  // catalog are neither commits nor interchangeable with one, and saying
+  // "build" over them is what made a five-day-old stamp look current. A
+  // manifest predating versionSource carries no source, and keeps the old
+  // wording rather than being relabelled on a guess.
+  function stampLabel(stamp) {
+    switch (stamp.source) {
+      case 'deploy-build':
+        return 'deploy ' + stamp.version;
+      case 'content':
+        return 'catalog ' + stamp.version;
+      default:
+        return 'build ' + stamp.version;
+    }
+  }
+
   let versionSummary = $derived.by(() => {
     const parts = [];
     if (updates?.version) parts.push('shmupX ' + updates.version);
@@ -1295,7 +1317,7 @@
       parts.push('the manifest did not load  ·  showing the baked-in list');
       return parts.join('  ·  ');
     }
-    if (manifestStamp.version) parts.push('build ' + manifestStamp.version);
+    if (manifestStamp.version) parts.push(stampLabel(manifestStamp));
     const at = stampTime(manifestStamp.generatedAt);
     if (at) parts.push('updated ' + at);
     return parts.join('  ·  ') || 'unknown';
@@ -5009,7 +5031,11 @@
       // deploy. A bare-array manifest (the older shape) carries none, which
       // reads as "unknown" rather than as a failure.
       return { games, base, stamp: data && !Array.isArray(data) && data.version
-        ? { version: String(data.version), generatedAt: data.generatedAt ?? null }
+        ? {
+          version: String(data.version),
+          source: data.versionSource ? String(data.versionSource) : null,
+          generatedAt: data.generatedAt ?? null,
+        }
         : null };
     };
     let res = null;
