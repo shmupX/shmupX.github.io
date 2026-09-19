@@ -282,9 +282,14 @@ Deno.test("the 5+6 split is instrument first, note second — a swap fails here"
   assertNotEquals(cell.instrument, PLUS_INSTRUMENT_PERM[9]);
   assertNotEquals(cell.note, plusNoteFromBits(7));
   assertEquals(plusNoteFromBits(7), 62);
-  assert(NOTE_TABLE_HOLES.includes(62), "62 is a table hole, not a tie");
+  // NOTE_TABLE_HOLES is a literal in this file, so asserting 62 is in it would
+  // check the test against itself. plusNoteToMidi is the module, and returning
+  // null for 62 is the claim that matters: widen the hole rule from `semi > 11`
+  // to `semi > 14` and this goes red.
   assertEquals(plusNoteToMidi(62), null);
-  assertNotEquals(62, PLUS_NOTE_TIE); // the tie is 125; raw BITS 62 make it
+  // (A `62 !== PLUS_NOTE_TIE` check lived here. The tie is 125 and swapping
+  // REST and TIE in the module leaves it 124 — still not 62 — so no module
+  // change could move it.) Raw BITS 62 make
 
   // And the same order in the flat buffer the game builds: the melody
   // sequencer reads the instrument at +0 and the note at +1 of each pair.
@@ -439,12 +444,22 @@ Deno.test("songSettings names the four tail bytes and turns the tempo index into
   // The BPM numerator is derived from the two constants that document it, so
   // neither can drift from the formula unnoticed. 60 s x 60 fps x 4 ticks / 4
   // steps-per-beat = 3600.
+  // Only the value, not the formula: restating the module's own expression
+  // here would hold for every value of the three constants and could never be
+  // the assertion that fails. Each constant is pinned individually by the BPM
+  // expectations below — 4 -> 7 ticks, 4 -> 3 steps and 60 -> 50 fps each turn
+  // this test red on its own. A ratio-preserving joint move (ticks and steps
+  // both doubled) is the one hole left, and no check of the numerator can
+  // close it.
   assertEquals(PLUS_BPM_NUMERATOR, 3600);
-  assertEquals(
-    PLUS_BPM_NUMERATOR,
-    60 * PLUS_FRAMES_PER_SECOND * PLUS_TEMPO_TICKS_PER_FRAME /
-      PLUS_STEPS_PER_BEAT,
-  );
+  // The three constants behind it, each against what the disassembly says
+  // rather than against the formula they feed: 0x80058F20 is `addiu v0,v0,4`,
+  // the machine is NTSC, and the sixteenth is the assumption the module's own
+  // comment flags. Pinning the values is a transcription check; pinning the
+  // formula would have been a restatement.
+  assertEquals(PLUS_TEMPO_TICKS_PER_FRAME, 4);
+  assertEquals(PLUS_FRAMES_PER_SECOND, 60);
+  assertEquals(PLUS_STEPS_PER_BEAT, 4);
 
   assertEquals(plusSongSettings([7, 0, 0, 15]), {
     volumeIndex: 7,
@@ -711,10 +726,18 @@ Deno.test({
         songs++;
       }
     }
-    // A floor proportional to the collection, in the style of the other
-    // fixture suites: sixteen slots a save, always present, never optional.
+    // `songs` is the loop-trip count, so comparing it to
+    // PLUS_BLOCKS.length * PLUS_SONG_COUNT is an identity and cannot fail. The
+    // guard that is actually wanted here — the one psx-fixtures.test.js states
+    // as "a loop that silently walked nothing" — has to bound the COLLECTION,
+    // because everything downstream of a shrunken corpus stays green: slicing
+    // PLUS_BLOCKS to a single save leaves this file 15/15. 60 is well under the
+    // 67 blocks present and well over anything a partial discovery would find.
+    assert(
+      PLUS_BLOCKS.length >= 60,
+      `only ${PLUS_BLOCKS.length} save blocks were discovered`,
+    );
     assertEquals(songs, PLUS_BLOCKS.length * PLUS_SONG_COUNT);
-    assert(songs > 0);
   },
 });
 

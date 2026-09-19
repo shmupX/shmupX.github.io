@@ -452,10 +452,15 @@ that the `N(gp)` globals the sound code uses do not resolve.
 
 **The sound-table block corresponds by a constant `-0x71EBC`, and the whole
 block was checked byte for byte**: the permutation, its inverse (`0x800F03C8` →
-`0x8007E50C`), both instrument maps, the note table's 200 addressed bytes and
-the tempo table are byte-identical between the two builds at that offset. The
-two ends are anchored by their cross-references rather than by the offset alone
-— `0x8007E4EC` is loaded only from `0x8002E4C8`, inside MAIN.EXE's unpacker,
+`0x8007E50C`), both instrument maps, the note table and the tempo table are
+byte-identical between the two builds at that offset —
+`0x800F03A8`..`0x800F04C4` against `0x8007E4EC`..`0x8007E608`, 284 bytes, and
+the maximal identical run around them is 6,909 bytes. (Not "the note table's 200
+bytes": the span from the note base to the end of code 99 is 200 bytes, but only
+the 90 belonging to codes 55..99 are ever addressed, and the other 110 are the
+permutation tail and the two maps this sentence already lists.) The two ends are
+anchored by their cross-references rather than by the offset alone —
+`0x8007E4EC` is loaded only from `0x8002E4C8`, inside MAIN.EXE's unpacker,
 exactly as `0x800F03A8` is loaded from `0x80057864` inside DEZA.EXE's; and
 `0x8007E4FE` is loaded from `0x8002ECB0`, inside MAIN.EXE's melody sequencer
 `0x8002EBD4`, exactly as `0x800F03BA` is loaded from `0x80057F5C` inside
@@ -701,10 +706,11 @@ cell as
 offset = bar * 68 + 4 + step * 2 + voice * 32     note at +1, instrument at +0
 ```
 
-— its loop at `0x80058020` runs `s3 < 2`, so there are **two voices**;
-`0x80057ECC` takes the step as `pos & 0xF`, so each is **16 steps**; and
-`0x80057EE0` is what puts voice 1 thirty-two bytes further into the bar. The bar
-stride 68 is `bar * (16 + 1) * 4` at `0x80057EBC`.
+— its loop bound at `0x8005801C` is `slti v0,s3,2`, so there are **two voices**
+(`0x80058020` is the branch that acts on it); `0x80057ECC` takes the step as
+`pos & 0xF`, so each is **16 steps**; and `0x80057EE0` is what puts voice 1
+thirty-two bytes further into the bar. The bar stride 68 is `bar * (16 + 1) * 4`
+at `0x80057EBC`.
 
 **Of the 5 + 6 split, the 6-bit field is the note and it comes second.** This is
 the one thing worth pinning hardest, because reversing the split still produces
@@ -726,8 +732,10 @@ editor's numbering and the raw bits are the driver's:
 At play time the instrument byte goes through one more map — `0x800F0408` with
 the flag at `0x8014E844` clear, `0x800F03E8` with it set, the second being the
 inverse permutation again, so with the flag set the driver program is the raw
-5-bit field. **Voice 0 plays program `map[i] + 1` (`0x80057FE8`) and voice 1
+5-bit field. **Voice 0 plays program `map[i] + 1` (`0x80057FF0`) and voice 1
 `map[i] + 91` (`0x80057FDC`)**: two banks, not two channels of one.
+(`0x80057FE8` is where the voice-0 path begins, the target of the `bne s3,v0` at
+`0x80057FCC`; the `addiu` itself is two instructions later.)
 
 The **6-bit field** becomes a note byte through the tail of reader `0x800576CC`
 — `sltiu 62`, then `+7`, then `+55`, so `v + 55` and `v + 62` once `v >= 62`.
@@ -787,9 +795,12 @@ field:
 Thirty-two byte entries from `0x800F0484` run exactly up to the volume table at
 `0x800F04A4`, which is the check on the width. The value is a **step period in
 units of 4 per frame**: `0x80058F20` adds 4 to a counter each frame and
-`0x80058FD8` fires a step when it passes the period. A step is a sixteenth, so
-at 60 Hz the tempo is **3600 / period BPM** — 39 at the slow end, 225 at the
-fast one. The 3600 is `60 s × 60 fps × 4 ticks-per-frame / 4 steps-per-beat`;
+`0x80058FD8` fires a step when it passes the period. A step is a sixteenth — the
+one **assumed** link in this chain, since the driver never names a beat, though
+16 steps to a bar makes 4/4 overwhelming — so at 60 Hz the tempo is **3600 /
+period BPM**, 39 at the slow end and 225 at the fast one. A different
+steps-per-beat would rescale every BPM here by the same ratio and change nothing
+else. The 3600 is `60 s × 60 fps × 4 ticks-per-frame / 4 steps-per-beat`;
 `plusSongSettings` derives it from those constants rather than writing it out.
 
 **VOLUME** is the 8-entry table at `0x800F04A4`, indexed by the tail's 3-bit

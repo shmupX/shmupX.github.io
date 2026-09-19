@@ -53,12 +53,15 @@
 // 55..87, the note table's whole output range. On the backing side the pattern
 // ROM names programs 35-43 (and 0, only ever in cells whose note is already
 // key-off or tie), with no bias applied — 0x8005824C loads the ROM byte and
-// 0x800582F8 hands it to SsUtKeyOn as the program. Every one of those nine is
-// sampled over a key range containing the untransposed notes the ROM plays
-// under it: program 35 is 4..51 against ROM notes 4..51, 40 and 43 are 4..105
-// against 4..105, the rest are strict containments. Track 5's instrument byte
-// 125 occurs only with notes 100..107, and VH program 125 has exactly eight
-// tones spanning exactly 100..107.
+// 0x800582F8 hands it to SsUtKeyOn as the program. The full set of instrument
+// bytes that occur with a real note is 35..43 AND 125, ten programs, not nine:
+// 125 is track 5's alone. Every one of the ten is sampled over a key range
+// containing the untransposed notes the ROM plays under it. Three are exact
+// rather than merely containing — 35 is 4..51 against ROM notes 4..51, 40 is
+// 4..105 against 4..105, and 125 is 100..107 against exactly eight tones
+// spanning 100..107 — and the other seven are strict containments. Program 43
+// is one of those seven: its VH range is 4..105 but the lowest note the ROM
+// ever plays under it is 7.
 //
 // NOT corroboration from outside the code: the round trip. Every song in the
 // corpus re-encodes to its original bytes, which proves decodePlusSong and
@@ -113,7 +116,10 @@ export function plusBitReader(bytes, start = 0) {
 }
 
 export const PLUS_SONG_BARS = 16; // 0x80057894: the unpacker's outer loop runs s6 < 16
-/** 0x80058020: the melody loop runs s3 < 2. The 32 cells are two voices, not 32 steps. */
+/**
+ * 0x8005801C: the melody loop runs s3 < 2 (`slti v0,s3,2`; 0x80058020 is the
+ * branch that acts on it). The 32 cells are two voices, not 32 steps.
+ */
 export const PLUS_SONG_VOICES = 2;
 /** 0x80057ECC: the sequencer indexes the step as `pos & 0xF`. */
 export const PLUS_SONG_STEPS = 16;
@@ -305,7 +311,14 @@ export const PLUS_INSTRUMENT_PROGRAMS = Object.freeze([
     7, 17, 18, 19, 20, 21, 22, 23, 25, 28, 30, 27, 33, 29, 31, 24,
 ]);
 export const PLUS_INSTRUMENT_PROGRAMS_ALT = PLUS_INSTRUMENT_UNPERM;
-/** 0x80057FE8 (voice 0, map[i] + 1) and 0x80057FDC (voice 1, map[i] + 91). */
+/**
+ * 0x80057FF0 (voice 0, map[i] + 1) and 0x80057FDC (voice 1, map[i] + 91).
+ *
+ * 0x80057FE8, which this used to cite, is where the voice-0 path BEGINS — the
+ * target of the `bne s3,v0` at 0x80057FCC — and holds the `lw`, not the add.
+ * The two addresses here are the two `addiu`s themselves, so the pair is
+ * symmetric the way it reads.
+ */
 export const PLUS_VOICE_PROGRAM_BIAS = Object.freeze([1, 91]);
 
 /** The libsnd program number a cell plays, for one of the two melody voices. */
@@ -330,7 +343,16 @@ export const PLUS_TEMPO_TABLE = Object.freeze([
 ]);
 /** The counter's gain per frame, 0x80058F20's `addiu v0,v0,4`. */
 export const PLUS_TEMPO_TICKS_PER_FRAME = 4;
-/** A step is a sixteenth, so four of them make a beat. */
+/**
+ * A step is a sixteenth, so four of them make a beat.
+ *
+ * ASSUMED, NOT TRACED — the one number in this tempo chain that is. Everything
+ * else is read off the driver: the +4 per frame at 0x80058F20, the compare
+ * against the table period at 0x80058FD8, the table itself at 0x800F0484.
+ * Nothing in the driver names a beat at all. 16 steps to a bar makes 4/4
+ * overwhelming, and every BPM this module reports scales with this constant,
+ * so a wrong value would misreport every tempo by the same ratio.
+ */
 export const PLUS_STEPS_PER_BEAT = 4;
 /** NTSC PlayStation. The driver's tick is the vertical blank. */
 export const PLUS_FRAMES_PER_SECOND = 60;
