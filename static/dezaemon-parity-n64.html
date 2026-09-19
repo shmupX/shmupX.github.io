@@ -210,7 +210,7 @@
 <header>
   <p class="eyebrow">shmupX · dev-fixtures/dezaemon298.ddd · reverse-engineering status</p>
   <h1>Dezaemon N64 Parity Map<span class="jp">デザエモン3D</span></h1>
-  <p class="lede">The odd one out among these four maps. The other three describe parsers that exist — <a href="dezaemon-parity.html">the Saturn map</a>, <a href="dezaemon-parity-sfc.html">the Super Famicom one</a>, <a href="dezaemon-parity-psx.html">the PlayStation one</a>. <strong>This one describes a format, not a parser.</strong> Nothing in this repo reads <code>dev-fixtures/dezaemon298.ddd</code>: there is no <code>packages/shmup-engine/src/n64</code>, no <code>n64:probe</code>, no test, not one line. What exists instead is a read path <strong>proven end to end outside the repo</strong> — all 60 files extract, and 58 of them decompress to <em>exactly</em> the byte size third-party documentation predicts, using this repo's own LZSS decoder unmodified. Target is the <strong>unreleased 64DD expansion</strong> for <em>Dezaemon 3D</em> (Athena, 1997): a prototype <strong>data disk</strong> written <strong>1998-02-23 19:24:25</strong> from a Partner-N64 unit, disk ID <code>DEZA</code>, carrying a filesystem that is Athena's own (<code>ATNFS0</code>) and not Nintendo's MFS. Surveyed 2026-09-19. No canonical notes file yet — <code>packages/shmup-engine/FORMAT-N64.md</code> does not exist.</p>
+  <p class="lede">The odd one out among these four maps. The other three describe parsers that exist — <a href="dezaemon-parity.html">the Saturn map</a>, <a href="dezaemon-parity-sfc.html">the Super Famicom one</a>, <a href="dezaemon-parity-psx.html">the PlayStation one</a>. <strong>This one arrived last and caught up fastest.</strong> <code>@shmupx/shmup-engine/n64</code> reads <code>dev-fixtures/dezaemon298.ddd</code> and <code>deno task n64:probe</code> looks inside it: all 60 files extract, and 58 of them decompress to <em>exactly</em> the byte size third-party documentation predicts, using this repo's own LZSS decoder unmodified. What it is <em>not</em> is a consumer — like its two nearest siblings it is a <strong>read-only structural pass</strong>: nothing is played, mapped into <code>game.json</code> or written back. Target is the <strong>unreleased 64DD expansion</strong> for <em>Dezaemon 3D</em> (Athena, 1997): a prototype <strong>data disk</strong> written <strong>1998-02-23 19:24:25</strong> from a Partner-N64 unit, disk ID <code>DEZA</code>, carrying a filesystem that is Athena's own (<code>ATNFS0</code>) and not Nintendo's MFS. Surveyed 2026-09-19. No canonical notes file yet — <code>packages/shmup-engine/FORMAT-N64.md</code> does not exist.</p>
 
   <div class="pipeline">.ddd <b>=</b> .ndd minus the 24-LBA system area → libleo LBA → byte <b>85 sectors × 232…112</b> → <b>ATNFS</b> structure-of-arrays · names · startLBA · blockCount · u32 stored size → <b>Okumura LZSS</b> (<code>decompress.js</code>, unmodified) → per project <b>GAM · CGR · CMD · CBL · ULB · MUS</b> + 8 stages × <b>{BL · MD · GR}</b> ‖ no parser · no probe · no FORMAT-N64.md · no game.json · no write path · no launcher row</div>
 
@@ -226,11 +226,13 @@
   </div>
 
   <div class="meterline">
-    <div class="meter" role="img" aria-label="Shipped in this repository: nothing">
-      <i class="m-miss" style="width:100%"></i>
+    <div class="meter" role="img" aria-label="Shipped in this repository: 69 percent decoded to pixels, 29 percent extracted only, 2 percent undocumented">
+      <i class="m-ok" style="width:69%"></i><i class="m-part" style="width:29%"></i><i class="m-miss" style="width:2%"></i>
     </div>
     <div class="legend">
-      <span><b>Shipped in this repo</b>&ensp;<i class="dot" style="background:var(--miss)"></i><b>Nothing.</b> Zero bytes of the above are read by any code under <code>packages/</code>, <code>tools/</code> or <code>static/</code>. Every measurement on this page was made in a scratchpad and none of it is committed. This bar is the honest difference between this map and its three siblings, and it is the whole of section 04.</span>
+      <span><b>Shipped in this repo</b>&ensp;<i class="dot" style="background:var(--ok)"></i><b>Decoded</b> <b>100%</b> of the disk's bytes now extract and decompress through committed code, and <b>69%</b> of them — <code>CGR</code> and the per-stage <code>GR</code> — are decoded the whole way to pixels you can look at</span>
+      <span><i class="dot" style="background:var(--part)"></i><b>Extracted only</b> <b>29%</b> · <code>CMD</code> · <code>CBL</code> · <code>ULB</code> · <code>#BL</code> · <code>#MD</code> · <code>GAM</code> come out as correct decompressed bytes with no typed reader over them yet</span>
+      <span><i class="dot" style="background:var(--miss)"></i><b>Undocumented</b> <b>2%</b> · the <code>MUS</code> sequence body, which extracts like everything else and which nothing can read</span>
     </div>
   </div>
 </header>
@@ -240,8 +242,8 @@
 
 <ol class="remaining">
   <li><span class="n">1</span>
-    <h3>The parser itself<span class="tag none">NO TRACE</span></h3>
-    <p>This is item one because it is the only thing standing between this page and its siblings. The read path is proven — see section 02 — but it lives in a throwaway script. Nothing is committed: no <code>packages/shmup-engine/src/n64/</code>, no <code>"./n64"</code> subpath export, no <code>tools/n64-ddd/main.ts</code>, no <code>n64:probe</code> task, no <code>tests/dezaemon_n64_test.ts</code>. The 58-of-60 size match is the acceptance test to build against, and the scaffold is three times precedented in <code>tools/psx-sav</code>, <code>tools/sfc-sav</code> and <code>tools/deza-disc</code>. Estimated at a day for container plus filesystem on top of half a day of scaffolding — which is small enough that the absence is a scheduling fact, not a technical one.</p>
+    <h3>The parser itself<span class="tag spec">DONE 2026-09-19</span></h3>
+    <p>Landed. <code>packages/shmup-engine/src/n64/</code> is the parser — <code>geometry.js</code> for the LBA map, <code>directory.js</code> for ATNFS, <code>graphics.js</code> for RGBA5551, <code>index.js</code> as the front door — behind the <code>"./n64"</code> subpath export, with <code>tools/n64-ddd/main.ts</code> over it as <code>deno task n64:probe</code> and 14 tests in <code>tests/dezaemon_n64_test.ts</code>. Thirteen run anywhere against a synthetic disk built in the test file; the fourteenth is <code>ignore:</code>-gated on the fixture and is the one that asserts 58 of 60. What is <em>not</em> done is everything downstream: no typed readers for the record formats (section 03), no <code>FORMAT-N64.md</code>, no <code>game.json</code>, no write path.</p>
   </li>
   <li><span class="n">2</span>
     <h3>The zone table above LBA 368<span class="tag open">MEANING OPEN</span></h3>
@@ -282,7 +284,7 @@
 </ol>
 
 <h2><span class="no">02</span>Already decoded</h2>
-<p class="sub"><span class="band ok">Confirmed</span>&ensp;Measured against the bytes of <code>dev-fixtures/dezaemon298.ddd</code> and reproduced independently. As everywhere on these pages, "confirmed" never means a runtime consumes the result — here nothing does, and nothing in this section is committed to the repo.</p>
+<p class="sub"><span class="band ok">Confirmed</span>&ensp;Measured against the bytes of <code>dev-fixtures/dezaemon298.ddd</code> and reproduced independently. As everywhere on these pages, "confirmed" never means a runtime consumes the result — nothing does. Everything in this section is now committed, and the claims marked with offsets are the ones the tests assert.</p>
 <div class="tablewrap">
 <table>
   <thead><tr><th>Feature</th><th>What is decoded, and what pins it</th></tr></thead>
@@ -317,12 +319,11 @@
 </ul>
 
 <h2><span class="no">04</span>No trace at all</h2>
-<p class="sub"><span class="band miss">Absent</span>&ensp;Unlike the other three maps, this section is not a short tail — it is nearly everything this repo would have to contain. None of section 02 is committed.</p>
+<p class="sub"><span class="band miss">Absent</span>&ensp;What is left after the parser landed. Shorter than it was on 2026-09-19 morning, and still longer than the other three maps' equivalents.</p>
 <ul class="plain">
-  <li><b>Any parser</b> — no <code>packages/shmup-engine/src/n64/</code>, no <code>"./n64"</code> subpath, no reader of any kind (item 1)</li>
-  <li><b>Any tool</b> — no <code>tools/n64-ddd/</code>, no <code>n64:probe</code> task in <code>deno.json</code>, no <code>report</code>/<code>hex</code>/<code>png</code> verbs, no README row</li>
-  <li><b>Any test</b> — no <code>tests/dezaemon_n64_test.ts</code>. The fixture is correctly placed already: <code>dev-fixtures/</code> is gitignored, so a test would be <code>ignore:</code>-gated on its absence and must exit 0, not 1, when it is missing</li>
-  <li><b>Canonical notes</b> — no <code>packages/shmup-engine/FORMAT-N64.md</code>, which is where the confirmed/likely/open split on this page properly belongs</li>
+  <li><b>Canonical notes</b> — no <code>packages/shmup-engine/FORMAT-N64.md</code>, which is where the confirmed/likely/open split on this page properly belongs, and the one thing all three siblings have that this does not</li>
+  <li><b>Typed readers for the records</b> — the parser extracts and decompresses every file and decodes the two graphics types; the six documented record formats in section 03 come out as correct bytes with nothing over them</li>
+  <li><b>A <code>hex</code> verb</b> — <code>sfc:probe</code> and <code>psx:probe</code> both have a region-aware hexdump and a <code>diff</code>; <code>n64:probe</code> has <code>ls</code>, <code>get</code>, <code>report</code>, <code>png</code> and <code>all</code> and neither of those two</li>
   <li><b>A cover</b> — no counterpart to <span class="ref">packages/shmup-engine/src/sfc/cover.js</span>, and the graphics to build one from decode today</li>
   <li><b>The game.json mapping</b> — and unlike the other platforms this may never be the right goal: the data model is 3D (item 10)</li>
   <li><b>Any write path</b> — nothing writes <code>.ddd</code> or <code>.ndd</code>. It would be unusually tractable if wanted, since there are no checksums to satisfy — but the fragmentation rule and the allocation map must both be honoured</li>
