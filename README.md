@@ -1552,18 +1552,64 @@ launch — the same scrub `tools/build-level`'s Electron shell does.
 
 ### Steam, Bazzite and handhelds
 
-Add the AppImage (or the `.exe`) as a non-Steam game — **Games → Add a Non-Steam
-Game → Browse** — and it wears the monkey icon by itself
-(`static/app-icons/README.md`). Bazzite ships Firefox as a Flatpak and no other
-browser, so there the launcher runs in Firefox's kiosk mode on its own profile;
-installing a Chromium-family Flatpak (Chrome, Chromium, Brave) from Discover or
-the Bazzite Portal moves it to the `--app` kiosk, the better engine for the
-Phaser games. The launcher's first paint no longer leaves the machine — its
-fonts are self-hosted in `static/fonts/` rather than fetched from Google — and
-every request that does is optional: the games manifest is same-origin, the
-shipped Dezaemon shelf is embedded, and the editor needs nothing remote. The
-2028.Ai leaderboard's Firebase SDK still comes from Google's CDN and fails soft
-without it.
+On Linux the way in is **Settings → ADD TO STEAM**, one press, from inside the
+launcher itself, and not **Games → Add a Non-Steam Game → Browse**. Pointing
+Steam at the downloaded `.AppImage` by hand works exactly once and then never
+changes again: a type-2 AppImage is a read-only squashfs mounted at
+`/tmp/.mount_*`, so `lib/self-update.ts` refuses to arm the updater on one at
+all, and what is left in the library is an entry frozen at whatever version was
+downloaded, with nothing on screen to say so. The press is the repair.
+`routes/api/steam.ts` installs first and writes the shortcut second: the mounted
+tree is copied to `~/.local/share/shmupX/app` (`lib/launcher-install.ts`) and
+the shortcut points at the `AppRun` in there, which reports itself as
+`kind: "installed"` (`lib/launcher-binary.ts`) — the only Linux shape the
+updater will arm for. It then writes `shortcuts.vdf` for every account signed in
+on this machine, and the roots it searches include the Flatpak Steam that
+Bazzite and the Deck ship (`lib/steam-library.ts`). The press earns itself most
+where doing it by hand is worst: in Game Mode, "add a non-Steam game" means
+dropping to the desktop for a file picker that hides AppImages by default.
+
+Most players will never need that paragraph, because the launcher now offers the
+press itself. The first time it runs from a raw, uninstalled AppImage with Steam
+on the machine, a first-run panel puts ADD TO STEAM in front of them —
+`static/steam-nudge.js` decides, out of the `/api/steam` body the dashboard
+already fetches at mount, and `svelte-src/SteamNudge.svelte` draws it. Either
+answer is remembered under `cmg-steam-nudge-seen`, because the offer is once per
+machine rather than once per launch, and the Settings row stays where it is for
+afterwards.
+
+**Browse** is still right for the Windows `.exe` and the macOS `.app`, as is the
+same ADD TO STEAM row, which adds either where it sits: `installPlan` refuses to
+copy them — "only the Linux AppImage is installed; this build runs in place" —
+because the copy would buy them nothing. Their updaters are off for reasons of
+their own, a `deno compile` binary with no `Deno.autoUpdate` and a code-signed
+bundle a patch would invalidate, and neither of those is about where the file
+lives (**Keeping it current**, below).
+
+Whichever route wrote the entry, **restart Steam if it was running at the
+time.** Steam reads `shortcuts.vdf` when it starts and writes its own in-memory
+copy back when it quits, so a shortcut added underneath a live client is
+discarded the moment the player exits it; there is no way to make the write
+stick while it is up, which is why the UI says so rather than pretending
+(`lib/steam-library.ts`). It can only say so on Linux, where a running client is
+cheap to detect — on Windows and macOS the restart is on you. The monkey icon
+needs nothing done to it (`static/app-icons/README.md`): it is built into the
+artifact as `launcher-256.png` / `cmg.ico` / a generated `.icns`, so the window,
+the Dock and the Linux `.desktop` entry wear it. The shortcut itself goes in
+with an empty icon field, so the library tile is Steam's placeholder until
+artwork is dropped on it.
+
+Bazzite ships Firefox as a Flatpak and no other browser, so there the launcher
+runs in Firefox's kiosk mode on its own profile; installing a Chromium-family
+Flatpak (Chrome, Chromium, Brave) from Discover or the Bazzite Portal moves it
+to the `--app` kiosk, the better engine for the Phaser games.
+
+The launcher's first paint no longer leaves the machine — its fonts are
+self-hosted in `static/fonts/` rather than fetched from Google — and every
+request that does is optional: the games manifest is same-origin, the shipped
+Dezaemon shelf is embedded, and the editor needs nothing remote. The 2028.Ai
+leaderboard's Firebase SDK still comes from Google's CDN and fails soft without
+it.
 
 |                 | artifact                                                       | default arch                                                        |
 | --------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
