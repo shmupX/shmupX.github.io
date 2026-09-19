@@ -2730,7 +2730,7 @@ MCP server in `.mcp.json` died at startup on a missing `deno` executable, taking
 [`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh) is the
 SessionStart hook that fixes that, registered in
 [`.claude/settings.json`](.claude/settings.json). It installs a pinned Deno
-(v2.9.6, on the same v2.x line `.github/workflows/eshop.yml` asks for), then
+(v2.9.7, on the same v2.x line `.github/workflows/eshop.yml` asks for), then
 runs `deno install` — `nodeModulesDir` is `manual`, so vite, esbuild and svelte
 are absent until something asks for them by name.
 

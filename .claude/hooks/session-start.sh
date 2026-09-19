@@ -29,7 +29,7 @@ fi
 # costs roughly the square of a line's length (4x the time per 2x the
 # characters, measured). `deno task check` walked straight into them from the
 # repo root and never came back.
-DENO_VERSION="${DENO_VERSION:-v2.9.6}"
+DENO_VERSION="${DENO_VERSION:-v2.9.7}"
 export DENO_INSTALL="${DENO_INSTALL:-$HOME/.deno}"
 DENO_BIN="$DENO_INSTALL/bin/deno"
 
