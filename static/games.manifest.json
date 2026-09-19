@@ -1,7 +1,7 @@
 {
-  "version": "c399970",
+  "version": "fb654a9",
   "versionSource": "git",
-  "generatedAt": "2026-09-19T09:54:01.134Z",
+  "generatedAt": "2026-09-19T11:02:50.558Z",
   "games": [
     {
       "id": "shmupx",
@@ -72,6 +72,20 @@
       "romUrl": "/games/metamoqester/metmqstr.zip",
       "size": "7.9 MB",
       "date": "09.14.26",
+      "players": 2,
+      "status": "DEBUG"
+    },
+    {
+      "id": "sar-search-and-rescue",
+      "kind": "arcade",
+      "name": "SAR - Search And Rescue",
+      "title": "SAR - SEARCH AND RESCUE",
+      "sub": "ARCADE / MAME // SNK68 hardware · SNK 1989",
+      "core": "arcade",
+      "rom": "searchar",
+      "romUrl": "/games/sar-search-and-rescue/searchar.zip",
+      "size": "1.8 MB",
+      "date": "09.19.26",
       "players": 2,
       "status": "DEBUG"
     }

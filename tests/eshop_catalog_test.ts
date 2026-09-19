@@ -174,6 +174,46 @@ Deno.test("the second arcade board ships its romset and not the engine", async (
   }
 });
 
+Deno.test("the third arcade board ships its romset and not the engine", async () => {
+  const eshop = await read("data/eshop.json");
+  const sar = eshop.find((e: { id: string }) =>
+    e.id === "sar-search-and-rescue"
+  );
+  assertEquals(sar?.kind, "arcade");
+  // "arcade" is the shelf, not the MAME build. The player reads the recipe for
+  // this driver and loads whatever core it names -- mamesnk68 here, mamecave
+  // for metmqstr -- so a board needs no core of its own in emulators.json.
+  assertEquals(sar?.core, "arcade");
+  assertEquals(sar?.rom, "searchar");
+  assertEquals(sar?.romUrl, "/games/sar-search-and-rescue/searchar.zip");
+  const rom = await Deno.stat(
+    new URL(
+      "../static/games/sar-search-and-rescue/searchar.zip",
+      import.meta.url,
+    ),
+  );
+  assertEquals(rom.isFile, true, "the romset the catalog points at must ship");
+  // The same bargain the first two struck, checked the same way: the mamesnk68
+  // core and searchar.json are byte-identical by sha256 to what the Emularity
+  // engine already serves, so committing them would be 22 MB archive.org has.
+  for (
+    const stray of ["mamesnk68.js.gz", "mamesnk68.wasm.gz", "searchar.json"]
+  ) {
+    let found = true;
+    try {
+      await Deno.stat(
+        new URL(
+          "../static/games/sar-search-and-rescue/" + stray,
+          import.meta.url,
+        ),
+      );
+    } catch {
+      found = false;
+    }
+    assertEquals(found, false, stray + " is the engine's to serve, not ours");
+  }
+});
+
 Deno.test("a DEBUG game stays DEBUG, or it walks into the shop", async () => {
   // The launcher hides DEBUG rows unless it was opened with ?debug=1
   // (svelte-src/Dashboard.svelte). Nothing else hides them, so dropping the
@@ -183,6 +223,7 @@ Deno.test("a DEBUG game stays DEBUG, or it walks into the shop", async () => {
     eshop.find((e: { id: string }) => e.id === id)?.status ?? null;
   assertEquals(statusOf("metamoqester"), "DEBUG");
   assertEquals(statusOf("super-mario-sp"), "DEBUG");
+  assertEquals(statusOf("sar-search-and-rescue"), "DEBUG");
   // ...and the ones meant to be visible carry no status, which reads as
   // RELEASED. If a row ever needs hiding, give it DEBUG rather than inventing
   // a second mechanism.
