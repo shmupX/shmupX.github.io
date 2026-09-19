@@ -764,6 +764,18 @@
     // MAME to sample it at all) would otherwise buy five or six at a time.
     // One frame's impulse makes one tap one credit, whatever the hold.
     gameSrc = player + '?byob=1&args=' + encodeURIComponent('-coin_impulse 1');
+    // An arcade board is a cabinet: it has no windowed form to go back to, and
+    // every one of them wants the whole screen. So the launcher asks on launch
+    // rather than leaving it to the R3 shortcut, and asks for every board — the
+    // shelf is all cabinets, so there is nothing here to flag per game.
+    //
+    // Through requestFullscreenFromPad, not requestFullscreen, for the reason
+    // documented there: Chrome grants fullscreen only on transient user
+    // activation, and a gamepad press is not one. Launched by click or tap it
+    // goes fullscreen now; launched from the pad the request is refused, the
+    // intent is latched, and the next real gesture cashes it in. Already
+    // fullscreen — kiosk and desktop builds always are — and it is a no-op.
+    requestFullscreenFromPad();
     setTimeout(() => { gameOn = true; }, 30);
   }
   async function deliverArcadeBoard(frame) {
