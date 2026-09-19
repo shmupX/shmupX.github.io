@@ -2,6 +2,12 @@
   import { onMount, onDestroy, untrack } from 'svelte';
   import Osd from './Osd.svelte';
   import SavPicker from './SavPicker.svelte';
+  import SteamNudge from './SteamNudge.svelte';
+  // Whether this copy should offer to install itself. A Linux AppImage cannot
+  // update where it sits, and the offer is the repair; the decision is pure and
+  // lives in static/steam-nudge.js because tests/steam_nudge_test.ts is the
+  // only place it can be exercised without a real AppImage runtime.
+  import { steamNudge } from '../static/steam-nudge.js';
   // The PS2 shelf the level editor files its own builds in, and the rule for
   // what emu-sw.js is allowed to mirror. Shared with static/editor/index.html
   // (which imports the same module at runtime) so the two cannot drift — see
@@ -1104,9 +1110,12 @@
     } catch (_) { steam = null; }
   }
 
+  // Answers whether anything was written, for the first-run offer below: a
+  // press that failed has to leave that offer up, since it is the only way back
+  // to it. The Settings row ignores the result.
   async function addToSteam() {
-    if (steamBusy || !steam) return;
-    if (!steam.binary || !steam.steamFound) { showToast(steamSummary); return; }
+    if (steamBusy || !steam) return false;
+    if (!steam.binary || !steam.steamFound) { showToast(steamSummary); return false; }
     steamBusy = true;
     try {
       const r = await fetch('/api/steam', {
@@ -1118,7 +1127,7 @@
       if (!data || !data.ok) {
         steamDone = '';
         showToast('Could not add to Steam: ' + ((data && (data.error || (data.problems || [])[0])) || ('HTTP ' + r.status)));
-        return;
+        return false;
       }
       steam = { ...steam, ...data };
       const already = (data.installed || []).every((i) => i.action === 'unchanged');
@@ -1137,11 +1146,69 @@
       // but it is the reason updates stay off, so it does not pass silently.
       if (app && !app.ok && app.error) showToast('Added to Steam, but not installed: ' + app.error);
       showToast(steamDone.replace(/\s+·\s+/g, ' — '));
+      return true;
     } catch (e) {
       showToast('Could not add to Steam: ' + (e?.message || e));
+      return false;
     } finally {
       steamBusy = false;
     }
+  }
+
+  // ─── ...and the offer to do it, on a first run ─────────────────────────────
+  // The row above is where ADD TO STEAM lives for good — six rows down a screen
+  // two screens in. A player who double-clicked the AppImage will never go
+  // looking for it, and until they do, their launcher cannot update itself at
+  // all: lib/self-update.ts refuses outright, because the mount is read-only.
+  // So on the one launch where that is true of them, the offer comes out to
+  // meet them. static/steam-nudge.js decides; everything here is the surface.
+  const STEAM_NUDGE_SEEN_KEY = 'cmg-steam-nudge-seen';
+  // Read eagerly, once — a lazy read would mean writing $state from inside the
+  // $derived below. A store that cannot be read counts as NOT seen: an offer
+  // shown twice is a nuisance, a launcher that silently never updates again is
+  // the bug the offer exists to stop.
+  let steamNudgeSeen = $state((() => {
+    try { return localStorage.getItem(STEAM_NUDGE_SEEN_KEY) === '1'; } catch (_) { return false; }
+  })());
+  let steamNudgeDismissed = $state(false);
+  let steamNudgeDone = $state(false);
+  let steamNudgeSel = $state(0);
+  let steamNudgeVerdict = $derived(steamNudge(steam, {
+    seen: steamNudgeSeen,
+    dismissed: steamNudgeDismissed,
+    done: steamNudgeDone,
+  }));
+  // Held back until the boot flash has gone: it covers the screen at z-index
+  // 200 for 1.6s, so an overlay mounting under it spends its entrance unseen.
+  let steamNudgeOpen = $derived(bootGone && steamNudgeVerdict.show);
+
+  function markSteamNudgeSeen() {
+    steamNudgeSeen = true;
+    try { localStorage.setItem(STEAM_NUDGE_SEEN_KEY, '1'); } catch (_) { /* session-only */ }
+  }
+  // Dismissing remembers, the same as accepting does: the offer is once per
+  // machine, not once per launch. Settings keeps the row for afterwards.
+  function dismissSteamNudge() {
+    steamNudgeDismissed = true;
+    markSteamNudgeSeen();
+  }
+  function steamNudgeMove(dir) {
+    steamNudgeSel = Math.min(1, Math.max(0, steamNudgeSel + dir));
+  }
+  async function steamNudgeActivate() {
+    if (steamNudgeSel !== 0) { dismissSteamNudge(); return; }
+    if (steamBusy) return;
+    const ok = await addToSteam();
+    // A press that failed already said why in its own toast, and this panel is
+    // the only way back to the button — so only a success closes the matter.
+    // It closes it through this flag and never by re-reading the route:
+    // /api/steam surveys BEFORE it installs and spreads that survey into the
+    // reply, so install.can is still true afterwards, and re-fetching says the
+    // same thing — this process goes on being the AppImage until the player
+    // launches the copy.
+    if (!ok) return;
+    steamNudgeDone = true;
+    markSteamNudgeSeen();
   }
 
   // ─── Updates ───────────────────────────────────────────────────────────────
@@ -4628,6 +4695,58 @@
     padState.btn = pressedNow;
   }
 
+  // Gamepad nav for the first-run offer. Two rows on one axis, so it needs one
+  // latch where pollSavPickerPad needs four — but the same edge-then-repeat
+  // feel, so a held stick does not flick between the rows.
+  const nudgeNav = { vDir: 0, vSeenAt: 0, vHeldSince: 0, vLastNav: 0 };
+  function pollSteamNudgePad(pad) {
+    padState.axisDir = 0; padState.hAxisDir = 0;
+    const pressedNow = new Set();
+    pad.buttons.forEach((btn, i) => { if (btn?.pressed) pressedNow.add(i); });
+    const justPressed = (i) => pressedNow.has(i) && !padState.btn.has(i);
+    const dirs = readPadDirs(pad);
+    const now = performance.now();
+    const isSnes = SNES_PAD_RE.test(pad?.id || '');
+    let v = 0;
+    if (dirs.up || dirs.left) v = -1;
+    else if (dirs.down || dirs.right) v = 1;
+    else {
+      // Capped at 1.05 like every other axis read here: idle axes on some pads
+      // rest at "no input" sentinels like 1.28. SNES pads have no sticks, and
+      // their raw slots must not be read as analog at all.
+      for (const i of isSnes ? [] : [1]) {
+        const a = pad.axes[i];
+        if (typeof a !== 'number' || Math.abs(a) > 1.05) continue;
+        if (a < -PAD_DEADZONE) { v = -1; break; }
+        if (a > PAD_DEADZONE) { v = 1; break; }
+      }
+    }
+    const vReal = v;
+    if (v === 0 && nudgeNav.vDir !== 0 && now - nudgeNav.vSeenAt < 80) v = nudgeNav.vDir;
+    if (vReal !== 0) nudgeNav.vSeenAt = now;
+    if (v !== 0 && v !== nudgeNav.vDir) {
+      if (now - nudgeNav.vLastNav >= 150 || nudgeNav.vLastNav === 0) {
+        lastInput = 'pad';
+        steamNudgeMove(v);
+        nudgeNav.vLastNav = now;
+      }
+      nudgeNav.vHeldSince = now;
+    } else if (v !== 0 && v === nudgeNav.vDir) {
+      if (now - nudgeNav.vHeldSince >= padState.initialDelayMs && now - nudgeNav.vLastNav >= padState.repeatMs) {
+        lastInput = 'pad';
+        steamNudgeMove(v);
+        nudgeNav.vLastNav = now;
+      }
+    }
+    nudgeNav.vDir = v;
+    if (justPressed(0) || justPressed(9)) { lastInput = 'pad'; steamNudgeActivate(); }
+    else if (justPressed(1) || justPressed(8)) { lastInput = 'pad'; dismissSteamNudge(); }
+    // A SELECT still held from somewhere else must not read as Back once it is
+    // finally released back in the launcher branch.
+    if (!pressedNow.has(8)) { padState.selChordFired = false; padState.selArmed = false; }
+    padState.btn = pressedNow;
+  }
+
   async function loadManifest() {
     // Launcher content, fetched SAME-ORIGIN only (/games.manifest.json), else
     // keep the baked seeds. Same-origin keeps every game url root-relative,
@@ -5241,6 +5360,9 @@
     }
     if (!pad) { padState.btn.clear(); padState.axisDir = 0; padState.hAxisDir = 0; padState.rawDirPrev = 0; padState.selArmed = false; padState.selChordFired = false; if (padConnected) padConnected = false; return; }
     if (!padConnected) padConnected = true;
+    // The first-run offer owns the pad while it is up — same shape, and same
+    // reason, as the coverflow branch under it.
+    if (steamNudgeOpen) { pollSteamNudgePad(pad); return; }
     // The .sav coverflow owns the pad while it is up — nothing may navigate
     // or launch underneath it. Same shape as the OSD branch above.
     if (savPickerOpen) { pollSavPickerPad(pad); return; }
@@ -5523,6 +5645,17 @@
         });
         return;
       }
+    }
+    // The first-run offer owns the keyboard while it is up. Ahead of the
+    // coverflow's guard rather than after it: this one fires at boot, before a
+    // shelf exists to open a picker over, so neither branch has to know about
+    // the other.
+    if (steamNudgeOpen) {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') { e.preventDefault(); steamNudgeMove(-1); }
+      else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') { e.preventDefault(); steamNudgeMove(1); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); steamNudgeActivate(); }
+      else if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'b' || e.key === 'B') { e.preventDefault(); dismissSteamNudge(); }
+      return;
     }
     // The .sav coverflow owns the keyboard while it is up (launcher only —
     // it can never be open over a running game).
@@ -6918,6 +7051,14 @@
      onscrub={(on) => { savScrubbing = on; }}
      onselect={(i) => savPickerJump(i)} onlaunch={(i) => launchSavGame(i)}
      onclose={closeSavPicker} />
+
+<!-- Shown once, on the launch where this copy turns out to be a Linux AppImage
+     running where it sits — see static/steam-nudge.js. -->
+<SteamNudge open={steamNudgeOpen} sel={steamNudgeSel} busy={steamBusy}
+     headline={steamNudgeVerdict.headline} detail={steamNudgeVerdict.detail}
+     restart={steamNudgeVerdict.restart}
+     onselect={(i) => (steamNudgeSel = i)}
+     onactivate={steamNudgeActivate} ondismiss={dismissSteamNudge} />
 
 <Osd open={osdOpen} items={osdItems} sel={osdSel} theme={tweaks.theme}
      clock={clockStr} title={currentGame?.title || currentGame?.name || ''}
