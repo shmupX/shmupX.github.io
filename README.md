@@ -1474,8 +1474,8 @@ traced from the games' own code off the discs, not inferred:
 `packages/shmup-engine/FORMAT-PSX.md` holds the notes, with a confidence on
 every claim and the open items listed at the end, and
 `static/dezaemon-parity-psx.html` is the parity map — the PlayStation
-counterpart of `static/dezaemon-parity.html` and
-`static/dezaemon-parity-sfc.html`.
+counterpart of `static/dezaemon-parity.html`,
+`static/dezaemon-parity-sfc.html` and `static/dezaemon-parity-n64.html`.
 `deno task psx:probe all
 <sav> --out build/psx/x/` renders what a save holds,
 including every stage map drawn the way the game draws it. Saves and discs stay
@@ -1515,6 +1515,46 @@ so. Booting a particular card needs a writer that can put it into the emulator's
 memory card, and there isn't one; the row explains that instead of offering a
 Play that could only fail, the way the Super Famicom section does for a save
 with no cartridge under it.
+
+### The Nintendo 64 disk
+
+Dezaemon 3D (Athena, 1997) went 3D and put its user data on a **64DD disk**, and
+the one that survives is a prototype: `dezaemon298.ddd`, a *data disk* written
+1998-02-23 from a Partner-N64 unit for an expansion that was never released. The
+disk says so itself, in romaji at `0x28E80` — power off, insert the DEZA64
+cartridge, power on again — and without that cartridge it does nothing. `.ddd`
+is not a format: it is a 64DD `.ndd` dump with the 24-LBA system area sliced
+off, which a byte comparison against 64dd.org's `deza1.NDD` settles exactly —
+the two differ by 473,280 bytes, which is 24 × 85 × 232, and their ROM areas are
+identical.
+
+**Nothing here reads it.** There is no `packages/shmup-engine/src/n64`, no
+`n64:probe`, no `FORMAT-N64.md` and no test, which makes this the one platform
+whose parity map documents a format rather than a parser —
+`static/dezaemon-parity-n64.html`, the Nintendo 64 counterpart of
+`static/dezaemon-parity.html`, `static/dezaemon-parity-sfc.html` and
+`static/dezaemon-parity-psx.html`, says so in its second meter. What the survey
+established is that the read path is short. The container geometry is published
+(85 sectors to a block, sector sizes 232…112 by zone, 4,292 blocks summing to
+64,458,560); the filesystem is Athena's own `ATNFS`, not Nintendo's MFS, and it
+is a structure of arrays rather than packed records — names, start LBA, block
+count and a `u32` stored size in four parallel arrays, the last of which is what
+makes extraction possible; and the payloads are Okumura LZSS, which
+`packages/shmup-engine/src/decompress.js` decompresses **unmodified**, the same
+codec the PlayStation ports use. On that path all 60 files extract and 58
+decompress to exactly the size the third-party format documentation predicts —
+five distinct types landing on exact sizes up to 1,064,960 bytes, which is what
+pins the LBA mapping, the directory and the codec at once. The two that miss are
+the two `GAM` files that documentation names as malformed on the prototype
+disks. Graphics are N64 RGBA5551 at 64×32, so `rgb555ToRgb` from the other
+platforms does **not** apply: the alpha bit is bit 0.
+
+The disk stays in the gitignored `dev-fixtures/`, and one caution for whoever
+writes the parser: 64dd.org labels this dump the old one, and it differs from
+the current `deza1.NDD` in 175,897 bytes, every one of them inside the save area
+where the `DST` user project lives. The two pressed sample projects are
+byte-identical between the dumps, so everything above holds — but read `DST`
+from `deza1.NDD`, not from this fixture.
 
 ## Desktop app
 

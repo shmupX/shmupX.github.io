@@ -1,0 +1,336 @@
+<title>Dezaemon N64 Parity Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #F3F6F3;
+    --surface: #FFFFFF;
+    --ink: #17211C;
+    --muted: #5A6B62;
+    --line: #D8E0DA;
+    --accent: #1F7A52;
+    --accent-ink: #FFFFFF;
+    --ok: #1F7A52;
+    --ok-bg: #E3F0E8;
+    --part: #96661A;
+    --part-bg: #F5ECD9;
+    --miss: #A8433A;
+    --miss-bg: #F6E4E1;
+    --chip-bg: #EAF0EB;
+    --code-bg: #EDF2EE;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F1512;
+      --surface: #161F1A;
+      --ink: #DCE6DF;
+      --muted: #8FA398;
+      --line: #263229;
+      --accent: #58C08C;
+      --accent-ink: #0F1512;
+      --ok: #6CC79A;
+      --ok-bg: #1A2E23;
+      --part: #D3A557;
+      --part-bg: #2E2618;
+      --miss: #D98077;
+      --miss-bg: #331E1B;
+      --chip-bg: #1D2822;
+      --code-bg: #1A241E;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1512;
+    --surface: #161F1A;
+    --ink: #DCE6DF;
+    --muted: #8FA398;
+    --line: #263229;
+    --accent: #58C08C;
+    --accent-ink: #0F1512;
+    --ok: #6CC79A;
+    --ok-bg: #1A2E23;
+    --part: #D3A557;
+    --part-bg: #2E2618;
+    --miss: #D98077;
+    --miss-bg: #331E1B;
+    --chip-bg: #1D2822;
+    --code-bg: #1A241E;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 20px 96px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header { padding: 56px 0 8px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 44px);
+    font-weight: 900;
+    line-height: 1.15;
+    letter-spacing: -.01em;
+    margin: 0 0 4px;
+    text-wrap: balance;
+  }
+  h1 .jp { color: var(--muted); font-weight: 700; font-size: .55em; letter-spacing: .04em; vertical-align: .35em; margin-left: .5em; }
+  .lede { color: var(--muted); max-width: 62ch; margin: 12px 0 0; }
+  .lede strong { color: var(--ink); font-weight: 700; }
+
+  .meterline {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin: 28px 0 0; padding: 14px 16px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .meter { flex: 1 1 260px; height: 10px; border-radius: 5px; overflow: hidden; display: flex; }
+  .meter i { display: block; height: 100%; }
+  .meter .m-ok { background: var(--ok); }
+  .meter .m-part { background: var(--part); }
+  .meter .m-miss { background: var(--miss); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .legend b { color: var(--ink); font-weight: 700; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+
+  h2 {
+    font-size: 22px; font-weight: 900; letter-spacing: -.005em;
+    margin: 56px 0 6px; text-wrap: balance;
+  }
+  h2 .no {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    color: var(--accent); font-weight: 600; font-size: 15px; margin-right: 10px;
+  }
+  .sub { color: var(--muted); margin: 0 0 20px; max-width: 66ch; }
+
+  code, .ref {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .86em;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  .ref { color: var(--muted); }
+
+  /* ── remaining-work list ── */
+  ol.remaining { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  ol.remaining li {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px 14px 14px;
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 4px 12px;
+  }
+  ol.remaining .n {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600; font-size: 14px;
+    color: var(--accent);
+    background: var(--chip-bg);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    height: 34px;
+  }
+  ol.remaining h3 { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.4; }
+  ol.remaining h3 .tag {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 500; letter-spacing: .05em;
+    border-radius: 999px; padding: 2px 9px; margin-left: 8px;
+    vertical-align: 2px; white-space: nowrap;
+  }
+  .tag.spec { background: var(--ok-bg); color: var(--ok); }
+  .tag.open { background: var(--part-bg); color: var(--part); }
+  .tag.none { background: var(--miss-bg); color: var(--miss); }
+  /* The number sits in the first column and spans the whole card; every
+     heading and paragraph belongs in the second, however many there are.
+     Without this only the first two children land in the content column and
+     a third wraps one word per line down the 34px number gutter. */
+  ol.remaining h3, ol.remaining p { grid-column: 2; }
+  ol.remaining p { margin: 0; font-size: 14px; color: var(--muted); max-width: 72ch; }
+  ol.remaining p b { color: var(--ink); font-weight: 700; }
+
+  /* ── status tables ── */
+  .band {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    border-radius: 999px; padding: 3px 12px;
+  }
+  .band.ok { background: var(--ok-bg); color: var(--ok); }
+  .band.part { background: var(--part-bg); color: var(--part); }
+  .band.miss { background: var(--miss-bg); color: var(--miss); }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th {
+    text-align: left; font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); padding: 12px 16px 8px; border-bottom: 1px solid var(--line);
+  }
+  td { padding: 10px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.feat { font-weight: 700; white-space: nowrap; }
+  td .note { color: var(--muted); }
+  .tablegroup { display: grid; gap: 12px; margin-top: 14px; }
+
+  ul.plain { margin: 10px 0 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
+  ul.plain li { margin: 6px 0; max-width: 72ch; }
+  ul.plain b { color: var(--ink); font-weight: 700; }
+
+  .pipeline {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13px; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto; white-space: normal; /* the sibling's strip is nowrap; this page's pipeline is twice its length, so it wraps and its tail is seen without a sideways scroll */
+    margin: 18px 0 0;
+  }
+  .pipeline b { color: var(--accent); font-weight: 600; }
+
+  footer { margin-top: 64px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; max-width: 72ch; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .meter i { transition: width .6s ease; }
+  }
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">shmupX · dev-fixtures/dezaemon298.ddd · reverse-engineering status</p>
+  <h1>Dezaemon N64 Parity Map<span class="jp">デザエモン3D</span></h1>
+  <p class="lede">The odd one out among these four maps. The other three describe parsers that exist — <a href="dezaemon-parity.html">the Saturn map</a>, <a href="dezaemon-parity-sfc.html">the Super Famicom one</a>, <a href="dezaemon-parity-psx.html">the PlayStation one</a>. <strong>This one describes a format, not a parser.</strong> Nothing in this repo reads <code>dev-fixtures/dezaemon298.ddd</code>: there is no <code>packages/shmup-engine/src/n64</code>, no <code>n64:probe</code>, no test, not one line. What exists instead is a read path <strong>proven end to end outside the repo</strong> — all 60 files extract, and 58 of them decompress to <em>exactly</em> the byte size third-party documentation predicts, using this repo's own LZSS decoder unmodified. Target is the <strong>unreleased 64DD expansion</strong> for <em>Dezaemon 3D</em> (Athena, 1997): a prototype <strong>data disk</strong> written <strong>1998-02-23 19:24:25</strong> from a Partner-N64 unit, disk ID <code>DEZA</code>, carrying a filesystem that is Athena's own (<code>ATNFS0</code>) and not Nintendo's MFS. Surveyed 2026-09-19. No canonical notes file yet — <code>packages/shmup-engine/FORMAT-N64.md</code> does not exist.</p>
+
+  <div class="pipeline">.ddd <b>=</b> .ndd minus the 24-LBA system area → libleo LBA → byte <b>85 sectors × 232…112</b> → <b>ATNFS</b> structure-of-arrays · names · startLBA · blockCount · u32 stored size → <b>Okumura LZSS</b> (<code>decompress.js</code>, unmodified) → per project <b>GAM · CGR · CMD · CBL · ULB · MUS</b> + 8 stages × <b>{BL · MD · GR}</b> ‖ no parser · no probe · no FORMAT-N64.md · no game.json · no write path · no launcher row</div>
+
+  <div class="meterline">
+    <div class="meter" role="img" aria-label="Format knowledge: 69 percent confirmed, 29 percent likely, 2 percent open">
+      <i class="m-ok" style="width:69%"></i><i class="m-part" style="width:29%"></i><i class="m-miss" style="width:2%"></i>
+    </div>
+    <div class="legend">
+      <span><b>Format knowledge</b>&ensp;<i class="dot" style="background:var(--ok)"></i><b>Confirmed</b> the container, the read-only directory, the codec, and the two graphics types — <b>8,683,520</b> of the <b>12,596,477</b> bytes a project decompresses to, <b>69%</b>, and it is that high for the same reason as on the PlayStation page: the graphics are two thirds of the payload</span>
+      <span><i class="dot" style="background:var(--part)"></i><b>Likely</b> <code>CMD</code> · <code>CBL</code> · <code>ULB</code> · <code>#BL</code> · <code>#MD</code> · <code>GAM</code> and the writable directory — <b>3,638,925</b> bytes, <b>29%</b>: documented field by field by a third party whose arithmetic closes exactly, and not yet checked struct by struct against these bytes</span>
+      <span><i class="dot" style="background:var(--miss)"></i><b>Open</b> the <code>MUS</code> sequence body — <b>274,032</b> bytes, <b>2%</b>: 24 songs of <code>0x2C9A</code> of which only the <code>0x1A</code>-byte header is described</span>
+    </div>
+  </div>
+
+  <div class="meterline">
+    <div class="meter" role="img" aria-label="Shipped in this repository: nothing">
+      <i class="m-miss" style="width:100%"></i>
+    </div>
+    <div class="legend">
+      <span><b>Shipped in this repo</b>&ensp;<i class="dot" style="background:var(--miss)"></i><b>Nothing.</b> Zero bytes of the above are read by any code under <code>packages/</code>, <code>tools/</code> or <code>static/</code>. Every measurement on this page was made in a scratchpad and none of it is committed. This bar is the honest difference between this map and its three siblings, and it is the whole of section 04.</span>
+    </div>
+  </div>
+</header>
+
+<h2><span class="no">01</span>What remains</h2>
+<p class="sub">Unusually for these maps, almost none of what remains is reverse engineering. The format was closed in a single pass (2026-09-19) once the prior art was found — a canonical dump of the same disk on 64dd.org and a field-by-field format document shipped with a 2024 fan translation. What remains is mostly <em>writing the code</em>. <span class="tag open" style="margin-left:0">MEANING OPEN</span> means bytes located at a stride something gives but whose semantics are untraced; <span class="tag none" style="margin-left:0">NO TRACE</span> means nothing exists yet.</p>
+
+<ol class="remaining">
+  <li><span class="n">1</span>
+    <h3>The parser itself<span class="tag none">NO TRACE</span></h3>
+    <p>This is item one because it is the only thing standing between this page and its siblings. The read path is proven — see section 02 — but it lives in a throwaway script. Nothing is committed: no <code>packages/shmup-engine/src/n64/</code>, no <code>"./n64"</code> subpath export, no <code>tools/n64-ddd/main.ts</code>, no <code>n64:probe</code> task, no <code>tests/dezaemon_n64_test.ts</code>. The 58-of-60 size match is the acceptance test to build against, and the scaffold is three times precedented in <code>tools/psx-sav</code>, <code>tools/sfc-sav</code> and <code>tools/deza-disc</code>. Estimated at a day for container plus filesystem on top of half a day of scaffolding — which is small enough that the absence is a scheduling fact, not a technical one.</p>
+  </li>
+  <li><span class="n">2</span>
+    <h3>The zone table above LBA 368<span class="tag open">MEANING OPEN</span></h3>
+    <p>All 60 sample files live below user LBA 368, where the LBA-to-byte map degenerates to two zones — <code>lba × 19720</code> under LBA 268, then <code>268 × 19720 + (lba − 268) × 18360</code> — and that is what the extraction actually used. The <em>writable</em> area starts around LBA 1417, and reaching it needs the real thing: two heads, sixteen physical zones, and a per-disk-type <code>vzone → pzone</code> permutation. The multiset of sector sizes is certain and the tables are published for disk type 0, but the ordering is <strong>not</strong> a monotone 232→112 descent and hand-rolling it will be quietly wrong. Copy <code>leo64dd_python</code> or <code>leotools</code>'s <code>leogeo.c</code>, and assert the cumulative total equals 64,458,560.</p>
+  </li>
+  <li><span class="n">3</span>
+    <h3>How big the directories actually are<span class="tag open">MEANING OPEN</span></h3>
+    <p>The read-only directory has <strong>60 populated entries</strong> and the writable one <strong>21 used slots</strong> — 11 live including <code>DEZA3D.SYS</code>, <code>DEZA3D.HSC</code> and nine files of a user project <code>DST</code>, plus 10 tombstoned. Those counts are measured. The <em>capacities</em> — 834 and 480 slots, the latter reading as 16 projects × 30 files — are inferred from the strides between the parallel arrays, and those strides run through zero fill, which cannot distinguish a large array from a small one followed by padding. One disk cannot settle it. Take the slot count as a parameter; do not hard-code 480.</p>
+  </li>
+  <li><span class="n">4</span>
+    <h3>The MUS sequence body<span class="tag open">MEANING OPEN</span></h3>
+    <p>24 songs of <code>0x2C9A</code> each, <code>0x42E70</code> total, and the documentation describes the <code>0x1A</code>-byte header and stops. That leaves roughly 11.4 KB per song of sequence data with no reading at all — the single largest undocumented run on the disk and the whole of the open band in the meter above. It is also the one item with no cheap route: the playback code is on a cartridge nobody has, so it would have to come out of the bytes alone. Budget a week and expect it to resist.</p>
+  </li>
+  <li><span class="n">5</span>
+    <h3>The fields the documentation marks ???<span class="tag open">MEANING OPEN</span></h3>
+    <p>Its author says so plainly — "please note these are not complete!" — and leaves named gaps: <code>#MD +0xC11..0xC1F</code>, <code>#BL 0x47</code>, <code>0x5B</code> and <code>0x8B2F</code>, and <code>GAM 0x1</code>, <code>0x225</code>, <code>0x557</code>, <code>0x558</code>. Separately, one of its counts is demonstrably wrong: it claims 520 images for <code>#GR</code>, and <code>0x104000 ÷ 2 bytes ÷ (64 × 32)</code> is <strong>260</strong>. Take its dimensions, not its totals, and re-derive every count from the size.</p>
+  </li>
+  <li><span class="n">6</span>
+    <h3>Why the two GAM files are nine bytes short<span class="tag open">MEANING OPEN</span></h3>
+    <p><code>SAMPLEZ1.GAM</code> and <code>SAMP.GAM</code> decompress to 1,360 bytes where the documented structure is 1,369 — the only two misses in sixty, and the deficit is identical. This is not a defect in the read path: the same documentation warns by name that "in the recovered prototype disks, SAMPLEZ1 &amp; SAMP's GAM file data has slightly different, incompatible formatting", and these are exactly and only those two files. So the miss is a fourth independent confirmation that the chain is right. What the nine bytes <em>are</em> is still unknown, and a retail disk would presumably settle it — except no retail disk exists.</p>
+  </li>
+  <li><span class="n">7</span>
+    <h3>The DezaDiskTool bytecode<span class="tag none">NO TRACE</span></h3>
+    <p>The fan-translation release ships <code>DezaDiskTool.exe</code>, a PyInstaller bundle whose three Python bytecode bodies were extracted during this survey but not decompiled: the tool proper (46,491 B — a <code>Filetable</code> class, a <code>known_sizes</code> table, an 8.3 name helper, an LBA-usage checksum), its LZSS module (10,359 B), and an N64 helper (40,813 B). Running <code>pycdc</code> or <code>decompyle3</code> over them would hand over the size table and the exact list of which extensions are compressed as <em>someone else's tested code</em> rather than as inference. Half a day, and it retires most of items 3 and 5. This is the highest-value unspent hour on the page.</p>
+  </li>
+  <li><span class="n">8</span>
+    <h3>This fixture is the wrong dump for the save area<span class="tag open">MEANING OPEN</span></h3>
+    <p>64dd.org labels our file the "Old Dump" and hosts <code>DEZA_1_19980223.zip</code> as current. They differ in <strong>175,897 bytes, every one of them inside the save area</strong> (<code>0x18CF180</code>–<code>0x1922C3F</code>); the ROM area holding all 60 sample files is byte-identical, so nothing else on this page is affected. But the <code>DST</code> user project lives in exactly the region that differs, and a 2021 64dd.org note describes correcting a dump that "may have been tampered by accident". <strong>If anyone parses <code>DST</code>, use <code>deza1.NDD</code>, not this fixture.</strong></p>
+  </li>
+  <li><span class="n">9</span>
+    <h3>No controlled delta is possible here<span class="tag none">NO TRACE</span></h3>
+    <p>The method that promotes a claim to <em>confirmed</em> on the other three maps — change one thing in the editor under an emulator, save, diff — cannot be run. It needs a 64DD emulator, a disk writer, and the DEZA64 cartridge, and the cartridge was never released. So for this platform confidence tops out at <em>likely</em> for anything not provable by arithmetic. That is precisely why the exact-size test in section 02 carries so much weight: it is the only arithmetic proof available, and it happens to cover the entire chain at once.</p>
+  </li>
+  <li><span class="n">10</span>
+    <h3>A viewer, and then the ceiling<span class="tag none">NO TRACE</span></h3>
+    <p>Worth stating plainly so nobody plans past it. Neither <code>psx-sav</code> nor <code>sfc-sav</code> output ever reaches this repo's <code>game.json</code>; the only pipeline into a playable level is the Saturn <code>.sav</code> path. And Dezaemon 3D is a <em>3D</em> shooter whose data model — <code>s16</code> vertex meshes, baked per-face lighting, texture tile descriptors — does not obviously map onto a chip-grid 2D level. So the credible deliverable is a <strong>viewer</strong>, in the shape <code>sfc:probe</code> and <code>psx:probe</code> already have: <code>report</code>, <code>hex</code>, <code>png</code>, then <code>FORMAT-N64.md</code>, then a shelf cover. A launcher row is not reachable at all — <code>static/emulators.json</code> has no N64 core, and the disk needs a cartridge that does not exist.</p>
+  </li>
+</ol>
+
+<h2><span class="no">02</span>Already decoded</h2>
+<p class="sub"><span class="band ok">Confirmed</span>&ensp;Measured against the bytes of <code>dev-fixtures/dezaemon298.ddd</code> and reproduced independently. As everywhere on these pages, "confirmed" never means a runtime consumes the result — here nothing does, and nothing in this section is committed to the repo.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Feature</th><th>What is decoded, and what pins it</th></tr></thead>
+  <tbody>
+  <tr><td class="feat">The whole read path</td><td><span class="note"><b>The load-bearing result.</b> Using only the directory arrays, a two-zone LBA→byte function and this repo's existing <span class="ref">packages/shmup-engine/src/decompress.js</span>, all 60 files extract and <b>58 decompress to exactly their documented size</b> — <code>CGR</code> 163,840, <code>ULB</code> 57,600, <code>CMD</code> 62,120, <code>MUS</code> 274,032, <code>0GR</code> 1,064,960. The two misses are the two <code>GAM</code> files, both short by the same 9 bytes, and the documentation names those two files as malformed on the prototype disks (item 6). Landing five distinct types on exact sizes up to a megabyte is not reachable by chance, and this one test confirms the LBA mapping, the directory layout, the codec and the third-party documentation simultaneously.</span></td></tr>
+  <tr><td class="feat">What the file is</td><td><span class="note">The <b>user data area of a 64DD disk</b> — not a ROM, and there is no N64 ROM magic anywhere in the 64 MB, nor should there be (the 64DD IPL jumps straight to LBA 24 with no header). Settled by byte comparison against 64dd.org's canonical <code>deza1.NDD</code>: the sizes differ by <b>473,280 = 24 × 85 × 232</b>, exactly the system area, and <code>deza1.NDD[473280:]</code> is byte-identical to this file except in the save area. So <b><code>.ddd</code> is <code>.ndd</code> with the 24-LBA system area sliced off</b> — an ad-hoc 2018 dumper's extension, not a format any spec, tool or emulator names.</span></td></tr>
+  <tr><td class="feat">The disk's own words</td><td><span class="note">At <code>0x28E80</code>, in romaji: <code>KONO DISK WA DEZA64 DATA DISK DESU / ICHIDO DENGEN WO KIRI DEZA64 NO / ROMCARTRIDGE WO SOUNYUUSHITE / DENGEN WO IRENAOSHITE KUDASAI</code> — "this is a DEZA64 data disk; power off, insert the DEZA64 ROM cartridge, power on again". <b>DEZA64</b> is Dezaemon 3D's internal codename, and the sentence is the disk stating its own dependency on the cartridge that was never released.</span></td></tr>
+  <tr><td class="feat">The system area</td><td><span class="note">Absent from our file, recovered from the canonical dump: region <code>E8 48 D3 16</code> (JP), format type <code>0x10</code>, <b>disk type 0</b>, Disk ID <code>DEZA</code> with BCD timestamp <b>1998-02-23 19:24:25</b>, <code>PTN64</code> (written from a Partner-N64 development unit) and <code>ATNFS0</code> in the free area. One trap worth recording: the ROM-end / RAM-start / RAM-end LBA fields at <code>0xE0</code> read <code>1016 / 1C22 / 282E</code>, which is an arithmetic sequence stepping by 6 and past the maximum LBA — <b>filler, not data</b>. The disk does not record where its own ROM area ends.</span></td></tr>
+  <tr><td class="feat">The ROM/RAM split</td><td><span class="note">Recovered from the data instead, and unambiguous: exactly <b>one</b> large <code>0xFF</code> run, <code>0x6C7188</code>–<code>0x18CA9C8</code>, 18,888,768 bytes of unwritten media. The last sample file's stored extent ends at <code>0x6C7187</code>, flush against it. That run is blank media, not corruption, and region 2's 6.2–7.7 bits/byte is LZSS output, not encryption.</span></td></tr>
+  <tr><td class="feat">Container geometry</td><td><span class="note">A linear concatenation of variable-size blocks in libleo LBA order from user LBA 0 (physical LBA 24). A block is <b>85 sectors</b>; sector size is one of <b>232/216/208/192/176/160/144/128/112</b> by zone; <b>4,292 blocks summing to exactly 64,458,560</b>. Nothing here needs reverse engineering — the tables are published on LuigiBlood's 64dd wiki and implemented in <code>leo64dd_python</code>, <code>leotools</code>, Project64 and mupen64plus-core. The first hint came from the file itself: the gaps between the directory's backup copies are exact sums of block sizes, <b>34,680 = 85×192 + 85×216</b> and <b>48,960 = 3 × 85×192</b>.</span></td></tr>
+  <tr><td class="feat">The directory (read-only)</td><td><span class="note">Athena's own <code>ATNFS</code>, and a <b>structure of arrays</b>, not packed records — which is why earlier passes found names and no sizes. Base <code>0x18CA9C8</code>, 60 entries: names <code>char[11]</code> = NAME(8, space-padded) + EXT(3) with no separator at <code>0x18CAD0A</code>; <code>u16</code> big-endian start LBA at <code>0x18CD0E0</code>; <code>u16</code> block count at <code>0x18CD764</code>; an all-zero <code>u16</code> array at <code>0x18CDDE8</code>; and <b><code>u32</code> big-endian stored size at <code>0x18CE46C</code></b> — that last array is the one that makes extraction possible. Allocation is contiguous: <code>startLBA[i] + blockCount[i] == startLBA[i+1]</code> for <b>all 59 pairs</b>, LBA 9 → 368. Replicated byte-identically at <code>0x18D3482</code> and <code>0x18DF3C2</code>, all three at in-block offset 834 — redundant backups.</span></td></tr>
+  <tr><td class="feat">Compression</td><td><span class="note">Okumura LZSS, and <b><span class="ref">packages/shmup-engine/src/decompress.js</span> decompresses these files unmodified</b> — the same parameters as the PlayStation Dezaemon 2 work already shipped here: 4096-byte ring zero-filled, write pointer at <code>0xFEE</code>, flag byte LSB-first, <code>1</code> = literal, <code>0</code> = 2-byte match with <code>off = b1 | ((b2 &amp; 0xF0) &lt;&lt; 4)</code> and <code>len = (b2 &amp; 0x0F) + 3</code>. Corroborated independently: the LZSS module inside <code>DezaDiskTool.exe</code> self-describes as a port of Okumura's codec. <b>The trap:</b> this decoder cannot fail — it will happily "decompress" noise, and one pass of this very survey was misled that way. It is evidence only when the caller supplies the stored length from the directory <em>and</em> the output length matches a predicted value. There is no length prefix on these streams.</span></td></tr>
+  <tr><td class="feat">Graphics format</td><td><span class="note">N64 <b>RGBA5551</b>, 2 bytes per pixel, no palette, on flat 64-pixel-wide scanline sheets — <em>not</em> the <code>rgb555ToRgb</code> unpack the PSX and SFC parsers use, since the alpha bit is bit 0. Pinned by measurement: of the 432,506 nonzero big-endian 16-bit words in <code>SAMPLEZ1.0GR</code>, <b>every one has bit 0 set</b>, fraction 1.000000, and the same holds for all 29,180 in <code>CGR</code>. Nothing but an alpha bit produces that. It also corrects the documentation's image count — <code>0x104000 ÷ 2 ÷ (64 × 32)</code> is <b>260</b>, not 520. Rendered as a contact sheet the tiles are unmistakably real art: the sample game's <b>GEAR SQUID</b> title logos, <code>WARNING</code> and <code>DANGER</code> plates, a <code>CODE NAME DUAL-LANCER</code> briefing screen, <code>sys check 01</code>/<code>02</code>, and Japanese cut-in portraits.</span></td></tr>
+  <tr><td class="feat">The model record</td><td><span class="note"><code>0xC20</code> bytes, and the pleasant surprise of the survey: <b>plain data, not F3DEX display lists</b>. <code>+0x0</code> <code>u8</code> vertex count (≤100), <code>+0x1</code> <code>u8</code> face count (≤100), <code>+0x2</code> 100 vertices of <code>s16 x,y,z</code>, <code>+0x25A</code> 100 faces of <code>0x14</code> bytes (three vertex indices, three <code>s16</code> UV pairs, three bytes of baked RGB light, one flags byte), <code>+0xA2C</code> 16 tile descriptors, <code>+0xBAC</code> per-vertex groups. Corroborated by a scan of the whole 64 MB, which found only 4 <code>G_ENDDL</code> and 1 <code>G_RDPPIPESYNC</code>, all inside the boot stub. The engine builds display lists at run time; the disk stores geometry as structs, so a viewer is direct.</span></td></tr>
+  <tr><td class="feat">The project model</td><td><span class="note">30 files per project: 6 globals — <code>GAM CGR CMD CBL ULB MUS</code> — and 3 per stage, <code>BL MD GR</code>, for stages <b>0,1,2,3,4,5,6,8</b>. Stage 7 is simply absent from the numbering. The disk carries two pressed sample projects, <code>SAMPLEZ1</code> and <code>SAMP</code>, plus the global <code>DEZA3D.SYS</code> and <code>DEZA3D.HSC</code> and a user project <code>DST</code> in the writable area.</span></td></tr>
+  <tr><td class="feat">The boot program <span class="tag spec">DEAD END</span></td><td><span class="note">Recorded here so nobody spends a day on it. File <code>0x0</code>–<code>0x29420</code> (168,992 bytes) is a complete libultra executable, load address <code>0x80000400</code>, entry <code>0x80000560</code>; the entry stub's bzero loop gives the BSS bounds (<code>t0 = 0x80029820</code>, length <code>0x48180</code> — note the <code>addiu</code> sign-extends, so it is <em>not</em> 0x8003xxxx) and <code>0xFF</code> filler begins on exactly the byte BSS starts, which pins both the load address and the image end. It holds ~3.9 KB of genuine 64DD block-mode driver (ASIC registers <code>0x05000508</code>/<code>0x05000510</code>, sector buffer <code>0x05000000</code>) and <b>no filesystem code at all</b> — not one filename constant, no <code>DEZA3D</code>, no extension table. All 274 <code>jr ra</code> instructions in the 64 MB fall inside this image; there is no code anywhere else on the disk. Its entire job is the "insert the cartridge" screen. <b>Do not disassemble it hoping to find the filesystem</b> — that lives on the cartridge, and it is no longer needed.</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2><span class="no">03</span>Located but not yet understood</h2>
+<p class="sub"><span class="band part">Likely</span>&ensp;Every one of these has a documented layout whose arithmetic closes exactly against the measured file sizes — <code>CBL = 27 × 0x5C</code>, <code>CMD = 20 × 0xC20 + 40</code>, <code>#MD = 130 × 0xC20 + 260</code>, <code>ULB = 8 × 0xC20 + 8 × 0x1000</code>, <code>CGR = 40 × 0x1000</code>. That is a strong prior and it is not the same thing as having been checked field by field against these bytes, which none of them has. The source says of itself "please note these are not complete!", and one of its counts is already known wrong (item 5), so everything here should ship marked <em>likely</em>.</p>
+<ul class="plain">
+  <li><b><code>CMD</code></b> <code>0xF2A8</code> — 20 model entries of <code>0xC20</code> plus 20 texture indices; the record itself is confirmed (section 02), the surrounding table is not</li>
+  <li><b><code>#MD</code></b> <code>0x62944</code> — 130 model entries of <code>0xC20</code> plus 260 bytes, per stage: by volume the largest <em>likely</em> region on the disk, and the one a viewer would reach first</li>
+  <li><b><code>CBL</code></b> <code>0x9B4</code> — 20 enemy entries and 7 item entries of <code>0x5C</code> each</li>
+  <li><b><code>ULB</code></b> <code>0xE100</code> — 8 models and 8 textures, the only file mixing the two record kinds in one container</li>
+  <li><b><code>#BL</code></b> <code>0x8B37</code> — 180 enemy entries of <code>0x5C</code>, enemy placement, a 256-entry map table and 500 layout-effect commands of <code>0xC</code>; three named <code>???</code> fields inside it</li>
+  <li><b><code>GAM</code></b> <code>0x559</code> — global settings, two <code>0xA0</code> high-score blocks, ~120 <code>s16</code> sprite-atlas coordinates, 30 light entries and a <code>0x200</code> editor palette — and nine bytes that do not reconcile on this prototype (item 6)</li>
+  <li><b><code>MUS</code> header</b> — the <code>0x1A</code> bytes at the head of each of the 24 songs are described; the <code>0x2C80</code> after them are not (item 4)</li>
+  <li><b>The writable directory</b> — same structure-of-arrays shape at ~<code>0x18CF174</code>, one 16,320-byte block, with a per-block <code>u16</code> allocation map at <code>0x18CF182</code> where <code>0xFFFF</code> means free and anything else is the owning slot index. Two traps a naive reader will hit: <b>save-area files can be fragmented</b> — <code>DST.MUS</code> claims start LBA 1428 count 3 but the map places it on 1428, 1429 and <b>1451</b>, so <code>startLBA + count</code> is valid only in the read-only area — and <b>there is no checksum anywhere</b> in either directory, so unknown fields must be preserved verbatim rather than recomputed. Deletion is FAT-style: zero the first byte of the name.</li>
+</ul>
+
+<h2><span class="no">04</span>No trace at all</h2>
+<p class="sub"><span class="band miss">Absent</span>&ensp;Unlike the other three maps, this section is not a short tail — it is nearly everything this repo would have to contain. None of section 02 is committed.</p>
+<ul class="plain">
+  <li><b>Any parser</b> — no <code>packages/shmup-engine/src/n64/</code>, no <code>"./n64"</code> subpath, no reader of any kind (item 1)</li>
+  <li><b>Any tool</b> — no <code>tools/n64-ddd/</code>, no <code>n64:probe</code> task in <code>deno.json</code>, no <code>report</code>/<code>hex</code>/<code>png</code> verbs, no README row</li>
+  <li><b>Any test</b> — no <code>tests/dezaemon_n64_test.ts</code>. The fixture is correctly placed already: <code>dev-fixtures/</code> is gitignored, so a test would be <code>ignore:</code>-gated on its absence and must exit 0, not 1, when it is missing</li>
+  <li><b>Canonical notes</b> — no <code>packages/shmup-engine/FORMAT-N64.md</code>, which is where the confirmed/likely/open split on this page properly belongs</li>
+  <li><b>A cover</b> — no counterpart to <span class="ref">packages/shmup-engine/src/sfc/cover.js</span>, and the graphics to build one from decode today</li>
+  <li><b>The game.json mapping</b> — and unlike the other platforms this may never be the right goal: the data model is 3D (item 10)</li>
+  <li><b>Any write path</b> — nothing writes <code>.ddd</code> or <code>.ndd</code>. It would be unusually tractable if wanted, since there are no checksums to satisfy — but the fragmentation rule and the allocation map must both be honoured</li>
+  <li><b>A launcher row</b> — <code>static/emulators.json</code> has no N64 core, and the disk is inert without a cartridge that was never released</li>
+  <li><b>A round trip</b> — impossible here rather than merely undone, for want of an emulator, a disk writer and the cartridge (item 9)</li>
+</ul>
+
+<footer>
+  Sources: the fixture <code>dev-fixtures/dezaemon298.ddd</code> (64,458,560 bytes, md5 <code>99a67674130f271f150db75c02d14f0a</code>, gitignored like every other Dezaemon fixture here); 64dd.org's canonical dump <code>DEZA_1_19980223.zip</code> → <code>deza1.NDD</code> and its database and Dezaemon pages; <code>file formats.txt</code> from Zoinkity and whowasphone404's 2024 Dezaemon 3D English translation, which documents every payload type field by field; LuigiBlood's 64dd wiki (Disk Specification, Disk Image Formats) with the geometry implemented in <code>leo64dd_python</code>, <code>jkbenaim/leotools</code> (<code>leogeo.c</code>), Project64's <code>N64Disk.h</code> and mupen64plus-core's <code>src/device/dd/disk.h</code>; and the Internet Archive item <code>64ddDezaemon3DExpansion</code>, which is where this fixture came from. Method: every offset and stride on this page was measured against the bytes and then re-measured independently before it was written down, and the one claim everything else rests on — that the chain from LBA to decompressed file is correct — was tested the only way this platform allows, by predicting 60 output sizes from third-party documentation and hitting 58 of them exactly, with the 2 misses falling on the 2 files that documentation names as malformed. Where a controlled delta would normally promote a claim to confirmed, none is possible: that needs a 64DD emulator, a disk writer and the DEZA64 cartridge, and the cartridge was never released. Nothing described in section 02 is committed to this repository; see section 04. Surveyed 2026-09-19. The Saturn map it mirrors was surveyed 2026-08-28 with updates to 2026-09-05, the Super Famicom one 2026-09-07 and the PlayStation one 2026-09-12.
+</footer>
+</div>
