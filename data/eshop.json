@@ -57,5 +57,19 @@
     "date": "09.14.26",
     "players": 2,
     "status": "DEBUG"
+  },
+  {
+    "id": "sar-search-and-rescue",
+    "kind": "arcade",
+    "name": "SAR - Search And Rescue",
+    "title": "SAR - SEARCH AND RESCUE",
+    "sub": "ARCADE / MAME // SNK68 hardware \u00b7 SNK 1989",
+    "core": "arcade",
+    "rom": "searchar",
+    "romUrl": "/games/sar-search-and-rescue/searchar.zip",
+    "size": "1.8 MB",
+    "date": "09.19.26",
+    "players": 2,
+    "status": "DEBUG"
   }
 ]
