@@ -34,7 +34,8 @@
  * that suffix as the right half of a split controller and starts two-player.
  */
 
-import { join } from "@std/path";
+import { join, resolve } from "@std/path";
+import { repoRoot } from "@shmupx/shmup-harbor/repo-root";
 import {
   Cdp,
   findChrome,
@@ -314,14 +315,38 @@ export function pngSize(bytes: Uint8Array): { width: number; height: number } {
   return { width: dv.getUint32(16), height: dv.getUint32(20) };
 }
 
-/** Find the debug browser's page target and connect to it. */
+/**
+ * Find the debug browser's page target and connect to it.
+ *
+ * WHY THE CLOSING ADVICE BELONGS TO THE CALLER. There are two ways to be in
+ * this function and they want opposite sentences at the end of the failure. An
+ * MCP tool, or a second prompt, is ATTACHING to a browser somebody else was
+ * supposed to have started, and "start one with `deno task game:debug`" is the
+ * entire fix. launchDebugBrowser is the thing that just started one, and
+ * handing it that same line tells a person to run the command that is failing
+ * in front of them — which is what it did, on the one path where the advice was
+ * worse than silence. It is a function rather than a string because the
+ * launcher's version of the sentence quotes what Chrome wrote to stderr WHILE
+ * this loop was polling, and none of that has been written at the moment of the
+ * call.
+ *
+ * The signal is for a caller racing this against something that already knows
+ * the answer — launchDebugBrowser races it against the browser's own exit — so
+ * the loop gives up within one poll instead of spending the rest of a
+ * forty-second deadline fetching a port nothing will ever answer on.
+ */
 export async function attachCdp(
   port = DEFAULT_CDP_PORT,
   timeoutMs = 20_000,
+  opts: {
+    advice?: (lastErr: string) => string;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<Cdp> {
+  const advice = opts.advice ?? (() => "Start one with: deno task game:debug");
   const deadline = Date.now() + timeoutMs;
   let lastErr = "";
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !opts.signal?.aborted) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/json/list`);
       const targets = await res.json() as {
@@ -343,9 +368,11 @@ export async function attachCdp(
     }
     await sleep(300);
   }
+  const tail = advice(lastErr);
   throw new Error(
-    `no debug browser on DevTools port ${port} (${lastErr}). ` +
-      `Start one with: deno task game:debug`,
+    `no debug browser on DevTools port ${port}${
+      lastErr ? ` (${lastErr})` : ""
+    }.${tail ? ` ${tail}` : ""}`,
   );
 }
 
@@ -572,36 +599,261 @@ export class GameDebug {
   }
 }
 
-/** Serve the level and open a debug browser on it, probe installed pre-boot. */
-export async function launchDebugBrowser(opts: {
-  record: Record<string, unknown>;
-  servePort?: number;
-  cdpPort?: number;
-  headless?: boolean;
-  bossRush?: boolean;
-  stage?: number;
-  chromeBin?: string | null;
-  log?: (s: string) => void;
-}): Promise<{
-  cdp: Cdp;
+/**
+ * A text sink that keeps the first and last `half` characters it is given.
+ *
+ * WHY BOTH ENDS AND NOT A PLAIN TAIL. The two questions a captured browser log
+ * gets asked live at opposite ends of it. "Why would this launch not start" is
+ * the first two seconds, where Chrome refuses the debugging port, or the
+ * profile, or the socket, before it has drawn anything at all. "Why did the
+ * page stop after an hour of stepping" is the last few lines. A tail ring
+ * answers the second question and silently discards the first — which is the
+ * one this module exists to surface — so both ends are kept and the middle,
+ * which is component-update chatter, is the part that goes.
+ */
+export function makeCapture(half = 16_000): {
+  push(text: string): void;
+  text(): string;
+} {
+  let head = "";
+  let tail = "";
+  let elided = 0;
+  return {
+    push(text: string) {
+      if (head.length < half) {
+        const room = half - head.length;
+        head += text.slice(0, room);
+        text = text.slice(room);
+      }
+      if (!text) return;
+      tail += text;
+      if (tail.length > half) {
+        elided += tail.length - half;
+        tail = tail.slice(-half);
+      }
+    },
+    text(): string {
+      if (!elided) return (head + tail).trim();
+      return `${head.trim()}\n... [${elided} characters elided] ...\n${tail.trim()}`;
+    },
+  };
+}
+
+/**
+ * Drain a child's stderr into a capture, and hand back a reader for it.
+ *
+ * The draining is the obligation, not the reading: a "piped" stream nobody
+ * consumes fills at about 64KB and the child blocks forever on its next write,
+ * so this has to run for the whole session rather than being started once
+ * something has gone wrong. Chrome is chatty on a healthy run too — a clean
+ * launch produces a "DevTools listening" line, an allocator warning and a GCM
+ * registration ERROR within five seconds — which is why the output is captured
+ * rather than inherited: two lines of irrelevant noise, one of them tagged
+ * ERROR, above every handover banner would teach people to ignore the place
+ * the real explanation appears.
+ */
+function drainStderr(
+  child: Deno.ChildProcess,
+): { text: () => string; stop: () => void } {
+  const capture = makeCapture();
+  const decoder = new TextDecoder();
+  // A reader is held rather than `for await (const c of child.stderr)`,
+  // because the loop has to be stoppable from outside and `for await` owns the
+  // lock, so cancel() on the stream itself throws. WHY IT HAS TO BE
+  // STOPPABLE: SIGKILL on the browser does not close this pipe if anything the
+  // browser started still holds the write end, and Chrome starts renderers.
+  // The read then never completes, and a pending read op keeps the event loop
+  // alive — invisible to `deno task game:debug`, which ends in Deno.exit(),
+  // and a process that never returns for anything that calls this as a
+  // library. Measured on a stand-in child that leaves one `sleep` behind: the
+  // launch failed and reported correctly, and the process then sat there for
+  // the remaining five minutes.
+  const reader = child.stderr.getReader();
+  (async () => {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || !value) return;
+      capture.push(decoder.decode(value, { stream: true }));
+    }
+  })().catch(() => {
+    // SIGKILL closes the pipe out from under the read, and Deno surfaces that
+    // here as a BadResource. It is never the failure worth reporting —
+    // whatever did the killing is already throwing — and an uncaught rejection
+    // during teardown would take the process down before it printed that.
+  });
+  return {
+    text: () => capture.text(),
+    stop: () => void reader.cancel().catch(() => {}),
+  };
+}
+
+/**
+ * What Chrome's refusal to open a DevTools port means, and what to do about it.
+ *
+ * Pure, and returning lines rather than one sentence, for the reasons
+ * explainTunnelError in lib/tailscale.ts is: the matching is against text a
+ * browser prints and rewords between versions, so it has to live somewhere a
+ * test can feed it a real capture and read the answer back. The strings matched
+ * here were taken out of the installed binary's string table rather than
+ * remembered.
+ *
+ * The rule with no exceptions: nothing this returns may tell the reader to run
+ * `deno task game:debug`. Every caller of this function IS that command,
+ * mid-failure, and that was the old advice's whole problem.
+ * tests/game_debug_test.ts asserts it across every fixture.
+ */
+export function explainChromeLaunch(opts: {
+  cdpPort: number;
+  profileDir: string;
+  /** Everything Chrome wrote to stderr while we waited. */
+  said: string;
+  /** The child's exit code, or null while it is still running. */
+  exitCode: number | null;
+  /** What attachCdp's last poll gave up with. */
+  lastErr: string;
+  /** Where the full capture was written, if it was worth writing. */
+  logPath?: string;
+}): string[] {
+  const said = opts.said ?? "";
+  const lines: string[] = [];
+
+  if (/non-default data directory/i.test(said)) {
+    lines.push(
+      "Chrome refused the debugging port because of the profile it was given " +
+        `(${opts.profileDir}): since Chrome 136 --remote-debugging-port is ` +
+        "only honoured on a profile that is not the user's default one. Point " +
+        "--profile at a directory of its own.",
+    );
+  } else if (/disallowed by the system admin/i.test(said)) {
+    lines.push(
+      "Remote debugging is switched off by enterprise policy " +
+        "(DevToolsRemoteDebuggingAllowed). No flag works around that one — not " +
+        "a different profile, not a different port. A Chromium the policy does " +
+        "not cover, passed with --chrome, is the only way through.",
+    );
+  } else if (
+    /address already in use|cannot start http server for devtools/i.test(said)
+  ) {
+    lines.push(
+      `Something already holds DevTools port ${opts.cdpPort}: ` +
+        `\`lsof -iTCP:${opts.cdpPort} -sTCP:LISTEN\` names it, and --cdp-port ` +
+        "moves out of its way.",
+    );
+  }
+  // Tested on its own rather than as another branch of the chain above: it
+  // ACCOMPANIES the bind failure rather than replacing it, and it is the half
+  // of that pair a reader mistakes for success.
+  if (/DevTools listening on ws:\/\/\[::1\]/.test(said)) {
+    lines.push(
+      'Chrome did print a "DevTools listening" line, but on [::1] — it fell ' +
+        "back to IPv6 after failing to bind IPv4. Everything here talks to " +
+        "127.0.0.1, so that line is not the success it looks like.",
+    );
+  }
+
+  if (!lines.length && opts.exitCode !== null) {
+    lines.push(
+      `Chrome exited with code ${opts.exitCode} instead of staying up. A ` +
+        `browser already holding ${opts.profileDir} takes the URL off a second ` +
+        "one and lets it quit, which looks exactly like this from out here: " +
+        "one session per profile, and so one session per --cdp-port.",
+    );
+  }
+  if (
+    !lines.length &&
+    (/no page target/i.test(opts.lastErr) ||
+      new RegExp(`DevTools listening on ws://127\\.0\\.0\\.1:${opts.cdpPort}`)
+        .test(said))
+  ) {
+    lines.push(
+      "The port opened — Chrome says so — but no page target ever appeared on " +
+        "it. That is a page that never loaded, not a port that never listened.",
+    );
+  }
+  if (!lines.length) {
+    lines.push(
+      "Chrome is running and was given " +
+        `--remote-debugging-port=${opts.cdpPort}, but nothing ever answered on ` +
+        `it. Profile: ${opts.profileDir}.`,
+    );
+  }
+
+  // Every branch ends pointing at the browser's own words, because every
+  // branch above is an inference from them and the next unrecognised refusal
+  // will only be legible in the raw text.
+  if (said) {
+    const last = said.trim().split("\n").slice(-3).join(" / ");
+    lines.push(
+      `Chrome wrote: ${last}` +
+        (opts.logPath ? ` (all of it: ${opts.logPath})` : ""),
+    );
+  } else {
+    lines.push("Chrome wrote nothing to stderr at all.");
+  }
+  return lines;
+}
+
+/**
+ * The Chrome profile a debug browser runs on — one directory per DevTools
+ * port, under the gitignored build/.
+ *
+ * WHY THIS IS NOT THE EVERYDAY PROFILE, AND WHY --headed DID NOT WORK WITHOUT
+ * IT. Chrome 136 stopped honouring --remote-debugging-port when the
+ * user-data-dir is the DEFAULT profile. It is a real fix for a real attack —
+ * malware was starting the installed browser with a debugging port and reading
+ * live cookies and sessions straight out of the profile — but the refusal is
+ * silent in the worst available way: Chrome still starts, still opens the URL,
+ * still puts a window on screen with the game running in it, and simply never
+ * listens on the port. The only symptom is attachCdp polling for forty seconds
+ * and then reporting a fetch failure against a browser the person can see.
+ * Headless is exempt from the rule, and headless is this task's default, which
+ * is precisely why this survived: the single flag that took the other branch
+ * was the one flag that could not work.
+ *
+ * WHY PER PORT, AND NOT ONE SHARED DIRECTORY. --cdp-port and --serve-port exist
+ * so two debug sessions can run side by side, and a Chromium profile takes a
+ * singleton lock. A second Chrome pointed at a directory the first one holds
+ * does not start a browser at all: it hands its URL to the running instance and
+ * exits, so the tab opens in somebody else's window and the port being waited
+ * on belongs to somebody else's game. That would trade this silent failure for
+ * a stranger one. Keying on the port also means a given port keeps its
+ * localStorage and IndexedDB between runs, so whatever the runtime saved last
+ * session is still there this session.
+ *
+ * Nothing stale can come out of that persistence: startServer already answers
+ * every request no-store and strips etag and last-modified, for exactly this
+ * reason, and --disk-cache-size=1 below covers the rest.
+ *
+ * The root is a parameter so a test can ask the question without touching
+ * repoRoot(), which caches its answer for the whole process and reads
+ * $SHMUPX_ROOT on the way.
+ */
+export function debugProfileDir(
+  cdpPort = DEFAULT_CDP_PORT,
+  root = repoRoot(),
+): string {
+  return join(root, "build", "debug-profile", String(cdpPort));
+}
+
+/**
+ * The command line the debug browser is started with.
+ *
+ * Split out from the spawn so it can be asserted without a browser. The
+ * argument that earns that is --user-data-dir: invisible when it is right,
+ * forty seconds and a wrong diagnosis when it is missing, and missing only in
+ * the mode that is not the default. tests/game_debug_test.ts pins it.
+ */
+export function debugChromeArgs(opts: {
   url: string;
   cdpPort: number;
-  stopServer: () => Promise<void>;
-  kill: () => void;
-}> {
-  const log = opts.log ?? (() => {});
-  const servePort = opts.servePort ?? DEFAULT_SERVE_PORT;
-  const cdpPort = opts.cdpPort ?? DEFAULT_CDP_PORT;
-  const server = startServer(opts.record, { port: servePort });
-  const params = new URLSearchParams();
-  if (opts.stage) params.set("stage", String(opts.stage));
-  if (opts.bossRush ?? true) params.set("bossRush", "1");
-  const q = params.toString();
-  const url = `http://127.0.0.1:${servePort}/games/2028-ai${q ? `?${q}` : ""}`;
-
-  const bin = await findChrome(opts.chromeBin ?? null);
+  profileDir: string;
+  headless: boolean;
+}): string[] {
   const args = [
-    `--remote-debugging-port=${cdpPort}`,
+    `--remote-debugging-port=${opts.cdpPort}`,
+    // Not hygiene, and not optional — see debugProfileDir. Without this line a
+    // headed Chrome ignores the line above it and listens on nothing.
+    `--user-data-dir=${opts.profileDir}`,
     `--window-size=${GAME_WIDTH},${GAME_HEIGHT}`,
     // Without these a backgrounded or occluded window is throttled to a crawl,
     // which for a stepped game reads as the step having hung.
@@ -612,8 +864,28 @@ export async function launchDebugBrowser(opts: {
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-features=TranslateUI",
+    // The same set the profiler's Browser.launch carries, and for the same
+    // reason now that this profile persists too: a first-run profile spends
+    // its opening minute on component updates and background networking, and
+    // the opening minute here is the typewriter story that driveToGame has to
+    // tap through. The disk cache is turned off rather than reused so an
+    // edited runtime is never served from it.
+    "--disk-cache-size=1",
+    "--disable-component-update",
+    "--disable-background-networking",
+    "--disable-sync",
+    "--disable-extensions",
+    "--no-service-autorun",
+    // The profile OUTLIVES the run now, and teardown ends the browser with
+    // SIGKILL, so every launch after the first is a launch after an unclean
+    // shutdown. Left alone Chrome greets that with the "Restore pages?"
+    // bubble, which in a 256x480 headed window is most of the window — parked
+    // in front of the first frame of the stage, the one thing anybody passes
+    // --headed to look at.
+    "--disable-session-crashed-bubble",
+    "--hide-crash-restore-bubble",
   ];
-  if (opts.headless ?? true) {
+  if (opts.headless) {
     args.push(
       "--headless=new",
       "--disable-gpu",
@@ -621,48 +893,212 @@ export async function launchDebugBrowser(opts: {
       "--disable-dev-shm-usage",
     );
   }
-  args.push(url);
-  log(`chrome ${opts.headless ?? true ? "(headless) " : ""}-> ${url}`);
+  // Last: a bare URL sitting after a valueless flag is read as that flag's
+  // value rather than as a page to open.
+  args.push(opts.url);
+  return args;
+}
+
+/** Serve the level and open a debug browser on it, probe installed pre-boot. */
+export async function launchDebugBrowser(opts: {
+  record: Record<string, unknown>;
+  servePort?: number;
+  cdpPort?: number;
+  headless?: boolean;
+  bossRush?: boolean;
+  stage?: number;
+  chromeBin?: string | null;
+  userDataDir?: string;
+  log?: (s: string) => void;
+}): Promise<{
+  cdp: Cdp;
+  url: string;
+  cdpPort: number;
+  profileDir: string;
+  chromeLog: () => string;
+  stopServer: () => Promise<void>;
+  kill: () => void;
+}> {
+  const log = opts.log ?? (() => {});
+  const servePort = opts.servePort ?? DEFAULT_SERVE_PORT;
+  const cdpPort = opts.cdpPort ?? DEFAULT_CDP_PORT;
+  const headless = opts.headless ?? true;
+  // Absolute, because this path is printed in the handover banner and in the
+  // failure message and somebody has to be able to go and look in it. `||`
+  // rather than `??`, because an override that arrived empty (`--profile=`)
+  // would hand Chrome nothing at all and put it straight back on the default
+  // profile — the one failure this directory exists to prevent, reintroduced
+  // by a trailing equals sign.
+  const profileDir = resolve(
+    opts.userDataDir?.trim() || debugProfileDir(cdpPort),
+  );
+  const logPath = join(
+    repoRoot(),
+    "build",
+    "debug-logs",
+    `chrome-${cdpPort}.log`,
+  );
+
+  // Both of these happen BEFORE the port is bound. findChrome throws for a
+  // --chrome that is not a file and mkdir throws for a build/ that cannot be
+  // written, and a server already listening on --serve-port when either of
+  // them does means the obvious next move — fix the typo, run it again — fails
+  // on an address already in use and blames something unrelated. Making the
+  // directory ourselves rather than leaving it to Chrome is the same trade:
+  // our version of that error names the path, Chrome's goes to the stderr of a
+  // browser that then exits 0.
+  const bin = await findChrome(opts.chromeBin ?? null);
+  await Deno.mkdir(profileDir, { recursive: true });
+
+  const server = startServer(opts.record, { port: servePort });
+  const params = new URLSearchParams();
+  if (opts.stage) params.set("stage", String(opts.stage));
+  if (opts.bossRush ?? true) params.set("bossRush", "1");
+  const q = params.toString();
+  const url = `http://127.0.0.1:${servePort}/games/2028-ai${q ? `?${q}` : ""}`;
+
+  log(`chrome ${headless ? "(headless) " : ""}-> ${url}`);
+  log(`  profile ${profileDir}`);
   const child = new Deno.Command(bin, {
-    args,
+    args: debugChromeArgs({ url, cdpPort, profileDir, headless }),
     stdout: "null",
-    stderr: "null",
+    // WHY STDERR IS READ AND NOT THROWN AWAY. Everything Chrome has to say
+    // about refusing to start the way it was asked — a profile another
+    // instance holds the lock on, a port already taken, a debugging port a
+    // policy or a default profile forbids — it says here, and then it exits 0
+    // as though nothing had happened. With this set to "null" the whole
+    // diagnosis available to anybody was attachCdp's "fetch failed", which
+    // names the symptom and points at the wrong component. Measured: nothing
+    // at all arrives on stdout, so there is one stream and one reader.
+    stderr: "piped",
     stdin: "null",
   }).spawn();
+  const chrome = drainStderr(child);
+  const chromeSaid = chrome.text;
 
-  const cdp = await attachCdp(cdpPort, 40_000);
-  // WHY THE VIEWPORT IS OVERRIDDEN AND --window-size IS NOT ENOUGH.
-  // --window-size asks for an OS WINDOW, and Chrome clamps its width to a
-  // minimum — measured in this container, `--window-size=256,480` produced an
-  // innerWidth/innerHeight of 500x340. The page then does the right thing with
-  // a window that shape and fits the 256x480 game into it, letterboxed and
-  // scaled DOWN to about 182x340, so the game boots believing it has a
-  // landscape-ish viewport. fitViewport sizes the viewport itself instead, and
-  // it is done BEFORE the boot reload so the bundle sizes itself once on the
-  // way up rather than being resized underneath a paused game that cannot
-  // repaint until the next step.
-  await fitViewport(cdp, GAME_WIDTH, GAME_HEIGHT);
-  // Install, then reload: the document Chrome first answers with has already
-  // run its scripts, so only a fresh one is owned from before the bundle boots.
-  await installProbe(cdp);
-  await cdp.send("Page.reload", { ignoreCache: true });
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    const v = await cdp.eval<number | null>(
-      `window.__dbg ? window.__dbg.version : null`,
-    ).catch(() => null);
-    if (v === PROBE_VERSION) break;
-    await sleep(250);
-  }
-  return {
-    cdp,
-    url,
-    cdpPort,
-    stopServer: () => server.close(),
-    kill: () => {
-      try {
-        child.kill("SIGKILL");
-      } catch { /* gone */ }
-    },
+  // WHY THE FAILURE PATH CLEANS UP IN HERE AND NOT AT THE CALLER. The child
+  // and the server are reachable only through the object returned below, and a
+  // throw does not return one — so a caller's teardown has nothing to work
+  // with however carefully it is written. debug-game.ts's teardown() is the
+  // demonstration: `launched?.kill()` against a `launched` that is still null
+  // on this exact path, i.e. a no-op, which is how a failed --headed launch
+  // left a live Chrome holding a window on an origin that stopped existing the
+  // moment the task exited. The server is the same problem one process in: it
+  // holds --serve-port, and the next thing anybody does after a failed launch
+  // is launch again.
+  const abandon = async (): Promise<void> => {
+    try {
+      child.kill("SIGKILL");
+    } catch { /* already gone */ }
+    chrome.stop();
+    // Awaited, not merely signalled: an unreaped child stays a zombie for as
+    // long as this process lives, and a library caller's process is meant to.
+    await Promise.race([child.status, sleep(2000)]).catch(() => {});
+    await Promise.race([server.close(), sleep(3000)]).catch(() => {});
   };
+
+  // A Chrome that loses the singleton lock on the profile directory does not
+  // fail slowly — it hands its URL to the instance already holding the lock
+  // and exits within the second. Racing the attach against the child's own
+  // exit turns that into an immediate, named error instead of forty seconds of
+  // polling a port nothing is going to open, and the abort stops the poller
+  // dead rather than leaving it fetching into the rest of its deadline.
+  const abort = new AbortController();
+  const died = child.status.then((status): never => {
+    throw new Error(
+      `Chrome exited before a DevTools port opened on ${cdpPort}. ` +
+        explainChromeLaunch({
+          cdpPort,
+          profileDir,
+          said: chromeSaid(),
+          exitCode: status.code,
+          lastErr: "the browser exited",
+          logPath,
+        }).join(" "),
+    );
+  });
+  // On the happy path this rejects at teardown, long after the race that was
+  // listening has settled.
+  died.catch(() => {});
+
+  // Held outside the try so the failure path can close it: everything between
+  // the attach and the return can throw, and a socket left open against a
+  // browser that is about to be SIGKILLed is an op this process never finishes.
+  let cdp: Cdp | null = null;
+  try {
+    cdp = await Promise.race([
+      attachCdp(cdpPort, 40_000, {
+        signal: abort.signal,
+        advice: (lastErr) =>
+          explainChromeLaunch({
+            cdpPort,
+            profileDir,
+            said: chromeSaid(),
+            exitCode: null,
+            lastErr,
+            logPath,
+          }).join(" "),
+      }),
+      died,
+    ]);
+    // WHY THE VIEWPORT IS OVERRIDDEN AND --window-size IS NOT ENOUGH.
+    // --window-size asks for an OS WINDOW, and Chrome clamps its width to a
+    // minimum — measured in this container, `--window-size=256,480` produced an
+    // innerWidth/innerHeight of 500x340. The page then does the right thing with
+    // a window that shape and fits the 256x480 game into it, letterboxed and
+    // scaled DOWN to about 182x340, so the game boots believing it has a
+    // landscape-ish viewport. fitViewport sizes the viewport itself instead, and
+    // it is done BEFORE the boot reload so the bundle sizes itself once on the
+    // way up rather than being resized underneath a paused game that cannot
+    // repaint until the next step.
+    await fitViewport(cdp, GAME_WIDTH, GAME_HEIGHT);
+    // Install, then reload: the document Chrome first answers with has already
+    // run its scripts, so only a fresh one is owned from before the bundle boots.
+    await installProbe(cdp);
+    await cdp.send("Page.reload", { ignoreCache: true });
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const v = await cdp.eval<number | null>(
+        `window.__dbg ? window.__dbg.version : null`,
+      ).catch(() => null);
+      if (v === PROBE_VERSION) break;
+      await sleep(250);
+    }
+    return {
+      cdp,
+      url,
+      cdpPort,
+      profileDir,
+      chromeLog: chromeSaid,
+      stopServer: () => server.close(),
+      kill: () => {
+        try {
+          child.kill("SIGKILL");
+        } catch { /* gone */ }
+        chrome.stop();
+        // Fire and forget: the caller's teardown is not waiting on this, but
+        // an unawaited status leaves a zombie behind in any caller that does
+        // not exit immediately afterwards.
+        child.status.catch(() => {});
+      },
+    };
+  } catch (err) {
+    abort.abort();
+    try {
+      cdp?.close();
+    } catch { /* the child is going anyway */ }
+    await abandon();
+    // The message this is about to rethrow already names logPath, so the file
+    // has to exist by the time anybody reads it. build/ is known writable —
+    // the profile directory went into it a moment ago — and it is written
+    // after abandon() so the kill's last words are in it too.
+    const said = chromeSaid();
+    if (said) {
+      await Deno.mkdir(join(logPath, ".."), { recursive: true }).catch(
+        () => {},
+      );
+      await Deno.writeTextFile(logPath, `${said}\n`).catch(() => {});
+    }
+    throw err;
+  }
 }

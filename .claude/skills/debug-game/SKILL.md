@@ -27,6 +27,12 @@ that *you* are the clock.
    child and holds them only while it is in the foreground, so launching it from
    a tool call kills the session the moment the call returns — and it takes
    ~3 minutes to walk to the stage, every time.
+   If the player answers that a **window is already open with the game in it**
+   while you still see nothing on the port, they are on a build from before the
+   headed-profile fix: Chrome 136+ declines a debugging port on the default
+   profile without declining anything else, so the window is real and the port
+   was never opened. The task now runs on `build/debug-profile/<port>/` for that
+   reason; ask them to pull and restart it.
 2. **Confirm where it is.** `status` reports `scenes`. At the stage that is
    `["PhaserGameScene"]`. PhaserGameScene is *also* active underneath the story,
    so the test is that `PhaserAdvScene` and `PhaserTitleScene` are **absent**.

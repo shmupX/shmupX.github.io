@@ -13,20 +13,38 @@
 // a second ship in the air. So they are asserted against the source text here,
 // where they cost nothing.
 //
+// The browser's command line is pinned here for the same reason as the probe,
+// and it arrived here the same way — by failing silently in the runtime. A
+// --user-data-dir missing from the argv costs nothing headless, which is the
+// default and the CI path, and costs a headed run its DevTools port entirely:
+// Chrome 136+ declines a debugging port on the user's default profile without
+// declining anything else, so the window opens, the game runs in it, and the
+// only symptom is a forty-second timeout blaming the port. Nothing about that
+// is visible to the type-checker either.
+//
 // Nothing in this file touches the network, starts a browser or opens a
-// DevTools port: every case is a literal or a substring of PROBE.
+// DevTools port. Every case is a literal, a substring of PROBE, or a pure
+// function fed a fixture — including the attachCdp case, which passes a
+// timeout of zero so the polling loop's guard is false before its first fetch.
 
 import {
   assert,
   assertEquals,
+  assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "@std/assert";
+import { basename, isAbsolute, join } from "@std/path";
 import {
+  attachCdp,
+  debugChromeArgs,
+  debugProfileDir,
+  explainChromeLaunch,
   GAME_HEIGHT,
   GAME_WIDTH,
   KEY_SPECS,
   keySpec,
+  makeCapture,
   PAD_BUTTONS,
   padButtonIndex,
   pngSize,
@@ -304,4 +322,232 @@ Deno.test("pngSize refuses to guess about bytes that are not a PNG", () => {
     0x0a,
   ]);
   assertEquals(pngSize(truncated), { width: 0, height: 0 });
+});
+
+/** ─── the browser's command line ────────────────────────────────────────── */
+
+Deno.test("the debug browser never runs on the default Chrome profile", () => {
+  // Chrome 136+ silently declines to honour --remote-debugging-port when the
+  // user-data-dir is the default profile: the window opens, the game loads,
+  // and the port is simply never listening. Headless is exempt, and headless
+  // is the default here, so a --user-data-dir dropped from this list breaks
+  // exactly one mode — and breaks it as a forty-second timeout that blames the
+  // DevTools port.
+  const url = "http://127.0.0.1:8824/games/2028-ai?bossRush=1";
+  for (const headless of [true, false]) {
+    const args = debugChromeArgs({
+      url,
+      cdpPort: 9223,
+      profileDir: "/tmp/profile-under-test",
+      headless,
+    });
+    const profile = args.filter((a) => a.startsWith("--user-data-dir="));
+    assertEquals(
+      profile.length,
+      1,
+      `headless=${headless} passes ${profile.length} --user-data-dir flags`,
+    );
+    assertEquals(profile[0], "--user-data-dir=/tmp/profile-under-test");
+    assert(args.includes("--remote-debugging-port=9223"));
+    // The URL goes last, or a valueless flag before it swallows it.
+    assertEquals(args[args.length - 1], url);
+  }
+});
+
+Deno.test("headed means headed, and headless keeps its container flags", () => {
+  // The two halves of the same mistake: a --headless that survives into the
+  // headed argv is a window that never appears, and a container flag lost from
+  // the headless argv is a CI job that fails on a sandbox or on /dev/shm
+  // rather than on the game.
+  const common = {
+    url: "http://127.0.0.1:8824/games/2028-ai",
+    cdpPort: 9223,
+    profileDir: "/tmp/p",
+  };
+  const headed = debugChromeArgs({ ...common, headless: false });
+  assert(
+    !headed.some((a) => a.startsWith("--headless")),
+    `headed argv still carries ${
+      headed.find((a) => a.startsWith("--headless"))
+    }`,
+  );
+  const headless = debugChromeArgs({ ...common, headless: true });
+  for (
+    const flag of [
+      "--headless=new",
+      "--disable-gpu",
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+    ]
+  ) {
+    assert(headless.includes(flag), `headless argv lost ${flag}`);
+  }
+});
+
+Deno.test("each DevTools port gets a profile directory of its own", () => {
+  // --cdp-port exists so two sessions can run side by side, and a Chromium
+  // profile takes a singleton lock: a second Chrome on a directory the first
+  // one holds hands over its URL and exits rather than starting a browser, so
+  // one shared directory would trade the bug above for a subtler one — a tab
+  // in the wrong window, and a port belonging to somebody else's game.
+  //
+  // The root is passed in rather than left to repoRoot(), which caches per
+  // process and reads $SHMUPX_ROOT: this asks about the shape of the path, not
+  // about where this checkout happens to be.
+  const a = debugProfileDir(9223, "/r");
+  const b = debugProfileDir(9224, "/r");
+  assert(a !== b, `ports 9223 and 9224 share a profile directory (${a})`);
+  assert(isAbsolute(a), `${a} is not absolute`);
+  // Under build/, which is gitignored — the same place debug-shots land.
+  assertEquals(a, join("/r", "build", "debug-profile", "9223"));
+  assertEquals(basename(b), "9224");
+});
+
+/** ─── what the failure says ─────────────────────────────────────────────── */
+
+// Chrome's own wording, lifted out of the installed binary's string table
+// rather than remembered, plus one real capture of the IPv6 fallback.
+const CHROME_SAYS = {
+  defaultProfile:
+    "DevTools remote debugging requires a non-default data directory. " +
+    "Specify this using --user-data-dir.",
+  policy: "DevTools remote debugging is disallowed by the system admin.",
+  portTaken: "[98110:1271797:0918/224335.067619:ERROR:net/socket/" +
+    "socket_posix.cc:175] bind() failed: Address already in use (48)\n" +
+    "DevTools listening on ws://[::1]:9223/devtools/browser/abc",
+  listening: "DevTools listening on ws://127.0.0.1:9223/devtools/browser/abc",
+};
+
+function explain(
+  said: string,
+  exitCode: number | null,
+  lastErr = "fetch failed",
+): string[] {
+  return explainChromeLaunch({
+    cdpPort: 9223,
+    profileDir: "/r/build/debug-profile/9223",
+    said,
+    exitCode,
+    lastErr,
+    logPath: "/r/build/debug-logs/chrome-9223.log",
+  });
+}
+
+Deno.test("the launch path never advises running the command that failed", () => {
+  // The defect this whole function exists to retire. attachCdp is shared
+  // between attaching to somebody else's browser — where "start one with
+  // `deno task game:debug`" is the entire fix — and launching one, where it
+  // tells a person to re-run the command that is failing in front of them.
+  // Everything explainChromeLaunch produces is on the launch side.
+  const fixtures: [string, number | null][] = [
+    [CHROME_SAYS.defaultProfile, 0],
+    [CHROME_SAYS.policy, 0],
+    [CHROME_SAYS.portTaken, null],
+    [CHROME_SAYS.listening, null],
+    ["", 0],
+    ["", null],
+  ];
+  for (const [said, exitCode] of fixtures) {
+    const lines = explain(said, exitCode);
+    assert(
+      lines.length > 0,
+      `no explanation at all for ${JSON.stringify(said)}`,
+    );
+    for (const line of lines) {
+      assert(
+        !line.includes("game:debug"),
+        `explanation tells the caller to run the failing command: ${line}`,
+      );
+    }
+  }
+});
+
+Deno.test("each refusal Chrome has a word for is named by that word", () => {
+  const profile = explain(CHROME_SAYS.defaultProfile, 0).join(" ");
+  assertStringIncludes(profile, "/r/build/debug-profile/9223");
+  assertStringIncludes(profile, "136");
+
+  // Policy is the failure mode that SURVIVES the profile fix, so the answer
+  // must not be the profile fix: a reader who tries --user-data-dir here
+  // spends an hour proving it makes no difference.
+  const policy = explain(CHROME_SAYS.policy, 0).join(" ");
+  assertStringIncludes(policy, "policy");
+  assert(
+    !policy.includes("--user-data-dir"),
+    `policy failure offers the flag that cannot help it: ${policy}`,
+  );
+
+  // Both halves: the port is taken, AND the cheerful "DevTools listening" line
+  // underneath it is on [::1] while everything here fetches 127.0.0.1.
+  const taken = explain(CHROME_SAYS.portTaken, null).join(" ");
+  assertStringIncludes(taken, "lsof -iTCP:9223");
+  assertStringIncludes(taken, "[::1]");
+
+  // A port that opened and a page that never appeared is a different bug from
+  // a port that never opened, and saying so is the difference between looking
+  // at the browser and looking at the bundle.
+  const noPage = explain(CHROME_SAYS.listening, null, "no page target").join(
+    " ",
+  );
+  assertStringIncludes(noPage, "no page target ever appeared");
+
+  // Exited with nothing to say: the profile singleton handed the URL over.
+  const exited = explain("", 0).join(" ");
+  assertStringIncludes(exited, "/r/build/debug-profile/9223");
+  assertStringIncludes(exited, "--cdp-port");
+});
+
+Deno.test("every explanation points at Chrome's own words", () => {
+  // Each branch above is an INFERENCE from the capture, and the next refusal
+  // Chrome invents will match none of them — so the raw text, or the file it
+  // was written to, is always the last thing said.
+  assertStringIncludes(
+    explain(CHROME_SAYS.defaultProfile, 0).at(-1)!,
+    "/r/build/debug-logs/chrome-9223.log",
+  );
+  assertStringIncludes(explain("", null).at(-1)!, "Chrome wrote nothing");
+});
+
+Deno.test("the advice sentence belongs to attachCdp's caller", async () => {
+  // A timeout of zero makes `Date.now() < Date.now() + 0` false on its first
+  // evaluation, so this composes the message and throws without opening a
+  // single connection. If anyone turns that loop into a do/while, this test
+  // starts making one real (refused) fetch — still harmless, no longer pure.
+  const bare = await assertRejects(() => attachCdp(9999, 0), Error);
+  assertStringIncludes(bare.message, "no debug browser on DevTools port 9999");
+  assertStringIncludes(bare.message, "Start one with: deno task game:debug");
+
+  const launched = await assertRejects(
+    () => attachCdp(9999, 0, { advice: () => "Chrome exited (code 0)." }),
+    Error,
+  );
+  assertStringIncludes(launched.message, "Chrome exited (code 0).");
+  assert(
+    !launched.message.includes("game:debug"),
+    `a caller's own advice did not replace the default: ${launched.message}`,
+  );
+});
+
+Deno.test("the captured browser log keeps both of its ends", () => {
+  // The refusal is at the head — Chrome declines the port in the first two
+  // seconds — and a renderer crash three hours into a stepping session is at
+  // the tail. A plain tail ring answers only the second, and silently discards
+  // the one this capture was added for.
+  const capture = makeCapture(64);
+  capture.push(`${CHROME_SAYS.defaultProfile}\n`);
+  for (let i = 0; i < 40; i++) capture.push(`component update chatter ${i}\n`);
+  capture.push("[ERROR] the renderer went away\n");
+  const text = capture.text();
+  assertStringIncludes(text, "non-default data directory");
+  assertStringIncludes(text, "the renderer went away");
+  assertStringIncludes(text, "elided");
+  // Not a transcript with holes patched over: the elision is announced, and
+  // the middle really is gone.
+  assert(!text.includes("component update chatter 20"), text);
+});
+
+Deno.test("a capture that fits is handed back whole", () => {
+  const capture = makeCapture(64);
+  capture.push("one line\n");
+  assertEquals(capture.text(), "one line");
 });

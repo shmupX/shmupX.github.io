@@ -71,7 +71,11 @@ async function requireDebugBrowser(port: number): Promise<void> {
         "`deno task game:debug` — it serves the level, opens the runtime, walks " +
         "it to the first frame of the stage and pauses it there, then leaves the " +
         "port open for these tools. If it is already running on a different " +
-        "port, pass that port.",
+        "port, pass that port. If the player says a window is open with the " +
+        "game in it and this port is still dead, their checkout predates the " +
+        "headed-profile fix: Chrome 136+ declines a debugging port on the " +
+        "default profile and declines nothing else, so the window is real and " +
+        "the port was never opened.",
     );
   }
 }

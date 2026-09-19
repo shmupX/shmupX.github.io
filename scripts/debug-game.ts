@@ -79,11 +79,15 @@ With no options it serves the SHIPPED level (static/games/2028-ai/foo.json).
                             it so the boss arrives immediately
   --cdp-port <n>            DevTools port to expose (default ${DEFAULT_CDP_PORT})
   --serve-port <n>          port the level is served on (default ${DEFAULT_SERVE_PORT})
-  --headless                run Chromium headless (the default: this container
-                            has no display)
+  --headless                run Chromium headless (the default, and the only
+                            mode a machine with no display can use)
   --headed                  run Chromium with a window instead
   --shots <dir>             where \`c\` writes screenshots
                             (default build/debug-shots/<timestamp>)
+  --profile <dir>           Chrome user-data-dir for the debug browser
+                            (default build/debug-profile/<cdp-port>). Never
+                            your everyday profile: Chrome 136+ refuses to
+                            expose a debugging port on that one, silently.
   --chrome <path>           Chromium binary (\$CHROME_BIN is also read)
   --help`;
 
@@ -239,6 +243,7 @@ async function main(): Promise<number> {
       "cdp-port",
       "serve-port",
       "shots",
+      "profile",
       "chrome",
     ],
     default: {
@@ -318,6 +323,14 @@ async function main(): Promise<number> {
    * either: Deno.serve's shutdown() drains in-flight requests, and a browser
    * still holding a keep-alive connection to the level can make that hang past
    * the point where anyone cares.
+   *
+   * The `launched?.` guards are not defensive here, they are precise: on the
+   * launch-failure path `launched` really is null, because the throw happened
+   * before the return. That used to mean the browser leaked — a window left
+   * standing on an origin that stopped existing the moment this task exited —
+   * and it no longer does, because launchDebugBrowser kills its own child and
+   * closes its own server before it throws. This function owns the teardown of
+   * a launch that SUCCEEDED, and nothing else.
    */
   const teardown = async (): Promise<void> => {
     if (closing) return;
@@ -343,6 +356,7 @@ async function main(): Promise<number> {
       bossRush: args["boss-rush"],
       stage,
       chromeBin: args.chrome ?? null,
+      userDataDir: args.profile ?? undefined,
       log: (s) => console.log(s),
     });
   } catch (err) {
@@ -381,6 +395,13 @@ async function main(): Promise<number> {
     reached = await driveToGame(launched.cdp, { log: (s) => console.log(s) });
   } catch (err) {
     clearInterval(heartbeat);
+    // Printed before teardown kills the browser, and only here: a walk that
+    // never reaches the stage is the one failure where the renderer's own
+    // complaint — a crashed tab, a bundle that threw on boot — is the answer,
+    // and it is the one failure whose message cannot contain it, because
+    // driveToGame is looking at scene names and not at the browser.
+    const said = launched.chromeLog();
+    if (said) console.error(`chrome said:\n${said}`);
     await teardown();
     console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
@@ -416,6 +437,11 @@ async function main(): Promise<number> {
   console.log(`  frame           ${paused.frame} (paused)`);
   console.log(`  active scenes   ${paused.scenes.join(",") || "none"}`);
   console.log(`  screenshots     ${shots}`);
+  // Worth a line of the banner because the profile now PERSISTS across runs on
+  // this port: the game's localStorage and IndexedDB live in there, and "why
+  // is this run behaving differently from a fresh one" is answered by that
+  // path and by nothing else on screen.
+  console.log(`  chrome profile  ${launched.profileDir}`);
   console.log("");
   console.log("  Two ways to drive it, both against this same paused page:");
   console.log("");

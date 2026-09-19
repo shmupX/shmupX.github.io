@@ -1074,6 +1074,17 @@ screenshots land (default `build/debug-shots/<timestamp>/`, gitignored).
 Chromium is found the usual way: `--chrome` wins, then `$CHROME_BIN`, then the
 Playwright cache and the system installs.
 
+The browser always runs on a profile of its own, one directory per DevTools port
+under `build/debug-profile/`, and `--profile <dir>` moves it. That is not
+tidiness: since Chrome 136 a browser started on the user's **default** profile
+silently declines `--remote-debugging-port` — it opens the window, loads the
+game, and never listens — so `--headed` on the everyday profile would look like
+a working session with a dead port. The directory is keyed on the port because a
+Chromium profile takes a singleton lock, and two sessions on one directory would
+leave the second handing its URL to the first and exiting. It also persists, so
+a given port keeps the runtime's `localStorage` and IndexedDB between runs; the
+handover banner prints the path.
+
 Single letters at the prompt, because you type them a lot:
 
 | key         | what it does                                                  |
