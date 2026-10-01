@@ -1513,6 +1513,22 @@
     if (!isImportedLevel()) return true;
     return readBooleanSearchParam("continues", false);
   }
+  // The combo MULTIPLIER is this runtime's addition, like the continue prompt:
+  // a kill at combo 11-20 pays double, 21-30 triple. The launcher's LIBRARY
+  // plays a cart's OG version with ?combo=0, which keeps the count and its HUD
+  // bar but pays every kill at face value. Absent, nothing changes.
+  function comboRatio(count) {
+    if (!readBooleanSearchParam("combo", true)) return 1;
+    return Math.max(1, Math.ceil(count / 10));
+  }
+  // ?story=1 / ?story=0 overrides the level's own NO STORY flag for one run —
+  // the LIBRARY's REBOOT / OG again. Absent, the recipe decides as before. A
+  // cart with no story of its own still skips either way (PhaserAdvScene).
+  function storyOff(recipe) {
+    var p = readSearchParam("story");
+    if (p != null && p !== "") return !readBooleanSearchParam("story", true);
+    return !!(recipe && recipe.noStory);
+  }
   function scoreCountsAsRecord(state = gameState) {
     return !state.godFlg || isExportedLevelApp();
   }
@@ -7475,7 +7491,7 @@
     // — an imported save's stage 4 is simply its fifth stage, whichever way
     // the editor's NO STORY toggle is set (and a cart's bomb never counts as
     // an akebono finish, so the unlock could never be earned).
-    if (!isImportedLevel() && gameState.stageId === finalStage && finalStage === 4 && !(recipe && recipe.noStory) && !(gameState.akebonoCnt >= 4 && gameState.continueCnt === 0)) {
+    if (!isImportedLevel() && gameState.stageId === finalStage && finalStage === 4 && !storyOff(recipe) && !(gameState.akebonoCnt >= 4 && gameState.continueCnt === 0)) {
       return true;
     }
     return false;
@@ -7507,7 +7523,7 @@
       var advImported = !!(recipe && isImportedLevel());
       if (
         recipe &&
-        ((recipe.noStory && (advImported || !this.__advSceneScripted)) || advNoOwnStory)
+        ((storyOff(recipe) && (advImported || !this.__advSceneScripted)) || advNoOwnStory)
       ) {
         this.endingFlg = decideEnding(recipe);
         var nextScene = this.endingFlg ? "PhaserEndingScene" : "PhaserGameScene";
@@ -9310,7 +9326,7 @@
       if (p.comboCount > p.maxCombo) {
         p.maxCombo = p.comboCount;
       }
-      ratio = Math.max(1, Math.ceil(p.comboCount / 10));
+      ratio = comboRatio(p.comboCount);
       p.comboTimeCnt = 100;
       if (!isSp) {
         p.spGauge = Math.min(100, p.spGauge + spgage);
@@ -12625,7 +12641,7 @@
       if (slayer.comboCount > slayer.maxCombo) {
         slayer.maxCombo = slayer.comboCount;
       }
-      ratio = Math.max(1, Math.ceil(slayer.comboCount / 10));
+      ratio = comboRatio(slayer.comboCount);
     }
     scene.scoreCount += scene.bossScore * ratio;
     scene.showScorePopup(boss.x, boss.y, scene.bossScore, ratio);
@@ -14576,7 +14592,7 @@
                 if (!canceller.dead) {
                   canceller.comboCount++;
                   if (canceller.comboCount > canceller.maxCombo) canceller.maxCombo = canceller.comboCount;
-                  ebRatio = Math.max(1, Math.ceil(canceller.comboCount / 10));
+                  ebRatio = comboRatio(canceller.comboCount);
                   canceller.comboTimeCnt = 100;
                   canceller.spGauge = Math.min(100, canceller.spGauge + ebSpgage);
                   this.updateSpGauge();

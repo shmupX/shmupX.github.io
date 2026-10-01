@@ -145,6 +145,19 @@
         body.theme-nintendo #stage-banner-title { color: #e9ecf1; text-shadow: 0 0 14px rgba(255,59,73,.7); }
         body.theme-nintendo #stage-banner-waves { color: rgba(139,160,194,.8); }
 
+        /* ===== MOD LINEAGE STRIP =====
+           Under the banner once an opened cart has been edited: this copy is
+           a mod now, and the strip names the parent it forked from, where the
+           parent came from, and how far the copy has drifted. */
+        #lineage-strip {
+            flex-shrink: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; padding: 9px 16px 0;
+            font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .16em; color: var(--sel);
+        }
+        #lineage-strip .lin-main { display: flex; align-items: center; gap: 7px; min-width: 0; }
+        #lineage-strip .lin-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #lineage-strip svg { width: 12px; height: 12px; display: block; flex-shrink: 0; }
+        #lineage-strip .lin-dim { color: var(--rsub); }
+
         /* ===== TOOLBAR: monogram badges ===== */
         #toolbar { flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 12px 14px 4px; z-index: 10; }
         .badge {
@@ -202,9 +215,11 @@
         body:not(.has-save-target) #save-badge, body:not(.has-save-target) #pad-hint-y { display: none !important; }
         body:not(.has-3d-models) #model-viewer-link { display: none !important; }
         @media (max-width: 767px) {
-            /* Phones: PLAY / 3D / SAVE leave the toolbar — all still in the
-               menu, and SAVE is Y on the pad footer. */
-            #play-badge, #model-viewer-link, #save-badge { display: none !important; }
+            /* Phones: PLAY / 3D / TILEMAP / SAVE leave the toolbar — all still
+               in the menu, and SAVE is Y on the pad footer. With the tilemap
+               badge left in, seven badges ran 20px past a 390px screen and
+               the one that got clipped was MENU. */
+            #play-badge, #model-viewer-link, #tilemap-link, #save-badge { display: none !important; }
             #lab-status .lab-status-long { display: none; }
             #lab-status .lab-status-short { display: inline; }
         }
@@ -579,6 +594,58 @@
             font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .1em;
             color: var(--raillbl); padding: 0 2px; flex-shrink: 0;
         }
+        /* Every drawer control is a 44px touch target. */
+        .menu-panel .menu-row, .menu-panel .toggle-row { min-height: 44px; }
+        .menu-panel .seg { min-height: 36px; }
+        /* A row with a subline (SAVE MOD, IMPORT, EXPORT) and a › that says it
+           opens a sheet rather than acting. */
+        .menu-row .row-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+        .menu-row .row-sub {
+            font-family: 'Share Tech Mono', monospace; font-size: 8px; font-weight: 400; letter-spacing: .14em;
+            color: var(--bink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .menu-row .row-chev { font-size: 15px; line-height: 1; color: var(--bink2); flex-shrink: 0; }
+        body:not(.has-save-target) #menu-save-row { display: none !important; }
+        body:not(.has-3d-models) .needs-3d-models { display: none !important; }
+        body:not(.sav-loaded) .show-when-sav { display: none !important; }
+
+        /* ===== IMPORT / EXPORT SHEETS =====
+           The pickers' bottom sheet, holding big option rows instead of a
+           grid. An option opens in place onto its actions (.sheet-sec) — the
+           same .menu-row / .display-row controls the drawer is built from. */
+        .sheet-opts { display: flex; flex-direction: column; gap: 10px; padding: 2px 6px; }
+        .sheet-opt {
+            display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 14px; min-height: 68px;
+            border-radius: 12px; cursor: pointer; text-align: left; flex-shrink: 0;
+            background: var(--rbg); border: 1px solid var(--redge); color: var(--rink);
+            font-family: 'Orbitron', sans-serif; transition: all .15s;
+        }
+        .sheet-opt:active { transform: scale(0.99); }
+        .sheet-opt.open { border-color: var(--shedge); }
+        @media (hover: hover) {
+            .sheet-opt:hover { border-color: var(--shedge); box-shadow: 0 0 16px rgba(246,255,74,.25); }
+            body.theme-nintendo .sheet-opt:hover { box-shadow: 0 0 16px rgba(228,0,15,.3); }
+        }
+        .sheet-badge {
+            width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--bedge2);
+            background: radial-gradient(circle at 35% 30%, var(--b2a), var(--b2b) 70%);
+            display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+            font-family: 'Share Tech Mono', monospace; font-size: 13px; letter-spacing: .04em; color: var(--bink);
+        }
+        .sheet-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+        .sheet-name { font-size: 12px; font-weight: 800; letter-spacing: .14em; line-height: 1.2; }
+        .sheet-sub { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .12em; line-height: 1.5; color: var(--rsub); }
+        .sheet-chev { font-size: 16px; line-height: 1; color: var(--bink2); transition: transform .15s; }
+        .sheet-opt.open .sheet-chev { transform: rotate(90deg); color: var(--sel); }
+        /* A console with no cart writer: the row stays, and says so. */
+        .sheet-opt.off { opacity: .6; }
+        .sheet-opt.off .sheet-sub { color: var(--sel); }
+        .sheet-sec, .sheet-sub-sec { display: flex; flex-direction: column; gap: 9px; }
+        .sheet-sec { margin: -2px 0 2px 21px; padding: 2px 0 2px 14px; border-left: 1px solid var(--redge); animation: fadeIn .15s; }
+        .sheet-sec .menu-row { min-height: 44px; }
+        .sheet-opts > .display-row .seg { min-height: 36px; letter-spacing: .1em; }
+        .sheet-foot { text-align: center; line-height: 1.7; }
+
         .menu-flex-spacer { flex: 1; min-height: 8px; }
         .menu-status {
             font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em;
@@ -858,6 +925,15 @@
             <div id="stage-banner-waves">00 WAVES</div>
         </div>
 
+        <!-- LINEAGE STRIP: appears once an opened cart (.sav file, saved-games
+             shelf) has been changed — this copy is now a MOD and tracks its
+             parent. Filled in by updateLineageUI(). -->
+        <div id="lineage-strip" class="hidden">
+            <span class="lin-main"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span id="lineage-parent"></span></span>
+            <span class="lin-dim" id="lineage-origin"></span>
+            <span class="lin-dim" id="lineage-changes"></span>
+        </div>
+
         <!-- TOOLBAR: monogram badges -->
         <div id="toolbar">
             <!-- Enemy picker badge -->
@@ -950,6 +1026,185 @@
         </div>
     </div>
 
+    <!-- IMPORT SHEET: one entry point for every source. WEB is the editor's
+         own formats (a game directory, a cloud game save); DEZAEMON is a
+         console save, sorted by its bytes rather than by its extension — a
+         Saturn backup image opens in the editor, a Super Famicom SRAM is
+         filed on the SNES shelf, and a PlayStation card or a 64DD disk is
+         named for what it is and pointed at the page that reads it. Each
+         option opens in place onto the actions it stands for. -->
+    <div id="import-sheet" class="picker-overlay hidden" onclick="if(event.target===this)closeSheet()">
+        <div class="picker-panel">
+            <div class="picker-title">IMPORT</div>
+            <div class="sheet-opts">
+                <button class="sheet-opt" data-sec="import-web" onclick="toggleSheetSection(this)"><span class="sheet-badge">W</span><span class="sheet-txt"><span class="sheet-name">WEB</span><span class="sheet-sub">GAME.JSON &middot; DIRECTORY &middot; RTDB GAMESAVE</span></span><span class="sheet-chev">&rsaquo;</span></button>
+                <div class="sheet-sec hidden" id="sheet-sec-import-web">
+                    <button class="menu-row" onclick="closeSheet();loadDirectory()"><span class="mono-badge">LD</span>LOAD DIRECTORY</button>
+                    <button class="menu-row" onclick="closeSheet();loadFromFirebasePrompt()"><span class="mono-badge">LG</span>LOAD GAME (CLOUD)</button>
+                </div>
+                <button class="sheet-opt" data-sec="import-deza" onclick="toggleSheetSection(this)"><span class="sheet-badge">D</span><span class="sheet-txt"><span class="sheet-name">DEZAEMON</span><span class="sheet-sub">.SAV &middot; SFC / N64 / SATURN / PS &middot; CONSOLE AUTO-DETECTED</span></span><span class="sheet-chev">&rsaquo;</span></button>
+                <div class="sheet-sec hidden" id="sheet-sec-import-deza">
+                    <!-- One picker for every console's save, sorted by what the
+                         bytes are (handleDezaemonFile). A Saturn backup image opens in
+                         the editor. A Super Famicom SRAM — Athena's 1994 cart, 128 KB,
+                         the "T.TABATA" magic — cannot be OPENED yet: the SFC decoders
+                         read a save and nothing maps one to a level, so it is filed on
+                         the launcher's SUPER FAMICOM shelf instead (IndexedDB, this
+                         browser; static/snes-shelf.js owns the store, static/
+                         snes-library.js the core and the published library), exactly
+                         as SAVE SHELF in the EXPORT sheet files a Saturn cart on the
+                         Dezaemon one. Never hide-when-sav: what is open in the editor
+                         has no bearing on opening or filing a cart from disk. -->
+                    <button class="menu-row" id="snes-lib-btn" onclick="openDezaemonImport()" title="Pick a console save. A Saturn backup image (.sav / .bcr / .bkr) opens in the editor; a Super Famicom SRAM dump (.srm) is filed on this browser's SNES shelf, where the launcher's SUPER FAMICOM section plays it."><span class="mono-badge">SV</span>OPEN A SAVE FILE</button>
+                    <input id="deza-url-input" type="url" placeholder="HTTPS://…/GAME.SAV" class="menu-input" style="margin-bottom:0"
+                           onkeydown="if(event.key==='Enter')document.getElementById('deza-url-btn').click()">
+                    <button class="menu-row" id="deza-url-btn" onclick="importDezaemonFromUrlInput()"><span class="mono-badge">UR</span>IMPORT .SAV FROM URL</button>
+                    <button class="menu-row" id="deza-library-btn" onclick="closeSheet();openDezaemonLibrary()"><span class="mono-badge">LG</span>LOAD GAME</button>
+                    <div id="snes-lib-note" class="menu-note"></div>
+                    <div class="menu-note">SATURN (.SAV / .BCR / .BKR) OPENS IN THE EDITOR &middot; SUPER FAMICOM (.SRM, 128 KB) IS FILED ON THE SNES SHELF &middot; PS AND N64 SAVES ARE READ BY THE PARITY PAGES, NOT OPENED HERE YET</div>
+                </div>
+            </div>
+            <div class="picker-hint sheet-foot">IMPORTED GAMES GET OG + REBOOT VERSIONS IN THE LAUNCHER &middot; EDITS SAVE AS A MOD OF THE IMPORT</div>
+        </div>
+    </div>
+
+    <!-- EXPORT SHEET: every target. WEB, then a CONSOLE picker that retargets
+         the DEZAEMON row (its title and subline follow the pick), then 3D —
+         and after those, the two targets that had drawer groups of their
+         own: an app build and the eShop. Only the Saturn has a cart writer
+         (packages/shmup-engine/src/write/); the other three consoles say so
+         rather than offer a row that would build nothing. -->
+    <div id="export-sheet" class="picker-overlay hidden" onclick="if(event.target===this)closeSheet()">
+        <div class="picker-panel">
+            <div class="picker-title">EXPORT</div>
+            <div class="sheet-opts">
+                <button class="sheet-opt" data-sec="export-web" onclick="toggleSheetSection(this)"><span class="sheet-badge">W</span><span class="sheet-txt"><span class="sheet-name">WEB</span><span class="sheet-sub">GAME.JSON + ASSETS &middot; PLAYS IN PHASER</span></span><span class="sheet-chev">&rsaquo;</span></button>
+                <div class="sheet-sec hidden" id="sheet-sec-export-web">
+                    <button class="menu-row" onclick="exportGameRecordJSON()" title="The whole open game as the level record the runtime loads — every stage, enemy and boss, the soundtrack and the atlas — in one .json"><span class="mono-badge">GJ</span>EXPORT GAME JSON</button>
+                    <button class="menu-row hide-when-sav" onclick="exportCurrentLevelJSON()" title="The open stage's wave grid alone"><span class="mono-badge">EX</span>EXPORT STAGE JSON</button>
+                    <div class="menu-label hide-when-sav">GAME SAVE (CLOUD)</div>
+                    <input id="firebase-level-name" type="text" placeholder="MY GAME NAME" class="menu-input hide-when-sav" style="margin-bottom:0">
+                    <button class="menu-row hide-when-sav" onclick="saveToFirebase()"><span class="mono-badge">SG</span>SAVE GAME</button>
+                    <button class="menu-row hide-when-sav" onclick="playFirebaseLevel()"><span class="mono-badge">PG</span>PLAY GAME</button>
+                </div>
+                <!-- console picker: the Dezaemon target -->
+                <div class="display-row" title="Which console's Dezaemon the row below builds for">
+                    <span class="display-lbl">CONSOLE</span>
+                    <div class="seg-wrap" id="export-console-segs">
+                        <button class="seg" data-console="sfc" onclick="setExportConsole('sfc')">SFC</button>
+                        <button class="seg" data-console="n64" onclick="setExportConsole('n64')">N64</button>
+                        <button class="seg" data-console="saturn" onclick="setExportConsole('saturn')">SATURN</button>
+                        <button class="seg" data-console="ps" onclick="setExportConsole('ps')">PS</button>
+                    </div>
+                </div>
+                <button class="sheet-opt" id="export-deza-opt" data-sec="export-deza" onclick="toggleSheetSection(this)"><span class="sheet-badge">D</span><span class="sheet-txt"><span class="sheet-name" id="export-deza-name">DEZAEMON 2</span><span class="sheet-sub" id="export-deza-sub">SEGA SATURN &middot; .SAV</span></span><span class="sheet-chev">&rsaquo;</span></button>
+                <div class="sheet-sec hidden" id="sheet-sec-export-deza">
+                    <div id="export-deza-nowriter" class="menu-note hidden"></div>
+                    <div id="export-deza-saturn" class="sheet-sub-sec">
+                        <!-- EXPORT: the open game as a Dezaemon 2 cart save. Built entirely in
+                             the page by the engine bundle (exportLevelToSav) — no build host —
+                             and either downloaded or filed under YOUR .SAV EXPORTS on the LOAD
+                             GAME shelf (IndexedDB, this browser). The palette picker decides how
+                             the atlas is cut down to console colours. -->
+                        <div class="display-row" title="How the atlas is reduced to console colours on export. SATURN: Dezaemon 2's 192 system colours plus 64 user colours mixed from the art. SNES: up to four 15-colour rows with every sprite confined to one, the Super Famicom's 4bpp rule.">
+                            <span class="display-lbl">SAV PALETTE</span>
+                            <div class="seg-wrap" id="deza-sav-palette-segs">
+                                <button class="seg xseg on" data-palette="saturn" onclick="setDezaSavPalette('saturn')">SATURN</button>
+                                <button class="seg xseg" data-palette="snes" onclick="setDezaSavPalette('snes')">SNES</button>
+                            </div>
+                        </div>
+                        <button class="menu-row" id="deza-sav-download" onclick="exportDezaemonSav('download')" title="Build a Dezaemon 2 cart save of the open game — the 1,114,112-byte .sav MiSTer's Saturn core reads — and download it"><span class="mono-badge">DL</span>DOWNLOAD .SAV</button>
+                        <button class="menu-row" id="deza-sav-shelf" onclick="exportDezaemonSav('shelf')" title="Build the .sav and file it in this browser's LOAD GAME shelf, under YOUR .SAV EXPORTS"><span class="mono-badge">SH</span>&rarr; SAVE SHELF</button>
+                        <!-- The two Saturn user-save targets. The browser core (the launcher's
+                             Sega Saturn shelf) keeps only the 32 KB internal memory — no backup
+                             cart — so most games will not fit and the note says so, with the
+                             numbers; Mednafen on this machine has the 512 KB cart, and its row
+                             appears only once /api/saturn-save says it is reachable (probed
+                             the first time the drawer opens). Neither is hide-when-sav: an
+                             imported cart can be staged for play too. -->
+                        <button class="menu-row" id="deza-sav-emu" onclick="exportDezaemonSav('emu')" title="Build the save and stage it in the browser Saturn core's internal backup memory (32 KB, no cart) so Dezaemon 2 on the launcher's Sega Saturn shelf can load it from 本体 memory. Saves over ~30 KB do not fit — use Mednafen or MiSTer for those."><span class="mono-badge">EM</span>&rarr; SATURN EMU (USER SAVE)</button>
+                        <button class="menu-row hidden" id="deza-sav-mednafen" onclick="exportDezaemonSav('mednafen')" title="Build the save, merge it into one Dezaemon 2 slot of Mednafen's cartridge (.bcr) beside the disc on this machine — the cart's other saves and the console's own .bkr memory untouched — and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN CART</button>
+                        <div id="deza-sav-note" class="menu-note"></div>
+                    </div>
+                </div>
+                <button class="sheet-opt" data-sec="export-3d" onclick="toggleSheetSection(this)"><span class="sheet-badge">3D</span><span class="sheet-txt"><span class="sheet-name">3D</span><span class="sheet-sub">SUPER-SCALER BUILD &middot; STANDALONE</span></span><span class="sheet-chev">&rsaquo;</span></button>
+                <div class="sheet-sec hidden" id="sheet-sec-export-3d">
+                    <button class="menu-row hide-when-sav" onclick="closeSheet();saveAs3D()"><span class="mono-badge">3D</span>SAVE AS 3D</button>
+                    <button class="menu-row hide-when-sav" onclick="closeSheet();saveAsVoxel3D()" title="Voxelize every atlas frame (Pixel Composer, pitch/yaw 10) and publish a Phaser 4.2.1 dual-mode (2D shooter / 3D super scaler) build at a URL"><span class="mono-badge">V3</span>SAVE AS VOXEL 3D</button>
+                    <div class="menu-note show-when-sav">THE 3D BUILDS ARE NOT OFFERED WHILE AN IMPORTED CART IS OPEN &middot; PLAY 3D IN THE MENU STILL RUNS IT</div>
+                </div>
+                <button class="sheet-opt" data-sec="export-app" onclick="toggleSheetSection(this)"><span class="sheet-badge">AP</span><span class="sheet-txt"><span class="sheet-name">APP</span><span class="sheet-sub">ANDROID &middot; IOS &middot; LINUX &middot; WINDOWS &middot; PS2</span></span><span class="sheet-chev">&rsaquo;</span></button>
+                <div class="sheet-sec hidden" id="sheet-sec-export-app">
+                    <!-- EXPORT AS AN APP: not hide-when-sav, and its own group rather than
+                         the cloud one's tail, because it is the one export that works for
+                         BOTH halves of the editor. A cloud level is saved and then built
+                         from its name; an imported .sav has no cloud record and never will,
+                         so exportGameToApk() hands the record over directly instead
+                         (ExportRequest.levelRecord) — to this origin's builder when it has
+                         one, and to the paired desktop's when it does not. All five
+                         targets work either way, from either half. -->
+                    <div class="display-row" title="Which app the export builds. Linux/Windows/macOS are deno desktop builds and cross-compile from any host. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
+                        <span class="display-lbl">TARGET</span>
+                        <div class="seg-wrap" id="export-platform-segs">
+                            <button class="seg xseg" data-platform="android" onclick="setExportPlatform('android')">ANDROID</button>
+                            <button class="seg xseg" data-platform="ios" onclick="setExportPlatform('ios')">IOS</button>
+                            <button class="seg xseg" data-platform="linux" onclick="setExportPlatform('linux')">LINUX</button>
+                            <button class="seg xseg" data-platform="windows" onclick="setExportPlatform('windows')">WIN</button>
+                            <button class="seg xseg" data-platform="ps2" onclick="setExportPlatform('ps2')">PS2</button>
+                        </div>
+                    </div>
+                    <button class="menu-row" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
+                    <div id="export-apk-status" class="menu-note"></div>
+                    <!-- Build somewhere else. On the hosted site and the PWA there is no
+                         /api/build-apk to post to, so exportGameToApk() queues the export
+                         for a desktop running shmupX instead, paired by the BUILD CODE
+                         that desktop shows in Settings → BUILD SERVER (the browser half is
+                         static/export-queue.js, the desktop half lib/export-worker.ts).
+                         The panel lists every job this browser has queued, live, and
+                         offers what a finished one can do: download, install, file it in
+                         the PS2 shelf.
+
+                         Not hide-when-sav, for the same reason EXPORT AS AN APP above is
+                         not: a cart queues too. It has no cloud level for the desktop to
+                         fetch, so the record rides up with the job (queueExport's
+                         `levelRecord`) and the desktop builds from that. -->
+                    <div class="display-row" title="Eight letters from the desktop that should build this: open shmupX there and read them off Settings → BUILD SERVER (the app prints them at launch too). Exports from this browser go to that desktop whenever they cannot be built here — an imported .sav included, which travels up with the job.">
+                        <span class="display-lbl">DESKTOP</span>
+                        <input id="export-builder-code" type="text" placeholder="BUILD CODE" class="menu-input" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="9" style="margin-bottom:0;flex:1;min-width:0"
+                               oninput="onBuilderCodeInput(this.value)">
+                    </div>
+                    <div id="export-builder-status" class="menu-note"></div>
+                    <div id="export-queue-panel" class="hidden"></div>
+                    <!-- What to do with a finished PS2 build. Hidden until one exists;
+                         filled in by showPs2ExportActions(). The disc and the USB folder
+                         are both downloadable, and "PS2 LIBRARY" files the disc in the
+                         launcher's own shelf (static/ps2-library.js) so it can be played
+                         here, in the browser, on the Play! core. -->
+                    <div id="export-ps2-actions" class="hidden">
+                        <button class="menu-row" id="export-ps2-iso" onclick="downloadPs2Artifact('iso')"><span class="mono-badge">IS</span>DOWNLOAD DISC (.ISO)</button>
+                        <button class="menu-row" id="export-ps2-zip" onclick="downloadPs2Artifact('zip')"><span class="mono-badge">US</span>DOWNLOAD USB FOLDER (.ZIP)</button>
+                        <button class="menu-row" id="export-ps2-lib" onclick="addPs2ExportToLibrary()" title="Install the Play! core if it is not already here, file this disc in the launcher's PlayStation 2 shelf, and play it in the browser"><span class="mono-badge">P2</span>&rarr; PS2 LIBRARY</button>
+                        <button class="menu-row hidden" id="export-ps2-play" onclick="playPs2Export()"><span class="mono-badge">PL</span>PLAY ON PS2</button>
+                        <div id="export-ps2-note" class="menu-note"></div>
+                    </div>
+                </div>
+                <button class="sheet-opt" data-sec="export-eshop" onclick="toggleSheetSection(this)"><span class="sheet-badge">ES</span><span class="sheet-txt"><span class="sheet-name">ESHOP</span><span class="sheet-sub">PUBLISH TO THE GLOBAL GAME LIST</span></span><span class="sheet-chev">&rsaquo;</span></button>
+                <div class="sheet-sec hidden" id="sheet-sec-export-eshop">
+                    <!-- ESHOP: the global game list every launcher reads. Publishing
+                         builds the open game as a Dezaemon 2 cart (the same .sav writer as
+                         the Saturn export below) and files it in the Realtime Database
+                         through /eshop-library.js, which also puts it on this browser's
+                         shelf so the publisher sees it at once. Not hide-when-sav: an
+                         imported cart may be republished, the note just asks for your
+                         own games. -->
+                    <button class="menu-row" id="eshop-publish-btn" onclick="publishToEshop()" title="Build the open game as a Dezaemon 2 cart save and publish it to the eShop — the global game list every shmupX launcher sees. It lands on your own LOAD GAME shelf too."><span class="mono-badge">ES</span>PUBLISH TO ESHOP</button>
+                    <div id="eshop-publish-note" class="menu-note"></div>
+                </div>
+            </div>
+            <div class="picker-hint sheet-foot" id="export-sheet-note"></div>
+        </div>
+    </div>
+
     <!-- TOAST -->
     <div id="toast" class="hidden"></div>
 
@@ -962,10 +1217,28 @@
             <button class="menu-row" onclick="addWave();closeMenu()"><span class="accent">+</span> ADD WAVE</button>
             <button class="menu-row" onclick="deleteLastWave();closeMenu()"><span class="accent del">−</span> DELETE WAVE</button>
         </div>
+        <!-- FILE SYSTEM, consolidated: every source sits behind IMPORT and
+             every target behind EXPORT (the two bottom sheets above the
+             toast), so the drawer keeps four rows where it used to keep
+             forty. SAVE shows only while there is somewhere to save to — a
+             directory, a named cloud game, or the shelf once an opened cart
+             has been edited into a mod (MOD LINEAGE, in the script) — and
+             reads SAVE MOD then. -->
         <div class="menu-label">FILE SYSTEM</div>
-        <button class="menu-row hide-when-sav" onclick="loadDirectory();closeMenu()"><span class="mono-badge">LD</span>LOAD DIRECTORY</button>
-        <button class="menu-row hide-when-sav" onclick="saveAll();closeMenu()"><span class="mono-badge">SA</span>SAVE ALL</button>
-        <button class="menu-row" onclick="playCurrentStage();closeMenu()"><span class="mono-badge">PL</span>PLAY IN PHASER</button>
+        <button class="menu-row" id="menu-save-row" onclick="quickSave();closeMenu()"><span class="mono-badge">SA</span><span class="row-txt"><span id="menu-save-label">SAVE ALL</span><span class="row-sub hidden" id="menu-save-sub"></span></span></button>
+        <button class="menu-row" onclick="openSheet('import')"><span class="mono-badge">IM</span><span class="row-txt"><span>IMPORT</span><span class="row-sub">WEB &middot; DEZAEMON</span></span><span class="row-chev">&rsaquo;</span></button>
+        <button class="menu-row" onclick="openSheet('export')"><span class="mono-badge">EX</span><span class="row-txt"><span>EXPORT</span><span class="row-sub" id="menu-export-sub">WEB &middot; DEZAEMON 2 (SATURN) &middot; 3D</span></span><span class="row-chev">&rsaquo;</span></button>
+        <button class="menu-row" onclick="startNewGame();closeMenu()"><span class="mono-badge">NG</span>NEW GAME</button>
+        <button class="menu-row hidden" id="deza-website-btn" onclick="openLoadedGameWebsite()"
+                title="Open this game's page on satakore.com — inside the CMG Desktop it opens as a Web Browser window"><span class="mono-badge">WB</span>VIEW WEBSITE</button>
+        <!-- PLAY: the rows that run the open game, out of FILE SYSTEM's way.
+             MODEL VIEWER shows only while the game carries sec7 models. -->
+        <div class="menu-label">PLAY</div>
+        <div class="adv-grid">
+            <button class="menu-row" onclick="playCurrentStage();closeMenu()"><span class="mono-badge sm">PL</span>PLAY IN PHASER</button>
+            <button class="menu-row" onclick="play3D();closeMenu()"><span class="mono-badge sm">P3</span>PLAY 3D</button>
+            <button class="menu-row needs-3d-models" onclick="openModelViewer();closeMenu()" title="View an imported Dezaemon save's ポリ吉 3D models (sec7) on Phaser 4 Mesh2D"><span class="mono-badge sm">MV</span>MODEL VIEWER</button>
+        </div>
         <button class="display-row toggle-row" onclick="toggleGodMode()" title="Launch PLAY with player invincibility (?god=1)">
             <span class="display-lbl">GOD MODE</span>
             <span class="toggle"><span id="god-knob" class="knob off"></span></span>
@@ -974,128 +1247,6 @@
             <span class="display-lbl">NO STORY</span>
             <span class="toggle"><span id="nostory-knob" class="knob off"></span></span>
         </button>
-        <button class="menu-row hide-when-sav" onclick="exportCurrentLevelJSON();closeMenu()"><span class="mono-badge">EX</span>EXPORT JSON</button>
-        <button class="menu-row hide-when-sav" onclick="saveAs3D();closeMenu()"><span class="mono-badge">3D</span>SAVE AS 3D</button>
-        <button class="menu-row" onclick="play3D();closeMenu()"><span class="mono-badge">P3</span>PLAY 3D</button>
-        <button class="menu-row" onclick="openModelViewer();closeMenu()" title="View an imported Dezaemon save's ポリ吉 3D models (sec7) on Phaser 4 Mesh2D"><span class="mono-badge">MV</span>MODEL VIEWER</button>
-        <button class="menu-row hide-when-sav" onclick="saveAsVoxel3D();closeMenu()" title="Voxelize every atlas frame (Pixel Composer, pitch/yaw 10) and publish a Phaser 4.2.1 dual-mode (2D shooter / 3D super scaler) build at a URL"><span class="mono-badge">V3</span>SAVE AS VOXEL 3D</button>
-        <div class="menu-label hide-when-sav">GAME SAVE (CLOUD)</div>
-        <input id="firebase-level-name" type="text" placeholder="MY GAME NAME" class="menu-input hide-when-sav" style="margin-bottom:0">
-        <button class="menu-row hide-when-sav" onclick="saveToFirebase()"><span class="mono-badge">SG</span>SAVE GAME</button>
-        <button class="menu-row hide-when-sav" onclick="loadFromFirebasePrompt()"><span class="mono-badge">LG</span>LOAD GAME</button>
-        <button class="menu-row hide-when-sav" onclick="playFirebaseLevel()"><span class="mono-badge">PG</span>PLAY GAME</button>
-        <!-- EXPORT AS AN APP: not hide-when-sav, and its own group rather than
-             the cloud one's tail, because it is the one export that works for
-             BOTH halves of the editor. A cloud level is saved and then built
-             from its name; an imported .sav has no cloud record and never will,
-             so exportGameToApk() hands the record over directly instead
-             (ExportRequest.levelRecord) — to this origin's builder when it has
-             one, and to the paired desktop's when it does not. All five
-             targets work either way, from either half. -->
-        <div class="menu-label">EXPORT AS AN APP</div>
-        <div class="display-row" title="Which app the export builds. Linux/Windows/macOS are deno desktop builds and cross-compile from any host. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
-            <span class="display-lbl">TARGET</span>
-            <div class="seg-wrap" id="export-platform-segs">
-                <button class="seg xseg" data-platform="android" onclick="setExportPlatform('android')">ANDROID</button>
-                <button class="seg xseg" data-platform="ios" onclick="setExportPlatform('ios')">IOS</button>
-                <button class="seg xseg" data-platform="linux" onclick="setExportPlatform('linux')">LINUX</button>
-                <button class="seg xseg" data-platform="windows" onclick="setExportPlatform('windows')">WIN</button>
-                <button class="seg xseg" data-platform="ps2" onclick="setExportPlatform('ps2')">PS2</button>
-            </div>
-        </div>
-        <button class="menu-row" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
-        <div id="export-apk-status" class="menu-note"></div>
-        <!-- Build somewhere else. On the hosted site and the PWA there is no
-             /api/build-apk to post to, so exportGameToApk() queues the export
-             for a desktop running shmupX instead, paired by the BUILD CODE
-             that desktop shows in Settings → BUILD SERVER (the browser half is
-             static/export-queue.js, the desktop half lib/export-worker.ts).
-             The panel lists every job this browser has queued, live, and
-             offers what a finished one can do: download, install, file it in
-             the PS2 shelf.
-
-             Not hide-when-sav, for the same reason EXPORT AS AN APP above is
-             not: a cart queues too. It has no cloud level for the desktop to
-             fetch, so the record rides up with the job (queueExport's
-             `levelRecord`) and the desktop builds from that. -->
-        <div class="display-row" title="Eight letters from the desktop that should build this: open shmupX there and read them off Settings → BUILD SERVER (the app prints them at launch too). Exports from this browser go to that desktop whenever they cannot be built here — an imported .sav included, which travels up with the job.">
-            <span class="display-lbl">DESKTOP</span>
-            <input id="export-builder-code" type="text" placeholder="BUILD CODE" class="menu-input" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="9" style="margin-bottom:0;flex:1;min-width:0"
-                   oninput="onBuilderCodeInput(this.value)">
-        </div>
-        <div id="export-builder-status" class="menu-note"></div>
-        <div id="export-queue-panel" class="hidden"></div>
-        <!-- What to do with a finished PS2 build. Hidden until one exists;
-             filled in by showPs2ExportActions(). The disc and the USB folder
-             are both downloadable, and "PS2 LIBRARY" files the disc in the
-             launcher's own shelf (static/ps2-library.js) so it can be played
-             here, in the browser, on the Play! core. -->
-        <div id="export-ps2-actions" class="hidden">
-            <button class="menu-row" id="export-ps2-iso" onclick="downloadPs2Artifact('iso')"><span class="mono-badge">IS</span>DOWNLOAD DISC (.ISO)</button>
-            <button class="menu-row" id="export-ps2-zip" onclick="downloadPs2Artifact('zip')"><span class="mono-badge">US</span>DOWNLOAD USB FOLDER (.ZIP)</button>
-            <button class="menu-row" id="export-ps2-lib" onclick="addPs2ExportToLibrary()" title="Install the Play! core if it is not already here, file this disc in the launcher's PlayStation 2 shelf, and play it in the browser"><span class="mono-badge">P2</span>&rarr; PS2 LIBRARY</button>
-            <button class="menu-row hidden" id="export-ps2-play" onclick="playPs2Export()"><span class="mono-badge">PL</span>PLAY ON PS2</button>
-            <div id="export-ps2-note" class="menu-note"></div>
-        </div>
-        <!-- ESHOP: the global game list every launcher reads. Publishing
-             builds the open game as a Dezaemon 2 cart (the same .sav writer as
-             the Saturn export below) and files it in the Realtime Database
-             through /eshop-library.js, which also puts it on this browser's
-             shelf so the publisher sees it at once. Not hide-when-sav: an
-             imported cart may be republished, the note just asks for your
-             own games. -->
-        <div class="menu-label">ESHOP</div>
-        <button class="menu-row" id="eshop-publish-btn" onclick="publishToEshop()" title="Build the open game as a Dezaemon 2 cart save and publish it to the eShop — the global game list every shmupX launcher sees. It lands on your own LOAD GAME shelf too."><span class="mono-badge">ES</span>PUBLISH TO ESHOP</button>
-        <div id="eshop-publish-note" class="menu-note"></div>
-        <div class="menu-label">DEZAEMON 2 (SATURN)</div>
-        <button class="menu-row" onclick="startNewGame();closeMenu()"><span class="mono-badge">NG</span>NEW GAME</button>
-        <button class="menu-row hide-when-sav" onclick="openDezaemonImport()"><span class="mono-badge">SV</span>IMPORT .SAV</button>
-        <input id="deza-url-input" type="url" placeholder="HTTPS://…/GAME.SAV" class="menu-input hide-when-sav" style="margin-bottom:0"
-               onkeydown="if(event.key==='Enter')document.getElementById('deza-url-btn').click()">
-        <button class="menu-row hide-when-sav" id="deza-url-btn" onclick="importDezaemonFromUrlInput()"><span class="mono-badge">UR</span>IMPORT .SAV FROM URL</button>
-        <button class="menu-row" id="deza-library-btn" onclick="openDezaemonLibrary()"><span class="mono-badge">LG</span>LOAD GAME</button>
-        <button class="menu-row hidden" id="deza-website-btn" onclick="openLoadedGameWebsite()"
-                title="Open this game's page on satakore.com — inside the CMG Desktop it opens as a Web Browser window"><span class="mono-badge">WB</span>VIEW WEBSITE</button>
-        <!-- EXPORT: the open game as a Dezaemon 2 cart save. Built entirely in
-             the page by the engine bundle (exportLevelToSav) — no build host —
-             and either downloaded or filed under YOUR .SAV EXPORTS on the LOAD
-             GAME shelf (IndexedDB, this browser). The palette picker decides how
-             the atlas is cut down to console colours. -->
-        <div class="display-row" title="How the atlas is reduced to console colours on export. SATURN: Dezaemon 2's 192 system colours plus 64 user colours mixed from the art. SNES: up to four 15-colour rows with every sprite confined to one, the Super Famicom's 4bpp rule.">
-            <span class="display-lbl">SAV PALETTE</span>
-            <div class="seg-wrap" id="deza-sav-palette-segs">
-                <button class="seg xseg on" data-palette="saturn" onclick="setDezaSavPalette('saturn')">SATURN</button>
-                <button class="seg xseg" data-palette="snes" onclick="setDezaSavPalette('snes')">SNES</button>
-            </div>
-        </div>
-        <button class="menu-row" id="deza-sav-download" onclick="exportDezaemonSav('download')" title="Build a Dezaemon 2 cart save of the open game — the 1,114,112-byte .sav MiSTer's Saturn core reads — and download it"><span class="mono-badge">DL</span>DOWNLOAD .SAV</button>
-        <button class="menu-row" id="deza-sav-shelf" onclick="exportDezaemonSav('shelf')" title="Build the .sav and file it in this browser's LOAD GAME shelf, under YOUR .SAV EXPORTS"><span class="mono-badge">SH</span>&rarr; SAVE SHELF</button>
-        <!-- The two Saturn user-save targets. The browser core (the launcher's
-             Sega Saturn shelf) keeps only the 32 KB internal memory — no backup
-             cart — so most games will not fit and the note says so, with the
-             numbers; Mednafen on this machine has the 512 KB cart, and its row
-             appears only once /api/saturn-save says it is reachable (probed
-             the first time the drawer opens). Neither is hide-when-sav: an
-             imported cart can be staged for play too. -->
-        <button class="menu-row" id="deza-sav-emu" onclick="exportDezaemonSav('emu')" title="Build the save and stage it in the browser Saturn core's internal backup memory (32 KB, no cart) so Dezaemon 2 on the launcher's Sega Saturn shelf can load it from 本体 memory. Saves over ~30 KB do not fit — use Mednafen or MiSTer for those."><span class="mono-badge">EM</span>&rarr; SATURN EMU (USER SAVE)</button>
-        <button class="menu-row hidden" id="deza-sav-mednafen" onclick="exportDezaemonSav('mednafen')" title="Build the save, merge it into one Dezaemon 2 slot of Mednafen's cartridge (.bcr) beside the disc on this machine — the cart's other saves and the console's own .bkr memory untouched — and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN CART</button>
-        <div id="deza-sav-note" class="menu-note"></div>
-        <div class="menu-note">SATURN BACKUP SAVES: .SAV / .BCR / .BKR</div>
-        <!-- DEZAEMON (SUPER FAMICOM). The other Dezaemon: Athena's 1994 cart,
-             whose games are 128 KB SRAM dumps. The editor cannot yet OPEN one —
-             the SFC decoders read a save, and nothing maps one to a level — so
-             this block is a shelf door rather than an import: "→ SNES LIBRARY"
-             files a dump on the launcher's SUPER FAMICOM shelf (IndexedDB,
-             this browser), exactly as "→ SAVE SHELF" above files a Saturn cart
-             on the Dezaemon one. static/snes-shelf.js owns the store and
-             static/snes-library.js the core and the published library, and the
-             launcher's dashboard reads the same store, so a cart filed here
-             turns up in its section. Not hide-when-sav: what is open in the
-             editor has no bearing on filing a cart from disk. -->
-        <div class="menu-label">DEZAEMON (SUPER FAMICOM)</div>
-        <button class="menu-row" id="snes-lib-btn" onclick="openSnesCartImport()" title="Pick a Super Famicom Dezaemon SRAM dump (.srm) and file it on this browser's SNES shelf, where the launcher's SUPER FAMICOM section plays it"><span class="mono-badge">SF</span>&rarr; SNES LIBRARY</button>
-        <div id="snes-lib-note" class="menu-note"></div>
-        <div class="menu-note">SUPER FAMICOM SRAM: .SRM (128 KB)</div>
         <div class="menu-label">ADVANCED EDITORS</div>
         <div class="adv-grid">
             <button class="menu-row" onclick="showCharacterEditor()"><span class="mono-badge sm">CH</span>CHARACTER</button>
@@ -1125,14 +1276,13 @@
         <div id="status" class="menu-status">STATUS: NO DIRECTORY LOADED</div>
     </div>
 
-    <!-- DEZAEMON 2 IMPORT -->
-    <input id="deza-file-input" type="file" accept=".sav,.bcr,.bkr" style="display:none"
+    <!-- CONSOLE SAVE IMPORT: one picker for every console's save. It accepts
+         the PlayStation and 64DD extensions too, and .sav for a Super Famicom
+         dump as well as .srm — dumpers disagree about the extension, and the
+         bytes decide (the "T.TABATA" magic), not the name: see
+         sniffConsoleSave / handleDezaemonFile. -->
+    <input id="deza-file-input" type="file" accept=".sav,.bcr,.bkr,.srm,.mcr,.mcd,.ndd,.ddd" style="display:none"
            onchange="if(this.files[0])handleDezaemonFile(this.files[0]);this.value=''">
-    <!-- DEZAEMON (SUPER FAMICOM) IMPORT. Deliberately accepts .sav as well as
-         .srm: dumpers disagree about the extension, and the bytes decide (the
-         "T.TABATA" magic) rather than the name — see fileSnesCartToLibrary. -->
-    <input id="snes-file-input" type="file" accept=".srm,.sav" style="display:none"
-           onchange="if(this.files[0])fileSnesCartToLibrary(this.files[0]);this.value=''">
     <div id="dezaemon-import-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:84vh">
             <div class="picker-title">DEZAEMON 2 IMPORT
@@ -1860,6 +2010,81 @@
             document.getElementById('menu-backdrop').classList.add('hidden');
             document.getElementById('menu-panel').classList.add('hidden');
         }
+
+        // ================== IMPORT / EXPORT SHEETS ==================
+        // The drawer's IMPORT › and EXPORT › rows open these in its place.
+        // A sheet's options open in place onto their actions and stay open
+        // across visits, so a status note written while a build runs (an app
+        // export, a .sav) is still under the row that started it.
+        function openSheet(which) {
+            closeMenu();
+            closePicker();
+            closeSheet();
+            if (which === 'export') { updateExportSheet(); probeSaturnSaveRoute(); }
+            document.getElementById(which === 'export' ? 'export-sheet' : 'import-sheet').classList.remove('hidden');
+        }
+        function closeSheet() {
+            document.getElementById('import-sheet').classList.add('hidden');
+            document.getElementById('export-sheet').classList.add('hidden');
+        }
+        function toggleSheetSection(btn, force) {
+            const sec = document.getElementById('sheet-sec-' + btn.dataset.sec);
+            if (!sec) return;
+            const open = typeof force === 'boolean' ? force : sec.classList.contains('hidden');
+            sec.classList.toggle('hidden', !open);
+            btn.classList.toggle('open', open);
+            if (open) sec.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+
+        // CONSOLE picker: which console's Dezaemon the export sheet's DEZAEMON
+        // row builds for. The row's title and subline follow the pick. Only the
+        // Saturn has a writer (Dezaemon.exportLevelToSav); the engine READS the
+        // other three — a Super Famicom SRAM, a PlayStation card, a 64DD disk —
+        // and builds none of them, so those picks say that in the row instead
+        // of offering buttons that would do nothing.
+        const EXPORT_CONSOLES = {
+            sfc: { label: 'SFC', long: 'SUPER FAMICOM', dz: 'DEZAEMON', read: 'A SUPER FAMICOM SRAM (.SRM) IS READ AND SHELVED — OPEN ONE FROM THE IMPORT SHEET — BUT NOTHING WRITES ONE YET.' },
+            n64: { label: 'N64', long: 'NINTENDO 64', dz: 'DEZAEMON 3D', read: 'THE 64DD DISK IS READ BY THE N64 PARITY PAGE; NOTHING WRITES ONE YET.' },
+            saturn: { label: 'SATURN', long: 'SEGA SATURN', dz: 'DEZAEMON 2', writer: true },
+            ps: { label: 'PS', long: 'PLAYSTATION', dz: 'DEZAEMON PLUS / KIDS!', read: 'A PLAYSTATION MEMORY CARD IS READ, AND EDITED IN PLACE, BY THE PSX TOOLS; NOTHING BUILDS ONE FROM A LEVEL YET.' },
+        };
+        const EXPORT_CONSOLE_KEY = 'cmg-export-console';
+        let exportConsole = 'saturn';
+        try {
+            const saved = localStorage.getItem(EXPORT_CONSOLE_KEY);
+            if (saved && EXPORT_CONSOLES[saved]) exportConsole = saved;
+        } catch (e) { }
+        function setExportConsole(c) {
+            exportConsole = EXPORT_CONSOLES[c] ? c : 'saturn';
+            try { localStorage.setItem(EXPORT_CONSOLE_KEY, exportConsole); } catch (e) { }
+            updateExportSheet();
+        }
+        function updateExportSheet() {
+            const con = EXPORT_CONSOLES[exportConsole];
+            document.querySelectorAll('#export-console-segs .seg').forEach((b) => {
+                b.classList.toggle('on', b.dataset.console === exportConsole);
+            });
+            document.getElementById('export-deza-name').textContent = con.dz;
+            document.getElementById('export-deza-sub').textContent = con.writer
+                ? con.long + ' · .SAV' + (hasSec7Models() ? ' · SEC7 MODELS INCLUDED' : '')
+                : con.long + ' · NO WRITER YET';
+            document.getElementById('export-deza-opt').classList.toggle('off', !con.writer);
+            document.getElementById('export-deza-saturn').classList.toggle('hidden', !con.writer);
+            const none = document.getElementById('export-deza-nowriter');
+            none.classList.toggle('hidden', !!con.writer);
+            none.textContent = con.writer ? '' : con.read + ' PICK SATURN TO BUILD A CART.';
+            document.getElementById('menu-export-sub').textContent = 'WEB · ' + con.dz + ' (' + con.label + ') · 3D';
+            const L = lineageForked() ? lineage : null;
+            document.getElementById('export-sheet-note').textContent = L
+                ? 'EXPORTS THIS MOD · PARENT ' + L.parent.title.toUpperCase() + ' STAYS UNTOUCHED'
+                : 'EXPORTS ' + openGameLabel() + ' AS CURRENTLY EDITED';
+        }
+        // What the open game is called, for a line of chrome: the cloud name,
+        // the cart's title, or the stock game's id.
+        function openGameLabel() {
+            const name = gameData ? dezaSavGameName() : '';
+            return (name && name !== 'my game' ? name : GAME_ID).toUpperCase();
+        }
         function showCharacterEditor() {
             closeMenu();
             switchEditorTab(currentEditorTab);
@@ -1949,7 +2174,7 @@
                     dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
                     document.getElementById('status').textContent = `STATUS: DIR: ${dirHandle.name.toUpperCase()}`;
                     flash('DIRECTORY LOADED: ' + dirHandle.name.toUpperCase());
-                    document.body.classList.remove('sav-loaded');
+                    leaveSavMode();
                     await loadGameFiles();
                 } catch (e) { alert("Directory picker cancelled or not supported"); }
             } else {
@@ -2033,7 +2258,7 @@
             const dirName = (files[0].webkitRelativePath || '').split('/')[0] || 'folder';
             document.getElementById('status').textContent = `STATUS: DIR: ${dirName.toUpperCase()}`;
             flash('DIRECTORY LOADED: ' + dirName.toUpperCase());
-            document.body.classList.remove('sav-loaded');
+            leaveSavMode();
             populateStagePills();
             loadCurrentStage();
             renderAll();
@@ -2621,6 +2846,8 @@
         // above this point, so these must not sit in a TDZ.
         var bossLab = null;
         var bossLabOpen = false;
+        // The open cart's lineage (see MOD LINEAGE). `var` for the same reason.
+        var lineage = null;
         function labAtlas() {
             if (!atlasData || !atlasData.frames || !atlasImage || !atlasImage.complete || !atlasImage.naturalWidth) return null;
             return { frames: atlasData.frames, url: atlasImage.src, w: atlasImage.naturalWidth, h: atlasImage.naturalHeight };
@@ -2631,8 +2858,10 @@
             if (!atlasData || !atlasData.frames) return [];
             return Object.keys(atlasData.frames).filter(k => /^player0[0-9]\.(gif|png)$/.test(k)).sort().slice(0, 2);
         }
-        // Somewhere to save to: a directory handle or a named cloud game.
+        // Somewhere to save to: a directory handle, a named cloud game — or,
+        // for an opened cart that has been edited, the shelf (SAVE MOD).
         function hasSaveTarget() {
+            if (lineageActive()) return lineageForked();
             const nameInput = document.getElementById('firebase-level-name');
             return !!dirHandle || !!(nameInput && nameInput.value.trim());
         }
@@ -2705,12 +2934,22 @@
             const lbl = document.getElementById('menu-boss-lab-label');
             if (lbl) lbl.textContent = bossLabOpen ? 'BOSS LAB · ON' : 'BOSS LAB';
             if (bossLab) bossLab.updateFoot();
+            // The drawer's SAVE row says what a save will do from here.
+            const forked = lineageForked();
+            const saveLabel = document.getElementById('menu-save-label');
+            if (saveLabel) saveLabel.textContent = forked ? 'SAVE MOD' : (dirHandle ? 'SAVE ALL' : 'SAVE GAME');
+            const saveSub = document.getElementById('menu-save-sub');
+            if (saveSub) {
+                saveSub.classList.toggle('hidden', !forked);
+                saveSub.textContent = forked ? 'PARENT ' + lineage.parent.title.toUpperCase() + ' STAYS UNTOUCHED' : '';
+            }
         }
         document.getElementById('firebase-level-name').addEventListener('input', updateContextualToolbar);
         // The standalone viewer's APPLY arrives here; take only attackPattern,
         // the one field it edits, and only for a pattern this game has.
         if (viewerBridgeChannel) viewerBridgeChannel.onmessage = (ev) => {
             const m = ev.data;
+            lineageCheckSoon();   // an edit made in another window still forks an opened cart
             if (m && m.type === 'tilemap-apply' && (!m.gameId || m.gameId === GAME_ID)) { applyTilemapFromEditor(m); return; }
             if (!m || m.type !== 'boss-patterns' || m.gameId !== GAME_ID || !m.changes || !bossData) return;
             let n = 0;
@@ -4965,6 +5204,13 @@
         }
 
         function quickSave() {
+            // An opened cart saves as a mod of itself, on the shelf — never
+            // over the cart it came from, and never to the cloud by accident.
+            if (lineageActive()) {
+                if (lineageForked()) saveMod();
+                else flash('NOTHING TO SAVE · NO CHANGES SINCE THE IMPORT');
+                return;
+            }
             if (dirHandle && gameData) {
                 saveAll();
                 // Also save to Firebase if a cloud game name is set
@@ -5020,6 +5266,21 @@
                 if (src) out += '&source=' + encodeURIComponent(src);
             } catch (_e) { /* no URL to read */ }
             return out;
+        }
+        // ?version=og|reboot — the launcher's LIBRARY card says which version
+        // of a shelf game to run, and the hand-off spells that out as the
+        // runtime's own boot flags (continues, combo, story; versionParams in
+        // /deza-shelf.js is the one list both ends read). Absent — every play
+        // that starts in the editor — nothing is added and the runtime's
+        // defaults stand.
+        async function versionPlayParams() {
+            let version = '';
+            try { version = new URLSearchParams(location.search).get('version') || ''; } catch (_e) { return ''; }
+            if (version !== 'og' && version !== 'reboot') return '';
+            try {
+                const flags = (await dezaShelf()).versionParams(version);
+                return Object.keys(flags).map((k) => '&' + k + '=' + flags[k]).join('');
+            } catch (_e) { return ''; }
         }
         // ================== OPENING THE GAME (LAUNCHER AWARE) ==================
         // The hand-off to the game travels entirely through this origin's
@@ -5090,7 +5351,7 @@
             // this is normally a fast no-op rewrite; it settles well inside the
             // window where a click still authorizes window.open.
             await storeAtlasForViewers();
-            const playUrl = `${GAME_PLAY_URL}?editorPlay=1&stage=${sid}${godModeParam()}${debugPlayParams()}`;
+            const playUrl = `${GAME_PLAY_URL}?editorPlay=1&stage=${sid}${godModeParam()}${debugPlayParams()}${await versionPlayParams()}`;
             // navigate: swap this page (or this launcher frame) for the game
             // instead of opening a tab — the shelf's player mode uses it so a
             // slow cart fetch can't outlive the click's popup allowance.
@@ -5104,6 +5365,23 @@
             a.href = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' }));
             a.download = `${currentStageKey}-level.json`; a.click();
             flash('LEVEL JSON EXPORTED ⬇');
+        }
+
+        // EXPORT › WEB › GAME JSON: the whole open game as one level record —
+        // the shape the runtime's level-loader reads and an app build stages
+        // from (levelRecordForAppExport), atlas included. The stage JSON above
+        // is one wave grid; this is the game.
+        async function exportGameRecordJSON() {
+            if (!gameData) { alert('Load a game first'); return; }
+            let record;
+            try { record = await levelRecordForAppExport(); }
+            catch (e) { alert('Could not read the open game:\n\n' + (e && e.message || e)); return; }
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([JSON.stringify(record)], { type: 'application/json' }));
+            a.download = (dezaSlugOfTitle(record.name) || 'game') + '.game.json';
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+            flash((lineageForked() ? 'MOD · ' : '') + 'GAME JSON EXPORTED ⬇');
         }
 
         // ================== DEZAEMON 2 (NEW GAME + .SAV IMPORT) ==================
@@ -5218,7 +5496,7 @@
             if (nameInput) nameInput.value = '';
             setDezaStatus('NEW GAME (UNSAVED)');
             flash('NEW GAME — STAGE 00');
-            document.body.classList.remove('sav-loaded');
+            leaveSavMode();
         }
 
         // ================== EXTERNAL LINKS (CMG DESKTOP AWARE) ==================
@@ -5276,9 +5554,37 @@
             document.getElementById('deza-file-input').click();
         }
 
+        // Which console a picked save came off, by its bytes: the IMPORT
+        // sheet's one picker takes all four. Only the Saturn's opens in the
+        // editor; the others are named for what they are.
+        function sniffConsoleSave(u8, name) {
+            const D = window.Dezaemon;
+            try { if (D && typeof D.isSfcSav === 'function' && D.isSfcSav(u8)) return 'sfc'; } catch (e) { }
+            // A raw PlayStation memory card: 128 KB, "MC" opening its first frame.
+            if (u8.length === 131072 && u8[0] === 0x4d && u8[1] === 0x43) return 'ps';
+            // A 64DD disk image is tens of megabytes; no other save here is.
+            if (/\.(ndd|ddd|d64)$/i.test(name || '') || u8.length > 0x2000000) return 'n64';
+            return 'saturn';
+        }
+
         async function handleDezaemonFile(file) {
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return false; }
             const u8 = new Uint8Array(await file.arrayBuffer());
+            const consoleKind = sniffConsoleSave(u8, file.name);
+            if (consoleKind === 'sfc') {
+                flash('SUPER FAMICOM CART · FILING IT ON THE SNES SHELF');
+                await fileSnesCartToLibrary(file);
+                return false;
+            }
+            if (consoleKind === 'ps' || consoleKind === 'n64') {
+                const ps = consoleKind === 'ps';
+                snesNote((ps ? 'THAT IS A PLAYSTATION MEMORY CARD' : 'THAT IS A 64DD DISK IMAGE') +
+                    ' — THE EDITOR CANNOT OPEN ONE YET. ' +
+                    (ps ? '/dezaemon-parity-psx.html' : '/dezaemon-parity-n64.html') + ' READS IT.', '#f59e0b');
+                flash(ps ? 'PLAYSTATION CARD · NOT OPENED HERE YET' : '64DD DISK · NOT OPENED HERE YET');
+                return false;
+            }
+            closeSheet();
             return ingestDezaemonBytes(u8, file.name);
         }
 
@@ -5303,7 +5609,12 @@
                 alert('Not a Saturn backup image (' + label + '):\n\n' + (err.message || err));
                 return false;
             }
-            dezaImportState = { containerKind: normalized.kind, saves, selectedSlot: null, decoded: null, fileName: label, importing: false };
+            // rawBytes + lineageHint feed MOD LINEAGE: the cart as it came, and
+            // where it came from (a file unless the caller says otherwise).
+            dezaImportState = {
+                containerKind: normalized.kind, saves, selectedSlot: null, decoded: null, fileName: label, importing: false,
+                rawBytes: u8, lineageHint: (opts && opts.lineage) || null,
+            };
             if (!opts || opts.openModal !== false) openDezaemonImportModal();
             return true;
         }
@@ -5379,7 +5690,7 @@
             const url = (input.value || '').trim();
             if (!url) { alert('ENTER THE URL OF A .SAV / .BCR / .BKR FILE FIRST.'); return false; }
             const ok = await loadDezaemonFromUrl(url);
-            if (ok) closeMenu();
+            if (ok) { closeMenu(); closeSheet(); }
             return ok;
         }
 
@@ -5674,6 +5985,287 @@
                 : 'COULD NOT DOWNLOAD IT';
         }
 
+        // ================== MOD LINEAGE ==================
+        // An opened cart is somebody's game. The first edit to one forks it:
+        // from then on this copy is a MOD, the strip under the banner names
+        // the parent it came from, and SAVE becomes SAVE MOD — which files the
+        // edited game on the shelf as its own record (static/deza-shelf.js,
+        // source "mod") and never writes over the parent. A cart opened from a
+        // file or a URL is filed there too, as it came (source "import"), so
+        // the launcher's LIBRARY has the parent to hang the mod on and can
+        // offer both in OG and REBOOT. The stock game, a directory and a cloud
+        // game are the author's own and never fork: lineage exists only while
+        // a cart is open (body.sav-loaded).
+        //
+        // `lineage` is { parent: { id, title }, origin, modId, modTitle,
+        // changes, base, last, saved } — the last three are fingerprints of
+        // the open game: as opened, as of the last look, as last saved.
+        function lineageActive() {
+            return !!lineage && document.body.classList.contains('sav-loaded');
+        }
+        // A mod: an opened mod, or an opened cart that has been changed.
+        function lineageForked() {
+            return lineageActive() && (lineage.changes > 0 || !!lineage.modId);
+        }
+        function leaveSavMode() {
+            document.body.classList.remove('sav-loaded');
+            lineage = null;
+            updateLineageUI();
+        }
+
+        // One cart image holding exactly the save that was opened. The shelf
+        // plays the first game save it finds in a record, so a slot picked
+        // out of a multi-save cart is rewrapped on its own; a cart that is
+        // already one game in the MiSTer layout goes on the shelf untouched.
+        function lineageParentImage(st, save) {
+            const D = window.Dezaemon;
+            const games = st.saves.filter((x) => D.isGameSave(x) && x.payload);
+            const mister = D.MISTER_SAV_SIZE || 1114112;
+            if (games.length === 1 && st.rawBytes && st.rawBytes.length === mister) return st.rawBytes;
+            try {
+                if (typeof D.buildBupImage === 'function' && save && save.payload) {
+                    return D.buildBupImage([{
+                        filename: save.filename, comment: save.comment, language: save.language,
+                        date: save.date, payload: save.payload,
+                    }], { layout: 'mister' }).image;
+                }
+            } catch (e) { console.warn('could not rewrap the imported save; filing the cart as it came:', e); }
+            return st.rawBytes || null;
+        }
+
+        function lineageStats() {
+            const stages = gameData ? Object.keys(gameData).filter((k) => /^stage\d+$/.test(k)).length : 0;
+            return { stages, bosses: Object.keys(bossData || {}).length };
+        }
+
+        function lineageBeginFromImport(st, save, title, opts) {
+            const hint = st.lineageHint || { kind: 'file' };
+            const L = {
+                parent: null, origin: 'DEZAEMON 2 · SATURN .SAV', modId: null, modTitle: '', changes: 0,
+                base: null, last: null, saved: null,
+                parentBytes: null, parentFile: st.fileName || '', parentStats: lineageStats(),
+            };
+            const rec = hint.kind === 'shelf' ? hint.rec : null;
+            if (rec && rec.source === 'mod') {
+                // An opened mod is still that mod: saving writes it back.
+                L.parent = { id: (rec.parent && rec.parent.id) || '', title: (rec.parent && rec.parent.title) || 'A GAME NO LONGER HERE' };
+                L.modId = rec.id;
+                L.modTitle = rec.title || '';
+                L.changes = rec.changes > 0 ? rec.changes : 1;
+                L.origin = 'YOUR MOD · ON THE SHELF';
+                applyModOverlay(rec.web);
+            } else if (rec) {
+                L.parent = { id: rec.id, title: rec.title || title };
+                L.origin = rec.source === 'eshop' ? 'ESHOP GAME' : rec.source === 'import' ? 'DEZAEMON 2 · SATURN .SAV' : 'YOUR .SAV EXPORT';
+            } else {
+                const credits = gameData && gameData.dezaemonCredits;
+                L.parent = { id: '', title: hint.title || (credits && credits.title) || title };
+                L.parentBytes = lineageParentImage(st, save);
+                if (hint.kind === 'library') L.origin = 'SAVED GAMES SHELF · SATURN .SAV';
+            }
+            lineage = L;
+            updateLineageUI();
+            // The game as opened is the baseline every later look is compared
+            // with — taken a beat later, once the import's own tail (credits,
+            // the atlas publish) has landed.
+            setTimeout(() => { if (lineage === L) lineageCheckNow(); }, 600);
+            // A cart opened from a file or a URL goes on the shelf as it came,
+            // so the launcher has it. A community save is filed only once it
+            // has a mod to be the parent of (lineageEnsureParent), and a
+            // launcher play hand-off (silent) files nothing at all.
+            if (!rec && hint.kind !== 'library' && !(opts && opts.silent)) {
+                lineageEnsureParent(L, true).catch((e) => console.warn('could not file the import on the shelf:', e));
+            }
+        }
+
+        // The parent's shelf id, filing the parent first when it is not there.
+        async function lineageEnsureParent(L, replace) {
+            const shelf = await dezaShelf();
+            if (L.parent.id) {
+                const there = await shelf.getDezaShelfEntry(L.parent.id).catch(() => null);
+                if (there || !L.parentBytes) return L.parent.id;
+            }
+            if (!L.parentBytes) throw new Error('the parent cart is no longer in memory');
+            const id = shelf.dezaShelfIdForImport(L.parent.title);
+            const there = replace ? null : await shelf.getDezaShelfEntry(id).catch(() => null);
+            if (!there) {
+                await shelf.putDezaShelfEntry({
+                    id, title: L.parent.title, file: L.parentFile || undefined,
+                    bytes: L.parentBytes, size: L.parentBytes.length, savedAt: Date.now(),
+                    source: 'import', stats: L.parentStats,
+                });
+                dezaExportRows = null;
+            }
+            L.parent.id = id;
+            return id;
+        }
+
+        // What a Dezaemon 2 cart has nowhere to put, kept beside the cart on
+        // the mod's shelf record and laid back over it when the mod is opened
+        // or played: boss attack patterns (BOSS LAB) and the story.
+        function modOverlay() {
+            const web = {};
+            const patterns = {};
+            for (const k of Object.keys(bossData || {})) {
+                if (bossData[k] && bossData[k].attackPattern) patterns[k] = bossData[k].attackPattern;
+            }
+            if (Object.keys(patterns).length) web.bossPatterns = patterns;
+            if (gameData && gameData.storyData) web.storyData = gameData.storyData;
+            web.noStory = !!(gameData && gameData.noStory);
+            return web;
+        }
+        function applyModOverlay(web) {
+            if (!web || !gameData) return;
+            if (web.bossPatterns && bossData) {
+                for (const k of Object.keys(web.bossPatterns)) {
+                    if (bossData[k] && typeof web.bossPatterns[k] === 'string') bossData[k].attackPattern = web.bossPatterns[k];
+                }
+                storeBossDataForViewers();
+            }
+            if (web.storyData && typeof web.storyData === 'object') gameData.storyData = web.storyData;
+            if (web.noStory === false) delete gameData.noStory;
+            else if (web.noStory === true) gameData.noStory = true;
+            syncNoStoryKnob();
+        }
+
+        // The open game boiled down to a short string, so "has it changed"
+        // is one comparison whichever editor did the changing. Stages go
+        // through the cloud save's canonical form, which reads the open stage
+        // from the live grid — the answer is the same whichever stage is up.
+        // Left out: what the import itself fills in late (credits) and ids.
+        const LINEAGE_SKIP = new Set(['enemyData', 'bossData', 'playerData', 'dezaemonCredits', 'gameId']);
+        let lineageAtlasSeen = null, lineageAtlasGen = 0;
+        function lineageFingerprint() {
+            if (!gameData) return '';
+            const rest = {};
+            for (const k of Object.keys(gameData)) {
+                if (/^stage\d+$/.test(k) || LINEAGE_SKIP.has(k)) continue;
+                rest[k] = gameData[k];
+            }
+            const text = JSON.stringify([buildStagesForCloudSave(), enemyData, bossData, playerData, rest]);
+            let h = 0x811c9dc5;
+            for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+            // The atlas is pixels, not data: a repack swaps the Image object.
+            if (atlasImage !== lineageAtlasSeen) { lineageAtlasSeen = atlasImage; lineageAtlasGen++; }
+            const len = (x) => (x ? x.length : 0);
+            return [
+                (h >>> 0).toString(16), text.length,
+                lineageAtlasGen, Object.keys(replacedFrames).length, extraSprites.length,
+                len(titleBgDataURL), len(logoDataURL), len(subTitleDataURL), len(titleStartTextDataURL),
+                audioCustomKeys.size, JSON.stringify(audioURLs),
+            ].join(':');
+        }
+
+        function lineageCheckNow() {
+            if (!lineageActive()) return;
+            const L = lineage;
+            let fp;
+            try { fp = lineageFingerprint(); } catch (e) { console.warn('lineage: could not read the open game:', e); return; }
+            if (L.base === null) { L.base = L.last = L.saved = fp; return; }
+            if (fp === L.last) return;
+            L.last = fp;
+            // Edited by hand back to exactly what was opened: not a mod after all.
+            if (!L.modId && fp === L.base) L.changes = 0;
+            else L.changes++;
+            updateLineageUI();
+        }
+        let lineageTimer = null;
+        function lineageCheckSoon() {
+            if (!lineageActive()) return;
+            clearTimeout(lineageTimer);
+            lineageTimer = setTimeout(lineageCheckNow, 350);
+        }
+        // Every edit in this page ends in one of these. The check is a
+        // comparison, so a press that changed nothing counts nothing.
+        ['pointerup', 'keyup', 'change', 'drop'].forEach((ev) => document.addEventListener(ev, lineageCheckSoon, true));
+
+        function updateLineageUI() {
+            const forked = lineageForked();
+            const strip = document.getElementById('lineage-strip');
+            if (strip) strip.classList.toggle('hidden', !forked);
+            if (forked) {
+                const L = lineage;
+                const parent = L.parent.title.toUpperCase();
+                const count = L.changes + ' CHANGE' + (L.changes === 1 ? '' : 'S');
+                const unsaved = !L.modId || L.last !== L.saved;
+                document.getElementById('lineage-parent').textContent = 'MOD OF ' + parent;
+                document.getElementById('lineage-origin').textContent = L.origin;
+                document.getElementById('lineage-changes').textContent = count + ' · ' + (unsaved ? 'UNSAVED' : 'SAVED');
+                setDezaStatus('MOD OF ' + parent + ' · ' + count);
+            }
+            updateContextualToolbar();
+        }
+
+        // The open game as a Dezaemon 2 cart, under `name` — the build
+        // exportDezaemonSav() does, for a caller with its own destination.
+        async function buildOpenGameSav(name) {
+            const record = await buildLevelRecordForSav();
+            if (name) record.name = name;
+            const art = collectAtlasArtForSav();
+            const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
+            const out = window.Dezaemon.exportLevelToSav(record, art, {
+                palette: dezaSavPalette,
+                gameMode: dezaSavGameMode(),
+                title1, title2,
+            });
+            return { out, record };
+        }
+
+        // SAVE MOD: the edited cart, filed on the shelf as a mod of its
+        // parent. Named once, on the first save; after that the same record
+        // is written back. The parent's record is only ever read.
+        let modSaveBusy = false;
+        async function saveMod() {
+            if (!lineageActive() || modSaveBusy) return;
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
+            if (typeof window.Dezaemon.exportLevelToSav !== 'function') {
+                alert('This engine bundle predates the .sav writer — run `deno task engine:bundle`.');
+                return;
+            }
+            const L = lineage;
+            const parent = L.parent.title.toUpperCase();
+            let title = L.modTitle;
+            if (!L.modId) {
+                title = prompt('NAME THIS MOD OF ' + parent + ':', L.parent.title + ' // MOD');
+                title = title ? title.trim() : '';
+                if (!title) return;
+            }
+            modSaveBusy = true;
+            flash('SAVING MOD…');
+            try {
+                clearTimeout(lineageTimer);
+                lineageCheckNow();
+                const shelf = await dezaShelf();
+                const parentId = await lineageEnsureParent(L, false);
+                const id = L.modId || shelf.dezaShelfIdForMod(parentId, title);
+                if (!L.modId && await shelf.getDezaShelfEntry(id).catch(() => null)) {
+                    if (!confirm('A mod of ' + parent + ' called "' + title + '" is already on the shelf. Replace it?')) return;
+                }
+                const savedFp = L.last;
+                const { out } = await buildOpenGameSav(title);
+                await shelf.putDezaShelfEntry({
+                    id, title, file: out.fileName, palette: dezaSavPalette,
+                    bytes: out.sav, size: out.sav.length, savedAt: Date.now(),
+                    warnings: out.warnings, report: out.report || {},
+                    source: 'mod', parent: { id: parentId, title: L.parent.title },
+                    changes: L.changes, web: modOverlay(), stats: lineageStats(),
+                });
+                dezaExportRows = null;
+                if (out.warnings.length) console.warn('.sav export warnings:', out.warnings);
+                if (lineage !== L) return;   // another game was opened while this one saved
+                L.modId = id;
+                L.modTitle = title;
+                L.saved = savedFp;
+                updateLineageUI();
+                flash('SAVED AS MOD OF ' + parent + ' · PARENT UNTOUCHED');
+            } catch (e) {
+                console.error('SAVE MOD failed:', e);
+                alert('Could not save the mod:\n\n' + (e && e.message || e));
+            } finally {
+                modSaveBusy = false;
+            }
+        }
+
         // → SATURN EMU (USER SAVE). The browser core (yabause, on the
         // launcher's Sega Saturn shelf) persists only the console's 32 KB
         // internal backup memory — it has no cartridge slot — as an IDBFS
@@ -5885,7 +6477,8 @@
                 return;
             }
             hideDezaPreview();
-            await loadDezaemonLibraryGame(rec.file, rec.title, null, null, { bytes: new Uint8Array(rec.bytes) });
+            await loadDezaemonLibraryGame(rec.file, rec.title, null, null,
+                { bytes: new Uint8Array(rec.bytes), lineage: { kind: 'shelf', rec } });
         }
 
         // ============ SAVED GAMES (community save collection) ============
@@ -6388,9 +6981,12 @@
                 exportId: r.id, file: r.file, title: r.title, meta: null, slug: null, hasCover: false,
                 palette: r.palette, size: r.size, savedAt: r.savedAt,
                 eshop: !!r.eshop, eshopId: r.eshopId || null, cover: r.cover || null,
+                source: r.source || '', parent: r.parent || null, changes: r.changes || 0,
             }));
             const eshopRows = shelfRows.filter((r) => r.eshop);
-            const exportRows = shelfRows.filter((r) => !r.eshop);
+            const modRows = shelfRows.filter((r) => !r.eshop && r.source === 'mod');
+            const importRows = shelfRows.filter((r) => !r.eshop && r.source === 'import');
+            const exportRows = shelfRows.filter((r) => !r.eshop && r.source !== 'mod' && r.source !== 'import');
             if (!st.available || !st.saves.length) {
                 if (!shelfRows.length) {
                     const note = document.createElement('div');
@@ -6429,9 +7025,13 @@
             // the top, each with a ✕ instead of a star — and the eShop games
             // installed in this browser lead even those, since they are what
             // the launcher's shelf shows first too.
+            // Imported carts and the mods made from them (MOD LINEAGE) sit
+            // between the two, mods first: they are what was last worked on.
             if (exportRows.length) sections.unshift(['YOUR .SAV EXPORTS', exportRows]);
+            if (importRows.length) sections.unshift(['IMPORTED GAMES', importRows]);
+            if (modRows.length) sections.unshift(['YOUR MODS', modRows]);
             if (eshopRows.length) sections.unshift(['ESHOP GAMES', eshopRows]);
-            const LOCAL_SECTIONS = new Set(['ESHOP GAMES', 'YOUR .SAV EXPORTS']);
+            const LOCAL_SECTIONS = new Set(['ESHOP GAMES', 'YOUR MODS', 'IMPORTED GAMES', 'YOUR .SAV EXPORTS']);
             for (const [label, unsorted] of sections) {
                 const head = document.createElement('div');
                 head.className = 'menu-label';
@@ -6473,7 +7073,10 @@
                     } else if (item.exportId) {
                         const dev = document.createElement('div');
                         dev.className = 'deza-slot-meta';
-                        dev.textContent = item.file + (item.eshop ? ' · ESHOP' : '') + ' · ' + String(item.palette || 'saturn').toUpperCase() + ' PALETTE · ' +
+                        dev.textContent = (item.source === 'mod' && item.parent
+                            ? 'MOD OF ' + String(item.parent.title || '?').toUpperCase() + ' · ' + item.changes + ' CHANGE' + (item.changes === 1 ? '' : 'S') + ' · '
+                            : '') +
+                            item.file + (item.eshop ? ' · ESHOP' : '') + ' · ' + String(item.palette || 'saturn').toUpperCase() + ' PALETTE · ' +
                             (item.size ? (item.size / 1048576).toFixed(2) + ' MB' : '') +
                             (item.savedAt ? ' · ' + (item.eshop ? 'INSTALLED ' : '') + new Date(item.savedAt).toLocaleString() : '');
                         body.appendChild(dev);
@@ -6516,6 +7119,12 @@
                 ? await loadDezaemonFromRtdb(slug, file, { openModal: false })
                 : await loadDezaemonFromUrl('dezaemon/saves/' + encodeURIComponent(file), { openModal: false });
             if (!ok) return;
+            // Where this cart came from, for MOD LINEAGE: a shelf record names
+            // itself (opts.lineage); anything else here is a community save.
+            dezaImportState.lineageHint = (opts && opts.lineage) || {
+                kind: 'library',
+                title: (meta && meta.title) || fallbackTitle || String(file || '').replace(/\.sav$/i, ''),
+            };
             // What the game page should call this cart when the debug engine
             // comparison asks a desktop to fetch it again: the library slug
             // (a browser-built export has none — the desktop cannot reach
@@ -6531,7 +7140,9 @@
             // opts.forcePlay (the launcher's ?play= hand-off) means "run it" no
             // matter how the EDIT FIRST toggle is set — the player asked to
             // play, not to open the editor.
-            const playNow = !!(opts && opts.forcePlay) || !dezaEditFirstOn;
+            // opts.forceEdit (the LIBRARY's Y EDIT, ?editExport=) is the same
+            // promise the other way round: open it, whatever the toggle says.
+            const playNow = !(opts && opts.forceEdit) && (!!(opts && opts.forcePlay) || !dezaEditFirstOn);
             const st = dezaImportState;
             const usable = [];
             st.saves.forEach((s, i) => { if (window.Dezaemon.isGameSave(s) && s.payload) usable.push(i); });
@@ -6852,6 +7463,7 @@
             // A loaded .sav trims the drawer to the controls that apply to it
             // (see body.sav-loaded); NEW GAME / directory / cloud loads restore it.
             document.body.classList.add('sav-loaded');
+            lineageBeginFromImport(st, save, title, opts);
             const notes = warnings.slice();
             const importedStages = Object.keys(gameData).filter(k => /^stage\d+$/.test(k));
             const spawnCount = importedStages.reduce((n, k) =>
@@ -6932,7 +7544,24 @@
                 return;
             }
             if (!rec || !rec.bytes) { flash('THAT SHELF GAME IS NO LONGER HERE'); return; }
-            loadDezaemonLibraryGame(rec.file, rec.title, null, null, { bytes: new Uint8Array(rec.bytes), forcePlay: true });
+            loadDezaemonLibraryGame(rec.file, rec.title, null, null,
+                { bytes: new Uint8Array(rec.bytes), forcePlay: true, lineage: { kind: 'shelf', rec } });
+        }
+
+        // ?editExport=<shelfId> — the LIBRARY card's Y EDIT: the same record,
+        // opened in the editor instead of played. A mod opens as that mod; any
+        // other game opens as itself, and its first edit forks a new mod.
+        async function editDezaemonShelfExport(id) {
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
+            await editorBaselineReady;
+            let rec = null;
+            try { rec = await dezaExportsGet(id); } catch (err) {
+                flash('COULD NOT OPEN THE SHELF: ' + (err.message || err));
+                return;
+            }
+            if (!rec || !rec.bytes) { flash('THAT SHELF GAME IS NO LONGER HERE'); return; }
+            loadDezaemonLibraryGame(rec.file, rec.title, null, null,
+                { bytes: new Uint8Array(rec.bytes), forceEdit: true, lineage: { kind: 'shelf', rec } });
         }
 
         // ?sav=<url> opens the importer straight from a link, so the launcher (or
@@ -6943,6 +7572,8 @@
             if (sav) { loadDezaemonFromUrl(sav); return; }
             const playExport = params.get('playExport');
             if (playExport) { playDezaemonShelfExport(playExport); return; }
+            const editExport = params.get('editExport');
+            if (editExport) { editDezaemonShelfExport(editExport); return; }
             const play = params.get('play');
             if (play) playDezaemonLibrarySlug(play);
         });
@@ -9514,7 +10145,7 @@ function GAME3D_RUNTIME(DATA) {
         // ================== KEYBOARD ==================
         document.addEventListener('keydown', e => {
             if (e.key === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); quickSave(); }
-            if (e.key === 'Escape') { closePicker(); closeMenu(); }
+            if (e.key === 'Escape') { closePicker(); closeSheet(); closeMenu(); }
             if (e.key === 'd' && !e.ctrlKey && !e.metaKey && !e.target.closest('input,textarea')) { e.preventDefault(); setDeleteMode(); }
             if (e.key === 'Enter' && e.target.id === 'firebase-level-name') { e.preventDefault(); playFirebaseLevel(); }
         });
@@ -10005,7 +10636,7 @@ function GAME3D_RUNTIME(DATA) {
                 }
                 document.getElementById('firebase-level-name').value = name;
                 document.getElementById('status').textContent = `STATUS: GAME: ${String(name).toUpperCase()} (CLOUD)`;
-                document.body.classList.remove('sav-loaded');
+                leaveSavMode();
 // Restore sprite thumbnails from Firebase data
                 if (d.frameThumbnails) restoreFrameThumbnails(d.frameThumbnails);
                 renderGrid(); updateToolUI(); renderEnemyList();
@@ -10351,11 +10982,6 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             if (!el) return;
             el.textContent = msg || '';
             el.style.color = color || '';
-        }
-
-        function openSnesCartImport() {
-            snesNote('');
-            document.getElementById('snes-file-input').click();
         }
 
         async function fileSnesCartToLibrary(file) {
@@ -11466,6 +12092,7 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
         // ================== INIT ==================
         window.onload = async () => {
             updateToolUI();
+            updateExportSheet();
             // Auto-load local data first so Firebase can override it
             try { await autoLoadFromServer(); } finally { editorBaselineResolve(); }
             const urlParams = new URLSearchParams(window.location.search);

@@ -646,20 +646,20 @@ once per drop and remembers the answer.
 The flap is an ordinary `anims.play()` at `frameRate: 5`, the same path the
 stock explosions take.
 
-**In the editor.** Under DEZAEMON 2 (SATURN): **DOWNLOAD .SAV** builds the open
-game in the page (the engine bundle) and downloads `Dez 2 - <name>.sav`; **→
-SAVE SHELF** files the same bytes in this browser's IndexedDB, and the LOAD GAME
-shelf lists them first under **YOUR .SAV EXPORTS** with a ✕ to forget one —
-loading a row runs the normal import, so a save can be exported, reloaded and
-re-edited without leaving the page. Both work on an imported cart as well as an
-authored level, which is how a community game can be edited and written back
-out. The store is [`static/deza-shelf.js`](static/deza-shelf.js), shared with
-the launcher: its SAVED GAMES coverflow shelves the same builds ahead of the
-collection under the ⬇ stop on the rail, finds them by search, re-reads the
-shelf whenever the editor (an iframe of the launcher) files one, and PLAY on
-such a cover hands the editor `?playExport=<id>` so the cart comes straight out
-of the store — see **The eShop** below, which installs published Dezaemon games
-onto the same shelf.
+**In the editor.** Under EXPORT → DEZAEMON 2 (the export sheet, with its CONSOLE
+picker on SATURN): **DOWNLOAD .SAV** builds the open game in the page (the
+engine bundle) and downloads `Dez 2 - <name>.sav`; **→ SAVE SHELF** files the
+same bytes in this browser's IndexedDB, and the LOAD GAME shelf lists them first
+under **YOUR .SAV EXPORTS** with a ✕ to forget one — loading a row runs the
+normal import, so a save can be exported, reloaded and re-edited without leaving
+the page. Both work on an imported cart as well as an authored level, which is
+how a community game can be edited and written back out. The store is
+[`static/deza-shelf.js`](static/deza-shelf.js), shared with the launcher: its
+SAVED GAMES coverflow shelves the same builds ahead of the collection under the
+⬇ stop on the rail, finds them by search, re-reads the shelf whenever the editor
+(an iframe of the launcher) files one, and PLAY on such a cover hands the editor
+`?playExport=<id>` so the cart comes straight out of the store — see **The
+eShop** below, which installs published Dezaemon games onto the same shelf.
 
 **Every shelf row wears its own title screen.** A record filed here gets a
 `cover` rendered from its own cart bytes by `composeCover`
@@ -699,15 +699,15 @@ says which of the two the cart came out wearing — `"cart"`, `"uploaded"` or
 every import carries `noStory`, so the runtime's AdvScene hands straight on to
 the stage.
 
-**Exporting a loaded cart as an app.** EXPORT AS AN APP — the TARGET picker and
-the EXPORT button — is not hidden while a `.sav` is open, so a cart loaded from
-a file, from the LOAD GAME shelf or from the database exports to all five
-targets (ANDROID / IOS / LINUX / WIN / PS2) exactly as a cloud level does. A
-cloud level is saved first and built from its name; an imported cart has no
-cloud record and never will, so the editor hands the **record itself** over
-instead (`levelRecord` on `/api/build-apk`, written to disk for `--level-file`),
-which means the export carries whatever you have just edited rather than
-whatever the database last saw.
+**Exporting a loaded cart as an app.** EXPORT → APP — the TARGET picker and the
+EXPORT button — is not hidden while a `.sav` is open, so a cart loaded from a
+file, from the LOAD GAME shelf or from the database exports to all five targets
+(ANDROID / IOS / LINUX / WIN / PS2) exactly as a cloud level does. A cloud level
+is saved first and built from its name; an imported cart has no cloud record and
+never will, so the editor hands the **record itself** over instead
+(`levelRecord` on `/api/build-apk`, written to disk for `--level-file`), which
+means the export carries whatever you have just edited rather than whatever the
+database last saw.
 
 **A cart builds on a paired desktop too.** The remote build queue used to pair a
 desktop with a level _name_, which a cart has none of, so the one export that
@@ -726,6 +726,71 @@ hands the APK / disc / app back to the phone. The DESKTOP row, its status line
 and the job list are no longer hidden while a cart is open, and if no code is
 given the status line still names the `deno task build:<target> --sav` to run
 from a checkout instead.
+
+## Import, export, mods and the LIBRARY
+
+The level editor's drawer used to list every source and every target as a row of
+its own — forty of them. FILE SYSTEM is four now: **SAVE**, **IMPORT ›**,
+**EXPORT ›** and **NEW GAME**, with the rows that run the game in a **PLAY**
+group under it. The two `›` rows open bottom sheets, and each option on a sheet
+opens in place onto the actions it stands for — the same buttons as before, with
+the same ids, so a build's status note is still under the row that started it.
+
+- **IMPORT** has two sources. **WEB** is the editor's own formats: a game
+  directory, or a cloud game save. **DEZAEMON** is a console save, and its one
+  picker sorts files by their bytes rather than their extension
+  (`sniffConsoleSave`): a Saturn backup image (`.sav` / `.bcr` / `.bkr`) opens
+  in the editor; a Super Famicom SRAM (the `T.TABATA` magic) is filed on the
+  SNES shelf, since nothing maps one to a level yet; a PlayStation card or a
+  64DD disk is named for what it is and pointed at its parity page.
+- **EXPORT** has **WEB** (the whole game as one level record, `GAME JSON`; the
+  open stage alone; the cloud save), a **CONSOLE** picker — SFC / N64 / SATURN /
+  PS — that retargets the **DEZAEMON** row under it, **3D**, **APP** and
+  **ESHOP**. Only the Saturn has a cart writer
+  (`packages/shmup-engine/src/write/`). The other three consoles are read and
+  never built, and the row says "NO WRITER YET" rather than offering buttons
+  that would build nothing.
+
+**An opened cart is somebody's game, so editing one forks it.** The first change
+turns the copy in the editor into a **mod**: a strip appears under the banner —
+`MOD OF <PARENT> · <where it came from> · <n> CHANGES · UNSAVED` — and SAVE
+becomes **SAVE MOD**, which files the edited game on the shelf as its own record
+and never writes over the parent. Changes are counted by fingerprinting the open
+game after each press (`lineageFingerprint`), so every editor counts — the wave
+grid, the Boss Lab, the character sheet, an apply arriving from the Tilemap
+Editor's window — and a press that changed nothing counts nothing. The stock
+game, a directory and a cloud game are the author's own and never fork.
+
+The shelf ([`static/deza-shelf.js`](static/deza-shelf.js)) grew two sources to
+hold this. A cart opened from a file or a URL is filed as it came, `"import"`; a
+mod is `"mod"`, carrying `parent: { id, title }`, how many `changes` it is from
+that parent, and `web` — the edits a Dezaemon 2 cart has nowhere to put (Boss
+Lab attack patterns, a story), which the editor lays back over the cart when the
+mod is opened or played. A community save is only filed once it has a mod to be
+the parent of. The two kinds are told apart by `source` and never by id prefix:
+an export of a game called "Mod" is `mod:saturn`, and stays an export.
+
+**The launcher's LIBRARY** is that shelf as game cards, reached from the Games
+list's LIBRARY row (it appears once the shelf holds something). `libraryCards()`
+orders them — each game, then its mods — so a mod sits under the game it came
+from; its ribbon names that parent and jumps to it, and the parent's card counts
+its mods. Every card has a **VERSION** switch:
+
+|                              | OG                       | REBOOT                                 |
+| ---------------------------- | ------------------------ | -------------------------------------- |
+| CONTINUES (`?continues=`)    | game over is game over   | the CONTINUE? prompt                   |
+| COMBO MULTIPLIER (`?combo=`) | every kill at face value | ×2 at combo 11, ×3 at 21…              |
+| STORY MODE (`?story=`)       | skipped                  | the game's story scenes, if it has any |
+
+OG is the cart by the rules it shipped with; REBOOT turns on what the web
+runtime adds. **A** plays the selected version and **Y** opens the game in the
+editor (◀ ▶ turns the switch on a pad). The launcher sends only the word —
+`&playExport=<id>&version=reboot` — and the editor spells it out as the
+runtime's boot flags when it hands the game over; `versionParams()` in
+`deza-shelf.js` is the one list both ends read, and
+`tests/library_lineage_test.ts` checks that `game.bundle.js` reads every flag on
+it. A story is the one chip that can stay dark on REBOOT: a cart has nowhere to
+keep one, so only a mod that was given a story in the STORY editor has it.
 
 ## Pixel Editor and Tilemap Editor
 
@@ -1376,7 +1441,7 @@ RTDB /dezaemonSfc/{meta,index,covers,saves}
       │  install                       static/snes-library.js
       ▼
 the SNES shelf (IndexedDB)             static/snes-shelf.js
-      ▲  → SNES LIBRARY                static/editor/index.html
+      ▲  IMPORT → DEZAEMON             static/editor/index.html
 a .srm on your own disk
 ```
 
@@ -2711,8 +2776,8 @@ every game anyone can get — and it is read from two places by
   place. Only this screen filters: the field on a Games row (`data/games.json`,
   where shmupX says `"players": 2`) is catalog metadata the manifest carries,
   and Sh'M↑ Party's eShop row says `4`.
-- The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU → PUBLISH
-  TO ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`, cover under
+- The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU → EXPORT
+  → ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`, cover under
   `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last). A
   static entry wins over a published one of the same id. The cover is
   `composeCover` over the cart it just wrote, the same shot the shelf and the

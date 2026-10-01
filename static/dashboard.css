@@ -989,6 +989,129 @@ body.theme-xbox360.osd-music-blade .music-hd {
    to the sub instead of floating in the name row. */
 body.theme-nintendo .eshop-kind { margin-left: 0; justify-self: start; }
 
+/* === LIBRARY ===
+   The shelf as game cards (Dashboard.svelte, screen 'library'): a chevron
+   banner over a wrapping row of 340px cards — one column on a phone. Reuses
+   .games-screen for the show/hide transition and nothing else; the colours
+   are tokens here so the Nintendo theme can turn the whole screen at once. */
+.library-screen {
+  --lib-edge: rgba(140, 255, 110, .28); --lib-edge-hi: rgba(140, 255, 110, .45); --lib-edge-lo: rgba(140, 255, 110, .16);
+  --lib-ink: #d9ffcb; --lib-sub: rgba(220, 255, 180, .6); --lib-dim: rgba(156, 255, 107, .5); --lib-chip: rgba(156, 255, 107, .8);
+  --lib-card: linear-gradient(180deg, rgba(24, 64, 32, .55), rgba(4, 18, 8, .94) 42%);
+  --lib-art: radial-gradient(ellipse 70% 80% at 50% 60%, rgba(20, 90, 40, .6), rgba(0, 0, 0, .15) 70%), #04140a;
+  --lib-glow: rgba(124, 255, 79, .6); --lib-well: rgba(0, 0, 0, .45); --lib-feat: rgba(20, 70, 30, .5);
+  --lib-sel: #F6FF4A; --lib-sel-edge: rgba(246, 255, 74, .45); --lib-sel-ink: #fffbb0;
+  --lib-ribbon: linear-gradient(90deg, rgba(60, 54, 8, .8), rgba(24, 22, 4, .9));
+  --lib-seg: linear-gradient(90deg, #fffea1, #F6FF4A 28%, #d8e640 65%, #a4b00b); --lib-seg-ink: #0e0e02; --lib-seg-glow: rgba(255, 240, 90, .5);
+  --lib-hint: rgba(214, 255, 196, .85);
+  align-items: stretch; justify-content: stretch;
+}
+.lib-panel { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding-top: max(8vmin, 44px); }
+.lib-banner {
+  flex-shrink: 0; margin-top: 6px; height: 46px; display: flex; align-items: center; position: relative;
+  background: linear-gradient(180deg, rgba(70, 180, 90, .18), rgba(20, 60, 30, .7) 50%, rgba(20, 60, 30, .7) 50%, rgba(70, 180, 90, .05));
+  border-top: 1px solid rgba(140, 255, 110, .35); border-bottom: 1px solid rgba(140, 255, 110, .35);
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%);
+}
+.lib-banner-title { flex: 1; text-align: center; font-size: 18px; font-weight: 800; letter-spacing: .32em; color: var(--lib-ink); text-shadow: 0 0 14px rgba(124, 255, 79, .8); padding-left: 12px; }
+.lib-banner-count { font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: .14em; color: rgba(220, 255, 180, .7); padding-right: 34px; white-space: nowrap; }
+/* The bottom padding clears the B / A hints, which float over this screen. */
+.lib-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 16px max(13vmin, 84px); scrollbar-width: thin; scrollbar-color: var(--lib-edge) transparent; }
+.lib-cards { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; justify-content: center; }
+.lib-card {
+  width: 340px; max-width: 100%; display: flex; flex-direction: column; border-radius: 14px; overflow: hidden;
+  background: var(--lib-card); border: 1px solid var(--lib-edge); transition: border-color .15s, box-shadow .15s;
+}
+.lib-card.mod { border-color: var(--lib-sel-edge); box-shadow: 0 0 26px rgba(246, 255, 74, .12); }
+/* The cursor: a pad (or a hover) has this card. */
+.lib-card.sel { border-color: var(--green); box-shadow: 0 0 22px rgba(124, 255, 79, .3); }
+.lib-card.mod.sel { border-color: var(--lib-sel); box-shadow: 0 0 26px rgba(246, 255, 74, .3); }
+.lib-card button { font-family: inherit; -webkit-tap-highlight-color: transparent; }
+.lib-card svg { display: block; flex-shrink: 0; }
+
+/* Lineage ribbon (mods only): names the parent, and jumps to it. */
+.lib-ribbon {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 14px;
+  background: var(--lib-ribbon); border: none; border-bottom: 1px solid var(--lib-sel-edge); color: var(--lib-sel);
+  font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .18em; cursor: pointer; text-align: left;
+}
+.lib-card .lib-ribbon { font-family: 'Share Tech Mono', monospace; }
+.lib-ribbon svg { width: 14px; height: 14px; }
+.lib-ribbon-k { flex-shrink: 0; }
+.lib-ribbon-parent { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.lib-ribbon-parent img { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; image-rendering: pixelated; }
+.lib-ribbon-parent span { font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 800; letter-spacing: .12em; color: var(--lib-sel-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-ribbon-chev { font-size: 15px; line-height: 1; color: rgba(246, 255, 74, .7); }
+
+/* Key art: the cart's own title screen, standing where the design's sprite stood. */
+.lib-art { position: relative; height: 150px; overflow: hidden; background: var(--lib-art); }
+.lib-art img { position: absolute; left: 50%; top: 54%; height: 125px; width: auto; transform: translate(-50%, -50%); image-rendering: pixelated; filter: drop-shadow(0 0 6px rgba(124, 255, 79, .55)); }
+.lib-art-ph { position: absolute; left: 50%; top: 54%; transform: translate(-50%, -50%); font-size: 44px; font-weight: 800; letter-spacing: .1em; color: var(--lib-dim); }
+.lib-art-scan { position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(180deg, rgba(0, 255, 120, .05) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
+.lib-source, .lib-tag { position: absolute; top: 10px; padding: 3px 7px; border-radius: 4px; background: rgba(0, 0, 0, .55); font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .18em; }
+.lib-source { left: 12px; color: var(--lib-chip); }
+.lib-tag { right: 12px; border: 1px solid rgba(140, 255, 110, .35); color: rgba(156, 255, 107, .85); }
+.lib-card.mod .lib-tag { border-color: rgba(246, 255, 74, .5); color: var(--lib-sel); }
+
+.lib-head { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px 2px; }
+.lib-title { font-size: 15px; font-weight: 800; letter-spacing: .14em; color: var(--lib-ink); text-shadow: 0 0 12px var(--lib-glow); text-wrap: balance; overflow-wrap: anywhere; }
+.lib-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em; color: var(--lib-sub); }
+.lib-mods { display: flex; align-items: center; gap: 5px; color: rgba(246, 255, 74, .85); }
+.lib-mods svg { width: 11px; height: 11px; }
+
+/* VERSION: OG | REBOOT */
+.lib-version { display: flex; align-items: center; gap: 8px; margin: 12px 14px 0; padding: 6px; border-radius: 10px; background: var(--lib-well); border: 1px solid var(--lib-edge); }
+.lib-version-lbl { font-size: 9px; font-weight: 700; letter-spacing: .12em; color: rgba(214, 255, 196, .8); padding: 0 4px 0 6px; }
+.lib-segs { flex: 1; display: flex; gap: 4px; }
+.lib-seg {
+  flex: 1; text-align: center; padding: 6px 0; min-height: 40px; border-radius: 7px; cursor: pointer;
+  font-size: 9px; font-weight: 700; letter-spacing: .14em;
+  border: 1px solid var(--lib-edge); background: none; color: rgba(220, 255, 180, .55);
+}
+.lib-seg.on { border-color: transparent; background: var(--lib-seg); color: var(--lib-seg-ink); font-weight: 800; box-shadow: 0 0 14px var(--lib-seg-glow); }
+.lib-feats { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
+.lib-feat {
+  display: flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 6px;
+  font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .14em;
+  border: 1px solid var(--lib-edge-lo); color: rgba(220, 255, 180, .42); background: transparent;
+}
+.lib-feat.on { border-color: var(--lib-edge-hi); color: var(--lib-ink); background: var(--lib-feat); }
+.lib-feat-mark { font-size: 9px; line-height: 1; }
+.lib-note { padding: 8px 14px 0; font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .14em; color: var(--lib-dim); }
+
+.lib-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; font-size: 10px; font-weight: 700; letter-spacing: .16em; color: var(--lib-hint); }
+.lib-act { display: flex; align-items: center; gap: 8px; background: none; border: none; padding: 0; min-height: 44px; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; }
+.lib-act:active { transform: scale(.96); }
+.lib-orb { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 900; }
+.lib-orb.a { background: radial-gradient(circle at 35% 30%, #d6ffd0 0%, #6fd06f 25%, #0e6a2b 60%, #04240f 95%); border: 1px solid rgba(140, 255, 110, .6); color: #04240f; box-shadow: 0 0 12px rgba(140, 255, 110, .5); }
+.lib-orb.y { background: radial-gradient(circle at 35% 30%, #e8e8ff 0%, #8f8fd8 30%, #2c2c6e 65%, #0a0a24 100%); border: 1px solid rgba(160, 160, 255, .5); color: #0a0a24; }
+.library-screen .byod { flex: 1 1 100%; }
+
+body.theme-nintendo .library-screen {
+  --lib-edge: #2a3850; --lib-edge-hi: rgba(213, 213, 216, .45); --lib-edge-lo: #1f2a3c;
+  --lib-ink: #e9ecf1; --lib-sub: rgba(139, 160, 194, .8); --lib-dim: rgba(139, 160, 194, .7); --lib-chip: rgba(233, 236, 241, .8);
+  --lib-card: linear-gradient(180deg, rgba(31, 42, 60, .7), rgba(10, 13, 22, .96) 42%);
+  --lib-art: radial-gradient(ellipse 70% 80% at 50% 60%, rgba(228, 0, 15, .18), rgba(0, 0, 0, .15) 70%), #0b0f18;
+  --lib-glow: rgba(255, 59, 73, .5); --lib-feat: rgba(49, 58, 78, .6);
+  --lib-sel: #ff5b66; --lib-sel-edge: rgba(255, 91, 102, .5); --lib-sel-ink: #ffd9db;
+  --lib-ribbon: linear-gradient(90deg, rgba(74, 3, 8, .8), rgba(36, 1, 4, .9));
+  --lib-seg: linear-gradient(90deg, #ff5b66, #e4000f 28%, #c00011 65%, #8c000c); --lib-seg-ink: #fff; --lib-seg-glow: rgba(228, 0, 15, .5);
+  --lib-hint: #d5d5d8;
+}
+body.theme-nintendo .lib-banner { background: linear-gradient(180deg, rgba(139, 160, 194, .1), rgba(15, 22, 34, .85) 35%, rgba(15, 22, 34, .85) 65%, rgba(139, 160, 194, .08)); border-color: rgba(213, 213, 216, .3); }
+body.theme-nintendo .lib-banner-title { text-shadow: 0 0 14px rgba(255, 59, 73, .7); }
+body.theme-nintendo .lib-banner-count { color: rgba(139, 160, 194, .8); }
+body.theme-nintendo .lib-card.sel { border-color: #e9ecf1; box-shadow: 0 0 22px rgba(228, 0, 15, .3); }
+body.theme-nintendo .lib-card.mod { box-shadow: 0 0 26px rgba(228, 0, 15, .14); }
+body.theme-nintendo .lib-card.mod.sel { box-shadow: 0 0 26px rgba(228, 0, 15, .35); }
+body.theme-nintendo .lib-tag { border-color: rgba(213, 213, 216, .35); color: rgba(233, 236, 241, .85); }
+body.theme-nintendo .lib-seg { color: rgba(139, 160, 194, .8); }
+body.theme-nintendo .lib-feat { color: rgba(139, 160, 194, .55); }
+body.theme-nintendo .lib-version-lbl { color: #d5d5d8; }
+body.theme-nintendo .lib-mods, body.theme-nintendo .lib-ribbon-chev { color: rgba(255, 91, 102, .85); }
+body.theme-nintendo .lib-art img { filter: drop-shadow(0 0 6px rgba(255, 59, 73, .45)); }
+body.theme-nintendo .lib-art-scan { background: repeating-linear-gradient(180deg, rgba(255, 70, 84, .04) 0 1px, transparent 1px 3px); }
+
 /* Boot flash */
 .boot { position: fixed; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; z-index: 200; pointer-events: none; animation: bootOut 1.6s ease forwards; }
 /* .b-glyph is the 🐵 emoji in the 30vmin box the voxel X used to fill: the

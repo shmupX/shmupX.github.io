@@ -1,10 +1,12 @@
 // The Dezaemon shelf: this browser's Dezaemon 2 (Sega Saturn) .sav games.
 //
-// Two things land here. The level editor's "→ SAVE SHELF" files the cart it has
-// just built (source "export"), and the eShop installs a published Dezaemon
-// game onto the same shelf (source "eshop") — see static/eshop-library.js. The
-// launcher's coverflow and the editor's LOAD GAME drawer both read it, and
-// both react when it changes.
+// Four things land here. The level editor's "→ SAVE SHELF" files the cart it
+// has just built (source "export"), and the eShop installs a published
+// Dezaemon game onto the same shelf (source "eshop") — see
+// static/eshop-library.js. The editor also files a cart it OPENED (source
+// "import") and the mod made by editing one (source "mod") — see LINEAGE
+// below. The launcher's coverflow and LIBRARY and the editor's LOAD GAME
+// drawer all read it, and all react when it changes.
 //
 // Shared on purpose, the way static/ps2-library.js is: the editor imports it
 // at runtime (`import('/deza-shelf.js')`), the dashboard bundles it. The
@@ -14,12 +16,26 @@
 //
 //   { id, title, file, palette, bytes (Uint8Array: the full 1,114,112-byte
 //     MiSTer-layout .sav), size, savedAt, warnings?, report?,
-//     source: "export" | "eshop", eshopId?, cover (data URL) }
+//     source: "export" | "eshop" | "import" | "mod", eshopId?,
+//     cover (data URL), parent? { id, title }, changes?, web?, stats? }
 //
 // Ids: an export keeps the editor's "<slug>:<palette>", so re-exporting the
 // same level replaces its row instead of growing the shelf; an eShop install
 // is "eshop:<catalog id>", so the two can never collide and the launcher can
 // tell them apart without a lookup.
+//
+// LINEAGE
+// Two more sources arrived with the editor's IMPORT sheet. A cart opened from
+// a file or a URL is filed as it came (source "import", id "import:<slug>"),
+// and the first edit to any opened cart forks it: SAVE MOD files the edited
+// game as its own record (source "mod", id "mod:<parent slug>:<mod slug>")
+// carrying `parent: { id, title }`, so the parent is never written over and
+// the launcher's LIBRARY can say which game a mod came from. A mod also
+// carries `changes` (how many edits it is from its parent) and `web`: the
+// edits a Dezaemon 2 cart has nowhere to put — boss attack patterns, a story —
+// which the editor lays back over the cart when it opens or plays the mod.
+// These two are told apart by `source` alone, never by id prefix: an export
+// of a game called "Mod" is "mod:saturn", and must stay an export.
 //
 // COVERS
 // `cover` used to be optional and, for the editor's own exports, always
@@ -61,6 +77,118 @@ export function dezaShelfIdForEshop(id) {
 
 export function isEshopShelfEntry(rec) {
   return !!rec && (rec.source === 'eshop' || String(rec.id || '').startsWith('eshop:'));
+}
+
+// ── Lineage ──────────────────────────────────────────────────────────────────
+
+/** A cart imported as it came: "import:<slug>". */
+export function dezaShelfIdForImport(title) {
+  return 'import:' + slugOfTitle(title);
+}
+
+/**
+ * A mod's id: "mod:<parent slug>:<mod slug>". The parent half drops the
+ * parent id's own namespace ("import:", "eshop:") and palette suffix, so two
+ * mods of one game sit side by side and a mod of a mod reads as what it is.
+ */
+export function dezaShelfIdForMod(parentId, title) {
+  const parent = String(parentId || '').replace(/^(import|eshop|mod):/, '').replace(/:(saturn|snes)$/, '');
+  return 'mod:' + slugOfTitle(parent) + ':' + slugOfTitle(title);
+}
+
+export function isModShelfEntry(rec) {
+  return !!rec && rec.source === 'mod';
+}
+
+export function isImportShelfEntry(rec) {
+  return !!rec && rec.source === 'import';
+}
+
+/** Which of the four kinds a record is: "mod" | "import" | "eshop" | "export". */
+export function shelfKindOf(rec) {
+  if (isModShelfEntry(rec)) return 'mod';
+  if (isImportShelfEntry(rec)) return 'import';
+  if (isEshopShelfEntry(rec)) return 'eshop';
+  return 'export';
+}
+
+// OG plays a cart by the rules it shipped with; REBOOT turns on what the web
+// runtime adds. The three additions, in the order the launcher's cards list
+// them, each with the boot-time URL parameter game.bundle.js reads it from.
+export const LIBRARY_VERSIONS = ['og', 'reboot'];
+export const LIBRARY_FEATURES = [
+  { id: 'continues', label: 'CONTINUES', param: 'continues' },
+  { id: 'combo', label: 'COMBO MULTIPLIER', param: 'combo' },
+  { id: 'story', label: 'STORY MODE', param: 'story' },
+];
+
+/** A mod opens on REBOOT, everything else on OG, until the player picks. */
+export function defaultVersionFor(rec) {
+  return isModShelfEntry(rec) ? 'reboot' : 'og';
+}
+
+/**
+ * The runtime parameters a version stands for, as { param: "1" | "0" }. Every
+ * feature is named both ways rather than left to the runtime's defaults,
+ * which differ per feature (continues are off for an imported cart, the combo
+ * multiplier is on) — so OG and REBOOT mean the same thing on every game.
+ */
+export function versionParams(version) {
+  const on = version === 'reboot' ? '1' : '0';
+  const out = {};
+  for (const f of LIBRARY_FEATURES) out[f.param] = on;
+  return out;
+}
+
+/**
+ * The shelf as the launcher's LIBRARY lays it out: every game followed by its
+ * mods (each group newest first), then any mod whose parent is no longer on
+ * the shelf. Takes records or light rows — anything with { id, source,
+ * parent?, savedAt? } — and returns { cards, games, mods }, where a card is
+ * the row plus { kind, isMod, parentId, parentTitle, parentOnShelf, mods }.
+ */
+export function libraryCards(rows) {
+  const list = (rows || []).filter((r) => r && r.id);
+  const newest = (a, b) => (b.savedAt || 0) - (a.savedAt || 0);
+  const byId = new Map(list.map((r) => [r.id, r]));
+  const modsOf = new Map();
+  const orphans = [];
+  for (const r of list) {
+    if (!isModShelfEntry(r)) continue;
+    const pid = r.parent && r.parent.id;
+    if (pid && byId.has(pid) && pid !== r.id) {
+      if (!modsOf.has(pid)) modsOf.set(pid, []);
+      modsOf.get(pid).push(r);
+    } else orphans.push(r);
+  }
+  const card = (r) => {
+    const isMod = isModShelfEntry(r);
+    const pid = isMod && r.parent ? r.parent.id || '' : '';
+    const parent = pid ? byId.get(pid) : null;
+    return {
+      ...r,
+      kind: shelfKindOf(r),
+      isMod,
+      parentId: pid,
+      parentTitle: isMod ? String((parent && parent.title) || (r.parent && r.parent.title) || '') : '',
+      parentOnShelf: !!parent,
+      mods: (modsOf.get(r.id) || []).length,
+    };
+  };
+  const cards = [];
+  const walk = (r, seen) => {
+    cards.push(card(r));
+    seen.add(r.id);
+    // A mod of a mod nests the same way; `seen` stops a cycle a hand-edited
+    // record could make.
+    for (const m of (modsOf.get(r.id) || []).slice().sort(newest)) if (!seen.has(m.id)) walk(m, seen);
+  };
+  const seen = new Set();
+  for (const r of list.filter((x) => !isModShelfEntry(x)).sort(newest)) walk(r, seen);
+  for (const r of orphans.sort(newest)) if (!seen.has(r.id)) walk(r, seen);
+  for (const r of list) if (!seen.has(r.id)) walk(r, seen);
+  const mods = cards.filter((c) => c.isMod).length;
+  return { cards, games: cards.length - mods, mods };
 }
 
 // ── The cover ────────────────────────────────────────────────────────────────

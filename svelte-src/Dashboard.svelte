@@ -50,11 +50,18 @@
     uninstallDezaGame,
     uninstallWebGame,
   } from '../static/eshop-library.js';
-  import { backfillDezaShelfCovers, listDezaShelf, onDezaShelfChanged } from '../static/deza-shelf.js';
+  import {
+    backfillDezaShelfCovers,
+    defaultVersionFor,
+    LIBRARY_FEATURES,
+    libraryCards,
+    listDezaShelf,
+    onDezaShelfChanged,
+  } from '../static/deza-shelf.js';
   // The SNES shelf: Super Famicom Dezaemon dumps this browser holds, and the
   // published library they can be installed from. Shared with the editor the
-  // same way — its "→ SNES LIBRARY" files onto the very store this section
-  // reads. See static/snes-shelf.js and static/snes-library.js.
+  // same way — a .srm opened from its IMPORT sheet is filed onto the very
+  // store this section reads. See static/snes-shelf.js and static/snes-library.js.
   import {
     backfillSnesShelfCovers,
     listSnesShelf,
@@ -141,7 +148,7 @@
   // root-relative so mapped gamepad→keyboard input injection works).
   let manifestOrigin = $state('');
 
-  let screen = $state('dashboard'); // 'dashboard' | 'games' | 'eshop' | 'settings' | 'emulators'
+  let screen = $state('dashboard'); // 'dashboard' | 'games' | 'eshop' | 'library' | 'settings' | 'emulators'
   let menuSel = $state(0);           // start on Games
   let gameSel = $state(0);
   let clockStr = $state('--:--:--');
@@ -613,7 +620,7 @@
 
   // ─── The local SNES shelf ──────────────────────────────────────────────────
   // Super Famicom Dezaemon dumps this browser holds: imported from disk by the
-  // editor's "→ SNES LIBRARY", or installed off the published library. They
+  // editor's IMPORT sheet, or installed off the published library. They
   // live in IndexedDB, like the PS2 discs above, so they are read here rather
   // than off the mirror.
   //
@@ -2246,13 +2253,20 @@
   // &playExport=<shelfId> in place of &play=<slug>, so the editor reads the
   // local shelf instead of the database. Launched as the shelf-owning catalog
   // entry (shmupX) so its capabilities stay keyed to it.
-  function launchDezaShelfGame(shelfId) {
+  //
+  // opts.version ("og" | "reboot") rides along as &version=, which the editor
+  // spells out as the runtime's boot flags when it hands the game over (see
+  // versionPlayParams in the editor and versionParams in deza-shelf.js).
+  // opts.edit swaps &playExport= for &editExport=: the same record, opened in
+  // the editor rather than played.
+  function launchDezaShelfGame(shelfId, opts) {
     if (!shelfId) return;
     const owner = GAMES.find((g) => rowHasSavPicker({ g })) || null;
     let url;
     try {
       const u = new URL(owner?.url || '/editor/?game=2028-ai', window.location.origin);
-      u.searchParams.set('playExport', shelfId);
+      u.searchParams.set(opts?.edit ? 'editExport' : 'playExport', shelfId);
+      if (!opts?.edit && (opts?.version === 'og' || opts?.version === 'reboot')) u.searchParams.set('version', opts.version);
       url = u.pathname + u.search + u.hash;
     } catch (_) { return; }
     if (owner) { launchGame(owner.id, url); return; }
@@ -2358,6 +2372,14 @@
       type: 'ESHOP / INSTALLED', kind: 'eshop-web',
       g,
     })),
+    // The LIBRARY: this browser's shelf as cards. Listed only once the shelf
+    // holds something, so a launcher that has imported nothing shows no door
+    // onto an empty room.
+    ...(library.cards.length ? [{
+      key: 'library-menu', name: 'Library', title: 'LIBRARY', sub: libraryCountText.toLowerCase(),
+      icon: null, size: '— MB', date: 'LOCAL', type: 'SHELF / LIBRARY',
+      submenu: true, kind: 'library-menu',
+    }] : []),
     {
       key: 'eshop-menu', name: 'eShop', title: 'ESHOP', sub: eshopMenuSub,
       icon: null, size: '— MB', date: 'NET', type: 'NET / ESHOP',
@@ -2367,6 +2389,7 @@
   function activateGamesRow(i) {
     const r = gamesRows[i];
     if (!r) return;
+    if (r.kind === 'library-menu') { sfx.enter(); openLibrary(); return; }
     if (r.kind === 'eshop-menu') { sfx.enter(); openEshop('games'); return; }
     if (r.kind === 'eshop-web') { launchEshopWeb(r.g); return; }
     launchGame(r.g?.id);
@@ -2389,7 +2412,10 @@
       file: rec.file || '',
       title: rec.title || rec.id,
       titleJa: '',
-      developer: eshop ? 'ESHOP' : 'YOUR EXPORT',
+      developer: eshop ? 'ESHOP'
+        : rec.source === 'mod' ? 'MOD OF ' + String(rec.parent?.title || '?').toUpperCase()
+        : rec.source === 'import' ? 'IMPORTED'
+        : 'YOUR EXPORT',
       developerJa: '',
       genre: rec.palette ? String(rec.palette).toUpperCase() + ' PALETTE' : '',
       hasCover: false,
@@ -2402,8 +2428,10 @@
     return row;
   }
   async function refreshDezaShelf() {
-    try { dezaShelfRows = ((await listDezaShelf()) || []).map(dezaShelfRowOf); }
-    catch (_) { dezaShelfRows = []; }
+    let recs = [];
+    try { recs = (await listDezaShelf()) || []; } catch (_) { recs = []; }
+    dezaShelfRows = recs.map(dezaShelfRowOf);
+    libraryRows = recs.map(libraryRowOf);
     // Rows filed before covers existed still show the "YOUR EXPORT" text card.
     // Render their title screens from the carts themselves and re-file them;
     // each one that lands notifies the shelf, which brings us back through
@@ -2411,6 +2439,121 @@
     // failure leaves the row exactly as it is (static/deza-shelf.js).
     backfillDezaShelfCovers().catch(() => {});
   }
+
+  // ─── LIBRARY: the shelf as game cards ──────────────────────────────────────
+  // The same records the coverflow leads with, laid out as cards that say
+  // what a row cannot: which VERSION to run — OG, the cart by the rules it
+  // shipped with, or REBOOT, with what the web runtime adds (LIBRARY_FEATURES:
+  // continues, the combo multiplier, a story where the game has one) — and,
+  // for a mod, the game it was forked from. libraryCards() orders them: each
+  // game, then its mods; the ribbon on a mod jumps to its parent and the
+  // parent counts its mods. Reached from the Games list's LIBRARY row.
+  //
+  // Light rows only — the carts stay in IndexedDB, as they do for the
+  // coverflow; a card carries the shelf id the editor's hand-off wants.
+  let libraryRows = $state([]);
+  function libraryRowOf(rec) {
+    return {
+      id: rec.id,
+      title: rec.title || rec.id,
+      source: rec.source || '',
+      parent: rec.parent && typeof rec.parent === 'object' ? { id: rec.parent.id || '', title: rec.parent.title || '' } : null,
+      changes: Number(rec.changes) || 0,
+      stages: Number(rec.stats?.stages) || rec.report?.stages?.length || 0,
+      bosses: Number(rec.stats?.bosses) || 0,
+      savedAt: rec.savedAt || 0,
+      palette: rec.palette || '',
+      cover: typeof rec.cover === 'string' ? rec.cover : '',
+      // Only a mod can carry a story: a cart has nowhere to keep one.
+      hasStory: !!(rec.web && rec.web.storyData),
+    };
+  }
+  let library = $derived(libraryCards(libraryRows));
+  let libraryCountText = $derived(
+    library.games + (library.games === 1 ? ' GAME · ' : ' GAMES · ') + library.mods + (library.mods === 1 ? ' MOD' : ' MODS')
+  );
+  let libSel = $state(0);
+  let libCardEls = $state([]);
+  let libraryCurrent = $derived(library.cards[libSel]);
+  // The VERSION each game was last set to, by shelf id. A game nobody has
+  // set runs its default (a mod on REBOOT, anything else on OG).
+  const LIB_VERSIONS_KEY = 'cmg-library-versions';
+  function loadLibVersions() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(LIB_VERSIONS_KEY) || '{}');
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch (_) { return {}; }
+  }
+  let libVersions = $state(loadLibVersions());
+  function libVersionOf(c) {
+    const v = c ? libVersions[c.id] : '';
+    return v === 'og' || v === 'reboot' ? v : defaultVersionFor(c);
+  }
+  function setLibVersion(c, v) {
+    if (!c || libVersionOf(c) === v) return;
+    libVersions = { ...libVersions, [c.id]: v };
+    try { localStorage.setItem(LIB_VERSIONS_KEY, JSON.stringify(libVersions)); } catch (_) { /* session-only pick */ }
+    sfx.nav();
+  }
+  // What a card's three feature chips show: lit on REBOOT — except a story on
+  // a game that has none, which REBOOT cannot conjure and the chip says so.
+  function libFeats(c) {
+    const reboot = libVersionOf(c) === 'reboot';
+    return LIBRARY_FEATURES.map((f) => ({ id: f.id, label: f.label, on: reboot && (f.id !== 'story' || c.hasStory) }));
+  }
+  function libVersionNote(c) {
+    if (libVersionOf(c) !== 'reboot') return 'OG · ORIGINAL RULES, AS SHIPPED';
+    return c.hasStory ? 'REBOOT · ALL ADDITIONS ON' : 'REBOOT · CONTINUES + COMBO ON · THIS GAME HAS NO STORY';
+  }
+  const LIB_KIND_TAG = { mod: 'MOD', import: 'IMPORTED', eshop: 'ESHOP', export: 'YOUR EXPORT' };
+  function libAgo(ts) {
+    if (!ts) return '';
+    const min = Math.max(0, Math.round((Date.now() - ts) / 60000));
+    if (min < 1) return 'JUST NOW';
+    if (min < 60) return min + ' MIN AGO';
+    if (min < 1440) return Math.round(min / 60) + ' H AGO';
+    return Math.round(min / 1440) + ' D AGO';
+  }
+  function libMeta(c) {
+    if (c.isMod) {
+      return [c.changes + (c.changes === 1 ? ' CHANGE' : ' CHANGES'), libAgo(c.savedAt)].filter(Boolean).join(' · ');
+    }
+    const parts = [];
+    if (c.stages) parts.push(c.stages + (c.stages === 1 ? ' STAGE' : ' STAGES'));
+    if (c.bosses) parts.push(c.bosses + (c.bosses === 1 ? ' BOSS' : ' BOSSES'));
+    parts.push(c.kind === 'import' ? 'FROM .SAV' : c.kind === 'eshop' ? 'FROM THE ESHOP' : 'BUILT HERE');
+    return parts.join(' · ');
+  }
+  function libParentCover(c) {
+    return c.parentId ? (library.cards.find((x) => x.id === c.parentId)?.cover || '') : '';
+  }
+  function openLibrary() {
+    screen = 'library';
+    libSel = Math.min(libSel, Math.max(library.cards.length - 1, 0));
+    refreshDezaShelf();
+  }
+  function playLibraryCard(i) {
+    const c = library.cards[i];
+    if (!c) return;
+    libSel = i;
+    launchDezaShelfGame(c.id, { version: libVersionOf(c) });
+  }
+  function editLibraryCard(i) {
+    const c = library.cards[i];
+    if (!c) return;
+    libSel = i;
+    launchDezaShelfGame(c.id, { edit: true });
+  }
+  // The ribbon on a mod: put the cursor on the game it came from.
+  function libJumpToParent(c) {
+    const i = library.cards.findIndex((x) => x.id === c.parentId);
+    if (i < 0) { sfx.back(); return; }
+    libSel = i;
+    sfx.nav();
+  }
+  let libraryActionLabel = $derived(
+    libraryCurrent ? 'Play ' + (libVersionOf(libraryCurrent) === 'reboot' ? 'Reboot' : 'OG') : 'Select'
+  );
 
   // --- online 2P presence -------------------------------------------------
   //
@@ -3680,6 +3823,16 @@
     if (eshopSel > eshopRows.length - 1) eshopSel = Math.max(eshopRows.length - 1, 0);
   });
 
+  // LIBRARY screen: the same two rules.
+  $effect(() => {
+    if (screen !== 'library') return;
+    const el = libCardEls[libSel];
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+  $effect(() => {
+    if (libSel > library.cards.length - 1) libSel = Math.max(library.cards.length - 1, 0);
+  });
+
   // Auto-focus the BYOD button when landing on an empty console section so
   // gamepad FBTN_BOTTOM can click it. Note: browsers require a *user* gesture to
   // open the native file picker — gamepad input doesn't count. Focusing means a
@@ -3886,9 +4039,9 @@
       return snesRom?.available
         ? {
           title: 'NO CARTS YET',
-          pre: 'Import a Dezaemon .srm with the level editor\u2019s ',
-          path: '→ SNES LIBRARY',
-          post: ', or install one from the published library. The cartridge is here: ' +
+          pre: 'Open a Dezaemon .srm from the level editor\u2019s ',
+          path: 'IMPORT → DEZAEMON',
+          post: ' sheet, or install one from the published library. The cartridge is here: ' +
             (snesRom.name || 'Dezaemon.sfc') + '.',
           hint: [],
         }
@@ -4008,7 +4161,7 @@
   let gamesActionLabel = $derived(
     stripOn
       ? (sectionEmpty ? (curSection.picker ? 'Browse' : 'Open') : 'Open')
-      : (curRow?.pinned ? 'Browse' : curRow?.kind === 'eshop-menu' ? 'Open' : 'Launch')
+      : (curRow?.pinned ? 'Browse' : (curRow?.kind === 'eshop-menu' || curRow?.kind === 'library-menu') ? 'Open' : 'Launch')
   );
   // WebAudio blips
   let ac = null;
@@ -5420,6 +5573,14 @@
     // to whichever it was (openEshop records it).
     // ◀ ▶ cycles the release-status filter (see eshopCycleFilter).
     eshop: { sel: () => eshopSel, setSel: (v) => (eshopSel = v), len: () => eshopRows.length, activate: (i) => activateEshop(i), moveH: (dir) => eshopCycleFilter(dir), back: () => eshopFrom },
+    // Reached from the Games list. ▲ ▼ walks the cards, ◀ ▶ turns the
+    // highlighted card's VERSION, A plays that version, Y opens it in the editor.
+    library: {
+      sel: () => libSel, setSel: (v) => (libSel = v), len: () => library.cards.length,
+      activate: (i) => playLibraryCard(i),
+      moveH: (dir) => setLibVersion(libraryCurrent, dir < 0 ? 'og' : 'reboot'),
+      back: 'games',
+    },
   };
 
   // Shared vertical nav. `fresh` marks a deliberate new press (gamepad edge /
@@ -5858,8 +6019,10 @@
     // FBTN_TOP (Y / triangle) opens the highlighted row's .sav shelf — the
     // one-button replacement for the old SELECT + Up chord — and, on a row
     // with no shelf, pulls a waiting eShop update.
+    // On the LIBRARY it is the card's own Y: open that game in the editor.
     if (justPressed(3)) {
-      if (openSavPickerForRow()) lastInput = 'pad';
+      if (screen === 'library') editLibraryCard(libSel);
+      else if (openSavPickerForRow()) lastInput = 'pad';
       else actEshopUpdate();
     }
     // SELECT backs out on its RELEASE edge, so SELECT + Up can chord (above)
@@ -6019,6 +6182,8 @@
     else if (e.key === 'u' || e.key === 'U') actEshopUpdate();
     // F steps the eShop's status filter, the way ◀ ▶ do.
     else if (screen === 'eshop' && (e.key === 'f' || e.key === 'F')) eshopCycleFilter(1);
+    // Keyboard twin of FBTN_TOP on a LIBRARY card: Y (or E) edits.
+    else if (screen === 'library' && (e.key === 'y' || e.key === 'Y' || e.key === 'e' || e.key === 'E')) editLibraryCard(libSel);
   }
 
   // Inject a capture-phase OSD-trigger forwarder INTO a same-origin game frame.
@@ -6379,7 +6544,7 @@
     // through static/eshop-library.js: the catalog, the installed set and the
     // shelf may all have moved.
     else if (d.type === 'cmg-eshop-changed') { refreshEshop(); refreshDezaShelf(); refreshArcadeLocal(); }
-    // The editor's → SNES LIBRARY filed a cart. The shelf's BroadcastChannel
+    // The editor's IMPORT sheet filed a .srm. The shelf's BroadcastChannel
     // already reaches this page while the editor is same-origin, which it is
     // today; this covers the case it stops being, and costs one re-read.
     else if (d.type === 'cmg-snes-shelf-changed') refreshSnesLocal();
@@ -7106,6 +7271,97 @@
     </div>
   </div>
 
+  <!-- LIBRARY — this browser's shelf as game cards, entered from the Games
+       list's LIBRARY row. A card carries a VERSION switch (OG keeps the cart's
+       original rules, REBOOT turns on what the web runtime adds), three chips
+       that light with REBOOT, and A PLAY / Y EDIT. A mod wears a ribbon naming
+       the game it was forked from — press it to jump there — and that game's
+       card counts its mods. One column on a phone; every control is 44px. -->
+  <div class="games-screen library-screen {screen === 'library' ? 'shown' : ''}">
+    <div class="lib-panel">
+      <div class="lib-banner">
+        <div class="lib-banner-title">LIBRARY</div>
+        <div class="lib-banner-count">{libraryCountText}</div>
+      </div>
+      <div class="lib-scroll">
+        <div class="lib-cards">
+          {#each library.cards as c, i (c.id)}
+            <div
+              bind:this={libCardEls[i]}
+              class="lib-card {c.isMod ? 'mod' : ''} {i === libSel ? 'sel' : ''}"
+              role="group"
+              aria-label={c.title}
+              onmouseenter={() => { if (i !== libSel) { libSel = i; sfx.nav(); } }}
+            >
+              {#if c.isMod}
+                <button type="button" class="lib-ribbon" title="Open the parent game" onclick={() => libJumpToParent(c)}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+                  <span class="lib-ribbon-k">MOD OF</span>
+                  <span class="lib-ribbon-parent">
+                    {#if libParentCover(c)}<img src={libParentCover(c)} alt="" />{/if}
+                    <span>{c.parentTitle || 'A GAME NO LONGER HERE'}</span>
+                  </span>
+                  {#if c.parentOnShelf}<span class="lib-ribbon-chev" aria-hidden="true">›</span>{/if}
+                </button>
+              {/if}
+
+              <div class="lib-art">
+                {#if c.cover}
+                  <img src={c.cover} alt="" draggable="false" />
+                {:else}
+                  <span class="lib-art-ph">{initial(c.title)}</span>
+                {/if}
+                <div class="lib-art-scan"></div>
+                <span class="lib-source">DEZAEMON 2 · SATURN</span>
+                <span class="lib-tag">{LIB_KIND_TAG[c.kind] || 'GAME'}</span>
+              </div>
+
+              <div class="lib-head">
+                <span class="lib-title">{c.title}</span>
+                <div class="lib-meta">
+                  <span>{libMeta(c)}</span>
+                  {#if !c.isMod && c.mods > 0}
+                    <span class="lib-mods"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>{c.mods} {c.mods === 1 ? 'MOD' : 'MODS'}</span>
+                  {/if}
+                </div>
+              </div>
+
+              <!-- VERSION: OG keeps the original rules; REBOOT turns on every addition -->
+              <div class="lib-version">
+                <span class="lib-version-lbl">VERSION</span>
+                <div class="lib-segs" role="group" aria-label="Version">
+                  <button type="button" class="lib-seg {libVersionOf(c) === 'og' ? 'on' : ''}" aria-pressed={libVersionOf(c) === 'og'} onclick={() => { libSel = i; setLibVersion(c, 'og'); }}>OG</button>
+                  <button type="button" class="lib-seg {libVersionOf(c) === 'reboot' ? 'on' : ''}" aria-pressed={libVersionOf(c) === 'reboot'} onclick={() => { libSel = i; setLibVersion(c, 'reboot'); }}>REBOOT</button>
+                </div>
+              </div>
+              <div class="lib-feats">
+                {#each libFeats(c) as f (f.id)}
+                  <span class="lib-feat {f.on ? 'on' : ''}"><span class="lib-feat-mark">{f.on ? '●' : '○'}</span>{f.label}</span>
+                {/each}
+              </div>
+              <div class="lib-note">{libVersionNote(c)}</div>
+
+              <div class="lib-actions">
+                <button type="button" class="lib-act" onclick={() => playLibraryCard(i)}>
+                  <span class="lib-orb a">A</span><span>PLAY {libVersionOf(c) === 'reboot' ? 'REBOOT' : 'OG'}</span>
+                </button>
+                <button type="button" class="lib-act" title={c.isMod ? 'Open this mod in the editor' : 'Open in the editor — changes save as a new mod'} onclick={() => editLibraryCard(i)}>
+                  <span class="lib-orb y">Y</span><span>EDIT</span>
+                </button>
+              </div>
+            </div>
+          {/each}
+          {#if !library.cards.length}
+            <div class="byod">
+              <div class="byod-title">NOTHING ON THE SHELF YET</div>
+              <div class="byod-sub">Open the level editor and IMPORT a Dezaemon save: it lands here in OG and REBOOT versions, and anything you change saves beside it as a mod.</div>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Settings — entered from the main menu. -->
   <div class="games-screen {screen === 'settings' ? 'shown' : ''}">
     <div class="games-panel">
@@ -7321,7 +7577,7 @@
   {/if}
   <div class="footer tap" role="button" tabindex="0" onpointerup={tapHandler(actFbtnBottom)} onkeydown={chipKeyHandler(actFbtnBottom)}>
     <div class="btn-hint">A</div>
-    <span>{screen === 'games' ? gamesActionLabel : screen === 'emulators' ? emuActionLabel : screen === 'exports' ? exportsActionLabel : screen === 'eshop' ? eshopActionLabel : 'Select'}</span>
+    <span>{screen === 'games' ? gamesActionLabel : screen === 'emulators' ? emuActionLabel : screen === 'exports' ? exportsActionLabel : screen === 'eshop' ? eshopActionLabel : screen === 'library' ? libraryActionLabel : 'Select'}</span>
   </div>
 </div>
 

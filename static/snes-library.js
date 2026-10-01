@@ -461,5 +461,5 @@ export function onSnesLibraryChanged(cb) {
 }
 
 /** The id an imported dump takes on the shelf — re-exported so the editor's
- * "→ SNES LIBRARY" and this module agree without importing both files. */
+ * IMPORT sheet and this module agree without importing both files. */
 export { sfcSlugOfTitle };

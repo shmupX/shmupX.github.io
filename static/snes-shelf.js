@@ -1,10 +1,11 @@
 // The SNES shelf: this browser's Super Famicom Dezaemon (.srm) games.
 //
 // Two things land here, the same two the Saturn shelf takes. The editor's
-// "→ SNES LIBRARY" files a dump the player picked off their own disk (source
-// "import"), and static/snes-library.js installs one published to the Realtime
-// Database onto the same shelf (source "library"). The launcher's SUPER
-// FAMICOM section reads it, and reacts when it changes.
+// IMPORT sheet files a dump the player picked off their own disk (source
+// "import": its one picker sorts saves by their bytes, and a .srm comes here),
+// and static/snes-library.js installs one published to the Realtime Database
+// onto the same shelf (source "library"). The launcher's SUPER FAMICOM section
+// reads it, and reacts when it changes.
 //
 // Shared on purpose, the way static/deza-shelf.js is: the editor imports it at
 // runtime (`import('/snes-shelf.js')`), the dashboard bundles it. One store,
