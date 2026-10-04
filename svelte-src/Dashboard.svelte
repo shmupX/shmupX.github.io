@@ -4480,7 +4480,7 @@
   // mapped keyboard events into the frame. (The PS2 and Switch players also want
   // cross-origin isolation for SharedArrayBuffer; the worker stamps COOP/COEP on
   // their responses, but an iframe only isolates when the embedder does too, so
-  // those two are best-effort here.)
+  // a disc for either of those two is opened as a top-level navigation instead.)
   function launchEmuRow(core, row) {
     if (!core || !row) return;
     sfx.enter();
@@ -4524,6 +4524,15 @@
         const params = new URLSearchParams({ rom: row.file });
         params.set('bios', row.bios.join(','));
         q = params.toString();
+      }
+      // A disc for an isolated core leaves the frame, as a local one does
+      // above and for the same reason: the player refuses to start unless its
+      // document is cross-origin isolated, and in this frame it never is —
+      // the row opened onto "PS2 needs cross-origin isolation" instead of a
+      // game. cmg's own launcher has always gone top-level for these two.
+      if (core.isolated) {
+        location.href = core.player + '?' + q;
+        return;
       }
       gameSrc = core.player + '?' + q;
     }
