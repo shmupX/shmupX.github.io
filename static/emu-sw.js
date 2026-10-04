@@ -148,6 +148,35 @@ function withHeaders(res, isolated) {
   });
 }
 
+// The requests mirror() asks the origin for even when it holds a copy: a
+// document being navigated to (a player, a web build's entry page) and a
+// core's manifest.json. tests/emu_sw_universe_test.ts pins both.
+function revalidates(request, url) {
+  return request.mode === "navigate" ||
+    url.pathname.endsWith("/manifest.json");
+}
+
+// How long a held page waits on the mirror before it is shown as it is.
+const REVALIDATE_MS = 4000;
+
+// The mirror's current copy, whole, or null — never a rejection, and never a
+// body the timeout could still cut short once it has been handed on.
+async function refetch(upstream) {
+  try {
+    const res = await fetch(upstream, {
+      signal: AbortSignal.timeout(REVALIDATE_MS),
+    });
+    if (!res.ok) return null;
+    return new Response(await res.arrayBuffer(), {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function mirror(request, url) {
   const st = await readState();
   const cache = await caches.open(CACHE);
@@ -179,12 +208,30 @@ async function mirror(request, url) {
     );
   }
 
+  const upstream = st.origin + url.pathname + url.search;
+
+  // A page or a shelf manifest is an index: it names the files around it — a
+  // web build's hashed bundle, a core's disc list — and keeps its own name
+  // when those change. Held cache-first like everything else, the copy taken
+  // on first use would be the one served for good, and a build the mirror has
+  // since replaced could never arrive. So these two are asked for again, and
+  // the held copy is what answers when the mirror does not. What they point
+  // at stays cache-first: a new bundle is a new name, and a new name is a miss.
+  if (hit && revalidates(request, url)) {
+    const fresh = await refetch(upstream);
+    if (fresh) {
+      try {
+        await cache.put(url.pathname, fresh.clone());
+      } catch { /* quota — serve it anyway, the old copy stays held */ }
+      return withHeaders(fresh, isolated);
+    }
+  }
+
   if (hit) return withHeaders(hit, isolated);
 
   // Not held yet — pull it from the origin that has it. Range requests (the
   // emulators stream large ISOs) are passed through uncached: a partial body
   // must never be stored as if it were the whole file.
-  const upstream = st.origin + url.pathname + url.search;
   if (request.headers.has("range")) {
     const ranged = await fetch(upstream, { headers: request.headers });
     return withHeaders(ranged, isolated);

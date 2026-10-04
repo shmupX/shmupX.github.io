@@ -150,3 +150,55 @@ Deno.test("/eshop/ is outside MIRRORABLE but handled by the eshop branch", async
     "the eshop branch must run before the MIRRORABLE check",
   );
 });
+
+// mirror() is cache-first, which is right for everything a page loads and
+// wrong for the page: a web build's entry document keeps its name while the
+// hashed bundle it points at changes, and a core's manifest.json keeps its
+// name while the shelf behind it grows. Held cache-first, the first copy a
+// browser took was the one it kept: however often the mirror re-vendored a
+// game, the PlayStation 2 row went on opening the build from the day the core
+// was installed. Those two are asked for again; nothing else is.
+Deno.test("mirror() revalidates documents and manifests, and only those", async () => {
+  const worker = await read("emu-sw.js");
+
+  const source = worker.match(
+    /function revalidates\(request, url\) \{[\s\S]*?\n\}/,
+  );
+  if (!source) throw new Error("no revalidates() in static/emu-sw.js");
+  const revalidates = new Function(`${source[0]}; return revalidates;`)() as (
+    request: { mode: string },
+    url: URL,
+  ) => boolean;
+  const asked = (mode: string, pathname: string) =>
+    revalidates({ mode }, new URL(pathname, "https://x"));
+
+  assertEquals(asked("navigate", "/games/shmup-party-ps2/play/"), true);
+  assertEquals(asked("navigate", "/ps2/play.html"), true);
+  assertEquals(asked("cors", "/PlayStation2/manifest.json"), true);
+  assertEquals(asked("same-origin", "/Nintendo/manifest.json"), true);
+
+  // What a page pulls in stays cache-first: that is what makes an installed
+  // core work offline, and a 30 MB core must not be refetched per launch.
+  assertEquals(
+    asked("no-cors", "/games/shmup-party-ps2/assets/play-DBjDm9NV.js"),
+    false,
+  );
+  assertEquals(asked("cors", "/ps2/Play.wasm"), false);
+  assertEquals(asked("cors", "/PlayStation2/ps2-mario.iso"), false);
+  assertEquals(asked("no-cors", "/emulator-controls.js"), false);
+
+  // And the question has to be put before the held copy is returned.
+  const mirror = worker.slice(worker.indexOf("async function mirror("));
+  const askedAt = mirror.indexOf("revalidates(request, url)");
+  const heldAt = mirror.indexOf("if (hit) return withHeaders(hit, isolated);");
+  assertEquals(
+    askedAt > 0 && heldAt > 0,
+    true,
+    "mirror() lost one of its two answers",
+  );
+  assertEquals(
+    askedAt < heldAt,
+    true,
+    "mirror() must revalidate before it answers from the cache",
+  );
+});
