@@ -2411,6 +2411,34 @@ which an iframe cannot be unless its embedder is too. That is the mode
 `play.html`'s own BYOD path is written for, exit gestures (Escape, SELECT+START,
 two held corners) included.
 
+**What Play! shows for it today is nothing.** The disc boots, the frame counter
+ticks, and the screen stays black — as it does for every AthenaEnv disc on the
+mirror. Measured against the mirrored core (Play! 0.76-3) by dumping the
+emulated RAM and patching `athena.elf` past each stop, three things stand
+between AthenaEnv and its first frame, in the order it meets them:
+
+1. `init_taskman()` lists the kernel's threads by calling `ReferThreadStatus` on
+   rising ids until one reports a zero stack size, and never looks at the return
+   value. Play!'s HLE kernel returns for a thread that does not exist without
+   writing the struct, so the size it reads is the previous thread's for ever.
+   This is the black screen with a live frame counter.
+2. One patched instruction later, `wait_device("cdfs:/")` is a `stat` over the
+   EE's file I/O RPC on a device `cdfs.irx` registered itself. Play!'s
+   `CIoman::GetStat` opens it as an ordinary file and seeks a stream a
+   driver-registered device never has: a call through a null pointer, which
+   takes the emulator's thread down
+   (`getWasmTableEntry(...) is not a
+   function`).
+3. With that call skipped as well, Play!'s WebAssembly JIT emits a module the
+   browser refuses to compile (`expected 0 elements on the stack for fallthru`)
+   for a block of AthenaEnv's code.
+
+The first is AthenaEnv's to fix and the other two are Play!'s; the third in
+particular cannot be worked around from the disc or from this launcher. Until
+they are, the `.iso` is an artifact for a console or PCSX2, and a PS2 game that
+should run in the browser needs a web build beside it — which is what the
+mirror's `kind: "web"` rows are.
+
 **Audio.** audsrv splits sound in two, and so does the export.
 [`lib/ps2/sound-pack.ts`](packages/shmup-harbor/lib/ps2/sound-pack.ts) builds
 both packs and
@@ -2681,6 +2709,15 @@ BIOS and ROMs, and each request materialises on use. Installing only pre-warms
 the player page, the console's manifest and the shared assets so the shelf is
 usable at once.
 
+Held files are answered from the cache without asking again, with two
+exceptions: a **document being navigated to** (a player, a web build's entry
+page) and a core's **`manifest.json`**. Those are indexes — they keep their name
+while the hashed bundle or the shelf behind them changes — so cache-first would
+pin a browser to the build it saw the day the core was installed, however often
+the mirror re-vendored it. The worker asks the mirror for them every time and
+falls back to the held copy when it does not answer within four seconds, which
+keeps an installed core working offline.
+
 It has to be a worker rather than plain fetches:
 
 - The gamepad→keyboard input the launcher synthesises only reaches a
@@ -2690,7 +2727,10 @@ It has to be a worker rather than plain fetches:
 - PS2 and Switch need SharedArrayBuffer, so their responses are stamped
   COOP/COEP, and every mirrored subresource gets CORP or `require-corp` rejects
   it. `ISOLATED_PLAYERS` in `main.ts` and `vite.config.ts` covers the case where
-  those files are served from disk instead — keep the three lists in sync.
+  those files are served from disk instead — keep the three lists in sync. The
+  headers only isolate a top-level document, so a disc row for a core flagged
+  `isolated` leaves the launcher's frame (`launchEmuRow`); opened inside it, the
+  PS2 player stops at "PS2 needs cross-origin isolation".
 - HEAD is mirrored as well as GET: EmulatorJS HEADs a ROM for its
   `content-length` before streaming it and aborts the load if that 404s.
 
