@@ -1504,30 +1504,93 @@
     }
     return false;
   }
+  // --- OG and MOD -----------------------------------------------------------
+  //
+  // This runtime plays two kinds of game, and each brought parts the other
+  // never had. A WEB game (2028.Ai, and anything authored on it) has a ship
+  // that takes its record's maxHp in hits, the HP / SCORE / COMBO band across
+  // the top, the combo multiplier, the CONTINUE? prompt and a story. A
+  // DEZAEMON cart (isImportedLevel() above) has a ship that is destroyed by
+  // anything that touches it and replaced from a stock of spares, nothing
+  // drawn over the top of the playfield, and the Saturn's weapon kit — the
+  // MAIN shot types, the charge shot, the OPTION pods.
+  //
+  // OG plays a game with its own side's parts and none of the other's. MOD
+  // (?version=mod — the launcher's LIBRARY switch and the Guide's Cheats ->
+  // Mod Mode both send it) lets every part cross over: a cart gets the hit
+  // points, the band, the combo, the prompt and a story if it was given one,
+  // and a web game gets the Dezaemon weapons (dezaKit). With no ?version= at
+  // all a game is OG. "reboot" is what MOD was called until 2026-10-05 and
+  // still reads as it, for a link somebody kept.
+  //
+  // Each part can also be asked for by name — ?hud=1, ?armor=0, ?continues=1
+  // (Cheats -> Allow Continues), ?combo=0, ?story=0, ?dezaWeapons=1 — and a
+  // named part wins over the version. static/deza-shelf.js lists the same
+  // parts for the launcher's cards (LIBRARY_FEATURES), and
+  // tests/library_lineage_test.ts holds the two lists equal.
+  var CROSSOVER = {
+    continues: "web",
+    combo: "web",
+    hud: "web",
+    armor: "web",
+    story: "web",
+    dezaWeapons: "deza"
+  };
+  function gameVersion() {
+    var v = String(readSearchParam("version") || "").toLowerCase();
+    return v === "mod" || v === "reboot" ? "mod" : "og";
+  }
+  // Asked for several times a tick (the weapon dispatchers go through
+  // dezaKit), so the answers are kept until the level or the URL changes.
+  var crossoverMemo = { recipe: null, search: null, side: "", on: {} };
+  function crossoverState() {
+    var recipe = gameState._phaserRecipe || null;
+    var search = typeof window !== "undefined" && window.location ? window.location.search : "";
+    if (crossoverMemo.recipe !== recipe || crossoverMemo.search !== search) {
+      crossoverMemo = { recipe: recipe, search: search, side: isImportedLevel() ? "deza" : "web", on: {} };
+    }
+    return crossoverMemo;
+  }
+  // Which side the running level came from: "deza" or "web".
+  function levelSide() {
+    return crossoverState().side;
+  }
+  function componentOn(name) {
+    var memo = crossoverState().on;
+    if (memo[name] === void 0) {
+      var asked = readSearchParam(name);
+      if (asked != null && asked !== "") memo[name] = readBooleanSearchParam(name, true);
+      else if (gameVersion() === "mod") memo[name] = true;
+      else memo[name] = CROSSOVER[name] === levelSide();
+    }
+    return memo[name];
+  }
   // A Dezaemon cart has no CONTINUE? prompt: losing the last ship is GAME OVER
   // and the cart goes back to its own title. So an imported save skips the
   // prompt (the scene still shows GAME OVER, the score and GO TO TITLE) unless
-  // the launcher's Cheats → Allow Continues asks for it with ?continues=1.
+  // MOD or the launcher's Cheats -> Allow Continues (?continues=1) asks for it.
   // 2028.Ai itself is unchanged — free play, continues on.
   function continuesAllowed() {
-    if (!isImportedLevel()) return true;
-    return readBooleanSearchParam("continues", false);
+    return componentOn("continues");
   }
-  // The combo MULTIPLIER is this runtime's addition, like the continue prompt:
-  // a kill at combo 11-20 pays double, 21-30 triple. The launcher's LIBRARY
-  // plays a cart's OG version with ?combo=0, which keeps the count and its HUD
-  // bar but pays every kill at face value. Absent, nothing changes.
+  // The combo MULTIPLIER is the web runtime's, like the continue prompt: a
+  // kill at combo 11-20 pays double, 21-30 triple. A cart played OG pays every
+  // kill at face value — the count still runs, but with no band to draw it in
+  // (componentOn("hud")) nothing shows it.
   function comboRatio(count) {
-    if (!readBooleanSearchParam("combo", true)) return 1;
+    if (!componentOn("combo")) return 1;
     return Math.max(1, Math.ceil(count / 10));
   }
-  // ?story=1 / ?story=0 overrides the level's own NO STORY flag for one run —
-  // the LIBRARY's REBOOT / OG again. Absent, the recipe decides as before. A
-  // cart with no story of its own still skips either way (PhaserAdvScene).
+  // The story is the one part with a say of its own. A web game's NO STORY
+  // flag is its author's and stands in either version; a cart has no story
+  // unless a mod gave it one, so OG skips it and MOD plays it. ?story=1 /
+  // ?story=0 overrides all of that for one run. A cart with no story of its
+  // own still skips either way (PhaserAdvScene).
   function storyOff(recipe) {
-    var p = readSearchParam("story");
-    if (p != null && p !== "") return !readBooleanSearchParam("story", true);
-    return !!(recipe && recipe.noStory);
+    var asked = readSearchParam("story");
+    if (asked != null && asked !== "") return !readBooleanSearchParam("story", true);
+    if (!componentOn("story")) return true;
+    return isImportedLevel() ? false : !!(recipe && recipe.noStory);
   }
   function scoreCountsAsRecord(state = gameState) {
     return !state.godFlg || isExportedLevelApp();
@@ -2226,6 +2289,7 @@
       gameState.player2ShootSpeed = recipe.playerData.defaultShootSpeed;
       gameState.player2Spgage = 0;
     }
+    resetShipStock();
     // A fresh run starts with one ship however the last one ended; ?players=2
     // is re-read from the URL, so the override survives.
     gameState.playerCount = readPlayerCountParam(1);
@@ -4039,7 +4103,7 @@
           var p2 = live.players && live.players[1];
           if (p2 && !p2.dead) {
             p2.remote = null;
-            playerDie(live, p2);
+            playerDie(live, p2, true);
           }
           return;
         }
@@ -4081,7 +4145,7 @@
       var lost = scene.players && scene.players[1];
       if (lost && lost.remote) {
         lost.remote = null;
-        if (!lost.dead) playerDie(scene, lost);
+        if (!lost.dead) playerDie(scene, lost, true);
       }
       cmgNet.guestHex = null;
       return;
@@ -7333,6 +7397,7 @@
         gameState.player2ShootSpeed = recipe.playerData.defaultShootSpeed;
         gameState.player2Spgage = 0;
       }
+      resetShipStock();
       gameState.playerCount = readPlayerCountParam(1);
       // cmg: a claimed split right half is player 2 from the first stage.
       if (cmgSplitTwoPlayer()) gameState.playerCount = 2;
@@ -8708,6 +8773,16 @@
     if (p.barrierActive) return;
     if (p.hurtFlg) return;
     p.hurtFlg = true;
+    // A Dezaemon ship has no hit points: whatever touches it destroys it, and
+    // the next one comes out of the stock (dezaNextShip, from playerDie). The
+    // flinch below — the voice, the shake, the band's flash, four red blinks —
+    // is a ship surviving a hit, so none of it plays.
+    if (!componentOn("armor")) {
+      p.hp = 0;
+      playerDie(scene, p);
+      scene.playSound("se_damage", 0.15);
+      return;
+    }
     p.hp -= amount;
     if (p.hp <= 0) {
       p.hp = 0;
@@ -8759,12 +8834,15 @@
       })(steps[i], i === steps.length - 1);
     }
   }
-  function playerDie(scene, p) {
+  // `gone` is a player who has LEFT (a network guest dropping out) rather than
+  // one who was shot down: nobody is there to fly a spare, so the seat opens.
+  function playerDie(scene, p, gone) {
     if (p.dead) return;
     p.dead = true;
     dezaRankDeath(scene);
     triggerHaptic("death", p.padIndex);
     scene.showExplosion(p.sprite.x, p.sprite.y);
+    if (!gone && dezaNextShip(scene, p)) return;
     p.sprite.setVisible(false);
     if (p.shadow) p.shadow.setVisible(false);
     if (p.barrierSprite) {
@@ -8787,6 +8865,66 @@
     p.padId = null;
     p.remote = null;
     if (allPlayersDead(scene)) endRun(scene);
+  }
+  // --- The ship stock --------------------------------------------------------
+  //
+  // A ship without hit points (componentOn("armor") off — a Dezaemon cart
+  // played OG) is one of several: lose it and the next is already flying, lose
+  // the last and the run ends the way it always did. Dezaemon 2 seeds the
+  // count from somewhere this decoder has not traced — the same gap
+  // p.dezaBombStock has — so three ships, two of them spare, is the same
+  // shmup-standard stand-in. The count belongs to the run, not the stage:
+  // resetShipStock() is called wherever a run starts or is continued.
+  var DEZA_SPARE_SHIPS = 2;
+  // How long the ship that replaces one blinks, and cannot be hit.
+  var DEZA_RESPAWN_SAFE_MS = 2e3;
+  function resetShipStock() {
+    gameState.shipStock = [DEZA_SPARE_SHIPS, DEZA_SPARE_SHIPS];
+  }
+  function shipStock() {
+    if (!Array.isArray(gameState.shipStock)) resetShipStock();
+    return gameState.shipStock;
+  }
+  // The replacement arrives in the same call that lost the ship, so there is
+  // never a tick with nobody in the air: the world freezes while every player
+  // is down (fixedUpdate) and a boss stops firing for good (_bossAlive), and a
+  // respawn must trip neither. It is revivePlayer's ship — back at the spawn
+  // point on the default weapon — which is what a rejoin gets too, except that
+  // whoever was flying keeps the seat, and a bomb already in the air keeps
+  // running.
+  function dezaNextShip(scene, p) {
+    if (componentOn("armor") || scene._runEnded) return false;
+    var stock = shipStock();
+    if (!(stock[p.index] > 0)) return false;
+    stock[p.index]--;
+    if (p.barrierSprite) {
+      p.barrierSprite.destroy();
+      p.barrierSprite = null;
+    }
+    p.barrierActive = false;
+    gameState.maxCombo = Math.max(gameState.maxCombo || 0, p.maxCombo);
+    var remote = p.remote;
+    var bomb = p.dezaBomb;
+    revivePlayer(scene, p);
+    p.remote = remote;
+    if (bomb && bomb.alive) p.dezaBomb = bomb;
+    // hurtFlg is the flag playerDamage already refuses a second hit on.
+    p.hurtFlg = true;
+    var sprite = p.sprite;
+    sprite.setAlpha(0.25);
+    scene.tweens.add({
+      targets: sprite,
+      alpha: 1,
+      duration: 125,
+      yoyo: true,
+      repeat: Math.round(DEZA_RESPAWN_SAFE_MS / 250) - 1,
+      onComplete: function() {
+        p.hurtFlg = false;
+        sprite.setAlpha(1);
+      }
+    });
+    scene.updateShipStock();
+    return true;
   }
   // The run is over only when every ship is gone. Latched separately from the
   // per-player death: two deaths inside the same two-second window would
@@ -8867,6 +9005,11 @@
       case PLAYER_STATES.SHOOT_NAME_3WAY:
         p.shootMode = "3way";
         p.shootSpeed = "speed_normal";
+        // On the crossover kit this drop is a shot level too (dezaKit): a web
+        // game has two shot power-ups and no POWER-UP item to tell them apart.
+        if (dezaKit(scene) === DEZA_CROSSOVER_KIT) {
+          p.dezaOptions = Math.min(DEZA_CROSSOVER_KIT.ships[0].maxOptions, (p.dezaOptions || 0) + 1);
+        }
         break;
       case "dezaScore": {
         // Dezaemon score item: game-wide value from settings +0x24
@@ -9382,10 +9525,45 @@
   // speed cap, and the two power-level nibbles the per-level weapon tables are
   // indexed by.
   function dezaShip(scene, index) {
-    var m = scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
+    var m = dezaKit(scene);
     var ships = m && m.ships;
     if (!ships || !ships.length) return null;
     return ships[index] || ships[0];
+  }
+  // --- The weapon kit a web game flies in MOD --------------------------------
+  //
+  // A cart's weapons come out of its own settings block: four loadout presets
+  // and a config block per ship. A web game has neither, so when the Dezaemon
+  // weapons cross over to one (componentOn("dezaWeapons") — MOD, or
+  // ?dezaWeapons=1) it flies this instead, on top of the shot it always had:
+  //
+  //   MAIN 1    the spread — one more projectile per shot level
+  //   OPTION A  the ring of pods, one per shot level, widened with Z / L2 / R2
+  //   CHARGE 1  hold SHIFT or a shoulder button, release for the weaving volley
+  //   no bomb   the SP button stays the game's own special attack
+  //
+  // The ship starts at shot level 1 and climbs to 4. A cart raises the level
+  // with its POWER-UP item, which reaches the runtime as the BIG-shot drop; a
+  // web game's 3-WAY drop is the other shot power-up it has, so here either
+  // one is a level (collectItem). Damage needs no stand-in: with no settings
+  // dezaDamageUnit falls back to the anchor the tables were traced against.
+  //
+  // It is deliberately NOT written into recipe.meta.dezaemonSettings. That
+  // block is how isImportedLevel() and isDezaImport() know a cart, and a web
+  // game that grew one would lose its boss timer, its story and its tweet
+  // button, and have its enemies' hp scaled by a rule that was never theirs.
+  var DEZA_CROSSOVER_KIT = {
+    ships: [{ initialPower: 0, maxPower: 7, initialOptions: 1, maxOptions: 4 }],
+    loadouts: [{ main: 1, sub: 5, charge: 1, bomb: 0, bombVariant: false }],
+    startLoadout: [0, 0]
+  };
+  // The settings the weapon code reads its ship and loadout from: the cart's
+  // own, the crossover kit for a web game that has been given the weapons, or
+  // null — a web game played OG, where none of the Dezaemon weapons run.
+  function dezaKit(scene) {
+    var m = scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
+    if (m) return m;
+    return levelSide() === "web" && componentOn("dezaWeapons") ? DEZA_CROSSOVER_KIT : null;
   }
   // Seed a ship's power level from its own config block. Every per-level table
   // in the sub and charge weapons is indexed by this, so a level that starts a
@@ -9401,7 +9579,7 @@
     p.dezaPodTrail = null;
   }
   function dezaLoadout(scene, p) {
-    var m = scene.recipe && scene.recipe.meta && scene.recipe.meta.dezaemonSettings;
+    var m = dezaKit(scene);
     if (!m || !m.loadouts || !m.loadouts.length) return null;
     var k = p.dezaLoadoutIndex;
     if (typeof k !== "number") {
@@ -13408,6 +13586,49 @@
       this.bossHpBarFg = this.add.graphics();
       this.bossHpBarFg.setDepth(101);
       this.bossHpBarFg.setVisible(false);
+      this.applyTopHud();
+      this.updateShipStock();
+    }
+    // The band across the top — the HP and COMBO troughs, the score and the
+    // world best — is the web runtime's. A Dezaemon cart played OG has none of
+    // it (componentOn("hud")), so the pieces are built as always and switched
+    // off: every site that writes a bar or flashes the band keeps a live
+    // object to write to, and nothing has to learn that the HUD may be absent.
+    // Called again when player 2's bars arrive.
+    applyTopHud() {
+      if (componentOn("hud")) return;
+      var parts = [
+        this.hudBg, this.hpBar, this.hpBarP2, this.scoreLabel,
+        this.scoreSmallNum && this.scoreSmallNum.container, this.worldBestText,
+        this.comboLabel, this.comboLabelP2, this.comboNumContainer
+      ];
+      for (var i = 0; i < parts.length; i++) {
+        if (parts[i]) parts[i].setVisible(false);
+      }
+    }
+    // The spare ships a Dezaemon ship is replaced from (dezaNextShip), drawn
+    // as the ship itself at half size along the bottom edge: player 1's from
+    // the left corner, player 2's from the right. Nothing is drawn for a ship
+    // with hit points, which has no spares. Where the Saturn draws its own
+    // count is not traced; the bottom corners are simply clear of the play.
+    updateShipStock() {
+      var old = this.shipStockIcons || [];
+      for (var i = 0; i < old.length; i++) old[i].destroy();
+      this.shipStockIcons = [];
+      if (componentOn("armor")) return;
+      var stock = shipStock();
+      for (var pi = 0; pi < this.players.length; pi++) {
+        var p = this.players[pi];
+        if (!p || !p.sprite) continue;
+        for (var n = 0; n < stock[pi]; n++) {
+          var icon = this.add.sprite(0, GH11 - 4, p.sprite.texture.key, p.sprite.frame.name);
+          icon.setOrigin(pi === 0 ? 0 : 1, 1);
+          icon.setScale(0.5);
+          icon.x = pi === 0 ? 4 + n * (icon.displayWidth + 2) : GW13 - 4 - n * (icon.displayWidth + 2);
+          icon.setDepth(101);
+          this.shipStockIcons.push(icon);
+        }
+      }
     }
     // Split the HP and COMBO bands in two. `animate` is the join-in moment:
     // player 1's bar collapses into the top half of each trough and player 2's
@@ -13433,6 +13654,8 @@
       this.comboLabelP2.setDepth(101);
       this.comboLabelP2.setTint(P2_HUD_TINT).setTintMode(Phaser.TintModes.FILL);
       this.comboLabelP2.scaleX = 0;
+      this.applyTopHud();
+      this.updateShipStock();
       if (!animate) {
         this.hpBar.scaleY = HP_SPLIT_SCALEY;
         this.comboLabel.scaleY = CB_SPLIT_SCALEY;
@@ -15286,6 +15509,7 @@
               gameState.player2ShootSpeed = recipe.playerData.defaultShootSpeed;
               gameState.player2Spgage = 0;
             }
+            resetShipStock();
             // 2028.Ai's continue restarts the run from stage 0. An imported
             // save resumes on the stage that killed you — a Dezaemon cart is
             // somebody's ten-stage game, and sending them back to the start is
@@ -16635,6 +16859,7 @@
       gameState.player2ShootSpeed = recipe.playerData.defaultShootSpeed;
       gameState.player2Spgage = 0;
     }
+    resetShipStock();
     gameState.playerCount = readPlayerCountParam(1);
     gameState.twoPlayerForced = gameState.playerCount === 2;
     gameState.combo = 0;
@@ -16655,7 +16880,11 @@
   // parent frame — it is a no-op.
   function cmgBroadcastCheats(recipe) {
     if (typeof window === "undefined" || window.parent === window) return;
+    // Mod Mode is the LIBRARY's VERSION switch for a game that has no card
+    // there — 2028.Ai, a community cart off the coverflow: ?version=mod lets
+    // the web runtime's parts and the Dezaemon ones cross over (CROSSOVER).
     var cheats = [
+      { param: "version", kind: "toggle", label: "Mod Mode", on: "mod" },
       { param: "bossRush", kind: "toggle", label: "Boss Rush", on: "1" }
     ];
     if (isImportedLevel()) {

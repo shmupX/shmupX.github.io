@@ -112,32 +112,60 @@ export function shelfKindOf(rec) {
   return 'export';
 }
 
-// OG plays a cart by the rules it shipped with; REBOOT turns on what the web
-// runtime adds. The three additions, in the order the launcher's cards list
-// them, each with the boot-time URL parameter game.bundle.js reads it from.
-export const LIBRARY_VERSIONS = ['og', 'reboot'];
+// ── OG and MOD ───────────────────────────────────────────────────────────────
+// The runtime plays two kinds of game, and each brought parts the other never
+// had: a web game its hit points, HUD, combo, continues and story; a Dezaemon
+// cart the Saturn's weapon kit. OG plays a game with its own side's parts and
+// none of the other's — a cart as the Saturn played it, a one-hit ship under
+// no HUD — and MOD lets every part cross over. (MOD was REBOOT until
+// 2026-10-05; normalizeVersion still reads the old word.)
+//
+// The parts, in the order the launcher's cards list them. `param` is the URL
+// parameter game.bundle.js answers to when one part is asked for by name, and
+// `from` is the side it is native to — the same table as CROSSOVER in the
+// runtime, which tests/library_lineage_test.ts holds this one equal to.
+export const LIBRARY_VERSIONS = ['og', 'mod'];
 export const LIBRARY_FEATURES = [
-  { id: 'continues', label: 'CONTINUES', param: 'continues' },
-  { id: 'combo', label: 'COMBO MULTIPLIER', param: 'combo' },
-  { id: 'story', label: 'STORY MODE', param: 'story' },
+  { id: 'continues', label: 'CONTINUES', param: 'continues', from: 'web' },
+  { id: 'combo', label: 'COMBO MULTIPLIER', param: 'combo', from: 'web' },
+  { id: 'hud', label: 'HP + COMBO HUD', param: 'hud', from: 'web' },
+  { id: 'armor', label: '3-HIT SHIP', param: 'armor', from: 'web' },
+  { id: 'story', label: 'STORY MODE', param: 'story', from: 'web' },
+  { id: 'dezaWeapons', label: 'DEZA WEAPONS', param: 'dezaWeapons', from: 'deza' },
 ];
 
-/** A mod opens on REBOOT, everything else on OG, until the player picks. */
+/** "og" | "mod" for anything that names a version, "" for anything that does not. */
+export function normalizeVersion(version) {
+  const v = String(version || '').toLowerCase();
+  if (v === 'og') return 'og';
+  return v === 'mod' || v === 'reboot' ? 'mod' : '';
+}
+
+/** A mod opens on MOD, everything else on OG, until the player picks. */
 export function defaultVersionFor(rec) {
-  return isModShelfEntry(rec) ? 'reboot' : 'og';
+  return isModShelfEntry(rec) ? 'mod' : 'og';
 }
 
 /**
- * The runtime parameters a version stands for, as { param: "1" | "0" }. Every
- * feature is named both ways rather than left to the runtime's defaults,
- * which differ per feature (continues are off for an imported cart, the combo
- * multiplier is on) — so OG and REBOOT mean the same thing on every game.
+ * What a version sends the runtime: the word itself, as { version }. Which
+ * parts that turns on depends on the side the game came from, and only the
+ * runtime knows that for certain (isImportedLevel in game.bundle.js) — so the
+ * launcher and the editor pass the word along and never spell the parts out.
+ * An unknown version sends nothing, which the runtime plays as OG.
  */
 export function versionParams(version) {
-  const on = version === 'reboot' ? '1' : '0';
-  const out = {};
-  for (const f of LIBRARY_FEATURES) out[f.param] = on;
-  return out;
+  const v = normalizeVersion(version);
+  return v ? { version: v } : {};
+}
+
+/**
+ * The parts a version plays a game with, as [{ id, label, on }]: its own
+ * side's in OG, every one in MOD. `side` is "deza" for a cart — everything on
+ * this shelf — or "web".
+ */
+export function versionFeatures(version, side = 'deza') {
+  const mod = normalizeVersion(version) === 'mod';
+  return LIBRARY_FEATURES.map((f) => ({ id: f.id, label: f.label, on: mod || f.from === side }));
 }
 
 /**

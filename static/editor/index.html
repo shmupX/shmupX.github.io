@@ -1064,7 +1064,7 @@
                     <div class="menu-note">SATURN (.SAV / .BCR / .BKR) OPENS IN THE EDITOR &middot; SUPER FAMICOM (.SRM, 128 KB) IS FILED ON THE SNES SHELF &middot; PS AND N64 SAVES ARE READ BY THE PARITY PAGES, NOT OPENED HERE YET</div>
                 </div>
             </div>
-            <div class="picker-hint sheet-foot">IMPORTED GAMES GET OG + REBOOT VERSIONS IN THE LAUNCHER &middot; EDITS SAVE AS A MOD OF THE IMPORT</div>
+            <div class="picker-hint sheet-foot">IMPORTED GAMES GET OG + MOD VERSIONS IN THE LAUNCHER &middot; EDITS SAVE AS A MOD OF THE IMPORT</div>
         </div>
     </div>
 
@@ -5267,18 +5267,20 @@
             } catch (_e) { /* no URL to read */ }
             return out;
         }
-        // ?version=og|reboot — the launcher's LIBRARY card says which version
-        // of a shelf game to run, and the hand-off spells that out as the
-        // runtime's own boot flags (continues, combo, story; versionParams in
-        // /deza-shelf.js is the one list both ends read). Absent — every play
-        // that starts in the editor — nothing is added and the runtime's
-        // defaults stand.
+        // ?version=og|mod — the launcher's LIBRARY card says which version of
+        // a shelf game to run, and the hand-off passes the word on: the
+        // runtime decides which parts it turns on, since that depends on
+        // whether the game is a cart or a web game (versionParams in
+        // /deza-shelf.js is what both ends send). Absent — every play that
+        // starts in the editor — a mod is played as MOD, because the edits a
+        // mod carries (a story, most of all) are parts OG leaves out, and
+        // anything else sends nothing, which the runtime plays as OG.
         async function versionPlayParams() {
             let version = '';
-            try { version = new URLSearchParams(location.search).get('version') || ''; } catch (_e) { return ''; }
-            if (version !== 'og' && version !== 'reboot') return '';
+            try { version = new URLSearchParams(location.search).get('version') || ''; } catch (_e) { /* no URL to read */ }
             try {
-                const flags = (await dezaShelf()).versionParams(version);
+                const shelf = await dezaShelf();
+                const flags = shelf.versionParams(shelf.normalizeVersion(version) || (lineageForked() ? 'mod' : ''));
                 return Object.keys(flags).map((k) => '&' + k + '=' + flags[k]).join('');
             } catch (_e) { return ''; }
         }
@@ -5993,7 +5995,7 @@
         // source "mod") and never writes over the parent. A cart opened from a
         // file or a URL is filed there too, as it came (source "import"), so
         // the launcher's LIBRARY has the parent to hang the mod on and can
-        // offer both in OG and REBOOT. The stock game, a directory and a cloud
+        // offer both in OG and MOD. The stock game, a directory and a cloud
         // game are the author's own and never fork: lineage exists only while
         // a cart is open (body.sav-loaded).
         //

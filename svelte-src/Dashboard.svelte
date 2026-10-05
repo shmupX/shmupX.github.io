@@ -53,8 +53,9 @@
   import {
     backfillDezaShelfCovers,
     defaultVersionFor,
-    LIBRARY_FEATURES,
     libraryCards,
+    normalizeVersion,
+    versionFeatures,
     listDezaShelf,
     onDezaShelfChanged,
   } from '../static/deza-shelf.js';
@@ -2254,9 +2255,9 @@
   // local shelf instead of the database. Launched as the shelf-owning catalog
   // entry (shmupX) so its capabilities stay keyed to it.
   //
-  // opts.version ("og" | "reboot") rides along as &version=, which the editor
-  // spells out as the runtime's boot flags when it hands the game over (see
-  // versionPlayParams in the editor and versionParams in deza-shelf.js).
+  // opts.version ("og" | "mod") rides along as &version=, which the editor
+  // hands on to the runtime with the game (see versionPlayParams in the editor
+  // and versionParams in deza-shelf.js).
   // opts.edit swaps &playExport= for &editExport=: the same record, opened in
   // the editor rather than played.
   function launchDezaShelfGame(shelfId, opts) {
@@ -2266,7 +2267,7 @@
     try {
       const u = new URL(owner?.url || '/editor/?game=2028-ai', window.location.origin);
       u.searchParams.set(opts?.edit ? 'editExport' : 'playExport', shelfId);
-      if (!opts?.edit && (opts?.version === 'og' || opts?.version === 'reboot')) u.searchParams.set('version', opts.version);
+      if (!opts?.edit && normalizeVersion(opts?.version)) u.searchParams.set('version', normalizeVersion(opts.version));
       url = u.pathname + u.search + u.hash;
     } catch (_) { return; }
     if (owner) { launchGame(owner.id, url); return; }
@@ -2442,9 +2443,10 @@
 
   // ─── LIBRARY: the shelf as game cards ──────────────────────────────────────
   // The same records the coverflow leads with, laid out as cards that say
-  // what a row cannot: which VERSION to run — OG, the cart by the rules it
-  // shipped with, or REBOOT, with what the web runtime adds (LIBRARY_FEATURES:
-  // continues, the combo multiplier, a story where the game has one) — and,
+  // what a row cannot: which VERSION to run — OG, the cart as the Saturn
+  // played it (a one-hit ship, no HUD, its own weapons), or MOD, where the web
+  // runtime's parts cross over to it (LIBRARY_FEATURES: continues, the combo
+  // multiplier, the HUD, hit points, a story where the game has one) — and,
   // for a mod, the game it was forked from. libraryCards() orders them: each
   // game, then its mods; the ribbon on a mod jumps to its parent and the
   // parent counts its mods. Reached from the Games list's LIBRARY row.
@@ -2476,7 +2478,8 @@
   let libCardEls = $state([]);
   let libraryCurrent = $derived(library.cards[libSel]);
   // The VERSION each game was last set to, by shelf id. A game nobody has
-  // set runs its default (a mod on REBOOT, anything else on OG).
+  // set runs its default (a mod on MOD, anything else on OG). A pick stored
+  // as "reboot" — what MOD was called — still reads as MOD.
   const LIB_VERSIONS_KEY = 'cmg-library-versions';
   function loadLibVersions() {
     try {
@@ -2487,7 +2490,7 @@
   let libVersions = $state(loadLibVersions());
   function libVersionOf(c) {
     const v = c ? libVersions[c.id] : '';
-    return v === 'og' || v === 'reboot' ? v : defaultVersionFor(c);
+    return normalizeVersion(v) || defaultVersionFor(c);
   }
   function setLibVersion(c, v) {
     if (!c || libVersionOf(c) === v) return;
@@ -2495,15 +2498,15 @@
     try { localStorage.setItem(LIB_VERSIONS_KEY, JSON.stringify(libVersions)); } catch (_) { /* session-only pick */ }
     sfx.nav();
   }
-  // What a card's three feature chips show: lit on REBOOT — except a story on
-  // a game that has none, which REBOOT cannot conjure and the chip says so.
+  // What a card's chips show: the parts the selected version plays the cart
+  // with — its own Dezaemon weapons in OG, every part in MOD. A story is the
+  // one MOD cannot conjure for a game that has none, and the chip says so.
   function libFeats(c) {
-    const reboot = libVersionOf(c) === 'reboot';
-    return LIBRARY_FEATURES.map((f) => ({ id: f.id, label: f.label, on: reboot && (f.id !== 'story' || c.hasStory) }));
+    return versionFeatures(libVersionOf(c), 'deza').map((f) => ({ ...f, on: f.on && (f.id !== 'story' || c.hasStory) }));
   }
   function libVersionNote(c) {
-    if (libVersionOf(c) !== 'reboot') return 'OG · ORIGINAL RULES, AS SHIPPED';
-    return c.hasStory ? 'REBOOT · ALL ADDITIONS ON' : 'REBOOT · CONTINUES + COMBO ON · THIS GAME HAS NO STORY';
+    if (libVersionOf(c) !== 'mod') return 'OG · AS THE SATURN PLAYED IT · ONE-HIT SHIP, NO HUD';
+    return c.hasStory ? 'MOD · EVERY PART CROSSES OVER' : 'MOD · EVERY PART CROSSES OVER · THIS GAME HAS NO STORY';
   }
   const LIB_KIND_TAG = { mod: 'MOD', import: 'IMPORTED', eshop: 'ESHOP', export: 'YOUR EXPORT' };
   function libAgo(ts) {
@@ -2552,7 +2555,7 @@
     sfx.nav();
   }
   let libraryActionLabel = $derived(
-    libraryCurrent ? 'Play ' + (libVersionOf(libraryCurrent) === 'reboot' ? 'Reboot' : 'OG') : 'Select'
+    libraryCurrent ? 'Play ' + (libVersionOf(libraryCurrent) === 'mod' ? 'Mod' : 'OG') : 'Select'
   );
 
   // --- online 2P presence -------------------------------------------------
@@ -5587,7 +5590,7 @@
     library: {
       sel: () => libSel, setSel: (v) => (libSel = v), len: () => library.cards.length,
       activate: (i) => playLibraryCard(i),
-      moveH: (dir) => setLibVersion(libraryCurrent, dir < 0 ? 'og' : 'reboot'),
+      moveH: (dir) => setLibVersion(libraryCurrent, dir < 0 ? 'og' : 'mod'),
       back: 'games',
     },
   };
@@ -7281,9 +7284,9 @@
   </div>
 
   <!-- LIBRARY — this browser's shelf as game cards, entered from the Games
-       list's LIBRARY row. A card carries a VERSION switch (OG keeps the cart's
-       original rules, REBOOT turns on what the web runtime adds), three chips
-       that light with REBOOT, and A PLAY / Y EDIT. A mod wears a ribbon naming
+       list's LIBRARY row. A card carries a VERSION switch (OG is the cart as
+       the Saturn played it, MOD lets the web runtime's parts cross over), a
+       chip per part that lights when the version plays it, and A PLAY / Y EDIT. A mod wears a ribbon naming
        the game it was forked from — press it to jump there — and that game's
        card counts its mods. One column on a phone; every control is 44px. -->
   <div class="games-screen library-screen {screen === 'library' ? 'shown' : ''}">
@@ -7335,12 +7338,12 @@
                 </div>
               </div>
 
-              <!-- VERSION: OG keeps the original rules; REBOOT turns on every addition -->
+              <!-- VERSION: OG keeps the original rules; MOD lets every part cross over -->
               <div class="lib-version">
                 <span class="lib-version-lbl">VERSION</span>
                 <div class="lib-segs" role="group" aria-label="Version">
                   <button type="button" class="lib-seg {libVersionOf(c) === 'og' ? 'on' : ''}" aria-pressed={libVersionOf(c) === 'og'} onclick={() => { libSel = i; setLibVersion(c, 'og'); }}>OG</button>
-                  <button type="button" class="lib-seg {libVersionOf(c) === 'reboot' ? 'on' : ''}" aria-pressed={libVersionOf(c) === 'reboot'} onclick={() => { libSel = i; setLibVersion(c, 'reboot'); }}>REBOOT</button>
+                  <button type="button" class="lib-seg {libVersionOf(c) === 'mod' ? 'on' : ''}" aria-pressed={libVersionOf(c) === 'mod'} onclick={() => { libSel = i; setLibVersion(c, 'mod'); }}>MOD</button>
                 </div>
               </div>
               <div class="lib-feats">
@@ -7352,7 +7355,7 @@
 
               <div class="lib-actions">
                 <button type="button" class="lib-act" onclick={() => playLibraryCard(i)}>
-                  <span class="lib-orb a">A</span><span>PLAY {libVersionOf(c) === 'reboot' ? 'REBOOT' : 'OG'}</span>
+                  <span class="lib-orb a">A</span><span>PLAY {libVersionOf(c) === 'mod' ? 'MOD' : 'OG'}</span>
                 </button>
                 <button type="button" class="lib-act" title={c.isMod ? 'Open this mod in the editor' : 'Open in the editor — changes save as a new mod'} onclick={() => editLibraryCard(i)}>
                   <span class="lib-orb y">Y</span><span>EDIT</span>
@@ -7363,7 +7366,7 @@
           {#if !library.cards.length}
             <div class="byod">
               <div class="byod-title">NOTHING ON THE SHELF YET</div>
-              <div class="byod-sub">Open the level editor and IMPORT a Dezaemon save: it lands here in OG and REBOOT versions, and anything you change saves beside it as a mod.</div>
+              <div class="byod-sub">Open the level editor and IMPORT a Dezaemon save: it lands here in OG and MOD versions, and anything you change saves beside it as a mod.</div>
             </div>
           {/if}
         </div>

@@ -6,11 +6,13 @@
 // shape of a record connects the two, so the rules that read it — which kind a
 // record is, how cards are ordered, what a parent counts — are pinned here.
 //
-// VERSION. A card plays OG or REBOOT. The launcher sends the word, the editor
-// spells it out as boot flags, and game.bundle.js reads the flags: three files
-// and one list (versionParams). A flag renamed in one of them is a switch that
-// does nothing, with no error anywhere — which is why the runtime's half is
-// checked against the list rather than trusted.
+// VERSION. A card plays OG or MOD. The launcher sends the word, the editor
+// passes it on, and game.bundle.js decides which parts it turns on — a cart's
+// own side in OG, every part in MOD: three files, one word (versionParams) and
+// one table of parts (LIBRARY_FEATURES here, CROSSOVER in the runtime). A part
+// renamed in one of them is a chip that lights and changes nothing, with no
+// error anywhere — which is why the runtime's half is checked against the
+// list rather than trusted.
 //
 // And the editor's drawer: its FILE SYSTEM rows moved behind the IMPORT and
 // EXPORT sheets with their ids and handlers intact, because the script that
@@ -158,10 +160,10 @@ Deno.test("a lineage that loops is listed once, not walked forever", () => {
   assertEquals(shelf.libraryCards(null).cards, []);
 });
 
-Deno.test("a mod opens on REBOOT and everything else on OG", () => {
+Deno.test("a mod opens on MOD and everything else on OG", () => {
   assertEquals(
     shelf.defaultVersionFor({ id: "mod:a:b", source: "mod" }),
-    "reboot",
+    "mod",
   );
   assertEquals(
     shelf.defaultVersionFor({ id: "import:a", source: "import" }),
@@ -174,36 +176,80 @@ Deno.test("a mod opens on REBOOT and everything else on OG", () => {
   assertEquals(shelf.defaultVersionFor(undefined), "og");
 });
 
-Deno.test("OG and REBOOT name every feature flag, both ways", () => {
-  // Spelled out for OG as well as REBOOT, because the runtime's own defaults
-  // differ per flag — continues are off for an imported cart, the combo
-  // multiplier on — so "absent" would not mean the same thing for all three.
-  assertEquals(shelf.versionParams("og"), {
-    continues: "0",
-    combo: "0",
-    story: "0",
-  });
-  assertEquals(shelf.versionParams("reboot"), {
-    continues: "1",
-    combo: "1",
-    story: "1",
-  });
-  assertEquals(
-    shelf.LIBRARY_FEATURES.map((f: Any) => f.label),
-    ["CONTINUES", "COMBO MULTIPLIER", "STORY MODE"],
-  );
+Deno.test("a version travels as one word, and REBOOT still reads as MOD", () => {
+  assertEquals(shelf.LIBRARY_VERSIONS, ["og", "mod"]);
+  assertEquals(shelf.versionParams("og"), { version: "og" });
+  assertEquals(shelf.versionParams("mod"), { version: "mod" });
+  // What MOD was called until 2026-10-05: a stored pick or a kept link.
+  assertEquals(shelf.normalizeVersion("reboot"), "mod");
+  assertEquals(shelf.normalizeVersion("REBOOT"), "mod");
+  assertEquals(shelf.versionParams("reboot"), { version: "mod" });
+  // Anything else names no version and sends nothing — the runtime's OG.
+  assertEquals(shelf.normalizeVersion("remix"), "");
+  assertEquals(shelf.normalizeVersion(undefined), "");
+  assertEquals(shelf.versionParams("remix"), {});
 });
 
-Deno.test("the runtime reads every flag a version sends", async () => {
+Deno.test("OG plays a game's own parts and MOD plays every part", () => {
+  const on = (version: string, side?: string) =>
+    shelf.versionFeatures(version, side).filter((f: Any) => f.on).map((
+      f: Any,
+    ) => f.id);
+  const all = shelf.LIBRARY_FEATURES.map((f: Any) => f.id);
+  assertEquals(all, [
+    "continues",
+    "combo",
+    "hud",
+    "armor",
+    "story",
+    "dezaWeapons",
+  ]);
+  // A cart as the Saturn played it: its weapons, and nothing of the web's —
+  // no hit points, no HUD, no combo multiplier, no continue, no story.
+  assertEquals(on("og"), ["dezaWeapons"]);
+  assertEquals(on("og", "deza"), ["dezaWeapons"]);
+  // A web game by its own rules: everything but the Dezaemon weapons.
+  assertEquals(on("og", "web"), [
+    "continues",
+    "combo",
+    "hud",
+    "armor",
+    "story",
+  ]);
+  // MOD is the same on both sides: everything crosses over.
+  assertEquals(on("mod", "deza"), all);
+  assertEquals(on("mod", "web"), all);
+  assertEquals(on("reboot", "web"), all);
+});
+
+Deno.test("the runtime knows every part by the same name and the same side", async () => {
   const bundle = await read("static/games/2028-ai/game.bundle.js");
+  assert(
+    bundle.includes('readSearchParam("version")'),
+    "game.bundle.js never reads ?version= — OG and MOD would play the same game",
+  );
+  const table = bundle.match(/var CROSSOVER = \{([^}]*)\}/);
+  assert(table, "game.bundle.js has no CROSSOVER table");
+  const runtime = Object.fromEntries(
+    [...table[1].matchAll(/(\w+): "(web|deza)"/g)].map((m) => [m[1], m[2]]),
+  );
+  assertEquals(
+    runtime,
+    Object.fromEntries(
+      shelf.LIBRARY_FEATURES.map((f: Any) => [f.param, f.from]),
+    ),
+    "LIBRARY_FEATURES (deza-shelf.js) and CROSSOVER (game.bundle.js) disagree",
+  );
+  // And every part in the table is actually consulted somewhere: a row nothing
+  // asks about is a chip that lights and changes nothing.
   for (const f of shelf.LIBRARY_FEATURES) {
     assert(
-      bundle.includes(`SearchParam("${f.param}"`),
-      `game.bundle.js never reads ?${f.param}= — the ${f.label} chip would light and change nothing`,
+      bundle.includes(`componentOn("${f.param}")`),
+      `game.bundle.js never asks componentOn("${f.param}") — the ${f.label} chip would light and change nothing`,
     );
   }
   // The multiplier is applied in three places (a kill, a boss kill, a
-  // cancelled bullet). All three go through the one function the flag gates;
+  // cancelled bullet). All three go through the one function the part gates;
   // a fourth site written the old way would ignore OG.
   assertEquals(
     bundle.match(/Math\.ceil\([a-z.]*comboCount \/ 10\)/gi)?.length ?? 0,
@@ -213,10 +259,51 @@ Deno.test("the runtime reads every flag a version sends", async () => {
   assertEquals(bundle.match(/= comboRatio\(/g)?.length, 3);
 });
 
-Deno.test("the editor hands a version on as the shelf's own flag list", async () => {
+Deno.test("OG is a one-hit ship under no HUD, and a web game gets the weapons only in MOD", async () => {
+  const bundle = await read("static/games/2028-ai/game.bundle.js");
+  // One hit: the unarmoured branch kills before any hp is subtracted.
+  const damage = bundle.slice(
+    bundle.indexOf("function playerDamage(scene, p, amount)"),
+    bundle.indexOf("function playerDie(scene, p, gone)"),
+  );
+  assert(
+    damage.indexOf('if (!componentOn("armor"))') > 0 &&
+      damage.indexOf('if (!componentOn("armor"))') <
+        damage.indexOf("p.hp -= amount"),
+    "playerDamage no longer destroys an unarmoured ship outright",
+  );
+  // The spare is flown in the same call, so no tick sees every ship down.
+  assert(bundle.includes("if (!gone && dezaNextShip(scene, p)) return;"));
+  // Each place a run starts or continues refills the stock.
+  assertEquals(bundle.match(/^\s+resetShipStock\(\);$/gm)?.length, 4);
+  // No HUD: built, then switched off, for the first player's bars and again
+  // when the second player's arrive.
+  assertEquals(bundle.match(/^\s+this\.applyTopHud\(\);$/gm)?.length, 2);
+  // The weapon code reads its ship and loadout through dezaKit, which is the
+  // only door a web game's crossover kit comes through.
+  assertEquals(bundle.match(/var m = dezaKit\(scene\);/g)?.length, 2);
+  assert(
+    bundle.includes(
+      'levelSide() === "web" && componentOn("dezaWeapons") ? DEZA_CROSSOVER_KIT : null',
+    ),
+  );
+  // And a game with no LIBRARY card can still be switched: the Guide's cheat.
+  assert(
+    bundle.includes(
+      '{ param: "version", kind: "toggle", label: "Mod Mode", on: "mod" }',
+    ),
+  );
+});
+
+Deno.test("the editor hands a version on as the shelf's own word", async () => {
   const editor = await read("static/editor/index.html");
-  // It asks deza-shelf.js rather than keeping a second copy of the list.
-  assert(editor.includes(".versionParams(version)"));
+  // It asks deza-shelf.js rather than keeping a second copy of the rule, and
+  // plays a mod as MOD when no card chose for it.
+  assert(
+    editor.includes(
+      "shelf.versionParams(shelf.normalizeVersion(version) || (lineageForked() ? 'mod' : ''))",
+    ),
+  );
   assert(editor.includes("${await versionPlayParams()}"));
   // Both hand-offs the launcher's cards make are answered.
   assert(editor.includes("params.get('playExport')"));
@@ -298,7 +385,8 @@ Deno.test("the committed dashboard bundle carries the LIBRARY screen", async () 
       "lib-card",
       "cmg-library-versions",
       "editExport",
-      "ORIGINAL RULES, AS SHIPPED",
+      "AS THE SATURN PLAYED IT",
+      "EVERY PART CROSSES OVER",
     ]
   ) {
     assert(
