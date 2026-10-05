@@ -779,44 +779,83 @@ export function buildSaveFromGame(level, art, options = {}) {
             : shipIdle)
         : [];
 
-    // Global bullet types: the first three distinct projectile textures,
-    // the zako's first and then each stage boss's own weapons. A save has
-    // exactly three and every shot in the game is one of them: a zako
-    // record names one in its byte 4, a boss fire point in its type nibble
-    // (A/B/C). A boss's bulletDataA/B/C — the records the stock 2028.Ai
-    // bosses and anything extracted into the library arm themselves with —
-    // used to be the one weapon the writer never looked at, so a web boss
-    // folded into a cart came back out firing whatever a zako had put in
-    // type 0, or nothing at all.
-    const bulletTypes = []; // [{first, frames: planKeys}]
+    // Global bullet types. A save has exactly three and every shot in the
+    // game is one of them: a zako record names one in its byte 4, a boss
+    // fire point in its type nibble (A/B/C). They are filled in this order:
+    //
+    //   1. the cart's own bank, at the indices it came with
+    //      (`dezaemonBullets.art`, what map-to-game decoded out of refs
+    //      132-143). An import's zako records go back verbatim, and byte 4
+    //      of each still names the type it was drawn with, so these cannot
+    //      move. The writer used to drop them on the floor — it read only
+    //      the bank's `configs` — so a mod of a community cart came back
+    //      with its zako firing 0xFFFF refs: invisible on hardware, the
+    //      drawn ring in the runtime;
+    //   2. the web-authored zako's `projectileData`, in grid order;
+    //   3. each stage boss's own weapons A/B/C — bulletDataA/B/C, the slots
+    //      the stock 2028.Ai bosses and anything extracted into the library
+    //      arm themselves with, and the one weapon the writer never looked
+    //      at before: a web boss folded into a cart came back out firing
+    //      whatever a zako had put in type 0, or nothing at all.
+    //
+    // The same art claims one type however many records name it. What does
+    // not fit is warned about: the cart's limit is three, not the writer's.
+    const bulletTypes = [null, null, null]; // per type: {first, speed, src, frames: planKeys, engine}
     const bulletTypeOf = new Map(); // enemy key -> type index
-    // The type that holds this projectile record's art, claiming a free one
-    // for it the first time; null when the record names no art, its art is
-    // not in the atlas, or all three types already hold something else.
-    const claimBulletType = (proj, owner) => {
-        const tex = proj && Array.isArray(proj.texture) ? proj.texture : null;
-        if (!tex || !tex.length) return null;
-        let t = bulletTypes.findIndex((b) => b.first === tex[0]);
-        if (t >= 0) return t;
-        const frames = spreadFrames(tex.map(lookup).filter(Boolean), 4);
-        if (!frames.length) return null;
-        if (bulletTypes.length >= 3) {
-            warn(`${owner}: a save holds three bullet types and they are all taken — ${tex[0]} is not one of them`);
-            return null;
-        }
-        t = bulletTypes.length;
-        bulletTypes.push({
-            first: tex[0],
-            speed: Number(proj.speed) || 1,
+    const paintedTypes = () => bulletTypes.filter(Boolean).length;
+    const planBulletType = (t, first, frames, speed) => {
+        bulletTypes[t] = {
+            first,
+            speed,
             src: frames,
             frames: frames.map((f, i) => planFrame(`bullet:${t}:${i}:${f.key}`, f, 16, 16, `bullet${t}`, 1)),
             // The same projectile, fitted to each engine char-slot frame's geometry, so
             // the bullet the hardware actually draws (char slots 55/59/63) shows it.
             engine: BULLET_ENGINE_SLOTS[t].map((slot, i) =>
                 planFrame(`bulletE:${t}:${i}:${frames[i % frames.length].key}`, frames[i % frames.length], slot.w * CG_CELL, slot.h * CG_CELL, `bulletE${t}`, 1)),
-        });
+        };
+    };
+    // 1. The cart's own bank, type by type, where the atlas still has it.
+    const bankArt = level.dezaemonBullets && Array.isArray(level.dezaemonBullets.art) ? level.dezaemonBullets.art : [];
+    const bankType2 = Array.isArray(bankArt[2]) && bankArt[2].length > 0;
+    for (let t = 0; t < 3; t++) {
+        let names = Array.isArray(bankArt[t]) ? bankArt[t] : [];
+        if (!names.length) continue;
+        // Refs 132 and 136 — the decoder's frame 0 of types 0 and 1 — are
+        // also the engine's last two frames of type 2 (BULLET_ENGINE_SLOTS),
+        // so on a cart that paints type 2 those two frames read back as type
+        // 2's art. Leave them out rather than spread somebody else's bullet
+        // into the engine's own frames of types 0 and 1.
+        if (t < 2 && bankType2 && names.length > 1) names = names.slice(1);
+        const frames = spreadFrames(names.map(lookup).filter(Boolean), 4);
+        if (!frames.length) {
+            warn(`bullet type ${t}: the cart's own art (${names[0]}) is not in the atlas — left unpainted`);
+            continue;
+        }
+        // The config byte goes back raw below; the speed here only stands in
+        // for a bank whose config was lost, in the runtime's px/frame.
+        const cfg = level.dezaemonBullets.configs && level.dezaemonBullets.configs[t];
+        planBulletType(t, names[0], frames, cfg && Number.isFinite(cfg.speedAdd) ? cfg.speedAdd / RUNTIME_TO_SATURN_SPEED : 1);
+    }
+    // The type that holds this projectile record's art, claiming a free one
+    // for it the first time; null when the record names no art, its art is
+    // not in the atlas, or all three types already hold something else.
+    const claimBulletType = (proj, owner) => {
+        const tex = proj && Array.isArray(proj.texture) ? proj.texture : null;
+        if (!tex || !tex.length) return null;
+        const have = bulletTypes.findIndex((b) => b && b.first === tex[0]);
+        if (have >= 0) return have;
+        const frames = spreadFrames(tex.map(lookup).filter(Boolean), 4);
+        if (!frames.length) return null;
+        const t = bulletTypes.indexOf(null);
+        if (t < 0) {
+            warn(`${owner}: a save holds three bullet types and they are all taken — ${tex[0]} is not one of them`);
+            return null;
+        }
+        planBulletType(t, tex[0], frames, Number(proj.speed) || 1);
         return t;
     };
+    // 2. The web-authored zako.
     const usedLetters = new Set();
     for (const st of stages) for (const row of st.enemylist) for (const c of row) if (c !== "00") usedLetters.add(c.slice(0, -1));
     for (const letter of usedLetters) {
@@ -824,7 +863,7 @@ export function buildSaveFromGame(level, art, options = {}) {
         const t = claimBulletType(rec && rec.projectileData, `enemy${letter}`);
         if (t !== null) bulletTypeOf.set(letter, t);
     }
-    // Each boss's weapons A/B/C, in the slots the runtime reads them from
+    // 3. Each boss's weapons A/B/C, in the slots the runtime reads them from
     // (bossAdd: bulletDataX || projectileDataX, the bare bulletData standing
     // in for A). An armed slot is only one that names art — map-to-game
     // leaves a decoded boss on `bulletData: {}`, and an empty record claims
@@ -1403,11 +1442,11 @@ export function buildSaveFromGame(level, art, options = {}) {
     itemKeys.forEach((key, i) => putRefs(GLOBAL_SLOTS.items + i, refsOf(key, 1)));
     blastAKeys.forEach((key, i) => putRefs(GLOBAL_SLOTS.blastA + i, refsOf(key, 1)));
     blastBKeys.forEach((key, i) => putRefs(GLOBAL_SLOTS.blastB + i * 4, refsOf(key, 4)));
-    bulletTypes.forEach((b, t) => b.frames.forEach((key, f) => putRefs(GLOBAL_SLOTS.bullets + t * 4 + f, refsOf(key, 1))));
+    bulletTypes.forEach((b, t) => b && b.frames.forEach((key, f) => putRefs(GLOBAL_SLOTS.bullets + t * 4 + f, refsOf(key, 1))));
     // The refs the engine's shot renderer actually reads (char slots 55/59/63), painted
     // LAST so they own their cells over the procedural blast anim that shares this region.
     bulletTypes.forEach((b, t) => {
-        if (!b.engine) return;
+        if (!b || !b.engine) return;
         BULLET_ENGINE_SLOTS[t].forEach((slot, f) => putRefs(slot.ref, refsOf(b.engine[f], slot.w * slot.h)));
     });
     weaponKeys.forEach((key, i) => {
@@ -1516,7 +1555,7 @@ export function buildSaveFromGame(level, art, options = {}) {
             })),
             ship: shipSource,
             player2: ship2Idle.length > 0,
-            bulletTypes: bulletTypes.length,
+            bulletTypes: paintedTypes(),
             weaponArt: { slots: weaponKeys.filter(Boolean).length, levelShotFrames: shotFrames.length },
             frames: planned.length,
             cells: packer.used,

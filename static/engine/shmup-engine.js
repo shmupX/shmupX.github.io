@@ -6922,29 +6922,47 @@ function buildSaveFromGame(level, art2, options = {}) {
   const shipIdle = spreadFrames(shipFrames, 2).map((f, i) => planFrame(`ship:${i}:${f.key}`, f, 32, 32, "player", 0));
   const ship2Frames = (level.playerData2 && level.playerData2.texture || []).map(lookup).filter(Boolean);
   const ship2Idle = opts.gameMode & 2 ? ship2Frames.length ? spreadFrames(ship2Frames, 2).map((f, i) => planFrame(`ship2:${i}:${f.key}`, f, 32, 32, "player2", 0)) : shipIdle : [];
-  const bulletTypes = [];
+  const bulletTypes = [null, null, null];
   const bulletTypeOf = /* @__PURE__ */ new Map();
-  const claimBulletType = (proj, owner) => {
-    const tex = proj && Array.isArray(proj.texture) ? proj.texture : null;
-    if (!tex || !tex.length) return null;
-    let t = bulletTypes.findIndex((b) => b.first === tex[0]);
-    if (t >= 0) return t;
-    const frames = spreadFrames(tex.map(lookup).filter(Boolean), 4);
-    if (!frames.length) return null;
-    if (bulletTypes.length >= 3) {
-      warn(`${owner}: a save holds three bullet types and they are all taken \u2014 ${tex[0]} is not one of them`);
-      return null;
-    }
-    t = bulletTypes.length;
-    bulletTypes.push({
-      first: tex[0],
-      speed: Number(proj.speed) || 1,
+  const paintedTypes = () => bulletTypes.filter(Boolean).length;
+  const planBulletType = (t, first, frames, speed) => {
+    bulletTypes[t] = {
+      first,
+      speed,
       src: frames,
       frames: frames.map((f, i) => planFrame(`bullet:${t}:${i}:${f.key}`, f, 16, 16, `bullet${t}`, 1)),
       // The same projectile, fitted to each engine char-slot frame's geometry, so
       // the bullet the hardware actually draws (char slots 55/59/63) shows it.
       engine: BULLET_ENGINE_SLOTS[t].map((slot, i) => planFrame(`bulletE:${t}:${i}:${frames[i % frames.length].key}`, frames[i % frames.length], slot.w * CG_CELL, slot.h * CG_CELL, `bulletE${t}`, 1))
-    });
+    };
+  };
+  const bankArt = level.dezaemonBullets && Array.isArray(level.dezaemonBullets.art) ? level.dezaemonBullets.art : [];
+  const bankType2 = Array.isArray(bankArt[2]) && bankArt[2].length > 0;
+  for (let t = 0; t < 3; t++) {
+    let names = Array.isArray(bankArt[t]) ? bankArt[t] : [];
+    if (!names.length) continue;
+    if (t < 2 && bankType2 && names.length > 1) names = names.slice(1);
+    const frames = spreadFrames(names.map(lookup).filter(Boolean), 4);
+    if (!frames.length) {
+      warn(`bullet type ${t}: the cart's own art (${names[0]}) is not in the atlas \u2014 left unpainted`);
+      continue;
+    }
+    const cfg = level.dezaemonBullets.configs && level.dezaemonBullets.configs[t];
+    planBulletType(t, names[0], frames, cfg && Number.isFinite(cfg.speedAdd) ? cfg.speedAdd / RUNTIME_TO_SATURN_SPEED : 1);
+  }
+  const claimBulletType = (proj, owner) => {
+    const tex = proj && Array.isArray(proj.texture) ? proj.texture : null;
+    if (!tex || !tex.length) return null;
+    const have = bulletTypes.findIndex((b) => b && b.first === tex[0]);
+    if (have >= 0) return have;
+    const frames = spreadFrames(tex.map(lookup).filter(Boolean), 4);
+    if (!frames.length) return null;
+    const t = bulletTypes.indexOf(null);
+    if (t < 0) {
+      warn(`${owner}: a save holds three bullet types and they are all taken \u2014 ${tex[0]} is not one of them`);
+      return null;
+    }
+    planBulletType(t, tex[0], frames, Number(proj.speed) || 1);
     return t;
   };
   const usedLetters = /* @__PURE__ */ new Set();
@@ -7396,9 +7414,9 @@ function buildSaveFromGame(level, art2, options = {}) {
   itemKeys.forEach((key, i) => putRefs(GLOBAL_SLOTS.items + i, refsOf(key, 1)));
   blastAKeys.forEach((key, i) => putRefs(GLOBAL_SLOTS.blastA + i, refsOf(key, 1)));
   blastBKeys.forEach((key, i) => putRefs(GLOBAL_SLOTS.blastB + i * 4, refsOf(key, 4)));
-  bulletTypes.forEach((b, t) => b.frames.forEach((key, f) => putRefs(GLOBAL_SLOTS.bullets + t * 4 + f, refsOf(key, 1))));
+  bulletTypes.forEach((b, t) => b && b.frames.forEach((key, f) => putRefs(GLOBAL_SLOTS.bullets + t * 4 + f, refsOf(key, 1))));
   bulletTypes.forEach((b, t) => {
-    if (!b.engine) return;
+    if (!b || !b.engine) return;
     BULLET_ENGINE_SLOTS[t].forEach((slot, f) => putRefs(slot.ref, refsOf(b.engine[f], slot.w * slot.h)));
   });
   weaponKeys.forEach((key, i) => {
@@ -7495,7 +7513,7 @@ function buildSaveFromGame(level, art2, options = {}) {
       })),
       ship: shipSource,
       player2: ship2Idle.length > 0,
-      bulletTypes: bulletTypes.length,
+      bulletTypes: paintedTypes(),
       weaponArt: { slots: weaponKeys.filter(Boolean).length, levelShotFrames: shotFrames.length },
       frames: planned.length,
       cells: packer.used,

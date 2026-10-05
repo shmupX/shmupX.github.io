@@ -772,3 +772,85 @@ Deno.test("a fourth projectile does not fit a cart, and the writer says so", () 
   const decoded = decodeSave(buildPayload(sections));
   assertEquals(firedWeapons(decoded.bosses[0].behavior), [[0], [0, 0], [1], [0]]);
 });
+
+// A cart's own bullet bank is what its verbatim zako records fire: byte 4 of
+// each names a type by index, so the bank has to go back out at the indices
+// it came with, before anything web-authored claims a slot. The writer used
+// to read only the bank's configs, so a mod of a community cart came back
+// with its zako firing 0xFFFF refs — invisible on hardware, the drawn ring
+// in the runtime.
+function cartLevel() {
+  const lv = level();
+  lv.meta = { source: "dezaemon2" };
+  lv.dezaemonBullets = {
+    configs: [{ raw: 0x13, speedAdd: 1 }, { raw: 0x23, speedAdd: 2 }, { raw: 0x33, speedAdd: 3.5 }],
+    art: [null, ["bank1_0.gif", "bank1_1.gif"], ["bank2_0.gif"]],
+  };
+  lv.bossData.boss0.projectileDataA = { texture: ["eye0.png"], speed: 0.6 };
+  const a = art();
+  a["bank1_0.gif"] = frame(16, 16, [255, 0, 255]);
+  a["bank1_1.gif"] = frame(16, 16, [200, 0, 200]);
+  a["bank2_0.gif"] = frame(16, 16, [0, 255, 0]);
+  a["eye0.png"] = frame(12, 12, [0, 255, 255]);
+  return { lv, a };
+}
+
+// The dominant opaque colour of a decoded sprite, as [r, g, b] bands.
+function dominantBand(sprite) {
+  const counts = new Map();
+  for (let i = 0; i < sprite.rgba.length; i += 4) {
+    if (sprite.rgba[i + 3] === 0) continue;
+    const band = [sprite.rgba[i], sprite.rgba[i + 1], sprite.rgba[i + 2]].map((v) => v >> 6).join(",");
+    counts.set(band, (counts.get(band) || 0) + 1);
+  }
+  return [...counts.entries()].sort((x, y) => y[1] - x[1])[0][0];
+}
+
+Deno.test("a cart's own bullet bank goes back out at its own indices, before any web claim", () => {
+  const { lv, a } = cartLevel();
+  const { sections, warnings, report } = buildSaveFromGame(lv, a);
+  // the bank held types 1 and 2; the zako's shot took the free type 0; the
+  // boss's weapon found no room and said so
+  assertStrictEquals(report.bulletTypes, 3);
+  assertEquals(report.stages[0].boss.weapons, [null, null, null]);
+  assertStrictEquals(warnings.filter((w) => /three bullet types/.test(w)).length, 1);
+
+  const decoded = decodeSave(buildPayload(sections));
+  assertEquals(decoded.globalArt.bullets.map(Boolean), [true, true, true]);
+  // type 1 is the magenta bank art, type 2 the green, type 0 the zako's
+  // yellow. Read on the SECOND frame: the engine draws type 2's last two
+  // frames from refs 132 and 136 (BULLET_ENGINE_SLOTS), which are also the
+  // first decoder frame of types 0 and 1, and the writer paints the engine
+  // layout last on purpose — so whenever type 2 is painted, frame 0 of the
+  // other two reads back as type 2's art, on a Saturn-written cart too.
+  assertStrictEquals(dominantBand(decoded.sprites[decoded.globalArt.bullets[1][1]]), "3,0,3");
+  assertStrictEquals(dominantBand(decoded.sprites[decoded.globalArt.bullets[2][1]]), "0,3,0");
+  assertStrictEquals(dominantBand(decoded.sprites[decoded.globalArt.bullets[0][1]]), "3,3,0");
+  // and the config bytes went back raw (the fourth config is the blast byte)
+  assertEquals(decoded.settings.bullets.configs.slice(0, 3).map((c) => c.raw), [0x13, 0x23, 0x33]);
+});
+
+Deno.test("a cart's bullets survive a second trip through the editor", () => {
+  const { lv, a } = cartLevel();
+  const first = decodeSave(buildPayload(buildSaveFromGame(lv, a).sections));
+  // what the editor holds after importing that cart: the mapped game and
+  // its decoded sprites as the atlas
+  const mapped = mapSaveToGame(first);
+  const atlas = {};
+  for (const s of mapped.sprites || []) atlas[s.key] = { w: s.w, h: s.h, rgba: s.rgba };
+  assert(mapped.gameJson.dezaemonBullets.art.every((f) => f && f.every((k) => atlas[k])), "the bank's frames are in the atlas");
+  const { sections, warnings } = buildSaveFromGame(mapped.gameJson, atlas);
+  assertEquals(warnings.filter((w) => /bullet/.test(w)), []);
+  const second = decodeSave(buildPayload(sections));
+  assertEquals(second.globalArt.bullets.map(Boolean), first.globalArt.bullets.map(Boolean));
+  for (let t = 0; t < 3; t++) {
+    for (let f = 0; f < 4; f++) {
+      assertStrictEquals(
+        dominantBand(second.sprites[second.globalArt.bullets[t][f]]),
+        dominantBand(first.sprites[first.globalArt.bullets[t][f]]),
+        `type ${t} frame ${f} keeps its art`,
+      );
+    }
+  }
+  assertEquals(second.settings.bullets.configs.map((c) => c.raw), first.settings.bullets.configs.map((c) => c.raw));
+});

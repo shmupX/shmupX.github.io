@@ -589,10 +589,10 @@ switch under DEZAEMON 2 (SATURN) picks it.
 (in the smallest of the seven zako art bands that holds them, downscaled only
 past 64×64), the boss core (class F0–F3 by size), the ship (the level's own,
 else Duke), the eight item icons (**Item icons** below) and two blast anims
-(drawn procedurally), up to three bullet types from the enemies' and bosses'
-projectiles (the zako's first, then each boss's own weapons A/B/C, its fire
-points pointed at wherever they landed — a boss whose weapons do not fit the
-three fires what did, and the warnings say so),
+(drawn procedurally), the three bullet types — an import's own bank first, at
+the indices its verbatim zako records name, then the web enemies' projectiles,
+then each boss's own weapons A/B/C with its fire points pointed at wherever
+they landed; a weapon that does not fit the three is dropped with a warning —
 the logo and subtitle as the drawn TITLE 1/2, an import's scenery — is packed
 into the 1024 shared CG cells (mirrors and duplicates cost nothing). Each stage
 gets its placement grid (json rows spawn last-first, so they are reversed into
