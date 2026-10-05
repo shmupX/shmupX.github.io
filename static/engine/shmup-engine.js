@@ -6924,29 +6924,48 @@ function buildSaveFromGame(level, art2, options = {}) {
   const ship2Idle = opts.gameMode & 2 ? ship2Frames.length ? spreadFrames(ship2Frames, 2).map((f, i) => planFrame(`ship2:${i}:${f.key}`, f, 32, 32, "player2", 0)) : shipIdle : [];
   const bulletTypes = [];
   const bulletTypeOf = /* @__PURE__ */ new Map();
+  const claimBulletType = (proj, owner) => {
+    const tex = proj && Array.isArray(proj.texture) ? proj.texture : null;
+    if (!tex || !tex.length) return null;
+    let t = bulletTypes.findIndex((b) => b.first === tex[0]);
+    if (t >= 0) return t;
+    const frames = spreadFrames(tex.map(lookup).filter(Boolean), 4);
+    if (!frames.length) return null;
+    if (bulletTypes.length >= 3) {
+      warn(`${owner}: a save holds three bullet types and they are all taken \u2014 ${tex[0]} is not one of them`);
+      return null;
+    }
+    t = bulletTypes.length;
+    bulletTypes.push({
+      first: tex[0],
+      speed: Number(proj.speed) || 1,
+      src: frames,
+      frames: frames.map((f, i) => planFrame(`bullet:${t}:${i}:${f.key}`, f, 16, 16, `bullet${t}`, 1)),
+      // The same projectile, fitted to each engine char-slot frame's geometry, so
+      // the bullet the hardware actually draws (char slots 55/59/63) shows it.
+      engine: BULLET_ENGINE_SLOTS[t].map((slot, i) => planFrame(`bulletE:${t}:${i}:${frames[i % frames.length].key}`, frames[i % frames.length], slot.w * CG_CELL, slot.h * CG_CELL, `bulletE${t}`, 1))
+    });
+    return t;
+  };
   const usedLetters = /* @__PURE__ */ new Set();
   for (const st of stages) for (const row of st.enemylist) for (const c of row) if (c !== "00") usedLetters.add(c.slice(0, -1));
   for (const letter of usedLetters) {
     const rec = enemyData[`enemy${letter}`];
-    const tex = rec && rec.projectileData && Array.isArray(rec.projectileData.texture) ? rec.projectileData.texture : null;
-    if (!tex || !tex.length) continue;
-    let t = bulletTypes.findIndex((b) => b.first === tex[0]);
-    if (t < 0 && bulletTypes.length < 3) {
-      const frames = spreadFrames(tex.map(lookup).filter(Boolean), 4);
-      if (!frames.length) continue;
-      t = bulletTypes.length;
-      bulletTypes.push({
-        first: tex[0],
-        speed: Number(rec.projectileData.speed) || 1,
-        src: frames,
-        frames: frames.map((f, i) => planFrame(`bullet:${t}:${i}:${f.key}`, f, 16, 16, `bullet${t}`, 1)),
-        // The same projectile, fitted to each engine char-slot frame's geometry, so
-        // the bullet the hardware actually draws (char slots 55/59/63) shows it.
-        engine: BULLET_ENGINE_SLOTS[t].map((slot, i) => planFrame(`bulletE:${t}:${i}:${frames[i % frames.length].key}`, frames[i % frames.length], slot.w * CG_CELL, slot.h * CG_CELL, `bulletE${t}`, 1))
-      });
-    }
-    if (t >= 0) bulletTypeOf.set(letter, t);
+    const t = claimBulletType(rec && rec.projectileData, `enemy${letter}`);
+    if (t !== null) bulletTypeOf.set(letter, t);
   }
+  const bossWeaponTypes = /* @__PURE__ */ new Map();
+  const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
+  stages.forEach((st, s) => {
+    const b = bossData[`boss${s}`];
+    if (!b) return;
+    const owner = `${st.key}: boss (${b.name || "?"})`;
+    bossWeaponTypes.set(s, [
+      claimBulletType(armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData), owner),
+      claimBulletType(armed(b.bulletDataB, b.projectileDataB), owner),
+      claimBulletType(armed(b.bulletDataC, b.projectileDataC), owner)
+    ]);
+  });
   const built = stages.map((st, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
     const spawnRows = st.enemylist.slice().reverse();
@@ -7100,6 +7119,9 @@ function buildSaveFromGame(level, art2, options = {}) {
       const row = Number.isInteger(dz.row) ? clamp(dz.row, 0, PLACEMENT_ROWS - 1) : Math.min(PLACEMENT_ROWS - 8, lastRow + BOSS_ROW_GAP);
       const col = Number.isInteger(dz.col) ? clamp(dz.col, 0, PLACEMENT_COLS - 1) : BOSS_COL;
       const decoded = dz.boss || null;
+      const weaponTypes = bossWeaponTypes.get(s) || [null, null, null];
+      const fireType = (type) => type <= 2 ? weaponTypes[type] ?? weaponTypes[0] ?? type : type;
+      const remapFirePoints = (fps) => fps.map((fp) => ({ ...fp, type: fireType(fp.type) }));
       const trailer = encodeBossTrailer(decoded ? {
         sizeClass,
         hpStages: decoded.hpStages,
@@ -7115,16 +7137,17 @@ function buildSaveFromGame(level, art2, options = {}) {
           moveScript: p.moveScript,
           moveSpeed: p.moveSpeed,
           fireTickFrames: p.fireTickFrames,
-          firePoints: (p.firePoints || []).map((fp) => ({ dx: fp.dx, dy: fp.dy, type: fp.type, rate: fp.rate, param: fp.param }))
+          firePoints: remapFirePoints((p.firePoints || []).map((fp) => ({ dx: fp.dx, dy: fp.dy, type: fp.type, rate: fp.rate, param: fp.param })))
         }))
       } : {
         sizeClass,
         hpStages: 2,
         hp: Math.max(1, Number(bossRec.hp) || 100) * BOSS_UNITS_PER_HIT,
         score: Number(bossRec.score) || BOSS_SCORE_TABLE[2],
-        optionFlag: false
+        optionFlag: false,
+        patterns: DEFAULT_BOSS_PATTERNS.map((p) => ({ ...p, firePoints: remapFirePoints(p.firePoints) }))
       });
-      boss = { sizeClass, row, col, frames: planKeys, trailer, name: bossRec.name || `boss${s}` };
+      boss = { sizeClass, row, col, frames: planKeys, trailer, name: bossRec.name || `boss${s}`, weapons: weaponTypes };
       lastRow = Math.max(lastRow, row);
     }
     const items = [];
@@ -7463,7 +7486,9 @@ function buildSaveFromGame(level, art2, options = {}) {
         key: b.key,
         placements: b.placements.length,
         records: [...b.records.values()].map((r) => ({ name: r.name, record: r.index, band: r.band })),
-        boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col } : null,
+        // weapons: the global bullet type each of the boss's own
+        // weapons A/B/C landed in, null where it carries none.
+        boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, weapons: b.boss.weapons } : null,
         items: b.items.length,
         background: !!b.background,
         extent: b.extent

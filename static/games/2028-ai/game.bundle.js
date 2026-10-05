@@ -5780,30 +5780,36 @@
     // with its weaponry written down (extract-mode.js `bossTravelRecord`), and
     // the bank belonging to whichever game it landed in must not overrule it.
     var own = weapon === 1 ? scene.bossProjDataB : weapon === 2 ? scene.bossProjDataC : scene.bossProjDataA;
-    if (own && own.texture && own.texture.length && bulletFramesInAtlas(scene, own.texture, null).length) {
+    // A slot bossAdd filled from the bank is not the boss's own statement:
+    // read the bank again here, where the rank term is live.
+    if (own && !own.fromBank && own.texture && own.texture.length && bulletFramesInAtlas(scene, own.texture, null).length) {
       return own;
     }
-    // The save's own bullet art + config for this global type, when painted.
-    var bullets = scene.recipe && scene.recipe.dezaemonBullets;
-    var art = bullets && bullets.art && bullets.art[weapon];
-    if (art && art.length) {
-      var atlas = scene.textures.get("game_asset");
-      if (atlas && atlas.has(art[0])) {
-        var cfg = bullets.configs && bullets.configs[weapon];
-        return {
-          speed: cfg && Number.isFinite(cfg.speedAdd)
-            ? (dezaRank(scene) * 4 / 512 + cfg.speedAdd) * 2
-            : DEZA_BOSS_BULLET.speed,
-          damage: 1,
-          hp: 1,
-          score: 0,
-          spgage: 0,
-          texture: art
-        };
-      }
-    }
+    var bank = bankBossWeapon(scene, weapon);
+    if (bank) return bank;
     var pd = weapon === 1 ? scene.bossProjDataB : weapon === 2 ? scene.bossProjDataC : scene.bossProjDataA;
     return pd && pd.texture && pd.texture.length ? pd : DEZA_BOSS_BULLET;
+  }
+  // The save's own bullet art + config for one global bullet type (A/B/C),
+  // as a boss projectile record — null when the cart never painted it.
+  function bankBossWeapon(scene, weapon) {
+    var bullets = scene.recipe && scene.recipe.dezaemonBullets;
+    var art = bullets && bullets.art && bullets.art[weapon];
+    if (!art || !art.length) return null;
+    var atlas = scene.textures.get("game_asset");
+    if (!atlas || !atlas.has(art[0])) return null;
+    var cfg = bullets.configs && bullets.configs[weapon];
+    return {
+      speed: cfg && Number.isFinite(cfg.speedAdd)
+        ? (dezaRank(scene) * 4 / 512 + cfg.speedAdd) * 2
+        : DEZA_BOSS_BULLET.speed,
+      damage: 1,
+      hp: 1,
+      score: 0,
+      spgage: 0,
+      texture: art,
+      fromBank: true
+    };
   }
   function spawnDezaBossBullet(scene, x, y, dirX, dirY, projData, tint) {
     var frames = bulletFramesInAtlas(scene, projData.texture, DEZA_BOSS_BULLET.texture);
@@ -12286,6 +12292,26 @@
     scene.bossProjDataB = bossData.bulletDataB || bossData.projectileDataB || null;
     scene.bossProjDataC = bossData.bulletDataC || bossData.projectileDataC || null;
     scene.bossProjData = bossData.bulletData || bossData.projectileData || scene.bossProjDataA;
+    // A cart has nowhere to keep a boss's own weapon records. The writer
+    // (shmup-engine game-to-save.js) folds bulletDataA/B/C into the save-wide
+    // bullet bank and points the fire points at them, and the decoder hands
+    // them back only as `dezaemonBullets.art` beside a record left on the
+    // starter's `bulletData: {}`. The Dezaemon state machine arms itself out
+    // of that bank (bossWeapon); a boss pinned to a stock pattern —
+    // `attackPattern`, which a mod's web overlay lays back over the cart —
+    // read nothing but the record's slots, and fired normalProjectile out of
+    // the empty stub. On an import, fill what the record left empty from the
+    // bank, so both routes fire what the cart carries. Stock levels are
+    // untouched: they have no bank, and their records say what they fire.
+    if (isImportedLevel()) {
+      var armedSlot = function(pd) {
+        return pd && Array.isArray(pd.texture) && pd.texture.length ? pd : null;
+      };
+      scene.bossProjDataA = armedSlot(scene.bossProjDataA) || bankBossWeapon(scene, 0) || scene.bossProjDataA;
+      scene.bossProjDataB = armedSlot(scene.bossProjDataB) || bankBossWeapon(scene, 1) || scene.bossProjDataB;
+      scene.bossProjDataC = armedSlot(scene.bossProjDataC) || bankBossWeapon(scene, 2) || scene.bossProjDataC;
+      scene.bossProjData = armedSlot(scene.bossProjData) || scene.bossProjDataA;
+    }
     triggerHaptic("bossEnter");
     // Same reasoning as the bullets: art named by a record that travelled here
     // without its pixels must not resolve to duke_0, the atlas's first frame.

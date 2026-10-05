@@ -225,6 +225,19 @@ they are written out in full.
     would play as a black band. A stage with Dezaemon scenery (`dezaBg`) never
     shows a stage-end backdrop at all, so the field is inert there. Upstream
     home is `2019-es7/src/phaser/GameScene.js`.
+  - A cart's boss arms itself out of the cart. A cart has nowhere to keep a
+    boss's own weapon records: the writer folds `bulletDataA/B/C` into the
+    save-wide bullet bank and points the fire points at them, and the decoder
+    hands them back only as `dezaemonBullets.art`, beside a record left on the
+    starter's `bulletData: {}`. The Dezaemon state machine already armed itself
+    out of that bank (`bossWeapon`); a boss pinned to a stock pattern
+    (`attackPattern`, which a mod's web overlay lays back over the cart) read
+    nothing but the record's slots and fired `normalProjectile` out of the empty
+    stub. `bossAdd` now fills, on an import only, whatever slot the record left
+    empty from the bank (`bankBossWeapon`, factored out of `bossWeapon`); a slot
+    filled that way is marked `fromBank` so the state machine keeps reading the
+    bank live, where the rank term moves. Upstream home is
+    `2019-es7/src/phaser/game-objects/Boss.js`.
 - `mcp/` — the **character MCP server** (`deno task mcp:character`, registered
   for this repo by `.mcp.json`): clone a character out of the catalog, swap any
   frame of any sprite or atlas into its animations, its projectiles or its
@@ -576,7 +589,10 @@ switch under DEZAEMON 2 (SATURN) picks it.
 (in the smallest of the seven zako art bands that holds them, downscaled only
 past 64×64), the boss core (class F0–F3 by size), the ship (the level's own,
 else Duke), the eight item icons (**Item icons** below) and two blast anims
-(drawn procedurally), up to three bullet types from the enemies' projectiles,
+(drawn procedurally), up to three bullet types from the enemies' and bosses'
+projectiles (the zako's first, then each boss's own weapons A/B/C, its fire
+points pointed at wherever they landed — a boss whose weapons do not fit the
+three fires what did, and the warnings say so),
 the logo and subtitle as the drawn TITLE 1/2, an import's scenery — is packed
 into the 1024 shared CG cells (mirrors and duplicates cost nothing). Each stage
 gets its placement grid (json rows spawn last-first, so they are reversed into

@@ -779,33 +779,69 @@ export function buildSaveFromGame(level, art, options = {}) {
             : shipIdle)
         : [];
 
-    // Global bullet types: the first three distinct projectile textures.
+    // Global bullet types: the first three distinct projectile textures,
+    // the zako's first and then each stage boss's own weapons. A save has
+    // exactly three and every shot in the game is one of them: a zako
+    // record names one in its byte 4, a boss fire point in its type nibble
+    // (A/B/C). A boss's bulletDataA/B/C — the records the stock 2028.Ai
+    // bosses and anything extracted into the library arm themselves with —
+    // used to be the one weapon the writer never looked at, so a web boss
+    // folded into a cart came back out firing whatever a zako had put in
+    // type 0, or nothing at all.
     const bulletTypes = []; // [{first, frames: planKeys}]
     const bulletTypeOf = new Map(); // enemy key -> type index
+    // The type that holds this projectile record's art, claiming a free one
+    // for it the first time; null when the record names no art, its art is
+    // not in the atlas, or all three types already hold something else.
+    const claimBulletType = (proj, owner) => {
+        const tex = proj && Array.isArray(proj.texture) ? proj.texture : null;
+        if (!tex || !tex.length) return null;
+        let t = bulletTypes.findIndex((b) => b.first === tex[0]);
+        if (t >= 0) return t;
+        const frames = spreadFrames(tex.map(lookup).filter(Boolean), 4);
+        if (!frames.length) return null;
+        if (bulletTypes.length >= 3) {
+            warn(`${owner}: a save holds three bullet types and they are all taken — ${tex[0]} is not one of them`);
+            return null;
+        }
+        t = bulletTypes.length;
+        bulletTypes.push({
+            first: tex[0],
+            speed: Number(proj.speed) || 1,
+            src: frames,
+            frames: frames.map((f, i) => planFrame(`bullet:${t}:${i}:${f.key}`, f, 16, 16, `bullet${t}`, 1)),
+            // The same projectile, fitted to each engine char-slot frame's geometry, so
+            // the bullet the hardware actually draws (char slots 55/59/63) shows it.
+            engine: BULLET_ENGINE_SLOTS[t].map((slot, i) =>
+                planFrame(`bulletE:${t}:${i}:${frames[i % frames.length].key}`, frames[i % frames.length], slot.w * CG_CELL, slot.h * CG_CELL, `bulletE${t}`, 1)),
+        });
+        return t;
+    };
     const usedLetters = new Set();
     for (const st of stages) for (const row of st.enemylist) for (const c of row) if (c !== "00") usedLetters.add(c.slice(0, -1));
     for (const letter of usedLetters) {
         const rec = enemyData[`enemy${letter}`];
-        const tex = rec && rec.projectileData && Array.isArray(rec.projectileData.texture) ? rec.projectileData.texture : null;
-        if (!tex || !tex.length) continue;
-        let t = bulletTypes.findIndex((b) => b.first === tex[0]);
-        if (t < 0 && bulletTypes.length < 3) {
-            const frames = spreadFrames(tex.map(lookup).filter(Boolean), 4);
-            if (!frames.length) continue;
-            t = bulletTypes.length;
-            bulletTypes.push({
-                first: tex[0],
-                speed: Number(rec.projectileData.speed) || 1,
-                src: frames,
-                frames: frames.map((f, i) => planFrame(`bullet:${t}:${i}:${f.key}`, f, 16, 16, `bullet${t}`, 1)),
-                // The same projectile, fitted to each engine char-slot frame's geometry, so
-                // the bullet the hardware actually draws (char slots 55/59/63) shows it.
-                engine: BULLET_ENGINE_SLOTS[t].map((slot, i) =>
-                    planFrame(`bulletE:${t}:${i}:${frames[i % frames.length].key}`, frames[i % frames.length], slot.w * CG_CELL, slot.h * CG_CELL, `bulletE${t}`, 1)),
-            });
-        }
-        if (t >= 0) bulletTypeOf.set(letter, t);
+        const t = claimBulletType(rec && rec.projectileData, `enemy${letter}`);
+        if (t !== null) bulletTypeOf.set(letter, t);
     }
+    // Each boss's weapons A/B/C, in the slots the runtime reads them from
+    // (bossAdd: bulletDataX || projectileDataX, the bare bulletData standing
+    // in for A). An armed slot is only one that names art — map-to-game
+    // leaves a decoded boss on `bulletData: {}`, and an empty record claims
+    // nothing. The fire points are remapped through this below, so a boss
+    // whose weapon A landed in type 2 fires type 2.
+    const bossWeaponTypes = new Map(); // stage index -> [typeA|null, typeB|null, typeC|null]
+    const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
+    stages.forEach((st, s) => {
+        const b = bossData[`boss${s}`];
+        if (!b) return;
+        const owner = `${st.key}: boss (${b.name || "?"})`;
+        bossWeaponTypes.set(s, [
+            claimBulletType(armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData), owner),
+            claimBulletType(armed(b.bulletDataB, b.projectileDataB), owner),
+            claimBulletType(armed(b.bulletDataC, b.projectileDataC), owner),
+        ]);
+    });
 
     // Per stage: placements, records, boss, items, scenery.
     const built = stages.map((st, s) => {
@@ -996,6 +1032,17 @@ export function buildSaveFromGame(level, art, options = {}) {
             const row = Number.isInteger(dz.row) ? clamp(dz.row, 0, PLACEMENT_ROWS - 1) : Math.min(PLACEMENT_ROWS - 8, lastRow + BOSS_ROW_GAP);
             const col = Number.isInteger(dz.col) ? clamp(dz.col, 0, PLACEMENT_COLS - 1) : BOSS_COL;
             const decoded = dz.boss || null;
+            // A fire point's type 0-2 is the global bullet type it fires.
+            // Where this boss's own weapon A/B/C claimed a type above, the
+            // fire point follows it there; a weapon it does not carry falls
+            // back to its weapon A, so a one-weapon boss never fires an
+            // unpainted type; a boss with no weapons of its own keeps the
+            // numbers it was written with — the defaults for a web boss, its
+            // own trailer's for a decoded one, whose bank travels in the
+            // level's zako records rather than in the boss.
+            const weaponTypes = bossWeaponTypes.get(s) || [null, null, null];
+            const fireType = (type) => (type <= 2 ? (weaponTypes[type] ?? weaponTypes[0] ?? type) : type);
+            const remapFirePoints = (fps) => fps.map((fp) => ({ ...fp, type: fireType(fp.type) }));
             const trailer = encodeBossTrailer(decoded
                 ? {
                     sizeClass,
@@ -1012,7 +1059,7 @@ export function buildSaveFromGame(level, art, options = {}) {
                         moveScript: p.moveScript,
                         moveSpeed: p.moveSpeed,
                         fireTickFrames: p.fireTickFrames,
-                        firePoints: (p.firePoints || []).map((fp) => ({ dx: fp.dx, dy: fp.dy, type: fp.type, rate: fp.rate, param: fp.param })),
+                        firePoints: remapFirePoints((p.firePoints || []).map((fp) => ({ dx: fp.dx, dy: fp.dy, type: fp.type, rate: fp.rate, param: fp.param }))),
                     })),
                 }
                 : {
@@ -1021,8 +1068,9 @@ export function buildSaveFromGame(level, art, options = {}) {
                     hp: (Math.max(1, Number(bossRec.hp) || 100)) * BOSS_UNITS_PER_HIT,
                     score: Number(bossRec.score) || BOSS_SCORE_TABLE[2],
                     optionFlag: false,
+                    patterns: DEFAULT_BOSS_PATTERNS.map((p) => ({ ...p, firePoints: remapFirePoints(p.firePoints) })),
                 });
-            boss = { sizeClass, row, col, frames: planKeys, trailer, name: bossRec.name || `boss${s}` };
+            boss = { sizeClass, row, col, frames: planKeys, trailer, name: bossRec.name || `boss${s}`, weapons: weaponTypes };
             lastRow = Math.max(lastRow, row);
         }
 
@@ -1459,7 +1507,9 @@ export function buildSaveFromGame(level, art, options = {}) {
                 key: b.key,
                 placements: b.placements.length,
                 records: [...b.records.values()].map((r) => ({ name: r.name, record: r.index, band: r.band })),
-                boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col } : null,
+                // weapons: the global bullet type each of the boss's own
+                // weapons A/B/C landed in, null where it carries none.
+                boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, weapons: b.boss.weapons } : null,
                 items: b.items.length,
                 background: !!b.background,
                 extent: b.extent,

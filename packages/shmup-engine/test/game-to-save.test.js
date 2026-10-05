@@ -699,3 +699,76 @@ Deno.test("a level with no 3D models leaves sec7 zeroed", () => {
   assert(sections[7].every((b) => b === 0));
   assertStrictEquals(decodeSave(buildPayload(sections)).models, null);
 });
+
+// A boss's own weapons were the one projectile the writer never packed. A
+// cart keeps every shot in three global bullet types and a boss fire point
+// names one by its type nibble, so pyramid — the stock 2028.Ai boss,
+// extracted into the library and folded into a cart — came back out of the
+// mod's .sav firing whatever a zako had put in type 0, or the runtime's
+// tinted stand-in when nothing had, while the library editor's firing
+// range showed its evilEye and hexagram fine.
+function armedLevel() {
+  const lv = level();
+  lv.bossData.boss0.projectileDataA = { texture: ["eye0.png", "eye1.png"], speed: 0.6 };
+  lv.bossData.boss0.projectileDataB = { texture: ["hex0.png"], speed: 1 };
+  const a = art();
+  a["eye0.png"] = frame(12, 12, [0, 255, 255]);
+  a["eye1.png"] = frame(12, 12, [0, 200, 255]);
+  a["hex0.png"] = frame(16, 16, [255, 255, 255]);
+  return { lv, a };
+}
+
+// The weapons each shot of a decoded boss fires, pattern by pattern. A
+// trailer carries three fire points per pattern whether or not they were
+// filled in; a blank one decodes as weapon 0 with shot function 0, which
+// the runtime never fires, so it is left out here too.
+function firedWeapons(behavior) {
+  return behavior.patterns.map((p) => p.firePoints.filter((fp) => fp.shot && fp.shot.fn !== 0).map((fp) => fp.shot.weapon));
+}
+
+Deno.test("a boss's own weapons claim bullet types, and its fire points follow them", () => {
+  const { lv, a } = armedLevel();
+  const { sections, warnings, report } = buildSaveFromGame(lv, a);
+  assertEquals(warnings.filter((w) => !/drop digits/.test(w)), []);
+  // the zako's shot claimed type 0 first; the boss's A and B are 1 and 2
+  assertStrictEquals(report.bulletTypes, 3);
+  assertEquals(report.stages[0].boss.weapons, [1, 2, null]);
+
+  const decoded = decodeSave(buildPayload(sections));
+  assertStrictEquals(decoded.globalArt.bullets.filter(Boolean).length, 3);
+  // the four default patterns fire A, A+A, B, A — moved off types 0/1
+  assertEquals(firedWeapons(decoded.bosses[0].behavior), [[1], [1, 1], [2], [1]]);
+  // and back in the editor the boss arms out of the bank at those types
+  const { gameJson } = mapSaveToGame(decoded);
+  assertStrictEquals(gameJson.dezaemonBullets.art.filter(Boolean).length, 3);
+  assertEquals(firedWeapons(gameJson.bossData.boss0.dezaemon.boss), [[1], [1, 1], [2], [1]]);
+});
+
+Deno.test("a one-weapon boss fires that weapon from every fire point; a boss with none keeps the defaults", () => {
+  const { lv, a } = armedLevel();
+  delete lv.bossData.boss0.projectileDataB;
+  const one = decodeSave(buildPayload(buildSaveFromGame(lv, a).sections));
+  // the default third pattern names weapon B; without one it falls back to A
+  assertEquals(firedWeapons(one.bosses[0].behavior), [[1], [1, 1], [1], [1]]);
+
+  const none = decodeSave(buildPayload(buildSaveFromGame(level(), art()).sections));
+  assertEquals(firedWeapons(none.bosses[0].behavior), [[0], [0, 0], [1], [0]]);
+});
+
+Deno.test("a fourth projectile does not fit a cart, and the writer says so", () => {
+  const { lv, a } = armedLevel();
+  // two more zako, each with a shot of its own, take the types first
+  lv.enemylist[1][1] = "C0";
+  lv.enemylist[1][2] = "D0";
+  lv.enemyData.enemyC = { name: "c", hp: 1, score: 10, speed: 1, interval: 60, texture: ["dot0.png"], projectileData: { texture: ["shotC.png"], speed: 1 } };
+  lv.enemyData.enemyD = { name: "d", hp: 1, score: 10, speed: 1, interval: 60, texture: ["dot1.png"], projectileData: { texture: ["shotD.png"], speed: 1 } };
+  a["shotC.png"] = frame(6, 6, [255, 0, 255]);
+  a["shotD.png"] = frame(6, 6, [0, 255, 0]);
+  const { sections, warnings, report } = buildSaveFromGame(lv, a);
+  assertStrictEquals(report.bulletTypes, 3);
+  assertEquals(report.stages[0].boss.weapons, [null, null, null]);
+  assertStrictEquals(warnings.filter((w) => /three bullet types/.test(w)).length, 2);
+  // nothing claimed, so the fire points keep the default numbers
+  const decoded = decodeSave(buildPayload(sections));
+  assertEquals(firedWeapons(decoded.bosses[0].behavior), [[0], [0, 0], [1], [0]]);
+});
