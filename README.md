@@ -780,7 +780,7 @@ its mods. Every card has a **VERSION** switch:
 | ------------------------------ | -------- | ---------------------------------------------- | -------------------------------------- |
 | CONTINUES (`?continues=`)      | web      | game over is game over                         | the CONTINUE? prompt                   |
 | COMBO MULTIPLIER (`?combo=`)   | web      | every kill at face value                       | ×2 at combo 11, ×3 at 21…              |
-| HP + COMBO HUD (`?hud=`)       | web      | nothing drawn over the top of the playfield    | the HP, SCORE and COMBO band           |
+| HP + COMBO HUD (`?hud=`)       | web      | the Saturn's one line of SCORE, and no band    | the HP, SCORE and COMBO band           |
 | 3-HIT SHIP (`?armor=`)         | web      | one hit destroys the ship; two spares in stock | the record's `maxHp` in hits, no stock |
 | STORY MODE (`?story=`)         | web      | skipped                                        | the game's story scenes, if it has any |
 | DEZA WEAPONS (`?dezaWeapons=`) | Dezaemon | its own MAIN, charge, bomb and OPTION pods     | the same                               |
@@ -788,14 +788,14 @@ its mods. Every card has a **VERSION** switch:
 The runtime plays two kinds of game and each brought parts the other never had.
 **OG** plays a game with its own side's parts and none of the other's: a cart as
 the Saturn played it — a ship that anything destroys, replaced from a stock of
-spares drawn along the bottom edge, under no HUD — and a web game exactly as it
-always was (three hits, the HUD, the combo, continues, its story, no Dezaemon
-weapons). **MOD** — called REBOOT until 2026-10-05, a word that still reads as
-it — lets every part cross over: a cart gets the web column above, and a web
-game gets the Dezaemon weapons on top of its own shot (`dezaKit` in
-`game.bundle.js`: the MAIN 1 spread, the OPTION A ring, charge 1, levelled by
-its two shot power-ups; the SP button stays its own special attack). A game with
-no `?version=` at all is OG.
+spares drawn along the bottom edge, under the Saturn's one line of SCORE — and a
+web game exactly as it always was (three hits, the HUD, the combo, continues,
+its story, no Dezaemon weapons). **MOD** — called REBOOT until 2026-10-05, a
+word that still reads as it — lets every part cross over: a cart gets the web
+column above, and a web game gets the Dezaemon weapons on top of its own shot
+(`dezaKit` in `game.bundle.js`: the MAIN 1 spread, the OPTION A ring, charge 1,
+levelled by its two shot power-ups; the SP button stays its own special attack).
+A game with no `?version=` at all is OG.
 
 **A** plays the selected version and **Y** opens the game in the editor (◀ ▶
 turns the switch on a pad). The launcher sends only the word —
@@ -810,9 +810,28 @@ holds them equal and checks the runtime asks about every row. A story is the one
 chip that can stay dark on MOD: a cart has nowhere to keep one, so only a mod
 that was given a story in the STORY editor has it.
 
-The spare-ship count is a stand-in: Dezaemon 2 seeds it from somewhere the
-decoder has not traced (the same gap the bomb stock has), so every cart gets
-three ships, and where the Saturn draws its own count is not traced either.
+**The score line** is the kernel's own, and its place is measured rather than
+traced: two Mednafen captures of a vertical cart (906×720 for a 330×240 frame —
+the 320×224 picture inside 5 px and 8 lines of overscan), with the glyph sheet
+fitted to each word until it locked to the 8 px tile grid. `SCORE` starts at
+tile (6, 1) — px (48, 8) — and the number is right-aligned in the eight tiles
+after one blank, so its last digit ends at x 160, the centre line of the screen.
+`dezaSatX` keeps the middle 256 columns, as it does for the title and the staff
+roll, so in the runtime the word starts at x 16 and the number ends on its own
+centre line. The glyphs are `assets/fonts/athenaFont.png`, the 95-cell sheet the
+game already ships; the disc's tiles also carry a palette gradient and a baked
+drop shadow the sheet does not, so both are painted back on from the same
+captures (white to row 4, then `#e7ffff` and `#d6ffff`, over a `#484848` shadow
+to the right, below and diagonally — `dezaHudSheet` in `game.bundle.js`). That
+is one of the eight HUD palettes a cart can pick (settings `+0x01` bits 0-2);
+the other seven are not traced, so every cart is drawn in this one.
+
+The same captures put `BOMB` at tile (27, 27) with its count ending at tile 33 —
+the mirror of the score's 48 px inset, on the last row — and show no ship count
+anywhere on screen. Neither is acted on yet: the bomb stock is still the SP
+button's to show, and the spare-ship count is a stand-in in both number and
+place. Dezaemon 2 seeds it from somewhere the decoder has not traced (the same
+gap the bomb stock has), so every cart gets three ships.
 
 ## Pixel Editor and Tilemap Editor
 
@@ -1376,9 +1395,10 @@ that is 2028.Ai's rather than the game's is keyed off it:
   Boss** (`?finalBoss=1` — the cart's last stage, opened at its boss) and Allow
   Continues. 2028.Ai keeps its own set, Akuma (`?boss=goki`) included. Both lead
   with **Mod Mode** (`?version=mod`).
-- **A one-hit ship, and no HUD.** A cart's ship has no hit points and nothing is
-  drawn across the top of its playfield — OG, the default; see the VERSION table
-  under **The launcher's LIBRARY** for what MOD lays back over it.
+- **A one-hit ship, and the Saturn's score line.** A cart's ship has no hit
+  points, and the only thing drawn across the top of its playfield is `SCORE` in
+  the kernel's font, where the Saturn types it — OG, the default; see the
+  VERSION table under **The launcher's LIBRARY** for what MOD lays back over it.
 - **No ROUND / FIGHT card.** Dezaemon 2 starts the level as its title fades —
   the scroll runs and the ship flies in inside a second. 2028.Ai's 2.5 s stage
   card (`showTitle()` in `PhaserGameScene`) put every imported cart that far

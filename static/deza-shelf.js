@@ -117,7 +117,7 @@ export function shelfKindOf(rec) {
 // had: a web game its hit points, HUD, combo, continues and story; a Dezaemon
 // cart the Saturn's weapon kit. OG plays a game with its own side's parts and
 // none of the other's — a cart as the Saturn played it, a one-hit ship under
-// no HUD — and MOD lets every part cross over. (MOD was REBOOT until
+// the kernel's one line of SCORE — and MOD lets every part cross over. (MOD was REBOOT until
 // 2026-10-05; normalizeVersion still reads the old word.)
 //
 // The parts, in the order the launcher's cards list them. `param` is the URL

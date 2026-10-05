@@ -1511,9 +1511,9 @@
   // that takes its record's maxHp in hits, the HP / SCORE / COMBO band across
   // the top, the combo multiplier, the CONTINUE? prompt and a story. A
   // DEZAEMON cart (isImportedLevel() above) has a ship that is destroyed by
-  // anything that touches it and replaced from a stock of spares, nothing
-  // drawn over the top of the playfield, and the Saturn's weapon kit — the
-  // MAIN shot types, the charge shot, the OPTION pods.
+  // anything that touches it and replaced from a stock of spares, the kernel's
+  // one line of SCORE where the band would be (dezaHudLine), and the Saturn's
+  // weapon kit — the MAIN shot types, the charge shot, the OPTION pods.
   //
   // OG plays a game with its own side's parts and none of the other's. MOD
   // (?version=mod — the launcher's LIBRARY switch and the Guide's Cheats ->
@@ -2433,6 +2433,10 @@
       // import swaps game_asset for the level's own atlas, which would take
       // the animated pickups away with it. Built by `deno task powerups:atlas`.
       this.load.atlas("powerups", "assets/img/powerups.png", "assets/powerups.json");
+      // The kernel font's glyph sheet, for the Saturn's own score line
+      // (dezaHudSheet). The TrueType beside it is the same face for canvas
+      // text; this is the bitmap, eight pixels to a cell.
+      this.load.image("athenaFont", "assets/fonts/athenaFont.png");
       this.load.json("recipe", "assets/game.json");
       this.load.json("custom-bgm-manifest", "assets/custom-bgm/manifest.json");
       this.load.image("title_bg", "assets/img/title_bg.jpg");
@@ -13214,6 +13218,107 @@
   var GH11 = GAME_DIMENSIONS.HEIGHT;
   var GCX6 = GAME_DIMENSIONS.CENTER_X;
   var GCY3 = GAME_DIMENSIONS.CENTER_Y;
+  // --- The Saturn's own score line -------------------------------------------
+  //
+  // What a Dezaemon cart draws where this runtime draws its band: one line of
+  // the kernel's text layer. Its place is measured, not traced — two Mednafen
+  // captures of a vertical cart (906x720 for a 330x240 frame: the 320x224
+  // picture inside 5 px and 8 lines of overscan), with the glyph sheet fitted
+  // to each word until it locked to the 8 px tile grid:
+  //
+  //   SCORE    tile (6, 1)   px (48, 8)
+  //   number   right-aligned in the eight tiles after one blank, so its last
+  //            digit ends at x 160 — the centre line of the 320 px screen
+  //
+  // dezaSatX keeps the middle 256 columns of that screen, as it does for the
+  // title and the staff roll, so here the word starts at x 16 and the number
+  // ends on this screen's centre line too; the row is counted from the top
+  // edge, as it is on the Saturn.
+  //
+  // The face is the kernel's own, font 0 of GFONT.BIN. athenaFont.png holds
+  // its 95 ASCII glyphs as white body pixels, eight to a cell. The disc's tiles
+  // carry more than the sheet does — a row index per pixel for a palette
+  // gradient, and a baked drop shadow — so both are painted back on from the
+  // same captures: white down to row 4, then #e7ffff and #d6ffff, over a
+  // #484848 shadow wherever the pixel to the left, above, or above-left is
+  // body, cut off at the cell's edge the way a tile's is. (All three, not the
+  // diagonal alone: fitted cell by cell against "24600", the diagonal leaves
+  // 39 of 320 pixels wrong and the three leave 9, every one of them a blend
+  // at a glyph's edge.) That is ONE of the eight HUD palettes a cart can
+  // choose (settings +0x01 bits0-2, hudStyle.palette); the other seven are
+  // not traced, so every cart is drawn in this one.
+  var DEZA_HUD_SCORE = { x: 48, y: 8, digits: 8 };
+  var DEZA_HUD_INK = ["#ffffff", "#ffffff", "#ffffff", "#ffffff", "#ffffff", "#e7ffff", "#d6ffff", "#d6ffff"];
+  var DEZA_HUD_SHADOW = "#484848";
+  // The glyph sheet in the HUD's colours: built from the white sheet the
+  // first time a line is typed, and kept for the life of the game.
+  function dezaHudSheet(scene) {
+    var key = "athenaFontHud";
+    if (scene.textures.exists(key)) return scene.textures.get(key).getSourceImage();
+    if (!scene.textures.exists("athenaFont")) return null;
+    var src = scene.textures.get("athenaFont").getSourceImage();
+    var w = src.width, h = Math.min(src.height, DEZA_CELL);
+    var scratch = document.createElement("canvas");
+    scratch.width = w;
+    scratch.height = h;
+    var sctx = scratch.getContext("2d", { willReadFrequently: true });
+    sctx.drawImage(src, 0, 0);
+    var alpha = sctx.getImageData(0, 0, w, h).data;
+    // Body pixel (x, y) of the cell that starts at column `cell`; anything
+    // outside the cell is not body, which is what clips the shadow to it.
+    var body = function(cell, x, y) {
+      return x >= 0 && y >= 0 && alpha[(y * w + cell + x) * 4 + 3] > 127;
+    };
+    var tex = scene.textures.createCanvas(key, w, h);
+    var ctx = tex.getContext();
+    for (var cell = 0; cell + DEZA_CELL <= w; cell += DEZA_CELL) {
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < DEZA_CELL; x++) {
+          if (body(cell, x, y)) ctx.fillStyle = DEZA_HUD_INK[y];
+          else if (body(cell, x - 1, y) || body(cell, x, y - 1) || body(cell, x - 1, y - 1)) ctx.fillStyle = DEZA_HUD_SHADOW;
+          else continue;
+          ctx.fillRect(cell + x, y, 1, 1);
+        }
+      }
+    }
+    tex.refresh();
+    return tex.getSourceImage();
+  }
+  // One line of that text, `cells` characters wide: a single image whose
+  // canvas is re-typed only when the string changes, so every glyph lands on
+  // its own 8 px cell and nothing is laid out by a text engine. Null when the
+  // glyph sheet never loaded — the line is then simply not drawn.
+  function dezaHudLine(scene, key, x, y, cells) {
+    var sheet = dezaHudSheet(scene);
+    if (!sheet) return null;
+    var tex = scene.textures.exists(key)
+      ? scene.textures.get(key)
+      : scene.textures.createCanvas(key, cells * DEZA_CELL, DEZA_CELL);
+    var ctx = tex.getContext();
+    var line = scene.add.image(x, y, key);
+    line.setOrigin(0, 0);
+    var typed = null;
+    line.setText = function(next) {
+      var str = String(next);
+      if (str === typed) return;
+      typed = str;
+      ctx.clearRect(0, 0, cells * DEZA_CELL, DEZA_CELL);
+      for (var i = 0; i < str.length && i < cells; i++) {
+        // The sheet is ASCII 32..126 in order; a space draws nothing.
+        var glyph = str.charCodeAt(i) - 32;
+        if (glyph > 0 && glyph < 95) {
+          ctx.drawImage(sheet, glyph * DEZA_CELL, 0, DEZA_CELL, DEZA_CELL, i * DEZA_CELL, 0, DEZA_CELL, DEZA_CELL);
+        }
+      }
+      tex.refresh();
+    };
+    return line;
+  }
+  function dezaHudScoreText(score) {
+    var n = String(Math.max(0, Math.floor(Number(score) || 0)));
+    while (n.length < DEZA_HUD_SCORE.digits) n = " " + n;
+    return "SCORE " + n;
+  }
   function recipeData() {
     return gameState._phaserRecipe || null;
   }
@@ -13588,6 +13693,23 @@
       this.bossHpBarFg.setVisible(false);
       this.applyTopHud();
       this.updateShipStock();
+      // With the band off, the score is drawn the way the Saturn draws it:
+      // one line of kernel text (dezaHudLine). Two digits wider than the
+      // Saturn's eight, so a score this runtime can reach still fits.
+      this.dezaScoreLine = null;
+      if (!componentOn("hud")) {
+        this.dezaScoreLine = dezaHudLine(
+          this,
+          "dezaHudScore",
+          dezaSatX(DEZA_HUD_SCORE.x),
+          DEZA_HUD_SCORE.y,
+          "SCORE ".length + DEZA_HUD_SCORE.digits + 2
+        );
+        if (this.dezaScoreLine) {
+          this.dezaScoreLine.setDepth(101);
+          this.dezaScoreLine.setText(dezaHudScoreText(this.scoreCount));
+        }
+      }
     }
     // The band across the top — the HP and COMBO troughs, the score and the
     // world best — is the web runtime's. A Dezaemon cart played OG has none of
@@ -14926,6 +15048,7 @@
     updateHUD() {
       // One score for the pair.
       this._setSmallNum(this.scoreSmallNum, this.scoreCount);
+      if (this.dezaScoreLine) this.dezaScoreLine.setText(dezaHudScoreText(this.scoreCount));
       // The combo troughs drain per player; only scaleX is written, so the
       // heights the split set stay put.
       var lead = this.players[0];

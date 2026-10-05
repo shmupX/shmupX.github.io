@@ -2505,7 +2505,7 @@
     return versionFeatures(libVersionOf(c), 'deza').map((f) => ({ ...f, on: f.on && (f.id !== 'story' || c.hasStory) }));
   }
   function libVersionNote(c) {
-    if (libVersionOf(c) !== 'mod') return 'OG · AS THE SATURN PLAYED IT · ONE-HIT SHIP, NO HUD';
+    if (libVersionOf(c) !== 'mod') return 'OG · AS THE SATURN PLAYED IT · ONE-HIT SHIP, SCORE LINE ONLY';
     return c.hasStory ? 'MOD · EVERY PART CROSSES OVER' : 'MOD · EVERY PART CROSSES OVER · THIS GAME HAS NO STORY';
   }
   const LIB_KIND_TAG = { mod: 'MOD', import: 'IMPORTED', eshop: 'ESHOP', export: 'YOUR EXPORT' };

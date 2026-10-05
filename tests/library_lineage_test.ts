@@ -295,6 +295,58 @@ Deno.test("OG is a one-hit ship under no HUD, and a web game gets the weapons on
   );
 });
 
+Deno.test("OG types the score where the Saturn does, in the kernel's own glyphs", async () => {
+  const bundle = await read("static/games/2028-ai/game.bundle.js");
+  // Measured off two Mednafen captures and fitted to the 8 px tile grid:
+  // SCORE at tile (6, 1), the number right-aligned in the eight tiles after
+  // one blank. "SCORE " + 8 is 14 tiles from x 48, so the last digit ends at
+  // x 160 — the middle of the 320 px screen, and of this runtime's 256.
+  assert(bundle.includes("var DEZA_HUD_SCORE = { x: 48, y: 8, digits: 8 };"));
+  assertEquals(48 + ("SCORE ".length + 8) * 8, 320 / 2);
+  assert(bundle.includes("dezaSatX(DEZA_HUD_SCORE.x),"));
+  // The line exists only where the web band does not.
+  assert(
+    /if \(!componentOn\("hud"\)\) \{\s+this\.dezaScoreLine = dezaHudLine\(/
+      .test(
+        bundle,
+      ),
+  );
+  assert(
+    bundle.includes(
+      "if (this.dezaScoreLine) this.dezaScoreLine.setText(dezaHudScoreText(this.scoreCount));",
+    ),
+  );
+  // The glyphs come off the sheet the game already ships: 95 ASCII cells of
+  // 8x8, which is what `glyph * DEZA_CELL` indexes. A PNG's size is the two
+  // big-endian words after its IHDR tag.
+  assert(
+    bundle.includes(
+      'this.load.image("athenaFont", "assets/fonts/athenaFont.png");',
+    ),
+  );
+  const png = await Deno.readFile(
+    new URL(
+      "../static/games/2028-ai/assets/fonts/athenaFont.png",
+      import.meta.url,
+    ),
+  );
+  const size = new DataView(png.buffer, png.byteOffset + 16, 8);
+  assertEquals([size.getUint32(0), size.getUint32(4)], [95 * 8, 8]);
+  // The gradient and the shadow the sheet does not carry, as measured.
+  assert(
+    bundle.includes(
+      'var DEZA_HUD_INK = ["#ffffff", "#ffffff", "#ffffff", "#ffffff", "#ffffff", "#e7ffff", "#d6ffff", "#d6ffff"];',
+    ),
+  );
+  assert(bundle.includes('var DEZA_HUD_SHADOW = "#484848";'));
+  assert(
+    bundle.includes(
+      "body(cell, x - 1, y) || body(cell, x, y - 1) || body(cell, x - 1, y - 1)",
+    ),
+    "the shadow is the body shifted right, down and both — not the diagonal alone",
+  );
+});
+
 Deno.test("the editor hands a version on as the shelf's own word", async () => {
   const editor = await read("static/editor/index.html");
   // It asks deza-shelf.js rather than keeping a second copy of the rule, and
