@@ -6383,6 +6383,222 @@ var CgPacker = class {
   }
 };
 
+// packages/shmup-engine/src/write/attribution.js
+var ATTRIBUTION_ROLES = 3;
+var NAMES_PER_ROLE = 2;
+var DEFAULT_ATTRIBUTION_ROLE = "PRESENTED BY";
+var CREDIT_STRIP_W = 64;
+var CREDIT_STRIP_H = 16;
+var CREDIT_LINE_CHARS = 16;
+var CREDIT_STRIP_CHARS = CREDIT_LINE_CHARS * 2;
+var GLYPH_W = 3;
+var GLYPH_H = 5;
+var ADVANCE = 4;
+var GLYPHS = {
+  " ": "000000000000000",
+  A: "010101111101101",
+  B: "110101110101110",
+  C: "011100100100011",
+  D: "110101101101110",
+  E: "111100110100111",
+  F: "111100110100100",
+  G: "011100101101011",
+  H: "101101111101101",
+  I: "111010010010111",
+  J: "001001001101010",
+  K: "101101110101101",
+  L: "100100100100111",
+  M: "101111111101101",
+  N: "110101101101101",
+  O: "010101101101010",
+  P: "110101110100100",
+  Q: "010101101111011",
+  R: "110101110101101",
+  S: "011100010001110",
+  T: "111010010010010",
+  U: "101101101101111",
+  V: "101101101101010",
+  W: "101101111111101",
+  X: "101101010101101",
+  Y: "101101010010010",
+  Z: "111001010100111",
+  0: "111101101101111",
+  1: "010110010010111",
+  2: "110001010100111",
+  3: "110001010001110",
+  4: "101101111001001",
+  5: "111100110001110",
+  6: "011100111101111",
+  7: "111001010010010",
+  8: "111101111101111",
+  9: "111101111001110",
+  ".": "000000000000010",
+  ",": "000000000010100",
+  "-": "000000111000000",
+  _: "000000000000111",
+  "'": "010010000000000",
+  "!": "010010010000010",
+  "?": "110001010000010",
+  "&": "010101010101011",
+  "/": "001001010100100",
+  ":": "000010000010000",
+  "+": "000010111010000",
+  "@": "111101111100111",
+  "#": "101111101111101",
+  "(": "001010010010001",
+  ")": "100010010010100",
+  "*": "101010101000000"
+};
+var FOLD = { "\u2018": "'", "\u2019": "'", "`": "'", "\u201C": "'", "\u201D": "'", '"': "'", "\u2013": "-", "\u2014": "-", "	": " " };
+function foldCreditText(text) {
+  let dropped = "";
+  const folded = [...String(text ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "")].map((ch) => FOLD[ch] ?? ch).join("").toUpperCase();
+  let out = "";
+  for (const ch of folded) {
+    if (ch === "\n" || GLYPHS[ch] !== void 0) out += ch;
+    else if (!dropped.includes(ch)) dropped += ch;
+  }
+  const lines = out.split("\n").map((l) => l.replace(/ +/g, " ").trim());
+  return { text: lines.join("\n").replace(/^\n+|\n+$/g, ""), dropped };
+}
+function wrapLine(line, cols) {
+  const out = [];
+  let cur = "";
+  for (let word of line.split(" ").filter(Boolean)) {
+    while (word.length > cols) {
+      if (cur) {
+        out.push(cur);
+        cur = "";
+      }
+      out.push(word.slice(0, cols));
+      word = word.slice(cols);
+    }
+    if (!cur) cur = word;
+    else if (cur.length + 1 + word.length <= cols) cur += " " + word;
+    else {
+      out.push(cur);
+      cur = word;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+function creditStripRgba(text) {
+  const folded = foldCreditText(text);
+  if (!folded.text.replace(/\n/g, "")) return null;
+  const asked = folded.text.split("\n").filter(Boolean);
+  let lines, sx = 1, sy = 1;
+  if (asked.length === 1 && asked[0].length <= CREDIT_LINE_CHARS / 2) {
+    lines = asked;
+    sx = 2;
+    sy = 2;
+  } else if (asked.length === 1 && asked[0].length <= CREDIT_LINE_CHARS) {
+    lines = asked;
+    sy = 2;
+  } else {
+    lines = asked.flatMap((l) => wrapLine(l, CREDIT_LINE_CHARS));
+  }
+  const truncated = lines.length > 2;
+  lines = lines.slice(0, 2);
+  const rgba = new Uint8Array(CREDIT_STRIP_W * CREDIT_STRIP_H * 4);
+  const put = (x, y, v) => {
+    if (x < 0 || y < 0 || x >= CREDIT_STRIP_W || y >= CREDIT_STRIP_H) return;
+    const o = (y * CREDIT_STRIP_W + x) * 4;
+    rgba[o] = rgba[o + 1] = rgba[o + 2] = v;
+    rgba[o + 3] = 255;
+  };
+  const lineH = GLYPH_H * sy, pitch = lineH + 2;
+  const top = Math.floor((CREDIT_STRIP_H - (lineH + (lines.length - 1) * pitch + 1)) / 2);
+  const draw = (dx, dy, v) => lines.forEach((line, n) => {
+    const left = Math.floor((CREDIT_STRIP_W - (line.length * ADVANCE * sx - sx + 1)) / 2);
+    [...line].forEach((ch, c) => {
+      const bits = GLYPHS[ch];
+      for (let gy = 0; gy < GLYPH_H; gy++) {
+        for (let gx = 0; gx < GLYPH_W; gx++) {
+          if (bits[gy * GLYPH_W + gx] !== "1") continue;
+          for (let py = 0; py < sy; py++) {
+            for (let px = 0; px < sx; px++) {
+              put(left + (c * ADVANCE + gx) * sx + px + dx, top + n * pitch + gy * sy + py + dy, v);
+            }
+          }
+        }
+      }
+    });
+  });
+  draw(1, 1, 0);
+  draw(0, 0, 255);
+  return { w: CREDIT_STRIP_W, h: CREDIT_STRIP_H, rgba, lines, dropped: folded.dropped, truncated };
+}
+function roleIndex(role) {
+  if (Number.isInteger(role)) return role >= 0 && role < STAFF_ROLE_LABELS.length ? role : -1;
+  if (typeof role !== "string") return -1;
+  return STAFF_ROLE_LABELS.indexOf(role.trim().replace(/\s+/g, " ").toUpperCase());
+}
+var cleanName = (v) => typeof v === "string" || typeof v === "number" ? String(v).trim() : "";
+function normalizeAttribution(value, warn = () => {
+}) {
+  if (value === false) return { credits: [] };
+  if (value === void 0 || value === null || value === true) return null;
+  if (typeof value === "string" || typeof value === "number") {
+    const author = cleanName(value);
+    return author ? { credits: [{ role: DEFAULT_ATTRIBUTION_ROLE, names: [author] }] } : null;
+  }
+  if (typeof value !== "object") return null;
+  const list = Array.isArray(value) ? value : value.credits;
+  if (!Array.isArray(list)) return normalizeAttribution(value.author ?? null, warn);
+  if (list.length > ATTRIBUTION_ROLES) {
+    warn(`attribution: a staff roll holds ${ATTRIBUTION_ROLES} roles; dropped ${list.length - ATTRIBUTION_ROLES}`);
+  }
+  const credits = list.slice(0, ATTRIBUTION_ROLES).map((entry) => {
+    if (typeof entry === "string" || typeof entry === "number") entry = { names: [entry] };
+    if (!entry || typeof entry !== "object") return { role: "", names: [] };
+    const raw = Array.isArray(entry.names) ? entry.names : [entry.names ?? entry.name];
+    const names = raw.map(cleanName);
+    const over = names.slice(NAMES_PER_ROLE).filter(Boolean);
+    if (over.length) warn(`attribution: a role holds ${NAMES_PER_ROLE} names; dropped "${over.join('", "')}"`);
+    const kept = names.slice(0, NAMES_PER_ROLE);
+    while (kept.length && !kept[kept.length - 1]) kept.pop();
+    const presented = STAFF_ROLE_LABELS.indexOf(DEFAULT_ATTRIBUTION_ROLE);
+    let index;
+    if (entry.role === void 0 || entry.role === null) {
+      index = kept.length ? presented : 0;
+    } else {
+      index = roleIndex(entry.role);
+      if (index < 0) {
+        warn(`attribution: "${entry.role}" is not one of the staff roll's labels \u2014 using ${DEFAULT_ATTRIBUTION_ROLE}`);
+        index = presented;
+      }
+    }
+    return { role: STAFF_ROLE_LABELS[index], names: kept };
+  });
+  while (credits.length && !credits[credits.length - 1].role && !credits[credits.length - 1].names.length) credits.pop();
+  return { credits };
+}
+function cameOffACart(level) {
+  return !!(level && (level.dezaemonTitle || level.dezaemonTitleScreen || level.meta && level.meta.source === "dezaemon2"));
+}
+function resolveAttribution(level, { attribution, author } = {}, warn = () => {
+}) {
+  const asked = normalizeAttribution(attribution, warn);
+  if (asked) return { source: "option", credits: asked.credits };
+  const own = normalizeAttribution(level && level.attribution, warn);
+  if (own) return { source: "level", credits: own.credits };
+  if (cameOffACart(level)) return { source: "cart", credits: [] };
+  const fallback = normalizeAttribution(cleanName(author), warn);
+  if (fallback) return { source: "default", credits: fallback.credits };
+  return { source: "none", credits: [] };
+}
+function staffRolesFor(credits) {
+  return Array.from({ length: ATTRIBUTION_ROLES }, (_, i) => Math.max(0, roleIndex(credits[i] ? credits[i].role : "")));
+}
+function authorFromEnvironment(env = {}) {
+  const read = (key) => typeof env[key] === "string" ? env[key].trim() : "";
+  const user = read("USER") || read("LOGNAME") || read("USERNAME");
+  if (user) return user;
+  const home = (read("HOME") || read("USERPROFILE")).replace(/[\\/]+$/, "");
+  return home.split(/[\\/]/).pop() || null;
+}
+
 // packages/shmup-engine/src/write/game-to-save.js
 var FIRST_SPAWN_ROW = 8;
 var ROW_STEP = 12;
@@ -6878,7 +7094,7 @@ function puffSprite(size = 16) {
   return fr;
 }
 function buildSaveFromGame(level, art2, options = {}) {
-  const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, storyPanels: null, useBackground: true, ...options };
+  const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, storyPanels: null, useBackground: true, attribution: null, author: null, ...options };
   const warnings = [];
   const warn = (m) => warnings.push(m);
   const artMap = /* @__PURE__ */ new Map();
@@ -7259,8 +7475,23 @@ function buildSaveFromGame(level, art2, options = {}) {
     "title2",
     4
   ) : null;
+  const attribution = resolveAttribution(level, opts, warn);
+  const typedCredits = attribution.source !== "cart" && attribution.source !== "none";
   const stripW = TITLE_SLOTS.credits[0].w * CG_CELL, stripH = TITLE_SLOTS.credits[0].h * CG_CELL;
   const creditKeys = TITLE_SLOTS.credits.map((_slot, i) => {
+    if (typedCredits) {
+      const credit = attribution.credits[Math.floor(i / NAMES_PER_ROLE)];
+      const name = credit && credit.names[i % NAMES_PER_ROLE];
+      if (!name) return null;
+      const strip = creditStripRgba(name);
+      if (!strip) {
+        warn(`credit "${name}" has no character the staff roll's face can draw \u2014 left off the cart`);
+        return null;
+      }
+      if (strip.dropped) warn(`credit "${name}": no glyph for "${strip.dropped}" \u2014 drawn as "${strip.lines.join(" / ")}"`);
+      if (strip.truncated) warn(`credit "${name}" is longer than a strip holds \u2014 cut to "${strip.lines.join(" / ")}"`);
+      return planFrame(`credit${i}`, strip, stripW, stripH, "credits", 4);
+    }
     const art3 = drawnTitle(`credit${i}`);
     if (!art3) return null;
     const at = titleLayout.credits && titleLayout.credits[i];
@@ -7469,7 +7700,8 @@ function buildSaveFromGame(level, art2, options = {}) {
     extents,
     bgmTable,
     sfxSet: bgm && Number.isInteger(bgm.sfxSet) ? bgm.sfxSet : 1,
-    staffRoles: Array.isArray(ts.staffRoles) && ts.staffRoles.length === 3 ? ts.staffRoles : DEFAULT_STAFF_ROLES
+    // The labels belong to whoever the strips belong to.
+    staffRoles: typedCredits ? staffRolesFor(attribution.credits) : Array.isArray(ts.staffRoles) && ts.staffRoles.length === 3 ? ts.staffRoles : DEFAULT_STAFF_ROLES
   });
   sec5.set(settings, SEC5_REGIONS.settings.offset);
   const sec6 = emptySongBank();
@@ -7528,7 +7760,11 @@ function buildSaveFromGame(level, art2, options = {}) {
         // Where the art came from, so a caller can say whether the cart
         // kept its own title screen or wears an uploaded one.
         source: uploaded1 || uploaded2 ? "uploaded" : painted(title1Key) || painted(title2Key) ? "cart" : "none"
-      }
+      },
+      // Who the staff roll credits and on whose say-so (attribution.js):
+      // "option" | "level" | "cart" | "default" | "none". `credits` is
+      // the typed roll; a cart's own strips are art and count above.
+      attribution: { source: attribution.source, credits: attribution.credits }
     }
   };
 }
@@ -8837,6 +9073,7 @@ function normalizeLegacyAtlasFrames(frames) {
 }
 export {
   ALPHA_CUTOFF,
+  ATTRIBUTION_ROLES,
   BLANK_WAVES,
   BUILTIN_DEFAULTS,
   BUP_LANGUAGE,
@@ -8847,8 +9084,11 @@ export {
   COLOR_SETS,
   COVER_H,
   COVER_W,
+  CREDIT_LINE_CHARS,
+  CREDIT_STRIP_CHARS,
   CgFullError,
   CgPacker,
+  DEFAULT_ATTRIBUTION_ROLE,
   DEFAULT_BOSS_PATTERNS,
   DEFAULT_ITEM_TYPES,
   DEFAULT_TABLE_ADDR,
@@ -8898,6 +9138,7 @@ export {
   MODEL_SLOTS,
   MODEL_SLOT_SIZE,
   MODEL_UNIT_RADIUS,
+  NAMES_PER_ROLE,
   NEAR,
   NEUTRAL_COLOR,
   PALETTE_TARGETS,
@@ -8925,12 +9166,14 @@ export {
   SHADE_ZERO,
   SHAPE_FAMILIES,
   SINGLE_LETTER_ENEMIES,
+  STAFF_ROLE_LABELS,
   STRAIGHT_APPEARANCE_BASE,
   SWATCH_LAYOUT,
   TABLE_SIZE,
   TROOPER_PLAYER,
   USER_ROW_FIRST,
   allocFrame,
+  authorFromEnvironment,
   bandFor,
   bankToPalettes,
   bankToSec4,
@@ -8955,6 +9198,7 @@ export {
   composeTransform,
   compress,
   compressCmp,
+  creditStripRgba,
   cutLayer,
   dataBlocksFor,
   decodeMdldt,
@@ -8990,6 +9234,7 @@ export {
   findEntries,
   findEntry,
   fitRgba,
+  foldCreditText,
   formatPartition,
   frameGroup,
   gamePayloadFromSav,
@@ -9024,6 +9269,7 @@ export {
   nearestPaletteIndex,
   normalMatrix,
   normalize,
+  normalizeAttribution,
   normalizeLegacyAtlasFrames,
   normalizeLegacyGame,
   openDisc,
@@ -9051,6 +9297,7 @@ export {
   readExtent,
   readFile,
   renderTitlePage,
+  resolveAttribution,
   rgb555ToHex,
   rgb555ToRgb,
   rgb8ToRgb555,

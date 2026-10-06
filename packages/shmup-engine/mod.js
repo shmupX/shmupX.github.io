@@ -271,6 +271,20 @@ export {
   savComment,
   savFileName,
 } from "./src/write/export-sav.js";
+// --- Attribution: the staff roll's names, typed (src/write/attribution.js) ---
+export {
+  ATTRIBUTION_ROLES,
+  authorFromEnvironment,
+  CREDIT_LINE_CHARS,
+  CREDIT_STRIP_CHARS,
+  creditStripRgba,
+  DEFAULT_ATTRIBUTION_ROLE,
+  foldCreditText,
+  NAMES_PER_ROLE,
+  normalizeAttribution,
+  resolveAttribution,
+} from "./src/write/attribution.js";
+export { STAFF_ROLE_LABELS } from "./src/decode/decode-settings.js";
 
 // --- Extras: cartridge-dump deinterleaving (src/bup-deinterleave.js) ---
 export { deinterleave, detect } from "./src/bup-deinterleave.js";

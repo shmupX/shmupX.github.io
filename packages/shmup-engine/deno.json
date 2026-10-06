@@ -32,6 +32,7 @@
     "./cg-pack": "./src/write/cg-pack.js",
     "./game-to-save": "./src/write/game-to-save.js",
     "./export-sav": "./src/write/export-sav.js",
+    "./attribution": "./src/write/attribution.js",
     "./sfc": "./src/sfc/index.js",
     "./psx": "./src/psx/index.js",
     "./n64": "./src/n64/index.js"

@@ -1833,7 +1833,14 @@ collection (60 saves scanned) while building it:
   a level has both, TITLE 1 gets the logo in its top 48 rows and TITLE 2 the
   subtitle in its bottom 16, the way the runtime stacks them.
 
-What the writer does NOT yet reproduce: the six credit strips, the death-word
+The six credit strips (refs 208-231) and the three staff-roll labels
+(`+0x5A..+0x5C`) are written from one of two sources: an imported cart's own
+drawn strips, placed back where its author had them, or — for a game with no
+drawing — the names in the level's `attribution` (else the caller's default
+`author`), set in the writer's 3×5 face, strips 2i / 2i+1 under label i
+(`write/attribution.js`).
+
+What the writer does NOT yet reproduce: the death-word
 children of records whose slot had to move (the record keeps its bytes; a
 collision is reported), and anything the level format has no words for (enemy
 names, story scenes, audio files). Item icons are half-closed (2026-09-07):

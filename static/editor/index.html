@@ -665,6 +665,23 @@
             font-family: 'Share Tech Mono', monospace; outline: none;
         }
         .menu-input::placeholder { color: var(--rsub); }
+        /* STAFF ROLL rows (EXPORT > DEZAEMON 2): a role label and the two
+           names under it, each over the 64x16 strip the cart will carry. */
+        .credit-rows { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+        .credit-row { display: flex; gap: 4px; align-items: flex-start; }
+        .credit-row select {
+            flex: 0 0 34%; min-width: 0; height: 32px; padding: 0 4px; border-radius: 8px;
+            border: 1px solid var(--redge); background: rgba(0,0,0,.5); color: var(--rink);
+            font-family: 'Share Tech Mono', monospace; font-size: 10px; outline: none;
+        }
+        .credit-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+        .credit-name .menu-input { margin-bottom: 0; height: 32px; padding: 0 8px; font-size: 11px; text-transform: uppercase; }
+        .credit-name canvas {
+            width: 100%; aspect-ratio: 4 / 1; border-radius: 4px;
+            background: #1b2540; border: 1px solid var(--redge);
+        }
+        /* What the cart gets when the row is left alone, not what was typed. */
+        .credit-name canvas.ghost { opacity: .5; }
 
         /* ===== PIXEL-ART RENDERING (mimics Phaser pixelArt:true) ===== */
         img, canvas {
@@ -1113,6 +1130,15 @@
                                 <button class="seg xseg" data-palette="snes" onclick="setDezaSavPalette('snes')">SNES</button>
                             </div>
                         </div>
+                        <!-- STAFF ROLL: who the cart says made the game. The Saturn's ending
+                             types three role labels (its own fixed list) and flies two drawn
+                             64x16 strips in under each; these rows are those nine fields, kept
+                             on the game as `attribution` and set in the cart writer's own face.
+                             Untouched, a game made here is PRESENTED BY this machine's player
+                             and an imported cart keeps the strips its author drew. -->
+                        <div class="menu-label" title="The ending's staff roll: up to three role labels, two names under each. Saved with the game as its `attribution` (it rides EXPORT GAME JSON and the cloud save) and drawn onto the cart on export.">STAFF ROLL &middot; WHO MADE THIS GAME</div>
+                        <div id="deza-credit-rows" class="credit-rows"></div>
+                        <div id="deza-credit-note" class="menu-note"></div>
                         <button class="menu-row" id="deza-sav-download" onclick="exportDezaemonSav('download')" title="Build a Dezaemon 2 cart save of the open game — the 1,114,112-byte .sav MiSTer's Saturn core reads — and download it"><span class="mono-badge">DL</span>DOWNLOAD .SAV</button>
                         <button class="menu-row" id="deza-sav-shelf" onclick="exportDezaemonSav('shelf')" title="Build the .sav and file it in this browser's LOAD GAME shelf, under YOUR .SAV EXPORTS"><span class="mono-badge">SH</span>&rarr; SAVE SHELF</button>
                         <!-- The two Saturn user-save targets. The browser core (the launcher's
@@ -2114,6 +2140,7 @@
             document.getElementById('export-sheet-note').textContent = L
                 ? 'EXPORTS THIS MOD · PARENT ' + L.parent.title.toUpperCase() + ' STAYS UNTOUCHED'
                 : 'EXPORTS ' + openGameLabel() + ' AS CURRENTLY EDITED';
+            renderDezaCredits();
         }
         // What the open game is called, for a line of chrome: the cloud name,
         // the cart's title, or the stock game's id.
@@ -5816,6 +5843,9 @@
                 for (const k of ['backgroundCells', 'dezaemonBgm', 'dezaemonBullets', 'dezaemonItems', 'dezaemonModels', 'dezaemonTitle', 'dezaemonTitleScreen', 'meta']) {
                     if (gameData[k]) record[k] = gameData[k];
                 }
+                // Who the staff roll credits. `false` is an answer — nobody —
+                // so it is carried too, not dropped as falsy.
+                if (gameData.attribution !== undefined && gameData.attribution !== null) record.attribution = gameData.attribution;
             }
             return record;
         }
@@ -5944,6 +5974,187 @@
             }
         }
 
+        // ============ STAFF ROLL (who the exported cart says made the game) ============
+        // A Dezaemon 2 cart names its makers in one place, the ending's staff
+        // roll: three role labels off the Saturn game's fixed list and, under
+        // each, two 64x16 strips the author DREW. The open game says who they
+        // are in gameData.attribution — the shape is
+        // packages/shmup-engine/src/write/attribution.js; it rides EXPORT GAME
+        // JSON and the cloud save — and the cart writer sets the names in a
+        // 3x5 face of its own. The rows under EXPORT > DEZAEMON 2 edit that
+        // field and show each strip as the cart will carry it.
+        //
+        // Left as they come, the field stays off the game and the writer
+        // decides: a game made here goes out PRESENTED BY whoever is at this
+        // machine (/api/player — the account name, else the home directory's),
+        // and an imported cart keeps the strips its author drew.
+        let dezaHostUser = null;       // /api/player's answer, once it lands
+        let dezaHostUserProbe = null;
+        function dezaHostAuthor() {
+            if (!dezaHostUserProbe) {
+                const opts = { cache: 'no-store' };
+                // Local, so it answers at once or not at all; an export must
+                // not wait on a server that has gone away.
+                if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opts.signal = AbortSignal.timeout(4000);
+                dezaHostUserProbe = fetch('/api/player', opts)
+                    .then((r) => r.ok ? r.json() : null)
+                    .then((info) => {
+                        dezaHostUser = (info && info.available && typeof info.user === 'string' && info.user) || null;
+                        return dezaHostUser;
+                    })
+                    .catch(() => null);
+            }
+            return dezaHostUserProbe;
+        }
+
+        // What every .sav build in this page hands the cart writer beside the
+        // level and its art.
+        async function dezaSavOptions() {
+            const [title1, title2, author] = await Promise.all([
+                dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL), dezaHostAuthor(),
+            ]);
+            return { palette: dezaSavPalette, gameMode: dezaSavGameMode(), title1, title2, author };
+        }
+
+        function dezaCreditRows() {
+            const host = document.getElementById('deza-credit-rows');
+            const E = window.Dezaemon;
+            if (!host || !E || typeof E.normalizeAttribution !== 'function') return null;
+            if (host.childElementCount) return host;
+            for (let i = 0; i < E.ATTRIBUTION_ROLES; i++) {
+                const row = document.createElement('div');
+                row.className = 'credit-row';
+                const role = document.createElement('select');
+                role.title = 'The label the staff roll types out over these two names — the Saturn game has these sixteen and no others';
+                E.STAFF_ROLE_LABELS.forEach((label) => {
+                    const o = document.createElement('option');
+                    o.value = label;
+                    o.textContent = label || '— NO LABEL —';
+                    role.appendChild(o);
+                });
+                role.addEventListener('change', onDezaCreditEdit);
+                row.appendChild(role);
+                for (let n = 0; n < E.NAMES_PER_ROLE; n++) {
+                    const cell = document.createElement('label');
+                    cell.className = 'credit-name';
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'menu-input';
+                    input.maxLength = E.CREDIT_STRIP_CHARS;
+                    input.spellcheck = false;
+                    input.autocomplete = 'off';
+                    input.title = 'One strip of the staff roll: up to 8 characters draw double size, up to 16 on one line, up to 32 on two';
+                    input.addEventListener('input', onDezaCreditEdit);
+                    const strip = document.createElement('canvas');
+                    strip.width = 64; strip.height = 16;
+                    cell.appendChild(input);
+                    cell.appendChild(strip);
+                    row.appendChild(cell);
+                }
+                host.appendChild(row);
+            }
+            return host;
+        }
+
+        // The rows, from the open game. Called whenever the export sheet opens,
+        // so a game that arrived since (import, cloud load, new game) shows its
+        // own credits rather than the last one's.
+        function renderDezaCredits() {
+            const host = dezaCreditRows();
+            if (!host) return;
+            const E = window.Dezaemon;
+            const own = E.normalizeAttribution(gameData && gameData.attribution);
+            [...host.children].forEach((row, i) => {
+                const credit = own
+                    ? (own.credits[i] || { role: '', names: [] })
+                    : { role: i === 0 ? E.DEFAULT_ATTRIBUTION_ROLE : '', names: [] };
+                row.querySelector('select').value = credit.role;
+                row.querySelectorAll('input').forEach((input, n) => {
+                    // A name in the JSON may ask for its two lines with a
+                    // newline, which an <input> cannot hold: the field shows a
+                    // space and the name itself waits here until it is retyped.
+                    const full = (credit.names && credit.names[n]) || '';
+                    input.dataset.full = full;
+                    input.value = full.replace(/\n/g, ' ');
+                });
+            });
+            paintDezaCredits();
+            if (!dezaHostUserProbe) dezaHostAuthor().then(paintDezaCredits);
+        }
+
+        // The rows, onto the open game. Three states, and only one of them
+        // writes names: untouched (PRESENTED BY over nothing) takes the field
+        // off so the writer's defaults apply; every label and name cleared is
+        // NOBODY, said as `false` — an empty list would not survive the cloud
+        // save, which drops empty arrays; anything else is the roll as typed.
+        function onDezaCreditEdit() {
+            const host = dezaCreditRows();
+            if (!host || !gameData) return;
+            const E = window.Dezaemon;
+            const rows = [...host.children].map((row) => ({
+                role: row.querySelector('select').value,
+                names: [...row.querySelectorAll('input')].map((input) => {
+                    const typed = input.value.trim();
+                    const full = input.dataset.full || '';
+                    return full && full.replace(/\n/g, ' ').trim() === typed ? full : typed;
+                }),
+            }));
+            const named = rows.some((r) => r.names.some(Boolean));
+            if (!named && rows.every((r, i) => r.role === (i === 0 ? E.DEFAULT_ATTRIBUTION_ROLE : ''))) delete gameData.attribution;
+            else if (!named && rows.every((r) => !r.role)) gameData.attribution = false;
+            else gameData.attribution = E.normalizeAttribution({ credits: rows });
+            paintDezaCredits();
+        }
+
+        // Each strip as the writer will draw it — the very function, so what
+        // is shown is what is burned — and one line saying whose names these
+        // are. A strip the game did not type (the default) is drawn dimmed.
+        function paintDezaCredits() {
+            const host = dezaCreditRows();
+            if (!host) return;
+            const E = window.Dezaemon;
+            const roll = E.resolveAttribution(gameData || {}, { author: dezaHostUser });
+            const typed = roll.source === 'level';
+            const trouble = [];
+            [...host.children].forEach((row, i) => {
+                row.querySelectorAll('.credit-name').forEach((cell, n) => {
+                    const input = cell.querySelector('input'), canvas = cell.querySelector('canvas');
+                    const name = (roll.credits[i] && roll.credits[i].names[n]) || '';
+                    const strip = name ? E.creditStripRgba(name) : null;
+                    input.placeholder = !typed && name ? name : 'NAME';
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    if (strip) ctx.putImageData(new ImageData(new Uint8ClampedArray(strip.rgba), strip.w, strip.h), 0, 0);
+                    canvas.classList.toggle('ghost', !typed);
+                    if (!typed) return;
+                    if (name && !strip) trouble.push('"' + name + '" HAS NO CHARACTER THE CART CAN DRAW');
+                    if (strip && strip.dropped) trouble.push('NO GLYPH FOR ' + strip.dropped);
+                    if (strip && strip.truncated) trouble.push('CUT TO "' + strip.lines.join(' / ') + '"');
+                });
+            });
+            const note = document.getElementById('deza-credit-note');
+            if (!note) return;
+            note.style.color = trouble.length ? '#fbbf24' : '';
+            note.textContent = trouble.length ? trouble.join(' · ')
+                : roll.source === 'level' ? (roll.credits.length
+                    ? 'DRAWN ONTO THE CART\'S STAFF ROLL AS SHOWN · SAVED WITH THE GAME AS ITS ATTRIBUTION'
+                    : 'NOBODY IS CREDITED · THE STAFF ROLL GOES OUT BLANK')
+                : roll.source === 'cart' ? 'THIS CART KEEPS THE CREDITS ITS AUTHOR DREW · TYPE A NAME TO REPLACE THEM'
+                : roll.source === 'default' ? 'LEFT AS IT IS, THE CART IS PRESENTED BY ' + dezaHostUser.toUpperCase() + ' — THIS MACHINE\'S ACCOUNT NAME'
+                : 'NOBODY TO NAME YET · TYPE ONE, OR THE STAFF ROLL GOES OUT BLANK';
+        }
+
+        // "PRESENTED BY EASIERBYCODE", for the line under a finished build.
+        function dezaCreditSummary(rep) {
+            const a = rep && rep.attribution;
+            if (!a) return '';
+            if (a.source === 'cart') return rep.title && rep.title.credits ? ' · ITS OWN CREDITS' : '';
+            const said = a.credits
+                .map((c) => [c.role, c.names.filter(Boolean).join(' / ')].filter(Boolean).join(' '))
+                .filter(Boolean).join(', ');
+            return said ? ' · ' + said.replace(/\n/g, ' ').toUpperCase() : ' · UNCREDITED';
+        }
+
         let dezaSavBusy = false;
         async function exportDezaemonSav(action) {
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
@@ -5960,12 +6171,7 @@
                 dezaSavNote('BUILDING THE SAVE…');
                 record = await buildLevelRecordForSav();
                 const art = collectAtlasArtForSav();
-                const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
-                out = window.Dezaemon.exportLevelToSav(record, art, {
-                    palette: dezaSavPalette,
-                    gameMode: dezaSavGameMode(),
-                    title1, title2,
-                });
+                out = window.Dezaemon.exportLevelToSav(record, art, await dezaSavOptions());
             } catch (e) {
                 console.error('.sav export failed:', e);
                 dezaSavNote('COULD NOT BUILD THE .SAV: ' + (e && e.message || e), '#f87171');
@@ -5979,7 +6185,8 @@
                 const mb = (out.sav.length / 1048576).toFixed(2);
                 const rep = out.report || {};
                 const summary = (rep.stages ? rep.stages.length : 0) + ' STAGE' + (rep.stages && rep.stages.length === 1 ? '' : 'S') +
-                    ' · ' + (rep.cells || 0) + '/1024 CG CELLS · ' + dezaSavPalette.toUpperCase() + ' PALETTE · ' + mb + ' MB';
+                    ' · ' + (rep.cells || 0) + '/1024 CG CELLS · ' + dezaSavPalette.toUpperCase() + ' PALETTE · ' + mb + ' MB' +
+                    dezaCreditSummary(rep);
                 const warn = out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : '';
                 if (action === 'shelf') {
                     const shelf = await dezaShelf();
@@ -6245,12 +6452,7 @@
             const record = await buildLevelRecordForSav();
             if (name) record.name = name;
             const art = collectAtlasArtForSav();
-            const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
-            const out = window.Dezaemon.exportLevelToSav(record, art, {
-                palette: dezaSavPalette,
-                gameMode: dezaSavGameMode(),
-                title1, title2,
-            });
+            const out = window.Dezaemon.exportLevelToSav(record, art, await dezaSavOptions());
             return { out, record };
         }
 
@@ -6433,12 +6635,7 @@
                 const record = await buildLevelRecordForSav();
                 record.name = name;
                 const art = collectAtlasArtForSav();
-                const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
-                const out = window.Dezaemon.exportLevelToSav(record, art, {
-                    palette: dezaSavPalette,
-                    gameMode: dezaSavGameMode(),
-                    title1, title2,
-                });
+                const out = window.Dezaemon.exportLevelToSav(record, art, await dezaSavOptions());
                 eshopNote('RENDERING THE COVER…');
                 const cover = await dezaCoverDataUrl(out.sav);
                 eshopNote('PUBLISHING "' + name + '"…');
@@ -10420,6 +10617,10 @@ function GAME3D_RUNTIME(DATA) {
                 // placement inside its slots and the staff-roll labels.
                 payload.dezaemonTitleScreen = (gameData && gameData.dezaemonTitleScreen) || null;
                 payload.dezaemonCredits = (gameData && gameData.dezaemonCredits) || null;
+                // Who made it, as the staff roll of a .SAV export will say
+                // (the STAFF ROLL rows under EXPORT > DEZAEMON 2). `false` is
+                // an answer — credit nobody — so it is not folded into null.
+                payload.attribution = gameData && gameData.attribution !== undefined ? gameData.attribution : null;
                 // Where this game came from. meta.source === "dezaemon2" is what
                 // the runtime's isImportedLevel() asks first — it decides the
                 // AdvScene skip, the CONTINUE? prompt and the title screen's
@@ -10604,6 +10805,8 @@ function GAME3D_RUNTIME(DATA) {
                 else delete gameData.dezaemonTitleScreen;
                 if (d.dezaemonCredits) gameData.dezaemonCredits = d.dezaemonCredits;
                 else delete gameData.dezaemonCredits;
+                if (d.attribution !== undefined && d.attribution !== null) gameData.attribution = d.attribution;
+                else delete gameData.attribution;
                 if (d.meta && typeof d.meta === 'object') gameData.meta = d.meta;
                 else delete gameData.meta;
                 if (d.noStory) gameData.noStory = true;

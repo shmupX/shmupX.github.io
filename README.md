@@ -410,6 +410,7 @@ deno task build:sav                          # foo.json -> build/sav/Dez 2 - foo
 deno task build:sav "Master Arena Mod"       # that cloud level
 deno task build:sav ./backups/mygame.json    # a level record on disk
 deno task build:sav foo --palette snes --snes-pal build/sav/foo.pal --report
+deno task build:sav foo --author "EASIER BY CODE"   # who the staff roll presents it by
 ```
 
 **Run it in an emulator.** `deno task sav:run [level]` builds the `.sav`, merges
@@ -715,6 +716,67 @@ says which of the two the cart came out wearing — `"cart"`, `"uploaded"` or
 `"none"` — and `deno task build:sav` prints it. Story scenes were already right:
 every import carries `noStory`, so the runtime's AdvScene hands straight on to
 the stage.
+
+**Attribution: who the cart says made the game.** A Dezaemon 2 save has one
+place for a name — the ending's **staff roll**: three role labels picked from
+the Saturn game's fixed sixteen (settings `+0x5A..+0x5C`) and, under each, two
+64×16 credit strips the author **drew**. There is no text in the format, so a
+name is pixels, and a game made in the web editor had nobody to draw them: it
+went out reading `PRESENTED BY` over an empty screen. The level record now
+carries the words and the writer sets them in a 3×5 face of its own
+([`write/attribution.js`](packages/shmup-engine/src/write/attribution.js)) —
+white with a one-pixel shadow, as large as the strip allows: up to 8 characters
+at double size, up to 16 on one double-height line, otherwise two lines of 16.
+
+```jsonc
+"attribution": "easierbycode"                    // one PRESENTED BY credit
+"attribution": { "author": "easierbycode" }      // the same thing
+"attribution": { "credits": [                    // or the whole roll:
+  { "role": "PRESENTED BY", "names": ["EASIER BY CODE", "2026"] },
+  { "role": "MUSIC",        "names": ["SOMEBODY ELSE"] }
+] }
+"attribution": false                             // credit nobody
+```
+
+`credits` is up to three roles with two names each — `names[0]` and `names[1]`
+are that label's two strips, so a blank first name keeps its place — and `role`
+is one of `PLANNING`, `PRODUCE`, `SFX PLAY`, `ENEMY DESIGN`, `MAP DESIGN`,
+`CHARACTER DESIGN`, `TITLE LOGO`, `2D GRAPHIC`, `3D GRAPHIC`, `DEBUG`,
+`SPECIAL THANKS`, `PRESENTED BY`, `GRAPHIC`, `MUSIC`, `THANKS` or `""` for no
+label (the Saturn has no others; an unknown one becomes `PRESENTED BY` with a
+warning). The face is upper case, digits and `. , - _ ' ! ? & / : + @ # ( ) *`:
+accents fold off their letters, and a character with no glyph is left out and
+reported rather than guessed at.
+
+The field is edited in two places. **In the editor**, EXPORT → DEZAEMON 2 has
+three **STAFF ROLL** rows — a label and two names each, over a live picture of
+the strip exactly as the writer will draw it (it is the same function). **In the
+JSON**, it is the top-level key above: it rides EXPORT GAME JSON and the cloud
+save, and `deno task build:sav ./mygame.json` reads it straight off the file.
+Who ends up on the cart, most explicit first:
+
+1. `--author NAME` on `build:sav` (the writer's `attribution` option);
+2. the level's own `attribution`;
+3. a cart's own drawn credits — an imported game keeps what its author drew;
+4. **the player**: the account name (`$USER` / `%USERNAME%`), else the name of
+   the home directory, which is the same word on most machines and the one a
+   sandbox that clears `USER` leaves behind.
+
+(4) is why a game exported without touching any of this still says who made it.
+`build:sav` reads its own environment (`--no-author` turns it off); the editor
+asks the local server at `GET /api/player`, which answers only a browser on the
+machine it runs on — so the hosted site and a phone on the tunnel have no
+default and the rows say so until a name is typed. It **never** applies to a
+game that came off a cart: that is somebody else's game, and re-exporting it
+must not sign it with yours. Typed names replace the roll whole rather than
+patching it, and blanking every label and name is `false` — nobody — which stops
+the search instead of falling through to the default.
+
+Once written, a name is art like any other cart's: import the `.sav` back and it
+arrives as `dezaCredit<N>` frames under `dezaemonTitle`, the runtime's STAFF
+ROLL card draws it, and the next export carries it out again untouched
+(`report.attribution.source` says which of the four it was — `"option"`,
+`"level"`, `"cart"`, `"default"` or `"none"` — and `build:sav` prints it).
 
 **Exporting a loaded cart as an app.** EXPORT → APP — the TARGET picker and the
 EXPORT button — is not hidden while a `.sav` is open, so a cart loaded from a

@@ -25,9 +25,9 @@ export function savComment(title) {
  * Export a level record + its RGBA frames as a .sav.
  *
  * Options: everything buildSaveFromGame() takes (`palette`, `gameMode`,
- * `title1`, `title2`, `useBackground`) plus `slot` (1-5), `comment`,
- * `language`, `date` (BUP minutes, or omitted for now) and `layout`
- * ("mister" | "cart").
+ * `title1`, `title2`, `useBackground`, `attribution`, `author`) plus `slot`
+ * (1-5), `comment`, `language`, `date` (BUP minutes, or omitted for now) and
+ * `layout` ("mister" | "cart").
  *
  * Returns {sav, payload, sections, bank, entry, filename, fileName,
  * warnings, report}.

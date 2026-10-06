@@ -81,6 +81,7 @@ import { bankToSec4, frameGroup, quantizeFrames } from "../palette/palette-targe
 import { CG_CELL } from "../palette/deza2-palette.js";
 import { CgFullError, CgPacker, REF_HFLIP, REF_VFLIP } from "./cg-pack.js";
 import { encodeModels } from "./encode-model.js";
+import { creditStripRgba, NAMES_PER_ROLE, resolveAttribution, staffRolesFor } from "./attribution.js";
 
 // --- layout constants ------------------------------------------------------------
 
@@ -705,7 +706,9 @@ export function puffSprite(size = 16) {
  * `art` maps atlas frame names (Firebase-encoded or not) to {w, h, rgba}.
  * Options: `palette` ("saturn" | "snes"), `gameMode` (settings +0x00),
  * `title1` / `title2` ({w, h, rgba} logos for the drawn title screen),
- * `useBackground` (pack imported scenery; default true).
+ * `useBackground` (pack imported scenery; default true), `attribution` (the
+ * staff roll, over whatever the level says) and `author` (the name a web game
+ * that credits nobody is presented by) — see attribution.js for both.
  *
  * With no `title1`/`title2` the title screen is taken from the level's own
  * `dezaemonTitle` (role -> atlas frame name) and `dezaemonTitleScreen.layout`,
@@ -715,7 +718,7 @@ export function puffSprite(size = 16) {
  * Returns {sections, bank, warnings, report}.
  */
 export function buildSaveFromGame(level, art, options = {}) {
-    const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, storyPanels: null, useBackground: true, ...options };
+    const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, storyPanels: null, useBackground: true, attribution: null, author: null, ...options };
     const warnings = [];
     const warn = (m) => warnings.push(m);
 
@@ -1252,8 +1255,30 @@ export function buildSaveFromGame(level, art, options = {}) {
     // The six credit strips, each 4x1 cells. Only the ones the game actually
     // carries: an unpainted slot must stay unpainted or a re-import reads six
     // blank lines as credits.
+    //
+    // A cart's strips are its author's drawing and go back as they came. A
+    // game made here has no drawing, only names (attribution.js), so those
+    // are set in the writer's own face — strips 2i and 2i+1 are the two names
+    // under role label i, which is how the roll flies them in. Names replace
+    // the whole roll rather than patching it: half one author's art and half
+    // another's type is nobody's credits.
+    const attribution = resolveAttribution(level, opts, warn);
+    const typedCredits = attribution.source !== "cart" && attribution.source !== "none";
     const stripW = TITLE_SLOTS.credits[0].w * CG_CELL, stripH = TITLE_SLOTS.credits[0].h * CG_CELL;
     const creditKeys = TITLE_SLOTS.credits.map((_slot, i) => {
+        if (typedCredits) {
+            const credit = attribution.credits[Math.floor(i / NAMES_PER_ROLE)];
+            const name = credit && credit.names[i % NAMES_PER_ROLE];
+            if (!name) return null;
+            const strip = creditStripRgba(name);
+            if (!strip) {
+                warn(`credit "${name}" has no character the staff roll's face can draw — left off the cart`);
+                return null;
+            }
+            if (strip.dropped) warn(`credit "${name}": no glyph for "${strip.dropped}" — drawn as "${strip.lines.join(" / ")}"`);
+            if (strip.truncated) warn(`credit "${name}" is longer than a strip holds — cut to "${strip.lines.join(" / ")}"`);
+            return planFrame(`credit${i}`, strip, stripW, stripH, "credits", 4);
+        }
         const art = drawnTitle(`credit${i}`);
         if (!art) return null;
         const at = titleLayout.credits && titleLayout.credits[i];
@@ -1503,7 +1528,10 @@ export function buildSaveFromGame(level, art, options = {}) {
         extents,
         bgmTable,
         sfxSet: bgm && Number.isInteger(bgm.sfxSet) ? bgm.sfxSet : 1,
-        staffRoles: Array.isArray(ts.staffRoles) && ts.staffRoles.length === 3 ? ts.staffRoles : DEFAULT_STAFF_ROLES,
+        // The labels belong to whoever the strips belong to.
+        staffRoles: typedCredits
+            ? staffRolesFor(attribution.credits)
+            : (Array.isArray(ts.staffRoles) && ts.staffRoles.length === 3 ? ts.staffRoles : DEFAULT_STAFF_ROLES),
     });
     sec5.set(settings, SEC5_REGIONS.settings.offset);
 
@@ -1573,6 +1601,10 @@ export function buildSaveFromGame(level, art, options = {}) {
                     ? "uploaded"
                     : (painted(title1Key) || painted(title2Key) ? "cart" : "none"),
             },
+            // Who the staff roll credits and on whose say-so (attribution.js):
+            // "option" | "level" | "cart" | "default" | "none". `credits` is
+            // the typed roll; a cart's own strips are art and count above.
+            attribution: { source: attribution.source, credits: attribution.credits },
         },
     };
 }

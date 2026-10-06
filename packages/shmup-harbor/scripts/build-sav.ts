@@ -5,6 +5,7 @@
 //   deno task build:sav ./backups/mygame.json            # a level record on disk
 //   deno task build:sav foo --palette snes               # reduce the art the Super Famicom way
 //   deno task build:sav foo --out build/sav/foo.sav --snes-pal build/sav/foo.pal --report
+//   deno task build:sav foo --author "EASIER BY CODE"    # who the staff roll presents it by
 //
 // The export is the inverse of the .sav import the editor does: the record's
 // atlas (`atlasImageDataURL` + `atlasFrames`, the level's custom frames) is
@@ -22,6 +23,15 @@
 // rule. Both produce a Saturn save; the palette decides how the art is cut.
 // --snes-pal also writes the bank as a 512-byte little-endian CGRAM file.
 //
+// Attribution. A cart names its makers in one place, the ending's staff roll,
+// and the level record says who they are in `attribution` (the editor's STAFF
+// ROLL rows write it; packages/shmup-engine/src/write/attribution.js is the
+// shape). A web game that names nobody goes out PRESENTED BY whoever built it:
+// the account name ($USER / %USERNAME%), else the name of the home directory.
+// --author NAME says it outright, over the level's own; --no-author leaves a
+// level that names nobody uncredited. A game that came off a cart keeps the
+// credits its author drew unless one of the two says otherwise.
+//
 // Frames the level names but its own atlas lacks come from the base game's
 // sheet (static/games/2028-ai/assets/game_asset.png) — the same fallback the
 // runtime uses — so a level built on stock enemies exports with their art.
@@ -35,6 +45,7 @@ import { EMBLEM_DIR, loadItemEmblems } from "../lib/powerup-emblems.ts";
 import { loadAthenaFont } from "../lib/bitmap-font.ts";
 import { storyPanels } from "../lib/story-panels.ts";
 import {
+  authorFromEnvironment,
   exportLevelToSav,
   PALETTE_TARGETS,
   savFileName,
@@ -96,6 +107,13 @@ export interface BuildSavOptions {
   snesPal?: string | null;
   slot?: number;
   comment?: string | null;
+  /**
+   * Who a web game that names nobody is presented by. Omitted: the player —
+   * the account name, else the home directory's. null: nobody.
+   */
+  author?: string | null;
+  /** The staff roll outright, over the level's own `attribution`. */
+  attribution?: unknown;
   /** Skip the base game's atlas for missing frames. */
   noBaseAtlas?: boolean;
   gameMode?: number;
@@ -184,6 +202,19 @@ function namedFrames(record: LevelRecord): Set<string> {
   walk(record.playerData);
   walk(record.backgroundCells);
   return names;
+}
+
+/** The player, as this process's environment names them. */
+export function defaultAuthor(): string | null {
+  const env: Record<string, string | undefined> = {};
+  for (const key of ["USER", "LOGNAME", "USERNAME", "HOME", "USERPROFILE"]) {
+    try {
+      env[key] = Deno.env.get(key);
+    } catch {
+      // no --allow-env for this one: the next key may still answer
+    }
+  }
+  return authorFromEnvironment(env);
 }
 
 /** Build the .sav. Exported so the E2E test drives the same code the task does. */
@@ -314,6 +345,8 @@ export async function buildSav(
     title2,
     itemEmblems,
     storyPanels: panels,
+    author: options.author === undefined ? defaultAuthor() : options.author,
+    attribution: options.attribution,
   });
   const t = result.report.title;
   log(
@@ -334,6 +367,28 @@ export async function buildSav(
             ? `, ${t.credits} credit strip${t.credits === 1 ? "" : "s"}`
             : ""
         })`,
+  );
+  const a = result.report.attribution;
+  const roll = a.credits
+    .filter((c: { role: string; names: string[] }) =>
+      c.role || c.names.some(Boolean)
+    )
+    .map((c: { role: string; names: string[] }) =>
+      [c.role, c.names.filter(Boolean).join(" / ")].filter(Boolean).join(" ")
+    )
+    .join(", ");
+  log(
+    a.source === "cart"
+      ? "credits: the cart's own drawn staff roll"
+      : a.source === "none"
+      ? "credits: nobody to name — the staff roll is blank (--author NAME)"
+      : `credits: ${roll || "nobody"} (${
+        a.source === "default"
+          ? "the player's name — the level's `attribution` or --author changes it"
+          : a.source === "option"
+          ? "--author"
+          : "the level's attribution"
+      })`,
   );
   for (const w of result.warnings) log(`warning: ${w}`);
 
@@ -393,6 +448,9 @@ if (import.meta.main) {
     else if (arg.startsWith("--snes-pal=")) opts.snesPal = arg.slice(11);
     else if (arg === "--slot") opts.slot = Number(value());
     else if (arg === "--comment") opts.comment = value();
+    else if (arg === "--author") opts.attribution = value();
+    else if (arg.startsWith("--author=")) opts.attribution = arg.slice(9);
+    else if (arg === "--no-author") opts.author = null;
     else if (arg === "--horizontal") opts.gameMode = (opts.gameMode ?? 0) | 1;
     else if (arg === "--two-player") opts.gameMode = (opts.gameMode ?? 0) | 2;
     else if (arg === "--no-base-atlas") opts.noBaseAtlas = true;
@@ -401,7 +459,7 @@ if (import.meta.main) {
       console.log(
         "usage: deno task build:sav [level-name | level.json] [--palette saturn|snes] [--out file.sav]\n" +
           "       [--snes-pal file.pal] [--slot 1-5] [--comment TEXT] [--horizontal] [--two-player]\n" +
-          "       [--no-base-atlas] [--report]",
+          "       [--author NAME | --no-author] [--no-base-atlas] [--report]",
       );
       Deno.exit(0);
     } else if (arg.startsWith("-")) fail(`unknown argument ${arg}`);

@@ -71,6 +71,7 @@ const { sav, fileName, warnings, report } = exportLevelToSav(level, art, {
   palette: "saturn", // or "snes": one 15-colour row per sprite
   title1: logoRgba, // optional {w, h, rgba} for the drawn TITLE 1 / TITLE 2
   itemEmblems: { 8: speedIcon }, // optional 16×16 icon per type; else a square
+  author: "easierbycode", // optional: who presents a level that names nobody
 });
 await Deno.writeFile(fileName, sav); // "Dez 2 - <name>.sav", 1,114,112 bytes
 ```
@@ -158,6 +159,11 @@ The root module (`mod.js`) flat-exports the surface the level editor binds as
   `bossClassFor`, `mapColumn`, `spreadFrames`, `blastFrames`, `itemIcon`, …
 - **`./src/write/export-sav.js`** — `exportLevelToSav`, `savFileName`,
   `savComment`
+- **`./src/write/attribution.js`** — the staff roll's names, typed:
+  `normalizeAttribution` (a level's `attribution` in any shape -> `{credits}`),
+  `resolveAttribution` (option > level > the cart's own art > default author),
+  `creditStripRgba` (a name set in the built-in 3×5 face, 64×16),
+  `authorFromEnvironment` (account name, else the home directory's)
 
 `buildSaveFromGame` paints the drawn title screen from `title1`/`title2` when
 the caller has images (the editor's TITLE EDITOR uploads), and otherwise from
