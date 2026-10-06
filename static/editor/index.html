@@ -1636,6 +1636,39 @@
         // ================== ATLAS FORMAT NORMALIZER ==================
         // Converts Phaser multi-atlas format (textures[].frames[] array with filename keys)
         // to the flat {frames: {key: {frame:{x,y,w,h}}}} format the editor uses internally.
+        // 2019 names -> today's. A game.json from the 2019 web game, or a cloud
+        // level saved from one, names its bullets for a sheet the runtime no
+        // longer has (normalTama0 -> normalProjectile0) and its gauge fields
+        // cagage / caDamage instead of spgage / spDamage; the engine's
+        // legacy-names.js holds the whole list. Run over every game this editor
+        // opens, so a re-save writes current names. The engine loads
+        // asynchronously (the module script at the top); should it be missing
+        // the game opens as it was and the console says so, rather than the
+        // editor quietly shipping stale names.
+        function normalizeLegacyNames(game) {
+            const D = window.Dezaemon;
+            if (!D || !D.normalizeLegacyGame) {
+                console.warn('shmup-engine not loaded — 2019 names left as they were');
+                return null;
+            }
+            const report = D.normalizeLegacyGame(game);
+            const frames = report.frames.length, fields = report.fields.length;
+            if (frames + fields) {
+                console.info('2019 names updated:', report);
+                flash(`2019 NAMES UPDATED: ${frames} FRAME${frames === 1 ? '' : 'S'} · ${fields} FIELD${fields === 1 ? '' : 'S'}`);
+            }
+            return report;
+        }
+
+        // The sheet that came with such a game keys its frames the old way too;
+        // renaming them alongside keeps every reference resolving. Plain keys
+        // or Firebase-encoded ones — the engine reads both.
+        function normalizeLegacyAtlasKeys(frames) {
+            const D = window.Dezaemon;
+            if (!frames || !D || !D.normalizeLegacyAtlasFrames) return frames;
+            return D.normalizeLegacyAtlasFrames(frames);
+        }
+
         function normalizeAtlasData(raw) {
             if (!raw) return raw;
             // Already flat format: { frames: { "name.png": { frame: {...} } } }
@@ -2122,6 +2155,7 @@
                         }
                     }
                     atlasData = normalizeAtlasData(JSON.parse(atlasJsonText));
+                atlasData.frames = normalizeLegacyAtlasKeys(atlasData.frames);
                     // Try editor-repacked (_) PNG first, then original
                     try {
                         const ad = await dirHandle.getDirectoryHandle(ATLAS_DIR);
@@ -2225,6 +2259,7 @@
             const gameJsonFile = findFile('game.json') || findFile('assets/game.json');
             if (!gameJsonFile) { alert('game.json not found in selected folder'); return; }
             gameData = JSON.parse(await gameJsonFile.text());
+            normalizeLegacyNames(gameData);
 
             enemyData = gameData.enemyData || {};
             if (!enemyData || Object.keys(enemyData).length === 0) {
@@ -2241,6 +2276,7 @@
             const atlasJsonFile = findFile('_game_asset.json') || findFile('game_asset.json') || findFile('assets/game_asset.json');
             if (atlasJsonFile) {
                 atlasData = normalizeAtlasData(JSON.parse(await atlasJsonFile.text()));
+                atlasData.frames = normalizeLegacyAtlasKeys(atlasData.frames);
             }
 
             // Load atlas PNG
@@ -2280,6 +2316,7 @@
                 catch { alert("game.json not found"); return; }
             }
             gameData = JSON.parse(jsonText);
+            normalizeLegacyNames(gameData);
             ssRestoreFromGameData();
 
             // Try to find atlas JSON + PNG — prefer editor-repacked (_) versions
@@ -2299,6 +2336,7 @@
                     }
                 }
                 atlasData = normalizeAtlasData(JSON.parse(atlasJsonText));
+                atlasData.frames = normalizeLegacyAtlasKeys(atlasData.frames);
                 // Try editor-repacked PNG first, then original
                 try {
                     const ad = await dirHandle.getDirectoryHandle(ATLAS_DIR);
@@ -10502,6 +10540,10 @@ function GAME3D_RUNTIME(DATA) {
                 const snap = await firebaseDb.ref(`${LEVEL_LOADER_DEFAULTS.levelsPath}/${name}`).once('value');
                 const d = snap.val();
                 if (!d) { alert(`"${name}" not found`); return false; }
+                // A level saved from the 2019 game comes up to today's names
+                // here, so the fields below read them and a re-save writes them.
+                normalizeLegacyNames(d);
+                if (d.atlasFrames) d.atlasFrames = normalizeLegacyAtlasKeys(d.atlasFrames);
                 // Reset per-level atlas customization state so overrides from a
                 // previously-loaded level don't leak into this one.
                 replacedFrames = {};

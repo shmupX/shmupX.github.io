@@ -361,3 +361,13 @@ export {
   SRAM_SIZE as SFC_SRAM_SIZE,
   summarizeSfcSav,
 } from "./src/sfc/index.js";
+
+// The 2019 web game's names brought up to today's (src/legacy-names.js): the
+// bullet frames the base atlas renamed and the gauge fields game.json renamed.
+// The editor runs it over every game it opens; scripts/normalize-cloud-level.ts
+// over a stored record.
+export {
+  legacyFrameName,
+  normalizeLegacyAtlasFrames,
+  normalizeLegacyGame,
+} from "./src/legacy-names.js";

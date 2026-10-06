@@ -304,6 +304,7 @@ deno task sav:inject      # …or merge it into one of the five save slots on th
 deno task sav:profile     # play a .sav in Mednafen and in the runtime at once and record a window of both (macOS)
 deno task eshop:check     # validate data/eshop.json against the built manifest
 deno task eshop:covers    # cover a published eShop game that went out without one (dry run; --write uploads)
+deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN

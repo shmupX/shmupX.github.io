@@ -132,6 +132,11 @@ The root module (`mod.js`) flat-exports the surface the level editor binds as
   `findEntry`, `readExtent`
 - **`./src/atlas-pack.js`** — `packShelf`
 - **`./src/game-schema.js`** — `validateGameJson`
+- **`./src/legacy-names.js`** — `normalizeLegacyGame`,
+  `normalizeLegacyAtlasFrames`, `legacyFrameName`: the 2019 web game's bullet
+  frame names and gauge fields (`normalTama0`, `cagage`) brought up to the
+  2028-ai base game's (`normalProjectile0`, `spgage`), which is what the editor
+  runs over every game it opens.
 - extras: `decompress`, `decompressCmp` (disc `.CMP` files), `SECTION_SIZES`,
   `SECTION_HINTS` (LZSS + section geometry), `detect`, `deinterleave` (cartridge
   dumps), `coalesceDiffRanges`, `totalDiffBytes` (byte-range diffing)

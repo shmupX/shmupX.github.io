@@ -35,6 +35,7 @@
     "games:manifest": "deno run -A scripts/build-games-manifest.ts",
     "eshop:check": "deno test -A tests/eshop_catalog_test.ts",
     "eshop:covers": "deno run -A scripts/backfill-eshop-covers.ts",
+    "level:normalize": "deno run -A scripts/normalize-cloud-level.ts",
     "deza:manifest": "deno run -A scripts/build-deza-saves-manifest.ts",
     "deza:upload": "deno run -A scripts/upload-deza-saves.ts",
     "sfc:upload": "deno run -A scripts/upload-sfc-saves.ts",

@@ -8752,6 +8752,89 @@ function summarizeSfcSav(parsed) {
   for (const e of parsed.errors) lines.push(`error in ${e.block}: ${e.message}`);
   return lines.join("\n");
 }
+
+// packages/shmup-engine/src/legacy-names.js
+var FRAME_RENAMES = [
+  // `<x>Tama<A-C?><n>` -> `<x>Projectile<A-C?><n>`: normalTama0, vegaTama2.
+  [/Tama(?=[A-Z]?\d+[.․](?:gif|png)$)/, "Projectile"],
+  // `<boss>_tama<A-C?><n>` -> `<boss>_projectile<A-C?><n>`: sagat_tamaA0.
+  [/_tama(?=[A-Z]?\d+[.․](?:gif|png)$)/, "_projectile"],
+  // The CA BOMB's blast is the SP blast now.
+  [/^caExplosion(?=\d+[.․](?:gif|png)$)/, "spExplosion"]
+];
+var FIELD_RENAMES = { cagage: "spgage", caDamage: "spDamage" };
+var TEXTURE_KEYS = /* @__PURE__ */ new Set(["texture", "attackTexture", "itemTexture"]);
+function legacyFrameName(name) {
+  if (typeof name !== "string") return name;
+  let out = name;
+  for (const [pattern, to] of FRAME_RENAMES) out = out.replace(pattern, to);
+  return out;
+}
+function normalizeRecord(record, path, report, seen) {
+  if (!record || typeof record !== "object" || seen.has(record)) return;
+  seen.add(record);
+  if (Array.isArray(record)) {
+    for (let i = 0; i < record.length; i++) {
+      normalizeRecord(record[i], `${path}[${i}]`, report, seen);
+    }
+    return;
+  }
+  for (const [from, to] of Object.entries(FIELD_RENAMES)) {
+    if (!(from in record)) continue;
+    if (!(to in record)) record[to] = record[from];
+    delete record[from];
+    report.fields.push({ path: `${path}.${from}`, to });
+  }
+  for (const key of Object.keys(record)) {
+    const value = record[key];
+    if (TEXTURE_KEYS.has(key) && Array.isArray(value)) {
+      renameFrames(value, `${path}.${key}`, report);
+    } else if (key === "anim" && value && typeof value === "object") {
+      for (const [animName, frames] of Object.entries(value)) {
+        if (Array.isArray(frames)) {
+          renameFrames(frames, `${path}.anim.${animName}`, report);
+        }
+      }
+    } else if (value && typeof value === "object") {
+      normalizeRecord(value, `${path}.${key}`, report, seen);
+    }
+  }
+}
+function renameFrames(list, path, report) {
+  for (let i = 0; i < list.length; i++) {
+    const to = legacyFrameName(list[i]);
+    if (to === list[i]) continue;
+    report.frames.push({ path: `${path}[${i}]`, from: list[i], to });
+    list[i] = to;
+  }
+}
+function normalizeLegacyGame(game) {
+  const report = { frames: [], fields: [] };
+  if (!game || typeof game !== "object") return report;
+  const seen = /* @__PURE__ */ new Set();
+  for (const key of ["enemyData", "bossData", "playerData", "playerData2"]) {
+    if (game[key] && typeof game[key] === "object") {
+      normalizeRecord(game[key], key, report, seen);
+    }
+  }
+  return report;
+}
+function normalizeLegacyAtlasFrames(frames) {
+  if (!frames || typeof frames !== "object") return frames;
+  const out = {};
+  for (const [key, value] of Object.entries(frames)) {
+    const renamed = legacyFrameName(key);
+    if (renamed !== key && (renamed in frames || renamed in out)) {
+      out[key] = value;
+      continue;
+    }
+    out[renamed] = value;
+  }
+  return (
+    /** @type {T} */
+    out
+  );
+}
 export {
   ALPHA_CUTOFF,
   BLANK_WAVES,
@@ -8923,6 +9006,7 @@ export {
   isSfcSav,
   itemIcon,
   layerAt,
+  legacyFrameName,
   levelGain,
   levelStages,
   libraryIndex,
@@ -8940,6 +9024,8 @@ export {
   nearestPaletteIndex,
   normalMatrix,
   normalize,
+  normalizeLegacyAtlasFrames,
+  normalizeLegacyGame,
   openDisc,
   orbitCamera,
   packMesh2D,
