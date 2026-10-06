@@ -2980,8 +2980,16 @@ every game anyone can get — and it is read from two places by
   and Sh'M↑ Party's eShop row says `4`.
 - The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU → EXPORT
   → ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`, cover under
-  `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last). A
-  static entry wins over a published one of the same id. The cover is
+  `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last). The
+  listing carries an `author`: the names on the cart's own staff roll
+  (**Attribution** above — every typed name once, in the roll's order, a strip
+  with no letter in it left off as a year rather than a person; `dezaByline`
+  reads them off the writer's report), or, for an imported cart whose credits
+  are drawn rather than typed, the community table's developer. The shop leads
+  the row's subline with it — `by EASIER BY CODE · Dezaemon 2 // 5 stages…`,
+  first because that line is cut with an ellipsis — and the detail panel has a
+  `by` line; a game listed before this, or one that credits nobody, shows
+  neither. A static entry wins over a published one of the same id. The cover is
   `composeCover` over the cart it just wrote, the same shot the shelf and the
   community library wear. A game published before that — it used to send the
   TITLE EDITOR's uploaded logo, which an import never has — is listed with

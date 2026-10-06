@@ -2143,6 +2143,14 @@
   // Where a game came from, for the disc panel and the graduated row's sub:
   // the repo for a GitHub build, the host for a plain zip, the editor for a
   // published cart.
+  // A row's second line. Who made the game leads it — the listing's `author`,
+  // which a published Dezaemon game takes from its cart's staff roll — because
+  // the line is cut with an ellipsis and the name is the part worth keeping.
+  function eshopRowSub(g) {
+    const what = g.sub || eshopSourceLabel(g);
+    return g.author ? 'by ' + g.author + ' · ' + what : what;
+  }
+
   function eshopSourceLabel(g) {
     if (!g) return '—';
     if (g.origin === 'rtdb' || g.source === 'editor') return 'published from the editor';
@@ -7286,6 +7294,7 @@
         <div class="disc net"></div>
         <div class="meta">
           <div><span class="k">name</span><b>{eshopCurrent?.name ?? '—'}</b></div>
+          <div><span class="k">by</span><b>{eshopCurrent?.author || '—'}</b></div>
           <div><span class="k">kind</span><b>{eshopCurrent ? eshopTypeLabel(eshopCurrent) : '—'}</b></div>
           <div><span class="k">status</span><b>{eshopCurrent ? statusLabel(eshopStatusKey(eshopCurrent)) : '—'}</b></div>
           <div><span class="k">size</span><b>{eshopCurrent?.size ?? '—'}</b></div>
@@ -7339,7 +7348,7 @@
               </div>
               <div class="game-bar">
                 <span class="name">{g.title || String(g.name).toUpperCase()}</span>
-                <span class="sub">{g.sub || eshopSourceLabel(g)}</span>
+                <span class="sub">{eshopRowSub(g)}</span>
                 <span class="eshop-kind {g.kind === 'deza' ? 'deza' : 'web'}">{eshopKindLabel(g)}</span>
                 {#if eshopStatusOf(g)}
                   <span class="eshop-kind status">{statusLabel(eshopStatusOf(g))}</span>

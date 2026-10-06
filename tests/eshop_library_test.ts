@@ -34,6 +34,8 @@ interface EshopLib {
   ESHOP_CHANNEL: string;
   MISTER_SAV_BYTES: number;
   LOGICAL_SAV_BYTES: number;
+  BYLINE_MAX: number;
+  dezaByline(report: unknown): string;
   normalizeEshopEntry(
     raw: unknown,
     origin?: string,
@@ -349,8 +351,14 @@ Deno.test("normalizeEshopEntry fills the defaults and refuses a malformed row", 
   // A web row's `shelf` — the console section an installed build lists in —
   // rides through when it is a core id, and is blank otherwise.
   assertEquals(entry.shelf, "");
-  assertEquals(lib.normalizeEshopEntry({ ...PARTY, shelf: "ps2" }).entry.shelf, "ps2");
-  assertEquals(lib.normalizeEshopEntry({ ...PARTY, shelf: "PS 2" }).entry.shelf, "");
+  assertEquals(
+    lib.normalizeEshopEntry({ ...PARTY, shelf: "ps2" }).entry.shelf,
+    "ps2",
+  );
+  assertEquals(
+    lib.normalizeEshopEntry({ ...PARTY, shelf: "PS 2" }).entry.shelf,
+    "",
+  );
 
   const deza = lib.normalizeEshopEntry(
     {
@@ -782,6 +790,70 @@ Deno.test("publishDezaGame writes the save, the cover, then the index — and th
   // No IndexedDB here: the shelf half fails soft, the publish stands.
   assertStrictEquals(got.shelf, null);
   assert(got.shelfError.includes("shmupxDezaExports"), got.shelfError);
+});
+
+Deno.test("a listing names whoever the cart's staff roll does", async () => {
+  const roll = (credits: unknown, source = "level") => ({
+    stages: [{}],
+    cells: 1,
+    attribution: { source, credits },
+  });
+  // Every name once, in the order the roll runs them, whatever its role — and
+  // a strip that is only a year is not somebody.
+  assertEquals(
+    lib.dezaByline(roll([
+      { role: "PRESENTED BY", names: ["Easier By Code", "2026"] },
+      { role: "MUSIC", names: ["", "somebody\nelse"] },
+      { role: "THANKS", names: ["EASIER BY CODE"] },
+    ])),
+    "Easier By Code, somebody else",
+  );
+  // Nothing typed is nothing to say: no roll, nobody, or a cart's drawn art.
+  for (
+    const silent of [
+      null,
+      {},
+      { stages: 2 },
+      roll([]),
+      roll([], "cart"),
+      roll("x"),
+    ]
+  ) {
+    assertStrictEquals(lib.dezaByline(silent), "");
+  }
+  // A listing row is one line.
+  const long = lib.dezaByline(
+    roll([{ names: ["a".repeat(60), "b".repeat(60)] }]),
+  );
+  assertStrictEquals(long.length, lib.BYLINE_MAX);
+  assert(long.endsWith("…"));
+
+  const publish = async (extra: Record<string, unknown>) => {
+    const { fetchImpl, calls } = stubFetch({
+      "https://db.test/": () => new Response(null, { status: 204 }),
+    });
+    await lib.publishDezaGame({
+      name: "Credited",
+      sav: interleave(logicalCart()),
+      fetchImpl,
+      rtdb: "https://db.test/",
+      ...extra,
+    });
+    const index = JSON.parse(calls[calls.length - 1].body!);
+    // …and the shop reads it back off the row.
+    return lib.normalizeEshopEntry(index, "rtdb", "credited").entry.author;
+  };
+  const report = roll(
+    [{ role: "PRESENTED BY", names: ["easierbycode"] }],
+    "default",
+  );
+  assertStrictEquals(await publish({ report }), "easierbycode");
+  // A name handed in outright wins; none at all leaves the row without one.
+  assertStrictEquals(
+    await publish({ report, author: " the  developer " }),
+    "the developer",
+  );
+  assertStrictEquals(await publish({ report: roll([], "cart") }), "");
 });
 
 Deno.test("publishDezaGame stops before the index when the save is refused", async () => {

@@ -1199,6 +1199,35 @@ async function coverNode(cover) {
   return { png: cover, w, h };
 }
 
+/** The longest byline a listing carries: a row is one line. */
+export const BYLINE_MAX = 80;
+
+/**
+ * Who made a game, as one line for its listing: every name the cart's staff
+ * roll was given, once each, in the order the roll runs them — read off the
+ * writer's own report (`report.attribution`, see the engine's
+ * write/attribution.js), so the listing says what the cart says. A strip with
+ * no letter in it is a year or a version, not somebody, and stays off. ''
+ * when the roll was not typed: an uncredited game, or an imported cart whose
+ * credits are its author's drawing and nothing here can read.
+ */
+export function dezaByline(report) {
+  const credits = report && report.attribution && report.attribution.credits;
+  if (!Array.isArray(credits)) return '';
+  const seen = new Set();
+  const names = [];
+  for (const credit of credits) {
+    for (const raw of (credit && Array.isArray(credit.names) ? credit.names : [])) {
+      const name = String(raw ?? '').replace(/\s+/g, ' ').trim();
+      if (!/\p{L}/u.test(name) || seen.has(name.toUpperCase())) continue;
+      seen.add(name.toUpperCase());
+      names.push(name);
+    }
+  }
+  const line = names.join(', ');
+  return line.length > BYLINE_MAX ? line.slice(0, BYLINE_MAX - 1).trimEnd() + '…' : line;
+}
+
 /**
  * Publish a Dezaemon game to the eShop: gzip(deinterleave(sav)) → /eshop/saves,
  * the cover → /eshop/covers, and the index row LAST, so a half-published game
@@ -1207,7 +1236,9 @@ async function coverNode(cover) {
  * `shelfError`, not thrown — the publish itself succeeded).
  *
  * `sav` is the 1,114,112-byte MiSTer image the exporter builds (a 557,056-byte
- * logical image is accepted too). `id` defaults to slugOfTitle(name).
+ * logical image is accepted too). `id` defaults to slugOfTitle(name). The
+ * listing's `author` is the one handed in, else the names on the cart's own
+ * staff roll (dezaByline over `report`).
  */
 export async function publishDezaGame({
   id = '',
@@ -1265,13 +1296,14 @@ export async function publishDezaGame({
   // to two-player games without downloading every save.
   const players = await dezaCartPlayers(logical, eng);
   const file = 'Dez 2 - ' + title + '.sav';
+  const by = String(author || '').replace(/\s+/g, ' ').trim() || dezaByline(report);
   const index = {
     schemaVersion: 1,
     kind: 'deza',
     name: title,
     title: title.toUpperCase(),
     sub: String(sub || '') || (stages + ' STAGE' + (stages === 1 ? '' : 'S') + ' · ' + cells + '/1024 CG CELLS · ' + pal.toUpperCase() + ' PALETTE'),
-    ...(author ? { author: String(author) } : {}),
+    ...(by ? { author: by } : {}),
     file,
     palette: pal,
     size: MISTER_SAV_BYTES,

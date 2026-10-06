@@ -6649,9 +6649,17 @@
                     report: rep,
                     cover,
                     sub: 'Dezaemon 2 // ' + stages + ' stage' + (stages === 1 ? '' : 's') + ' · ' + dezaSavPalette + ' palette',
+                    // The listing names whoever the cart's staff roll does
+                    // (publishDezaGame reads them off the report). A cart's
+                    // own credits are drawn, not typed, so for those the
+                    // community table's developer is the only name there is.
+                    author: rep.attribution && rep.attribution.source === 'cart'
+                        ? String((gameData && gameData.dezaemonCredits && gameData.dezaemonCredits.developer) || '')
+                        : '',
                 });
                 dezaExportRows = null;
-                eshopNote('PUBLISHED TO THE ESHOP AS ' + (res && res.id || name) + ' · ON YOUR SHELF' +
+                const by = res && res.index && res.index.author;
+                eshopNote('PUBLISHED TO THE ESHOP AS ' + (res && res.id || name) + (by ? ' · BY ' + String(by).toUpperCase() : '') + ' · ON YOUR SHELF' +
                     (imported ? ' · THAT WAS AN IMPORTED CART — THE ESHOP IS FOR YOUR OWN GAMES, PLEASE PUBLISH THOSE' : '') +
                     (out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : ''), '#84cc16');
                 flash('PUBLISHED TO THE ESHOP');
