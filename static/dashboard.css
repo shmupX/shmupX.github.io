@@ -621,6 +621,10 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   box-shadow: inset 0 0 12px rgba(120, 255, 90, .4), 0 0 0 2px rgba(140, 255, 110, .75);
 }
 .strip-disc .glass img { width: 82%; height: 82%; object-fit: contain; filter: drop-shadow(0 0 6px rgba(120, 255, 90, .55)); }
+/* The Games tile's globe (an inline Lucide icon, see Dashboard.svelte): a
+   stroke in the mark's green, a step smaller than a bitmap since it has no
+   fill to carry the glow and reads better with air around it. */
+.strip-disc .glass svg.glyph { width: 64%; height: 64%; color: #bdf48c; filter: drop-shadow(0 0 6px rgba(120, 255, 90, .55)); }
 .strip-disc .mark {
   font-weight: 800; font-size: clamp(18px, 2.9vmin, 32px); letter-spacing: .04em;
   color: #bdf48c; text-shadow: 0 0 10px rgba(120, 255, 90, .7);
@@ -1418,6 +1422,7 @@ body.theme-nintendo .strip-disc::before {
 }
 body.theme-nintendo .strip-disc .glass { inset: 0; border-radius: 0; background: transparent; box-shadow: none; }
 body.theme-nintendo .strip-disc .glass img { width: 100%; height: 100%; object-fit: cover; filter: none; }
+body.theme-nintendo .strip-disc .glass svg.glyph { color: #fff; filter: none; }
 body.theme-nintendo .strip-disc .mark { color: #fff; text-shadow: none; }
 body.theme-nintendo .strip-tile.sel .strip-disc { border-color: #49c2ff; box-shadow: 0 0 0 2px rgba(73, 194, 255, .35); transform: none; }
 body.theme-nintendo .strip-tile.sel .strip-disc .glass { background: transparent; box-shadow: none; }

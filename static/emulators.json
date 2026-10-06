@@ -116,14 +116,7 @@
       "coreB": "wasm",
       "size": "~30 MB",
       "player": "/ps2/play.html",
-      "manifest": "/PlayStation2/manifest.json",
-      "prefixes": [
-        "/ps2/",
-        "/PlayStation2/",
-        "/games/ps2-mario/",
-        "/games/racer-intro/",
-        "/games/shmup-party-ps2/"
-      ],
+      "prefixes": ["/ps2/", "/PlayStation2/"],
       "isolated": true
     },
     {

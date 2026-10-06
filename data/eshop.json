@@ -2,6 +2,7 @@
   {
     "id": "shmup-party-ps2",
     "kind": "web",
+    "shelf": "ps2",
     "name": "Sh'M↑ Party",
     "title": "SH'M↑ PARTY",
     "sub": "5velte-ps2 // 1-4 players · attract mode",

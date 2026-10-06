@@ -68,6 +68,13 @@ const ESHOP_PREFIX = "/eshop/";
 // origin that has never heard of them, and only for the people who installed
 // it. Same trap, same answer as /games/super-mario-sp/ — see the third test in
 // tests/emu_sw_universe_test.ts.
+//
+// cmg's PS2 shelf — /PlayStation2/manifest.json, three AthenaEnv discs beside
+// browser builds of the same games under /games/ps2-mario/, /games/racer-intro/
+// and /games/shmup-party-ps2/ — is not mirrored either. The discs come up black
+// under Play!'s HLE kernel, so the ps2 core's catalogue entry reads no manifest
+// and the section lists only what this machine built and what the eShop
+// installed on it (Sh'M↑ Party comes in from its own zip, under /eshop/).
 const MIRRORABLE = [
   "/nes/", "/Nintendo/",
   "/turbografx16/", "/TurboGrafx-16/",
@@ -76,7 +83,6 @@ const MIRRORABLE = [
   "/arcade/",
   "/naomi/", "/Naomi/", "/icons/naomi-reindeer.png",
   "/ps2/", "/PlayStation2/",
-  "/games/ps2-mario/", "/games/racer-intro/", "/games/shmup-party-ps2/",
   "/switch/", "/NintendoSwitch/",
   "/emulator-controls.js", "/shaders/", "/bios/",
 ];

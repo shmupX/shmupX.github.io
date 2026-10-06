@@ -346,6 +346,11 @@ Deno.test("normalizeEshopEntry fills the defaults and refuses a malformed row", 
   assertEquals(entry.source, "github");
   assertEquals(entry.origin, "manifest");
   assertEquals(entry.icon, null);
+  // A web row's `shelf` — the console section an installed build lists in —
+  // rides through when it is a core id, and is blank otherwise.
+  assertEquals(entry.shelf, "");
+  assertEquals(lib.normalizeEshopEntry({ ...PARTY, shelf: "ps2" }).entry.shelf, "ps2");
+  assertEquals(lib.normalizeEshopEntry({ ...PARTY, shelf: "PS 2" }).entry.shelf, "");
 
   const deza = lib.normalizeEshopEntry(
     {
@@ -386,6 +391,8 @@ Deno.test("normalizeEshopEntry fills the defaults and refuses a malformed row", 
   assertEquals(arcade.players, 2);
   // Nothing deza-shaped leaks in: an arcade row carries no save.
   assertEquals(arcade.sav, undefined);
+  // …and nothing web-shaped: a board is shelved by its core, not a `shelf`.
+  assertEquals(arcade.shelf, undefined);
 
   // A DEBUG status survives normalization on an arcade row — it is what the
   // launcher hides on, and installArcadeGame copies it onto the shelf so an

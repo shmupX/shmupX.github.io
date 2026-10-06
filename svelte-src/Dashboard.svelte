@@ -15,6 +15,7 @@
   import {
     addPs2Game,
     emuStateFor,
+    ensureEmuCore,
     ensurePs2Core,
     getPs2Game,
     listPs2Games,
@@ -1621,7 +1622,8 @@
   // that moves instead of the design's hardcoded 6 and 3.
   $effect(() => {
     const snes = snesLocal.length;
-    const ps2 = ps2Local.length;
+    // The PS2 shelf is the discs built here plus the eShop builds filed on it.
+    const ps2 = ps2Local.length + eshopShelfGames('ps2').length;
     if (!watchCode) return;
     publishShelves(watchCode, { snes, ps2 });
   });
@@ -2188,20 +2190,53 @@
         if (c && emuManifests[c.id] === undefined) loadEmuManifest(c);
         await refreshArcadeLocal();
         showToast(g.name + ' is in the ' + (c?.title || core.toUpperCase()) + ' section — press A there to play it.');
-      } else if (launch && !gameOn) {
-        // The A that started the install meant "play" — unless something else
-        // has been launched in the meantime, which the new build must not
-        // shove out of the frame.
-        launchEshopWeb(g);
-      } else if (gameOn && typeof gameSrc === 'string' && gameSrc.startsWith(ESHOP_PREFIX + id + '/')) {
-        // Updated the game that is on screen — bring the new build up.
-        const iframe = document.getElementById('gameframe');
-        try { if (iframe) iframe.src = entryUrl(g); } catch (_) { /* ignore */ }
+      } else {
+        // A build whose row names a `shelf` lists in that console's section
+        // rather than under Games, so the section has to exist: the core goes
+        // in the way the PS2 export hand-off puts it in. Before the launch,
+        // so the shelf is there when the game is left.
+        if (entry.shelf) await shelveEshopWeb(g);
+        if (launch && !gameOn) {
+          // The A that started the install meant "play" — unless something
+          // else has been launched in the meantime, which the new build must
+          // not shove out of the frame.
+          launchEshopWeb(g);
+        } else if (gameOn && typeof gameSrc === 'string' && gameSrc.startsWith(ESHOP_PREFIX + id + '/')) {
+          // Updated the game that is on screen — bring the new build up.
+          const iframe = document.getElementById('gameframe');
+          try { if (iframe) iframe.src = entryUrl(g); } catch (_) { /* ignore */ }
+        }
       }
     } catch (e) {
       const msg = e?.message || String(e);
       setEshopStatus(id, { busy: false, err: msg });
       showToast(g.name + ': ' + msg);
+    }
+  }
+  // Put the core a shelved web build lists under into the installed set, the
+  // way fileExportToPs2 does for a disc: ensureEmuCore records it, hands the
+  // worker its prefixes and warms the player page — the core's wasm stays
+  // lazy, so a browser build costs no 30 MB download it will never run on.
+  // A core that will not go in is a toast, not a failed install: the build
+  // has landed, and eshopWebGames keeps it on the Games list until the
+  // section exists (see shelvedElsewhere).
+  async function shelveEshopWeb(g) {
+    const shelf = String(g.shelf || '');
+    const core = emuCores.find((c) => c.id === shelf);
+    const section = core?.title || shelf.toUpperCase();
+    try {
+      await ensureEmuCore(shelf, core?.name || shelf.toUpperCase(), (step) => {
+        setEshopStatus(g.id, { busy: true, pct: 100, label: String(step || '').toUpperCase() });
+      });
+      emuInstalled = [...new Set([...loadInstalledEmus(), shelf])];
+      persistEmus();
+      await pushEmuState();
+      if (core && emuManifests[core.id] === undefined) loadEmuManifest(core);
+      showToast(g.name + ' is in the ' + section + ' section — press A there to play it.');
+    } catch (e) {
+      showToast(g.name + ': installed, but the ' + section + ' section could not be added — ' + (e?.message || e));
+    } finally {
+      setEshopStatus(g.id, { busy: false, pct: 100, label: '' });
     }
   }
   function eshopUpdate(g) {
@@ -2303,11 +2338,12 @@
   }
 
   // The row an eShop action applies to from the pad or the keyboard: the shop
-  // screen's own row, or an installed build's row in the Games list.
+  // screen's own row, or an installed build's row — in the Games list, or in
+  // the console section its catalog row shelves it on (eshopShelfRows).
   function eshopRowInFocus() {
     if (gameOn) return null;
     if (screen === 'eshop') return eshopCurrent || null;
-    if (screen === 'games' && !stripOn && curSection.id === 'games' && curRow?.kind === 'eshop-web') return curRow.g;
+    if (screen === 'games' && !stripOn && curRow?.kind === 'eshop-web') return curRow.g;
     return null;
   }
   function actEshopUpdate() {
@@ -2350,9 +2386,24 @@
   // Installed web builds graduate into the Games list, right under the
   // catalog: a game you installed is a game you own. Deduped against the
   // manifest so the keyed {#each} never sees one id twice.
+  // An installed web build whose catalog row names a `shelf` — an emulator
+  // core id — lists in THAT console's section instead (eshopShelfRows):
+  // Sh'M↑ Party's PS2 port belongs beside the discs, not under the globe.
+  // Only while the shelf's core is installed, though. Installing the build
+  // puts the core in (shelveEshopWeb), and this is the guard for the time
+  // that part did not take: a build is never on no list at all.
+  function shelvedElsewhere(g) {
+    return !!g.shelf && emuInstalled.includes(g.shelf);
+  }
+  // The eShop builds filed on one console: installed web entries whose row
+  // says `shelf: <core id>`.
+  function eshopShelfGames(coreId) {
+    return eshopCatalogRows.filter((g) => g.kind === 'web' && g.shelf === coreId && !!eshopInstalled[g.id]);
+  }
   let eshopWebGames = $derived(
     eshopCatalogRows.filter((g) =>
-      g.kind === 'web' && !!eshopInstalled[g.id] && !manifestGames.some((m) => m.id === g.id))
+      g.kind === 'web' && !!eshopInstalled[g.id] && !manifestGames.some((m) => m.id === g.id) &&
+      !shelvedElsewhere(g))
   );
   let eshopMenuSub = $derived(
     eshopCatalogRows.length ? eshopCatalogRows.length + ' games · get more' : (eshopLoaded && eshopOffline ? 'catalog offline · retry' : 'get more games')
@@ -4020,10 +4071,25 @@
     }
     return [];
   }
-  // Rows for an installed core: what this machine built first, then the mirror's
-  // shelf. A build you just made is the one you came here to play.
+  // The eShop builds shelved on a console (eshopShelfGames), as rows. The
+  // same shape the Games list gives an installed build, and the same launch:
+  // a browser build served from Cache Storage runs in the frame like any
+  // other web game and never touches the core, which only has to be
+  // installed for the section to exist.
+  function eshopShelfRows(core) {
+    return eshopShelfGames(core.id).map((g) => ({
+      key: 'eshop:' + g.id, name: g.name, title: g.title || String(g.name).toUpperCase(),
+      sub: 'ESHOP // ' + eshopSourceLabel(g) + (eshopStatusOf(g) ? ' · ' + statusLabel(eshopStatusOf(g)) : ''),
+      icon: g.icon || null, size: g.size || '— MB', date: g.date || '—',
+      type: core.mark + ' / ESHOP', kind: 'eshop-web',
+      g,
+    }));
+  }
+  // Rows for an installed core: what this machine built first, then what the
+  // eShop filed on it, then the mirror's shelf. A build you just made is the
+  // one you came here to play.
   function coreRows(core) {
-    return [...localRows(core), ...romRows(emuManifests[core.id], core)];
+    return [...localRows(core), ...eshopShelfRows(core), ...romRows(emuManifests[core.id], core)];
   }
   // Empty-shelf copy for an installed core. The three states are distinct on
   // purpose: a manifest that has not arrived is not the same as one that failed,
@@ -4057,6 +4123,22 @@
             'under static/ instead. Carts can be shelved and exported without it.',
           hint: [],
         };
+    }
+    // The PlayStation 2 section is built here or installed from the eShop,
+    // never read off the mirror: its catalogue entry carries no manifest (see
+    // static/emulators.json — cmg's own PS2 shelf is three AthenaEnv discs
+    // that come up black under Play!'s HLE kernel, beside browser builds of
+    // the same games), so installing the core, from Settings or with the
+    // first export, puts nothing on the shelf by itself. The manifest states
+    // below would read "fetching undefined" here.
+    if (core.id === 'ps2') {
+      return {
+        title: 'NO GAMES YET',
+        pre: 'Build a level for it from the level editor\u2019s ',
+        path: 'TARGET → PS2',
+        post: ' sheet and add the disc here, or install a PlayStation 2 build from the eShop.',
+        hint: [],
+      };
     }
     // The PlayStation section has a real mirror shelf, so the manifest states
     // below are not nonsense here the way they were for the Super Famicom —
@@ -4103,7 +4185,10 @@
   }
   let SECTIONS = $derived([
     {
-      id: 'games', name: 'Games', mark: 'SX', icon: '/x-logo.png',
+      // The strip's one non-console tile: this section is the web — shmupX's
+      // own catalog and the eShop's browser builds — so it wears a globe
+      // (Lucide's, inline in the template) rather than a console mark.
+      id: 'games', name: 'Games', mark: 'SX', icon: null, glyph: 'globe',
       title: 'GAMES', metaType: 'SHMUPX / CATALOG', date: 'SX',
       coreA: 'boot.0728', coreB: 'signal // ok',
       sel: () => gameSel, setSel: (v) => (gameSel = v),
@@ -4515,6 +4600,10 @@
     // is the core's (mirrored under this origin), so it goes in through the
     // player's bring-your-own-board mode rather than by filename.
     if (row.kind === 'arcade-local') { launchArcadeBoard(row.local, core); return; }
+    // An eShop build shelved on this console (eshopShelfRows): a browser
+    // build out of Cache Storage, so it runs in the frame like any other web
+    // game and the core is never asked for.
+    if (row.kind === 'eshop-web') { launchEshopWeb(row.g); return; }
     if (row.kind === 'mednafen') { launchMednafen(); return; }
     // A ps2 "web" row is a browser build living beside the ISOs, not a disc —
     // launch its own url rather than handing the filename to the emulator.
@@ -6951,6 +7040,13 @@
                 <div class="glass">
                   {#if s.icon}
                     <img src={s.icon} alt={s.name} />
+                  {:else if s.glyph === 'globe'}
+                    <!-- Lucide "globe" (ISC), stroked in the glass's own green. -->
+                    <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label={s.name}>
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+                      <path d="M2 12h20" />
+                    </svg>
                   {:else}
                     <span class="mark {s.mark.length > 3 ? 'long' : ''}">{s.mark}</span>
                   {/if}

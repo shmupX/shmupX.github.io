@@ -149,6 +149,13 @@ export function normalizeEshopEntry(raw, origin = 'manifest', key = '') {
     entry.subdir = cleanRel(raw.subdir);
     entry.downloadUrl = str(raw.downloadUrl);
     entry.streamUrl = str(raw.streamUrl);
+    // The console section an installed build lists in: a core id from
+    // emulators.json (Sh'M↑ Party's PS2 port shelves on "ps2"), or blank for
+    // the Games list. The dashboard installs the core along with the build,
+    // so the section is there to list it in. Checked against the id shape
+    // rather than the catalogue: that file is the dashboard's to read, and a
+    // name it does not know simply leaves the build on the Games list.
+    entry.shelf = ESHOP_ID_RE.test(str(raw.shelf)) ? str(raw.shelf) : '';
     // Launcher capabilities, verbatim: the dashboard reads them exactly as it
     // reads a manifest game's.
     if (raw.twinStick !== undefined) entry.twinStick = raw.twinStick;

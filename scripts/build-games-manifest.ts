@@ -66,6 +66,11 @@ interface EshopEntry extends ManifestEntry {
   subdir?: string;
   downloadUrl?: string;
   streamUrl?: string;
+  // Where an installed web build lists: the id of a core in
+  // static/emulators.json, whose launcher section it then appears in (the
+  // dashboard installs the core with the build). Left out, the build lists
+  // under Games.
+  shelf?: string;
   // deza
   sav?: string;
   slug?: string;
@@ -131,6 +136,9 @@ export function eshopEntryProblems(e: EshopEntry, i: number): string[] {
     }
     if (e.streamUrl != null && !isFetchableUrl(e.streamUrl)) {
       problems.push(`${at}: streamUrl must be https or root-relative`);
+    }
+    if (e.shelf != null && !ID_RE.test(e.shelf)) {
+      problems.push(`${at}: shelf must be a core id from static/emulators.json`);
     }
     for (const key of ["branch", "entry", "subdir"] as const) {
       const v = e[key];

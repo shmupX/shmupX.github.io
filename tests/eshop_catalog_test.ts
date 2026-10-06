@@ -87,6 +87,15 @@ Deno.test("the first global game is Sh'M↑ Party's PS2 port, from its Pages dep
   );
   // The game is the site's /play/ page, so that is the entry inside the zip.
   assertEquals(first?.entry, "play/index.html");
+  // It lists in the PlayStation 2 section, not under Games: `shelf` names a
+  // core in static/emulators.json, which installing the game turns on.
+  assertEquals(first?.shelf, "ps2");
+  const cores = (await read("static/emulators.json")).cores as { id: string }[];
+  assertEquals(
+    cores.some((c) => c.id === first?.shelf),
+    true,
+    "the shelf must be a core in static/emulators.json",
+  );
   assertEquals(first?.icon, "/icons/shmup-party-icon.png");
   const icon = await Deno.stat(
     new URL("../static/icons/shmup-party-icon.png", import.meta.url),
@@ -301,6 +310,9 @@ Deno.test("eshopEntryProblems rejects what the installer cannot act on", () => {
   assertEquals(bad({ id: "Ok Game" }), true, "id with spaces/case");
   assertEquals(bad({ id: "-leading" }), true, "id starting with -");
   assertEquals(bad({ kind: "rom" }), true, "unknown kind");
+  // A web row may name the console section it lists in; it has to be a core id.
+  assertEquals(eshopEntryProblems({ ...ok, shelf: "ps2" }, 0), []);
+  assertEquals(bad({ shelf: "PS 2" }), true, "shelf must be a core id");
   // An arcade row needs all three of core/rom/romUrl — each one is something
   // the launcher cannot guess.
   const arcade = {
