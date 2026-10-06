@@ -7340,7 +7340,7 @@
           "pyramidNewer24.png"
         ]
       },
-      "cagage": 30,
+      "spgage": 30,
       "hp": 300,
       "interval": 250,
       "name": "pyramid",
@@ -7349,7 +7349,7 @@
           "pentagram0.png",
           "pentagram1.png"
         ],
-        "cagage": 10,
+        "spgage": 10,
         "damage": 1,
         "frameRate": 9,
         "hp": 10,
@@ -7362,7 +7362,7 @@
         ]
       },
       "projectileDataB": {
-        "cagage": 1,
+        "spgage": 1,
         "damage": 1,
         "frameRate": 21,
         "hp": 2,
@@ -7405,12 +7405,12 @@
           "flirty_girl4.png"
         ]
       },
-      "cagage": 30,
+      "spgage": 30,
       "hp": 250,
       "interval": 200,
       "name": "flirty_girl",
       "projectileDataA": {
-        "cagage": 2,
+        "spgage": 2,
         "damage": 1,
         "hp": 5,
         "score": 200,
@@ -7421,7 +7421,7 @@
         ]
       },
       "projectileDataB": {
-        "cagage": 20,
+        "spgage": 20,
         "damage": 1,
         "hp": 18,
         "score": 500,
@@ -7471,7 +7471,7 @@
           "trump52.png"
         ]
       },
-      "cagage": 30,
+      "spgage": 30,
       "hp": 350,
       "interval": 200,
       "name": "trump",
@@ -7481,7 +7481,7 @@
           "goki_projectileA1.gif",
           "goki_projectileA2.gif"
         ],
-        "cagage": 5,
+        "spgage": 5,
         "damage": 1,
         "hp": 5,
         "score": 100,
@@ -7497,7 +7497,7 @@
           "goki_projectileB1.gif",
           "goki_projectileB2.gif"
         ],
-        "cagage": 10,
+        "spgage": 10,
         "damage": 1,
         "hp": 20,
         "score": 500,
@@ -7558,7 +7558,7 @@
           "flirtyRevenge4.png"
         ]
       },
-      "cagage": 30,
+      "spgage": 30,
       "hp": 200,
       "interval": 200,
       "name": "flirty_revenge",
@@ -7567,7 +7567,7 @@
           "flirty_revenge_projectile0.png",
           "flirty_revenge_projectile1.png"
         ],
-        "cagage": 5,
+        "spgage": 5,
         "damage": 1,
         "hp": 8,
         "score": 150,
@@ -7616,7 +7616,7 @@
           "monkeyBrain0.png"
         ]
       },
-      "cagage": 30,
+      "spgage": 30,
       "hp": 500,
       "interval": 120,
       "name": "monkeyBrain",
@@ -7625,7 +7625,7 @@
           "fang_projectileA0.gif",
           "fang_projectileA1.gif"
         ],
-        "cagage": 5,
+        "spgage": 5,
         "damage": 1,
         "hp": 9,
         "score": 222,
@@ -7651,7 +7651,7 @@
           "fang_projectileB7.gif",
           "fang_projectileB8.gif"
         ],
-        "cagage": 10,
+        "spgage": 10,
         "damage": 1,
         "hp": 15,
         "score": 222,
@@ -7669,7 +7669,7 @@
           "fang_projectileC1.gif",
           "fang_projectileC2.gif"
         ],
-        "cagage": 5,
+        "spgage": 5,
         "damage": 1,
         "hp": 4,
         "score": 222,
@@ -7711,7 +7711,7 @@
           "elon2.png"
         ]
       },
-      "cagage": 30,
+      "spgage": 30,
       "hp": 150,
       "interval": 100,
       "name": "Elon",
@@ -7730,12 +7730,12 @@
   },
   "enemyData": {
     "enemyA": {
-      "cagage": 4,
+      "spgage": 4,
       "hp": 1,
       "interval": 300,
       "name": "redEyeOcto",
       "projectileData": {
-        "cagage": 2,
+        "spgage": 2,
         "damage": 1,
         "hp": 1,
         "score": 100,
@@ -7763,12 +7763,12 @@
       ]
     },
     "enemyB": {
-      "cagage": 7,
+      "spgage": 7,
       "hp": 3,
       "interval": 60,
       "name": "stickman",
       "projectileData": {
-        "cagage": 2,
+        "spgage": 2,
         "damage": 1,
         "hp": 2,
         "score": 100,
@@ -7795,12 +7795,12 @@
       ]
     },
     "enemyC": {
-      "cagage": 5,
+      "spgage": 5,
       "hp": 1,
       "interval": 170,
       "name": "flirtyGirl",
       "projectileData": {
-        "cagage": 1,
+        "spgage": 1,
         "damage": 1,
         "hp": 1,
         "score": 100,
@@ -7824,7 +7824,7 @@
       ]
     },
     "enemyD": {
-      "cagage": 10,
+      "spgage": 10,
       "hp": 5,
       "interval": -1,
       "name": "tiger",
@@ -7846,7 +7846,7 @@
       ]
     },
     "enemyO": {
-      "cagage": 1,
+      "spgage": 1,
       "hp": 5,
       "interval": -1,
       "name": "ufo",
@@ -7864,7 +7864,7 @@
       ]
     },
     "enemyP": {
-      "cagage": 1,
+      "spgage": 1,
       "hp": 18,
       "interval": -1,
       "name": "asteroidFace",
@@ -7878,12 +7878,12 @@
       ]
     },
     "enemyQ": {
-      "cagage": 1,
+      "spgage": 1,
       "hp": 30,
       "interval": 100,
       "name": "launchpad",
       "projectileData": {
-        "cagage": 1,
+        "spgage": 1,
         "damage": 1,
         "hp": 1,
         "score": 400,
@@ -7913,7 +7913,7 @@
       ]
     },
     "enemyR": {
-      "cagage": 1,
+      "spgage": 1,
       "hp": 20,
       "interval": -1,
       "name": "spikeA",
@@ -7926,7 +7926,7 @@
       ]
     },
     "enemyS": {
-      "cagage": 2,
+      "spgage": 2,
       "hp": 20,
       "interval": -1,
       "name": "spikeB",
@@ -7939,7 +7939,7 @@
       ]
     },
     "enemyT": {
-      "cagage": 5,
+      "spgage": 5,
       "hp": 10,
       "interval": -1,
       "name": "roseVineA",
@@ -7952,7 +7952,7 @@
       ]
     },
     "enemyU": {
-      "cagage": 5,
+      "spgage": 5,
       "hp": 10,
       "interval": -1,
       "name": "roseVineB",
@@ -7965,7 +7965,7 @@
       ]
     },
     "enemyV": {
-      "cagage": 0,
+      "spgage": 0,
       "hp": "infinity",
       "interval": -1,
       "name": "orbous",
