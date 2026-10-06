@@ -8,16 +8,20 @@
 //   assets/game_asset.png|json   the base sprite atlas, repacked
 //   assets/game_ui.png|json      the base HUD atlas, repacked
 //   assets/cyber_liberty.png     the player, as the 32x32 grid sheet ps2-sp wants
-//   assets/game.json             the base recipe (player/enemy/boss stats)
+//   assets/game.json             the base recipe (player/enemy/boss stats),
+//                                with a whole-game record's own later stages
+//                                laid over the base game's
 //   assets/level.json            this stage's waves (one-character enemy codes)
-//                                and the enemy/boss records it can spawn
-//   assets/level_atlas.png|json  every frame the exported stage can draw
+//                                and the enemy/boss records the disc can spawn
+//   assets/level_atlas.png|json  every frame the exported game can draw
 //
 // ps2-sp tags each of the level's own enemies with the `level_atlas` texture,
 // so the level atlas has to be self-sufficient: a frame the level references
 // but never customised is pulled from the base sheet rather than left dangling.
 // It also has to stay small enough to keep its resolution: only the enemy
-// types the exported stage spawns, and that stage's boss, go in (stageRecipes).
+// types the console will actually spawn, and the bosses it will actually
+// fight, go in (stageRecipes) — and that is more than the exported stage's,
+// because the port plays on into the stages after it (laterStages).
 
 import { join } from "@std/path";
 import {
@@ -42,6 +46,12 @@ export interface LevelRecord {
   enemyData?: Record<string, Record<string, unknown>>;
   bossData?: Record<string, Record<string, unknown>>;
   playerData?: Record<string, unknown>;
+  /**
+   * Every stage of the game, as the editor saves a whole-game record
+   * (`stages.stageN.enemylist`). `enemylist` above is the one at `stageKey`;
+   * the console plays on through the ones after it, so they ship too.
+   */
+  stages?: Record<string, { enemylist?: string[][] } & Record<string, unknown>>;
   atlasFrames?: Record<string, FrameEntry>;
   atlasImageDataURL?: string;
   /**
@@ -170,6 +180,8 @@ function collectTextures(value: unknown, into: Set<string>): void {
 /** The wave grid and enemy table as the disc's level.json carries them. */
 export interface DiscStage {
   enemylist: string[][];
+  /** The stages after this one, re-coded the same way (see laterStages). */
+  later: Record<string, string[][]>;
   enemyData: Record<string, Record<string, unknown>>;
   /** Multi-character type -> the single character it became on the disc. */
   renamed: Record<string, string>;
@@ -197,16 +209,24 @@ const CODE_CHARS =
  * type: a single-character type keeps its letter, every other type takes the
  * next unused one (upper case, then lower case, then 1-9), and enemyData is
  * re-keyed to match. Both readings agree on a one-character code, so this is
- * right whichever runtime opens it. Only the types the stage names ship, which
- * also takes level.json from hundreds of records to a few dozen. A stage with
+ * right whichever runtime opens it. Only the types some grid names ship, which
+ * also takes level.json from hundreds of records to a few dozen. A game with
  * more types than there are characters keeps the leftovers as they were and
  * says so; a grid that names nothing the record knows ships unchanged.
+ *
+ * `later` is the grids of the stages the console plays after this one
+ * (laterStages). They spawn from the same enemyData, so they are read for
+ * types and re-coded with the very same map, and come back re-coded.
  */
-export function discStage(record: LevelRecord): DiscStage {
+export function discStage(
+  record: LevelRecord,
+  later: Record<string, string[][]> = {},
+): DiscStage {
   const enemyData = record.enemyData ?? {};
   const grid = record.enemylist ?? [];
   const unchanged: DiscStage = {
     enemylist: grid,
+    later,
     enemyData,
     renamed: {},
     note: "",
@@ -219,10 +239,12 @@ export function discStage(record: LevelRecord): DiscStage {
     return code.slice(0, -1);
   };
   const types = new Set<string>();
-  for (const row of grid) {
-    for (const cell of row) {
-      const type = typeOf(cell);
-      if (type) types.add(type);
+  for (const rows of [grid, ...Object.values(later)]) {
+    for (const row of rows) {
+      for (const cell of row) {
+        const type = typeOf(cell);
+        if (type) types.add(type);
+      }
     }
   }
   const known = [...types].filter((type) => `enemy${type}` in enemyData)
@@ -244,16 +266,22 @@ export function discStage(record: LevelRecord): DiscStage {
   for (const type of known) {
     out[`enemy${renamed[type] ?? type}`] = enemyData[`enemy${type}`];
   }
-  const enemylist = grid.map((row) =>
-    row.map((cell) => {
-      const type = typeOf(cell);
-      const to = type ? renamed[type] : undefined;
-      return to ? to + String(cell).slice(-1) : cell;
-    })
-  );
+  const recode = (rows: string[][]) =>
+    rows.map((row) =>
+      row.map((cell) => {
+        const type = typeOf(cell);
+        const to = type ? renamed[type] : undefined;
+        return to ? to + String(cell).slice(-1) : cell;
+      })
+    );
+  const enemylist = recode(grid);
+  const laterOut: Record<string, string[][]> = {};
+  for (const [key, rows] of Object.entries(later)) laterOut[key] = recode(rows);
 
   const renames = Object.keys(renamed).length;
+  const laterCount = Object.keys(later).length;
   const note = `level.json: ${known.length} enemy type(s) on the grid` +
+    (laterCount ? ` and the ${laterCount} stage(s) after it` : "") +
     (renames
       ? `, ${renames} re-coded to one character for the port (${
         Object.entries(renamed).slice(0, 3).map(([from, to]) =>
@@ -266,7 +294,52 @@ export function discStage(record: LevelRecord): DiscStage {
         leftover.slice(0, 3).join(", ")
       }${leftover.length > 3 ? ", …" : ""})`
       : "");
-  return { enemylist, enemyData: out, renamed, note };
+  return { enemylist, later: laterOut, enemyData: out, renamed, note };
+}
+
+/** The port's last stage: `stageId` is clamped to it and the game ends after it. */
+const LAST_STAGE = 4;
+
+/** The exported stage's number, as the port reads it off `stageKey`. */
+function stageNumberOf(record: LevelRecord): number {
+  const stageKey = record.stageKey ?? "stage0";
+  return Number(/^stage(\d+)$/.exec(stageKey)?.[1] ?? 0);
+}
+
+/** A stage record's wave grid, when it has one. */
+function gridOf(stage: unknown): string[][] | null {
+  const list = (stage as { enemylist?: unknown } | null | undefined)?.enemylist;
+  return Array.isArray(list) ? list as string[][] : null;
+}
+
+/**
+ * The stages the console plays AFTER the exported one, with the grid each
+ * will run.
+ *
+ * level.json carries one stage, but the port does not stop when it ends: as
+ * its boss falls, `stageId++`, and the next stage of game.json begins, on up
+ * to the fifth. Those stages spawn from the same enemyData the level replaced
+ * the base recipe's with, and draw from the level atlas — so whatever they
+ * name has to be on the disc too. Cutting level.json to the exported stage's
+ * own types left an export of the base game with no enemies at all on its
+ * stage 2 (the first stage's four types were the only ones that shipped) and
+ * no visible boss after the first (the other four had no frames to draw).
+ *
+ * A whole-game record — the editor's `stages` — supplies its own grid for
+ * each of them; any other record plays the base game's, as the port did.
+ */
+export function laterStages(
+  record: LevelRecord,
+  base: Record<string, unknown>,
+): Record<string, string[][]> {
+  const out: Record<string, string[][]> = {};
+  const first = Math.min(stageNumberOf(record), LAST_STAGE);
+  for (let id = first + 1; id <= LAST_STAGE; id++) {
+    const key = `stage${id}`;
+    const grid = gridOf(record.stages?.[key]) ?? gridOf(base[key]);
+    if (grid) out[key] = grid;
+  }
+  return out;
 }
 
 /** The enemy and boss records the exported stage can actually put on screen. */
@@ -281,14 +354,15 @@ export interface StageRecipes {
  * Cut `enemyData`/`bossData` down to what the exported stage spawns.
  *
  * A Dezaemon import carries every enemy type of every stage of the save — the
- * Mucha Kucha Fighter save has 209, Master Arena Mod 443 — but level.json
- * ships ONE stage, and the port spawns only the types that stage's wave grid
- * names, plus `bossData["boss" + stageId]`. Packing all of them made the level
+ * Mucha Kucha Fighter save has 209, Master Arena Mod 443 — but the port spawns
+ * only the types the grids it plays name: the exported stage's, and then each
+ * later stage's as the game goes on (laterStages), plus `bossData["boss" +
+ * stageId]` for each of those stages. Packing all of them made the level
  * atlas so crowded that buildPs2Atlas had to shrink it to 1/2 or 1/4 to fit a
  * 512 sheet, and a 16x16 Dezaemon sprite reduced to 4x4 texels is a smudge:
  * on the console the enemies came out as faint "stars", still able to hit and
- * be hit but with nothing recognisable drawn. With only the stage's own types
- * the set fits at full size.
+ * be hit but with nothing recognisable drawn. With only the types the console
+ * will spawn, the set fits at full size.
  *
  * A grid cell is `<type><item>`. The browser reads the type as everything but
  * the last character (`CM0` -> enemyCM); the PS2 port (svelte-ps2 1.1.0,
@@ -297,7 +371,10 @@ export interface StageRecipes {
  * that names nothing the record knows falls back to packing everything, as
  * before, rather than shipping an empty sheet.
  */
-export function stageRecipes(record: LevelRecord): StageRecipes {
+export function stageRecipes(
+  record: LevelRecord,
+  later: Record<string, string[][]> = {},
+): StageRecipes {
   const enemyData = record.enemyData ?? {};
   const bossData = record.bossData ?? {};
   const enemyCount = Object.keys(enemyData).length;
@@ -308,36 +385,52 @@ export function stageRecipes(record: LevelRecord): StageRecipes {
 
   const enemyKeys = new Set<string>();
   const unmatched = new Set<string>();
-  for (const row of record.enemylist ?? []) {
-    for (const cell of row) {
-      const code = String(cell ?? "");
-      if (!code || code === "00") continue;
-      let matched = false;
-      for (const type of new Set([code.slice(0, -1), code[0]])) {
-        const key = `enemy${type}`;
-        if (type && key in enemyData) {
-          enemyKeys.add(key);
-          matched = true;
+  for (const rows of [record.enemylist ?? [], ...Object.values(later)]) {
+    for (const row of rows) {
+      for (const cell of row) {
+        const code = String(cell ?? "");
+        if (!code || code === "00") continue;
+        let matched = false;
+        for (const type of new Set([code.slice(0, -1), code[0]])) {
+          const key = `enemy${type}`;
+          if (type && key in enemyData) {
+            enemyKeys.add(key);
+            matched = true;
+          }
         }
+        if (!matched) unmatched.add(code);
       }
-      if (!matched) unmatched.add(code);
     }
   }
 
-  // The port plays `bossData["boss" + stageId]`, with the id clamped to its
-  // own five stages; keep the unclamped key too in case the runtime grows.
+  // The port plays `bossData["boss" + stageId]` for the exported stage and
+  // then for every stage after it up to its fifth, with or without a grid to
+  // play first — an absent grid is an empty wave list and the boss comes
+  // straight on. So every boss from this stage to the last ships. The id is
+  // clamped to the port's five stages; the unclamped key is kept too in case
+  // the runtime grows.
   const stageKey = record.stageKey ?? "stage0";
-  const stageNumber = Number(/^stage(\d+)$/.exec(stageKey)?.[1] ?? 0);
+  const stageNumber = stageNumberOf(record);
   const bossKeys = new Set<string>();
-  for (const id of new Set([stageNumber, Math.min(stageNumber, 4)])) {
+  const ids = [stageNumber];
+  for (let id = Math.min(stageNumber, LAST_STAGE); id <= LAST_STAGE; id++) {
+    ids.push(id);
+  }
+  for (const id of new Set(ids)) {
     if (`boss${id}` in bossData) bossKeys.add(`boss${id}`);
   }
+
+  // What the note calls the stretch of stages that was read.
+  const laterKeys = Object.keys(later);
+  const span = laterKeys.length
+    ? `${stageKey}–${laterKeys[laterKeys.length - 1]}`
+    : stageKey;
 
   if (enemyKeys.size === 0 && enemyCount > 0) {
     return {
       enemies: Object.values(enemyData),
       bosses: Object.values(bossData),
-      note: `level_atlas: no wave of ${stageKey} names an enemy in enemyData` +
+      note: `level_atlas: no wave of ${span} names an enemy in enemyData` +
         ` — packing all ${enemyCount} enemy types and ${bossCount} bosses`,
     };
   }
@@ -345,7 +438,7 @@ export function stageRecipes(record: LevelRecord): StageRecipes {
   return {
     enemies: [...enemyKeys].map((key) => enemyData[key]),
     bosses: [...bossKeys].map((key) => bossData[key]),
-    note: `level_atlas: ${stageKey} spawns ${enemyKeys.size} of ${enemyCount}` +
+    note: `level_atlas: ${span} spawns ${enemyKeys.size} of ${enemyCount}` +
       ` enemy types and ${bossKeys.size} of ${bossCount} bosses` +
       (unmatched.size
         ? `; ${unmatched.size} code(s) match no enemy (${
@@ -621,7 +714,7 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
 
   const baseRecipe = JSON.parse(
     await Deno.readTextFile(join(gameDir, "assets", "game.json")),
-  ) as { playerData?: Record<string, unknown> };
+  ) as Record<string, unknown> & { playerData?: Record<string, unknown> };
   // Only game_asset: that is the sheet the port draws bullets from.
   const upright = playerShotFrames(record, baseRecipe);
 
@@ -688,24 +781,45 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     );
   }
 
-  // The recipe the port normalises into its own shape at boot.
-  files.push({
-    path: "assets/game.json",
-    data: await Deno.readFile(join(gameDir, "assets", "game.json")),
-  });
-
   // --- the level's own atlas ---
   //
-  // Both the sheet and level.json describe the stage as the DISC carries it:
-  // one-character enemy codes and only the records the grid names.
-  const disc = discStage(record);
+  // Both the sheet and level.json describe the game as the DISC carries it:
+  // one-character enemy codes and only the records some grid names — this
+  // stage's, and every stage the console plays after it (laterStages).
+  const later = laterStages(record, baseRecipe);
+  const disc = discStage(record, later);
   if (disc.note) notes.push(disc.note);
   const recipes = stageRecipes({
     ...record,
     enemylist: disc.enemylist,
     enemyData: disc.enemyData,
-  });
+  }, disc.later);
   if (recipes.note) notes.push(recipes.note);
+
+  // The recipe the port normalises into its own shape at boot. The stages
+  // after the exported one are played out of this file, so a whole-game
+  // record's own grids go in over the base game's — re-coded along with the
+  // level's, since they spawn from the same re-keyed enemyData. A record with
+  // nothing of its own leaves the file exactly as the base game ships it.
+  const ownStages = Object.keys(disc.later).filter((key) =>
+    JSON.stringify(disc.later[key]) !== JSON.stringify(gridOf(baseRecipe[key]))
+  );
+  if (ownStages.length) {
+    const recipe: Record<string, unknown> = { ...baseRecipe };
+    for (const key of ownStages) {
+      recipe[key] = {
+        ...(baseRecipe[key] as Record<string, unknown> | undefined ?? {}),
+        enemylist: disc.later[key],
+      };
+    }
+    files.push({ path: "assets/game.json", data: json(recipe) });
+    notes.push(`game.json: ${ownStages.join(", ")} from the level`);
+  } else {
+    files.push({
+      path: "assets/game.json",
+      data: await Deno.readFile(join(gameDir, "assets", "game.json")),
+    });
+  }
   const wanted = new Set<string>();
   for (const recipe of recipes.enemies) collectTextures(recipe, wanted);
   for (const recipe of recipes.bosses) collectTextures(recipe, wanted);

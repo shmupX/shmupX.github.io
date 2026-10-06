@@ -2313,13 +2313,20 @@ Everything else in the export is data, produced by `lib/ps2/`:
   player composites it, and the result is made **self-sufficient**: a frame the
   level names but never customised is pulled from the base sheet, because the
   PS2 port looks for every one of a level's own sprites in the level atlas. Only
-  the sprites **the exported stage can spawn** go in — the enemy types its wave
-  grid names, plus that stage's boss (`stageRecipes` in
-  [`lib/ps2/assets.ts`](packages/shmup-harbor/lib/ps2/assets.ts)). A Dezaemon
-  save carries every type of every stage (Master Arena Mod has 443), and packing
-  them all forced the sheet down to 1/4 scale, where a 16x16 enemy is a
-  4x4-texel smudge you can shoot but not see. The build log says how many types
-  the stage uses.
+  the sprites **the console can actually spawn** go in — the enemy types named
+  by the exported stage's wave grid and by the grids of the stages the port
+  plays after it, plus each of those stages' bosses (`stageRecipes` and
+  `laterStages` in
+  [`lib/ps2/assets.ts`](packages/shmup-harbor/lib/ps2/assets.ts)). The port
+  does not stop at the exported stage: when its boss falls it moves on through
+  the rest of game.json, spawning from the same enemyData the level replaced
+  the base recipe's with, so cutting to the one stage left stage 2 of a
+  base-game export with no enemies and no visible boss. A whole-game record (the
+  editor's `stages`) supplies its own grids for those later stages, laid into
+  the shipped game.json over the base game's. A Dezaemon save carries every type
+  of every stage (Master Arena Mod has 443), and packing them all forced the
+  sheet down to 1/4 scale, where a 16x16 enemy is a 4x4-texel smudge you can
+  shoot but not see. The build log says how many types the console uses.
 - The wave grid goes out with **one-character enemy codes** (`discStage`, same
   file). A cell is `<type><item>` and the browser reads the type as everything
   but the last character, so a save with more than 26 types spawns `CM0` as

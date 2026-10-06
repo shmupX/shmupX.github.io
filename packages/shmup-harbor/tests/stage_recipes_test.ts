@@ -1,14 +1,16 @@
 // Which of a level's enemies and bosses the PS2 export packs.
 //
-// A Dezaemon import carries every enemy type of every stage of the save, but
-// the console plays one stage, and packing all of them shrank the level atlas
-// to 1/2 or 1/4 — a 16x16 sprite reduced to 4x4 texels, which on the console
-// was an enemy you could hit but not see. stageRecipes() cuts the set down to
-// what the exported stage's wave grid names.
+// A Dezaemon import carries every enemy type of every stage of the save, and
+// packing all of them shrank the level atlas to 1/2 or 1/4 — a 16x16 sprite
+// reduced to 4x4 texels, which on the console was an enemy you could hit but
+// not see. stageRecipes() cuts the set down to what the console will actually
+// spawn: the exported stage's wave grid, and the grids of the stages the port
+// plays after it (laterStages), each with its boss.
 
 import { assert, assertEquals } from "@std/assert";
 import {
   discStage,
+  laterStages,
   type LevelRecord,
   stageRecipes,
 } from "../lib/ps2/assets.ts";
@@ -29,9 +31,55 @@ Deno.test("only the types the stage's grid names are packed", () => {
   };
   const out = stageRecipes(record);
   assertEquals(names(out.enemies), ["a", "b"]);
-  assertEquals(names(out.bosses), ["boss0"]);
+  // Both bosses: the port fights boss1 on the stage after this one.
+  assertEquals(names(out.bosses), ["boss0", "boss1"]);
   assert(out.note.includes("2 of 3 enemy types"), out.note);
-  assert(out.note.includes("1 of 2 bosses"), out.note);
+  assert(out.note.includes("2 of 2 bosses"), out.note);
+});
+
+Deno.test("the stages the console plays afterwards are packed too", () => {
+  // The port runs on past the exported stage into the next ones of game.json,
+  // spawning from the level's enemyData — so their types ship, or stage 2
+  // comes up empty.
+  const record: LevelRecord = {
+    stageKey: "stage0",
+    enemylist: [["A0", "00"]],
+    enemyData: {
+      enemyA: enemy("a"),
+      enemyB: enemy("b"),
+      enemyC: enemy("c"),
+      enemyD: enemy("d"),
+    },
+    bossData: {
+      boss0: enemy("boss0"),
+      boss1: enemy("boss1"),
+      boss4: enemy("boss4"),
+      bossExtra: enemy("extra"),
+    },
+  };
+  const later = { stage1: [["C0", "00"]], stage2: [["D3", "A0"]] };
+  const out = stageRecipes(record, later);
+  assertEquals(names(out.enemies), ["a", "c", "d"]);
+  // Every boss from this stage to the port's last; bossExtra is never played.
+  assertEquals(names(out.bosses), ["boss0", "boss1", "boss4"]);
+  assert(out.note.includes("stage0–stage2 spawns 3 of 4"), out.note);
+  assert(out.note.includes("3 of 4 bosses"), out.note);
+});
+
+Deno.test("a stage in the middle packs its own boss and the ones after", () => {
+  const record: LevelRecord = {
+    stageKey: "stage2",
+    enemylist: [["A0"]],
+    enemyData: { enemyA: enemy("a") },
+    bossData: {
+      boss0: enemy("boss0"),
+      boss1: enemy("boss1"),
+      boss2: enemy("boss2"),
+      boss3: enemy("boss3"),
+      boss4: enemy("boss4"),
+    },
+  };
+  assertEquals(names(stageRecipes(record).bosses), ["boss2", "boss3", "boss4"]);
 });
 
 Deno.test("a two-letter code is read both ways", () => {
@@ -176,4 +224,99 @@ Deno.test("a grid naming nothing known is shipped as it was", () => {
   assertEquals(disc.enemylist, [["Q0"]]);
   assertEquals(names(Object.values(disc.enemyData)), ["a"]);
   assertEquals(disc.note, "");
+});
+
+// Which grids the console plays after the exported stage.
+
+Deno.test("laterStages runs from the stage after the exported one to the port's last", () => {
+  const base = {
+    stage0: { enemylist: [["Z0"]] },
+    stage1: { enemylist: [["Z1"]] },
+    stage2: { enemylist: [["Z2"]] },
+    stage3: { enemylist: [["Z3"]] },
+    stage4: { enemylist: [["Z4"]] },
+  };
+  assertEquals(
+    laterStages({ stageKey: "stage0", enemylist: [["A0"]] }, base),
+    {
+      stage1: [["Z1"]],
+      stage2: [["Z2"]],
+      stage3: [["Z3"]],
+      stage4: [["Z4"]],
+    },
+  );
+  assertEquals(
+    laterStages({ stageKey: "stage3", enemylist: [["A0"]] }, base),
+    { stage4: [["Z4"]] },
+  );
+  assertEquals(
+    laterStages({ stageKey: "stage4", enemylist: [["A0"]] }, base),
+    {},
+  );
+  // Past the port's clamp there is nothing after.
+  assertEquals(
+    laterStages({ stageKey: "stage7", enemylist: [["A0"]] }, base),
+    {},
+  );
+});
+
+Deno.test("a whole-game record's own stages win over the base game's", () => {
+  const base = {
+    stage1: { enemylist: [["Z1"]] },
+    stage2: { enemylist: [["Z2"]] },
+  };
+  const record: LevelRecord = {
+    stageKey: "stage0",
+    enemylist: [["A0"]],
+    stages: {
+      stage0: { enemylist: [["A0"]] },
+      stage1: { enemylist: [["B0", "B1"]] },
+      // stage2 left to the base game; stage3 has no grid at all.
+      stage3: { background: "x" },
+      stage4: { enemylist: [["C0"]] },
+    },
+  };
+  assertEquals(laterStages(record, base), {
+    stage1: [["B0", "B1"]],
+    stage2: [["Z2"]],
+    stage4: [["C0"]],
+  });
+});
+
+Deno.test("the later grids are re-coded with the level's own map", () => {
+  const record: LevelRecord = {
+    enemylist: [["CM0", "A1"]],
+    enemyData: {
+      enemyA: enemy("a"),
+      enemyB: enemy("b"), // the port's misreading of BE — must not be shipped
+      enemyC: enemy("c"), // named only by a later stage
+      enemyCM: enemy("cm"),
+      enemyBE: enemy("be"), // named only by a later stage
+      enemyZZ: enemy("zz"), // named by nothing
+    },
+  };
+  const disc = discStage(record, {
+    stage1: [["BE9", "C0"]],
+    stage2: [["CM3", "00"]],
+  });
+  // C is already in use (stage1 names it), so BE and CM take the next free.
+  assertEquals(disc.renamed, { BE: "B", CM: "D" });
+  assertEquals(disc.enemylist, [["D0", "A1"]]);
+  assertEquals(disc.later, { stage1: [["B9", "C0"]], stage2: [["D3", "00"]] });
+  assertEquals(names(Object.values(disc.enemyData)), ["a", "be", "c", "cm"]);
+  assertEquals(disc.enemyData.enemyB, enemy("be"));
+  assertEquals(disc.enemyData.enemyD, enemy("cm"));
+  assert(disc.note.includes("and the 2 stage(s) after it"), disc.note);
+});
+
+Deno.test("a later stage's types stay in enemyData", () => {
+  // The exported grid names A alone; the stage after it names C. Cutting to
+  // the exported grid dropped C and the next stage spawned nothing.
+  const record: LevelRecord = {
+    enemylist: [["A0"]],
+    enemyData: { enemyA: enemy("a"), enemyB: enemy("b"), enemyC: enemy("c") },
+  };
+  const disc = discStage(record, { stage1: [["C0", "C3"]] });
+  assertEquals(names(Object.values(disc.enemyData)), ["a", "c"]);
+  assertEquals(disc.later, { stage1: [["C0", "C3"]] });
 });
