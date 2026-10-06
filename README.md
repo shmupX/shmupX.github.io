@@ -2484,6 +2484,22 @@ cannot yet. A disc filed before records carried it shows alone until it is
 re-exported; a cart edited since it was opened, or a mod with unsaved edits,
 gets no web row rather than one that plays a different game.
 
+**Test-driving the whole road.** `deno task testdrive:ps2:web "<level>"`
+([`scripts/testdrive-ps2-web.ts`](scripts/testdrive-ps2-web.ts)) launches the
+packaged Mac app with a DevTools port and does what a person would: loads that
+cloud level in the editor (or imports a web game's folder when given a
+directory), TARGET → PS2, EXPORT, → PS2 LIBRARY, then the launcher's
+PLAYSTATION 2 section and A on the WEB row, asserting each step and
+screenshotting the shelf and the running web build once each has drawn. With
+PCSX2 under `/Applications` (and the Xcode command line tools, for the
+20-line Swift window lister it compiles) it also boots the new `.iso` and
+captures its title screen, which is the only picture of the disc itself a
+browser cannot give. Everything lands in `build/testdrive/ps2-web/<slug>/`
+with a `report.json`; `--rebuild` runs `build:mac` first, `--quit` closes the
+app afterwards, `--no-pcsx2` skips the emulator. Like a person pressing EXPORT,
+it saves the open game to the shared level database under its name first, so a
+directory import leaves a cloud level named after the folder (or `--name`).
+
 Two things follow from how Play! works. The **disc** is what gets filed, not the
 `athena.elf`: Play! will boot a bare ELF, but AthenaEnv would then have no
 device to read `main.js` and `assets/` from, and only the `.iso` carries the
