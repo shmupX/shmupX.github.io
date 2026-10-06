@@ -56,6 +56,7 @@
     "preview:verify": "deno run -A scripts/verify-preview.ts",
     "game:debug": "deno run -A scripts/debug-game.ts",
     "testdrive:ps2:web": "deno run -A scripts/testdrive-ps2-web.ts",
+    "testdrive:ps2:compare": "deno run -A scripts/testdrive-ps2-compare.ts",
     "dashboard:build": "deno run -A scripts/build-dashboard.ts",
     "engine:bundle": "deno run -A scripts/build-engine.ts",
     "netplay:bundle": "deno run -A scripts/build-netplay.ts",

@@ -2550,17 +2550,35 @@ gets no web row rather than one that plays a different game.
 ([`scripts/testdrive-ps2-web.ts`](scripts/testdrive-ps2-web.ts)) launches the
 packaged Mac app with a DevTools port and does what a person would: loads that
 cloud level in the editor (or imports a web game's folder when given a
-directory), TARGET → PS2, EXPORT, → PS2 LIBRARY, then the launcher's
-PLAYSTATION 2 section and A on the WEB row, asserting each step and
-screenshotting the shelf and the running web build once each has drawn. With
-PCSX2 under `/Applications` (and the Xcode command line tools, for the
-20-line Swift window lister it compiles) it also boots the new `.iso` and
-captures its title screen, which is the only picture of the disc itself a
-browser cannot give. Everything lands in `build/testdrive/ps2-web/<slug>/`
-with a `report.json`; `--rebuild` runs `build:mac` first, `--quit` closes the
-app afterwards, `--no-pcsx2` skips the emulator. Like a person pressing EXPORT,
-it saves the open game to the shared level database under its name first, so a
-directory import leaves a cloud level named after the folder (or `--name`).
+directory), TARGET → PS2, EXPORT, → PS2 LIBRARY, then the launcher's PLAYSTATION
+2 section and A on the WEB row, asserting each step and screenshotting the shelf
+and the running web build once each has drawn. With PCSX2 under `/Applications`
+(and the Xcode command line tools, for the 20-line Swift window lister it
+compiles) it also boots the new `.iso` and captures its title screen, which is
+the only picture of the disc itself a browser cannot give. Everything lands in
+`build/testdrive/ps2-web/<slug>/` with a `report.json`; `--rebuild` runs
+`build:mac` first, `--quit` closes the app afterwards, `--no-pcsx2` skips the
+emulator. Like a person pressing EXPORT, it saves the open game to the shared
+level database under its name first, so a directory import leaves a cloud level
+named after the folder (or `--name`).
+
+**Watching OG against MOD.** `deno task testdrive:ps2:compare "2019-PS2"`
+([`scripts/testdrive-ps2-compare.ts`](scripts/testdrive-ps2-compare.ts)) is the
+other test drive, and it needs no packaged app: it serves this checkout with
+vite (or takes `--origin` for a server already up), opens a headless Chrome on
+one page holding two same-origin iframes — the cloud level in OG on the left and
+in MOD on the right, each the game's own 256×480, both booted straight into the
+stage with `?stage=0&god=1` — holds each pane on the first frame of its stage
+until the other gets there, wakes both on the same tick, sways both ships
+through the same moves, and screencasts the page for 25 seconds (`--seconds`,
+`--fps`). The frames are resampled onto a steady clock and ffmpeg writes
+`build/testdrive/ps2-compare/<slug>/compare.gif` beside `first.png`, `last.png`
+and a `report.json` that records each pane's version and `godFlg` as the runtime
+reported them. God mode is what keeps a 25-second window a comparison of play
+rather than of game-over screens; `--no-god` plays mortal. The browser is found
+the way the profiler finds it (`--chrome`, `$CHROME_BIN`, the usual installs),
+with Google Chrome from Flathub as the last resort, since that is the only
+Chrome a Silverblue-style box has.
 
 Two things follow from how Play! works. The **disc** is what gets filed, not the
 `athena.elf`: Play! will boot a bare ELF, but AthenaEnv would then have no
