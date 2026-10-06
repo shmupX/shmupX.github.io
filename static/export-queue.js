@@ -356,10 +356,11 @@ export async function uploadJobRecord(id, record, onProgress = () => {}) {
  *
  * @param {{ code: string, level: string, platform?: string, kind?: string,
  *   options?: Record<string, unknown>, levelRecord?: unknown,
+ *   web?: Record<string, unknown>,
  *   onProgress?: (sent: number, total: number) => void }} request
  * @returns {Promise<Record<string, any>>}
  */
-export async function queueExport({ code, level, platform, kind, options, levelRecord, onProgress }) {
+export async function queueExport({ code, level, platform, kind, options, levelRecord, web, onProgress }) {
   code = normalizeBuilderCode(code);
   if (!code) throw new Error('a BUILD CODE is needed — open shmupX on the desktop that should build this and read it off Settings');
   if (!level) throw new Error('the game needs a name');
@@ -379,6 +380,9 @@ export async function queueExport({ code, level, platform, kind, options, levelR
   // its own parameters; a plain export leaves both out, as it always has.
   if (kind && kind !== 'export') job.kind = String(kind);
   if (options && typeof options === 'object') job.options = options;
+  // The disc's web build, for the PS2 shelf's WEB row. Carried as given; the
+  // shelf normalizes it on filing (static/ps2-library.js normalizePs2Web).
+  if (web && typeof web === 'object') job.web = web;
   if (levelRecord !== undefined && levelRecord !== null) {
     try {
       job.record = await uploadJobRecord(id, levelRecord, onProgress || (() => {}));

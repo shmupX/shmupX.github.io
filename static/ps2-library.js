@@ -292,11 +292,56 @@ export function ps2GameId(name) {
   return s.slice(0, 60) || 'game';
 }
 
+// ── The disc's web build ─────────────────────────────────────────────────────
+// The game a disc was built from also plays in the browser, as this launcher's
+// own web build of that level: a cloud level by its name, a Dezaemon cart by
+// the shelf record or the SAVED GAMES slug it was opened from. A record keeps
+// that as a KEY the launcher resolves itself, never as a URL — a queued job
+// comes back out of an open-write database, so only these three shapes are
+// kept, and nothing in them reaches a path without encodeURIComponent.
+const WEB_KEYS = { level: 'level', shelf: 'shelfId', slug: 'slug' };
+
+/**
+ * The identity as stored, or null when it is missing or not one of the three
+ * shapes.
+ * @param {unknown} web
+ * @returns {{ kind: string, level?: string, shelfId?: string, slug?: string } | null}
+ */
+export function normalizePs2Web(web) {
+  if (!web || typeof web !== 'object') return null;
+  const kind = web.kind;
+  if (typeof kind !== 'string' || !Object.prototype.hasOwnProperty.call(WEB_KEYS, kind)) return null;
+  const key = WEB_KEYS[kind];
+  const v = typeof web[key] === 'string' ? web[key].trim() : '';
+  // A database key is at most 768 bytes; anything longer names nothing, and a
+  // truncated name would name the wrong thing, so it is dropped rather than cut.
+  if (!v || v.length > 768) return null;
+  return { kind, [key]: v };
+}
+
+/**
+ * Where the web build plays: the game page for a cloud level, the editor's
+ * instant-play hand-off for a cart — the same roads the editor's PLAY and the
+ * launcher's Dezaemon shelf already take. Null for a disc with no web build.
+ * @param {unknown} web
+ * @returns {string | null}
+ */
+export function ps2WebUrl(web) {
+  const w = normalizePs2Web(web);
+  if (!w) return null;
+  if (w.kind === 'level') return '/games/2028-ai?level=' + encodeURIComponent(w.level);
+  if (w.kind === 'shelf') return '/editor/?game=2028-ai&playExport=' + encodeURIComponent(w.shelfId);
+  if (w.kind === 'slug') return '/editor/?game=2028-ai&play=' + encodeURIComponent(w.slug);
+  return null;
+}
+
 /**
  * File a built disc. Re-filing a game that is already there replaces it, so
  * exporting the same level twice updates the row instead of growing the shelf.
+ * `web` names the disc's web build (normalizePs2Web); a record without one
+ * gets no WEB row, rather than a guess at a level that may not exist.
  */
-export async function addPs2Game({ name, blob, file, source }) {
+export async function addPs2Game({ name, blob, file, source, web }) {
   if (!blob) throw new Error('a library entry needs the disc image itself');
   const id = ps2GameId(name);
   const record = {
@@ -308,6 +353,8 @@ export async function addPs2Game({ name, blob, file, source }) {
     addedAt: Date.now(),
     blob,
   };
+  const w = normalizePs2Web(web);
+  if (w) record.web = w;
   const db = await openLibrary();
   await run(db, 'readwrite', (store) => store.put(record));
   return record;

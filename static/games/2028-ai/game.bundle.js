@@ -17266,6 +17266,21 @@
     return res.json();
   }
   async function main() {
+    // An explicit ?level= names a cloud level. The level loader answers with
+    // the offline record whenever one is set, before it looks at the name, so
+    // baking foo.json here would make every named level play 2028.Ai (the
+    // boot log said source=offline). Skip the preload and let the loader fall
+    // through to the database; a plain visit still gets the baked level.
+    var explicitLevel = null;
+    try {
+      explicitLevel = new URLSearchParams(window.location.search).get("level");
+    } catch (_e) {
+      explicitLevel = null;
+    }
+    if (explicitLevel) {
+      whenPhaserReady(create2028Game);
+      return;
+    }
     try {
       globalThis.__OFFLINE_LEVEL__ = await fetchLevel2(LEVEL_DATA_URL);
     } catch (err) {

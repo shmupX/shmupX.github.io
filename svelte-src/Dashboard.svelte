@@ -20,6 +20,7 @@
     getPs2Game,
     listPs2Games,
     ps2PlayerUrl,
+    ps2WebUrl,
   } from '../static/ps2-library.js';
   // The eShop: the global game list (data/eshop.json via the manifest, plus
   // games published from the level editor to the database), the Cache Storage
@@ -1736,7 +1737,7 @@
     try {
       const blob = await fetchQueuedArtifact(job, disc.index, (got, total) => setExportBusy(job, exportMb(got) + ' / ' + exportMb(total) + ' MB'));
       await ensurePs2Core((step) => setExportBusy(job, step));
-      const record = await addPs2Game({ name: job.level, blob, source: 'built on ' + (job.workerName || 'the desktop') });
+      const record = await addPs2Game({ name: job.level, blob, source: 'built on ' + (job.workerName || 'the desktop'), web: job.web });
       exportFiled = { ...exportFiled, [job.id]: record.id };
       markExportReceived(job.code, job.id);
       // ensurePs2Core wrote the installed set to storage; merge it into this
@@ -3951,13 +3952,27 @@
   // the only thing that has to know where the game came from.
   function localRows(core) {
     if (core.id === 'ps2') {
-      return ps2Local.map((g) => ({
-        key: 'local:' + g.id, name: g.name, title: String(g.name).toUpperCase(),
-        sub: g.source || 'built here', icon: null,
-        size: (g.size / 1048576).toFixed(1) + ' MB',
-        date: 'LOCAL', type: 'PS2 / BUILT HERE',
-        kind: 'local', local: g,
-      }));
+      // The disc, then its web build: the same level as a browser game, so the
+      // row that can actually play here sits directly under the one Play!
+      // cannot run yet (README: AthenaEnv stalls in init_taskman). A disc filed
+      // before records carried `web` has no second row — re-exporting adds it.
+      return ps2Local.flatMap((g) => {
+        const disc = {
+          key: 'local:' + g.id, name: g.name, title: String(g.name).toUpperCase(),
+          sub: g.source || 'built here', icon: null,
+          size: (g.size / 1048576).toFixed(1) + ' MB',
+          date: 'LOCAL', type: 'PS2 / BUILT HERE',
+          kind: 'local', local: g,
+        };
+        const url = ps2WebUrl(g.web);
+        if (!url) return [disc];
+        return [disc, {
+          key: 'local-web:' + g.id, name: g.name, title: String(g.name).toUpperCase(),
+          sub: 'WEB BUILD // plays here, in the browser', icon: null,
+          size: 'WEB', date: 'LOCAL', type: 'PS2 / WEB BUILD',
+          kind: 'ps2-web', url, local: g,
+        }];
+      });
     }
     // This browser's own Super Famicom dumps. Every one of them is local —
     // there is no mirror shelf for this console — so unlike the PS2's these are
@@ -4571,6 +4586,11 @@
   // a disc for either of those two is opened as a top-level navigation instead.)
   function launchEmuRow(core, row) {
     if (!core || !row) return;
+    // A disc's web build (ps2-library.js `web`): the same level as a browser
+    // game, in the frame, with the shmupX entry's capabilities the way every
+    // other shmupX hand-off gets them. launchGame blips on its own, so this
+    // sits ahead of sfx.enter(). The disc row above it stays top-level.
+    if (row.kind === 'ps2-web' && row.url) { launchGame('shmupx', row.url); return; }
     sfx.enter();
     chromeDismissed = false;
     // A disc built on this machine never reaches the mirror, so it is handed to
@@ -7218,6 +7238,10 @@
                             onclick={(e) => { e.stopPropagation(); eshopUpdate(r.g); }}
                             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); eshopUpdate(r.g); } }}>↻ UPDATE</span>
                     {/if}
+                  {:else if r.kind === 'ps2-web'}
+                    <!-- A local disc's web build (localRows): the same chip the
+                         eShop's shelved builds wear, since it is one. -->
+                    <span class="eshop-kind">WEB</span>
                   {/if}
                 </div>
                 {#if r.kind === 'eshop-web'}

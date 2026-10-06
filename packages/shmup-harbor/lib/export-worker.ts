@@ -127,6 +127,12 @@ export interface ExportJob {
   kind?: "export" | "engine-compare";
   /** The kind's own parameters (a comparison's `from` and `for`, seconds). */
   options?: Record<string, unknown>;
+  /**
+   * The disc's web build identity — a cloud level's name or a Dezaemon shelf
+   * key — carried through untouched to the PS2 shelf's WEB row; see
+   * static/ps2-library.js normalizePs2Web for the shapes it accepts.
+   */
+  web?: Record<string, unknown>;
   requester?: string;
   requesterLabel?: string;
   requestedAt: number;

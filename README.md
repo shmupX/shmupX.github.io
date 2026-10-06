@@ -2232,8 +2232,10 @@ artifact can do: **INSTALL APK** (the download hands the file to Android's
 installer), **DOWNLOAD** for an `.exe` / AppImage, and for a PS2 build
 **DOWNLOAD DISC**, **DOWNLOAD USB FOLDER** and **→ PS2 LIBRARY**, which files
 the disc in the launcher's PlayStation 2 shelf and installs the Play! core if it
-is not there — the same hand-off a local build gets. The launcher lists the same
-jobs under Settings → EXPORTS (A collects, ✕ dismisses), toasts when one
+is not there — the same hand-off a local build gets — plus **PLAY WEB BUILD** as
+soon as the build lands, filed or not, when the job carries the level's web
+build (`web`, below). The launcher lists the same jobs under Settings → EXPORTS
+(A collects, ✕ dismisses; its rows have no web-build action), toasts when one
 finishes, and posts a system notification where the page may.
 
 Chunks are freed once the requester reports the bytes landed, or after a day; a
@@ -2459,13 +2461,14 @@ What a packaged export still lacks is the Dezaemon tone bank, which comes from a
 
 **What the editor offers when the build lands.** A finished PS2 export is three
 things at once, so the panel under the EXPORT button offers all three rather
-than printing a path and stopping:
+than printing a path and stopping — and, beside them, the level's web build:
 
 |                            |                                                                                                                                |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | DOWNLOAD DISC (.ISO)       | the disc image, streamed by [`routes/api/build-artifact.ts`](routes/api/build-artifact.ts)                                     |
 | DOWNLOAD USB FOLDER (.ZIP) | the athena.elf folder, zipped on the way out by the same route                                                                 |
 | → PS2 LIBRARY              | install the Play! core if it is not already here, file the disc in the launcher's own PS2 shelf, and play it — in this browser |
+| PLAY WEB BUILD             | the same level as a web game, in the browser: the game page for a cloud level, the editor's instant-play hand-off for a cart   |
 
 [`static/ps2-library.js`](static/ps2-library.js) is the shared half: the editor
 imports it at runtime, the dashboard at bundle time, so both surfaces use one
@@ -2473,7 +2476,13 @@ shelf (an IndexedDB store), one core-install path and one rule for what
 `emu-sw.js` may mirror. A disc filed from the editor therefore also appears in
 the launcher's **PLAYSTATION 2** section, ahead of the mirror's hosted rows and
 marked `built in this editor`; re-exporting the same level replaces its row
-rather than adding another.
+rather than adding another. A filed disc also carries its **web build** — the
+cloud level's name, or the shelf record or SAVED GAMES slug a cart was opened
+from (`normalizePs2Web`) — and the section lists that directly under the disc,
+marked `WEB`, so the row that can play in a browser sits beside the one that
+cannot yet. A disc filed before records carried it shows alone until it is
+re-exported; a cart edited since it was opened, or a mod with unsaved edits,
+gets no web row rather than one that plays a different game.
 
 Two things follow from how Play! works. The **disc** is what gets filed, not the
 `athena.elf`: Play! will boot a bare ELF, but AthenaEnv would then have no
@@ -2511,7 +2520,8 @@ The first is AthenaEnv's to fix and the other two are Play!'s; the third in
 particular cannot be worked around from the disc or from this launcher. Until
 they are, the `.iso` is an artifact for a console or PCSX2, and a PS2 game that
 should run in the browser needs a web build beside it — which is what the
-mirror's `kind: "web"` rows are.
+mirror's `kind: "web"` rows are, and what the PLAYSTATION 2 section does for a
+disc built here: the `WEB` row under it plays the same level in the browser.
 
 **Audio.** audsrv splits sound in two, and so does the export.
 [`lib/ps2/sound-pack.ts`](packages/shmup-harbor/lib/ps2/sound-pack.ts) builds
