@@ -178,8 +178,6 @@ export const KIDS_FONT_FILES = Object.freeze(["FN1", "FN2", "FN3", "FN4"]);
 /** A sound entry plays a BGM file unless bit 7 of its first byte is set. */
 export const KIDS_BGM_BANKS = Object.freeze(["G_BGM1", "G_BGM2", "G_BGM3", "G_BGM4"]);
 
-export const CONFIDENCES = Object.freeze(["confirmed", "likely", "open"]);
-
 function region(name, label, offset, end, stride, confidence, note) {
     return Object.freeze({ name, label, offset, end, length: end - offset, stride, confidence, note });
 }

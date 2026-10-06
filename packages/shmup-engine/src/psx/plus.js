@@ -146,8 +146,6 @@ export const PLUS_TURN_RATES = Object.freeze([16, 32, 64, 128, 256, 384, 512, 20
 export const PLUS_START_ANGLES = Object.freeze([0x00, 0xe0, 0xc0, 0xa0, 0x80, 0x60, 0x40, 0x20]);
 export const PLUS_ANIM_INTERVALS = Object.freeze([59, 29, 14, 9, 5, 2, 1, 0]);
 
-export const CONFIDENCES = Object.freeze(["confirmed", "likely", "open"]);
-
 function region(name, label, offset, end, confidence, note) {
     return Object.freeze({ name, label, offset, end, length: end - offset, confidence, note });
 }

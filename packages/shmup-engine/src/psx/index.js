@@ -32,6 +32,9 @@ export * from "./plus-edit.js";
 // where plus.js cites the Select 100 MAIN.EXE build — see its header.
 export * from "./plus-song.js";
 
+/** The confidence ratings the Kids! and Dezaemon+ region tables use. */
+export const CONFIDENCES = Object.freeze(["confirmed", "likely", "open"]);
+
 /** The two games, by the product code their save file is named after. */
 export const PSX_GAMES = Object.freeze({
     kids: Object.freeze({ id: "kids", product: KIDS_PRODUCT, title: "Dezaemon Kids!", code: "SLPS-01503", titlePrefix: KIDS_TITLE_PREFIX }),
