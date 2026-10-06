@@ -592,21 +592,21 @@ past 64×64), the boss core (class F0–F3 by size), the ship (the level's own,
 else Duke), the eight item icons (**Item icons** below) and two blast anims
 (drawn procedurally), the three bullet types — an import's own bank first, at
 the indices its verbatim zako records name, then the web enemies' projectiles,
-then each boss's own weapons A/B/C with its fire points pointed at wherever
-they landed; a weapon that does not fit the three is dropped with a warning —
-the logo and subtitle as the drawn TITLE 1/2, an import's scenery — is packed
-into the 1024 shared CG cells (mirrors and duplicates cost nothing). Each stage
-gets its placement grid (json rows spawn last-first, so they are reversed into
-scroll order; an import's `waveRows` puts waves back on their rows, an authored
-level spaces them 12 rows apart across the 14-column playfield), its 60 enemy
-records (an import's 18 bytes verbatim in their own slot; an authored enemy
-encoded from hp/score/interval/speed as a straight-down flier that fires aimed
-shots; a cell's drop digit becomes the record's death word), the boss trailer
-(re-encoded from an import's decoded record, else four default patterns), scroll
-curve and extents, and the settings block (mode from the grid's VERT/HORIZ
-switch, loadouts, item slots, bullet configs, BGM table). An import's
-`dezaemonBgm` songs go back into sec6, and `dezaemonModels` back into sec7 — the
-ポリ吉 3D models an import carried, re-encoded by
+then each boss's own weapons A/B/C with its fire points pointed at wherever they
+landed; a weapon that does not fit the three is dropped with a warning — the
+logo and subtitle as the drawn TITLE 1/2, an import's scenery — is packed into
+the 1024 shared CG cells (mirrors and duplicates cost nothing). Each stage gets
+its placement grid (json rows spawn last-first, so they are reversed into scroll
+order; an import's `waveRows` puts waves back on their rows, an authored level
+spaces them 12 rows apart across the 14-column playfield), its 60 enemy records
+(an import's 18 bytes verbatim in their own slot; an authored enemy encoded from
+hp/score/interval/speed as a straight-down flier that fires aimed shots; a
+cell's drop digit becomes the record's death word), the boss trailer (re-encoded
+from an import's decoded record, else four default patterns), scroll curve and
+extents, and the settings block (mode from the grid's VERT/HORIZ switch,
+loadouts, item slots, bullet configs, BGM table). An import's `dezaemonBgm`
+songs go back into sec6, and `dezaemonModels` back into sec7 — the ポリ吉 3D
+models an import carried, re-encoded by
 [`write/encode-model.js`](packages/shmup-engine/src/write/encode-model.js) so a
 cart keeps them on the way out instead of having the section zeroed. Everything
 the format does not carry — enemy names, story scenes, custom audio, the base
@@ -843,12 +843,16 @@ to the right, below and diagonally — `dezaHudSheet` in `game.bundle.js`). That
 is one of the eight HUD palettes a cart can pick (settings `+0x01` bits 0-2);
 the other seven are not traced, so every cart is drawn in this one.
 
-The same captures put `BOMB` at tile (27, 27) with its count ending at tile 33 —
-the mirror of the score's 48 px inset, on the last row — and show no ship count
-anywhere on screen. Neither is acted on yet: the bomb stock is still the SP
-button's to show, and the spare-ship count is a stand-in in both number and
-place. Dezaemon 2 seeds it from somewhere the decoder has not traced (the same
-gap the bomb stock has), so every cart gets three ships.
+The same captures put `BOMB` at tile (27, 27) — px (216, 216), the bottom row —
+with its count right-aligned in the two tiles after one blank, ending at x 272:
+the mirror of the score's 48 px inset. The runtime draws it there too
+(`DEZA_HUD_BOMB`, counted from the bottom edge), for player 1's stock, the ship
+the SP button fires for — and only when that ship has a bomb to count; a cart
+whose ship charges the runtime's SP gauge instead gets no line. The captures
+show no ship count anywhere on screen, so the spare-ship icons are a stand-in in
+both number and place: Dezaemon 2 seeds the count from somewhere the decoder has
+not traced (the same gap the bomb stock has), so every cart gets three ships,
+drawn in the bottom corners — player 2's a row up, clear of `BOMB`.
 
 ## Pixel Editor and Tilemap Editor
 
@@ -2318,16 +2322,16 @@ Everything else in the export is data, produced by `lib/ps2/`:
   by the exported stage's wave grid and by the grids of the stages the port
   plays after it, plus each of those stages' bosses (`stageRecipes` and
   `laterStages` in
-  [`lib/ps2/assets.ts`](packages/shmup-harbor/lib/ps2/assets.ts)). The port
-  does not stop at the exported stage: when its boss falls it moves on through
-  the rest of game.json, spawning from the same enemyData the level replaced
-  the base recipe's with, so cutting to the one stage left stage 2 of a
-  base-game export with no enemies and no visible boss. A whole-game record (the
-  editor's `stages`) supplies its own grids for those later stages, laid into
-  the shipped game.json over the base game's. A Dezaemon save carries every type
-  of every stage (Master Arena Mod has 443), and packing them all forced the
-  sheet down to 1/4 scale, where a 16x16 enemy is a 4x4-texel smudge you can
-  shoot but not see. The build log says how many types the console uses.
+  [`lib/ps2/assets.ts`](packages/shmup-harbor/lib/ps2/assets.ts)). The port does
+  not stop at the exported stage: when its boss falls it moves on through the
+  rest of game.json, spawning from the same enemyData the level replaced the
+  base recipe's with, so cutting to the one stage left stage 2 of a base-game
+  export with no enemies and no visible boss. A whole-game record (the editor's
+  `stages`) supplies its own grids for those later stages, laid into the shipped
+  game.json over the base game's. A Dezaemon save carries every type of every
+  stage (Master Arena Mod has 443), and packing them all forced the sheet down
+  to 1/4 scale, where a 16x16 enemy is a 4x4-texel smudge you can shoot but not
+  see. The build log says how many types the console uses.
 - The wave grid goes out with **one-character enemy codes** (`discStage`, same
   file). A cell is `<type><item>` and the browser reads the type as everything
   but the last character, so a save with more than 26 types spawns `CM0` as

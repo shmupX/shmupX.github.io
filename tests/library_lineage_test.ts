@@ -295,7 +295,7 @@ Deno.test("OG is a one-hit ship under no HUD, and a web game gets the weapons on
   );
 });
 
-Deno.test("OG types the score where the Saturn does, in the kernel's own glyphs", async () => {
+Deno.test("OG types the score and the bomb stock where the Saturn does, in the kernel's own glyphs", async () => {
   const bundle = await read("static/games/2028-ai/game.bundle.js");
   // Measured off two Mednafen captures and fitted to the 8 px tile grid:
   // SCORE at tile (6, 1), the number right-aligned in the eight tiles after
@@ -304,6 +304,22 @@ Deno.test("OG types the score where the Saturn does, in the kernel's own glyphs"
   assert(bundle.includes("var DEZA_HUD_SCORE = { x: 48, y: 8, digits: 8 };"));
   assertEquals(48 + ("SCORE ".length + 8) * 8, 320 / 2);
   assert(bundle.includes("dezaSatX(DEZA_HUD_SCORE.x),"));
+  // BOMB at tile (27, 27) — the bottom row of 224 lines, counted from the
+  // bottom edge — with its two-digit count ending at x 272: the mirror of
+  // the score's 48 px inset.
+  assert(
+    bundle.includes(
+      "var DEZA_HUD_BOMB = { x: 216, y: DEZA_SCREEN_H - 216, digits: 2 };",
+    ),
+  );
+  assertEquals(216 + ("BOMB ".length + 2) * 8, 320 - 48);
+  assert(bundle.includes("GH11 - DEZA_HUD_BOMB.y,"));
+  // Only a ship with a bomb to count gets the line; one on the SP gauge does not.
+  assert(
+    bundle.includes(
+      'if (!componentOn("hud") && dezaBombArmed(this, this.players[0])) {',
+    ),
+  );
   // The line exists only where the web band does not.
   assert(
     /if \(!componentOn\("hud"\)\) \{\s+this\.dezaScoreLine = dezaHudLine\(/

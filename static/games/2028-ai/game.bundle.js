@@ -13255,11 +13255,15 @@
   //   SCORE    tile (6, 1)   px (48, 8)
   //   number   right-aligned in the eight tiles after one blank, so its last
   //            digit ends at x 160 — the centre line of the 320 px screen
+  //   BOMB     tile (27, 27)  px (216, 216) — the bottom row of the 224
+  //   count    right-aligned in the two tiles after one blank, ending at
+  //            x 272: the mirror of the score's 48 px inset
   //
   // dezaSatX keeps the middle 256 columns of that screen, as it does for the
-  // title and the staff roll, so here the word starts at x 16 and the number
-  // ends on this screen's centre line too; the row is counted from the top
-  // edge, as it is on the Saturn.
+  // title and the staff roll, so here SCORE starts at x 16 and its number
+  // ends on this screen's centre line too, and BOMB ends 16 px short of the
+  // right edge. The rows are counted from the edge they sit on: SCORE from
+  // the top, BOMB from the bottom, as on the Saturn's 224 lines.
   //
   // The face is the kernel's own, font 0 of GFONT.BIN. athenaFont.png holds
   // its 95 ASCII glyphs as white body pixels, eight to a cell. The disc's tiles
@@ -13274,6 +13278,7 @@
   // choose (settings +0x01 bits0-2, hudStyle.palette); the other seven are
   // not traced, so every cart is drawn in this one.
   var DEZA_HUD_SCORE = { x: 48, y: 8, digits: 8 };
+  var DEZA_HUD_BOMB = { x: 216, y: DEZA_SCREEN_H - 216, digits: 2 };
   var DEZA_HUD_INK = ["#ffffff", "#ffffff", "#ffffff", "#ffffff", "#ffffff", "#e7ffff", "#d6ffff", "#d6ffff"];
   var DEZA_HUD_SHADOW = "#484848";
   // The glyph sheet in the HUD's colours: built from the white sheet the
@@ -13344,6 +13349,13 @@
     var n = String(Math.max(0, Math.floor(Number(score) || 0)));
     while (n.length < DEZA_HUD_SCORE.digits) n = " " + n;
     return "SCORE " + n;
+  }
+  // The bomb stock caps at 99 (item type 5, FORMAT.md settings +0x1C), so two
+  // digits is the whole range.
+  function dezaHudBombText(stock) {
+    var n = String(Math.max(0, Math.min(99, Math.floor(Number(stock) || 0))));
+    while (n.length < DEZA_HUD_BOMB.digits) n = " " + n;
+    return "BOMB " + n;
   }
   function recipeData() {
     return gameState._phaserRecipe || null;
@@ -13736,6 +13748,24 @@
           this.dezaScoreLine.setText(dezaHudScoreText(this.scoreCount));
         }
       }
+      // And the bomb stock, bottom right — player 1's, the ship the SP button
+      // fires for, which shows stock only as full or empty. A cart whose ship
+      // charges the runtime's SP gauge instead has no stock to count, and the
+      // line is not drawn: BOMB 0 over a gauge that is filling would be a lie.
+      this.dezaBombLine = null;
+      if (!componentOn("hud") && dezaBombArmed(this, this.players[0])) {
+        this.dezaBombLine = dezaHudLine(
+          this,
+          "dezaHudBomb",
+          dezaSatX(DEZA_HUD_BOMB.x),
+          GH11 - DEZA_HUD_BOMB.y,
+          "BOMB ".length + DEZA_HUD_BOMB.digits
+        );
+        if (this.dezaBombLine) {
+          this.dezaBombLine.setDepth(101);
+          this.dezaBombLine.setText(dezaHudBombText(this.players[0].dezaBombStock));
+        }
+      }
     }
     // The band across the top — the HP and COMBO troughs, the score and the
     // world best — is the web runtime's. A Dezaemon cart played OG has none of
@@ -13756,9 +13786,11 @@
     }
     // The spare ships a Dezaemon ship is replaced from (dezaNextShip), drawn
     // as the ship itself at half size along the bottom edge: player 1's from
-    // the left corner, player 2's from the right. Nothing is drawn for a ship
-    // with hit points, which has no spares. Where the Saturn draws its own
-    // count is not traced; the bottom corners are simply clear of the play.
+    // the left corner, player 2's from the right, one row up so the BOMB line
+    // keeps its own. Nothing is drawn for a ship with hit points, which has
+    // no spares. The Saturn shows no count at all in the captures the HUD
+    // lines were measured from; the bottom corners are simply clear of the
+    // play.
     updateShipStock() {
       var old = this.shipStockIcons || [];
       for (var i = 0; i < old.length; i++) old[i].destroy();
@@ -13769,7 +13801,7 @@
         var p = this.players[pi];
         if (!p || !p.sprite) continue;
         for (var n = 0; n < stock[pi]; n++) {
-          var icon = this.add.sprite(0, GH11 - 4, p.sprite.texture.key, p.sprite.frame.name);
+          var icon = this.add.sprite(0, GH11 - 4 - (pi === 0 ? 0 : DEZA_CELL), p.sprite.texture.key, p.sprite.frame.name);
           icon.setOrigin(pi === 0 ? 0 : 1, 1);
           icon.setScale(0.5);
           icon.x = pi === 0 ? 4 + n * (icon.displayWidth + 2) : GW13 - 4 - n * (icon.displayWidth + 2);
@@ -15075,6 +15107,7 @@
       // One score for the pair.
       this._setSmallNum(this.scoreSmallNum, this.scoreCount);
       if (this.dezaScoreLine) this.dezaScoreLine.setText(dezaHudScoreText(this.scoreCount));
+      if (this.dezaBombLine) this.dezaBombLine.setText(dezaHudBombText(this.players[0].dezaBombStock));
       // The combo troughs drain per player; only scaleX is written, so the
       // heights the split set stay put.
       var lead = this.players[0];
