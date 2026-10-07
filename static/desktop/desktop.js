@@ -11,6 +11,7 @@ import * as fs from "./fs.js";
 import { CodeEditor } from "./editor.js";
 import { FilesApp } from "./files-app.js";
 import { glyphIcon, tileIcon } from "./icons.js";
+import { installPadNav } from "./pad.js";
 
 const STORE_KEY = "cmg-desktop";
 const SPRITEX_URL = "https://easierbycode.com/spriteX/";
@@ -252,10 +253,12 @@ const APPS = {
         const label = document.createElement("span");
         label.textContent = app.title;
         cell.appendChild(label);
+        cell.dataset.app = id;
         cell.addEventListener("dblclick", () => launch(id));
         cell.addEventListener("keydown", (e) => {
           if (e.key === "Enter") launch(id);
         });
+        tapOpens(cell, () => launch(id));
         cell.title = `${app.title} — double-click to open`;
         grid.appendChild(cell);
       }
@@ -736,10 +739,12 @@ function renderDesktopIcons() {
     label.textContent = app.title;
     btn.appendChild(label);
     btn.title = `${app.title} — double-click to open`;
+    btn.dataset.app = id;
     btn.addEventListener("dblclick", () => launch(id));
     btn.addEventListener("keydown", (e) => {
       if (e.key === "Enter") launch(id);
     });
+    tapOpens(btn, () => launch(id));
     btn.addEventListener("click", () => {
       for (const b of iconsEl.querySelectorAll(".desk-icon")) {
         b.classList.toggle("sel", b === btn);
@@ -747,6 +752,23 @@ function renderDesktopIcons() {
     });
     iconsEl.appendChild(btn);
   }
+}
+
+// A finger has no double-click: one tap that stays put opens what a mouse
+// opens with two. Mouse and pen keep the double-click (a single click only
+// selects), and a tap that turned into a scroll opens nothing.
+function tapOpens(el, open) {
+  let down = null;
+  el.addEventListener("pointerdown", (e) => {
+    down = e.pointerType === "touch" ? { x: e.clientX, y: e.clientY } : null;
+  });
+  el.addEventListener("pointerup", (e) => {
+    if (!down || e.pointerType !== "touch") return;
+    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+    down = null;
+    if (moved <= 12) open();
+  });
+  el.addEventListener("pointercancel", () => { down = null; });
 }
 
 // ---- taskbar -----------------------------------------------------------
@@ -965,6 +987,25 @@ document.getElementById("tb-layouts").addEventListener("click", (e) => {
 
 document.getElementById("tb-console").addEventListener("click", () => {
   location.href = "/";
+});
+
+// A pad at the desktop (see pad.js): the ring moves between icons, taskbar
+// and window buttons; A on an app icon opens that app, on anything else it is
+// the click; SELECT + START (or Home) goes back to the console.
+installPadNav({
+  wm,
+  activate: (el) => {
+    const id = el.dataset && el.dataset.app;
+    if (!id) return false;
+    launch(id);
+    return true;
+  },
+  openStartMenu: () => {
+    const open = document.querySelector(".start-pop");
+    if (open) open.remove();
+    else document.getElementById("tb-start").click();
+  },
+  toConsole: () => { location.href = "/"; },
 });
 
 // ---- boot --------------------------------------------------------------

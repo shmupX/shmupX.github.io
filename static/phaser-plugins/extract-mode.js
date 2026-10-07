@@ -9,7 +9,10 @@
 //     runtime below: an EXTRACT MODE button rides the standalone PAUSE panel
 //     (#cmg-pause-panel, hand-patched into game.bundle.js); while the game
 //     loop sleeps, a DOM overlay hit-tests the frozen PhaserGameScene so any
-//     sprite can be clicked, inspected and published.
+//     sprite can be tapped, inspected and published. A pad (or keyboard)
+//     drives the same overlay without a pointer: ◀ ▶ step through the
+//     player, enemies and boss on screen, A saves the highlighted one under
+//     its own name, B closes the card and then leaves (see padKeys).
 //
 // The library schema mirrors spriteX (see editor/index.html publish notes):
 //   atlases/{name}    => { json: JSON.stringify(atlasJson), png: dataURL }
@@ -404,6 +407,13 @@
     var ui = null;        // { overlay, hint, box, card }
     var pausePanel = null;
     var picked = null;    // current selection: { sprite, kind, key, record, textureKey }
+    // Pad / keyboard stepping: the index of `picked` in the candidate walk
+    // (extractables in reading order), -1 before the first step.
+    var cycleIdx = -1;
+    // When the overlay came up. The press that chose EXTRACT MODE in the
+    // launcher's Guide can land here as a key a frame later; anything in the
+    // first beat is that press, not a pick.
+    var enteredAt = 0;
     // Embedded in the cmg launcher there is no PAUSE panel to ride, so extract
     // mode owns the pause itself. `launcherWantsPaused` mirrors the last
     // cmg-pause the launcher sent, so exiting restores ITS intent rather than
@@ -645,7 +655,7 @@
         if (ui) return ui;
         var overlay = document.createElement('div');
         overlay.id = 'shmup-extract-overlay';
-        overlay.style.cssText = 'position:fixed;inset:0;z-index:10001;display:none;cursor:crosshair;'
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:10001;display:none;cursor:crosshair;touch-action:none;'
             + "font-family:'Orbitron',system-ui,sans-serif;color:#fff;";
 
         // pointer-events:none so sprites at the top of the screen stay
@@ -656,10 +666,13 @@
             + 'padding:7px 12px;font-size:10px;letter-spacing:.2em;white-space:nowrap;'
             + 'box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none;';
         var hintText = document.createElement('span');
-        hintText.textContent = 'EXTRACT MODE · TAP ANY OBJECT';
+        hintText.textContent = 'EXTRACT MODE · TAP AN OBJECT · \u25C0 \u25B6 PICK · A SAVE · B EXIT';
         var exitBtn = makeButton('EXIT', function (ev) { ev.stopPropagation(); exitExtractMode(); });
-        exitBtn.style.padding = '4px 10px';
+        // A thumb-sized target: the bar is the only chrome a touch player has.
+        exitBtn.style.padding = '10px 16px';
+        exitBtn.style.minHeight = '40px';
         exitBtn.style.pointerEvents = 'auto';
+        exitBtn.style.touchAction = 'manipulation';
         exitBtn.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
         hint.appendChild(hintText);
         hint.appendChild(exitBtn);
@@ -691,6 +704,8 @@
     function enterExtractMode() {
         var u = ensureUI();
         picked = null;
+        cycleIdx = -1;
+        enteredAt = Date.now();
         u.card.style.display = 'none';
         u.box.style.display = 'none';
         u.overlay.style.display = 'block';
@@ -700,6 +715,7 @@
         if (!ui) return;
         ui.overlay.style.display = 'none';
         picked = null;
+        cycleIdx = -1;
         // Back to the PAUSE panel — the game is still cmg-paused. Embedded
         // there is no panel: hand the pause back to whatever the launcher
         // last asked for, so we never resume under an open Guide.
@@ -841,6 +857,13 @@
             picked = null;
             return;
         }
+        cycleIdx = -1;
+        selectHit(scene, hit);
+    }
+
+    // Make `hit` ({ c, bounds }) the selection: box it, show its card.
+    function selectHit(scene, hit) {
+        var u = ensureUI();
         picked = hit.c;
         picked.textureKey = (hit.c.sprite.texture && hit.c.sprite.texture.key) || 'game_asset';
         var sr = screenRectFromBounds(hit.bounds, scene);
@@ -854,29 +877,134 @@
         showCard(scene, picked);
     }
 
-    async function saveSelection(scene, sel) {
-        var name = prompt('Save to the shared library as:', suggestName(sel.record.name || sel.key));
-        if (!name) return;
-        name = name.trim();
-        if (!validName(name)) return alert('Use letters, digits and underscores only');
-        if (reservedName(name)) return alert("'" + name + "' is reserved by the characters module — pick another name");
+    // The pad's walk: every extractable on screen, in reading order (top to
+    // bottom, then left to right), so ◀ ▶ visit them predictably.
+    function cycleList(scene) {
+        var list = extractables(scene).filter(function (c) {
+            try { return !!c.sprite.getBounds(); } catch (e) { return false; }
+        });
+        list.sort(function (a, b) {
+            var ba = a.sprite.getBounds(), bb = b.sprite.getBounds();
+            var dy = (ba.y + ba.height / 2) - (bb.y + bb.height / 2);
+            if (Math.abs(dy) > 8) return dy;
+            return (ba.x + ba.width / 2) - (bb.x + bb.width / 2);
+        });
+        return list;
+    }
+
+    // Step the selection by `dir` (+1 / -1) through cycleList. Picks the
+    // first object when nothing is selected yet.
+    function stepPick(dir) {
+        var scene = activeGameScene();
+        if (!scene) { exitExtractMode(); return; }
+        var list = cycleList(scene);
+        if (!list.length) { flashToast('EXTRACT MODE · NOTHING ON SCREEN TO PICK'); return; }
+        var n = list.length;
+        // Resume from the picked object if a tap chose it, else from the walk.
+        var at = cycleIdx;
+        if (picked) {
+            for (var i = 0; i < n; i++) { if (list[i].sprite === picked.sprite) { at = i; break; } }
+        }
+        var next = at < 0 ? (dir < 0 ? n - 1 : 0) : ((at + dir) % n + n) % n;
+        cycleIdx = next;
+        var c = list[next];
+        var b;
+        try { b = c.sprite.getBounds(); } catch (e) { return; }
+        selectHit(scene, { c: c, depth: c.sprite.depth || 0, bounds: b });
+    }
+
+    // Pad / keyboard control of the overlay. The launcher turns a pad into
+    // keys for the frame (gamepad-support.js: D-pad → arrows, FBTN_BOTTOM →
+    // Space, Start → Enter, FBTN_RIGHT / FBTN_LEFT → c, Select → Backspace,
+    // L / R → q / e), so one handler covers both. Capture phase, and the
+    // event stops here: the paused game must not see the arrows as steering.
+    // Returns true when the key was taken.
+    function padKeys(ev) {
+        if (!extractActive()) return false;
+        if (Date.now() - enteredAt < 350) return true;
+        var k = ev.key;
+        var cardUp = ui && ui.card.style.display !== 'none';
+        if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'q' || k === 'Q') { stepPick(-1); return true; }
+        if (k === 'ArrowRight' || k === 'ArrowDown' || k === 'e' || k === 'E') { stepPick(1); return true; }
+        if (k === ' ' || k === 'Enter') {
+            if (picked && cardUp) {
+                var scene = activeGameScene();
+                if (scene) saveSelection(scene, picked, { quick: true });
+            } else stepPick(1);
+            return true;
+        }
+        if (k === 'Backspace' || k === 'c' || k === 'C' || k === 'Escape') {
+            if (cardUp) {
+                ui.card.style.display = 'none';
+                ui.box.style.display = 'none';
+                picked = null;
+            } else {
+                exitExtractMode();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // The first of name, name_2, name_3… the library does not hold yet.
+    async function freeName(name) {
+        var DB = dbURL();
+        var taken = function (n) {
+            return fetch(DB + '/characters/' + encodeURIComponent(n) + '.json')
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (v) { return v !== null; })
+                .catch(function () { return false; });
+        };
+        if (!(await taken(name))) return name;
+        for (var i = 2; i < 100; i++) {
+            if (!(await taken(name + '_' + i))) return name + '_' + i;
+        }
+        return name + '_' + Date.now();
+    }
+
+    // opts.quick: the pad's save. No prompt, confirm or alert — a pad has no
+    // way to answer a native dialog, and one left open would wedge the frame
+    // — so the name is the suggested one (made unique rather than
+    // overwriting), missing frames are skipped, and every outcome is a
+    // toast or the SAVED card.
+    async function saveSelection(scene, sel, opts) {
+        var quick = !!(opts && opts.quick);
+        var name = suggestName(sel.record.name || sel.key);
+        if (!quick) {
+            name = prompt('Save to the shared library as:', name);
+            if (!name) return;
+            name = name.trim();
+            if (!validName(name)) return alert('Use letters, digits and underscores only');
+            if (reservedName(name)) return alert("'" + name + "' is reserved by the characters module — pick another name");
+        } else if (reservedName(name)) {
+            name = name + '_';
+        }
 
         var crop = cropFrames(sel.record, textureFrameSource(scene, sel.textureKey));
-        if (!crop.sprites.length) return alert('None of the frames this object references are loaded');
-        if (crop.missing.length
+        if (!crop.sprites.length) {
+            if (quick) return flashToast('NONE OF THIS OBJECT\'S FRAMES ARE LOADED');
+            return alert('None of the frames this object references are loaded');
+        }
+        if (crop.missing.length && !quick
             && !confirm(crop.missing.length + ' referenced frame(s) are missing and will be skipped. Save anyway?')) return;
 
         var packed = packFrames(crop.sprites);
         try {
+            if (quick) {
+                flashToast('SAVING \'' + name.toUpperCase() + '\'\u2026');
+                name = await freeName(name);
+            }
             var saved = await publishRecord({
                 name: name, record: sel.record, missing: crop.missing,
                 canvas: packed.canvas, atlasJson: packed.atlasJson,
+                confirmOverwrite: quick ? function () { return false; } : null,
             });
             if (saved) showSaved(saved);
         } catch (e) {
-            alert(navigator.onLine === false
+            var msg = navigator.onLine === false
                 ? 'You are offline — the shared library needs a connection.'
-                : 'Save failed: ' + e.message);
+                : 'Save failed: ' + e.message;
+            if (quick) flashToast(msg.toUpperCase()); else alert(msg);
         }
     }
 
@@ -893,19 +1021,14 @@
         if (panel && panel.style.display !== 'none') panel.style.display = 'none';
     }, true);
 
-    // ESC while extracting: close the card, or leave extract mode back to the
-    // PAUSE panel. Capture-phase so the bundle's own ESC toggle never fires.
+    // Keys while extracting: the pad's walk (padKeys), and ESC to close the
+    // card or leave extract mode back to the PAUSE panel. Capture-phase so
+    // the bundle's own ESC toggle (and its steering) never fires.
     window.addEventListener('keydown', function (ev) {
-        if (ev.key !== 'Escape' || !extractActive()) return;
+        if (!extractActive()) return;
+        if (!padKeys(ev)) return;
         ev.preventDefault();
         ev.stopImmediatePropagation();
-        if (ui.card.style.display !== 'none') {
-            ui.card.style.display = 'none';
-            ui.box.style.display = 'none';
-            picked = null;
-        } else {
-            exitExtractMode();
-        }
     }, true);
 
     // Ride the standalone PAUSE panel: add EXTRACT MODE under RESUME the

@@ -34,6 +34,9 @@
 
   <div id="toast" role="status"></div>
 
+  <!-- The pad normaliser first, so pad.js reads SNES and other odd pads in
+       the standard layout the launcher sees. -->
+  <script src="/gamepad-compatibility-plugin.js"></script>
   <script type="module" src="/desktop/desktop.js"></script>
 </body>
 </html>

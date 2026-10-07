@@ -320,6 +320,15 @@ kbd {
   background: var(--accent-soft);
   border-color: rgba(139, 178, 255, 0.45);
 }
+/* The pad's focus ring (pad.js): one element at a time, anywhere on the
+   desktop, drawn over the element's own hover/focus looks. */
+.pad-focus {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(139, 178, 255, 0.28), 0 0 18px rgba(139, 178, 255, 0.45) !important;
+  border-radius: 8px;
+}
+.desk-icon.pad-focus, .folder-cell.pad-focus, .start-cell.pad-focus { background: var(--accent-soft); }
 
 /* Bare Lucide glyphs — inherit the surrounding text colour. */
 .app-svg { display: inline-grid; width: 17px; height: 17px; color: var(--ink-dim); }

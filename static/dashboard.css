@@ -1065,7 +1065,7 @@ body.theme-nintendo .eshop-kind { margin-left: 0; justify-self: start; }
 
 /* VERSION: OG | MOD */
 .lib-version { display: flex; align-items: center; gap: 8px; margin: 12px 14px 0; padding: 6px; border-radius: 10px; background: var(--lib-well); border: 1px solid var(--lib-edge); }
-.lib-version-lbl { font-size: 9px; font-weight: 700; letter-spacing: .12em; color: rgba(214, 255, 196, .8); padding: 0 4px 0 6px; }
+.lib-version-lbl { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; letter-spacing: .12em; color: rgba(214, 255, 196, .8); padding: 0 4px 0 6px; }
 .lib-segs { flex: 1; display: flex; gap: 4px; }
 .lib-seg {
   flex: 1; text-align: center; padding: 6px 0; min-height: 40px; border-radius: 7px; cursor: pointer;
@@ -1089,6 +1089,8 @@ body.theme-nintendo .eshop-kind { margin-left: 0; justify-self: start; }
 .lib-orb { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 900; }
 .lib-orb.a { background: radial-gradient(circle at 35% 30%, #d6ffd0 0%, #6fd06f 25%, #0e6a2b 60%, #04240f 95%); border: 1px solid rgba(140, 255, 110, .6); color: #04240f; box-shadow: 0 0 12px rgba(140, 255, 110, .5); }
 .lib-orb.y { background: radial-gradient(circle at 35% 30%, #e8e8ff 0%, #8f8fd8 30%, #2c2c6e 65%, #0a0a24 100%); border: 1px solid rgba(160, 160, 255, .5); color: #0a0a24; }
+/* X turns the VERSION — the orb sits in the row's label, smaller than the action orbs. */
+.lib-orb.x { width: 18px; height: 18px; font-size: 9px; background: radial-gradient(circle at 35% 30%, #dff4ff 0%, #7fb6e8 30%, #1f4f7a 65%, #081a2c 100%); border: 1px solid rgba(140, 200, 255, .5); color: #081a2c; }
 .library-screen .byod { flex: 1 1 100%; }
 
 body.theme-nintendo .library-screen {

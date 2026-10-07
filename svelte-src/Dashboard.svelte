@@ -2637,6 +2637,62 @@
   let libraryActionLabel = $derived(
     libraryCurrent ? 'Play ' + (libVersionOf(libraryCurrent) === 'mod' ? 'Mod' : 'OG') : 'Select'
   );
+  // The cards wrap into a grid (.lib-cards is flex-wrap), so the cursor moves
+  // in two dimensions: ◀ ▶ step a card, ▲ ▼ step a ROW. The column count is
+  // read off the rendered cards — however many share the first card's top
+  // edge — so a phone's one-column shelf and a TV's three behave alike.
+  // The VERSION switch, which used to sit on ◀ ▶, lives on X (FBTN_LEFT) now.
+  function libCols() {
+    const first = libCardEls[0];
+    if (!first) return 1;
+    const top = first.offsetTop;
+    let n = 0;
+    for (const el of libCardEls) {
+      if (!el) continue;
+      if (Math.abs(el.offsetTop - top) > 2) break;
+      n++;
+    }
+    return Math.max(n, 1);
+  }
+  // ◀ ▶ walk the cards in reading order; a fresh press wraps at either end,
+  // like every list here (see navMove).
+  function libMoveH(dir, fresh = true) {
+    const max = library.cards.length - 1;
+    if (max < 0) return;
+    let next = libSel + dir;
+    if (next < 0) next = fresh && max > 0 ? max : 0;
+    else if (next > max) next = fresh && max > 0 ? 0 : max;
+    libSel = next;
+  }
+  // ▲ ▼ move a row. Off the bottom of a column that is shorter than the last
+  // row lands on the last card; off the top or bottom edge a fresh press wraps
+  // within the column, a held repeat parks at the edge.
+  function libMove(dir, fresh = false) {
+    const max = library.cards.length - 1;
+    if (max < 0) return;
+    const cols = libCols();
+    const next = libSel + dir * cols;
+    if (next >= 0 && next <= max) { libSel = next; return; }
+    const col = libSel % cols;
+    if (dir > 0) {
+      // Is there a row below at all? Then its last card is the landing.
+      const lastRow = Math.floor(max / cols);
+      const row = Math.floor(libSel / cols);
+      if (row < lastRow) { libSel = max; return; }
+      if (fresh) libSel = col;
+    } else if (fresh) {
+      // The bottom-most card in this column.
+      let bottom = col;
+      while (bottom + cols <= max) bottom += cols;
+      libSel = bottom;
+    }
+  }
+  function libToggleVersion() {
+    const c = libraryCurrent;
+    if (!c) return;
+    setLibVersion(c, libVersionOf(c) === 'mod' ? 'og' : 'mod');
+    sfx.nav();
+  }
 
   // --- online 2P presence -------------------------------------------------
   //
@@ -5709,12 +5765,14 @@
     // to whichever it was (openEshop records it).
     // ◀ ▶ cycles the release-status filter (see eshopCycleFilter).
     eshop: { sel: () => eshopSel, setSel: (v) => (eshopSel = v), len: () => eshopRows.length, activate: (i) => activateEshop(i), moveH: (dir) => eshopCycleFilter(dir), back: () => eshopFrom },
-    // Reached from the Games list. ▲ ▼ walks the cards, ◀ ▶ turns the
-    // highlighted card's VERSION, A plays that version, Y opens it in the editor.
+    // Reached from the Games list. The cards are a grid: ▲ ▼ move a row,
+    // ◀ ▶ a card (see libMove / libMoveH). X turns the highlighted card's
+    // VERSION, A plays that version, Y opens it in the editor.
     library: {
       sel: () => libSel, setSel: (v) => (libSel = v), len: () => library.cards.length,
       activate: (i) => playLibraryCard(i),
-      moveH: (dir) => setLibVersion(libraryCurrent, dir < 0 ? 'og' : 'mod'),
+      move: (dir, fresh) => libMove(dir, fresh),
+      moveH: (dir) => libMoveH(dir),
       back: 'games',
     },
   };
@@ -6146,12 +6204,32 @@
     const pressedNow = new Set();
     pad.buttons.forEach((btn, i) => { if (btn?.pressed) pressedNow.add(i); });
     const justPressed = (i) => pressedNow.has(i) && !padState.btn.has(i);
+    // SELECT + START is a chord of its own: home, back to the main menu. It
+    // must never read as START (activate whatever the cursor is on — the
+    // Desktop tile, on the dashboard) plus a SELECT-release Back, and while
+    // SELECT is down the shoulders and triggers stay quiet too, so the chord
+    // cannot shove the cursor around on pads that report Select/Start
+    // elsewhere. selChordFired keeps the release from firing Back.
+    const startHeld = pressedNow.has(9);
+    if (justPressed(8)) padState.selArmed = true;
+    if (selHeld && startHeld) {
+      if (!padState.selChordFired) {
+        padState.selChordFired = true;
+        if (screen !== 'dashboard') { screen = 'dashboard'; sfx.back(); }
+      }
+      padState.btn = pressedNow;
+      return;
+    }
+    if (selHeld) { padState.btn = pressedNow; return; }
     if (justPressed(0) || justPressed(9)) actFbtnBottom(); // FBTN_BOTTOM or Start
     if (justPressed(1)) actFbtnRight();                    // FBTN_RIGHT
     // FBTN_LEFT (X / square) uninstalls the eShop game under the cursor — on
     // the shop screen, or an installed build's row in Games. Confirm-free,
     // like the ✕ on the row; nowhere else does X mean anything.
-    if (justPressed(2)) actEshopUninstall();
+    if (justPressed(2)) {
+      if (screen === 'library') libToggleVersion();
+      else actEshopUninstall();
+    }
     // FBTN_TOP (Y / triangle) opens the highlighted row's .sav shelf — the
     // one-button replacement for the old SELECT + Up chord — and, on a row
     // with no shelf, pulls a waiting eShop update.
@@ -6165,9 +6243,11 @@
     // without Back firing the moment SELECT goes down. Only a press that
     // began in this branch arms it — a release inherited from the in-game or
     // picker branches must not fire a stray Back.
-    if (justPressed(8)) padState.selArmed = true;
     if (padState.btn.has(8) && !pressedNow.has(8)) {
-      if (padState.selArmed && !padState.selChordFired) actFbtnRight();
+      // A SELECT let go while START is still down is the chord ending, not
+      // a Back — the START release that follows is swallowed by its own
+      // latch (it was never a fresh press).
+      if (padState.selArmed && !padState.selChordFired && !startHeld) actFbtnRight();
       padState.selArmed = false;
       padState.selChordFired = false;
     }
@@ -6320,6 +6400,8 @@
     else if (screen === 'eshop' && (e.key === 'f' || e.key === 'F')) eshopCycleFilter(1);
     // Keyboard twin of FBTN_TOP on a LIBRARY card: Y (or E) edits.
     else if (screen === 'library' && (e.key === 'y' || e.key === 'Y' || e.key === 'e' || e.key === 'E')) editLibraryCard(libSel);
+    // Keyboard twin of FBTN_LEFT on a LIBRARY card: X (or V) turns the VERSION.
+    else if (screen === 'library' && (e.key === 'x' || e.key === 'X' || e.key === 'v' || e.key === 'V')) libToggleVersion();
   }
 
   // Inject a capture-phase OSD-trigger forwarder INTO a same-origin game frame.
@@ -7479,7 +7561,7 @@
 
               <!-- VERSION: OG keeps the original rules; MOD lets every part cross over -->
               <div class="lib-version">
-                <span class="lib-version-lbl">VERSION</span>
+                <span class="lib-version-lbl"><span class="lib-orb x" aria-hidden="true">X</span>VERSION</span>
                 <div class="lib-segs" role="group" aria-label="Version">
                   <button type="button" class="lib-seg {libVersionOf(c) === 'og' ? 'on' : ''}" aria-pressed={libVersionOf(c) === 'og'} onclick={() => { libSel = i; setLibVersion(c, 'og'); }}>OG</button>
                   <button type="button" class="lib-seg {libVersionOf(c) === 'mod' ? 'on' : ''}" aria-pressed={libVersionOf(c) === 'mod'} onclick={() => { libSel = i; setLibVersion(c, 'mod'); }}>MOD</button>
