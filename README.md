@@ -1,6 +1,6 @@
 # shmupX — codemonkey.games
 
-![A shmupX level playing in Dezaemon 2 on the Saturn](static/preview.gif)
+![A shmupX level playing in Dezaemon 2 on the Saturn](docs/preview.gif)
 
 The final CMG launcher, rebuilt as **shmupX**: a Deno Fresh 2 + Vite app for
 [Deno Deploy](https://deploy.deno.com) with a single built-in game — the shmupX
@@ -3025,17 +3025,19 @@ every game anyone can get — and it is read from two places by
   ([`/wave-editor/`](https://easierbycode.com/shmup-party-ps2/wave-editor/),
   which authors its `ps2/data/waves.js`), framed in the CMG Desktop's Tools
   folder beside spriteX.
-- A `web` entry does not have to come from GitHub. **Super Mario SP** is the
-  in-repo shape: `source: "url"` with a **root-relative** `downloadUrl`
-  (`/games/super-mario-sp-web.zip`), which `isFetchableUrl` accepts alongside
+- A `web` entry does not have to come from GitHub. **Super Mario SP** was the
+  first in-repo shape (it left the catalogue on 2026-10-07; its folder stays,
+  since `/snes/` boots on the EmulatorJS it vendors, and `deno task build` no
+  longer packs its archive): `source: "url"` with a **root-relative**
+  `downloadUrl` (`/games/super-mario-sp-web.zip`), which `isFetchableUrl` accepts alongside
   `https://`, so the install never leaves this origin — no CORS, no third host,
   and it works offline and inside a packaged desktop launcher. There is no repo
   to follow, so there is no sha and no `codemonkey.json` fetch: **bumping `date`
   in `data/eshop.json` is the only thing that flags UPDATE** (`checkWebUpdate`
   compares the catalog's `downloadUrl` and `date` against what the install
   recorded), and `status` is pinned on the row rather than read off a branch.
-  The archive is a build artifact — `deno task super-mario-sp:zip`, which
-  `deno task build` runs — so the repo does not carry the game's bytes twice.
+  The archive was a build artifact — `deno task super-mario-sp:zip`, which
+  still packs it by hand — so the repo never carried the game's bytes twice.
 - **2019** is the second in-repo shape: a level's web build, listed on the
   PlayStation 2 shelf (`shelf: "ps2"`, like Sh'M↑ Party) because it is the PS2
   export of the 2019 game — `dev-fixtures/2019-web` imported, saved as the cloud

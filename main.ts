@@ -2,6 +2,11 @@ import { App, staticFiles } from "fresh";
 import { define, type State } from "./utils.ts";
 import { injectLauncherMarker } from "./lib/launcher-inject.ts";
 import { dirIndexRedirect } from "./lib/static-indexes.ts";
+import {
+  isLeftOut,
+  ROMSET_PATH,
+  streamFromDeploy,
+} from "./lib/streamed-payloads.ts";
 
 export const app = new App<State>();
 
@@ -59,6 +64,20 @@ app.use((ctx) => {
   const to = dirIndexRedirect(url.pathname + url.search);
   if (to === null) return ctx.next();
   return new Response(null, { status: 301, headers: { location: to } });
+});
+
+// A packaged app leaves some static payloads out of its binary
+// (lib/streamed-payloads.ts): it streams an arcade romset from the deploy and
+// answers 404 for the rest. Ahead of staticFiles(), whose build snapshot still
+// lists those files and would 500 opening one that is not there.
+const STANDALONE = (Deno.build as { standalone?: boolean }).standalone === true;
+app.use((ctx) => {
+  if (!STANDALONE) return ctx.next();
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return ctx.next();
+  const { pathname } = new URL(ctx.req.url);
+  if (isLeftOut(pathname)) return new Response(null, { status: 404 });
+  if (ROMSET_PATH.test(pathname)) return streamFromDeploy(ctx.req, pathname);
+  return ctx.next();
 });
 
 app.use(staticFiles());
