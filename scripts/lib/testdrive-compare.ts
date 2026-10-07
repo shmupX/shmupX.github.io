@@ -1,8 +1,9 @@
-// The offline half of scripts/testdrive-ps2-compare.ts: the two URLs a
-// comparison plays, the page that seats them side by side, the in-page
-// autopilot, and the arithmetic that turns a screencast's irregular frames
-// into a constant-rate GIF. Nothing here opens a browser or a socket, which is
-// what lets tests/testdrive_compare_test.ts pin all of it.
+// The offline half of the side-by-side test drives (scripts/testdrive-ps2-*.ts):
+// the page that seats two games beside each other, the probes that read and
+// freeze each one, the in-page autopilot, and the arithmetic that turns a
+// screencast's irregular frames into a constant-rate GIF. Nothing here opens
+// a browser or a socket, which is what lets tests/testdrive_compare_test.ts
+// pin all of it. The browser half is scripts/lib/testdrive-rig.ts.
 //
 // WHY ONE PAGE AND TWO IFRAMES, NOT TWO BROWSERS. A screencast is per page, so
 // two pages would be two streams on two clocks to be stitched afterwards, and
@@ -23,11 +24,19 @@ export const CAPTION_HEIGHT = 22;
 
 export type Side = "og" | "mod";
 
+/** One seat in the harness: the iframe's id, the caption over it, its URL. */
+export interface Pane {
+  id: string;
+  label: string;
+  url: string;
+}
+
 /**
- * The two URLs: the same cloud level, the same stage, the ship invincible on
- * both, and only `version` differing. `version=og` is written out even though
- * the runtime reads a missing parameter the same way, so a report or a
- * screenshot's address bar says which pane it is.
+ * The two URLs of the OG-against-MOD drive: the same cloud level, the same
+ * stage, the ship invincible on both, and only `version` differing.
+ * `version=og` is written out even though the runtime reads a missing
+ * parameter the same way, so a report or a screenshot's address bar says
+ * which pane it is.
  */
 export function compareUrls(
   origin: string,
@@ -50,56 +59,60 @@ export function compareUrls(
   return { og: make("og"), mod: make("mod") };
 }
 
-/** The viewport the harness needs, at game pixels. */
-export function harnessSize(): { width: number; height: number } {
+/** The viewport a harness of `panes` panes needs, at game pixels. */
+export function harnessSize(panes = 2): { width: number; height: number } {
   return {
-    width: GAME_WIDTH * 2 + GUTTER * 3,
+    width: GAME_WIDTH * panes + GUTTER * (panes + 1),
     height: GAME_HEIGHT + CAPTION_HEIGHT + GUTTER * 2,
   };
 }
 
 function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(
+    /"/g,
+    "&quot;",
+  );
 }
 
 /**
- * The page the browser is handed: two captioned iframes, each exactly the
- * game's 256×480, on black. The route's own fit script scales the canvas to
- * its window, so a frame that size shows the game 1:1.
+ * The page the browser is handed: captioned iframes, each exactly the game's
+ * 256×480, on black. The route's own fit script scales the canvas to its
+ * window, so a frame that size shows the game 1:1. A pane is a fixed column
+ * and the page clips: a caption longer than 256px is cut with an ellipsis,
+ * never allowed to widen the row, which once put scrollbars across the
+ * harness and the right pane's edge off the screencast.
  */
-export function harnessHtml(urls: Record<Side, string>, level: string): string {
-  const pane = (side: Side, label: string) =>
-    `<figure class="pane" id="pane-${side}">` +
-    `<figcaption>${label}</figcaption>` +
-    `<iframe id="${side}" src="${
-      esc(urls[side])
+export function harnessHtml(panes: Pane[], title: string): string {
+  const pane = (p: Pane) =>
+    `<figure class="pane" id="pane-${esc(p.id)}">` +
+    `<figcaption>${esc(p.label)}</figcaption>` +
+    `<iframe id="${esc(p.id)}" src="${
+      esc(p.url)
     }" width="${GAME_WIDTH}" height="${GAME_HEIGHT}" allow="autoplay"></iframe>` +
     `</figure>`;
   return `<!doctype html>
-<html><head><meta charset="utf-8"><title>${esc(level)} — OG vs MOD</title>
+<html><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>
-html, body { margin: 0; background: #000; color: #fff; }
-body { font: bold 13px/${CAPTION_HEIGHT}px ui-monospace, Menlo, monospace; }
+html, body { margin: 0; background: #000; color: #fff; overflow: hidden; }
+body { font: bold 11px/${CAPTION_HEIGHT}px ui-monospace, Menlo, monospace; }
 .row { display: flex; gap: ${GUTTER}px; padding: ${GUTTER}px; }
-.pane { margin: 0; }
-figcaption { height: ${CAPTION_HEIGHT}px; letter-spacing: 0.08em; text-transform: uppercase; }
+.pane { margin: 0; width: ${GAME_WIDTH}px; flex: 0 0 ${GAME_WIDTH}px; }
+figcaption { height: ${CAPTION_HEIGHT}px; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 iframe { display: block; border: 0; background: #000; }
 </style></head>
-<body><div class="row">${pane("og", "OG")}${
-    pane("mod", "MOD")
-  }</div></body></html>`;
+<body><div class="row">${panes.map(pane).join("")}</div></body></html>`;
 }
 
 /**
  * What one pane is doing, read through its own Phaser instance. Evaluated in
- * the harness page; `side` is the iframe's id.
+ * the harness page; `id` is the iframe's id.
  */
-export function paneStateExpr(side: Side): string {
+export function paneStateExpr(id: string): string {
   return `(function () {
-    var f = document.getElementById(${JSON.stringify(side)});
+    var f = document.getElementById(${JSON.stringify(id)});
     var w = f && f.contentWindow;
-    var out = { side: ${
-    JSON.stringify(side)
+    var out = { id: ${
+    JSON.stringify(id)
   }, href: null, game: false, scenes: [], started: false, god: null, version: null, frozen: false };
     if (!w) return out;
     try { out.href = w.location.href; } catch (e) { return out; }
@@ -118,7 +131,7 @@ export function paneStateExpr(side: Side): string {
 }
 
 export interface PaneState {
-  side: Side;
+  id: string;
   href: string | null;
   game: boolean;
   scenes: string[];
@@ -129,9 +142,9 @@ export interface PaneState {
 }
 
 /** Put one pane's game to sleep (`on`) or wake it; returns whether it took. */
-export function freezeExpr(side: Side, on: boolean): string {
+export function freezeExpr(id: string, on: boolean): string {
   return `(function () {
-    var w = document.getElementById(${JSON.stringify(side)}).contentWindow;
+    var w = document.getElementById(${JSON.stringify(id)}).contentWindow;
     var g = w.__PHASER_4_GAME__ || w.__PHASER_GAME__;
     if (!g || !g.loop) return false;
     if (${on ? "true" : "false"}) { if (g.loop.running) g.loop.sleep(); }
@@ -143,11 +156,11 @@ export function freezeExpr(side: Side, on: boolean): string {
 /**
  * The autopilot, installed in the harness page. The runtime autofires, so the
  * ship needs only to be moved: it sways left and right across the lower
- * playfield on a slow cycle, the same keys at the same moments into both
- * iframes, so whatever differs between the panes is the version and not the
- * flying. Keys arrive as synthetic KeyboardEvents on each frame's window,
- * which is where Phaser listens; a DevTools key press would reach only the
- * focused frame.
+ * playfield on a slow cycle, the same keys at the same moments into every
+ * iframe, so whatever differs between the panes is what they were given and
+ * not the flying. Keys arrive as synthetic KeyboardEvents on each frame's
+ * window, which is where Phaser listens; a DevTools key press would reach
+ * only the focused frame.
  */
 export const AUTOPILOT = `(function () {
   if (window.__autopilot) return "already";
@@ -155,7 +168,7 @@ export const AUTOPILOT = `(function () {
   var RIGHT = { key: "ArrowRight", code: "ArrowRight", keyCode: 39 };
   var held = null;
   function frames() {
-    return ["og", "mod"].map(function (id) { var f = document.getElementById(id); return f && f.contentWindow; }).filter(Boolean);
+    return Array.prototype.map.call(document.querySelectorAll("iframe"), function (f) { return f.contentWindow; }).filter(Boolean);
   }
   function send(type, k) {
     frames().forEach(function (w) {
@@ -251,15 +264,39 @@ export function gifArgs(listFile: string, fps: number, out: string): string[] {
 /** The concat list `gifArgs` reads: ffmpeg's syntax, paths quoted. */
 export function concatList(files: string[], fps: number): string {
   const dur = 1 / fps;
-  const lines = files.map((f) =>
-    `file '${f.replace(/'/g, "'\\''")}'\nduration ${dur}`
-  );
+  const q = (f: string) => `file '${f.replace(/'/g, "'\\''")}'`;
+  const lines = files.map((f) => `${q(f)}\nduration ${dur}`);
   // concat holds the last entry's duration only when the file is named once
   // more after it.
-  if (files.length) {
-    lines.push(`file '${files[files.length - 1].replace(/'/g, "'\\''")}'`);
-  }
+  if (files.length) lines.push(q(files[files.length - 1]));
   return lines.join("\n") + "\n";
+}
+
+/**
+ * The recording's defaults, set by the GIF's size and not by taste. A GIF of
+ * two scrolling starfields changes every pixel every frame, so it costs about
+ * 65 KB a frame whatever the rate, and 25 s at 12 fps came out at 19 MB —
+ * too big to drop into a pull request or a chat. Ten seconds at 6 fps is
+ * sixty frames, measured at 3.9 MB on the 2019-PS2 stage, under the 5 MB
+ * budget with room for a busier stage; the budget itself is enforced by
+ * fpsLadder below when a run outgrows it.
+ */
+export const DEFAULT_SECONDS = 10;
+export const DEFAULT_FPS = 6;
+export const DEFAULT_MAX_MB = 5;
+
+/** The rates a GIF over its budget is re-encoded at, highest first. */
+const FPS_LADDER = [15, 12, 10, 8, 6, 5, 4, 3, 2];
+
+/**
+ * The frame rates to try for a GIF that must fit a size budget: the one asked
+ * for, then each lower rung of the ladder. Fewer frames is the one knob that
+ * shrinks the file without touching the window's length or the picture, so
+ * it is the one that turns on its own; a run still over at 2 fps is told to
+ * shorten --seconds instead.
+ */
+export function fpsLadder(fps: number): number[] {
+  return [fps, ...FPS_LADDER.filter((f) => f < fps)];
 }
 
 /**
@@ -278,3 +315,11 @@ export const FLATPAK_CHROME_IDS = [
   "org.chromium.Chromium",
   "com.google.ChromeDev",
 ];
+
+/** A level's name as a directory name. */
+export function slugOf(level: string): string {
+  return level.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
+    /^-|-$/g,
+    "",
+  ) || "level";
+}

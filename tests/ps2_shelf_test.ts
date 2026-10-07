@@ -46,7 +46,9 @@ Deno.test("the dashboard explains the empty PS2 shelf and files eShop builds on 
     "coreRows does not spread the eShop's shelved builds",
   );
   assert(
-    dashboard.includes("if (row.kind === 'eshop-web') { launchEshopWeb(row.g); return; }"),
+    dashboard.includes(
+      "if (row.kind === 'eshop-web') { launchEshopWeb(row.g); return; }",
+    ),
     "launchEmuRow cannot start a shelved eShop build",
   );
 });
@@ -60,34 +62,79 @@ Deno.test("a filed disc names its web build by a key the launcher resolves itsel
     ps2WebUrl({ kind: "shelf", shelfId: "import:test-cart" }),
     "/editor/?game=2028-ai&playExport=import%3Atest-cart",
   );
-  assertEquals(ps2WebUrl({ kind: "slug", slug: "radiant" }), "/editor/?game=2028-ai&play=radiant");
+  assertEquals(
+    ps2WebUrl({ kind: "slug", slug: "radiant" }),
+    "/editor/?game=2028-ai&play=radiant",
+  );
   // A record from before the field, and a job somebody wrote a URL into: no row.
   assertEquals(ps2WebUrl(undefined), null);
   assertEquals(ps2WebUrl({ url: "https://example.com/" }), null);
   assertEquals(ps2WebUrl({ kind: "level", level: "" }), null);
   assertEquals(ps2WebUrl({ kind: "level", level: 42 }), null);
   assertEquals(
-    normalizePs2Web({ kind: "level", level: " x ", url: "https://example.com/" }),
+    normalizePs2Web({
+      kind: "level",
+      level: " x ",
+      url: "https://example.com/",
+    }),
     { kind: "level", level: "x" },
   );
 });
 
 Deno.test("every surface that files a disc passes its web build along, and the launcher pairs them", async () => {
   const dashboard = await read("svelte-src/Dashboard.svelte");
-  assert(dashboard.includes("key: 'local-web:' + g.id"), "localRows does not add the web row");
   assert(
-    dashboard.includes("if (row.kind === 'ps2-web' && row.url) { launchGame('shmupx', row.url); return; }"),
+    dashboard.includes("key: 'local-web:' + g.id"),
+    "localRows does not add the web row",
+  );
+  assert(
+    dashboard.includes(
+      "if (row.kind === 'ps2-web' && row.url) { launchGame('shmupx', row.url); return; }",
+    ),
     "launchEmuRow cannot start a disc's web build",
   );
-  assert(dashboard.includes("web: job.web });"), "fileExportToPs2 drops the identity");
-  assert(dashboard.includes("{:else if r.kind === 'ps2-web'}"), "the web row wears no WEB chip");
+  assert(
+    dashboard.includes("web: job.web });"),
+    "fileExportToPs2 drops the identity",
+  );
+  assert(
+    dashboard.includes("{:else if r.kind === 'ps2-web'}"),
+    "the web row wears no WEB chip",
+  );
   const editor = await read("static/editor/index.html");
-  assert(editor.includes('id="export-ps2-web"'), "the export panel has no PLAY WEB BUILD row");
-  assert(editor.includes("web: ps2Export.web,"), "addPs2ExportToLibrary drops the identity");
+  assert(
+    editor.includes('id="export-ps2-web"'),
+    "the export panel has no PLAY WEB BUILD row",
+  );
+  // No PLAY ON PS2 anywhere in the editor: filing a disc used to offer a row
+  // that booted it in Play!, which comes up black (the HLE kernel stalls
+  // AthenaEnv), so the one thing a filed disc can do here is sit on the shelf.
+  assert(
+    !editor.includes("PLAY ON PS2"),
+    "the editor still offers PLAY ON PS2",
+  );
+  assert(
+    !editor.includes('id="export-ps2-play"'),
+    "the export panel still has the PLAY ON PS2 row",
+  );
+  assert(
+    !editor.includes("ps2PlayerUrl("),
+    "the editor still boots a disc in Play!",
+  );
+  assert(
+    editor.includes("web: ps2Export.web,"),
+    "addPs2ExportToLibrary drops the identity",
+  );
   assert(editor.includes("web: job.web,"), "fileQueuedPs2 drops the identity");
-  assert(editor.includes("const web = ps2WebIdentity(sav, name);"), "the export never settles an identity");
+  assert(
+    editor.includes("const web = ps2WebIdentity(sav, name);"),
+    "the export never settles an identity",
+  );
   const queue = await read("static/export-queue.js");
-  assert(queue.includes("job.web = web"), "a queued job does not carry the identity");
+  assert(
+    queue.includes("job.web = web"),
+    "a queued job does not carry the identity",
+  );
 });
 
 Deno.test("the game page honours an explicit ?level= instead of baking foo.json over it", async () => {
@@ -98,10 +145,15 @@ Deno.test("the game page honours an explicit ?level= instead of baking foo.json 
   const bundle = await read("static/games/2028-ai/game.bundle.js");
   const main = bundle.slice(bundle.indexOf("async function main() {"));
   const skip = main.indexOf('.get("level")');
-  const bake = main.indexOf("__OFFLINE_LEVEL__ = await fetchLevel2(LEVEL_DATA_URL)");
+  const bake = main.indexOf(
+    "__OFFLINE_LEVEL__ = await fetchLevel2(LEVEL_DATA_URL)",
+  );
   assert(skip >= 0, "main() never reads ?level=");
   assert(bake >= 0, "main() no longer bakes foo.json for a plain visit");
-  assert(skip < bake, "main() bakes foo.json before it checks for an explicit level");
+  assert(
+    skip < bake,
+    "main() bakes foo.json before it checks for an explicit level",
+  );
 });
 
 Deno.test("the Games tile wears the web globe, not the X", async () => {

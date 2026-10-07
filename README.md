@@ -2525,12 +2525,12 @@ What a packaged export still lacks is the Dezaemon tone bank, which comes from a
 things at once, so the panel under the EXPORT button offers all three rather
 than printing a path and stopping — and, beside them, the level's web build:
 
-|                            |                                                                                                                                |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| DOWNLOAD DISC (.ISO)       | the disc image, streamed by [`routes/api/build-artifact.ts`](routes/api/build-artifact.ts)                                     |
-| DOWNLOAD USB FOLDER (.ZIP) | the athena.elf folder, zipped on the way out by the same route                                                                 |
-| → PS2 LIBRARY              | install the Play! core if it is not already here, file the disc in the launcher's own PS2 shelf, and play it — in this browser |
-| PLAY WEB BUILD             | the same level as a web game, in the browser: the game page for a cloud level, the editor's instant-play hand-off for a cart   |
+|                            |                                                                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| DOWNLOAD DISC (.ISO)       | the disc image, streamed by [`routes/api/build-artifact.ts`](routes/api/build-artifact.ts)                                   |
+| DOWNLOAD USB FOLDER (.ZIP) | the athena.elf folder, zipped on the way out by the same route                                                               |
+| → PS2 LIBRARY              | install the Play! core if it is not already here and file the disc in the launcher's own PS2 shelf                           |
+| PLAY WEB BUILD             | the same level as a web game, in the browser: the game page for a cloud level, the editor's instant-play hand-off for a cart |
 
 [`static/ps2-library.js`](static/ps2-library.js) is the shared half: the editor
 imports it at runtime, the dashboard at bundle time, so both surfaces use one
@@ -2570,15 +2570,37 @@ one page holding two same-origin iframes — the cloud level in OG on the left a
 in MOD on the right, each the game's own 256×480, both booted straight into the
 stage with `?stage=0&god=1` — holds each pane on the first frame of its stage
 until the other gets there, wakes both on the same tick, sways both ships
-through the same moves, and screencasts the page for 25 seconds (`--seconds`,
-`--fps`). The frames are resampled onto a steady clock and ffmpeg writes
+through the same moves, and screencasts the page for ten seconds (`--seconds`).
+The frames are resampled onto a steady 6 fps clock (`--fps`) and ffmpeg writes
 `build/testdrive/ps2-compare/<slug>/compare.gif` beside `first.png`, `last.png`
 and a `report.json` that records each pane's version and `godFlg` as the runtime
-reported them. God mode is what keeps a 25-second window a comparison of play
-rather than of game-over screens; `--no-god` plays mortal. The browser is found
-the way the profiler finds it (`--chrome`, `$CHROME_BIN`, the usual installs),
-with Google Chrome from Flathub as the last resort, since that is the only
-Chrome a Silverblue-style box has.
+reported them. Those defaults are the GIF's size talking: two scrolling
+starfields change every pixel every frame, so a 25-second, 12 fps GIF came out
+at 19 MB, and sixty frames is what fits under 5 MB. A GIF over `--max-mb`
+(default 5; 0 lifts the cap) is re-encoded down the frame-rate ladder until it
+fits. God mode is what keeps the window a comparison of play rather than of
+game-over screens; `--no-god` plays mortal. `--headed` drives a visible Chrome
+instead, so the run can be watched. The browser is found the way the profiler
+finds it (`--chrome`, `$CHROME_BIN`, the usual installs), with Google Chrome
+from Flathub as the last resort, since that is the only Chrome a
+Silverblue-style box has.
+
+**Watching the disc's textures.** `deno task testdrive:ps2:textures "2019-PS2"`
+([`scripts/testdrive-ps2-textures.ts`](scripts/testdrive-ps2-textures.ts)) uses
+the same rig for the other question a PS2 export raises: what `--atlas-max`
+buys. It plays the level twice in the same version (`--version og|mod`), the
+left pane drawn with the textures the disc gets at the export's default 512
+sheet and the right with the sharpest sheet that still fits the Graphics
+Synthesizer's 4 MB — every sheet goes up as one byte a texel and the frame
+buffer takes 2.19 MB first, so a budget is within the threshold when what is
+left holds its sheets. The disc is staged at each budget with the export's own
+`stageAssets`, which is where the sheet sizes and the 1/N scales come from, and
+each pane's sheets (`game_asset`, `game_ui`, the level's atlas) are box-filtered
+down by that scale and drawn back at size, then served to that pane alone over
+DevTools request interception, keyed on a `tex=` marker in the pane's URL. Play!
+cannot show the disc, so this is the one place the trade can be looked at. When
+nothing sharper fits, the task says so and records nothing. Output lands in
+`build/testdrive/ps2-textures/<slug>/` with the budget table in `report.json`.
 
 Two things follow from how Play! works. The **disc** is what gets filed, not the
 `athena.elf`: Play! will boot a bare ELF, but AthenaEnv would then have no

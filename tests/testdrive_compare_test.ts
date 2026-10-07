@@ -7,6 +7,9 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   compareUrls,
   concatList,
+  DEFAULT_FPS,
+  DEFAULT_SECONDS,
+  fpsLadder,
   gifArgs,
   harnessHtml,
   harnessSize,
@@ -35,20 +38,32 @@ Deno.test("god mode and the stage can be turned", () => {
   assertEquals(new URL(u.mod).searchParams.get("stage"), "2");
 });
 
-Deno.test("the harness seats both panes at game size under their labels", () => {
+Deno.test("the harness seats every pane at game size under its label", () => {
   const urls = compareUrls("http://x", "A & B");
-  const html = harnessHtml(urls, "A & B");
+  const html = harnessHtml(
+    [{ id: "og", label: "OG", url: urls.og }, {
+      id: "mod",
+      label: "MOD",
+      url: urls.mod,
+    }],
+    "A & B — OG vs MOD",
+  );
   assertStringIncludes(html, `id="og"`);
   assertStringIncludes(html, `id="mod"`);
   assertStringIncludes(html, `width="256" height="480"`);
   assertStringIncludes(html, "<figcaption>OG</figcaption>");
   assertStringIncludes(html, "<figcaption>MOD</figcaption>");
+  // Fixed columns and a clipped page, so a long caption cannot widen the row.
+  assertStringIncludes(html, "flex: 0 0 256px");
+  assertStringIncludes(html, "overflow: hidden; }");
+  assertStringIncludes(html, "text-overflow: ellipsis");
   // The level name and the URLs are escaped, not interpolated raw.
   assertStringIncludes(html, "A &amp; B");
   assert(!html.includes("A & B —"), "the title carries the name unescaped");
-  const size = harnessSize();
+  const size = harnessSize(2);
   assertEquals(size.width, 256 * 2 + 8 * 3);
   assertEquals(size.height, 480 + 22 + 8 * 2);
+  assertEquals(harnessSize(3).width, 256 * 3 + 8 * 4);
 });
 
 Deno.test("resampling keeps the capture's clock", () => {
@@ -80,4 +95,14 @@ Deno.test("the concat list times every frame and holds the last", () => {
   assertEquals(args.at(-1), "/f/out.gif");
   assertStringIncludes(args.join(" "), "palettegen");
   assertStringIncludes(args.join(" "), "fps=12");
+});
+
+Deno.test("a GIF over budget steps down the rate, never up", () => {
+  assertEquals(fpsLadder(12), [12, 10, 8, 6, 5, 4, 3, 2]);
+  assertEquals(fpsLadder(6), [6, 5, 4, 3, 2]);
+  // An odd rate is tried first and then the rungs below it.
+  assertEquals(fpsLadder(7), [7, 6, 5, 4, 3, 2]);
+  assertEquals(fpsLadder(2), [2]);
+  // The defaults: sixty frames, measured under the 5 MB budget.
+  assertEquals(DEFAULT_SECONDS * DEFAULT_FPS, 60);
 });
