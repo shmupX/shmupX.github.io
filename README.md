@@ -620,9 +620,13 @@ of the global sprite bank (refs 94–101), so a pickup in a cart is a **still** 
 there is nowhere for a second frame to go. With the four winged letter emblems
 sitting in `dev-fixtures/powerups/` as `powerup-s.gif`, `powerup-b.gif`,
 `powerup-f.gif` and `powerup-r.gif`, `deno task build:sav` draws those rather
-than the procedural coloured squares it otherwise falls back to. The letters map
-**S = speed**, **B = barrier**, **F = power** and **R = all four weapon-change
-slots**; bomb and score have no letter and keep their squares.
+than the procedural coloured squares it otherwise falls back to. The letters
+read **F = firepower** (the big shot), **S = the 3-way shot**, **R = rapid
+fire** and **B = barrier**. The Saturn has no 3-way and no rapid-fire item among
+its sixteen weapons, so a web game's S and R go out as **shot-level** items —
+the engine's power-up, +1 to the option count, the same item F is — wearing
+their own letters (`DEFAULT_ITEM_LETTERS` in `game-to-save.js`); bomb, score,
+weapon change and a cart's own speed-up have no letter and keep their squares.
 [`lib/powerup-emblems.ts`](packages/shmup-harbor/lib/powerup-emblems.ts) takes
 the largest frame of each GIF that fits the cell at native resolution — the art
 is stored blown up, and the factor is measured rather than assumed — and centres
@@ -647,9 +651,13 @@ artefact, the way the tone bank and the mesh library are. It is deliberately a
 texture of its own rather than part of `game_asset`, because an import swaps
 `game_asset` for the level's atlas and would otherwise take the pickups away
 just as a cart starts. `dropItem` runs the four-frame flap at the GIF's own 5fps
-on the drops the letters name — **F** on the power-up, **R** on the weapon
-change, **S** on the speed-up, **B** on the barrier — while bomb and score keep
-their stock art.
+on the drops the letters name — **F** on the big shot, **S** on the 3-way, **R**
+on the speed-up, **B** on the barrier — while bomb and score keep their stock
+art. In OG the drops do what the 2019 game's did: S switches the shot to 3-way,
+R shortens the shot interval (rapid fire). On the Dezaemon kit — MOD, or a cart
+— S and R are shot levels, the same as F. A cart's drop flaps whichever letter
+its own slot icon is the still of, so the three shot-level slots a web game
+exports stay F, S and R when the cart comes back.
 
 A cart that drew its own item icons keeps them, because that art is its author's
 — **unless the icon is one of these emblems**, which is exactly what a
@@ -873,8 +881,8 @@ its story, no Dezaemon weapons). **MOD** — called REBOOT until 2026-10-05, a
 word that still reads as it — lets every part cross over: a cart gets the web
 column above, and a web game gets the Dezaemon weapons on top of its own shot
 (`dezaKit` in `game.bundle.js`: the MAIN 1 spread, the OPTION A ring, charge 1,
-levelled by its two shot power-ups; the SP button stays its own special attack).
-A game with no `?version=` at all is OG.
+levelled by its three shot power-ups, F, S and R; the SP button stays its own
+special attack). A game with no `?version=` at all is OG.
 
 **A** plays the selected version and **Y** opens the game in the editor (◀ ▶
 turns the switch on a pad). The launcher sends only the word —

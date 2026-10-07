@@ -26,6 +26,7 @@ import {
   encodeEnemyRecord,
   encodeSettings,
   fitRgba,
+  itemIcon,
   levelStages,
   mapColumn,
   placeRgba,
@@ -256,10 +257,94 @@ Deno.test("encodeSettings decodes with the fields it was given", () => {
   }, { loopPart: 4, endPart: 30 }]);
   assertEquals(s.bgmTable.slice(0, 6), [1, 2, 3, 4, 5, 6]);
   assertStrictEquals(s.sfxSet, 2);
-  assertEquals(s.itemSlots.map((i) => i.type), [7, 0, 8, 6, 5, 4, 1, 2]);
+  // F, S and R are all shot levels on a cart: the Saturn has no 3-way and
+  // no rapid-fire item, so the web game's three shot power-ups go out as
+  // three power-up slots, told apart by their icons alone
+  assertEquals(s.itemSlots.map((i) => i.type), [7, 7, 7, 6, 5, 4, 1, 2]);
   assertStrictEquals(s.loadouts[0].main, 1);
   assertStrictEquals(s.loadouts[0].sub, 1);
   assertStrictEquals(s.shotDamage, 20);
+});
+
+Deno.test("the default item slots wear their letters: F, S, R on the shot levels, B on the barrier", () => {
+  // Four emblems told apart by opaque pixel count alone, since the writer
+  // repaints every colour into the save's own palette on the way in.
+  const emblem = (count) => {
+    const rgba = new Uint8Array(16 * 16 * 4);
+    for (let i = 0; i < count; i++) rgba.set([255, 255, 255, 255], i * 4);
+    return { w: 16, h: 16, rgba };
+  };
+  const opaqueOf = (rgba) => {
+    let n = 0;
+    for (let i = 3; i < rgba.length; i += 4) if (rgba[i]) n++;
+    return n;
+  };
+  const itemEmblems = {
+    f: emblem(12),
+    s: emblem(24),
+    r: emblem(36),
+    b: emblem(48),
+  };
+  const { sections } = buildSaveFromGame(level(), art(), { itemEmblems });
+  const decoded = decodeSave(buildPayload(sections));
+  const sec = decoded.sections.map((s) => s.decompressed);
+  // item icons are global bank refs 94-101, one 16x16 cell each
+  const opaque = (slot) => {
+    const w = bankWord(sections, 94 + slot);
+    const img = renderFrame(sec, decoded.cg.palettes, {
+      w: 1,
+      h: 1,
+      cells: [{
+        empty: false,
+        cell: w & 0x3ff,
+        hflip: (w & 0x4000) !== 0,
+        vflip: (w & 0x8000) !== 0,
+      }],
+    });
+    return opaqueOf(img.rgba);
+  };
+  assertEquals(decoded.settings.itemSlots.map((s) => s.type), [
+    7,
+    7,
+    7,
+    6,
+    5,
+    4,
+    1,
+    2,
+  ]);
+  assertStrictEquals(opaque(0), 12, "slot 0, the big shot, wears F");
+  assertStrictEquals(opaque(1), 24, "slot 1, the 3-way, wears S");
+  assertStrictEquals(opaque(2), 36, "slot 2, rapid fire, wears R");
+  assertStrictEquals(opaque(5), 48, "slot 5, the barrier, wears B");
+  // score, bomb and the weapon-change presets have no letter: the square stands
+  assertStrictEquals(
+    opaque(3),
+    opaqueOf(itemIcon(6).rgba),
+    "score keeps its square",
+  );
+  assertStrictEquals(
+    opaque(4),
+    opaqueOf(itemIcon(5).rgba),
+    "bomb keeps its square",
+  );
+  assertStrictEquals(
+    opaque(6),
+    opaqueOf(itemIcon(1).rgba),
+    "weapon change keeps its square",
+  );
+  // and with no art at all, every slot is a square — what a checkout without
+  // dev-fixtures/powerups exports
+  const bare = buildSaveFromGame(level(), art()).sections;
+  const bareDecoded = decodeSave(buildPayload(bare));
+  const bareSec = bareDecoded.sections.map((s) => s.decompressed);
+  const bw = bankWord(bare, 95);
+  const bareImg = renderFrame(bareSec, bareDecoded.cg.palettes, {
+    w: 1,
+    h: 1,
+    cells: [{ empty: false, cell: bw & 0x3ff, hflip: false, vflip: false }],
+  });
+  assertStrictEquals(opaqueOf(bareImg.rgba), opaqueOf(itemIcon(7).rgba));
 });
 
 Deno.test("emptySong is the engine's unused-slot template", () => {
@@ -709,7 +794,10 @@ Deno.test("a level with no 3D models leaves sec7 zeroed", () => {
 // range showed its evilEye and hexagram fine.
 function armedLevel() {
   const lv = level();
-  lv.bossData.boss0.projectileDataA = { texture: ["eye0.png", "eye1.png"], speed: 0.6 };
+  lv.bossData.boss0.projectileDataA = {
+    texture: ["eye0.png", "eye1.png"],
+    speed: 0.6,
+  };
   lv.bossData.boss0.projectileDataB = { texture: ["hex0.png"], speed: 1 };
   const a = art();
   a["eye0.png"] = frame(12, 12, [0, 255, 255]);
@@ -723,7 +811,11 @@ function armedLevel() {
 // filled in; a blank one decodes as weapon 0 with shot function 0, which
 // the runtime never fires, so it is left out here too.
 function firedWeapons(behavior) {
-  return behavior.patterns.map((p) => p.firePoints.filter((fp) => fp.shot && fp.shot.fn !== 0).map((fp) => fp.shot.weapon));
+  return behavior.patterns.map((p) =>
+    p.firePoints.filter((fp) => fp.shot && fp.shot.fn !== 0).map((fp) =>
+      fp.shot.weapon
+    )
+  );
 }
 
 Deno.test("a boss's own weapons claim bullet types, and its fire points follow them", () => {
@@ -737,11 +829,18 @@ Deno.test("a boss's own weapons claim bullet types, and its fire points follow t
   const decoded = decodeSave(buildPayload(sections));
   assertStrictEquals(decoded.globalArt.bullets.filter(Boolean).length, 3);
   // the four default patterns fire A, A+A, B, A — moved off types 0/1
-  assertEquals(firedWeapons(decoded.bosses[0].behavior), [[1], [1, 1], [2], [1]]);
+  assertEquals(firedWeapons(decoded.bosses[0].behavior), [[1], [1, 1], [2], [
+    1,
+  ]]);
   // and back in the editor the boss arms out of the bank at those types
   const { gameJson } = mapSaveToGame(decoded);
   assertStrictEquals(gameJson.dezaemonBullets.art.filter(Boolean).length, 3);
-  assertEquals(firedWeapons(gameJson.bossData.boss0.dezaemon.boss), [[1], [1, 1], [2], [1]]);
+  assertEquals(firedWeapons(gameJson.bossData.boss0.dezaemon.boss), [
+    [1],
+    [1, 1],
+    [2],
+    [1],
+  ]);
 });
 
 Deno.test("a one-weapon boss fires that weapon from every fire point; a boss with none keeps the defaults", () => {
@@ -751,7 +850,9 @@ Deno.test("a one-weapon boss fires that weapon from every fire point; a boss wit
   // the default third pattern names weapon B; without one it falls back to A
   assertEquals(firedWeapons(one.bosses[0].behavior), [[1], [1, 1], [1], [1]]);
 
-  const none = decodeSave(buildPayload(buildSaveFromGame(level(), art()).sections));
+  const none = decodeSave(
+    buildPayload(buildSaveFromGame(level(), art()).sections),
+  );
   assertEquals(firedWeapons(none.bosses[0].behavior), [[0], [0, 0], [1], [0]]);
 });
 
@@ -760,17 +861,38 @@ Deno.test("a fourth projectile does not fit a cart, and the writer says so", () 
   // two more zako, each with a shot of its own, take the types first
   lv.enemylist[1][1] = "C0";
   lv.enemylist[1][2] = "D0";
-  lv.enemyData.enemyC = { name: "c", hp: 1, score: 10, speed: 1, interval: 60, texture: ["dot0.png"], projectileData: { texture: ["shotC.png"], speed: 1 } };
-  lv.enemyData.enemyD = { name: "d", hp: 1, score: 10, speed: 1, interval: 60, texture: ["dot1.png"], projectileData: { texture: ["shotD.png"], speed: 1 } };
+  lv.enemyData.enemyC = {
+    name: "c",
+    hp: 1,
+    score: 10,
+    speed: 1,
+    interval: 60,
+    texture: ["dot0.png"],
+    projectileData: { texture: ["shotC.png"], speed: 1 },
+  };
+  lv.enemyData.enemyD = {
+    name: "d",
+    hp: 1,
+    score: 10,
+    speed: 1,
+    interval: 60,
+    texture: ["dot1.png"],
+    projectileData: { texture: ["shotD.png"], speed: 1 },
+  };
   a["shotC.png"] = frame(6, 6, [255, 0, 255]);
   a["shotD.png"] = frame(6, 6, [0, 255, 0]);
   const { sections, warnings, report } = buildSaveFromGame(lv, a);
   assertStrictEquals(report.bulletTypes, 3);
   assertEquals(report.stages[0].boss.weapons, [null, null, null]);
-  assertStrictEquals(warnings.filter((w) => /three bullet types/.test(w)).length, 2);
+  assertStrictEquals(
+    warnings.filter((w) => /three bullet types/.test(w)).length,
+    2,
+  );
   // nothing claimed, so the fire points keep the default numbers
   const decoded = decodeSave(buildPayload(sections));
-  assertEquals(firedWeapons(decoded.bosses[0].behavior), [[0], [0, 0], [1], [0]]);
+  assertEquals(firedWeapons(decoded.bosses[0].behavior), [[0], [0, 0], [1], [
+    0,
+  ]]);
 });
 
 // A cart's own bullet bank is what its verbatim zako records fire: byte 4 of
@@ -783,7 +905,10 @@ function cartLevel() {
   const lv = level();
   lv.meta = { source: "dezaemon2" };
   lv.dezaemonBullets = {
-    configs: [{ raw: 0x13, speedAdd: 1 }, { raw: 0x23, speedAdd: 2 }, { raw: 0x33, speedAdd: 3.5 }],
+    configs: [{ raw: 0x13, speedAdd: 1 }, { raw: 0x23, speedAdd: 2 }, {
+      raw: 0x33,
+      speedAdd: 3.5,
+    }],
     art: [null, ["bank1_0.gif", "bank1_1.gif"], ["bank2_0.gif"]],
   };
   lv.bossData.boss0.projectileDataA = { texture: ["eye0.png"], speed: 0.6 };
@@ -800,7 +925,9 @@ function dominantBand(sprite) {
   const counts = new Map();
   for (let i = 0; i < sprite.rgba.length; i += 4) {
     if (sprite.rgba[i + 3] === 0) continue;
-    const band = [sprite.rgba[i], sprite.rgba[i + 1], sprite.rgba[i + 2]].map((v) => v >> 6).join(",");
+    const band = [sprite.rgba[i], sprite.rgba[i + 1], sprite.rgba[i + 2]].map((
+      v,
+    ) => v >> 6).join(",");
     counts.set(band, (counts.get(band) || 0) + 1);
   }
   return [...counts.entries()].sort((x, y) => y[1] - x[1])[0][0];
@@ -813,7 +940,10 @@ Deno.test("a cart's own bullet bank goes back out at its own indices, before any
   // boss's weapon found no room and said so
   assertStrictEquals(report.bulletTypes, 3);
   assertEquals(report.stages[0].boss.weapons, [null, null, null]);
-  assertStrictEquals(warnings.filter((w) => /three bullet types/.test(w)).length, 1);
+  assertStrictEquals(
+    warnings.filter((w) => /three bullet types/.test(w)).length,
+    1,
+  );
 
   const decoded = decodeSave(buildPayload(sections));
   assertEquals(decoded.globalArt.bullets.map(Boolean), [true, true, true]);
@@ -823,11 +953,24 @@ Deno.test("a cart's own bullet bank goes back out at its own indices, before any
   // first decoder frame of types 0 and 1, and the writer paints the engine
   // layout last on purpose — so whenever type 2 is painted, frame 0 of the
   // other two reads back as type 2's art, on a Saturn-written cart too.
-  assertStrictEquals(dominantBand(decoded.sprites[decoded.globalArt.bullets[1][1]]), "3,0,3");
-  assertStrictEquals(dominantBand(decoded.sprites[decoded.globalArt.bullets[2][1]]), "0,3,0");
-  assertStrictEquals(dominantBand(decoded.sprites[decoded.globalArt.bullets[0][1]]), "3,3,0");
+  assertStrictEquals(
+    dominantBand(decoded.sprites[decoded.globalArt.bullets[1][1]]),
+    "3,0,3",
+  );
+  assertStrictEquals(
+    dominantBand(decoded.sprites[decoded.globalArt.bullets[2][1]]),
+    "0,3,0",
+  );
+  assertStrictEquals(
+    dominantBand(decoded.sprites[decoded.globalArt.bullets[0][1]]),
+    "3,3,0",
+  );
   // and the config bytes went back raw (the fourth config is the blast byte)
-  assertEquals(decoded.settings.bullets.configs.slice(0, 3).map((c) => c.raw), [0x13, 0x23, 0x33]);
+  assertEquals(decoded.settings.bullets.configs.slice(0, 3).map((c) => c.raw), [
+    0x13,
+    0x23,
+    0x33,
+  ]);
 });
 
 Deno.test("a cart's bullets survive a second trip through the editor", () => {
@@ -837,12 +980,22 @@ Deno.test("a cart's bullets survive a second trip through the editor", () => {
   // its decoded sprites as the atlas
   const mapped = mapSaveToGame(first);
   const atlas = {};
-  for (const s of mapped.sprites || []) atlas[s.key] = { w: s.w, h: s.h, rgba: s.rgba };
-  assert(mapped.gameJson.dezaemonBullets.art.every((f) => f && f.every((k) => atlas[k])), "the bank's frames are in the atlas");
+  for (const s of mapped.sprites || []) {
+    atlas[s.key] = { w: s.w, h: s.h, rgba: s.rgba };
+  }
+  assert(
+    mapped.gameJson.dezaemonBullets.art.every((f) =>
+      f && f.every((k) => atlas[k])
+    ),
+    "the bank's frames are in the atlas",
+  );
   const { sections, warnings } = buildSaveFromGame(mapped.gameJson, atlas);
   assertEquals(warnings.filter((w) => /bullet/.test(w)), []);
   const second = decodeSave(buildPayload(sections));
-  assertEquals(second.globalArt.bullets.map(Boolean), first.globalArt.bullets.map(Boolean));
+  assertEquals(
+    second.globalArt.bullets.map(Boolean),
+    first.globalArt.bullets.map(Boolean),
+  );
   for (let t = 0; t < 3; t++) {
     for (let f = 0; f < 4; f++) {
       assertStrictEquals(
@@ -852,5 +1005,8 @@ Deno.test("a cart's bullets survive a second trip through the editor", () => {
       );
     }
   }
-  assertEquals(second.settings.bullets.configs.map((c) => c.raw), first.settings.bullets.configs.map((c) => c.raw));
+  assertEquals(
+    second.settings.bullets.configs.map((c) => c.raw),
+    first.settings.bullets.configs.map((c) => c.raw),
+  );
 });

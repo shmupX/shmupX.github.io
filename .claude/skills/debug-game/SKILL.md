@@ -146,7 +146,7 @@ Worth knowing before you press something and misread the result:
 
 - **There is no fire button.** The ship autofires: `shootTimer` ticks up every
   frame and a shot leaves every `shootInterval` frames (23 by default, less with
-  the speed powerup). To see a shot, just step.
+  the R — rapid fire — powerup). To see a shot, just step.
 - **Every face button and both top shoulders fire the bomb** — `a`, `b`, `x`,
   `y`, `l`, `r` all map to the one `sp` edge. It is a limited resource, so a
   press changes the run's state, not just its pixels.

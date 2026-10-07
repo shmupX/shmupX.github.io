@@ -34,22 +34,22 @@ export const EMBLEM_DIR = "dev-fixtures/powerups";
 export const EMBLEM_CELL = 16;
 
 /**
- * Which emblem each item type wears.
+ * The four letters, in the order the runtime's atlas rows them.
  *
- * Item types are 0-3 weapon change, 4 barrier, 5 bomb, 6 score, 7 power,
- * 8 speed (`itemIcon()`), and the letters read S=speed, B=barrier,
- * F=firepower, R=rapid — so R covers all four weapon-change slots. Bomb and
- * score have no letter and keep their coloured squares.
+ * They read F=firepower (the big shot), S=the 3-way shot, R=rapid fire and
+ * B=barrier. Which item SLOT wears which is the cart writer's call
+ * (game-to-save.js DEFAULT_ITEM_LETTERS / EMBLEM_LETTER_BY_TYPE): a web
+ * game's three shot power-ups go out as power-up items wearing F, S and R,
+ * its barrier wears B, and an import's own power-up and barrier wear F and
+ * B. Weapon change, bomb, score and the speed-up have no letter and keep
+ * their coloured squares.
  */
-export const EMBLEM_BY_TYPE: Readonly<Record<number, string>> = Object.freeze({
-  0: "r",
-  1: "r",
-  2: "r",
-  3: "r",
-  4: "b",
-  7: "f",
-  8: "s",
-});
+export const EMBLEM_LETTERS: readonly string[] = Object.freeze([
+  "s",
+  "b",
+  "f",
+  "r",
+]);
 
 interface Box {
   x0: number;
@@ -178,9 +178,9 @@ export function emblemFromGif(bytes: Uint8Array): EmblemFrame {
 }
 
 /**
- * The emblem for every item type that has one, keyed by type, ready for the
- * writer's `itemEmblems` option — or null when the directory holds none, in
- * which case the writer draws its coloured squares.
+ * The emblem for every letter whose GIF is in `dir`, keyed by letter (s, b,
+ * f, r), ready for the writer's `itemEmblems` option — or null when the
+ * directory holds none, in which case the writer draws its coloured squares.
  *
  * A GIF that fails to decode is reported through `onWarn` and skipped; one
  * bad file does not cost the others their art.
@@ -188,27 +188,20 @@ export function emblemFromGif(bytes: Uint8Array): EmblemFrame {
 export async function loadItemEmblems(
   dir: string,
   onWarn: (message: string) => void = () => {},
-): Promise<Record<number, EmblemFrame> | null> {
-  const cache = new Map<string, EmblemFrame>();
-  const out: Record<number, EmblemFrame> = {};
-  for (const [type, letter] of Object.entries(EMBLEM_BY_TYPE)) {
-    let frame = cache.get(letter);
-    if (!frame) {
-      let bytes: Uint8Array;
-      try {
-        bytes = await Deno.readFile(`${dir}/powerup-${letter}.gif`);
-      } catch {
-        continue; // no art for this letter; the square stands
-      }
-      try {
-        frame = emblemFromGif(bytes);
-      } catch (e) {
-        onWarn(`powerup-${letter}.gif: ${(e as Error).message}`);
-        continue;
-      }
-      cache.set(letter, frame);
+): Promise<Record<string, EmblemFrame> | null> {
+  const out: Record<string, EmblemFrame> = {};
+  for (const letter of EMBLEM_LETTERS) {
+    let bytes: Uint8Array;
+    try {
+      bytes = await Deno.readFile(`${dir}/powerup-${letter}.gif`);
+    } catch {
+      continue; // no art for this letter; the square stands
     }
-    out[Number(type)] = frame;
+    try {
+      out[letter] = emblemFromGif(bytes);
+    } catch (e) {
+      onWarn(`powerup-${letter}.gif: ${(e as Error).message}`);
+    }
   }
   return Object.keys(out).length ? out : null;
 }

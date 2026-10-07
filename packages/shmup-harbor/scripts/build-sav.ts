@@ -302,8 +302,8 @@ export async function buildSav(
   log(
     itemEmblems
       ? `item icons: ${
-        Object.keys(itemEmblems).length
-      } of 9 types wear a powerup emblem`
+        Object.keys(itemEmblems).map((l) => l.toUpperCase()).join(" ")
+      } wear a powerup emblem (${Object.keys(itemEmblems).length} of 4 letters)`
       : `item icons: no powerup GIFs in ${EMBLEM_DIR} — drawing coloured squares`,
   );
 
