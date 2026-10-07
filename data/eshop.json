@@ -33,21 +33,6 @@
     "players": 1
   },
   {
-    "id": "super-mario-sp",
-    "kind": "web",
-    "name": "Super Mario SP",
-    "title": "SUPER MARIO SP",
-    "sub": "SFC / .SFC // 65816 homebrew · snes9x",
-    "icon": "/icons/super-mario-sp-icon.png",
-    "source": "url",
-    "downloadUrl": "/games/super-mario-sp-web.zip",
-    "entry": "index.html",
-    "size": "2.3 MB",
-    "date": "09.13.26",
-    "players": 1,
-    "status": "DEBUG"
-  },
-  {
     "id": "zunzunkyou-no-yabou",
     "kind": "arcade",
     "name": "Zunzunkyou No Yabou",

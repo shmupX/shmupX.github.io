@@ -284,7 +284,6 @@ Deno.test("a DEBUG game stays DEBUG, or it walks into the shop", async () => {
   const statusOf = (id: string) =>
     eshop.find((e: { id: string }) => e.id === id)?.status ?? null;
   assertEquals(statusOf("metamoqester"), "DEBUG");
-  assertEquals(statusOf("super-mario-sp"), "DEBUG");
   assertEquals(statusOf("sar-search-and-rescue"), "DEBUG");
   assertEquals(statusOf("guardians-denjin-makai-ii"), "DEBUG");
   // ...and the ones meant to be visible carry no status, which reads as

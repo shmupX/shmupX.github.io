@@ -1,7 +1,7 @@
 {
-  "version": "fdf18e0",
+  "version": "ac4a977",
   "versionSource": "git",
-  "generatedAt": "2026-10-07T07:01:21.505Z",
+  "generatedAt": "2026-10-07T07:39:39.732Z",
   "games": [
     {
       "id": "shmupx",
@@ -48,21 +48,6 @@
       "size": "0.6 MB",
       "date": "10.07.26",
       "players": 1
-    },
-    {
-      "id": "super-mario-sp",
-      "kind": "web",
-      "name": "Super Mario SP",
-      "title": "SUPER MARIO SP",
-      "sub": "SFC / .SFC // 65816 homebrew · snes9x",
-      "icon": "/icons/super-mario-sp-icon.png",
-      "source": "url",
-      "downloadUrl": "/games/super-mario-sp-web.zip",
-      "entry": "index.html",
-      "size": "2.3 MB",
-      "date": "09.13.26",
-      "players": 1,
-      "status": "DEBUG"
     },
     {
       "id": "zunzunkyou-no-yabou",
