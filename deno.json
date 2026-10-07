@@ -18,6 +18,7 @@
     "build:android": "deno run -A packages/shmup-harbor/scripts/build-desktop.ts android",
     "build:ios": "deno run -A packages/shmup-harbor/scripts/build-desktop.ts ios",
     "shelf:list": "deno run -A packages/shmup-harbor/scripts/build-desktop.ts android --list",
+    "steam:waydroid": "deno run -A scripts/steam-waydroid.ts",
     "release:keygen": "deno run -A scripts/release-desktop.ts --keygen",
     "release:checkkey": "deno run -A scripts/release-desktop.ts --check-key",
     "release:desktop": "deno run -A scripts/release-desktop.ts",
