@@ -1656,10 +1656,13 @@
         // ================== POWERUP DEFINITIONS ==================
         const POWERUP_TYPES = [
             { id: '0', name: 'None', frame: null, color: '#666' },
-            { id: '1', name: 'Big Shot', frame: 'powerupBig0.png', color: '#f59e0b' },
-            { id: '2', name: '3-Way', frame: 'powerup3way0.png', color: '#3b82f6' },
-            { id: '3', name: 'Speed Up', frame: 'speedupItem0.png', color: '#10b981' },
-            { id: '9', name: 'Barrier', frame: 'barrierItem0.png', color: '#8b5cf6' }
+            // The letter is the emblem the runtime flaps on the drop
+            // (game.bundle.js dropItem): F = firepower, S = the 3-way shot,
+            // R = rapid fire (the shot interval), B = barrier.
+            { id: '1', name: 'Big Shot (F)', frame: 'powerupBig0.png', color: '#f59e0b' },
+            { id: '2', name: '3-Way Shot (S)', frame: 'powerup3way0.png', color: '#3b82f6' },
+            { id: '3', name: 'Rapid Fire (R)', frame: 'speedupItem0.png', color: '#10b981' },
+            { id: '9', name: 'Barrier (B)', frame: 'barrierItem0.png', color: '#8b5cf6' }
         ];
 
         // ================== ATLAS FORMAT NORMALIZER ==================

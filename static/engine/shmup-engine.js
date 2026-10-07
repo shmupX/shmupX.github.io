@@ -6607,7 +6607,9 @@ var MAX_SPAWN_ROW = PLACEMENT_ROWS - 32;
 var PLAYFIELD_FIRST_COL = 3;
 var PLAYFIELD_COLS2 = 14;
 var BOSS_COL = 9;
-var DEFAULT_ITEM_TYPES = [7, 0, 8, 6, 5, 4, 1, 2];
+var DEFAULT_ITEM_TYPES = [7, 7, 7, 6, 5, 4, 1, 2];
+var DEFAULT_ITEM_LETTERS = Object.freeze(["f", "s", "r", null, null, "b", null, null]);
+var EMBLEM_LETTER_BY_TYPE = Object.freeze({ 4: "b", 7: "f" });
 var DEFAULT_ITEM_MOVEMENT = 1;
 var DROP_TO_SLOT = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 9: 5 };
 var STRAIGHT_APPEARANCE_BASE = 32;
@@ -7434,10 +7436,13 @@ function buildSaveFromGame(level, art2, options = {}) {
     }
     return { key: st.key, placements, records, boss, items, background, curve, extent, lastRow };
   });
+  const importedIcons = importedSlots && level.dezaemonItems && Array.isArray(level.dezaemonItems.icons) ? level.dezaemonItems.icons : null;
   const itemKeys = itemSlotBytes.map((b, i) => {
     const type = b & 15;
-    const supplied = opts.itemEmblems ? opts.itemEmblems[type] : null;
-    const frame = supplied && supplied.rgba && supplied.w > 0 && supplied.h > 0 ? supplied : itemIcon(type);
+    const own = importedIcons ? lookup(importedIcons[i]) : null;
+    const letter = importedSlots ? EMBLEM_LETTER_BY_TYPE[type] || null : DEFAULT_ITEM_LETTERS[i];
+    const supplied = letter && opts.itemEmblems ? opts.itemEmblems[letter] : null;
+    const frame = own ? own : supplied && supplied.rgba && supplied.w > 0 && supplied.h > 0 ? supplied : itemIcon(type);
     return planFrame(`item:${i}:${type}`, frame, 16, 16, "items", 3);
   });
   const blastAKeys = blastFrames(16).map((f, i) => planFrame(`blastA:${i}`, f, 16, 16, "blast", 3));
@@ -9090,6 +9095,7 @@ export {
   CgPacker,
   DEFAULT_ATTRIBUTION_ROLE,
   DEFAULT_BOSS_PATTERNS,
+  DEFAULT_ITEM_LETTERS,
   DEFAULT_ITEM_TYPES,
   DEFAULT_TABLE_ADDR,
   DEZA2_CG_COLORS,
@@ -9103,6 +9109,7 @@ export {
   DEZA2_USER_ROWS,
   DEZA2_ZAKO_SIZES,
   DROP_TO_SLOT,
+  EMBLEM_LETTER_BY_TYPE,
   DUKE_PLAYER,
   ENEMY_BULLET_SPEED,
   ENGINE_SHOT_DAMAGE,

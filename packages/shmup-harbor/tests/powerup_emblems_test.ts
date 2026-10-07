@@ -18,9 +18,9 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import {
-  EMBLEM_BY_TYPE,
   EMBLEM_CELL,
   EMBLEM_DIR,
+  EMBLEM_LETTERS,
   emblemFromGif,
   loadItemEmblems,
   pixelScale,
@@ -437,38 +437,18 @@ Deno.test("emblemFromGif throws on bytes that are not a GIF", () => {
 });
 
 // ---------------------------------------------------------------------------
-// EMBLEM_BY_TYPE
+// EMBLEM_LETTERS
 // ---------------------------------------------------------------------------
 
-Deno.test("EMBLEM_BY_TYPE letters the item types that have a letter", () => {
-  assertEquals(EMBLEM_BY_TYPE, {
-    0: "r",
-    1: "r",
-    2: "r",
-    3: "r",
-    4: "b",
-    7: "f",
-    8: "s",
-  });
+Deno.test("EMBLEM_LETTERS are the four winged letters, in the atlas's row order", () => {
+  // F = firepower, S = the 3-way shot, R = rapid fire, B = barrier. Which
+  // item slot wears which is the writer's table (game-to-save.js
+  // DEFAULT_ITEM_LETTERS), not this one's.
+  assertEquals([...EMBLEM_LETTERS], ["s", "b", "f", "r"]);
+  assert(Object.isFrozen(EMBLEM_LETTERS));
 });
 
-Deno.test("EMBLEM_BY_TYPE leaves bomb and score their coloured squares", () => {
-  // Types 5 (bomb) and 6 (score) wear no letter, and the writer falls back
-  // to itemIcon() for them. Their absence is the contract, not an oversight.
-  assert(!(5 in EMBLEM_BY_TYPE), "bomb has no emblem");
-  assert(!(6 in EMBLEM_BY_TYPE), "score has no emblem");
-  assertEquals(Object.keys(EMBLEM_BY_TYPE).length, 7);
-  // All four weapon-change slots share the one R emblem.
-  assertEquals([0, 1, 2, 3].map((t) => EMBLEM_BY_TYPE[t]), [
-    "r",
-    "r",
-    "r",
-    "r",
-  ]);
-});
-
-Deno.test("EMBLEM_BY_TYPE is frozen, and the cell is the cart's 16x16", () => {
-  assert(Object.isFrozen(EMBLEM_BY_TYPE));
+Deno.test("the cell is the cart's 16x16, and the art lives beside the repo", () => {
   assertEquals(EMBLEM_CELL, 16);
   assertEquals(EMBLEM_DIR, "dev-fixtures/powerups");
 });
@@ -499,20 +479,14 @@ Deno.test("loadItemEmblems returns null for a directory that is not there", asyn
   assertEquals(await loadItemEmblems(join(ROOT, "no-such-dir-here")), null);
 });
 
-Deno.test("loadItemEmblems gives all four weapon slots the one R emblem", async () => {
+Deno.test("loadItemEmblems keys the art it finds by letter", async () => {
   await withDir(async (dir) => {
     await Deno.writeFile(join(dir, "powerup-r.gif"), posesGif());
     const out = await loadItemEmblems(dir);
     assert(out);
-    assertEquals(Object.keys(out).map(Number).sort((a, b) => a - b), [
-      0,
-      1,
-      2,
-      3,
-    ]);
-    // Decoded once and shared, not re-cut per slot.
-    assert(out[0] === out[1] && out[1] === out[2] && out[2] === out[3]);
-    assertEquals(out[0].w, EMBLEM_CELL);
+    assertEquals(Object.keys(out), ["r"]);
+    assertEquals(out.r.w, EMBLEM_CELL);
+    assertEquals(out.r.h, EMBLEM_CELL);
   });
 });
 
@@ -529,7 +503,7 @@ Deno.test("loadItemEmblems warns past a corrupt GIF instead of throwing", async 
     const warnings: string[] = [];
     const out = await loadItemEmblems(dir, (m) => warnings.push(m));
     assert(out);
-    assertEquals(Object.keys(out), ["8"], "speed keeps its emblem");
+    assertEquals(Object.keys(out), ["s"], "S keeps its emblem");
     assertEquals(warnings.length, 1);
     assert(
       warnings[0].startsWith("powerup-b.gif:"),
@@ -597,18 +571,14 @@ Deno.test(
 );
 
 Deno.test(
-  "the real art dresses seven of the nine item types",
+  "the real art supplies all four letters",
   gated,
   async () => {
     const warnings: string[] = [];
     const out = await loadItemEmblems(ART, (m) => warnings.push(m));
     assert(out);
     assertEquals(warnings, []);
-    assertEquals(
-      Object.keys(out).map(Number).sort((a, b) => a - b),
-      [0, 1, 2, 3, 4, 7, 8],
-    );
-    assert(!(5 in out) && !(6 in out), "bomb and score keep their squares");
+    assertEquals(Object.keys(out).sort(), ["b", "f", "r", "s"]);
     for (const frame of Object.values(out)) {
       assertEquals(frame.rgba.length, EMBLEM_CELL * EMBLEM_CELL * 4);
     }

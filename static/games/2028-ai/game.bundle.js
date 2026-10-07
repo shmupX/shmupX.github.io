@@ -8976,7 +8976,15 @@
     switch (itemName) {
       case PLAYER_STATES.SHOOT_SPEED_HIGH:
         p.shootSpeed = "speed_high";
-        // The SPEED-UP item (type 8) is the engine's POWER pickup (+0x1D1A4):
+        // The R (rapid fire) drop. The Saturn has no rapid-fire weapon among
+        // its sixteen, so on the crossover kit it is a shot level like F and
+        // S: one more projectile on the spread and one more pod on the ring,
+        // while the game's own shot fires faster as it always did.
+        if (dezaKit(scene) === DEZA_CROSSOVER_KIT) {
+          p.dezaOptions = Math.min(DEZA_CROSSOVER_KIT.ships[0].maxOptions, (p.dezaOptions || 0) + 1);
+          break;
+        }
+        // A cart's SPEED-UP item (type 8) is the engine's POWER pickup (+0x1D1A4):
         // it increments `*0x06084120`, capped by ship byte +1's high nibble,
         // and that array indexes the ship's own velocity table (+0x21A22) and
         // nothing else. How fast you fly IS your power level.
@@ -9015,8 +9023,9 @@
       case PLAYER_STATES.SHOOT_NAME_3WAY:
         p.shootMode = "3way";
         p.shootSpeed = "speed_normal";
-        // On the crossover kit this drop is a shot level too (dezaKit): a web
-        // game has two shot power-ups and no POWER-UP item to tell them apart.
+        // The S (3-way shot) drop. On the crossover kit it is a shot level
+        // too (dezaKit): the kit's MAIN 1 spread is the 3-way's counterpart,
+        // and a level is one more projectile on it.
         if (dezaKit(scene) === DEZA_CROSSOVER_KIT) {
           p.dezaOptions = Math.min(DEZA_CROSSOVER_KIT.ships[0].maxOptions, (p.dezaOptions || 0) + 1);
         }
@@ -9399,6 +9408,17 @@
     if (digit === 9) return PLAYER_STATES.BARRIER;
     return null;
   }
+  // The icon the import drew for that slot, when it carried one. Per slot,
+  // where iconByDrop keeps only the first slot of each type: a cart written
+  // from a web game has three power-up slots (F, S and R) that differ by
+  // nothing but their icon.
+  function deathWordItemIcon(scene, slotIndex) {
+    var items = scene.recipe && scene.recipe.dezaemonItems;
+    var slots = items && items.slots;
+    var icons = items && items.icons;
+    if (!slots || !slots.length || !Array.isArray(icons)) return null;
+    return icons[slotIndex % slots.length] || null;
+  }
   function runDeathWord(scene, enemy) {
     var death = enemy.getData("dezaDeath");
     if (!death || !death.mode) return death;
@@ -9406,7 +9426,7 @@
       // Slot 9 is the engine's "cycling" item: a global counter, not random.
       var idx = death.item === 9 ? deathItemCycle++ & 7 : death.item - 1;
       var name = death.item > 0 ? deathWordItemName(scene, idx) : null;
-      if (name) scene.dropItem(enemy.x, enemy.y, name);
+      if (name) scene.dropItem(enemy.x, enemy.y, name, deathWordItemIcon(scene, idx));
     } else if (death.mode === 2) {
       spawnDeathChild(scene, enemy, death);
     } else if (death.mode === 3) {
@@ -9554,8 +9574,9 @@
   //
   // The ship starts at shot level 1 and climbs to 4. A cart raises the level
   // with its POWER-UP item, which reaches the runtime as the BIG-shot drop; a
-  // web game's 3-WAY drop is the other shot power-up it has, so here either
-  // one is a level (collectItem). Damage needs no stand-in: with no settings
+  // web game's three shot power-ups — F (big), S (3-way) and R (rapid) — are
+  // each a level here (collectItem), since the Saturn has no 3-way and no
+  // rapid-fire among its sixteen weapons. Damage needs no stand-in: with no settings
   // dezaDamageUnit falls back to the anchor the tables were traced against.
   //
   // It is deliberately NOT written into recipe.meta.dezaemonSettings. That
@@ -14438,7 +14459,7 @@
       return match;
     }
 
-    dropItem(x, y, itemName) {
+    dropItem(x, y, itemName, ownIcon) {
       var frameMap = {
         big: "powerupBig0.gif",
         "3way": "powerup3way0.gif",
@@ -14450,10 +14471,14 @@
       };
       var frameKey = frameMap[itemName] || "powerupBig0.gif";
       var tint = itemName === "dezaScore" ? 16766720 : itemName === "dezaSp" ? 16729156 : 0;
-      // The save's own item icon for this drop, when the import carried one.
+      // The save's own item icon for this drop, when the import carried one:
+      // the slot the death word named (ownIcon, from runDeathWord), else the
+      // first slot of this drop's type. A cart written from a web game holds
+      // three shot-level slots — F, S and R — that all reach this runtime as
+      // the one drop, so the slot's own icon is what tells them apart.
       var dropByName = { big: 1, "3way": 2, speed_high: 3, dezaScore: 4, dezaSp: 5, barrier: 9 };
       var icons = this.recipe && this.recipe.dezaemonItems && this.recipe.dezaemonItems.iconByDrop;
-      var own = icons && icons[dropByName[itemName]];
+      var own = ownIcon || (icons && icons[dropByName[itemName]]);
       var usingOwn = false;
       if (own) {
         var atlas = this.textures.get("game_asset");
@@ -14464,20 +14489,35 @@
         }
       }
       // The winged letter emblems, four frames apiece at the GIF's own 5fps.
-      // The letters read S=speed, B=barrier, F=firepower, R=rapid, so they
-      // land on the drops that mean those things — the same reading the cart
-      // writer uses for its item icons (lib/powerup-emblems.ts). Bomb and
-      // score have no letter and keep their stock art.
+      // The letters read F=firepower, S=3-way shot, R=rapid fire, B=barrier,
+      // and land on the drops that do those things: F on the big shot, S on
+      // the 3-way, R on the speed-up (it shortens the shot interval), B on
+      // the barrier — the same reading the cart writer uses for its item
+      // icons (game-to-save.js DEFAULT_ITEM_LETTERS, lib/powerup-emblems.ts).
+      // Bomb and score have no letter and keep their stock art.
       //
       // A cart that drew its own icon keeps it, because that art is its
-      // author's — unless the icon IS this emblem, which is exactly what an
-      // export from this repo writes into the cell. A save holds one 16x16
-      // still per item slot and cannot animate; recognising our own still
-      // lets the pickup flap anyway.
-      var emblemByItem = { big: "F", "3way": "R", speed_high: "S", barrier: "B" };
+      // author's — unless the icon IS one of these emblems, which is exactly
+      // what an export from this repo writes into the cell. A save holds one
+      // 16x16 still per item slot and cannot animate; recognising our own
+      // still lets the pickup flap anyway. The Saturn has no 3-way and no
+      // rapid-fire item, so a cart carries S and R as shot-level (power-up)
+      // slots: they come back as the same drop F does, and only the icon says
+      // which letter to flap — so every letter is tried, the drop's own first.
+      var emblemByItem = { big: "F", "3way": "S", speed_high: "R", barrier: "B" };
       var letter = emblemByItem[itemName];
-      if (letter && usingOwn && !this.emblemSilhouetteMatches(own, letter)) {
+      if (usingOwn) {
+        var candidates = letter ? [letter] : [];
+        ["F", "S", "R", "B"].forEach(function(l) {
+          if (candidates.indexOf(l) === -1) candidates.push(l);
+        });
         letter = null;
+        for (var ci = 0; ci < candidates.length; ci++) {
+          if (this.emblemSilhouetteMatches(own, candidates[ci])) {
+            letter = candidates[ci];
+            break;
+          }
+        }
       }
       var item = null;
       if (letter && this.textures.exists("powerups")) {

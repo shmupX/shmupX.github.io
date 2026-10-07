@@ -96,8 +96,30 @@ export const PLAYFIELD_FIRST_COL = 3;
 export const PLAYFIELD_COLS = 14;
 export const BOSS_COL = 9;
 
-/** The eight item slots (settings +0x1C..): item TYPE per slot. */
-export const DEFAULT_ITEM_TYPES = [7, 0, 8, 6, 5, 4, 1, 2];
+/**
+ * The eight item slots (settings +0x1C..): item TYPE per slot.
+ *
+ * Slots 0-2 are the web game's three shot power-ups — F (the big shot), S
+ * (the 3-way) and R (rapid fire) — and all three go out as POWER-UP items
+ * (type 7, the engine's +1 shot level): the Saturn has no 3-way and no
+ * rapid-fire item among its sixteen weapons, so a shot level is what S and R
+ * become on a cart, and only their icons (DEFAULT_ITEM_LETTERS) tell the
+ * three apart. Then score, bomb, the barrier (B), and two weapon-change
+ * presets for an import's own placements to name.
+ */
+export const DEFAULT_ITEM_TYPES = [7, 7, 7, 6, 5, 4, 1, 2];
+/**
+ * The letter emblem each default slot wears, out of the powerup art the
+ * caller supplies (`itemEmblems`, keyed by letter — lib/powerup-emblems.ts
+ * cuts them from the GIFs); null is the procedural coloured square.
+ */
+export const DEFAULT_ITEM_LETTERS = Object.freeze(["f", "s", "r", null, null, "b", null, null]);
+/**
+ * The letter a cart's own item type wears, for an import that carries no
+ * icon art of its own: its power-up is F and its barrier B. Weapon change,
+ * bomb, score and the speed-up (the ship's velocity, not the shot) have none.
+ */
+export const EMBLEM_LETTER_BY_TYPE = Object.freeze({ 4: "b", 7: "f" });
 /** Items bounce (movement 1), the way most community games set them. */
 export const DEFAULT_ITEM_MOVEMENT = 1;
 /** Runtime drop digit -> item slot under DEFAULT_ITEM_TYPES. */
@@ -706,7 +728,9 @@ export function puffSprite(size = 16) {
  * `art` maps atlas frame names (Firebase-encoded or not) to {w, h, rgba}.
  * Options: `palette` ("saturn" | "snes"), `gameMode` (settings +0x00),
  * `title1` / `title2` ({w, h, rgba} logos for the drawn title screen),
- * `useBackground` (pack imported scenery; default true), `attribution` (the
+ * `itemEmblems` (a 16x16 {w, h, rgba} per letter — f, s, r, b — for the item
+ * icons; see DEFAULT_ITEM_LETTERS), `useBackground` (pack imported scenery;
+ * default true), `attribution` (the
  * staff roll, over whatever the level says) and `author` (the name a web game
  * that credits nobody is presented by) — see attribution.js for both.
  *
@@ -1170,14 +1194,25 @@ export function buildSaveFromGame(level, art, options = {}) {
 
     // Item icons and blasts (procedural), and the drawn title screen.
     //
-    // An item slot draws the emblem the caller supplied for its type when
-    // there is one (lib/powerup-emblems.ts cuts those out of the powerup
-    // GIFs) and the procedural coloured square otherwise, so a caller with no
-    // art beside it exports exactly what it always did.
+    // An item slot keeps the icon an import drew for it when the level's art
+    // still carries it (dezaemonItems.icons: the author's own cell, or this
+    // repo's emblem on its way back out), else draws the emblem the caller
+    // supplied for the slot's letter when there is one (lib/powerup-emblems.ts
+    // cuts those out of the powerup GIFs: the defaults' F / S / R / B, an
+    // import's power-up F and barrier B), and the procedural coloured square
+    // otherwise, so a caller with no art beside it exports exactly what it
+    // always did.
+    const importedIcons = importedSlots && level.dezaemonItems && Array.isArray(level.dezaemonItems.icons)
+        ? level.dezaemonItems.icons
+        : null;
     const itemKeys = itemSlotBytes.map((b, i) => {
         const type = b & 15;
-        const supplied = opts.itemEmblems ? opts.itemEmblems[type] : null;
-        const frame = supplied && supplied.rgba && supplied.w > 0 && supplied.h > 0
+        const own = importedIcons ? lookup(importedIcons[i]) : null;
+        const letter = importedSlots ? EMBLEM_LETTER_BY_TYPE[type] || null : DEFAULT_ITEM_LETTERS[i];
+        const supplied = letter && opts.itemEmblems ? opts.itemEmblems[letter] : null;
+        const frame = own
+            ? own
+            : supplied && supplied.rgba && supplied.w > 0 && supplied.h > 0
             ? supplied
             : itemIcon(type);
         return planFrame(`item:${i}:${type}`, frame, 16, 16, "items", 3);
