@@ -638,7 +638,11 @@
         return Promise.all([idbPromise, electronPromise]).then(() => entries);
       }
       // Queue the level's remote BGM URL overrides onto the scene loader,
-      // preferring locally downloaded copies. Returns the discovered source URLs.
+      // preferring the locally downloaded copies custom-bgm/manifest.json lists.
+      // A key it does not list streams from its source URL instead (the packaged
+      // app leaves custom-bgm/ out of its binary); should that fail, the stock
+      // sound in opts.stockPaths goes back under the key rather than silence.
+      // Returns the discovered source URLs.
       _queueAudioOverrides(levelData, opts) {
         const scene = this.scene;
         const sourceURLs = {};
@@ -650,18 +654,57 @@
         const baseUrlEl = typeof document !== "undefined" ? document.getElementById(opts.baseUrlElementId || DEFAULTS.audio.baseUrlElementId) : null;
         const baseUrl = baseUrlEl ? baseUrlEl.textContent.trim() : "./";
         const manifest = scene.cache.json.exists(manifestKey) ? scene.cache.json.get(manifestKey) || {} : {};
+        const stockPaths = opts.stockPaths || {};
+        const streamed = {};
+        const leadFor = {};
+        const sharers = {};
+
         for (const uKey in levelData.customAudioURLs) {
           const uUrl = levelData.customAudioURLs[uKey];
           if (uUrl && typeof uUrl === "string") {
-            const localFilename = manifest[uKey] || uKey + ".mp3";
-            const localPath = baseUrl + customBgmDir + localFilename;
             sourceURLs[uKey] = uUrl;
             if (scene.cache.audio.exists(uKey)) {
               scene.cache.audio.remove(uKey);
             }
-            scene.load.audio(uKey, [localPath, uUrl]);
+            if (!manifest[uKey] && stockPaths[uKey]) streamed[uKey] = stockPaths[uKey];
+            // Keys often share a track (2028.Ai's four bosses share one 41 MB file):
+            // load it once, under the first key, and file it under the rest on landing.
+            if (leadFor[uUrl]) {
+              sharers[leadFor[uUrl]].push(uKey);
+              continue;
+            }
+            leadFor[uUrl] = uKey;
+            sharers[uKey] = [];
+            // Phaser takes the first URL it can decode and never falls back on a
+            // 404, so a local path goes in only when the manifest vouches for it.
+            if (manifest[uKey]) {
+              scene.load.audio(uKey, [baseUrl + customBgmDir + manifest[uKey], uUrl]);
+            } else {
+              scene.load.audio(uKey, uUrl);
+            }
           }
         }
+
+        const fileUnder = {};
+        for (const lead in sharers) {
+          if (sharers[lead].length === 0) continue;
+          fileUnder[lead] = () => {
+            for (const k of sharers[lead]) scene.cache.audio.add(k, scene.cache.audio.get(lead));
+          };
+          scene.load.once("filecomplete-audio-" + lead, fileUnder[lead]);
+        }
+        // A stream that fails puts each key's own stock sound back, the lead's
+        // sharers included, rather than leaving them silent.
+        const restoreStock = (file) => {
+          if (file.type !== "audio" || !sharers[file.key]) return;
+          if (fileUnder[file.key]) scene.load.off("filecomplete-audio-" + file.key, fileUnder[file.key]);
+          for (const k of [file.key, ...sharers[file.key]]) {
+            if (streamed[k]) scene.load.audio(k, streamed[k]);
+          }
+          delete sharers[file.key];
+        };
+        scene.load.on("loaderror", restoreStock);
+        scene.load.once("complete", () => scene.load.off("loaderror", restoreStock));
         return sourceURLs;
       }
       // Queue every audio source (URL overrides + collected blobs), run the
@@ -17193,6 +17236,7 @@
         atlasKey: "game_asset",
         defaultLevel: "foo",
         lowMode: !!gameState.lowModeFlg,
+        audio: { stockPaths: RESOURCE_PATHS },
         onPrimeState: (recipe, info) => {
           gameState._phaserRecipe = recipe;
           gameState.hasCustomEnemies = info.hasCustomEnemies;
