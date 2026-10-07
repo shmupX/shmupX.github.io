@@ -91,12 +91,52 @@
             color: var(--sel); background: rgba(0,0,0,.75); border: 1px solid var(--edge);
             border-radius: 8px; padding: 8px 16px;
         }
+
+        /* ===== HUD AUTO-HIDE =====
+           After a few idle seconds #app flips to data-hud="hidden": the status
+           row and banner fold up, the lab's chips, title row, moves bar and
+           pattern panel fold away and its counters fade, so the stage fills the
+           screen. Any input flips it back. Selectors stay attribute-scoped so
+           they meet the lab's own (later-injected) rules at the same weight. */
+        [data-bv-root] { --bv-e: cubic-bezier(.2,.7,.2,1); --bv-d: .5s; }
+        [data-bv-root] [data-hud-top] { flex-shrink: 0; display: grid; grid-template-rows: 1fr; transition: grid-template-rows var(--bv-d) var(--bv-e), opacity .3s ease, transform var(--bv-d) var(--bv-e); }
+        [data-hud-top] > .hud-top-inner { min-height: 0; overflow: hidden; }
+        [data-bv-root] .bl-chips-scroll, [data-bv-root] .bl-title-row { max-height: 72px; transition: max-height var(--bv-d) var(--bv-e), padding var(--bv-d) var(--bv-e), opacity .3s ease, transform var(--bv-d) var(--bv-e); }
+        [data-bv-root] .bl-moves { max-height: 240px; overflow: hidden; transition: max-height var(--bv-d) var(--bv-e), padding var(--bv-d) var(--bv-e), opacity .3s ease, border-color .3s ease; }
+        [data-bv-root] .bl-panel { overflow: hidden; transition: max-width var(--bv-d) var(--bv-e), max-height var(--bv-d) var(--bv-e), flex-grow var(--bv-d) var(--bv-e), flex-basis var(--bv-d) var(--bv-e), opacity .25s ease, border-color .3s ease; }
+        [data-bv-root] .bl-root.narrow .bl-panel { max-height: 100vh; }
+        [data-bv-root] .bl-hits, [data-bv-root] .bl-frame, [data-bv-root] .bl-player-hint { transition: opacity .3s ease; }
+
+        [data-hud="hidden"] [data-hud-top] { grid-template-rows: 0fr; opacity: 0; transform: translateY(-10px); }
+        [data-hud="hidden"] .bl-chips-scroll, [data-hud="hidden"] .bl-title-row { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; transform: translateY(-8px); }
+        [data-hud="hidden"] .bl-moves { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-top-color: transparent; }
+        [data-hud="hidden"] .bl-root .bl-panel { max-width: 0; flex-grow: 0; flex-basis: 0; opacity: 0; border-color: transparent; }
+        [data-hud="hidden"] .bl-root.narrow .bl-panel { max-width: none; max-height: 0; flex: 0 0 0; }
+        [data-hud="hidden"] .bl-hits, [data-hud="hidden"] .bl-frame, [data-hud="hidden"] .bl-player-hint { opacity: 0; }
+        [data-hud="hidden"] .bl-stage { cursor: none; }
+
+        /* How to get the HUD back: rises in just after the HUD folds, fades
+           out on its own a few seconds later or as soon as the HUD returns. */
+        #hint {
+            position: absolute; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+            width: max-content; max-width: calc(100% - 32px); text-align: center; z-index: 300; pointer-events: none;
+            font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .16em;
+            color: var(--sel); background: rgba(0,0,0,.75); border: 1px solid var(--edge);
+            border-radius: 8px; padding: 8px 16px;
+            transform: translate(-50%, 0); transition: opacity .4s ease, transform .4s cubic-bezier(.2,.7,.2,1);
+        }
+        #hint[data-hint="on"] { transition-delay: .35s; }
+        #hint[data-hint="off"] { opacity: 0; transform: translate(-50%, 6px); }
     </style>
 </head>
 <body>
-    <div id="app">
+    <div id="app" data-bv-root data-hud="shown">
         <div id="bg"></div>
         <div id="col">
+            <!-- Status row + banner fold up together when the HUD hides: the
+                 grid row animates 1fr → 0fr and the inner box clips. -->
+            <div id="hud-top" data-hud-top>
+            <div class="hud-top-inner">
             <div id="statusbar">
                 <div class="status-left">
                     <span class="dot"></span>
@@ -117,6 +157,8 @@
                 <div class="banner-title">BOSS VIEWER</div>
                 <div id="banner-sub"></div>
             </div>
+            </div>
+            </div>
             <!-- The same Boss Lab the editor mounts. APPLY writes back through
                  the editor bridge, so both pages read one store. -->
             <div id="lab"></div>
@@ -124,6 +166,7 @@
         <div id="fx-scanlines"></div>
         <div id="vignette"></div>
         <div id="flash" class="hidden"></div>
+        <div id="hint" data-hint="off"></div>
     </div>
 
     <script>
@@ -207,6 +250,96 @@
             el.classList.remove('hidden');
             clearTimeout(flashTimer);
             flashTimer = setTimeout(() => el.classList.add('hidden'), 2200);
+        }
+
+        // ================== HUD AUTO-HIDE ==================
+        // After HUD.hideDelay idle seconds the chrome folds away (CSS keyed on
+        // #app[data-hud]) and a hint says how to get it back, worded for the
+        // last input used. A touch drag on the stage flies the player, so it
+        // keeps the HUD down and only a tap wakes it; a mouse resting over the
+        // chrome or the panel holds the HUD open.
+        const HUD = { autoHide: true, hideDelay: 3, dragKeepsHidden: true, wakeOnMouseMove: true, showHint: true };
+        const HINTS = {
+            pad: 'PRESS ANY BUTTON FOR CONTROLS',
+            touch: 'TAP FOR CONTROLS',
+            touchDrag: 'TAP FOR CONTROLS · DRAG TO FLY',
+            mouse: 'MOVE THE MOUSE FOR CONTROLS',
+            key: 'PRESS ANY KEY FOR CONTROLS'
+        };
+        const hud = {
+            shown: true, hintOn: false, hintTimer: null, last: performance.now(),
+            // Until the first input, guess from the device so a phone isn't told to move a mouse.
+            lastInput: window.matchMedia && matchMedia('(hover: none) and (pointer: coarse)').matches ? 'touch' : 'mouse',
+            down: null, overHud: false, mp: null, acc: 0, padPrev: {}
+        };
+        function setHint(on, text) {
+            if (text) $('hint').textContent = text;
+            hud.hintOn = on;
+            $('hint').dataset.hint = on ? 'on' : 'off';
+        }
+        function setHud(shown) {
+            hud.shown = shown;
+            $('app').dataset.hud = shown ? 'shown' : 'hidden';
+        }
+        function wake(src) {
+            // A key pressed while a pad is driving keeps the pad wording.
+            if (src !== 'key' || hud.lastInput !== 'pad') hud.lastInput = src;
+            hud.last = performance.now();
+            if (!hud.shown || hud.hintOn) { clearTimeout(hud.hintTimer); setHud(true); setHint(false); }
+        }
+        function checkIdle() {
+            if (!HUD.autoHide || !hud.shown || hud.overHud || hud.down) return;
+            if (performance.now() - hud.last < HUD.hideDelay * 1000) return;
+            const src = hud.lastInput === 'touch' && HUD.dragKeepsHidden ? 'touchDrag' : hud.lastInput;
+            setHud(false);
+            clearTimeout(hud.hintTimer);
+            if (HUD.showHint) {
+                setHint(true, HINTS[src] || HINTS.mouse);
+                hud.hintTimer = setTimeout(() => setHint(false), 2800);
+            }
+        }
+        setInterval(checkIdle, 200);
+
+        const inStage = e => !!(e.target && e.target.closest && e.target.closest('.bl-stage'));
+        // Capture phase, so the lab's own stage handlers can't hide input from us.
+        window.addEventListener('pointerdown', e => {
+            const touch = e.pointerType !== 'mouse';
+            if (touch && HUD.dragKeepsHidden && inStage(e)) {
+                hud.lastInput = 'touch';
+                hud.down = { x: e.clientX, y: e.clientY, t: performance.now() };
+                return;
+            }
+            wake(touch ? 'touch' : 'mouse');
+        }, true);
+        window.addEventListener('pointerup', e => {
+            const d = hud.down; hud.down = null;
+            if (d && performance.now() - d.t < 300 && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 12) wake('touch');
+        }, true);
+        window.addEventListener('pointercancel', () => { hud.down = null; }, true);
+        window.addEventListener('pointermove', e => {
+            if (e.pointerType !== 'mouse') return;
+            hud.overHud = hud.shown && !inStage(e);
+            const p = hud.mp; hud.mp = { x: e.clientX, y: e.clientY };
+            if (!p) return;
+            hud.acc += Math.hypot(e.clientX - p.x, e.clientY - p.y);
+            if (hud.acc > 8) { hud.acc = 0; if (HUD.wakeOnMouseMove) wake('mouse'); }
+        }, true);
+        window.addEventListener('keydown', () => wake('key'), true);
+        window.addEventListener('wheel', () => wake(hud.lastInput), true);
+
+        // Any newly pressed pad button or stick past half-travel wakes the HUD.
+        if (navigator.getGamepads) {
+            const pollPads = () => {
+                requestAnimationFrame(pollPads);
+                let hit = false;
+                for (const p of navigator.getGamepads()) {
+                    if (!p) continue;
+                    p.buttons.forEach((b, i) => { const k = p.index + ':' + i, on = b.pressed || b.value > 0.5; if (on && !hud.padPrev[k]) hit = true; hud.padPrev[k] = on; });
+                    p.axes.forEach((a, i) => { const k = p.index + ':a' + i, on = Math.abs(a) > 0.5; if (on && !hud.padPrev[k]) hit = true; hud.padPrev[k] = on; });
+                }
+                if (hit) wake('pad');
+            };
+            requestAnimationFrame(pollPads);
         }
 
         // ================== EDITOR BRIDGE ==================
