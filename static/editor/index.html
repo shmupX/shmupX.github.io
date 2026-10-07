@@ -2272,6 +2272,39 @@
             inp.click();
         }
 
+        // A web game's own stage backdrops. img/stage/stage_loop<N>.png scrolls
+        // behind stage N and stage_end<N>.png is its boss's, one pair per
+        // stage 0..4 (the runtime's five; stage 5 and up reuse them). Read off
+        // the folder as PNG data URLs and kept on gameData as
+        // `stageBackgrounds` ({ stage0: { loop, end }, … }), which rides the
+        // cloud save and the play recipe; level-loader.js puts them over the
+        // runtime's own. Without this a folder's backdrops never left it: the
+        // import read game.json and the atlas and nothing else, and the
+        // runtime draws its starfield for any level with custom enemies, so
+        // the 2019 game played over space_stars.png at every stage. A folder
+        // with no stage art leaves the stock art in place.
+        const STAGE_BACKGROUND_STAGES = 5;
+        async function readStageBackgrounds(readBlob) {
+            const out = {};
+            for (let n = 0; n < STAGE_BACKGROUND_STAGES; n++) {
+                const rec = {};
+                for (const part of ['loop', 'end']) {
+                    let blob = null;
+                    try { blob = await readBlob('img/stage/stage_' + part + n + '.png'); } catch (_e) { blob = null; }
+                    if (!blob) continue;
+                    const dataURL = await blobToDataURL3D(blob);
+                    if (dataURL) rec[part] = dataURL;
+                }
+                if (rec.loop || rec.end) out['stage' + n] = rec;
+            }
+            return Object.keys(out).length ? out : null;
+        }
+        function setStageBackgrounds(bgs) {
+            if (!gameData) gameData = {};
+            if (bgs) gameData.stageBackgrounds = bgs;
+            else delete gameData.stageBackgrounds;
+        }
+
         async function loadGameFilesFromFileList(files) {
             dezaInvalidateBaseAtlas();
             // Build a path -> File map for quick lookup
@@ -2323,6 +2356,8 @@
                 buildFrameThumbs();
                 storeAtlasForViewers();
             }
+
+            setStageBackgrounds(await readStageBackgrounds(async (rel) => findFile(rel)));
 
             const dirName = (files[0].webkitRelativePath || '').split('/')[0] || 'folder';
             document.getElementById('status').textContent = `STATUS: DIR: ${dirName.toUpperCase()}`;
@@ -2389,6 +2424,8 @@
                 atlasImage.src = URL.createObjectURL(pngBlob);
                 atlasImage.onload = () => { buildFrameThumbs(); storeAtlasForViewers(); renderAll(); };
             } catch (e) { console.warn("Atlas load failed", e); }
+
+            setStageBackgrounds(await readStageBackgrounds((rel) => readGameBlob3D('assets/' + rel)));
 
             enemyData = gameData.enemyData || {};
             if (!enemyData || Object.keys(enemyData).length === 0) {
@@ -7838,6 +7875,7 @@
             enemyKeys: Object.keys(enemyData || {}),
             bossKeys: Object.keys(bossData || {}),
             extraSpriteCount: extraSprites.length,
+            stageBackgrounds: Object.keys((gameData && gameData.stageBackgrounds) || {}),
             spriteFrameCount: Object.keys((atlasData && atlasData.frames) || {}).filter(k => /^deza\d+_\d+_\d+\.gif$/.test(k)).length,
             status: (document.getElementById('status') || {}).textContent || '',
         });
@@ -10612,6 +10650,11 @@ function GAME3D_RUNTIME(DATA) {
                 // only music a Dezaemon import has — there is no mp3 in
                 // customAudioURLs to fall back on — so a level saved without it
                 // plays in silence everywhere it is loaded from the cloud.
+                // A web game's own stage backdrops (readStageBackgrounds) ride
+                // the level the same way. null clears a snapshot the open game
+                // no longer carries, since the write below is a merge.
+                payload.stageBackgrounds = (gameData && gameData.stageBackgrounds &&
+                    typeof gameData.stageBackgrounds === 'object') ? gameData.stageBackgrounds : null;
                 payload.dezaemonBgm = (gameData && gameData.dezaemonBgm) || null;
                 // The save's three global bullet configs + blast anims — one
                 // record for the whole game, like the soundtrack.
@@ -10798,6 +10841,7 @@ function GAME3D_RUNTIME(DATA) {
                 applyCloudStages(d);
                 if (Array.isArray(d.backgroundCells)) gameData.backgroundCells = d.backgroundCells;
                 else delete gameData.backgroundCells;
+                setStageBackgrounds((d.stageBackgrounds && typeof d.stageBackgrounds === 'object') ? d.stageBackgrounds : null);
                 if (d.dezaemonBgm) gameData.dezaemonBgm = d.dezaemonBgm;
                 else delete gameData.dezaemonBgm;
                 if (d.dezaemonBullets) gameData.dezaemonBullets = d.dezaemonBullets;

@@ -19,7 +19,7 @@
     ensurePs2Core,
     getPs2Game,
     listPs2Games,
-    ps2PlayerUrl,
+    onPs2LibraryChanged,
     ps2WebUrl,
   } from '../static/ps2-library.js';
   // The eShop: the global game list (data/eshop.json via the manifest, plus
@@ -604,6 +604,34 @@
   let ps2Local = $state([]);
   async function refreshPs2Local() {
     try { ps2Local = await listPs2Games(); } catch (_) { ps2Local = []; }
+  }
+  // The editor files a disc through static/ps2-library.js — from this page's
+  // own game frame, most of the time — and ensurePs2Core puts the core into
+  // the shared set on the way. Both of this tab's copies were read at boot,
+  // so → PS2 LIBRARY used to land on a launcher whose PLAYSTATION 2 section
+  // was missing, or showed the shelf without the new disc, until a reload.
+  // The library announces itself (onPs2LibraryChanged); re-read both here.
+  async function refreshPs2Shelf() {
+    const now = loadInstalledEmus();
+    if (now.some((id) => !emuInstalled.includes(id))) {
+      emuInstalled = [...new Set([...emuInstalled, ...now])];
+      await pushEmuState();
+      for (const c of installedCores) {
+        if (emuManifests[c.id] === undefined) loadEmuManifest(c);
+      }
+    }
+    await refreshPs2Local();
+  }
+  // What A does on a filed disc, wherever the disc is offered: its web build.
+  // Play! cannot boot an AthenaEnv disc (README: the HLE kernel stalls in
+  // init_taskman — a black screen with a frame counter), so the disc is never
+  // handed to it. A disc filed before records carried `web` has nothing to
+  // play and says so; re-exporting the level from the editor adds it.
+  function playPs2Record(record) {
+    const url = ps2WebUrl(record?.web);
+    if (url) { launchGame('shmupx', url); return true; }
+    showToast('Play! cannot boot this disc (AthenaEnv stalls in its HLE kernel). Re-export the level from the editor to get its web build.');
+    return false;
   }
 
   // ─── The local arcade shelf ────────────────────────────────────────────────
@@ -1533,21 +1561,13 @@
         return { title: record.title || record.id, run: () => launchLocalSnes(record) };
       }
       case 'ps2': {
+        // The disc's web build, in the frame like any other game — never
+        // Play! (playPs2Record). A disc with no web build is not runnable.
         const record = ps2Local.find((r) => r.id === req.shelf_id) || null;
-        if (!record) return null;
+        if (!record || !ps2WebUrl(record.web)) return null;
         return {
           title: record.title || record.id,
-          run: () => {
-            // The PS2 player takes over the tab, so this page — and with it the
-            // watch channel — is about to stop existing. Say so before going,
-            // or the wrist sits on NOW PLAYING for a launcher that is gone.
-            publishPlaying(
-              watchCode,
-              { state: 'idle', detail: 'the PS2 player took over the desktop' },
-              { replace: true },
-            );
-            launchLocalPs2(record);
-          },
+          run: () => { playPs2Record(record); },
         };
       }
       case 'url': {
@@ -1760,9 +1780,9 @@
     try {
       const record = await getPs2Game(exportFiled[job.id]);
       if (!record) { showToast('That game is no longer in the library.'); return; }
-      launchLocalPs2(record);
+      playPs2Record(record);
     } catch (e) {
-      showToast('Could not start the PS2 player: ' + (e?.message || e));
+      showToast('Could not start the PS2 game: ' + (e?.message || e));
     }
   }
 
@@ -4599,18 +4619,13 @@
     // other shmupX hand-off gets them. launchGame blips on its own, so this
     // sits ahead of sfx.enter(). The disc row above it stays top-level.
     if (row.kind === 'ps2-web' && row.url) { launchGame('shmupx', row.url); return; }
+    // The disc row itself plays the same web build: A on a disc built here
+    // used to hand it to Play! at the top level, which came up black every
+    // time (playPs2Record says why), so the disc defaults to the version
+    // that runs and the row under it is the same thing spelled out.
+    if (row.kind === 'local' && row.local) { playPs2Record(row.local); return; }
     sfx.enter();
     chromeDismissed = false;
-    // A disc built on this machine never reaches the mirror, so it is handed to
-    // the player through IndexedDB instead of by filename — and at the TOP
-    // level, because Play! keeps guest RAM in a SharedArrayBuffer and only a
-    // cross-origin-isolated document gets one; an iframe cannot isolate unless
-    // its embedder does too. That is the mode the player's own BYOD path was
-    // written for, exit gestures (Escape, SELECT+START, two corners) included.
-    if (row.kind === 'local' && row.local) {
-      launchLocalPs2(row.local);
-      return;
-    }
     // The local Dezaemon 2 disc: the browser core takes it as a File posted
     // into its frame, the desktop Mednafen is started by the server.
     if (row.kind === 'local-saturn') { launchLocalSaturn(); return; }
@@ -4657,14 +4672,6 @@
       gameSrc = core.player + '?' + q;
     }
     setTimeout(() => { gameOn = true; }, 30);
-  }
-
-  async function launchLocalPs2(game) {
-    try {
-      location.href = await ps2PlayerUrl(game);
-    } catch (e) {
-      showToast('Could not start the PS2 player: ' + (e?.message || e));
-    }
   }
 
   // ─── ShmupX context menu — .sav coverflow picker ──────────────────────────
@@ -6684,6 +6691,7 @@
   let unsubEshop = null;
   let unsubDezaShelf = null;
   let unsubSnesShelf = null;
+  let unsubPs2Library = null;
 
   onMount(() => {
     // 12-hour wall clock, the way the phone's own status bar reads it — the
@@ -6741,6 +6749,7 @@
     try { unsubEshop = onEshopChanged(() => { refreshEshop(); refreshDezaShelf(); refreshArcadeLocal(); }); } catch (_) { unsubEshop = null; }
     try { unsubDezaShelf = onDezaShelfChanged(() => { refreshDezaShelf(); refreshEshopInstalled(); }); } catch (_) { unsubDezaShelf = null; }
     try { unsubSnesShelf = onSnesShelfChanged(() => { refreshSnesLocal(); }); } catch (_) { unsubSnesShelf = null; }
+    try { unsubPs2Library = onPs2LibraryChanged(() => { refreshPs2Shelf(); }); } catch (_) { unsubPs2Library = null; }
   });
 
   function refreshPadConnected() {
@@ -6915,6 +6924,7 @@
     try { unsubEshop?.(); } catch (_) { /* already closed */ }
     try { unsubDezaShelf?.(); } catch (_) { /* already closed */ }
     try { unsubSnesShelf?.(); } catch (_) { /* already closed */ }
+    try { unsubPs2Library?.(); } catch (_) { /* already closed */ }
     if (stopExportWatch) stopExportWatch();
     if (builderTimer) clearInterval(builderTimer);
     document.body.classList.remove('playing');

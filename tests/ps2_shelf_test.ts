@@ -137,6 +137,65 @@ Deno.test("every surface that files a disc passes its web build along, and the l
   );
 });
 
+Deno.test("A on a filed disc plays its web build, and nothing hands a disc to Play!", async () => {
+  const dashboard = await read("svelte-src/Dashboard.svelte");
+  assert(
+    dashboard.includes(
+      "if (row.kind === 'local' && row.local) { playPs2Record(row.local); return; }",
+    ),
+    "the disc row no longer plays the web build",
+  );
+  assert(
+    dashboard.includes("const url = ps2WebUrl(record?.web);"),
+    "playPs2Record does not resolve the web build",
+  );
+  // The three roads that used to boot a disc at the top level: the shelf row,
+  // the EXPORTS card's Play, and a watch request. None may be left.
+  assertEquals(
+    dashboard.includes("launchLocalPs2("),
+    false,
+    "a disc still boots in Play!",
+  );
+  assertEquals(
+    dashboard.includes("ps2PlayerUrl"),
+    false,
+    "the dashboard still imports the Play! hand-off",
+  );
+  assertEquals(
+    dashboard.split("playPs2Record(").length - 1 >= 4,
+    true,
+    "a surface that offers a filed disc does not go through playPs2Record",
+  );
+});
+
+Deno.test("filing a disc tells the launcher, which re-reads the shelf and the installed cores", async () => {
+  const library = await read("static/ps2-library.js");
+  assert(library.includes("export function onPs2LibraryChanged(cb)"));
+  assert(library.includes("export function notifyPs2LibraryChanged()"));
+  // After the put, not before: a subscriber re-reads the store on the signal.
+  const put = library.indexOf(
+    "await run(db, 'readwrite', (store) => store.put(record));",
+  );
+  const told = library.indexOf("notifyPs2LibraryChanged();", put);
+  assert(
+    put >= 0 && told >= 0 && told - put < 80,
+    "addPs2Game does not announce the new row",
+  );
+  assert(
+    library.includes("if (!already) notifyPs2LibraryChanged();"),
+    "ensureEmuCore installs a core without telling the launcher",
+  );
+  const dashboard = await read("svelte-src/Dashboard.svelte");
+  assert(
+    dashboard.includes("onPs2LibraryChanged(() => { refreshPs2Shelf(); })"),
+    "the launcher does not subscribe",
+  );
+  assert(
+    dashboard.includes("const now = loadInstalledEmus();"),
+    "refreshPs2Shelf trusts this tab's copy of the installed set",
+  );
+});
+
 Deno.test("the game page honours an explicit ?level= instead of baking foo.json over it", async () => {
   // The web row for a cloud level is /games/2028-ai?level=<name>. The bundle's
   // main() used to preload foo.json into globalThis.__OFFLINE_LEVEL__ for every

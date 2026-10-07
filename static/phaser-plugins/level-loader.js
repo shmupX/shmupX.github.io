@@ -87,6 +87,11 @@ export const DEFAULTS = {
   },
 };
 
+// How many sets of per-stage backdrops the runtime ships (stage_loop0..4,
+// stage_end0..4); stage 5 and up draw stage N % 5's. A level's own
+// `stageBackgrounds` are keyed the same way.
+const STAGE_BACKGROUND_SETS = 5;
+
 // Every field the runtime reads a boss projectile record out of
 // (game.bundle.js, `scene.bossProjData*`). A boss's bullets are spread over
 // four independent slots, so anything that repairs one repairs all of them.
@@ -706,6 +711,59 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       }
     }
 
+    // ---- Stage backgrounds ------------------------------------------------
+
+    // A web game's own scrolling backdrops: `stageBackgrounds` is
+    // { stage0: { loop, end }, … } of PNG data URLs, as the editor's
+    // IMPORT › WEB reads them off a game folder's img/stage/ and the cloud
+    // save carries them. The runtime draws `stage_loop<N>` for a plain level
+    // and `stage_loop_c<N>` — space_stars.png, under the space_corridor.png
+    // overlay — for one with custom enemies, which every cloud level has, so
+    // an imported game played over the starfield whatever its folder held.
+    // Both keys are replaced and the overlay texture is taken away, so the
+    // corridor cannot paint over the art. Resolves once every texture is in:
+    // a ?level= visit goes straight into the stage, and the scene reads them
+    // in create().
+    applyStageBackgrounds(levelData) {
+      const scene = this.scene;
+      const bgs = levelData && levelData.stageBackgrounds;
+      if (!bgs || typeof bgs !== "object") return Promise.resolve(false);
+      const jobs = [];
+      for (const key in bgs) {
+        const m = /^stage(\d+)$/.exec(key);
+        const rec = bgs[key];
+        if (!m || !rec || typeof rec !== "object") continue;
+        const n = Number(m[1]);
+        if (n >= STAGE_BACKGROUND_SETS) continue;
+        for (const part of ["loop", "end"]) {
+          const dataURL = rec[part];
+          if (typeof dataURL !== "string" || !dataURL) continue;
+          jobs.push(loadImage(dataURL).then((img) => {
+            if (!img) return false;
+            for (const textureKey of ["stage_" + part + n, "stage_" + part + "_c" + n]) {
+              try {
+                if (scene.textures.exists(textureKey)) scene.textures.remove(textureKey);
+                scene.textures.addImage(textureKey, img);
+              } catch (e) {
+                console.warn('Failed to load stage background "' + textureKey + '":', e);
+              }
+            }
+            return true;
+          }));
+        }
+      }
+      if (!jobs.length) return Promise.resolve(false);
+      return Promise.all(jobs).then((done) => {
+        const any = done.some(Boolean);
+        if (any) {
+          try {
+            if (scene.textures.exists("stage_over_c")) scene.textures.remove("stage_over_c");
+          } catch (_e) { /* the overlay stays; the art is still under it */ }
+        }
+        return any;
+      });
+    }
+
     // ---- Custom audio -----------------------------------------------------
 
     // Gather custom audio blobs from IndexedDB (browser/editor flow) and, when
@@ -871,7 +929,10 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         } catch (_e) { /* ignore */ }
         const stageId = parseStageId(editorPlay.stageId, o.maxStage);
         const info = { stageId, bossRush, source: "editor", hasCustomEnemies };
-        return this.mergeEditorAtlas(o).then(() => {
+        return this.mergeEditorAtlas(o).then(() => this.applyStageBackgrounds(recipe)).then(() => {
+          // Applied as textures above; the recipe the scene keeps need not
+          // carry half a megabyte of PNG as well.
+          delete recipe.stageBackgrounds;
           prime(recipe, info);
           return {
             recipe,
@@ -897,7 +958,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         : (typeof globalThis !== "undefined" && !!globalThis.__OFFLINE_LEVEL__);
 
       return this.fetchLevel(levelName, o).then((data) =>
-        this.mergeAtlas(data, o.atlasKey).then(() => {
+        this.mergeAtlas(data, o.atlasKey).then(() => this.applyStageBackgrounds(data)).then(() => {
           const recipe = this.mergeRecipe(baseRecipe, data, o.atlasKey);
           this.applyTitleImages(data, o.titleImageKeys);
 

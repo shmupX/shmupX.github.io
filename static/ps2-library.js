@@ -165,6 +165,10 @@ export async function ensureEmuCore(coreId, label, onStep = () => {}) {
   const already = installed.includes(coreId);
   const next = already ? installed : [...installed, coreId];
   try { localStorage.setItem(EMU_KEY, JSON.stringify(next)); } catch (_) {}
+  // The launcher's copy of the set was read at boot, and this install is
+  // often the editor's, from inside the launcher's own game frame — say so,
+  // or its section for this console stays missing until a reload.
+  if (!already) notifyPs2LibraryChanged();
 
   onStep(already ? label + ' core: already installed' : 'installing the ' + label + ' core…');
 
@@ -357,6 +361,7 @@ export async function addPs2Game({ name, blob, file, source, web }) {
   if (w) record.web = w;
   const db = await openLibrary();
   await run(db, 'readwrite', (store) => store.put(record));
+  notifyPs2LibraryChanged();
   return record;
 }
 
@@ -380,6 +385,49 @@ export async function getPs2Game(id) {
 export async function removePs2Game(id) {
   const db = await openLibrary();
   await run(db, 'readwrite', (store) => store.delete(id));
+  notifyPs2LibraryChanged();
+}
+
+// ── Change notification ──────────────────────────────────────────────────────
+// The same arrangement as static/deza-shelf.js: a BroadcastChannel reaches the
+// other tabs and the launcher above an editor frame, but never the context
+// that posted, so local subscribers are called directly as well. The launcher
+// reads the shelf and the installed-core set once at boot, and the editor's
+// → PS2 LIBRARY writes both from inside the launcher's own game frame, so
+// without this the disc it had just filed — and the PLAYSTATION 2 section
+// itself, when this was the install that put the core in — were not there
+// until the page was reloaded. One signal covers both stores: a subscriber
+// re-reads what it holds rather than being told which half moved.
+export const PS2_LIBRARY_CHANNEL = 'shmupx-ps2-library';
+
+const local = new Set();
+let channel = null;
+function libraryChannel() {
+  if (channel) return channel;
+  if (typeof BroadcastChannel !== 'function') return null;
+  try {
+    channel = new BroadcastChannel(PS2_LIBRARY_CHANNEL);
+    channel.onmessage = (ev) => { if (ev?.data?.type === 'changed') fire(); };
+  } catch (_) { channel = null; }
+  return channel;
+}
+function fire() {
+  for (const cb of [...local]) {
+    try { cb(); } catch (_) { /* one listener's throw must not starve the rest */ }
+  }
+}
+
+export function notifyPs2LibraryChanged() {
+  try { libraryChannel()?.postMessage({ type: 'changed' }); } catch (_) { /* local listeners still hear it */ }
+  fire();
+}
+
+/** Subscribe to shelf and core-install changes from any tab (and this one). Returns unsubscribe. */
+export function onPs2LibraryChanged(cb) {
+  if (typeof cb !== 'function') return () => {};
+  libraryChannel();
+  local.add(cb);
+  return () => { local.delete(cb); };
 }
 
 // ── Handing a disc to the player ─────────────────────────────────────────────

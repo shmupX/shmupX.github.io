@@ -119,6 +119,17 @@ they are written out in full.
   - `LEVEL_DATA_URL` fetches `foo.json` same-origin instead of from cmg's deploy
     origin. `tools/build-level/lib/stage.js` matches that exact string when it
     stages an offline export, so the two must change together.
+  - The level loader at the top of the bundle is an **inlined copy of
+    `static/phaser-plugins/level-loader.js`**, so an edit to the plugin reaches
+    the game only when it is made in both places. `applyStageBackgrounds` is the
+    latest: a level's own `stageBackgrounds` (see **Import, export, mods and the
+    LIBRARY** below) replace the `stage_loop<N>` / `stage_end<N>` textures _and_
+    their `_c` twins, and drop `stage_over_c`, because the runtime draws the
+    `_c` set — `space_stars.png` under the `space_corridor.png` overlay — for
+    any level with custom enemies, which every cloud level has. Awaited on both
+    roads in (`mergeAtlas` and `mergeEditorAtlas`), since a `?level=` visit goes
+    straight into the stage. `tests/stage_backgrounds_test.ts` checks the two
+    copies carry it.
   - Every font stack that read `Orbitron` — the Dezaemon title prompt
     (`dezaCellText`), the STAFF ROLL card's thanks and credit labels, and the
     standalone PAUSE panel — reads `athenaFont`: Dezaemon 2's own 8×8 game font,
@@ -287,6 +298,7 @@ deno task check           # fmt + lint + type-check
 deno task super-mario-sp:rom     # build the Super Famicom ROM (needs cc65)
 deno task super-mario-sp:zip     # pack it into the eShop's install archive
 deno task super-mario-sp:vendor  # re-fetch the pinned EmulatorJS files
+deno task 2019:zip               # pack the 2019 game's PS2 web build into its eShop archive (--fetch refreshes the level first)
 
 deno task build:windows   # the launcher as a Windows .exe
 deno task build:linux     # the launcher as a Linux .AppImage
@@ -829,7 +841,19 @@ the same ids, so a build's status note is still under the row that started it.
   (`sniffConsoleSave`): a Saturn backup image (`.sav` / `.bcr` / `.bkr`) opens
   in the editor; a Super Famicom SRAM (the `T.TABATA` magic) is filed on the
   SNES shelf, since nothing maps one to a level yet; a PlayStation card or a
-  64DD disk is named for what it is and pointed at its parity page.
+  64DD disk is named for what it is and pointed at its parity page. A game
+  directory's **stage art travels with it**: `img/stage/stage_loop<N>.png` (the
+  scroller behind stage N) and `stage_end<N>.png` (its boss's backdrop), one
+  pair per stage 0..4 — the runtime's five; stage 5 and up reuse them — read by
+  both directory imports (`readStageBackgrounds`) as PNG data URLs and kept on
+  `gameData.stageBackgrounds` as `{ stage0: { loop, end }, … }`, which rides the
+  cloud save and the play recipe. Before this the import read `game.json` and
+  the atlas and nothing else, and the 2019 game — whose five stages each have
+  their own — played every one of them over the runtime's starfield once
+  exported, because the runtime draws its `_c` backdrops for any level with
+  custom enemies (see the `game.bundle.js` hand-edit list above). A folder with
+  no stage art leaves the stock art in place; a cloud load without the field
+  clears the previous level's.
 - **EXPORT** has **WEB** (the whole game as one level record, `GAME JSON`; the
   open stage alone; the cloud save), a **CONSOLE** picker — SFC / N64 / SATURN /
   PS — that retargets the **DEZAEMON** row under it, **3D**, **APP** and
@@ -2554,6 +2578,25 @@ cannot yet. A disc filed before records carried it shows alone until it is
 re-exported; a cart edited since it was opened, or a mod with unsaved edits,
 gets no web row rather than one that plays a different game.
 
+**A on either row plays the web build.** The disc row used to hand its `.iso` to
+Play! at the top level, and what came up was a black screen with a frame counter
+every time (AthenaEnv stalls in Play!'s HLE kernel, above), so the dashboard's
+`playPs2Record` is now the one road for a filed disc — the shelf row, the
+EXPORTS card's Play and a watch request all go through it — and it runs the
+disc's web build in the frame, or says why it cannot when the record carries
+none. Nothing in the launcher hands a disc to Play! any more
+(`tests/ps2_shelf_test.ts` keeps it that way).
+
+**The launcher hears the filing.** → PS2 LIBRARY is usually pressed inside the
+launcher's own game frame, and the launcher had read both the shelf and the
+installed-core set once, at boot — so a disc filed from the editor, and the
+PLAYSTATION 2 section itself when that export's `ensurePs2Core` was the install
+that put the core in, were not there until the page was reloaded, which read as
+"add to library did nothing". `ps2-library.js` now announces both
+(`notifyPs2LibraryChanged`, a BroadcastChannel plus local listeners, the same
+arrangement as `deza-shelf.js`) and the dashboard's `refreshPs2Shelf` re-reads
+the installed set and the shelf on the signal.
+
 **Test-driving the whole road.** `deno task testdrive:ps2:web "<level>"`
 ([`scripts/testdrive-ps2-web.ts`](scripts/testdrive-ps2-web.ts)) launches the
 packaged Mac app with a DevTools port and does what a person would: loads that
@@ -2993,6 +3036,22 @@ every game anyone can get — and it is read from two places by
   recorded), and `status` is pinned on the row rather than read off a branch.
   The archive is a build artifact — `deno task super-mario-sp:zip`, which
   `deno task build` runs — so the repo does not carry the game's bytes twice.
+- **2019** is the second in-repo shape: a level's web build, listed on the
+  PlayStation 2 shelf (`shelf: "ps2"`, like Sh'M↑ Party) because it is the PS2
+  export of the 2019 game — `dev-fixtures/2019-web` imported, saved as the cloud
+  level `2019-PS2` and exported (**The PlayStation 2 export** above). The disc
+  that export makes cannot play in Play!, so the shop lists the build that can,
+  and A on the row runs it in the frame. The archive is three files rather than
+  a game tree — the 2028.Ai game page rendered standalone
+  ([`lib/game-page.ts`](lib/game-page.ts), which the route reads its inline
+  scripts from too), this checkout's `game.bundle.js` with its one level line
+  pointed at a `foo.json` beside it, and that level record — with Phaser, the
+  plugins and the 68 MB of assets fetched off this origin by root-relative URL,
+  where they already are. `deno task 2019:zip` packs it from the committed
+  `static/games/2019/level.json` (`--fetch` refreshes that from the database
+  after the level is re-exported; the editor's `frameThumbnails` are dropped on
+  the way), `deno task build` runs it, and `tests/stage_backgrounds_test.ts`
+  checks the archive's shape.
 - Each GitHub-tracked build's own **`codemonkey.json`** — the file the cmg
   launcher has always let a game ship at its root — read off the tracked branch
   (`raw.githubusercontent.com/<owner>/<repo>/<branch>/codemonkey.json`) after

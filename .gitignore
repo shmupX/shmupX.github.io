@@ -22,6 +22,9 @@ static/games/2028-ai/assets/custom-bgm/
 # `vite build` -- so Deploy makes it and the repo does not carry ~2.3MB
 # of incompressible duplicate, re-added whole on every rebuild.
 static/games/super-mario-sp-web.zip
+# The same for the 2019 game's PS2 web build: `deno task 2019:zip` packs it
+# from static/games/2019/level.json and this checkout's game.bundle.js.
+static/games/2019-web.zip
 
 # Finder's per-directory metadata. No leading slash, so it is ignored at every
 # depth — macOS drops one into any folder it has been browsed in.

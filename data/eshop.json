@@ -18,6 +18,21 @@
     "twinStick": { "default": true }
   },
   {
+    "id": "2019",
+    "kind": "web",
+    "shelf": "ps2",
+    "name": "2019",
+    "title": "2019",
+    "sub": "PS2 web build // the 2019 shooter as exported for PlayStation 2 · plays here",
+    "icon": "/icons/2019-icon.png",
+    "source": "url",
+    "downloadUrl": "/games/2019-web.zip",
+    "entry": "index.html",
+    "size": "0.6 MB",
+    "date": "10.07.26",
+    "players": 1
+  },
+  {
     "id": "super-mario-sp",
     "kind": "web",
     "name": "Super Mario SP",
