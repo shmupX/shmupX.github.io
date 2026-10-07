@@ -94,7 +94,7 @@ export interface BuildPs2Options {
   /** Which game in a cart image that holds more than one. Default: the first. */
   savSlot?: number | null;
   /**
-   * Which of a save's stages to export — the console runs one. Default: the
+   * Which of a save's stages to export — a .sav build exports one. Default: the
    * first stage that has anything placed on it.
    */
   stage?: string | null;
@@ -117,7 +117,11 @@ export interface BuildPs2Options {
   athenaElf?: string | null;
   /** Re-download AthenaEnv even if the cache has it. */
   refreshAthena?: boolean;
-  /** Cap on either dimension of a generated atlas (default 512). */
+  /**
+   * Cap on either dimension of a generated atlas (default 512). The level
+   * atlas alone may go one doubling past it on one side — 512x1024 — when
+   * five stages of sprites need it.
+   */
   maxSheet?: number;
   /**
    * Also write a disc image. Off by default: the folder is what gets run,

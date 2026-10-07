@@ -24,8 +24,8 @@
 //   --level-file <path>  read the level from a local JSON export, not Firebase
 //   --sav <path>         read the level from a Dezaemon 2 .sav instead
 //   --slot <n>           which game in a .sav that holds more than one
-//   --stage <n>          which of the save's stages to export (the console
-//                        runs one; default: the first with anything on it)
+//   --stage <n>          which of the save's stages to export (a .sav build
+//                        exports one; default: the first with anything on it)
 //   --athena-elf <path>  use this AthenaEnv build instead of downloading one
 //   --refresh-athena     re-download AthenaEnv even if it is cached
 //   --atlas-max <px>     cap generated atlases at this size (default 512)

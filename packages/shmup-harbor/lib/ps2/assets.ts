@@ -19,9 +19,11 @@
 // so the level atlas has to be self-sufficient: a frame the level references
 // but never customised is pulled from the base sheet rather than left dangling.
 // It also has to stay small enough to keep its resolution: only the enemy
-// types the console will actually spawn, and the bosses it will actually
-// fight, go in (stageRecipes) — and that is more than the exported stage's,
-// because the port plays on into the stages after it (laterStages).
+// types the console will actually spawn, and the frames of the bosses it will
+// actually fight, go in (stageRecipes, bossFrames) — and that is more than the
+// exported stage's, because the port plays on into the stages after it
+// (laterStages). The bosses' own bullets are the one thing that goes on
+// game_asset instead, because that is where the port looks for them.
 
 import { join } from "@std/path";
 import {
@@ -31,7 +33,12 @@ import {
   newRaster,
   type Raster,
 } from "./png.ts";
-import { buildPs2Atlas, type FrameEntry, type SourceFrame } from "./atlas.ts";
+import {
+  buildPs2Atlas,
+  type BuiltAtlas,
+  type FrameEntry,
+  type SourceFrame,
+} from "./atlas.ts";
 import { quantize } from "./palette.ts";
 import { blit, cut, fitInto, resizeTo } from "./raster.ts";
 
@@ -177,6 +184,73 @@ function collectTextures(value: unknown, into: Set<string>): void {
   }
 }
 
+/** `value.texture`, when it is a list that names at least one frame. */
+function textureOf(value: unknown): string[] | null {
+  const list = (value as { texture?: unknown } | null | undefined)?.texture;
+  return Array.isArray(list) && list.length > 0 ? list as string[] : null;
+}
+
+/**
+ * The frames the port draws a boss with: its `texture`, or `anim.idle` for a
+ * web-shaped record — normalizeRecipe copies the one into the other at boot.
+ *
+ * Nothing else of a boss reaches the screen. `attackTexture` is filled in and
+ * never read, and the other `anim` lists (charge, shoot, wait, …) drive attack
+ * patterns only the browser engine has. Collecting all of them, the way an
+ * enemy's textures are collected, put 43 frames on the sheet for the five
+ * stock bosses where 16 are ever drawn — and with five bosses to carry, that
+ * is the difference between the level atlas at full size and at 1/4.
+ */
+function bossFrames(boss: Record<string, unknown>): string[] {
+  const anim = boss.anim as { idle?: unknown } | null | undefined;
+  return textureOf(boss) ?? textureOf({ texture: anim?.idle }) ?? [];
+}
+
+/**
+ * The frame lists a boss fires: `projectileData` — or `bulletData`, which
+ * normalizeRecipe turns into it — and `projectileDataA`, the one further slot
+ * a port attack pattern reads (the second boss's spread). The B and C slots
+ * are the browser engine's.
+ */
+function bossShotLists(boss: Record<string, unknown>): string[][] {
+  return [
+    textureOf(boss.projectileData) ?? textureOf(boss.bulletData),
+    textureOf(boss.projectileDataA),
+  ].filter((list): list is string[] => list !== null);
+}
+
+/**
+ * Pack the level's own atlas — a size up from the other sheets, when that is
+ * what keeps it at full size.
+ *
+ * Five stages of sprites can outgrow the 512 sheet one stage fitted: the 2019
+ * game's come out at 1/2 there, and half size is where a 32px enemy starts to
+ * smear. When that happens this sheet may take one doubling more than
+ * `maxSheet` — 512x1024 at the default, 0.5 MB paletted, which with the two
+ * base sheets and the frame buffer is 3.19 MB of the GS's 4 (encodeSheet;
+ * scripts/lib/testdrive-textures.ts counts it the same way) — and never past
+ * the GS's 1024. Only when it buys the scale back, though: a set that fits
+ * packs exactly as it always did. And not when a title cover has already
+ * spent that margin on game_ui.
+ */
+export function buildLevelAtlas(
+  frames: SourceFrame[],
+  budget: { maxSheet?: number; cover?: boolean } = {},
+): BuiltAtlas {
+  const maxSheet = budget.maxSheet ?? 512;
+  const built = buildPs2Atlas(frames, "level_atlas.png", maxSheet);
+  if (built.displayScale === 1 || budget.cover || maxSheet >= 1024) {
+    return built;
+  }
+  const roomier = buildPs2Atlas(
+    frames,
+    "level_atlas.png",
+    Math.min(maxSheet * 2, 1024),
+    maxSheet * maxSheet * 2,
+  );
+  return roomier.displayScale < built.displayScale ? roomier : built;
+}
+
 /** The wave grid and enemy table as the disc's level.json carries them. */
 export interface DiscStage {
   enemylist: string[][];
@@ -313,8 +387,8 @@ function gridOf(stage: unknown): string[][] | null {
 }
 
 /**
- * The stages the console plays AFTER the exported one, with the grid each
- * will run.
+ * The stages the console plays AFTER the exported one, in the order it plays
+ * them, with the grid each will run.
  *
  * level.json carries one stage, but the port does not stop when it ends: as
  * its boss falls, `stageId++`, and the next stage of game.json begins, on up
@@ -325,6 +399,12 @@ function gridOf(stage: unknown): string[][] | null {
  * stage 2 (the first stage's four types were the only ones that shipped) and
  * no visible boss after the first (the other four had no frames to draw).
  *
+ * Nor does it stop at the fifth. The ending resets the game (resetGameState:
+ * `stageId = 0`) and the next one starts from stage0, still out of the tables
+ * the level merged in at boot — loadFirebaseLevel runs once. So a disc
+ * exported from stage2 plays stage0 and stage1 too, on its second game, and
+ * they follow the stages after it here.
+ *
  * A whole-game record — the editor's `stages` — supplies its own grid for
  * each of them; any other record plays the base game's, as the port did.
  */
@@ -334,7 +414,10 @@ export function laterStages(
 ): Record<string, string[][]> {
   const out: Record<string, string[][]> = {};
   const first = Math.min(stageNumberOf(record), LAST_STAGE);
-  for (let id = first + 1; id <= LAST_STAGE; id++) {
+  const order: number[] = [];
+  for (let id = first + 1; id <= LAST_STAGE; id++) order.push(id);
+  for (let id = 0; id < first; id++) order.push(id);
+  for (const id of order) {
     const key = `stage${id}`;
     const grid = gridOf(record.stages?.[key]) ?? gridOf(base[key]);
     if (grid) out[key] = grid;
@@ -404,26 +487,26 @@ export function stageRecipes(
   }
 
   // The port plays `bossData["boss" + stageId]` for the exported stage and
-  // then for every stage after it up to its fifth, with or without a grid to
-  // play first — an absent grid is an empty wave list and the boss comes
-  // straight on. So every boss from this stage to the last ships. The id is
-  // clamped to the port's five stages; the unclamped key is kept too in case
-  // the runtime grows.
+  // then for every stage it reaches after that — on up to its fifth, and then
+  // from stage0 again once the ending has reset the game (laterStages) — with
+  // or without a grid to play first: an absent grid is an empty wave list and
+  // the boss comes straight on. So every one of its five bosses ships. The id
+  // is clamped to the port's five stages; the unclamped key is kept too in
+  // case the runtime grows.
   const stageKey = record.stageKey ?? "stage0";
   const stageNumber = stageNumberOf(record);
   const bossKeys = new Set<string>();
   const ids = [stageNumber];
-  for (let id = Math.min(stageNumber, LAST_STAGE); id <= LAST_STAGE; id++) {
-    ids.push(id);
-  }
+  for (let id = 0; id <= LAST_STAGE; id++) ids.push(id);
   for (const id of new Set(ids)) {
     if (`boss${id}` in bossData) bossKeys.add(`boss${id}`);
   }
 
   // What the note calls the stretch of stages that was read.
-  const laterKeys = Object.keys(later);
-  const span = laterKeys.length
-    ? `${stageKey}–${laterKeys[laterKeys.length - 1]}`
+  const read = [stageKey, ...Object.keys(later)]
+    .map((key) => Number(/^stage(\d+)$/.exec(key)?.[1] ?? 0));
+  const span = read.length > 1
+    ? `stage${Math.min(...read)}–stage${Math.max(...read)}`
     : stageKey;
 
   if (enemyKeys.size === 0 && enemyCount > 0) {
@@ -560,7 +643,11 @@ export interface StageOptions {
    * When this is set it wins over `record.atlasImageDataURL`.
    */
   customAtlas?: { sheet: Raster; frames: Record<string, FrameEntry> } | null;
-  /** Cap on either dimension of a generated atlas. */
+  /**
+   * Cap on either dimension of a generated atlas — and the level atlas may
+   * take one doubling more on one side, when that keeps it at full size
+   * (buildLevelAtlas).
+   */
   maxSheet?: number;
 }
 
@@ -751,6 +838,42 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     ? coverTitleFrames(options.cover, notes)
     : dezaemonTitleFrames(record, index, notes);
 
+  // --- what the console will play ---
+  //
+  // Worked out before any sheet is packed, because it decides what goes on two
+  // of them. From here on the game is described as the DISC carries it:
+  // one-character enemy codes and only the records some grid names — this
+  // stage's, and every stage the console plays after it (laterStages).
+  const later = laterStages(record, baseRecipe);
+  const disc = discStage(record, later);
+  const recipes = stageRecipes({
+    ...record,
+    enemylist: disc.enemylist,
+    enemyData: disc.enemyData,
+  }, disc.later);
+
+  // A boss's bullets are the exception to "a level's sprites are in the level
+  // atlas". The port's boss queues its shots with frame names and no atlas
+  // (bossShootStraight and friends), so createProjectile files every one of
+  // them under `game_asset`, whatever loadFirebaseLevel tagged the record
+  // with. Art the base sheet already has is found there; a level's OWN bullet
+  // art has to be packed into that sheet under its name, or the boss fires
+  // shots that hit and are never drawn — which the game this repo ships did,
+  // on its second and fourth stages.
+  const missing = new Set<string>();
+  const bossShots = new Map<string, SourceFrame>();
+  for (const boss of recipes.bosses) {
+    for (const list of bossShotLists(boss)) {
+      for (const name of list) {
+        const found = resolve(index, name);
+        if (!found) missing.add(name);
+        else if (found.sheet !== baseSheet) {
+          bossShots.set(name, { name, sheet: found.sheet, entry: found.entry });
+        }
+      }
+    }
+  }
+
   for (const name of ["game_asset", "game_ui"]) {
     // A cover lands in game_ui and the port magnifies it 2.5x, so that sheet
     // gets a bigger budget when one is present: at 512 it packs at 1/4 and
@@ -766,7 +889,7 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
       name,
       budget,
       name === "game_asset" ? upright : new Set(),
-      name === "game_ui" ? title.overrides : [],
+      name === "game_ui" ? title.overrides : [...bossShots.values()],
       name === "game_ui" ? title.drop : new Set(),
     );
     files.push(...built.files);
@@ -780,20 +903,18 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
         }`,
     );
   }
+  if (bossShots.size) {
+    notes.push(
+      `boss shots: ${bossShots.size} of the level's own frame(s) packed into ` +
+        `game_asset, where the port draws them — ` +
+        `${[...bossShots.keys()].slice(0, 3).join(", ")}${
+          bossShots.size > 3 ? ", …" : ""
+        }`,
+    );
+  }
 
   // --- the level's own atlas ---
-  //
-  // Both the sheet and level.json describe the game as the DISC carries it:
-  // one-character enemy codes and only the records some grid names — this
-  // stage's, and every stage the console plays after it (laterStages).
-  const later = laterStages(record, baseRecipe);
-  const disc = discStage(record, later);
   if (disc.note) notes.push(disc.note);
-  const recipes = stageRecipes({
-    ...record,
-    enemylist: disc.enemylist,
-    enemyData: disc.enemyData,
-  }, disc.later);
   if (recipes.note) notes.push(recipes.note);
 
   // The recipe the port normalises into its own shape at boot. The stages
@@ -820,23 +941,28 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
       data: await Deno.readFile(join(gameDir, "assets", "game.json")),
     });
   }
+  // Everything an enemy record names, and the frames each boss is drawn with.
   const wanted = new Set<string>();
   for (const recipe of recipes.enemies) collectTextures(recipe, wanted);
-  for (const recipe of recipes.bosses) collectTextures(recipe, wanted);
+  for (const recipe of recipes.bosses) {
+    for (const frame of bossFrames(recipe)) wanted.add(frame);
+  }
 
   const levelFrames: SourceFrame[] = [];
-  const missing: string[] = [];
   for (const name of wanted) {
     const found = resolve(index, name);
     if (!found) {
-      missing.push(name);
+      missing.add(name);
       continue;
     }
     levelFrames.push({ name, sheet: found.sheet, entry: found.entry });
   }
 
   if (levelFrames.length > 0) {
-    const built = buildPs2Atlas(levelFrames, "level_atlas.png", maxSheet);
+    const built = buildLevelAtlas(levelFrames, {
+      maxSheet,
+      cover: !!options.cover,
+    });
     const sheet = await encodeSheet(built.image, "level_atlas");
     files.push(
       { path: "assets/level_atlas.png", data: sheet.data },
@@ -859,10 +985,12 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     );
     notes.push("level_atlas: empty — the level names no custom sprites");
   }
-  if (missing.length) {
+  if (missing.size) {
     notes.push(
-      `level_atlas: ${missing.length} frame(s) not found in either sheet ` +
-        `(${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ", …" : ""})`,
+      `level_atlas: ${missing.size} frame(s) not found in either sheet ` +
+        `(${[...missing].slice(0, 4).join(", ")}${
+          missing.size > 4 ? ", …" : ""
+        })`,
     );
   }
 

@@ -2384,11 +2384,11 @@ lands on the same level record the Firebase reader produces, so nothing
 downstream can tell the two apart. The name is then optional, as the second
 command above shows: leave it off and the filename supplies it, with the shelf's
 own `Dez 2 -` prefix stripped ("Dez 2 - Chohsoku Stringer.sav" → "Chohsoku
-Stringer"). A save holds up to ten stages and the console runs one, so the
-export takes the first stage with anything placed on it; `--stage <n>` picks
-another, and `--slot <n>` picks between games in a cart image that holds more
-than one. Pair it with `--cover <slug>` (below) to put that save's shelf shot on
-the title screen.
+Stringer"). A save holds up to ten stages and `--sav` exports one of them — the
+first with anything placed on it; `--stage <n>` picks another, and `--slot <n>`
+picks between games in a cart image that holds more than one. (The console still
+plays on past it, into the base game's waves — see below.) Pair it with
+`--cover <slug>` (below) to put that save's shelf shot on the title screen.
 
 There is nothing to install: no ps2dev, no C compiler, not even Node. The
 console runs the game as **JavaScript**, because `athena.elf` is
@@ -2422,21 +2422,39 @@ Everything else in the export is data, produced by `lib/ps2/`:
   not stop at the exported stage: when its boss falls it moves on through the
   rest of game.json, spawning from the same enemyData the level replaced the
   base recipe's with, so cutting to the one stage left stage 2 of a base-game
-  export with no enemies and no visible boss. A whole-game record (the editor's
-  `stages`) supplies its own grids for those later stages, laid into the shipped
-  game.json over the base game's. A Dezaemon save carries every type of every
-  stage (Master Arena Mod has 443), and packing them all forced the sheet down
-  to 1/4 scale, where a 16x16 enemy is a 4x4-texel smudge you can shoot but not
-  see. The build log says how many types the console uses.
+  export with no enemies and no visible boss. Nor does it stop at the fifth: the
+  ending resets the port to `stage0`, and the next game is played out of the
+  same tables, so the stages before the exported one count as later too. A
+  whole-game record (the editor's `stages`) supplies its own grids for those
+  stages, laid into the shipped game.json over the base game's. A Dezaemon save
+  carries every type of every stage (Master Arena Mod has 443), and packing them
+  all forced the sheet down to 1/4 scale, where a 16x16 enemy is a 4x4-texel
+  smudge you can shoot but not see. The build log says how many types the
+  console uses.
+- A boss ships **only the frames it is drawn with** (`anim.idle`, which the port
+  copies into `texture`). Its other animations are the browser engine's, and
+  packing all of them for five bosses put the level atlas back at that 1/4. When
+  even the drawn frames outgrow 512, the level atlas alone may take one doubling
+  more — 512×1024 at the default `--atlas-max`, 3.19 MB of the GS's 4 with
+  everything else, the way `testdrive:ps2:textures` counts it — unless a
+  `--cover` has already spent that margin on game_ui.
+- A boss's **own bullet art goes on `game_asset`**, not the level atlas. The
+  port queues a boss's shots with frame names and no atlas, so it looks every
+  one of them up on the base sheet; packed anywhere else they hit the player and
+  are never drawn, which is what the game this repo ships did on its second and
+  fourth stages. The build log lists what was packed there.
 - The wave grid goes out with **one-character enemy codes** (`discStage`, same
   file). A cell is `<type><item>` and the browser reads the type as everything
   but the last character, so a save with more than 26 types spawns `CM0` as
-  enemyCM; the PS2 port (svelte-ps2 1.1.0) takes only the first character and
+  enemyCM; the PS2 port at svelte-ps2 1.1.0 took only the first character and
   spawned enemyC instead — in Master Arena Mod a single-pixel "star", which is
   what the console showed in place of every enemy. Each type the stage uses is
   re-coded (A–Z, then a–z, then 1–9; `0` never, since `00` is the empty cell)
-  and enemyData is re-keyed to match, so both readings agree. Only those records
-  ship, which also takes level.json from hundreds of entries to a few dozen.
+  and enemyData is re-keyed to match, so both readings agree. The port reads a
+  cell the browser's way from 1.1.1, which the export is pinned to; the codes
+  stay, since one character is the spelling both readings agree on. Only those
+  records ship, which also takes level.json from hundreds of entries to a few
+  dozen.
 - The ISO is written here too
   ([`lib/ps2/iso9660.ts`](packages/shmup-harbor/lib/ps2/iso9660.ts)) — no
   mkisofs, no xorriso. Names are uppercase ISO 9660 level 2 with a `;1` suffix,

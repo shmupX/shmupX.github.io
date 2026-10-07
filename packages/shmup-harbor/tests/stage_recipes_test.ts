@@ -66,7 +66,9 @@ Deno.test("the stages the console plays afterwards are packed too", () => {
   assert(out.note.includes("3 of 4 bosses"), out.note);
 });
 
-Deno.test("a stage in the middle packs its own boss and the ones after", () => {
+Deno.test("a stage in the middle packs every boss the console reaches", () => {
+  // Its own and the ones after it on the first game; the ones before it on
+  // the next, once the ending has reset the port to stage0.
   const record: LevelRecord = {
     stageKey: "stage2",
     enemylist: [["A0"]],
@@ -79,7 +81,10 @@ Deno.test("a stage in the middle packs its own boss and the ones after", () => {
       boss4: enemy("boss4"),
     },
   };
-  assertEquals(names(stageRecipes(record).bosses), ["boss2", "boss3", "boss4"]);
+  assertEquals(
+    names(stageRecipes(record).bosses),
+    ["boss0", "boss1", "boss2", "boss3", "boss4"],
+  );
 });
 
 Deno.test("a two-letter code is read both ways", () => {
@@ -98,7 +103,8 @@ Deno.test("a two-letter code is read both ways", () => {
   };
   const out = stageRecipes(record);
   assertEquals(names(out.enemies), ["be", "c", "cm"]);
-  assertEquals(names(out.bosses), ["boss1"]);
+  // boss0 too: the stage before this one is played on the next game.
+  assertEquals(names(out.bosses), ["boss0", "boss1"]);
 });
 
 Deno.test("the boss follows the port's clamp to five stages", () => {
@@ -228,7 +234,10 @@ Deno.test("a grid naming nothing known is shipped as it was", () => {
 
 // Which grids the console plays after the exported stage.
 
-Deno.test("laterStages runs from the stage after the exported one to the port's last", () => {
+Deno.test("laterStages runs to the port's last stage, then round from stage0", () => {
+  // The ending resets the port to stage0 and the next game is played out of
+  // the same merged tables, so the stages before the exported one come round
+  // too — after the ones that follow it, which is the order they are played.
   const base = {
     stage0: { enemylist: [["Z0"]] },
     stage1: { enemylist: [["Z1"]] },
@@ -245,18 +254,22 @@ Deno.test("laterStages runs from the stage after the exported one to the port's 
       stage4: [["Z4"]],
     },
   );
+  const stage3 = laterStages({ stageKey: "stage3", enemylist: [["A0"]] }, base);
+  assertEquals(stage3, {
+    stage4: [["Z4"]],
+    stage0: [["Z0"]],
+    stage1: [["Z1"]],
+    stage2: [["Z2"]],
+  });
+  assertEquals(Object.keys(stage3), ["stage4", "stage0", "stage1", "stage2"]);
   assertEquals(
-    laterStages({ stageKey: "stage3", enemylist: [["A0"]] }, base),
-    { stage4: [["Z4"]] },
+    Object.keys(laterStages({ stageKey: "stage4", enemylist: [["A0"]] }, base)),
+    ["stage0", "stage1", "stage2", "stage3"],
   );
+  // Past the port's clamp the game boots on its last stage, so the same.
   assertEquals(
-    laterStages({ stageKey: "stage4", enemylist: [["A0"]] }, base),
-    {},
-  );
-  // Past the port's clamp there is nothing after.
-  assertEquals(
-    laterStages({ stageKey: "stage7", enemylist: [["A0"]] }, base),
-    {},
+    Object.keys(laterStages({ stageKey: "stage7", enemylist: [["A0"]] }, base)),
+    ["stage0", "stage1", "stage2", "stage3"],
   );
 });
 

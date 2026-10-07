@@ -85,7 +85,7 @@ const packShelf = deza.packShelf as (
 const ATLAS_MAX_WIDTH = 2048;
 const ATLAS_PAD = 4;
 
-/** The port stages exactly one stage; this is Dezaemon's first. */
+/** A build straight from a .sav exports one stage; this is Dezaemon's first. */
 const DEFAULT_STAGE = "stage0";
 
 export interface SavLevelOptions {
@@ -117,11 +117,13 @@ export interface SavLevel {
   name: string;
   notes: string[];
   /**
-   * The whole decoded game, before `record` narrows it to the one stage the
-   * PS2 runs.
+   * The whole decoded game, before `record` narrows it to the one stage this
+   * path exports.
    *
-   * `record` is deliberately a subset: the console stages exactly one stage and
-   * has no use for the rest. A browser build is the opposite — it plays every
+   * `record` is deliberately a subset: it carries no `stages`, so the disc
+   * gets this one stage of the cart and the console plays on into the base
+   * game's waves after it, out of the cart's tables (laterStages in
+   * assets.ts). A browser build is the opposite — it plays every
    * stage and reads the music, the scenery tiles, the bullet and item tables
    * and the drawn title screen straight off the record — so lib/shelf.ts builds
    * its own, fuller record from this. Handed over rather than re-decoded
@@ -288,7 +290,7 @@ export async function loadSavLevelFromBytes(
   }
   if (populated.length > 1) {
     notes.push(
-      `the save has ${populated.length} stages; the console runs one — ` +
+      `the save has ${populated.length} stages; a .sav build exports one — ` +
         `exporting ${stageKey}`,
     );
   }

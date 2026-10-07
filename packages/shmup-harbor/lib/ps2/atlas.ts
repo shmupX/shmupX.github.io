@@ -132,11 +132,17 @@ function extract(frame: SourceFrame): Raster {
  * PS2 port's own atlases — a 512x512 RGBA texture is 1MB of the console's 4MB
  * of VRAM). The scale factor is the smallest power of two that makes the set
  * fit; `imageName` only lands in the JSON metadata.
+ *
+ * `maxArea` caps the sheet's texel count as well, for a caller budgeting VRAM
+ * rather than a dimension: 1024 with an area of 512 * 1024 allows a sheet
+ * twice the default without allowing the full 1024x1024, which is four times
+ * it.
  */
 export function buildPs2Atlas(
   frames: SourceFrame[],
   imageName: string,
   maxSheet = 512,
+  maxArea = Infinity,
 ): BuiltAtlas {
   if (frames.length === 0) {
     throw new Error(`atlas ${imageName}: no frames to pack`);
@@ -180,6 +186,7 @@ export function buildPs2Atlas(
     let best: { placements: Placement[]; w: number; h: number } | null = null;
     for (const sheetW of sheetSteps) {
       for (const sheetH of sheetSteps) {
+        if (sheetW * sheetH > maxArea) continue;
         if (best && sheetW * sheetH >= best.w * best.h) continue;
         const placements = shelfPack(sizes, sheetW, sheetH);
         if (placements) best = { placements, w: sheetW, h: sheetH };
