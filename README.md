@@ -163,6 +163,21 @@ they are written out in full.
     the level has resolved, because the set depends on which level is running —
     see **A Dezaemon save is not 2028.Ai** below. `routes/games/2028-ai.tsx`
     used to send a fixed list from its `<head>` and no longer does.
+  - A cheat opens the level where it asks, and holds. The Guide writes its
+    Cheats into the frame's URL (`?stage=N`, `?bossRush=1`, `?boss=goki`,
+    `?finalBoss=1`) and reloads it, and `PluginBootScene` read them into
+    `gameState` — then showed the title, whose START (`goToAdvScene`)
+    begins a fresh run: stage 0, no boss rush, no Akuma. The editor's hand-off
+    never saw it (`?editorPlay=1` skips the title); the eShop's 2019 web
+    build always did, since it boots like a plain visit. `cmgCheatStart` now
+    reads the four off the URL in one place, a boot that asks for one goes
+    straight to `PhaserGameScene` as the game's own `BootScene` always did
+    (no title, no story), and `goToAdvScene` lays them back over the fresh
+    state (`cmgApplyCheatStart`), so GO TO TITLE → START replays them while
+    the Guide still shows them on. Mod Mode is not one of them: it changes
+    which parts play, not where the run starts. `tests/cheat_boot_test.ts`
+    pins all three. Upstream homes: `scripts/2028-ai/boot-entry.js` and
+    `2019-es7/src/phaser/TitleScene.js`.
   - A boss dies as the boss whatever finished it. `updateDezaColumns` (the
     Dezaemon sub-weapon 5 / charge 2 columns) used to bill the boss sprite and
     hand the kill to `enemyDie`, which destroyed the sprite without telling the

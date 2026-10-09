@@ -7523,6 +7523,10 @@
       gameState.akebonoCnt = 0;
       gameState.shortFlg = false;
       gameState.forceBossName = null;
+      // cmg: a cheat the launcher's Guide still shows switched on (?stage=,
+      // ?bossRush=1, ?boss=goki, ?finalBoss=1) holds for a run started over
+      // from this title too — GO TO TITLE, then START — not only for the boot.
+      cmgApplyCheatStart(recipe);
       var game = this.game;
       setTimeout(function() {
         game.scene.stop("PhaserTitleScene");
@@ -17224,6 +17228,54 @@
     } catch (e) {
     }
   }
+  // cmg: the boot-time cheats on the URL that open the level somewhere other
+  // than its first stage — the Guide's Start Stage (?stage=N), Boss Rush
+  // (?bossRush=1), Akuma Boss (?boss=goki) and Final Boss (?finalBoss=1).
+  // Read off the page's own location each time, since the launcher rewrites
+  // it and reloads the frame on every toggle. Null when none is asked, so a
+  // plain boot keeps its title and its story. Mod Mode (?version=mod) is not
+  // one of these: it changes which parts play, not where the run starts.
+  function cmgCheatStart(recipe) {
+    var p;
+    try {
+      p = new URLSearchParams(window.location.search);
+    } catch (_e) {
+      return null;
+    }
+    var stage = p.get("stage");
+    var stageId = stage != null && stage !== "" ? stage : null;
+    var bossRush = p.get("bossRush") === "1";
+    var forceBoss = null;
+    if (p.get("boss") === "goki") {
+      forceBoss = "goki";
+      if (stageId == null) stageId = 3;
+      bossRush = true;
+    }
+    // Cheats → Final Boss: whatever this cart's last stage happens to be,
+    // opened at its boss. The Akuma cheat above is 2028.Ai's own fixed
+    // stage-3 fight and stays as it is.
+    if (p.get("finalBoss") === "1") {
+      stageId = lastStageId(recipe);
+      bossRush = true;
+    }
+    if (stageId == null && !bossRush) return null;
+    return { stageId: stageId, bossRush: bossRush, forceBoss: forceBoss };
+  }
+  // The title's START (goToAdvScene) begins a fresh run — stage 0, no boss
+  // rush, no Akuma — which is right for a plain visit and wrong for a cheat
+  // the launcher's Guide still shows switched on: the eShop's 2019 web build
+  // boots to its title like a plain visit (no ?level=, unlike the editor's
+  // hand-off), and a player who set Boss Rush there pressed START into stage
+  // 0 and the whole wave. So the cheats are laid back over the fresh state
+  // wherever a run starts. True when one was.
+  function cmgApplyCheatStart(recipe) {
+    var cheat = cmgCheatStart(recipe);
+    if (!cheat) return false;
+    if (cheat.stageId != null) gameState.stageId = parseStageId(cheat.stageId, DEFAULTS.maxStage);
+    if (cheat.bossRush) gameState.shortFlg = true;
+    if (cheat.forceBoss) gameState.forceBossName = cheat.forceBoss;
+    return true;
+  }
   var PluginBootScene = class extends BootScene {
     preload() {
       this.load.setBaseURL(ASSET_BASE);
@@ -17240,26 +17292,10 @@
         onPrimeState: (recipe, info) => {
           gameState._phaserRecipe = recipe;
           gameState.hasCustomEnemies = info.hasCustomEnemies;
-          let stageId = info.stageId;
-          let bossRush = info.bossRush;
-          try {
-            const p = new URLSearchParams(location.search);
-            if (p.get("boss") === "goki") {
-              gameState.forceBossName = "goki";
-              if (p.get("stage") == null) stageId = 3;
-              bossRush = true;
-            }
-            // Cheats → Final Boss: whatever this cart's last stage happens to
-            // be, opened at its boss. The Akuma cheat above is 2028.Ai's own
-            // fixed stage-3 fight and stays as it is.
-            if (p.get("finalBoss") === "1") {
-              stageId = lastStageId(recipe);
-              bossRush = true;
-            }
-          } catch (_e) {
-          }
-          primeGameStateForStage2(recipe, stageId);
-          if (bossRush) gameState.shortFlg = true;
+          primeGameStateForStage2(recipe, info.stageId);
+          if (info.bossRush) gameState.shortFlg = true;
+          // The Guide's cheats, over that: see cmgCheatStart above.
+          cmgApplyCheatStart(recipe);
         }
       }).then((result) => {
         if (result.bgmSourceURLs) {
@@ -17268,7 +17304,14 @@
         cmgBroadcastCheats(gameState._phaserRecipe);
         return initSceneScripts({ recipe: gameState._phaserRecipe }).then(() => {
           let nextScene = result.showTitle ? "PhaserTitleScene" : "PhaserGameScene";
-          if (nextScene === "PhaserGameScene") {
+          if (cmgCheatStart(gameState._phaserRecipe)) {
+            // cmg: a boot that asks for a stage or a boss opens the level
+            // there, as the game's own BootScene always did — no title, no
+            // story. Through the title, START would begin a fresh run over it
+            // (goToAdvScene; cmgApplyCheatStart covers the player who goes
+            // back to the title and starts again).
+            nextScene = "PhaserGameScene";
+          } else if (nextScene === "PhaserGameScene") {
             const recipe = gameState._phaserRecipe;
             if (hasSceneScript("title")) nextScene = "PhaserTitleScene";
             else if (hasSceneScript("adv")) nextScene = "PhaserAdvScene";
