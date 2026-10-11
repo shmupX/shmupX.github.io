@@ -5092,6 +5092,13 @@
     var horiz = dezaHorizontal(scene);
     var hasEntry = !!(dezaemon && dezaemon.entry && dezaemon.entry.rows && dezaemon.entry.rows.length);
     var specialCls = dezaemon && dezaemon.entry && dezaemon.entry.objectClass;
+    // Record byte 2 bit 5, the engine's NO-COLLISION attribute (bit 1 of the
+    // decoder's move.mode): both of the Saturn's collision drivers test it
+    // first and skip the whole block — no player shot, no bomb, no ship
+    // contact. An exported story panel wears it, so the player flies through
+    // the picture instead of dying on it. Fixed for the object's life, unlike
+    // dezaNoContact, which the zoom pass rewrites every tick.
+    enemy.setData("dezaNoCollision", !!(dezaMove(behavior).mode & 2));
     enemy.setData("deza", {
       behavior,
       age: 0,
@@ -9981,6 +9988,7 @@
     for (var i = 0; i < scene.enemies.length; i++) {
       var e = scene.enemies[i];
       if (!e || !e.active) continue;
+      if (e.getData("dezaNoCollision")) continue;
       var d = (e.x - x) * (e.x - x) + (e.y - y) * (e.y - y);
       if (d < bd) { bd = d; best = e; }
     }
@@ -9994,6 +10002,7 @@
       var e = scene.enemies[i];
       if (!e || !e.active) continue;
       if (e.getData("type") === "boss" && scene.bossEntering) continue;
+      if (e.getData("dezaNoCollision")) continue;
       // The tether drains only the enemy it latched onto.
       if (b.type === 3 && e !== b.target) continue;
       var dx = Math.abs(e.x - b.x), dy = Math.abs(e.y - b.y);
@@ -10010,6 +10019,27 @@
         if (e.getData("type") === "boss") scene.bossDie(e, b.owner);
         else scene.enemyDie(e, true, b.owner);
       }
+    }
+    // Bomb vs enemy bullets: a bomb is a big contact object, and a bullet it
+    // overlaps is gone — the same shape test the enemies get, on the bullet's
+    // own frame. (The engine's resolver would reach only a bullet whose config
+    // bit 7 puts it in the full collision system; this runtime models no
+    // bullet as shootable at all, and a bomb that leaves the bullets it
+    // passes through standing is the thing a player notices.)
+    var bullets = scene.enemyBullets || [];
+    for (var k = bullets.length - 1; k >= 0; k--) {
+      var eb = bullets[k];
+      if (!eb || !eb.active) continue;
+      var bw = eb.displayWidth || eb.width || 0, bh = eb.displayHeight || eb.height || 0;
+      var bx = Math.abs(eb.x - b.x), by = Math.abs(eb.y - b.y);
+      var hitB;
+      if (b.shape === "strip") hitB = bx <= b.halfW + bw / 2;
+      else if (b.shape === "box") hitB = bx <= b.halfW + bw / 2 && by <= b.halfH + bh / 2;
+      else hitB = bx * bx + by * by <= (b.radius || 0) * (b.radius || 0) + bw * bh;
+      if (!hitB) continue;
+      if (typeof scene.showHitImpact === "function") scene.showHitImpact(eb.x, eb.y, false);
+      eb.destroy();
+      bullets.splice(k, 1);
     }
   }
   function updateDezaBomb(scene, p) {
@@ -11024,6 +11054,7 @@
         // telling the boss machinery: no death drift, no stage clear, and a
         // skull balloon and TIME label left over an empty sky.
         if (isBoss && scene.bossEntering) continue;
+        if (en.getData("dezaNoCollision")) continue;
         if (Math.abs(en.x - c.x) > c.halfW + en.width / 2) continue;
         if (en.y > bottom || en.y < top) continue;
         var hp = en.getData("hp");
@@ -11171,6 +11202,7 @@
       for (var i = 0; i < scene.enemies.length; i++) {
         var e = scene.enemies[i];
         if (!e || !e.active || e.getData("hp") === "infinity") continue;
+        if (e.getData("dezaNoCollision")) continue;
         if (Math.abs(e.x - bullet.x) > 80 || Math.abs(e.y - bullet.y) > 128) continue;
         target = e;
         break;
@@ -14424,7 +14456,7 @@
           if (en && en.active) {
             var ex = en.x, ey = en.y, ew = en.width || 0;
             if (ex < -ew / 2 || ex > GW13 || ey < 20 || ey > GH11) continue;
-            if (en.getData("dezaNoContact")) continue;
+            if (en.getData("dezaNoContact") || en.getData("dezaNoCollision")) continue;
             var isBoss = en.getData("type") === "boss";
             if (isBoss) {
               var ehp = en.getData("hp") - spDamage;
@@ -14877,7 +14909,11 @@
         }
         animateEnemy(enemy, step);
         var eRect = { x: enemy.x - enemy.width / 2, y: enemy.y - enemy.height / 2, w: enemy.width, h: enemy.height };
-        if (enemy.getData("dezaNoContact")) {
+        // Out of every contact test below — the shots, the barrier, the hull
+        // — while zoomed off unity (dezaNoContact) or for good (the record's
+        // NO-COLLISION attribute, dezaNoCollision); it still leaves when it
+        // flies off.
+        if (enemy.getData("dezaNoContact") || enemy.getData("dezaNoCollision")) {
           if (enemy.getData("dezaGone") || enemy.y > GH11 + 20 || enemy.x < -40 || enemy.x > GW13 + 40) {
             this.enemies.splice(e, 1);
             var ncShadow = enemy.getData("shadow");

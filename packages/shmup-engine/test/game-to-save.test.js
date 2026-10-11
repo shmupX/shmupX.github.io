@@ -189,6 +189,49 @@ Deno.test("encodeEnemyRecord round-trips through decodeEnemyRecord", () => {
   assert(!(d.move.mode & 1));
   const armoured = decodeEnemyRecord(encodeEnemyRecord({ armour: true }));
   assertStrictEquals(armoured.move.mode & 1, 1);
+  // Byte 2 bit 5: the engine's NO-COLLISION attribute, mode bit 1.
+  const ghost = decodeEnemyRecord(encodeEnemyRecord({ noCollision: true }));
+  assertStrictEquals(ghost.move.mode & 2, 2);
+  assertStrictEquals(ghost.move.mode & 1, 0);
+  const both = decodeEnemyRecord(
+    encodeEnemyRecord({ armour: true, noCollision: true }),
+  );
+  assertStrictEquals(both.move.mode, 3);
+});
+
+Deno.test("a story panel's pieces carry the NO-COLLISION attribute", () => {
+  // Four 64x64 quarters, the shape storyPanels() hands build:sav.
+  const quarter = (col, row) => ({
+    col,
+    row,
+    w: 64,
+    h: 64,
+    rgba: frame(64, 64, [180, 120, 60]).rgba,
+  });
+  const storyPanels = [{
+    stage: 0,
+    picture: [quarter(0, 0), quarter(1, 0), quarter(0, 1), quarter(1, 1)],
+    text: [],
+  }];
+  const { sections, warnings } = buildSaveFromGame(level(), art(), {
+    storyPanels,
+  });
+  assertEquals(warnings.filter((w) => /story/.test(w)), []);
+  const decoded = decodeSave(buildPayload(sections));
+  // The picture lives in band 6 (records 56-59), beside the level's own two.
+  const pieces = decoded.enemies.filter((e) => e.record >= 56);
+  assertStrictEquals(pieces.length, 4);
+  for (const piece of pieces) {
+    assertStrictEquals(
+      piece.behavior.move.mode & 2,
+      2,
+      `record ${piece.record} can be collided with`,
+    );
+    assertStrictEquals(piece.behavior.fire.geometry, 0, "a piece never fires");
+  }
+  // The level's own enemies are untouched by it.
+  const dot = decoded.enemies.find((e) => e.record < 16);
+  assertStrictEquals(dot.behavior.move.mode & 2, 0);
 });
 
 Deno.test("encodeBossTrailer round-trips through decodeBossTrailer", () => {

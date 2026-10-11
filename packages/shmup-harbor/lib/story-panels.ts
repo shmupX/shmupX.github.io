@@ -7,6 +7,10 @@
 // stage can open on a quiet stretch with one large object descending through
 // it. That is where a story picture can live.
 //
+// A piece is scenery, not an enemy: the writer gives every one the format's
+// NO-COLLISION attribute (record byte 2 bit 5), so nothing shoots it and the
+// ship passes through it, on the Saturn and in the runtime alike.
+//
 // The size is fixed by the record art table (`RECORD_ART` in
 // decode-sprites.js). The largest zako band is 4x4 cells — 64x64 pixels, one
 // frame, and only four such records per stage. The boss core reaches 128x128
