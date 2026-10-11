@@ -5659,6 +5659,10 @@
         let chooserRoster = [];      // [{ id, label, meta, frames: [canvas], builtin, off }]
         let chooserPick = 'duke';
         let chooserAnim = 0;         // preview interval while the modal is open
+        // The name the next new game gets, set by ?new=<name>: a visit to a
+        // subdomain no level has claimed lands here (main.ts), and the game
+        // made from it is called what the visitor typed.
+        let pendingNewGameName = '';
 
         function loadShipSheet() {
             if (shipSheet) return Promise.resolve(shipSheet);
@@ -5917,10 +5921,13 @@
             if (seeded) await mergeExtraSpritesIntoAtlas();
             populateStagePills(); loadCurrentStage(); renderEnemyList(); renderAtlas(); updateToolUI();
             const nameInput = document.getElementById('firebase-level-name');
-            if (nameInput) nameInput.value = '';
-            setDezaStatus('NEW GAME (UNSAVED)');
+            if (nameInput) nameInput.value = pendingNewGameName;
+            const named = pendingNewGameName;
+            pendingNewGameName = '';
+            setDezaStatus('NEW GAME (UNSAVED)' + (named ? ' · ' + named.toUpperCase() : ''));
             const who = chooserEntry(choice);
-            flash('NEW GAME — STAGE 00 · ' + (who ? who.label : String(playerData.name || 'duke').toUpperCase()));
+            flash('NEW GAME — STAGE 00 · ' + (who ? who.label : String(playerData.name || 'duke').toUpperCase())
+                + (named ? ' · ' + named.toUpperCase() : ''));
             leaveSavMode();
         }
 
@@ -12749,6 +12756,15 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             // ?libraryEditor=1&character=name opens the library editor on it.
             if (urlParams.get('libraryEditor')) {
                 openLibraryEditor(urlParams.get('character') || undefined);
+            }
+            // ?new=<name>: a subdomain nobody has claimed (main.ts sends
+            // `<name>.codemonkey.games/` here) — straight to CHOOSE YOUR
+            // CHARACTER, and the game that follows is named for it. The name
+            // is made a legal cloud key the way the loader does it.
+            const urlNew = urlParams.get('new');
+            if (urlNew && !urlLevel) {
+                pendingNewGameName = urlNew.replace(/[.#$/\[\]]/g, '_').trim().slice(0, 64);
+                openCharacterChooser();
             }
         };
     </script>

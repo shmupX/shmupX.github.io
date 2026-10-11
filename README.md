@@ -857,16 +857,16 @@ ship player 1 flies. **DUKE** and **BILL** are the two the engine bakes in
 picking him hands player 2 Duke so a 2P game is not two troopers); the rest is a
 roster of some 210 ships cut from a sprite sheet by `deno task ships:atlas` into
 `static/editor/assets/ships/ships.{png,json}`, the committed artefact of a
-gitignored source (`dev-fixtures/ship-sheet/ships.png`), the way the pickup atlas
-is. Each ship is found as a connected blob on the sheet's flat grey, cropped with
-its background **and** its drop shadow removed, and held to the Dezaemon 2
-system palette (`nearestPaletteIndex`, the same rule the `.sav` writer applies),
-so what the chooser shows is what a cart gets. A chosen ship rides with the game
-as a custom frame — `playerData.texture` names it and the level save carries the
-pixels — while Duke's shots, big shot, 3-way and shield stay whoever flies, the
-same way the trooper already works as player 2. `tests/ship_sheet_test.ts` pins
-the atlas: reading-order keys, trimmed non-overlapping frames, binary alpha and
-not one off-palette pixel.
+gitignored source (`dev-fixtures/ship-sheet/ships.png`), the way the pickup
+atlas is. Each ship is found as a connected blob on the sheet's flat grey,
+cropped with its background **and** its drop shadow removed, and held to the
+Dezaemon 2 system palette (`nearestPaletteIndex`, the same rule the `.sav`
+writer applies), so what the chooser shows is what a cart gets. A chosen ship
+rides with the game as a custom frame — `playerData.texture` names it and the
+level save carries the pixels — while Duke's shots, big shot, 3-way and shield
+stay whoever flies, the same way the trooper already works as player 2.
+`tests/ship_sheet_test.ts` pins the atlas: reading-order keys, trimmed
+non-overlapping frames, binary alpha and not one off-palette pixel.
 
 - **IMPORT** has two sources. **WEB** is the editor's own formats: a game
   directory, or a cloud game save. **DEZAEMON** is a console save, and its one
@@ -3220,6 +3220,39 @@ can say which of the four it is showing: only a commit is printed as `build`, a
 build id as `deploy`, a content hash as `catalog`.
 
 Point the `codemonkey.games` domain at the app in the Deploy dashboard.
+
+### Level subdomains
+
+`<name>.codemonkey.games` is the level called `<name>`. A visit to the **root**
+of a subdomain is routed by its label (`lib/level-subdomain.ts`, wired in
+`main.ts` ahead of `staticFiles()` and the dashboard route):
+
+- `2019-ps2.codemonkey.games/` → `/games/2028-ai?level=2019-PS2` — a level that
+  exists opens straight into the game, the way `?level=` does.
+- `my-first-level.codemonkey.games/` → `/editor/?new=my-first-level` — a name no
+  level has yet opens the editor on **CHOOSE YOUR CHARACTER**, and the game made
+  from it is called `my-first-level`.
+
+Only the root is redirected; every other path on a subdomain serves exactly as
+the apex does, which is what lets the redirect stay relative (the game and its
+bundle load from the host the visitor typed). The lookup is one shallow REST
+read of the cloud `levels/*` keys, cached for a minute like `/characters`;
+hostnames are case-insensitive and RTDB keys are not, so the label is matched
+exactly, then by case (`2019-ps2` finds `2019-PS2`; a tie such as
+`ramsie`/`Ramsie` resolves to the same one every time). A key the DNS cannot
+spell — a space, a dot, an underscore — is not reachable this way. If the
+database cannot be read at all, the label goes to the game rather than the
+editor: a shared link to a real level is the common case, and the loader's own
+"no such level" screen beats a stranger's editor opening over a name that
+exists. `www.codemonkey.games` is the apex, never a level. The dev tunnel's
+rewritten Host is looked past to `X-Forwarded-Host`, and `*.localhost` works the
+same in a checkout (`daioh.localhost:5173/`). `tests/level_subdomain_test.ts`
+pins all of it.
+
+**DNS and Deploy both have to know the wildcard.** Add `*.codemonkey.games` as a
+custom domain on the app in the Deploy dashboard (it issues the wildcard
+certificate) and point a `*` record at it beside the apex's — until both exist a
+subdomain simply does not resolve, and nothing in this repo can change that.
 
 ## Claude Code on the web
 

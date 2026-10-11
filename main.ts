@@ -2,6 +2,7 @@ import { App, staticFiles } from "fresh";
 import { define, type State } from "./utils.ts";
 import { injectLauncherMarker } from "./lib/launcher-inject.ts";
 import { dirIndexRedirect } from "./lib/static-indexes.ts";
+import { cloudLevelKeys, subdomainRedirect } from "./lib/level-subdomain.ts";
 import {
   isLeftOut,
   ROMSET_PATH,
@@ -64,6 +65,20 @@ app.use((ctx) => {
   const to = dirIndexRedirect(url.pathname + url.search);
   if (to === null) return ctx.next();
   return new Response(null, { status: 301, headers: { location: to } });
+});
+
+// `<name>.codemonkey.games/` is the level called <name>: its root goes to
+// the game with that level, or — when no level has the name — to the
+// editor's NEW GAME with the name filled in. Only the root; every other path
+// on a subdomain serves as the apex does. lib/level-subdomain.ts has the
+// matching rules and the cached level listing it reads. Ahead of
+// staticFiles() and the dashboard route, GET and HEAD only.
+app.use(async (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return ctx.next();
+  if (new URL(ctx.req.url).pathname !== "/") return ctx.next();
+  const peek = subdomainRedirect(ctx.req, []);
+  if (peek === null) return ctx.next();
+  return subdomainRedirect(ctx.req, await cloudLevelKeys()) ?? ctx.next();
 });
 
 // A packaged app leaves some static payloads out of its binary
