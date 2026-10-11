@@ -6,6 +6,7 @@
 //   deno task build:sav foo --palette snes               # reduce the art the Super Famicom way
 //   deno task build:sav foo --out build/sav/foo.sav --snes-pal build/sav/foo.pal --report
 //   deno task build:sav foo --author "EASIER BY CODE"    # who the staff roll presents it by
+//   deno task build:sav foo --name dezaFoo               # the cart's own name (its comment, its file) over the level's
 //
 // The export is the inverse of the .sav import the editor does: the record's
 // atlas (`atlasImageDataURL` + `atlasFrames`, the level's custom frames) is
@@ -102,6 +103,12 @@ export interface ArtFrame {
 export interface BuildSavOptions {
   /** A level name in the cloud, or a path to a level JSON file. Omitted: foo.json. */
   level?: string | null;
+  /**
+   * The cart's name, over the level's own: the header comment the writer
+   * sets and the "Dez 2 - <name>.sav" it is written as. The editor's publish
+   * does the same (record.name = the eShop name) before it exports.
+   */
+  name?: string | null;
   palette?: "saturn" | "snes";
   out?: string | null;
   snesPal?: string | null;
@@ -227,6 +234,10 @@ export async function buildSav(
     throw new Error(`unknown palette "${palette}" (saturn | snes)`);
   }
   const { record } = await loadLevel(options.level, log);
+  if (options.name?.trim()) {
+    record.name = options.name.trim();
+    log(`name: ${record.name} (--name, over the level's own)`);
+  }
 
   // The level's own atlas first, then the base game's sheet for whatever the
   // records still name — a level of stock enemies has an empty custom atlas.
@@ -442,7 +453,9 @@ if (import.meta.main) {
         fail(`--palette must be saturn or snes, got ${v}`);
       }
       opts.palette = v;
-    } else if (arg === "--out") opts.out = value();
+    } else if (arg === "--name") opts.name = value();
+    else if (arg.startsWith("--name=")) opts.name = arg.slice(7);
+    else if (arg === "--out") opts.out = value();
     else if (arg.startsWith("--out=")) opts.out = arg.slice(6);
     else if (arg === "--snes-pal") opts.snesPal = value();
     else if (arg.startsWith("--snes-pal=")) opts.snesPal = arg.slice(11);
@@ -458,7 +471,7 @@ if (import.meta.main) {
     else if (arg === "--help" || arg === "-h") {
       console.log(
         "usage: deno task build:sav [level-name | level.json] [--palette saturn|snes] [--out file.sav]\n" +
-          "       [--snes-pal file.pal] [--slot 1-5] [--comment TEXT] [--horizontal] [--two-player]\n" +
+          "       [--name NAME] [--snes-pal file.pal] [--slot 1-5] [--comment TEXT] [--horizontal] [--two-player]\n" +
           "       [--author NAME | --no-author] [--no-base-atlas] [--report]",
       );
       Deno.exit(0);
