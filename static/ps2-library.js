@@ -85,15 +85,26 @@ export function readInstalledCores() {
 // an uncontrolled page's fetches never reach it, so the mirrored paths would
 // 404 against this origin. Wait for control, with a ceiling so a claim that
 // never lands cannot hang an install.
+//
+// Waited for only when a claim can still come, though: a worker this call
+// just put in (register() answered with one installing or waiting) claims the
+// page as it activates. A registration that was already active when the page
+// loaded has nothing left to do, and a page outside it — a hard reload, or
+// DevTools' "Bypass for network" — stays outside until it is reloaded, so
+// eight seconds of waiting changed nothing and showed as an install stuck at
+// 0% before it failed. ensureEmuCore below still refuses an uncontrolled
+// page (the mirror needs the page's own fetches); an eShop install does not
+// (static/eshop-library.js requireWorker says why).
 let swReady = null;
 let swError = '';  // why the last registration attempt failed, for the message above
 function readyWorker() {
   if (swReady) return swReady;
   if (!('serviceWorker' in navigator)) return Promise.resolve(null);
   swReady = (async () => {
-    await navigator.serviceWorker.register(EMU_SW);
+    const registered = await navigator.serviceWorker.register(EMU_SW);
+    const claimComing = !!(registered && (registered.installing || registered.waiting));
     const reg = await navigator.serviceWorker.ready;
-    if (!navigator.serviceWorker.controller) {
+    if (!navigator.serviceWorker.controller && claimComing) {
       await new Promise((resolve) => {
         const done = () => { clearTimeout(timer); resolve(); };
         const timer = setTimeout(done, 8000);

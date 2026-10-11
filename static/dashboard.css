@@ -962,6 +962,9 @@ body.theme-xbox360.osd-music-blade .music-hd {
 .net-badge.err { color: #ff9b9b; }
 .net-badge.upd { color: #5effc8; cursor: pointer; animation: net-upd-pulse 1.4s ease-in-out infinite; }
 .net-badge.upd:hover { background: rgba(94, 255, 200, .18); }
+/* A console section's ! RETRY is a click target too (it re-runs the update). */
+.net-badge.err[role="button"] { cursor: pointer; }
+.net-badge.err[role="button"]:hover { background: rgba(255, 155, 155, .18); }
 @keyframes net-upd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 .game-row.sel .net-badge { color: #1a1400; border-color: rgba(20, 20, 0, .45); background: rgba(255, 255, 255, .35); }
 .net-prog {
@@ -1707,7 +1710,8 @@ body.theme-xbox360 .add-btn {
    otherwise runs a selection-class model with no focus styling at all). */
 .footer.tap:focus-visible,
 .footer .act:focus-visible,
-.net-badge.upd:focus-visible {
+.net-badge.upd:focus-visible,
+.net-badge.err[role="button"]:focus-visible {
   outline: 2px solid var(--yellow, #F6FF4A);
   outline-offset: 3px;
   border-radius: 6px;
