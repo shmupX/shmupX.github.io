@@ -331,6 +331,7 @@ deno task sav:inject      # …or merge it into one of the five save slots on th
 deno task sav:profile     # play a .sav in Mednafen and in the runtime at once and record a window of both (macOS)
 deno task eshop:check     # validate data/eshop.json against the built manifest
 deno task eshop:covers    # cover a published eShop game that went out without one (dry run; --write uploads)
+deno task eshop:publish   # export a level as a Dezaemon 2 cart and publish it to the eShop, replacing that id (--name NAME lists it as; --dry-run writes nothing)
 deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
@@ -3140,7 +3141,20 @@ every game anyone can get — and it is read from two places by
   and Sh'M↑ Party's eShop row says `4`.
 - The Firebase RTDB at `/eshop/`, where the level editor's SYSTEM MENU → EXPORT
   → ESHOP files a game (its gzipped cart under `/eshop/saves/<id>`, cover under
-  `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last). The
+  `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last).
+  `deno task eshop:publish <level> --name <name>`
+  ([`scripts/publish-eshop-sav.ts`](scripts/publish-eshop-sav.ts)) is that
+  export from a checkout: `build:sav`'s cart, story panels and all, with
+  `--name` as its own name (the header comment, and the `Dez 2 - <name>.sav`
+  the shop installs it as), `composeCover` over the cart just written, and
+  `publishDezaGame`'s three writes in the editor's order — the database
+  cannot tell the two apart. The id is the name's slug (`--id` overrides),
+  and publishing to an id that exists **replaces** it, save, cover and
+  listing, after naming the listing that goes; `--dry-run` builds and
+  renders and writes nothing. `--author NAME` is `build:sav`'s, and wanted:
+  a cloud level that credits nobody would otherwise go out presented by the
+  account running the task. `dezaFoo` is the cloud level `foo` published
+  this way, with `--author "EASIER BY CODE"` on its roll. The
   listing carries an `author`: the names on the cart's own staff roll
   (**Attribution** above — every typed name once, in the roll's order, a strip
   with no letter in it left off as a year rather than a person; `dezaByline`
