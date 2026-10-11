@@ -4343,6 +4343,17 @@
   let metaSize = $derived(stripOn ? '— MB' : (curRow ? curRow.size : '—'));
   let metaType = $derived(stripOn ? curSection.metaType : (curRow?.type || curSection.metaType));
   let metaDate = $derived(stripOn ? curSection.date : (curRow ? curRow.date : '—'));
+  // An installed eShop build's state, the shop screen's eshopStateLabel for
+  // the row it lists on a console section — where a failed update otherwise
+  // had nowhere to say why. Blank for every other row, and the panel line
+  // goes with it.
+  let metaState = $derived.by(() => {
+    if (stripOn || curRow?.kind !== 'eshop-web') return '';
+    const st = eshopStatus[curRow.g?.id];
+    if (st?.busy) return 'INSTALLING ' + (st.pct || 0) + '%' + (st.label ? ' · ' + st.label : '');
+    if (st?.err) return st.err;
+    return st?.updateAvailable ? 'UPDATE AVAILABLE' : 'INSTALLED';
+  });
   // What A does from here: open the section (or its file picker, when the
   // section is empty and A goes straight to the dialog), or launch a row.
   let gamesActionLabel = $derived(
@@ -7186,6 +7197,9 @@
           <div><span class="k">size</span><b>{metaSize}</b></div>
           <div><span class="k">type</span><b>{metaType}</b></div>
           <div><span class="k">date</span><b>{metaDate}</b></div>
+          {#if metaState}
+            <div><span class="k">state</span><b>{metaState}</b></div>
+          {/if}
         </div>
       </div>
 
@@ -7333,6 +7347,14 @@
                     <span class="eshop-kind">WEB</span>
                     {#if eshopStatus[r.g.id]?.busy}
                       <span class="net-badge dl">⬇ {eshopStatus[r.g.id].pct}%</span>
+                    {:else if eshopStatus[r.g.id]?.err}
+                      <!-- A failed update says so here as it does on the shop
+                           screen, rather than falling back to ↻ UPDATE as if
+                           nothing had been tried; the reason is the panel's
+                           state line (metaState). The badge retries. -->
+                      <span class="net-badge err" role="button" tabindex="0" title={eshopStatus[r.g.id].err}
+                            onclick={(e) => { e.stopPropagation(); eshopUpdate(r.g); }}
+                            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); eshopUpdate(r.g); } }}>! RETRY</span>
                     {:else if eshopStatus[r.g.id]?.updateAvailable}
                       <span class="net-badge upd" role="button" tabindex="0"
                             onclick={(e) => { e.stopPropagation(); eshopUpdate(r.g); }}

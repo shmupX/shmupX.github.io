@@ -3175,7 +3175,15 @@ every game anyone can get — and it is read from two places by
 What "install" means depends on the kind. A **web** game is unzipped into Cache
 Storage (`shmupx-eshop-v1`, keys `/eshop/<id>/…`) and served from there by the
 same service worker as the emulators, so it runs same-origin — which is what
-lets the launcher's mapped gamepad input reach it — and offline. A GitHub entry
+lets the launcher's mapped gamepad input reach it — and offline. The launcher
+page itself need not be under that worker to install or update one: the files
+are written from the page directly, and the game runs in its own frame, which
+the worker claims on its own even when a hard reload (or DevTools' "Bypass for
+network") left the page outside it. It used to refuse — UPDATE on such a page
+sat at 0% for eight seconds, then asked for a reload while the old build kept
+playing — and a console section's row, unlike the shop screen, showed nothing
+of that but ↻ UPDATE again; it now shows **! RETRY** (the badge retries) with
+the reason on the panel's `state` line. A GitHub entry
 with no `downloadUrl` streams its zipball through `/api/eshop/zip`; a
 `raw.githubusercontent.com` URL is pinned to the branch's newest commit so the
 install is never a stale CDN copy. A **Dezaemon** game goes onto the shelf

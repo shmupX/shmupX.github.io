@@ -564,12 +564,12 @@ export async function installedWebGames(entries) {
 }
 
 /**
- * Register the service worker that serves /eshop/ and wait for it to control
- * this page. Shares ps2-library's memoised registration: the emulator mirror
- * and the eShop are the same worker, and two register() calls racing each
- * other gain nothing. Resolves to the registration, or null when there can be
- * none (no API, insecure context, refused) — installWebGame turns that null
- * into a message that says which.
+ * Register the service worker that serves /eshop/. Shares ps2-library's
+ * memoised registration: the emulator mirror and the eShop are the same
+ * worker, and two register() calls racing each other gain nothing. Resolves
+ * to the registration, or null when there can be none (no API, insecure
+ * context, refused) — installWebGame turns that null into a message that
+ * says which.
  */
 export function ensureEshopWorker() {
   return readyEmuWorker();
@@ -588,15 +588,14 @@ async function requireWorker() {
         : 'the service worker at ' + EMU_SW + ' would not register, so an installed game could not be served',
     );
   }
-  // Registered is not controlling. A hard reload (or DevTools' "Bypass for
-  // network") leaves the page outside its worker, and every /eshop/ path
-  // would then 404 against the origin. Say so BEFORE the download, not after.
-  if (!sw.controller) {
-    throw new Error(
-      'the service worker is registered but is not in front of this page, which is what a hard ' +
-      'reload leaves behind — reload the page and try again',
-    );
-  }
+  // Registered is enough. This page does not have to be under the worker for
+  // an install: the files go into Cache Storage from here directly, and the
+  // game runs in its own frame, which the worker claims on its own — a frame
+  // opened from a page a hard reload (or DevTools' "Bypass for network") left
+  // outside the worker is still served from the install. Refusing here used
+  // to turn every UPDATE pressed on such a page into an eight-second stall
+  // and a "reload the page and try again", while the build it had been asked
+  // to replace kept playing.
   return reg;
 }
 
