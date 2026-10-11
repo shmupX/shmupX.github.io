@@ -47,6 +47,7 @@
     "psx:probe": "deno run -A tools/psx-sav/main.ts",
     "n64:probe": "deno run -A tools/n64-ddd/main.ts",
     "powerups:atlas": "deno run -A scripts/build-powerup-atlas.ts",
+    "ships:atlas": "deno run -A scripts/build-ship-sheet.ts",
     "deza:tonebank": "deno run -A packages/shmup-harbor/scripts/build-tone-bank.ts",
     "deza:meshlib": "deno run -A scripts/build-mesh-library.ts",
     "deza:palette": "deno run -A scripts/build-palette.ts",

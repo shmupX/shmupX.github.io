@@ -449,6 +449,36 @@
         }
         .deza-actions { display: flex; gap: 8px; padding: 0 6px; }
         .deza-actions .menu-row { flex: 1; }
+        /* NEW GAME › CHOOSE YOUR CHARACTER: a preview stage over a grid of
+           pixel thumbnails, on the same tokens as the slot list above. */
+        .chooser-stage {
+            display: flex; align-items: center; gap: 14px; margin: 0 6px 10px; padding: 10px 12px;
+            border-radius: 12px; background: var(--rbg); border: 1px solid var(--redge);
+        }
+        .chooser-preview {
+            width: 96px; height: 96px; flex-shrink: 0; image-rendering: pixelated;
+            background: rgba(0,0,0,.35); border: 1px solid var(--redge); border-radius: 8px;
+        }
+        .chooser-stage-txt { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .chooser-hint { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .12em; color: var(--raillbl); margin-top: 4px; }
+        .chooser-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 6px;
+            padding: 0 6px 10px; max-height: 40vh; overflow-y: auto;
+        }
+        .chooser-cell {
+            display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 2px;
+            border-radius: 8px; background: var(--rbg); border: 1px solid var(--redge); color: var(--rsub);
+            cursor: pointer; transition: border-color .1s, box-shadow .1s;
+        }
+        .chooser-cell canvas { width: 48px; height: 48px; image-rendering: pixelated; }
+        .chooser-cell span { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .08em; }
+        .chooser-cell.sel { border-color: var(--sel); box-shadow: 0 0 10px var(--selglow); color: var(--sel); }
+        .chooser-cell.builtin { border-color: var(--shedge); }
+        .chooser-cell.off { opacity: .4; cursor: default; }
+        .chooser-sep {
+            grid-column: 1 / -1; font-family: 'Share Tech Mono', monospace; font-size: 9px;
+            letter-spacing: .14em; color: var(--raillbl); padding: 6px 2px 0;
+        }
 
         .picker-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; padding: 2px 6px; }
         .picker-opt {
@@ -1257,7 +1287,10 @@
         <button class="menu-row" id="menu-save-row" onclick="quickSave();closeMenu()"><span class="mono-badge">SA</span><span class="row-txt"><span id="menu-save-label">SAVE ALL</span><span class="row-sub hidden" id="menu-save-sub"></span></span></button>
         <button class="menu-row" onclick="openSheet('import')"><span class="mono-badge">IM</span><span class="row-txt"><span>IMPORT</span><span class="row-sub">WEB &middot; DEZAEMON</span></span><span class="row-chev">&rsaquo;</span></button>
         <button class="menu-row" onclick="openSheet('export')"><span class="mono-badge">EX</span><span class="row-txt"><span>EXPORT</span><span class="row-sub" id="menu-export-sub">WEB &middot; DEZAEMON 2 (SATURN) &middot; 3D</span></span><span class="row-chev">&rsaquo;</span></button>
-        <button class="menu-row" onclick="startNewGame();closeMenu()"><span class="mono-badge">NG</span>NEW GAME</button>
+        <!-- NEW GAME opens on CHOOSE YOUR CHARACTER (the modal below the
+             library): Duke, Bill, or any ship on the roster sheet, and the
+             blank game is then built around the pick (startNewGame). -->
+        <button class="menu-row" onclick="openCharacterChooser()"><span class="mono-badge">NG</span><span class="row-txt"><span>NEW GAME</span><span class="row-sub">CHOOSE YOUR CHARACTER</span></span><span class="row-chev">&rsaquo;</span></button>
         <button class="menu-row hidden" id="deza-website-btn" onclick="openLoadedGameWebsite()"
                 title="Open this game's page on satakore.com — inside the CMG Desktop it opens as a Web Browser window"><span class="mono-badge">WB</span>VIEW WEBSITE</button>
         <!-- PLAY: the rows that run the open game, out of FILE SYSTEM's way.
@@ -1342,6 +1375,34 @@
             </button>
             <div id="deza-editfirst-note" class="menu-note" style="margin-top:0"></div>
             <div id="deza-library-list" class="deza-slots"></div>
+        </div>
+    </div>
+
+    <!-- NEW GAME › CHOOSE YOUR CHARACTER: the first step of a new game is the
+         ship the player flies. DUKE and BILL are the two characters the engine
+         bakes in (player-art.js and player2-art.js — Bill is the trooper that
+         player 2 flies); the rest is the roster atlas at /editor/assets/ships,
+         cut from the ship sheet by scripts/build-ship-sheet.ts and fetched the
+         first time this opens. The pick is previewed above the grid (animated
+         when it has more than one frame) and START builds the game around it. -->
+    <div id="character-chooser-modal" class="picker-overlay hidden" onclick="if(event.target===this)closeCharacterChooser()">
+        <div class="picker-panel" style="max-height:84vh">
+            <div class="picker-title">CHOOSE YOUR CHARACTER
+                <span id="chooser-count" class="deza-kind"></span>
+            </div>
+            <div class="chooser-stage">
+                <canvas id="chooser-preview" class="chooser-preview" width="96" height="96"></canvas>
+                <div class="chooser-stage-txt">
+                    <div id="chooser-name" class="deza-slot-name">DUKE</div>
+                    <div id="chooser-meta" class="deza-slot-meta"></div>
+                    <div class="chooser-hint">TAP OR ARROW KEYS TO BROWSE &middot; ENTER STARTS</div>
+                </div>
+            </div>
+            <div id="chooser-grid" class="chooser-grid" role="listbox" aria-label="Characters"></div>
+            <div class="deza-actions">
+                <button id="chooser-start" class="menu-row hi" onclick="confirmCharacterChoice()"><span class="mono-badge">GO</span>START NEW GAME</button>
+                <button class="menu-row" onclick="closeCharacterChooser()"><span class="mono-badge">✕</span>CANCEL</button>
+            </div>
         </div>
     </div>
 
@@ -5582,7 +5643,258 @@
             };
         }
 
-        async function startNewGame() {
+        // ================== NEW GAME › CHOOSE YOUR CHARACTER ==================
+        // The roster the chooser offers. DUKE and BILL are baked into the
+        // engine (player-art.js, player2-art.js — Bill is the trooper that
+        // player 2 flies); the rest is the ship sheet that
+        // scripts/build-ship-sheet.ts cut into /editor/assets/ships, every
+        // frame already on the Dezaemon 2 palette so a cart export does not
+        // recolour it. A sheet ship is in no stock atlas, so it travels with
+        // the game as a custom frame, exactly like an imported sprite; the two
+        // built-ins ship in game_asset and are only seeded when missing.
+        const SHIP_SHEET_URL = { json: '/editor/assets/ships/ships.json', png: '/editor/assets/ships/ships.png' };
+        const CHOOSER_PICK_KEY = 'cmg-new-game-character';   // last pick, so the next NEW GAME opens on it
+        let shipSheet = null;        // { frames, image } once fetched
+        let shipSheetLoading = null;
+        let chooserRoster = [];      // [{ id, label, meta, frames: [canvas], builtin, off }]
+        let chooserPick = 'duke';
+        let chooserAnim = 0;         // preview interval while the modal is open
+
+        function loadShipSheet() {
+            if (shipSheet) return Promise.resolve(shipSheet);
+            if (shipSheetLoading) return shipSheetLoading;
+            shipSheetLoading = (async () => {
+                const resp = await fetch(SHIP_SHEET_URL.json);
+                if (!resp.ok) throw new Error('ships.json ' + resp.status);
+                const json = normalizeAtlasData(await resp.json());
+                const image = new Image();
+                await new Promise((res, rej) => {
+                    image.onload = res;
+                    image.onerror = () => rej(new Error('ships.png did not load'));
+                    image.src = SHIP_SHEET_URL.png;
+                });
+                shipSheet = { frames: (json && json.frames) || {}, image };
+                return shipSheet;
+            })();
+            shipSheetLoading.catch(() => { shipSheetLoading = null; });
+            return shipSheetLoading;
+        }
+
+        // The engine's baked {key, w, h, rgba} frame -> canvas.
+        function rgbaFrameCanvas(sp) {
+            const c = document.createElement('canvas');
+            c.width = sp.w; c.height = sp.h;
+            c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(sp.rgba), sp.w, sp.h), 0, 0);
+            return c;
+        }
+        // One frame of the roster atlas -> canvas (null for a key it lacks).
+        function sheetFrameCanvas(sheet, key) {
+            const f = sheet.frames[key] && sheet.frames[key].frame;
+            if (!f) return null;
+            const c = document.createElement('canvas');
+            c.width = f.w; c.height = f.h;
+            c.getContext('2d').drawImage(sheet.image, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+            return c;
+        }
+
+        function builtinCharacters() {
+            const D = window.Dezaemon;
+            const duke = { id: 'duke', label: 'DUKE', meta: 'PLAYER 1 · THE SPARKLER SHOT', builtin: true, frames: [] };
+            const bill = { id: 'bill', label: 'BILL', meta: 'THE TROOPER · PLAYER 2 THEN FLIES DUKE', builtin: true, frames: [] };
+            if (D && D.decodePlayerArt) duke.frames = D.decodePlayerArt().filter((f) => /^duke_\d$/.test(f.key)).map(rgbaFrameCanvas);
+            if (D && D.decodePlayer2Art) bill.frames = D.decodePlayer2Art().map(rgbaFrameCanvas);
+            else { bill.off = true; bill.meta = 'NEEDS THE ENGINE MODULE'; }
+            return [duke, bill];
+        }
+
+        async function buildChooserRoster() {
+            const roster = builtinCharacters();
+            try {
+                const sheet = await loadShipSheet();
+                Object.keys(sheet.frames).forEach((key, i) => {
+                    const c = sheetFrameCanvas(sheet, key);
+                    if (!c) return;
+                    const num = String(i + 1).padStart(3, '0');
+                    roster.push({ id: key, label: num, meta: 'SHIP ' + num + ' · ' + c.width + '×' + c.height, frames: [c] });
+                });
+            } catch (e) {
+                console.warn('ship roster unavailable:', e);
+                roster.sheetError = (e && e.message) || String(e);
+            }
+            return roster;
+        }
+
+        function chooserEntry(id) { return chooserRoster.find((r) => r.id === id) || null; }
+
+        async function openCharacterChooser() {
+            closeMenu(); closePicker(); closeSheet();
+            const modal = document.getElementById('character-chooser-modal');
+            modal.classList.remove('hidden');
+            document.getElementById('chooser-grid').innerHTML = '<div class="chooser-sep">LOADING THE ROSTER…</div>';
+            document.getElementById('chooser-count').textContent = '';
+            chooserRoster = await buildChooserRoster();
+            if (modal.classList.contains('hidden')) return;   // cancelled while the sheet loaded
+            let last = 'duke';
+            try { last = localStorage.getItem(CHOOSER_PICK_KEY) || 'duke'; } catch (e) { }
+            const entry = chooserEntry(last);
+            renderChooserGrid();
+            selectCharacter(entry && !entry.off ? last : 'duke', { scroll: true });
+            document.getElementById('chooser-count').textContent = chooserRoster.length + ' CHARACTERS';
+        }
+
+        function renderChooserGrid() {
+            const grid = document.getElementById('chooser-grid');
+            grid.innerHTML = '';
+            let sep = false;
+            for (const r of chooserRoster) {
+                if (!r.builtin && !sep) {
+                    const el = document.createElement('div');
+                    el.className = 'chooser-sep'; el.textContent = 'SHIP ROSTER';
+                    grid.appendChild(el); sep = true;
+                }
+                const cell = document.createElement('button');
+                cell.type = 'button';
+                cell.className = 'chooser-cell' + (r.builtin ? ' builtin' : '') + (r.off ? ' off' : '');
+                cell.dataset.id = r.id;
+                cell.title = r.label + (r.meta ? ' — ' + r.meta : '');
+                cell.setAttribute('role', 'option');
+                const thumb = document.createElement('canvas');
+                thumb.width = 48; thumb.height = 48;
+                const f = r.frames[0];
+                if (f) {
+                    const s = Math.min(1, 44 / Math.max(f.width, f.height));
+                    const w = Math.round(f.width * s), h = Math.round(f.height * s);
+                    const ctx = thumb.getContext('2d'); ctx.imageSmoothingEnabled = false;
+                    ctx.drawImage(f, (48 - w) / 2 | 0, (48 - h) / 2 | 0, w, h);
+                }
+                const lbl = document.createElement('span'); lbl.textContent = r.label;
+                cell.appendChild(thumb); cell.appendChild(lbl);
+                if (!r.off) {
+                    cell.onclick = () => selectCharacter(r.id);
+                    cell.ondblclick = () => { selectCharacter(r.id); confirmCharacterChoice(); };
+                }
+                grid.appendChild(cell);
+            }
+            if (chooserRoster.sheetError) {
+                const el = document.createElement('div');
+                el.className = 'chooser-sep';
+                el.textContent = 'SHIP ROSTER UNAVAILABLE — ' + String(chooserRoster.sheetError).toUpperCase();
+                grid.appendChild(el);
+            }
+        }
+
+        function selectCharacter(id, opts) {
+            const entry = chooserEntry(id);
+            if (!entry || entry.off) return;
+            chooserPick = id;
+            document.querySelectorAll('#chooser-grid .chooser-cell').forEach((c) => {
+                const on = c.dataset.id === id;
+                c.classList.toggle('sel', on);
+                c.setAttribute('aria-selected', on ? 'true' : 'false');
+                if (on && opts && opts.scroll) c.scrollIntoView({ block: 'nearest' });
+            });
+            document.getElementById('chooser-name').textContent = entry.label;
+            document.getElementById('chooser-meta').textContent = entry.meta || '';
+            // The preview: a single frame as-is, or the cycle at the runtime's 6 fps.
+            clearInterval(chooserAnim); chooserAnim = 0;
+            const cv = document.getElementById('chooser-preview');
+            const ctx = cv.getContext('2d'); ctx.imageSmoothingEnabled = false;
+            let i = 0;
+            const draw = () => {
+                const f = entry.frames[i % entry.frames.length]; i++;
+                ctx.clearRect(0, 0, cv.width, cv.height);
+                if (!f) return;
+                const s = Math.max(1, Math.min(3, Math.floor(88 / Math.max(f.width, f.height))));
+                const w = f.width * s, h = f.height * s;
+                ctx.drawImage(f, (cv.width - w) / 2 | 0, (cv.height - h) / 2 | 0, w, h);
+            };
+            draw();
+            if (entry.frames.length > 1) chooserAnim = setInterval(draw, 1000 / 6);
+        }
+
+        function closeCharacterChooser() {
+            clearInterval(chooserAnim); chooserAnim = 0;
+            document.getElementById('character-chooser-modal').classList.add('hidden');
+        }
+
+        function confirmCharacterChoice() {
+            const entry = chooserEntry(chooserPick);
+            if (!entry || entry.off) return;
+            try { localStorage.setItem(CHOOSER_PICK_KEY, entry.id); } catch (e) { }
+            closeCharacterChooser();
+            startNewGame(entry.id);
+        }
+
+        // Keyboard while the chooser is open: arrows browse, Enter starts, Escape cancels.
+        document.addEventListener('keydown', (ev) => {
+            const modal = document.getElementById('character-chooser-modal');
+            if (!modal || modal.classList.contains('hidden')) return;
+            if (ev.key === 'Escape') { ev.preventDefault(); closeCharacterChooser(); return; }
+            if (ev.key === 'Enter') { ev.preventDefault(); confirmCharacterChoice(); return; }
+            if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(ev.key)) return;
+            ev.preventDefault();
+            const cells = [...document.querySelectorAll('#chooser-grid .chooser-cell:not(.off)')];
+            const idx = cells.findIndex((c) => c.dataset.id === chooserPick);
+            if (idx < 0) return;
+            const cur = cells[idx];
+            const cols = Math.max(1, Math.round(cur.parentElement.clientWidth / (cur.offsetWidth + 6)));
+            const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols }[ev.key];
+            const next = cells[Math.max(0, Math.min(cells.length - 1, idx + step))];
+            if (next) selectCharacter(next.dataset.id, { scroll: true });
+        });
+
+        // Put frames in the atlas ahead of the first paint — the same rule as
+        // seedPlayerArt(): a frame already there at the right size is left
+        // alone, a different size is a replacement, a missing one is added.
+        // `custom` marks every key as this level's own so the save carries it
+        // (a roster ship is in no stock atlas); without it only what was added
+        // is marked, which is right for art that ships in game_asset.
+        function seedFrames(frames, custom) {
+            const existing = (atlasData && atlasData.frames) || {};
+            let n = 0;
+            for (const fr of frames) {
+                if (custom) customFrameKeys.add(fr.key);
+                const cur = existing[fr.key] && existing[fr.key].frame;
+                if (cur && cur.w === fr.w && cur.h === fr.h) continue;
+                const entry = { key: fr.key, canvas: fr.canvas, w: fr.w, h: fr.h };
+                if (existing[fr.key]) replacedFrames[fr.key] = entry;
+                else extraSprites.push(entry);
+                customFrameKeys.add(fr.key);
+                n++;
+            }
+            return n;
+        }
+
+        // Point the fresh game's player at the chosen character. Duke's shots,
+        // big shot, 3-way and shield stay whoever flies — Dezaemon gives a
+        // ship a config block, not its own bullets, and the trooper already
+        // works this way as player 2. Returns the frames it added to the atlas.
+        async function applyCharacterChoice(choice) {
+            if (!choice || choice === 'duke') return 0;
+            const D = window.Dezaemon;
+            if (choice === 'bill') {
+                if (!D || !D.decodePlayer2Art) return 0;
+                const trooper = D.decodePlayer2Art().map((sp) => ({ key: sp.key, w: sp.w, h: sp.h, canvas: rgbaFrameCanvas(sp) }));
+                const n = seedFrames(trooper, false);
+                playerData.name = 'bill';
+                playerData.texture = trooper.map((f) => f.key);
+                // Player 2 then flies Duke, so a 2P game is not two troopers.
+                const duke = (D.DUKE_PLAYER && D.DUKE_PLAYER.texture) || ['duke_0', 'duke_1', 'duke_2', 'duke_3'];
+                gameData.playerData2 = { name: 'duke', texture: duke.slice() };
+                return n;
+            }
+            const sheet = await loadShipSheet();
+            const canvas = sheetFrameCanvas(sheet, choice);
+            if (!canvas) throw new Error('no such ship: ' + choice);
+            const n = seedFrames([{ key: choice, w: canvas.width, h: canvas.height, canvas }], true);
+            playerData.name = choice;
+            playerData.texture = [choice];
+            return n;
+        }
+
+        // `choice` is a roster id ('duke' when called with none): the chooser
+        // is the way in from the menu, this is what it lands on.
+        async function startNewGame(choice) {
             snapshotDefaultsOnce();
             let blank = null;
             if (window.Dezaemon) blank = window.Dezaemon.buildBlankGame(getDezaemonDefaults());
@@ -5597,13 +5909,18 @@
             storeBossDataForViewers();
             // Same discipline as an import: fold the player's frames into the
             // atlas BEFORE the first paint, or the player row in the editor —
-            // and the ship at play time — draws empty.
-            if (seedPlayerArt()) await mergeExtraSpritesIntoAtlas();
+            // and the ship at play time — draws empty. The chosen character
+            // goes in the same pass; Duke's art stays for his shots and shield.
+            let seeded = seedPlayerArt();
+            try { seeded += await applyCharacterChoice(choice); }
+            catch (e) { alert('THAT CHARACTER COULD NOT BE LOADED — FLYING DUKE INSTEAD.\n\n' + ((e && e.message) || e)); }
+            if (seeded) await mergeExtraSpritesIntoAtlas();
             populateStagePills(); loadCurrentStage(); renderEnemyList(); renderAtlas(); updateToolUI();
             const nameInput = document.getElementById('firebase-level-name');
             if (nameInput) nameInput.value = '';
             setDezaStatus('NEW GAME (UNSAVED)');
-            flash('NEW GAME — STAGE 00');
+            const who = chooserEntry(choice);
+            flash('NEW GAME — STAGE 00 · ' + (who ? who.label : String(playerData.name || 'duke').toUpperCase()));
             leaveSavMode();
         }
 

@@ -343,6 +343,7 @@ deno task sfc:upload      # publish the Super Famicom library (dumps + covers + 
 deno task psx:probe       # look inside a PlayStation Dezaemon+ / Dezaemon Kids! save (report / png / hex / diff / all)
 deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (ls / get / report / png / all)
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
+deno task ships:atlas     # cut dev-fixtures/ship-sheet/ships.png into the editor's NEW GAME character roster
 deno task tonebank:table  # re-pack the instrument map into src/audio/
 deno task netplay:bundle  # bundle the online-2P browser client
 deno task netplay:generate  # regenerate its bindings from the module
@@ -849,6 +850,23 @@ its own — forty of them. FILE SYSTEM is four now: **SAVE**, **IMPORT ›**,
 group under it. The two `›` rows open bottom sheets, and each option on a sheet
 opens in place onto the actions it stands for — the same buttons as before, with
 the same ids, so a build's status note is still under the row that started it.
+
+**NEW GAME** opens on **CHOOSE YOUR CHARACTER** before anything is built: the
+ship player 1 flies. **DUKE** and **BILL** are the two the engine bakes in
+(`player-art.js` and `player2-art.js` — Bill is the trooper player 2 flies, and
+picking him hands player 2 Duke so a 2P game is not two troopers); the rest is a
+roster of some 210 ships cut from a sprite sheet by `deno task ships:atlas` into
+`static/editor/assets/ships/ships.{png,json}`, the committed artefact of a
+gitignored source (`dev-fixtures/ship-sheet/ships.png`), the way the pickup atlas
+is. Each ship is found as a connected blob on the sheet's flat grey, cropped with
+its background **and** its drop shadow removed, and held to the Dezaemon 2
+system palette (`nearestPaletteIndex`, the same rule the `.sav` writer applies),
+so what the chooser shows is what a cart gets. A chosen ship rides with the game
+as a custom frame — `playerData.texture` names it and the level save carries the
+pixels — while Duke's shots, big shot, 3-way and shield stay whoever flies, the
+same way the trooper already works as player 2. `tests/ship_sheet_test.ts` pins
+the atlas: reading-order keys, trimmed non-overlapping frames, binary alpha and
+not one off-palette pixel.
 
 - **IMPORT** has two sources. **WEB** is the editor's own formats: a game
   directory, or a cloud game save. **DEZAEMON** is a console save, and its one
