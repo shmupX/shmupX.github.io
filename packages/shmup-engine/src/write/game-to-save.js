@@ -347,6 +347,7 @@ export function encodeEnemyRecord({
     ground = false,
     hpIndex = 0,
     armour = false,
+    noCollision = false,
     deathMode = 0,
     deathParam = 0,
     bulletType = 0,
@@ -358,7 +359,11 @@ export function encodeEnemyRecord({
     const b = new Uint8Array(18);
     b[0] = appearance & 0xff;
     b[1] = (animIndex & 7) | ((scoreIndex & 7) << 4) | (ground ? 0x80 : 0);
-    b[2] = (hpIndex & 7) | (armour ? 0x10 : 0) | ((deathMode & 3) << 6);
+    // Byte 2 bits 4-5 are the engine's hit attributes: bit 4 ARMOUR, bit 5
+    // NO COLLISION AT ALL (both collision drivers test it first and skip the
+    // whole block — no player shot, no bomb, no ship contact; FORMAT.md's
+    // hit-attribute table). decodeEnemyRecord carries them as move.mode.
+    b[2] = (hpIndex & 7) | (armour ? 0x10 : 0) | (noCollision ? 0x20 : 0) | ((deathMode & 3) << 6);
     b[3] = deathParam & 0xff;
     b[4] = (bulletType & 3) | ((deathPresentation & 3) << 2) | ((fireRateIndex & 7) << 4);
     b[5] = (fireGeometry & 0x0f) | (aimed && fireGeometry ? 0x10 : 0);
@@ -1007,17 +1012,20 @@ export function buildSaveFromGame(level, art, options = {}) {
             ? opts.storyPanels.find((p) => p.stage === s)
             : null;
         if (panel) {
-            // A piece never fires and never drops. Its hit points are the
-            // reading time: a player holding the fire button puts five
-            // full-power shots into a quarter in well under a second, which
-            // tore the picture up before it could be read, so this is the
-            // table's 102,400 — about twenty — and the panel still comes
-            // apart for anyone who wants to shoot it.
+            // A piece never fires, never drops, and is nothing to touch: it
+            // carries the NO-COLLISION attribute (byte 2 bit 5), which both
+            // of the engine's collision drivers test first — no player shot,
+            // no bomb, no ship contact — so the picture is scenery the ship
+            // flies through, not a wall it dies on. It used to carry twenty
+            // hits instead, "so the panel still comes apart for anyone who
+            // wants to shoot it", and the panel's quarters killed the player
+            // on contact like any other zako; a story is not an enemy.
             const storyBytes = encodeEnemyRecord({
                 appearance: STRAIGHT_APPEARANCE_BASE,
                 animIndex: 3,
-                scoreIndex: 1,
-                hpIndex: 4,
+                scoreIndex: 0,
+                hpIndex: 0,
+                noCollision: true,
                 deathMode: 0,
                 fireGeometry: 0,
                 aimed: false,

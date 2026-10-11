@@ -1560,6 +1560,21 @@ option pods, the bomb billed per Saturn frame, boss parts carrying their own hp
 — is the runtime's own rather than any one cart's, so a level has it whether it
 arrived as a `.sav` or out of the web catalog:
 
+- **A cart's bomb clears the bullets it touches.** `dezaBombDamage` runs the
+  same shape test over `enemyBullets` that it runs over the enemies, and a
+  bullet inside the bomb is destroyed. The Saturn's resolver would reach only a
+  bullet whose config bit 7 puts it in the full collision system (FORMAT.md's
+  hit-attribute table); this runtime models no bullet as shootable at all, and
+  a bomb that left the bullets it passed through standing was the thing a
+  player noticed.
+- **The NO-COLLISION attribute is honoured.** Record byte 2 bit 5 — bit 1 of
+  the decoder's `move.mode`, which both of the engine's collision drivers test
+  first — becomes `dezaNoCollision` on the spawned object, and the shots, the
+  columns, the bomb, the homing and tether picks and the ship's hull all skip
+  it. `build:sav` writes it on every story-panel piece, so the picture and the
+  words a stage opens on are scenery the ship flies through, on hardware and
+  here, rather than four zako it died on.
+
 ![The extended runtime in play: the boxer boss worked over mid-screen, the ship's fire raking sideways along the bottom, HP and COMBO across the top](static/extended-runtime.webp)
 
 That is the runtime's own half of a `sav:profile` window — the visual profiler
