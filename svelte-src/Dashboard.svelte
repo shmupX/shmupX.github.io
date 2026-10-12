@@ -5606,12 +5606,18 @@
   // Chrome appends the Stadia pad's extra buttons after the standard 17:
   // 17 = Capture, 18 = Assistant.
   const STADIA_ASSISTANT_BTN = 18;
+  // Nintendo Switch Pro Controller (Chrome: "Pro Controller (STANDARD GAMEPAD
+  // Vendor: 057e Product: 2009)"; Firefox "57e-2009-Pro Controller").
+  // Standard mapping: its SELECT slot is −, Home is 16 and Capture 17. Pinned
+  // to the plugin's copy by tests/gamepad_pads_test.ts.
+  const SWITCH_PRO_PAD_RE = /Pro Controller|Vendor:\s*057e\s+Product:\s*2009|\b0?57e-2009-/i;
 
   function padPriority(p) {
     const id = p?.id || '';
     if (SNES_PAD_RE.test(id)) return 3;
-    // A Legion pad ranks with Xbox pads under every spelling (LEGION_PAD_RE).
-    if (XBOX_PAD_RE.test(id) || STADIA_PAD_RE.test(id) || LEGION_PAD_RE.test(id)) return 2;
+    // A Legion pad ranks with Xbox pads under every spelling (LEGION_PAD_RE),
+    // and the Switch Pro with the Stadia, so neither one hides the other.
+    if (XBOX_PAD_RE.test(id) || STADIA_PAD_RE.test(id) || SWITCH_PRO_PAD_RE.test(id) || LEGION_PAD_RE.test(id)) return 2;
     return 1;
   }
 

@@ -21,6 +21,7 @@ const {
   GamepadManager,
   DEFAULT_MAPPING,
   STADIA_PAD_RE,
+  SWITCH_PRO_PAD_RE,
   ARCADE_COIN_KEY,
   ARCADE_COIN_TAP_MS,
   ARCADE_P1_KEYS,
@@ -53,7 +54,44 @@ const PADS = {
     mapping: "",
     connected: true,
   },
+  // Nintendo Switch Pro Controller, 057e:2009. Chrome reads it over HID on
+  // every desktop OS; Linux's hid-nintendo names it in full; Firefox prefixes
+  // the hex ids, zero-padded on Linux only.
+  switchProChrome: {
+    id: "Pro Controller (STANDARD GAMEPAD Vendor: 057e Product: 2009)",
+    mapping: "standard",
+    connected: true,
+  },
+  switchProLinux: {
+    id:
+      "Nintendo Switch Pro Controller (STANDARD GAMEPAD Vendor: 057e Product: 2009)",
+    mapping: "standard",
+    connected: true,
+  },
+  switchProFirefox: {
+    id: "57e-2009-Pro Controller",
+    mapping: "standard",
+    connected: true,
+  },
+  switchProFirefoxLinux: {
+    id: "057e-2009-Nintendo Switch Pro Controller",
+    mapping: "standard",
+    connected: true,
+  },
+  // Found by its ids alone, whatever a driver calls it.
+  switchProHex: {
+    id: "Wireless Gamepad (STANDARD GAMEPAD Vendor: 057e Product: 2009)",
+    mapping: "standard",
+    connected: true,
+  },
 };
+const SWITCH_PROS = [
+  PADS.switchProChrome,
+  PADS.switchProLinux,
+  PADS.switchProFirefox,
+  PADS.switchProFirefoxLinux,
+  PADS.switchProHex,
+];
 
 Deno.test("the Stadia controller is recognised under both browsers' id spellings", () => {
   assert(STADIA_PAD_RE.test(PADS.stadiaChrome.id));
@@ -67,6 +105,60 @@ Deno.test("the Stadia controller is recognised under both browsers' id spellings
   const proto = GamepadManager.prototype;
   assert(proto.isStadiaController.call(proto, PADS.stadiaChrome));
   assert(!proto.isStadiaController.call(proto, PADS.snes));
+  for (const pad of SWITCH_PROS) assert(!STADIA_PAD_RE.test(pad.id), pad.id);
+});
+
+Deno.test("the Switch Pro is recognised under every spelling, in all three copies", async () => {
+  const proto = GamepadManager.prototype;
+  for (const pad of SWITCH_PROS) {
+    assert(SWITCH_PRO_PAD_RE.test(pad.id), pad.id);
+    assert(compat.isSwitchProPad(pad), pad.id);
+    assert(proto.isSwitchProController.call(proto, pad), pad.id);
+    // Not mistaken for its sibling, the NSO SNES pad (057e:2017).
+    assert(!compat.isSnesPad(pad), pad.id);
+    assert(!proto.isSnesController.call(proto, pad), pad.id);
+  }
+  for (const pad of [PADS.snes, PADS.stadiaChrome, PADS.ds4, PADS.xbox]) {
+    assert(!compat.isSwitchProPad(pad), pad.id);
+    assert(!proto.isSwitchProController.call(proto, pad), pad.id);
+  }
+  const bundle = await Deno.readTextFile(
+    new URL("../static/dashboard.bundle.js", import.meta.url),
+  );
+  assert(
+    bundle.includes("Product:\\s*2009"),
+    "stale bundle: the launcher's Switch Pro regex is missing",
+  );
+});
+
+Deno.test("a Switch Pro and a Stadia connected together both drive the game", () => {
+  const proto = GamepadManager.prototype;
+  for (const pad of SWITCH_PROS) {
+    // It ranks with the Stadia, in both implementations...
+    assertStrictEquals(compat.padPriority(pad), 2, `plugin: ${pad.id}`);
+    assertStrictEquals(
+      proto.controllerPriority.call(proto, pad),
+      2,
+      `support: ${pad.id}`,
+    );
+  }
+  // ...so neither drops the other. shouldProcessController keeps only the
+  // pads at the best rank; a Switch Pro at 1 lost its fire buttons whenever a
+  // Stadia was connected beside it.
+  const manager = Object.create(proto);
+  manager.controllers = { 0: PADS.stadiaChrome, 1: PADS.switchProChrome };
+  assert(manager.shouldProcessController(PADS.stadiaChrome));
+  assert(manager.shouldProcessController(PADS.switchProChrome));
+  // It still beats the DualShock paired in the background, and still yields
+  // to the SNES pad.
+  assertStrictEquals(
+    compat.selectPreferredPad([PADS.ds4, PADS.switchProChrome]),
+    PADS.switchProChrome,
+  );
+  assertStrictEquals(
+    compat.selectPreferredPad([PADS.switchProChrome, PADS.snes]),
+    PADS.snes,
+  );
 });
 
 Deno.test("priority: SNES > Xbox = Stadia > everything else, in both implementations", () => {
@@ -807,6 +899,8 @@ function fakeManager() {
     arcadeCoinArmedAt: 0,
     isArcadeFrame: () => self.arcadeFrame === true,
     arcadeKeyFor: proto.arcadeKeyFor,
+    arcadeMutes: proto.arcadeMutes,
+    withArcadeStick: proto.withArcadeStick,
     pulseArcadeCoin: proto.pulseArcadeCoin,
     dispatchKeyboardEvent(type: string, m: { keyboardKey: string }) {
       sent.push(type + ":" + m.keyboardKey);
@@ -949,6 +1043,151 @@ Deno.test("a Select chord pays no coin", async () => {
   // board came up — is not a coin either.
   assertEquals(tapSelect({ arcade: true, armedAt: 0 }), []);
   await new Promise((r) => setTimeout(r, 200));
+});
+
+// ── Stadia and Switch Pro on a board (zunkyou) ──────────────────────────────
+
+// Press `pressed` with the left stick at `axes`, then let everything go,
+// through one group of the mapping table; report what reached the game.
+function pressAndRelease(group: string, opts: {
+  arcade: boolean;
+  id?: string;
+  mapping?: string;
+  pressed?: number[];
+  axes?: number[];
+  useWASD?: boolean;
+}) {
+  const { self, sent } = fakeManager();
+  self.arcadeFrame = opts.arcade;
+  const index = 0;
+  const pad = (held: boolean) =>
+    fakePad({
+      id: opts.id ?? PADS.switchProChrome.id,
+      index,
+      mapping: opts.mapping,
+      pressed: held ? opts.pressed : [],
+      axes: held ? opts.axes : [0, 0, 0, 0],
+      buttons: 19,
+    });
+  for (const held of [true, false]) {
+    GamepadManager.prototype.processButtonGroup.call(
+      self,
+      group,
+      pad(held),
+      index,
+      { ...self.buttonState[index] },
+      DEFAULT_MAPPING,
+      opts.useWASD ?? false,
+    );
+  }
+  return sent;
+}
+
+Deno.test("zunkyou's Shot and Bomb sit in the same two places on a Stadia and a Switch Pro", () => {
+  // By position, as the cabinet lays them out left to right: the bottom
+  // button (Stadia A, Switch Pro B) is button 1, the right one (Stadia B,
+  // Switch Pro A) button 2.
+  for (const id of [PADS.stadiaChrome.id, PADS.switchProChrome.id]) {
+    assertEquals(pressAndRelease("face", { arcade: true, id, pressed: [0] }), [
+      "keydown:Control",
+      "keyup:Control",
+    ]);
+    assertEquals(pressAndRelease("face", { arcade: true, id, pressed: [1] }), [
+      "keydown:Alt",
+      "keyup:Alt",
+    ]);
+  }
+});
+
+Deno.test("on an arcade board Capture presses nothing — F9 is MAME's Frameskip Inc", () => {
+  for (const id of [PADS.stadiaChrome.id, PADS.switchProChrome.id]) {
+    // Everywhere else it is the snapshot key...
+    assertEquals(
+      pressAndRelease("special", { arcade: false, id, pressed: [17] }),
+      ["keydown:F9", "keyup:F9"],
+    );
+    // ...but a board would skip a frame in twelve for every press.
+    assertEquals(
+      pressAndRelease("special", { arcade: true, id, pressed: [17] }),
+      [],
+    );
+  }
+});
+
+Deno.test("Home, Capture and Assistant are not a D-pad on a standard pad", () => {
+  // They used to read as Up, Down and Up: the shifted-index guess for
+  // non-standard layouts ran on every pad.
+  for (const pressed of [[16], [17], [18]]) {
+    for (const id of [PADS.stadiaChrome.id, PADS.switchProChrome.id]) {
+      for (const arcade of [false, true]) {
+        assertEquals(
+          pressAndRelease("dpad", { arcade, id, pressed }),
+          [],
+          `slot ${pressed} on ${id}`,
+        );
+      }
+    }
+  }
+  // A non-standard pad keeps the guess.
+  assertEquals(
+    pressAndRelease("dpad", {
+      arcade: false,
+      id: "Generic USB Joystick",
+      mapping: "",
+      pressed: [16],
+    }),
+    ["keydown:ArrowUp", "keyup:ArrowUp"],
+  );
+});
+
+Deno.test("on an arcade board a WASD pad's D-pad is the arrows, not player 2's buttons", () => {
+  // addGamepad can default a pad to WASD (a lone one included); off a board
+  // that stands.
+  assertEquals(
+    pressAndRelease("dpad", { arcade: false, pressed: [14], useWASD: true }),
+    ["keydown:a", "keyup:a"],
+  );
+  // On one, A is player 2's button 1 — zunkyou's Shot — so it is the arrow.
+  assertEquals(
+    pressAndRelease("dpad", { arcade: true, pressed: [14], useWASD: true }),
+    ["keydown:ArrowLeft", "keyup:ArrowLeft"],
+  );
+});
+
+Deno.test("on an arcade board a standard pad's left stick steers through the arrows", () => {
+  // MAME's own joystick path sees only the pad preferSinglePad picks, so
+  // with a Stadia and a Switch Pro both connected one stick moved nothing.
+  for (const id of [PADS.stadiaChrome.id, PADS.switchProChrome.id]) {
+    assertEquals(
+      pressAndRelease("dpad", { arcade: true, id, axes: [-0.9, -0.9, 0, 0] }),
+      [
+        "keydown:ArrowUp",
+        "keydown:ArrowLeft",
+        "keyup:ArrowUp",
+        "keyup:ArrowLeft",
+      ],
+    );
+  }
+  // A light touch is no press.
+  assertEquals(
+    pressAndRelease("dpad", { arcade: true, axes: [0.3, 0.3, 0, 0] }),
+    [],
+  );
+  // Off a board the stick is the game's own business.
+  assertEquals(
+    pressAndRelease("dpad", { arcade: false, axes: [-0.9, -0.9, 0, 0] }),
+    [],
+  );
+  // And a non-standard pad's axes 0/1 need not be a stick at all.
+  assertEquals(
+    pressAndRelease("dpad", {
+      arcade: true,
+      id: "Generic USB Joystick",
+      mapping: "",
+      axes: [-1, -1, 0, 0],
+    }),
+    [],
+  );
 });
 
 Deno.test("split mode holds back the keys for the right half's buttons — and Start's tap — on the split pads only", () => {

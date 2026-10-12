@@ -2891,10 +2891,10 @@ normalises pads whose browser reports them oddly (the Switch Online SNES pad,
 generic USB adapters with a hat-switch D-pad) and picks which pad drives when
 several are connected, and `static/controller-configurator.js` plus the mapping
 wizard let a player remap or teach an unknown pad. Priority when more than one
-pad is plugged in: SNES pads first, then Xbox-style and Stadia pads, then
-anything else, so a controller left paired in the background never steals the
-menus. `tests/gamepad_pads_test.ts` pins the three copies of that rule to each
-other and to the committed dashboard bundle.
+pad is plugged in: SNES pads first, then Xbox-style, Stadia and Switch Pro pads,
+then anything else, so a controller left paired in the background never steals
+the menus. `tests/gamepad_pads_test.ts` pins the three copies of that rule to
+each other and to the committed dashboard bundle.
 
 **Which engine sees the pad matters as much as the mapping.** The three browser
 engines disagree about the Gamepad API — WebKitGTK exposes it only where the
@@ -2917,7 +2917,7 @@ The default mapping, by standard-mapping slot:
 | 8, 9   | Select, Start              | Backspace, Enter (Start also taps the game to start it) |
 | 10, 11 | L3, R3                     | F, G (R3 enters fullscreen)                             |
 | 16     | Home / Guide               | H                                                       |
-| 17, 18 | Stadia Capture, Assistant  | F9, H                                                   |
+| 17, 18 | Capture, Stadia Assistant  | F9, H                                                   |
 
 **Google Stadia controller.** Chrome and Firefox both expose it with the
 standard mapping (vendor `18d1`, product `9400`), so its sticks, D-pad, A/B/X/Y,
@@ -2928,6 +2928,23 @@ the **Assistant button opens the Guide** on its own, since the pad has no SELECT
 to chord with — the Guide footer says so when a Stadia pad is the active one.
 Both extra buttons appear in the configurator (CAP / AST) and can be remapped
 like any other.
+
+**Nintendo Switch Pro Controller.** Chrome reads it over HID with the standard
+mapping on every desktop OS (vendor `057e`, product `2009`; Firefox spells it
+`57e-2009-Pro Controller`), so its face buttons go by position like every other
+pad: B is the bottom slot, A the right. − is SELECT, + is START, Home is slot 16
+and Capture slot 17, the Stadia's Capture slot. It ranks with the Stadia rather
+than below it. Pads ranked lower are not read at all while a higher one is
+connected, so at the old rank a Switch Pro beside a Stadia lost every button but
+Start and the D-pad.
+
+**On an arcade board** (a MAME game such as Zunzunkyou) the pad becomes MAME's
+stock P1 panel: bottom/right/left/top are buttons 1–4 (LCtrl, LAlt, Space,
+LShift), the shoulders 5–6, and a tap of SELECT drops a coin. On a Stadia that
+puts Zunzunkyou's Shot on A and Bomb on B. On a Switch Pro it puts them on B and
+A, the same two spots. Every pad's D-pad and left stick go out as the arrow
+keys, never WASD, since A and S are player 2's Shot and Bomb. Capture presses
+nothing on a board, because its F9 is MAME's Frameskip Inc.
 
 ### Lenovo Legion Go
 

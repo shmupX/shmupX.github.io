@@ -121,7 +121,7 @@ import { GamepadManager } from './gamepad-support.js';
                   <text x="170" y="127" text-anchor="middle" fill="#dfffc4" font-size="7">SEL</text>
                   <text x="230" y="127" text-anchor="middle" fill="#dfffc4" font-size="7">STR</text>
                   <!-- Stadia's extra pair (standard slots 17/18): Capture and Assistant.
-                       Other pads never press them; they light up only on a Stadia. -->
+                       A Switch Pro's Capture is slot 17 too; no other pad presses either. -->
                   <rect x="152" y="140" width="36" height="22" rx="6" fill="transparent" class="config-hit" data-group="special" data-button="capture"></rect>
                   <rect x="212" y="140" width="36" height="22" rx="6" fill="transparent" class="config-hit" data-group="special" data-button="assistant"></rect>
                   <circle cx="170" cy="150" r="5" fill="#1f5c34" class="config-btn special-capture" data-group="special" data-button="capture"></circle>

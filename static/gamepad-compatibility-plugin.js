@@ -22,6 +22,13 @@
   // button rebuild here — only the priority that makes it win over a generic
   // pad still paired in the background.
   const STADIA_PAD_RE = /Stadia|18d1.{0,8}9400/i;
+  // Nintendo Switch Pro Controller, vendor 057e, product 2009: Chrome "Pro
+  // Controller (STANDARD GAMEPAD Vendor: 057e Product: 2009)" ("Nintendo
+  // Switch Pro Controller (…)" through Linux's hid-nintendo), Firefox
+  // "57e-2009-Pro Controller" or "057e-2009-…". Standard mapping like the
+  // Stadia, and ranked with it for the same reason — see padPriority.
+  const SWITCH_PRO_PAD_RE =
+    /Pro Controller|Vendor:\s*057e\s+Product:\s*2009|\b0?57e-2009-/i;
   // Lenovo Legion Go family. The built-in TrueStrike controller enumerates as
   // "Lenovo Legion Controller for Windows", vendor 17ef, product 6182 in
   // XInput mode (6183 DInput, 6184 dual DInput, 6185 FPS mode): Linux Chrome
@@ -74,6 +81,10 @@
     return !!(pad && STADIA_PAD_RE.test(pad.id || ""));
   }
 
+  function isSwitchProPad(pad) {
+    return !!(pad && SWITCH_PRO_PAD_RE.test(pad.id || ""));
+  }
+
   function isLegionPad(pad) {
     return !!(pad && LEGION_PAD_RE.test(pad.id || ""));
   }
@@ -82,8 +93,12 @@
     const id = (pad && pad.id) || "";
     if (SNES_PAD_RE.test(id)) return 3;
     // A Legion pad ranks with Xbox pads under every spelling, not only the
-    // ones that say "Legion" — see LEGION_PAD_RE.
-    if (XBOX_PAD_RE.test(id) || STADIA_PAD_RE.test(id) || LEGION_PAD_RE.test(id)) return 2;
+    // ones that say "Legion" — see LEGION_PAD_RE. So does a Switch Pro, or a
+    // Stadia beside it would win every preferSinglePad pick.
+    if (
+      XBOX_PAD_RE.test(id) || STADIA_PAD_RE.test(id) ||
+      SWITCH_PRO_PAD_RE.test(id) || LEGION_PAD_RE.test(id)
+    ) return 2;
     return 1;
   }
 
@@ -1034,6 +1049,7 @@
     install,
     isSnesPad,
     isStadiaPad,
+    isSwitchProPad,
     isLegionPad,
     padPriority,
     decodeHat,

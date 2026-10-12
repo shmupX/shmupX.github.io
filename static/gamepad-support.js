@@ -17,6 +17,14 @@
 // Firefox spells the same pad "18d1-9400-Stadia Controller rev. A".
 const STADIA_PAD_RE = /Stadia|18d1.{0,8}9400/i;
 
+// Nintendo Switch Pro Controller, vendor 057e, product 2009. Chrome reads it
+// over HID with a standard mapping on every desktop OS: "Pro Controller
+// (STANDARD GAMEPAD Vendor: 057e Product: 2009)", "Nintendo Switch Pro
+// Controller (…)" through Linux's hid-nintendo; Firefox "57e-2009-Pro
+// Controller" (Linux "057e-2009-…"). Home is slot 16 and Capture slot 17, the
+// Stadia's Capture slot. An 8BitDo pad in Switch mode reports the same ids.
+const SWITCH_PRO_PAD_RE = /Pro Controller|Vendor:\s*057e\s+Product:\s*2009|\b0?57e-2009-/i;
+
 // Lenovo Legion Go built-in controller: "Lenovo Legion Controller for
 // Windows", vendor 17ef, product 6182 (XInput mode) — see the same regex in
 // gamepad-compatibility-plugin.js for the spellings. On Windows it is XInput's
@@ -61,9 +69,23 @@ const ARCADE_COIN_KEY = { keyboardKey: '5', keyCode: 53, code: 'Digit5' };
 // pad there is simply no fire button. These are MAME's STOCK P1 keys, so they
 // work on any board without a cfg: LCtrl/LAlt/Space/LShift are buttons 1-4 and
 // Z/X are 5-6. Mapped by POSITION like the table above, so FBTN_BOTTOM — the
-// thumb's button, A on a Stadia or Xbox pad — is button 1, the one almost
-// every game shoots with.
+// thumb's button, A on a Stadia or Xbox pad and B on a Switch Pro — is button
+// 1, the one almost every game shoots with, and FBTN_RIGHT next to it is
+// button 2: zunkyou's Shot and Bomb, in the cabinet's left-to-right order on
+// either pad.
+//
+// The D-pad is the arrows on every pad. addGamepad's two-pad default can put
+// a pad on WASD — a lone pad too, since it counts itself as the first — and on
+// a board A and S are player 2's buttons 1 and 2, Shot and Bomb in zunkyou,
+// and D its left. The player itself already steers player 1 with any pad's
+// D-pad.
 const ARCADE_P1_KEYS = {
+  dpad: {
+    up: { keyboardKey: 'ArrowUp', keyCode: 38, code: 'ArrowUp' },
+    down: { keyboardKey: 'ArrowDown', keyCode: 40, code: 'ArrowDown' },
+    left: { keyboardKey: 'ArrowLeft', keyCode: 37, code: 'ArrowLeft' },
+    right: { keyboardKey: 'ArrowRight', keyCode: 39, code: 'ArrowRight' },
+  },
   face: {
     btnBottom: { keyboardKey: 'Control', keyCode: 17, code: 'ControlLeft' },
     btnRight: { keyboardKey: 'Alt', keyCode: 18, code: 'AltLeft' },
@@ -75,6 +97,16 @@ const ARCADE_P1_KEYS = {
     rightShoulder: { keyboardKey: 'x', keyCode: 88, code: 'KeyX' },
   },
 };
+// Slots that press nothing at all on a board. Capture (slot 17 on a Stadia and
+// on a Switch Pro) is F9 everywhere else, and F9 is MAME's Frameskip Inc: each
+// press skips one more frame in every twelve, and nothing on the pad sends the
+// F8 that takes it back.
+const ARCADE_MUTED = {
+  special: new Set(['capture']),
+};
+// How far a stick has to lean before it presses an arrow on a board — the
+// configurator's digital threshold (processAnalogToDigital).
+const ARCADE_STICK_AT = 0.5;
 // Longer than this and it was a chord, not a coin.
 const ARCADE_COIN_TAP_MS = 600;
 // MAME samples input at the emulated frame rate, so the key has to be held
@@ -113,6 +145,8 @@ const DEFAULT_MAPPING = {
     home: { gamepadButton: 16, keyboardKey: 'h', keyCode: 72 },
     // The Stadia controller's two extra buttons. Chrome's standard mapping
     // appends them after the 17 standard slots: 17 = Capture, 18 = Assistant.
+    // A Switch Pro's Capture lands on 17 as well. (Not on an arcade board,
+    // where F9 is MAME's Frameskip Inc — see ARCADE_MUTED.)
     // Capture goes to F9 (the snapshot key emulator players and Mednafen use;
     // free for a game to pick up), Assistant doubles as Home. The launcher
     // itself also opens the Guide on Assistant in-game (Dashboard.svelte).
@@ -253,13 +287,21 @@ class GamepadManager {
     return STADIA_PAD_RE.test((controller && controller.id) || "");
   }
 
+  isSwitchProController(controller) {
+    return SWITCH_PRO_PAD_RE.test((controller && controller.id) || "");
+  }
+
   controllerPriority(controller) {
     if (this.isSnesController(controller)) return 3;
-    // Stadia sits with Xbox: a standard-mapping first-party pad that should
-    // win over a generic "Wireless Controller" left paired in the background.
-    // A Legion pad ranks here under every spelling, not only the ones that
-    // say "Legion" (see LEGION_PAD_RE).
-    if (this.isXboxController(controller) || this.isStadiaController(controller) || this.isLegionController(controller)) return 2;
+    // Stadia and the Switch Pro sit with Xbox: standard-mapping first-party
+    // pads that should win over a generic "Wireless Controller" left paired in
+    // the background — and tie with each other, because shouldProcessController
+    // drops every pad below the best rank: a Switch Pro left at 1 lost its fire
+    // buttons whenever a Stadia was connected too. A Legion pad ranks here
+    // under every spelling, not only the ones that say "Legion" (see
+    // LEGION_PAD_RE).
+    if (this.isXboxController(controller) || this.isStadiaController(controller) ||
+      this.isSwitchProController(controller) || this.isLegionController(controller)) return 2;
     return 1;
   }
 
@@ -409,7 +451,9 @@ class GamepadManager {
     // D-pad press state comes from readDpad() so non-standard pads (hat switch
     // on an axis, digital D-pad axes, or shifted button indices) drive it — not
     // just the standard buttons 12-15.
-    const dpadDirs = groupName === 'dpad' ? this.readDpad(controller, mapping) : null;
+    const dpadDirs = groupName === 'dpad'
+      ? this.withArcadeStick(controller, this.readDpad(controller, mapping))
+      : null;
 
     for (let buttonName in group) {
       const buttonMapping = group[buttonName];
@@ -467,6 +511,8 @@ class GamepadManager {
           // Select over an arcade board arms the coin; nothing goes out yet.
           else if (groupName === 'special' && buttonName === 'select' && this.isArcadeFrame()) {
             this.arcadeCoinArmedAt = Date.now();
+          } else if (this.arcadeMutes(groupName, buttonName)) {
+            // nothing for the board (see ARCADE_MUTED)
           } else {
             const eff = this.arcadeKeyFor(groupName, buttonName) ||
               this.getEffectiveMappingForLayout(groupName, buttonName, buttonMapping, useWASD);
@@ -492,6 +538,8 @@ class GamepadManager {
             if (armedAt && (Date.now() - armedAt) <= ARCADE_COIN_TAP_MS && !overlayOpen) {
               this.pulseArcadeCoin();
             }
+          } else if (this.arcadeMutes(groupName, buttonName)) {
+            // its keydown never went out either
           } else {
             const eff = this.arcadeKeyFor(groupName, buttonName) ||
               this.getEffectiveMappingForLayout(groupName, buttonName, buttonMapping, useWASD);
@@ -660,9 +708,14 @@ class GamepadManager {
     let up = mapped('up', 12), down = mapped('down', 13),
         left = mapped('left', 14), right = mapped('right', 15);
 
-    // 2) Shifted indices some non-standard layouts use (e.g. Firefox).
-    up = up || pressed(16) || pressed(18) || pressed(20);
-    down = down || pressed(17) || pressed(19) || pressed(21);
+    // 2) Shifted indices some non-standard layouts use (e.g. Firefox). Never
+    //    on a standard-mapping pad: there 16 is Home and 17/18 are the extra
+    //    buttons (Capture on a Stadia or Switch Pro, the Stadia's Assistant),
+    //    which this used to read as Up, Down and Up.
+    if (controller.mapping !== 'standard') {
+      up = up || pressed(16) || pressed(18) || pressed(20);
+      down = down || pressed(17) || pressed(19) || pressed(21);
+    }
 
     // 3) Dedicated digital D-pad axes (value -1/0/+1), distinct from analog
     //    sticks. Only trust them when in [-1.05, 1.05] (skip neutral sentinels).
@@ -936,6 +989,31 @@ class GamepadManager {
     const group = ARCADE_P1_KEYS[groupName];
     if (!group || !group[buttonName]) return null;
     return this.isArcadeFrame() ? group[buttonName] : null;
+  }
+
+  // On an arcade board a standard pad's left stick steers too, through the
+  // D-pad's arrow keys and its press and release edges. MAME reads a stick
+  // only through its joystick path, which sees the single pad preferSinglePad
+  // hands it: with a Stadia and a Switch Pro both connected, the other pad's
+  // stick moved nothing. Standard pads only, where axes 0/1 are that stick.
+  withArcadeStick(controller, dirs) {
+    if (!controller || controller.mapping !== 'standard' || !this.isArcadeFrame()) return dirs;
+    const ax = controller.axes || [];
+    const x = typeof ax[0] === 'number' ? ax[0] : 0;
+    const y = typeof ax[1] === 'number' ? ax[1] : 0;
+    return {
+      up: dirs.up || y < -ARCADE_STICK_AT,
+      down: dirs.down || y > ARCADE_STICK_AT,
+      left: dirs.left || x < -ARCADE_STICK_AT,
+      right: dirs.right || x > ARCADE_STICK_AT,
+    };
+  }
+
+  // Does this slot press nothing on the arcade board on screen? False
+  // whenever the game is not one.
+  arcadeMutes(groupName, buttonName) {
+    const muted = ARCADE_MUTED[groupName];
+    return !!(muted && muted.has(buttonName)) && this.isArcadeFrame();
   }
 
   // Is the game on screen an arcade board? The player is mirrored under our
@@ -1235,5 +1313,5 @@ if (typeof window !== 'undefined') {
 }
 
 // ES module exports so other web games can import this class.
-export { GamepadManager, DEFAULT_MAPPING, STADIA_PAD_RE, LEGION_PAD_RE, SPLIT_RIGHT_HALF_SLOTS, ARCADE_COIN_KEY, ARCADE_COIN_TAP_MS, ARCADE_P1_KEYS };
+export { GamepadManager, DEFAULT_MAPPING, STADIA_PAD_RE, SWITCH_PRO_PAD_RE, LEGION_PAD_RE, SPLIT_RIGHT_HALF_SLOTS, ARCADE_COIN_KEY, ARCADE_COIN_TAP_MS, ARCADE_P1_KEYS };
 export default GamepadManager;
