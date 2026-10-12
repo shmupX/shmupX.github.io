@@ -3262,12 +3262,16 @@
             if (!atlasData || !atlasData.frames) return [];
             return Object.keys(atlasData.frames).filter(k => /^player0[0-9]\.(gif|png)$/.test(k)).sort().slice(0, 2);
         }
-        // Somewhere to save to: a directory handle, a named cloud game — or,
-        // for an opened cart that has been edited, the shelf (SAVE MOD).
+        // Somewhere to save to: a directory handle, the cloud — or, for an
+        // opened cart that has been edited, the shelf (SAVE MOD). The cloud
+        // needs no name up front: saveToFirebase asks for one when the name
+        // box is empty, so any loaded game can be saved. Gating this on a
+        // typed name hid the SAVE badge, the drawer's SAVE row and the lab's
+        // Y SAVE on every NEW GAME, and the one way left to keep it was the
+        // import sheet's SAVE GAME row three menus down.
         function hasSaveTarget() {
             if (lineageActive()) return lineageForked();
-            const nameInput = document.getElementById('firebase-level-name');
-            return !!dirHandle || !!(nameInput && nameInput.value.trim());
+            return !!dirHandle || !!gameData;
         }
         // sec7 3D models arrive only with a Dezaemon .sav import.
         function hasSec7Models() {
@@ -3289,8 +3293,62 @@
                 onBack: closeBossLab,
                 onSave: () => quickSave(),
                 canSave: hasSaveTarget,
+                stageBossKey: () => 'boss' + getCurrentStageId(),
+                stageLabel: () => 'STAGE ' + String(getCurrentStageId()).padStart(2, '0'),
+                onAssignStageBoss: (key) => assignStageBoss(key, getCurrentStageId()),
             });
             return bossLab;
+        }
+        // Make `key`'s record the boss stage `sid` fights. The runtime pairs
+        // stage N with slot bossN, so a boss added from the library lands in
+        // the first free slot — boss1 on a new game — and STAGE 00 keeps
+        // fighting whatever sits in boss0, however often that chip is lit in
+        // the lab. The two records trade slots. The stage's parking row/col
+        // (a Dezaemon import's, see importCharacterFromLibrary) stays with
+        // the slot: it belongs to the scenery, not the character. Returns the
+        // slot key the record now sits in.
+        function assignStageBoss(key, sid) {
+            const slot = 'boss' + sid;
+            if (!bossData || !bossData[key] || key === slot) return key;
+            syncEnemyEditorForm();
+            const mover = bossData[key], tenant = bossData[slot] || null;
+            const placement = (r) => r && r.dezaemon && typeof r.dezaemon.row === 'number'
+                ? { row: r.dezaemon.row, col: r.dezaemon.col } : null;
+            const place = (r, p) => {
+                if (!r) return;
+                if (p) {
+                    r.dezaemon = Object.assign({}, r.dezaemon || {}, { row: p.row });
+                    if (typeof p.col === 'number') r.dezaemon.col = p.col; else delete r.dezaemon.col;
+                } else if (r.dezaemon) { delete r.dezaemon.row; delete r.dezaemon.col; }
+            };
+            const pm = placement(mover), pt = placement(tenant);
+            place(mover, pt); place(tenant, pm);
+            bossData[slot] = mover;
+            if (tenant) bossData[key] = tenant; else delete bossData[key];
+            if (gameData) gameData.bossData = bossData;
+            storeBossDataForViewers();
+            if (currentEditorTab === 'bosses' && (currentEnemyKey === key || currentEnemyKey === slot)) {
+                editEnemy(currentEnemyKey === key ? slot : (tenant ? key : slot));
+            } else renderEnemyList();
+            if (bossLab) { bossLab.refresh(); bossLab.selectBoss(slot); }
+            if (!bossLabOpen) renderGrid();
+            flash(bossDisplayName(slot, mover).toUpperCase() + ' → ' + slot.toUpperCase()
+                + ' · FIGHTS ON STAGE ' + String(sid).padStart(2, '0'));
+            return slot;
+        }
+        // PLAY while the lab is open runs the open stage, and the stage fights
+        // the boss in its own slot — not whichever chip is lit. A lit chip
+        // that sits in some other slot is the boss the player wants to see,
+        // so offer to move it into the stage's slot before the game opens.
+        function settleLabBossForPlay() {
+            if (!bossLabOpen || !bossLab || !bossData) return;
+            const sid = getCurrentStageId(), slot = 'boss' + sid, cur = bossLab.curKey();
+            if (!cur || cur === slot || !bossData[cur]) return;
+            const stage = 'STAGE ' + String(sid).padStart(2, '0');
+            const tenant = bossData[slot] ? bossDisplayName(slot, bossData[slot]) + ' (' + slot + ')' : 'nobody';
+            if (confirm(stage + ' fights ' + tenant + ', not ' + bossDisplayName(cur, bossData[cur]) + ' (' + cur + ').\n\n'
+                + 'Make ' + bossDisplayName(cur, bossData[cur]) + ' the ' + stage + ' boss and play?\n\n'
+                + 'Cancel plays the stage as it is.')) assignStageBoss(cur, sid);
         }
         function applyBossPatterns(changes, n) {
             for (const k in changes) {
@@ -3709,6 +3767,8 @@
             const obj = gameData ? (gameData[currentStageKey] || {}) : {};
             currentGrid = normalizeGrid(obj.enemylist);
             renderGrid();
+            // The lab's STAGE nn tag follows the open stage.
+            if (bossLab && bossLabOpen) bossLab.refresh();
                        updateToolUI();
         }
 
@@ -4665,10 +4725,25 @@
                     delete entry.dezaemon.row;
                     delete entry.dezaemon.col;
                 }
+                // The record reads by the library's name for it — without
+                // one it would show as its slot's shipped tenant ("Barlog"
+                // for anything in boss1) in the lab and the boss list.
+                if (!entry.name || typeof entry.name !== 'string') entry.name = String(name);
                 bossData[key] = entry;
                 gameData.bossData = bossData;
                 storeBossDataForViewers();
                 switchEditorTab('bosses');
+                // A fresh slot is one no stage fights (stage N plays bossN):
+                // on a new game the library boss lands in boss1 and STAGE 00
+                // goes on fighting the starter in boss0. Offer the open
+                // stage's slot right here, where the player is looking.
+                const sid = getCurrentStageId(), slot = 'boss' + sid;
+                if (!targetKey && key !== slot) {
+                    const stage = 'STAGE ' + String(sid).padStart(2, '0');
+                    const tenant = bossData[slot] ? bossDisplayName(slot, bossData[slot]) + ' (' + slot + ')' : 'nobody';
+                    if (confirm("'" + name + "' went into " + key + '. ' + stage + ' fights ' + tenant + '.\n\n'
+                        + "Make '" + name + "' the " + stage + ' boss instead?')) key = assignStageBoss(key, sid);
+                }
             } else if (kind === 'player') {
                 playerData = entry;
                 gameData.playerData = playerData;
@@ -4685,7 +4760,7 @@
             }
             document.getElementById('character-library-modal').classList.add('hidden');
             editEnemy(key);
-            alert(`'${name}' added as ${key}. Save to keep it in this level.`);
+            alert(`'${name}' added as ${key}. SAVE (the toolbar badge, Y on a pad) keeps it in this game.`);
         }
 
         // "PUBLISH TO LIBRARY": pack the current entry's frames from the level
@@ -5741,6 +5816,7 @@
         async function playCurrentStage(opts) {
             if (!gameData) { alert('Load directory first'); return; }
             if (!syncEnemyEditorForm(true)) return;
+            settleLabBossForPlay();
             const sid = getCurrentStageId();
             // A no-op when every record's art is already here; otherwise the
             // library answers before the atlas is published to the game.
@@ -10273,10 +10349,16 @@ function GAME3D_RUNTIME(DATA) {
         // own name wins whenever it carries that form — otherwise an imported
         // save's stage bosses would all read as Bison, Barlog, Sagat, Vega, Fang.
         const IMPORTED_BOSS_NAME = /^dezaBoss\d+$/;
+        // A record that carries a name of its own — a library boss dropped
+        // into boss1, a stock boss traded into another slot (assignStageBoss)
+        // — reads by that name; the slot's shipped tenant only names the
+        // shipped record (so "bison" in boss0 still reads Bison).
         function bossDisplayName(key, entry) {
-            const own = entry && entry.name;
-            if (IMPORTED_BOSS_NAME.test(own || '')) return own;
-            return BOSS_PATTERN_NAMES[key] || own || key;
+            const own = entry && typeof entry.name === 'string' ? entry.name : '';
+            if (IMPORTED_BOSS_NAME.test(own)) return own;
+            const stock = BOSS_PATTERN_NAMES[key];
+            if (own && (!stock || own.toLowerCase() !== stock.toLowerCase())) return own;
+            return stock || own || key;
         }
 
         // Boss pattern assignment lives in the BOSS LAB now (see the BOSS LAB
@@ -11349,6 +11431,7 @@ function GAME3D_RUNTIME(DATA) {
                 atlasAheadOfCloud = false;
                 if (gameData) gameData.gameId = payload.gameId;
                 document.getElementById('firebase-level-name').value = name;
+                updateContextualToolbar();   // the drawer's SAVE row reads the name box
                 alert(`Game "${name}" saved!\nIncludes: title, story, sprites, levels, enemies & bosses`);
             } catch (e) { alert('Save failed: ' + e.message); }
         }

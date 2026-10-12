@@ -16,6 +16,10 @@
 //     onApply: (changes, n) => {},        // commit {bossKey: patternKey|''}; omit → lab mutates the data itself
 //     onBack: () => {},                   // B when nothing is pending (omit → B is inert)
 //     onSave: () => {} | null,            // Y SAVE when the host has a save target
+//     canSave: () => bool,                // gates Y SAVE (omit → shown whenever onSave is)
+//     stageBossKey: () => 'boss0',        // the slot the open stage fights (stage N → bossN)
+//     stageLabel: () => 'STAGE 00',       // how that stage is named in the chrome
+//     onAssignStageBoss: key => slotKey,  // APPLY: put this record in the stage's slot; returns the slot
 //     bossName: (key, rec) => string,     // optional display-name override
 //     theme: 'xbox' | 'nintendo', layout: 'auto' | 'phone' | 'desktop',
 //   });
@@ -118,6 +122,13 @@
 .bl-chip.on { border-color: var(--sel); color: var(--sel); background: var(--btnactive); box-shadow: 0 0 16px var(--selglow); }
 .bl-chip-dot { position: absolute; top: 6px; right: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--sel); box-shadow: 0 0 8px var(--sel); }
 .bl-chip-dot.pend { background: #fff; box-shadow: 0 0 8px #fff; }
+.bl-chip-stage { display: inline-block; margin-left: 8px; padding: 2px 6px; border-radius: 6px; font-family: 'Share Tech Mono', monospace; font-size: 8px; font-weight: 400; letter-spacing: .12em; border: 1px solid var(--redge); color: var(--rsub); vertical-align: 1px; }
+.bl-chip.on .bl-chip-stage, .bl-chip-stage.pend { border-color: var(--sel); color: var(--sel); }
+/* which boss the open stage fights: a row above the pattern list, with FIGHT ON STAGE nn for any other chip */
+.bl-assign { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 2px 10px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--redge); background: rgba(0,0,0,.3); font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .12em; line-height: 1.6; color: var(--rsub); }
+.bl-assign.pend { border-color: var(--sel); color: var(--sel); box-shadow: 0 0 10px var(--selglow); }
+.bl-assign-btn { flex-shrink: 0; min-height: 36px; padding: 0 12px; border-radius: 18px; border: 2px solid var(--sel); background: var(--btnbg); color: var(--sel); font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: 800; letter-spacing: .12em; cursor: pointer; }
+.bl-assign-btn.dim { border-color: var(--redge); color: var(--rink); }
 /* split: live stage (left) · pattern panel (right); stacked below 760px */
 .bl-split { flex: 1; min-height: 0; display: flex; flex-direction: row; align-items: stretch; overflow: hidden; }
 .bl-root.narrow .bl-split { flex-direction: column; }
@@ -239,7 +250,8 @@
             ensureStyle();
             this.container = container;
             this.opts = opts || {};
-            this.state = { bossKey: null, pending: {}, previewBoss: null, moveId: 'idle', narrow: false, panelOpen: true, theme: this.opts.theme === 'nintendo' ? 'nintendo' : 'xbox' };
+            // pendingStage: the chip queued for the open stage's slot (FIGHT ON STAGE nn), committed by APPLY.
+            this.state = { bossKey: null, pending: {}, previewBoss: null, pendingStage: null, moveId: 'idle', narrow: false, panelOpen: true, theme: this.opts.theme === 'nintendo' ? 'nintendo' : 'xbox' };
             this.sim = { x: 0.5, y: BASE, alpha: 1, animKey: 'idle', frame: 0, frameT: 0, projs: [], player: { x: 0.5, y: 0.86 }, hits: 0, hitAt: 0, seq: null, stepIdx: 0, loopAt: 0, dragging: false, dragged: false, nowT: 0 };
             this.dom = { boss: null, bossKey: null, bossFrame: null, bossScale: 0, player: null, playerSprite: null, playerHint: null, playerFrame: null, playerScale: 0, ringAt: 0, lastHit: false };
             this.prevT = null;
@@ -264,10 +276,22 @@
         bossName(k) {
             const rec = this.data()[k];
             if (this.opts.bossName) return this.opts.bossName(k, rec);
-            const own = rec && rec.name;
-            if (IMPORTED_BOSS_NAME.test(own || '')) return own;
-            return NAMES[k] || own || k;
+            const own = rec && typeof rec.name === 'string' ? rec.name : '';
+            if (IMPORTED_BOSS_NAME.test(own)) return own;
+            // A record with a name of its own (a library boss in boss1, a
+            // stock boss traded into another slot) reads by it; the slot's
+            // shipped tenant only names the shipped record.
+            const stock = NAMES[k];
+            if (own && (!stock || own.toLowerCase() !== stock.toLowerCase())) return own;
+            return stock || own || k;
         }
+        // ---- the open stage's boss (hosts that know which stage is open) ----
+        stageSlot() { return this.opts.stageBossKey ? (this.opts.stageBossKey() || null) : null; }
+        stageLabel() { return this.opts.stageLabel ? this.opts.stageLabel() : stageOf(this.stageSlot() || ''); }
+        canAssignStage() { return !!(this.opts.onAssignStageBoss && this.stageSlot()); }
+        // The chip queued for the stage's slot, or null once it is there already / gone.
+        stagePending() { const k = this.state.pendingStage; return k && k !== this.stageSlot() && this.data()[k] ? k : null; }
+        setStagePending(k) { this.state.pendingStage = k || null; this.renderChrome(); this.renderPanel(); }
         curKey() { const keys = this.keys(); return keys.includes(this.state.bossKey) ? this.state.bossKey : keys[0]; }
         curBoss() { return this.data()[this.curKey()]; }
         savedPattern(k) { const b = this.data()[k]; return (b && b.attackPattern) || ''; }
@@ -293,7 +317,8 @@
             return pick(this.curBoss()) || pick(d[this.effKey(this.curKey())]) || pick(d.bossExtra) || pick(d.boss1);
         }
         pendingCount() {
-            return this.keys().filter(k => this.state.pending[k] !== undefined && this.state.pending[k] !== this.savedPattern(k)).length;
+            return this.keys().filter(k => this.state.pending[k] !== undefined && this.state.pending[k] !== this.savedPattern(k)).length
+                + (this.stagePending() ? 1 : 0);
         }
 
         // ---------- frames ----------
@@ -474,6 +499,14 @@
                 const btn = el('button', 'bl-chip' + (k === cur ? ' on' : ''), this.bossName(k));
                 const ov = !!this.savedPattern(k), pend = this.state.pending[k] !== undefined && this.state.pending[k] !== this.savedPattern(k);
                 if (ov || pend) { const dot = el('span', 'bl-chip-dot' + (pend ? ' pend' : '')); dot.title = pend ? 'Pattern change pending' : 'Pattern overridden'; btn.appendChild(dot); }
+                if (this.canAssignStage()) {
+                    const ps = this.stagePending();
+                    if (ps ? k === ps : k === this.stageSlot()) {
+                        const tag = el('span', 'bl-chip-stage' + (ps ? ' pend' : ''), (ps ? '→ ' : '') + this.stageLabel());
+                        tag.title = ps ? 'Queued for this stage — A applies' : 'The boss this stage fights';
+                        btn.appendChild(tag);
+                    }
+                }
                 btn.onclick = () => this.selectBoss(k);
                 this.chipsEl.appendChild(btn);
             });
@@ -512,6 +545,7 @@
             const list = this.listEl;
             list.innerHTML = '';
             list.appendChild(el('div', 'bl-hint', 'TAP A PATTERN TO PREVIEW IT LIVE ON ' + this.bossName(cur).toUpperCase() + ' · A APPLIES · B REVERTS'));
+            if (this.canAssignStage()) list.appendChild(this.assignRow(cur));
 
             if (this.state.previewBoss === cur && isPending) {
                 const newKey = effective || cur, oldKey = saved || cur;
@@ -572,6 +606,32 @@
         }
 
         // ---------- assignment ----------
+        // Which boss the open stage fights. The game pairs stage N with slot
+        // bossN, so a boss added from the library (first free slot) is one no
+        // stage plays until it is moved into the stage's slot — the one thing
+        // a lit chip and PLAY used to leave undone.
+        assignRow(cur) {
+            const slot = this.stageSlot(), label = this.stageLabel(), ps = this.stagePending();
+            const row = el('div', 'bl-assign' + (ps === cur ? ' pend' : ''));
+            const txt = el('div');
+            let btn = null;
+            if (ps === cur) {
+                txt.textContent = this.bossName(cur).toUpperCase() + ' → ' + label + ' BOSS · NOT APPLIED · A APPLIES';
+                btn = el('button', 'bl-assign-btn dim', 'UNDO');
+                btn.onclick = () => this.setStagePending(null);
+            } else if (cur === slot && !ps) {
+                txt.textContent = label + ' BOSS · PLAY FIGHTS ' + this.bossName(cur).toUpperCase();
+            } else {
+                const tenant = ps || slot;
+                txt.textContent = label + ' FIGHTS ' + (this.data()[tenant] ? this.bossName(tenant).toUpperCase() : 'NOBODY')
+                    + ' · ' + this.bossName(cur).toUpperCase() + ' SITS IN ' + String(cur).toUpperCase();
+                btn = el('button', 'bl-assign-btn', 'FIGHT ON ' + label);
+                btn.onclick = () => this.setStagePending(cur);
+            }
+            row.appendChild(txt);
+            if (btn) row.appendChild(btn);
+            return row;
+        }
         selectBoss(k) {
             if (!this.data()[k]) return;
             Object.assign(this.sim, { x: 0.5, y: BASE, alpha: 1, frame: 0, hits: 0 });
@@ -595,24 +655,37 @@
             if (!n) return;
             const changes = {};
             this.keys().forEach(k => { if (this.state.pending[k] !== undefined) changes[k] = this.state.pending[k]; });
-            if (this.opts.onApply) this.opts.onApply(changes, n);
-            else {
-                const d = this.data();
-                for (const k in changes) { if (!d[k]) continue; if (changes[k]) d[k].attackPattern = changes[k]; else delete d[k].attackPattern; }
+            const ps = this.stagePending();
+            const nPat = n - (ps ? 1 : 0);
+            if (nPat) {
+                if (this.opts.onApply) this.opts.onApply(changes, nPat);
+                else {
+                    const d = this.data();
+                    for (const k in changes) { if (!d[k]) continue; if (changes[k]) d[k].attackPattern = changes[k]; else delete d[k].attackPattern; }
+                }
             }
             this.state.pending = {};
             this.state.previewBoss = null;
+            this.state.pendingStage = null;
+            // The slot trade goes last: the patterns above were picked against
+            // the keys the records sat in, and a record carries its
+            // attackPattern with it into the stage's slot.
+            if (ps) {
+                const slot = this.opts.onAssignStageBoss(ps);
+                if (slot && this.data()[slot]) this.state.bossKey = slot;
+            }
             this.startMove('idle');
-            this.renderPanel();
+            this.render();
         }
         revert() {
-            if (this.pendingCount()) { this.state.pending = {}; this.state.previewBoss = null; this.startMove('idle'); this.renderPanel(); }
+            if (this.pendingCount()) { this.state.pending = {}; this.state.previewBoss = null; this.state.pendingStage = null; this.startMove('idle'); this.render(); }
             else if (this.opts.onBack) this.opts.onBack();
         }
         // The host changed bossData (a load, an apply from the other page): re-read it.
         refresh() {
             const keys = this.keys();
             if (!keys.includes(this.state.bossKey)) { this.state.bossKey = keys[0] || null; this.state.pending = {}; this.state.previewBoss = null; }
+            if (this.state.pendingStage && !keys.includes(this.state.pendingStage)) this.state.pendingStage = null;
             this.cachePlayerFrames();
             this.dom.bossFrame = null; this.dom.playerFrame = null;
             this.render();

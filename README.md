@@ -69,9 +69,16 @@ they are written out in full.
   roster it lists: `+ STOCK` adds an enemy of the game the editor booted on
   (every frame already in `game_asset`), `+ LIBRARY` one from the shared
   character library, `+ NEW` a blank record opened in the CHARACTER EDITOR, and
-  each entry's `×` removes it, clearing its cells on every stage. ADVANCED
-  EDITORS → TILEMAP and PIXELS, and the map badge on the toolbar, open the two
-  tools below on the open game.
+  each entry's `×` removes it, clearing its cells on every stage. A boss added
+  from the library lands in the first free slot, and the runtime pairs stage N
+  with slot `bossN` — so the import offers the open stage's slot, the Boss Lab
+  tags the chip that stage fights with **STAGE nn** and gives every other chip
+  **FIGHT ON STAGE nn** (A APPLY trades the two records' slots, keeping the
+  stage's parking row with the slot), and PLAY from the lab with another chip
+  lit asks before moving it. SAVE — the toolbar badge, the drawer row, Y on a
+  pad — shows for any loaded game: an unnamed one is asked for its cloud name
+  on the first press. ADVANCED EDITORS → TILEMAP and PIXELS, and the map badge
+  on the toolbar, open the two tools below on the open game.
 - `static/palette.png` — the 288 Dezaemon 2 palette colours, one pixel each (see
   **The Dezaemon 2 palette** below); `palette-sheet.png` is the same as a
   picture. Both from `deno task deza:palette`.
