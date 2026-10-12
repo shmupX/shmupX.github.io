@@ -65,9 +65,13 @@ they are written out in full.
 - `static/editor/` — the shmupX level editor (single-file app). Its wave grid
   has a **VERT / HORIZ** switch on the stage rail: the same waves laid out top
   to bottom, or left to right the way a Dezaemon horizontal cart scrolls
-  (auto-picked from a `.sav`'s game-mode bit). ADVANCED EDITORS → TILEMAP and
-  PIXELS, and the map badge on the toolbar, open the two tools below on the open
-  game.
+  (auto-picked from a `.sav`'s game-mode bit). The SELECT ENEMY picker edits the
+  roster it lists: `+ STOCK` adds an enemy of the game the editor booted on
+  (every frame already in `game_asset`), `+ LIBRARY` one from the shared
+  character library, `+ NEW` a blank record opened in the CHARACTER EDITOR, and
+  each entry's `×` removes it, clearing its cells on every stage. ADVANCED
+  EDITORS → TILEMAP and PIXELS, and the map badge on the toolbar, open the two
+  tools below on the open game.
 - `static/palette.png` — the 288 Dezaemon 2 palette colours, one pixel each (see
   **The Dezaemon 2 palette** below); `palette-sheet.png` is the same as a
   picture. Both from `deno task deza:palette`.

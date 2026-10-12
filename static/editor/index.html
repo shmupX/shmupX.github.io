@@ -482,7 +482,7 @@
 
         .picker-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; padding: 2px 6px; }
         .picker-opt {
-            display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+            display: flex; position: relative; align-items: center; gap: 12px; padding: 10px 12px;
             border-radius: 12px; background: var(--rbg); border: 1px solid var(--redge); cursor: pointer;
             transition: all 0.15s; -webkit-user-select: none; user-select: none;
         }
@@ -510,6 +510,25 @@
         .picker-opt.sel .opt-code { color: var(--srsub); }
         .picker-hint {
             display: flex; align-items: center; justify-content: center; gap: 8px; padding: 14px 16px 0;
+            font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em; color: var(--raillbl);
+        }
+        /* SELECT ENEMY edits the roster it lists: every entry carries an ×
+           that takes the enemy out of this game (clearing its cells on every
+           stage), and the add row brings one in from the stock roster, the
+           shared character library, or a blank record. */
+        .picker-opt .opt-remove {
+            position: absolute; top: -7px; right: -7px; width: 22px; height: 22px; border-radius: 50%;
+            border: 1px solid var(--redge); background: var(--rbg); color: var(--rsub);
+            font-size: 14px; line-height: 1; padding: 0; cursor: pointer; font-family: inherit;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .picker-opt .opt-remove:hover { color: #fff; border-color: #ef4444; background: rgba(239,68,68,.4); }
+        .picker-add-row { display: flex; gap: 8px; padding: 14px 6px 0; }
+        .picker-add-row .menu-btn { width: auto; flex: 1; justify-content: center; margin: 0; padding: 8px 6px; font-size: 10px; }
+        .picker-add-row .menu-btn.on { border-color: var(--rink); color: #fff; }
+        #enemy-picker-stock { margin-top: 10px; }
+        .picker-stock-note {
+            grid-column: 1 / -1; padding: 4px 2px 0; text-align: center;
             font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em; color: var(--raillbl);
         }
 
@@ -1060,7 +1079,17 @@
         <div class="picker-panel">
             <div class="picker-title">SELECT ENEMY</div>
             <div id="enemy-picker-grid" class="picker-grid"></div>
-            <div class="picker-hint">TAP TO ARM · TAP GRID TO PLACE</div>
+            <!-- The roster is edited here too. + STOCK lists the enemies of the
+                 game this atlas shipped with that this game lacks, + LIBRARY is
+                 the shared character library's ADD, + NEW seeds a blank record
+                 and opens it in the CHARACTER EDITOR. -->
+            <div class="picker-add-row">
+                <button type="button" class="menu-btn" id="enemy-add-stock-btn" onclick="toggleStockEnemyList()" title="Add an enemy from the stock roster">+ STOCK</button>
+                <button type="button" class="menu-btn" onclick="openCharacterLibrary()" title="Add an enemy from the shared character library">+ LIBRARY</button>
+                <button type="button" class="menu-btn" onclick="newEnemyFromPicker()" title="Add a blank enemy and edit it">+ NEW</button>
+            </div>
+            <div id="enemy-picker-stock" class="picker-grid hidden"></div>
+            <div class="picker-hint">TAP TO ARM · TAP GRID TO PLACE · × REMOVES FROM THIS GAME</div>
         </div>
     </div>
 
@@ -1417,6 +1446,7 @@
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
                 <button class="menu-btn" id="char-new-btn" onclick="addNewCharacterEntry()">+ NEW</button>
+                <button class="menu-btn" id="char-del-btn" onclick="deleteCurrentEnemyEntry()" title="Remove the selected enemy from this game">DELETE</button>
                 <button class="menu-btn" onclick="openCharacterLibrary()">+ FROM LIBRARY</button>
                 <button class="menu-btn" onclick="publishCharacterToLibrary()">PUBLISH TO LIBRARY</button>
                 <button class="menu-btn" onclick="openLibraryEditor()">LIBRARY EDITOR</button>
@@ -2808,8 +2838,9 @@
             c.innerHTML = '';
             const keys = Object.keys(enemyData);
             if (!keys.length) {
-                c.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#666;padding:24px;font-size:13px">No enemies loaded. Load a game directory or a saved game.</div>';
-                return;
+                c.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#666;padding:24px;font-size:13px">'
+                    + (gameData ? 'No enemies in this game yet — add one below.' : 'No enemies loaded. Load a game directory or a saved game.')
+                    + '</div>';
             }
             keys.forEach(ek => {
                 const letter = getEnemyLetter(ek);
@@ -2846,6 +2877,17 @@
                 txt.appendChild(code);
                 opt.appendChild(txt);
 
+                // × takes the enemy out of this game; a tap on it must not arm it.
+                const rm = document.createElement('button');
+                rm.type = 'button';
+                rm.className = 'opt-remove';
+                rm.textContent = '×';
+                rm.title = 'Remove ' + getEnemyDisplayName(ek) + ' from this game';
+                rm.setAttribute('aria-label', rm.title);
+                rm.draggable = false;
+                rm.onclick = (e) => { e.stopPropagation(); e.preventDefault(); removeEnemyFromGame(ek); };
+                opt.appendChild(rm);
+
                 opt.onclick = () => selectEnemy(ek);
                 opt.addEventListener('dragstart', e => {
                     e.dataTransfer.setData('application/json', JSON.stringify({ type: 'enemy', key: ek, letter }));
@@ -2853,6 +2895,201 @@
                 });
                 c.appendChild(opt);
             });
+            // An open stock list drops the entries that just came in.
+            if (!document.getElementById('enemy-picker-stock').classList.contains('hidden')) renderStockEnemyList();
+        }
+
+        // ----- SELECT ENEMY's roster controls -----
+        // The stock roster is the enemyData of the game that shipped with this
+        // atlas — /games/<id>/assets/game.json, the record the editor booted
+        // on — whose frames are in game_asset, so an entry taken from it plays
+        // at once. A new game keeps only its enemyA (buildBlankGame), which is
+        // why the picker had one entry and no way to a second. Snapshotted by
+        // the boot load; fetched here only if that never ran.
+        let stockEnemyRoster = null;
+        async function loadStockEnemyRoster() {
+            if (stockEnemyRoster) return stockEnemyRoster;
+            try {
+                const r = await fetch('assets/game.json');   // rewritten onto GAME_BASE above
+                if (r.ok) stockEnemyRoster = dezaClone((await r.json()).enemyData || {});
+            } catch (e) { console.warn('stock roster unavailable:', e); }
+            return stockEnemyRoster || {};
+        }
+
+        // The stock entries this game could take: not in it already (by name —
+        // a stock enemy copied in under another key is still that enemy) and
+        // standing only on frames the atlas has, so nothing offered renders as
+        // the player ship. `frames` is the atlas's frame map.
+        function stockEnemyChoices(roster, enemies, frames) {
+            const names = new Set(Object.values(enemies || {}).map((e) => e && e.name).filter(Boolean));
+            const have = frames || {};
+            return Object.keys(roster || {}).filter((k) => {
+                const rec = roster[k];
+                if (!rec || (rec.name && names.has(rec.name))) return false;
+                return entryFrameNames(rec).every((f) => !!have[f]);
+            });
+        }
+
+        function refreshEnemyPickerIfOpen() {
+            const ov = document.getElementById('enemy-picker-overlay');
+            if (ov && !ov.classList.contains('hidden')) populateEnemyPicker();
+        }
+
+        async function toggleStockEnemyList() {
+            const list = document.getElementById('enemy-picker-stock');
+            const open = list.classList.contains('hidden');
+            list.classList.toggle('hidden', !open);
+            document.getElementById('enemy-add-stock-btn').classList.toggle('on', open);
+            if (open) await renderStockEnemyList();
+        }
+
+        async function renderStockEnemyList() {
+            const c = document.getElementById('enemy-picker-stock');
+            c.innerHTML = '<div class="picker-stock-note">LOADING THE STOCK ROSTER…</div>';
+            const roster = await loadStockEnemyRoster();
+            if (c.classList.contains('hidden')) return;   // closed while it loaded
+            c.innerHTML = '';
+            const keys = stockEnemyChoices(roster, enemyData, atlasData && atlasData.frames);
+            const note = document.createElement('div');
+            note.className = 'picker-stock-note';
+            if (!Object.keys(roster).length) note.textContent = 'STOCK ROSTER UNAVAILABLE';
+            else if (!keys.length) note.textContent = 'EVERY STOCK ENEMY THIS ATLAS CAN DRAW IS ALREADY IN THIS GAME';
+            else note.textContent = 'STOCK ROSTER · ' + keys.length + ' TO ADD · TAP TO ADD + ARM';
+            c.appendChild(note);
+            keys.forEach((sk) => {
+                const rec = roster[sk];
+                const opt = document.createElement('div');
+                opt.className = 'picker-opt';
+                const badge = document.createElement('div');
+                badge.className = 'opt-badge';
+                const url = getThumbURL(rec.texture && rec.texture[0]);
+                if (url) {
+                    const img = document.createElement('img');
+                    img.src = url;
+                    img.className = 'opt-img';
+                    badge.appendChild(img);
+                } else {
+                    const ph = document.createElement('div');
+                    ph.className = 'opt-placeholder';
+                    ph.textContent = '+';
+                    badge.appendChild(ph);
+                }
+                opt.appendChild(badge);
+                const txt = document.createElement('div');
+                txt.className = 'opt-txt';
+                const nm = document.createElement('div');
+                nm.className = 'opt-name';
+                nm.textContent = rec.name || sk;
+                const code = document.createElement('div');
+                code.className = 'opt-code';
+                code.textContent = '+ ADD · STOCK ' + getEnemyLetter(sk) + ' · HP ' + (rec.hp === undefined ? '?' : rec.hp);
+                txt.appendChild(nm);
+                txt.appendChild(code);
+                opt.appendChild(txt);
+                opt.onclick = () => addStockEnemy(sk);
+                c.appendChild(opt);
+            });
+        }
+
+        // Copy a stock enemy into this game — under its stock key when that is
+        // free, so a game built from the roster keeps the roster's codes, and
+        // the next free one otherwise — and arm it. The picker stays open so
+        // several can come in at once.
+        async function addStockEnemy(stockKey) {
+            const roster = await loadStockEnemyRoster();
+            const rec = roster[stockKey];
+            if (!rec) return;
+            const key = enemyData[stockKey] ? nextEnemyKey() : stockKey;
+            if (!key) { alert('No free enemy key'); return; }
+            enemyData[key] = dezaClone(rec);
+            gameData.enemyData = enemyData;
+            selectedEnemyLetter = getEnemyLetter(key);
+            selectedEnemyFullKey = key;
+            currentTool = 'place';
+            renderEnemyList();            // the CHARACTER EDITOR's list, and the picker through it
+            updateToolUI();
+            lineageCheckSoon();
+            flash('ADDED + ARMED: ' + getEnemyDisplayName(key).toUpperCase() + ' · CODE ' + selectedEnemyLetter);
+        }
+
+        // "+ NEW" from the picker: a blank record from the same defaults a new
+        // game uses, opened in the CHARACTER EDITOR — a copy of the starter is
+        // nothing to place until it has been made into something.
+        function newEnemyFromPicker() {
+            closePicker();
+            currentEditorTab = 'enemies';
+            showCharacterEditor();
+            addNewCharacterEntry();
+        }
+
+        // Every stage cell that spawns enemy<letter>, counted — and cleared
+        // when `clear` is set. The match is the whole letter run: enemyA's "A"
+        // never touches enemyAB's "AB", the reading the runtime and
+        // game-schema.js give a cell.
+        function enemyCellsOf(game, letter, clear) {
+            let cells = 0;
+            const stages = new Set();
+            for (const k of Object.keys(game || {})) {
+                if (!/^stage\d+$/.test(k)) continue;
+                const list = game[k] && game[k].enemylist;
+                if (!Array.isArray(list)) continue;
+                for (const row of list) {
+                    if (!Array.isArray(row)) continue;
+                    for (let i = 0; i < row.length; i++) {
+                        const cell = row[i];
+                        if (!cell || cell === '00' || cellEnemyLetter(cell) !== letter) continue;
+                        cells++;
+                        stages.add(k);
+                        if (clear) row[i] = '00';
+                    }
+                }
+            }
+            return { cells, stages: stages.size };
+        }
+
+        // × on a picker entry, DELETE in the CHARACTER EDITOR: take the enemy
+        // out of this game. Its cells go with it on every stage — a cell that
+        // names an enemy the record lacks is a schema error, and the runtime
+        // would draw it as the player ship — so a placed enemy asks first.
+        function removeEnemyFromGame(key) {
+            if (!enemyData[key]) return false;
+            const letter = getEnemyLetter(key);
+            const name = getEnemyDisplayName(key);
+            commitCurrentGrid();                       // the open stage's grid is a working copy
+            const placed = enemyCellsOf(gameData, letter, false);
+            const what = name + (name === key ? '' : ' (' + key + ')');
+            const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+            const ask = placed.cells
+                ? 'Remove ' + what + ' from this game?\n\nIt is placed in ' + plural(placed.cells, 'cell')
+                    + ' across ' + plural(placed.stages, 'stage') + '. Those cells will be cleared.'
+                : 'Remove ' + what + ' from this game?';
+            if (!confirm(ask)) return false;
+            enemyCellsOf(gameData, letter, true);
+            delete enemyData[key];
+            gameData.enemyData = enemyData;
+            if (selectedEnemyFullKey === key) {
+                selectedEnemyFullKey = null;
+                selectedEnemyLetter = null;
+                if (currentTool === 'place') currentTool = 'none';
+            }
+            // The CHARACTER EDITOR's form must not hand the record back on Save.
+            if (currentEnemyKey === key) {
+                currentEnemyKey = null;
+                document.getElementById('enemy-key').value = '';
+                document.getElementById('enemy-json').value = '';
+            }
+            loadCurrentStage();                        // re-read the cleared grid; redraws it and the tool UI
+            renderEnemyList();                         // the CHARACTER EDITOR's list, and the picker through it
+            lineageCheckSoon();
+            flash('REMOVED: ' + name.toUpperCase() + (placed.cells ? ' · ' + plural(placed.cells, 'CELL').toUpperCase() + ' CLEARED' : ''));
+            return true;
+        }
+
+        function deleteCurrentEnemyEntry() {
+            if (currentEditorTab !== 'enemies') return;
+            const key = currentEnemyKey || document.getElementById('enemy-key').value.trim();
+            if (!key || !enemyData[key]) { alert('Select an enemy first'); return; }
+            removeEnemyFromGame(key);
         }
 
         function populatePowerupPicker() {
@@ -3627,10 +3864,14 @@
             // The player is a single entry — "+ NEW" only makes sense for lists.
             const newBtn = document.getElementById('char-new-btn');
             if (newBtn) newBtn.style.display = tab === 'player' ? 'none' : '';
+            // DELETE is the enemy roster's. A boss slot is replaced, not emptied.
+            const delBtn = document.getElementById('char-del-btn');
+            if (delBtn) delBtn.style.display = tab === 'enemies' ? '' : 'none';
             renderEnemyList();
         }
 
         function renderEnemyList() {
+            refreshEnemyPickerIfOpen();   // SELECT ENEMY lists the same records
             const c = document.getElementById('enemy-list');
             c.innerHTML = '';
             const enemyKeys = Object.keys(enemyData);
@@ -12196,6 +12437,7 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                 const gameResp = await fetch('assets/game.json');
                 if (gameResp.ok) {
                     gameData = await gameResp.json();
+                    stockEnemyRoster = dezaClone(gameData.enemyData || {});   // what + STOCK offers
                     enemyData = gameData.enemyData || {};
                     if (!enemyData || Object.keys(enemyData).length === 0) {
                         for (let k in gameData) {
