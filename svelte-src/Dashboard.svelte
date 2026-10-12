@@ -5545,6 +5545,9 @@
     viewOwned: false,
     rawDirPrev: 0,
     r3Latched: false,
+    // Rising edge of "any button" while a boot-time fullscreen request is
+    // pending (see requestLauncherFullscreen), so one press asks once.
+    anyBtnLatched: false,
     dirSeenAt: 0,
     lastPollAt: 0,
     // Horizontal twins of axisDir/lastNavAt/holdingSince/dirSeenAt, for the
@@ -5875,7 +5878,18 @@
       const r3 = !!pad.buttons[11]?.pressed;
       if (r3 && !padState.r3Latched) requestFullscreenFromPad();
       padState.r3Latched = r3;
-    } else padState.r3Latched = false;
+      // In the packaged desktop launcher the fullscreen asked for at boot
+      // (requestLauncherFullscreen) is usually refused for want of a gesture,
+      // and on a pad the first button press IS the first gesture there is —
+      // so any button cashes it in there, not just R3. Rising edge, like R3,
+      // so a held button asks once. Only the launcher: in a browser tab a pad
+      // press is not activation (see requestFullscreenFromPad), and the
+      // hosted site must not go fullscreen because somebody pressed A.
+      const anyBtn = launcherFullscreenPending && fullscreenWanted &&
+        pad.buttons.some((b) => b && b.pressed);
+      if (anyBtn && !padState.anyBtnLatched) requestFullscreenFromPad();
+      padState.anyBtnLatched = anyBtn;
+    } else { padState.r3Latched = false; padState.anyBtnLatched = false; }
     // While the controller configurator or the mapping wizard is open, that
     // panel owns pad input (driven from gamepad-support.js's poll hook) — the
     // launcher must not also navigate/launch/open the Guide underneath it.
@@ -6827,6 +6841,7 @@
     initHostDevice();
     refreshSteam();
     refreshUpdates();
+    requestLauncherFullscreen();
     loadManifest();
     initNetplayPresence();
     // The disc check waits for the catalogue: auto-installing a core needs its
@@ -6930,6 +6945,36 @@
     const req = el.requestFullscreen || el.webkitRequestFullscreen;
     if (!req) return;
     try { const p = req.call(el); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+  }
+
+  // ── Fullscreen on launch, in the packaged desktop launcher ───────────────
+  // `deno desktop` (the Linux and macOS build, see desktop.ts) opens a plain
+  // window: Deno.BrowserWindow has size, position and frameless options but
+  // no fullscreen or kiosk one, so the player got a windowed launcher until
+  // they found R3 or the OSD's Fullscreen row. The page asks instead, the
+  // moment it is up. Without a gesture behind it the request is normally
+  // refused, so it rides the same latch an R3 press does: the first real
+  // input — a key, a click, or in pollPad any pad button — cashes it in.
+  //
+  // Launcher only. /api/desktop-window answers { available: true } exactly
+  // when this process owns a Deno.BrowserWindow (a source checkout in a
+  // browser tab and the hosted site both say false), and that is the one
+  // place a first click should throw the page into fullscreen. The borrowed
+  // --kiosk browsers already fill the screen and short-circuit in
+  // isEffectivelyFullscreen.
+  let launcherFullscreenPending = false;
+
+  async function requestLauncherFullscreen() {
+    let available = false;
+    try {
+      const r = await fetch('/api/desktop-window', { cache: 'no-store' });
+      if (!r.ok) return;
+      const data = await r.json();
+      available = !!(data && data.available);
+    } catch (_) { return; }
+    if (!available || isEffectivelyFullscreen()) return;
+    launcherFullscreenPending = true;
+    requestFullscreenFromPad();
   }
 
   $effect(() => {

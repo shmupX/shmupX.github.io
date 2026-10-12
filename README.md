@@ -1868,7 +1868,13 @@ Two routes, because they are good at different things:
 - **Linux and macOS → `deno desktop --backend cef`.** Brings its own Chromium
   and writes the `.AppImage` / `.app` itself. Neither is host-gated, so both
   cross-build from anywhere Deno runs — including from Windows. `deno desktop`
-  picks the port itself, so `--port` / `SHMUPX_PORT` are no-ops there.
+  picks the port itself, so `--port` / `SHMUPX_PORT` are no-ops there. Its
+  window is a plain one — `Deno.BrowserWindow` has no fullscreen or kiosk
+  option — so the dashboard asks for fullscreen itself as soon as it is up
+  (`requestLauncherFullscreen` in `svelte-src/Dashboard.svelte`, keyed on
+  `/api/desktop-window` saying the process owns a window). A request with no
+  gesture behind it is refused, so the first input — a key, a click, or any
+  pad button — cashes it in; R3 and the OSD's Fullscreen row still work.
 
 CEF rather than the default OS webview because this is a controller-driven
 Phaser game and the native webviews do not agree about the Gamepad API:
@@ -2919,7 +2925,7 @@ The default mapping, by standard-mapping slot:
 | 0–3    | face bottom/right/left/top | Space / C / C / Space                                   |
 | 4–7    | LB / RB / LT / RT          | Q / E / R / T                                           |
 | 8, 9   | Select, Start              | Backspace, Enter (Start also taps the game to start it) |
-| 10, 11 | L3, R3                     | F, G (R3 enters fullscreen)                             |
+| 10, 11 | L3, R3                     | F, G (R3 enters fullscreen; the desktop app also goes fullscreen on the first button press) |
 | 16     | Home / Guide               | H                                                       |
 | 17, 18 | Capture, Stadia Assistant  | F9, H                                                   |
 
