@@ -3,10 +3,24 @@ import { define, type State } from "./utils.ts";
 import { injectLauncherMarker } from "./lib/launcher-inject.ts";
 import { dirIndexRedirect } from "./lib/static-indexes.ts";
 import { cloudLevelKeys, subdomainRedirect } from "./lib/level-subdomain.ts";
+import { join } from "@std/path";
+import { launcherDataDir } from "./lib/desktop-browser.ts";
 import {
+  applyKept,
+  injectKeptStorage,
+  KEPT_STORAGE_URL,
+  readBody,
+  readKept,
+} from "./lib/kept-storage.ts";
+import { isStored, serveStored, sweepPartials } from "./lib/offline-store.ts";
+import {
+  isKeptManifest,
   isLeftOut,
+  keepArcadeBoard,
+  keptManifest,
+  localizeCatalog,
   ROMSET_PATH,
-  streamFromDeploy,
+  sourceFor,
 } from "./lib/streamed-payloads.ts";
 
 export const app = new App<State>();
@@ -81,18 +95,87 @@ app.use(async (ctx) => {
   return subdomainRedirect(ctx.req, await cloudLevelKeys()) ?? ctx.next();
 });
 
-// A packaged app leaves some static payloads out of its binary
-// (lib/streamed-payloads.ts): it streams an arcade romset from the deploy and
-// answers 404 for the rest. Ahead of staticFiles(), whose build snapshot still
-// lists those files and would 500 opening one that is not there.
+// A packaged app's page keeps nothing past the launch (a fresh CEF profile and
+// port every time), so its server keeps what has to last, under the launcher's
+// data directory, and answers for it ahead of staticFiles() — whose build
+// snapshot still lists what the binary left out, and would 500 opening it:
+//
+// - What the binary leaves out (lib/streamed-payloads.ts) and the arcade
+//   player it never carried are downloaded the first time they are asked for
+//   and served from disk after, online or not (lib/offline-store.ts). A
+//   romset's first request brings its whole board with it — player, engine
+//   recipe, MAME core — so a board installed once plays offline. A kept
+//   folder's manifest lists only the tracks the store holds, since the level
+//   loader plays silence for a listed track that is not there.
+// - The catalogue calls the kept cores `local`, so the dashboard asks this
+//   server for them instead of mirroring them through the service worker.
+// - The installed-cores set and the arcade shelf are kept on disk too, and put
+//   back into every page's localStorage before its scripts run
+//   (lib/kept-storage.ts).
+//
+// None of it runs outside a packaged app: a checkout and the deploy serve
+// static/ as they always have.
 const STANDALONE = (Deno.build as { standalone?: boolean }).standalone === true;
-app.use((ctx) => {
+const DATA_DIR = launcherDataDir(
+  Deno.build.os === "windows"
+    ? "windows"
+    : Deno.build.os === "darwin"
+    ? "darwin"
+    : "linux",
+  Deno.env.toObject(),
+);
+const STORE_ROOT = join(DATA_DIR, "offline");
+const KEPT_FILE = join(DATA_DIR, "kept-storage.json");
+if (STANDALONE) sweepPartials(STORE_ROOT);
+app.use(async (ctx) => {
   if (!STANDALONE) return ctx.next();
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return ctx.next();
+  const { method } = ctx.req;
   const { pathname } = new URL(ctx.req.url);
+  if (pathname === KEPT_STORAGE_URL) {
+    if (method !== "PUT") return new Response(null, { status: 405 });
+    const body = await readBody(ctx.req);
+    const status = body === null ? 400 : await applyKept(KEPT_FILE, body);
+    return new Response(null, { status });
+  }
+  if (method !== "GET" && method !== "HEAD") return ctx.next();
   if (isLeftOut(pathname)) return new Response(null, { status: 404 });
-  if (ROMSET_PATH.test(pathname)) return streamFromDeploy(ctx.req, pathname);
-  return ctx.next();
+
+  if (pathname === "/emulators.json" && method === "GET") {
+    const res = await ctx.next();
+    if (!res.ok) return res;
+    return Response.json(localizeCatalog(await res.json()), {
+      headers: { "cache-control": "no-store" },
+    });
+  }
+
+  if (isKeptManifest(pathname) && method === "GET") {
+    return keptManifest(pathname, { root: STORE_ROOT });
+  }
+  const source = sourceFor(pathname);
+  if (source) {
+    if (ROMSET_PATH.test(pathname)) {
+      // The install's probe waits for the whole board, so installed means
+      // playable offline; later launches top it up in the background.
+      const first = !(await isStored(STORE_ROOT, pathname));
+      const board = keepArcadeBoard(pathname, { root: STORE_ROOT }).catch(
+        (err) => console.warn(`[offline] ${pathname}: ${err.message}`),
+      );
+      if (first) await board;
+    }
+    return serveStored(ctx.req, pathname, { root: STORE_ROOT, source });
+  }
+
+  const res = await ctx.next();
+  const type = res.headers.get("content-type") ?? "";
+  if (method !== "GET" || res.status !== 200 || !type.includes("text/html")) {
+    return res;
+  }
+  const html = injectKeptStorage(await res.text(), await readKept(KEPT_FILE));
+  const headers = new Headers(res.headers);
+  headers.delete("content-length");
+  headers.delete("etag");
+  headers.delete("last-modified");
+  return new Response(html, { status: 200, headers });
 });
 
 app.use(staticFiles());

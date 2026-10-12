@@ -82,7 +82,7 @@ import {
 } from "../lib/export-build.ts";
 import { listShelf, resolveShelfName, ShelfError } from "../lib/shelf.ts";
 import { harborRoot, repoRoot } from "../lib/repo-root.ts";
-import { LEFT_OUT, streamedRomsets } from "../../../lib/streamed-payloads.ts";
+import { excludedFromBinary } from "../../../lib/streamed-payloads.ts";
 
 const ROOT = repoRoot();
 
@@ -428,17 +428,16 @@ async function embedArgs(opts: Options): Promise<string[]> {
     "--exclude",
     "./spacetimedb/module/node_modules",
   ];
-  // What the packaged server streams from the deploy or answers 404 for
-  // (lib/streamed-payloads.ts): the arcade romsets, 2028-ai's custom BGM and
-  // any stale Mario archive: ~68MB, and the BGM's second copy with export tools.
+  // What the packaged server downloads once from the deploy and keeps, or
+  // answers 404 for (lib/streamed-payloads.ts): the arcade romsets, 2028-ai's
+  // custom BGM and any stale Mario archive — ~68MB, and the BGM's second copy
+  // with export tools.
   // Only paths this checkout has: a build that never made one has nothing to
   // leave out.
   const eshop = JSON.parse(
     await Deno.readTextFile(join(ROOT, "data", "eshop.json")),
   );
-  const leftOut = [...streamedRomsets(eshop), ...LEFT_OUT].map((p) =>
-    p.replace(/\/$/, "")
-  );
+  const leftOut = excludedFromBinary(eshop);
   const excludes = leftOut.map((p) => "_fresh/client" + p);
   if (opts.exportTools) {
     // The export tools' own copy of the game, included whole below.

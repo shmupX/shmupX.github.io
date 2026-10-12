@@ -4,47 +4,79 @@
 // in packages/shmup-harbor/scripts/build-desktop.ts), so everything under
 // static/ ships in it unless build-desktop excludes it. These it excludes.
 //
+// What it leaves out it downloads once and keeps (lib/offline-store.ts), and
+// sourceFor() says from where. The arcade core joins them though the binary
+// never carried it: the dashboard mirrors a core through a service worker into
+// Cache Storage, which a packaged app's profile does not keep past the launch,
+// so the packaged server keeps the arcade player itself and the catalogue it
+// serves calls the core `local`.
+//
 // Fresh's production staticFiles() serves from the build snapshot's file list,
 // and that list still names an excluded file: opening it throws and the request
 // 500s. So main.ts answers these paths ahead of staticFiles(), and only in a
 // packaged app — a checkout and the deploy serve them from static/ as before.
 
-/** Where a packaged app streams what it does not carry: the deploy. */
+import { ensureStored } from "./offline-store.ts";
+
+/** Where a packaged app downloads what it does not carry: the deploy. */
 export const STREAM_ORIGIN = "https://codemonkey.games";
+
+/** static/emulators.json's origin: where the dashboard mirrors its cores from. */
+export const CORE_ORIGIN = "https://cmg.easierbycode.deno.net";
+
+/**
+ * Where the arcade player's MAME engine lives: its ENGINE_REMOTE. The player
+ * looks under ENGINE_DIR first, so a kept copy there is what plays offline.
+ */
+export const ENGINE_ORIGIN = "https://emularity-engine.ux-b.archive.org";
+const ENGINE_DIR = "/arcade/emularity/engine/";
+
+/** Cores a packaged app serves itself from its store, with each one's prefixes on CORE_ORIGIN. */
+export const KEPT_CORES: Readonly<Record<string, readonly string[]>> = {
+  arcade: ["/arcade/"],
+};
 
 /**
  * An arcade romset: /games/<id>/<romset>.zip, the shape every arcade row's
  * romUrl in data/eshop.json takes (tests/eshop_catalog_test.ts pins each one).
- * The dashboard fetches the romset at every launch, so a packaged app proxies
- * it from STREAM_ORIGIN; offline, the launch says it could not reach the board.
  */
 export const ROMSET_PATH =
   /^\/games\/[a-z0-9][a-z0-9-]*\/[A-Za-z0-9_.-]+\.zip$/;
 
 /**
- * Paths a packaged app leaves out and answers 404 for. A trailing slash means
- * everything under it.
+ * Folders a packaged app downloads once from STREAM_ORIGIN and keeps, beside
+ * the romsets (lib/offline-store.ts):
  *
- * - 2028-ai's custom BGM: 41 MB, one track that four bosses share. Without its
- *   manifest.json the level loader streams each track from the level's own
- *   source URL, and plays the stock sound if that fails
+ * - 2028-ai's custom BGM: 41 MB, one track that four bosses share. Should the
+ *   deploy be unreachable on the first play, the level loader streams each
+ *   track from its own source URL and plays the stock sound if that fails too
  *   (static/phaser-plugins/level-loader.js, _queueAudioOverrides).
- * - Super Mario SP's eShop archive: its row left the catalogue, and a stale copy
- *   in a checkout would otherwise still ride along.
+ */
+export const KEPT_FOLDERS: readonly string[] = [
+  "/games/2028-ai/assets/custom-bgm/",
+];
+
+/** True when a packaged app keeps `pathname` from STREAM_ORIGIN rather than carrying it. */
+export function keptFromDeploy(pathname: string): boolean {
+  return ROMSET_PATH.test(pathname) ||
+    KEPT_FOLDERS.some((p) => pathname.startsWith(p));
+}
+
+/**
+ * Paths a packaged app leaves out and answers 404 for: Super Mario SP's eShop
+ * archive. Its row left the catalogue, and a stale copy in a checkout would
+ * otherwise still ride along.
  */
 export const LEFT_OUT: readonly string[] = [
-  "/games/2028-ai/assets/custom-bgm/",
   "/games/super-mario-sp-web.zip",
 ];
 
 export function isLeftOut(pathname: string): boolean {
-  return LEFT_OUT.some((p) =>
-    p.endsWith("/") ? pathname.startsWith(p) : pathname === p
-  );
+  return LEFT_OUT.includes(pathname);
 }
 
-/** The romUrls a packaged app streams: every arcade row's that has the romset shape. */
-export function streamedRomsets(
+/** The romUrls a packaged app keeps: every arcade row's that has the romset shape. */
+export function keptRomsets(
   eshop: ReadonlyArray<{ kind?: unknown; romUrl?: unknown }>,
 ): string[] {
   return eshop.flatMap((e) =>
@@ -55,46 +87,165 @@ export function streamedRomsets(
   );
 }
 
-// What the proxy passes back. Range rides through both ways so a probe for one
-// byte (static/eshop-library.js) stays one byte when the deploy honours it.
-const PASSED_HEADERS = [
-  "content-type",
-  "content-length",
-  "content-range",
-  "accept-ranges",
-  "etag",
-  "last-modified",
-];
+/** Every static path build-desktop excludes from the binary (folders without the slash). */
+export function excludedFromBinary(
+  eshop: ReadonlyArray<{ kind?: unknown; romUrl?: unknown }>,
+): string[] {
+  return [...keptRomsets(eshop), ...KEPT_FOLDERS, ...LEFT_OUT].map((p) =>
+    p.replace(/\/$/, "")
+  );
+}
 
-/** Answer `req` for `pathname` with the deploy's copy, or a 502 saying why not. */
-export async function streamFromDeploy(
-  req: Request,
+/** Where a packaged app downloads `pathname` from to keep it, or null when it does not keep it. */
+export function sourceFor(pathname: string): string | null {
+  if (keptFromDeploy(pathname)) return STREAM_ORIGIN + pathname;
+  if (pathname.startsWith(ENGINE_DIR)) {
+    const name = pathname.slice(ENGINE_DIR.length);
+    if (!name || name.includes("/")) return null;
+    // The player asks for a core by its unzipped name (localCoreName drops the
+    // .gz); the engine sends the .gz with Content-Encoding: gzip, which fetch
+    // undoes, so what lands on disk is the file the player asked for.
+    return `${ENGINE_ORIGIN}/${
+      /\.(js|wasm)$/.test(name) ? name + ".gz" : name
+    }`;
+  }
+  for (const prefixes of Object.values(KEPT_CORES)) {
+    if (prefixes.some((p) => pathname.startsWith(p))) {
+      return CORE_ORIGIN + pathname;
+    }
+  }
+  return null;
+}
+
+interface Catalog {
+  cores?: Array<{ id?: unknown; local?: unknown }>;
+}
+
+/** The emulator catalogue as a packaged app serves it: its kept cores are `local`. */
+export function localizeCatalog<T extends Catalog>(catalog: T): T {
+  return {
+    ...catalog,
+    cores: (catalog.cores ?? []).map((c) =>
+      typeof c.id === "string" && c.id in KEPT_CORES ? { ...c, local: true } : c
+    ),
+  };
+}
+
+interface Recipe {
+  driver?: unknown;
+  wasmjs_filename?: unknown;
+  wasm_filename?: unknown;
+}
+
+/**
+ * Every page path an arcade board needs to play with no network, beyond the
+ * romset: the player and its scripts, the engine recipe, the MAME core it
+ * names, and the control and NVRAM files the player looks for (most boards
+ * have none — those simply are not kept). Mirrors static/arcade's play.html:
+ * getRecipe, resolveCoreUrl, resolveCfg, resolveNvram.
+ */
+export function arcadeFiles(rom: string, recipe: Recipe | null): string[] {
+  const enc = encodeURIComponent;
+  const files = [
+    "/arcade/play.html",
+    "/arcade/manifest.json",
+    "/arcade/emularity/browserfs.min.js",
+    "/arcade/emularity/loader.js",
+    `${ENGINE_DIR}${enc(rom)}.json`,
+    "/arcade/cfg/default.cfg",
+    `/arcade/cfg/${enc(rom)}.cfg`,
+  ];
+  if (!recipe) return files;
+  const driver = typeof recipe.driver === "string" && recipe.driver
+    ? recipe.driver
+    : rom;
+  for (
+    const gz of [
+      typeof recipe.wasmjs_filename === "string"
+        ? recipe.wasmjs_filename
+        : "mamezn.js.gz",
+      typeof recipe.wasm_filename === "string"
+        ? recipe.wasm_filename
+        : "mamezn.wasm.gz",
+    ]
+  ) files.push(ENGINE_DIR + enc(gz.replace(/\.gz$/i, "")));
+  if (driver !== rom) files.push(`/arcade/cfg/${enc(driver)}.cfg`);
+  files.push(`/arcade/nvram/${enc(driver)}/at28c16`);
+  return files;
+}
+
+/**
+ * Keep an arcade board whole: the romset at `romPath`, then everything
+ * arcadeFiles() says its player needs. The romset is named after the board
+ * (data/eshop.json's `rom`, which tests/streamed_payloads_test.ts pins), and
+ * so is its engine recipe. Only the romset's failure is reported — a missing
+ * cfg is normal, and a core that could not be fetched now is fetched on play.
+ */
+export async function keepArcadeBoard(
+  romPath: string,
+  opts: { root: string; fetchImpl?: typeof fetch },
+): Promise<void> {
+  const keep = (path: string) => {
+    const source = sourceFor(path);
+    return source
+      ? ensureStored(path, { ...opts, source })
+      : Promise.resolve(null);
+  };
+  const board = await keep(romPath);
+  if (!board?.ok) return;
+  const rom = decodeURIComponent(romPath.slice(romPath.lastIndexOf("/") + 1))
+    .replace(/\.zip$/, "");
+  const recipeAt = await keep(`${ENGINE_DIR}${encodeURIComponent(rom)}.json`);
+  let recipe: Recipe | null = null;
+  if (recipeAt?.ok) {
+    try {
+      recipe = JSON.parse(await Deno.readTextFile(recipeAt.file));
+    } catch {
+      recipe = null;
+    }
+  }
+  await Promise.all(arcadeFiles(rom, recipe).map(keep));
+}
+
+/** True for a kept folder's track manifest (custom-bgm/manifest.json). */
+export function isKeptManifest(pathname: string): boolean {
+  return pathname.endsWith("/manifest.json") &&
+    KEPT_FOLDERS.some((p) => pathname.startsWith(p));
+}
+
+/**
+ * A kept folder's manifest as a packaged app serves it: each track it names is
+ * fetched first (once — later launches find them held), and only the tracks
+ * the store then holds are listed. The level loader trusts a listed track and
+ * never falls back from a dead local path, so a track named but not held —
+ * a first launch offline, a download cut off — would play silence; unlisted,
+ * it streams from its source or plays the stock sound instead.
+ */
+export async function keptManifest(
   pathname: string,
-  fetchImpl: typeof fetch = fetch,
+  opts: { root: string; fetchImpl?: typeof fetch },
 ): Promise<Response> {
-  const headers = new Headers();
-  const range = req.headers.get("range");
-  if (range) headers.set("range", range);
-  let upstream: Response;
+  const keep = (path: string) =>
+    ensureStored(path, { ...opts, source: sourceFor(path)! });
+  const at = await keep(pathname);
+  if (!at.ok) return new Response(at.reason, { status: at.status });
+  let names: Record<string, unknown>;
   try {
-    upstream = await fetchImpl(STREAM_ORIGIN + pathname, {
-      method: req.method,
-      headers,
-    });
-  } catch (err) {
-    return new Response(
-      `could not reach ${STREAM_ORIGIN}: ${(err as Error).message}`,
-      { status: 502, headers: { "content-type": "text/plain" } },
-    );
+    names = JSON.parse(await Deno.readTextFile(at.file));
+  } catch {
+    return new Response("unreadable manifest", { status: 502 });
   }
-  const out = new Headers();
-  for (const k of PASSED_HEADERS) {
-    const v = upstream.headers.get(k);
-    if (v) out.set(k, v);
+  const dir = pathname.slice(0, pathname.lastIndexOf("/") + 1);
+  const files = [...new Set(Object.values(names))].filter(
+    (f): f is string => typeof f === "string" && f.length > 0,
+  );
+  const held = new Set<string>();
+  await Promise.all(files.map(async (f) => {
+    if ((await keep(dir + encodeURIComponent(f))).ok) held.add(f);
+  }));
+  const listed: Record<string, string> = {};
+  for (const [key, f] of Object.entries(names)) {
+    if (typeof f === "string" && held.has(f)) listed[key] = f;
   }
-  if (req.method === "HEAD") await upstream.body?.cancel();
-  return new Response(req.method === "HEAD" ? null : upstream.body, {
-    status: upstream.status,
-    headers: out,
-  });
+  return Response.json(listed, { headers: { "cache-control": "no-store" } });
 }

@@ -2022,6 +2022,33 @@ stages them out of the read-only `deno compile` VFS onto disk before spawning
 `node`. It costs ~0.3MB, since Deno dedupes the game against the identical copy
 Vite already put in `_fresh/client`.
 
+### What the app downloads once
+
+The page in a packaged app keeps nothing past the launch: under `deno desktop`
+the CEF profile is a fresh `$TMPDIR/laufey_cef_<pid>/` every time and the
+origin is `127.0.0.1:<ephemeral port>`, so IndexedDB, Cache Storage,
+localStorage and the emulator service worker all start empty. So the packaged
+**server** keeps what has to last, under the launcher's data directory
+(`~/Library/Application Support/shmupX`, `~/.local/share/shmupX`,
+`%LOCALAPPDATA%\shmupX`), and none of it runs in a checkout or on the deploy:
+
+- **`offline/`** — a download-once store (`lib/offline-store.ts`). The binary
+  leaves out the arcade romsets and 2028-ai's 41MB custom BGM
+  (`lib/streamed-payloads.ts`, which `build-desktop.ts` reads for its
+  `--exclude`s); the first request for one fetches it from the deploy, and every
+  later one is served from disk, online or not. The arcade player joins them
+  even though the binary never carried it: the served `/emulators.json` calls
+  the arcade core `local`, so `/arcade/**` comes from this store (from the
+  catalogue's origin) instead of the service worker, and its MAME engine from
+  archive.org into `/arcade/emularity/engine/` — the player's ENGINE_LOCAL. A
+  romset's first request (the eShop install's probe) waits for the whole board
+  — romset, player, recipe, core — so a board installed once plays offline.
+  Manifests and player pages refresh when the network answers within 4s.
+- **`kept-storage.json`** — the installed-cores set and the arcade shelf
+  (`lib/kept-storage.ts`). Every HTML page the packaged server sends starts
+  with a script that puts them back into localStorage before the page's own
+  scripts read them, and sends each later change back.
+
 ### Keeping it current
 
 A launcher somebody downloaded once is a frozen copy: every canary feature since
