@@ -15572,7 +15572,23 @@
     if (!list.length) return "";
     return String(list[Math.floor(Math.random() * list.length)] || "");
   }
-  // The save's own ship, idling, sized to fill a portrait box G left — the
+  // A game that flies its own ship: an imported cart, or a web game whose
+  // player record names frames of its own (a library character, a roster
+  // ship) rather than the base game's. Such a game shows its ship where G
+  // stood — on the continue card and the CONGRATULATIONS card alike — since
+  // G belongs to 2028.Ai, not to it. The base game's player is read off the
+  // shipped game.json, so a recipe that merely restates it still shows G.
+  function playsOwnShip(scene) {
+    if (isImportedLevel()) return true;
+    var r = gameState._phaserRecipe;
+    var pd = r && r.playerData;
+    var own = pd && Array.isArray(pd.texture) ? pd.texture : [];
+    if (!own.length) return false;
+    var base = scene.cache && scene.cache.json ? scene.cache.json.get("recipe") : null;
+    var stock = base && base.playerData && Array.isArray(base.playerData.texture) ? base.playerData.texture : [];
+    return own.join("\n") !== stock.join("\n");
+  }
+  // The game's own ship, idling, sized to fill a portrait box G left — the
   // continue card's face box, or the spot his bow takes on the CONGRATULATIONS
   // card. Null when the recipe names frames this atlas does not have — G stays
   // up rather than leaving a hole. `animKey` is per scene, so one card's
@@ -15658,11 +15674,11 @@
       this.loseFace = this.add.sprite(20, this.continueTitle.y + this.continueTitle.height + 38, "game_ui", "continueFace0.gif");
       this.loseFace.setOrigin(0, 0);
       this.loseFace.play("continue_face_idle");
-      // G belongs to 2028.Ai, not to somebody's Dezaemon cart: an imported save
-      // idles its own ship in his place. His sprite stays (hidden) because the
-      // whole card is laid out against that box, and selectYes/selectNo still
-      // swap its frames.
-      this.shipFace = isImportedLevel() ? dezaShipFace(this, this.loseFace, "continue_ship_idle") : null;
+      // G belongs to 2028.Ai, not to somebody's game: one that flies its own
+      // ship (playsOwnShip) idles it in his place. His sprite stays (hidden)
+      // because the whole card is laid out against that box, and
+      // selectYes/selectNo still swap its frames.
+      this.shipFace = playsOwnShip(this) ? dezaShipFace(this, this.loseFace, "continue_ship_idle") : null;
       if (this.shipFace) this.loseFace.setVisible(false);
       this.cntTextBg = this.add.sprite(
         this.loseFace.x + this.loseFace.width + 20,
@@ -16164,13 +16180,13 @@
       this.bg.setOrigin(0, 0);
       this.bg.setAlpha(0);
       this.bg.play("congra_bg_anim");
-      // The three congraBg frames ARE G, taking his bow, so an imported cart
-      // cannot show any of them: they stay hidden and the save's own ship
-      // idles where his portrait was — the continue card's box, set at the top
+      // The three congraBg frames ARE G, taking his bow, so a game with a ship
+      // of its own (playsOwnShip) cannot show any of them: they stay hidden
+      // and that ship idles where his portrait was — the continue card's box, set at the top
       // of the screen clear of the CONGRATULATIONS strip and the score panel —
       // fading in on the cue the bow would have. G stays up when the atlas
       // lacks the ship's frames, as on the continue card.
-      this.shipFace = isImportedLevel()
+      this.shipFace = playsOwnShip(this)
         ? dezaShipFace(this, { x: GCX8 - 50, y: 0, width: 100, height: 131 }, "congra_ship_idle")
         : null;
       if (this.shipFace) {

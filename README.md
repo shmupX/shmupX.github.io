@@ -1617,7 +1617,10 @@ that is 2028.Ai's rather than the game's is keyed off it:
   sprite idles in the portrait box G would have filled. The CONGRATULATIONS
   card's three background frames are G taking a bow, so an imported save keeps
   those hidden and idles the ship in the same box at the top of the card
-  instead, fading in on the cue his bow had.
+  instead, fading in on the cue his bow had. The same goes for a web game
+  whose player names frames of its own — a library character, a roster ship —
+  rather than the base game's (`playsOwnShip`, which reads the stock player
+  off the shipped game.json): G belongs to 2028.Ai, not to that game.
 - **Its own cheats.** The Guide's Cheats submenu is broadcast per level: Boss
   Rush, a Start Stage slider bounded by the cart's real stage count, **Final
   Boss** (`?finalBoss=1` — the cart's last stage, opened at its boss) and Allow
