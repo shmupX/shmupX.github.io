@@ -81,6 +81,19 @@
     }
     return Math.max(0, Math.min(maxStage, Math.floor(stageId)));
   }
+  // Does a level record carry a whole game's framing, or one stage's grid? A
+  // story, its own title art, or a second stage says it is a game — which is
+  // what every game the editor saves under a name is — and a bare grid, the
+  // shape ?level= was made for, says it is a level.
+  function recordIsAGame(data) {
+    if (!data || typeof data !== "object") return false;
+    const story = data.storyData;
+    if (story && typeof story === "object" && Object.keys(story).length) return true;
+    if (data.logoDataURL || data.titleBgDataURL || data.subTitleDataURL || data.titleStartTextDataURL) return true;
+    if (data.dezaemonTitle && typeof data.dezaemonTitle === "object") return true;
+    const stages = data.stages && typeof data.stages === "object" ? data.stages : null;
+    return !!stages && Object.keys(stages).filter((k) => /^stage\d+$/.test(k)).length > 1;
+  }
   function openCustomAudioDB(dbName, store) {
     if (typeof indexedDB === "undefined") {
       return Promise.reject(new Error("IndexedDB not available"));
@@ -807,13 +820,18 @@
         }
         const explicitLevel = this.readLevelParam();
         const levelName = explicitLevel || o.defaultLevel;
-        const showTitle = !explicitLevel;
         const stageParam = this.readStageParam();
         const usingOffline = o.offlineLevel !== void 0 ? !!o.offlineLevel : typeof globalThis !== "undefined" && !!globalThis.__OFFLINE_LEVEL__;
         return this.fetchLevel(levelName, o).then(
           (data) => this.mergeAtlas(data, o.atlasKey).then(() => this.applyStageBackgrounds(data)).then(() => {
             const recipe = this.mergeRecipe(baseRecipe, data, o.atlasKey);
             this.applyTitleImages(data, o.titleImageKeys);
+            // A ?level= visit used to open straight into the stage: a named
+            // level was one stage to test, and the title was the base game's.
+            // A whole game saved under a name has a title of its own and a
+            // stage-0 story, and opens through them like any other game — unless
+            // the URL also names a stage (the Guide's cheats, a stage test).
+            const showTitle = !explicitLevel || (stageParam == null && recordIsAGame(data));
             const stageKey = data.stageKey || "stage0";
             const stageId = stageParam != null ? parseStageId(stageParam, o.maxStage) : parseStageId(stageKey.replace("stage", ""), o.maxStage);
             const hasCustomEnemies = !!data.enemyData;
@@ -3095,6 +3113,15 @@
     [1320, 32, 32, 1, 1.125, 160, 176],
     [1560, 288, 32, -1, 1.3125, 160, 200]
   ];
+  // The table's y is a plate's TOP edge: the sprite below is centred, so it
+  // sits half a plate (8 px) lower than the table says. Read as a centre,
+  // plate 0 (y 32) would cover rows 24-40 — its label's own row, 3 (y 24-32)
+  // — and the typed PRESENTED BY would run through the author's name. Every
+  // community cart that paints a first plate paints it the full 16 rows
+  // (AVENGE, CHOHSOKU STRINGER, DESTROYER), which no author would have left
+  // under the label; the top-edge reading gives the roll its rhythm instead:
+  // label, plate directly beneath, an 8 px gap, the second plate.
+  var DEZA_ROLL_STRIP_DROP = 8;
   var DEZA_ROLL_FLIGHT = 128;
   var DEZA_ROLL_GHOST_LIFE = 64;
   var DEZA_ROLL_FADE_IN = 128;
@@ -16401,12 +16428,12 @@
       var k = Math.min(DEZA_ROLL_FLIGHT, s.k);
       var y0 = DEZA_ROLL_BAND_Y;
       if (k >= DEZA_ROLL_FLIGHT) {
-        s.sprite.setPosition(dezaSatX(row[5]), y0 + row[6]);
+        s.sprite.setPosition(dezaSatX(row[5]), y0 + row[6] + DEZA_ROLL_STRIP_DROP);
         s.sprite.setScale(1);
         s.sprite.setRotation(0);
         return;
       }
-      s.sprite.setPosition(dezaSatX(row[1] + k * row[3]), y0 + row[2] + k * row[4]);
+      s.sprite.setPosition(dezaSatX(row[1] + k * row[3]), y0 + row[2] + k * row[4] + DEZA_ROLL_STRIP_DROP);
       var zoom = 3 - 2 * k / DEZA_ROLL_FLIGHT;
       s.sprite.setScale(zoom);
       s.sprite.setRotation(Math.PI * 2 * k / DEZA_ROLL_FLIGHT);

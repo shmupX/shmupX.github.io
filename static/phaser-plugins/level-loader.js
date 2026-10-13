@@ -167,6 +167,20 @@ export function parseStageId(value, maxStage) {
   return Math.max(0, Math.min(maxStage, Math.floor(stageId)));
 }
 
+// Does a level record carry a whole game's framing, or one stage's grid? A
+// story, its own title art, or a second stage says it is a game — which is
+// what every game the editor saves under a name is — and a bare grid, the
+// shape ?level= was made for, says it is a level.
+export function recordIsAGame(data) {
+  if (!data || typeof data !== "object") return false;
+  const story = data.storyData;
+  if (story && typeof story === "object" && Object.keys(story).length) return true;
+  if (data.logoDataURL || data.titleBgDataURL || data.subTitleDataURL || data.titleStartTextDataURL) return true;
+  if (data.dezaemonTitle && typeof data.dezaemonTitle === "object") return true;
+  const stages = data.stages && typeof data.stages === "object" ? data.stages : null;
+  return !!stages && Object.keys(stages).filter((k) => /^stage\d+$/.test(k)).length > 1;
+}
+
 export function openCustomAudioDB(dbName, store) {
   if (typeof indexedDB === "undefined") {
     return Promise.reject(new Error("IndexedDB not available"));
@@ -994,7 +1008,6 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       //    game; the default level shows the title first.
       const explicitLevel = this.readLevelParam();
       const levelName = explicitLevel || o.defaultLevel;
-      const showTitle = !explicitLevel;
       const stageParam = this.readStageParam();
       const usingOffline = o.offlineLevel !== undefined
         ? !!o.offlineLevel
@@ -1004,6 +1017,13 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         this.mergeAtlas(data, o.atlasKey).then(() => this.applyStageBackgrounds(data)).then(() => {
           const recipe = this.mergeRecipe(baseRecipe, data, o.atlasKey);
           this.applyTitleImages(data, o.titleImageKeys);
+
+          // A ?level= visit used to open straight into the stage: a named
+          // level was one stage to test, and the title was the base game's.
+          // A whole game saved under a name has a title of its own and a
+          // stage-0 story, and opens through them like any other game — unless
+          // the URL also names a stage (the Guide's cheats, a stage test).
+          const showTitle = !explicitLevel || (stageParam == null && recordIsAGame(data));
 
           const stageKey = data.stageKey || "stage0";
           const stageId = stageParam != null

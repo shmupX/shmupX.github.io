@@ -5954,6 +5954,9 @@
                 const w = await h.createWritable();
                 await w.write(JSON.stringify(gameData, null, 2)); await w.close();
                 flash('ALL DATA SAVED ✓');
+                // A folder game with a cloud name is saved there next (quickSave),
+                // and that save rebuilds its shelf cart; one without is done here.
+                if (!document.getElementById('firebase-level-name').value.trim()) refreshShelfExports();
             } catch (e) { alert('Write failed: ' + e.message); }
         }
 
@@ -7074,6 +7077,52 @@
             return said ? ' · ' + said.replace(/\n/g, ' ').toUpperCase() : ' · UNCREDITED';
         }
 
+        // The .sav of the open game: the record, art and options the EXPORT
+        // sheet builds from, for `palette` (the sheet's own when omitted).
+        // Returns { out, record } — `out` as exportLevelToSav hands it back.
+        async function buildDezaemonSav(palette) {
+            const record = await buildLevelRecordForSav();
+            const art = collectAtlasArtForSav();
+            const opts = await dezaSavOptions();
+            if (palette) opts.palette = palette;
+            return { out: window.Dezaemon.exportLevelToSav(record, art, opts), record };
+        }
+
+        // A game that is on the shelf (→ SAVE SHELF) is built there again on
+        // every later save, in the palette its row was filed in, so the shelf
+        // never plays a cart older than the game it was built from: a wave
+        // added to a cloud game showed in the web run and not in the Saturn
+        // one until SAVE SHELF was pressed again. A game that was never filed
+        // stays off the shelf, and a failure here only logs — the save that
+        // called this has already succeeded. Returns how many rows were rebuilt.
+        async function refreshShelfExports() {
+            const E = window.Dezaemon;
+            if (!E || typeof E.exportLevelToSav !== 'function' || dezaSavBusy) return 0;
+            if (lineageActive()) return 0;   // an opened cart's edits are a MOD (saveMod), never an export
+            let shelf, name;
+            try { shelf = await dezaShelf(); name = dezaSavGameName(); } catch (e) { return 0; }
+            const rows = [];
+            for (const palette of ['saturn', 'snes']) {
+                const id = shelf.dezaShelfIdForExport(name, palette);
+                const there = await shelf.getDezaShelfEntry(id).catch(() => null);
+                if (there && shelf.shelfKindOf(there) === 'export') rows.push({ id, palette });
+            }
+            let rebuilt = 0;
+            for (const row of rows) {
+                try {
+                    const { out, record } = await buildDezaemonSav(row.palette);
+                    await shelf.putDezaShelfEntry({
+                        id: row.id, title: record.name, file: out.fileName, palette: row.palette,
+                        bytes: out.sav, size: out.sav.length, savedAt: Date.now(),
+                        warnings: out.warnings, report: out.report || {}, source: 'export',
+                    });
+                    rebuilt++;
+                } catch (e) { console.warn('Could not rebuild the shelf cart "' + row.id + '":', e); }
+            }
+            if (rebuilt) { dezaExportRows = null; flash('SHELF CART REBUILT'); }
+            return rebuilt;
+        }
+
         let dezaSavBusy = false;
         async function exportDezaemonSav(action) {
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
@@ -7088,9 +7137,7 @@
             let out = null, record = null;
             try {
                 dezaSavNote('BUILDING THE SAVE…');
-                record = await buildLevelRecordForSav();
-                const art = collectAtlasArtForSav();
-                out = window.Dezaemon.exportLevelToSav(record, art, await dezaSavOptions());
+                ({ out, record } = await buildDezaemonSav());
             } catch (e) {
                 console.error('.sav export failed:', e);
                 dezaSavNote('COULD NOT BUILD THE .SAV: ' + (e && e.message || e), '#f87171');
@@ -11715,7 +11762,9 @@ function GAME3D_RUNTIME(DATA) {
                 if (gameData) gameData.gameId = payload.gameId;
                 document.getElementById('firebase-level-name').value = name;
                 updateContextualToolbar();   // the drawer's SAVE row reads the name box
-                alert(`Game "${name}" saved!\nIncludes: title, story, sprites, levels, enemies & bosses`);
+                const shelved = await refreshShelfExports();   // its Saturn cart, if it has one, built from this save
+                alert(`Game "${name}" saved!\nIncludes: title, story, sprites, levels, enemies & bosses` +
+                    (shelved ? '\nIts .sav on the LOAD GAME shelf was rebuilt too.' : ''));
             } catch (e) { alert('Save failed: ' + e.message); }
         }
 

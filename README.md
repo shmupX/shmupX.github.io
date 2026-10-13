@@ -190,6 +190,16 @@ they are written out in full.
     NEW GAME built out of them (`meta.version`, no `source`) used to be taken
     for a cart — its story switched off in OG mode, no CONTINUE? prompt, the
     cart's title fallback.
+  - `loadLevel` opens a `?level=` visit through the title when the record is a
+    whole game — `recordIsAGame`: a story, its own title art, or a second
+    stage — and the URL names no stage; a bare level still opens in its stage.
+    Before, every named level booted straight into `PhaserGameScene`, so a
+    cloud game's own title screen and its stage-0 story were never seen on the
+    web. Mirrors `static/phaser-plugins/level-loader.js`.
+  - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
+    TOP edge at the traced y, not their centre, so a name sits under its label
+    instead of under the typed PRESENTED BY (see the comment on the constant,
+    and FORMAT.md's staff-roll row).
   - A cheat opens the level where it asks, and holds. The Guide writes its
     Cheats into the frame's URL (`?stage=N`, `?bossRush=1`, `?boss=goki`,
     `?finalBoss=1`) and reloads it, and `PluginBootScene` read them into
@@ -734,7 +744,9 @@ engine bundle) and downloads `Dez 2 - <name>.sav`; **→ SAVE SHELF** files the
 same bytes in this browser's IndexedDB, and the LOAD GAME shelf lists them first
 under **YOUR .SAV EXPORTS** with a ✕ to forget one — loading a row runs the
 normal import, so a save can be exported, reloaded and re-edited without leaving
-the page. Both work on an imported cart as well as an authored level, which is
+the page. A game that is on the shelf is built there again on every later save
+(cloud or folder — `refreshShelfExports`), in the palette its row was filed in,
+so the launcher never plays a cart older than the game it was built from. Both work on an imported cart as well as an authored level, which is
 how a community game can be edited and written back out. The store is
 [`static/deza-shelf.js`](static/deza-shelf.js), shared with the launcher: its
 SAVED GAMES coverflow shelves the same builds ahead of the collection under the
