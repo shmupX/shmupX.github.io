@@ -335,6 +335,23 @@ function deathChildClosure(stage, placed) {
     return found;
 }
 
+// A record's own death word, mode 1, drops an item on every kill: a SLOT
+// 1-8, or 9 = the slots in turn off a global counter. That is a property of
+// the record, so every placement of it drops — it is how the writer sends a
+// web game's drops out (game-to-save.js) and how the Saturn plays them — and
+// these cells used to come back with no drop at all. The slot's TYPE picks
+// the runtime's drop code the way a placed pickup's does; a cycling record
+// takes the slots in placement order.
+function deathDrop(enemy, itemSlots, cycle) {
+    const death = enemy && enemy.behavior && enemy.behavior.death;
+    if (!death || death.mode !== 1 || !death.item) return 0;
+    const slot = death.item === 9 ? (cycle.n++) & 7 : (death.item - 1) & 7;
+    const def = itemSlots && itemSlots[slot];
+    return def && def.type !== undefined
+        ? (ITEM_TYPE_DROPS[def.type] ?? 0)
+        : ITEM_SLOT_DROPS[slot % ITEM_SLOT_DROPS.length];
+}
+
 // `itemSlots` is decode-settings' slot table; with it each placed item drops
 // as its authored TYPE instead of the legacy even spread.
 export function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = {}) {
@@ -404,11 +421,12 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = nu
             if (!byRow.has(row)) byRow.set(row, new Array(cols).fill(null));
             return byRow.get(row);
         };
+        const cycle = { n: 0 };
         for (const o of st.placement.objects) {
             if (o.kind !== "zako") continue;
             const idx = indexOf.get(enemyPairKey(s, o.record));
             if (idx === undefined) continue;
-            rowOf(o.row)[placementColumn(o.col)] = { enemy: idx, drop: 0 };
+            rowOf(o.row)[placementColumn(o.col)] = { enemy: idx, drop: deathDrop(enemies[idx], itemSlots, cycle) };
         }
         // Item pickups stand alone on the Dezaemon grid, but the Phaser runtime
         // only drops items from a killed enemy. Hang each one on the nearest

@@ -5943,6 +5943,7 @@
 
         async function saveAll() {
             if (!dirHandle || !gameData) { alert("Load directory first"); return; }
+            if (!(await awaitCloudLoad('SAVE'))) return;
             // Sync any pending editor form changes into gameData before saving
             syncEnemyEditorForm();
             gameData[currentStageKey] = gameData[currentStageKey] || {};
@@ -5973,6 +5974,13 @@
             const ss = ssEntriesPlain();
             if (ss) r.sceneScripts = ss;
             else delete r.sceneScripts;
+            // The title art rides along the way a cloud save carries it. PLAY
+            // opens in the stage, but the ending returns to the title, and
+            // without these that title was 2028.Ai's over the game's own story.
+            if (titleBgDataURL) r.titleBgDataURL = titleBgDataURL;
+            if (logoDataURL) r.logoDataURL = logoDataURL;
+            if (subTitleDataURL) r.subTitleDataURL = subTitleDataURL;
+            if (titleStartTextDataURL) r.titleStartTextDataURL = titleStartTextDataURL;
             return r;
         }
 
@@ -6056,6 +6064,7 @@
 
         async function playCurrentStage(opts) {
             if (!gameData) { alert('Load directory first'); return; }
+            if (!(await awaitCloudLoad('PLAY'))) return;
             if (!syncEnemyEditorForm(true)) return;
             settleLabBossForPlay();
             const sid = getCurrentStageId();
@@ -7131,6 +7140,7 @@
                 return;
             }
             if (dezaSavBusy) return;
+            if (!(await awaitCloudLoad('EXPORT'))) return;
             dezaSavBusy = true;
             const buttons = ['deza-sav-download', 'deza-sav-shelf', 'deza-sav-emu', 'deza-sav-mednafen'].map((id) => document.getElementById(id));
             buttons.forEach((b) => { if (b) b.disabled = true; });
@@ -11515,6 +11525,7 @@ function GAME3D_RUNTIME(DATA) {
         }
 
         async function saveToFirebase() {
+            if (!(await awaitCloudLoad('SAVE'))) return;
             // Sync any pending editor form changes into bossData/enemyData before saving
             syncEnemyEditorForm();
             if (storyEditorOpen()) syncStoryFromUI();   // the STORY EDITOR's text, as typed
@@ -11768,7 +11779,36 @@ function GAME3D_RUNTIME(DATA) {
             } catch (e) { alert('Save failed: ' + e.message); }
         }
 
+        // The cloud game on its way, while one is. A ?level= visit opens on
+        // the stock game and fetches the named one behind it — megabytes, on a
+        // phone — and PLAY pressed in that gap handed the stock game to the new
+        // tab, with the new tab the only thing saying so; a SAVE in the gap
+        // would have written the stock game under the cloud game's name. The
+        // hand-offs wait on this instead. It settles once the record AND its
+        // art have landed: the atlas is folded in after the record is read,
+        // and a PLAY between the two ships the previous atlas.
+        let cloudLoadPending = null;
+        let cloudLoadName = '';
+        let cloudArtLanding = null;   // the fold-in of the record's atlas, set by the load
         async function loadFromFirebase(name) {
+            cloudLoadName = String(name || '').toUpperCase();
+            cloudArtLanding = null;
+            const job = (async () => {
+                const ok = await loadFromFirebaseRecord(name);
+                if (ok && cloudArtLanding) await cloudArtLanding;
+                return ok;
+            })();
+            cloudLoadPending = job;
+            try { return await job; } finally { if (cloudLoadPending === job) cloudLoadPending = null; }
+        }
+        // True once nothing is loading (or it has landed), false when the load
+        // failed. `what` names the button for the toast.
+        async function awaitCloudLoad(what) {
+            if (!cloudLoadPending) return true;
+            flash(cloudLoadName + ' IS STILL LOADING — ' + what + ' WAITS FOR IT');
+            try { return !!(await cloudLoadPending); } catch (_e) { return false; }
+        }
+        async function loadFromFirebaseRecord(name) {
             initFirebase();
             if (!firebaseDb) { alert('Firebase not available'); return false; }
             name = sanitizeLevelName(name);
@@ -11868,13 +11908,18 @@ function GAME3D_RUNTIME(DATA) {
                         for (const [k, v] of Object.entries(d.atlasFrames)) decodedFrames[decodeFirebaseKey(k)] = v;
                         atlasData = { frames: decodedFrames };
                         atlasImage = new Image();
+                        cloudArtLanding = new Promise((landed) => {
+                            atlasImage.onload = () => { buildFrameThumbs(); storeAtlasForViewers().then(landed, landed); renderAtlas(); };
+                            atlasImage.onerror = () => landed();
+                        });
                         atlasImage.src = d.atlasImageDataURL;
-                        atlasImage.onload = () => { buildFrameThumbs(); storeAtlasForViewers(); renderAtlas(); };
                         customFrameKeys = new Set(Object.keys(decodedFrames));
                     } else {
                         const localFrames = atlasData.frames;
                         const nextCustom = new Set();
                         const fbImg = new Image();
+                        let artLanded = () => {};
+                        cloudArtLanding = new Promise((landed) => { artLanded = landed; });
                         fbImg.onload = () => {
                             for (const [encKey, frameData] of Object.entries(d.atlasFrames)) {
                                 const key = decodeFirebaseKey(encKey);
@@ -11905,11 +11950,13 @@ function GAME3D_RUNTIME(DATA) {
                                 // already holds, so the atlas is level with it.
                                 atlasAheadOfCloud = false;
                                 renderAtlas();
-                            });
+                                artLanded();
+                            }, artLanded);
                         };
                         fbImg.onerror = () => {
                             customFrameKeys = new Set();
                             console.warn('Firebase atlas image failed to load for level', name);
+                            artLanded();
                         };
                         fbImg.src = d.atlasImageDataURL;
                     }

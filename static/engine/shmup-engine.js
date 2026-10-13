@@ -1210,6 +1210,13 @@ function deathChildClosure(stage, placed) {
   }
   return found;
 }
+function deathDrop(enemy, itemSlots, cycle) {
+  const death = enemy && enemy.behavior && enemy.behavior.death;
+  if (!death || death.mode !== 1 || !death.item) return 0;
+  const slot = death.item === 9 ? cycle.n++ & 7 : death.item - 1 & 7;
+  const def = itemSlots && itemSlots[slot];
+  return def && def.type !== void 0 ? ITEM_TYPE_DROPS[def.type] ?? 0 : ITEM_SLOT_DROPS[slot % ITEM_SLOT_DROPS.length];
+}
 function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = {}) {
   const uses = /* @__PURE__ */ new Map();
   stages.forEach((st, s) => {
@@ -1264,11 +1271,12 @@ function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = 
       if (!byRow.has(row)) byRow.set(row, new Array(cols).fill(null));
       return byRow.get(row);
     };
+    const cycle = { n: 0 };
     for (const o of st.placement.objects) {
       if (o.kind !== "zako") continue;
       const idx = indexOf.get(enemyPairKey(s, o.record));
       if (idx === void 0) continue;
-      rowOf(o.row)[placementColumn(o.col)] = { enemy: idx, drop: 0 };
+      rowOf(o.row)[placementColumn(o.col)] = { enemy: idx, drop: deathDrop(enemies[idx], itemSlots, cycle) };
     }
     const items = st.placement.objects.filter((o) => o.kind === "item").map((o) => {
       const def = itemSlots && itemSlots[o.slot & 7];
@@ -6770,6 +6778,7 @@ function encodeEnemyRecord({
   ground = false,
   hpIndex = 0,
   armour = false,
+  noCollision = false,
   deathMode = 0,
   deathParam = 0,
   bulletType = 0,
@@ -6781,10 +6790,16 @@ function encodeEnemyRecord({
   const b = new Uint8Array(18);
   b[0] = appearance & 255;
   b[1] = animIndex & 7 | (scoreIndex & 7) << 4 | (ground ? 128 : 0);
-  b[2] = hpIndex & 7 | (armour ? 16 : 0) | (deathMode & 3) << 6;
+  b[2] = hpIndex & 7 | (armour ? 16 : 0) | (noCollision ? 32 : 0) | (deathMode & 3) << 6;
   b[3] = deathParam & 255;
   b[4] = bulletType & 3 | (deathPresentation & 3) << 2 | (fireRateIndex & 7) << 4;
   b[5] = fireGeometry & 15 | (aimed && fireGeometry ? 16 : 0);
+  return b;
+}
+function withDeathDrop(bytes, slot) {
+  const b = Uint8Array.from(bytes);
+  b[2] = b[2] & 63 | 1 << 6;
+  b[3] = slot & 7;
   return b;
 }
 function enemyRecordFromEditor(rec, { bulletType = 0, dropSlot = null } = {}) {
@@ -7216,16 +7231,27 @@ function buildSaveFromGame(level, art2, options = {}) {
         const letter = cell.slice(0, -1);
         const drop = Number(cell.slice(-1)) || 0;
         placements.push({ row: scrollRow, col: mapColumn(c, width), letter, drop });
-        if (!usage.has(letter)) usage.set(letter, { count: 0, drops: /* @__PURE__ */ new Map() });
+        if (!usage.has(letter)) usage.set(letter, { count: 0, digits: /* @__PURE__ */ new Map() });
         const u = usage.get(letter);
         u.count++;
-        if (drop) u.drops.set(drop, (u.drops.get(drop) || 0) + 1);
+        u.digits.set(drop, (u.digits.get(drop) || 0) + 1);
         lastRow = Math.max(lastRow, scrollRow);
       });
     });
     const taken = /* @__PURE__ */ new Set();
     const records = /* @__PURE__ */ new Map();
+    const recordOf = /* @__PURE__ */ new Map();
     const letters = [...usage.keys()].sort((a, b) => usage.get(b).count - usage.get(a).count);
+    const freeIndex = (band, preferred) => {
+      for (let b = band; b < RECORD_ART.length; b++) {
+        const def = RECORD_ART[b];
+        if (preferred >= def.first && preferred < def.first + def.count && !taken.has(preferred)) return { index: preferred, band: b };
+        for (let i = def.first; i < def.first + def.count; i++) {
+          if (!taken.has(i)) return { index: i, band: b };
+        }
+      }
+      return null;
+    };
     for (const letter of letters) {
       const rec = enemyData[`enemy${letter}`];
       if (!rec) {
@@ -7236,56 +7262,58 @@ function buildSaveFromGame(level, art2, options = {}) {
       if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas \u2014 placed invisible`);
       const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
       const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
-      let band = bandFor(maxW, maxH);
+      const minBand = bandFor(maxW, maxH);
       if (frames.length && (maxW > 64 || maxH > 64)) {
         warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 \u2014 downscaled`);
       }
-      let index = -1;
       const preferred = rec.dezaemon && Number.isInteger(rec.dezaemon.record) ? rec.dezaemon.record : -1;
-      for (let b = band; b < RECORD_ART.length && index < 0; b++) {
-        const def2 = RECORD_ART[b];
-        if (preferred >= def2.first && preferred < def2.first + def2.count && !taken.has(preferred)) {
-          index = preferred;
+      const verbatim = rec.dezaemon ? hexToBytes(rec.dezaemon.attributes, 18) : null;
+      const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
+      let first = null;
+      for (const digit of digits) {
+        const found = freeIndex(minBand, first ? -1 : preferred);
+        if (!found) {
+          if (!first) {
+            warn(`${st.key}: no free enemy record for enemy${letter} \u2014 a stage holds 60 \u2014 cells left empty`);
+            break;
+          }
+          warn(`${st.key}: enemy${letter} carries several drop digits and the stage is out of records \u2014 its drop-${digit} cells drop ${first.drop ? "item " + first.drop : "nothing"} instead`);
+          recordOf.set(letter + digit, first.key);
+          continue;
+        }
+        taken.add(found.index);
+        const def = RECORD_ART[found.band];
+        const bw = def.w * CG_CELL, bh = def.h * CG_CELL;
+        const chosen = spreadFrames(frames, def.frames);
+        const planKeys = chosen.map((f) => planFrame(`e:${f.key}:${bw}x${bh}`, f, bw, bh, frameGroup(f.key), 2));
+        const drop = digit || 0;
+        const slot = dropToSlot(drop);
+        let bytes;
+        if (!verbatim) {
+          bytes = enemyRecordFromEditor(rec, { bulletType: bulletTypeOf.get(letter) || 0, dropSlot: slot });
+        } else if (slot === null) {
+          bytes = verbatim;
         } else {
-          for (let i = def2.first; i < def2.first + def2.count; i++) {
-            if (!taken.has(i)) {
-              index = i;
-              break;
-            }
+          bytes = withDeathDrop(verbatim, slot);
+          if (verbatim[2] >> 6 >= 2) {
+            warn(`${st.key}: enemy${letter} (${rec.name || "?"}) spawns a child when it dies; on its drop-${drop} cells the drop takes that word's place`);
           }
         }
-        if (index >= 0) band = b;
+        const key = letter + digit;
+        const entry = { key, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${letter}`, drop };
+        records.set(key, entry);
+        recordOf.set(key, key);
+        if (!first) first = entry;
       }
-      if (index < 0) {
-        warn(`${st.key}: no free enemy record for enemy${letter} \u2014 a stage holds 60 \u2014 cells left empty`);
-        continue;
-      }
-      taken.add(index);
-      const def = RECORD_ART[band];
-      const bw = def.w * CG_CELL, bh = def.h * CG_CELL;
-      const chosen = spreadFrames(frames, def.frames);
-      const planKeys = chosen.map((f) => planFrame(`e:${f.key}:${bw}x${bh}`, f, bw, bh, frameGroup(f.key), 2));
-      let drop = 0, dropN = 0;
-      for (const [d, n] of usage.get(letter).drops) if (n > dropN) {
-        drop = d;
-        dropN = n;
-      }
-      if (usage.get(letter).drops.size > 1) {
-        warn(`${st.key}: enemy${letter} carries several drop digits; a Dezaemon record has one \u2014 kept ${drop}`);
-      }
-      let bytes = rec.dezaemon ? hexToBytes(rec.dezaemon.attributes, 18) : null;
-      if (!bytes) {
-        bytes = enemyRecordFromEditor(rec, { bulletType: bulletTypeOf.get(letter) || 0, dropSlot: dropToSlot(drop) });
-      }
-      records.set(letter, { index, band, frames: planKeys, bytes, name: rec.name || `enemy${letter}` });
     }
     const panel = opts.storyPanels ? opts.storyPanels.find((p) => p.stage === s) : null;
     if (panel) {
       const storyBytes = encodeEnemyRecord({
         appearance: STRAIGHT_APPEARANCE_BASE,
         animIndex: 3,
-        scoreIndex: 1,
-        hpIndex: 4,
+        scoreIndex: 0,
+        hpIndex: 0,
+        noCollision: true,
         deathMode: 0,
         fireGeometry: 0,
         aimed: false
@@ -7314,7 +7342,8 @@ function buildSaveFromGame(level, art2, options = {}) {
             (_, f) => planFrame(`${key}:${f}`, frame, def.w * CG_CELL, def.h * CG_CELL, "story", 2)
           );
           const letter = `\0${key}`;
-          records.set(letter, { index, band, frames: planKeys, bytes: storyBytes, name: key });
+          records.set(letter, { index, band, frames: planKeys, bytes: storyBytes, name: key, drop: 0 });
+          recordOf.set(letter + "0", letter);
           placements.push({
             row: rowBase + (rows - 1 - tile.row) * stepRow,
             col: colBase + tile.col * stepCol,
@@ -7434,7 +7463,7 @@ function buildSaveFromGame(level, art2, options = {}) {
       const end = clamp(Math.ceil((lastRow + 32) / 16 / 2) * 2, 2, 48);
       extent = [Math.max(0, end - 4), end];
     }
-    return { key: st.key, placements, records, boss, items, background, curve, extent, lastRow };
+    return { key: st.key, placements, records, recordOf, boss, items, background, curve, extent, lastRow };
   });
   const importedIcons = importedSlots && level.dezaemonItems && Array.isArray(level.dezaemonItems.icons) ? level.dezaemonItems.icons : null;
   const itemKeys = itemSlotBytes.map((b, i) => {
@@ -7587,7 +7616,7 @@ function buildSaveFromGame(level, art2, options = {}) {
   built.forEach((b, s) => {
     const placeBase = SEC5_REGIONS.placement.offset + s * SEC5_REGIONS.placement.stride;
     for (const p of b.placements) {
-      const rec = b.records.get(p.letter);
+      const rec = b.records.get(b.recordOf.get(p.letter + p.drop));
       if (!rec) continue;
       sec5[placeBase + p.row * PLACEMENT_COLS + p.col] = zakoPlacementId(rec.index);
     }
@@ -7740,7 +7769,7 @@ function buildSaveFromGame(level, art2, options = {}) {
       stages: built.map((b) => ({
         key: b.key,
         placements: b.placements.length,
-        records: [...b.records.values()].map((r) => ({ name: r.name, record: r.index, band: r.band })),
+        records: [...b.records.values()].map((r) => ({ name: r.name, record: r.index, band: r.band, ...r.drop ? { drop: r.drop } : {} })),
         // weapons: the global bullet type each of the boss's own
         // weapons A/B/C landed in, null where it carries none.
         boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, weapons: b.boss.weapons } : null,

@@ -371,6 +371,17 @@ export function encodeEnemyRecord({
 }
 
 /** An enemy record for an authored (non-imported) enemyData entry. */
+/**
+ * A copy of an 18-byte record whose death word drops item slot `slot` (0-7):
+ * byte 2 bits 6-7 = mode 1, byte 3 = the slot (FORMAT.md, "The death word").
+ */
+export function withDeathDrop(bytes, slot) {
+    const b = Uint8Array.from(bytes);
+    b[2] = (b[2] & 0x3f) | (1 << 6);
+    b[3] = slot & 7;
+    return b;
+}
+
 export function enemyRecordFromEditor(rec, { bulletType = 0, dropSlot = null } = {}) {
     const speed = Number.isFinite(rec.speed) ? rec.speed : 1;
     const hits = rec.hp === "infinity" ? 1 : Math.max(1, Number(rec.hp) || 1);
@@ -922,7 +933,7 @@ export function buildSaveFromGame(level, art, options = {}) {
             ? st.waveRows.slice().reverse()
             : null;
         const placements = [];
-        const usage = new Map(); // letter -> {count, drops: Map}
+        const usage = new Map(); // letter -> {count, digits: Map of drop digit -> cells}
         let lastRow = FIRST_SPAWN_ROW;
         spawnRows.forEach((row, k) => {
             const scrollRow = waveRows
@@ -933,19 +944,41 @@ export function buildSaveFromGame(level, art, options = {}) {
                 const letter = cell.slice(0, -1);
                 const drop = Number(cell.slice(-1)) || 0;
                 placements.push({ row: scrollRow, col: mapColumn(c, width), letter, drop });
-                if (!usage.has(letter)) usage.set(letter, { count: 0, drops: new Map() });
+                if (!usage.has(letter)) usage.set(letter, { count: 0, digits: new Map() });
                 const u = usage.get(letter);
                 u.count++;
-                if (drop) u.drops.set(drop, (u.drops.get(drop) || 0) + 1);
+                u.digits.set(drop, (u.digits.get(drop) || 0) + 1);
                 lastRow = Math.max(lastRow, scrollRow);
             });
         });
 
         // Records: most-placed enemies first, each in the smallest band that
         // holds its art, an import's own slot when it is free.
+        //
+        // A record has ONE drop (its death word), where a web game's cells
+        // carry a digit each — enemy B dropping a power-up here and a bomb
+        // there. So an enemy whose cells carry several digits is written as
+        // one record per digit. Its art is planned once and the records share
+        // the cells it paints, so a variant costs a record index out of the
+        // stage's 60 and nothing else; only when those run out does the most
+        // common digit stand for all of them. An import's verbatim 18 bytes
+        // keep their own death word on the cells with no digit, and take the
+        // author's drop on the cells that carry one — the digit is what the
+        // author put there after the import, and it used to be thrown away.
         const taken = new Set();
-        const records = new Map(); // letter -> {index, band, frames, bytes}
+        const records = new Map(); // record key -> {index, band, frames, bytes, name, drop}
+        const recordOf = new Map(); // cell code ("B9") -> record key
         const letters = [...usage.keys()].sort((a, b) => usage.get(b).count - usage.get(a).count);
+        const freeIndex = (band, preferred) => {
+            for (let b = band; b < RECORD_ART.length; b++) {
+                const def = RECORD_ART[b];
+                if (preferred >= def.first && preferred < def.first + def.count && !taken.has(preferred)) return { index: preferred, band: b };
+                for (let i = def.first; i < def.first + def.count; i++) {
+                    if (!taken.has(i)) return { index: i, band: b };
+                }
+            }
+            return null;
+        };
         for (const letter of letters) {
             const rec = enemyData[`enemy${letter}`];
             if (!rec) {
@@ -956,43 +989,50 @@ export function buildSaveFromGame(level, art, options = {}) {
             if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas — placed invisible`);
             const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
             const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
-            let band = bandFor(maxW, maxH);
+            const minBand = bandFor(maxW, maxH);
             if (frames.length && (maxW > 64 || maxH > 64)) {
                 warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 — downscaled`);
             }
-            let index = -1;
             const preferred = rec.dezaemon && Number.isInteger(rec.dezaemon.record) ? rec.dezaemon.record : -1;
-            for (let b = band; b < RECORD_ART.length && index < 0; b++) {
-                const def = RECORD_ART[b];
-                if (preferred >= def.first && preferred < def.first + def.count && !taken.has(preferred)) {
-                    index = preferred;
+            const verbatim = rec.dezaemon ? hexToBytes(rec.dezaemon.attributes, 18) : null;
+            // The digits on this enemy's cells, most common first.
+            const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
+            let first = null;   // the record the most common digit got
+            for (const digit of digits) {
+                const found = freeIndex(minBand, first ? -1 : preferred);
+                if (!found) {
+                    if (!first) {
+                        warn(`${st.key}: no free enemy record for enemy${letter} — a stage holds 60 — cells left empty`);
+                        break;
+                    }
+                    warn(`${st.key}: enemy${letter} carries several drop digits and the stage is out of records — its drop-${digit} cells drop ${first.drop ? "item " + first.drop : "nothing"} instead`);
+                    recordOf.set(letter + digit, first.key);
+                    continue;
+                }
+                taken.add(found.index);
+                const def = RECORD_ART[found.band];
+                const bw = def.w * CG_CELL, bh = def.h * CG_CELL;
+                const chosen = spreadFrames(frames, def.frames);
+                const planKeys = chosen.map((f) => planFrame(`e:${f.key}:${bw}x${bh}`, f, bw, bh, frameGroup(f.key), 2));
+                const drop = digit || 0;
+                const slot = dropToSlot(drop);
+                let bytes;
+                if (!verbatim) {
+                    bytes = enemyRecordFromEditor(rec, { bulletType: bulletTypeOf.get(letter) || 0, dropSlot: slot });
+                } else if (slot === null) {
+                    bytes = verbatim;
                 } else {
-                    for (let i = def.first; i < def.first + def.count; i++) {
-                        if (!taken.has(i)) { index = i; break; }
+                    bytes = withDeathDrop(verbatim, slot);
+                    if ((verbatim[2] >> 6) >= 2) {
+                        warn(`${st.key}: enemy${letter} (${rec.name || "?"}) spawns a child when it dies; on its drop-${drop} cells the drop takes that word's place`);
                     }
                 }
-                if (index >= 0) band = b;
+                const key = letter + digit;
+                const entry = { key, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${letter}`, drop };
+                records.set(key, entry);
+                recordOf.set(key, key);
+                if (!first) first = entry;
             }
-            if (index < 0) {
-                warn(`${st.key}: no free enemy record for enemy${letter} — a stage holds 60 — cells left empty`);
-                continue;
-            }
-            taken.add(index);
-            const def = RECORD_ART[band];
-            const bw = def.w * CG_CELL, bh = def.h * CG_CELL;
-            const chosen = spreadFrames(frames, def.frames);
-            const planKeys = chosen.map((f) => planFrame(`e:${f.key}:${bw}x${bh}`, f, bw, bh, frameGroup(f.key), 2));
-            // The record's drop: the most common non-zero digit on its cells.
-            let drop = 0, dropN = 0;
-            for (const [d, n] of usage.get(letter).drops) if (n > dropN) { drop = d; dropN = n; }
-            if (usage.get(letter).drops.size > 1) {
-                warn(`${st.key}: enemy${letter} carries several drop digits; a Dezaemon record has one — kept ${drop}`);
-            }
-            let bytes = rec.dezaemon ? hexToBytes(rec.dezaemon.attributes, 18) : null;
-            if (!bytes) {
-                bytes = enemyRecordFromEditor(rec, { bulletType: bulletTypeOf.get(letter) || 0, dropSlot: dropToSlot(drop) });
-            }
-            records.set(letter, { index, band, frames: planKeys, bytes, name: rec.name || `enemy${letter}` });
         }
 
         // The story panel: a stage's opening picture and its words, placed as
@@ -1056,7 +1096,8 @@ export function buildSaveFromGame(level, art, options = {}) {
                         (_, f) => planFrame(`${key}:${f}`, frame, def.w * CG_CELL, def.h * CG_CELL, "story", 2),
                     );
                     const letter = `\x00${key}`;
-                    records.set(letter, { index, band, frames: planKeys, bytes: storyBytes, name: key });
+                    records.set(letter, { index, band, frames: planKeys, bytes: storyBytes, name: key, drop: 0 });
+                    recordOf.set(letter + "0", letter);
                     placements.push({
                         row: rowBase + (rows - 1 - tile.row) * stepRow,
                         col: colBase + tile.col * stepCol,
@@ -1197,7 +1238,7 @@ export function buildSaveFromGame(level, art, options = {}) {
             const end = clamp(Math.ceil((lastRow + 32) / 16 / 2) * 2, 2, 48);
             extent = [Math.max(0, end - 4), end];
         }
-        return { key: st.key, placements, records, boss, items, background, curve, extent, lastRow };
+        return { key: st.key, placements, records, recordOf, boss, items, background, curve, extent, lastRow };
     });
 
     // Item icons and blasts (procedural), and the drawn title screen.
@@ -1442,7 +1483,7 @@ export function buildSaveFromGame(level, art, options = {}) {
     built.forEach((b, s) => {
         const placeBase = SEC5_REGIONS.placement.offset + s * SEC5_REGIONS.placement.stride;
         for (const p of b.placements) {
-            const rec = b.records.get(p.letter);
+            const rec = b.records.get(b.recordOf.get(p.letter + p.drop));
             if (!rec) continue;
             sec5[placeBase + p.row * PLACEMENT_COLS + p.col] = zakoPlacementId(rec.index);
         }
@@ -1616,7 +1657,7 @@ export function buildSaveFromGame(level, art, options = {}) {
             stages: built.map((b) => ({
                 key: b.key,
                 placements: b.placements.length,
-                records: [...b.records.values()].map((r) => ({ name: r.name, record: r.index, band: r.band })),
+                records: [...b.records.values()].map((r) => ({ name: r.name, record: r.index, band: r.band, ...(r.drop ? { drop: r.drop } : {}) })),
                 // weapons: the global bullet type each of the boss's own
                 // weapons A/B/C landed in, null where it carries none.
                 boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, weapons: b.boss.weapons } : null,

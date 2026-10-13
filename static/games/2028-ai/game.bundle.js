@@ -413,6 +413,13 @@
             const sRec = stageRecordFromLevel(levelData.stages[sKey]);
             if (sRec) recipe[sKey] = sRec;
           }
+          // `stages` is the whole game, so a base stage it does not name is not
+          // part of it. Left in, a two-stage game ran on into the base game's
+          // stages 2-4 here, where the editor's own PLAY — which hands over the
+          // record alone — ended it after its second.
+          for (const key of Object.keys(recipe)) {
+            if (/^stage\d+$/.test(key) && key !== stageKey && !levelData.stages[key]) delete recipe[key];
+          }
         }
         if (Array.isArray(levelData.backgroundCells)) {
           recipe.backgroundCells = levelData.backgroundCells;
@@ -802,9 +809,14 @@
           const stageId = parseStageId(editorPlay.stageId, o.maxStage);
           const info = { stageId, bossRush, source: "editor", hasCustomEnemies };
           return this.mergeEditorAtlas(o).then(() => this.applyStageBackgrounds(recipe)).then(() => {
+            // The game's title art, for the title the ending returns to: PLAY
+            // itself opens in the stage. Without this that title was the base
+            // game's, over the game's own story.
+            this.applyTitleImages(recipe, o.titleImageKeys);
             // Applied as textures above; the recipe the scene keeps need not
             // carry half a megabyte of PNG as well.
             delete recipe.stageBackgrounds;
+            for (const dataKey in o.titleImageKeys) delete recipe[dataKey];
             prime(recipe, info);
             return {
               recipe,
@@ -7705,6 +7717,34 @@
     text.setOrigin(0, 0);
     return text;
   }
+  // A story entry's lines, whitespace folded, for telling an author's text
+  // from the base game's.
+  function storyLines(entry) {
+    var parts = entry && Array.isArray(entry.part) ? entry.part : [];
+    return parts.map(function(p) {
+      return String(p && p.text || "").replace(/\s+/g, " ").trim();
+    });
+  }
+  // Does `storyData` carry an epilogue of the author's own under
+  // stage<stageId>: an entry with words or a picture that is not one of the
+  // base game's stories (the editor seeds a new game with those).
+  function authoredEpilogue(storyData, stageId) {
+    var key = "stage" + String(stageId);
+    var entry = storyData ? storyData[key] : null;
+    if (!entry || !Array.isArray(entry.part) || !entry.part.length) return false;
+    var images = storyData.customImages || {};
+    for (var i = 0; i < entry.part.length; i++) {
+      if (images[key + "_part" + i]) return true;
+    }
+    var own = storyLines(entry);
+    if (!own.some(function(t) { return t; })) return false;
+    var stock = [ADV_SCENARIO_EN[key], ADV_SCENARIO_JA[key]];
+    for (var s = 0; s < stock.length; s++) {
+      var theirs = storyLines(stock[s]);
+      if (theirs.length === own.length && theirs.every(function(t, k) { return t === own[k]; })) return false;
+    }
+    return true;
+  }
   function decideEnding(recipe) {
     var finalStage = recipe ? lastStageId(recipe) : 4;
     if (gameState.stageId > finalStage) return true;
@@ -7753,6 +7793,21 @@
         setTimeout(function() {
           game.scene.stop("PhaserAdvScene");
           game.scene.start(nextScene);
+        }, 50);
+        return;
+      }
+      // Past the last stage this scene is the epilogue, and a game has one
+      // only if its author wrote it. The editor seeds every game with the
+      // base game's five stories, so a two-stage game's "stage2" is the base
+      // game's third-stage text, not an ending — and a game whose story has
+      // no entry for the stage used to replay its first one here. The base
+      // game's own epilogue is its hardcoded stage5, which stays.
+      if (recipe && recipe.storyData && gameState.stageId > lastStageId(recipe) && !authoredEpilogue(recipe.storyData, gameState.stageId)) {
+        this.endingFlg = true;
+        var game0 = this.game;
+        setTimeout(function() {
+          game0.scene.stop("PhaserAdvScene");
+          game0.scene.start("PhaserEndingScene");
         }, 50);
         return;
       }

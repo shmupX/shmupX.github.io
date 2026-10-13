@@ -196,10 +196,25 @@ they are written out in full.
     Before, every named level booted straight into `PhaserGameScene`, so a
     cloud game's own title screen and its stage-0 story were never seen on the
     web. Mirrors `static/phaser-plugins/level-loader.js`.
+  - `mergeRecipe` takes a record's `stages` as the whole game: a base stage
+    the record does not name is dropped from the recipe, so a two-stage cloud
+    game ends after its second on the web as it does from the editor's PLAY,
+    instead of running on into 2028.Ai's stages 2-4. The editor hand-off
+    (`?editorPlay=1`) also applies the record's title art now (the editor
+    sends it in the recipe): PLAY opens in the stage, but the ending returns
+    to the title, and that title was the base game's. Both mirror
+    `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
     TOP edge at the traced y, not their centre, so a name sits under its label
     instead of under the typed PRESENTED BY (see the comment on the constant,
     and FORMAT.md's staff-roll row).
+  - `PhaserAdvScene` past the last stage is the epilogue, and a game has one
+    only if its author wrote it (`authoredEpilogue`: words or a picture under
+    `stage<last+1>` that are not one of the base game's five stories the
+    editor seeds a game with). A two-stage game used to play the base game's
+    third-stage text before its ending, and a game whose story had no entry
+    for the stage replayed its first one. The base game's own epilogue is its
+    hardcoded `stage5`, which stays.
   - A cheat opens the level where it asks, and holds. The Guide writes its
     Cheats into the frame's URL (`?stage=N`, `?bossRush=1`, `?boss=goki`,
     `?finalBoss=1`) and reloads it, and `PluginBootScene` read them into
@@ -668,7 +683,10 @@ order; an import's `waveRows` puts waves back on their rows, an authored level
 spaces them 12 rows apart across the 14-column playfield), its 60 enemy records
 (an import's 18 bytes verbatim in their own slot; an authored enemy encoded from
 hp/score/interval/speed as a straight-down flier that fires aimed shots; a
-cell's drop digit becomes the record's death word), the boss trailer (re-encoded
+cell's drop digit becomes the record's death word — one record per digit an
+enemy's cells carry, sharing the art, since a record has one drop and a web
+game's B0/B1/B9 cells are three; only a stage out of records collapses them to
+the most common digit), the boss trailer (re-encoded
 from an import's decoded record, else four default patterns), scroll curve and
 extents, and the settings block (mode from the grid's VERT/HORIZ switch,
 loadouts, item slots, bullet configs, BGM table). An import's `dezaemonBgm`
@@ -705,7 +723,13 @@ drawing squares; a GIF that will not decode costs only its own letter, and a
 checkout without the art exports exactly what it always did. Import the cart
 back and its icons dress its drops again (`dezaemonItems.iconByDrop`), which is
 what the runtime then draws for its pickups — the same path a community save's
-own icons take.
+own icons take. The drops themselves come back through the records' death
+words: `projectForEditor` stamps a mode-1 record's item slot onto every cell it
+is placed in (`deathDrop`, the slot's type → the runtime's drop digit, a cycling
+record taking the slots in turn), which is how a cart's enemies drop on the
+Saturn and how the shelf's web run of one drops too — before, only a pickup
+placed on the map survived the import, so a web game's items were gone from its
+shelf cart.
 
 **Animated pickups in the runtime.** What a cart cannot hold, the game can.
 `deno task powerups:atlas` cuts the same four GIFs into
@@ -746,7 +770,11 @@ under **YOUR .SAV EXPORTS** with a ✕ to forget one — loading a row runs the
 normal import, so a save can be exported, reloaded and re-edited without leaving
 the page. A game that is on the shelf is built there again on every later save
 (cloud or folder — `refreshShelfExports`), in the palette its row was filed in,
-so the launcher never plays a cart older than the game it was built from. Both work on an imported cart as well as an authored level, which is
+so the launcher never plays a cart older than the game it was built from. PLAY,
+SAVE and the exports wait for a cloud game that is still on its way
+(`awaitCloudLoad`): a `?level=` visit opens on the stock game and fetches the
+named one behind it, and a PLAY in that gap used to hand the stock game to the
+new tab — a SAVE would have written it under the cloud game's name. Both work on an imported cart as well as an authored level, which is
 how a community game can be edited and written back out. The store is
 [`static/deza-shelf.js`](static/deza-shelf.js), shared with the launcher: its
 SAVED GAMES coverflow shelves the same builds ahead of the collection under the

@@ -538,6 +538,13 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           const sRec = stageRecordFromLevel(levelData.stages[sKey]);
           if (sRec) recipe[sKey] = sRec;
         }
+        // `stages` is the whole game, so a base stage it does not name is not
+        // part of it. Left in, a two-stage game ran on into the base game's
+        // stages 2-4 here, where the editor's own PLAY — which hands over the
+        // record alone — ended it after its second.
+        for (const key of Object.keys(recipe)) {
+          if (/^stage\d+$/.test(key) && key !== stageKey && !levelData.stages[key]) delete recipe[key];
+        }
       }
       // The cell list every stage's tile grid indexes into. Both halves must
       // travel or the runtime draws nothing.
@@ -987,9 +994,14 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         const stageId = parseStageId(editorPlay.stageId, o.maxStage);
         const info = { stageId, bossRush, source: "editor", hasCustomEnemies };
         return this.mergeEditorAtlas(o).then(() => this.applyStageBackgrounds(recipe)).then(() => {
+          // The game's title art, for the title the ending returns to: PLAY
+          // itself opens in the stage. Without this that title was the base
+          // game's, over the game's own story.
+          this.applyTitleImages(recipe, o.titleImageKeys);
           // Applied as textures above; the recipe the scene keeps need not
           // carry half a megabyte of PNG as well.
           delete recipe.stageBackgrounds;
+          for (const dataKey in o.titleImageKeys) delete recipe[dataKey];
           prime(recipe, info);
           return {
             recipe,

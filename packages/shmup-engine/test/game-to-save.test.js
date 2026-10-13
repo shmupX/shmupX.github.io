@@ -415,13 +415,19 @@ Deno.test("a tiny level assembles, and decodeSave reads it back", () => {
   const decoded = decodeSave(buildPayload(sections));
   assert(decoded.sections.every((s) => s.sizeMatchesKnown));
   assertStrictEquals(decoded.stageCount, 1);
-  assertStrictEquals(decoded.enemies.length, 2);
-  const dot = decoded.enemies.find((e) => e.record < 16);
+  // A record has one drop and the dot's cells carry two digits (A0 and A1),
+  // so it goes out as two records sharing one set of art: the three A0
+  // cells first, then the two A1 cells.
+  assertStrictEquals(decoded.enemies.length, 3);
+  const dots = decoded.enemies.filter((e) => e.record < 16);
   const slab = decoded.enemies.find((e) => e.record >= 48 && e.record < 52);
-  assert(dot && slab, "dot is a 16x16 record, slab a 64x32 one");
-  assertStrictEquals(dot.placements, 5);
+  assert(dots.length === 2 && slab, "dot is two 16x16 records, slab a 64x32 one");
+  const dot = dots.find((e) => e.placements === 3);
+  const dotDrop = dots.find((e) => e.placements === 2);
+  assert(dot && dotDrop, "three plain dots, two dropping ones");
   assertStrictEquals(slab.placements, 2);
   assertStrictEquals(dot.spriteKeys.length, 4);
+  assertEquals(dotDrop.spriteKeys, dot.spriteKeys, "the variants share their art");
   assertStrictEquals(slab.spriteKeys.length, 2);
   assertStrictEquals(decoded.sprites[dot.spriteKeys[0]].w, 16);
   assertStrictEquals(decoded.sprites[slab.spriteKeys[0]].w, 64);
@@ -434,9 +440,15 @@ Deno.test("a tiny level assembles, and decodeSave reads it back", () => {
     0,
     "interval -1 = never fires",
   );
-  // the drop digit 1 (power-up) became a mode-1 death word on slot 0
-  assertStrictEquals(dot.behavior.death.mode, 1);
-  assertStrictEquals(dot.behavior.death.item, 1);
+  // the drop digit 1 (power-up) became a mode-1 death word on slot 0 — on
+  // the A1 cells' record only; the A0 cells' record drops nothing
+  assertStrictEquals(dotDrop.behavior.death.mode, 1);
+  assertStrictEquals(dotDrop.behavior.death.item, 1);
+  assertStrictEquals(dot.behavior.death.mode, 0);
+  // ...and read back, those cells carry the digit again (decodeSave maps the
+  // record's death word onto every cell it is placed in)
+  const back = decoded.stages[0].rows.flat().filter(Boolean);
+  assertEquals(back.map((c) => c.drop).sort(), [0, 0, 0, 0, 0, 1, 1]);
   // placement: row order is spawn order (json reversed), columns on the playfield
   const rows = decoded.stages[0].waveRows;
   assertEquals(rows, [8, 20, 32]);
@@ -647,7 +659,7 @@ Deno.test("exportLevelToSav wraps it all into a MiSTer cart named the collection
   const [save] = bup.parse((await normalize(out.sav)).data).filter(isGameSave);
   assertStrictEquals(save.comment, "tiny");
   const decoded = decodeSave(save.payload.buffer);
-  assertStrictEquals(decoded.enemies.length, 2);
+  assertStrictEquals(decoded.enemies.length, 3);
   assertEquals(out.report.stages[0].boss.sizeClass, 3);
 });
 
