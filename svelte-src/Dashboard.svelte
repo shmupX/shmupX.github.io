@@ -58,6 +58,7 @@
     libraryCards,
     normalizeVersion,
     versionFeatures,
+    getDezaShelfEntry,
     listDezaShelf,
     onDezaShelfChanged,
   } from '../static/deza-shelf.js';
@@ -1676,7 +1677,8 @@
     if (exportBusy[j.id]) return 'Working…';
     if (j.status === 'done' && !j.blobsFreed) {
       if (j.platform === 'ps2') return exportFiled[j.id] ? 'Play' : 'Add to PS2 library';
-      return j.platform === 'android' ? 'Install' : 'Download';
+      if (j.platform === 'android') return androidBuildForExport(j) ? 'Play on Mobile' : 'Install';
+      return 'Download';
     }
     if (j.status === 'failed' && j.log) return 'Show log';
     if (j.status === 'queued') return 'Cancel';
@@ -1704,6 +1706,10 @@
     if (exportBusy[job.id]) return;
     sfx.enter();
     if (job.status === 'done' && !job.blobsFreed) {
+      // An Android build this desktop made is already on its Mobile shelf
+      // (the APK landed in this machine's build tree): A plays it there.
+      const apk = androidBuildForExport(job);
+      if (apk) { screen = 'games'; secSel = Math.max(SECTIONS.findIndex((s) => s.id === 'mobile'), 0); stripFocus = false; playAndroidBuild(apk); return; }
       if (job.platform !== 'ps2') await downloadExport(job);
       else if (exportFiled[job.id]) await playFiledExport(job);
       else await fileExportToPs2(job);
@@ -3352,6 +3358,420 @@
     } catch (_) { hostDevice = null; }
   }
 
+  // ─── The Mobile shelf: this machine's Android builds ───────────────────────
+  // Drawn from /api/android (routes/api/android.ts over lib/android-host.ts):
+  // the APKs this machine has built — by the BUILD row here, the editor's
+  // EXPORT, a queued export it picked up, or `deno task build:android` — and
+  // what it can run them on: Waydroid, the Windows Subsystem for Android, a
+  // phone or emulator on adb, a Tailscale peer to Taildrop them to. Like
+  // /api/host it answers only this machine's own browser, so androidHost
+  // stays null on the hosted site and on a phone looking in over the tunnel,
+  // and the section exists only where it is not null.
+  //
+  // A remote desktop session passes that gate — it is this machine's browser,
+  // driven from afar — and the body says so (remoteDesktop). On such a
+  // machine the APK just built is for the device in the player's hand, not
+  // for this screen, so the install-elsewhere targets lead the chooser and A
+  // on a fresh build opens it.
+  const ANDROID_URL = '/api/android';
+  let androidHost = $state(null);       // the GET body, or null
+  let androidJobs = $state({});         // job id → job, while one runs
+  let androidPick = $state(null);       // the BUILD picker: { rows } while open
+  let androidChoose = $state(null);     // the target chooser: its build, while open
+  let mobileSel = $state(0);
+  async function refreshAndroid() {
+    try {
+      const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined;
+      const r = await fetch(ANDROID_URL, { cache: 'no-store', signal });
+      if (!r.ok) { androidHost = null; return; }
+      const d = await r.json();
+      androidHost = d && d.available ? d : null;
+      // A job still running when the page loaded — a build another tab
+      // started — is picked up again rather than lost.
+      for (const j of (androidHost?.jobs || [])) {
+        if (j.status === 'running' && !androidJobs[j.id]) watchAndroidJob(j);
+      }
+    } catch (_) { androidHost = null; }
+  }
+  async function androidPost(body) {
+    const r = await fetch(ANDROID_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.error || ('HTTP ' + r.status));
+    return d;
+  }
+  // Poll a job to its end. Its last log line is the row's subtitle meanwhile;
+  // the toast says how it ended, unless the caller wants to.
+  function watchAndroidJob(job, onDone) {
+    androidJobs = { ...androidJobs, [job.id]: job };
+    const tick = async () => {
+      let j = null;
+      try {
+        const r = await fetch(ANDROID_URL + '?job=' + encodeURIComponent(job.id), { cache: 'no-store' });
+        const d = await r.json();
+        j = d.job || null;
+      } catch (_) { j = null; }
+      if (!j) { setTimeout(tick, 2500); return; }
+      androidJobs = { ...androidJobs, [job.id]: j };
+      if (j.status === 'running') { setTimeout(tick, 1500); return; }
+      const next = { ...androidJobs };
+      delete next[j.id];
+      androidJobs = next;
+      await refreshAndroid();
+      if (onDone) onDone(j);
+      else if (j.status === 'done') showToast(androidJobDoneText(j));
+      else showToast(androidJobVerb(j) + ' failed: ' + (j.error || 'see the server log'));
+    };
+    setTimeout(tick, 1200);
+  }
+  function androidJobVerb(j) {
+    return j.kind === 'build' ? 'Build' : j.kind === 'install' ? 'Install' : 'Launch';
+  }
+  function androidJobDoneText(j) {
+    if (j.kind === 'build') return (j.build?.name || j.name) + ' built — it is on the Mobile shelf.';
+    return (j.log || []).slice(-1)[0] || (androidJobVerb(j) + ' done.');
+  }
+  function androidJobFor(buildId) {
+    return Object.values(androidJobs).find((j) => j.buildId === buildId && j.status === 'running') || null;
+  }
+  function androidBuildJob() {
+    return Object.values(androidJobs).find((j) => j.kind === 'build' && j.status === 'running') || null;
+  }
+  // What this machine can run an APK on, as the strip's credits line.
+  let androidRuntimeLabel = $derived.by(() => {
+    const r = androidHost?.runtimes;
+    if (!r) return '';
+    const parts = [];
+    if (r.waydroid?.found && r.waydroid.initialized) parts.push('waydroid' + (r.waydroid.sessionRunning ? ' // up' : ''));
+    if (r.wsa?.found) parts.push('wsa' + (r.wsa.running ? ' // up' : ''));
+    const devs = (r.adb?.devices || []).filter((d) => d.state === 'device');
+    if (devs.length) parts.push(devs.length === 1 ? (devs[0].model || devs[0].serial).toLowerCase() + ' // adb' : devs.length + ' adb devices');
+    const phones = (r.tailscale?.peers || []).filter((p) => p.online && p.os === 'android');
+    if (phones.length) parts.push(phones.map((p) => p.name.toLowerCase()).join(', ') + ' // tailscale');
+    return parts.join(' · ');
+  });
+  // The section shows where there is something to run an APK on or a device
+  // to reach — or already a build to show, or the toolchain to make one.
+  let androidShown = $derived(
+    !!androidHost && (androidRuntimeLabel !== '' || (androidHost.builds || []).length > 0 || !!androidHost.canBuild)
+  );
+  let androidRemote = $derived(!!androidHost?.remoteDesktop?.detected);
+  // Every place a build can go, in the order A would pick: what runs on this
+  // screen first — unless this screen is a remote desktop, when the device in
+  // the player's hand leads.
+  function androidTargets() {
+    const r = androidHost?.runtimes;
+    if (!r) return [];
+    const local = [];
+    if (r.waydroid?.found && r.waydroid.initialized) {
+      local.push({ id: 'waydroid', title: 'WAYDROID', sub: 'install and play on this machine' + (r.waydroid.sessionRunning ? ' · session up' : ''), remote: false });
+    }
+    if (r.wsa?.found) {
+      local.push({ id: 'wsa', title: 'WINDOWS SUBSYSTEM FOR ANDROID', sub: 'install and play on this machine', remote: false });
+    }
+    const away = [];
+    for (const d of (r.adb?.devices || [])) {
+      const ok = d.state === 'device';
+      away.push({
+        id: 'adb:' + d.serial, title: (d.model || d.serial).toUpperCase(),
+        sub: ok ? 'install over adb · ' + d.serial : 'adb · ' + d.serial + ' · ' + d.state + (d.state === 'unauthorized' ? ' — allow this computer on the phone' : ''),
+        remote: true, dead: !ok,
+      });
+    }
+    for (const p of (r.tailscale?.peers || [])) {
+      if (!p.online || p.os !== 'android') continue;
+      away.push({ id: 'taildrop:' + p.id, title: p.name.toUpperCase(), sub: 'send the APK with Tailscale · ' + p.ip, remote: true });
+    }
+    return androidRemote ? [...away, ...local] : [...local, ...away];
+  }
+  const androidMb = (n) => (n / 1048576).toFixed(1) + ' MB';
+  function androidDate(ms) {
+    try { return new Date(ms).toISOString().slice(0, 10); } catch (_) { return '—'; }
+  }
+  // A build's row art: the app's own icon off its build tree (served by
+  // /api/build-artifact, which allows the build roots), else the catalog's.
+  function androidIcon(b) {
+    if (b.icon) return '/api/build-artifact?path=' + encodeURIComponent(b.icon);
+    const g = GAMES.find((x) => x.id === b.slug || x.id === b.id);
+    return g?.icon || null;
+  }
+  function androidTargetName(t) {
+    const r = androidHost?.runtimes;
+    if (t === 'waydroid') return 'WAYDROID';
+    if (t === 'wsa') return 'WSA';
+    if (String(t).startsWith('adb:')) {
+      const d = (r?.adb?.devices || []).find((x) => x.serial === t.slice(4));
+      return (d?.model || t.slice(4)).toUpperCase();
+    }
+    if (String(t).startsWith('taildrop:')) {
+      const p = (r?.tailscale?.peers || []).find((x) => x.id === t.slice(9));
+      return (p?.name || t.slice(9)).toUpperCase();
+    }
+    return String(t).toUpperCase();
+  }
+  function androidSub(b) {
+    const job = androidJobFor(b.id);
+    if (job) return (job.log || []).slice(-1)[0] || (androidJobVerb(job).toUpperCase() + 'ING…');
+    const on = Object.keys(b.installed || {});
+    return b.packageId + ' · ' + (on.length ? 'ON ' + on.map(androidTargetName).join(', ') : 'not installed yet');
+  }
+  // The section's rows: the chooser or the picker while one is open; else a
+  // build in progress, the builds, and the way to start one.
+  let mobileRows = $derived.by(() => {
+    if (!androidHost) return [];
+    if (androidChoose) {
+      const b = androidChoose;
+      return [
+        {
+          key: 'mobile-back', name: 'Back', title: '◀ ' + String(b.name).toUpperCase(), sub: 'back to the shelf',
+          icon: androidIcon(b), size: androidMb(b.size), date: androidDate(b.builtAt), type: 'ANDROID / APK',
+          kind: 'apk-back',
+        },
+        ...androidTargets().map((t) => ({
+          key: 'target:' + t.id, name: t.title, title: t.title, sub: t.sub, icon: null,
+          size: androidMb(b.size), date: t.remote ? 'REMOTE' : 'LOCAL',
+          type: t.id.startsWith('taildrop:') ? 'SEND / TAILSCALE' : 'INSTALL / ' + (t.id === 'waydroid' ? 'WAYDROID' : t.id === 'wsa' ? 'WSA' : 'ADB'),
+          kind: 'apk-target', apk: b, target: t,
+        })),
+        {
+          key: 'target:connect', name: 'Connect', title: 'CONNECT A DEVICE…',
+          sub: 'adb connect host:port — a phone\u2019s wireless debugging, over any network', icon: null,
+          size: '—', date: 'ADB', type: 'ADB / CONNECT', kind: 'apk-connect', apk: b,
+        },
+        {
+          key: 'target:forget', name: 'Forget', title: 'OFF THE SHELF', sub: 'forget it here — the APK stays at ' + b.apk, icon: null,
+          size: androidMb(b.size), date: androidDate(b.builtAt), type: 'ANDROID / APK', kind: 'apk-forget', apk: b,
+        },
+      ];
+    }
+    if (androidPick) {
+      return [
+        {
+          key: 'mobile-back', name: 'Back', title: '◀ BACK', sub: 'back to the shelf', icon: null,
+          size: '—', date: '—', type: 'BUILD / ANDROID', submenu: true, kind: 'apk-back',
+        },
+        ...androidPick.rows,
+      ];
+    }
+    const rows = (androidHost.builds || []).map((b) => ({
+      key: 'apk:' + b.id, name: b.name, title: String(b.name).toUpperCase(),
+      sub: androidSub(b), icon: androidIcon(b),
+      size: androidMb(b.size), date: androidDate(b.builtAt),
+      type: 'ANDROID / APK', kind: 'apk', apk: b,
+    }));
+    const building = androidBuildJob();
+    if (building) {
+      rows.unshift({
+        key: 'job:' + building.id, name: building.name, title: 'BUILDING ' + String(building.name).toUpperCase(),
+        sub: (building.log || []).slice(-1)[0] || 'starting…', icon: null,
+        size: '—', date: 'NOW', type: 'BUILD / ANDROID', kind: 'apk-job', job: building,
+      });
+    }
+    rows.push({
+      key: 'mobile-build', name: 'Build', title: 'BUILD A GAME',
+      sub: androidHost.canBuild
+        ? 'pick a game from the shelf → an APK on this shelf'
+        : 'needs cordova and the Android SDK on this machine',
+      icon: null, size: '—', date: 'LOCAL', type: 'BUILD / ANDROID', submenu: true, kind: 'apk-build-menu',
+    });
+    return rows;
+  });
+  function activateMobileRow(i) {
+    const r = mobileRows[i];
+    if (!r) return;
+    if (r.kind === 'apk-back') { closeMobileMenus(); return; }
+    if (r.kind === 'apk-build-menu') { sfx.enter(); openAndroidPicker(); return; }
+    if (r.kind === 'apk-pick') { startAndroidBuild(r.pick); return; }
+    if (r.kind === 'apk-job') { sfx.enter(); showToast((r.job.log || []).slice(-3).join(' · ') || 'building…'); return; }
+    if (r.kind === 'apk-target') { installAndroidTo(r.apk, r.target.id, true); return; }
+    if (r.kind === 'apk-connect') { connectAndroidDevice(); return; }
+    if (r.kind === 'apk-forget') { forgetAndroidBuild(r.apk); return; }
+    if (r.kind === 'apk') playAndroidBuild(r.apk);
+  }
+  function closeMobileMenus() {
+    sfx.back();
+    androidPick = null;
+    androidChoose = null;
+    mobileSel = 0;
+  }
+  // What A does on the Mobile section's rows, for the button bar.
+  function mobileActionLabel(r) {
+    if (!r) return 'Select';
+    switch (r.kind) {
+      case 'apk-back': return 'Back';
+      case 'apk-build-menu': return 'Open';
+      case 'apk-pick': return 'Build';
+      case 'apk-job': return 'Log';
+      case 'apk-target': return String(r.target.id).startsWith('taildrop:') ? 'Send' : 'Install';
+      case 'apk-connect': return 'Connect';
+      case 'apk-forget': return 'Remove';
+      case 'apk': {
+        const t = String(androidHost?.defaultTarget || '');
+        return !t ? 'Choose' : t.startsWith('taildrop:') ? 'Send' : t.startsWith('adb:') ? 'Install' : 'Play';
+      }
+      default: return 'Launch';
+    }
+  }
+  // A on a build: the default target — this machine's runtime, or the device
+  // in hand when this is a remote desktop. Y, a hold or a right-click choose.
+  function playAndroidBuild(b) {
+    if (androidJobFor(b.id)) { showToast('Still working on ' + b.name + '…'); return; }
+    const t = androidHost?.defaultTarget || null;
+    if (!t) {
+      sfx.enter();
+      openAndroidChooser(b);
+      showToast('Nowhere to run it from here yet — connect a device over adb, or send it with Tailscale.');
+      return;
+    }
+    installAndroidTo(b, t, true);
+  }
+  async function installAndroidTo(b, target, launch) {
+    sfx.enter();
+    androidChoose = null;
+    mobileSel = 0;
+    const send = String(target).startsWith('taildrop:');
+    try {
+      const d = await androidPost({ action: launch && !send ? 'launch' : 'install', id: b.id, target });
+      showToast((send ? 'Sending ' : launch ? 'Starting ' : 'Installing ') + b.name + ' → ' + androidTargetName(target) + '…');
+      watchAndroidJob(d.job);
+    } catch (e) {
+      showToast('Mobile: ' + (e?.message || e));
+    }
+  }
+  function openAndroidChooser(b) {
+    if (!b) return;
+    androidPick = null;
+    androidChoose = b;
+    mobileSel = 0;
+  }
+  // The BUILD picker: what the host can build (/api/android?shelf=1 — this
+  // repo's games, the cloud levels, the eShop's carts) plus what only this
+  // browser holds: the LIBRARY's carts, which go up as bytes.
+  async function openAndroidPicker() {
+    if (!androidHost?.canBuild) {
+      showToast('This machine cannot build an APK: ' + ((androidHost?.buildNotes || []).join('; ') || 'cordova and the Android SDK are needed'));
+      return;
+    }
+    androidChoose = null;
+    androidPick = { rows: [{
+      key: 'pick-loading', name: 'Loading', title: 'READING THE SHELF…', sub: 'this repo, the cloud, the eShop, the library',
+      icon: null, size: '—', date: '—', type: 'BUILD / ANDROID', kind: 'apk-job', job: { log: [] },
+    }] };
+    mobileSel = 0;
+    let cands = [];
+    try {
+      const r = await fetch(ANDROID_URL + '?shelf=1', { cache: 'no-store' });
+      const d = await r.json();
+      cands = d.candidates || [];
+    } catch (_) { cands = []; }
+    const rows = [];
+    const seen = new Set();
+    for (const c of cands) {
+      if (!c || !c.name || seen.has(c.name)) continue;
+      seen.add(c.name);
+      const g = GAMES.find((x) => c.name === 'game:' + x.id);
+      rows.push({
+        key: 'pick:' + c.name, name: c.title, title: String(g?.title || c.title).toUpperCase(),
+        sub: c.section + ' // ' + c.name, icon: g?.icon || null,
+        size: '—', date: c.section, type: 'BUILD / ' + c.section, kind: 'apk-pick', pick: c,
+      });
+    }
+    for (const c of library.cards) {
+      rows.push({
+        key: 'pick:shelf:' + c.id, name: c.title, title: String(c.title).toUpperCase(),
+        sub: 'LIBRARY // ' + (c.kind === 'eshop' ? 'from the eShop' : c.isMod ? 'mod' : 'your cart'),
+        icon: c.cover || null, size: '—', date: 'LIBRARY', type: 'BUILD / LIBRARY', kind: 'apk-pick',
+        pick: { shelfId: c.id, title: c.title, name: '', section: 'LIBRARY' },
+      });
+    }
+    if (!rows.length) {
+      rows.push({
+        key: 'pick-none', name: 'Nothing', title: 'NOTHING TO BUILD', sub: 'no game answered — is this machine online?',
+        icon: null, size: '—', date: '—', type: 'BUILD / ANDROID', kind: 'apk-job', job: { log: [] },
+      });
+    }
+    if (!androidPick) return; // closed while the shelf was loading
+    androidPick = { rows };
+  }
+  async function startAndroidBuild(pick) {
+    if (!pick) return;
+    if (androidBuildJob()) { showToast('A build is already running — one at a time.'); return; }
+    sfx.enter();
+    androidPick = null;
+    mobileSel = 0;
+    try {
+      const body = { action: 'build', name: pick.name || '', title: pick.title || null };
+      if (pick.shelfId) {
+        const rec = await getDezaShelfEntry(pick.shelfId);
+        if (!rec?.bytes) throw new Error('that cart is no longer on the shelf');
+        body.sav = bytesToBase64(rec.bytes);
+      }
+      const d = await androidPost(body);
+      showToast('Building ' + (pick.title || pick.name) + ' for Android…');
+      watchAndroidJob(d.job, (j) => {
+        if (j.status !== 'done') { showToast('Build failed: ' + (j.error || 'see the server log')); return; }
+        showToast((j.build?.name || j.name) + ' built — it is on the Mobile shelf.');
+        // On a remote desktop the APK is for the device in hand, not this
+        // screen: open the chooser on it straight away.
+        if (androidRemote && j.build && screen === 'games' && curSection?.id === 'mobile') openAndroidChooser(j.build);
+      });
+    } catch (e) {
+      showToast('Build: ' + (e?.message || e));
+    }
+  }
+  function bytesToBase64(bytes) {
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      out += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(out);
+  }
+  async function forgetAndroidBuild(b) {
+    closeMobileMenus();
+    try {
+      await androidPost({ action: 'forget', id: b.id });
+      await refreshAndroid();
+      showToast(b.name + ' is off the shelf — the APK stays where it was.');
+    } catch (e) { showToast('Mobile: ' + (e?.message || e)); }
+  }
+  // adb over the network: a phone's wireless debugging reached by address —
+  // its tailnet IP, say. Pairing is a one-time step the phone's own dialog
+  // gives the address and code for.
+  async function connectAndroidDevice() {
+    const addr = prompt('adb connect — the phone\u2019s wireless-debugging address (host:port). Over Tailscale its tailnet IP works.');
+    if (!addr) return;
+    try {
+      const d = await androidPost({ action: 'connect', address: addr.trim() });
+      if (d.ok) {
+        showToast(d.text || 'Connected.');
+      } else {
+        const pair = confirm((d.text || 'Not connected.') + '\n\nPair first? On the phone open Wireless debugging → Pair device with pairing code, then enter that address and code here.');
+        if (pair) {
+          const paddr = prompt('Pairing address (host:port):');
+          if (!paddr) return;
+          const code = prompt('Pairing code (6 digits):');
+          if (!code) return;
+          const p = await androidPost({ action: 'pair', address: paddr.trim(), code: code.trim() });
+          showToast(p.text || (p.ok ? 'Paired.' : 'Pairing failed.'));
+          if (p.ok) await androidPost({ action: 'connect', address: addr.trim() });
+        }
+      }
+      await refreshAndroid();
+    } catch (e) { showToast('adb: ' + (e?.message || e)); }
+  }
+  // The Mobile shelf's row for a queued export, when the desktop that built
+  // it is this one: its APK landed in this machine's build tree, where the
+  // shelf finds it by itself.
+  function androidBuildForExport(job) {
+    if (!androidHost || job.platform !== 'android') return null;
+    const want = String(job.level || '').toLowerCase();
+    const slug = want.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    return (androidHost.builds || []).find((b) => String(b.name).toLowerCase() === want || b.id === slug) || null;
+  }
+
   function setLegionFpsMode(on) {
     on = !!on;
     if (legionFpsMode === on) return;
@@ -4294,6 +4714,19 @@
       activate: (i) => activateGamesRow(i),
       rows: gamesRows,
     },
+    // Android: the APKs this machine built, run in Waydroid or WSA here or
+    // sent to a device (see refreshAndroid). Lucide carries no Android mark
+    // (it dropped its brand icons), so the tile wears its "smartphone".
+    ...(androidShown ? [{
+      id: 'mobile', name: 'Mobile', mark: 'AP', icon: null, glyph: 'smartphone',
+      title: 'MOBILE', metaType: 'ANDROID / APK', date: 'AP',
+      coreA: androidRuntimeLabel || 'no runtime // build only',
+      coreB: androidRemote ? 'remote desktop // ' + (androidHost.remoteDesktop.via || []).join(', ') : 'signal // ok',
+      sel: () => mobileSel, setSel: (v) => (mobileSel = v),
+      activate: (i) => activateMobileRow(i),
+      rows: mobileRows,
+      byod: { title: 'NO BUILDS YET', pre: 'Press A on ', path: 'BUILD A GAME', post: ' to make an APK.', hint: [] },
+    }] : []),
     ...installedCores.map((c) => ({
       id: 'emu-' + c.id, name: c.name, mark: c.mark, icon: c.icon || null,
       title: c.title, metaType: c.metaType, date: c.date,
@@ -4348,7 +4781,15 @@
   // had nowhere to say why. Blank for every other row, and the panel line
   // goes with it.
   let metaState = $derived.by(() => {
-    if (stripOn || curRow?.kind !== 'eshop-web') return '';
+    if (stripOn) return '';
+    // A Mobile build: what is happening to it, else where it already is.
+    if (curRow?.kind === 'apk') {
+      const j = androidJobFor(curRow.apk.id);
+      if (j) return androidJobVerb(j).toUpperCase() + 'ING · ' + ((j.log || []).slice(-1)[0] || '…');
+      const on = Object.keys(curRow.apk.installed || {});
+      return on.length ? 'ON ' + on.map(androidTargetName).join(', ') : 'NOT INSTALLED YET';
+    }
+    if (curRow?.kind !== 'eshop-web') return '';
     const st = eshopStatus[curRow.g?.id];
     if (st?.busy) return 'INSTALLING ' + (st.pct || 0) + '%' + (st.label ? ' · ' + st.label : '');
     if (st?.err) return st.err;
@@ -4359,7 +4800,10 @@
   let gamesActionLabel = $derived(
     stripOn
       ? (sectionEmpty ? (curSection.picker ? 'Browse' : 'Open') : 'Open')
-      : (curRow?.pinned ? 'Browse' : (curRow?.kind === 'eshop-menu' || curRow?.kind === 'library-menu') ? 'Open' : 'Launch')
+      : (curRow?.pinned ? 'Browse'
+        : (curRow?.kind === 'eshop-menu' || curRow?.kind === 'library-menu') ? 'Open'
+        : curSection.id === 'mobile' ? mobileActionLabel(curRow)
+        : 'Launch')
   );
   // WebAudio blips
   let ac = null;
@@ -4415,6 +4859,12 @@
   }
 
   function goBack() {
+    // The Mobile section's picker and chooser are lists inside the list: B
+    // closes them before it leaves the screen.
+    if (screen === 'games' && curSection?.id === 'mobile' && (androidPick || androidChoose)) {
+      closeMobileMenus();
+      return;
+    }
     sfx.back();
     // A screen reached from another screen names its parent in SCREEN_DEFS
     // (Emulators → Settings; the eShop, which has two doors, answers with a
@@ -5107,6 +5557,8 @@
   // highlighted row of the games screen.
   function openSavPickerForRow() {
     if (gameOn || screen !== 'games' || stripOn) return false;
+    // On a Mobile build the same button opens its target chooser.
+    if (curRow?.kind === 'apk') { sfx.enter(); openAndroidChooser(curRow.apk); return true; }
     if (!rowHasSavPicker(curRow)) return false;
     openSavPicker(curRow.g);
     return true;
@@ -5178,7 +5630,10 @@
   const ROW_PRESS_MS = 550;
   const ROW_PRESS_SLOP = 12;
   function rowPressStart(e, r, i) {
-    if (!rowHasSavPicker(r) || savPickerOpen) return;
+    // A Mobile build's hold opens its target chooser, the way a shelf row's
+    // opens the coverflow.
+    const apk = r.kind === 'apk' ? r.apk : null;
+    if ((!apk && !rowHasSavPicker(r)) || savPickerOpen) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     rowPressCancel();
     rowPress = {
@@ -5188,7 +5643,7 @@
         rowPressFiredAt = performance.now();
         stripFocus = false;
         curSection.setSel(i);
-        openSavPicker(r.g);
+        if (apk) openAndroidChooser(apk); else openSavPicker(r.g);
       }, ROW_PRESS_MS),
     };
   }
@@ -5208,6 +5663,13 @@
     return performance.now() - rowPressFiredAt < 800;
   }
   function onRowContextMenu(e, r, i) {
+    if (r.kind === 'apk') {
+      e.preventDefault();
+      stripFocus = false;
+      curSection.setSel(i);
+      openAndroidChooser(r.apk);
+      return;
+    }
     if (!rowHasSavPicker(r)) return; // other rows keep the native menu
     e.preventDefault();
     if (savPickerOpen) return;
@@ -6431,6 +6893,8 @@
     else if (screen === 'eshop' && (e.key === 'f' || e.key === 'F')) eshopCycleFilter(1);
     // Keyboard twin of FBTN_TOP on a LIBRARY card: Y (or E) edits.
     else if (screen === 'library' && (e.key === 'y' || e.key === 'Y' || e.key === 'e' || e.key === 'E')) editLibraryCard(libSel);
+    // ...and on a Mobile build: Y opens where it can go.
+    else if (screen === 'games' && !stripOn && curRow?.kind === 'apk' && (e.key === 'y' || e.key === 'Y')) { sfx.enter(); openAndroidChooser(curRow.apk); }
     // Keyboard twin of FBTN_LEFT on a LIBRARY card: X (or V) turns the VERSION.
     else if (screen === 'library' && (e.key === 'x' || e.key === 'X' || e.key === 'v' || e.key === 'V')) libToggleVersion();
   }
@@ -6839,6 +7303,7 @@
     padRaf = requestAnimationFrame(pollPad);
 
     initHostDevice();
+    refreshAndroid();
     refreshSteam();
     refreshUpdates();
     requestLauncherFullscreen();
@@ -7229,6 +7694,13 @@
                       <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
                       <path d="M2 12h20" />
                     </svg>
+                  {:else if s.glyph === 'smartphone'}
+                    <!-- Lucide "smartphone" (ISC): the Mobile shelf's Android
+                         tile — Lucide ships no Android brand mark. -->
+                    <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label={s.name}>
+                      <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
+                      <path d="M12 18h.01" />
+                    </svg>
                   {:else}
                     <span class="mark {s.mark.length > 3 ? 'long' : ''}">{s.mark}</span>
                   {/if}
@@ -7415,6 +7887,20 @@
                     <!-- A local disc's web build (localRows): the same chip the
                          eShop's shelved builds wear, since it is one. -->
                     <span class="eshop-kind">WEB</span>
+                  {:else if r.kind === 'apk'}
+                    <!-- A Mobile build: its kind, and what is being done to it. -->
+                    <span class="eshop-kind">APK</span>
+                    {#if androidJobFor(r.apk.id)}
+                      <span class="net-badge dl">{androidJobVerb(androidJobFor(r.apk.id)).toUpperCase()}ING…</span>
+                    {:else if androidRemote && Object.keys(r.apk.installed || {}).length === 0}
+                      <span class="net-badge upd">Y · INSTALL ELSEWHERE</span>
+                    {/if}
+                  {:else if r.kind === 'apk-job'}
+                    <span class="net-badge dl">WORKING</span>
+                  {:else if r.kind === 'apk-target'}
+                    <span class="eshop-kind">{r.target.dead ? 'OFFLINE' : r.target.remote ? 'REMOTE' : 'HERE'}</span>
+                  {:else if r.kind === 'apk-pick'}
+                    <span class="eshop-kind">{r.pick.shelfId ? 'CART' : r.pick.section}</span>
                   {/if}
                 </div>
                 {#if r.kind === 'eshop-web'}

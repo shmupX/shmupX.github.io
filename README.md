@@ -399,6 +399,7 @@ deno task build:desktop   # …whichever of those three matches this host
 deno task shelf:list      # every game name the five build targets accept
 deno task build:android   # one game from the shelf as an .apk (needs a name)
 deno task build:ios       # …as an unsigned .ipa (needs a name, and a Mac)
+deno task steam:waydroid  # that .apk into Waydroid, as a Lutris game and a Steam shortcut (Bazzite)
 deno task build:ps2       # a level as a PlayStation 2 USB folder
 deno task build:ps2:zip   # …as one .zip of that folder
 deno task build:ps2:iso   # …plus a bootable disc image
@@ -3151,6 +3152,66 @@ launcher's is empty), the halves it produced, and whether 2028.Ai acknowledged
 the two-player gate (`cmg-splitpads-ack`); `tests/gamepad_pads_test.ts` pins the
 split view's slots to 2028.Ai's own button tables (and Sh'M↑ Party's, as
 constants), and `tests/host_device_test.ts` the machine classification.
+
+## Mobile (Android)
+
+The launcher's **MOBILE** section — the smartphone tile in the top strip
+(Lucide's `smartphone`; Lucide carries no Android brand mark) — is this machine's
+shelf of **Android builds**: every APK it has made, and what it can run them on.
+It appears only where there is something to run an APK on or a device to reach,
+or a build already on the shelf, or the toolchain to make one; the hosted site
+and a phone looking in over the tunnel never see it.
+
+Unlike the PlayStation 2 and Dezaemon shelves, which live in one browser's
+IndexedDB, an APK is a file on the host and the only things that can run it are
+on the host too — so the shelf is host-side:
+[`lib/android-host.ts`](lib/android-host.ts) keeps a registry at
+`~/.config/shmupx/android-shelf.json` (`%APPDATA%\shmupX` on Windows,
+`~/Library/Application Support/shmupX` on a Mac — the export worker's config
+directory) and **discovers** what nobody registered from the build trees'
+`artifacts.json`, so a `deno task build:android <game>` run from a terminal, an
+EXPORT from the editor and a queued export this desktop picked up all land on it
+without being told to. [`routes/api/android.ts`](routes/api/android.ts) serves
+it, local-only the way `/api/host` is.
+
+What the section can do:
+
+- **BUILD A GAME** — the trailing row opens a picker over what this host can
+  build (`/api/android?shelf=1`: this repo's games, the cloud levels, the eShop's
+  carts) plus the LIBRARY's carts, which this browser holds and sends up as
+  bytes. The build runs the same per-game export as `deno task build:android`
+  (lib/export-build.ts, `node tools/build-level`), as a job the row follows line
+  by line; the finished APK is registered on the shelf. Needs cordova and the
+  Android SDK on the host — `canBuild` in the GET body says.
+- **A on a build** — runs it on the **default target**: Waydroid on a Linux
+  desktop, the Windows Subsystem for Android on Windows, installing it there
+  first when it is not yet. Waydroid's session is started when it is stopped,
+  and inside gamescope (Bazzite's Game Mode) the launch goes through
+  `waydroid-launcher`; WSA is started through `WsaClient.exe` and reached on its
+  fixed adb port (its Developer mode must be on).
+- **Y, a hold, or a right-click on a build** — the target chooser: Waydroid or
+  WSA, every device `adb devices` lists (USB, an emulator, or wireless debugging
+  reached by address), and every online Android peer on the tailnet, to which
+  the APK goes by **Taildrop** (`tailscale file cp`) — the phone's owner installs
+  it from the Tailscale app. `CONNECT A DEVICE…` is `adb connect host:port`,
+  with the one-time `adb pair` behind it; over Tailscale the phone's tailnet IP
+  works from anywhere. `OFF THE SHELF` forgets the row and leaves the APK.
+- **Remote desktop** — when the host is being driven from elsewhere (an RDP,
+  xrdp, VNC or ssh session, or a running Sunshine, RustDesk, AnyDesk, Parsec,
+  TeamViewer or GNOME Remote Desktop host — `remoteDesktop` in the GET body,
+  `remoteDesktopSignals` in the lib), the APK just built is for the device in
+  the player's hand, not for this screen: the install-elsewhere targets lead the
+  chooser and the default, a fresh build opens the chooser on itself, and the
+  strip's credits say so.
+
+The Steam side of the same chain — the APK as a Lutris game and a Steam shortcut
+on Bazzite — is `deno task steam:waydroid <game>` (scripts/steam-waydroid.ts),
+which installs into Waydroid the same way the shelf does.
+
+`tests/android_host_test.ts` holds the pure half to a truth table: the adb,
+Tailscale and Waydroid parsers, the remote-desktop verdict, the package id a
+build found on disk is addressed by (mirroring tools/build-level's
+`safePackageSegment`), the registry merge, and the default target.
 
 ## Emulators (opt-in)
 

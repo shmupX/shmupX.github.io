@@ -12408,7 +12408,7 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                     // an iOS export off a Mac stops at an Xcode project — and
                     // saying so is the whole point: this line used to read
                     // "iOS app built" over a build with nothing in dist/ at all.
-                    showBuiltArtifact(cfg, artifact, data.note);
+                    showBuiltArtifact(cfg, artifact, data.note, data.level || name);
                 } else {
                     setStatus(cfg.artifact + ' built: see build/ output', '#84cc16');
                 }
@@ -12549,7 +12549,7 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
         // it. /api/build-artifact streams a file with its own content-disposition
         // and zips a DIRECTORY on the way out, so one anchor covers an .apk, an
         // .msi, a mac .app bundle and an iOS Xcode project alike.
-        function showBuiltArtifact(cfg, artifact, note) {
+        function showBuiltArtifact(cfg, artifact, note, levelName) {
             const statusEl = document.getElementById('export-apk-status');
             if (!statusEl) return;
             const esc = (s) => String(s)
@@ -12572,7 +12572,46 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             // else here is something you install by pointing a phone at it.
             if (exportPlatform === 'android' && !note) {
                 showArtifactQr(document.getElementById('export-artifact-qr'), artifact);
+                showMobileShelfAction(statusEl, artifact, levelName);
             }
+        }
+
+        // The launcher's MOBILE shelf (routes/api/android.ts) finds this APK
+        // in the build tree by itself; the button is the way in — it registers
+        // the build under the level's own name and says where to play it:
+        // the launcher's Mobile section, where A runs it in Waydroid / WSA or
+        // sends it to a phone. Only where that route answers (a local host
+        // with the shelf), so the hosted editor keeps the link it has.
+        async function showMobileShelfAction(statusEl, artifact, levelName) {
+            try {
+                const res = await fetch('/api/android', { cache: 'no-store' });
+                if (!res.ok) return;
+                const info = await res.json();
+                if (!info || !info.available) return;
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn';
+                btn.style.marginTop = '6px';
+                btn.textContent = '\u2192 MOBILE SHELF';
+                btn.onclick = async () => {
+                    btn.disabled = true;
+                    try {
+                        const r = await fetch('/api/android', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'adopt', path: artifact, name: levelName || null }),
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+                        flash('On the Mobile shelf as ' + d.build.name + ' \u2014 open the launcher\u2019s MOBILE section to play it in Waydroid or send it to a phone.');
+                        btn.textContent = '\u2713 ON THE MOBILE SHELF';
+                    } catch (e) {
+                        btn.disabled = false;
+                        flash('Mobile shelf: ' + (e && e.message ? e.message : e));
+                    }
+                };
+                statusEl.appendChild(btn);
+            } catch (_e) { /* no shelf here */ }
         }
 
         // The finished APK as a QR code of its own download URL, so the phone
