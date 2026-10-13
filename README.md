@@ -81,7 +81,14 @@ they are written out in full.
   working state (`atlasStash`): a trip to `game_ui` and back no longer drops
   the level's custom frames, and the cloud save, the `.sav` writer and the app
   export always read the level atlas (`levelAtlasState`), plus every frame a
-  record names that the hosted stock atlas lacks. A record whose art the atlas
+  record names that the hosted stock atlas lacks. The UI atlases ship too: a
+  frame replaced or added in `game_ui` or `title_ui` (titleG.gif, the
+  wordmark the title draws, say) is packed like the level's custom frames and
+  carried as `uiAtlases: { <atlasKey>: { imageDataURL, frames } }` by the
+  cloud save, PLAY and the exports (`uiAtlasesForSave`); a cloud load keeps
+  the record's sets and folds them into the atlas when the Atlas Manager opens
+  it (`foldCloudUiAtlas`). Upload Sprites replaces a frame whose name it
+  matches instead of adding a second frame under the same name. A record whose art the atlas
   has lost is healed on load: the library answers by frame name, then by
   replaying `+ LIBRARY`'s `<name>_<n>.png` renames over the library record,
   then the editor's own banks (Duke, the trooper, the roster sheet's ships);
@@ -204,6 +211,11 @@ they are written out in full.
     sends it in the recipe): PLAY opens in the stage, but the ending returns
     to the title, and that title was the base game's. Both mirror
     `level-loader.js`.
+  - `applyUiAtlases` stacks a record's `uiAtlases` sets (the editor's
+    replacements in `game_ui` / `title_ui`) onto those textures the way the
+    level's own atlas goes onto `game_asset`, on both the cloud path and the
+    editor hand-off, so a replaced title plate draws from the game's art.
+    Mirrors `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
     TOP edge at the traced y, not their centre, so a name sits under its label
     instead of under the typed PRESENTED BY (see the comment on the constant,

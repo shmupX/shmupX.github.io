@@ -2283,6 +2283,130 @@
         async function ensureLevelAtlasOpen() {
             if (currentAtlasKey !== LEVEL_ATLAS_KEY) await switchAtlas(LEVEL_ATLAS_KEY);
         }
+        // The UI atlases — game_ui (the title plates, buttons, banners) and
+        // title_ui — ship with a game too. The Atlas Manager's replacement of
+        // titleG.gif used to stay in the editor: the cloud save, PLAY and the
+        // exports read the level atlas alone, so the title kept 2028.Ai's
+        // wordmark however many times it was replaced. Now each UI atlas's
+        // custom frames (its customFrameKeys, plus any replacement or upload
+        // not yet baked in) are packed like the level's and carried as
+        // `uiAtlases: { <atlasKey>: { imageDataURL, frames } }`, and the
+        // runtime's loader stacks each set onto its atlas (applyUiAtlases).
+        const UI_ATLAS_KEYS = ['game_ui', 'title_ui'];
+        // The loaded game's own sets as the record carried them: the answer
+        // for an atlas the Atlas Manager has not opened since the load (the
+        // open folds them in, and from then on the atlas's own state answers).
+        let uiAtlasesCloud = null;
+        function uiAtlasStateOf(key) {
+            if (currentAtlasKey === key) {
+                return atlasData && atlasImage ? { atlasData, atlasImage, replacedFrames, extraSprites, customFrameKeys } : null;
+            }
+            const s = atlasStash[key];
+            return s && s.atlasData && s.atlasImage ? s : null;
+        }
+        function uiAtlasCustomSet(state) {
+            const keys = new Set(state.customFrameKeys || []);
+            for (const k of Object.keys(state.replacedFrames || {})) keys.add(k);
+            for (const s of state.extraSprites || []) keys.add(s.key);
+            if (!keys.size) return null;
+            const pending = Object.keys(state.replacedFrames || {}).length > 0 || (state.extraSprites || []).length > 0;
+            const baked = pending ? buildAtlasWithReplacements(state) : null;
+            const frames = baked ? baked.frames : (state.atlasData.frames || {});
+            const source = baked ? baked.canvas : state.atlasImage;
+            const items = [];
+            for (const k of keys) {
+                const f = frames[k] && frames[k].frame;
+                if (!f) continue;
+                const fc = document.createElement('canvas');
+                fc.width = f.w; fc.height = f.h;
+                fc.getContext('2d').drawImage(source, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+                items.push({ key: k, canvas: fc, w: f.w, h: f.h });
+            }
+            return packSpriteSheet(items);
+        }
+        // Every UI atlas's custom set, keyed by atlas — null when none was
+        // customized. What the cloud save, PLAY and the exports carry.
+        function uiAtlasesForSave() {
+            const out = {};
+            for (const key of UI_ATLAS_KEYS) {
+                const state = uiAtlasStateOf(key);
+                const set = state ? uiAtlasCustomSet(state) : ((uiAtlasesCloud && uiAtlasesCloud[key]) || null);
+                if (set && set.imageDataURL && set.frames) out[key] = set;
+            }
+            return Object.keys(out).length ? out : null;
+        }
+        function loadImageFromDataURL(src) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = () => resolve(null);
+                img.src = src;
+            });
+        }
+        // A UI atlas just opened fresh from disk takes the loaded game's own
+        // frames for it as replacements, so the Atlas Manager shows them and
+        // a later save keeps them.
+        async function foldCloudUiAtlas(key) {
+            const set = uiAtlasesCloud && uiAtlasesCloud[key];
+            if (!set || !set.imageDataURL || !set.frames || currentAtlasKey !== key || !atlasData) return;
+            const img = await loadImageFromDataURL(set.imageDataURL);
+            if (!img || currentAtlasKey !== key || !atlasData) return;
+            const local = atlasData.frames || {};
+            for (const [enc, fd] of Object.entries(set.frames)) {
+                const k = decodeFirebaseKey(enc);
+                const f = fd && fd.frame;
+                if (!f) continue;
+                const fc = document.createElement('canvas');
+                fc.width = f.w; fc.height = f.h;
+                fc.getContext('2d').drawImage(img, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+                const spr = { key: k, canvas: fc, w: f.w, h: f.h };
+                if (local[k]) replacedFrames[k] = spr;
+                else if (!extraSprites.some((s) => s.key === k)) extraSprites.push(spr);
+                customFrameKeys.add(k);
+            }
+            renderAtlas();
+        }
+        // A game landing in the editor starts its UI atlases over: the stashed
+        // states go (the next open reloads the disk copy and folds the game's
+        // own set in), and the record's sets, if any, answer until then.
+        function resetUiAtlases(record) {
+            for (const key of UI_ATLAS_KEYS) delete atlasStash[key];
+            uiAtlasesCloud = record && record.uiAtlases && typeof record.uiAtlases === 'object' ? record.uiAtlases : null;
+        }
+        // Cut frames packed into one sheet the way the cloud save stores a
+        // level's custom frames: { imageDataURL, frames } with Firebase-safe
+        // frame keys, or null for no items.
+        function packSpriteSheet(items) {
+            if (!items.length) return null;
+            items.sort((a, b) => b.h - a.h);
+            const MW = 2048, P = 4;
+            let cx = P, cy = P, rh = 0, fh = 0, maxX = 0;
+            const pos = {};
+            items.forEach(s => {
+                if (cx + s.w + P > MW) { cy += rh + P; cx = P; rh = 0; }
+                pos[s.key] = { x: cx, y: cy };
+                cx += s.w + P;
+                rh = Math.max(rh, s.h);
+                fh = Math.max(fh, cy + s.h + P);
+                maxX = Math.max(maxX, pos[s.key].x + s.w + P);
+            });
+            const sheet = document.createElement('canvas');
+            sheet.width = Math.min(MW, maxX);
+            sheet.height = fh;
+            const nc = sheet.getContext('2d');
+            items.forEach(s => { const p = pos[s.key]; nc.drawImage(s.canvas, p.x, p.y); });
+            const frames = {};
+            items.forEach(s => {
+                const p = pos[s.key];
+                frames[encodeFirebaseKey(s.key)] = {
+                    frame: { x: p.x, y: p.y, w: s.w, h: s.h },
+                    rotated: false, trimmed: false,
+                    spriteSourceSize: { x: 0, y: 0, w: s.w, h: s.h },
+                    sourceSize: { w: s.w, h: s.h }
+                };
+            });
+            return { imageDataURL: sheet.toDataURL('image/png'), frames };
+        }
         // Every record the game draws art for.
         function gameRecords() {
             return [playerData, gameData && gameData.playerData2]
@@ -2393,6 +2517,7 @@
                     renderAtlas();
                 } catch (e) { console.warn("Atlas fetch failed for " + key, e); alert("Failed to load atlas: " + key); }
             }
+            await foldCloudUiAtlas(key);
         }
 
         // ================== FILE SYSTEM ==================
@@ -5293,7 +5418,14 @@
                 const c = document.createElement('canvas');
                 c.width = img.width; c.height = img.height;
                 c.getContext('2d').drawImage(img, 0, 0);
-                extraSprites.push({ key: file.name, canvas: c, w: img.width, h: img.height });
+                // A file named like a frame already here replaces that frame.
+                // It used to be added beside it under the same name, and the
+                // repack drew whichever of the two it reached last.
+                const spr = { key: file.name, canvas: c, w: img.width, h: img.height };
+                const at = extraSprites.findIndex((s) => s.key === file.name);
+                if (atlasData && atlasData.frames && atlasData.frames[file.name]) replacedFrames[file.name] = spr;
+                else if (at >= 0) extraSprites[at] = spr;
+                else extraSprites.push(spr);
                 customFrameKeys.add(file.name);
             }
             renderAtlas();
@@ -5981,6 +6113,8 @@
             if (logoDataURL) r.logoDataURL = logoDataURL;
             if (subTitleDataURL) r.subTitleDataURL = subTitleDataURL;
             if (titleStartTextDataURL) r.titleStartTextDataURL = titleStartTextDataURL;
+            const ui = uiAtlasesForSave();
+            if (ui) r.uiAtlases = ui;
             return r;
         }
 
@@ -6473,6 +6607,7 @@
             if (!blank) { alert('EDITOR DATA IS STILL LOADING — TRY AGAIN IN A MOMENT.'); return; }
             await ensureLevelAtlasOpen();
             replacedFrames = {}; extraSprites = []; customFrameKeys = new Set();
+            resetUiAtlases(null);
             gameData = blank;
             enemyData = gameData.enemyData;
             bossData = gameData.bossData;
@@ -6777,6 +6912,8 @@
                 // so it is carried too, not dropped as falsy.
                 if (gameData.attribution !== undefined && gameData.attribution !== null) record.attribution = gameData.attribution;
             }
+            const ui = uiAtlasesForSave();
+            if (ui) record.uiAtlases = ui;
             return record;
         }
 
@@ -8580,6 +8717,7 @@
             // loadFromFirebase) BEFORE adding this import's sprites.
             await ensureLevelAtlasOpen();
             replacedFrames = {}; extraSprites = []; customFrameKeys = new Set();
+            resetUiAtlases(null);
             // The TITLE EDITOR's four uploaded images belong to whatever game
             // was open before, exactly as the atlas snapshot below does. A
             // cart carries its own drawn title (gameJson.dezaemonTitle), and
@@ -11721,50 +11859,21 @@ function GAME3D_RUNTIME(DATA) {
                             fc.getContext('2d').drawImage(atlasSource, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
                             items.push({ key: k, canvas: fc, w: f.w, h: f.h });
                         }
-                        if (items.length > 0) {
-                            items.sort((a, b) => b.h - a.h);
-                            const MW = 2048, P = 4;
-                            let cx = P, cy = P, rh = 0, fh = 0, maxX = 0;
-                            const pos = {};
-                            items.forEach(s => {
-                                if (cx + s.w + P > MW) { cy += rh + P; cx = P; rh = 0; }
-                                pos[s.key] = { x: cx, y: cy };
-                                cx += s.w + P;
-                                rh = Math.max(rh, s.h);
-                                fh = Math.max(fh, cy + s.h + P);
-                                maxX = Math.max(maxX, pos[s.key].x + s.w + P);
-                            });
-                            const saveCanvas = document.createElement('canvas');
-                            saveCanvas.width = Math.min(MW, maxX);
-                            saveCanvas.height = fh;
-                            const nc = saveCanvas.getContext('2d');
-                            items.forEach(s => { const p = pos[s.key]; nc.drawImage(s.canvas, p.x, p.y); });
-                            const saveFrames = {};
-                            items.forEach(s => {
-                                const p = pos[s.key];
-                                saveFrames[s.key] = {
-                                    frame: { x: p.x, y: p.y, w: s.w, h: s.h },
-                                    rotated: false, trimmed: false,
-                                    spriteSourceSize: { x: 0, y: 0, w: s.w, h: s.h },
-                                    sourceSize: { w: s.w, h: s.h }
-                                };
-                            });
-                            payload.atlasImageDataURL = saveCanvas.toDataURL('image/png');
-                            const encodedFrames = {};
-                            for (const [k, v] of Object.entries(saveFrames)) encodedFrames[encodeFirebaseKey(k)] = v;
-                            payload.atlasFrames = encodedFrames;
-                        } else {
-                            // Clear any previously saved atlas so a stale snapshot
-                            // cannot keep shadowing local frames.
-                            payload.atlasImageDataURL = null;
-                            payload.atlasFrames = null;
-                        }
+                        // One sheet of just these frames (packSpriteSheet);
+                        // none clears any previously saved atlas so a stale
+                        // snapshot cannot keep shadowing local frames.
+                        const packed = packSpriteSheet(items);
+                        payload.atlasImageDataURL = packed ? packed.imageDataURL : null;
+                        payload.atlasFrames = packed ? packed.frames : null;
                     } catch (e) { console.warn('Could not save atlas to Firebase:', e); }
                 }
                 // Leaderboard identity: minted once, then never touched again,
                 // so a game keeps its scores through renames and re-exports.
                 // Only ever written when the record has none — an update() that
                 // re-minted every save would orphan the board each time.
+                // The UI atlases' custom frames — a replaced title plate, say —
+                // keyed by atlas; null clears a set the game no longer has.
+                payload.uiAtlases = uiAtlasesForSave();
                 payload.gameId = await ensureGameId(name);
                 await firebaseDb.ref(`${LEVEL_LOADER_DEFAULTS.levelsPath}/${name}`).update(payload);
                 // The atlas snapshot went up with the records, so a later
@@ -11821,6 +11930,7 @@ function GAME3D_RUNTIME(DATA) {
                 normalizeLegacyNames(d);
                 if (d.atlasFrames) d.atlasFrames = normalizeLegacyAtlasKeys(d.atlasFrames);
                 await ensureLevelAtlasOpen();
+                resetUiAtlases(d);
                 // Reset per-level atlas customization state so overrides from a
                 // previously-loaded level don't leak into this one.
                 replacedFrames = {};
@@ -12019,6 +12129,7 @@ function GAME3D_RUNTIME(DATA) {
                     if (val.sceneScripts) badgeDefs.push(['Scene Scripts', '📜']);
                     if (val.logoDataURL || val.titleBgDataURL) badgeDefs.push(['Title Screen', '🖼']);
                     if (val.atlasImageDataURL) badgeDefs.push(['Custom Sprites', '🎨']);
+                    if (val.uiAtlases) badgeDefs.push(['UI Art', '🧩']);
                     if (badgeDefs.length) {
                         const bwrap = document.createElement('span');
                         bwrap.style.marginLeft = '4px';

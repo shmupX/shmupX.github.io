@@ -62,15 +62,16 @@ Deno.test("the level loader — the plugin and the bundle's inlined copy — put
       path + ": no applyStageBackgrounds",
     );
     // Awaited, on both roads in: a ?level= visit goes straight into the stage.
+    // (The UI atlases stack first, then the level atlas, then the backdrops.)
     assert(
       js.includes(
-        "this.mergeAtlas(data, o.atlasKey).then(() => this.applyStageBackgrounds(data)).then(() => {",
+        "this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {",
       ),
       path + ": the cloud path does not await the backdrops",
     );
     assert(
       js.includes(
-        "this.mergeEditorAtlas(o).then(() => this.applyStageBackgrounds(recipe)).then(() => {",
+        "this.applyUiAtlases(recipe).then(() => this.mergeEditorAtlas(o)).then(() => this.applyStageBackgrounds(recipe)).then(() => {",
       ),
       path + ": the editor-play path does not await the backdrops",
     );

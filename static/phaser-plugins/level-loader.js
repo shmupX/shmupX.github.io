@@ -402,6 +402,33 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
 
     // ---- Atlas merge ------------------------------------------------------
 
+    // The UI atlases' custom frames: what the editor's Atlas Manager replaced
+    // or added in game_ui / title_ui, which the cloud save, the editor's PLAY
+    // and an export carry as `uiAtlases: { <atlasKey>: { imageDataURL, frames } }`.
+    // Each set is stacked onto its atlas the way the level's own goes onto
+    // game_asset, so a replaced title plate or button draws from the game's
+    // art rather than 2028.Ai's. Resolves once every set is in (false when
+    // there is none); an atlas the runtime did not load is skipped.
+    applyUiAtlases(levelData) {
+      const sets = levelData && levelData.uiAtlases;
+      if (!sets || typeof sets !== "object") return Promise.resolve(false);
+      const scene = this.scene;
+      const jobs = Object.keys(sets).map((atlasKey) => {
+        const set = sets[atlasKey];
+        if (!set || !set.imageDataURL || !set.frames || !scene.textures.exists(atlasKey)) {
+          return Promise.resolve(false);
+        }
+        return loadImage(set.imageDataURL).then((img) => {
+          if (!img) {
+            console.warn("UI atlas image failed to load for " + atlasKey + ", using local art");
+            return false;
+          }
+          return this._stackAtlas(img, set.frames, atlasKey);
+        });
+      });
+      return Promise.all(jobs).then((done) => done.some(Boolean));
+    }
+
     // A level may ship its own atlas (base64 PNG + frame map). Stack it beneath
     // the local atlas in a single canvas so both local frames (player/UI) and
     // level frames (enemies) resolve from one texture. Resolves once merged (or
@@ -993,7 +1020,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         } catch (_e) { /* ignore */ }
         const stageId = parseStageId(editorPlay.stageId, o.maxStage);
         const info = { stageId, bossRush, source: "editor", hasCustomEnemies };
-        return this.mergeEditorAtlas(o).then(() => this.applyStageBackgrounds(recipe)).then(() => {
+        return this.applyUiAtlases(recipe).then(() => this.mergeEditorAtlas(o)).then(() => this.applyStageBackgrounds(recipe)).then(() => {
           // The game's title art, for the title the ending returns to: PLAY
           // itself opens in the stage. Without this that title was the base
           // game's, over the game's own story.
@@ -1001,6 +1028,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           // Applied as textures above; the recipe the scene keeps need not
           // carry half a megabyte of PNG as well.
           delete recipe.stageBackgrounds;
+          delete recipe.uiAtlases;
           for (const dataKey in o.titleImageKeys) delete recipe[dataKey];
           prime(recipe, info);
           return {
@@ -1026,7 +1054,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         : (typeof globalThis !== "undefined" && !!globalThis.__OFFLINE_LEVEL__);
 
       return this.fetchLevel(levelName, o).then((data) =>
-        this.mergeAtlas(data, o.atlasKey).then(() => this.applyStageBackgrounds(data)).then(() => {
+        this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
           const recipe = this.mergeRecipe(baseRecipe, data, o.atlasKey);
           this.applyTitleImages(data, o.titleImageKeys);
 
