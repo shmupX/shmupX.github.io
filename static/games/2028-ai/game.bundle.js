@@ -9964,6 +9964,267 @@
     }
     return faces;
   }
+  // ===========================================================================
+  // The X-ray lens on the SP button
+  //
+  // The CA BOMB disc is a permanent hologram window (the Claude Design handoff
+  // "X-Ray effect for SP button", its final 2a Tomograph): whatever the player
+  // can hit or collect — the ships, their shots, enemies, enemy shots and
+  // pickups — is redrawn over the disc as a cyan luminance ramp with 2 px
+  // scanlines, a 1 px red/blue fringe, a 5 px bloom and one scan line walking
+  // the disc top to bottom every 1.6 s, over a 12 % field of 8 px grid and
+  // scanlines, inside a faint cyan rim. Never the stage, the shadows or the
+  // HUD, and the disc art under it is untouched.
+  //
+  // It is one 64x64 CanvasTexture, drawn by hand once per rendered frame with
+  // the prototype's own per-pixel math and shown by an Image at depth 104 —
+  // over spBtnWrap (103), under the score popups (110) — that takes no input,
+  // so spBtnBarBg keeps the tap. Hand-drawn rather than Phaser 4 Filters
+  // because Phaser.AUTO can land on the Canvas renderer, where there are none,
+  // and because the ramp is quadratic in red, which a ColorMatrix cannot fit.
+  // The window is 4096 pixels; the subjects are culled by distance first.
+  var SP_LENS_SIZE = 64;              // the window, centred on the disc
+  var SP_LENS_R = 28;                 // drawSpFace's ground circle: r - 5.5
+  var SP_LENS_CENTRE = 33.5;          // the disc's centre inside spBtnWrap
+  var SP_LENS_SCAN_MS = 1600;         // one sweep, top to bottom
+  var SP_LENS_FRINGE_PX = 1;
+  var SP_LENS_FIELD_ALPHA = 0.12;     // the grid and scanlines over the disc
+  var SP_LENS_GRID_PX = 8;
+  var SP_LENS_TEXTURE = "spLens";
+  var SP_LENS_DEPTH = 104;
+  // The prototype's ramp over one window of subject pixels: luminance L (0-1)
+  // becomes R 10 + 200L², G 110 + 145L, B 140 + 115L with the alpha kept, and
+  // the two fringe plates — red (120 + 135L, 0, 24), blue (0, 70 + 70L,
+  // 200 + 55L) — are cut from the same alpha. Four Uint8ClampedArrays of the
+  // same length, the first read and the other three written.
+  function spLensTintPixels(src, main, red, blue) {
+    for (var i = 0; i < src.length; i += 4) {
+      var a = src[i + 3];
+      if (!a) {
+        main[i + 3] = 0;
+        red[i + 3] = 0;
+        blue[i + 3] = 0;
+        continue;
+      }
+      var k = (src[i] * 77 + src[i + 1] * 150 + src[i + 2] * 29) / 65280;
+      main[i] = 10 + 200 * k * k;
+      main[i + 1] = 110 + 145 * k;
+      main[i + 2] = 140 + 115 * k;
+      main[i + 3] = a;
+      red[i] = 120 + 135 * k;
+      red[i + 1] = 0;
+      red[i + 2] = 24;
+      red[i + 3] = a;
+      blue[i] = 0;
+      blue[i + 1] = 70 + 70 * k;
+      blue[i + 2] = 200 + 55 * k;
+      blue[i + 3] = a;
+    }
+  }
+  // One sprite as the renderer draws it, into a window whose top-left is
+  // (ox, oy) on screen: trim offsets, origin, scale, flips, rotation, alpha
+  // and a multiplied tint (an item's colour) — nothing in this game uses a
+  // blend mode or a fill tint. Positions round to whole pixels as pixelArt
+  // rounds them.
+  function spLensDrawSprite(ctx, s, ox, oy, scratch) {
+    var f = s.frame;
+    var img = f && f.source && f.source.image;
+    if (!img || !f.cutWidth || !f.cutHeight) return;
+    var dx = f.x - s.originX * f.realWidth;
+    var dy = f.y - s.originY * f.realHeight;
+    ctx.save();
+    ctx.globalAlpha = s.alpha;
+    ctx.translate(Math.round(s.x - ox), Math.round(s.y - oy));
+    if (s.rotation) ctx.rotate(s.rotation);
+    ctx.scale(s.scaleX * (s.flipX ? -1 : 1), s.scaleY * (s.flipY ? -1 : 1));
+    if (s.isTinted && scratch) {
+      if (scratch.el.width < f.cutWidth || scratch.el.height < f.cutHeight) {
+        scratch.el.width = Math.max(scratch.el.width, f.cutWidth);
+        scratch.el.height = Math.max(scratch.el.height, f.cutHeight);
+      }
+      var sc = scratch.ctx;
+      sc.globalCompositeOperation = "source-over";
+      sc.clearRect(0, 0, scratch.el.width, scratch.el.height);
+      sc.imageSmoothingEnabled = false;
+      sc.drawImage(img, f.cutX, f.cutY, f.cutWidth, f.cutHeight, 0, 0, f.cutWidth, f.cutHeight);
+      sc.globalCompositeOperation = "multiply";
+      sc.fillStyle = "#" + ("000000" + (s.tintTopLeft & 16777215).toString(16)).slice(-6);
+      sc.fillRect(0, 0, f.cutWidth, f.cutHeight);
+      sc.globalCompositeOperation = "destination-in";
+      sc.drawImage(img, f.cutX, f.cutY, f.cutWidth, f.cutHeight, 0, 0, f.cutWidth, f.cutHeight);
+      sc.globalCompositeOperation = "source-over";
+      ctx.drawImage(scratch.el, 0, 0, f.cutWidth, f.cutHeight, dx, dy, f.cutWidth, f.cutHeight);
+    } else {
+      ctx.drawImage(img, f.cutX, f.cutY, f.cutWidth, f.cutHeight, dx, dy, f.cutWidth, f.cutHeight);
+    }
+    ctx.restore();
+  }
+  // The lens over this scene's SP button, or null where a 2D canvas is not to
+  // be had — the button is then exactly as it was. Called once spBtnWrap and
+  // its faces exist; the window follows the button every frame after that.
+  function createSpLens(scene) {
+    var L = SP_LENS_SIZE;
+    var lens = {
+      cx: 0, cy: 0, ox: 0, oy: 0, broken: false,
+      subjects: null, holo: null, holoR: null, holoB: null, body: null, scratch: null,
+      main: null, red: null, blue: null, tex: null, image: null
+    };
+    try {
+      var canvas = function (w, h, opts) {
+        var el = document.createElement("canvas");
+        el.width = w;
+        el.height = h;
+        var ctx = el.getContext("2d", opts);
+        if (!ctx) throw new Error("no 2d context");
+        return { el: el, ctx: ctx };
+      };
+      lens.subjects = canvas(L, L, { willReadFrequently: true });
+      lens.holo = canvas(L, L);
+      lens.holoR = canvas(L, L);
+      lens.holoB = canvas(L, L);
+      lens.body = canvas(L, L);
+      lens.scratch = canvas(L, L);
+      lens.main = lens.holo.ctx.createImageData(L, L);
+      lens.red = lens.holo.ctx.createImageData(L, L);
+      lens.blue = lens.holo.ctx.createImageData(L, L);
+      // One texture for the game's life: a restarted scene draws into it again.
+      lens.tex = scene.textures.exists(SP_LENS_TEXTURE)
+        ? scene.textures.get(SP_LENS_TEXTURE)
+        : scene.textures.createCanvas(SP_LENS_TEXTURE, L, L);
+      lens.tex.getContext().clearRect(0, 0, L, L);
+      lens.tex.refresh();
+      spLensFollowButton(scene, lens);
+      lens.image = scene.add.image(lens.ox, lens.oy, SP_LENS_TEXTURE);
+      lens.image.setOrigin(0, 0);
+      lens.image.setDepth(SP_LENS_DEPTH);
+    } catch (e) {
+      return null;
+    }
+    return lens;
+  }
+  // The window sits on the disc's centre: the 64 px square from 31.5 px left
+  // and above it, which is spBtnWrap + 2 on the shipped HUD (188, 257).
+  function spLensFollowButton(scene, lens) {
+    var wrap = scene.spBtnWrap;
+    lens.cx = wrap.x + SP_LENS_CENTRE;
+    lens.cy = wrap.y + SP_LENS_CENTRE;
+    lens.ox = lens.cx - SP_LENS_SIZE / 2 + 0.5;
+    lens.oy = lens.cy - SP_LENS_SIZE / 2 + 0.5;
+    if (lens.image && (lens.image.x !== lens.ox || lens.image.y !== lens.oy)) lens.image.setPosition(lens.ox, lens.oy);
+  }
+  // Once per rendered frame, after the fixed steps have moved everything. A
+  // throw mid-paint (a tainted atlas source, say) retires the lens for good
+  // rather than once a frame; the disc is still the disc.
+  function updateSpLens(scene, lens, time) {
+    if (!lens || lens.broken || !lens.image || !lens.image.active) return;
+    var wrap = scene.spBtnWrap;
+    var shown = !!(wrap && wrap.active && wrap.visible && wrap.alpha > 0);
+    if (lens.image.visible !== shown) lens.image.setVisible(shown);
+    if (!shown) return;
+    try {
+      spLensFollowButton(scene, lens);
+      paintSpLens(scene, lens, time);
+    } catch (e) {
+      lens.broken = true;
+      lens.image.setVisible(false);
+    }
+  }
+  function paintSpLens(scene, lens, time) {
+    var L = SP_LENS_SIZE, R = SP_LENS_R, ox = lens.ox, oy = lens.oy;
+    var lcx = lens.cx - ox, lcy = lens.cy - oy;          // the disc's centre in the window
+    // 1. The subjects behind the disc — the sprite layer only, never the stage
+    //    or the shadows — in the prototype's order: enemies, pickups, enemy
+    //    shots, shots, then the ships on top.
+    var sc = lens.subjects.ctx;
+    sc.clearRect(0, 0, L, L);
+    sc.imageSmoothingEnabled = false;
+    var any = false;
+    var draw = function (s) {
+      if (!s || !s.active || !s.visible || s.alpha <= 0) return;
+      var reach = R + Math.max(s.displayWidth, s.displayHeight) / 2;
+      var dx = s.x - lens.cx, dy = s.y - lens.cy;
+      if (dx * dx + dy * dy > reach * reach) return;    // cheap cull
+      spLensDrawSprite(sc, s, ox, oy, lens.scratch);
+      any = true;
+    };
+    var lists = [scene.enemies, scene.items, scene.enemyBullets, scene.playerBullets];
+    for (var l = 0; l < lists.length; l++) {
+      var arr = lists[l] || [];
+      for (var i = 0; i < arr.length; i++) draw(arr[i]);
+    }
+    for (var p = 0; p < scene.players.length; p++) draw(scene.players[p] && scene.players[p].sprite);
+    var phase = (time % SP_LENS_SCAN_MS) / SP_LENS_SCAN_MS;
+    var sy = lcy - R + phase * 2 * R;                    // the scan line, in window rows
+    if (any) {
+      // 2. The ramp, and the red and blue plates for the fringe.
+      var px = sc.getImageData(0, 0, L, L).data;
+      spLensTintPixels(px, lens.main.data, lens.red.data, lens.blue.data);
+      lens.holo.ctx.putImageData(lens.main, 0, 0);
+      lens.holoR.ctx.putImageData(lens.red, 0, 0);
+      lens.holoB.ctx.putImageData(lens.blue, 0, 0);
+      // 3. The hologram: fringe plates under, bloom, body, scanlines, the
+      //    sweep's white flare on whatever it crosses.
+      var bc = lens.body.ctx;
+      bc.globalCompositeOperation = "source-over";
+      bc.clearRect(0, 0, L, L);
+      bc.globalCompositeOperation = "lighter";
+      if (SP_LENS_FRINGE_PX > 0) {
+        bc.drawImage(lens.holoR.el, -SP_LENS_FRINGE_PX, 0);
+        bc.drawImage(lens.holoB.el, SP_LENS_FRINGE_PX, 0);
+      }
+      bc.globalCompositeOperation = "source-over";
+      bc.shadowColor = "rgba(120,255,255,1)";
+      bc.shadowBlur = 5;
+      bc.drawImage(lens.holo.el, 0, 0);
+      bc.shadowBlur = 0;
+      bc.shadowColor = "transparent";
+      bc.globalCompositeOperation = "source-atop";
+      bc.fillStyle = "rgba(0,16,32,0.45)";
+      for (var y = 1; y < L; y += 2) bc.fillRect(0, y, L, 1);
+      var flare = bc.createLinearGradient(0, sy - 9, 0, sy + 1);
+      flare.addColorStop(0, "rgba(255,255,255,0)");
+      flare.addColorStop(1, "rgba(255,255,255,0.65)");
+      bc.fillStyle = flare;
+      bc.fillRect(0, sy - 9, L, 10);
+      bc.globalCompositeOperation = "source-over";
+    }
+    // 4. Onto the disc, clipped to its ground: the field, the sweep, the
+    //    hologram; then the rim outside the clip.
+    var ctx = lens.tex.getContext();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.clearRect(0, 0, L, L);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(lcx, lcy, R, 0, Math.PI * 2);
+    ctx.clip();
+    var fa = SP_LENS_FIELD_ALPHA, G = SP_LENS_GRID_PX;
+    if (fa > 0) {
+      // Scanlines on the even screen rows, the grid on the screen's 8 px
+      // lines — fixed to the screen, not the window, as the prototype draws them.
+      ctx.fillStyle = "rgba(0,0,0," + fa + ")";
+      for (var fy = Math.ceil(lens.cy - R); fy < lens.cy + R; fy++) {
+        if ((fy & 1) === 0) ctx.fillRect(lcx - R, fy - oy, 2 * R, 1);
+      }
+      ctx.fillStyle = "rgba(140,255,255," + fa + ")";
+      for (var gx = Math.ceil((lens.cx - R) / G) * G; gx <= lens.cx + R; gx += G) ctx.fillRect(gx - ox, lcy - R, 1, 2 * R);
+      for (var gy = Math.ceil((lens.cy - R) / G) * G; gy <= lens.cy + R; gy += G) ctx.fillRect(lcx - R, gy - oy, 2 * R, 1);
+    }
+    var trail = ctx.createLinearGradient(0, sy - 10, 0, sy);
+    trail.addColorStop(0, "rgba(120,255,255,0)");
+    trail.addColorStop(1, "rgba(120,255,255,0.35)");
+    ctx.fillStyle = trail;
+    ctx.fillRect(lcx - R, sy - 10, 2 * R, 10);
+    ctx.fillStyle = "rgba(220,255,255,0.9)";
+    ctx.fillRect(lcx - R, Math.floor(sy), 2 * R, 1);
+    if (any) ctx.drawImage(lens.body.el, 0, 0);
+    ctx.restore();
+    ctx.strokeStyle = "rgba(120,255,255,0.35)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(lcx, lcy, R + 0.5, 0, Math.PI * 2);
+    ctx.stroke();
+    lens.tex.refresh();
+  }
   function fireDezaBomb(scene, p) {
     var nib = dezaBombNibble(scene, p);
     var type = DEZA_BOMB_BY_NIBBLE[nib];
@@ -13969,6 +14230,10 @@
       this.spBtnBar.setOrigin(0, 0);
       this.spBtnWrap.add([this.spBtnPulse, this.spBtnReadyBg, this.spBtnBarBg, this.spBtnBar]);
       this.spBtnWrap.setSize(this.spBtnBarBg.width, this.spBtnBarBg.height);
+      // The X-ray lens: the disc is a hologram window onto whatever flies
+      // behind it (createSpLens). Its own object at depth 104, so the faces,
+      // the crop and the hit circle below are exactly as they were.
+      this.spLens = createSpLens(this);
       this.spBtnBarBg.setInteractive(
         new Phaser.Geom.Circle(
           this.spBtnBarBg.width / 2,
@@ -14899,6 +15164,9 @@
         this._accumulator -= STEP;
         this.fixedUpdate(time, STEP);
       }
+      // The SP button's X-ray lens, once per rendered frame, after every
+      // fixed step has moved what it shows.
+      if (this.spLens) updateSpLens(this, this.spLens, time);
     }
     fixedUpdate(time, step) {
       var anyAlive = !allPlayersDead(this);

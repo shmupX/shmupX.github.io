@@ -328,6 +328,19 @@ they are written out in full.
     filled that way is marked `fromBank` so the state machine keeps reading the
     bank live, where the rank term moves. Upstream home is
     `2019-es7/src/phaser/game-objects/Boss.js`.
+  - The SP button is an X-ray lens (`createSpLens`, from the Claude Design
+    handoff "X-Ray effect for SP button", its final Tomograph). The CA BOMB disc
+    is a permanent hologram window: the ships, their shots, enemies, enemy shots
+    and pickups passing behind it are redrawn over the disc — never the stage,
+    the shadows or the HUD — as a cyan luminance ramp (R 10 + 200L², G 110 +
+    145L, B 140 + 115L) with 2 px scanlines at 45 %, a 1 px red/blue fringe, a 5
+    px bloom and one scan line walking the disc every 1.6 s, over a 12 % field
+    of 8 px grid and scanlines inside a faint cyan rim; the disc art under it is
+    untouched. One 64×64 CanvasTexture, hand-drawn once per rendered frame with
+    the prototype's own pixel math and shown by an Image at depth 104 (over the
+    button, under the score popups) that takes no input, so the button keeps the
+    tap — the same under WebGL and the Canvas renderer `Phaser.AUTO` may pick.
+    `tests/sp_lens_test.ts` holds the ramp and the hookup.
 - `mcp/` — the **character MCP server** (`deno task mcp:character`, registered
   for this repo by `.mcp.json`): clone a character out of the catalog, swap any
   frame of any sprite or atlas into its animations, its projectiles or its
