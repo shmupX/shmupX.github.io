@@ -1525,8 +1525,8 @@
                 <button id="missing-tex-repack-btn" onclick="repackFromMissingPanel()"
                         class="menu-btn" style="background:#84cc16;color:#000;font-weight:700;flex:1;justify-content:center;opacity:0.4;"
                         disabled>Repack Atlas</button>
-                <button onclick="skipMissingTextures()"
-                        class="menu-btn" style="background:#475569;color:#e2e8f0;font-weight:700;flex:1;justify-content:center;">Skip — Use Original Bosses</button>
+                <button onclick="skipMissingTextures()" title="Close the panel. These frames stay missing until they are uploaded; a set that still had one frame was already filled from it."
+                        class="menu-btn" style="background:#475569;color:#e2e8f0;font-weight:700;flex:1;justify-content:center;">Later</button>
             </div>
         </div>
     </div>
@@ -1581,7 +1581,7 @@
 
 
     <!-- STORY EDITOR MODAL -->
-    <div id="story-editor-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+    <div id="story-editor-modal" class="picker-overlay hidden" onclick="if(event.target===this){syncStoryFromUI();this.classList.add('hidden')}">
         <div class="picker-panel" style="max-height:80vh">
             <div class="picker-title">STORY EDITOR</div>
             <div style="font-size:11px;color:#888;margin-bottom:12px;font-family:monospace;">Edit AdvScene dialog per stage</div>
@@ -2252,8 +2252,81 @@
             document.getElementById('atlas-modal').classList.remove('hidden');
         }
 
+        // Each atlas keeps its own working state across a switch. The Atlas
+        // Manager's selector and the sprite-picker bridge both move the editor
+        // to game_ui / title_ui and back, and until now the switch threw the
+        // level's custom frames away: replacedFrames, extraSprites and the
+        // customFrameKeys set the cloud save writes were all reset. A game that
+        // had visited game_ui to put its own picture on the title saved an
+        // atlas holding that one picture and lost every library character it
+        // had — on the next load the runtime fell back to stock enemies and
+        // bosses (level-loader keeps the local texture for a frame it cannot
+        // find), the ship drew as Duke, and the MISSING TEXTURES panel asked
+        // for every frame. Now a switch stashes, and a switch back restores.
+        const atlasStash = {};   // atlasKey -> { atlasData, atlasImage, extraSprites, replacedFrames, customFrameKeys, atlasAheadOfCloud }
+        const LEVEL_ATLAS_KEY = 'game_asset';
+        function stashCurrentAtlas() {
+            if (!atlasData) return;
+            atlasStash[currentAtlasKey] = { atlasData, atlasImage, extraSprites, replacedFrames, customFrameKeys, atlasAheadOfCloud };
+        }
+        // The level's own atlas — live when it is the one open, stashed while
+        // another is. Saves and exports read art from here, so a trip to
+        // game_ui in the Atlas Manager cannot change what a game ships.
+        function levelAtlasState() {
+            if (currentAtlasKey === LEVEL_ATLAS_KEY) return { live: true, atlasData, atlasImage, extraSprites, replacedFrames, customFrameKeys };
+            const s = atlasStash[LEVEL_ATLAS_KEY];
+            return s ? Object.assign({ live: false }, s)
+                : { live: false, atlasData: null, atlasImage: null, extraSprites: [], replacedFrames: {}, customFrameKeys: new Set() };
+        }
+        // Anything that lands art or a whole game in the editor lands it in
+        // the level atlas, whichever one the Atlas Manager was showing.
+        async function ensureLevelAtlasOpen() {
+            if (currentAtlasKey !== LEVEL_ATLAS_KEY) await switchAtlas(LEVEL_ATLAS_KEY);
+        }
+        // Every record the game draws art for.
+        function gameRecords() {
+            return [playerData, gameData && gameData.playerData2]
+                .concat(Object.values(enemyData || {}), Object.values(bossData || {}))
+                .filter((r) => r && typeof r === 'object');
+        }
+        // Every frame name those records stand on.
+        function gameFrameNames() {
+            const names = new Set();
+            for (const rec of gameRecords()) for (const f of entryFrameNames(rec)) names.add(f);
+            return names;
+        }
+        // The hosted stock atlas's frame names, fetched once: what a cloud
+        // level can count on at play time without carrying the pixels itself.
+        let stockFrameKeysPromise = null;
+        function stockFrameKeys() {
+            if (!stockFrameKeysPromise) {
+                stockFrameKeysPromise = (async () => {
+                    try {
+                        const resp = await fetch(GAME_BASE + 'assets/' + ATLAS_CONFIGS[LEVEL_ATLAS_KEY].json);
+                        if (!resp.ok) return null;
+                        const norm = normalizeAtlasData(await resp.json());
+                        return new Set(Object.keys(normalizeLegacyAtlasKeys((norm && norm.frames) || {})));
+                    } catch (e) { return null; }
+                })();
+                stockFrameKeysPromise.then((s) => { if (!s) stockFrameKeysPromise = null; });
+            }
+            return stockFrameKeysPromise;
+        }
+
         async function switchAtlas(key) {
+            if (key !== currentAtlasKey) stashCurrentAtlas();
             currentAtlasKey = key;
+            cancelMultiReplace();
+            const back = atlasStash[key];
+            if (back && back.atlasData && back.atlasImage) {
+                delete atlasStash[key];
+                atlasData = back.atlasData; atlasImage = back.atlasImage;
+                extraSprites = back.extraSprites; replacedFrames = back.replacedFrames;
+                customFrameKeys = back.customFrameKeys; atlasAheadOfCloud = back.atlasAheadOfCloud;
+                const show = () => { buildFrameThumbs(); storeAtlasForViewers(); renderAtlas(); };
+                if (atlasImage.complete && atlasImage.naturalWidth) show(); else atlasImage.onload = show;
+                return;
+            }
             dezaInvalidateBaseAtlas(key);
             const cfg = ATLAS_CONFIGS[key];
             const editorJson = "_" + cfg.json;
@@ -2261,7 +2334,6 @@
             extraSprites = [];
             replacedFrames = {};
             customFrameKeys = new Set();
-            cancelMultiReplace();
             if (dirHandle) {
                 try {
                     let atlasJsonText, pngBlob;
@@ -2582,6 +2654,13 @@
                 for (const t of texArr) { if (t && !frames[t]) missing.add(t); }
             }
 
+            // The ships too: a roster ship (CHOOSE YOUR CHARACTER) is named
+            // by its sheet key and lives in no stock atlas, so a cloud record
+            // that lost its snapshot flew as Duke's first frame with nobody
+            // asked — the check only ever read the enemies and the bosses.
+            for (const rec of [playerData, gameData && gameData.playerData2]) {
+                if (rec && typeof rec === 'object') collectTextures(entryFrameNames(rec));
+            }
             for (const d of Object.values(enemyData)) {
                 if (!d) continue;
                 collectTextures(d.texture);
@@ -2614,6 +2693,8 @@
             // The atlas rebuild inside the library pass re-enters this check
             // through buildFrameThumbs; the pass that started it reports.
             if (libraryResolveBusy) return;
+            // The panel is about the level's art; the ui atlases have none of it.
+            if (currentAtlasKey !== LEVEL_ATLAS_KEY) return;
             const missing = await collectMissingTextures();
             if (!missing.size || libraryResolveBusy) return;
             let left = [...missing];
@@ -2623,6 +2704,17 @@
                 left = r.left;
             } catch (e) { console.warn('Level editor: library lookup failed:', e); }
             if (!left.length) return;
+            // What the library cannot answer is filled from the frame beside
+            // it: a set that still has one of its frames plays that frame in
+            // place of the lost ones. Only a set with none at all is asked for.
+            try {
+                const n = await fillMissingFromFirstFrame(left);
+                if (n) {
+                    flash(n + ' FRAME' + (n === 1 ? '' : 'S') + ' FILLED FROM THE FIRST FRAME OF THEIR SET');
+                    left = [...await collectMissingTextures()];
+                }
+            } catch (e) { console.warn('Level editor: first-frame fill failed:', e); }
+            if (!left.length) return;
             console.warn('Level editor: missing textures in atlas:', left);
             showMissingTexturesPanel(left);
             const status = document.getElementById('missing-tex-atlas-status');
@@ -2630,6 +2722,52 @@
                 status.textContent = 'Not in the shared library either — upload each, or a PNG + JSON atlas.';
                 status.style.color = '#888';
             }
+        }
+
+        // A record's animation or bullet list that has lost some of its frames
+        // takes the first frame it still has for each of them — the character
+        // keeps drawing as itself, flat, rather than as the atlas's first frame
+        // (the player ship) the runtime answers an unknown name with. Counts
+        // the frames it filled; the merge afterwards puts them in the atlas.
+        async function fillMissingFromFirstFrame(missingList) {
+            const missing = new Set(missingList);
+            const have = (atlasData && atlasData.frames) || {};
+            if (!missing.size || !atlasImage || !atlasImage.complete || !atlasImage.naturalWidth) return 0;
+            if (libraryResolveBusy) return 0;
+            libraryResolveBusy = true;
+            try {
+                let filled = 0;
+                const fillList = (list) => {
+                    if (!list.length || !list.every((s) => typeof s === 'string')) return;
+                    const lost = list.filter((f) => missing.has(f) && !have[f]);
+                    if (!lost.length) return;
+                    const src = list.find((f) => have[f] && have[f].frame);
+                    if (!src) return;
+                    const f = have[src].frame;
+                    for (const name of lost) {
+                        if (extraSprites.find((sp) => sp.key === name)) continue;
+                        const c = document.createElement('canvas');
+                        c.width = f.w; c.height = f.h;
+                        c.getContext('2d').drawImage(atlasImage, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+                        extraSprites.push({ key: name, canvas: c, w: f.w, h: f.h });
+                        customFrameKeys.add(name);
+                        missing.delete(name);
+                        filled++;
+                    }
+                };
+                const walk = (obj, depth) => {
+                    if (!obj || typeof obj !== 'object' || depth > 2) return;
+                    for (const k of Object.keys(obj)) {
+                        if (k.startsWith('_')) continue;
+                        const v = obj[k];
+                        if (Array.isArray(v)) fillList(v);
+                        else if (v && typeof v === 'object') walk(v, depth + 1);
+                    }
+                };
+                for (const rec of gameRecords()) walk(rec, 0);
+                if (filled) await mergeExtraSpritesIntoAtlas();
+                return filled;
+            } finally { libraryResolveBusy = false; }
         }
 
         function showMissingTexturesPanel(missingList) {
@@ -4188,14 +4326,25 @@
         // frame name -> the library atlas that carries it, over every
         // published character. Fetched once per session; a fetch that fails
         // or finds nothing is not remembered, so a flaky connection retries.
+        // The shared library's records, fetched once per session.
+        let libraryRecordsPromise = null;
+        function libraryRecords() {
+            if (!libraryRecordsPromise) {
+                libraryRecordsPromise = (async () => {
+                    const res = await fetch(`${FIREBASE_CONFIG.databaseURL}/characters.json`);
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    return (await res.json()) || {};
+                })();
+                libraryRecordsPromise.catch(() => { libraryRecordsPromise = null; });
+            }
+            return libraryRecordsPromise;
+        }
         function libraryFrameIndex() {
             if (!libraryIndexPromise) {
                 libraryIndexPromise = (async () => {
                     const index = new Map();
                     try {
-                        const res = await fetch(`${FIREBASE_CONFIG.databaseURL}/characters.json`);
-                        if (!res.ok) throw new Error('HTTP ' + res.status);
-                        const all = (await res.json()) || {};
+                        const all = await libraryRecords();
                         for (const [name, rec] of Object.entries(all)) {
                             if (!rec || typeof rec !== 'object') continue;
                             const key = rec.textureKey || name;
@@ -4214,51 +4363,134 @@
         // textureKey is tried first (a record pasted out of the library keeps
         // it); the library-wide index answers for one that lost it. Resolves
         // { resolved, left }: how many landed, and the names nobody had.
+        // + LIBRARY copies a character's art under <library name>_<n>.png, n
+        // counting the distinct frames in the order the record walks them
+        // (importCharacterFromLibrary). Those names are the editor's own, so
+        // the library's index has never heard of them — but replaying the
+        // walk over the library record gives back the frame each one stood
+        // for. This is how a game whose atlas snapshot was lost (see
+        // atlasStash) gets its library characters' art back on load.
+        // Resolves name -> { key: library atlas, src: the frame in it }.
+        async function libraryRenameLookup(names) {
+            const out = new Map();
+            const wanted = names.map((n) => { const m = /^(.+)_(\d+)\.png$/.exec(n); return m ? { n, base: m[1], idx: Number(m[2]) } : null; }).filter(Boolean);
+            if (!wanted.length) return out;
+            const all = await libraryRecords();
+            const safeOf = (s) => String(s).replace(/[^A-Za-z0-9_]/g, '_');
+            const byBase = new Map();
+            for (const w of wanted) { if (!byBase.has(w.base)) byBase.set(w.base, []); byBase.get(w.base).push(w); }
+            for (const [libName, rec] of Object.entries(all || {})) {
+                if (!rec || typeof rec !== 'object') continue;
+                const list = byBase.get(safeOf(libName));
+                if (!list) continue;
+                const atlasKey = rec.textureKey || libName;
+                const atlas = await loadLibraryAtlas(atlasKey);
+                if (!atlas) continue;
+                // The import's walk: distinct names in record order, counting
+                // only those the character's atlas answers — an unresolved
+                // name took no number.
+                const order = [];
+                const seen = new Set();
+                const walk = (obj, depth) => {
+                    if (!obj || typeof obj !== 'object' || depth > 2) return;
+                    for (const k of Object.keys(obj)) {
+                        const v = obj[k];
+                        if (Array.isArray(v) && v.length && v.every((s) => typeof s === 'string')) {
+                            for (const old of v) { if (seen.has(old)) continue; seen.add(old); if (libraryFrameOf(atlas, old)) order.push(old); }
+                        } else if (v && typeof v === 'object') walk(v, depth + 1);
+                    }
+                };
+                const entry = dezaClone(rec); delete entry.textureKey;
+                walk(entry, 0);
+                for (const w of list) if (!out.has(w.n) && order[w.idx]) out.set(w.n, { key: atlasKey, src: order[w.idx] });
+            }
+            return out;
+        }
+
+        // Art the editor seeds itself and can seed again: Duke's and the
+        // trooper's frames out of the engine module, and the roster sheet's
+        // ships (CHOOSE YOUR CHARACTER names a ship by its sheet key, and a
+        // cloud record that lost its snapshot names it still).
+        let localArtBankPromise = null;   // Promise<Map<frameName, () => canvas>>
+        function localArtBank() {
+            if (!localArtBankPromise) {
+                localArtBankPromise = (async () => {
+                    const bank = new Map();
+                    const D = window.Dezaemon;
+                    for (const dec of [D && D.decodePlayerArt, D && D.decodePlayer2Art]) {
+                        if (typeof dec !== 'function') continue;
+                        try { for (const sp of dec()) if (!bank.has(sp.key)) bank.set(sp.key, () => rgbaFrameCanvas(sp)); }
+                        catch (e) { /* bank unavailable */ }
+                    }
+                    try {
+                        const sheet = await loadShipSheet();
+                        for (const key of Object.keys(sheet.frames)) if (!bank.has(key)) bank.set(key, () => sheetFrameCanvas(sheet, key));
+                    } catch (e) { /* no roster sheet here */ }
+                    return bank;
+                })();
+            }
+            return localArtBankPromise;
+        }
+
         async function resolveMissingTexturesFromLibrary(missing) {
             const have = () => (atlasData && atlasData.frames) || {};
             const names = [...missing].filter((n) => !have()[n]);
             if (!names.length) return { resolved: 0, left: [] };
-            if (libraryResolveBusy) return { resolved: 0, left: names };
+            // Level art only lands in the level atlas (see atlasStash).
+            if (libraryResolveBusy || currentAtlasKey !== LEVEL_ATLAS_KEY) return { resolved: 0, left: names };
             libraryResolveBusy = true;
             try {
                 const hint = new Map();
-                const records = [playerData, ...Object.values(enemyData || {}), ...Object.values(bossData || {})];
-                for (const rec of records) {
-                    if (!rec || typeof rec !== 'object' || !rec.textureKey) continue;
+                for (const rec of gameRecords()) {
+                    if (!rec.textureKey) continue;
                     for (const f of entryFrameNames(rec)) if (!hint.has(f)) hint.set(f, rec.textureKey);
                 }
                 let index = null;
-                const byAtlas = new Map();
+                const byAtlas = new Map();   // atlasKey -> [{ name, src }]
+                const place = (n, key, src) => { if (!byAtlas.has(key)) byAtlas.set(key, []); byAtlas.get(key).push({ name: n, src }); };
+                const unplaced = [];
                 for (const n of names) {
                     let key = hint.get(n);
                     if (!key) {
                         if (!index) index = await libraryFrameIndex();
                         key = index.get(n);
                     }
-                    if (!key) continue;
-                    if (!byAtlas.has(key)) byAtlas.set(key, []);
-                    byAtlas.get(key).push(n);
+                    if (key) place(n, key, n); else unplaced.push(n);
+                }
+                if (unplaced.length) {
+                    let renamed = new Map();
+                    try { renamed = await libraryRenameLookup(unplaced); } catch (e) { /* offline */ }
+                    for (const [n, hit] of renamed) place(n, hit.key, hit.src);
                 }
                 let resolved = 0;
+                const add = (n, c, w, h) => {
+                    const spr = { key: n, canvas: c, w, h };
+                    if (have()[n]) replacedFrames[n] = spr;
+                    else if (!extraSprites.find((sp) => sp.key === n)) extraSprites.push(spr);
+                    customFrameKeys.add(n);
+                    resolved++;
+                };
                 for (const [key, list] of byAtlas) {
                     const atlas = await loadLibraryAtlas(key);
                     if (!atlas) continue;
-                    const existing = have();
-                    for (const n of list) {
-                        const f = libraryFrameOf(atlas, n);
+                    for (const { name: n, src } of list) {
+                        const f = libraryFrameOf(atlas, src);
                         if (!f) continue;
                         const c = document.createElement('canvas');
                         c.width = f.frame.w; c.height = f.frame.h;
                         c.getContext('2d').drawImage(atlas.img, f.frame.x, f.frame.y, f.frame.w, f.frame.h, 0, 0, f.frame.w, f.frame.h);
-                        const spr = { key: n, canvas: c, w: f.frame.w, h: f.frame.h };
-                        // Same discipline as the library import: a name the
-                        // atlas already has is a replacement, never a second
-                        // sprite on the same slot.
-                        if (existing[n]) replacedFrames[n] = spr;
-                        else if (!extraSprites.find((sp) => sp.key === n)) extraSprites.push(spr);
-                        customFrameKeys.add(n);
-                        resolved++;
+                        add(n, c, f.frame.w, f.frame.h);
                     }
+                }
+                // What is still missing may be the editor's own art.
+                let bank = null;
+                for (const n of names) {
+                    if (have()[n] || replacedFrames[n] || extraSprites.find((sp) => sp.key === n)) continue;
+                    if (!bank) bank = await localArtBank();
+                    const make = bank.get(n);
+                    if (!make) continue;
+                    const c = make();
+                    if (c) add(n, c, c.width, c.height);
                 }
                 if (resolved) await mergeExtraSpritesIntoAtlas();
                 return { resolved, left: names.filter((n) => !have()[n]) };
@@ -4630,6 +4862,7 @@
         // bug: replacing has to go through this function, because this is where
         // the art is cropped out of the library atlas and folded into the level.
         async function importCharacterFromLibrary(name, rec, targetKey) {
+            await ensureLevelAtlasOpen();   // the art goes into the LEVEL atlas, not whichever the Atlas Manager shows
             if (!atlasData || !atlasImage) {
                 alert("Load or start a game first — the character's art is copied into this level's atlas.");
                 return;
@@ -4791,7 +5024,8 @@
         async function publishEntryToLibrary(entry, suggested, entryKey) {
             const EX = window.ShmupExtract;
             if (!EX) { alert('extract-mode.js failed to load'); return null; }
-            if (!atlasData || !atlasImage) { alert('Load a game first'); return null; }
+            const L = levelAtlasState();   // the level's atlas, whichever one the Atlas Manager shows
+            if (!L.atlasData || !L.atlasImage) { alert('Load a game first'); return null; }
             // A boss arms itself out of the LEVEL, not out of its own record
             // (extract-mode.js `bossTravelRecord`). Resolving that here is what
             // makes a boss published from the editor travel armed, the way one
@@ -4826,11 +5060,11 @@
             if (!EX.validName(name)) { alert('Use letters, digits and underscores only'); return null; }
             if (EX.reservedName(name)) { alert(`'${name}' is reserved by the characters module — pick another name`); return null; }
 
-            const frames = atlasData.frames || {};
+            const frames = L.atlasData.frames || {};
             const crop = EX.cropFrames(entry, (fk) => {
                 const f = frames[fk];
                 if (!f || !f.frame) return null;
-                return { image: atlasImage, x: f.frame.x, y: f.frame.y, w: f.frame.w, h: f.frame.h };
+                return { image: L.atlasImage, x: f.frame.x, y: f.frame.y, w: f.frame.w, h: f.frame.h };
             });
             if (!crop.sprites.length) { alert('None of the frames this entry references are in the atlas'); return null; }
             if (crop.missing.length && !confirm(`${crop.missing.length} referenced frame(s) are missing from the atlas and will be skipped. Publish anyway?`)) return null;
@@ -5440,21 +5674,24 @@
             }
         }
 
-        function buildAtlasWithReplacements() {
+        // `state` (see levelAtlasState) packs a stashed atlas; the live one
+        // when omitted.
+        function buildAtlasWithReplacements(state) {
+            const S = state || { atlasData, atlasImage, replacedFrames, extraSprites };
             const all = [];
-            const frames = atlasData.frames || {};
+            const frames = S.atlasData.frames || {};
             for (let k in frames) {
                 const f = frames[k].frame; if (!f) continue;
-                if (replacedFrames[k]) {
-                    all.push(replacedFrames[k]);
+                if (S.replacedFrames[k]) {
+                    all.push(S.replacedFrames[k]);
                 } else {
                     const fc = document.createElement('canvas');
                     fc.width = f.w; fc.height = f.h;
-                    fc.getContext('2d').drawImage(atlasImage, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+                    fc.getContext('2d').drawImage(S.atlasImage, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
                     all.push({ key: k, canvas: fc, w: f.w, h: f.h });
                 }
             }
-            all.push(...extraSprites);
+            all.push(...S.extraSprites);
             all.sort((a, b) => b.h - a.h);
             const MW = 2048, P = 4;
             let cx = P, cy = P, rh = 0, fh = 0;
@@ -5721,6 +5958,7 @@
         }
 
         function buildRuntimeRecipe() {
+            if (storyEditorOpen()) syncStoryFromUI();   // the STORY EDITOR's text, as typed
             const r = JSON.parse(JSON.stringify(gameData || {}));
             r.enemyData = JSON.parse(JSON.stringify(enemyData || {}));
             r.bossData = JSON.parse(JSON.stringify(bossData || {}));
@@ -6221,6 +6459,7 @@
             if (window.Dezaemon) blank = window.Dezaemon.buildBlankGame(getDezaemonDefaults());
             else blank = createBlankGameFallback();
             if (!blank) { alert('EDITOR DATA IS STILL LOADING — TRY AGAIN IN A MOMENT.'); return; }
+            await ensureLevelAtlasOpen();
             replacedFrames = {}; extraSprites = []; customFrameKeys = new Set();
             gameData = blank;
             enemyData = gameData.enemyData;
@@ -6533,11 +6772,12 @@
         // pending replacements and pasted extras included, without committing
         // them to the editor's atlas the way a cloud save does.
         function collectAtlasArtForSav() {
-            if (!atlasData || !atlasImage) return {};
-            let source = atlasImage;
-            let frames = atlasData.frames || {};
-            if (Object.keys(replacedFrames).length > 0 || extraSprites.length > 0) {
-                const result = buildAtlasWithReplacements();
+            const L = levelAtlasState();   // the level's atlas, whichever one the Atlas Manager shows
+            if (!L.atlasData || !L.atlasImage) return {};
+            let source = L.atlasImage;
+            let frames = L.atlasData.frames || {};
+            if (Object.keys(L.replacedFrames).length > 0 || L.extraSprites.length > 0) {
+                const result = buildAtlasWithReplacements(L);
                 source = result.canvas;
                 frames = result.frames;
             }
@@ -8281,6 +8521,7 @@
             });
             // Reset per-level atlas customization state (same discipline as
             // loadFromFirebase) BEFORE adding this import's sprites.
+            await ensureLevelAtlasOpen();
             replacedFrames = {}; extraSprites = []; customFrameKeys = new Set();
             // The TITLE EDITOR's four uploaded images belong to whatever game
             // was open before, exactly as the atlas snapshot below does. A
@@ -8516,6 +8757,9 @@
             extraSpriteCount: extraSprites.length,
             stageBackgrounds: Object.keys((gameData && gameData.stageBackgrounds) || {}),
             spriteFrameCount: Object.keys((atlasData && atlasData.frames) || {}).filter(k => /^deza\d+_\d+_\d+\.gif$/.test(k)).length,
+            atlasKey: currentAtlasKey,
+            atlasFrames: Object.keys((atlasData && atlasData.frames) || {}).length,
+            customFrameKeys: [...levelAtlasState().customFrameKeys].sort(),
             status: (document.getElementById('status') || {}).textContent || '',
         });
 
@@ -10471,6 +10715,11 @@ function GAME3D_RUNTIME(DATA) {
                 storyCustomImages[customKey] = e.target.result;
                 if (!gameData.storyData.customImages) gameData.storyData.customImages = {};
                 gameData.storyData.customImages[customKey] = e.target.result;
+                // The re-render below rebuilds the textareas from storyData,
+                // so take what is typed in them first — a picture uploaded
+                // after the text was written used to throw the text away, and
+                // only the picture reached the save.
+                syncStoryFromUI();
                 renderStoryEditor();
             };
             reader.readAsDataURL(file);
@@ -10601,6 +10850,7 @@ function GAME3D_RUNTIME(DATA) {
                     bgOpt.onclick = () => {
                         bgContainer.querySelectorAll('.story-bg-opt').forEach(el => el.classList.remove('sel'));
                         bgOpt.classList.add('sel');
+                        part.background = opt.value;   // straight into storyData, not only the DOM
                     };
                     bgContainer.appendChild(bgOpt);
                 });
@@ -10611,12 +10861,19 @@ function GAME3D_RUNTIME(DATA) {
                 textarea.style.marginTop = '8px';
                 textarea.placeholder = 'Dialog text (use Enter for newlines)';
                 textarea.value = part.text || '';
+                // Every keystroke lands in storyData, so a save, a PLAY or a
+                // picture upload sees the text as typed with no sync step.
+                textarea.oninput = () => { part.text = textarea.value; };
                 row.appendChild(textarea);
 
                 listEl.appendChild(row);
             });
         }
 
+        function storyEditorOpen() {
+            const m = document.getElementById('story-editor-modal');
+            return !!m && !m.classList.contains('hidden');
+        }
         function syncStoryFromUI() {
             if (!gameData || !gameData.storyData) return;
             const stageData = gameData.storyData['stage' + storyEditorStage];
@@ -11213,6 +11470,7 @@ function GAME3D_RUNTIME(DATA) {
         async function saveToFirebase() {
             // Sync any pending editor form changes into bossData/enemyData before saving
             syncEnemyEditorForm();
+            if (storyEditorOpen()) syncStoryFromUI();   // the STORY EDITOR's text, as typed
             // ...and give every record its art before the atlas snapshot
             // below is cut, or a pasted character is saved as names only.
             await pullAllArtFromLibrary();
@@ -11345,35 +11603,60 @@ function GAME3D_RUNTIME(DATA) {
                 // Writing the full atlas would freeze a snapshot in Firebase that later
                 // shadows locally repacked frames (BootScene overrides local frames by
                 // key), so unrelated repacks wouldn't be visible in this level.
-                if (atlasImage && atlasData) {
+                // The art comes from the LEVEL atlas whichever one the Atlas
+                // Manager has open (levelAtlasState): a visit to game_ui used
+                // to make this write that atlas's one replaced frame as the
+                // game's whole custom set.
+                const L = levelAtlasState();
+                if (L.atlasImage && L.atlasData) {
                     try {
-                        // Bake any pending replacements/extras into the current atlas
-                        // state so we can pick them up from atlasImage below, and mark
-                        // their keys as custom for this level.
-                        // Source we draw per-frame tiles from — usually the current
-                        // atlasImage, but after a rebuild we must draw from the fresh
-                        // canvas because `new Image()` with a data URL loads async and
-                        // synchronous drawImage calls against it would produce blank
-                        // tiles (which got saved to Firebase as invisible frames).
-                        let atlasSource = atlasImage;
-                        if (Object.keys(replacedFrames).length > 0 || extraSprites.length > 0) {
-                            for (const k of Object.keys(replacedFrames)) customFrameKeys.add(k);
-                            for (const s of extraSprites) customFrameKeys.add(s.key);
-                            const result = buildAtlasWithReplacements();
-                            atlasData = { frames: result.frames, meta: atlasData.meta };
+                        // Bake any pending replacements/extras into the atlas
+                        // state so we can pick them up below, and mark their
+                        // keys as custom for this level.
+                        // Source we draw per-frame tiles from — usually the
+                        // atlas image, but after a rebuild we must draw from the
+                        // fresh canvas because `new Image()` with a data URL
+                        // loads async and synchronous drawImage calls against
+                        // it would produce blank tiles (which got saved to
+                        // Firebase as invisible frames).
+                        let atlasSource = L.atlasImage;
+                        let atlasFrames = L.atlasData.frames || {};
+                        const custom = L.customFrameKeys;
+                        if (Object.keys(L.replacedFrames).length > 0 || L.extraSprites.length > 0) {
+                            for (const k of Object.keys(L.replacedFrames)) custom.add(k);
+                            for (const s of L.extraSprites) custom.add(s.key);
+                            const result = buildAtlasWithReplacements(L);
+                            const baked = { frames: result.frames, meta: L.atlasData.meta };
+                            atlasFrames = result.frames;
                             atlasSource = result.canvas;
-                            atlasImage = new Image();
-                            atlasImage.src = result.canvas.toDataURL('image/png');
-                            atlasImage.onload = () => { buildFrameThumbs(); storeAtlasForViewers(); renderAtlas(); };
-                            replacedFrames = {};
-                            extraSprites = [];
+                            const img = new Image();
+                            img.src = result.canvas.toDataURL('image/png');
+                            if (L.live) {
+                                atlasData = baked;
+                                atlasImage = img;
+                                atlasImage.onload = () => { buildFrameThumbs(); storeAtlasForViewers(); renderAtlas(); };
+                                replacedFrames = {};
+                                extraSprites = [];
+                            } else {
+                                const st = atlasStash[LEVEL_ATLAS_KEY];
+                                st.atlasData = baked; st.atlasImage = img; st.replacedFrames = {}; st.extraSprites = [];
+                            }
                         }
+                        // Every frame the save carries: the level's own set,
+                        // plus — belt and braces — any frame a record names
+                        // that the level atlas has and the hosted stock atlas
+                        // does not. This set is what the next load rebuilds
+                        // from, so a frame it forgets is a frame the game
+                        // loses on its next trip through the cloud.
+                        const keys = new Set(custom);
+                        const stock = await stockFrameKeys();
+                        if (stock) for (const f of gameFrameNames()) if (atlasFrames[f] && !stock.has(f)) keys.add(f);
                         // Only write atlas data if this level has something custom.
                         // Otherwise leave the local disk atlas (e.g. _game_asset.png
                         // after repack) as the single source of truth at play time.
                         const items = [];
-                        for (const k of customFrameKeys) {
-                            const f = atlasData.frames && atlasData.frames[k] && atlasData.frames[k].frame;
+                        for (const k of keys) {
+                            const f = atlasFrames[k] && atlasFrames[k].frame;
                             if (!f) continue;
                             const fc = document.createElement('canvas');
                             fc.width = f.w; fc.height = f.h;
@@ -11448,6 +11731,7 @@ function GAME3D_RUNTIME(DATA) {
                 // here, so the fields below read them and a re-save writes them.
                 normalizeLegacyNames(d);
                 if (d.atlasFrames) d.atlasFrames = normalizeLegacyAtlasKeys(d.atlasFrames);
+                await ensureLevelAtlasOpen();
                 // Reset per-level atlas customization state so overrides from a
                 // previously-loaded level don't leak into this one.
                 replacedFrames = {};
@@ -11750,11 +12034,12 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
         // Keys stay exactly as the editor holds them — level-loader.js runs
         // them through decodeFirebaseKey, which is a no-op on an unencoded one.
         function atlasPayloadForAppExport() {
-            if (!atlasData || !atlasImage) return null;
-            let source = atlasImage;
-            let frames = atlasData.frames || {};
-            if (Object.keys(replacedFrames).length > 0 || extraSprites.length > 0) {
-                const built = buildAtlasWithReplacements();
+            const L = levelAtlasState();   // the level's atlas, whichever one the Atlas Manager shows
+            if (!L.atlasData || !L.atlasImage) return null;
+            let source = L.atlasImage;
+            let frames = L.atlasData.frames || {};
+            if (Object.keys(L.replacedFrames).length > 0 || L.extraSprites.length > 0) {
+                const built = buildAtlasWithReplacements(L);
                 source = built.canvas;
                 frames = built.frames;
             }

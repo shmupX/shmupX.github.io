@@ -77,8 +77,18 @@ they are written out in full.
   stage's parking row with the slot), and PLAY from the lab with another chip
   lit asks before moving it. SAVE — the toolbar badge, the drawer row, Y on a
   pad — shows for any loaded game: an unnamed one is asked for its cloud name
-  on the first press. ADVANCED EDITORS → TILEMAP and PIXELS, and the map badge
-  on the toolbar, open the two tools below on the open game.
+  on the first press. The Atlas Manager's atlas selector keeps each atlas's
+  working state (`atlasStash`): a trip to `game_ui` and back no longer drops
+  the level's custom frames, and the cloud save, the `.sav` writer and the app
+  export always read the level atlas (`levelAtlasState`), plus every frame a
+  record names that the hosted stock atlas lacks. A record whose art the atlas
+  has lost is healed on load: the library answers by frame name, then by
+  replaying `+ LIBRARY`'s `<name>_<n>.png` renames over the library record,
+  then the editor's own banks (Duke, the trooper, the roster sheet's ships);
+  a set that still has one frame plays it in place of the lost ones, and only
+  a set with none reaches the MISSING TEXTURES panel. ADVANCED EDITORS →
+  TILEMAP and PIXELS, and the map badge on the toolbar, open the two tools
+  below on the open game.
 - `static/palette.png` — the 288 Dezaemon 2 palette colours, one pixel each (see
   **The Dezaemon 2 palette** below); `palette-sheet.png` is the same as a
   picture. Both from `deno task deza:palette`.
@@ -174,6 +184,12 @@ they are written out in full.
     the level has resolved, because the set depends on which level is running —
     see **A Dezaemon save is not 2028.Ai** below. `routes/games/2028-ai.tsx`
     used to send a fixed list from its `<head>` and no longer does.
+  - `isImportedLevel` trusts a record's `meta` when it has one: only a record
+    older than the meta stamp is judged by whether its enemies carry
+    `dezaemon` blocks. The shared library's characters keep those blocks, so a
+    NEW GAME built out of them (`meta.version`, no `source`) used to be taken
+    for a cart — its story switched off in OG mode, no CONTINUE? prompt, the
+    cart's title fallback.
   - A cheat opens the level where it asks, and holds. The Guide writes its
     Cheats into the frame's URL (`?stage=N`, `?bossRush=1`, `?boss=goki`,
     `?finalBoss=1`) and reloads it, and `PluginBootScene` read them into

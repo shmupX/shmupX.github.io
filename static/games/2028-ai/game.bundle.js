@@ -1598,6 +1598,13 @@
     if (!r) return false;
     if (r.meta && (r.meta.source === "dezaemon2" || r.meta.dezaemonSettings)) return true;
     if (r.dezaemonBgm || r.dezaemonTitle || r.dezaemonBullets || r.dezaemonItems || r.dezaemonCredits) return true;
+    // cmg: a record that names its provenance is read from that alone. The
+    // per-enemy check below is for records older than the meta stamp. The
+    // shared library's characters keep their Dezaemon behaviour blocks, and
+    // a NEW GAME built out of them (meta.version, no source) is a web game —
+    // with its story, its CONTINUE? prompt and the editor's title — not a
+    // cart that happens to carry a cutscene.
+    if (r.meta && typeof r.meta === "object") return false;
     var ed = r.enemyData;
     if (ed) {
       for (var k in ed) {
