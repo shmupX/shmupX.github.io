@@ -1239,6 +1239,19 @@
                         <button class="menu-row hidden" id="kids-card-mednafen" onclick="exportPsCard('mednafen')" title="Build the card, install it as Mednafen's slot-1 memory card for the picked Dezaemon's disc on this machine (the card that was there is backed up first) and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN (SLOT 1)</button>
                         <div id="kids-card-note" class="menu-note"></div>
                     </div>
+                    <!-- EXPORT: the open game as the 1994 Super Famicom cart's battery SRAM.
+                         Built in the page by the engine bundle (exportLevelToSfcSram): the art
+                         quantised into 15-colour CGRAM rows and cut into 4bpp tiles, the
+                         stages laid into the save's 18x128 chip maps and appearance tables,
+                         the factory sound carried over, the seventeen checksum words sealed.
+                         Downloaded as the raw 131,072-byte .srm an emulator keeps beside the
+                         ROM, or, where a local server can see the ROM and a Mednafen,
+                         installed as that emulator's SRAM for it and launched. -->
+                    <div id="export-deza-sfc" class="sheet-sub-sec hidden">
+                        <button class="menu-row" id="sfc-sram-download" onclick="exportSfcSram('download')" title="Build the Super Famicom cart's SRAM image of the open game — the 131,072-byte raw .srm Mednafen, Snes9x, bsnes and MiSTer keep beside the ROM — and download it"><span class="mono-badge">DL</span>DOWNLOAD .SRM</button>
+                        <button class="menu-row hidden" id="sfc-sram-mednafen" onclick="exportSfcSram('mednafen')" title="Build the SRAM image, install it as Mednafen's save for the Dezaemon cart on this machine (the save that was there is backed up first) and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN (SRAM)</button>
+                        <div id="sfc-sram-note" class="menu-note"></div>
+                    </div>
                 </div>
                 <button class="sheet-opt" data-sec="export-3d" onclick="toggleSheetSection(this)"><span class="sheet-badge">3D</span><span class="sheet-txt"><span class="sheet-name">3D</span><span class="sheet-sub">SUPER-SCALER BUILD &middot; STANDALONE</span></span><span class="sheet-chev">&rsaquo;</span></button>
                 <div class="sheet-sec hidden" id="sheet-sec-export-3d">
@@ -2226,7 +2239,7 @@
         // 64DD disk — and builds none of them, so those picks say that in the
         // row instead of offering buttons that would do nothing.
         const EXPORT_CONSOLES = {
-            sfc: { label: 'SFC', long: 'SUPER FAMICOM', dz: 'DEZAEMON', read: 'A SUPER FAMICOM SRAM (.SRM) IS READ AND SHELVED — OPEN ONE FROM THE IMPORT SHEET — BUT NOTHING WRITES ONE YET.' },
+            sfc: { label: 'SFC', long: 'SUPER FAMICOM', dz: 'DEZAEMON', sfc: true },
             n64: { label: 'N64', long: 'NINTENDO 64', dz: 'DEZAEMON 3D', read: 'THE 64DD DISK IS READ BY THE N64 PARITY PAGE; NOTHING WRITES ONE YET.' },
             saturn: { label: 'SATURN', long: 'SEGA SATURN', dz: 'DEZAEMON 2', writer: true },
             ps: { label: 'PS', long: 'PLAYSTATION', dz: 'DEZAEMON KIDS!', kids: true },
@@ -2265,16 +2278,19 @@
             document.querySelectorAll('#export-console-segs .seg').forEach((b) => {
                 b.classList.toggle('on', b.dataset.console === exportConsole);
             });
-            const builds = !!(con.writer || con.kids);
+            const builds = !!(con.writer || con.kids || con.sfc);
             const dz = con.kids ? PS_GAMES[psGame].dz : con.dz;
             document.getElementById('export-deza-name').textContent = dz;
             document.getElementById('export-deza-sub').textContent = con.writer
                 ? con.long + ' · .SAV' + (hasSec7Models() ? ' · SEC7 MODELS INCLUDED' : '')
                 : con.kids ? con.long + ' · MEMORY CARD (.MCR)'
+                : con.sfc ? con.long + ' · CART SRAM (.SRM)'
                 : con.long + ' · NO WRITER YET';
             document.getElementById('export-deza-opt').classList.toggle('off', !builds);
             document.getElementById('export-deza-saturn').classList.toggle('hidden', !con.writer);
             document.getElementById('export-deza-kids').classList.toggle('hidden', !con.kids);
+            document.getElementById('export-deza-sfc').classList.toggle('hidden', !con.sfc);
+            if (con.sfc) probeSfcSaveRoute();
             if (con.kids) {
                 document.querySelectorAll('#ps-game-segs .seg').forEach((b) => {
                     b.classList.toggle('on', b.dataset.game === psGame);
@@ -2284,7 +2300,7 @@
             }
             const none = document.getElementById('export-deza-nowriter');
             none.classList.toggle('hidden', builds);
-            none.textContent = builds ? '' : con.read + ' PICK SATURN OR PS TO BUILD ONE.';
+            none.textContent = builds ? '' : con.read + ' PICK SFC, SATURN OR PS TO BUILD ONE.';
             document.getElementById('menu-export-sub').textContent = 'WEB · ' + dz + ' (' + con.label + ') · 3D';
             const L = lineageForked() ? lineage : null;
             document.getElementById('export-sheet-note').textContent = L
@@ -7918,6 +7934,112 @@
                 .then((info) => { apply(info); return info; })
                 .catch(() => null);
             return psxSaveProbes[g];
+        }
+
+        // ============ .SRM EXPORT (the open game as the Super Famicom cart's SRAM) ============
+        // packages/shmup-engine/src/sfc/sfc-write.js: the same level record and
+        // atlas art go into Dezaemon.exportLevelToSfcSram(), which quantises the
+        // art into CGRAM rows and 4bpp tiles, lays the stages into the 1994
+        // cart's maps and appearance tables, carries the factory sound over and
+        // seals the checksums. `deno task build:sfc` does the same from a shell.
+        function sfcSramNote(msg, color) {
+            const el = document.getElementById('sfc-sram-note');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = color || '';
+        }
+        async function buildSfcSramForExport() {
+            const record = await buildLevelRecordForSav();
+            const art = collectAtlasArtForSav();
+            const title1 = await dataUrlToRgba(logoDataURL);
+            const out = window.Dezaemon.exportLevelToSfcSram(record, art, { name: record.name, title1 });
+            return { out, record };
+        }
+        let sfcSramBusy = false;
+        async function exportSfcSram(action) {
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
+            if (typeof window.Dezaemon.exportLevelToSfcSram !== 'function') {
+                alert('This engine bundle predates the Super Famicom writer — run `deno task engine:bundle`.');
+                return;
+            }
+            if (sfcSramBusy) return;
+            if (!(await awaitCloudLoad('EXPORT'))) return;
+            sfcSramBusy = true;
+            const buttons = ['sfc-sram-download', 'sfc-sram-mednafen'].map((id) => document.getElementById(id));
+            buttons.forEach((b) => { if (b) b.disabled = true; });
+            let out = null;
+            try {
+                sfcSramNote('BUILDING THE SRAM IMAGE…');
+                ({ out } = await buildSfcSramForExport());
+            } catch (e) {
+                console.error('.srm export failed:', e);
+                sfcSramNote('COULD NOT BUILD THE SRAM IMAGE: ' + (e && e.message || e), '#f87171');
+                sfcSramBusy = false;
+                buttons.forEach((b) => { if (b) b.disabled = false; });
+                return;
+            }
+            try {
+                const rep = out.report || {};
+                const stages = rep.stages ? rep.stages.length : 0;
+                const summary = '"' + out.name + '" · ' + stages + ' STAGE' + (stages === 1 ? '' : 'S') +
+                    ' · ' + ((rep.tiles && rep.tiles.used) || 0) + '/' + ((rep.tiles && rep.tiles.capacity) || 2048) + ' TILES · ' +
+                    ((rep.rows && rep.rows.length) || 0) + ' PALETTE ROWS';
+                const warn = out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : '';
+                if (action === 'mednafen') {
+                    sfcSramNote('INSTALLING THE SAVE FOR MEDNAFEN…');
+                    const resp = await fetch('/api/sfc-save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sram: bytesToBase64(out.sram), name: out.name, launch: true }),
+                    });
+                    let body = null;
+                    try { body = await resp.json(); } catch (e) { body = null; }
+                    if (!resp.ok || !body || body.ok === false) {
+                        throw new Error((body && (body.error || body.reason)) || ('HTTP ' + resp.status));
+                    }
+                    sfcSramNote('MEDNAFEN SAVE INSTALLED: ' + (body.sram || '?') +
+                        (body.backup ? ' · THE SAVE THAT WAS THERE IS BACKED UP TO ' + body.backup : '') +
+                        (body.launched ? ' · MEDNAFEN LAUNCHED — THE CART BOOTS INTO ITS ONE SAVED GAME'
+                            : body.error ? ' · MEDNAFEN DID NOT START: ' + body.error
+                            : ' · START MEDNAFEN ON THE DEZAEMON ROM') +
+                        '. ' + summary + warn, '#84cc16');
+                    flash(body.launched ? 'MEDNAFEN LAUNCHED' : 'MEDNAFEN SAVE INSTALLED');
+                } else {
+                    const blob = new Blob([out.sram], { type: 'application/octet-stream' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = out.fileName;
+                    document.body.appendChild(a); a.click(); a.remove();
+                    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+                    sfcSramNote('DOWNLOADING "' + out.fileName + '" — NAME IT AFTER THE ROM (<ROM>.srm) BESIDE IT AND THE CART BOOTS INTO IT. ' + summary + warn, '#84cc16');
+                    flash('.SRM EXPORTED ⬇');
+                }
+                if (out.warnings.length) console.warn('.srm export warnings:', out.warnings);
+            } catch (e) {
+                console.error('.srm export (' + action + ') failed:', e);
+                sfcSramNote((action === 'mednafen' ? 'COULD NOT INSTALL IT FOR MEDNAFEN' : 'COULD NOT DOWNLOAD IT') + ': ' + (e && e.message || e), '#f87171');
+            } finally {
+                sfcSramBusy = false;
+                buttons.forEach((b) => { if (b) b.disabled = false; });
+            }
+        }
+
+        // The → MEDNAFEN row for the SRAM means something only where a local
+        // server can see the Dezaemon ROM and a Mednafen, so it stays hidden
+        // until GET /api/sfc-save says so — asked once, the first time the SFC
+        // pick is shown, and never on Deploy's { available: false }.
+        let sfcSaveProbe = null;
+        function probeSfcSaveRoute() {
+            if (sfcSaveProbe) return sfcSaveProbe;
+            sfcSaveProbe = fetch('/api/sfc-save', { cache: 'no-store' })
+                .then((r) => r.ok ? r.json() : null)
+                .then((info) => {
+                    const row = document.getElementById('sfc-sram-mednafen');
+                    if (row) row.classList.toggle('hidden', !(info && info.available));
+                    return info;
+                })
+                .catch(() => null);
+            return sfcSaveProbe;
         }
 
         // ================== PUBLISH TO ESHOP ==================

@@ -378,20 +378,23 @@ export {
 // which decoder to call.
 //
 // Only the surface the BROWSER needs is flattened here (recognise, parse,
-// summarise, cover). The rest of the SFC decoders — every region, the tile and
+// summarise, cover, and the writer the editor's SFC export row calls). The rest of the SFC decoders — every region, the tile and
 // tilemap primitives, the ROM cross-check — stay behind the ./sfc subpath,
 // where tools/sfc-sav reads them; flattening all of it would collide with the
 // Saturn names above (both halves have a `decodeGraphics`-shaped idea of most
 // things) for no gain on a page that only files carts on a shelf.
 export {
   ACCEPTED_SIZES as SFC_ACCEPTED_SIZES,
+  buildSfcGameFromLevel,
   CHECK_STRING as SFC_CHECK_STRING,
   composeSfcCover,
+  exportLevelToSfcSram,
   isSfcSav,
   parseSfcSav,
   pickSfcCoverWindow,
   SFC_COVER_H,
   SFC_COVER_W,
+  sfcSramFileName,
   SRAM_SIZE as SFC_SRAM_SIZE,
   summarizeSfcSav,
 } from "./src/sfc/index.js";

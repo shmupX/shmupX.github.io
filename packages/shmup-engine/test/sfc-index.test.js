@@ -10,7 +10,6 @@ import {
   parseSfcSav,
   readRomHeader,
   regionTableMatches,
-  rowContinuity,
   SFC_REGIONS,
   summarizeSfcSav,
 } from "../src/sfc/index.js";
@@ -110,30 +109,96 @@ Deno.test({
       0x1b,
     ]);
     assertEquals(Array.from(config.keyConfig), [0x20, 0x08, 0x10, 0x20]);
-    assertEquals(parsed.enemies?.filter((e) => !e.blank).length, 23);
-    assertEquals(parsed.enemies?.[21].blank, true);
+    // entries per stage, classes 0-2 then 3 and 4; stage 0's class-0 entry 0
+    assertEquals(parsed.enemies?.map((e) => e.used), [20, 21, 21, 19, 22, 27]);
+    assertEquals(
+      parsed.enemies?.[0].classes.map((c) =>
+        c.entries.filter((e) => !e.blank).length
+      ),
+      [8, 1, 5, 5, 1],
+    );
+    assertEquals(parsed.enemies?.[0].classes[0].entries[0].bytes, [
+      0x00,
+      0x0d,
+      0x00,
+      0x80,
+      0xa1,
+      0x00,
+      0x00,
+      0x00,
+    ]);
+    assertEquals(parsed.enemies?.[0].boss.blank, false);
     const groups = parsed.groups;
     assert(groups);
-    assertEquals(Array.from(groups.myShip[0].words), [
-      0x0200,
-      0x0201,
-      0x0208,
-      0x0209,
+    // the ship sheet's first chips are the ROM's (sheet 2, rows 0-1), the last three the forced 0x3FC-0x3FE
+    assertEquals(groups.myShip.slice(0, 4).map((c) => c.word), [
+      0x200,
+      0x201,
+      0x208,
+      0x209,
     ]);
-    assertEquals(groups.myShip[0].kind, "chip");
-    assertEquals(groups.boss[0].quads[0].kind, "strip");
-    assertEquals(groups.title[0].entries[0].tile, 0x2a0);
-    assertEquals(groups.ending.every((q) => q.kind === "empty"), true);
-    assertEquals(groups.myShipOdr.every((q) => q.blank), true);
-    assertEquals(parsed.maps?.[0].cells[1], 0x9c);
-    assertEquals(parsed.maps?.every((m) => m.maxChip < 192), true);
-    // The map width: 18 columns beats every other width in every stage.
-    for (const m of parsed.maps ?? []) {
-      const at18 = rowContinuity(m.cells, 18);
-      for (const w of [8, 12, 16, 20, 24, 32, 64]) {
-        assert(at18 > rowContinuity(m.cells, w), `stage ${m.stage}: ${w}`);
-      }
-    }
+    assertEquals(groups.myShip[0].rom, true);
+    assertEquals(groups.myShip.slice(61).map((c) => c.word), [
+      0x3fc,
+      0x3fd,
+      0x3fe,
+    ]);
+    assertEquals(groups.boss[0].chips[0].word, 0x0244);
+    assertEquals(
+      groups.boss[0].chips[2].hflip,
+      true,
+      "the sample's bosses mirror their halves",
+    );
+    assertEquals(groups.title[0].word, 0x02a0);
+    assertEquals(groups.ending.every((c) => c.empty), true);
+    assertEquals(groups.myShipOdr.every((r) => r.byte === 0), true);
+    // stage 0's ODR: class 0's first quad names four frames, class 3's first two quads mirror
+    const odr0 = groups.enemyOdr[0].quads;
+    assertEquals(odr0[0].refs.map((r) => r.slot), [0x12, 0x15, 0x2a, 0x2b]);
+    assertEquals(odr0[48].refs.map((r) => [r.slot, r.hflip]), [
+      [0x17, false],
+      [0x17, true],
+      [0x08, false],
+      [0x08, true],
+    ]);
+    assertEquals(odr0.filter((q) => !q.blank).length, 26);
+    // the map: row 0 cell 1 names slot 0x1c h-flipped (the old 0x9c); every slot is under 128
+    assertEquals([parsed.maps?.[0].slots[1], parsed.maps?.[0].hflips[1]], [
+      0x1c,
+      1,
+    ]);
+    assertEquals(parsed.maps?.every((m) => m.maxSlot < 128), true);
+    assertEquals(parsed.maps?.map((m) => m.used), [
+      1736,
+      1736,
+      1792,
+      1456,
+      673,
+      570,
+    ]);
+    assertEquals(parsed.appear?.map((a) => a.used), [
+      136,
+      100,
+      133,
+      181,
+      177,
+      161,
+    ]);
+    assertEquals(parsed.appear?.[0].lines[2], 66);
+    assertEquals(parsed.appear?.[0].records[66].spawns, [{
+      column: 9,
+      klass: 3,
+      entry: 0,
+    }]);
+    assertEquals(
+      parsed.appear?.[0].records[1].blank,
+      false,
+      "record 1 is the END code",
+    );
+    assertEquals(
+      Array.from(parsed.appear?.[0].records[1].bytes),
+      new Array(14).fill(0xff),
+    );
     assertEquals(parsed.appear?.every((a) => !a.blank), true);
   },
 });

@@ -271,3 +271,26 @@ Deno.test("CgPacker: capacity overflow throws and leaves nothing half-stored", (
     "identical halves share a cell",
   );
 });
+
+Deno.test("snes: firstRow and rows place the packed rows anywhere in the 16-row bank", () => {
+  const f = (key, r, g, b) => {
+    const rgba = new Uint8Array(8 * 8 * 4);
+    for (let i = 0; i < 64; i++) rgba.set([r, g, b, 255], i * 4);
+    return { key, w: 8, h: 8, rgba };
+  };
+  const frames = [
+    f("a0.png", 255, 0, 0),
+    f("b0.png", 0, 255, 0),
+    f("c0.png", 0, 0, 255),
+  ];
+  const q = quantizeFrames(frames, "snes", { firstRow: 0, rows: 8 });
+  for (const fr of q.frames) {
+    assert(fr.row >= 0 && fr.row < 8, `row ${fr.row}`);
+    // the raster's values are bank indices: this row's slots 1..15
+    for (const v of fr.indexed) {
+      assert(v === 0 || (v >> 4) === fr.row, `index ${v} in row ${fr.row}`);
+    }
+  }
+  assert(q.report.rows.every((r) => r.row >= 0 && r.row < 8));
+  assertThrows(() => quantizeFrames(frames, "snes", { firstRow: 12, rows: 8 }));
+});

@@ -1,16 +1,17 @@
 // The Super Famicom shelf cover: which screenful it picks, and what it paints.
 //
-// Built from synthetic SRAM rather than a dump, because the one SNES save this
-// repo can commit (dev-fixtures/debug-tools/Dez SNES.sav, the ROM's own default
-// image) has a BLANK graphics bank — it is exactly the case composeSfcCover
-// answers null for, so it can prove the refusal and nothing else. A hand-built
-// cart writes the four regions a cover reads and can therefore state what each
-// pixel should be.
+// Built from synthetic SRAM: a hand-built cart writes the four regions a
+// cover reads — a palette row, a chip in the save's own sheet, a MAP GROUP
+// word naming it, map cells naming that slot — and can therefore state what
+// each pixel should be. The committed sample's scenery lives in the ROM's
+// sheets, which is the case the cover answers null for without the ROM.
 
 import { assert, assertEquals } from "@std/assert";
 import {
+  chipIndexOffset,
   chipRgba,
   composeSfcCover,
+  encodeMapRow,
   MAP_COLUMNS,
   parseSfcSav,
   pickSfcCoverWindow,
@@ -24,7 +25,6 @@ import {
 
 const SRAM_BYTES = 0x20000;
 const MAP_STAGE_BYTES = REGION.map.length / 6;
-const TILE_BYTES = 32;
 
 /** A 15-bit BGR colour word, little-endian, at a palette row's slot. */
 function putColor(sram, row, index, r, g, b) {
@@ -34,58 +34,59 @@ function putColor(sram, row, index, r, g, b) {
   sram[at + 1] = word >> 8;
 }
 
-/** A solid 8x8 4bpp tile of one colour index, at tile number `tile`. */
-function putSolidTile(sram, tile, index) {
-  const at = REGION.graphics.offset + tile * TILE_BYTES;
-  for (let y = 0; y < 8; y++) {
-    // Every pixel of the row takes the same index, so each plane byte is
-    // either 0x00 or 0xFF depending on that index's bit.
-    sram[at + y * 2] = index & 1 ? 0xff : 0;
-    sram[at + y * 2 + 1] = index & 2 ? 0xff : 0;
-    sram[at + 16 + y * 2] = index & 4 ? 0xff : 0;
-    sram[at + 16 + y * 2 + 1] = index & 8 ? 0xff : 0;
+/** User chip `index` painted solid with colour `color`: four tiles of one index. */
+function putSolidChip(sram, index, color) {
+  const at = chipIndexOffset(index);
+  for (const off of [0, 0x20, 0x200, 0x220]) {
+    for (let y = 0; y < 8; y++) {
+      sram[at + off + y * 2] = color & 1 ? 0xff : 0;
+      sram[at + off + y * 2 + 1] = color & 2 ? 0xff : 0;
+      sram[at + off + 16 + y * 2] = color & 4 ? 0xff : 0;
+      sram[at + off + 16 + y * 2 + 1] = color & 8 ? 0xff : 0;
+    }
   }
 }
 
-/** MAP GROUP chip `chip` as four tilemap words on palette row `row`. */
-function putChip(sram, chip, tiles, row) {
-  const at = REGION.mapGroup.offset + chip * 8;
-  tiles.forEach((tile, i) => {
-    const word = (tile & 0x03ff) | ((row & 7) << 10);
-    sram[at + i * 2] = word & 0xff;
-    sram[at + i * 2 + 1] = word >> 8;
-  });
+/** Stage `stage`'s MAP GROUP slot `slot` = user chip `index`. */
+function putGroupWord(sram, stage, slot, index) {
+  const at = REGION.mapGroup.offset + stage * 0x100 + slot * 2;
+  sram[at] = index & 0xff;
+  sram[at + 1] = index >> 8;
 }
 
-function putCell(sram, stage, row, column, value) {
-  sram[
-    REGION.map.offset + stage * MAP_STAGE_BYTES + row * MAP_COLUMNS +
-    column
-  ] = value;
+/** Cell (row, column) of a stage names `slot`, with flips. */
+function putCell(
+  sram,
+  stage,
+  row,
+  column,
+  slot,
+  { hflip = false, vflip = false } = {},
+) {
+  const at = REGION.map.offset + stage * MAP_STAGE_BYTES + row * 18;
+  const half = column >> 3, k = column & 7;
+  sram[at + half * 9 + k] = (slot & 0x7f) | (hflip ? 0x80 : 0);
+  if (vflip) sram[at + half * 9 + 8] |= 1 << (7 - k);
 }
 
 /**
- * A cart with a backdrop, one chip drawn in a named colour, and nothing else.
- * `cells` is a list of [stage, row, column, chipValue].
+ * A cart with a backdrop, one red chip in slot 7 of every stage, and the
+ * cells listed as [stage, row, column, slot].
  */
 function cart(cells, { graphics = true } = {}) {
   const sram = new Uint8Array(SRAM_BYTES);
-  // "T.TABATA" — not read by the cover, but it keeps the parse honest.
   new TextEncoder().encodeInto(
     "T.TABATA",
     sram.subarray(REGION.checkString.offset),
   );
-  // Row 0 colour 0 is the backdrop: a dark blue nothing else can be confused
-  // with. Row 3 colour 1 is the chip's ink, on a row that is NOT row 0 so a
-  // composer that ignored the quad's palette bits would paint the wrong thing.
+  // Row 0 colour 0 is the backdrop, a dark blue; colour 1 of rows 0-5 is red
+  // ink — every stage draws through its own row (row n), so each gets it.
   putColor(sram, 0, 0, 4, 4, 8);
-  putColor(sram, 3, 1, 31, 0, 0);
-  if (graphics) {
-    putSolidTile(sram, 1, 1);
-    putChip(sram, 7, [1, 1, 1, 1], 3);
-  }
-  for (const [stage, row, column, value] of cells) {
-    putCell(sram, stage, row, column, value);
+  for (let r = 0; r < 6; r++) putColor(sram, r, 1, 31, 0, 0);
+  if (graphics) putSolidChip(sram, 9, 1);
+  for (let s = 0; s < 6; s++) putGroupWord(sram, s, 7, 9);
+  for (const [stage, row, column, slot, flips] of cells) {
+    putCell(sram, stage, row, column, slot, flips);
   }
   return parseSfcSav(sram);
 }
@@ -105,22 +106,20 @@ Deno.test("the cover is 256x480: 16 map columns by 30 map rows", () => {
   assertEquals([SFC_COVER_COLUMNS, SFC_COVER_ROWS], [16, 30]);
 });
 
-Deno.test("windowCells counts the cropped columns only, and masks bit 7", () => {
+Deno.test("windowCells counts cells naming a slot, flipped or not", () => {
   const parsed = cart([
-    [0, 0, 0, 0x09], // column 0: inside the crop
-    [0, 0, 15, 0x89], // column 15 with bit 7 set: still a drawn cell
-    [0, 0, 16, 0x09], // column 16: outside the crop, never counted
-    [0, 0, 17, 0x09], // column 17: likewise
-    [0, 29, 3, 0x09], // last row of the first window
-    [0, 30, 3, 0x09], // one row past it
+    [0, 0, 0, 7],
+    [0, 0, 15, 7, { hflip: true }],
+    [0, 29, 3, 7],
+    [0, 30, 3, 7, { vflip: true }],
   ]);
   const map = parsed.maps[0];
   assertEquals(windowCells(map, 0), 3);
   assertEquals(windowCells(map, 1), 2); // rows 1..30: loses row 0's two, gains row 30
 });
 
-Deno.test("a cell whose low seven bits are zero is not a drawn cell", () => {
-  const parsed = cart([[0, 4, 4, 0x80]]);
+Deno.test("a cell naming slot 0 is not a drawn cell", () => {
+  const parsed = cart([[0, 4, 4, 0, { hflip: true }]]);
   assertEquals(windowCells(parsed.maps[0], 0), 0);
   assertEquals(pickSfcCoverWindow(parsed.maps), null);
   assertEquals(composeSfcCover(parsed), null);
@@ -128,41 +127,38 @@ Deno.test("a cell whose low seven bits are zero is not a drawn cell", () => {
 
 Deno.test("pickSfcCoverWindow takes the busiest screenful across every stage", () => {
   const parsed = cart([
-    [0, 0, 0, 0x07],
-    [0, 1, 0, 0x07],
+    [0, 0, 0, 7],
+    [0, 1, 0, 7],
     // Stage 2 rows 40-42: three cells, so its window beats stage 0's two.
-    [2, 40, 0, 0x07],
-    [2, 41, 0, 0x07],
-    [2, 42, 0, 0x07],
+    [2, 40, 0, 7],
+    [2, 41, 0, 7],
+    [2, 42, 0, 7],
   ]);
   const pick = pickSfcCoverWindow(parsed.maps);
   assertEquals([pick.stage, pick.cells], [2, 3]);
-  // Rows 40-42 are inside every window from 13 to 40; the lowest wins.
   assertEquals(pick.top, 13);
-  // …and a pinned stage is obeyed even when another stage is busier.
   assertEquals(pickSfcCoverWindow(parsed.maps, { stage: 0 }).stage, 0);
 });
 
 Deno.test("ties go to the earliest stage and the lowest row", () => {
-  const parsed = cart([[0, 50, 2, 0x07], [1, 50, 2, 0x07]]);
+  const parsed = cart([[0, 50, 2, 7], [1, 50, 2, 7]]);
   const pick = pickSfcCoverWindow(parsed.maps);
   assertEquals([pick.stage, pick.top, pick.cells], [0, 21, 1]);
 });
 
-Deno.test("no graphics bank, no cover", () => {
+Deno.test("no sheets, no cover", () => {
+  // The chip's bytes are zero: every pixel transparent, nothing drawn.
   assertEquals(
-    composeSfcCover(cart([[0, 0, 0, 0x07]], { graphics: false })),
+    composeSfcCover(cart([[0, 0, 0, 7]], { graphics: false })),
     null,
   );
   // A 64 KB dump has no GRAPIC DATA region at all, which is the same answer.
-  const short = new Uint8Array(0x10000);
-  assertEquals(composeSfcCover(parseSfcSav(short)), null);
+  assertEquals(composeSfcCover(parseSfcSav(new Uint8Array(0x10000))), null);
   assertEquals(composeSfcCover(null), null);
 });
 
-Deno.test("composeSfcCover paints the chip through its own palette row", () => {
-  // rgb555 31 -> 8-bit: the decoder scales the 5-bit channel to 0-255.
-  const parsed = cart([[0, 0, 0, 0x07]]);
+Deno.test("composeSfcCover paints the chip through the stage's palette row", () => {
+  const parsed = cart([[0, 0, 0, 7]]);
   const cover = composeSfcCover(parsed);
   assert(cover);
   assertEquals([cover.w, cover.h, cover.stage, cover.top, cover.cells], [
@@ -175,44 +171,54 @@ Deno.test("composeSfcCover paints the chip through its own palette row", () => {
   assertEquals(cover.rgba.length, 256 * 480 * 4);
   const ink = pixel(cover, 0, 0);
   const backdrop = pixel(cover, 255, 479);
-  // Red ink, from row 3 — a composer reading row 0 would find colour 1 unset
-  // there and paint black instead.
   assertEquals([ink[0] > 200, ink[1], ink[2], ink[3]], [true, 0, 0, 255]);
-  // The chip is 16x16 and stops there.
   assertEquals(pixel(cover, 15, 15), ink);
   assertEquals(pixel(cover, 16, 0), backdrop);
   assertEquals(pixel(cover, 0, 16), backdrop);
-  // The backdrop is row 0 colour 0, opaque everywhere — never a transparent PNG.
   assert(backdrop[0] > 0 || backdrop[2] > 0);
-  assertEquals(backdrop[3], 255);
   for (let i = 3; i < cover.rgba.length; i += 4) {
     assertEquals(cover.rgba[i], 255);
   }
 });
 
+Deno.test("a stage draws through its own row: stage 3 with no ink in row 3 paints nothing", () => {
+  const parsed = cart([[3, 2, 2, 7]]);
+  // take row 3's ink away: the chip's colour 1 is unset there
+  putColor(parsed.bytes, 3, 1, 0, 0, 0);
+  const again = parseSfcSav(parsed.bytes);
+  const cover = composeSfcCover(again);
+  assert(cover);
+  assertEquals(
+    pixel(cover, 32, 32),
+    [0, 0, 0, 255],
+    "black ink from row 3's unset colour 1",
+  );
+});
+
 Deno.test("the window offsets the rows it paints", () => {
-  const parsed = cart([[1, 40, 2, 0x07]]);
+  const parsed = cart([[1, 40, 2, 7]]);
   const cover = composeSfcCover(parsed);
   assertEquals([cover.stage, cover.top], [1, 11]);
-  // Map row 40 is the 29th row of a window starting at 11 -> y 464.
   assertEquals(pixel(cover, 32, 464)[0] > 200, true);
   assertEquals(pixel(cover, 32, 448), pixel(cover, 0, 0));
 });
 
-Deno.test("chipRgba reads the palette off the quad, not off row 0", () => {
+Deno.test("chipRgba reads a chip word through a row, with flips", () => {
   const parsed = cart([]);
   const art = {
-    tiles: parsed.graphics.tiles,
-    chips: parsed.groups.map,
+    sram: parsed.bytes,
+    rom: null,
     palettes: parsed.palettes.palettes,
   };
-  const rgba = chipRgba(art, parsed.groups.map[7].entries);
+  const rgba = chipRgba(art, 9, 2);
   assertEquals(rgba.length, 16 * 16 * 4);
   assertEquals([rgba[0] > 200, rgba[1], rgba[2], rgba[3]], [true, 0, 0, 255]);
+  assertEquals(chipRgba(art, 0x02a0, 0), null, "a ROM chip with no ROM");
+  assertEquals(chipRgba(art, 0xffff, 0), null, "the empty word");
 });
 
 Deno.test("the same cart always composes the same cover", () => {
-  const cells = [[0, 3, 3, 0x07], [3, 3, 3, 0x07]];
+  const cells = [[0, 3, 3, 7], [3, 3, 3, 7]];
   const a = composeSfcCover(cart(cells));
   const b = composeSfcCover(cart(cells));
   assertEquals([a.stage, a.top, a.cells], [b.stage, b.top, b.cells]);

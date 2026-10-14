@@ -1,10 +1,9 @@
-// GRAPIC DATA: the upper 64 KB, 2,048 4bpp tiles by size.
+// GRAPIC DATA: the upper 64 KB, 2,048 4bpp tiles — the save's two chip sheets.
 //
-// Which tile number in a group word maps to which 32 bytes here is open —
-// 64 KB is more than VRAM shows at once, so the game must bank it — and the
-// only fixture so far has the region zeroed. This decodes the bytes as a flat
-// sheet and says when there is nothing to decode, which is all a probe needs
-// to tell a complete dump from a half one. Environment-neutral ESM (Node + browser).
+// A group word reaches them through chips.js (sheet, row, column); this
+// decodes the bytes as a flat tile list and says when there is nothing to
+// decode, which is what a probe needs to tell a complete dump from a half
+// one or from a cart that draws the ROM's art. Environment-neutral ESM (Node + browser).
 
 import { REGION } from "./regions.js";
 import { isBlank } from "./sram.js";

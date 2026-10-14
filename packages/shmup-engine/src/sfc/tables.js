@@ -12,8 +12,29 @@ import { latin1 } from "./sram.js";
 export const HI_SCORE_ENTRY_BYTES = 16;
 export const HI_SCORE_COUNT = REGION.hiScore.length / HI_SCORE_ENTRY_BYTES; // 20
 export const HI_SCORE_NAME_LENGTH = 8;
+/** Entries 0-9 are the SAMPLE game's table, 10-19 the USER game's ($05:D087 picks by the data-source flag). */
+export const HI_SCORE_TABLE_SIZE = 10;
+export const HI_SCORE_USER_TABLE = 10;
 export const BGM_PATCH_COUNT = REGION.bgmPatch.length; // 16
+/**
+ * BGM PATCH slots ($04:C1DF reads each & 0x3F): 0-5 stage n's song, 6-11
+ * stage n's boss song, 12 the title, 13-15 ending / stage clear / game over
+ * (that order likely). Values 0-15 are the save's own SOUND DATA songs;
+ * 0x10 and up pick the ROM's built-in songs, which is all the sample uses.
+ */
+export const BGM_PATCH_STAGE = 0;
+export const BGM_PATCH_BOSS = 6;
+export const BGM_PATCH_TITLE = 12;
+export const BGM_PATCH_ROM_SONGS = 0x10;
+export function bgmPatchRole(slot) {
+    if (slot < 6) return `stage ${slot}`;
+    if (slot < 12) return `stage ${slot - 6} boss`;
+    return ["title", "ending", "stage clear", "game over"][slot - 12] ?? `slot ${slot}`;
+}
 export const KEY_CONFIG_BYTES = REGION.keyConfig.length; // 4
+/** SOUND DATA: 16 songs of 0x2E0 bytes (the clear routine $00:89DD copies one ROM block to all 16). */
+export const SOUND_SONG_COUNT = 16;
+export const SOUND_SONG_BYTES = REGION.sound.length / SOUND_SONG_COUNT; // 0x2E0
 
 function u16(bytes, offset) {
     return bytes[offset] | (bytes[offset + 1] << 8);
@@ -35,7 +56,8 @@ export function decodeHiScores(bytes) {
     for (let i = 0; i < HI_SCORE_COUNT; i++) {
         const offset = REGION.hiScore.offset + i * HI_SCORE_ENTRY_BYTES;
         entries.push({
-            rank: i + 1,
+            rank: (i % HI_SCORE_TABLE_SIZE) + 1,
+            table: i < HI_SCORE_USER_TABLE ? "sample" : "user",
             offset,
             score: u32(bytes, offset),
             extra: bytes.subarray(offset + 4, offset + 8),
@@ -61,8 +83,13 @@ export function decodeConfig(bytes) {
     };
 }
 
-/** SOUND DATA as stored; the composer's format is still open. */
+/** SOUND DATA as stored, and its 16 song slots; the note format is still open. */
 export function sliceSound(bytes) {
     need(bytes, REGION.sound);
-    return { offset: REGION.sound.offset, length: REGION.sound.length, bytes: bytes.subarray(REGION.sound.offset, REGION.sound.end) };
+    const songs = [];
+    for (let i = 0; i < SOUND_SONG_COUNT; i++) {
+        const at = REGION.sound.offset + i * SOUND_SONG_BYTES;
+        songs.push({ index: i, offset: at, bytes: bytes.subarray(at, at + SOUND_SONG_BYTES) });
+    }
+    return { offset: REGION.sound.offset, length: REGION.sound.length, bytes: bytes.subarray(REGION.sound.offset, REGION.sound.end), songs };
 }

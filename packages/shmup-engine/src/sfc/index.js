@@ -32,6 +32,7 @@ import { decodeConfig, decodeHiScores, sliceSound } from "./tables.js";
 import { decodeAppearData, decodeEnemyData } from "./enemy.js";
 import { decodeGraphics } from "./graphics.js";
 import { compareWithRomDefault, isDezaemonRom, parseRomRegionTable, readRomHeader, regionTableMatches } from "./rom.js";
+import { verifySfcChecksums } from "./checksum.js";
 
 export * from "./regions.js";
 export * from "./sram.js";
@@ -45,6 +46,12 @@ export * from "./enemy.js";
 export * from "./graphics.js";
 export * from "./cover.js";
 export * from "./rom.js";
+export * from "./checksum.js";
+export * from "./factory-data.js";
+export * from "./chips.js";
+export * from "./sfc-format.js";
+export * from "./tile-bank.js";
+export * from "./sfc-write.js";
 
 /**
  * @typedef {object} SfcRomReport
@@ -79,6 +86,8 @@ export * from "./rom.js";
  * @property {ReturnType<typeof decodeGraphics> | null} graphics
  * @property {typeof SFC_REGIONS} regions
  * @property {SfcRomReport | null} rom
+ * @property {Uint8Array} bytes            the dump itself, for drawing its chips
+ * @property {Uint8Array | null} romBytes  the ROM when given, for the factory sheets
  */
 
 function attempt(result, block, fn) {
@@ -119,8 +128,22 @@ export function parseSfcSav(bytes, { rom = null } = {}) {
         graphics: null,
         regions: SFC_REGIONS,
         rom: null,
+        /** The dump itself and, when given, the ROM — what drawing a chip needs. */
+        bytes,
+        romBytes: rom || null,
     });
-    attempt(result, "checksum", () => readChecksumBlocks(bytes));
+    attempt(result, "checksum", () => {
+        const blocks = readChecksumBlocks(bytes);
+        // The seventeen words recomputed; a 64 KB dump cannot be verified
+        // (word 0 sums the graphics bank), so `verified` is null for it.
+        let verified = null;
+        try {
+            verified = bytes.length >= SRAM_SIZE ? verifySfcChecksums(bytes) : null;
+        } catch {
+            verified = null;
+        }
+        return { ...blocks, verified };
+    });
     attempt(result, "palettes", () => decodePaletteData(bytes));
     attempt(result, "maps", () => decodeMapData(bytes));
     attempt(result, "scroll", () => decodeScrollEffect(bytes));
@@ -168,11 +191,19 @@ export function summarizeSfcSav(parsed) {
     const lines = [];
     lines.push(`size ${parsed.size} (${parsed.sizeOk ? "ok" : "unexpected"}), check string ${JSON.stringify(parsed.checkString)}${parsed.checkStringOk ? "" : ` (expected ${CHECK_STRING})`}`);
     lines.push(`segments: ${parsed.segments.map((s) => `$${s.bank.toString(16)} ${!s.present ? "absent" : s.blank ? "blank" : "data"}`).join(", ")}`);
-    if (parsed.checksum) lines.push(`checksum copy ${parsed.checksum.equal ? "matches" : "DIFFERS"}`);
+    if (parsed.checksum) {
+        const v = parsed.checksum.verified;
+        lines.push(`checksum copy ${parsed.checksum.equal ? "matches" : "DIFFERS"}${v ? `; ${v.ok ? "all 17 words verify" : `${v.words.filter((w) => !w.ok).length} of 17 words FAIL (${v.words.filter((w) => !w.ok).map((w) => w.name).join(", ")})`}` : ""}`);
+    }
     if (parsed.palettes) lines.push(`palettes: ${parsed.palettes.colorRowCount}/${parsed.palettes.rows.length} rows are colour words`);
     if (parsed.maps) lines.push(`maps: ${parsed.maps.map((m) => m.used).join("/")} cells used per stage`);
+    if (parsed.groups) {
+        const chips = (list) => list.filter((c) => !c.empty).length;
+        const romArt = parsed.groups.map.some((g) => g.chips.some((c) => c.rom)) || parsed.groups.myShip.some((c) => c.rom);
+        lines.push(`chips: map ${parsed.groups.map.map((g) => chips(g.chips)).join("/")}, enemies ${parsed.groups.enemy.map((g) => chips(g.chips)).join("/")}, bosses ${parsed.groups.boss.map((g) => chips(g.chips)).join("/")}, ship ${chips(parsed.groups.myShip)}, title ${chips(parsed.groups.title)}; art ${romArt ? "partly from the ROM's sheets" : "from the save's sheets"}`);
+    }
     if (parsed.hiScores) lines.push(`hi-scores: ${parsed.hiScores.slice(0, 3).map((h) => `${h.score} ${h.name.trim() || "-"}`).join(", ")} …`);
-    if (parsed.enemies) lines.push(`enemies: ${parsed.enemies.filter((e) => !e.blank).length}/${parsed.enemies.length} records in use`);
+    if (parsed.enemies) lines.push(`enemies: ${parsed.enemies.map((e) => e.used).join("/")} entries per stage${parsed.appear ? `; spawn lines ${parsed.appear.map((a) => a.used).join("/")}` : ""}`);
     if (parsed.graphics) lines.push(`graphics: ${!parsed.graphics.present ? "absent (64 KB dump)" : parsed.graphics.blank ? "blank" : `${parsed.graphics.usedCount} tiles in use`}`);
     if (parsed.rom) {
         const r = parsed.rom;

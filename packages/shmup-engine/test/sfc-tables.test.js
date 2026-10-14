@@ -2,8 +2,20 @@
 
 import { assertEquals, assertThrows } from "@std/assert";
 import { decodeConfig, decodeHiScores, sliceSound } from "../src/sfc/tables.js";
-import { decodeAppearData, decodeEnemyData } from "../src/sfc/enemy.js";
-import { decodeMapData, decodeScrollEffect } from "../src/sfc/map.js";
+import {
+  decodeAppearByte,
+  decodeAppearData,
+  decodeEnemyData,
+  encodeAppearByte,
+  encodeEnemyEntry,
+} from "../src/sfc/enemy.js";
+import {
+  decodeMapData,
+  decodeMapRow,
+  decodeScrollEffect,
+  encodeMapRow,
+  writeDefaultScroll,
+} from "../src/sfc/map.js";
 import { decodeGroups } from "../src/sfc/groups.js";
 import { decodeGraphics } from "../src/sfc/graphics.js";
 import { REGION } from "../src/sfc/regions.js";
@@ -53,40 +65,127 @@ Deno.test("decodeConfig reads the words and byte fields around the checksum copy
 
 Deno.test("enemy, appearance, map and scroll tables use the ROM strides", () => {
   const bytes = zero();
-  bytes[REGION.enemyData.offset + 5 * 0x80] = 1;
+  // stage 5, class 3, entry 2: pattern 9 speed 1, score byte 7
+  const at = REGION.enemyData.offset + 5 * 0x200 + 0x180 + 2 * 8;
+  bytes.set([0x49, 0, 0, 0, 0, 7], at);
+  // the sample's straight-down popcorn, decoded and re-encoded
+  assertEquals(
+    encodeEnemyEntry({ family: 1, variant: 2, hp: 0, score: 0, anim: 0 }),
+    [0x0a, 0, 0, 0, 0, 0, 0, 0],
+  );
   const enemies = decodeEnemyData(bytes);
-  assertEquals(enemies.length, 24);
+  assertEquals(enemies.length, 6);
   assertEquals(
     enemies.map((e) => e.offset),
-    enemies.map((_, i) => 0x8000 + i * 0x80),
+    [0, 1, 2, 3, 4, 5].map((s) => 0x8000 + s * 0x200),
   );
-  assertEquals(enemies.filter((e) => !e.blank).map((e) => e.index), [5]);
+  assertEquals(enemies[5].offset + 0x200, REGION.appear.offset);
+  assertEquals(enemies[5].classes.map((c) => c.entries.length), [
+    16,
+    16,
+    16,
+    8,
+    4,
+  ]);
+  assertEquals(enemies[5].classes[3].entries[2].fields.family, 9);
+  assertEquals(enemies[5].classes[3].entries[2].fields.variant, 1);
+  assertEquals(enemies[5].classes[3].entries[2].fields.shotParam, 7);
+  assertEquals(enemies[5].used, 1);
+  assertEquals(
+    enemies[5].boss.offset,
+    REGION.enemyData.offset + 5 * 0x200 + 0x1e0,
+  );
+  assertEquals(enemies[5].boss.blank, true);
+  assertEquals(enemies[0].used, 0);
+  assertEquals(encodeEnemyEntry(enemies[5].classes[3].entries[2].fields), [
+    0x49,
+    0,
+    0,
+    0,
+    0,
+    7,
+    0,
+    0,
+  ]);
+
+  // appear: stage 1, record 2 spawns class 3 entry 5 in column 4; line 40 fires it
+  const a1 = REGION.appear.offset + 0x1200;
+  bytes[a1 + 2 * 14 + 3] = 0x80 | (3 << 4) | 5;
+  bytes[a1 + 0xe00 + 40] = 2;
   const appear = decodeAppearData(bytes);
   assertEquals(
     appear.map((a) => a.offset),
     [0, 1, 2, 3, 4, 5].map((s) => 0x8c00 + s * 0x1200),
   );
   assertEquals(appear[5].offset + 0x1200, REGION.enemyOdr.offset);
+  assertEquals(appear[1].records[2].spawns, [{
+    column: 4,
+    klass: 3,
+    entry: 5,
+  }]);
+  assertEquals(appear[1].lines[40], 2);
+  assertEquals([appear[1].used, appear[1].spawns, appear[1].lastLine], [
+    1,
+    1,
+    40,
+  ]);
+  assertEquals(appear[0].blank, true);
+  assertEquals(decodeAppearByte(0x80 | (3 << 4) | 5), {
+    byte: 0xb5,
+    valid: true,
+    klass: 3,
+    entry: 5,
+  });
+  assertEquals(encodeAppearByte({ klass: 3, entry: 5 }), 0xb5);
+
+  // map: stage 1, row 0, cell 3 names slot 0x1c h-flipped; the flag byte v-flips cell 0
   const maps = decodeMapData(bytes);
   assertEquals(maps.length, 6);
   assertEquals(
     maps.map((m) => m.offset),
     [0, 1, 2, 3, 4, 5].map((s) => 0x340 + s * 0x900),
   );
-  assertEquals([maps[0].columns, maps[0].rows, maps[0].cells.length], [
-    18,
+  assertEquals([maps[0].columns, maps[0].rows, maps[0].slots.length], [
+    16,
     128,
-    0x900,
+    2048,
   ]);
   bytes[REGION.map.offset + 0x900 + 3] = 0x9c;
+  bytes[REGION.map.offset + 0x900 + 8] = 0x80;
   const stage1 = decodeMapData(bytes)[1];
-  assertEquals([stage1.used, stage1.flagged, stage1.maxChip], [1, 1, 0x1c]);
+  assertEquals([stage1.used, stage1.flipped, stage1.maxSlot], [1, 2, 0x1c]);
+  assertEquals([stage1.slots[3], stage1.hflips[3], stage1.vflips[0]], [
+    0x1c,
+    1,
+    1,
+  ]);
+  const row = decodeMapRow(bytes, REGION.map.offset + 0x900);
+  assertEquals(row[3], { slot: 0x1c, hflip: true, vflip: false });
+  const back = new Uint8Array(18);
+  encodeMapRow(back, 0, row);
+  assertEquals(
+    Array.from(back),
+    Array.from(
+      bytes.subarray(REGION.map.offset + 0x900, REGION.map.offset + 0x900 + 18),
+    ),
+  );
+
   const scroll = decodeScrollEffect(bytes);
   assertEquals(
     scroll.map((s) => s.offset),
     [0, 1, 2, 3, 4, 5].map((s) => 0x3940 + s * 0x200),
   );
   assertEquals(scroll[5].offset + 0x200, REGION.mapGroup.offset);
+  assertEquals([scroll[0].effect.length, scroll[0].speed.length], [256, 256]);
+  writeDefaultScroll(bytes, 2);
+  const s2 = decodeScrollEffect(bytes)[2];
+  assertEquals([s2.effect[0], s2.effect[33], s2.speed[0], s2.min, s2.max], [
+    0,
+    1,
+    0x42,
+    0x42,
+    0x42,
+  ]);
   assertThrows(
     () => decodeMapData(new Uint8Array(0x1000)),
     Error,
@@ -96,51 +195,28 @@ Deno.test("enemy, appearance, map and scroll tables use the ROM strides", () => 
 
 Deno.test("the group tables have the ROM's counts", () => {
   const groups = decodeGroups(zero());
-  assertEquals(groups.map.length, 192);
-  assertEquals(groups.map[191].offset + 8, REGION.myShipOdr.offset);
-  assertEquals(groups.enemy.length, 24);
-  assertEquals(groups.enemy[0].quads.length, 4);
-  assertEquals(groups.enemy[23].quads[3].offset + 8, REGION.bossGroup.offset);
-  assertEquals(groups.boss.length, 6);
-  assertEquals(groups.boss[0].quads.length, 8);
-  assertEquals(groups.boss[5].quads[7].offset + 8, REGION.titleGroup.offset);
-  assertEquals(groups.title.length, 8);
-  assertEquals(groups.ending.length, 3);
-  assertEquals(groups.ending[2].offset + 8, REGION.sound.offset);
-  assertEquals(groups.myShip.length, 16);
-  assertEquals(groups.myShip[15].offset + 8, 0x10000);
-  assertEquals(groups.enemyOdr.length, 24);
-  assertEquals(groups.enemyOdr[0].quads.length, 20);
+  assertEquals(groups.map.length, 6);
+  assertEquals(groups.map[0].chips.length, 128);
+  assertEquals(groups.map[5].offset + 0x100, REGION.myShipOdr.offset);
+  assertEquals(groups.enemy.length, 6);
+  assertEquals(groups.enemy[0].chips.length, 64);
+  assertEquals(groups.enemy[5].offset + 0x80, REGION.bossGroup.offset);
+  assertEquals(groups.boss[0].chips.length, 32);
+  assertEquals(groups.boss[5].offset + 0x40, REGION.titleGroup.offset);
+  assertEquals(groups.title.length, 32);
+  assertEquals(groups.ending.length, 12);
+  assertEquals(groups.ending[11].offset + 2, REGION.sound.offset);
+  assertEquals(groups.myShip.length, 64);
+  assertEquals(groups.myShip[63].offset + 2, 0x10000);
+  assertEquals(groups.enemyOdr.length, 6);
+  assertEquals(groups.enemyOdr[0].quads.length, 80);
   assertEquals(
-    groups.enemyOdr[23].quads[19].offset + 4,
+    groups.enemyOdr[5].quads[79].offset + 4,
     REGION.myShipGroup.offset,
   );
-  assertEquals(groups.myShipOdr.length, 16);
-  // Zero words are tile 0 in palette 0, not the empty marker.
-  assertEquals(groups.map[0].kind, null);
-});
-
-Deno.test("decodeGraphics tells a half dump from a blank bank from real tiles", () => {
-  assertEquals(decodeGraphics(new Uint8Array(0x10000)), {
-    offset: 0x10000,
-    present: false,
-    blank: true,
-    tiles: [],
-    usedCount: 0,
-  });
-  const blank = decodeGraphics(zero());
-  assertEquals([blank.present, blank.blank, blank.tiles.length], [
-    true,
-    true,
-    0,
-  ]);
-  const bytes = zero();
-  bytes[0x10000 + 32 * 7] = 0x80; // tile 7, one pixel
-  const graphics = decodeGraphics(bytes);
-  assertEquals([graphics.blank, graphics.tiles.length, graphics.usedCount], [
-    false,
-    2048,
-    1,
-  ]);
-  assertEquals(graphics.tiles[7][0], 1);
+  assertEquals(groups.myShipOdr.length, 64);
+  // a zero word is user chip 0, not an empty slot; the blank words are
+  assertEquals(groups.map[0].chips[0].empty, false);
+  assertEquals(groups.map[0].chips[0].index, 0);
+  assertEquals(decodeGraphics(zero()).blank, true);
 });

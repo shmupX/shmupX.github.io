@@ -436,6 +436,7 @@ deno task sfc:upload      # publish the Super Famicom library (dumps + covers + 
 deno task psx:probe       # look inside a PlayStation Dezaemon+ / Dezaemon Kids! save (report / png / hex / diff / all)
 deno task build:kids      # a level as a Dezaemon Kids! memory card (.mcr) for Mednafen / DuckStation / MiSTer
 deno task build:plus      # a level as a Dezaemon+ / Select 100 memory card (.mcr)
+deno task build:sfc       # a level as the Super Famicom Dezaemon cart's SRAM (.srm) for Mednafen / Snes9x / bsnes / MiSTer
 deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (ls / get / report / png / all)
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task ships:atlas     # cut dev-fixtures/ship-sheet/ships.png into the editor's NEW GAME character roster
@@ -1774,8 +1775,8 @@ compression. `@shmupx/shmup-engine/sfc` reads it structurally —
 region list is held equal to by a test): 24 BGR555 palette rows, six 18×128-chip
 stage maps and their scroll tables, the tile groups, two high-score tables, the
 configuration words, and the 4bpp graphics bank when the dump carries one. It
-does not yet map a cart into `game.json` — the enemy records, appearance tables,
-sound data and the graphics banking are still open, and
+does not yet map a cart back into `game.json` — the read direction waits on
+an SFC map-to-game — and
 `packages/shmup-engine/FORMAT-SFC.md` says what is known and how to close the
 rest. `deno task sfc:probe all <sav> --rom <sfc> --out build/sfc/x/` renders
 what a dump holds, and `static/dezaemon-parity-sfc.html` is the parity map — the
@@ -1783,6 +1784,30 @@ Super Famicom counterpart of `static/dezaemon-parity.html`. Neither saves nor
 the ROM are committed: the tests gate on
 `packages/shmup-engine/fixtures/dezaemon-sfc-sample.sav` and a ROM in
 `dev-fixtures/`.
+
+**And a level can become that cart's SRAM.** On 2026-10-14 the ROM was traced
+(the chip banking behind every group word, the 18-byte map rows, the enemy
+entries' fields, the appearance records and line table, the scroll
+sequencer, the boot path), the reader was brought up to it, and
+`deno task build:sfc` (and the editor's CONSOLE › SFC rows) writes the 128 KB
+`.srm` the cart boots into:
+
+```
+deno task build:sfc                           # foo.json -> build/sfc/Dezaemon SFC - foo.srm
+deno task build:sfc "Master Arena Mod"        # that cloud level, six stages
+deno task build:sfc foo --report              # the per-stage entries, records, chips and rows as JSON
+```
+
+The art is quantised into the 15-colour rows the game copies (a stage's
+scenery, enemies and boss each have one; the title another) and cut into
+16x16 chips of the save's two sheets; scenery becomes map rows naming group
+slots, an enemy an entry of the class its art fits with its frames in the
+stage's sheet, each wave a spawn record on its line, the boss an 8x4 sheet
+spawned after the last wave; the ship sheet and the sound are the factory
+game's; the seventeen checksum words are sealed last and the image is read
+back before it is written. `/api/sfc-save` installs a save as Mednafen's
+`<rom>.srm` for the Dezaemon ROM in `dev-fixtures/` and starts it. FORMAT-SFC.md
+"Writing a save" lists what is a template rather than a trace.
 
 #### The Super Famicom library and shelf
 
