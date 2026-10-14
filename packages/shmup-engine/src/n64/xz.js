@@ -12,7 +12,7 @@
 // Three facts about how xdelta3 drives liblzma shape the API; all three are
 // read from xdelta3's source (github.com/jmacd/xdelta: xdelta3-lzma.h,
 // xdelta3-second.h) and confirmed on the patch itself with Python's lzma
-// (the walker in the session scratchpad; see the test):
+// (an independent walker kept outside the repo; see the test):
 //
 //   - ONE lzma_stream per section TYPE (data, inst, addr) for the whole
 //     patch, allocated on first use and never reset, so window 1's sections

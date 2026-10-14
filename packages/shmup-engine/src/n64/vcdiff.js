@@ -34,8 +34,9 @@
 //     this reader does, as the RFC describes them, untested against anything
 //     because nothing writes them.
 //
-// Measured on the patch (parseVcdiff, and the Python walker in the session
-// scratchpad, which agrees): 2 windows of 8,388,608 target bytes each, both
+// Measured on the patch (parseVcdiff, and an independent Python walker over
+// liblzma, kept outside the repo, which agrees): 2 windows of 8,388,608
+// target bytes each, both
 // VCD_SOURCE | VCD_ADLER32 with every section compressed (del_indicator 7);
 // window 0 reads source [0, 16,256,035), window 1 [470,487, 16,719,088), so
 // a 16 MiB .z64 of the Japanese ROM covers both and `sourceLengthNeeded` is
