@@ -25,6 +25,11 @@ export * from "./memcard.js";
 export * from "./save-header.js";
 export * from "./kids.js";
 export * from "./kids-edit.js";
+// The writer: a level record -> a Kids! save -> the memory card around it.
+// The first module under src/psx/ that builds a save from nothing; it reads
+// its own output back through kids.js before handing it over.
+export * from "./kids-write.js";
+export * from "./memcard-write.js";
 export * from "./plus.js";
 export * from "./plus-edit.js";
 // The interior of a Dezaemon+ song, which plus.js hands back as raw 0x2E0-byte

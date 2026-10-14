@@ -6689,8 +6689,8 @@ function b64ToBytes(b64) {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-function hexToBytes(hex, len) {
-  const s = String(hex || "").replace(/[^0-9a-f]/gi, "");
+function hexToBytes(hex2, len) {
+  const s = String(hex2 || "").replace(/[^0-9a-f]/gi, "");
   if (s.length !== len * 2) return null;
   const out = new Uint8Array(len);
   for (let i = 0; i < len; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
@@ -7842,6 +7842,3035 @@ function exportLevelToSav(level, art2, options = {}) {
   };
 }
 
+// packages/shmup-engine/src/psx/kids-palette.js
+var KIDS_PALETTE = Object.freeze([
+  0,
+  959,
+  1471,
+  31,
+  31775,
+  32083,
+  31744,
+  32326,
+  32736,
+  992,
+  3493,
+  8627,
+  21407,
+  25368,
+  32767,
+  3171,
+  6590,
+  7710,
+  8862,
+  7934,
+  9086,
+  2015,
+  1019,
+  5109,
+  992,
+  15343,
+  21474,
+  23364,
+  25290,
+  29290,
+  32228,
+  32067,
+  31517,
+  26366,
+  24383,
+  23423,
+  21407,
+  24511,
+  24575,
+  21500,
+  25595,
+  27639,
+  32761,
+  32567,
+  31547,
+  31643,
+  26425,
+  25500,
+  30272,
+  32418,
+  31470,
+  31572,
+  30618,
+  28606,
+  19391,
+  18271,
+  7935,
+  10909,
+  14905,
+  16819,
+  22831,
+  25740,
+  22535,
+  18437,
+  28671,
+  24575,
+  18399,
+  2015,
+  11135,
+  9983,
+  5791,
+  542,
+  415,
+  31,
+  2331,
+  277,
+  2289,
+  173,
+  2153,
+  2118,
+  2370,
+  2435,
+  517,
+  644,
+  783,
+  884,
+  987,
+  1023,
+  926,
+  795,
+  664,
+  599,
+  501,
+  403,
+  304,
+  205,
+  2277,
+  3400,
+  2508,
+  4688,
+  8916,
+  11031,
+  14170,
+  17243,
+  19291,
+  19226,
+  16056,
+  12885,
+  10738,
+  7567,
+  4396,
+  1258,
+  25500,
+  21272,
+  17077,
+  13873,
+  9645,
+  6441,
+  4294,
+  2180,
+  32767,
+  26425,
+  21140,
+  16912,
+  12684,
+  8456,
+  5285,
+  2114,
+  31579,
+  30392,
+  32278,
+  32115,
+  30800,
+  20652,
+  12327,
+  7205,
+  30586,
+  26358,
+  22130,
+  17902,
+  14731,
+  10503,
+  7332,
+  5218,
+  32665,
+  32564,
+  32462,
+  32326,
+  23936,
+  15584,
+  9344,
+  6208,
+  32534,
+  32403,
+  32238,
+  32041,
+  31746,
+  20480,
+  12288,
+  7168,
+  27640,
+  24564,
+  21474,
+  19275,
+  14948,
+  11682,
+  8484,
+  6336,
+  32729,
+  32757,
+  32736,
+  26400,
+  20032,
+  13696,
+  10496,
+  7328,
+  20477,
+  16314,
+  5114,
+  4916,
+  3630,
+  3433,
+  1221,
+  1122,
+  23548,
+  19449,
+  14325,
+  992,
+  6824,
+  3494,
+  1249,
+  129,
+  24575,
+  19423,
+  14303,
+  991,
+  5913,
+  528,
+  330,
+  198,
+  18235,
+  15130,
+  9878,
+  5650,
+  4494,
+  232,
+  133,
+  1091,
+  21407,
+  16223,
+  7967,
+  767,
+  568,
+  367,
+  200,
+  100,
+  24511,
+  20284,
+  16057,
+  12887,
+  8626,
+  4364,
+  3240,
+  2149,
+  24383,
+  20127,
+  14879,
+  9567,
+  31,
+  5332,
+  1067,
+  5,
+  23423,
+  19263,
+  14047,
+  607,
+  1535,
+  340,
+  171,
+  2150,
+  31517,
+  32415,
+  32255,
+  31775,
+  23575,
+  16400,
+  10250,
+  6150,
+  27455,
+  24255,
+  22079,
+  17823,
+  15391,
+  9237,
+  5133,
+  3079
+]);
+var KIDS_PALETTE_SIZE = KIDS_PALETTE.length;
+var KIDS_TRANSPARENT_INDEX = 0;
+
+// packages/shmup-engine/src/psx/memcard.js
+var CARD_SIZE = 131072;
+var FRAME_SIZE = 128;
+var BLOCK_SIZE = 8192;
+var BLOCK_COUNT = 15;
+var DIRECTORY_OFFSET = FRAME_SIZE;
+var FILENAME_OFFSET = 10;
+var FILENAME_LENGTH = 20;
+var NO_NEXT = 65535;
+var CARD_MAGIC = "MC";
+var GME_HEADER_SIZE = 3904;
+var GME_MAGIC = "123-456-STD";
+var PSV_HEADER_SIZE = 132;
+var MCS_HEADER_SIZE = FRAME_SIZE;
+var STATUS = Object.freeze({
+  FIRST: 81,
+  MIDDLE: 82,
+  LAST: 83,
+  FREE: 160,
+  DELETED_FIRST: 161,
+  DELETED_MIDDLE: 162,
+  DELETED_LAST: 163,
+  UNUSABLE: 255
+});
+function latin1(bytes, offset, length) {
+  let s = "";
+  for (let i = 0; i < length && offset + i < bytes.length; i++) s += String.fromCharCode(bytes[offset + i]);
+  return s;
+}
+function cString(bytes, offset, length) {
+  let end = offset;
+  while (end < offset + length && end < bytes.length && bytes[end] !== 0) end++;
+  return latin1(bytes, offset, end - offset);
+}
+function u16le(bytes, at) {
+  return bytes[at] | bytes[at + 1] << 8;
+}
+function u32le(bytes, at) {
+  return (bytes[at] | bytes[at + 1] << 8 | bytes[at + 2] << 16 | bytes[at + 3] << 24) >>> 0;
+}
+function frameChecksum(frame) {
+  let x = 0;
+  for (let i = 0; i < FRAME_SIZE - 1 && i < frame.length; i++) x ^= frame[i];
+  return x;
+}
+function isCardImage(bytes) {
+  return bytes.length === CARD_SIZE && latin1(bytes, 0, 2) === CARD_MAGIC;
+}
+function isGmeImage(bytes) {
+  return bytes.length === GME_HEADER_SIZE + CARD_SIZE && latin1(bytes, 0, GME_MAGIC.length) === GME_MAGIC;
+}
+function isPsvImage(bytes) {
+  return bytes.length > PSV_HEADER_SIZE && bytes[0] === 0 && latin1(bytes, 1, 3) === "VSP";
+}
+function isMcsImage(bytes) {
+  return bytes.length > MCS_HEADER_SIZE && (bytes.length - MCS_HEADER_SIZE) % BLOCK_SIZE === 0 && (bytes[0] & 240) === 80 && latin1(bytes, MCS_HEADER_SIZE, 2) === "SC";
+}
+function isBareSave(bytes) {
+  return bytes.length >= BLOCK_SIZE && bytes.length % BLOCK_SIZE === 0 && latin1(bytes, 0, 2) === "SC";
+}
+function parseDirectoryFrame(card, index) {
+  const at = DIRECTORY_OFFSET + index * FRAME_SIZE;
+  const frame = card.subarray(at, at + FRAME_SIZE);
+  const status = frame[0];
+  return {
+    block: index + 1,
+    offset: at,
+    status,
+    size: u32le(frame, 4),
+    next: u16le(frame, 8),
+    filename: cString(frame, FILENAME_OFFSET, FILENAME_LENGTH),
+    checksum: frame[FRAME_SIZE - 1],
+    checksumOk: frameChecksum(frame) === frame[FRAME_SIZE - 1],
+    live: status === STATUS.FIRST || status === STATUS.MIDDLE || status === STATUS.LAST,
+    deleted: status === STATUS.DELETED_FIRST || status === STATUS.DELETED_MIDDLE || status === STATUS.DELETED_LAST,
+    free: status === STATUS.FREE,
+    first: status === STATUS.FIRST || status === STATUS.DELETED_FIRST,
+    last: status === STATUS.LAST || status === STATUS.DELETED_LAST
+  };
+}
+function blockBytes(card, block) {
+  return card.subarray(block * BLOCK_SIZE, (block + 1) * BLOCK_SIZE);
+}
+function chainFrom(frames, firstIndex) {
+  const chain = [];
+  const seen = /* @__PURE__ */ new Set();
+  let index = firstIndex;
+  while (index >= 0 && index < frames.length && !seen.has(index)) {
+    seen.add(index);
+    chain.push(index + 1);
+    const frame = frames[index];
+    if (frame.last || frame.next === NO_NEXT) break;
+    index = frame.next;
+  }
+  return chain;
+}
+function parseMemoryCard(card) {
+  const magic = latin1(card, 0, 2);
+  const frames = [];
+  for (let i = 0; i < BLOCK_COUNT; i++) frames.push(parseDirectoryFrame(card, i));
+  const files = [];
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i];
+    if (!frame.first) continue;
+    const blocks = chainFrom(frames, i);
+    const parts = blocks.map((b) => blockBytes(card, b));
+    const joined = new Uint8Array(parts.length * BLOCK_SIZE);
+    parts.forEach((p, k) => joined.set(p, k * BLOCK_SIZE));
+    const size = Math.min(frame.size, joined.length);
+    files.push({
+      filename: frame.filename,
+      firstBlock: frame.block,
+      blocks,
+      size: frame.size,
+      complete: frame.size <= joined.length && blocks.length > 0 && frames[blocks[blocks.length - 1] - 1].last,
+      deleted: frame.deleted,
+      data: joined.subarray(0, size)
+    });
+  }
+  return {
+    magic,
+    magicOk: magic === CARD_MAGIC,
+    headerChecksumOk: frameChecksum(card.subarray(0, FRAME_SIZE)) === card[FRAME_SIZE - 1],
+    frames,
+    files,
+    freeBlocks: frames.filter((f) => f.free).length
+  };
+}
+function locateSaves(bytes) {
+  if (isCardImage(bytes) || isGmeImage(bytes)) {
+    const container = isGmeImage(bytes) ? "gme" : "card";
+    const card = parseMemoryCard(container === "gme" ? bytes.subarray(GME_HEADER_SIZE) : bytes);
+    return {
+      container,
+      card,
+      saves: card.files.map((f) => ({ filename: f.filename, data: f.data, deleted: f.deleted }))
+    };
+  }
+  if (isMcsImage(bytes)) {
+    const size = u32le(bytes, 4) || bytes.length - MCS_HEADER_SIZE;
+    return {
+      container: "mcs",
+      card: null,
+      saves: [{
+        filename: cString(bytes, FILENAME_OFFSET, FILENAME_LENGTH),
+        data: bytes.subarray(MCS_HEADER_SIZE, MCS_HEADER_SIZE + size),
+        deleted: false
+      }]
+    };
+  }
+  if (isPsvImage(bytes)) {
+    return {
+      container: "psv",
+      card: null,
+      saves: [{ filename: cString(bytes, 100, FILENAME_LENGTH), data: bytes.subarray(PSV_HEADER_SIZE), deleted: false }]
+    };
+  }
+  if (isBareSave(bytes)) {
+    return { container: "bare", card: null, saves: [{ filename: "", data: bytes, deleted: false }] };
+  }
+  return { container: "unknown", card: null, saves: [] };
+}
+
+// packages/shmup-engine/src/psx/save-header.js
+var SAVE_MAGIC = "SC";
+var TITLE_FRAME_SIZE = 128;
+var ICON_FRAME_SIZE = 128;
+var TITLE_OFFSET = 4;
+var TITLE_LENGTH = 64;
+var CLUT_OFFSET = 96;
+var ICON_DIM = 16;
+var sjis = null;
+function shiftJisDecoder() {
+  if (sjis === null) {
+    try {
+      sjis = new TextDecoder("shift_jis");
+    } catch {
+      sjis = false;
+    }
+  }
+  return sjis || null;
+}
+function decodeShiftJis(bytes) {
+  const decoder = shiftJisDecoder();
+  return decoder ? decoder.decode(bytes) : latin1(bytes, 0, bytes.length);
+}
+function narrow(text) {
+  return text.replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248)).replace(/　/g, " ");
+}
+function bracketedName(title) {
+  const m = /『(.*?)』/.exec(title);
+  if (!m) return null;
+  return m[1].replace(/^[\s　]+|[\s　]+$/g, "");
+}
+function decodeClut(bytes, offset) {
+  const colors = [];
+  for (let i = 0; i < 16; i++) colors.push(u16le(bytes, offset + i * 2));
+  return colors;
+}
+function decodeIconFrame(bytes, offset) {
+  const out = new Uint8Array(ICON_DIM * ICON_DIM);
+  for (let i = 0; i < out.length; i += 2) {
+    const b = bytes[offset + (i >> 1)];
+    out[i] = b & 15;
+    out[i + 1] = b >> 4;
+  }
+  return out;
+}
+function parseSaveHeader(data) {
+  const magic = latin1(data, 0, 2);
+  const iconFlag = data[2];
+  const iconFrames = (iconFlag & 240) === 16 ? Math.min(3, Math.max(1, iconFlag & 15)) : 0;
+  let titleEnd = TITLE_OFFSET;
+  while (titleEnd < TITLE_OFFSET + TITLE_LENGTH && data[titleEnd] !== 0) titleEnd++;
+  const titleBytes = data.subarray(TITLE_OFFSET, titleEnd);
+  const title = decodeShiftJis(titleBytes);
+  const icons = [];
+  for (let i = 0; i < iconFrames; i++) icons.push(decodeIconFrame(data, TITLE_FRAME_SIZE + i * ICON_FRAME_SIZE));
+  return {
+    magic,
+    magicOk: magic === SAVE_MAGIC,
+    iconFlag,
+    iconFrames,
+    blockCount: data[3],
+    title,
+    titleAscii: narrow(title),
+    titleBytes,
+    clut: decodeClut(data, CLUT_OFFSET),
+    icons,
+    /** Where the game's own data starts: after the title and icon frames. */
+    bodyOffset: TITLE_FRAME_SIZE + iconFrames * ICON_FRAME_SIZE
+  };
+}
+
+// packages/shmup-engine/src/psx/kids.js
+var KIDS_PRODUCT = "BISLPS-01503DEZAKIDS";
+var KIDS_TITLE_PREFIX = "\u30C7\u30B6\u30A8\u30E2\u30F3\uFF2B\uFF49\uFF44\uFF53\uFF01";
+var KIDS_BLOCK_SIZE = 122880;
+var KIDS_SECTOR = 128;
+var KIDS_TABLE_OFFSET = 256;
+var KIDS_TABLE_WORDS = 11;
+var KIDS_FIRST_SECTION = 384;
+var KIDS_TAIL_SIZE = 256;
+var KIDS_GRAPHICS_SIZE = 4 * CG_PAGE_SIZE;
+var KIDS_DATA_SIZE = 64712;
+var KIDS_CELL_COUNT = KIDS_GRAPHICS_SIZE / 256;
+var KIDS_STAGES = 6;
+var KIDS_HISCORE_COUNT = 10;
+var KIDS_HISCORE_SIZE = 16;
+var KIDS_OPTIONS_OFFSET = KIDS_HISCORE_COUNT * KIDS_HISCORE_SIZE;
+var KIDS_OPTIONS_SIZE = 28;
+var KIDS_TAIL_UNUSED_OFFSET = KIDS_OPTIONS_OFFSET + KIDS_OPTIONS_SIZE;
+var KIDS_ALL_CLEAR = 128;
+var KIDS_LEVELS = Object.freeze(["EASY", "NORMAL", "HARD", "MANIAC"]);
+var KIDS_MUTEKI_LEVEL = 4;
+var KIDS_MAP_COLUMNS = 7;
+var KIDS_MAP_ROWS = 384;
+var KIDS_MAP_STAGE_BYTES = KIDS_MAP_COLUMNS * KIDS_MAP_ROWS * 2;
+var KIDS_CHIP_DIM = 32;
+var KIDS_CELL_ALIGN = 9;
+var KIDS_HFLIP = 8192;
+var KIDS_VFLIP = 16384;
+var KIDS_BLANK = 32768;
+var KIDS_SCROLL_STAGE_BYTES = 96;
+var KIDS_SCROLL_UNITS = KIDS_SCROLL_STAGE_BYTES * 2;
+var KIDS_SCROLL_UNIT_PIXELS = 64;
+var KIDS_SCROLL_SPEEDS = Object.freeze([0, 0.25, 1, 4]);
+var KIDS_APPEAR_STAGE_BYTES = 3456;
+var KIDS_APPEAR_COLUMNS = 9;
+var KIDS_APPEAR_ROWS = 384;
+var KIDS_APPEAR_ROW_PIXELS = 32;
+var KIDS_APPEAR_CLASSES = Object.freeze([
+  { klass: 0, size: "32x32", count: 16 },
+  { klass: 1, size: "64x32", count: 8 },
+  { klass: 2, size: "32x64", count: 8 },
+  { klass: 3, size: "64x64", count: 8 }
+]);
+var KIDS_APPEAR_CELLS = Object.freeze([[1, 1], [2, 1], [1, 2], [2, 2]]);
+var KIDS_APPEAR_PRESENT = 128;
+var KIDS_APPEAR_CLASS_MASK = 112;
+var KIDS_APPEAR_ID_MASK = 15;
+var KIDS_APPEAR_FOOTPRINT_CLASS = 5;
+var KIDS_APPEAR_BOSS_CLASS = 4;
+var KIDS_RECORDS_STAGE_BYTES = 230;
+var KIDS_RECORD_SIZE = 5;
+var KIDS_RECORD_COUNT = 40;
+var KIDS_CLASS_BASE = Object.freeze([0, 16, 24, 32]);
+var KIDS_BOSS_OFFSET = 200;
+var KIDS_BOSS_SIZE = 15;
+var KIDS_BOSS_COUNT = 2;
+var KIDS_BOSS_SIZES = Object.freeze(["64x64", "128x64", "64x128", "128x128"]);
+var KIDS_SHIP_TABLE_BYTES = 436;
+var KIDS_SPRITE_STAGE_BYTES = 1536;
+var KIDS_SPRITE_CLASS_OFFSETS = Object.freeze([0, 512, 768, 1024]);
+var KIDS_SPRITE_ENTRY_WORDS = 16;
+var KIDS_SPRITE_BOSS_OFFSETS = Object.freeze([1280, 1408]);
+var KIDS_SPRITE_BOSS_WORDS = 64;
+var KIDS_POINT_SMALL = Object.freeze([100, 500, 1e3, 0]);
+var KIDS_POINT_LARGE = Object.freeze([5e3, 1e4, 5e4, 0]);
+var KIDS_BG_SPEEDS = Object.freeze([0, 4, 12, 24]);
+var KIDS_FONT_FILES = Object.freeze(["FN1", "FN2", "FN3", "FN4"]);
+var KIDS_BGM_BANKS = Object.freeze(["G_BGM1", "G_BGM2", "G_BGM3", "G_BGM4"]);
+function region(name, label, offset, end, stride, confidence, note) {
+  return Object.freeze({ name, label, offset, end, length: end - offset, stride, confidence, note });
+}
+var KIDS_REGIONS = Object.freeze([
+  region(
+    "map",
+    "MAP",
+    0,
+    32256,
+    KIDS_MAP_STAGE_BYTES,
+    "confirmed",
+    "6 stages x 0x1500: 384 rows of 7 u16 chips. A chip is 32x32 px drawn from the CG cells n, n+1, n+8, n+9, so n is always 2x2-aligned; bits 0-9 name n, bit 13 h-flip, bit 14 v-flip, bit 15 blank (0x8080 and 0x8000 are the commonest of 14 blank words)."
+  ),
+  region(
+    "scroll",
+    "SCROLL",
+    32256,
+    32832,
+    KIDS_SCROLL_STAGE_BYTES,
+    "confirmed",
+    "6 x 0x60: one nibble per 64 px of map, low nibble first. value & 3 picks 0, 0.25, 1 or 4 px per frame; 0x22 is the fill."
+  ),
+  region(
+    "appear",
+    "APPEAR",
+    32832,
+    53568,
+    KIDS_APPEAR_STAGE_BYTES,
+    "confirmed",
+    "6 x 0xD80: 384 rows of 9 slot bytes, one per 32 px across and down. A byte is present(bit 7) | class(bits 4-6) | id(bits 0-3); classes 0-3 are the enemy sizes, 4 the boss, and 5 a footprint mark (0x50 | dx << 2 | dy) giving the cell offset inside the owning enemy rectangle."
+  ),
+  region(
+    "config",
+    "CONFIG",
+    53568,
+    53680,
+    0,
+    "confirmed",
+    "0x70 bytes of game-wide settings (RAM 0x8005D140): scroll direction, the last stage, sixteen 4-byte sound entries, per-stage ship speed and background set."
+  ),
+  region(
+    "records",
+    "RECORDS",
+    53680,
+    55060,
+    KIDS_RECORDS_STAGE_BYTES,
+    "confirmed",
+    "6 x 0xE6: 40 five-byte enemy records indexed by class base 0/16/24/32 plus id, then two 15-byte boss records at +0xC8."
+  ),
+  region(
+    "ship",
+    "SHIP",
+    55060,
+    55496,
+    0,
+    "confirmed",
+    "0x1B4 bytes of u16 cell words in the map's encoding: the two ships' three poses each, their shots, the item icons and the title blocks."
+  ),
+  region(
+    "sprites",
+    "SPRITES",
+    55496,
+    64712,
+    KIDS_SPRITE_STAGE_BYTES,
+    "confirmed",
+    "6 x 0x600 of u16 cell words: 16 entries of 16 cells for class 0 at +0, 8 each for classes 1-3 at +0x200/+0x300/+0x400, and two 64-cell boss parts at +0x500 and +0x580. Ends exactly at 0xFCC8 \u2014 there is no trailer."
+  )
+]);
+var KIDS_REGION = Object.freeze(Object.fromEntries(KIDS_REGIONS.map((r) => [r.name, r])));
+function roundUp(n, to) {
+  return Math.ceil(n / to) * to;
+}
+function byteSum2(bytes, start, end) {
+  let sum = 0;
+  for (let i = start; i < end && i < bytes.length; i++) sum += bytes[i];
+  return sum >>> 0;
+}
+function isKidsBlock(block) {
+  if (block.length < KIDS_TABLE_OFFSET + KIDS_TABLE_WORDS * 4) return false;
+  return parseKidsTable(block).consistent;
+}
+function parseKidsTable(block) {
+  const words = [];
+  for (let i = 0; i < KIDS_TABLE_WORDS; i++) words.push(u32le(block, KIDS_TABLE_OFFSET + i * 4));
+  const [end, gfxSize, dataSize, gfxOffset, gfxSum, dataOffset, dataSum, tailOffset, tailSum, gfxPadded, dataPadded] = words;
+  const problems = [];
+  if (gfxOffset !== KIDS_FIRST_SECTION) problems.push(`graphics offset ${gfxOffset.toString(16)} != 0x180`);
+  if (gfxPadded !== roundUp(gfxSize, KIDS_SECTOR)) problems.push("graphics padded size != roundUp(size, 0x80)");
+  if (dataOffset !== gfxOffset + gfxPadded) problems.push("data offset != graphics offset + padded size");
+  if (dataPadded !== roundUp(dataSize, KIDS_SECTOR)) problems.push("data padded size != roundUp(size, 0x80)");
+  if (tailOffset !== dataOffset + dataPadded) problems.push("tail offset != data offset + padded size");
+  if (end !== tailOffset + KIDS_TAIL_SIZE) problems.push("end != tail offset + 0x100");
+  if (end > block.length) problems.push(`end ${end.toString(16)} past the block (${block.length.toString(16)})`);
+  return {
+    words,
+    end,
+    sections: {
+      graphics: { offset: gfxOffset, size: gfxSize, padded: gfxPadded, checksum: gfxSum },
+      data: { offset: dataOffset, size: dataSize, padded: dataPadded, checksum: dataSum },
+      tail: { offset: tailOffset, size: KIDS_TAIL_SIZE, padded: KIDS_TAIL_SIZE, checksum: tailSum }
+    },
+    problems,
+    consistent: problems.length === 0
+  };
+}
+function validateKidsTable(block, table = parseKidsTable(block)) {
+  const check = (s) => byteSum2(block, s.offset, s.offset + s.padded) === s.checksum;
+  const graphics = check(table.sections.graphics);
+  const data = check(table.sections.data);
+  const tail = check(table.sections.tail);
+  return { graphics, data, tail, ok: graphics && data && tail };
+}
+function decodeKidsHiScores(tail, offset = 0) {
+  const entries = [];
+  for (let i = 0; i < KIDS_HISCORE_COUNT; i++) {
+    const at = offset + i * KIDS_HISCORE_SIZE;
+    const stage = tail[at + 4];
+    const allClear = (stage & KIDS_ALL_CLEAR) !== 0;
+    const level = tail[at + 5];
+    entries.push({
+      rank: i + 1,
+      score: u32le(tail, at),
+      stage: allClear ? null : stage,
+      allClear,
+      level,
+      levelName: KIDS_LEVELS[level & 3],
+      muteki: level === KIDS_MUTEKI_LEVEL,
+      name: latin1(tail, at + 8, 8)
+    });
+  }
+  return entries;
+}
+function decodeKidsOptions(tail) {
+  const at = (i) => tail[KIDS_OPTIONS_OFFSET + i];
+  return {
+    bytes: tail.subarray(KIDS_OPTIONS_OFFSET, KIDS_OPTIONS_OFFSET + KIDS_OPTIONS_SIZE),
+    unused: tail.subarray(KIDS_TAIL_UNUSED_OFFSET, KIDS_TAIL_SIZE),
+    screenWidth: at(0),
+    //  tail+0xA0
+    stereo: at(14),
+    //       tail+0xAE
+    presetBgm: at(22),
+    //    tail+0xB6
+    seMuted: at(23) !== 0,
+    // tail+0xB7
+    backdropWhite: (at(24) & 1) !== 0,
+    // tail+0xB8 bit 0
+    bgmFile: at(25),
+    //      tail+0xB9
+    bgmVolume: at(26)
+    //    tail+0xBA
+  };
+}
+function decodeKidsMap(data) {
+  const stages = [];
+  for (let s = 0; s < KIDS_STAGES; s++) {
+    const base = KIDS_REGION.map.offset + s * KIDS_MAP_STAGE_BYTES;
+    const words = new Uint16Array(KIDS_MAP_COLUMNS * KIDS_MAP_ROWS);
+    let used = 0;
+    for (let i = 0; i < words.length; i++) {
+      const w = u16le(data, base + i * 2);
+      words[i] = w;
+      if ((w & KIDS_BLANK) === 0) used++;
+    }
+    stages.push({
+      stage: s,
+      columns: KIDS_MAP_COLUMNS,
+      rows: KIDS_MAP_ROWS,
+      chipDim: KIDS_CHIP_DIM,
+      width: KIDS_MAP_COLUMNS * KIDS_CHIP_DIM,
+      height: KIDS_MAP_ROWS * KIDS_CHIP_DIM,
+      words,
+      used
+    });
+  }
+  return stages;
+}
+function decodeKidsScroll(data) {
+  const stages = [];
+  for (let s = 0; s < KIDS_STAGES; s++) {
+    const base = KIDS_REGION.scroll.offset + s * KIDS_SCROLL_STAGE_BYTES;
+    const steps = [];
+    for (let i = 0; i < KIDS_SCROLL_UNITS; i++) {
+      const b = data[base + (i >> 1)];
+      const nibble = i & 1 ? b >> 4 : b & 15;
+      steps.push({ nibble, speed: KIDS_SCROLL_SPEEDS[nibble & 3] });
+    }
+    stages.push({ stage: s, unitPixels: KIDS_SCROLL_UNIT_PIXELS, steps });
+  }
+  return stages;
+}
+function decodeKidsAppearSlot(byte) {
+  if (byte === 0) return null;
+  const klass = (byte & KIDS_APPEAR_CLASS_MASK) >> 4;
+  const id = byte & KIDS_APPEAR_ID_MASK;
+  if (klass === KIDS_APPEAR_BOSS_CLASS && byte & KIDS_APPEAR_PRESENT) {
+    return { raw: byte, boss: true, klass: null, id: null };
+  }
+  if ((byte & KIDS_APPEAR_PRESENT) === 0) {
+    const footprint = klass === KIDS_APPEAR_FOOTPRINT_CLASS;
+    return { raw: byte, boss: false, klass: null, id: null, footprint, dx: id >> 2 & 3, dy: id & 3 };
+  }
+  const spec = KIDS_APPEAR_CLASSES[klass];
+  if (!spec) return { raw: byte, boss: false, klass: null, id: null, unknown: true };
+  return { raw: byte, boss: false, klass, id, size: spec.size };
+}
+function kidsFootprintOwner(index, dx, dy, horizontal) {
+  const owner = horizontal ? index - 9 * dx - dy : index + 9 * dy - dx;
+  return owner >= 0 && owner < KIDS_APPEAR_STAGE_BYTES ? owner : null;
+}
+function decodeKidsAppear(data, { horizontal = false } = {}) {
+  const stages = [];
+  for (let s = 0; s < KIDS_STAGES; s++) {
+    const base = KIDS_REGION.appear.offset + s * KIDS_APPEAR_STAGE_BYTES;
+    const bytes = data.subarray(base, base + KIDS_APPEAR_STAGE_BYTES);
+    const spawns = [];
+    const byIndex = /* @__PURE__ */ new Map();
+    const marks = [];
+    let boss = null;
+    for (let i = 0; i < bytes.length; i++) {
+      const byte = bytes[i];
+      if (byte === 0) continue;
+      const row = i / KIDS_APPEAR_COLUMNS | 0;
+      const col = i % KIDS_APPEAR_COLUMNS;
+      const slot = decodeKidsAppearSlot(byte);
+      if (!slot) continue;
+      if ((byte & KIDS_APPEAR_PRESENT) === 0) {
+        if (slot.footprint) marks.push({ ...slot, index: i, row, col });
+        continue;
+      }
+      const placed = {
+        ...slot,
+        row,
+        col,
+        x: col * KIDS_APPEAR_ROW_PIXELS,
+        y: row * KIDS_APPEAR_ROW_PIXELS,
+        covers: []
+      };
+      byIndex.set(i, placed);
+      if (slot.boss) boss = placed;
+      else spawns.push(placed);
+    }
+    let orphans = 0;
+    for (const mark of marks) {
+      const at = kidsFootprintOwner(mark.index, mark.dx, mark.dy, horizontal);
+      const owner = at === null ? void 0 : byIndex.get(at);
+      if (!owner) {
+        orphans++;
+        continue;
+      }
+      mark.owner = { row: owner.row, col: owner.col };
+      owner.covers.push({ row: mark.row, col: mark.col });
+    }
+    stages.push({
+      stage: s,
+      columns: KIDS_APPEAR_COLUMNS,
+      rows: KIDS_APPEAR_ROWS,
+      bytes,
+      spawns,
+      boss,
+      marks,
+      orphanMarks: orphans
+    });
+  }
+  return stages;
+}
+function kidsBackgroundFile(set, horizontal) {
+  const value = set & 127;
+  if (value === 0 || value > 38) return null;
+  const second = value > 16;
+  const dir = `${horizontal ? "SIDE" : "LENGTH"}${second ? 2 : 1}`;
+  const name = horizontal ? "BGY" : "BGT";
+  const number = second ? value + 34 : value;
+  return `GAME\\${dir}\\${name}${String(number).padStart(2, "0")}.CMP`;
+}
+function kidsSoundEntry(bytes, at) {
+  const b0 = bytes[at];
+  return {
+    preset: (b0 & 128) !== 0,
+    sequenceVolume: b0 & 127,
+    bgm: bytes[at + 1],
+    presetNumber: bytes[at + 2] & 127,
+    volume: bytes[at + 3] & 127
+  };
+}
+function kidsBgmFile(number) {
+  if (number === 0 || number > 99) return null;
+  const bank = number < 30 ? 0 : number < 60 ? 1 : number < 90 ? 2 : 3;
+  return `SOUND\\${KIDS_BGM_BANKS[bank]}\\BGM${String(number).padStart(2, "0")}.CMP`;
+}
+function decodeKidsConfig(data) {
+  const r = KIDS_REGION.config;
+  const bytes = data.subarray(r.offset, r.end);
+  const horizontal = (bytes[0] & 1) !== 0;
+  const stages = [];
+  for (let s = 0; s < KIDS_STAGES; s++) {
+    const flags = bytes[3 + s];
+    const motion = bytes[99 + s];
+    const set = bytes[105 + s];
+    stages.push({
+      stage: s,
+      last: (flags & 128) !== 0,
+      chained: (flags & 1) !== 0,
+      flags,
+      scrollSpeed: KIDS_SCROLL_SPEEDS[motion & 3],
+      scrollReverse: (motion & 4) !== 0,
+      backgroundSpeed: KIDS_BG_SPEEDS[motion >> 4 & 3],
+      backgroundSet: set & 127,
+      backgroundFile: kidsBackgroundFile(set, horizontal)
+    });
+  }
+  const lastStage = stages.findIndex((st) => st.last);
+  const stageCount = lastStage + 1 || KIDS_STAGES;
+  const sound = [];
+  for (let i = 0; i < 16; i++) {
+    const entry = kidsSoundEntry(bytes, 35 + i * 4);
+    entry.scope = i < 4 ? "game" : `stage ${i - 4 >> 1}`;
+    entry.file = entry.preset ? null : kidsBgmFile(entry.bgm);
+    sound.push(entry);
+  }
+  return {
+    bytes,
+    horizontal,
+    font: {
+      typeface: bytes[1] & 7,
+      colour: bytes[1] >> 3 & 7,
+      file: KIDS_FONT_FILES[bytes[1] >> 6]
+    },
+    soundBank: bytes[2],
+    stages,
+    stageCount,
+    pointItems: {
+      small: KIDS_POINT_SMALL[bytes[15] & 3],
+      large: KIDS_POINT_LARGE[bytes[16] & 3]
+    },
+    /** Two three-byte player-ship records; only byte 2 has a play-mode reader. */
+    ships: [bytes.subarray(9, 12), bytes.subarray(12, 15)],
+    /** Seven item records and two more of the same shape. */
+    items: Array.from({ length: 9 }, (_, i) => ({
+      a: bytes[17 + i] & 3,
+      b: bytes[17 + i] >> 2 & 3
+    })),
+    unknown1A: bytes[26],
+    /** Two four-byte player-shot records, one per ship. */
+    shots: [bytes.subarray(27, 31), bytes.subarray(31, 35)],
+    sound,
+    /** Sound entries past this are zeroed when the game loads. */
+    liveSoundEntries: 2 * stageCount + 4
+  };
+}
+function decodeKidsRecord(bytes, at, index) {
+  const b = [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3], bytes[at + 4]];
+  return {
+    index,
+    bytes: b,
+    movement: b[0] & 31,
+    movementVariant: b[0] >> 5 & 3,
+    spawnFlag: (b[0] & 128) !== 0,
+    hitPoints: b[1] & 7,
+    scoreClass: b[1] >> 3 & 3,
+    fireTiming: b[2] >> 4 & 3,
+    fireInterval: b[2] >> 6 & 3,
+    shotPattern: (b[3] & 15) + 1
+  };
+}
+function decodeKidsRecords(data) {
+  const stages = [];
+  for (let s = 0; s < KIDS_STAGES; s++) {
+    const base = KIDS_REGION.records.offset + s * KIDS_RECORDS_STAGE_BYTES;
+    const enemies = [];
+    for (let i = 0; i < KIDS_RECORD_COUNT; i++) enemies.push(decodeKidsRecord(data, base + i * KIDS_RECORD_SIZE, i));
+    const bosses = [];
+    for (let i = 0; i < KIDS_BOSS_COUNT; i++) {
+      const at = base + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE;
+      const head = data[at];
+      bosses.push({
+        index: i,
+        bytes: data.subarray(at, at + KIDS_BOSS_SIZE),
+        sizeClass: head >> 6,
+        size: KIDS_BOSS_SIZES[head >> 6]
+      });
+    }
+    stages.push({ stage: s, enemies, bosses });
+  }
+  return stages;
+}
+function cellWords(data, at, count) {
+  const words = new Uint16Array(count);
+  for (let i = 0; i < count; i++) words[i] = u16le(data, at + i * 2);
+  return words;
+}
+function decodeKidsSprites(data) {
+  const ship = cellWords(data, KIDS_REGION.ship.offset, KIDS_SHIP_TABLE_BYTES / 2);
+  const stages = [];
+  for (let s = 0; s < KIDS_STAGES; s++) {
+    const base = KIDS_REGION.sprites.offset + s * KIDS_SPRITE_STAGE_BYTES;
+    const classes = KIDS_APPEAR_CLASSES.map((spec, k) => {
+      const at = base + KIDS_SPRITE_CLASS_OFFSETS[k];
+      const entries = [];
+      for (let i = 0; i < spec.count; i++) {
+        entries.push(cellWords(data, at + i * KIDS_SPRITE_ENTRY_WORDS * 2, KIDS_SPRITE_ENTRY_WORDS));
+      }
+      return { klass: k, size: spec.size, entries };
+    });
+    const bosses = KIDS_SPRITE_BOSS_OFFSETS.map((off, i) => ({
+      part: i,
+      words: cellWords(data, base + off, KIDS_SPRITE_BOSS_WORDS)
+    }));
+    stages.push({ stage: s, classes, bosses });
+  }
+  return { ship, stages };
+}
+function kidsCgPages(graphics) {
+  const pages = [];
+  for (let p = 0; p < 4; p++) pages.push(decodeCgPage(graphics.subarray(p * CG_PAGE_SIZE, (p + 1) * CG_PAGE_SIZE)));
+  return pages;
+}
+function attempt(result, block, fn) {
+  try {
+    result[block] = fn();
+  } catch (err) {
+    result[block] = null;
+    result.errors.push({ block, message: err.message });
+  }
+}
+function parseKidsSave(block, { filename = "" } = {}) {
+  const result = {
+    game: "kids",
+    filename,
+    productOk: filename === "" || filename === KIDS_PRODUCT,
+    size: block.length,
+    sizeOk: block.length === KIDS_BLOCK_SIZE,
+    header: null,
+    gameName: null,
+    gameNameAscii: null,
+    table: null,
+    checksums: null,
+    graphics: null,
+    data: null,
+    tail: null,
+    hiScores: null,
+    options: null,
+    map: null,
+    scroll: null,
+    appear: null,
+    config: null,
+    records: null,
+    sprites: null,
+    pages: null,
+    regions: KIDS_REGIONS,
+    errors: []
+  };
+  attempt(result, "header", () => parseSaveHeader(block));
+  if (result.header) {
+    result.gameName = bracketedName(result.header.title);
+    result.gameNameAscii = result.gameName === null ? null : narrow(result.gameName).replace(/\s+/g, " ").trim();
+  }
+  attempt(result, "table", () => parseKidsTable(block));
+  const table = result.table;
+  if (!table) return result;
+  if (!table.consistent) result.errors.push({ block: "table", message: table.problems.join("; ") });
+  attempt(result, "checksums", () => validateKidsTable(block, table));
+  const section = (s) => block.subarray(s.offset, Math.min(s.offset + s.size, block.length));
+  attempt(result, "graphics", () => {
+    const out = Uint8Array.from(decompress(section(table.sections.graphics)));
+    if (out.length !== KIDS_GRAPHICS_SIZE) throw new Error(`graphics decompress to ${out.length}, expected ${KIDS_GRAPHICS_SIZE}`);
+    return out;
+  });
+  attempt(result, "data", () => {
+    const out = Uint8Array.from(decompress(section(table.sections.data)));
+    if (out.length !== KIDS_DATA_SIZE) throw new Error(`data decompress to ${out.length}, expected ${KIDS_DATA_SIZE}`);
+    return out;
+  });
+  attempt(result, "tail", () => section(table.sections.tail));
+  if (result.tail) {
+    attempt(result, "hiScores", () => decodeKidsHiScores(result.tail));
+    attempt(result, "options", () => decodeKidsOptions(result.tail));
+  }
+  if (result.data) {
+    attempt(result, "map", () => decodeKidsMap(result.data));
+    attempt(result, "scroll", () => decodeKidsScroll(result.data));
+    attempt(result, "config", () => decodeKidsConfig(result.data));
+    attempt(result, "appear", () => decodeKidsAppear(result.data, { horizontal: result.config?.horizontal ?? false }));
+    attempt(result, "records", () => decodeKidsRecords(result.data));
+    attempt(result, "sprites", () => decodeKidsSprites(result.data));
+  }
+  if (result.graphics) attempt(result, "pages", () => kidsCgPages(result.graphics));
+  return result;
+}
+
+// packages/shmup-engine/src/psx/kids-edit.js
+function putU16le(bytes, at, v) {
+  bytes[at] = v & 255;
+  bytes[at + 1] = v >> 8 & 255;
+}
+function putU32le(bytes, at, v) {
+  putU16le(bytes, at, v & 65535);
+  putU16le(bytes, at + 2, v >>> 16 & 65535);
+}
+function hex(n) {
+  return "0x" + n.toString(16);
+}
+function intIn(name, v, lo, hi) {
+  if (!Number.isInteger(v) || v < lo || v > hi) {
+    throw new Error(`${name} is ${v}; the range is ${lo}..${hi}`);
+  }
+  return v;
+}
+function assertKidsBlock(block) {
+  if (!(block instanceof Uint8Array)) {
+    throw new Error(`a Dezaemon Kids! block must be a Uint8Array; got ${typeof block}`);
+  }
+  if (block.length !== KIDS_BLOCK_SIZE) {
+    throw new Error(`editing needs the whole ${KIDS_BLOCK_SIZE}-byte block; got ${block.length}`);
+  }
+}
+var KIDS_TABLE_WORD_NAMES = Object.freeze([
+  "end",
+  "graphicsSize",
+  "dataSize",
+  "graphicsOffset",
+  "graphicsSum",
+  "dataOffset",
+  "dataSum",
+  "tailOffset",
+  "tailSum",
+  "graphicsPadded",
+  "dataPadded"
+]);
+function kidsLayout(graphicsSize, dataSize) {
+  const graphicsPadded = roundUp(graphicsSize, KIDS_SECTOR);
+  const dataPadded = roundUp(dataSize, KIDS_SECTOR);
+  const graphicsOffset = KIDS_FIRST_SECTION;
+  const dataOffset = graphicsOffset + graphicsPadded;
+  const tailOffset = dataOffset + dataPadded;
+  return {
+    graphicsSize,
+    dataSize,
+    graphicsPadded,
+    dataPadded,
+    graphicsOffset,
+    dataOffset,
+    tailOffset,
+    end: tailOffset + KIDS_TAIL_SIZE
+  };
+}
+function assertFits(layout, what) {
+  if (layout.end <= KIDS_BLOCK_SIZE) return;
+  throw new Error(
+    `${what} needs ${layout.end} bytes \u2014 graphics ${layout.graphicsSize} padded to ${layout.graphicsPadded}, data ${layout.dataSize} padded to ${layout.dataPadded}, a ${KIDS_TAIL_SIZE}-byte tail, all after ${hex(KIDS_FIRST_SECTION)} \u2014 and a memory-card file holds ${KIDS_BLOCK_SIZE} (${hex(KIDS_BLOCK_SIZE)}); it is ${layout.end - KIDS_BLOCK_SIZE} bytes over`
+  );
+}
+function sealKidsTable(block, { graphics, data } = {}) {
+  assertKidsBlock(block);
+  const current = parseKidsTable(block);
+  if (graphics === void 0 || graphics === null || data === void 0 || data === null) {
+    if (!current.consistent) {
+      throw new Error(
+        `the block's own directory is inconsistent (${current.problems.join("; ")}), so the omitted compressed size cannot be read back from it; pass {graphics, data} explicitly`
+      );
+    }
+    graphics ??= current.sections.graphics.size;
+    data ??= current.sections.data.size;
+  }
+  intIn("graphics compressed size", graphics, 1, KIDS_BLOCK_SIZE);
+  intIn("data compressed size", data, 1, KIDS_BLOCK_SIZE);
+  const layout = kidsLayout(graphics, data);
+  assertFits(layout, "the directory these sizes describe");
+  const table = [
+    layout.end,
+    layout.graphicsSize,
+    layout.dataSize,
+    layout.graphicsOffset,
+    byteSum2(block, layout.graphicsOffset, layout.graphicsOffset + layout.graphicsPadded),
+    layout.dataOffset,
+    byteSum2(block, layout.dataOffset, layout.dataOffset + layout.dataPadded),
+    layout.tailOffset,
+    byteSum2(block, layout.tailOffset, layout.end),
+    layout.graphicsPadded,
+    layout.dataPadded
+  ];
+  const words = [];
+  for (let i = 0; i < KIDS_TABLE_WORDS; i++) {
+    const offset = KIDS_TABLE_OFFSET + i * 4;
+    const before = u32le(block, offset);
+    const after = table[i] >>> 0;
+    if (before === after) continue;
+    putU32le(block, offset, after);
+    words.push({ index: i, name: KIDS_TABLE_WORD_NAMES[i], offset, before, after });
+  }
+  const sealed = parseKidsTable(block);
+  return {
+    words,
+    table,
+    bytes: words.length * 4,
+    checksums: validateKidsTable(block, sealed),
+    consistent: sealed.consistent,
+    end: layout.end,
+    slack: KIDS_BLOCK_SIZE - layout.end
+  };
+}
+var KIDS_HISCORE_NAME_PAD = 46;
+var KIDS_TITLE_NAME_OFFSET = TITLE_OFFSET + 42;
+var KIDS_TITLE_NAME_BYTES = 20;
+var KIDS_TITLE_NAME_CHARS = KIDS_TITLE_NAME_BYTES / 2;
+var KIDS_TITLE_OPEN = 33143;
+var KIDS_TITLE_CLOSE = 33144;
+var KIDS_TITLE_PAD = 33088;
+if (KIDS_TITLE_NAME_OFFSET + KIDS_TITLE_NAME_BYTES + 2 !== TITLE_OFFSET + TITLE_LENGTH) {
+  throw new Error("the Kids! name field no longer ends flush with the 0x40-byte title");
+}
+var SJIS_PUNCTUATION = Object.freeze({
+  " ": KIDS_TITLE_PAD,
+  "!": 33097,
+  "#": 33172,
+  "$": 33168,
+  "%": 33171,
+  "&": 33173,
+  "(": 33129,
+  ")": 33130,
+  "*": 33174,
+  "+": 33147,
+  ",": 33091,
+  "-": 33148,
+  ".": 33092,
+  "/": 33118,
+  ":": 33094,
+  ";": 33095,
+  "<": 33155,
+  "=": 33153,
+  ">": 33156,
+  "?": 33096,
+  "@": 33175,
+  "[": 33133,
+  "\\": 33119,
+  "]": 33134,
+  "^": 33103,
+  "_": 33105,
+  "`": 33101,
+  "{": 33135,
+  "|": 33122,
+  "}": 33136,
+  "~": 33120
+});
+function sjisWord(ch) {
+  if (ch === "\u3000") return KIDS_TITLE_PAD;
+  const code = ch.charCodeAt(0);
+  const ascii = code >= 65281 && code <= 65374 ? String.fromCharCode(code - 65248) : ch;
+  if (ascii >= "0" && ascii <= "9") return 33359 + (ascii.charCodeAt(0) - 48);
+  if (ascii >= "A" && ascii <= "Z") return 33376 + (ascii.charCodeAt(0) - 65);
+  if (ascii >= "a" && ascii <= "z") return 33409 + (ascii.charCodeAt(0) - 97);
+  return SJIS_PUNCTUATION[ascii] ?? null;
+}
+function kidsNameBytes(text) {
+  if (typeof text !== "string") throw new Error(`a game name is a string; got ${typeof text}`);
+  const chars = [...text];
+  if (chars.length > KIDS_TITLE_NAME_CHARS) {
+    throw new Error(
+      `the title's name field is ${KIDS_TITLE_NAME_CHARS} fullwidth characters (${KIDS_TITLE_NAME_BYTES} bytes, fixed); "${text}" is ${chars.length}`
+    );
+  }
+  const out = new Uint8Array(KIDS_TITLE_NAME_BYTES);
+  for (let i = 0; i < KIDS_TITLE_NAME_CHARS; i++) {
+    const word = i < chars.length ? sjisWord(chars[i]) : KIDS_TITLE_PAD;
+    if (word === null) {
+      throw new Error(
+        `"${chars[i]}" has no ASCII Shift-JIS form; kidsNameBytes encodes 0x20..0x7E and their fullwidth twins only, and 54 of the 77 community names are katakana \u2014 pass raw Shift-JIS bytes to setKidsGameName for those`
+      );
+    }
+    out[i * 2] = word >> 8 & 255;
+    out[i * 2 + 1] = word & 255;
+  }
+  return out;
+}
+
+// packages/shmup-engine/src/psx/memcard-write.js
+var BROKEN_LIST_FIRST_FRAME = 16;
+var BROKEN_LIST_FRAMES = 20;
+var BROKEN_DATA_FIRST_FRAME = 36;
+var WRITE_TEST_FRAME = 63;
+var NO_BROKEN_SECTOR = 4294967295;
+function putU16le2(bytes, at, v) {
+  bytes[at] = v & 255;
+  bytes[at + 1] = v >> 8 & 255;
+}
+function putU32le2(bytes, at, v) {
+  putU16le2(bytes, at, v & 65535);
+  putU16le2(bytes, at + 2, v >>> 16 & 65535);
+}
+function seal(frame) {
+  frame[FRAME_SIZE - 1] = frameChecksum(frame);
+}
+function formatMemoryCard() {
+  const card = new Uint8Array(CARD_SIZE);
+  const header = card.subarray(0, FRAME_SIZE);
+  header[0] = 77;
+  header[1] = 67;
+  seal(header);
+  for (let i = 0; i < BLOCK_COUNT; i++) {
+    const frame = card.subarray(DIRECTORY_OFFSET + i * FRAME_SIZE, DIRECTORY_OFFSET + (i + 1) * FRAME_SIZE);
+    frame[0] = STATUS.FREE;
+    putU16le2(frame, 8, NO_NEXT);
+    seal(frame);
+  }
+  for (let i = 0; i < BROKEN_LIST_FRAMES; i++) {
+    const at = (BROKEN_LIST_FIRST_FRAME + i) * FRAME_SIZE;
+    const frame = card.subarray(at, at + FRAME_SIZE);
+    putU32le2(frame, 0, NO_BROKEN_SECTOR);
+    seal(frame);
+  }
+  card.fill(255, BROKEN_DATA_FIRST_FRAME * FRAME_SIZE, WRITE_TEST_FRAME * FRAME_SIZE);
+  card.set(header, WRITE_TEST_FRAME * FRAME_SIZE);
+  return card;
+}
+function encodeCardFilename(filename) {
+  if (typeof filename !== "string" || !filename.length) throw new Error("a card file needs a name");
+  if (filename.length > FILENAME_LENGTH) {
+    throw new Error(`a card file name is at most ${FILENAME_LENGTH} bytes; "${filename}" is ${filename.length}`);
+  }
+  const out = new Uint8Array(FILENAME_LENGTH);
+  for (let i = 0; i < filename.length; i++) {
+    const c = filename.charCodeAt(i);
+    if (c < 32 || c > 126) throw new Error(`"${filename[i]}" is not printable ASCII; a card file name is`);
+    out[i] = c;
+  }
+  return out;
+}
+function buildMemoryCard(files) {
+  const card = formatMemoryCard();
+  let next = 1;
+  for (const file of files) {
+    if (!(file.data instanceof Uint8Array) || !file.data.length) {
+      throw new Error(`${file.filename || "(unnamed)"}: a card file is a non-empty Uint8Array`);
+    }
+    const blocks = Math.ceil(file.data.length / BLOCK_SIZE);
+    if (next + blocks - 1 > BLOCK_COUNT) {
+      throw new Error(
+        `${file.filename} needs ${blocks} block${blocks === 1 ? "" : "s"} and the card has ${BLOCK_COUNT - next + 1} free of ${BLOCK_COUNT}`
+      );
+    }
+    const name = encodeCardFilename(file.filename);
+    for (let k = 0; k < blocks; k++) {
+      const block = next + k;
+      const frame = card.subarray(DIRECTORY_OFFSET + (block - 1) * FRAME_SIZE, DIRECTORY_OFFSET + block * FRAME_SIZE);
+      frame.fill(0);
+      const last = k === blocks - 1;
+      frame[0] = k === 0 ? STATUS.FIRST : last ? STATUS.LAST : STATUS.MIDDLE;
+      if (k === 0) {
+        putU32le2(frame, 4, file.data.length);
+        frame.set(name, FILENAME_OFFSET);
+      }
+      putU16le2(frame, 8, last ? NO_NEXT : block);
+      seal(frame);
+      card.set(file.data.subarray(k * BLOCK_SIZE, (k + 1) * BLOCK_SIZE), block * BLOCK_SIZE);
+    }
+    next += blocks;
+  }
+  const back = parseMemoryCard(card);
+  if (!back.magicOk || !back.headerChecksumOk || !back.frames.every((f) => f.checksumOk)) {
+    throw new Error("the card this built does not read back: a directory frame failed its checksum");
+  }
+  for (const file of files) {
+    const found = back.files.find((f) => f.filename === file.filename);
+    if (!found || !found.complete || found.size !== file.data.length) {
+      throw new Error(`${file.filename} did not come back off the card it was just written to`);
+    }
+    for (let i = 0; i < file.data.length; i++) {
+      if (found.data[i] !== file.data[i]) {
+        throw new Error(`${file.filename} read back with a different byte at 0x${i.toString(16)}`);
+      }
+    }
+  }
+  return card;
+}
+
+// packages/shmup-engine/src/psx/kids-write.js
+var KIDS_SPRITE_STRIPS = Object.freeze([
+  Object.freeze({ klass: 0, w: 2, h: 2, frames: 4, stripW: 8, stripH: 2 }),
+  Object.freeze({ klass: 1, w: 4, h: 2, frames: 2, stripW: 8, stripH: 2 }),
+  Object.freeze({ klass: 2, w: 2, h: 4, frames: 2, stripW: 4, stripH: 4 }),
+  Object.freeze({ klass: 3, w: 4, h: 4, frames: 1, stripW: 4, stripH: 4 })
+]);
+var KIDS_BOSS_GRID = 8;
+var KIDS_BOSS_ART_CELLS = Object.freeze([[4, 4], [8, 4], [4, 8], [8, 8]]);
+var KIDS_BOSS_FOOTPRINT = Object.freeze([[2, 2], [4, 2], [2, 4], [4, 4]]);
+var KIDS_SHIP_LAYOUT = Object.freeze({
+  ship1: Object.freeze({ poses: [0, 4, 8], shot: 12 }),
+  ship2: Object.freeze({ poses: [32, 36, 40], shot: 44 }),
+  title1: Object.freeze({ at: 64, w: 8, h: 4 }),
+  title2: Object.freeze({ at: 112, w: 8, h: 6 }),
+  items: Object.freeze({ at: 160, count: 6 }),
+  blast: Object.freeze({ at: 166, frames: 6 }),
+  bullets: Object.freeze({ at: 190, count: 7, frames: 4 })
+});
+var KIDS_SHIP_TABLE_WORDS = KIDS_SHIP_TABLE_BYTES / 2;
+var KIDS_MOVE_STRAIGHT = 4;
+var KIDS_STRAIGHT_SPEEDS = Object.freeze([1, 2, 4.5]);
+var RUNTIME_TO_KIDS_SPEED = 0.5;
+var KIDS_HP_UNITS = Object.freeze([256, 38400, 102400, 512e3]);
+var KIDS_SHOT_UNITS = 5120;
+var KIDS_SCORE_TIERS = Object.freeze([350, 2e3]);
+var KIDS_FIRE_INTERVAL_BITS = 64;
+var KIDS_BOSS_TEMPLATES = Object.freeze([
+  Object.freeze([17, 105, 0, 0, 27, 33, 26, 246, 6, 16, 17, 13, 6, 16, 16]),
+  Object.freeze([90, 9, 0, 230, 255, 32, 19, 25, 255, 32, 19, 0, 0, 19, 6]),
+  Object.freeze([130, 9, 136, 250, 244, 38, 9, 232, 244, 20, 16, 12, 243, 20, 16]),
+  Object.freeze([220, 129, 0, 0, 53, 39, 0, 0, 226, 19, 3, 255, 2, 17, 3])
+]);
+var KIDS_BOSS_UNUSED = Object.freeze([16, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+var KIDS_CONFIG_TEMPLATE = Object.freeze([
+  0,
+  162,
+  3,
+  1,
+  32,
+  1,
+  0,
+  1,
+  129,
+  128,
+  71,
+  1,
+  130,
+  70,
+  1,
+  2,
+  2,
+  9,
+  9,
+  9,
+  9,
+  5,
+  5,
+  5,
+  1,
+  9,
+  5,
+  0,
+  0,
+  0,
+  1,
+  0,
+  0,
+  3,
+  0,
+  127,
+  3,
+  0,
+  31,
+  127,
+  1,
+  0,
+  0,
+  127,
+  6,
+  0,
+  32,
+  127,
+  5,
+  0,
+  32,
+  127,
+  2,
+  0,
+  24,
+  127,
+  0,
+  0,
+  24,
+  127,
+  16,
+  0,
+  87,
+  127,
+  16,
+  0,
+  87,
+  127,
+  18,
+  0,
+  24,
+  127,
+  0,
+  0,
+  24,
+  127,
+  0,
+  0,
+  85,
+  127,
+  32,
+  0,
+  61,
+  127,
+  88,
+  0,
+  58,
+  127,
+  0,
+  0,
+  24,
+  127,
+  0,
+  0,
+  24,
+  127,
+  0,
+  0,
+  24,
+  7,
+  7,
+  1,
+  7,
+  17,
+  20,
+  6,
+  6,
+  22,
+  22,
+  3,
+  25,
+  0
+]);
+var KIDS_CONFIG_SOUND_OFFSET = 35;
+var KIDS_CONFIG_MOTION_OFFSET = 99;
+var KIDS_CONFIG_BACKGROUND_OFFSET = 105;
+var KIDS_CONFIG_LAST_STAGE = 128;
+var KIDS_MOTION_DEFAULT = 2;
+var KIDS_MOTION_BACKGROUND = 32;
+var KIDS_BACKGROUND_SETS = 38;
+var KIDS_FACTORY_OPTIONS = Object.freeze([
+  1,
+  1,
+  160,
+  80,
+  1,
+  160,
+  80,
+  0,
+  1,
+  160,
+  80,
+  8,
+  2,
+  1,
+  1,
+  0,
+  0,
+  1,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  2,
+  0,
+  127,
+  0
+]);
+var KIDS_FACTORY_LEVEL = 1;
+var KIDS_FIRST_SPAWN_ROW = 4;
+var KIDS_ROW_STEP = 6;
+var KIDS_BOSS_ROW_GAP = 12;
+var KIDS_MAX_SPAWN_ROW = KIDS_APPEAR_ROWS - 16;
+var KIDS_FIRST_VISIBLE_COLUMN = 1;
+var KIDS_VISIBLE_COLUMNS = KIDS_MAP_COLUMNS;
+var KIDS_BOSS_COLUMN = Object.freeze([3, 2, 3, 2]);
+var KIDS_SCROLL_RUN = 2;
+var KIDS_SCROLL_HALT = 0;
+var KIDS_MAP_FILL = 32896;
+var clamp2 = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function nearestIndex2(table, value) {
+  let best = 0, bestD = Infinity;
+  table.forEach((v, i) => {
+    const d = Math.abs(v - value);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  return best;
+}
+function putU16le3(bytes, at, v) {
+  bytes[at] = v & 255;
+  bytes[at + 1] = v >> 8 & 255;
+}
+function putU32le3(bytes, at, v) {
+  putU16le3(bytes, at, v & 65535);
+  putU16le3(bytes, at + 2, v >>> 16 & 65535);
+}
+function b64ToBytes2(b64) {
+  const bin = atob(String(b64));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function hflipRgba(frame) {
+  const out = new Uint8Array(frame.rgba.length);
+  for (let y = 0; y < frame.h; y++) {
+    for (let x = 0; x < frame.w; x++) {
+      const s = (y * frame.w + (frame.w - 1 - x)) * 4;
+      const d = (y * frame.w + x) * 4;
+      out[d] = frame.rgba[s];
+      out[d + 1] = frame.rgba[s + 1];
+      out[d + 2] = frame.rgba[s + 2];
+      out[d + 3] = frame.rgba[s + 3];
+    }
+  }
+  return { w: frame.w, h: frame.h, rgba: out };
+}
+function mapKidsColumn(col, width, cellsWide = 1) {
+  const last = KIDS_FIRST_VISIBLE_COLUMN + KIDS_VISIBLE_COLUMNS - cellsWide;
+  if (width <= 1) return clamp2(KIDS_FIRST_VISIBLE_COLUMN + Math.floor((KIDS_VISIBLE_COLUMNS - cellsWide) / 2), KIDS_FIRST_VISIBLE_COLUMN, last);
+  const c = KIDS_FIRST_VISIBLE_COLUMN + Math.round(col * (KIDS_VISIBLE_COLUMNS - 1) / (width - 1));
+  return clamp2(c, KIDS_FIRST_VISIBLE_COLUMN, last);
+}
+function kidsClassFor(w, h) {
+  if (w <= 32 && h <= 32) return 0;
+  if (h <= 32) return 1;
+  if (w <= 32) return 2;
+  return 3;
+}
+function kidsBossClassFor(w, h) {
+  if (w <= 64 && h <= 64) return 0;
+  if (h <= 64) return 1;
+  if (w <= 64) return 2;
+  return 3;
+}
+var paletteRgb = null;
+var nearestCache = /* @__PURE__ */ new Map();
+function nearestKidsIndex(r, g, b) {
+  const key = r << 16 | g << 8 | b;
+  const hit = nearestCache.get(key);
+  if (hit !== void 0) return hit;
+  if (!paletteRgb) paletteRgb = KIDS_PALETTE.map((w) => rgb555ToRgb(w & 32767));
+  let best = 1, bestD = Infinity;
+  for (let i = 1; i < paletteRgb.length; i++) {
+    const p = paletteRgb[i];
+    const dr = p.r - r, dg = p.g - g, db = p.b - b;
+    const d = dr * dr + dg * dg + db * db;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  nearestCache.set(key, best);
+  return best;
+}
+var KIDS_ALPHA_CUTOFF = 128;
+function quantizeKidsFrame(frame) {
+  const out = new Uint8Array(frame.w * frame.h);
+  for (let i = 0; i < out.length; i++) {
+    const o = i * 4;
+    if (frame.rgba[o + 3] < KIDS_ALPHA_CUTOFF) {
+      out[i] = KIDS_TRANSPARENT_INDEX;
+      continue;
+    }
+    out[i] = nearestKidsIndex(frame.rgba[o], frame.rgba[o + 1], frame.rgba[o + 2]);
+  }
+  return out;
+}
+var KidsBankFullError = class extends Error {
+  constructor(what) {
+    super(`the four CG pages hold ${KIDS_CELL_COUNT} cells and every one is taken (${what})`);
+    this.name = "KidsBankFullError";
+  }
+};
+function cellKey(cell) {
+  let s = "";
+  for (let i = 0; i < cell.length; i++) s += String.fromCharCode(cell[i]);
+  return s;
+}
+function flipCellH(cell, dim2) {
+  const out = new Uint8Array(cell.length);
+  for (let y = 0; y < dim2; y++) for (let x = 0; x < dim2; x++) out[y * dim2 + x] = cell[y * dim2 + (dim2 - 1 - x)];
+  return out;
+}
+function flipCellV(cell, dim2) {
+  const out = new Uint8Array(cell.length);
+  for (let y = 0; y < dim2; y++) out.set(cell.subarray((dim2 - 1 - y) * dim2, (dim2 - y) * dim2), y * dim2);
+  return out;
+}
+function isBlank2(bytes) {
+  for (let i = 0; i < bytes.length; i++) if (bytes[i]) return false;
+  return true;
+}
+var KidsCellBank = class {
+  constructor() {
+    this.graphics = new Uint8Array(KIDS_GRAPHICS_SIZE);
+    this.taken = new Uint8Array(KIDS_CELL_COUNT);
+    this.used = 0;
+    this.chips = 0;
+    this.sprites = 0;
+    this.shared = 0;
+    this.cellByKey = /* @__PURE__ */ new Map();
+    this.chipByKey = /* @__PURE__ */ new Map();
+    this.nextSingle = KIDS_CELL_COUNT - 1;
+  }
+  get free() {
+    return KIDS_CELL_COUNT - this.used;
+  }
+  _store(index, cell) {
+    this.graphics.set(cell, index * CG_CELL_BYTES);
+    this.taken[index] = 1;
+    this.used++;
+  }
+  /** One 16x16 cell -> its word (cell | flips), or KIDS_BLANK. */
+  addCell(cell) {
+    if (isBlank2(cell)) return KIDS_BLANK;
+    const key = cellKey(cell);
+    const hit = this.cellByKey.get(key);
+    if (hit) {
+      this.shared++;
+      return hit;
+    }
+    let index = this.nextSingle;
+    while (index >= 0 && this.taken[index]) index--;
+    if (index < 0) throw new KidsBankFullError("a sprite cell");
+    this.nextSingle = index - 1;
+    this._store(index, cell);
+    this.sprites++;
+    this.cellByKey.set(key, index);
+    const h = flipCellH(cell, CG_CELL), v = flipCellV(cell, CG_CELL);
+    for (const [bytes, flags] of [[h, KIDS_HFLIP], [v, KIDS_VFLIP], [flipCellV(h, CG_CELL), KIDS_HFLIP | KIDS_VFLIP]]) {
+      const k = cellKey(bytes);
+      if (!this.cellByKey.has(k)) this.cellByKey.set(k, index | flags);
+    }
+    return index;
+  }
+  /** A 32x32 indexed chip (row-major, 1,024 bytes) -> its map word. */
+  addChip(chip) {
+    if (isBlank2(chip)) return KIDS_MAP_FILL;
+    const key = cellKey(chip);
+    const hit = this.chipByKey.get(key);
+    if (hit !== void 0) {
+      this.shared++;
+      return hit;
+    }
+    let n = -1;
+    for (let c = 0; c < KIDS_CELL_COUNT; c++) {
+      if ((c & KIDS_CELL_ALIGN) !== 0) continue;
+      if (this.taken[c] || this.taken[c + 1] || this.taken[c + 8] || this.taken[c + 9]) continue;
+      n = c;
+      break;
+    }
+    if (n < 0) throw new KidsBankFullError("a map chip");
+    const dim2 = 2 * CG_CELL;
+    for (const [cy, cx, index] of [[0, 0, n], [0, 1, n + 1], [1, 0, n + 8], [1, 1, n + 9]]) {
+      const cell = new Uint8Array(CG_CELL_BYTES);
+      for (let y = 0; y < CG_CELL; y++) {
+        cell.set(chip.subarray((cy * CG_CELL + y) * dim2 + cx * CG_CELL, (cy * CG_CELL + y) * dim2 + cx * CG_CELL + CG_CELL), y * CG_CELL);
+      }
+      this._store(index, cell);
+    }
+    this.chips++;
+    this.chipByKey.set(key, n);
+    const h = flipCellH(chip, dim2), v = flipCellV(chip, dim2);
+    for (const [bytes, flags] of [[h, KIDS_HFLIP], [v, KIDS_VFLIP], [flipCellV(h, dim2), KIDS_HFLIP | KIDS_VFLIP]]) {
+      const k = cellKey(bytes);
+      if (!this.chipByKey.has(k)) this.chipByKey.set(k, n | flags);
+    }
+    return n;
+  }
+  /**
+   * An indexed frame whose w and h are multiples of 16 -> one word per cell
+   * in reading order. Throws KidsBankFullError with nothing stored when the
+   * frame's new cells do not fit.
+   */
+  addFrame(indexed, w, h) {
+    const cw = w / CG_CELL, ch = h / CG_CELL;
+    const cells = [];
+    let need3 = 0;
+    const seen = /* @__PURE__ */ new Set();
+    for (let cy = 0; cy < ch; cy++) {
+      for (let cx = 0; cx < cw; cx++) {
+        const cell = new Uint8Array(CG_CELL_BYTES);
+        for (let y = 0; y < CG_CELL; y++) {
+          cell.set(indexed.subarray((cy * CG_CELL + y) * w + cx * CG_CELL, (cy * CG_CELL + y) * w + cx * CG_CELL + CG_CELL), y * CG_CELL);
+        }
+        cells.push(cell);
+        if (isBlank2(cell)) continue;
+        const k = cellKey(cell);
+        if (this.cellByKey.has(k) || seen.has(k)) continue;
+        seen.add(k);
+        need3++;
+      }
+    }
+    if (need3 > this.free) throw new KidsBankFullError(`${need3} new cells for a ${w}x${h} frame, ${this.free} free`);
+    return Uint16Array.from(cells, (c) => this.addCell(c));
+  }
+};
+function encodeKidsIcon(frame) {
+  const fitted = fitRgba(frame, ICON_DIM, ICON_DIM);
+  const hist = colorHistogram([fitted]);
+  const words = medianCut(hist, 15);
+  const clut = new Uint16Array(16);
+  words.forEach((w, i) => {
+    clut[i + 1] = w === 0 ? 32768 : w;
+  });
+  const pixels = new Uint8Array(ICON_DIM * ICON_DIM / 2);
+  const to52 = (v) => v >> 3;
+  for (let i = 0; i < ICON_DIM * ICON_DIM; i++) {
+    const o = i * 4;
+    let index = 0;
+    if (fitted.rgba[o + 3] >= KIDS_ALPHA_CUTOFF && words.length) {
+      const r = to52(fitted.rgba[o]), g = to52(fitted.rgba[o + 1]), b = to52(fitted.rgba[o + 2]);
+      let best = 0, bestD = Infinity;
+      words.forEach((w, k) => {
+        const dr = (w & 31) - r, dg = (w >> 5 & 31) - g, db = (w >> 10 & 31) - b;
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestD) {
+          bestD = d;
+          best = k;
+        }
+      });
+      index = best + 1;
+    }
+    if (i & 1) pixels[i >> 1] |= index << 4;
+    else pixels[i >> 1] |= index;
+  }
+  return { clut, pixels };
+}
+function defaultKidsIcon() {
+  const rgba = new Uint8Array(ICON_DIM * ICON_DIM * 4);
+  const rows = [
+    "................",
+    ".##############.",
+    ".#............#.",
+    ".#.##....##...#.",
+    ".#.##...##....#.",
+    ".#.##..##.....#.",
+    ".#.##.##......#.",
+    ".#.####.......#.",
+    ".#.####.......#.",
+    ".#.##.##......#.",
+    ".#.##..##.....#.",
+    ".#.##...##....#.",
+    ".#.##....##...#.",
+    ".#............#.",
+    ".##############.",
+    "................"
+  ];
+  for (let y = 0; y < ICON_DIM; y++) {
+    for (let x = 0; x < ICON_DIM; x++) {
+      const o = (y * ICON_DIM + x) * 4;
+      const ink = rows[y][x] === "#";
+      rgba[o] = ink ? 255 : 40;
+      rgba[o + 1] = ink ? 220 : 40;
+      rgba[o + 2] = ink ? 80 : 60;
+      rgba[o + 3] = 255;
+    }
+  }
+  return { w: ICON_DIM, h: ICON_DIM, rgba };
+}
+function kidsGameNameFor(name) {
+  const source = String(name ?? "").trim() || "my game";
+  const kept = [];
+  let dropped = false;
+  for (const ch of source) {
+    try {
+      kidsNameBytes(ch);
+      kept.push(ch);
+    } catch {
+      dropped = true;
+    }
+  }
+  let text = kept.join("").replace(/\s+/g, " ").trim();
+  const cut = [...text].length > KIDS_TITLE_NAME_CHARS;
+  if (cut) text = [...text].slice(0, KIDS_TITLE_NAME_CHARS).join("");
+  if (!text) text = "GAME";
+  return { text, bytes: kidsNameBytes(text), changed: dropped || cut || text !== source };
+}
+var KIDS_TITLE_PREFIX_BYTES = Object.freeze([
+  131,
+  102,
+  131,
+  85,
+  131,
+  71,
+  131,
+  130,
+  131,
+  147,
+  // デザエモン
+  130,
+  106,
+  130,
+  137,
+  130,
+  132,
+  130,
+  147,
+  129,
+  73,
+  // Ｋｉｄｓ！
+  131,
+  134,
+  129,
+  91,
+  131,
+  85,
+  129,
+  91,
+  131,
+  81,
+  129,
+  91,
+  131,
+  128,
+  131,
+  102,
+  129,
+  91,
+  131,
+  94,
+  // ユーザーゲームデータ
+  KIDS_TITLE_OPEN >> 8 & 255,
+  KIDS_TITLE_OPEN & 255
+  // 『
+]);
+function buildKidsBlock({ graphics, data, tail, name, icon }) {
+  if (!(graphics instanceof Uint8Array) || graphics.length !== KIDS_GRAPHICS_SIZE) {
+    throw new Error(`graphics must be ${KIDS_GRAPHICS_SIZE} bytes`);
+  }
+  if (!(data instanceof Uint8Array) || data.length !== KIDS_DATA_SIZE) throw new Error(`data must be ${KIDS_DATA_SIZE} bytes`);
+  if (!(tail instanceof Uint8Array) || tail.length !== KIDS_TAIL_SIZE) throw new Error(`the tail must be ${KIDS_TAIL_SIZE} bytes`);
+  if (!(name instanceof Uint8Array) || name.length !== KIDS_TITLE_NAME_BYTES) {
+    throw new Error(`the name must be ${KIDS_TITLE_NAME_BYTES} bytes of Shift-JIS (kidsNameBytes)`);
+  }
+  const block = new Uint8Array(KIDS_BLOCK_SIZE);
+  block[0] = 83;
+  block[1] = 67;
+  block[2] = 17;
+  block[3] = KIDS_BLOCK_SIZE / 8192;
+  block.set(KIDS_TITLE_PREFIX_BYTES, TITLE_OFFSET);
+  block.set(name, KIDS_TITLE_NAME_OFFSET);
+  block[KIDS_TITLE_NAME_OFFSET + KIDS_TITLE_NAME_BYTES] = KIDS_TITLE_CLOSE >> 8 & 255;
+  block[KIDS_TITLE_NAME_OFFSET + KIDS_TITLE_NAME_BYTES + 1] = KIDS_TITLE_CLOSE & 255;
+  if (KIDS_TITLE_NAME_OFFSET + KIDS_TITLE_NAME_BYTES + 2 !== TITLE_OFFSET + TITLE_LENGTH) {
+    throw new Error("the title no longer ends flush with its 0x40 bytes");
+  }
+  for (let i = 0; i < 16; i++) putU16le3(block, CLUT_OFFSET + i * 2, icon.clut[i] ?? 0);
+  block.set(icon.pixels.subarray(0, 128), TITLE_FRAME_SIZE);
+  const gfx = compress(graphics);
+  const dat = compress(data);
+  const round = (n) => Math.ceil(n / 128) * 128;
+  const dataOffset = KIDS_FIRST_SECTION + round(gfx.length);
+  const tailOffset = dataOffset + round(dat.length);
+  const end = tailOffset + KIDS_TAIL_SIZE;
+  if (end > KIDS_BLOCK_SIZE) {
+    throw new Error(
+      `the game does not fit a memory-card file: graphics pack to ${gfx.length} bytes and data to ${dat.length}, ${end - KIDS_BLOCK_SIZE} bytes over the ${KIDS_BLOCK_SIZE} a Kids! save holds`
+    );
+  }
+  block.set(gfx, KIDS_FIRST_SECTION);
+  block.set(dat, dataOffset);
+  block.set(tail, tailOffset);
+  const seal2 = sealKidsTable(block, { graphics: gfx.length, data: dat.length });
+  if (!seal2.consistent || !seal2.checksums.ok) throw new Error("the block's own directory does not verify after sealing");
+  const back = parseKidsSave(block);
+  if (back.errors.length) throw new Error(`the block does not read back: ${back.errors.map((e) => e.message).join("; ")}`);
+  for (const [label, want, got] of [["graphics", graphics, back.graphics], ["data", data, back.data]]) {
+    if (!got || got.length !== want.length) throw new Error(`the ${label} section does not decompress to its size`);
+    for (let i = 0; i < want.length; i++) {
+      if (got[i] !== want[i]) throw new Error(`the ${label} section differs at 0x${i.toString(16)} after the round trip`);
+    }
+  }
+  return { block, seal: seal2, sizes: { graphics: gfx.length, data: dat.length } };
+}
+function factoryKidsTail() {
+  const tail = new Uint8Array(KIDS_TAIL_SIZE);
+  for (let i = 0; i < KIDS_HISCORE_COUNT; i++) {
+    const at = i * KIDS_HISCORE_SIZE;
+    putU32le3(tail, at, (KIDS_HISCORE_COUNT - i) * 100);
+    tail[at + 5] = KIDS_FACTORY_LEVEL;
+    tail.fill(KIDS_HISCORE_NAME_PAD, at + 8, at + 16);
+  }
+  tail.set(KIDS_FACTORY_OPTIONS, KIDS_OPTIONS_OFFSET);
+  return tail;
+}
+function buildKidsGameFromLevel(level, art2, options = {}) {
+  const opts = { name: null, title1: null, title2: null, backgroundSet: 0, horizontal: false, ...options };
+  const warnings = [];
+  const warn = (m) => warnings.push(m);
+  const artMap = /* @__PURE__ */ new Map();
+  for (const [k, v] of Object.entries(art2 || {})) {
+    if (v && v.rgba && v.w > 0 && v.h > 0) artMap.set(decodeFrameKey(k), { key: decodeFrameKey(k), ...v });
+  }
+  const lookup = (n) => n ? artMap.get(decodeFrameKey(n)) || null : null;
+  let stages = levelStages(level);
+  if (!stages.length) throw new Error("the level has no stage with an enemylist");
+  if (stages.length > KIDS_STAGES) {
+    warn(`level has ${stages.length} stages; a Kids! save holds ${KIDS_STAGES} \u2014 dropped the rest`);
+    stages = stages.slice(0, KIDS_STAGES);
+  }
+  if (opts.horizontal) warn("the grid is horizontal; a Kids! game is written as a vertical one here \u2014 enemies come down the screen");
+  const enemyData = level.enemyData || {};
+  const bossData = level.bossData || {};
+  const bank = new KidsCellBank();
+  const fullWarned = /* @__PURE__ */ new Set();
+  const bankFrame = (indexed, w, h, what) => {
+    try {
+      return bank.addFrame(indexed, w, h);
+    } catch (e) {
+      if (!(e instanceof KidsBankFullError)) throw e;
+      if (!fullWarned.has(what)) {
+        fullWarned.add(what);
+        warn(`CG pages full (${KIDS_CELL_COUNT} cells): ${what} art left unpainted`);
+      }
+      return null;
+    }
+  };
+  const fitIndexed = (frame, w, h) => quantizeKidsFrame(fitRgba(frame, w, h));
+  const data = new Uint8Array(KIDS_DATA_SIZE);
+  const putWords = (at, list) => {
+    for (let i = 0; i < list.length; i++) putU16le3(data, at + i * 2, list[i]);
+  };
+  for (let i = 0; i < KIDS_REGION.map.length; i += 2) putU16le3(data, KIDS_REGION.map.offset + i, KIDS_MAP_FILL);
+  let shipSource = "level";
+  let shipFrames = (level.playerData && level.playerData.texture || []).map(lookup).filter(Boolean);
+  if (!shipFrames.length) {
+    shipSource = "duke";
+    shipFrames = decodePlayerArt().filter((f) => /^duke_\d$/.test(f.key)).slice(0, 2);
+  }
+  const shipWords = new Uint16Array(KIDS_SHIP_TABLE_WORDS).fill(KIDS_BLANK);
+  const poseWords = (frame) => {
+    if (!frame) return new Uint16Array(4).fill(KIDS_BLANK);
+    return bankFrame(fitIndexed(frame, 32, 32), 32, 32, "player") || new Uint16Array(4).fill(KIDS_BLANK);
+  };
+  const centre = shipFrames[0] || null;
+  const bank0 = shipFrames.length > 1 ? shipFrames[1] : centre;
+  const poses = [poseWords(bank0), poseWords(centre), poseWords(bank0 ? hflipRgba(fitRgba(bank0, 32, 32)) : null)];
+  for (const ship of [KIDS_SHIP_LAYOUT.ship1, KIDS_SHIP_LAYOUT.ship2]) {
+    ship.poses.forEach((at, i) => shipWords.set(poses[i], at));
+  }
+  const pd = level.playerData || {};
+  const shotArt = [];
+  for (const mode of ["shootNormal", "shoot3way", "shootBig"]) {
+    const tex = pd[mode] && Array.isArray(pd[mode].texture) ? pd[mode].texture : [];
+    for (const f of tex.map(lookup).filter(Boolean)) {
+      if (shotArt.some((s) => s.key === f.key)) continue;
+      shotArt.push(f.w > f.h ? { ...rotateCcwRgba(f), key: f.key } : f);
+    }
+  }
+  const shotFrame = shotArt[0] || shotSprite(16, 16);
+  const shotWords = bankFrame(fitIndexed(shotFrame, 16, 32), 16, 32, "player shot") || new Uint16Array(2).fill(KIDS_BLANK);
+  for (const ship of [KIDS_SHIP_LAYOUT.ship1, KIDS_SHIP_LAYOUT.ship2]) {
+    shipWords.set(shotWords, ship.shot);
+    shipWords.set(shotWords, ship.shot + 2);
+  }
+  const bulletArt = [];
+  const usedLetters = /* @__PURE__ */ new Set();
+  for (const st of stages) for (const row of st.enemylist) for (const c of row) if (c !== "00") usedLetters.add(c.slice(0, -1));
+  for (const letter of usedLetters) {
+    const rec = enemyData[`enemy${letter}`];
+    const tex = rec && rec.projectileData && Array.isArray(rec.projectileData.texture) ? rec.projectileData.texture : [];
+    const frames = tex.map(lookup).filter(Boolean);
+    if (frames.length && !bulletArt.some((b) => b[0].key === frames[0].key)) bulletArt.push(frames);
+  }
+  for (let s = 0; s < stages.length; s++) {
+    const b = bossData[`boss${s}`];
+    if (!b) continue;
+    for (const slot of ["bulletDataA", "projectileDataA", "bulletData", "projectileData", "bulletDataB", "projectileDataB", "bulletDataC", "projectileDataC"]) {
+      const tex = b[slot] && Array.isArray(b[slot].texture) ? b[slot].texture : [];
+      const frames = tex.map(lookup).filter(Boolean);
+      if (frames.length && !bulletArt.some((x) => x[0].key === frames[0].key)) bulletArt.push(frames);
+    }
+  }
+  const bulletTints = [[255, 240, 120], [120, 200, 255], [255, 120, 200], [140, 255, 140], [255, 170, 60], [200, 200, 255], [255, 255, 255]];
+  const bulletSlots = [];
+  for (let q = 0; q < KIDS_SHIP_LAYOUT.bullets.count; q++) {
+    const frames = bulletArt.length ? bulletArt[q % bulletArt.length] : [shotSprite(16, 16, bulletTints[q])];
+    const chosen = spreadFrames(frames, KIDS_SHIP_LAYOUT.bullets.frames);
+    const out = chosen.map((f) => (bankFrame(fitIndexed(f, 16, 16), 16, 16, "enemy bullet") || new Uint16Array([KIDS_BLANK]))[0]);
+    shipWords.set(out, KIDS_SHIP_LAYOUT.bullets.at + q * KIDS_SHIP_LAYOUT.bullets.frames);
+    bulletSlots.push(frames[0].key || "procedural");
+  }
+  blastFrames(32, KIDS_SHIP_LAYOUT.blast.frames).forEach((f, i) => {
+    const w = bankFrame(quantizeKidsFrame(f), 32, 32, "blast") || new Uint16Array(4).fill(KIDS_BLANK);
+    shipWords.set(w, KIDS_SHIP_LAYOUT.blast.at + i * 4);
+  });
+  [7, 8, 5, 4, 6, 6].forEach((type, i) => {
+    const w = bankFrame(quantizeKidsFrame(itemIcon(type)), 16, 16, "items") || new Uint16Array([KIDS_BLANK]);
+    shipWords[KIDS_SHIP_LAYOUT.items.at + i] = w[0];
+  });
+  const built = stages.map((st, s) => {
+    const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
+    const spawnRows = st.enemylist.slice().reverse();
+    const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
+    const appear = new Uint8Array(KIDS_APPEAR_STAGE_BYTES);
+    const counts = KIDS_APPEAR_CLASSES.map(() => 0);
+    const records = /* @__PURE__ */ new Map();
+    const usage = /* @__PURE__ */ new Map();
+    for (const row of spawnRows) for (const cell of row) if (cell && cell !== "00") usage.set(cell.slice(0, -1), (usage.get(cell.slice(0, -1)) || 0) + 1);
+    const letters = [...usage.keys()].sort((a, b) => usage.get(b) - usage.get(a));
+    for (const letter of letters) {
+      const rec = enemyData[`enemy${letter}`];
+      if (!rec) {
+        warn(`${st.key}: grid names enemy${letter} but enemyData has no such record \u2014 cells left empty`);
+        continue;
+      }
+      const frames = (Array.isArray(rec.texture) ? rec.texture : []).map(lookup).filter(Boolean);
+      if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas \u2014 placed invisible`);
+      const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
+      const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
+      if (frames.length && (maxW > 64 || maxH > 64)) {
+        warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 \u2014 downscaled`);
+      }
+      let klass = kidsClassFor(maxW, maxH);
+      while (klass < KIDS_APPEAR_CLASSES.length && counts[klass] >= KIDS_APPEAR_CLASSES[klass].count) klass++;
+      if (klass >= KIDS_APPEAR_CLASSES.length) {
+        warn(`${st.key}: no free record for enemy${letter} (${rec.name || "?"}) \u2014 a stage holds 16 + 8 + 8 + 8 \u2014 cells left empty`);
+        continue;
+      }
+      const id = counts[klass]++;
+      const strip = KIDS_SPRITE_STRIPS[klass];
+      const bw = strip.w * CG_CELL, bh = strip.h * CG_CELL;
+      const stripWords = new Uint16Array(KIDS_SPRITE_ENTRY_WORDS).fill(KIDS_BLANK);
+      spreadFrames(frames, strip.frames).forEach((f, fi) => {
+        const cells = bankFrame(fitIndexed(f, bw, bh), bw, bh, `enemy${letter}`);
+        if (!cells) return;
+        for (let cy = 0; cy < strip.h; cy++) {
+          for (let cx = 0; cx < strip.w; cx++) stripWords[cy * strip.stripW + fi * strip.w + cx] = cells[cy * strip.w + cx];
+        }
+      });
+      const speed = (Number.isFinite(rec.speed) ? rec.speed : 1) * RUNTIME_TO_KIDS_SPEED;
+      const variant = nearestIndex2(KIDS_STRAIGHT_SPEEDS, speed);
+      const hits = rec.hp === "infinity" ? 100 : Math.max(1, Number(rec.hp) || 1);
+      const hpIndex = nearestIndex2(KIDS_HP_UNITS, hits * KIDS_SHOT_UNITS);
+      const score = Number(rec.score) || 100;
+      const tier = score < KIDS_SCORE_TIERS[0] ? 0 : score < KIDS_SCORE_TIERS[1] ? 1 : 2;
+      const interval = Number(rec.interval);
+      const fires = Number.isFinite(interval) && interval > 0;
+      const timing = !fires ? 0 : interval >= 90 ? 1 : interval >= 45 ? 2 : 3;
+      const bytes = [
+        KIDS_MOVE_STRAIGHT | variant << 5,
+        hpIndex & 7 | (tier & 3) << 3,
+        KIDS_FIRE_INTERVAL_BITS | timing << 4,
+        0,
+        0
+      ];
+      records.set(letter, { klass, id, bytes, name: rec.name || `enemy${letter}`, strip: stripWords, frames: frames.length });
+    }
+    const cellAt = (row, col) => row * KIDS_APPEAR_COLUMNS + col;
+    const rectFree = (row, col, w, h) => {
+      for (let dy = 0; dy < h; dy++) {
+        for (let dx = 0; dx < w; dx++) {
+          const r = row - dy, c = col + dx;
+          if (r < 0 || r >= KIDS_APPEAR_ROWS || c < 0 || c >= KIDS_APPEAR_COLUMNS) return false;
+          if (appear[cellAt(r, c)]) return false;
+        }
+      }
+      return true;
+    };
+    const stamp = (row, col, w, h, byte) => {
+      for (let dy = 0; dy < h; dy++) {
+        for (let dx = 0; dx < w; dx++) {
+          appear[cellAt(row - dy, col + dx)] = dx === 0 && dy === 0 ? byte : KIDS_APPEAR_FOOTPRINT_CLASS << 4 | dx << 2 | dy;
+        }
+      }
+    };
+    let placed = 0, dropped = 0, lastRow = KIDS_FIRST_SPAWN_ROW;
+    spawnRows.forEach((row, k) => {
+      const scrollRow = waveRows ? clamp2(Math.round(waveRows[k] / 2), 0, KIDS_MAX_SPAWN_ROW) : Math.min(KIDS_MAX_SPAWN_ROW, KIDS_FIRST_SPAWN_ROW + k * KIDS_ROW_STEP);
+      row.forEach((cell, c) => {
+        if (!cell || cell === "00") return;
+        const rec = records.get(cell.slice(0, -1));
+        if (!rec) return;
+        const [w, h] = KIDS_APPEAR_CELLS[rec.klass];
+        const col = mapKidsColumn(c, width, w);
+        const r = Math.max(scrollRow, h - 1);
+        let at = null;
+        for (const dc of [0, 1, -1, 2, -2]) {
+          const cc = col + dc;
+          if (cc < KIDS_FIRST_VISIBLE_COLUMN || cc + w - 1 > KIDS_FIRST_VISIBLE_COLUMN + KIDS_VISIBLE_COLUMNS - 1) continue;
+          if (rectFree(r, cc, w, h)) {
+            at = cc;
+            break;
+          }
+        }
+        if (at === null) {
+          dropped++;
+          return;
+        }
+        stamp(r, at, w, h, KIDS_APPEAR_PRESENT | rec.klass << 4 | rec.id);
+        placed++;
+        lastRow = Math.max(lastRow, r);
+      });
+    });
+    if (dropped) warn(`${st.key}: ${dropped} placement${dropped === 1 ? "" : "s"} overlapped another enemy's cells and ${dropped === 1 ? "was" : "were"} left out`);
+    let boss = null;
+    const bossWords = [new Uint16Array(KIDS_SPRITE_BOSS_WORDS).fill(KIDS_BLANK), new Uint16Array(KIDS_SPRITE_BOSS_WORDS).fill(KIDS_BLANK)];
+    const bossRecords = [Uint8Array.from(KIDS_BOSS_UNUSED), Uint8Array.from(KIDS_BOSS_UNUSED)];
+    const bossRec = bossData[`boss${s}`];
+    if (bossRec) {
+      const names = bossRec.anim && Array.isArray(bossRec.anim.idle) ? [...bossRec.anim.idle, ...Array.isArray(bossRec.anim.attack) ? bossRec.anim.attack : []] : Array.isArray(bossRec.texture) ? bossRec.texture : [];
+      const frames = names.map(lookup).filter(Boolean);
+      const maxW = frames.reduce((a, f) => Math.max(a, f.w), 64);
+      const maxH = frames.reduce((a, f) => Math.max(a, f.h), 64);
+      const sizeClass = kidsBossClassFor(maxW, maxH);
+      const [aw, ah] = KIDS_BOSS_ART_CELLS[sizeClass];
+      if (frames.length && (maxW > aw * CG_CELL || maxH > ah * CG_CELL)) {
+        warn(`${st.key}: boss (${bossRec.name || "?"}) is ${maxW}x${maxH}; its art is ${aw * CG_CELL}x${ah * CG_CELL} \u2014 downscaled`);
+      }
+      if (!frames.length) warn(`${st.key}: boss (${bossRec.name || "?"}) has no art in the atlas \u2014 its sprite is unpainted`);
+      if (frames.length) {
+        const cells = bankFrame(fitIndexed(frames[0], aw * CG_CELL, ah * CG_CELL), aw * CG_CELL, ah * CG_CELL, `boss${s}`);
+        if (cells) {
+          for (let cy = 0; cy < ah; cy++) for (let cx = 0; cx < aw; cx++) bossWords[0][cy * KIDS_BOSS_GRID + cx] = cells[cy * aw + cx];
+        }
+      }
+      const tpl = KIDS_BOSS_TEMPLATES[sizeClass];
+      bossRecords[0] = Uint8Array.from(tpl);
+      bossRecords[0][0] = tpl[0] & 63 | sizeClass << 6;
+      const [fw, fh] = KIDS_BOSS_FOOTPRINT[sizeClass];
+      let row = Math.min(KIDS_APPEAR_ROWS - 1, Math.max(lastRow + KIDS_BOSS_ROW_GAP, fh - 1));
+      const col = KIDS_BOSS_COLUMN[sizeClass];
+      while (row < KIDS_APPEAR_ROWS && !rectFree(row, col, fw, fh)) row++;
+      if (row >= KIDS_APPEAR_ROWS) {
+        warn(`${st.key}: no room left for the boss past the last wave \u2014 it is left out`);
+      } else {
+        stamp(row, col, fw, fh, KIDS_APPEAR_PRESENT | KIDS_APPEAR_BOSS_CLASS << 4);
+        boss = { name: bossRec.name || `boss${s}`, sizeClass, row, col, frames: frames.length };
+        lastRow = Math.max(lastRow, row);
+      }
+    }
+    let chips = 0;
+    const mapWords = new Uint16Array(KIDS_MAP_COLUMNS * KIDS_MAP_ROWS).fill(KIDS_MAP_FILL);
+    const cellsList = Array.isArray(level.backgroundCells) ? level.backgroundCells : null;
+    if (st.background && st.background.tiles && cellsList) {
+      try {
+        const bytes = b64ToBytes2(st.background.tiles);
+        const cols = st.background.cols || 14;
+        const tiles = new Uint16Array(bytes.length >> 1);
+        for (let i = 0; i < tiles.length; i++) tiles[i] = bytes[i * 2] << 8 | bytes[i * 2 + 1];
+        const rows = Math.floor(tiles.length / cols);
+        const cellRgba = /* @__PURE__ */ new Map();
+        const cellOf = (ordinal) => {
+          if (!cellRgba.has(ordinal)) {
+            const f = lookup(cellsList[ordinal]);
+            cellRgba.set(ordinal, f ? fitRgba(f, CG_CELL, CG_CELL) : null);
+          }
+          return cellRgba.get(ordinal);
+        };
+        const chipRgba2 = new Uint8Array(32 * 32 * 4);
+        const firstCol = Math.max(0, Math.floor((cols - KIDS_MAP_COLUMNS * 2) / 2));
+        let chipsFull = false;
+        for (let cr = 0; cr < Math.min(KIDS_MAP_ROWS, Math.ceil(rows / 2)) && !chipsFull; cr++) {
+          for (let cc = 0; cc < KIDS_MAP_COLUMNS; cc++) {
+            chipRgba2.fill(0);
+            let any = false;
+            for (let dy = 0; dy < 2; dy++) {
+              for (let dx = 0; dx < 2; dx++) {
+                const r = cr * 2 + dy, c = firstCol + cc * 2 + dx;
+                if (r >= rows || c >= cols) continue;
+                const w = tiles[r * cols + c];
+                if (w === 65535) continue;
+                const f = cellOf(w & 1023);
+                if (!f) continue;
+                const hf = (w & 32768) !== 0, vf = (w & 16384) !== 0;
+                for (let y = 0; y < CG_CELL; y++) {
+                  for (let x = 0; x < CG_CELL; x++) {
+                    const sx = hf ? CG_CELL - 1 - x : x, sy = vf ? CG_CELL - 1 - y : y;
+                    const si = (sy * CG_CELL + sx) * 4, di = ((dy * CG_CELL + y) * 32 + dx * CG_CELL + x) * 4;
+                    chipRgba2[di] = f.rgba[si];
+                    chipRgba2[di + 1] = f.rgba[si + 1];
+                    chipRgba2[di + 2] = f.rgba[si + 2];
+                    chipRgba2[di + 3] = f.rgba[si + 3];
+                    any = true;
+                  }
+                }
+              }
+            }
+            if (!any) continue;
+            try {
+              const word = bank.addChip(quantizeKidsFrame({ w: 32, h: 32, rgba: chipRgba2 }));
+              mapWords[cr * KIDS_MAP_COLUMNS + cc] = word;
+              if (word !== KIDS_MAP_FILL) chips++;
+            } catch (e) {
+              if (!(e instanceof KidsBankFullError)) throw e;
+              warn(`${st.key}: CG pages full (${KIDS_CELL_COUNT} cells) \u2014 scenery past chip row ${cr} left unpainted`);
+              chipsFull = true;
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        warn(`${st.key}: could not read the background grid (${e.message}) \u2014 scenery skipped`);
+      }
+    }
+    const scroll = new Uint8Array(KIDS_SCROLL_STAGE_BYTES);
+    const haltUnit = boss ? Math.floor(boss.row * 32 / KIDS_SCROLL_UNIT_PIXELS) : KIDS_SCROLL_UNITS;
+    for (let u = 0; u < KIDS_SCROLL_UNITS; u++) {
+      const nibble = u < haltUnit ? KIDS_SCROLL_RUN : KIDS_SCROLL_HALT;
+      if (u & 1) scroll[u >> 1] |= nibble << 4;
+      else scroll[u >> 1] |= nibble;
+    }
+    return { key: st.key, appear, records, bossWords, bossRecords, boss, mapWords, chips, scroll, placed, dropped, lastRow };
+  });
+  let title = "none";
+  if (opts.title1 && opts.title1.rgba) {
+    const t = KIDS_SHIP_LAYOUT.title1;
+    const w = bankFrame(fitIndexed(opts.title1, t.w * CG_CELL, t.h * CG_CELL), t.w * CG_CELL, t.h * CG_CELL, "title");
+    if (w) {
+      shipWords.set(w, t.at);
+      title = "uploaded";
+    }
+  }
+  if (opts.title2 && opts.title2.rgba) {
+    const t = KIDS_SHIP_LAYOUT.title2;
+    const w = bankFrame(fitIndexed(opts.title2, t.w * CG_CELL, t.h * CG_CELL), t.w * CG_CELL, t.h * CG_CELL, "title");
+    if (w) {
+      shipWords.set(w, t.at);
+      title = "uploaded";
+    }
+  }
+  const stageCount = built.length;
+  built.forEach((b, s) => {
+    putWords(KIDS_REGION.map.offset + s * KIDS_MAP_STAGE_BYTES, b.mapWords);
+    data.set(b.scroll, KIDS_REGION.scroll.offset + s * KIDS_SCROLL_STAGE_BYTES);
+    data.set(b.appear, KIDS_REGION.appear.offset + s * KIDS_APPEAR_STAGE_BYTES);
+    const recBase = KIDS_REGION.records.offset + s * KIDS_RECORDS_STAGE_BYTES;
+    for (const r of b.records.values()) data.set(r.bytes, recBase + (KIDS_CLASS_BASE[r.klass] + r.id) * KIDS_RECORD_SIZE);
+    b.bossRecords.forEach((rec, i) => data.set(rec, recBase + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE));
+    const sprBase = KIDS_REGION.sprites.offset + s * KIDS_SPRITE_STAGE_BYTES;
+    for (let i = 0; i < KIDS_SPRITE_STAGE_BYTES; i += 2) putU16le3(data, sprBase + i, KIDS_BLANK);
+    for (const r of b.records.values()) {
+      putWords(sprBase + KIDS_SPRITE_CLASS_OFFSETS[r.klass] + r.id * KIDS_SPRITE_ENTRY_WORDS * 2, r.strip);
+    }
+    b.bossWords.forEach((w, i) => putWords(sprBase + KIDS_SPRITE_BOSS_OFFSETS[i], w));
+  });
+  for (let s = stageCount; s < KIDS_STAGES; s++) {
+    const sprBase = KIDS_REGION.sprites.offset + s * KIDS_SPRITE_STAGE_BYTES;
+    for (let i = 0; i < KIDS_SPRITE_STAGE_BYTES; i += 2) putU16le3(data, sprBase + i, KIDS_BLANK);
+    const recBase = KIDS_REGION.records.offset + s * KIDS_RECORDS_STAGE_BYTES;
+    for (let i = 0; i < 2; i++) data.set(KIDS_BOSS_UNUSED, recBase + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE);
+    data.fill(KIDS_SCROLL_RUN | KIDS_SCROLL_RUN << 4, KIDS_REGION.scroll.offset + s * KIDS_SCROLL_STAGE_BYTES, KIDS_REGION.scroll.offset + (s + 1) * KIDS_SCROLL_STAGE_BYTES);
+  }
+  putWords(KIDS_REGION.ship.offset, shipWords);
+  const config = Uint8Array.from(KIDS_CONFIG_TEMPLATE);
+  config[0] = 0;
+  const backgroundSet = Number.isInteger(opts.backgroundSet) ? clamp2(opts.backgroundSet, 0, KIDS_BACKGROUND_SETS) : 0;
+  for (let s = 0; s < KIDS_STAGES; s++) {
+    config[3 + s] = s === stageCount - 1 ? KIDS_CONFIG_LAST_STAGE : 0;
+    config[KIDS_CONFIG_MOTION_OFFSET + s] = s < stageCount ? KIDS_MOTION_DEFAULT | (backgroundSet ? KIDS_MOTION_BACKGROUND : 0) : 0;
+    config[KIDS_CONFIG_BACKGROUND_OFFSET + s] = s < stageCount ? backgroundSet : 0;
+  }
+  const templateStagePairs = 6;
+  for (let s = 0; s < KIDS_STAGES; s++) {
+    for (let k = 0; k < 2; k++) {
+      const at = KIDS_CONFIG_SOUND_OFFSET + (4 + s * 2 + k) * 4;
+      if (s < stageCount) {
+        const from = KIDS_CONFIG_SOUND_OFFSET + (4 + s % templateStagePairs * 2 + k) * 4;
+        config.set(KIDS_CONFIG_TEMPLATE.slice(from, from + 4), at);
+      } else config.fill(0, at, at + 4);
+    }
+  }
+  config[111] = 0;
+  data.set(config, KIDS_REGION.config.offset);
+  const tail = factoryKidsTail();
+  const name = kidsGameNameFor(opts.name ?? level.name);
+  if (name.changed) warn(`the game is named "${name.text}" on the card: the title field holds ten ASCII characters`);
+  const icon = encodeKidsIcon(centre || defaultKidsIcon());
+  return {
+    graphics: bank.graphics,
+    data,
+    tail,
+    name,
+    icon,
+    warnings,
+    report: {
+      name: name.text,
+      stages: built.map((b) => ({
+        key: b.key,
+        placements: b.placed,
+        dropped: b.dropped,
+        records: [...b.records.values()].map((r) => ({ name: r.name, klass: r.klass, id: r.id, frames: r.frames })),
+        boss: b.boss,
+        chips: b.chips,
+        lastRow: b.lastRow
+      })),
+      ship: shipSource,
+      bullets: bulletSlots,
+      title,
+      backgroundSet,
+      cells: { used: bank.used, chips: bank.chips, sprites: bank.sprites, shared: bank.shared, free: bank.free }
+    }
+  };
+}
+function kidsCardFileName(name) {
+  const clean = String(name || "game").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim() || "game";
+  return `Dezaemon Kids - ${clean}.mcr`;
+}
+function exportLevelToKidsCard(level, art2, options = {}) {
+  const game = buildKidsGameFromLevel(level, art2, options);
+  const { block, seal: seal2, sizes } = buildKidsBlock({
+    graphics: game.graphics,
+    data: game.data,
+    tail: game.tail,
+    name: game.name.bytes,
+    icon: game.icon
+  });
+  const card = buildMemoryCard([{ filename: KIDS_PRODUCT, data: block }]);
+  return {
+    card,
+    block,
+    fileName: kidsCardFileName(game.name.text),
+    name: game.name.text,
+    warnings: game.warnings,
+    report: { ...game.report, sizes, slack: seal2.slack, end: seal2.end }
+  };
+}
+
+// packages/shmup-engine/src/psx/plus.js
+var PLUS_PRODUCT = "BISLPS-00335DEZA";
+var PLUS_TITLE_PREFIX = "\u30C7\u30B6\u30A8\u30E2\u30F3\uFF0B";
+var PLUS_BLOCK_SIZE = 122880;
+var PLUS_GRAPHICS_OFFSET = 256;
+var PLUS_GRAPHICS_SIZE = 65536;
+var PLUS_GRAPHICS_WIDTH = 256;
+var PLUS_GRAPHICS_HEIGHT = 512;
+var PLUS_GRAPHICS_PAGES = 2;
+var PLUS_PAGE_HEIGHT = 256;
+var PLUS_PALETTE_OFFSET = 65792;
+var PLUS_PALETTE_ROWS = 24;
+var PLUS_PALETTE_ROW_BYTES = 32;
+var PLUS_STAGES_OFFSET = 66560;
+var PLUS_STAGE_SIZE = 8764;
+var PLUS_STAGES = 5;
+var PLUS_GLOBAL_OFFSET = 110380;
+var PLUS_SOUND_OFFSET = 110736;
+var PLUS_SOUND_SIZE = 11776;
+var PLUS_SONG_SIZE = 736;
+var PLUS_SONG_COUNT = PLUS_SOUND_SIZE / PLUS_SONG_SIZE;
+var PLUS_HISCORE_OFFSET = 122512;
+var PLUS_HISCORE_TABLE_BYTES = 160;
+var PLUS_HISCORE_TABLES = 2;
+var PLUS_HISCORE_COUNT = 10;
+var PLUS_HISCORE_SIZE = 16;
+var PLUS_SETTINGS_OFFSET = 122832;
+var PLUS_SETTINGS_SIZE = 8;
+var PLUS_CHECKSUM_OFFSET = 122840;
+var PLUS_CHECKSUM_COUNT = 20;
+var PLUS_CHECKSUM_SIZE = PLUS_CHECKSUM_COUNT * 2;
+var PLUS_CHECKED_GROUPS = 19;
+var PLUS_MAP_ROW_BYTES = 18;
+var PLUS_MAP_ROWS = 128;
+var PLUS_MAP_COLUMNS = 16;
+var PLUS_CHIP_DIM = 16;
+var PLUS_MAP_HALVES = Object.freeze([
+  { chips: [0, 1, 2, 3, 4, 5, 6, 7], flags: 8 },
+  { chips: [9, 10, 11, 12, 13, 14, 15, 16], flags: 17 }
+]);
+var PLUS_APPEAR_CLASSES = Object.freeze([
+  { nibble: 8, size: "16x16", base: 0, mask: 15 },
+  { nibble: 9, size: "32x16", base: 16, mask: 15 },
+  { nibble: 10, size: "16x32", base: 32, mask: 15 },
+  { nibble: 11, size: "32x32", base: 48, mask: 7 },
+  { nibble: 12, size: "64x64", base: 56, mask: 3 }
+]);
+var PLUS_ITEM_EFFECTS = Object.freeze([
+  null,
+  "weapon 0",
+  "weapon 1",
+  "weapon 2",
+  "weapon 3",
+  "weapon 4",
+  "weapon 5",
+  "bomb",
+  "score",
+  "power up",
+  "speed up",
+  "option"
+]);
+var PLUS_SCORE_BONUS = Object.freeze([5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 5e5, 1e6]);
+var PLUS_BGM_SLOTS = Object.freeze([
+  "stage 0",
+  "stage 1",
+  "stage 2",
+  "stage 3",
+  "stage 4",
+  "stage 5",
+  "boss 0",
+  "boss 1",
+  "boss 2",
+  "boss 3",
+  "boss 4",
+  "boss 5",
+  "title",
+  "game over",
+  "ending",
+  "preloaded"
+]);
+var PLUS_BUTTONS = Object.freeze(["circle", "cross", "triangle", "square", "L1", "L2", "R1", "R2"]);
+var PLUS_ENEMY_HP = Object.freeze([1, 50, 100, 200, 400, 800, 1e3, 2e3]);
+var PLUS_ENEMY_SCORE = Object.freeze([50, 100, 200, 500, 1e3, 2e3, 5e3, 1e4]);
+var PLUS_SCALE_RATES = Object.freeze([32, 64, 128, 256, 384, 512, 640, 768]);
+var PLUS_SCALES = Object.freeze([0, 6, 8, 16, 24, 32, 48, 64]);
+var PLUS_TURN_RATES = Object.freeze([16, 32, 64, 128, 256, 384, 512, 2048]);
+var PLUS_START_ANGLES = Object.freeze([0, 224, 192, 160, 128, 96, 64, 32]);
+var PLUS_ANIM_INTERVALS = Object.freeze([59, 29, 14, 9, 5, 2, 1, 0]);
+function region2(name, label, offset, end, confidence, note) {
+  return Object.freeze({ name, label, offset, end, length: end - offset, confidence, note });
+}
+function tableEntry(index, offset, length, ram, flag, kind, group, sub) {
+  return Object.freeze({ index, offset, length, ram, flag, kind, group, sub });
+}
+var STAGE_PIECES = [
+  ["map", "MAP", 2304, 2148818056],
+  ["scroll", "SCROLL", 512, 2148831880],
+  ["mapGroup", "MAP GROUP", 256, 2149106352],
+  ["enemyGroup", "ENEMY GROUP", 128, 2148668128],
+  ["enemyData", "ENEMY DATA", 512, 2148621136],
+  ["spriteLayout", "SPRITE LAYOUT", 320, 2149111400],
+  ["appear", "APPEAR", 4608, 2148638800],
+  ["config", "STAGE CONFIG", 60, 2148667072],
+  ["bossGroup", "BOSS GROUP", 64, 2148636712]
+];
+var GLOBAL_PIECES = [
+  ["titleType", "TITLE TYPE", 2, 2148608560],
+  ["titleGroup", "TITLE GROUP", 64, 2148668896],
+  ["endingGroup", "ENDING GROUP", 24, 2148835560],
+  ["shipGroup", "MY SHIP GROUP", 154, 2149108200],
+  ["shipOdr", "MY SHIP ODR", 77, 2148667840],
+  ["itemTable", "ITEM TABLE", 16, 2148837184],
+  ["gameSettings", "GAME SETTINGS", 3, 2148608594],
+  ["bgmAssignment", "BGM ASSIGNMENT", 16, 2149108760]
+];
+var HEADER_PIECES = [
+  [4, 2148608140],
+  [64, 2147852932],
+  [28, 2147852996],
+  [32, 2147853024],
+  [128, 2147853056]
+];
+var SETTINGS_PIECES = [[1, 2148608604], [1, 2148608605], [2, 2148608684], [4, 2148608548]];
+function buildTable() {
+  const rows = [];
+  let offset = 0;
+  const push = (length, ram, flag, kind, group, sub = "") => {
+    rows.push(tableEntry(rows.length, offset, length, ram, flag, kind, group, sub));
+    offset += length;
+  };
+  for (const [length, ram] of HEADER_PIECES) push(length, ram, 0, 0, "header");
+  for (let q = 0; q < 4; q++) push(16384, 2147922472 + q * 16384, 1 + q, 1, "graphics", `quarter ${q}`);
+  push(768, 2148837304, 5, 1, "palettes");
+  for (let s = 0; s < PLUS_STAGES; s++) {
+    for (const [name, label, length, ram] of STAGE_PIECES) {
+      push(length, ram + s * length, 6 + s, 2, `stage ${s}`, `${label} (${name})`);
+    }
+  }
+  for (const [name, label, length, ram] of GLOBAL_PIECES) push(length, ram, 11, 2, "global", `${label} (${name})`);
+  for (let q = 0; q < 4; q++) push(2944, 2148624776 + q * 2944, 12 + q, 3, "sound", `quarter ${q}`);
+  push(PLUS_HISCORE_TABLE_BYTES, 2148835400, 16, 4, "hiScores", "table A");
+  push(PLUS_HISCORE_TABLE_BYTES, 2148636552, 17, 4, "hiScores", "table B");
+  for (const [length, ram] of SETTINGS_PIECES) push(length, ram, 18, 4, "settings");
+  push(PLUS_CHECKSUM_SIZE, 2148609008, 19, 5, "checksums");
+  return Object.freeze(rows);
+}
+var PLUS_TABLE = buildTable();
+function plusChecksums(block) {
+  if (block.length < PLUS_BLOCK_SIZE) {
+    throw new Error(`a checksum needs the whole ${PLUS_BLOCK_SIZE}-byte block; got ${block.length}`);
+  }
+  const cs = new Uint16Array(PLUS_CHECKSUM_COUNT + 1);
+  let entry = 0;
+  let within = 0;
+  for (let pos = 0; pos < PLUS_BLOCK_SIZE; pos++) {
+    const row = PLUS_TABLE[entry];
+    if (!row) break;
+    if ((pos & 127) === 0) cs[row.flag] += entry;
+    cs[row.flag] += block[pos] * (within & 31) + entry;
+    within++;
+    if (within >= row.length) {
+      const next = PLUS_TABLE[entry + 1];
+      if (next && next.flag !== row.flag && row.kind !== 5) cs[row.flag + 1] = 0;
+      entry++;
+      within = 0;
+    }
+  }
+  const computed = Array.from(cs.subarray(0, PLUS_CHECKSUM_COUNT));
+  const stored = [];
+  for (let i = 0; i < PLUS_CHECKSUM_COUNT; i++) stored.push(u16le(block, PLUS_CHECKSUM_OFFSET + i * 2));
+  const bad = [];
+  for (let i = 0; i < PLUS_CHECKED_GROUPS; i++) if (computed[i] !== stored[i]) bad.push(i);
+  return { computed, stored, bad, ok: bad.length === 0, checkedGroups: PLUS_CHECKED_GROUPS };
+}
+var PLUS_REGIONS = Object.freeze([
+  region2(
+    "header",
+    "SC HEADER",
+    0,
+    PLUS_GRAPHICS_OFFSET,
+    "confirmed",
+    "Title frame and one icon frame, built from five pieces of the program's own template; the title text is fixed."
+  ),
+  region2(
+    "graphics",
+    "GRAPHICS",
+    PLUS_GRAPHICS_OFFSET,
+    PLUS_GRAPHICS_OFFSET + PLUS_GRAPHICS_SIZE,
+    "confirmed",
+    "Two 256x256 4bpp PlayStation texture pages, a 128-byte row pitch, low nibble = left pixel. The four 0x4000 quarters are checksum groups, not picture boundaries."
+  ),
+  region2(
+    "palettes",
+    "PALETTES",
+    PLUS_PALETTE_OFFSET,
+    PLUS_STAGES_OFFSET,
+    "confirmed",
+    "24 rows x 16 RGB555 words, little-endian, bit 15 = STP, colour 0 transparent. LoadImage'd to VRAM (0, 480+row); the map draws with row = stage."
+  ),
+  region2(
+    "stages",
+    "STAGES",
+    PLUS_STAGES_OFFSET,
+    PLUS_GLOBAL_OFFSET,
+    "confirmed",
+    "5 x 0x223C, each nine pieces (PLUS_STAGE_LAYOUT). The stride is exact: the checksum reproduces every community save under it and none under 0x2240."
+  ),
+  region2(
+    "global",
+    "GLOBAL",
+    PLUS_GLOBAL_OFFSET,
+    PLUS_SOUND_OFFSET,
+    "confirmed",
+    "0x164 of game-wide tables: title type and group, ending, the ship's group and ODR, the stage list, game config and the BGM patch list."
+  ),
+  region2(
+    "sound",
+    "SOUND",
+    PLUS_SOUND_OFFSET,
+    PLUS_HISCORE_OFFSET,
+    "confirmed",
+    "16 songs of 0x2E0 bytes, bit-packed: 16 bars of a 14-bit header and 32 steps of 11 bits, then a 16-bit tail."
+  ),
+  region2(
+    "hiScores",
+    "HIGH SCORE",
+    PLUS_HISCORE_OFFSET,
+    PLUS_SETTINGS_OFFSET,
+    "confirmed",
+    "Two tables of ten 16-byte entries: u32le score, four bytes, an 8-character name. The factory ladder is 1000..100 in both."
+  ),
+  region2(
+    "settings",
+    "SETTINGS",
+    PLUS_SETTINGS_OFFSET,
+    PLUS_CHECKSUM_OFFSET,
+    "likely",
+    "Eight bytes from four separate variables (u8, u8, u16, u32); which option each is has not been traced."
+  ),
+  region2(
+    "checksums",
+    "CHECKSUMS",
+    PLUS_CHECKSUM_OFFSET,
+    PLUS_BLOCK_SIZE,
+    "confirmed",
+    "Twenty u16 checksums, one per flag group; the game verifies groups 0x00..0x12 on load."
+  )
+]);
+var PLUS_REGION = Object.freeze(Object.fromEntries(PLUS_REGIONS.map((r) => [r.name, r])));
+var PLUS_STAGE_LAYOUT = Object.freeze((() => {
+  const out = [];
+  let at = 0;
+  for (const [name, label, length] of STAGE_PIECES) {
+    out.push(Object.freeze({ name, label, offset: at, end: at + length, length }));
+    at += length;
+  }
+  return out;
+})());
+var PLUS_STAGE_PIECE = Object.freeze(Object.fromEntries(PLUS_STAGE_LAYOUT.map((p) => [p.name, p])));
+var PLUS_GLOBAL_LAYOUT = Object.freeze((() => {
+  const out = [];
+  let at = 0;
+  for (const [name, label, length] of GLOBAL_PIECES) {
+    out.push(Object.freeze({ name, label, offset: at, end: at + length, length }));
+    at += length;
+  }
+  return out;
+})());
+function decodePlusPalettes(block) {
+  const rows = [];
+  for (let r = 0; r < PLUS_PALETTE_ROWS; r++) {
+    const colors = [];
+    for (let c = 0; c < 16; c++) {
+      const raw = u16le(block, PLUS_PALETTE_OFFSET + r * PLUS_PALETTE_ROW_BYTES + c * 2);
+      colors.push({ raw, ...rgb555ToRgb(raw), stp: (raw & 32768) !== 0, empty: raw === 0 });
+    }
+    rows.push({ row: r, colors, blank: colors.every((c) => c.empty) });
+  }
+  return rows;
+}
+function decodePlusGraphics(block) {
+  const indexed = new Uint8Array(PLUS_GRAPHICS_WIDTH * PLUS_GRAPHICS_HEIGHT);
+  let used = 0;
+  for (let i = 0; i < PLUS_GRAPHICS_SIZE; i++) {
+    const b = block[PLUS_GRAPHICS_OFFSET + i];
+    indexed[i * 2] = b & 15;
+    indexed[i * 2 + 1] = b >> 4;
+    if (b) used++;
+  }
+  return {
+    width: PLUS_GRAPHICS_WIDTH,
+    height: PLUS_GRAPHICS_HEIGHT,
+    pages: PLUS_GRAPHICS_PAGES,
+    pageHeight: PLUS_PAGE_HEIGHT,
+    indexed,
+    usedBytes: used,
+    blank: used === 0
+  };
+}
+function plusStageOffset(stage) {
+  return PLUS_STAGES_OFFSET + stage * PLUS_STAGE_SIZE;
+}
+function decodePlusMapRow(row) {
+  const chips = [];
+  for (const half of PLUS_MAP_HALVES) {
+    const flags = row[half.flags];
+    half.chips.forEach((at, i) => {
+      const b = row[at];
+      chips.push({
+        raw: b,
+        group: b & 127,
+        hflip: (b & 128) !== 0,
+        vflip: (flags >> 7 - i & 1) !== 0,
+        blank: (b & 127) === 0
+      });
+    });
+  }
+  return chips;
+}
+function decodePlusStage(block, stage) {
+  const base = plusStageOffset(stage);
+  const parts = {};
+  for (const p of PLUS_STAGE_LAYOUT) parts[p.name] = block.subarray(base + p.offset, base + p.end);
+  const rows = [];
+  let used = 0;
+  for (let r = 0; r < PLUS_MAP_ROWS; r++) {
+    const chips = decodePlusMapRow(parts.map.subarray(r * PLUS_MAP_ROW_BYTES, (r + 1) * PLUS_MAP_ROW_BYTES));
+    for (const c of chips) if (!c.blank) used++;
+    rows.push(chips);
+  }
+  return {
+    stage,
+    offset: base,
+    columns: PLUS_MAP_COLUMNS,
+    rows: PLUS_MAP_ROWS,
+    chipDim: PLUS_CHIP_DIM,
+    map: parts.map,
+    mapRows: rows,
+    used,
+    parts
+  };
+}
+function decodePlusStages(block) {
+  const stages = [];
+  for (let s = 0; s < PLUS_STAGES; s++) stages.push(decodePlusStage(block, s));
+  return stages;
+}
+function decodePlusGlobals(block) {
+  const parts = {};
+  for (const p of PLUS_GLOBAL_LAYOUT) {
+    parts[p.name] = block.subarray(PLUS_GLOBAL_OFFSET + p.offset, PLUS_GLOBAL_OFFSET + p.end);
+  }
+  const items = [];
+  for (let i = 1; i < 8; i++) {
+    const word = u16le(parts.itemTable, i * 2);
+    const effect = word & 255;
+    items.push({ slot: i - 1, effect, name: PLUS_ITEM_EFFECTS[effect] ?? null, enabled: word >> 8 !== 0 });
+  }
+  const settings = parts.gameSettings;
+  const bgm = Array.from(parts.bgmAssignment, (song, i) => ({ slot: PLUS_BGM_SLOTS[i], song }));
+  return {
+    parts,
+    items,
+    /** The weapon a new game starts with, from item slot 0. */
+    startingWeapon: (u16le(parts.itemTable, 2) & 255) - 1,
+    bgm,
+    scoreBonus: PLUS_SCORE_BONUS[settings[0] & 7],
+    /** Frames the hold-to-charge weapon needs. */
+    chargeFrames: (5 - Math.min(settings[1], 5)) * 45 + 40,
+    stageCount: settings[2] + 1
+  };
+}
+function decodePlusSound(block) {
+  const songs = [];
+  for (let i = 0; i < PLUS_SONG_COUNT; i++) {
+    const at = PLUS_SOUND_OFFSET + i * PLUS_SONG_SIZE;
+    songs.push({ index: i, bytes: block.subarray(at, at + PLUS_SONG_SIZE) });
+  }
+  return songs;
+}
+function decodePlusHiScores(block, { stageCount = null } = {}) {
+  const entries = [];
+  for (let t = 0; t < PLUS_HISCORE_TABLES; t++) {
+    for (let i = 0; i < PLUS_HISCORE_COUNT; i++) {
+      const at = PLUS_HISCORE_OFFSET + t * PLUS_HISCORE_TABLE_BYTES + i * PLUS_HISCORE_SIZE;
+      const stage = block[at + 4];
+      entries.push({
+        rank: i + 1,
+        table: t,
+        owner: t === 0 ? "built-in" : "user game",
+        score: u32le(block, at),
+        stage,
+        allClear: stageCount !== null && stage >= stageCount,
+        pad: Array.from(block.subarray(at + 5, at + 8)),
+        name: latin1(block, at + 8, 8)
+      });
+    }
+  }
+  return entries;
+}
+function plusButtons(mask) {
+  return PLUS_BUTTONS.filter((_, i) => mask >> i & 1);
+}
+function decodePlusSettings(block) {
+  const at = PLUS_SETTINGS_OFFSET;
+  const keys = [];
+  for (let i = 0; i < 4; i++) {
+    const mask = block[at + 4 + i];
+    keys.push({ action: i, mask, buttons: plusButtons(mask) });
+  }
+  return {
+    bytes: block.subarray(at, at + PLUS_SETTINGS_SIZE),
+    cursorSpeed: block[at],
+    fontBank: block[at + 1],
+    menuBgm: block[at + 2] < 4 ? block[at + 2] : null,
+    stereo: block[at + 3] !== 0,
+    keys
+  };
+}
+function attempt2(result, block, fn) {
+  try {
+    result[block] = fn();
+  } catch (err) {
+    result[block] = null;
+    result.errors.push({ block, message: err.message });
+  }
+}
+function parsePlusSave(block, { filename = "" } = {}) {
+  const result = {
+    game: "plus",
+    filename,
+    productOk: filename === "" || filename === PLUS_PRODUCT,
+    size: block.length,
+    sizeOk: block.length === PLUS_BLOCK_SIZE,
+    header: null,
+    checksums: null,
+    palettes: null,
+    graphics: null,
+    stages: null,
+    globals: null,
+    sound: null,
+    hiScores: null,
+    settings: null,
+    table: PLUS_TABLE,
+    regions: PLUS_REGIONS,
+    stageLayout: PLUS_STAGE_LAYOUT,
+    globalLayout: PLUS_GLOBAL_LAYOUT,
+    errors: []
+  };
+  attempt2(result, "header", () => parseSaveHeader(block));
+  if (block.length < PLUS_BLOCK_SIZE) {
+    result.errors.push({ block: "size", message: `${block.length} bytes; a Dezaemon+ save is ${PLUS_BLOCK_SIZE}` });
+    return result;
+  }
+  attempt2(result, "checksums", () => plusChecksums(block));
+  attempt2(result, "palettes", () => decodePlusPalettes(block));
+  attempt2(result, "graphics", () => decodePlusGraphics(block));
+  attempt2(result, "stages", () => decodePlusStages(block));
+  attempt2(result, "globals", () => decodePlusGlobals(block));
+  attempt2(result, "sound", () => decodePlusSound(block));
+  attempt2(result, "hiScores", () => decodePlusHiScores(block, { stageCount: result.globals?.stageCount ?? null }));
+  attempt2(result, "settings", () => decodePlusSettings(block));
+  return result;
+}
+
+// packages/shmup-engine/src/psx/plus-edit.js
+var PLUS_UNSEALED_GROUP = 19;
+var PLUS_UNSEALED_OFFSET = PLUS_CHECKSUM_OFFSET + PLUS_UNSEALED_GROUP * 2;
+var GLOBAL_PIECE = Object.freeze(Object.fromEntries(PLUS_GLOBAL_LAYOUT.map((p) => [p.name, p])));
+var GRAPHICS_ROW_BYTES = PLUS_GRAPHICS_WIDTH / 2;
+var GROUP_TABLES = Object.freeze({
+  title: "titleGroup",
+  ending: "endingGroup",
+  ship: "shipGroup"
+});
+var PLUS_SHIP_GROUP_FORCED = Object.freeze([61, 62, 63]);
+
+// packages/shmup-engine/src/psx/plus-song.js
+var PLUS_SONG_BARS = 16;
+var PLUS_SONG_VOICES = 2;
+var PLUS_SONG_STEPS = 16;
+var PLUS_SONG_CELLS = PLUS_SONG_VOICES * PLUS_SONG_STEPS;
+var PLUS_SONG_BAR_STRIDE = 68;
+var PLUS_SONG_UNPACKED_SIZE = PLUS_SONG_BARS * PLUS_SONG_BAR_STRIDE + 4;
+var PLUS_SONG_BITS = PLUS_SONG_BARS * (14 + PLUS_SONG_CELLS * 11) + 16;
+var PLUS_SONG_PACKED_BYTES = PLUS_SONG_BITS / 8;
+var PLUS_INSTRUMENT_PERM = Object.freeze([
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  16,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  7,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  31,
+  24,
+  28,
+  27,
+  25,
+  29,
+  26,
+  30
+]);
+var PLUS_INSTRUMENT_UNPERM = Object.freeze((() => {
+  const a = new Array(32);
+  PLUS_INSTRUMENT_PERM.forEach((v, i) => a[v] = i);
+  return a;
+})());
+var PLUS_INSTRUMENT_PROGRAMS = Object.freeze([
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  32,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  7,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  25,
+  28,
+  30,
+  27,
+  33,
+  29,
+  31,
+  24
+]);
+var PLUS_VOICE_PROGRAM_BIAS = Object.freeze([1, 91]);
+var PLUS_TEMPO_TABLE = Object.freeze([
+  92,
+  82,
+  73,
+  67,
+  61,
+  56,
+  52,
+  49,
+  46,
+  43,
+  41,
+  38,
+  36,
+  35,
+  33,
+  32,
+  31,
+  30,
+  29,
+  28,
+  27,
+  26,
+  25,
+  24,
+  23,
+  22,
+  21,
+  20,
+  19,
+  18,
+  17,
+  16
+]);
+var PLUS_TEMPO_TICKS_PER_FRAME = 4;
+var PLUS_STEPS_PER_BEAT = 4;
+var PLUS_FRAMES_PER_SECOND = 60;
+var PLUS_BPM_NUMERATOR = 60 * PLUS_FRAMES_PER_SECOND * PLUS_TEMPO_TICKS_PER_FRAME / PLUS_STEPS_PER_BEAT;
+var PLUS_VOLUME_TABLE = Object.freeze([0, 8, 16, 24, 32, 40, 48, 56]);
+var PLUS_ACCOMP_ROM = Object.freeze({
+  address: 2148486060,
+  bytes: 92160,
+  patternAStride: 10240,
+  patternBStride: 2560,
+  patternCStride: 512,
+  trackStride: 64,
+  stepStride: 4,
+  halfStride: 2,
+  shape: "9 patternA x 4 patternB x 5 patternC x 8 tracks x 16 steps x 2 half-steps x (instrument, note)"
+});
+var PLUS_ACCOMP_FOLD_LO = Object.freeze([56, 32, 44, 44, 15]);
+var PLUS_ACCOMP_FOLD_MID = Object.freeze([81, 57, 69, 69, 255]);
+var PLUS_ACCOMP_FOLD_HI = Object.freeze([92, 68, 80, 80, 255]);
+
+// packages/shmup-engine/src/psx/index.js
+var CONFIDENCES = Object.freeze(["confirmed", "likely", "open"]);
+var PSX_GAMES = Object.freeze({
+  kids: Object.freeze({ id: "kids", product: KIDS_PRODUCT, title: "Dezaemon Kids!", code: "SLPS-01503", titlePrefix: KIDS_TITLE_PREFIX }),
+  plus: Object.freeze({ id: "plus", product: PLUS_PRODUCT, title: "Dezaemon+", code: "SLPS-00335", titlePrefix: PLUS_TITLE_PREFIX })
+});
+function identifyGame(block, filename = "") {
+  if (filename === KIDS_PRODUCT) return "kids";
+  if (filename === PLUS_PRODUCT) return "plus";
+  if (block.length < 256) return null;
+  const header = parseSaveHeader(block);
+  if (!header.magicOk) return null;
+  if (header.title.startsWith(KIDS_TITLE_PREFIX)) return "kids";
+  if (header.title.startsWith(PLUS_TITLE_PREFIX)) return "plus";
+  if (isKidsBlock(block)) return "kids";
+  return null;
+}
+function parsePsxSav(bytes) {
+  const located = locateSaves(bytes);
+  const result = { container: located.container, card: located.card, saves: [], others: [], errors: [] };
+  if (located.container === "unknown") {
+    result.errors.push({ block: "container", message: `${bytes.length} bytes: not a memory card image, .gme, .mcs, .psv or "SC" save block` });
+    return result;
+  }
+  for (const save of located.saves) {
+    const game = identifyGame(save.data, save.filename);
+    if (!game) {
+      result.others.push({ filename: save.filename, size: save.data.length, deleted: save.deleted });
+      continue;
+    }
+    const parsed = game === "kids" ? parseKidsSave(save.data, { filename: save.filename }) : parsePlusSave(save.data, { filename: save.filename });
+    parsed.deleted = save.deleted;
+    result.saves.push(parsed);
+  }
+  return result;
+}
+
 // packages/shmup-engine/src/audio/tone-bank-table.js
 var LAYER_FIELDS = 20;
 var LAYER = {
@@ -8087,7 +11116,7 @@ function readExtent(disc, lba, size) {
   }
   return written === size ? out : out.subarray(0, written);
 }
-function u32le(bytes, at) {
+function u32le2(bytes, at) {
   return (bytes[at] | bytes[at + 1] << 8 | bytes[at + 2] << 16 | bytes[at + 3] << 24) >>> 0;
 }
 function parseDirectory(data) {
@@ -8107,8 +11136,8 @@ function parseDirectory(data) {
     if (nameLen !== 1 || raw[0] !== 0 && raw[0] !== 1) {
       entries.push({
         name,
-        lba: u32le(data, off + 2),
-        size: u32le(data, off + 10),
+        lba: u32le2(data, off + 2),
+        size: u32le2(data, off + 10),
         isDir: (data[off + 25] & 2) !== 0
       });
     }
@@ -8118,7 +11147,7 @@ function parseDirectory(data) {
 }
 function rootRecord(disc) {
   const pvd = sector(disc, PVD_LBA);
-  return { lba: u32le(pvd, 156 + 2), size: u32le(pvd, 156 + 10) };
+  return { lba: u32le2(pvd, 156 + 2), size: u32le2(pvd, 156 + 10) };
 }
 function listFiles(disc, dir) {
   const at = dir ?? rootRecord(disc);
@@ -8172,11 +11201,11 @@ function totalDiffBytes(ranges) {
 }
 
 // packages/shmup-engine/src/sfc/regions.js
-function region(name, label, offset, end, confidence, note) {
+function region3(name, label, offset, end, confidence, note) {
   return Object.freeze({ name, label, offset, end, length: end - offset, confidence, note });
 }
 var SFC_REGIONS = Object.freeze([
-  region(
+  region3(
     "checksum",
     "CHECK SUM",
     0,
@@ -8184,7 +11213,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "16 words, copied verbatim at 0x7E5A. Traced in the ROM ($00:847B computes, $00:8482 verifies): each word is 0xFFFF minus the mod-2^16 sum of the 16-bit little-endian words over a scatter/gather segment list, the descriptors being a 17-pointer table at $80:8665. Word 15 covers the first fifteen, so the block always totals 0xFFFF. See FORMAT-SFC.md for the segment map."
   ),
-  region(
+  region3(
     "reserved0",
     "RESERVED",
     32,
@@ -8192,7 +11221,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "Zero apart from the word 0x3160 at 0x3E in the sample."
   ),
-  region(
+  region3(
     "palette",
     "PALETTE DATA",
     64,
@@ -8200,7 +11229,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "24 rows of 16 BGR555 little-endian words. Rows 0-21 are colour (bit 15 clear); the rows at 0x100, 0x120, 0x140, 0x160 and 0x180 are five identical defaults in the sample. Rows 22-23 (0x300-0x33F) look like the editor's own R/G/B ramps and primaries and each ends in a bit-15 word \u2014 open."
   ),
-  region(
+  region3(
     "map",
     "MAP DATA",
     832,
@@ -8208,7 +11237,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "6 stages x 0x900 bytes of 8-bit chip indices into MAP GROUP, 18 columns x 128 rows (vertical continuity beats every non-multiple width in all six sample stages; its multiple 36 edges it by 0.002 in stage 4; columns 0 and 16 hold no non-zero cell in any stage while 8 and 17 are sparse, roughly a third as full as the rest, so the drawn field looks narrower than the stride); bit 7 is set on some cells."
   ),
-  region(
+  region3(
     "scroll",
     "SCROLL EFECT",
     14656,
@@ -8216,7 +11245,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "6 x 0x200 bytes by size. The sample opens with 0x100 bytes of small integers, then smooth curves around 0x40 padded with 0x1F/0x1D recur every 0x200 from +0x100; per-stage scroll tables, layout open."
   ),
-  region(
+  region3(
     "mapGroup",
     "MAP GROUP",
     17728,
@@ -8224,7 +11253,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "192 chips x 4 SNES tilemap words, free-form tile picks (tiles 0x2C0-0x373 in the sample); 0xFFFF and 0x03FF mean an empty slot, and 119 of the sample's chips are wholly empty, only 4 classifying as 2x2 chips."
   ),
-  region(
+  region3(
     "myShipOdr",
     "MY SHIP ODR",
     19264,
@@ -8232,7 +11261,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "16 x 4-byte 8-bit tile quads; all zero in the sample."
   ),
-  region(
+  region3(
     "enemyGroup",
     "ENEMY GROUP",
     19328,
@@ -8240,7 +11269,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "24 enemies x 32 bytes = 4 quads of tilemap words; the sample draws mostly on tiles 0x360-0x3FB, a few from 0x200 and 0x2B8."
   ),
-  region(
+  region3(
     "bossGroup",
     "BOSS GROUP",
     20096,
@@ -8248,7 +11277,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "6 bosses x 64 bytes = 8 quads; 16 of the sample's 48 are symmetric strips [n, n+1, n+1|H, n|H], the rest neither strip nor chip."
   ),
-  region(
+  region3(
     "titleGroup",
     "TITLE GROUP",
     20480,
@@ -8256,7 +11285,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "8 quads of tilemap words (tiles 0x2A0-0x2BF in the sample)."
   ),
-  region(
+  region3(
     "endingGroup",
     "ENDING GROUP",
     20544,
@@ -8264,7 +11293,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "3 quads; all empty in the sample."
   ),
-  region(
+  region3(
     "sound",
     "SOUND DATA",
     20568,
@@ -8272,9 +11301,9 @@ var SFC_REGIONS = Object.freeze([
     "open",
     "11,776 bytes of high-entropy bit-packed data. The composer holds 16 bars at 1/16 quantise, two voices; layout open."
   ),
-  region("titleType", "TITLE TYPE", 32344, 32346, "confirmed", "u16; 0x020A in the sample."),
-  region("checksumCopy", "CHECK SUM COPY", 32346, 32378, "confirmed", "Byte-identical to CHECK SUM."),
-  region(
+  region3("titleType", "TITLE TYPE", 32344, 32346, "confirmed", "u16; 0x020A in the sample."),
+  region3("checksumCopy", "CHECK SUM COPY", 32346, 32378, "confirmed", "Byte-identical to CHECK SUM."),
+  region3(
     "mouseSpeed",
     "MOUSE SPEED",
     32378,
@@ -8282,9 +11311,9 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "u16. The cart supports the SNES Mouse; the anti-piracy SRAM-size probe writes $707E7B."
   ),
-  region("editBgm", "EDIT BGM", 32380, 32382, "confirmed", "u16."),
-  region("bgmPatch", "BGM PATCH", 32382, 32398, "confirmed", "16 bytes, one instrument per BGM slot."),
-  region(
+  region3("editBgm", "EDIT BGM", 32380, 32382, "confirmed", "u16."),
+  region3("bgmPatch", "BGM PATCH", 32382, 32398, "confirmed", "16 bytes, one instrument per BGM slot."),
+  region3(
     "hiScore",
     "HIGH SCORE",
     32398,
@@ -8292,9 +11321,9 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "20 entries x 16 bytes: u32 score, 4 bytes, char[8] name \u2014 two tables of ten. The sample holds the factory ladder 1000..100 twice, with '........' names."
   ),
-  region("keyConfig", "KEY CONFIG", 32718, 32722, "confirmed", "4 bytes; 20 08 10 20 in the sample."),
-  region("reserved1", "RESERVED", 32722, 32760, "confirmed", "38 bytes, 20 of them 0xFF in the sample."),
-  region(
+  region3("keyConfig", "KEY CONFIG", 32718, 32722, "confirmed", "4 bytes; 20 08 10 20 in the sample."),
+  region3("reserved1", "RESERVED", 32722, 32760, "confirmed", "38 bytes, 20 of them 0xFF in the sample."),
+  region3(
     "checkString",
     "CHECK STRINGS",
     32760,
@@ -8302,8 +11331,8 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "ASCII 'T.TABATA' \u2014 the programmer's initials (ROM credits: TSUTOMU TABATA 94/01/27), used as the formatted-SRAM magic."
   ),
-  region("enemyData", "ENEMY DATA", 32768, 35840, "likely", "24 records x 128 bytes."),
-  region(
+  region3("enemyData", "ENEMY DATA", 32768, 35840, "likely", "24 records x 128 bytes."),
+  region3(
     "appear",
     "APPEAR DATA",
     35840,
@@ -8311,8 +11340,8 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "6 stages x 0x1200 bytes of enemy appearance tables; each starts with 14 zero bytes then 14 x 0xFF in the sample."
   ),
-  region("enemyOdr", "ENEMY ODR", 63488, 65408, "likely", "24 enemies x 80 bytes = 20 x 4-byte 8-bit tile quads."),
-  region(
+  region3("enemyOdr", "ENEMY ODR", 63488, 65408, "likely", "24 enemies x 80 bytes = 20 x 4-byte 8-bit tile quads."),
+  region3(
     "myShipGroup",
     "MY SHIP GROUP",
     65408,
@@ -8320,7 +11349,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "16 quads of tilemap words (tiles 0x200-0x23C in the sample); 5 classify as 2x2 chips [n, n+1, n+8, n+9], the rest as neither shape."
   ),
-  region(
+  region3(
     "graphics",
     "GRAPIC DATA",
     65536,
@@ -8330,7 +11359,7 @@ var SFC_REGIONS = Object.freeze([
   )
 ]);
 var REGION = Object.freeze(Object.fromEntries(SFC_REGIONS.map((r) => [r.name, r])));
-var CONFIDENCES = Object.freeze(["confirmed", "likely", "open"]);
+var CONFIDENCES2 = Object.freeze(["confirmed", "likely", "open"]);
 
 // packages/shmup-engine/src/sfc/sram.js
 var SRAM_SIZE = 131072;
@@ -8342,13 +11371,13 @@ var CHECK_STRING_OFFSET = REGION.checkString.offset;
 var CHECKSUM_OFFSET = REGION.checksum.offset;
 var CHECKSUM_SIZE = REGION.checksum.length;
 var CHECKSUM_COPY_OFFSET = REGION.checksumCopy.offset;
-function latin1(bytes, offset, length) {
+function latin12(bytes, offset, length) {
   let s = "";
   for (let i = 0; i < length && offset + i < bytes.length; i++) s += String.fromCharCode(bytes[offset + i]);
   return s;
 }
 function readCheckString(bytes) {
-  return latin1(bytes, CHECK_STRING_OFFSET, REGION.checkString.length);
+  return latin12(bytes, CHECK_STRING_OFFSET, REGION.checkString.length);
 }
 function hasCheckString(bytes) {
   return bytes.length >= CHECK_STRING_OFFSET + CHECK_STRING.length && readCheckString(bytes) === CHECK_STRING;
@@ -8356,7 +11385,7 @@ function hasCheckString(bytes) {
 function isSfcSav(bytes) {
   return ACCEPTED_SIZES.includes(bytes.length) && hasCheckString(bytes);
 }
-function isBlank2(bytes) {
+function isBlank3(bytes) {
   for (let i = 0; i < bytes.length; i++) if (bytes[i] !== 0) return false;
   return true;
 }
@@ -8366,7 +11395,7 @@ function splitSegments(bytes) {
     const offset = i * SEGMENT_SIZE;
     const present = bytes.length >= offset + SEGMENT_SIZE;
     const view2 = present ? bytes.subarray(offset, offset + SEGMENT_SIZE) : bytes.subarray(0, 0);
-    segments.push({ index: i, offset, bank: 112 + i, present, bytes: view2, blank: !present || isBlank2(view2) });
+    segments.push({ index: i, offset, bank: 112 + i, present, bytes: view2, blank: !present || isBlank3(view2) });
   }
   return segments;
 }
@@ -8431,10 +11460,10 @@ var MAP_ROWS = MAP_STAGE_BYTES / MAP_COLUMNS;
 var SCROLL_STAGE_BYTES = REGION.scroll.length / STAGE_COUNT;
 var MAP_CHIP_MASK = 127;
 var MAP_CELL_FLAG = 128;
-function stageSlice(bytes, region2, stage, size) {
-  const offset = region2.offset + stage * size;
+function stageSlice(bytes, region4, stage, size) {
+  const offset = region4.offset + stage * size;
   if (offset + size > bytes.length) {
-    throw new Error(`${region2.label} stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
+    throw new Error(`${region4.label} stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
   }
   return { offset, view: bytes.subarray(offset, offset + size) };
 }
@@ -8544,10 +11573,10 @@ function decodeByteQuadTable(bytes, offset, count) {
   }
   return quads;
 }
-function perOwner(bytes, region2, owners, quadsEach, decode, quadBytes, key) {
+function perOwner(bytes, region4, owners, quadsEach, decode, quadBytes, key) {
   const out = [];
   for (let o = 0; o < owners; o++) {
-    const offset = region2.offset + o * quadsEach * quadBytes;
+    const offset = region4.offset + o * quadsEach * quadBytes;
     out.push({ [key]: o, offset, quads: decode(bytes, offset, quadsEach) });
   }
   return out;
@@ -8601,9 +11630,9 @@ function u162(bytes, offset) {
 function u32(bytes, offset) {
   return (bytes[offset] | bytes[offset + 1] << 8 | bytes[offset + 2] << 16 | bytes[offset + 3] << 24) >>> 0;
 }
-function need(bytes, region2) {
-  if (bytes.length < region2.end) {
-    throw new Error(`${region2.label} at 0x${region2.offset.toString(16)} runs past the end (${bytes.length})`);
+function need(bytes, region4) {
+  if (bytes.length < region4.end) {
+    throw new Error(`${region4.label} at 0x${region4.offset.toString(16)} runs past the end (${bytes.length})`);
   }
 }
 function decodeHiScores(bytes) {
@@ -8616,7 +11645,7 @@ function decodeHiScores(bytes) {
       offset,
       score: u32(bytes, offset),
       extra: bytes.subarray(offset + 4, offset + 8),
-      name: latin1(bytes, offset + 8, HI_SCORE_NAME_LENGTH)
+      name: latin12(bytes, offset + 8, HI_SCORE_NAME_LENGTH)
     });
   }
   return entries;
@@ -8645,9 +11674,9 @@ var ENEMY_COUNT2 = 24;
 var ENEMY_RECORD_BYTES = REGION.enemyData.length / ENEMY_COUNT2;
 var APPEAR_STAGE_COUNT = 6;
 var APPEAR_STAGE_BYTES = REGION.appear.length / APPEAR_STAGE_COUNT;
-function need2(bytes, region2) {
-  if (bytes.length < region2.end) {
-    throw new Error(`${region2.label} at 0x${region2.offset.toString(16)} runs past the end (${bytes.length})`);
+function need2(bytes, region4) {
+  if (bytes.length < region4.end) {
+    throw new Error(`${region4.label} at 0x${region4.offset.toString(16)} runs past the end (${bytes.length})`);
   }
 }
 function decodeEnemyData(bytes) {
@@ -8656,7 +11685,7 @@ function decodeEnemyData(bytes) {
   for (let i = 0; i < ENEMY_COUNT2; i++) {
     const offset = REGION.enemyData.offset + i * ENEMY_RECORD_BYTES;
     const view2 = bytes.subarray(offset, offset + ENEMY_RECORD_BYTES);
-    records.push({ index: i, offset, bytes: view2, blank: isBlank2(view2) });
+    records.push({ index: i, offset, bytes: view2, blank: isBlank3(view2) });
   }
   return records;
 }
@@ -8752,7 +11781,7 @@ function decodeGraphics(bytes) {
   const present = bytes.length >= end;
   if (!present) return { offset, present, blank: true, tiles: [], usedCount: 0 };
   const view2 = bytes.subarray(offset, end);
-  if (isBlank2(view2)) return { offset, present, blank: true, tiles: [], usedCount: 0 };
+  if (isBlank3(view2)) return { offset, present, blank: true, tiles: [], usedCount: 0 };
   const tiles = decodeTileSheet(bytes, offset, GRAPHICS_TILE_COUNT);
   let usedCount = 0;
   for (const tile of tiles) if (!tileIsBlank(tile)) usedCount++;
@@ -8767,7 +11796,7 @@ var ROM_TITLE = "DEZAEMON";
 function copierHeaderSize(rom) {
   return rom.length % 32768 === 512 ? 512 : 0;
 }
-function latin12(bytes, offset, length) {
+function latin13(bytes, offset, length) {
   let s = "";
   for (let i = 0; i < length && offset + i < bytes.length; i++) s += String.fromCharCode(bytes[offset + i]);
   return s;
@@ -8783,7 +11812,7 @@ function readRomHeader(rom) {
   return {
     copierHeader: skip,
     headerOffset: h,
-    title: latin12(rom, h, 21).trimEnd(),
+    title: latin13(rom, h, 21).trimEnd(),
     mapMode: rom[h + 21],
     cartType: rom[h + 22],
     romSizeCode,
@@ -8807,7 +11836,7 @@ function isDezaemonRom(rom) {
 }
 var TABLE_ROW = /([0-9A-F]{5})-([0-9A-F]{5})\s+([A-Z][A-Z ]*[A-Z])/g;
 function parseRomRegionTable(rom) {
-  const text = latin12(rom, 0, rom.length);
+  const text = latin13(rom, 0, rom.length);
   const rows = [];
   for (const m of text.matchAll(TABLE_ROW)) {
     rows.push({ offset: parseInt(m[1], 16), end: parseInt(m[2], 16) + 1, label: m[3], at: m.index });
@@ -8930,7 +11959,7 @@ function composeSfcCover(parsed, { stage = null } = {}) {
 }
 
 // packages/shmup-engine/src/sfc/index.js
-function attempt(result, block, fn) {
+function attempt3(result, block, fn) {
   try {
     result[block] = fn();
   } catch (err) {
@@ -8966,17 +11995,17 @@ function parseSfcSav(bytes, { rom = null } = {}) {
       rom: null
     }
   );
-  attempt(result, "checksum", () => readChecksumBlocks(bytes));
-  attempt(result, "palettes", () => decodePaletteData(bytes));
-  attempt(result, "maps", () => decodeMapData(bytes));
-  attempt(result, "scroll", () => decodeScrollEffect(bytes));
-  attempt(result, "groups", () => decodeGroups(bytes));
-  attempt(result, "hiScores", () => decodeHiScores(bytes));
-  attempt(result, "config", () => decodeConfig(bytes));
-  attempt(result, "sound", () => sliceSound(bytes));
-  attempt(result, "enemies", () => decodeEnemyData(bytes));
-  attempt(result, "appear", () => decodeAppearData(bytes));
-  attempt(result, "graphics", () => decodeGraphics(bytes));
+  attempt3(result, "checksum", () => readChecksumBlocks(bytes));
+  attempt3(result, "palettes", () => decodePaletteData(bytes));
+  attempt3(result, "maps", () => decodeMapData(bytes));
+  attempt3(result, "scroll", () => decodeScrollEffect(bytes));
+  attempt3(result, "groups", () => decodeGroups(bytes));
+  attempt3(result, "hiScores", () => decodeHiScores(bytes));
+  attempt3(result, "config", () => decodeConfig(bytes));
+  attempt3(result, "sound", () => sliceSound(bytes));
+  attempt3(result, "enemies", () => decodeEnemyData(bytes));
+  attempt3(result, "appear", () => decodeAppearData(bytes));
+  attempt3(result, "graphics", () => decodeGraphics(bytes));
   result.confidence = {
     checksum: REGION.checksum.confidence,
     palettes: REGION.palette.confidence,
@@ -8991,7 +12020,7 @@ function parseSfcSav(bytes, { rom = null } = {}) {
     graphics: REGION.graphics.confidence
   };
   if (rom) {
-    attempt(result, "rom", () => {
+    attempt3(result, "rom", () => {
       const header = readRomHeader(rom);
       const table = parseRomRegionTable(rom);
       return {
@@ -9153,6 +12182,7 @@ export {
   INTERNAL_PARTITION_SIZE,
   INTERNAL_RAM_PAYLOAD_CAPACITY,
   INTERNAL_SRM_SIZE,
+  KIDS_BACKGROUND_SETS,
   LAYER_COUNT,
   LIBRARY_MESH_COUNT,
   LIGHT_AZIMUTH,
@@ -9218,6 +12248,8 @@ export {
   buildBlankGame,
   buildBupImage,
   buildGameSave,
+  buildKidsGameFromLevel,
+  buildMemoryCard,
   buildMeshLibrary,
   buildModelMesh,
   buildPayload,
@@ -9263,6 +12295,7 @@ export {
   encodeShapeWord,
   enemyLetters,
   enemyRecordFromEditor,
+  exportLevelToKidsCard,
   exportLevelToSav,
   extractPayload,
   familyForFile,
@@ -9271,6 +12304,7 @@ export {
   findEntry,
   fitRgba,
   foldCreditText,
+  formatMemoryCard,
   formatPartition,
   frameGroup,
   gamePayloadFromSav,
@@ -9286,6 +12320,7 @@ export {
   isGzip,
   isSfcSav,
   itemIcon,
+  kidsCardFileName,
   layerAt,
   legacyFrameName,
   levelGain,
@@ -9317,6 +12352,7 @@ export {
   panPosition,
   parse,
   parseEntry,
+  parsePsxSav,
   parseSectionTable,
   parseSfcSav,
   payloadCapacity,

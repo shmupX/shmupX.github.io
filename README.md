@@ -420,6 +420,7 @@ deno task sfc:probe       # look inside a Super Famicom Dezaemon SRAM dump (repo
 deno task sfc:stage       # copy the Dezaemon cart into static/ so a packaged launcher can boot it
 deno task sfc:upload      # publish the Super Famicom library (dumps + covers + metadata) to the database
 deno task psx:probe       # look inside a PlayStation Dezaemon+ / Dezaemon Kids! save (report / png / hex / diff / all)
+deno task build:kids      # a level as a Dezaemon Kids! memory card (.mcr) for Mednafen / DuckStation / MiSTer
 deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (ls / get / report / png / all)
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task ships:atlas     # cut dev-fixtures/ship-sheet/ships.png into the editor's NEW GAME character roster
@@ -1918,10 +1919,36 @@ The memory cards are **listed, not played**. `/api/dezaemon-psx` walks
 `dev-fixtures/` for them and names each one from its `SC` title frame (the
 engine's cheap path: peel the container, identify the game, read the 256-byte
 header — nothing decompresses), and the section shows one row per game saying
-so. Booting a particular card needs a writer that can put it into the emulator's
-memory card, and there isn't one; the row explains that instead of offering a
-Play that could only fail, the way the Super Famicom section does for a save
-with no cartridge under it.
+so. Booting a particular card in the browser player needs a way to put it into
+that player's memory card, and there isn't one; the row explains that instead
+of offering a Play that could only fail, the way the Super Famicom section does
+for a save with no cartridge under it.
+
+**And a level can become a Dezaemon Kids! card.** `deno task build:kids` (and
+the editor's EXPORT sheet under CONSOLE › PS) takes the same level record and
+atlas art the Saturn export reads and writes the 128 KB raw card image an
+emulator mounts in slot 1, holding one `BISLPS-01503DEZAKIDS` save:
+
+```
+deno task build:kids                          # foo.json -> build/kids/Dezaemon Kids - foo.mcr
+deno task build:kids "Master Arena Mod"       # that cloud level
+deno task build:kids foo --name "SKY TALE"    # the card's own ten-character name
+deno task build:kids foo --background 3       # one of the disc's 38 backdrops behind every stage
+```
+
+The art is reduced to the disc's fixed 256-colour bank (a Kids! save carries
+no palette), the stages are laid into the save's 384-row grids with the
+footprint marks the editor needs, the two sections are LZSS-packed behind
+their directory and the card is formatted around them; the block is read back
+through the parser before it is written. On a machine where a Dezaemon Kids!
+disc and a Mednafen are visible, the editor's → MEDNAFEN (SLOT 1) row posts the
+card to `/api/psx-save`, which installs it as Mednafen's slot-1 card for the
+disc (backing up the card that was there) and launches the emulator — load it
+from PELON's ロード on the main menu. Mednafen also needs the Japanese BIOS
+(`scph5500.bin`) in its firmware folder, which the route reports rather than
+supplies. `packages/shmup-engine/FORMAT-PSX.md` "Writing a Kids! save" lists
+what the writer settled beyond the traced layouts and where each answer came
+from. **Dezaemon+ has no writer**: its enemy sprite layout is still open.
 
 ### The Nintendo 64 disk
 
