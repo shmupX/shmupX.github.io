@@ -2,16 +2,12 @@
 // Famicom cart wears on the shelf.
 //
 // The Saturn sequel's cover (src/cover/compose-cover.js) is the drawn KUMITATE
-// TITLE page over a screenful of scenery, and that shape does not carry over.
-// TITLE GROUP here is eight quads, not a page, and rendering them does not
-// produce a logo: ALDI Adventure's eight come out as eight unrelated 16x16
-// fragments of crate and stripe, while the drawn "ALDI Adventure /
-// NOVASQUIRREL.COM" banner that is plainly in the graphics bank goes unclaimed.
-// That is consistent with what FORMAT-SFC.md already says — a group's tile
-// numbers are read as indices into the FLAT bank, and the bank's real layout is
-// still `open`, so quads outside MAP GROUP land on the wrong tiles. Until that
-// is pinned down, a title layer would composite garbage over the scenery, so
-// the cover is the game's own scenery and only that.
+// TITLE page over a screenful of scenery. Here the cover is the scenery alone:
+// the stage map drawn through its MAP GROUP chips and its own palette row,
+// from the save's sheets or, when the parse was given the ROM, the factory
+// sheets the sample game draws from. TITLE GROUP is a 32-chip picture the
+// title screen animates; compositing it over scenery is not what the game
+// shows either, so it stays out.
 //
 // WHY 256x480, WHICH IS NOT A SNES SCREEN
 // Every shelf surface — the launcher's coverflow, the editor's LOAD GAME
@@ -20,11 +16,7 @@
 // that letterboxes, so the geometry is chosen to land on those numbers
 // honestly rather than by stretching:
 //
-//   width   MAP DATA strides 18 chips (288 px) but only columns 1-15 are ever
-//           drawn — measured over both dumps, columns 0 and 16 hold no non-zero
-//           cell in any of their twelve stages and 17 is sparse. Columns 0-15
-//           are therefore the whole drawn field plus the 16 px left margin the
-//           Saturn composer also leaves (BG_X), and they are exactly 256 px.
+//   width   a stage is 16 chips (256 px) wide, exactly the cover's width.
 //   height  30 rows of 16 px. The map is 128 rows tall, so the window slides.
 //
 // WHICH 30 ROWS
@@ -37,57 +29,59 @@
 // Pure data -> RGBA, like its Saturn counterpart: no canvas, no network, no
 // DOM. Environment-neutral ESM (Node + browser).
 
-import { assemble2x2, flipTile, withPaletteRow } from "./tiles.js";
 import { indexedToRgba } from "../decode/decode-cg.js";
 import { MAP_COLUMNS } from "./map.js";
+import { decodeChipPixels, flipChip } from "./chips.js";
+import { withPaletteRow } from "./tiles.js";
 
 export const SFC_COVER_W = 256;
 export const SFC_COVER_H = 480;
 export const SFC_COVER_CHIP = 16;
-/** Map columns the cover crops to: 0..15, the drawn field plus its left margin. */
+/** Map columns the cover shows: all 16 of the playfield. */
 export const SFC_COVER_COLUMNS = SFC_COVER_W / SFC_COVER_CHIP; // 16
 /** Map rows one cover shows. */
 export const SFC_COVER_ROWS = SFC_COVER_H / SFC_COVER_CHIP; // 30
 
 /**
- * The three things a chip needs to become pixels. Null when any is missing —
- * a 64 KB dump has no GRAPIC DATA at all, and a cart whose graphics bank is
- * blank has nothing to draw either.
+ * What a chip needs to become pixels: the save's bytes (its own sheets), the
+ * ROM's when the parse was given them (the factory sheets), the palettes and
+ * the six MAP GROUP tables. Null for a 64 KB dump, which has no sheets.
  */
 function art(parsed) {
-    const { graphics, groups, palettes } = parsed ?? {};
-    if (!graphics || graphics.blank || !groups?.map || !palettes) return null;
-    return { tiles: graphics.tiles, chips: groups.map, palettes: palettes.palettes };
+    const { graphics, groups, palettes, bytes, romBytes } = parsed ?? {};
+    if (!graphics || !graphics.present || !groups?.map || !palettes || !bytes) return null;
+    return { sram: bytes, rom: romBytes ?? null, groups: groups.map, palettes: palettes.palettes };
 }
 
 /**
- * One 16x16 background chip as RGBA, through its OWN palette row.
- *
- * tools/sfc-sav renders every quad through one row chosen on the command line,
- * which is right for a probe comparing rows and wrong for a picture: the row
- * is in the tilemap word (bits 10-12), and `classifyQuad` only calls a quad a
- * chip when all four words agree on it, so the first non-empty entry speaks
- * for the quad.
+ * One 16x16 chip as RGBA through palette row `row` (a stage's scenery row
+ * is its number), or null when the chip's sheet is not at hand — a ROM chip
+ * with no ROM given, or an empty word.
  */
-export function chipRgba(art, entries) {
-    const blank = new Uint8Array(64);
-    const pieces = entries.map((e) =>
-        e.empty || e.tile >= art.tiles.length ? blank : flipTile(art.tiles[e.tile], e.hflip, e.vflip)
-    );
-    const row = entries.find((e) => !e.empty)?.palette ?? 0;
-    return indexedToRgba(withPaletteRow(assemble2x2(pieces), row), art.palettes);
+export function chipRgba(art, word, row, { hflip = false, vflip = false } = {}) {
+    const px = decodeChipPixels(word, { sram: art.sram, rom: art.rom });
+    if (!px) return null;
+    return chipThroughRow(flipChip(px, hflip, vflip), art.palettes, row);
 }
 
 /**
- * How many drawn cells a 30-row window of one stage holds, counting only the
- * columns the cover shows. Bit 7 of a cell is not the chip index (FORMAT-SFC
- * "MAP DATA"), so it is masked off before a cell counts as used.
+ * 256 chip indices through one of the 24 palette rows. indexedToRgba takes
+ * an 8-bit index (row << 4 | colour), which reaches rows 0-15 only; a row is
+ * therefore handed to it on its own, as row 0 of a one-row bank.
+ */
+export function chipThroughRow(px, palettes, row) {
+    return indexedToRgba(withPaletteRow(px, 0), [palettes[row] ?? palettes[0]]);
+}
+
+/**
+ * How many drawn cells a 30-row window of one stage holds: cells naming a
+ * MAP GROUP slot other than 0, the blank one by the editor's convention.
  */
 export function windowCells(map, top) {
     let n = 0;
     for (let r = top; r < top + SFC_COVER_ROWS && r < map.rows; r++) {
         for (let c = 0; c < SFC_COVER_COLUMNS; c++) {
-            if (map.cells[r * MAP_COLUMNS + c] & 0x7f) n++;
+            if (map.slots[r * MAP_COLUMNS + c]) n++;
         }
     }
     return n;
@@ -167,17 +161,28 @@ export function composeSfcCover(parsed, { stage = null } = {}) {
     }
 
     const map = parsed.maps[pick.stage];
+    const group = a.groups[pick.stage].chips;
+    let drawn = 0;
     for (let r = 0; r < SFC_COVER_ROWS; r++) {
         const row = pick.top + r;
         if (row >= map.rows) break;
         for (let c = 0; c < SFC_COVER_COLUMNS; c++) {
-            const cell = map.cells[row * MAP_COLUMNS + c] & 0x7f;
-            if (!cell) continue;
-            const chip = a.chips[cell];
-            if (!chip) continue;
-            blitChip(canvas, c * SFC_COVER_CHIP, r * SFC_COVER_CHIP, chipRgba(a, chip.entries));
+            const i = row * MAP_COLUMNS + c;
+            const slot = map.slots[i];
+            if (!slot) continue;
+            const chip = group[slot];
+            if (!chip || chip.empty) continue;
+            const px = decodeChipPixels(chip.word, { sram: a.sram, rom: a.rom });
+            if (!px || !px.some((v) => v)) continue; // not at hand, or every pixel transparent
+            const rgba = chipThroughRow(flipChip(px, !!map.hflips[i], !!map.vflips[i]), a.palettes, pick.stage);
+            blitChip(canvas, c * SFC_COVER_CHIP, r * SFC_COVER_CHIP, rgba);
+            drawn++;
         }
     }
+    // A cart whose scenery lives in the ROM's sheets, parsed without the ROM,
+    // or whose own sheets are blank, has drawn nothing: say so rather than
+    // publish a flat backdrop.
+    if (!drawn) return null;
     return {
         w: SFC_COVER_W,
         h: SFC_COVER_H,

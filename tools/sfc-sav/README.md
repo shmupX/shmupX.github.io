@@ -21,10 +21,14 @@ shape of each stage's map and scroll table.
   region table and compares it with the parser's, and says whether the save's
   first 64 KB is still the ROM's factory image.
 - `png palettes` draws the 24 palette rows as swatches. `png map` draws a stage:
-  chip indices as colours when the dump has no graphics, chips through the
-  graphics bank when it does (a guess at the bank layout — see FORMAT-SFC.md
-  "GRAPIC DATA"). `png scroll` plots a stage's scroll table. `png graphics` and
-  `png groups` need a dump with graphics and say so otherwise.
+  a stage map drawn through its MAP GROUP chips and the stage's own palette
+  row, from the save's sheets or — with `--rom` — the ROM's factory sheets a
+  cart like the sample draws from; without either, slot numbers as colours.
+  `png scroll` plots a stage's two scroll tables (the block sequencer in blue,
+  the speed table in yellow). `png graphics` draws the save's two 128x512 chip
+  sheets through one row; `png groups` the assembled ship, title, ending,
+  boss and enemy sheets, each through the row the game gives it (`--row`
+  overrides). FORMAT-SFC.md "Chip words and the GROUP tables".
 - `hex` dumps a half-open range with its region name; `diff` lists the ranges
   two dumps differ in, by region — the tool for controlled-delta captures.
 - `all` writes everything above into one directory.

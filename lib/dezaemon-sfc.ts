@@ -128,9 +128,10 @@ export async function romCandidates(
   }
   const dirs: string[] = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (entry.isDirectory) {
+    const kind = entryKind(fixtures, entry);
+    if (kind === "dir") {
       if (!entry.name.startsWith(".")) dirs.push(join(fixtures, entry.name));
-    } else if (entry.isFile && looksLikeRomName(entry.name)) {
+    } else if (kind === "file" && looksLikeRomName(entry.name)) {
       await add(join(fixtures, entry.name));
     }
   }
@@ -142,12 +143,32 @@ export async function romCandidates(
       continue;
     }
     for (const entry of sub.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.isFile && looksLikeRomName(entry.name)) {
+      if (entryKind(dir, entry) === "file" && looksLikeRomName(entry.name)) {
         await add(join(dir, entry.name));
       }
     }
   }
   return out;
+}
+
+/**
+ * What a directory entry is, through a symlink: a worktree's dev-fixtures/
+ * links to the main checkout's folders and files, and readDir reports a link
+ * as neither directory nor file.
+ */
+function entryKind(
+  dir: string,
+  entry: Deno.DirEntry,
+): "dir" | "file" | "other" {
+  if (entry.isDirectory) return "dir";
+  if (entry.isFile) return "file";
+  if (!entry.isSymlink) return "other";
+  try {
+    const st = Deno.statSync(join(dir, entry.name));
+    return st.isDirectory ? "dir" : st.isFile ? "file" : "other";
+  } catch {
+    return "other";
+  }
 }
 
 /** A candidate's bytes, or null when it vanished or cannot be read. */

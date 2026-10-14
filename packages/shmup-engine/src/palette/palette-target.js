@@ -254,7 +254,13 @@ function quantizeSaturn(frames, { userColors = USER_COLOR_COUNT, threshold = 12 
     };
 }
 
-function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15 } = {}) {
+function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15, firstRow = USER_ROW_FIRST } = {}) {
+    // `firstRow`/`rows` place the packed rows anywhere in the 16-row bank: the
+    // Saturn-shaped default is the four user rows from 12; the Super Famicom
+    // writer asks for up to eight from the CGRAM row its layer owns.
+    if (firstRow < 0 || firstRow + rows > DEZA2_CG_COLORS / DEZA2_PALETTE_COLS) {
+        throw new Error(`palette rows ${firstRow}..${firstRow + rows - 1} do not fit a 16-row bank`);
+    }
     // Frames of one sprite share a row; groups are then packed into at most
     // `rows` palettes, each group going where it costs the least error.
     const groups = new Map();
@@ -304,7 +310,7 @@ function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15 } = {}
     const rowOfGroup = new Map();
     const rowCands = [];
     rowSets.forEach((row, i) => {
-        const palRow = USER_ROW_FIRST + i;
+        const palRow = firstRow + i;
         // Entry 0 of a SNES palette is transparent: leave it empty (the
         // marker slot at 15 becomes a real colour, as authored saves do).
         bank[palRow * DEZA2_PALETTE_COLS + DEZA2_PALETTE_COLS - 1] = 0;
@@ -328,7 +334,7 @@ function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15 } = {}
         }
         const set = rowCands[r];
         const out = indexFrame(f, set);
-        return { key: f.key, w: f.w, h: f.h, group: g, indexed: out, row: USER_ROW_FIRST + r };
+        return { key: f.key, w: f.w, h: f.h, group: g, indexed: out, row: firstRow + r };
     });
     for (const set of rowCands) { error += set.meanError(); count++; }
     return {
@@ -338,7 +344,7 @@ function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15 } = {}
             target: "snes",
             sourceColors: colorHistogram(frames).size,
             rows: rowSets.map((row, i) => ({
-                row: USER_ROW_FIRST + i,
+                row: firstRow + i,
                 colors: Math.min(colorsPerRow, row.hist.size),
                 groups: row.groups.map((g) => g.name),
             })),

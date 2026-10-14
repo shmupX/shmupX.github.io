@@ -104,17 +104,17 @@ function bupDateToDate(minutes) {
   return new Date(epoch1980 + minutes * 6e4);
 }
 function makeStream(data, base, blockSize, entryOff, chain) {
-  let seg = -1;
+  let seg2 = -1;
   let pos = entryOff + 34;
   let segEnd = entryOff + blockSize;
   return {
     readByte() {
       while (pos >= segEnd) {
-        seg++;
-        if (seg >= chain.length) {
+        seg2++;
+        if (seg2 >= chain.length) {
           throw new Error("save data stream exhausted before datasize bytes were read");
         }
-        const n = chain[seg];
+        const n = chain[seg2];
         pos = base + n * blockSize + 4;
         segEnd = base + (n + 1) * blockSize;
         if (segEnd > data.length) {
@@ -5292,13 +5292,13 @@ function writeSaveEntry(partition, blockSize, save, firstBlock = FIRST_SAVE_BLOC
   partition[h + 28] = date >> 8 & 255;
   partition[h + 29] = date & 255;
   dv.setUint32(h + 30, payload.length);
-  let seg = -1;
+  let seg2 = -1;
   let pos = h + STREAM_OFFSET;
   let segEnd = h + blockSize;
   const put = (b) => {
     while (pos >= segEnd) {
-      seg++;
-      const n = chain[seg];
+      seg2++;
+      const n = chain[seg2];
       if (n === void 0) throw new Error("block chain exhausted while writing the data stream");
       const start = n * blockSize;
       dv.setUint32(start, 0);
@@ -6176,7 +6176,10 @@ function quantizeSaturn(frames, { userColors = USER_COLOR_COUNT, threshold = 12 
     }
   };
 }
-function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15 } = {}) {
+function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15, firstRow = USER_ROW_FIRST } = {}) {
+  if (firstRow < 0 || firstRow + rows > DEZA2_CG_COLORS / DEZA2_PALETTE_COLS) {
+    throw new Error(`palette rows ${firstRow}..${firstRow + rows - 1} do not fit a 16-row bank`);
+  }
   const groups = /* @__PURE__ */ new Map();
   for (const f of frames) {
     const g = f.group || frameGroup(f.key);
@@ -6230,7 +6233,7 @@ function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15 } = {}
   const rowOfGroup = /* @__PURE__ */ new Map();
   const rowCands = [];
   rowSets.forEach((row, i) => {
-    const palRow = USER_ROW_FIRST + i;
+    const palRow = firstRow + i;
     bank[palRow * DEZA2_PALETTE_COLS + DEZA2_PALETTE_COLS - 1] = 0;
     const words = medianCut(row.hist, colorsPerRow);
     const cands = [];
@@ -6251,7 +6254,7 @@ function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15 } = {}
     }
     const set = rowCands[r];
     const out = indexFrame(f, set);
-    return { key: f.key, w: f.w, h: f.h, group: g, indexed: out, row: USER_ROW_FIRST + r };
+    return { key: f.key, w: f.w, h: f.h, group: g, indexed: out, row: firstRow + r };
   });
   for (const set of rowCands) {
     error += set.meanError();
@@ -6264,7 +6267,7 @@ function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15 } = {}
       target: "snes",
       sourceColors: colorHistogram(frames).size,
       rows: rowSets.map((row, i) => ({
-        row: USER_ROW_FIRST + i,
+        row: firstRow + i,
         colors: Math.min(colorsPerRow, row.hist.size),
         groups: row.groups.map((g) => g.name)
       })),
@@ -6321,8 +6324,8 @@ var CG_CELL_CAPACITY = CG_PAGE_COUNT * (CG_PAGE_BYTES / CG_CELL_BYTES);
 var REF_HFLIP = 16384;
 var REF_VFLIP = 32768;
 var CgFullError = class extends Error {
-  constructor(need3) {
-    super(`the four CG pages hold ${CG_CELL_CAPACITY} cells and every one is taken (needed ${need3} more)`);
+  constructor(need2) {
+    super(`the four CG pages hold ${CG_CELL_CAPACITY} cells and every one is taken (needed ${need2} more)`);
     this.name = "CgFullError";
   }
 };
@@ -6392,7 +6395,7 @@ var CgPacker = class {
   addFrame(indexed, w, h) {
     const cells = indexedToCells(indexed, w, h);
     const count = cells.length / CG_CELL_BYTES;
-    let need3 = 0;
+    let need2 = 0;
     const seen = /* @__PURE__ */ new Set();
     for (let c = 0; c < count; c++) {
       const cell = cells.subarray(c * CG_CELL_BYTES, (c + 1) * CG_CELL_BYTES);
@@ -6405,9 +6408,9 @@ var CgPacker = class {
       const k = keyOf(cell);
       if (this.byKey.has(k) || seen.has(k)) continue;
       seen.add(k);
-      need3++;
+      need2++;
     }
-    if (need3 > this.free) throw new CgFullError(need3 - this.free);
+    if (need2 > this.free) throw new CgFullError(need2 - this.free);
     const refs = new Uint16Array(count);
     for (let c = 0; c < count; c++) {
       refs[c] = this.addCell(cells.subarray(c * CG_CELL_BYTES, (c + 1) * CG_CELL_BYTES));
@@ -7630,7 +7633,7 @@ function buildSaveFromGame(level, art2, options = {}) {
   };
   const painted = (key) => !!(key && refsByKey.get(key));
   const sec5 = new Uint8Array(SECTION_SIZES[5]);
-  const putWord = (at, w) => {
+  const putWord2 = (at, w) => {
     sec5[at] = w >> 8;
     sec5[at + 1] = w & 255;
   };
@@ -7658,7 +7661,7 @@ function buildSaveFromGame(level, art2, options = {}) {
       const slot = bankBase + def.base + (rec.index - def.first) * def.frames * cellsPerFrame * 2;
       rec.frames.forEach((key, f) => {
         const refs = refsOf(key, cellsPerFrame);
-        for (let c = 0; c < cellsPerFrame; c++) putWord(slot + (f * cellsPerFrame + c) * 2, refs[c]);
+        for (let c = 0; c < cellsPerFrame; c++) putWord2(slot + (f * cellsPerFrame + c) * 2, refs[c]);
       });
     }
     if (b.boss) {
@@ -7670,7 +7673,7 @@ function buildSaveFromGame(level, art2, options = {}) {
       b.boss.frames.forEach((key, f) => {
         const refs = refsOf(key, cellsPerFrame);
         for (let c = 0; c < cellsPerFrame; c++) {
-          putWord(bankBase + BOSS_CORE_OFFSET + (f * cellsPerFrame + order[c]) * 2, refs[c]);
+          putWord2(bankBase + BOSS_CORE_OFFSET + (f * cellsPerFrame + order[c]) * 2, refs[c]);
         }
       });
     }
@@ -7691,13 +7694,13 @@ function buildSaveFromGame(level, art2, options = {}) {
           let ref = refs[0];
           if (h) ref ^= REF_HFLIP;
           if (v) ref ^= REF_VFLIP;
-          putWord(bgBase + (r * BG_COLS + c) * 2, ref);
+          putWord2(bgBase + (r * BG_COLS + c) * 2, ref);
         }
       }
     }
   });
   const gb = SEC5_REGIONS.spriteBank.offset;
-  const putRefs = (slot, refs) => refs.forEach((r, i) => putWord(gb + (slot + i) * 2, r));
+  const putRefs = (slot, refs) => refs.forEach((r, i) => putWord2(gb + (slot + i) * 2, r));
   for (const pose of [GLOBAL_SLOTS.shipBankA, GLOBAL_SLOTS.shipIdle, GLOBAL_SLOTS.shipBankB]) {
     shipIdle.forEach((key, f) => putRefs(pose + f * 4, refsOf(key, 4)));
   }
@@ -9717,7 +9720,7 @@ var KidsCellBank = class {
   addFrame(indexed, w, h) {
     const cw = w / CG_CELL, ch = h / CG_CELL;
     const cells = [];
-    let need3 = 0;
+    let need2 = 0;
     const seen = /* @__PURE__ */ new Set();
     for (let cy = 0; cy < ch; cy++) {
       for (let cx = 0; cx < cw; cx++) {
@@ -9730,10 +9733,10 @@ var KidsCellBank = class {
         const k = cellKey(cell);
         if (this.cellByKey.has(k) || seen.has(k)) continue;
         seen.add(k);
-        need3++;
+        need2++;
       }
     }
-    if (need3 > this.free) throw new KidsBankFullError(`${need3} new cells for a ${w}x${h} frame, ${this.free} free`);
+    if (need2 > this.free) throw new KidsBankFullError(`${need2} new cells for a ${w}x${h} frame, ${this.free} free`);
     return Uint16Array.from(cells, (c) => this.addCell(c));
   }
 };
@@ -9977,7 +9980,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
       return null;
     }
   };
-  const fitIndexed = (frame, w, h) => quantizeKidsFrame(fitRgba(frame, w, h));
+  const fitIndexed2 = (frame, w, h) => quantizeKidsFrame(fitRgba(frame, w, h));
   const data = new Uint8Array(KIDS_DATA_SIZE);
   const putWords = (at, list) => {
     for (let i = 0; i < list.length; i++) putU16le3(data, at + i * 2, list[i]);
@@ -9992,7 +9995,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
   const shipWords = new Uint16Array(KIDS_SHIP_TABLE_WORDS).fill(KIDS_BLANK);
   const poseWords = (frame) => {
     if (!frame) return new Uint16Array(4).fill(KIDS_BLANK);
-    return bankFrame(fitIndexed(frame, 32, 32), 32, 32, "player") || new Uint16Array(4).fill(KIDS_BLANK);
+    return bankFrame(fitIndexed2(frame, 32, 32), 32, 32, "player") || new Uint16Array(4).fill(KIDS_BLANK);
   };
   const centre = shipFrames[0] || null;
   const bank0 = shipFrames.length > 1 ? shipFrames[1] : centre;
@@ -10010,7 +10013,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
     }
   }
   const shotFrames = spreadFrames(shotArt.length ? shotArt : [shotSprite(16, 16)], 4);
-  const shotWords = shotFrames.map((f) => (bankFrame(fitIndexed(f, 16, 16), 16, 16, "player shot") || new Uint16Array([KIDS_BLANK]))[0]);
+  const shotWords = shotFrames.map((f) => (bankFrame(fitIndexed2(f, 16, 16), 16, 16, "player shot") || new Uint16Array([KIDS_BLANK]))[0]);
   const blastRings = blastFrames(32, KIDS_SHIP_LAYOUT.blast.frames);
   const blastCells = blastRings.map((f) => bankFrame(quantizeKidsFrame(f), 32, 32, "blast") || new Uint16Array(4).fill(KIDS_BLANK));
   for (const ship of [KIDS_SHIP_LAYOUT.ship1, KIDS_SHIP_LAYOUT.ship2]) {
@@ -10046,7 +10049,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
     const frames = bulletArt.length ? bulletArt[q % bulletArt.length] : [shotSprite(16, 16, bulletTints[q])];
     if (bulletArt.length && !quadOfArt.has(frames[0].key)) quadOfArt.set(frames[0].key, q);
     const chosen = spreadFrames(frames, KIDS_SHIP_LAYOUT.bullets.frames);
-    const out = chosen.map((f) => (bankFrame(fitIndexed(f, 16, 16), 16, 16, "enemy bullet") || new Uint16Array([KIDS_BLANK]))[0]);
+    const out = chosen.map((f) => (bankFrame(fitIndexed2(f, 16, 16), 16, 16, "enemy bullet") || new Uint16Array([KIDS_BLANK]))[0]);
     shipWords.set(out, KIDS_SHIP_LAYOUT.bullets.at + q * KIDS_SHIP_LAYOUT.bullets.frames);
     bulletSlots.push(frames[0].key || "procedural");
   }
@@ -10079,7 +10082,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
       frame = itemIcon(slot.type);
       source = "square";
     }
-    const w = bankFrame(fitIndexed(frame, 16, 16), 16, 16, "items") || new Uint16Array([KIDS_BLANK]);
+    const w = bankFrame(fitIndexed2(frame, 16, 16), 16, 16, "items") || new Uint16Array([KIDS_BLANK]);
     shipWords[KIDS_SHIP_LAYOUT.items.at + i] = w[0];
     return source;
   });
@@ -10123,7 +10126,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
         const bw = strip.w * CG_CELL, bh = strip.h * CG_CELL;
         const stripWords = new Uint16Array(KIDS_SPRITE_ENTRY_WORDS).fill(KIDS_BLANK);
         spreadFrames(frames, strip.frames).forEach((f, fi) => {
-          const cells = bankFrame(fitIndexed(f, bw, bh), bw, bh, `enemy${letter}`);
+          const cells = bankFrame(fitIndexed2(f, bw, bh), bw, bh, `enemy${letter}`);
           if (!cells) return;
           for (let cy = 0; cy < strip.h; cy++) {
             for (let cx = 0; cx < strip.w; cx++) stripWords[cy * strip.stripW + fi * strip.w + cx] = cells[cy * strip.w + cx];
@@ -10237,7 +10240,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
       if (!frames.length) warn(`${st.key}: boss (${bossRec.name || "?"}) has no art in the atlas \u2014 its sprite is unpainted`);
       const phaseFrames = frames.length ? [frames[0], frames[1] || frames[0]] : [];
       phaseFrames.forEach((f, phase) => {
-        const cells = bankFrame(fitIndexed(f, aw * CG_CELL, ah * CG_CELL), aw * CG_CELL, ah * CG_CELL, `boss${s}`);
+        const cells = bankFrame(fitIndexed2(f, aw * CG_CELL, ah * CG_CELL), aw * CG_CELL, ah * CG_CELL, `boss${s}`);
         if (!cells) return;
         for (let cy = 0; cy < ah; cy++) for (let cx = 0; cx < aw; cx++) bossWords[phase][cy * KIDS_BOSS_GRID + cx] = cells[cy * aw + cx];
       });
@@ -10278,12 +10281,12 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
           }
           return cellRgba.get(ordinal);
         };
-        const chipRgba2 = new Uint8Array(32 * 32 * 4);
+        const chipRgba = new Uint8Array(32 * 32 * 4);
         const firstCol = Math.max(0, Math.floor((cols - KIDS_MAP_COLUMNS * 2) / 2));
         let chipsFull = false;
         for (let cr = 0; cr < Math.min(KIDS_MAP_ROWS, Math.ceil(rows / 2)) && !chipsFull; cr++) {
           for (let cc = 0; cc < KIDS_MAP_COLUMNS; cc++) {
-            chipRgba2.fill(0);
+            chipRgba.fill(0);
             let any = false;
             for (let dy = 0; dy < 2; dy++) {
               for (let dx = 0; dx < 2; dx++) {
@@ -10298,10 +10301,10 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
                   for (let x = 0; x < CG_CELL; x++) {
                     const sx = hf ? CG_CELL - 1 - x : x, sy = vf ? CG_CELL - 1 - y : y;
                     const si = (sy * CG_CELL + sx) * 4, di = ((dy * CG_CELL + y) * 32 + dx * CG_CELL + x) * 4;
-                    chipRgba2[di] = f.rgba[si];
-                    chipRgba2[di + 1] = f.rgba[si + 1];
-                    chipRgba2[di + 2] = f.rgba[si + 2];
-                    chipRgba2[di + 3] = f.rgba[si + 3];
+                    chipRgba[di] = f.rgba[si];
+                    chipRgba[di + 1] = f.rgba[si + 1];
+                    chipRgba[di + 2] = f.rgba[si + 2];
+                    chipRgba[di + 3] = f.rgba[si + 3];
                     any = true;
                   }
                 }
@@ -10309,7 +10312,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
             }
             if (!any) continue;
             try {
-              const word = bank.addChip(quantizeKidsFrame({ w: 32, h: 32, rgba: chipRgba2 }));
+              const word = bank.addChip(quantizeKidsFrame({ w: 32, h: 32, rgba: chipRgba }));
               mapWords[cr * KIDS_MAP_COLUMNS + cc] = word;
               if (word !== KIDS_MAP_FILL) chips++;
             } catch (e) {
@@ -10337,7 +10340,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
   let title = "none";
   for (const [art3, t] of [[opts.title1, KIDS_SHIP_LAYOUT.title1], [opts.title2, KIDS_SHIP_LAYOUT.title2]]) {
     if (!art3 || !art3.rgba) continue;
-    const w = bankFrame(fitIndexed(art3, t.w * CG_CELL, t.h * CG_CELL), t.w * CG_CELL, t.h * CG_CELL, "title");
+    const w = bankFrame(fitIndexed2(art3, t.w * CG_CELL, t.h * CG_CELL), t.w * CG_CELL, t.h * CG_CELL, "title");
     if (w) {
       shipWords.set(w, t.at);
       title = "uploaded";
@@ -12337,7 +12340,7 @@ var SFC_REGIONS = Object.freeze([
     32,
     64,
     "confirmed",
-    "Zero apart from the word 0x3160 at 0x3E in the sample."
+    "Never read by the boot or load paths; zero but for the word 0x3160 at 0x3E in the ROM's default image."
   ),
   region3(
     "palette",
@@ -12345,15 +12348,15 @@ var SFC_REGIONS = Object.freeze([
     64,
     832,
     "confirmed",
-    "24 rows of 16 BGR555 little-endian words. Rows 0-21 are colour (bit 15 clear); the rows at 0x100, 0x120, 0x140, 0x160 and 0x180 are five identical defaults in the sample. Rows 22-23 (0x300-0x33F) look like the editor's own R/G/B ramps and primaries and each ends in a bit-15 word \u2014 open."
+    "24 rows of 16 BGR555 little-endian words. Rows 0-5 colour the stages' scenery, 6-11 their enemies, 12-17 their bosses, 18 the ship, 19 the title and ending, 20 items and weapons, 21 is free; 22-23 are the editor's own colour picker (bit-15 words, never copied to CGRAM)."
   ),
   region3(
     "map",
     "MAP DATA",
     832,
     14656,
-    "likely",
-    "6 stages x 0x900 bytes of 8-bit chip indices into MAP GROUP, 18 columns x 128 rows (vertical continuity beats every non-multiple width in all six sample stages; its multiple 36 edges it by 0.002 in stage 4; columns 0 and 16 hold no non-zero cell in any stage while 8 and 17 are sparse, roughly a third as full as the rest, so the drawn field looks narrower than the stride); bit 7 is set on some cells."
+    "confirmed",
+    "6 stages x 0x900: 128 rows of 18 bytes, row 0 the stage start. A row is two halves of eight cells and a flag byte: cell bit 7 = H flip, bits 0-6 = MAP GROUP slot; flag bit 7-k = V flip of cell k. 16 chips (256 px) wide, 2,048 px tall ($00:9B9C; rendered)."
   ),
   region3(
     "scroll",
@@ -12361,55 +12364,55 @@ var SFC_REGIONS = Object.freeze([
     14656,
     17728,
     "likely",
-    "6 x 0x200 bytes by size. The sample opens with 0x100 bytes of small integers, then smooth curves around 0x40 padded with 0x1F/0x1D recur every 0x200 from +0x100; per-stage scroll tables, layout open."
+    "6 x 0x200: two 256-byte tables, one entry per 8-px band \u2014 +0x000 an effect index (cleared to i & 0x1F), +0x100 the band's scroll speed (cleared to 0x42; 0x40 reads as 1 px/frame). The play-time reader is untraced."
   ),
   region3(
     "mapGroup",
     "MAP GROUP",
     17728,
     19264,
-    "likely",
-    "192 chips x 4 SNES tilemap words, free-form tile picks (tiles 0x2C0-0x373 in the sample); 0xFFFF and 0x03FF mean an empty slot, and 119 of the sample's chips are wholly empty, only 4 classifying as 2x2 chips."
+    "confirmed",
+    "6 stages x 128 chip words: word k is the chip copied into BG slot k, which a map cell names. 0xFFFF (or 0x03FF) is the blank chip; the editor clears a stage's table to 0xFF with word 0 = 0x03FF."
   ),
   region3(
     "myShipOdr",
     "MY SHIP ODR",
     19264,
     19328,
-    "likely",
-    "16 x 4-byte 8-bit tile quads; all zero in the sample."
+    "confirmed",
+    "64 bytes, 56 used: bits 6-7 are the V/H flips of the ship sheet's chips 0-55 ($00:9D8B); zero in both dumps."
   ),
   region3(
     "enemyGroup",
     "ENEMY GROUP",
     19328,
     20096,
-    "likely",
-    "24 enemies x 32 bytes = 4 quads of tilemap words; the sample draws mostly on tiles 0x360-0x3FB, a few from 0x200 and 0x2B8."
+    "confirmed",
+    "6 stages x 64 chip words: the stage's enemy sprite sheet, 8x8 chips, assembled into OBJ names 0x100-0x1FF; ENEMY ODR references its slots. Cleared to 0xFFFF/0x03FF."
   ),
   region3(
     "bossGroup",
     "BOSS GROUP",
     20096,
     20480,
-    "likely",
-    "6 bosses x 64 bytes = 8 quads; 16 of the sample's 48 are symmetric strips [n, n+1, n+1|H, n|H], the rest neither strip nor chip."
+    "confirmed",
+    "6 stages x 32 chip words: the boss as an 8x4-chip BG sheet at tiles 0x20-0x9F. Cleared to 0x03FF."
   ),
   region3(
     "titleGroup",
     "TITLE GROUP",
     20480,
     20544,
-    "likely",
-    "8 quads of tilemap words (tiles 0x2A0-0x2BF in the sample)."
+    "confirmed",
+    "32 chip words: the title picture, assembled like a stage sheet (bits 11-13 masked on save)."
   ),
   region3(
     "endingGroup",
     "ENDING GROUP",
     20544,
     20568,
-    "likely",
-    "3 quads; all empty in the sample."
+    "confirmed",
+    "12 chip words for the ending screen; 0x03FF when unused."
   ),
   region3(
     "sound",
@@ -12417,9 +12420,16 @@ var SFC_REGIONS = Object.freeze([
     20568,
     32344,
     "open",
-    "11,776 bytes of high-entropy bit-packed data. The composer holds 16 bars at 1/16 quantise, two voices; layout open."
+    "16 songs x 0x2E0 bytes; the editor clears every slot to one ROM block ($80:8E46). The sample's BGM PATCH points at ROM songs, so its stream is never played. The note format is open."
   ),
-  region3("titleType", "TITLE TYPE", 32344, 32346, "confirmed", "u16; 0x020A in the sample."),
+  region3(
+    "titleType",
+    "TITLE TYPE",
+    32344,
+    32346,
+    "confirmed",
+    "u16: the title animation ($00:B182) \u2014 byte 0 bits 0-1 / 2-3 / 4-5 the X, Y and third motion of element 1, byte 1 of element 2; 0x020A in the sample."
+  ),
   region3("checksumCopy", "CHECK SUM COPY", 32346, 32378, "confirmed", "Byte-identical to CHECK SUM."),
   region3(
     "mouseSpeed",
@@ -12427,20 +12437,48 @@ var SFC_REGIONS = Object.freeze([
     32378,
     32380,
     "confirmed",
-    "u16. The cart supports the SNES Mouse; the anti-piracy SRAM-size probe writes $707E7B."
+    "u16: the low byte is the option; the boot writes its SRAM-size probe into the high byte every start, so only the low byte is the save's."
   ),
-  region3("editBgm", "EDIT BGM", 32380, 32382, "confirmed", "u16."),
-  region3("bgmPatch", "BGM PATCH", 32382, 32398, "confirmed", "16 bytes, one instrument per BGM slot."),
+  region3(
+    "editBgm",
+    "EDIT BGM",
+    32380,
+    32382,
+    "confirmed",
+    "u16: the song slot the composer was editing."
+  ),
+  region3(
+    "bgmPatch",
+    "BGM PATCH",
+    32382,
+    32398,
+    "confirmed",
+    "16 bytes, each & 0x3F: slots 0-5 stage n's song, 6-11 stage n's boss song, 12 the title, 13-15 ending / clear / game over; 0-15 pick SOUND DATA songs, 0x10 and up the ROM's own."
+  ),
   region3(
     "hiScore",
     "HIGH SCORE",
     32398,
     32718,
     "confirmed",
-    "20 entries x 16 bytes: u32 score, 4 bytes, char[8] name \u2014 two tables of ten. The sample holds the factory ladder 1000..100 twice, with '........' names."
+    "20 entries x 16 bytes: u32 score, 4 bytes (the stage reached, likely), char[8] name \u2014 entries 0-9 are the sample game's table, 10-19 the user game's ($05:D087). The factory ladder 1000..100 with '........' names fills both."
   ),
-  region3("keyConfig", "KEY CONFIG", 32718, 32722, "confirmed", "4 bytes; 20 08 10 20 in the sample."),
-  region3("reserved1", "RESERVED", 32722, 32760, "confirmed", "38 bytes, 20 of them 0xFF in the sample."),
+  region3(
+    "keyConfig",
+    "KEY CONFIG",
+    32718,
+    32722,
+    "confirmed",
+    "Two u16 button assignments ($03:C134); 20 08 10 20 is the default."
+  ),
+  region3(
+    "reserved1",
+    "RESERVED",
+    32722,
+    32760,
+    "confirmed",
+    "38 bytes; never read. The ROM's default image leaves 20 of them 0xFF."
+  ),
   region3(
     "checkString",
     "CHECK STRINGS",
@@ -12449,31 +12487,45 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "ASCII 'T.TABATA' \u2014 the programmer's initials (ROM credits: TSUTOMU TABATA 94/01/27), used as the formatted-SRAM magic."
   ),
-  region3("enemyData", "ENEMY DATA", 32768, 35840, "likely", "24 records x 128 bytes."),
+  region3(
+    "enemyData",
+    "ENEMY DATA",
+    32768,
+    35840,
+    "likely",
+    "6 stages x 0x200: eight-byte entries in five classes \u2014 0-2 sixteen each at +0/+0x80/+0x100, 3 eight at +0x180, 4 four at +0x1C0 \u2014 then a 32-byte boss block at +0x1E0. The entries' bit fields are the editor's ($04:E2F0); what each means to the play engine is read off ranges, not traced."
+  ),
   region3(
     "appear",
     "APPEAR DATA",
     35840,
     63488,
-    "likely",
-    "6 stages x 0x1200 bytes of enemy appearance tables; each starts with 14 zero bytes then 14 x 0xFF in the sample."
+    "confirmed",
+    "6 stages x 0x1200: 256 records of 14 spawn bytes (one per playfield column 1..14: valid bit 7, class bits 4-6, entry bits 0-3), then a 1,024-byte line table \u2014 one entry per 2 px of the stage, the record that fires there. Record 0 is empty and record 1 the END code the loader forces."
   ),
-  region3("enemyOdr", "ENEMY ODR", 63488, 65408, "likely", "24 enemies x 80 bytes = 20 x 4-byte 8-bit tile quads."),
+  region3(
+    "enemyOdr",
+    "ENEMY ODR",
+    63488,
+    65408,
+    "confirmed",
+    "6 stages x 320 bytes: 80 four-byte quads of slot references ([V][H][row:3][col:3]) into the stage's enemy sheet, 16 quads a class \u2014 classes 0-2 one quad (four 16x16 frames) an entry, class 3 two quads (a 32x32 sprite, two frames), class 4 four."
+  ),
   region3(
     "myShipGroup",
     "MY SHIP GROUP",
     65408,
     65536,
-    "likely",
-    "16 quads of tilemap words (tiles 0x200-0x23C in the sample); 5 classify as 2x2 chips [n, n+1, n+8, n+9], the rest as neither shape."
+    "confirmed",
+    "64 chip words: the ship sheet (8x8 chips) assembled into OBJ names 0x000-0x0FF \u2014 poses, shots, weapons, items; slots 61-63 are forced to 0x3FC-0x3FE."
   ),
   region3(
     "graphics",
     "GRAPIC DATA",
     65536,
     131072,
-    "open",
-    "2,048 x 4bpp planar 8x8 tiles by size. All zero in the sample dump, so the bank layout (tile number -> offset) is unverified."
+    "confirmed",
+    "Two 32 KB sheets of 4bpp tiles, each 16 tiles wide: 32 chip rows of 8 chips, a chip 0x40 bytes with its tiles at +0/+0x20/+0x200/+0x220. A group word's bits 8-10 pick the sheet (0/1 here; 2/3 the ROM's factory art), bits 3-7 the row, 0-2 the column."
   )
 ]);
 var REGION = Object.freeze(Object.fromEntries(SFC_REGIONS.map((r) => [r.name, r])));
@@ -12531,8 +12583,29 @@ function readChecksumBlocks(bytes) {
 var CGRAM_ROW_COLORS = 16;
 var CGRAM_ROW_BYTES = CGRAM_ROW_COLORS * 2;
 var PALETTE_ROW_COUNT = REGION.palette.length / CGRAM_ROW_BYTES;
+var PALETTE_ROW_STAGE_BG = 0;
+var PALETTE_ROW_STAGE_ENEMY = 6;
+var PALETTE_ROW_STAGE_BOSS = 12;
+var PALETTE_ROW_SHIP = 18;
+var PALETTE_ROW_TITLE = 19;
+function paletteRowRole(row) {
+  if (row < 6) return `stage ${row} scenery`;
+  if (row < 12) return `stage ${row - 6} enemies`;
+  if (row < 18) return `stage ${row - 12} boss`;
+  return ["ship", "title and ending", "items and weapons", "free", "editor picker", "editor picker"][row - 18] ?? `row ${row}`;
+}
 function readColorWord(bytes, offset) {
   return bytes[offset] | bytes[offset + 1] << 8;
+}
+function writeCgramRow(bytes, row, words) {
+  if (row < 0 || row >= PALETTE_ROW_COUNT) throw new Error(`palette row ${row} is outside 0..${PALETTE_ROW_COUNT - 1}`);
+  const at = REGION.palette.offset + row * CGRAM_ROW_BYTES;
+  for (let i = 0; i < CGRAM_ROW_COLORS; i++) {
+    const w = i === 0 ? 0 : (words[i] ?? 0) & 32767;
+    bytes[at + i * 2] = w & 255;
+    bytes[at + i * 2 + 1] = w >> 8;
+  }
+  return bytes;
 }
 function decodeCgramRow(bytes, offset) {
   if (offset + CGRAM_ROW_BYTES > bytes.length) {
@@ -12563,7 +12636,7 @@ function decodePaletteData(bytes) {
   const colorRowCount = rows.filter((row) => row.color).length;
   return {
     offset: REGION.palette.offset,
-    rows,
+    rows: rows.map((row, i) => ({ ...row, row: i, role: paletteRowRole(i) })),
     palettes: rowsToPalettes(rows),
     colorRowCount,
     allColor: colorRowCount === rows.length
@@ -12573,11 +12646,18 @@ function decodePaletteData(bytes) {
 // packages/shmup-engine/src/sfc/map.js
 var STAGE_COUNT = 6;
 var MAP_STAGE_BYTES = REGION.map.length / STAGE_COUNT;
-var MAP_COLUMNS = 18;
-var MAP_ROWS = MAP_STAGE_BYTES / MAP_COLUMNS;
+var MAP_ROW_BYTES = 18;
+var MAP_COLUMNS = 16;
+var MAP_ROWS = MAP_STAGE_BYTES / MAP_ROW_BYTES;
+var MAP_CELL_SLOT_MASK = 127;
+var MAP_CELL_HFLIP = 128;
 var SCROLL_STAGE_BYTES = REGION.scroll.length / STAGE_COUNT;
-var MAP_CHIP_MASK = 127;
-var MAP_CELL_FLAG = 128;
+var SCROLL_BANDS = 256;
+var SCROLL_SPEED_OFFSET = 256;
+var SCROLL_DEFAULT_SPEED = 66;
+function scrollDefaultEffect(band) {
+  return band & 31;
+}
 function stageSlice(bytes, region4, stage, size) {
   const offset = region4.offset + stage * size;
   if (offset + size > bytes.length) {
@@ -12585,17 +12665,51 @@ function stageSlice(bytes, region4, stage, size) {
   }
   return { offset, view: bytes.subarray(offset, offset + size) };
 }
+function decodeMapRow(bytes, at) {
+  const cells = [];
+  for (let half = 0; half < 2; half++) {
+    const base = at + half * 9;
+    const flags = bytes[base + 8];
+    for (let k = 0; k < 8; k++) {
+      const b = bytes[base + k];
+      cells.push({ slot: b & MAP_CELL_SLOT_MASK, hflip: (b & MAP_CELL_HFLIP) !== 0, vflip: (flags >> 7 - k & 1) !== 0 });
+    }
+  }
+  return cells;
+}
+function encodeMapRow(bytes, at, cells) {
+  for (let half = 0; half < 2; half++) {
+    const base = at + half * 9;
+    let flags = 0;
+    for (let k = 0; k < 8; k++) {
+      const c = cells[half * 8 + k] || { slot: 0 };
+      bytes[base + k] = c.slot & MAP_CELL_SLOT_MASK | (c.hflip ? MAP_CELL_HFLIP : 0);
+      if (c.vflip) flags |= 1 << 7 - k;
+    }
+    bytes[base + 8] = flags;
+  }
+  return bytes;
+}
 function decodeMapStage(bytes, stage) {
   const { offset, view: view2 } = stageSlice(bytes, REGION.map, stage, MAP_STAGE_BYTES);
-  let used = 0, flagged = 0, maxChip = 0;
-  for (let i = 0; i < view2.length; i++) {
-    const v = view2[i];
-    if (!v) continue;
-    used++;
-    if (v & MAP_CELL_FLAG) flagged++;
-    if ((v & MAP_CHIP_MASK) > maxChip) maxChip = v & MAP_CHIP_MASK;
+  const n = MAP_COLUMNS * MAP_ROWS;
+  const slots = new Uint8Array(n), hflips = new Uint8Array(n), vflips = new Uint8Array(n);
+  let used = 0, flipped = 0, maxSlot = 0;
+  for (let r = 0; r < MAP_ROWS; r++) {
+    const cells = decodeMapRow(view2, r * MAP_ROW_BYTES);
+    cells.forEach((c, k) => {
+      const i = r * MAP_COLUMNS + k;
+      slots[i] = c.slot;
+      hflips[i] = c.hflip ? 1 : 0;
+      vflips[i] = c.vflip ? 1 : 0;
+      if (c.slot) {
+        used++;
+        if (c.slot > maxSlot) maxSlot = c.slot;
+      }
+      if (c.hflip || c.vflip) flipped++;
+    });
   }
-  return { stage, offset, cells: view2, columns: MAP_COLUMNS, rows: MAP_ROWS, used, flagged, maxChip };
+  return { stage, offset, columns: MAP_COLUMNS, rows: MAP_ROWS, slots, hflips, vflips, used, flipped, maxSlot };
 }
 function decodeMapData(bytes) {
   const stages = [];
@@ -12606,218 +12720,24 @@ function decodeScrollEffect(bytes) {
   const stages = [];
   for (let s = 0; s < STAGE_COUNT; s++) {
     const { offset, view: view2 } = stageSlice(bytes, REGION.scroll, s, SCROLL_STAGE_BYTES);
+    const effect = view2.subarray(0, SCROLL_BANDS);
+    const speed = view2.subarray(SCROLL_SPEED_OFFSET, SCROLL_SPEED_OFFSET + SCROLL_BANDS);
     let min = 255, max = 0;
-    for (let i = 0; i < view2.length; i++) {
-      if (view2[i] < min) min = view2[i];
-      if (view2[i] > max) max = view2[i];
+    for (let i = 0; i < speed.length; i++) {
+      if (speed[i] < min) min = speed[i];
+      if (speed[i] > max) max = speed[i];
     }
-    stages.push({ stage: s, offset, bytes: view2, min, max });
+    stages.push({ stage: s, offset, bytes: view2, effect, speed, min, max });
   }
   return stages;
 }
-
-// packages/shmup-engine/src/sfc/tilemap.js
-var TILEMAP_TILE_MASK = 1023;
-var TILEMAP_PALETTE_SHIFT = 10;
-var TILEMAP_PALETTE_MASK = 7;
-var TILEMAP_PRIORITY = 8192;
-var TILEMAP_HFLIP = 16384;
-var TILEMAP_VFLIP = 32768;
-var EMPTY_WORDS = Object.freeze([65535, 1023]);
-function decodeTilemapWord(word) {
-  return {
-    word,
-    tile: word & TILEMAP_TILE_MASK,
-    palette: word >> TILEMAP_PALETTE_SHIFT & TILEMAP_PALETTE_MASK,
-    priority: (word & TILEMAP_PRIORITY) !== 0,
-    hflip: (word & TILEMAP_HFLIP) !== 0,
-    vflip: (word & TILEMAP_VFLIP) !== 0,
-    empty: EMPTY_WORDS.includes(word)
-  };
-}
-function readWords2(bytes, offset, count) {
-  if (offset + count * 2 > bytes.length) {
-    throw new Error(`${count} words at 0x${offset.toString(16)} run past the end (${bytes.length})`);
+function writeDefaultScroll(bytes, stage) {
+  const at = REGION.scroll.offset + stage * SCROLL_STAGE_BYTES;
+  for (let i = 0; i < SCROLL_BANDS; i++) {
+    bytes[at + i] = scrollDefaultEffect(i);
+    bytes[at + SCROLL_SPEED_OFFSET + i] = SCROLL_DEFAULT_SPEED;
   }
-  const words = new Uint16Array(count);
-  for (let i = 0; i < count; i++) words[i] = bytes[offset + i * 2] | bytes[offset + i * 2 + 1] << 8;
-  return words;
-}
-function classifyQuad(words) {
-  if (words.length !== 4) return null;
-  const e = Array.from(words, decodeTilemapWord);
-  if (e.every((x) => x.empty)) return "empty";
-  if (e.some((x) => x.empty)) return null;
-  const sameAttrs = (a, b) => a.palette === b.palette && a.priority === b.priority && a.vflip === b.vflip;
-  if (!e.every((x) => sameAttrs(x, e[0]))) return null;
-  const noH = e.every((x) => !x.hflip);
-  if (noH && e[1].tile === e[0].tile + 1 && e[2].tile === e[0].tile + 8 && e[3].tile === e[0].tile + 9) return "chip";
-  if (!e[0].hflip && !e[1].hflip && e[2].hflip && e[3].hflip && e[1].tile === e[0].tile + 1 && e[2].tile === e[1].tile && e[3].tile === e[0].tile) return "strip";
-  return null;
-}
-
-// packages/shmup-engine/src/sfc/groups.js
-var QUAD_BYTES = 8;
-var BYTE_QUAD_BYTES = 4;
-var MAP_GROUP_CHIPS = REGION.mapGroup.length / QUAD_BYTES;
-var ENEMY_COUNT = 24;
-var ENEMY_GROUP_QUADS = REGION.enemyGroup.length / QUAD_BYTES / ENEMY_COUNT;
-var BOSS_COUNT = 6;
-var BOSS_GROUP_QUADS = REGION.bossGroup.length / QUAD_BYTES / BOSS_COUNT;
-var TITLE_GROUP_QUADS = REGION.titleGroup.length / QUAD_BYTES;
-var ENDING_GROUP_QUADS = REGION.endingGroup.length / QUAD_BYTES;
-var MY_SHIP_GROUP_QUADS = REGION.myShipGroup.length / QUAD_BYTES;
-var ENEMY_ODR_QUADS = REGION.enemyOdr.length / BYTE_QUAD_BYTES / ENEMY_COUNT;
-var MY_SHIP_ODR_QUADS = REGION.myShipOdr.length / BYTE_QUAD_BYTES;
-function decodeQuadTable(bytes, offset, count) {
-  const quads = [];
-  for (let i = 0; i < count; i++) {
-    const at = offset + i * QUAD_BYTES;
-    const words = readWords2(bytes, at, 4);
-    const entries = Array.from(words, decodeTilemapWord);
-    quads.push({ index: i, offset: at, words, entries, kind: classifyQuad(words) });
-  }
-  return quads;
-}
-function decodeByteQuadTable(bytes, offset, count) {
-  const quads = [];
-  for (let i = 0; i < count; i++) {
-    const at = offset + i * BYTE_QUAD_BYTES;
-    if (at + BYTE_QUAD_BYTES > bytes.length) {
-      throw new Error(`byte quad at 0x${at.toString(16)} runs past the end (${bytes.length})`);
-    }
-    const tiles = Array.from(bytes.subarray(at, at + BYTE_QUAD_BYTES));
-    quads.push({ index: i, offset: at, tiles, blank: tiles.every((t) => t === 0) });
-  }
-  return quads;
-}
-function perOwner(bytes, region4, owners, quadsEach, decode, quadBytes, key) {
-  const out = [];
-  for (let o = 0; o < owners; o++) {
-    const offset = region4.offset + o * quadsEach * quadBytes;
-    out.push({ [key]: o, offset, quads: decode(bytes, offset, quadsEach) });
-  }
-  return out;
-}
-function decodeMapGroup(bytes) {
-  return decodeQuadTable(bytes, REGION.mapGroup.offset, MAP_GROUP_CHIPS);
-}
-function decodeEnemyGroup(bytes) {
-  return perOwner(bytes, REGION.enemyGroup, ENEMY_COUNT, ENEMY_GROUP_QUADS, decodeQuadTable, QUAD_BYTES, "enemy");
-}
-function decodeBossGroup(bytes) {
-  return perOwner(bytes, REGION.bossGroup, BOSS_COUNT, BOSS_GROUP_QUADS, decodeQuadTable, QUAD_BYTES, "boss");
-}
-function decodeTitleGroup(bytes) {
-  return decodeQuadTable(bytes, REGION.titleGroup.offset, TITLE_GROUP_QUADS);
-}
-function decodeEndingGroup(bytes) {
-  return decodeQuadTable(bytes, REGION.endingGroup.offset, ENDING_GROUP_QUADS);
-}
-function decodeMyShipGroup(bytes) {
-  return decodeQuadTable(bytes, REGION.myShipGroup.offset, MY_SHIP_GROUP_QUADS);
-}
-function decodeEnemyOdr(bytes) {
-  return perOwner(bytes, REGION.enemyOdr, ENEMY_COUNT, ENEMY_ODR_QUADS, decodeByteQuadTable, BYTE_QUAD_BYTES, "enemy");
-}
-function decodeMyShipOdr(bytes) {
-  return decodeByteQuadTable(bytes, REGION.myShipOdr.offset, MY_SHIP_ODR_QUADS);
-}
-function decodeGroups(bytes) {
-  return {
-    map: decodeMapGroup(bytes),
-    enemy: decodeEnemyGroup(bytes),
-    boss: decodeBossGroup(bytes),
-    title: decodeTitleGroup(bytes),
-    ending: decodeEndingGroup(bytes),
-    myShip: decodeMyShipGroup(bytes),
-    enemyOdr: decodeEnemyOdr(bytes),
-    myShipOdr: decodeMyShipOdr(bytes)
-  };
-}
-
-// packages/shmup-engine/src/sfc/tables.js
-var HI_SCORE_ENTRY_BYTES = 16;
-var HI_SCORE_COUNT = REGION.hiScore.length / HI_SCORE_ENTRY_BYTES;
-var HI_SCORE_NAME_LENGTH = 8;
-var BGM_PATCH_COUNT = REGION.bgmPatch.length;
-var KEY_CONFIG_BYTES = REGION.keyConfig.length;
-function u162(bytes, offset) {
-  return bytes[offset] | bytes[offset + 1] << 8;
-}
-function u32(bytes, offset) {
-  return (bytes[offset] | bytes[offset + 1] << 8 | bytes[offset + 2] << 16 | bytes[offset + 3] << 24) >>> 0;
-}
-function need(bytes, region4) {
-  if (bytes.length < region4.end) {
-    throw new Error(`${region4.label} at 0x${region4.offset.toString(16)} runs past the end (${bytes.length})`);
-  }
-}
-function decodeHiScores(bytes) {
-  need(bytes, REGION.hiScore);
-  const entries = [];
-  for (let i = 0; i < HI_SCORE_COUNT; i++) {
-    const offset = REGION.hiScore.offset + i * HI_SCORE_ENTRY_BYTES;
-    entries.push({
-      rank: i + 1,
-      offset,
-      score: u32(bytes, offset),
-      extra: bytes.subarray(offset + 4, offset + 8),
-      name: latin12(bytes, offset + 8, HI_SCORE_NAME_LENGTH)
-    });
-  }
-  return entries;
-}
-function decodeConfig(bytes) {
-  for (const r of [REGION.titleType, REGION.mouseSpeed, REGION.editBgm, REGION.bgmPatch, REGION.keyConfig, REGION.reserved1]) {
-    need(bytes, r);
-  }
-  return {
-    titleType: u162(bytes, REGION.titleType.offset),
-    mouseSpeed: u162(bytes, REGION.mouseSpeed.offset),
-    editBgm: u162(bytes, REGION.editBgm.offset),
-    bgmPatch: bytes.subarray(REGION.bgmPatch.offset, REGION.bgmPatch.end),
-    keyConfig: bytes.subarray(REGION.keyConfig.offset, REGION.keyConfig.end),
-    reserved0: bytes.subarray(REGION.reserved0.offset, REGION.reserved0.end),
-    reserved1: bytes.subarray(REGION.reserved1.offset, REGION.reserved1.end)
-  };
-}
-function sliceSound(bytes) {
-  need(bytes, REGION.sound);
-  return { offset: REGION.sound.offset, length: REGION.sound.length, bytes: bytes.subarray(REGION.sound.offset, REGION.sound.end) };
-}
-
-// packages/shmup-engine/src/sfc/enemy.js
-var ENEMY_COUNT2 = 24;
-var ENEMY_RECORD_BYTES = REGION.enemyData.length / ENEMY_COUNT2;
-var APPEAR_STAGE_COUNT = 6;
-var APPEAR_STAGE_BYTES = REGION.appear.length / APPEAR_STAGE_COUNT;
-function need2(bytes, region4) {
-  if (bytes.length < region4.end) {
-    throw new Error(`${region4.label} at 0x${region4.offset.toString(16)} runs past the end (${bytes.length})`);
-  }
-}
-function decodeEnemyData(bytes) {
-  need2(bytes, REGION.enemyData);
-  const records = [];
-  for (let i = 0; i < ENEMY_COUNT2; i++) {
-    const offset = REGION.enemyData.offset + i * ENEMY_RECORD_BYTES;
-    const view2 = bytes.subarray(offset, offset + ENEMY_RECORD_BYTES);
-    records.push({ index: i, offset, bytes: view2, blank: isBlank3(view2) });
-  }
-  return records;
-}
-function decodeAppearData(bytes) {
-  need2(bytes, REGION.appear);
-  const stages = [];
-  for (let s = 0; s < APPEAR_STAGE_COUNT; s++) {
-    const offset = REGION.appear.offset + s * APPEAR_STAGE_BYTES;
-    const view2 = bytes.subarray(offset, offset + APPEAR_STAGE_BYTES);
-    let used = 0;
-    for (let i = 0; i < view2.length; i++) if (view2[i]) used++;
-    stages.push({ stage: s, offset, bytes: view2, used, blank: used === 0 });
-  }
-  return stages;
+  return bytes;
 }
 
 // packages/shmup-engine/src/sfc/tiles.js
@@ -12849,6 +12769,20 @@ function decodeTile2bpp(bytes, offset, out = new Uint8Array(TILE_PIXELS)) {
   }
   return out;
 }
+function encodeTile4bpp(indices, out = new Uint8Array(TILE_BYTES_4BPP)) {
+  out.fill(0);
+  for (let y = 0; y < TILE_DIM; y++) {
+    for (let x = 0; x < TILE_DIM; x++) {
+      const v = indices[y * TILE_DIM + x] & 15;
+      const bit = 7 - x;
+      out[y * 2] |= (v & 1) << bit;
+      out[y * 2 + 1] |= (v >> 1 & 1) << bit;
+      out[16 + y * 2] |= (v >> 2 & 1) << bit;
+      out[16 + y * 2 + 1] |= (v >> 3 & 1) << bit;
+    }
+  }
+  return out;
+}
 function decodeTileSheet(bytes, offset, count, { bpp = 4 } = {}) {
   const stride = bpp === 2 ? TILE_BYTES_2BPP : TILE_BYTES_4BPP;
   const decode = bpp === 2 ? decodeTile2bpp : decodeTile4bpp;
@@ -12863,33 +12797,443 @@ function tileIsBlank(tile) {
   for (let i = 0; i < tile.length; i++) if (tile[i] !== 0) return false;
   return true;
 }
-function flipTile(tile, hflip, vflip) {
-  if (!hflip && !vflip) return tile;
-  const out = new Uint8Array(TILE_PIXELS);
-  for (let y = 0; y < TILE_DIM; y++) {
-    const sy = vflip ? TILE_DIM - 1 - y : y;
-    for (let x = 0; x < TILE_DIM; x++) {
-      const sx = hflip ? TILE_DIM - 1 - x : x;
-      out[y * TILE_DIM + x] = tile[sy * TILE_DIM + sx];
-    }
-  }
-  return out;
-}
-function assemble2x2(tiles) {
-  const out = new Uint8Array(256);
-  for (let y = 0; y < 16; y++) {
-    for (let x = 0; x < 16; x++) {
-      const tile = tiles[(y >> 3) * 2 + (x >> 3)];
-      out[y * 16 + x] = tile ? tile[(y & 7) * TILE_DIM + (x & 7)] : 0;
-    }
-  }
-  return out;
-}
 function withPaletteRow(indices, row) {
   const out = new Uint8Array(indices.length);
   const tag = (row & 15) << 4;
   for (let i = 0; i < indices.length; i++) out[i] = indices[i] ? tag | indices[i] & 15 : 0;
   return out;
+}
+
+// packages/shmup-engine/src/sfc/chips.js
+var CHIP_DIM = 16;
+var CHIP_PIXELS = CHIP_DIM * CHIP_DIM;
+var CHIP_SHEET_BYTES = 32768;
+var CHIP_SHEET_COLS = 8;
+var CHIP_SHEET_ROWS = 32;
+var CHIPS_PER_SHEET = CHIP_SHEET_COLS * CHIP_SHEET_ROWS;
+var CHIP_ROW_BYTES = 1024;
+var CHIP_COL_BYTES = 64;
+var CHIP_TILE_OFFSETS = Object.freeze([0, 32, 512, 544]);
+var CHIP_HFLIP = 16384;
+var CHIP_VFLIP = 32768;
+var CHIP_FLIP_MASK = CHIP_HFLIP | CHIP_VFLIP;
+var CHIP_WORD_MASK = 2047;
+var CHIP_EMPTY_WORD = 65535;
+var CHIP_BLANK_WORD = 1023;
+var USER_CHIP_COUNT = 2 * CHIPS_PER_SHEET;
+var SFC_SHEETS = Object.freeze([
+  Object.freeze({ sheet: 0, source: "sram", offset: REGION.graphics.offset, what: "GRAPIC DATA, first half" }),
+  Object.freeze({ sheet: 1, source: "sram", offset: REGION.graphics.offset + CHIP_SHEET_BYTES, what: "GRAPIC DATA, second half" }),
+  Object.freeze({ sheet: 2, source: "rom", offset: 262144, what: "factory art" }),
+  Object.freeze({ sheet: 3, source: "rom", offset: 294912, what: "factory art" }),
+  Object.freeze({ sheet: 4, source: "rom", offset: 393216, what: "editor icons" })
+]);
+function decodeChipWord(word) {
+  const sheet = word >> 8 & 7;
+  const row = word >> 3 & 31;
+  const col = word & 7;
+  const empty = word === CHIP_EMPTY_WORD || (word & CHIP_WORD_MASK) === CHIP_BLANK_WORD;
+  return {
+    word,
+    sheet,
+    row,
+    col,
+    hflip: (word & CHIP_HFLIP) !== 0,
+    vflip: (word & CHIP_VFLIP) !== 0,
+    empty,
+    user: !empty && sheet < 2,
+    rom: !empty && sheet >= 2 && sheet < SFC_SHEETS.length,
+    index: !empty && sheet < 2 ? sheet * CHIPS_PER_SHEET + row * CHIP_SHEET_COLS + col : null
+  };
+}
+function chipWordForIndex(index, { hflip = false, vflip = false } = {}) {
+  if (index < 0 || index >= USER_CHIP_COUNT) throw new Error(`chip index ${index} is outside the two user sheets (0..${USER_CHIP_COUNT - 1})`);
+  return index | (hflip ? CHIP_HFLIP : 0) | (vflip ? CHIP_VFLIP : 0);
+}
+function chipSource(word) {
+  const d = decodeChipWord(word);
+  if (d.empty || d.sheet >= SFC_SHEETS.length) return null;
+  const sheet = SFC_SHEETS[d.sheet];
+  return { source: sheet.source, offset: sheet.offset + d.row * CHIP_ROW_BYTES + d.col * CHIP_COL_BYTES, sheet: d.sheet, row: d.row, col: d.col };
+}
+function chipIndexOffset(index) {
+  if (index < 0 || index >= USER_CHIP_COUNT) throw new Error(`chip index ${index} is outside the two user sheets`);
+  return REGION.graphics.offset + (index >> 8) * CHIP_SHEET_BYTES + (index >> 3 & 31) * CHIP_ROW_BYTES + (index & 7) * CHIP_COL_BYTES;
+}
+function decodeChipPixels(word, { sram, rom = null } = {}) {
+  const src = chipSource(word);
+  if (!src) return null;
+  const bytes = src.source === "sram" ? sram : rom;
+  if (!bytes || src.offset + CHIP_TILE_OFFSETS[3] + TILE_BYTES_4BPP > bytes.length) return null;
+  const d = decodeChipWord(word);
+  const out = new Uint8Array(CHIP_PIXELS);
+  const tile = new Uint8Array(TILE_DIM * TILE_DIM);
+  CHIP_TILE_OFFSETS.forEach((off, q) => {
+    decodeTile4bpp(bytes, src.offset + off, tile);
+    const ox = (q & 1) * TILE_DIM, oy = (q >> 1) * TILE_DIM;
+    for (let y = 0; y < TILE_DIM; y++) {
+      for (let x = 0; x < TILE_DIM; x++) {
+        const px = ox + x, py = oy + y;
+        const dx = d.hflip ? CHIP_DIM - 1 - px : px;
+        const dy = d.vflip ? CHIP_DIM - 1 - py : py;
+        out[dy * CHIP_DIM + dx] = tile[y * TILE_DIM + x];
+      }
+    }
+  });
+  return out;
+}
+function encodeChipPixels(sram, index, pixels) {
+  const at = chipIndexOffset(index);
+  const tile = new Uint8Array(TILE_DIM * TILE_DIM);
+  CHIP_TILE_OFFSETS.forEach((off, q) => {
+    const ox = (q & 1) * TILE_DIM, oy = (q >> 1) * TILE_DIM;
+    for (let y = 0; y < TILE_DIM; y++) {
+      for (let x = 0; x < TILE_DIM; x++) tile[y * TILE_DIM + x] = pixels[(oy + y) * CHIP_DIM + ox + x] & 15;
+    }
+    encodeTile4bpp(tile, sram.subarray(at + off, at + off + TILE_BYTES_4BPP));
+  });
+  return sram;
+}
+function flipChip(pixels, hflip, vflip) {
+  if (!hflip && !vflip) return pixels;
+  const out = new Uint8Array(CHIP_PIXELS);
+  for (let y = 0; y < CHIP_DIM; y++) {
+    const sy = vflip ? CHIP_DIM - 1 - y : y;
+    for (let x = 0; x < CHIP_DIM; x++) out[y * CHIP_DIM + x] = pixels[sy * CHIP_DIM + (hflip ? CHIP_DIM - 1 - x : x)];
+  }
+  return out;
+}
+var ODR_HFLIP = 64;
+var ODR_VFLIP = 128;
+var ODR_SLOT_MASK = 63;
+function decodeOdrByte(b) {
+  return { byte: b, slot: b & ODR_SLOT_MASK, row: b >> 3 & 7, col: b & 7, hflip: (b & ODR_HFLIP) !== 0, vflip: (b & ODR_VFLIP) !== 0 };
+}
+function encodeOdrByte({ slot = 0, hflip = false, vflip = false } = {}) {
+  return slot & ODR_SLOT_MASK | (hflip ? ODR_HFLIP : 0) | (vflip ? ODR_VFLIP : 0);
+}
+
+// packages/shmup-engine/src/sfc/tilemap.js
+function readWords2(bytes, offset, count) {
+  if (offset + count * 2 > bytes.length) {
+    throw new Error(`${count} words at 0x${offset.toString(16)} run past the end (${bytes.length})`);
+  }
+  const words = new Uint16Array(count);
+  for (let i = 0; i < count; i++) words[i] = bytes[offset + i * 2] | bytes[offset + i * 2 + 1] << 8;
+  return words;
+}
+function writeWords(bytes, offset, words) {
+  if (offset + words.length * 2 > bytes.length) {
+    throw new Error(`${words.length} words at 0x${offset.toString(16)} run past the end (${bytes.length})`);
+  }
+  for (let i = 0; i < words.length; i++) {
+    bytes[offset + i * 2] = words[i] & 255;
+    bytes[offset + i * 2 + 1] = words[i] >> 8 & 255;
+  }
+  return bytes;
+}
+
+// packages/shmup-engine/src/sfc/groups.js
+var STAGE_COUNT2 = 6;
+var MAP_GROUP_CHIPS = REGION.mapGroup.length / STAGE_COUNT2 / 2;
+var MAP_GROUP_STAGE_BYTES = MAP_GROUP_CHIPS * 2;
+var ENEMY_GROUP_CHIPS = REGION.enemyGroup.length / STAGE_COUNT2 / 2;
+var ENEMY_GROUP_STAGE_BYTES = ENEMY_GROUP_CHIPS * 2;
+var BOSS_GROUP_CHIPS = REGION.bossGroup.length / STAGE_COUNT2 / 2;
+var BOSS_GROUP_STAGE_BYTES = BOSS_GROUP_CHIPS * 2;
+var TITLE_GROUP_CHIPS = REGION.titleGroup.length / 2;
+var ENDING_GROUP_CHIPS = REGION.endingGroup.length / 2;
+var MY_SHIP_GROUP_CHIPS = REGION.myShipGroup.length / 2;
+var MY_SHIP_FORCED_SLOTS = Object.freeze([[61, 1020], [62, 1021], [63, 1022]]);
+var ENEMY_ODR_STAGE_BYTES = REGION.enemyOdr.length / STAGE_COUNT2;
+var ENEMY_ODR_QUADS = ENEMY_ODR_STAGE_BYTES / 4;
+var MY_SHIP_ODR_BYTES = REGION.myShipOdr.length;
+var BOSS_SHEET_COLS = 8;
+var BOSS_SHEET_ROWS = 4;
+function decodeChipTable(bytes, offset, count) {
+  const words = readWords2(bytes, offset, count);
+  return Array.from(words, (word, slot) => ({ slot, offset: offset + slot * 2, ...decodeChipWord(word) }));
+}
+function decodeMapGroup(bytes, stage) {
+  const offset = REGION.mapGroup.offset + stage * MAP_GROUP_STAGE_BYTES;
+  return { stage, offset, chips: decodeChipTable(bytes, offset, MAP_GROUP_CHIPS) };
+}
+function decodeEnemyGroup(bytes, stage) {
+  const offset = REGION.enemyGroup.offset + stage * ENEMY_GROUP_STAGE_BYTES;
+  return { stage, offset, chips: decodeChipTable(bytes, offset, ENEMY_GROUP_CHIPS) };
+}
+function decodeBossGroup(bytes, stage) {
+  const offset = REGION.bossGroup.offset + stage * BOSS_GROUP_STAGE_BYTES;
+  return { stage, offset, chips: decodeChipTable(bytes, offset, BOSS_GROUP_CHIPS) };
+}
+function decodeTitleGroup(bytes) {
+  return decodeChipTable(bytes, REGION.titleGroup.offset, TITLE_GROUP_CHIPS);
+}
+function decodeEndingGroup(bytes) {
+  return decodeChipTable(bytes, REGION.endingGroup.offset, ENDING_GROUP_CHIPS);
+}
+function decodeMyShipGroup(bytes) {
+  return decodeChipTable(bytes, REGION.myShipGroup.offset, MY_SHIP_GROUP_CHIPS);
+}
+function decodeEnemyOdr(bytes, stage) {
+  const offset = REGION.enemyOdr.offset + stage * ENEMY_ODR_STAGE_BYTES;
+  if (offset + ENEMY_ODR_STAGE_BYTES > bytes.length) {
+    throw new Error(`ENEMY ODR stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
+  }
+  const quads = [];
+  for (let q = 0; q < ENEMY_ODR_QUADS; q++) {
+    const at = offset + q * 4;
+    const refs = Array.from(bytes.subarray(at, at + 4), decodeOdrByte);
+    quads.push({ quad: q, offset: at, refs, blank: refs.every((r) => r.byte === 0) });
+  }
+  return { stage, offset, quads };
+}
+function decodeMyShipOdr(bytes) {
+  const { offset, end } = REGION.myShipOdr;
+  if (end > bytes.length) throw new Error(`MY SHIP ODR at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
+  return Array.from(bytes.subarray(offset, end), decodeOdrByte);
+}
+function decodeGroups(bytes) {
+  const stages = Array.from({ length: STAGE_COUNT2 }, (_, s) => s);
+  return {
+    map: stages.map((s) => decodeMapGroup(bytes, s)),
+    enemy: stages.map((s) => decodeEnemyGroup(bytes, s)),
+    boss: stages.map((s) => decodeBossGroup(bytes, s)),
+    enemyOdr: stages.map((s) => decodeEnemyOdr(bytes, s)),
+    title: decodeTitleGroup(bytes),
+    ending: decodeEndingGroup(bytes),
+    myShip: decodeMyShipGroup(bytes),
+    myShipOdr: decodeMyShipOdr(bytes)
+  };
+}
+
+// packages/shmup-engine/src/sfc/tables.js
+var HI_SCORE_ENTRY_BYTES = 16;
+var HI_SCORE_COUNT = REGION.hiScore.length / HI_SCORE_ENTRY_BYTES;
+var HI_SCORE_NAME_LENGTH = 8;
+var HI_SCORE_TABLE_SIZE = 10;
+var HI_SCORE_USER_TABLE = 10;
+var BGM_PATCH_COUNT = REGION.bgmPatch.length;
+var KEY_CONFIG_BYTES = REGION.keyConfig.length;
+var SOUND_SONG_COUNT = 16;
+var SOUND_SONG_BYTES = REGION.sound.length / SOUND_SONG_COUNT;
+function u162(bytes, offset) {
+  return bytes[offset] | bytes[offset + 1] << 8;
+}
+function u32(bytes, offset) {
+  return (bytes[offset] | bytes[offset + 1] << 8 | bytes[offset + 2] << 16 | bytes[offset + 3] << 24) >>> 0;
+}
+function need(bytes, region4) {
+  if (bytes.length < region4.end) {
+    throw new Error(`${region4.label} at 0x${region4.offset.toString(16)} runs past the end (${bytes.length})`);
+  }
+}
+function decodeHiScores(bytes) {
+  need(bytes, REGION.hiScore);
+  const entries = [];
+  for (let i = 0; i < HI_SCORE_COUNT; i++) {
+    const offset = REGION.hiScore.offset + i * HI_SCORE_ENTRY_BYTES;
+    entries.push({
+      rank: i % HI_SCORE_TABLE_SIZE + 1,
+      table: i < HI_SCORE_USER_TABLE ? "sample" : "user",
+      offset,
+      score: u32(bytes, offset),
+      extra: bytes.subarray(offset + 4, offset + 8),
+      name: latin12(bytes, offset + 8, HI_SCORE_NAME_LENGTH)
+    });
+  }
+  return entries;
+}
+function decodeConfig(bytes) {
+  for (const r of [REGION.titleType, REGION.mouseSpeed, REGION.editBgm, REGION.bgmPatch, REGION.keyConfig, REGION.reserved1]) {
+    need(bytes, r);
+  }
+  return {
+    titleType: u162(bytes, REGION.titleType.offset),
+    mouseSpeed: u162(bytes, REGION.mouseSpeed.offset),
+    editBgm: u162(bytes, REGION.editBgm.offset),
+    bgmPatch: bytes.subarray(REGION.bgmPatch.offset, REGION.bgmPatch.end),
+    keyConfig: bytes.subarray(REGION.keyConfig.offset, REGION.keyConfig.end),
+    reserved0: bytes.subarray(REGION.reserved0.offset, REGION.reserved0.end),
+    reserved1: bytes.subarray(REGION.reserved1.offset, REGION.reserved1.end)
+  };
+}
+function sliceSound(bytes) {
+  need(bytes, REGION.sound);
+  const songs = [];
+  for (let i = 0; i < SOUND_SONG_COUNT; i++) {
+    const at = REGION.sound.offset + i * SOUND_SONG_BYTES;
+    songs.push({ index: i, offset: at, bytes: bytes.subarray(at, at + SOUND_SONG_BYTES) });
+  }
+  return { offset: REGION.sound.offset, length: REGION.sound.length, bytes: bytes.subarray(REGION.sound.offset, REGION.sound.end), songs };
+}
+
+// packages/shmup-engine/src/sfc/enemy.js
+var STAGE_COUNT3 = 6;
+var ENEMY_STAGE_BYTES = REGION.enemyData.length / STAGE_COUNT3;
+var ENEMY_ENTRY_BYTES = 8;
+var BOSS_BLOCK_OFFSET = 480;
+var BOSS_BLOCK_BYTES = 32;
+var SFC_ENEMY_CLASSES = Object.freeze([
+  Object.freeze({ klass: 0, base: 0, entries: 16, odrBase: 0, cols: 1, rows: 1, frames: 4, w: 16, h: 16 }),
+  Object.freeze({ klass: 1, base: 128, entries: 16, odrBase: 64, cols: 2, rows: 1, frames: 2, w: 32, h: 16 }),
+  Object.freeze({ klass: 2, base: 256, entries: 16, odrBase: 128, cols: 1, rows: 2, frames: 2, w: 16, h: 32 }),
+  Object.freeze({ klass: 3, base: 384, entries: 8, odrBase: 192, cols: 2, rows: 2, frames: 2, w: 32, h: 32 }),
+  Object.freeze({ klass: 4, base: 448, entries: 4, odrBase: 256, cols: 4, rows: 4, frames: 1, w: 64, h: 64 })
+]);
+var APPEAR_BOSS_CLASS = 5;
+var SFC_ENEMY_CONTACT = Object.freeze([1, 5, 5, 12, 24]);
+var SFC_ENEMY_HP = Object.freeze([1, 50, 100, 200, 400, 800, 1e3, 2e3]);
+var SFC_ENEMY_SCORE = Object.freeze([50, 100, 200, 500, 1e3, 2e3, 5e3, 1e4]);
+var SFC_ANIM_INTERVALS = Object.freeze([59, 29, 14, 9, 5, 2, 1, 0]);
+var SFC_SHOT_RATES = Object.freeze([31, 31, 15, 15, 7, 3, 1, 0]);
+var SFC_SHOT_SPEEDS = Object.freeze([20, 18, 14, 10, 8, 4, 2, 1]);
+var SFC_STRAIGHT_SPEEDS = Object.freeze([1, 2, 3, 4, 5, 6, 9, 12]);
+var SFC_HOMING_SPEEDS = Object.freeze([1.5, 2, 2.5, 3, 3.5, 4, 6, 8]);
+var SFC_MOVE_FAMILIES = Object.freeze([
+  "stationary on the ground",
+  "straight down",
+  "down, pause, down",
+  "down, curve back up and leave",
+  "U-turn",
+  "U-turn (later)",
+  "arc, exit sideways",
+  "zig-zag, then sideways",
+  "down, long turn, up",
+  "ground vehicle",
+  "square patrol",
+  "down with weaving turns",
+  "bobbing",
+  "down, retreat, down",
+  "stepwise",
+  "down, then sweeps",
+  "down, stop, exit up-right",
+  "homing",
+  "level with the player, dash",
+  "wait, aim, dash"
+]);
+var SFC_MOVE_STRAIGHT = 1;
+var SFC_BOSS_HP = Object.freeze([24, 2e3, 4e3, 8e3, 12e3, 16e3, 18e3, 24e3]);
+function decodeEnemyEntry(bytes, at) {
+  const b = Array.from(bytes.subarray(at, at + ENEMY_ENTRY_BYTES));
+  return {
+    offset: at,
+    bytes: b,
+    blank: b.every((v) => v === 0),
+    fields: {
+      family: b[0] >> 3,
+      variant: b[0] & 7,
+      aim: b[1] & 31,
+      rate: b[1] >> 5,
+      shotType: b[2] & 3,
+      itemDrop: (b[2] >> 2 & 1) !== 0,
+      hp: b[3] & 7,
+      flags: b[3] >> 5,
+      score: b[4] & 7,
+      anim: b[4] >> 5,
+      shotParam: b[5]
+    }
+  };
+}
+function encodeEnemyEntry({ family = 0, variant = 0, aim = 0, rate = 0, shotType = 0, itemDrop = false, hp = 0, flags = 0, score = 0, anim = 0, shotParam = 0 } = {}) {
+  return [
+    (family & 31) << 3 | variant & 7,
+    aim & 31 | (rate & 7) << 5,
+    shotType & 3 | (itemDrop ? 4 : 0),
+    hp & 7 | (flags & 7) << 5,
+    score & 7 | (anim & 7) << 5,
+    shotParam & 255,
+    0,
+    0
+  ];
+}
+function decodeBossBlock(bytes, at) {
+  const b = Array.from(bytes.subarray(at, at + BOSS_BLOCK_BYTES));
+  return {
+    offset: at,
+    bytes: b,
+    blank: b.every((v) => v === 0),
+    anim: [b[0], b[1], b[2]],
+    phases: [0, 1, 2].map((p) => ({
+      aim: b[3 + p] & 31,
+      rate: b[3 + p] >> 5,
+      shotType: b[6] >> p * 2 & 3,
+      pair: [b[7 + p * 2], b[8 + p * 2]],
+      shotParam: b[15 + p] & 127
+    })),
+    tall: (b[6] & 64) !== 0,
+    hp: b[13] & 7,
+    priority: (b[13] & 64) !== 0,
+    score: b[14] & 7
+  };
+}
+function decodeEnemyStage(bytes, stage) {
+  const offset = REGION.enemyData.offset + stage * ENEMY_STAGE_BYTES;
+  if (offset + ENEMY_STAGE_BYTES > bytes.length) {
+    throw new Error(`ENEMY DATA stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
+  }
+  let used = 0;
+  const classes = SFC_ENEMY_CLASSES.map((spec) => {
+    const entries = [];
+    for (let e = 0; e < spec.entries; e++) {
+      const entry = decodeEnemyEntry(bytes, offset + spec.base + e * ENEMY_ENTRY_BYTES);
+      if (!entry.blank) used++;
+      entries.push({ index: e, ...entry });
+    }
+    return { klass: spec.klass, offset: offset + spec.base, entries };
+  });
+  return { stage, offset, classes, boss: decodeBossBlock(bytes, offset + BOSS_BLOCK_OFFSET), used };
+}
+function decodeEnemyData(bytes) {
+  const stages = [];
+  for (let s = 0; s < STAGE_COUNT3; s++) stages.push(decodeEnemyStage(bytes, s));
+  return stages;
+}
+var APPEAR_STAGE_BYTES = REGION.appear.length / STAGE_COUNT3;
+var APPEAR_RECORDS = 256;
+var APPEAR_RECORD_BYTES = 14;
+var APPEAR_COLUMNS = 14;
+var APPEAR_FIRST_COLUMN = 1;
+var APPEAR_TABLE_B_OFFSET = APPEAR_RECORDS * APPEAR_RECORD_BYTES;
+var APPEAR_LINES = APPEAR_STAGE_BYTES - APPEAR_TABLE_B_OFFSET;
+var APPEAR_RECORD_END = 1;
+var APPEAR_VALID = 128;
+function decodeAppearByte(b) {
+  return { byte: b, valid: (b & APPEAR_VALID) !== 0, klass: b >> 4 & 7, entry: b & 15 };
+}
+function encodeAppearByte({ klass, entry }) {
+  return APPEAR_VALID | (klass & 7) << 4 | entry & 15;
+}
+function decodeAppearStage(bytes, stage) {
+  const offset = REGION.appear.offset + stage * APPEAR_STAGE_BYTES;
+  if (offset + APPEAR_STAGE_BYTES > bytes.length) {
+    throw new Error(`APPEAR DATA stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
+  }
+  const records = [];
+  for (let r = 0; r < APPEAR_RECORDS; r++) {
+    const at = offset + r * APPEAR_RECORD_BYTES;
+    const view2 = bytes.subarray(at, at + APPEAR_RECORD_BYTES);
+    const spawns2 = [];
+    view2.forEach((b, k) => {
+      const d = decodeAppearByte(b);
+      if (d.valid && r !== APPEAR_RECORD_END) spawns2.push({ column: APPEAR_FIRST_COLUMN + k, klass: d.klass, entry: d.entry });
+    });
+    records.push({ index: r, offset: at, bytes: view2, spawns: spawns2, blank: isBlank3(view2) });
+  }
+  const lines = bytes.subarray(offset + APPEAR_TABLE_B_OFFSET, offset + APPEAR_STAGE_BYTES);
+  let used = 0, spawns = 0, lastLine = -1;
+  for (let l = 0; l < lines.length; l++) {
+    if (!lines[l]) continue;
+    used++;
+    lastLine = l;
+    spawns += records[lines[l]].spawns.length;
+  }
+  return { stage, offset, records, lines, used, spawns, lastLine, blank: used === 0 };
+}
+function decodeAppearData(bytes) {
+  const stages = [];
+  for (let s = 0; s < STAGE_COUNT3; s++) stages.push(decodeAppearStage(bytes, s));
+  return stages;
 }
 
 // packages/shmup-engine/src/sfc/graphics.js
@@ -12982,6 +13326,88 @@ function compareWithRomDefault(sav, rom) {
   return { equal, total, identical: equal === image.length };
 }
 
+// packages/shmup-engine/src/sfc/checksum.js
+var STAGES = 6;
+var seg = (offset, length) => Object.freeze({ offset, length });
+function stageSegments(n) {
+  return [
+    seg(REGION.map.offset + n * 2304, 2304),
+    seg(REGION.scroll.offset + n * 512, 512),
+    seg(REGION.mapGroup.offset + n * 256, 256)
+  ];
+}
+function stageTables(n) {
+  return [
+    seg(REGION.enemyGroup.offset + n * 128, 128),
+    seg(REGION.enemyOdr.offset + n * 320, 320),
+    seg(REGION.bossGroup.offset + n * 64, 64),
+    seg(REGION.enemyData.offset + n * 512, 512),
+    seg(REGION.appear.offset + n * 4608, 4608)
+  ];
+}
+var SFC_CHECKSUM_DESCRIPTORS = Object.freeze([
+  Object.freeze({ at: 0, name: "graphics + palettes", segments: Object.freeze([seg(REGION.graphics.offset, 32768), seg(REGION.graphics.offset + 32768, 32768), seg(REGION.palette.offset, REGION.palette.length)]) }),
+  ...Array.from({ length: STAGES }, (_, n) => Object.freeze({ at: 2 + n * 2, name: `stage ${n} map, scroll, map group`, segments: Object.freeze(stageSegments(n)) })),
+  ...Array.from({ length: STAGES }, (_, n) => Object.freeze({ at: 14 + n * 2, name: `stage ${n} enemies, appear`, segments: Object.freeze(stageTables(n)) })),
+  Object.freeze({
+    at: 26,
+    name: "ship, title, ending, config, hi-scores",
+    segments: Object.freeze([
+      seg(REGION.myShipOdr.offset, REGION.myShipOdr.length),
+      seg(REGION.myShipGroup.offset, REGION.myShipGroup.length),
+      seg(REGION.titleGroup.offset, REGION.titleGroup.length),
+      seg(REGION.titleType.offset, REGION.titleType.length),
+      seg(REGION.endingGroup.offset, REGION.endingGroup.length),
+      seg(REGION.mouseSpeed.offset, REGION.mouseSpeed.length),
+      seg(REGION.editBgm.offset, REGION.editBgm.length),
+      seg(REGION.hiScore.offset, REGION.hiScore.length),
+      seg(REGION.keyConfig.offset, REGION.keyConfig.length)
+    ])
+  }),
+  Object.freeze({ at: 28, name: "sound + bgm patch", segments: Object.freeze([seg(REGION.sound.offset, REGION.sound.length), seg(REGION.bgmPatch.offset, REGION.bgmPatch.length)]) }),
+  Object.freeze({ at: 30, name: "the block's first fifteen words", segments: Object.freeze([seg(REGION.checksum.offset, 30)]) }),
+  Object.freeze({ at: REGION.checksumCopy.offset + 30, name: "the copy's first fifteen words", segments: Object.freeze([seg(REGION.checksumCopy.offset, 30)]) })
+]);
+function sfcChecksumWord(bytes, segments) {
+  let sum = 0;
+  for (const { offset, length } of segments) {
+    if (offset + length > bytes.length) throw new Error(`checksum segment 0x${offset.toString(16)}+0x${length.toString(16)} runs past the end (${bytes.length})`);
+    for (let i = offset; i < offset + length; i += 2) sum = sum + (bytes[i] | bytes[i + 1] << 8) & 65535;
+  }
+  return 65535 - sum & 65535;
+}
+function putWord(bytes, at, word) {
+  bytes[at] = word & 255;
+  bytes[at + 1] = word >> 8 & 255;
+}
+function getWord(bytes, at) {
+  return bytes[at] | bytes[at + 1] << 8;
+}
+function sealSfcChecksums(bytes) {
+  if (bytes.length < REGION.graphics.end) throw new Error(`a Dezaemon SRAM image is ${REGION.graphics.end} bytes; got ${bytes.length}`);
+  for (let i = 0; i < 16; i++) {
+    const d = SFC_CHECKSUM_DESCRIPTORS[i];
+    putWord(bytes, d.at, sfcChecksumWord(bytes, d.segments));
+  }
+  bytes.set(bytes.subarray(REGION.checksum.offset, REGION.checksum.end), REGION.checksumCopy.offset);
+  const copy = SFC_CHECKSUM_DESCRIPTORS[16];
+  putWord(bytes, copy.at, sfcChecksumWord(bytes, copy.segments));
+  return bytes;
+}
+function verifySfcChecksums(bytes) {
+  const words = SFC_CHECKSUM_DESCRIPTORS.map((d) => {
+    let computed = null;
+    try {
+      computed = sfcChecksumWord(bytes, d.segments);
+    } catch {
+      computed = null;
+    }
+    const stored = d.at + 1 < bytes.length ? getWord(bytes, d.at) : null;
+    return { name: d.name, at: d.at, stored, computed, ok: computed !== null && stored === computed };
+  });
+  return { ok: words.every((w) => w.ok), words, blockOk: words[15].ok, copyOk: words[16].ok };
+}
+
 // packages/shmup-engine/src/sfc/cover.js
 var SFC_COVER_W = 256;
 var SFC_COVER_H = 480;
@@ -12989,23 +13415,18 @@ var SFC_COVER_CHIP = 16;
 var SFC_COVER_COLUMNS = SFC_COVER_W / SFC_COVER_CHIP;
 var SFC_COVER_ROWS = SFC_COVER_H / SFC_COVER_CHIP;
 function art(parsed) {
-  const { graphics, groups, palettes } = parsed ?? {};
-  if (!graphics || graphics.blank || !groups?.map || !palettes) return null;
-  return { tiles: graphics.tiles, chips: groups.map, palettes: palettes.palettes };
+  const { graphics, groups, palettes, bytes, romBytes } = parsed ?? {};
+  if (!graphics || !graphics.present || !groups?.map || !palettes || !bytes) return null;
+  return { sram: bytes, rom: romBytes ?? null, groups: groups.map, palettes: palettes.palettes };
 }
-function chipRgba(art2, entries) {
-  const blank = new Uint8Array(64);
-  const pieces = entries.map(
-    (e) => e.empty || e.tile >= art2.tiles.length ? blank : flipTile(art2.tiles[e.tile], e.hflip, e.vflip)
-  );
-  const row = entries.find((e) => !e.empty)?.palette ?? 0;
-  return indexedToRgba(withPaletteRow(assemble2x2(pieces), row), art2.palettes);
+function chipThroughRow(px, palettes, row) {
+  return indexedToRgba(withPaletteRow(px, 0), [palettes[row] ?? palettes[0]]);
 }
 function windowCells(map, top) {
   let n = 0;
   for (let r = top; r < top + SFC_COVER_ROWS && r < map.rows; r++) {
     for (let c = 0; c < SFC_COVER_COLUMNS; c++) {
-      if (map.cells[r * MAP_COLUMNS + c] & 127) n++;
+      if (map.slots[r * MAP_COLUMNS + c]) n++;
     }
   }
   return n;
@@ -13054,17 +13475,25 @@ function composeSfcCover(parsed, { stage = null } = {}) {
     canvas[i * 4 + 3] = 255;
   }
   const map = parsed.maps[pick.stage];
+  const group = a.groups[pick.stage].chips;
+  let drawn = 0;
   for (let r = 0; r < SFC_COVER_ROWS; r++) {
     const row = pick.top + r;
     if (row >= map.rows) break;
     for (let c = 0; c < SFC_COVER_COLUMNS; c++) {
-      const cell = map.cells[row * MAP_COLUMNS + c] & 127;
-      if (!cell) continue;
-      const chip = a.chips[cell];
-      if (!chip) continue;
-      blitChip(canvas, c * SFC_COVER_CHIP, r * SFC_COVER_CHIP, chipRgba(a, chip.entries));
+      const i = row * MAP_COLUMNS + c;
+      const slot = map.slots[i];
+      if (!slot) continue;
+      const chip = group[slot];
+      if (!chip || chip.empty) continue;
+      const px = decodeChipPixels(chip.word, { sram: a.sram, rom: a.rom });
+      if (!px || !px.some((v) => v)) continue;
+      const rgba = chipThroughRow(flipChip(px, !!map.hflips[i], !!map.vflips[i]), a.palettes, pick.stage);
+      blitChip(canvas, c * SFC_COVER_CHIP, r * SFC_COVER_CHIP, rgba);
+      drawn++;
     }
   }
+  if (!drawn) return null;
   return {
     w: SFC_COVER_W,
     h: SFC_COVER_H,
@@ -13074,6 +13503,1144 @@ function composeSfcCover(parsed, { stage = null } = {}) {
     cells: pick.cells,
     source: "scenery"
   };
+}
+
+// packages/shmup-engine/src/sfc/factory-data.js
+var SFC_FACTORY_SOUND_BASE64 = [
+  "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",
+  "AA=="
+].join("");
+var soundBytes = null;
+function sfcFactorySound() {
+  if (!soundBytes) {
+    const bin = typeof atob === "function" ? atob(SFC_FACTORY_SOUND_BASE64) : Buffer.from(SFC_FACTORY_SOUND_BASE64, "base64").toString("latin1");
+    soundBytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) soundBytes[i] = bin.charCodeAt(i);
+  }
+  return soundBytes;
+}
+var SFC_FACTORY_BGM_PATCH = Object.freeze([
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  22,
+  23,
+  24,
+  22,
+  25,
+  26,
+  16,
+  28,
+  29,
+  27
+]);
+var SFC_FACTORY_PICKER_ROWS = Object.freeze([
+  231,
+  28,
+  239,
+  61,
+  255,
+  127,
+  3,
+  0,
+  7,
+  0,
+  15,
+  0,
+  31,
+  0,
+  96,
+  0,
+  224,
+  0,
+  224,
+  1,
+  224,
+  3,
+  0,
+  12,
+  0,
+  28,
+  0,
+  60,
+  0,
+  124,
+  247,
+  135,
+  255,
+  127,
+  0,
+  0,
+  16,
+  66,
+  31,
+  0,
+  224,
+  3,
+  0,
+  124,
+  255,
+  3,
+  32,
+  127,
+  16,
+  1,
+  13,
+  124,
+  31,
+  18,
+  119,
+  50,
+  142,
+  127,
+  159,
+  105,
+  160,
+  1,
+  110,
+  183
+]);
+var SFC_FACTORY_RESERVED0 = Object.freeze([
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  96,
+  49
+]);
+var SFC_FACTORY_RESERVED1 = Object.freeze([
+  127,
+  223,
+  255,
+  126,
+  255,
+  255,
+  255,
+  255,
+  253,
+  251,
+  255,
+  255,
+  254,
+  205,
+  255,
+  255,
+  247,
+  255,
+  255,
+  251,
+  223,
+  247,
+  255,
+  247,
+  255,
+  135,
+  255,
+  125,
+  255,
+  255,
+  247,
+  255,
+  255,
+  186,
+  255,
+  238,
+  255,
+  251
+]);
+var SFC_FACTORY_SHIP_WORDS = Object.freeze([
+  512,
+  513,
+  520,
+  521,
+  514,
+  515,
+  522,
+  523,
+  516,
+  517,
+  524,
+  525,
+  518,
+  519,
+  526,
+  527,
+  528,
+  529,
+  530,
+  531,
+  532,
+  533,
+  534,
+  535,
+  552,
+  553,
+  554,
+  555,
+  556,
+  557,
+  536,
+  537,
+  544,
+  545,
+  538,
+  539,
+  546,
+  547,
+  540,
+  541,
+  548,
+  549,
+  542,
+  543,
+  550,
+  551,
+  558,
+  559,
+  560,
+  561,
+  562,
+  563,
+  564,
+  565,
+  566,
+  567,
+  568,
+  569,
+  570,
+  571,
+  572,
+  1020,
+  1021,
+  1022
+]);
+var SFC_FACTORY_GLOBAL_ROWS = Object.freeze([
+  0,
+  0,
+  136,
+  49,
+  179,
+  86,
+  222,
+  123,
+  192,
+  2,
+  227,
+  43,
+  15,
+  0,
+  57,
+  17,
+  159,
+  62,
+  35,
+  85,
+  75,
+  114,
+  118,
+  127,
+  16,
+  2,
+  57,
+  43,
+  255,
+  103,
+  0,
+  0,
+  10,
+  78,
+  76,
+  82,
+  110,
+  90,
+  176,
+  94,
+  210,
+  98,
+  20,
+  107,
+  86,
+  111,
+  120,
+  119,
+  186,
+  123,
+  255,
+  123,
+  0,
+  52,
+  162,
+  2,
+  41,
+  3,
+  143,
+  3,
+  245,
+  3,
+  160,
+  1,
+  31,
+  0,
+  255,
+  0,
+  255,
+  1,
+  31,
+  3,
+  159,
+  3,
+  255,
+  31,
+  255,
+  51,
+  255,
+  75,
+  255,
+  103,
+  255,
+  127,
+  23,
+  0,
+  14,
+  0,
+  10,
+  0,
+  5,
+  0,
+  1,
+  0,
+  160,
+  1,
+  0,
+  0,
+  8,
+  33,
+  16,
+  66,
+  247,
+  94,
+  255,
+  127,
+  181,
+  0,
+  95,
+  1,
+  191,
+  14,
+  255,
+  23,
+  64,
+  97,
+  36,
+  114,
+  231,
+  126,
+  32,
+  6,
+  224,
+  2,
+  224,
+  3,
+  255,
+  127
+]);
+var SFC_FACTORY_BOSS_BLOCK = Object.freeze([
+  28,
+  32,
+  20,
+  0,
+  112,
+  0,
+  112,
+  223,
+  244,
+  223,
+  244,
+  31,
+  17,
+  2,
+  2,
+  48,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1
+]);
+var SFC_FACTORY_TITLE_TYPE = 522;
+var SFC_FACTORY_MOUSE_SPEED = 0;
+var SFC_FACTORY_EDIT_BGM = 0;
+var SFC_FACTORY_KEY_CONFIG = Object.freeze([32, 8, 16, 32]);
+
+// packages/shmup-engine/src/sfc/sfc-format.js
+var SFC_EMPTY_WORD = CHIP_BLANK_WORD;
+var APPEAR_HEADER_ZEROS = 14;
+var APPEAR_HEADER_FFS = 14;
+var FACTORY_HI_SCORES = Object.freeze([1e3, 900, 800, 700, 600, 500, 400, 300, 200, 100]);
+var FACTORY_HI_SCORE_NAME = "........";
+function putU162(bytes, at, v) {
+  bytes[at] = v & 255;
+  bytes[at + 1] = v >> 8 & 255;
+}
+function putU32(bytes, at, v) {
+  bytes[at] = v & 255;
+  bytes[at + 1] = v >> 8 & 255;
+  bytes[at + 2] = v >> 16 & 255;
+  bytes[at + 3] = v >>> 24 & 255;
+}
+function writeHiScore(bytes, index, { score, name = FACTORY_HI_SCORE_NAME }) {
+  const at = REGION.hiScore.offset + index * HI_SCORE_ENTRY_BYTES;
+  putU32(bytes, at, score >>> 0);
+  bytes.fill(0, at + 4, at + 8);
+  const text = String(name).padEnd(HI_SCORE_NAME_LENGTH, " ").slice(0, HI_SCORE_NAME_LENGTH);
+  for (let i = 0; i < HI_SCORE_NAME_LENGTH; i++) bytes[at + 8 + i] = text.charCodeAt(i) & 255;
+}
+function writeFactoryHiScores(bytes) {
+  for (let t = 0; t < HI_SCORE_COUNT / FACTORY_HI_SCORES.length; t++) {
+    FACTORY_HI_SCORES.forEach((score, i) => writeHiScore(bytes, t * FACTORY_HI_SCORES.length + i, { score }));
+  }
+}
+function blankQuadRegion(bytes, region4, word = SFC_EMPTY_WORD) {
+  const words = new Uint16Array(region4.length / 2).fill(word);
+  writeWords(bytes, region4.offset, words);
+}
+function writeClearedTables(bytes) {
+  for (let s = 0; s < STAGE_COUNT3; s++) {
+    const mapAt = REGION.mapGroup.offset + s * MAP_GROUP_STAGE_BYTES;
+    bytes.fill(255, mapAt, mapAt + MAP_GROUP_STAGE_BYTES);
+    writeWords(bytes, mapAt, [CHIP_BLANK_WORD]);
+    const enemyAt = REGION.enemyGroup.offset + s * ENEMY_GROUP_STAGE_BYTES;
+    bytes.fill(255, enemyAt, enemyAt + ENEMY_GROUP_STAGE_BYTES);
+    writeDefaultScroll(bytes, s);
+  }
+  blankQuadRegion(bytes, REGION.bossGroup);
+  blankQuadRegion(bytes, REGION.titleGroup);
+  blankQuadRegion(bytes, REGION.myShipGroup);
+  for (const [slot, word] of MY_SHIP_FORCED_SLOTS) writeWords(bytes, REGION.myShipGroup.offset + slot * 2, [word]);
+  return bytes;
+}
+function writeAppearHeaders(bytes) {
+  for (let s = 0; s < STAGE_COUNT3; s++) {
+    const at = REGION.appear.offset + s * APPEAR_STAGE_BYTES;
+    bytes.fill(0, at, at + APPEAR_STAGE_BYTES);
+    bytes.fill(255, at + APPEAR_HEADER_ZEROS, at + APPEAR_HEADER_ZEROS + APPEAR_HEADER_FFS);
+  }
+}
+function formatSfcSram({ seal: seal2 = true } = {}) {
+  const bytes = new Uint8Array(SRAM_SIZE);
+  for (let i = 0; i < CHECK_STRING.length; i++) bytes[CHECK_STRING_OFFSET + i] = CHECK_STRING.charCodeAt(i);
+  bytes.set(SFC_FACTORY_RESERVED0, REGION.reserved0.offset);
+  bytes.set(SFC_FACTORY_RESERVED1, REGION.reserved1.offset);
+  bytes.set(SFC_FACTORY_PICKER_ROWS, REGION.palette.offset + 22 * 32);
+  putU162(bytes, REGION.titleType.offset, SFC_FACTORY_TITLE_TYPE);
+  putU162(bytes, REGION.mouseSpeed.offset, SFC_FACTORY_MOUSE_SPEED);
+  putU162(bytes, REGION.editBgm.offset, SFC_FACTORY_EDIT_BGM);
+  bytes.set(SFC_FACTORY_BGM_PATCH, REGION.bgmPatch.offset);
+  bytes.set(SFC_FACTORY_KEY_CONFIG, REGION.keyConfig.offset);
+  bytes.set(sfcFactorySound(), REGION.sound.offset);
+  writeFactoryHiScores(bytes);
+  blankQuadRegion(bytes, REGION.endingGroup);
+  writeClearedTables(bytes);
+  writeAppearHeaders(bytes);
+  if (seal2) sealSfcChecksums(bytes);
+  return bytes;
+}
+
+// packages/shmup-engine/src/sfc/sfc-write.js
+var SFC_FIRST_SPAWN_LINE = 2;
+var SFC_LINE_STEP = 4;
+var SFC_BOSS_LINE_GAP = 12;
+var SFC_LAST_SPAWN_LINE = APPEAR_LINES - 2;
+var SFC_HIT_UNITS = 25;
+var SFC_DEFAULT_AIM = 13;
+var SFC_TITLE_COLS = 8;
+var SFC_TITLE_ROWS = 4;
+function nearestIndex4(table, value) {
+  let best = 0, bestD = Infinity;
+  table.forEach((v, i) => {
+    const d = Math.abs(v - value);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  return best;
+}
+function clamp4(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+function b64ToBytes4(b64) {
+  const bin = atob(String(b64));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function sfcSpawnColumn(col, width) {
+  if (width <= 1) return APPEAR_FIRST_COLUMN + Math.floor(APPEAR_COLUMNS / 2);
+  return APPEAR_FIRST_COLUMN + Math.round(clamp4(col, 0, width - 1) * (APPEAR_COLUMNS - 1) / (width - 1));
+}
+function sfcClassFor(w, h) {
+  if (w <= 16 && h <= 16) return 0;
+  if (w <= 32 && h <= 16) return 1;
+  if (w <= 16 && h <= 32) return 2;
+  if (w <= 32 && h <= 32) return 3;
+  return 4;
+}
+var CLASS_FALLBACKS = Object.freeze([[0, 1, 2, 3, 4], [1, 3, 4], [2, 3, 4], [3, 4], [4]]);
+function sfcSramFileName(name) {
+  const safe = String(name || "game").replace(/[\\/:*?"<>|]+/g, " ").trim() || "game";
+  return `Dezaemon SFC - ${safe}.srm`;
+}
+var SfcChipBank = class {
+  constructor(capacity = USER_CHIP_COUNT) {
+    this.capacity = capacity;
+    this.chips = [];
+    this.byKey = /* @__PURE__ */ new Map();
+    this.shared = 0;
+  }
+  get used() {
+    return this.chips.length;
+  }
+  /** {chip, hflip, vflip} for a 256-index raster, null when the bank is full. */
+  add(pixels) {
+    const key = keyOf2(pixels);
+    const hit = this.byKey.get(key);
+    if (hit) {
+      if (hit.hflip || hit.vflip) this.shared++;
+      return hit;
+    }
+    if (this.chips.length >= this.capacity) return null;
+    const chip = this.chips.length;
+    this.chips.push(Uint8Array.from(pixels));
+    const plain = { chip, hflip: false, vflip: false };
+    this.byKey.set(key, plain);
+    for (const [h, v] of [[true, false], [false, true], [true, true]]) {
+      const k = keyOf2(flipChip(pixels, h, v));
+      if (!this.byKey.has(k)) this.byKey.set(k, { chip, hflip: h, vflip: v });
+    }
+    return plain;
+  }
+  /** Every chip into the image's two sheets. */
+  writeTo(bytes) {
+    this.chips.forEach((px, i) => encodeChipPixels(bytes, i, px));
+  }
+};
+function keyOf2(pixels) {
+  let s = "";
+  for (let i = 0; i < pixels.length; i++) s += String.fromCharCode(pixels[i] & 15);
+  return s;
+}
+function isTransparent(pixels) {
+  for (let i = 0; i < pixels.length; i++) if (pixels[i]) return false;
+  return true;
+}
+function quantizeToRow(frames) {
+  if (!frames.length) return { frames: [], words: [], colors: 0 };
+  const q = quantizeFrames(frames.map((f, i) => ({ ...f, key: f.key ?? `f${i}`, group: "row" })), "snes", { firstRow: 0, rows: 1 });
+  const words = [];
+  for (let k = 1; k < 16; k++) {
+    const w = q.bank[k];
+    words.push(w ? w & 32767 : 0);
+  }
+  const out = q.frames.map((f) => {
+    const indices = new Uint8Array(f.indexed.length);
+    for (let i = 0; i < indices.length; i++) indices[i] = f.indexed[i] & 15;
+    return { key: f.key, w: f.w, h: f.h, indices };
+  });
+  return { frames: out, words, colors: q.report.rows[0] ? q.report.rows[0].colors : 0 };
+}
+function cutChip(indices, w, cx, cy) {
+  const out = new Uint8Array(CHIP_DIM * CHIP_DIM);
+  for (let y = 0; y < CHIP_DIM; y++) {
+    for (let x = 0; x < CHIP_DIM; x++) out[y * CHIP_DIM + x] = indices[(cy * CHIP_DIM + y) * w + cx * CHIP_DIM + x];
+  }
+  return out;
+}
+function buildSfcGameFromLevel(level, art2, options = {}) {
+  const opts = { name: null, title1: null, horizontal: false, ...options };
+  const warnings = [];
+  const warn = (m) => warnings.push(m);
+  const name = String(opts.name || level.name || "game").trim() || "game";
+  const artMap = /* @__PURE__ */ new Map();
+  for (const [k, v] of Object.entries(art2 || {})) {
+    if (v && v.rgba && v.w > 0 && v.h > 0) artMap.set(decodeFrameKey(k), { key: decodeFrameKey(k), ...v });
+  }
+  const lookup = (n) => n ? artMap.get(decodeFrameKey(n)) || null : null;
+  let stages = levelStages(level);
+  if (!stages.length) throw new Error("the level has no stage with an enemylist");
+  if (stages.length > STAGE_COUNT) {
+    warn(`level has ${stages.length} stages; a Super Famicom save holds ${STAGE_COUNT} \u2014 dropped the rest`);
+    stages = stages.slice(0, STAGE_COUNT);
+  }
+  if (opts.horizontal) warn("the grid is horizontal; the Super Famicom game scrolls vertically and is written as such \u2014 enemies come down the screen");
+  const enemyData = level.enemyData || {};
+  const bossData = level.bossData || {};
+  const bytes = formatSfcSram({ seal: false });
+  const bank = new SfcChipBank();
+  const fullWarned = /* @__PURE__ */ new Set();
+  const bankChip = (pixels, what) => {
+    const hit = bank.add(pixels);
+    if (!hit && !fullWarned.has(what)) {
+      fullWarned.add(what);
+      warn(`the save's two sheets are full (${USER_CHIP_COUNT} chips): ${what} art left unpainted`);
+    }
+    return hit;
+  };
+  const rows = [];
+  writeWords(bytes, REGION.myShipGroup.offset, SFC_FACTORY_SHIP_WORDS);
+  bytes.set(SFC_FACTORY_GLOBAL_ROWS, REGION.palette.offset + PALETTE_ROW_SHIP * 32);
+  let title = "none";
+  if (opts.title1 && opts.title1.rgba) {
+    const fitted = fitRgba(opts.title1, SFC_TITLE_COLS * CHIP_DIM, SFC_TITLE_ROWS * CHIP_DIM);
+    const q = quantizeToRow([{ key: "title", ...fitted }]);
+    writeCgramRow(bytes, PALETTE_ROW_TITLE, [0, ...q.words]);
+    rows.push({ row: PALETTE_ROW_TITLE, owner: "title", colors: q.colors });
+    const words = new Uint16Array(TITLE_GROUP_CHIPS).fill(CHIP_BLANK_WORD);
+    for (let cy = 0; cy < SFC_TITLE_ROWS; cy++) {
+      for (let cx = 0; cx < SFC_TITLE_COLS; cx++) {
+        const px = cutChip(q.frames[0].indices, fitted.w, cx, cy);
+        if (isTransparent(px)) continue;
+        const hit = bankChip(px, "title");
+        if (hit) words[cy * SFC_TITLE_COLS + cx] = chipWordForIndex(hit.chip, hit);
+      }
+    }
+    writeWords(bytes, REGION.titleGroup.offset, words);
+    title = "uploaded";
+  } else {
+    bytes.set(SFC_FACTORY_GLOBAL_ROWS.slice(32, 64), REGION.palette.offset + PALETTE_ROW_TITLE * 32);
+  }
+  const built = stages.map((st, s) => {
+    const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
+    const stageReport = { key: st.key, placements: 0, records: 0, lines: 0, enemies: [], boss: null, mapChips: 0, cellsDrawn: 0, rowsDrawn: 0 };
+    const mapGroup = new Uint16Array(MAP_GROUP_CHIPS).fill(CHIP_EMPTY_WORD);
+    mapGroup[0] = CHIP_BLANK_WORD;
+    const mapSlotOfChip = /* @__PURE__ */ new Map();
+    const cells = [];
+    for (let r = 0; r < MAP_ROWS; r++) cells.push(Array.from({ length: MAP_COLUMNS }, () => ({ slot: 0, hflip: false, vflip: false })));
+    const cellsList = Array.isArray(level.backgroundCells) ? level.backgroundCells : null;
+    if (st.background && st.background.tiles && cellsList) {
+      try {
+        const tileBytes = b64ToBytes4(st.background.tiles);
+        const cols = st.background.cols || 14;
+        const tiles = new Uint16Array(tileBytes.length >> 1);
+        for (let i = 0; i < tiles.length; i++) tiles[i] = tileBytes[i * 2] << 8 | tileBytes[i * 2 + 1];
+        const gridRows = Math.floor(tiles.length / cols);
+        if (gridRows > MAP_ROWS) warn(`${st.key}: the scenery grid is ${gridRows} rows; a stage map holds ${MAP_ROWS} \u2014 the rest is left out`);
+        const ordinals = /* @__PURE__ */ new Set();
+        for (let r = 0; r < Math.min(gridRows, MAP_ROWS); r++) {
+          for (let c = 0; c < cols; c++) {
+            const w = tiles[r * cols + c];
+            if (w !== 65535) ordinals.add(w & 1023);
+          }
+        }
+        const frames = [];
+        for (const o of ordinals) {
+          const f = lookup(cellsList[o]);
+          if (f) frames.push({ key: `cell${o}`, ...fitRgba(f, CHIP_DIM, CHIP_DIM) });
+        }
+        const q = quantizeToRow(frames);
+        if (frames.length) {
+          writeCgramRow(bytes, PALETTE_ROW_STAGE_BG + s, [0, ...q.words]);
+          rows.push({ row: PALETTE_ROW_STAGE_BG + s, owner: `${st.key} scenery`, colors: q.colors });
+        }
+        const indexedOf = new Map(q.frames.map((f) => [f.key, f.indices]));
+        const firstCol = Math.max(0, Math.floor((MAP_COLUMNS - cols) / 2));
+        let slotsFull = false;
+        for (let r = 0; r < Math.min(gridRows, MAP_ROWS); r++) {
+          for (let c = 0; c < cols; c++) {
+            const mc = firstCol + c;
+            if (mc >= MAP_COLUMNS) continue;
+            const w = tiles[r * cols + c];
+            if (w === 65535) continue;
+            const px = indexedOf.get(`cell${w & 1023}`);
+            if (!px || isTransparent(px)) continue;
+            const hit = bankChip(px, `${st.key} scenery`);
+            if (!hit) continue;
+            let slot = mapSlotOfChip.get(hit.chip);
+            if (slot === void 0) {
+              if (mapSlotOfChip.size >= MAP_GROUP_CHIPS - 1) {
+                if (!slotsFull) warn(`${st.key}: more than ${MAP_GROUP_CHIPS - 1} distinct scenery chips; the rest are left blank`);
+                slotsFull = true;
+                continue;
+              }
+              slot = mapSlotOfChip.size + 1;
+              mapSlotOfChip.set(hit.chip, slot);
+              mapGroup[slot] = chipWordForIndex(hit.chip);
+            }
+            cells[r][mc] = { slot, hflip: (w & 32768) !== 0 !== hit.hflip, vflip: (w & 16384) !== 0 !== hit.vflip };
+            stageReport.cellsDrawn++;
+            stageReport.rowsDrawn = Math.max(stageReport.rowsDrawn, r + 1);
+          }
+        }
+        stageReport.mapChips = mapSlotOfChip.size;
+      } catch (e) {
+        warn(`${st.key}: could not read the background grid (${e.message}) \u2014 scenery skipped`);
+      }
+    }
+    const mapAt = REGION.map.offset + s * MAP_STAGE_BYTES;
+    for (let r = 0; r < MAP_ROWS; r++) encodeMapRow(bytes, mapAt + r * MAP_ROW_BYTES, cells[r]);
+    writeWords(bytes, REGION.mapGroup.offset + s * MAP_GROUP_STAGE_BYTES, mapGroup);
+    const spawnRows = st.enemylist.slice().reverse();
+    const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
+    const usage = /* @__PURE__ */ new Map();
+    for (const row of spawnRows) {
+      for (const cell of row) {
+        if (!cell || cell === "00") continue;
+        const letter = cell.slice(0, -1), digit = cell.slice(-1);
+        if (!usage.has(letter)) usage.set(letter, { count: 0, digits: /* @__PURE__ */ new Map() });
+        const u = usage.get(letter);
+        u.count++;
+        u.digits.set(digit, (u.digits.get(digit) || 0) + 1);
+      }
+    }
+    const letters = [...usage.keys()].sort((a, b) => usage.get(b).count - usage.get(a).count);
+    const counts = SFC_ENEMY_CLASSES.map(() => 0);
+    const enemyGroup = new Uint16Array(ENEMY_GROUP_CHIPS).fill(CHIP_EMPTY_WORD);
+    enemyGroup[0] = CHIP_BLANK_WORD;
+    const sheetSlotOfChip = /* @__PURE__ */ new Map();
+    const odr = new Uint8Array(ENEMY_ODR_STAGE_BYTES);
+    const entryData = new Uint8Array(ENEMY_STAGE_BYTES);
+    const records = /* @__PURE__ */ new Map();
+    let sheetFull = false;
+    const enemyFrames = [];
+    const framesOf = /* @__PURE__ */ new Map();
+    for (const letter of letters) {
+      const rec = enemyData[`enemy${letter}`];
+      if (!rec) continue;
+      const frames = (Array.isArray(rec.texture) ? rec.texture : []).map(lookup).filter(Boolean);
+      framesOf.set(letter, frames);
+      for (const f of frames) if (!enemyFrames.some((e) => e.key === f.key)) enemyFrames.push(f);
+    }
+    const quant = quantizeToRow(enemyFrames.map((f) => ({ key: f.key, w: f.w, h: f.h, rgba: f.rgba })));
+    if (enemyFrames.length) {
+      writeCgramRow(bytes, PALETTE_ROW_STAGE_ENEMY + s, [0, ...quant.words]);
+      rows.push({ row: PALETTE_ROW_STAGE_ENEMY + s, owner: `${st.key} enemies`, colors: quant.colors });
+    }
+    const indexedByKey = new Map(quant.frames.map((f) => [f.key, f]));
+    const sheetSlot = (px) => {
+      if (isTransparent(px)) return { slot: 0, hflip: false, vflip: false };
+      const hit = bankChip(px, `${st.key} enemy`);
+      if (!hit) return null;
+      let slot = sheetSlotOfChip.get(hit.chip);
+      if (slot === void 0) {
+        if (sheetSlotOfChip.size >= ENEMY_GROUP_CHIPS - 1) {
+          if (!sheetFull) warn(`${st.key}: the enemy sheet is full (${ENEMY_GROUP_CHIPS - 1} chips); later enemies draw blank`);
+          sheetFull = true;
+          return null;
+        }
+        slot = sheetSlotOfChip.size + 1;
+        sheetSlotOfChip.set(hit.chip, slot);
+        enemyGroup[slot] = chipWordForIndex(hit.chip);
+      }
+      return { slot, hflip: hit.hflip, vflip: hit.vflip };
+    };
+    for (const letter of letters) {
+      const rec = enemyData[`enemy${letter}`];
+      if (!rec) {
+        warn(`${st.key}: grid names enemy${letter} but enemyData has no such record \u2014 cells left empty`);
+        continue;
+      }
+      const frames = framesOf.get(letter) || [];
+      if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas \u2014 placed invisible`);
+      const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
+      const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
+      if (frames.length && (maxW > 64 || maxH > 64)) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; a sprite tops out at 64x64 \u2014 downscaled`);
+      const wanted = sfcClassFor(maxW, maxH);
+      let klass = CLASS_FALLBACKS[wanted].find((k) => counts[k] < SFC_ENEMY_CLASSES[k].entries);
+      if (klass === void 0) {
+        warn(`${st.key}: no free entry for enemy${letter} (${rec.name || "?"}) \u2014 a stage holds 16 + 16 + 16 + 8 + 4 \u2014 cells left empty`);
+        continue;
+      }
+      const spec = SFC_ENEMY_CLASSES[klass];
+      const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
+      const speed = Number.isFinite(rec.speed) ? Math.max(0.5, rec.speed) : 1;
+      const interval = Number(rec.interval);
+      const fires = Number.isFinite(interval) && interval > 0;
+      const hits = rec.hp === "infinity" ? Infinity : Math.max(1, Number(rec.hp) || 1);
+      const fields = {
+        family: SFC_MOVE_STRAIGHT,
+        variant: nearestIndex4(SFC_STRAIGHT_SPEEDS, speed),
+        aim: fires ? SFC_DEFAULT_AIM : 0,
+        rate: fires ? nearestIndex4(SFC_SHOT_RATES, clamp4(interval, 0, 31)) : 0,
+        shotType: 0,
+        hp: hits === Infinity ? SFC_ENEMY_HP.length - 1 : hits <= 1 ? 0 : nearestIndex4(SFC_ENEMY_HP, hits * SFC_HIT_UNITS),
+        flags: 0,
+        score: nearestIndex4(SFC_ENEMY_SCORE, Number(rec.score) || 100),
+        anim: Number.isFinite(rec.frameRate) && rec.frameRate > 0 ? nearestIndex4(SFC_ANIM_INTERVALS, 60 / rec.frameRate) : 3
+      };
+      let first = null;
+      for (const digit of digits) {
+        const k = first ? CLASS_FALLBACKS[klass].find((c) => counts[c] < SFC_ENEMY_CLASSES[c].entries) : klass;
+        if (k === void 0) {
+          warn(`${st.key}: enemy${letter} carries several drop digits and the stage is out of entries \u2014 its drop-${digit} cells ${first.itemDrop ? "drop an item" : "drop nothing"} too`);
+          records.set(letter + digit, first);
+          continue;
+        }
+        const kspec = SFC_ENEMY_CLASSES[k];
+        const entry = counts[k]++;
+        const itemDrop = digit !== "0";
+        entryData.set(encodeEnemyEntry({ ...fields, itemDrop }), kspec.base + entry * ENEMY_ENTRY_BYTES);
+        const chipsPerFrame = kspec.cols * kspec.rows;
+        spreadFrames(frames, kspec.frames).forEach((f, fi) => {
+          const q = indexedByKey.get(f.key);
+          if (!q) return;
+          const fitted = fitIndexed(q, kspec.w, kspec.h);
+          for (let cy = 0; cy < kspec.rows; cy++) {
+            for (let cx = 0; cx < kspec.cols; cx++) {
+              const ref = sheetSlot(cutChip(fitted, kspec.w, cx, cy));
+              if (!ref) continue;
+              odr[kspec.odrBase + entry * chipsPerFrame * kspec.frames + fi * chipsPerFrame + cy * kspec.cols + cx] = encodeOdrByte(ref);
+            }
+          }
+        });
+        const made = { klass: k, entry, itemDrop, name: rec.name || `enemy${letter}`, cell: letter + digit, frames: frames.length };
+        records.set(letter + digit, made);
+        if (!first) first = made;
+        stageReport.enemies.push({ name: made.name, cell: made.cell, klass: k, entry, size: `${kspec.w}x${kspec.h}`, frames: Math.min(kspec.frames, Math.max(1, frames.length)), itemDrop });
+      }
+    }
+    const bossRec = bossData[`boss${s}`] || (s === 0 && stages.length === 1 ? bossData.boss0 : null);
+    const bossWords = new Uint16Array(BOSS_GROUP_CHIPS).fill(CHIP_BLANK_WORD);
+    const bossBlock = Uint8Array.from(SFC_FACTORY_BOSS_BLOCK);
+    let boss = null;
+    if (bossRec) {
+      const names = bossRec.anim && Array.isArray(bossRec.anim.idle) ? [...bossRec.anim.idle, ...Array.isArray(bossRec.anim.attack) ? bossRec.anim.attack : []] : Array.isArray(bossRec.texture) ? bossRec.texture : [];
+      const frames = names.map(lookup).filter(Boolean);
+      if (!frames.length) warn(`${st.key}: boss (${bossRec.name || "?"}) has no art in the atlas \u2014 drawn blank`);
+      if (frames.length && (frames[0].w > BOSS_SHEET_COLS * CHIP_DIM || frames[0].h > BOSS_SHEET_ROWS * CHIP_DIM)) {
+        warn(`${st.key}: boss (${bossRec.name || "?"}) is ${frames[0].w}x${frames[0].h}; a Super Famicom boss is 128x64 \u2014 downscaled`);
+      }
+      if (frames.length) {
+        const fitted = fitRgba(frames[0], BOSS_SHEET_COLS * CHIP_DIM, BOSS_SHEET_ROWS * CHIP_DIM);
+        const q = quantizeToRow([{ key: "boss", ...fitted }]);
+        writeCgramRow(bytes, PALETTE_ROW_STAGE_BOSS + s, [0, ...q.words]);
+        rows.push({ row: PALETTE_ROW_STAGE_BOSS + s, owner: `${st.key} boss`, colors: q.colors });
+        for (let cy = 0; cy < BOSS_SHEET_ROWS; cy++) {
+          for (let cx = 0; cx < BOSS_SHEET_COLS; cx++) {
+            const px = cutChip(q.frames[0].indices, fitted.w, cx, cy);
+            if (isTransparent(px)) continue;
+            const hit = bankChip(px, `${st.key} boss`);
+            if (hit) bossWords[cy * BOSS_SHEET_COLS + cx] = chipWordForIndex(hit.chip, hit);
+          }
+        }
+      }
+      const hits = bossRec.hp === "infinity" ? Infinity : Math.max(1, Number(bossRec.hp) || 100);
+      bossBlock[13] = bossBlock[13] & 248 | (hits === Infinity ? SFC_BOSS_HP.length - 1 : nearestIndex4(SFC_BOSS_HP, hits * SFC_HIT_UNITS));
+      bossBlock[6] &= ~64;
+      boss = { name: bossRec.name || `boss${s}`, hits, hpIndex: bossBlock[13] & 7, frames: frames.length };
+    }
+    writeWords(bytes, REGION.bossGroup.offset + s * BOSS_GROUP_STAGE_BYTES, bossWords);
+    entryData.set(bossBlock, BOSS_BLOCK_OFFSET);
+    const appear = new Uint8Array(APPEAR_STAGE_BYTES);
+    appear.fill(255, APPEAR_RECORD_END * APPEAR_RECORD_BYTES, (APPEAR_RECORD_END + 1) * APPEAR_RECORD_BYTES);
+    const lines = appear.subarray(APPEAR_TABLE_B_OFFSET, APPEAR_TABLE_B_OFFSET + APPEAR_LINES);
+    const recordIndex = /* @__PURE__ */ new Map();
+    let nextRecord = APPEAR_RECORD_END + 1;
+    let recordsFull = false;
+    const addRecord = (record) => {
+      const key = Array.from(record).join(",");
+      if (recordIndex.has(key)) return recordIndex.get(key);
+      if (nextRecord >= APPEAR_RECORDS) {
+        if (!recordsFull) warn(`${st.key}: more than ${APPEAR_RECORDS - 2} distinct spawn lines; the rest are left out`);
+        recordsFull = true;
+        return null;
+      }
+      const index = nextRecord++;
+      appear.set(record, index * APPEAR_RECORD_BYTES);
+      recordIndex.set(key, index);
+      return index;
+    };
+    let lastLine = -1, placed = 0, dropped = 0;
+    spawnRows.forEach((row, k) => {
+      const line = clamp4(waveRows ? Math.round(waveRows[k]) : SFC_FIRST_SPAWN_LINE + k * SFC_LINE_STEP, 0, SFC_LAST_SPAWN_LINE);
+      const record = new Uint8Array(APPEAR_RECORD_BYTES);
+      let any = false;
+      row.forEach((cell, c) => {
+        if (!cell || cell === "00") return;
+        const made = records.get(cell);
+        if (!made) return;
+        const column = sfcSpawnColumn(c, width);
+        const at = column - APPEAR_FIRST_COLUMN;
+        if (record[at]) {
+          dropped++;
+          return;
+        }
+        record[at] = encodeAppearByte({ klass: made.klass, entry: made.entry });
+        any = true;
+        placed++;
+      });
+      if (!any) return;
+      if (lines[line]) {
+        const prev = appear.subarray(lines[line] * APPEAR_RECORD_BYTES, (lines[line] + 1) * APPEAR_RECORD_BYTES);
+        const merged = Uint8Array.from(prev);
+        record.forEach((b, i) => {
+          if (!b) return;
+          if (merged[i]) dropped++;
+          else merged[i] = b;
+        });
+        const idx2 = addRecord(merged);
+        if (idx2 !== null) lines[line] = idx2;
+        lastLine = Math.max(lastLine, line);
+        return;
+      }
+      const idx = addRecord(record);
+      if (idx === null) return;
+      lines[line] = idx;
+      lastLine = Math.max(lastLine, line);
+    });
+    if (dropped) warn(`${st.key}: ${dropped} placement${dropped === 1 ? "" : "s"} shared a column with another on the same line and ${dropped === 1 ? "was" : "were"} left out`);
+    if (boss) {
+      const line = clamp4(lastLine + SFC_BOSS_LINE_GAP, SFC_BOSS_LINE_GAP, SFC_LAST_SPAWN_LINE);
+      const record = new Uint8Array(APPEAR_RECORD_BYTES);
+      record[Math.floor(APPEAR_COLUMNS / 2)] = encodeAppearByte({ klass: APPEAR_BOSS_CLASS, entry: 0 });
+      const idx = addRecord(record);
+      if (idx !== null) lines[line] = idx;
+      boss.line = line;
+      lastLine = Math.max(lastLine, line);
+    }
+    stageReport.placements = placed;
+    stageReport.records = nextRecord - 2;
+    stageReport.lines = lastLine + 1;
+    stageReport.boss = boss;
+    bytes.set(entryData, REGION.enemyData.offset + s * ENEMY_STAGE_BYTES);
+    bytes.set(appear, REGION.appear.offset + s * APPEAR_STAGE_BYTES);
+    bytes.set(odr, REGION.enemyOdr.offset + s * ENEMY_ODR_STAGE_BYTES);
+    writeWords(bytes, REGION.enemyGroup.offset + s * ENEMY_GROUP_STAGE_BYTES, enemyGroup);
+    return stageReport;
+  });
+  bank.writeTo(bytes);
+  sealSfcChecksums(bytes);
+  const report = {
+    name,
+    stages: built,
+    chips: { used: bank.used, capacity: USER_CHIP_COUNT, shared: bank.shared, free: USER_CHIP_COUNT - bank.used },
+    rows,
+    ship: "factory",
+    title,
+    sound: "factory"
+  };
+  return { bytes, name, warnings, report };
+}
+function fitIndexed(frame, w, h) {
+  if (frame.w === w && frame.h === h) return frame.indices;
+  const out = new Uint8Array(w * h);
+  const scale = Math.min(1, w / frame.w, h / frame.h);
+  const fw = Math.max(1, Math.round(frame.w * scale)), fh = Math.max(1, Math.round(frame.h * scale));
+  const ox = Math.floor((w - fw) / 2), oy = Math.floor((h - fh) / 2);
+  for (let y = 0; y < fh; y++) {
+    const sy = scale === 1 ? y : Math.min(frame.h - 1, Math.floor((y + 0.5) / scale));
+    for (let x = 0; x < fw; x++) {
+      const sx = scale === 1 ? x : Math.min(frame.w - 1, Math.floor((x + 0.5) / scale));
+      out[(oy + y) * w + ox + x] = frame.indices[sy * frame.w + sx];
+    }
+  }
+  return out;
+}
+function exportLevelToSfcSram(level, art2, options = {}) {
+  const built = buildSfcGameFromLevel(level, art2, options);
+  const parsed = parseSfcSav(built.bytes);
+  if (!parsed.isSfcSav) throw new Error("the built image does not read back as a Dezaemon save");
+  if (parsed.errors.length) throw new Error(`the built image does not parse: ${parsed.errors.map((e) => `${e.block}: ${e.message}`).join("; ")}`);
+  const v = verifySfcChecksums(built.bytes);
+  if (!v.ok) throw new Error(`the built image's checksums do not verify: ${v.words.filter((w) => !w.ok).map((w) => w.name).join(", ")}`);
+  if (built.bytes.length !== SRAM_SIZE) throw new Error(`the image is ${built.bytes.length} bytes, not ${SRAM_SIZE}`);
+  return { sram: built.bytes, fileName: sfcSramFileName(built.name), name: built.name, warnings: built.warnings, report: built.report };
 }
 
 // packages/shmup-engine/src/sfc/index.js
@@ -13110,10 +14677,22 @@ function parseSfcSav(bytes, { rom = null } = {}) {
       appear: null,
       graphics: null,
       regions: SFC_REGIONS,
-      rom: null
+      rom: null,
+      /** The dump itself and, when given, the ROM — what drawing a chip needs. */
+      bytes,
+      romBytes: rom || null
     }
   );
-  attempt3(result, "checksum", () => readChecksumBlocks(bytes));
+  attempt3(result, "checksum", () => {
+    const blocks = readChecksumBlocks(bytes);
+    let verified = null;
+    try {
+      verified = bytes.length >= SRAM_SIZE ? verifySfcChecksums(bytes) : null;
+    } catch {
+      verified = null;
+    }
+    return { ...blocks, verified };
+  });
   attempt3(result, "palettes", () => decodePaletteData(bytes));
   attempt3(result, "maps", () => decodeMapData(bytes));
   attempt3(result, "scroll", () => decodeScrollEffect(bytes));
@@ -13156,11 +14735,19 @@ function summarizeSfcSav(parsed) {
   const lines = [];
   lines.push(`size ${parsed.size} (${parsed.sizeOk ? "ok" : "unexpected"}), check string ${JSON.stringify(parsed.checkString)}${parsed.checkStringOk ? "" : ` (expected ${CHECK_STRING})`}`);
   lines.push(`segments: ${parsed.segments.map((s) => `$${s.bank.toString(16)} ${!s.present ? "absent" : s.blank ? "blank" : "data"}`).join(", ")}`);
-  if (parsed.checksum) lines.push(`checksum copy ${parsed.checksum.equal ? "matches" : "DIFFERS"}`);
+  if (parsed.checksum) {
+    const v = parsed.checksum.verified;
+    lines.push(`checksum copy ${parsed.checksum.equal ? "matches" : "DIFFERS"}${v ? `; ${v.ok ? "all 17 words verify" : `${v.words.filter((w) => !w.ok).length} of 17 words FAIL (${v.words.filter((w) => !w.ok).map((w) => w.name).join(", ")})`}` : ""}`);
+  }
   if (parsed.palettes) lines.push(`palettes: ${parsed.palettes.colorRowCount}/${parsed.palettes.rows.length} rows are colour words`);
   if (parsed.maps) lines.push(`maps: ${parsed.maps.map((m) => m.used).join("/")} cells used per stage`);
+  if (parsed.groups) {
+    const chips = (list) => list.filter((c) => !c.empty).length;
+    const romArt = parsed.groups.map.some((g) => g.chips.some((c) => c.rom)) || parsed.groups.myShip.some((c) => c.rom);
+    lines.push(`chips: map ${parsed.groups.map.map((g) => chips(g.chips)).join("/")}, enemies ${parsed.groups.enemy.map((g) => chips(g.chips)).join("/")}, bosses ${parsed.groups.boss.map((g) => chips(g.chips)).join("/")}, ship ${chips(parsed.groups.myShip)}, title ${chips(parsed.groups.title)}; art ${romArt ? "partly from the ROM's sheets" : "from the save's sheets"}`);
+  }
   if (parsed.hiScores) lines.push(`hi-scores: ${parsed.hiScores.slice(0, 3).map((h) => `${h.score} ${h.name.trim() || "-"}`).join(", ")} \u2026`);
-  if (parsed.enemies) lines.push(`enemies: ${parsed.enemies.filter((e) => !e.blank).length}/${parsed.enemies.length} records in use`);
+  if (parsed.enemies) lines.push(`enemies: ${parsed.enemies.map((e) => e.used).join("/")} entries per stage${parsed.appear ? `; spawn lines ${parsed.appear.map((a) => a.used).join("/")}` : ""}`);
   if (parsed.graphics) lines.push(`graphics: ${!parsed.graphics.present ? "absent (64 KB dump)" : parsed.graphics.blank ? "blank" : `${parsed.graphics.usedCount} tiles in use`}`);
   if (parsed.rom) {
     const r = parsed.rom;
@@ -13374,6 +14961,7 @@ export {
   buildPayload,
   buildPlusGameFromLevel,
   buildSaveFromGame,
+  buildSfcGameFromLevel,
   buildSwatchTable,
   bupDateFromDate,
   bupDateToDate,
@@ -13418,6 +15006,7 @@ export {
   exportLevelToKidsCard,
   exportLevelToPlusCard,
   exportLevelToSav,
+  exportLevelToSfcSram,
   extractPayload,
   familyForFile,
   familyOfLibraryIndex,
@@ -13499,6 +15088,7 @@ export {
   savComment,
   savFileName,
   serializeMeshLibrary,
+  sfcSramFileName,
   shadeRgb555,
   shadeRow,
   snesCgramBytes,

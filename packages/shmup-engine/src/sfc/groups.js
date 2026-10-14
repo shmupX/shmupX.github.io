@@ -1,106 +1,108 @@
-// The "GROUP" and "ODR" regions: how tiles are grouped into things.
+// The GROUP and ODR regions: the chip sheets a stage, the ship and the title
+// screen are assembled from.
 //
-// Every GROUP region is a table of quads — four tilemap words (tilemap.js),
-// eight bytes — one quad per 16x16 object: the 192 background chips MAP DATA
-// indexes, four per enemy, eight per boss, eight for the title, three for the
-// ending, sixteen for the player's ship. The two ODR ("order") regions are the
-// same idea in 8-bit: four tile numbers per quad, twenty quads per enemy and
-// sixteen for the ship — animation frame lists by the look of the sample,
-// which is as far as this file goes. Environment-neutral ESM (Node + browser).
+// Every GROUP table is a list of chip words (chips.js), one per SLOT of the
+// sheet the stage assembly builds ($04:F979 / $05:AFD0): MAP GROUP 128 words a
+// stage (the BG chips a map cell can name), ENEMY GROUP 64 a stage (the
+// enemy sprite sheet, 8x8 chips), BOSS GROUP 32 a stage (an 8x4 sheet of BG
+// chips), TITLE GROUP 32, ENDING GROUP 12, MY SHIP GROUP 64 (the ship sheet:
+// poses, shots, weapons, items). The two ODR regions reference those sheets
+// by slot: ENEMY ODR is 80 four-byte quads a stage — a quad is four slot
+// references with flips (chips.js decodeOdrByte) — and MY SHIP ODR 64 bytes
+// of flips for the ship sheet's chips. FORMAT-SFC.md "The sprite sheets".
+// Environment-neutral ESM (Node + browser).
 
 import { REGION } from "./regions.js";
-import { classifyQuad, decodeTilemapWord, readWords } from "./tilemap.js";
+import { decodeChipWord, decodeOdrByte } from "./chips.js";
+import { readWords } from "./tilemap.js";
 
-export const QUAD_BYTES = 8;
-export const BYTE_QUAD_BYTES = 4;
-export const MAP_GROUP_CHIPS = REGION.mapGroup.length / QUAD_BYTES; // 192
-export const ENEMY_COUNT = 24;
-export const ENEMY_GROUP_QUADS = REGION.enemyGroup.length / QUAD_BYTES / ENEMY_COUNT; // 4
-export const BOSS_COUNT = 6;
-export const BOSS_GROUP_QUADS = REGION.bossGroup.length / QUAD_BYTES / BOSS_COUNT; // 8
-export const TITLE_GROUP_QUADS = REGION.titleGroup.length / QUAD_BYTES; // 8
-export const ENDING_GROUP_QUADS = REGION.endingGroup.length / QUAD_BYTES; // 3
-export const MY_SHIP_GROUP_QUADS = REGION.myShipGroup.length / QUAD_BYTES; // 16
-export const ENEMY_ODR_QUADS = REGION.enemyOdr.length / BYTE_QUAD_BYTES / ENEMY_COUNT; // 20
-export const MY_SHIP_ODR_QUADS = REGION.myShipOdr.length / BYTE_QUAD_BYTES; // 16
+export const STAGE_COUNT = 6;
+export const MAP_GROUP_CHIPS = REGION.mapGroup.length / STAGE_COUNT / 2; // 128
+export const MAP_GROUP_STAGE_BYTES = MAP_GROUP_CHIPS * 2; // 0x100
+export const ENEMY_GROUP_CHIPS = REGION.enemyGroup.length / STAGE_COUNT / 2; // 64
+export const ENEMY_GROUP_STAGE_BYTES = ENEMY_GROUP_CHIPS * 2; // 0x80
+export const BOSS_GROUP_CHIPS = REGION.bossGroup.length / STAGE_COUNT / 2; // 32
+export const BOSS_GROUP_STAGE_BYTES = BOSS_GROUP_CHIPS * 2; // 0x40
+export const TITLE_GROUP_CHIPS = REGION.titleGroup.length / 2; // 32
+export const ENDING_GROUP_CHIPS = REGION.endingGroup.length / 2; // 12
+export const MY_SHIP_GROUP_CHIPS = REGION.myShipGroup.length / 2; // 64
+/** The ship sheet's last three slots, which the editor forces to 0x3FC-0x3FE. */
+export const MY_SHIP_FORCED_SLOTS = Object.freeze([[61, 0x03fc], [62, 0x03fd], [63, 0x03fe]]);
+export const ENEMY_ODR_STAGE_BYTES = REGION.enemyOdr.length / STAGE_COUNT; // 0x140
+export const ENEMY_ODR_QUADS = ENEMY_ODR_STAGE_BYTES / 4; // 80
+export const MY_SHIP_ODR_BYTES = REGION.myShipOdr.length; // 64
+export const MY_SHIP_ODR_USED = 56;
+/** The boss sheet's shape, in chips. */
+export const BOSS_SHEET_COLS = 8;
+export const BOSS_SHEET_ROWS = 4;
+export const SHEET_COLS = 8;
 
-/** `count` quads of tilemap words at `offset`. */
-export function decodeQuadTable(bytes, offset, count) {
-    const quads = [];
-    for (let i = 0; i < count; i++) {
-        const at = offset + i * QUAD_BYTES;
-        const words = readWords(bytes, at, 4);
-        const entries = Array.from(words, decodeTilemapWord);
-        quads.push({ index: i, offset: at, words, entries, kind: classifyQuad(words) });
-    }
-    return quads;
+/** `count` chip words at `offset`, decoded, with their slot numbers. */
+export function decodeChipTable(bytes, offset, count) {
+    const words = readWords(bytes, offset, count);
+    return Array.from(words, (word, slot) => ({ slot, offset: offset + slot * 2, ...decodeChipWord(word) }));
 }
 
-/** `count` quads of four 8-bit tile numbers at `offset`. */
-export function decodeByteQuadTable(bytes, offset, count) {
-    const quads = [];
-    for (let i = 0; i < count; i++) {
-        const at = offset + i * BYTE_QUAD_BYTES;
-        if (at + BYTE_QUAD_BYTES > bytes.length) {
-            throw new Error(`byte quad at 0x${at.toString(16)} runs past the end (${bytes.length})`);
-        }
-        const tiles = Array.from(bytes.subarray(at, at + BYTE_QUAD_BYTES));
-        quads.push({ index: i, offset: at, tiles, blank: tiles.every((t) => t === 0) });
-    }
-    return quads;
+export function decodeMapGroup(bytes, stage) {
+    const offset = REGION.mapGroup.offset + stage * MAP_GROUP_STAGE_BYTES;
+    return { stage, offset, chips: decodeChipTable(bytes, offset, MAP_GROUP_CHIPS) };
 }
 
-function perOwner(bytes, region, owners, quadsEach, decode, quadBytes, key) {
-    const out = [];
-    for (let o = 0; o < owners; o++) {
-        const offset = region.offset + o * quadsEach * quadBytes;
-        out.push({ [key]: o, offset, quads: decode(bytes, offset, quadsEach) });
-    }
-    return out;
+export function decodeEnemyGroup(bytes, stage) {
+    const offset = REGION.enemyGroup.offset + stage * ENEMY_GROUP_STAGE_BYTES;
+    return { stage, offset, chips: decodeChipTable(bytes, offset, ENEMY_GROUP_CHIPS) };
 }
 
-export function decodeMapGroup(bytes) {
-    return decodeQuadTable(bytes, REGION.mapGroup.offset, MAP_GROUP_CHIPS);
-}
-
-export function decodeEnemyGroup(bytes) {
-    return perOwner(bytes, REGION.enemyGroup, ENEMY_COUNT, ENEMY_GROUP_QUADS, decodeQuadTable, QUAD_BYTES, "enemy");
-}
-
-export function decodeBossGroup(bytes) {
-    return perOwner(bytes, REGION.bossGroup, BOSS_COUNT, BOSS_GROUP_QUADS, decodeQuadTable, QUAD_BYTES, "boss");
+export function decodeBossGroup(bytes, stage) {
+    const offset = REGION.bossGroup.offset + stage * BOSS_GROUP_STAGE_BYTES;
+    return { stage, offset, chips: decodeChipTable(bytes, offset, BOSS_GROUP_CHIPS) };
 }
 
 export function decodeTitleGroup(bytes) {
-    return decodeQuadTable(bytes, REGION.titleGroup.offset, TITLE_GROUP_QUADS);
+    return decodeChipTable(bytes, REGION.titleGroup.offset, TITLE_GROUP_CHIPS);
 }
 
 export function decodeEndingGroup(bytes) {
-    return decodeQuadTable(bytes, REGION.endingGroup.offset, ENDING_GROUP_QUADS);
+    return decodeChipTable(bytes, REGION.endingGroup.offset, ENDING_GROUP_CHIPS);
 }
 
 export function decodeMyShipGroup(bytes) {
-    return decodeQuadTable(bytes, REGION.myShipGroup.offset, MY_SHIP_GROUP_QUADS);
+    return decodeChipTable(bytes, REGION.myShipGroup.offset, MY_SHIP_GROUP_CHIPS);
 }
 
-export function decodeEnemyOdr(bytes) {
-    return perOwner(bytes, REGION.enemyOdr, ENEMY_COUNT, ENEMY_ODR_QUADS, decodeByteQuadTable, BYTE_QUAD_BYTES, "enemy");
+/** A stage's 80 ODR quads: {quad, offset, refs: [4 slot refs], blank}. */
+export function decodeEnemyOdr(bytes, stage) {
+    const offset = REGION.enemyOdr.offset + stage * ENEMY_ODR_STAGE_BYTES;
+    if (offset + ENEMY_ODR_STAGE_BYTES > bytes.length) {
+        throw new Error(`ENEMY ODR stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
+    }
+    const quads = [];
+    for (let q = 0; q < ENEMY_ODR_QUADS; q++) {
+        const at = offset + q * 4;
+        const refs = Array.from(bytes.subarray(at, at + 4), decodeOdrByte);
+        quads.push({ quad: q, offset: at, refs, blank: refs.every((r) => r.byte === 0) });
+    }
+    return { stage, offset, quads };
 }
 
+/** The ship sheet's 64 flip bytes (56 used). */
 export function decodeMyShipOdr(bytes) {
-    return decodeByteQuadTable(bytes, REGION.myShipOdr.offset, MY_SHIP_ODR_QUADS);
+    const { offset, end } = REGION.myShipOdr;
+    if (end > bytes.length) throw new Error(`MY SHIP ODR at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
+    return Array.from(bytes.subarray(offset, end), decodeOdrByte);
 }
 
-/** Every group region at once. */
+/** Every group region at once, per stage where the ROM strides them. */
 export function decodeGroups(bytes) {
+    const stages = Array.from({ length: STAGE_COUNT }, (_, s) => s);
     return {
-        map: decodeMapGroup(bytes),
-        enemy: decodeEnemyGroup(bytes),
-        boss: decodeBossGroup(bytes),
+        map: stages.map((s) => decodeMapGroup(bytes, s)),
+        enemy: stages.map((s) => decodeEnemyGroup(bytes, s)),
+        boss: stages.map((s) => decodeBossGroup(bytes, s)),
+        enemyOdr: stages.map((s) => decodeEnemyOdr(bytes, s)),
         title: decodeTitleGroup(bytes),
         ending: decodeEndingGroup(bytes),
         myShip: decodeMyShipGroup(bytes),
-        enemyOdr: decodeEnemyOdr(bytes),
         myShipOdr: decodeMyShipOdr(bytes),
     };
 }

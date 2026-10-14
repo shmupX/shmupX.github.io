@@ -10,23 +10,29 @@
 // The parser (packages/shmup-engine/src/sfc/) knows the regions the ROM's own
 // map names; this is the way to look at what one particular dump holds — the
 // per-region statistics that tell a full dump from a half one, the palette
-// rows, the stage maps and scroll curves, the graphics bank when there is one.
+// rows, the stage maps drawn through their chips, the scroll tables, the
+// save's two chip sheets and the assembled ship / title / boss / enemy sheets.
+// A cart that draws the ROM's factory art (the sample does) needs --rom for
+// those chips; without it the map falls back to slot colours.
 // Saves and the ROM are never committed (dev-fixtures/ and
 // packages/shmup-engine/fixtures/ are gitignored), so paths are given
 // explicitly rather than discovered.
 
 import { basename, dirname, extname, resolve } from "@std/path";
 import {
-  assemble2x2,
+  chipRgba,
   coverage,
-  flipTile,
   MAP_COLUMNS,
+  PALETTE_ROW_SHIP,
+  PALETTE_ROW_STAGE_BOSS,
+  PALETTE_ROW_STAGE_ENEMY,
+  PALETTE_ROW_TITLE,
   parseSfcSav,
   regionFor,
   regionStats,
   type SfcSave,
   summarizeSfcSav,
-  tilesToIndexed,
+  userSheetIndexed,
   withPaletteRow,
 } from "../../packages/shmup-engine/src/sfc/index.js";
 import { indexedToRgba } from "../../packages/shmup-engine/src/decode/decode-cg.js";
@@ -238,66 +244,85 @@ function renderPalettes(parsed: SfcSave): Raster {
   return out;
 }
 
-/** The graphics bank, the tile groups and the palettes — all three, or nothing to draw. */
+/** What drawing a chip needs: the save's sheets, the ROM's when given, the palettes. */
 function art(parsed: SfcSave) {
-  const { graphics, groups, palettes } = parsed;
-  if (!graphics || graphics.blank || !groups || !palettes) return null;
-  return { tiles: graphics.tiles, groups, palettes: palettes.palettes };
+  const { graphics, palettes, bytes, romBytes } = parsed;
+  if (!graphics || !graphics.present || !palettes || !bytes) return null;
+  return { sram: bytes, rom: romBytes ?? null, palettes: palettes.palettes };
 }
 
+/** The save's two chip sheets side by side, 128x512 each, through palette row `row`. */
 function renderGraphics(parsed: SfcSave, row: number): Raster | null {
   const a = art(parsed);
-  if (!a) return null;
-  const sheet = tilesToIndexed(a.tiles, 16);
-  const rgba = indexedToRgba(withPaletteRow(sheet.indices, row), a.palettes);
-  const out = newRaster(sheet.width, sheet.height);
-  out.data.set(rgba);
+  if (!a || parsed.graphics?.blank) return null;
+  const sheets = [0, 1].map((n) => userSheetIndexed(a.sram, n)).filter(Boolean);
+  if (!sheets.length) return null;
+  const out = newRaster(sheets.length * 128 + (sheets.length - 1) * 4, 512);
+  fill(out, 0, 0, out.width, out.height, [24, 24, 32, 255]);
+  sheets.forEach((sheet, n) => {
+    if (!sheet) return;
+    const rgba = throughRow(sheet.indices, a.palettes, row);
+    blit(out, n * 132, 0, sheet.width, sheet.height, rgba);
+  });
   return out;
 }
 
-type QuadEntry = {
-  tile: number;
-  hflip: boolean;
-  vflip: boolean;
-  empty: boolean;
-};
-
-/**
- * One 16x16 object from a quad of tilemap words, reading tile numbers as
- * indices into the flat graphics bank. The bank's real layout is open
- * (FORMAT-SFC.md "GRAPIC DATA"), so this is a probe's guess, not a decode.
- */
-function quadRgba(
+/** A chip word as 16x16 RGBA through palette row `row` (any of the 24), or null when its sheet is not at hand. */
+function chipPixels(
   a: NonNullable<ReturnType<typeof art>>,
-  entries: QuadEntry[],
+  word: number,
   row: number,
-): Uint8ClampedArray {
-  const blank = new Uint8Array(64);
-  const pieces = entries.map((e) =>
-    e.empty || e.tile >= a.tiles.length
-      ? blank
-      : flipTile(a.tiles[e.tile], e.hflip, e.vflip)
-  );
-  return indexedToRgba(withPaletteRow(assemble2x2(pieces), row), a.palettes);
+  flips: { hflip?: boolean; vflip?: boolean } = {},
+): Uint8ClampedArray | null {
+  return chipRgba(a, word, row, flips);
 }
 
+/** A whole indexed raster through one palette row. */
+function throughRow(
+  indices: Uint8Array,
+  palettes: { colors: unknown[] }[],
+  row: number,
+): Uint8ClampedArray {
+  return indexedToRgba(withPaletteRow(indices, 0), [
+    palettes[row] ?? palettes[0],
+  ]);
+}
+
+/**
+ * A stage map through its MAP GROUP chips and its own palette row (row n for
+ * stage n, or `row` when given as non-negative). Cells whose chip cannot be
+ * drawn — a ROM chip with no ROM given — fall back to a hashed colour, so
+ * the scenery's shape still shows.
+ */
 function renderMap(parsed: SfcSave, stage: number, row: number): Raster {
   const map = parsed.maps?.[stage];
   if (!map) return fail(`stage ${stage} did not decode`);
   const a = art(parsed);
+  const group = parsed.groups?.map[stage]?.chips;
+  const palRow = row >= 0 ? row : stage;
   const cell = a ? 16 : 4;
   const out = newRaster(map.columns * cell, map.rows * cell);
-  for (let i = 0; i < map.cells.length; i++) {
-    const v = map.cells[i];
-    if (!v) continue;
+  for (let i = 0; i < map.slots.length; i++) {
+    const slot = map.slots[i];
+    if (!slot) continue;
     const x = (i % MAP_COLUMNS) * cell;
     const y = Math.floor(i / MAP_COLUMNS) * cell;
-    if (a) {
-      const chip = a.groups.map[v & 0x7f];
-      if (chip) blit(out, x, y, 16, 16, quadRgba(a, chip.entries, row));
-    } else {
-      fill(out, x, y, cell, cell, hashColor(v & 0x7f, (v & 0x80) !== 0));
-    }
+    const chip = group?.[slot];
+    const rgba = a && chip && !chip.empty
+      ? chipPixels(a, chip.word, palRow, {
+        hflip: !!map.hflips[i],
+        vflip: !!map.vflips[i],
+      })
+      : null;
+    if (rgba) blit(out, x, y, 16, 16, rgba);
+    else {fill(
+        out,
+        x,
+        y,
+        cell,
+        cell,
+        hashColor(slot, !!(map.hflips[i] || map.vflips[i])),
+      );}
   }
   return out;
 }
@@ -308,29 +333,75 @@ function renderScroll(parsed: SfcSave, stage: number): Raster {
   const out = newRaster(scroll.bytes.length, 256);
   fill(out, 0, 0, out.width, out.height, [16, 16, 24, 255]);
   for (let x = 0; x < scroll.bytes.length; x++) {
-    fill(out, x, 255 - scroll.bytes[x], 1, 1, [255, 220, 80, 255]);
+    fill(
+      out,
+      x,
+      255 - scroll.bytes[x],
+      1,
+      1,
+      x < 256 ? [120, 200, 255, 255] : [255, 220, 80, 255],
+    );
   }
   return out;
 }
 
-/** The GROUP tables as rows of 16x16 objects: ship, title, ending, bosses, enemies. */
+/**
+ * The assembled sheets, each through the row the game gives it: the ship
+ * (8x8 chips, row 18), the title (8x4, row 19), the ending (12, row 19),
+ * then per stage the boss (8x4, row 12+n) and the enemies (8x8, row 6+n).
+ * `row` overrides every row when non-negative.
+ */
 function renderGroups(parsed: SfcSave, row: number): Raster | null {
   const a = art(parsed);
-  if (!a) return null;
-  const g = a.groups;
-  const lines: { entries: QuadEntry[] }[][] = [
-    g.myShip,
-    g.title,
-    g.ending,
-    ...g.boss.map((b) => b.quads),
-    ...g.enemy.map((e) => e.quads),
+  const g = parsed.groups;
+  if (!a || !g) return null;
+  type Sheet = {
+    label: string;
+    chips: { word: number; empty: boolean }[];
+    cols: number;
+    row: number;
+  };
+  const sheets: Sheet[] = [
+    { label: "ship", chips: g.myShip, cols: 8, row: PALETTE_ROW_SHIP },
+    { label: "title", chips: g.title, cols: 8, row: PALETTE_ROW_TITLE },
+    { label: "ending", chips: g.ending, cols: 8, row: PALETTE_ROW_TITLE },
   ];
-  const cols = Math.max(...lines.map((l) => l.length));
-  const out = newRaster(cols * 16, lines.length * 16);
-  lines.forEach((line, y) => {
-    line.forEach((quad, x) =>
-      blit(out, x * 16, y * 16, 16, 16, quadRgba(a, quad.entries, row))
-    );
+  g.boss.forEach((b, n) =>
+    sheets.push({
+      label: `boss ${n}`,
+      chips: b.chips,
+      cols: 8,
+      row: PALETTE_ROW_STAGE_BOSS + n,
+    })
+  );
+  g.enemy.forEach((e, n) =>
+    sheets.push({
+      label: `enemies ${n}`,
+      chips: e.chips,
+      cols: 8,
+      row: PALETTE_ROW_STAGE_ENEMY + n,
+    })
+  );
+  const heights = sheets.map((sh) => Math.ceil(sh.chips.length / sh.cols) * 16);
+  const out = newRaster(8 * 16, heights.reduce((s, h) => s + h + 4, 0));
+  fill(out, 0, 0, out.width, out.height, [24, 24, 32, 255]);
+  let y = 0;
+  sheets.forEach((sh, n) => {
+    sh.chips.forEach((chip, i) => {
+      if (chip.empty) return;
+      const rgba = chipPixels(a, chip.word, row >= 0 ? row : sh.row);
+      if (rgba) {
+        blit(
+          out,
+          (i % sh.cols) * 16,
+          y + Math.floor(i / sh.cols) * 16,
+          16,
+          16,
+          rgba,
+        );
+      }
+    });
+    y += heights[n] + 4;
   });
   return out;
 }
@@ -347,15 +418,6 @@ async function savePng(
 }
 
 // --- reports ------------------------------------------------------------------
-
-function countKinds(quads: { kind: string | null }[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const q of quads) {
-    const kind = q.kind ?? "other";
-    out[kind] = (out[kind] ?? 0) + 1;
-  }
-  return out;
-}
 
 function reportOf(path: string, parsed: SfcSave, bytes: Uint8Array) {
   const stats = regionStats(bytes);
@@ -411,8 +473,8 @@ function reportOf(path: string, parsed: SfcSave, bytes: Uint8Array) {
     maps: parsed.maps?.map((m) => ({
       stage: m.stage,
       used: m.used,
-      flagged: m.flagged,
-      maxChip: m.maxChip,
+      flipped: m.flipped,
+      maxSlot: m.maxSlot,
     })) ?? null,
     scroll: parsed.scroll?.map((s) => ({
       stage: s.stage,
@@ -420,16 +482,35 @@ function reportOf(path: string, parsed: SfcSave, bytes: Uint8Array) {
       max: s.max,
     })) ?? null,
     groups: parsed.groups
-      ? {
-        mapKinds: countKinds(parsed.groups.map),
-        enemyKinds: countKinds(parsed.groups.enemy.flatMap((e) => e.quads)),
-        bossKinds: countKinds(parsed.groups.boss.flatMap((b) => b.quads)),
-        titleKinds: countKinds(parsed.groups.title),
-        myShipKinds: countKinds(parsed.groups.myShip),
-      }
+      ? (() => {
+        const count = (chips: { empty: boolean; rom: boolean }[]) => ({
+          chips: chips.filter((c) => !c.empty).length,
+          fromRom: chips.filter((c) => c.rom).length,
+        });
+        return {
+          map: parsed.groups.map.map((g) => count(g.chips)),
+          enemy: parsed.groups.enemy.map((g) => count(g.chips)),
+          boss: parsed.groups.boss.map((g) => count(g.chips)),
+          title: count(parsed.groups.title),
+          ending: count(parsed.groups.ending),
+          myShip: count(parsed.groups.myShip),
+          enemyOdrQuads: parsed.groups.enemyOdr.map((o) =>
+            o.quads.filter((q) => !q.blank).length
+          ),
+        };
+      })()
       : null,
-    enemiesInUse: parsed.enemies?.filter((e) => !e.blank).length ?? null,
-    appearUsed: parsed.appear?.map((a) => a.used) ?? null,
+    enemies: parsed.enemies?.map((e) => ({
+      stage: e.stage,
+      entries: e.classes.map((c) => c.entries.filter((x) => !x.blank).length),
+      boss: !e.boss.blank,
+    })) ?? null,
+    appear: parsed.appear?.map((a) => ({
+      stage: a.stage,
+      lines: a.used,
+      spawns: a.spawns,
+      lastLine: a.lastLine,
+    })) ?? null,
     graphics: parsed.graphics
       ? {
         present: parsed.graphics.present,
@@ -519,25 +600,25 @@ if (command === "report") {
   const parsed = parse(bytes);
   const out = need("--out");
   const scale = Math.max(1, intFlag("--scale", 1));
-  const row = intFlag("--row", 0);
+  const row = intFlag("--row", -1);
   const stage = intFlag("--stage", 0);
   const noArt =
-    "graphics segment is blank or absent in this dump — nothing to draw";
+    "graphics segment is blank or absent in this dump — nothing to draw (a cart drawing the ROM's art needs --rom)";
   if (what === "palettes") {
     await savePng(out, renderPalettes(parsed), scale, "palette rows");
   } else if (what === "graphics") {
-    const raster = renderGraphics(parsed, row);
+    const raster = renderGraphics(parsed, Math.max(0, row));
     if (!raster) console.log(noArt);
     else {await savePng(
         out,
         raster,
         scale,
-        `graphics bank through palette row ${row}`,
+        `the save's two chip sheets through palette row ${Math.max(0, row)}`,
       );}
   } else if (what === "map") {
     const how = art(parsed)
-      ? "chips through the graphics bank"
-      : "chip indices as colours; graphics blank";
+      ? "chips through the sheets"
+      : "slot numbers as colours; no sheets";
     await savePng(
       out,
       renderMap(parsed, stage, row),
@@ -558,7 +639,9 @@ if (command === "report") {
         out,
         raster,
         scale,
-        `group tables through palette row ${row}`,
+        row >= 0
+          ? `assembled sheets through palette row ${row}`
+          : "assembled sheets through their own palette rows",
       );}
   } else {
     fail(`unknown render ${what}\n\n${USAGE}`);
@@ -631,7 +714,7 @@ if (command === "report") {
   for (let s = 0; s < (parsed.maps?.length ?? 0); s++) {
     await savePng(
       resolve(dir, `map-stage${s}.png`),
-      renderMap(parsed, s, 0),
+      renderMap(parsed, s, -1),
       1,
       `stage ${s} map`,
     );
@@ -651,11 +734,11 @@ if (command === "report") {
       "graphics bank",
     );
   } else {console.log(
-      "  graphics segment is blank or absent — no graphics/groups renders",
+      "  graphics segment is blank or absent — no sheet render (the groups still draw from the ROM with --rom)",
     );}
-  const groups = renderGroups(parsed, 0);
+  const groups = renderGroups(parsed, -1);
   if (groups) {
-    await savePng(resolve(dir, "groups-row0.png"), groups, 2, "group tables");
+    await savePng(resolve(dir, "sheets.png"), groups, 2, "assembled sheets");
   }
   console.log(`  -> ${resolve(dir)}`);
 } else {

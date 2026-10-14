@@ -29,6 +29,7 @@
     "build:kids": "deno run -A packages/shmup-harbor/scripts/build-kids.ts",
     "build:plus": "deno run -A packages/shmup-harbor/scripts/build-plus.ts",
     "build:ddd": "deno run -A packages/shmup-harbor/scripts/build-ddd.ts",
+    "build:sfc": "deno run -A packages/shmup-harbor/scripts/build-sfc.ts",
     "sav:run": "deno run -A packages/shmup-harbor/scripts/run-mednafen.ts",
     "sav:inject": "deno run -A packages/shmup-harbor/scripts/sav-inject.ts",
     "sav:profile": "deno run -A packages/shmup-harbor/tools/sav-profiler/main.ts",
