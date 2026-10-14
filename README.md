@@ -2186,14 +2186,14 @@ source names — the disk as `/Dezaemon3D.z64.ndd`, the content's full name plus
 `/Mupen64plus/IPL.n64`, the hard-coded path under a system directory that
 EmulatorJS's RetroArch build resolves to the content directory. The core keeps
 its writes to the disk in a full copy beside it that EmulatorJS never persists,
-so the page's SAVE DISK button downloads that copy, with every game saved on
-it. All of this was read out of the core's and EmulatorJS's sources, not run:
+so the page's SAVE DISK button downloads that copy, with every game saved on it.
+All of this was read out of the core's and EmulatorJS's sources, not run:
 **untested here** — no cartridge, IPL or disk fixture is in this repo, the
-player has not been booted in a browser by the session that wrote it, and a
-disk built without a donor has no `DEZA3D.SYS`, so disk mode would have to copy
-one from the cartridge's save. The recipe is one object at the top of the page,
-so a correction is one edit; `packages/shmup-engine/FORMAT-N64.md` "The
-launcher's player" has the trace.
+player has not been booted in a browser by the session that wrote it, and a disk
+built without a donor has no `DEZA3D.SYS`, so disk mode would have to copy one
+from the cartridge's save. The recipe is one object at the top of the page, so a
+correction is one edit; `packages/shmup-engine/FORMAT-N64.md` "The launcher's
+player" has the trace.
 
 ## Desktop app
 
@@ -3501,13 +3501,13 @@ carries no path prefixes, because its player is
 never served `/snes/play.html`. Installing it therefore downloads nothing,
 registers no service worker and warms only that page. See _The Super Famicom
 library and shelf_. `n64dd` is local the same way: its player is
-[`static/n64dd/play.html`](static/n64dd/play.html), and the EmulatorJS it
-runs and the mupen64plus-next core come from the EmulatorJS CDN at the version
+[`static/n64dd/play.html`](static/n64dd/play.html), and the EmulatorJS it runs
+and the mupen64plus-next core come from the EmulatorJS CDN at the version
 `scripts/vendor-emulatorjs.ts` pins, not from this repo or the mirror — so it is
-online-only until somebody vendors that core. Its tile has nothing to list —
-no manifest, nothing filed on it — and says so (NO SHELF), pointing at the
-editor's → PLAY 64DD row, which is what opens it and what installs the core
-when it is not yet. See _The Nintendo 64 disk_.
+online-only until somebody vendors that core. Its tile has nothing to list — no
+manifest, nothing filed on it — and says so (NO SHELF), pointing at the editor's
+→ PLAY 64DD row, which is what opens it and what installs the core when it is
+not yet. See _The Nintendo 64 disk_.
 
 Nothing else is vendored here. [`static/emu-sw.js`](static/emu-sw.js) is a
 service worker that mirrors an installed core's path prefixes from the cmg

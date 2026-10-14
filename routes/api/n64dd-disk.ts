@@ -20,12 +20,12 @@ import {
 // The editor builds a 64DD disk in the page (exportLevelToDdd) and the player
 // is another window — opened by the launcher's own window manager on the
 // desktop, by window.open elsewhere — that cannot be posted 64 MB across. So
-// the disk is parked here first, under build/n64dd/ in the checkout (the same
-// tree `deno task build:ddd` writes to), and the player is given its URL: the
-// "?rom=<path>" contract every player in the catalogue already takes, only
-// with a disk and an IPL beside the cartridge. A parked disk is also a file
-// the operator keeps — an .ndd ares or a flashcart can mount — which the
-// download row gives them anyway.
+// the disk is parked here first, under build/n64dd/ in the checkout (beside
+// the build/n64/ tree `deno task build:ddd` writes to), and the player is
+// given its URL: the "?rom=<path>" contract every player in the catalogue
+// already takes, only with a disk and an IPL beside the cartridge. A parked
+// disk is also a file the operator keeps — an .ndd ares or a flashcart can
+// mount — which the download row gives them anyway.
 //
 // A .ddd posted here is turned into the .ndd the player wants (the system
 // area built for a type-0 disk, lib/dezaemon-n64.ts's sibling in the engine
