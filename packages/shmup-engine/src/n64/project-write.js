@@ -35,8 +35,9 @@
 // Where a number here is a reading rather than a measurement it is named in
 // a constant below with its evidence. The two that matter most: model
 // numbers in an entry are 20 + the stage's model slot (the sample game's
-// stage entries use 20..148 almost exclusively while its common entries and
-// items use 8..19, so the common CMD comes first — LIKELY); layout x runs
+// stage entries name 20..148 almost exclusively and its seven items 12..18,
+// so the common CMD is read as coming first — LIKELY, on no stronger
+// evidence than that); layout x runs
 // about -400..400 across the screen and the frame offset counts DOWN from
 // the start, entries in descending order (measured on the sample's three
 // stages — LIKELY in meaning, CONFIRMED in shape). Nothing this writes has
@@ -110,9 +111,11 @@ export const N64_FRAMES_PER_ENEMY = 4;
 
 /**
  * An entry's model number for a stage model slot: 20 + the slot. The sample
- * game's three stages name models 20..148 in their entries and 0..19 only
- * from the common entries and the seven items (which use 12..18), so the
- * common CMD's twenty come first and the stage's 130 follow. (likely)
+ * game's stage entries name models 20..148 almost exclusively (the first
+ * stage also 0 and 19, the second 11), its seven items 12..18 only, and its
+ * twenty common entries anything from 8 to 80 — so the common CMD's twenty
+ * are read as coming first and the stage's 130 after, on the items and the
+ * stages' habit alone. (likely)
  */
 export const N64_MODEL_NUMBER_BASE = N64_CMD_MODELS;
 
@@ -144,8 +147,9 @@ export const N64_SPEED_TABLE = Object.freeze([0, 0.5, 1, 1.5, 2, 3, 4, 6]);
 export const N64_HIT_SIZE_TABLE = Object.freeze([8, 16, 24, 32, 48, 64, 96, 128]);
 /** The web's drop digits -> the item an entry drops (0 shot, 1 laser, 2 bomb, 3 shield, 4 1UP, 5 bonus1, 6 bonus2): the three shot power-ups all become the shot item, 4 (score) bonus1, 5 (bomb) the bomb, 9 (barrier) the shield. (likely) */
 export const N64_DROP_ITEMS = Object.freeze({ 1: 0, 2: 0, 3: 0, 4: 5, 5: 2, 9: 3 });
-/** The item entries' own settings in the cartridge's game: invincible (hp mode 2), hit size 4, scale 45. (measured) */
-export const N64_ITEM_ENTRY = Object.freeze({ scale: 45, hitMode: 2, hitSize: 4 });
+/** The item entries' own settings in the cartridge's game: every one invincible (hp mode 2) with hit size 4, and a scale of its own — shot, laser, bomb, shield, 1UP, bonus1, bonus2. (measured) */
+export const N64_ITEM_ENTRY = Object.freeze({ hitMode: 2, hitSize: 4 });
+export const N64_ITEM_SCALES = Object.freeze([33, 45, 45, 32, 45, 76, 32]);
 
 /** The documented size of a file by extension, or null for one the format does not name. */
 export function fileSizeFor(ext) {
@@ -448,10 +452,10 @@ export function enemyEntryFromEditor(rec, { slots, size, frames, drop = null, bo
 }
 
 /** The item entry that shows common model `model` (the cartridge's own items' settings). */
-function itemEntry(model) {
+function itemEntry(model, scale) {
     return {
         animation: { disabled: true, frameSpeed: 0x7f, models: [model, model, model, model] },
-        scale: N64_ITEM_ENTRY.scale,
+        scale,
         hit: { hpMode: N64_ITEM_ENTRY.hitMode, size: N64_ITEM_ENTRY.hitSize },
     };
 }
@@ -521,7 +525,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         return new TextureSheet(count, t);
     };
     const cgr = sheetFrom("CGR", N64_CGR_TEXTURES);
-    const common = { placed: [], missed: [], models: [] };
+    const common = { placed: [], missed: [], models: [], scaled: [] };
     const cmd = new Map(); // common slot -> {model, texture}
     const placeCommon = (key, grid) => {
         const at = cgr.place(key, grid);
@@ -541,6 +545,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
     }
     spreadFrames(shipFrames, Math.min(2, shipFrames.length)).forEach((f, i) => {
         const t = spriteTexture(f);
+        if (t.scaled) common.scaled.push(`ship:${i}:${f.key}`);
         const at = placeCommon(`ship:${i}:${f.key}`, t.grid);
         if (at !== null && i === 0) cmd.set(N64_PLAYER_MODEL, { model: spriteModel(t), texture: at, key: `ship:${f.key}` });
     });
@@ -549,6 +554,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         const f = lookup(k);
         if (!f) return;
         const t = spriteTexture(f);
+        if (t.scaled) common.scaled.push(`item:${decodeFrameKey(k)}`);
         const at = placeCommon(`item:${decodeFrameKey(k)}`, t.grid);
         if (at !== null && i < N64_ITEM_MODELS.length) {
             cmd.set(N64_ITEM_MODELS[i], { model: spriteModel(t), texture: at, key: `item:${decodeFrameKey(k)}` });
@@ -752,7 +758,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         if (!templateFiles.has("CMD")) {
             CBL_ITEMS.forEach((item, k) => {
                 const slot = N64_ITEM_MODELS[k];
-                if (cmd.has(slot)) items[item] = itemEntry(slot);
+                if (cmd.has(slot)) items[item] = itemEntry(slot, N64_ITEM_SCALES[k]);
             });
         }
         built.set("CBL", buildCbl({ items }));
@@ -804,7 +810,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         template: templateFiles.size ? [...templateFiles.keys()] : null,
         ship: shipSource,
         finalStage,
-        common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, models: common.models },
+        common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, scaled: common.scaled, models: common.models },
         stages: stageReports,
         files: sources,
         bytes: files.reduce((a, f) => a + f.data.length, 0),

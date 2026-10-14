@@ -480,11 +480,13 @@ stages hold 0x20, 0x80, 0xA0 and 0x81 in them; and the player's initial altitude
 admits 9 and 10, the cartridge's default being 9. What the real data also
 showed: every layout layer ends in an entry whose enemy number is -1 and the
 rest zero; the tail's first-enemy indices count those terminators; an unset map
-entry carries texture 150; stage entries name models 20..148 while the common
-entries and the seven items name 0..19 (so the common `CMD` comes first in the
-model-number space and a stage's slot _k_ is model 20 + _k_ — likely); layout
-entries within a layer sit in **descending** frame order from +19 down to about
--90,000, with x in roughly -400..430 and y in 60..800 on the map layer (the
+entry carries texture 150; stage entries name models 20..148 almost exclusively
+(the first stage also 0 and 19, the second 11), the seven items 12..18 only, and
+the twenty common entries anything from 8 to 80 — read here as the common `CMD`
+coming first in the model-number space, a stage's slot _k_ being model 20 + _k_,
+on the items and the stages' habit alone (likely); layout entries within a layer
+sit in **descending** frame order from +19 down to about -90,000, with x in
+roughly -400..430 and y in 63..600 on the map layer (to 800 on layer B; the
 units are the game's, untraced). Still **open**: the units of a face's UV pairs
 (the sample models run to 321 × 291 over 64 × 32 textures) and of a tile's
 offset; the tile index base (textured faces name tiles 1..9 and leave tile 0 at

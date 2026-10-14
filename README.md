@@ -3506,9 +3506,10 @@ library and shelf_. `n64dd` is local the same way: its player is
 and the mupen64plus-next core come from the EmulatorJS CDN at the version
 `scripts/vendor-emulatorjs.ts` pins, not from this repo or the mirror — so it is
 online-only until somebody vendors that core. Its tile has nothing to list — no
-manifest, nothing filed on it — and says so (NO SHELF), pointing at the editor's
-→ PLAY 64DD row, which is what opens it and what installs the core when it is
-not yet. See _The Nintendo 64 disk_.
+manifest, nothing filed on it — and says so (NO SHELF, once the dashboard bundle
+is rebuilt: `deno task dashboard:build`), pointing at the editor's → PLAY 64DD
+row, which is what opens it and what installs the core when it is not yet. See
+_The Nintendo 64 disk_.
 
 Nothing else is vendored here. [`static/emu-sw.js`](static/emu-sw.js) is a
 service worker that mirrors an installed core's path prefixes from the cmg
