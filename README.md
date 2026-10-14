@@ -1008,6 +1008,25 @@ mod is opened or played. A community save is only filed once it has a mod to be
 the parent of. The two kinds are told apart by `source` and never by id prefix:
 an export of a game called "Mod" is `mod:saturn`, and stays an export.
 
+**A web game's own `.SAV` export carries `web` too, and the overlay names every
+web boss's slot.** A web boss's routine is implicit in its slot — with no
+`attackPattern`, `bossShootStart` runs the slot's stock pattern (boss1 is
+Barlog's, power dive and all). Written into a cart it becomes a Dezaemon record
+wearing the writer's stand-in patterns (`DEFAULT_BOSS_PATTERNS` in
+`game-to-save.js`), and an export filed without `web` played those: 2028.Ai's
+second boss lost her dive and fired the bank's bullets the moment her game was
+exported to the shelf, and EXTRACT MODE's SAVE TO LIBRARY out of that game wrote
+the stripped boss into the shared library. `modOverlay()` now records the slot
+for every web boss (`bossPatterns[k] = k`), both export sites file it, and
+`lineageBeginFromImport` lays it back over any shelf record that has one — so
+the decoded boss is pinned to her routine (`initDezaBoss` reads `attackPattern`
+as the opt-out) and `bossAdd` arms it from the bank. On the publish side, the
+game's EXTRACT MODE and the editor's PUBLISH TO LIBRARY share
+`ShmupExtract.bossPublishRecord`: a web boss leaves with `attackPattern` pinned
+to the slot it was authored for (never a Dezaemon-native boss, and never over a
+pattern already on the record), so she dives wherever she lands.
+`tests/extract_mode_publish_test.ts` pins the rule.
+
 **The launcher's LIBRARY** is that shelf as game cards, reached from the Games
 list's LIBRARY row (it appears once the shelf holds something). `libraryCards()`
 orders them — each game, then its mods — so a mod sits under the game it came

@@ -382,9 +382,38 @@
         return out;
     }
 
+    // The boss record as it should LEAVE this game, behaviour included. A web
+    // boss's routine is its SLOT's: bossShootStart picks the stock pattern from
+    // the slot NUMBER a record lands in, never from the record — so pyramid,
+    // published out of boss0 and imported into boss1, would run Barlog's
+    // routine, and a boss published out of boss1 (Barlog's dive) and placed in
+    // boss0 would lose it. Pin the slot it was authored for, so the behaviour
+    // travels with the art; the editor's PUBLISH TO LIBRARY pins the same way,
+    // and the two doors write to one library and must not disagree.
+    //
+    // Never for a Dezaemon-native boss: initDezaBoss reads any attackPattern
+    // as an opt-out of its own state machine — parts, HP bands, movement
+    // scripts — so pinning one there would disarm the very thing bossTravelRecord
+    // preserves. A pattern already on the record wins: a mod's web overlay lays
+    // one over a cart-decoded boss that was a web boss before the cart writer
+    // gave it stand-in patterns, and that is the routine its author meant.
+    function bossPublishRecord(recipe, record, stageId, bossKey) {
+        var out = bossTravelRecord(recipe, record, stageId);
+        if (!out || typeof out !== 'object') return out;
+        var deza = out.dezaemon && out.dezaemon.boss;
+        if (!out.attackPattern && !deza && /^boss\d+$/.test(String(bossKey || ''))) {
+            // Copy rather than assign: for a web boss bossTravelRecord hands
+            // back the LIVE recipe record, and publishing must not write a
+            // pattern into the game being played.
+            out = Object.assign({}, out, { attackPattern: String(bossKey) });
+        }
+        return out;
+    }
+
     window.ShmupExtract = {
         dbURL: dbURL,
         bossTravelRecord: bossTravelRecord,
+        bossPublishRecord: bossPublishRecord,
         collectFrameNames: collectFrameNames,
         cropFrames: cropFrames,
         packFrames: packFrames,
@@ -566,8 +595,9 @@
                 out.push({
                     sprite: e, kind: 'boss', key: bossKey,
                     // Written down now, while the recipe that answers them is
-                    // still on screen — see bossTravelRecord.
-                    record: bossTravelRecord(recipe, bossRec, scene.bossStageId),
+                    // still on screen — its weaponry (bossTravelRecord) and the
+                    // routine its slot gives it (bossPublishRecord).
+                    record: bossPublishRecord(recipe, bossRec, scene.bossStageId, bossKey),
                 });
             } else {
                 var letter = e.getData('enemyKey');

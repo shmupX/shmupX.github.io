@@ -5158,26 +5158,17 @@
             // doors write to the same library and must not disagree.
             const bossSlot = /^boss(\d+)$/.exec(entryKey || '');
             if (bossSlot) {
-                entry = EX.bossTravelRecord(gameData, entry, Number(bossSlot[1]));
                 // Its BEHAVIOUR is the slot's too: bossShootStart picks the boss
                 // pattern from the slot NUMBER a record lands in, never from the
                 // record — so pyramid, published out of boss0 and imported into
-                // boss1, runs Barlog's routine: one that never changes the boss's
-                // stance and fires one weapon where pyramid has two. Pin the slot
-                // it was authored for, so the behaviour travels with the art.
-                //
-                // Never for a Dezaemon-native boss: initDezaBoss reads any
-                // attackPattern as an opt-out of its own state machine — parts, HP
-                // bands, movement scripts — so pinning one there would disarm the
-                // very thing this is meant to preserve. A pattern the author set by
-                // hand wins over the slot it happens to sit in.
-                //
-                // Copy rather than assign: bossTravelRecord hands back the LIVE
-                // bossData record for a non-Dezaemon boss, and publishing must not
-                // write a pattern into the level being edited.
-                if (!entry.attackPattern && !(entry.dezaemon && entry.dezaemon.boss)) {
-                    entry = Object.assign({}, entry, { attackPattern: entryKey });
-                }
+                // boss1, runs Barlog's routine. bossPublishRecord pins the slot it
+                // was authored for (never on a Dezaemon-native boss, whose
+                // attackPattern would switch its own state machine off), the same
+                // rule the game's EXTRACT MODE publishes by — the two doors write
+                // to one library and must not disagree.
+                entry = EX.bossPublishRecord
+                    ? EX.bossPublishRecord(gameData, entry, Number(bossSlot[1]), entryKey)
+                    : EX.bossTravelRecord(gameData, entry, Number(bossSlot[1]));
             }
             let name = prompt('Publish to the shared library as:', EX.suggestName(suggested));
             if (!name) return null;
@@ -7261,6 +7252,7 @@
                         id: row.id, title: record.name, file: out.fileName, palette: row.palette,
                         bytes: out.sav, size: out.sav.length, savedAt: Date.now(),
                         warnings: out.warnings, report: out.report || {}, source: 'export',
+                        web: modOverlay(),
                     });
                     rebuilt++;
                 } catch (e) { console.warn('Could not rebuild the shelf cart "' + row.id + '":', e); }
@@ -7314,6 +7306,9 @@
                         warnings: out.warnings,
                         report: rep,
                         source: 'export',
+                        // What the cart cannot hold — the bosses' routines, the
+                        // story — rides beside it, as on a mod (modOverlay).
+                        web: modOverlay(),
                     });
                     dezaExportRows = null;
                     dezaSavNote('"' + out.fileName + '" IS ON THE LOAD GAME SHELF UNDER YOUR .SAV EXPORTS. ' + summary + warn, '#84cc16');
@@ -7420,6 +7415,9 @@
             } else if (rec) {
                 L.parent = { id: rec.id, title: rec.title || title };
                 L.origin = rec.source === 'eshop' ? 'ESHOP GAME' : rec.source === 'import' ? 'DEZAEMON 2 · SATURN .SAV' : 'YOUR .SAV EXPORT';
+                // A web game's own .SAV export carries its overlay too (the
+                // bosses' routines, the story): lay it back, as for a mod.
+                applyModOverlay(rec.web);
             } else {
                 const credits = gameData && gameData.dezaemonCredits;
                 L.parent = { id: '', title: hint.title || (credits && credits.title) || title };
@@ -7464,13 +7462,27 @@
         }
 
         // What a Dezaemon 2 cart has nowhere to put, kept beside the cart on
-        // the mod's shelf record and laid back over it when the mod is opened
-        // or played: boss attack patterns (BOSS LAB) and the story.
+        // its shelf record — a mod's, and a web game's .SAV export's — and
+        // laid back over it when the game is opened or played: boss attack
+        // patterns (BOSS LAB) and the story.
+        //
+        // A web boss's routine is IMPLICIT in its slot: with no attackPattern,
+        // bossShootStart runs the slot's stock pattern (boss1 → Barlog's, dive
+        // and all). Written into a cart it becomes a Dezaemon record wearing the
+        // writer's stand-in patterns (game-to-save.js DEFAULT_BOSS_PATTERNS),
+        // and the decoded boss, back in the runtime, flies those — a 2028.Ai
+        // boss lost her dive and fired the bank's bullets the moment her game
+        // was exported, and an EXTRACT MODE publish out of that game wrote the
+        // stripped boss into the shared library. So the overlay says the slot
+        // out loud for every web boss, and laying it back pins the routine.
         function modOverlay() {
             const web = {};
             const patterns = {};
             for (const k of Object.keys(bossData || {})) {
-                if (bossData[k] && bossData[k].attackPattern) patterns[k] = bossData[k].attackPattern;
+                const b = bossData[k];
+                if (!b) continue;
+                if (b.attackPattern) patterns[k] = b.attackPattern;
+                else if (/^boss\d+$/.test(k) && !(b.dezaemon && b.dezaemon.boss)) patterns[k] = k;
             }
             if (Object.keys(patterns).length) web.bossPatterns = patterns;
             if (gameData && gameData.storyData) web.storyData = gameData.storyData;
