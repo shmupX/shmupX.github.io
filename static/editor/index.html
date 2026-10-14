@@ -1147,9 +1147,10 @@
     <!-- EXPORT SHEET: every target. WEB, then a CONSOLE picker that retargets
          the DEZAEMON row (its title and subline follow the pick), then 3D —
          and after those, the two targets that had drawer groups of their
-         own: an app build and the eShop. Only the Saturn has a cart writer
-         (packages/shmup-engine/src/write/); the other three consoles say so
-         rather than offer a row that would build nothing. -->
+         own: an app build and the eShop. The Saturn (packages/shmup-engine/
+         src/write/), the PlayStation (src/psx/) and the Nintendo 64 (src/n64/)
+         have writers; the Super Famicom says so rather than offer a row that
+         would build nothing. -->
     <div id="export-sheet" class="picker-overlay hidden" onclick="if(event.target===this)closeSheet()">
         <div class="picker-panel">
             <div class="picker-title">EXPORT</div>
@@ -1238,6 +1239,44 @@
                         <button class="menu-row" id="kids-card-download" onclick="exportPsCard('download')" title="Build a memory card of the open game for the picked Dezaemon — the 131,072-byte raw card image (.mcr) Mednafen, DuckStation and MiSTer's PSX core mount — and download it"><span class="mono-badge">DL</span>DOWNLOAD .MCR</button>
                         <button class="menu-row hidden" id="kids-card-mednafen" onclick="exportPsCard('mednafen')" title="Build the card, install it as Mednafen's slot-1 memory card for the picked Dezaemon's disc on this machine (the card that was there is backed up first) and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN (SLOT 1)</button>
                         <div id="kids-card-note" class="menu-note"></div>
+                    </div>
+                    <!-- EXPORT: the open game as a Dezaemon 3D 64DD disk. Built in the
+                         page by the engine bundle (exportLevelToDdd): the level's art cut
+                         into 64x32 RGBA5551 textures and laid into the BLANK slots of the
+                         project's texture sheets (CGR for the title pictures, ship and
+                         items; a stage's GR for its enemies, shots and boss), every other
+                         file of the project copied from the DONOR disk's first project
+                         (SAMPLEZ1 on the prototype) or left zero at its documented size,
+                         and the project pressed into the read-only directory beside the
+                         donor's samples — the donor's save area carried byte for byte. What
+                         is NOT built: no enemy, model or placement record is written (their
+                         layouts are only likely; static/dezaemon-parity-n64.html 03/04), so
+                         nothing on the disk refers to the textures yet; without a donor the
+                         disk has no writable area and no DEZA3D.SYS, so the cartridge is not
+                         expected to enter disk mode; and nothing here boots the result — no
+                         cartridge, emulator or disk fixture is in this repo, so every disk
+                         is untested on hardware or in an emulator. Downloaded as the .ndd an
+                         emulator mounts beside the cartridge, or the .ddd this repo's reader
+                         and the prototype dump use. -->
+                    <div id="export-deza-n64" class="sheet-sub-sec hidden">
+                        <div class="display-row" style="flex-wrap:wrap" title="A 64DD image (.ndd or .ddd — the prototype data disk) to write the project onto. With one, the project is pressed beside the samples SAMPLEZ1 and SAMP in the read-only directory and the donor's save area — its writable directory, DEZA3D.SYS and the projects it saved — is carried verbatim, so the cartridge keeps what it needs for disk mode. Without one the disk is built from nothing: it has no writable area and no DEZA3D.SYS, so the cartridge is not expected to enter disk mode, though this repo's reader opens it.">
+                            <span class="display-lbl">DONOR DISK</span>
+                            <input id="n64-donor-input" type="file" accept=".ndd,.ddd" class="menu-input" style="flex:1;min-width:0;margin:0;padding:5px 8px;font-size:9px" onchange="handleN64DonorFile(this)">
+                            <span id="n64-donor-status" class="menu-note" style="min-width:0"></span>
+                        </div>
+                        <div class="display-row" title="The project's name in the disk's directory: up to eight letters and digits, uppercased the way ATNFS stores them. Empty, the open game's name cut to fit. A name that matches a project already on the donor replaces that project.">
+                            <span class="display-lbl">PROJECT NAME</span>
+                            <input id="n64-project-name" type="text" maxlength="8" class="menu-input" style="width:9em;margin:0;text-transform:uppercase" placeholder="SHMUPX" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
+                        </div>
+                        <div class="display-row" title="Which image to download. NDD is the whole disk — the 24-block system area, then the user area (64,931,840 bytes) — what an emulator mounts; DDD is the user area alone (64,458,560 bytes), what the prototype dump and this repo's reader use.">
+                            <span class="display-lbl">FORMAT</span>
+                            <div class="seg-wrap" id="n64-format-segs">
+                                <button class="seg xseg" data-format="ndd" onclick="setN64Format('ndd')">NDD</button>
+                                <button class="seg xseg" data-format="ddd" onclick="setN64Format('ddd')">DDD</button>
+                            </div>
+                        </div>
+                        <button class="menu-row" id="n64-disk-download" onclick="exportN64Disk()" title="Build a Dezaemon 3D 64DD disk of the open game — the level's art laid as 64x32 textures into the free slots of a project's texture sheets, the rest of the project from the donor's first project or blank, the project pressed beside the donor's samples — and download it. Untested on hardware or in an emulator: no cartridge, emulator or disk fixture is in this repo, and nothing on the disk places the level's enemies yet."><span class="mono-badge">DL</span><span id="n64-disk-download-label">DOWNLOAD .NDD</span></button>
+                        <div id="n64-disk-note" class="menu-note"></div>
                     </div>
                 </div>
                 <button class="sheet-opt" data-sec="export-3d" onclick="toggleSheetSection(this)"><span class="sheet-badge">3D</span><span class="sheet-txt"><span class="sheet-name">3D</span><span class="sheet-sub">SUPER-SCALER BUILD &middot; STANDALONE</span></span><span class="sheet-chev">&rsaquo;</span></button>
@@ -2220,14 +2259,15 @@
 
         // CONSOLE picker: which console's Dezaemon the export sheet's DEZAEMON
         // row builds for. The row's title and subline follow the pick. The
-        // Saturn has a writer (Dezaemon.exportLevelToSav) and so does the
-        // PlayStation's Dezaemon Kids! (Dezaemon.exportLevelToKidsCard); the
-        // engine READS the rest — a Super Famicom SRAM, a Dezaemon+ card, a
-        // 64DD disk — and builds none of them, so those picks say that in the
-        // row instead of offering buttons that would do nothing.
+        // Saturn has a writer (Dezaemon.exportLevelToSav), the PlayStation
+        // has one for either of its Dezaemons (Dezaemon.exportLevelToKidsCard
+        // / exportLevelToPlusCard) and the Nintendo 64 has one for a 64DD
+        // disk (Dezaemon.exportLevelToDdd); the engine only READS a Super
+        // Famicom SRAM and builds none, so that pick says so in the row
+        // instead of offering a button that would do nothing.
         const EXPORT_CONSOLES = {
             sfc: { label: 'SFC', long: 'SUPER FAMICOM', dz: 'DEZAEMON', read: 'A SUPER FAMICOM SRAM (.SRM) IS READ AND SHELVED — OPEN ONE FROM THE IMPORT SHEET — BUT NOTHING WRITES ONE YET.' },
-            n64: { label: 'N64', long: 'NINTENDO 64', dz: 'DEZAEMON 3D', read: 'THE 64DD DISK IS READ BY THE N64 PARITY PAGE; NOTHING WRITES ONE YET.' },
+            n64: { label: 'N64', long: 'NINTENDO 64', dz: 'DEZAEMON 3D', n64: true },
             saturn: { label: 'SATURN', long: 'SEGA SATURN', dz: 'DEZAEMON 2', writer: true },
             ps: { label: 'PS', long: 'PLAYSTATION', dz: 'DEZAEMON KIDS!', kids: true },
         };
@@ -2249,6 +2289,21 @@
             kidsCardNote('');
             updateExportSheet();
         }
+        // The N64 pick builds a 64DD disk in either image format — .ndd, the
+        // whole disk an emulator mounts, or .ddd, the user area alone — and
+        // the FORMAT segs under it choose, remembered like the PS game.
+        const N64_FORMAT_KEY = 'cmg-export-n64-format';
+        let n64Format = 'ndd';
+        try {
+            const savedN64 = localStorage.getItem(N64_FORMAT_KEY);
+            if (savedN64 === 'ndd' || savedN64 === 'ddd') n64Format = savedN64;
+        } catch (e) { }
+        function setN64Format(f) {
+            n64Format = f === 'ddd' ? 'ddd' : 'ndd';
+            try { localStorage.setItem(N64_FORMAT_KEY, n64Format); } catch (e) { }
+            n64DiskNote('');
+            updateExportSheet();
+        }
         const EXPORT_CONSOLE_KEY = 'cmg-export-console';
         let exportConsole = 'saturn';
         try {
@@ -2265,16 +2320,18 @@
             document.querySelectorAll('#export-console-segs .seg').forEach((b) => {
                 b.classList.toggle('on', b.dataset.console === exportConsole);
             });
-            const builds = !!(con.writer || con.kids);
+            const builds = !!(con.writer || con.kids || con.n64);
             const dz = con.kids ? PS_GAMES[psGame].dz : con.dz;
             document.getElementById('export-deza-name').textContent = dz;
             document.getElementById('export-deza-sub').textContent = con.writer
                 ? con.long + ' · .SAV' + (hasSec7Models() ? ' · SEC7 MODELS INCLUDED' : '')
                 : con.kids ? con.long + ' · MEMORY CARD (.MCR)'
+                : con.n64 ? con.long + ' · 64DD DISK (.' + n64Format.toUpperCase() + ')'
                 : con.long + ' · NO WRITER YET';
             document.getElementById('export-deza-opt').classList.toggle('off', !builds);
             document.getElementById('export-deza-saturn').classList.toggle('hidden', !con.writer);
             document.getElementById('export-deza-kids').classList.toggle('hidden', !con.kids);
+            document.getElementById('export-deza-n64').classList.toggle('hidden', !con.n64);
             if (con.kids) {
                 document.querySelectorAll('#ps-game-segs .seg').forEach((b) => {
                     b.classList.toggle('on', b.dataset.game === psGame);
@@ -2282,9 +2339,18 @@
                 document.getElementById('kids-backdrop-row').classList.toggle('hidden', psGame !== 'kids');
                 probePsxSaveRoute(psGame);
             }
+            if (con.n64) {
+                document.querySelectorAll('#n64-format-segs .seg').forEach((b) => {
+                    b.classList.toggle('on', b.dataset.format === n64Format);
+                });
+                document.getElementById('n64-disk-download-label').textContent = 'DOWNLOAD .' + n64Format.toUpperCase();
+                // An empty PROJECT NAME follows the open game; a typed one stays.
+                const nameInput = document.getElementById('n64-project-name');
+                if (nameInput && !nameInput.value.trim()) nameInput.value = n64DefaultProjectName();
+            }
             const none = document.getElementById('export-deza-nowriter');
             none.classList.toggle('hidden', builds);
-            none.textContent = builds ? '' : con.read + ' PICK SATURN OR PS TO BUILD ONE.';
+            none.textContent = builds ? '' : con.read + ' PICK N64, SATURN OR PS TO BUILD ONE.';
             document.getElementById('menu-export-sub').textContent = 'WEB · ' + dz + ' (' + con.label + ') · 3D';
             const L = lineageForked() ? lineage : null;
             document.getElementById('export-sheet-note').textContent = L
@@ -7918,6 +7984,178 @@
                 .then((info) => { apply(info); return info; })
                 .catch(() => null);
             return psxSaveProbes[g];
+        }
+
+        // ============ .NDD / .DDD EXPORT (the open game as a Dezaemon 3D 64DD disk) ============
+        // The Nintendo 64 writer (packages/shmup-engine/src/n64/export-ddd.js
+        // over project-write.js and disk-write.js): the same level record and
+        // atlas art the Saturn and PlayStation exports read go into
+        // Dezaemon.exportLevelToDdd() — the art cut into 64x32 RGBA5551
+        // textures and laid into the blank slots of the project's CGR and
+        // stage GR sheets, every other file of the project copied from the
+        // donor disk's first project (SAMPLEZ1 on the prototype) or left zero
+        // at its documented size — and the project is pressed into the
+        // read-only directory of the donor, or of a disk built from nothing,
+        // then read back through the reader before it is handed over. It
+        // places no enemies: the enemy, model and placement records are only
+        // likely in layout, so nothing on the disk refers to the textures
+        // yet. And nothing here boots the result — no cartridge, emulator or
+        // disk fixture is in this repo — so a disk this builds is untested on
+        // hardware or in an emulator; without a donor it has no writable area
+        // and no DEZA3D.SYS, so the cartridge is not expected to enter disk
+        // mode at all.
+        function n64DiskNote(msg, color) {
+            const el = document.getElementById('n64-disk-note');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = color || '';
+        }
+        function n64DonorStatus(msg, color) {
+            const el = document.getElementById('n64-donor-status');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = color || '';
+        }
+        // What the DONOR DISK row holds: the picked image's bytes (or null
+        // for a disk built from nothing), its name, and the projects its
+        // directory lists — a donor with none has no project to template.
+        let n64DonorBytes = null;
+        let n64DonorFile = '';
+        let n64DonorProjects = [];
+        function dropN64Donor(input) {
+            n64DonorBytes = null;
+            n64DonorFile = '';
+            n64DonorProjects = [];
+            if (input) input.value = '';
+        }
+        async function handleN64DonorFile(input) {
+            const file = input && input.files && input.files[0];
+            n64DiskNote('');
+            if (!file) { dropN64Donor(input); n64DonorStatus(''); return; }
+            const E = window.Dezaemon;
+            if (!E || typeof E.n64ImageFormat !== 'function' || typeof E.n64ReadProjects !== 'function') {
+                dropN64Donor(input);
+                n64DonorStatus('THE ENGINE BUNDLE PREDATES THE DISK WRITER — RUN `deno task engine:bundle`', '#f87171');
+                return;
+            }
+            let bytes;
+            try {
+                n64DonorStatus('READING ' + file.name.toUpperCase() + '…');
+                bytes = new Uint8Array(await file.arrayBuffer());
+            } catch (e) {
+                dropN64Donor(input);
+                n64DonorStatus('COULD NOT READ IT: ' + (e && e.message || e), '#f87171');
+                return;
+            }
+            const format = E.n64ImageFormat(bytes);
+            if (!format) {
+                dropN64Donor(input);
+                n64DonorStatus(file.name.toUpperCase() + ' IS ' + bytes.length.toLocaleString() + ' BYTES — NEITHER A .DDD (' +
+                    Number(E.DDD_IMAGE_BYTES || 64458560).toLocaleString() + ') NOR AN .NDD (' + Number(E.NDD_IMAGE_BYTES || 64931840).toLocaleString() + '); DROPPED', '#f87171');
+                return;
+            }
+            let projects;
+            try {
+                projects = E.n64ReadProjects(bytes);
+            } catch (e) {
+                dropN64Donor(input);
+                n64DonorStatus('ITS DIRECTORY DOES NOT READ, SO IT CANNOT BE WRITTEN TO: ' + (e && e.message || e), '#f87171');
+                return;
+            }
+            n64DonorBytes = bytes;
+            n64DonorFile = file.name;
+            n64DonorProjects = projects.map((p) => p.name);
+            const files = projects.reduce((a, p) => a + p.files.length, 0);
+            n64DonorStatus('.' + format.toUpperCase() + ' · ' + (n64DonorProjects.join(' · ') || 'NO PROJECT') +
+                ' · ' + files + ' FILE' + (files === 1 ? '' : 'S'), '#84cc16');
+        }
+        // The PROJECT NAME field: one to eight letters and digits, the way the
+        // directory stores a name. Empty, the open game's label cut to fit —
+        // or SHMUPX when the label leaves no letter or digit to cut.
+        function n64DefaultProjectName() {
+            const E = window.Dezaemon;
+            if (E && typeof E.n64ProjectName === 'function') {
+                try { return E.n64ProjectName(openGameLabel()); } catch (e) { }
+            }
+            return 'SHMUPX';
+        }
+        function n64ProjectNameInput() {
+            const el = document.getElementById('n64-project-name');
+            const typed = el ? el.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) : '';
+            if (el && el.value !== typed) el.value = typed;
+            return typed || n64DefaultProjectName();
+        }
+        async function buildN64DiskForExport() {
+            const record = await buildLevelRecordForSav();
+            const art = collectAtlasArtForSav();
+            const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
+            const options = {
+                name: n64ProjectNameInput(),
+                disk: n64DonorBytes || null,
+                format: n64Format,
+                title1, title2,
+            };
+            // A donor with no project has nothing to copy the other files
+            // from; the writer would refuse "disk" as a template, so none.
+            if (n64DonorBytes && !n64DonorProjects.length) options.template = null;
+            const out = window.Dezaemon.exportLevelToDdd(record, art, options);
+            return { out, record };
+        }
+        let n64DiskBusy = false;
+        async function exportN64Disk() {
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
+            if (typeof window.Dezaemon.exportLevelToDdd !== 'function') {
+                alert('This engine bundle predates the Dezaemon 3D disk writer — run `deno task engine:bundle`.');
+                return;
+            }
+            if (n64DiskBusy) return;
+            if (!(await awaitCloudLoad('EXPORT'))) return;
+            n64DiskBusy = true;
+            const row = document.getElementById('n64-disk-download');
+            if (row) row.disabled = true;
+            let out = null;
+            try {
+                n64DiskNote('BUILDING THE 64DD DISK' + (n64DonorFile ? ' ON ' + n64DonorFile.toUpperCase() : '') + '…');
+                ({ out } = await buildN64DiskForExport());
+            } catch (e) {
+                console.error('.' + n64Format + ' export failed:', e);
+                n64DiskNote('COULD NOT BUILD THE DISK: ' + (e && e.message || e), '#f87171');
+                n64DiskBusy = false;
+                if (row) row.disabled = false;
+                return;
+            }
+            // Built and read back by the engine. What follows is the
+            // download's own failure, worded as such.
+            try {
+                const rep = out.report || {};
+                const proj = rep.project || {};
+                // A sheet's line: the textures the ART placed over the total —
+                // a template's own painted textures are not the level's.
+                const sheet = (s) => s ? ((s.used || 0) - (s.painted || 0)) + '/' + ((s.used || 0) + (s.free || 0)) : '0/0';
+                const stages = proj.stages || [];
+                const summary = '"' + out.name + '" · ' + stages.length + ' STAGE' + (stages.length === 1 ? '' : 'S') +
+                    ' · TEXTURES PLACED ' + sheet(proj.common) + ' (CGR)' +
+                    (stages.length ? ' + ' + stages.map((s) => sheet(s) + ' (' + s.ext + ')').join(' + ') : '') +
+                    ' · ' + (rep.templateProject ? 'TEMPLATE ' + rep.templateProject : 'NO DONOR') +
+                    ' · ' + (out.image.length / 1048576).toFixed(1) + ' MB';
+                const warn = out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : '';
+                const caveat = n64DonorBytes ? '' : ' · WITHOUT A DONOR THE DISK HAS NO SAVE AREA, SO THE CARTRIDGE IS NOT EXPECTED TO ENTER DISK MODE';
+                const blob = new Blob([out.image], { type: 'application/octet-stream' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = out.fileName;
+                document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+                n64DiskNote('DOWNLOADING "' + out.fileName + '" — MOUNT IT IN ARES BESIDE THE DEZAEMON 3D CARTRIDGE. ' + summary + warn + caveat, '#84cc16');
+                flash('.' + String(out.format || n64Format).toUpperCase() + ' EXPORTED ⬇');
+                if (out.warnings.length) console.warn('.' + out.format + ' export warnings:', out.warnings);
+            } catch (e) {
+                console.error('.' + n64Format + ' export (download) failed:', e);
+                n64DiskNote('COULD NOT DOWNLOAD IT: ' + (e && e.message || e), '#f87171');
+            } finally {
+                n64DiskBusy = false;
+                if (row) row.disabled = false;
+            }
         }
 
         // ================== PUBLISH TO ESHOP ==================

@@ -436,7 +436,8 @@ deno task sfc:upload      # publish the Super Famicom library (dumps + covers + 
 deno task psx:probe       # look inside a PlayStation Dezaemon+ / Dezaemon Kids! save (report / png / hex / diff / all)
 deno task build:kids      # a level as a Dezaemon Kids! memory card (.mcr) for Mednafen / DuckStation / MiSTer
 deno task build:plus      # a level as a Dezaemon+ / Select 100 memory card (.mcr)
-deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (ls / get / report / png / all)
+deno task build:ddd       # a level as a Dezaemon 3D 64DD disk (.ndd) beside the prototype disk's sample projects
+deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (ls / get / report / png / all / put / rm / convert / sys)
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task ships:atlas     # cut dev-fixtures/ship-sheet/ships.png into the editor's NEW GAME character roster
 deno task tonebank:table  # re-pack the instrument map into src/audio/
@@ -1000,10 +1001,13 @@ non-overlapping frames, binary alpha and not one off-palette pixel.
 - **EXPORT** has **WEB** (the whole game as one level record, `GAME JSON`; the
   open stage alone; the cloud save), a **CONSOLE** picker — SFC / N64 / SATURN /
   PS — that retargets the **DEZAEMON** row under it, **3D**, **APP** and
-  **ESHOP**. Only the Saturn has a cart writer
-  (`packages/shmup-engine/src/write/`). The other three consoles are read and
-  never built, and the row says "NO WRITER YET" rather than offering buttons
-  that would build nothing.
+  **ESHOP**. Three of the four consoles build: the Saturn's cart save
+  (`packages/shmup-engine/src/write/`), a PlayStation memory card for either of
+  its Dezaemons (`src/psx/kids-write.js`, `plus-write.js`) and a Nintendo 64
+  64DD disk written onto a donor image (`src/n64/export-ddd.js`; see **The
+  Nintendo 64 disk** below). The Super Famicom is read and never built, and its
+  row says "NO WRITER YET" rather than offering buttons that would build
+  nothing.
 
 **An opened cart is somebody's game, so editing one forks it.** The first change
 turns the copy in the editor into a **mod**: a strip appears under the banner —
@@ -2017,12 +2021,16 @@ platforms does **not** apply: the alpha bit is bit 0.
 
 `deno task n64:probe` is the tool: `ls` lists the directory, `get` writes one
 file out decompressed, `png` renders a graphics sheet as a contact sheet of its
-64×32 tiles, `report` gives the regions and the invariants, and `all` does the
-lot into a directory. What it is not is a consumer — as of 2026-09-19 it is a
-**read-only structural pass**, the same place `sfc:probe` and `psx:probe` stop:
-nothing is played, mapped into `game.json` or written back, and there is no
-`FORMAT-N64.md` yet. `static/dezaemon-parity-n64.html` is the parity map, the
-Nintendo 64 counterpart of `static/dezaemon-parity.html`,
+64×32 tiles, `report` gives the regions and the invariants, `all` does the lot
+into a directory, and `sys` prints an `.ndd`'s system area the way an emulator
+reads it before mounting the disk. Every verb takes a `.ddd` or an `.ndd`, told
+apart by length and never by name. The read-only structural pass this was on
+2026-09-19 has had a writer under it since 2026-10-14 — the paragraphs below,
+and `put`, `rm` and `convert` on the probe — but it is still not a consumer:
+nothing is played or mapped into `game.json`, the same place `sfc:probe` and
+`psx:probe` stop. `packages/shmup-engine/FORMAT-N64.md` holds the notes, with a
+confidence on every claim, and `static/dezaemon-parity-n64.html` is the parity
+map, the Nintendo 64 counterpart of `static/dezaemon-parity.html`,
 `static/dezaemon-parity-sfc.html` and `static/dezaemon-parity-psx.html`.
 
 The two invariants the tests lean on are worth naming, because between them they
@@ -2031,15 +2039,80 @@ the entries chain; and `blockCount` equals `ceil(storedSize / blockSize)` for
 every one of the 60 — which holds **only** if the block shrinks from 19,720 to
 18,360 bytes at LBA 268. The same file appears with 10 blocks at LBA 96 and 11
 at LBA 272. One file, `SAMP 3MD`, straddles that boundary, so an extent is
-summed per block rather than multiplied.
+summed per block rather than multiplied. Those two measurements and a third —
+the three copies of the directory sit exactly 834 bytes into LBA 1417, 1419 and
+1422, which no other ordering of the sector sizes produces — pin
+`packages/shmup-engine/src/n64/geometry.js`, which is now the whole disk rather
+than the two zones the samples occupy: two heads, sixteen physical zones, the
+per-disk-type zone order for types 0–6, every user LBA from 0 to 4291 (the ROM
+area ending at 1417, the RAM area 1418 on) and the sum 64,458,560, cross-checked
+against `jkbenaim/leotools`' `leogeo.c` and mupen64plus-core's
+`src/device/dd/disk.h`, which agree with it and with each other.
 
-The disk stays in the gitignored `dev-fixtures/`, so the test is `ignore:`-gated
-and a checkout without it simply skips. One caution for whoever takes this
-further: 64dd.org labels this dump the old one, and it differs from the current
-`deza1.NDD` in 175,897 bytes, every one of them inside the save area where the
-`DST` user project lives. The two pressed sample projects are byte-identical
-between the dumps, so everything above holds — but read `DST` from `deza1.NDD`,
-not from this fixture.
+The disk stays in the gitignored `dev-fixtures/`, so the tests that need it —
+the reader's 58 of 60, and the writer's rebuild of the prototype from its own
+two projects, byte for byte — are `ignore:`-gated and a checkout without it
+simply skips them. One caution for whoever takes this further: 64dd.org labels
+this dump the old one, and it differs from the current `deza1.NDD` in 175,897
+bytes, every one of them inside the save area where the `DST` user project
+lives. The two pressed sample projects are byte-identical between the dumps, so
+everything above holds — but read `DST` from `deza1.NDD`, not from this fixture,
+and expect a disk built on the old dump to carry that save area as it is.
+
+**And a level can become a 64DD disk.** `deno task build:ddd` (and the editor's
+EXPORT sheet under CONSOLE › N64, which has a DONOR DISK file input, a PROJECT
+NAME field and an NDD / DDD switch above its DOWNLOAD row) takes the same level
+record and atlas art the Saturn and PlayStation exports read and writes a 64DD
+disk image — by default the `.ndd` an emulator mounts, the whole disk with its
+24-block system area first; `--ddd` for the user area alone, the format the
+prototype dump and this repo's reader use:
+
+```
+deno task build:ddd                                    # foo.json -> build/n64/Dezaemon 3D - foo.ndd
+deno task build:ddd "Master Arena Mod"                 # that cloud level
+deno task build:ddd foo --disk dev-fixtures/deza1.NDD  # onto that donor disk (default: the first 64DD image in dev-fixtures/)
+deno task build:ddd foo --ddd                          # the user area alone, 64,458,560 bytes
+deno task build:ddd foo --as GEARSQ                    # the project's name on the disk, up to eight letters and digits
+deno task build:ddd foo --no-disk                      # from nothing: no donor, so no boot program and an empty RAM area
+```
+
+What is written is a _pressed_ project in the read-only directory, beside the
+prototype's two samples `SAMPLEZ1` and `SAMP`: its thirty files (the six globals
+`GAM CGR CMD CBL ULB MUS`, then `BL MD GR` for each of the eight stages),
+LZSS-packed and laid contiguously from LBA 9 after the donor's own — each file's
+block count the blocks its bytes span from where it starts, the next file on the
+block after, the donor's streams carried byte for byte and never recompressed —
+then the read-only directory in its three copies, 834 bytes into LBA 1417, 1419
+and 1422, and for an `.ndd` the system area the emulators validate before they
+mount a disk: the donor's, or one built for a type-0 disk with the fields
+mupen64plus-core checks. Inside the project, the level's art is the only thing
+of the level's. Each frame is cut into 64×32 RGBA5551 textures (the one
+confirmed record format) and laid into the _free_ slots of the `CGR` sheet — the
+title pictures, the ship, the item icons — and of each stage's `GR` sheet — its
+enemies, their shots, its boss — never over a texture the template painted, so a
+donor project's own art survives. Every other file is the donor's first
+project's, byte for byte (`--template NAME` picks another), or, without a donor,
+zero bytes at its documented size. The donor's RAM area, LBA 1418 to 4291, is
+carried verbatim: the two directory copies inside it are rewritten and nothing
+else there is touched.
+
+What is **not** written: the writable directory and its allocation map,
+`DEZA3D.SYS` and `DEZA3D.HSC`, and any enemy, model, placement or song record —
+their layouts are only _likely_ (the parity page's section 03), and with no
+checksum anywhere in the format there is nothing to tell a wrong guess from a
+right one. So nothing on the disk refers to the textures yet: the result is the
+disk with the level's art on it, not a playable Dezaemon 3D game. A disk built
+on the prototype keeps the boot program and the save area the cartridge needs
+for disk mode; one built from nothing is recognised by this repo's reader and is
+not expected to put the cartridge into disk mode. Every disk is read back
+through the parser before it is written — the directory, its invariants, every
+new stream decompressed and compared — and the fixture-gated test rebuilds the
+prototype from its own two projects and gets the same bytes. Nothing here has
+booted one, though: there is no cartridge, no emulator and no disk fixture in
+CI, so every image is untested on hardware or in an emulator.
+`packages/shmup-engine/FORMAT-N64.md` records the writer's reach, confidence by
+confidence, and its "What the writer does not write" is the list of what has to
+be traced before it can place an enemy.
 
 ## Desktop app
 

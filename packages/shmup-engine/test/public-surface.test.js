@@ -63,6 +63,22 @@ const EXPECTED_SFC = [
   "summarizeSfcSav",
 ];
 
+// The Nintendo 64 half: the one-call export the editor's N64 row runs, the
+// file name, and the two donor-disk helpers, prefixed where the bare name
+// would read as general.
+const EXPECTED_N64 = [
+  "buildN64ProjectFromLevel",
+  "dddFileName",
+  "DDD_IMAGE_BYTES",
+  "exportLevelToDdd",
+  "isDddImage",
+  "n64ImageFormat",
+  "n64ProjectName",
+  "n64ReadProjects",
+  "n64TemplateFromDisk",
+  "NDD_IMAGE_BYTES",
+];
+
 Deno.test("mod.js exports the model surface", () => {
   for (const name of EXPECTED) {
     assert(name in engine, `missing export ${name}`);
@@ -85,4 +101,19 @@ Deno.test("mod.js exports the Super Famicom surface", () => {
   assertStrictEquals(engine.COVER_W, 256);
   assertStrictEquals(engine.COVER_H, 480);
   assertStrictEquals(engine.isSfcSav(new Uint8Array(16)), false);
+});
+
+Deno.test("mod.js exports the Nintendo 64 surface", () => {
+  for (const name of EXPECTED_N64) {
+    assert(name in engine, `missing export ${name}`);
+  }
+  assertStrictEquals(engine.DDD_IMAGE_BYTES, 64458560);
+  assertStrictEquals(engine.NDD_IMAGE_BYTES, 64931840);
+  assertStrictEquals(engine.n64ProjectName("my game 2"), "MYGAME2");
+  assertStrictEquals(engine.n64ImageFormat(new Uint8Array(16)), null);
+  assertStrictEquals(engine.dddFileName("Tiny"), "Dezaemon 3D - Tiny.ndd");
+  assertStrictEquals(
+    engine.dddFileName("Tiny", "ddd"),
+    "Dezaemon 3D - Tiny.ddd",
+  );
 });

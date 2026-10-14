@@ -1,9 +1,13 @@
-// Dezaemon 3D on the Nintendo 64: reading a 64DD data disk (.ddd).
+// Dezaemon 3D on the Nintendo 64: reading and writing a 64DD data disk
+// (.ddd, or .ndd with its system area).
 //
 // The front door. parseDddImage() gives the regions, the ATNFS directory and
 // the invariants that directory is meant to satisfy; extractFile() gives one
 // file's bytes, decompressed. Nothing here throws on content: a stage that
-// fails lands in `errors` and the rest still decodes.
+// fails lands in `errors` and the rest still decodes. The writer half —
+// disk-write.js for the files and the directory, project-write.js for a
+// project out of a level, export-ddd.js for the one call — is re-exported
+// beside the reader.
 //
 // The read path is three layers and each is short. The container is published
 // 64DD geometry (geometry.js). The filesystem is Athena's ATNFS, five parallel
@@ -28,6 +32,10 @@ export * from "./geometry.js";
 export * from "./directory.js";
 export * from "./graphics.js";
 export * from "./regions.js";
+export * from "./system-area.js";
+export * from "./disk-write.js";
+export * from "./project-write.js";
+export * from "./export-ddd.js";
 
 function attempt(result, block, fn) {
     try {

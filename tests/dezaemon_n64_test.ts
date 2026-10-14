@@ -9,25 +9,49 @@
 // The synthetic disk is allocated at full size (64,458,560 bytes) because the
 // reader checks that length; that is ~64 MB of zero pages per test and nothing
 // is read from disk to make it.
+//
+// The geometry tests here cover the whole disk since the writer landed: the
+// zone table is held to the three measurements that pin it and to the two
+// published implementations it was cross-checked against. The writer's own
+// tests are dezaemon_n64_write_test.ts.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   alphaBitRatio,
+  blocksFor,
   blockSize,
   byProject,
   checkDirectory,
   DDD_IMAGE_BYTES,
+  dddFromImage,
   decodeRgba5551,
+  DIRECTORY_BYTES,
+  DIRECTORY_COPIES,
+  DIRECTORY_IN_BLOCK_OFFSET,
+  DIRECTORY_LBA,
   DIRECTORY_OFFSET,
   DIRECTORY_SLOTS,
+  directoryOffsets,
   extentBytes,
   extractFile,
   isDddImage,
   lbaToOffset,
+  MAX_USER_LBA,
+  NDD_IMAGE_BYTES,
+  nddFromDdd,
+  offsetToLba,
   parseDddImage,
+  ramEndLba,
+  ramStartLba,
+  ramStartOffset,
   readDirectory,
+  romEndLba,
   SYSTEM_AREA_BYTES,
+  systemAreaOf,
+  USER_LBA_COUNT,
+  userArea,
   ZONE1_START_LBA,
+  zoneTable,
 } from "../packages/shmup-engine/src/n64/index.js";
 
 const NAMES = DIRECTORY_OFFSET;
@@ -97,11 +121,182 @@ Deno.test("an extent that straddles the zone boundary is not count x one size", 
   assert(extentBytes(266, 5) !== 5 * 19720, "a flat stride would overcount");
 });
 
-Deno.test("the mapping refuses to guess past the range it was measured over", () => {
+Deno.test("the mapping covers the whole disk and refuses to guess past it", () => {
+  assertEquals(blockSize(MAX_USER_LBA), 16320, "the last zone is 85 x 192");
+  assertEquals(blockSize(USER_LBA_COUNT), null);
   assertEquals(blockSize(5000), null);
-  assertEquals(lbaToOffset(5000), null);
-  assertEquals(extentBytes(4000, 2), null);
+  assertEquals(
+    lbaToOffset(USER_LBA_COUNT),
+    DDD_IMAGE_BYTES,
+    "one past the end is the image length",
+  );
+  assertEquals(lbaToOffset(USER_LBA_COUNT + 1), null);
+  assertEquals(extentBytes(MAX_USER_LBA, 1), 16320);
+  assertEquals(extentBytes(MAX_USER_LBA, 2), null);
   assertEquals(lbaToOffset(-1), null);
+  assertEquals(
+    blocksFor(MAX_USER_LBA, 16321),
+    null,
+    "bytes that run off the disk",
+  );
+});
+
+Deno.test("the sixteen zones of a type-0 disk sum to a .ddd and end where leotools says", () => {
+  const zones = zoneTable(0);
+  assertEquals(zones.length, 16);
+  assertEquals(zones.map((z) => z.pzone), [
+    0,
+    1,
+    2,
+    9,
+    8,
+    3,
+    4,
+    5,
+    6,
+    7,
+    15,
+    14,
+    13,
+    12,
+    11,
+    10,
+  ]);
+  assertEquals(
+    zones.map((z) => z.sectorSize),
+    [
+      232,
+      216,
+      208,
+      208,
+      216,
+      192,
+      176,
+      160,
+      144,
+      128,
+      112,
+      128,
+      144,
+      160,
+      176,
+      192,
+    ],
+  );
+  assertEquals(zones.reduce((a, z) => a + z.blockCount, 0), USER_LBA_COUNT);
+  assertEquals(
+    zones.reduce((a, z) => a + z.blockCount * z.blockSize, 0),
+    DDD_IMAGE_BYTES,
+  );
+  // jkbenaim/leotools leogeo.c pzone_tbl1, disk type 0: the last user LBA of each vzone.
+  assertEquals(
+    zones.map((z) => z.firstLba + z.blockCount - 1),
+    [
+      267,
+      559,
+      833,
+      1125,
+      1417,
+      1691,
+      1965,
+      2239,
+      2513,
+      2717,
+      2921,
+      3195,
+      3469,
+      3743,
+      4017,
+      4291,
+    ],
+  );
+  assertEquals(
+    zones[0].blockCount,
+    ZONE1_START_LBA,
+    "vzone 0 is 292 blocks less the 24 of the system area",
+  );
+  assertEquals(zones.filter((z) => z.rom).length, 5);
+});
+
+Deno.test("the ROM/RAM split is LBA 1417/1418, and 0x18CF180 is where the RAM area starts", () => {
+  assertEquals(romEndLba(0), 1417);
+  assertEquals(ramStartLba(0), 1418);
+  assertEquals(ramEndLba(0), 4291);
+  assertEquals(ramStartOffset(0), 0x18cf180);
+  assertEquals(
+    lbaToOffset(1417),
+    0x18ca9c8,
+    "the directory's block starts where REGION.saveArea does",
+  );
+  // mupen64plus-core disk.c RAM_START_LBA, physical: 0x5A2 0x7C6 0x9EA 0xC0E 0xE32 0x1010, none for type 6.
+  assertEquals(
+    [0, 1, 2, 3, 4, 5, 6].map((t) => ramStartLba(t)),
+    [
+      0x5a2 - 24,
+      0x7c6 - 24,
+      0x9ea - 24,
+      0xc0e - 24,
+      0xe32 - 24,
+      0x1010 - 24,
+      null,
+    ],
+  );
+  for (let t = 0; t < 7; t++) {
+    assertEquals(
+      zoneTable(t).reduce((a, z) => a + z.blockCount * z.blockSize, 0),
+      DDD_IMAGE_BYTES,
+      `type ${t}`,
+    );
+  }
+});
+
+Deno.test("the three directory copies are 834 bytes into LBA 1417, 1419 and 1422 — the measured offsets", () => {
+  assertEquals(directoryOffsets(), [0x18cad0a, 0x18d3482, 0x18df3c2]);
+  assertEquals(directoryOffsets()[0], DIRECTORY_OFFSET);
+  assertEquals(directoryOffsets().map((o) => o - DIRECTORY_OFFSET), [
+    ...DIRECTORY_COPIES,
+  ]);
+  assertEquals(
+    DIRECTORY_IN_BLOCK_OFFSET + DIRECTORY_BYTES,
+    18348,
+    "the directory fills its 18,360-byte block",
+  );
+  assert(
+    DIRECTORY_IN_BLOCK_OFFSET + DIRECTORY_BYTES <= blockSize(DIRECTORY_LBA)!,
+  );
+});
+
+Deno.test("an offset maps back to the LBA whose block holds it", () => {
+  for (const lba of [0, 267, 268, 1417, 1418, 2717, 2718, 4291]) {
+    const at = lbaToOffset(lba)!;
+    assertEquals(offsetToLba(at), lba);
+    assertEquals(offsetToLba(at + blockSize(lba)! - 1), lba);
+  }
+  assertEquals(offsetToLba(DDD_IMAGE_BYTES), null);
+  assertEquals(
+    blocksFor(266, 2 * 19720 + 3 * 18360),
+    5,
+    "SAMP 3MD across the zone boundary",
+  );
+  assertEquals(blocksFor(9, 0), 0);
+  assertEquals(blocksFor(9, 1), 1);
+});
+
+Deno.test("a .ddd is a .ndd less its system area, both ways", () => {
+  const ndd = new Uint8Array(NDD_IMAGE_BYTES);
+  ndd[SYSTEM_AREA_BYTES] = 0x5a;
+  ndd[7] = 0x11;
+  const ddd = dddFromImage(ndd);
+  assertEquals(ddd.length, DDD_IMAGE_BYTES);
+  assertEquals(ddd[0], 0x5a);
+  assertEquals(userArea(ndd)[0], 0x5a, "a view of the same bytes");
+  assertEquals(systemAreaOf(ndd)![7], 0x11);
+  assertEquals(systemAreaOf(ddd), null);
+  const back = nddFromDdd(ddd, systemAreaOf(ndd)!);
+  assertEquals(back.length, NDD_IMAGE_BYTES);
+  assertEquals(back[7], 0x11);
+  assertEquals(back[SYSTEM_AREA_BYTES], 0x5a);
+  assertThrows(() => dddFromImage(new Uint8Array(100)), Error, "64DD image");
 });
 
 Deno.test("a .ddd is an .ndd less the 24-block system area", () => {

@@ -306,6 +306,27 @@ export {
 export { buildMemoryCard, formatMemoryCard } from "./src/psx/memcard-write.js";
 export { parsePsxSav } from "./src/psx/index.js";
 
+// --- Dezaemon 3D on the Nintendo 64: a level record -> a 64DD data disk
+// (src/n64/export-ddd.js over disk-write.js and project-write.js). The
+// reader stays behind the ./n64 subpath, where tools/n64-ddd reads it; the
+// editor needs the export, the file name, and enough to take a donor disk
+// from a file input — its format by length and the projects it holds, so
+// the row can say which one the new project is laid beside. The names that
+// would read as general ("imageFormat", "readProjects") are prefixed here.
+export {
+  dddFileName,
+  exportLevelToDdd,
+  templateFromDisk as n64TemplateFromDisk,
+} from "./src/n64/export-ddd.js";
+export {
+  imageFormat as n64ImageFormat,
+  readProjects as n64ReadProjects,
+} from "./src/n64/disk-write.js";
+export { buildN64ProjectFromLevel } from "./src/n64/project-write.js";
+export { normalizeProjectName as n64ProjectName } from "./src/n64/directory.js";
+export { DDD_IMAGE_BYTES, NDD_IMAGE_BYTES } from "./src/n64/geometry.js";
+export { isDddImage } from "./src/n64/index.js";
+
 // --- Extras: cartridge-dump deinterleaving (src/bup-deinterleave.js) ---
 export { deinterleave, detect } from "./src/bup-deinterleave.js";
 
