@@ -2452,9 +2452,12 @@ already has — trims the air around it, and writes the six densities plus the
 PWA sizes to `build/<slug>/app-icon/`, which `run-cordova.js` lays over the
 cordova project's `res/android/` and `icons/` (so the Mobile shelf's row shows
 it too). A record that merely restates Duke, or names a frame no atlas has,
-keeps Duke — and says so in the build log. The desktop targets keep the
-scaffold's icons. `tests/build_level_app_icon_test.ts` runs the Node code
-against fixtures encoded by `lib/ps2/png.ts`, whose Node port is
+keeps Duke — and says so in the build log. The desktop targets wear it too:
+`run-deno-desktop.js` hands `deno desktop` the set's `icon-512.png` for Linux
+and Windows, and for a Mac assembles its `.icns` from the set's 32, 128, 256
+and 512 (the scaffold has only the 512, so a game's own ship is the sharper
+Mac icon). `tests/build_level_app_icon_test.ts` runs the Node code against
+fixtures encoded by `lib/ps2/png.ts`, whose Node port is
 `tools/build-level/lib/png.js`.
 
 `build:ios` needs cordova everywhere and Xcode on top of it to finish. On a Mac

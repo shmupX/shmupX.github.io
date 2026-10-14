@@ -332,6 +332,7 @@ async function main() {
           winArch: winArch,
           macArch: macArch,
           linuxArch: linuxArch,
+          iconDir: appIcon ? appIcon.dir : null,
         });
       } else {
         results[p] = await buildCordova({

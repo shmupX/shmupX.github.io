@@ -334,8 +334,14 @@ async function buildDenoDesktop(opts) {
     "--include",
     "./www",
   ];
-  const icon = iconFor(platform, path.join(scaffoldRoot, "icons"), appDir);
-  if (icon) args.push("--icon", icon);
+  // The game's own ship when lib/app-icon.js cut one (opts.iconDir), else
+  // the scaffold's Duke.
+  const iconsDir = opts.iconDir || path.join(scaffoldRoot, "icons");
+  const icon = iconFor(platform, iconsDir, appDir);
+  if (icon) {
+    args.push("--icon", icon);
+    if (opts.iconDir) console.log("  icon: the game's own ship (" + icon + ")");
+  }
   args.push("./app.ts");
 
   run(opts.denoPath || "deno", args, { cwd: appDir });

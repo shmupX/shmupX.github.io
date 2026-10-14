@@ -15,8 +15,8 @@
 // this cannot find keeps the scaffold's icons, and says so.
 //
 // Written under build/<slug>/app-icon/, then copied over the cordova project's
-// res/android and icons/ by run-cordova.js. Only the Android target reads it;
-// the desktop builds keep the scaffold's icons.
+// res/android and icons/ by run-cordova.js, and handed to `deno desktop` by
+// run-deno-desktop.js in place of the scaffold's icons dir.
 
 const fs = require("fs");
 const path = require("path");
@@ -38,6 +38,17 @@ const SHARED_ICONS = {
   "icon-192.png": 192,
   "icon-512.png": 512,
   "apple-touch-icon.png": 180,
+};
+
+/**
+ * What the desktop targets want on top (run-deno-desktop.js iconFor): Linux
+ * and Windows take icon-512.png, and a Mac .icns is assembled from these
+ * three and the 512 — the sizes macOS renders a PNG-backed entry for.
+ */
+const DESKTOP_ICONS = {
+  "icon-32.png": 32,
+  "icon-128.png": 128,
+  "icon-256.png": 256,
 };
 
 // Firebase keys cannot hold "."; the editor writes U+2024 in its place
@@ -266,6 +277,9 @@ function writeAppIcon(opts) {
   for (const file of Object.keys(SHARED_ICONS)) {
     write(path.join(outDir, file), fitInto(sprite, SHARED_ICONS[file]));
   }
+  for (const file of Object.keys(DESKTOP_ICONS)) {
+    write(path.join(outDir, file), fitInto(sprite, DESKTOP_ICONS[file]));
+  }
   fs.writeFileSync(
     path.join(outDir, "icon.json"),
     JSON.stringify(
@@ -315,6 +329,7 @@ function applyAppIcon(iconDir, cordovaDir) {
 module.exports = {
   ANDROID_DENSITIES,
   SHARED_ICONS,
+  DESKTOP_ICONS,
   ownPlayerFrameName,
   lookupFrame,
   playerSprite,

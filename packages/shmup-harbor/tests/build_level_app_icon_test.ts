@@ -164,8 +164,9 @@ Deno.test({
       assertEquals(result.name, "ship_1.png");
       assertEquals(result.from, "the game's atlas");
       assertEquals(result.dir, out);
-      // Six densities + three shared sizes + the source frame.
-      assertEquals(result.files.length, 10);
+      // Six densities + three shared sizes + three icns sources + the source
+      // frame.
+      assertEquals(result.files.length, 13);
 
       // The frame is trimmed to the 3×2 ship, then blown up by whole pixels:
       // ×64 fits 192 (192×128, centred), ×12 fits 36 (36×24).
@@ -182,6 +183,11 @@ Deno.test({
       const shared = await readIcon(join(out, "icon-512.png"));
       assertEquals([shared.width, shared.height], [512, 512]);
       assertEquals(pixel(shared, 256, 256), RED);
+      for (const n of [32, 128, 256]) {
+        const icns = await readIcon(join(out, `icon-${n}.png`));
+        assertEquals([icns.width, icns.height], [n, n]);
+        assertEquals(pixel(icns, n >> 1, n >> 1), RED);
+      }
       const src = await readIcon(join(out, "source.png"));
       assertEquals(
         [src.width, src.height],
@@ -321,6 +327,64 @@ Deno.test({
       ) {
         assert(await exists(join(cordova, "icons", f)), f);
       }
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "the set feeds the desktop builder: a Mac .icns with all four sizes",
+  ignore: !nodeAvailable,
+  async fn() {
+    const tmp = await Deno.makeTempDir({ prefix: "app-icon-" });
+    try {
+      const game = join(tmp, "game");
+      await writeBaseGame(game);
+      const out = join(tmp, "icon");
+      const { result } = await runTool(game, out, {
+        playerData: { texture: ["ship_1.png"] },
+        ...(await levelAtlas()),
+      });
+      assert(result);
+      // What run-deno-desktop.js iconFor does for a mac target, over this dir.
+      const script = `
+        const path = require("path");
+        const { buildIcns } = require(process.argv[1]);
+        const icns = buildIcns([32, 128, 256, 512].map((n) => path.join(process.argv[2], "icon-" + n + ".png")));
+        const types = [];
+        let at = 8;
+        while (at + 8 <= icns.length) {
+          types.push(icns.toString("ascii", at, at + 4));
+          at += icns.readUInt32BE(at + 4);
+        }
+        console.log(JSON.stringify(types));
+      `;
+      const run = await new Deno.Command("node", {
+        args: [
+          "-e",
+          script,
+          join(
+            harborRoot(),
+            "tools",
+            "build-level",
+            "lib",
+            "run-deno-desktop.js",
+          ),
+          out,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (!run.success) throw new Error(new TextDecoder().decode(run.stderr));
+      assertEquals(JSON.parse(new TextDecoder().decode(run.stdout)), [
+        "ic11",
+        "ic07",
+        "ic08",
+        "ic13",
+        "ic09",
+        "ic14",
+      ]);
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
