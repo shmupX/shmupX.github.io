@@ -49,6 +49,16 @@
 // blocks, which is why the first file starts at LBA 9); they are kept even on
 // a disk built without that program, since the cartridge never runs it.
 //
+// WHAT THE CARTRIDGE CHECKS. LuigiBlood's 64dd wiki (its Dezaemon 3D page)
+// says what the game looks for before it treats a disk as its own: the drive
+// must be a Japanese retail or a development unit, and the DISK ID — not the
+// system data, and no game code — must carry company code E7 (Athena) and
+// the free area ATNFS? with ? the disk type in ASCII, "ATNFS0" for type 0.
+// So the two fields that identify a Dezaemon disk are the company code and
+// the free area, and both are written here from the disk type by default.
+// Confidence: likely — it is the wiki's reading of the cartridge, and no
+// disk this writes has been put in front of one.
+//
 // Environment-neutral ESM (Node + browser).
 
 import {
@@ -96,7 +106,33 @@ export const DEZAEMON_IPL_ADDRESS = 0x80000400;
 
 /** What the Dezaemon disk's ID says about itself. */
 export const DEZAEMON_INITIAL_CODE = "DEZA";
+/** Athena's company code, which the cartridge checks the disk ID for. */
+export const DEZAEMON_COMPANY_CODE = "E7";
+/** The free area the cartridge checks for: ATNFS followed by the disk type in ASCII. */
+export const DEZAEMON_FREE_AREA_PREFIX = "ATNFS";
 export const DEZAEMON_FREE_AREA = "ATNFS0";
+
+/**
+ * The free area a Dezaemon disk of a type carries: "ATNFS0" for type 0.
+ * @param {number} [diskType]
+ */
+export function dezaemonFreeArea(diskType = 0) {
+    if (!Number.isInteger(diskType) || diskType < 0 || diskType >= DISK_TYPE_COUNT) {
+        throw new Error(`disk type ${diskType} is not one of 0..${DISK_TYPE_COUNT - 1}`);
+    }
+    return `${DEZAEMON_FREE_AREA_PREFIX}${diskType}`;
+}
+
+/**
+ * Whether a disk ID is one the Dezaemon 3D cartridge accepts as its own
+ * disk: company code E7 and free area ATNFS<type>. The initial code is not
+ * checked by the game and so not here.
+ * @param {DiskId} id
+ * @param {number} [diskType]
+ */
+export function isDezaemonDiskId(id, diskType = 0) {
+    return !!id && id.companyCode === DEZAEMON_COMPANY_CODE && id.freeArea === dezaemonFreeArea(diskType);
+}
 
 function u16(bytes, at) {
     return (bytes[at] << 8) | bytes[at + 1];
@@ -247,10 +283,11 @@ export function checkSystemData(sys) {
  */
 
 /**
- * One disk ID record, 0x20 bytes. Defaults are the Dezaemon disk's where the
- * prototype's are known (DEZA, RAM in use, ATNFS0); the company code is not
- * recorded anywhere this repo can read and defaults to two NULs.
- * @param {Partial<DiskId>} [fields]
+ * One disk ID record, 0x20 bytes. Defaults are the Dezaemon disk's: DEZA,
+ * RAM in use, and the two fields the cartridge checks — company code E7 and
+ * free area ATNFS<diskType> (`diskType` defaults to 0; give `freeArea` to
+ * override it outright).
+ * @param {Partial<DiskId> & {diskType?: number}} [fields]
  * @returns {Uint8Array}
  */
 export function encodeDiskId(fields = {}) {
@@ -273,8 +310,8 @@ export function encodeDiskId(fields = {}) {
         out[0x16] = bcd(date.getMinutes());
         out[0x17] = bcd(date.getSeconds());
     }
-    putAscii(out, 0x18, 2, fields.companyCode ?? "", "the company code");
-    putAscii(out, 0x1a, 6, fields.freeArea ?? DEZAEMON_FREE_AREA, "the free area");
+    putAscii(out, 0x18, 2, fields.companyCode ?? DEZAEMON_COMPANY_CODE, "the company code");
+    putAscii(out, 0x1a, 6, fields.freeArea ?? dezaemonFreeArea(fields.diskType ?? 0), "the free area");
     return out;
 }
 
@@ -323,13 +360,16 @@ function fillBlock(area, lba, sector, sectorBytes) {
  * A whole system area, 473,280 bytes: the system data in LBA 0, 1, 8 and 9
  * and the disk ID in LBA 14 and 15, each sector of each block a copy of the
  * record; everything else zero. `systemData` and `diskId` are either the
- * encoded records or the fields to encode them from.
- * @param {{systemData?: Uint8Array | Partial<SystemData>, diskId?: Uint8Array | Partial<DiskId>}} [options]
+ * encoded records or the fields to encode them from; a disk type given for
+ * the system data is also the one the disk ID's free area names, unless the
+ * ID's fields say otherwise.
+ * @param {{systemData?: Uint8Array | Partial<SystemData>, diskId?: Uint8Array | (Partial<DiskId> & {diskType?: number})}} [options]
  * @returns {Uint8Array}
  */
 export function buildSystemArea({ systemData, diskId } = {}) {
     const sys = systemData instanceof Uint8Array ? systemData : encodeSystemData(systemData);
-    const id = diskId instanceof Uint8Array ? diskId : encodeDiskId(diskId);
+    const type = systemData instanceof Uint8Array ? decodeSystemData(systemData).diskType : (systemData && systemData.diskType) ?? 0;
+    const id = diskId instanceof Uint8Array ? diskId : encodeDiskId({ diskType: type, ...(diskId || {}) });
     const sysSector = new Uint8Array(SYSTEM_SECTOR_BYTES);
     sysSector.set(sys.subarray(0, Math.min(sys.length, SYSTEM_SECTOR_BYTES)));
     const idSector = new Uint8Array(SYSTEM_SECTOR_BYTES);

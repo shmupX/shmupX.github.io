@@ -432,6 +432,7 @@ deno task deza:meshlib    # decode the ポリ吉 3D part library off a disc imag
 deno task deza:palette    # write static/palette.png (+ palette-sheet.png) from DEZA2.PAL
 deno task sfc:probe       # look inside a Super Famicom Dezaemon SRAM dump (report / png / hex / diff)
 deno task sfc:stage       # copy the Dezaemon cart into static/ so a packaged launcher can boot it
+deno task n64:stage       # Dezaemon 3D, translated to English, and the 64DD IPL into static/n64dd/ for the Nintendo 64DD player
 deno task sfc:upload      # publish the Super Famicom library (dumps + covers + metadata) to the database
 deno task psx:probe       # look inside a PlayStation Dezaemon+ / Dezaemon Kids! save (report / png / hex / diff / all)
 deno task build:kids      # a level as a Dezaemon Kids! memory card (.mcr) for Mednafen / DuckStation / MiSTer
@@ -2114,6 +2115,49 @@ CI, so every image is untested on hardware or in an emulator.
 confidence, and its "What the writer does not write" is the list of what has to
 be traced before it can place an enemy.
 
+**And the launcher can boot it.** A data disk needs two files that are not ours
+to ship — Dezaemon 3D's cartridge and the 64DD's own IPL ROM — so, as the Super
+Famicom shelf does with Athena's 1994 cart, `GET /api/dezaemon-n64` finds both
+on the operator's own disk (`dev-fixtures/` one level deep, `$DEZAEMON_N64_ROM`
+and `$N64DD_IPL` for files kept elsewhere; a 16 MB image whose header names
+DEZAEMON 3D in any of the three byte orders, a 4 MB image whose header or name
+says IPL) and serves them to the player. The cartridge leaves in **English**:
+Zoinkity and whowasphone404's 2024 translation is committed as the xdelta3 delta
+`static/n64dd/dezaemon-3d-usa-2024.09.12.xdelta`, and `lib/dezaemon-n64.ts`
+applies it in memory to the Japanese dump — the delta's windows carry LZMA
+secondary compression, so the engine grew an XZ decoder beside its VCDIFF one —
+and holds the result to the SHA-1 the translation's readme publishes. A dump
+that is already the English ROM passes through; any other is reported with its
+sum rather than patched into garbage. `deno task n64:stage` writes the same two
+files under `static/n64dd/` (gitignored) for the packaged launcher, which has no
+`dev-fixtures/` to read; `deno task build` runs it like `sfc:stage`.
+
+The player is `static/n64dd/play.html`, the `n64dd` core in
+`static/emulators.json` — `local`, like the Super Famicom's, and online-only,
+because EmulatorJS and its mupen64plus-next core are fetched from the EmulatorJS
+CDN at the pinned version rather than vendored. The editor's → PLAY 64DD row
+(under CONSOLE › N64, shown once the route says the pair is here) builds the
+disk, parks it through `POST /api/n64dd-disk` under `build/n64dd/` — the player
+is another window, opened by the launcher's own window manager on the desktop,
+and 64 MB is not something to post into one — and opens the player with the
+three URLs in its query string, the `?rom=<path>` contract every player in the
+catalogue takes. The page fetches the cartridge, the IPL and the disk and hands
+the cartridge to the core as its game (`/Dezaemon3D.z64`); the other two go in
+through `EJS_externalFiles`, as bytes, at the two paths mupen64plus-next's own
+source names — the disk as `/Dezaemon3D.z64.ndd`, the content's full name plus
+`.ndd`, which the core opens beside a cartridge it is loading, and the IPL at
+`/Mupen64plus/IPL.n64`, the hard-coded path under a system directory that
+EmulatorJS's RetroArch build resolves to the content directory. The core keeps
+its writes to the disk in a full copy beside it that EmulatorJS never persists,
+so the page's SAVE DISK button downloads that copy, with every game saved on
+it. All of this was read out of the core's and EmulatorJS's sources, not run:
+**untested here** — no cartridge, IPL or disk fixture is in this repo, the
+player has not been booted in a browser by the session that wrote it, and a
+disk built without a donor has no `DEZA3D.SYS`, so disk mode would have to copy
+one from the cartridge's save. The recipe is one object at the top of the page,
+so a correction is one edit; `packages/shmup-engine/FORMAT-N64.md` "The
+launcher's player" has the trace.
+
 ## Desktop app
 
 `deno task build:windows` / `build:linux` / `build:mac` package the launcher
@@ -3409,17 +3453,22 @@ build found on disk is addressed by (mirroring tools/build-level's
 
 ## Emulators (opt-in)
 
-shmupX ships no emulators. Settings → EMULATORS lists the nine cores in
+shmupX ships no emulators. Settings → EMULATORS lists the ten cores in
 [`static/emulators.json`](static/emulators.json); enabling one downloads it, and
 the console then appears as a tile in the top strip. With nothing installed
 there is only one section, so the strip hides itself entirely.
 
-One of the nine is not on the mirror at all: `snes` is flagged **`local`** and
+Two of the ten are not on the mirror at all. `snes` is flagged **`local`** and
 carries no path prefixes, because its player is
 [`static/snes/play.html`](static/snes/play.html) on this very origin — cmg has
 never served `/snes/play.html`. Installing it therefore downloads nothing,
 registers no service worker and warms only that page. See _The Super Famicom
-library and shelf_.
+library and shelf_. `n64dd` is local the same way: its player is
+[`static/n64dd/play.html`](static/n64dd/play.html), and the EmulatorJS it
+runs and the mupen64plus-next core come from the EmulatorJS CDN at the version
+`scripts/vendor-emulatorjs.ts` pins, not from this repo or the mirror — so it is
+online-only until somebody vendors that core. It has no section of its own; the
+editor's → PLAY 64DD row is what opens it. See _The Nintendo 64 disk_.
 
 Nothing else is vendored here. [`static/emu-sw.js`](static/emu-sw.js) is a
 service worker that mirrors an installed core's path prefixes from the cmg

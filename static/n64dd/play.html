@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Nintendo 64DD</title>
+
+<!--
+  The Nintendo 64DD player: Dezaemon 3D's cartridge, the 64DD IPL and a disk
+  the editor built, booted together in EmulatorJS's mupen64plus-next core.
+
+  WHY THIS PAGE EXISTS ON THIS ORIGIN
+  For the reason static/snes/play.html gives: the launcher's synthesised
+  gamepad input reaches only a same-origin frame, and the cmg origin that
+  serves the other cores has no 64DD player. So the `n64dd` catalogue entry is
+  flagged `local`, carries no prefixes, and /n64dd/ is not in the worker's
+  MIRRORABLE list — a mirrored /n64dd/ would send every request on this page to
+  an origin that has never heard of it. tests/n64dd_player_test.ts pins that.
+
+  WHERE THE CORE COMES FROM
+  Not from this repo. The Super Famicom page borrows the snes9x core vendored
+  for Super Mario SP; no N64 core is vendored here (mupen64plus-next's wasm is
+  several megabytes and runs nothing that ships with the launcher), so this page
+  loads EmulatorJS and the core from the EmulatorJS CDN at the version
+  scripts/vendor-emulatorjs.ts pins for the vendored copy — the loader checks
+  each core's build against its own version and hard-errors on a mismatch, so
+  the two have to move together. It is therefore online-only until someone
+  vendors the core; the `size` in static/emulators.json says "~4 MB" for that
+  download.
+
+  THREE FILES, BY URL
+    /n64dd/play.html?rom=<path>&ipl=<path>&disk=<path>&name=<name>
+  Same-origin paths only, the contract every other player in the catalogue
+  takes with ?rom= — here with the cartridge (translated to English by
+  /api/dezaemon-n64, or staged by `deno task n64:stage`), the 64DD IPL, and the
+  disk the editor parked through /api/n64dd-disk. The page fetches all three
+  itself: the player is opened as another window (by the launcher's own window
+  manager on the desktop), so nothing can be posted into it, and 64 MB of disk
+  is not something to post anyway. A ?byod=1 form is kept for a parent frame
+  that would rather post the three Files in, the way the SNES shelf posts a
+  cart; see static/n64dd-library.js.
+
+  HOW THE THREE REACH THE CORE — the recipe below, read out of the sources
+  (EmulatorJS 4.2.3's emulator.js and its RetroArch fork, and the
+  mupen64plus-next core it builds; see FORMAT-N64.md "The launcher's player")
+  rather than run: the cartridge is the content, written by EmulatorJS as
+  /Dezaemon3D.z64; the core, on loading a cartridge, opens the FULL content
+  name plus ".ndd" beside it — /Dezaemon3D.z64.ndd — as the 64DD disk; and it
+  reads the IPL from a hard-coded <system dir>/Mupen64plus/IPL.n64, where the
+  EmulatorJS build's system directory is the content directory, "/". Both of
+  those are put in place through EJS_externalFiles, the one EmulatorJS hook
+  that writes a file at a given path (and makes its directories) before the
+  core starts — and they have to be BYTES, because 4.2.3 drops a URL-string
+  entry on the floor. The core writes every change to the disk into
+  /Dezaemon3D.z64.ndd.disk_save, a full copy it prefers on the next load; the
+  SAVE DISK button here downloads that copy (or the untouched disk). Whether
+  the WEB build of the core honours any of this is untested: no cartridge, IPL
+  or disk fixture is in this repo, and this page was never booted in a browser
+  in the session that wrote it. The recipe is one object (RECIPE) so a
+  correction is one edit.
+-->
+
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden;
+    overscroll-behavior: none; touch-action: none;
+    font: 14px/1.4 system-ui, -apple-system, sans-serif; color: #cfe;
+  }
+  #game { position: fixed; inset: 0; }
+  #game canvas { image-rendering: auto; }
+  #wait {
+    position: fixed; inset: 0; display: grid; place-content: center;
+    text-align: center; letter-spacing: .08em; color: #8cff5a;
+    font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #wait small { display: block; color: #6a8; letter-spacing: 0; margin-top: 8px; }
+  #wait.err { color: #f87171; }
+  #save-disk {
+    position: fixed; right: 10px; top: 10px; z-index: 9; padding: 6px 10px;
+    border: 1px solid #8cff5a; border-radius: 6px; background: rgba(0,0,0,.6);
+    color: #8cff5a; font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .08em; cursor: pointer; opacity: .75;
+  }
+  #save-disk:hover { opacity: 1; }
+</style>
+
+<script>
+// Audio unlock and the launcher OSD bridge, the same two shims as
+// static/snes/play.html (see its comments).
+(function () {
+  var ctxs = [];
+  var OrigAC = window.AudioContext || window.webkitAudioContext;
+  if (!OrigAC) return;
+  function Patched() { var c = new OrigAC(); ctxs.push(c); return c; }
+  Patched.prototype = OrigAC.prototype;
+  if (window.AudioContext) window.AudioContext = Patched;
+  if (window.webkitAudioContext) window.webkitAudioContext = Patched;
+  function unlock() {
+    for (var i = 0; i < ctxs.length; i++) {
+      var c = ctxs[i];
+      if (c && (c.state === "suspended" || c.state === "interrupted")) c.resume().catch(function () {});
+    }
+  }
+  ["pointerdown", "touchstart", "mousedown", "keydown"].forEach(function (ev) {
+    window.addEventListener(ev, unlock, { passive: true });
+  });
+})();
+(function () {
+  if (window.parent === window) return;
+  window.addEventListener("keydown", function (e) {
+    if (e.code === "Backquote" || e.key === "`" || e.key === "~" ||
+        e.keyCode === 192 || e.key === "Escape") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      try { window.parent.postMessage({ type: "tg16-toggle-controls" }, "*"); } catch (_) {}
+    }
+  }, true);
+})();
+</script>
+</head>
+<body>
+<div id="game"></div>
+<div id="wait">WAITING FOR THE CARTRIDGE, THE IPL AND THE DISK<small>fetching the three files</small></div>
+
+<script>
+// The recipe: where EmulatorJS comes from and how the three files reach the
+// core. One object, so a correction is one edit (and tests/n64dd_player_test.ts
+// reads the names out of it).
+var RECIPE = {
+  // The EmulatorJS version scripts/vendor-emulatorjs.ts pins; loader and core
+  // must agree. "n64" resolves to mupen64plus_next unless the player's own
+  // settings chose parallel_n64, which cannot pair a disk with a cartridge.
+  ejsVersion: "4.2.3",
+  pathtodata: "https://cdn.emulatorjs.org/4.2.3/data/",
+  core: "n64",
+  // The cartridge's file name, which EmulatorJS writes as /<name> and hands
+  // the core as its content.
+  romName: "Dezaemon3D.z64",
+  // The disk: the FULL content name plus .ndd, beside it — what the core opens
+  // on loading a cartridge (mupen64plus-next libretro.c, "workaround for broken
+  // subsystem").
+  diskName: "Dezaemon3D.z64.ndd",
+  // Where the core wrote its changes to the disk: a full copy it prefers on
+  // the next load.
+  diskSaveName: "Dezaemon3D.z64.ndd.disk_save",
+  // The 64DD IPL, at the hard-coded path under the core's system directory,
+  // which EmulatorJS's RetroArch resolves to the content directory.
+  iplPath: "/Mupen64plus/IPL.n64",
+};
+
+// Controls: the launcher's synthesised keys paired with the pad EmulatorJS
+// reads natively, as static/snes/play.html explains. The N64 pad in RetroPad
+// terms: 0 B, 1 Y (C-Left), 2 SELECT, 3 START, 4-7 D-pad, 8 A, 9 X (C-Down),
+// 10 L, 11 R, 12 L2 (Z), 13 R2 (C-Right), 14 L3, 15 R3 (C-Up), 16-19 the
+// control stick. Dezaemon 3D's editor is driven with A to confirm and B to
+// cancel, so those two land where the launcher's PAD puts confirm and cancel.
+var PAD = {
+  0:  { value: "space",       value2: "BUTTON_1" },           // B
+  1:  { value: "x",           value2: "BUTTON_3" },           // C-Left
+  2:  { value: "backspace",   value2: "SELECT" },
+  3:  { value: "enter",       value2: "START" },
+  4:  { value: "up arrow",    value2: "DPAD_UP" },
+  5:  { value: "down arrow",  value2: "DPAD_DOWN" },
+  6:  { value: "left arrow",  value2: "DPAD_LEFT" },
+  7:  { value: "right arrow", value2: "DPAD_RIGHT" },
+  8:  { value: "c",           value2: "BUTTON_2" },           // A
+  9:  { value: "z",           value2: "BUTTON_4" },           // C-Down
+  10: { value: "q",           value2: "LEFT_TOP_SHOULDER" },  // L
+  11: { value: "e",           value2: "RIGHT_TOP_SHOULDER" }, // R
+  12: { value: "shift",       value2: "LEFT_BOTTOM_SHOULDER" }, // Z
+  13: { value: "v",           value2: "RIGHT_BOTTOM_SHOULDER" }, // C-Right
+  14: { value: "",            value2: "" },
+  15: { value: "f",           value2: "RIGHT_STICK" },        // C-Up
+  16: { value: "w",           value2: "LEFT_STICK_Y:-1" },
+  17: { value: "s",           value2: "LEFT_STICK_Y:+1" },
+  18: { value: "a",           value2: "LEFT_STICK_X:-1" },
+  19: { value: "d",           value2: "LEFT_STICK_X:+1" },
+};
+for (var i = 20; i <= 23; i++) PAD[i] = { value: "", value2: "" };
+
+var params = new URLSearchParams(location.search);
+var wait = document.getElementById("wait");
+function say(text, small, err) {
+  if (!wait) return;
+  wait.innerHTML = "";
+  wait.appendChild(document.createTextNode(text));
+  if (small) { var s = document.createElement("small"); s.textContent = small; wait.appendChild(s); }
+  wait.classList.toggle("err", !!err);
+}
+
+window.EJS_player = "#game";
+window.EJS_core = RECIPE.core;
+window.EJS_pathtodata = RECIPE.pathtodata;
+window.EJS_startOnLoaded = true;
+// Not cross-origin isolated (ISOLATED_PLAYERS covers /ps2/ and /switch/ only),
+// so no SharedArrayBuffer and no threads; mupen64plus-next needs neither.
+window.EJS_threads = false;
+window.EJS_disableDatabases = true;
+window.EJS_disableAutoLang = false;
+window.EJS_color = "#8cff5a";
+window.EJS_startButtonName = "PRESS START";
+window.EJS_defaultControls = { 0: PAD, 1: {}, 2: {}, 3: {} };
+
+// SAVE DISK: the core keeps its writes to the disk in a full copy beside it
+// (RECIPE.diskSaveName) that EmulatorJS never persists, so the only way the
+// games saved in DISK mode survive the tab is to download that copy — or the
+// untouched disk when nothing was written yet. Pass the copy back as the next
+// launch's disk and the core reads it in place of the .ndd.
+function saveDisk() {
+  var gm = window.EJS_emulator && window.EJS_emulator.gameManager;
+  if (!gm || !gm.FS) return;
+  var path = gm.FS.analyzePath("/" + RECIPE.diskSaveName).exists ? "/" + RECIPE.diskSaveName : "/" + RECIPE.diskName;
+  var bytes;
+  try { bytes = gm.FS.readFile(path); } catch (e) { console.error("could not read the disk back", e); return; }
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+  a.download = (params.get("name") || "Dezaemon 3D") + ".ndd";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
+}
+window.EJS_onGameStart = function () {
+  var b = document.createElement("button");
+  b.id = "save-disk";
+  b.type = "button";
+  b.textContent = "SAVE DISK \u2B07";
+  b.title = "Download the disk as the core has it now, with every game saved on it";
+  b.onclick = saveDisk;
+  document.body.appendChild(b);
+};
+
+// The loader reads every EJS_* global when it runs, so it is appended only
+// once the three files are in hand. `files` carries bytes: EJS_externalFiles
+// is written through Emscripten's FS.writeFile, which takes a Uint8Array and
+// not a URL (4.2.3 drops a string entry silently).
+function boot(files) {
+  window.EJS_gameUrl = files.rom;
+  window.EJS_gameName = RECIPE.romName.replace(/\.[^.]+$/, "");
+  window.EJS_externalFiles = {};
+  window.EJS_externalFiles["/" + RECIPE.diskName] = files.disk;
+  window.EJS_externalFiles[RECIPE.iplPath] = files.ipl;
+  if (wait) wait.remove();
+  var s = document.createElement("script");
+  s.src = RECIPE.pathtodata + "loader.js";
+  s.onerror = function () {
+    document.body.appendChild(wait);
+    say("COULD NOT LOAD EMULATORJS", "the player fetches the core from " + RECIPE.pathtodata + " — is this machine online?", true);
+  };
+  document.body.appendChild(s);
+}
+
+// Same-origin paths only: the three names arrive in a URL anyone can edit, and
+// a player that would fetch an absolute URL is a page that will fetch one from
+// wherever a link says.
+function samePath(p) {
+  return typeof p === "string" && /^\/[^/]/.test(p);
+}
+function fetchFile(path, what) {
+  return fetch(path, { cache: "no-store" }).then(function (res) {
+    if (!res.ok) throw new Error(what + ": " + path + " answered HTTP " + res.status);
+    return res.arrayBuffer();
+  }).then(function (buf) {
+    return new Uint8Array(buf);
+  });
+}
+function toBytes(v) {
+  if (v instanceof Uint8Array) return Promise.resolve(v);
+  if (v && typeof v.arrayBuffer === "function") return v.arrayBuffer().then(function (b) { return new Uint8Array(b); });
+  if (v instanceof ArrayBuffer) return Promise.resolve(new Uint8Array(v));
+  return Promise.reject(new Error("not bytes"));
+}
+
+var byod = params.get("byod") === "1";
+if (byod) {
+  window.addEventListener("message", function (e) {
+    if (e.origin !== location.origin) return;
+    var d = e.data || {};
+    if (d.type !== "n64dd-byod-file" || !d.rom || !d.ipl || !d.disk) return;
+    Promise.all([toBytes(d.rom), toBytes(d.ipl), toBytes(d.disk)]).then(function (b) {
+      boot({
+        rom: new File([b[0]], RECIPE.romName, { type: "application/octet-stream" }),
+        ipl: b[1],
+        disk: b[2],
+      });
+    }).catch(function (e) {
+      say("COULD NOT READ WHAT WAS POSTED", (e && e.message) || String(e), true);
+    });
+  });
+  try {
+    window.parent.postMessage({ type: "n64dd-byod-ready" }, location.origin);
+  } catch (_) { /* opened standalone: the ?rom= form below is the way in */ }
+  if (window.parent === window) {
+    say("NOTHING POSTED", "open this page from the launcher, or pass ?rom=&ipl=&disk= paths on this site");
+  }
+} else {
+  var rom = params.get("rom") || "";
+  var ipl = params.get("ipl") || "";
+  var disk = params.get("disk") || "";
+  if (!samePath(rom) || !samePath(ipl) || !samePath(disk)) {
+    say("NO CARTRIDGE, IPL OR DISK", "?rom=, ?ipl= and ?disk= each need a path on this site, e.g. /api/dezaemon-n64?rom=1, /api/dezaemon-n64?ipl=1 and /api/n64dd-disk?file=<name>.ndd", true);
+  } else {
+    say("FETCHING THE CARTRIDGE, THE IPL AND THE DISK", "the cartridge is translated to English on the way");
+    Promise.all([
+      fetchFile(rom, "the cartridge"),
+      fetchFile(ipl, "the 64DD IPL"),
+      fetchFile(disk, "the disk"),
+    ]).then(function (files) {
+      boot({
+        rom: new File([files[0]], RECIPE.romName, { type: "application/octet-stream" }),
+        ipl: files[1],
+        disk: files[2],
+      });
+    }).catch(function (e) {
+      say("COULD NOT FETCH THE FILES", (e && e.message) || String(e), true);
+    });
+  }
+}
+</script>
+</body>
+</html>

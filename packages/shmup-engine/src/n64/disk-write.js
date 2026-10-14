@@ -287,7 +287,7 @@ export function buildDisk(options = {}) {
     // --- the image ---
     let image = user;
     if (format === "ndd") {
-        const systemArea = options.systemArea ?? (baseFormat === "ndd" ? systemAreaOf(base) : buildSystemArea({ systemData: { diskType: type } }));
+        const systemArea = options.systemArea ?? (baseFormat === "ndd" ? systemAreaOf(base) : buildSystemArea({ systemData: { diskType: type }, diskId: { diskType: type } }));
         image = nddFromDdd(user, systemArea);
     }
 
@@ -366,7 +366,7 @@ export function convertDisk(image, format, { systemArea, type = DEZAEMON_DISK_TY
     if (!have) throw new Error(`a 64DD image is ${DDD_IMAGE_BYTES} (.ddd) or ${NDD_IMAGE_BYTES} (.ndd) bytes; this one is ${image.length}`);
     if (format === "ddd") return userArea(image).slice();
     if (format !== "ndd") throw new Error(`format is "ddd" or "ndd", not "${format}"`);
-    return nddFromDdd(image, systemArea ?? (have === "ndd" ? systemAreaOf(image) : buildSystemArea({ systemData: { diskType: type } })));
+    return nddFromDdd(image, systemArea ?? (have === "ndd" ? systemAreaOf(image) : buildSystemArea({ systemData: { diskType: type }, diskId: { diskType: type } })));
 }
 
 /** Where the read-only directory's block begins, for a probe to name. */

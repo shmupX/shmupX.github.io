@@ -35,6 +35,20 @@
       "prefixes": []
     },
     {
+      "id": "n64dd",
+      "name": "Nintendo 64DD",
+      "mark": "64DD",
+      "title": "NINTENDO 64DD",
+      "metaType": "N64DD / .NDD",
+      "date": "64DD",
+      "coreA": "core // mupen64plus-next",
+      "coreB": "emulatorjs",
+      "size": "~4 MB",
+      "local": true,
+      "player": "/n64dd/play.html",
+      "prefixes": []
+    },
+    {
       "id": "tg16",
       "name": "TurboGrafx-16",
       "mark": "PCE",

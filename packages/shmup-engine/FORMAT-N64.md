@@ -15,21 +15,24 @@ save, diff — needs a 64DD emulator, a disk writer and the DEZA64 cartridge, an
 the cartridge was never released. Nothing described here has been booted on
 hardware or in an emulator.
 
-| Material                                            | Where                                                                   | What it is                                                                                                                 |
-| --------------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `dezaemon298.ddd`                                   | `dev-fixtures/` (gitignored, **not** in every checkout)                 | 64,458,560 bytes, md5 `99a67674130f271f150db75c02d14f0a` — the prototype data disk's user area, 64dd.org's "old dump"      |
-| `deza1.NDD`                                         | **not in the repo** (64dd.org, `DEZA_1_19980223.zip`)                   | the canonical dump, 64,931,840 bytes: the same disk with its 24-block system area, and a differently written save area     |
-| `file formats.txt`                                  | **not in the repo** (the 2024 fan translation, Zoinkity/whowasphone404) | the field-by-field description of every payload type; `static/dezaemon-parity-n64.html` summarised it and is what is cited |
-| `leogeo.c`                                          | jkbenaim/leotools                                                       | the published zone tables and the system-area reader this geometry was cross-checked against                               |
-| `disk.h`, `disk.c`                                  | mupen64plus-core `src/device/dd/`                                       | the zone tables, `struct dd_sys_data`, and `scan_and_expand_disk_format`, which is what an emulator checks before mounting |
-| `static/dezaemon-parity-n64.html`                   | this repo                                                               | the survey of 2026-09-19: every offset below that is not derived from the modules is copied from it                        |
-| `tests/dezaemon_n64_test.ts`, `…_n64_write_test.ts` | this repo                                                               | 38 tests that run against synthetic disks; two more are `ignore:`-gated on the fixture                                     |
+| Material                                            | Where                                                                   | What it is                                                                                                                                             |
+| --------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dezaemon298.ddd`                                   | `dev-fixtures/` (gitignored, **not** in every checkout)                 | 64,458,560 bytes, md5 `99a67674130f271f150db75c02d14f0a` — the prototype data disk's user area, 64dd.org's "old dump"                                  |
+| `deza1.NDD`                                         | **not in the repo** (64dd.org, `DEZA_1_19980223.zip`)                   | the canonical dump, 64,931,840 bytes: the same disk with its 24-block system area, and a differently written save area                                 |
+| `file formats.txt`                                  | **not in the repo** (the 2024 fan translation, Zoinkity/whowasphone404) | the field-by-field description of every payload type; read whole for the record codecs (`records.js`), summarised on `static/dezaemon-parity-n64.html` |
+| `leogeo.c`                                          | jkbenaim/leotools                                                       | the published zone tables and the system-area reader this geometry was cross-checked against                                                           |
+| `disk.h`, `disk.c`                                  | mupen64plus-core `src/device/dd/`                                       | the zone tables, `struct dd_sys_data`, and `scan_and_expand_disk_format`, which is what an emulator checks before mounting                             |
+| `static/dezaemon-parity-n64.html`                   | this repo                                                               | the survey of 2026-09-19: every offset below that is not derived from the modules is copied from it                                                    |
+| `tests/dezaemon_n64_test.ts`, `…_n64_write_test.ts` | this repo                                                               | 38 tests that run against synthetic disks; two more are `ignore:`-gated on the fixture                                                                 |
 
 LuigiBlood's 64dd wiki and the fan translation's `file formats.txt` were the
-survey's sources for the geometry and the record layouts respectively; neither
-is reachable from this repo, and nothing below is quoted from them directly.
-What is cited is the parity page's summary and the two implementations named
-above, which the modules were held to.
+survey's sources for the geometry and the record layouts respectively. Neither
+is reachable from this repo's own tooling, but the wiki's _Disk Specification_
+and _Dezaemon 3D_ pages were supplied to the session that wrote the system-area
+and geometry modules, and the physical account of the disk and the disk-ID check
+below are quoted from them; the record layouts are cited through the parity
+page's summary and the two implementations named above, which the modules were
+held to.
 
 All multi-byte integers are **big-endian** (the N64 is big-endian), as in the
 Saturn notes and unlike the Super Famicom's and the PlayStation's.
@@ -93,19 +96,30 @@ cartridge, no emulator and no disk fixture exist here.
 
 ## Container geometry (confirmed — `src/n64/geometry.js`)
 
-A block is **85 sectors**, and the sector size steps down from the outer edge
-inwards through 232, 216, 208, 192, 176, 160, 144, 128 and 112 bytes, so a block
-is 19,720 bytes in the outermost zone and 9,520 in the innermost. The disk has
-two heads and eight zones a head: sixteen **physical zones**, 0–7 on head 0 and
-8–15 on head 1, head 1's zone _k_ having the sector size of head 0's zone
-_k_ + 1. A head's eight zones have 158, 158, 149, 149, 149, 149, 149 and 114
-tracks of two blocks, twelve of which every zone keeps spare for defects, so the
-usable blocks are 292, 292, 274, 274, 274, 274, 274 and 204 on each head — 4,316
-in all, 24 of them the system area, 4,292 the user area. LBA order walks the
-physical zones through a per-disk-type permutation, the **virtual zones**: the
-ROM area takes the outer zones of both heads, the RAM area the inner ones. The
-Dezaemon disk is **disk type 0**, and `zoneTable(0)` is, in user terms (LBA 0 is
-the first block after the system area, offset 0 the first byte of a `.ddd`):
+A block is **85 sectors** of user data, and the sector size steps down from the
+outer edge inwards through 232, 216, 208, 192, 176, 160, 144, 128 and 112 bytes,
+so a block is 19,720 bytes in the outermost zone and 9,520 in the innermost. The
+physical disk (LuigiBlood's wiki, _Disk Specification_): two sides, each of
+1,175 cylinder tracks over eight zones, side 1 starting one zone in; a track is
+two blocks; a block on the media is 90 sectors — the 85 of user data, four of C2
+error correction and one gap, of which only the 85 reach an image (C1 correction
+is seven bytes a sector and the drive's business); a sector of zone _n_ is the
+_n_-th size above. So there are sixteen **physical zones**, 0–7 on side 0 and
+8–15 on side 1, side 1's zone _k_ having the sector size of side 0's zone
+_k_ + 1. A side's eight zones have 158, 158, 149, 149, 149, 149, 149 and 114
+tracks, of which the driver treats twelve a zone as defective on a retail disk
+(ten on a development one) and skips them, so the usable blocks are 292, 292,
+274, 274, 274, 274, 274 and 204 on each side — 4,316 in all, 24 of them the
+system area, 4,292 the user area. The driver also interleaves the two blocks of
+every odd track for seek time and reads side 1's tracks from the end of a zone
+inwards; none of that reaches an image, which is the blocks in LBA order. LBA
+order walks the physical zones through a per-disk-type permutation, the
+**virtual zones**: the ROM area is zones 0, 1 and 2 of both sides always and one
+zone more per disk type (zone 3 from type 1, zone 4 from type 2, … zone 8 from
+type 6), the RAM area the rest — the disk type is handed to the drive in a
+command that write-protects those zones. The Dezaemon disk is **disk type 0**,
+and `zoneTable(0)` is, in user terms (LBA 0 is the first block after the system
+area, offset 0 the first byte of a `.ddd`):
 
 | vzone | pzone | Sector |  Block | First LBA | Last LBA | Blocks | `.ddd` offset | Area |
 | ----: | ----: | -----: | -----: | --------: | -------: | -----: | ------------- | ---- |
@@ -229,8 +243,8 @@ The layouts are the ones leotools (`LeoGeo_analyze_disk`) and mupen64plus
 | `0x07` | u8      | disk use                                           | 0                                                      |
 | `0x08` | u8[9]   | unused here                                        | 0                                                      |
 | `0x11` | BCD[7]  | year (two bytes), month, day, hour, minute, second | prototype `1998-02-23 19:24:25`; writer the build time |
-| `0x18` | char[2] | company code                                       | not recorded anywhere this repo can read; two NULs     |
-| `0x1A` | char[6] | free area                                          | `ATNFS0`                                               |
+| `0x18` | char[2] | company code — **what the cartridge checks**       | `E7`, Athena                                           |
+| `0x1A` | char[6] | free area — **what the cartridge checks**          | `ATNFS0`: `ATNFS` + the disk type in ASCII             |
 
 What the prototype's own copy holds, recovered from `deza1.NDD` and recorded on
 the parity page: region Japan, format `0x10`, disk type 0, `DEZA`, the timestamp
@@ -246,6 +260,19 @@ them: mupen64plus `disk.c` refuses a D64 whose RAM start is not
 (nine blocks = 177,480 bytes, of which 168,992 are used, loaded to
 `0x80000400`); they are kept on a disk built without that program, since the
 cartridge never runs it.
+
+What the **cartridge** checks before it treats a disk as its own (LuigiBlood's
+wiki, _Dezaemon 3D_; likely — it is the wiki's reading of the game, and no disk
+this writes has been put in front of one): the drive must be a Japanese retail
+or a development unit, and the disk ID — no game code, and not the system data —
+must carry company code `E7` and free area `ATNFS?` with `?` the disk type in
+ASCII. Dezaemon 3D does not reboot into a disk the way most 64DD expansions do;
+it keeps running from the cartridge and uses the disk for storage, with sample
+projects pressed into the ROM area. `encodeDiskId()` writes `E7` and
+`ATNFS<diskType>` by default, `buildSystemArea()` takes the type from the system
+data it is given, and `isDezaemonDiskId()` is the check; an `.ndd` this repo
+wrote before 2026-10-14 carried two NULs for the company code and would not have
+passed it.
 
 What an emulator checks before it mounts an `.ndd` — mupen64plus
 `scan_and_expand_disk_format`, which `checkSystemData()` and `readSystemArea()`
@@ -576,6 +603,72 @@ DOWNLOAD. Both say what every disk is: untested on hardware or in an emulator.
   not grown — a project has 40 + 8 × 260 textures and no more;
 - any disk type but 0 beyond the geometry (a warning says so), any `.ndd` whose
   system area is development-format, and the D64 or MAME image shapes.
+
+## The launcher's player (likely — `static/n64dd/play.html`, `static/n64dd-library.js`, `lib/dezaemon-n64.ts`)
+
+A data disk boots only beside Dezaemon 3D's cartridge and the 64DD's own IPL
+ROM, neither of which is ours to ship, so the launcher finds both on the
+operator's disk (`/api/dezaemon-n64`, `deno task n64:stage`) and the editor's →
+PLAY 64DD row opens `static/n64dd/play.html` — the `n64dd` core of
+`static/emulators.json`, `local` like the Super Famicom's — on the cartridge,
+the IPL and a disk parked through `/api/n64dd-disk`. The cartridge leaves in
+English: the 2024 translation's xdelta3 delta (`static/n64dd/`, 557,699 bytes,
+two VCDIFF windows whose data, instruction and address sections are LZMA-packed
+`.xz` streams) is applied by `src/n64/vcdiff.js` over `src/n64/xz.js` and the
+result held to the SHA-1 its readme gives (`04D0423E…`; the Japanese dump is
+`1C10A85A…`, 16,777,216 bytes, any of the three byte orders accepted and put in
+z64 order first).
+
+How the three files reach EmulatorJS 4.2.3's mupen64plus-next core was read out
+of the sources — EmulatorJS's `emulator.js` and its RetroArch fork, and
+libretro's `mupen64plus-libretro-nx` as the EmulatorJS fork builds it — and not
+run; every line of it is **likely** until a browser has booted a disk:
+
+- The cartridge is the content: EmulatorJS writes the game to `/<name>` and
+  starts the core on `/Dezaemon3D.z64`.
+- The disk goes beside it as `/Dezaemon3D.z64.ndd` — the content's **full** name
+  plus `.ndd`: `retro_load_game` appends `.ndd` to the cartridge's path and,
+  when that opens, keeps it as the disk (`libretro.c`, the "workaround for
+  broken subsystem"). The `ndd` subsystem (disk + cartridge) exists but only
+  RetroArch's `--subsystem` reaches it; no core option attaches a disk.
+- The IPL goes to `/Mupen64plus/IPL.n64`: the path is hard-coded under the
+  core's system directory (`main.c`, `"Mupen64plus" + "/" + "IPL.n64"`), its
+  byte order read from its first word, and the EmulatorJS RetroArch build leaves
+  the system directory empty so RetroArch falls back to the content directory,
+  `/`. It is read only when a disk was found; without it the core logs "Failed
+  to load DD IPL ROM" and the cartridge boots in ROM mode.
+- Both are placed through `EJS_externalFiles` —
+  `{"/Dezaemon3D.z64.ndd":
+  bytes, "/Mupen64plus/IPL.n64": bytes}` — the one
+  hook that writes a file at a given path, directories made, before the core
+  starts. The values must be bytes: in 4.2.3 a URL-string entry is fetched to an
+  `ArrayBuffer` that Emscripten's `FS.writeFile` refuses, and the failure is
+  swallowed. `EJS_biosUrl` cannot do it (it names the file after the URL and
+  writes to `/`), and a `File` given to it hangs the loader.
+- The core validates the `.ndd` the way `readSystemArea()` does
+  (`scan_and_expand_disk_format`), takes the region from its system data, and
+  redirects every write to a full copy `/Dezaemon3D.z64.ndd.disk_save`, which it
+  prefers over the `.ndd` on the next load. EmulatorJS persists neither; the
+  page's SAVE DISK button downloads the copy (or the untouched disk), and a disk
+  handed back as the next launch's disk is read in place.
+- Not possible with this core: booting a disk with no cartridge (its
+  `valid_extensions` have no `ndd`); a second content file through EmulatorJS's
+  configuration. `parallel_n64`, the other EmulatorJS N64 core, classifies a
+  lone `.ndd` as a disk and boots the IPL on it, but pairs no cartridge with it
+  and keeps the disk inside a 70 MB `.srm` — so the page asks for
+  `mupen64plus_next` and a player who switched cores in EmulatorJS's menu gets
+  no disk.
+- Two cartridge-side cautions from the translation's readme. Dezaemon 3D saves
+  to 768 Kbit banked SRAM; the core's SRAM is 32 KB, so bank 0 works and the
+  other two are lost, and the game's boot-time save test may or may not pass. In
+  disk mode the game copies `DEZA3D.SYS` from the cartridge's save when the disk
+  has none — a disk built without a donor has none, since the writable area is
+  not written — and refuses to go on when that copy fails.
+
+Confidence stops at likely for all of it: the shipped 4.2.3 wasm was not
+inspected (the CDN is unreachable from the session that wrote this), nothing was
+run in a browser, and the `.ndd` passing the core's checks is the writer's
+claim, never an emulator's.
 
 ## Unresolved
 

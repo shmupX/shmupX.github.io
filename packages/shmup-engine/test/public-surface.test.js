@@ -64,9 +64,10 @@ const EXPECTED_SFC = [
 ];
 
 // The Nintendo 64 half: the one-call export the editor's N64 row runs, the
-// file name, and the two donor-disk helpers, prefixed where the bare name
-// would read as general.
+// file name, the two donor-disk helpers, prefixed where the bare name would
+// read as general, and the xdelta3 applier for the translation patch.
 const EXPECTED_N64 = [
+  "applyVcdiff",
   "buildN64ProjectFromLevel",
   "dddFileName",
   "DDD_IMAGE_BYTES",
@@ -77,6 +78,7 @@ const EXPECTED_N64 = [
   "n64ReadProjects",
   "n64TemplateFromDisk",
   "NDD_IMAGE_BYTES",
+  "parseVcdiff",
 ];
 
 Deno.test("mod.js exports the model surface", () => {

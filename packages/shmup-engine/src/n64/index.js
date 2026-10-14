@@ -36,6 +36,9 @@ export * from "./system-area.js";
 export * from "./disk-write.js";
 export * from "./project-write.js";
 export * from "./export-ddd.js";
+// The English translation patch: xdelta3's VCDIFF over an XZ/LZMA2 decoder.
+export * from "./xz.js";
+export * from "./vcdiff.js";
 
 function attempt(result, block, fn) {
     try {

@@ -7,15 +7,21 @@
 // LBA order, system area first; a .ddd is the same less the 24 system blocks.
 // That is why a fixed stride finds nothing in either.
 //
-// The disk has two heads and eight zones a head: sixteen PHYSICAL zones, 0-7
-// on head 0 and 8-15 on head 1, where head 1's zone k has the sector size of
-// head 0's zone k+1. Each has 158, 149 or 114 tracks of two blocks, twelve of
-// which every zone keeps spare for defects, so the usable blocks per physical
-// zone are 292, 292, 274, 274, 274, 274, 274 and 204 on each head — 4,316 in
-// all, 24 of them the system area. LBA order walks the physical zones through
-// a per-disk-type permutation (the VIRTUAL zones): the ROM area takes the
-// outer zones of both heads, the RAM area the inner ones, and a disk type
-// moves the split. Disk type 0, the Dezaemon disk's, is
+// The disk has two sides and eight zones a side: sixteen PHYSICAL zones, 0-7
+// on side 0 and 8-15 on side 1, where side 1 starts with the second sector
+// size (its zone k has the size of side 0's zone k+1). Each has 158, 149 or
+// 114 cylinder tracks of two blocks — a block is 90 sectors on the media, 85
+// of user data, four of C2 error correction and one gap, and only the 85
+// reach an image — twelve of which every zone keeps spare for defects on a
+// retail disk (ten on a development one), so the usable blocks per physical
+// zone are 292, 292, 274, 274, 274, 274, 274 and 204 on each side — 4,316 in
+// all, 24 of them the system area. The driver interleaves the two blocks of
+// odd tracks for seek time and reads side 1's tracks from the end of a zone
+// inwards; none of that reaches an image, which is laid in LBA order. LBA
+// order walks the physical zones through a per-disk-type permutation (the
+// VIRTUAL zones): the ROM area takes the outer zones of both sides — zones 0,
+// 1 and 2 always, and one zone more per disk type — the RAM area the inner
+// ones. Disk type 0, the Dezaemon disk's, is
 //
 //   vzone  0  1  2  3  4 |  5  6  7  8  9 10 11 12 13 14 15
 //   pzone  0  1  2  9  8 |  3  4  5  6  7 15 14 13 12 11 10
@@ -26,8 +32,10 @@
 //
 // Three things pin this table to the disk this repo has measured
 // (dev-fixtures/dezaemon298.ddd), beyond the published tables themselves
-// (LuigiBlood's 64dd wiki; jkbenaim/leotools leogeo.c; mupen64plus-core
-// src/device/dd/disk.h, which agree with each other and with this file):
+// (LuigiBlood's 64dd wiki, "Disk Specification", which the physical account
+// above is taken from; jkbenaim/leotools leogeo.c; mupen64plus-core
+// src/device/dd/disk.h — all of which agree with each other and with this
+// file):
 //
 //   - every one of the 60 directory entries satisfies
 //     blockCount === ceil(storedSize / blockSize(startLba)) — the same file

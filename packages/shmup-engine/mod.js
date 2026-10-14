@@ -326,6 +326,10 @@ export { buildN64ProjectFromLevel } from "./src/n64/project-write.js";
 export { normalizeProjectName as n64ProjectName } from "./src/n64/directory.js";
 export { DDD_IMAGE_BYTES, NDD_IMAGE_BYTES } from "./src/n64/geometry.js";
 export { isDddImage } from "./src/n64/index.js";
+// The English translation patch (static/n64dd/*.xdelta) applied to the
+// Japanese ROM in the browser: xdelta3's VCDIFF, with its LZMA sections
+// (src/n64/vcdiff.js over src/n64/xz.js).
+export { applyVcdiff, parseVcdiff } from "./src/n64/vcdiff.js";
 
 // --- Extras: cartridge-dump deinterleaving (src/bup-deinterleave.js) ---
 export { deinterleave, detect } from "./src/bup-deinterleave.js";

@@ -44,6 +44,15 @@ static/games/2019-web.zip
 static/snes/*.sfc
 static/snes/*.smc
 
+# The same for Dezaemon 3D and the 64DD IPL, staged under static/n64dd/ by
+# `deno task n64:stage` for the Nintendo 64DD player. The translation patch
+# beside them (an .xdelta) is the fan translation's own release and stays
+# committed; the cartridge and Nintendo's IPL are not ours to ship.
+static/n64dd/*.z64
+static/n64dd/*.n64
+static/n64dd/*.v64
+static/n64dd/*.bin
+
 # Local .sav test fixtures (community Dezaemon 2 saves — never committed).
 # Drop .sav/.bcr/.bkr files here to enable the fixture-gated engine tests.
 # debug-tools/ is the exception — scripts that read the fixtures, not the

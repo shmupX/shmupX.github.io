@@ -1276,6 +1276,15 @@
                             </div>
                         </div>
                         <button class="menu-row" id="n64-disk-download" onclick="exportN64Disk()" title="Build a Dezaemon 3D 64DD disk of the open game — the level's art laid as 64x32 textures into the free slots of a project's texture sheets, the rest of the project from the donor's first project or blank, the project pressed beside the donor's samples — and download it. Untested on hardware or in an emulator: no cartridge, emulator or disk fixture is in this repo, and nothing on the disk places the level's enemies yet."><span class="mono-badge">DL</span><span id="n64-disk-download-label">DOWNLOAD .NDD</span></button>
+                        <!-- → PLAY 64DD: the disk booted in the launcher's Nintendo 64DD player
+                             (static/n64dd/play.html, on EmulatorJS's mupen64plus-next) beside
+                             the cartridge and the 64DD IPL this machine has — /api/dezaemon-n64
+                             finds both in dev-fixtures/ and hands the cartridge over translated
+                             to English (the 2024 patch under static/n64dd/). The disk is parked
+                             through /api/n64dd-disk first, because the player is another window
+                             and 64 MB is not posted across one; the player then fetches the
+                             three files by URL. Hidden until the route says the pair is here. -->
+                        <button class="menu-row hidden" id="n64-disk-play" onclick="exportN64Disk('play')" title="Build the disk, park it under build/n64dd/ on this machine, and open the Nintendo 64DD player on it with the Dezaemon 3D cartridge (translated to English) and the 64DD IPL found in dev-fixtures/. The player is EmulatorJS's mupen64plus-next, fetched from its CDN; whether the web core mounts a disk beside a cartridge is untested here."><span class="mono-badge">PL</span>&rarr; PLAY 64DD</button>
                         <div id="n64-disk-note" class="menu-note"></div>
                     </div>
                 </div>
@@ -2347,6 +2356,7 @@
                 // An empty PROJECT NAME follows the open game; a typed one stays.
                 const nameInput = document.getElementById('n64-project-name');
                 if (nameInput && !nameInput.value.trim()) nameInput.value = n64DefaultProjectName();
+                probeN64ddRoute();
             }
             const none = document.getElementById('export-deza-nowriter');
             none.classList.toggle('hidden', builds);
@@ -8085,14 +8095,14 @@
             if (el && el.value !== typed) el.value = typed;
             return typed || n64DefaultProjectName();
         }
-        async function buildN64DiskForExport() {
+        async function buildN64DiskForExport(format) {
             const record = await buildLevelRecordForSav();
             const art = collectAtlasArtForSav();
             const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
             const options = {
                 name: n64ProjectNameInput(),
                 disk: n64DonorBytes || null,
-                format: n64Format,
+                format: format || n64Format,
                 title1, title2,
             };
             // A donor with no project has nothing to copy the other files
@@ -8102,7 +8112,54 @@
             return { out, record };
         }
         let n64DiskBusy = false;
-        async function exportN64Disk() {
+        // The → PLAY 64DD row means something only where a local server can see
+        // the cartridge and the IPL, so it stays hidden until GET /api/dezaemon-n64
+        // says so — asked once, the first time the N64 pick is shown, through
+        // /n64dd-library.js (which also knows the staged copies a packaged
+        // launcher carries). The answer is kept for the launch itself.
+        let n64ddProbe = null;
+        let n64ddInfo = null;
+        function n64ddLibrary() {
+            return import('/n64dd-library.js');
+        }
+        function probeN64ddRoute() {
+            if (n64ddProbe) return n64ddProbe;
+            n64ddProbe = n64ddLibrary()
+                .then((lib) => lib.findN64ddRom())
+                .then((info) => {
+                    n64ddInfo = info || null;
+                    const row = document.getElementById('n64-disk-play');
+                    if (row) row.classList.toggle('hidden', !(info && info.available));
+                    if (info && !info.available && (info.rom || info.ipl)) {
+                        // Half the pair is here: say which half is missing, since the
+                        // row would otherwise just not appear.
+                        n64DiskNote('PLAY 64DD NEEDS THE CARTRIDGE AND THE 64DD IPL IN DEV-FIXTURES/: ' + String(info.reason || 'one is missing').toUpperCase());
+                    }
+                    return info;
+                })
+                .catch(() => { n64ddInfo = null; return null; });
+            return n64ddProbe;
+        }
+        // Park the disk on this machine and open the player on it. The player
+        // takes the three files by URL (see /n64dd-library.js n64ddPlayerUrl):
+        // the cartridge and the IPL from /api/dezaemon-n64, the disk from
+        // /api/n64dd-disk, which wrote it under build/n64dd/.
+        async function playN64Disk(out) {
+            const lib = await n64ddLibrary();
+            const info = n64ddInfo && n64ddInfo.available ? n64ddInfo : await lib.findN64ddRom();
+            if (!info || !info.available) {
+                throw new Error('this machine has no Dezaemon 3D cartridge or no 64DD IPL to boot the disk with: ' + (info && info.reason || 'not found'));
+            }
+            n64DiskNote('PARKING THE DISK FOR THE PLAYER…');
+            const parked = await lib.storeN64ddDisk(out.image, out.fileName);
+            n64DiskNote('CHECKING THE NINTENDO 64DD PLAYER…');
+            try { await lib.ensureN64ddCore(); } catch (e) { throw new Error('the Nintendo 64DD player is not reachable: ' + (e && e.message || e)); }
+            const url = lib.n64ddPlayerUrl({ rom: info.rom.url, ipl: info.ipl.url, disk: parked.url, name: out.name });
+            await openGameWindow(url, 'Dezaemon 3D', 'play');
+            return parked;
+        }
+        async function exportN64Disk(action) {
+            action = action === 'play' ? 'play' : 'download';
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
             if (typeof window.Dezaemon.exportLevelToDdd !== 'function') {
                 alert('This engine bundle predates the Dezaemon 3D disk writer — run `deno task engine:bundle`.');
@@ -8111,17 +8168,18 @@
             if (n64DiskBusy) return;
             if (!(await awaitCloudLoad('EXPORT'))) return;
             n64DiskBusy = true;
-            const row = document.getElementById('n64-disk-download');
-            if (row) row.disabled = true;
+            const rows = ['n64-disk-download', 'n64-disk-play'].map((id) => document.getElementById(id));
+            rows.forEach((b) => { if (b) b.disabled = true; });
             let out = null;
             try {
                 n64DiskNote('BUILDING THE 64DD DISK' + (n64DonorFile ? ' ON ' + n64DonorFile.toUpperCase() : '') + '…');
-                ({ out } = await buildN64DiskForExport());
+                // The player mounts an .ndd whatever the download pick says.
+                ({ out } = await buildN64DiskForExport(action === 'play' ? 'ndd' : n64Format));
             } catch (e) {
                 console.error('.' + n64Format + ' export failed:', e);
                 n64DiskNote('COULD NOT BUILD THE DISK: ' + (e && e.message || e), '#f87171');
                 n64DiskBusy = false;
-                if (row) row.disabled = false;
+                rows.forEach((b) => { if (b) b.disabled = false; });
                 return;
             }
             // Built and read back by the engine. What follows is the
@@ -8140,21 +8198,29 @@
                     ' · ' + (out.image.length / 1048576).toFixed(1) + ' MB';
                 const warn = out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : '';
                 const caveat = n64DonorBytes ? '' : ' · WITHOUT A DONOR THE DISK HAS NO SAVE AREA, SO THE CARTRIDGE IS NOT EXPECTED TO ENTER DISK MODE';
-                const blob = new Blob([out.image], { type: 'application/octet-stream' });
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = out.fileName;
-                document.body.appendChild(a); a.click(); a.remove();
-                setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-                n64DiskNote('DOWNLOADING "' + out.fileName + '" — MOUNT IT IN ARES BESIDE THE DEZAEMON 3D CARTRIDGE. ' + summary + warn + caveat, '#84cc16');
-                flash('.' + String(out.format || n64Format).toUpperCase() + ' EXPORTED ⬇');
+                if (action === 'play') {
+                    const parked = await playN64Disk(out);
+                    n64DiskNote('OPENING THE NINTENDO 64DD PLAYER ON ' + (parked.file || out.fileName).toUpperCase() +
+                        ' (PARKED AT ' + (parked.path || 'build/n64dd/') + ') WITH THE ENGLISH CARTRIDGE AND THE IPL. ' + summary + warn + caveat +
+                        ' · WHETHER THE WEB CORE MOUNTS THE DISK BESIDE THE CARTRIDGE IS UNTESTED HERE', '#84cc16');
+                    flash('64DD PLAYER OPENED');
+                } else {
+                    const blob = new Blob([out.image], { type: 'application/octet-stream' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = out.fileName;
+                    document.body.appendChild(a); a.click(); a.remove();
+                    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+                    n64DiskNote('DOWNLOADING "' + out.fileName + '" — MOUNT IT IN ARES BESIDE THE DEZAEMON 3D CARTRIDGE. ' + summary + warn + caveat, '#84cc16');
+                    flash('.' + String(out.format || n64Format).toUpperCase() + ' EXPORTED ⬇');
+                }
                 if (out.warnings.length) console.warn('.' + out.format + ' export warnings:', out.warnings);
             } catch (e) {
-                console.error('.' + n64Format + ' export (download) failed:', e);
-                n64DiskNote('COULD NOT DOWNLOAD IT: ' + (e && e.message || e), '#f87171');
+                console.error('.' + n64Format + ' export (' + action + ') failed:', e);
+                n64DiskNote((action === 'play' ? 'COULD NOT PLAY IT' : 'COULD NOT DOWNLOAD IT') + ': ' + (e && e.message || e), '#f87171');
             } finally {
                 n64DiskBusy = false;
-                if (row) row.disabled = false;
+                rows.forEach((b) => { if (b) b.disabled = false; });
             }
         }
 
