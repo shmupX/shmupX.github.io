@@ -12,6 +12,7 @@ import {
   type AndroidBuild,
   type AndroidRuntimes,
   buildFromTree,
+  currentInstalls,
   defaultTarget,
   discoverBuilds,
   mergeBuilds,
@@ -453,4 +454,16 @@ Deno.test("a build tree on disk becomes a shelf row; the registry round-trips", 
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("a rebuild on the same path outdates the row's install marks", () => {
+  const marks = { waydroid: 1500, "adb:abc": 900, "taildrop:pixel-9": 2000 };
+  // Marks made after the file was: this APK is there.
+  assertEquals(currentInstalls(marks, 1000), {
+    waydroid: 1500,
+    "taildrop:pixel-9": 2000,
+  });
+  // The file is newer than every mark: nothing has this build yet.
+  assertEquals(currentInstalls(marks, 2500), {});
+  assertEquals(currentInstalls(undefined, 1), {});
 });

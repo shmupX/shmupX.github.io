@@ -47,6 +47,7 @@ const { slugify, packageIdFor } = require("./lib/slug");
 const { fetchLevel } = require("./lib/fetch-level");
 const { downloadBgmForLevel } = require("./lib/download-bgm");
 const { stageWww } = require("./lib/stage");
+const { writeAppIcon } = require("./lib/app-icon");
 const { gameIdForLevel } = require("./lib/game-id");
 const {
   rebrandConfigXml,
@@ -274,6 +275,20 @@ async function main() {
     gameId,
   });
 
+  // The launcher icon: the game's own ship when it flies one, else the
+  // scaffold's Duke (lib/app-icon.js). Best-effort — a frame this cannot read
+  // is a worse icon, not a failed build.
+  let appIcon = null;
+  try {
+    appIcon = writeAppIcon({
+      levelData,
+      gameDir: GAME_DIR,
+      outDir: path.join(buildRoot, "app-icon"),
+    });
+  } catch (err) {
+    console.warn("  icon: " + err.message + "; Duke stays.");
+  }
+
   // 3. Custom BGM
   if (args.flags["skip-bgm"]) {
     console.log("\n[3/4] Skipping BGM download (--skip-bgm).");
@@ -328,6 +343,7 @@ async function main() {
           slug,
           platform: p,
           configXml: rebrandedConfig,
+          iconDir: appIcon ? appIcon.dir : null,
         });
       }
     } catch (err) {

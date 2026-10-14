@@ -2441,6 +2441,22 @@ and an installer is the closest thing to one file you can hand someone.
 in from the default install path when it is unset) and produces a
 **debug-signed** APK.
 
+**The APK's icon is the game's own ship.** The scaffold's launcher icons are
+Duke — 2028.Ai's player, his first frame scaled by whole pixels to each Android
+density. A game that flies a player of its own gets the same treatment from
+*its* first frame: `tools/build-level/lib/app-icon.js` applies `playsOwnShip`'s
+rule (`playerData.texture` set and, unless the record is a Dezaemon import,
+different from the base game's in `game.json`), cuts that frame out of the
+level's own atlas — or out of `game_asset.png` for a roster ship the base sheet
+already has — trims the air around it, and writes the six densities plus the
+PWA sizes to `build/<slug>/app-icon/`, which `run-cordova.js` lays over the
+cordova project's `res/android/` and `icons/` (so the Mobile shelf's row shows
+it too). A record that merely restates Duke, or names a frame no atlas has,
+keeps Duke — and says so in the build log. The desktop targets keep the
+scaffold's icons. `tests/build_level_app_icon_test.ts` runs the Node code
+against fixtures encoded by `lib/ps2/png.ts`, whose Node port is
+`tools/build-level/lib/png.js`.
+
 `build:ios` needs cordova everywhere and Xcode on top of it to finish. On a Mac
 it compiles the staged project with `xcodebuild` and wraps the result as an
 **unsigned `.ipa`** — signing is switched off rather than demanded, because the
@@ -3185,7 +3201,10 @@ What the section can do:
   Android SDK on the host — `canBuild` in the GET body says.
 - **A on a build** — runs it on the **default target**: Waydroid on a Linux
   desktop, the Windows Subsystem for Android on Windows, installing it there
-  first when it is not yet. Waydroid's session is started when it is stopped,
+  first when it is not yet. A rebuild on the same path outdates the row's ON
+  marks (the shelf shows only installs newer than the APK —
+  `currentInstalls`), so the next A installs the new build over the old one
+  rather than launching what is already there. Waydroid's session is started when it is stopped,
   and inside gamescope (Bazzite's Game Mode) the launch goes through
   `waydroid-launcher`; WSA is started through `WsaClient.exe` and reached on its
   fixed adb port (its Developer mode must be on).

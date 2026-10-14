@@ -439,6 +439,23 @@ export function mergeBuilds(
 }
 
 /**
+ * The install marks that still describe THIS APK. A mark older than the file
+ * was made by an earlier build on the same path, so after a rebuild the row
+ * stops saying "ON WAYDROID" and A installs again before launching. The
+ * registry keeps the old marks; this is only the shelf's view of them.
+ */
+export function currentInstalls(
+  installed: Record<string, number> | undefined,
+  builtAt: number,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [target, at] of Object.entries(installed || {})) {
+    if (typeof at === "number" && at >= builtAt) out[target] = at;
+  }
+  return out;
+}
+
+/**
  * Which target A on a row should use when the user has not said: something
  * that runs on this screen first, unless this screen is a remote one — then
  * the device in their hand. Null when there is nowhere to put it.
@@ -774,11 +791,12 @@ export async function listBuilds(): Promise<AndroidBuild[]> {
   for (const b of file.builds) {
     try {
       const stat = await Deno.stat(b.apk);
+      const builtAt = Math.max(b.builtAt || 0, stat.mtime?.getTime() || 0);
       live.push({
         ...b,
         size: stat.size,
-        builtAt: Math.max(b.builtAt || 0, stat.mtime?.getTime() || 0),
-        installed: b.installed || {},
+        builtAt,
+        installed: currentInstalls(b.installed, builtAt),
       });
     } catch { /* the APK is gone — the row goes with it */ }
   }
@@ -1098,10 +1116,11 @@ async function launchWaydroid(
   build: AndroidBuild,
   env: Record<string, string>,
   log: Log,
+  onTarget = false,
 ): Promise<string> {
   const status = await runRead("waydroid", ["status"], { timeoutMs: 10000 });
   const running = parseWaydroidStatus(status.text).sessionRunning;
-  if (!running || !(await waydroidHas(build.packageId))) {
+  if (!running || !onTarget || !(await waydroidHas(build.packageId))) {
     await installWaydroid(build, log);
   }
   const gameMode = env.XDG_CURRENT_DESKTOP === "gamescope" ||
@@ -1222,8 +1241,9 @@ async function launchAdb(
   serial: string,
   build: AndroidBuild,
   log: Log,
+  onTarget = false,
 ): Promise<string> {
-  if (!(await adbHas(adb, serial, build.packageId))) {
+  if (!onTarget || !(await adbHas(adb, serial, build.packageId))) {
     await installAdb(adb, serial, build, log);
   }
   const r = await adbRun(adb, [
@@ -1296,12 +1316,17 @@ export async function launchBuild(
   log: Log = () => {},
   env: Record<string, string> = Deno.env.toObject(),
 ): Promise<{ build: AndroidBuild; note: string }> {
+  // A mark on the row means THIS APK is on the target (listBuilds drops the
+  // marks an earlier build on the same path left). Without one the launch
+  // installs first — even over an older build of the same package.
+  const onTarget = (build.installed || {})[target] !== undefined;
   let note: string;
-  if (target === "waydroid") note = await launchWaydroid(build, env, log);
-  else if (target === "wsa") {
+  if (target === "waydroid") {
+    note = await launchWaydroid(build, env, log, onTarget);
+  } else if (target === "wsa") {
     const adb = await requireAdb(env);
     const serial = await ensureWsa(adb, env, log);
-    if (!(await adbHas(adb, serial, build.packageId))) {
+    if (!onTarget || !(await adbHas(adb, serial, build.packageId))) {
       await installAdb(adb, serial, build, log);
     }
     const client = wsaClientPath(env);
@@ -1311,7 +1336,13 @@ export async function launchBuild(
       note = "Launched in the Windows Subsystem for Android.";
     } else note = await launchAdb(adb, serial, build, log);
   } else if (target.startsWith("adb:")) {
-    note = await launchAdb(await requireAdb(env), target.slice(4), build, log);
+    note = await launchAdb(
+      await requireAdb(env),
+      target.slice(4),
+      build,
+      log,
+      onTarget,
+    );
   } else {
     // Taildrop has no launch: the phone's owner installs what arrived.
     await taildrop(target.slice(9), build, env, log);

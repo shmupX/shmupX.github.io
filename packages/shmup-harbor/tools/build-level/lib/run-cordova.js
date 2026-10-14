@@ -8,6 +8,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { applyAppIcon } = require("./app-icon");
 
 function copyFile(src, dst) {
   fs.mkdirSync(path.dirname(dst), { recursive: true });
@@ -139,6 +140,7 @@ async function buildCordova(opts) {
     slug,
     platform,
     configXml,
+    iconDir,
   } = opts;
   if (platform !== "android" && platform !== "ios") {
     throw new Error("Unsupported cordova platform: " + platform);
@@ -156,6 +158,10 @@ async function buildCordova(opts) {
   copyDir(path.join(scaffoldRoot, "hooks"), path.join(cordovaDir, "hooks"));
   copyDir(path.join(scaffoldRoot, "res"), path.join(cordovaDir, "res"));
   copyDir(path.join(scaffoldRoot, "icons"), path.join(cordovaDir, "icons"));
+  // The game's own ship over the scaffold's Duke, when lib/app-icon.js cut one.
+  if (applyAppIcon(iconDir, cordovaDir)) {
+    console.log("  icon: the game's own ship (" + iconDir + ")");
+  }
 
   const dstWww = path.join(cordovaDir, "www");
   if (fs.existsSync(dstWww)) fs.rmSync(dstWww, { recursive: true, force: true });
