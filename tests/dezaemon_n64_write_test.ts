@@ -1053,6 +1053,79 @@ Deno.test("more stages than a project holds are dropped with a warning, and a fu
   assert(crowded.warnings.some((w) => w.includes("ran out of room")));
 });
 
+Deno.test("the layout's cap keeps the boss last, a partial hit counts as one, and a wrong-size template sheet is warned about", () => {
+  // 1,200 cells and a boss: the layout holds 1,000, so 201 enemies go and
+  // the boss — the most negative frame, so always last — stays.
+  const rows: string[][] = [];
+  for (let r = 0; r < 40; r++) {
+    rows.push(Array.from({ length: 30 }, () => "A0"));
+  }
+  const big = buildN64ProjectFromLevel({
+    name: "big",
+    enemylist: rows,
+    enemyData: { enemyA: { texture: ["a0.png"], hp: 2.5 } },
+    bossData: { boss0: { texture: ["boss.png"], hp: 0.5 } },
+  }, tinyArt());
+  const bl = parseStageBl(big.files.find((f) => f.ext === "0BL")!.data) as Any;
+  assertEquals(bl.layout.map.length, 1000);
+  assertEquals(
+    bl.layout.map[999].enemy,
+    big.report.stages[0].records.bossEntry,
+    "the boss is the last placement",
+  );
+  assertEquals(
+    bl.layout.map.filter((e: Any) => e.enemy === bl.layout.map[999].enemy)
+      .length,
+    1,
+  );
+  assert(
+    big.warnings.some((w) => w.includes("201 dropped")),
+    big.warnings.join("; "),
+  );
+  assertEquals(
+    bl.enemies[0].hp,
+    2,
+    "hp 2.5 is three hits: a partial hit counts",
+  );
+  assertEquals(bl.enemies[1].hp, 0, "a boss of hp 0.5 takes one hit");
+  // a template GR of the wrong size is left out, not fatal
+  const odd = buildN64ProjectFromLevel(tinyLevel(), tinyArt(), {
+    template: [{ ext: "0GR", data: new Uint8Array(100) }],
+  });
+  assert(odd.warnings.some((w) => w.includes("template 0GR is 100 bytes")));
+  assertEquals(odd.report.stages[0].painted, 0);
+  // a letter past the 180 entries places no frames, so the boss keeps a model
+  const enemyData: Record<string, unknown> = {};
+  const art: Record<string, { w: number; h: number; rgba: Uint8Array }> = {};
+  const row: string[] = [];
+  for (let i = 0; i < 181; i++) {
+    const l = String.fromCharCode(65 + Math.floor(i / 26)) +
+      String.fromCharCode(65 + (i % 26));
+    enemyData[`enemy${l}`] = { texture: [`${l}.png`] };
+    art[`${l}.png`] = solid(8, 8, [i % 255, 0, 0]);
+    row.push(`${l}0`);
+  }
+  art["boss.png"] = solid(32, 32, [0, 255, 255]);
+  const full = buildN64ProjectFromLevel({
+    name: "full",
+    enemylist: [row],
+    enemyData,
+    bossData: { boss0: { texture: ["boss.png"] } },
+  }, art);
+  assertEquals(full.report.stages[0].records.entries, 180);
+  assert(full.warnings.some((w) => w.includes("is left out")));
+  assertEquals(
+    full.report.stages[0].records.bossEntry,
+    null,
+    "180 letters took every entry",
+  );
+  assertEquals(
+    full.report.stages[0].records.models,
+    130,
+    "the first 130 letters got models; the 181st placed none",
+  );
+});
+
 Deno.test("exportLevelToDdd: a level to an .ndd in one call, and onto a donor with its first project as the template", () => {
   const out = exportLevelToDdd(tinyLevel(), tinyArt(), {});
   assertEquals(out.format, "ndd");

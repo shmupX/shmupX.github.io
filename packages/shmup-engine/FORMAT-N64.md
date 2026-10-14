@@ -587,26 +587,27 @@ record, the four frame model numbers as 20 + the slot, the motion speed, a
 bullet-1 shot aimed at the player when the record names an interval, the item
 the digit maps to — the three shot power-ups the shot item, 4 bonus1, 5 the
 bomb, 9 the shield); then the boss's idle frames and an entry with the
-stage-clear and lock-on flags, HP 15 and a fixed motion. The **layout** puts
-every cell on the map layer at x across -400..400 by column and y 240, at the
-frame its row scrolls in (`-(row × 16)`, the row from the Saturn writer's
-`FIRST_SPAWN_ROW`/`ROW_STEP` or the stage's `waveRows`, so the two consoles pace
-a level the same way), the boss at x 0, y 400 after the last wave, entries in
-descending frame order; the map settings and map entries come from a template
-stage's `BL` when there is one, else the map is unset; no effects are written.
-The common files: the ship and the item icons as common models 10 and 12..18
-(the slots the cartridge's game uses) in `CMD`, the seven item entries pointing
-at them in `CBL`, `GAM` with the final stage set (a template's `GAM` is carried
-with only that byte changed — the prototype's 1,360-byte ones included), blank
-songs in `MUS`, an empty `ULB`; a template's `CMD`, `CBL`, `MUS` and `ULB` are
-carried instead. The report says per file whether it is `art`,
-`art over
-template`, `records`, `template`, `template, final stage set` or
-`blank`, per sheet how many textures were painted by the template, used, free,
-missed and scaled, and per stage its `records`: entries, models, placements, the
-boss's entry and whether the map is the template's. The limits are the format's:
-180 entries, 130 models, 1,000 placements and 260 textures a stage, each warned
-about when it runs out. A template is a project's thirty files decompressed —
+stage-clear and lock-on flags, its HP capped at 15 (15 when the record names
+none) and a fixed motion. The **layout** puts every cell on the map layer at x
+across -400..400 by column and y 240, at the frame its row scrolls in
+(`-(row × 16)`, the row from the Saturn writer's `FIRST_SPAWN_ROW`/`ROW_STEP` or
+the stage's `waveRows`, so the two consoles pace a level the same way), the boss
+at x 0, y 400 after the last wave, entries in descending frame order; the map
+settings and map entries come from a template stage's `BL` when there is one,
+else the map is unset; no effects are written. The common files: the ship and
+the item icons as common models 10 and 12..18 (the slots the cartridge's game
+uses) in `CMD`, the seven item entries pointing at them in `CBL`, `GAM` with the
+final stage set (a template's `GAM` is carried with only that byte changed — the
+prototype's 1,360-byte ones included), blank songs in `MUS`, an empty `ULB`; a
+template's `CMD`, `CBL`, `MUS` and `ULB` are carried instead. The report says
+per file whether it is `art`, `art over
+template`, `records`, `template`,
+`template, final stage set` or `blank`, per sheet how many textures were painted
+by the template, used, free, missed and scaled, and per stage its `records`:
+entries, models, placements, the boss's entry and whether the map is the
+template's. The limits are the format's: 180 entries, 130 models, 1,000
+placements and 260 textures a stage, each warned about when it runs out. A
+template is a project's thirty files decompressed —
 `templateFromDisk(image, name)` gives the named or the first project of a disk
 that way. Every number here that is not a measurement is a constant with its
 evidence beside it (`N64_MODEL_NUMBER_BASE`, `N64_LAYOUT_HALF_WIDTH`,

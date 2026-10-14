@@ -2127,11 +2127,12 @@ boss after the last wave; the ship and the item icons as common models 10 and
 12..18 in `CMD` with the item entries in `CBL` pointing at them; `GAM` with the
 final stage set. A donor's first project is the template (`--template NAME`
 picks another): its `CMD`, `CBL`, `MUS` and `ULB` are carried byte for byte, its
-`GAM` with one byte changed, its stage map tables reused; without one, the
-common files are the cartridge's own initial game (the codecs' defaults
-re-encode that save byte for byte), the songs blank and the maps unset. The
-donor's RAM area, LBA 1418 to 4291, is carried verbatim: the two directory
-copies inside it are rewritten and nothing else there is touched.
+`GAM` with one byte changed, its stage map tables reused; without one, `GAM` is
+the cartridge's own initial game with the final stage set (the codecs' defaults
+re-encode that save byte for byte), `CMD` and `CBL` hold the level's ship and
+item icons and nothing else, the songs are blank and the maps unset. The donor's
+RAM area, LBA 1418 to 4291, is carried verbatim: the two directory copies inside
+it are rewritten and nothing else there is touched.
 
 What is **not** written, and what is not known: the writable directory and its
 allocation map, `DEZA3D.SYS` and `DEZA3D.HSC`; any layout effect (no song, no

@@ -104,13 +104,14 @@ frame, an enemy entry per enemy letter and drop digit, the boss with the
 stage-clear flag, the layout of every cell at the frame its row scrolls in, the
 ship and item icons as common models. A template project on a donor disk — by
 default the first 64DD image in `dev-fixtures/`, an `.ndd` before a `.ddd` —
-lends its `CMD`, `CBL`, `MUS`, `ULB` and map tables; without one the common
-files are the cartridge's own initial game and the songs are blank. Every unit
-the records carry that is not a measurement is marked likely in the code, so the
-result is the level as the format document says a level is laid out, not a level
-anyone has seen the game play. `n64:probe report` on a built image is the
-quickest check that its directory and system area read back; `sys` on a built
-`.ndd` shows the system area an emulator would validate.
+lends its `CMD`, `CBL`, `MUS`, `ULB` and map tables; without one `GAM` is the
+cartridge's own initial game, `CMD` and `CBL` hold the ship and item icons
+alone, the songs are blank and the maps unset. Every unit the records carry that
+is not a measurement is marked likely in the code, so the result is the level as
+the format document says a level is laid out, not a level anyone has seen the
+game play. `n64:probe report` on a built image is the quickest check that its
+directory and system area read back; `sys` on a built `.ndd` shows the system
+area an emulator would validate.
 
 The disk is community content and is never committed; `dev-fixtures/` is
 gitignored, so a path is given explicitly rather than discovered, and the

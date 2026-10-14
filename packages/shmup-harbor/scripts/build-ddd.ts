@@ -26,8 +26,9 @@
 // the record codecs — a billboard model per frame, an enemy entry per letter,
 // the layout, the boss, the ship and items as common models — with a
 // TEMPLATE project on the donor (the donor's first, or --template NAME)
-// lending its CMD, CBL, MUS, ULB and map tables, or, with --no-template, the
-// cartridge's own initial game standing in for them. Every unit the records
+// lending its CMD, CBL, MUS, ULB and map tables, or, with --no-template, GAM
+// the cartridge's own initial game, CMD and CBL the level's ship and item
+// icons alone, the songs blank and the maps unset. Every unit the records
 // carry that is not a measurement is a reading of the format document marked
 // likely in the engine, and no disk this writes has been booted.
 //
@@ -69,7 +70,7 @@ export interface BuildDddOptions {
   noDisk?: boolean;
   /** The donor project whose files underlie the new one. Omitted: the donor's first. */
   template?: string | null;
-  /** No template: the common files are the cartridge's initial game, the songs blank, the maps unset. */
+  /** No template: GAM is the cartridge's initial game, CMD/CBL hold the ship and items alone, the songs are blank, the maps unset. */
   noTemplate?: boolean;
   /** The image to write: the whole disk (.ndd, the default) or the user area alone (.ddd). */
   format?: DiskFormat;
@@ -246,7 +247,7 @@ export async function buildDdd(
       ? `template: ${rep.templateProject}${
         options.template ? "" : " (the donor's first project)"
       } — its files underlie every one the art does not paint`
-      : "template: none — the common files are the cartridge's initial game, the songs blank, the maps unset",
+      : "template: none — GAM is the cartridge's initial game with the final stage set, CMD and CBL hold the ship and item icons alone, the songs are blank, the maps unset",
   );
   const sheet = (label: string, s: SheetReport) =>
     `${label} ${count(s.textures.length, "frame")} in ${

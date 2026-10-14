@@ -125,8 +125,15 @@ export const N64_UNITS_PER_PIXEL = 4;
 
 /** The layout's x across the screen: the sample's map layers run about -400..430. (likely) */
 export const N64_LAYOUT_HALF_WIDTH = 400;
-/** Where an enemy is placed on the map plane: the sample's second stage opens its enemies at y 240; its one layer-A entry — the boss, by its place at the end — sits at y 400. (likely) */
+/** Where an enemy is placed on the map plane: the sample's second stage opens its enemies at y 240. (likely) */
 export const N64_SPAWN_Y = 240;
+/**
+ * Where the boss is placed: y 400 is where the sample's second stage puts its
+ * one layer-A object — an invincible, scoreless one early in the stage, not a
+ * boss. The samples' own bosses are not placed by their layouts at all (the
+ * third stage ends by a stage-clear effect), so this is a reading, held
+ * because an entry has to go somewhere. (likely)
+ */
 export const N64_BOSS_Y = 400;
 /** A placement row (16 px) in frames at the Saturn's 1 px/frame, so the two consoles pace a level the same way. (likely) */
 export const N64_FRAMES_PER_ROW = 16;
@@ -398,7 +405,8 @@ function animationModels(slots) {
 export function enemyEntryFromEditor(rec, { slots, size, frames, drop = null, boss = false }) {
     const r = rec || {};
     const infinite = r.hp === "infinity";
-    const hits = infinite ? 16 : Math.max(1, Number(r.hp) || (boss ? 16 : 1));
+    // A partial hit counts as one: the editor admits any finite hp.
+    const hits = infinite ? 16 : Math.max(1, Math.ceil(Number(r.hp)) || (boss ? 16 : 1));
     const speed = Number.isFinite(r.speed) ? r.speed : 1;
     const frameRate = Number(r.frameRate);
     const animated = frames > 1 && Number.isFinite(frameRate) && frameRate > 0;
@@ -501,7 +509,18 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
     const bossData = (level && level.bossData) || {};
 
     // --- CGR: the common sheet, and the common models that show it ---
-    const cgr = new TextureSheet(N64_CGR_TEXTURES, templateFiles.get("CGR") || null);
+    // A template sheet of the wrong size is left out with a warning, the way
+    // a template BL that cannot be read is, rather than refusing the build.
+    const sheetFrom = (ext, count) => {
+        const t = templateFiles.get(ext) || null;
+        if (t && t.length !== count * TILE_BYTES) {
+            warn(`template ${ext} is ${t.length} bytes, not the ${count * TILE_BYTES} of ${count} textures; built on a blank sheet instead`);
+            templateFiles.delete(ext);
+            return new TextureSheet(count, null);
+        }
+        return new TextureSheet(count, t);
+    };
+    const cgr = sheetFrom("CGR", N64_CGR_TEXTURES);
     const common = { placed: [], missed: [], models: [] };
     const cmd = new Map(); // common slot -> {model, texture}
     const placeCommon = (key, grid) => {
@@ -536,7 +555,9 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         }
     });
     common.placed = cgr.placed;
-    common.models = [...cmd.entries()].map(([slot, m]) => ({ slot, texture: m.texture, key: m.key }));
+    // The report names the common models only when CMD is written here; a
+    // template's CMD is carried as it is, and then these show nothing.
+    common.models = templateFiles.has("CMD") ? [] : [...cmd.entries()].map(([slot, m]) => ({ slot, texture: m.texture, key: m.key }));
 
     // --- the stages ---
     const stageReports = [];
@@ -544,7 +565,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
     stages.forEach((st, i) => {
         const stage = STAGES[i];
         const grExt = `${stage}GR`, mdExt = `${stage}MD`, blExt = `${stage}BL`;
-        const sheet = new TextureSheet(N64_GR_TEXTURES, templateFiles.get(grExt) || null);
+        const sheet = sheetFrom(grExt, N64_GR_TEXTURES);
         const models = new ModelTable(N64_MD_MODELS);
         const entries = []; // enemy entries, index = enemy number
         const placements = []; // {enemy, x, y, frame}
@@ -605,6 +626,13 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
                 warn(`${st.key}: cell ${letter} names no enemyData.enemy${letter}; nothing drawn for it`);
                 continue;
             }
+            if (entries.length >= N64_BL_ENEMIES) {
+                // No entry could name its frames, so they are not placed either:
+                // a texture and a model nobody points at would only crowd out
+                // the letters after it, and the boss.
+                warn(`${st.key}: a stage holds ${N64_BL_ENEMIES} enemy entries and they are all taken — enemy${letter} is left out`);
+                continue;
+            }
             const frames = (rec.texture || []).map(lookup).filter(Boolean);
             if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "unnamed"}) has no frame in the art`);
             const kept = spreadFrames(frames, Math.min(framesPerEnemy, frames.length));
@@ -614,10 +642,6 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             let first = null;
             for (const drop of digits) {
                 if (entries.length >= N64_BL_ENEMIES) {
-                    if (first === null) {
-                        warn(`${st.key}: a stage holds ${N64_BL_ENEMIES} enemy entries and they are all taken — enemy${letter} is left out`);
-                        break;
-                    }
                     warn(`${st.key}: no entry left for enemy${letter}'s drop ${drop}; it drops what its first entry does`);
                     entryOf.set(`${letter}${drop}`, first);
                     continue;
@@ -638,8 +662,17 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             placements.push({ enemy: index, x, y: N64_SPAWN_Y, frame: -(c.row * N64_FRAMES_PER_ROW) });
         }
 
-        // The boss: an entry with the stage-clear flag, after the last wave.
+        // Descending frame order, as the sample stages keep theirs; at most
+        // 1000 between the enemies and the boss, which goes last.
         const boss = bossData[`boss${i}`] || null;
+        placements.sort((a, b) => b.frame - a.frame);
+        const room = LAYOUT_MAX_ENEMIES - (boss ? 1 : 0);
+        if (placements.length > room) {
+            warn(`${st.key}: a stage's layout holds ${LAYOUT_MAX_ENEMIES} enemies${boss ? " with the boss" : ""}; ${placements.length - room} dropped from the end`);
+            placements.length = room;
+        }
+
+        // The boss: an entry with the stage-clear flag, after the last wave.
         let bossEntry = null;
         if (boss) {
             const names = (boss.anim && Array.isArray(boss.anim.idle) && boss.anim.idle.length ? boss.anim.idle : boss.texture) || [];
@@ -657,12 +690,6 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             }
         }
 
-        // Descending frame order, as the sample stages keep theirs; at most 1000.
-        placements.sort((a, b) => b.frame - a.frame);
-        if (placements.length > LAYOUT_MAX_ENEMIES) {
-            warn(`${st.key}: a stage's layout holds ${LAYOUT_MAX_ENEMIES} enemies; ${placements.length - LAYOUT_MAX_ENEMIES} dropped from the end`);
-            placements.length = LAYOUT_MAX_ENEMIES;
-        }
         if (missed.length) warn(`${st.key}: the ${grExt} sheet or the ${mdExt} table ran out of room; not drawn: ${missed.join(", ")}`);
 
         // The map: a template stage's, else unset.
