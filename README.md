@@ -2086,34 +2086,46 @@ block after, the donor's streams carried byte for byte and never recompressed �
 then the read-only directory in its three copies, 834 bytes into LBA 1417, 1419
 and 1422, and for an `.ndd` the system area the emulators validate before they
 mount a disk: the donor's, or one built for a type-0 disk with the fields
-mupen64plus-core checks. Inside the project, the level's art is the only thing
-of the level's. Each frame is cut into 64×32 RGBA5551 textures (the one
-confirmed record format) and laid into the _free_ slots of the `CGR` sheet — the
-title pictures, the ship, the item icons — and of each stage's `GR` sheet — its
-enemies, their shots, its boss — never over a texture the template painted, so a
-donor project's own art survives. Every other file is the donor's first
-project's, byte for byte (`--template NAME` picks another), or, without a donor,
-zero bytes at its documented size. The donor's RAM area, LBA 1418 to 4291, is
-carried verbatim: the two directory copies inside it are rewritten and nothing
-else there is touched.
+mupen64plus-core checks. Inside the project, the level is placed, not only
+drawn. Each frame becomes one 64×32 RGBA5551 texture (the one confirmed record
+format; a bigger frame is shrunk to fit, aspect kept) in a _free_ slot of the
+`CGR` sheet — the title pictures, the ship, the item icons — or of its stage's
+`GR` sheet, never over a texture the template painted, so a donor project's own
+art survives. Then the records the 2024 translation's `file formats.txt`
+describes, through the typed codecs in
+`packages/shmup-engine/src/n64/records.js`: a billboard model per frame in the
+stage's `MD`, an enemy entry per enemy letter (one per drop digit on its cells)
+in its `BL` with score, HP, speed, a shot when the record fires and the item it
+drops, the boss with the stage-clear flag, and the layout — every cell on the
+map layer at x across the screen by column, at the frame its row scrolls in, the
+boss after the last wave; the ship and the item icons as common models 10 and
+12..18 in `CMD` with the item entries in `CBL` pointing at them; `GAM` with the
+final stage set. A donor's first project is the template (`--template NAME`
+picks another): its `CMD`, `CBL`, `MUS` and `ULB` are carried byte for byte, its
+`GAM` with one byte changed, its stage map tables reused; without one, the
+common files are the cartridge's own initial game (the codecs' defaults
+re-encode that save byte for byte), the songs blank and the maps unset. The
+donor's RAM area, LBA 1418 to 4291, is carried verbatim: the two directory
+copies inside it are rewritten and nothing else there is touched.
 
-What is **not** written: the writable directory and its allocation map,
-`DEZA3D.SYS` and `DEZA3D.HSC`, and any enemy, model, placement or song record —
-their layouts are only _likely_ (the parity page's section 03), and with no
-checksum anywhere in the format there is nothing to tell a wrong guess from a
-right one. So nothing on the disk refers to the textures yet: the result is the
-disk with the level's art on it, not a playable Dezaemon 3D game. A disk built
-on the prototype keeps the boot program and the save area the cartridge needs
-for disk mode; one built from nothing is recognised by this repo's reader and is
-not expected to put the cartridge into disk mode. Every disk is read back
-through the parser before it is written — the directory, its invariants, every
-new stream decompressed and compared — and the fixture-gated test rebuilds the
-prototype from its own two projects and gets the same bytes. Nothing here has
-booted one, though: there is no cartridge, no emulator and no disk fixture in
-CI, so every image is untested on hardware or in an emulator.
+What is **not** written, and what is not known: the writable directory and its
+allocation map, `DEZA3D.SYS` and `DEZA3D.HSC`; any layout effect (no song, no
+camera, no stage-clear command — the boss's flag is relied on); the `MUS`
+bodies. And every number the records carry that is not a measurement — that a
+stage's model _k_ is model number 20 + _k_, that x ±400 spans the screen and y
+240 is where an enemy appears, the UV units of a billboard — is a reading of the
+document and of the cartridge's sample stages, marked _likely_ in the code, and
+untested: a disk built on the prototype keeps the boot program and the save area
+the cartridge needs for disk mode; one built from nothing is recognised by this
+repo's reader and is not expected to put the cartridge into disk mode. Every
+disk is read back through the parser before it is written — the directory, its
+invariants, every new stream decompressed and compared — and the fixture-gated
+test rebuilds the prototype from its own two projects and gets the same bytes.
+Nothing here has booted one, though: there is no cartridge, no emulator and no
+disk fixture in CI, so every image is untested on hardware or in an emulator.
 `packages/shmup-engine/FORMAT-N64.md` records the writer's reach, confidence by
-confidence, and its "What the writer does not write" is the list of what has to
-be traced before it can place an enemy.
+confidence, and its "What the writer does not write" is the list of what a boot
+would settle.
 
 **And the launcher can boot it.** A data disk needs two files that are not ours
 to ship — Dezaemon 3D's cartridge and the 64DD's own IPL ROM — so, as the Super
@@ -3467,8 +3479,10 @@ library and shelf_. `n64dd` is local the same way: its player is
 [`static/n64dd/play.html`](static/n64dd/play.html), and the EmulatorJS it
 runs and the mupen64plus-next core come from the EmulatorJS CDN at the version
 `scripts/vendor-emulatorjs.ts` pins, not from this repo or the mirror — so it is
-online-only until somebody vendors that core. It has no section of its own; the
-editor's → PLAY 64DD row is what opens it. See _The Nintendo 64 disk_.
+online-only until somebody vendors that core. Its tile has nothing to list —
+no manifest, nothing filed on it — and says so (NO SHELF), pointing at the
+editor's → PLAY 64DD row, which is what opens it and what installs the core
+when it is not yet. See _The Nintendo 64 disk_.
 
 Nothing else is vendored here. [`static/emu-sw.js`](static/emu-sw.js) is a
 service worker that mirrors an installed core's path prefixes from the cmg

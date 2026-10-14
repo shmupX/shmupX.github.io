@@ -36,6 +36,9 @@ export * from "./system-area.js";
 export * from "./disk-write.js";
 export * from "./project-write.js";
 export * from "./export-ddd.js";
+// The records inside a project's files: enemy entries, layout, map, effects,
+// models, songs, the global settings.
+export * from "./records.js";
 // The English translation patch: xdelta3's VCDIFF over an XZ/LZMA2 decoder.
 export * from "./xz.js";
 export * from "./vcdiff.js";

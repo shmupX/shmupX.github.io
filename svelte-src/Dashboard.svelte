@@ -4659,6 +4659,23 @@
         hint: [],
       };
     }
+    // The Nintendo 64DD section has nothing to list at all: its catalogue
+    // entry carries no manifest (the core is served from this origin, like
+    // the Super Famicom's), nothing is filed on it, and the one thing it
+    // plays — a disk the level editor built, beside the operator's own
+    // Dezaemon 3D cartridge and 64DD IPL — is opened from the editor's row,
+    // which also installs the core (ensureN64ddCore). Without this branch the
+    // tile would read "fetching undefined" for ever.
+    if (core.id === 'n64dd') {
+      return {
+        title: 'NO SHELF',
+        pre: 'A 64DD disk is built and opened from the level editor\u2019s ',
+        path: 'CONSOLE → N64 → PLAY 64DD',
+        post: ' row, with the Dezaemon 3D cartridge and the 64DD IPL found on this machine ' +
+          '(dev-fixtures/, or $DEZAEMON_N64_ROM and $N64DD_IPL); nothing is listed here.',
+        hint: [],
+      };
+    }
     // The PlayStation section has a real mirror shelf, so the manifest states
     // below are not nonsense here the way they were for the Super Famicom —
     // they just never mention dev-fixtures/, which is where this section's own

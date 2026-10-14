@@ -1,39 +1,81 @@
 // A level record -> a Dezaemon 3D project: the thirty files a project on a
-// 64DD data disk is made of, with the level's art in the texture sheets.
+// 64DD data disk is made of, with the level's art in the texture sheets and
+// its enemies in the records.
 //
 // This is the N64 counterpart of src/write/game-to-save.js and
-// src/psx/kids-write.js, and it is honest about how far it reaches. What is
-// known about a project's files is on static/dezaemon-parity-n64.html: the
-// two graphics types are CONFIRMED (RGBA5551 on 64x32 tiles, 40 in CGR and
-// 260 in each stage's GR), the sizes of every file are confirmed by the
-// prototype disk's own extraction, and the records inside the other seven
-// types — enemy entries, placement, model tables, songs, the global settings
-// — are LIKELY in layout and OPEN in meaning. A writer that painted bytes it
-// cannot name would be guessing, so this one does not:
+// src/psx/kids-write.js. The first version laid the art alone, because the
+// records were unknown; they are known now — records.js carries the codecs
+// read from the 2024 translation's "file formats.txt" — so this one places
+// the level, and is honest about which of its choices are measured and
+// which are the best reading of a document nobody here has put in front of
+// the game:
 //
-//   CGR, #GR   the level's frames, each cut into 64x32 textures (a frame
-//              wider or taller than one is a grid of them), laid into the
-//              sheet's BLANK textures — never over a painted one, so a
-//              template's own art survives — in a fixed order the report
-//              names tile by tile: the title pictures, the ship and the
-//              item icons in CGR; a stage's enemies, their projectiles and
-//              its boss in that stage's GR
-//   the rest   a TEMPLATE's bytes when one is given (a project off a real
-//              disk — the sample SAMPLEZ1 is the one this repo has), else
-//              zero bytes at the documented size
+//   CGR, #GR   the level's frames as 64x32 RGBA5551 textures (CONFIRMED
+//              format), one texture per frame — a model shows ONE texture,
+//              so a frame wider than 64 or taller than 32 is shrunk to fit,
+//              aspect kept — laid into the sheet's BLANK textures, never
+//              over a painted one, so a template's own art survives
+//   #MD        a billboard per placed frame: a flat quad the size of the
+//              sprite, textured from its texture (records.js billboardModel;
+//              the UV units are the document's as written, OPEN)
+//   #BL        an enemy entry per enemy letter (one per drop digit on its
+//              cells, as the Saturn writer does, because an entry carries
+//              one item), its frames' model numbers, score, HP, speed, a
+//              shot when it fires, the item it drops; the boss with the
+//              stage-clear flag; the layout of every cell on the map layer
+//              at the frame its row scrolls in; no effects; the map carried
+//              from a template stage or left unset
+//   CMD, CBL   the ship and the item icons as common models 10 and 12..18 —
+//              the slots the cartridge's own game uses — with the seven item
+//              entries pointing at them; a template's bytes when given
+//   GAM        a template's with its final stage set, else the cartridge's
+//              initial game (records.js gamDefaults) with the final stage set
+//   MUS, ULB   a template's, else blank songs and an empty library
 //
-// So a project this builds from the sample is the sample with the level's
-// art added in its free texture slots, and one built from nothing is the
-// art and empty records. Neither places the level's enemies: nothing on the
-// disk refers to the textures this lays, and FORMAT-N64.md "What the writer
-// does not write" is the list of what has to be traced before it can.
+// Where a number here is a reading rather than a measurement it is named in
+// a constant below with its evidence. The two that matter most: model
+// numbers in an entry are 20 + the stage's model slot (the sample game's
+// stage entries use 20..148 almost exclusively while its common entries and
+// items use 8..19, so the common CMD comes first — LIKELY); layout x runs
+// about -400..400 across the screen and the frame offset counts DOWN from
+// the start, entries in descending order (measured on the sample's three
+// stages — LIKELY in meaning, CONFIRMED in shape). Nothing this writes has
+// been booted: FORMAT-N64.md "What the writer does not write" is the list of
+// what is still carried rather than built.
 //
 // Environment-neutral ESM (Node + browser).
 
-import { decodeFrameKey, fitRgba, levelStages, spreadFrames } from "../write/game-to-save.js";
+import {
+    BOSS_ROW_GAP,
+    decodeFrameKey,
+    FIRST_SPAWN_ROW,
+    fitRgba,
+    levelStages,
+    MAX_SPAWN_ROW,
+    ROW_STEP,
+    spreadFrames,
+} from "../write/game-to-save.js";
+import { ANIM_PERIOD_TABLE, FIRE_INTERVAL_TABLE } from "../decode/decode-enemy.js";
 import { decodePlayerArt } from "../player-art.js";
 import { DOCUMENTED_SIZES, normalizeProjectName, projectExts, sizeKey, STAGES } from "./directory.js";
 import { TILE_BYTES, TILE_HEIGHT, TILE_WIDTH } from "./graphics.js";
+import {
+    billboardModel,
+    BL_ENEMY_COUNT,
+    buildCbl,
+    buildCmdFile,
+    buildMdFile,
+    buildMusFile,
+    buildStageBl,
+    buildUlbFile,
+    CBL_ITEMS,
+    CMD_MODEL_COUNT,
+    encodeGam,
+    ENEMY_SCORE_TABLE,
+    LAYOUT_MAX_ENEMIES,
+    MD_MODEL_COUNT,
+    parseStageBl,
+} from "./records.js";
 
 /** One texture: a 64x32 RGBA5551 tile, 0x1000 bytes. */
 export const N64_TEXTURE_BYTES = TILE_BYTES;
@@ -42,16 +84,16 @@ export const N64_TEXTURE_BYTES = TILE_BYTES;
 export const N64_CGR_TEXTURES = DOCUMENTED_SIZES.CGR / TILE_BYTES; // 40
 export const N64_GR_TEXTURES = DOCUMENTED_SIZES.GR / TILE_BYTES; // 260
 
-/** The record counts the documentation gives, from which the file sizes follow. (likely) */
+/** The record counts the documentation gives, from which the file sizes follow. (confirmed by the sizes) */
 export const N64_MODEL_BYTES = 0xc20;
 export const N64_ENTRY_BYTES = 0x5c;
-export const N64_CMD_MODELS = 20;
-export const N64_MD_MODELS = 130;
+export const N64_CMD_MODELS = CMD_MODEL_COUNT;
+export const N64_MD_MODELS = MD_MODEL_COUNT;
 export const N64_ULB_MODELS = 8;
 export const N64_ULB_TEXTURES = 8;
 export const N64_CBL_ENEMIES = 20;
 export const N64_CBL_ITEMS = 7;
-export const N64_BL_ENEMIES = 180;
+export const N64_BL_ENEMIES = BL_ENEMY_COUNT;
 export const N64_SONGS = 24;
 export const N64_SONG_BYTES = 0x2c9a;
 export const N64_SONG_HEADER_BYTES = 0x1a;
@@ -66,10 +108,56 @@ export const N64_TITLE_ROWS = 2;
 /** Frames per enemy kept in a stage sheet; the rest of an animation is dropped. */
 export const N64_FRAMES_PER_ENEMY = 4;
 
+/**
+ * An entry's model number for a stage model slot: 20 + the slot. The sample
+ * game's three stages name models 20..148 in their entries and 0..19 only
+ * from the common entries and the seven items (which use 12..18), so the
+ * common CMD's twenty come first and the stage's 130 follow. (likely)
+ */
+export const N64_MODEL_NUMBER_BASE = N64_CMD_MODELS;
+
+/** The common model slots the cartridge's own game gives the ship (GAM player.models[0] = 10) and the seven items (CBL's item entries name 12..18). (likely) */
+export const N64_PLAYER_MODEL = 10;
+export const N64_ITEM_MODELS = Object.freeze([12, 13, 14, 15, 16, 17, 18]);
+
+/** A sprite pixel in model units: 32 px becomes a 128-unit quad, the size of the sample game's ordinary objects. (likely) */
+export const N64_UNITS_PER_PIXEL = 4;
+
+/** The layout's x across the screen: the sample's map layers run about -400..430. (likely) */
+export const N64_LAYOUT_HALF_WIDTH = 400;
+/** Where an enemy is placed on the map plane: the sample's second stage opens its enemies at y 240; its one layer-A entry — the boss, by its place at the end — sits at y 400. (likely) */
+export const N64_SPAWN_Y = 240;
+export const N64_BOSS_Y = 400;
+/** A placement row (16 px) in frames at the Saturn's 1 px/frame, so the two consoles pace a level the same way. (likely) */
+export const N64_FRAMES_PER_ROW = 16;
+
+/** motion speed 1..3 (0..7) from a runtime px/frame. (likely) */
+export const N64_SPEED_TABLE = Object.freeze([0, 0.5, 1, 1.5, 2, 3, 4, 6]);
+/** hit size (0..7) from a sprite's larger side in px. (likely) */
+export const N64_HIT_SIZE_TABLE = Object.freeze([8, 16, 24, 32, 48, 64, 96, 128]);
+/** The web's drop digits -> the item an entry drops (0 shot, 1 laser, 2 bomb, 3 shield, 4 1UP, 5 bonus1, 6 bonus2): the three shot power-ups all become the shot item, 4 (score) bonus1, 5 (bomb) the bomb, 9 (barrier) the shield. (likely) */
+export const N64_DROP_ITEMS = Object.freeze({ 1: 0, 2: 0, 3: 0, 4: 5, 5: 2, 9: 3 });
+/** The item entries' own settings in the cartridge's game: invincible (hp mode 2), hit size 4, scale 45. (measured) */
+export const N64_ITEM_ENTRY = Object.freeze({ scale: 45, hitMode: 2, hitSize: 4 });
+
 /** The documented size of a file by extension, or null for one the format does not name. */
 export function fileSizeFor(ext) {
     const key = sizeKey(String(ext).toUpperCase());
     return key in DOCUMENTED_SIZES ? DOCUMENTED_SIZES[key] : null;
+}
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+function nearestIndex(table, value) {
+    let best = 0, bestD = Infinity;
+    table.forEach((v, i) => {
+        const d = Math.abs(v - value);
+        if (d < bestD) {
+            bestD = d;
+            best = i;
+        }
+    });
+    return best;
 }
 
 /**
@@ -132,6 +220,74 @@ export function textureGrid(frame, options = {}) {
     return { cols, rows, tiles };
 }
 
+/**
+ * A frame no larger than maxW x maxH: the frame itself when it fits, else a
+ * nearest-neighbour downscale that keeps its aspect, top-left origin.
+ * @param {{w: number, h: number, rgba: Uint8Array|Uint8ClampedArray}} frame
+ * @returns {{w: number, h: number, rgba: Uint8Array|Uint8ClampedArray, scaled: boolean}}
+ */
+export function shrinkRgba(frame, maxW = TILE_WIDTH, maxH = TILE_HEIGHT) {
+    const scale = Math.min(1, maxW / frame.w, maxH / frame.h);
+    if (scale === 1) return { w: frame.w, h: frame.h, rgba: frame.rgba, scaled: false };
+    const w = Math.max(1, Math.round(frame.w * scale));
+    const h = Math.max(1, Math.round(frame.h * scale));
+    const out = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++) {
+        const sy = Math.min(frame.h - 1, Math.floor((y + 0.5) / scale));
+        for (let x = 0; x < w; x++) {
+            const sx = Math.min(frame.w - 1, Math.floor((x + 0.5) / scale));
+            const s = (sy * frame.w + sx) * 4;
+            const d = (y * w + x) * 4;
+            out[d] = frame.rgba[s];
+            out[d + 1] = frame.rgba[s + 1];
+            out[d + 2] = frame.rgba[s + 2];
+            out[d + 3] = frame.rgba[s + 3];
+        }
+    }
+    return { w, h, rgba: out, scaled: true };
+}
+
+/**
+ * One frame as ONE texture — what a model can show — shrunk to 64x32 when it
+ * is bigger, top-left aligned: {grid (one tile), w, h (the sprite's pixels in
+ * the texture), scaled}.
+ * @param {{w: number, h: number, rgba: Uint8Array|Uint8ClampedArray}} frame
+ */
+export function spriteTexture(frame, options = {}) {
+    const small = shrinkRgba(frame);
+    return { grid: textureGrid(small, options), w: small.w, h: small.h, scaled: small.scaled };
+}
+
+/** The tile power for `px` pixels: the smallest p with 1 << (p + 1) >= px (16 -> 3, 32 -> 4, 64 -> 5). */
+export function tilePower(px) {
+    let p = 0;
+    while ((1 << (p + 1)) < px && p < 7) p++;
+    return p;
+}
+
+/**
+ * The billboard model for a sprite of w x h texture pixels: a quad of
+ * N64_UNITS_PER_PIXEL units a pixel, its two faces' UVs over the sprite's own
+ * pixel box on tile 1 (the sample models leave tile 0 blank), the tile sized
+ * to the next power of two. (likely: the UV units are the document's)
+ * @param {{w: number, h: number}} sprite
+ * @param {number} [light]
+ */
+export function spriteModel(sprite, light = 0) {
+    const w = Math.max(1, sprite.w), h = Math.max(1, sprite.h);
+    const model = billboardModel({
+        width: clamp(w * N64_UNITS_PER_PIXEL, 1, 0x7fff),
+        height: clamp(h * N64_UNITS_PER_PIXEL, 1, 0x7fff),
+        tileWidthPower: tilePower(w),
+        tileHeightPower: tilePower(h),
+        tile: 1,
+        light,
+    });
+    model.faces[0].uv = [[0, 0], [w, 0], [w, h]];
+    model.faces[1].uv = [[0, 0], [w, h], [0, h]];
+    return model;
+}
+
 /** Whether a texture is every word zero: nothing drawn, so free for the taking. */
 export function isBlankTexture(bytes) {
     for (let i = 0; i < bytes.length; i++) if (bytes[i] !== 0) return false;
@@ -158,7 +314,7 @@ export class TextureSheet {
         }
         this.blank = Array.from({ length: count }, (_, i) => isBlankTexture(this.bytes.subarray(i * TILE_BYTES, (i + 1) * TILE_BYTES)));
         this.painted = this.blank.filter((b) => !b).length; // the template's own art
-        this.placed = []; // {key, index, cols, rows}
+        this.placed = []; // {key, index, cols, rows, textures}
     }
 
     /** Textures still blank. */
@@ -190,6 +346,25 @@ export class TextureSheet {
     }
 }
 
+/** A model table of `count` slots: models and the texture index each shows. */
+class ModelTable {
+    constructor(count) {
+        this.count = count;
+        this.models = [];
+        this.textures = [];
+    }
+    /** @returns {number|null} the slot, or null when the table is full */
+    add(model, texture) {
+        if (this.models.length >= this.count) return null;
+        this.models.push(model);
+        this.textures.push(texture);
+        return this.models.length - 1;
+    }
+    get used() {
+        return this.models.length;
+    }
+}
+
 /** The letter and drop digit of a grid cell, or null for an empty one. */
 function cellParts(cell) {
     if (typeof cell !== "string" || cell.length < 2 || cell === "00") return null;
@@ -203,6 +378,76 @@ function asFrame(f) {
     return { w: f.w, h: f.h, rgba: f.rgba };
 }
 
+/** The four model numbers of an entry's animation from the placed frames' slots (-1 for a frame that got no slot): repeat the last, 0xFF for none. */
+function animationModels(slots) {
+    const numbers = slots.filter((s) => s >= 0).map((s) => N64_MODEL_NUMBER_BASE + s);
+    if (!numbers.length) return [0xff, 0xff, 0xff, 0xff];
+    return [0, 1, 2, 3].map((i) => numbers[Math.min(i, numbers.length - 1)]);
+}
+
+/**
+ * An enemy entry (records.js encodeEnemyEntry's shape) for an editor enemy
+ * record: score and HP from the record, the animation over the placed
+ * frames, the speed, a shot when the record fires, the item its cells drop,
+ * and for a boss the stage-clear and lock-on flags with a fixed motion.
+ * Every table here is a reading of the document's ranges (likely).
+ *
+ * @param {object} rec        enemyData.enemyX (or a boss record)
+ * @param {{slots: number[], size: number, frames: number, drop?: number|null, boss?: boolean}} placed
+ */
+export function enemyEntryFromEditor(rec, { slots, size, frames, drop = null, boss = false }) {
+    const r = rec || {};
+    const infinite = r.hp === "infinity";
+    const hits = infinite ? 16 : Math.max(1, Number(r.hp) || (boss ? 16 : 1));
+    const speed = Number.isFinite(r.speed) ? r.speed : 1;
+    const frameRate = Number(r.frameRate);
+    const animated = frames > 1 && Number.isFinite(frameRate) && frameRate > 0;
+    const proj = r.projectileData || null;
+    const interval = Number(r.interval);
+    const fires = !!proj && Number.isFinite(interval) && interval > 0;
+    const item = drop !== null && drop in N64_DROP_ITEMS ? N64_DROP_ITEMS[drop] : null;
+    const blastScale = size < 24 ? 0 : size < 48 ? 1 : size < 96 ? 2 : 3;
+    const entry = {
+        score: nearestIndex(ENEMY_SCORE_TABLE, Number(r.score) || (boss ? 10000 : 100)),
+        hp: clamp(hits - 1, 0, 15),
+        animation: {
+            disabled: !animated,
+            frameSpeed: animated ? nearestIndex(ANIM_PERIOD_TABLE, 60 / frameRate) : 0x7f,
+            models: animationModels(slots),
+        },
+        scale: 100,
+        motion: { type: boss ? 1 : 0, speed1: nearestIndex(N64_SPEED_TABLE, speed) },
+        hit: {
+            lockOn: boss,
+            stageClear: boss,
+            hpMode: infinite && !boss ? 2 : 0,
+            size: nearestIndex(N64_HIT_SIZE_TABLE, size),
+        },
+        blast: { particle: true, scale: blastScale },
+    };
+    if (fires) {
+        entry.shots = [{
+            type: 0, // bullet 1
+            direction: 0,
+            variant: 1,
+            speed: nearestIndex(N64_SPEED_TABLE, Number(proj.speed) || 2),
+            aimAtPlayer: true,
+            timing: nearestIndex(FIRE_INTERVAL_TABLE, interval),
+        }];
+    }
+    if (item !== null) entry.item = { enabled: true, value: item };
+    return entry;
+}
+
+/** The item entry that shows common model `model` (the cartridge's own items' settings). */
+function itemEntry(model) {
+    return {
+        animation: { disabled: true, frameSpeed: 0x7f, models: [model, model, model, model] },
+        scale: N64_ITEM_ENTRY.scale,
+        hit: { hpMode: N64_ITEM_ENTRY.hitMode, size: N64_ITEM_ENTRY.hitSize },
+    };
+}
+
 /**
  * A level record and its RGBA frames -> a project's files.
  *
@@ -210,7 +455,7 @@ function asFrame(f) {
  *   name      the project's name (normalizeProjectName); default the level's
  *   template  a project's files to start from — [{ext, data}] or a Map of
  *             ext -> bytes, decompressed, as readProjects() + decompress()
- *             give them off a disk; null for zeros
+ *             give them off a disk; null for none
  *   title1, title2  the title pictures as RGBA frames, each fitted to 128x64
  *   framesPerEnemy  frames kept per enemy animation (4)
  *
@@ -255,18 +500,19 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
     const enemyData = (level && level.enemyData) || {};
     const bossData = (level && level.bossData) || {};
 
-    // --- CGR: the common sheet ---
+    // --- CGR: the common sheet, and the common models that show it ---
     const cgr = new TextureSheet(N64_CGR_TEXTURES, templateFiles.get("CGR") || null);
-    const common = { placed: [], missed: [] };
-    const placeCommon = (key, frame) => {
-        if (!frame) return;
-        const at = cgr.place(key, textureGrid(frame));
+    const common = { placed: [], missed: [], models: [] };
+    const cmd = new Map(); // common slot -> {model, texture}
+    const placeCommon = (key, grid) => {
+        const at = cgr.place(key, grid);
         if (at === null) common.missed.push(key);
+        return at;
     };
     for (const [key, pic] of [["title1", title1], ["title2", title2]]) {
         const f = asFrame(pic);
         if (!f) continue;
-        placeCommon(key, fitRgba(f, N64_TITLE_COLS * TILE_WIDTH, N64_TITLE_ROWS * TILE_HEIGHT));
+        placeCommon(key, textureGrid(fitRgba(f, N64_TITLE_COLS * TILE_WIDTH, N64_TITLE_ROWS * TILE_HEIGHT)));
     }
     let shipFrames = (((level && level.playerData) || {}).texture || []).map(lookup).filter(Boolean);
     let shipSource = "level";
@@ -274,30 +520,85 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         shipSource = "duke";
         shipFrames = decodePlayerArt().filter((f) => /^duke_\d$/.test(f.key)).slice(0, 2);
     }
-    spreadFrames(shipFrames, Math.min(2, shipFrames.length)).forEach((f, i) => placeCommon(`ship:${i}:${f.key}`, f));
+    spreadFrames(shipFrames, Math.min(2, shipFrames.length)).forEach((f, i) => {
+        const t = spriteTexture(f);
+        const at = placeCommon(`ship:${i}:${f.key}`, t.grid);
+        if (at !== null && i === 0) cmd.set(N64_PLAYER_MODEL, { model: spriteModel(t), texture: at, key: `ship:${f.key}` });
+    });
     const itemFrames = Object.entries(art || {}).filter(([k]) => /item|powerup|speedup|1up/i.test(k)).slice(0, 8);
-    for (const [k] of itemFrames) placeCommon(`item:${decodeFrameKey(k)}`, lookup(k));
+    itemFrames.forEach(([k], i) => {
+        const f = lookup(k);
+        if (!f) return;
+        const t = spriteTexture(f);
+        const at = placeCommon(`item:${decodeFrameKey(k)}`, t.grid);
+        if (at !== null && i < N64_ITEM_MODELS.length) {
+            cmd.set(N64_ITEM_MODELS[i], { model: spriteModel(t), texture: at, key: `item:${decodeFrameKey(k)}` });
+        }
+    });
     common.placed = cgr.placed;
+    common.models = [...cmd.entries()].map(([slot, m]) => ({ slot, texture: m.texture, key: m.key }));
 
     // --- the stages ---
     const stageReports = [];
-    const sheets = new Map(); // ext -> bytes
+    const built = new Map(); // ext -> bytes
     stages.forEach((st, i) => {
         const stage = STAGES[i];
-        const ext = `${stage}GR`;
-        const sheet = new TextureSheet(N64_GR_TEXTURES, templateFiles.get(ext) || null);
+        const grExt = `${stage}GR`, mdExt = `${stage}MD`, blExt = `${stage}BL`;
+        const sheet = new TextureSheet(N64_GR_TEXTURES, templateFiles.get(grExt) || null);
+        const models = new ModelTable(N64_MD_MODELS);
+        const entries = []; // enemy entries, index = enemy number
+        const placements = []; // {enemy, x, y, frame}
         const missed = [];
-        const place = (key, frame) => {
-            if (!frame) return;
-            if (sheet.place(key, textureGrid(frame)) === null) missed.push(key);
+        const scaled = [];
+
+        // A frame -> its texture and model slot; -1 for a frame that found no room.
+        const placeFrame = (key, frame) => {
+            if (models.used >= models.count) {
+                missed.push(key); // no model slot left: the texture would show nothing
+                return -1;
+            }
+            const t = spriteTexture(frame);
+            if (t.scaled) scaled.push(key);
+            const at = sheet.place(key, t.grid);
+            if (at === null) {
+                missed.push(key);
+                return -1;
+            }
+            return models.add(spriteModel(t), at);
         };
-        const letters = [];
+
+        // The cells: which letters, how often, with which drop digits.
+        const width = Math.max(1, (level && level.width) || 0, ...st.enemylist.map((row) => row.length));
+        const spawnRows = st.enemylist.slice().reverse();
+        const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
+        const usage = new Map(); // letter -> {count, digits: Map digit -> count}
+        const cells = []; // {letter, drop, col, row}
+        let lastRow = FIRST_SPAWN_ROW;
+        spawnRows.forEach((row, k) => {
+            const scrollRow = waveRows ? clamp(Math.round(waveRows[k]), 0, MAX_SPAWN_ROW) : Math.min(MAX_SPAWN_ROW, FIRST_SPAWN_ROW + k * ROW_STEP);
+            row.forEach((cell, col) => {
+                const parts = cellParts(cell);
+                if (!parts) return;
+                cells.push({ ...parts, col, row: scrollRow });
+                if (!usage.has(parts.letter)) usage.set(parts.letter, { count: 0, digits: new Map() });
+                const u = usage.get(parts.letter);
+                u.count++;
+                u.digits.set(parts.drop, (u.digits.get(parts.drop) || 0) + 1);
+                lastRow = Math.max(lastRow, scrollRow);
+            });
+        });
+        const letters = [...usage.keys()].sort((a, b) => usage.get(b).count - usage.get(a).count);
+        const gridLetters = []; // the report's order: as the grid reads, top row first
         for (const row of st.enemylist) {
             for (const cell of row) {
                 const parts = cellParts(cell);
-                if (parts && !letters.includes(parts.letter)) letters.push(parts.letter);
+                if (parts && !gridLetters.includes(parts.letter)) gridLetters.push(parts.letter);
             }
         }
+
+        // An entry per letter and drop digit, most-placed letters first.
+        const entryOf = new Map(); // "A1" -> entry index
+        const stageEnemies = [];
         for (const letter of letters) {
             const rec = enemyData[`enemy${letter}`];
             if (!rec) {
@@ -306,60 +607,163 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             }
             const frames = (rec.texture || []).map(lookup).filter(Boolean);
             if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "unnamed"}) has no frame in the art`);
-            spreadFrames(frames, Math.min(framesPerEnemy, frames.length)).forEach((f, k) => place(`enemy${letter}:${k}:${f.key}`, f));
-            const shot = rec.projectileData && rec.projectileData.texture ? lookup(rec.projectileData.texture[0]) : null;
-            if (shot) place(`enemy${letter}:shot:${shot.key}`, shot);
+            const kept = spreadFrames(frames, Math.min(framesPerEnemy, frames.length));
+            const slots = kept.map((f, k) => placeFrame(`enemy${letter}:${k}:${f.key}`, f));
+            const size = frames.reduce((a, f) => Math.max(a, f.w, f.h), 16);
+            const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
+            let first = null;
+            for (const drop of digits) {
+                if (entries.length >= N64_BL_ENEMIES) {
+                    if (first === null) {
+                        warn(`${st.key}: a stage holds ${N64_BL_ENEMIES} enemy entries and they are all taken — enemy${letter} is left out`);
+                        break;
+                    }
+                    warn(`${st.key}: no entry left for enemy${letter}'s drop ${drop}; it drops what its first entry does`);
+                    entryOf.set(`${letter}${drop}`, first);
+                    continue;
+                }
+                const index = entries.length;
+                entries.push(enemyEntryFromEditor(rec, { slots, size, frames: kept.length, drop }));
+                entryOf.set(`${letter}${drop}`, index);
+                if (first === null) first = index;
+            }
+            if (first !== null) stageEnemies.push({ letter, name: rec.name || null, entries: digits.map((d) => entryOf.get(`${letter}${d}`)), slots, size });
         }
+
+        // The layout: every cell on the map layer at the frame its row scrolls in, x across the screen.
+        for (const c of cells) {
+            const index = entryOf.get(`${c.letter}${c.drop}`);
+            if (index === undefined) continue;
+            const x = width <= 1 ? 0 : Math.round(-N64_LAYOUT_HALF_WIDTH + (c.col * 2 * N64_LAYOUT_HALF_WIDTH) / (width - 1));
+            placements.push({ enemy: index, x, y: N64_SPAWN_Y, frame: -(c.row * N64_FRAMES_PER_ROW) });
+        }
+
+        // The boss: an entry with the stage-clear flag, after the last wave.
         const boss = bossData[`boss${i}`] || null;
+        let bossEntry = null;
         if (boss) {
-            const idle = (boss.anim && boss.anim.idle && boss.anim.idle[0]) || (boss.texture && boss.texture[0]) || null;
-            const f = lookup(idle);
-            if (f) place(`boss${i}:${f.key}`, f);
-            else warn(`${st.key}: boss${i} has no idle frame in the art`);
+            const names = (boss.anim && Array.isArray(boss.anim.idle) && boss.anim.idle.length ? boss.anim.idle : boss.texture) || [];
+            const frames = names.map(lookup).filter(Boolean);
+            if (!frames.length) warn(`${st.key}: boss${i} has no idle frame in the art`);
+            const kept = spreadFrames(frames, Math.min(framesPerEnemy, frames.length));
+            const slots = kept.map((f, k) => placeFrame(`boss${i}:${k}:${f.key}`, f));
+            const size = frames.reduce((a, f) => Math.max(a, f.w, f.h), 64);
+            if (entries.length >= N64_BL_ENEMIES) {
+                warn(`${st.key}: no enemy entry left for boss${i}; the stage has no end`);
+            } else {
+                bossEntry = entries.length;
+                entries.push(enemyEntryFromEditor(boss, { slots, size, frames: kept.length, boss: true }));
+                placements.push({ enemy: bossEntry, x: 0, y: N64_BOSS_Y, frame: -((lastRow + BOSS_ROW_GAP) * N64_FRAMES_PER_ROW) });
+            }
         }
-        if (missed.length) warn(`${st.key}: the ${ext} sheet ran out of blank textures; not drawn: ${missed.join(", ")}`);
-        sheets.set(ext, sheet.bytes);
+
+        // Descending frame order, as the sample stages keep theirs; at most 1000.
+        placements.sort((a, b) => b.frame - a.frame);
+        if (placements.length > LAYOUT_MAX_ENEMIES) {
+            warn(`${st.key}: a stage's layout holds ${LAYOUT_MAX_ENEMIES} enemies; ${placements.length - LAYOUT_MAX_ENEMIES} dropped from the end`);
+            placements.length = LAYOUT_MAX_ENEMIES;
+        }
+        if (missed.length) warn(`${st.key}: the ${grExt} sheet or the ${mdExt} table ran out of room; not drawn: ${missed.join(", ")}`);
+
+        // The map: a template stage's, else unset.
+        let mapSettings = {}, map = [];
+        const templateBl = templateFiles.get(blExt);
+        if (templateBl) {
+            try {
+                const t = parseStageBl(templateBl);
+                mapSettings = t.mapSettings;
+                map = t.map;
+            } catch (e) {
+                warn(`${st.key}: the template's ${blExt} could not be read for its map (${e.message}); the map is unset`);
+            }
+        }
+
+        built.set(grExt, sheet.bytes);
+        built.set(mdExt, buildMdFile(models.models, models.textures));
+        built.set(blExt, buildStageBl({ enemies: entries, layout: { map: placements }, mapSettings, map, effects: [] }));
         stageReports.push({
             key: st.key,
             stage,
-            ext,
-            enemies: letters,
+            ext: grExt,
+            enemies: gridLetters,
             boss: boss ? `boss${i}` : null,
             textures: sheet.placed,
             painted: sheet.painted,
             used: sheet.count - sheet.free,
             free: sheet.free,
             missed,
+            scaled,
+            records: {
+                entries: entries.length,
+                models: models.used,
+                placements: placements.length,
+                enemies: stageEnemies,
+                bossEntry,
+                map: templateBl ? "template" : "unset",
+            },
         });
     });
     if (common.missed.length) warn(`the CGR sheet ran out of blank textures; not drawn: ${common.missed.join(", ")}`);
 
+    // --- the common records ---
+    const finalStage = STAGES[stages.length - 1];
+    if (!templateFiles.has("CMD")) {
+        const cmdModels = [], cmdTextures = [];
+        for (const [slot, m] of cmd) {
+            cmdModels[slot] = m.model;
+            cmdTextures[slot] = m.texture;
+        }
+        for (let s = 0; s < cmdModels.length; s++) if (cmdModels[s] === undefined) cmdModels[s] = null;
+        for (let s = 0; s < cmdTextures.length; s++) if (cmdTextures[s] === undefined) cmdTextures[s] = 0;
+        built.set("CMD", buildCmdFile(cmdModels, cmdTextures));
+    }
+    if (!templateFiles.has("CBL")) {
+        // The item entries point at the common models written above; when a
+        // template's CMD is carried instead, those slots hold its models, not
+        // the icons, so the items show nothing rather than something else.
+        const items = {};
+        if (!templateFiles.has("CMD")) {
+            CBL_ITEMS.forEach((item, k) => {
+                const slot = N64_ITEM_MODELS[k];
+                if (cmd.has(slot)) items[item] = itemEntry(slot);
+            });
+        }
+        built.set("CBL", buildCbl({ items }));
+    }
+    if (templateFiles.has("GAM")) {
+        const gam = Uint8Array.from(templateFiles.get("GAM"));
+        if (gam.length) gam[0] = finalStage;
+        built.set("GAM", gam);
+    } else {
+        built.set("GAM", encodeGam({ finalStage }));
+    }
+    if (!templateFiles.has("MUS")) built.set("MUS", buildMusFile([]));
+    if (!templateFiles.has("ULB")) built.set("ULB", buildUlbFile([], []));
+
     // --- every file ---
     const files = [];
     const sources = [];
+    const sheets = new Set(["CGR", ...stages.map((_, i) => `${STAGES[i]}GR`)]);
     for (const ext of projectExts()) {
         /** @type {Uint8Array} */
         let data;
         /** @type {string} */
         let source;
-        const sheet = sheets.get(ext);
         const fromTemplate = templateFiles.get(ext);
         if (ext === "CGR") {
             data = cgr.bytes;
-            source = "art";
-        } else if (sheet) {
-            data = sheet;
-            source = "art";
+            source = fromTemplate ? "art over template" : "art";
+        } else if (built.has(ext)) {
+            data = built.get(ext);
+            if (sheets.has(ext)) source = fromTemplate ? "art over template" : "art";
+            else if (ext === "GAM" && fromTemplate) source = "template, final stage set";
+            else source = "records";
         } else if (fromTemplate) {
             data = fromTemplate;
             source = "template";
         } else {
             data = new Uint8Array(fileSizeFor(ext) ?? 0);
             source = "blank";
-        }
-        if (templateFiles.has(ext) && source !== "template") {
-            // a template sheet underlies the art; say so
-            source = "art over template";
         }
         files.push({ ext, data });
         sources.push({ ext, bytes: data.length, source });
@@ -372,7 +776,8 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         name,
         template: templateFiles.size ? [...templateFiles.keys()] : null,
         ship: shipSource,
-        common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed },
+        finalStage,
+        common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, models: common.models },
         stages: stageReports,
         files: sources,
         bytes: files.reduce((a, f) => a + f.data.length, 0),

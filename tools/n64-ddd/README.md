@@ -97,15 +97,20 @@ exists to try it on.
 
 The other direction — a level record INTO a disk — is `deno task build:ddd`
 (`packages/shmup-harbor/scripts/build-ddd.ts` over
-`packages/shmup-engine/src/n64/export-ddd.js`), which lays the level's art into
-the free textures of the `CGR` and stage `GR` sheets and takes every other file
-from a template project on a donor disk — by default the first 64DD image in
-`dev-fixtures/`, an `.ndd` before a `.ddd` — or writes zero bytes at the
-documented size without one. Nothing on the disk refers to the textures it lays,
-so the result is the disk with the level's art on it, not a playable Dezaemon 3D
-game. `n64:probe report` on a built image is the quickest check that its
-directory and system area read back; `sys` on a built `.ndd` shows the system
-area an emulator would validate.
+`packages/shmup-engine/src/n64/export-ddd.js`), which lays each of the level's
+frames into a free texture of the `CGR` and stage `GR` sheets and then places
+the level through the record codecs of `records.js`: a billboard model per
+frame, an enemy entry per enemy letter and drop digit, the boss with the
+stage-clear flag, the layout of every cell at the frame its row scrolls in, the
+ship and item icons as common models. A template project on a donor disk — by
+default the first 64DD image in `dev-fixtures/`, an `.ndd` before a `.ddd` —
+lends its `CMD`, `CBL`, `MUS`, `ULB` and map tables; without one the common
+files are the cartridge's own initial game and the songs are blank. Every unit
+the records carry that is not a measurement is marked likely in the code, so the
+result is the level as the format document says a level is laid out, not a level
+anyone has seen the game play. `n64:probe report` on a built image is the
+quickest check that its directory and system area read back; `sys` on a built
+`.ndd` shows the system area an emulator would validate.
 
 The disk is community content and is never committed; `dev-fixtures/` is
 gitignored, so a path is given explicitly rather than discovered, and the

@@ -78,6 +78,20 @@ Deno.test("the Nintendo 64DD core is local, says so, and claims no mirror paths"
   assertEquals(state.isolated, []);
 });
 
+Deno.test("the dashboard's tile for the core explains its empty shelf", async () => {
+  // Installing the core — from Settings, or by the editor's PLAY 64DD row —
+  // gives the launcher a NINTENDO 64DD tile with nothing to list, and a core
+  // without a manifest falls through emuNote to "READING SHELF… Fetching
+  // undefined", a state nothing resolves (tests/ps2_shelf_test.ts pins the
+  // same trap for ps2). The branch below is what keeps that off the screen.
+  const dashboard = await read("svelte-src/Dashboard.svelte");
+  assert(
+    dashboard.includes("if (core.id === 'n64dd') {"),
+    "emuNote has no n64dd branch, so an empty shelf would say 'fetching undefined'",
+  );
+  assertStringIncludes(dashboard, "PLAY 64DD");
+});
+
 Deno.test("the worker's MIRRORABLE list leaves /n64dd/ alone", async () => {
   const worker = await read("static/emu-sw.js");
   const block = worker.match(/const MIRRORABLE = \[([\s\S]*?)\];/);

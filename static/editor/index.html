@@ -1241,23 +1241,25 @@
                         <div id="kids-card-note" class="menu-note"></div>
                     </div>
                     <!-- EXPORT: the open game as a Dezaemon 3D 64DD disk. Built in the
-                         page by the engine bundle (exportLevelToDdd): the level's art cut
-                         into 64x32 RGBA5551 textures and laid into the BLANK slots of the
-                         project's texture sheets (CGR for the title pictures, ship and
-                         items; a stage's GR for its enemies, shots and boss), every other
-                         file of the project copied from the DONOR disk's first project
-                         (SAMPLEZ1 on the prototype) or left zero at its documented size,
-                         and the project pressed into the read-only directory beside the
-                         donor's samples — the donor's save area carried byte for byte. What
-                         is NOT built: no enemy, model or placement record is written (their
-                         layouts are only likely; static/dezaemon-parity-n64.html 03/04), so
-                         nothing on the disk refers to the textures yet; without a donor the
-                         disk has no writable area and no DEZA3D.SYS, so the cartridge is not
-                         expected to enter disk mode; and nothing here boots the result — no
-                         cartridge, emulator or disk fixture is in this repo, so every disk
-                         is untested on hardware or in an emulator. Downloaded as the .ndd an
-                         emulator mounts beside the cartridge, or the .ddd this repo's reader
-                         and the prototype dump use. -->
+                         page by the engine bundle (exportLevelToDdd): each of the level's
+                         frames as a 64x32 RGBA5551 texture in a BLANK slot of the project's
+                         sheets (CGR for the title pictures, ship and items; a stage's GR for
+                         its enemies and boss), then the level placed through the record
+                         codecs — a billboard model per frame, an enemy entry per letter and
+                         drop digit, the boss with the stage-clear flag, the layout of every
+                         cell, the ship and items as common models, GAM's final stage — with
+                         the DONOR disk's first project (SAMPLEZ1 on the prototype) lending
+                         its CMD, CBL, MUS, ULB and map tables, and the project pressed into
+                         the read-only directory beside the donor's samples — the donor's
+                         save area carried byte for byte. What is NOT known: every unit the
+                         records carry that is not a measurement is a reading of the format
+                         document (static/dezaemon-parity-n64.html 03), marked likely in the
+                         engine; without a donor the disk has no writable area and no
+                         DEZA3D.SYS, so the cartridge is not expected to enter disk mode; and
+                         nothing here boots the result — no cartridge, emulator or disk
+                         fixture is in this repo, so every disk is untested on hardware or in
+                         an emulator. Downloaded as the .ndd an emulator mounts beside the
+                         cartridge, or the .ddd this repo's reader and the prototype dump use. -->
                     <div id="export-deza-n64" class="sheet-sub-sec hidden">
                         <div class="display-row" style="flex-wrap:wrap" title="A 64DD image (.ndd or .ddd — the prototype data disk) to write the project onto. With one, the project is pressed beside the samples SAMPLEZ1 and SAMP in the read-only directory and the donor's save area — its writable directory, DEZA3D.SYS and the projects it saved — is carried verbatim, so the cartridge keeps what it needs for disk mode. Without one the disk is built from nothing: it has no writable area and no DEZA3D.SYS, so the cartridge is not expected to enter disk mode, though this repo's reader opens it.">
                             <span class="display-lbl">DONOR DISK</span>
@@ -8000,20 +8002,21 @@
         // The Nintendo 64 writer (packages/shmup-engine/src/n64/export-ddd.js
         // over project-write.js and disk-write.js): the same level record and
         // atlas art the Saturn and PlayStation exports read go into
-        // Dezaemon.exportLevelToDdd() — the art cut into 64x32 RGBA5551
-        // textures and laid into the blank slots of the project's CGR and
-        // stage GR sheets, every other file of the project copied from the
-        // donor disk's first project (SAMPLEZ1 on the prototype) or left zero
-        // at its documented size — and the project is pressed into the
-        // read-only directory of the donor, or of a disk built from nothing,
-        // then read back through the reader before it is handed over. It
-        // places no enemies: the enemy, model and placement records are only
-        // likely in layout, so nothing on the disk refers to the textures
-        // yet. And nothing here boots the result — no cartridge, emulator or
-        // disk fixture is in this repo — so a disk this builds is untested on
-        // hardware or in an emulator; without a donor it has no writable area
-        // and no DEZA3D.SYS, so the cartridge is not expected to enter disk
-        // mode at all.
+        // Dezaemon.exportLevelToDdd() — each frame a 64x32 RGBA5551 texture
+        // in a blank slot of the project's CGR and stage GR sheets, the level
+        // placed through the record codecs (a billboard model per frame, an
+        // enemy entry per letter, the layout, the boss, the ship and items as
+        // common models), the donor disk's first project (SAMPLEZ1 on the
+        // prototype) lending its CMD, CBL, MUS, ULB and map tables — and the
+        // project is pressed into the read-only directory of the donor, or of
+        // a disk built from nothing, then read back through the reader before
+        // it is handed over. Every unit the records carry that is not a
+        // measurement is a reading of the format document marked likely in
+        // the engine. And nothing here boots the result — no cartridge,
+        // emulator or disk fixture is in this repo — so a disk this builds is
+        // untested on hardware or in an emulator; without a donor it has no
+        // writable area and no DEZA3D.SYS, so the cartridge is not expected
+        // to enter disk mode at all.
         function n64DiskNote(msg, color) {
             const el = document.getElementById('n64-disk-note');
             if (!el) return;

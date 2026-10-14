@@ -25,6 +25,7 @@ import {
   DDD_IMAGE_BYTES,
   dddFileName,
   decodeDiskId,
+  decodeGam,
   decodeRgba5551,
   decodeSystemData,
   DEZA64_NOTICE_OFFSET,
@@ -48,11 +49,17 @@ import {
   lbaToOffset,
   N64_CGR_TEXTURES,
   N64_GR_TEXTURES,
+  N64_MD_MODELS,
+  N64_MODEL_NUMBER_BASE,
   N64_TEXTURE_BYTES,
   NDD_IMAGE_BYTES,
   normalizeProjectName,
   packProject,
+  parseCbl,
+  parseCmdFile,
   parseDddImage,
+  parseMdFile,
+  parseStageBl,
   projectExts,
   putProject,
   ramStartOffset,
@@ -72,6 +79,9 @@ import {
   writeDirectory,
 } from "../packages/shmup-engine/src/n64/index.js";
 import { decompress } from "../packages/shmup-engine/src/decompress.js";
+
+// deno-lint-ignore no-explicit-any
+type Any = any;
 
 function same(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
@@ -771,14 +781,18 @@ Deno.test("a project from a level is thirty files at documented sizes with the a
       ["enemyA", 1, 1],
       ["enemyA", 2, 1],
       ["enemyA", 3, 1],
-      ["enemyA", 4, 1],
-      ["enemyB", 5, 4],
-      ["boss0", 9, 8],
+      ["enemyB", 4, 1],
+      ["boss0", 5, 1],
     ],
-    "four of the six ant frames, its shot, the bee as 2x2, the boss as 2x4",
+    "four of the six ant frames, the bee and the boss one texture each — a model shows one",
   );
-  assertEquals(s0.used, 17);
-  assertEquals(s0.free, N64_GR_TEXTURES - 17);
+  assertEquals(
+    s0.scaled,
+    ["enemyB:0:big.png", "boss0:0:boss.png"],
+    "the 96x48 bee and the 128x128 boss were shrunk to fit",
+  );
+  assertEquals(s0.used, 6);
+  assertEquals(s0.free, N64_GR_TEXTURES - 6);
   assertEquals(p.warnings.length, 1);
   assert(p.warnings[0].includes("enemyC"));
   // the common sheet: the title fitted to 2x2, the ship's two frames, one item
@@ -788,22 +802,152 @@ Deno.test("a project from a level is thirty files at documented sizes with the a
   assertEquals(common, [["title1", 4], ["ship", 1], ["ship", 1], ["item", 1]]);
   assertEquals(p.report.ship, "level");
   assertEquals(
+    p.report.common.models.map((
+      m: { slot: number; texture: number },
+    ) => [m.slot, m.texture]),
+    [[10, 4], [12, 6]],
+    "the ship is common model 10 on its first texture, the item model 12",
+  );
+  assertEquals(
     p.report.files.filter((f: { source: string }) => f.source === "art").length,
     1 + 1,
     "CGR and the one stage's GR",
   );
   assertEquals(
+    p.report.files.filter((f: { source: string }) => f.source === "records")
+      .map((f: { ext: string }) => f.ext),
+    ["GAM", "CMD", "CBL", "ULB", "MUS", "0BL", "0MD"],
+    "the records of the one stage and the common files are built",
+  );
+  assertEquals(
     p.report.files.filter((f: { source: string }) => f.source === "blank")
       .length,
-    28,
+    21,
+    "the seven other stages are zero",
   );
   // the stage sheet decodes to the art: the first texture's top-left pixel is ant frame 0's colour (0,0,0) and opaque
   const gr = p.files.find((f) => f.ext === "0GR")!.data;
   assertEquals((gr[0] << 8 | gr[1]) & 1, 1);
   const bee = decodeRgba5551(
-    gr.subarray(5 * N64_TEXTURE_BYTES, 6 * N64_TEXTURE_BYTES),
+    gr.subarray(4 * N64_TEXTURE_BYTES, 5 * N64_TEXTURE_BYTES),
   );
   assertEquals([bee.data[0], bee.data[1], bee.data[2]], [0, 0, 255]);
+
+  // the records: an entry per enemy (B's cell carries drop 1, the shot item), the boss with the stage-clear flag
+  assertEquals(s0.records.entries, 3);
+  assertEquals(s0.records.models, 6);
+  assertEquals(s0.records.placements, 3);
+  assertEquals(s0.records.bossEntry, 2);
+  const bl = parseStageBl(p.files.find((f) => f.ext === "0BL")!.data) as Any;
+  const ant = bl.enemies[0];
+  assertEquals(ant.animation.models, [
+    N64_MODEL_NUMBER_BASE,
+    N64_MODEL_NUMBER_BASE + 1,
+    N64_MODEL_NUMBER_BASE + 2,
+    N64_MODEL_NUMBER_BASE + 3,
+  ]);
+  assertEquals(
+    ant.animation.disabled,
+    true,
+    "the ant names no frameRate, so its frames do not cycle",
+  );
+  assertEquals(
+    ant.shots[0].variant,
+    0,
+    "the ant has no interval, so it does not fire",
+  );
+  assertEquals(ant.item.enabled, false);
+  const beeEntry = bl.enemies[1];
+  assertEquals(beeEntry.animation.models, [
+    N64_MODEL_NUMBER_BASE + 4,
+    N64_MODEL_NUMBER_BASE + 4,
+    N64_MODEL_NUMBER_BASE + 4,
+    N64_MODEL_NUMBER_BASE + 4,
+  ]);
+  assertEquals(
+    beeEntry.item,
+    { enabled: true, value: 0 },
+    "B1: drop digit 1 is the shot item",
+  );
+  assertEquals(beeEntry.hit.size, 6, "96 px across");
+  const bossEntry = bl.enemies[2];
+  assertEquals(bossEntry.hit.stageClear, true);
+  assertEquals(bossEntry.hit.lockOn, true);
+  assertEquals(bossEntry.motion.type, 1, "a boss holds its place");
+  assertEquals(bossEntry.hp, 15);
+  assertEquals(
+    bl.enemies[3].animation.models,
+    [0xff, 0xff, 0xff, 0xff],
+    "the fourth entry is the plain default",
+  );
+  // the layout: the grid's last row scrolls in first; x across the screen; descending frames; the boss last
+  assertEquals(bl.layout.a, []);
+  assertEquals(bl.layout.b, []);
+  assertEquals(
+    bl.layout.map.map((e: Any) => [e.enemy, e.x, e.y, e.frame]),
+    [[0, -400, 240, -320], [1, 400, 240, -320], [2, 0, 400, -704]],
+  );
+  assertEquals(bl.tail.firstA, 4);
+  assertEquals(bl.tail.firstB, 5);
+  assertEquals(bl.tail.totalEffects, 0);
+  assertEquals(
+    bl.mapSettings,
+    { scale: 5, loopStart: 0, loopEnd: 3 },
+    "the sample game's map settings",
+  );
+  assertEquals(
+    bl.map.every((m: Any) => m.texture === 150),
+    true,
+    "no template: the map is unset",
+  );
+  // the models: a billboard per placed frame on its texture
+  const md = parseMdFile(p.files.find((f) => f.ext === "0MD")!.data) as Any;
+  assertEquals(md.models.filter(Boolean).length, 6);
+  assertEquals(md.textureIndices.slice(0, 7), [0, 1, 2, 3, 4, 5, 0]);
+  const quad = md.models[0]!;
+  assertEquals(quad.vertexCount, 4);
+  assertEquals(quad.faceCount, 2);
+  assertEquals(quad.vertices.slice(0, 4).map((v: Any) => [v.x, v.y, v.z]), [
+    [-64, 64, 0],
+    [64, 64, 0],
+    [64, -64, 0],
+    [-64, -64, 0],
+  ], "a 32x32 sprite is a 128-unit quad");
+  assertEquals(quad.faces[0].uv, [[0, 0], [32, 0], [32, 32]]);
+  assertEquals(quad.faces[0].tile, 1);
+  assertEquals(quad.tiles[1].widthPower, 4, "a 32-px tile");
+  const beeModel = md.models[4]!;
+  assertEquals(
+    beeModel.faces[0].uv,
+    [[0, 0], [64, 0], [64, 32]],
+    "the bee was shrunk to 64x32",
+  );
+  // the common records: the ship as model 10, the item as model 12, the shot item entry pointing at it, the final stage
+  const cmd = parseCmdFile(p.files.find((f) => f.ext === "CMD")!.data) as Any;
+  assertEquals(
+    cmd.models.map((m: Any, i: number) => (m ? i : -1)).filter((i: number) =>
+      i >= 0
+    ),
+    [
+      10,
+      12,
+    ],
+  );
+  assertEquals(cmd.textureIndices[10], 4);
+  assertEquals(cmd.textureIndices[12], 6);
+  const cbl = parseCbl(p.files.find((f) => f.ext === "CBL")!.data) as Any;
+  assertEquals(cbl.items.shot.animation.models, [12, 12, 12, 12]);
+  assertEquals(cbl.items.shot.hit.hpMode, 2, "an item cannot be shot down");
+  assertEquals(
+    cbl.items.laser.animation.models,
+    [0xff, 0xff, 0xff, 0xff],
+    "one item icon: the other items show nothing",
+  );
+  assertEquals(
+    decodeGam(p.files.find((f) => f.ext === "GAM")!.data).finalStage,
+    0,
+  );
+  assertEquals(p.report.finalStage, 0);
 });
 
 Deno.test("a template project underlies the art and the art never covers a painted texture", () => {
@@ -828,14 +972,26 @@ Deno.test("a template project underlies the art and the art never covers a paint
     gr.subarray(0, 3 * N64_TEXTURE_BYTES).every((b) => b === 0x55),
     "the template's textures survive",
   );
-  assert(
-    p.files.find((f) => f.ext === "GAM")!.data.every((b) => b === 0x42),
-    "a record file is the template's",
-  );
+  const gam = p.files.find((f) => f.ext === "GAM")!.data;
+  assertEquals(gam[0], 0, "the template's GAM with the final stage set");
+  assert(gam.subarray(1).every((b) => b === 0x42), "and nothing else touched");
   assertEquals(
     p.report.files.find((f: { ext: string }) => f.ext === "GAM")?.source,
-    "template",
+    "template, final stage set",
   );
+  for (const ext of ["CMD", "CBL", "MUS", "ULB"]) {
+    assertEquals(
+      p.report.files.find((f: { ext: string }) => f.ext === ext)?.source,
+      "template",
+      `${ext} is carried from the template`,
+    );
+  }
+  assertEquals(
+    p.report.files.find((f: { ext: string }) => f.ext === "0BL")?.source,
+    "records",
+    "a stage's records are built even over a template; its map is the template's",
+  );
+  assertEquals(p.report.stages[0].records.map, "template");
   assertEquals(
     p.report.files.find((f: { ext: string }) => f.ext === "0GR")?.source,
     "art over template",
@@ -888,9 +1044,14 @@ Deno.test("more stages than a project holds are dropped with a warning, and a fu
     enemylist: [row],
     enemyData,
   }, art);
-  assertEquals(crowded.report.stages[0].used, N64_GR_TEXTURES);
-  assertEquals(crowded.report.stages[0].missed.length, 40);
-  assert(crowded.warnings.some((w) => w.includes("ran out of blank textures")));
+  assertEquals(
+    crowded.report.stages[0].used,
+    N64_MD_MODELS,
+    "a texture nobody models would show nothing, so the model table is the limit",
+  );
+  assertEquals(crowded.report.stages[0].missed.length, 300 - N64_MD_MODELS);
+  assertEquals(crowded.report.stages[0].records.models, N64_MD_MODELS);
+  assert(crowded.warnings.some((w) => w.includes("ran out of room")));
 });
 
 Deno.test("exportLevelToDdd: a level to an .ndd in one call, and onto a donor with its first project as the template", () => {
@@ -934,7 +1095,12 @@ Deno.test("exportLevelToDdd: a level to an .ndd in one call, and onto a donor wi
   const gam = Uint8Array.from(
     decompress(mine.files.find((f) => f.ext === "GAM")!.stream),
   );
-  assert(gam.every((b) => b === 0x5a), "the template's GAM under the new name");
+  assertEquals(
+    gam[0],
+    0,
+    "the template's GAM under the new name, its final stage set",
+  );
+  assert(gam.subarray(1).every((b) => b === 0x5a));
   const gr0 = Uint8Array.from(
     decompress(mine.files.find((f) => f.ext === "0GR")!.stream),
   );

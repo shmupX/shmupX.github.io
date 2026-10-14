@@ -21,12 +21,15 @@
 // sections 03 and 04).
 //
 // How far the project reaches is the writer's to say, not this script's: the
-// level's art is laid into the free 64x32 textures of the CGR and stage GR
-// sheets (the one CONFIRMED record format), and every other file comes from a
-// TEMPLATE project on the donor — the donor's first, or --template NAME — or,
-// with --no-template, is zero bytes at its documented size. Nothing on the
-// disk refers to the textures this lays, so the result is not a playable
-// Dezaemon 3D game; it is the disk with the level's art on it.
+// level's frames are laid into the free 64x32 textures of the CGR and stage
+// GR sheets (the one CONFIRMED record format) and the level is placed through
+// the record codecs — a billboard model per frame, an enemy entry per letter,
+// the layout, the boss, the ship and items as common models — with a
+// TEMPLATE project on the donor (the donor's first, or --template NAME)
+// lending its CMD, CBL, MUS, ULB and map tables, or, with --no-template, the
+// cartridge's own initial game standing in for them. Every unit the records
+// carry that is not a measurement is a reading of the format document marked
+// likely in the engine, and no disk this writes has been booted.
 //
 // The donor matters more here than on the other consoles. A disk built on the
 // prototype keeps the boot program and the RAM area the cartridge needs to go
@@ -66,7 +69,7 @@ export interface BuildDddOptions {
   noDisk?: boolean;
   /** The donor project whose files underlie the new one. Omitted: the donor's first. */
   template?: string | null;
-  /** No template: every file but the texture sheets is zero bytes at its documented size. */
+  /** No template: the common files are the cartridge's initial game, the songs blank, the maps unset. */
   noTemplate?: boolean;
   /** The image to write: the whole disk (.ndd, the default) or the user area alone (.ddd). */
   format?: DiskFormat;
@@ -243,7 +246,7 @@ export async function buildDdd(
       ? `template: ${rep.templateProject}${
         options.template ? "" : " (the donor's first project)"
       } — its files underlie every one the art does not paint`
-      : "template: none — every file but the texture sheets is zero bytes at its documented size",
+      : "template: none — the common files are the cartridge's initial game, the songs blank, the maps unset",
   );
   const sheet = (label: string, s: SheetReport) =>
     `${label} ${count(s.textures.length, "frame")} in ${
@@ -282,7 +285,7 @@ export async function buildDdd(
   );
   for (const w of result.warnings) log(`warning: ${w}`);
   log(
-    "note: the level's art is in the texture sheets' free slots and nothing on the disk refers to it yet; the image is untested on hardware or in an emulator",
+    "note: the level is placed as the format document says a level is laid out, and no disk this writes has been booted — the image is untested on hardware or in an emulator",
   );
 
   const outPath = resolve(

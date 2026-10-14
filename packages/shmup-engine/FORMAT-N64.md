@@ -402,7 +402,7 @@ the zero word — which is what the prototype's own sheets use for nothing, and
 what `isBlankTexture()` tests a whole texture for. The write tests hold the
 encoder to the decoder.
 
-## The project model and the record files (likely)
+## The project model and the record files (likely — `src/n64/records.js`)
 
 A project is **thirty files**: six globals — `GAM CGR CMD CBL ULB MUS` — and
 `BL`, `MD`, `GR` for each of eight stages numbered 0, 1, 2, 3, 4, 5, 6 and
@@ -434,22 +434,67 @@ from the size.
 The **model record**, 0xC20 bytes, is plain data rather than F3DEX display lists
 — a scan of the whole 64 MB found only 4 `G_ENDDL` and 1 `G_RDPPIPESYNC`, all
 inside the boot stub, so the engine builds its display lists at run time and the
-disk stores geometry as structs. As the parity page reads it:
+disk stores geometry as structs. As `records.js` reads it from
+`file
+formats.txt`:
 
-| Off     | Size       | Field                                                                                                        |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
-| `0x000` | u8         | vertex count, ≤ 100                                                                                          |
-| `0x001` | u8         | face count, ≤ 100                                                                                            |
-| `0x002` | 100 × 6    | vertices: s16 x, y, z                                                                                        |
-| `0x25A` | 100 × 0x14 | faces: three vertex indices, three s16 UV pairs, three bytes of baked RGB light, one flags byte (to `0xA2A`) |
-| `0xA2C` | 16 × 0x18  | tile descriptors (the stride is by subtraction, `0xBAC − 0xA2C`)                                             |
-| `0xBAC` | 0x74       | per-vertex groups, to the end of the record                                                                  |
+| Off     | Size       | Field                                                                                                                                                                |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0x000` | u8         | vertex count, ≤ 100                                                                                                                                                  |
+| `0x001` | u8         | face count, ≤ 100                                                                                                                                                    |
+| `0x002` | 100 × 6    | vertices: s16 x, y, z                                                                                                                                                |
+| `0x25A` | 100 × 0x14 | faces: three vertex indices, a pad, three s16 UV pairs, three bytes of baked RGB light, a texturing byte (`0x80` untextured, `0x40` light mask, low nibble the tile) |
+| `0xA2A` | u16        | unnamed                                                                                                                                                              |
+| `0xA2C` | 16 × 0x14  | tiles: u32 offset to the selection's corner, u32 vertical mirror, u32 width power, u32 horizontal mirror, u32 height power                                           |
+| `0xB6C` | 16 × u16   | tile horizontal scales (0x64..0x400 documented; the samples hold up to 0x46F)                                                                                        |
+| `0xB8C` | 16 × u16   | tile vertical scales                                                                                                                                                 |
+| `0xBAC` | 100 × s8   | per-vertex group (-1 ungrouped)                                                                                                                                      |
+| `0xC10` | u8         | light position (0..0x1D, one of `GAM`'s thirty)                                                                                                                      |
+| `0xC11` | 15         | marked `???`, carried raw                                                                                                                                            |
 
-Nothing in this repo reads a record of any of the seven likely types: they
-extract and decompress as correct bytes with no typed reader over them, and the
-writer does not compose them (below). The tile descriptors are the field a
-writer would have to fill to make a model refer to a texture, and their contents
-are untraced.
+**The codecs.** `src/n64/records.js` is a typed encode and decode for every
+record the document describes — the 0x5C enemy entry with each packed byte's
+bits named, the 0xC layout position and the three terminated layers, the map's
+three settings bytes and 256 entries, the 0xC layout effect with its nineteen
+command names, the `#BL` tail, the 0xC20 model, the 0x559 `GAM`, the 0x1A song
+header and the blank song — and whole-file builders and parsers over them:
+`buildStageBl`/`parseStageBl`, `buildCbl`/`parseCbl`, `buildMdFile`,
+`buildCmdFile`, `buildUlbFile` and their parsers, `encodeGam`/`decodeGam`,
+`buildMusFile`/`parseMusFile`. Every encode defaults every field and
+range-checks by name; every decode is the inverse, with the bits a packed byte
+does not document kept under `unknownBits` so a real file re-encodes byte for
+byte. The ground truth beyond the document is the cartridge's own **initial
+save** — the 0x18000-byte `sram` the translation ships for its fileserver, whose
+bank table and LZSS streams decompress to exactly `GAM` 0x559, `CGR` 0x12000,
+`CMD` 0x7968 (the cartridge variant, ten models), `CBL` 0x9B4, three stage `BL`
+of 0x8FC2 (the cartridge variant, a 0x104-byte model-index prefix before the
+disk layout), `MUS` 8 × 0x2C9A and `DEZA3D.SYS` 0x290. Against it:
+`encodeGam({})` **is** that `GAM` byte for byte; `blankSong()` is its song 0 and
+its eight songs re-encode byte-exact; the three stages, the `CBL` and all ten
+`CMD` models parse and rebuild with zero mismatches, the tail's layer indices
+equal to what `layoutIndices()` computes (0/9/10, 0/121/123, 0/1/108). Three
+places the codecs depart from the document, each marked where it happens: the
+sprite y table ends at 0x224, so the vibration bytes start there, not 0x223;
+shots 2 and 3's type bytes (0x25, 0x26) are packed like shot 1's, since the
+stages hold 0x20, 0x80, 0xA0 and 0x81 in them; and the player's initial altitude
+admits 9 and 10, the cartridge's default being 9. What the real data also
+showed: every layout layer ends in an entry whose enemy number is -1 and the
+rest zero; the tail's first-enemy indices count those terminators; an unset map
+entry carries texture 150; stage entries name models 20..148 while the common
+entries and the seven items name 0..19 (so the common `CMD` comes first in the
+model-number space and a stage's slot _k_ is model 20 + _k_ — likely); layout
+entries within a layer sit in **descending** frame order from +19 down to about
+-90,000, with x in roughly -400..430 and y in 60..800 on the map layer (the
+units are the game's, untraced). Still **open**: the units of a face's UV pairs
+(the sample models run to 321 × 291 over 64 × 32 textures) and of a tile's
+offset; the tile index base (textured faces name tiles 1..9 and leave tile 0 at
+the editor's blank `0, 0, 5, 0, 6`, which read as the document says would be 64
+× 128); the disk-mode `#BL` tail's words at 0x8B2F, 0x8B33 and 0x8B35, which the
+cartridge variant lacks; the score table's 0xD entry (printed as 1,000,000, read
+here as 100,000); and the tempo table's 33rd entry. No disk- mode `#BL`, `CMD`
+or `MUS` was available to check — the prototype's `SAMPLEZ1` files are on the
+fixture, not in CI — and nothing any codec writes has been put in front of the
+game.
 
 ## The writable area (likely / open)
 
@@ -522,27 +567,51 @@ and gets the same 64,458,560 bytes, then puts a third project on, checks the
 save area is untouched, removes it and gets the prototype back.
 
 **`buildN64ProjectFromLevel(level, art, options)`** — `name`, `template`,
-`title1`, `title2`, `framesPerEnemy` — makes the thirty files, and reaches
-exactly as far as the confirmed format does. The level's frames are cut into
-64×32 textures (`textureGrid()`: top-left aligned, pixels 1:1, a 32×32 sprite
-one texture with its right half clear, a 128×128 boss a 2×4 grid) and laid into
-the sheets' **blank** textures — `TextureSheet.place()` takes the first run of
-consecutive blank textures long enough for the grid, never a painted one, so a
-template's own art survives; a frame that fits no run is listed as `missed` and
-warned about. Into `CGR`: the two title pictures fitted to 128×64 (2×2
-textures), two spread frames of the ship (the level's, or the base game's duke
-when the level names none), and up to eight item frames (names matching `item`,
-`powerup`, `speedup`, `1up`). Into a stage's `GR`, for each enemy letter its
-enemylist uses: up to four spread frames, then its projectile's first frame;
-then the boss's idle frame. More than eight stages are dropped with a warning.
-Every other file is the **template**'s bytes when one is given, else zero bytes
-at its documented size (`fileSizeFor()`), and the report says per file whether
-it is `art`, `art over template`, `template` or `blank`, and per sheet how many
-textures were painted by the template, used, free and missed. A template is a
-project's thirty files decompressed — `templateFromDisk(image, name)` gives the
-named or the first project of a disk that way — so a project built on `SAMPLEZ1`
-is `SAMPLEZ1` with the level's art in its free texture slots, and one built on
-nothing is the art and empty records.
+`title1`, `title2`, `framesPerEnemy` — makes the thirty files, and since the
+codecs landed it places the level rather than only its art. Each frame becomes
+ONE 64×32 texture — a model shows one texture, so a frame wider than 64 or
+taller than 32 is shrunk to fit with its aspect kept (`shrinkRgba()`,
+`spriteTexture()`) and the report lists it under `scaled` — laid into the
+sheets' **blank** textures (`TextureSheet.place()`: never over a painted one, so
+a template's own art survives; a frame that fits nowhere is `missed` and warned
+about). Into `CGR`: the two title pictures fitted to 128×64 (2×2 textures), two
+spread frames of the ship (the level's, or the base game's duke when the level
+names none), and up to eight item frames (names matching `item`, `powerup`,
+`speedup`, `1up`). Per stage, for each enemy letter its enemylist uses, most
+placed first: up to four spread frames into `GR`, a **billboard model** per
+frame into `MD` (`spriteModel()`: a flat quad of 4 units a pixel on tile 1 with
+UVs over the sprite's own pixel box — the UV units being the document's as
+written, open), its texture index in the model's slot, and an **enemy entry**
+per drop digit its cells carry (`enemyEntryFromEditor()`: score and HP from the
+record, the four frame model numbers as 20 + the slot, the motion speed, a
+bullet-1 shot aimed at the player when the record names an interval, the item
+the digit maps to — the three shot power-ups the shot item, 4 bonus1, 5 the
+bomb, 9 the shield); then the boss's idle frames and an entry with the
+stage-clear and lock-on flags, HP 15 and a fixed motion. The **layout** puts
+every cell on the map layer at x across -400..400 by column and y 240, at the
+frame its row scrolls in (`-(row × 16)`, the row from the Saturn writer's
+`FIRST_SPAWN_ROW`/`ROW_STEP` or the stage's `waveRows`, so the two consoles pace
+a level the same way), the boss at x 0, y 400 after the last wave, entries in
+descending frame order; the map settings and map entries come from a template
+stage's `BL` when there is one, else the map is unset; no effects are written.
+The common files: the ship and the item icons as common models 10 and 12..18
+(the slots the cartridge's game uses) in `CMD`, the seven item entries pointing
+at them in `CBL`, `GAM` with the final stage set (a template's `GAM` is carried
+with only that byte changed — the prototype's 1,360-byte ones included), blank
+songs in `MUS`, an empty `ULB`; a template's `CMD`, `CBL`, `MUS` and `ULB` are
+carried instead. The report says per file whether it is `art`,
+`art over
+template`, `records`, `template`, `template, final stage set` or
+`blank`, per sheet how many textures were painted by the template, used, free,
+missed and scaled, and per stage its `records`: entries, models, placements, the
+boss's entry and whether the map is the template's. The limits are the format's:
+180 entries, 130 models, 1,000 placements and 260 textures a stage, each warned
+about when it runs out. A template is a project's thirty files decompressed —
+`templateFromDisk(image, name)` gives the named or the first project of a disk
+that way. Every number here that is not a measurement is a constant with its
+evidence beside it (`N64_MODEL_NUMBER_BASE`, `N64_LAYOUT_HALF_WIDTH`,
+`N64_SPAWN_Y`, `N64_UNITS_PER_PIXEL`, the speed, hit-size and drop tables), all
+**likely**: nothing the builder writes has been booted.
 
 **`exportLevelToDdd(level, art, options)`** — the project options above plus
 `disk`, `template`, `format`, `systemArea` — is the one call: the project onto
@@ -579,15 +648,16 @@ DOWNLOAD. Both say what every disk is: untested on hardware or in an emulator.
 
 **What the writer does not write** — the list a future session starts from:
 
-- any record that refers to a texture: no `CMD`, `#MD` or `ULB` model (tile
-  descriptors included), no `CBL` or `#BL` enemy entry, no placement, no `GAM`
-  settings, no `MUS` song. The level's art reaches the disk as textures in the
-  free slots of the sheets and **nothing on the disk refers to them**; the
-  exported level is the disk with the level's art on it, not a playable Dezaemon
-  3D game. Composing those records needs the seven likely layouts checked field
-  by field first (the `DezaDiskTool.exe` bytecode is the cheapest route to the
-  size table and the field list) and then a way to see the result, which does
-  not exist;
+- anything a boot would settle: whether a billboard's UVs and tile land on its
+  texture, whether model 20 + _k_ is slot _k_, whether x ±400 spans the screen
+  and y 240 is where an enemy should appear, whether the frame offsets pace the
+  level — every one of them a reading of the document and the sample stages, and
+  the test of all of them is the game, which no one here has run;
+- layout effects: no song command, no camera, no altitude, no stage-clear
+  command (the boss's flag is relied on instead); the map is unset unless a
+  template stage lends its map table, and a template's effects are never carried
+  (a stage-clear or a camera move at the wrong frame would be worse than none);
+- the `MUS` sequence bodies: 24 blank songs, or a template's;
 - the RAM area: the writable directory, the allocation map, `DEZA3D.SYS`,
   `DEZA3D.HSC`, and any **saved** (as opposed to pressed) project — carried from
   the donor or left zero;
@@ -595,10 +665,11 @@ DOWNLOAD. Both say what every disk is: untested on hardware or in an emulator.
   nine blocks, and the 8,488-byte pad after the prototype's program;
 - the 834 bytes at the head of the directory block (donor's or zero), and the 12
   after the arrays;
-- a system area's defect tables (zero), the company code (two NULs) and `PTN64`,
-  which the parity page records but does not place;
+- a system area's defect tables (zero) and `PTN64`, which the parity page
+  records but does not place;
 - the nine bytes by which the prototype's two `GAM` files fall short of the
-  documented 1,369, and a `GAM` that reconciles;
+  documented 1,369, and the "slightly different, incompatible formatting" the
+  translation's notes say they have beyond that;
 - textures beyond what the blank slots hold: a sheet that runs out is reported,
   not grown — a project has 40 + 8 × 260 textures and no more;
 - any disk type but 0 beyond the geometry (a warning says so), any `.ndd` whose
@@ -682,18 +753,20 @@ claim, never an emulator's.
   area LBAs — why `0x1016` / `0x1C22` / `0x282E`;
 - the notice's exact separators in the prototype's boot program, and the
   8,488-byte pad after it;
-- every field of `CMD`, `CBL`, `ULB`, `#BL`, `#MD` and `GAM` — located at
-  documented strides, checked only by total size, and the gaps the documentation
-  itself marks `???`: `#MD` `+0xC11`–`0xC1F`, `#BL` `0x47`, `0x5B`, `0x8B2F`,
-  `GAM` `0x1`, `0x225`, `0x557`, `0x558`; and the `#BL` size, whose documented
-  parts do not sum to 0x8B37 here;
+- the meaning of what `records.js` encodes: its layouts re-encode the
+  cartridge's own initial save byte for byte, but the units of a face's UV pairs
+  and a tile's offset, the tile index base, the disk-mode `#BL` tail's last
+  three words, and the gaps the documentation itself marks `???` (`#MD`
+  `+0xC11`–`0xC1F`, `#BL` `0x47`, `0x5B`, `0x8B2F`, `GAM` `0x1`, `0x225`,
+  `0x557`, `0x558`) are carried, not understood;
 - the nine bytes the two `GAM` files are short, which a retail disk would
   settle, except that none exists;
 - the `MUS` sequence body: 24 × 0x2C80 bytes with no description at all, and no
   cheap route, since the playback code is on a cartridge nobody has;
 - whether a disk this writes puts the cartridge into disk mode (on a donor) or
-  mounts in an emulator (as an `.ndd`): the checks an emulator makes are
-  reproduced, the result has never been run;
+  mounts in an emulator (as an `.ndd`), and whether the project it carries plays
+  as the level: the checks an emulator makes are reproduced and the records are
+  the document's, and the result has never been run;
 - the other six disk types' directory blocks, if a disk of another type ever
   carried ATNFS.
 
