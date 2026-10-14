@@ -7,11 +7,13 @@ import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { join } from "@std/path";
 import { encodeBase64 } from "@std/encoding/base64";
 import {
+  biosCandidates,
   discBaseName,
   firmwareDirFor,
   installPsxCard,
   MednafenError,
   PSX_CARD_SIZE,
+  psxLaunchArgs,
   slotCardName,
 } from "../lib/psx-mednafen.ts";
 import { decodeCardField, handler } from "../routes/api/psx-save.ts";
@@ -36,6 +38,21 @@ Deno.test("names: the card is <disc base>.0.mcr beside the firmware folder", () 
   assertStrictEquals(
     firmwareDirFor("/home/me/.mednafen/sav"),
     "/home/me/.mednafen/firmware",
+  );
+  // the BIOS: the firmware folder first, then the checkout's dev-fixtures
+  const cands = biosCandidates("/m/firmware", "/repo");
+  assertStrictEquals(cands[0], "/m/firmware/scph5500.bin");
+  assert(cands.includes("/repo/dev-fixtures/bios/scph5500.bin"));
+  // a copy outside the firmware folder rides the launch as -psx.bios_jp
+  const bios = { dir: "/m/firmware", file: "scph5500.bin" };
+  assertEquals(psxLaunchArgs({ ...bios, path: null }), []);
+  assertEquals(
+    psxLaunchArgs({ ...bios, path: "/m/firmware/scph5500.bin" }),
+    [],
+  );
+  assertEquals(
+    psxLaunchArgs({ ...bios, path: "/repo/dev-fixtures/bios/scph5500.bin" }),
+    ["-psx.bios_jp", "/repo/dev-fixtures/bios/scph5500.bin"],
   );
 });
 

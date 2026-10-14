@@ -153,7 +153,7 @@ export const handler = define.handlers({
       replaced: false,
       note: r.bios.present
         ? null
-        : `no ${r.bios.file} in ${r.bios.dir}: Mednafen will stop at the BIOS check until a Japanese BIOS is there`,
+        : `no ${r.bios.file} in ${r.bios.dir} or dev-fixtures/bios: Mednafen will stop at the BIOS check until a Japanese BIOS is there`,
       launched: false,
     };
     try {

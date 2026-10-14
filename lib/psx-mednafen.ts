@@ -16,10 +16,13 @@
 // and the cue beside it, or the bare track when the rip has none.
 //
 // The BIOS is the one thing this cannot supply. Mednafen hash-checks it and a
-// Japanese SLPS disc needs scph5500.bin in <MEDNAFEN_HOME>/firmware (the US
-// SCPH1001 is refused for the region). It is reported — present or not, and
-// where it is looked for — rather than guessed at, so the editor can say why
-// a launch will not boot before the user presses the button.
+// Japanese SLPS disc needs scph5500.bin (the US SCPH1001 is refused for the
+// region). It is looked for in Mednafen's own firmware folder and then in the
+// gitignored dev-fixtures/ (bios/, or the top), and a copy found there is
+// handed to the launch as `-psx.bios_jp <path>` so nothing has to be copied
+// into the emulator's directory. It is reported — present or not, and where
+// it was looked for — rather than guessed at, so the editor can say why a
+// launch will not boot before the user presses the button.
 //
 // LOCAL-ONLY, like everything else that writes into the user's emulator
 // directory; the route gates it.
@@ -55,7 +58,11 @@ export interface PsxMednafenResolution {
   name: string;
   /** Where the slot-1 card lives, whether or not it exists yet. */
   cardPath: string | null;
-  bios: { file: string; dir: string; present: boolean };
+  /**
+   * `dir` is Mednafen's firmware folder; `path` is the copy that will be
+   * used — there, or in dev-fixtures/ — and null when there is none.
+   */
+  bios: { file: string; dir: string; present: boolean; path: string | null };
 }
 
 function home(): string {
@@ -89,6 +96,26 @@ export function slotCardName(base: string, slot = 0): string {
   return `${base}.${slot}.mcr`;
 }
 
+/** The places a Japanese BIOS is looked for, in order. */
+export function biosCandidates(firmwareDir: string, root: string): string[] {
+  return [
+    join(firmwareDir, PSX_BIOS_JP),
+    join(home(), ".mednafen", "firmware", PSX_BIOS_JP),
+    join(root, "dev-fixtures", "bios", PSX_BIOS_JP),
+    join(root, "dev-fixtures", PSX_BIOS_JP),
+  ];
+}
+
+async function findBios(
+  firmwareDir: string,
+  root: string,
+): Promise<string | null> {
+  for (const c of biosCandidates(firmwareDir, root)) {
+    if (await exists(c)) return resolve(c);
+  }
+  return null;
+}
+
 /**
  * Where everything is, without insisting that it is: the Kids! disc, the
  * executable, the save directory, the BIOS. `available` says whether a launch
@@ -103,7 +130,8 @@ export async function resolvePsxMednafen(
   } = {},
 ): Promise<PsxMednafenResolution> {
   const exe = findBin(bin);
-  const discs = await findPsxDiscs(root ?? await repoRoot(), { extra });
+  const at = root ?? await repoRoot();
+  const discs = await findPsxDiscs(at, { extra });
   const found = discs.find((d) => d.game === "kids") ?? null;
   const disc = found ? (found.cuePath ?? found.files[0]?.path ?? null) : null;
   let dir: string;
@@ -119,16 +147,17 @@ export async function resolvePsxMednafen(
       savDir: "",
       name: disc ? discBaseName(disc) : "",
       cardPath: null,
-      bios: { file: PSX_BIOS_JP, dir: "", present: false },
+      bios: { file: PSX_BIOS_JP, dir: "", present: false, path: null },
     };
   }
   const name = disc ? discBaseName(disc) : "";
   const biosDir = firmwareDirFor(dir);
+  const biosPath = await findBios(biosDir, at);
   const bios = {
     file: PSX_BIOS_JP,
     dir: biosDir,
-    present: await exists(join(biosDir, PSX_BIOS_JP)) ||
-      await exists(join(home(), ".mednafen", "firmware", PSX_BIOS_JP)),
+    present: biosPath !== null,
+    path: biosPath,
   };
   const hasBin = await binExists(exe);
   const reason = !found
@@ -190,13 +219,28 @@ export async function installPsxCard(
   return { cardPath, backupPath, replaced };
 }
 
+/**
+ * The extra arguments a launch carries: the BIOS by path when the copy found
+ * is not in Mednafen's own firmware folder (an absolute `psx.bios_jp` is
+ * taken as given; a bare name is looked up in that folder).
+ */
+export function psxLaunchArgs(
+  bios: Pick<PsxMednafenResolution["bios"], "dir" | "path" | "file">,
+): string[] {
+  if (!bios.path) return [];
+  if (resolve(bios.path) === resolve(join(bios.dir, bios.file))) return [];
+  return ["-psx.bios_jp", bios.path];
+}
+
 /** Start Mednafen on the Kids! disc, detached; resolves with the pid. */
 export async function launchPsxMednafen(
-  r: Pick<PsxMednafenResolution, "bin" | "disc">,
-): Promise<{ pid: number | null; args: string[] }> {
+  r: Pick<PsxMednafenResolution, "bin" | "disc" | "bios">,
+  { wait = false }: { wait?: boolean } = {},
+): Promise<{ pid: number | null; code: number | null; args: string[] }> {
   if (!r.disc) throw new MednafenError("no Dezaemon Kids! disc to start");
-  const { pid, args } = await launchMednafen({ bin: r.bin, disc: r.disc }, {
-    wait: false,
-  });
-  return { pid, args };
+  const { pid, code, args } = await launchMednafen(
+    { bin: r.bin, disc: r.disc },
+    { wait, passThrough: psxLaunchArgs(r.bios) },
+  );
+  return { pid, code, args };
 }
