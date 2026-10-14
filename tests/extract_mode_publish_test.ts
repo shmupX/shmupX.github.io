@@ -22,6 +22,9 @@ interface Extract {
     key: string,
   ): Rec;
   bossTravelRecord(recipe: Rec, record: Rec, stageId: number): Rec;
+  collectFrameNames(record: Rec): string[];
+  previewFrameName(record: Rec): string | null;
+  pruneFrameNames(record: Rec, missing: string[]): Rec;
 }
 
 /** Load the browser script under a window just real enough for its load-time arming. */
@@ -134,4 +137,56 @@ Deno.test("only a numbered slot pins; bossExtra's routine is name-driven", () =>
 Deno.test("the travel record underneath is unchanged for a web boss", () => {
   const live = webBoss();
   assertEquals(EX.bossTravelRecord({}, live, 1), live);
+});
+
+// flirty_revenge as the editor exports her: re-skinned from Barlog, whose
+// art the editor set aside under '_' keys rather than deleting.
+const reskinned = (): Rec => ({
+  _name: "barlog",
+  name: "flirty_revenge",
+  anim: {
+    _attack: ["barlog_attack0.gif", "barlog_attack1.gif"],
+    _idle: ["barlog_idle0.gif"],
+    attack: ["flirtyRevenge3.png", "flirtyRevenge4.png"],
+    idle: ["flirtyRevenge0.png", "flirtyRevenge1.png"],
+  },
+  projectileData: {
+    _texture: ["flirty_revenge_projectile0.png"],
+    texture: ["flirtyRevengeProjectile0.png", "flirtyRevengeProjectile1.png"],
+  },
+});
+
+Deno.test("a key the editor set aside with '_' is not part of the character", () => {
+  assertEquals(EX.collectFrameNames(reskinned()), [
+    "flirtyRevenge3.png",
+    "flirtyRevenge4.png",
+    "flirtyRevenge0.png",
+    "flirtyRevenge1.png",
+    "flirtyRevengeProjectile0.png",
+    "flirtyRevengeProjectile1.png",
+  ]);
+});
+
+Deno.test("the card leads with the idle pose, as the library does", () => {
+  assertEquals(EX.previewFrameName(reskinned()), "flirtyRevenge0.png");
+  // No idle list: the texture list, then the first name the walk finds.
+  assertEquals(
+    EX.previewFrameName({ texture: ["ship0.png", "ship1.png"] }),
+    "ship0.png",
+  );
+  assertEquals(
+    EX.previewFrameName({ anim: { attack: ["a0.png"] } }),
+    "a0.png",
+  );
+  assertEquals(EX.previewFrameName({ name: "bare" }), null);
+});
+
+Deno.test("pruning a missing frame leaves the set-aside lists alone", () => {
+  const rec = reskinned();
+  EX.pruneFrameNames(rec, ["flirtyRevenge4.png", "barlog_attack0.gif"]);
+  assertEquals((rec.anim as Rec).attack, ["flirtyRevenge3.png"]);
+  assertEquals((rec.anim as Rec)._attack, [
+    "barlog_attack0.gif",
+    "barlog_attack1.gif",
+  ]);
 });

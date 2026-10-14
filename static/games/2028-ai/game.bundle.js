@@ -12267,6 +12267,19 @@
   function clamp4(v, lo, hi) {
     return v < lo ? lo : v > hi ? hi : v;
   }
+  // The slot whose routine a boss runs: her attackPattern's when she has one
+  // (a boss the library placed elsewhere than she was authored for), else
+  // the slot she sits in. bossShootStart picks the routine by it, and
+  // bossAdd builds the stance sets that routine switches between by it —
+  // flirty_revenge, placed in slot 1 pinned to "boss3", ran Vega's warps
+  // and fields but never left her idle pose while her shoot and attack sets
+  // were only built for a boss sitting in slot 3.
+  function bossPatternSlot(bossData, stageId) {
+    var m = bossData && bossData.attackPattern
+      ? String(bossData.attackPattern).match(/boss(\d+)/)
+      : null;
+    return m ? Number(m[1]) : stageId;
+  }
   function _setBossAnim(scene, boss, frames) {
     if (!frames || frames.length === 0 || !boss || !boss.active) return;
     boss.setData("frames", frames);
@@ -12883,12 +12896,13 @@
     var bossAnimFrames = function(list) {
       return bulletFramesInAtlas(scene, list, null);
     };
-    if (stageId === 3 && bossData.anim) {
+    var patternSlot = bossPatternSlot(bossData, stageId);
+    if (patternSlot === 3 && bossData.anim) {
       scene.vegaAnimIdle = bossAnimFrames(bossData.anim.idle);
       scene.vegaAnimShoot = bossAnimFrames(bossData.anim.shoot);
       scene.vegaAnimAttack = bossAnimFrames(bossData.anim.attack);
     }
-    if (stageId === 4 && bossData.anim) {
+    if (patternSlot === 4 && bossData.anim) {
       scene.fangAnimIdle = bossAnimFrames(bossData.anim.idle);
       scene.fangAnimWait = bossAnimFrames(bossData.anim.wait);
       scene.fangAnimCharge = bossAnimFrames(bossData.anim.charge);
@@ -13153,13 +13167,8 @@
       bossPatternGoki(scene, seed);
       return;
     }
-    var patternKey = null;
     var currentBossData = scene.recipe.bossData ? scene.recipe.bossData["boss" + String(scene.bossStageId)] : null;
-    if (currentBossData && currentBossData.attackPattern) {
-      var m = currentBossData.attackPattern.match(/boss(\d+)/);
-      if (m) patternKey = Number(m[1]);
-    }
-    var patternId = patternKey !== null ? patternKey : scene.bossStageId;
+    var patternId = bossPatternSlot(currentBossData, scene.bossStageId);
     switch (patternId) {
       case 0:
         bossPatternPyramid(scene, seed);

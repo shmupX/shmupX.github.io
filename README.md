@@ -1027,6 +1027,22 @@ to the slot it was authored for (never a Dezaemon-native boss, and never over a
 pattern already on the record), so she dives wherever she lands.
 `tests/extract_mode_publish_test.ts` pins the rule.
 
+**EXTRACT MODE's card and atlas skip the keys the editor set aside, and a
+placed boss wears her routine's poses.** A key the editor prefixes with `_` is
+a variant it kept rather than deleted — the art a re-skinned boss was made from
+(`anim._idle`), the projectile list it replaced (`projectileData._texture`) —
+and the runtime, the level loader and the editor's own frame walks all skip
+them. `collectFrameNames` did not: 2028.Ai's fourth boss, re-skinned from
+Barlog, previewed on the card as Barlog's dive, counted his twelve frames and
+carried them into the library. The walk and `pruneFrameNames` now skip `_`
+keys, and the card leads with the frame the library leads with
+(`previewFrameName`: idle, then the texture list, then the first name found).
+In the bundle, the stance sets a routine switches between follow the same slot
+as the routine: a boss pinned to `boss3` and placed in another slot ran Vega's
+warps and fields but never left her idle pose, because `bossAdd` built the Vega
+and Fang sets for the slot she sat in rather than the one she plays
+(`bossPatternSlot`, shared with `bossShootStart`).
+
 **The launcher's LIBRARY** is that shelf as game cards, reached from the Games
 list's LIBRARY row (it appears once the shelf holds something). `libraryCards()`
 orders them — each game, then its mods — so a mod sits under the game it came

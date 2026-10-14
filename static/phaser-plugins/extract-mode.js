@@ -28,6 +28,17 @@
         return (cfg && cfg.databaseURL) || DEFAULT_DB;
     }
 
+    // A key the editor prefixes with '_' is a variant it set aside, not part
+    // of the character: the art a re-skinned boss was made from (anim._idle),
+    // the projectile list it replaced (projectileData._texture). The runtime,
+    // the level loader and the editor's own walks all skip them, so the card
+    // and the published atlas must too — flirty_revenge, re-skinned from
+    // Barlog, previewed as Barlog's dive and carried his twelve frames into
+    // the library.
+    function disabledKey(k) {
+        return k.charAt(0) === '_';
+    }
+
     // Every frame name a character record references, in order, deduped —
     // the same depth<=2 walk the editor's publish flow uses, so player
     // (texture + shoot*/barrier frame lists), enemy (texture) and boss
@@ -38,6 +49,7 @@
         var collect = function (obj, depth) {
             if (!obj || typeof obj !== 'object' || depth > 2) return;
             for (var k in obj) {
+                if (disabledKey(k)) continue;
                 var v = obj[k];
                 if (Array.isArray(v) && v.length && v.every(function (s) { return typeof s === 'string'; })) {
                     for (var i = 0; i < v.length; i++) {
@@ -175,6 +187,7 @@
         var walk = function (obj, depth) {
             if (!obj || typeof obj !== 'object' || depth > 2) return;
             for (var k in obj) {
+                if (disabledKey(k)) continue;
                 var v = obj[k];
                 if (Array.isArray(v) && v.length && v.every(function (x) { return typeof x === 'string'; })) {
                     var kept = v.filter(function (x) { return !drop[x]; });
@@ -415,6 +428,7 @@
         bossTravelRecord: bossTravelRecord,
         bossPublishRecord: bossPublishRecord,
         collectFrameNames: collectFrameNames,
+        previewFrameName: previewFrameName,
         cropFrames: cropFrames,
         packFrames: packFrames,
         publishRecord: publishRecord,
@@ -770,9 +784,19 @@
         return row;
     }
 
+    // The frame a card leads with — the pose the editor's library leads with
+    // too (libraryFrames: idle, then the texture list, then whatever the walk
+    // finds first), so the thumb shows the character as the shelf will.
+    function previewFrameName(record) {
+        var ok = function (v) { return Array.isArray(v) && v.length > 0 && typeof v[0] === 'string'; };
+        if (record && record.anim && ok(record.anim.idle)) return record.anim.idle[0];
+        if (record && ok(record.texture)) return record.texture[0];
+        var all = collectFrameNames(record);
+        return all.length ? all[0] : null;
+    }
+
     function drawThumb(scene, sel) {
-        var frames = collectFrameNames(sel.record);
-        var first = frames.length ? frames[0] : (sel.sprite.frame && sel.sprite.frame.name);
+        var first = previewFrameName(sel.record) || (sel.sprite.frame && sel.sprite.frame.name);
         if (!first) return null;
         var src = lookupFrame(textureFrameSource(scene, sel.textureKey), first);
         if (!src) return null;
