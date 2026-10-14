@@ -103,10 +103,10 @@ function bupDateToDate(minutes) {
   const epoch1980 = Date.UTC(1980, 0, 1, 0, 0, 0);
   return new Date(epoch1980 + minutes * 6e4);
 }
-function makeStream(data, base, blockSize, entryOff, chain) {
+function makeStream(data, base, blockSize2, entryOff, chain) {
   let seg2 = -1;
   let pos = entryOff + 34;
-  let segEnd = entryOff + blockSize;
+  let segEnd = entryOff + blockSize2;
   return {
     readByte() {
       while (pos >= segEnd) {
@@ -115,8 +115,8 @@ function makeStream(data, base, blockSize, entryOff, chain) {
           throw new Error("save data stream exhausted before datasize bytes were read");
         }
         const n = chain[seg2];
-        pos = base + n * blockSize + 4;
-        segEnd = base + (n + 1) * blockSize;
+        pos = base + n * blockSize2 + 4;
+        segEnd = base + (n + 1) * blockSize2;
         if (segEnd > data.length) {
           throw new Error(`block ${n} lies outside the image`);
         }
@@ -129,9 +129,9 @@ function makeStream(data, base, blockSize, entryOff, chain) {
   };
 }
 function extractPayload(data, partition, entry) {
-  const { base, blockSize } = partition;
+  const { base, blockSize: blockSize2 } = partition;
   const chain = [];
-  const stream = makeStream(data, base, blockSize, entry.offset, chain);
+  const stream = makeStream(data, base, blockSize2, entry.offset, chain);
   for (; ; ) {
     const hi = stream.readByte();
     const lo = stream.readByte();
@@ -3640,12 +3640,12 @@ function composeCover(decoded, opts = {}) {
     backdrop = true
   } = opts;
   let canvas = makeCanvas(COVER_W, COVER_H);
-  const layers = [];
+  const layers2 = [];
   const pick = backdrop ? pickBackdrop(decoded.bgStages || []) : { stage: -1, row: 0, tiles: 0 };
   let bgTiles = 0;
   if (pick.stage >= 0) {
     bgTiles = drawBackdrop(canvas, decoded, pick.stage, pick.row);
-    layers.push({
+    layers2.push({
       layer: "backdrop",
       stage: pick.stage,
       row: pick.row,
@@ -3688,7 +3688,7 @@ function composeCover(decoded, opts = {}) {
           canvas[o + 2] = PLATE_RGB[2];
         }
       }
-      layers.push({
+      layers2.push({
         layer: "plate",
         darkInkFraction: +darkInkFraction.toFixed(3),
         darkBehindFraction: +darkBehindFraction.toFixed(3),
@@ -3698,7 +3698,7 @@ function composeCover(decoded, opts = {}) {
     blit(canvas, COVER_W, COVER_H, page.rgba, page.w, page.h, pageX, titleY, {
       scale: titleScale
     });
-    layers.push({
+    layers2.push({
       layer: "titlePage",
       w: page.w,
       h: page.h,
@@ -3722,7 +3722,7 @@ function composeCover(decoded, opts = {}) {
         Math.round(190 - boss.h * k / 2),
         { scale: k }
       );
-      layers.push({
+      layers2.push({
         layer: "fallback-boss",
         key: boss.key,
         w: boss.w,
@@ -3754,12 +3754,12 @@ function composeCover(decoded, opts = {}) {
           { scale: k }
         );
       });
-      layers.push({ layer: "fallback-enemies", count: strip.length });
+      layers2.push({ layer: "fallback-enemies", count: strip.length });
     }
     if (!boss && !strip.length && !bgTiles && decoded.cg?.pages?.[0]) {
       const p = decoded.cg.pages[0];
       blit(canvas, COVER_W, COVER_H, p.rgba, p.width, p.height, 64, 0);
-      layers.push({ layer: "fallback-cgpage", w: p.width, h: p.height });
+      layers2.push({ layer: "fallback-cgpage", w: p.width, h: p.height });
     }
   }
   let w = COVER_W, h = COVER_H;
@@ -3784,7 +3784,7 @@ function composeCover(decoded, opts = {}) {
     w,
     h,
     rgba: canvas,
-    layers,
+    layers: layers2,
     backdropStage: pick.stage,
     backdropRow: pick.row,
     hasTitleArt: hasTitle
@@ -4278,12 +4278,12 @@ function serializeMeshLibrary(library) {
         n: Array.from(mesh.normals, (x) => Math.round(x * JSON_NORMAL_UNIT)),
         c: mesh.colorSets.map((set) => Array.from(set))
       };
-      const flagged = [];
+      const flagged2 = [];
       const flags = mesh.dualPlane;
       if (flags) {
-        for (let q = 0; q < flags.length; q++) if (flags[q]) flagged.push(q);
+        for (let q = 0; q < flags.length; q++) if (flags[q]) flagged2.push(q);
       }
-      if (flagged.length) out.d = flagged;
+      if (flagged2.length) out.d = flagged2;
       return out;
     })
   };
@@ -5256,22 +5256,22 @@ function encodeFilename(name) {
   for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
   return out;
 }
-function formatPartition(size, blockSize) {
+function formatPartition(size, blockSize2) {
   const part = new Uint8Array(size);
-  for (let off = 0; off + MAGIC.length <= blockSize; off += MAGIC.length) part.set(MAGIC, off);
+  for (let off = 0; off + MAGIC.length <= blockSize2; off += MAGIC.length) part.set(MAGIC, off);
   return part;
 }
-function dataBlocksFor(datasize, blockSize) {
-  const headerRoom = blockSize - STREAM_OFFSET;
-  const blockRoom = blockSize - 4;
+function dataBlocksFor(datasize, blockSize2) {
+  const headerRoom = blockSize2 - STREAM_OFFSET;
+  const blockRoom = blockSize2 - 4;
   let n = 0;
   while (headerRoom + n * blockRoom < 2 * (n + 1) + datasize) n++;
   return n;
 }
-function writeSaveEntry(partition, blockSize, save, firstBlock = FIRST_SAVE_BLOCK) {
+function writeSaveEntry(partition, blockSize2, save, firstBlock = FIRST_SAVE_BLOCK) {
   const payload = save.payload;
-  const numBlocks = Math.floor(partition.length / blockSize);
-  const dataBlocks = dataBlocksFor(payload.length, blockSize);
+  const numBlocks = Math.floor(partition.length / blockSize2);
+  const dataBlocks = dataBlocksFor(payload.length, blockSize2);
   const header = firstBlock;
   const chain = [];
   for (let k = 0; k < dataBlocks; k++) chain.push(header + 1 + k);
@@ -5282,7 +5282,7 @@ function writeSaveEntry(partition, blockSize, save, firstBlock = FIRST_SAVE_BLOC
     );
   }
   const dv = new DataView(partition.buffer, partition.byteOffset, partition.byteLength);
-  const h = header * blockSize;
+  const h = header * blockSize2;
   dv.setUint32(h, 2147483648);
   partition.set(encodeFilename(save.filename), h + 4);
   partition.set(encodeComment(save.comment), h + 16);
@@ -5294,16 +5294,16 @@ function writeSaveEntry(partition, blockSize, save, firstBlock = FIRST_SAVE_BLOC
   dv.setUint32(h + 30, payload.length);
   let seg2 = -1;
   let pos = h + STREAM_OFFSET;
-  let segEnd = h + blockSize;
+  let segEnd = h + blockSize2;
   const put = (b) => {
     while (pos >= segEnd) {
       seg2++;
       const n = chain[seg2];
       if (n === void 0) throw new Error("block chain exhausted while writing the data stream");
-      const start = n * blockSize;
+      const start = n * blockSize2;
       dv.setUint32(start, 0);
       pos = start + 4;
-      segEnd = start + blockSize;
+      segEnd = start + blockSize2;
     }
     partition[pos++] = b;
   };
@@ -5327,12 +5327,12 @@ function interleave(logical) {
 function buildBupImage(saves, { layout = "mister" } = {}) {
   if (!Array.isArray(saves) || !saves.length) throw new Error("buildBupImage needs at least one save");
   const partSize = layout === "internal" ? INTERNAL_PARTITION_SIZE : CART_PARTITION_SIZE;
-  const blockSize = layout === "internal" ? INTERNAL_BLOCK_SIZE : CART_BLOCK_SIZE;
-  const part = formatPartition(partSize, blockSize);
+  const blockSize2 = layout === "internal" ? INTERNAL_BLOCK_SIZE : CART_BLOCK_SIZE;
+  const part = formatPartition(partSize, blockSize2);
   let next = FIRST_SAVE_BLOCK;
   const entries = [];
   for (const save of saves) {
-    const placed = writeSaveEntry(part, blockSize, save, next);
+    const placed = writeSaveEntry(part, blockSize2, save, next);
     entries.push({ filename: save.filename, ...placed });
     next = placed.next;
   }
@@ -5361,9 +5361,9 @@ function buildGameSave(sections, {
 var INTERNAL_SRM_SIZE = INTERNAL_PARTITION_SIZE * 2;
 var MISTER_LOGICAL_SIZE = INTERNAL_PARTITION_SIZE + CART_PARTITION_SIZE;
 var PartitionFullError = class extends Error {
-  constructor({ payloadBytes, freeBytes, capacityBytes, freeBlocks, neededBlocks, blockSize }) {
+  constructor({ payloadBytes, freeBytes, capacityBytes, freeBlocks, neededBlocks, blockSize: blockSize2 }) {
     super(
-      `a ${payloadBytes}-byte save needs ${neededBlocks} ${blockSize}-byte blocks; the ${capacityBytes}-byte partition has room for a ${freeBytes}-byte save at most`
+      `a ${payloadBytes}-byte save needs ${neededBlocks} ${blockSize2}-byte blocks; the ${capacityBytes}-byte partition has room for a ${freeBytes}-byte save at most`
     );
     this.name = "PartitionFullError";
     this.payloadBytes = payloadBytes;
@@ -5371,12 +5371,12 @@ var PartitionFullError = class extends Error {
     this.capacityBytes = capacityBytes;
     this.freeBlocks = freeBlocks;
     this.neededBlocks = neededBlocks;
-    this.blockSize = blockSize;
+    this.blockSize = blockSize2;
   }
 };
-function payloadCapacity(blocks, blockSize) {
+function payloadCapacity(blocks, blockSize2) {
   if (blocks < 1) return 0;
-  return blockSize - STREAM_OFFSET - 2 + (blocks - 1) * (blockSize - 6);
+  return blockSize2 - STREAM_OFFSET - 2 + (blocks - 1) * (blockSize2 - 6);
 }
 var INTERNAL_RAM_PAYLOAD_CAPACITY = payloadCapacity(
   INTERNAL_PARTITION_SIZE / INTERNAL_BLOCK_SIZE - FIRST_SAVE_BLOCK,
@@ -5386,7 +5386,7 @@ var MIN_GAME_PAYLOAD_BYTES = SECTION_SIZES.reduce((sum, n) => {
   const items = Math.ceil(n / 18);
   return sum + items * 2 + Math.ceil(items / 8);
 }, TABLE_SIZE);
-function partitionOf(partition, blockSize) {
+function partitionOf(partition, blockSize2) {
   const parts = detectPartitions(partition);
   if (parts.length === 0 || parts[0].base !== 0) {
     throw new Error('partition is not formatted ("BackUpRam Format" magic missing from block 0)');
@@ -5394,17 +5394,17 @@ function partitionOf(partition, blockSize) {
   if (parts.length > 1) {
     throw new Error(`expected one partition, found ${parts.length}; pass a bare partition`);
   }
-  if (parts[0].blockSize !== blockSize) {
+  if (parts[0].blockSize !== blockSize2) {
     throw new Error(
-      `${blockSize}-byte blocks do not match a ${partition.length}-byte partition (${parts[0].blockSize}-byte blocks)`
+      `${blockSize2}-byte blocks do not match a ${partition.length}-byte partition (${parts[0].blockSize}-byte blocks)`
     );
   }
   return parts[0];
 }
-function placeSaveInPartition(partition, blockSize, save, { replace } = {}) {
+function placeSaveInPartition(partition, blockSize2, save, { replace } = {}) {
   if (!(save?.payload instanceof Uint8Array)) throw new Error("save.payload must be a Uint8Array");
-  partitionOf(partition, blockSize);
-  const numBlocks = Math.floor(partition.length / blockSize);
+  partitionOf(partition, blockSize2);
+  const numBlocks = Math.floor(partition.length / blockSize2);
   const entries = parse(partition);
   let replaced = null;
   const doomed = new Set([save.filename, replace].filter((n) => typeof n === "string" && n));
@@ -5414,9 +5414,9 @@ function placeSaveInPartition(partition, blockSize, save, { replace } = {}) {
       kept.push(entry);
       continue;
     }
-    const header = entry.offset / blockSize;
+    const header = entry.offset / blockSize2;
     for (const n of [header, ...entry.blocks]) {
-      if (n < numBlocks) partition.fill(0, n * blockSize, (n + 1) * blockSize);
+      if (n < numBlocks) partition.fill(0, n * blockSize2, (n + 1) * blockSize2);
     }
     if (replaced === null || entry.filename === replace) replaced = entry.filename;
   }
@@ -5424,10 +5424,10 @@ function placeSaveInPartition(partition, blockSize, save, { replace } = {}) {
   used[0] = 1;
   used[1] = 1;
   for (const entry of kept) {
-    used[entry.offset / blockSize] = 1;
+    used[entry.offset / blockSize2] = 1;
     for (const n of entry.blocks) if (n < numBlocks) used[n] = 1;
   }
-  const needed = 1 + dataBlocksFor(save.payload.length, blockSize);
+  const needed = 1 + dataBlocksFor(save.payload.length, blockSize2);
   let start = -1;
   let run = 0;
   let longest = 0;
@@ -5445,15 +5445,15 @@ function placeSaveInPartition(partition, blockSize, save, { replace } = {}) {
   if (start === -1) {
     throw new PartitionFullError({
       payloadBytes: save.payload.length,
-      freeBytes: payloadCapacity(longest, blockSize),
+      freeBytes: payloadCapacity(longest, blockSize2),
       capacityBytes: partition.length,
       freeBlocks,
       neededBlocks: needed,
-      blockSize
+      blockSize: blockSize2
     });
   }
-  partition.fill(0, start * blockSize, (start + needed) * blockSize);
-  const placed = writeSaveEntry(partition, blockSize, save, start);
+  partition.fill(0, start * blockSize2, (start + needed) * blockSize2);
+  const placed = writeSaveEntry(partition, blockSize2, save, start);
   return { ...placed, replaced };
 }
 function bytesOf(input) {
@@ -6190,7 +6190,7 @@ function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15, first
     g.hist = colorHistogram(g.frames);
     for (const n of g.hist.values()) g.pixels += n;
   }
-  const merge = (a, b) => {
+  const merge2 = (a, b) => {
     const m = new Map(a);
     for (const [w, n] of b) m.set(w, (m.get(w) || 0) + n);
     return m;
@@ -6215,7 +6215,7 @@ function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15, first
     const alone = errorOf(g.hist, medianCut(g.hist, colorsPerRow));
     let bestRow = -1, bestErr = Infinity;
     rowSets.forEach((row, i) => {
-      const merged = merge(row.hist, g.hist);
+      const merged = merge2(row.hist, g.hist);
       const err = errorOf(merged, medianCut(merged, colorsPerRow));
       if (err < bestErr) {
         bestErr = err;
@@ -6225,7 +6225,7 @@ function quantizeSnes(frames, { rows = DEZA2_USER_ROWS, colorsPerRow = 15, first
     if (rowSets.length < rows && (bestRow < 0 || bestErr > alone)) {
       rowSets.push({ hist: new Map(g.hist), groups: [g] });
     } else {
-      rowSets[bestRow].hist = merge(rowSets[bestRow].hist, g.hist);
+      rowSets[bestRow].hist = merge2(rowSets[bestRow].hist, g.hist);
       rowSets[bestRow].groups.push(g);
     }
   }
@@ -8540,10 +8540,10 @@ function parseKidsTable(block) {
   };
 }
 function validateKidsTable(block, table = parseKidsTable(block)) {
-  const check = (s) => byteSum2(block, s.offset, s.offset + s.padded) === s.checksum;
-  const graphics = check(table.sections.graphics);
-  const data = check(table.sections.data);
-  const tail = check(table.sections.tail);
+  const check2 = (s) => byteSum2(block, s.offset, s.offset + s.padded) === s.checksum;
+  const graphics = check2(table.sections.graphics);
+  const data = check2(table.sections.data);
+  const tail = check2(table.sections.tail);
   return { graphics, data, tail, ok: graphics && data && tail };
 }
 function decodeKidsHiScores(tail, offset = 0) {
@@ -11992,6 +11992,3737 @@ function parsePsxSav(bytes) {
   return result;
 }
 
+// packages/shmup-engine/src/n64/geometry.js
+var SECTORS_PER_BLOCK = 85;
+var BLOCKS_PER_TRACK = 2;
+var ZONE_SECTOR_SIZES = Object.freeze([232, 216, 208, 192, 176, 160, 144, 128, 112]);
+var PZONE_SECTOR_SIZES = Object.freeze([
+  232,
+  216,
+  208,
+  192,
+  176,
+  160,
+  144,
+  128,
+  216,
+  208,
+  192,
+  176,
+  160,
+  144,
+  128,
+  112
+]);
+var PZONE_TRACKS = Object.freeze([
+  158,
+  158,
+  149,
+  149,
+  149,
+  149,
+  149,
+  114,
+  158,
+  158,
+  149,
+  149,
+  149,
+  149,
+  149,
+  114
+]);
+var SPARE_TRACKS_PER_ZONE = 12;
+var DISK_TYPE_ZONES = Object.freeze([
+  Object.freeze([0, 1, 2, 9, 8, 3, 4, 5, 6, 7, 15, 14, 13, 12, 11, 10]),
+  Object.freeze([0, 1, 2, 3, 10, 9, 8, 4, 5, 6, 7, 15, 14, 13, 12, 11]),
+  Object.freeze([0, 1, 2, 3, 4, 11, 10, 9, 8, 5, 6, 7, 15, 14, 13, 12]),
+  Object.freeze([0, 1, 2, 3, 4, 5, 12, 11, 10, 9, 8, 6, 7, 15, 14, 13]),
+  Object.freeze([0, 1, 2, 3, 4, 5, 6, 13, 12, 11, 10, 9, 8, 7, 15, 14]),
+  Object.freeze([0, 1, 2, 3, 4, 5, 6, 7, 14, 13, 12, 11, 10, 9, 8, 15]),
+  Object.freeze([0, 1, 2, 3, 4, 5, 6, 7, 15, 14, 13, 12, 11, 10, 9, 8])
+]);
+var DISK_TYPE_COUNT = DISK_TYPE_ZONES.length;
+var DEZAEMON_DISK_TYPE = 0;
+var TOTAL_LBAS = 4316;
+var SYSTEM_AREA_LBAS = 24;
+var USER_LBA_COUNT = TOTAL_LBAS - SYSTEM_AREA_LBAS;
+var MAX_USER_LBA = USER_LBA_COUNT - 1;
+var SYSTEM_AREA_BYTES = SYSTEM_AREA_LBAS * SECTORS_PER_BLOCK * 232;
+var DDD_IMAGE_BYTES = 64458560;
+var NDD_IMAGE_BYTES = DDD_IMAGE_BYTES + SYSTEM_AREA_BYTES;
+function pzoneBlockSize(pzone) {
+  return PZONE_SECTOR_SIZES[pzone] * SECTORS_PER_BLOCK;
+}
+function pzoneBlocks(pzone) {
+  return (PZONE_TRACKS[pzone] - SPARE_TRACKS_PER_ZONE) * BLOCKS_PER_TRACK;
+}
+function checkType(type) {
+  if (!Number.isInteger(type) || type < 0 || type >= DISK_TYPE_COUNT) {
+    throw new Error(`disk type ${type} is not one of 0..${DISK_TYPE_COUNT - 1}`);
+  }
+}
+function romZoneCount(type) {
+  checkType(type);
+  return Math.min(16, 5 + 2 * type);
+}
+var tables = /* @__PURE__ */ new Map();
+function zoneTable(type = DEZAEMON_DISK_TYPE) {
+  checkType(type);
+  if (tables.has(type)) return tables.get(type);
+  const rom = romZoneCount(type);
+  const zones = [];
+  let lba = 0;
+  let offset = 0;
+  DISK_TYPE_ZONES[type].forEach((pzone, vzone) => {
+    const blockSize2 = pzoneBlockSize(pzone);
+    const blockCount = pzoneBlocks(pzone) - (vzone === 0 ? SYSTEM_AREA_LBAS : 0);
+    zones.push(Object.freeze({
+      vzone,
+      pzone,
+      sectorSize: PZONE_SECTOR_SIZES[pzone],
+      blockSize: blockSize2,
+      firstLba: lba,
+      blockCount,
+      offset,
+      rom: vzone < rom
+    }));
+    lba += blockCount;
+    offset += blockCount * blockSize2;
+  });
+  const table = Object.freeze(zones);
+  tables.set(type, table);
+  return table;
+}
+function zoneOf(lba, type = DEZAEMON_DISK_TYPE) {
+  if (!Number.isInteger(lba) || lba < 0 || lba > MAX_USER_LBA) return null;
+  for (const z of zoneTable(type)) {
+    if (lba < z.firstLba + z.blockCount) return z;
+  }
+  return null;
+}
+function blockSize(lba, type = DEZAEMON_DISK_TYPE) {
+  const z = zoneOf(lba, type);
+  return z ? z.blockSize : null;
+}
+function lbaToOffset(lba, type = DEZAEMON_DISK_TYPE) {
+  if (!Number.isInteger(lba) || lba < 0 || lba > USER_LBA_COUNT) return null;
+  if (lba === USER_LBA_COUNT) return DDD_IMAGE_BYTES;
+  const z = zoneOf(lba, type);
+  return z.offset + (lba - z.firstLba) * z.blockSize;
+}
+function extentBytes(lba, count, type = DEZAEMON_DISK_TYPE) {
+  if (!Number.isInteger(count) || count < 0) return null;
+  const from = lbaToOffset(lba, type);
+  const to = lbaToOffset(lba + count, type);
+  if (from === null || to === null) return null;
+  return to - from;
+}
+function blocksFor(lba, bytes, type = DEZAEMON_DISK_TYPE) {
+  if (!Number.isInteger(bytes) || bytes < 0 || lbaToOffset(lba, type) === null) return null;
+  let count = 0;
+  let left = bytes;
+  while (left > 0) {
+    const size = blockSize(lba + count, type);
+    if (size === null) return null;
+    left -= size;
+    count++;
+  }
+  return count;
+}
+function romEndLba(type = DEZAEMON_DISK_TYPE) {
+  const zones = zoneTable(type);
+  const last = zones[romZoneCount(type) - 1];
+  return last.firstLba + last.blockCount - 1;
+}
+function ramStartLba(type = DEZAEMON_DISK_TYPE) {
+  const end = romEndLba(type);
+  return end >= MAX_USER_LBA ? null : end + 1;
+}
+function ramEndLba(type = DEZAEMON_DISK_TYPE) {
+  return ramStartLba(type) === null ? null : MAX_USER_LBA;
+}
+function isDddSize(size) {
+  return size === DDD_IMAGE_BYTES;
+}
+function isNddSize(size) {
+  return size === NDD_IMAGE_BYTES;
+}
+function userArea(image) {
+  if (isNddSize(image.length)) return image.subarray(SYSTEM_AREA_BYTES);
+  if (isDddSize(image.length)) return image;
+  throw new Error(`a 64DD image is ${DDD_IMAGE_BYTES} (.ddd) or ${NDD_IMAGE_BYTES} (.ndd) bytes; this one is ${image.length}`);
+}
+function systemAreaOf(image) {
+  if (isNddSize(image.length)) return image.subarray(0, SYSTEM_AREA_BYTES);
+  if (isDddSize(image.length)) return null;
+  throw new Error(`a 64DD image is ${DDD_IMAGE_BYTES} (.ddd) or ${NDD_IMAGE_BYTES} (.ndd) bytes; this one is ${image.length}`);
+}
+function nddFromDdd(image, systemArea) {
+  if (!(systemArea instanceof Uint8Array) || systemArea.length !== SYSTEM_AREA_BYTES) {
+    throw new Error(`a system area is ${SYSTEM_AREA_BYTES} bytes`);
+  }
+  const user = userArea(image);
+  const out = new Uint8Array(NDD_IMAGE_BYTES);
+  out.set(systemArea, 0);
+  out.set(user, SYSTEM_AREA_BYTES);
+  return out;
+}
+
+// packages/shmup-engine/src/n64/directory.js
+var DIRECTORY_OFFSET2 = 25996554;
+var DIRECTORY_SLOTS = 834;
+var NAMES = DIRECTORY_OFFSET2;
+var START_LBA = NAMES + DIRECTORY_SLOTS * 11;
+var BLOCK_COUNT2 = START_LBA + DIRECTORY_SLOTS * 2;
+var RESERVED = BLOCK_COUNT2 + DIRECTORY_SLOTS * 2;
+var STORED_SIZE = RESERVED + DIRECTORY_SLOTS * 2;
+var DIRECTORY_END = STORED_SIZE + DIRECTORY_SLOTS * 4;
+var DIRECTORY_COPIES = Object.freeze([0, 34680, 83640]);
+var DIRECTORY_LBA = 1417;
+var DIRECTORY_IN_BLOCK_OFFSET = 834;
+var DIRECTORY_COPY_LBAS = Object.freeze([1417, 1419, 1422]);
+var SLOT_BYTES = 21;
+var DIRECTORY_BYTES = DIRECTORY_SLOTS * SLOT_BYTES;
+var FIRST_FILE_LBA = 9;
+var NAME_CHARS = 8;
+var EXT_CHARS = 3;
+var GLOBAL_EXTS = Object.freeze(["GAM", "CGR", "CMD", "CBL", "ULB", "MUS"]);
+var STAGES = Object.freeze([0, 1, 2, 3, 4, 5, 6, 8]);
+var STAGE_EXTS = Object.freeze(["BL", "MD", "GR"]);
+var PROJECT_FILE_COUNT = GLOBAL_EXTS.length + STAGES.length * STAGE_EXTS.length;
+var DOCUMENTED_SIZES = Object.freeze({
+  GAM: 1369,
+  CGR: 163840,
+  CMD: 62120,
+  CBL: 2484,
+  ULB: 57600,
+  MUS: 274032,
+  BL: 35639,
+  GR: 1064960,
+  MD: 403780
+});
+function u162(bytes, at) {
+  return bytes[at] << 8 | bytes[at + 1];
+}
+function u32(bytes, at) {
+  return (bytes[at] << 24 | bytes[at + 1] << 16 | bytes[at + 2] << 8 | bytes[at + 3]) >>> 0;
+}
+function sizeKey(ext) {
+  return /^[0-9]/.test(ext) ? ext.slice(1) : ext;
+}
+function readDirectory(bytes) {
+  if (bytes.length < DIRECTORY_END) throw new Error(`image is ${bytes.length} bytes, too short for the directory at 0x${DIRECTORY_OFFSET2.toString(16)}`);
+  const entries = [];
+  for (let slot = 0; slot < DIRECTORY_SLOTS; slot++) {
+    const at = NAMES + slot * 11;
+    let raw = "";
+    let printable = true;
+    for (let i = 0; i < 11; i++) {
+      const c = bytes[at + i];
+      if (c < 32 || c > 126) {
+        printable = false;
+        break;
+      }
+      raw += String.fromCharCode(c);
+    }
+    if (!printable || raw.trim() === "") break;
+    const ext = raw.slice(8);
+    const startLba = u162(bytes, START_LBA + slot * 2);
+    const blockCount = u162(bytes, BLOCK_COUNT2 + slot * 2);
+    const storedSize = u32(bytes, STORED_SIZE + slot * 4);
+    const key = sizeKey(ext);
+    entries.push(Object.freeze({
+      slot,
+      name: raw.slice(0, 8).trimEnd(),
+      ext,
+      stage: /^[0-9]/.test(ext) ? Number(ext[0]) : null,
+      startLba,
+      blockCount,
+      storedSize,
+      offset: lbaToOffset(startLba),
+      capacity: extentBytes(startLba, blockCount),
+      documentedSize: key in DOCUMENTED_SIZES ? DOCUMENTED_SIZES[key] : null
+    }));
+  }
+  return entries;
+}
+function checkDirectory(entries) {
+  const contiguous = entries.every((e, i) => i === 0 || entries[i - 1].startLba + entries[i - 1].blockCount === e.startLba);
+  const blocksFit = entries.every((e) => {
+    const bs = blockSize(e.startLba);
+    return bs !== null && Math.ceil(e.storedSize / bs) === e.blockCount;
+  });
+  const withinCapacity = entries.every((e) => e.capacity !== null && e.storedSize <= e.capacity);
+  const last = entries[entries.length - 1];
+  return {
+    contiguous,
+    blocksFit,
+    withinCapacity,
+    end: last && last.offset !== null ? last.offset + last.storedSize : null
+  };
+}
+function projectExts(stages = STAGES) {
+  return [...GLOBAL_EXTS, ...stages.flatMap((s) => STAGE_EXTS.map((e) => `${s}${e}`))];
+}
+function extOrder(ext) {
+  const i = projectExts().indexOf(String(ext).toUpperCase());
+  return i < 0 ? PROJECT_FILE_COUNT : i;
+}
+function normalizeProjectName(name) {
+  const clean = String(name ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, NAME_CHARS);
+  if (!clean) throw new Error(`"${name}" leaves no letters or digits for a project name`);
+  return clean;
+}
+function directoryOffsets(type = DEZAEMON_DISK_TYPE) {
+  return DIRECTORY_COPY_LBAS.map((lba) => lbaToOffset(lba, type) + DIRECTORY_IN_BLOCK_OFFSET);
+}
+function encodeSlotName(name, ext) {
+  const n = String(name);
+  const e = String(ext);
+  if (n.length < 1 || n.length > NAME_CHARS) throw new Error(`a project name is 1..${NAME_CHARS} characters; "${n}" is not`);
+  if (e.length !== EXT_CHARS) throw new Error(`an extension is ${EXT_CHARS} characters; "${e}" is not`);
+  const out = new Uint8Array(NAME_CHARS + EXT_CHARS);
+  const label = n.padEnd(NAME_CHARS) + e;
+  for (let i = 0; i < label.length; i++) {
+    const c = label.charCodeAt(i);
+    if (c < 33 && i < n.length) throw new Error(`"${n}" has a blank in its name`);
+    if (c < 32 || c > 126) throw new Error(`"${label[i]}" is not printable ASCII; a directory name is`);
+    out[i] = c;
+  }
+  return out;
+}
+function encodeDirectory(entries, { slots = DIRECTORY_SLOTS } = {}) {
+  if (entries.length > slots) throw new Error(`the directory holds ${slots} files; ${entries.length} were given`);
+  const out = new Uint8Array(slots * SLOT_BYTES);
+  const names = 0;
+  const startLba = names + slots * 11;
+  const blockCount = startLba + slots * 2;
+  const reserved = blockCount + slots * 2;
+  const storedSize = reserved + slots * 2;
+  entries.forEach((e, slot) => {
+    out.set(encodeSlotName(e.name, e.ext), names + slot * 11);
+    for (const [at2, v, what] of [[startLba, e.startLba, "start LBA"], [blockCount, e.blockCount, "block count"], [reserved, e.reserved ?? 0, "reserved word"]]) {
+      if (!Number.isInteger(v) || v < 0 || v > 65535) throw new Error(`${e.name}.${e.ext}: ${what} ${v} is not a u16`);
+      out[at2 + slot * 2] = v >> 8;
+      out[at2 + slot * 2 + 1] = v & 255;
+    }
+    if (!Number.isInteger(e.storedSize) || e.storedSize < 0 || e.storedSize > 4294967295) throw new Error(`${e.name}.${e.ext}: stored size ${e.storedSize} is not a u32`);
+    const at = storedSize + slot * 4;
+    out[at] = e.storedSize >>> 24 & 255;
+    out[at + 1] = e.storedSize >>> 16 & 255;
+    out[at + 2] = e.storedSize >>> 8 & 255;
+    out[at + 3] = e.storedSize & 255;
+  });
+  return out;
+}
+function writeDirectory(user, entries, type = DEZAEMON_DISK_TYPE) {
+  const bytes = encodeDirectory(entries);
+  for (const at of directoryOffsets(type)) {
+    if (at + bytes.length > user.length) throw new Error(`the image is ${user.length} bytes, too short for a directory copy at 0x${at.toString(16)}`);
+    user.set(bytes, at);
+  }
+  return bytes;
+}
+function layoutFiles(files, { firstLba = FIRST_FILE_LBA, type = DEZAEMON_DISK_TYPE } = {}) {
+  const lastLba = romEndLba(type) - 1;
+  const out = [];
+  let lba = firstLba;
+  for (const f of files) {
+    const blocks = blocksFor(lba, f.storedSize, type);
+    if (blocks === null || lba + blocks - 1 > lastLba) {
+      const used = lbaToOffset(lba, type) - lbaToOffset(firstLba, type);
+      const room = lbaToOffset(lastLba + 1, type) - lbaToOffset(firstLba, type);
+      throw new Error(
+        `the ROM area is full at ${f.name}.${f.ext}: ${used} bytes of files already laid out and ${room} available between LBA ${firstLba} and the directory at LBA ${lastLba + 1}`
+      );
+    }
+    out.push({
+      name: f.name,
+      ext: f.ext,
+      startLba: lba,
+      blockCount: blocks,
+      storedSize: f.storedSize,
+      offset: lbaToOffset(lba, type),
+      capacity: extentBytes(lba, blocks, type) ?? 0
+    });
+    lba += blocks;
+  }
+  return out;
+}
+
+// packages/shmup-engine/src/n64/system-area.js
+var REGION_JAPAN = 3897086742;
+var FORMAT_RETAIL = 16;
+var SYSTEM_DATA_BYTES = 232;
+var DISK_ID_BYTES = 32;
+var SYSTEM_SECTOR_BYTES = ZONE_SECTOR_SIZES[0];
+var SYSTEM_SECTOR_BYTES_DEV = ZONE_SECTOR_SIZES[3];
+var SYSTEM_DATA_LBAS = Object.freeze([0, 1, 8, 9]);
+var SYSTEM_DATA_LBAS_DEV = Object.freeze([2, 3, 10, 11]);
+var DISK_ID_LBAS = Object.freeze([14, 15]);
+var SYSTEM_BLOCK_BYTES = SECTORS_PER_BLOCK * SYSTEM_SECTOR_BYTES;
+var DEZAEMON_IPL_BLOCKS = 9;
+var DEZAEMON_IPL_ADDRESS = 2147484672;
+var DEZAEMON_INITIAL_CODE = "DEZA";
+var DEZAEMON_COMPANY_CODE = "E7";
+var DEZAEMON_FREE_AREA_PREFIX = "ATNFS";
+function dezaemonFreeArea(diskType = 0) {
+  if (!Number.isInteger(diskType) || diskType < 0 || diskType >= DISK_TYPE_COUNT) {
+    throw new Error(`disk type ${diskType} is not one of 0..${DISK_TYPE_COUNT - 1}`);
+  }
+  return `${DEZAEMON_FREE_AREA_PREFIX}${diskType}`;
+}
+function u163(bytes, at) {
+  return bytes[at] << 8 | bytes[at + 1];
+}
+function u322(bytes, at) {
+  return (bytes[at] << 24 | bytes[at + 1] << 16 | bytes[at + 2] << 8 | bytes[at + 3]) >>> 0;
+}
+function putU162(bytes, at, v) {
+  bytes[at] = v >> 8 & 255;
+  bytes[at + 1] = v & 255;
+}
+function putU32(bytes, at, v) {
+  bytes[at] = v >>> 24 & 255;
+  bytes[at + 1] = v >>> 16 & 255;
+  bytes[at + 2] = v >>> 8 & 255;
+  bytes[at + 3] = v & 255;
+}
+function bcd(n) {
+  return Math.floor(n / 10) % 10 << 4 | n % 10;
+}
+function putAscii(bytes, at, len, text, what) {
+  const s = String(text ?? "");
+  if (s.length > len) throw new Error(`${what} is at most ${len} characters; "${s}" is ${s.length}`);
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c > 126) throw new Error(`${what} is ASCII; "${s[i]}" is not`);
+    bytes[at + i] = c;
+  }
+}
+function encodeSystemData(fields = {}) {
+  const diskType = fields.diskType ?? 0;
+  if (!Number.isInteger(diskType) || diskType < 0 || diskType >= DISK_TYPE_COUNT) {
+    throw new Error(`disk type ${diskType} is not one of 0..${DISK_TYPE_COUNT - 1}`);
+  }
+  const retail = fields.retail ?? true;
+  const out = new Uint8Array(SYSTEM_DATA_BYTES);
+  putU32(out, 0, fields.region ?? REGION_JAPAN);
+  out[4] = fields.format ?? (retail ? FORMAT_RETAIL : 0);
+  out[5] = (retail ? FORMAT_RETAIL : 0) | diskType;
+  const blocks = fields.iplLoadBlocks ?? DEZAEMON_IPL_BLOCKS;
+  if (!Number.isInteger(blocks) || blocks < 1 || blocks > MAX_USER_LBA) {
+    throw new Error(`the IPL load size is 1..${MAX_USER_LBA} blocks; ${blocks} is not (an emulator refuses 0)`);
+  }
+  putU162(out, 6, blocks);
+  const address = fields.iplLoadAddress ?? DEZAEMON_IPL_ADDRESS;
+  if (!Number.isInteger(address) || address < 2147483648 || address >= 2155872256) {
+    throw new Error(`the IPL load address is 0x80000000..0x807FFFFF; 0x${(address >>> 0).toString(16)} is not`);
+  }
+  putU32(out, 28, address);
+  const offsets = fields.defectOffsets ?? [];
+  for (let i = 0; i < 16; i++) out[8 + i] = (offsets[i] ?? 0) & 255;
+  const tracks = fields.defectTracks ?? [];
+  for (let i = 0; i < 192; i++) out[32 + i] = (tracks[i] ?? 0) & 255;
+  const ramStart = ramStartLba(diskType);
+  putU162(out, 224, fields.romEndLba ?? romEndLba(diskType));
+  putU162(out, 226, fields.ramStartLba ?? (ramStart === null ? 65535 : ramStart));
+  putU162(out, 228, fields.ramEndLba ?? (ramStart === null ? 65535 : ramEndLba(diskType)));
+  return out;
+}
+function decodeSystemData(bytes) {
+  if (bytes.length < SYSTEM_DATA_BYTES) throw new Error(`a system data record is ${SYSTEM_DATA_BYTES} bytes`);
+  return {
+    region: u322(bytes, 0),
+    format: bytes[4],
+    retail: (bytes[5] & FORMAT_RETAIL) !== 0,
+    diskType: bytes[5] & 15,
+    iplLoadBlocks: u163(bytes, 6),
+    iplLoadAddress: u322(bytes, 28),
+    defectOffsets: Array.from(bytes.subarray(8, 24)),
+    defectTracks: Array.from(bytes.subarray(32, 224)),
+    romEndLba: u163(bytes, 224),
+    ramStartLba: u163(bytes, 226),
+    ramEndLba: u163(bytes, 228)
+  };
+}
+function encodeDiskId(fields = {}) {
+  const out = new Uint8Array(DISK_ID_BYTES);
+  const code = fields.initialCode ?? DEZAEMON_INITIAL_CODE;
+  if (String(code).length !== 4) throw new Error(`an initial code is four characters; "${code}" is not`);
+  putAscii(out, 0, 4, code, "the initial code");
+  out[4] = (fields.version ?? 0) & 255;
+  out[5] = (fields.diskNumber ?? 0) & 255;
+  out[6] = (fields.ramUse ?? 1) & 255;
+  out[7] = (fields.diskUse ?? 0) & 255;
+  const date = fields.date === void 0 ? /* @__PURE__ */ new Date() : fields.date;
+  if (date) {
+    const year = date.getFullYear();
+    out[17] = bcd(Math.floor(year / 100));
+    out[18] = bcd(year % 100);
+    out[19] = bcd(date.getMonth() + 1);
+    out[20] = bcd(date.getDate());
+    out[21] = bcd(date.getHours());
+    out[22] = bcd(date.getMinutes());
+    out[23] = bcd(date.getSeconds());
+  }
+  putAscii(out, 24, 2, fields.companyCode ?? DEZAEMON_COMPANY_CODE, "the company code");
+  putAscii(out, 26, 6, fields.freeArea ?? dezaemonFreeArea(fields.diskType ?? 0), "the free area");
+  return out;
+}
+function fillBlock(area, lba, sector2, sectorBytes) {
+  const base = lba * SYSTEM_BLOCK_BYTES;
+  for (let s = 0; s < SECTORS_PER_BLOCK; s++) area.set(sector2.subarray(0, sectorBytes), base + s * sectorBytes);
+}
+function buildSystemArea({ systemData, diskId } = {}) {
+  const sys = systemData instanceof Uint8Array ? systemData : encodeSystemData(systemData);
+  const type = systemData instanceof Uint8Array ? decodeSystemData(systemData).diskType : (systemData && systemData.diskType) ?? 0;
+  const id = diskId instanceof Uint8Array ? diskId : encodeDiskId({ diskType: type, ...diskId || {} });
+  const sysSector = new Uint8Array(SYSTEM_SECTOR_BYTES);
+  sysSector.set(sys.subarray(0, Math.min(sys.length, SYSTEM_SECTOR_BYTES)));
+  const idSector = new Uint8Array(SYSTEM_SECTOR_BYTES);
+  idSector.set(id.subarray(0, Math.min(id.length, SYSTEM_SECTOR_BYTES)));
+  const area = new Uint8Array(SYSTEM_AREA_BYTES);
+  for (const lba of SYSTEM_DATA_LBAS) fillBlock(area, lba, sysSector, SYSTEM_SECTOR_BYTES);
+  for (const lba of DISK_ID_LBAS) fillBlock(area, lba, idSector, SYSTEM_SECTOR_BYTES);
+  return area;
+}
+
+// packages/shmup-engine/src/n64/disk-write.js
+var DEZA64_NOTICE_OFFSET = 167552;
+var DEZA64_NOTICE = Object.freeze([
+  "KONO DISK WA DEZA64 DATA DISK DESU",
+  "ICHIDO DENGEN WO KIRI DEZA64 NO",
+  "ROMCARTRIDGE WO SOUNYUUSHITE",
+  "DENGEN WO IRENAOSHITE KUDASAI"
+]);
+var BLANK_BYTE = 255;
+var DISK_FORMATS = Object.freeze(["ddd", "ndd"]);
+function imageFormat(image) {
+  if (isNddSize(image.length)) return "ndd";
+  if (isDddSize(image.length)) return "ddd";
+  return null;
+}
+function writeNotice(user) {
+  let at = DEZA64_NOTICE_OFFSET;
+  for (const line of DEZA64_NOTICE) {
+    for (let i = 0; i < line.length; i++) user[at++] = line.charCodeAt(i);
+    user[at++] = 0;
+  }
+}
+function readProjects(image) {
+  const user = userArea(image);
+  const entries = readDirectory(user);
+  const inv = checkDirectory(entries);
+  if (entries.length && (!inv.blocksFit || !inv.withinCapacity)) {
+    throw new Error("the disk's directory does not agree with the 64DD geometry; refusing to rewrite it");
+  }
+  const projects = /* @__PURE__ */ new Map();
+  for (const e of entries) {
+    if (e.offset === null) throw new Error(`${e.name}.${e.ext} starts at LBA ${e.startLba}, off the disk`);
+    if (e.offset + e.storedSize > user.length) throw new Error(`${e.name}.${e.ext} runs past the end of the image`);
+    if (!projects.has(e.name)) projects.set(e.name, { name: e.name, files: [] });
+    projects.get(e.name).files.push({
+      ext: e.ext,
+      stream: user.subarray(e.offset, e.offset + e.storedSize),
+      storedSize: e.storedSize,
+      startLba: e.startLba,
+      blockCount: e.blockCount
+    });
+  }
+  return [...projects.values()];
+}
+function sameBytes(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+function packProject(project) {
+  const name = normalizeProjectName(project.name);
+  const files = (project.files || []).map((f, i) => {
+    const ext = String(f.ext || "").toUpperCase();
+    if (ext.length !== 3) throw new Error(`${name}: "${f.ext}" is not a three-character extension`);
+    if (!(f.data instanceof Uint8Array) || !f.data.length) throw new Error(`${name}.${ext}: a file is a non-empty Uint8Array`);
+    return { ext, data: f.data, i };
+  });
+  if (!files.length) throw new Error(`${name}: a project has at least one file`);
+  const seen = /* @__PURE__ */ new Set();
+  for (const f of files) {
+    if (seen.has(f.ext)) throw new Error(`${name}: ${f.ext} is given twice`);
+    seen.add(f.ext);
+  }
+  files.sort((a, b) => extOrder(a.ext) - extOrder(b.ext) || a.i - b.i);
+  return files.map((f) => ({ name, ext: f.ext, raw: f.data, stream: compress(f.data) }));
+}
+function buildDisk(options = {}) {
+  const { base = null, projects = [], remove = [], boot = null, type = DEZAEMON_DISK_TYPE } = options;
+  const warnings = [];
+  if (type !== DEZAEMON_DISK_TYPE) {
+    warnings.push(`disk type ${type}: only type 0's directory block has been measured; the directory is written where type 0 keeps it`);
+  }
+  let baseFormat = null;
+  if (base !== null) {
+    baseFormat = imageFormat(base);
+    if (!baseFormat) throw new Error(`a base disk is ${DDD_IMAGE_BYTES} (.ddd) or ${NDD_IMAGE_BYTES} (.ndd) bytes; this one is ${base.length}`);
+  }
+  const format = options.format ?? baseFormat ?? "ddd";
+  if (!DISK_FORMATS.includes(format)) throw new Error(`format is "ddd" or "ndd", not "${format}"`);
+  const dropped = new Set(remove.map((n) => normalizeProjectName(n)));
+  const fresh = /* @__PURE__ */ new Map();
+  for (const p of projects) {
+    const packed = packProject(p);
+    const name = packed[0].name;
+    if (fresh.has(name)) throw new Error(`project ${name} is given twice`);
+    fresh.set(name, packed);
+  }
+  const laid = [];
+  const order = [];
+  const kept = [];
+  const baseUser = base === null ? null : userArea(base);
+  if (baseUser !== null) {
+    for (const p of readProjects(baseUser)) {
+      if (dropped.has(p.name)) continue;
+      if (fresh.has(p.name)) {
+        order.push(p.name);
+        continue;
+      }
+      order.push(p.name);
+      kept.push(p.name);
+      for (const f of p.files) laid.push({ name: p.name, ext: f.ext, stream: f.stream, raw: null, kept: true });
+    }
+  }
+  for (const name of fresh.keys()) if (!order.includes(name)) order.push(name);
+  const byName = new Map(order.map((n) => [n, []]));
+  for (const f of laid) byName.get(f.name).push(f);
+  for (const [name, packed] of fresh) byName.set(name, packed.map((f) => ({ ...f, kept: false })));
+  const files = order.flatMap((n) => byName.get(n));
+  for (const name of dropped) {
+    if (baseUser === null || !readProjects(baseUser).some((p) => p.name === name)) warnings.push(`${name} is not on the disk, so there was nothing to remove`);
+  }
+  const entries = layoutFiles(files.map((f) => ({ name: f.name, ext: f.ext, storedSize: f.stream.length })), { type });
+  const user = new Uint8Array(DDD_IMAGE_BYTES);
+  const firstFile = lbaToOffset(FIRST_FILE_LBA, type);
+  const directoryBlock = lbaToOffset(DIRECTORY_LBA, type);
+  if (baseUser !== null) {
+    user.set(baseUser);
+  } else {
+    if (boot) {
+      if (!(boot instanceof Uint8Array) || boot.length > firstFile) throw new Error(`a boot program is at most ${firstFile} bytes (nine blocks); this one is ${boot ? boot.length : "not bytes"}`);
+      user.set(boot, 0);
+    } else {
+      writeNotice(user);
+    }
+  }
+  user.fill(BLANK_BYTE, firstFile, directoryBlock);
+  entries.forEach((e, i) => user.set(files[i].stream, e.offset));
+  const directoryBytes = writeDirectory(user, entries, type);
+  const back = readDirectory(user);
+  if (back.length !== entries.length) throw new Error(`the directory read back with ${back.length} files, not ${entries.length}`);
+  back.forEach((b, i) => {
+    const e = entries[i];
+    if (b.name !== e.name || b.ext !== e.ext || b.startLba !== e.startLba || b.blockCount !== e.blockCount || b.storedSize !== e.storedSize) {
+      throw new Error(`${e.name}.${e.ext} read back differently from the directory it was written to`);
+    }
+  });
+  const inv = checkDirectory(back);
+  if (back.length && !(inv.contiguous && inv.blocksFit && inv.withinCapacity)) {
+    throw new Error("the directory this wrote fails its own invariants (contiguous, blocksFit, withinCapacity)");
+  }
+  back.forEach((b, i) => {
+    const f = files[i];
+    const stream = user.subarray(b.offset, b.offset + b.storedSize);
+    if (!sameBytes(stream, f.stream)) throw new Error(`${b.name}.${b.ext}: the stream on the disk is not the one written`);
+    if (f.raw) {
+      const out = decompress(stream);
+      if (!sameBytes(out, f.raw)) throw new Error(`${b.name}.${b.ext}: does not decompress to the bytes given`);
+    }
+  });
+  for (const at of directoryOffsets(type)) {
+    if (!sameBytes(user.subarray(at, at + directoryBytes.length), directoryBytes)) throw new Error(`the directory copy at 0x${at.toString(16)} did not land`);
+  }
+  let image = user;
+  if (format === "ndd") {
+    const systemArea = options.systemArea ?? (baseFormat === "ndd" ? systemAreaOf(base) : buildSystemArea({ systemData: { diskType: type }, diskId: { diskType: type } }));
+    image = nddFromDdd(user, systemArea);
+  }
+  const last = entries[entries.length - 1];
+  const nextLba = last ? last.startLba + last.blockCount : FIRST_FILE_LBA;
+  const report = {
+    format,
+    type,
+    base: baseFormat,
+    projects: order.map((name) => {
+      const own = entries.filter((e) => e.name === name);
+      return {
+        name,
+        kept: kept.includes(name),
+        files: own.map((e) => {
+          const f = files[entries.indexOf(e)];
+          return {
+            ext: e.ext,
+            raw: f.raw ? f.raw.length : null,
+            stored: e.storedSize,
+            startLba: e.startLba,
+            blockCount: e.blockCount,
+            ratio: f.raw ? Number((e.storedSize / f.raw.length).toFixed(3)) : null
+          };
+        }),
+        stored: own.reduce((a, e) => a + e.storedSize, 0),
+        firstLba: own.length ? own[0].startLba : null,
+        blockCount: own.reduce((a, e) => a + e.blockCount, 0)
+      };
+    }),
+    removed: [...dropped],
+    files: entries.length,
+    firstLba: FIRST_FILE_LBA,
+    nextLba,
+    romEnd: last ? last.offset + last.storedSize : firstFile,
+    romBytes: directoryBlock - firstFile,
+    romFree: directoryBlock - lbaToOffset(nextLba, type),
+    directoryLba: DIRECTORY_LBA,
+    directoryOffsets: directoryOffsets(type),
+    romEndLba: romEndLba(type)
+  };
+  return { image, format, directory: back, report, warnings };
+}
+
+// packages/shmup-engine/src/n64/graphics.js
+var TILE_WIDTH = 64;
+var TILE_HEIGHT = 32;
+var TILE_BYTES = TILE_WIDTH * TILE_HEIGHT * 2;
+
+// packages/shmup-engine/src/n64/records.js
+function check(name, v, min, max) {
+  if (typeof v === "boolean") v = v ? 1 : 0;
+  if (!Number.isInteger(v) || v < min || v > max) {
+    throw new Error(`${name} is ${v}; it must be an integer ${min}..${max}`);
+  }
+  return v;
+}
+var s82 = (b, at) => b[at] << 24 >> 24;
+var u164 = (b, at) => b[at] << 8 | b[at + 1];
+var s16 = (b, at) => u164(b, at) << 16 >> 16;
+var u323 = (b, at) => (b[at] << 24 | b[at + 1] << 16 | b[at + 2] << 8 | b[at + 3]) >>> 0;
+var s322 = (b, at) => u323(b, at) | 0;
+function putU8(b, at, name, v) {
+  b[at] = check(name, v, 0, 255);
+}
+function putS8(b, at, name, v) {
+  b[at] = check(name, v, -128, 127) & 255;
+}
+function putU163(b, at, name, v) {
+  check(name, v, 0, 65535);
+  b[at] = v >> 8;
+  b[at + 1] = v & 255;
+}
+function putS16(b, at, name, v) {
+  check(name, v, -32768, 32767);
+  b[at] = v >> 8 & 255;
+  b[at + 1] = v & 255;
+}
+function putU322(b, at, name, v) {
+  check(name, v, 0, 4294967295);
+  b[at] = v >>> 24 & 255;
+  b[at + 1] = v >>> 16 & 255;
+  b[at + 2] = v >>> 8 & 255;
+  b[at + 3] = v & 255;
+}
+function putS322(b, at, name, v) {
+  check(name, v, -2147483648, 2147483647);
+  putU322(b, at, name, v >>> 0);
+}
+function putIndex(b, at, name, v) {
+  b[at] = check(name, v, -1, 254) & 255;
+}
+var getIndex = (b, at) => b[at] === 255 ? -1 : b[at];
+function shiftOf(mask) {
+  let s = 0;
+  while (!(mask >> s & 1)) s++;
+  return s;
+}
+function pack(label, fields, values) {
+  let out = 0;
+  for (const f of fields) {
+    const shift = shiftOf(f.mask);
+    const v = check(`${label}.${f.name}`, values[f.name], 0, f.max ?? f.mask >> shift);
+    out |= v << shift;
+  }
+  return out >>> 0;
+}
+function unpack(fields, word) {
+  const out = {};
+  for (const f of fields) {
+    const v = (word & f.mask) >>> shiftOf(f.mask);
+    out[f.name] = f.bool ? v !== 0 : v;
+  }
+  return out;
+}
+var isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v) && !ArrayBuffer.isView(v);
+function merge(label, defaults, given) {
+  if (given === void 0 || given === null) return defaults;
+  if (ArrayBuffer.isView(defaults)) {
+    if (!ArrayBuffer.isView(given) && !Array.isArray(given)) throw new Error(`${label} is ${defaults.length} raw bytes`);
+    if (given.length !== defaults.length) throw new Error(`${label} is ${defaults.length} raw bytes; ${given.length} were given`);
+    return Uint8Array.from(given);
+  }
+  if (Array.isArray(defaults)) {
+    if (!Array.isArray(given)) throw new Error(`${label} is a list`);
+    if (defaults.length === 0) return given;
+    if (given.length > defaults.length) throw new Error(`${label} holds ${defaults.length} entries; ${given.length} were given`);
+    return defaults.map((d, i) => merge(`${label}[${i}]`, d, given[i]));
+  }
+  if (isPlain(defaults)) {
+    if (!isPlain(given)) throw new Error(`${label} is an object`);
+    for (const k of Object.keys(given)) {
+      if (!(k in defaults)) throw new Error(`${label}.${k} is not a field of ${label}`);
+    }
+    const out = {};
+    for (const k of Object.keys(defaults)) out[k] = merge(`${label}.${k}`, defaults[k], given[k]);
+    return out;
+  }
+  return given;
+}
+var fill = (n, v) => Array.from({ length: n }, () => typeof v === "function" ? v() : v);
+function needBytes(label, bytes, at, n) {
+  if (!(bytes instanceof Uint8Array)) throw new Error(`${label}: bytes are a Uint8Array`);
+  if (at + n > bytes.length) throw new Error(`${label}: ${n} bytes at 0x${at.toString(16)} run past the end of ${bytes.length}`);
+}
+function isZero(bytes, at, n) {
+  for (let i = at; i < at + n; i++) if (bytes[i] !== 0) return false;
+  return true;
+}
+var ENEMY_ENTRY_BYTES = 92;
+var ENEMY_SCORE_TABLE = Object.freeze([
+  0,
+  50,
+  100,
+  200,
+  300,
+  500,
+  1e3,
+  2e3,
+  3e3,
+  5e3,
+  1e4,
+  2e4,
+  5e4,
+  1e5,
+  5e5,
+  1e6
+]);
+var ENEMY_FLAGS = [
+  { name: "rotationDisabled", mask: 128, bool: true },
+  { name: "scalingDisabled", mask: 64, bool: true },
+  { name: "transparencyDisabled", mask: 32, bool: true },
+  { name: "unknownBits", mask: 31 }
+];
+var ALTITUDE_SETTINGS = [
+  { name: "rate", mask: 3, max: 2 },
+  { name: "loopType", mask: 224, max: 4 },
+  { name: "unknownBits", mask: 28 }
+];
+var ROTATION_1B = [
+  { name: "clockwise", mask: 128, bool: true },
+  { name: "axis", mask: 3, max: 2 },
+  { name: "unknownBits1B", mask: 124 }
+];
+var ROTATION_1C = [
+  { name: "look", mask: 192 },
+  { name: "loopType", mask: 3 },
+  { name: "unknownBits1C", mask: 60 }
+];
+var SHOT_TYPE = [
+  { name: "type", mask: 192 },
+  { name: "direction", mask: 32 },
+  { name: "variant", mask: 15 },
+  { name: "unknownBits24", mask: 16 }
+  // not `unknownBits`: the settings byte's is spread into the same object
+];
+var SHOT_SETTINGS = [
+  { name: "speed", mask: 224 },
+  { name: "aimAtPlayer", mask: 16, bool: true },
+  { name: "timing", mask: 7 },
+  { name: "unknownBits", mask: 8 }
+];
+var HIT_SETTINGS = [
+  { name: "lockOn", mask: 128, bool: true },
+  { name: "stageClear", mask: 64, bool: true },
+  { name: "hpMode", mask: 3 },
+  { name: "unknownBits", mask: 60 }
+];
+var BLAST_SETTINGS = [
+  { name: "pattern", mask: 48 },
+  { name: "type", mask: 8 },
+  { name: "particle", mask: 4, bool: true },
+  { name: "scale", mask: 3 },
+  { name: "unknownBits", mask: 192 }
+];
+var flagged = (max) => [
+  { name: "enabled", mask: 128, bool: true },
+  { name: "value", mask: 127, max }
+];
+var ITEM_FLAGGED = flagged(6);
+var DEATH_FLAGGED = flagged(7);
+function shotDefaults() {
+  return {
+    type: 0,
+    direction: 0,
+    variant: 0,
+    speed: 0,
+    aimAtPlayer: false,
+    timing: 0,
+    unknownBits: 0,
+    unknownBits24: 0,
+    launchedEnemy: 0,
+    x: 0,
+    y: 0,
+    z: 0,
+    se: -1,
+    seVolume: 3
+  };
+}
+function enemyEntryDefaults() {
+  return {
+    score: 0,
+    hp: 0,
+    animation: { disabled: true, frameSpeed: 127, models: [255, 255, 255, 255] },
+    flags: { rotationDisabled: true, scalingDisabled: true, transparencyDisabled: true, unknownBits: 0 },
+    altitude: { cue: 0, initial: 0, final: 0, speed: 0, rate: 0, loopType: 0, unknownBits: 0 },
+    unknown11: 0,
+    scale: 100,
+    scaling: { cue: 0, initial: 3, final: 3, speed: 3, loopType: 1 },
+    rotation: {
+      cue: 0,
+      start: 0,
+      end: 0,
+      speed: 0,
+      clockwise: false,
+      axis: 1,
+      look: 0,
+      loopType: 0,
+      unknownBits1B: 0,
+      unknownBits1C: 0
+    },
+    motion: {
+      birth: 0,
+      in: 0,
+      type: 0,
+      orbit1: 0,
+      orbit2: 0,
+      orbit3: 0,
+      speed1: 0,
+      speed2: 0,
+      speed3: 0,
+      death: 7,
+      deathEnabled: false
+    },
+    shots: [shotDefaults(), shotDefaults(), shotDefaults()],
+    unknown2D: 0,
+    hit: { lockOn: false, stageClear: false, hpMode: 0, size: 0, x: 0, y: 0, z: 0, unknownBits: 0 },
+    blast: { pattern: 0, type: 0, particle: false, scale: 1, se: -1, seVolume: 3, unknownBits: 0 },
+    item: { enabled: false, value: 0 },
+    enemySet: -1,
+    enemyRise: -1,
+    unknown47: 0,
+    transparency: { cue: 0, initial: 0, final: 0, speed: 0, loopType: 1 },
+    unknown5B: 0
+  };
+}
+function encodeEnemyEntry(entry = {}, label = "enemy") {
+  const e = merge(label, enemyEntryDefaults(), entry);
+  const b = new Uint8Array(ENEMY_ENTRY_BYTES);
+  const m = e.motion;
+  putU8(b, 0, `${label}.motion.birth`, check(`${label}.motion.birth`, m.birth, 0, 7));
+  putU8(b, 1, `${label}.motion.in`, check(`${label}.motion.in`, m.in, 0, 1));
+  putU8(b, 2, `${label}.score`, check(`${label}.score`, e.score, 0, 15));
+  putU8(b, 3, `${label}.hp`, check(`${label}.hp`, e.hp, 0, 15));
+  const a = e.animation;
+  b[4] = check(`${label}.animation.disabled`, a.disabled, 0, 1) << 7 | check(`${label}.animation.frameSpeed`, a.frameSpeed, 0, 127);
+  for (let i = 0; i < 4; i++) putU8(b, 5 + i, `${label}.animation.models[${i}]`, a.models[i]);
+  b[9] = pack(`${label}.flags`, ENEMY_FLAGS, e.flags);
+  const alt = e.altitude;
+  putU8(b, 10, `${label}.altitude.cue`, check(`${label}.altitude.cue`, alt.cue, 0, 7));
+  putU8(b, 11, `${label}.altitude.initial`, check(`${label}.altitude.initial`, alt.initial, 0, 8));
+  putU8(b, 12, `${label}.altitude.final`, check(`${label}.altitude.final`, alt.final, 0, 8));
+  putU8(b, 13, `${label}.altitude.speed`, check(`${label}.altitude.speed`, alt.speed, 0, 7));
+  b[14] = pack(`${label}.altitude`, ALTITUDE_SETTINGS, alt);
+  const sc = e.scaling;
+  putU8(b, 15, `${label}.scaling.cue`, check(`${label}.scaling.cue`, sc.cue, 0, 7));
+  const r = e.rotation;
+  putU8(b, 16, `${label}.rotation.cue`, check(`${label}.rotation.cue`, r.cue, 0, 7));
+  putU8(b, 17, `${label}.unknown11`, e.unknown11);
+  putU163(b, 18, `${label}.scale`, check(`${label}.scale`, e.scale, 0, 9999));
+  putU8(b, 20, `${label}.scaling.initial`, check(`${label}.scaling.initial`, sc.initial, 0, 7));
+  putU8(b, 21, `${label}.scaling.final`, check(`${label}.scaling.final`, sc.final, 0, 7));
+  putU8(b, 22, `${label}.scaling.speed`, check(`${label}.scaling.speed`, sc.speed, 0, 7));
+  putU8(b, 23, `${label}.scaling.loopType`, check(`${label}.scaling.loopType`, sc.loopType, 0, 3));
+  putU8(b, 24, `${label}.rotation.start`, r.start);
+  putU8(b, 25, `${label}.rotation.end`, r.end);
+  putU8(b, 26, `${label}.rotation.speed`, check(`${label}.rotation.speed`, r.speed, 0, 7));
+  b[27] = pack(`${label}.rotation`, ROTATION_1B, r);
+  b[28] = pack(`${label}.rotation`, ROTATION_1C, r);
+  putU8(b, 29, `${label}.motion.type`, check(`${label}.motion.type`, m.type, 0, 1));
+  putU8(b, 30, `${label}.motion.orbit1`, check(`${label}.motion.orbit1`, m.orbit1, 0, 29));
+  putU8(b, 31, `${label}.motion.orbit2`, check(`${label}.motion.orbit2`, m.orbit2, 0, 19));
+  putU8(b, 32, `${label}.motion.orbit3`, check(`${label}.motion.orbit3`, m.orbit3, 0, 19));
+  putU8(b, 33, `${label}.motion.speed1`, check(`${label}.motion.speed1`, m.speed1, 0, 7));
+  putU8(b, 34, `${label}.motion.speed2`, check(`${label}.motion.speed2`, m.speed2, 0, 7));
+  putU8(b, 35, `${label}.motion.speed3`, check(`${label}.motion.speed3`, m.speed3, 0, 7));
+  e.shots.forEach((s, i) => {
+    const sl = `${label}.shots[${i}]`;
+    b[36 + i] = pack(sl, SHOT_TYPE, s);
+    b[39 + i] = pack(sl, SHOT_SETTINGS, s);
+    putIndex(b, 42 + i, `${sl}.launchedEnemy`, s.launchedEnemy);
+    putS16(b, 46 + i * 2, `${sl}.x`, s.x);
+    putS16(b, 52 + i * 2, `${sl}.y`, s.y);
+    putS16(b, 58 + i * 2, `${sl}.z`, s.z);
+    putS8(b, 83 + i, `${sl}.se`, s.se);
+    putU8(b, 87 + i, `${sl}.seVolume`, check(`${sl}.seVolume`, s.seVolume, 0, 7));
+  });
+  putU8(b, 45, `${label}.unknown2D`, e.unknown2D);
+  const h = e.hit;
+  b[64] = pack(`${label}.hit`, HIT_SETTINGS, h);
+  putU8(b, 65, `${label}.hit.size`, check(`${label}.hit.size`, h.size, 0, 7));
+  const bl = e.blast;
+  b[66] = pack(`${label}.blast`, BLAST_SETTINGS, bl);
+  b[67] = pack(`${label}.item`, ITEM_FLAGGED, e.item);
+  putIndex(b, 68, `${label}.enemySet`, e.enemySet);
+  putIndex(b, 69, `${label}.enemyRise`, e.enemyRise);
+  b[70] = pack(`${label}.motion.death`, DEATH_FLAGGED, { enabled: m.deathEnabled, value: m.death });
+  putU8(b, 71, `${label}.unknown47`, e.unknown47);
+  putS16(b, 72, `${label}.hit.x`, h.x);
+  putS16(b, 74, `${label}.hit.y`, h.y);
+  putS16(b, 76, `${label}.hit.z`, h.z);
+  const t = e.transparency;
+  putU8(b, 78, `${label}.transparency.cue`, check(`${label}.transparency.cue`, t.cue, 0, 7));
+  putU8(b, 79, `${label}.transparency.initial`, check(`${label}.transparency.initial`, t.initial, 0, 7));
+  putU8(b, 80, `${label}.transparency.final`, check(`${label}.transparency.final`, t.final, 0, 7));
+  putU8(b, 81, `${label}.transparency.speed`, check(`${label}.transparency.speed`, t.speed, 0, 7));
+  putU8(b, 82, `${label}.transparency.loopType`, check(`${label}.transparency.loopType`, t.loopType, 0, 3));
+  putS8(b, 86, `${label}.blast.se`, bl.se);
+  putU8(b, 90, `${label}.blast.seVolume`, check(`${label}.blast.seVolume`, bl.seVolume, 0, 7));
+  putU8(b, 91, `${label}.unknown5B`, e.unknown5B);
+  return b;
+}
+function decodeEnemyEntry(bytes, at = 0) {
+  needBytes("enemy", bytes, at, ENEMY_ENTRY_BYTES);
+  const b = bytes.subarray(at, at + ENEMY_ENTRY_BYTES);
+  const death = unpack(DEATH_FLAGGED, b[70]);
+  return {
+    score: b[2],
+    hp: b[3],
+    animation: { disabled: (b[4] & 128) !== 0, frameSpeed: b[4] & 127, models: [b[5], b[6], b[7], b[8]] },
+    flags: unpack(ENEMY_FLAGS, b[9]),
+    altitude: { cue: b[10], initial: b[11], final: b[12], speed: b[13], ...unpack(ALTITUDE_SETTINGS, b[14]) },
+    unknown11: b[17],
+    scale: u164(b, 18),
+    scaling: { cue: b[15], initial: b[20], final: b[21], speed: b[22], loopType: b[23] },
+    rotation: {
+      cue: b[16],
+      start: b[24],
+      end: b[25],
+      speed: b[26],
+      ...unpack(ROTATION_1B, b[27]),
+      ...unpack(ROTATION_1C, b[28])
+    },
+    motion: {
+      birth: b[0],
+      in: b[1],
+      type: b[29],
+      orbit1: b[30],
+      orbit2: b[31],
+      orbit3: b[32],
+      speed1: b[33],
+      speed2: b[34],
+      speed3: b[35],
+      death: death.value,
+      deathEnabled: death.enabled
+    },
+    shots: [0, 1, 2].map((i) => ({
+      ...unpack(SHOT_TYPE, b[36 + i]),
+      ...unpack(SHOT_SETTINGS, b[39 + i]),
+      launchedEnemy: getIndex(b, 42 + i),
+      x: s16(b, 46 + i * 2),
+      y: s16(b, 52 + i * 2),
+      z: s16(b, 58 + i * 2),
+      se: s82(b, 83 + i),
+      seVolume: b[87 + i]
+    })),
+    unknown2D: b[45],
+    hit: { ...unpack(HIT_SETTINGS, b[64]), size: b[65], x: s16(b, 72), y: s16(b, 74), z: s16(b, 76) },
+    blast: { ...unpack(BLAST_SETTINGS, b[66]), se: s82(b, 86), seVolume: b[90] },
+    item: unpack(ITEM_FLAGGED, b[67]),
+    enemySet: getIndex(b, 68),
+    enemyRise: getIndex(b, 69),
+    unknown47: b[71],
+    transparency: { cue: b[78], initial: b[79], final: b[80], speed: b[81], loopType: b[82] },
+    unknown5B: b[91]
+  };
+}
+var LAYOUT_ENTRY_BYTES = 12;
+var LAYOUT_MAX_ENEMIES = 1e3;
+var LAYOUT_BYTES = (LAYOUT_MAX_ENEMIES + 3) * LAYOUT_ENTRY_BYTES;
+var LAYOUT_LAYERS = Object.freeze(["map", "a", "b"]);
+function layoutEntryDefaults() {
+  return { enemy: 0, unknown01: 0, x: 0, y: 0, unknown06: 0, frame: 0 };
+}
+function encodeLayoutEntry(entry = {}, label = "layout entry") {
+  const e = merge(label, layoutEntryDefaults(), entry);
+  const b = new Uint8Array(LAYOUT_ENTRY_BYTES);
+  putIndex(b, 0, `${label}.enemy`, e.enemy);
+  putU8(b, 1, `${label}.unknown01`, e.unknown01);
+  putS16(b, 2, `${label}.x`, e.x);
+  putS16(b, 4, `${label}.y`, e.y);
+  putU163(b, 6, `${label}.unknown06`, e.unknown06);
+  putS322(b, 8, `${label}.frame`, e.frame);
+  return b;
+}
+function decodeLayoutEntry(bytes, at = 0) {
+  needBytes("layout entry", bytes, at, LAYOUT_ENTRY_BYTES);
+  return {
+    enemy: getIndex(bytes, at),
+    unknown01: bytes[at + 1],
+    x: s16(bytes, at + 2),
+    y: s16(bytes, at + 4),
+    unknown06: u164(bytes, at + 6),
+    frame: s322(bytes, at + 8)
+  };
+}
+function layers(layout) {
+  const l = merge("layout", { map: [], a: [], b: [] }, layout);
+  for (const k of LAYOUT_LAYERS) if (!Array.isArray(l[k])) throw new Error(`layout.${k} is a list of positions`);
+  return l;
+}
+function layoutIndices(layout = {}) {
+  const l = layers(layout);
+  const enemies = l.map.length + l.a.length + l.b.length;
+  return {
+    map: 0,
+    a: l.map.length + 1,
+    b: l.map.length + l.a.length + 2,
+    enemies,
+    slots: enemies + 3
+  };
+}
+function encodeLayout(layout = {}) {
+  const l = layers(layout);
+  const idx = layoutIndices(l);
+  if (idx.enemies > LAYOUT_MAX_ENEMIES) {
+    throw new Error(`the layout holds ${LAYOUT_MAX_ENEMIES} enemies across its three layers; ${idx.enemies} were given`);
+  }
+  const out = new Uint8Array(LAYOUT_BYTES);
+  let at = 0;
+  for (const k of LAYOUT_LAYERS) {
+    l[k].forEach((e, i) => {
+      const entry = encodeLayoutEntry(e, `layout.${k}[${i}]`);
+      if (entry[0] === 255) throw new Error(`layout.${k}[${i}].enemy is -1, which marks the end of a layer`);
+      out.set(entry, at);
+      at += LAYOUT_ENTRY_BYTES;
+    });
+    out[at] = 255;
+    at += LAYOUT_ENTRY_BYTES;
+  }
+  return out;
+}
+function decodeLayout(bytes, at = 0) {
+  const out = { map: [], a: [], b: [] };
+  const end = Math.min(bytes.length, at + LAYOUT_BYTES);
+  let layer = 0, enemies = 0;
+  for (let p = at; p + LAYOUT_ENTRY_BYTES <= end && layer < LAYOUT_LAYERS.length; p += LAYOUT_ENTRY_BYTES) {
+    const e = decodeLayoutEntry(bytes, p);
+    if (e.enemy === -1) layer++;
+    else if (enemies < LAYOUT_MAX_ENEMIES) {
+      out[LAYOUT_LAYERS[layer]].push(e);
+      enemies++;
+    } else break;
+  }
+  return out;
+}
+var MAP_SETTINGS_BYTES = 3;
+var MAP_ENTRY_BYTES = 4;
+var MAP_ENTRIES = 256;
+var MAP_BYTES = MAP_ENTRIES * MAP_ENTRY_BYTES;
+var MAP_TEXTURE_UNSET = 150;
+function mapSettingsDefaults() {
+  return { scale: 5, loopStart: 0, loopEnd: 3 };
+}
+function encodeMapSettings(settings = {}) {
+  const s = merge("map settings", mapSettingsDefaults(), settings);
+  const b = new Uint8Array(MAP_SETTINGS_BYTES);
+  putU8(b, 0, "map settings.scale", s.scale);
+  putU8(b, 1, "map settings.loopStart", s.loopStart);
+  putU8(b, 2, "map settings.loopEnd", s.loopEnd);
+  return b;
+}
+function decodeMapSettings(bytes, at = 0) {
+  needBytes("map settings", bytes, at, MAP_SETTINGS_BYTES);
+  return { scale: bytes[at], loopStart: bytes[at + 1], loopEnd: bytes[at + 2] };
+}
+var MAP_EFFECTS = [
+  { name: "transparency", mask: 57344 },
+  { name: "type", mask: 7168 },
+  { name: "speed", mask: 896 },
+  { name: "intensity", mask: 112 },
+  { name: "cycle", mask: 12 },
+  { name: "noise", mask: 3 }
+];
+function mapEntryDefaults() {
+  return { transparency: 7, type: 0, speed: 7, intensity: 5, cycle: 1, noise: 0, hit: false, texture: MAP_TEXTURE_UNSET };
+}
+function encodeMapEntry(entry = {}, label = "map entry") {
+  const e = merge(label, mapEntryDefaults(), entry);
+  const b = new Uint8Array(MAP_ENTRY_BYTES);
+  putU163(b, 0, label, pack(label, MAP_EFFECTS, e));
+  b[2] = check(`${label}.hit`, e.hit, 0, 1);
+  putU8(b, 3, `${label}.texture`, e.texture);
+  return b;
+}
+function decodeMapEntry(bytes, at = 0) {
+  needBytes("map entry", bytes, at, MAP_ENTRY_BYTES);
+  return { ...unpack(MAP_EFFECTS, u164(bytes, at)), hit: bytes[at + 2] !== 0, texture: bytes[at + 3] };
+}
+function encodeMapEntries(entries = []) {
+  if (!Array.isArray(entries)) throw new Error("map entries are a list");
+  if (entries.length > MAP_ENTRIES) throw new Error(`the map holds ${MAP_ENTRIES} entries; ${entries.length} were given`);
+  const out = new Uint8Array(MAP_BYTES);
+  for (let i = 0; i < MAP_ENTRIES; i++) out.set(encodeMapEntry(entries[i] ?? {}, `map[${i}]`), i * MAP_ENTRY_BYTES);
+  return out;
+}
+function decodeMapEntries(bytes, at = 0) {
+  needBytes("map", bytes, at, MAP_BYTES);
+  return fill(MAP_ENTRIES, () => null).map((_, i) => decodeMapEntry(bytes, at + i * MAP_ENTRY_BYTES));
+}
+var EFFECT_ENTRY_BYTES = 12;
+var EFFECT_ENTRIES = 500;
+var EFFECT_BYTES = EFFECT_ENTRIES * EFFECT_ENTRY_BYTES;
+var EFFECT_COMMANDS = Object.freeze([
+  "soundEffect",
+  // v1 SE, v2 volume, v3 loop start/end
+  "portrait",
+  // v1 set/clear, v2 texture, v3 position, v4 flags
+  "fog",
+  // v1..v3 RGB, v4 level
+  "altitude",
+  // v1 altitude 0..0xA, v2 speed
+  "cameraAngle",
+  // v2 position, v3 speed
+  "cameraRotation",
+  // v2 position, v3 speed
+  "cameraZoom",
+  // v2 position, v3 speed
+  "backgroundTexture",
+  // v2 texture
+  "scrollBackground",
+  // v1 x, v2 y, v3 free/zero
+  "stageClear",
+  "playerVisibility",
+  // v1 on/off
+  "playerHitDetection",
+  // v1 on/off
+  "playerSplash",
+  // v1 off/constant/contact
+  "song",
+  // v1 song, v2 volume
+  "demoMode",
+  // v1 on/off
+  "vibration",
+  // v1 level
+  "mapScrollRate",
+  // v1 rate, v2 speed
+  "layerAScrollRate",
+  // v1 rate, v2 speed
+  "layerBScrollRate"
+  // v1 rate, v2 speed
+]);
+function effectCommand(command) {
+  if (typeof command === "string") {
+    const n = EFFECT_COMMANDS.indexOf(command);
+    if (n < 0) throw new Error(`"${command}" is not a layout effect command; one of ${EFFECT_COMMANDS.join(", ")}`);
+    return n;
+  }
+  return check("effect.command", command, 0, EFFECT_COMMANDS.length - 1);
+}
+function layoutEffectDefaults() {
+  return { frame: 0, values: [0, 0, 0, 0], command: 0, reserved: [0, 0, 0] };
+}
+function encodeLayoutEffect(effect = {}, label = "effect") {
+  const e = merge(label, layoutEffectDefaults(), effect);
+  const b = new Uint8Array(EFFECT_ENTRY_BYTES);
+  putU322(b, 0, `${label}.frame`, e.frame);
+  e.values.forEach((v, i) => {
+    b[4 + i] = check(`${label}.values[${i}]`, v, -128, 255) & 255;
+  });
+  b[8] = effectCommand(e.command);
+  e.reserved.forEach((v, i) => putU8(b, 9 + i, `${label}.reserved[${i}]`, v));
+  return b;
+}
+function decodeLayoutEffect(bytes, at = 0) {
+  needBytes("effect", bytes, at, EFFECT_ENTRY_BYTES);
+  return {
+    frame: u323(bytes, at),
+    values: [bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]],
+    command: bytes[at + 8],
+    reserved: [bytes[at + 9], bytes[at + 10], bytes[at + 11]]
+  };
+}
+function encodeLayoutEffects(effects = []) {
+  if (!Array.isArray(effects)) throw new Error("effects are a list");
+  if (effects.length > EFFECT_ENTRIES) throw new Error(`a stage holds ${EFFECT_ENTRIES} layout effects; ${effects.length} were given`);
+  const out = new Uint8Array(EFFECT_BYTES);
+  effects.forEach((e, i) => out.set(encodeLayoutEffect(e, `effects[${i}]`), i * EFFECT_ENTRY_BYTES));
+  return out;
+}
+function decodeLayoutEffects(bytes, at = 0, count = null) {
+  needBytes("effects", bytes, at, EFFECT_BYTES);
+  let n = EFFECT_ENTRIES;
+  while (n > (count ?? 0) && isZero(bytes, at + (n - 1) * EFFECT_ENTRY_BYTES, EFFECT_ENTRY_BYTES)) n--;
+  return fill(n, () => null).map((_, i) => decodeLayoutEffect(bytes, at + i * EFFECT_ENTRY_BYTES));
+}
+var BL_TAIL_BYTES = 16;
+var BL_ENEMY_COUNT = 180;
+var BL_OFFSETS = Object.freeze({
+  enemies: 0,
+  layout: BL_ENEMY_COUNT * ENEMY_ENTRY_BYTES,
+  // 0x40B0
+  mapSettings: BL_ENEMY_COUNT * ENEMY_ENTRY_BYTES + LAYOUT_BYTES,
+  // 0x6FB4
+  map: BL_ENEMY_COUNT * ENEMY_ENTRY_BYTES + LAYOUT_BYTES + MAP_SETTINGS_BYTES,
+  // 0x6FB7
+  effects: BL_ENEMY_COUNT * ENEMY_ENTRY_BYTES + LAYOUT_BYTES + MAP_SETTINGS_BYTES + MAP_BYTES,
+  // 0x73B7
+  tail: BL_ENEMY_COUNT * ENEMY_ENTRY_BYTES + LAYOUT_BYTES + MAP_SETTINGS_BYTES + MAP_BYTES + EFFECT_BYTES
+  // 0x8B27
+});
+function blTailDefaults() {
+  return { totalEffects: 0, firstMap: 0, firstA: 1, firstB: 2, unknown2F: 0, word33: 512, unknown35: 0 };
+}
+function encodeBlTail(tail = {}) {
+  const t = merge("tail", blTailDefaults(), tail);
+  const b = new Uint8Array(BL_TAIL_BYTES);
+  putU163(b, 0, "tail.totalEffects", t.totalEffects);
+  putU163(b, 2, "tail.firstMap", t.firstMap);
+  putU163(b, 4, "tail.firstA", t.firstA);
+  putU163(b, 6, "tail.firstB", t.firstB);
+  putU322(b, 8, "tail.unknown2F", t.unknown2F);
+  putU163(b, 12, "tail.word33", t.word33);
+  putU163(b, 14, "tail.unknown35", t.unknown35);
+  return b;
+}
+function decodeBlTail(bytes, at = 0) {
+  needBytes("tail", bytes, at, BL_TAIL_BYTES);
+  return {
+    totalEffects: u164(bytes, at),
+    firstMap: u164(bytes, at + 2),
+    firstA: u164(bytes, at + 4),
+    firstB: u164(bytes, at + 6),
+    unknown2F: u323(bytes, at + 8),
+    word33: u164(bytes, at + 12),
+    unknown35: u164(bytes, at + 14)
+  };
+}
+function enemyTable(list, count, label) {
+  if (!Array.isArray(list)) throw new Error(`${label} is a list of enemy entries`);
+  if (list.length > count) throw new Error(`${label} holds ${count} entries; ${list.length} were given`);
+  const out = new Uint8Array(count * ENEMY_ENTRY_BYTES);
+  for (let i = 0; i < count; i++) out.set(encodeEnemyEntry(list[i] ?? {}, `${label}[${i}]`), i * ENEMY_ENTRY_BYTES);
+  return out;
+}
+function enemyList(bytes, at, count) {
+  return fill(count, () => null).map((_, i) => decodeEnemyEntry(bytes, at + i * ENEMY_ENTRY_BYTES));
+}
+function buildStageBl({ enemies = [], layout = {}, mapSettings = {}, map = [], effects = [], tail = {} } = {}) {
+  const out = new Uint8Array(DOCUMENTED_SIZES.BL);
+  out.set(enemyTable(enemies, BL_ENEMY_COUNT, "enemies"), BL_OFFSETS.enemies);
+  out.set(encodeLayout(layout), BL_OFFSETS.layout);
+  out.set(encodeMapSettings(mapSettings), BL_OFFSETS.mapSettings);
+  out.set(encodeMapEntries(map), BL_OFFSETS.map);
+  out.set(encodeLayoutEffects(effects), BL_OFFSETS.effects);
+  const idx = layoutIndices(layout);
+  const t = merge("tail", blTailDefaults(), tail);
+  const given = tail ?? {};
+  const computed = {
+    ...t,
+    totalEffects: given.totalEffects ?? effects.length,
+    firstA: given.firstA ?? idx.a,
+    firstB: given.firstB ?? idx.b
+  };
+  out.set(encodeBlTail(computed), BL_OFFSETS.tail);
+  return out;
+}
+function parseStageBl(bytes) {
+  needBytes("#BL", bytes, 0, DOCUMENTED_SIZES.BL);
+  const tail = decodeBlTail(bytes, BL_OFFSETS.tail);
+  return {
+    enemies: enemyList(bytes, BL_OFFSETS.enemies, BL_ENEMY_COUNT),
+    layout: decodeLayout(bytes, BL_OFFSETS.layout),
+    mapSettings: decodeMapSettings(bytes, BL_OFFSETS.mapSettings),
+    map: decodeMapEntries(bytes, BL_OFFSETS.map),
+    effects: decodeLayoutEffects(bytes, BL_OFFSETS.effects, tail.totalEffects),
+    tail
+  };
+}
+var CBL_ENEMY_COUNT = 20;
+var CBL_ITEMS = Object.freeze(["shot", "laser", "bomb", "shield", "oneUp", "bonus1", "bonus2"]);
+var CBL_ITEMS_OFFSET = CBL_ENEMY_COUNT * ENEMY_ENTRY_BYTES;
+function buildCbl({ enemies = [], items = {} } = {}) {
+  const out = new Uint8Array(DOCUMENTED_SIZES.CBL);
+  out.set(enemyTable(enemies, CBL_ENEMY_COUNT, "enemies"), 0);
+  let byName;
+  if (Array.isArray(items)) {
+    if (items.length > CBL_ITEMS.length) throw new Error(`CBL holds ${CBL_ITEMS.length} items; ${items.length} were given`);
+    byName = Object.fromEntries(items.map((it, i) => [CBL_ITEMS[i], it]));
+  } else {
+    if (!isPlain(items)) throw new Error("items are {shot, laser, bomb, shield, oneUp, bonus1, bonus2} or a list");
+    for (const k of Object.keys(items)) {
+      if (!CBL_ITEMS.includes(k)) throw new Error(`items.${k} is not an item; the items are ${CBL_ITEMS.join(", ")}`);
+    }
+    byName = items;
+  }
+  CBL_ITEMS.forEach((name, i) => {
+    out.set(encodeEnemyEntry(byName[name] ?? {}, `items.${name}`), CBL_ITEMS_OFFSET + i * ENEMY_ENTRY_BYTES);
+  });
+  return out;
+}
+var MODEL_BYTES = 3104;
+var MODEL_MAX_VERTICES = 100;
+var MODEL_MAX_FACES = 100;
+var MODEL_TILES = 16;
+var VERTEX_BYTES = 6;
+var FACE_BYTES = 20;
+var MODEL_TILE_BYTES = 20;
+var MODEL_OFFSETS = Object.freeze({
+  vertices: 2,
+  faces: 602,
+  unknownA2A: 2602,
+  tiles: 2604,
+  hScale: 2924,
+  vScale: 2956,
+  groups: 2988,
+  light: 3088,
+  unknownC11: 3089
+});
+var TILE_SCALE_MAX = 1024;
+var TILE_OFFSET_MAX = 495;
+var LIGHT_POSITION_MAX = 29;
+function tilePixels(power) {
+  return 1 << check("tile power", power, 0, 7) + 1;
+}
+var FACE_TEXTURING = [
+  { name: "untextured", mask: 128, bool: true },
+  { name: "lightMask", mask: 64, bool: true },
+  { name: "tile", mask: 15 },
+  { name: "unknownBits", mask: 48 }
+];
+function vertexDefaults() {
+  return { x: 0, y: 0, z: 0 };
+}
+function faceDefaults() {
+  return {
+    vertices: [0, 0, 0],
+    pad: 0,
+    uv: [[0, 0], [0, 0], [0, 0]],
+    light: [255, 255, 255],
+    untextured: false,
+    lightMask: false,
+    tile: 0,
+    unknownBits: 0
+  };
+}
+function tileDefaults() {
+  return { offset: 0, mirrorV: false, widthPower: 5, mirrorH: false, heightPower: 6 };
+}
+function modelDefaults() {
+  return {
+    vertexCount: null,
+    faceCount: null,
+    vertices: [],
+    faces: [],
+    unknownA2A: 0,
+    tiles: fill(MODEL_TILES, tileDefaults),
+    hScale: fill(MODEL_TILES, TILE_SCALE_MAX),
+    vScale: fill(MODEL_TILES, TILE_SCALE_MAX),
+    groups: null,
+    light: 0,
+    unknownC11: new Uint8Array(MODEL_BYTES - 3089)
+  };
+}
+function encodeFace(face = {}, label = "face") {
+  const f = merge(label, faceDefaults(), face);
+  const b = new Uint8Array(FACE_BYTES);
+  f.vertices.forEach((v, i) => putU8(b, i, `${label}.vertices[${i}]`, check(`${label}.vertices[${i}]`, v, 0, MODEL_MAX_VERTICES - 1)));
+  putU8(b, 3, `${label}.pad`, f.pad);
+  f.uv.forEach(([u, v], i) => {
+    putS16(b, 4 + i * 4, `${label}.uv[${i}][0]`, u);
+    putS16(b, 6 + i * 4, `${label}.uv[${i}][1]`, v);
+  });
+  f.light.forEach((c, i) => putU8(b, 16 + i, `${label}.light[${i}]`, c));
+  b[19] = pack(label, FACE_TEXTURING, f);
+  return b;
+}
+function encodeTile(tile = {}, label = "tile") {
+  const t = merge(label, tileDefaults(), tile);
+  const b = new Uint8Array(MODEL_TILE_BYTES);
+  putU322(b, 0, `${label}.offset`, check(`${label}.offset`, t.offset, 0, TILE_OFFSET_MAX));
+  putU322(b, 4, `${label}.mirrorV`, check(`${label}.mirrorV`, t.mirrorV, 0, 1));
+  putU322(b, 8, `${label}.widthPower`, check(`${label}.widthPower`, t.widthPower, 0, 7));
+  putU322(b, 12, `${label}.mirrorH`, check(`${label}.mirrorH`, t.mirrorH, 0, 1));
+  putU322(b, 16, `${label}.heightPower`, check(`${label}.heightPower`, t.heightPower, 0, 7));
+  return b;
+}
+function encodeModel(model = {}, label = "model") {
+  const m = merge(label, modelDefaults(), model);
+  if (m.vertices.length > MODEL_MAX_VERTICES) throw new Error(`${label}.vertices holds ${MODEL_MAX_VERTICES}; ${m.vertices.length} were given`);
+  if (m.faces.length > MODEL_MAX_FACES) throw new Error(`${label}.faces holds ${MODEL_MAX_FACES}; ${m.faces.length} were given`);
+  const b = new Uint8Array(MODEL_BYTES);
+  putU8(b, 0, `${label}.vertexCount`, check(`${label}.vertexCount`, m.vertexCount ?? m.vertices.length, 0, MODEL_MAX_VERTICES));
+  putU8(b, 1, `${label}.faceCount`, check(`${label}.faceCount`, m.faceCount ?? m.faces.length, 0, MODEL_MAX_FACES));
+  m.vertices.forEach((v, i) => {
+    const p = merge(`${label}.vertices[${i}]`, vertexDefaults(), v);
+    const at = MODEL_OFFSETS.vertices + i * VERTEX_BYTES;
+    putS16(b, at, `${label}.vertices[${i}].x`, p.x);
+    putS16(b, at + 2, `${label}.vertices[${i}].y`, p.y);
+    putS16(b, at + 4, `${label}.vertices[${i}].z`, p.z);
+  });
+  m.faces.forEach((f, i) => b.set(encodeFace(f, `${label}.faces[${i}]`), MODEL_OFFSETS.faces + i * FACE_BYTES));
+  putU163(b, MODEL_OFFSETS.unknownA2A, `${label}.unknownA2A`, m.unknownA2A);
+  m.tiles.forEach((t, i) => b.set(encodeTile(t, `${label}.tiles[${i}]`), MODEL_OFFSETS.tiles + i * MODEL_TILE_BYTES));
+  m.hScale.forEach((v, i) => putU163(b, MODEL_OFFSETS.hScale + i * 2, `${label}.hScale[${i}]`, v));
+  m.vScale.forEach((v, i) => putU163(b, MODEL_OFFSETS.vScale + i * 2, `${label}.vScale[${i}]`, v));
+  const groups = m.groups ?? fill(MODEL_MAX_VERTICES, () => 0).map((_, i) => i < m.vertices.length ? -1 : 0);
+  if (!Array.isArray(groups) || groups.length !== MODEL_MAX_VERTICES) throw new Error(`${label}.groups is one byte per vertex slot, ${MODEL_MAX_VERTICES} of them`);
+  groups.forEach((g, i) => putS8(b, MODEL_OFFSETS.groups + i, `${label}.groups[${i}]`, g));
+  putU8(b, MODEL_OFFSETS.light, `${label}.light`, check(`${label}.light`, m.light, 0, LIGHT_POSITION_MAX));
+  b.set(m.unknownC11, MODEL_OFFSETS.unknownC11);
+  return b;
+}
+var MD_MODEL_COUNT = 130;
+var CMD_MODEL_COUNT = 20;
+var ULB_MODEL_COUNT = 8;
+var ULB_TEXTURE_COUNT = 8;
+var MD_TEXTURE_INDEX_OFFSET = MD_MODEL_COUNT * MODEL_BYTES;
+var CMD_TEXTURE_INDEX_OFFSET = CMD_MODEL_COUNT * MODEL_BYTES;
+var ULB_TEXTURES_OFFSET = ULB_MODEL_COUNT * MODEL_BYTES;
+function buildModelFile(label, models, textureIndices, count, size) {
+  if (!Array.isArray(models)) throw new Error(`${label} models are a list`);
+  if (!Array.isArray(textureIndices)) throw new Error(`${label} texture indices are a list`);
+  if (models.length > count) throw new Error(`${label} holds ${count} models; ${models.length} were given`);
+  if (textureIndices.length > count) throw new Error(`${label} holds ${count} texture indices; ${textureIndices.length} were given`);
+  const out = new Uint8Array(size);
+  models.forEach((m, i) => {
+    if (m !== null && m !== void 0) out.set(encodeModel(m, `${label} models[${i}]`), i * MODEL_BYTES);
+  });
+  textureIndices.forEach((t, i) => putU163(out, count * MODEL_BYTES + i * 2, `${label} textureIndices[${i}]`, t ?? 0));
+  return out;
+}
+function buildMdFile(models = [], textureIndices = []) {
+  return buildModelFile("#MD", models, textureIndices, MD_MODEL_COUNT, DOCUMENTED_SIZES.MD);
+}
+function buildCmdFile(models = [], textureIndices = []) {
+  return buildModelFile("CMD", models, textureIndices, CMD_MODEL_COUNT, DOCUMENTED_SIZES.CMD);
+}
+function buildUlbFile(models = [], textures = []) {
+  if (!Array.isArray(textures)) throw new Error("ULB textures are a list");
+  if (textures.length > ULB_TEXTURE_COUNT) throw new Error(`ULB holds ${ULB_TEXTURE_COUNT} textures; ${textures.length} were given`);
+  const out = buildModelFile("ULB", models, [], ULB_MODEL_COUNT, DOCUMENTED_SIZES.ULB);
+  textures.forEach((t, i) => {
+    if (t === null || t === void 0) return;
+    if (!(t instanceof Uint8Array) || t.length !== TILE_BYTES) throw new Error(`ULB textures[${i}] is a ${TILE_BYTES}-byte texture`);
+    out.set(t, ULB_TEXTURES_OFFSET + i * TILE_BYTES);
+  });
+  return out;
+}
+function billboardModel({ width = 64, height = 32, tileWidthPower = 5, tileHeightPower = 4, tileOffset = 0, tile = 0, light = 0 } = {}) {
+  check("billboard.width", width, 1, 32767);
+  check("billboard.height", height, 1, 32767);
+  check("billboard.tile", tile, 0, MODEL_TILES - 1);
+  const u = tilePixels(tileWidthPower);
+  const v = tilePixels(tileHeightPower);
+  const x0 = -(width >> 1), x1 = width - (width >> 1);
+  const y0 = -(height >> 1), y1 = height - (height >> 1);
+  const tiles = fill(MODEL_TILES, tileDefaults);
+  tiles[tile] = { offset: tileOffset, mirrorV: false, widthPower: tileWidthPower, mirrorH: false, heightPower: tileHeightPower };
+  const face = (vertices, uv) => ({ ...faceDefaults(), vertices, uv, tile });
+  return {
+    vertices: [{ x: x0, y: y1, z: 0 }, { x: x1, y: y1, z: 0 }, { x: x1, y: y0, z: 0 }, { x: x0, y: y0, z: 0 }],
+    faces: [face([0, 1, 2], [[0, 0], [u, 0], [u, v]]), face([0, 2, 3], [[0, 0], [u, v], [0, v]])],
+    tiles,
+    light
+  };
+}
+var GAM_HIGH_SCORES_BYTES = 160;
+var GAM_PALETTE_BYTES = 512;
+var GAM_LIGHTS = 30;
+var GAM_SPRITES = Object.freeze([
+  "playerShot",
+  "playerSplash",
+  "playerLaser",
+  "enemyLaser1",
+  "enemyShot1Frame1",
+  "enemyShot1Frame2",
+  "enemyShot1Frame3",
+  "enemyShot1Frame4",
+  "playerLaserFlash",
+  "enemyLaser1Flash",
+  "enemyLaser2",
+  "playerBomb",
+  "enemyShot2Frame1",
+  "enemyShot2Frame2",
+  "enemyShot2Frame3",
+  "enemyShot2Frame4",
+  "blastParticleFrame1",
+  "blastParticleFrame2",
+  "blastParticleFrame3",
+  "blastParticleFrame4",
+  "playerDustFrame1",
+  "playerDustFrame2",
+  "playerDustFrame3",
+  "playerDustFrame4",
+  "playerMuzzleFlashFrame1",
+  "playerMuzzleFlashFrame2",
+  "playerMuzzleFlashFrame3",
+  "playerMuzzleFlashFrame4",
+  "playerMark",
+  "playerSight",
+  "playerSightClosed",
+  "blast1Frame1",
+  "blast1Frame2",
+  "blast1Frame3",
+  "blast1Frame4",
+  "blast1Frame5",
+  "blast1Frame6",
+  "blast2Frame1",
+  "blast2Frame2",
+  "blast2Frame3",
+  "blast2Frame4",
+  "blast2Frame5",
+  "blast2Frame6",
+  "playerStockShip",
+  "playerStockBomb",
+  "playerBoost"
+]);
+var GAM_FONT_COLORS = Object.freeze(["gray", "green", "purple", "orange", "magenta", "blue", "yellow", "red"]);
+var GAM_LIGHT_POSITIONS = Object.freeze([
+  "topDownRightFront",
+  "topDownRightSide",
+  "topDownRightRear",
+  "topDownFront",
+  "topDown",
+  "topDownBack",
+  "topDownLeftFront",
+  "topDownLeftSide",
+  "topDownLeftRear",
+  "middleRightFront",
+  "middleRightSide",
+  "middleRightRear",
+  "middleFront",
+  "middleBack",
+  "middleLeftFront",
+  "middleLeftSide",
+  "middleLeftRear",
+  "bottomUpRightFront",
+  "bottomUpRightSide",
+  "bottomUpRightRear",
+  "bottomUpFront",
+  "bottomUp",
+  "bottomUpBack",
+  "bottomUpLeftFront",
+  "bottomUpLeftSide",
+  "bottomUpLeftRear"
+]);
+var GAM_OFFSETS = Object.freeze({
+  finalStage: 0,
+  unknown01: 1,
+  fontFace: 2,
+  fontColor: 3,
+  timeAttackStage: 4,
+  timeAttackLimit: 5,
+  highScores1: 6,
+  item1Score: 166,
+  item2Score: 167,
+  unknownA8: 168,
+  loadout: 178,
+  initialAltitude: 179,
+  highScores2: 180,
+  playerScale: 340,
+  shieldScale: 342,
+  playerFrameSpeed: 344,
+  shieldFrameSpeed: 345,
+  playerModels: 346,
+  shieldModels: 350,
+  playerTransparency: 354,
+  shieldTransparency: 355,
+  spriteX: 364,
+  spriteY: 456,
+  vibration: 548,
+  title1Settings: 558,
+  title2Settings: 560,
+  title1Y: 562,
+  title2Y: 564,
+  ending: 566,
+  lightPositions: 569,
+  lightColors: 599,
+  modelToolBackground: 779,
+  layoutBackground: 782,
+  palette: 785,
+  titleBackgroundTexture: 1297,
+  commonModelIndices: 1299,
+  commonTextureIndices: 1319,
+  bgm: 1363,
+  unknown557: 1367,
+  unknown558: 1368
+});
+var LOADOUT = [
+  { name: "shotPower", mask: 192, max: 2 },
+  { name: "laserPower", mask: 48, max: 2 },
+  { name: "bombs", mask: 3 },
+  { name: "unknownBits", mask: 12 }
+];
+var TITLE_SETTINGS = [
+  { name: "wave", mask: 24576 },
+  { name: "blink", mask: 4096, bool: true },
+  { name: "transparency", mask: 3072 },
+  { name: "inTop", mask: 64, bool: true },
+  { name: "inBottom", mask: 128, bool: true },
+  { name: "inLeft", mask: 256, bool: true },
+  { name: "inRight", mask: 512, bool: true },
+  { name: "width", mask: 48, max: 2 },
+  { name: "height", mask: 12, max: 2 },
+  { name: "roll", mask: 3, max: 2 },
+  { name: "unknownBits", mask: 32768 }
+];
+function defaultHighScores() {
+  const out = new Uint8Array(GAM_HIGH_SCORES_BYTES);
+  for (let i = 0; i < 10; i++) {
+    out.fill(46, i * 16, i * 16 + 8);
+    putU322(out, i * 16 + 12, "score", 1e4 - i * 1e3);
+  }
+  return out;
+}
+var DEFAULT_PALETTE_HEX = "0000f801fa81ffc107c107ff003f502be327fde9f7e1a7ebb4fff7bd8421084300031087210b318f42135297631b739f842394a7a52bb5afc633d6b7e73bfffff469fde3fea3ffe3dfa3b7279f2f97398eff963b9df9ad35d535dcf3f471f46d637d73fd8cbda53db5bdc63dd6bdef7ffc87fccdfd13fd99fde1fe67feadff35f801f909fa11fb19fc21fd29fe31ff39fa81fb09fbd1fc99fd61fe29fef1ffb9f781f787f78ff797f79df7a5f7adfff50541258945d166598ea3af2bcf73f7fd014b02d7056b07ff3fff7fffb7fff7ff003f213f423f6b7f8c7fb5bfd6bfffff502b612d7a2f9333a435bd39d63bef3f502b606978e98969a1a7b227caa7e327280151077a0da313d45bdd21ede7feef620d728f8b539bd7b499c51ddde1f6a5600180c1a981ca41f301f445f58bf711f801f901fa01fb41fc41fd81fe81ffc1ffc1d7c1b7c18fc16fc147c127c107c107c707cf07d707df07e707ef07f707ff06ff05ff04ff03ff02ff01ff00ff003f083b1039183728353031382f402d502b60257021881d9817a813c00fd009e005fb41fbc3fc87fd0bfdcdfe51ff15ffd910013001500170019001b001d001f8011001304150c171019141b1c1d201fa8110813141524173419c41bd41de41ff0100810141020102c10381040104c105810003000b0015001d0025002d0035003f100b180f20132819301d38214025502b";
+function hexBytes(hex2, n) {
+  if (hex2.length !== n * 2) throw new Error(`a ${n}-byte constant has ${hex2.length / 2} bytes`);
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) out[i] = parseInt(hex2.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+var DEFAULT_SPRITE_X = [
+  0,
+  16,
+  32,
+  32,
+  64,
+  80,
+  96,
+  112,
+  0,
+  16,
+  32,
+  48,
+  64,
+  80,
+  96,
+  112,
+  0,
+  16,
+  32,
+  48,
+  64,
+  80,
+  96,
+  112,
+  0,
+  16,
+  32,
+  48,
+  64,
+  80,
+  96,
+  0,
+  32,
+  64,
+  96,
+  0,
+  32,
+  64,
+  96,
+  0,
+  32,
+  64,
+  96,
+  0,
+  16,
+  16
+];
+var DEFAULT_SPRITE_Y = [
+  448,
+  448,
+  448,
+  456,
+  448,
+  448,
+  448,
+  448,
+  464,
+  464,
+  464,
+  464,
+  464,
+  464,
+  464,
+  464,
+  480,
+  480,
+  480,
+  480,
+  480,
+  480,
+  480,
+  480,
+  496,
+  496,
+  496,
+  496,
+  496,
+  496,
+  496,
+  512,
+  512,
+  512,
+  512,
+  544,
+  544,
+  544,
+  544,
+  576,
+  576,
+  576,
+  576,
+  608,
+  608,
+  464
+];
+var DEFAULT_LIGHT_POSITIONS = [0, 0, 19, 25, 25, 0, 19, 8, 16, 8, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+var DEFAULT_LIGHT_COLORS = [
+  [[255, 255, 255], [64, 64, 64]],
+  [[248, 192, 64], [69, 28, 8]],
+  [[248, 168, 56], [123, 67, 23]],
+  [[240, 248, 248], [93, 80, 131]],
+  [[248, 144, 104], [53, 29, 10]],
+  [[248, 168, 112], [76, 54, 22]],
+  [[248, 184, 128], [44, 46, 33]],
+  [[216, 216, 248], [24, 24, 40]],
+  [[240, 240, 248], [24, 24, 72]],
+  [[255, 255, 255], [64, 64, 64]],
+  [[223, 223, 255], [24, 24, 40]],
+  [[255, 255, 255], [64, 64, 64]],
+  [[255, 255, 255], [64, 64, 64]],
+  [[255, 255, 255], [64, 64, 64]],
+  [[255, 255, 255], [64, 64, 64]],
+  [[255, 255, 255], [64, 64, 64]]
+];
+function transparencyDefaults(final) {
+  return { enabled: false, initial: 0, final, speed: -1, loopType: 0 };
+}
+function titleDefaults(word, y) {
+  return { ...unpack(TITLE_SETTINGS, word), y };
+}
+function gamDefaults() {
+  const commonModels = new Uint8Array(20);
+  [660, 661, 662, 663, 664, 665, 666, 667, 668, 270].forEach((v, i) => putU163(commonModels, i * 2, "model", v));
+  const commonTextures = new Uint8Array(44);
+  [628, 629, 630, 631, 632, 633, 634, 635, 636, 560, 638, 639, 640, 641, 10226, 643, 644, 645, 646, 647, 648, 649].forEach((v, i) => putU163(commonTextures, i * 2, "texture", v));
+  return {
+    finalStage: 2,
+    unknown01: 0,
+    fontFace: 0,
+    fontColor: 4,
+    timeAttackStage: 1,
+    timeAttackLimit: 0,
+    highScores1: defaultHighScores(),
+    item1Score: 1,
+    item2Score: 2,
+    unknownA8: new Uint8Array(10),
+    loadout: { shotPower: 0, laserPower: 0, bombs: 0, unknownBits: 0 },
+    initialAltitude: 9,
+    highScores2: defaultHighScores(),
+    player: { scale: 66, frameSpeed: -1, models: [10, 0, 0, 0], transparency: transparencyDefaults(0) },
+    shield: { scale: 89, frameSpeed: -1, models: [7, 5, 5, 5], transparency: transparencyDefaults(3) },
+    spriteX: DEFAULT_SPRITE_X.slice(),
+    spriteY: DEFAULT_SPRITE_Y.slice(),
+    vibration: { death: 4, bomb: 4, blast1: [0, 0, 0, 0], blast2: [0, 0, 0, 0] },
+    title1: titleDefaults(8469, 928),
+    title2: titleDefaults(14870, 928),
+    ending: { type: 0, startTexture: 29, endTexture: 41 },
+    lightPositions: DEFAULT_LIGHT_POSITIONS.slice(),
+    lightColors: fill(GAM_LIGHTS, () => null).map((_, i) => {
+      const c = DEFAULT_LIGHT_COLORS[i];
+      return c ? { directional: c[0].slice(), ambient: c[1].slice() } : { directional: [0, 0, 0], ambient: [0, 0, 0] };
+    }),
+    modelToolBackground: [0, 0, 176],
+    layoutBackground: [3, 3, 6],
+    palette: hexBytes(DEFAULT_PALETTE_HEX, GAM_PALETTE_BYTES),
+    titleBackgroundTexture: 20,
+    commonModelIndices: commonModels,
+    commonTextureIndices: commonTextures,
+    bgm: { title: 37, ending: 28, gameOver: 40, stageClear: 11 },
+    unknown557: 46,
+    unknown558: 46
+  };
+}
+function putTransparency(b, at, label, t) {
+  b[at] = check(`${label}.enabled`, t.enabled, 0, 1);
+  putU8(b, at + 2, `${label}.initial`, check(`${label}.initial`, t.initial, 0, 7));
+  putU8(b, at + 4, `${label}.final`, check(`${label}.final`, t.final, 0, 7));
+  putS8(b, at + 6, `${label}.speed`, check(`${label}.speed`, t.speed, -1, 7));
+  putU8(b, at + 8, `${label}.loopType`, check(`${label}.loopType`, t.loopType, 0, 3));
+}
+function encodeGam(gam = {}) {
+  const { missing: _missing, ...given } = gam ?? {};
+  const g = merge("gam", gamDefaults(), given);
+  const b = new Uint8Array(DOCUMENTED_SIZES.GAM);
+  const o = GAM_OFFSETS;
+  putU8(b, o.finalStage, "gam.finalStage", g.finalStage);
+  putU8(b, o.unknown01, "gam.unknown01", g.unknown01);
+  putU8(b, o.fontFace, "gam.fontFace", check("gam.fontFace", g.fontFace, 0, 5));
+  putU8(b, o.fontColor, "gam.fontColor", check("gam.fontColor", g.fontColor, 0, 7));
+  putU8(b, o.timeAttackStage, "gam.timeAttackStage", g.timeAttackStage);
+  putU8(b, o.timeAttackLimit, "gam.timeAttackLimit", g.timeAttackLimit);
+  b.set(g.highScores1, o.highScores1);
+  putU8(b, o.item1Score, "gam.item1Score", check("gam.item1Score", g.item1Score, 0, 7));
+  putU8(b, o.item2Score, "gam.item2Score", check("gam.item2Score", g.item2Score, 0, 7));
+  b.set(g.unknownA8, o.unknownA8);
+  b[o.loadout] = pack("gam.loadout", LOADOUT, g.loadout);
+  putU8(b, o.initialAltitude, "gam.initialAltitude", check("gam.initialAltitude", g.initialAltitude, 0, 10));
+  b.set(g.highScores2, o.highScores2);
+  putU163(b, o.playerScale, "gam.player.scale", g.player.scale);
+  putU163(b, o.shieldScale, "gam.shield.scale", g.shield.scale);
+  putS8(b, o.playerFrameSpeed, "gam.player.frameSpeed", check("gam.player.frameSpeed", g.player.frameSpeed, -1, 7));
+  putS8(b, o.shieldFrameSpeed, "gam.shield.frameSpeed", check("gam.shield.frameSpeed", g.shield.frameSpeed, -1, 7));
+  g.player.models.forEach((m, i) => putU8(b, o.playerModels + i, `gam.player.models[${i}]`, m));
+  g.shield.models.forEach((m, i) => putU8(b, o.shieldModels + i, `gam.shield.models[${i}]`, m));
+  putTransparency(b, o.playerTransparency, "gam.player.transparency", g.player.transparency);
+  putTransparency(b, o.shieldTransparency, "gam.shield.transparency", g.shield.transparency);
+  g.spriteX.forEach((v, i) => putU163(b, o.spriteX + i * 2, `gam.spriteX[${i}] (${GAM_SPRITES[i]})`, v));
+  g.spriteY.forEach((v, i) => putU163(b, o.spriteY + i * 2, `gam.spriteY[${i}] (${GAM_SPRITES[i]})`, v));
+  putU8(b, o.vibration, "gam.vibration.death", g.vibration.death);
+  putU8(b, o.vibration + 1, "gam.vibration.bomb", g.vibration.bomb);
+  g.vibration.blast1.forEach((v, i) => putU8(b, o.vibration + 2 + i, `gam.vibration.blast1[${i}]`, v));
+  g.vibration.blast2.forEach((v, i) => putU8(b, o.vibration + 6 + i, `gam.vibration.blast2[${i}]`, v));
+  putU163(b, o.title1Settings, "gam.title1", pack("gam.title1", TITLE_SETTINGS, g.title1));
+  putU163(b, o.title2Settings, "gam.title2", pack("gam.title2", TITLE_SETTINGS, g.title2));
+  putU163(b, o.title1Y, "gam.title1.y", g.title1.y);
+  putU163(b, o.title2Y, "gam.title2.y", g.title2.y);
+  putU8(b, o.ending, "gam.ending.type", check("gam.ending.type", g.ending.type, 0, 1));
+  putU8(b, o.ending + 1, "gam.ending.startTexture", g.ending.startTexture);
+  putU8(b, o.ending + 2, "gam.ending.endTexture", g.ending.endTexture);
+  g.lightPositions.forEach((v, i) => putU8(b, o.lightPositions + i, `gam.lightPositions[${i}]`, check(`gam.lightPositions[${i}]`, v, 0, GAM_LIGHT_POSITIONS.length - 1)));
+  g.lightColors.forEach((c, i) => {
+    c.directional.forEach((v, k) => putU8(b, o.lightColors + i * 6 + k, `gam.lightColors[${i}].directional[${k}]`, v));
+    c.ambient.forEach((v, k) => putU8(b, o.lightColors + i * 6 + 3 + k, `gam.lightColors[${i}].ambient[${k}]`, v));
+  });
+  g.modelToolBackground.forEach((v, k) => putU8(b, o.modelToolBackground + k, `gam.modelToolBackground[${k}]`, v));
+  g.layoutBackground.forEach((v, k) => putU8(b, o.layoutBackground + k, `gam.layoutBackground[${k}]`, v));
+  b.set(g.palette, o.palette);
+  putS16(b, o.titleBackgroundTexture, "gam.titleBackgroundTexture", g.titleBackgroundTexture);
+  b.set(g.commonModelIndices, o.commonModelIndices);
+  b.set(g.commonTextureIndices, o.commonTextureIndices);
+  putS8(b, o.bgm, "gam.bgm.title", g.bgm.title);
+  putS8(b, o.bgm + 1, "gam.bgm.ending", g.bgm.ending);
+  putS8(b, o.bgm + 2, "gam.bgm.gameOver", g.bgm.gameOver);
+  putS8(b, o.bgm + 3, "gam.bgm.stageClear", g.bgm.stageClear);
+  putU8(b, o.unknown557, "gam.unknown557", g.unknown557);
+  putU8(b, o.unknown558, "gam.unknown558", g.unknown558);
+  return b;
+}
+var SONG_BYTES = 11418;
+var SONG_HEADER_BYTES = 26;
+var SONG_COUNT = 24;
+var SONG_BLOCKS = 32;
+var SCORE_BLOCK_BYTES = 132;
+var SCORE_BYTES = SONG_BLOCKS * SCORE_BLOCK_BYTES;
+var ACCOMPANIMENT_BLOCK_BYTES = 224;
+var ACCOMPANIMENT_BYTES = SONG_BLOCKS * ACCOMPANIMENT_BLOCK_BYTES;
+var SCORE_OFFSET = SONG_HEADER_BYTES;
+var ACCOMPANIMENT_OFFSET = SONG_HEADER_BYTES + SCORE_BYTES;
+var MUS_TEMPO_TABLE = Object.freeze([
+  66,
+  60,
+  57,
+  54,
+  52,
+  49,
+  47,
+  45,
+  43,
+  42,
+  40,
+  39,
+  38,
+  36,
+  35,
+  34,
+  33,
+  32,
+  31,
+  30,
+  29,
+  28,
+  27,
+  26,
+  25,
+  24,
+  23,
+  22,
+  21,
+  20,
+  19,
+  18
+]);
+var MUS_ECHO_TABLE = Object.freeze([0, 20, 30, 35, 40, 45, 50, 64]);
+var PAN_CENTER = 64;
+var INSTRUMENT_YELLOW_DRUMKIT = 50;
+var TRACK_VOLUME = [
+  { name: "muted", mask: 128, bool: true },
+  { name: "volume", mask: 127 }
+];
+function songHeaderDefaults() {
+  return {
+    tempo: 16,
+    echo: 2,
+    loopStart: 0,
+    length: SONG_BLOCKS - 1,
+    tracks: fill(4, () => ({ volume: 90, muted: false })),
+    instrumentVolumes: fill(7, 90),
+    trackPans: fill(4, PAN_CENTER),
+    instrumentPans: fill(7, PAN_CENTER)
+  };
+}
+function encodeSongHeader(header = {}, label = "song") {
+  const h = merge(label, songHeaderDefaults(), header);
+  const b = new Uint8Array(SONG_HEADER_BYTES);
+  putU8(b, 0, `${label}.tempo`, check(`${label}.tempo`, h.tempo, 0, 32));
+  putU8(b, 1, `${label}.echo`, check(`${label}.echo`, h.echo, 0, MUS_ECHO_TABLE.length - 1));
+  putU8(b, 2, `${label}.loopStart`, check(`${label}.loopStart`, h.loopStart, 0, SONG_BLOCKS - 1));
+  putU8(b, 3, `${label}.length`, check(`${label}.length`, h.length, 0, SONG_BLOCKS - 1));
+  h.tracks.forEach((t, i) => {
+    b[4 + i] = pack(`${label}.tracks[${i}]`, TRACK_VOLUME, t);
+  });
+  h.instrumentVolumes.forEach((v, i) => putU8(b, 8 + i, `${label}.instrumentVolumes[${i}]`, v));
+  h.trackPans.forEach((v, i) => putU8(b, 15 + i, `${label}.trackPans[${i}]`, v));
+  h.instrumentPans.forEach((v, i) => putU8(b, 19 + i, `${label}.instrumentPans[${i}]`, v));
+  return b;
+}
+function blankScore() {
+  const out = new Uint8Array(SCORE_BYTES);
+  for (let i = 0; i < SONG_BLOCKS; i++) out.set([255, 0, 1, 0], i * SCORE_BLOCK_BYTES);
+  return out;
+}
+function blankAccompaniment() {
+  const out = new Uint8Array(ACCOMPANIMENT_BYTES);
+  for (let i = 0; i < SONG_BLOCKS; i++) {
+    const drums = i * ACCOMPANIMENT_BLOCK_BYTES + 112 + 4 * 16;
+    out.fill(INSTRUMENT_YELLOW_DRUMKIT, drums, drums + 3 * 16);
+  }
+  return out;
+}
+function songDefaults() {
+  return { ...songHeaderDefaults(), score: blankScore(), accompaniment: blankAccompaniment() };
+}
+function encodeSong(song = {}, label = "song") {
+  const s = merge(label, songDefaults(), song);
+  const { score, accompaniment, ...header } = s;
+  const b = new Uint8Array(SONG_BYTES);
+  b.set(encodeSongHeader(header, label), 0);
+  b.set(score, SCORE_OFFSET);
+  b.set(accompaniment, ACCOMPANIMENT_OFFSET);
+  return b;
+}
+function buildMusFile(songs = []) {
+  if (!Array.isArray(songs)) throw new Error("MUS songs are a list");
+  if (songs.length > SONG_COUNT) throw new Error(`MUS holds ${SONG_COUNT} songs; ${songs.length} were given`);
+  const out = new Uint8Array(DOCUMENTED_SIZES.MUS);
+  for (let i = 0; i < SONG_COUNT; i++) out.set(encodeSong(songs[i] ?? {}, `songs[${i}]`), i * SONG_BYTES);
+  return out;
+}
+
+// packages/shmup-engine/src/n64/project-write.js
+var N64_CGR_TEXTURES = DOCUMENTED_SIZES.CGR / TILE_BYTES;
+var N64_GR_TEXTURES = DOCUMENTED_SIZES.GR / TILE_BYTES;
+var N64_CMD_MODELS = CMD_MODEL_COUNT;
+var N64_MD_MODELS = MD_MODEL_COUNT;
+var N64_BL_ENEMIES = BL_ENEMY_COUNT;
+var N64_STAGE_COUNT = STAGES.length;
+var N64_TITLE_COLS = 2;
+var N64_TITLE_ROWS = 2;
+var N64_FRAMES_PER_ENEMY = 4;
+var N64_MODEL_NUMBER_BASE = N64_CMD_MODELS;
+var N64_PLAYER_MODEL = 10;
+var N64_ITEM_MODELS = Object.freeze([12, 13, 14, 15, 16, 17, 18]);
+var N64_UNITS_PER_PIXEL = 4;
+var N64_LAYOUT_HALF_WIDTH = 400;
+var N64_SPAWN_Y = 240;
+var N64_BOSS_Y = 400;
+var N64_FRAMES_PER_ROW = 16;
+var N64_SPEED_TABLE = Object.freeze([0, 0.5, 1, 1.5, 2, 3, 4, 6]);
+var N64_HIT_SIZE_TABLE = Object.freeze([8, 16, 24, 32, 48, 64, 96, 128]);
+var N64_DROP_ITEMS = Object.freeze({ 1: 0, 2: 0, 3: 0, 4: 5, 5: 2, 9: 3 });
+var N64_ITEM_ENTRY = Object.freeze({ hitMode: 2, hitSize: 4 });
+var N64_ITEM_SCALES = Object.freeze([33, 45, 45, 32, 45, 76, 32]);
+function fileSizeFor(ext) {
+  const key = sizeKey(String(ext).toUpperCase());
+  return key in DOCUMENTED_SIZES ? DOCUMENTED_SIZES[key] : null;
+}
+var clamp4 = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function nearestIndex4(table, value) {
+  let best = 0, bestD = Infinity;
+  table.forEach((v, i) => {
+    const d = Math.abs(v - value);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  return best;
+}
+function encodeRgba5551(frame, { alphaCutoff = 128 } = {}) {
+  const n = frame.w * frame.h;
+  const out = new Uint8Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    const a = frame.rgba[o + 3] >= alphaCutoff;
+    const r = a ? Math.round(frame.rgba[o] * 31 / 255) : 0;
+    const g = a ? Math.round(frame.rgba[o + 1] * 31 / 255) : 0;
+    const b = a ? Math.round(frame.rgba[o + 2] * 31 / 255) : 0;
+    const v = r << 11 | g << 6 | b << 1 | (a ? 1 : 0);
+    out[i * 2] = v >> 8;
+    out[i * 2 + 1] = v & 255;
+  }
+  return out;
+}
+function textureGrid(frame, options = {}) {
+  const cols = Math.max(1, Math.ceil(frame.w / TILE_WIDTH));
+  const rows = Math.max(1, Math.ceil(frame.h / TILE_HEIGHT));
+  const tiles = [];
+  for (let ty = 0; ty < rows; ty++) {
+    for (let tx = 0; tx < cols; tx++) {
+      const cut = { w: TILE_WIDTH, h: TILE_HEIGHT, rgba: new Uint8Array(TILE_WIDTH * TILE_HEIGHT * 4) };
+      for (let y = 0; y < TILE_HEIGHT; y++) {
+        const sy = ty * TILE_HEIGHT + y;
+        if (sy >= frame.h) break;
+        for (let x = 0; x < TILE_WIDTH; x++) {
+          const sx = tx * TILE_WIDTH + x;
+          if (sx >= frame.w) break;
+          const s = (sy * frame.w + sx) * 4;
+          const d = (y * TILE_WIDTH + x) * 4;
+          cut.rgba[d] = frame.rgba[s];
+          cut.rgba[d + 1] = frame.rgba[s + 1];
+          cut.rgba[d + 2] = frame.rgba[s + 2];
+          cut.rgba[d + 3] = frame.rgba[s + 3];
+        }
+      }
+      tiles.push(encodeRgba5551(cut, options));
+    }
+  }
+  return { cols, rows, tiles };
+}
+function shrinkRgba(frame, maxW = TILE_WIDTH, maxH = TILE_HEIGHT) {
+  const scale = Math.min(1, maxW / frame.w, maxH / frame.h);
+  if (scale === 1) return { w: frame.w, h: frame.h, rgba: frame.rgba, scaled: false };
+  const w = Math.max(1, Math.round(frame.w * scale));
+  const h = Math.max(1, Math.round(frame.h * scale));
+  const out = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    const sy = Math.min(frame.h - 1, Math.floor((y + 0.5) / scale));
+    for (let x = 0; x < w; x++) {
+      const sx = Math.min(frame.w - 1, Math.floor((x + 0.5) / scale));
+      const s = (sy * frame.w + sx) * 4;
+      const d = (y * w + x) * 4;
+      out[d] = frame.rgba[s];
+      out[d + 1] = frame.rgba[s + 1];
+      out[d + 2] = frame.rgba[s + 2];
+      out[d + 3] = frame.rgba[s + 3];
+    }
+  }
+  return { w, h, rgba: out, scaled: true };
+}
+function spriteTexture(frame, options = {}) {
+  const small = shrinkRgba(frame);
+  return { grid: textureGrid(small, options), w: small.w, h: small.h, scaled: small.scaled };
+}
+function tilePower(px) {
+  let p = 0;
+  while (1 << p + 1 < px && p < 7) p++;
+  return p;
+}
+function spriteModel(sprite, light = 0) {
+  const w = Math.max(1, sprite.w), h = Math.max(1, sprite.h);
+  const model = billboardModel({
+    width: clamp4(w * N64_UNITS_PER_PIXEL, 1, 32767),
+    height: clamp4(h * N64_UNITS_PER_PIXEL, 1, 32767),
+    tileWidthPower: tilePower(w),
+    tileHeightPower: tilePower(h),
+    tile: 1,
+    light
+  });
+  model.faces[0].uv = [[0, 0], [w, 0], [w, h]];
+  model.faces[1].uv = [[0, 0], [w, h], [0, h]];
+  return model;
+}
+function isBlankTexture(bytes) {
+  for (let i = 0; i < bytes.length; i++) if (bytes[i] !== 0) return false;
+  return true;
+}
+var TextureSheet = class {
+  /**
+   * @param {number} count
+   * @param {Uint8Array|null} [template]  `count` x 0x1000 bytes, or null for an empty sheet
+   */
+  constructor(count, template = null) {
+    this.count = count;
+    this.bytes = new Uint8Array(count * TILE_BYTES);
+    if (template) {
+      if (template.length !== this.bytes.length) throw new Error(`a sheet of ${count} textures is ${this.bytes.length} bytes; the template is ${template.length}`);
+      this.bytes.set(template);
+    }
+    this.blank = Array.from({ length: count }, (_, i) => isBlankTexture(this.bytes.subarray(i * TILE_BYTES, (i + 1) * TILE_BYTES)));
+    this.painted = this.blank.filter((b) => !b).length;
+    this.placed = [];
+  }
+  /** Textures still blank. */
+  get free() {
+    return this.blank.filter(Boolean).length;
+  }
+  /**
+   * @param {string} key   what the report calls the frame
+   * @param {{cols: number, rows: number, tiles: Uint8Array[]}} grid
+   * @returns {number|null}  the first texture's index, or null when no run of blanks fits
+   */
+  place(key, grid) {
+    const need2 = grid.tiles.length;
+    let run = 0;
+    for (let i = 0; i < this.count; i++) {
+      run = this.blank[i] ? run + 1 : 0;
+      if (run === need2) {
+        const first = i - need2 + 1;
+        grid.tiles.forEach((t, k) => {
+          this.bytes.set(t, (first + k) * TILE_BYTES);
+          this.blank[first + k] = false;
+        });
+        this.placed.push({ key, index: first, cols: grid.cols, rows: grid.rows, textures: need2 });
+        return first;
+      }
+    }
+    return null;
+  }
+};
+var ModelTable = class {
+  constructor(count) {
+    this.count = count;
+    this.models = [];
+    this.textures = [];
+  }
+  /** @returns {number|null} the slot, or null when the table is full */
+  add(model, texture) {
+    if (this.models.length >= this.count) return null;
+    this.models.push(model);
+    this.textures.push(texture);
+    return this.models.length - 1;
+  }
+  get used() {
+    return this.models.length;
+  }
+};
+function cellParts(cell) {
+  if (typeof cell !== "string" || cell.length < 2 || cell === "00") return null;
+  const m = /^([A-Za-z]+)(\d)$/.exec(cell);
+  return m ? { letter: m[1].toUpperCase(), drop: Number(m[2]) } : null;
+}
+function asFrame(f) {
+  if (!f || !f.rgba || !(f.w > 0) || !(f.h > 0)) return null;
+  return { w: f.w, h: f.h, rgba: f.rgba };
+}
+function animationModels(slots) {
+  const numbers = slots.filter((s) => s >= 0).map((s) => N64_MODEL_NUMBER_BASE + s);
+  if (!numbers.length) return [255, 255, 255, 255];
+  return [0, 1, 2, 3].map((i) => numbers[Math.min(i, numbers.length - 1)]);
+}
+function enemyEntryFromEditor(rec, { slots, size, frames, drop = null, boss = false }) {
+  const r = rec || {};
+  const infinite = r.hp === "infinity";
+  const hits = infinite ? 16 : Math.max(1, Math.ceil(Number(r.hp)) || (boss ? 16 : 1));
+  const speed = Number.isFinite(r.speed) ? r.speed : 1;
+  const frameRate = Number(r.frameRate);
+  const animated = frames > 1 && Number.isFinite(frameRate) && frameRate > 0;
+  const proj = r.projectileData || null;
+  const interval = Number(r.interval);
+  const fires = !!proj && Number.isFinite(interval) && interval > 0;
+  const item = drop !== null && drop in N64_DROP_ITEMS ? N64_DROP_ITEMS[drop] : null;
+  const blastScale = size < 24 ? 0 : size < 48 ? 1 : size < 96 ? 2 : 3;
+  const entry = {
+    score: nearestIndex4(ENEMY_SCORE_TABLE, Number(r.score) || (boss ? 1e4 : 100)),
+    hp: clamp4(hits - 1, 0, 15),
+    animation: {
+      disabled: !animated,
+      frameSpeed: animated ? nearestIndex4(ANIM_PERIOD_TABLE, 60 / frameRate) : 127,
+      models: animationModels(slots)
+    },
+    scale: 100,
+    motion: { type: boss ? 1 : 0, speed1: nearestIndex4(N64_SPEED_TABLE, speed) },
+    hit: {
+      lockOn: boss,
+      stageClear: boss,
+      hpMode: infinite && !boss ? 2 : 0,
+      size: nearestIndex4(N64_HIT_SIZE_TABLE, size)
+    },
+    blast: { particle: true, scale: blastScale }
+  };
+  if (fires) {
+    entry.shots = [{
+      type: 0,
+      // bullet 1
+      direction: 0,
+      variant: 1,
+      speed: nearestIndex4(N64_SPEED_TABLE, Number(proj.speed) || 2),
+      aimAtPlayer: true,
+      timing: nearestIndex4(FIRE_INTERVAL_TABLE, interval)
+    }];
+  }
+  if (item !== null) entry.item = { enabled: true, value: item };
+  return entry;
+}
+function itemEntry(model, scale) {
+  return {
+    animation: { disabled: true, frameSpeed: 127, models: [model, model, model, model] },
+    scale,
+    hit: { hpMode: N64_ITEM_ENTRY.hitMode, size: N64_ITEM_ENTRY.hitSize }
+  };
+}
+function buildN64ProjectFromLevel(level, art2, options = {}) {
+  const { template = null, title1 = null, title2 = null, framesPerEnemy = N64_FRAMES_PER_ENEMY } = options;
+  const warnings = [];
+  const warn = (m) => warnings.push(m);
+  const name = normalizeProjectName(options.name ?? (level && level.name) ?? "SHMUPX");
+  const templateFiles = /* @__PURE__ */ new Map();
+  if (template) {
+    const list = template instanceof Map ? [...template.entries()].map(([ext, data]) => ({ ext, data })) : template;
+    for (const f of list) {
+      const ext = String(f.ext).toUpperCase();
+      if (!(f.data instanceof Uint8Array)) throw new Error(`template ${ext}: a file is a Uint8Array`);
+      templateFiles.set(ext, f.data);
+    }
+  }
+  const artMap = /* @__PURE__ */ new Map();
+  for (const [k, v] of Object.entries(art2 || {})) {
+    const f = asFrame(v);
+    if (f) artMap.set(decodeFrameKey(k), { key: decodeFrameKey(k), ...f });
+  }
+  const lookup = (n) => n ? artMap.get(decodeFrameKey(n)) || null : null;
+  let stages = levelStages(level || {});
+  if (!stages.length) throw new Error("the level has no stage with an enemylist");
+  if (stages.length > N64_STAGE_COUNT) {
+    warn(`level has ${stages.length} stages; a project holds ${N64_STAGE_COUNT} \u2014 dropped the rest`);
+    stages = stages.slice(0, N64_STAGE_COUNT);
+  }
+  const enemyData = level && level.enemyData || {};
+  const bossData = level && level.bossData || {};
+  const sheetFrom = (ext, count) => {
+    const t = templateFiles.get(ext) || null;
+    if (t && t.length !== count * TILE_BYTES) {
+      warn(`template ${ext} is ${t.length} bytes, not the ${count * TILE_BYTES} of ${count} textures; built on a blank sheet instead`);
+      templateFiles.delete(ext);
+      return new TextureSheet(count, null);
+    }
+    return new TextureSheet(count, t);
+  };
+  const cgr = sheetFrom("CGR", N64_CGR_TEXTURES);
+  const common = { placed: [], missed: [], models: [], scaled: [] };
+  const cmd = /* @__PURE__ */ new Map();
+  const placeCommon = (key, grid) => {
+    const at = cgr.place(key, grid);
+    if (at === null) common.missed.push(key);
+    return at;
+  };
+  for (const [key, pic] of [["title1", title1], ["title2", title2]]) {
+    const f = asFrame(pic);
+    if (!f) continue;
+    placeCommon(key, textureGrid(fitRgba(f, N64_TITLE_COLS * TILE_WIDTH, N64_TITLE_ROWS * TILE_HEIGHT)));
+  }
+  const frameNames = (v) => Array.isArray(v) ? v : [];
+  let shipFrames = frameNames((level && level.playerData || {}).texture).map(lookup).filter(Boolean);
+  let shipSource = "level";
+  if (!shipFrames.length) {
+    shipSource = "duke";
+    shipFrames = decodePlayerArt().filter((f) => /^duke_\d$/.test(f.key)).slice(0, 2);
+  }
+  spreadFrames(shipFrames, Math.min(2, shipFrames.length)).forEach((f, i) => {
+    const t = spriteTexture(f);
+    if (t.scaled) common.scaled.push(`ship:${i}:${f.key}`);
+    const at = placeCommon(`ship:${i}:${f.key}`, t.grid);
+    if (at !== null && i === 0) cmd.set(N64_PLAYER_MODEL, { model: spriteModel(t), texture: at, key: `ship:${f.key}` });
+  });
+  const itemFrames = Object.entries(art2 || {}).filter(([k]) => /item|powerup|speedup|1up/i.test(k)).slice(0, 8);
+  itemFrames.forEach(([k], i) => {
+    const f = lookup(k);
+    if (!f) return;
+    const t = spriteTexture(f);
+    if (t.scaled) common.scaled.push(`item:${decodeFrameKey(k)}`);
+    const at = placeCommon(`item:${decodeFrameKey(k)}`, t.grid);
+    if (at !== null && i < N64_ITEM_MODELS.length) {
+      cmd.set(N64_ITEM_MODELS[i], { model: spriteModel(t), texture: at, key: `item:${decodeFrameKey(k)}` });
+    }
+  });
+  common.placed = cgr.placed;
+  common.models = templateFiles.has("CMD") ? [] : [...cmd.entries()].map(([slot, m]) => ({ slot, texture: m.texture, key: m.key }));
+  const stageReports = [];
+  const built = /* @__PURE__ */ new Map();
+  stages.forEach((st, i) => {
+    const stage = STAGES[i];
+    const grExt = `${stage}GR`, mdExt = `${stage}MD`, blExt = `${stage}BL`;
+    const sheet = sheetFrom(grExt, N64_GR_TEXTURES);
+    const models = new ModelTable(N64_MD_MODELS);
+    const entries = [];
+    const placements = [];
+    const missed = [];
+    const scaled = [];
+    const placeFrame = (key, frame) => {
+      if (models.used >= models.count) {
+        missed.push(key);
+        return -1;
+      }
+      const t = spriteTexture(frame);
+      if (t.scaled) scaled.push(key);
+      const at = sheet.place(key, t.grid);
+      if (at === null) {
+        missed.push(key);
+        return -1;
+      }
+      return models.add(spriteModel(t), at);
+    };
+    const width = Math.max(1, level && level.width || 0, ...st.enemylist.map((row) => row.length));
+    const spawnRows = st.enemylist.slice().reverse();
+    const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
+    const usage = /* @__PURE__ */ new Map();
+    const cells = [];
+    let lastRow = FIRST_SPAWN_ROW;
+    spawnRows.forEach((row, k) => {
+      const scrollRow = waveRows ? clamp4(Math.round(waveRows[k]), 0, MAX_SPAWN_ROW) : Math.min(MAX_SPAWN_ROW, FIRST_SPAWN_ROW + k * ROW_STEP);
+      row.forEach((cell, col) => {
+        const parts = cellParts(cell);
+        if (!parts) return;
+        cells.push({ ...parts, col, row: scrollRow });
+        if (!usage.has(parts.letter)) usage.set(parts.letter, { count: 0, digits: /* @__PURE__ */ new Map() });
+        const u = usage.get(parts.letter);
+        u.count++;
+        u.digits.set(parts.drop, (u.digits.get(parts.drop) || 0) + 1);
+        lastRow = Math.max(lastRow, scrollRow);
+      });
+    });
+    const letters = [...usage.keys()].sort((a, b) => usage.get(b).count - usage.get(a).count);
+    const gridLetters = [];
+    for (const row of st.enemylist) {
+      for (const cell of row) {
+        const parts = cellParts(cell);
+        if (parts && !gridLetters.includes(parts.letter)) gridLetters.push(parts.letter);
+      }
+    }
+    const entryOf = /* @__PURE__ */ new Map();
+    const stageEnemies = [];
+    for (const letter of letters) {
+      const rec = enemyData[`enemy${letter}`];
+      if (!rec) {
+        warn(`${st.key}: cell ${letter} names no enemyData.enemy${letter}; nothing drawn for it`);
+        continue;
+      }
+      if (entries.length >= N64_BL_ENEMIES) {
+        warn(`${st.key}: a stage holds ${N64_BL_ENEMIES} enemy entries and they are all taken \u2014 enemy${letter} is left out`);
+        continue;
+      }
+      const frames = frameNames(rec.texture).map(lookup).filter(Boolean);
+      if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "unnamed"}) has no frame in the art`);
+      const kept = spreadFrames(frames, Math.min(framesPerEnemy, frames.length));
+      const slots = kept.map((f, k) => placeFrame(`enemy${letter}:${k}:${f.key}`, f));
+      const size = frames.reduce((a, f) => Math.max(a, f.w, f.h), 16);
+      const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
+      let first = null;
+      for (const drop of digits) {
+        if (entries.length >= N64_BL_ENEMIES) {
+          warn(`${st.key}: no entry left for enemy${letter}'s drop ${drop}; it drops what its first entry does`);
+          entryOf.set(`${letter}${drop}`, first);
+          continue;
+        }
+        const index = entries.length;
+        entries.push(enemyEntryFromEditor(rec, { slots, size, frames: kept.length, drop }));
+        entryOf.set(`${letter}${drop}`, index);
+        if (first === null) first = index;
+      }
+      if (first !== null) stageEnemies.push({ letter, name: rec.name || null, entries: digits.map((d) => entryOf.get(`${letter}${d}`)), slots, size });
+    }
+    for (const c of cells) {
+      const index = entryOf.get(`${c.letter}${c.drop}`);
+      if (index === void 0) continue;
+      const x = width <= 1 ? 0 : Math.round(-N64_LAYOUT_HALF_WIDTH + c.col * 2 * N64_LAYOUT_HALF_WIDTH / (width - 1));
+      placements.push({ enemy: index, x, y: N64_SPAWN_Y, frame: -(c.row * N64_FRAMES_PER_ROW) });
+    }
+    const boss = bossData[`boss${i}`] || null;
+    placements.sort((a, b) => b.frame - a.frame);
+    const room = LAYOUT_MAX_ENEMIES - (boss ? 1 : 0);
+    if (placements.length > room) {
+      warn(`${st.key}: a stage's layout holds ${LAYOUT_MAX_ENEMIES} enemies${boss ? " with the boss" : ""}; ${placements.length - room} dropped from the end`);
+      placements.length = room;
+    }
+    let bossEntry = null;
+    if (boss) {
+      const names = boss.anim && Array.isArray(boss.anim.idle) && boss.anim.idle.length ? boss.anim.idle : frameNames(boss.texture);
+      const frames = names.map(lookup).filter(Boolean);
+      if (!frames.length) warn(`${st.key}: boss${i} has no idle frame in the art`);
+      const kept = spreadFrames(frames, Math.min(framesPerEnemy, frames.length));
+      const slots = kept.map((f, k) => placeFrame(`boss${i}:${k}:${f.key}`, f));
+      const size = frames.reduce((a, f) => Math.max(a, f.w, f.h), 64);
+      if (entries.length >= N64_BL_ENEMIES) {
+        warn(`${st.key}: no enemy entry left for boss${i}; the stage has no end`);
+      } else {
+        bossEntry = entries.length;
+        entries.push(enemyEntryFromEditor(boss, { slots, size, frames: kept.length, boss: true }));
+        placements.push({ enemy: bossEntry, x: 0, y: N64_BOSS_Y, frame: -((lastRow + BOSS_ROW_GAP) * N64_FRAMES_PER_ROW) });
+      }
+    }
+    if (missed.length) warn(`${st.key}: the ${grExt} sheet or the ${mdExt} table ran out of room; not drawn: ${missed.join(", ")}`);
+    let mapSettings = {}, map = [];
+    const templateBl = templateFiles.get(blExt);
+    if (templateBl) {
+      try {
+        const t = parseStageBl(templateBl);
+        mapSettings = t.mapSettings;
+        map = t.map;
+      } catch (e) {
+        warn(`${st.key}: the template's ${blExt} could not be read for its map (${e.message}); the map is unset`);
+      }
+    }
+    built.set(grExt, sheet.bytes);
+    built.set(mdExt, buildMdFile(models.models, models.textures));
+    built.set(blExt, buildStageBl({ enemies: entries, layout: { map: placements }, mapSettings, map, effects: [] }));
+    stageReports.push({
+      key: st.key,
+      stage,
+      ext: grExt,
+      enemies: gridLetters,
+      boss: boss ? `boss${i}` : null,
+      textures: sheet.placed,
+      painted: sheet.painted,
+      used: sheet.count - sheet.free,
+      free: sheet.free,
+      missed,
+      scaled,
+      records: {
+        entries: entries.length,
+        models: models.used,
+        placements: placements.length,
+        enemies: stageEnemies,
+        bossEntry,
+        map: templateBl ? "template" : "unset"
+      }
+    });
+  });
+  if (common.missed.length) warn(`the CGR sheet ran out of blank textures; not drawn: ${common.missed.join(", ")}`);
+  const finalStage = STAGES[stages.length - 1];
+  if (!templateFiles.has("CMD")) {
+    const cmdModels = [], cmdTextures = [];
+    for (const [slot, m] of cmd) {
+      cmdModels[slot] = m.model;
+      cmdTextures[slot] = m.texture;
+    }
+    for (let s = 0; s < cmdModels.length; s++) if (cmdModels[s] === void 0) cmdModels[s] = null;
+    for (let s = 0; s < cmdTextures.length; s++) if (cmdTextures[s] === void 0) cmdTextures[s] = 0;
+    built.set("CMD", buildCmdFile(cmdModels, cmdTextures));
+  }
+  if (!templateFiles.has("CBL")) {
+    const items = {};
+    if (!templateFiles.has("CMD")) {
+      CBL_ITEMS.forEach((item, k) => {
+        const slot = N64_ITEM_MODELS[k];
+        if (cmd.has(slot)) items[item] = itemEntry(slot, N64_ITEM_SCALES[k]);
+      });
+    }
+    built.set("CBL", buildCbl({ items }));
+  }
+  if (templateFiles.has("GAM")) {
+    const gam = Uint8Array.from(templateFiles.get("GAM"));
+    if (gam.length) gam[0] = finalStage;
+    built.set("GAM", gam);
+  } else {
+    const gam = { finalStage };
+    if (cmd.has(N64_PLAYER_MODEL)) gam.player = { models: [N64_PLAYER_MODEL, N64_PLAYER_MODEL, N64_PLAYER_MODEL, N64_PLAYER_MODEL] };
+    built.set("GAM", encodeGam(gam));
+  }
+  if (!templateFiles.has("MUS")) built.set("MUS", buildMusFile([]));
+  if (!templateFiles.has("ULB")) built.set("ULB", buildUlbFile([], []));
+  const files = [];
+  const sources = [];
+  const sheets = /* @__PURE__ */ new Set(["CGR", ...stages.map((_, i) => `${STAGES[i]}GR`)]);
+  for (const ext of projectExts()) {
+    let data;
+    let source;
+    const fromTemplate = templateFiles.get(ext);
+    if (ext === "CGR") {
+      data = cgr.bytes;
+      source = fromTemplate ? "art over template" : "art";
+    } else if (built.has(ext)) {
+      data = built.get(ext);
+      if (sheets.has(ext)) source = fromTemplate ? "art over template" : "art";
+      else if (ext === "GAM" && fromTemplate) source = "template, final stage set";
+      else source = "records";
+    } else if (fromTemplate) {
+      data = fromTemplate;
+      source = "template";
+    } else {
+      data = new Uint8Array(fileSizeFor(ext) ?? 0);
+      source = "blank";
+    }
+    files.push({ ext, data });
+    sources.push({ ext, bytes: data.length, source });
+  }
+  for (const ext of templateFiles.keys()) {
+    if (!projectExts().includes(ext)) warn(`template file ${ext} is not one of a project's thirty and was not written`);
+  }
+  const report = {
+    name,
+    template: templateFiles.size ? [...templateFiles.keys()] : null,
+    ship: shipSource,
+    finalStage,
+    common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, scaled: common.scaled, models: common.models },
+    stages: stageReports,
+    files: sources,
+    bytes: files.reduce((a, f) => a + f.data.length, 0)
+  };
+  return { name, files, report, warnings };
+}
+
+// packages/shmup-engine/src/n64/export-ddd.js
+function dddFileName(title, format = "ndd") {
+  const clean = String(title || "game").replace(/[\\/:*?"<>|]+/g, "-").trim() || "game";
+  return `Dezaemon 3D - ${clean}.${format === "ddd" ? "ddd" : "ndd"}`;
+}
+function templateFromDisk(image, name = null) {
+  const projects = readProjects(image);
+  const pick = name ? projects.find((p) => p.name === String(name).toUpperCase()) : projects[0];
+  if (!pick) return null;
+  return { name: pick.name, files: pick.files.map((f) => ({ ext: f.ext, data: Uint8Array.from(decompress(f.stream)) })) };
+}
+function exportLevelToDdd(level, art2, options = {}) {
+  const { disk = null, format = "ndd", systemArea, template: templateOption = disk ? "disk" : null, ...projectOptions } = options;
+  if (disk !== null && !imageFormat(disk)) throw new Error(`the donor disk is ${disk.length} bytes, neither a .ddd nor an .ndd`);
+  let template = null;
+  let templateName = null;
+  if (templateOption === "disk" || typeof templateOption === "string" && templateOption !== "") {
+    if (disk === null) throw new Error("a template project needs a donor disk to come from");
+    const t = templateFromDisk(disk, templateOption === "disk" ? null : templateOption);
+    if (!t) throw new Error(templateOption === "disk" ? "the donor disk has no project to use as a template" : `the donor disk has no project named ${templateOption}`);
+    template = t.files;
+    templateName = t.name;
+  } else if (Array.isArray(templateOption) || templateOption instanceof Map) {
+    template = templateOption;
+  }
+  const project = buildN64ProjectFromLevel(level, art2, { ...projectOptions, template });
+  const built = buildDisk({ base: disk, projects: [{ name: project.name, files: project.files }], format, systemArea });
+  const title = level && level.name || project.name;
+  return {
+    image: built.image,
+    format: built.format,
+    fileName: dddFileName(title, built.format),
+    name: project.name,
+    project: project.report,
+    directory: built.directory,
+    report: { ...built.report, project: project.report, templateProject: templateName },
+    warnings: [...project.warnings, ...built.warnings]
+  };
+}
+
+// packages/shmup-engine/src/n64/regions.js
+function region3(name, label, offset, end, confidence, note) {
+  return Object.freeze({ name, label, offset, end, length: end - offset, confidence, note });
+}
+var N64_REGIONS = Object.freeze([
+  region3(
+    "boot",
+    "IPL PROGRAM",
+    0,
+    168992,
+    "confirmed",
+    "A complete libultra executable, load address 0x80000400, entry 0x80000560. The entry stub's bzero loop gives the BSS bounds (t0 = 0x80029820, length 0x48180) and the 0xFF filler begins on exactly the byte BSS starts, which pins both the load address and the image end. Holds ~3.9 KB of 64DD block-mode driver (ASIC registers 0x05000508/0x05000510, sector buffer 0x05000000) and the romaji 'KONO DISK WA DEZA64 DATA DISK DESU' notice at 0x28E80. It contains no filesystem code at all: no filename constant, no DEZA3D, no extension table, and all 274 'jr ra' instructions in the whole 64 MB fall inside it. The filesystem lives on the cartridge."
+  ),
+  region3(
+    "bootPad",
+    "IPL PAD",
+    168992,
+    177480,
+    "open",
+    "Between the end of the program image and the first file at LBA 9. Not read by anything here."
+  ),
+  region3(
+    "files",
+    "SAMPLE FILES",
+    177480,
+    7106952,
+    "confirmed",
+    "The 60 LZSS streams of the two pressed sample projects, laid end to end in directory order with no padding between them. Every one extracts, and 58 of the 60 decompress to exactly the size the published format documentation predicts."
+  ),
+  region3(
+    "blank",
+    "UNWRITTEN",
+    7106952,
+    25995720,
+    "confirmed",
+    "18,888,768 bytes of 0xFF: unwritten media, not corruption, and the only 0xFF run of any size in the image. The ROM area ends flush against it \u2014 the last sample file's extent ends at 0x6C7187."
+  ),
+  region3(
+    "saveArea",
+    "SAVE AREA",
+    25995720,
+    DDD_IMAGE_BYTES,
+    "likely",
+    "The writable half of the disk: the read-only directory and its two backup copies, the writable directory with its allocation map, and the DST user project. Note that 64dd.org labels this dump the old one \u2014 it differs from the current deza1.NDD in 175,897 bytes, every one of them inside this region. Read DST from deza1.NDD, not from this fixture."
+  )
+]);
+var REGION = Object.freeze(Object.fromEntries(N64_REGIONS.map((r) => [r.name, r])));
+var CONFIDENCES2 = Object.freeze(["confirmed", "likely", "open"]);
+
+// packages/shmup-engine/src/n64/xz.js
+var XZ_MAGIC = [253, 55, 122, 88, 90, 0];
+var XZ_FOOTER_MAGIC = [89, 90];
+var FILTER_LZMA2 = 33;
+var FILTER_NAMES = {
+  3: "Delta",
+  4: "BCJ x86",
+  5: "BCJ PowerPC",
+  6: "BCJ IA-64",
+  7: "BCJ ARM",
+  8: "BCJ ARM-Thumb",
+  9: "BCJ SPARC",
+  10: "BCJ ARM64",
+  11: "BCJ RISC-V",
+  33: "LZMA2"
+};
+var XZ_CHECKS = Object.freeze([
+  { name: "none", size: 0 },
+  { name: "CRC32", size: 4 },
+  { name: "reserved", size: 4 },
+  { name: "reserved", size: 4 },
+  { name: "CRC64", size: 8 },
+  { name: "reserved", size: 8 },
+  { name: "reserved", size: 8 },
+  { name: "reserved", size: 16 },
+  { name: "reserved", size: 16 },
+  { name: "reserved", size: 16 },
+  { name: "SHA-256", size: 32 },
+  { name: "reserved", size: 32 },
+  { name: "reserved", size: 32 },
+  { name: "reserved", size: 64 },
+  { name: "reserved", size: 64 },
+  { name: "reserved", size: 64 }
+].map(Object.freeze));
+var CRC32_TABLE = new Uint32Array(256);
+for (let i = 0; i < 256; i++) {
+  let c = i;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+  CRC32_TABLE[i] = c >>> 0;
+}
+function crc32(bytes, start = 0, end = bytes.length) {
+  let c = 4294967295;
+  for (let i = start; i < end; i++) c = CRC32_TABLE[(c ^ bytes[i]) & 255] ^ c >>> 8;
+  return (c ^ 4294967295) >>> 0;
+}
+var CRC64_LO = new Uint32Array(256);
+var CRC64_HI = new Uint32Array(256);
+for (let i = 0; i < 256; i++) {
+  let lo = i, hi = 0;
+  for (let k = 0; k < 8; k++) {
+    const bit = lo & 1;
+    lo = (lo >>> 1 | hi << 31) >>> 0;
+    hi = hi >>> 1;
+    if (bit) {
+      lo = (lo ^ 3615952706) >>> 0;
+      hi = (hi ^ 3379320725) >>> 0;
+    }
+  }
+  CRC64_LO[i] = lo;
+  CRC64_HI[i] = hi;
+}
+function crc64(bytes, start = 0, end = bytes.length) {
+  let lo = 4294967295, hi = 4294967295;
+  for (let i = start; i < end; i++) {
+    const idx = (lo ^ bytes[i]) & 255;
+    lo = ((lo >>> 8 | hi << 24) ^ CRC64_LO[idx]) >>> 0;
+    hi = (hi >>> 8 ^ CRC64_HI[idx]) >>> 0;
+  }
+  return { lo: (lo ^ 4294967295) >>> 0, hi: (hi ^ 4294967295) >>> 0 };
+}
+function readU32LE(bytes, at) {
+  return (bytes[at] | bytes[at + 1] << 8 | bytes[at + 2] << 16 | bytes[at + 3] << 24) >>> 0;
+}
+function readVli(bytes, at, end) {
+  let value = 0, scale = 1;
+  for (let i = 0; i < 9; i++) {
+    if (at + i >= end) return null;
+    const b = bytes[at + i];
+    value += (b & 127) * scale;
+    if ((b & 128) === 0) {
+      if (i > 0 && b === 0) throw new Error("XZ: multibyte integer with a redundant trailing byte");
+      return { value, next: at + i + 1 };
+    }
+    scale *= 128;
+  }
+  throw new Error("XZ: multibyte integer longer than 9 bytes");
+}
+var PROB_INIT = 1024;
+var IS_MATCH = 0;
+var IS_REP = IS_MATCH + 192;
+var IS_REP_G0 = IS_REP + 12;
+var IS_REP_G1 = IS_REP_G0 + 12;
+var IS_REP_G2 = IS_REP_G1 + 12;
+var IS_REP0_LONG = IS_REP_G2 + 12;
+var POS_SLOT = IS_REP0_LONG + 192;
+var SPEC_POS = POS_SLOT + 256;
+var ALIGN = SPEC_POS + 115;
+var LEN_CODER = ALIGN + 16;
+var REP_LEN_CODER = LEN_CODER + 514;
+var LITERAL = REP_LEN_CODER + 514;
+var LEN_CHOICE = 0;
+var LEN_CHOICE2 = 1;
+var LEN_LOW = 2;
+var LEN_MID = 2 + 128;
+var LEN_HIGH = 2 + 256;
+var END_POS_MODEL_INDEX = 14;
+var MATCH_MIN_LEN = 2;
+var LzmaState = class {
+  constructor() {
+    this.out = new Uint8Array(1 << 16);
+    this.outLength = 0;
+    this.dictStart = 0;
+    this.dictSize = 0;
+    this.lc = 0;
+    this.lp = 0;
+    this.pb = 0;
+    this.probs = null;
+    this.state = 0;
+    this.rep0 = 0;
+    this.rep1 = 0;
+    this.rep2 = 0;
+    this.rep3 = 0;
+    this.range = 0;
+    this.code = 0;
+    this.input = null;
+    this.inPos = 0;
+    this.inEnd = 0;
+  }
+  reserve(extra) {
+    const need2 = this.outLength + extra;
+    if (need2 <= this.out.length) return;
+    let size = this.out.length * 2;
+    while (size < need2) size *= 2;
+    const grown = new Uint8Array(size);
+    grown.set(this.out.subarray(0, this.outLength));
+    this.out = grown;
+  }
+  setProps(byte) {
+    if (byte >= 9 * 5 * 5) throw new Error(`LZMA2: properties byte 0x${byte.toString(16)} is out of range`);
+    const lc = byte % 9;
+    const rest = (byte - lc) / 9;
+    const lp = rest % 5;
+    const pb = (rest - lp) / 5;
+    if (lc + lp > 4) throw new Error(`LZMA2: lc + lp = ${lc + lp}, more than the 4 LZMA2 allows`);
+    this.lc = lc;
+    this.lp = lp;
+    this.pb = pb;
+    this.probs = new Uint16Array(LITERAL + (768 << lc + lp));
+  }
+  resetState() {
+    this.probs.fill(PROB_INIT);
+    this.state = 0;
+    this.rep0 = this.rep1 = this.rep2 = this.rep3 = 0;
+  }
+  resetDict() {
+    this.dictStart = this.outLength;
+  }
+  appendPlain(bytes, start, end) {
+    this.reserve(end - start);
+    this.out.set(bytes.subarray(start, end), this.outLength);
+    this.outLength += end - start;
+  }
+  // --- range decoder
+  rcInit(input, at, end) {
+    if (end - at < 5) throw new Error("LZMA: chunk shorter than the range coder's 5 initial bytes");
+    if (input[at] !== 0) throw new Error("LZMA: the range coder's first byte is not zero");
+    this.code = (input[at + 1] << 24 | input[at + 2] << 16 | input[at + 3] << 8 | input[at + 4]) >>> 0;
+    this.range = 4294967295;
+    if (this.code === this.range) throw new Error("LZMA: corrupted range coder state");
+    this.input = input;
+    this.inPos = at + 5;
+    this.inEnd = end;
+  }
+  rcByte() {
+    if (this.inPos >= this.inEnd) throw new Error("LZMA: chunk's compressed data ends early");
+    return this.input[this.inPos++];
+  }
+  bit(i) {
+    const probs = this.probs;
+    const prob = probs[i];
+    const bound = (this.range >>> 11) * prob;
+    let bit;
+    if (this.code < bound) {
+      probs[i] = prob + (2048 - prob >> 5);
+      this.range = bound;
+      bit = 0;
+    } else {
+      probs[i] = prob - (prob >> 5);
+      this.code -= bound;
+      this.range -= bound;
+      bit = 1;
+    }
+    if (this.range < 16777216) {
+      this.range = this.range << 8 >>> 0;
+      this.code = (this.code << 8 | this.rcByte()) >>> 0;
+    }
+    return bit;
+  }
+  directBits(count) {
+    let result = 0;
+    for (let i = 0; i < count; i++) {
+      this.range = this.range >>> 1;
+      this.code -= this.range;
+      let bit = 1;
+      if (this.code < 0) {
+        this.code += this.range;
+        bit = 0;
+      }
+      if (this.code === this.range) throw new Error("LZMA: corrupted range coder state");
+      if (this.range < 16777216) {
+        this.range = this.range << 8 >>> 0;
+        this.code = (this.code << 8 | this.rcByte()) >>> 0;
+      }
+      result = result * 2 + bit;
+    }
+    return result;
+  }
+  bitTree(base, numBits) {
+    let m = 1;
+    for (let i = 0; i < numBits; i++) m = (m << 1) + this.bit(base + m);
+    return m - (1 << numBits);
+  }
+  bitTreeReverse(base, numBits) {
+    let m = 1, symbol = 0;
+    for (let i = 0; i < numBits; i++) {
+      const b = this.bit(base + m);
+      m = (m << 1) + b;
+      symbol |= b << i;
+    }
+    return symbol;
+  }
+  decodeLen(base, posState) {
+    if (this.bit(base + LEN_CHOICE) === 0) return this.bitTree(base + LEN_LOW + posState * 8, 3);
+    if (this.bit(base + LEN_CHOICE2) === 0) return 8 + this.bitTree(base + LEN_MID + posState * 8, 3);
+    return 16 + this.bitTree(base + LEN_HIGH, 8);
+  }
+  decodeDistance(len) {
+    const lenState = len < 3 ? len : 3;
+    const posSlot = this.bitTree(POS_SLOT + lenState * 64, 6);
+    if (posSlot < 4) return posSlot;
+    const numDirectBits = (posSlot >> 1) - 1;
+    let dist = (2 | posSlot & 1) * Math.pow(2, numDirectBits);
+    if (posSlot < END_POS_MODEL_INDEX) {
+      dist += this.bitTreeReverse(SPEC_POS + dist - posSlot, numDirectBits);
+    } else {
+      dist += this.directBits(numDirectBits - 4) * 16;
+      dist += this.bitTreeReverse(ALIGN, 4);
+    }
+    return dist;
+  }
+  /**
+   * Decode one LZMA2 compressed chunk: exactly `unpacked` bytes out of
+   * exactly `packed` bytes in, with no end marker, continuing the state.
+   */
+  decodeChunk(input, at, packed, unpacked) {
+    this.rcInit(input, at, at + packed);
+    this.reserve(unpacked);
+    const out = this.out;
+    const end = this.outLength + unpacked;
+    const dictStart = this.dictStart;
+    const dictSize = this.dictSize;
+    const lc = this.lc;
+    const lpMask = (1 << this.lp) - 1;
+    const pbMask = (1 << this.pb) - 1;
+    let outPos = this.outLength;
+    let state = this.state;
+    let rep0 = this.rep0, rep1 = this.rep1, rep2 = this.rep2, rep3 = this.rep3;
+    while (outPos < end) {
+      const pos = outPos - dictStart;
+      const posState = pos & pbMask;
+      if (this.bit(IS_MATCH + (state << 4) + posState) === 0) {
+        const prevByte = pos > 0 ? out[outPos - 1] : 0;
+        const litBase = LITERAL + 768 * (((pos & lpMask) << lc) + (prevByte >> 8 - lc));
+        let symbol = 1;
+        if (state >= 7) {
+          let matchByte = out[outPos - rep0 - 1];
+          do {
+            const matchBit = matchByte >> 7 & 1;
+            matchByte <<= 1;
+            const b = this.bit(litBase + (1 + matchBit << 8) + symbol);
+            symbol = symbol << 1 | b;
+            if (matchBit !== b) break;
+          } while (symbol < 256);
+        }
+        while (symbol < 256) symbol = symbol << 1 | this.bit(litBase + symbol);
+        out[outPos++] = symbol & 255;
+        state = state < 4 ? 0 : state < 10 ? state - 3 : state - 6;
+        continue;
+      }
+      let len;
+      if (this.bit(IS_REP + state) !== 0) {
+        if (pos === 0) throw new Error("LZMA: repeat match before any dictionary");
+        if (this.bit(IS_REP_G0 + state) === 0) {
+          if (this.bit(IS_REP0_LONG + (state << 4) + posState) === 0) {
+            if (rep0 >= pos) throw new Error("LZMA: match distance past the dictionary");
+            state = state < 7 ? 9 : 11;
+            out[outPos] = out[outPos - rep0 - 1];
+            outPos++;
+            continue;
+          }
+        } else {
+          let dist;
+          if (this.bit(IS_REP_G1 + state) === 0) {
+            dist = rep1;
+          } else {
+            if (this.bit(IS_REP_G2 + state) === 0) {
+              dist = rep2;
+            } else {
+              dist = rep3;
+              rep3 = rep2;
+            }
+            rep2 = rep1;
+          }
+          rep1 = rep0;
+          rep0 = dist;
+        }
+        len = this.decodeLen(REP_LEN_CODER, posState);
+        state = state < 7 ? 8 : 11;
+      } else {
+        rep3 = rep2;
+        rep2 = rep1;
+        rep1 = rep0;
+        len = this.decodeLen(LEN_CODER, posState);
+        state = state < 7 ? 7 : 10;
+        rep0 = this.decodeDistance(len);
+        if (rep0 === 4294967295) throw new Error("LZMA: end marker inside an LZMA2 chunk");
+        if (rep0 >= dictSize) throw new Error("LZMA: match distance larger than the dictionary");
+      }
+      if (rep0 >= pos) throw new Error("LZMA: match distance past the dictionary");
+      len += MATCH_MIN_LEN;
+      if (outPos + len > end) throw new Error("LZMA: match runs past the end of its chunk");
+      let src = outPos - rep0 - 1;
+      for (let i = 0; i < len; i++) out[outPos++] = out[src++];
+    }
+    if (this.inPos !== this.inEnd) throw new Error(`LZMA: chunk left ${this.inEnd - this.inPos} compressed bytes unread`);
+    if (this.code !== 0) throw new Error("LZMA: range coder did not finish cleanly");
+    this.outLength = outPos;
+    this.state = state;
+    this.rep0 = rep0;
+    this.rep1 = rep1;
+    this.rep2 = rep2;
+    this.rep3 = rep3;
+  }
+};
+var XzDecoder = class {
+  /**
+   * @param {{verify?: boolean}} [options]  verify: check header CRCs and
+   *   CRC32/CRC64 block checks (default true)
+   */
+  constructor({ verify = true } = {}) {
+    this.verify = verify;
+    this.phase = "stream-header";
+    this.pending = null;
+    this.checkType = 0;
+    this.streamFlags = null;
+    this.blocks = [];
+    this.block = null;
+    this.blockOutStart = 0;
+    this.indexStart = 0;
+    this.indexSize = 0;
+    this.needDictReset = true;
+    this.needProps = true;
+    this.needState = true;
+    this.finished = false;
+    this.lzma = new LzmaState();
+  }
+  /** Everything decoded so far, as a view. */
+  get output() {
+    return this.lzma.out.subarray(0, this.lzma.outLength);
+  }
+  /** Bytes of a partial unit waiting for more input. */
+  get pendingLength() {
+    return this.pending ? this.pending.length : 0;
+  }
+  /**
+   * Feed the next piece of the stream.
+   * @param {Uint8Array} bytes
+   * @returns {Uint8Array} the bytes this piece produced (a view into the decoder's buffer)
+   */
+  decode(bytes) {
+    let input = bytes;
+    if (this.pending) {
+      input = new Uint8Array(this.pending.length + bytes.length);
+      input.set(this.pending);
+      input.set(bytes, this.pending.length);
+      this.pending = null;
+    }
+    const from = this.lzma.outLength;
+    let at = 0;
+    const end = input.length;
+    while (at < end) {
+      const next = this.step(input, at, end);
+      if (next === null) {
+        this.pending = input.slice(at);
+        break;
+      }
+      at = next;
+    }
+    return this.lzma.out.subarray(from, this.lzma.outLength);
+  }
+  /**
+   * Declare the input over. Throws if a unit was cut short, or, with
+   * complete, if the stream never reached its footer.
+   * @param {{complete?: boolean}} [options]
+   */
+  end({ complete = false } = {}) {
+    if (this.pending) {
+      throw new Error(`XZ: input ends ${this.pendingLength} bytes into an unfinished ${this.phase.replace("-", " ")} unit`);
+    }
+    if (complete && !this.finished) {
+      throw new Error(`XZ: stream has no footer (stopped in its ${this.phase.replace("-", " ")})`);
+    }
+  }
+  /** One unit at `at`; the position after it, or null when it is incomplete. */
+  step(input, at, end) {
+    switch (this.phase) {
+      case "stream-header":
+        return this.streamHeader(input, at, end);
+      case "block-or-index":
+        return input[at] === 0 ? this.index(input, at, end) : this.blockHeader(input, at, end);
+      case "chunks":
+        return this.chunk(input, at, end);
+      case "block-check":
+        return this.blockCheck(input, at, end);
+      case "footer":
+        return this.footer(input, at, end);
+      case "done":
+        return this.afterStream(input, at, end);
+      default:
+        throw new Error(`XZ: unknown phase ${this.phase}`);
+    }
+  }
+  streamHeader(input, at, end) {
+    if (end - at < 12) return null;
+    for (let i = 0; i < 6; i++) {
+      if (input[at + i] !== XZ_MAGIC[i]) throw new Error("XZ: not an .xz stream (bad magic)");
+    }
+    const flags0 = input[at + 6], flags1 = input[at + 7];
+    if (flags0 !== 0 || (flags1 & 240) !== 0) throw new Error("XZ: reserved stream flag bits are set");
+    if (this.verify && crc32(input, at + 6, at + 8) !== readU32LE(input, at + 8)) {
+      throw new Error("XZ: stream header CRC32 mismatch");
+    }
+    this.checkType = flags1 & 15;
+    this.streamFlags = [flags0, flags1];
+    this.phase = "block-or-index";
+    return at + 12;
+  }
+  blockHeader(input, at, end) {
+    const size = (input[at] + 1) * 4;
+    if (end - at < size) return null;
+    const flags = input[at + 1];
+    if ((flags & 60) !== 0) throw new Error("XZ: reserved block flag bits are set");
+    const filterCount = (flags & 3) + 1;
+    let p = at + 2;
+    const limit = at + size - 4;
+    let declaredCompressed = null, declaredUncompressed = null;
+    if (flags & 64) {
+      const v = readVli(input, p, limit);
+      if (!v) throw new Error("XZ: block header ends inside its compressed size");
+      declaredCompressed = v.value;
+      p = v.next;
+    }
+    if (flags & 128) {
+      const v = readVli(input, p, limit);
+      if (!v) throw new Error("XZ: block header ends inside its uncompressed size");
+      declaredUncompressed = v.value;
+      p = v.next;
+    }
+    let dictSize = 0;
+    for (let f = 0; f < filterCount; f++) {
+      const id = readVli(input, p, limit);
+      if (!id) throw new Error("XZ: block header ends inside a filter id");
+      const propsSize = readVli(input, id.next, limit);
+      if (!propsSize) throw new Error("XZ: block header ends inside a filter's property size");
+      p = propsSize.next + propsSize.value;
+      if (p > limit) throw new Error("XZ: filter properties run past the block header");
+      if (id.value !== FILTER_LZMA2 || filterCount !== 1) {
+        const name = FILTER_NAMES[id.value] || "unknown";
+        throw new Error(`XZ: filter 0x${id.value.toString(16)} (${name}) is not supported; only a lone LZMA2 filter is, which is all xdelta3 and xz write by default`);
+      }
+      if (propsSize.value !== 1) throw new Error("XZ: LZMA2 properties are not one byte");
+      const bits = input[propsSize.next] & 63;
+      if (bits > 40) throw new Error("XZ: LZMA2 dictionary size code out of range");
+      dictSize = bits === 40 ? 4294967295 : (2 | bits & 1) * Math.pow(2, Math.floor(bits / 2) + 11);
+    }
+    for (; p < limit; p++) {
+      if (input[p] !== 0) throw new Error("XZ: block header padding is not zero");
+    }
+    if (this.verify && crc32(input, at, limit) !== readU32LE(input, limit)) {
+      throw new Error("XZ: block header CRC32 mismatch");
+    }
+    this.block = {
+      headerSize: size,
+      compressedSize: 0,
+      uncompressedSize: 0,
+      declaredCompressedSize: declaredCompressed,
+      declaredUncompressedSize: declaredUncompressed,
+      dictSize
+    };
+    this.blocks.push(this.block);
+    this.blockOutStart = this.lzma.outLength;
+    this.lzma.dictSize = dictSize;
+    this.needDictReset = true;
+    this.needProps = true;
+    this.needState = true;
+    this.phase = "chunks";
+    return at + size;
+  }
+  chunk(input, at, end) {
+    const control = input[at];
+    const lzma = this.lzma;
+    if (control === 0) {
+      this.block.compressedSize += 1;
+      this.phase = "block-check";
+      return at + 1;
+    }
+    if (control === 1 || control === 2) {
+      if (end - at < 3) return null;
+      const size = (input[at + 1] << 8 | input[at + 2]) + 1;
+      if (end - at < 3 + size) return null;
+      if (control === 1) {
+        lzma.resetDict();
+        this.needDictReset = false;
+        this.needProps = true;
+        this.needState = true;
+      } else if (this.needDictReset) {
+        throw new Error("LZMA2: first chunk does not reset the dictionary");
+      }
+      lzma.appendPlain(input, at + 3, at + 3 + size);
+      this.block.compressedSize += 3 + size;
+      this.block.uncompressedSize += size;
+      return at + 3 + size;
+    }
+    if (control < 128) throw new Error(`LZMA2: invalid chunk control byte 0x${control.toString(16)}`);
+    const mode = control >> 5 & 3;
+    const headerSize = mode >= 2 ? 6 : 5;
+    if (end - at < headerSize) return null;
+    const unpacked = ((control & 31) << 16) + (input[at + 1] << 8 | input[at + 2]) + 1;
+    const packed = (input[at + 3] << 8 | input[at + 4]) + 1;
+    if (end - at < headerSize + packed) return null;
+    if (mode === 3) {
+      lzma.resetDict();
+      this.needDictReset = false;
+    } else if (this.needDictReset) {
+      throw new Error("LZMA2: first chunk does not reset the dictionary");
+    }
+    if (mode >= 2) {
+      lzma.setProps(input[at + 5]);
+      this.needProps = false;
+    } else if (this.needProps) {
+      throw new Error("LZMA2: chunk needs properties none was given");
+    }
+    if (mode >= 1) {
+      lzma.resetState();
+      this.needState = false;
+    } else if (this.needState) {
+      throw new Error("LZMA2: chunk continues a state that was never set");
+    }
+    lzma.decodeChunk(input, at + headerSize, packed, unpacked);
+    this.block.compressedSize += headerSize + packed;
+    this.block.uncompressedSize += unpacked;
+    return at + headerSize + packed;
+  }
+  blockCheck(input, at, end) {
+    const block = this.block;
+    const padding = (4 - block.compressedSize % 4) % 4;
+    const checkSize = XZ_CHECKS[this.checkType].size;
+    if (end - at < padding + checkSize) return null;
+    for (let i = 0; i < padding; i++) {
+      if (input[at + i] !== 0) throw new Error("XZ: block padding is not zero");
+    }
+    if (block.declaredCompressedSize !== null && block.declaredCompressedSize !== block.compressedSize) {
+      throw new Error(`XZ: block holds ${block.compressedSize} compressed bytes, header said ${block.declaredCompressedSize}`);
+    }
+    if (block.declaredUncompressedSize !== null && block.declaredUncompressedSize !== block.uncompressedSize) {
+      throw new Error(`XZ: block decoded to ${block.uncompressedSize} bytes, header said ${block.declaredUncompressedSize}`);
+    }
+    if (this.verify) {
+      const out = this.lzma.out, from = this.blockOutStart, to = this.lzma.outLength;
+      const checkAt = at + padding;
+      if (this.checkType === 1) {
+        if (crc32(out, from, to) !== readU32LE(input, checkAt)) throw new Error("XZ: block CRC32 mismatch");
+      } else if (this.checkType === 4) {
+        const got = crc64(out, from, to);
+        if (got.lo !== readU32LE(input, checkAt) || got.hi !== readU32LE(input, checkAt + 4)) {
+          throw new Error("XZ: block CRC64 mismatch");
+        }
+      }
+    }
+    this.block = null;
+    this.phase = "block-or-index";
+    return at + padding + checkSize;
+  }
+  index(input, at, end) {
+    const count = readVli(input, at + 1, end);
+    if (!count) return null;
+    let p = count.next;
+    const records = [];
+    for (let i = 0; i < count.value; i++) {
+      const unpadded = readVli(input, p, end);
+      if (!unpadded) return null;
+      const uncompressed = readVli(input, unpadded.next, end);
+      if (!uncompressed) return null;
+      records.push({ unpaddedSize: unpadded.value, uncompressedSize: uncompressed.value });
+      p = uncompressed.next;
+    }
+    const padding = (4 - (p - at) % 4) % 4;
+    if (end < p + padding + 4) return null;
+    for (let i = 0; i < padding; i++) {
+      if (input[p + i] !== 0) throw new Error("XZ: index padding is not zero");
+    }
+    if (this.verify && crc32(input, at, p + padding) !== readU32LE(input, p + padding)) {
+      throw new Error("XZ: index CRC32 mismatch");
+    }
+    if (records.length !== this.blocks.length) {
+      throw new Error(`XZ: index lists ${records.length} blocks, the stream had ${this.blocks.length}`);
+    }
+    const checkSize = XZ_CHECKS[this.checkType].size;
+    records.forEach((record, i) => {
+      const block = this.blocks[i];
+      const unpadded = block.headerSize + block.compressedSize + checkSize;
+      if (record.unpaddedSize !== unpadded || record.uncompressedSize !== block.uncompressedSize) {
+        throw new Error(`XZ: index record ${i} disagrees with block ${i} (${record.unpaddedSize}/${record.uncompressedSize} vs ${unpadded}/${block.uncompressedSize})`);
+      }
+    });
+    this.indexStart = at;
+    this.indexSize = p + padding + 4 - at;
+    this.phase = "footer";
+    return p + padding + 4;
+  }
+  footer(input, at, end) {
+    if (end - at < 12) return null;
+    if (this.verify && crc32(input, at + 4, at + 10) !== readU32LE(input, at)) {
+      throw new Error("XZ: stream footer CRC32 mismatch");
+    }
+    const backward = (readU32LE(input, at + 4) + 1) * 4;
+    if (backward !== this.indexSize) {
+      throw new Error(`XZ: footer's backward size ${backward} is not the index's ${this.indexSize}`);
+    }
+    if (input[at + 8] !== this.streamFlags[0] || input[at + 9] !== this.streamFlags[1]) {
+      throw new Error("XZ: footer's stream flags differ from the header's");
+    }
+    if (input[at + 10] !== XZ_FOOTER_MAGIC[0] || input[at + 11] !== XZ_FOOTER_MAGIC[1]) {
+      throw new Error("XZ: bad stream footer magic");
+    }
+    this.finished = true;
+    this.phase = "done";
+    return at + 12;
+  }
+  /** After a footer: zero padding in fours, or another stream. */
+  afterStream(input, at, end) {
+    if (input[at] === XZ_MAGIC[0]) {
+      this.phase = "stream-header";
+      this.finished = false;
+      this.blocks = [];
+      return at;
+    }
+    if (end - at < 4) return null;
+    for (let i = 0; i < 4; i++) {
+      if (input[at + i] !== 0) throw new Error("XZ: bytes after the stream footer are neither padding nor a stream");
+    }
+    return at + 4;
+  }
+};
+
+// packages/shmup-engine/src/n64/vcdiff.js
+var VCDIFF_MAGIC = [214, 195, 196, 0];
+var VCD_DECOMPRESS = 1;
+var VCD_CODETABLE = 2;
+var VCD_APPHEADER = 4;
+var VCD_SOURCE = 1;
+var VCD_TARGET = 2;
+var VCD_ADLER32 = 4;
+var VCD_DATACOMP = 1;
+var VCD_INSTCOMP = 2;
+var VCD_ADDRCOMP = 4;
+var VCD_SECONDARY_NAMES = Object.freeze({ 1: "DJW", 2: "LZMA", 16: "FGK" });
+var NOOP = 0;
+var ADD = 1;
+var RUN = 2;
+var COPY = 3;
+var NEAR_SLOTS = 4;
+var SAME_SLOTS = 3;
+var VCDIFF_CODE_TABLE = (() => {
+  const table = [];
+  const put = (t1, s1, m1, t2 = NOOP, s2 = 0, m2 = 0) => table.push(Object.freeze([t1, s1, m1, t2, s2, m2]));
+  put(RUN, 0, 0);
+  for (let size = 0; size <= 17; size++) put(ADD, size, 0);
+  for (let mode = 0; mode < 9; mode++) {
+    put(COPY, 0, mode);
+    for (let size = 4; size <= 18; size++) put(COPY, size, mode);
+  }
+  for (let mode = 0; mode < 9; mode++) {
+    for (let addSize = 1; addSize <= 4; addSize++) {
+      const copySizes = mode < 6 ? [4, 5, 6] : [4];
+      for (const copySize of copySizes) put(ADD, addSize, 0, COPY, copySize, mode);
+    }
+  }
+  for (let mode = 0; mode < 9; mode++) put(COPY, 4, mode, ADD, 1, 0);
+  if (table.length !== 256) throw new Error(`code table has ${table.length} entries`);
+  return Object.freeze(table);
+})();
+function adler32(bytes, start = 0, end = bytes.length) {
+  let a = 1, b = 0;
+  let at = start;
+  while (at < end) {
+    const stop = Math.min(end, at + 5552);
+    for (; at < stop; at++) {
+      a += bytes[at];
+      b += a;
+    }
+    a %= 65521;
+    b %= 65521;
+  }
+  return (b << 16 | a) >>> 0;
+}
+function hex8(n) {
+  return n.toString(16).padStart(8, "0");
+}
+var Reader = class {
+  constructor(bytes, at = 0, end = bytes.length, what = "patch") {
+    this.bytes = bytes;
+    this.at = at;
+    this.end = end;
+    this.what = what;
+  }
+  byte(field2) {
+    if (this.at >= this.end) throw new Error(`${this.what} ends at byte ${this.at}, inside ${field2}`);
+    return this.bytes[this.at++];
+  }
+  int(field2) {
+    let value = 0;
+    for (let i = 0; i < 9; i++) {
+      const b = this.byte(field2);
+      value = value * 128 + (b & 127);
+      if ((b & 128) === 0) return value;
+    }
+    throw new Error(`${this.what}: ${field2} is an integer longer than 9 bytes`);
+  }
+  take(count, field2) {
+    if (this.at + count > this.end) throw new Error(`${this.what} ends at byte ${this.end}, inside ${field2} (${count} bytes from ${this.at})`);
+    const slice = this.bytes.subarray(this.at, this.at + count);
+    this.at += count;
+    return slice;
+  }
+};
+function parseVcdiff(patch) {
+  const r = new Reader(patch);
+  for (let i = 0; i < 4; i++) {
+    if (r.byte("the magic") !== VCDIFF_MAGIC[i]) throw new Error("not a VCDIFF patch (bad magic)");
+  }
+  const hdrIndicator = r.byte("hdr_indicator");
+  if (hdrIndicator & ~(VCD_DECOMPRESS | VCD_CODETABLE | VCD_APPHEADER)) {
+    throw new Error(`hdr_indicator 0x${hdrIndicator.toString(16)} has reserved bits set`);
+  }
+  let secondaryId = null;
+  if (hdrIndicator & VCD_DECOMPRESS) {
+    secondaryId = r.byte("the secondary compressor id");
+    if (secondaryId !== 2) {
+      const name = VCD_SECONDARY_NAMES[secondaryId] || "unknown";
+      throw new Error(`secondary compressor ${secondaryId} (${name}) is not supported; only xdelta3's LZMA (2) is`);
+    }
+  }
+  if (hdrIndicator & VCD_CODETABLE) {
+    throw new Error("the patch carries a custom code table, which is not supported (xdelta3 never writes one)");
+  }
+  let appHeader = null;
+  if (hdrIndicator & VCD_APPHEADER) {
+    const length = r.int("the application header length");
+    appHeader = r.take(length, "the application header");
+  }
+  const windows = [];
+  let targetLength = 0;
+  let sourceLengthNeeded = 0;
+  let usesSource = false, usesTarget = false;
+  while (r.at < r.end) {
+    const index = windows.length;
+    const w = new Reader(patch, r.at, r.end, `window ${index}`);
+    const offset = w.at;
+    const winIndicator = w.byte("win_indicator");
+    if (winIndicator & ~(VCD_SOURCE | VCD_TARGET | VCD_ADLER32)) {
+      throw new Error(`window ${index}: win_indicator 0x${winIndicator.toString(16)} has reserved bits set`);
+    }
+    if (winIndicator & VCD_SOURCE && winIndicator & VCD_TARGET) {
+      throw new Error(`window ${index}: both VCD_SOURCE and VCD_TARGET are set`);
+    }
+    let segment = null;
+    if (winIndicator & (VCD_SOURCE | VCD_TARGET)) {
+      const length = w.int("the segment length");
+      const position = w.int("the segment position");
+      segment = { from: winIndicator & VCD_SOURCE ? "source" : "target", position, length };
+    }
+    const deltaLength = w.int("the delta encoding length");
+    const deltaStart = w.at;
+    const windowTarget = w.int("the target window length");
+    const deltaIndicator = w.byte("del_indicator");
+    if (deltaIndicator & ~(VCD_DATACOMP | VCD_INSTCOMP | VCD_ADDRCOMP)) {
+      throw new Error(`window ${index}: del_indicator 0x${deltaIndicator.toString(16)} has reserved bits set`);
+    }
+    if (deltaIndicator !== 0 && secondaryId === null) {
+      throw new Error(`window ${index}: sections are marked compressed but the header names no secondary compressor`);
+    }
+    const dataLength = w.int("the data section length");
+    const instLength = w.int("the instruction section length");
+    const addrLength = w.int("the address section length");
+    let checksum = null;
+    if (winIndicator & VCD_ADLER32) {
+      const b = w.take(4, "the Adler-32");
+      checksum = (b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]) >>> 0;
+    }
+    const section = (name, length, bit) => {
+      const compressed = (deltaIndicator & bit) !== 0;
+      const start = w.at;
+      const bytes = w.take(length, `the ${name} section`);
+      if (!compressed) return { offset: start, length, compressed, decodedLength: length, payloadOffset: start };
+      const s = new Reader(bytes, 0, bytes.length, `window ${index}'s ${name} section`);
+      const decodedLength = s.int("the decoded length");
+      if (decodedLength === 0) throw new Error(`window ${index}: the ${name} section decodes to 0 bytes`);
+      return { offset: start, length, compressed, decodedLength, payloadOffset: start + s.at };
+    };
+    const data = section("data", dataLength, VCD_DATACOMP);
+    const inst = section("inst", instLength, VCD_INSTCOMP);
+    const addr = section("addr", addrLength, VCD_ADDRCOMP);
+    if (w.at - deltaStart !== deltaLength) {
+      throw new Error(`window ${index}: the delta encoding length says ${deltaLength} bytes, the sections add up to ${w.at - deltaStart}`);
+    }
+    if (segment) {
+      if (segment.from === "source") {
+        usesSource = true;
+        sourceLengthNeeded = Math.max(sourceLengthNeeded, segment.position + segment.length);
+      } else {
+        usesTarget = true;
+        if (segment.position + segment.length > targetLength) {
+          throw new Error(`window ${index}: its target segment [${segment.position}, ${segment.position + segment.length}) is not decoded yet`);
+        }
+      }
+    }
+    windows.push({
+      index,
+      offset,
+      winIndicator,
+      segment,
+      deltaLength,
+      targetLength: windowTarget,
+      targetOffset: targetLength,
+      deltaIndicator,
+      adler32: checksum,
+      data,
+      inst,
+      addr
+    });
+    targetLength += windowTarget;
+    r.at = w.at;
+  }
+  return {
+    hdrIndicator,
+    secondaryId,
+    secondaryName: secondaryId === null ? null : VCD_SECONDARY_NAMES[secondaryId],
+    appHeader,
+    appHeaderText: appHeader ? String.fromCharCode(...appHeader) : null,
+    windows,
+    targetLength,
+    sourceLengthNeeded,
+    usesSource,
+    usesTarget
+  };
+}
+function makeDecoders() {
+  return { data: null, inst: null, addr: null };
+}
+function sectionBytes(patch, window, name, decoders) {
+  const section = window[name];
+  if (!section.compressed) return patch.subarray(section.offset, section.offset + section.length);
+  if (!decoders[name]) decoders[name] = new XzDecoder();
+  const decoder = decoders[name];
+  const out = decoder.decode(patch.subarray(section.payloadOffset, section.offset + section.length));
+  if (decoder.pendingLength !== 0) {
+    throw new Error(`window ${window.index}: the ${name} section ends inside a compressed unit`);
+  }
+  if (out.length !== section.decodedLength) {
+    throw new Error(`window ${window.index}: the ${name} section decoded to ${out.length} bytes, not the ${section.decodedLength} it declares`);
+  }
+  return out;
+}
+function walkWindow(window, data, inst, addr, sink) {
+  const segmentLength = window.segment ? window.segment.length : 0;
+  const targetLength = window.targetLength;
+  const instReader = new Reader(inst, 0, inst.length, `window ${window.index}'s instruction section`);
+  const addrReader = new Reader(addr, 0, addr.length, `window ${window.index}'s address section`);
+  const near = new Array(NEAR_SLOTS).fill(0);
+  const same = new Array(SAME_SLOTS * 256).fill(0);
+  let nextNear = 0;
+  let dataAt = 0;
+  let out = 0;
+  const counts = { instructions: 0, add: 0, run: 0, copySource: 0, copyTarget: 0, addBytes: 0, runBytes: 0, copySourceBytes: 0, copyTargetBytes: 0, sourceLow: Infinity, sourceHigh: 0 };
+  const decodeAddress = (mode, here) => {
+    let address;
+    if (mode === 0) {
+      address = addrReader.int("an address");
+    } else if (mode === 1) {
+      address = here - addrReader.int("an address");
+    } else if (mode < 2 + NEAR_SLOTS) {
+      address = near[mode - 2] + addrReader.int("an address");
+    } else {
+      address = same[(mode - 2 - NEAR_SLOTS) * 256 + addrReader.byte("an address")];
+    }
+    near[nextNear] = address;
+    nextNear = (nextNear + 1) % NEAR_SLOTS;
+    same[address % (SAME_SLOTS * 256)] = address;
+    return address;
+  };
+  const run = (type, size, mode) => {
+    if (size === 0) size = instReader.int("an instruction size");
+    if (out + size > targetLength) {
+      throw new Error(`window ${window.index}: an instruction at output byte ${out} runs ${out + size - targetLength} bytes past the window`);
+    }
+    counts.instructions++;
+    if (type === ADD) {
+      if (dataAt + size > data.length) throw new Error(`window ${window.index}: ADD at output byte ${out} reads past the data section`);
+      sink.add(data, dataAt, size);
+      dataAt += size;
+      counts.add++;
+      counts.addBytes += size;
+    } else if (type === RUN) {
+      if (dataAt >= data.length) throw new Error(`window ${window.index}: RUN at output byte ${out} reads past the data section`);
+      sink.run(data[dataAt++], size);
+      counts.run++;
+      counts.runBytes += size;
+    } else {
+      const here = segmentLength + out;
+      const address = decodeAddress(mode, here);
+      if (address >= here) {
+        throw new Error(`window ${window.index}: COPY at output byte ${out} reads address ${address}, which is not written yet`);
+      }
+      if (address < segmentLength) {
+        if (address + size > segmentLength) {
+          throw new Error(`window ${window.index}: COPY at output byte ${out} runs past the ${window.segment.from} segment`);
+        }
+        sink.copy(address, size, true);
+        counts.copySource++;
+        counts.copySourceBytes += size;
+        const low = window.segment.position + address;
+        if (low < counts.sourceLow) counts.sourceLow = low;
+        if (low + size > counts.sourceHigh) counts.sourceHigh = low + size;
+      } else {
+        sink.copy(address - segmentLength, size, false);
+        counts.copyTarget++;
+        counts.copyTargetBytes += size;
+      }
+    }
+    out += size;
+  };
+  while (instReader.at < instReader.end) {
+    const entry = VCDIFF_CODE_TABLE[instReader.byte("an instruction code")];
+    run(entry[0], entry[1], entry[2]);
+    if (entry[3] !== NOOP) run(entry[3], entry[4], entry[5]);
+  }
+  if (out !== targetLength) {
+    throw new Error(`window ${window.index}: its instructions produce ${out} bytes, the header says ${targetLength}`);
+  }
+  if (dataAt !== data.length) {
+    throw new Error(`window ${window.index}: ${data.length - dataAt} bytes of the data section are left over`);
+  }
+  if (addrReader.at !== addrReader.end) {
+    throw new Error(`window ${window.index}: ${addrReader.end - addrReader.at} bytes of the address section are left over`);
+  }
+  if (counts.sourceLow === Infinity) counts.sourceLow = null;
+  return counts;
+}
+function applyVcdiff(source, patch, { verify = true } = {}) {
+  const parsed = parseVcdiff(patch);
+  if (parsed.usesSource && source.length < parsed.sourceLengthNeeded) {
+    throw new Error(`the source is ${source.length} bytes but the patch reads its first ${parsed.sourceLengthNeeded}`);
+  }
+  const target = new Uint8Array(parsed.targetLength);
+  const decoders = makeDecoders();
+  for (const window of parsed.windows) {
+    const data = sectionBytes(patch, window, "data", decoders);
+    const inst = sectionBytes(patch, window, "inst", decoders);
+    const addr = sectionBytes(patch, window, "addr", decoders);
+    const out = target.subarray(window.targetOffset, window.targetOffset + window.targetLength);
+    let segment = null;
+    if (window.segment) {
+      const { from, position: position2, length } = window.segment;
+      segment = (from === "source" ? source : target).subarray(position2, position2 + length);
+    }
+    let position = 0;
+    walkWindow(window, data, inst, addr, {
+      add(bytes, from, size) {
+        out.set(bytes.subarray(from, from + size), position);
+        position += size;
+      },
+      run(byte, size) {
+        out.fill(byte, position, position + size);
+        position += size;
+      },
+      copy(address, size, fromSegment) {
+        if (fromSegment) {
+          out.set(segment.subarray(address, address + size), position);
+        } else if (address + size <= position) {
+          out.set(out.subarray(address, address + size), position);
+        } else {
+          for (let i = 0; i < size; i++) out[position + i] = out[address + i];
+        }
+        position += size;
+      }
+    });
+    if (verify && window.adler32 !== null) {
+      const got = adler32(out);
+      if (got !== window.adler32) {
+        throw new Error(
+          `window ${window.index} (target bytes ${window.targetOffset}..${window.targetOffset + window.targetLength}) checksum mismatch: the patch expects Adler-32 ${hex8(window.adler32)}, the output has ${hex8(got)}; the source is not the file this patch was made for`
+        );
+      }
+    }
+  }
+  return target;
+}
+
+// packages/shmup-engine/src/n64/index.js
+function isDddImage(bytes) {
+  if (!isDddSize(bytes.length)) return false;
+  const mark = "DEZA64 DATA DISK";
+  for (let at = 163840; at < 172032 - mark.length; at++) {
+    let hit = true;
+    for (let i = 0; i < mark.length; i++) {
+      if (bytes[at + i] !== mark.charCodeAt(i)) {
+        hit = false;
+        break;
+      }
+    }
+    if (hit) return true;
+  }
+  return false;
+}
+
 // packages/shmup-engine/src/audio/tone-bank-table.js
 var LAYER_FIELDS = 20;
 var LAYER = {
@@ -12322,11 +16053,11 @@ function totalDiffBytes(ranges) {
 }
 
 // packages/shmup-engine/src/sfc/regions.js
-function region3(name, label, offset, end, confidence, note) {
+function region4(name, label, offset, end, confidence, note) {
   return Object.freeze({ name, label, offset, end, length: end - offset, confidence, note });
 }
 var SFC_REGIONS = Object.freeze([
-  region3(
+  region4(
     "checksum",
     "CHECK SUM",
     0,
@@ -12334,7 +16065,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "16 words, copied verbatim at 0x7E5A. Traced in the ROM ($00:847B computes, $00:8482 verifies): each word is 0xFFFF minus the mod-2^16 sum of the 16-bit little-endian words over a scatter/gather segment list, the descriptors being a 17-pointer table at $80:8665. Word 15 covers the first fifteen, so the block always totals 0xFFFF. See FORMAT-SFC.md for the segment map."
   ),
-  region3(
+  region4(
     "reserved0",
     "RESERVED",
     32,
@@ -12342,7 +16073,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "Never read by the boot or load paths; zero but for the word 0x3160 at 0x3E in the ROM's default image."
   ),
-  region3(
+  region4(
     "palette",
     "PALETTE DATA",
     64,
@@ -12350,7 +16081,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "24 rows of 16 BGR555 little-endian words. Rows 0-5 colour the stages' scenery, 6-11 their enemies, 12-17 their bosses, 18 the ship, 19 the title and ending, 20 items and weapons, 21 is free; 22-23 are the editor's own colour picker (bit-15 words, never copied to CGRAM)."
   ),
-  region3(
+  region4(
     "map",
     "MAP DATA",
     832,
@@ -12358,7 +16089,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "6 stages x 0x900: 128 rows of 18 bytes, row 0 the stage start. A row is two halves of eight cells and a flag byte: cell bit 7 = H flip, bits 0-6 = MAP GROUP slot; flag bit 7-k = V flip of cell k. 16 chips (256 px) wide, 2,048 px tall ($00:9B9C; rendered)."
   ),
-  region3(
+  region4(
     "scroll",
     "SCROLL EFECT",
     14656,
@@ -12366,7 +16097,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "6 x 0x200: two 256-byte tables, one entry per 8-px band \u2014 +0x000 an effect index (cleared to i & 0x1F), +0x100 the band's scroll speed (cleared to 0x42; 0x40 reads as 1 px/frame). The play-time reader is untraced."
   ),
-  region3(
+  region4(
     "mapGroup",
     "MAP GROUP",
     17728,
@@ -12374,7 +16105,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "6 stages x 128 chip words: word k is the chip copied into BG slot k, which a map cell names. 0xFFFF (or 0x03FF) is the blank chip; the editor clears a stage's table to 0xFF with word 0 = 0x03FF."
   ),
-  region3(
+  region4(
     "myShipOdr",
     "MY SHIP ODR",
     19264,
@@ -12382,7 +16113,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "64 bytes, 56 used: bits 6-7 are the V/H flips of the ship sheet's chips 0-55 ($00:9D8B); zero in both dumps."
   ),
-  region3(
+  region4(
     "enemyGroup",
     "ENEMY GROUP",
     19328,
@@ -12390,7 +16121,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "6 stages x 64 chip words: the stage's enemy sprite sheet, 8x8 chips, assembled into OBJ names 0x100-0x1FF; ENEMY ODR references its slots. Cleared to 0xFFFF/0x03FF."
   ),
-  region3(
+  region4(
     "bossGroup",
     "BOSS GROUP",
     20096,
@@ -12398,7 +16129,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "6 stages x 32 chip words: the boss as an 8x4-chip BG sheet at tiles 0x20-0x9F. Cleared to 0x03FF."
   ),
-  region3(
+  region4(
     "titleGroup",
     "TITLE GROUP",
     20480,
@@ -12406,7 +16137,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "32 chip words: the title picture, assembled like a stage sheet (bits 11-13 masked on save)."
   ),
-  region3(
+  region4(
     "endingGroup",
     "ENDING GROUP",
     20544,
@@ -12414,7 +16145,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "12 chip words for the ending screen; 0x03FF when unused."
   ),
-  region3(
+  region4(
     "sound",
     "SOUND DATA",
     20568,
@@ -12422,7 +16153,7 @@ var SFC_REGIONS = Object.freeze([
     "open",
     "16 songs x 0x2E0 bytes; the editor clears every slot to one ROM block ($80:8E46). The sample's BGM PATCH points at ROM songs, so its stream is never played. The note format is open."
   ),
-  region3(
+  region4(
     "titleType",
     "TITLE TYPE",
     32344,
@@ -12430,8 +16161,8 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "u16: the title animation ($00:B182) \u2014 byte 0 bits 0-1 / 2-3 / 4-5 the X, Y and third motion of element 1, byte 1 of element 2; 0x020A in the sample."
   ),
-  region3("checksumCopy", "CHECK SUM COPY", 32346, 32378, "confirmed", "Byte-identical to CHECK SUM."),
-  region3(
+  region4("checksumCopy", "CHECK SUM COPY", 32346, 32378, "confirmed", "Byte-identical to CHECK SUM."),
+  region4(
     "mouseSpeed",
     "MOUSE SPEED",
     32378,
@@ -12439,7 +16170,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "u16: the low byte is the option; the boot writes its SRAM-size probe into the high byte every start, so only the low byte is the save's."
   ),
-  region3(
+  region4(
     "editBgm",
     "EDIT BGM",
     32380,
@@ -12447,7 +16178,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "u16: the song slot the composer was editing."
   ),
-  region3(
+  region4(
     "bgmPatch",
     "BGM PATCH",
     32382,
@@ -12455,7 +16186,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "16 bytes, each & 0x3F: slots 0-5 stage n's song, 6-11 stage n's boss song, 12 the title, 13-15 ending / clear / game over; 0-15 pick SOUND DATA songs, 0x10 and up the ROM's own."
   ),
-  region3(
+  region4(
     "hiScore",
     "HIGH SCORE",
     32398,
@@ -12463,7 +16194,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "20 entries x 16 bytes: u32 score, 4 bytes (the stage reached, likely), char[8] name \u2014 entries 0-9 are the sample game's table, 10-19 the user game's ($05:D087). The factory ladder 1000..100 with '........' names fills both."
   ),
-  region3(
+  region4(
     "keyConfig",
     "KEY CONFIG",
     32718,
@@ -12471,7 +16202,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "Two u16 button assignments ($03:C134); 20 08 10 20 is the default."
   ),
-  region3(
+  region4(
     "reserved1",
     "RESERVED",
     32722,
@@ -12479,7 +16210,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "38 bytes; never read. The ROM's default image leaves 20 of them 0xFF."
   ),
-  region3(
+  region4(
     "checkString",
     "CHECK STRINGS",
     32760,
@@ -12487,7 +16218,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "ASCII 'T.TABATA' \u2014 the programmer's initials (ROM credits: TSUTOMU TABATA 94/01/27), used as the formatted-SRAM magic."
   ),
-  region3(
+  region4(
     "enemyData",
     "ENEMY DATA",
     32768,
@@ -12495,7 +16226,7 @@ var SFC_REGIONS = Object.freeze([
     "likely",
     "6 stages x 0x200: eight-byte entries in five classes \u2014 0-2 sixteen each at +0/+0x80/+0x100, 3 eight at +0x180, 4 four at +0x1C0 \u2014 then a 32-byte boss block at +0x1E0. The entries' bit fields are the editor's ($04:E2F0); what each means to the play engine is read off ranges, not traced."
   ),
-  region3(
+  region4(
     "appear",
     "APPEAR DATA",
     35840,
@@ -12503,7 +16234,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "6 stages x 0x1200: 256 records of 14 spawn bytes (one per playfield column 1..14: valid bit 7, class bits 4-6, entry bits 0-3), then a 1,024-byte line table \u2014 one entry per 2 px of the stage, the record that fires there. Record 0 is empty and record 1 the END code the loader forces."
   ),
-  region3(
+  region4(
     "enemyOdr",
     "ENEMY ODR",
     63488,
@@ -12511,7 +16242,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "6 stages x 320 bytes: 80 four-byte quads of slot references ([V][H][row:3][col:3]) into the stage's enemy sheet, 16 quads a class \u2014 classes 0-2 one quad (four 16x16 frames) an entry, class 3 two quads (a 32x32 sprite, two frames), class 4 four."
   ),
-  region3(
+  region4(
     "myShipGroup",
     "MY SHIP GROUP",
     65408,
@@ -12519,7 +16250,7 @@ var SFC_REGIONS = Object.freeze([
     "confirmed",
     "64 chip words: the ship sheet (8x8 chips) assembled into OBJ names 0x000-0x0FF \u2014 poses, shots, weapons, items; slots 61-63 are forced to 0x3FC-0x3FE."
   ),
-  region3(
+  region4(
     "graphics",
     "GRAPIC DATA",
     65536,
@@ -12528,8 +16259,8 @@ var SFC_REGIONS = Object.freeze([
     "Two 32 KB sheets of 4bpp tiles, each 16 tiles wide: 32 chip rows of 8 chips, a chip 0x40 bytes with its tiles at +0/+0x20/+0x200/+0x220. A group word's bits 8-10 pick the sheet (0/1 here; 2/3 the ROM's factory art), bits 3-7 the row, 0-2 the column."
   )
 ]);
-var REGION = Object.freeze(Object.fromEntries(SFC_REGIONS.map((r) => [r.name, r])));
-var CONFIDENCES2 = Object.freeze(["confirmed", "likely", "open"]);
+var REGION2 = Object.freeze(Object.fromEntries(SFC_REGIONS.map((r) => [r.name, r])));
+var CONFIDENCES3 = Object.freeze(["confirmed", "likely", "open"]);
 
 // packages/shmup-engine/src/sfc/sram.js
 var SRAM_SIZE = 131072;
@@ -12537,17 +16268,17 @@ var SEGMENT_SIZE = 32768;
 var SEGMENT_COUNT = 4;
 var ACCEPTED_SIZES = Object.freeze([65536, SRAM_SIZE]);
 var CHECK_STRING = "T.TABATA";
-var CHECK_STRING_OFFSET = REGION.checkString.offset;
-var CHECKSUM_OFFSET = REGION.checksum.offset;
-var CHECKSUM_SIZE = REGION.checksum.length;
-var CHECKSUM_COPY_OFFSET = REGION.checksumCopy.offset;
+var CHECK_STRING_OFFSET = REGION2.checkString.offset;
+var CHECKSUM_OFFSET = REGION2.checksum.offset;
+var CHECKSUM_SIZE = REGION2.checksum.length;
+var CHECKSUM_COPY_OFFSET = REGION2.checksumCopy.offset;
 function latin12(bytes, offset, length) {
   let s = "";
   for (let i = 0; i < length && offset + i < bytes.length; i++) s += String.fromCharCode(bytes[offset + i]);
   return s;
 }
 function readCheckString(bytes) {
-  return latin12(bytes, CHECK_STRING_OFFSET, REGION.checkString.length);
+  return latin12(bytes, CHECK_STRING_OFFSET, REGION2.checkString.length);
 }
 function hasCheckString(bytes) {
   return bytes.length >= CHECK_STRING_OFFSET + CHECK_STRING.length && readCheckString(bytes) === CHECK_STRING;
@@ -12582,7 +16313,7 @@ function readChecksumBlocks(bytes) {
 // packages/shmup-engine/src/sfc/cgram.js
 var CGRAM_ROW_COLORS = 16;
 var CGRAM_ROW_BYTES = CGRAM_ROW_COLORS * 2;
-var PALETTE_ROW_COUNT = REGION.palette.length / CGRAM_ROW_BYTES;
+var PALETTE_ROW_COUNT = REGION2.palette.length / CGRAM_ROW_BYTES;
 var PALETTE_ROW_STAGE_BG = 0;
 var PALETTE_ROW_STAGE_ENEMY = 6;
 var PALETTE_ROW_STAGE_BOSS = 12;
@@ -12599,7 +16330,7 @@ function readColorWord(bytes, offset) {
 }
 function writeCgramRow(bytes, row, words) {
   if (row < 0 || row >= PALETTE_ROW_COUNT) throw new Error(`palette row ${row} is outside 0..${PALETTE_ROW_COUNT - 1}`);
-  const at = REGION.palette.offset + row * CGRAM_ROW_BYTES;
+  const at = REGION2.palette.offset + row * CGRAM_ROW_BYTES;
   for (let i = 0; i < CGRAM_ROW_COLORS; i++) {
     const w = i === 0 ? 0 : (words[i] ?? 0) & 32767;
     bytes[at + i * 2] = w & 255;
@@ -12632,10 +16363,10 @@ function rowsToPalettes(rows) {
   return rows.map((row) => ({ colors: row.colors }));
 }
 function decodePaletteData(bytes) {
-  const rows = decodeCgramRows(bytes, REGION.palette.offset, PALETTE_ROW_COUNT);
+  const rows = decodeCgramRows(bytes, REGION2.palette.offset, PALETTE_ROW_COUNT);
   const colorRowCount = rows.filter((row) => row.color).length;
   return {
-    offset: REGION.palette.offset,
+    offset: REGION2.palette.offset,
     rows: rows.map((row, i) => ({ ...row, row: i, role: paletteRowRole(i) })),
     palettes: rowsToPalettes(rows),
     colorRowCount,
@@ -12645,23 +16376,23 @@ function decodePaletteData(bytes) {
 
 // packages/shmup-engine/src/sfc/map.js
 var STAGE_COUNT = 6;
-var MAP_STAGE_BYTES = REGION.map.length / STAGE_COUNT;
+var MAP_STAGE_BYTES = REGION2.map.length / STAGE_COUNT;
 var MAP_ROW_BYTES = 18;
 var MAP_COLUMNS = 16;
 var MAP_ROWS = MAP_STAGE_BYTES / MAP_ROW_BYTES;
 var MAP_CELL_SLOT_MASK = 127;
 var MAP_CELL_HFLIP = 128;
-var SCROLL_STAGE_BYTES = REGION.scroll.length / STAGE_COUNT;
+var SCROLL_STAGE_BYTES = REGION2.scroll.length / STAGE_COUNT;
 var SCROLL_BANDS = 256;
 var SCROLL_SPEED_OFFSET = 256;
 var SCROLL_DEFAULT_SPEED = 66;
 function scrollDefaultEffect(band) {
   return band & 31;
 }
-function stageSlice(bytes, region4, stage, size) {
-  const offset = region4.offset + stage * size;
+function stageSlice(bytes, region5, stage, size) {
+  const offset = region5.offset + stage * size;
   if (offset + size > bytes.length) {
-    throw new Error(`${region4.label} stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
+    throw new Error(`${region5.label} stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
   }
   return { offset, view: bytes.subarray(offset, offset + size) };
 }
@@ -12691,7 +16422,7 @@ function encodeMapRow(bytes, at, cells) {
   return bytes;
 }
 function decodeMapStage(bytes, stage) {
-  const { offset, view: view2 } = stageSlice(bytes, REGION.map, stage, MAP_STAGE_BYTES);
+  const { offset, view: view2 } = stageSlice(bytes, REGION2.map, stage, MAP_STAGE_BYTES);
   const n = MAP_COLUMNS * MAP_ROWS;
   const slots = new Uint8Array(n), hflips = new Uint8Array(n), vflips = new Uint8Array(n);
   let used = 0, flipped = 0, maxSlot = 0;
@@ -12719,7 +16450,7 @@ function decodeMapData(bytes) {
 function decodeScrollEffect(bytes) {
   const stages = [];
   for (let s = 0; s < STAGE_COUNT; s++) {
-    const { offset, view: view2 } = stageSlice(bytes, REGION.scroll, s, SCROLL_STAGE_BYTES);
+    const { offset, view: view2 } = stageSlice(bytes, REGION2.scroll, s, SCROLL_STAGE_BYTES);
     const effect = view2.subarray(0, SCROLL_BANDS);
     const speed = view2.subarray(SCROLL_SPEED_OFFSET, SCROLL_SPEED_OFFSET + SCROLL_BANDS);
     let min = 255, max = 0;
@@ -12732,7 +16463,7 @@ function decodeScrollEffect(bytes) {
   return stages;
 }
 function writeDefaultScroll(bytes, stage) {
-  const at = REGION.scroll.offset + stage * SCROLL_STAGE_BYTES;
+  const at = REGION2.scroll.offset + stage * SCROLL_STAGE_BYTES;
   for (let i = 0; i < SCROLL_BANDS; i++) {
     bytes[at + i] = scrollDefaultEffect(i);
     bytes[at + SCROLL_SPEED_OFFSET + i] = SCROLL_DEFAULT_SPEED;
@@ -12822,8 +16553,8 @@ var CHIP_EMPTY_WORD = 65535;
 var CHIP_BLANK_WORD = 1023;
 var USER_CHIP_COUNT = 2 * CHIPS_PER_SHEET;
 var SFC_SHEETS = Object.freeze([
-  Object.freeze({ sheet: 0, source: "sram", offset: REGION.graphics.offset, what: "GRAPIC DATA, first half" }),
-  Object.freeze({ sheet: 1, source: "sram", offset: REGION.graphics.offset + CHIP_SHEET_BYTES, what: "GRAPIC DATA, second half" }),
+  Object.freeze({ sheet: 0, source: "sram", offset: REGION2.graphics.offset, what: "GRAPIC DATA, first half" }),
+  Object.freeze({ sheet: 1, source: "sram", offset: REGION2.graphics.offset + CHIP_SHEET_BYTES, what: "GRAPIC DATA, second half" }),
   Object.freeze({ sheet: 2, source: "rom", offset: 262144, what: "factory art" }),
   Object.freeze({ sheet: 3, source: "rom", offset: 294912, what: "factory art" }),
   Object.freeze({ sheet: 4, source: "rom", offset: 393216, what: "editor icons" })
@@ -12858,7 +16589,7 @@ function chipSource(word) {
 }
 function chipIndexOffset(index) {
   if (index < 0 || index >= USER_CHIP_COUNT) throw new Error(`chip index ${index} is outside the two user sheets`);
-  return REGION.graphics.offset + (index >> 8) * CHIP_SHEET_BYTES + (index >> 3 & 31) * CHIP_ROW_BYTES + (index & 7) * CHIP_COL_BYTES;
+  return REGION2.graphics.offset + (index >> 8) * CHIP_SHEET_BYTES + (index >> 3 & 31) * CHIP_ROW_BYTES + (index & 7) * CHIP_COL_BYTES;
 }
 function decodeChipPixels(word, { sram, rom = null } = {}) {
   const src = chipSource(word);
@@ -12935,19 +16666,19 @@ function writeWords(bytes, offset, words) {
 
 // packages/shmup-engine/src/sfc/groups.js
 var STAGE_COUNT2 = 6;
-var MAP_GROUP_CHIPS = REGION.mapGroup.length / STAGE_COUNT2 / 2;
+var MAP_GROUP_CHIPS = REGION2.mapGroup.length / STAGE_COUNT2 / 2;
 var MAP_GROUP_STAGE_BYTES = MAP_GROUP_CHIPS * 2;
-var ENEMY_GROUP_CHIPS = REGION.enemyGroup.length / STAGE_COUNT2 / 2;
+var ENEMY_GROUP_CHIPS = REGION2.enemyGroup.length / STAGE_COUNT2 / 2;
 var ENEMY_GROUP_STAGE_BYTES = ENEMY_GROUP_CHIPS * 2;
-var BOSS_GROUP_CHIPS = REGION.bossGroup.length / STAGE_COUNT2 / 2;
+var BOSS_GROUP_CHIPS = REGION2.bossGroup.length / STAGE_COUNT2 / 2;
 var BOSS_GROUP_STAGE_BYTES = BOSS_GROUP_CHIPS * 2;
-var TITLE_GROUP_CHIPS = REGION.titleGroup.length / 2;
-var ENDING_GROUP_CHIPS = REGION.endingGroup.length / 2;
-var MY_SHIP_GROUP_CHIPS = REGION.myShipGroup.length / 2;
+var TITLE_GROUP_CHIPS = REGION2.titleGroup.length / 2;
+var ENDING_GROUP_CHIPS = REGION2.endingGroup.length / 2;
+var MY_SHIP_GROUP_CHIPS = REGION2.myShipGroup.length / 2;
 var MY_SHIP_FORCED_SLOTS = Object.freeze([[61, 1020], [62, 1021], [63, 1022]]);
-var ENEMY_ODR_STAGE_BYTES = REGION.enemyOdr.length / STAGE_COUNT2;
+var ENEMY_ODR_STAGE_BYTES = REGION2.enemyOdr.length / STAGE_COUNT2;
 var ENEMY_ODR_QUADS = ENEMY_ODR_STAGE_BYTES / 4;
-var MY_SHIP_ODR_BYTES = REGION.myShipOdr.length;
+var MY_SHIP_ODR_BYTES = REGION2.myShipOdr.length;
 var BOSS_SHEET_COLS = 8;
 var BOSS_SHEET_ROWS = 4;
 function decodeChipTable(bytes, offset, count) {
@@ -12955,28 +16686,28 @@ function decodeChipTable(bytes, offset, count) {
   return Array.from(words, (word, slot) => ({ slot, offset: offset + slot * 2, ...decodeChipWord(word) }));
 }
 function decodeMapGroup(bytes, stage) {
-  const offset = REGION.mapGroup.offset + stage * MAP_GROUP_STAGE_BYTES;
+  const offset = REGION2.mapGroup.offset + stage * MAP_GROUP_STAGE_BYTES;
   return { stage, offset, chips: decodeChipTable(bytes, offset, MAP_GROUP_CHIPS) };
 }
 function decodeEnemyGroup(bytes, stage) {
-  const offset = REGION.enemyGroup.offset + stage * ENEMY_GROUP_STAGE_BYTES;
+  const offset = REGION2.enemyGroup.offset + stage * ENEMY_GROUP_STAGE_BYTES;
   return { stage, offset, chips: decodeChipTable(bytes, offset, ENEMY_GROUP_CHIPS) };
 }
 function decodeBossGroup(bytes, stage) {
-  const offset = REGION.bossGroup.offset + stage * BOSS_GROUP_STAGE_BYTES;
+  const offset = REGION2.bossGroup.offset + stage * BOSS_GROUP_STAGE_BYTES;
   return { stage, offset, chips: decodeChipTable(bytes, offset, BOSS_GROUP_CHIPS) };
 }
 function decodeTitleGroup(bytes) {
-  return decodeChipTable(bytes, REGION.titleGroup.offset, TITLE_GROUP_CHIPS);
+  return decodeChipTable(bytes, REGION2.titleGroup.offset, TITLE_GROUP_CHIPS);
 }
 function decodeEndingGroup(bytes) {
-  return decodeChipTable(bytes, REGION.endingGroup.offset, ENDING_GROUP_CHIPS);
+  return decodeChipTable(bytes, REGION2.endingGroup.offset, ENDING_GROUP_CHIPS);
 }
 function decodeMyShipGroup(bytes) {
-  return decodeChipTable(bytes, REGION.myShipGroup.offset, MY_SHIP_GROUP_CHIPS);
+  return decodeChipTable(bytes, REGION2.myShipGroup.offset, MY_SHIP_GROUP_CHIPS);
 }
 function decodeEnemyOdr(bytes, stage) {
-  const offset = REGION.enemyOdr.offset + stage * ENEMY_ODR_STAGE_BYTES;
+  const offset = REGION2.enemyOdr.offset + stage * ENEMY_ODR_STAGE_BYTES;
   if (offset + ENEMY_ODR_STAGE_BYTES > bytes.length) {
     throw new Error(`ENEMY ODR stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
   }
@@ -12989,7 +16720,7 @@ function decodeEnemyOdr(bytes, stage) {
   return { stage, offset, quads };
 }
 function decodeMyShipOdr(bytes) {
-  const { offset, end } = REGION.myShipOdr;
+  const { offset, end } = REGION2.myShipOdr;
   if (end > bytes.length) throw new Error(`MY SHIP ODR at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
   return Array.from(bytes.subarray(offset, end), decodeOdrByte);
 }
@@ -13009,35 +16740,35 @@ function decodeGroups(bytes) {
 
 // packages/shmup-engine/src/sfc/tables.js
 var HI_SCORE_ENTRY_BYTES = 16;
-var HI_SCORE_COUNT = REGION.hiScore.length / HI_SCORE_ENTRY_BYTES;
+var HI_SCORE_COUNT = REGION2.hiScore.length / HI_SCORE_ENTRY_BYTES;
 var HI_SCORE_NAME_LENGTH = 8;
 var HI_SCORE_TABLE_SIZE = 10;
 var HI_SCORE_USER_TABLE = 10;
-var BGM_PATCH_COUNT = REGION.bgmPatch.length;
-var KEY_CONFIG_BYTES = REGION.keyConfig.length;
+var BGM_PATCH_COUNT = REGION2.bgmPatch.length;
+var KEY_CONFIG_BYTES = REGION2.keyConfig.length;
 var SOUND_SONG_COUNT = 16;
-var SOUND_SONG_BYTES = REGION.sound.length / SOUND_SONG_COUNT;
-function u162(bytes, offset) {
+var SOUND_SONG_BYTES = REGION2.sound.length / SOUND_SONG_COUNT;
+function u165(bytes, offset) {
   return bytes[offset] | bytes[offset + 1] << 8;
 }
-function u32(bytes, offset) {
+function u324(bytes, offset) {
   return (bytes[offset] | bytes[offset + 1] << 8 | bytes[offset + 2] << 16 | bytes[offset + 3] << 24) >>> 0;
 }
-function need(bytes, region4) {
-  if (bytes.length < region4.end) {
-    throw new Error(`${region4.label} at 0x${region4.offset.toString(16)} runs past the end (${bytes.length})`);
+function need(bytes, region5) {
+  if (bytes.length < region5.end) {
+    throw new Error(`${region5.label} at 0x${region5.offset.toString(16)} runs past the end (${bytes.length})`);
   }
 }
 function decodeHiScores(bytes) {
-  need(bytes, REGION.hiScore);
+  need(bytes, REGION2.hiScore);
   const entries = [];
   for (let i = 0; i < HI_SCORE_COUNT; i++) {
-    const offset = REGION.hiScore.offset + i * HI_SCORE_ENTRY_BYTES;
+    const offset = REGION2.hiScore.offset + i * HI_SCORE_ENTRY_BYTES;
     entries.push({
       rank: i % HI_SCORE_TABLE_SIZE + 1,
       table: i < HI_SCORE_USER_TABLE ? "sample" : "user",
       offset,
-      score: u32(bytes, offset),
+      score: u324(bytes, offset),
       extra: bytes.subarray(offset + 4, offset + 8),
       name: latin12(bytes, offset + 8, HI_SCORE_NAME_LENGTH)
     });
@@ -13045,33 +16776,33 @@ function decodeHiScores(bytes) {
   return entries;
 }
 function decodeConfig(bytes) {
-  for (const r of [REGION.titleType, REGION.mouseSpeed, REGION.editBgm, REGION.bgmPatch, REGION.keyConfig, REGION.reserved1]) {
+  for (const r of [REGION2.titleType, REGION2.mouseSpeed, REGION2.editBgm, REGION2.bgmPatch, REGION2.keyConfig, REGION2.reserved1]) {
     need(bytes, r);
   }
   return {
-    titleType: u162(bytes, REGION.titleType.offset),
-    mouseSpeed: u162(bytes, REGION.mouseSpeed.offset),
-    editBgm: u162(bytes, REGION.editBgm.offset),
-    bgmPatch: bytes.subarray(REGION.bgmPatch.offset, REGION.bgmPatch.end),
-    keyConfig: bytes.subarray(REGION.keyConfig.offset, REGION.keyConfig.end),
-    reserved0: bytes.subarray(REGION.reserved0.offset, REGION.reserved0.end),
-    reserved1: bytes.subarray(REGION.reserved1.offset, REGION.reserved1.end)
+    titleType: u165(bytes, REGION2.titleType.offset),
+    mouseSpeed: u165(bytes, REGION2.mouseSpeed.offset),
+    editBgm: u165(bytes, REGION2.editBgm.offset),
+    bgmPatch: bytes.subarray(REGION2.bgmPatch.offset, REGION2.bgmPatch.end),
+    keyConfig: bytes.subarray(REGION2.keyConfig.offset, REGION2.keyConfig.end),
+    reserved0: bytes.subarray(REGION2.reserved0.offset, REGION2.reserved0.end),
+    reserved1: bytes.subarray(REGION2.reserved1.offset, REGION2.reserved1.end)
   };
 }
 function sliceSound(bytes) {
-  need(bytes, REGION.sound);
+  need(bytes, REGION2.sound);
   const songs = [];
   for (let i = 0; i < SOUND_SONG_COUNT; i++) {
-    const at = REGION.sound.offset + i * SOUND_SONG_BYTES;
+    const at = REGION2.sound.offset + i * SOUND_SONG_BYTES;
     songs.push({ index: i, offset: at, bytes: bytes.subarray(at, at + SOUND_SONG_BYTES) });
   }
-  return { offset: REGION.sound.offset, length: REGION.sound.length, bytes: bytes.subarray(REGION.sound.offset, REGION.sound.end), songs };
+  return { offset: REGION2.sound.offset, length: REGION2.sound.length, bytes: bytes.subarray(REGION2.sound.offset, REGION2.sound.end), songs };
 }
 
 // packages/shmup-engine/src/sfc/enemy.js
 var STAGE_COUNT3 = 6;
-var ENEMY_STAGE_BYTES = REGION.enemyData.length / STAGE_COUNT3;
-var ENEMY_ENTRY_BYTES = 8;
+var ENEMY_STAGE_BYTES = REGION2.enemyData.length / STAGE_COUNT3;
+var ENEMY_ENTRY_BYTES2 = 8;
 var BOSS_BLOCK_OFFSET = 480;
 var BOSS_BLOCK_BYTES = 32;
 var SFC_ENEMY_CLASSES = Object.freeze([
@@ -13114,8 +16845,8 @@ var SFC_MOVE_FAMILIES = Object.freeze([
 ]);
 var SFC_MOVE_STRAIGHT = 1;
 var SFC_BOSS_HP = Object.freeze([24, 2e3, 4e3, 8e3, 12e3, 16e3, 18e3, 24e3]);
-function decodeEnemyEntry(bytes, at) {
-  const b = Array.from(bytes.subarray(at, at + ENEMY_ENTRY_BYTES));
+function decodeEnemyEntry2(bytes, at) {
+  const b = Array.from(bytes.subarray(at, at + ENEMY_ENTRY_BYTES2));
   return {
     offset: at,
     bytes: b,
@@ -13135,7 +16866,7 @@ function decodeEnemyEntry(bytes, at) {
     }
   };
 }
-function encodeEnemyEntry({ family = 0, variant = 0, aim = 0, rate = 0, shotType = 0, itemDrop = false, hp = 0, flags = 0, score = 0, anim = 0, shotParam = 0 } = {}) {
+function encodeEnemyEntry2({ family = 0, variant = 0, aim = 0, rate = 0, shotType = 0, itemDrop = false, hp = 0, flags = 0, score = 0, anim = 0, shotParam = 0 } = {}) {
   return [
     (family & 31) << 3 | variant & 7,
     aim & 31 | (rate & 7) << 5,
@@ -13168,7 +16899,7 @@ function decodeBossBlock(bytes, at) {
   };
 }
 function decodeEnemyStage(bytes, stage) {
-  const offset = REGION.enemyData.offset + stage * ENEMY_STAGE_BYTES;
+  const offset = REGION2.enemyData.offset + stage * ENEMY_STAGE_BYTES;
   if (offset + ENEMY_STAGE_BYTES > bytes.length) {
     throw new Error(`ENEMY DATA stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
   }
@@ -13176,7 +16907,7 @@ function decodeEnemyStage(bytes, stage) {
   const classes = SFC_ENEMY_CLASSES.map((spec) => {
     const entries = [];
     for (let e = 0; e < spec.entries; e++) {
-      const entry = decodeEnemyEntry(bytes, offset + spec.base + e * ENEMY_ENTRY_BYTES);
+      const entry = decodeEnemyEntry2(bytes, offset + spec.base + e * ENEMY_ENTRY_BYTES2);
       if (!entry.blank) used++;
       entries.push({ index: e, ...entry });
     }
@@ -13189,7 +16920,7 @@ function decodeEnemyData(bytes) {
   for (let s = 0; s < STAGE_COUNT3; s++) stages.push(decodeEnemyStage(bytes, s));
   return stages;
 }
-var APPEAR_STAGE_BYTES = REGION.appear.length / STAGE_COUNT3;
+var APPEAR_STAGE_BYTES = REGION2.appear.length / STAGE_COUNT3;
 var APPEAR_RECORDS = 256;
 var APPEAR_RECORD_BYTES = 14;
 var APPEAR_COLUMNS = 14;
@@ -13205,7 +16936,7 @@ function encodeAppearByte({ klass, entry }) {
   return APPEAR_VALID | (klass & 7) << 4 | entry & 15;
 }
 function decodeAppearStage(bytes, stage) {
-  const offset = REGION.appear.offset + stage * APPEAR_STAGE_BYTES;
+  const offset = REGION2.appear.offset + stage * APPEAR_STAGE_BYTES;
   if (offset + APPEAR_STAGE_BYTES > bytes.length) {
     throw new Error(`APPEAR DATA stage ${stage} at 0x${offset.toString(16)} runs past the end (${bytes.length})`);
   }
@@ -13237,9 +16968,9 @@ function decodeAppearData(bytes) {
 }
 
 // packages/shmup-engine/src/sfc/graphics.js
-var GRAPHICS_TILE_COUNT = REGION.graphics.length / TILE_BYTES_4BPP;
+var GRAPHICS_TILE_COUNT = REGION2.graphics.length / TILE_BYTES_4BPP;
 function decodeGraphics(bytes) {
-  const { offset, end } = REGION.graphics;
+  const { offset, end } = REGION2.graphics;
   const present = bytes.length >= end;
   if (!present) return { offset, present, blank: true, tiles: [], usedCount: 0 };
   const view2 = bytes.subarray(offset, end);
@@ -13327,46 +17058,46 @@ function compareWithRomDefault(sav, rom) {
 }
 
 // packages/shmup-engine/src/sfc/checksum.js
-var STAGES = 6;
+var STAGES2 = 6;
 var seg = (offset, length) => Object.freeze({ offset, length });
 function stageSegments(n) {
   return [
-    seg(REGION.map.offset + n * 2304, 2304),
-    seg(REGION.scroll.offset + n * 512, 512),
-    seg(REGION.mapGroup.offset + n * 256, 256)
+    seg(REGION2.map.offset + n * 2304, 2304),
+    seg(REGION2.scroll.offset + n * 512, 512),
+    seg(REGION2.mapGroup.offset + n * 256, 256)
   ];
 }
 function stageTables(n) {
   return [
-    seg(REGION.enemyGroup.offset + n * 128, 128),
-    seg(REGION.enemyOdr.offset + n * 320, 320),
-    seg(REGION.bossGroup.offset + n * 64, 64),
-    seg(REGION.enemyData.offset + n * 512, 512),
-    seg(REGION.appear.offset + n * 4608, 4608)
+    seg(REGION2.enemyGroup.offset + n * 128, 128),
+    seg(REGION2.enemyOdr.offset + n * 320, 320),
+    seg(REGION2.bossGroup.offset + n * 64, 64),
+    seg(REGION2.enemyData.offset + n * 512, 512),
+    seg(REGION2.appear.offset + n * 4608, 4608)
   ];
 }
 var SFC_CHECKSUM_DESCRIPTORS = Object.freeze([
-  Object.freeze({ at: 0, name: "graphics + palettes", segments: Object.freeze([seg(REGION.graphics.offset, 32768), seg(REGION.graphics.offset + 32768, 32768), seg(REGION.palette.offset, REGION.palette.length)]) }),
-  ...Array.from({ length: STAGES }, (_, n) => Object.freeze({ at: 2 + n * 2, name: `stage ${n} map, scroll, map group`, segments: Object.freeze(stageSegments(n)) })),
-  ...Array.from({ length: STAGES }, (_, n) => Object.freeze({ at: 14 + n * 2, name: `stage ${n} enemies, appear`, segments: Object.freeze(stageTables(n)) })),
+  Object.freeze({ at: 0, name: "graphics + palettes", segments: Object.freeze([seg(REGION2.graphics.offset, 32768), seg(REGION2.graphics.offset + 32768, 32768), seg(REGION2.palette.offset, REGION2.palette.length)]) }),
+  ...Array.from({ length: STAGES2 }, (_, n) => Object.freeze({ at: 2 + n * 2, name: `stage ${n} map, scroll, map group`, segments: Object.freeze(stageSegments(n)) })),
+  ...Array.from({ length: STAGES2 }, (_, n) => Object.freeze({ at: 14 + n * 2, name: `stage ${n} enemies, appear`, segments: Object.freeze(stageTables(n)) })),
   Object.freeze({
     at: 26,
     name: "ship, title, ending, config, hi-scores",
     segments: Object.freeze([
-      seg(REGION.myShipOdr.offset, REGION.myShipOdr.length),
-      seg(REGION.myShipGroup.offset, REGION.myShipGroup.length),
-      seg(REGION.titleGroup.offset, REGION.titleGroup.length),
-      seg(REGION.titleType.offset, REGION.titleType.length),
-      seg(REGION.endingGroup.offset, REGION.endingGroup.length),
-      seg(REGION.mouseSpeed.offset, REGION.mouseSpeed.length),
-      seg(REGION.editBgm.offset, REGION.editBgm.length),
-      seg(REGION.hiScore.offset, REGION.hiScore.length),
-      seg(REGION.keyConfig.offset, REGION.keyConfig.length)
+      seg(REGION2.myShipOdr.offset, REGION2.myShipOdr.length),
+      seg(REGION2.myShipGroup.offset, REGION2.myShipGroup.length),
+      seg(REGION2.titleGroup.offset, REGION2.titleGroup.length),
+      seg(REGION2.titleType.offset, REGION2.titleType.length),
+      seg(REGION2.endingGroup.offset, REGION2.endingGroup.length),
+      seg(REGION2.mouseSpeed.offset, REGION2.mouseSpeed.length),
+      seg(REGION2.editBgm.offset, REGION2.editBgm.length),
+      seg(REGION2.hiScore.offset, REGION2.hiScore.length),
+      seg(REGION2.keyConfig.offset, REGION2.keyConfig.length)
     ])
   }),
-  Object.freeze({ at: 28, name: "sound + bgm patch", segments: Object.freeze([seg(REGION.sound.offset, REGION.sound.length), seg(REGION.bgmPatch.offset, REGION.bgmPatch.length)]) }),
-  Object.freeze({ at: 30, name: "the block's first fifteen words", segments: Object.freeze([seg(REGION.checksum.offset, 30)]) }),
-  Object.freeze({ at: REGION.checksumCopy.offset + 30, name: "the copy's first fifteen words", segments: Object.freeze([seg(REGION.checksumCopy.offset, 30)]) })
+  Object.freeze({ at: 28, name: "sound + bgm patch", segments: Object.freeze([seg(REGION2.sound.offset, REGION2.sound.length), seg(REGION2.bgmPatch.offset, REGION2.bgmPatch.length)]) }),
+  Object.freeze({ at: 30, name: "the block's first fifteen words", segments: Object.freeze([seg(REGION2.checksum.offset, 30)]) }),
+  Object.freeze({ at: REGION2.checksumCopy.offset + 30, name: "the copy's first fifteen words", segments: Object.freeze([seg(REGION2.checksumCopy.offset, 30)]) })
 ]);
 function sfcChecksumWord(bytes, segments) {
   let sum = 0;
@@ -13384,12 +17115,12 @@ function getWord(bytes, at) {
   return bytes[at] | bytes[at + 1] << 8;
 }
 function sealSfcChecksums(bytes) {
-  if (bytes.length < REGION.graphics.end) throw new Error(`a Dezaemon SRAM image is ${REGION.graphics.end} bytes; got ${bytes.length}`);
+  if (bytes.length < REGION2.graphics.end) throw new Error(`a Dezaemon SRAM image is ${REGION2.graphics.end} bytes; got ${bytes.length}`);
   for (let i = 0; i < 16; i++) {
     const d = SFC_CHECKSUM_DESCRIPTORS[i];
     putWord(bytes, d.at, sfcChecksumWord(bytes, d.segments));
   }
-  bytes.set(bytes.subarray(REGION.checksum.offset, REGION.checksum.end), REGION.checksumCopy.offset);
+  bytes.set(bytes.subarray(REGION2.checksum.offset, REGION2.checksum.end), REGION2.checksumCopy.offset);
   const copy = SFC_CHECKSUM_DESCRIPTORS[16];
   putWord(bytes, copy.at, sfcChecksumWord(bytes, copy.segments));
   return bytes;
@@ -14074,19 +17805,19 @@ var APPEAR_HEADER_ZEROS = 14;
 var APPEAR_HEADER_FFS = 14;
 var FACTORY_HI_SCORES = Object.freeze([1e3, 900, 800, 700, 600, 500, 400, 300, 200, 100]);
 var FACTORY_HI_SCORE_NAME = "........";
-function putU162(bytes, at, v) {
+function putU164(bytes, at, v) {
   bytes[at] = v & 255;
   bytes[at + 1] = v >> 8 & 255;
 }
-function putU32(bytes, at, v) {
+function putU323(bytes, at, v) {
   bytes[at] = v & 255;
   bytes[at + 1] = v >> 8 & 255;
   bytes[at + 2] = v >> 16 & 255;
   bytes[at + 3] = v >>> 24 & 255;
 }
 function writeHiScore(bytes, index, { score, name = FACTORY_HI_SCORE_NAME }) {
-  const at = REGION.hiScore.offset + index * HI_SCORE_ENTRY_BYTES;
-  putU32(bytes, at, score >>> 0);
+  const at = REGION2.hiScore.offset + index * HI_SCORE_ENTRY_BYTES;
+  putU323(bytes, at, score >>> 0);
   bytes.fill(0, at + 4, at + 8);
   const text = String(name).padEnd(HI_SCORE_NAME_LENGTH, " ").slice(0, HI_SCORE_NAME_LENGTH);
   for (let i = 0; i < HI_SCORE_NAME_LENGTH; i++) bytes[at + 8 + i] = text.charCodeAt(i) & 255;
@@ -14096,28 +17827,28 @@ function writeFactoryHiScores(bytes) {
     FACTORY_HI_SCORES.forEach((score, i) => writeHiScore(bytes, t * FACTORY_HI_SCORES.length + i, { score }));
   }
 }
-function blankQuadRegion(bytes, region4, word = SFC_EMPTY_WORD) {
-  const words = new Uint16Array(region4.length / 2).fill(word);
-  writeWords(bytes, region4.offset, words);
+function blankQuadRegion(bytes, region5, word = SFC_EMPTY_WORD) {
+  const words = new Uint16Array(region5.length / 2).fill(word);
+  writeWords(bytes, region5.offset, words);
 }
 function writeClearedTables(bytes) {
   for (let s = 0; s < STAGE_COUNT3; s++) {
-    const mapAt = REGION.mapGroup.offset + s * MAP_GROUP_STAGE_BYTES;
+    const mapAt = REGION2.mapGroup.offset + s * MAP_GROUP_STAGE_BYTES;
     bytes.fill(255, mapAt, mapAt + MAP_GROUP_STAGE_BYTES);
     writeWords(bytes, mapAt, [CHIP_BLANK_WORD]);
-    const enemyAt = REGION.enemyGroup.offset + s * ENEMY_GROUP_STAGE_BYTES;
+    const enemyAt = REGION2.enemyGroup.offset + s * ENEMY_GROUP_STAGE_BYTES;
     bytes.fill(255, enemyAt, enemyAt + ENEMY_GROUP_STAGE_BYTES);
     writeDefaultScroll(bytes, s);
   }
-  blankQuadRegion(bytes, REGION.bossGroup);
-  blankQuadRegion(bytes, REGION.titleGroup);
-  blankQuadRegion(bytes, REGION.myShipGroup);
-  for (const [slot, word] of MY_SHIP_FORCED_SLOTS) writeWords(bytes, REGION.myShipGroup.offset + slot * 2, [word]);
+  blankQuadRegion(bytes, REGION2.bossGroup);
+  blankQuadRegion(bytes, REGION2.titleGroup);
+  blankQuadRegion(bytes, REGION2.myShipGroup);
+  for (const [slot, word] of MY_SHIP_FORCED_SLOTS) writeWords(bytes, REGION2.myShipGroup.offset + slot * 2, [word]);
   return bytes;
 }
 function writeAppearHeaders(bytes) {
   for (let s = 0; s < STAGE_COUNT3; s++) {
-    const at = REGION.appear.offset + s * APPEAR_STAGE_BYTES;
+    const at = REGION2.appear.offset + s * APPEAR_STAGE_BYTES;
     bytes.fill(0, at, at + APPEAR_STAGE_BYTES);
     bytes.fill(255, at + APPEAR_HEADER_ZEROS, at + APPEAR_HEADER_ZEROS + APPEAR_HEADER_FFS);
   }
@@ -14125,17 +17856,17 @@ function writeAppearHeaders(bytes) {
 function formatSfcSram({ seal: seal2 = true } = {}) {
   const bytes = new Uint8Array(SRAM_SIZE);
   for (let i = 0; i < CHECK_STRING.length; i++) bytes[CHECK_STRING_OFFSET + i] = CHECK_STRING.charCodeAt(i);
-  bytes.set(SFC_FACTORY_RESERVED0, REGION.reserved0.offset);
-  bytes.set(SFC_FACTORY_RESERVED1, REGION.reserved1.offset);
-  bytes.set(SFC_FACTORY_PICKER_ROWS, REGION.palette.offset + 22 * 32);
-  putU162(bytes, REGION.titleType.offset, SFC_FACTORY_TITLE_TYPE);
-  putU162(bytes, REGION.mouseSpeed.offset, SFC_FACTORY_MOUSE_SPEED);
-  putU162(bytes, REGION.editBgm.offset, SFC_FACTORY_EDIT_BGM);
-  bytes.set(SFC_FACTORY_BGM_PATCH, REGION.bgmPatch.offset);
-  bytes.set(SFC_FACTORY_KEY_CONFIG, REGION.keyConfig.offset);
-  bytes.set(sfcFactorySound(), REGION.sound.offset);
+  bytes.set(SFC_FACTORY_RESERVED0, REGION2.reserved0.offset);
+  bytes.set(SFC_FACTORY_RESERVED1, REGION2.reserved1.offset);
+  bytes.set(SFC_FACTORY_PICKER_ROWS, REGION2.palette.offset + 22 * 32);
+  putU164(bytes, REGION2.titleType.offset, SFC_FACTORY_TITLE_TYPE);
+  putU164(bytes, REGION2.mouseSpeed.offset, SFC_FACTORY_MOUSE_SPEED);
+  putU164(bytes, REGION2.editBgm.offset, SFC_FACTORY_EDIT_BGM);
+  bytes.set(SFC_FACTORY_BGM_PATCH, REGION2.bgmPatch.offset);
+  bytes.set(SFC_FACTORY_KEY_CONFIG, REGION2.keyConfig.offset);
+  bytes.set(sfcFactorySound(), REGION2.sound.offset);
   writeFactoryHiScores(bytes);
-  blankQuadRegion(bytes, REGION.endingGroup);
+  blankQuadRegion(bytes, REGION2.endingGroup);
   writeClearedTables(bytes);
   writeAppearHeaders(bytes);
   if (seal2) sealSfcChecksums(bytes);
@@ -14151,7 +17882,7 @@ var SFC_HIT_UNITS = 25;
 var SFC_DEFAULT_AIM = 13;
 var SFC_TITLE_COLS = 8;
 var SFC_TITLE_ROWS = 4;
-function nearestIndex4(table, value) {
+function nearestIndex5(table, value) {
   let best = 0, bestD = Infinity;
   table.forEach((v, i) => {
     const d = Math.abs(v - value);
@@ -14162,7 +17893,7 @@ function nearestIndex4(table, value) {
   });
   return best;
 }
-function clamp4(v, lo, hi) {
+function clamp5(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
 function b64ToBytes4(b64) {
@@ -14173,7 +17904,7 @@ function b64ToBytes4(b64) {
 }
 function sfcSpawnColumn(col, width) {
   if (width <= 1) return APPEAR_FIRST_COLUMN + Math.floor(APPEAR_COLUMNS / 2);
-  return APPEAR_FIRST_COLUMN + Math.round(clamp4(col, 0, width - 1) * (APPEAR_COLUMNS - 1) / (width - 1));
+  return APPEAR_FIRST_COLUMN + Math.round(clamp5(col, 0, width - 1) * (APPEAR_COLUMNS - 1) / (width - 1));
 }
 function sfcClassFor(w, h) {
   if (w <= 16 && h <= 16) return 0;
@@ -14283,8 +18014,8 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     return hit;
   };
   const rows = [];
-  writeWords(bytes, REGION.myShipGroup.offset, SFC_FACTORY_SHIP_WORDS);
-  bytes.set(SFC_FACTORY_GLOBAL_ROWS, REGION.palette.offset + PALETTE_ROW_SHIP * 32);
+  writeWords(bytes, REGION2.myShipGroup.offset, SFC_FACTORY_SHIP_WORDS);
+  bytes.set(SFC_FACTORY_GLOBAL_ROWS, REGION2.palette.offset + PALETTE_ROW_SHIP * 32);
   let title = "none";
   if (opts.title1 && opts.title1.rgba) {
     const fitted = fitRgba(opts.title1, SFC_TITLE_COLS * CHIP_DIM, SFC_TITLE_ROWS * CHIP_DIM);
@@ -14300,10 +18031,10 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
         if (hit) words[cy * SFC_TITLE_COLS + cx] = chipWordForIndex(hit.chip, hit);
       }
     }
-    writeWords(bytes, REGION.titleGroup.offset, words);
+    writeWords(bytes, REGION2.titleGroup.offset, words);
     title = "uploaded";
   } else {
-    bytes.set(SFC_FACTORY_GLOBAL_ROWS.slice(32, 64), REGION.palette.offset + PALETTE_ROW_TITLE * 32);
+    bytes.set(SFC_FACTORY_GLOBAL_ROWS.slice(32, 64), REGION2.palette.offset + PALETTE_ROW_TITLE * 32);
   }
   const built = stages.map((st, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
@@ -14373,9 +18104,9 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
         warn(`${st.key}: could not read the background grid (${e.message}) \u2014 scenery skipped`);
       }
     }
-    const mapAt = REGION.map.offset + s * MAP_STAGE_BYTES;
+    const mapAt = REGION2.map.offset + s * MAP_STAGE_BYTES;
     for (let r = 0; r < MAP_ROWS; r++) encodeMapRow(bytes, mapAt + r * MAP_ROW_BYTES, cells[r]);
-    writeWords(bytes, REGION.mapGroup.offset + s * MAP_GROUP_STAGE_BYTES, mapGroup);
+    writeWords(bytes, REGION2.mapGroup.offset + s * MAP_GROUP_STAGE_BYTES, mapGroup);
     const spawnRows = st.enemylist.slice().reverse();
     const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
     const usage = /* @__PURE__ */ new Map();
@@ -14455,14 +18186,14 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
       const hits = rec.hp === "infinity" ? Infinity : Math.max(1, Number(rec.hp) || 1);
       const fields = {
         family: SFC_MOVE_STRAIGHT,
-        variant: nearestIndex4(SFC_STRAIGHT_SPEEDS, speed),
+        variant: nearestIndex5(SFC_STRAIGHT_SPEEDS, speed),
         aim: fires ? SFC_DEFAULT_AIM : 0,
-        rate: fires ? nearestIndex4(SFC_SHOT_RATES, clamp4(interval, 0, 31)) : 0,
+        rate: fires ? nearestIndex5(SFC_SHOT_RATES, clamp5(interval, 0, 31)) : 0,
         shotType: 0,
-        hp: hits === Infinity ? SFC_ENEMY_HP.length - 1 : hits <= 1 ? 0 : nearestIndex4(SFC_ENEMY_HP, hits * SFC_HIT_UNITS),
+        hp: hits === Infinity ? SFC_ENEMY_HP.length - 1 : hits <= 1 ? 0 : nearestIndex5(SFC_ENEMY_HP, hits * SFC_HIT_UNITS),
         flags: 0,
-        score: nearestIndex4(SFC_ENEMY_SCORE, Number(rec.score) || 100),
-        anim: Number.isFinite(rec.frameRate) && rec.frameRate > 0 ? nearestIndex4(SFC_ANIM_INTERVALS, 60 / rec.frameRate) : 3
+        score: nearestIndex5(SFC_ENEMY_SCORE, Number(rec.score) || 100),
+        anim: Number.isFinite(rec.frameRate) && rec.frameRate > 0 ? nearestIndex5(SFC_ANIM_INTERVALS, 60 / rec.frameRate) : 3
       };
       let first = null;
       for (const digit of digits) {
@@ -14475,7 +18206,7 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
         const kspec = SFC_ENEMY_CLASSES[k];
         const entry = counts[k]++;
         const itemDrop = digit !== "0";
-        entryData.set(encodeEnemyEntry({ ...fields, itemDrop }), kspec.base + entry * ENEMY_ENTRY_BYTES);
+        entryData.set(encodeEnemyEntry2({ ...fields, itemDrop }), kspec.base + entry * ENEMY_ENTRY_BYTES2);
         const chipsPerFrame = kspec.cols * kspec.rows;
         spreadFrames(frames, kspec.frames).forEach((f, fi) => {
           const q = indexedByKey.get(f.key);
@@ -14521,11 +18252,11 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
         }
       }
       const hits = bossRec.hp === "infinity" ? Infinity : Math.max(1, Number(bossRec.hp) || 100);
-      bossBlock[13] = bossBlock[13] & 248 | (hits === Infinity ? SFC_BOSS_HP.length - 1 : nearestIndex4(SFC_BOSS_HP, hits * SFC_HIT_UNITS));
+      bossBlock[13] = bossBlock[13] & 248 | (hits === Infinity ? SFC_BOSS_HP.length - 1 : nearestIndex5(SFC_BOSS_HP, hits * SFC_HIT_UNITS));
       bossBlock[6] &= ~64;
       boss = { name: bossRec.name || `boss${s}`, hits, hpIndex: bossBlock[13] & 7, frames: frames.length };
     }
-    writeWords(bytes, REGION.bossGroup.offset + s * BOSS_GROUP_STAGE_BYTES, bossWords);
+    writeWords(bytes, REGION2.bossGroup.offset + s * BOSS_GROUP_STAGE_BYTES, bossWords);
     entryData.set(bossBlock, BOSS_BLOCK_OFFSET);
     const appear = new Uint8Array(APPEAR_STAGE_BYTES);
     appear.fill(255, APPEAR_RECORD_END * APPEAR_RECORD_BYTES, (APPEAR_RECORD_END + 1) * APPEAR_RECORD_BYTES);
@@ -14548,7 +18279,7 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     };
     let lastLine = -1, placed = 0, dropped = 0;
     spawnRows.forEach((row, k) => {
-      const line = clamp4(waveRows ? Math.round(waveRows[k]) : SFC_FIRST_SPAWN_LINE + k * SFC_LINE_STEP, 0, SFC_LAST_SPAWN_LINE);
+      const line = clamp5(waveRows ? Math.round(waveRows[k]) : SFC_FIRST_SPAWN_LINE + k * SFC_LINE_STEP, 0, SFC_LAST_SPAWN_LINE);
       const record = new Uint8Array(APPEAR_RECORD_BYTES);
       let any = false;
       row.forEach((cell, c) => {
@@ -14586,7 +18317,7 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     });
     if (dropped) warn(`${st.key}: ${dropped} placement${dropped === 1 ? "" : "s"} shared a column with another on the same line and ${dropped === 1 ? "was" : "were"} left out`);
     if (boss) {
-      const line = clamp4(lastLine + SFC_BOSS_LINE_GAP, SFC_BOSS_LINE_GAP, SFC_LAST_SPAWN_LINE);
+      const line = clamp5(lastLine + SFC_BOSS_LINE_GAP, SFC_BOSS_LINE_GAP, SFC_LAST_SPAWN_LINE);
       const record = new Uint8Array(APPEAR_RECORD_BYTES);
       record[Math.floor(APPEAR_COLUMNS / 2)] = encodeAppearByte({ klass: APPEAR_BOSS_CLASS, entry: 0 });
       const idx = addRecord(record);
@@ -14598,10 +18329,10 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     stageReport.records = nextRecord - 2;
     stageReport.lines = lastLine + 1;
     stageReport.boss = boss;
-    bytes.set(entryData, REGION.enemyData.offset + s * ENEMY_STAGE_BYTES);
-    bytes.set(appear, REGION.appear.offset + s * APPEAR_STAGE_BYTES);
-    bytes.set(odr, REGION.enemyOdr.offset + s * ENEMY_ODR_STAGE_BYTES);
-    writeWords(bytes, REGION.enemyGroup.offset + s * ENEMY_GROUP_STAGE_BYTES, enemyGroup);
+    bytes.set(entryData, REGION2.enemyData.offset + s * ENEMY_STAGE_BYTES);
+    bytes.set(appear, REGION2.appear.offset + s * APPEAR_STAGE_BYTES);
+    bytes.set(odr, REGION2.enemyOdr.offset + s * ENEMY_ODR_STAGE_BYTES);
+    writeWords(bytes, REGION2.enemyGroup.offset + s * ENEMY_GROUP_STAGE_BYTES, enemyGroup);
     return stageReport;
   });
   bank.writeTo(bytes);
@@ -14704,17 +18435,17 @@ function parseSfcSav(bytes, { rom = null } = {}) {
   attempt3(result, "appear", () => decodeAppearData(bytes));
   attempt3(result, "graphics", () => decodeGraphics(bytes));
   result.confidence = {
-    checksum: REGION.checksum.confidence,
-    palettes: REGION.palette.confidence,
-    maps: REGION.map.confidence,
-    scroll: REGION.scroll.confidence,
-    groups: REGION.mapGroup.confidence,
-    hiScores: REGION.hiScore.confidence,
-    config: REGION.titleType.confidence,
-    sound: REGION.sound.confidence,
-    enemies: REGION.enemyData.confidence,
-    appear: REGION.appear.confidence,
-    graphics: REGION.graphics.confidence
+    checksum: REGION2.checksum.confidence,
+    palettes: REGION2.palette.confidence,
+    maps: REGION2.map.confidence,
+    scroll: REGION2.scroll.confidence,
+    groups: REGION2.mapGroup.confidence,
+    hiScores: REGION2.hiScore.confidence,
+    config: REGION2.titleType.confidence,
+    sound: REGION2.sound.confidence,
+    enemies: REGION2.enemyData.confidence,
+    appear: REGION2.appear.confidence,
+    graphics: REGION2.graphics.confidence
   };
   if (rom) {
     attempt3(result, "rom", () => {
@@ -14856,6 +18587,7 @@ export {
   CREDIT_STRIP_CHARS,
   CgFullError,
   CgPacker,
+  DDD_IMAGE_BYTES,
   DEFAULT_ATTRIBUTION_ROLE,
   DEFAULT_BOSS_PATTERNS,
   DEFAULT_ITEM_LETTERS,
@@ -14911,6 +18643,7 @@ export {
   MODEL_SLOT_SIZE,
   MODEL_UNIT_RADIUS,
   NAMES_PER_ROLE,
+  NDD_IMAGE_BYTES,
   NEAR,
   NEUTRAL_COLOR,
   PALETTE_TARGETS,
@@ -14945,6 +18678,7 @@ export {
   TROOPER_PLAYER,
   USER_ROW_FIRST,
   allocFrame,
+  applyVcdiff,
   authorFromEnvironment,
   bandFor,
   bankToPalettes,
@@ -14958,6 +18692,7 @@ export {
   buildMemoryCard,
   buildMeshLibrary,
   buildModelMesh,
+  buildN64ProjectFromLevel,
   buildPayload,
   buildPlusGameFromLevel,
   buildSaveFromGame,
@@ -14977,6 +18712,7 @@ export {
   creditStripRgba,
   cutLayer,
   dataBlocksFor,
+  dddFileName,
   decodeMdldt,
   decodeModels,
   decodePlayer2Art,
@@ -15003,6 +18739,7 @@ export {
   encodeShapeWord,
   enemyLetters,
   enemyRecordFromEditor,
+  exportLevelToDdd,
   exportLevelToKidsCard,
   exportLevelToPlusCard,
   exportLevelToSav,
@@ -15026,6 +18763,7 @@ export {
   instrumentAt,
   interleave,
   internalRamFromImage,
+  isDddImage,
   isGameSave,
   isGzip,
   isSfcSav,
@@ -15047,6 +18785,10 @@ export {
   meshFor,
   meshLibraryFromJson,
   modelStats,
+  imageFormat as n64ImageFormat,
+  normalizeProjectName as n64ProjectName,
+  readProjects as n64ReadProjects,
+  templateFromDisk as n64TemplateFromDisk,
   nearestPaletteIndex,
   normalMatrix,
   normalize,
@@ -15065,6 +18807,7 @@ export {
   parsePsxSav,
   parseSectionTable,
   parseSfcSav,
+  parseVcdiff,
   payloadCapacity,
   pickLayers,
   pickSfcCoverWindow,

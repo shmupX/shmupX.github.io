@@ -56,9 +56,10 @@
 // The defaults are the cartridge's where it has one (GAM is the initial game
 // the cartridge writes, a blank song is its blank song, a blank model slot is
 // its zeros) and the document's "initialized to" notes otherwise; an enemy
-// entry's defaults are a plain enemy, chosen from the values the sample
-// stages use most, because the cartridge has no single blank entry (each
-// sample stage duplicates a different template).
+// entry's defaults are a plain enemy — every effect off, no shots, no item,
+// SE off at volume 3 — chosen, not measured: the cartridge has no single
+// blank entry (each sample stage duplicates a different template), and the
+// values its stages use most differ field by field.
 //
 // Environment-neutral ESM (Node + browser).
 

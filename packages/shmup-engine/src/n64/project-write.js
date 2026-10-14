@@ -537,7 +537,8 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         if (!f) continue;
         placeCommon(key, textureGrid(fitRgba(f, N64_TITLE_COLS * TILE_WIDTH, N64_TITLE_ROWS * TILE_HEIGHT)));
     }
-    let shipFrames = (((level && level.playerData) || {}).texture || []).map(lookup).filter(Boolean);
+    const frameNames = (v) => (Array.isArray(v) ? v : []); // a hand-edited record may carry a string here; the schema says a list
+    let shipFrames = frameNames(((level && level.playerData) || {}).texture).map(lookup).filter(Boolean);
     let shipSource = "level";
     if (!shipFrames.length) {
         shipSource = "duke";
@@ -639,7 +640,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
                 warn(`${st.key}: a stage holds ${N64_BL_ENEMIES} enemy entries and they are all taken — enemy${letter} is left out`);
                 continue;
             }
-            const frames = (rec.texture || []).map(lookup).filter(Boolean);
+            const frames = frameNames(rec.texture).map(lookup).filter(Boolean);
             if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "unnamed"}) has no frame in the art`);
             const kept = spreadFrames(frames, Math.min(framesPerEnemy, frames.length));
             const slots = kept.map((f, k) => placeFrame(`enemy${letter}:${k}:${f.key}`, f));
@@ -681,7 +682,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         // The boss: an entry with the stage-clear flag, after the last wave.
         let bossEntry = null;
         if (boss) {
-            const names = (boss.anim && Array.isArray(boss.anim.idle) && boss.anim.idle.length ? boss.anim.idle : boss.texture) || [];
+            const names = boss.anim && Array.isArray(boss.anim.idle) && boss.anim.idle.length ? boss.anim.idle : frameNames(boss.texture);
             const frames = names.map(lookup).filter(Boolean);
             if (!frames.length) warn(`${st.key}: boss${i} has no idle frame in the art`);
             const kept = spreadFrames(frames, Math.min(framesPerEnemy, frames.length));
@@ -739,6 +740,9 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
     if (common.missed.length) warn(`the CGR sheet ran out of blank textures; not drawn: ${common.missed.join(", ")}`);
 
     // --- the common records ---
+    // The final stage as the files number it (8 for the eighth, since 7 is
+    // skipped). The one sample — final stage 2 with stages 0, 1, 2 — cannot
+    // tell a stage number from an index; they part only at the eighth. (likely)
     const finalStage = STAGES[stages.length - 1];
     if (!templateFiles.has("CMD")) {
         const cmdModels = [], cmdTextures = [];
@@ -768,7 +772,14 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         if (gam.length) gam[0] = finalStage;
         built.set("GAM", gam);
     } else {
-        built.set("GAM", encodeGam({ finalStage }));
+        // The cartridge's initial game, with the final stage set and the
+        // player's four frames on the ship written above (its own [10, 0, 0,
+        // 0] would show model 0, an empty slot here, for three frames). What
+        // it still names and this does not write — the shield's models 7 and
+        // 5, the title settings' textures — is in FORMAT-N64.md's list.
+        const gam = { finalStage };
+        if (cmd.has(N64_PLAYER_MODEL)) gam.player = { models: [N64_PLAYER_MODEL, N64_PLAYER_MODEL, N64_PLAYER_MODEL, N64_PLAYER_MODEL] };
+        built.set("GAM", encodeGam(gam));
     }
     if (!templateFiles.has("MUS")) built.set("MUS", buildMusFile([]));
     if (!templateFiles.has("ULB")) built.set("ULB", buildUlbFile([], []));

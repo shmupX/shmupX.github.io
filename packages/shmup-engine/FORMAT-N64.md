@@ -23,7 +23,7 @@ hardware or in an emulator.
 | `leogeo.c`                                          | jkbenaim/leotools                                                       | the published zone tables and the system-area reader this geometry was cross-checked against                                                           |
 | `disk.h`, `disk.c`                                  | mupen64plus-core `src/device/dd/`                                       | the zone tables, `struct dd_sys_data`, and `scan_and_expand_disk_format`, which is what an emulator checks before mounting                             |
 | `static/dezaemon-parity-n64.html`                   | this repo                                                               | the survey of 2026-09-19: every offset below that is not derived from the modules is copied from it                                                    |
-| `tests/dezaemon_n64_test.ts`, `…_n64_write_test.ts` | this repo                                                               | 38 tests that run against synthetic disks; two more are `ignore:`-gated on the fixture                                                                 |
+| `tests/dezaemon_n64_test.ts`, `…_n64_write_test.ts` | this repo                                                               | 39 tests that run against synthetic disks; two more are `ignore:`-gated on the fixture                                                                 |
 
 LuigiBlood's 64dd wiki and the fan translation's `file formats.txt` were the
 survey's sources for the geometry and the record layouts respectively. Neither
@@ -660,6 +660,11 @@ DOWNLOAD. Both say what every disk is: untested on hardware or in an emulator.
   command (the boss's flag is relied on instead); the map is unset unless a
   template stage lends its map table, and a template's effects are never carried
   (a stage-clear or a camera move at the wrong frame would be worse than none);
+- what a template-less `GAM` still names: it is the cartridge's initial game
+  with the final stage set and the player's frames on the ship's model, and it
+  keeps the shield's models (7 and 5, empty slots on a disk built here — the
+  shield draws nothing) and the title settings' texture references, whose
+  meaning is open;
 - the `MUS` sequence bodies: 24 blank songs, or a template's;
 - the RAM area: the writable directory, the allocation map, `DEZA3D.SYS`,
   `DEZA3D.HSC`, and any **saved** (as opposed to pressed) project — carried from
