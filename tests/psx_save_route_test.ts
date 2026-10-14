@@ -16,7 +16,7 @@ import {
   psxLaunchArgs,
   slotCardName,
 } from "../lib/psx-mednafen.ts";
-import { decodeCardField, handler } from "../routes/api/psx-save.ts";
+import { decodeCardField, gameOf, handler } from "../routes/api/psx-save.ts";
 import { buildMemoryCard } from "../packages/shmup-engine/src/psx/memcard-write.js";
 
 function card(seed = 1): Uint8Array {
@@ -122,6 +122,34 @@ Deno.test("GET /api/psx-save on Deploy says local only without touching the disk
   } finally {
     Deno.env.delete("DENO_DEPLOYMENT_ID");
   }
+});
+
+Deno.test("gameOf: kids by default, plus by name, anything else refused", () => {
+  assertStrictEquals(gameOf(undefined), "kids");
+  assertStrictEquals(gameOf(null), "kids");
+  assertStrictEquals(gameOf(""), "kids");
+  assertStrictEquals(gameOf("kids"), "kids");
+  assertStrictEquals(gameOf("plus"), "plus");
+  assertStrictEquals(gameOf("PLUS"), "plus");
+  assertStrictEquals(gameOf("saturn"), null);
+  assertStrictEquals(gameOf(7), null);
+});
+
+Deno.test("POST /api/psx-save refuses an unknown game before decoding the card", async () => {
+  const req = new Request("http://localhost/api/psx-save", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "sec-fetch-site": "same-origin",
+    },
+    body: JSON.stringify({ card: encodeBase64(card()), game: "saturn" }),
+  });
+  // deno-lint-ignore no-explicit-any
+  const res = await (handler as any).POST({ req });
+  assertStrictEquals(res.status, 400);
+  const body = await res.json();
+  assertStrictEquals(body.ok, false);
+  assert(/kids|plus/.test(body.error));
 });
 
 Deno.test("POST /api/psx-save refuses a body that is not a card before looking for Mednafen", async () => {

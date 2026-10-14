@@ -13,9 +13,14 @@ import {
   resolvePsxMednafen,
 } from "../../lib/psx-mednafen.ts";
 
-// GET  /api/psx-save — can a Dezaemon Kids! card be played in Mednafen from here?
-// POST /api/psx-save { card, name, launch } — install it as Mednafen's slot-1
-// memory card for the Kids! disc and, optionally, start Mednafen on the disc.
+// GET  /api/psx-save?game=kids|plus — can a PlayStation Dezaemon card be
+//                                       played in Mednafen from here?
+// POST /api/psx-save { card, name, launch, game } — install it as Mednafen's
+// slot-1 memory card for that game's disc and, optionally, start Mednafen.
+//
+// Two games, one route: `game` is "kids" (Dezaemon Kids!, SLPS-01503, the
+// default) or "plus" (Dezaemon+, SLPS-00335 or its Select 100 re-release),
+// and picks which disc lib/dezaemon-psx.ts's listing the card goes beside.
 //
 // The PlayStation counterpart of /api/saturn-save. The editor's DEZAEMON
 // KIDS! (PS) row builds the 128 KB card in the page (exportLevelToKidsCard)
@@ -44,6 +49,16 @@ interface SaveBody {
   card?: string;
   name?: string;
   launch?: boolean;
+  /** "kids" (the default) or "plus": which Dezaemon's disc the card is for. */
+  game?: string;
+}
+
+/** The game a request names, or null for a spelling this route does not know. */
+export function gameOf(value: unknown): "kids" | "plus" | null {
+  if (value === undefined || value === null || value === "") return "kids";
+  if (typeof value !== "string") return null;
+  const name = value.trim().toLowerCase();
+  return name === "kids" || name === "plus" ? name : null;
 }
 
 /** The base64 field as the 131,072-byte card, or a message saying why not. */
@@ -85,9 +100,17 @@ export const handler = define.handlers({
     }
     const denied = crossSiteGuard(ctx.req);
     if (denied) return denied;
+    const game = gameOf(new URL(ctx.req.url).searchParams.get("game"));
+    if (!game) {
+      return Response.json({
+        available: false,
+        error: "game must be kids or plus",
+      }, { status: 400 });
+    }
     const extra = [Deno.env.get("DEZAEMON_PSX_DISC") ?? ""].filter(Boolean);
-    const r = await resolvePsxMednafen({ extra });
+    const r = await resolvePsxMednafen({ extra, game });
     return Response.json({
+      game,
       available: r.available,
       mednafen: r.available
         ? {
@@ -116,6 +139,12 @@ export const handler = define.handlers({
       });
     }
     const launch = body.launch === true;
+    const game = gameOf(body.game);
+    if (!game) {
+      return Response.json({ ok: false, error: "game must be kids or plus" }, {
+        status: 400,
+      });
+    }
     if (body.card === undefined && !launch) {
       return Response.json(
         { ok: false, error: "nothing to do: send card, launch: true, or both" },
@@ -136,7 +165,7 @@ export const handler = define.handlers({
     }
 
     const extra = [Deno.env.get("DEZAEMON_PSX_DISC") ?? ""].filter(Boolean);
-    const r = await resolvePsxMednafen({ extra });
+    const r = await resolvePsxMednafen({ extra, game });
     if (!r.disc || !r.savDir || (launch && !r.available)) {
       return Response.json(
         { ok: false, error: r.reason ?? "Mednafen is not set up here" },
@@ -146,6 +175,7 @@ export const handler = define.handlers({
 
     const out: Record<string, unknown> = {
       ok: true,
+      game,
       name: typeof body.name === "string" ? body.name : null,
       disc: r.disc,
       card: null,

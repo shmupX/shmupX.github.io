@@ -295,8 +295,14 @@ export {
   buildKidsGameFromLevel,
   exportLevelToKidsCard,
   KIDS_BACKGROUND_SETS,
+  KIDS_STOCK_ITEM_FRAMES,
   kidsCardFileName,
 } from "./src/psx/kids-write.js";
+export {
+  buildPlusGameFromLevel,
+  exportLevelToPlusCard,
+  plusCardFileName,
+} from "./src/psx/plus-write.js";
 export { buildMemoryCard, formatMemoryCard } from "./src/psx/memcard-write.js";
 export { parsePsxSav } from "./src/psx/index.js";
 

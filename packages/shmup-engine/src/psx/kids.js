@@ -568,6 +568,18 @@ export function decodeKidsConfig(data) {
 }
 
 /** One five-byte enemy record, raw plus the fields whose readers were traced. */
+/**
+ * The five bytes of a zako record, as the spawner (GAMES.bin 0x80139F6C) and
+ * the editor's record page read them: byte 0 movement pattern (bits 0-4),
+ * its speed variant (5-6) and the enter-from-behind mark (7); byte 1
+ * hardness (0-2; the hit-point table index is its low two bits, 3 = not
+ * counted), score tier (3-4), opacity (5-7); byte 2 the bullet quad (0-3),
+ * the fire timing (4-5, 0 = never fires) and the animation interval (6-7);
+ * byte 3 the shot pattern (0-3), the aim mark (4) and the item a death
+ * drops (5-7, 1..6); byte 4 the rotation (0-2) and scale (3-5) marks and the
+ * ground mark (7). `hitPoints`, `scoreClass` and `fireTiming` are the older
+ * names of hardness & 3, scoreTier and timing, kept for their readers.
+ */
 export function decodeKidsRecord(bytes, at, index) {
     const b = [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3], bytes[at + 4]];
     return {
@@ -575,12 +587,66 @@ export function decodeKidsRecord(bytes, at, index) {
         bytes: b,
         movement: b[0] & 0x1f,
         movementVariant: (b[0] >> 5) & 3,
+        fromBehind: (b[0] & 0x80) !== 0,
         spawnFlag: (b[0] & 0x80) !== 0,
-        hitPoints: b[1] & 7,
+        hardness: b[1] & 7,
+        hitPoints: b[1] & 3,
+        scoreTier: (b[1] >> 3) & 3,
         scoreClass: (b[1] >> 3) & 3,
+        opacity: (b[1] >> 5) & 7,
+        bullet: b[2] & 0x0f,
         fireTiming: (b[2] >> 4) & 3,
+        animInterval: KIDS_ANIM_INTERVALS[(b[2] >> 6) & 3],
         fireInterval: (b[2] >> 6) & 3,
-        shotPattern: (b[3] & 0x0f) + 1,
+        shotPattern: b[3] & 0x0f,
+        aim: (b[3] & 0x10) !== 0,
+        item: (b[3] >> 5) & 7,
+        rotation: b[4] & 7,
+        scale: (b[4] >> 3) & 7,
+        ground: (b[4] & 0x80) !== 0,
+    };
+}
+
+/** Record byte 2 bits 6-7: frames between animation steps (GAMES.bin 0x8014A094). */
+export const KIDS_ANIM_INTERVALS = Object.freeze([30, 10, 2, 0]);
+
+/**
+ * A fifteen-byte boss record (GAMES.bin 0x8013C1B8): byte 0 the movement
+ * pattern (0-3), speed class (4-5) and size class (6-7); byte 1 the
+ * hit-point class (0-1), score class (3-4) and opacity (5-7); byte 2 the
+ * rotation, scale and ground marks; then three weapons of {dx, dy,
+ * bullet | timing << 4, pattern | aim << 4}. A stage's two records are the
+ * boss's two PHASES; its hit points are both phases' together.
+ */
+export function decodeKidsBoss(bytes, at, index) {
+    const head = bytes[at];
+    const weapons = [];
+    for (let w = 0; w < 3; w++) {
+        const o = at + 3 + w * 4;
+        weapons.push({
+            dx: (bytes[o] << 24) >> 24,
+            dy: (bytes[o + 1] << 24) >> 24,
+            bullet: bytes[o + 2] & 0x0f,
+            timing: (bytes[o + 2] >> 4) & 3,
+            pattern: bytes[o + 3] & 0x0f,
+            aim: (bytes[o + 3] & 0x10) !== 0,
+        });
+    }
+    return {
+        index,
+        phase: index + 1,
+        bytes: bytes.subarray(at, at + KIDS_BOSS_SIZE),
+        pattern: head & 0x0f,
+        speedClass: (head >> 4) & 3,
+        sizeClass: head >> 6,
+        size: KIDS_BOSS_SIZES[head >> 6],
+        hpClass: bytes[at + 1] & 3,
+        scoreClass: (bytes[at + 1] >> 3) & 3,
+        opacity: (bytes[at + 1] >> 5) & 7,
+        rotation: bytes[at + 2] & 7,
+        scale: (bytes[at + 2] >> 3) & 7,
+        ground: (bytes[at + 2] & 0x80) !== 0,
+        weapons,
     };
 }
 
@@ -592,16 +658,7 @@ export function decodeKidsRecords(data) {
         const enemies = [];
         for (let i = 0; i < KIDS_RECORD_COUNT; i++) enemies.push(decodeKidsRecord(data, base + i * KIDS_RECORD_SIZE, i));
         const bosses = [];
-        for (let i = 0; i < KIDS_BOSS_COUNT; i++) {
-            const at = base + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE;
-            const head = data[at];
-            bosses.push({
-                index: i,
-                bytes: data.subarray(at, at + KIDS_BOSS_SIZE),
-                sizeClass: head >> 6,
-                size: KIDS_BOSS_SIZES[head >> 6],
-            });
-        }
+        for (let i = 0; i < KIDS_BOSS_COUNT; i++) bosses.push(decodeKidsBoss(data, base + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE, i));
         stages.push({ stage: s, enemies, bosses });
     }
     return stages;

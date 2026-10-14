@@ -29,6 +29,7 @@ export * from "./kids-edit.js";
 // The first module under src/psx/ that builds a save from nothing; it reads
 // its own output back through kids.js before handing it over.
 export * from "./kids-write.js";
+export * from "./plus-write.js";
 export * from "./memcard-write.js";
 export * from "./plus.js";
 export * from "./plus-edit.js";

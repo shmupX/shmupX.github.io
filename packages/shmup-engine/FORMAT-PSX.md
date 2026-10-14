@@ -232,6 +232,13 @@ table rather than a scroll-specific one. The editor reads the **whole** nibble
 icon. `0x22` is the initialiser's fill; no nibble above 3 occurs in any of the
 98 saves.
 
+A stage **ends when the scroll is halted** (nibble 0) and, for 120 consecutive
+frames, no live enemy is on screen and no boss is in play (`0x8011C2F4`): the
+boss's spawn clears the condition and its death restores it. So the halt nibble
+is the end of a stage whether or not a boss stands there, and a stage that never
+halts loops (the map y wraps modulo 12288). The scroll speed eases toward the
+nibble's target by ±(12 + |difference| / 16) a frame (`0x8011C2D8`).
+
 ### APPEAR
 
 6 × **0xD80** — 384 rows of **9 slot bytes**, one per 32 px across and down (9
@@ -286,21 +293,21 @@ and its grid corrupts.
 initialisers — `0x800760E8` for the game and `0x80075E30` per stage — and now
 named almost throughout:
 
-| Offset       | Meaning                                                                                                                                                               |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| +0x00 bit 0  | horizontal-scrolling game (SIDE), else vertical (LENGTH)                                                                                                              |
-| +0x01        | font: bits 0-2 typeface, 3-5 palette, 6-7 the file FN1..FN4 (also the cell size)                                                                                      |
-| +0x02        | sound bank 0..4 (`AUDIO%d0.VH`/`.VB`)                                                                                                                                 |
-| +0x03..+0x08 | per stage: bit 7 = the last stage, bit 0 = a chained stage that does not advance the number; bits 5-6 read but unnamed                                                |
-| +0x09..+0x0E | two three-byte player-ship records; only byte 2 (masked to 2 bits) has a play-mode reader                                                                             |
-| +0x0F, +0x10 | point-item values: `[100, 500, 1000, 0]` and `[5000, 10000, 50000, 0]`                                                                                                |
-| +0x11..+0x19 | nine item records, two 2-bit fields each                                                                                                                              |
-| +0x1A        | two small fields, both read at play init, meaning open                                                                                                                |
-| +0x1B..+0x22 | two four-byte player-shot records: pattern (0..8), a second selector (0..6), a third (0..8), and a speed class (0..2)                                                 |
-| +0x23..+0x62 | sixteen 4-byte sound entries (below)                                                                                                                                  |
-| +0x63..+0x68 | per stage: bits 0-1 scroll speed into the same `[0, 0.25, 1, 4]` table the SCROLL nibbles use, bit 2 its direction, bits 4-5 a background speed into `[0, 4, 12, 24]` |
-| +0x69..+0x6E | per stage: the background set (below)                                                                                                                                 |
-| +0x6F        | pad; no routine forms it and it is zero in all 98 saves and 13 disc samples                                                                                           |
+| Offset       | Meaning                                                                                                                                                                                                                                                                                 |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| +0x00 bit 0  | horizontal-scrolling game (SIDE), else vertical (LENGTH)                                                                                                                                                                                                                                |
+| +0x01        | font: bits 0-2 typeface, 3-5 palette, 6-7 the file FN1..FN4 (also the cell size)                                                                                                                                                                                                        |
+| +0x02        | sound bank 0..4 (`AUDIO%d0.VH`/`.VB`)                                                                                                                                                                                                                                                   |
+| +0x03..+0x08 | per stage: bit 7 = the last stage, bit 0 = a chained stage that does not advance the number; bit 5 = 影表示 shadows (`0x8011FEF0` draws enemies in shadow mode 1 air / 2 ground), bit 6 = the player's normal shot suppressed (`0x8012BB74`, the editor's per-stage プレイヤー表示 OFF) |
+| +0x09..+0x0E | two three-byte player-ship records; only byte 2 (masked to 2 bits) has a play-mode reader                                                                                                                                                                                               |
+| +0x0F, +0x10 | point-item values: `[100, 500, 1000, 0]` and `[5000, 10000, 50000, 0]`                                                                                                                                                                                                                  |
+| +0x11..+0x19 | nine **enemy-bullet records** (テキダン 1-9), one byte each: bits 0-1 speed into `0x8014A348` = {0x80, 0x100, 0x200, 0xFFF} (the built-in lasers 7-8 into `0x8014A350`), bits 2-3 sub-mode / laser colour (`0x80144404`, `0x80142BC4`)                                                  |
+| +0x1A        | two 2-bit fields, likely the two players' explosion style (バクハツ選択 ふつう / かっこいい / コミカル: P1 bits 0-1, P2 bits 2-3); the samples hold 0, 2, 4, 5, 6, 9 and no reader was found                                                                                            |
+| +0x1B..+0x22 | two four-byte **title-animation records** (`0x80118DF0`): entrance direction 0..8 (jump table `0x80113750`), rotation 0..6 (0, ±512/1024/2048), deformation 0 or 3..8 (`0x801137A0`), size/speed 0..2; record 0 moves the picture at SHIP words 112-159, record 1 the one at 64-111     |
+| +0x23..+0x62 | sixteen 4-byte sound entries (below)                                                                                                                                                                                                                                                    |
+| +0x63..+0x68 | per stage: bits 0-1 scroll speed into the same `[0, 0.25, 1, 4]` table the SCROLL nibbles use, bit 2 the backdrop's parallax reversed (`0x80170218`, 方向切り替え), bits 4-5 a background speed into `[0, 4, 12, 24]`                                                                   |
+| +0x69..+0x6E | per stage: the background set (below)                                                                                                                                                                                                                                                   |
+| +0x6F        | pad; no routine forms it and it is zero in all 98 saves and 13 disc samples                                                                                                                                                                                                             |
 
 A **sound entry** is `[mode|volume, bgm, preset, master]`: bit 7 of byte 0 plays
 a preset instead of a file, bits 0-6 are the sequence volume, byte 1 is the BGM
@@ -315,8 +322,10 @@ for `…2\` at number+34, as `BGY%02d.CMP` (horizontal) or `BGT%02d.CMP`
 saves name is present in the disc's archive, which is the cross-check that the
 banking arithmetic and the SIDE/LENGTH rule are right.
 
-Still unnamed inside the block: the two ship records' first two bytes, `+0x1A`,
-and bits 5-6 of the per-stage flag byte.
+Still unnamed inside the block: the two ship records' first two bytes (the
+editor offers eight shot types and eight bomb types in three colours there, and
+the samples' byte 0 is a type 0..7 with bit 6 or 7 set, byte 1 a low nibble 0..7
+with bits 4-5 the colour) and the reader of `+0x1A`.
 
 ### RECORDS
 
@@ -327,29 +336,96 @@ and short-circuits), then **two 15-byte boss records at +0xC8** — one per boss
 part, pairing with the two boss sprite tables below. Some readers form the index
 with `OR` and others with `+`, which agree only because an id stays inside its
 class's width; none of the 98 saves has one that does not. Fields, from the
-spawner `0x801384F4` (**likely** — the tables are traced, the names are read off
-what they feed):
+spawner `0x801384F4`, its post-init `0x80138C0C`, the fire check `0x801453AC`
+and the death routine `0x80124B40` (**confirmed**, 2026-10-14; the editor's
+names for them are PELON's):
 
-| Byte | Bits | Feeds                                                    |
-| ---- | ---- | -------------------------------------------------------- |
-| 0    | 0-4  | movement pattern (pointer table `0x8014B4E8`)            |
-| 0    | 5-6  | movement variant (mod 3)                                 |
-| 0    | 7    | spawn gate flag                                          |
-| 1    | 0-2  | hit points (tables `0x8014A0D0/E0/F0`)                   |
-| 1    | 3-4  | score class (50/100/200, 500/1000/2000, 2000/5000/10000) |
-| 2    | 4-5  | shot timing class                                        |
-| 2    | 6-7  | fire interval — 30, 10, 2, 0 frames (`0x8014A094`)       |
-| 3    | 0-3  | shot pattern (+1)                                        |
+| Byte | Bits | Meaning                                                                                                                                                                                                                                        |
+| ---- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | 0-4  | movement pattern (pointer table `0x8014B4E8`, four pointers a pattern)                                                                                                                                                                         |
+| 0    | 5-6  | speed variant (mod 3) — which of the pattern's three pointers                                                                                                                                                                                  |
+| 0    | 7    | appear from behind: spawned at the bottom edge by the second scan pass, vy mirrored (出現方向)                                                                                                                                                 |
+| 1    | 0-2  | hardness (耐久力) 0..4: the hit-point index is the value & 3; 3 is the maximum and "not counted" in the kill tally; 4 is class 0 plus a second flag whose effect is open                                                                       |
+| 1    | 3-4  | score tier, into the spawn class's table (below)                                                                                                                                                                                               |
+| 1    | 5-7  | opacity mark mod 5: opaque, glow, translucent, fade in, fade out (`0x8014A204`)                                                                                                                                                                |
+| 2    | 0-3  | bullet (テキダン) mod 9: 0-6 the painted quads at SHIP words 190-217, 7-8 the built-in big lasers                                                                                                                                              |
+| 2    | 4-5  | attack timing 0..3; **0 never fires** (the spawner stores shot pattern 0 and the fire check returns on it). 1..3 reload `{12, 6, 2}` + rand % `{30, 10, 1}` fire ticks, a tick being ~9 frames at rank 0, so roughly every 4 s / 1.6 s / 0.3 s |
+| 2    | 6-7  | animation interval `0x8014A094` = {30, 10, 2, 0} frames between frames of the strip                                                                                                                                                            |
+| 3    | 0-3  | shot pattern (+1)                                                                                                                                                                                                                              |
+| 3    | 4    | aim at the player, else fire straight (攻撃方向)                                                                                                                                                                                               |
+| 3    | 5-7  | item a death drops: 0 none, 1..6 = the icon at SHIP word 160 + n - 1 (POWER UP, SPEED UP, BOMB UP, 1UP, the small and the big bonus), 7 none                                                                                                   |
+| 4    | 0-2  | rotation mark mod 5: none, faces its heading, faces the player, turns right, turns left (`0x8014A1DC`)                                                                                                                                         |
+| 4    | 3-5  | scale mark mod 5: ×1, ×2, ×½, breathes sideways, breathes lengthways (`0x8014A1B4`)                                                                                                                                                            |
+| 4    | 7    | ground mark (地上物): shadow mode 2 under the stage's shadow flag, pinned to the map by movement flag 0x100. A draw/physics mark only — the samples' pattern 0 is used by 197 airborne and 231 ground records                                  |
 
-A boss record's byte 0 bits 6-7 are its size class: 64×64, 128×64, 64×128,
-128×128. Its remaining bytes are three 4-byte sub-records, undecoded.
+Hit points and score come from tables the spawn class selects (class 0 the
+first, classes 1-2 the second, class 3 the third), scaled by the level byte
+(EASY ×⅔, NORMAL ×1, HARD and MANIAC ×1.5):
+
+| Class | Hit points (`0x8014A0D0/E0/F0`)       | Score (`0x8014A098/A0/A8`) |
+| ----- | ------------------------------------- | -------------------------- |
+| 0     | 0x100, 0x9600, 0x19000, 0x7D000       | 50, 100, 200, 0            |
+| 1, 2  | 0x3200, 0x12C00, 0x32000, 0x7D000     | 500, 1000, 2000, 0         |
+| 3     | 0x6400, 0x25800, 0x64000, 0x7D000     | 2000, 5000, 10000, 0       |
+| boss  | 0x7D000, 0x232800, 0x465000, 0x753000 | see below                  |
+
+A hit subtracts the attacker's power (`0x80121C48`): the standard shots are
+4608..9728 a hit (5120 for the plain one), the lasers 384/512 a contact frame,
+the player's body 0x100. At NORMAL with the plain shot a class-0 record takes 1
+/ 7.5 / 20 / 100 hits, a class 1-2 record 2.5 / 15 / 40 / 100, a class-3 one 5 /
+30 / 80 / 100.
+
+**The two 15-byte boss records are the boss's two phases** (the editor's
+ボス1段階目 / 2段階目), not two parts: the boss spawns with the sum of both
+records' hit points (`0x8013C6AC`), and when they fall below record 1's
+(`0x8013DA64`) an explosion plays, record 1's size, hit box, score and weapons
+are loaded and the sprite table at +0x580 is drawn. There is no "no second
+phase" value: a boss left with the per-stage initialiser's `10 09 00 …` still
+has a second phase of hit-point class 1 and no weapons, invisible if its sprite
+table is blank (ANGEL WING's stage 5 is exactly that). A record (`0x8013C1B8`,
+`0x8013B984`, `0x8013BD84`):
+
+| Byte       | Bits | Meaning                                                                                                                                                                                |
+| ---------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0          | 0-3  | movement pattern 0..15 into the boss script table `0x8014BAE4` (0 holds 1024 frames pinned to the map then drifts down; every script ends in "speed 1 down forever", the boss leaving) |
+| 0          | 4-5  | speed class into `0x8014A2B8` = {2, 4, 10}: step durations divided, speeds multiplied                                                                                                  |
+| 0          | 6-7  | size class: 64×64, 128×64, 64×128, 128×128 — the draw size AND the hit box (half-sizes {26,26}, {56,26}, {26,56}, {56,56})                                                             |
+| 1          | 0-1  | hit-point class into `0x8014A100`                                                                                                                                                      |
+| 1          | 3-4  | score class: phase 1 {0, 10000, 50000}, phase 2 {50000, 100000, 500000}                                                                                                                |
+| 1          | 5-7  | opacity mark (as the zako's)                                                                                                                                                           |
+| 2          | 0-2  | rotation mark                                                                                                                                                                          |
+| 2          | 3-5  | scale mark                                                                                                                                                                             |
+| 2          | 7    | ground mark                                                                                                                                                                            |
+| 3+4w..6+4w | —    | weapon w = 0..2: `s8 dx`, `s8 dy` from the boss's centre (swapped in a SIDE game), `bullet (0-3, mod 9) \| timing << 4`, `pattern (0-3, +1) \| aim << 4`                               |
 
 ### SHIP and SPRITES
 
 `0xD714` is a 0x1B4-byte common table of u16 **cell words in the map's
-encoding** (bits 0-9 the cell, 13/14 the flips, 15 blank): the two ships' three
-poses each (pose 3 is pose 1 h-flipped), their shots, six item icons, 24 blocks
-and seven 2×2 quads. `0xD8C8` is 6 × 0x600, one table per stage:
+encoding** (bits 0-9 the cell, 13/14 the flips, 15 blank). KIDS.EXE composes it
+into VRAM when a stage starts (poses `0x80076F04`, shots `0x80077020`, bombs
+`0x80077260`, titles `0x800775F0`, items `0x80077338`, blast `0x800773C4`,
+bullets `0x800774C8`) and GAMES.bin draws by frame number through the 200
+descriptors at `0x80146E48`:
+
+| Words   | Contents                                                                                                                                                                                                                                                                             |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0-11    | ship 1's poses 0, 1, 2 as `[TL, TR, BL, BR]` 2×2; pose 1 (words 4-7) is the level pose                                                                                                                                                                                               |
+| 12-15   | ship 1's shot: four 16×16 animation frames                                                                                                                                                                                                                                           |
+| 16-31   | ship 1's bomb (ボム): an 8×2 row-major strip of four 2×2 frames                                                                                                                                                                                                                      |
+| 32-63   | ship 2, the same layout                                                                                                                                                                                                                                                              |
+| 64-111  | title picture A, 8×6 cells = 128×96 px (frame 71)                                                                                                                                                                                                                                    |
+| 112-159 | title picture B, 8×6 (frame 72); the title screen overlays the two, B moved by CONFIG +0x1B and A by +0x1F                                                                                                                                                                           |
+| 160-165 | six 16×16 item icons: POWER UP, SPEED UP, BOMB UP, 1UP, the small and the big bonus                                                                                                                                                                                                  |
+| 166-189 | the blast, six 2×2 frames **interleaved** two to a strip row pair: frame 0 = `[166, 167 / 172, 173]`, 1 = `[168, 169 / 174, 175]`, 2 = `[170, 171 / 176, 177]`, 3 = `[178, 179 / 184, 185]`, 4 = `[180, 181 / 186, 187]`, 5 = `[182, 183 / 188, 189]` (placement table `0x8006300C`) |
+| 190-217 | seven enemy-bullet quads × four 16×16 frames, quad-major; the record's テキダン selector picks the quad                                                                                                                                                                              |
+
+`0xD8C8` is 6 × 0x600, one table per stage, composed by `0x80077660` (entries)
+and `0x80077918` (boss parts). An entry's 16 words are a **row-major strip of
+its frames side by side**: class 0 four 2×2 frames in an 8×2 strip, class 1 two
+4×2 frames in the same 8×2, class 2 two 2×4 frames in a 4×4, class 3 one 4×4
+frame. A boss part is an 8×8 row-major grid, 128×128 px, with a smaller boss's
+art in its top-left corner (rows 0-3 for 128×64, columns 0-3 for 64×128); the
+record's size class is both the draw size and the hit box.
 
 | Offset | Contents                                                       |
 | ------ | -------------------------------------------------------------- |
@@ -357,8 +433,8 @@ and seven 2×2 quads. `0xD8C8` is 6 × 0x600, one table per stage:
 | +0x200 | class 1: 8 entries × 16 cells                                  |
 | +0x300 | class 2: 8 entries × 16 cells                                  |
 | +0x400 | class 3: 8 entries × 16 cells                                  |
-| +0x500 | boss part 0: 64 cells (8×8 blocks = 128×128 px)                |
-| +0x580 | boss part 1: 64 cells                                          |
+| +0x500 | boss phase 1: 64 cells (8×8 blocks = 128×128 px)               |
+| +0x580 | boss phase 2: 64 cells                                         |
 
 Six of those end **exactly** at 0xFCC8: there is no trailer.
 
@@ -588,12 +664,164 @@ comes out as the game's own scenery.
   `16+n`, `32+n`, `48+(n&7)`, `56+(n&3)`; `D` is the boss.
 - **ENEMY DATA** (0x200): 60 definitions of 8 bytes, then a 32-byte boss
   definition at +0x1E0. STAGE CONFIG (0x3C) is one byte per definition.
-- **SPRITE LAYOUT** (0x140) is the chip layout of the stage's 256x320 sprite
+- **SPRITE LAYOUT** (0x140) is the cell layout of the stage's 256x320 sprite
   sheet, which `0x8001C82C` blits to VRAM (896, 0) in four sub-blocks — `0x80`
-  as a plain 16-wide grid, then three `0x40` blocks with interleaved addressing.
-  (The Super Famicom's ODR was the first guess for this piece and is wrong.)
-  **MAP GROUP**, **ENEMY GROUP** (64 u16) and **BOSS GROUP** (32 u16) are the
-  tile tables.
+  as a plain 16-wide grid, then three `0x40` blocks with interleaved addressing
+  — each byte an ENEMY GROUP index with flip bits 6-7; the geometry, the
+  per-class frame rectangles and the boss's and title's grids are in "The sprite
+  sheets" below. (The Super Famicom's ODR was the first guess for this piece and
+  is wrong.) **MAP GROUP**, **ENEMY GROUP** (64 u16) and **BOSS GROUP** (32 u16)
+  are the tile tables.
+
+## The sprite sheets (confirmed — MAIN.EXE, 2026-10-14)
+
+Traced on the Select 100 disc's `MAIN.EXE` and checked against the 106 user
+games in its `STRDATA.` (extracted through the 88-byte index at `0x8009DC7C`:
+`+0x3A` block count, `+0x3C` block sectors; a block is file bytes
+`0x100..0x1DE90` with the tail zeroed, and all 106 verify once resealed) and
+Athena's own `UPLOAD/SAMP?.BIN` game (its sections split by file: G = graphics +
+palettes, K = the five stage blocks + global, M = sound, S = scores
+
+- settings). `src/psx/plus-write.js` is this section as code.
+
+**One tile copier, `0x8001AF7C`**, serves every group: `page = word >> 8` (0..3
+picks one of four 64 KB buffers — the memory-card load scatters the save's
+GRAPHICS into pages 0/1 at `0x8006B228`/`0x80073228`, the disc-load path into
+2/3; a page above 3 leaves the source pointer unset),
+`col =
+(word & 7) | ((word & 0x80) >> 4)`, `row = (word >> 3) & 15`, 128-byte
+pitch. H-flip reverses each 16-px row halfword-and-nibble-wise, v-flip swaps
+rows `i` and `15-i`. So **ENEMY GROUP** is MAP GROUP's 10-bit word, unmasked and
+unclamped, with the flips taken from the layout byte; **BOSS GROUP**
+(`0x80030708`) and **TITLE GROUP** (`0x800318E8`) are `word & 0x3FFF` with
+`0x4000` h-flip and `0x8000` v-flip. Corpus conventions: an unused group slot is
+`0xFFFF` (tolerated — it copies from the stale pointer — a writer gives it
+`0x3FF` instead), a blank cell is `0x3FF` (all 3,844 page-3 boss words and 436
+title words), and art words name pages 0/1. Keep the save's page-1 tiles
+`0x3FC..0x3FF` transparent: the ship's words 61-63 are forced to `0x3FC..0x3FE`
+and every blank is `0x3FF`.
+
+**SPRITE LAYOUT** (`0x8001C82C`, once per stage): byte `b` →
+`tile =
+ENEMY_GROUP[b & 0x3F]`, h-flip `b & 0x40`, v-flip `b & 0x80`, into a
+256×320 sheet at VRAM x=896 in four sub-blocks. Byte index `i` fills cell (in
+16-px units):
+
+```
+0x000..0x07F  rows 0-7,  plain:          cx = i & 15,               cy = i >> 4
+0x080..0x0BF  rows 8-11, vertical pairs: k = i-0x80:  cx = (k & 31) >> 1,            cy = 8 + (k >> 5)*2 + (k & 1)
+0x0C0..0x0FF  rows 12-15, 2x2 blocks:    k = i-0xC0:  cx = ((k >> 2) & 7)*2 + (k & 1), cy = 12 + (k >> 5)*2 + ((k >> 1) & 1)
+0x100..0x13F  rows 16-19, 4x4 blocks:    k = i-0x100: cx = (k >> 4)*4 + (k & 3),      cy = 16 + ((k >> 2) & 3)
+```
+
+(`plusSheetCellFor` / `plusLayoutIndexFor`.) Corpus: every byte index 0..63
+used; bit 6 set in 15.2 % of 166,400 bytes, bit 7 in 5.1 %; six games rendered
+under this geometry show whole sprites, and the 2×2 and 4×4 blocks assemble (two
+64×64 definitions make a 128-px gate).
+
+**How a definition draws** — the five spawners (`0x8001BC8C` / `0x8001BE18` /
+`0x8001BFA4` / `0x8001C130` / `0x8001C2B4` for class nibbles 8/9/A/B/C) set u/v,
+size and frame count, and the draw composes `u + frame × width` (`0x8002A24C`):
+
+| class | size  | u            | v                 | frames |
+| ----: | ----- | ------------ | ----------------- | -----: |
+|     8 | 16×16 | `(n & 3)*64` | `(n >> 2)*16`     |      4 |
+|     9 | 32×16 | `(n & 3)*64` | `(n >> 2)*16+64`  |      2 |
+|     A | 16×32 | `(n & 7)*32` | `(n >> 3)*32+128` |      2 |
+|     B | 32×32 | `(n & 3)*64` | `(n >> 2)*32+192` |      2 |
+|     C | 64×64 | `(n & 3)*64` | `256`             |      1 |
+
+So class B's `n` is 0..7 and class C's 0..3 (the corpus never exceeds either),
+and the 320 layout bytes are simply every definition's frames in order
+(`plusFrameRect`). The animation reload is `0x8007B310` {59, 29, 14, 9, 5, 2, 1,
+0}[byte 4 >> 5] (= `PLUS_ANIM_INTERVALS`). A spawn's x centre is 24+16k / 32+16k
+/ 48+16k px for 16-, 32- and 64-wide art (left edge `16(k+1)`); a spawn right of
+centre sets the mirror flag that negates the script's vx.
+
+**The boss** draws from BOSS GROUP alone: word `i` is block `i >> 4`, row
+`(i >> 2) & 3`, column `i & 3` of a 4×4 block, two blocks side by side = a
+**128×64 picture** at sheet (0, 400) in palette row `12+stage` — or, with
+definition byte 6 bit 6 set (`0x80030BCC`), the left block ABOVE the right, a
+64×128 picture (239 of 520 corpus bosses). TITLE GROUP is the same grid one
+block to the right (sheet (128, 400), row 19): an 8×4-cell, 128×64 logo; ENDING
+GROUP is 12 cells in one row at (0, 464). Where the title screen puts the logo
+was not traced.
+
+**The boss definition** (32 bytes, reader `0x8003082C`):
+
+| byte  | field                                                                                                                         |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 0-2   | movement scripts for phases 0, 1, 2 (the 80-entry boss table `0x80081864`; a phase ends when its script hits a `0x7FFF` step) |
+| 3-5   | guns 0-2: bits 0-4 shot pattern (0..19), bits 5-7 fire-rate index (`0x8007B374` / `0x8007B384`, the enemy's tables)           |
+| 6     | bits 0-1 / 2-3 / 4-5 the three guns' shot modes; **bit 6 = vertical layout**                                                  |
+| 7-12  | three signed (x, y) gun positions from the boss centre (rebased ±32 when vertical)                                            |
+| 13    | bits 0-2 **hit points** into `0x8007B364` {2000, 4000, 8000, 12000, 16000, 18000, 24000, 32000}; bit 6 armour                 |
+| 14    | bits 0-2 **score** into `0x8007B328` {5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000}                             |
+| 15-17 | the guns' mode-2 shot parameters (`& 0x7F`)                                                                                   |
+| 18-29 | no reader; 0 in all 520 corpus bosses                                                                                         |
+| 30    | no reader; 0 in 481, 3 in 39 (open)                                                                                           |
+| 31    | bit 0 read by the stage-flow routine (`0x8002D700`): likely the boss-music flag                                               |
+
+The boss always starts at x = 128 px (the APPEAR column is ignored); there is no
+stage-count link in it.
+
+**STAGE CONFIG**'s byte per definition (`0x8001B210`): bits 5-7 the rotation END
+angle (`0x8007B3D0`, the start-angle table), bits 3-4 the rotation start trigger
+(0 from spawn, 1 at y ≥ 62, 2 at y ≥ 140, 3 never), bits 0-2 unread. Rotation
+turns the picture and the hit box (`0x8001D3F4`), never the path.
+
+**SCROLL's effect bytes** (`0x8001A634`, one per 64-px step): bits 0-2 the
+scroll speed index into `0x8007B238` {0, 0x40, 0x80, 0xC0, 0x100, 0x180, 0x200,
+0x400} (9.7 px per frame: 0, 0.5, 1, 1.5, 2, 3, 4, 8 — the unit likely),
+approached by ±32 a step; bits 3-5 a wave amplitude index; bits 6-7 the type: 0
+sine across the 32 blocks, 1 the same clamped to the map margin, 2 shake, 3
+none. A plain stage is type 1, amplitude 0.
+
+**Movement scripts** (`0x8007D760`, 160 pointers to 132 bodies; interpreter
+`0x8001DC88`, integration `0x800205F4`: `x += vx; y -= vy`): ten-byte steps
+`{u16 frames (0x7FFF forever), u16 angle (high byte = heading in 256ths: 0x40
+up, 0xC0 down), s16 turn per frame, s16 speed (bit 15 = ride the scroll;
+0x100 = 1 px/frame), s16 jump (0 next, -1 repeat)}`.
+**Scripts 0-7** are one body `{forever, 0xC000, 0, 0x8000, -1}`: sit still on
+the scroll (the corpus's commonest). **Scripts 8-15** are
+`{forever, 0xC000, 0, speed, 0}` with speed 0x80, 0x100, 0x180, 0x200, 0x280,
+0x300, 0x480, 0x600 = straight down at 0.5, 1, 1.5, 2, 2.5, 3, 4.5, 6 px per
+frame; 136-159 duplicate the 0.5. A definition's heading and turn fields only
+turn the picture.
+
+**Shot damage** (`0x800253F4` → `0x800250E4`, collision `0x8001D2F8`): the basic
+weapon at power 0 fires two bullets of **24** a volley (3×20, 4×16, 5×14 at
+powers 1-3), so the enemy table {1, 50, 100, 200, 400, 800, 1000, 2000} is 1 / 3
+/ 5 / 9 / 17 / 34 / 42 / 84 hits and the boss table 84 .. 1,334.
+
+**MY SHIP** (`0x8002378C`): the 77 words go to a work array with words 61-63
+overwritten by `0x3FC..0x3FE`; every cell byte is `ODR[i] | DEFAULT[i]`, DEFAULT
+being the program's table at `0x8007DCF4` (identity for 0-60, then
+`7B 7A 79 78 F9 FA FB FC BB BA B9 3D 3E 3F 00…`), so the user's ODR carries flip
+bits only (every corpus ODR byte is 0, 0x40, 0x80 or 0xC0). Rows 320-351 of the
+sheet are eight 32×32 blocks: words 0-3, 4-7, 8-11, 12-15 at x 0..127 as [TL,
+TR, BL, BR] and 30-45 at x 128..255; the player draws block 0, and the three
+ship attitudes are blocks 0-2 (likely — every rendered game shows them there,
+block 3 bomb/charge art, blocks 4-7 explosion art). Words 64-71 are never read.
+
+## Writing a Dezaemon+ save (`src/psx/plus-write.js`)
+
+`exportLevelToPlusCard(level, art)` / `deno task build:plus`: the level's frames
+are quantised to fifteen colours per palette row — a stage's map row, its
+enemies' `6+stage`, its boss's `12+stage`, the player's 18, the title's 19 — and
+packed as 16×16 tiles into pages 0/1 (508 of the 512, the corner kept blank);
+scenery cells land 1:1 as chips over MAP GROUP (group 0 the blank chip, the
+first 128 rows, SCROLL looping the 32 blocks); APPEAR gets one record per 16-px
+band that spawns (record 0 empty, 1 the end mark); a zako is `encodePlusEnemy`
+with script `8 + speed index`, hit points sized at 24 a hit, the reader's score
+and animation tables; its frames are laid at `plusFrameRect` and the sheet's 320
+bytes and 64 group words follow (`layoutEnemySheet`); the boss is one 128×64 or
+64×128 picture by its art's shape, its record Athena's sample boss's scripts and
+guns with the level's hit points and score (`encodePlusBoss`); the title is the
+logo in the boss's grid; the ship is three 2×2 poses, ODR zero; the globals, the
+sixteen songs (silent — the BGM assignment names the disc's own), the factory
+ladders and settings are fixed; `sealPlusChecksums` seals; the block is read
+back through `parsePlusSave` and the card built around it.
 
 ## GLOBAL, SOUND, HIGH SCORE, SETTINGS
 
@@ -1076,48 +1304,38 @@ top of that, and where each answer came from, is below; every item is **likely**
 unless it says confirmed, and `test/psx-kids-write.test.js` holds the sample
 games to the same readings.
 
-- **The sprite strips.** A spawn class's 16-word entry is a row-major strip of
-  its frames side by side: class 0 four 2×2 frames in an 8×2 strip (the one
-  SPRITES names above), class 1 two 4×2 frames in the same 8×2, class 2 two 2×4
-  frames in a 4×4, class 3 one 4×4 frame. Rendered from the thirteen `SGM_*.CMP`
-  sample games under that reading the entries are the games' own sprites; under
-  a frame-major reading classes 1–3 come out as halves of them.
-- **A boss part is an 8×8 cell grid**, row-major, 128×128 px, and a smaller
-  boss's art sits in its top-left corner — a 128×64 boss paints rows 0–3, a
-  64×128 one columns 0–3 — while the size class in the record's byte 0 is the
-  footprint and hit box. All 36 painted boss parts in the samples fit this.
-- **The SHIP table**, word by word, read off the samples and rendered: the first
-  ship's three 2×2 poses stored `[TL, TR, BL, BR]` at words 0, 4 and 8 (pose 2
-  is pose 0 mirrored in the games that bank), its shot at 12–15 as two frames of
-  two cells along the travel axis, a second ship laid out the same from word 32,
-  the title logo as an 8×4 cell block at 64–95, a second 8×6 block at 112–159,
-  six 16×16 item icons at 160–165, the blast as six 2×2 frames at 166–189, and
-  the seven enemy bullets the record's テキダン selector picks from at 190–217,
-  four frames each. Words 16–31 and 48–63 hold a ship's two further weapons in
-  the games that have them and are left blank.
-- **Movement.** GAMES.bin's pointer table `0x8014B4E8` has four pointers per
-  pattern — three speed variants and a dead fourth — into ten-byte steps of
-  `{u16 duration, op, s16 dx, s16 dy, …}`. Pattern 0's single step is
-  `{forever, dx 0, dy 0x8000}`, which rides the scroll: every stationary ground
-  object in the samples uses it, 5,850 of their 11,000 placements. Pattern 4's
-  is `{forever, dx 0, dy +1.0 / +2.0 / +4.5}` in 8.8 fixed point — straight down
-  the screen — so an exported zako is pattern 4 with the variant picked by its
-  speed. Read off the table's bytes, not traced through the interpreter.
-- **Record byte 4 bit 7** is set on every stationary object and clear on every
-  flier in the samples: the editor's 地上物 (ground) mark against its 空中物
-  (airborne) one, as the PELON help names them. An exported zako is airborne.
-- **Hit points** index GAMES.bin table `0x8014A0D0`
-  (`0x100, 0x9600,
-  0x19000, 0x7D000`, the first of four the spawner chooses
-  between); with one full-power shot taken as the Saturn's 5,120 units those are
-  0, 7, 20 and 100 hits. **Score** is the record's tier (50–200 / 500–2,000 /
-  2,000–10,000). **Firing**: the attack-timing class in byte 2 bits 4–5 is 0 on
-  the samples' popcorn and 1..3 on their gunners; the interval index in bits 6–7
-  is 1 (ten frames) on every sample record and stays so.
-- **The boss record's fifteen bytes are untraced**, so a boss built here wears
-  the record of a sample boss of its size class — MIYAKO's stage 0, RAMSIE's
-  stages 0 and 1, ANGEL WING's stage 1 — with its own art, position and size
-  bits; the second part is the per-stage initialiser's unused `10 09 00 …`.
+- **The sprite strips, the boss grid and the SHIP table** are the composers'
+  (SHIP and SPRITES above, traced 2026-10-14): a zako's strip is row-major
+  frames side by side, a boss phase an 8×8 grid with a smaller boss top-left,
+  the ship's shot four 16×16 frames at 12-15, its bomb an 8×2 strip at 16-31
+  (the blast's first four rings), the two titles 8×6 at 64 and 112, the blast
+  interleaved. A boss's first frame is phase 1 and its second (or the first
+  again) phase 2, so a one-frame boss shows the same art through both.
+- **Movement.** An exported zako is pattern 4 —
+  `{forever, angle 192 (down the
+  screen), speed 1.0 / 2.0 / 4.5 px/frame}` —
+  with the variant nearest its runtime speed halved (the web game's 60 Hz
+  px/frame is twice the Kids! scale); a stationary one would be pattern 0, which
+  rides the map. The step format is
+  `{u16 duration, u16 angle (1/65536 turn), u16 angular velocity,
+  u16 speed 8.8 | ride-the-scroll bit 15, u16 flags}`.
+- **The record** is `encodeKidsRecord`: hardness from the record's hp against
+  the spawn class's table (the nearest of the three counted values; `infinity`
+  is 3), the score tier the nearest of the class's three, the bullet the quad
+  the enemy's own projectile art landed in (0 when it has none), the timing 0
+  for a non-firer and 1..3 by interval, the animation interval from the frame
+  rate (10 frames when unset), the aim mark on every firer, the item from the
+  cell's drop digit (F/S → POWER UP, R → SPEED UP, B → BOMB UP) — a record drops
+  one item, so an enemy whose cells carry several digits is written as one
+  record per digit sharing a strip, as the Saturn writer does. No ground mark:
+  an exported zako is airborne.
+- **The boss** is `encodeKidsBoss` twice, one record a phase: the size class
+  from its art, each phase's hit-point class the nearest to half its hits, the
+  score class from its score, and the movement pattern, speed class and three
+  weapons of Athena's sample boss of that size (MIYAKO's stage 0 for 64×64,
+  RAMSIE's stages 0 and 1 for 128×64 and 64×128, ANGEL WING's stage 1 for
+  128×128) — the boss scripts' shapes are not traced, a sample's is a real
+  boss's. Stages past the last keep the initialiser's `10 09 00 …` record.
 - **CONFIG** starts from ANGEL WING's 0x70 bytes (a vertical one-player game)
   and the writer sets the direction, the per-stage flags, the motion bytes and
   the backdrop over it. Horizontal games are refused: the map and appear grids
@@ -1125,7 +1343,9 @@ games to the same readings.
 - **The stage runs from row 0.** In every sample stage the spawns climb from the
   low rows to the boss (RAMSIE's stage 0: spawns in rows 3–158, the boss at
   165), and the scroll nibbles are 2 to the boss's 64-px unit and 0 from it on —
-  the halt the games hold a boss fight on. The export does the same.
+  the halt the games hold a boss fight on. The export does the same, and a stage
+  without a boss halts a screen past its last wave, which is what ends a stage
+  (SCROLL above).
 - **The tail is the factory's**: KIDS.EXE `0x80064B98` writes the 1000..100
   ladder with `........` names and level 1, and `0x80065E94` the option bytes
   (`01 01 A0 50` three times over, cursor `08 02 01`, stereo 1, the backdrop
@@ -1137,51 +1357,42 @@ games to the same readings.
 - **The art** is reduced to the fixed bank by nearest colour; map chips take
   2×2-aligned cell groups from the bottom of the bank and sprites single cells
   from the top, mirrors shared through the flip bits. The title logo is the
-  level's uploaded one, fitted to the 8×4 block; the item icons and the blast
-  are the Saturn writer's procedural ones.
+  level's uploaded one and the subtitle the second, each fitted to its 8×6
+  block; the item icons are the base game's power-up emblems (the ship for 1UP,
+  a coin for the bonuses) and the blast is the Saturn writer's procedural rings.
 
-Not written: the item records in CONFIG (what drops) and the title's second
-block beyond an uploaded subtitle. **Dezaemon+ has no writer**, because its
-enemy sprite layout (SPRITE LAYOUT, ENEMY GROUP, BOSS GROUP) and boss definition
-are open below.
+Not written: the enemy-bullet records in CONFIG (ANGEL WING's stand) and the
+title animation beyond the sample's. The Dezaemon+ writer is above.
 
 ## Unresolved
 
-- **Kids! CONFIG, what is left**: the first two bytes of each player-ship
-  record, `+0x1A`, and bits 5-6 of the per-stage flag byte. The rest of the
-  block is named above. The editor's settings menu is drawn from PELON glyph
-  structures rather than stored strings, so a screenshot of that screen (or
-  rendering those glyphs) is the cheap way in.
+- **Kids! CONFIG, what is left**: the first two bytes of each player-ship record
+  (the shot and bomb types the editor offers, by the samples) and the reader of
+  `+0x1A` (the explosion styles, by the samples). The rest of the block is named
+  above.
 - **Kids! options**: most of the 0x1C bytes, including `+0xB8` bit 1, which is
-  set in 96 of 98 saves and in every disc sample but has no reader found.
-- **Kids! record fields**: byte 3's bits 4-7 and byte 4 entirely; the boss
-  record's three 4-byte sub-records.
-- **Dezaemon+ boss definition**: the 32 bytes at `+0x1E0`. The 60 ordinary
-  definitions are named above; the boss's are not.
-- **Dezaemon+ SPRITE LAYOUT**: the blit geometry is traced but not a single
-  byte's meaning; three of its four sub-blocks use interleaved addressing.
-- **Dezaemon+ SCROLL effects**: the 256 bytes that follow the 256 block numbers.
-  `decodePlusScroll` hands them back as a raw view and names nothing
-  (plus.js:565); no reader for them has been traced, so neither their meaning
-  nor their range is known.
-- **Dezaemon+ STAGE CONFIG**: the 60 bytes at `+0x21C0`. The shape is confirmed
-  — one byte per enemy definition, which is how the reader pairs them
-  (plus.js:526) — and the meaning is not: nothing says what the byte does to the
-  definition it belongs to.
-- **Dezaemon+ ENEMY GROUP and BOSS GROUP**: named as tile tables (64 and 32 u16)
-  with no traced word encoding. The format carries two incompatible ones — MAP
-  GROUP's 10-bit column/row/page, clamped by the reader (`decodePlusGroupWord`,
-  plus.js:401-406), and the global groups' `w & 0x3FFF` index with `0x4000` /
-  `0x8000` flips — and nothing says which of the two these use.
-  `decodePlusGroupWord` is exported and will decode either into
-  plausible-looking values, so a wrong guess rescrambles enemy graphics quietly.
-- **Dezaemon+ shot mode**: ENEMY DATA byte 2 bits 0-1. The field is read
-  (`shotMode: b[2] & 3`, plus.js:497) and its four values are never enumerated,
-  although byte 5's parameter is defined relative to mode 2 — so mode 2 shoots
-  and the other three are unnamed.
-- **Dezaemon+ graphics pages**: which pair of the program's four tile buffers a
-  save occupies is edition-dependent, and the reason the two populations differ
-  is inferred from the two load paths rather than traced.
+  set in 96 of 98 saves and in every disc sample but has no reader found; the
+  factory store writes 2 there, and which value of bit 0 is the white backdrop
+  is not re-verified.
+- **Kids! hardness 4** (record byte 1 bits 0-2 = 4): class 0 hit points plus a
+  second flag and a different draw type; 347 of the samples' 1,228 records use
+  it and its effect is untraced. The boss and zako movement scripts' shapes
+  (patterns 1-3 and 5-25, and the code-driven 26-31) are dumped in the session's
+  `scripts.txt` but not described.
+- **Dezaemon+ boss definition, the tail of it**: bytes 18-29 (no reader, always
+  0), byte 30 (0 or 3, no reader) and byte 31's meaning (likely the boss-music
+  flag). Bytes 0-17 are traced above.
+- **Dezaemon+ tile pages 2/3**: 96 of 106 Select 100 games mix all four pages in
+  their group words, those words do not match the disc sample's tiles, and 54
+  games use `0x1FF` as art beside `0x3FF` blanks — so in the running program
+  `0x3FF` is not the same tile as `0x1FF`, and the aliasing mechanism is open.
+  Rendering with `page & 1` over the save's own bitmap still comes out right,
+  which is the rule the parsers use; a writer names pages 0/1 only.
+- **Dezaemon+ title screen**: where the 128×64 logo lands on screen.
+- **Dezaemon+ shot mode**: ENEMY DATA byte 2 bits 0-1 and the boss's byte 6
+  modes. The field is read (`shotMode: b[2] & 3`, plus.js:497) and its four
+  values are never enumerated, although byte 5's parameter is defined relative
+  to mode 2 — so mode 2 shoots and the other three are unnamed.
 - **Dezaemon+ octave anchor**: whether a song's key numbers are concert-absolute
   — whether key 60 is middle C. The song format itself is decoded (SOUND,
   above); what is open is one constant, the pitch the VAGs are actually recorded
@@ -1190,6 +1401,9 @@ are open below.
 - **Dezaemon+ high-score tables**: which of the two the game writes is a RAM
   flag no save carries, so the A/B ownership above rests on which one the
   community saves actually vary (53 of 67 for B against 8 for A).
+- **Dezaemon+ ship poses**: that blocks 1 and 2 of MY SHIP are the banking
+  attitudes rests on the rendered corpus, not on a traced write of u = 32 or 64
+  to the player slot.
 
 ## The round trip through the games themselves (confirmed)
 

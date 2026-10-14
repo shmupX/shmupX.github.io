@@ -1211,22 +1211,32 @@
                         <button class="menu-row hidden" id="deza-sav-mednafen" onclick="exportDezaemonSav('mednafen')" title="Build the save, merge it into one Dezaemon 2 slot of Mednafen's cartridge (.bcr) beside the disc on this machine — the cart's other saves and the console's own .bkr memory untouched — and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN CART</button>
                         <div id="deza-sav-note" class="menu-note"></div>
                     </div>
-                    <!-- EXPORT: the open game as a Dezaemon Kids! memory card. Built in the
-                         page by the engine bundle (exportLevelToKidsCard): the art is reduced
-                         to the disc's fixed 256-colour bank, the stages laid into the save's
-                         384-row grids, the two sections LZSS-packed and the 128 KB card
-                         formatted around them. Downloaded as the raw .mcr an emulator mounts
-                         in slot 1 (Dezaemon Kids! loads it from PELON's ロード), or, where a
-                         local server can see the disc and a Mednafen, installed as that
-                         emulator's slot-1 card and launched. Dezaemon+ has no writer: its
-                         enemy sprite layout is untraced (FORMAT-PSX.md). -->
+                    <!-- EXPORT: the open game as a PlayStation memory card, for either
+                         Dezaemon. Built in the page by the engine bundle: KIDS! through
+                         exportLevelToKidsCard (the art reduced to the disc's fixed 256-colour
+                         bank, the stages laid into the save's 384-row grids, the two sections
+                         LZSS-packed), PLUS through exportLevelToPlusCard (the art quantised
+                         into 15-colour palette rows over two 4bpp texture pages, the enemy
+                         sheet laid out through SPRITE LAYOUT / ENEMY GROUP, nineteen checksums
+                         sealed) — then the 128 KB card formatted around the one save.
+                         Downloaded as the raw .mcr an emulator mounts in slot 1 (Kids! loads
+                         it from PELON's ロード, Dezaemon+ from LOAD/SAVE → ロード), or, where
+                         a local server can see that game's disc and a Mednafen, installed as
+                         the emulator's slot-1 card and launched. -->
                     <div id="export-deza-kids" class="sheet-sub-sec hidden">
-                        <div class="display-row" title="One of the disc's 38 scrolling backdrops drawn behind every stage (LENGTH1 1-16, LENGTH2 17-38), or none. A game with its own scenery cells keeps those in front of it.">
+                        <div class="display-row" title="Which PlayStation Dezaemon the card is for: Dezaemon Kids! (1998) or Dezaemon+ (1996, also Dezaemon Plus Select 100)">
+                            <span class="display-lbl">GAME</span>
+                            <div class="seg-wrap" id="ps-game-segs">
+                                <button class="seg" data-game="kids" onclick="setPsGame('kids')">KIDS!</button>
+                                <button class="seg" data-game="plus" onclick="setPsGame('plus')">PLUS</button>
+                            </div>
+                        </div>
+                        <div class="display-row" id="kids-backdrop-row" title="One of the disc's 38 scrolling backdrops drawn behind every stage (LENGTH1 1-16, LENGTH2 17-38), or none. A game with its own scenery cells keeps those in front of it.">
                             <span class="display-lbl">BACKDROP</span>
                             <input id="kids-backdrop" type="number" min="0" max="38" value="0" class="menu-input" style="width:5em;margin:0" title="0 = none, 1-38 = a disc backdrop">
                         </div>
-                        <button class="menu-row" id="kids-card-download" onclick="exportKidsCard('download')" title="Build a Dezaemon Kids! memory card of the open game — the 131,072-byte raw card image (.mcr) Mednafen, DuckStation and MiSTer's PSX core mount — and download it"><span class="mono-badge">DL</span>DOWNLOAD .MCR</button>
-                        <button class="menu-row hidden" id="kids-card-mednafen" onclick="exportKidsCard('mednafen')" title="Build the card, install it as Mednafen's slot-1 memory card for the Dezaemon Kids! disc on this machine (the card that was there is backed up first) and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN (SLOT 1)</button>
+                        <button class="menu-row" id="kids-card-download" onclick="exportPsCard('download')" title="Build a memory card of the open game for the picked Dezaemon — the 131,072-byte raw card image (.mcr) Mednafen, DuckStation and MiSTer's PSX core mount — and download it"><span class="mono-badge">DL</span>DOWNLOAD .MCR</button>
+                        <button class="menu-row hidden" id="kids-card-mednafen" onclick="exportPsCard('mednafen')" title="Build the card, install it as Mednafen's slot-1 memory card for the picked Dezaemon's disc on this machine (the card that was there is backed up first) and launch Mednafen"><span class="mono-badge">MD</span>&rarr; MEDNAFEN (SLOT 1)</button>
                         <div id="kids-card-note" class="menu-note"></div>
                     </div>
                 </div>
@@ -2219,8 +2229,26 @@
             sfc: { label: 'SFC', long: 'SUPER FAMICOM', dz: 'DEZAEMON', read: 'A SUPER FAMICOM SRAM (.SRM) IS READ AND SHELVED — OPEN ONE FROM THE IMPORT SHEET — BUT NOTHING WRITES ONE YET.' },
             n64: { label: 'N64', long: 'NINTENDO 64', dz: 'DEZAEMON 3D', read: 'THE 64DD DISK IS READ BY THE N64 PARITY PAGE; NOTHING WRITES ONE YET.' },
             saturn: { label: 'SATURN', long: 'SEGA SATURN', dz: 'DEZAEMON 2', writer: true },
-            ps: { label: 'PS', long: 'PLAYSTATION', dz: 'DEZAEMON KIDS!', kids: true, note: 'DEZAEMON+ (1996) IS READ AND EDITED IN PLACE BY THE PSX TOOLS, NOT BUILT: ITS ENEMY SPRITE LAYOUT IS UNTRACED.' },
+            ps: { label: 'PS', long: 'PLAYSTATION', dz: 'DEZAEMON KIDS!', kids: true },
         };
+        // The PS pick builds for either PlayStation Dezaemon; the GAME segs
+        // under it choose, and the choice is remembered like the console.
+        const PS_GAMES = {
+            kids: { dz: 'DEZAEMON KIDS!', load: 'LOAD IT FROM PELON’S ロード ON THE MAIN MENU', fn: 'exportLevelToKidsCard' },
+            plus: { dz: 'DEZAEMON+', load: 'LOAD IT FROM LOAD/SAVE → ロード ON THE TITLE MENU', fn: 'exportLevelToPlusCard' },
+        };
+        const PS_GAME_KEY = 'cmg-export-ps-game';
+        let psGame = 'kids';
+        try {
+            const savedPs = localStorage.getItem(PS_GAME_KEY);
+            if (savedPs && PS_GAMES[savedPs]) psGame = savedPs;
+        } catch (e) { }
+        function setPsGame(g) {
+            psGame = PS_GAMES[g] ? g : 'kids';
+            try { localStorage.setItem(PS_GAME_KEY, psGame); } catch (e) { }
+            kidsCardNote('');
+            updateExportSheet();
+        }
         const EXPORT_CONSOLE_KEY = 'cmg-export-console';
         let exportConsole = 'saturn';
         try {
@@ -2238,7 +2266,8 @@
                 b.classList.toggle('on', b.dataset.console === exportConsole);
             });
             const builds = !!(con.writer || con.kids);
-            document.getElementById('export-deza-name').textContent = con.dz;
+            const dz = con.kids ? PS_GAMES[psGame].dz : con.dz;
+            document.getElementById('export-deza-name').textContent = dz;
             document.getElementById('export-deza-sub').textContent = con.writer
                 ? con.long + ' · .SAV' + (hasSec7Models() ? ' · SEC7 MODELS INCLUDED' : '')
                 : con.kids ? con.long + ' · MEMORY CARD (.MCR)'
@@ -2246,11 +2275,17 @@
             document.getElementById('export-deza-opt').classList.toggle('off', !builds);
             document.getElementById('export-deza-saturn').classList.toggle('hidden', !con.writer);
             document.getElementById('export-deza-kids').classList.toggle('hidden', !con.kids);
+            if (con.kids) {
+                document.querySelectorAll('#ps-game-segs .seg').forEach((b) => {
+                    b.classList.toggle('on', b.dataset.game === psGame);
+                });
+                document.getElementById('kids-backdrop-row').classList.toggle('hidden', psGame !== 'kids');
+                probePsxSaveRoute(psGame);
+            }
             const none = document.getElementById('export-deza-nowriter');
-            none.classList.toggle('hidden', builds && !con.note);
-            none.textContent = con.writer ? '' : con.kids ? (con.note || '') : con.read + ' PICK SATURN OR PS TO BUILD ONE.';
-            if (con.kids) probePsxSaveRoute();
-            document.getElementById('menu-export-sub').textContent = 'WEB · ' + con.dz + ' (' + con.label + ') · 3D';
+            none.classList.toggle('hidden', builds);
+            none.textContent = builds ? '' : con.read + ' PICK SATURN OR PS TO BUILD ONE.';
+            document.getElementById('menu-export-sub').textContent = 'WEB · ' + dz + ' (' + con.label + ') · 3D';
             const L = lineageForked() ? lineage : null;
             document.getElementById('export-sheet-note').textContent = L
                 ? 'EXPORTS THIS MOD · PARENT ' + L.parent.title.toUpperCase() + ' STAYS UNTOUCHED'
@@ -7745,14 +7780,17 @@
             return saturnSaveProbe;
         }
 
-        // ============ .MCR EXPORT (the open game as a Dezaemon Kids! card) ============
-        // The PlayStation half of the writer (packages/shmup-engine/src/psx/
-        // kids-write.js): the same level record and atlas art the Saturn
-        // export reads go into Dezaemon.exportLevelToKidsCard(), which reduces
-        // the art to the disc's fixed 256-colour bank, lays the stages into
-        // the save's grids, packs the two sections and formats the 128 KB card
-        // around the one BISLPS-01503DEZAKIDS file. `deno task build:kids`
-        // does the identical thing from a shell.
+        // ============ .MCR EXPORT (the open game as a PlayStation Dezaemon card) ============
+        // The PlayStation writers (packages/shmup-engine/src/psx/kids-write.js
+        // and plus-write.js): the same level record and atlas art the Saturn
+        // export reads go into Dezaemon.exportLevelToKidsCard() — the art
+        // reduced to the disc's fixed 256-colour bank, the stages laid into
+        // the save's grids, the two sections packed — or into
+        // Dezaemon.exportLevelToPlusCard() — the art quantised into palette
+        // rows over the 4bpp pages, the enemy sheet laid out through SPRITE
+        // LAYOUT, the checksums sealed — and the 128 KB card is formatted
+        // around the one file. `deno task build:kids` / `build:plus` do the
+        // identical thing from a shell.
         function kidsCardNote(msg, color) {
             const el = document.getElementById('kids-card-note');
             if (!el) return;
@@ -7775,11 +7813,24 @@
             });
             return { out, record };
         }
+        async function buildPlusCardForExport() {
+            const record = await buildLevelRecordForSav();
+            const art = collectAtlasArtForSav();
+            const title1 = await dataUrlToRgba(logoDataURL);
+            const out = window.Dezaemon.exportLevelToPlusCard(record, art, {
+                name: record.name,
+                title1,
+                horizontal: gridOrientation === 'horizontal',
+            });
+            return { out, record };
+        }
         let kidsCardBusy = false;
-        async function exportKidsCard(action) {
+        async function exportPsCard(action) {
+            const game = PS_GAMES[psGame] ? psGame : 'kids';
+            const spec = PS_GAMES[game];
             if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
-            if (typeof window.Dezaemon.exportLevelToKidsCard !== 'function') {
-                alert('This engine bundle predates the Dezaemon Kids! writer — run `deno task engine:bundle`.');
+            if (typeof window.Dezaemon[spec.fn] !== 'function') {
+                alert('This engine bundle predates the ' + spec.dz + ' writer — run `deno task engine:bundle`.');
                 return;
             }
             if (kidsCardBusy) return;
@@ -7789,8 +7840,8 @@
             buttons.forEach((b) => { if (b) b.disabled = true; });
             let out = null, record = null;
             try {
-                kidsCardNote('BUILDING THE CARD…');
-                ({ out, record } = await buildKidsCardForExport());
+                kidsCardNote('BUILDING THE ' + spec.dz + ' CARD…');
+                ({ out, record } = await (game === 'plus' ? buildPlusCardForExport() : buildKidsCardForExport()));
             } catch (e) {
                 console.error('.mcr export failed:', e);
                 kidsCardNote('COULD NOT BUILD THE CARD: ' + (e && e.message || e), '#f87171');
@@ -7802,15 +7853,16 @@
                 const rep = out.report || {};
                 const stages = rep.stages ? rep.stages.length : 0;
                 const summary = '"' + out.name + '" · ' + stages + ' STAGE' + (stages === 1 ? '' : 'S') +
-                    ' · ' + ((rep.cells && rep.cells.used) || 0) + '/1024 CG CELLS · ' +
-                    Math.round((rep.slack || 0) / 1024) + ' KB TO SPARE';
+                    (game === 'plus'
+                        ? ' · ' + ((rep.tiles && rep.tiles.used) || 0) + '/512 TILES · ' + ((rep.rows && rep.rows.length) || 0) + ' PALETTE ROWS'
+                        : ' · ' + ((rep.cells && rep.cells.used) || 0) + '/1024 CG CELLS · ' + Math.round((rep.slack || 0) / 1024) + ' KB TO SPARE');
                 const warn = out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : '';
                 if (action === 'mednafen') {
                     kidsCardNote('INSTALLING THE CARD FOR MEDNAFEN…');
                     const resp = await fetch('/api/psx-save', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ card: bytesToBase64(out.card), name: out.name, launch: true }),
+                        body: JSON.stringify({ card: bytesToBase64(out.card), name: out.name, launch: true, game }),
                     });
                     let body = null;
                     try { body = await resp.json(); } catch (e) { body = null; }
@@ -7819,9 +7871,9 @@
                     }
                     kidsCardNote('MEDNAFEN CARD INSTALLED: ' + (body.card || '?') +
                         (body.backup ? ' · THE CARD THAT WAS THERE IS BACKED UP TO ' + body.backup : '') +
-                        (body.launched ? ' · MEDNAFEN LAUNCHED — LOAD IT FROM PELON’S ロード ON THE MAIN MENU'
+                        (body.launched ? ' · MEDNAFEN LAUNCHED — ' + spec.load
                             : body.error ? ' · MEDNAFEN DID NOT START: ' + body.error
-                            : ' · START MEDNAFEN ON THE KIDS! DISC') +
+                            : ' · START MEDNAFEN ON THE ' + (game === 'plus' ? 'DEZAEMON+' : 'KIDS!') + ' DISC') +
                         (body.note ? ' · ' + body.note : '') + '. ' + summary + warn, '#84cc16');
                     flash(body.launched ? 'MEDNAFEN LAUNCHED' : 'MEDNAFEN CARD INSTALLED');
                 } else {
@@ -7831,7 +7883,7 @@
                     a.download = out.fileName;
                     document.body.appendChild(a); a.click(); a.remove();
                     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-                    kidsCardNote('DOWNLOADING "' + out.fileName + '" — MOUNT IT AS SLOT 1 AND LOAD IT FROM PELON’S ロード ON THE MAIN MENU. ' + summary + warn, '#84cc16');
+                    kidsCardNote('DOWNLOADING "' + out.fileName + '" — MOUNT IT AS SLOT 1 AND ' + spec.load + '. ' + summary + warn, '#84cc16');
                     flash('.MCR EXPORTED ⬇');
                 }
                 if (out.warnings.length) console.warn('.mcr export warnings:', out.warnings);
@@ -7845,24 +7897,27 @@
         }
 
         // The → MEDNAFEN row for the card means something only where a local
-        // server can see a Dezaemon Kids! disc and a Mednafen, so it stays
-        // hidden until GET /api/psx-save says so — asked once, the first time
-        // the PS pick is shown, and never on Deploy's { available: false }.
-        let psxSaveProbe = null;
-        function probePsxSaveRoute() {
-            if (psxSaveProbe) return psxSaveProbe;
-            psxSaveProbe = fetch('/api/psx-save', { cache: 'no-store' })
+        // server can see the picked game's disc and a Mednafen, so it stays
+        // hidden until GET /api/psx-save?game= says so — asked once per game,
+        // the first time that pick is shown, and never on Deploy's
+        // { available: false }. The row follows whichever game is picked now.
+        const psxSaveProbes = {};
+        function probePsxSaveRoute(game) {
+            const g = PS_GAMES[game] ? game : 'kids';
+            const apply = (info) => {
+                if (psGame !== g) return;
+                const row = document.getElementById('kids-card-mednafen');
+                if (row) row.classList.toggle('hidden', !(info && info.available));
+                if (info && info.available && info.bios && info.bios.present === false) {
+                    kidsCardNote('MEDNAFEN AND THE ' + (g === 'plus' ? 'DEZAEMON+' : 'KIDS!') + ' DISC ARE HERE, BUT NO JAPANESE BIOS (' + (info.bios.file || 'scph5500.bin') + ') IS IN ' + (info.bios.dir || 'ITS FIRMWARE FOLDER') + ' — THE INSTALL WORKS, THE LAUNCH WILL NOT BOOT UNTIL IT IS.');
+                }
+            };
+            if (psxSaveProbes[g]) return psxSaveProbes[g].then((info) => { apply(info); return info; });
+            psxSaveProbes[g] = fetch('/api/psx-save?game=' + g, { cache: 'no-store' })
                 .then((r) => r.ok ? r.json() : null)
-                .then((info) => {
-                    const row = document.getElementById('kids-card-mednafen');
-                    if (row) row.classList.toggle('hidden', !(info && info.available));
-                    if (info && info.available && info.bios && info.bios.present === false) {
-                        kidsCardNote('MEDNAFEN AND THE KIDS! DISC ARE HERE, BUT NO JAPANESE BIOS (' + (info.bios.file || 'scph5500.bin') + ') IS IN ' + (info.bios.dir || 'ITS FIRMWARE FOLDER') + ' — THE INSTALL WORKS, THE LAUNCH WILL NOT BOOT UNTIL IT IS.');
-                    }
-                    return info;
-                })
+                .then((info) => { apply(info); return info; })
                 .catch(() => null);
-            return psxSaveProbe;
+            return psxSaveProbes[g];
         }
 
         // ================== PUBLISH TO ESHOP ==================

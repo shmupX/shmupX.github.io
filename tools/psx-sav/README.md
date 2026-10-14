@@ -134,11 +134,13 @@ dump has — a raw 128 KB memory-card image, a DexDrive `.gme`, a single-save
   three sums merely fail needs `--force`, and `--force` with no `--set` reseals
   it.
 
-The other direction — a level record INTO a Kids! save — is
-`deno task
-build:kids` (`packages/shmup-engine/src/psx/kids-write.js`,
-FORMAT-PSX.md "Writing a Kids! save"), and the editor's EXPORT sheet does the
-same under CONSOLE › PS. This tool reads what that writes like any other card.
+The other direction — a level record INTO a save — is `deno task build:kids`
+(`packages/shmup-engine/src/psx/kids-write.js`, FORMAT-PSX.md "Writing a Kids!
+save") and `deno task build:plus` (`src/psx/plus-write.js`, "Writing a Dezaemon+
+save"), and the editor's EXPORT sheet does the same under CONSOLE › PS with GAME
+set to KIDS! or PLUS. This tool reads what they write like any other card —
+`report` on a built Dezaemon+ card is the quickest check that its nineteen
+checksums seal.
 
 Saves are community content and never committed; the fixture-gated tests read
 the collection in the repo-root `dev-fixtures/` (`Dezaemon Kids!/`,

@@ -18,6 +18,8 @@ import {
   assertThrows,
 } from "@std/assert";
 import {
+  blastWords,
+  bombWords,
   buildKidsBlock,
   buildKidsGameFromLevel,
   defaultKidsIcon,
@@ -161,12 +163,26 @@ Deno.test("geometry helpers", () => {
   }
   // the ship table's regions tile its 218 words with no overlap
   const L = KIDS_SHIP_LAYOUT;
+  assertStrictEquals(L.ship1.shot, 12);
+  assertStrictEquals(L.ship1.bomb, 16);
+  assertStrictEquals(L.ship2.poses[0], 32);
   assertStrictEquals(L.title1.at, 64);
-  assertStrictEquals(L.title1.at + L.title1.w * L.title1.h, 96);
-  assertStrictEquals(L.title2.at + L.title2.w * L.title2.h, 160);
+  assertStrictEquals(L.title1.at + L.title1.w * L.title1.h, L.title2.at);
+  assertStrictEquals(L.title2.at + L.title2.w * L.title2.h, L.items.at);
   assertStrictEquals(L.items.at + L.items.count, L.blast.at);
   assertStrictEquals(L.blast.at + L.blast.frames * 4, L.bullets.at);
   assertStrictEquals(L.bullets.at + L.bullets.count * L.bullets.frames, 218);
+  // the blast's six 2x2 frames interleave two frames per 8-wide strip row pair
+  assertEquals(blastWords(0), [166, 167, 172, 173]);
+  assertEquals(blastWords(2), [170, 171, 176, 177]);
+  assertEquals(blastWords(3), [178, 179, 184, 185]);
+  assertEquals(blastWords(5), [182, 183, 188, 189]);
+  const blastCells = new Set();
+  for (let f = 0; f < 6; f++) for (const w of blastWords(f)) blastCells.add(w);
+  assertStrictEquals(blastCells.size, 24, "no two blast frames share a word");
+  // the bomb strip: four 2x2 frames in an 8x2 block from the ship's bomb word
+  assertEquals(bombWords(16, 0), [16, 17, 24, 25]);
+  assertEquals(bombWords(16, 3), [22, 23, 30, 31]);
 });
 
 Deno.test("the fixed palette: every opaque colour lands on a non-zero index of the bank", () => {
@@ -423,11 +439,34 @@ Deno.test("a level becomes a card the parsers read back as a Kids! game", () => 
   assertStrictEquals(byClass(2).scoreClass, 2);
   assertStrictEquals(recs.bosses[0].sizeClass, 3);
   assertStrictEquals(recs.bosses[0].size, "128x128");
-  assertStrictEquals(
-    recs.bosses[1].bytes[0],
-    0x10,
-    "the second boss part is the unused record",
+  assertEquals(
+    [...recs.bosses[1].bytes],
+    [...recs.bosses[0].bytes],
+    "the second record is the boss's second phase: the same boss",
   );
+  // 300 hits = 150 a phase = 768000 units: nearest the class-0 phase table entry
+  assertStrictEquals(recs.bosses[0].hpClass, 0);
+  assertStrictEquals(
+    recs.bosses[0].scoreClass,
+    0,
+    "6000 points: the low class",
+  );
+  assertStrictEquals(recs.bosses[0].weapons.length, 3);
+  assert(recs.bosses[0].weapons.some((w) => w.timing > 0), "the boss fires");
+  // the dot is two records: its three "0" cells (first, dropping nothing) and
+  // its two "1" cells (dropping the power-up)
+  assertStrictEquals(byClass(0).item, 0, "the A0 record drops nothing");
+  assertStrictEquals(
+    recs.enemies[1].item,
+    1,
+    "the A1 record drops the power-up",
+  );
+  assertStrictEquals(recs.enemies[1].movement, KIDS_MOVE_STRAIGHT);
+  assertEquals(
+    out.report.stages[0].records.map((r) => r.cell).sort(),
+    ["A0", "A1", "B0", "C0"],
+  );
+  assertStrictEquals(byClass(0).bullet, 0, "the dot's shot is bullet quad 0");
 
   // sprites: every non-blank word names a cell the bank painted
   const painted = new Set();
@@ -466,10 +505,30 @@ Deno.test("a level becomes a card the parsers read back as a Kids! game", () => 
   // the boss's 8x8 is fully painted (70x70 art fitted to 128x128 paints its middle)
   const bossWords = spr.stages[0].bosses[0].words;
   assert(bossWords.filter((w) => !(w & KIDS_BLANK)).length >= 16);
+  const phase2 = spr.stages[0].bosses[1].words;
   assert(
-    spr.stages[0].bosses[1].words.every((w) => w & KIDS_BLANK),
-    "part 1 is blank",
+    phase2.filter((w) => !(w & KIDS_BLANK)).length >= 16,
+    "phase 2 draws the boss's second frame",
   );
+  assert(
+    phase2.some((w, i) => w !== bossWords[i]),
+    "phase 2 is the second frame, not the first again",
+  );
+  // the shot is four 16x16 frames at words 12-15, the bomb an 8x2 strip from 16
+  for (let i = 12; i < 16; i++) {
+    assert(!(spr.ship[i] & KIDS_BLANK), `shot frame ${i - 12}`);
+  }
+  for (let f = 0; f < 4; f++) {
+    for (const at of bombWords(16, f)) {
+      assert(!(spr.ship[at] & KIDS_BLANK), `bomb frame ${f} word ${at}`);
+    }
+  }
+  assertStrictEquals(spr.ship[44], spr.ship[12], "ship 2 shares the shot");
+  for (let f = 0; f < 6; f++) {
+    for (const at of blastWords(f)) {
+      assert(!(spr.ship[at] & KIDS_BLANK), `blast frame ${f} word ${at}`);
+    }
+  }
   // the seven bullets are the dot's shot, four frames each
   for (let q = 0; q < 7; q++) {
     for (let f = 0; f < 4; f++) {

@@ -317,10 +317,66 @@ function regionFor(code: string): string | null {
   return PSX_REGIONS[prefix] ?? null;
 }
 
+/** Reads `length` bytes of an image at `offset`, or null past its end. */
+export type ExtentReader = (
+  offset: number,
+  length: number,
+) => Uint8Array | null;
+
+/** A file's bytes from an image, sector by sector, through an ExtentReader. */
+function readExtentAt(
+  readAt: ExtentReader,
+  { sectorSize, dataOffset }: { sectorSize: number; dataOffset: number },
+  lba: number,
+  size: number,
+): Uint8Array | null {
+  const USER = 2048;
+  const out = new Uint8Array(size);
+  let written = 0;
+  for (let i = 0; written < size; i++) {
+    const take = Math.min(USER, size - written);
+    const chunk = readAt((lba + i) * sectorSize + dataOffset, take);
+    if (!chunk || chunk.length < take) return null;
+    out.set(chunk, written);
+    written += take;
+  }
+  return out;
+}
+
+/** An ExtentReader over a file on disk: a seek and a read per call. */
+export function fileExtentReader(path: string): ExtentReader {
+  return (offset, length) => {
+    let file: Deno.FsFile;
+    try {
+      file = Deno.openSync(path, { read: true });
+    } catch {
+      return null;
+    }
+    try {
+      file.seekSync(offset, Deno.SeekMode.Start);
+      const out = new Uint8Array(length);
+      let got = 0;
+      while (got < length) {
+        const n = file.readSync(out.subarray(got));
+        if (n === null || n === 0) break;
+        got += n;
+      }
+      return got === length ? out : null;
+    } catch {
+      return null;
+    } finally {
+      file.close();
+    }
+  };
+}
+
 /** Which Dezaemon a disc image is, from its contents. `bytes` may be a prefix.
  * Returns null for anything else — a Dezaemon 2 Saturn image included, which is
  * the decoy that actually turns up in dev-fixtures/. */
-export function identifyPsxDisc(bytes: Uint8Array): {
+export function identifyPsxDisc(
+  bytes: Uint8Array,
+  readAt: ExtentReader | null = null,
+): {
   game: PsxGameId;
   code: string;
   codeFrom: "system.cnf" | "markers";
@@ -337,6 +393,21 @@ export function identifyPsxDisc(bytes: Uint8Array): {
     cnf = readFile(disc, "SYSTEM.CNF");
   } catch {
     cnf = null; /* a directory extent that runs off the end of a prefix */
+  }
+  if (readAt && (!cnf || !cnf.length)) {
+    // The directory named the file but its sector lies past the prefix —
+    // Select 100 keeps SYSTEM.CNF at sector 48315, 113 MB in — so read that
+    // one extent from the image: a few sectors at a known offset, never the
+    // file. Without a reader the markers below still name the game.
+    let entry: { lba: number; size: number; isDir: boolean } | null = null;
+    try {
+      entry = findEntry(disc, "SYSTEM.CNF");
+    } catch {
+      entry = null;
+    }
+    if (entry && !entry.isDir && entry.size > 0 && entry.size <= 0x2000) {
+      cnf = readExtentAt(readAt, geometry, entry.lba, entry.size);
+    }
   }
   if (cnf && cnf.length) {
     const code = parsePsxBootCode(CNF_TEXT.decode(cnf));
@@ -419,11 +490,12 @@ export async function psxDiscCandidates(
         // sidecar macOS leaves on this project's exFAT volume; neither holds a
         // disc and both cost a stat to find that out.
         if (entry.name.startsWith(".")) continue;
-        if (entry.isDirectory) {
+        const kind = entryKind(dir, entry);
+        if (kind === "dir") {
           if (descend) scan(join(dir, entry.name), false);
           continue;
         }
-        if (!entry.isFile) continue;
+        if (kind !== "file") continue;
         if (hasExtension(entry.name, wanted)) paths.add(join(dir, entry.name));
       }
     } catch { /* unreadable, or absent — a fresh checkout has neither */ }
@@ -494,7 +566,7 @@ export async function detectPsxDiscs(
     if (files.length !== names.length) continue; // a FILE that is not there
     const prefix = await readDiscPrefix(files[0].path);
     if (!prefix) continue;
-    const id = identifyPsxDisc(prefix);
+    const id = identifyPsxDisc(prefix, fileExtentReader(files[0].path));
     if (!id) continue;
     // Claimed before the duplicate test, not after: the cue describes these
     // tracks either way, and leaving them unclaimed would only let the bare
@@ -518,7 +590,7 @@ export async function detectPsxDiscs(
     }
     const prefix = await readDiscPrefix(img.path);
     if (!prefix) continue;
-    const id = identifyPsxDisc(prefix);
+    const id = identifyPsxDisc(prefix, fileExtentReader(img.path));
     // trackModeFor first, because cueForImage THROWS on a geometry no cue can
     // express (2448-byte sectors with subchannel data) and this is a probe: a
     // disc it cannot describe is "not here", not a 500 out of the route.
@@ -584,6 +656,26 @@ function relativeToFixtures(path: string): string {
     : posix.slice(at + FIXTURES_MARK.length);
 }
 
+/**
+ * What a directory entry is, through a symlink: a worktree's dev-fixtures/
+ * holds links to the main checkout's disc folders, and readDir reports those
+ * as neither directory nor file.
+ */
+function entryKind(
+  dir: string,
+  entry: Deno.DirEntry,
+): "dir" | "file" | "other" {
+  if (entry.isDirectory) return "dir";
+  if (entry.isFile) return "file";
+  if (!entry.isSymlink) return "other";
+  try {
+    const st = Deno.statSync(join(dir, entry.name));
+    return st.isDirectory ? "dir" : st.isFile ? "file" : "other";
+  } catch {
+    return "other";
+  }
+}
+
 /** Every file under dev-fixtures/ that is the right size and extension to be a
  * memory card, four levels deep, AppleDouble sidecars skipped. */
 export async function psxCardCandidates(root: string): Promise<DiscFile[]> {
@@ -607,11 +699,12 @@ export async function psxCardCandidates(root: string): Promise<DiscFile[]> {
       // exclude lists "**/._*" for the same reason.
       if (entry.name.startsWith(".")) continue;
       const path = join(dir, entry.name);
-      if (entry.isDirectory) {
+      const kind = entryKind(dir, entry);
+      if (kind === "dir") {
         dirs.push(path);
         continue;
       }
-      if (!entry.isFile) continue;
+      if (kind !== "file") continue;
       if (!hasExtension(entry.name, CARD_EXTENSIONS)) continue;
       const f = await statFile(path);
       if (!f || f.size < MIN_CARD_BYTES || f.size > MAX_CARD_BYTES) continue;

@@ -8788,12 +8788,55 @@ function decodeKidsRecord(bytes, at, index) {
     bytes: b,
     movement: b[0] & 31,
     movementVariant: b[0] >> 5 & 3,
+    fromBehind: (b[0] & 128) !== 0,
     spawnFlag: (b[0] & 128) !== 0,
-    hitPoints: b[1] & 7,
+    hardness: b[1] & 7,
+    hitPoints: b[1] & 3,
+    scoreTier: b[1] >> 3 & 3,
     scoreClass: b[1] >> 3 & 3,
+    opacity: b[1] >> 5 & 7,
+    bullet: b[2] & 15,
     fireTiming: b[2] >> 4 & 3,
+    animInterval: KIDS_ANIM_INTERVALS[b[2] >> 6 & 3],
     fireInterval: b[2] >> 6 & 3,
-    shotPattern: (b[3] & 15) + 1
+    shotPattern: b[3] & 15,
+    aim: (b[3] & 16) !== 0,
+    item: b[3] >> 5 & 7,
+    rotation: b[4] & 7,
+    scale: b[4] >> 3 & 7,
+    ground: (b[4] & 128) !== 0
+  };
+}
+var KIDS_ANIM_INTERVALS = Object.freeze([30, 10, 2, 0]);
+function decodeKidsBoss(bytes, at, index) {
+  const head = bytes[at];
+  const weapons = [];
+  for (let w = 0; w < 3; w++) {
+    const o = at + 3 + w * 4;
+    weapons.push({
+      dx: bytes[o] << 24 >> 24,
+      dy: bytes[o + 1] << 24 >> 24,
+      bullet: bytes[o + 2] & 15,
+      timing: bytes[o + 2] >> 4 & 3,
+      pattern: bytes[o + 3] & 15,
+      aim: (bytes[o + 3] & 16) !== 0
+    });
+  }
+  return {
+    index,
+    phase: index + 1,
+    bytes: bytes.subarray(at, at + KIDS_BOSS_SIZE),
+    pattern: head & 15,
+    speedClass: head >> 4 & 3,
+    sizeClass: head >> 6,
+    size: KIDS_BOSS_SIZES[head >> 6],
+    hpClass: bytes[at + 1] & 3,
+    scoreClass: bytes[at + 1] >> 3 & 3,
+    opacity: bytes[at + 1] >> 5 & 7,
+    rotation: bytes[at + 2] & 7,
+    scale: bytes[at + 2] >> 3 & 7,
+    ground: (bytes[at + 2] & 128) !== 0,
+    weapons
   };
 }
 function decodeKidsRecords(data) {
@@ -8803,16 +8846,7 @@ function decodeKidsRecords(data) {
     const enemies = [];
     for (let i = 0; i < KIDS_RECORD_COUNT; i++) enemies.push(decodeKidsRecord(data, base + i * KIDS_RECORD_SIZE, i));
     const bosses = [];
-    for (let i = 0; i < KIDS_BOSS_COUNT; i++) {
-      const at = base + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE;
-      const head = data[at];
-      bosses.push({
-        index: i,
-        bytes: data.subarray(at, at + KIDS_BOSS_SIZE),
-        sizeClass: head >> 6,
-        size: KIDS_BOSS_SIZES[head >> 6]
-      });
-    }
+    for (let i = 0; i < KIDS_BOSS_COUNT; i++) bosses.push(decodeKidsBoss(data, base + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE, i));
     stages.push({ stage: s, enemies, bosses });
   }
   return stages;
@@ -9217,29 +9251,109 @@ var KIDS_BOSS_GRID = 8;
 var KIDS_BOSS_ART_CELLS = Object.freeze([[4, 4], [8, 4], [4, 8], [8, 8]]);
 var KIDS_BOSS_FOOTPRINT = Object.freeze([[2, 2], [4, 2], [2, 4], [4, 4]]);
 var KIDS_SHIP_LAYOUT = Object.freeze({
-  ship1: Object.freeze({ poses: [0, 4, 8], shot: 12 }),
-  ship2: Object.freeze({ poses: [32, 36, 40], shot: 44 }),
-  title1: Object.freeze({ at: 64, w: 8, h: 4 }),
+  ship1: Object.freeze({ poses: [0, 4, 8], shot: 12, bomb: 16 }),
+  ship2: Object.freeze({ poses: [32, 36, 40], shot: 44, bomb: 48 }),
+  title1: Object.freeze({ at: 64, w: 8, h: 6 }),
   title2: Object.freeze({ at: 112, w: 8, h: 6 }),
   items: Object.freeze({ at: 160, count: 6 }),
   blast: Object.freeze({ at: 166, frames: 6 }),
   bullets: Object.freeze({ at: 190, count: 7, frames: 4 })
 });
+function blastWords(f) {
+  const base = f < 3 ? 166 + 2 * f : 178 + 2 * (f - 3);
+  return [base, base + 1, base + 6, base + 7];
+}
+function bombWords(at, f) {
+  return [at + f * 2, at + f * 2 + 1, at + 8 + f * 2, at + 8 + f * 2 + 1];
+}
 var KIDS_SHIP_TABLE_WORDS = KIDS_SHIP_TABLE_BYTES / 2;
+var KIDS_ITEM_SLOTS = Object.freeze([
+  Object.freeze({ name: "POWER UP", frames: ["powerupBig0.gif", "powerupBig0.png", "powerupBig1.gif"], fallback: "square", type: 7 }),
+  Object.freeze({ name: "SPEED UP", frames: ["speedupItem0.gif", "speedupItem0.png", "speedupItem1.gif"], fallback: "square", type: 8 }),
+  Object.freeze({ name: "BOMB UP", frames: ["barrierItem0.gif", "barrierItem0.png", "barrierItem1.gif"], fallback: "square", type: 5 }),
+  Object.freeze({ name: "1UP", frames: ["1upItem0.gif", "1upItem0.png"], fallback: "ship", type: 4 }),
+  Object.freeze({ name: "1000PTS", frames: ["scoreItem0.gif", "scoreItem0.png"], fallback: "coin", type: 6 }),
+  Object.freeze({ name: "50000PTS", frames: ["scoreItem1.gif", "scoreItem1.png"], fallback: "bigCoin", type: 6 })
+]);
+var KIDS_STOCK_ITEM_FRAMES = Object.freeze(KIDS_ITEM_SLOTS.flatMap((s) => s.frames));
 var KIDS_MOVE_STRAIGHT = 4;
 var KIDS_STRAIGHT_SPEEDS = Object.freeze([1, 2, 4.5]);
 var RUNTIME_TO_KIDS_SPEED = 0.5;
-var KIDS_HP_UNITS = Object.freeze([256, 38400, 102400, 512e3]);
-var KIDS_SHOT_UNITS = 5120;
-var KIDS_SCORE_TIERS = Object.freeze([350, 2e3]);
-var KIDS_FIRE_INTERVAL_BITS = 64;
-var KIDS_BOSS_TEMPLATES = Object.freeze([
-  Object.freeze([17, 105, 0, 0, 27, 33, 26, 246, 6, 16, 17, 13, 6, 16, 16]),
-  Object.freeze([90, 9, 0, 230, 255, 32, 19, 25, 255, 32, 19, 0, 0, 19, 6]),
-  Object.freeze([130, 9, 136, 250, 244, 38, 9, 232, 244, 20, 16, 12, 243, 20, 16]),
-  Object.freeze([220, 129, 0, 0, 53, 39, 0, 0, 226, 19, 3, 255, 2, 17, 3])
+var KIDS_GROUND_MARK = 128;
+var KIDS_HP_TABLES = Object.freeze([
+  Object.freeze([256, 38400, 102400, 512e3]),
+  Object.freeze([12800, 76800, 204800, 512e3]),
+  Object.freeze([12800, 76800, 204800, 512e3]),
+  Object.freeze([25600, 153600, 409600, 512e3])
 ]);
-var KIDS_BOSS_UNUSED = Object.freeze([16, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+var KIDS_SHOT_UNITS = 5120;
+var KIDS_SCORE_TABLES = Object.freeze([
+  Object.freeze([50, 100, 200]),
+  Object.freeze([500, 1e3, 2e3]),
+  Object.freeze([500, 1e3, 2e3]),
+  Object.freeze([2e3, 5e3, 1e4])
+]);
+var KIDS_ITEM_FOR_DROP = Object.freeze({ 1: 1, 2: 1, 3: 2, 9: 3 });
+var KIDS_BOSS_HP = Object.freeze([512e3, 2304e3, 4608e3, 768e4]);
+var KIDS_BOSS_SCORE = Object.freeze([5e4, 11e4, 55e4]);
+var KIDS_BOSS_SPEEDS = 3;
+function encodeKidsRecord({
+  movement = KIDS_MOVE_STRAIGHT,
+  variant = 0,
+  fromBehind = false,
+  hardness = 0,
+  scoreTier = 0,
+  opacity = 0,
+  bullet = 0,
+  timing = 0,
+  animIndex = 1,
+  shotPattern = 0,
+  aim = false,
+  item = 0,
+  rotation = 0,
+  scale = 0,
+  ground = false
+} = {}) {
+  return [
+    movement & 31 | variant % 3 << 5 | (fromBehind ? 128 : 0),
+    hardness & 7 | (scoreTier & 3) << 3 | opacity % 5 << 5,
+    bullet % 9 | (timing & 3) << 4 | (animIndex & 3) << 6,
+    shotPattern & 15 | (aim ? 16 : 0) | (item & 7) << 5,
+    rotation % 5 | scale % 5 << 3 | (ground ? KIDS_GROUND_MARK : 0)
+  ];
+}
+function encodeKidsBoss({
+  pattern = 0,
+  speed = 1,
+  sizeClass = 3,
+  hpClass = 1,
+  scoreClass = 1,
+  opacity = 0,
+  rotation = 0,
+  scale = 0,
+  ground = false,
+  weapons = []
+} = {}) {
+  const b = new Uint8Array(KIDS_BOSS_SIZE);
+  b[0] = pattern & 15 | speed % KIDS_BOSS_SPEEDS << 4 | (sizeClass & 3) << 6;
+  b[1] = hpClass & 3 | (scoreClass & 3) << 3 | opacity % 5 << 5;
+  b[2] = rotation % 5 | scale % 5 << 3 | (ground ? 128 : 0);
+  for (let w = 0; w < 3; w++) {
+    const wp = weapons[w] || { dx: 0, dy: 0, bullet: 0, timing: 0, pattern: 0, aim: false };
+    b[3 + w * 4] = wp.dx & 255;
+    b[4 + w * 4] = wp.dy & 255;
+    b[5 + w * 4] = wp.bullet % 9 | (wp.timing & 3) << 4;
+    b[6 + w * 4] = wp.pattern & 15 | (wp.aim ? 16 : 0);
+  }
+  return b;
+}
+var KIDS_BOSS_BEHAVIOUR = Object.freeze([
+  Object.freeze({ pattern: 1, speed: 1, weapons: [{ dx: 0, dy: 27, bullet: 1, timing: 2, pattern: 6, aim: true }, { dx: 6, dy: 32, bullet: 1, timing: 1, pattern: 13, aim: false }, { dx: 6, dy: 16, bullet: 0, timing: 1, pattern: 0, aim: true }] }),
+  Object.freeze({ pattern: 10, speed: 1, weapons: [{ dx: -26, dy: -1, bullet: 0, timing: 2, pattern: 3, aim: true }, { dx: 25, dy: -1, bullet: 0, timing: 2, pattern: 3, aim: true }, { dx: 0, dy: 0, bullet: 3, timing: 1, pattern: 6, aim: false }] }),
+  Object.freeze({ pattern: 2, speed: 0, weapons: [{ dx: -6, dy: -12, bullet: 6, timing: 2, pattern: 9, aim: false }, { dx: -24, dy: -12, bullet: 4, timing: 1, pattern: 0, aim: true }, { dx: 12, dy: -13, bullet: 4, timing: 1, pattern: 0, aim: true }] }),
+  Object.freeze({ pattern: 12, speed: 1, weapons: [{ dx: 0, dy: 53, bullet: 7, timing: 2, pattern: 0, aim: false }, { dx: 0, dy: -30, bullet: 3, timing: 0, pattern: 3, aim: true }, { dx: -1, dy: 2, bullet: 1, timing: 1, pattern: 3, aim: false }] })
+]);
+var KIDS_BOSS_DEFAULT = Object.freeze(Array.from(encodeKidsBoss({ pattern: 0, speed: 1, sizeClass: 0, hpClass: 1, scoreClass: 1 })));
 var KIDS_CONFIG_TEMPLATE = Object.freeze([
   0,
   162,
@@ -9654,6 +9768,25 @@ function encodeKidsIcon(frame) {
   }
   return { clut, pixels };
 }
+function coinSprite(size = 12) {
+  const dim2 = 16;
+  const rgba = new Uint8Array(dim2 * dim2 * 4);
+  const c = (dim2 - 1) / 2, r = size / 2;
+  for (let y = 0; y < dim2; y++) {
+    for (let x = 0; x < dim2; x++) {
+      const d = Math.hypot(x - c, y - c);
+      if (d > r) continue;
+      const o = (y * dim2 + x) * 4;
+      const rim = d > r - 1.6;
+      const glint = x - c < -r * 0.25 && y - c < -r * 0.25 && d < r - 2;
+      rgba[o] = rim ? 150 : glint ? 255 : 250;
+      rgba[o + 1] = rim ? 95 : glint ? 250 : 200;
+      rgba[o + 2] = rim ? 20 : glint ? 190 : 40;
+      rgba[o + 3] = 255;
+    }
+  }
+  return { w: dim2, h: dim2, rgba };
+}
 function defaultKidsIcon() {
   const rgba = new Uint8Array(ICON_DIM * ICON_DIM * 4);
   const rows = [
@@ -9876,11 +10009,17 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
       shotArt.push(f.w > f.h ? { ...rotateCcwRgba(f), key: f.key } : f);
     }
   }
-  const shotFrame = shotArt[0] || shotSprite(16, 16);
-  const shotWords = bankFrame(fitIndexed(shotFrame, 16, 32), 16, 32, "player shot") || new Uint16Array(2).fill(KIDS_BLANK);
+  const shotFrames = spreadFrames(shotArt.length ? shotArt : [shotSprite(16, 16)], 4);
+  const shotWords = shotFrames.map((f) => (bankFrame(fitIndexed(f, 16, 16), 16, 16, "player shot") || new Uint16Array([KIDS_BLANK]))[0]);
+  const blastRings = blastFrames(32, KIDS_SHIP_LAYOUT.blast.frames);
+  const blastCells = blastRings.map((f) => bankFrame(quantizeKidsFrame(f), 32, 32, "blast") || new Uint16Array(4).fill(KIDS_BLANK));
   for (const ship of [KIDS_SHIP_LAYOUT.ship1, KIDS_SHIP_LAYOUT.ship2]) {
-    shipWords.set(shotWords, ship.shot);
-    shipWords.set(shotWords, ship.shot + 2);
+    shotWords.forEach((w, i) => {
+      shipWords[ship.shot + i] = w;
+    });
+    for (let f = 0; f < 4; f++) bombWords(ship.bomb, f).forEach((at, i) => {
+      shipWords[at] = blastCells[f][i];
+    });
   }
   const bulletArt = [];
   const usedLetters = /* @__PURE__ */ new Set();
@@ -9902,20 +10041,47 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
   }
   const bulletTints = [[255, 240, 120], [120, 200, 255], [255, 120, 200], [140, 255, 140], [255, 170, 60], [200, 200, 255], [255, 255, 255]];
   const bulletSlots = [];
+  const quadOfArt = /* @__PURE__ */ new Map();
   for (let q = 0; q < KIDS_SHIP_LAYOUT.bullets.count; q++) {
     const frames = bulletArt.length ? bulletArt[q % bulletArt.length] : [shotSprite(16, 16, bulletTints[q])];
+    if (bulletArt.length && !quadOfArt.has(frames[0].key)) quadOfArt.set(frames[0].key, q);
     const chosen = spreadFrames(frames, KIDS_SHIP_LAYOUT.bullets.frames);
     const out = chosen.map((f) => (bankFrame(fitIndexed(f, 16, 16), 16, 16, "enemy bullet") || new Uint16Array([KIDS_BLANK]))[0]);
     shipWords.set(out, KIDS_SHIP_LAYOUT.bullets.at + q * KIDS_SHIP_LAYOUT.bullets.frames);
     bulletSlots.push(frames[0].key || "procedural");
   }
-  blastFrames(32, KIDS_SHIP_LAYOUT.blast.frames).forEach((f, i) => {
-    const w = bankFrame(quantizeKidsFrame(f), 32, 32, "blast") || new Uint16Array(4).fill(KIDS_BLANK);
-    shipWords.set(w, KIDS_SHIP_LAYOUT.blast.at + i * 4);
-  });
-  [7, 8, 5, 4, 6, 6].forEach((type, i) => {
-    const w = bankFrame(quantizeKidsFrame(itemIcon(type)), 16, 16, "items") || new Uint16Array([KIDS_BLANK]);
+  blastCells.forEach((cells, f) => blastWords(f).forEach((at, i) => {
+    shipWords[at] = cells[i];
+  }));
+  const itemSources = KIDS_ITEM_SLOTS.map((slot, i) => {
+    let frame = null, source = null;
+    for (const name2 of slot.frames) {
+      const f = lookup(name2);
+      if (f) {
+        frame = f;
+        source = f.key;
+        break;
+      }
+    }
+    if (!frame && slot.fallback === "ship" && centre) {
+      frame = centre;
+      source = "ship";
+    }
+    if (!frame && slot.fallback === "coin") {
+      frame = coinSprite(11);
+      source = "coin";
+    }
+    if (!frame && slot.fallback === "bigCoin") {
+      frame = coinSprite(14);
+      source = "coin";
+    }
+    if (!frame) {
+      frame = itemIcon(slot.type);
+      source = "square";
+    }
+    const w = bankFrame(fitIndexed(frame, 16, 16), 16, 16, "items") || new Uint16Array([KIDS_BLANK]);
     shipWords[KIDS_SHIP_LAYOUT.items.at + i] = w[0];
+    return source;
   });
   const built = stages.map((st, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
@@ -9925,8 +10091,17 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
     const counts = KIDS_APPEAR_CLASSES.map(() => 0);
     const records = /* @__PURE__ */ new Map();
     const usage = /* @__PURE__ */ new Map();
-    for (const row of spawnRows) for (const cell of row) if (cell && cell !== "00") usage.set(cell.slice(0, -1), (usage.get(cell.slice(0, -1)) || 0) + 1);
-    const letters = [...usage.keys()].sort((a, b) => usage.get(b) - usage.get(a));
+    for (const row of spawnRows) {
+      for (const cell of row) {
+        if (!cell || cell === "00") continue;
+        const letter = cell.slice(0, -1), digit = cell.slice(-1);
+        if (!usage.has(letter)) usage.set(letter, { count: 0, digits: /* @__PURE__ */ new Map() });
+        const u = usage.get(letter);
+        u.count++;
+        u.digits.set(digit, (u.digits.get(digit) || 0) + 1);
+      }
+    }
+    const letters = [...usage.keys()].sort((a, b) => usage.get(b).count - usage.get(a).count);
     for (const letter of letters) {
       const rec = enemyData[`enemy${letter}`];
       if (!rec) {
@@ -9940,40 +10115,63 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
       if (frames.length && (maxW > 64 || maxH > 64)) {
         warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 \u2014 downscaled`);
       }
-      let klass = kidsClassFor(maxW, maxH);
-      while (klass < KIDS_APPEAR_CLASSES.length && counts[klass] >= KIDS_APPEAR_CLASSES[klass].count) klass++;
-      if (klass >= KIDS_APPEAR_CLASSES.length) {
-        warn(`${st.key}: no free record for enemy${letter} (${rec.name || "?"}) \u2014 a stage holds 16 + 8 + 8 + 8 \u2014 cells left empty`);
-        continue;
-      }
-      const id = counts[klass]++;
-      const strip = KIDS_SPRITE_STRIPS[klass];
-      const bw = strip.w * CG_CELL, bh = strip.h * CG_CELL;
-      const stripWords = new Uint16Array(KIDS_SPRITE_ENTRY_WORDS).fill(KIDS_BLANK);
-      spreadFrames(frames, strip.frames).forEach((f, fi) => {
-        const cells = bankFrame(fitIndexed(f, bw, bh), bw, bh, `enemy${letter}`);
-        if (!cells) return;
-        for (let cy = 0; cy < strip.h; cy++) {
-          for (let cx = 0; cx < strip.w; cx++) stripWords[cy * strip.stripW + fi * strip.w + cx] = cells[cy * strip.w + cx];
-        }
-      });
+      const artClass = kidsClassFor(maxW, maxH);
+      const strips = /* @__PURE__ */ new Map();
+      const stripFor = (klass) => {
+        if (strips.has(klass)) return strips.get(klass);
+        const strip = KIDS_SPRITE_STRIPS[klass];
+        const bw = strip.w * CG_CELL, bh = strip.h * CG_CELL;
+        const stripWords = new Uint16Array(KIDS_SPRITE_ENTRY_WORDS).fill(KIDS_BLANK);
+        spreadFrames(frames, strip.frames).forEach((f, fi) => {
+          const cells = bankFrame(fitIndexed(f, bw, bh), bw, bh, `enemy${letter}`);
+          if (!cells) return;
+          for (let cy = 0; cy < strip.h; cy++) {
+            for (let cx = 0; cx < strip.w; cx++) stripWords[cy * strip.stripW + fi * strip.w + cx] = cells[cy * strip.w + cx];
+          }
+        });
+        strips.set(klass, stripWords);
+        return stripWords;
+      };
       const speed = (Number.isFinite(rec.speed) ? rec.speed : 1) * RUNTIME_TO_KIDS_SPEED;
-      const variant = nearestIndex2(KIDS_STRAIGHT_SPEEDS, speed);
-      const hits = rec.hp === "infinity" ? 100 : Math.max(1, Number(rec.hp) || 1);
-      const hpIndex = nearestIndex2(KIDS_HP_UNITS, hits * KIDS_SHOT_UNITS);
-      const score = Number(rec.score) || 100;
-      const tier = score < KIDS_SCORE_TIERS[0] ? 0 : score < KIDS_SCORE_TIERS[1] ? 1 : 2;
+      const hits = rec.hp === "infinity" ? Infinity : Math.max(1, Number(rec.hp) || 1);
       const interval = Number(rec.interval);
       const fires = Number.isFinite(interval) && interval > 0;
       const timing = !fires ? 0 : interval >= 90 ? 1 : interval >= 45 ? 2 : 3;
-      const bytes = [
-        KIDS_MOVE_STRAIGHT | variant << 5,
-        hpIndex & 7 | (tier & 3) << 3,
-        KIDS_FIRE_INTERVAL_BITS | timing << 4,
-        0,
-        0
-      ];
-      records.set(letter, { klass, id, bytes, name: rec.name || `enemy${letter}`, strip: stripWords, frames: frames.length });
+      const proj = rec.projectileData && Array.isArray(rec.projectileData.texture) ? rec.projectileData.texture[0] : null;
+      const bulletKey = proj ? (lookup(proj) || {}).key : null;
+      const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
+      let first = null;
+      for (const digit of digits) {
+        let klass = artClass;
+        while (klass < KIDS_APPEAR_CLASSES.length && counts[klass] >= KIDS_APPEAR_CLASSES[klass].count) klass++;
+        const item = KIDS_ITEM_FOR_DROP[digit] || 0;
+        if (klass >= KIDS_APPEAR_CLASSES.length) {
+          if (first) {
+            warn(`${st.key}: enemy${letter} carries several drop digits and the stage is out of records \u2014 its drop-${digit} cells drop ${first.item ? KIDS_ITEM_SLOTS[first.item - 1].name : "nothing"} instead`);
+            records.set(letter + digit, first);
+          } else {
+            warn(`${st.key}: no free record for enemy${letter} (${rec.name || "?"}) \u2014 a stage holds 16 + 8 + 8 + 8 \u2014 cells left empty`);
+          }
+          continue;
+        }
+        const id = counts[klass]++;
+        const hardness = hits === Infinity ? 3 : nearestIndex2(KIDS_HP_TABLES[klass].slice(0, 3), hits * KIDS_SHOT_UNITS);
+        const scoreTier = nearestIndex2(KIDS_SCORE_TABLES[klass], Number(rec.score) || KIDS_SCORE_TABLES[klass][1]);
+        const bytes = encodeKidsRecord({
+          movement: KIDS_MOVE_STRAIGHT,
+          variant: nearestIndex2(KIDS_STRAIGHT_SPEEDS, speed),
+          hardness,
+          scoreTier,
+          bullet: bulletKey && quadOfArt.has(bulletKey) ? quadOfArt.get(bulletKey) : 0,
+          timing,
+          animIndex: Number.isFinite(rec.frameRate) && rec.frameRate > 0 ? nearestIndex2(KIDS_ANIM_INTERVALS, 60 / rec.frameRate) : 1,
+          aim: fires,
+          item
+        });
+        const entry = { klass, id, bytes, name: rec.name || `enemy${letter}`, letter, digit, strip: stripFor(klass), frames: frames.length, item };
+        records.set(letter + digit, entry);
+        if (!first) first = entry;
+      }
     }
     const cellAt = (row, col) => row * KIDS_APPEAR_COLUMNS + col;
     const rectFree = (row, col, w, h) => {
@@ -9998,7 +10196,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
       const scrollRow = waveRows ? clamp2(Math.round(waveRows[k] / 2), 0, KIDS_MAX_SPAWN_ROW) : Math.min(KIDS_MAX_SPAWN_ROW, KIDS_FIRST_SPAWN_ROW + k * KIDS_ROW_STEP);
       row.forEach((cell, c) => {
         if (!cell || cell === "00") return;
-        const rec = records.get(cell.slice(0, -1));
+        const rec = records.get(cell);
         if (!rec) return;
         const [w, h] = KIDS_APPEAR_CELLS[rec.klass];
         const col = mapKidsColumn(c, width, w);
@@ -10024,7 +10222,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
     if (dropped) warn(`${st.key}: ${dropped} placement${dropped === 1 ? "" : "s"} overlapped another enemy's cells and ${dropped === 1 ? "was" : "were"} left out`);
     let boss = null;
     const bossWords = [new Uint16Array(KIDS_SPRITE_BOSS_WORDS).fill(KIDS_BLANK), new Uint16Array(KIDS_SPRITE_BOSS_WORDS).fill(KIDS_BLANK)];
-    const bossRecords = [Uint8Array.from(KIDS_BOSS_UNUSED), Uint8Array.from(KIDS_BOSS_UNUSED)];
+    const bossRecords = [Uint8Array.from(KIDS_BOSS_DEFAULT), Uint8Array.from(KIDS_BOSS_DEFAULT)];
     const bossRec = bossData[`boss${s}`];
     if (bossRec) {
       const names = bossRec.anim && Array.isArray(bossRec.anim.idle) ? [...bossRec.anim.idle, ...Array.isArray(bossRec.anim.attack) ? bossRec.anim.attack : []] : Array.isArray(bossRec.texture) ? bossRec.texture : [];
@@ -10037,15 +10235,19 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
         warn(`${st.key}: boss (${bossRec.name || "?"}) is ${maxW}x${maxH}; its art is ${aw * CG_CELL}x${ah * CG_CELL} \u2014 downscaled`);
       }
       if (!frames.length) warn(`${st.key}: boss (${bossRec.name || "?"}) has no art in the atlas \u2014 its sprite is unpainted`);
-      if (frames.length) {
-        const cells = bankFrame(fitIndexed(frames[0], aw * CG_CELL, ah * CG_CELL), aw * CG_CELL, ah * CG_CELL, `boss${s}`);
-        if (cells) {
-          for (let cy = 0; cy < ah; cy++) for (let cx = 0; cx < aw; cx++) bossWords[0][cy * KIDS_BOSS_GRID + cx] = cells[cy * aw + cx];
-        }
+      const phaseFrames = frames.length ? [frames[0], frames[1] || frames[0]] : [];
+      phaseFrames.forEach((f, phase) => {
+        const cells = bankFrame(fitIndexed(f, aw * CG_CELL, ah * CG_CELL), aw * CG_CELL, ah * CG_CELL, `boss${s}`);
+        if (!cells) return;
+        for (let cy = 0; cy < ah; cy++) for (let cx = 0; cx < aw; cx++) bossWords[phase][cy * KIDS_BOSS_GRID + cx] = cells[cy * aw + cx];
+      });
+      const hits = bossRec.hp === "infinity" ? Infinity : Math.max(1, Number(bossRec.hp) || 100);
+      const hpClass = hits === Infinity ? 3 : nearestIndex2(KIDS_BOSS_HP, hits / 2 * KIDS_SHOT_UNITS);
+      const scoreClass = nearestIndex2(KIDS_BOSS_SCORE, Number(bossRec.score) || KIDS_BOSS_SCORE[1]);
+      const behaviour = KIDS_BOSS_BEHAVIOUR[sizeClass];
+      for (let phase = 0; phase < 2; phase++) {
+        bossRecords[phase] = encodeKidsBoss({ ...behaviour, sizeClass, hpClass, scoreClass });
       }
-      const tpl = KIDS_BOSS_TEMPLATES[sizeClass];
-      bossRecords[0] = Uint8Array.from(tpl);
-      bossRecords[0][0] = tpl[0] & 63 | sizeClass << 6;
       const [fw, fh] = KIDS_BOSS_FOOTPRINT[sizeClass];
       let row = Math.min(KIDS_APPEAR_ROWS - 1, Math.max(lastRow + KIDS_BOSS_ROW_GAP, fh - 1));
       const col = KIDS_BOSS_COLUMN[sizeClass];
@@ -10054,7 +10256,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
         warn(`${st.key}: no room left for the boss past the last wave \u2014 it is left out`);
       } else {
         stamp(row, col, fw, fh, KIDS_APPEAR_PRESENT | KIDS_APPEAR_BOSS_CLASS << 4);
-        boss = { name: bossRec.name || `boss${s}`, sizeClass, row, col, frames: frames.length };
+        boss = { name: bossRec.name || `boss${s}`, sizeClass, row, col, frames: frames.length, hits, hpClass };
         lastRow = Math.max(lastRow, row);
       }
     }
@@ -10123,7 +10325,8 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
       }
     }
     const scroll = new Uint8Array(KIDS_SCROLL_STAGE_BYTES);
-    const haltUnit = boss ? Math.floor(boss.row * 32 / KIDS_SCROLL_UNIT_PIXELS) : KIDS_SCROLL_UNITS;
+    const haltRow = boss ? boss.row : Math.min(KIDS_APPEAR_ROWS - 1, lastRow + KIDS_BOSS_ROW_GAP);
+    const haltUnit = Math.floor(haltRow * 32 / KIDS_SCROLL_UNIT_PIXELS);
     for (let u = 0; u < KIDS_SCROLL_UNITS; u++) {
       const nibble = u < haltUnit ? KIDS_SCROLL_RUN : KIDS_SCROLL_HALT;
       if (u & 1) scroll[u >> 1] |= nibble << 4;
@@ -10132,17 +10335,9 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
     return { key: st.key, appear, records, bossWords, bossRecords, boss, mapWords, chips, scroll, placed, dropped, lastRow };
   });
   let title = "none";
-  if (opts.title1 && opts.title1.rgba) {
-    const t = KIDS_SHIP_LAYOUT.title1;
-    const w = bankFrame(fitIndexed(opts.title1, t.w * CG_CELL, t.h * CG_CELL), t.w * CG_CELL, t.h * CG_CELL, "title");
-    if (w) {
-      shipWords.set(w, t.at);
-      title = "uploaded";
-    }
-  }
-  if (opts.title2 && opts.title2.rgba) {
-    const t = KIDS_SHIP_LAYOUT.title2;
-    const w = bankFrame(fitIndexed(opts.title2, t.w * CG_CELL, t.h * CG_CELL), t.w * CG_CELL, t.h * CG_CELL, "title");
+  for (const [art3, t] of [[opts.title1, KIDS_SHIP_LAYOUT.title1], [opts.title2, KIDS_SHIP_LAYOUT.title2]]) {
+    if (!art3 || !art3.rgba) continue;
+    const w = bankFrame(fitIndexed(art3, t.w * CG_CELL, t.h * CG_CELL), t.w * CG_CELL, t.h * CG_CELL, "title");
     if (w) {
       shipWords.set(w, t.at);
       title = "uploaded";
@@ -10154,11 +10349,11 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
     data.set(b.scroll, KIDS_REGION.scroll.offset + s * KIDS_SCROLL_STAGE_BYTES);
     data.set(b.appear, KIDS_REGION.appear.offset + s * KIDS_APPEAR_STAGE_BYTES);
     const recBase = KIDS_REGION.records.offset + s * KIDS_RECORDS_STAGE_BYTES;
-    for (const r of b.records.values()) data.set(r.bytes, recBase + (KIDS_CLASS_BASE[r.klass] + r.id) * KIDS_RECORD_SIZE);
+    for (const r of new Set(b.records.values())) data.set(r.bytes, recBase + (KIDS_CLASS_BASE[r.klass] + r.id) * KIDS_RECORD_SIZE);
     b.bossRecords.forEach((rec, i) => data.set(rec, recBase + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE));
     const sprBase = KIDS_REGION.sprites.offset + s * KIDS_SPRITE_STAGE_BYTES;
     for (let i = 0; i < KIDS_SPRITE_STAGE_BYTES; i += 2) putU16le3(data, sprBase + i, KIDS_BLANK);
-    for (const r of b.records.values()) {
+    for (const r of new Set(b.records.values())) {
       putWords(sprBase + KIDS_SPRITE_CLASS_OFFSETS[r.klass] + r.id * KIDS_SPRITE_ENTRY_WORDS * 2, r.strip);
     }
     b.bossWords.forEach((w, i) => putWords(sprBase + KIDS_SPRITE_BOSS_OFFSETS[i], w));
@@ -10167,7 +10362,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
     const sprBase = KIDS_REGION.sprites.offset + s * KIDS_SPRITE_STAGE_BYTES;
     for (let i = 0; i < KIDS_SPRITE_STAGE_BYTES; i += 2) putU16le3(data, sprBase + i, KIDS_BLANK);
     const recBase = KIDS_REGION.records.offset + s * KIDS_RECORDS_STAGE_BYTES;
-    for (let i = 0; i < 2; i++) data.set(KIDS_BOSS_UNUSED, recBase + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE);
+    for (let i = 0; i < 2; i++) data.set(KIDS_BOSS_DEFAULT, recBase + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE);
     data.fill(KIDS_SCROLL_RUN | KIDS_SCROLL_RUN << 4, KIDS_REGION.scroll.offset + s * KIDS_SCROLL_STAGE_BYTES, KIDS_REGION.scroll.offset + (s + 1) * KIDS_SCROLL_STAGE_BYTES);
   }
   putWords(KIDS_REGION.ship.offset, shipWords);
@@ -10208,12 +10403,13 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
         key: b.key,
         placements: b.placed,
         dropped: b.dropped,
-        records: [...b.records.values()].map((r) => ({ name: r.name, klass: r.klass, id: r.id, frames: r.frames })),
-        boss: b.boss,
+        records: [...new Set(b.records.values())].map((r) => ({ name: r.name, cell: r.letter + r.digit, klass: r.klass, id: r.id, frames: r.frames, ...r.item ? { item: KIDS_ITEM_SLOTS[r.item - 1].name } : {} })),
+        boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, frames: b.boss.frames, hpClass: b.boss.hpClass } : null,
         chips: b.chips,
         lastRow: b.lastRow
       })),
       ship: shipSource,
+      items: itemSources,
       bullets: bulletSlots,
       title,
       backgroundSet,
@@ -10285,6 +10481,13 @@ var PLUS_MAP_HALVES = Object.freeze([
   { chips: [0, 1, 2, 3, 4, 5, 6, 7], flags: 8 },
   { chips: [9, 10, 11, 12, 13, 14, 15, 16], flags: 17 }
 ]);
+var PLUS_APPEAR_RECORDS = 256;
+var PLUS_APPEAR_RECORD_SIZE = 14;
+var PLUS_APPEAR_ROW_TABLE = 1024;
+var PLUS_APPEAR_END_MARK = 255;
+var PLUS_ENEMY_SIZE = 8;
+var PLUS_BOSS_OFFSET = 480;
+var PLUS_BOSS_SIZE = 32;
 var PLUS_APPEAR_CLASSES = Object.freeze([
   { nibble: 8, size: "16x16", base: 0, mask: 15 },
   { nibble: 9, size: "32x16", base: 16, mask: 15 },
@@ -10292,6 +10495,7 @@ var PLUS_APPEAR_CLASSES = Object.freeze([
   { nibble: 11, size: "32x32", base: 48, mask: 7 },
   { nibble: 12, size: "64x64", base: 56, mask: 3 }
 ]);
+var PLUS_APPEAR_BOSS_NIBBLE = 13;
 var PLUS_ITEM_EFFECTS = Object.freeze([
   null,
   "weapon 0",
@@ -10525,6 +10729,26 @@ function decodePlusPalettes(block) {
   }
   return rows;
 }
+function plusPaletteRow(what, stage = 0) {
+  switch (what) {
+    case "map":
+      return stage;
+    case "enemy":
+      return 6 + stage;
+    case "boss":
+      return 12 + stage;
+    case "player":
+      return 18;
+    case "title":
+      return 19;
+    case "shot":
+      return 20;
+    case "effect":
+      return 21;
+    default:
+      return null;
+  }
+}
 function decodePlusGraphics(block) {
   const indexed = new Uint8Array(PLUS_GRAPHICS_WIDTH * PLUS_GRAPHICS_HEIGHT);
   let used = 0;
@@ -10711,8 +10935,44 @@ function parsePlusSave(block, { filename = "" } = {}) {
 }
 
 // packages/shmup-engine/src/psx/plus-edit.js
+function putU16le4(bytes, at, v) {
+  bytes[at] = v & 255;
+  bytes[at + 1] = v >> 8 & 255;
+}
 var PLUS_UNSEALED_GROUP = 19;
 var PLUS_UNSEALED_OFFSET = PLUS_CHECKSUM_OFFSET + PLUS_UNSEALED_GROUP * 2;
+var PLUS_SEALED_GROUPS = PLUS_CHECKED_GROUPS;
+function assertPlusBlock(block) {
+  if (!(block instanceof Uint8Array)) {
+    throw new Error(`a Dezaemon+ block must be a Uint8Array; got ${typeof block}`);
+  }
+  if (block.length !== PLUS_BLOCK_SIZE) {
+    throw new Error(`editing needs the whole ${PLUS_BLOCK_SIZE}-byte block; got ${block.length}`);
+  }
+}
+function sealPlusChecksums(block) {
+  assertPlusBlock(block);
+  const { computed } = plusChecksums(block);
+  const words = [];
+  const groups = [];
+  for (let group = 0; group < PLUS_SEALED_GROUPS; group++) {
+    const offset = PLUS_CHECKSUM_OFFSET + group * 2;
+    const before = u16le(block, offset);
+    const after = computed[group];
+    if (before === after) continue;
+    putU16le4(block, offset, after);
+    words.push({ group, offset, before, after });
+    groups.push(group);
+  }
+  return {
+    words,
+    groups,
+    bytes: words.length * 2,
+    unsealedGroup: PLUS_UNSEALED_GROUP,
+    unsealedOffset: PLUS_UNSEALED_OFFSET,
+    ok: plusChecksums(block).ok
+  };
+}
 var GLOBAL_PIECE = Object.freeze(Object.fromEntries(PLUS_GLOBAL_LAYOUT.map((p) => [p.name, p])));
 var GRAPHICS_ROW_BYTES = PLUS_GRAPHICS_WIDTH / 2;
 var GROUP_TABLES = Object.freeze({
@@ -10721,6 +10981,839 @@ var GROUP_TABLES = Object.freeze({
   ship: "shipGroup"
 });
 var PLUS_SHIP_GROUP_FORCED = Object.freeze([61, 62, 63]);
+
+// packages/shmup-engine/src/psx/plus-write.js
+var PLUS_TILE_COLS = 16;
+var PLUS_TILE_ROWS = 32;
+var PLUS_TILE_COUNT = PLUS_TILE_COLS * PLUS_TILE_ROWS;
+var PLUS_TILE_CAPACITY = PLUS_TILE_COUNT - 4;
+var PLUS_ROW_PITCH = 128;
+var PLUS_EMPTY_TILE = 1023;
+var PLUS_GROUP_HFLIP = 16384;
+var PLUS_GROUP_VFLIP = 32768;
+var PLUS_LAYOUT_HFLIP = 64;
+var PLUS_LAYOUT_VFLIP = 128;
+function plusTileWord(n) {
+  const col = n % PLUS_TILE_COLS;
+  const row = Math.floor(n / PLUS_TILE_COLS) % 16;
+  const half = n >= 256 ? 1 : 0;
+  return col & 7 | (col & 8) << 4 | row << 3 | half << 8;
+}
+var PlusBankFullError = class extends Error {
+  constructor(what) {
+    super(`the graphics bank holds ${PLUS_TILE_CAPACITY} tiles and every one is taken (${what})`);
+    this.name = "PlusBankFullError";
+  }
+};
+function tileKey(t) {
+  let s = "";
+  for (let i = 0; i < t.length; i++) s += String.fromCharCode(t[i]);
+  return s;
+}
+function flipTileH(t) {
+  const out = new Uint8Array(256);
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) out[y * 16 + x] = t[y * 16 + 15 - x];
+  return out;
+}
+function flipTileV(t) {
+  const out = new Uint8Array(256);
+  for (let y = 0; y < 16; y++) out.set(t.subarray((15 - y) * 16, (16 - y) * 16), y * 16);
+  return out;
+}
+var PlusTileBank = class {
+  constructor() {
+    this.tiles = [];
+    this.byKey = /* @__PURE__ */ new Map();
+    this.shared = 0;
+  }
+  get used() {
+    return this.tiles.length;
+  }
+  get free() {
+    return PLUS_TILE_CAPACITY - this.tiles.length;
+  }
+  /** An all-zero tile is the empty word; otherwise the tile's number. */
+  add(indices) {
+    let blank = true;
+    for (let i = 0; i < indices.length; i++) if (indices[i]) {
+      blank = false;
+      break;
+    }
+    if (blank) return null;
+    const key = tileKey(indices);
+    const hit = this.byKey.get(key);
+    if (hit !== void 0) {
+      this.shared++;
+      return hit;
+    }
+    if (this.tiles.length >= PLUS_TILE_CAPACITY) throw new PlusBankFullError("a tile");
+    const n = this.tiles.length;
+    this.tiles.push(Uint8Array.from(indices));
+    this.byKey.set(key, n);
+    return n;
+  }
+  /** As add(), but a stored mirror serves: returns {tile, hflip, vflip} or null for blank. */
+  addFlippable(indices) {
+    let blank = true;
+    for (let i = 0; i < indices.length; i++) if (indices[i]) {
+      blank = false;
+      break;
+    }
+    if (blank) return null;
+    const hit = this.byKey.get(tileKey(indices));
+    if (hit !== void 0) {
+      this.shared++;
+      return { tile: hit, hflip: false, vflip: false };
+    }
+    const h = flipTileH(indices);
+    const hv = flipTileV(h);
+    const v = flipTileV(indices);
+    for (const [bytes, hflip, vflip] of [[h, true, false], [v, false, true], [hv, true, true]]) {
+      const m = this.byKey.get(tileKey(bytes));
+      if (m !== void 0) {
+        this.shared++;
+        return { tile: m, hflip, vflip };
+      }
+    }
+    return { tile: this.add(indices), hflip: false, vflip: false };
+  }
+  /** The 0x10000-byte 4bpp bitmap, low nibble = left pixel. */
+  toBitmap() {
+    const out = new Uint8Array(PLUS_GRAPHICS_SIZE);
+    this.tiles.forEach((t, n) => {
+      const col = n % PLUS_TILE_COLS, row = Math.floor(n / PLUS_TILE_COLS);
+      for (let y = 0; y < 16; y++) {
+        const base = (row * 16 + y) * PLUS_ROW_PITCH + col * 8;
+        for (let x = 0; x < 16; x += 2) out[base + (x >> 1)] = t[y * 16 + x] & 15 | (t[y * 16 + x + 1] & 15) << 4;
+      }
+    });
+    return out;
+  }
+};
+var PLUS_OPAQUE = 32768;
+var PLUS_COLORS_PER_ROW = 15;
+var PlusPaletteRow = class {
+  constructor(row) {
+    this.row = row;
+    this.frames = [];
+    this.words = null;
+    this.cands = null;
+    this.cache = /* @__PURE__ */ new Map();
+  }
+  consider(frame) {
+    this.frames.push(frame);
+  }
+  build() {
+    const hist = colorHistogram(this.frames);
+    const chosen = medianCut(hist, PLUS_COLORS_PER_ROW);
+    this.words = new Uint16Array(16);
+    chosen.forEach((w, i) => {
+      this.words[i + 1] = PLUS_OPAQUE | w;
+    });
+    this.cands = chosen.map((w, i) => ({ index: i + 1, r: w & 31, g: w >> 5 & 31, b: w >> 10 & 31 }));
+    this.count = chosen.length;
+    return this;
+  }
+  nearest(r8, g8, b8) {
+    const key = r8 >> 3 << 10 | g8 >> 3 << 5 | b8 >> 3;
+    const hit = this.cache.get(key);
+    if (hit !== void 0) return hit;
+    const r = r8 >> 3, g = g8 >> 3, b = b8 >> 3;
+    let best = 1, bestD = Infinity;
+    for (const c of this.cands) {
+      const d = (c.r - r) ** 2 + (c.g - g) ** 2 + (c.b - b) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = c.index;
+      }
+    }
+    if (!this.cands.length) best = 0;
+    this.cache.set(key, best);
+    return best;
+  }
+  /** An RGBA frame as w*h indices into this row (0 where transparent). */
+  index(frame) {
+    if (!this.words) this.build();
+    const out = new Uint8Array(frame.w * frame.h);
+    for (let i = 0; i < out.length; i++) {
+      const o = i * 4;
+      if (frame.rgba[o + 3] < KIDS_ALPHA_CUTOFF) continue;
+      out[i] = this.nearest(frame.rgba[o], frame.rgba[o + 1], frame.rgba[o + 2]);
+    }
+    return out;
+  }
+};
+function indexedTiles(indexed, w, h) {
+  const cw = w / CG_CELL, ch = h / CG_CELL;
+  const tiles = [];
+  for (let cy = 0; cy < ch; cy++) {
+    for (let cx = 0; cx < cw; cx++) {
+      const t = new Uint8Array(256);
+      for (let y = 0; y < 16; y++) t.set(indexed.subarray((cy * 16 + y) * w + cx * 16, (cy * 16 + y) * w + cx * 16 + 16), y * 16);
+      tiles.push(t);
+    }
+  }
+  return tiles;
+}
+var PLUS_TITLE_BYTES = Object.freeze([
+  131,
+  102,
+  131,
+  85,
+  131,
+  71,
+  131,
+  130,
+  131,
+  147,
+  129,
+  123,
+  129,
+  105,
+  131,
+  118,
+  131,
+  137,
+  131,
+  88,
+  129,
+  106,
+  129,
+  64,
+  131,
+  134,
+  129,
+  91,
+  131,
+  85,
+  129,
+  91,
+  131,
+  81,
+  129,
+  91,
+  131,
+  128,
+  131,
+  102,
+  129,
+  91,
+  131,
+  94
+]);
+var PLUS_FACTORY_SETTINGS = Object.freeze([0, 0, 0, 0, 2, 1, 8, 2]);
+var PLUS_FACTORY_NAME = 46;
+var PLUS_TITLE_TYPE = Object.freeze([10, 2]);
+var PLUS_ITEM_TABLE = Object.freeze([0, 0, 6, 1, 11, 1, 9, 1, 2, 1, 10, 1, 3, 1, 7, 1]);
+var PLUS_SCORE_BONUS_INDEX = 4;
+var PLUS_CHARGE_TIME = 2;
+var PLUS_BGM_ASSIGNMENT = Object.freeze([17, 18, 19, 20, 22, 22, 22, 23, 24, 22, 24, 26, 16, 28, 29, 27]);
+var PLUS_BOSS_COLUMN = 5;
+var PLUS_STAGE_CONFIG_DEFAULT = 0;
+var PLUS_SCROLL_EFFECT_DEFAULT = 66;
+var PLUS_DEF_CLASSES = Object.freeze([
+  Object.freeze({ nibble: 8, base: 0, count: 16, w: 16, h: 16, frames: 4 }),
+  Object.freeze({ nibble: 9, base: 16, count: 16, w: 32, h: 16, frames: 2 }),
+  Object.freeze({ nibble: 10, base: 32, count: 16, w: 16, h: 32, frames: 2 }),
+  Object.freeze({ nibble: 11, base: 48, count: 8, w: 32, h: 32, frames: 2 }),
+  Object.freeze({ nibble: 12, base: 56, count: 4, w: 64, h: 64, frames: 1 })
+]);
+var PLUS_BOSS_ART = Object.freeze({ horizontal: { w: 128, h: 64 }, vertical: { w: 64, h: 128 } });
+var PLUS_BOSS_HP = Object.freeze([2e3, 4e3, 8e3, 12e3, 16e3, 18e3, 24e3, 32e3]);
+var PLUS_BOSS_SCORE = Object.freeze([5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 5e5, 1e6]);
+var PLUS_BOSS_SCRIPTS = 80;
+var PLUS_SCROLL_BANDS = PLUS_APPEAR_ROW_TABLE;
+var PLUS_FIRST_SPAWN_ROW = 8;
+var PLUS_ROW_STEP = 12;
+var PLUS_BOSS_ROW_GAP = 24;
+var PLUS_MAX_SPAWN_ROW = PLUS_SCROLL_BANDS - 64;
+var PLUS_SPAWN_COLUMNS = PLUS_APPEAR_RECORD_SIZE;
+var RUNTIME_TO_PLUS_SPEED = 0.5;
+var PLUS_SHOT_DAMAGE = 24;
+var PLUS_MOVE_STRAIGHT_BASE = 8;
+var PLUS_STRAIGHT_SPEEDS = Object.freeze([0.5, 1, 1.5, 2, 2.5, 3, 4.5, 6]);
+var clamp3 = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function nearestIndex3(table, value) {
+  let best = 0, bestD = Infinity;
+  table.forEach((v, i) => {
+    const d = Math.abs(v - value);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  return best;
+}
+function putU16le5(bytes, at, v) {
+  bytes[at] = v & 255;
+  bytes[at + 1] = v >> 8 & 255;
+}
+function putU32le4(bytes, at, v) {
+  putU16le5(bytes, at, v & 65535);
+  putU16le5(bytes, at + 2, v >>> 16 & 65535);
+}
+function b64ToBytes3(b64) {
+  const bin = atob(String(b64));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function plusClassFor(w, h) {
+  for (let k = 0; k < PLUS_DEF_CLASSES.length; k++) {
+    const c = PLUS_DEF_CLASSES[k];
+    if (w <= c.w && h <= c.h) return k;
+  }
+  return PLUS_DEF_CLASSES.length - 1;
+}
+function mapPlusColumn(col, width, cellsWide = 1) {
+  const last = PLUS_SPAWN_COLUMNS - cellsWide;
+  if (width <= 1) return clamp3(Math.floor((PLUS_SPAWN_COLUMNS - cellsWide) / 2), 0, last);
+  return clamp3(Math.round(col * (PLUS_SPAWN_COLUMNS - 1) / (width - 1)), 0, last);
+}
+function encodePlusEnemy({
+  movement = 0,
+  shotPattern = 0,
+  fireRate = 0,
+  shotMode = 0,
+  dropsItem = false,
+  scaleRateIndex = 0,
+  scalesX = false,
+  scalesY = false,
+  hpIndex = 0,
+  scaleLimitAction = 0,
+  hitFlags = 0,
+  scoreIndex = 0,
+  turnEndAction = 0,
+  animIndex = 0,
+  shotParameter = 0,
+  depthGate = false,
+  rotation = 0,
+  endScaleIndex = 0,
+  startScaleIndex = 0,
+  startTrigger = 0,
+  headingIndex = 0,
+  turnRateIndex = 0
+} = {}) {
+  const b = new Uint8Array(PLUS_ENEMY_SIZE);
+  b[0] = movement & 255;
+  b[1] = shotPattern & 31 | (fireRate & 7) << 5;
+  b[2] = shotMode & 3 | (dropsItem ? 4 : 0) | (scaleRateIndex & 7) << 3 | (scalesX ? 64 : 0) | (scalesY ? 128 : 0);
+  b[3] = hpIndex & 7 | (scaleLimitAction & 3) << 3 | (hitFlags & 7) << 5;
+  b[4] = scoreIndex & 7 | (turnEndAction & 3) << 3 | (animIndex & 7) << 5;
+  b[5] = shotParameter & 127 | (depthGate ? 128 : 0);
+  b[6] = rotation & 3 | (endScaleIndex & 7) << 2 | (startScaleIndex & 7) << 5;
+  b[7] = startTrigger & 3 | (headingIndex & 7) << 2 | (turnRateIndex & 7) << 5;
+  return b;
+}
+function encodePlusBoss({
+  scripts = [0, 0, 0],
+  guns = [{ pattern: 0, rate: 0 }, { pattern: 0, rate: 0 }, { pattern: 0, rate: 0 }],
+  modes = [0, 0, 0],
+  vertical = false,
+  offsets = [[0, 0], [0, 0], [0, 0]],
+  hpIndex = 0,
+  armour = false,
+  scoreIndex = 0,
+  parameters = [0, 0, 0],
+  music = true
+} = {}) {
+  const b = new Uint8Array(PLUS_BOSS_SIZE);
+  for (let i = 0; i < 3; i++) {
+    b[i] = clamp3(scripts[i] ?? 0, 0, PLUS_BOSS_SCRIPTS - 1);
+    const g = guns[i] || { pattern: 0, rate: 0 };
+    b[3 + i] = clamp3(g.pattern ?? 0, 0, 19) | ((g.rate ?? 0) & 7) << 5;
+    b[7 + i * 2] = (offsets[i]?.[0] ?? 0) & 255;
+    b[8 + i * 2] = (offsets[i]?.[1] ?? 0) & 255;
+    b[15 + i] = (parameters[i] ?? 0) & 127;
+  }
+  b[6] = modes[0] & 3 | (modes[1] & 3) << 2 | (modes[2] & 3) << 4 | (vertical ? 64 : 0);
+  b[13] = hpIndex & 7 | (armour ? 64 : 0);
+  b[14] = scoreIndex & 7;
+  b[31] = music ? 1 : 0;
+  return b;
+}
+var PLUS_BOSS_BEHAVIOUR = Object.freeze({
+  scripts: Object.freeze([28, 32, 20]),
+  guns: Object.freeze([Object.freeze({ pattern: 0, rate: 0 }), Object.freeze({ pattern: 16, rate: 3 }), Object.freeze({ pattern: 0, rate: 0 })]),
+  modes: Object.freeze([0, 0, 3]),
+  offsets: Object.freeze([Object.freeze([-33, -12]), Object.freeze([-33, 15]), Object.freeze([31, 17])])
+});
+function plusLayoutIndexFor(cx, cy) {
+  if (cy < 8) return cy * 16 + cx;
+  if (cy < 12) {
+    const r2 = cy - 8;
+    return 128 + (r2 >> 1) * 32 + cx * 2 + (r2 & 1);
+  }
+  if (cy < 16) {
+    const r2 = cy - 12;
+    return 192 + (r2 >> 1) * 32 + (cx >> 1) * 4 + (r2 & 1) * 2 + (cx & 1);
+  }
+  const r = cy - 16;
+  return 256 + (cx >> 2) * 16 + r * 4 + (cx & 3);
+}
+function plusFrameRect(klass, n, k) {
+  const c = PLUS_DEF_CLASSES[klass];
+  let u = 0, v = 0;
+  switch (klass) {
+    case 0:
+      u = (n & 3) * 64;
+      v = (n >> 2) * 16;
+      break;
+    case 1:
+      u = (n & 3) * 64;
+      v = (n >> 2) * 16 + 64;
+      break;
+    case 2:
+      u = (n & 7) * 32;
+      v = (n >> 3) * 32 + 128;
+      break;
+    case 3:
+      u = (n & 3) * 64;
+      v = (n >> 2) * 32 + 192;
+      break;
+    default:
+      u = (n & 3) * 64;
+      v = 256;
+      break;
+  }
+  return { x: u + k * c.w, y: v, w: c.w, h: c.h };
+}
+function layoutEnemySheet(defs) {
+  const enemyGroup = new Uint16Array(64).fill(PLUS_EMPTY_TILE);
+  const spriteLayout = new Uint8Array(PLUS_STAGE_PIECE.spriteLayout.length);
+  const entryOfTile = /* @__PURE__ */ new Map();
+  let entries = 1;
+  let painted = 0, dropped = 0;
+  for (const d of defs) {
+    const c = PLUS_DEF_CLASSES[d.klass];
+    const cw = c.w / CG_CELL, ch = c.h / CG_CELL;
+    d.tiles.forEach((cells, k) => {
+      if (k >= c.frames) return;
+      const r = plusFrameRect(d.klass, d.id, k);
+      for (let cy = 0; cy < ch; cy++) {
+        for (let cx = 0; cx < cw; cx++) {
+          const t = cells[cy * cw + cx];
+          const at = plusLayoutIndexFor(r.x / CG_CELL + cx, r.y / CG_CELL + cy);
+          if (!t) {
+            spriteLayout[at] = 0;
+            continue;
+          }
+          let e = entryOfTile.get(t.tile);
+          if (e === void 0) {
+            if (entries >= 64) {
+              dropped++;
+              spriteLayout[at] = 0;
+              continue;
+            }
+            e = entries++;
+            entryOfTile.set(t.tile, e);
+            enemyGroup[e] = plusTileWord(t.tile);
+          }
+          spriteLayout[at] = e | (t.hflip ? PLUS_LAYOUT_HFLIP : 0) | (t.vflip ? PLUS_LAYOUT_VFLIP : 0);
+          painted++;
+        }
+      }
+    });
+  }
+  return { enemyGroup, spriteLayout, painted, entries: entries - 1, dropped };
+}
+function layoutBoss(tiles, vertical = false) {
+  const words = new Uint16Array(32).fill(PLUS_EMPTY_TILE);
+  const cols = vertical ? 4 : 8;
+  for (let i = 0; i < 32; i++) {
+    const block = i >> 4, row = i >> 2 & 3, col = i & 3;
+    const x = vertical ? col : block * 4 + col;
+    const y = vertical ? block * 4 + row : row;
+    const t = tiles[y * cols + x];
+    if (!t) continue;
+    words[i] = plusTileWord(t.tile) | (t.hflip ? PLUS_GROUP_HFLIP : 0) | (t.vflip ? PLUS_GROUP_VFLIP : 0);
+  }
+  return words;
+}
+function layoutTitle(tiles) {
+  return layoutBoss(tiles.map((t) => t === null || t === void 0 ? null : typeof t === "number" ? { tile: t } : t), false);
+}
+function layoutShip(poses) {
+  const group = PLUS_GLOBAL_LAYOUT.find((p) => p.name === "shipGroup").length / 2;
+  const shipGroup = new Uint16Array(group).fill(PLUS_EMPTY_TILE);
+  const shipOdr = new Uint8Array(PLUS_GLOBAL_LAYOUT.find((p) => p.name === "shipOdr").length);
+  let painted = 0;
+  poses.slice(0, 3).forEach((tiles, p) => {
+    tiles.forEach((t, i) => {
+      if (!t || i >= 4) return;
+      shipGroup[p * 4 + i] = plusTileWord(t.tile) | (t.hflip ? PLUS_GROUP_HFLIP : 0) | (t.vflip ? PLUS_GROUP_VFLIP : 0);
+      painted++;
+    });
+  });
+  [1020, 1021, 1022].forEach((w, i) => {
+    shipGroup[61 + i] = w;
+  });
+  for (let i = 64; i < 72; i++) shipGroup[i] = 0;
+  return { shipGroup, shipOdr, painted };
+}
+function buildPlusGameFromLevel(level, art2, options = {}) {
+  const opts = { name: null, title1: null, horizontal: false, ...options };
+  const warnings = [];
+  const warn = (m) => warnings.push(m);
+  const artMap = /* @__PURE__ */ new Map();
+  for (const [k, v] of Object.entries(art2 || {})) {
+    if (v && v.rgba && v.w > 0 && v.h > 0) artMap.set(decodeFrameKey(k), { key: decodeFrameKey(k), ...v });
+  }
+  const lookup = (n) => n ? artMap.get(decodeFrameKey(n)) || null : null;
+  let stages = levelStages(level);
+  if (!stages.length) throw new Error("the level has no stage with an enemylist");
+  if (stages.length > PLUS_STAGES) {
+    warn(`level has ${stages.length} stages; a Dezaemon+ save holds ${PLUS_STAGES} \u2014 dropped the rest`);
+    stages = stages.slice(0, PLUS_STAGES);
+  }
+  if (opts.horizontal) warn("the grid is horizontal; a Dezaemon+ game is written as a vertical one here");
+  const enemyData = level.enemyData || {};
+  const bossData = level.bossData || {};
+  const bank = new PlusTileBank();
+  const rows = Array.from({ length: PLUS_PALETTE_ROWS }, (_, r) => new PlusPaletteRow(r));
+  const fullWarned = /* @__PURE__ */ new Set();
+  const tilesOf = (row, frame, w, h, what) => {
+    const fitted = fitRgba(frame, w, h);
+    rows[row].consider(fitted);
+    return { row, fitted, w, h, what };
+  };
+  const plans = [];
+  const plan = (row, frame, w, h, what) => {
+    const p = tilesOf(row, frame, w, h, what);
+    plans.push(p);
+    return p;
+  };
+  let shipSource = "level";
+  let shipFrames = (level.playerData && level.playerData.texture || []).map(lookup).filter(Boolean);
+  if (!shipFrames.length) {
+    shipSource = "duke";
+    shipFrames = decodePlayerArt().filter((f) => /^duke_\d$/.test(f.key)).slice(0, 2);
+  }
+  const shipPlans = [shipFrames[0], shipFrames[1] || shipFrames[0], shipFrames[1] || shipFrames[0]].map((f, i) => plan(plusPaletteRow("player"), f, 32, 32, `ship ${i}`));
+  const titlePlan = opts.title1 && opts.title1.rgba ? plan(plusPaletteRow("title"), opts.title1, 128, 64, "title") : null;
+  const built = stages.map((st, s) => {
+    const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
+    const spawnRows = st.enemylist.slice().reverse();
+    const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
+    const usage = /* @__PURE__ */ new Map();
+    for (const row of spawnRows) for (const cell of row) if (cell && cell !== "00") usage.set(cell.slice(0, -1), (usage.get(cell.slice(0, -1)) || 0) + 1);
+    const letters = [...usage.keys()].sort((a, b) => usage.get(b) - usage.get(a));
+    const counts = PLUS_DEF_CLASSES.map(() => 0);
+    const defs = /* @__PURE__ */ new Map();
+    for (const letter of letters) {
+      const rec = enemyData[`enemy${letter}`];
+      if (!rec) {
+        warn(`${st.key}: grid names enemy${letter} but enemyData has no such record \u2014 cells left empty`);
+        continue;
+      }
+      const frames = (Array.isArray(rec.texture) ? rec.texture : []).map(lookup).filter(Boolean);
+      if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas \u2014 placed invisible`);
+      const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
+      const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
+      if (frames.length && (maxW > 64 || maxH > 64)) {
+        warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 \u2014 downscaled`);
+      }
+      let klass = plusClassFor(maxW, maxH);
+      while (klass < PLUS_DEF_CLASSES.length && counts[klass] >= PLUS_DEF_CLASSES[klass].count) klass++;
+      if (klass >= PLUS_DEF_CLASSES.length) {
+        warn(`${st.key}: no free definition for enemy${letter} (${rec.name || "?"}) \u2014 a stage holds 60 \u2014 cells left empty`);
+        continue;
+      }
+      const c = PLUS_DEF_CLASSES[klass];
+      const id = counts[klass]++;
+      const hits = rec.hp === "infinity" ? 2e3 / PLUS_SHOT_DAMAGE : Math.max(1, Number(rec.hp) || 1);
+      const interval = Number(rec.interval);
+      const fires = Number.isFinite(interval) && interval > 0;
+      const speed = (Number.isFinite(rec.speed) ? rec.speed : 1) * RUNTIME_TO_PLUS_SPEED;
+      const bytes = encodePlusEnemy({
+        movement: PLUS_MOVE_STRAIGHT_BASE + nearestIndex3(PLUS_STRAIGHT_SPEEDS, speed),
+        shotPattern: fires ? 1 : 0,
+        fireRate: fires ? clamp3(Math.round(7 - Math.min(6, interval / 30)), 1, 7) : 0,
+        hpIndex: nearestIndex3(PLUS_ENEMY_HP, hits * PLUS_SHOT_DAMAGE),
+        scoreIndex: nearestIndex3(PLUS_ENEMY_SCORE, Number(rec.score) || 100),
+        animIndex: Number.isFinite(rec.frameRate) && rec.frameRate > 0 ? nearestIndex3(PLUS_ANIM_INTERVALS, 60 / rec.frameRate) : 3
+      });
+      const framePlans = spreadFrames(frames, c.frames).map((f, i) => plan(plusPaletteRow("enemy", s), f, c.w, c.h, `${st.key} enemy${letter} ${i}`));
+      defs.set(letter, { klass, id, index: c.base + id, bytes, frames: framePlans, name: rec.name || `enemy${letter}` });
+    }
+    const bands = /* @__PURE__ */ new Map();
+    let placed = 0, dropped = 0, lastRow = PLUS_FIRST_SPAWN_ROW;
+    spawnRows.forEach((row, k) => {
+      const band = waveRows ? clamp3(Math.round(waveRows[k]), 0, PLUS_MAX_SPAWN_ROW) : Math.min(PLUS_MAX_SPAWN_ROW, PLUS_FIRST_SPAWN_ROW + k * PLUS_ROW_STEP);
+      row.forEach((cell, col) => {
+        if (!cell || cell === "00") return;
+        const def = defs.get(cell.slice(0, -1));
+        if (!def) return;
+        const c = PLUS_DEF_CLASSES[def.klass];
+        const column = mapPlusColumn(col, width, c.w / 16);
+        if (!bands.has(band)) bands.set(band, new Uint8Array(PLUS_APPEAR_RECORD_SIZE));
+        const rec = bands.get(band);
+        let at = null;
+        for (const dc of [0, 1, -1, 2, -2]) {
+          const cc = column + dc;
+          if (cc < 0 || cc >= PLUS_SPAWN_COLUMNS || rec[cc]) continue;
+          at = cc;
+          break;
+        }
+        if (at === null) {
+          dropped++;
+          return;
+        }
+        rec[at] = 128 | c.nibble << 4 | def.id & 15;
+        placed++;
+        lastRow = Math.max(lastRow, band);
+      });
+    });
+    if (dropped) warn(`${st.key}: ${dropped} placement${dropped === 1 ? "" : "s"} overlapped another in the same band and ${dropped === 1 ? "was" : "were"} left out`);
+    let boss = null;
+    const bossRec = bossData[`boss${s}`];
+    if (bossRec) {
+      const names = bossRec.anim && Array.isArray(bossRec.anim.idle) ? [...bossRec.anim.idle, ...Array.isArray(bossRec.anim.attack) ? bossRec.anim.attack : []] : Array.isArray(bossRec.texture) ? bossRec.texture : [];
+      const frames = names.map(lookup).filter(Boolean);
+      if (!frames.length) warn(`${st.key}: boss (${bossRec.name || "?"}) has no art in the atlas \u2014 its picture is unpainted`);
+      const first = frames[0] || { w: 128, h: 64 };
+      const vertical = first.h > first.w;
+      const box = vertical ? PLUS_BOSS_ART.vertical : PLUS_BOSS_ART.horizontal;
+      if (frames.length && (first.w > box.w || first.h > box.h)) {
+        warn(`${st.key}: boss (${bossRec.name || "?"}) is ${first.w}x${first.h}; a Dezaemon+ boss is ${box.w}x${box.h} \u2014 downscaled`);
+      }
+      const picture = frames.length ? plan(plusPaletteRow("boss", s), first, box.w, box.h, `${st.key} boss`) : null;
+      const hits = bossRec.hp === "infinity" ? PLUS_BOSS_HP[7] / PLUS_SHOT_DAMAGE : Math.max(1, Number(bossRec.hp) || 100);
+      const record = encodePlusBoss({
+        ...PLUS_BOSS_BEHAVIOUR,
+        vertical,
+        hpIndex: nearestIndex3(PLUS_BOSS_HP, hits * PLUS_SHOT_DAMAGE),
+        scoreIndex: nearestIndex3(PLUS_BOSS_SCORE, Number(bossRec.score) || PLUS_BOSS_SCORE[1])
+      });
+      const band = Math.min(PLUS_SCROLL_BANDS - 8, lastRow + PLUS_BOSS_ROW_GAP);
+      if (!bands.has(band)) bands.set(band, new Uint8Array(PLUS_APPEAR_RECORD_SIZE));
+      bands.get(band)[PLUS_BOSS_COLUMN] = 128 | PLUS_APPEAR_BOSS_NIBBLE << 4;
+      boss = { name: bossRec.name || `boss${s}`, band, picture, vertical, record, frameCount: frames.length, hits };
+      lastRow = Math.max(lastRow, band);
+    }
+    const scenery = [];
+    const cellsList = Array.isArray(level.backgroundCells) ? level.backgroundCells : null;
+    if (st.background && st.background.tiles && cellsList) {
+      try {
+        const bytes = b64ToBytes3(st.background.tiles);
+        const cols = st.background.cols || 14;
+        const tiles = new Uint16Array(bytes.length >> 1);
+        for (let i = 0; i < tiles.length; i++) tiles[i] = bytes[i * 2] << 8 | bytes[i * 2 + 1];
+        const rowsIn = Math.floor(tiles.length / cols);
+        if (rowsIn > PLUS_MAP_ROWS) warn(`${st.key}: the scenery is ${rowsIn} rows and the map holds ${PLUS_MAP_ROWS}; the first ${PLUS_MAP_ROWS} loop`);
+        const firstCol = Math.max(0, Math.floor((cols - 14) / 2));
+        const planByOrdinal = /* @__PURE__ */ new Map();
+        for (let r = 0; r < Math.min(rowsIn, PLUS_MAP_ROWS); r++) {
+          for (let c = 0; c < 14; c++) {
+            const w = tiles[r * cols + firstCol + c];
+            if (w === 65535 || firstCol + c >= cols) continue;
+            const ordinal = w & 1023;
+            if (!planByOrdinal.has(ordinal)) {
+              const f = lookup(cellsList[ordinal]);
+              planByOrdinal.set(ordinal, f ? plan(plusPaletteRow("map", s), f, 16, 16, `${st.key} scenery`) : null);
+            }
+            const p = planByOrdinal.get(ordinal);
+            if (!p) continue;
+            scenery.push({ row: r, col: c + 1, plan: p, hflip: (w & 32768) !== 0, vflip: (w & 16384) !== 0 });
+          }
+        }
+      } catch (e) {
+        warn(`${st.key}: could not read the background grid (${e.message}) \u2014 scenery skipped`);
+      }
+    }
+    return { key: st.key, defs, bands, boss, scenery, placed, dropped, lastRow };
+  });
+  for (const r of rows) if (r.frames.length) r.build();
+  const indexedOf = (p) => rows[p.row].index(p.fitted);
+  const bankTiles = (p, flippable = false) => {
+    const tiles = indexedTiles(indexedOf(p), p.w, p.h);
+    try {
+      return tiles.map((t) => flippable ? bank.addFlippable(t) : bank.add(t));
+    } catch (e) {
+      if (!(e instanceof PlusBankFullError)) throw e;
+      const group = p.what.replace(/ \d+$/, "");
+      if (!fullWarned.has(group)) {
+        fullWarned.add(group);
+        warn(`graphics bank full (${PLUS_TILE_COUNT} tiles): ${group} art left unpainted`);
+      }
+      return tiles.map(() => null);
+    }
+  };
+  const block = new Uint8Array(PLUS_BLOCK_SIZE);
+  const stageReports = built.map((b, s) => {
+    const base = PLUS_STAGES_OFFSET + s * PLUS_STAGE_SIZE;
+    const piece = (name2) => block.subarray(base + PLUS_STAGE_PIECE[name2].offset, base + PLUS_STAGE_PIECE[name2].end);
+    const map = piece("map");
+    const mapGroup = piece("mapGroup");
+    for (let i = 0; i < mapGroup.length; i += 2) putU16le5(mapGroup, i, PLUS_EMPTY_TILE);
+    const groupOfTile = /* @__PURE__ */ new Map();
+    let groups = 1, chips = 0, sceneryDropped = 0;
+    const tileOfPlan = /* @__PURE__ */ new Map();
+    for (const sc of b.scenery) {
+      if (!tileOfPlan.has(sc.plan)) tileOfPlan.set(sc.plan, bankTiles(sc.plan, true)[0]);
+      const t = tileOfPlan.get(sc.plan);
+      if (!t) continue;
+      let g = groupOfTile.get(t.tile);
+      if (g === void 0) {
+        if (groups >= 128) {
+          sceneryDropped++;
+          continue;
+        }
+        g = groups++;
+        groupOfTile.set(t.tile, g);
+        putU16le5(mapGroup, g * 2, plusTileWord(t.tile));
+      }
+      const half = PLUS_MAP_HALVES[sc.col < 8 ? 0 : 1];
+      const k = sc.col < 8 ? sc.col : sc.col - 9;
+      const at = sc.row * PLUS_MAP_ROW_BYTES;
+      const hflip = sc.hflip !== t.hflip, vflip = sc.vflip !== t.vflip;
+      map[at + half.chips[k]] = g | (hflip ? 128 : 0);
+      if (vflip) map[at + half.flags] |= 1 << 7 - k;
+      chips++;
+    }
+    if (sceneryDropped) warn(`${b.key}: the scenery needs more than 127 distinct tiles; ${sceneryDropped} chips left blank`);
+    const scroll = piece("scroll");
+    for (let i = 0; i < 256; i++) scroll[i] = i % 32;
+    scroll.fill(PLUS_SCROLL_EFFECT_DEFAULT, 256, 512);
+    const appear = piece("appear");
+    appear.fill(PLUS_APPEAR_END_MARK, PLUS_APPEAR_RECORD_SIZE, 2 * PLUS_APPEAR_RECORD_SIZE);
+    let next = 2;
+    const rowTable = appear.subarray(PLUS_APPEAR_RECORDS * PLUS_APPEAR_RECORD_SIZE);
+    let bandsDropped = 0;
+    for (const [band, rec] of [...b.bands.entries()].sort((x, y) => x[0] - y[0])) {
+      if (next >= PLUS_APPEAR_RECORDS) {
+        bandsDropped++;
+        continue;
+      }
+      appear.set(rec, next * PLUS_APPEAR_RECORD_SIZE);
+      rowTable[band] = next++;
+    }
+    if (bandsDropped) warn(`${b.key}: more than 254 bands spawn something; ${bandsDropped} left empty`);
+    const enemyData2 = piece("enemyData");
+    const config = piece("config");
+    config.fill(PLUS_STAGE_CONFIG_DEFAULT);
+    for (const d of b.defs.values()) enemyData2.set(d.bytes, d.index * PLUS_ENEMY_SIZE);
+    const bossGroup = piece("bossGroup");
+    let bossPainted = 0;
+    if (b.boss) {
+      enemyData2.set(b.boss.record, PLUS_BOSS_OFFSET);
+      const tiles = b.boss.picture ? bankTiles(b.boss.picture, true) : [];
+      const words = layoutBoss(tiles, b.boss.vertical);
+      for (let i = 0; i < words.length; i++) putU16le5(bossGroup, i * 2, words[i]);
+      bossPainted = words.filter((w) => w !== PLUS_EMPTY_TILE).length;
+    } else {
+      for (let i = 0; i < bossGroup.length; i += 2) putU16le5(bossGroup, i, PLUS_EMPTY_TILE);
+    }
+    const sheet = layoutEnemySheet([...b.defs.values()].map((d) => ({ ...d, tiles: d.frames.map((p) => bankTiles(p, true)) })));
+    if (sheet.dropped) warn(`${b.key}: the enemies need more than 63 distinct tiles; ${sheet.dropped} cells left blank`);
+    const enemyGroup = piece("enemyGroup");
+    for (let i = 0; i < 64; i++) putU16le5(enemyGroup, i * 2, sheet.enemyGroup[i]);
+    piece("spriteLayout").set(sheet.spriteLayout);
+    return {
+      key: b.key,
+      placements: b.placed,
+      dropped: b.dropped,
+      definitions: [...b.defs.values()].map((d) => ({ name: d.name, klass: d.klass, id: d.id, index: d.index })),
+      boss: b.boss ? { name: b.boss.name, band: b.boss.band, frames: b.boss.frameCount, vertical: b.boss.vertical, tiles: bossPainted, hits: b.boss.hits } : null,
+      chips,
+      groups: groups - 1,
+      enemyTiles: sheet.painted,
+      enemyEntries: sheet.entries
+    };
+  });
+  for (let s = built.length; s < PLUS_STAGES; s++) {
+    const base = PLUS_STAGES_OFFSET + s * PLUS_STAGE_SIZE;
+    for (const name2 of ["mapGroup", "enemyGroup", "bossGroup"]) {
+      const p = block.subarray(base + PLUS_STAGE_PIECE[name2].offset, base + PLUS_STAGE_PIECE[name2].end);
+      for (let i = 0; i < p.length; i += 2) putU16le5(p, i, PLUS_EMPTY_TILE);
+    }
+    block.subarray(base + PLUS_STAGE_PIECE.appear.offset + PLUS_APPEAR_RECORD_SIZE, base + PLUS_STAGE_PIECE.appear.offset + 2 * PLUS_APPEAR_RECORD_SIZE).fill(PLUS_APPEAR_END_MARK);
+    block.subarray(base + PLUS_STAGE_PIECE.scroll.offset + 256, base + PLUS_STAGE_PIECE.scroll.end).fill(PLUS_SCROLL_EFFECT_DEFAULT);
+    block.subarray(base + PLUS_STAGE_PIECE.config.offset, base + PLUS_STAGE_PIECE.config.end).fill(PLUS_STAGE_CONFIG_DEFAULT);
+  }
+  const global = (name2) => {
+    const p = PLUS_GLOBAL_LAYOUT.find((x) => x.name === name2);
+    return block.subarray(PLUS_GLOBAL_OFFSET + p.offset, PLUS_GLOBAL_OFFSET + p.end);
+  };
+  global("titleType").set(PLUS_TITLE_TYPE);
+  const titleGroup = global("titleGroup");
+  let titlePainted = 0;
+  {
+    const words = layoutTitle(titlePlan ? bankTiles(titlePlan, true) : []);
+    for (let i = 0; i < 32; i++) putU16le5(titleGroup, i * 2, words[i]);
+    titlePainted = words.filter((w) => w !== PLUS_EMPTY_TILE).length;
+  }
+  const ending = global("endingGroup");
+  for (let i = 0; i < ending.length; i += 2) putU16le5(ending, i, PLUS_EMPTY_TILE);
+  const ship = layoutShip(shipPlans.map((p) => bankTiles(p, true)));
+  const shipGroup = global("shipGroup");
+  for (let i = 0; i < ship.shipGroup.length; i++) putU16le5(shipGroup, i * 2, ship.shipGroup[i]);
+  global("shipOdr").set(ship.shipOdr);
+  global("itemTable").set(PLUS_ITEM_TABLE);
+  global("gameSettings").set([PLUS_SCORE_BONUS_INDEX, PLUS_CHARGE_TIME, built.length - 1]);
+  global("bgmAssignment").set(PLUS_BGM_ASSIGNMENT);
+  block.fill(0, PLUS_SOUND_OFFSET, PLUS_SOUND_OFFSET + PLUS_SONG_COUNT * PLUS_SONG_SIZE);
+  for (let t = 0; t < PLUS_HISCORE_TABLES; t++) {
+    for (let i = 0; i < PLUS_HISCORE_COUNT; i++) {
+      const at = PLUS_HISCORE_OFFSET + t * PLUS_HISCORE_TABLE_BYTES + i * PLUS_HISCORE_SIZE;
+      putU32le4(block, at, (PLUS_HISCORE_COUNT - i) * 100);
+      block.fill(PLUS_FACTORY_NAME, at + 8, at + 16);
+    }
+  }
+  block.set(PLUS_FACTORY_SETTINGS, PLUS_SETTINGS_OFFSET);
+  block.set(bank.toBitmap(), PLUS_GRAPHICS_OFFSET);
+  rows.forEach((r, i) => {
+    const words = r.words || new Uint16Array(16);
+    for (let c = 0; c < 16; c++) putU16le5(block, PLUS_PALETTE_OFFSET + i * PLUS_PALETTE_ROW_BYTES + c * 2, words[c]);
+  });
+  block[0] = 83;
+  block[1] = 67;
+  block[2] = 17;
+  block[3] = PLUS_BLOCK_SIZE / 8192;
+  block.set(PLUS_TITLE_BYTES, TITLE_OFFSET);
+  const icon = encodeKidsIcon(shipFrames[0] || defaultKidsIcon());
+  for (let i = 0; i < 16; i++) putU16le5(block, CLUT_OFFSET + i * 2, icon.clut[i] ?? 0);
+  block.set(icon.pixels.subarray(0, 128), TITLE_FRAME_SIZE);
+  const name = String(opts.name ?? level.name ?? "game").trim() || "game";
+  return {
+    block,
+    warnings,
+    report: {
+      name,
+      stages: stageReports,
+      ship: shipSource,
+      shipTiles: ship.painted,
+      title: titlePainted ? "uploaded" : "none",
+      rows: rows.map((r) => ({ row: r.row, colors: r.count || 0 })).filter((r) => r.colors),
+      tiles: { used: bank.used, shared: bank.shared, free: bank.free }
+    }
+  };
+}
+function buildPlusBlock(block) {
+  if (!(block instanceof Uint8Array) || block.length !== PLUS_BLOCK_SIZE) throw new Error(`a Dezaemon+ block is ${PLUS_BLOCK_SIZE} bytes`);
+  const seal2 = sealPlusChecksums(block);
+  const back = parsePlusSave(block, { filename: PLUS_PRODUCT });
+  if (back.errors.length) throw new Error(`the block does not read back: ${back.errors.map((e) => e.message).join("; ")}`);
+  if (!back.checksums || !back.checksums.ok) throw new Error("the block's group checksums do not verify after sealing");
+  return { block, seal: seal2, parsed: back };
+}
+function plusCardFileName(name) {
+  const clean = String(name || "game").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim() || "game";
+  return `Dezaemon Plus - ${clean}.mcr`;
+}
+function exportLevelToPlusCard(level, art2, options = {}) {
+  const game = buildPlusGameFromLevel(level, art2, options);
+  const { block, seal: seal2 } = buildPlusBlock(game.block);
+  const card = buildMemoryCard([{ filename: PLUS_PRODUCT, data: block }]);
+  return {
+    card,
+    block,
+    fileName: plusCardFileName(game.report.name),
+    name: game.report.name,
+    warnings: game.warnings,
+    report: { ...game.report, sealedGroups: seal2.groups ? seal2.groups.length : void 0, checksumBytes: seal2.bytes }
+  };
+}
 
 // packages/shmup-engine/src/psx/plus-song.js
 var PLUS_SONG_BARS = 16;
@@ -12208,6 +13301,7 @@ export {
   INTERNAL_RAM_PAYLOAD_CAPACITY,
   INTERNAL_SRM_SIZE,
   KIDS_BACKGROUND_SETS,
+  KIDS_STOCK_ITEM_FRAMES,
   LAYER_COUNT,
   LIBRARY_MESH_COUNT,
   LIGHT_AZIMUTH,
@@ -12278,6 +13372,7 @@ export {
   buildMeshLibrary,
   buildModelMesh,
   buildPayload,
+  buildPlusGameFromLevel,
   buildSaveFromGame,
   buildSwatchTable,
   bupDateFromDate,
@@ -12321,6 +13416,7 @@ export {
   enemyLetters,
   enemyRecordFromEditor,
   exportLevelToKidsCard,
+  exportLevelToPlusCard,
   exportLevelToSav,
   extractPayload,
   familyForFile,
@@ -12387,6 +13483,7 @@ export {
   placeholderLibrary,
   placeholderMesh,
   playbackRate,
+  plusCardFileName,
   polygonNormals,
   projectModel,
   quantizeFrames,

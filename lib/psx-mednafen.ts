@@ -121,18 +121,22 @@ async function findBios(
  * executable, the save directory, the BIOS. `available` says whether a launch
  * could start; `reason` says what is missing when it could not.
  */
+export type PsxWriterGame = "kids" | "plus";
+
 export async function resolvePsxMednafen(
-  { bin = null, savDir = null, root = null, extra = [] }: {
+  { bin = null, savDir = null, root = null, extra = [], game = "kids" }: {
     bin?: string | null;
     savDir?: string | null;
     root?: string | null;
     extra?: string[];
+    /** Which Dezaemon's disc to start: Kids! (SLPS-01503) or Dezaemon+ (SLPS-00335 / Select 100). */
+    game?: PsxWriterGame;
   } = {},
 ): Promise<PsxMednafenResolution> {
   const exe = findBin(bin);
   const at = root ?? await repoRoot();
   const discs = await findPsxDiscs(at, { extra });
-  const found = discs.find((d) => d.game === "kids") ?? null;
+  const found = discs.find((d) => d.game === game) ?? null;
   const disc = found ? (found.cuePath ?? found.files[0]?.path ?? null) : null;
   let dir: string;
   try {
@@ -161,8 +165,11 @@ export async function resolvePsxMednafen(
   };
   const hasBin = await binExists(exe);
   const reason = !found
-    ? "no Dezaemon Kids! disc image in dev-fixtures/ (a .cue/.bin whose " +
-      "SYSTEM.CNF boots SLPS-01503; $DEZAEMON_PSX_DISC is looked at too)"
+    ? (game === "plus"
+      ? "no Dezaemon+ disc image in dev-fixtures/ (a .cue/.bin whose " +
+        "SYSTEM.CNF boots SLPS-00335 or SLPS-01504; $DEZAEMON_PSX_DISC is looked at too)"
+      : "no Dezaemon Kids! disc image in dev-fixtures/ (a .cue/.bin whose " +
+        "SYSTEM.CNF boots SLPS-01503; $DEZAEMON_PSX_DISC is looked at too)")
     : !hasBin
     ? `could not find "${exe}". Set MEDNAFEN_BIN to the mednafen executable (or put it on PATH).`
     : null;
@@ -232,12 +239,12 @@ export function psxLaunchArgs(
   return ["-psx.bios_jp", bios.path];
 }
 
-/** Start Mednafen on the Kids! disc, detached; resolves with the pid. */
+/** Start Mednafen on the resolved disc, detached; resolves with the pid. */
 export async function launchPsxMednafen(
   r: Pick<PsxMednafenResolution, "bin" | "disc" | "bios">,
   { wait = false }: { wait?: boolean } = {},
 ): Promise<{ pid: number | null; code: number | null; args: string[] }> {
-  if (!r.disc) throw new MednafenError("no Dezaemon Kids! disc to start");
+  if (!r.disc) throw new MednafenError("no PlayStation Dezaemon disc to start");
   const { pid, code, args } = await launchMednafen(
     { bin: r.bin, disc: r.disc },
     { wait, passThrough: psxLaunchArgs(r.bios) },

@@ -219,9 +219,11 @@ export function namedFrames(record: LevelRecord): Set<string> {
  */
 export async function loadLevelArt(
   record: LevelRecord,
-  { noBaseAtlas = false, log = () => {} }: {
+  { noBaseAtlas = false, log = () => {}, extraNames = [] }: {
     noBaseAtlas?: boolean;
     log?: (m: string) => void;
+    /** Frames to fetch beside the ones the records name (an item emblem the writer paints). */
+    extraNames?: readonly string[];
   } = {},
 ): Promise<Record<string, ArtFrame>> {
   const art: Record<string, ArtFrame> = {};
@@ -234,7 +236,7 @@ export async function loadLevelArt(
       } custom frames (${sheet.width}x${sheet.height})`,
     );
   }
-  const missing = [...namedFrames(record)].filter((n) =>
+  const missing = [...namedFrames(record), ...extraNames].filter((n) =>
     !art[n.replace(/․/g, ".")]
   );
   if (missing.length && !noBaseAtlas) {

@@ -435,6 +435,7 @@ deno task sfc:stage       # copy the Dezaemon cart into static/ so a packaged la
 deno task sfc:upload      # publish the Super Famicom library (dumps + covers + metadata) to the database
 deno task psx:probe       # look inside a PlayStation Dezaemon+ / Dezaemon Kids! save (report / png / hex / diff / all)
 deno task build:kids      # a level as a Dezaemon Kids! memory card (.mcr) for Mednafen / DuckStation / MiSTer
+deno task build:plus      # a level as a Dezaemon+ / Select 100 memory card (.mcr)
 deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (ls / get / report / png / all)
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task ships:atlas     # cut dev-fixtures/ship-sheet/ships.png into the editor's NEW GAME character roster
@@ -1962,7 +1963,29 @@ from PELON's ロード on the main menu. Mednafen also needs the Japanese BIOS
 (`scph5500.bin`) in its firmware folder, which the route reports rather than
 supplies. `packages/shmup-engine/FORMAT-PSX.md` "Writing a Kids! save" lists
 what the writer settled beyond the traced layouts and where each answer came
-from. **Dezaemon+ has no writer**: its enemy sprite layout is still open.
+from.
+
+**And a Dezaemon+ card.** `deno task build:plus` (and the editor's same PS
+pick with GAME set to PLUS) writes the raw card holding one `BISLPS-00335DEZA`
+save, which both Dezaemon+ (SLPS-00335) and Dezaemon Plus Select 100
+(SLPS-01504) load from their LOAD/SAVE menu:
+
+```
+deno task build:plus                          # foo.json -> build/plus/Dezaemon Plus - foo.mcr
+deno task build:plus "Master Arena Mod"       # that cloud level
+deno task build:plus foo --report             # the per-stage tile, sheet and boss summary as JSON
+```
+
+A Dezaemon+ save carries no palette bank and no name: the art is quantised
+into 15-colour palette rows (one a stage for the enemies, one for the boss,
+one for the title, one for the ship) over the two 256×256 4bpp texture pages,
+the enemy sheet is laid out through the SPRITE LAYOUT and ENEMY GROUP words
+the 1996 program's tile copier reads, the boss and title as two 4×4 tile
+blocks, and the nineteen checksums the game verifies are sealed last. The
+card file's name is the level's. The → MEDNAFEN row posts it to
+`/api/psx-save?game=plus`, which installs it for whichever Dezaemon+ disc the
+machine has. `FORMAT-PSX.md` "The sprite sheets" and "Writing a Dezaemon+
+save" are the trace.
 
 ### The Nintendo 64 disk
 

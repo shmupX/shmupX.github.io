@@ -20,7 +20,10 @@
 
 import { dirname, join, relative, resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
-import { exportLevelToKidsCard } from "@shmupx/shmup-engine";
+import {
+  exportLevelToKidsCard,
+  KIDS_STOCK_ITEM_FRAMES,
+} from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
 import { loadLevel, loadLevelArt, titleArt } from "./build-sav.ts";
 
@@ -63,6 +66,9 @@ export async function buildKids(
   const art = await loadLevelArt(record, {
     noBaseAtlas: options.noBaseAtlas,
     log,
+    // The item icons come from the base game's power-up emblems, which no
+    // record names; the CLI asks for them so the card shows the stock art.
+    extraNames: KIDS_STOCK_ITEM_FRAMES,
   });
   const title1 = await titleArt(record.logoDataURL, "logo", log);
   const title2 = await titleArt(record.subTitleDataURL, "subtitle", log);
@@ -83,6 +89,7 @@ export async function buildKids(
       ).join(", ")
     }`,
   );
+  log(`items: ${rep.items.join(", ")}`);
   log(
     `cells: ${rep.cells.used} of 1024 (${rep.cells.chips} chips, ${rep.cells.sprites} sprite cells, ${rep.cells.shared} shared)`,
   );

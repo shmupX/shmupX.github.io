@@ -99,6 +99,7 @@ import {
     KIDS_TAIL_SIZE,
     KIDS_VFLIP,
     parseKidsSave,
+    KIDS_ANIM_INTERVALS,
 } from "./kids.js";
 import {
     KIDS_HISCORE_NAME_PAD,
@@ -148,84 +149,203 @@ export const KIDS_BOSS_ART_CELLS = Object.freeze([[4, 4], [8, 4], [4, 8], [8, 8]
 export const KIDS_BOSS_FOOTPRINT = Object.freeze([[2, 2], [4, 2], [2, 4], [4, 4]]);
 
 /**
- * The common SHIP table, word by word (likely — read off the samples, each
- * region rendered): the first ship's three 2x2 poses stored [TL, TR, BL, BR]
- * (pose 2 is pose 0 mirrored in the games that bank), its shot as two frames
- * of two cells along the travel axis, a second ship laid out the same at 32,
- * the title logo as an 8x4 cell block, a second 8x6 title block, six 16x16 item
- * icons, the blast as six 2x2 frames, and the seven enemy bullets the record's
- * テキダン (bullet) selector picks from, four frames each.
+ * The common SHIP table, word by word, as KIDS.EXE composes it into VRAM
+ * (confirmed — the composers 0x80076F04 poses, 0x80077020 shots, 0x80077260
+ * bombs, 0x800775F0 titles, 0x80077338 items, 0x800773C4 blast through the
+ * placement table 0x8006300C, 0x800774C8 bullets): the first ship's three
+ * 2x2 poses stored [TL, TR, BL, BR] (pose 1, words 4-7, is the level pose),
+ * its shot as FOUR 16x16 animation frames, its bomb as four 2x2 frames in an
+ * 8x2 row-major strip, the second ship laid out the same from 32, two 8x6
+ * title pictures (128x96) the title screen overlays, six 16x16 item icons in
+ * the ITEM LIST's order (icon = the record's item value - 1), the blast as
+ * six 2x2 frames in the interleaved order `blastWords` spells, and the seven
+ * enemy bullets a record's bullet selector names, four frames each.
  */
 export const KIDS_SHIP_LAYOUT = Object.freeze({
-    ship1: Object.freeze({ poses: [0, 4, 8], shot: 12 }),
-    ship2: Object.freeze({ poses: [32, 36, 40], shot: 44 }),
-    title1: Object.freeze({ at: 64, w: 8, h: 4 }),
+    ship1: Object.freeze({ poses: [0, 4, 8], shot: 12, bomb: 16 }),
+    ship2: Object.freeze({ poses: [32, 36, 40], shot: 44, bomb: 48 }),
+    title1: Object.freeze({ at: 64, w: 8, h: 6 }),
     title2: Object.freeze({ at: 112, w: 8, h: 6 }),
     items: Object.freeze({ at: 160, count: 6 }),
     blast: Object.freeze({ at: 166, frames: 6 }),
     bullets: Object.freeze({ at: 190, count: 7, frames: 4 }),
 });
+/** The blast's frame f, cell [TL, TR, BL, BR] -> SHIP word: two 3-frame 8x2 strips (0x8006300C). */
+export function blastWords(f) {
+    const base = f < 3 ? 166 + 2 * f : 178 + 2 * (f - 3);
+    return [base, base + 1, base + 6, base + 7];
+}
+/** A bomb's frame f (an 8x2 strip of four 2x2 frames) -> the four words of `at`'s strip. */
+export function bombWords(at, f) {
+    return [at + f * 2, at + f * 2 + 1, at + 8 + f * 2, at + 8 + f * 2 + 1];
+}
 export const KIDS_SHIP_TABLE_WORDS = KIDS_SHIP_TABLE_BYTES / 2; // 218
 
-// --- the records -------------------------------------------------------------------
+/**
+ * The six item icons, in the order the game's ITEM LIST screen names them:
+ * POWER UP, SPEED UP, BOMB UP, 1UP, 1000PTS UP, 50000PTS UP (likely — the
+ * screen lists them in this order with the icon each slot holds). Each slot
+ * is painted from the first atlas frame named here that the art carries —
+ * the web game's own power-up emblems, F for firepower, R (its speed-up art)
+ * and B — else from what `fallback` says: the ship for the extra life, a
+ * drawn coin for the point items.
+ */
+export const KIDS_ITEM_SLOTS = Object.freeze([
+    Object.freeze({ name: "POWER UP", frames: ["powerupBig0.gif", "powerupBig0.png", "powerupBig1.gif"], fallback: "square", type: 7 }),
+    Object.freeze({ name: "SPEED UP", frames: ["speedupItem0.gif", "speedupItem0.png", "speedupItem1.gif"], fallback: "square", type: 8 }),
+    Object.freeze({ name: "BOMB UP", frames: ["barrierItem0.gif", "barrierItem0.png", "barrierItem1.gif"], fallback: "square", type: 5 }),
+    Object.freeze({ name: "1UP", frames: ["1upItem0.gif", "1upItem0.png"], fallback: "ship", type: 4 }),
+    Object.freeze({ name: "1000PTS", frames: ["scoreItem0.gif", "scoreItem0.png"], fallback: "coin", type: 6 }),
+    Object.freeze({ name: "50000PTS", frames: ["scoreItem1.gif", "scoreItem1.png"], fallback: "bigCoin", type: 6 }),
+]);
+/** Every frame name an item slot may ask the art for — what a CLI pulls from the base atlas. */
+export const KIDS_STOCK_ITEM_FRAMES = Object.freeze(KIDS_ITEM_SLOTS.flatMap((s) => s.frames));
+
+// --- the records (confirmed — GAMES.bin spawner 0x801384F4 and its tables) ---
 //
-// GAMES.bin's movement scripts (pointer table 0x8014B4E8, four pointers per
-// pattern: three speed variants and a dead fourth) are ten-byte steps of
-// {duration, op, dx, dy}. Pattern 0's single step is {forever, dx 0, dy 0x8000}
-// — it rides the scroll, which is what every stationary ground object in the
-// samples uses (5,850 of their 11,000 placements) — and pattern 4's is
-// {forever, dx 0, dy +1.0 / +2.0 / +4.5} in 8.8 fixed point: straight down the
-// screen at the variant's speed. That pair is read off the table's bytes, not
-// traced through the interpreter, so: likely.
+// A zako record's five bytes, as the spawner reads them: byte 0 = movement
+// pattern (bits 0-4, GAMES.bin's pointer table 0x8014B4E8, three speed
+// variants in bits 5-6, bit 7 = appear from behind); byte 1 = hardness
+// (bits 0-2, the hit-point index), score tier (bits 3-4), opacity mark
+// (bits 5-7); byte 2 = bullet type (bits 0-3, the SHIP table's seven quads,
+// 7-8 the program's lasers), attack timing (bits 4-5, 0 = never fires),
+// animation interval (bits 6-7, {30, 10, 2, 0} frames); byte 3 = shot
+// pattern (bits 0-3), aim at the player (bit 4), item drop (bits 5-7,
+// 1..6 = the six icons); byte 4 = rotation mark (bits 0-2), scale mark
+// (bits 3-5), ground mark (bit 7).
+//
+// The movement scripts are ten-byte steps {duration, angle, angular
+// velocity, speed | ride, flags} on a y-up sin table, so angle 192 is down
+// the screen. Pattern 0 is one step {forever, 192, 0, speed 0 | ride}: it
+// rides the map (the editor's STOP). Pattern 4 is {forever, 192, 0, 1.0 /
+// 2.0 / 4.5 px per frame} by variant: straight down the screen.
 
 /** Record byte 0 bits 0-4: the pattern that rides the scroll. */
 export const KIDS_MOVE_STATIONARY = 0;
-/** Record byte 0 bits 0-4: straight ahead; bits 5-6 pick the speed. */
+/** Record byte 0 bits 0-4: straight down the screen; bits 5-6 pick the speed. */
 export const KIDS_MOVE_STRAIGHT = 4;
 /** Pattern 4's three variants, in px per frame. */
 export const KIDS_STRAIGHT_SPEEDS = Object.freeze([1, 2, 4.5]);
 /** A Kids! px/frame is half a runtime px/frame, the Saturn writer's ratio. */
 export const RUNTIME_TO_KIDS_SPEED = 0.5;
-/**
- * Record byte 4 bit 7: set on every stationary object and clear on every
- * flier in the samples — the editor's 地上物 (ground) mark against its 空中物
- * (airborne) one, as the PELON help names them (likely).
- */
+/** Record byte 4 bit 7: the editor's 地上物 (ground) mark — a draw and physics mark, independent of the pattern. */
 export const KIDS_GROUND_MARK = 0x80;
 /**
- * Hit points per record index, GAMES.bin table 0x8014A0D0 (the first of four,
- * which the spawner picks by a value it reads beside the record — likely the
- * difficulty). The unit is the engine's; one full-power shot is taken to be the
- * Saturn's 5,120, which puts the four at 0, 7, 20 and 100 hits.
+ * Hit points per hardness index, chosen by the spawn CLASS: the three
+ * tables at GAMES.bin 0x8014A0D0 / 0x8014A0E0 / 0x8014A0F0 (class 0, classes
+ * 1-2, class 3), scaled x2/3, x1, x1.5 by the difficulty. Index 3 is the
+ * "max, not counted" hardness (0x7D000 in every table); hardness 4 is
+ * untraced and not written.
  */
-export const KIDS_HP_UNITS = Object.freeze([0x100, 0x9600, 0x19000, 0x7d000]);
+export const KIDS_HP_TABLES = Object.freeze([
+    Object.freeze([0x100, 0x9600, 0x19000, 0x7d000]),
+    Object.freeze([0x3200, 0x12c00, 0x32000, 0x7d000]),
+    Object.freeze([0x3200, 0x12c00, 0x32000, 0x7d000]),
+    Object.freeze([0x6400, 0x25800, 0x64000, 0x7d000]),
+]);
+/** A standard player shot's power, one of the weapons' (GAMES.bin 0x8013532C); others run 4608..9728. */
 export const KIDS_SHOT_UNITS = 5120;
-/** Record byte 1 bits 3-4: the score tier (50-200 / 500-2000 / 2000-10000). */
-export const KIDS_SCORE_TIERS = Object.freeze([350, 2000]);
+/** Score per tier by spawn class (GAMES.bin 0x8014A098 / A0A0 / A0A8); tier 3 is worth nothing. */
+export const KIDS_SCORE_TABLES = Object.freeze([
+    Object.freeze([50, 100, 200]),
+    Object.freeze([500, 1000, 2000]),
+    Object.freeze([500, 1000, 2000]),
+    Object.freeze([2000, 5000, 10000]),
+]);
 /**
- * Record byte 2: bits 6-7 the fire interval index (1 = 10 frames, the value
- * every sample record carries) and bits 4-5 the attack-timing class, which is
- * 0 on the samples' popcorn and 1..3 on their gunners (likely: the help calls
- * it 『攻撃タイミング選択』, "how many times it attacks").
+ * Record byte 3 bits 5-7: the item a death drops, 1..6 = the ITEM LIST's
+ * POWER UP, SPEED UP, BOMB UP, 1UP, 1000PTS, 50000PTS. The web game's drop
+ * digits (F big shot 1, S 3-way 2, R rapid 3, B barrier 9) become the
+ * power-up, the power-up, the speed-up and the bomb.
  */
-export const KIDS_FIRE_INTERVAL_BITS = 0x40;
+export const KIDS_ITEM_FOR_DROP = Object.freeze({ 1: 1, 2: 1, 3: 2, 9: 3 });
+/**
+ * Boss hit points per class (GAMES.bin 0x8014A100), per PHASE: a boss's two
+ * 15-byte records are its two phases and its total is both. Score per
+ * phase and class: phase 1 {0, 10000, 50000}, phase 2 {50000, 100000, 500000}.
+ */
+export const KIDS_BOSS_HP = Object.freeze([0x7d000, 0x232800, 0x465000, 0x753000]);
+export const KIDS_BOSS_SCORE = Object.freeze([50000, 110000, 550000]);
+/** Boss byte 0 bits 4-5: the move speed class, scale {2, 4, 10}. */
+export const KIDS_BOSS_SPEEDS = 3;
 
 /**
- * Boss records, one per size class, as Athena's sample games wrote them. The
- * fifteen bytes are a head whose bits 6-7 are the size class and three 4-byte
- * sub-records the help pages describe as the boss's three fire points, and
- * none of it is traced (FORMAT-PSX.md, "Unresolved"); a boss built here wears
- * the behaviour of a sample boss of its size, with its own art and position.
- * Class 0 is MIYAKO's stage 0, 1 RAMSIE's stage 0, 2 RAMSIE's stage 1, 3 ANGEL
- * WING's stage 1. The unused record is the per-stage initialiser's.
+ * One five-byte zako record from named fields (the spawner's inverse).
  */
-export const KIDS_BOSS_TEMPLATES = Object.freeze([
-    Object.freeze([0x11, 0x69, 0x00, 0x00, 0x1b, 0x21, 0x1a, 0xf6, 0x06, 0x10, 0x11, 0x0d, 0x06, 0x10, 0x10]),
-    Object.freeze([0x5a, 0x09, 0x00, 0xe6, 0xff, 0x20, 0x13, 0x19, 0xff, 0x20, 0x13, 0x00, 0x00, 0x13, 0x06]),
-    Object.freeze([0x82, 0x09, 0x88, 0xfa, 0xf4, 0x26, 0x09, 0xe8, 0xf4, 0x14, 0x10, 0x0c, 0xf3, 0x14, 0x10]),
-    Object.freeze([0xdc, 0x81, 0x00, 0x00, 0x35, 0x27, 0x00, 0x00, 0xe2, 0x13, 0x03, 0xff, 0x02, 0x11, 0x03]),
+export function encodeKidsRecord({
+    movement = KIDS_MOVE_STRAIGHT,
+    variant = 0,
+    fromBehind = false,
+    hardness = 0,
+    scoreTier = 0,
+    opacity = 0,
+    bullet = 0,
+    timing = 0,
+    animIndex = 1,
+    shotPattern = 0,
+    aim = false,
+    item = 0,
+    rotation = 0,
+    scale = 0,
+    ground = false,
+} = {}) {
+    return [
+        (movement & 0x1f) | ((variant % 3) << 5) | (fromBehind ? 0x80 : 0),
+        (hardness & 7) | ((scoreTier & 3) << 3) | ((opacity % 5) << 5),
+        (bullet % 9) | ((timing & 3) << 4) | ((animIndex & 3) << 6),
+        (shotPattern & 0x0f) | (aim ? 0x10 : 0) | ((item & 7) << 5),
+        (rotation % 5) | ((scale % 5) << 3) | (ground ? KIDS_GROUND_MARK : 0),
+    ];
+}
+
+/**
+ * One fifteen-byte boss record (GAMES.bin 0x8013C1B8, 0x8013B984): the
+ * pattern, speed class and size class, the hit-point and score classes and
+ * the opacity mark, the rotation / scale / ground marks, then three weapons
+ * {dx, dy, bullet | timing << 4, pattern | aim << 4}.
+ */
+export function encodeKidsBoss({
+    pattern = 0,
+    speed = 1,
+    sizeClass = 3,
+    hpClass = 1,
+    scoreClass = 1,
+    opacity = 0,
+    rotation = 0,
+    scale = 0,
+    ground = false,
+    weapons = [],
+} = {}) {
+    const b = new Uint8Array(KIDS_BOSS_SIZE);
+    b[0] = (pattern & 0x0f) | ((speed % KIDS_BOSS_SPEEDS) << 4) | ((sizeClass & 3) << 6);
+    b[1] = (hpClass & 3) | ((scoreClass & 3) << 3) | ((opacity % 5) << 5);
+    b[2] = (rotation % 5) | ((scale % 5) << 3) | (ground ? 0x80 : 0);
+    for (let w = 0; w < 3; w++) {
+        const wp = weapons[w] || { dx: 0, dy: 0, bullet: 0, timing: 0, pattern: 0, aim: false };
+        b[3 + w * 4] = wp.dx & 0xff;
+        b[4 + w * 4] = wp.dy & 0xff;
+        b[5 + w * 4] = (wp.bullet % 9) | ((wp.timing & 3) << 4);
+        b[6 + w * 4] = (wp.pattern & 0x0f) | (wp.aim ? 0x10 : 0);
+    }
+    return b;
+}
+
+/**
+ * The movement and weapons a boss of each size class wears, read off
+ * Athena's sample bosses (ANGEL WING's stage 1 for 128x128, RAMSIE's stages
+ * 0 and 1 for 128x64 and 64x128, MIYAKO's stage 0 for 64x64): their pattern
+ * and speed class, and their three weapons' offsets, timings and patterns.
+ * The boss scripts' shapes are not traced; a sample boss's are a real boss's.
+ */
+export const KIDS_BOSS_BEHAVIOUR = Object.freeze([
+    Object.freeze({ pattern: 1, speed: 1, weapons: [{ dx: 0, dy: 27, bullet: 1, timing: 2, pattern: 6, aim: true }, { dx: 6, dy: 32, bullet: 1, timing: 1, pattern: 13, aim: false }, { dx: 6, dy: 16, bullet: 0, timing: 1, pattern: 0, aim: true }] }),
+    Object.freeze({ pattern: 10, speed: 1, weapons: [{ dx: -26, dy: -1, bullet: 0, timing: 2, pattern: 3, aim: true }, { dx: 25, dy: -1, bullet: 0, timing: 2, pattern: 3, aim: true }, { dx: 0, dy: 0, bullet: 3, timing: 1, pattern: 6, aim: false }] }),
+    Object.freeze({ pattern: 2, speed: 0, weapons: [{ dx: -6, dy: -12, bullet: 6, timing: 2, pattern: 9, aim: false }, { dx: -24, dy: -12, bullet: 4, timing: 1, pattern: 0, aim: true }, { dx: 12, dy: -13, bullet: 4, timing: 1, pattern: 0, aim: true }] }),
+    Object.freeze({ pattern: 12, speed: 1, weapons: [{ dx: 0, dy: 53, bullet: 7, timing: 2, pattern: 0, aim: false }, { dx: 0, dy: -30, bullet: 3, timing: 0, pattern: 3, aim: true }, { dx: -1, dy: 2, bullet: 1, timing: 1, pattern: 3, aim: false }] }),
 ]);
-export const KIDS_BOSS_UNUSED = Object.freeze([0x10, 0x09, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+/** The per-stage initialiser's boss record (`10 09 00 …`): pattern 0, speed 1, 64x64, hit-point and score class 1, no weapons. */
+export const KIDS_BOSS_DEFAULT = Object.freeze(Array.from(encodeKidsBoss({ pattern: 0, speed: 1, sizeClass: 0, hpClass: 1, scoreClass: 1 })));
 
 /**
  * The 0x70 CONFIG bytes of ANGEL WING (SGM_AWIN), a vertical one-player game,
@@ -573,6 +693,27 @@ export function encodeKidsIcon(frame) {
     return { clut, pixels };
 }
 
+/** A gold coin for a point item: a rimmed disc with a glint, `size` px across in a 16x16 cell. */
+export function coinSprite(size = 12) {
+    const dim = 16;
+    const rgba = new Uint8Array(dim * dim * 4);
+    const c = (dim - 1) / 2, r = size / 2;
+    for (let y = 0; y < dim; y++) {
+        for (let x = 0; x < dim; x++) {
+            const d = Math.hypot(x - c, y - c);
+            if (d > r) continue;
+            const o = (y * dim + x) * 4;
+            const rim = d > r - 1.6;
+            const glint = x - c < -r * 0.25 && y - c < -r * 0.25 && d < r - 2;
+            rgba[o] = rim ? 150 : glint ? 255 : 250;
+            rgba[o + 1] = rim ? 95 : glint ? 250 : 200;
+            rgba[o + 2] = rim ? 20 : glint ? 190 : 40;
+            rgba[o + 3] = 255;
+        }
+    }
+    return { w: dim, h: dim, rgba };
+}
+
 /** A plain icon for a game with no ship art: a "K" on a dark square. */
 export function defaultKidsIcon() {
     const rgba = new Uint8Array(ICON_DIM * ICON_DIM * 4);
@@ -797,7 +938,8 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
         ship.poses.forEach((at, i) => shipWords.set(poses[i], at));
     }
     // The shot: the level's normal shot stood on end (the runtime draws it
-    // travelling right), fitted to the 16x32 box, as two identical frames.
+    // travelling right), as four 16x16 animation frames; the bomb: the first
+    // four blast rings in the 8x2 strip the composer reads.
     const pd = level.playerData || {};
     const shotArt = [];
     for (const mode of ["shootNormal", "shoot3way", "shootBig"]) {
@@ -807,11 +949,13 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
             shotArt.push(f.w > f.h ? { ...rotateCcwRgba(f), key: f.key } : f);
         }
     }
-    const shotFrame = shotArt[0] || shotSprite(16, 16);
-    const shotWords = bankFrame(fitIndexed(shotFrame, 16, 32), 16, 32, "player shot") || new Uint16Array(2).fill(KIDS_BLANK);
+    const shotFrames = spreadFrames(shotArt.length ? shotArt : [shotSprite(16, 16)], 4);
+    const shotWords = shotFrames.map((f) => (bankFrame(fitIndexed(f, 16, 16), 16, 16, "player shot") || new Uint16Array([KIDS_BLANK]))[0]);
+    const blastRings = blastFrames(32, KIDS_SHIP_LAYOUT.blast.frames);
+    const blastCells = blastRings.map((f) => bankFrame(quantizeKidsFrame(f), 32, 32, "blast") || new Uint16Array(4).fill(KIDS_BLANK));
     for (const ship of [KIDS_SHIP_LAYOUT.ship1, KIDS_SHIP_LAYOUT.ship2]) {
-        shipWords.set(shotWords, ship.shot);
-        shipWords.set(shotWords, ship.shot + 2);
+        shotWords.forEach((w, i) => { shipWords[ship.shot + i] = w; });
+        for (let f = 0; f < 4; f++) bombWords(ship.bomb, f).forEach((at, i) => { shipWords[at] = blastCells[f][i]; });
     }
 
     // --- bullets: the seven the records can name, from the level's zako shots ---
@@ -835,22 +979,33 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
     }
     const bulletTints = [[255, 240, 120], [120, 200, 255], [255, 120, 200], [140, 255, 140], [255, 170, 60], [200, 200, 255], [255, 255, 255]];
     const bulletSlots = [];
+    const quadOfArt = new Map(); // first frame key -> the quad that holds it
     for (let q = 0; q < KIDS_SHIP_LAYOUT.bullets.count; q++) {
         const frames = bulletArt.length ? bulletArt[q % bulletArt.length] : [shotSprite(16, 16, bulletTints[q])];
+        if (bulletArt.length && !quadOfArt.has(frames[0].key)) quadOfArt.set(frames[0].key, q);
         const chosen = spreadFrames(frames, KIDS_SHIP_LAYOUT.bullets.frames);
         const out = chosen.map((f) => (bankFrame(fitIndexed(f, 16, 16), 16, 16, "enemy bullet") || new Uint16Array([KIDS_BLANK]))[0]);
         shipWords.set(out, KIDS_SHIP_LAYOUT.bullets.at + q * KIDS_SHIP_LAYOUT.bullets.frames);
         bulletSlots.push(frames[0].key || "procedural");
     }
 
-    // --- the blast and the item icons ---
-    blastFrames(32, KIDS_SHIP_LAYOUT.blast.frames).forEach((f, i) => {
-        const w = bankFrame(quantizeKidsFrame(f), 32, 32, "blast") || new Uint16Array(4).fill(KIDS_BLANK);
-        shipWords.set(w, KIDS_SHIP_LAYOUT.blast.at + i * 4);
-    });
-    [7, 8, 5, 4, 6, 6].forEach((type, i) => {
-        const w = bankFrame(quantizeKidsFrame(itemIcon(type)), 16, 16, "items") || new Uint16Array([KIDS_BLANK]);
+    // --- the blast (its six frames in the composer's interleaved order) and the item icons ---
+    blastCells.forEach((cells, f) => blastWords(f).forEach((at, i) => { shipWords[at] = cells[i]; }));
+    // The item icons: the stock emblems where the art has them, the ship as
+    // the extra life, coins for the points, and only then a coloured square.
+    const itemSources = KIDS_ITEM_SLOTS.map((slot, i) => {
+        let frame = null, source = null;
+        for (const name of slot.frames) {
+            const f = lookup(name);
+            if (f) { frame = f; source = f.key; break; }
+        }
+        if (!frame && slot.fallback === "ship" && centre) { frame = centre; source = "ship"; }
+        if (!frame && slot.fallback === "coin") { frame = coinSprite(11); source = "coin"; }
+        if (!frame && slot.fallback === "bigCoin") { frame = coinSprite(14); source = "coin"; }
+        if (!frame) { frame = itemIcon(slot.type); source = "square"; }
+        const w = bankFrame(fitIndexed(frame, 16, 16), 16, 16, "items") || new Uint16Array([KIDS_BLANK]);
         shipWords[KIDS_SHIP_LAYOUT.items.at + i] = w[0];
+        return source;
     });
 
     // --- per stage ---
@@ -860,10 +1015,23 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
         const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
         const appear = new Uint8Array(KIDS_APPEAR_STAGE_BYTES);
         const counts = KIDS_APPEAR_CLASSES.map(() => 0);
-        const records = new Map(); // letter -> {klass, id, bytes, name, strip}
-        const usage = new Map();
-        for (const row of spawnRows) for (const cell of row) if (cell && cell !== "00") usage.set(cell.slice(0, -1), (usage.get(cell.slice(0, -1)) || 0) + 1);
-        const letters = [...usage.keys()].sort((a, b) => usage.get(b) - usage.get(a));
+        // A record per enemy letter AND drop digit, as the Saturn writer does:
+        // a Kids! record drops one item, and the grid's "B1" here and "B0"
+        // there are two records sharing one strip. The most used letters,
+        // and within a letter the most used digits, claim records first.
+        const records = new Map(); // "A1" -> {klass, id, bytes, name, strip, item}
+        const usage = new Map(); // letter -> {count, digits: Map digit -> count}
+        for (const row of spawnRows) {
+            for (const cell of row) {
+                if (!cell || cell === "00") continue;
+                const letter = cell.slice(0, -1), digit = cell.slice(-1);
+                if (!usage.has(letter)) usage.set(letter, { count: 0, digits: new Map() });
+                const u = usage.get(letter);
+                u.count++;
+                u.digits.set(digit, (u.digits.get(digit) || 0) + 1);
+            }
+        }
+        const letters = [...usage.keys()].sort((a, b) => usage.get(b).count - usage.get(a).count);
         for (const letter of letters) {
             const rec = enemyData[`enemy${letter}`];
             if (!rec) {
@@ -877,40 +1045,65 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
             if (frames.length && (maxW > 64 || maxH > 64)) {
                 warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 — downscaled`);
             }
-            let klass = kidsClassFor(maxW, maxH);
-            while (klass < KIDS_APPEAR_CLASSES.length && counts[klass] >= KIDS_APPEAR_CLASSES[klass].count) klass++;
-            if (klass >= KIDS_APPEAR_CLASSES.length) {
-                warn(`${st.key}: no free record for enemy${letter} (${rec.name || "?"}) — a stage holds 16 + 8 + 8 + 8 — cells left empty`);
-                continue;
-            }
-            const id = counts[klass]++;
-            const strip = KIDS_SPRITE_STRIPS[klass];
-            const bw = strip.w * CG_CELL, bh = strip.h * CG_CELL;
-            const stripWords = new Uint16Array(KIDS_SPRITE_ENTRY_WORDS).fill(KIDS_BLANK);
-            spreadFrames(frames, strip.frames).forEach((f, fi) => {
-                const cells = bankFrame(fitIndexed(f, bw, bh), bw, bh, `enemy${letter}`);
-                if (!cells) return;
-                for (let cy = 0; cy < strip.h; cy++) {
-                    for (let cx = 0; cx < strip.w; cx++) stripWords[cy * strip.stripW + fi * strip.w + cx] = cells[cy * strip.w + cx];
-                }
-            });
+            const artClass = kidsClassFor(maxW, maxH);
+            const strips = new Map(); // klass -> the strip words, banked once per class the letter lands in
+            const stripFor = (klass) => {
+                if (strips.has(klass)) return strips.get(klass);
+                const strip = KIDS_SPRITE_STRIPS[klass];
+                const bw = strip.w * CG_CELL, bh = strip.h * CG_CELL;
+                const stripWords = new Uint16Array(KIDS_SPRITE_ENTRY_WORDS).fill(KIDS_BLANK);
+                spreadFrames(frames, strip.frames).forEach((f, fi) => {
+                    const cells = bankFrame(fitIndexed(f, bw, bh), bw, bh, `enemy${letter}`);
+                    if (!cells) return;
+                    for (let cy = 0; cy < strip.h; cy++) {
+                        for (let cx = 0; cx < strip.w; cx++) stripWords[cy * strip.stripW + fi * strip.w + cx] = cells[cy * strip.w + cx];
+                    }
+                });
+                strips.set(klass, stripWords);
+                return stripWords;
+            };
             const speed = (Number.isFinite(rec.speed) ? rec.speed : 1) * RUNTIME_TO_KIDS_SPEED;
-            const variant = nearestIndex(KIDS_STRAIGHT_SPEEDS, speed);
-            const hits = rec.hp === "infinity" ? 100 : Math.max(1, Number(rec.hp) || 1);
-            const hpIndex = nearestIndex(KIDS_HP_UNITS, hits * KIDS_SHOT_UNITS);
-            const score = Number(rec.score) || 100;
-            const tier = score < KIDS_SCORE_TIERS[0] ? 0 : score < KIDS_SCORE_TIERS[1] ? 1 : 2;
+            const hits = rec.hp === "infinity" ? Infinity : Math.max(1, Number(rec.hp) || 1);
             const interval = Number(rec.interval);
             const fires = Number.isFinite(interval) && interval > 0;
             const timing = !fires ? 0 : interval >= 90 ? 1 : interval >= 45 ? 2 : 3;
-            const bytes = [
-                KIDS_MOVE_STRAIGHT | (variant << 5),
-                (hpIndex & 7) | ((tier & 3) << 3),
-                KIDS_FIRE_INTERVAL_BITS | (timing << 4),
-                0x00,
-                0x00,
-            ];
-            records.set(letter, { klass, id, bytes, name: rec.name || `enemy${letter}`, strip: stripWords, frames: frames.length });
+            const proj = rec.projectileData && Array.isArray(rec.projectileData.texture) ? rec.projectileData.texture[0] : null;
+            const bulletKey = proj ? (lookup(proj) || {}).key : null;
+            const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
+            let first = null; // the record the most common digit got
+            for (const digit of digits) {
+                let klass = artClass;
+                while (klass < KIDS_APPEAR_CLASSES.length && counts[klass] >= KIDS_APPEAR_CLASSES[klass].count) klass++;
+                const item = KIDS_ITEM_FOR_DROP[digit] || 0;
+                if (klass >= KIDS_APPEAR_CLASSES.length) {
+                    if (first) {
+                        warn(`${st.key}: enemy${letter} carries several drop digits and the stage is out of records — its drop-${digit} cells drop ${first.item ? KIDS_ITEM_SLOTS[first.item - 1].name : "nothing"} instead`);
+                        records.set(letter + digit, first);
+                    } else {
+                        warn(`${st.key}: no free record for enemy${letter} (${rec.name || "?"}) — a stage holds 16 + 8 + 8 + 8 — cells left empty`);
+                    }
+                    continue;
+                }
+                const id = counts[klass]++;
+                // Hardness 3 is "max, not counted"; a finite hp picks among the
+                // three counted ones of this class's table.
+                const hardness = hits === Infinity ? 3 : nearestIndex(KIDS_HP_TABLES[klass].slice(0, 3), hits * KIDS_SHOT_UNITS);
+                const scoreTier = nearestIndex(KIDS_SCORE_TABLES[klass], Number(rec.score) || KIDS_SCORE_TABLES[klass][1]);
+                const bytes = encodeKidsRecord({
+                    movement: KIDS_MOVE_STRAIGHT,
+                    variant: nearestIndex(KIDS_STRAIGHT_SPEEDS, speed),
+                    hardness,
+                    scoreTier,
+                    bullet: bulletKey && quadOfArt.has(bulletKey) ? quadOfArt.get(bulletKey) : 0,
+                    timing,
+                    animIndex: Number.isFinite(rec.frameRate) && rec.frameRate > 0 ? nearestIndex(KIDS_ANIM_INTERVALS, 60 / rec.frameRate) : 1,
+                    aim: fires,
+                    item,
+                });
+                const entry = { klass, id, bytes, name: rec.name || `enemy${letter}`, letter, digit, strip: stripFor(klass), frames: frames.length, item };
+                records.set(letter + digit, entry);
+                if (!first) first = entry;
+            }
         }
 
         // Placement. The anchor is the top-left cell on screen; the rest of the
@@ -943,7 +1136,7 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
                 : Math.min(KIDS_MAX_SPAWN_ROW, KIDS_FIRST_SPAWN_ROW + k * KIDS_ROW_STEP);
             row.forEach((cell, c) => {
                 if (!cell || cell === "00") return;
-                const rec = records.get(cell.slice(0, -1));
+                const rec = records.get(cell);
                 if (!rec) return;
                 const [w, h] = KIDS_APPEAR_CELLS[rec.klass];
                 const col = mapKidsColumn(c, width, w);
@@ -962,12 +1155,14 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
         });
         if (dropped) warn(`${st.key}: ${dropped} placement${dropped === 1 ? "" : "s"} overlapped another enemy's cells and ${dropped === 1 ? "was" : "were"} left out`);
 
-        // The boss: its art in the 8x8 grid, Athena's record for its size,
-        // the 0xC0 anchor a few rows past the last wave with the scroll halted
-        // under it.
+        // The boss: its art in the 8x8 grid for both phases (a boss is two
+        // records, two phases, and its total hit points are both; an unpainted
+        // second phase is an invisible one), the sample bosses' movement and
+        // weapons for its size, the 0xC0 anchor a few rows past the last wave
+        // with the scroll halted under it.
         let boss = null;
         const bossWords = [new Uint16Array(KIDS_SPRITE_BOSS_WORDS).fill(KIDS_BLANK), new Uint16Array(KIDS_SPRITE_BOSS_WORDS).fill(KIDS_BLANK)];
-        const bossRecords = [Uint8Array.from(KIDS_BOSS_UNUSED), Uint8Array.from(KIDS_BOSS_UNUSED)];
+        const bossRecords = [Uint8Array.from(KIDS_BOSS_DEFAULT), Uint8Array.from(KIDS_BOSS_DEFAULT)];
         const bossRec = bossData[`boss${s}`];
         if (bossRec) {
             const names = bossRec.anim && Array.isArray(bossRec.anim.idle)
@@ -982,15 +1177,21 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
                 warn(`${st.key}: boss (${bossRec.name || "?"}) is ${maxW}x${maxH}; its art is ${aw * CG_CELL}x${ah * CG_CELL} — downscaled`);
             }
             if (!frames.length) warn(`${st.key}: boss (${bossRec.name || "?"}) has no art in the atlas — its sprite is unpainted`);
-            if (frames.length) {
-                const cells = bankFrame(fitIndexed(frames[0], aw * CG_CELL, ah * CG_CELL), aw * CG_CELL, ah * CG_CELL, `boss${s}`);
-                if (cells) {
-                    for (let cy = 0; cy < ah; cy++) for (let cx = 0; cx < aw; cx++) bossWords[0][cy * KIDS_BOSS_GRID + cx] = cells[cy * aw + cx];
-                }
+            // Phase 1 draws the first frame, phase 2 the second (or the first again).
+            const phaseFrames = frames.length ? [frames[0], frames[1] || frames[0]] : [];
+            phaseFrames.forEach((f, phase) => {
+                const cells = bankFrame(fitIndexed(f, aw * CG_CELL, ah * CG_CELL), aw * CG_CELL, ah * CG_CELL, `boss${s}`);
+                if (!cells) return;
+                for (let cy = 0; cy < ah; cy++) for (let cx = 0; cx < aw; cx++) bossWords[phase][cy * KIDS_BOSS_GRID + cx] = cells[cy * aw + cx];
+            });
+            const hits = bossRec.hp === "infinity" ? Infinity : Math.max(1, Number(bossRec.hp) || 100);
+            // Each phase takes half the hits; the class is the nearest per-phase value.
+            const hpClass = hits === Infinity ? 3 : nearestIndex(KIDS_BOSS_HP, (hits / 2) * KIDS_SHOT_UNITS);
+            const scoreClass = nearestIndex(KIDS_BOSS_SCORE, Number(bossRec.score) || KIDS_BOSS_SCORE[1]);
+            const behaviour = KIDS_BOSS_BEHAVIOUR[sizeClass];
+            for (let phase = 0; phase < 2; phase++) {
+                bossRecords[phase] = encodeKidsBoss({ ...behaviour, sizeClass, hpClass, scoreClass });
             }
-            const tpl = KIDS_BOSS_TEMPLATES[sizeClass];
-            bossRecords[0] = Uint8Array.from(tpl);
-            bossRecords[0][0] = (tpl[0] & 0x3f) | (sizeClass << 6);
             const [fw, fh] = KIDS_BOSS_FOOTPRINT[sizeClass];
             let row = Math.min(KIDS_APPEAR_ROWS - 1, Math.max(lastRow + KIDS_BOSS_ROW_GAP, fh - 1));
             const col = KIDS_BOSS_COLUMN[sizeClass];
@@ -999,7 +1200,7 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
                 warn(`${st.key}: no room left for the boss past the last wave — it is left out`);
             } else {
                 stamp(row, col, fw, fh, KIDS_APPEAR_PRESENT | (KIDS_APPEAR_BOSS_CLASS << 4));
-                boss = { name: bossRec.name || `boss${s}`, sizeClass, row, col, frames: frames.length };
+                boss = { name: bossRec.name || `boss${s}`, sizeClass, row, col, frames: frames.length, hits, hpClass };
                 lastRow = Math.max(lastRow, row);
             }
         }
@@ -1071,9 +1272,12 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
             }
         }
 
-        // Scroll: run to the boss, halt under it.
+        // Scroll: run to the boss and halt under it — or, with no boss, halt a
+        // screen past the last wave: a halted scroll with nothing left alive
+        // on screen is what ends a stage (GAMES.bin 0x8011C2F4).
         const scroll = new Uint8Array(KIDS_SCROLL_STAGE_BYTES);
-        const haltUnit = boss ? Math.floor((boss.row * 32) / KIDS_SCROLL_UNIT_PIXELS) : KIDS_SCROLL_UNITS;
+        const haltRow = boss ? boss.row : Math.min(KIDS_APPEAR_ROWS - 1, lastRow + KIDS_BOSS_ROW_GAP);
+        const haltUnit = Math.floor((haltRow * 32) / KIDS_SCROLL_UNIT_PIXELS);
         for (let u = 0; u < KIDS_SCROLL_UNITS; u++) {
             const nibble = u < haltUnit ? KIDS_SCROLL_RUN : KIDS_SCROLL_HALT;
             if (u & 1) scroll[u >> 1] |= nibble << 4;
@@ -1082,16 +1286,11 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
         return { key: st.key, appear, records, bossWords, bossRecords, boss, mapWords, chips, scroll, placed, dropped, lastRow };
     });
 
-    // --- title blocks ---
+    // --- the two title pictures (the logo, then the subtitle) ---
     let title = "none";
-    if (opts.title1 && opts.title1.rgba) {
-        const t = KIDS_SHIP_LAYOUT.title1;
-        const w = bankFrame(fitIndexed(opts.title1, t.w * CG_CELL, t.h * CG_CELL), t.w * CG_CELL, t.h * CG_CELL, "title");
-        if (w) { shipWords.set(w, t.at); title = "uploaded"; }
-    }
-    if (opts.title2 && opts.title2.rgba) {
-        const t = KIDS_SHIP_LAYOUT.title2;
-        const w = bankFrame(fitIndexed(opts.title2, t.w * CG_CELL, t.h * CG_CELL), t.w * CG_CELL, t.h * CG_CELL, "title");
+    for (const [art, t] of [[opts.title1, KIDS_SHIP_LAYOUT.title1], [opts.title2, KIDS_SHIP_LAYOUT.title2]]) {
+        if (!art || !art.rgba) continue;
+        const w = bankFrame(fitIndexed(art, t.w * CG_CELL, t.h * CG_CELL), t.w * CG_CELL, t.h * CG_CELL, "title");
         if (w) { shipWords.set(w, t.at); title = "uploaded"; }
     }
 
@@ -1102,11 +1301,11 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
         data.set(b.scroll, KIDS_REGION.scroll.offset + s * KIDS_SCROLL_STAGE_BYTES);
         data.set(b.appear, KIDS_REGION.appear.offset + s * KIDS_APPEAR_STAGE_BYTES);
         const recBase = KIDS_REGION.records.offset + s * KIDS_RECORDS_STAGE_BYTES;
-        for (const r of b.records.values()) data.set(r.bytes, recBase + (KIDS_CLASS_BASE[r.klass] + r.id) * KIDS_RECORD_SIZE);
+        for (const r of new Set(b.records.values())) data.set(r.bytes, recBase + (KIDS_CLASS_BASE[r.klass] + r.id) * KIDS_RECORD_SIZE);
         b.bossRecords.forEach((rec, i) => data.set(rec, recBase + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE));
         const sprBase = KIDS_REGION.sprites.offset + s * KIDS_SPRITE_STAGE_BYTES;
         for (let i = 0; i < KIDS_SPRITE_STAGE_BYTES; i += 2) putU16le(data, sprBase + i, KIDS_BLANK);
-        for (const r of b.records.values()) {
+        for (const r of new Set(b.records.values())) {
             putWords(sprBase + KIDS_SPRITE_CLASS_OFFSETS[r.klass] + r.id * KIDS_SPRITE_ENTRY_WORDS * 2, r.strip);
         }
         b.bossWords.forEach((w, i) => putWords(sprBase + KIDS_SPRITE_BOSS_OFFSETS[i], w));
@@ -1116,7 +1315,7 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
         const sprBase = KIDS_REGION.sprites.offset + s * KIDS_SPRITE_STAGE_BYTES;
         for (let i = 0; i < KIDS_SPRITE_STAGE_BYTES; i += 2) putU16le(data, sprBase + i, KIDS_BLANK);
         const recBase = KIDS_REGION.records.offset + s * KIDS_RECORDS_STAGE_BYTES;
-        for (let i = 0; i < 2; i++) data.set(KIDS_BOSS_UNUSED, recBase + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE);
+        for (let i = 0; i < 2; i++) data.set(KIDS_BOSS_DEFAULT, recBase + KIDS_BOSS_OFFSET + i * KIDS_BOSS_SIZE);
         data.fill(KIDS_SCROLL_RUN | (KIDS_SCROLL_RUN << 4), KIDS_REGION.scroll.offset + s * KIDS_SCROLL_STAGE_BYTES, KIDS_REGION.scroll.offset + (s + 1) * KIDS_SCROLL_STAGE_BYTES);
     }
     putWords(KIDS_REGION.ship.offset, shipWords);
@@ -1162,12 +1361,13 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
                 key: b.key,
                 placements: b.placed,
                 dropped: b.dropped,
-                records: [...b.records.values()].map((r) => ({ name: r.name, klass: r.klass, id: r.id, frames: r.frames })),
-                boss: b.boss,
+                records: [...new Set(b.records.values())].map((r) => ({ name: r.name, cell: r.letter + r.digit, klass: r.klass, id: r.id, frames: r.frames, ...(r.item ? { item: KIDS_ITEM_SLOTS[r.item - 1].name } : {}) })),
+                boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, frames: b.boss.frames, hpClass: b.boss.hpClass } : null,
                 chips: b.chips,
                 lastRow: b.lastRow,
             })),
             ship: shipSource,
+            items: itemSources,
             bullets: bulletSlots,
             title,
             backgroundSet,

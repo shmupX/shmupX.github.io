@@ -46,6 +46,7 @@ import {
   detectPsxCards,
   detectPsxDiscs,
   DEZAEMON_PSX_TITLE,
+  fileExtentReader,
   findPsxCards,
   findPsxDisc,
   findPsxDiscs,
@@ -1250,10 +1251,15 @@ Deno.test({
       assertEquals(disc.content, PSX_CONTENT_NAMES_TS[disc.game]);
 
       // The prefix read is the whole point of the module: this file is
-      // hundreds of megabytes and detection must never open it.
+      // hundreds of megabytes and detection must never read it through. The
+      // extent reader is the one exception — Select 100 keeps SYSTEM.CNF
+      // 113 MB in, and the detector fetches those 68 bytes by offset.
       const prefix = await readDiscPrefix(disc.files[0].path);
       assert(prefix, `${disc.files[0].name} could not be opened`);
-      const seen = identifyPsxDisc(prefix);
+      const seen = identifyPsxDisc(
+        prefix,
+        fileExtentReader(disc.files[0].path),
+      );
       assert(seen, `${disc.files[0].name} was not identified from a prefix`);
       assertEquals(seen.code, disc.code);
       assertEquals(seen.game, disc.game);
