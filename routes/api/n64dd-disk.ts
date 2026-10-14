@@ -43,10 +43,15 @@ export async function diskDir(): Promise<string> {
   return join(await repoRoot(), "build", "n64dd");
 }
 
-/** A file name this route will write or serve: letters, digits, a few marks, ending in .ndd. */
+/**
+ * A file name this route will write or serve: letters and digits in any
+ * script (a Japanese title keeps its name instead of collapsing to "-"), a
+ * few marks, ending in .ndd. Every separator and control character becomes
+ * "-", so nothing here names a directory.
+ */
 export function safeDiskName(name: unknown): string | null {
   if (typeof name !== "string") return null;
-  let clean = name.trim().replace(/[^A-Za-z0-9 ._()\-]+/g, "-").replace(
+  let clean = name.trim().replace(/[^\p{L}\p{N} ._()\-]+/gu, "-").replace(
     /^\.+/,
     "",
   ).slice(0, 80).trim();

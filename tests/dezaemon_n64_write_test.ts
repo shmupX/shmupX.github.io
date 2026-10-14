@@ -15,7 +15,6 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   BLANK_BYTE,
-  blockSize,
   buildDisk,
   buildN64ProjectFromLevel,
   buildSystemArea,

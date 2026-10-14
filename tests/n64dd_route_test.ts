@@ -48,6 +48,12 @@ Deno.test("a disk's file name is cut to a safe spelling and always ends in .ndd"
   assertEquals(safeDiskName("  "), null);
   assertEquals(safeDiskName(42), null);
   assertEquals(safeDiskName(".ndd"), "ndd.ndd", "a bare extension gets a name");
+  assertEquals(
+    safeDiskName("Dezaemon 3D - 日本の級.ndd"),
+    "Dezaemon 3D - 日本の級.ndd",
+    "a title in another script keeps its name, so two such levels do not park as one",
+  );
+  assertEquals(safeDiskName("a/b\\c\u0000d.ndd"), "a-b-c-d.ndd");
 });
 
 Deno.test("a built .ddd parks as the .ndd the player mounts, and comes back by name", async () => {
