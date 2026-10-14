@@ -1063,6 +1063,88 @@ save format itself is SLPS-00335's: the file is still named `BISLPS-00335DEZA`.
 
 ---
 
+## Writing a Kids! save (`src/psx/kids-write.js`, `memcard-write.js`)
+
+`exportLevelToKidsCard(level, art)` builds a save from nothing — a level record
+and its RGBA frames in, the 0x1E000 block and the 128 KB card out — the way
+`src/write/game-to-save.js` builds a Saturn cart, and `deno task build:kids`
+runs it from a shell. Everything it writes that the sections above already
+confirm (the directory and sums, the LZSS, the map's 2×2-aligned chips, the
+footprint marks, the config's traced bytes, the tail) is read back through
+`parseKidsSave` before the block leaves the builder. What it had to settle on
+top of that, and where each answer came from, is below; every item is **likely**
+unless it says confirmed, and `test/psx-kids-write.test.js` holds the sample
+games to the same readings.
+
+- **The sprite strips.** A spawn class's 16-word entry is a row-major strip of
+  its frames side by side: class 0 four 2×2 frames in an 8×2 strip (the one
+  SPRITES names above), class 1 two 4×2 frames in the same 8×2, class 2 two 2×4
+  frames in a 4×4, class 3 one 4×4 frame. Rendered from the thirteen `SGM_*.CMP`
+  sample games under that reading the entries are the games' own sprites; under
+  a frame-major reading classes 1–3 come out as halves of them.
+- **A boss part is an 8×8 cell grid**, row-major, 128×128 px, and a smaller
+  boss's art sits in its top-left corner — a 128×64 boss paints rows 0–3, a
+  64×128 one columns 0–3 — while the size class in the record's byte 0 is the
+  footprint and hit box. All 36 painted boss parts in the samples fit this.
+- **The SHIP table**, word by word, read off the samples and rendered: the first
+  ship's three 2×2 poses stored `[TL, TR, BL, BR]` at words 0, 4 and 8 (pose 2
+  is pose 0 mirrored in the games that bank), its shot at 12–15 as two frames of
+  two cells along the travel axis, a second ship laid out the same from word 32,
+  the title logo as an 8×4 cell block at 64–95, a second 8×6 block at 112–159,
+  six 16×16 item icons at 160–165, the blast as six 2×2 frames at 166–189, and
+  the seven enemy bullets the record's テキダン selector picks from at 190–217,
+  four frames each. Words 16–31 and 48–63 hold a ship's two further weapons in
+  the games that have them and are left blank.
+- **Movement.** GAMES.bin's pointer table `0x8014B4E8` has four pointers per
+  pattern — three speed variants and a dead fourth — into ten-byte steps of
+  `{u16 duration, op, s16 dx, s16 dy, …}`. Pattern 0's single step is
+  `{forever, dx 0, dy 0x8000}`, which rides the scroll: every stationary ground
+  object in the samples uses it, 5,850 of their 11,000 placements. Pattern 4's
+  is `{forever, dx 0, dy +1.0 / +2.0 / +4.5}` in 8.8 fixed point — straight down
+  the screen — so an exported zako is pattern 4 with the variant picked by its
+  speed. Read off the table's bytes, not traced through the interpreter.
+- **Record byte 4 bit 7** is set on every stationary object and clear on every
+  flier in the samples: the editor's 地上物 (ground) mark against its 空中物
+  (airborne) one, as the PELON help names them. An exported zako is airborne.
+- **Hit points** index GAMES.bin table `0x8014A0D0`
+  (`0x100, 0x9600,
+  0x19000, 0x7D000`, the first of four the spawner chooses
+  between); with one full-power shot taken as the Saturn's 5,120 units those are
+  0, 7, 20 and 100 hits. **Score** is the record's tier (50–200 / 500–2,000 /
+  2,000–10,000). **Firing**: the attack-timing class in byte 2 bits 4–5 is 0 on
+  the samples' popcorn and 1..3 on their gunners; the interval index in bits 6–7
+  is 1 (ten frames) on every sample record and stays so.
+- **The boss record's fifteen bytes are untraced**, so a boss built here wears
+  the record of a sample boss of its size class — MIYAKO's stage 0, RAMSIE's
+  stages 0 and 1, ANGEL WING's stage 1 — with its own art, position and size
+  bits; the second part is the per-stage initialiser's unused `10 09 00 …`.
+- **CONFIG** starts from ANGEL WING's 0x70 bytes (a vertical one-player game)
+  and the writer sets the direction, the per-stage flags, the motion bytes and
+  the backdrop over it. Horizontal games are refused: the map and appear grids
+  are laid out for a vertical one.
+- **The stage runs from row 0.** In every sample stage the spawns climb from the
+  low rows to the boss (RAMSIE's stage 0: spawns in rows 3–158, the boss at
+  165), and the scroll nibbles are 2 to the boss's 64-px unit and 0 from it on —
+  the halt the games hold a boss fight on. The export does the same.
+- **The tail is the factory's**: KIDS.EXE `0x80064B98` writes the 1000..100
+  ladder with `........` names and level 1, and `0x80065E94` the option bytes
+  (`01 01 A0 50` three times over, cursor `08 02 01`, stereo 1, the backdrop
+  byte 2 — bit 0 clear, black — volume 127). Confirmed off the stores.
+- **The card** is the console's own layout (`memcard-write.js`): the `MC` frame,
+  one directory frame per block with the size only in the first, an empty
+  broken-sector list, 0xFF-filled replacement frames, and frame 63 a copy of
+  frame 0. Read back through `parseMemoryCard` before it is returned.
+- **The art** is reduced to the fixed bank by nearest colour; map chips take
+  2×2-aligned cell groups from the bottom of the bank and sprites single cells
+  from the top, mirrors shared through the flip bits. The title logo is the
+  level's uploaded one, fitted to the 8×4 block; the item icons and the blast
+  are the Saturn writer's procedural ones.
+
+Not written: the item records in CONFIG (what drops) and the title's second
+block beyond an uploaded subtitle. **Dezaemon+ has no writer**, because its
+enemy sprite layout (SPRITE LAYOUT, ENEMY GROUP, BOSS GROUP) and boss definition
+are open below.
+
 ## Unresolved
 
 - **Kids! CONFIG, what is left**: the first two bytes of each player-ship

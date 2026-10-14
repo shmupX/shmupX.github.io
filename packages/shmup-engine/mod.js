@@ -287,6 +287,18 @@ export {
   resolveAttribution,
 } from "./src/write/attribution.js";
 export { STAFF_ROLE_LABELS } from "./src/decode/decode-settings.js";
+// --- Dezaemon Kids! on the PlayStation: a level record -> a memory card
+// (src/psx/kids-write.js, src/psx/memcard-write.js). The PlayStation parsers
+// stay behind the ./psx subpath, where tools/psx-sav reads them; the editor
+// needs only the export and the two names a row prints.
+export {
+  buildKidsGameFromLevel,
+  exportLevelToKidsCard,
+  KIDS_BACKGROUND_SETS,
+  kidsCardFileName,
+} from "./src/psx/kids-write.js";
+export { buildMemoryCard, formatMemoryCard } from "./src/psx/memcard-write.js";
+export { parsePsxSav } from "./src/psx/index.js";
 
 // --- Extras: cartridge-dump deinterleaving (src/bup-deinterleave.js) ---
 export { deinterleave, detect } from "./src/bup-deinterleave.js";

@@ -160,7 +160,7 @@ export function sliceAtlas(
   return into;
 }
 
-async function loadLevel(
+export async function loadLevel(
   level: string | null | undefined,
   log: (m: string) => void,
 ): Promise<{ record: LevelRecord; source: string }> {
@@ -193,7 +193,7 @@ async function loadLevel(
 }
 
 /** Every frame name a level's records mention. */
-function namedFrames(record: LevelRecord): Set<string> {
+export function namedFrames(record: LevelRecord): Set<string> {
   const names = new Set<string>();
   const walk = (value: unknown) => {
     if (Array.isArray(value)) {
@@ -209,6 +209,87 @@ function namedFrames(record: LevelRecord): Set<string> {
   walk(record.playerData);
   walk(record.backgroundCells);
   return names;
+}
+
+/**
+ * The art a level's records name, as RGBA frames: the level's own atlas
+ * first, then the base game's sheet for whatever the records still name — a
+ * level of stock enemies has an empty custom atlas. Shared by the Saturn and
+ * the PlayStation builders, which take the same frames.
+ */
+export async function loadLevelArt(
+  record: LevelRecord,
+  { noBaseAtlas = false, log = () => {} }: {
+    noBaseAtlas?: boolean;
+    log?: (m: string) => void;
+  } = {},
+): Promise<Record<string, ArtFrame>> {
+  const art: Record<string, ArtFrame> = {};
+  if (record.atlasImageDataURL && record.atlasFrames) {
+    const sheet = await decodeDataUrl(record.atlasImageDataURL);
+    sliceAtlas(sheet, record.atlasFrames, art);
+    log(
+      `atlas: ${
+        Object.keys(art).length
+      } custom frames (${sheet.width}x${sheet.height})`,
+    );
+  }
+  const missing = [...namedFrames(record)].filter((n) =>
+    !art[n.replace(/․/g, ".")]
+  );
+  if (missing.length && !noBaseAtlas) {
+    try {
+      const json = JSON.parse(await Deno.readTextFile(BASE_ATLAS_JSON));
+      const sheet = await decodePng(await Deno.readFile(BASE_ATLAS_PNG));
+      const wanted: Record<string, FrameRect> = {};
+      for (const name of missing) {
+        if (json.frames[name]) wanted[name] = json.frames[name];
+      }
+      const before = Object.keys(art).length;
+      sliceAtlas(sheet, wanted, art);
+      log(
+        `atlas: ${
+          Object.keys(art).length - before
+        } frames from the base game's sheet`,
+      );
+    } catch (e) {
+      log(`atlas: base sheet unavailable (${(e as Error).message})`);
+    }
+  }
+  return art;
+}
+
+/**
+ * A title-screen image — the level's logo or subtitle data URL — as RGBA.
+ * PNG and GIF decode here (the editor stores logos as either); a JPEG logo
+ * leaves its slot unpainted, and says so.
+ *
+ * A record decoded from a cart has neither — its title lives in
+ * `dezaemonTitle` as atlas frame names, which the Saturn writer reads for
+ * itself (buildSaveFromGame) when nothing is passed. That is what carries a
+ * Dezaemon game's own title and credits through the round trip; `report.title`
+ * says which of the two the cart came out wearing.
+ */
+export async function titleArt(
+  dataUrl: string | null | undefined,
+  what: string,
+  log: (m: string) => void = () => {},
+): Promise<ArtFrame | null> {
+  if (!dataUrl) return null;
+  try {
+    const bytes = dataUrlBytes(dataUrl);
+    if (isGif(bytes)) return toFrame(decodeGif(bytes));
+    if (/^data:image\/png[;,]/i.test(dataUrl)) {
+      return toFrame(await decodePng(bytes));
+    }
+    log(
+      `title: ${what} is neither a PNG nor a GIF data URL — left unpainted`,
+    );
+    return null;
+  } catch (e) {
+    log(`title: ${what} could not be decoded (${(e as Error).message})`);
+    return null;
+  }
 }
 
 /** The player, as this process's environment names them. */
@@ -239,69 +320,12 @@ export async function buildSav(
     log(`name: ${record.name} (--name, over the level's own)`);
   }
 
-  // The level's own atlas first, then the base game's sheet for whatever the
-  // records still name — a level of stock enemies has an empty custom atlas.
-  const art: Record<string, ArtFrame> = {};
-  if (record.atlasImageDataURL && record.atlasFrames) {
-    const sheet = await decodeDataUrl(record.atlasImageDataURL);
-    sliceAtlas(sheet, record.atlasFrames, art);
-    log(
-      `atlas: ${
-        Object.keys(art).length
-      } custom frames (${sheet.width}x${sheet.height})`,
-    );
-  }
-  const missing = [...namedFrames(record)].filter((n) =>
-    !art[n.replace(/․/g, ".")]
-  );
-  if (missing.length && !options.noBaseAtlas) {
-    try {
-      const json = JSON.parse(await Deno.readTextFile(BASE_ATLAS_JSON));
-      const sheet = await decodePng(await Deno.readFile(BASE_ATLAS_PNG));
-      const wanted: Record<string, FrameRect> = {};
-      for (const name of missing) {
-        if (json.frames[name]) wanted[name] = json.frames[name];
-      }
-      const before = Object.keys(art).length;
-      sliceAtlas(sheet, wanted, art);
-      log(
-        `atlas: ${
-          Object.keys(art).length - before
-        } frames from the base game's sheet`,
-      );
-    } catch (e) {
-      log(`atlas: base sheet unavailable (${(e as Error).message})`);
-    }
-  }
-
-  // The drawn title screen: the level's logo and subtitle images, if any.
-  // PNG and GIF data URLs decode here (the editor stores logos as either);
-  // a JPEG logo leaves its slot unpainted.
-  //
-  // A record decoded from a cart has neither — its title lives in
-  // `dezaemonTitle` as atlas frame names, which the writer reads for itself
-  // (buildSaveFromGame) when nothing is passed here. That is what carries a
-  // Dezaemon game's own title and credits through the round trip; `report.title`
-  // says which of the two the cart came out wearing.
-  const titleArt = async (dataUrl: string | null | undefined, what: string) => {
-    if (!dataUrl) return null;
-    try {
-      const bytes = dataUrlBytes(dataUrl);
-      if (isGif(bytes)) return toFrame(decodeGif(bytes));
-      if (/^data:image\/png[;,]/i.test(dataUrl)) {
-        return toFrame(await decodePng(bytes));
-      }
-      log(
-        `title: ${what} is neither a PNG nor a GIF data URL — left unpainted`,
-      );
-      return null;
-    } catch (e) {
-      log(`title: ${what} could not be decoded (${(e as Error).message})`);
-      return null;
-    }
-  };
-  const title1 = await titleArt(record.logoDataURL, "logo");
-  const title2 = await titleArt(record.subTitleDataURL, "subtitle");
+  const art = await loadLevelArt(record, {
+    noBaseAtlas: options.noBaseAtlas,
+    log,
+  });
+  const title1 = await titleArt(record.logoDataURL, "logo", log);
+  const title2 = await titleArt(record.subTitleDataURL, "subtitle", log);
 
   // Real item icons when the powerup GIFs are sitting in dev-fixtures, the
   // coloured squares when they are not. A cart holds one 16x16 cell per item
