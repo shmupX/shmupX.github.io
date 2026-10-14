@@ -40,9 +40,11 @@
 //              player's initial altitude admits 9 and 10, since the
 //              cartridge's own default is 9. Undocumented bits of each
 //              packed byte are kept under an `unknownBits` field so that a
-//              real file re-encodes byte for byte (the sample stages set bit
-//              0x04 of the rotation byte 0x1B and bit 0x08 of the shot
-//              setting bytes 0x27..0x29, which the document does not name).
+//              real file re-encodes byte for byte (the sample stages set bits
+//              0x04 and 0x08 of the rotation byte 0x1B and bit 0x08 of the
+//              shot setting bytes 0x27..0x29, which the document does not
+//              name; bit 0x10 of the shot type bytes 0x24..0x26 is carried
+//              the same way, under `unknownBits24`).
 //   OPEN       the units of a face's UV pairs (the sample models run to 321 x
 //              291 over 64 x 32 textures) and of a tile's offset; the tile
 //              index base (the sample models' textured faces name tiles 1..9
@@ -228,6 +230,7 @@ const SHOT_TYPE = [
     { name: "type", mask: 0xc0 },
     { name: "direction", mask: 0x20 },
     { name: "variant", mask: 0x0f },
+    { name: "unknownBits24", mask: 0x10 }, // not `unknownBits`: the settings byte's is spread into the same object
 ];
 const SHOT_SETTINGS = [
     { name: "speed", mask: 0xe0 },
@@ -264,6 +267,7 @@ function shotDefaults() {
         aimAtPlayer: false,
         timing: 0,
         unknownBits: 0,
+        unknownBits24: 0,
         launchedEnemy: 0,
         x: 0,
         y: 0,
@@ -572,17 +576,24 @@ export function encodeLayout(layout = {}) {
 /**
  * The three layers back out of a layout region. A layer the region ends
  * before closing comes back with what it held; layers past that are empty.
+ * A region with no terminator at all (a zero-filled #BL) would read as 1,003
+ * enemies at the origin, more than encodeLayout() takes back, so reading
+ * stops at the 1,000 the layout holds: the rest of such a region is
+ * padding, not positions.
  * @param {Uint8Array} bytes
  * @param {number} [at]
  */
 export function decodeLayout(bytes, at = 0) {
     const out = { map: [], a: [], b: [] };
     const end = Math.min(bytes.length, at + LAYOUT_BYTES);
-    let layer = 0;
+    let layer = 0, enemies = 0;
     for (let p = at; p + LAYOUT_ENTRY_BYTES <= end && layer < LAYOUT_LAYERS.length; p += LAYOUT_ENTRY_BYTES) {
         const e = decodeLayoutEntry(bytes, p);
         if (e.enemy === -1) layer++;
-        else out[LAYOUT_LAYERS[layer]].push(e);
+        else if (enemies < LAYOUT_MAX_ENEMIES) {
+            out[LAYOUT_LAYERS[layer]].push(e);
+            enemies++;
+        } else break;
     }
     return out;
 }

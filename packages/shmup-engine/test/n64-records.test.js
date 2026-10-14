@@ -54,6 +54,7 @@ import {
   GAM_SPRITES,
   LAYOUT_BYTES,
   LAYOUT_ENTRY_BYTES,
+  LAYOUT_MAX_ENEMIES,
   layoutIndices,
   MAP_TEXTURE_UNSET,
   mapEntryDefaults,
@@ -141,6 +142,7 @@ function fullEnemy() {
         aimAtPlayer: true,
         timing: 7,
         unknownBits: 1,
+        unknownBits24: 1,
         launchedEnemy: 179,
         x: -32768,
         y: 32767,
@@ -156,6 +158,7 @@ function fullEnemy() {
         aimAtPlayer: false,
         timing: 2,
         unknownBits: 0,
+        unknownBits24: 0,
         launchedEnemy: -1,
         x: 1,
         y: 2,
@@ -171,6 +174,7 @@ function fullEnemy() {
         aimAtPlayer: true,
         timing: 0,
         unknownBits: 1,
+        unknownBits24: 1,
         launchedEnemy: 0,
         x: -4,
         y: -5,
@@ -424,6 +428,38 @@ Deno.test("a layout lays its three layers end to end, each closed by a terminato
 });
 
 // --- the map and the effects ------------------------------------------------------
+
+Deno.test("an unterminated layout region reads as at most 1,000 enemies, so a zero #BL rebuilds", () => {
+  // The first project writer wrote zero bytes for a stage's BL; its layout
+  // region has no terminator, so every slot reads as enemy 0 at the origin —
+  // 1,003 of them, more than encodeLayout takes. Reading stops at the 1,000
+  // the format holds, and parseStageBl -> buildStageBl of a zero file works.
+  const zero = decodeLayout(new Uint8Array(LAYOUT_BYTES));
+  assertEquals(zero.map.length, LAYOUT_MAX_ENEMIES);
+  assertEquals(zero.a, []);
+  assertEquals(zero.b, []);
+  const rebuilt = buildStageBl(
+    parseStageBl(new Uint8Array(DOCUMENTED_SIZES.BL)),
+  );
+  assertEquals(rebuilt.length, DOCUMENTED_SIZES.BL);
+});
+
+Deno.test("the shot type bytes keep their undocumented bit, like every other packed byte", () => {
+  // Bit 0x10 of 0x24..0x26 is not in the document; a stage that sets it must
+  // re-encode byte for byte, which the field unknownBits24 is for (the
+  // settings byte's own undocumented bit already owns `unknownBits`).
+  const b = encodeEnemyEntry();
+  b[0x24] = 0x10;
+  b[0x25] = 0x30;
+  b[0x26] = 0xff;
+  const back = encodeEnemyEntry(decodeEnemyEntry(b));
+  assertEquals([back[0x24], back[0x25], back[0x26]], [0x10, 0x30, 0xff]);
+  assertEquals(decodeEnemyEntry(b).shots.map((sh) => sh.unknownBits24), [
+    1,
+    1,
+    1,
+  ]);
+});
 
 Deno.test("a map entry packs the effects word's six fields into the documented bits", () => {
   const entry = {
