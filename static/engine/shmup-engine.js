@@ -893,6 +893,26 @@ function decodeRotationChannel(b, mode) {
     authoredRepeat: ch.repeat
   };
 }
+var CHANNEL_TRIGGER_FIELDS = Object.freeze({
+  scale: 1,
+  rotation: 4,
+  zoom: 7,
+  direction: 10
+});
+function normalizeChannelTrigger(mode, ground) {
+  mode &= 7;
+  if (!ground) return mode;
+  return mode === 0 ? 4 : mode === 4 ? 0 : mode;
+}
+function packChannelTriggers(bytes, ground) {
+  const b = bytes;
+  const g = ground === void 0 ? (b[1] & 128) !== 0 : !!ground;
+  return normalizeChannelTrigger(b[14], g) << CHANNEL_TRIGGER_FIELDS.scale | normalizeChannelTrigger(b[11], g) << CHANNEL_TRIGGER_FIELDS.rotation | normalizeChannelTrigger(b[8], g) << CHANNEL_TRIGGER_FIELDS.zoom | normalizeChannelTrigger(b[17], g) << CHANNEL_TRIGGER_FIELDS.direction;
+}
+var CHANNEL_TRIGGER_BASE_PX = Object.freeze([0, 62, 112, 164]);
+var CHANNEL_TRIGGER_BASE_PX_H = Object.freeze([0, 14, 48, 116]);
+var CHANNEL_TRIGGER_BAND_OFFSET = Object.freeze([-16, -16, -8, -8, -8, 8, 8, 0]);
+var CHANNEL_TRIGGER_BAND_OFFSET_H = Object.freeze([-16, -8, -16, -8, 8, -8, 8, 0]);
 var ZAKO_BAND_BASE = [0, 16, 24, 32, 48, 52, 56];
 function zakoRecordFromKey(key) {
   const band = key >> 4 & 7;
@@ -1038,7 +1058,12 @@ function decodeEnemyRecord(bytes) {
       table: DIRECTION_TABLE,
       stepTable: DIRECTION_STEP_TABLE,
       angle: true
-    })
+    }),
+    // The four channels' triggers as the spawn packs them into the
+    // per-slot status word 0x06093C50 — four independent 3-bit fields,
+    // ground swap applied (see CHANNEL_TRIGGER_FIELDS). Each channel's
+    // own `trigger` above is the raw authored field.
+    triggerWord: packChannelTriggers(b, (b[1] & 128) !== 0)
   };
 }
 

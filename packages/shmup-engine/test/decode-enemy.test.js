@@ -15,13 +15,22 @@ import {
   BIG_SHOT_BANDS,
   BULLET_STEERING,
   bulletSteering,
+  CHANNEL_TRIGGER_BAND_OFFSET,
+  CHANNEL_TRIGGER_BAND_OFFSET_H,
+  CHANNEL_TRIGGER_BASE_PX,
+  CHANNEL_TRIGGER_BASE_PX_H,
+  CHANNEL_TRIGGER_FIELDS,
   decodeBigShot,
   decodeEnemyRecord,
   DIRECTION_TABLE,
   FACTOR_TABLE,
   hasTransforms,
   HP_TABLE,
+  normalizeChannelTrigger,
+  packChannelTriggers,
+  resolveChannelTrigger,
   SCORE_TABLE,
+  unpackChannelTriggers,
   ZAKO_BAND_BASE,
   zakoRecordFromKey,
 } from "../src/decode/decode-enemy.js";
@@ -479,4 +488,70 @@ Deno.test("the seven art bands fold band 7 onto band 0 and mask their index", ()
     frames: 1,
   });
   assertEquals(BIG_SHOT_BANDS.length, 7);
+});
+
+// --- change-channel triggers: four independent fields in one status word ---
+
+Deno.test("the spawn packs four 3-bit trigger fields into the status word", () => {
+  // bytes 8 / 11 / 14 / 17 are the C bytes of zoom / rotation / scale /
+  // direction; their bits 0-2 land at bits 7 / 4 / 1 / 10 (+0x15C7A..+0x15CD2).
+  const b = new Uint8Array(18);
+  b[8] = 0x31; // zoom trigger 1 (repeat bits above it must not leak)
+  b[11] = 0x22; // rotation trigger 2
+  b[14] = 0x13; // scale trigger 3
+  b[17] = 0x05; // direction trigger 5
+  assertEquals(CHANNEL_TRIGGER_FIELDS, { scale: 1, rotation: 4, zoom: 7, direction: 10 });
+  const word = packChannelTriggers(b, false);
+  assertEquals(word, (3 << 1) | (2 << 4) | (1 << 7) | (5 << 10));
+  assertEquals(unpackChannelTriggers(word), { scale: 3, rotation: 2, zoom: 1, direction: 5 });
+  // each field is its own: a different trigger per channel survives intact
+  const d = decodeEnemyRecord(b);
+  assertEquals([d.zoom.trigger, d.rotation.trigger, d.scale.trigger, d.direction.trigger], [1, 2, 3, 5]);
+  assertEquals(d.triggerWord, word);
+});
+
+Deno.test("a ground record swaps 0 and 4 in every field, one field at a time", () => {
+  assertEquals([0, 1, 2, 3, 4, 5, 6, 7].map((m) => normalizeChannelTrigger(m, false)), [0, 1, 2, 3, 4, 5, 6, 7]);
+  assertEquals([0, 1, 2, 3, 4, 5, 6, 7].map((m) => normalizeChannelTrigger(m, true)), [4, 1, 2, 3, 0, 5, 6, 7]);
+  const b = new Uint8Array(18);
+  b[1] = 0x80; // ground
+  b[8] = 0x04; // zoom authored 4 -> runs from spawn
+  b[11] = 0x00; // rotation authored 0 -> never
+  b[14] = 0x02; // scale 2 stays 2
+  b[17] = 0x04; // direction 4 -> 0
+  const d = decodeEnemyRecord(b);
+  assertEquals(unpackChannelTriggers(d.triggerWord), { scale: 2, rotation: 4, zoom: 0, direction: 0 });
+  // the raw authored bits are still what each channel reports
+  assertEquals([d.zoom.trigger, d.rotation.trigger, d.scale.trigger, d.direction.trigger], [4, 0, 2, 4]);
+  // the ground flag is read off byte 1 when the caller leaves it out
+  assertEquals(packChannelTriggers(b), d.triggerWord);
+});
+
+Deno.test("the trigger resolver is +0x4C8C: bases, band offsets and sense", () => {
+  // 0x1F00 / 0x3800 / 0x5200 and 0x0700 / 0x1800 / 0x3A00, px << 7
+  assertEquals(CHANNEL_TRIGGER_BASE_PX, [0, 62, 112, 164]);
+  assertEquals(CHANNEL_TRIGGER_BASE_PX_H, [0, 14, 48, 116]);
+  // the signed bytes at +0x22044 and +0x2204C, whole pixels
+  assertEquals(CHANNEL_TRIGGER_BAND_OFFSET, [-16, -16, -8, -8, -8, 8, 8, 0]);
+  assertEquals(CHANNEL_TRIGGER_BAND_OFFSET_H, [-16, -8, -16, -8, 8, -8, 8, 0]);
+  // air: base - offset; ground: base + offset
+  assertEquals(resolveChannelTrigger(1, { band: 0 }), { mode: 1, threshold: 78, armWhen: "reached" });
+  assertEquals(resolveChannelTrigger(1, { band: 0, ground: true }), { mode: 1, threshold: 46, armWhen: "fallenBack" });
+  assertEquals(resolveChannelTrigger(2, { band: 5 }), { mode: 2, threshold: 104, armWhen: "reached" });
+  assertEquals(resolveChannelTrigger(3, { band: 7 }).threshold, 164);
+  assertEquals(resolveChannelTrigger(3, { band: 7, ground: true }).threshold, 164);
+  // horizontal lines, with their own offset table
+  assertEquals(resolveChannelTrigger(1, { band: 1, horizontal: true }).threshold, 22);
+  assertEquals(resolveChannelTrigger(2, { band: 4, horizontal: true, ground: true }).threshold, 56);
+  // mode 0 runs from spawn; 4 shares its `return 0` and 5-7 fail `cmp/hi #4`
+  assertEquals(resolveChannelTrigger(0, {}), { mode: 0, threshold: null, armWhen: "spawn" });
+  for (const m of [4, 5, 6, 7]) {
+    assertEquals(resolveChannelTrigger(m, {}).armWhen, "never");
+    assertEquals(resolveChannelTrigger(m, {}).threshold, Infinity);
+  }
+  // the ground swap rides through the resolver
+  assertEquals(resolveChannelTrigger(4, { ground: true }).armWhen, "spawn");
+  assertEquals(resolveChannelTrigger(0, { ground: true }).armWhen, "never");
+  // bands wrap at 3 bits the way the resolver masks them
+  assertEquals(resolveChannelTrigger(1, { band: 8 }).threshold, resolveChannelTrigger(1, { band: 0 }).threshold);
 });

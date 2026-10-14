@@ -113,7 +113,11 @@ stage.rows.forEach((row, ri) => {
 });
 
 const pad = (v, w) => String(v).padStart(w);
-const chan = (c) => c && c.enabled ? `${round(c.from)}>${round(c.to)}` : "-";
+// "@N" is the channel's own TRIGGER mode (C byte bits 0-2; the status word
+// 0x06093C50 holds four of them, one per channel): 0 from spawn, 1-3 the
+// 62/112/164 px lines, 4 never — with 0 and 4 swapped on a GND record.
+const chan = (c) =>
+  c && c.enabled ? `${round(c.from)}>${round(c.to)}@${c.trigger}` : "-";
 const round = (n) => Math.round(n * 100) / 100;
 
 console.log(
@@ -156,8 +160,8 @@ for (const [idx, rows] of byFirstRow) {
       `i=${pad(f.interval, 3)}`,
       `d=${pad(f.direction, 2)}`,
       `p=${f.pattern ?? "-"}}`,
-      `rot=${b.rotation.enabled ? b.rotation.mode : "-"}`,
-      `scl=${b.scale.enabled ? b.scale.axes : "-"}`,
+      `rot=${b.rotation.enabled ? `${b.rotation.mode}@${b.rotation.trigger}` : "-"}`,
+      `scl=${b.scale.enabled ? `${b.scale.axes}@${b.scale.trigger}` : "-"}`,
       `dir=${chan(b.direction)}`,
       `zoom=${chan(b.zoom)}`,
       `| app=${b.appearance}`,

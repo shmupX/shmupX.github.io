@@ -298,6 +298,20 @@ they are written out in full.
     ×3 on its first frame; and an enemy flagged `dezaNoContact` (scale off unity
     — status bit15 in FORMAT.md) no longer fires, as it already did not collide.
     Upstream home for both is `2019-es7/src/phaser/game-objects/Enemy.js`.
+  - The change-channel triggers as the Saturn resolves them: the spawn packs
+    the four channels' trigger bits into one status word as four independent
+    3-bit fields, and the arm pass resolves each through `+0x4C8C` — a
+    62/112/164 px line shifted by a signed byte indexed by the record's art
+    band (±8 or 16 px, band 7 alone unshifted; air subtracts, ground adds), an
+    air object arming once it has reached its line and a ground one once it
+    has fallen back to it. `channelTrigger`/`armChannels` now carry the band
+    (from `dezaemon.placementId`) and the ground sense; the per-channel arming
+    was already there. A zoom or scale channel still waiting on its line now
+    contributes ×1 (`applyDezaScale`), as the spawn-seeded registers do on
+    hardware — it used to apply the channel's start value at once, so a record
+    authored to appear at ×0 and grow once past its line was deleted on its
+    first frame. `tests/deza_channel_triggers_test.ts` pins all of it against
+    the bundle. Upstream home is `2019-es7/src/phaser/game-objects/Enemy.js`.
   - The Dezaemon divergences below, all of them keyed off `isImportedLevel()`.
   - A boss record can name its own stage-end backdrop. `stageBgEnd` on
     `bossData.boss<N>` raises the author's art behind the boss instead of the

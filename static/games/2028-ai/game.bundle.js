@@ -4614,12 +4614,26 @@
   }
   // A change channel does not have to start at spawn: its C byte's low 3
   // bits are a TRIGGER that arms it once the enemy has travelled far enough
-  // into the playfield. The engine resolves the mode to a scroll-axis
-  // threshold (+0x4C8C): mode 0 = armed from spawn, modes 1/2/3 = ~31/56/82
-  // px into the 224-px playfield, modes 4-7 = never armed (the resolver
-  // returns 0 and the channel simply never runs). A GROUND enemy has the
-  // pair swapped at spawn — its 4 means "from spawn" and its 0 "never" —
-  // so the editor's default reads the same either way.
+  // into the playfield. The spawn packs the FOUR channels' triggers into one
+  // per-slot status word (0x06093C50: scale bits 1-3, rotation 4-6, zoom
+  // 7-9, direction 10-12) and the per-frame arm pass (+0x5864..+0x5A72)
+  // resolves each field on its own through +0x4C8C, clearing just that
+  // field and re-seeding just that channel when its line is crossed — four
+  // independent triggers, which is what the four `armAt`s below are. Mode 0
+  // = armed from spawn, modes 1/2/3 = 62/112/164 px into the 224-px
+  // playfield shifted by a per-BAND byte (below), modes 4-7 = never armed
+  // (the resolver returns 0 and the channel simply never runs). A GROUND
+  // enemy has the pair swapped at spawn in every field — its 4 means "from
+  // spawn" and its 0 "never" — so the editor's default reads the same
+  // either way; and a ground field arms on the OTHER side of its line: an
+  // air object arms once its scroll coordinate has REACHED the line
+  // (cmp/ge, +0x58CC), a ground one once it has FALLEN BACK to or past it
+  // (cmp/gt skips while above, +0x589E). The spawn starts a grid object 48
+  // px (air) or 240 px (ground) above the entry edge (+0x152E8) and shifts
+  // that start by the same band byte as the line (+0x1679A), so on hardware
+  // a ground 1/2/3 fires on its first serviced frame, and only one standing
+  // lower than the line on the opening screen keeps waiting — for ever,
+  // since the scroll only carries it further down.
   // A HORIZONTAL save is the SAME world simulation — the engine transposes it
   // only at draw time (lateral becomes screen Y, the scroll axis becomes screen
   // X running right-to-left). This runtime already draws lateral across and the
@@ -4639,14 +4653,31 @@
   var CHANNEL_TRIGGER_PX = [0, 62, 112, 164];
   // The same resolver returns 0x0700 / 0x1800 / 0x3A00 in a horizontal game.
   var CHANNEL_TRIGGER_PX_H = [0, 14, 48, 116];
+  // ...and then shifts the base by a signed byte indexed by the ART BAND of
+  // the object's formation key (0x06090530[slot] bits 4-6 — the placement
+  // cell's band, `dezaKey` here), times 128 = whole px: the vertical table
+  // at +0x22044 and the horizontal one at +0x2204C. SUBTRACTED for an air
+  // object, ADDED for a ground one (+0x4D4C), so band 0's air line is 78 px
+  // and its ground line 46, and only band 7 sits on the bare base.
+  var CHANNEL_TRIGGER_BAND = [-16, -16, -8, -8, -8, 8, 8, 0];
+  var CHANNEL_TRIGGER_BAND_H = [-16, -8, -16, -8, 8, -8, 8, 0];
   var CHANNEL_TRIGGER_SCALE = 480 / 224;
-  function channelTrigger(ch, ground, horizontal) {
+  function channelTrigger(ch, ground, horizontal, band) {
     var mode = ch && ch.trigger ? ch.trigger & 7 : 0;
     if (ground) mode = mode === 0 ? 4 : mode === 4 ? 0 : mode;
     if (mode === 0) return null;              // runs immediately
     if (mode > 3) return Infinity;            // never arms
     var table = horizontal ? CHANNEL_TRIGGER_PX_H : CHANNEL_TRIGGER_PX;
-    return table[mode] * CHANNEL_TRIGGER_SCALE;
+    var offsets = horizontal ? CHANNEL_TRIGGER_BAND_H : CHANNEL_TRIGGER_BAND;
+    var off = offsets[(band || 0) & 7];
+    return (ground ? table[mode] + off : table[mode] - off) * CHANNEL_TRIGGER_SCALE;
+  }
+  // The band of a formation key: a grid-spawned zako carries its placement
+  // cell byte (`1 bbb nnnn`), a death-word child its parent's parameter
+  // with bit 7 forced on — the band is bits 4-6 of either.
+  function dezaBand(dezaemon) {
+    var key = dezaemon && dezaemon.placementId;
+    return typeof key === "number" ? (key >> 4) & 7 : 0;
   }
   // A change channel as the Saturn runs it. The engine never compares the
   // live value against the end value: it keeps a signed accumulator, adds
@@ -4658,7 +4689,7 @@
   // whose start equals its end is a whole circle, not a channel that never
   // moves. The step already carries its own sign: on the angle channel the
   // direction is the MODE, not which endpoint is the larger number.
-  function makeChannel(ch, extra, ground, horizontal) {
+  function makeChannel(ch, extra, ground, horizontal, band) {
     if (!ch || !ch.enabled) return null;
     return {
       value: ch.from,
@@ -4669,13 +4700,17 @@
       repeat: ch.repeat,
       // 0 hold at the end, 1 ping-pong, 2 loop back to the start
       wrap: !!(extra && extra.wrap),
-      armAt: channelTrigger(ch, ground, horizontal),
+      armAt: channelTrigger(ch, ground, horizontal, band),
+      // which side of the line arms it: a ground field arms once the object
+      // has fallen back to or past its line, an air one once it has reached it
+      armBelow: !!ground,
       done: false
     };
   }
   // Arm any channel whose trigger threshold the enemy has now crossed; an
   // armed channel re-seeds its value from the start of its ramp, as the
-  // engine does at +0x58AA.
+  // engine does at +0x58AA. Each channel keeps its own line and its own
+  // pending state, as the four fields of the status word do.
   function armChannels(st, enemy) {
     if (!st.pendingChannels) return;
     var y = enemy.y;
@@ -4683,7 +4718,10 @@
     for (var i = 0; i < st.pendingChannels.length; i++) {
       var ch = st.pendingChannels[i];
       if (!ch || ch.armAt === null) continue;
-      if (y >= ch.armAt) {
+      // a never-arming field (the resolver's 0) is skipped outright — it is
+      // not "below Infinity" for a ground object
+      if (!isFinite(ch.armAt)) continue;
+      if (ch.armBelow ? y <= ch.armAt : y >= ch.armAt) {
         ch.armAt = null;
         ch.value = ch.from;
         ch.progress = 0;
@@ -5164,6 +5202,7 @@
       (behavior.fire.bigShot != null || zakoGeometry(behavior.fire) !== 0);
     var facesPlayer = behavior.rotation.enabled && behavior.rotation.mode >= 3;
     var horiz = dezaHorizontal(scene);
+    var band = dezaBand(dezaemon);
     var hasEntry = !!(dezaemon && dezaemon.entry && dezaemon.entry.rows && dezaemon.entry.rows.length);
     var specialCls = dezaemon && dezaemon.entry && dezaemon.entry.objectClass;
     // Record byte 2 bit 5, the engine's NO-COLLISION attribute (bit 1 of the
@@ -5195,11 +5234,11 @@
       // 0x06094A40, which the per-frame pass copies into both hitbox
       // half-extents where bytes 12-14 give each axis its own. A recipe
       // imported before 2026-09-12 carries the old field name.
-      zoomCh: makeChannel(behavior.zoom || behavior.speedChange, null, behavior.ground, horiz),
+      zoomCh: makeChannel(behavior.zoom || behavior.speedChange, null, behavior.ground, horiz, band),
       rotationCh: facesPlayer ? null : makeChannel(behavior.rotation, {
         wrap: true
-      }, behavior.ground, horiz),
-      scaleCh: makeChannel(behavior.scale, null, behavior.ground, horiz),
+      }, behavior.ground, horiz, band),
+      scaleCh: makeChannel(behavior.scale, null, behavior.ground, horiz, band),
       // "xy", "x" or "y" — the mode really does pick axes, exactly as the
       // editor's list says. An older recipe has no axes field; treat it as
       // the both-axes case it was imported under.
@@ -5208,7 +5247,7 @@
       // Spun as a circle it sent Ramsie's roc riding the scroll to the
       // screen bottom; held at 0 (up-map, fighting the scroll) the roc
       // hangs near the top of the screen like the capture shows.
-      directionCh: makeChannel(behavior.direction, null, behavior.ground, horiz),
+      directionCh: makeChannel(behavior.direction, null, behavior.ground, horiz, band),
       // stagger the first volley inside the randomization window
       reload: fires ? zakoReload(behavior.fire) : -1,
       burst: 0,
@@ -5364,9 +5403,14 @@
   // stops it firing and colliding; the "falling from above" look is the
   // zoom riding down plus, on stages with the drop-shadow pass, the mesh
   // shadow converging on the object — not an alpha ramp on the object.
+  // A channel still waiting on its trigger line contributes x1.0: the spawn
+  // seeds all three registers to 0x1000 and the arm pass loads the start
+  // byte only when it clears the field (+0x58AA / +0x59DA), so an object
+  // authored to appear at x0 and grow once 70 px in is whole until then,
+  // not deleted on its first frame.
   function applyDezaScale(enemy, st) {
-    var zoom = st.zoomCh ? st.zoomCh.value : 1;
-    var axis = st.scaleCh ? st.scaleCh.value : 1;
+    var zoom = st.zoomCh && st.zoomCh.armAt === null ? st.zoomCh.value : 1;
+    var axis = st.scaleCh && st.scaleCh.armAt === null ? st.scaleCh.value : 1;
     var axes = st.scaleCh ? st.scaleAxes || "xy" : "";
     var sx = zoom * (axes.indexOf("x") >= 0 ? axis : 1);
     var sy = zoom * (axes.indexOf("y") >= 0 ? axis : 1);

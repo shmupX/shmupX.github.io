@@ -32,6 +32,8 @@
 //   B bits4-7 -> end value index       C bits4-5 -> repeat (see
 //   C bits0-2 -> trigger mode                       CHANNEL_REPEAT)
 // (rotation uses 3-bit value indices, B bits0-2 / bits4-6)
+// The four trigger fields are packed into one per-slot status word at spawn
+// and resolved one by one — see CHANNEL_TRIGGER_FIELDS / resolveChannelTrigger.
 //
 // TWO of these four are scale. Bytes 12-14 drive the pair of per-axis
 // registers `0x06095930` and `0x06091A30`; bytes 6-8 drive `0x06094A40`,
@@ -293,6 +295,97 @@ function decodeRotationChannel(b, mode) {
     };
 }
 
+// --- change-channel triggers: the per-slot status word ---------------------
+//
+// Each channel's C byte carries a 3-bit TRIGGER in bits 0-2, and the spawn
+// (+0x15C7A) packs the four of them into ONE u16 per slot, `0x06093C50`, as
+// four INDEPENDENT fields — not one shared trigger:
+//
+//   bits 1-3   scale      (byte 14 & 7)
+//   bits 4-6   rotation   (byte 11 & 7)
+//   bits 7-9   zoom       (byte  8 & 7)
+//   bits 10-12 direction  (byte 17 & 7)
+//   bit 15     the no-fire / no-collide flag the zoom pass raises per frame
+//
+// A field of 0 means the channel RUNS: the scale stepper, for one, tests
+// `(word >> 1) & 7 == 0` before it moves (+0x5A7C). A non-zero field is a
+// WAIT: every frame the arm pass (+0x5864..+0x5A72) resolves each field
+// separately through +0x4C8C into a scroll-axis threshold and, once the
+// object is past it, clears that one field and re-seeds that one channel from
+// the start of its ramp. A GROUND record (byte 1 bit 7, flag byte
+// `0x0608EF40` bit 1) has 0 and 4 swapped in every field at spawn (+0x15CD4
+// ..+0x15E12), one field at a time, which is why the editor's default reads
+// the same for air and ground and the corpus piles ground channels on 4.
+export const CHANNEL_TRIGGER_FIELDS = Object.freeze({
+    scale: 1,
+    rotation: 4,
+    zoom: 7,
+    direction: 10,
+});
+
+// The engine's own normalisation: on a ground record a 0 means NEVER and a
+// 4 means FROM SPAWN, the reverse of an air record.
+export function normalizeChannelTrigger(mode, ground) {
+    mode &= 7;
+    if (!ground) return mode;
+    return mode === 0 ? 4 : mode === 4 ? 0 : mode;
+}
+
+// The status word as the spawn leaves it, ground swap applied.
+export function packChannelTriggers(bytes, ground) {
+    const b = bytes;
+    const g = ground === undefined ? (b[1] & 0x80) !== 0 : !!ground;
+    return (normalizeChannelTrigger(b[14], g) << CHANNEL_TRIGGER_FIELDS.scale) |
+        (normalizeChannelTrigger(b[11], g) << CHANNEL_TRIGGER_FIELDS.rotation) |
+        (normalizeChannelTrigger(b[8], g) << CHANNEL_TRIGGER_FIELDS.zoom) |
+        (normalizeChannelTrigger(b[17], g) << CHANNEL_TRIGGER_FIELDS.direction);
+}
+
+export function unpackChannelTriggers(word) {
+    const out = {};
+    for (const [name, shift] of Object.entries(CHANNEL_TRIGGER_FIELDS)) {
+        out[name] = (word >> shift) & 7;
+    }
+    return out;
+}
+
+// The resolver +0x4C8C, in pixels along the scroll axis of the Saturn's
+// 224-px playfield. Modes 1/2/3 are the bases 0x1F00/0x3800/0x5200 (px<<7)
+// in a vertical game and 0x0700/0x1800/0x3A00 in a horizontal one; the
+// jump table sends mode 4 to the same `return 0` as mode 0, and `cmp/hi #4`
+// returns 0 for 5-7 before the table is consulted. The base is then shifted
+// by a signed per-BAND byte — the art band of the placement cell, bits 4-6
+// of the formation key `0x06090530[slot]` — from +0x22044 (vertical) or
+// +0x2204C (horizontal), times 128 (= whole pixels): SUBTRACTED for an air
+// object, ADDED for a ground one (+0x4D4C). So band 0's air line is 78 px,
+// not 62, and its ground line 46.
+export const CHANNEL_TRIGGER_BASE_PX = Object.freeze([0, 62, 112, 164]);
+export const CHANNEL_TRIGGER_BASE_PX_H = Object.freeze([0, 14, 48, 116]);
+export const CHANNEL_TRIGGER_BAND_OFFSET = Object.freeze([-16, -16, -8, -8, -8, 8, 8, 0]);
+export const CHANNEL_TRIGGER_BAND_OFFSET_H = Object.freeze([-16, -8, -16, -8, 8, -8, 8, 0]);
+
+// Resolve one channel's authored trigger bits to what the engine does with
+// them. `threshold` is null when the channel runs from spawn, Infinity when
+// it never arms, else the scroll-axis line in Saturn px. `armWhen` says which
+// side of the line arms it: an AIR object arms once its scroll coordinate
+// has REACHED the line (`cmp/ge`, +0x58CC), a GROUND one once it has FALLEN
+// BACK to or past it (`cmp/gt` skips while above, +0x589E) — an object that
+// rides the terrain in from the entry edge is already below every line, so
+// on hardware a ground 1/2/3 fires on its first frame, and only a ground
+// object standing lower than the line on the opening screen keeps waiting.
+export function resolveChannelTrigger(mode, { ground = false, band = 0, horizontal = false } = {}) {
+    const m = normalizeChannelTrigger(mode, ground);
+    if (m === 0) return { mode: m, threshold: null, armWhen: "spawn" };
+    if (m > 3) return { mode: m, threshold: Infinity, armWhen: "never" };
+    const base = (horizontal ? CHANNEL_TRIGGER_BASE_PX_H : CHANNEL_TRIGGER_BASE_PX)[m];
+    const off = (horizontal ? CHANNEL_TRIGGER_BAND_OFFSET_H : CHANNEL_TRIGGER_BAND_OFFSET)[band & 7];
+    return {
+        mode: m,
+        threshold: ground ? base + off : base - off,
+        armWhen: ground ? "fallenBack" : "reached",
+    };
+}
+
 // Decode one 18-byte record into named fields (all in editor/runtime units:
 // hp in hits, score in points, speed in px/frame, angles in degrees,
 // factors where 1 = 100%).
@@ -479,6 +572,11 @@ export function decodeEnemyRecord(bytes) {
             stepTable: DIRECTION_STEP_TABLE,
             angle: true,
         }),
+        // The four channels' triggers as the spawn packs them into the
+        // per-slot status word 0x06093C50 — four independent 3-bit fields,
+        // ground swap applied (see CHANNEL_TRIGGER_FIELDS). Each channel's
+        // own `trigger` above is the raw authored field.
+        triggerWord: packChannelTriggers(b, (b[1] & 0x80) !== 0),
     };
 }
 

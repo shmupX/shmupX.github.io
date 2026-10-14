@@ -446,7 +446,12 @@ start/end/rate/repeat interpolators:
 
 Channel byte layout (A,B,C): A bits4-6 step index; B low/high nibble start/end
 value index (rotation: 3-bit); C bits4-5 repeat, bits0-2 a trigger mode packed
-into a per-enemy status word (semantics open).
+into a per-enemy status word — **four independent 3-bit fields, one per
+channel**, not one shared trigger: the spawn `+0x15C7A..+0x15CD2` writes
+`u16 0x06093C50[slot]` as scale (byte 14) at bits 1-3, rotation (byte 11) at
+bits 4-6, zoom (byte 8) at bits 7-9 and direction (byte 17) at bits 10-12, and
+the per-frame arm pass resolves and clears each field on its own (closed
+2026-10-14; see "Change-channel triggers" below).
 
 **Repeat (C bits4-5).** The jump table at `0x6069FFC` has four arms, and every
 channel's stepper falls into it:
@@ -821,16 +826,63 @@ child record is often never PLACED, the roster now includes the transitive
 closure of mode-2 children so those enemies exist to be spawned.
 
 **Change-channel triggers** (the C byte's bits 0–2 of each of the record's
-four channels) resolve through `+0x4C8C` to a scroll-axis threshold: mode 0
-= run from spawn, modes 1/2/3 = arm at `0x1F00`/`0x3800`/`0x5200` = **62 /
-112 / 164 px** into the 224-px playfield (a per-enemy signed byte from
-`+0x22044` shifts that by up to ±16 px), modes 4–7 = never arm (the
-resolver returns 0). An **air** enemy arms when its scroll coordinate has
-reached the threshold, a **ground** one when it has fallen back past it;
-ground records additionally have modes 0 and 4 swapped at spawn
-(`+0x15CD4`), which is why the editor's default reads the same for both —
-and why the corpus shows air channels piled on mode 0 and ground channels
-on mode 4. Arming re-seeds the channel from the start of its ramp.
+four channels) — **fully traced and consumed, 2026-10-14.** The spawn packs
+the four of them into ONE per-slot status word, `u16 0x06093C50[slot]`, as
+four **independent 3-bit fields** (`+0x15C7A..+0x15CD2`):
+
+| bits | channel | from |
+|------|---------|------|
+| 1-3 | scale | byte 14 & 7 |
+| 4-6 | rotation | byte 11 & 7 |
+| 7-9 | zoom | byte 8 & 7 |
+| 10-12 | direction | byte 17 & 7 |
+| 15 | the per-frame no-fire / no-collide flag (below) | — |
+
+A field of 0 means the channel RUNS — the scale stepper tests
+`(word >> 1) & 7 == 0` at `+0x5A7C` before it moves — and a non-zero field
+is a WAIT. Every frame the arm pass `+0x5864..+0x5A72` takes each field in
+turn, resolves it through `+0x4C8C` to a scroll-axis threshold, and once the
+object is past it clears THAT field and re-seeds THAT channel from the start
+of its ramp (scale and zoom reload their registers from the start bytes at
+`+0x58AA` / `+0x59DA`; rotation and direction only clear the field and let
+the stepper's own seed stand). The resolver: mode 0 = run from spawn, modes
+1/2/3 = base `0x1F00`/`0x3800`/`0x5200` = **62 / 112 / 164 px** into the
+224-px playfield (`0x0700`/`0x1800`/`0x3A00` = 14 / 48 / 116 px in a
+horizontal game), mode 4 = the same `return 0` arm as mode 0 in the jump
+table, and 5–7 fail the `cmp/hi #4` before the table — so 4–7 never arm.
+The base is then shifted by a **signed per-BAND byte** — the art band of the
+object's formation key, `0x06090530[slot]` bits 4-6 — times 128 (whole px):
+`+0x22044` = `[-16,-16,-8,-8,-8,+8,+8,0]` vertical, `+0x2204C` =
+`[-16,-8,-16,-8,+8,-8,+8,0]` horizontal, **subtracted** for an air object and
+**added** for a ground one (`+0x4D4C`), so band 0's air line is 78 px and its
+ground line 46, and only band 7 sits on the bare base. An **air** enemy arms
+when its scroll coordinate has REACHED the line (`cmp/ge`, `+0x58CC`), a
+**ground** one (flag byte `0x0608EF40` bit 1 = record byte 1 bit 7) when it
+has FALLEN BACK to or past it (`cmp/gt` skips while above, `+0x589E`) —
+and the spawn puts a grid object well above every line: the spawn-time
+helper `+0x152E8` (called from `+0x15434`) adds a signed word to the scroll
+coordinate — `0xE800` = **−48 px** for an air object in a vertical game,
+`0xB800` = −144 px horizontal, `0x8800` = **−240 px** for a ground object in
+either — and the spawn tail `+0x1679A` then shifts that start by the SAME
+per-band byte the resolver uses, subtracted for air and added for ground, so
+a bigger sprite travels the same distance to its line as a smaller one. A
+ground 1/2/3 therefore passes its test on its first serviced frame and runs
+as if from spawn, and only a ground object standing lower than its line on
+the opening screen keeps waiting, for ever. Ground records additionally have
+0 and 4 swapped at spawn, **in every field, one field at a time**
+(`+0x15CD4..+0x15E12`), which is why the editor's default reads the same for
+both — and why the corpus shows air channels piled on mode 0 and ground
+channels on mode 4 (262 saves, 2026-10-14: 8,685 enabled air direction
+channels on 0 against 1,446 ground ones on 4; **4,716** ground channels on
+1/2/3 across the four kinds; and **8,011** records carrying two or more
+enabled channels on *different* modes — the case one shared trigger would
+have broken).
+
+The decoder exposes all of it (`decode-enemy.js`: `triggerWord` on every
+record, `packChannelTriggers` / `unpackChannelTriggers`, and
+`resolveChannelTrigger` for the lines), and the 2028-ai runtime arms its four
+channels one by one on those lines, band offset and ground sense included —
+until 2026-10-14 it had the four fields but neither the offset nor the sense.
 
 A channel that reaches a scale of ×0 or ×4, or a direction value of 0,
 **silently removes the object** (`+0x632A` — no explosion, no score), and
