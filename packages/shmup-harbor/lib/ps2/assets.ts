@@ -40,6 +40,7 @@ import {
   type FrameEntry,
   type SourceFrame,
 } from "./atlas.ts";
+import { decodeGif, isGif } from "./gif.ts";
 import { quantize } from "./palette.ts";
 import { blit, cut, fitInto, resizeTo } from "./raster.ts";
 
@@ -62,6 +63,14 @@ export interface LevelRecord {
   stages?: Record<string, { enemylist?: string[][] } & Record<string, unknown>>;
   atlasFrames?: Record<string, FrameEntry>;
   atlasImageDataURL?: string;
+  /**
+   * The title editor's uploads, each the picked file as a data URL: the
+   * title backdrop, the logo plate and the subtitle under it. See
+   * titleUploadFrames.
+   */
+  titleBgDataURL?: string;
+  logoDataURL?: string;
+  subTitleDataURL?: string;
   /**
    * The game's own art for frames of the UI atlases — titleG.gif, the
    * wordmark the title slides in, replaced in the editor's Atlas Manager —
@@ -249,8 +258,8 @@ function bossShotLists(boss: Record<string, unknown>): string[][] {
  * base sheets and the frame buffer is 3.19 MB of the GS's 4 (encodeSheet;
  * scripts/lib/testdrive-textures.ts counts it the same way) — and never past
  * the GS's 1024. Only when it buys the scale back, though: a set that fits
- * packs exactly as it always did. And not when a title cover has already
- * spent that margin on game_ui.
+ * packs exactly as it always did. And not when a title cover or an uploaded
+ * backdrop (`cover`) has already spent that margin on game_ui.
  */
 export function buildLevelAtlas(
   frames: SourceFrame[],
@@ -812,6 +821,117 @@ export function coverTitleFrames(
 }
 
 /**
+ * An uploaded image's data URL, decoded. The title editor keeps the file as
+ * it was picked (`readAsDataURL`), so it can be a GIF as easily as a PNG — the
+ * game this repo ships has a GIF logo. Anything else has no decoder here and
+ * comes back null.
+ */
+function decodeUpload(
+  dataUrl: string,
+): Promise<Raster | null> | Raster | null {
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) return null;
+  const binary = atob(dataUrl.slice(comma + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  if (isGif(bytes)) return decodeGif(bytes);
+  const png = [0x89, 0x50, 0x4e, 0x47];
+  if (png.every((byte, i) => bytes[i] === byte)) return decodePng(bytes);
+  return null;
+}
+
+/**
+ * The title editor's uploads, as the frames the port's title scene draws.
+ *
+ * The browser puts `logoDataURL` up as the logo, `subTitleDataURL` as the
+ * subtitle and `titleBgDataURL` as the backdrop (level-loader's
+ * titleImageKeys, then the title scene's `custom_logo` / `custom_subTitle` /
+ * `title_bg`). The port draws `logo.gif`, `subTitle.gif` and `title_bg` from
+ * game_ui, so each upload is packed under that name, framed to land where the
+ * browser shows it:
+ *
+ * - The logo and subtitle rest at y 75 and 130 at 1:1 in both. The port
+ *   centres its plate on the screen; the browser sets a plate's centre at
+ *   half its own width, which puts its left edge at 0. So each goes onto a
+ *   256-wide plate flush left, which the port then centres onto the same
+ *   place — and a stock-width upload comes out exactly as it went in.
+ * - The browser tiles the backdrop at its own size across the 256x480
+ *   screen. That screen is composed here and given the squeeze a cover gets
+ *   (frameForTitleBg), since the port stretches `title_bg` across the whole
+ *   640 and the letterbox hides all but its middle.
+ *
+ * A stock disc has no `title_bg` at all — the port fills a flat purple
+ * instead — so the backdrop is new art on the sheet, not a swap.
+ */
+export async function titleUploadFrames(
+  record: LevelRecord,
+  notes: string[],
+): Promise<{ overrides: SourceFrame[]; drop: Set<string> }> {
+  const overrides: SourceFrame[] = [];
+  const got: string[] = [];
+  const whole = (raster: Raster): SourceFrame["entry"] => ({
+    frame: { x: 0, y: 0, w: raster.width, h: raster.height },
+    rotated: false,
+    trimmed: false,
+  });
+  // A plate the title can do without never fails the build: one that will
+  // not decode, or decodes to nothing, leaves the stock one with a note.
+  const read = async (what: string, dataUrl: string | undefined) => {
+    if (!dataUrl) return null;
+    let raster: Raster | null = null;
+    let why: string;
+    try {
+      raster = await decodeUpload(dataUrl);
+      const type = dataUrl.slice(5, dataUrl.search(/[;,]/)) || "unknown";
+      why = raster ? "empty" : `${type}, which the exporter cannot decode`;
+    } catch (err) {
+      why = `unreadable (${err instanceof Error ? err.message : err})`;
+    }
+    if (raster && raster.width > 0 && raster.height > 0) return raster;
+    notes.push(
+      `title screen: the ${what} upload is ${why} — the stock ${what} stays`,
+    );
+    return null;
+  };
+
+  for (
+    const [what, dataUrl, name] of [
+      ["logo", record.logoDataURL, "logo.gif"],
+      ["subtitle", record.subTitleDataURL, "subTitle.gif"],
+    ] as const
+  ) {
+    const art = await read(what, dataUrl);
+    if (!art) continue;
+    const plate = newRaster(GW, art.height);
+    blit(plate, art, 0, 0);
+    overrides.push({ name, sheet: plate, entry: whole(plate) });
+    got.push(`${what} ${art.width}x${art.height}`);
+  }
+
+  const bg = await read("backdrop", record.titleBgDataURL);
+  if (bg) {
+    const screen = newRaster(GW, GH);
+    for (let y = 0; y < GH; y += bg.height) {
+      for (let x = 0; x < GW; x += bg.width) blit(screen, bg, x, y);
+    }
+    const framed = frameForTitleBg(screen);
+    overrides.push({ name: "title_bg", sheet: framed, entry: whole(framed) });
+    // The browser shows the backdrop at its own size from the top-left, so a
+    // large one is seen as its corner and a small one repeats.
+    const fit = bg.width < GW || bg.height < GH
+      ? " tiled"
+      : bg.width > GW || bg.height > GH
+      ? ` (its top-left ${GW}x${GH}, as the browser shows it)`
+      : "";
+    got.push(`backdrop ${bg.width}x${bg.height}${fit}`);
+  }
+  if (got.length) {
+    notes.push(`title screen: the title editor's ${got.join(", ")}`);
+  }
+  return { overrides, drop: new Set() };
+}
+
+/**
  * The game's own art for game_ui frames, packed under the base sheet's names.
  *
  * A frame replaced in the editor's Atlas Manager under game_ui — titleG.gif,
@@ -946,9 +1066,28 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
   }
   const index = buildFrameIndex(baseSheet, baseJson.frames, custom);
 
+  // One arrangement of the title, in the browser's order: the cover is the
+  // whole screen; a save's drawn title replaces the stock plates and hides
+  // the backdrop, uploads or not (its `dezaTitle` branch); otherwise the
+  // title editor's uploads go up where the stock ones were.
+  const uploads = !!(record.logoDataURL || record.subTitleDataURL ||
+    record.titleBgDataURL);
+  const drawnTitle = !!record.dezaemonTitle &&
+    Object.keys(record.dezaemonTitle).length > 0;
   const title = options.cover
     ? coverTitleFrames(options.cover, notes)
-    : dezaemonTitleFrames(record, index, notes);
+    : drawnTitle
+    ? dezaemonTitleFrames(record, index, notes)
+    : await titleUploadFrames(record, notes);
+  if (uploads && (options.cover || drawnTitle)) {
+    notes.push(
+      `title screen: the title editor's uploads left out — the ${
+        options.cover ? "cover" : "save's drawn title"
+      } replaces them`,
+    );
+  }
+  // A full-screen backdrop is the frame that costs: see the budget below.
+  const backdrop = title.overrides.some((frame) => frame.name === "title_bg");
 
   // The game's own game_ui art goes under the title's arrangement: a cover or
   // a save's drawn title puts its frames up under these names and leaves the
@@ -969,7 +1108,7 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     notes.push(
       `game_ui: ${
         covered.map((frame) => frame.name).join(", ")
-      } left out — the title screen covers it`,
+      } left out — the title screen puts its own art there`,
     );
   }
   const uiOverrides = [
@@ -1014,13 +1153,13 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
   }
 
   for (const name of ["game_asset", "game_ui"]) {
-    // A cover lands in game_ui and the port magnifies it 2.5x, so that sheet
-    // gets a bigger budget when one is present: at 512 it packs at 1/4 and
-    // the title has 24 texels across the 239 pixels it is shown in, at 1024
-    // it packs at 1/2 and has 48. The other sheets stay where they are, which
-    // keeps the working set inside the GS's 4 MB — see the note in
-    // encodeSheet().
-    const budget = name === "game_ui" && options.cover
+    // A cover or an uploaded backdrop lands in game_ui as `title_bg` and the
+    // port magnifies it 2.5x, so that sheet gets a bigger budget when one is
+    // present: at 512 it packs at 1/4 and the title has 24 texels across the
+    // 239 pixels it is shown in, at 1024 it packs at 1/2 and has 48. The
+    // other sheets stay where they are, which keeps the working set inside
+    // the GS's 4 MB — see the note in encodeSheet().
+    const budget = name === "game_ui" && backdrop
       ? Math.max(maxSheet, 1024)
       : maxSheet;
     const built = await repackBaseAtlas(
@@ -1100,7 +1239,7 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
   if (levelFrames.length > 0) {
     const built = buildLevelAtlas(levelFrames, {
       maxSheet,
-      cover: !!options.cover,
+      cover: backdrop,
     });
     const sheet = await encodeSheet(built.image, "level_atlas");
     files.push(

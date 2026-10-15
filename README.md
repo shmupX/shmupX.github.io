@@ -3127,6 +3127,17 @@ proportions. When a cover is present game_ui gets a 1024 sheet rather than 512,
 which packs it at 1/2 instead of 1/4 — 48 texels across the 239 pixels it is
 shown in rather than 24 — and keeps the working set at 3.57 MB of the GS's 4.
 
+Without a cover or a drawn title, **the title editor's uploads** take the stock
+plates' places (`titleUploadFrames`): `logoDataURL` as `logo.gif`,
+`subTitleDataURL` as `subTitle.gif` and `titleBgDataURL` as `title_bg`, which a
+stock disc has none of (the port fills a flat purple instead). The browser rests
+a logo or subtitle with its left edge at 0 and the port centres its plate, so
+each goes onto a 256-wide plate flush left; the backdrop is tiled at its own
+size across the 256x480 screen from the top-left, as the browser's tileSprite
+shows it, then squeezed like a cover, and gets the same 1024 sheet. An upload is
+the picked file as it was, so PNG and GIF are decoded (the game this repo ships
+has a GIF logo) and anything else keeps the stock plate with a note.
+
 **The game's own UI art** goes on the disc too. A game_ui frame replaced in the
 editor's Atlas Manager — titleG.gif, say — rides the record as
 `uiAtlases.game_ui`, and a record saved before that existed carries it in its
