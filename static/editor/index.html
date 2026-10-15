@@ -2798,6 +2798,79 @@
             for (const key of UI_ATLAS_KEYS) delete atlasStash[key];
             uiAtlasesCloud = record && record.uiAtlases && typeof record.uiAtlases === 'object' ? record.uiAtlases : null;
         }
+        // A record saved before uiAtlases existed can carry a UI frame in its
+        // level atlas — titleG.gif, put there by an editor that saved whichever
+        // atlas the Atlas Manager had open. The load folded it into the level
+        // atlas, so the Atlas Manager showed it, while the title draws
+        // titleG.gif from game_ui and kept 2028.Ai's wordmark. The three
+        // atlases share no frame name, so a frame the stock level atlas lacks
+        // and a stock UI atlas has moves into that atlas's set here: the Atlas
+        // Manager shows it where the title reads it, and PLAY and the next
+        // save carry it there. A frame the record's own set already names is
+        // the newer save and wins; the level atlas's copy goes either way,
+        // unless one of the game's characters stands on it. The runtime lifts
+        // the same frames out of a record never re-saved (level-loader's
+        // _liftUiFrames).
+        async function liftUiFramesFromLevelAtlas(d) {
+            if (!d || !d.atlasImageDataURL || !d.atlasFrames) return;
+            const level = await stockFrameKeys(LEVEL_ATLAS_KEY);
+            if (!level) return;
+            const spellings = (k) => {
+                const alt = k.endsWith('.png') ? k.slice(0, -4) + '.gif' : k.endsWith('.gif') ? k.slice(0, -4) + '.png' : null;
+                return alt ? [k, alt] : [k];
+            };
+            const lifts = {};   // UI atlas key -> the level atlas's (encoded) keys it takes
+            for (const uiKey of UI_ATLAS_KEYS) {
+                const ui = await stockFrameKeys(uiKey);
+                if (!ui) continue;
+                for (const [enc, fd] of Object.entries(d.atlasFrames)) {
+                    const names = spellings(decodeFirebaseKey(enc));
+                    if (!fd || !fd.frame || names.some((n) => level.has(n)) || !names.some((n) => ui.has(n))) continue;
+                    (lifts[uiKey] = lifts[uiKey] || []).push(enc);
+                }
+            }
+            if (!Object.keys(lifts).length) return;
+            const img = await loadImageFromDataURL(d.atlasImageDataURL);
+            if (!img) return;
+            const cut = (src, key, f) => {
+                const fc = document.createElement('canvas');
+                fc.width = f.w; fc.height = f.h;
+                fc.getContext('2d').drawImage(src, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+                return { key, canvas: fc, w: f.w, h: f.h };
+            };
+            const named = new Set();
+            for (const rec of [d.playerData, d.playerData2].concat(Object.values(d.enemyData || {}), Object.values(d.bossData || {}))) {
+                if (rec && typeof rec === 'object') for (const f of entryFrameNames(rec)) named.add(f);
+            }
+            const sets = Object.assign({}, d.uiAtlases && typeof d.uiAtlases === 'object' ? d.uiAtlases : {});
+            for (const [uiKey, encs] of Object.entries(lifts)) {
+                const items = [];
+                const have = new Set();
+                const set = sets[uiKey];
+                if (set && set.imageDataURL && set.frames) {
+                    const setImg = await loadImageFromDataURL(set.imageDataURL);
+                    if (!setImg) continue;   // cannot repack the record's set: leave both as they were
+                    for (const [enc, fd] of Object.entries(set.frames)) {
+                        if (!fd || !fd.frame) continue;
+                        const k = decodeFirebaseKey(enc);
+                        items.push(cut(setImg, k, fd.frame));
+                        for (const n of spellings(k)) have.add(n);
+                    }
+                }
+                for (const enc of encs) {
+                    const k = decodeFirebaseKey(enc);
+                    if (!spellings(k).some((n) => have.has(n))) items.push(cut(img, k, d.atlasFrames[enc].frame));
+                    if (!spellings(k).some((n) => named.has(n))) delete d.atlasFrames[enc];
+                }
+                const packed = packSpriteSheet(items);
+                if (packed) sets[uiKey] = packed;
+            }
+            d.uiAtlases = sets;
+            if (!Object.keys(d.atlasFrames).length) {
+                delete d.atlasFrames;
+                delete d.atlasImageDataURL;
+            }
+        }
         // Cut frames packed into one sheet the way the cloud save stores a
         // level's custom frames: { imageDataURL, frames } with Firebase-safe
         // frame keys, or null for no items.
@@ -2844,22 +2917,24 @@
             for (const rec of gameRecords()) for (const f of entryFrameNames(rec)) names.add(f);
             return names;
         }
-        // The hosted stock atlas's frame names, fetched once: what a cloud
-        // level can count on at play time without carrying the pixels itself.
-        let stockFrameKeysPromise = null;
-        function stockFrameKeys() {
-            if (!stockFrameKeysPromise) {
-                stockFrameKeysPromise = (async () => {
+        // A hosted stock atlas's frame names (the level atlas unless another
+        // is named), fetched once each: what a cloud level can count on at
+        // play time without carrying the pixels itself.
+        const stockFrameKeysPromises = {};
+        function stockFrameKeys(key = LEVEL_ATLAS_KEY) {
+            if (!stockFrameKeysPromises[key]) {
+                const job = (async () => {
                     try {
-                        const resp = await fetch(GAME_BASE + 'assets/' + ATLAS_CONFIGS[LEVEL_ATLAS_KEY].json);
+                        const resp = await fetch(GAME_BASE + 'assets/' + ATLAS_CONFIGS[key].json);
                         if (!resp.ok) return null;
                         const norm = normalizeAtlasData(await resp.json());
                         return new Set(Object.keys(normalizeLegacyAtlasKeys((norm && norm.frames) || {})));
                     } catch (e) { return null; }
                 })();
-                stockFrameKeysPromise.then((s) => { if (!s) stockFrameKeysPromise = null; });
+                stockFrameKeysPromises[key] = job;
+                job.then((s) => { if (!s && stockFrameKeysPromises[key] === job) delete stockFrameKeysPromises[key]; });
             }
-            return stockFrameKeysPromise;
+            return stockFrameKeysPromises[key];
         }
 
         async function switchAtlas(key) {
@@ -13371,6 +13446,7 @@ function GAME3D_RUNTIME(DATA) {
                 normalizeLegacyNames(d);
                 if (d.atlasFrames) d.atlasFrames = normalizeLegacyAtlasKeys(d.atlasFrames);
                 await ensureLevelAtlasOpen();
+                await liftUiFramesFromLevelAtlas(d);
                 resetUiAtlases(d);
                 // Reset per-level atlas customization state so overrides from a
                 // previously-loaded level don't leak into this one.

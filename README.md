@@ -87,7 +87,12 @@ they are written out in full.
   carried as `uiAtlases: { <atlasKey>: { imageDataURL, frames } }` by the
   cloud save, PLAY and the exports (`uiAtlasesForSave`); a cloud load keeps
   the record's sets and folds them into the atlas when the Atlas Manager opens
-  it (`foldCloudUiAtlas`). Upload Sprites replaces a frame whose name it
+  it (`foldCloudUiAtlas`). A record saved before `uiAtlases` existed can
+  carry such a frame in its level atlas instead (the cloud game `contra`'s
+  titleG.gif, which the Atlas Manager showed and the title never did): the
+  load moves it into the record's sets (`liftUiFramesFromLevelAtlas`), so it
+  shows under `game_ui` and PLAY and the next save carry it there. Upload
+  Sprites replaces a frame whose name it
   matches instead of adding a second frame under the same name. A record whose art the atlas
   has lost is healed on load: the library answers by frame name, then by
   replaying `+ LIBRARY`'s `<name>_<n>.png` renames over the library record,
@@ -224,6 +229,11 @@ they are written out in full.
     replacements in `game_ui` / `title_ui`) onto those textures the way the
     level's own atlas goes onto `game_asset`, on both the cloud path and the
     editor hand-off, so a replaced title plate draws from the game's art.
+    A UI frame an older save left in the level atlas goes up too
+    (`_liftUiFrames`): the three atlases share no frame name, so a level
+    frame `game_asset` lacks and `game_ui` has is that frame, cut out and
+    stacked onto `game_ui` before the level atlas lands on `game_asset`. That
+    is what kept `contra`'s titleG.gif off its title, with no re-save needed.
     Mirrors `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
     TOP edge at the traced y, not their centre, so a name sits under its label
