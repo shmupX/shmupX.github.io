@@ -3127,6 +3127,16 @@ proportions. When a cover is present game_ui gets a 1024 sheet rather than 512,
 which packs it at 1/2 instead of 1/4 — 48 texels across the 239 pixels it is
 shown in rather than 24 — and keeps the working set at 3.57 MB of the GS's 4.
 
+**The game's own UI art** goes on the disc too. A game_ui frame replaced in the
+editor's Atlas Manager — titleG.gif, say — rides the record as
+`uiAtlases.game_ui`, and a record saved before that existed carries it in its
+level atlas (the cloud game `contra`). Either way it is packed into game_ui
+under the stock frame's own name (`uiAtlasFrames`), the set winning over the
+level atlas's copy, as the browser does. Only frames the stock sheet has go in,
+since the port asks for game_ui frames by fixed names; a cover or a save's drawn
+title still covers titleG, and `title_ui` has no sheet on the disc, so a set for
+it is left out with a note.
+
 **The output is a folder** — `athena.elf`, `main.js`, `athena.ini` and
 `assets/`. Copy it to a USB stick, or point an emulator straight at
 `athena.elf`. `--iso` also writes a disc image; it is opt-in because the folder

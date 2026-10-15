@@ -6,7 +6,8 @@
 // time and the result is repacked into console-sized sheets:
 //
 //   assets/game_asset.png|json   the base sprite atlas, repacked
-//   assets/game_ui.png|json      the base HUD atlas, repacked
+//   assets/game_ui.png|json      the base HUD atlas, repacked, with the game's
+//                                own replacements of its frames (uiAtlasFrames)
 //   assets/cyber_liberty.png     the player, as the 32x32 grid sheet ps2-sp wants
 //   assets/game.json             the base recipe (player/enemy/boss stats),
 //                                with a whole-game record's own later stages
@@ -62,6 +63,15 @@ export interface LevelRecord {
   atlasFrames?: Record<string, FrameEntry>;
   atlasImageDataURL?: string;
   /**
+   * The game's own art for frames of the UI atlases — titleG.gif, the
+   * wordmark the title slides in, replaced in the editor's Atlas Manager —
+   * keyed by atlas, each set packed like the level's own. See uiAtlasFrames.
+   */
+  uiAtlases?: Record<
+    string,
+    { imageDataURL?: string; frames?: Record<string, FrameEntry> } | null
+  >;
+  /**
    * A Dezaemon save's own drawn title screen: role -> the atlas frame name
    * holding it. `mapSaveToGame` writes this from the save's TITLE 1/2 and
    * credit strips.
@@ -102,6 +112,30 @@ const decodeKey = (key: string) => key.replace(/․/g, ".");
 const textEncoder = new TextEncoder();
 const json = (value: unknown) => textEncoder.encode(JSON.stringify(value));
 
+/** The other of .gif/.png, which either spelling of a frame answers to. */
+function altName(name: string): string | null {
+  return name.endsWith(".png")
+    ? name.slice(0, -4) + ".gif"
+    : name.endsWith(".gif")
+    ? name.slice(0, -4) + ".png"
+    : null;
+}
+
+/**
+ * A frame the editor cut and packed itself: the whole rect is the sprite,
+ * nothing trimmed or turned.
+ */
+function plainEntry(frame: FrameEntry["frame"]): FrameEntry {
+  const { w, h } = frame;
+  return {
+    frame: { x: frame.x, y: frame.y, w, h },
+    rotated: false,
+    trimmed: false,
+    spriteSourceSize: { x: 0, y: 0, w, h },
+    sourceSize: { w, h },
+  };
+}
+
 /**
  * Build the name -> (sheet, rect) index the rest of the staging works from:
  * the base atlas, with the level's custom atlas laid over it. A custom frame
@@ -121,20 +155,9 @@ function buildFrameIndex(
   for (const [rawName, data] of Object.entries(custom.frames)) {
     if (!data || !data.frame) continue;
     const name = decodeKey(rawName);
-    const { w, h } = data.frame;
-    const entry: FrameEntry = {
-      frame: { x: data.frame.x, y: data.frame.y, w, h },
-      rotated: false,
-      trimmed: false,
-      spriteSourceSize: { x: 0, y: 0, w, h },
-      sourceSize: { w, h },
-    };
+    const entry = plainEntry(data.frame);
     index.set(name, { sheet: custom.sheet, entry });
-    const alt = name.endsWith(".png")
-      ? name.slice(0, -4) + ".gif"
-      : name.endsWith(".gif")
-      ? name.slice(0, -4) + ".png"
-      : null;
+    const alt = altName(name);
     if (alt) index.set(alt, { sheet: custom.sheet, entry });
   }
   return index;
@@ -147,11 +170,7 @@ function resolve(
 ): IndexedFrame | null {
   const direct = index.get(name);
   if (direct) return direct;
-  const alt = name.endsWith(".gif")
-    ? name.slice(0, -4) + ".png"
-    : name.endsWith(".png")
-    ? name.slice(0, -4) + ".gif"
-    : null;
+  const alt = altName(name);
   return alt ? index.get(alt) ?? null : null;
 }
 
@@ -792,6 +811,99 @@ export function coverTitleFrames(
   };
 }
 
+/**
+ * The game's own art for game_ui frames, packed under the base sheet's names.
+ *
+ * A frame replaced in the editor's Atlas Manager under game_ui — titleG.gif,
+ * the wordmark the title slides in, say — rides the record as
+ * `uiAtlases.game_ui`, and the browser stacks it onto game_ui
+ * (level-loader's applyUiAtlases). A record saved before that existed carries
+ * the frame in its level atlas instead, which the browser lifts the same way
+ * (_liftUiFrames): the atlases share no frame name, so a level frame
+ * game_asset lacks and game_ui has is that UI frame. Both become overrides of
+ * the game_ui repack here, the set winning over the level atlas's copy as it
+ * does in the browser.
+ *
+ * Only frames the base sheet has go in, under its own spelling of the name:
+ * the port draws game_ui by fixed names, exact first, so a titleG.png beside
+ * the stock titleG.gif would never be drawn, and a name it never asks for
+ * would only take texels from the GS's 4 MB. title_ui has no sheet on the
+ * disc at all — its frames are the browser's mode-select buttons — so a set
+ * for it is reported and left out.
+ */
+export async function uiAtlasFrames(
+  record: LevelRecord,
+  custom: { sheet: Raster; frames: Record<string, FrameEntry> } | null,
+  base: { asset: Set<string>; ui: Set<string> },
+  notes: string[],
+): Promise<SourceFrame[]> {
+  const slot = (names: Set<string>, name: string) => {
+    const alt = altName(name);
+    return names.has(name) ? name : alt && names.has(alt) ? alt : null;
+  };
+  const out = new Map<string, SourceFrame>();
+  const noSlot: string[] = [];
+  const sets = record.uiAtlases ?? {};
+
+  const own = sets.game_ui;
+  if (own?.imageDataURL && own.frames) {
+    const sheet = await decodeDataUrl(own.imageDataURL);
+    for (const [rawName, data] of Object.entries(own.frames)) {
+      if (!data?.frame) continue;
+      const name = decodeKey(rawName);
+      const target = slot(base.ui, name);
+      if (!target) {
+        noSlot.push(name);
+        continue;
+      }
+      out.set(target, { name: target, sheet, entry: plainEntry(data.frame) });
+    }
+  }
+  const fromLevel: string[] = [];
+  for (const [rawName, data] of Object.entries(custom?.frames ?? {})) {
+    if (!data?.frame) continue;
+    const name = decodeKey(rawName);
+    if (slot(base.asset, name)) continue;
+    const target = slot(base.ui, name);
+    if (!target || out.has(target)) continue;
+    out.set(target, {
+      name: target,
+      sheet: custom!.sheet,
+      entry: plainEntry(data.frame),
+    });
+    fromLevel.push(target);
+  }
+
+  const list = (names: string[]) =>
+    `${names.slice(0, 3).join(", ")}${names.length > 3 ? ", …" : ""}`;
+  if (out.size) {
+    notes.push(
+      `game_ui: ${out.size} frame(s) of the game's own art — ${
+        list([...out.keys()])
+      }${
+        fromLevel.length
+          ? ` (${fromLevel.length} from its level atlas, saved before ` +
+            `uiAtlases)`
+          : ""
+      }`,
+    );
+  }
+  if (noSlot.length) {
+    notes.push(
+      `game_ui: ${noSlot.length} frame(s) the port never draws, left out — ` +
+        list(noSlot),
+    );
+  }
+  for (const [key, set] of Object.entries(sets)) {
+    if (key === "game_ui" || !set?.frames) continue;
+    notes.push(
+      `${key}: ${Object.keys(set.frames).length} frame(s) left out — ` +
+        `the port has no ${key} sheet`,
+    );
+  }
+  return [...out.values()];
+}
+
 /** Produce every file the console reads, ready to hand to the ISO writer. */
 export async function stageAssets(options: StageOptions): Promise<StageResult> {
   const { gameDir, record } = options;
@@ -837,6 +949,33 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
   const title = options.cover
     ? coverTitleFrames(options.cover, notes)
     : dezaemonTitleFrames(record, index, notes);
+
+  // The game's own game_ui art goes under the title's arrangement: a cover or
+  // a save's drawn title puts its frames up under these names and leaves the
+  // stock plates out, as the browser hides titleG under a drawn title, so a
+  // replaced plate the title covers is not packed either.
+  const uiJson = JSON.parse(
+    await Deno.readTextFile(join(gameDir, "assets", "game_ui.json")),
+  ) as { frames: Record<string, FrameEntry> };
+  const titleNames = new Set(title.overrides.map((frame) => frame.name));
+  const uiOwn = await uiAtlasFrames(record, custom, {
+    asset: new Set(Object.keys(baseJson.frames)),
+    ui: new Set(Object.keys(uiJson.frames)),
+  }, notes);
+  const covered = uiOwn.filter((frame) =>
+    titleNames.has(frame.name) || title.drop.has(frame.name)
+  );
+  if (covered.length) {
+    notes.push(
+      `game_ui: ${
+        covered.map((frame) => frame.name).join(", ")
+      } left out — the title screen covers it`,
+    );
+  }
+  const uiOverrides = [
+    ...uiOwn.filter((frame) => !covered.includes(frame)),
+    ...title.overrides,
+  ];
 
   // --- what the console will play ---
   //
@@ -889,7 +1028,7 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
       name,
       budget,
       name === "game_asset" ? upright : new Set(),
-      name === "game_ui" ? title.overrides : [...bossShots.values()],
+      name === "game_ui" ? uiOverrides : [...bossShots.values()],
       name === "game_ui" ? title.drop : new Set(),
     );
     files.push(...built.files);
