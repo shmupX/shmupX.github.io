@@ -433,6 +433,7 @@ deno task sav:profile     # play a .sav in Mednafen and in the runtime at once a
 deno task eshop:check     # validate data/eshop.json against the built manifest
 deno task eshop:covers    # cover a published eShop game that went out without one (dry run; --write uploads)
 deno task eshop:publish   # export a level as a Dezaemon 2 cart and publish it to the eShop, replacing that id (--name NAME lists it as; --dry-run writes nothing)
+deno task bgm:tone        # transcribe an mp3 (path or URL) onto the Dezaemon 2 tone bank: a level's dezaemonBgm, one piece across the stages
 deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
@@ -1666,13 +1667,82 @@ Shipping it means `spacetime login` and `deno task netplay:publish`.
 
 Requires Deno canary (`deno upgrade canary`).
 
+## A soundtrack off the tone bank
+
+```bash
+deno task bgm:tone song.mp3 --out foo-bgm.json --stages 5 --report report.md --render render.wav
+```
+
+[`scripts/bgm-to-tone.ts`](packages/shmup-harbor/scripts/bgm-to-tone.ts)
+listens to a recording (a path or an https URL; ffmpeg decodes it to mono
+22.05 kHz) and writes it as 音まろ songs — the level record's `dezaemonBgm`,
+the same object an import carries, which `build:sav` puts into a cart's sec6
+and the runtime plays through the Saturn tone bank (the real SNDPAC samples on
+localhost, the analysed periodic waves everywhere else). The listening is
+[`lib/bgm-transcribe.ts`](packages/shmup-harbor/lib/bgm-transcribe.ts), with
+no dependencies beyond ffmpeg: an onset envelope and a tempo path by section
+(a 40 s window, octave ties broken by whether the faster reading's sixteenths
+are articulated — `--alias slow|fast` overrules it), beats tracked by dynamic
+programming and a sixteenth grid between them; a 4096-point spectrogram
+whitened and read for up to three pitched voices a step by harmonic salience,
+and a kick / snare / hat decision from the low and high flux bands. Those
+become the four monophonic parts a song has — lead, bass, pad, drums at the
+runtime's fixed gains 1 / 0.8 / 1.2 / 0.5, each on one instrument (`--lead 13
+--bass 18 --pad 23 --kick 41 --snare 40 --hat 48` are the defaults; the bank
+has no names, so pick by the catalogue's ear) — with pitches folded into the
+format's C2..Bb6 and, since a note has no velocity, loudness reduced to an
+energy gate and the instrument. A slot is 512 sixteenths at its own tempo
+index out of the kernel's 32, so a 21-minute piece is some twenty slots, each
+starting on a beat where the last one ended and cut short (its `loopEnd` at
+its last measure) where the tempo changes. Past `--max-slots` (24, the bank)
+the converter falls back to eighths and says so; it never truncates. The
+report scores the result against the source — per-beat chroma cosine and
+onset agreement at ±70 ms — and `--render` writes the events as a WAV to
+listen to before committing to them.
+
+What the record then means. `sequence` is the slots in playing order, and
+the web runtime treats a soundtrack that carries one as **one piece**: slots
+play end to end (looping the whole piece when the last ends), a boss keeps it
+going instead of switching to the boss slot, and a stage clear **pauses** it —
+the next stage resumes it where it stopped, so the story in between stays
+quiet the way it does for a continued mp3; a new run starts it over, a stock
+continue (back to stage 0) starts it over, an imported cart's continue
+resumes. The Saturn knows nothing of this — the kernel plays the BGM table's
+slot and restarts it on every stage — so the same record's `stages` pairs are
+spread along the sequence (stage r of S opens at slot ⌊r·n/S⌋, its boss on the
+slot after) and a cart still walks the piece over a game; `special` names the
+first slot for the title, the last for the ending's staff roll, and an unused
+slot for game over and stage clear, which is silence on the cart and the
+game's own music on the web (a missing slot falls back). A record carrying
+`dezaemonBgm` alone is **not** a cart: `isImportedLevel()` reads provenance
+from `meta.source` and the other `dezaemon*` records, so a web level keeps its
+story, continues, HUD and its own sound effects while borrowing the tone bank
+for its music. The encoder underneath is
+[`src/audio/song-write.js`](packages/shmup-engine/src/audio/song-write.js) —
+`encodeDezaSong` (events in, 4228 bytes out, the inverse of `decodeSong`) and
+`buildDezaemonBgm` (slots in, the record out) — which anything else that
+wants to write a song can call.
+
+**foo and dezaFoo** carry the first one: the 21:13 Sol Invicto track that was
+foo's custom boss mp3 (four stages' worth of a 42 MB download, stage 4 never
+covered) is now 21 slots — 160.6 BPM for the first 4:47, 114.7 to 12:23, a
+metric modulation to 86.05 until 15:20, then 114.8 to the end — scored 0.751
+chroma and 0.711 onset-F against the source (0.734 against a rolling-threshold
+truth that does not let the loud sections set the bar for the quiet ones), 14 s
+to convert. It was PATCHed
+onto `levels/foo` (the four `boss_*_bgm` overrides dropped, the two voice
+entries kept) and dezaFoo republished from it with `deno task eshop:publish
+foo --name dezaFoo --author "EASIER BY CODE"`.
+
 ## A Dezaemon save is not 2028.Ai
 
 The runtime plays two quite different things: 2028.Ai itself — a Capcom April
 Fool's joke with its own staff, its own top-hatted G and its own tweet buttons —
 and 258 carts other people wrote on a Saturn in 1997. `isImportedLevel()` in
 `game.bundle.js` tells them apart (`meta.source === "dezaemon2"`, stamped by
-`map-to-game.js`, with the `dezaemon*` records as a fallback), and everything
+`map-to-game.js`, with the `dezaemon*` records as a fallback — all but
+`dezaemonBgm`, since a web game may borrow the tone bank for its music, see
+[the soundtrack converter](#a-soundtrack-off-the-tone-bank)), and everything
 that is 2028.Ai's rather than the game's is keyed off it:
 
 - **No tweet button, anywhere** — title, game over, ending. The staff roll is

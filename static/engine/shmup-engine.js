@@ -7831,6 +7831,194 @@ function buildSaveFromGame(level, art2, options = {}) {
   };
 }
 
+// packages/shmup-engine/src/audio/song-write.js
+var SONG_STEPS = MEASURES * STEPS_PER_MEASURE;
+var CONTROL_DEFAULT = Object.freeze([0, 0, 128, 3]);
+var PITCH_TO_MIDI = 35;
+var MIDI_MIN = NOTE_MIN + PITCH_TO_MIDI;
+var MIDI_MAX = NOTE_MAX + PITCH_TO_MIDI;
+var INSTRUMENT_MAX = 127;
+var TIE = 128;
+function midiToPitch(midi) {
+  const m = Math.round(midi);
+  if (m < MIDI_MIN || m > MIDI_MAX) return null;
+  return m - PITCH_TO_MIDI;
+}
+function foldMidiToPitch(midi) {
+  let m = Math.round(midi);
+  if (!Number.isFinite(m)) return null;
+  while (m < MIDI_MIN) m += 12;
+  while (m > MIDI_MAX) m -= 12;
+  return m - PITCH_TO_MIDI;
+}
+function pitchToMidi(pitch) {
+  return pitch + PITCH_TO_MIDI;
+}
+function stepSecondsOf(tempoIndex) {
+  return TEMPO_TABLE[tempoIndex & 31] / 240;
+}
+function tempoIndexForStepSeconds(stepSeconds) {
+  let best = 0;
+  let bestErr = Infinity;
+  for (let i = 0; i < TEMPO_TABLE.length; i++) {
+    const err = Math.abs(Math.log(stepSecondsOf(i) / stepSeconds));
+    if (err < bestErr) {
+      bestErr = err;
+      best = i;
+    }
+  }
+  return best;
+}
+function tempoIndexForBpm(bpm) {
+  return tempoIndexForStepSeconds(60 / bpm / 4);
+}
+function bpmOfTempoIndex(tempoIndex) {
+  return 60 / (stepSecondsOf(tempoIndex) * 4);
+}
+function fail(what) {
+  throw new RangeError(`song-write: ${what}`);
+}
+function checkInt(v, lo, hi, what) {
+  if (!Number.isInteger(v) || v < lo || v > hi) {
+    fail(`${what} must be an integer ${lo}..${hi}, got ${v}`);
+  }
+  return v;
+}
+function stepOffsets(part, step) {
+  const m = Math.floor(step / STEPS_PER_MEASURE);
+  const st = step % STEPS_PER_MEASURE;
+  const base = SONG_HEADER + m * MEASURE_SIZE + MEASURE_HEADER + part * PART_BLOCK;
+  return [base + VOICE_OFFSET + st, base + PITCH_OFFSET + st];
+}
+function encodeDezaSong(song = {}) {
+  const bytes = new Uint8Array(SONG_SIZE);
+  const tempoIndex = checkInt(song.tempoIndex ?? 15, 0, 31, "tempoIndex");
+  const echo = checkInt(song.echo ?? 3, 0, 7, "echo");
+  const loopStart = checkInt(song.loopStart ?? 0, 0, MEASURES - 1, "loopStart");
+  const loopEnd = checkInt(song.loopEnd ?? MEASURES - 1, 0, MEASURES - 1, "loopEnd");
+  if (loopEnd < loopStart) fail(`loopEnd ${loopEnd} is before loopStart ${loopStart}`);
+  bytes[SONG_LOOP_START_OFFSET] = loopStart;
+  bytes[SONG_LOOP_END_OFFSET] = loopEnd;
+  bytes[SONG_ECHO_OFFSET] = echo;
+  bytes[SONG_TEMPO_OFFSET] = tempoIndex;
+  for (let m = 0; m < MEASURES; m++) {
+    bytes.set(CONTROL_DEFAULT, SONG_HEADER + m * MEASURE_SIZE);
+  }
+  const parts = Array.isArray(song.parts) ? song.parts : [];
+  if (parts.length > PARTS) fail(`${parts.length} parts; a song has ${PARTS}`);
+  for (let p = 0; p < parts.length; p++) {
+    const events = parts[p] || [];
+    if (!Array.isArray(events)) fail(`part ${p} is not an array of events`);
+    const sorted = events.slice().sort((a, b) => a.step - b.step);
+    for (let i = 0; i < sorted.length; i++) {
+      const e = sorted[i];
+      const step = checkInt(e.step, 0, SONG_STEPS - 1, `part ${p} event ${i} step`);
+      const note = checkInt(e.note ?? e.pitch, NOTE_MIN, NOTE_MAX, `part ${p} step ${step} note`);
+      const instrument = checkInt(
+        e.instrument ?? e.inst ?? 0,
+        0,
+        INSTRUMENT_MAX,
+        `part ${p} step ${step} instrument`
+      );
+      const len = checkInt(e.len ?? 1, 1, SONG_STEPS, `part ${p} step ${step} len`);
+      if (i > 0 && sorted[i - 1].step === step) {
+        fail(`part ${p} has two events on step ${step}`);
+      }
+      const next = i + 1 < sorted.length ? sorted[i + 1].step : SONG_STEPS;
+      const end = Math.min(step + len, next, SONG_STEPS);
+      const [v0, p0] = stepOffsets(p, step);
+      bytes[v0] = instrument;
+      bytes[p0] = note;
+      for (let s = step + 1; s < end; s++) {
+        const [v, q] = stepOffsets(p, s);
+        bytes[v] = TIE;
+        bytes[q] = note;
+      }
+    }
+  }
+  return bytes;
+}
+function cellsToEvents(cells) {
+  const events = [];
+  let current = null;
+  for (let step = 0; step < cells.length && step < SONG_STEPS; step++) {
+    const c = cells[step];
+    if (!c) {
+      current = null;
+      continue;
+    }
+    if (c.tie && current) {
+      current.len = step - current.step + 1;
+      continue;
+    }
+    current = {
+      step,
+      note: c.note ?? c.pitch,
+      instrument: c.instrument ?? c.inst ?? 0,
+      len: 1
+    };
+    events.push(current);
+  }
+  return events;
+}
+function bytesToB64(bytes) {
+  if (typeof btoa === "function") {
+    let s = "";
+    for (let i = 0; i < bytes.length; i += 32768) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+    }
+    return btoa(s);
+  }
+  return Buffer.from(bytes).toString("base64");
+}
+function buildDezaemonBgm(options = {}) {
+  const slots = (options.songs || []).map((s, i) => {
+    if (!(s instanceof Uint8Array) || s.length !== SONG_SIZE) {
+      fail(`songs[${i}] is not a ${SONG_SIZE}-byte slot`);
+    }
+    return s;
+  });
+  if (!slots.length) fail("no songs");
+  if (slots.length > SONG_SLOTS) fail(`${slots.length} songs; a bank holds ${SONG_SLOTS}`);
+  const n = slots.length;
+  const last = n - 1;
+  const silent = n < SONG_SLOTS ? n : last;
+  const songs = {};
+  const tempos = {};
+  slots.forEach((s, i) => {
+    songs[String(i)] = bytesToB64(s);
+    tempos[String(i)] = stepSecondsOf(s[SONG_TEMPO_OFFSET]);
+  });
+  let stages = options.stages;
+  if (!Array.isArray(stages)) {
+    const stageCount = Math.max(1, Math.min(10, options.stageCount || Math.ceil(n / 2)));
+    stages = [];
+    for (let r = 0; r < stageCount; r++) {
+      const main = Math.min(Math.floor(r * n / stageCount), last);
+      stages.push([main, Math.min(main + 1, last)]);
+    }
+  }
+  stages.forEach((pair, r) => {
+    if (!Array.isArray(pair) || pair.length !== 2) fail(`stages[${r}] is not a [main, boss] pair`);
+    pair.forEach((slot, k) => checkInt(slot, 0, SONG_SLOTS - 1, `stages[${r}][${k}]`));
+  });
+  if (stages.length > 10) fail(`${stages.length} stage pairs; the table holds 10`);
+  const special = Array.isArray(options.special) ? options.special : [0, silent, silent, last];
+  if (special.length !== 4) fail("special must be [title, gameover, clear, ending]");
+  special.forEach((slot, k) => checkInt(slot, 0, SONG_SLOTS - 1, `special[${k}]`));
+  const out = {
+    sfxSet: checkInt(options.sfxSet ?? 1, 1, 3, "sfxSet"),
+    special: special.slice(),
+    stages: stages.map((p) => p.slice()),
+    songs,
+    tempos
+  };
+  if (options.sequence !== false) {
+    out.sequence = Array.isArray(options.sequence) ? options.sequence.map((slot, k) => checkInt(slot, 0, SONG_SLOTS - 1, `sequence[${k}]`)) : slots.map((_, i) => i);
+  }
+  return out;
+}
+
 // packages/shmup-engine/src/write/export-sav.js
 function savFileName(title) {
   const clean = String(title || "game").replace(/[\\/:*?"<>|]+/g, "-").trim() || "game";
@@ -18581,6 +18769,7 @@ export {
   CG_CELL_BYTES,
   CG_CELL_CAPACITY,
   COLOR_SETS,
+  CONTROL_DEFAULT,
   COVER_H,
   COVER_W,
   CREDIT_LINE_CHARS,
@@ -18671,6 +18860,7 @@ export {
   SHADE_ZERO,
   SHAPE_FAMILIES,
   SINGLE_LETTER_ENEMIES,
+  SONG_STEPS,
   STAFF_ROLE_LABELS,
   STRAIGHT_APPEARANCE_BASE,
   SWATCH_LAYOUT,
@@ -18685,8 +18875,10 @@ export {
   bankToSec4,
   blastFrames,
   bossClassFor,
+  bpmOfTempoIndex,
   buildBlankGame,
   buildBupImage,
+  buildDezaemonBgm,
   buildGameSave,
   buildKidsGameFromLevel,
   buildMemoryCard,
@@ -18701,6 +18893,7 @@ export {
   bupDateFromDate,
   bupDateToDate,
   byteSum,
+  cellsToEvents,
   cellsToIndexed,
   coalesceDiffRanges,
   colorHistogram,
@@ -18732,6 +18925,7 @@ export {
   emptyWave,
   encodeBossTrailer,
   encodeComment,
+  encodeDezaSong,
   encodeEnemyRecord,
   encodeModels,
   encodeRotation,
@@ -18751,6 +18945,7 @@ export {
   findEntry,
   fitRgba,
   foldCreditText,
+  foldMidiToPitch,
   formatMemoryCard,
   formatPartition,
   frameGroup,
@@ -18784,6 +18979,7 @@ export {
   meshBounds,
   meshFor,
   meshLibraryFromJson,
+  midiToPitch,
   modelStats,
   imageFormat as n64ImageFormat,
   normalizeProjectName as n64ProjectName,
@@ -18811,6 +19007,7 @@ export {
   payloadCapacity,
   pickLayers,
   pickSfcCoverWindow,
+  pitchToMidi,
   placeSaveInPartition,
   placeholderLibrary,
   placeholderMesh,
@@ -18837,11 +19034,14 @@ export {
   snesCgramBytes,
   spreadFrames,
   stageSaveInInternalRam,
+  stepSecondsOf,
   summarizeSfcSav,
   swatchCell,
   swatchCellRect,
   swatchRgb,
   swatchUV,
+  tempoIndexForBpm,
+  tempoIndexForStepSeconds,
   tintRgb555,
   toFloat32,
   totalDiffBytes,

@@ -268,6 +268,23 @@ export {
   spreadFrames,
   STRAIGHT_APPEARANCE_BASE,
 } from "./src/write/game-to-save.js";
+
+// --- Songs written from events (src/audio/song-write.js): the inverse of
+// decodeSong, for a converter that has decided what the four parts play ---
+export {
+  bpmOfTempoIndex,
+  buildDezaemonBgm,
+  cellsToEvents,
+  CONTROL_DEFAULT,
+  encodeDezaSong,
+  foldMidiToPitch,
+  midiToPitch,
+  pitchToMidi,
+  SONG_STEPS,
+  stepSecondsOf,
+  tempoIndexForBpm,
+  tempoIndexForStepSeconds,
+} from "./src/audio/song-write.js";
 export {
   exportLevelToSav,
   savComment,

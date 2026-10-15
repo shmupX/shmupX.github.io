@@ -26,6 +26,7 @@
     "build:ps2:zip": "deno run -A packages/shmup-harbor/scripts/build-ps2.ts --zip",
     "build:ps2:iso": "deno run -A packages/shmup-harbor/scripts/build-ps2.ts --iso",
     "build:sav": "deno run -A packages/shmup-harbor/scripts/build-sav.ts",
+    "bgm:tone": "deno run -A packages/shmup-harbor/scripts/bgm-to-tone.ts",
     "build:kids": "deno run -A packages/shmup-harbor/scripts/build-kids.ts",
     "build:plus": "deno run -A packages/shmup-harbor/scripts/build-plus.ts",
     "build:ddd": "deno run -A packages/shmup-harbor/scripts/build-ddd.ts",

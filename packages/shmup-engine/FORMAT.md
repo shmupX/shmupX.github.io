@@ -1858,7 +1858,18 @@ collection (60 saves scanned) while building it:
 - **sec6**: an unused song slot is header `00 1F 03 0F` and control bytes
   `00 00 80 03` in each of the 32 measures (67 non-zero bytes — Ramsie's slots
   14–23); `emptySong()` reproduces it. The BGM table may name such a slot: it
-  plays silence.
+  plays silence. A song written from events (`src/audio/song-write.js`,
+  `encodeDezaSong`) keeps those control bytes in every measure — rows 0–6 of
+  the kernel's accompaniment table are silent, so the four composed parts are
+  all that sounds — and writes a tie as `0x80` in the VOICE column with the
+  pitch byte repeated beside it, as every song in the corpus does. The level
+  record's `dezaemonBgm` may also carry `sequence`, the slots in playing order
+  for a soundtrack that is one piece cut into slots (`deno task bgm:tone`); the
+  cart knows nothing of it — the kernel plays the BGM table's slot and restarts
+  it on every stage — so the same record's `stages` pairs are spread along the
+  sequence (stage r of S opens at slot ⌊r·n/S⌋) and a cart still walks the
+  piece over a game. The web runtime plays the sequence end to end instead and
+  pauses it at a stage clear.
 - **sec7**: all zero when the level carries no models — no `0x12345678` magic,
   which the decoder (and Ramsie's own save) treats as "the 3D editor was never
   opened". A level that DOES carry them (`dezaemonModels`) has the section

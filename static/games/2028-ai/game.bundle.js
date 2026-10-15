@@ -1655,14 +1655,24 @@
     var r = gameState._phaserRecipe;
     if (!r) return false;
     if (r.meta && (r.meta.source === "dezaemon2" || r.meta.dezaemonSettings)) return true;
-    if (r.dezaemonBgm || r.dezaemonTitle || r.dezaemonBullets || r.dezaemonItems || r.dezaemonCredits) return true;
+    // A soundtrack alone is not provenance: the converter (deno task bgm:tone)
+    // writes dezaemonBgm into web levels too — foo plays its own song off the
+    // tone bank — and such a level keeps its story, continues and HUD.
+    if (r.dezaemonTitle || r.dezaemonBullets || r.dezaemonItems || r.dezaemonCredits) return true;
     // cmg: a record that names its provenance is read from that alone. The
     // per-enemy check below is for records older than the meta stamp. The
     // shared library's characters keep their Dezaemon behaviour blocks, and
     // a NEW GAME built out of them (meta.version, no source) is a web game —
     // with its story, its CONTINUE? prompt and the editor's title — not a
     // cart that happens to carry a cutscene.
-    if (r.meta && typeof r.meta === "object") return false;
+    // The editor's PLAY stamps editorReturn/editorLevelName onto meta so the
+    // OSD can hand the level back; that is not provenance, so a pre-stamp
+    // record carrying only those keys still reaches the per-enemy check.
+    if (r.meta && typeof r.meta === "object") {
+      for (var mk in r.meta) {
+        if (mk !== "editorReturn" && mk !== "editorLevelName") return false;
+      }
+    }
     var ed = r.enemyData;
     if (ed) {
       for (var k in ed) {
@@ -6687,17 +6697,92 @@
     for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     return buf;
   }
+  // A soundtrack that is one piece in several slots: `sequence` names the
+  // slots in playing order (deno task bgm:tone writes it). Such a song is not
+  // looped a slot at a time but played end to end, slot after slot, and a stage
+  // clear PAUSES it — the next stage picks it up where it stopped, out of
+  // gameState.dezaBgmResume — so a twenty-minute track runs across a whole
+  // game instead of restarting with every stage and boss. The Saturn cart
+  // cannot do this (its kernel restarts a slot on every stage), so the same
+  // record also carries the stages table a cart plays.
+  function dezaBgmSequence(bgm) {
+    var seq = bgm && bgm.sequence;
+    return Array.isArray(seq) && seq.length ? seq : null;
+  }
+  // Point `st` at slot `idx`: the song parsed, its streams laid out and the
+  // cursors at its first events.
+  function loadBgmSlot(st, idx) {
+    var song = parseBgmSong(st.bgm.songs[idx]);
+    // The four composed parts play alongside the seven channels of the engine's
+    // automatic accompaniment; one scheduler drives all eleven.
+    song.streams = song.parts.concat(song.accomp || []);
+    st.song = song;
+    st.stepSeconds = song.stepSeconds;
+    st.songIndex = idx;
+    st.cursor = [];
+    for (var ci = 0; ci < song.streams.length; ci++) st.cursor.push(0);
+  }
+  // The slot's echo send. The delay network is built on the first slot that
+  // asks for one and its level follows every slot after, so a sequence whose
+  // slots differ in echo sounds the same wherever it starts or resumes.
+  function applyBgmEcho(st) {
+    var level = st.song ? st.song.echoLevel : 0;
+    st.echoBase = 0.45 * (level / 7);
+    if (!st.echo) {
+      if (level <= 0) return;
+      var ctx = st.ctx;
+      var delay = ctx.createDelay(0.5);
+      delay.delayTime.value = 0.18;
+      var fb = ctx.createGain();
+      fb.gain.value = 0.3;
+      var wet = ctx.createGain();
+      st.master.connect(delay);
+      delay.connect(fb);
+      fb.connect(delay);
+      delay.connect(wet);
+      wet.connect(ctx.destination);
+      st.echo = wet;
+    }
+    st.echo.gain.value = st.echoBase * cmgVol.bgm;
+  }
+  // Where a sequence stands — its slot and the step inside it — for the stage
+  // that resumes it.
+  function dezaBgmPosition(st) {
+    var span = st.song ? st.song.loopEndStep : 512;
+    var step = Math.floor((st.ctx.currentTime - st.startTime) / st.stepSeconds);
+    return { index: st.seqIndex, step: Math.min(Math.max(0, step), span - 1) };
+  }
   function startDezaemonBgm(scene, which) {
     var bgm = (scene.recipe || gameState._phaserRecipe || {}).dezaemonBgm;
     if (!bgm) return false;
     var ctx = audioCtx(scene);
     if (!ctx) return false;
     var idx;
+    var seq = null;
+    var resume = null;
     // The table's four special tracks: title, game over, stage clear, and the
     // all-clear track that plays through the ending's staff roll.
     var specialSlot = { title: 0, gameover: 1, clear: 2, ending: 3 };
     if (specialSlot[which] !== void 0) {
       idx = bgm.special ? bgm.special[specialSlot[which]] : null;
+    } else if (dezaBgmSequence(bgm)) {
+      // One piece across the stages: a boss keeps it going, and a stage start
+      // resumes it where the last clear (or the last death) paused it.
+      if (scene._dezaBgm && scene._dezaBgm.seq) return true;
+      seq = dezaBgmSequence(bgm);
+      var saved = gameState.dezaBgmResume;
+      resume = saved && typeof saved.index === "number" && saved.index >= 0 && saved.index < seq.length ? saved : { index: 0, step: 0 };
+      // A slot the record does not carry is skipped here as it is when the
+      // sequence advances; the saved step only holds for the slot it was
+      // saved in.
+      for (var k = 0; k < seq.length; k++) {
+        var cand = (resume.index + k) % seq.length;
+        if (bgm.songs && bgm.songs[seq[cand]] != null) {
+          if (k) resume = { index: cand, step: 0 };
+          break;
+        }
+      }
+      idx = seq[resume.index];
     } else {
       var stageId = typeof scene.bossStageId === "number" ? scene.bossStageId : 0;
       var pair = bgm.stages && bgm.stages[stageId] || null;
@@ -6709,19 +6794,18 @@
     // missing bank costs one 404 and nothing else.
     loadDezaToneBank();
     stopDezaemonBgm(scene);
-    var song = parseBgmSong(bgm.songs[idx]);
-    // The four composed parts play alongside the seven channels of the engine's
-    // automatic accompaniment; one scheduler drives all eleven.
-    song.streams = song.parts.concat(song.accomp || []);
     var st = scene._dezaBgm = {
       ctx,
-      song,
-      stepSeconds: song.stepSeconds,
+      bgm,
+      song: null,
+      stepSeconds: 0,
       songIndex: idx,
       which,
       cursor: [],
       startTime: ctx.currentTime + 0.05,
       loop: 0,
+      seq,
+      seqIndex: resume ? resume.index : 0,
       master: ctx.createGain(),
       noise: makeNoiseBuffer(ctx),
       buffers: {},
@@ -6730,27 +6814,29 @@
       scheduled: 0,
       echo: null
     };
-    for (var ci = 0; ci < song.streams.length; ci++) st.cursor.push(0);
+    loadBgmSlot(st, idx);
+    if (seq) {
+      gameState.dezaBgmResume = null;
+      var at = Math.min(Math.max(0, Math.floor(resume.step || 0)), st.song.loopEndStep - 1);
+      if (at > 0) {
+        // Step `at` falls at the start time; whatever sounded before it is
+        // over, so each stream's cursor skips to its first event from there.
+        st.startTime -= at * st.stepSeconds;
+        for (var p = 0; p < st.song.streams.length; p++) {
+          var evs = st.song.streams[p];
+          var k = 0;
+          while (k < evs.length && evs[k].step < at) k++;
+          st.cursor[p] = k;
+        }
+      }
+    }
     st.master.gain.value = BGM_GAIN * cmgVol.bgm;
     cmgDezaBgms.push(st);
     st.master.connect(ctx.destination);
-    if (song.echoLevel > 0) {
-      var delay = ctx.createDelay(0.5);
-      delay.delayTime.value = 0.18;
-      var fb = ctx.createGain();
-      fb.gain.value = 0.3;
-      var wet = ctx.createGain();
-      st.echoBase = 0.45 * (song.echoLevel / 7);
-      wet.gain.value = st.echoBase * cmgVol.bgm;
-      st.master.connect(delay);
-      delay.connect(fb);
-      fb.connect(delay);
-      delay.connect(wet);
-      wet.connect(ctx.destination);
-      st.echo = wet;
-    }
+    applyBgmEcho(st);
     var pump = function() {
-      scheduleBgm(scene, st);
+      if (st.seq) scheduleBgmSequence(scene, st);
+      else scheduleBgm(scene, st);
     };
     st.timer = scene.time.addEvent({ delay: BGM_TICK_MS, loop: true, callback: pump });
     pump();
@@ -6812,6 +6898,60 @@
           p < 4 ? e.note + 54 : e.note);
         st.scheduled += 1;
       }
+    }
+  }
+  // Every event of the current slot that falls at or before `limit`, once
+  // through — the sequence player never loops a slot.
+  function scheduleSlotOnce(st, limit) {
+    var ctx = st.ctx;
+    var song = st.song;
+    var streams = song.streams;
+    for (var p = 0; p < streams.length; p++) {
+      var events = streams[p];
+      var voice = p < 4 ? PART_VOICES[p] : ACCOMP_VOICE;
+      while (st.cursor[p] < events.length) {
+        var e = events[st.cursor[p]];
+        if (e.step >= song.loopEndStep) {
+          st.cursor[p] = events.length;
+          break;
+        }
+        var t = st.startTime + e.step * st.stepSeconds;
+        if (t > limit) break;
+        st.cursor[p] += 1;
+        if (t < ctx.currentTime - 0.02) continue;
+        playBgmNote(st, voice, e, p < 4 ? t : t + ACCOMP_DELAY,
+          p < 4 ? e.note + 54 : e.note);
+        st.scheduled += 1;
+      }
+    }
+  }
+  // The next slot of the sequence starts at `at` (the end of the one playing);
+  // slots the record does not carry are skipped. False when none is left.
+  function advanceBgmSequence(st, at) {
+    var seq = st.seq;
+    for (var tries = 0; tries < seq.length; tries++) {
+      var next = (st.seqIndex + 1 + tries) % seq.length;
+      var slot = seq[next];
+      if (st.bgm.songs[slot] == null) continue;
+      st.seqIndex = next;
+      st.startTime = at;
+      st.loop = 0;
+      loadBgmSlot(st, slot);
+      applyBgmEcho(st);
+      return true;
+    }
+    return false;
+  }
+  // The sequence player's tick: schedule to the horizon, crossing into the
+  // following slot (and the one after, for a very short slot) when the one
+  // playing ends inside it. The whole piece loops when its last slot ends.
+  function scheduleBgmSequence(scene, st) {
+    var horizon = st.ctx.currentTime + BGM_LOOKAHEAD;
+    for (var guard = 0; guard < 64; guard++) {
+      var slotEnd = st.startTime + st.song.loopEndStep * st.stepSeconds;
+      scheduleSlotOnce(st, Math.min(horizon, slotEnd));
+      if (slotEnd > horizon) return;
+      if (!advanceBgmSequence(st, slotEnd)) return;
     }
   }
   function playBgmNote(st, mix, e, t, scaleNote) {
@@ -6922,6 +7062,8 @@
   function stopDezaemonBgm(scene) {
     var st = scene._dezaBgm;
     if (!st) return;
+    // Stopping a sequence is pausing it: the next start resumes here.
+    if (st.seq) gameState.dezaBgmResume = dezaBgmPosition(st);
     if (st.timer) st.timer.remove();
     try {
       st.master.disconnect();
@@ -7644,6 +7786,7 @@
       gameState.score = 0;
       gameState.spgage = 0;
       gameState.stageId = 0;
+      gameState.dezaBgmResume = null;
       gameState.continueCnt = 0;
       gameState.akebonoCnt = 0;
       gameState.shortFlg = false;
@@ -13166,13 +13309,18 @@
           scene.bossDangerShown = false;
           scene.bossHpBarBg.setVisible(false);
           scene.bossHpBarFg.setVisible(false);
-          try {
-            var oldBgm = scene.sound.get(scene.stageBgmName);
-            if (oldBgm && oldBgm.isPlaying) oldBgm.stop();
-          } catch (e) {
+          // A tone-bank soundtrack plays on through the hidden boss as it does
+          // through every other boss; only the mp3 path swaps to Goki's own
+          // track.
+          if (!scene._dezaBgm) {
+            try {
+              var oldBgm = scene.sound.get(scene.stageBgmName);
+              if (oldBgm && oldBgm.isPlaying) oldBgm.stop();
+            } catch (e) {
+            }
+            scene.stageBgmName = "boss_goki_bgm";
+            scene.playBgm("boss_goki_bgm", 0.4);
           }
-          scene.stageBgmName = "boss_goki_bgm";
-          scene.playBgm("boss_goki_bgm", 0.4);
           var gokiRestY = GH10 / 4 + gokiSprite.height / 2;
           scene.bossBaseY = gokiRestY;
           scene.tweens.add({
@@ -14690,6 +14838,8 @@
         var bossNames = ["bison", "barlog", "sagat", "vega", "fang"];
         var nextBossName = bossNames[nextStageId] || "";
         var nextKey = nextBossName ? "boss_" + nextBossName + "_bgm" : "";
+        var recipeNow = gameState._phaserRecipe;
+        var lastStage = recipeNow ? lastStageId(recipeNow) : 4;
         var sameBgm = urls && currentKey && nextKey && urls[currentKey] && urls[nextKey] && urls[currentKey] === urls[nextKey];
         if (sameBgm) {
           try {
@@ -14706,6 +14856,14 @@
           }
           gameState.bgmContinuityActive = true;
           gameState.currentBgmKey = currentKey;
+        } else if (currentKey === "__dezaemon__" && gameState.dezaBgmResume && nextStageId <= lastStage) {
+          // The tone-bank soundtrack is one piece across the stages: it paused
+          // when the stage cleared and the next stage resumes it, so the story
+          // in between stays quiet, as it does for a continued mp3. After the
+          // last stage nothing resumes it, so the epilogue and the ending get
+          // their own music.
+          self.stopAllSounds();
+          gameState.bgmContinuityActive = true;
         } else {
           self.stopAllSounds();
           gameState.bgmContinuityActive = false;
@@ -15164,7 +15322,10 @@
     }
     playSound(key, volume) {
       if (gameState.lowModeFlg) return;
-      if (this.recipe && this.recipe.dezaemonBgm) {
+      // The synthesized Saturn effects belong to a cart's side of the
+      // crossover; a web level that only borrowed the tone bank for its music
+      // keeps its own shots and explosions.
+      if (this.recipe && this.recipe.dezaemonBgm && isImportedLevel()) {
         var deza = DEZA_SFX_MAP[key];
         if (deza && playDezaemonSfx(this, deza)) return;
       }
@@ -16293,6 +16454,7 @@
       gameState.secondLoop = true;
       gameState.bgmContinuityActive = false;
       gameState.currentBgmKey = null;
+      gameState.dezaBgmResume = null;
       this.stopAllSounds();
       var game = this.game;
       setTimeout(function() {
@@ -16332,7 +16494,10 @@
             // save resumes on the stage that killed you — a Dezaemon cart is
             // somebody's ten-stage game, and sending them back to the start is
             // a punishment its author never wrote.
-            if (!isImportedLevel()) gameState.stageId = 0;
+            if (!isImportedLevel()) {
+              gameState.stageId = 0;
+              gameState.dezaBgmResume = null;
+            }
             gameState.continueCnt = Number(gameState.continueCnt || 0) + 1;
             gameState.score = gameState.continueCnt;
             nextScene = "PhaserGameScene";
@@ -16618,6 +16783,7 @@
           gameState.bgmContinuityActive = false;
           gameState.currentBgmKey = null;
           gameState.stageId = 0;
+          gameState.dezaBgmResume = null;
           self.stopAllSounds();
           setTimeout(function() {
             game.scene.stop("PhaserEndingScene");
@@ -17718,6 +17884,36 @@
     } catch (e) {
     }
   }
+  // cmg: the Guide's "Edit Levels", told where to go. The page head
+  // advertises the editor at boot (LEVEL_EDITOR_BROADCAST in
+  // lib/game-page.ts) with no level named, which is the stock game; once the
+  // level has loaded this says which editor URL reopens IT: the one the
+  // editor stamped into a PLAY recipe (meta.editorReturn — a shelf record, a
+  // library slug, or ?fromPlay=1 for the recipe itself), else the cloud level
+  // the URL named (?level=), else ?fromPlay=1 for an editor recipe with no
+  // stamp, else nothing — the stock game. The launcher only honours a
+  // same-origin /editor… path (sanitizeLevelEditor), so that is all that is
+  // ever sent.
+  function cmgBroadcastLevelEditor(result, recipe) {
+    if (typeof window === "undefined" || window.parent === window) return;
+    var url = null;
+    var stamped = recipe && recipe.meta && recipe.meta.editorReturn;
+    if (typeof stamped === "string" && /^\/editor(\/|\?|$)/.test(stamped) && stamped.indexOf("..") < 0) {
+      url = stamped;
+    } else if (result && result.source === "firebase") {
+      var named = null;
+      try { named = new URLSearchParams(window.location.search).get("level"); } catch (_e) { named = null; }
+      if (named) url = "/editor/?game=2028-ai&level=" + encodeURIComponent(named);
+    } else if (result && result.source === "editor") {
+      url = "/editor/?game=2028-ai&fromPlay=1";
+    }
+    try {
+      var msg = { type: "cmg-level-editor", game: "2028-ai" };
+      if (url) msg.url = url;
+      window.parent.postMessage(msg, "*");
+    } catch (e) {
+    }
+  }
   // cmg: the boot-time cheats on the URL that open the level somewhere other
   // than its first stage — the Guide's Start Stage (?stage=N), Boss Rush
   // (?bossRush=1), Akuma Boss (?boss=goki) and Final Boss (?finalBoss=1).
@@ -17792,6 +17988,7 @@
           gameState.bgmSourceURLs = result.bgmSourceURLs;
         }
         cmgBroadcastCheats(gameState._phaserRecipe);
+        cmgBroadcastLevelEditor(result, gameState._phaserRecipe);
         return initSceneScripts({ recipe: gameState._phaserRecipe }).then(() => {
           let nextScene = result.showTitle ? "PhaserTitleScene" : "PhaserGameScene";
           if (cmgCheatStart(gameState._phaserRecipe)) {
@@ -17884,36 +18081,6 @@
   function create2028Game() {
     syncRuntimeFlagsFromLocation();
     initializeFirebaseScores().catch(() => {
-  // cmg: the Guide's "Edit Levels", told where to go. The page head
-  // advertises the editor at boot (LEVEL_EDITOR_BROADCAST in
-  // lib/game-page.ts) with no level named, which is the stock game; once the
-  // level has loaded this says which editor URL reopens IT: the one the
-  // editor stamped into a PLAY recipe (meta.editorReturn — a shelf record, a
-  // library slug, or ?fromPlay=1 for the recipe itself), else the cloud level
-  // the URL named (?level=), else ?fromPlay=1 for an editor recipe with no
-  // stamp, else nothing — the stock game. The launcher only honours a
-  // same-origin /editor… path (sanitizeLevelEditor), so that is all that is
-  // ever sent.
-  function cmgBroadcastLevelEditor(result, recipe) {
-    if (typeof window === "undefined" || window.parent === window) return;
-    var url = null;
-    var stamped = recipe && recipe.meta && recipe.meta.editorReturn;
-    if (typeof stamped === "string" && /^\/editor(\/|\?|$)/.test(stamped) && stamped.indexOf("..") < 0) {
-      url = stamped;
-    } else if (result && result.source === "firebase") {
-      var named = null;
-      try { named = new URLSearchParams(window.location.search).get("level"); } catch (_e) { named = null; }
-      if (named) url = "/editor/?game=2028-ai&level=" + encodeURIComponent(named);
-    } else if (result && result.source === "editor") {
-      url = "/editor/?game=2028-ai&fromPlay=1";
-    }
-    try {
-      var msg = { type: "cmg-level-editor", game: "2028-ai" };
-      if (url) msg.url = url;
-      window.parent.postMessage(msg, "*");
-    } catch (e) {
-    }
-  }
     });
     const phaserContainer = document.getElementById("phaser-canvas");
     if (phaserContainer) phaserContainer.style.display = "flex";
@@ -17988,7 +18155,6 @@
       return;
     }
     try {
-        cmgBroadcastLevelEditor(result, gameState._phaserRecipe);
       globalThis.__OFFLINE_LEVEL__ = await fetchLevel2(LEVEL_DATA_URL);
     } catch (err) {
       console.warn("[2028.Ai] foo.json fetch failed (" + LEVEL_DATA_URL + ") — trying fallback", err);
