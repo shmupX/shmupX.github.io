@@ -434,6 +434,7 @@ deno task eshop:check     # validate data/eshop.json against the built manifest
 deno task eshop:covers    # cover a published eShop game that went out without one (dry run; --write uploads)
 deno task eshop:publish   # export a level as a Dezaemon 2 cart and publish it to the eShop, replacing that id (--name NAME lists it as; --dry-run writes nothing)
 deno task bgm:tone        # transcribe an mp3 (path or URL) onto the Dezaemon 2 tone bank: a level's dezaemonBgm, one piece across the stages
+deno task extension:zip   # pack the Sprite Picker extension into static/extension/ for the download page (part of build)
 deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
@@ -1153,8 +1154,14 @@ mode, overlay boxes and review panel in the editor's own CRT look, wearing the
 shmupX icon — and a different destination. Where CMG's booted SpriteX, this one
 talks to `/editor/`.
 
-**Installing it.** There is no build step. Open `chrome://extensions`, turn on
-**Developer mode**, **Load unpacked** and pick `tools/sprite-picker-extension/`.
+**Installing it.** <https://codemonkey.games/extension> is the download page
+(`static/extension/index.html`, in the launcher's skin with the install and use
+steps inline); the zip it hands out is `deno task extension:zip`'s — part of
+`deno task build`, gitignored, packed fresh from `tools/sprite-picker-extension/`
+for every deploy, without the tests and the README. There is no build step on
+the receiving end: unpack, open `chrome://extensions`, turn on **Developer
+mode**, **Load unpacked** and pick the folder (or, from a checkout, the
+`tools/sprite-picker-extension/` directory itself).
 The extension's own [README](tools/sprite-picker-extension/README.md) is the
 full manual; the short form:
 

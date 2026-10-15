@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>shmupX Sprite Picker</title>
+    <meta name="description" content="A Chrome extension that cuts sprites out of sprite sheets on the web and sends them into the shmupX level editor.">
+    <link rel="icon" href="/app-icons/icon-32.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <!-- The launcher's skin, as the level editor wears it (static/editor/index.html):
+         the same tokens, the same two themes under cmg-theme, the same scanlines. -->
+    <style>
+        @font-face {
+            font-family: 'Orbitron';
+            src: url('/editor/assets/fonts/Orbitron-Variable.woff2') format('woff2'),
+                 url('/editor/assets/fonts/Orbitron-Variable.ttf') format('truetype');
+            font-weight: 400 900; font-style: normal; font-display: swap;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            --edge: rgba(140,255,110,.35);
+            --ban1: rgba(70,180,90,.18); --ban2: rgba(20,60,30,.7); --ban3: rgba(70,180,90,.05);
+            --title-ink: #d9ffcb; --tglow: rgba(124,255,79,.8);
+            --sel: #F6FF4A; --selglow: rgba(246,255,74,.55);
+            --bink: #9CFF6B; --raillbl: rgba(156,255,107,.5); --hint: rgba(214,255,196,.8);
+            --rbg: rgba(4,24,10,.6); --redge: rgba(140,255,110,.28); --rink: #d6ffc4; --rsub: rgba(220,255,180,.55);
+            --sr1: #fffea1; --sr2: #F6FF4A; --sr3: #d8e640; --sr4: #a4b00b; --srink: #0e0e02; --srglow: rgba(255,240,90,.5);
+            --scan: rgba(0,255,120,.035);
+            min-height: 100vh; color: var(--rink);
+            font-family: 'Orbitron', system-ui, -apple-system, sans-serif;
+            background: radial-gradient(ellipse 80% 60% at 38% 55%, rgba(20,90,40,.45), transparent 70%),
+                        radial-gradient(ellipse 60% 70% at 50% 50%, rgba(8,40,18,.85), #000 80%), #000;
+        }
+        body.theme-nintendo {
+            --edge: rgba(213,213,216,.3);
+            --ban1: rgba(139,160,194,.1); --ban2: rgba(15,22,34,.85); --ban3: rgba(139,160,194,.08);
+            --title-ink: #e9ecf1; --tglow: rgba(255,59,73,.7);
+            --sel: #ff5b66; --selglow: rgba(228,0,15,.5);
+            --bink: #e9ecf1; --raillbl: rgba(139,160,194,.7); --hint: #d5d5d8;
+            --rbg: #0f1622; --redge: #2a3850; --rink: #e9ecf1; --rsub: rgba(139,160,194,.7);
+            --sr1: #ff5b66; --sr2: #e4000f; --sr3: #c00011; --sr4: #8c000c; --srink: #fff; --srglow: rgba(228,0,15,.5);
+            --scan: rgba(255,70,84,.03);
+            background: radial-gradient(ellipse 80% 55% at 40% 45%, rgba(228,0,15,.1), transparent 70%), #0d0f1a;
+        }
+        #fx-scanlines {
+            position: fixed; inset: 0; pointer-events: none; z-index: 998;
+            background: repeating-linear-gradient(180deg, var(--scan) 0 1px, transparent 1px 3px); mix-blend-mode: screen;
+        }
+        main { max-width: 560px; margin: 0 auto; padding: 48px 16px 64px; position: relative; z-index: 1; }
+        .mark { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+        .mark img { width: 56px; height: 56px; image-rendering: pixelated; filter: drop-shadow(0 0 12px var(--tglow)); }
+        .kicker { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .28em; color: var(--raillbl); text-transform: uppercase; }
+        h1 { font-size: 20px; font-weight: 800; letter-spacing: .2em; color: var(--title-ink); text-shadow: 0 0 14px var(--tglow); text-transform: uppercase; line-height: 1.3; }
+        .lead { font-family: 'Share Tech Mono', monospace; font-size: 13px; line-height: 1.7; color: var(--hint); margin: 0 0 26px; }
+        .lead a { color: var(--bink); }
+        .dl {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+            padding: 16px 20px; border-radius: 10px; text-decoration: none; cursor: pointer;
+            font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 14px; letter-spacing: .14em; text-transform: uppercase;
+            color: var(--srink); background: linear-gradient(90deg, var(--sr1), var(--sr2) 28%, var(--sr3) 65%, var(--sr4));
+            box-shadow: 0 0 26px var(--srglow); border: 1px solid var(--sel);
+            transition: transform .1s ease, box-shadow .15s ease;
+        }
+        .dl:hover { transform: translateY(-1px); box-shadow: 0 0 36px var(--srglow); }
+        .dl:active { transform: translateY(0); }
+        .dl small { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .14em; font-weight: 400; opacity: .75; white-space: nowrap; }
+        .band {
+            margin: 28px -12px 14px; height: 40px; display: flex; align-items: center; padding: 0 32px 0 18px;
+            background: linear-gradient(180deg, var(--ban1), var(--ban2) 50%, var(--ban3));
+            border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge);
+            clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%);
+            font-size: 12px; font-weight: 800; letter-spacing: .3em; color: var(--title-ink); text-shadow: 0 0 14px var(--tglow);
+        }
+        ol { list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 8px; }
+        ol li {
+            counter-increment: step; display: grid; grid-template-columns: 28px 1fr; gap: 12px; align-items: start;
+            padding: 10px 12px; border-radius: 10px; background: var(--rbg); border: 1px solid var(--redge);
+            font-family: 'Share Tech Mono', monospace; font-size: 12px; line-height: 1.6; color: var(--rink);
+        }
+        ol li::before {
+            content: counter(step); display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+            font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 12px;
+            color: var(--srink); background: linear-gradient(180deg, var(--sr1), var(--sr2) 40%, var(--sr3));
+            box-shadow: 0 0 10px var(--srglow);
+        }
+        ol li > span { min-width: 0; }
+        ol li b { color: var(--bink); font-weight: 400; }
+        kbd { font-family: inherit; padding: 0 5px; border: 1px solid var(--redge); border-radius: 4px; color: var(--sel); }
+        .foot { margin-top: 30px; display: flex; flex-wrap: wrap; gap: 14px; font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .14em; color: var(--rsub); text-transform: uppercase; }
+        .foot a { color: var(--raillbl); text-decoration: none; }
+        .foot a:hover { color: var(--bink); }
+        @media (max-width: 480px) { h1 { font-size: 16px; } .dl { font-size: 12px; padding: 14px 16px; } }
+    </style>
+</head>
+<body>
+    <div id="fx-scanlines"></div>
+    <main>
+        <div class="mark">
+            <img src="/app-icons/icon-128.png" alt="">
+            <div>
+                <div class="kicker">Chrome extension · Manifest V3</div>
+                <h1>shmupX<br>Sprite Picker</h1>
+            </div>
+        </div>
+        <p class="lead">Cuts the sprites out of any sprite sheet on the web and sends them into the
+            <a href="/editor/?game=2028-ai">level editor</a>'s Atlas Manager — an open editor tab
+            first, or an inbox the editor picks up when it opens.</p>
+
+        <a class="dl" id="dl" href="/extension/shmupx-sprite-picker.zip" download>
+            <span>Download ↓</span>
+            <small id="dl-meta">ZIP · UNPACKED EXTENSION</small>
+        </a>
+
+        <div class="band">INSTALL</div>
+        <ol>
+            <li><span>Unpack the zip. It is one folder, <b>shmupx-sprite-picker/</b>.</span></li>
+            <li><span>Open <b>chrome://extensions</b>, turn on <b>Developer mode</b>, press <b>Load unpacked</b> and pick that folder.</span></li>
+        </ol>
+
+        <div class="band">USE</div>
+        <ol>
+            <li><span>Open the <a href="/editor/?game=2028-ai" style="color:var(--bink)">level editor</a> in a tab. The popup says <b>EDITOR ONLINE</b> when it sees it.</span></li>
+            <li><span>Browse to a sprite sheet (spriters-resource.com just works; elsewhere, press <b>Inject picker on this tab</b> in the popup).</span></li>
+            <li><span>Press <kbd>⊕</kbd> bottom right, click the sheet, click the boxes you want.</span></li>
+            <li><span><b>SEND TO SHMUPX</b> — the editor comes forward with the sprites on top of its Atlas Manager, tagged <b>NEW</b>.</span></li>
+            <li><span>No editor tab? Type the <b>PICKER CODE</b> the editor's Atlas Manager shows into the popup once, and sends wait in an inbox until that editor opens — the road for the desktop app and other devices.</span></li>
+        </ol>
+
+        <div class="foot">
+            <a href="https://github.com/shmupX/shmupX.github.io/tree/main/tools/sprite-picker-extension">Source &amp; manual</a>
+            <a href="/">codemonkey.games</a>
+            <span id="ver"></span>
+        </div>
+    </main>
+    <script>
+        // The launcher's theme, as the editor reads it.
+        try {
+            var tw = {}; try { tw = JSON.parse(localStorage.getItem('cmg-tweaks') || '{}'); } catch (e) {}
+            var theme = localStorage.getItem('cmg-theme') || localStorage.getItem('__editorTheme__') || tw.theme || 'xbox';
+            document.body.classList.toggle('theme-nintendo', theme === 'nintendo');
+            if (localStorage.getItem('cmg-scanlines') === '0') document.getElementById('fx-scanlines').style.display = 'none';
+        } catch (e) {}
+        // The one line of facts, from the build's meta.json; the link works without it.
+        fetch('/extension/meta.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (m) {
+            if (!m) return;
+            document.getElementById('dl-meta').textContent = 'ZIP · v' + m.version + ' · ' + Math.round(m.bytes / 1024) + ' KB';
+            document.getElementById('ver').textContent = 'v' + m.version;
+        }).catch(function () {});
+    </script>
+</body>
+</html>

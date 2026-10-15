@@ -83,3 +83,8 @@ spacetimedb/module/node_modules/
 # to restore one does not.
 backups/*
 !backups/README.md
+# The Sprite Picker archive https://codemonkey.games/extension hands out, and
+# the facts the page shows beside it: `deno task extension:zip` (in `build`)
+# packs tools/sprite-picker-extension/ fresh for every deploy.
+static/extension/shmupx-sprite-picker.zip
+static/extension/meta.json
