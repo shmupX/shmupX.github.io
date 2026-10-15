@@ -95,7 +95,16 @@ they are written out in full.
   a set that still has one frame plays it in place of the lost ones, and only
   a set with none reaches the MISSING TEXTURES panel. ADVANCED EDITORS →
   TILEMAP and PIXELS, and the map badge on the toolbar, open the two tools
-  below on the open game.
+  below on the open game. A game whose stages carry no tile scenery — one that
+  scrolls the runtime's `stage_loop<N>.png` behind each stage and shows
+  `stage_end<N>.png` under its boss, which is every game that is not a
+  Dezaemon import — gets the **Background Manager** in the map badge's place
+  (ADVANCED EDITORS → BACKGROUNDS on a phone): the current art of the stage's
+  set (sets 0–4; stage 5 and up reuse set N % 5), UPLOAD FILE or FROM URL in
+  its place, and the stock art back. Replacements are PNG data URLs on
+  `gameData.stageBackgrounds`, which ride the cloud save and PLAY's recipe;
+  the runtime's level loader puts them over its own art and over the
+  starfield it draws for a level with custom enemies.
 - `static/palette.png` — the 288 Dezaemon 2 palette colours, one pixel each (see
   **The Dezaemon 2 palette** below); `palette-sheet.png` is the same as a
   picture. Both from `deno task deza:palette`.

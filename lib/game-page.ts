@@ -77,7 +77,10 @@ export const OSD_BRIDGE = `
 // cmg-cheats/cmg-actions opt-in pattern — which surfaces an "Edit Levels" entry
 // in the Guide OSD. The games.json `levelEditor` flag is the belt-and-suspenders
 // fallback for when the launcher can't hear this (e.g. an older manifest); the
-// dashboard sanitizes both to a same-origin /editor… path.
+// dashboard sanitizes both to a same-origin /editor… path. This boot-time one
+// names no level (the stock game); once the level has loaded, the bundle sends
+// it again with the URL that reopens that level (cmgBroadcastLevelEditor:
+// ?level= for a cloud game, ?fromPlay=1 or the shelf record for a PLAY run).
 export const LEVEL_EDITOR_BROADCAST = `
 (function () {
   if (window.parent === window) return; // standalone — no launcher to notify

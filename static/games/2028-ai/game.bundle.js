@@ -17884,6 +17884,36 @@
   function create2028Game() {
     syncRuntimeFlagsFromLocation();
     initializeFirebaseScores().catch(() => {
+  // cmg: the Guide's "Edit Levels", told where to go. The page head
+  // advertises the editor at boot (LEVEL_EDITOR_BROADCAST in
+  // lib/game-page.ts) with no level named, which is the stock game; once the
+  // level has loaded this says which editor URL reopens IT: the one the
+  // editor stamped into a PLAY recipe (meta.editorReturn — a shelf record, a
+  // library slug, or ?fromPlay=1 for the recipe itself), else the cloud level
+  // the URL named (?level=), else ?fromPlay=1 for an editor recipe with no
+  // stamp, else nothing — the stock game. The launcher only honours a
+  // same-origin /editor… path (sanitizeLevelEditor), so that is all that is
+  // ever sent.
+  function cmgBroadcastLevelEditor(result, recipe) {
+    if (typeof window === "undefined" || window.parent === window) return;
+    var url = null;
+    var stamped = recipe && recipe.meta && recipe.meta.editorReturn;
+    if (typeof stamped === "string" && /^\/editor(\/|\?|$)/.test(stamped) && stamped.indexOf("..") < 0) {
+      url = stamped;
+    } else if (result && result.source === "firebase") {
+      var named = null;
+      try { named = new URLSearchParams(window.location.search).get("level"); } catch (_e) { named = null; }
+      if (named) url = "/editor/?game=2028-ai&level=" + encodeURIComponent(named);
+    } else if (result && result.source === "editor") {
+      url = "/editor/?game=2028-ai&fromPlay=1";
+    }
+    try {
+      var msg = { type: "cmg-level-editor", game: "2028-ai" };
+      if (url) msg.url = url;
+      window.parent.postMessage(msg, "*");
+    } catch (e) {
+    }
+  }
     });
     const phaserContainer = document.getElementById("phaser-canvas");
     if (phaserContainer) phaserContainer.style.display = "flex";
@@ -17958,6 +17988,7 @@
       return;
     }
     try {
+        cmgBroadcastLevelEditor(result, gameState._phaserRecipe);
       globalThis.__OFFLINE_LEVEL__ = await fetchLevel2(LEVEL_DATA_URL);
     } catch (err) {
       console.warn("[2028.Ai] foo.json fetch failed (" + LEVEL_DATA_URL + ") — trying fallback", err);

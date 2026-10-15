@@ -214,12 +214,17 @@
         body.boss-lab #boss-lab-host { display: flex; flex-direction: column; }
         body:not(.has-save-target) #save-badge, body:not(.has-save-target) #pad-hint-y { display: none !important; }
         body:not(.has-3d-models) #model-viewer-link { display: none !important; }
+        /* One scenery tool at a time: a game whose stages carry tile scenery
+           gets the tilemap badge, one that scrolls stage_loop/stage_end
+           backdrops gets the background manager in its place. */
+        body:not(.uses-tilemap) #tilemap-link { display: none !important; }
+        body.uses-tilemap #background-link { display: none !important; }
         @media (max-width: 767px) {
             /* Phones: PLAY / 3D / TILEMAP / SAVE leave the toolbar — all still
                in the menu, and SAVE is Y on the pad footer. With the tilemap
                badge left in, seven badges ran 20px past a 390px screen and
                the one that got clipped was MENU. */
-            #play-badge, #model-viewer-link, #tilemap-link, #save-badge { display: none !important; }
+            #play-badge, #model-viewer-link, #tilemap-link, #background-link, #save-badge { display: none !important; }
             #lab-status .lab-status-long { display: none; }
             #lab-status .lab-status-short { display: inline; }
         }
@@ -856,6 +861,16 @@
         }
         .title-image-slot .slot-reset-btn:hover { background: rgba(255,255,255,.06); }
 
+        /* Background Manager: the two backdrops of a stage set, tall previews */
+        .bg-image-slot .slot-preview { aspect-ratio: 256/256; min-height: 120px; max-height: 320px; }
+        .bg-image-slot .slot-preview img { width: 100%; height: 100%; max-height: none; object-fit: contain; image-rendering: pixelated; }
+        .bg-image-slot .slot-state { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .15em; margin-bottom: 6px; }
+        .bg-image-slot .slot-state.custom { color: var(--sel); }
+        .bg-image-slot .slot-state.stock { color: var(--raillbl); }
+        .bg-image-slot .slot-actions { display: flex; gap: 6px; }
+        .bg-image-slot .slot-actions .slot-upload-btn { flex: 1; }
+        #bg-set-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+
         /* Audio Editor */
         .audio-filter-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
         .audio-filter-pill {
@@ -1029,6 +1044,8 @@
             <a id="model-viewer-link" href="model-viewer.html" class="badge" title="3D model viewer (Dezaemon sec7 compositions)" onclick="openModelViewer(); return false;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></a>
             <!-- Tilemap Editor (Lucide map): this stage's scenery, vertical or horizontal -->
             <a id="tilemap-link" href="/tilemap-editor/" class="badge" title="Tilemap editor — this stage's scenery tile grid, vertical or horizontal" onclick="openTilemapEditor(); return false;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/></svg></a>
+            <!-- Background Manager (Lucide image): shown in the tilemap badge's place for a game whose stages scroll stage_loop/stage_end backdrops instead of tile scenery -->
+            <button id="background-link" class="badge" title="Background manager — this stage's scrolling backdrop and its boss backdrop: view the current art, replace it from a file or a URL" onclick="openBackgroundManager()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></button>
             <!-- Save (Lucide save) -->
             <button id="save-badge" class="badge" title="Save" onclick="quickSave()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></button>
             <!-- Menu -->
@@ -1437,6 +1454,7 @@
             <button class="menu-row" onclick="showAtlasManager()"><span class="mono-badge sm">AT</span>ATLAS</button>
             <button class="menu-row" onclick="showTitleEditor()"><span class="mono-badge sm">TI</span>TITLE</button>
             <button class="menu-row" onclick="showAudioEditor()"><span class="mono-badge sm">AU</span>AUDIO</button>
+            <button class="menu-row" onclick="closeMenu();openBackgroundManager()" title="The stage backdrops a game without tile scenery scrolls: view the current art, replace it from a file or a URL"><span class="mono-badge sm">BG</span>BACKGROUNDS</button>
         </div>
         <div class="menu-note">BOSS PATTERNS MOVED TO THE TOOLBAR &rarr; BOSS LAB</div>
         <div class="menu-label">DISPLAY</div>
@@ -1694,6 +1712,23 @@
             <div style="font-size:11px;color:#888;margin-bottom:12px;font-family:monospace;">Customize title screen logo, subtitle, and background</div>
             <div id="title-editor-slots" class="story-images-row"></div>
             <div id="title-script-panel" class="ss-panel"></div>
+        </div>
+    </div>
+
+    <!-- BACKGROUND MANAGER MODAL: a game without tile scenery scrolls the
+         runtime's stage_loop<N>.png behind stage N and shows stage_end<N>.png
+         under its boss, one set per stage 0..4 (stage 5 and up reuse set
+         N % 5). Replacements are PNG data URLs on gameData.stageBackgrounds
+         ({ stage<N>: { loop, end } }), which ride the cloud save and the play
+         recipe; the runtime's level-loader puts them over its own art (and
+         over the starfield it draws for a custom level). -->
+    <div id="background-manager-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+        <div class="picker-panel" style="max-height:86vh;overflow:auto">
+            <div class="picker-title">BACKGROUND MANAGER</div>
+            <div id="background-manager-sub" style="font-size:11px;color:#888;margin-bottom:10px;font-family:monospace;"></div>
+            <div id="bg-set-pills"></div>
+            <div id="background-slots" class="story-images-row"></div>
+            <div id="background-manager-note" class="menu-note"></div>
         </div>
     </div>
 
@@ -2742,6 +2777,178 @@
             if (!gameData) gameData = {};
             if (bgs) gameData.stageBackgrounds = bgs;
             else delete gameData.stageBackgrounds;
+        }
+
+        // ================== BACKGROUND MANAGER ==================
+        // Which scenery tool a game gets. A game whose stages carry a tile
+        // grid (gameData.stage<N>.background, the Tilemap Editor's) scrolls
+        // that; one without scrolls the runtime's stage_loop<N>.png and shows
+        // stage_end<N>.png under its boss — or, for a custom level, the
+        // starfield — unless `stageBackgrounds` replaces them. The manager
+        // below is that replacement's UI: the current art of a stage set,
+        // a file or a URL in its place, and the stock art back.
+        function gameUsesTilemap() {
+            if (!gameData) return false;
+            return Object.keys(gameData).some((k) => {
+                if (!/^stage\d+$/.test(k)) return false;
+                const bg = gameData[k] && gameData[k].background;
+                return !!(bg && typeof bg === 'object' && bg.tiles);
+            });
+        }
+        const BACKGROUND_PARTS = [
+            { part: 'loop', label: 'STAGE BACKDROP', file: 'stage_loop', hint: 'scrolls behind the stage; 256 px wide, tiles vertically (the stock art is 256 x 256)' },
+            { part: 'end', label: 'BOSS BACKDROP', file: 'stage_end', hint: 'scrolls in under the boss; 256 px wide (the stock art is 256 x 256)' },
+        ];
+        let bgManagerSet = 0;
+        function stageBackgroundSetOf(stageId) {
+            return ((Number(stageId) || 0) % STAGE_BACKGROUND_STAGES + STAGE_BACKGROUND_STAGES) % STAGE_BACKGROUND_STAGES;
+        }
+        function stageBackgroundPart(set, part) {
+            const bgs = gameData && gameData.stageBackgrounds;
+            const rec = bgs && bgs['stage' + set];
+            return rec && typeof rec[part] === 'string' && rec[part] ? rec[part] : null;
+        }
+        // Set or clear one backdrop of a set; an empty set is dropped and an
+        // empty table removed, so a cloud save writes null rather than {}.
+        function setStageBackgroundPart(set, part, dataURL) {
+            if (!gameData) gameData = {};
+            const bgs = Object.assign({}, gameData.stageBackgrounds || {});
+            const rec = Object.assign({}, bgs['stage' + set] || {});
+            if (dataURL) rec[part] = dataURL; else delete rec[part];
+            if (rec.loop || rec.end) bgs['stage' + set] = rec; else delete bgs['stage' + set];
+            setStageBackgrounds(Object.keys(bgs).length ? bgs : null);
+        }
+        function openBackgroundManager() {
+            if (!gameData) { alert('Load a game first'); return; }
+            bgManagerSet = stageBackgroundSetOf(getCurrentStageId());
+            renderBackgroundManager();
+            document.getElementById('background-manager-modal').classList.remove('hidden');
+        }
+        function renderBackgroundManager() {
+            const set = bgManagerSet;
+            const stageId = getCurrentStageId();
+            const sub = document.getElementById('background-manager-sub');
+            sub.textContent = 'SET ' + set + ' · STAGE ' + stageId + (stageBackgroundSetOf(stageId) === set ? '' : ' USES SET ' + stageBackgroundSetOf(stageId)) +
+                ' · the runtime scrolls stage_loop' + set + ' behind stages ' + set + ', ' + (set + 5) + ', ' + (set + 10) + '… and shows stage_end' + set + ' under their boss';
+            const pills = document.getElementById('bg-set-pills');
+            pills.innerHTML = '';
+            for (let n = 0; n < STAGE_BACKGROUND_STAGES; n++) {
+                const b = document.createElement('button');
+                b.className = 'seg' + (n === set ? ' on' : '');
+                const custom = stageBackgroundPart(n, 'loop') || stageBackgroundPart(n, 'end');
+                b.textContent = 'SET ' + n + (custom ? ' \u25cf' : '');
+                b.title = 'Stages ' + n + ', ' + (n + 5) + ', ' + (n + 10) + '…' + (custom ? ' — carries its own art' : ' — the stock art');
+                b.onclick = () => { bgManagerSet = n; renderBackgroundManager(); };
+                pills.appendChild(b);
+            }
+            const container = document.getElementById('background-slots');
+            container.innerHTML = '';
+            for (const spec of BACKGROUND_PARTS) {
+                const custom = stageBackgroundPart(set, spec.part);
+                const slot = document.createElement('div');
+                slot.className = 'title-image-slot bg-image-slot';
+                const label = document.createElement('div');
+                label.className = 'slot-label';
+                label.textContent = spec.label + ' · ' + spec.file + set + '.png';
+                slot.appendChild(label);
+                const state = document.createElement('div');
+                state.className = 'slot-state ' + (custom ? 'custom' : 'stock');
+                state.textContent = custom ? 'CUSTOM · SAVED WITH THE LEVEL' : 'STOCK · THE GAME\'S OWN ART';
+                slot.appendChild(state);
+                const hint = document.createElement('div');
+                hint.style.cssText = 'font-size:9px;color:#555;margin-bottom:6px;font-family:monospace;';
+                hint.textContent = spec.hint;
+                slot.appendChild(hint);
+                const preview = document.createElement('div');
+                preview.className = 'slot-preview';
+                const img = document.createElement('img');
+                img.alt = spec.label;
+                img.src = custom || gameAssetUrl('assets/img/stage/' + spec.file + set + '.png');
+                img.onload = () => { state.textContent += ' · ' + img.naturalWidth + ' x ' + img.naturalHeight; };
+                img.onerror = () => { preview.innerHTML = ''; const ph = document.createElement('div'); ph.style.cssText = 'color:#555;font-size:11px;'; ph.textContent = 'no art'; preview.appendChild(ph); };
+                preview.appendChild(img);
+                slot.appendChild(preview);
+                const actions = document.createElement('div');
+                actions.className = 'slot-actions';
+                const uploadBtn = document.createElement('label');
+                uploadBtn.className = 'slot-upload-btn';
+                uploadBtn.textContent = 'UPLOAD FILE';
+                const fileInput = document.createElement('input');
+                fileInput.type = 'file';
+                fileInput.accept = 'image/*';
+                fileInput.style.display = 'none';
+                fileInput.onchange = (e) => { if (e.target.files[0]) handleBackgroundFile(set, spec.part, e.target.files[0]); e.target.value = ''; };
+                uploadBtn.appendChild(fileInput);
+                actions.appendChild(uploadBtn);
+                const urlBtn = document.createElement('button');
+                urlBtn.className = 'slot-upload-btn';
+                urlBtn.textContent = 'FROM URL';
+                urlBtn.onclick = () => backgroundFromUrl(set, spec.part);
+                actions.appendChild(urlBtn);
+                slot.appendChild(actions);
+                if (custom) {
+                    const resetBtn = document.createElement('button');
+                    resetBtn.className = 'slot-reset-btn';
+                    resetBtn.textContent = '\u2715 Back to the stock art';
+                    resetBtn.onclick = () => { setStageBackgroundPart(set, spec.part, null); renderBackgroundManager(); flash(spec.file + set + ' BACK TO STOCK'); };
+                    slot.appendChild(resetBtn);
+                }
+                container.appendChild(slot);
+            }
+            const note = document.getElementById('background-manager-note');
+            const customEnemies = enemyData && Object.keys(enemyData).length;
+            note.textContent = (gameData.stageBackgrounds ? 'REPLACEMENTS RIDE THE CLOUD SAVE AND PLAY. ' : '') +
+                (customEnemies ? 'A LEVEL WITH ITS OWN ENEMIES PLAYS OVER THE RUNTIME\'S STARFIELD UNTIL A BACKDROP IS SET HERE.' : 'THE STOCK ART PLAYS UNTIL A BACKDROP IS SET HERE.') +
+                (gameUsesTilemap() ? ' THIS GAME ALSO CARRIES TILE SCENERY, WHICH DRAWS IN FRONT OF THESE.' : '');
+        }
+        // A picked file -> the set's backdrop, as a data URL the save carries.
+        function handleBackgroundFile(set, part, file) {
+            if (!file.type || !file.type.startsWith('image/')) { alert('Pick an image file (PNG, GIF, JPEG, WebP).'); return; }
+            const reader = new FileReader();
+            reader.onload = () => {
+                setStageBackgroundPart(set, part, reader.result);
+                renderBackgroundManager();
+                flash((part === 'loop' ? 'STAGE' : 'BOSS') + ' BACKDROP SET ' + set + ' REPLACED');
+            };
+            reader.onerror = () => alert('Could not read ' + file.name);
+            reader.readAsDataURL(file);
+        }
+        // A URL -> the set's backdrop. Fetched and stored as a data URL so the
+        // level does not depend on the address staying up; a server that
+        // refuses cross-origin reads is tried again through an <img>, which
+        // only works when it sends CORS headers, and the failure says so.
+        async function backgroundFromUrl(set, part) {
+            const url = prompt('Image URL for ' + (part === 'loop' ? 'the stage backdrop' : 'the boss backdrop') + ' of set ' + set + ':', '');
+            if (!url || !url.trim()) return;
+            const address = url.trim();
+            let dataURL = null;
+            try {
+                const resp = await fetch(address, { mode: 'cors' });
+                if (resp.ok) {
+                    const blob = await resp.blob();
+                    if (blob.type && blob.type.startsWith('image/')) dataURL = await blobToDataURL3D(blob);
+                }
+            } catch (e) { dataURL = null; }
+            if (!dataURL) {
+                dataURL = await new Promise((resolve) => {
+                    const img = new Image();
+                    img.crossOrigin = 'anonymous';
+                    img.onload = () => {
+                        try {
+                            const cv = document.createElement('canvas');
+                            cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+                            cv.getContext('2d').drawImage(img, 0, 0);
+                            resolve(cv.toDataURL('image/png'));
+                        } catch (e) { resolve(null); }
+                    };
+                    img.onerror = () => resolve(null);
+                    img.src = address;
+                });
+            }
+            if (!dataURL) { alert('Could not load an image from that URL. The address has to serve an image the browser may read (same origin, or CORS headers); save the file and upload it instead.'); return; }
+            setStageBackgroundPart(set, part, dataURL);
+            renderBackgroundManager();
+            flash((part === 'loop' ? 'STAGE' : 'BOSS') + ' BACKDROP SET ' + set + ' REPLACED FROM URL');
         }
 
         async function loadGameFilesFromFileList(files) {
@@ -3805,6 +4012,7 @@
         function updateContextualToolbar() {
             document.body.classList.toggle('has-save-target', hasSaveTarget());
             document.body.classList.toggle('has-3d-models', hasSec7Models());
+            document.body.classList.toggle('uses-tilemap', gameUsesTilemap());
             const b = document.getElementById('boss-lab-btn');
             if (b) b.classList.toggle('active', bossLabOpen);
             const row = document.getElementById('menu-boss-lab');
@@ -6259,7 +6467,106 @@
             if (titleStartTextDataURL) r.titleStartTextDataURL = titleStartTextDataURL;
             const ui = uiAtlasesForSave();
             if (ui) r.uiAtlases = ui;
+            // Where the Guide's "Edit Levels" comes back to: the runtime
+            // re-broadcasts its level-editor capability with this URL once
+            // the level is loaded (cmgBroadcastLevelEditor in game.bundle.js),
+            // so the editor reopens on the game being played, not the stock
+            // one. On the recipe's copy of meta only — a cloud save reads
+            // gameData.meta, which stays as it was.
+            r.meta = Object.assign({}, r.meta || {}, {
+                editorReturn: editorReturnUrl(),
+                editorLevelName: (document.getElementById('firebase-level-name').value || '').trim() || null,
+            });
             return r;
+        }
+
+        // The same-origin editor URL that reopens the open game, for the
+        // launcher's "Edit Levels" after PLAY swapped the frame to the runtime:
+        // a shelf mod or export by its record (?editExport=, which keeps its
+        // lineage), a library cart by its slug (?edit=), anything else from
+        // the recipe PLAY just stored (?fromPlay=1, which restores the exact
+        // edited state — the cloud name rides along for the name field and as
+        // the fallback when the recipe is gone).
+        function editorReturnUrl() {
+            const base = '/editor/?game=' + encodeURIComponent(GAME_ID);
+            const name = (document.getElementById('firebase-level-name').value || '').trim();
+            if (lineage && lineage.modId) return base + '&editExport=' + encodeURIComponent(lineage.modId);
+            if (lineage && lineage.parent && lineage.parent.id) return base + '&editExport=' + encodeURIComponent(lineage.parent.id);
+            if (lineage && window.__dezaPlaySource) return base + '&edit=' + encodeURIComponent(window.__dezaPlaySource);
+            return base + '&fromPlay=1' + (name ? '&level=' + encodeURIComponent(name) : '');
+        }
+
+        // ?fromPlay=1 — the runtime's "Edit Levels" sent the player back here
+        // from a game PLAY had started: the editor's state is the recipe PLAY
+        // stored (localStorage, the same the runtime read) and the atlas it
+        // published to the viewer bridge (IndexedDB) just before. Both are
+        // this game's by construction. False when either is missing, so the
+        // boot can fall back to ?level= or the stock game.
+        async function restoreFromPlayRecipe() {
+            let recipe = null;
+            try { recipe = JSON.parse(localStorage.getItem(LEVEL_LOADER_DEFAULTS.editorRecipeKey) || 'null'); } catch (e) { recipe = null; }
+            if (!recipe || typeof recipe !== 'object') return false;
+            const bridge = await new Promise((resolve) => {
+                openViewerBridge().then((db) => {
+                    if (!db) { resolve(null); return; }
+                    try {
+                        const tx = db.transaction('assets', 'readonly');
+                        const req = tx.objectStore('assets').get(VIEWER_BRIDGE_ATLAS_PREFIX + LEVEL_ATLAS_KEY);
+                        req.onsuccess = () => { const v = req.result; db.close(); resolve(v && v.frames && v.blob ? v : null); };
+                        req.onerror = () => { db.close(); resolve(null); };
+                    } catch (e) { try { db.close(); } catch (e2) {} resolve(null); }
+                });
+            });
+            await ensureLevelAtlasOpen();
+            const meta = recipe.meta && typeof recipe.meta === 'object' ? recipe.meta : {};
+            const levelName = typeof meta.editorLevelName === 'string' ? meta.editorLevelName : '';
+            // The recipe is gameData's shape plus the records and title art PLAY
+            // folded in; take them back apart the way a folder load does.
+            gameData = recipe;
+            normalizeLegacyNames(gameData);
+            enemyData = (gameData.enemyData && typeof gameData.enemyData === 'object') ? gameData.enemyData : {};
+            bossData = (gameData.bossData && typeof gameData.bossData === 'object') ? gameData.bossData : {};
+            playerData = (gameData.playerData && typeof gameData.playerData === 'object') ? gameData.playerData : {};
+            titleBgDataURL = gameData.titleBgDataURL || null; delete gameData.titleBgDataURL;
+            logoDataURL = gameData.logoDataURL || null; delete gameData.logoDataURL;
+            subTitleDataURL = gameData.subTitleDataURL || null; delete gameData.subTitleDataURL;
+            titleStartTextDataURL = gameData.titleStartTextDataURL || null; delete gameData.titleStartTextDataURL;
+            if (gameData.meta) {
+                delete gameData.meta.editorReturn;
+                delete gameData.meta.editorLevelName;
+                if (!Object.keys(gameData.meta).length) delete gameData.meta;
+            }
+            ssRestoreFromGameData();
+            storeBossDataForViewers();
+            replacedFrames = {};
+            extraSprites = [];
+            const stage = parseInt(localStorage.getItem(LEVEL_LOADER_DEFAULTS.editorStageKey) || '0', 10);
+            currentStageKey = 'stage' + (Number.isInteger(stage) && stage >= 0 ? stage : 0);
+            if (!gameData[currentStageKey]) currentStageKey = Object.keys(gameData).find((k) => /^stage\d+$/.test(k)) || 'stage0';
+            currentGrid = normalizeGrid((gameData[currentStageKey] || {}).enemylist || []);
+            if (bridge) {
+                // Every frame of the published atlas, as it was; the ones the
+                // stock atlas lacks count as this game's own so a cloud save
+                // carries them (a stock frame repainted in place is not told
+                // apart here).
+                const stock = await stockFrameKeys();
+                const frames = JSON.parse(JSON.stringify(bridge.frames));
+                atlasData = { frames };
+                customFrameKeys = new Set(Object.keys(frames).filter((k) => !stock || !stock.has(k)));
+                atlasAheadOfCloud = true;
+                atlasImage = new Image();
+                await new Promise((landed) => {
+                    atlasImage.onload = () => { buildFrameThumbs(); renderAtlas(); landed(); };
+                    atlasImage.onerror = () => landed();
+                    atlasImage.src = URL.createObjectURL(bridge.blob);
+                });
+            }
+            document.getElementById('firebase-level-name').value = levelName;
+            document.getElementById('status').textContent = 'STATUS: GAME: ' + (levelName || 'THE GAME YOU WERE PLAYING').toUpperCase() + ' (BACK FROM PLAY)';
+            syncNoStoryKnob();
+            populateStagePills(); loadCurrentStage(); renderAtlas(); renderEnemyList(); updateToolUI(); updateContextualToolbar(); updateExportSheet();
+            flash('BACK FROM PLAY · ' + (levelName ? levelName.toUpperCase() : 'THE GAME YOU WERE PLAYING'));
+            return true;
         }
 
         // Debug flags the game page inherits: ?debug=1 turns its engine
@@ -9533,6 +9840,27 @@
             loadDezaemonLibraryGame(row.file, row.title, row.meta, row.slug, { forcePlay: true });
         }
 
+        // ?edit=<slug> — the same library cart, opened in the editor instead
+        // of played: where "Edit Levels" comes back to from a ?play= run.
+        async function editDezaemonLibrarySlug(slug) {
+            if (!window.Dezaemon) { alert(dezaemonUnavailableMessage()); return; }
+            await editorBaselineReady;
+            let row = null;
+            try {
+                const byTitle = await loadDezaGamesDbByTitle();
+                let saves = null;
+                try { saves = await loadDezaLibraryFromRtdb(); } catch (_e) { saves = null; }
+                if (!saves) saves = await loadDezaLibraryFromStatic(byTitle);
+                row = (saves || []).find((s) => (s.slug || dezaSlugOfTitle(s.title)) === slug) || null;
+                if (row && !row.meta) row.meta = byTitle.get(dezaNormTitle(row.title)) || null;
+            } catch (err) {
+                flash('COULD NOT LIST SAVED GAMES: ' + (err.message || err));
+                return;
+            }
+            if (!row) { flash('NO SUCH SAVED GAME: ' + slug); return; }
+            loadDezaemonLibraryGame(row.file, row.title, row.meta, row.slug, { forceEdit: true });
+        }
+
         // ?playExport=<shelfId> — the launcher's shelf hands over one of the
         // rows only this browser has (its "⬇" bucket: installed eShop games,
         // "eshop:<id>", and its own exports, "<slug>:<palette>") by the id of
@@ -9578,7 +9906,9 @@
             const editExport = params.get('editExport');
             if (editExport) { editDezaemonShelfExport(editExport); return; }
             const play = params.get('play');
-            if (play) playDezaemonLibrarySlug(play);
+            if (play) { playDezaemonLibrarySlug(play); return; }
+            const edit = params.get('edit');
+            if (edit) editDezaemonLibrarySlug(edit);
         });
 
         // Test hook for the e2e suite (and console debugging).
@@ -14242,7 +14572,14 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             try { await autoLoadFromServer(); } finally { editorBaselineResolve(); }
             const urlParams = new URLSearchParams(window.location.search);
             const urlLevel = urlParams.get('level');
-            if (urlLevel) {
+            // ?fromPlay=1: back from the runtime's "Edit Levels" — the game
+            // that was playing, from the recipe PLAY stored. ?level= is the
+            // fallback when that recipe is gone.
+            let restored = false;
+            if (urlParams.get('fromPlay') === '1') {
+                try { restored = await restoreFromPlayRecipe(); } catch (e) { console.warn('could not restore the played game:', e); restored = false; }
+            }
+            if (urlLevel && !restored) {
                 document.getElementById('firebase-level-name').value = urlLevel;
                 initFirebase();
                 const tryLoad = () => { initFirebase(); loadFromFirebase(urlLevel); };
