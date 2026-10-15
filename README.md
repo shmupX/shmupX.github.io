@@ -1151,7 +1151,37 @@ editor. It is the shmupX cut of CMG's picker: the same detector (the flood-fill
 and background key-out SpriteX runs in its Extract tab), the same **⊕** pick
 mode, overlay boxes and review panel in the editor's own CRT look, wearing the
 shmupX icon — and a different destination. Where CMG's booted SpriteX, this one
-talks to `/editor/`:
+talks to `/editor/`.
+
+**Installing it.** There is no build step. Open `chrome://extensions`, turn on
+**Developer mode**, **Load unpacked** and pick `tools/sprite-picker-extension/`.
+The extension's own [README](tools/sprite-picker-extension/README.md) is the
+full manual; the short form:
+
+1. Open the level editor somewhere Chrome can see it — `/editor/` (or
+   `/editor/?game=…`) on `codemonkey.games`, a level subdomain,
+   `shmupx.github.io`, or local dev (`localhost:5173`, `:8000`, the Windows
+   desktop binary on `:8787`), as its own tab, the dashboard's **Level
+   Editor** tile, or the installed PWA. The popup reads **EDITOR ONLINE · TAB
+   n · atlas** once it finds one; it also learns that editor's PICKER CODE
+   for later, so the inbox works without typing anything.
+2. Browse to a sprite sheet. spriters-resource.com is wired in; on any other
+   site press the popup's **Inject picker on this tab** (Chrome asks once to
+   let the extension read that site's images).
+3. Press **⊕** at the bottom right, click the sheet; detected sprites get lime
+   boxes. Click boxes to select (yellow), review the thumbnails in the panel,
+   set the **SPRITE NAME** base, the **TARGET ATLAS** (the editor's current
+   one is selected) and **ADD** or **REPLACE FRAME** (one sprite, picked from
+   that atlas's frame list).
+4. **SEND TO SHMUPX**. The editor tab comes to the front with the sprites on
+   top of its Atlas Manager — or, with no editor tab in reach, the panel says
+   **SENT … → INBOX ABCD-EFGH** and the editor that owns the code takes them
+   the moment it is open.
+
+`deno task sprite-picker:test` runs the extension's 36 node tests (the pure
+core in `lib/picker-core.js` and the manifest against the files beside it);
+there is no Deno in the extension itself. What the picker does on the editor's
+side, and why there are two roads:
 
 - **An open editor is the first choice.** The extension looks through every tab
   on the editor's origins — `codemonkey.games` and its level subdomains,
