@@ -1,0 +1,85 @@
+{
+  "manifest_version": 3,
+  "name": "shmupX Sprite Picker",
+  "version": "1.0",
+  "description": "Detect and pick sprites from sprite-sheet images, then send them into the shmupX level editor's Atlas Manager — directly to an open editor tab, or through its inbox.",
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://spriters-resource.com/*",
+    "*://www.spriters-resource.com/*",
+    "*://images.spriters-resource.com/*",
+    "https://codemonkey.games/*",
+    "https://*.codemonkey.games/*",
+    "https://shmupx.github.io/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://evil-invaders-default-rtdb.firebaseio.com/*"
+  ],
+  "optional_host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://spriters-resource.com/*",
+        "*://www.spriters-resource.com/*"
+      ],
+      "js": [
+        "lib/picker-core.js",
+        "lib/sprite-detect.js",
+        "content/content.js"
+      ],
+      "css": [
+        "content/content.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://codemonkey.games/*",
+        "https://*.codemonkey.games/*",
+        "https://shmupx.github.io/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "lib/picker-core.js",
+        "bridge/shmupx-bridge.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "fonts/*.woff2",
+        "content/content.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

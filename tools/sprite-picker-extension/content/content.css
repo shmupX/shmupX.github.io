@@ -1,0 +1,439 @@
+/* shmupX Sprite Picker — content script styles.
+   The level editor's own look (static/editor/index.html): green CRT glass
+   panel, Orbitron + Share Tech Mono type, lime rgba(156,255,107,…) ink and
+   borders, glossy yellow #F6FF4A selection gradient.
+
+   Loaded twice on purpose: into the document by the manifest (only the
+   page-level rules below — pick-mode cursor, image highlight — match there)
+   and as a <link> inside the picker's closed shadow root, where the toggle,
+   overlay and panel live. The "SHX Orbitron" @font-face is NOT here: a
+   shadow tree cannot declare fonts, so content.js injects it into the
+   document with chrome.runtime.getURL. */
+
+/* ── The shadow host: no box of its own, nothing inherited from the page ── */
+:host {
+  all: initial;
+  display: contents !important;
+}
+
+/* ── Pick-mode toggle (⊕) ── */
+.shx-toggle-btn {
+  position: fixed;
+  bottom: 2.4vmin;
+  right: 2.4vmin;
+  z-index: 999998;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid rgba(140, 255, 110, 0.55);
+  background: linear-gradient(180deg, rgba(12, 40, 20, 0.94), rgba(6, 22, 11, 0.96));
+  color: #9cff6b;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 22px rgba(80, 220, 100, 0.3),
+    inset 0 0 0 1px rgba(140, 255, 110, 0.08);
+  transition: background 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+  font-family: "SHX Orbitron", "Orbitron", sans-serif;
+}
+.shx-toggle-btn:hover {
+  box-shadow: 0 0 30px rgba(120, 255, 90, 0.5),
+    inset 0 0 0 1px rgba(140, 255, 110, 0.16);
+  color: #eaffd2;
+}
+.shx-toggle-btn.active {
+  color: #0e0e02;
+  border-color: #fff36a;
+  background: linear-gradient(180deg, #fffea1 0%, #f6ff4a 30%, #d8e640 70%, #a4b00b 100%);
+  box-shadow: 0 0 22px rgba(255, 240, 90, 0.45);
+}
+
+/* Pick mode cursor */
+.shx-pick-mode img {
+  cursor: crosshair !important;
+}
+
+/* Image hover highlight in pick mode */
+.shx-img-highlight {
+  outline: 3px dashed rgba(246, 255, 74, 0.85) !important;
+  outline-offset: 2px;
+}
+
+/* Overlay container positioned over the target image */
+.shx-overlay-container {
+  position: absolute;
+  z-index: 999999;
+  pointer-events: none;
+}
+.shx-overlay-container canvas {
+  display: block;
+  pointer-events: all;
+  cursor: crosshair;
+  image-rendering: pixelated;
+}
+
+/* ── Selection panel (the editor's CRT glass) ── */
+.shx-panel {
+  position: fixed;
+  right: 2.4vmin;
+  bottom: calc(2.4vmin + 60px);
+  z-index: 999998;
+  width: min(340px, 88vw);
+  max-height: min(80vh, 680px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #dfffc4;
+  font-family: "SHX Orbitron", "Orbitron", sans-serif;
+  font-size: 13px;
+  background: linear-gradient(180deg, rgba(12, 40, 20, 0.94), rgba(6, 22, 11, 0.96));
+  border: 1px solid rgba(140, 255, 110, 0.55);
+  border-radius: 12px;
+  box-shadow: 0 0 38px rgba(80, 220, 100, 0.3),
+    inset 0 0 0 1px rgba(140, 255, 110, 0.08);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  animation: shxIn 0.16s ease-out;
+}
+@keyframes shxIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.shx-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 10px 16px;
+  border-bottom: 1px solid rgba(140, 255, 110, 0.18);
+}
+.shx-title {
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  font-size: 13px;
+  color: #eaffd2;
+  text-shadow: 0 0 14px rgba(120, 255, 90, 0.5);
+}
+.shx-x {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: rgba(220, 255, 180, 0.6);
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  font-family: inherit;
+}
+.shx-x:hover {
+  background: rgba(120, 255, 90, 0.12);
+  color: #eaffd2;
+}
+
+.shx-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 255, 110, 0.3) transparent;
+}
+
+.shx-sect {
+  font-family: "Share Tech Mono", ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(156, 255, 107, 0.5);
+  padding: 8px 4px 0;
+}
+.shx-sect:first-child {
+  padding-top: 2px;
+}
+
+/* ── TARGET row: where a send goes ── */
+.shx-target-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shx-target {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-family: "Share Tech Mono", ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1.45;
+  color: rgba(220, 255, 180, 0.7);
+  border: 1px solid rgba(140, 255, 110, 0.18);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(70, 180, 90, 0.08), rgba(20, 60, 30, 0.4));
+  word-break: break-word;
+}
+.shx-target-ok {
+  border-color: rgba(180, 255, 140, 0.8);
+  color: #bdf48c;
+  box-shadow: 0 0 14px rgba(120, 255, 90, 0.25);
+}
+.shx-target-none {
+  color: #ff9b9b;
+  border-color: rgba(255, 155, 155, 0.35);
+}
+.shx-refresh-btn {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-family: "SHX Orbitron", "Orbitron", sans-serif;
+  font-size: 16px;
+  line-height: 1;
+  color: #dfffc4;
+  border: 1px solid rgba(140, 255, 110, 0.18);
+  border-radius: 8px;
+  cursor: pointer;
+  background: linear-gradient(180deg, rgba(70, 180, 90, 0.08), rgba(20, 60, 30, 0.4));
+  transition: background 0.15s ease, border-color 0.15s ease,
+    box-shadow 0.15s ease, color 0.15s ease;
+}
+.shx-refresh-btn:hover {
+  color: #0e0e02;
+  border-color: #fff36a;
+  background: linear-gradient(180deg, #fffea1 0%, #f6ff4a 30%, #d8e640 70%, #a4b00b 100%);
+  box-shadow: 0 0 22px rgba(255, 240, 90, 0.45);
+}
+
+.shx-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  min-height: 44px;
+  border: 1px solid rgba(140, 255, 110, 0.18);
+  border-radius: 8px;
+  background: conic-gradient(
+        rgba(124, 255, 79, 0.06) 25%,
+        transparent 0 50%,
+        rgba(124, 255, 79, 0.06) 0 75%,
+        transparent 0
+      )
+      0 0 / 16px 16px,
+    linear-gradient(180deg, rgba(70, 180, 90, 0.08), rgba(20, 60, 30, 0.4));
+}
+.shx-empty {
+  font-family: "Share Tech Mono", ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: rgba(220, 255, 180, 0.45);
+  align-self: center;
+}
+.shx-thumb {
+  border: 1px solid rgba(140, 255, 110, 0.35);
+  border-radius: 4px;
+  image-rendering: pixelated;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.shx-thumb:hover {
+  border-color: #fff36a;
+  box-shadow: 0 0 10px rgba(255, 240, 90, 0.45);
+}
+
+/* Text inputs and the atlas select share the editor's dark field look */
+.shx-input,
+.shx-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-family: "Share Tech Mono", ui-monospace, Consolas, monospace;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: #dfffc4;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(120, 255, 90, 0.35);
+  border-radius: 6px;
+  caret-color: #9cff6b;
+  outline: none;
+}
+.shx-input::placeholder {
+  color: rgba(220, 255, 180, 0.35);
+  letter-spacing: 0.12em;
+}
+.shx-input:focus,
+.shx-select:focus {
+  border-color: rgba(160, 255, 120, 0.9);
+  box-shadow: 0 0 14px rgba(120, 255, 90, 0.35),
+    inset 0 0 8px rgba(120, 255, 90, 0.12);
+}
+.shx-select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  text-transform: uppercase;
+  padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, #9cff6b 50%),
+    linear-gradient(135deg, #9cff6b 50%, transparent 50%);
+  background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.shx-select option {
+  background: #0a2412;
+  color: #dfffc4;
+}
+
+.shx-replace-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.shx-replace-wrap[hidden] {
+  display: none;
+}
+.shx-hint {
+  font-family: "Share Tech Mono", ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(220, 255, 180, 0.45);
+  padding: 0 4px;
+}
+
+/* Primary CTA — the editor's green pill button */
+.shx-send-btn {
+  margin-top: 8px;
+  padding: 10px 16px;
+  font-family: "SHX Orbitron", "Orbitron", sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #051208;
+  background: linear-gradient(180deg, rgba(160, 255, 110, 0.95), rgba(90, 220, 60, 0.9));
+  border: 1px solid rgba(180, 255, 140, 1);
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 0 24px rgba(120, 255, 90, 0.45), inset 0 -2px 0 rgba(0, 0, 0, 0.15);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.shx-send-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 24px rgba(120, 255, 90, 0.7), inset 0 -2px 0 rgba(0, 0, 0, 0.15);
+}
+
+.shx-row-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/* Secondary buttons — editor rows: green glass, yellow gloss on hover/active */
+.shx-btn {
+  min-height: 34px;
+  padding: 6px 12px;
+  font-family: "SHX Orbitron", "Orbitron", sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #dfffc4;
+  border: 1px solid rgba(140, 255, 110, 0.18);
+  border-radius: 8px;
+  cursor: pointer;
+  background: linear-gradient(180deg, rgba(70, 180, 90, 0.08), rgba(20, 60, 30, 0.4));
+  transition: background 0.15s ease, border-color 0.15s ease,
+    box-shadow 0.15s ease, color 0.15s ease;
+}
+.shx-btn:hover:not(:disabled),
+.shx-btn.active {
+  color: #0e0e02;
+  border-color: #fff36a;
+  background: linear-gradient(180deg, #fffea1 0%, #f6ff4a 30%, #d8e640 70%, #a4b00b 100%);
+  box-shadow: 0 0 22px rgba(255, 240, 90, 0.45);
+}
+.shx-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.shx-mode-btn {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+/* REPLACE FRAME chosen but unavailable (not exactly one sprite): keep the
+   yellow so the wish is visible, dimmed so the state is too. */
+.shx-mode-btn.active:disabled {
+  opacity: 0.55;
+}
+.shx-mode-hint {
+  min-height: 0;
+  color: rgba(246, 255, 74, 0.75);
+}
+.shx-mode-hint:empty {
+  display: none;
+}
+
+.shx-status {
+  margin-top: 6px;
+  min-height: 16px;
+  font-family: "Share Tech Mono", ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  line-height: 1.45;
+  text-transform: uppercase;
+  color: rgba(220, 255, 180, 0.7);
+  word-break: break-word;
+}
+.shx-err {
+  color: #ff9b9b;
+}
+.shx-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(140, 255, 110, 0.25);
+  border-top-color: #9cff6b;
+  border-radius: 50%;
+  animation: shxSpin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes shxSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.shx-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-top: 1px solid rgba(140, 255, 110, 0.18);
+  font-family: "Share Tech Mono", ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: rgba(220, 255, 180, 0.55);
+  text-transform: uppercase;
+}
+.shx-foot b {
+  color: #eaffd2;
+  font-weight: 400;
+}
+.shx-foot-hint {
+  margin-left: auto;
+  opacity: 0.7;
+}

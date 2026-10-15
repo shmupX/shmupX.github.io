@@ -1142,6 +1142,61 @@ both number and place: Dezaemon 2 seeds the count from somewhere the decoder has
 not traced (the same gap the bomb stock has), so every cart gets three ships,
 drawn in the bottom corners — player 2's a row up, clear of `BOMB`.
 
+## The Sprite Picker
+
+[`tools/sprite-picker-extension/`](tools/sprite-picker-extension/) is a Chrome
+extension (Manifest V3, loaded unpacked from `chrome://extensions`) that cuts
+sprites out of sprite-sheet images on the web and beams them into the level
+editor. It is the shmupX cut of CMG's picker: the same detector (the flood-fill
+and background key-out SpriteX runs in its Extract tab), the same **⊕** pick
+mode, overlay boxes and review panel in the editor's own CRT look, wearing the
+shmupX icon — and a different destination. Where CMG's booted SpriteX, this one
+talks to `/editor/`:
+
+- **An open editor is the first choice.** The extension looks through every tab
+  on the editor's origins — `codemonkey.games` and its level subdomains,
+  `shmupx.github.io`, the dev server on `localhost` / `127.0.0.1`, the
+  installed PWA (a Chrome window like any other) — for a frame that is the
+  editor (the page says so with a `shmupx-editor` meta tag), standalone or inside the
+  dashboard's game frame, and its bridge posts `SPRITE_PICKER_INJECT` into that
+  window. The panel's TARGET row says which tab it found; TARGET ATLAS picks
+  `game_asset` / `game_ui` / `title_ui` (the editor's current one first), and
+  REPLACE FRAME, with a single sprite selected, swaps one named frame instead
+  of adding.
+- **The inbox is the second.** The desktop app's own window is a browser no
+  extension can enter, and a phone is another machine. For those the editor
+  mints an eight-letter **PICKER CODE** (shown in the Atlas Manager's title,
+  click to copy; `shmupx-picker-code` in localStorage, the BUILD CODE's
+  alphabet) and watches `spritePicker/inbox/<code>` in the database over
+  server-sent events, the way the export queue watches a job. Type the code
+  into the extension's popup once; when no editor tab is in reach, SEND leaves
+  the batch there, and the editor that owns the code applies it the moment it
+  sees it and deletes it — the inbox is a hand-off, not a store. SEND refuses
+  an inbox batch over 4 MiB of sprites (the extension's limit; a direct inject
+  has no batch cap, and the editor only drops a single data URL of 8 MiB or
+  more). The inbox is a public, unauthenticated hand-off, like the export
+  queue: anyone who knows the code can push sprites into that editor, which
+  applies them on sight — treat it like the BUILD CODE, and clear
+  `shmupx-picker-code` from localStorage to mint a new one.
+
+**What arrives is on top.** Either road ends in `applyPickedSprites`, one
+batch at a time: the frames are folded straight into the working atlas
+(`mergeExtraSpritesIntoAtlas`, no file download, so SELECT ENEMY and the
+Character Editor can draw them at once; a batch that beats the editor's boot
+waits for the atlas), a name already taken gets `_2`, `_3`… rather than
+silently replacing an earlier batch, a replace that names a frame the atlas
+lacks is added instead and says so, the toast says how many came and by which
+road, and the Atlas Manager opens with them first. The editor remembers its
+arrivals (`shmupx-picker-recent`, newest first, per browser) and four surfaces
+read that list: the Atlas Manager grid and the SELECT ENEMY picker put them —
+and the records standing on them — ahead of everything else, the latest batch
+tagged **NEW** in yellow and earlier ones **RECENT** in lime; the CHARACTER
+EDITOR shows a RECENT FRAMES strip whose INSERT writes a frame's quoted name
+where the cursor stands in the record's JSON (or copies it when no cursor has
+been placed); and the Background Manager's RECENT PICKS strip makes any
+arrival the stage or boss backdrop of the open set with one button, since the
+picker cuts a background panel off a sheet as readily as a sprite.
+
 ## Pixel Editor and Tilemap Editor
 
 Two workbench tools alongside spriteX, both in the CMG Desktop's Tools folder

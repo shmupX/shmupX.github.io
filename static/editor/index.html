@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="shmupx-editor" content="1">
     <title>2028.ai Level Editor</title>
     <!-- Declared so the browser stops probing /apple-touch-icon.png at the root
          and 404ing: with no link element it guesses that path itself. -->
@@ -771,6 +772,38 @@
             box-shadow: 0 0 22px var(--srglow); font-size: 10px; font-weight: 800; letter-spacing: .12em;
             color: var(--srink); z-index: 400; white-space: nowrap; pointer-events: none;
         }
+
+        /* ===== SPRITE PICKER arrivals: newest on top, the latest batch badged ===== */
+        .picker-cell { position: relative; }
+        .picker-cell.picker-new { outline: 2px solid #F6FF4A; outline-offset: -2px; box-shadow: 0 0 10px rgba(246,255,74,.35); }
+        .picker-cell.picker-recent { outline: 1px dashed rgba(156,255,107,.7); outline-offset: -1px; }
+        /* SELECT ENEMY's option keeps its × at the top right; the tag goes left. */
+        .picker-opt .picker-tag { right: auto; left: 2px; }
+        .picker-tag {
+            position: absolute; top: 2px; right: 2px; z-index: 1; pointer-events: none;
+            font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .12em; font-weight: 700;
+            padding: 1px 4px; border-radius: 3px; background: #F6FF4A; color: #0e0e02;
+        }
+        .picker-cell.picker-recent .picker-tag { background: rgba(156,255,107,.85); }
+        #picker-code-row { display: flex; justify-content: flex-end; margin: -6px 0 10px; }
+        #picker-code {
+            font-family: 'Share Tech Mono', monospace; font-size: 10px; font-weight: 400; letter-spacing: .14em;
+            text-shadow: none; color: rgba(156,255,107,.75); cursor: pointer; white-space: nowrap;
+        }
+        #picker-code b { color: #F6FF4A; font-weight: 700; }
+        .picker-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; flex-basis: 100%; }
+        .picker-strip-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .2em; color: var(--raillbl); margin-right: 4px; }
+        .picker-chip {
+            display: inline-flex; align-items: center; gap: 5px; position: relative; padding: 3px 7px 3px 4px;
+            border: 1px solid var(--redge); border-radius: 7px; background: var(--rbg); cursor: default;
+            font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .06em; color: var(--rink);
+        }
+        .picker-chip.clickable { cursor: pointer; }
+        .picker-chip.clickable:hover { border-color: #F6FF4A; }
+        .picker-chip img, .picker-chip canvas { width: 20px; height: 20px; image-rendering: pixelated; object-fit: contain; }
+        .picker-chip .picker-tag { position: static; margin-left: 2px; }
+        .picker-chip .chip-act { font-size: 8px; letter-spacing: .12em; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--redge); background: transparent; color: var(--rink); cursor: pointer; font-family: inherit; }
+        .picker-chip .chip-act:hover { background: #F6FF4A; color: #0e0e02; border-color: #F6FF4A; }
 
         /* ===== ENEMY EDITOR TABS ===== */
         .enemy-editor-tabs {
@@ -1561,6 +1594,7 @@
                 <button class="menu-btn" onclick="openLibraryEditor()">LIBRARY EDITOR</button>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" id="enemy-list"></div>
+            <div id="char-recent-frames" class="picker-strip hidden" title="Frames that arrived from the Sprite Picker — click one to put its name where the cursor is in the JSON below"></div>
             <input id="enemy-key" type="text" placeholder="Key (e.g. enemyA)" class="menu-input">
             <textarea id="enemy-json" rows="12" class="menu-input" style="font-family:monospace;font-size:11px;resize:vertical;"></textarea>
             <button onclick="saveCurrentEnemy()" class="menu-btn" style="background:#84cc16;color:#000;font-weight:700;">Save</button>
@@ -1650,6 +1684,7 @@
                     <option value="title_ui">title_ui</option>
                 </select>
             </div>
+            <div id="picker-code-row"><span id="picker-code" title="The shmupX Sprite Picker extension sends sprites straight into an open editor tab; where it cannot reach one (the installed desktop app, another device) it leaves them in an inbox under this code — type it into the extension's popup once. Click to copy." onclick="copyPickerCode()"></span></div>
             <div style="display:flex;gap:8px;margin-bottom:12px;">
                 <label class="menu-btn" style="flex:1;justify-content:center;">
                     <input type="file" id="upload-sprites" multiple accept="image/*" style="display:none" onchange="handleSpriteUpload(event)">
@@ -2140,6 +2175,207 @@
         // Firebase atlas never overrides unrelated frames that may have been
         // repacked locally since the level was last saved.
         let customFrameKeys = new Set();
+
+        // ================== SPRITE PICKER: recent arrivals ==================
+        // Frames that came in from the shmupX Sprite Picker (the extension,
+        // straight into this tab or through the inbox), newest first, so every
+        // frame chooser can put them on top and badge the latest batch NEW.
+        // Kept per browser, not per level: the question it answers is "what did
+        // I just send", whichever level happens to be open.
+        const PICKER_RECENT_KEY = 'shmupx-picker-recent';
+        const PICKER_CODE_KEY = 'shmupx-picker-code';
+        const PICKER_RECENT_MAX = 60;
+        let pickerRecent = loadPickerRecent(); // [{ key, atlas, batchId, at }]
+        function loadPickerRecent() {
+            try {
+                const v = JSON.parse(localStorage.getItem(PICKER_RECENT_KEY) || '[]');
+                return Array.isArray(v) ? v.filter((r) => r && typeof r.key === 'string') : [];
+            } catch (e) { return []; }
+        }
+        function savePickerRecent() {
+            try { localStorage.setItem(PICKER_RECENT_KEY, JSON.stringify(pickerRecent.slice(0, PICKER_RECENT_MAX))); } catch (e) {}
+        }
+        function notePickerArrivals(keys, atlas, batchId, at) {
+            const fresh = keys.map((key) => ({ key, atlas, batchId, at }));
+            pickerRecent = fresh.concat(pickerRecent.filter((r) => !(r.atlas === atlas && keys.includes(r.key)))).slice(0, PICKER_RECENT_MAX);
+            savePickerRecent();
+        }
+        function pickerRecentEntry(key, atlas) {
+            return pickerRecent.find((r) => r.key === key && (!atlas || !r.atlas || r.atlas === atlas)) || null;
+        }
+        function pickerLatestBatchId() { return pickerRecent.length ? pickerRecent[0].batchId : null; }
+        /** 'new' for the latest batch, 'recent' for an earlier arrival, null otherwise. */
+        function pickerBadgeFor(key, atlas) {
+            const r = pickerRecentEntry(key, atlas);
+            if (!r) return null;
+            return r.batchId && r.batchId === pickerLatestBatchId() ? 'new' : 'recent';
+        }
+        /** Reorder `items` in place: picker arrivals first (newest first), the rest in their own order. */
+        function pickerSortRecentFirst(items, keyOf, atlas) {
+            const rank = new Map();
+            pickerRecent.forEach((r, i) => {
+                if ((!atlas || !r.atlas || r.atlas === atlas) && !rank.has(r.key)) rank.set(r.key, i);
+            });
+            if (!rank.size) return items;
+            const indexed = items.map((it, i) => ({ it, i, r: rank.has(keyOf(it)) ? rank.get(keyOf(it)) : Infinity }));
+            indexed.sort((a, b) => {
+                if (a.r !== b.r) return a.r < b.r ? -1 : 1;
+                return a.i - b.i;
+            });
+            items.splice(0, items.length, ...indexed.map((x) => x.it));
+            return items;
+        }
+        /** The best (lowest) arrival rank among a record's frame names, or Infinity. */
+        function pickerRankOfFrames(frames, atlas) {
+            let best = Infinity;
+            pickerRecent.forEach((r, i) => {
+                if (i < best && (!atlas || !r.atlas || r.atlas === atlas) && frames.includes(r.key)) best = i;
+            });
+            return best;
+        }
+        /** The badge a record earns from its frames: 'new' if any is in the latest batch, 'recent' if any arrived earlier. */
+        function pickerBadgeForFrames(frames, atlas) {
+            let badge = null;
+            for (const f of frames) {
+                const b = pickerBadgeFor(f, atlas);
+                if (b === 'new') return 'new';
+                if (b) badge = b;
+            }
+            return badge;
+        }
+        /** Reorder record keys in place: records standing on picker arrivals first. */
+        function pickerSortRecordsByArrival(keys, framesOf, atlas) {
+            if (!pickerRecent.length) return keys;
+            const indexed = keys.map((k, i) => ({ k, i, r: pickerRankOfFrames(framesOf(k) || [], atlas) }));
+            indexed.sort((a, b) => {
+                if (a.r !== b.r) return a.r < b.r ? -1 : 1;
+                return a.i - b.i;
+            });
+            keys.splice(0, keys.length, ...indexed.map((x) => x.k));
+            return keys;
+        }
+        function decoratePickerCellAny(el, frames, atlas) {
+            const badge = pickerBadgeForFrames(frames || [], atlas);
+            if (!badge) return false;
+            el.classList.add('picker-cell', badge === 'new' ? 'picker-new' : 'picker-recent');
+            const tag = document.createElement('span');
+            tag.className = 'picker-tag';
+            tag.textContent = badge === 'new' ? 'NEW' : 'RECENT';
+            el.appendChild(tag);
+            return true;
+        }
+        /** The frame at full size, as a PNG data URL, out of the loaded atlas (null when it is not there). */
+        function atlasFrameDataURL(key) {
+            const f = atlasData && atlasData.frames && atlasData.frames[key] && atlasData.frames[key].frame;
+            if (!f || !atlasImage) return null;
+            const cv = document.createElement('canvas');
+            cv.width = f.w; cv.height = f.h;
+            cv.getContext('2d').drawImage(atlasImage, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+            return cv.toDataURL('image/png');
+        }
+        /**
+         * A strip of the recent arrivals the loaded atlas carries, newest first:
+         * a thumb, the name, the NEW/RECENT tag, and whatever buttons the
+         * caller wants on each (`actions(key)` returns [{label, title, onclick}]).
+         * Hidden when there is nothing recent to show.
+         */
+        function renderPickerStrip(el, label, actions, max, atlas) {
+            if (!el) return 0;
+            el.innerHTML = '';
+            // The strip speaks for one atlas: its arrivals, drawn from its
+            // image — which is the loaded one, or the level atlas's stash
+            // while the Atlas Manager shows another.
+            const scope = atlas || currentAtlasKey;
+            const state = scope === currentAtlasKey ? { atlasData, atlasImage } : (scope === LEVEL_ATLAS_KEY ? levelAtlasState() : atlasStash[scope] || {});
+            const frames = state.atlasData && state.atlasData.frames ? state.atlasData.frames : {};
+            const recent = pickerRecent.filter((r) => (!r.atlas || r.atlas === scope) && frames[r.key]).slice(0, max || 12);
+            if (!recent.length) { el.classList.add('hidden'); return 0; }
+            el.classList.remove('hidden');
+            const lbl = document.createElement('span');
+            lbl.className = 'picker-strip-label';
+            lbl.textContent = label;
+            el.appendChild(lbl);
+            const seen = new Set();
+            for (const r of recent) {
+                if (seen.has(r.key)) continue;
+                seen.add(r.key);
+                const chip = document.createElement('span');
+                chip.className = 'picker-chip';
+                const url = scope === currentAtlasKey ? getThumbURL(r.key) : frameThumbFrom(state, r.key);
+                if (url) { const img = document.createElement('img'); img.src = url; img.alt = ''; chip.appendChild(img); }
+                const name = document.createElement('span');
+                name.textContent = r.key;
+                chip.appendChild(name);
+                const badge = pickerBadgeFor(r.key, scope);
+                if (badge) { const tag = document.createElement('span'); tag.className = 'picker-tag'; tag.textContent = badge === 'new' ? 'NEW' : 'RECENT'; chip.appendChild(tag); }
+                for (const act of (actions ? actions(r.key) : [])) {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'chip-act';
+                    b.textContent = act.label;
+                    b.title = act.title || '';
+                    b.onclick = (e) => { e.stopPropagation(); act.onclick(); };
+                    chip.appendChild(b);
+                }
+                const acts = actions ? actions(r.key) : [];
+                if (acts.length === 1) { chip.classList.add('clickable'); chip.onclick = () => acts[0].onclick(); }
+                el.appendChild(chip);
+            }
+            return seen.size;
+        }
+        /** A 64px thumb of a frame out of an atlas state that is not the loaded one (null when it lacks the frame). */
+        function frameThumbFrom(state, key) {
+            const f = state && state.atlasData && state.atlasData.frames && state.atlasData.frames[key] && state.atlasData.frames[key].frame;
+            if (!f || !state.atlasImage || !state.atlasImage.complete) return null;
+            const cv = document.createElement('canvas');
+            cv.width = 64; cv.height = 64;
+            cv.getContext('2d').drawImage(state.atlasImage, f.x, f.y, f.w, f.h, 0, 0, 64, 64);
+            return cv.toDataURL('image/png');
+        }
+        /** Decorate a chooser cell: the NEW / RECENT tag and outline, when the frame is a picker arrival. */
+        function decoratePickerCell(el, key, atlas) {
+            const badge = pickerBadgeFor(key, atlas);
+            if (!badge) return false;
+            el.classList.add('picker-cell', badge === 'new' ? 'picker-new' : 'picker-recent');
+            const tag = document.createElement('span');
+            tag.className = 'picker-tag';
+            tag.textContent = badge === 'new' ? 'NEW' : 'RECENT';
+            el.appendChild(tag);
+            return true;
+        }
+        // The eight-letter PICKER CODE names this browser's inbox — the same
+        // alphabet and shape as the export queue's BUILD CODE, minted once and
+        // kept in localStorage. The Atlas Manager shows it; the extension's
+        // popup takes it.
+        let pickerCodeMemo = '';
+        function pickerCode() {
+            if (pickerCodeMemo) return pickerCodeMemo;
+            let code = '';
+            try { code = localStorage.getItem(PICKER_CODE_KEY) || ''; } catch (e) {}
+            code = String(code).toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (code.length !== 8) {
+                const alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+                const bytes = new Uint8Array(8);
+                crypto.getRandomValues(bytes);
+                code = Array.from(bytes, (b) => alpha[b % alpha.length]).join('');
+                try { localStorage.setItem(PICKER_CODE_KEY, code); } catch (e) {}
+            }
+            // One code per page load whatever storage does: the watcher, the
+            // Atlas Manager and the extension's PING must all see the same one.
+            pickerCodeMemo = code;
+            return code;
+        }
+        function formatPickerCode(code) { return code ? code.slice(0, 4) + '-' + code.slice(4) : ''; }
+        function renderPickerCode() {
+            const el = document.getElementById('picker-code');
+            if (el) el.innerHTML = 'PICKER CODE <b>' + formatPickerCode(pickerCode()) + '</b>';
+        }
+        function copyPickerCode() {
+            const code = formatPickerCode(pickerCode());
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(code).then(() => flash('Picker code ' + code + ' copied'), () => flash('Picker code ' + code));
+            } else flash('Picker code ' + code);
+        }
         // Set when the in-memory atlas gains pixels the cloud copy does not have
         // yet, cleared when a whole-game save writes it or a load replaces it.
         // The per-entry save reads it: a record and its art go to two different
@@ -2436,6 +2672,7 @@
         function showAtlasManager() {
             closeMenu();
             document.getElementById('atlas-select').value = currentAtlasKey;
+            renderPickerCode();
             renderAtlas();
             document.getElementById('atlas-modal').classList.remove('hidden');
         }
@@ -2895,6 +3132,28 @@
                 }
                 container.appendChild(slot);
             }
+            // Recent Sprite Picker arrivals as a backdrop: the picker can cut a
+            // whole background panel off a sheet as readily as a sprite, and the
+            // runtime draws whatever size it is given. The strip is a row of
+            // its own under the two slots (their row does not wrap).
+            let strip = document.getElementById('bg-recent-picks');
+            if (!strip) {
+                strip = document.createElement('div');
+                strip.id = 'bg-recent-picks';
+                strip.className = 'picker-strip hidden';
+                container.parentNode.insertBefore(strip, container.nextSibling);
+            }
+            renderPickerStrip(strip, 'RECENT PICKS', (key) => BACKGROUND_PARTS.map((spec) => ({
+                label: '\u2192 ' + spec.label.toUpperCase(),
+                title: 'Use ' + key + ' as ' + spec.file + set + '.png',
+                onclick: () => {
+                    const url = atlasFrameDataURL(key);
+                    if (!url) { flash(key + ' IS NOT IN THE LOADED ATLAS'); return; }
+                    setStageBackgroundPart(set, spec.part, url);
+                    renderBackgroundManager();
+                    flash(spec.file + set + ' \u2190 ' + key);
+                },
+            })), 8, currentAtlasKey);
             const note = document.getElementById('background-manager-note');
             const customEnemies = enemyData && Object.keys(enemyData).length;
             note.textContent = (gameData.stageBackgrounds ? 'REPLACEMENTS RIDE THE CLOUD SAVE AND PLAY. ' : '') +
@@ -3460,6 +3719,7 @@
             const c = document.getElementById('enemy-picker-grid');
             c.innerHTML = '';
             const keys = Object.keys(enemyData);
+            pickerSortRecordsByArrival(keys, (k) => entryFrameNames(enemyData[k]), null);
             if (!keys.length) {
                 c.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#666;padding:24px;font-size:13px">'
                     + (gameData ? 'No enemies in this game yet — add one below.' : 'No enemies loaded. Load a game directory or a saved game.')
@@ -3471,6 +3731,7 @@
                 const opt = document.createElement('div');
                 opt.className = `picker-opt${selectedEnemyFullKey === ek ? ' sel' : ''}`;
                 opt.draggable = true;
+                decoratePickerCellAny(opt, entryFrameNames(enemyData[ek]), null);
 
                 const badge = document.createElement('div');
                 badge.className = 'opt-badge';
@@ -4558,6 +4819,7 @@
             refreshEnemyPickerIfOpen();   // SELECT ENEMY lists the same records
             const c = document.getElementById('enemy-list');
             c.innerHTML = '';
+            renderCharRecentFrames();
             const enemyKeys = Object.keys(enemyData);
             const bossKeys = Object.keys(bossData);
             const hasPlayer = playerData && Object.keys(playerData).length > 0;
@@ -4582,11 +4844,15 @@
                 c.innerHTML = '<div style="color:#666;font-size:11px;padding:8px;">No ' + currentEditorTab + ' loaded.</div>';
                 return;
             }
+            // Records standing on frames that just came in from the Sprite
+            // Picker lead the list, tagged like the frames themselves.
+            keys = keys.slice();
+            pickerSortRecordsByArrival(keys, (k) => entryFrameNames(data[k]), null);
 
             keys.forEach(key => {
                 const b = document.createElement('button');
                 b.className = 'menu-btn';
-                b.style.cssText = 'display:inline-flex;padding:6px 10px;font-size:11px;gap:6px;align-items:center;';
+                b.style.cssText = 'display:inline-flex;position:relative;padding:6px 10px;font-size:11px;gap:6px;align-items:center;';
                 if (key === currentEnemyKey) b.style.borderColor = '#84cc16';
 
                 // Try to show a thumbnail
@@ -4616,10 +4882,45 @@
                     label.textContent = key;
                 }
                 b.appendChild(label);
+                decoratePickerCellAny(b, entryFrameNames(entry), null);
 
                 b.onclick = () => editEnemy(key);
                 c.appendChild(b);
             });
+        }
+
+        // The Character Editor's RECENT FRAMES strip: the Sprite Picker's
+        // arrivals the LEVEL atlas carries (records draw from that one, never
+        // from game_ui), newest first. A record's frames are edited as JSON
+        // here, so a chip writes its name — quoted — where the cursor stands in
+        // that JSON; when the textarea is not focused, or its caret still sits
+        // at the very end of the record (nobody has placed it), the name goes
+        // to the clipboard instead, since splicing after the closing brace
+        // would only break the JSON.
+        function renderCharRecentFrames() {
+            renderPickerStrip(document.getElementById('char-recent-frames'), 'RECENT FRAMES', (key) => [{
+                label: 'INSERT',
+                title: 'Write "' + key + '" at the cursor in the JSON below (copied instead when the cursor is not placed)',
+                onclick: () => insertFrameNameIntoJson(key),
+            }], 12, LEVEL_ATLAS_KEY);
+        }
+        function insertFrameNameIntoJson(key) {
+            const ta = document.getElementById('enemy-json');
+            if (!ta) return;
+            const quoted = JSON.stringify(key);
+            const start = typeof ta.selectionStart === 'number' ? ta.selectionStart : ta.value.length;
+            const end = typeof ta.selectionEnd === 'number' ? ta.selectionEnd : start;
+            const unplaced = document.activeElement !== ta || (ta.value.trim() && start === end && start >= ta.value.length);
+            if (unplaced) {
+                const done = () => flash(quoted + ' COPIED — PLACE THE CURSOR IN THE JSON TO INSERT');
+                if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(quoted).then(done, done);
+                else done();
+                return;
+            }
+            ta.value = ta.value.slice(0, start) + quoted + ta.value.slice(end);
+            ta.focus();
+            ta.selectionStart = ta.selectionEnd = start + quoted.length;
+            flash(quoted + ' WRITTEN AT THE CURSOR');
         }
 
         function editEnemy(key) {
@@ -5701,8 +6002,29 @@
             const c = document.getElementById('atlas-grid');
             c.innerHTML = '';
             const frames = atlasData ? atlasData.frames || {} : {};
-            Object.keys(frames).forEach(key => {
+            // Sprite Picker arrivals first — the latest batch tagged NEW, earlier
+            // ones RECENT — then the atlas in its own order, then unsaved extras.
+            const entries = Object.keys(frames).map((key) => ({ kind: 'frame', key }))
+                .concat(extraSprites.map((spr) => ({ kind: 'extra', key: spr.key, spr })));
+            // "Replace it and the next N" (applyMultiReplaceAt) walks the atlas's
+            // own order, so while one is armed the grid shows that order too.
+            if (!pendingMultiReplace) pickerSortRecentFirst(entries, (e) => e.key, currentAtlasKey);
+            entries.forEach((entry) => {
+                const key = entry.key;
                 const d = document.createElement('div');
+                if (entry.kind === 'extra') {
+                    const spr = entry.spr;
+                    d.style.cssText = 'text-align:center;';
+                    spr.canvas.style.cssText = 'image-rendering:pixelated;width:100%;aspect-ratio:1;';
+                    d.appendChild(spr.canvas);
+                    const n = document.createElement('div');
+                    n.style.cssText = 'font-size:8px;color:#f59e0b;';
+                    n.textContent = key + ' (new)';
+                    d.appendChild(n);
+                    decoratePickerCell(d, key, currentAtlasKey);
+                    c.appendChild(d);
+                    return;
+                }
                 d.style.cssText = 'text-align:center;cursor:pointer;';
                 d.title = pendingMultiReplace ? 'Click to replace from here' : 'Click to replace';
                 const isReplaced = !!replacedFrames[key];
@@ -5723,21 +6045,11 @@
                 n.style.color = isReplaced ? '#84cc16' : '#888';
                 n.textContent = key + (isReplaced ? ' (replaced)' : '');
                 d.appendChild(n);
+                decoratePickerCell(d, key, currentAtlasKey);
                 d.onclick = () => {
                     if (pendingMultiReplace) applyMultiReplaceAt(key);
                     else replaceFrame(key);
                 };
-                c.appendChild(d);
-            });
-            extraSprites.forEach(s => {
-                const d = document.createElement('div');
-                d.style.cssText = 'text-align:center;';
-                s.canvas.style.cssText = 'image-rendering:pixelated;width:100%;aspect-ratio:1;';
-                d.appendChild(s.canvas);
-                const n = document.createElement('div');
-                n.style.cssText = 'font-size:8px;color:#f59e0b;';
-                n.textContent = s.key + ' (new)';
-                d.appendChild(n);
                 c.appendChild(d);
             });
         }
@@ -6277,45 +6589,204 @@
         }
 
         // ================== SPRITE PICKER EXTENSION BRIDGE ==================
+        // Two roads into the working atlas, one handler. The shmupX Sprite
+        // Picker extension (tools/sprite-picker-extension) posts
+        // SPRITE_PICKER_INJECT into this window when it can see the editor —
+        // a tab, the dashboard's frame or the installed PWA. Where it cannot
+        // (the desktop app's own window, another device) it leaves the batch in
+        // the database under this browser's PICKER CODE, and the watcher below
+        // picks it up. Either way the frames are folded straight into the atlas
+        // (mergeExtraSpritesIntoAtlas, so SELECT ENEMY and the Character Editor
+        // can draw them at once), remembered as recent, and the Atlas Manager
+        // opens with them on top.
+        const PICKER_DB = 'https://evil-invaders-default-rtdb.firebaseio.com';
+        const PICKER_INBOX = 'spritePicker/inbox';
+        let pickerInboxStop = null;
+        const pickerInboxSeen = new Set();
+
+        function validPickedSprite(spr) {
+            // Raster only: an SVG with a foreignObject taints the canvas it is
+            // drawn to, and a tainted canvas in extraSprites would make every
+            // later toDataURL in the atlas pipeline throw.
+            return !!spr && typeof spr.dataURL === 'string' && /^data:image\/(png|gif|jpeg|webp);base64,/i.test(spr.dataURL) && spr.dataURL.length < 8 * 1024 * 1024;
+        }
+        // A name the atlas does not already use: picker batches default to
+        // sprite_0, sprite_1, … so a second batch must not silently replace
+        // the first.
+        function uniquePickKey(name) {
+            const base = String(name || 'sprite').replace(/[^\w.-]/g, '').slice(0, 60) || 'sprite';
+            const taken = (k) => (atlasData && atlasData.frames && atlasData.frames[k]) || replacedFrames[k] || extraSprites.some((e) => e.key === k);
+            if (!taken(base)) return base;
+            for (let i = 2; i < 10000; i++) {
+                const k = base + '_' + i;
+                if (!taken(k)) return k;
+            }
+            return base + '_' + Date.now().toString(36);
+        }
+
+        // One batch at a time: mergeExtraSpritesIntoAtlas snapshots extraSprites
+        // and clears them after an async decode, so a second batch landing in
+        // that window would be wiped unpacked. Both roads await this.
+        let pickerApplyChain = Promise.resolve();
+        function applyPickedSprites(payload, via) {
+            const run = pickerApplyChain.then(() => applyPickedSpritesNow(payload, via));
+            pickerApplyChain = run.catch(() => {});
+            return run;
+        }
+        // The atlas, once it is loaded and decoded — a batch that beats the
+        // editor's boot waits for it rather than landing in nothing.
+        async function waitForLoadedAtlas(ms) {
+            const until = Date.now() + (ms || 30000);
+            while (Date.now() < until) {
+                if (atlasData && atlasData.frames && atlasImage && atlasImage.complete && atlasImage.naturalWidth) return true;
+                if (atlasData && atlasImage && !atlasImage.complete && atlasImage.decode) {
+                    try { await atlasImage.decode(); continue; } catch (e) {}
+                }
+                await new Promise((r) => setTimeout(r, 250));
+            }
+            return false;
+        }
+        async function applyPickedSpritesNow(payload, via) {
+            const sprites = (Array.isArray(payload && payload.sprites) ? payload.sprites : []).filter(validPickedSprite);
+            if (!sprites.length) return 0;
+            const { atlas, mode, frameName } = payload;
+            if (atlas && ATLAS_CONFIGS[atlas] && atlas !== currentAtlasKey) await switchAtlas(atlas);
+            if (!await waitForLoadedAtlas()) { flash('SPRITE PICKER: NO ATLAS LOADED YET — THE BATCH WAITS'); return 0; }
+            const batchId = String(payload.batchId || ('batch-' + Date.now().toString(36)));
+            const at = Number(payload.at) || Date.now();
+            // A replace needs one sprite and a frame the atlas has; anything
+            // else is added under its own name and the user is told.
+            const canReplace = mode === 'replace' && typeof frameName === 'string' && sprites.length === 1 &&
+                atlasData.frames && !!atlasData.frames[frameName];
+            if (mode === 'replace' && !canReplace) {
+                flash('REPLACE OF ' + String(frameName || '?').toUpperCase() + ' NOT POSSIBLE — ADDED AS NEW FRAMES INSTEAD');
+            }
+            const keys = [];
+            for (const spr of sprites) {
+                const img = new Image();
+                img.src = spr.dataURL;
+                const ok = await new Promise((r) => { img.onload = () => r(true); img.onerror = () => r(false); });
+                if (!ok || !img.width || !img.height) continue;
+                const cv = document.createElement('canvas');
+                cv.width = img.width; cv.height = img.height;
+                const cx = cv.getContext('2d');
+                cx.drawImage(img, 0, 0);
+                try { cx.getImageData(0, 0, 1, 1); } catch (e) { continue; } // tainted: never into the atlas
+                if (canReplace) {
+                    replacedFrames[frameName] = { key: frameName, canvas: cv, w: img.width, h: img.height };
+                    customFrameKeys.add(frameName);
+                    keys.push(frameName);
+                } else {
+                    const sprKey = uniquePickKey(spr.name);
+                    extraSprites.push({ key: sprKey, canvas: cv, w: img.width, h: img.height });
+                    customFrameKeys.add(sprKey);
+                    keys.push(sprKey);
+                }
+            }
+            if (!keys.length) return 0;
+            notePickerArrivals([...new Set(keys)], currentAtlasKey, batchId, at);
+            const merged = await mergeExtraSpritesIntoAtlas();
+            if (!merged) { flash('SPRITE PICKER: THE ATLAS WOULD NOT TAKE THE BATCH'); return 0; }
+            renderAtlas();
+            showAtlasManager();
+            const bgModal = document.getElementById('background-manager-modal');
+            if (bgModal && !bgModal.classList.contains('hidden') && typeof renderBackgroundManager === 'function') renderBackgroundManager();
+            const charModal = document.getElementById('enemy-editor-modal');
+            if (charModal && !charModal.classList.contains('hidden')) renderEnemyList();
+            else refreshEnemyPickerIfOpen();
+            flash(keys.length + (keys.length === 1 ? ' SPRITE' : ' SPRITES') + ' FROM THE SPRITE PICKER' + (via === 'inbox' ? ' INBOX' : '') + ' — ON TOP IN THE ATLAS MANAGER');
+            return keys.length;
+        }
+
         window.addEventListener("message", async (ev) => {
             if (!ev.data || ev.data.source !== "sprite-picker-bridge") return;
+            // The bridge posts to the editor's own window from its own origin
+            // (inside the dashboard's frame too); a parent or a stranger does not.
+            if (ev.source !== window || ev.origin !== location.origin) return;
 
             if (ev.data.type === "SPRITE_PICKER_INJECT") {
-                const { sprites, atlas, mode, frameName } = ev.data;
-                if (atlas && atlas !== currentAtlasKey) await switchAtlas(atlas);
-
-                for (const spr of sprites) {
-                    const img = new Image();
-                    img.src = spr.dataURL;
-                    await new Promise(r => img.onload = r);
-                    const cv = document.createElement('canvas');
-                    cv.width = img.width; cv.height = img.height;
-                    cv.getContext('2d').drawImage(img, 0, 0);
-
-                    if (mode === "replace" && frameName) {
-                        replacedFrames[frameName] = { key: frameName, canvas: cv, w: img.width, h: img.height };
-                        customFrameKeys.add(frameName);
-                    } else {
-                        const sprKey = spr.name || ('sprite_' + Date.now());
-                        extraSprites.push({ key: sprKey, canvas: cv, w: img.width, h: img.height });
-                        customFrameKeys.add(sprKey);
-                    }
-                }
-                renderAtlas();
-                showAtlasManager();
+                await applyPickedSprites(ev.data, 'tab');
             }
 
             if (ev.data.type === "GET_ATLAS_FRAMES") {
-                const frames = atlasData ? Object.keys(atlasData.frames || {}) : [];
+                // The loaded atlas's frames, or — when the picker asks about
+                // another atlas it may send to — that one's, read without
+                // switching, so REPLACE FRAME can offer real names for all three.
+                const want = ev.data.atlas && ATLAS_CONFIGS[ev.data.atlas] ? ev.data.atlas : currentAtlasKey;
+                const frames = want === currentAtlasKey
+                    ? (atlasData ? Object.keys(atlasData.frames || {}) : [])
+                    : await otherAtlasFrameNames(want);
                 window.postMessage({
                     source: "sprite-picker-page",
                     type: "ATLAS_FRAMES_RESPONSE",
                     requestId: ev.data.requestId,
                     frames: frames,
-                    atlas: currentAtlasKey
+                    atlas: want,
+                    currentAtlas: currentAtlasKey,
+                    atlases: Object.keys(ATLAS_CONFIGS),
+                    pickerCode: pickerCode()
                 }, "*");
             }
         });
+
+        // Frame names of an atlas that is not the loaded one, from the open
+        // directory when there is one, else from the served game files — the
+        // same two roads collectMissingTextures walks. Cached for the page.
+        const otherAtlasFrameCache = {};
+        async function otherAtlasFrameNames(key) {
+            if (otherAtlasFrameCache[key]) return otherAtlasFrameCache[key];
+            const cfg = ATLAS_CONFIGS[key];
+            if (!cfg) return [];
+            let json = null;
+            try {
+                if (dirHandle) {
+                    const ad = await dirHandle.getDirectoryHandle(ATLAS_DIR);
+                    json = JSON.parse(await (await (await ad.getFileHandle(cfg.json)).getFile()).text());
+                } else {
+                    const resp = await fetch(gameAssetUrl('assets/' + cfg.json));
+                    if (resp.ok) json = await resp.json();
+                }
+            } catch (e) { json = null; }
+            const norm = json ? normalizeAtlasData(json) : null;
+            const names = norm && norm.frames ? Object.keys(norm.frames) : [];
+            if (names.length) otherAtlasFrameCache[key] = names;
+            return names;
+        }
+
+        // The inbox: spritePicker/inbox/<code>/<batchId> = { at, from, atlas,
+        // mode, frameName, sprites }. Watched the way the export queue watches a
+        // job (static/export-queue.js, server-sent events); a batch is applied
+        // once and then deleted — the inbox is a hand-off, not a store.
+        function startPickerInbox() {
+            if (pickerInboxStop) return;
+            const code = pickerCode();
+            if (!code) return;
+            import('/export-queue.js').then((q) => {
+                pickerInboxStop = q.watchPath(PICKER_INBOX + '/' + code, (val, err) => {
+                    if (err || !val || typeof val !== 'object') return;
+                    for (const [id, batch] of Object.entries(val)) {
+                        if (!batch || pickerInboxSeen.has(id)) continue;
+                        pickerInboxSeen.add(id);
+                        receivePickerInboxBatch(code, id, batch);
+                    }
+                });
+            }).catch((e) => console.warn('sprite picker inbox unavailable:', e));
+        }
+        async function receivePickerInboxBatch(code, id, batch) {
+            let landed = 0;
+            try {
+                landed = await applyPickedSprites(Object.assign({}, batch, { batchId: batch.batchId || id }), 'inbox');
+            } catch (e) {
+                console.warn('sprite picker inbox batch failed:', e);
+            }
+            // Applied: consumed. Not applied (no atlas yet, nothing usable in
+            // it): it stays for the next look — an empty batch is dropped.
+            const empty = !Array.isArray(batch.sprites) || !batch.sprites.some(validPickedSprite);
+            if (landed || empty) {
+                fetch(PICKER_DB + '/' + PICKER_INBOX + '/' + code + '/' + encodeURIComponent(id) + '.json', { method: 'DELETE' }).catch(() => {});
+            } else pickerInboxSeen.delete(id);
+        }
+        setTimeout(startPickerInbox, 1500);
 
         // ================== SAVE ==================
         // Write the working grid back onto a stage record. A stage imported
