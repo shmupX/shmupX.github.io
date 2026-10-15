@@ -127,6 +127,28 @@
       img.src = url;
     });
   }
+  const UI_ATLAS_KEYS = ["game_ui", "title_ui"];
+  function altFrameName(name) {
+    if (name.endsWith(".png")) return name.slice(0, -4) + ".gif";
+    if (name.endsWith(".gif")) return name.slice(0, -4) + ".png";
+    return null;
+  }
+  function cutFrames(image, frames) {
+    const keys = Object.keys(frames);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, ...keys.map((k) => frames[k].frame.w));
+    canvas.height = Math.max(1, keys.reduce((sum, k) => sum + frames[k].frame.h, 0));
+    const ctx = canvas.getContext("2d");
+    const out = {};
+    let y = 0;
+    for (const k of keys) {
+      const f = frames[k].frame;
+      ctx.drawImage(image, f.x, f.y, f.w, f.h, 0, y, f.w, f.h);
+      out[k] = { frame: { x: 0, y, w: f.w, h: f.h } };
+      y += f.h;
+    }
+    return { canvas, frames: out };
+  }
   function readEditorAtlasBridge(atlasKey, opts) {
     const o = opts || DEFAULTS.editorAtlas;
     if (o.enabled === false || typeof indexedDB === "undefined") {
@@ -305,10 +327,11 @@
       // Each set is stacked onto its atlas the way the level's own goes onto
       // game_asset, so a replaced title plate or button draws from the game's
       // art rather than 2028.Ai's. Resolves once every set is in (false when
-      // there is none); an atlas the runtime did not load is skipped.
-      applyUiAtlases(levelData) {
-        const sets = levelData && levelData.uiAtlases;
-        if (!sets || typeof sets !== "object") return Promise.resolve(false);
+      // there is none); an atlas the runtime did not load is skipped. A UI
+      // frame an older save left in the level atlas goes up too (_liftUiFrames).
+      applyUiAtlases(levelData, levelAtlasKey) {
+        const raw = levelData && levelData.uiAtlases;
+        const sets = raw && typeof raw === "object" ? raw : {};
         const scene = this.scene;
         const jobs = Object.keys(sets).map((atlasKey) => {
           const set = sets[atlasKey];
@@ -323,7 +346,53 @@
             return this._stackAtlas(img, set.frames, atlasKey);
           });
         });
+        jobs.push(this._liftUiFrames(levelData, sets, levelAtlasKey || DEFAULTS.atlasKey));
         return Promise.all(jobs).then((done) => done.some(Boolean));
+      }
+
+      // A record saved before uiAtlases existed can carry a UI frame in its
+      // level atlas instead — titleG.gif, the wordmark the title slides in, put
+      // there by an editor that saved whichever atlas the Atlas Manager had
+      // open. mergeAtlas stacks the level atlas onto game_asset and the title
+      // draws titleG.gif from game_ui, so the replacement showed in the editor
+      // and never on the title. The atlases share no frame name, so a level
+      // frame the local level atlas lacks and a loaded UI atlas has can only be
+      // that UI frame: it is cut out and stacked onto the UI atlas as well. A
+      // frame the record's own uiAtlases set names is left to that set, the
+      // newer save. Runs before mergeAtlas, so the level atlas is still local.
+      _liftUiFrames(levelData, sets, levelAtlasKey) {
+        const frames = levelData && levelData.atlasFrames;
+        if (!frames || !levelData.atlasImageDataURL) return Promise.resolve(false);
+        const scene = this.scene;
+        const level = scene.textures.exists(levelAtlasKey) ? scene.textures.get(levelAtlasKey) : null;
+        const lifts = {};
+        let found = false;
+        for (const fname in frames) {
+          const fd = frames[fname];
+          if (!fd || !fd.frame) continue;
+          const decoded = decodeFirebaseKey(fname);
+          const names = [decoded, altFrameName(decoded)].filter(Boolean);
+          if (level && names.some((n) => level.has(n))) continue;
+          const uiKey = UI_ATLAS_KEYS.find((k) =>
+            scene.textures.exists(k) && names.some((n) => scene.textures.get(k).has(n))
+          );
+          if (!uiKey) continue;
+          const claimed = sets[uiKey] && sets[uiKey].frames;
+          if (claimed && Object.keys(claimed).some((c) => names.includes(decodeFirebaseKey(c)))) continue;
+          (lifts[uiKey] = lifts[uiKey] || {})[fname] = fd;
+          found = true;
+        }
+        if (!found) return Promise.resolve(false);
+        return loadImage(levelData.atlasImageDataURL).then((img) => {
+          if (!img) {
+            console.warn("Level atlas image failed to load, UI frames in it stay unused");
+            return false;
+          }
+          return Object.keys(lifts).map((uiKey) => {
+            const cut = cutFrames(img, lifts[uiKey]);
+            return this._stackAtlas(cut.canvas, cut.frames, uiKey);
+          }).some(Boolean);
+        });
       }
 
       // A level may ship its own atlas (base64 PNG + frame map). Stack it beneath
