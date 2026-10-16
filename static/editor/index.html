@@ -1294,7 +1294,9 @@
                          Built in the page by the engine bundle (exportLevelToSfcSram): the art
                          quantised into 15-colour CGRAM rows and cut into 4bpp tiles, the
                          stages laid into the save's 18x128 chip maps and appearance tables,
-                         the factory sound carried over, the seventeen checksum words sealed.
+                         the ship's poses and the title editor's backdrop, logo and subtitle
+                         painted, the factory sound carried over, the seventeen checksum
+                         words sealed.
                          Downloaded as the raw 131,072-byte .srm an emulator keeps beside the
                          ROM, or, where a local server can see the ROM and a Mednafen,
                          installed as that emulator's SRAM for it and launched. -->
@@ -9109,8 +9111,10 @@
         // packages/shmup-engine/src/sfc/sfc-write.js: the same level record and
         // atlas art go into Dezaemon.exportLevelToSfcSram(), which quantises the
         // art into CGRAM rows and 4bpp tiles, lays the stages into the 1994
-        // cart's maps and appearance tables, carries the factory sound over and
-        // seals the checksums. `deno task build:sfc` does the same from a shell.
+        // cart's maps and appearance tables, paints the ship's poses and the
+        // title editor's backdrop, logo and subtitle, carries the factory sound
+        // over and seals the checksums. `deno task build:sfc` does the same
+        // from a shell.
         function sfcSramNote(msg, color) {
             const el = document.getElementById('sfc-sram-note');
             if (!el) return;
@@ -9120,8 +9124,12 @@
         async function buildSfcSramForExport() {
             const record = await buildLevelRecordForSav();
             const art = collectAtlasArtForSav();
-            const title1 = await dataUrlToRgba(logoDataURL);
-            const out = window.Dezaemon.exportLevelToSfcSram(record, art, { name: record.name, title1 });
+            // The title picture is the title scene as the cart can hold it: the
+            // backdrop with the logo and subtitle over it, fitted to 8x4 chips.
+            const [title1, title2, titleBg] = await Promise.all([
+                dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL), dataUrlToRgba(titleBgDataURL),
+            ]);
+            const out = window.Dezaemon.exportLevelToSfcSram(record, art, { name: record.name, title1, title2, titleBg });
             return { out, record };
         }
         let sfcSramBusy = false;

@@ -71,6 +71,8 @@ export interface SaveContent {
     boss: boolean;
   }[];
   titleChips: number;
+  /** MY SHIP GROUP pose slots (0-11) naming the save's own chips: the level's ship, not the factory's. */
+  shipPoseChips: number;
   tiles: number;
   /** Stages that carry scenery or spawns. */
   stagesWithContent: number;
@@ -97,9 +99,13 @@ export function saveContent(parsed: Parsed): SaveContent {
   const titleChips =
     parsed.groups?.title?.filter((c: { empty: boolean }) => !c.empty).length ??
       0;
+  const shipPoseChips =
+    parsed.groups?.myShip?.slice(0, 12).filter((c: { user: boolean }) => c.user)
+      .length ?? 0;
   return {
     stages,
     titleChips,
+    shipPoseChips,
     tiles: parsed.graphics?.usedCount ?? 0,
     stagesWithContent: stages.filter((s) => s.mapCells > 0 || s.spawns > 0)
       .length,
@@ -206,6 +212,20 @@ export function staticFindings(
     );
   } else f("pass", "title", `${content.titleChips} title chips`);
 
+  if (content.shipPoseChips === 0) {
+    f(
+      "warn",
+      "ship",
+      "the ship's pose slots name no chip of the save's own: the factory ship flies",
+    );
+  } else {
+    f(
+      "pass",
+      "ship",
+      `the level's own ship: ${content.shipPoseChips} of the 12 pose chips are the save's`,
+    );
+  }
+
   for (const s of content.stages) {
     const parts: string[] = [];
     if (s.mapCells === 0) parts.push("no scenery (black background)");
@@ -225,12 +245,13 @@ export function staticFindings(
     }
   }
   // Rows the game copies to CGRAM that are all black draw their content
-  // invisibly — the usual reason a title "shows nothing".
+  // invisibly — the usual reason a title "shows nothing". Words 0..14 are
+  // the colours (the console lands them at 1..15; word 15 is never copied).
   const rows = parsed.palettes?.rows ?? [];
   const black = (row: number) =>
     rows[row]
       ? Array.from(rows[row].raw as Uint16Array).every((w, i) =>
-        i === 0 || (w & 0x7fff) === 0
+        i === 15 || (w & 0x7fff) === 0
       )
       : false;
   if (content.titleChips > 0 && black(19)) {
@@ -701,6 +722,7 @@ export async function liveFindings(
       ["scenery (BG palette 7 ← row 0)", 7, 0],
       ["boss (BG palette 6 ← row 12)", 6, 12],
       ["enemies (OBJ palette 4 ← row 6)", 12, 6],
+      ["ship (OBJ palette 7 ← row 18)", 15, 18],
     ];
     for (const [what, pal, row] of checks) {
       const live = cgramRowMatches(report.cgram, pal, rows[row].raw);

@@ -259,6 +259,22 @@ export function fitRgba(frame, boxW, boxH) {
     return { w: boxW, h: boxH, rgba: out, scaled: scale < 1 };
 }
 
+/** An RGBA frame mirrored left to right. */
+export function hflipRgba(frame) {
+    const out = new Uint8Array(frame.rgba.length);
+    for (let y = 0; y < frame.h; y++) {
+        for (let x = 0; x < frame.w; x++) {
+            const s = (y * frame.w + (frame.w - 1 - x)) * 4;
+            const d = (y * frame.w + x) * 4;
+            out[d] = frame.rgba[s];
+            out[d + 1] = frame.rgba[s + 1];
+            out[d + 2] = frame.rgba[s + 2];
+            out[d + 3] = frame.rgba[s + 3];
+        }
+    }
+    return { w: frame.w, h: frame.h, rgba: out };
+}
+
 /** The art band for a frame of w x h px: the smallest that holds it, else the largest. */
 export function bandFor(w, h) {
     for (let i = 0; i < RECORD_ART.length; i++) {

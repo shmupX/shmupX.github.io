@@ -6745,6 +6745,20 @@ function fitRgba(frame, boxW, boxH) {
   }
   return { w: boxW, h: boxH, rgba: out, scaled: scale < 1 };
 }
+function hflipRgba(frame) {
+  const out = new Uint8Array(frame.rgba.length);
+  for (let y = 0; y < frame.h; y++) {
+    for (let x = 0; x < frame.w; x++) {
+      const s = (y * frame.w + (frame.w - 1 - x)) * 4;
+      const d = (y * frame.w + x) * 4;
+      out[d] = frame.rgba[s];
+      out[d + 1] = frame.rgba[s + 1];
+      out[d + 2] = frame.rgba[s + 2];
+      out[d + 3] = frame.rgba[s + 3];
+    }
+  }
+  return { w: frame.w, h: frame.h, rgba: out };
+}
 function bandFor(w, h) {
   for (let i = 0; i < RECORD_ART.length; i++) {
     const b = RECORD_ART[i];
@@ -8014,7 +8028,11 @@ function buildDezaemonBgm(options = {}) {
     tempos
   };
   if (options.sequence !== false) {
-    out.sequence = Array.isArray(options.sequence) ? options.sequence.map((slot, k) => checkInt(slot, 0, SONG_SLOTS - 1, `sequence[${k}]`)) : slots.map((_, i) => i);
+    out.sequence = Array.isArray(options.sequence) ? options.sequence.map((slot, k) => {
+      checkInt(slot, 0, SONG_SLOTS - 1, `sequence[${k}]`);
+      if (!(String(slot) in songs)) fail(`sequence[${k}] names slot ${slot}, which songs does not carry`);
+      return slot;
+    }) : slots.map((_, i) => i);
   }
   return out;
 }
@@ -9732,20 +9750,6 @@ function b64ToBytes2(b64) {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
-}
-function hflipRgba(frame) {
-  const out = new Uint8Array(frame.rgba.length);
-  for (let y = 0; y < frame.h; y++) {
-    for (let x = 0; x < frame.w; x++) {
-      const s = (y * frame.w + (frame.w - 1 - x)) * 4;
-      const d = (y * frame.w + x) * 4;
-      out[d] = frame.rgba[s];
-      out[d + 1] = frame.rgba[s + 1];
-      out[d + 2] = frame.rgba[s + 2];
-      out[d + 3] = frame.rgba[s + 3];
-    }
-  }
-  return { w: frame.w, h: frame.h, rgba: out };
 }
 function mapKidsColumn(col, width, cellsWide = 1) {
   const last = KIDS_FIRST_VISIBLE_COLUMN + KIDS_VISIBLE_COLUMNS - cellsWide;
@@ -16520,7 +16524,7 @@ function writeCgramRow(bytes, row, words) {
   if (row < 0 || row >= PALETTE_ROW_COUNT) throw new Error(`palette row ${row} is outside 0..${PALETTE_ROW_COUNT - 1}`);
   const at = REGION2.palette.offset + row * CGRAM_ROW_BYTES;
   for (let i = 0; i < CGRAM_ROW_COLORS; i++) {
-    const w = i === 0 ? 0 : (words[i] ?? 0) & 32767;
+    const w = (words[i] ?? 0) & 32767;
     bytes[at + i * 2] = w & 255;
     bytes[at + i * 2 + 1] = w >> 8;
   }
@@ -16547,8 +16551,9 @@ function decodeCgramRows(bytes, offset, count) {
   for (let i = 0; i < count; i++) rows.push(decodeCgramRow(bytes, offset + i * CGRAM_ROW_BYTES));
   return rows;
 }
+var TRANSPARENT_COLOR = Object.freeze({ raw: 0, r: 0, g: 0, b: 0 });
 function rowsToPalettes(rows) {
-  return rows.map((row) => ({ colors: row.colors }));
+  return rows.map((row) => ({ colors: [TRANSPARENT_COLOR, ...row.colors.slice(0, CGRAM_ROW_COLORS - 1)] }));
 }
 function decodePaletteData(bytes) {
   const rows = decodeCgramRows(bytes, REGION2.palette.offset, PALETTE_ROW_COUNT);
@@ -16861,6 +16866,9 @@ var ENEMY_GROUP_STAGE_BYTES = ENEMY_GROUP_CHIPS * 2;
 var BOSS_GROUP_CHIPS = REGION2.bossGroup.length / STAGE_COUNT2 / 2;
 var BOSS_GROUP_STAGE_BYTES = BOSS_GROUP_CHIPS * 2;
 var TITLE_GROUP_CHIPS = REGION2.titleGroup.length / 2;
+function titleSlotForCell(cx, cy) {
+  return (cx >> 2) * 16 + cy * 4 + (cx & 3);
+}
 var ENDING_GROUP_CHIPS = REGION2.endingGroup.length / 2;
 var MY_SHIP_GROUP_CHIPS = REGION2.myShipGroup.length / 2;
 var MY_SHIP_FORCED_SLOTS = Object.freeze([[61, 1020], [62, 1021], [63, 1022]]);
@@ -17385,7 +17393,7 @@ function composeSfcCover(parsed, { stage = null } = {}) {
   if (!a) return null;
   const pick = pickSfcCoverWindow(parsed.maps, { stage });
   if (!pick) return null;
-  const back = a.palettes[0]?.colors?.[0] ?? { r: 0, g: 0, b: 0 };
+  const back = a.palettes[0]?.colors?.[1] ?? { r: 0, g: 0, b: 0 };
   const canvas = new Uint8ClampedArray(SFC_COVER_W * SFC_COVER_H * 4);
   for (let i = 0; i < SFC_COVER_W * SFC_COVER_H; i++) {
     canvas[i * 4] = back.r;
@@ -18070,6 +18078,9 @@ var SFC_HIT_UNITS = 25;
 var SFC_DEFAULT_AIM = 13;
 var SFC_TITLE_COLS = 8;
 var SFC_TITLE_ROWS = 4;
+var SFC_SHIP_POSE_PX = 32;
+var SFC_SHIP_POSE_SLOTS = Object.freeze({ left: 0, centre: 4, right: 8 });
+var SFC_TITLE_SCENE = Object.freeze({ w: 256, h: 480, logoY: 75, subtitleY: 130 });
 function nearestIndex5(table, value) {
   let best = 0, bestD = Infinity;
   table.forEach((v, i) => {
@@ -18155,7 +18166,7 @@ function quantizeToRow(frames) {
   const words = [];
   for (let k = 1; k < 16; k++) {
     const w = q.bank[k];
-    words.push(w ? w & 32767 : 0);
+    words.push(w & USER_COLOR_FLAG ? w & 32767 : 0);
   }
   const out = q.frames.map((f) => {
     const indices = new Uint8Array(f.indexed.length);
@@ -18171,8 +18182,75 @@ function cutChip(indices, w, cx, cy) {
   }
   return out;
 }
+function composeTitlePicture({ logo = null, subtitle = null, backdrop = null } = {}) {
+  const W = SFC_TITLE_COLS * CHIP_DIM, H = SFC_TITLE_ROWS * CHIP_DIM;
+  const scene = SFC_TITLE_SCENE;
+  const has = (f) => !!(f && f.rgba && f.w > 0 && f.h > 0);
+  const plates = [];
+  if (has(logo)) plates.push({ x: 0, y: scene.logoY, w: logo.w, h: logo.h, rgba: logo.rgba });
+  if (has(subtitle)) plates.push({ x: 0, y: scene.subtitleY, w: subtitle.w, h: subtitle.h, rgba: subtitle.rgba });
+  const bg = has(backdrop) ? backdrop : null;
+  if (!plates.length && !bg) return null;
+  let box = { x: 0, y: scene.logoY, w: scene.w, h: H };
+  if (plates.length) {
+    const x0 = Math.min(...plates.map((p) => p.x)), y0 = Math.min(...plates.map((p) => p.y));
+    const x1 = Math.max(...plates.map((p) => p.x + p.w)), y1 = Math.max(...plates.map((p) => p.y + p.h));
+    box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+  const scale = Math.min(1, W / box.w, H / box.h);
+  const ww = W / scale, wh = H / scale;
+  const within = (at, size, span2) => bg && size <= span2 ? Math.min(Math.max(at, 0), span2 - size) : at;
+  const wx = Math.round(within(box.x + (box.w - ww) / 2, ww, scene.w));
+  const wy = Math.round(within(box.y + (box.h - wh) / 2, wh, scene.h));
+  const over = (dst, f, x, y) => {
+    const s = (y * f.w + x) * 4;
+    const a = f.rgba[s + 3] / 255;
+    if (!a) return;
+    const keep = 1 - a;
+    dst[0] = f.rgba[s] * a + dst[0] * keep;
+    dst[1] = f.rgba[s + 1] * a + dst[1] * keep;
+    dst[2] = f.rgba[s + 2] * a + dst[2] * keep;
+    dst[3] = 255 * a + dst[3] * keep;
+  };
+  const px = [0, 0, 0, 0];
+  const sceneAt = (x, y) => {
+    px[0] = px[1] = px[2] = px[3] = 0;
+    if (x < 0 || y < 0 || x >= scene.w || y >= scene.h) return px;
+    if (bg) over(px, bg, x % bg.w, y % bg.h);
+    for (const p of plates) {
+      if (x >= p.x && y >= p.y && x < p.x + p.w && y < p.y + p.h) over(px, p, x - p.x, y - p.y);
+    }
+    return px;
+  };
+  const out = new Uint8Array(W * H * 4);
+  const span = (from, to) => [Math.floor(from), Math.max(Math.ceil(to), Math.floor(from) + 1)];
+  for (let oy = 0; oy < H; oy++) {
+    const [y0, y1] = span(wy + oy / scale, wy + (oy + 1) / scale);
+    for (let ox = 0; ox < W; ox++) {
+      const [x0, x1] = span(wx + ox / scale, wx + (ox + 1) / scale);
+      let r = 0, g = 0, b = 0, a = 0, n = 0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const p = sceneAt(x, y);
+          r += p[0];
+          g += p[1];
+          b += p[2];
+          a += p[3];
+          n++;
+        }
+      }
+      if (!a) continue;
+      const d = (oy * W + ox) * 4;
+      out[d] = Math.round(r * 255 / a);
+      out[d + 1] = Math.round(g * 255 / a);
+      out[d + 2] = Math.round(b * 255 / a);
+      out[d + 3] = Math.round(a / n);
+    }
+  }
+  return { w: W, h: H, rgba: out };
+}
 function buildSfcGameFromLevel(level, art2, options = {}) {
-  const opts = { name: null, title1: null, horizontal: false, ...options };
+  const opts = { name: null, title1: null, title2: null, titleBg: null, horizontal: false, ...options };
   const warnings = [];
   const warn = (m) => warnings.push(m);
   const name = String(opts.name || level.name || "game").trim() || "game";
@@ -18202,27 +18280,60 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     return hit;
   };
   const rows = [];
-  writeWords(bytes, REGION2.myShipGroup.offset, SFC_FACTORY_SHIP_WORDS);
   bytes.set(SFC_FACTORY_GLOBAL_ROWS, REGION2.palette.offset + PALETTE_ROW_SHIP * 32);
+  const shipWords = Uint16Array.from(SFC_FACTORY_SHIP_WORDS);
+  let shipFrames = (level.playerData && level.playerData.texture || []).map(lookup).filter(Boolean);
+  let shipSource = "level";
+  if (!shipFrames.length) {
+    shipSource = "duke";
+    shipFrames = decodePlayerArt().filter((f) => /^duke_\d$/.test(f.key)).slice(0, 2);
+  }
+  const shipLevel = fitRgba(shipFrames[0], SFC_SHIP_POSE_PX, SFC_SHIP_POSE_PX);
+  const shipBank = shipFrames.length > 1 ? fitRgba(shipFrames[1], SFC_SHIP_POSE_PX, SFC_SHIP_POSE_PX) : shipLevel;
+  const shipQuant = quantizeToRow([
+    { key: "left", ...shipBank },
+    { key: "centre", ...shipLevel },
+    { key: "right", ...hflipRgba(shipBank) }
+  ]);
+  writeCgramRow(bytes, PALETTE_ROW_SHIP, shipQuant.words);
+  rows.push({ row: PALETTE_ROW_SHIP, owner: "ship", colors: shipQuant.colors });
+  let shipChips = 0;
+  const poseSlots = [SFC_SHIP_POSE_SLOTS.left, SFC_SHIP_POSE_SLOTS.centre, SFC_SHIP_POSE_SLOTS.right];
+  shipQuant.frames.forEach((f, p) => {
+    for (let cy = 0; cy < 2; cy++) {
+      for (let cx = 0; cx < 2; cx++) {
+        const px = cutChip(f.indices, SFC_SHIP_POSE_PX, cx, cy);
+        let word = CHIP_BLANK_WORD;
+        if (!isTransparent(px)) {
+          const hit = bankChip(px, "ship");
+          if (hit) {
+            word = chipWordForIndex(hit.chip, hit);
+            shipChips++;
+          }
+        }
+        shipWords[poseSlots[p] + cy * 2 + cx] = word;
+      }
+    }
+  });
+  writeWords(bytes, REGION2.myShipGroup.offset, shipWords);
   let title = "none";
-  if (opts.title1 && opts.title1.rgba) {
-    const fitted = fitRgba(opts.title1, SFC_TITLE_COLS * CHIP_DIM, SFC_TITLE_ROWS * CHIP_DIM);
-    const q = quantizeToRow([{ key: "title", ...fitted }]);
-    writeCgramRow(bytes, PALETTE_ROW_TITLE, [0, ...q.words]);
+  const titleParts = [["logo", opts.title1], ["subtitle", opts.title2], ["backdrop", opts.titleBg]].filter(([, f]) => f && f.rgba).map(([what]) => what);
+  const picture = composeTitlePicture({ logo: opts.title1, subtitle: opts.title2, backdrop: opts.titleBg });
+  if (picture) {
+    const q = quantizeToRow([{ key: "title", ...picture }]);
+    writeCgramRow(bytes, PALETTE_ROW_TITLE, q.words);
     rows.push({ row: PALETTE_ROW_TITLE, owner: "title", colors: q.colors });
     const words = new Uint16Array(TITLE_GROUP_CHIPS).fill(CHIP_BLANK_WORD);
     for (let cy = 0; cy < SFC_TITLE_ROWS; cy++) {
       for (let cx = 0; cx < SFC_TITLE_COLS; cx++) {
-        const px = cutChip(q.frames[0].indices, fitted.w, cx, cy);
+        const px = cutChip(q.frames[0].indices, picture.w, cx, cy);
         if (isTransparent(px)) continue;
         const hit = bankChip(px, "title");
-        if (hit) words[cy * SFC_TITLE_COLS + cx] = chipWordForIndex(hit.chip, hit);
+        if (hit) words[titleSlotForCell(cx, cy)] = chipWordForIndex(hit.chip, hit);
       }
     }
     writeWords(bytes, REGION2.titleGroup.offset, words);
     title = "uploaded";
-  } else {
-    bytes.set(SFC_FACTORY_GLOBAL_ROWS.slice(32, 64), REGION2.palette.offset + PALETTE_ROW_TITLE * 32);
   }
   const built = stages.map((st, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
@@ -18255,7 +18366,7 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
         }
         const q = quantizeToRow(frames);
         if (frames.length) {
-          writeCgramRow(bytes, PALETTE_ROW_STAGE_BG + s, [0, ...q.words]);
+          writeCgramRow(bytes, PALETTE_ROW_STAGE_BG + s, q.words);
           rows.push({ row: PALETTE_ROW_STAGE_BG + s, owner: `${st.key} scenery`, colors: q.colors });
         }
         const indexedOf = new Map(q.frames.map((f) => [f.key, f.indices]));
@@ -18328,7 +18439,7 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     }
     const quant = quantizeToRow(enemyFrames.map((f) => ({ key: f.key, w: f.w, h: f.h, rgba: f.rgba })));
     if (enemyFrames.length) {
-      writeCgramRow(bytes, PALETTE_ROW_STAGE_ENEMY + s, [0, ...quant.words]);
+      writeCgramRow(bytes, PALETTE_ROW_STAGE_ENEMY + s, quant.words);
       rows.push({ row: PALETTE_ROW_STAGE_ENEMY + s, owner: `${st.key} enemies`, colors: quant.colors });
     }
     const indexedByKey = new Map(quant.frames.map((f) => [f.key, f]));
@@ -18428,7 +18539,7 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
       if (frames.length) {
         const fitted = fitRgba(frames[0], BOSS_SHEET_COLS * CHIP_DIM, BOSS_SHEET_ROWS * CHIP_DIM);
         const q = quantizeToRow([{ key: "boss", ...fitted }]);
-        writeCgramRow(bytes, PALETTE_ROW_STAGE_BOSS + s, [0, ...q.words]);
+        writeCgramRow(bytes, PALETTE_ROW_STAGE_BOSS + s, q.words);
         rows.push({ row: PALETTE_ROW_STAGE_BOSS + s, owner: `${st.key} boss`, colors: q.colors });
         for (let cy = 0; cy < BOSS_SHEET_ROWS; cy++) {
           for (let cx = 0; cx < BOSS_SHEET_COLS; cx++) {
@@ -18530,8 +18641,10 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     stages: built,
     chips: { used: bank.used, capacity: USER_CHIP_COUNT, shared: bank.shared, free: USER_CHIP_COUNT - bank.used },
     rows,
-    ship: "factory",
+    ship: shipSource,
+    shipChips,
     title,
+    titleParts,
     sound: "factory"
   };
   return { bytes, name, warnings, report };

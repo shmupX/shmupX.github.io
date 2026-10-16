@@ -236,9 +236,10 @@ Deno.test("the verdict reads the console: palettes, tiles, screen, SRAM", async 
   const cgram = cgramWith([[7, rows[0].raw], [6, rows[12].raw], [
     12,
     rows[6].raw,
-  ]]);
+  ], [15, rows[18].raw]]);
   assert(cgramRowMatches(cgram, 12, rows[6].raw));
   assert(!cgramRowMatches(cgram, 5, rows[6].raw));
+  assert(cgramRowMatches(cgram, 15, rows[18].raw), "the ship's row");
 
   // VRAM carrying the save's first eight sheet tiles and some noise
   const vram = new Uint8Array(0x10000);
@@ -274,7 +275,12 @@ Deno.test("the verdict reads the console: palettes, tiles, screen, SRAM", async 
   ]));
   const v = await liveFindings(builtLevel, null, good, EXIT.ok);
   assert(v.ok, JSON.stringify(v.findings));
-  assertEquals(byCheck(v.findings, "palette"), ["pass", "pass", "pass"]);
+  assertEquals(byCheck(v.findings, "palette"), [
+    "pass",
+    "pass",
+    "pass",
+    "pass",
+  ]);
   assertEquals(byCheck(v.findings, "tiles"), ["pass"]);
   assertEquals(byCheck(v.findings, "screen"), ["pass"]);
   assertEquals(byCheck(v.findings, "sram"), ["pass"]);
@@ -291,7 +297,12 @@ Deno.test("the verdict reads the console: palettes, tiles, screen, SRAM", async 
   const bad = await liveFindings(builtLevel, null, formatted, EXIT.ok);
   assert(!bad.ok);
   assertEquals(byCheck(bad.findings, "sram"), ["fail"]);
-  assertEquals(byCheck(bad.findings, "palette"), ["fail", "fail", "fail"]);
+  assertEquals(byCheck(bad.findings, "palette"), [
+    "fail",
+    "fail",
+    "fail",
+    "fail",
+  ]);
 
   // a run that never reached the menu
   const stuck = decodeReport(encodeReport([

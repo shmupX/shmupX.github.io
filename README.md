@@ -2018,13 +2018,16 @@ deno task build:sfc foo --report              # the per-stage entries, records, 
 ```
 
 The art is quantised into the 15-colour rows the game copies (a stage's
-scenery, enemies and boss each have one; the title another) and cut into
-16x16 chips of the save's two sheets; scenery becomes map rows naming group
-slots, an enemy an entry of the class its art fits with its frames in the
-stage's sheet, each wave a spawn record on its line, the boss an 8x4 sheet
-spawned after the last wave; the ship sheet and the sound are the factory
-game's; the seventeen checksum words are sealed last and the image is read
-back before it is written. `/api/sfc-save` installs a save as Mednafen's
+scenery, enemies and boss each have one; the ship and the title another each)
+and cut into 16x16 chips of the save's two sheets; scenery becomes map rows
+naming group slots, an enemy an entry of the class its art fits with its
+frames in the stage's sheet, each wave a spawn record on its line, the boss
+an 8x4 sheet spawned after the last wave; the ship's three poses are the
+level's own frames (Duke when it has none) on the factory ship sheet, whose
+shots, bullets and items stay the ROM's; the title picture is the title
+editor's backdrop, logo and subtitle as the browser lays them out; the sound
+is the factory game's; the seventeen checksum words are sealed last and the
+image is read back before it is written. `/api/sfc-save` installs a save as Mednafen's
 `<rom>.srm` for the Dezaemon ROM in `dev-fixtures/` and starts it. FORMAT-SFC.md
 "Writing a save" lists what is a template rather than a trace.
 

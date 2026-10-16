@@ -54,7 +54,7 @@ Deno.test("isColorRow rejects a word with bit 15 set", () => {
 
 Deno.test("decodePaletteData reads 24 rows from 0x40 in the shape indexedToRgba takes", () => {
   const bytes = new Uint8Array(0x20000);
-  bytes[REGION.palette.offset + 2] = 0x1f; // row 0 colour 1 = red
+  bytes[REGION.palette.offset + 2] = 0x1f; // row 0 word 1 = red, which index 2 draws (a row lands one colour up)
   bytes[REGION.palette.end - 1] = 0x80; // last word of the last row: not colour
   const data = decodePaletteData(bytes);
   assertEquals(PALETTE_ROW_COUNT, 24);
@@ -64,8 +64,8 @@ Deno.test("decodePaletteData reads 24 rows from 0x40 in the shape indexedToRgba 
   assertEquals(data.colorRowCount, 23);
   assertEquals(data.allColor, false);
   const rgba = indexedToRgba(
-    new Uint8Array([0x01, 0x00]),
+    new Uint8Array([0x02, 0x01, 0x00]),
     rowsToPalettes(data.rows),
   );
-  assertEquals(Array.from(rgba), [255, 0, 0, 255, 0, 0, 0, 0]);
+  assertEquals(Array.from(rgba), [255, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 0]);
 });

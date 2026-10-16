@@ -147,11 +147,12 @@ export function composeSfcCover(parsed, { stage = null } = {}) {
     const pick = pickSfcCoverWindow(parsed.maps, { stage });
     if (!pick) return null;
 
-    // Colour 0 of row 0 is the SNES backdrop — what the PPU shows wherever no
+    // Row 0's first word is the SNES backdrop — what the PPU shows wherever no
     // BG tile is drawn, which on a Dezaemon stage is most of the sky. Filling
     // with it is what makes the cover the game's own colour rather than a
-    // transparent PNG that the shelf's background shows through.
-    const back = a.palettes[0]?.colors?.[0] ?? { r: 0, g: 0, b: 0 };
+    // transparent PNG that the shelf's background shows through. (The rows
+    // come laid out as the console draws them, word 0 at colour 1.)
+    const back = a.palettes[0]?.colors?.[1] ?? { r: 0, g: 0, b: 0 };
     const canvas = new Uint8ClampedArray(SFC_COVER_W * SFC_COVER_H * 4);
     for (let i = 0; i < SFC_COVER_W * SFC_COVER_H; i++) {
         canvas[i * 4] = back.r;

@@ -297,7 +297,7 @@ the boss is a BG object and enemies and the ship are sprites.
 | MAP GROUP     | 6 × 128 | the chips a stage's map cells name; cleared to `0xFF` with word 0 = `0x03FF`                                 |
 | ENEMY GROUP   | 6 × 64  | the stage's enemy sprite sheet, 8×8 chips; cleared to `0xFFFF`                                               |
 | BOSS GROUP    | 6 × 32  | the boss as an 8×4-chip BG sheet (128×64 px), drawn whole on BG1; cleared to `0x03FF`                        |
-| TITLE GROUP   | 32      | the title picture, assembled like a stage sheet                                                              |
+| TITLE GROUP   | 32      | the title picture, 8×4 chips on screen as two 4-wide halves: slots 0-15 the left, 16-31 the right, each 4 rows row-major |
 | ENDING GROUP  | 12      | the ending screen's chips; `0x03FF` when unused                                                              |
 | MY SHIP GROUP | 64      | the ship sheet: poses, shots, enemy bullets, weapons, items, explosions; slots 61-63 forced to `0x3FC-0x3FE` |
 
@@ -511,9 +511,11 @@ factory sample's SOUND DATA and BGM PATCH (the ROM's songs), all embedded in
 `factory-data.js` by `tools/sfc-sav/factory-data.ts`. Over that:
 
 - **Art** is quantised into 15-colour rows — row n for stage n's scenery, 6+n
-  its enemies, 12+n its boss, 19 the title — and cut into 16×16 chips of the two
-  user sheets, one copy per distinct chip with mirrors shared through the flip
-  bits (`SfcChipBank`); a chip's word is its index.
+  its enemies, 12+n its boss, 18 the ship, 19 the title — written with a
+  sprite's first colour in word 0, since the console lands a row one colour up
+  (pixel index k draws word k − 1; "Running a save" below) — and cut into
+  16×16 chips of the two user sheets, one copy per distinct chip with mirrors
+  shared through the flip bits (`SfcChipBank`); a chip's word is its index.
 - **Scenery**: the level's 16×16 cell grid, one chip a cell, the first 128 rows
   centred in the 16-column playfield; a stage's distinct chips take MAP GROUP
   slots 1..127 and the cells' own flips ride the cell bits. The scroll tables
@@ -531,11 +533,23 @@ factory sample's SOUND DATA and BGM PATCH (the ROM's songs), all embedded in
   records 2..255. **The boss** paints its first frame into the 8×4 sheet, wears
   the sample's stage-0 block with the hit-point index nearest hits × 25 and the
   wide layout, and is spawned by a class-5 byte twelve lines past the last wave.
-- **The ship** and everything the ship sheet carries (shots, enemy bullets,
-  weapons, items, explosions) are the factory sheet's words — the ROM's art,
-  read at play time exactly as the sample reads it — with the sample's rows 18,
-  20 and 21; the level's own ship is not painted yet (the pose slots are likely,
-  not traced).
+- **The ship** is the level's own frames — the first as the level pose, the
+  second (else the first) banking left and its mirror banking right, each
+  fitted to 32×32 — in the three pose slots the player handler names (chips
+  0-3, 4-7 and 8-11 of MY SHIP GROUP, each TL TR BL BR) through row 18, which
+  only the ship draws through; a level with no ship frames flies Duke. The
+  rest of the sheet (the dome at 12-15, shots, enemy bullets, weapons, items,
+  explosions) keeps the factory sheet's words — the ROM's art, read at play
+  time exactly as the sample reads it — with the sample's rows 20 and 21.
+- **The title picture** (TITLE GROUP, 8×4 chips on screen through row 19) is
+  the browser's title scene as the cart can hold it: the title editor's
+  backdrop tiled from the top-left, the logo at y 75 and the subtitle at y 130
+  flush left, the window around the logo and subtitle fitted to 128×64 and
+  box-filtered down (`composeTitlePicture`); a logo alone sits on the title's
+  black, as the sample's does. The group is not that grid row-major — the
+  left half of the picture is slots 0-15 and the right half 16-31, each 4
+  wide and 4 rows row-major (`titleSlotForCell`; a save with every chip
+  coded, photographed at the title, 2026-10-16).
 - The sixteen CHECK SUM words, the copy and its word are sealed last, and the
   image is read back through `parseSfcSav` and `verifySfcChecksums` before it
   leaves.
@@ -566,12 +580,27 @@ both games:
   game, so it is not a "sample is playing" flag at the menu.
 - **CGRAM at play.** A PALETTE DATA row lands one colour up — colour 0 of
   the hardware palette is transparent, so row word k is palette colour
-  k + 1 and the row's word 15 is dropped: BG palette 7 ← row n (stage n's
-  scenery), BG palette 6 ← row 12 + n (boss), OBJ palette 4 (CGRAM 0x180) ←
-  row 6 + n (enemies), BG palette 3 ← row 19 (title). VRAM holds the
-  stage's chips as the save's own tiles (ALDI: ~500 of its 1,947 tiles in
-  VRAM mid-stage 0, plus ~190 of the ROM's factory tiles for the ship, shots
-  and items).
+  k + 1 and the row's word 15 is dropped; a pixel of index k therefore draws
+  word k − 1, which is how the writer lays a row out: BG palette 7 ← row n
+  (stage n's scenery), BG palette 6 ← row 12 + n (boss), OBJ palette 4
+  (CGRAM 0x180) ← row 6 + n (enemies), BG palette 3 ← row 19 (title), OBJ
+  palette 7 ← row 18 (ship), OBJ palette 6 ← row 20 (items), OBJ palette 5
+  ← row 21 (free), and OBJ palette 1 ← row 21 again with its word 15 at
+  colour 0 (a built level's dump at the title and in play, 2026-10-16). VRAM
+  holds the stage's chips as the save's own tiles (ALDI: ~500 of its 1,947
+  tiles in VRAM mid-stage 0, plus ~190 of the ROM's factory tiles for the
+  ship, shots and items).
+- **The ship sheet at play** (OAM, a built level, 2026-10-16). The ship is
+  four 16×16 OBJs through OBJ palette 7, naming MY SHIP GROUP chips 4-7 (TL
+  TR BL BR) while level, 0-3 while banking left and 8-11 banking right — the
+  player handler `$02:85D6` keeps the pose in the object's byte 1 (0 left, 1
+  level, 2 right) and walks it one step every 5 frames (10 back to level)
+  from the sign of the x velocity, which it reads from the speed table
+  `$02:8743` by the pad direction and `$19D4 & 3`. Chips 12-15 (the factory's
+  blue dome) were never named in 2,000 frames. Y fires: the shots are chips
+  47-53 through OBJ palette 6; enemy bullets and explosions are chips 24-45
+  through OBJ palette 5; the forced 61-63 draw through OBJ palette 1.
+  Nothing but the ship draws through palette 7, so row 18 is the ship's own.
 - **Mesen.** Its home on this machine's build is
   `~/Library/Application Support/MesenCE/` (Mesen 2 proper uses `~/Mesen2`
   or `~/Documents/Mesen2`); the battery is `Saves/<rom base>.srm`, written
@@ -582,18 +611,18 @@ both games:
 
 ## Unresolved
 
-- **The play-time palette slots** of rows 18-21 (ship, title, items, free): the
-  loaders go through a copy table not yet found; writing the sample's rows and
-  keeping the row numbers is right by construction.
+- **The row-to-CGRAM copy** for rows 18-21 goes through a table not yet
+  found; which palette each lands in is observed ("Running a save"), not
+  traced.
 - **Entry byte 1 bits 0-4** (shot aim/pattern) and the shapes of shot types 0-2:
   the shot routine `$02:82AD`. The writer copies the sample's value.
 - **The boss block's pair bytes 7-12** and the score index's table; the exact
   phase logic (`$02:A337`).
 - **SCROLL EFECT +0x100**: no play-time reader found; `0x42` is what every save
   holds.
-- **The ship sheet's pose order** (chips 0-15 as LEFT/CENTER/RIGHT × two
-  animation types) — the player handler `$02:85D6`; the item and weapon slot
-  roles beyond the pointers listed in the trace.
+- **The ship sheet's chips 12-15** (the factory's blue dome: a second
+  animation type?) and the item and weapon slot roles beyond the pointers
+  listed in the trace; the three poses are settled ("Running a save").
 - **SOUND DATA's note format**, and whether an all-zero song is tolerated; the
   writer carries the sample's 16 songs and points BGM PATCH at ROM songs.
 - **The player's shot damage** against the hit-point table.

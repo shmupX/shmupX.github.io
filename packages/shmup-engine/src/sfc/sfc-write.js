@@ -8,7 +8,11 @@
 // loaders read (FORMAT-SFC.md, traced 2026-10-14):
 //
 //   - the art is quantised into 15-colour palette rows — row n for stage n's
-//     scenery, 6+n its enemies, 12+n its boss, 19 the title — and cut into
+//     scenery, 6+n its enemies, 12+n its boss, 18 the ship, 19 the title —
+//     written with a sprite's first colour in word 0, because the console
+//     lands a row one colour up (the game copies words 0..14 into colours
+//     1..15 of the palette its layer owns, so pixel index k draws word k - 1;
+//     FORMAT-SFC.md "Running a save") — and cut into
 //     16x16 chips in the save's two GRAPIC DATA sheets, one copy per distinct
 //     chip with mirrors shared through the flip bits;
 //   - a stage's scenery is 128 rows of 16 chips naming MAP GROUP slots, the
@@ -19,10 +23,18 @@
 //     DATA fired by the line table, one line a map row;
 //   - the boss is the 8x4-chip BOSS GROUP sheet with the sample's stage-0
 //     block for its behaviour, spawned by a class-5 byte after the last wave;
-//   - the ship, its shots, the enemy bullets, items and explosions are the
-//     factory ship sheet (the ROM's art, read at play time), the sound is the
-//     factory sample's (factory-data.js), and the CHECK SUM block is sealed
-//     last. The image is read back through parseSfcSav before it leaves.
+//   - the ship is the level's own frames (Duke when it has none) in the
+//     three poses the player handler names — chips 0-3 of the ship sheet
+//     banking left, 4-7 level, 8-11 banking right, drawn as four 16x16 OBJs
+//     through OBJ palette 7 <- row 18, which nothing else draws through; the
+//     rest of the sheet (shots, enemy bullets, items, explosions, through
+//     rows 20 and 21) stays the factory's, the ROM's art read at play time;
+//   - the title picture (TITLE GROUP, 8x4 chips) is the browser's title
+//     scene as the cart can hold it: the title editor's backdrop with the
+//     logo and subtitle over it, the window around them fitted to 128x64;
+//   - the sound is the factory sample's (factory-data.js), and the CHECK SUM
+//     block is sealed last. The image is read back through parseSfcSav
+//     before it leaves.
 //
 // What is settled and what is still a template is in FORMAT-SFC.md "Writing
 // a save". Environment-neutral ESM (Node + browser).
@@ -53,6 +65,7 @@ import {
     MAP_GROUP_CHIPS,
     MAP_GROUP_STAGE_BYTES,
     TITLE_GROUP_CHIPS,
+    titleSlotForCell,
 } from "./groups.js";
 import {
     APPEAR_BOSS_CLASS,
@@ -82,8 +95,9 @@ import { PALETTE_ROW_SHIP, PALETTE_ROW_STAGE_BG, PALETTE_ROW_STAGE_BOSS, PALETTE
 import { formatSfcSram } from "./sfc-format.js";
 import { SFC_FACTORY_BOSS_BLOCK, SFC_FACTORY_GLOBAL_ROWS, SFC_FACTORY_SHIP_WORDS } from "./factory-data.js";
 import { parseSfcSav } from "./index.js";
-import { quantizeFrames } from "../palette/palette-target.js";
-import { decodeFrameKey, fitRgba, levelStages, spreadFrames } from "../write/game-to-save.js";
+import { quantizeFrames, USER_COLOR_FLAG } from "../palette/palette-target.js";
+import { decodeFrameKey, fitRgba, hflipRgba, levelStages, spreadFrames } from "../write/game-to-save.js";
+import { decodePlayerArt } from "../player-art.js";
 
 /** The playfield's spawn columns 1..14, and the map row a wave spawns on when the level says nothing. */
 export const SFC_FIRST_SPAWN_LINE = 2;
@@ -96,9 +110,24 @@ export const SFC_LAST_SPAWN_LINE = APPEAR_LINES - 2;
 export const SFC_HIT_UNITS = 25;
 /** The aim value the sample's firing enemies carry (byte 1 bits 0-4; its pattern is untraced). */
 export const SFC_DEFAULT_AIM = 13;
-/** The title picture's shape: TITLE GROUP is 32 chips as 8 x 4. */
+/** The title picture's shape on screen: TITLE GROUP's 32 chips as 8 x 4 (titleSlotForCell places each). */
 export const SFC_TITLE_COLS = 8;
 export const SFC_TITLE_ROWS = 4;
+/**
+ * The ship's poses: 32x32 each, four 16x16 chips TL TR BL BR, at these MY
+ * SHIP GROUP slots — what the player handler ($02:85D6) names in OAM while
+ * level, banking left and banking right (traced 2026-10-16). Chips 12-15 are
+ * never named in play and keep the factory's words.
+ */
+export const SFC_SHIP_POSE_PX = 32;
+export const SFC_SHIP_POSE_SLOTS = Object.freeze({ left: 0, centre: 4, right: 8 });
+/**
+ * The browser's title scene, whose layout the title picture follows: a
+ * 256x480 screen, the backdrop tiled from the top-left at its own size, the
+ * logo plate at y 75 and the subtitle at y 130, both flush left (the PS2
+ * exporter's titleUploadFrames reads the same numbers off the title scene).
+ */
+export const SFC_TITLE_SCENE = Object.freeze({ w: 256, h: 480, logoY: 75, subtitleY: 130 });
 
 function nearestIndex(table, value) {
     let best = 0, bestD = Infinity;
@@ -203,7 +232,9 @@ function isTransparent(pixels) {
 /**
  * Reduce RGBA frames to one 15-colour row: {frames: [{key, w, h, indices}],
  * words: [15 colour words], colors}. Index 0 is transparent; the frames'
- * values are 1..15 of that row.
+ * values are 1..15 of that row, and words[k - 1] is the colour of index k —
+ * the order writeCgramRow takes, since the console lands a row one colour
+ * up. Slots the quantiser did not fill are 0.
  */
 export function quantizeToRow(frames) {
     if (!frames.length) return { frames: [], words: [], colors: 0 };
@@ -211,7 +242,7 @@ export function quantizeToRow(frames) {
     const words = [];
     for (let k = 1; k < 16; k++) {
         const w = q.bank[k];
-        words.push(w ? w & 0x7fff : 0);
+        words.push(w & USER_COLOR_FLAG ? w & 0x7fff : 0);
     }
     const out = q.frames.map((f) => {
         const indices = new Uint8Array(f.indexed.length);
@@ -231,15 +262,106 @@ export function cutChip(indices, w, cx, cy) {
 }
 
 /**
+ * The title picture: the browser's title scene as the cart's 8x4-chip TITLE
+ * GROUP (128x64). The scene is composed as the title scene draws it — the
+ * backdrop tiled from the top-left at its own size, the logo at y 75 and the
+ * subtitle at y 130, each flush left — and the window around the logo and
+ * subtitle (the band the logo would sit in when there is only a backdrop) is
+ * fitted to the picture, never upscaled, and box-filtered down. Where the
+ * scene has nothing the picture is transparent, so a logo on its own sits on
+ * the title's black as the sample's does. Null when there is no title art.
+ *
+ * `logo`, `subtitle` and `backdrop` are {w, h, rgba} or null; returns
+ * {w: 128, h: 64, rgba} or null.
+ */
+export function composeTitlePicture({ logo = null, subtitle = null, backdrop = null } = {}) {
+    const W = SFC_TITLE_COLS * CHIP_DIM, H = SFC_TITLE_ROWS * CHIP_DIM;
+    const scene = SFC_TITLE_SCENE;
+    const has = (f) => !!(f && f.rgba && f.w > 0 && f.h > 0);
+    const plates = [];
+    if (has(logo)) plates.push({ x: 0, y: scene.logoY, w: logo.w, h: logo.h, rgba: logo.rgba });
+    if (has(subtitle)) plates.push({ x: 0, y: scene.subtitleY, w: subtitle.w, h: subtitle.h, rgba: subtitle.rgba });
+    const bg = has(backdrop) ? backdrop : null;
+    if (!plates.length && !bg) return null;
+
+    // The window: around the plates, else the band the logo would sit in.
+    let box = { x: 0, y: scene.logoY, w: scene.w, h: H };
+    if (plates.length) {
+        const x0 = Math.min(...plates.map((p) => p.x)), y0 = Math.min(...plates.map((p) => p.y));
+        const x1 = Math.max(...plates.map((p) => p.x + p.w)), y1 = Math.max(...plates.map((p) => p.y + p.h));
+        box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    }
+    const scale = Math.min(1, W / box.w, H / box.h);
+    const ww = W / scale, wh = H / scale;
+    // Centred on the box — and, when a backdrop fills the screen, kept on the
+    // screen where it fits, so the picture shows backdrop rather than the
+    // black past the screen's edge; plates alone are simply centred.
+    const within = (at, size, span) => (bg && size <= span ? Math.min(Math.max(at, 0), span - size) : at);
+    const wx = Math.round(within(box.x + (box.w - ww) / 2, ww, scene.w));
+    const wy = Math.round(within(box.y + (box.h - wh) / 2, wh, scene.h));
+
+    // One scene pixel, premultiplied: the backdrop under the plates.
+    const over = (dst, f, x, y) => {
+        const s = (y * f.w + x) * 4;
+        const a = f.rgba[s + 3] / 255;
+        if (!a) return;
+        const keep = 1 - a;
+        dst[0] = f.rgba[s] * a + dst[0] * keep;
+        dst[1] = f.rgba[s + 1] * a + dst[1] * keep;
+        dst[2] = f.rgba[s + 2] * a + dst[2] * keep;
+        dst[3] = 255 * a + dst[3] * keep;
+    };
+    const px = [0, 0, 0, 0];
+    const sceneAt = (x, y) => {
+        px[0] = px[1] = px[2] = px[3] = 0;
+        if (x < 0 || y < 0 || x >= scene.w || y >= scene.h) return px;
+        if (bg) over(px, bg, x % bg.w, y % bg.h);
+        for (const p of plates) {
+            if (x >= p.x && y >= p.y && x < p.x + p.w && y < p.y + p.h) over(px, p, x - p.x, y - p.y);
+        }
+        return px;
+    };
+    // Box-filtered down: a picture pixel is the mean of the scene pixels it covers.
+    const out = new Uint8Array(W * H * 4);
+    const span = (from, to) => [Math.floor(from), Math.max(Math.ceil(to), Math.floor(from) + 1)];
+    for (let oy = 0; oy < H; oy++) {
+        const [y0, y1] = span(wy + oy / scale, wy + (oy + 1) / scale);
+        for (let ox = 0; ox < W; ox++) {
+            const [x0, x1] = span(wx + ox / scale, wx + (ox + 1) / scale);
+            let r = 0, g = 0, b = 0, a = 0, n = 0;
+            for (let y = y0; y < y1; y++) {
+                for (let x = x0; x < x1; x++) {
+                    const p = sceneAt(x, y);
+                    r += p[0];
+                    g += p[1];
+                    b += p[2];
+                    a += p[3];
+                    n++;
+                }
+            }
+            if (!a) continue;
+            const d = (oy * W + ox) * 4;
+            out[d] = Math.round(r * 255 / a);
+            out[d + 1] = Math.round(g * 255 / a);
+            out[d + 2] = Math.round(b * 255 / a);
+            out[d + 3] = Math.round(a / n);
+        }
+    }
+    return { w: W, h: H, rgba: out };
+}
+
+/**
  * Build the image. `art` maps atlas frame names to {w, h, rgba}. Options:
  * `name` (the game's name, for the file; a Super Famicom save carries no
- * text name), `title1` ({w, h, rgba}, the title picture), `horizontal`
- * (refused with a warning: the cart scrolls vertically).
+ * text name), `title1`, `title2` and `titleBg` ({w, h, rgba}: the title
+ * editor's logo, subtitle and backdrop, composed into the title picture by
+ * composeTitlePicture), `horizontal` (refused with a warning: the cart
+ * scrolls vertically).
  *
  * Returns {bytes, name, warnings, report}.
  */
 export function buildSfcGameFromLevel(level, art, options = {}) {
-    const opts = { name: null, title1: null, horizontal: false, ...options };
+    const opts = { name: null, title1: null, title2: null, titleBg: null, horizontal: false, ...options };
     const warnings = [];
     const warn = (m) => warnings.push(m);
     const name = String(opts.name || level.name || "game").trim() || "game";
@@ -273,32 +395,79 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
     };
     const rows = []; // report: palette rows written
 
-    // --- the ship, items, bullets, explosions: the factory sheet and its rows ---
-    writeWords(bytes, REGION.myShipGroup.offset, SFC_FACTORY_SHIP_WORDS);
+    // --- the ship: the level's own poses on the factory sheet ---
+    // MY SHIP GROUP stays the factory's — its shots, the enemy bullets, items
+    // and explosions are the ROM's art, drawn through rows 20 and 21 — but
+    // for the three poses the player handler names: chips 0-3 banking left,
+    // 4-7 level, 8-11 banking right, each TL TR BL BR as the four 16x16 OBJs
+    // the ship is drawn with, through OBJ palette 7 <- row 18, which nothing
+    // else draws through, so the row is the ship's. Chips 12-15 are never
+    // named in play and keep the factory's words. The level's first frame is
+    // the level pose and its second (else the first) the bank, mirrored for
+    // the right, as the Kids! writer lays its ship out; a level with no ship
+    // frames flies Duke, who ships with the engine, so no cart is flown by an
+    // invisible ship. Painted first: it is the one thing every stage draws.
     bytes.set(SFC_FACTORY_GLOBAL_ROWS, REGION.palette.offset + PALETTE_ROW_SHIP * 32);
+    const shipWords = Uint16Array.from(SFC_FACTORY_SHIP_WORDS);
+    let shipFrames = ((level.playerData && level.playerData.texture) || []).map(lookup).filter(Boolean);
+    let shipSource = "level";
+    if (!shipFrames.length) {
+        shipSource = "duke";
+        shipFrames = decodePlayerArt().filter((f) => /^duke_\d$/.test(f.key)).slice(0, 2);
+    }
+    const shipLevel = fitRgba(shipFrames[0], SFC_SHIP_POSE_PX, SFC_SHIP_POSE_PX);
+    const shipBank = shipFrames.length > 1 ? fitRgba(shipFrames[1], SFC_SHIP_POSE_PX, SFC_SHIP_POSE_PX) : shipLevel;
+    const shipQuant = quantizeToRow([
+        { key: "left", ...shipBank },
+        { key: "centre", ...shipLevel },
+        { key: "right", ...hflipRgba(shipBank) },
+    ]);
+    writeCgramRow(bytes, PALETTE_ROW_SHIP, shipQuant.words);
+    rows.push({ row: PALETTE_ROW_SHIP, owner: "ship", colors: shipQuant.colors });
+    let shipChips = 0;
+    const poseSlots = [SFC_SHIP_POSE_SLOTS.left, SFC_SHIP_POSE_SLOTS.centre, SFC_SHIP_POSE_SLOTS.right];
+    shipQuant.frames.forEach((f, p) => {
+        for (let cy = 0; cy < 2; cy++) {
+            for (let cx = 0; cx < 2; cx++) {
+                const px = cutChip(f.indices, SFC_SHIP_POSE_PX, cx, cy);
+                let word = CHIP_BLANK_WORD;
+                if (!isTransparent(px)) {
+                    const hit = bankChip(px, "ship");
+                    if (hit) {
+                        word = chipWordForIndex(hit.chip, hit);
+                        shipChips++;
+                    }
+                }
+                shipWords[poseSlots[p] + cy * 2 + cx] = word;
+            }
+        }
+    });
+    writeWords(bytes, REGION.myShipGroup.offset, shipWords);
 
-    // --- the title picture ---
+    // --- the title picture: the title editor's backdrop, logo and subtitle ---
+    // Row 19 was set with the factory rows above; a level with no title art
+    // keeps it and the blank group, as the sample's is.
     let title = "none";
-    if (opts.title1 && opts.title1.rgba) {
-        const fitted = fitRgba(opts.title1, SFC_TITLE_COLS * CHIP_DIM, SFC_TITLE_ROWS * CHIP_DIM);
-        const q = quantizeToRow([{ key: "title", ...fitted }]);
-        writeCgramRow(bytes, PALETTE_ROW_TITLE, [0, ...q.words]);
+    const titleParts = [["logo", opts.title1], ["subtitle", opts.title2], ["backdrop", opts.titleBg]]
+        .filter(([, f]) => f && f.rgba).map(([what]) => what);
+    const picture = composeTitlePicture({ logo: opts.title1, subtitle: opts.title2, backdrop: opts.titleBg });
+    if (picture) {
+        const q = quantizeToRow([{ key: "title", ...picture }]);
+        writeCgramRow(bytes, PALETTE_ROW_TITLE, q.words);
         rows.push({ row: PALETTE_ROW_TITLE, owner: "title", colors: q.colors });
+        // The group is not the 8x4 picture row-major: two 4-wide halves, the
+        // left in slots 0-15 and the right in 16-31 (titleSlotForCell).
         const words = new Uint16Array(TITLE_GROUP_CHIPS).fill(CHIP_BLANK_WORD);
         for (let cy = 0; cy < SFC_TITLE_ROWS; cy++) {
             for (let cx = 0; cx < SFC_TITLE_COLS; cx++) {
-                const px = cutChip(q.frames[0].indices, fitted.w, cx, cy);
+                const px = cutChip(q.frames[0].indices, picture.w, cx, cy);
                 if (isTransparent(px)) continue;
                 const hit = bankChip(px, "title");
-                if (hit) words[cy * SFC_TITLE_COLS + cx] = chipWordForIndex(hit.chip, hit);
+                if (hit) words[titleSlotForCell(cx, cy)] = chipWordForIndex(hit.chip, hit);
             }
         }
         writeWords(bytes, REGION.titleGroup.offset, words);
         title = "uploaded";
-    } else {
-        // the title row still needs colours for the factory title words a
-        // blank group would not draw anyway; leave the row as the sample's
-        bytes.set(SFC_FACTORY_GLOBAL_ROWS.slice(32, 64), REGION.palette.offset + PALETTE_ROW_TITLE * 32);
     }
 
     // --- per stage ---
@@ -336,7 +505,7 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
                 }
                 const q = quantizeToRow(frames);
                 if (frames.length) {
-                    writeCgramRow(bytes, PALETTE_ROW_STAGE_BG + s, [0, ...q.words]);
+                    writeCgramRow(bytes, PALETTE_ROW_STAGE_BG + s, q.words);
                     rows.push({ row: PALETTE_ROW_STAGE_BG + s, owner: `${st.key} scenery`, colors: q.colors });
                 }
                 const indexedOf = new Map(q.frames.map((f) => [f.key, f.indices]));
@@ -412,7 +581,7 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
         }
         const quant = quantizeToRow(enemyFrames.map((f) => ({ key: f.key, w: f.w, h: f.h, rgba: f.rgba })));
         if (enemyFrames.length) {
-            writeCgramRow(bytes, PALETTE_ROW_STAGE_ENEMY + s, [0, ...quant.words]);
+            writeCgramRow(bytes, PALETTE_ROW_STAGE_ENEMY + s, quant.words);
             rows.push({ row: PALETTE_ROW_STAGE_ENEMY + s, owner: `${st.key} enemies`, colors: quant.colors });
         }
         const indexedByKey = new Map(quant.frames.map((f) => [f.key, f]));
@@ -518,7 +687,7 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
             if (frames.length) {
                 const fitted = fitRgba(frames[0], BOSS_SHEET_COLS * CHIP_DIM, BOSS_SHEET_ROWS * CHIP_DIM);
                 const q = quantizeToRow([{ key: "boss", ...fitted }]);
-                writeCgramRow(bytes, PALETTE_ROW_STAGE_BOSS + s, [0, ...q.words]);
+                writeCgramRow(bytes, PALETTE_ROW_STAGE_BOSS + s, q.words);
                 rows.push({ row: PALETTE_ROW_STAGE_BOSS + s, owner: `${st.key} boss`, colors: q.colors });
                 for (let cy = 0; cy < BOSS_SHEET_ROWS; cy++) {
                     for (let cx = 0; cx < BOSS_SHEET_COLS; cx++) {
@@ -626,8 +795,10 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
         stages: built,
         chips: { used: bank.used, capacity: USER_CHIP_COUNT, shared: bank.shared, free: USER_CHIP_COUNT - bank.used },
         rows,
-        ship: "factory",
+        ship: shipSource,
+        shipChips,
         title,
+        titleParts,
         sound: "factory",
     };
     return { bytes, name, warnings, report };

@@ -59,14 +59,17 @@ export function encodeColorWord(r, g, b) {
 }
 
 /**
- * Write one PALETTE DATA row: up to 16 colour words (missing ones 0), word 0
- * forced to 0 — colour 0 of a row is transparent whatever is stored.
+ * Write one PALETTE DATA row: up to 16 colour words (missing ones 0). The
+ * game copies a row into colours 1..15 of the CGRAM palette its layer owns
+ * (colour 0 is transparent, word 15 is never copied — FORMAT-SFC.md "Running
+ * a save"), so word k is the colour a pixel of index k + 1 draws: a sprite
+ * whose pixels are 1..n wants its n colours in words 0..n-1.
  */
 export function writeCgramRow(bytes, row, words) {
     if (row < 0 || row >= PALETTE_ROW_COUNT) throw new Error(`palette row ${row} is outside 0..${PALETTE_ROW_COUNT - 1}`);
     const at = REGION.palette.offset + row * CGRAM_ROW_BYTES;
     for (let i = 0; i < CGRAM_ROW_COLORS; i++) {
-        const w = i === 0 ? 0 : ((words[i] ?? 0) & 0x7fff);
+        const w = (words[i] ?? 0) & 0x7fff;
         bytes[at + i * 2] = w & 0xff;
         bytes[at + i * 2 + 1] = w >> 8;
     }
@@ -97,9 +100,17 @@ export function decodeCgramRows(bytes, offset, count) {
     return rows;
 }
 
-/** Rows in the shape decode-cg.js indexedToRgba() takes: [{colors}]. */
+const TRANSPARENT_COLOR = Object.freeze({ raw: 0, r: 0, g: 0, b: 0 });
+
+/**
+ * Rows in the shape decode-cg.js indexedToRgba() takes, [{colors}], laid out
+ * as the console draws them: the game copies a row into colours 1..15 of its
+ * CGRAM palette, so a pixel of index k shows row word k - 1 and word 15 is
+ * never seen. Colour 0 is the transparent slot (never read: index 0 is left
+ * clear).
+ */
 export function rowsToPalettes(rows) {
-    return rows.map((row) => ({ colors: row.colors }));
+    return rows.map((row) => ({ colors: [TRANSPARENT_COLOR, ...row.colors.slice(0, CGRAM_ROW_COLORS - 1)] }));
 }
 
 /**

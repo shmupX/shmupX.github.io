@@ -79,11 +79,12 @@ function cart(cells, { graphics = true } = {}) {
     "T.TABATA",
     sram.subarray(REGION.checkString.offset),
   );
-  // Row 0 colour 0 is the backdrop, a dark blue; colour 1 of rows 0-5 is red
-  // ink — every stage draws through its own row (row n), so each gets it.
+  // Row 0 word 0 is the backdrop, a dark blue; word 1 of rows 0-5 is red
+  // ink, which pixels of index 2 draw (the console lands a row one colour
+  // up) — every stage draws through its own row (row n), so each gets it.
   putColor(sram, 0, 0, 4, 4, 8);
   for (let r = 0; r < 6; r++) putColor(sram, r, 1, 31, 0, 0);
-  if (graphics) putSolidChip(sram, 9, 1);
+  if (graphics) putSolidChip(sram, 9, 2);
   for (let s = 0; s < 6; s++) putGroupWord(sram, s, 7, 9);
   for (const [stage, row, column, slot, flips] of cells) {
     putCell(sram, stage, row, column, slot, flips);

@@ -51,14 +51,25 @@ export async function buildSfc(
     noBaseAtlas: options.noBaseAtlas,
     log,
   });
+  // The title picture is the browser's title scene — the title editor's
+  // backdrop with the logo and subtitle over it — as the cart's 8x4 chips.
   const title1 = await titleArt(record.logoDataURL, "logo", log);
+  const title2 = await titleArt(record.subTitleDataURL, "subtitle", log);
+  const titleBg = await titleArt(record.titleBgDataURL, "backdrop", log);
 
   const result = exportLevelToSfcSram(record, art, {
     name: options.name?.trim() || null,
     title1,
+    title2,
+    titleBg,
   });
   const rep = result.report;
   log(`name: ${result.name}`);
+  log(
+    `ship: ${rep.ship} (${rep.shipChips} chips); title: ${rep.title}${
+      rep.titleParts.length ? ` (${rep.titleParts.join(", ")})` : ""
+    }`,
+  );
   log(
     `stages: ${
       rep.stages.map((s: { key: string; placements: number; boss: unknown }) =>

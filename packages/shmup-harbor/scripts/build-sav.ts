@@ -90,6 +90,8 @@ export interface LevelRecord {
   atlasFrames?: Record<string, FrameRect> | null;
   logoDataURL?: string | null;
   subTitleDataURL?: string | null;
+  /** The title editor's backdrop, tiled behind the logo in the browser. */
+  titleBgDataURL?: string | null;
   [key: string]: unknown;
 }
 

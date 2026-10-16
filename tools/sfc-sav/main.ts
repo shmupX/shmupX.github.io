@@ -32,6 +32,7 @@ import {
   regionStats,
   type SfcSave,
   summarizeSfcSav,
+  titleCellForSlot,
   userSheetIndexed,
   withPaletteRow,
 } from "../../packages/shmup-engine/src/sfc/index.js";
@@ -360,10 +361,19 @@ function renderGroups(parsed: SfcSave, row: number): Raster | null {
     chips: { word: number; empty: boolean }[];
     cols: number;
     row: number;
+    /** Where slot i draws, in chips; row-major over `cols` when absent. */
+    place?: (i: number) => { cx: number; cy: number };
   };
   const sheets: Sheet[] = [
     { label: "ship", chips: g.myShip, cols: 8, row: PALETTE_ROW_SHIP },
-    { label: "title", chips: g.title, cols: 8, row: PALETTE_ROW_TITLE },
+    // the title group is two 4-wide halves, drawn as the 8x4 picture it makes
+    {
+      label: "title",
+      chips: g.title,
+      cols: 8,
+      row: PALETTE_ROW_TITLE,
+      place: titleCellForSlot,
+    },
     { label: "ending", chips: g.ending, cols: 8, row: PALETTE_ROW_TITLE },
   ];
   g.boss.forEach((b, n) =>
@@ -391,14 +401,10 @@ function renderGroups(parsed: SfcSave, row: number): Raster | null {
       if (chip.empty) return;
       const rgba = chipPixels(a, chip.word, row >= 0 ? row : sh.row);
       if (rgba) {
-        blit(
-          out,
-          (i % sh.cols) * 16,
-          y + Math.floor(i / sh.cols) * 16,
-          16,
-          16,
-          rgba,
-        );
+        const at = sh.place
+          ? sh.place(i)
+          : { cx: i % sh.cols, cy: Math.floor(i / sh.cols) };
+        blit(out, at.cx * 16, y + at.cy * 16, 16, 16, rgba);
       }
     });
     y += heights[n] + 4;

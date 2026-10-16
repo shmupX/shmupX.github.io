@@ -24,6 +24,21 @@ export const ENEMY_GROUP_STAGE_BYTES = ENEMY_GROUP_CHIPS * 2; // 0x80
 export const BOSS_GROUP_CHIPS = REGION.bossGroup.length / STAGE_COUNT / 2; // 32
 export const BOSS_GROUP_STAGE_BYTES = BOSS_GROUP_CHIPS * 2; // 0x40
 export const TITLE_GROUP_CHIPS = REGION.titleGroup.length / 2; // 32
+/**
+ * The title picture on screen is 8 chips by 4, but TITLE GROUP is not that
+ * grid row-major: it is two 4-chip-wide halves, slots 0-15 the left half and
+ * 16-31 the right, each four rows row-major (a save with every chip coded,
+ * photographed at the title, 2026-10-16). Cell (cx, cy) of the picture <->
+ * slot.
+ */
+export const TITLE_PICTURE_COLS = 8;
+export const TITLE_PICTURE_ROWS = 4;
+export function titleSlotForCell(cx, cy) {
+    return (cx >> 2) * 16 + cy * 4 + (cx & 3);
+}
+export function titleCellForSlot(slot) {
+    return { cx: (slot >> 4) * 4 + (slot & 3), cy: (slot >> 2) & 3 };
+}
 export const ENDING_GROUP_CHIPS = REGION.endingGroup.length / 2; // 12
 export const MY_SHIP_GROUP_CHIPS = REGION.myShipGroup.length / 2; // 64
 /** The ship sheet's last three slots, which the editor forces to 0x3FC-0x3FE. */
