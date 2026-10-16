@@ -13316,6 +13316,7 @@ function GAME3D_RUNTIME(DATA) {
                 // looking like a stock level.
                 payload.meta = (gameData && gameData.meta) || null;
                 payload.noStory = !!(gameData && gameData.noStory);
+                payload.ownCutin = !!(gameData && gameData.ownCutin);
                 payload.godMode = godModeOn;
                 // Save audio URL overrides
                 var urlEntries = {};
@@ -13528,6 +13529,11 @@ function GAME3D_RUNTIME(DATA) {
                 else delete gameData.meta;
                 if (d.noStory) gameData.noStory = true;
                 else delete gameData.noStory;
+                // A game that keeps the cut-in it has over rando's, even where
+                // it is 2028.Ai's (level-loader's ownCutin). PLAY's recipe is
+                // a copy of gameData, so it carries the flag from here.
+                if (d.ownCutin) gameData.ownCutin = true;
+                else delete gameData.ownCutin;
                 syncNoStoryKnob();
                 if (typeof d.godMode === 'boolean') applyGodMode(d.godMode);
                 titleBgDataURL = d.titleBgDataURL || null;

@@ -282,7 +282,11 @@ they are written out in full.
     export's shell, `__OFFLINE_LEVEL_NAME__` from the in-game forge's). Being
     offline is not enough, because a plain visit bakes 2028.Ai's own
     `foo.json` in as its offline level, and that is the stock game, which
-    keeps its cut-in. `tests/custom_cutin_test.ts` pins both copies. Mirrors
+    keeps its cut-in. A level with `ownCutin: true` keeps the cut-in it has
+    and is never painted: `2019-PS2` carries the 2019 game's nine frames in
+    its atlas, which are 2028.Ai's pixel for pixel and would otherwise be left
+    out as a copy. The editor loads and saves the flag beside `noStory`.
+    `tests/custom_cutin_test.ts` pins both copies. Mirrors
     `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
     TOP edge at the traced y, not their centre, so a name sits under its label

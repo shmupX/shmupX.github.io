@@ -1282,9 +1282,10 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         const stageId = parseStageId(editorPlay.stageId, o.maxStage);
         const info = { stageId, bossRush, source: "editor", hasCustomEnemies };
         // A game saved under a name is a custom game; an unsaved one has no
-        // name yet and wears the stock plates and the stock cut-in.
+        // name yet and wears the stock plates and the stock cut-in. A game that
+        // keeps the cut-in it has says so (`ownCutin`, below).
         const editorName = recipe.meta && recipe.meta.editorLevelName;
-        if (editorName) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
+        if (editorName && !recipe.ownCutin) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
         return this.applyUiAtlases(recipe).then(() => this.mergeEditorAtlas(o)).then(() => this.applyStageBackgrounds(recipe)).then(() => {
           // The game's title art, for the title the ending returns to: PLAY
           // itself opens in the stage. Without this that title was the base
@@ -1325,11 +1326,14 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       // rando's cut-in goes to a game named on the URL, or the one an exported
       // app was built around — not to every offline level: a plain visit bakes
       // 2028.Ai's own foo.json in as one (the bundle's main()), and that is the
-      // stock game, which keeps its own.
+      // stock game, which keeps its own. So does a game whose `ownCutin` says
+      // its cut-in is the one it has: 2019-PS2 plays the 2019 game's, which is
+      // 2028.Ai's frame for frame, so its atlas's copy would read as a stock
+      // copy (_withoutStockCutins) and lose to rando's.
       const exportedApp = o.exportedApp !== undefined ? !!o.exportedApp : isExportedApp();
 
       return this.fetchLevel(levelName, o).then((data) => {
-        if (explicitLevel || exportedApp) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
+        if ((explicitLevel || exportedApp) && !(data && data.ownCutin)) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
         return this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
           const recipe = this.mergeRecipe(baseRecipe, data, o.atlasKey);
           this.applyTitleImages(data, o.titleImageKeys);

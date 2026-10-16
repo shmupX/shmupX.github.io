@@ -331,6 +331,44 @@ Deno.test("a copy of the stock cut-in in a game's atlas leaves rando's in place"
     assertEquals(atlas.rect("akuma_0.png"), { x: 0, y: 2328, w: 64, h: 64 });
   }));
 
+Deno.test("a game whose ownCutin says so keeps its cut-in, even 2028.Ai's", () =>
+  withFakeDom("?level=2019-PS2", async () => {
+    // 2019-PS2's atlas, as saved: the 2019 game's nine, which are the stock
+    // frames pixel for pixel, so only the flag tells them from a copy.
+    const url = "data:image/png;base64,MjAxOQ==";
+    PICTURES.set(url, (r) => `stock@${(r.x - 4) / 260 * 256},1700`);
+    const atlasFrames: FrameMap = {};
+    for (let i = 0; i < 9; i++) {
+      atlasFrames[`cutin${i}․gif`] = {
+        frame: { x: 4 + i * 260, y: 4, w: 256, h: 142 },
+      };
+    }
+    const scene = stockScene();
+    const plugin = new Plugin(scene, null, "levelLoader");
+    plugin.fetchLevel = () =>
+      Promise.resolve({
+        name: "2019-PS2",
+        enemylist: [["A0"]],
+        atlasImageDataURL: url,
+        atlasFrames,
+        ownCutin: true,
+      });
+    await plugin.loadLevel({ baseRecipe: BASE, audio: { enabled: false } });
+    const atlas = scene.textures.get("game_asset");
+    const canvas = atlas.source[0].image;
+    // rando's was never painted, and the game's own frames win their names.
+    const under = canvas.ops![0][1] as Img;
+    assertEquals(under, STOCK_IMAGE);
+    for (let i = 0; i < 9; i++) {
+      assertEquals(atlas.rect(`cutin${i}.gif`), {
+        x: 4 + i * 260,
+        y: 2132,
+        w: 256,
+        h: 142,
+      });
+    }
+  }));
+
 Deno.test("the stock game stacks a level's cut-in frames untouched", () =>
   withFakeDom(null, async () => {
     const url = "data:image/png;base64,Rk9P";
@@ -430,6 +468,13 @@ Deno.test("the editor's PLAY of a saved game plays rando's; an unsaved one, the 
     const unsaved = await play({ ...BASE, meta: { version: "1.0" } });
     assertEquals(unsaved.paintedFirst, false);
     assertEquals(ops(unsaved.scene), []);
+    const own = await play({
+      ...BASE,
+      ownCutin: true,
+      meta: { version: "1.0", editorLevelName: "2019-PS2" },
+    });
+    assertEquals(own.paintedFirst, false);
+    assertEquals(ops(own.scene), []);
   }));
 
 // ---- two copies, one rule ----------------------------------------------------
@@ -470,11 +515,11 @@ Deno.test("the bundle's inlined loader paints the cut-in the way the plugin does
     const line of [
       'customCutinKey: "cutin_custom",',
       "const mergedFrameMap = frameMapOf(localAtlas);",
-      "if (explicitLevel || exportedApp) this.applyCustomCutin(o.atlasKey, o.customCutinKey);",
+      "if ((explicitLevel || exportedApp) && !(data && data.ownCutin)) this.applyCustomCutin(o.atlasKey, o.customCutinKey);",
       "return this._stackAtlas(img, this._withoutStockCutins(img, levelData.atlasFrames), atlasKey);",
       "this._stackAtlas(img, this._withoutStockCutins(img, record.frames), atlasKey) : false",
       "this._stockCutin = null;",
-      "if (editorName) this.applyCustomCutin(o.atlasKey, o.customCutinKey);",
+      "if (editorName && !recipe.ownCutin) this.applyCustomCutin(o.atlasKey, o.customCutinKey);",
     ]
   ) {
     assert(plugin.includes(line), "the plugin lacks: " + line);
