@@ -81,6 +81,38 @@
     }
     return Math.max(0, Math.min(maxStage, Math.floor(stageId)));
   }
+  // The title plates a record brought art for — the three 2028.Ai's title
+  // draws from game_ui and a game may replace: the logo (logoDataURL, or a
+  // logo.gif in its game_ui set), the subtitle (subTitleDataURL, or a
+  // subTitle.gif / subTitleEn.gif there) and G's plate (a titleG.gif in that
+  // set, or one an older save left in its level atlas, which _liftUiFrames puts
+  // up). TitleScene reads it off recipe.customTitle to decide which stock plate
+  // a custom game still wears: none of its own means the game's name set in
+  // Orbitron for the logo, a plate naming only the genre for the subtitle, and
+  // its own ship for G.
+  function customTitleArt(data) {
+    const art = { logo: false, subTitle: false, titleG: false };
+    if (!data || typeof data !== "object") return art;
+    const named = (frames, base) =>
+      !!frames && typeof frames === "object" &&
+      Object.keys(frames).some((k) => {
+        const name = decodeFirebaseKey(k);
+        return name === base + ".gif" || name === base + ".png";
+      });
+    const ui = data.uiAtlases && data.uiAtlases.game_ui && data.uiAtlases.game_ui.frames;
+    art.logo = !!data.logoDataURL || named(ui, "logo");
+    art.subTitle = !!data.subTitleDataURL || named(ui, "subTitle") || named(ui, "subTitleEn");
+    art.titleG = named(ui, "titleG") || (!!data.atlasImageDataURL && named(data.atlasFrames, "titleG"));
+    return art;
+  }
+
+  // What the title calls a game that drew no logo: the record's own name, else
+  // the key it was fetched by.
+  function titleNameOf(data, levelName) {
+    const own = data && typeof data.name === "string" ? data.name.trim() : "";
+    return own || (typeof levelName === "string" ? levelName : "") || null;
+  }
+
   // Does a level record carry a whole game's framing, or one stage's grid? A
   // story, its own title art, or a second stage says it is a game — which is
   // what every game the editor saves under a name is — and a bare grid, the
@@ -90,6 +122,9 @@
     const story = data.storyData;
     if (story && typeof story === "object" && Object.keys(story).length) return true;
     if (data.logoDataURL || data.titleBgDataURL || data.subTitleDataURL || data.titleStartTextDataURL) return true;
+    // A title plate of its own in the record's game_ui set says the same.
+    const art = customTitleArt(data);
+    if (art.logo || art.subTitle || art.titleG) return true;
     if (data.dezaemonTitle && typeof data.dezaemonTitle === "object") return true;
     const stages = data.stages && typeof data.stages === "object" ? data.stages : null;
     return !!stages && Object.keys(stages).filter((k) => /^stage\d+$/.test(k)).length > 1;
@@ -939,6 +974,13 @@
             // itself opens in the stage. Without this that title was the base
             // game's, over the game's own story.
             this.applyTitleImages(recipe, o.titleImageKeys);
+            // The title art the saved game brought, and its name, for that
+            // title (customTitleArt); an unsaved game has no name yet and
+            // wears the stock plates.
+            const editorName = recipe.meta && recipe.meta.editorLevelName;
+            if (editorName) {
+              recipe.customTitle = Object.assign({ name: String(editorName) }, customTitleArt(recipe));
+            }
             // Applied as textures above; the recipe the scene keeps need not
             // carry half a megabyte of PNG as well.
             delete recipe.stageBackgrounds;
@@ -965,6 +1007,12 @@
           (data) => this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
             const recipe = this.mergeRecipe(baseRecipe, data, o.atlasKey);
             this.applyTitleImages(data, o.titleImageKeys);
+            // What of its title the level brought, and its name, for TitleScene
+            // (customTitleArt). Only a game named on the URL or baked into an
+            // exported app: the default visit is 2028.Ai itself, in its own plates.
+            if (explicitLevel || usingOffline) {
+              recipe.customTitle = Object.assign({ name: titleNameOf(data, levelName) }, customTitleArt(data));
+            }
             // A ?level= visit used to open straight into the stage: a named
             // level was one stage to test, and the title was the base game's.
             // A whole game saved under a name has a title of its own and a
@@ -2719,6 +2767,9 @@
       this.load.json("recipe", "assets/game.json");
       this.load.json("custom-bgm-manifest", "assets/custom-bgm/manifest.json");
       this.load.image("title_bg", "assets/img/title_bg.jpg");
+      // The subtitle plate for a custom game that drew none of its own: the
+      // stock plate's genre tag alone, without 2028.Ai's name (TitleScene).
+      this.load.image("subTitle_custom", "assets/img/subTitleCustom.png");
       for (var i = 0; i < 5; i++) {
         this.load.image("stage_loop" + i, "assets/img/stage/stage_loop" + i + ".png");
         this.load.image("stage_end" + i, "assets/img/stage/stage_end" + i + ".png");
@@ -3431,6 +3482,83 @@
       if (atlas && atlas.has(wanted[i])) frames.push(wanted[i]);
     }
     return frames.length ? frames : null;
+  }
+  // A custom game — a cloud level named on the URL, an exported app's record,
+  // the editor's PLAY of a saved game — wears 2028.Ai's title plates only
+  // where it brought none of its own; level-loader.js says which on
+  // recipe.customTitle. The three plates it did not bring are drawn here:
+  // its name set in Orbitron on a plate the size of logo.gif, the stock
+  // subtitle's genre tag alone (subTitle_custom, loaded with the atlases),
+  // and its own ship where G stands. Canvas textures, so the title scene
+  // draws them exactly as it draws the stock plates.
+  var NAME_LOGO_KEY = "custom_name_logo";
+  var SHIP_TITLE_G_KEY = "custom_ship_titleG";
+  var NAME_LOGO_FONT = "900 40px Orbitron";
+  function drawNameLogo(canvas, name) {
+    var ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    var text = String(name).toUpperCase();
+    // As large as fits the plate with a margin; a long name shrinks.
+    var size = 44;
+    for (; size > 14; size -= 2) {
+      ctx.font = "900 " + size + "px Orbitron, 'Arial Black', sans-serif";
+      if (ctx.measureText(text).width <= canvas.width - 16) break;
+    }
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = Math.max(3, Math.round(size / 7));
+    ctx.strokeStyle = "#000000";
+    ctx.strokeText(text, canvas.width / 2, canvas.height / 2 + 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2);
+  }
+  function nameLogoTexture(scene, name) {
+    if (typeof document === "undefined") return null;
+    var canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 88;
+    drawNameLogo(canvas, name);
+    if (scene.textures.exists(NAME_LOGO_KEY)) scene.textures.remove(NAME_LOGO_KEY);
+    var tex = scene.textures.addCanvas(NAME_LOGO_KEY, canvas);
+    // Orbitron may still be on its way on a first visit (FONT_PRELOAD starts
+    // it with the page): the plate is drawn again when it lands.
+    try {
+      if (document.fonts && document.fonts.load && !document.fonts.check(NAME_LOGO_FONT)) {
+        document.fonts.load(NAME_LOGO_FONT).then(function() {
+          if (!tex || !scene.textures.exists(NAME_LOGO_KEY)) return;
+          drawNameLogo(canvas, name);
+          tex.refresh();
+        }).catch(function() {
+        });
+      }
+    } catch (e) {
+    }
+    return NAME_LOGO_KEY;
+  }
+  // The game's own ship, frame 0, on a plate the size of titleG.gif, set
+  // where G's face sits — under the logo and subtitle, above TAP OR CLICK
+  // START — at the largest whole-pixel scale that keeps it a portrait.
+  function shipTitleGTexture(scene) {
+    var frames = dezaPlayerTitleFrames(scene);
+    if (!frames || typeof document === "undefined") return null;
+    var frame = scene.textures.getFrame("game_asset", frames[0]);
+    var src = frame && frame.source && frame.source.image;
+    if (!src || !frame.cutWidth || !frame.cutHeight) return null;
+    var canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 364;
+    var scale = Math.max(1, Math.min(4, Math.floor(160 / frame.cutWidth), Math.floor(160 / frame.cutHeight)));
+    var w = frame.cutWidth * scale;
+    var h = frame.cutHeight * scale;
+    var ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    // The plate rests at (5, 20): canvas (123, 230) is the screen's centre
+    // column, a little above the start prompt.
+    ctx.drawImage(src, frame.cutX, frame.cutY, frame.cutWidth, frame.cutHeight, Math.round(123 - w / 2), Math.round(230 - h / 2), w, h);
+    if (scene.textures.exists(SHIP_TITLE_G_KEY)) scene.textures.remove(SHIP_TITLE_G_KEY);
+    scene.textures.addCanvas(SHIP_TITLE_G_KEY, canvas);
+    return SHIP_TITLE_G_KEY;
   }
   function dezaHasStaffEntries(recipe) {
     return dezaStaffEntries(recipe).some(function(e) {
@@ -7286,6 +7414,18 @@
           !this.textures.exists("custom_logo")
         ? dezaPlayerTitleFrames(this)
         : null;
+      // A custom game wears a stock plate only where it brought no art of
+      // its own (recipe.customTitle, from level-loader.js): its name set in
+      // Orbitron for the logo, the genre tag alone for the subtitle, and its
+      // own ship for G. A cart is settled above and never reaches these;
+      // the default visit is 2028.Ai itself and carries no customTitle.
+      var custom = !this.dezaTitle && !shipFrames && recipe && recipe.customTitle ? recipe.customTitle : null;
+      var nameLogo = custom && !custom.logo && custom.name && !this.textures.exists("custom_logo")
+        ? nameLogoTexture(this, custom.name)
+        : null;
+      var plateSub = !!custom && !custom.subTitle && !this.textures.exists("custom_subTitle") &&
+        this.textures.exists("subTitle_custom");
+      var ownG = custom && !custom.titleG && playsOwnShip(this) ? shipTitleGTexture(this) : null;
       this.bg = this.add.tileSprite(
         0,
         0,
@@ -7299,7 +7439,7 @@
       // flying its ship instead of a title must not either: black is what a
       // Dezaemon title screen sits on anyway.
       if (this.dezaTitle || shipFrames) this.bg.setVisible(false);
-      this.titleG = this.add.sprite(0, 0, "game_ui", "titleG.gif");
+      this.titleG = ownG ? this.add.sprite(0, 0, ownG) : this.add.sprite(0, 0, "game_ui", "titleG.gif");
       this.titleG.setOrigin(0, 0);
       this.titleG.setPosition(GAME_DIMENSIONS.WIDTH, 100);
       // titleG is 2028.Ai's own wordmark strip; a ship logo replaces the whole
@@ -7309,6 +7449,8 @@
         this.logo = this.add.sprite(0, 0, "game_asset", dezaLogo);
       } else if (!this.dezaTitle && this.textures.exists("custom_logo")) {
         this.logo = this.add.sprite(0, 0, "custom_logo");
+      } else if (nameLogo) {
+        this.logo = this.add.sprite(0, 0, nameLogo);
       } else if (shipFrames) {
         this.logo = this.add.sprite(0, 0, "game_asset", shipFrames[0]);
       } else {
@@ -7358,6 +7500,8 @@
         this.subTitle = this.add.sprite(0, 0, "game_asset", dezaSub);
       } else if (!this.dezaTitle && this.textures.exists("custom_subTitle")) {
         this.subTitle = this.add.sprite(0, 0, "custom_subTitle");
+      } else if (plateSub) {
+        this.subTitle = this.add.sprite(0, 0, "subTitle_custom");
       } else {
         var subtitleKey = "subTitle" + (LANG === "ja" ? "" : "En") + ".gif";
         this.subTitle = this.add.sprite(0, 0, "game_ui", subtitleKey);

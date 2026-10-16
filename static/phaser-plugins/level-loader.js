@@ -167,6 +167,38 @@ export function parseStageId(value, maxStage) {
   return Math.max(0, Math.min(maxStage, Math.floor(stageId)));
 }
 
+// The title plates a record brought art for — the three 2028.Ai's title
+// draws from game_ui and a game may replace: the logo (logoDataURL, or a
+// logo.gif in its game_ui set), the subtitle (subTitleDataURL, or a
+// subTitle.gif / subTitleEn.gif there) and G's plate (a titleG.gif in that
+// set, or one an older save left in its level atlas, which _liftUiFrames puts
+// up). TitleScene reads it off recipe.customTitle to decide which stock plate
+// a custom game still wears: none of its own means the game's name set in
+// Orbitron for the logo, a plate naming only the genre for the subtitle, and
+// its own ship for G.
+export function customTitleArt(data) {
+  const art = { logo: false, subTitle: false, titleG: false };
+  if (!data || typeof data !== "object") return art;
+  const named = (frames, base) =>
+    !!frames && typeof frames === "object" &&
+    Object.keys(frames).some((k) => {
+      const name = decodeFirebaseKey(k);
+      return name === base + ".gif" || name === base + ".png";
+    });
+  const ui = data.uiAtlases && data.uiAtlases.game_ui && data.uiAtlases.game_ui.frames;
+  art.logo = !!data.logoDataURL || named(ui, "logo");
+  art.subTitle = !!data.subTitleDataURL || named(ui, "subTitle") || named(ui, "subTitleEn");
+  art.titleG = named(ui, "titleG") || (!!data.atlasImageDataURL && named(data.atlasFrames, "titleG"));
+  return art;
+}
+
+// What the title calls a game that drew no logo: the record's own name, else
+// the key it was fetched by.
+export function titleNameOf(data, levelName) {
+  const own = data && typeof data.name === "string" ? data.name.trim() : "";
+  return own || (typeof levelName === "string" ? levelName : "") || null;
+}
+
 // Does a level record carry a whole game's framing, or one stage's grid? A
 // story, its own title art, or a second stage says it is a game — which is
 // what every game the editor saves under a name is — and a bare grid, the
@@ -176,6 +208,9 @@ export function recordIsAGame(data) {
   const story = data.storyData;
   if (story && typeof story === "object" && Object.keys(story).length) return true;
   if (data.logoDataURL || data.titleBgDataURL || data.subTitleDataURL || data.titleStartTextDataURL) return true;
+  // A title plate of its own in the record's game_ui set says the same.
+  const art = customTitleArt(data);
+  if (art.logo || art.subTitle || art.titleG) return true;
   if (data.dezaemonTitle && typeof data.dezaemonTitle === "object") return true;
   const stages = data.stages && typeof data.stages === "object" ? data.stages : null;
   return !!stages && Object.keys(stages).filter((k) => /^stage\d+$/.test(k)).length > 1;
@@ -1134,6 +1169,13 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           // itself opens in the stage. Without this that title was the base
           // game's, over the game's own story.
           this.applyTitleImages(recipe, o.titleImageKeys);
+          // The title art the saved game brought, and its name, for that
+          // title (customTitleArt); an unsaved game has no name yet and
+          // wears the stock plates.
+          const editorName = recipe.meta && recipe.meta.editorLevelName;
+          if (editorName) {
+            recipe.customTitle = Object.assign({ name: String(editorName) }, customTitleArt(recipe));
+          }
           // Applied as textures above; the recipe the scene keeps need not
           // carry half a megabyte of PNG as well.
           delete recipe.stageBackgrounds;
@@ -1166,6 +1208,12 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
           const recipe = this.mergeRecipe(baseRecipe, data, o.atlasKey);
           this.applyTitleImages(data, o.titleImageKeys);
+          // What of its title the level brought, and its name, for TitleScene
+          // (customTitleArt). Only a game named on the URL or baked into an
+          // exported app: the default visit is 2028.Ai itself, in its own plates.
+          if (explicitLevel || usingOffline) {
+            recipe.customTitle = Object.assign({ name: titleNameOf(data, levelName) }, customTitleArt(data));
+          }
 
           // A ?level= visit used to open straight into the stage: a named
           // level was one stage to test, and the title was the base game's.

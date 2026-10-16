@@ -243,6 +243,23 @@ they are written out in full.
     in an Android export (`rando.apk`). `_applyCustomImage` also keeps the
     backdrop hidden, never stock, while a picture is still decoding.
     `tests/story_images_test.ts` pins both. Mirrors `level-loader.js`.
+  - A custom game — a level named on the URL, an exported app's record, the
+    editor's PLAY of a saved game — wears 2028.Ai's title plates only where it
+    brought none of its own. `loadLevel` reads what it brought off the record
+    (`customTitleArt`: `logoDataURL` or a `logo.gif` in its `game_ui` set,
+    `subTitleDataURL` or a `subTitle*.gif` there, a `titleG.gif` there or left
+    in its level atlas) and puts that, with the game's name (`name`, else the
+    key it was fetched by), on `recipe.customTitle`. TitleScene then draws
+    what is missing: the name set in Orbitron on a plate the size of
+    `logo.gif` for the logo (`nameLogoTexture`; the game page self-hosts the
+    face for canvas text, `lib/game-page.ts`), the stock subtitle's genre tag
+    alone — `assets/img/subTitleCustom.png`, the plate the cloud game `rando`
+    drew — for the subtitle, and the game's own ship, frame 0, where G stands
+    (`shipTitleGTexture`). A title plate of its own also makes the record a
+    game (`recordIsAGame`), so a `?level=` visit opens on that title. The
+    default visit is 2028.Ai itself and carries no `customTitle`; a cart's own
+    title and an import's ship logo are settled first. `tests/custom_title_test.ts`
+    pins the three copies. Mirrors `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
     TOP edge at the traced y, not their centre, so a name sits under its label
     instead of under the typed PRESENTED BY (see the comment on the constant,

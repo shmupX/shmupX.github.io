@@ -102,6 +102,7 @@ export const LEVEL_EDITOR_BROADCAST = `
 export const FONT_PRELOAD = `
 if (document.fonts && document.fonts.load) {
   document.fonts.load("8px athenaFont").catch(function () {});
+  document.fonts.load("900 40px Orbitron").catch(function () {});
 }
 `;
 
@@ -252,6 +253,17 @@ export const GAME_PAGE_CSS = `
           @font-face {
             font-family: 'athenaFont';
             src: url('/games/2028-ai/assets/fonts/athenaFont.ttf') format('truetype');
+            font-display: swap;
+          }
+          /* The launcher's display face, for the title logo the runtime
+             draws for a custom game that brought no title art of its own
+             (TitleScene, nameLogoCanvas): the game's name set in Orbitron.
+             Same self-hosted file the dashboard uses (static/fonts/). */
+          @font-face {
+            font-family: 'Orbitron';
+            font-style: normal;
+            font-weight: 400 900;
+            src: url('/fonts/orbitron-latin.woff2') format('woff2');
             font-display: swap;
           }
           html, body {
