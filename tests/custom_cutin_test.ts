@@ -12,6 +12,7 @@
 // it (patched by hand, see stage_backgrounds_test.ts).
 
 import { assert, assertEquals } from "@std/assert";
+import { decodePng } from "@shmupx/shmup-harbor/png";
 import { createLevelLoaderPlugin } from "../static/phaser-plugins/level-loader.js";
 
 const read = (p: string) =>
@@ -499,14 +500,38 @@ Deno.test("the game loads rando's sheet and the SP fire draws from game_asset", 
   );
 });
 
-Deno.test("the sheet is nine 256x142 frames, three to a row", async () => {
-  const png = await Deno.readFile(
-    new URL(
-      "../static/games/2028-ai/assets/img/cutinCustom.png",
-      import.meta.url,
+const readSheet = async () =>
+  decodePng(
+    await Deno.readFile(
+      new URL(
+        "../static/games/2028-ai/assets/img/cutinCustom.png",
+        import.meta.url,
+      ),
     ),
   );
-  // IHDR, the first chunk, holds width then height.
-  const view = new DataView(png.buffer, png.byteOffset);
-  assertEquals([view.getUint32(16), view.getUint32(20)], [3 * 256, 3 * 142]);
+
+Deno.test("the sheet is nine 256x142 frames, three to a row", async () => {
+  const png = await readSheet();
+  assertEquals([png.width, png.height], [3 * 256, 3 * 142]);
+});
+
+Deno.test("the strip opens over the cut-in's dark, not a white card", async () => {
+  // rando drew frames 0-5 on opaque white where the stock frames are clear;
+  // the sheet clears it, so the strip widens over the dimmed stage as the
+  // stock one does. Its lettering, white too, stays.
+  const png = await readSheet();
+  const alpha = (i: number, x: number, y: number) =>
+    png.data[
+      (((Math.floor(i / 3) * 142 + y) * png.width) + (i % 3) * 256 + x) * 4 + 3
+    ];
+  for (let i = 0; i < 6; i++) {
+    for (const y of [0, 141]) {
+      for (let x = 0; x < 256; x++) {
+        assertEquals(alpha(i, x, y), 0, `frame ${i} (${x},${y}) is opaque`);
+      }
+    }
+    assertEquals(alpha(i, 128, 71), 255, `frame ${i} lost its strip`);
+  }
+  // The last three are whole pictures, edge to edge.
+  for (let i = 6; i < 9; i++) assert(alpha(i, 0, 0) > 0, `frame ${i} cleared`);
 });
