@@ -16537,6 +16537,15 @@
     // Whole-pixel scaling only: this is a pixel-art ship blown up ~3x from a
     // 32px sprite, and a fractional factor shimmers.
     ship.setScale(Math.max(1, Math.floor(fit)));
+    // And a whole-pixel corner. Phaser leaves a scaled sprite's vertices
+    // unrounded, so centring a 128px ship in the 131px bow box put its top at
+    // y 1.5: every screen pixel then sampled a texel boundary, and the last
+    // row came from the texel under the frame — the top of the shot packed
+    // directly below player02/04, a line under the feet on those frames.
+    ship.setPosition(
+      Math.round(ship.x - ship.displayWidth / 2) + ship.displayWidth / 2,
+      Math.round(ship.y - ship.displayHeight / 2) + ship.displayHeight / 2
+    );
     if (frames.length > 1) {
       if (scene.anims.exists(animKey)) scene.anims.remove(animKey);
       scene.anims.create({
