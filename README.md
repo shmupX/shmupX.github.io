@@ -235,6 +235,14 @@ they are written out in full.
     stacked onto `game_ui` before the level atlas lands on `game_asset`. That
     is what kept `contra`'s titleG.gif off its title, with no re-save needed.
     Mirrors `level-loader.js`.
+  - `applyStoryImages` decodes a game's own story pictures
+    (`storyData.customImages`) into the `advCustom_<key>` textures AdvScene
+    reads, on both roads in, before the first scene starts. AdvScene used to
+    decode each as its part came up, over 2028.Ai's stock portrait for the
+    part, which showed until the decode finished: a flicker of the stock story
+    in an Android export (`rando.apk`). `_applyCustomImage` also keeps the
+    backdrop hidden, never stock, while a picture is still decoding.
+    `tests/story_images_test.ts` pins both. Mirrors `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
     TOP edge at the traced y, not their centre, so a name sits under its label
     instead of under the typed PRESENTED BY (see the comment on the constant,

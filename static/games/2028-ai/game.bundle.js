@@ -673,6 +673,36 @@
           img.src = dataURL;
         }
       }
+      // ---- Story pictures ---------------------------------------------------
+
+      // A game's own story pictures (storyData.customImages: "stage<N>_part<M>"
+      // -> data URL), decoded into the textures AdvScene looks for
+      // ("advCustom_<key>") before the first scene starts. AdvScene used to
+      // decode each one as its part came up, over 2028.Ai's stock portrait for
+      // that part, which stayed on screen until the decode finished: a flash of
+      // the stock story, long enough to see on a phone. Resolves once every
+      // picture is in (false when there is none); one that fails to decode is
+      // left to AdvScene.
+      applyStoryImages(levelData) {
+        const story = levelData && levelData.storyData;
+        const images = story && story.customImages;
+        if (!images || typeof images !== "object") return Promise.resolve(false);
+        const scene = this.scene;
+        const jobs = Object.keys(images).map((key) => {
+          const dataURL = images[key];
+          const texKey = "advCustom_" + key;
+          if (typeof dataURL !== "string" || !dataURL || scene.textures.exists(texKey)) {
+            return Promise.resolve(false);
+          }
+          return loadImage(dataURL).then((img) => {
+            if (!img || scene.textures.exists(texKey)) return false;
+            scene.textures.addImage(texKey, img);
+            return true;
+          });
+        });
+        return Promise.all(jobs).then((done) => done.some(Boolean));
+      }
+
       // ---- Stage backgrounds ------------------------------------------------
 
       // A web game's own scrolling backdrops: `stageBackgrounds` is
@@ -915,7 +945,7 @@
             delete recipe.uiAtlases;
             for (const dataKey in o.titleImageKeys) delete recipe[dataKey];
             prime(recipe, info);
-            return {
+            return this.applyStoryImages(recipe).then(() => ({
               recipe,
               stageId,
               hasCustomEnemies,
@@ -924,7 +954,7 @@
               source: "editor",
               levelName: null,
               bgmSourceURLs: {}
-            };
+            }));
           });
         }
         const explicitLevel = this.readLevelParam();
@@ -946,7 +976,10 @@
             const hasCustomEnemies = !!data.enemyData;
             const source = usingOffline ? "offline" : "firebase";
             prime(recipe, { stageId, bossRush, source, hasCustomEnemies });
-            return this._loadAudio(data, o.audio, o.lowMode).then((bgmSourceURLs) => ({
+            return Promise.all([
+              this._loadAudio(data, o.audio, o.lowMode),
+              this.applyStoryImages(data)
+            ]).then(([bgmSourceURLs]) => ({
               recipe,
               stageId,
               hasCustomEnemies,
@@ -8123,6 +8156,7 @@
       var bgKey = "advBg" + this.scenario[this.stageKey].part[this.partNum].background + ".gif";
       this.bgSprite = this.add.sprite(0, 0, "game_ui", bgKey);
       this.bgSprite.setOrigin(0, 0);
+      this._advCustomWant = null;
       this._applyCustomImage(this.stageKey, this.partNum);
       this.txtBg = this.add.graphics();
       this.txtBg.lineStyle(2, 16777215, 1);
@@ -8228,20 +8262,36 @@
       } catch (e) {
       }
     }
+    // The level loader decodes a game's story pictures before the first scene
+    // (applyStoryImages), so the texture is normally here already. When it is
+    // not — a picture still decoding on a slow phone, one the loader could not
+    // read — the sprite stays hidden until it is: under it is 2028.Ai's own
+    // portrait for the part, which used to show until the decode finished. A
+    // decode that lands after the player has moved on to another part leaves
+    // that part's picture alone.
     _applyCustomImage(stageKey, partNum) {
       var customKey = stageKey + "_part" + partNum;
       var dataURL = this.customImages[customKey];
       if (!dataURL) return;
       var texKey = "advCustom_" + customKey;
       var self = this;
+      this._advCustomWant = texKey;
       if (this.textures.exists(texKey)) {
         this.bgSprite.setTexture(texKey);
+        this.bgSprite.setVisible(true);
       } else {
+        this.bgSprite.setVisible(false);
         var img = new Image();
         img.onload = function() {
-          self.textures.addImage(texKey, img);
-          if (self.bgSprite && self.bgSprite.active) {
+          if (!self.textures.exists(texKey)) self.textures.addImage(texKey, img);
+          if (self.bgSprite && self.bgSprite.active && self._advCustomWant === texKey) {
             self.bgSprite.setTexture(texKey);
+            self.bgSprite.setVisible(true);
+          }
+        };
+        img.onerror = function() {
+          if (self.bgSprite && self.bgSprite.active && self._advCustomWant === texKey) {
+            self.bgSprite.setVisible(true);
           }
         };
         img.src = dataURL;
@@ -8262,9 +8312,13 @@
           this._applyCustomImage(this.stageKey, this.partNum);
         } else {
           var bgKey = "advBg" + this.scenario[this.stageKey].part[this.partNum].background + ".gif";
+          // A part with no picture of its own shows the stock one, even when
+          // the part before it was still waiting on its own picture.
+          this._advCustomWant = null;
           if (this.textures.getFrame("game_ui", bgKey)) {
             this.bgSprite.setTexture("game_ui", bgKey);
           }
+          this.bgSprite.setVisible(true);
         }
         var bgKeyForSound = "advBg" + this.scenario[this.stageKey].part[this.partNum].background + ".gif";
         if (bgKeyForSound === "advBgDone.gif") {
