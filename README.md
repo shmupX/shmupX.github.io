@@ -248,18 +248,24 @@ they are written out in full.
     brought none of its own. `loadLevel` reads what it brought off the record
     (`customTitleArt`: `logoDataURL` or a `logo.gif` in its `game_ui` set,
     `subTitleDataURL` or a `subTitle*.gif` there, a `titleG.gif` there or left
-    in its level atlas) and puts that, with the game's name (`name`, else the
-    key it was fetched by), on `recipe.customTitle`. TitleScene then draws
-    what is missing: the name set in Orbitron on a plate the size of
-    `logo.gif` for the logo (`nameLogoTexture`; the game page self-hosts the
-    face for canvas text, `lib/game-page.ts`), the stock subtitle's genre tag
-    alone — `assets/img/subTitleCustom.png`, the plate the cloud game `rando`
-    drew — for the subtitle, and the game's own ship, frame 0, where G stands
-    (`shipTitleGTexture`). A title plate of its own also makes the record a
-    game (`recordIsAGame`), so a `?level=` visit opens on that title. The
-    default visit is 2028.Ai itself and carries no `customTitle`; a cart's own
-    title and an import's ship logo are settled first. `tests/custom_title_test.ts`
-    pins the three copies. Mirrors `level-loader.js`.
+    in its level atlas, `titleBgDataURL`) and puts that, with the game's name
+    (`name`, else the key it was fetched by), on `recipe.customTitle`.
+    TitleScene then draws what is missing: the name set in Orbitron on a plate
+    the size of `logo.gif` for the logo (`nameLogoTexture`; the game page
+    self-hosts the face for canvas text, `lib/game-page.ts`), the stock
+    subtitle's genre tag alone — `assets/img/subTitleCustom.png`, the plate the
+    cloud game `rando` drew — for the subtitle, the game's own ship, frame 0,
+    where G stands (`shipTitleGTexture`), and `rando`'s gold 2028 for the
+    scrolling backdrop in place of `title_bg.jpg`'s blue 2019 —
+    `assets/img/titleBgCustom.jpg`, the top 768x480 of its 768x1376 upload,
+    which is every row a 1:1 tileSprite scrolling sideways shows (the default
+    visit's own record carries the same picture). The Android forge's
+    `KEEP_FILES` stages both plates. A title plate of its own also makes the
+    record a game (`recordIsAGame`), so a `?level=` visit opens on that title.
+    The default visit is 2028.Ai itself and carries no `customTitle`; a cart's
+    own title and an import's ship logo are settled first.
+    `tests/custom_title_test.ts` pins the three copies. Mirrors
+    `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
     TOP edge at the traced y, not their centre, so a name sits under its label
     instead of under the typed PRESENTED BY (see the comment on the constant,

@@ -5,7 +5,8 @@
 // loader reads what it brought off the record (customTitleArt) and puts that,
 // with the game's name, on recipe.customTitle; TitleScene in game.bundle.js
 // draws the name in Orbitron for a missing logo, the genre plate
-// (subTitle_custom) for a missing subtitle, and the game's own ship for G.
+// (subTitle_custom) for a missing subtitle, the game's own ship for G, and
+// rando's gold 2028 (title_bg_custom) for a missing scrolling backdrop.
 // Three places must agree: the loader, the bundle's inlined copy of it
 // (patched by hand, see ui_frames_in_level_atlas_test.ts) and the game page,
 // which self-hosts Orbitron for the canvas text.
@@ -24,7 +25,7 @@ const read = (p: string) =>
 type Rect = { x: number; y: number; w: number; h: number };
 type FrameMap = Record<string, { frame: Rect }>;
 
-const NONE = { logo: false, subTitle: false, titleG: false };
+const NONE = { logo: false, subTitle: false, titleG: false, titleBg: false };
 
 function uiSet(frame: string) {
   return {
@@ -46,7 +47,10 @@ Deno.test("a bare record brought no title art", () => {
 Deno.test("a title plate uploaded as a data URL counts", () => {
   assertEquals(customTitleArt({ logoDataURL: "data:," }).logo, true);
   assertEquals(customTitleArt({ subTitleDataURL: "data:," }).subTitle, true);
-  assertEquals(customTitleArt({ titleBgDataURL: "data:," }), NONE);
+  assertEquals(customTitleArt({ titleBgDataURL: "data:," }), {
+    ...NONE,
+    titleBg: true,
+  });
 });
 
 Deno.test("a plate in the record's game_ui set counts, in either spelling", () => {
@@ -54,11 +58,7 @@ Deno.test("a plate in the record's game_ui set counts, in either spelling", () =
   assertEquals(customTitleArt(uiSet("logo․gif")).logo, true);
   assertEquals(customTitleArt(uiSet("subTitleEn.gif")).subTitle, true);
   assertEquals(customTitleArt(uiSet("subTitle.png")).subTitle, true);
-  assertEquals(customTitleArt(uiSet("titleG․gif")), {
-    logo: false,
-    subTitle: false,
-    titleG: true,
-  });
+  assertEquals(customTitleArt(uiSet("titleG․gif")), { ...NONE, titleG: true });
   // Another atlas's frame of that name is not the title's.
   const other = {
     uiAtlases: { title_ui: uiSet("logo.gif").uiAtlases.game_ui },
@@ -225,6 +225,7 @@ Deno.test("a level named on the URL carries its name and title art on the recipe
       logo: false,
       subTitle: false,
       titleG: true,
+      titleBg: false,
     });
     // ...and, with a title plate of its own, opens on its title.
     assertEquals(out.showTitle, true);
@@ -246,6 +247,7 @@ Deno.test("an exported app's baked record is a custom game too", () =>
       logo: false,
       subTitle: false,
       titleG: true,
+      titleBg: false,
     });
   }));
 
@@ -280,12 +282,14 @@ Deno.test("the editor's PLAY of a saved game names it; an unsaved one wears the 
       ...BASE,
       meta: { version: "1.0", editorLevelName: "gs" },
       logoDataURL: "data:,",
+      titleBgDataURL: "data:,",
     });
     assertEquals(saved.recipe.customTitle, {
       name: "gs",
       logo: true,
       subTitle: false,
       titleG: false,
+      titleBg: true,
     });
     // PLAY itself opens in the stage; the title it names is the one the
     // ending returns to.
@@ -331,7 +335,7 @@ Deno.test("the bundle's inlined loader reads a record's title art the way the pl
   }
 });
 
-Deno.test("the title scene draws the three plates a custom game did not bring", async () => {
+Deno.test("the title scene draws the plates a custom game did not bring", async () => {
   const bundle = await read("static/games/2028-ai/game.bundle.js");
   for (
     const needle of [
@@ -340,6 +344,9 @@ Deno.test("the title scene draws the three plates a custom game did not bring", 
       'this.load.image("subTitle_custom", "assets/img/subTitleCustom.png");',
       "} else if (nameLogo) {",
       "} else if (plateSub) {",
+      'this.load.image("title_bg_custom", "assets/img/titleBgCustom.jpg");',
+      'var plateBg = !!custom && !custom.titleBg && this.textures.exists("title_bg_custom");',
+      'plateBg ? "title_bg_custom" : "title_bg"',
       'this.titleG = ownG ? this.add.sprite(0, 0, ownG) : this.add.sprite(0, 0, "game_ui", "titleG.gif");',
     ]
   ) {
@@ -351,14 +358,35 @@ Deno.test("the title scene draws the three plates a custom game did not bring", 
       .test(bundle),
     "a custom game's plates must defer to a cart's title",
   );
-  // The genre plate ships with the game's assets.
-  const plate = await Deno.stat(
+  // The genre plate and the backdrop ship with the game's assets, and an
+  // app the forge stages carries both.
+  for (const file of ["subTitleCustom.png", "titleBgCustom.jpg"]) {
+    const plate = await Deno.stat(
+      new URL(`../static/games/2028-ai/assets/img/${file}`, import.meta.url),
+    );
+    assert(plate.isFile, file);
+    const keep = slice(bundle, "var KEEP_FILES = [", "];");
+    assert(keep.includes(`"assets/img/${file}"`), `the forge drops ${file}`);
+  }
+});
+
+Deno.test("the custom backdrop is rando's gold 2028, as wide as it tiles and as tall as the screen", async () => {
+  const jpg = await Deno.readFile(
     new URL(
-      "../static/games/2028-ai/assets/img/subTitleCustom.png",
+      "../static/games/2028-ai/assets/img/titleBgCustom.jpg",
       import.meta.url,
     ),
   );
-  assert(plate.isFile);
+  // The first baseline frame header (SOF0) holds height then width.
+  let at = 2;
+  while (at < jpg.length && jpg[at + 1] !== 0xc0) {
+    at += 2 + ((jpg[at + 2] << 8) | jpg[at + 3]);
+  }
+  const height = (jpg[at + 5] << 8) | jpg[at + 6];
+  const width = (jpg[at + 7] << 8) | jpg[at + 8];
+  // 768 is rando's own width, so the sideways scroll repeats where its did;
+  // 480 is GAME_DIMENSIONS.HEIGHT, every row a 1:1 tileSprite shows.
+  assertEquals([width, height], [768, 480]);
 });
 
 Deno.test("the game page self-hosts Orbitron and starts its load for the canvas", async () => {

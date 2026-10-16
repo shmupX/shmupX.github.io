@@ -172,12 +172,13 @@ export function parseStageId(value, maxStage) {
 // logo.gif in its game_ui set), the subtitle (subTitleDataURL, or a
 // subTitle.gif / subTitleEn.gif there) and G's plate (a titleG.gif in that
 // set, or one an older save left in its level atlas, which _liftUiFrames puts
-// up). TitleScene reads it off recipe.customTitle to decide which stock plate
-// a custom game still wears: none of its own means the game's name set in
-// Orbitron for the logo, a plate naming only the genre for the subtitle, and
-// its own ship for G.
+// up) — and the scrolling backdrop behind them (titleBgDataURL). TitleScene
+// reads it off recipe.customTitle to decide which stock plate a custom game
+// still wears: none of its own means the game's name set in Orbitron for the
+// logo, a plate naming only the genre for the subtitle, its own ship for G,
+// and the gold 2028 backdrop rando drew for 2028.Ai's blue 2019 one.
 export function customTitleArt(data) {
-  const art = { logo: false, subTitle: false, titleG: false };
+  const art = { logo: false, subTitle: false, titleG: false, titleBg: false };
   if (!data || typeof data !== "object") return art;
   const named = (frames, base) =>
     !!frames && typeof frames === "object" &&
@@ -189,6 +190,7 @@ export function customTitleArt(data) {
   art.logo = !!data.logoDataURL || named(ui, "logo");
   art.subTitle = !!data.subTitleDataURL || named(ui, "subTitle") || named(ui, "subTitleEn");
   art.titleG = named(ui, "titleG") || (!!data.atlasImageDataURL && named(data.atlasFrames, "titleG"));
+  art.titleBg = !!data.titleBgDataURL;
   return art;
 }
 

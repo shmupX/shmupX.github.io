@@ -86,12 +86,13 @@
   // logo.gif in its game_ui set), the subtitle (subTitleDataURL, or a
   // subTitle.gif / subTitleEn.gif there) and G's plate (a titleG.gif in that
   // set, or one an older save left in its level atlas, which _liftUiFrames puts
-  // up). TitleScene reads it off recipe.customTitle to decide which stock plate
-  // a custom game still wears: none of its own means the game's name set in
-  // Orbitron for the logo, a plate naming only the genre for the subtitle, and
-  // its own ship for G.
+  // up) — and the scrolling backdrop behind them (titleBgDataURL). TitleScene
+  // reads it off recipe.customTitle to decide which stock plate a custom game
+  // still wears: none of its own means the game's name set in Orbitron for the
+  // logo, a plate naming only the genre for the subtitle, its own ship for G,
+  // and the gold 2028 backdrop rando drew for 2028.Ai's blue 2019 one.
   function customTitleArt(data) {
-    const art = { logo: false, subTitle: false, titleG: false };
+    const art = { logo: false, subTitle: false, titleG: false, titleBg: false };
     if (!data || typeof data !== "object") return art;
     const named = (frames, base) =>
       !!frames && typeof frames === "object" &&
@@ -103,6 +104,7 @@
     art.logo = !!data.logoDataURL || named(ui, "logo");
     art.subTitle = !!data.subTitleDataURL || named(ui, "subTitle") || named(ui, "subTitleEn");
     art.titleG = named(ui, "titleG") || (!!data.atlasImageDataURL && named(data.atlasFrames, "titleG"));
+    art.titleBg = !!data.titleBgDataURL;
     return art;
   }
 
@@ -2770,6 +2772,9 @@
       // The subtitle plate for a custom game that drew none of its own: the
       // stock plate's genre tag alone, without 2028.Ai's name (TitleScene).
       this.load.image("subTitle_custom", "assets/img/subTitleCustom.png");
+      // And the backdrop for one that brought none: the gold 2028 rando drew,
+      // its top 480 rows — all a 1:1 tileSprite scrolling sideways ever shows.
+      this.load.image("title_bg_custom", "assets/img/titleBgCustom.jpg");
       for (var i = 0; i < 5; i++) {
         this.load.image("stage_loop" + i, "assets/img/stage/stage_loop" + i + ".png");
         this.load.image("stage_end" + i, "assets/img/stage/stage_end" + i + ".png");
@@ -3490,7 +3495,8 @@
   // its name set in Orbitron on a plate the size of logo.gif, the stock
   // subtitle's genre tag alone (subTitle_custom, loaded with the atlases),
   // and its own ship where G stands. Canvas textures, so the title scene
-  // draws them exactly as it draws the stock plates.
+  // draws them exactly as it draws the stock plates. (A backdrop it did not
+  // bring is rando's gold 2028, title_bg_custom, loaded with the subtitle.)
   var NAME_LOGO_KEY = "custom_name_logo";
   var SHIP_TITLE_G_KEY = "custom_ship_titleG";
   var NAME_LOGO_FONT = "900 40px Orbitron";
@@ -7426,18 +7432,20 @@
       var plateSub = !!custom && !custom.subTitle && !this.textures.exists("custom_subTitle") &&
         this.textures.exists("subTitle_custom");
       var ownG = custom && !custom.titleG && playsOwnShip(this) ? shipTitleGTexture(this) : null;
+      var plateBg = !!custom && !custom.titleBg && this.textures.exists("title_bg_custom");
       this.bg = this.add.tileSprite(
         0,
         0,
         GAME_DIMENSIONS.WIDTH,
         GAME_DIMENSIONS.HEIGHT,
-        "title_bg"
+        plateBg ? "title_bg_custom" : "title_bg"
       );
       this.bg.setOrigin(0, 0);
       // title_bg is 2028.Ai's own tiled backdrop, down to the year printed
-      // across it. A cart that drew its own title never shows it, and a cart
-      // flying its ship instead of a title must not either: black is what a
-      // Dezaemon title screen sits on anyway.
+      // across it; a custom game that uploaded none scrolls rando's gold 2028
+      // (title_bg_custom) instead. A cart that drew its own title shows
+      // neither, and a cart flying its ship instead of a title must not
+      // either: black is what a Dezaemon title screen sits on anyway.
       if (this.dezaTitle || shipFrames) this.bg.setVisible(false);
       this.titleG = ownG ? this.add.sprite(0, 0, ownG) : this.add.sprite(0, 0, "game_ui", "titleG.gif");
       this.titleG.setOrigin(0, 0);
@@ -17763,6 +17771,10 @@
     "lib/phaser.min.js",
     "lib/boot.bundle.js",
     "assets/img/title_bg.jpg",
+    // A custom game's stock backdrop and genre plate (TitleScene): an
+    // exported app is always one.
+    "assets/img/titleBgCustom.jpg",
+    "assets/img/subTitleCustom.png",
     "assets/game.json",
     "assets/img/game_ui.png",
     "assets/game_ui.json",
