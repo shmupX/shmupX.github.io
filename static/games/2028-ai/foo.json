@@ -7475,6 +7475,7 @@
       "hp": 350,
       "interval": 200,
       "name": "trump",
+      "attackPattern": "bossExtra",
       "projectileDataA": {
         "_texture": [
           "goki_projectileA0.gif",

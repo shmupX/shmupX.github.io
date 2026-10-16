@@ -12538,9 +12538,9 @@
   // switches to his stances, and an Akuma imported from the 2019 game and
   // made the second boss flew Barlog's pattern in his idle pose throughout.
   // His record is known by the name the hidden boss's entrance gives him,
-  // not by his stances: the game this repo ships flies a boss drawn on
-  // Akuma's stance set (boss2) through its slot's routine, and moving her to
-  // his is her author's call, in the Boss Lab.
+  // not by his stances: a boss drawn on Akuma's stance set flies his routine
+  // when its author pins it there, as the game this repo ships pins its
+  // boss2, trump, to "bossExtra" — never because of the stances alone.
   var GOKI_PATTERN = "goki";
   function isGokiRecord(bossData) {
     return !!bossData && String(bossData.name || "").toLowerCase() === "goki";
