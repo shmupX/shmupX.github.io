@@ -17,7 +17,9 @@ function xmlEscape(s) {
     .replace(/'/g, "&apos;");
 }
 
-function rebrandConfigXml(sourceXml, levelName, packageId) {
+// `entry` is the page the app opens: phaser-game.html for a staged level, a
+// web build's own page (e.g. play/index.html) for an eShop web entry.
+function rebrandConfigXml(sourceXml, levelName, packageId, entry) {
   let xml = fs.readFileSync(sourceXml, "utf8");
   xml = xml.replace(
     /<widget\s+id="[^"]*"/,
@@ -29,7 +31,7 @@ function rebrandConfigXml(sourceXml, levelName, packageId) {
   );
   xml = xml.replace(
     /<content\s+src="[^"]*"\s*\/>/,
-    '<content src="phaser-game.html" />',
+    '<content src="' + xmlEscape(entry || "phaser-game.html") + '" />',
   );
   return xml;
 }

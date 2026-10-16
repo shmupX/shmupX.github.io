@@ -80,6 +80,24 @@ export interface ShelfHit {
   note: string;
   /** The cart on disk, when this hit came from one — PS2 wants the .sav itself. */
   savFile?: string;
+  /**
+   * An eShop WEB entry: a browser game that is already a build. There is no
+   * level record to stage — the app is the game's own files, unpacked from
+   * this zip into www/ (scripts/build-desktop.ts → tools/build-level
+   * --web-dir), opened at `entry`.
+   */
+  web?: WebBuild;
+}
+
+export interface WebBuild {
+  /** Where the build's zip is: an absolute URL, or null when it is on disk. */
+  zipUrl: string | null;
+  /** The zip in this checkout (a root-relative downloadUrl under static/). */
+  zipPath: string | null;
+  /** The page to open, relative to the zip's root ("play/index.html"). */
+  entry: string;
+  /** Which touch controller the phone shows for it: two sticks, or a pad. */
+  pad: "twin" | "classic";
 }
 
 export interface ResolveOptions {
@@ -691,11 +709,14 @@ async function eshopEntry(
     for (const entry of catalog) {
       const id = String(entry.id ?? "");
       if (shelfSlug(id) !== slug) continue;
+      if (entry.kind === "web") {
+        return await webEntry(entry, opts, root);
+      }
       if (entry.kind !== "deza") {
         throw new ShelfError(
           `"${id}" is an eShop entry of kind "${entry.kind}" — only a ` +
-            `Dezaemon game (kind "deza") carries a cart a build can stage. A ` +
-            `"web" entry is already a playable build; install it from the eShop.`,
+            `Dezaemon game (kind "deza") or a web build (kind "web") is ` +
+            `something a build can stage.`,
         );
       }
       found = true;
@@ -760,6 +781,58 @@ async function eshopEntry(
     opts,
     root,
   );
+}
+
+/**
+ * An eShop web build as a hit: no record, just where its zip is and how it
+ * opens. Only Android and iOS can wrap one (scripts/build-desktop.ts refuses
+ * the rest), since the Cordova shell is what can serve an arbitrary www/.
+ */
+function webEntry(
+  entry: Record<string, unknown>,
+  opts: ResolveOptions,
+  root: string,
+): ShelfHit {
+  const id = String(entry.id ?? "");
+  const url = typeof entry.downloadUrl === "string" ? entry.downloadUrl : "";
+  if (!url) {
+    throw new ShelfError(
+      `"${id}" is a web build with no downloadUrl — only a packed build zip ` +
+        `can be wrapped as an app (a GitHub source tree is not a build).`,
+    );
+  }
+  let zipUrl: string | null = null;
+  let zipPath: string | null = null;
+  if (/^https?:\/\//i.test(url)) {
+    zipUrl = url;
+  } else if (url.startsWith("/")) {
+    // Root-relative: a zip this checkout serves out of static/.
+    zipPath = join(root, "static", ...url.slice(1).split("/"));
+  } else {
+    throw new ShelfError(`"${id}": cannot read downloadUrl "${url}"`);
+  }
+  const rawEntry = typeof entry.entry === "string" && entry.entry.trim()
+    ? entry.entry.trim()
+    : "index.html";
+  const page = rawEntry.replace(/^\.?\//, "");
+  if (page.split("/").includes("..")) {
+    throw new ShelfError(`"${id}": entry "${rawEntry}" leaves the build`);
+  }
+  const twin = entry.twinStick === true ||
+    (!!entry.twinStick && typeof entry.twinStick === "object");
+  const slug = shelfSlug(id);
+  const levelName = opts.name?.trim() ||
+    String(entry.name ?? entry.title ?? id);
+  const note = `shelf: ${slug} → the eShop ("${levelName}", a web build)`;
+  opts.log?.(note);
+  return {
+    kind: "eshop",
+    slug,
+    levelName,
+    levelFile: null,
+    note,
+    web: { zipUrl, zipPath, entry: page, pad: twin ? "twin" : "classic" },
+  };
 }
 
 /** The 262-save community Dezaemon library, in the Realtime Database. */

@@ -720,6 +720,11 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   -webkit-tap-highlight-color: transparent;
 }
 .twin-touch-zone.left { left: 0; width: 50vw; }
+
+/* Touch Controller — the on-screen pad over the game when no pad is connected
+   (static/virtual-pad/virtual-pad.js draws it). Same layer as the twin-touch
+   zones, under the Guide's corner zones (102). */
+.touch-pad-overlay { position: fixed; inset: 0; z-index: 101; pointer-events: none; }
 .twin-touch-zone.right { right: 0; width: 50vw; }
 .twin-touch-base,
 .twin-touch-knob {

@@ -32,6 +32,7 @@ import {
 } from "./lib/desktop-browser.ts";
 import { currentLauncherBinary } from "./lib/launcher-binary.ts";
 import { startAutoUpdate } from "./lib/self-update.ts";
+import { restoreDisplays, restoreDisplaysSync } from "./lib/second-screen.ts";
 
 interface FetchServer {
   fetch(
@@ -242,4 +243,12 @@ const httpServer = Deno.serve({
   },
 }, (req, info) => server.fetch(req, info));
 
+// The controller screen (lib/second-screen.ts) may have turned the built-in
+// panel on for a game; the launcher going away must not leave it that way. The
+// server's copy of that module keeps its undo on globalThis, where this copy
+// reads it — once on an orderly shutdown, and synchronously on `unload` for an
+// exit nothing else saw coming (the last window closed under `deno desktop`).
+globalThis.addEventListener("unload", () => restoreDisplaysSync());
+
 await httpServer.finished;
+await restoreDisplays();

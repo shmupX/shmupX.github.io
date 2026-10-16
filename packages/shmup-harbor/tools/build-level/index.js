@@ -31,6 +31,16 @@
 //                     where the AppImage will run).
 //   --level-file <p>  Read the level record from a local JSON file instead of
 //                     Firebase (offline staging / tests).
+//   --web-dir <dir>   Wrap a browser game that is already a build (an eShop
+//                     "web" entry, unpacked by scripts/build-desktop.ts)
+//                     instead of staging a level: <dir> becomes www/ as-is.
+//                     android / ios only.
+//   --entry <path>    With --web-dir: the page the app opens, relative to
+//                     <dir> (default index.html).
+//   --pad <layout>    The touch controller the phone shows when the game
+//                     goes to an external display: twin (two sticks) or
+//                     classic (stick + ABXY, the default). See
+//                     scaffold/plugins/cordova-plugin-second-screen.
 //
 // Pipeline:
 //   1. Fetch the level record (Firebase REST, or --level-file).
@@ -47,6 +57,7 @@ const { slugify, packageIdFor } = require("./lib/slug");
 const { fetchLevel } = require("./lib/fetch-level");
 const { downloadBgmForLevel } = require("./lib/download-bgm");
 const { stageWww } = require("./lib/stage");
+const { stageWebDir, stageSecondScreen } = require("./lib/second-screen");
 const { writeAppIcon } = require("./lib/app-icon");
 const { gameIdForLevel } = require("./lib/game-id");
 const {
@@ -123,6 +134,9 @@ function parseArgs(argv) {
     "mac-target",
     "mac-arch",
     "editor-origin",
+    "web-dir",
+    "entry",
+    "pad",
   ]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -212,6 +226,32 @@ async function main() {
     }
   }
 
+  const webDir = args.flags["web-dir"] ? path.resolve(args.flags["web-dir"]) : null;
+  const padLayout = args.flags.pad === "twin" ? "twin" : "classic";
+  if (args.flags.pad && !["twin", "classic"].includes(args.flags.pad)) {
+    console.error("Unknown --pad: " + args.flags.pad + " (twin or classic)");
+    process.exit(2);
+  }
+  if (webDir) {
+    for (const p of platforms) {
+      if (p !== "android" && p !== "ios") {
+        console.error(
+          "--web-dir builds only android and ios: a web build already plays " +
+            "in a browser, and the Cordova shell is what can serve it as-is.",
+        );
+        process.exit(2);
+      }
+    }
+    return await buildWebApp({
+      levelName,
+      webDir,
+      entry: args.flags.entry || "index.html",
+      padLayout,
+      platforms,
+      args,
+    });
+  }
+
   // Sanity-check the game source is present before doing any work.
   const bundle = path.join(GAME_DIR, "game.bundle.js");
   if (!fs.existsSync(bundle)) {
@@ -273,6 +313,15 @@ async function main() {
     levelName,
     levelData,
     gameId,
+  });
+
+  // The phone as the controller while the game is on an external display.
+  stageSecondScreen({
+    cmgRoot: CMG_ROOT,
+    wwwRoot,
+    layout: padLayout,
+    entry: "phaser-game.html",
+    title: levelName,
   });
 
   // The launcher icon: the game's own ship when it flies one, else the
@@ -394,6 +443,91 @@ async function main() {
     console.warn("Could not record artifacts.json: " + err.message);
   }
 
+  console.log("\nDone. Artifacts:");
+  for (const p of Object.keys(results)) {
+    for (const a of (results[p].artifacts || [])) {
+      console.log("  " + p + "  " + a);
+    }
+  }
+}
+
+// A browser game that is already a build (an eShop "web" entry): no level, no
+// atlas, no BGM — www/ is the build itself, opened at its own entry page, plus
+// the controller page the phone shows while the game is on a monitor.
+async function buildWebApp(o) {
+  const slug = slugify(o.levelName);
+  const packageId = o.args.flags["package-id"] || packageIdFor(o.levelName);
+  const buildRoot = path.resolve(
+    o.args.flags.out || path.join(CMG_ROOT, "build", slug),
+  );
+  const wwwRoot = path.join(buildRoot, "www");
+  console.log("Web build: " + o.levelName);
+  console.log("Slug     : " + slug);
+  console.log("Package  : " + packageId);
+  console.log("Source   : " + o.webDir);
+  console.log("Entry    : " + o.entry);
+  console.log("Pad      : " + o.padLayout);
+  console.log("Build    : " + buildRoot);
+
+  console.log("\n[1/2] Staging www/ from the web build…");
+  stageWebDir({ srcDir: o.webDir, wwwRoot, entry: o.entry });
+  stageSecondScreen({
+    cmgRoot: CMG_ROOT,
+    wwwRoot,
+    layout: o.padLayout,
+    entry: o.entry,
+    title: o.levelName,
+  });
+  if (o.args.flags["stage-only"]) {
+    console.log("\n--stage-only: www staged at " + wwwRoot);
+    return;
+  }
+
+  console.log("\n[2/2] Platform builds…");
+  const results = {};
+  const configXml = rebrandConfigXml(
+    path.join(SCAFFOLD_ROOT, "config.xml"),
+    o.levelName,
+    packageId,
+    o.entry,
+  );
+  for (const p of o.platforms) {
+    console.log("\n--- " + p.toUpperCase() + " ---");
+    try {
+      results[p] = await buildCordova({
+        scaffoldRoot: SCAFFOLD_ROOT,
+        wwwRoot,
+        buildRoot,
+        levelName: o.levelName,
+        packageId,
+        slug,
+        platform: p,
+        configXml,
+        iconDir: null,
+        entry: o.entry,
+      });
+    } catch (err) {
+      console.error(p + " build failed: " + err.message);
+      process.exitCode = 1;
+    }
+  }
+  writeArtifacts(buildRoot, results);
+}
+
+function writeArtifacts(buildRoot, results) {
+  const manifestPath = path.join(buildRoot, "artifacts.json");
+  try {
+    let manifest = {};
+    if (fs.existsSync(manifestPath)) {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) || {};
+    }
+    for (const p of Object.keys(results)) {
+      manifest[p] = results[p].artifacts || [];
+    }
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  } catch (err) {
+    console.warn("Could not record artifacts.json: " + err.message);
+  }
   console.log("\nDone. Artifacts:");
   for (const p of Object.keys(results)) {
     for (const a of (results[p].artifacts || [])) {

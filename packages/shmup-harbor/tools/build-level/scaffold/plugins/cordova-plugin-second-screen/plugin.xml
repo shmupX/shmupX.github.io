@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
+        xmlns:android="http://schemas.android.com/apk/res/android"
+        id="cordova-plugin-second-screen"
+        version="1.0.0">
+
+    <name>Second Screen</name>
+    <description>With an external display connected (Pixel Desktop mode, a USB-C monitor), the game plays on it and the phone becomes the touch controller. Reads www/second-screen.json, staged by tools/build-level/lib/second-screen.js; without it the plugin does nothing.</description>
+
+    <platform name="android">
+        <config-file target="res/xml/config.xml" parent="/*">
+            <feature name="SecondScreen">
+                <param name="android-package" value="com.easierbycode.secondscreen.SecondScreenPlugin" />
+                <!-- Loaded at startup: it has to be watching for a display
+                     before anyone calls it, and it adds the controller bridge
+                     to the WebView before the first page loads. -->
+                <param name="onload" value="true" />
+            </feature>
+        </config-file>
+
+        <config-file target="AndroidManifest.xml" parent="/manifest/application">
+            <!-- The other screen's window: the game on the monitor, or the
+                 controller on the phone when the app itself was opened on the
+                 monitor. Its own task (taskAffinity) so it can live on a
+                 different display from MainActivity; resizable because a
+                 Desktop-mode display only takes resizable activities;
+                 density in configChanges so a window dragged between screens
+                 is not torn down and the game restarted. -->
+            <activity android:name="com.easierbycode.secondscreen.ScreenActivity"
+                      android:exported="false"
+                      android:taskAffinity="${applicationId}.secondscreen"
+                      android:excludeFromRecents="true"
+                      android:resizeableActivity="true"
+                      android:launchMode="standard"
+                      android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|density|uiMode|locale|navigation" />
+        </config-file>
+
+        <source-file src="src/android/SecondScreenPlugin.kt"
+                     target-dir="app/src/main/java/com/easierbycode/secondscreen" />
+        <source-file src="src/android/ScreenActivity.kt"
+                     target-dir="app/src/main/java/com/easierbycode/secondscreen" />
+        <source-file src="src/android/PadRelay.kt"
+                     target-dir="app/src/main/java/com/easierbycode/secondscreen" />
+
+        <!-- WebViewAssetLoader: the second window serves www/ on the same
+             https://localhost origin as Cordova's own WebView, so the game
+             keeps its saves (localStorage, IndexedDB) wherever it runs. -->
+        <framework src="androidx.webkit:webkit:1.12.1" />
+    </platform>
+</plugin>

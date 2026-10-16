@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>shmupX Controller</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #050807; overflow: hidden;
+    overscroll-behavior: none; touch-action: none; }
+  #pad { position: fixed; inset: 0; }
+  #status { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%);
+    font: 600 11px/1.2 system-ui, sans-serif; letter-spacing: .18em; text-transform: uppercase;
+    color: rgba(233, 255, 224, .45); pointer-events: none; white-space: nowrap; }
+  #swap { position: fixed; right: 10px; bottom: 8px; height: 30px; padding: 0 12px;
+    border-radius: 999px; border: 1px solid rgba(124, 255, 79, .35); background: rgba(10, 20, 14, .7);
+    color: rgba(233, 255, 224, .75); font: 600 11px system-ui, sans-serif; letter-spacing: .12em;
+    display: none; }
+</style>
+</head>
+<body>
+<div id="pad"></div>
+<div id="status"></div>
+<button id="swap" type="button"></button>
+<script type="module">
+  // The controller screen. Shown on the device's own panel while the game
+  // plays on a monitor (static/virtual-pad/virtual-pad.js says when), it reads
+  // touches into a standard gamepad state and sends it to wherever the game
+  // is:
+  //   * Android (cordova-plugin-second-screen): window.ShmupxSecondScreen, the
+  //     native bridge, which relays it into the game's WebView on the other
+  //     display.
+  //   * The desktop launcher: a BroadcastChannel — the game window and this
+  //     one are the same origin in the same browser, so nothing in between.
+  // Every change goes out at once, and the current state again every 250 ms,
+  // so a receiver that missed one, or just started listening, catches up, and
+  // one that hears nothing for a few seconds can drop the pad.
+  import {
+    encodePadState,
+    mountVirtualPad,
+    normalizeLayout,
+    PAD_CHANNEL,
+  } from "./virtual-pad.js";
+
+  const params = new URLSearchParams(location.search);
+  const bridge = window.ShmupxSecondScreen || null;
+  let layout = normalizeLayout(params.get("layout"));
+  try {
+    const info = bridge && bridge.info ? JSON.parse(bridge.info() || "{}") : null;
+    if (info && info.layout) layout = normalizeLayout(info.layout);
+  } catch (_) { /* an older bridge — the query string stands */ }
+
+  let channel = null;
+  try { channel = new BroadcastChannel(PAD_CHANNEL); } catch (_) { channel = null; }
+
+  let current = { axes: [0, 0, 0, 0], bits: 0 };
+  function send() {
+    const msg = encodePadState(current, layout);
+    if (bridge && bridge.postPad) {
+      try { bridge.postPad(JSON.stringify(msg)); } catch (_) { /* bridge gone */ }
+    }
+    if (channel) {
+      try { channel.postMessage(msg); } catch (_) { /* channel closed */ }
+    }
+  }
+
+  const pad = mountVirtualPad(document.getElementById("pad"), {
+    layout,
+    overlay: false,
+    acceptMouse: true,
+    onChange(state) {
+      current = state;
+      send();
+    },
+  });
+  setInterval(send, 250);
+
+  // The launcher can change the layout (a twin-stick game replaced by a
+  // classic one) without reopening the window.
+  if (channel) {
+    channel.onmessage = (e) => {
+      const d = e.data;
+      if (d && d.t === "layout" && d.l) {
+        layout = normalizeLayout(d.l);
+        pad.setLayout(layout);
+      }
+    };
+  }
+
+  const status = document.getElementById("status");
+  const title = params.get("title") || "";
+  status.textContent = (title ? title + " · " : "") + "game on the other screen";
+
+  // Hand the game back to this screen. Android: the bridge pulls the game
+  // window off the monitor and shows it here; desktop: the launcher closes
+  // this window and puts the displays back as they were.
+  const swap = document.getElementById("swap");
+  swap.textContent = "PLAY HERE";
+  swap.style.display = "block";
+  swap.addEventListener("click", () => {
+    pad.release();
+    current = { axes: [0, 0, 0, 0], bits: 0 };
+    send();
+    if (bridge && bridge.swap) {
+      try { bridge.swap(); } catch (_) { /* nothing to swap */ }
+    } else if (channel) {
+      channel.postMessage({ t: "close" });
+    }
+  });
+
+  // Keep the panel awake: a controller that dims and locks mid-run is a pause
+  // nobody asked for.
+  async function wake() {
+    try { await navigator.wakeLock?.request("screen"); } catch (_) { /* not offered here */ }
+  }
+  wake();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) wake(); });
+</script>
+</body>
+</html>

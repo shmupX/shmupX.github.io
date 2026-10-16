@@ -2941,6 +2941,33 @@ and an installer is the closest thing to one file you can hand someone.
 in from the default install path when it is unset) and produces a
 **debug-signed** APK.
 
+**The phone as the controller.** Every Android build carries
+`cordova-plugin-second-screen` (`tools/build-level/scaffold/plugins/`). Plug the
+phone into a monitor (Pixel Desktop mode, or any phone with DisplayPort over
+USB-C) and the game moves to the monitor while the phone shows the touch
+controller: two sticks for a twin-stick game, a stick and ABXY for the rest. The
+pad is the same [`static/virtual-pad/`](static/virtual-pad/) page the launcher
+uses, staged into `www/virtual-pad/` with a `www/second-screen.json` saying which
+layout and which page is the game (`tools/build-level/lib/second-screen.js`).
+The game's window on the monitor is a `ScreenActivity` launched onto that
+display. It serves `www/` on the same `https://localhost` origin as Cordova's own
+WebView, so saves follow the game. Every controller message is handed to the
+game's page through `pad-shim.js`, injected on first use, which makes it one
+more standard gamepad. If the app was opened on the monitor instead (a Desktop
+mode taskbar tap), the roles swap: the game stays where it is and the controller
+opens on the phone. Unplugging brings the game back to the phone. **PLAY HERE**
+on the controller, or Back on either screen, does the same until the displays
+next change. A build without `second-screen.json` stays on one screen.
+
+**An eShop web build as an APK.** `deno task build:android shmup-party-ps2`
+wraps a `kind: "web"` eShop entry: its `downloadUrl` zip is unpacked under
+`build/shelf/web/<slug>/` and handed to the tool as `--web-dir`, with
+`--entry` (the catalog's `entry`, e.g. `play/index.html`) and `--pad twin` for a
+`twinStick` game. www/ is the build as-is, and `cordova.js` is injected into the
+entry page. Android and iOS only, since a web build already plays in a browser.
+`--name "Shmup Party"` gives it a cleaner slug and package id than the ↑ in the
+title allows.
+
 **The APK's icon is the game's own ship.** The scaffold's launcher icons are
 Duke — 2028.Ai's player, his first frame scaled by whole pixels to each Android
 density. A game that flies a player of its own gets the same treatment from
@@ -3692,6 +3719,56 @@ launcher's is empty), the halves it produced, and whether 2028.Ai acknowledged
 the two-player gate (`cmg-splitpads-ack`); `tests/gamepad_pads_test.ts` pins the
 split view's slots to 2028.Ai's own button tables (and Sh'M↑ Party's, as
 constants), and `tests/host_device_test.ts` the machine classification.
+
+### Touch Controller (no pad in hand)
+
+A machine with a touchscreen and no pad connected gets an on-screen pad over the
+game: a Legion Go with its controller off or in the bag, or a tablet. A
+twin-stick game (Sh'M↑ Party, or anything with `twinStick` in the catalog) gets
+two floating sticks, one per half of the screen. Every other game gets a stick
+that also writes the D-pad, plus ABXY, shoulders, SELECT and START. The pad is
+[`static/virtual-pad/virtual-pad.js`](static/virtual-pad/virtual-pad.js). What it
+reads goes into the game frame as one more standard Gamepad, through the same
+`getGamepads` patch Twin-Stick and Split Controller use (`touchPadGamepads` in
+`svelte-src/Dashboard.svelte`), so a game needs no change. Its id is `CMG Touch
+Twin-Stick` or `CMG Touch Pad`. Sh'M↑ Party's `/touch twin-?stick/` test reads
+the first one as touch input. The pad shows only for same-origin frames. A
+cross-origin twin-stick game is told to run its own touch analogs instead
+(`cmg-twinstick-touch-set`). A pad connecting takes the overlay away and
+disconnecting brings it back. The Legion's FPS mode never shows it, and only
+touch and pen drive it, so FPS mode's mouse cannot grab a stick. Settings →
+**TOUCH CONTROLLER** switches it off, and so does the Guide's **Touch
+Controller** row. The choice is kept in `cmg-touch-controller`.
+
+**The built-in screen as the controller.** A Legion docked to a monitor and set
+to use *only* the external display while one is connected has its own
+touchscreen dark. With **CONTROLLER SCREEN** on (the default), a game started
+with no pad leaves the game on the monitor and the controller goes to the
+Legion's own panel. [`lib/display-layout.ts`](lib/display-layout.ts) turns the
+panel on beside the monitor: to its right, top-aligned, with the monitor still
+primary. It goes through `kscreen-doctor` on KDE Plasma (Bazzite's and SteamOS's
+Desktop Mode) or `xrandr` on an X11 session. Both are the session's own display
+configuration, so no root and no extra permission is needed.
+[`lib/second-screen.ts`](lib/second-screen.ts) then opens a frameless,
+always-on-top `Deno.BrowserWindow` across the panel at
+[`/virtual-pad/index.html`](static/virtual-pad/index.html). That page and the
+launcher are one origin in one browser, so the pad's state crosses on a
+`BroadcastChannel`. The layout is put back exactly as found (only what was
+changed is undone) when the game ends, a pad connects, the controller's **PLAY
+HERE** is pressed, its window is closed, or the launcher quits (`desktop.ts`
+restores on the way out, synchronously on `unload`). A monitor plugged in
+mid-game is noticed within a few seconds. `/api/second-screen` (local-only, like
+`/api/host`) is the switch.
+
+Some setups cannot do this, and the CONTROLLER SCREEN row says why. Only the
+packaged Linux launcher has `Deno.BrowserWindow` here; Windows borrows a browser.
+Gamescope (Game Mode) drives one display at a time, so switch to Desktop Mode. A
+GNOME Wayland session offers no command to change its layout. In every one of
+those cases the overlay stands in. `tests/display_layout_test.ts` holds the
+kscreen and xrandr readers and the plan to fixtures shaped like a docked Legion
+(its panel is natively portrait, turned a quarter, at 150%).
+`tests/second_screen_test.ts` runs the whole open/close round trip against a
+stand-in `kscreen-doctor` and window.
 
 ## Mobile (Android)
 

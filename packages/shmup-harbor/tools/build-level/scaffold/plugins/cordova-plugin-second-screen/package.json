@@ -1,0 +1,12 @@
+{
+  "name": "cordova-plugin-second-screen",
+  "version": "1.0.0",
+  "description": "With an external display connected, show the game there and the touch controller on the phone.",
+  "cordova": {
+    "id": "cordova-plugin-second-screen",
+    "platforms": ["android"]
+  },
+  "keywords": ["cordova", "ecosystem:cordova", "cordova-android"],
+  "author": "easierbycode",
+  "license": "MIT"
+}

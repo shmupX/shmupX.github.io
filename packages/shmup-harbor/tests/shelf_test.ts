@@ -308,3 +308,25 @@ Deno.test("--slot and --stage get their own cache entries", async () => {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("an eShop web build resolves to its zip and entry, not a record", async () => {
+  // Offline is fine: the catalog row says everything, and the zip is only
+  // fetched when the build runs (scripts/build-desktop.ts stageWebBuild).
+  const hit = await resolveShelfName("shmup-party-ps2", OFFLINE);
+  assertEquals(hit.kind, "eshop");
+  assertEquals(hit.levelFile, null);
+  assert(hit.web, "expected a web build");
+  assertEquals(hit.web.entry, "play/index.html");
+  // Sh'M↑ Party is a twin-stick game: the phone shows two sticks.
+  assertEquals(hit.web.pad, "twin");
+  assertStringIncludes(hit.web.zipUrl ?? "", "shmup-party-ps2-web.zip");
+  // A root-relative downloadUrl is a zip this checkout serves.
+  const local = await resolveShelfName("eshop:2019", OFFLINE);
+  assert(local.web);
+  assertEquals(local.web.zipUrl, null);
+  assertStringIncludes(
+    local.web.zipPath ?? "",
+    join("static", "games", "2019-web.zip"),
+  );
+  assertEquals(local.web.pad, "classic");
+});

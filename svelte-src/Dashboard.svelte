@@ -127,6 +127,15 @@
     sameOriginPath,
     watchLaunches,
   } from '../static/watch-launch.js';
+  // The touch controller: laid over the game when the machine has a
+  // touchscreen and no pad, or shown on the built-in screen while the game is
+  // on a monitor (see "Touch Controller" below).
+  import {
+    decodePadState,
+    gamepadFromState,
+    mountVirtualPad,
+    PAD_CHANNEL,
+  } from '../static/virtual-pad/virtual-pad.js';
 
   const MAIN_MENU = [
     { id: 'games',    label: 'Games',    tag: '01 / disc.io',  num: '0x01' },
@@ -1815,6 +1824,30 @@
       label: 'EXPORTS',
       sub: exportsSummary,
     },
+    // The on-screen pad for when no controller is connected — offered wherever
+    // there is a touchscreen to put it on (see "Touch Controller").
+    ...(isTouch || secondScreen?.available
+      ? [{
+        id: 'touchpad',
+        label: 'TOUCH CONTROLLER',
+        sub: touchPadPref
+          ? 'ON  ·  no pad connected → the touchscreen is the pad'
+          : 'OFF  ·  games wait for a real pad',
+      }]
+      : []),
+    // ...and, on the desktop launcher, the built-in screen as that pad while a
+    // monitor shows the game. Game Mode says why it cannot.
+    ...(secondScreen?.available || /Game Mode/.test(secondScreen?.reason || '')
+      ? [{
+        id: 'touchpad-screen',
+        label: 'CONTROLLER SCREEN',
+        sub: !secondScreen?.available
+          ? secondScreen.reason
+          : touchPadScreenPref
+          ? 'ON  ·  monitor connected → game there, controller on the built-in screen'
+          : 'OFF  ·  the controller stays over the game',
+      }]
+      : []),
     // Only a local install is a build server (see refreshBuilder).
     ...(builder ? [{ id: 'builder', label: 'BUILD SERVER', sub: builderSummary }] : []),
     // ...and only a packaged launcher has a file to add (see refreshSteam).
@@ -3871,6 +3904,252 @@
     try { iframe?.contentWindow?.postMessage({ type: 'cmg-theme', theme: tweaks.theme }, '*'); } catch (_) { /* ignore */ }
   }
 
+  // ── Touch Controller (no pad in hand) ─────────────────────────────────────
+  // A machine with a touchscreen and no pad connected — a Legion Go with its
+  // controller off or in a bag, a tablet — gets an on-screen pad over the game:
+  // two floating sticks for a twin-stick game, a stick + ABXY for the rest
+  // (static/virtual-pad/virtual-pad.js). What it reads goes into the game frame
+  // as one more standard Gamepad (touchPadGamepads, through the same
+  // getGamepads patch Twin-Stick and Split Controller use), so a game needs no
+  // change. A real pad connecting takes the overlay away; disconnecting brings
+  // it back. Settings → TOUCH CONTROLLER (and the Guide) switch it off.
+  //
+  // CONTROLLER SCREEN: with a monitor connected, the game stays on the monitor
+  // and the controller goes to the machine's OWN panel instead — the desktop
+  // launcher turns the built-in screen on beside the monitor (a Legion set to
+  // use only the external display while one is connected has it dark), opens
+  // the controller page there (/api/second-screen, lib/second-screen.ts), and
+  // puts the displays back when the game ends. The controller page and this one
+  // share an origin, so its state arrives on a BroadcastChannel.
+  const TOUCH_PAD_KEY = 'cmg-touch-controller';
+  const TOUCH_PAD_SCREEN_KEY = 'cmg-touch-controller-screen';
+  const SECOND_SCREEN_URL = '/api/second-screen';
+  // The controller page resends every 250 ms; this long without a word means
+  // its window is gone.
+  const TOUCH_PAD_REMOTE_STALE_MS = 4000;
+  function readBoolPref(key, fallback) {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? fallback : v === '1';
+    } catch (_) { return fallback; }
+  }
+  let touchPadPref = $state(readBoolPref(TOUCH_PAD_KEY, true));
+  let touchPadScreenPref = $state(readBoolPref(TOUCH_PAD_SCREEN_KEY, true));
+  let touchPadTitle = '';
+  let touchPadLayout = $derived(twinStickAvail ? 'twin' : 'classic');
+  // Same-origin frames only: the pad goes in through the frame's getGamepads.
+  // (A cross-origin twin-stick game is told to run its own touch analogs
+  // instead — see applyTwinStick.)
+  let touchPadWanted = $derived(
+    gameOn && touchPadPref && !padConnected && !legionFpsMode && !editorFrameActive && gameFramePatchable
+  );
+  let secondScreen = $state(null);          // GET /api/second-screen, or null
+  let secondScreenOpen = $state(false);
+  // PLAY HERE on the controller page: this game stays on one screen from now on.
+  let secondScreenDismissed = $state(false);
+  let secondScreenBusy = false;
+  let secondScreenWanted = $derived(
+    touchPadWanted && touchPadScreenPref && !secondScreenDismissed &&
+      !!secondScreen?.available && !!secondScreen?.external
+  );
+  // Not while the controller screen is being asked for: that would flash the
+  // pad up on the monitor for the second it takes.
+  let touchPadOverlay = $derived(touchPadWanted && isTouch && !secondScreenOpen && !secondScreenWanted && !osdOpen);
+  // Whether the frame is being handed the touch pad at all (the overlay can be
+  // hidden under the Guide while the pad stays connected).
+  let touchPadPresent = $derived(touchPadWanted && (secondScreenOpen || isTouch));
+  // Read on every poll of the frame's getGamepads, so plain objects, not $state.
+  const touchPadLocal = { axes: [0, 0, 0, 0], bits: 0 };
+  const touchPadRemote = { axes: [0, 0, 0, 0], bits: 0, at: 0 };
+  let touchPadIndex = -1;
+  let touchPadChannel = null;
+
+  function touchPadLive() {
+    if (!touchPadWanted) return false;
+    if (secondScreenOpen) return performance.now() - touchPadRemote.at < TOUCH_PAD_REMOTE_STALE_MS;
+    return isTouch;
+  }
+
+  // The touch pad as one more pad in the frame's list: in the first free slot
+  // (slot 0 in the usual case, nothing else being connected), kept there while
+  // it stays live.
+  function touchPadGamepads(pads) {
+    if (!touchPadLive()) { touchPadIndex = -1; return pads; }
+    const out = Array.prototype.slice.call(pads || []);
+    if (touchPadIndex < 0 || out[touchPadIndex]) {
+      touchPadIndex = out.findIndex((p) => !p);
+      if (touchPadIndex < 0) touchPadIndex = out.length;
+    }
+    while (out.length <= touchPadIndex) out.push(null);
+    const src = secondScreenOpen ? touchPadRemote : touchPadLocal;
+    out[touchPadIndex] = gamepadFromState(src, { layout: touchPadLayout, index: touchPadIndex });
+    return out;
+  }
+
+  // Tell the frame a pad arrived (or left) the way a real one's first press
+  // would: some engines only start polling on gamepadconnected.
+  function announceTouchPad(type) {
+    const iframe = document.getElementById('gameframe') || document.querySelector('.game-iframe iframe');
+    const w = iframe && iframe.contentWindow;
+    if (!w || !frameIsSameOrigin(iframe)) return;
+    try {
+      const ev = new w.Event(type);
+      Object.defineProperty(ev, 'gamepad', {
+        value: gamepadFromState(secondScreenOpen ? touchPadRemote : touchPadLocal, { layout: touchPadLayout, index: Math.max(0, touchPadIndex) }),
+      });
+      w.dispatchEvent(ev);
+    } catch (_) { /* frame mid-navigation */ }
+  }
+
+  function setTouchPadPref(v) {
+    touchPadPref = !!v;
+    try { localStorage.setItem(TOUCH_PAD_KEY, touchPadPref ? '1' : '0'); } catch (_) { /* ignore */ }
+    applyTwinStick();
+  }
+  function setTouchPadScreenPref(v) {
+    touchPadScreenPref = !!v;
+    try { localStorage.setItem(TOUCH_PAD_SCREEN_KEY, touchPadScreenPref ? '1' : '0'); } catch (_) { /* ignore */ }
+  }
+
+  // Svelte action: the overlay over the game frame.
+  function touchPadOverlayAction(node, layout) {
+    const pad = mountVirtualPad(node, {
+      layout,
+      overlay: true,
+      acceptMouse: false,
+      onChange(state) {
+        touchPadLocal.axes = state.axes;
+        touchPadLocal.bits = state.bits;
+      },
+    });
+    return {
+      update(next) { pad.setLayout(next); },
+      destroy() {
+        pad.destroy();
+        touchPadLocal.axes = [0, 0, 0, 0];
+        touchPadLocal.bits = 0;
+      },
+    };
+  }
+
+  function onTouchPadMessage(e) {
+    const d = e && e.data;
+    if (!d) return;
+    if (d.t === 'close') {
+      // PLAY HERE on the controller: back to one screen for this game.
+      secondScreenDismissed = true;
+      return;
+    }
+    const st = decodePadState(d);
+    if (!st) return;
+    touchPadRemote.axes = st.axes;
+    touchPadRemote.bits = st.bits;
+    touchPadRemote.at = performance.now();
+  }
+  function openTouchPadChannel() {
+    try {
+      touchPadChannel = new BroadcastChannel(PAD_CHANNEL);
+      touchPadChannel.onmessage = onTouchPadMessage;
+    } catch (_) { touchPadChannel = null; }
+  }
+
+  async function refreshSecondScreen() {
+    try {
+      const r = await fetch(SECOND_SCREEN_URL, { cache: 'no-store' });
+      if (!r.ok) { secondScreen = null; return; }
+      const d = await r.json();
+      secondScreen = d && typeof d === 'object' ? d : null;
+      // The window was closed by hand (or a reload lost track of it): the
+      // server has already put the screens back.
+      if (secondScreenOpen && d && d.open === false) {
+        secondScreenOpen = false;
+        secondScreenDismissed = true;
+      } else if (!secondScreenOpen && d && d.open === true && !secondScreenWanted) {
+        // Left open by a launcher page that reloaded mid-game.
+        postSecondScreen({ action: 'close' });
+      }
+    } catch (_) { secondScreen = null; }
+  }
+
+  async function postSecondScreen(body) {
+    try {
+      const r = await fetch(SECOND_SCREEN_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return await r.json();
+    } catch (e) {
+      return { ok: false, reason: String((e && e.message) || e) };
+    }
+  }
+
+  async function syncSecondScreen(want) {
+    if (secondScreenBusy) return;
+    if (want && !secondScreenOpen) {
+      secondScreenBusy = true;
+      const r = await postSecondScreen({
+        action: 'open',
+        layout: touchPadLayout,
+        title: touchPadTitle,
+        origin: location.origin,
+      });
+      secondScreenBusy = false;
+      if (r && r.ok) {
+        // A grace period: the controller page needs a moment to load and
+        // speak, and the game should see its pad from the start.
+        touchPadRemote.at = performance.now();
+        secondScreenOpen = true;
+      } else {
+        // Do not keep asking for the rest of this game; the overlay stands in.
+        secondScreenDismissed = true;
+        if (r && r.reason) showToast('Controller screen: ' + r.reason);
+      }
+      // The answer may have changed while it was in flight.
+      if (!untrack(() => secondScreenWanted) && secondScreenOpen) syncSecondScreen(false);
+    } else if (!want && secondScreenOpen) {
+      secondScreenBusy = true;
+      secondScreenOpen = false;
+      await postSecondScreen({ action: 'close' });
+      secondScreenBusy = false;
+      if (untrack(() => secondScreenWanted)) syncSecondScreen(true);
+    }
+  }
+
+  $effect(() => {
+    const want = secondScreenWanted;
+    untrack(() => syncSecondScreen(want));
+  });
+  // A twin-stick game replaced by a classic one while the screen is up.
+  $effect(() => {
+    const layout = touchPadLayout;
+    if (!untrack(() => secondScreenOpen)) return;
+    try { touchPadChannel?.postMessage({ t: 'layout', l: layout }); } catch (_) { /* closed */ }
+  });
+  // The touch pad arriving or leaving is a pad connecting or disconnecting.
+  // Only on a change: a game that pauses on a disconnect must not hear one at
+  // boot, or for the Guide coming up over the overlay.
+  let touchPadAnnounced = false;
+  $effect(() => {
+    const on = touchPadPresent;
+    if (on === touchPadAnnounced) return;
+    touchPadAnnounced = on;
+    untrack(() => announceTouchPad(on ? 'gamepadconnected' : 'gamepaddisconnected'));
+  });
+  // A monitor plugged in mid-game is noticed within a few seconds.
+  $effect(() => {
+    if (!(gameOn && touchPadPref && touchPadScreenPref && !padConnected && secondScreen?.available)) return;
+    const timer = setInterval(refreshSecondScreen, 4000);
+    return () => clearInterval(timer);
+  });
+  // A cross-origin twin-stick game runs its own touch analogs; tell it when
+  // the pad situation changes, not only when the frame loads.
+  $effect(() => {
+    if (!gameOn) return;
+    void padConnected; void touchPadPref;
+    untrack(() => { if (!gameFramePatchable) applyTwinStick(); });
+  });
+
   let twinTouch = $state({
     left: { id: null, ox: 0, oy: 0, x: 0, y: 0, active: false },
     right: { id: null, ox: 0, oy: 0, x: 0, y: 0, active: false },
@@ -3945,7 +4224,7 @@
       // ?paddebug=1 overlay.
       w.__cmgOrigGetGamepads = orig;
       w.navigator.getGamepads = () => {
-        if (!twinStickOn && !splitPadsOn) return orig();
+        if (!twinStickOn && !splitPadsOn && !touchPadLive()) return orig();
         try { return frameGamepads(orig); }
         catch (err) {
           splitDiag.error = String((err && err.message) || err);
@@ -3992,7 +4271,9 @@
     // twin-stick expression); any other pad still gets its D-pad/faces
     // re-expressed as sticks.
     if (twinStickOn) pads = compat.twinStick(pads);
-    return twinTouchGamepad(pads);
+    // The touch controller last, as a pad of its own: it already is a
+    // twin-stick (or plain) pad and needs no re-expressing.
+    return touchPadGamepads(twinTouchGamepad(pads));
   }
 
   // Patch (same-origin) and/or notify (any origin) the running game frame.
@@ -4014,7 +4295,12 @@
       // EFFECTIVE state (same gate as the same-origin overlay), not the raw
       // saved toggle: turning Twin-Stick Mode off must also stop the game's
       // touch analogs even though twinTouchOn stays saved for later.
-      const touchEffective = twinStickAvail && twinStickOn && twinTouchOn;
+      // The Touch Controller setting asks for the same thing when no pad is
+      // in hand on a touchscreen.
+      const touchEffective = twinStickAvail && (
+        (twinStickOn && twinTouchOn) ||
+        (touchPadPref && isTouch && !padConnected && !legionFpsMode)
+      );
       try { w.postMessage({ type: 'cmg-twinstick-touch-set', value: touchEffective }, '*'); } catch (_) { /* ignore */ }
     }
     // Cross-origin games apply the toggle themselves off this message.
@@ -4138,6 +4424,14 @@
         game.push({ key: 'twinstick-touch', kind: 'toggle', label: 'Touch Twin-Stick', value: twinTouchOn });
       }
     }
+    // The Touch Controller (no pad in hand) — for any game the launcher can
+    // feed a pad into, on a machine with a touchscreen or a controller screen.
+    if ((isTouch || secondScreen?.available) && gameFramePatchable && !editorFrameActive) {
+      game.push({ key: 'touchpad', kind: 'toggle', label: 'Touch Controller', value: touchPadPref });
+      if (secondScreen?.available) {
+        game.push({ key: 'touchpad-screen', kind: 'toggle', label: 'Controller on Built-in Screen', value: touchPadScreenPref });
+      }
+    }
     // Touch Controls appears only for games that opt in (catalog
     // `touchControls` flag or a cmg-touchcontrols broadcast).
     if (touchCtlAvail) {
@@ -4241,6 +4535,8 @@
     else if (it.key === 'twinstick') setTwinStick(!!v);
     else if (it.key === 'twinstick-touch') setTwinTouch(!!v);
     else if (it.key === 'touchcontrols') setTouchControls(!!v);
+    else if (it.key === 'touchpad') setTouchPadPref(!!v);
+    else if (it.key === 'touchpad-screen') setTouchPadScreenPref(!!v);
   }
   function adjustOsd(i, dir) {
     const it = osdItems[i]; if (!it) return;
@@ -5078,6 +5374,11 @@
     } else if (it.id === 'exports') {
       screen = 'exports';
       exportsSel = 0;
+    } else if (it.id === 'touchpad') {
+      setTouchPadPref(!touchPadPref);
+    } else if (it.id === 'touchpad-screen') {
+      if (secondScreen?.available) setTouchPadScreenPref(!touchPadScreenPref);
+      else showToast(secondScreen?.reason || 'Not available here');
     } else if (it.id === 'builder') {
       builderAction(builder?.running ? 'stop' : 'start');
     } else if (it.id === 'steam') {
@@ -5110,6 +5411,8 @@
     initTwinStick(id, item);
     initTouchControls(id, item);
     initSplitPads(id, item);
+    touchPadTitle = item.name || item.title || '';
+    secondScreenDismissed = false;
     // Level-editor availability from the catalog entry (games that broadcast
     // cmg-level-editor on boot override this in onWindowMessage).
     osdLevelEditor = (item && item.levelEditor)
@@ -7323,6 +7626,8 @@
     padRaf = requestAnimationFrame(pollPad);
 
     initHostDevice();
+    openTouchPadChannel();
+    refreshSecondScreen();
     refreshAndroid();
     refreshSteam();
     refreshUpdates();
@@ -7550,6 +7855,7 @@
     endStripDrag();
     window.removeEventListener('gamepadconnected', onPadConnect);
     window.removeEventListener('gamepaddisconnected', onPadDisconnect);
+    try { touchPadChannel?.close(); } catch (_) { /* already closed */ }
     try { unsubEshop?.(); } catch (_) { /* already closed */ }
     try { unsubDezaShelf?.(); } catch (_) { /* already closed */ }
     try { unsubSnesShelf?.(); } catch (_) { /* already closed */ }
@@ -8410,7 +8716,7 @@
   </div>
 {/if}
 
-{#if gameOn && twinStickAvail && twinStickOn && twinTouchOn && gameFramePatchable && !osdOpen}
+{#if gameOn && twinStickAvail && twinStickOn && twinTouchOn && gameFramePatchable && !osdOpen && !touchPadOverlay}
   <div class="twin-touch-zone left" aria-hidden="true"
        onpointerdown={(e) => twinTouchStart(e, 'left')}
        onpointermove={(e) => twinTouchMove(e, 'left')}
@@ -8431,6 +8737,13 @@
       <span class="twin-touch-knob" style={`left:${twinTouch.right.ox + twinTouch.right.x * TWIN_TOUCH_RADIUS}px;top:${twinTouch.right.oy + twinTouch.right.y * TWIN_TOUCH_RADIUS}px`}></span>
     {/if}
   </div>
+{/if}
+
+<!-- Touch Controller: the on-screen pad over the game when there is no pad in
+     hand (see touchPadOverlay). Above the game frame, below the Guide's
+     corner zones. -->
+{#if touchPadOverlay}
+  <div class="touch-pad-overlay" use:touchPadOverlayAction={touchPadLayout}></div>
 {/if}
 
 <!-- In-game OSD trigger: two-finger bottom-left + top-right tap. Small corner

@@ -332,6 +332,12 @@ export const EMBEDDED_LOOSE_FILES: readonly string[][] = [
   // EXTRACT MODE — the exported app's PAUSE panel publishes sprites to the
   // shared character library through it.
   ["static", "phaser-plugins", "extract-mode.js"],
+  // The phone-as-controller page an Android export shows while its game is on
+  // an external display, and the shim that feeds it into the game
+  // (tools/build-level/lib/second-screen.js).
+  ["static", "virtual-pad", "index.html"],
+  ["static", "virtual-pad", "virtual-pad.js"],
+  ["static", "virtual-pad", "pad-shim.js"],
 ];
 
 // Materialise the embedded tools/build-level + static/games/2028-ai (+ the

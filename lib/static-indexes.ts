@@ -26,6 +26,7 @@ export const STATIC_INDEXES = [
   "/pixel-composer",
   "/pixel-editor",
   "/tilemap-editor",
+  "/virtual-pad",
 ];
 
 /**

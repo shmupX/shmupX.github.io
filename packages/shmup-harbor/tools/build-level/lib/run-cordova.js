@@ -142,6 +142,8 @@ async function buildCordova(opts) {
     configXml,
     iconDir,
   } = opts;
+  // The page the app opens — and so the one that needs cordova.js.
+  const entry = opts.entry || "phaser-game.html";
   if (platform !== "android" && platform !== "ios") {
     throw new Error("Unsupported cordova platform: " + platform);
   }
@@ -167,11 +169,14 @@ async function buildCordova(opts) {
   if (fs.existsSync(dstWww)) fs.rmSync(dstWww, { recursive: true, force: true });
   copyDir(wwwRoot, dstWww);
 
-  // Inject cordova.js into the shell so plugins are available.
-  const htmlPath = path.join(dstWww, "phaser-game.html");
+  // Inject cordova.js into the shell so plugins are available. The path is
+  // relative to the page, which for a web build may sit in a subdirectory.
+  const htmlPath = path.join(dstWww, entry);
   let html = fs.readFileSync(htmlPath, "utf8");
-  if (html.indexOf('src="cordova.js"') === -1) {
-    html = html.replace(/<\/head>/, '<script src="cordova.js"></script>\n</head>');
+  if (html.indexOf("cordova.js\"") === -1) {
+    const depth = entry.split("/").length - 1;
+    const src = "../".repeat(depth) + "cordova.js";
+    html = html.replace(/<\/head>/, '<script src="' + src + '"></script>\n</head>');
     fs.writeFileSync(htmlPath, html);
   }
 
@@ -179,9 +184,14 @@ async function buildCordova(opts) {
   run("cordova", ["platform", "add", platformArg], { cwd: cordovaDir });
 
   if (platform === "android") {
-    const plug = path.join(scaffoldRoot, "plugins", "cordova-plugin-sprite-share");
-    if (fs.existsSync(plug)) {
-      run("cordova", ["plugin", "add", plug, "--nosave"], { cwd: cordovaDir });
+    // The phone as the controller while the game is on an external display
+    // (Pixel Desktop mode, a USB-C monitor): the plugin reads
+    // www/second-screen.json, which lib/second-screen.js staged.
+    for (const name of ["cordova-plugin-sprite-share", "cordova-plugin-second-screen"]) {
+      const plug = path.join(scaffoldRoot, "plugins", name);
+      if (fs.existsSync(plug)) {
+        run("cordova", ["plugin", "add", plug, "--nosave"], { cwd: cordovaDir });
+      }
     }
   } else {
     const plug = path.join(scaffoldRoot, "plugins", "cordova-plugin-ios-haptics");

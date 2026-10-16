@@ -7,6 +7,7 @@
 //   deno task build:windows 2028_ai      → the game this repo ships, as a Windows app
 //   deno task build:android g-fencer-755 → a community Dezaemon cart, as an APK
 //   deno task build:linux "My Level"     → that one Firebase level, as an AppImage
+//   deno task build:android shmup-party-ps2 → an eShop web build, as an APK
 //   deno task shelf:list                 → every name the three above accept
 //
 // Two different products share these tasks, picked by whether a game name is
@@ -80,7 +81,13 @@ import {
   guessAndroidSdk,
   slugFor,
 } from "../lib/export-build.ts";
-import { listShelf, resolveShelfName, ShelfError } from "../lib/shelf.ts";
+import {
+  listShelf,
+  resolveShelfName,
+  ShelfError,
+  type WebBuild,
+} from "../lib/shelf.ts";
+import { unzip } from "../../../static/zip-read.js";
 import { harborRoot, repoRoot } from "../lib/repo-root.ts";
 import { excludedFromBinary } from "../../../lib/streamed-payloads.ts";
 
@@ -737,7 +744,7 @@ async function compileLauncher(opts: Options): Promise<string> {
  */
 async function resolveGame(
   opts: Options,
-): Promise<{ levelName: string; levelFile: string | null }> {
+): Promise<{ levelName: string; levelFile: string | null; web?: WebBuild }> {
   const explicit = opts.passthrough.indexOf("--level-file");
   if (explicit >= 0) {
     return {
@@ -758,11 +765,56 @@ async function resolveGame(
       refresh: opts.refresh,
       log: (message) => console.log(message),
     });
-    return { levelName: hit.levelName, levelFile: hit.levelFile };
+    return { levelName: hit.levelName, levelFile: hit.levelFile, web: hit.web };
   } catch (err) {
     if (err instanceof ShelfError) fail(err.message);
     throw err;
   }
+}
+
+/**
+ * An eShop web build's files, unpacked under build/shelf/web/<slug>/ for
+ * tools/build-level --web-dir. The zip is fetched fresh each time (a web build
+ * is republished in place); one already in this checkout is read from disk.
+ */
+async function stageWebBuild(web: WebBuild, slug: string): Promise<string> {
+  let bytes: Uint8Array;
+  if (web.zipPath) {
+    console.log(`web build: ${web.zipPath}`);
+    try {
+      bytes = await Deno.readFile(web.zipPath);
+    } catch (_e) {
+      fail(`${web.zipPath} is not in this checkout — build it first.`);
+    }
+  } else {
+    console.log(`web build: ${web.zipUrl}`);
+    const res = await fetch(web.zipUrl!, {
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) fail(`${web.zipUrl} answered HTTP ${res.status}`);
+    bytes = new Uint8Array(await res.arrayBuffer());
+  }
+  const entries = await unzip(bytes) as Array<
+    { path: string; dir: boolean; data: Uint8Array }
+  >;
+  const dir = join(ROOT, "build", "shelf", "web", slug || "web");
+  await Deno.remove(dir, { recursive: true }).catch(() => {});
+  let files = 0;
+  for (const e of entries) {
+    // zip-read.js has already dropped anything that climbs out of the root.
+    if (e.dir || basename(e.path).startsWith("._")) continue;
+    const dest = join(dir, ...e.path.split("/"));
+    await ensureDir(dirname(dest));
+    await Deno.writeFile(dest, e.data);
+    files++;
+  }
+  try {
+    await Deno.stat(join(dir, ...web.entry.split("/")));
+  } catch (_e) {
+    fail(`the build has no ${web.entry} — the catalog's entry is wrong`);
+  }
+  console.log(`  ${files} file(s) → ${dir}\n`);
+  return dir;
 }
 
 async function buildLevel(opts: Options): Promise<void> {
@@ -792,13 +844,24 @@ async function buildLevel(opts: Options): Promise<void> {
     );
   }
 
-  const { levelName, levelFile } = await resolveGame(opts);
+  const { levelName, levelFile, web } = await resolveGame(opts);
+  if (web && opts.platform !== "android" && opts.platform !== "ios") {
+    fail(
+      `"${levelName}" is a web build — it already plays in a browser, and ` +
+        `only the Cordova targets (android, ios) wrap one as an app.`,
+    );
+  }
   console.log(
     `\nBuilding "${levelName}" as a ${opts.platform} app ` +
       "(tools/build-level)…\n",
   );
   const args = [toolDir, levelName, opts.platform];
   if (levelFile) args.push("--level-file", levelFile);
+  if (web) {
+    const dir = await stageWebBuild(web, slugFor(levelName));
+    args.push("--web-dir", dir, "--entry", web.entry);
+    if (!opts.passthrough.includes("--pad")) args.push("--pad", web.pad);
+  }
   // One --arch knob for both products, translated to whichever the tool hands
   // electron-builder. Both default the same way it does, so this only ever
   // matters when --arch was passed explicitly. Cordova picks its own ABIs.
