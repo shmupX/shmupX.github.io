@@ -838,6 +838,36 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       }
     }
 
+    // ---- Story pictures ---------------------------------------------------
+
+    // A game's own story pictures (storyData.customImages: "stage<N>_part<M>"
+    // -> data URL), decoded into the textures AdvScene looks for
+    // ("advCustom_<key>") before the first scene starts. AdvScene used to
+    // decode each one as its part came up, over 2028.Ai's stock portrait for
+    // that part, which stayed on screen until the decode finished: a flash of
+    // the stock story, long enough to see on a phone. Resolves once every
+    // picture is in (false when there is none); one that fails to decode is
+    // left to AdvScene.
+    applyStoryImages(levelData) {
+      const story = levelData && levelData.storyData;
+      const images = story && story.customImages;
+      if (!images || typeof images !== "object") return Promise.resolve(false);
+      const scene = this.scene;
+      const jobs = Object.keys(images).map((key) => {
+        const dataURL = images[key];
+        const texKey = "advCustom_" + key;
+        if (typeof dataURL !== "string" || !dataURL || scene.textures.exists(texKey)) {
+          return Promise.resolve(false);
+        }
+        return loadImage(dataURL).then((img) => {
+          if (!img || scene.textures.exists(texKey)) return false;
+          scene.textures.addImage(texKey, img);
+          return true;
+        });
+      });
+      return Promise.all(jobs).then((done) => done.some(Boolean));
+    }
+
     // ---- Stage backgrounds ------------------------------------------------
 
     // A web game's own scrolling backdrops: `stageBackgrounds` is
@@ -1110,7 +1140,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           delete recipe.uiAtlases;
           for (const dataKey in o.titleImageKeys) delete recipe[dataKey];
           prime(recipe, info);
-          return {
+          return this.applyStoryImages(recipe).then(() => ({
             recipe,
             stageId,
             hasCustomEnemies,
@@ -1119,7 +1149,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
             source: "editor",
             levelName: null,
             bgmSourceURLs: {},
-          };
+          }));
         });
       }
 
@@ -1153,7 +1183,10 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
 
           prime(recipe, { stageId, bossRush, source, hasCustomEnemies });
 
-          return this._loadAudio(data, o.audio, o.lowMode).then((bgmSourceURLs) => ({
+          return Promise.all([
+            this._loadAudio(data, o.audio, o.lowMode),
+            this.applyStoryImages(data),
+          ]).then(([bgmSourceURLs]) => ({
             recipe,
             stageId,
             hasCustomEnemies,

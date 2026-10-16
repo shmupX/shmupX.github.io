@@ -235,6 +235,14 @@ they are written out in full.
     stacked onto `game_ui` before the level atlas lands on `game_asset`. That
     is what kept `contra`'s titleG.gif off its title, with no re-save needed.
     Mirrors `level-loader.js`.
+  - `applyStoryImages` decodes a game's own story pictures
+    (`storyData.customImages`) into the `advCustom_<key>` textures AdvScene
+    reads, on both roads in, before the first scene starts. AdvScene used to
+    decode each as its part came up, over 2028.Ai's stock portrait for the
+    part, which showed until the decode finished: a flicker of the stock story
+    in an Android export (`rando.apk`). `_applyCustomImage` also keeps the
+    backdrop hidden, never stock, while a picture is still decoding.
+    `tests/story_images_test.ts` pins both. Mirrors `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
     TOP edge at the traced y, not their centre, so a name sits under its label
     instead of under the typed PRESENTED BY (see the comment on the constant,
@@ -1085,13 +1093,13 @@ idle pose throughout. `bossPatternSlot` now answers `GOKI_PATTERN` for his own
 record (named `goki`, as the hidden boss is) with no `attackPattern`, and for an
 `attackPattern` of `"bossExtra"` (the GOKI pick the Boss Lab writes, which used
 to fall through to the slot's routine). It goes by his name, not his stances:
-the shipped game's `boss2` is drawn on Akuma's stance set and keeps flying her
-slot's routine until her author picks GOKI for her. `bossAdd` builds his stance
-sets for that routine and, on his own record, sets `bossIsGoki` — his voice, his
-danger balloon, and the Shun Goku Satsu grab when a ship touches him, as the
-hidden boss does. The Boss Lab, the editor's boss strip and `modOverlay()` name
-the same default (`BossLab.ownPattern`). `tests/boss_goki_pattern_test.ts` pins
-it.
+the shipped game's `boss2`, trump, is drawn on Akuma's stance set and flies his
+routine because `foo.json` pins him to it (`"bossExtra"`). `bossAdd` builds the
+stance sets that routine switches between and, on Akuma's own record, sets
+`bossIsGoki` — his voice, his danger balloon, and the Shun Goku Satsu grab when
+a ship touches him, as the hidden boss does. The Boss Lab, the editor's boss
+strip and `modOverlay()` name the same default (`BossLab.ownPattern`).
+`tests/boss_goki_pattern_test.ts` pins it.
 
 **EXTRACT MODE's card and atlas skip the keys the editor set aside, and a
 placed boss wears her routine's poses.** A key the editor prefixes with `_` is

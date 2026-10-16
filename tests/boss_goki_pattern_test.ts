@@ -54,11 +54,15 @@ Deno.test("Akuma's record runs his own routine in whatever slot it sits", async 
     assertEquals(slot(bosses[key], 1), 1, key);
   }
   assertEquals(slot(null, 2), 2);
-  // He is known by his name, not his stances: the shipped game's boss2 is
-  // drawn on Akuma's stance set and keeps her slot's routine.
+  // He is known by his name, not his stances: the shipped game's boss2,
+  // trump, is drawn on Akuma's stance set and flies his routine only
+  // because he is pinned to it.
   const shipped = JSON.parse(await read("static/games/2028-ai/foo.json"));
-  assert(shipped.bossData.boss2.anim.syngoku, "boss2 no longer wears his set");
-  assertEquals(slot(shipped.bossData.boss2, 2), 2);
+  const trump = shipped.bossData.boss2;
+  assert(trump.anim.syngoku, "boss2 no longer wears Akuma's set");
+  assertEquals(trump.attackPattern, "bossExtra");
+  assertEquals(slot(trump, 2), "goki");
+  assertEquals(slot({ ...trump, attackPattern: undefined }, 2), 2);
 });
 
 Deno.test("attackPattern pins a routine, and bossExtra pins Akuma's", async () => {
