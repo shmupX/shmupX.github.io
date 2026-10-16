@@ -4613,7 +4613,8 @@
             const pat = document.createElement('span');
             const ap = entry.attackPattern && bossData[entry.attackPattern] ? entry.attackPattern : '';
             pat.className = 'boss-pat' + (ap ? ' on' : '');
-            const ownLabel = window.BossLab && BossLab.PAT[key] ? BossLab.PAT[key].label : 'OWN';
+            const own = window.BossLab ? BossLab.ownPattern(key, entry) : key;
+            const ownLabel = window.BossLab && BossLab.PAT[own] ? BossLab.PAT[own].label : 'OWN';
             pat.textContent = ap
                 ? 'PATTERN → ' + bossDisplayName(ap, bossData[ap]).toUpperCase()
                 : 'PATTERN · ' + ownLabel + ' (DEFAULT)';
@@ -8488,7 +8489,8 @@
                 const b = bossData[k];
                 if (!b) continue;
                 if (b.attackPattern) patterns[k] = b.attackPattern;
-                else if (/^boss\d+$/.test(k) && !(b.dezaemon && b.dezaemon.boss)) patterns[k] = k;
+                // Akuma's own routine is not his slot's (BossLab.ownPattern).
+                else if (/^boss\d+$/.test(k) && !(b.dezaemon && b.dezaemon.boss)) patterns[k] = window.BossLab ? BossLab.ownPattern(k, b) : k;
             }
             if (Object.keys(patterns).length) web.bossPatterns = patterns;
             if (gameData && gameData.storyData) web.storyData = gameData.storyData;

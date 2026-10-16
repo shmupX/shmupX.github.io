@@ -12530,11 +12530,27 @@
   // flirty_revenge, placed in slot 1 pinned to "boss3", ran Vega's warps
   // and fields but never left her idle pose while her shoot and attack sets
   // were only built for a boss sitting in slot 3.
+  //
+  // Akuma's routine (bossPatternGoki) is no stage's: it answers to
+  // GOKI_PATTERN, named by his slot in the stock recipe — `bossExtra`, which
+  // is what the editor's Boss Lab writes when GOKI is picked. And his own
+  // record runs it unpinned, whatever slot it sits in: no stage's routine
+  // switches to his stances, and an Akuma imported from the 2019 game and
+  // made the second boss flew Barlog's pattern in his idle pose throughout.
+  // His record is known by the name the hidden boss's entrance gives him,
+  // not by his stances: the game this repo ships flies a boss drawn on
+  // Akuma's stance set (boss2) through its slot's routine, and moving her to
+  // his is her author's call, in the Boss Lab.
+  var GOKI_PATTERN = "goki";
+  function isGokiRecord(bossData) {
+    return !!bossData && String(bossData.name || "").toLowerCase() === "goki";
+  }
   function bossPatternSlot(bossData, stageId) {
-    var m = bossData && bossData.attackPattern
-      ? String(bossData.attackPattern).match(/boss(\d+)/)
-      : null;
-    return m ? Number(m[1]) : stageId;
+    var ap = bossData && bossData.attackPattern ? String(bossData.attackPattern) : "";
+    if (ap === "bossExtra") return GOKI_PATTERN;
+    var m = ap ? ap.match(/boss(\d+)/) : null;
+    if (m) return Number(m[1]);
+    return !ap && isGokiRecord(bossData) ? GOKI_PATTERN : stageId;
   }
   function _setBossAnim(scene, boss, frames) {
     if (!frames || frames.length === 0 || !boss || !boss.active) return;
@@ -13164,6 +13180,26 @@
       scene.fangAnimCharge = bossAnimFrames(bossData.anim.charge);
       scene.fangAnimShoot = bossAnimFrames(bossData.anim.shoot);
     }
+    // Akuma's routine switches between his own stances, built here as the
+    // hidden boss's entrance builds them. Run by his own record he is Akuma
+    // throughout — his voice, his danger balloon, the grab when a ship
+    // touches him (bossIsGoki) — and a record of someone else's pinned to
+    // his routine takes its attack or shoot set for each move, as the Boss
+    // Lab previews it. Built even without an anim block, so a previous
+    // boss's stances cannot carry over.
+    if (patternSlot === GOKI_PATTERN) {
+      var gokiAnim = bossData.anim || {};
+      var gokiStance = function(own) {
+        return bossAnimFrames(own || gokiAnim.attack || gokiAnim.shoot);
+      };
+      scene.gokiAnimIdle = bossAnimFrames(gokiAnim.idle);
+      scene.gokiAnimShootA = gokiStance(gokiAnim.shootA);
+      scene.gokiAnimShootB = gokiStance(gokiAnim.shootB);
+      scene.gokiAnimSyngoku = gokiStance(gokiAnim.syngoku);
+      scene.gokiAnimSyngokuFinish = bossAnimFrames(gokiAnim.syngokuFinish);
+      scene.gokiAnimSyngokuFinishTen = bossAnimFrames(gokiAnim.syngokuFinishTen);
+      scene.bossIsGoki = isGokiRecord(bossData);
+    }
     if (bossData.anim) {
       scene.pyramidAnimIdle = bossAnimFrames(bossData.anim.idle);
       scene.pyramidAnimAttack = bossAnimFrames(bossData.anim.attack);
@@ -13177,7 +13213,7 @@
       if (scene.bossShadow) scene.bossShadow.setVisible(false);
     }
     var bossNames = ["bison", "barlog", "sagat", "vega", "fang"];
-    var voiceKey = "boss_" + (bossNames[assetStageId(stageId)] || "bison") + "_voice_add";
+    var voiceKey = "boss_" + (scene.bossIsGoki ? "goki" : bossNames[assetStageId(stageId)] || "bison") + "_voice_add";
     scene.playSound(voiceKey, 0.7);
     var pixiRestY = stageId === 4 ? 48 : GH10 / 4;
     var entryY = pixiRestY + scene.bossSprite.height / 2;
@@ -13445,6 +13481,11 @@
         break;
       case 4:
         bossPatternFang(scene, seed);
+        break;
+      // Someone else's record pinned to Akuma's routine; his own record has
+      // already gone through bossIsGoki above.
+      case GOKI_PATTERN:
+        bossPatternGoki(scene, seed);
         break;
       default:
         bossPatternPyramid(scene, seed);

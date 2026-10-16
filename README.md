@@ -1070,6 +1070,22 @@ to the slot it was authored for (never a Dezaemon-native boss, and never over a
 pattern already on the record), so she dives wherever she lands.
 `tests/extract_mode_publish_test.ts` pins the rule.
 
+**Akuma is the exception: his routine is his own, in any slot.** His stances —
+SHOOT-A, SHOOT-B, the Ashura warp — are no other boss's, and no stage's routine
+switches to them, so an Akuma imported from the 2019 game and made a stage's
+boss (the cloud game `rando` fights him second) flew Barlog's pattern in his
+idle pose throughout. `bossPatternSlot` now answers `GOKI_PATTERN` for his own
+record (named `goki`, as the hidden boss is) with no `attackPattern`, and for an
+`attackPattern` of `"bossExtra"` (the GOKI pick the Boss Lab writes, which used
+to fall through to the slot's routine). It goes by his name, not his stances:
+the shipped game's `boss2` is drawn on Akuma's stance set and keeps flying her
+slot's routine until her author picks GOKI for her. `bossAdd` builds his stance
+sets for that routine and, on his own record, sets `bossIsGoki` — his voice, his
+danger balloon, and the Shun Goku Satsu grab when a ship touches him, as the
+hidden boss does. The Boss Lab, the editor's boss strip and `modOverlay()` name
+the same default (`BossLab.ownPattern`). `tests/boss_goki_pattern_test.ts` pins
+it.
+
 **EXTRACT MODE's card and atlas skip the keys the editor set aside, and a
 placed boss wears her routine's poses.** A key the editor prefixes with `_` is
 a variant it kept rather than deleted — the art a re-skinned boss was made from

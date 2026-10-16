@@ -99,6 +99,12 @@
     const GENERIC = { label: 'GENERIC', desc: 'STAND-IN MOVES — THIS BOSS RUNS A DATA-DRIVEN PATTERN THE LAB CANNOT SCRIPT', moves: PAT.boss0.moves };
     const patternOf = key => PAT[key] || GENERIC;
     const patternLabel = key => patternOf(key).label;
+    // The routine a record runs when nothing pins one: its slot's — except
+    // Akuma's own record (named goki). No stage's routine plays his stances,
+    // so the runtime runs his own wherever he sits (bossPatternSlot in
+    // game.bundle.js), and the lab and the editor say so.
+    const isGokiRecord = b => !!b && String(b.name || '').toLowerCase() === 'goki';
+    const ownPattern = (key, rec) => isGokiRecord(rec) ? 'bossExtra' : key;
 
     // ================== THEME TOKENS (synced with the CMG launcher) ==================
     // The lab paints itself off these variables on its own root, so it looks
@@ -297,7 +303,9 @@
         savedPattern(k) { const b = this.data()[k]; return (b && b.attackPattern) || ''; }
         // The pattern a boss actually runs: pending pick, else its saved
         // attackPattern override (the same field the game engine reads), else its own.
-        effKey(k) { const p = this.state.pending[k]; const v = p !== undefined ? p : this.savedPattern(k); return v || k; }
+        effKey(k) { const p = this.state.pending[k]; const v = p !== undefined ? p : this.savedPattern(k); return v || this.ownKey(k); }
+        // The routine k runs unpinned (ownPattern): its slot's, or Akuma's own.
+        ownKey(k) { return ownPattern(k, this.data()[k]); }
         pat(k) { return patternOf(this.effKey(k)); }
         animKeys(b) { return Object.keys((b && b.anim) || {}).filter(a => !a.startsWith('_')); }
         idleKey() { const b = this.curBoss(); return b && b.anim && b.anim.idle ? 'idle' : this.animKeys(b)[0]; }
@@ -548,7 +556,7 @@
             if (this.canAssignStage()) list.appendChild(this.assignRow(cur));
 
             if (this.state.previewBoss === cur && isPending) {
-                const newKey = effective || cur, oldKey = saved || cur;
+                const newKey = effective || this.ownKey(cur), oldKey = saved || this.ownKey(cur);
                 const np = patternOf(newKey), op = patternOf(oldKey), pvw = PREVIEWS[newKey] || PREVIEWS.boss0;
                 const box = el('div', 'bl-preview');
                 box.appendChild(el('div', 'bl-preview-label', 'PATTERN PREVIEW · ' + this.bossName(cur).toUpperCase()));
@@ -568,7 +576,7 @@
 
             const option = (k, isOwn) => {
                 const val = isOwn ? '' : k, selected = effective === val, pend = isPending && selected, savedSel = !isPending && selected && !!saved;
-                const p = patternOf(k), b = this.data()[k] || {};
+                const p = patternOf(isOwn ? this.ownKey(k) : k), b = this.data()[k] || {};
                 const btn = el('button', 'bl-opt' + (selected ? ' sel' : '') + (pend ? ' pend' : (savedSel ? ' saved' : '')));
                 const main = el('div', 'bl-opt-main');
                 const thumb = el('div', 'bl-opt-thumb');
@@ -845,7 +853,7 @@
 
     window.BossLab = {
         mount: (container, opts) => new Lab(container, opts),
-        PAT, PREVIEWS, NAMES, BOSS_ORDER, THEMES, patternOf, patternLabel,
+        PAT, PREVIEWS, NAMES, BOSS_ORDER, THEMES, patternOf, patternLabel, ownPattern,
         // The BroadcastChannel both hosts share: the viewer's APPLY reaches an
         // open editor on this origin as { type: 'boss-patterns', gameId, changes }.
         CHANNEL: 'editor-viewer-bridge',
