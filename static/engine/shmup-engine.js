@@ -18297,25 +18297,29 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
   ]);
   writeCgramRow(bytes, PALETTE_ROW_SHIP, shipQuant.words);
   rows.push({ row: PALETTE_ROW_SHIP, owner: "ship", colors: shipQuant.colors });
+  const shipOdr = new Uint8Array(MY_SHIP_ODR_BYTES);
   let shipChips = 0;
   const poseSlots = [SFC_SHIP_POSE_SLOTS.left, SFC_SHIP_POSE_SLOTS.centre, SFC_SHIP_POSE_SLOTS.right];
   shipQuant.frames.forEach((f, p) => {
     for (let cy = 0; cy < 2; cy++) {
       for (let cx = 0; cx < 2; cx++) {
         const px = cutChip(f.indices, SFC_SHIP_POSE_PX, cx, cy);
+        const slot = poseSlots[p] + cy * 2 + cx;
         let word = CHIP_BLANK_WORD;
         if (!isTransparent(px)) {
           const hit = bankChip(px, "ship");
           if (hit) {
-            word = chipWordForIndex(hit.chip, hit);
+            word = chipWordForIndex(hit.chip);
+            shipOdr[slot] = (hit.hflip ? ODR_HFLIP : 0) | (hit.vflip ? ODR_VFLIP : 0);
             shipChips++;
           }
         }
-        shipWords[poseSlots[p] + cy * 2 + cx] = word;
+        shipWords[slot] = word;
       }
     }
   });
   writeWords(bytes, REGION2.myShipGroup.offset, shipWords);
+  bytes.set(shipOdr, REGION2.myShipOdr.offset);
   let title = "none";
   const titleParts = [["logo", opts.title1], ["subtitle", opts.title2], ["backdrop", opts.titleBg]].filter(([, f]) => f && f.rgba).map(([what]) => what);
   const picture = composeTitlePicture({ logo: opts.title1, subtitle: opts.title2, backdrop: opts.titleBg });

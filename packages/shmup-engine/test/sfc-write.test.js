@@ -449,11 +449,17 @@ Deno.test("the ship: a level with no ship frames flies Duke; a second frame bank
     "Duke's level pose",
   );
 
-  // an asymmetric bank frame: its left half red, its right half blue
+  // an asymmetric bank frame: its left half red with a green mark in the
+  // top-left corner, its right half blue
   const bank = frame(32, 32, [255, 0, 0]);
   for (let y = 0; y < 32; y++) {
     for (let x = 16; x < 32; x++) {
       bank.rgba.set([0, 0, 255, 255], (y * 32 + x) * 4);
+    }
+  }
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      bank.rgba.set([0, 255, 0, 255], (y * 32 + x) * 4);
     }
   }
   const lv2 = level();
@@ -462,6 +468,7 @@ Deno.test("the ship: a level with no ship frames flies Duke; a second frame bank
   const out = exportLevelToSfcSram(lv2, a);
   const save = parseSfcSav(out.sram);
   const ship = save.groups.myShip;
+  const odr = save.groups.myShipOdr;
   const px = (slot) => decodeChipPixels(ship[slot].word, { sram: out.sram });
   const row = save.palettes.rows[18];
   const colourAt = (slot, x, y) => row.colors[px(slot)[y * 16 + x] - 1];
@@ -474,6 +481,20 @@ Deno.test("the ship: a level with no ship frames flies Duke; a second frame bank
   assert(
     colourAt(4, 8, 8).r > 200 && colourAt(4, 8, 8).g > 200 &&
       colourAt(4, 8, 8).b > 200,
+  );
+  // the right pose's top-right chip is the left pose's top-left chip
+  // mirrored: the same chip, no flip in the word, H in MY SHIP ODR — the
+  // ship sheet reads its flips there and ignores the word's
+  assertStrictEquals(ship[9].word, ship[0].word);
+  assert(
+    ship.every((c) => !c.hflip && !c.vflip),
+    "no flip bits in the ship words",
+  );
+  assertEquals([odr[0].hflip, odr[0].vflip], [false, false]);
+  assertEquals([odr[9].hflip, odr[9].vflip], [true, false]);
+  assert(
+    colourAt(0, 1, 1).g > 200,
+    "the mark sits top-left in the chip the two slots share",
   );
 });
 

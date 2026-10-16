@@ -537,7 +537,11 @@ factory sample's SOUND DATA and BGM PATCH (the ROM's songs), all embedded in
   second (else the first) banking left and its mirror banking right, each
   fitted to 32×32 — in the three pose slots the player handler names (chips
   0-3, 4-7 and 8-11 of MY SHIP GROUP, each TL TR BL BR) through row 18, which
-  only the ship draws through; a level with no ship frames flies Duke. The
+  only the ship draws through; a level with no ship frames flies Duke. A
+  chip the bank shares as a mirror keeps a plain word and takes its flips
+  from MY SHIP ODR (H bit 6, V bit 7 of the slot's byte), because the ship
+  sheet ignores the word's own flip bits: written through them, the right
+  bank drew its halves swapped and unmirrored. The
   rest of the sheet (the dome at 12-15, shots, enemy bullets, weapons, items,
   explosions) keeps the factory sheet's words — the ROM's art, read at play
   time exactly as the sample reads it — with the sample's rows 20 and 21.
@@ -601,6 +605,9 @@ both games:
   47-53 through OBJ palette 6; enemy bullets and explosions are chips 24-45
   through OBJ palette 5; the forced 61-63 draw through OBJ palette 1.
   Nothing but the ship draws through palette 7, so row 18 is the ship's own.
+  The ship sheet does not honour a group word's flip bits (a mirrored chip
+  so written drew unmirrored in its slot, the enemy sheets' words are
+  honoured); its flips are MY SHIP ODR's bits 6-7, one byte a slot.
 - **Mesen.** Its home on this machine's build is
   `~/Library/Application Support/MesenCE/` (Mesen 2 proper uses `~/Mesen2`
   or `~/Documents/Mesen2`); the battery is `Saves/<rom base>.srm`, written

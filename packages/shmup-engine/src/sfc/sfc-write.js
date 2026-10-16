@@ -51,6 +51,8 @@ import {
     encodeChipPixels,
     encodeOdrByte,
     flipChip,
+    ODR_HFLIP,
+    ODR_VFLIP,
     USER_CHIP_COUNT,
 } from "./chips.js";
 import { encodeMapRow, MAP_COLUMNS, MAP_ROW_BYTES, MAP_ROWS, MAP_STAGE_BYTES, STAGE_COUNT } from "./map.js";
@@ -64,6 +66,7 @@ import {
     ENEMY_ODR_STAGE_BYTES,
     MAP_GROUP_CHIPS,
     MAP_GROUP_STAGE_BYTES,
+    MY_SHIP_ODR_BYTES,
     TITLE_GROUP_CHIPS,
     titleSlotForCell,
 } from "./groups.js";
@@ -424,25 +427,35 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
     ]);
     writeCgramRow(bytes, PALETTE_ROW_SHIP, shipQuant.words);
     rows.push({ row: PALETTE_ROW_SHIP, owner: "ship", colors: shipQuant.colors });
+    // The ship sheet ignores a group word's own flip bits: a mirrored chip
+    // written through them drew the right-bank pose with its halves swapped
+    // and unmirrored (OpenEmu and Mesen, 2026-10-16). Its flips are MY SHIP
+    // ODR's, one byte a slot with H in bit 6 and V in bit 7 ($00:9D8B), as
+    // ENEMY ODR carries the enemies', so a shared mirror goes there and the
+    // word stays plain.
+    const shipOdr = new Uint8Array(MY_SHIP_ODR_BYTES);
     let shipChips = 0;
     const poseSlots = [SFC_SHIP_POSE_SLOTS.left, SFC_SHIP_POSE_SLOTS.centre, SFC_SHIP_POSE_SLOTS.right];
     shipQuant.frames.forEach((f, p) => {
         for (let cy = 0; cy < 2; cy++) {
             for (let cx = 0; cx < 2; cx++) {
                 const px = cutChip(f.indices, SFC_SHIP_POSE_PX, cx, cy);
+                const slot = poseSlots[p] + cy * 2 + cx;
                 let word = CHIP_BLANK_WORD;
                 if (!isTransparent(px)) {
                     const hit = bankChip(px, "ship");
                     if (hit) {
-                        word = chipWordForIndex(hit.chip, hit);
+                        word = chipWordForIndex(hit.chip);
+                        shipOdr[slot] = (hit.hflip ? ODR_HFLIP : 0) | (hit.vflip ? ODR_VFLIP : 0);
                         shipChips++;
                     }
                 }
-                shipWords[poseSlots[p] + cy * 2 + cx] = word;
+                shipWords[slot] = word;
             }
         }
     });
     writeWords(bytes, REGION.myShipGroup.offset, shipWords);
+    bytes.set(shipOdr, REGION.myShipOdr.offset);
 
     // --- the title picture: the title editor's backdrop, logo and subtitle ---
     // Row 19 was set with the factory rows above; a level with no title art
