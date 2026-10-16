@@ -185,5 +185,7 @@ Deno.test("a cover still covers the game's wordmark", async () => {
     parse(staged.files, "assets/game_ui.json").frames["titleG.gif"],
     undefined,
   );
-  assert(staged.notes.some((n) => n.includes("the title screen covers it")));
+  assert(
+    staged.notes.some((n) => n.includes("the title screen puts its own art")),
+  );
 });
