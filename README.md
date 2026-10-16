@@ -266,6 +266,24 @@ they are written out in full.
     own title and an import's ship logo are settled first.
     `tests/custom_title_test.ts` pins the three copies. Mirrors
     `level-loader.js`.
+  - A custom game's SP cut-in is `rando`'s where it drew none of its own.
+    `assets/img/cutinCustom.png` is `rando`'s nine frames, a 3x3 spritesheet
+    (`cutin_custom`, loaded with the subtitle plate), and `applyCustomCutin`
+    paints them over `cutin0.gif`..`cutin8.gif` in `game_asset`, in place, so
+    the atlas keeps its size (stacking them would add 426 rows toward a
+    phone's 4096 texture limit). It runs before the game's own atlas stacks,
+    so a cut-in the game drew still wins its names. A game's atlas often
+    carries the stock cut-in back frame for frame — `akuma`, `hell` and
+    `turbo` all do, copies the editor saved — so the paint fingerprints the
+    frames it covers, and `_withoutStockCutins` leaves a copy out of the stack
+    on both roads (the cloud level's atlas, the editor's working one). Custom
+    here is narrower than for the title: a level named on the URL, a saved
+    game's PLAY, or an exported app (`__EXPORTED_LEVEL_APP__` from the
+    export's shell, `__OFFLINE_LEVEL_NAME__` from the in-game forge's). Being
+    offline is not enough, because a plain visit bakes 2028.Ai's own
+    `foo.json` in as its offline level, and that is the stock game, which
+    keeps its cut-in. `tests/custom_cutin_test.ts` pins both copies. Mirrors
+    `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
     TOP edge at the traced y, not their centre, so a name sits under its label
     instead of under the typed PRESENTED BY (see the comment on the constant,

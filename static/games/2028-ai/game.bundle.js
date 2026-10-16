@@ -5,6 +5,10 @@
     baseRecipeKey: "recipe",
     levelsPath: "levels",
     atlasKey: "game_asset",
+    // The SP cut-in a custom game plays where it drew none: rando's, a
+    // spritesheet of cutin0..cutin8 in order, loaded with the atlases
+    // (applyCustomCutin).
+    customCutinKey: "cutin_custom",
     // stage0..stage9 — Dezaemon 2's own maximum, and what the 2019-es7 runtime
     // plays. Only five sets of per-stage backgrounds and voices exist, so stage
     // 5 and up reuse them (stageId % 5); see 2019-es7 src/phaser/stages.js.
@@ -185,6 +189,44 @@
       y += f.h;
     }
     return { canvas, frames: out };
+  }
+  // Is this page an app built around one game? The export's shell says so
+  // (__EXPORTED_LEVEL_APP__), and so does the in-game forge's
+  // (__OFFLINE_LEVEL_NAME__); the hosted game says neither.
+  function isExportedApp() {
+    if (typeof globalThis === "undefined") return false;
+    return !!globalThis.__EXPORTED_LEVEL_APP__ || !!globalThis.__OFFLINE_LEVEL_NAME__;
+  }
+  // A fingerprint of a rect's pixels (FNV-1a over its RGBA), to tell a copy of a
+  // frame from a frame drawn anew without keeping the pixels. Null where the
+  // canvas will not be read.
+  function pixelPrint(ctx, x, y, w, h) {
+    let data;
+    try {
+      data = ctx.getImageData(x, y, w, h).data;
+    } catch (_e) {
+      return null;
+    }
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < data.length; i++) {
+      hash ^= data[i];
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return w + "x" + h + ":" + (hash >>> 0).toString(16);
+  }
+  // The frame map a loaded atlas texture resolves, in the shape addAtlas takes
+  // back, for rebuilding it over a new canvas.
+  function frameMapOf(texture) {
+    const map = {};
+    const frames = texture ? texture.frames : {};
+    for (const name in frames) {
+      if (name === "__BASE") continue;
+      const f = frames[name];
+      if (f && f.cutX !== void 0) {
+        map[name] = { frame: { x: f.cutX, y: f.cutY, w: f.cutWidth, h: f.cutHeight } };
+      }
+    }
+    return map;
   }
   function readEditorAtlasBridge(atlasKey, opts) {
     const o = opts || DEFAULTS.editorAtlas;
@@ -445,7 +487,7 @@
             console.warn("Level atlas image failed to load, using local atlas");
             return false;
           }
-          return this._stackAtlas(img, levelData.atlasFrames, atlasKey);
+          return this._stackAtlas(img, this._withoutStockCutins(img, levelData.atlasFrames), atlasKey);
         });
       }
       // Stack `image` beneath the loaded atlas and rebuild the frame map so both
@@ -462,7 +504,6 @@
         try {
           const localAtlas = scene.textures.get(atlasKey);
           const localSource = localAtlas && localAtlas.source && localAtlas.source[0] ? localAtlas.source[0].image : null;
-          const localFrames = localAtlas ? localAtlas.frames : {};
           if (!localSource) {
             return false;
           }
@@ -474,16 +515,7 @@
           const mctx = mergedCanvas.getContext("2d");
           mctx.drawImage(localSource, 0, 0);
           mctx.drawImage(image, 0, localH);
-          const mergedFrameMap = {};
-          for (const lk in localFrames) {
-            if (lk === "__BASE") continue;
-            const lf = localFrames[lk];
-            if (lf && lf.cutX !== void 0) {
-              mergedFrameMap[lk] = {
-                frame: { x: lf.cutX, y: lf.cutY, w: lf.cutWidth, h: lf.cutHeight }
-              };
-            }
-          }
+          const mergedFrameMap = frameMapOf(localAtlas);
           for (const fname in frames) {
             const decodedName = decodeFirebaseKey(fname);
             const fd = frames[fname];
@@ -511,6 +543,86 @@
           return false;
         }
       }
+      // A custom game that drew no SP cut-in of its own plays rando's: the
+      // frames of the `sheetKey` spritesheet (assets/img/cutinCustom.png),
+      // painted over the atlas's cutin0.gif..cutin8.gif in place, so the atlas
+      // keeps its size and its frame map. It runs before the game's own atlas
+      // lands, so a cut-in the game did draw still wins those names there
+      // (_stackAtlas). The default visit is 2028.Ai itself and keeps its own.
+      applyCustomCutin(atlasKey, sheetKey) {
+        const scene = this.scene;
+        try {
+          if (!scene.textures.exists(sheetKey) || !scene.textures.exists(atlasKey)) return false;
+          const sheet = scene.textures.get(sheetKey);
+          const atlas = scene.textures.get(atlasKey);
+          const art = sheet.source && sheet.source[0] ? sheet.source[0].image : null;
+          const local = atlas.source && atlas.source[0] ? atlas.source[0].image : null;
+          if (!art || !local) return false;
+          const canvas = document.createElement("canvas");
+          canvas.width = local.width;
+          canvas.height = local.height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(local, 0, 0);
+          const stock = {};
+          let painted = false;
+          for (let i = 0; sheet.frames[i]; i++) {
+            const from = sheet.frames[i];
+            const name = "cutin" + i + ".gif";
+            const to = atlas.frames[name];
+            if (!to) continue;
+            stock[name] = pixelPrint(ctx, to.cutX, to.cutY, to.cutWidth, to.cutHeight);
+            ctx.clearRect(to.cutX, to.cutY, to.cutWidth, to.cutHeight);
+            ctx.drawImage(
+              art,
+              from.cutX,
+              from.cutY,
+              from.cutWidth,
+              from.cutHeight,
+              to.cutX,
+              to.cutY,
+              to.cutWidth,
+              to.cutHeight
+            );
+            painted = true;
+          }
+          if (!painted) return false;
+          const frames = frameMapOf(atlas);
+          scene.textures.remove(atlasKey);
+          scene.textures.addAtlas(atlasKey, canvas, { frames });
+          this._stockCutin = stock;
+          return true;
+        } catch (paintErr) {
+          console.warn("Failed to paint the custom cut-in:", paintErr);
+          return false;
+        }
+      }
+      // A game's atlas often carries 2028.Ai's own cut-in back, frame for frame
+      // — the editor saves the stock frames it was handed (akuma, hell and turbo
+      // all do) — and a copy is not a cut-in the game drew: stacked, it would put
+      // the stock cut-in back over rando's. So once rando's is painted, a cutin
+      // frame whose pixels are the stock frame's is left out of the stack, and
+      // only a cut-in that differs wins its name.
+      _withoutStockCutins(image, frames) {
+        const stock = this._stockCutin;
+        if (!stock || !frames) return frames;
+        let out = frames;
+        for (const fname in frames) {
+          const name = decodeFirebaseKey(fname);
+          const print = stock[name] || stock[altFrameName(name)];
+          const fd = frames[fname];
+          if (!print || !fd || !fd.frame) continue;
+          const f = fd.frame;
+          const canvas = document.createElement("canvas");
+          canvas.width = f.w;
+          canvas.height = f.h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(image, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+          if (pixelPrint(ctx, 0, 0, f.w, f.h) !== print) continue;
+          if (out === frames) out = Object.assign({}, frames);
+          delete out[fname];
+        }
+        return out;
+      }
       // The level EDITOR's working atlas, which it republishes to IndexedDB on
       // every change (one record per atlas key). An editor "play" hands over a
       // recipe of texture *names* through localStorage but no art, so without
@@ -524,7 +636,7 @@
         return readEditorAtlasBridge(atlasKey, bridge).then((record) => {
           if (!record) return false;
           return loadImage(record.blob).then(
-            (img) => img ? this._stackAtlas(img, record.frames, atlasKey) : false
+            (img) => img ? this._stackAtlas(img, this._withoutStockCutins(img, record.frames), atlasKey) : false
           );
         }).catch((err) => {
           console.warn("Editor atlas bridge unavailable, using on-disk art:", err);
@@ -950,6 +1062,8 @@
       //     levelName, bgmSourceURLs }
       // `source` is one of "editor" | "firebase" | "offline" | "fallback".
       loadLevel(options) {
+        // The stock cut-in's fingerprints, once rando's is painted over it.
+        this._stockCutin = null;
         const o = Object.assign({}, DEFAULTS, options || {});
         o.titleImageKeys = options && options.titleImageKeys || DEFAULTS.titleImageKeys;
         o.audio = Object.assign({}, DEFAULTS.audio, options && options.audio || {});
@@ -971,15 +1085,17 @@
           }
           const stageId = parseStageId(editorPlay.stageId, o.maxStage);
           const info = { stageId, bossRush, source: "editor", hasCustomEnemies };
+          // A game saved under a name is a custom game; an unsaved one has no
+          // name yet and wears the stock plates and the stock cut-in.
+          const editorName = recipe.meta && recipe.meta.editorLevelName;
+          if (editorName) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
           return this.applyUiAtlases(recipe).then(() => this.mergeEditorAtlas(o)).then(() => this.applyStageBackgrounds(recipe)).then(() => {
             // The game's title art, for the title the ending returns to: PLAY
             // itself opens in the stage. Without this that title was the base
             // game's, over the game's own story.
             this.applyTitleImages(recipe, o.titleImageKeys);
             // The title art the saved game brought, and its name, for that
-            // title (customTitleArt); an unsaved game has no name yet and
-            // wears the stock plates.
-            const editorName = recipe.meta && recipe.meta.editorLevelName;
+            // title (customTitleArt).
             if (editorName) {
               recipe.customTitle = Object.assign({ name: String(editorName) }, customTitleArt(recipe));
             }
@@ -1005,8 +1121,14 @@
         const levelName = explicitLevel || o.defaultLevel;
         const stageParam = this.readStageParam();
         const usingOffline = o.offlineLevel !== void 0 ? !!o.offlineLevel : typeof globalThis !== "undefined" && !!globalThis.__OFFLINE_LEVEL__;
-        return this.fetchLevel(levelName, o).then(
-          (data) => this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
+        // rando's cut-in goes to a game named on the URL, or the one an exported
+        // app was built around — not to every offline level: a plain visit bakes
+        // 2028.Ai's own foo.json in as one (the bundle's main()), and that is the
+        // stock game, which keeps its own.
+        const exportedApp = o.exportedApp !== void 0 ? !!o.exportedApp : isExportedApp();
+        return this.fetchLevel(levelName, o).then((data) => {
+          if (explicitLevel || exportedApp) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
+          return this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
             const recipe = this.mergeRecipe(baseRecipe, data, o.atlasKey);
             this.applyTitleImages(data, o.titleImageKeys);
             // What of its title the level brought, and its name, for TitleScene
@@ -1039,8 +1161,8 @@
               levelName,
               bgmSourceURLs
             }));
-          })
-        ).catch((err) => {
+          });
+        }).catch((err) => {
           console.warn("Level load failed for '" + levelName + "':", err);
           if (!o.fallbackOnError) {
             throw err;
@@ -2775,6 +2897,9 @@
       // And the backdrop for one that brought none: the gold 2028 rando drew,
       // its top 480 rows — all a 1:1 tileSprite scrolling sideways ever shows.
       this.load.image("title_bg_custom", "assets/img/titleBgCustom.jpg");
+      // And the SP cut-in for one that drew none: rando's nine frames, which
+      // the level loader paints over cutin0-8 in game_asset (applyCustomCutin).
+      this.load.spritesheet("cutin_custom", "assets/img/cutinCustom.png", { frameWidth: 256, frameHeight: 142 });
       for (var i = 0; i < 5; i++) {
         this.load.image("stage_loop" + i, "assets/img/stage/stage_loop" + i + ".png");
         this.load.image("stage_end" + i, "assets/img/stage/stage_end" + i + ".png");
@@ -17771,10 +17896,11 @@
     "lib/phaser.min.js",
     "lib/boot.bundle.js",
     "assets/img/title_bg.jpg",
-    // A custom game's stock backdrop and genre plate (TitleScene): an
-    // exported app is always one.
+    // A custom game's stock backdrop, genre plate (TitleScene) and SP cut-in
+    // (applyCustomCutin): an exported app is always one.
     "assets/img/titleBgCustom.jpg",
     "assets/img/subTitleCustom.png",
+    "assets/img/cutinCustom.png",
     "assets/game.json",
     "assets/img/game_ui.png",
     "assets/game_ui.json",
