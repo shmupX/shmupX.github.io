@@ -20,6 +20,7 @@
 
 import { basename, dirname, extname, resolve } from "@std/path";
 import {
+  bossCellForSlot,
   chipRgba,
   coverage,
   MAP_COLUMNS,
@@ -376,14 +377,18 @@ function renderGroups(parsed: SfcSave, row: number): Raster | null {
     },
     { label: "ending", chips: g.ending, cols: 8, row: PALETTE_ROW_TITLE },
   ];
-  g.boss.forEach((b, n) =>
+  // a boss is drawn as it stands on screen: wide (two 4-wide halves, 8x4)
+  // or tall (4 wide row-major, 4x8), by its block's layout bit
+  g.boss.forEach((b, n) => {
+    const tall = !!parsed.enemies?.[n]?.boss?.tall;
     sheets.push({
       label: `boss ${n}`,
       chips: b.chips,
-      cols: 8,
+      cols: tall ? 4 : 8,
       row: PALETTE_ROW_STAGE_BOSS + n,
-    })
-  );
+      place: (i: number) => bossCellForSlot(i, tall),
+    });
+  });
   g.enemy.forEach((e, n) =>
     sheets.push({
       label: `enemies ${n}`,

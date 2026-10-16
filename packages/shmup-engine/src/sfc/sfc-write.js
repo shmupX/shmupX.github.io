@@ -66,6 +66,7 @@ import {
     ENEMY_ODR_STAGE_BYTES,
     MAP_GROUP_CHIPS,
     MAP_GROUP_STAGE_BYTES,
+    bossSlotForCell,
     MY_SHIP_ODR_BYTES,
     TITLE_GROUP_CHIPS,
     titleSlotForCell,
@@ -702,12 +703,16 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
                 const q = quantizeToRow([{ key: "boss", ...fitted }]);
                 writeCgramRow(bytes, PALETTE_ROW_STAGE_BOSS + s, q.words);
                 rows.push({ row: PALETTE_ROW_STAGE_BOSS + s, owner: `${st.key} boss`, colors: q.colors });
+                // The boss is written wide (block byte 6 bit 6 clear, below),
+                // whose 32 slots are not the 8x4 picture row-major but two
+                // 4-wide halves, the left in slots 0-15 and the right in
+                // 16-31 (bossSlotForCell); row-major scattered rando's Ryu.
                 for (let cy = 0; cy < BOSS_SHEET_ROWS; cy++) {
                     for (let cx = 0; cx < BOSS_SHEET_COLS; cx++) {
                         const px = cutChip(q.frames[0].indices, fitted.w, cx, cy);
                         if (isTransparent(px)) continue;
                         const hit = bankChip(px, `${st.key} boss`);
-                        if (hit) bossWords[cy * BOSS_SHEET_COLS + cx] = chipWordForIndex(hit.chip, hit);
+                        if (hit) bossWords[bossSlotForCell(cx, cy)] = chipWordForIndex(hit.chip, hit);
                     }
                 }
             }

@@ -39,6 +39,20 @@ export function titleSlotForCell(cx, cy) {
 export function titleCellForSlot(slot) {
     return { cx: (slot >> 4) * 4 + (slot & 3), cy: (slot >> 2) & 3 };
 }
+/**
+ * BOSS GROUP is laid out by the boss block's layout bit (byte 6 bit 6): a
+ * wide boss (bit clear, 128x64 on screen, 8 chips by 4) is the title's two
+ * 4-wide halves, slots 0-15 the left and 16-31 the right; a tall boss (bit
+ * set, 64x128, 4 by 8) is all 32 slots 4 wide row-major, 0-15 the top half
+ * (a save with every chip coded, photographed in play both ways,
+ * 2026-10-16). Cell (cx, cy) of the boss picture <-> slot.
+ */
+export function bossSlotForCell(cx, cy, tall = false) {
+    return tall ? cy * 4 + cx : titleSlotForCell(cx, cy);
+}
+export function bossCellForSlot(slot, tall = false) {
+    return tall ? { cx: slot & 3, cy: slot >> 2 } : titleCellForSlot(slot);
+}
 export const ENDING_GROUP_CHIPS = REGION.endingGroup.length / 2; // 12
 export const MY_SHIP_GROUP_CHIPS = REGION.myShipGroup.length / 2; // 64
 /** The ship sheet's last three slots, which the editor forces to 0x3FC-0x3FE. */

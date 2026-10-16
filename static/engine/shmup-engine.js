@@ -16869,6 +16869,9 @@ var TITLE_GROUP_CHIPS = REGION2.titleGroup.length / 2;
 function titleSlotForCell(cx, cy) {
   return (cx >> 2) * 16 + cy * 4 + (cx & 3);
 }
+function bossSlotForCell(cx, cy, tall = false) {
+  return tall ? cy * 4 + cx : titleSlotForCell(cx, cy);
+}
 var ENDING_GROUP_CHIPS = REGION2.endingGroup.length / 2;
 var MY_SHIP_GROUP_CHIPS = REGION2.myShipGroup.length / 2;
 var MY_SHIP_FORCED_SLOTS = Object.freeze([[61, 1020], [62, 1021], [63, 1022]]);
@@ -18550,7 +18553,7 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
             const px = cutChip(q.frames[0].indices, fitted.w, cx, cy);
             if (isTransparent(px)) continue;
             const hit = bankChip(px, `${st.key} boss`);
-            if (hit) bossWords[cy * BOSS_SHEET_COLS + cx] = chipWordForIndex(hit.chip, hit);
+            if (hit) bossWords[bossSlotForCell(cx, cy)] = chipWordForIndex(hit.chip, hit);
           }
         }
       }

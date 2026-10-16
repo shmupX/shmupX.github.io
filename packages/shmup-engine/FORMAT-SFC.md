@@ -296,14 +296,14 @@ the boss is a BG object and enemies and the ship are sprites.
 | ------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
 | MAP GROUP     | 6 × 128 | the chips a stage's map cells name; cleared to `0xFF` with word 0 = `0x03FF`                                 |
 | ENEMY GROUP   | 6 × 64  | the stage's enemy sprite sheet, 8×8 chips; cleared to `0xFFFF`                                               |
-| BOSS GROUP    | 6 × 32  | the boss as an 8×4-chip BG sheet (128×64 px), drawn whole on BG1; cleared to `0x03FF`                        |
+| BOSS GROUP    | 6 × 32  | the boss, drawn whole on BG1; cleared to `0x03FF`. Wide (block byte 6 bit 6 clear): 8×4 chips on screen as the title's two 4-wide halves, slots 0-15 the left and 16-31 the right. Tall (bit set): 4×8, all 32 slots 4 wide row-major |
 | TITLE GROUP   | 32      | the title picture, 8×4 chips on screen as two 4-wide halves: slots 0-15 the left, 16-31 the right, each 4 rows row-major |
 | ENDING GROUP  | 12      | the ending screen's chips; `0x03FF` when unused                                                              |
 | MY SHIP GROUP | 64      | the ship sheet: poses, shots, enemy bullets, weapons, items, explosions; slots 61-63 forced to `0x3FC-0x3FE` |
 
 ```
 0ff80  00 02 01 02 08 02 09 02 02 02 03 02 0a 02 0b 02   MY SHIP GROUP slots 0-7: sheet 2 rows 0-1
-04e80  44 02 45 02 45 42 44 42 4c 02 4d 02 4d 42 4c 42   BOSS GROUP boss 0: mirrored halves (bit 14)
+04e80  44 02 45 02 45 42 44 42 4c 02 4d 02 4d 42 4c 42   BOSS GROUP boss 0 (tall): 4-chip rows mirrored about their middle (bit 14)
 04540  ff 03 d8 02 ff ff 5d 03 55 03 ff ff df 02 d7 02   MAP GROUP slots 0-7: blank, chips, empties
 ```
 
@@ -530,9 +530,12 @@ factory sample's SOUND DATA and BGM PATCH (the ROM's songs), all embedded in
   sheet (slot 0 blank) and ENEMY ODR names them per the class layout.
 - **Waves**: each grid row is a 14-byte record on its line — the level's wave
   row, else lines 2, 6, 10 …; columns spread over 1..14 — de-duplicated into
-  records 2..255. **The boss** paints its first frame into the 8×4 sheet, wears
-  the sample's stage-0 block with the hit-point index nearest hits × 25 and the
-  wide layout, and is spawned by a class-5 byte twelve lines past the last wave.
+  records 2..255. **The boss** paints its first frame into the 8×4 sheet —
+  placed by `bossSlotForCell`, the wide layout's two 4-wide halves, since the
+  group is not the picture row-major — wears the sample's stage-0 block with
+  the hit-point index nearest hits × 25 and the wide layout, and is spawned by
+  a class-5 byte twelve lines past the last wave. (Row-major placement drew
+  rando's Ryu as scattered pieces, 2026-10-16.)
 - **The ship** is the level's own frames — the first as the level pose, the
   second (else the first) banking left and its mirror banking right, each
   fitted to 32×32 — in the three pose slots the player handler names (chips

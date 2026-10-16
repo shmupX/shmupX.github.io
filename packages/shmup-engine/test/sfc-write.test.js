@@ -12,6 +12,8 @@ import {
 } from "@std/assert";
 import {
   APPEAR_BOSS_CLASS,
+  bossCellForSlot,
+  bossSlotForCell,
   buildSfcGameFromLevel,
   cutChip,
   decodeChipPixels,
@@ -581,6 +583,40 @@ Deno.test("the title group is two 4-wide halves: a picture cell lands in its slo
   const out = exportLevelToSfcSram(level(), art(), { title1: logo });
   const title = parseSfcSav(out.sram).groups.title;
   assertEquals(title.filter((c) => !c.empty).map((c) => c.slot), [25]);
+});
+
+Deno.test("a wide boss is two 4-wide halves, a tall one 4 wide row-major: a picture cell lands in its slot", () => {
+  // wide (the writer's): the title's layout
+  for (let cy = 0; cy < 4; cy++) {
+    for (let cx = 0; cx < 8; cx++) {
+      assertStrictEquals(bossSlotForCell(cx, cy), titleSlotForCell(cx, cy));
+    }
+  }
+  // tall: 4 wide, 8 rows, slot = cy * 4 + cx
+  assertStrictEquals(bossSlotForCell(3, 0, true), 3);
+  assertStrictEquals(bossSlotForCell(0, 4, true), 16);
+  assertStrictEquals(bossSlotForCell(3, 7, true), 31);
+  for (let s = 0; s < 32; s++) {
+    for (const tall of [false, true]) {
+      const { cx, cy } = bossCellForSlot(s, tall);
+      assertStrictEquals(bossSlotForCell(cx, cy, tall), s);
+    }
+  }
+  // a 128x64 boss with one opaque cell, (5, 2): only slot 16 + 2 * 4 + 1 = 25
+  // is painted, and the block says wide
+  const boss = { w: 128, h: 64, rgba: new Uint8Array(128 * 64 * 4) };
+  for (let y = 32; y < 48; y++) {
+    for (let x = 80; x < 96; x++) {
+      boss.rgba.set([0, 255, 0, 255], (y * 128 + x) * 4);
+    }
+  }
+  const out = exportLevelToSfcSram(level(), { ...art(), "boss0.png": boss });
+  const save = parseSfcSav(out.sram);
+  assertEquals(
+    save.groups.boss[0].chips.filter((c) => !c.empty).map((c) => c.slot),
+    [25],
+  );
+  assertStrictEquals(save.enemies[0].boss.tall, false);
 });
 
 Deno.test("the report says what the title was made of, and what flies", () => {
