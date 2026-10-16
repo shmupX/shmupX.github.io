@@ -7219,7 +7219,13 @@
             // this is normally a fast no-op rewrite; it settles well inside the
             // window where a click still authorizes window.open.
             await storeAtlasForViewers();
-            const playUrl = `${GAME_PLAY_URL}?editorPlay=1&stage=${sid}${godModeParam()}${debugPlayParams()}${await versionPlayParams()}`;
+            // The open stage travels in localStorage (editorStageKey, above),
+            // never as ?stage=: on the game's URL that is the Guide's Start
+            // Stage cheat, which the runtime lays back over every run started
+            // from the title (cmgApplyCheatStart) — so a game PLAYed from its
+            // second stage opened there, and its title's START went straight
+            // back to the second stage instead of the first.
+            const playUrl = `${GAME_PLAY_URL}?editorPlay=1${godModeParam()}${debugPlayParams()}${await versionPlayParams()}`;
             // navigate: swap this page (or this launcher frame) for the game
             // instead of opening a tab — the shelf's player mode uses it so a
             // slow cart fetch can't outlive the click's popup allowance.
@@ -13678,7 +13684,11 @@ function GAME3D_RUNTIME(DATA) {
 if (!name) { name = prompt('Level name:'); if (!name) return; }
             name = sanitizeLevelName(name);
             document.getElementById('firebase-level-name').value = name;
-            openGameWindow(`${GAME_PLAY_URL}?level=${encodeURIComponent(name)}&stage=${getCurrentStageId()}${godModeParam()}`, name, 'play');
+            // The saved game as a player gets it: its title, its story, its
+            // first stage. Not the editor's open stage — ?stage= skips the
+            // title and is the Guide's Start Stage cheat, which a run started
+            // from the title keeps (PLAY IN PHASER is the open stage's test).
+            openGameWindow(`${GAME_PLAY_URL}?level=${encodeURIComponent(name)}${godModeParam()}`, name, 'play');
         }
 
         // TARGET picker: which platform the export is compiled for. Persisted
