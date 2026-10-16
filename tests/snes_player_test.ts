@@ -245,6 +245,37 @@ Deno.test("the route wins over the staged copy when both answer", async () => {
   assertEquals(rom.rom, "/api/dezaemon-sfc?rom=1");
 });
 
+Deno.test("a save the route puts under the cart boots with the cartridge row", async () => {
+  const sramBytes = new Uint8Array(0x20000).fill(0x5a);
+  const withSave: Fetch = (url, init) => {
+    if (url.startsWith("/api/dezaemon-sfc?sram=1")) {
+      return Promise.resolve(new Response(sramBytes as BlobPart));
+    }
+    if (url.startsWith("/api/dezaemon-sfc?rom=1")) {
+      return Promise.resolve(new Response(new Uint8Array(0x80000) as BlobPart));
+    }
+    if (url.startsWith("/api/dezaemon-sfc")) {
+      return Promise.resolve(Response.json({
+        available: true,
+        name: "Deza.sfc",
+        rom: "/api/dezaemon-sfc?rom=1",
+        romName: "Dezaemon.sfc",
+        sram: "/api/dezaemon-sfc?sram=1",
+        sramName: "Dezaemon SFC - rando.srm",
+        sramTitle: "Dezaemon SFC - rando",
+      }));
+    }
+    return stagedOnly()(url, init);
+  };
+  const boot = await snesBootFiles(null, { fetchImpl: withSave });
+  assert(boot.sram, "the route's save did not ride along");
+  // named after the ROM, which is how a libretro core pairs the two
+  assertEquals(boot.sram.name, "Dezaemon.srm");
+  assertEquals(boot.sram.size, 0x20000);
+  assertEquals(boot.title, "Dezaemon SFC - rando");
+  assertEquals(boot.rom.name, "Dezaemon.sfc");
+});
+
 Deno.test("the bare cartridge boots with no save under it", async () => {
   const boot = await snesBootFiles(undefined, { fetchImpl: stagedOnly() });
   assertEquals(boot.sram, null, "the cartridge row has no shelf entry");

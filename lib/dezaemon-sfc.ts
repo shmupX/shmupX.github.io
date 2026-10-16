@@ -31,6 +31,7 @@ import {
   isDezaemonRom,
   readRomHeader,
 } from "../packages/shmup-engine/src/sfc/rom.js";
+import { isSfcSav, SRAM_SIZE } from "../packages/shmup-engine/src/sfc/sram.js";
 
 /** What the launcher calls it, and the name the ROM reaches the player under. */
 export const DEZAEMON_SFC_TITLE = "Dezaemon (Super Famicom)";
@@ -247,4 +248,50 @@ export async function readDezaemonSfcRom(
 /** Drop the memo — for tests, which build and rebuild fixture trees. */
 export function forgetDezaemonSfcRom(): void {
   cached = null;
+}
+
+/**
+ * A save to boot the cartridge row with: $DEZAEMON_SFC_SRAM, or whatever
+ * paths the caller names. Nothing is discovered here — a shelf row is the
+ * place for a save the browser picked, and this is the place for one the
+ * operator put under the cart on purpose (a build just written by
+ * `deno task build:sfc`, say, that another machine's launcher should play
+ * with one press). The file has to be a whole cart: 131,072 bytes carrying
+ * the "T.TABATA" magic, which is the test the player's shelf applies too.
+ */
+export interface DezaemonSfcSram {
+  path: string;
+  name: string;
+  /** The file's stem, which is what the launcher shows beside the cart. */
+  title: string;
+  size: number;
+  mtime: number;
+}
+
+export async function findDezaemonSfcSram(
+  extra: string[] = [],
+): Promise<DezaemonSfcSram | null> {
+  for (const path of extra) {
+    if (!path) continue;
+    let bytes: Uint8Array;
+    let mtime = 0;
+    try {
+      const info = await Deno.stat(path);
+      if (!info.isFile) continue;
+      mtime = info.mtime?.getTime() ?? 0;
+      bytes = await Deno.readFile(path);
+    } catch {
+      continue; // named but not there
+    }
+    if (bytes.length !== SRAM_SIZE || !isSfcSav(bytes)) continue;
+    const name = basename(path);
+    return {
+      path,
+      name,
+      title: name.replace(/\.[^.]+$/, ""),
+      size: bytes.length,
+      mtime,
+    };
+  }
+  return null;
 }

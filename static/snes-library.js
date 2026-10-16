@@ -419,12 +419,22 @@ export async function snesBootFiles(record, { fetchImpl = defaultFetch } = {}) {
     name: rom.romName || 'Dezaemon.sfc',
     url: rom.rom || SNES_ROM_URL + '?rom=1',
   });
-  if (bare) {
-    return { rom: romFile, sram: null, title: rom.title || SNES_ROM_TITLE };
-  }
   // The save file's base name has to match the ROM's, because that is how every
   // libretro core pairs a .srm with the cartridge it belongs to.
   const sramName = romFile.name.replace(/\.[^.]+$/, '') + '.srm';
+  if (bare) {
+    // The cartridge row boots the ROM alone — unless the route says the
+    // operator put a save under the cart ($DEZAEMON_SFC_SRAM), in which case
+    // that save rides along exactly as a shelf row's would.
+    if (rom.sram) {
+      const res = await fetchImpl(rom.sram, { cache: 'no-store' });
+      if (!res.ok) throw new Error(rom.sram + ' answered HTTP ' + res.status);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const sram = new File([bytes], sramName, { type: 'application/octet-stream' });
+      return { rom: romFile, sram, title: rom.sramTitle || rom.title || SNES_ROM_TITLE };
+    }
+    return { rom: romFile, sram: null, title: rom.title || SNES_ROM_TITLE };
+  }
   const sram = new File([record.bytes], sramName, { type: 'application/octet-stream' });
   return { rom: romFile, sram, title: record.title || record.slug || 'Dezaemon' };
 }

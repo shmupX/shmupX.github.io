@@ -4493,7 +4493,10 @@
           key: 'snes-rom', kind: 'snes-rom',
           name: snesRom.title || 'Dezaemon', title: 'DEZAEMON',
           sub: 'the cartridge · ' + (snesRom.name || 'Dezaemon.sfc') +
-            (snesRom.source === 'staged' ? ' · staged' : ' · dev-fixtures'),
+            (snesRom.source === 'staged' ? ' · staged' : ' · dev-fixtures') +
+            // $DEZAEMON_SFC_SRAM: the save the cartridge boots with, when the
+            // operator put one under it (routes/api/dezaemon-sfc.ts).
+            (snesRom.sramTitle ? ' · with save ' + snesRom.sramTitle : ''),
           icon: null,
           size: snesRom.size ? (snesRom.size / 1024).toFixed(0) + ' KB' : '—',
           date: 'LOCAL', type: 'SFC / CARTRIDGE',

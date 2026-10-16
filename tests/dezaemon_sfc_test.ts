@@ -11,10 +11,12 @@ import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import {
   findDezaemonSfcRom,
+  findDezaemonSfcSram,
   forgetDezaemonSfcRom,
   readDezaemonSfcRom,
   romCandidates,
 } from "../lib/dezaemon-sfc.ts";
+import { formatSfcSram } from "../packages/shmup-engine/src/sfc/index.js";
 
 const ROM_BYTES = 0x80000; // 512 KB, the size the real cart is
 const HEADER = 0x7fc0;
@@ -186,6 +188,35 @@ Deno.test("the lookup is memoised against the listing, and re-runs when it moves
       fakeRom({ title: "SOMETHING ELSE" }),
     );
     assertEquals(await findDezaemonSfcRom(root), null);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("the save under the cart is only ever a named, whole Dezaemon SRAM", async () => {
+  const root = await fixtureTree({
+    "saves/Dezaemon SFC - foo.srm": formatSfcSram(),
+    "saves/half.srm": formatSfcSram().slice(0, 0x10000),
+    "saves/unmagic.srm": (() => {
+      const b = formatSfcSram();
+      b[0x7ff8] = 0x58;
+      return b;
+    })(),
+  });
+  try {
+    // Nothing is discovered: a folder full of saves names none of them.
+    assertEquals(await findDezaemonSfcSram([]), null);
+    assertEquals(await findDezaemonSfcSram([join(root, "saves")]), null);
+    const found = await findDezaemonSfcSram([
+      join(root, "saves", "missing.srm"),
+      join(root, "saves", "half.srm"),
+      join(root, "saves", "unmagic.srm"),
+      join(root, "saves", "Dezaemon SFC - foo.srm"),
+    ]);
+    assert(found, "the whole, sealed image was not taken");
+    assertEquals(found.name, "Dezaemon SFC - foo.srm");
+    assertEquals(found.title, "Dezaemon SFC - foo");
+    assertEquals(found.size, 0x20000);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

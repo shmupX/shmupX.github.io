@@ -540,6 +540,46 @@ factory sample's SOUND DATA and BGM PATCH (the ROM's songs), all embedded in
   image is read back through `parseSfcSav` and `verifySfcChecksums` before it
   leaves.
 
+## Running a save (`scripts/lib/sfc-verify.ts`, `lib/sfc-mesen.ts`; observed 2026-10-14)
+
+`deno task sfc:verify <srm>` boots the real cart in Mesen 2's test runner
+(`--testRunner`, no window, no pad), writes the image into SRAM from Lua and
+resets, then drives the game by polling WRAM and reads the console back
+through the battery file Mesen writes on stop (the Lua sandbox has no `io`;
+the 128 KB cart is the only way out). What the runs settled, two saves and
+both games:
+
+- **Boot.** Reset → "DEZAEMON SUPER FAMICOM VERSION" (~120 frames) → the
+  Athena logo (~240) → the main menu GAME PLAY / EDIT / ETC. at ~900 frames.
+  A save the boot accepts comes through byte-identical but for CHECK SUM,
+  CHECK SUM COPY and MOUSE SPEED (0x7E5A-0x7E7B), which it rewrites.
+- **The main menu.** Start IS "GAME PLAY" whatever the cursor points at —
+  the hand icon moves with Down but Start ignores it; B (not A) picks the
+  pointed entry, so EDIT is Down + B. GAME PLAY → the game's own title:
+  TITLE GROUP flown in over its background (the TITLE TYPE animation takes
+  ~200 frames), GAME START / OPTION / EXIT, where Start picks the cursor's
+  entry (it rests on GAME START).
+- **State bytes** (WRAM, found by diffing dumps of each screen): the main
+  menu is `$000D == 1 and $03D6 == 5`; the game's title and its OPTION
+  screen are `$000D == 0 and $00D8 == $9C`; a stage playing is
+  `$03F4 == 1 and $0406 == 3`. `$19CE` is 1 on every screen of the user
+  game, so it is not a "sample is playing" flag at the menu.
+- **CGRAM at play.** A PALETTE DATA row lands one colour up — colour 0 of
+  the hardware palette is transparent, so row word k is palette colour
+  k + 1 and the row's word 15 is dropped: BG palette 7 ← row n (stage n's
+  scenery), BG palette 6 ← row 12 + n (boss), OBJ palette 4 (CGRAM 0x180) ←
+  row 6 + n (enemies), BG palette 3 ← row 19 (title). VRAM holds the
+  stage's chips as the save's own tiles (ALDI: ~500 of its 1,947 tiles in
+  VRAM mid-stage 0, plus ~190 of the ROM's factory tiles for the ship, shots
+  and items).
+- **Mesen.** Its home on this machine's build is
+  `~/Library/Application Support/MesenCE/` (Mesen 2 proper uses `~/Mesen2`
+  or `~/Documents/Mesen2`); the battery is `Saves/<rom base>.srm`, written
+  on `emu.stop()` even in test-runner mode. `emu.takeScreenshot()` returns
+  the PNG as a string; `emu.read`/`emu.write` reach `snesSaveRam`,
+  `snesWorkRam`, `snesCgRam` and `snesVideoRam`; `emu.setInput({start=true},
+  0)` inside an `inputPolled` callback presses a button.
+
 ## Unresolved
 
 - **The play-time palette slots** of rows 18-21 (ship, title, items, free): the

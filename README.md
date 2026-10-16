@@ -474,6 +474,7 @@ deno task psx:probe       # look inside a PlayStation Dezaemon+ / Dezaemon Kids!
 deno task build:kids      # a level as a Dezaemon Kids! memory card (.mcr) for Mednafen / DuckStation / MiSTer
 deno task build:plus      # a level as a Dezaemon+ / Select 100 memory card (.mcr)
 deno task build:sfc       # a level as the Super Famicom Dezaemon cart's SRAM (.srm) for Mednafen / Snes9x / bsnes / MiSTer
+deno task sfc:verify      # …then boot that .srm under the real cart in Mesen, press GAME PLAY and GAME START, and prove it is this save that plays (screenshots + report.json)
 deno task build:ddd       # a level as a Dezaemon 3D 64DD disk (.ndd) beside the prototype disk's sample projects
 deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (ls / get / report / png / all / put / rm / convert / sys)
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
@@ -2060,6 +2061,12 @@ a .srm on your own disk
   graphics bank, whose layout is still open, so it renders fragments rather than
   a logo. A cart with a blank graphics bank has no picture of itself and is
   published without one.
+- **A save under the cart.** `DEZAEMON_SFC_SRAM=<path to a 128 KB .srm> deno
+  task dev` makes the cartridge row itself boot with that save — the route
+  answers with `sram`, the launcher hands the player both files — so a build
+  just written by `deno task build:sfc` plays on another machine's launcher
+  (a tablet on the LAN) with one press of LAUNCH and no shelf import. The row
+  says `with save <name>` while one is under it.
 - **A save is not a game.** This is the one thing the SNES shelf does that no
   other shelf here has to. A PS2 row is a disc and a Saturn row is a cart the
   disc in the drive can load; a SNES row is 128 KB of SRAM belonging to a
