@@ -260,7 +260,14 @@ they are written out in full.
     the Guide still shows them on. Mod Mode is not one of them: it changes
     which parts play, not where the run starts. `tests/cheat_boot_test.ts`
     pins all three. Upstream homes: `scripts/2028-ai/boot-entry.js` and
-    `2019-es7/src/phaser/TitleScene.js`.
+    `2019-es7/src/phaser/TitleScene.js`. The editor's two PLAY rows put the
+    open stage on the URL as `?stage=` too, so a game saved on its second
+    stage (the cloud game `rando`) read as a Start Stage cheat: PLAY GAME
+    opened in that stage with no title, and either row's title then STARTed
+    straight back into it. PLAY IN PHASER now hands its stage over in
+    localStorage alone (`editorStageKey`, which `readEditorPlayRequest` already
+    reads), and PLAY GAME opens the saved game at its title
+    (`tests/editor_play_urls_test.ts`).
   - A boss dies as the boss whatever finished it. `updateDezaColumns` (the
     Dezaemon sub-weapon 5 / charge 2 columns) used to bill the boss sprite and
     hand the kill to `enemyDie`, which destroyed the sprite without telling the
