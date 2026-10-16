@@ -50,6 +50,7 @@
     "sfc:upload": "deno run -A scripts/upload-sfc-saves.ts",
     "sfc:stage": "deno run -A scripts/stage-dezaemon-sfc.ts",
     "sfc:verify": "deno run -A scripts/verify-sfc.ts",
+    "sfc:openemu": "deno run -A scripts/openemu-sfc.ts",
     "n64:stage": "deno run -A scripts/stage-dezaemon-n64.ts",
     "deza:disc": "deno run -A tools/deza-disc/main.ts",
     "sfc:probe": "deno run -A tools/sfc-sav/main.ts",

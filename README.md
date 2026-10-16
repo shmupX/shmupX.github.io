@@ -475,6 +475,7 @@ deno task build:kids      # a level as a Dezaemon Kids! memory card (.mcr) for M
 deno task build:plus      # a level as a Dezaemon+ / Select 100 memory card (.mcr)
 deno task build:sfc       # a level as the Super Famicom Dezaemon cart's SRAM (.srm) for Mednafen / Snes9x / bsnes / MiSTer
 deno task sfc:verify      # …then boot that .srm under the real cart in Mesen, press GAME PLAY and GAME START, and prove it is this save that plays (screenshots + report.json)
+deno task sfc:openemu     # …or put it under the cart in OpenEmu (macOS): quit OpenEmu, retire the auto save state that would outrank it, install, launch
 deno task build:ddd       # a level as a Dezaemon 3D 64DD disk (.ndd) beside the prototype disk's sample projects
 deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (ls / get / report / png / all / put / rm / convert / sys)
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
