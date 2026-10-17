@@ -13,6 +13,7 @@ import {
   createGame,
   type GameContext,
   SCENE_GAME,
+  SCENE_TITLE,
 } from "@easierbycode/svelte-ps2/ps2-sp";
 import { createAthenaSound } from "./runtime-sound.ts";
 
@@ -207,6 +208,22 @@ const pad = runtime.Pads.get();
 const START = runtime.Pads.START;
 let startWasDown = false;
 
+// The title's secret: hold L and R while pressing START — or SELECT, which
+// starts the run in turbo mode — and that run is played in god mode: nothing
+// hurts the ship. The port has no such mode; `state.godMode` is read by the
+// guard lib/ps2/runtime-patches.ts puts at the top of its playerOnDamage.
+// Either shoulder button of a side counts.
+//
+// The title switches scenes by starting a fade (`scenes.switch`), so the frame
+// that starts one is the frame it took the press, and the pad's held state
+// right after it is the step that saw it. Every START at the title decides the
+// run it begins, so a plain START after a god-mode run plays a normal one.
+const L = [runtime.Pads.L1, runtime.Pads.L2];
+const R = [runtime.Pads.R1, runtime.Pads.R2];
+const STARTS = [START, runtime.Pads.SELECT];
+const held = (masks: number[]) => masks.some((mask) => pad.pressed(mask));
+const state = ctx.state as typeof ctx.state & { godMode?: number };
+
 for (;;) {
   // Sample the pad BEFORE the frame runs, so this edge and the one the port's
   // own input layer takes during the frame are the same press. Reading it
@@ -217,9 +234,17 @@ for (;;) {
   const startPressed = startDown && !startWasDown;
   startWasDown = startDown;
   const pausedBefore = ctx.state.paused;
+  const titleWaiting = ctx.scenes.current === SCENE_TITLE &&
+    !ctx.scenes.fading;
 
   runtime.tick();
   sound.pump();
+
+  if (titleWaiting && ctx.scenes.fading) {
+    const god = held(STARTS) && held(L) && held(R);
+    state.godMode = god ? 1 : 0;
+    if (god) sound.playSound("se_correct");
+  }
 
   if (startPressed && ctx.scenes.current === SCENE_GAME) {
     const paused = !pausedBefore;

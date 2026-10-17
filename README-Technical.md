@@ -3304,9 +3304,8 @@ every frame. So only the middle 96 of its 256 columns are ever seen, stretched
 2.5x, and a cover dropped in untreated shows as the middle third of itself. The
 exporter squeezes it into exactly those columns and pads either side; the port's
 own stretch undoes the squeeze and the whole title comes out at its own
-proportions. When a cover is present game_ui gets a 1024 sheet rather than 512,
-which packs it at 1/2 instead of 1/4 — 48 texels across the 239 pixels it is
-shown in rather than 24 — and keeps the working set at 3.57 MB of the GS's 4.
+proportions. game_ui carries only what the port draws (below), so a cover packs
+at 1/1: all 96 of its visible columns across the 239 pixels they are shown in.
 
 Without a cover or a drawn title, **the title editor's uploads** take the stock
 plates' places (`titleUploadFrames`): `logoDataURL` as `logo.gif`,
@@ -3315,9 +3314,9 @@ stock disc has none of (the port fills a flat purple instead). The browser rests
 a logo or subtitle with its left edge at 0 and the port centres its plate, so
 each goes onto a 256-wide plate flush left; the backdrop is tiled at its own
 size across the 256x480 screen from the top-left, as the browser's tileSprite
-shows it, then squeezed like a cover, and gets the same 1024 sheet. An upload is
-the picked file as it was, so PNG and GIF are decoded (the game this repo ships
-has a GIF logo) and anything else keeps the stock plate with a note.
+shows it, then squeezed like a cover. An upload is the picked file as it was, so
+PNG and GIF are decoded (the game this repo ships has a GIF logo) and anything
+else keeps the stock plate with a note.
 
 **The game's own UI art** goes on the disc too. A game_ui frame replaced in the
 editor's Atlas Manager — titleG.gif, say — rides the record as
@@ -3343,6 +3342,34 @@ under those names (`continueFaceFrames`): G's 100x131 box with the ship centred
 at the largest whole-pixel scale that fits — 2x for `gs`'s 32x50 tag — its first
 two frames standing in for the browser's idle loop. A recipe that only restates
 the base player, or names frames neither sheet has, keeps G.
+
+**game_ui carries only what the port draws.** ps2-sp sets its HUD, menus and
+interludes as text, so of the ~120 frames on the stock sheet it asks game_ui for
+seven — `title_bg`, `titleG.gif`, `logo.gif`, `subTitle.gif`,
+`continueTitle.gif`, `continueFace0.gif`, `continueFace1.gif` — and for
+`stage_loop<N>`, which the stock sheet has none of (`PORT_UI_FRAMES`). Packed
+with the rest, the sheet came out at 1/4 and the title's G was 64 texels across;
+alone, and allowed the same one doubling the level atlas gets (512x1024 at the
+default, 0.5 MB paletted, less than the 1 MB a backdrop's 1024 sheet used to
+take), they pack at 1/1 with or without a backdrop. A game's own game_ui frame
+the port never draws is left out with a note. `tests/ps2_ui_atlases_test.ts`
+reads the bundled runtime and fails if the port ever asks game_ui for a name the
+set lacks.
+
+**God mode** is a title-screen secret: hold L and R (either shoulder button of a
+side) while pressing START — or SELECT, which starts in turbo mode — and that
+run cannot be hurt. A confirming chime (`se_correct`) plays over the usual START
+sound. Each START at the title decides the run it begins, so a plain one
+afterwards plays normally. The port has no such mode, so it comes in two halves:
+`runtime-entry.ts` reads the pad on the frame the title starts its fade out and
+sets `state.godMode`, and `lib/ps2/runtime-patches.ts` puts the guard that reads
+it at the top of the port's `playerOnDamage`, which every hurt goes through —
+shots, collisions and the boss timer running out — the way the browser's
+`playerDamage` returns early on `gameState.godFlg`. That function is private to
+svelte-ps2, so the patch is an anchored edit to the bundled text, applied each
+time `buildRuntimeBundle` hands the bundle out; an anchor that is not there
+exactly once fails the build rather than ship a disc without it. It belongs
+upstream, as a `godMode` the port reads itself.
 
 **The output is a folder** — `athena.elf`, `main.js`, `athena.ini` and
 `assets/`. Copy it to a USB stick, or point an emulator straight at

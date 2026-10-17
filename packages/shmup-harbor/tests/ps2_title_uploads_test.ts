@@ -138,10 +138,12 @@ Deno.test("the game this repo ships takes its own title onto the disc", async ()
     return [f.frame.w * scale, f.frame.h * scale];
   };
   assertEquals(size("title_bg"), [256, 480]);
-  assertEquals(size("logo.gif"), [256, 92]); // 91 rows, padded to the scale
+  assertEquals(size("logo.gif"), [256, 91]);
   assertEquals(size("subTitle.gif"), [256, 20]);
-  // The backdrop gets the sheet a cover gets.
-  assertEquals(ui.meta.size.w, 1024);
+  // game_ui holds only what the port draws, so all of it — backdrop too —
+  // packs at full size on the one-doubling sheet.
+  assertEquals(scale, 1);
+  assertEquals(ui.meta.size.w * ui.meta.size.h, 512 * 1024);
   assert(
     staged.notes.some((n) =>
       n.includes(

@@ -11,10 +11,13 @@ import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import {
   type LevelRecord,
+  PORT_UI_FRAMES,
+  portDrawsUi,
   stageAssets,
   type StagedFile,
   uiAtlasFrames,
 } from "../lib/ps2/assets.ts";
+import { buildRuntimeBundle } from "../lib/ps2/build.ts";
 import type { FrameEntry } from "../lib/ps2/atlas.ts";
 import {
   decodePng,
@@ -161,8 +164,8 @@ Deno.test("the disc's game_ui carries the game's own wordmark", async () => {
   assertEquals(entry.frame.h * scale, 64);
   assertEquals(rgba, [255, 0, 255, 255]);
   const frames = parse(staged.files, "assets/game_ui.json").frames;
-  // The rest of the stock sheet is still there...
-  assert(frames["titleStartText.gif"]);
+  // The rest of what the port draws is still there...
+  assert(frames["continueTitle.gif"]);
   // ...but not the 2019 logo and tagline the port centres on G's plate: they
   // would print across the game's own art (gs's Geek Squad badge).
   assertEquals(frames["logo.gif"], undefined);
@@ -232,6 +235,64 @@ Deno.test("a recipe that restates the base player keeps G on the continue card",
   const { rgba } = await stagedPixel(staged.files, "continueFace0.gif");
   assert(rgba[3] > 0, "G's face is missing");
   assertEquals(staged.notes.filter((n) => n.startsWith("continue:")), []);
+});
+
+Deno.test("game_ui carries only what the port draws, at full size", async () => {
+  const staged = await stageAssets({ gameDir: GAME_DIR, record: {} });
+  const ui = parse(staged.files, "assets/game_ui.json");
+  for (const name of Object.keys(ui.frames)) {
+    assert(PORT_UI_FRAMES.has(name), `${name} is packed but never drawn`);
+  }
+  // The stock title's three 256-wide plates and G, and the continue card,
+  // on the one-doubling sheet at 1:1 — they packed at 1/4 among the rest.
+  assertEquals(ui.meta.ps2DisplayScale, 1);
+  assert(ui.meta.size.w * ui.meta.size.h <= 512 * 1024);
+  assertEquals(ui.frames["titleG.gif"].frame.w, 256);
+});
+
+Deno.test("a game's own frame the port never draws stays off the disc", async () => {
+  const record: LevelRecord = {
+    uiAtlases: {
+      game_ui: {
+        imageDataURL: await dataUrl(solid(64, 45, [255, 0, 255, 255])),
+        frames: { "hudBg0․gif": rect(0, 0, 64, 45) },
+      },
+    },
+  };
+  const staged = await stageAssets({ gameDir: GAME_DIR, record });
+  assertEquals(
+    parse(staged.files, "assets/game_ui.json").frames["hudBg0.gif"],
+    undefined,
+  );
+  assert(
+    staged.notes.some((n) => n.includes("never draws") && n.includes("hudBg0")),
+  );
+});
+
+Deno.test("the port asks game_ui for nothing the disc leaves out", async () => {
+  const cache = join(repoRoot(), "build", "ps2", ".cache");
+  try {
+    await Deno.stat(join(cache, "main.js"));
+  } catch {
+    console.log("  (skipped: run `deno task build:ps2` first)");
+    return;
+  }
+  const js = decoder.decode(await buildRuntimeBundle(repoRoot(), cache));
+  // Every name it passes game_ui as a literal...
+  const asked = [...js.matchAll(/"game_ui", "([^"]+)"/g)].map((m) => m[1]);
+  // ...and every stock game_ui name that appears in it at all, which is how
+  // one it picks at run time (`faceFrame`) shows up.
+  const stock = JSON.parse(
+    await Deno.readTextFile(join(GAME_DIR, "assets", "game_ui.json")),
+  ).frames as Record<string, unknown>;
+  const named = Object.keys(stock).filter((name) => js.includes(`"${name}"`));
+  assert(asked.length > 0, "the bundle draws nothing from game_ui?");
+  for (const name of new Set([...asked, ...named])) {
+    if (name.endsWith(".png")) continue; // the files the sheets load from
+    assert(portDrawsUi(name), `the port draws game_ui's ${name}`);
+  }
+  // The one it builds by concatenation.
+  assert(js.includes(`"stage_loop" + `), "stage_loop is no longer built so");
 });
 
 Deno.test("a stock G keeps the stock logo and subtitle on it", async () => {

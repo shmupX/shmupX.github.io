@@ -15,6 +15,7 @@ import { ensureDir } from "@std/fs";
 import { resolveAthenaElf } from "./athena.ts";
 import { type LevelRecord, stageAssets, type StagedFile } from "./assets.ts";
 import { buildIso } from "./iso9660.ts";
+import { patchRuntime } from "./runtime-patches.ts";
 import { decodeDataUrl, decodePng, type Raster } from "./png.ts";
 import {
   buildToneBankPack,
@@ -352,13 +353,22 @@ export async function buildRuntimeBundle(
   }
   const key = parts.join("\n");
 
+  // The cache holds the bundler's own output; the patches go on as it is
+  // handed out, so editing one never needs a re-bundle.
+  const patched = (bytes: Uint8Array) =>
+    new TextEncoder().encode(patchRuntime(new TextDecoder().decode(bytes)));
+
+  let cached: Uint8Array | null = null;
   try {
     if (await Deno.readTextFile(stamp) === key) {
-      log("  runtime: reusing the cached bundle");
-      return await Deno.readFile(out);
+      cached = await Deno.readFile(out);
     }
   } catch {
     // No usable cache — fall through and bundle.
+  }
+  if (cached) {
+    log("  runtime: reusing the cached bundle");
+    return patched(cached);
   }
 
   await ensureDir(cacheDir);
@@ -396,7 +406,7 @@ export async function buildRuntimeBundle(
   }
   const bytes = await Deno.readFile(out);
   await Deno.writeTextFile(stamp, key);
-  return bytes;
+  return patched(bytes);
 }
 
 async function writeTree(dir: string, files: StagedFile[]): Promise<void> {

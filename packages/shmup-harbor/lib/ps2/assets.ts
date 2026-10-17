@@ -255,11 +255,11 @@ function bossShotLists(boss: Record<string, unknown>): string[][] {
  * game's come out at 1/2 there, and half size is where a 32px enemy starts to
  * smear. When that happens this sheet may take one doubling more than
  * `maxSheet` — 512x1024 at the default, 0.5 MB paletted, which with the two
- * base sheets and the frame buffer is 3.19 MB of the GS's 4 (encodeSheet;
- * scripts/lib/testdrive-textures.ts counts it the same way) — and never past
- * the GS's 1024. Only when it buys the scale back, though: a set that fits
- * packs exactly as it always did. And not when a title cover or an uploaded
- * backdrop (`cover`) has already spent that margin on game_ui.
+ * base sheets (game_ui at most the same 512x1024) and the frame buffer is
+ * 3.44 MB of the GS's 4 (encodeSheet; scripts/lib/testdrive-textures.ts
+ * counts it the same way) — and never past the GS's 1024. Only when it buys
+ * the scale back, though: a set that fits packs exactly as it always did. And
+ * not when a title cover or an uploaded backdrop (`cover`) is on game_ui.
  */
 export function buildLevelAtlas(
   frames: SourceFrame[],
@@ -626,6 +626,8 @@ async function repackBaseAtlas(
   overrides: SourceFrame[] = [],
   /** Base frames to leave out entirely, so `hasFrame` reports false. */
   drop: Set<string> = new Set(),
+  /** Cap on the sheet's texel count (buildPs2Atlas). */
+  maxArea = Infinity,
 ): Promise<{ files: StagedFile[]; note: string }> {
   const sheet = await decodePng(
     await Deno.readFile(join(gameDir, "assets", "img", `${name}.png`)),
@@ -640,7 +642,7 @@ async function repackBaseAtlas(
       [frameName, entry],
     ) => ({ name: frameName, sheet, entry, rotate: rotate.has(frameName) }));
   frames.push(...overrides);
-  const built = buildPs2Atlas(frames, `${name}.png`, maxSheet);
+  const built = buildPs2Atlas(frames, `${name}.png`, maxSheet, maxArea);
   const encoded = await encodeSheet(built.image, name);
   return {
     files: [
@@ -1025,6 +1027,33 @@ export async function uiAtlasFrames(
 }
 
 /**
+ * Every game_ui frame the port draws, by the name it asks for.
+ *
+ * ps2-sp sets its HUD, menus and interludes as text, so out of the ~120 frames
+ * on the stock sheet it asks game_ui for these alone: the title's backdrop and
+ * three plates, the continue card's banner and two faces — and
+ * `stage_loop<N>`, which the stock sheet has none of (portDrawsUi). Every other
+ * frame only took texels: packed with them the sheet came out at 1/4, the
+ * title's G 64 texels across the 239 pixels it is shown in. Without them it
+ * packs at 1/1. tests/ps2_ui_atlases_test.ts reads the bundled runtime and
+ * fails if the port ever asks for a name this set lacks.
+ */
+export const PORT_UI_FRAMES: ReadonlySet<string> = new Set([
+  "title_bg",
+  "titleG.gif",
+  "logo.gif",
+  "subTitle.gif",
+  "continueTitle.gif",
+  "continueFace0.gif",
+  "continueFace1.gif",
+]);
+
+/** Whether the port ever draws game_ui's `name` (PORT_UI_FRAMES). */
+export function portDrawsUi(name: string): boolean {
+  return PORT_UI_FRAMES.has(name) || /^stage_loop\d+$/.test(name);
+}
+
+/**
  * The stock plates that would sit on a game's own G, left out.
  *
  * The port centres titleG at y 60 and then draws the logo at y 75 and the
@@ -1190,7 +1219,8 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
       } replaces them`,
     );
   }
-  // A full-screen backdrop is the frame that costs: see the budget below.
+  // A full-screen backdrop is the frame that costs, and the level atlas
+  // leaves it the room it would otherwise take (buildLevelAtlas).
   const backdrop = title.overrides.some((frame) => frame.name === "title_bg");
 
   // The game's own game_ui art goes under the title's arrangement: a cover or
@@ -1201,9 +1231,12 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     await Deno.readTextFile(join(gameDir, "assets", "game_ui.json")),
   ) as { frames: Record<string, FrameEntry> };
   const titleNames = new Set(title.overrides.map((frame) => frame.name));
+  // Only the frames the port draws are slots for the game's own art: one it
+  // never asks for is left out with a note, like a name the sheet lacks.
+  const uiNames = Object.keys(uiJson.frames);
   const uiOwn = await uiAtlasFrames(record, custom, {
     asset: new Set(Object.keys(baseJson.frames)),
-    ui: new Set(Object.keys(uiJson.frames)),
+    ui: new Set(uiNames.filter(portDrawsUi)),
   }, notes);
   const covered = uiOwn.filter((frame) =>
     titleNames.has(frame.name) || title.drop.has(frame.name)
@@ -1241,6 +1274,7 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
       new Set(uiOverrides.map((frame) => frame.name)),
       notes,
     ),
+    ...uiNames.filter((name) => !portDrawsUi(name)),
   ]);
 
   // --- what the console will play ---
@@ -1280,22 +1314,23 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
   }
 
   for (const name of ["game_asset", "game_ui"]) {
-    // A cover or an uploaded backdrop lands in game_ui as `title_bg` and the
-    // port magnifies it 2.5x, so that sheet gets a bigger budget when one is
-    // present: at 512 it packs at 1/4 and the title has 24 texels across the
-    // 239 pixels it is shown in, at 1024 it packs at 1/2 and has 48. The
-    // other sheets stay where they are, which keeps the working set inside
-    // the GS's 4 MB — see the note in encodeSheet().
-    const budget = name === "game_ui" && backdrop
-      ? Math.max(maxSheet, 1024)
-      : maxSheet;
+    // game_ui carries only what the port draws from it (PORT_UI_FRAMES): the
+    // title and the continue card. It may take one doubling past the other
+    // sheets, as the level atlas may — 512x1024 at the default, 0.5 MB
+    // paletted — which is what the stock title's three 256-wide plates and
+    // G, or a cover or uploaded backdrop beside them, need to pack at 1/1.
+    // A backdrop's sheet used to be the full 1024 at 1 MB and still came out
+    // at 1/2, so this is less of the GS's 4 MB than that ever was (see the
+    // note in encodeSheet()).
+    const ui = name === "game_ui";
     const built = await repackBaseAtlas(
       gameDir,
       name,
-      budget,
+      ui ? Math.min(maxSheet * 2, 1024) : maxSheet,
       name === "game_asset" ? upright : new Set(),
-      name === "game_ui" ? uiOverrides : [...bossShots.values()],
-      name === "game_ui" ? uiDrop : new Set(),
+      ui ? uiOverrides : [...bossShots.values()],
+      ui ? uiDrop : new Set(),
+      ui ? maxSheet * maxSheet * 2 : Infinity,
     );
     files.push(...built.files);
     notes.push(built.note);
