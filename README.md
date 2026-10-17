@@ -439,7 +439,24 @@ they are written out in full.
     the prototype's own pixel math and shown by an Image at depth 104 (over the
     button, under the score popups) that takes no input, so the button keeps the
     tap — the same under WebGL and the Canvas renderer `Phaser.AUTO` may pick.
-    `tests/sp_lens_test.ts` holds the ramp and the hookup.
+    The parts that never move (the field, the rim, the trail and scan line, the
+    flare, the hologram's scanlines) are baked once into strips the paint
+    stamps (`spLensBakeStrips`, `spLensBakeField`), and a frame with nothing
+    behind the disc whose scan line is still on the same row is neither
+    repainted nor uploaded: measured in the real game on a CPU slowed 4×, the
+    lens went from 3.0–3.7 ms a frame to 2.3 with the ship parked behind the
+    disc, and from 1.5 to 0.9 in play. `tests/sp_lens_test.ts` holds the ramp,
+    the hookup and the skipped frames.
+  - `GameScene.playSound` plays a one-shot effect from up to four standing
+    voices per key (`playSfxVoice`), re-striking the oldest when all four are
+    sounding, and drops a second strike of the same key inside one 16 ms frame
+    (`sfxStrikeDue`, which holds the Dezaemon tone bank to the same rate). It
+    used `sound.play(key)`, which builds a whole Phaser sound per call; the hit
+    loop calls once per shot per enemy per 120 Hz step, so `rando`'s piercing
+    shot raking stage 1's stacked wave asked for 86 `se_damage` in a quarter
+    second and had 200+ copies of the 0.94 s sample alive at once, which is
+    what stuttered its Android export. The same play now peaks at 22 live
+    sounds in all. `tests/sfx_voices_test.ts`.
 - `mcp/` — the **character MCP server** (`deno task mcp:character`, registered
   for this repo by `.mcp.json`): clone a character out of the catalog, swap any
   frame of any sprite or atlas into its animations, its projectiles or its

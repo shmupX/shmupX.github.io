@@ -5,6 +5,12 @@
 // prototype's, pixel for pixel, and the hookup has to sit exactly where the
 // design put it — its own object over the button, under the score popups,
 // never taking the tap, painted once per rendered frame.
+//
+// It is also the one thing the game paints on the CPU every frame, so it is
+// held to what it costs (an Android export stuttered, and the lens was
+// suspected): the parts that never move are baked once, and a frame with
+// nothing behind the disc whose scan line has not moved a row is not
+// repainted or uploaded at all.
 
 import { assert, assertEquals } from "@std/assert";
 
@@ -114,7 +120,10 @@ Deno.test("the lens is the design's window: 28 px on the disc, 1.6 s scan, 12 % 
       "var SP_LENS_DEPTH = 104;",
     ]
   ) assert(js.includes(line), `missing ${line}`);
-  const paint = functionSource(js, "paintSpLens");
+  // The paint, and the strips and field it stamps (baked once, not per frame).
+  const paint = functionSource(js, "paintSpLens") +
+    functionSource(js, "spLensBakeStrips") +
+    functionSource(js, "spLensBakeField");
   // The subjects, and only them: never the stage, the shadows or the HUD.
   assert(
     paint.includes(
@@ -125,6 +134,7 @@ Deno.test("the lens is the design's window: 28 px on the disc, 1.6 s scan, 12 % 
   // Scanlines at 45 % on the hologram, a 5 px cyan bloom under it, the
   // white flare under the scan line, and the cyan trail on the field.
   assert(paint.includes('bc.fillStyle = "rgba(0,16,32,0.45)";'));
+  assert(paint.includes("bc.drawImage(lens.scan.el, 0, 0);"));
   assert(paint.includes("bc.shadowBlur = 5;"));
   assert(paint.includes('flare.addColorStop(1, "rgba(255,255,255,0.65)");'));
   assert(paint.includes('trail.addColorStop(1, "rgba(120,255,255,0.35)");'));
@@ -164,4 +174,154 @@ Deno.test("the lens hooks where the design put it, and never takes the tap", asy
   // A paint that throws retires the lens, not the frame.
   const tick = functionSource(js, "updateSpLens");
   assert(tick.includes("lens.broken = true;"));
+});
+
+// A stand-in 2D context: takes any property, records each call by name.
+function fakeContext(calls: string[]) {
+  const L = 64;
+  return new Proxy({} as Record<string, unknown>, {
+    get(t, k: string) {
+      if (k in t) return t[k];
+      return () => {
+        calls.push(k);
+        if (k === "getImageData") {
+          return { data: new Uint8ClampedArray(L * L * 4) };
+        }
+        if (k === "createImageData") {
+          return { data: new Uint8ClampedArray(L * L * 4) };
+        }
+        if (k === "createLinearGradient") return { addColorStop() {} };
+        return undefined;
+      };
+    },
+    set(t, k: string, v) {
+      t[k] = v;
+      return true;
+    },
+  });
+}
+
+// deno-lint-ignore no-explicit-any
+type Json = any;
+
+async function lensPainter() {
+  const js = await read(BUNDLE);
+  const consts = js.slice(
+    js.indexOf("  var SP_LENS_SIZE = 64;"),
+    js.indexOf("  var SP_LENS_DEPTH = 104;"),
+  );
+  return new Function(
+    consts +
+      functionSource(js, "spLensTintPixels") +
+      functionSource(js, "spLensDrawSprite") +
+      functionSource(js, "spLensBakeStrips") +
+      functionSource(js, "spLensBakeField") +
+      functionSource(js, "paintSpLens") +
+      "\nreturn { paint: paintSpLens, bake: spLensBakeStrips };",
+  )() as {
+    paint: (scene: Json, lens: Json, time: number) => void;
+    bake: (lens: Json) => void;
+  };
+}
+
+Deno.test("a frame with nothing behind the disc is painted only when the scan line moves a row", async () => {
+  const { paint, bake } = await lensPainter();
+  const calls: string[] = [];
+  const canvas = () => ({ el: {}, ctx: fakeContext(calls) });
+  let uploads = 0;
+  const tex = fakeContext(calls);
+  const lens: Json = {
+    cx: 221.5,
+    cy: 290.5,
+    ox: 190,
+    oy: 259,
+    broken: false,
+    subjects: canvas(),
+    holo: canvas(),
+    holoR: canvas(),
+    holoB: canvas(),
+    body: canvas(),
+    scratch: canvas(),
+    field: canvas(),
+    rim: canvas(),
+    trail: canvas(),
+    flare: canvas(),
+    scan: canvas(),
+    main: { data: new Uint8ClampedArray(64 * 64 * 4) },
+    red: { data: new Uint8ClampedArray(64 * 64 * 4) },
+    blue: { data: new Uint8ClampedArray(64 * 64 * 4) },
+    tex: { getContext: () => tex, refresh: () => void uploads++ },
+    fieldOx: NaN,
+    fieldOy: NaN,
+    row: null,
+  };
+  bake(lens);
+  const empty = {
+    enemies: [],
+    items: [],
+    enemyBullets: [],
+    playerBullets: [],
+    players: [],
+  };
+  // The sweep crosses 56 rows in 1600 ms from row 3.5: 0 ms and 10 ms share
+  // row 3, and 60 ms is on row 5.
+  paint(empty, lens, 0);
+  assertEquals(uploads, 1);
+  // The field and the rim were baked on the first paint, not every frame.
+  const baked = calls.filter((c) => c === "stroke").length;
+  assertEquals(baked, 1);
+  calls.length = 0;
+  paint(empty, lens, 10);
+  assertEquals(uploads, 1, "an unchanged frame was repainted");
+  // Nothing but emptying the subjects window before looking for subjects.
+  assertEquals(calls, ["clearRect"], "an unchanged frame drew");
+  paint(empty, lens, 60);
+  assertEquals(uploads, 2, "the scan line moved and the lens did not");
+  // Per frame: no gradient built, no field or rim drawn by hand.
+  assert(!calls.includes("createLinearGradient"), "a gradient per frame");
+  assert(!calls.includes("stroke"), "the rim per frame");
+  assert(!calls.includes("fillRect"), "the field per frame");
+  // A subject behind the disc repaints every frame, row or no row.
+  const ship = {
+    active: true,
+    visible: true,
+    alpha: 1,
+    x: 221,
+    y: 290,
+    displayWidth: 16,
+    displayHeight: 32,
+    originX: 0.5,
+    originY: 0.5,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+    flipX: false,
+    flipY: false,
+    isTinted: false,
+    frame: {
+      source: { image: {} },
+      x: 0,
+      y: 0,
+      cutX: 0,
+      cutY: 0,
+      cutWidth: 16,
+      cutHeight: 32,
+      realWidth: 16,
+      realHeight: 32,
+    },
+  };
+  const busy = { ...empty, players: [{ sprite: ship }] };
+  paint(busy, lens, 60);
+  paint(busy, lens, 61);
+  assertEquals(uploads, 4);
+  // And the first empty frame after it paints the hologram away.
+  paint(empty, lens, 62);
+  assertEquals(uploads, 5);
+  paint(empty, lens, 63);
+  assertEquals(uploads, 5);
+  // The button moving re-bakes the field under it.
+  lens.ox += 8;
+  lens.cx += 8;
+  paint(empty, lens, 63);
+  assertEquals(uploads, 6);
 });

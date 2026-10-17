@@ -10701,7 +10701,9 @@
     var lens = {
       cx: 0, cy: 0, ox: 0, oy: 0, broken: false,
       subjects: null, holo: null, holoR: null, holoB: null, body: null, scratch: null,
-      main: null, red: null, blue: null, tex: null, image: null
+      main: null, red: null, blue: null, tex: null, image: null,
+      field: null, rim: null, trail: null, flare: null, scan: null,
+      fieldOx: NaN, fieldOy: NaN, row: null
     };
     try {
       var canvas = function (w, h, opts) {
@@ -10718,6 +10720,12 @@
       lens.holoB = canvas(L, L);
       lens.body = canvas(L, L);
       lens.scratch = canvas(L, L);
+      lens.field = canvas(L, L);
+      lens.rim = canvas(L, L);
+      lens.trail = canvas(L, 11);
+      lens.flare = canvas(L, 10);
+      lens.scan = canvas(L, L);
+      spLensBakeStrips(lens);
       lens.main = lens.holo.ctx.createImageData(L, L);
       lens.red = lens.holo.ctx.createImageData(L, L);
       lens.blue = lens.holo.ctx.createImageData(L, L);
@@ -10763,6 +10771,64 @@
       lens.image.setVisible(false);
     }
   }
+  // What the paint used to redraw every frame and never changes: the sweep's
+  // trail and scan line, the flare under it on the hologram, and the
+  // hologram's scanlines, each drawn once into a strip the paint stamps at
+  // the scan line's row. The field and the rim (spLensBakeField) are fixed
+  // to the screen and baked again only if the button moves.
+  function spLensBakeStrips(lens) {
+    var L = SP_LENS_SIZE;
+    var tc = lens.trail.ctx;
+    var trail = tc.createLinearGradient(0, 0, 0, 10);
+    trail.addColorStop(0, "rgba(120,255,255,0)");
+    trail.addColorStop(1, "rgba(120,255,255,0.35)");
+    tc.fillStyle = trail;
+    tc.fillRect(0, 0, L, 10);
+    tc.fillStyle = "rgba(220,255,255,0.9)";
+    tc.fillRect(0, 10, L, 1);
+    var fc = lens.flare.ctx;
+    var flare = fc.createLinearGradient(0, 0, 0, 10);
+    flare.addColorStop(0, "rgba(255,255,255,0)");
+    flare.addColorStop(1, "rgba(255,255,255,0.65)");
+    fc.fillStyle = flare;
+    fc.fillRect(0, 0, L, 10);
+    var bc = lens.scan.ctx;
+    bc.fillStyle = "rgba(0,16,32,0.45)";
+    for (var y = 1; y < L; y += 2) bc.fillRect(0, y, L, 1);
+  }
+  function spLensBakeField(lens) {
+    var L = SP_LENS_SIZE, R = SP_LENS_R, ox = lens.ox, oy = lens.oy;
+    var lcx = lens.cx - ox, lcy = lens.cy - oy;
+    var ctx = lens.field.ctx;
+    ctx.clearRect(0, 0, L, L);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(lcx, lcy, R, 0, Math.PI * 2);
+    ctx.clip();
+    var fa = SP_LENS_FIELD_ALPHA, G = SP_LENS_GRID_PX;
+    if (fa > 0) {
+      // Scanlines on the even screen rows, the grid on the screen's 8 px
+      // lines — fixed to the screen, not the window, as the prototype draws them.
+      ctx.fillStyle = "rgba(0,0,0," + fa + ")";
+      for (var fy = Math.ceil(lens.cy - R); fy < lens.cy + R; fy++) {
+        if ((fy & 1) === 0) ctx.fillRect(lcx - R, fy - oy, 2 * R, 1);
+      }
+      ctx.fillStyle = "rgba(140,255,255," + fa + ")";
+      for (var gx = Math.ceil((lens.cx - R) / G) * G; gx <= lens.cx + R; gx += G) ctx.fillRect(gx - ox, lcy - R, 1, 2 * R);
+      for (var gy = Math.ceil((lens.cy - R) / G) * G; gy <= lens.cy + R; gy += G) ctx.fillRect(lcx - R, gy - oy, 2 * R, 1);
+    }
+    ctx.restore();
+    ctx = lens.rim.ctx;
+    ctx.clearRect(0, 0, L, L);
+    ctx.strokeStyle = "rgba(120,255,255,0.35)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(lcx, lcy, R + 0.5, 0, Math.PI * 2);
+    ctx.stroke();
+    lens.fieldOx = ox;
+    lens.fieldOy = oy;
+    lens.row = null;
+  }
   function paintSpLens(scene, lens, time) {
     var L = SP_LENS_SIZE, R = SP_LENS_R, ox = lens.ox, oy = lens.oy;
     var lcx = lens.cx - ox, lcy = lens.cy - oy;          // the disc's centre in the window
@@ -10788,7 +10854,13 @@
     }
     for (var p = 0; p < scene.players.length; p++) draw(scene.players[p] && scene.players[p].sprite);
     var phase = (time % SP_LENS_SCAN_MS) / SP_LENS_SCAN_MS;
-    var sy = lcy - R + phase * 2 * R;                    // the scan line, in window rows
+    var row = Math.floor(lcy - R + phase * 2 * R);      // the scan line, in window rows
+    if (lens.fieldOx !== ox || lens.fieldOy !== oy) spLensBakeField(lens);
+    // With nothing behind the disc the frame is the field and the sweep's row
+    // alone, so while the row holds it is the frame already on the texture:
+    // no repaint, and no upload. The sweep crosses a row every ~29 ms.
+    if (!any && lens.row === row) return;
+    lens.row = any ? null : row;
     if (any) {
       // 2. The ramp, and the red and blue plates for the fringe.
       var px = sc.getImageData(0, 0, L, L).data;
@@ -10813,13 +10885,8 @@
       bc.shadowBlur = 0;
       bc.shadowColor = "transparent";
       bc.globalCompositeOperation = "source-atop";
-      bc.fillStyle = "rgba(0,16,32,0.45)";
-      for (var y = 1; y < L; y += 2) bc.fillRect(0, y, L, 1);
-      var flare = bc.createLinearGradient(0, sy - 9, 0, sy + 1);
-      flare.addColorStop(0, "rgba(255,255,255,0)");
-      flare.addColorStop(1, "rgba(255,255,255,0.65)");
-      bc.fillStyle = flare;
-      bc.fillRect(0, sy - 9, L, 10);
+      bc.drawImage(lens.scan.el, 0, 0);
+      bc.drawImage(lens.flare.el, 0, row - 9);
       bc.globalCompositeOperation = "source-over";
     }
     // 4. Onto the disc, clipped to its ground: the field, the sweep, the
@@ -10827,36 +10894,15 @@
     var ctx = lens.tex.getContext();
     ctx.globalCompositeOperation = "source-over";
     ctx.clearRect(0, 0, L, L);
+    ctx.drawImage(lens.field.el, 0, 0);
     ctx.save();
     ctx.beginPath();
     ctx.arc(lcx, lcy, R, 0, Math.PI * 2);
     ctx.clip();
-    var fa = SP_LENS_FIELD_ALPHA, G = SP_LENS_GRID_PX;
-    if (fa > 0) {
-      // Scanlines on the even screen rows, the grid on the screen's 8 px
-      // lines — fixed to the screen, not the window, as the prototype draws them.
-      ctx.fillStyle = "rgba(0,0,0," + fa + ")";
-      for (var fy = Math.ceil(lens.cy - R); fy < lens.cy + R; fy++) {
-        if ((fy & 1) === 0) ctx.fillRect(lcx - R, fy - oy, 2 * R, 1);
-      }
-      ctx.fillStyle = "rgba(140,255,255," + fa + ")";
-      for (var gx = Math.ceil((lens.cx - R) / G) * G; gx <= lens.cx + R; gx += G) ctx.fillRect(gx - ox, lcy - R, 1, 2 * R);
-      for (var gy = Math.ceil((lens.cy - R) / G) * G; gy <= lens.cy + R; gy += G) ctx.fillRect(lcx - R, gy - oy, 2 * R, 1);
-    }
-    var trail = ctx.createLinearGradient(0, sy - 10, 0, sy);
-    trail.addColorStop(0, "rgba(120,255,255,0)");
-    trail.addColorStop(1, "rgba(120,255,255,0.35)");
-    ctx.fillStyle = trail;
-    ctx.fillRect(lcx - R, sy - 10, 2 * R, 10);
-    ctx.fillStyle = "rgba(220,255,255,0.9)";
-    ctx.fillRect(lcx - R, Math.floor(sy), 2 * R, 1);
+    ctx.drawImage(lens.trail.el, 0, row - 10);
     if (any) ctx.drawImage(lens.body.el, 0, 0);
     ctx.restore();
-    ctx.strokeStyle = "rgba(120,255,255,0.35)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(lcx, lcy, R + 0.5, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.drawImage(lens.rim.el, 0, 0);
     lens.tex.refresh();
   }
   function fireDezaBomb(scene, p) {
@@ -14442,6 +14488,47 @@
   }
 
   // ../2019-es7/src/phaser/GameScene.js
+  // A one-shot effect plays from a few standing voices per key, not from a
+  // new sound per call. Phaser's sound.play(key) builds a whole sound (its
+  // gain, mute and panner nodes, its listeners) for every call and tears it
+  // down when it ends, and the hit loop calls once per shot per enemy per
+  // fixed step: rando's piercing shot raking stage 1's stacked wave asked for
+  // 86 se_damage in a quarter second (14 in one step), and stood up 200+
+  // live copies of a 0.94 s sample at once, which is the audio graph and the
+  // garbage that stutters a phone. Each key keeps SFX_VOICES voices and
+  // re-strikes the oldest when all are sounding; a second strike of a key
+  // within SFX_MIN_GAP_MS (one rendered frame) is dropped, since the same
+  // sample started twice in a frame is only louder. The gap holds the
+  // Dezaemon tone bank to the same rate: it builds its nodes per call too.
+  var SFX_VOICES = 4;
+  var SFX_MIN_GAP_MS = 16;
+  var sfxVoices = {};
+  function sfxStrikeDue(key, now) {
+    var pool = sfxVoices[key] || (sfxVoices[key] = { voices: [], last: -Infinity });
+    if (now - pool.last < SFX_MIN_GAP_MS) return false;
+    pool.last = now;
+    return true;
+  }
+  function playSfxVoice(sound, key, vol, now) {
+    var pool = sfxVoices[key] || (sfxVoices[key] = { voices: [], last: now });
+    var voice = null, oldest = null, live = [];
+    for (var i = 0; i < pool.voices.length; i++) {
+      var v = pool.voices[i];
+      // One removed under us (removeAll / removeByKey, or another manager's).
+      if (!v || v.pendingRemove || v.manager !== sound) continue;
+      live.push(v);
+      if (!voice && !v.isPlaying && !v.isPaused) voice = v;
+      if (!oldest || v.__sfxAt < oldest.__sfxAt) oldest = v;
+    }
+    pool.voices = live;
+    if (!voice && live.length < SFX_VOICES) {
+      voice = sound.add(key);
+      live.push(voice);
+    }
+    voice = voice || oldest;
+    voice.__sfxAt = now;
+    voice.play({ volume: vol });
+  }
   var DEZA_SFX_MAP = {
     se_explosion: "explosion",
     se_bomb: "explosion",
@@ -15834,6 +15921,8 @@
     }
     playSound(key, volume) {
       if (gameState.lowModeFlg) return;
+      var now = performance.now();
+      if (!sfxStrikeDue(key, now)) return;
       // The synthesized Saturn effects belong to a cart's side of the
       // crossover; a web level that only borrowed the tone bank for its music
       // keeps its own shots and explosions.
@@ -15843,14 +15932,7 @@
       }
       try {
         var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
-        if (this.cache.audio.exists(key)) {
-          var existing = this.sound.get(key);
-          if (existing) {
-            this.sound.play(key, { volume: vol });
-          } else {
-            this.sound.add(key).play({ volume: vol });
-          }
-        }
+        if (this.cache.audio.exists(key)) playSfxVoice(this.sound, key, vol, now);
       } catch (e) {
       }
     }
