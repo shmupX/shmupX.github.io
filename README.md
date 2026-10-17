@@ -266,6 +266,12 @@ they are written out in full.
     own title and an import's ship logo are settled first.
     `tests/custom_title_test.ts` pins the three copies. Mirrors
     `level-loader.js`.
+  - The STAFF ROLL (the title's panel and the ending's) sets shmupX's own
+    credits as text, `SHMUPX_STAFF_ROLL`, unless the custom game's `game_ui`
+    set carries a `staffrollName.gif`: then `ownStaffrollPlate` draws that
+    plate at (15, 90) instead, as 2028.Ai's roll did, without the handles and
+    tie-in links it put over it. `customTitleArt` reports it as `staffroll`.
+    `2019-PS2` carries 2019's SGT plate. `tests/custom_title_test.ts` pins it.
   - A custom game's SP cut-in is `rando`'s where it drew none of its own.
     `assets/img/cutinCustom.png` is `rando`'s nine frames, a 3x3 spritesheet
     (`cutin_custom`, loaded with the subtitle plate), and `applyCustomCutin`
@@ -506,6 +512,7 @@ deno task eshop:publish   # export a level as a Dezaemon 2 cart and publish it t
 deno task bgm:tone        # transcribe an mp3 (path or URL) onto the Dezaemon 2 tone bank: a level's dezaemonBgm, one piece across the stages
 deno task extension:zip   # pack the Sprite Picker extension into static/extension/ for the download page (part of build)
 deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
+deno task level:alias     # other names a cloud game answers to (2019 -> 2019-PS2); dry run, --write sets
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
@@ -875,7 +882,13 @@ art. In OG the drops do what the 2019 game's did: S switches the shot to 3-way,
 R shortens the shot interval (rapid fire). On the Dezaemon kit — MOD, or a cart
 — S and R are shot levels, the same as F. A cart's drop flaps whichever letter
 its own slot icon is the still of, so the three shot-level slots a web game
-exports stay F, S and R when the cart comes back.
+exports stay F, S and R when the cart comes back. A level with
+`ownItems: true` flies none of them: `dropItem` draws the drop's own
+`game_asset` icon and blinks it between its `0` and `1` frames at 2019's 4.8
+fps. `2019-PS2` has it, with 2019's B SHOT, W SHOT, POW and G BARRIER in its
+atlas (the stock frames pixel for pixel). `mergeRecipe` carries the flag, the
+editor loads and saves it beside `ownCutin`, and `tests/own_items_test.ts`
+pins it.
 
 A cart that drew its own item icons keeps them, because that art is its author's
 — **unless the icon is one of these emblems**, which is exactly what a
@@ -4141,6 +4154,25 @@ exists. `www.codemonkey.games` is the apex, never a level. The dev tunnel's
 rewritten Host is looked past to `X-Forwarded-Host`, and `*.localhost` works the
 same in a checkout (`daioh.localhost:5173/`). `tests/level_subdomain_test.ts`
 pins all of it.
+
+**Aliases.** A game can answer to other names too: `2019.codemonkey.games` and
+`streetfighter.codemonkey.games` both open `2019-PS2`, and so do
+`/games/2028-ai?level=2019` and `?level=streetfighter`. The names live in one
+small index beside the levels, RTDB `levelAliases/<alias>` = the level's key,
+read whole and cached for a minute next to the key listing; the level loader's
+`fetchLevel` falls back to it when a `?level=` name is no level's key, and keeps
+the key it stood for (the result's `levelName`, the title's name, the game's
+**Edit Levels** link). An alias is a lowercase DNS label and never beats a
+level's own name. Set them with the task, a dry run unless `--write`:
+
+```bash
+deno task level:alias 2019-PS2 2019 streetfighter -- --write
+```
+
+`deno task level:alias` alone lists every alias, `level:alias <level>` one
+game's, and `-- --remove <alias> --write` takes one back. `planAliases` in
+`lib/level-subdomain.ts` refuses an alias another level holds or a level
+already owns as its own name.
 
 **DNS and Deploy both have to know the wildcard.** Add `*.codemonkey.games` as a
 custom domain on the app in the Deploy dashboard (it issues the wildcard

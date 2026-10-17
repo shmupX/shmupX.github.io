@@ -13317,6 +13317,7 @@ function GAME3D_RUNTIME(DATA) {
                 payload.meta = (gameData && gameData.meta) || null;
                 payload.noStory = !!(gameData && gameData.noStory);
                 payload.ownCutin = !!(gameData && gameData.ownCutin);
+                payload.ownItems = !!(gameData && gameData.ownItems);
                 payload.godMode = godModeOn;
                 // Save audio URL overrides
                 var urlEntries = {};
@@ -13534,6 +13535,10 @@ function GAME3D_RUNTIME(DATA) {
                 // a copy of gameData, so it carries the flag from here.
                 if (d.ownCutin) gameData.ownCutin = true;
                 else delete gameData.ownCutin;
+                // ...and its own item icons over the winged letters
+                // (level-loader's ownItems, the bundle's dropItem).
+                if (d.ownItems) gameData.ownItems = true;
+                else delete gameData.ownItems;
                 syncNoStoryKnob();
                 if (typeof d.godMode === 'boolean') applyGodMode(d.godMode);
                 titleBgDataURL = d.titleBgDataURL || null;

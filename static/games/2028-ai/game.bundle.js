@@ -4,6 +4,8 @@
     defaultLevel: "foo",
     baseRecipeKey: "recipe",
     levelsPath: "levels",
+    // A level's other names: alias -> key (lib/level-subdomain.ts).
+    aliasesPath: "levelAliases",
     atlasKey: "game_asset",
     // The SP cut-in a custom game plays where it drew none: rando's, a
     // spritesheet of cutin0..cutin8 in order, loaded with the atlases
@@ -94,9 +96,11 @@
   // reads it off recipe.customTitle to decide which stock plate a custom game
   // still wears: none of its own means the game's name set in Orbitron for the
   // logo, a plate naming only the genre for the subtitle, its own ship for G,
-  // and the gold 2028 backdrop rando drew for 2028.Ai's blue 2019 one.
+  // and the gold 2028 backdrop rando drew for 2028.Ai's blue 2019 one. It
+  // also says whether the set carries a staff roll plate (staffrollName.gif),
+  // which the STAFF ROLL then shows in place of shmupX's own credits.
   function customTitleArt(data) {
-    const art = { logo: false, subTitle: false, titleG: false, titleBg: false };
+    const art = { logo: false, subTitle: false, titleG: false, titleBg: false, staffroll: false };
     if (!data || typeof data !== "object") return art;
     const named = (frames, base) =>
       !!frames && typeof frames === "object" &&
@@ -109,6 +113,7 @@
     art.subTitle = !!data.subTitleDataURL || named(ui, "subTitle") || named(ui, "subTitleEn");
     art.titleG = named(ui, "titleG") || (!!data.atlasImageDataURL && named(data.atlasFrames, "titleG"));
     art.titleBg = !!data.titleBgDataURL;
+    art.staffroll = named(ui, "staffrollName");
     return art;
   }
 
@@ -391,8 +396,24 @@
           return Promise.reject(err);
         }
         const levelsPath = o.levelsPath || DEFAULTS.levelsPath;
-        return db.ref(levelsPath + "/" + levelName).once("value").then((snapshot) => {
-          const data = snapshot.val();
+        const aliasesPath = o.aliasesPath || DEFAULTS.aliasesPath;
+        const read = (key) => db.ref(levelsPath + "/" + key).once("value").then((snapshot) => snapshot.val());
+        return read(levelName).then((data) => {
+          if (data && data.enemylist) return data;
+          // Not a level's key: perhaps one of a level's alias names, from the
+          // levelAliases index (lowercase, as lib/level-subdomain.ts and
+          // scripts/level-alias.ts spell them) — ?level=2019 is 2019-PS2. The
+          // key it stands for is kept, so the game is named by its key.
+          return db.ref(aliasesPath + "/" + String(levelName).toLowerCase()).once("value").then((snapshot) => {
+            const key = snapshot.val();
+            if (typeof key !== "string" || !key || key === levelName) return null;
+            return read(key).then((aliased) => {
+              if (!aliased || !aliased.enemylist) return null;
+              this.resolvedLevelName = key;
+              return aliased;
+            });
+          }, () => null);
+        }).then((data) => {
           if (!data || !data.enemylist) {
             throw new Error('Level "' + levelName + '" not found');
           }
@@ -692,6 +713,11 @@
         }
         if (typeof levelData.godMode === "boolean") {
           recipe.godMode = levelData.godMode;
+        }
+        // A game that flies its own item icons rather than the winged letters
+        // (the bundle's dropItem), even where they are 2028.Ai's frame for frame.
+        if (typeof levelData.ownItems === "boolean") {
+          recipe.ownItems = levelData.ownItems;
         }
         const atlasFrames = (() => {
           try {
@@ -1064,6 +1090,8 @@
       loadLevel(options) {
         // The stock cut-in's fingerprints, once rando's is painted over it.
         this._stockCutin = null;
+        // The key an alias on the URL stood for (fetchLevel), once looked up.
+        this.resolvedLevelName = null;
         const o = Object.assign({}, DEFAULTS, options || {});
         o.titleImageKeys = options && options.titleImageKeys || DEFAULTS.titleImageKeys;
         o.audio = Object.assign({}, DEFAULTS.audio, options && options.audio || {});
@@ -1131,6 +1159,7 @@
         // copy (_withoutStockCutins) and lose to rando's.
         const exportedApp = o.exportedApp !== void 0 ? !!o.exportedApp : isExportedApp();
         return this.fetchLevel(levelName, o).then((data) => {
+          const levelKey = this.resolvedLevelName || levelName;
           if ((explicitLevel || exportedApp) && !(data && data.ownCutin)) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
           return this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
             const recipe = this.mergeRecipe(baseRecipe, data, o.atlasKey);
@@ -1139,7 +1168,7 @@
             // (customTitleArt). Only a game named on the URL or baked into an
             // exported app: the default visit is 2028.Ai itself, in its own plates.
             if (explicitLevel || usingOffline) {
-              recipe.customTitle = Object.assign({ name: titleNameOf(data, levelName) }, customTitleArt(data));
+              recipe.customTitle = Object.assign({ name: titleNameOf(data, levelKey) }, customTitleArt(data));
             }
             // A ?level= visit used to open straight into the stage: a named
             // level was one stage to test, and the title was the base game's.
@@ -1162,7 +1191,7 @@
               showTitle,
               bossRush,
               source,
-              levelName,
+              levelName: levelKey,
               bgmSourceURLs
             }));
           });
@@ -3717,6 +3746,15 @@
     [".: SOUND :.", "2-D"],
     [".: STORY :.", "BRANDON"]
   ];
+  // A game that brought its own staff roll plate — staffrollName.gif in its
+  // game_ui set (customTitleArt), as 2019-PS2 carries 2019's — shows that
+  // plate where shmupX's roll would be set, on the title's STAFF ROLL and the
+  // ending's alike. Only the plate: the handles and tie-in links 2028.Ai's
+  // roll put over it stay gone.
+  function ownStaffrollPlate() {
+    var recipe = gameState._phaserRecipe;
+    return !!(recipe && recipe.customTitle && recipe.customTitle.staffroll);
+  }
   var StaffRollPanel = class extends Phaser.GameObjects.Container {
     constructor(scene) {
       super(scene, 0, 0);
@@ -3765,6 +3803,11 @@
         // 2028.Ai's staff and their Twitter handles.
         this.wakingG.setVisible(false);
         this._addDezaStaff(dezaStaffEntries(recipe), 150);
+      } else if (ownStaffrollPlate()) {
+        this.namePanel = scene.add.sprite(15, 90, "game_ui", "staffrollName.gif");
+        this.namePanel.setOrigin(0, 0);
+        this.add(this.namePanel);
+        this.bringToTop(this.closeBtn);
       } else {
         // shmupX's own staff roll. What this drew before was staffrollName.gif
         // — a plate with 2028.Ai's credits baked into it — with that team's
@@ -15681,8 +15724,13 @@
       // slots: they come back as the same drop F does, and only the icon says
       // which letter to flap — so every letter is tried, the drop's own first.
       var emblemByItem = { big: "F", "3way": "S", speed_high: "R", barrier: "B" };
-      var letter = emblemByItem[itemName];
-      if (usingOwn) {
+      // A game whose recipe.ownItems says so flies the item icons it has
+      // instead: 2019-PS2's are 2019's own B SHOT, W SHOT, POW and G BARRIER,
+      // 2028.Ai's frames pixel for pixel, and they blink between their 0 and
+      // 1 frames below the way 2019 played them.
+      var ownItems = !!(this.recipe && this.recipe.ownItems);
+      var letter = ownItems ? null : emblemByItem[itemName];
+      if (usingOwn && !ownItems) {
         var candidates = letter ? [letter] : [];
         ["F", "S", "R", "B"].forEach(function(l) {
           if (candidates.indexOf(l) === -1) candidates.push(l);
@@ -15720,7 +15768,26 @@
           tint = 0;
         }
       }
-      if (!item) item = this.add.sprite(x, y, "game_asset", frameKey);
+      if (!item) {
+        item = this.add.sprite(x, y, "game_asset", frameKey);
+        // 2019's blink: the icon's 0 and 1 frames at its 0.08 a tick (4.8fps).
+        var blinkFrame = ownItems && !usingOwn ? frameKey.replace(/0\.gif$/, "1.gif") : null;
+        if (blinkFrame && blinkFrame !== frameKey && this.textures.get("game_asset").has(blinkFrame)) {
+          var blinkAnim = "ownItem_" + frameKey;
+          if (!this.anims.exists(blinkAnim)) {
+            this.anims.create({
+              key: blinkAnim,
+              frames: [
+                { key: "game_asset", frame: frameKey },
+                { key: "game_asset", frame: blinkFrame }
+              ],
+              frameRate: 4.8,
+              repeat: -1
+            });
+          }
+          item.play(blinkAnim);
+        }
+      }
       item.setOrigin(0.5);
       item.setDepth(55);
       item.setData("itemName", itemName);
@@ -17644,14 +17711,20 @@
       var rollRoleStyle = { fontSize: "8px", fontFamily: "athenaFont, Arial", fill: "#ffff00", align: "center", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1 };
       var rollNameStyle = { fontSize: "8px", fontFamily: "athenaFont, Arial", fill: "#ffffff", align: "center", shadow: { offsetX: 1, offsetY: 1, color: "#000000", blur: 0, stroke: false, fill: true }, resolution: 1 };
       var rollY = 100;
-      for (var ri = 0; ri < SHMUPX_STAFF_ROLL.length; ri++) {
-        var rollRole = this.add.text(GCX8, rollY, SHMUPX_STAFF_ROLL[ri][0], rollRoleStyle);
-        rollRole.setOrigin(0.5, 0);
-        this.staffRollContainer.add(rollRole);
-        var rollName = this.add.text(GCX8, rollY + 14, SHMUPX_STAFF_ROLL[ri][1], rollNameStyle);
-        rollName.setOrigin(0.5, 0);
-        this.staffRollContainer.add(rollName);
-        rollY += 40;
+      if (ownStaffrollPlate()) {
+        var namePlate = this.add.sprite(15, 90, "game_ui", "staffrollName.gif");
+        namePlate.setOrigin(0, 0);
+        this.staffRollContainer.add(namePlate);
+      } else {
+        for (var ri = 0; ri < SHMUPX_STAFF_ROLL.length; ri++) {
+          var rollRole = this.add.text(GCX8, rollY, SHMUPX_STAFF_ROLL[ri][0], rollRoleStyle);
+          rollRole.setOrigin(0.5, 0);
+          this.staffRollContainer.add(rollRole);
+          var rollName = this.add.text(GCX8, rollY + 14, SHMUPX_STAFF_ROLL[ri][1], rollNameStyle);
+          rollName.setOrigin(0.5, 0);
+          this.staffRollContainer.add(rollName);
+          rollY += 40;
+        }
       }
       var closeText = this.add.text(GCX8, GH13 - 30, "TAP TO CLOSE", {
         fontFamily: "sans-serif",
@@ -18362,7 +18435,8 @@
     } else if (result && result.source === "firebase") {
       var named = null;
       try { named = new URLSearchParams(window.location.search).get("level"); } catch (_e) { named = null; }
-      if (named) url = "/editor/?game=2028-ai&level=" + encodeURIComponent(named);
+      // The level's key, not an alias the URL may have named it by.
+      if (named) url = "/editor/?game=2028-ai&level=" + encodeURIComponent(result.levelName || named);
     } else if (result && result.source === "editor") {
       url = "/editor/?game=2028-ai&fromPlay=1";
     }

@@ -2,7 +2,11 @@ import { App, staticFiles } from "fresh";
 import { define, type State } from "./utils.ts";
 import { injectLauncherMarker } from "./lib/launcher-inject.ts";
 import { dirIndexRedirect } from "./lib/static-indexes.ts";
-import { cloudLevelKeys, subdomainRedirect } from "./lib/level-subdomain.ts";
+import {
+  cloudLevelAliases,
+  cloudLevelKeys,
+  subdomainRedirect,
+} from "./lib/level-subdomain.ts";
 import { join } from "@std/path";
 import { launcherDataDir } from "./lib/desktop-browser.ts";
 import {
@@ -85,14 +89,19 @@ app.use((ctx) => {
 // the game with that level, or — when no level has the name — to the
 // editor's NEW GAME with the name filled in. Only the root; every other path
 // on a subdomain serves as the apex does. lib/level-subdomain.ts has the
-// matching rules and the cached level listing it reads. Ahead of
+// matching rules, the cached level listing and the alias index it reads
+// (2019.codemonkey.games is 2019-PS2 by alias). Ahead of
 // staticFiles() and the dashboard route, GET and HEAD only.
 app.use(async (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return ctx.next();
   if (new URL(ctx.req.url).pathname !== "/") return ctx.next();
   const peek = subdomainRedirect(ctx.req, []);
   if (peek === null) return ctx.next();
-  return subdomainRedirect(ctx.req, await cloudLevelKeys()) ?? ctx.next();
+  const [keys, aliases] = await Promise.all([
+    cloudLevelKeys(),
+    cloudLevelAliases(),
+  ]);
+  return subdomainRedirect(ctx.req, keys, aliases ?? {}) ?? ctx.next();
 });
 
 // A packaged app's page keeps nothing past the launch (a fresh CEF profile and

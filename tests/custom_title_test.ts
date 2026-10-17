@@ -25,7 +25,13 @@ const read = (p: string) =>
 type Rect = { x: number; y: number; w: number; h: number };
 type FrameMap = Record<string, { frame: Rect }>;
 
-const NONE = { logo: false, subTitle: false, titleG: false, titleBg: false };
+const NONE = {
+  logo: false,
+  subTitle: false,
+  titleG: false,
+  titleBg: false,
+  staffroll: false,
+};
 
 function uiSet(frame: string) {
   return {
@@ -58,6 +64,11 @@ Deno.test("a plate in the record's game_ui set counts, in either spelling", () =
   assertEquals(customTitleArt(uiSet("logo․gif")).logo, true);
   assertEquals(customTitleArt(uiSet("subTitleEn.gif")).subTitle, true);
   assertEquals(customTitleArt(uiSet("subTitle.png")).subTitle, true);
+  // A staff roll plate of its own, which the STAFF ROLL shows (ownStaffrollPlate).
+  assertEquals(customTitleArt(uiSet("staffrollName․gif")), {
+    ...NONE,
+    staffroll: true,
+  });
   assertEquals(customTitleArt(uiSet("titleG․gif")), { ...NONE, titleG: true });
   // Another atlas's frame of that name is not the title's.
   const other = {
@@ -226,6 +237,7 @@ Deno.test("a level named on the URL carries its name and title art on the recipe
       subTitle: false,
       titleG: true,
       titleBg: false,
+      staffroll: false,
     });
     // ...and, with a title plate of its own, opens on its title.
     assertEquals(out.showTitle, true);
@@ -248,6 +260,7 @@ Deno.test("an exported app's baked record is a custom game too", () =>
       subTitle: false,
       titleG: true,
       titleBg: false,
+      staffroll: false,
     });
   }));
 
@@ -290,6 +303,7 @@ Deno.test("the editor's PLAY of a saved game names it; an unsaved one wears the 
       subTitle: false,
       titleG: false,
       titleBg: true,
+      staffroll: false,
     });
     // PLAY itself opens in the stage; the title it names is the one the
     // ending returns to.
@@ -326,7 +340,7 @@ Deno.test("the bundle's inlined loader reads a record's title art the way the pl
   assertEquals(isAGame(bundle), isAGame(plugin));
   for (
     const line of [
-      "recipe.customTitle = Object.assign({ name: titleNameOf(data, levelName) }, customTitleArt(data));",
+      "recipe.customTitle = Object.assign({ name: titleNameOf(data, levelKey) }, customTitleArt(data));",
       "recipe.customTitle = Object.assign({ name: String(editorName) }, customTitleArt(recipe));",
     ]
   ) {
@@ -402,5 +416,38 @@ Deno.test("the game page self-hosts Orbitron and starts its load for the canvas"
   assert(
     page.includes('document.fonts.load("900 40px Orbitron")'),
     "FONT_PRELOAD does not start Orbitron",
+  );
+});
+
+Deno.test("both staff rolls show a game's own staffrollName plate in place of shmupX's", async () => {
+  const bundle = await read("static/games/2028-ai/game.bundle.js");
+  const rule = slice(
+    bundle,
+    "function ownStaffrollPlate() {",
+    "var StaffRollPanel",
+  );
+  assert(
+    rule.includes(
+      "return !!(recipe && recipe.customTitle && recipe.customTitle.staffroll);",
+    ),
+    "ownStaffrollPlate no longer reads customTitle.staffroll",
+  );
+  const panel = slice(
+    bundle,
+    "var StaffRollPanel",
+    "_addDezaCredits(credits, entries) {",
+  );
+  assert(
+    panel.includes(
+      '} else if (ownStaffrollPlate()) { this.namePanel = scene.add.sprite(15, 90, "game_ui", "staffrollName.gif");',
+    ),
+    "the title's STAFF ROLL does not draw the game's plate",
+  );
+  const ending = slice(bundle, "showStaffRoll() {", "playSound(key, volume) {");
+  assert(
+    ending.includes(
+      'if (ownStaffrollPlate()) { var namePlate = this.add.sprite(15, 90, "game_ui", "staffrollName.gif");',
+    ),
+    "the ending's staff roll does not draw the game's plate",
   );
 });
