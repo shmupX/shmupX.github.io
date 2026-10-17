@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The gs cloud game's stage-2 boss, drawn from a whiteboard doodle.
+"""Daltonius, the gs cloud game's stage-2 boss, drawn from a whiteboard doodle.
 
 A marker drawing of a grinning, bearded office boss (topknot, wild hair, big
 toothy grin, a "DMP" name badge, oval arms and legs) is redrawn here as pixel
@@ -13,9 +13,9 @@ It also draws the "I'm Fired!!!" speech balloon from the same whiteboard as
 three blink frames: the record's own danger balloon (`dangerBalloon`),
 which takes the place of the stock skull once one bomb would finish him.
 
-    python3 scripts/gs/draw_lol_boss.py [out_dir]
+    python3 scripts/gs/draw_daltonius.py [out_dir]
 
-writes lolBoss_<pose>.png and lolBoss_fired<0..2>.png into out_dir
+writes Daltonius_<pose>.png and Daltonius_fired<0..2>.png into out_dir
 (default scripts/gs/art). Needs numpy and Pillow. The output is
 deterministic: the stubble and beard speckle use fixed seeds.
 """
@@ -420,9 +420,9 @@ def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "art")
     os.makedirs(out, exist_ok=True)
     for name in POSES:
-        render(name).save(os.path.join(out, f"lolBoss_{name}.png"))
+        render(name).save(os.path.join(out, f"Daltonius_{name}.png"))
     for i in range(3):
-        bubble(i).save(os.path.join(out, f"lolBoss_fired{i}.png"))
+        bubble(i).save(os.path.join(out, f"Daltonius_fired{i}.png"))
     print(f"wrote {len(POSES) + 3} frames to {out}")
 
 

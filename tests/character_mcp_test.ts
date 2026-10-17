@@ -225,6 +225,15 @@ Deno.test("referencedFrames walks every slot the runtime reads", () => {
     ["x.png"],
   );
   assertEquals(referencedFrames({ stageBgEnd: { alpha: 0.45 } }), []);
+
+  // A boss's own danger balloon is art it needs too, in either spelling, so a
+  // clone or a placement carries it.
+  assertEquals(
+    referencedFrames({ dangerBalloon: { frames: ["b0", "b1"], x: 50, y: 20 } }),
+    ["b0", "b1"],
+  );
+  assertEquals(referencedFrames({ dangerBalloon: ["b0"] }), ["b0"]);
+  assertEquals(referencedFrames({ dangerBalloon: { x: 5 } }), []);
 });
 
 Deno.test("a key that could walk the URL is refused", () => {
@@ -331,6 +340,19 @@ Deno.test("remapFrames rewrites every slot referencedFrames collects", () => {
     })
       .stageBgEnd,
     "a.png",
+  );
+  // So is the danger balloon, keeping its placement.
+  assertEquals(
+    (remapFrames({ dangerBalloon: { frames: ["a.gif"], x: 50, y: 20 } }, {
+      "a.gif": "a.png",
+    }) as { dangerBalloon: unknown }).dangerBalloon,
+    { frames: ["a.png"], x: 50, y: 20 },
+  );
+  assertEquals(
+    (remapFrames({ dangerBalloon: ["a.gif"] }, { "a.gif": "a.png" }) as {
+      dangerBalloon: unknown;
+    }).dangerBalloon,
+    ["a.png"],
   );
   // Nothing to rename is a faithful copy.
   assertEquals(remapFrames(record, {}), record);

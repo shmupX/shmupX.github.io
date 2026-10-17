@@ -15,8 +15,8 @@
  *   HACKED), with a big-shot, a 3-way, a speed-up and a barrier drop.
  * - `enemyData/enemyG`, the flirty girl: the shipped game's enemy, her lip
  *   bullets and all (static/games/2028-ai/foo.json's enemyC).
- * - `bossData/boss1`, lolBoss: Akuma's frame set one for one (idle, shootA,
- *   shootB, the Ashura warp, both finish poses), drawn by draw_lol_boss.py,
+ * - `bossData/boss1`, Daltonius: Akuma's frame set one for one (idle, shootA,
+ *   shootB, the Ashura warp, both finish poses), drawn by draw_daltonius.py,
  *   pinned to Akuma's routine (`attackPattern: "bossExtra"`) with Akuma's own
  *   hp, score, interval and bullet stats. His small shot (bulletDataA) is
  *   spriteX's RAM stick (sprites/RAM_0) and his big one (bulletDataB) is the
@@ -56,7 +56,7 @@ import {
 } from "../../mcp/lib/rtdb.ts";
 
 const LEVEL = "gs";
-const ART = new URL("./art/", import.meta.url);
+export const ART = new URL("./art/", import.meta.url);
 const SHIPPED = new URL("../../static/games/2028-ai/foo.json", import.meta.url);
 const PAD = 4;
 
@@ -71,7 +71,7 @@ const BOSS_POSES = {
   syngokuFinish: ["syungoku_finish"],
   syngokuFinishTen: ["syungoku_finish_ten"],
 };
-const FIRED = ["lolBoss_fired0", "lolBoss_fired1", "lolBoss_fired2"];
+const FIRED = ["Daltonius_fired0", "Daltonius_fired1", "Daltonius_fired2"];
 const FLIRTY = {
   flirtyGirl0: "flirtyGirl0.png",
   flirtyGirl1: "flirtyGirl1.png",
@@ -83,12 +83,16 @@ const FLIRTY = {
 const anim = Object.fromEntries(
   Object.entries(BOSS_POSES).map((
     [k, poses],
-  ) => [k, poses.map((p) => `lolBoss_${p}`)]),
+  ) => [k, poses.map((p) => `Daltonius_${p}`)]),
 );
 
-/** The stage-2 boss. Akuma's numbers (the stock bossExtra) throughout. */
-export const LOL_BOSS = {
-  name: "lolBoss",
+/**
+ * Daltonius, the stage-2 boss. Akuma's numbers (the stock bossExtra)
+ * throughout. The character library holds the same record
+ * (publish-daltonius.ts).
+ */
+export const DALTONIUS = {
+  name: "Daltonius",
   attackPattern: "bossExtra",
   anim,
   bulletDataA: {
@@ -170,14 +174,14 @@ export const STAGE2 = [
   ["00", "00", "00", "00", "00", "00", "00", "00"],
 ];
 
+/** Daltonius's own drawn frames: his poses and his balloon, each a PNG in art/. */
+export function daltoniusArt(): string[] {
+  return [...Object.values(anim).flat(), ...FIRED];
+}
+
 /** Every frame this script packs into the level, by the name it gets there. */
 export function packedNames(): string[] {
-  return [
-    ...Object.values(anim).flat(),
-    ...FIRED,
-    "RAM_0",
-    ...Object.keys(FLIRTY),
-  ];
+  return [...daltoniusArt(), "RAM_0", ...Object.keys(FLIRTY)];
 }
 
 /** Every frame name the three records draw. */
@@ -185,8 +189,8 @@ export function namedFrames(): string[] {
   const names = new Set<string>([
     ...Object.values(anim).flat(),
     ...FIRED,
-    ...LOL_BOSS.bulletDataA.texture,
-    ...LOL_BOSS.bulletDataB.texture,
+    ...DALTONIUS.bulletDataA.texture,
+    ...DALTONIUS.bulletDataB.texture,
     ...FLIRTY_GIRL.texture,
     ...FLIRTY_GIRL.projectileData.texture,
   ]);
@@ -273,12 +277,7 @@ export async function plan(): Promise<Plan> {
   // Every source, in packing order: the boss's poses in one row, then the
   // small things.
   const sources: (() => Promise<ResolvedFrame>)[] = [];
-  for (const name of Object.values(anim).flat()) {
-    sources.push(() =>
-      resolveFrame({ file: new URL(`${name}.png`, ART).pathname, as: name })
-    );
-  }
-  for (const name of FIRED) {
+  for (const name of daltoniusArt()) {
     sources.push(() =>
       resolveFrame({ file: new URL(`${name}.png`, ART).pathname, as: name })
     );
@@ -323,7 +322,7 @@ export async function plan(): Promise<Plan> {
   // The wave list last: it names the enemy and the boss.
   const records: Record<string, unknown> = {
     "enemyData/enemyG": FLIRTY_GIRL,
-    "bossData/boss1": LOL_BOSS,
+    "bossData/boss1": DALTONIUS,
     "stages/stage1": { enemylist: STAGE2 },
   };
   const taken: string[] = [];

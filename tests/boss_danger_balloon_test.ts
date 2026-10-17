@@ -41,7 +41,7 @@ const STOCK = [
   "boss_dengerous1.gif",
   "boss_dengerous2.gif",
 ];
-const FIRED = ["lolBoss_fired0", "lolBoss_fired1", "lolBoss_fired2"];
+const FIRED = ["Daltonius_fired0", "Daltonius_fired1", "Daltonius_fired2"];
 
 /** A scene whose game_asset atlas carries exactly `frames`. */
 function sceneWith(frames: string[], extra: Json = {}): Json {
@@ -133,7 +133,7 @@ Deno.test("balloon art that did not travel brings back the stock skull and its o
     ["mine0.png", "mine1.png"],
   );
   // Not a list of frames at all.
-  for (const bad of ["lolBoss_fired0", { frames: "lolBoss_fired0" }, 7]) {
+  for (const bad of ["Daltonius_fired0", { frames: "Daltonius_fired0" }, 7]) {
     assertEquals(
       balloon(sceneWith([...STOCK, ...FIRED]), { dangerBalloon: bad }, stock),
       { frames: STOCK, offset: stock },
@@ -209,7 +209,7 @@ function fightScene(atlas: string[], bossRecord: Json): Json {
 Deno.test("checkBossDanger pops the record's own balloon, where the record says", async () => {
   const check = await checkBossDanger();
   const scene = fightScene([...STOCK, ...FIRED], {
-    name: "lolBoss",
+    name: "Daltonius",
     dangerBalloon: { frames: FIRED, x: 70, y: 30 },
   });
   check(scene);

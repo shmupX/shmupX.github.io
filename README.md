@@ -426,9 +426,12 @@ they are written out in full.
     cue that a bomb will finish the boss, so it never goes missing. It reads
     `scene.bossRecord`, the record `bossAdd` (or the hidden Akuma's takeover)
     built the fight from, so the record the player is fighting is the one that
-    speaks. The cloud game `gs` uses it: its stage-2 boss says "I'm Fired!!!"
-    (`scripts/gs/build-stage2.ts` writes that stage, and `--revert` takes it
-    back out). `tests/boss_danger_balloon_test.ts` pins it. Upstream home is
+    speaks. The cloud game `gs` uses it: its stage-2 boss, Daltonius, says "I'm
+    Fired!!!" (`scripts/gs/build-stage2.ts` writes that stage, and `--revert`
+    takes it back out; `scripts/gs/publish-daltonius.ts` puts him in the
+    character library). The character tools carry the balloon's art with the
+    boss: `referencedFrames` and `remapFrames` walk `dangerBalloon` like any
+    other slot. `tests/boss_danger_balloon_test.ts` pins it. Upstream home is
     `2019-es7/src/phaser/game-objects/Boss.js`.
   - A cart's boss arms itself out of the cart. A cart has nowhere to keep a
     boss's own weapon records: the writer folds `bulletDataA/B/C` into the

@@ -159,6 +159,15 @@ export function referencedFrames(record: Character): string[] {
     if (typeof frame === "string") names.add(frame);
   }
 
+  // The boss's own danger balloon (game.bundle.js bossDangerBalloon): a bare
+  // list of frames, or {frames, x, y}.
+  const balloon = record.dangerBalloon;
+  add(
+    Array.isArray(balloon)
+      ? balloon
+      : (balloon as { frames?: unknown } | undefined)?.frames,
+  );
+
   return [...names];
 }
 
@@ -217,6 +226,13 @@ export function remapFrames(
   else if (bg && typeof bg === "object") {
     const o = bg as { frame?: unknown };
     if (o.frame !== undefined) o.frame = one(o.frame);
+  }
+
+  const balloon = next.dangerBalloon;
+  if (Array.isArray(balloon)) next.dangerBalloon = list(balloon);
+  else if (balloon && typeof balloon === "object") {
+    const o = balloon as { frames?: unknown };
+    if (o.frames !== undefined) o.frames = list(o.frames);
   }
   return next;
 }

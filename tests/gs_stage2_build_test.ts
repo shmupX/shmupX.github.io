@@ -19,7 +19,7 @@ import { type FrameRect, sheetDataUrl } from "../mcp/lib/art.ts";
 import { setDatabaseUrl } from "../mcp/lib/rtdb.ts";
 import {
   apply,
-  LOL_BOSS,
+  DALTONIUS,
   namedFrames,
   packedNames,
   plan,
@@ -194,15 +194,15 @@ Deno.test({
       // A packed frame is the drawn art, pixel for pixel.
       const fired = await decodePng(
         await Deno.readFile(
-          new URL("../scripts/gs/art/lolBoss_fired0.png", import.meta.url),
+          new URL("../scripts/gs/art/Daltonius_fired0.png", import.meta.url),
         ),
       );
       sameRaster(
-        cut(after, frames.lolBoss_fired0.frame),
+        cut(after, frames.Daltonius_fired0.frame),
         fired,
-        "lolBoss_fired0",
+        "Daltonius_fired0",
       );
-      assertEquals(db.read("levels/gs/bossData/boss1"), LOL_BOSS);
+      assertEquals(db.read("levels/gs/bossData/boss1"), DALTONIUS);
       assertEquals(db.read("levels/gs/stages/stage1"), { enemylist: STAGE2 });
       assertEquals(db.read("levels/gs/bossData/boss0"), s.level.bossData.boss0);
 
