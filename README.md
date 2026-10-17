@@ -1193,6 +1193,28 @@ monkey-kombat's `liu-kang.png`, packed into the level's atlas) spitting the
 Character Library's `deza_dragon` heads (`deza1_52_0.gif`, `deza1_52_1.gif`).
 `tests/boss_stage2_test.ts` pins it.
 
+**A Dezaemon zako leaves with its squad.** The Ambition of Valkyrie's
+motorcycle is four records. The upright bike (stage 3, record 32) rides
+straight down; 33 and 34 are the same bike leaning into a bend, on a diagonal
+entry path of their own; and a shot bike's death word spawns 35, the rider
+tumbling down the road. The mapper links that rider by roster key
+(`dezaemon.deathChild: "enemyAZ"`), which means nothing outside the game that
+issued it. So the motorcycle, published to the Character Library and imported
+into rando's first stage, pointed at an enemyAZ rando does not have. A shot
+bike left no rider, and nothing carried the lean poses at all. Publishing
+(EXTRACT MODE, the editor's PUBLISH TO LIBRARY and its EXTRACT tool) now goes
+through `ShmupExtract.zakoTravelRecord`, which writes a `squad` onto the record
+under the keys its members had. The squad holds the zako's poses (records of
+its stage identical to it in every byte but the appearance id, drawn in art of
+their own) and every record a death word of theirs spawns, to the end of the
+chain. `+ LIBRARY` re-keys the squad into the new roster and rewrites the links
+(`adoptSquad`). A link the squad cannot answer is dropped rather than left
+naming whatever the new game calls that key. The squad is numbered after the
+record's own frames, so a game that imported the record before it had one (rando's
+`motorcycle_deza2_32_<n>.png`) still finds its art. `motorcycle_deza2_32` in
+the library carries the two lean poses and the rider.
+`tests/zako_squad_test.ts` pins it.
+
 **EXTRACT MODE's card and atlas skip the keys the editor set aside, and a
 placed boss wears her routine's poses.** A key the editor prefixes with `_` is
 a variant it kept rather than deleted — the art a re-skinned boss was made from

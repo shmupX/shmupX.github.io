@@ -423,10 +423,66 @@
         return out;
     }
 
+    // ---------------- a zako's squad ----------------
+    // A Dezaemon zako's death animation is ANOTHER record: the death word's
+    // child mode spawns it out of the same stage's table (game.bundle.js
+    // `spawnDeathChild`), and the mapper writes that link down as a roster KEY,
+    // `dezaemon.deathChild: 'enemyAZ'`. A key means nothing outside the game
+    // that issued it. The Ambition of Valkyrie's motorcycle, published as-is
+    // and flown in rando, pointed at an enemyAZ rando does not have, so a shot
+    // bike left no rider tumbling down the road behind it. Its turn went the
+    // same way: the cart draws the bike leaning into a bend as records of
+    // their own (33 and 34 beside the upright 32), which fly a diagonal entry
+    // path the upright one never takes.
+    //
+    // So the record leaves with its SQUAD, under the keys the members had here:
+    //  - its POSES: records of its stage identical to it in every byte but
+    //    byte 0 (the appearance id, i.e. the entry path) and drawn in art of
+    //    their own. Same hp, fire, channels and death word: the same enemy on
+    //    another path, in another pose. A same-art twin is not a pose.
+    //  - every record a death word of the record or of a pose can spawn,
+    //    followed to the end of the chain.
+    // `deathChild` keeps naming those keys; the editor's import re-keys the
+    // squad into the new roster and rewrites the links (`adoptSquad`).
+    function zakoTravelRecord(recipe, record, key) {
+        var deza = record && record.dezaemon;
+        if (!deza) return record;
+        var enemyData = (recipe && recipe.enemyData) || {};
+        var clone = function (v) { return JSON.parse(JSON.stringify(v)); };
+        var squad = {};
+        var attrs = typeof deza.attributes === 'string' ? deza.attributes : '';
+        var art = JSON.stringify(record.texture || []);
+        if (attrs.length > 2) {
+            for (var k in enemyData) {
+                var d = enemyData[k];
+                if (k === key || d === record || !d || !d.dezaemon) continue;
+                if (d.dezaemon.stage !== deza.stage) continue;
+                var a = d.dezaemon.attributes;
+                if (typeof a !== 'string' || a.slice(2) !== attrs.slice(2)) continue;
+                if (JSON.stringify(d.texture || []) === art) continue;
+                squad[k] = clone(d);
+            }
+        }
+        var queue = [record];
+        for (var p in squad) queue.push(squad[p]);
+        while (queue.length) {
+            var r = queue.shift();
+            var child = r && r.dezaemon && r.dezaemon.deathChild;
+            if (!child || child === key || squad[child] || !enemyData[child]) continue;
+            squad[child] = clone(enemyData[child]);
+            queue.push(squad[child]);
+        }
+        if (!Object.keys(squad).length) return record;
+        var out = clone(record);
+        out.squad = squad;
+        return out;
+    }
+
     window.ShmupExtract = {
         dbURL: dbURL,
         bossTravelRecord: bossTravelRecord,
         bossPublishRecord: bossPublishRecord,
+        zakoTravelRecord: zakoTravelRecord,
         collectFrameNames: collectFrameNames,
         previewFrameName: previewFrameName,
         cropFrames: cropFrames,
@@ -618,7 +674,9 @@
                 var rec = letter && recipe.enemyData && recipe.enemyData['enemy' + letter];
                 out.push({
                     sprite: e, kind: 'enemy', key: letter ? 'enemy' + letter : (e.getData('name') || 'sprite'),
-                    record: rec || synthesizedRecord(e),
+                    // Its poses and the rider it leaves behind, written down
+                    // while this roster can still name them (zakoTravelRecord).
+                    record: rec ? zakoTravelRecord(recipe, rec, 'enemy' + letter) : synthesizedRecord(e),
                 });
             }
         }

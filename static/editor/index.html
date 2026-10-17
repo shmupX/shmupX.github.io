@@ -5164,6 +5164,50 @@
             return libraryAtlasCache[key];
         }
 
+        // The order the import numbers a library record's frames in
+        // (<name>_<n>.png): its own keys as stored, then its squad. The squad
+        // walks last so a record that gained one keeps the numbers its own
+        // frames had, and libraryRenameLookup, replaying the walk over the
+        // library's record of today, still answers for a game imported before.
+        function libraryWalkKeys(obj, depth) {
+            const keys = Object.keys(obj);
+            return depth === 0 && keys.includes('squad')
+                ? keys.filter((k) => k !== 'squad').concat('squad')
+                : keys;
+        }
+
+        // A library zako arrives with its squad (extract-mode.js
+        // `zakoTravelRecord`): its other poses and the records its death word
+        // spawns, under the keys they had in the game it was published from.
+        // Those keys mean nothing in this roster. rando has no enemyAZ for the
+        // motorcycle's fallen rider, and a game that did would spawn its own
+        // enemyAZ in the rider's place. So every member takes a key here and
+        // every death link is rewritten to it; a link the squad cannot answer
+        // is dropped rather than left naming whatever this game calls that
+        // key. nextKey() hands out the roster's next free key. Resolves the
+        // members' new keys, in the order their old ones ran.
+        function adoptSquad(roster, entry, squad, nextKey) {
+            const remap = {};
+            const added = [];
+            const byLetters = (a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
+            for (const old of Object.keys(squad || {}).sort(byLetters)) {
+                const rec = squad[old];
+                if (!rec || typeof rec !== 'object') continue;
+                const key = nextKey();
+                if (!key) break;
+                roster[key] = rec;
+                remap[old] = key;
+                added.push(key);
+            }
+            for (const rec of [entry, ...added.map((k) => roster[k])]) {
+                const deza = rec && rec.dezaemon;
+                if (!deza || deza.deathChild == null) continue;
+                if (remap[deza.deathChild]) deza.deathChild = remap[deza.deathChild];
+                else delete deza.deathChild;
+            }
+            return added;
+        }
+
         function libraryFrameOf(atlas, name) {
             if (!atlas || !name) return null;
             let f = atlas.frames[name];
@@ -5258,7 +5302,7 @@
                 const seen = new Set();
                 const walk = (obj, depth) => {
                     if (!obj || typeof obj !== 'object' || depth > 2) return;
-                    for (const k of Object.keys(obj)) {
+                    for (const k of libraryWalkKeys(obj, depth)) {
                         const v = obj[k];
                         if (Array.isArray(v) && v.length && v.every((s) => typeof s === 'string')) {
                             for (const old of v) { if (seen.has(old)) continue; seen.add(old); if (libraryFrameOf(atlas, old)) order.push(old); }
@@ -5765,13 +5809,17 @@
             });
             const walk = (obj, depth) => {
                 if (!obj || typeof obj !== 'object' || depth > 2) return;
-                for (const k of Object.keys(obj)) {
+                for (const k of libraryWalkKeys(obj, depth)) {
                     const v = obj[k];
                     if (Array.isArray(v) && v.length && v.every((s) => typeof s === 'string')) obj[k] = mapFrames(v);
                     else if (v && typeof v === 'object') walk(v, depth + 1);
                 }
             };
             walk(entry, 0);
+            // Renamed with the rest; the members become roster entries of
+            // their own once the record has a key (adoptSquad).
+            const squad = entry.squad && typeof entry.squad === 'object' ? entry.squad : null;
+            delete entry.squad;
             // The merge is what actually puts the cropped art in the level
             // atlas; it resolves false when the repacked sheet will not
             // encode. Ignoring that leaves the entry naming frames nothing
@@ -5794,6 +5842,7 @@
             }
 
             let key;
+            let squadKeys = [];
             if (kind === 'boss') {
                 key = targetKey || nextBossKey() || askBossSlotToReplace(name);
                 if (!key) return;
@@ -5853,12 +5902,17 @@
                 key = targetKey || nextEnemyKey();
                 if (!key) return alert('No free enemy key');
                 enemyData[key] = entry;
+                squadKeys = adoptSquad(enemyData, entry, squad, nextEnemyKey);
                 gameData.enemyData = enemyData;
                 switchEditorTab('enemies');
             }
             document.getElementById('character-library-modal').classList.add('hidden');
             editEnemy(key);
-            alert(`'${name}' added as ${key}. SAVE (the toolbar badge, Y on a pad) keeps it in this game.`);
+            const withSquad = squadKeys.length
+                ? '\n\nIts squad came too: ' + squadKeys.map((k) => k + ' (' + (enemyData[k].name || k) + ')').join(', ')
+                    + ' — the poses it turns in and what it leaves behind when shot. Place a pose where it should turn.'
+                : '';
+            alert(`'${name}' added as ${key}.${withSquad}\n\nSAVE (the toolbar badge, Y on a pad) keeps it in this game.`);
         }
 
         // "PUBLISH TO LIBRARY": pack the current entry's frames from the level
@@ -5909,6 +5963,11 @@
                 entry = EX.bossPublishRecord
                     ? EX.bossPublishRecord(gameData, entry, Number(bossSlot[1]), entryKey)
                     : EX.bossTravelRecord(gameData, entry, Number(bossSlot[1]));
+            } else if (/^enemy[A-Z]+$/.test(entryKey || '') && EX.zakoTravelRecord) {
+                // A zako's poses and the records its death word spawns are
+                // roster entries of their own, named by keys only this game
+                // understands; they leave with it as its squad.
+                entry = EX.zakoTravelRecord(gameData, entry, entryKey);
             }
             let name = prompt('Publish to the shared library as:', EX.suggestName(suggested));
             if (!name) return null;
