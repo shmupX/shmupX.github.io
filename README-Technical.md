@@ -3327,7 +3327,13 @@ under the stock frame's own name (`uiAtlasFrames`), the set winning over the
 level atlas's copy, as the browser does. Only frames the stock sheet has go in,
 since the port asks for game_ui frames by fixed names; a cover or a save's drawn
 title still covers titleG, and `title_ui` has no sheet on the disc, so a set for
-it is left out with a note.
+it is left out with a note. A game that brought its own titleG goes without the
+stock `logo.gif` and `subTitle.gif` unless it brought those too
+(`stockPlatesOverOwnG`): the port centres G at y 60 and both plates on the
+middle of it, so over a game's own G they are 2028.Ai's "2019" and its tagline
+printed across the game's art (`gs`'s Geek Squad badge sits in exactly those
+rows). The browser never wears either on a custom game; the disc has no way to
+set the game's name in their place, so its G stands alone.
 
 **The output is a folder** — `athena.elf`, `main.js`, `athena.ini` and
 `assets/`. Copy it to a USB stick, or point an emulator straight at

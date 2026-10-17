@@ -160,9 +160,51 @@ Deno.test("the disc's game_ui carries the game's own wordmark", async () => {
   assertEquals(entry.frame.w * scale, 128);
   assertEquals(entry.frame.h * scale, 64);
   assertEquals(rgba, [255, 0, 255, 255]);
-  // The rest of the stock sheet is still there.
-  assert(parse(staged.files, "assets/game_ui.json").frames["logo.gif"]);
+  const frames = parse(staged.files, "assets/game_ui.json").frames;
+  // The rest of the stock sheet is still there...
+  assert(frames["titleStartText.gif"]);
+  // ...but not the 2019 logo and tagline the port centres on G's plate: they
+  // would print across the game's own art (gs's Geek Squad badge).
+  assertEquals(frames["logo.gif"], undefined);
+  assertEquals(frames["subTitle.gif"], undefined);
   assert(staged.notes.some((n) => n.includes("game's own art — titleG.gif")));
+  assert(
+    staged.notes.some((n) =>
+      n.includes("stock logo.gif and subTitle.gif left out")
+    ),
+  );
+});
+
+Deno.test("a logo of the game's own still goes up over its own G", async () => {
+  const record: LevelRecord = {
+    name: "ui-art",
+    logoDataURL: await dataUrl(solid(200, 40, [0, 255, 255, 255])),
+    uiAtlases: {
+      game_ui: {
+        imageDataURL: await dataUrl(solid(128, 64, [255, 0, 255, 255])),
+        frames: { "titleG․gif": rect(0, 0, 128, 64) },
+      },
+    },
+  };
+  const staged = await stageAssets({ gameDir: GAME_DIR, record });
+  const { rgba } = await stagedPixel(staged.files, "logo.gif");
+  // The 256-wide plate is flush left, so its centre is the upload's cyan
+  // (give or take the sheet's palette), not the stock red 2019.
+  assert(
+    rgba[0] < 16 && rgba[1] > 240 && rgba[2] > 240 && rgba[3] === 255,
+    `logo.gif is ${rgba}, not the upload`,
+  );
+  const frames = parse(staged.files, "assets/game_ui.json").frames;
+  assert(frames["titleG.gif"]);
+  assertEquals(frames["subTitle.gif"], undefined);
+});
+
+Deno.test("a stock G keeps the stock logo and subtitle on it", async () => {
+  const staged = await stageAssets({ gameDir: GAME_DIR, record: {} });
+  const frames = parse(staged.files, "assets/game_ui.json").frames;
+  for (const plate of ["titleG.gif", "logo.gif", "subTitle.gif"]) {
+    assert(frames[plate], `${plate} is missing from the stock title`);
+  }
 });
 
 Deno.test("a cover still covers the game's wordmark", async () => {

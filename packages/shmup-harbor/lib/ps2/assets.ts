@@ -1024,6 +1024,41 @@ export async function uiAtlasFrames(
   return [...out.values()];
 }
 
+/**
+ * The stock plates that would sit on a game's own G, left out.
+ *
+ * The port centres titleG at y 60 and then draws the logo at y 75 and the
+ * subtitle at y 130, both centred too (ps2-sp's title.ts), so both land
+ * squarely on the middle of G's 364-row plate. Over the stock portrait that is
+ * the design. Over a game's own G it is 2028.Ai's "2019" and its tagline
+ * printed across the game's art — gs's Geek Squad badge sits in exactly those
+ * rows. The browser never puts either stock plate on a custom game
+ * (customTitleArt in level-loader.js: it sets the name in Orbitron and the
+ * genre tag instead), so a game that brought a G and no logo or subtitle of
+ * its own goes without the stock ones, and its G is the title.
+ *
+ * `own` is every game_ui frame the disc already carries of the game's own art,
+ * under the port's names.
+ */
+export function stockPlatesOverOwnG(
+  own: Set<string>,
+  notes: string[],
+): Set<string> {
+  const drop = new Set<string>();
+  if (!own.has("titleG.gif")) return drop;
+  for (const plate of ["logo.gif", "subTitle.gif"]) {
+    if (!own.has(plate)) drop.add(plate);
+  }
+  if (drop.size) {
+    notes.push(
+      `title screen: the stock ${
+        [...drop].join(" and ")
+      } left out — the port draws them over the game's own titleG.gif`,
+    );
+  }
+  return drop;
+}
+
 /** Produce every file the console reads, ready to hand to the ISO writer. */
 export async function stageAssets(options: StageOptions): Promise<StageResult> {
   const { gameDir, record } = options;
@@ -1115,6 +1150,13 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     ...uiOwn.filter((frame) => !covered.includes(frame)),
     ...title.overrides,
   ];
+  const uiDrop = new Set([
+    ...title.drop,
+    ...stockPlatesOverOwnG(
+      new Set(uiOverrides.map((frame) => frame.name)),
+      notes,
+    ),
+  ]);
 
   // --- what the console will play ---
   //
@@ -1168,7 +1210,7 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
       budget,
       name === "game_asset" ? upright : new Set(),
       name === "game_ui" ? uiOverrides : [...bossShots.values()],
-      name === "game_ui" ? title.drop : new Set(),
+      name === "game_ui" ? uiDrop : new Set(),
     );
     files.push(...built.files);
     notes.push(built.note);
