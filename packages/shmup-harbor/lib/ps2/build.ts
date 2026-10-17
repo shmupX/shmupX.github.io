@@ -732,7 +732,7 @@ function readme(
       : [
         "This build is silent: there was no ffmpeg on the build host to",
         "re-encode the game's audio, and no SNDPAC.BIN in dev-fixtures/ to",
-        "cut a tone bank from. See README.md.",
+        "cut a tone bank from. See README-Technical.md.",
         "",
       ]),
     "Controls: D-pad or left stick to move, Cross to fire, Start to pause.",

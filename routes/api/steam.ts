@@ -40,7 +40,7 @@ import {
 // Game Mode, "add a non-Steam game" means leaving Game Mode, finding a desktop
 // file picker that hides AppImages by default, and knowing where the download
 // went — for a launcher whose own README has always just told them to do that
-// (README.md's "Games → Add a Non-Steam Game"). lib/steam-shortcut.ts writes
+// (README-Technical.md's "Games → Add a Non-Steam Game"). lib/steam-shortcut.ts writes
 // the entry, lib/steam-library.ts finds the files.
 //
 // LOCAL-ONLY: it writes into this machine's Steam config, so the hosted origin
