@@ -88,6 +88,7 @@ async function shootStart() {
     'var GOKI_PATTERN = "goki";' +
       functionSource(js, "isGokiRecord") +
       functionSource(js, "bossPatternSlot") +
+      functionSource(js, "bossStage2Due") +
       functionSource(js, "bossShootStart") +
       `
       function _bossAlive() { return true; }
@@ -126,9 +127,14 @@ Deno.test("bossShootStart flies Akuma's routine for his record and for a GOKI pi
 });
 
 Deno.test("bossAdd builds Akuma's stances for his routine and makes his record Akuma", async () => {
-  const src = functionSource(await read(BUNDLE), "bossAdd");
+  const js = await read(BUNDLE);
+  const src = functionSource(js, "bossAdd");
+  // The stances are built by armBossStances, which a boss's second stage
+  // calls again with its own record.
+  assert(src.includes("armBossStances(scene, bossData, patternSlot);"));
+  const stances = functionSource(js, "armBossStances");
   assert(
-    src.includes("if (patternSlot === GOKI_PATTERN) {"),
+    stances.includes("if (patternSlot === GOKI_PATTERN) {"),
     "no Goki stances",
   );
   for (
@@ -141,8 +147,9 @@ Deno.test("bossAdd builds Akuma's stances for his routine and makes his record A
       "gokiAnimSyngokuFinishTen",
     ]
   ) {
-    assert(src.includes(`scene.${stance} = `), `${stance} is not built`);
+    assert(stances.includes(`scene.${stance} = `), `${stance} is not built`);
   }
+  assert(src.includes("if (patternSlot === GOKI_PATTERN) {"));
   assert(src.includes("scene.bossIsGoki = isGokiRecord(bossData);"));
   // His own entrance voice, not the slot's.
   assert(src.includes('(scene.bossIsGoki ? "goki" :'));

@@ -1178,6 +1178,21 @@ a ship touches him, as the hidden boss does. The Boss Lab, the editor's boss
 strip and `modOverlay()` name the same default (`BossLab.ownPattern`).
 `tests/boss_goki_pattern_test.ts` pins it.
 
+**A boss can have a second stage.** A `stage2` block on a boss record is laid
+over the record once the boss's hp falls below `hpBelow` of its bar (`0.5`
+unless the block says otherwise): its `anim` sets and its weapon slots
+(`bulletData`/`bulletDataA`–`C`, either spelling) replace the boss's own key by
+key, an `attackPattern` there changes the routine, and `anim.morph` plays once
+on the way in while the old pose fades out over it. The hp pool is the same
+one: stage 2 is the bottom of the bar, not a refill. `bossShootStart` makes the
+change between two moves (`bossStage2Due` / `bossStage2Start`), so the move in
+flight finishes first and only one chain of moves ever runs; a taller body
+keeps the rest line's top edge. The cloud game `gs` turns its second boss,
+Daltonius, into Liu Kang's dragon (the `liuKangDragon0`–`12` cells of
+monkey-kombat's `liu-kang.png`, packed into the level's atlas) spitting the
+Character Library's `deza_dragon` heads (`deza1_52_0.gif`, `deza1_52_1.gif`).
+`tests/boss_stage2_test.ts` pins it.
+
 **EXTRACT MODE's card and atlas skip the keys the editor set aside, and a
 placed boss wears her routine's poses.** A key the editor prefixes with `_` is
 a variant it kept rather than deleted — the art a re-skinned boss was made from

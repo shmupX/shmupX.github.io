@@ -13496,6 +13496,154 @@
     // fang
   ];
   var GOKI_BALLOON_OFFSET = { x: 5, y: 20 };
+  // The weapons a boss record arms: its A/B/C slots, and the one a routine
+  // with a single weapon fires (its own, else A's).
+  function bossWeaponSlots(scene, bossData) {
+    scene.bossProjDataA = bossData.bulletDataA || bossData.projectileDataA || null;
+    scene.bossProjDataB = bossData.bulletDataB || bossData.projectileDataB || null;
+    scene.bossProjDataC = bossData.bulletDataC || bossData.projectileDataC || null;
+    scene.bossProjData = bossData.bulletData || bossData.projectileData || scene.bossProjDataA;
+  }
+  // The stance sets a boss's routine switches between, built from its record
+  // for the routine it flies (patternSlot). They are handed to _setBossAnim,
+  // which calls setFrame() on the raw names — so they need the same atlas
+  // filter the entry art got, or a record that arrived without its pixels
+  // flips the boss to duke_0 the moment it changes stance. An UNRESOLVABLE set
+  // filters down to empty, and _setBossAnim leaves the current frame alone
+  // rather than drawing the wrong one; a set the record never defined stays
+  // empty exactly as before.
+  function armBossStances(scene, bossData, patternSlot) {
+    var bossAnimFrames = function(list) {
+      return bulletFramesInAtlas(scene, list, null);
+    };
+    if (patternSlot === 3 && bossData.anim) {
+      scene.vegaAnimIdle = bossAnimFrames(bossData.anim.idle);
+      scene.vegaAnimShoot = bossAnimFrames(bossData.anim.shoot);
+      scene.vegaAnimAttack = bossAnimFrames(bossData.anim.attack);
+    }
+    if (patternSlot === 4 && bossData.anim) {
+      scene.fangAnimIdle = bossAnimFrames(bossData.anim.idle);
+      scene.fangAnimWait = bossAnimFrames(bossData.anim.wait);
+      scene.fangAnimCharge = bossAnimFrames(bossData.anim.charge);
+      scene.fangAnimShoot = bossAnimFrames(bossData.anim.shoot);
+    }
+    // Akuma's routine switches between his own stances, built here as the
+    // hidden boss's entrance builds them; a record of someone else's pinned
+    // to his routine takes its attack or shoot set for each move, as the
+    // Boss Lab previews it. Built even without an anim block, so a previous
+    // boss's stances cannot carry over.
+    if (patternSlot === GOKI_PATTERN) {
+      var gokiAnim = bossData.anim || {};
+      var gokiStance = function(own) {
+        return bossAnimFrames(own || gokiAnim.attack || gokiAnim.shoot);
+      };
+      scene.gokiAnimIdle = bossAnimFrames(gokiAnim.idle);
+      scene.gokiAnimShootA = gokiStance(gokiAnim.shootA);
+      scene.gokiAnimShootB = gokiStance(gokiAnim.shootB);
+      scene.gokiAnimSyngoku = gokiStance(gokiAnim.syngoku);
+      scene.gokiAnimSyngokuFinish = bossAnimFrames(gokiAnim.syngokuFinish);
+      scene.gokiAnimSyngokuFinishTen = bossAnimFrames(gokiAnim.syngokuFinishTen);
+    }
+    if (bossData.anim) {
+      scene.pyramidAnimIdle = bossAnimFrames(bossData.anim.idle);
+      scene.pyramidAnimAttack = bossAnimFrames(bossData.anim.attack);
+      scene.pyramidAnimShoot = bossAnimFrames(bossData.anim.shoot);
+      scene.pyramidAnimWarp = bossAnimFrames(bossData.anim.warp);
+    }
+  }
+  // A boss's second stage. A `stage2` block on its record is laid over the
+  // record once its hp falls below `hpBelow` of the bar (half, unless the
+  // block says otherwise): its stances and weapons replace the boss's own,
+  // key by key, and an `attackPattern` there changes the routine. The hp
+  // pool is the same one — stage 2 is the bottom of the bar, not a refill.
+  // `anim.morph` plays once on the way in. The cloud game `gs` turns its
+  // second boss, Daltonius, into Liu Kang's dragon this way, spitting
+  // dragon heads.
+  var BOSS_STAGE2_HP_BELOW = 0.5;
+  var BOSS_MORPH_FRAME_MS = 90;
+  var BOSS_MORPH_FADE_MS = 360;
+  var BOSS_WEAPON_SUFFIXES = ["", "A", "B", "C"];
+  // The record stage 2 flies: the boss's own with its stage2 block laid over
+  // it, or null for a boss with no second stage.
+  function bossStage2Record(bossData) {
+    var stage2 = bossData && bossData.stage2;
+    if (!stage2 || typeof stage2 !== "object") return null;
+    var merged = Object.assign({}, bossData, stage2);
+    delete merged.stage2;
+    merged.anim = Object.assign({}, bossData.anim || {}, stage2.anim || {});
+    // A weapon slot is one weapon under either spelling: a stage 2
+    // bulletDataA replaces the boss's projectileDataA, which would otherwise
+    // still win where the boss's own spelling is read first.
+    for (var i = 0; i < BOSS_WEAPON_SUFFIXES.length; i++) {
+      var bullet = "bulletData" + BOSS_WEAPON_SUFFIXES[i];
+      var projectile = "projectileData" + BOSS_WEAPON_SUFFIXES[i];
+      if (stage2[bullet] && !stage2[projectile]) delete merged[projectile];
+      if (stage2[projectile] && !stage2[bullet]) delete merged[bullet];
+    }
+    var below = Number(stage2.hpBelow);
+    merged.hpBelow = below > 0 && below < 1 ? below : BOSS_STAGE2_HP_BELOW;
+    return merged;
+  }
+  function bossStage2Due(scene) {
+    var stage2 = scene.bossStage2;
+    if (!stage2 || scene.bossStage2Done || !(scene.bossMaxHp > 0)) return false;
+    return scene.bossHp / scene.bossMaxHp < stage2.hpBelow;
+  }
+  // Become stage 2. Called from bossShootStart, between two moves, so the
+  // move in flight has finished and only one chain of moves ever runs: the
+  // morph hands back to bossShootStart when it is done. The boss stays
+  // hittable throughout.
+  function bossStage2Start(scene) {
+    var stage2 = scene.bossStage2;
+    var boss = scene.bossSprite;
+    scene.bossStage2Done = true;
+    bossWeaponSlots(scene, stage2);
+    boss.setData("projData", scene.bossProjData);
+    armBossStances(scene, stage2, bossPatternSlot(stage2, scene.bossStageId));
+    var idle = bulletFramesInAtlas(scene, stage2.anim.idle, null);
+    var morph = bulletFramesInAtlas(scene, stage2.anim.morph, null);
+    var frames = morph.length ? morph : idle;
+    // Stage 1's last pose fades out over the first frames of the morph, so
+    // one body reads as becoming the other rather than a cut.
+    var ghost = scene.add.sprite(boss.x, boss.y, boss.texture.key, boss.frame.name);
+    ghost.setOrigin(0.5);
+    ghost.setDepth(boss.depth);
+    scene.tweens.add({
+      targets: ghost,
+      alpha: 0,
+      duration: BOSS_MORPH_FADE_MS,
+      onComplete: function() {
+        ghost.destroy();
+      }
+    });
+    if (scene.cameras && scene.cameras.main) {
+      scene.cameras.main.flash(350, 255, 255, 255);
+      scene.cameras.main.shake(300, 0.01);
+    }
+    scene.playSound("se_sp", 0.7);
+    triggerHaptic("bossEnter");
+    // Stage 2 keeps the rest line's top edge: a taller body hangs lower
+    // rather than climbing off the top of the screen.
+    var restTop = (scene.bossBaseY || boss.y) - boss.height / 2;
+    var fi = 0;
+    var step = function() {
+      if (!_bossAlive(scene)) return;
+      if (fi < frames.length) {
+        _setBossAnim(scene, boss, [frames[fi++]]);
+        if (fi === 1) {
+          scene.bossBaseY = restTop + boss.height / 2;
+          boss.y = scene.bossBaseY;
+        }
+        scene.time.delayedCall(BOSS_MORPH_FRAME_MS, step);
+        return;
+      }
+      _setBossAnim(scene, boss, idle);
+      scene.time.delayedCall(500, function() {
+        bossShootStart(scene);
+      });
+    };
+    step();
+  }
   function bossAdd(scene) {
     if (scene.bossActive) return;
     scene.bossActive = true;
@@ -13534,10 +13682,9 @@
     scene.bossIntervalCounter = 0;
     scene.bossName = bossData.name || "boss";
     scene.bossProjCnt = 0;
-    scene.bossProjDataA = bossData.bulletDataA || bossData.projectileDataA || null;
-    scene.bossProjDataB = bossData.bulletDataB || bossData.projectileDataB || null;
-    scene.bossProjDataC = bossData.bulletDataC || bossData.projectileDataC || null;
-    scene.bossProjData = bossData.bulletData || bossData.projectileData || scene.bossProjDataA;
+    bossWeaponSlots(scene, bossData);
+    scene.bossStage2 = bossStage2Record(bossData);
+    scene.bossStage2Done = false;
     // A cart has nowhere to keep a boss's own weapon records. The writer
     // (shmup-engine game-to-save.js) folds bulletDataA/B/C into the save-wide
     // bullet bank and points the fire points at them, and the decoder hands
@@ -13582,53 +13729,12 @@
     var bossShadowOffsetY = bossData.shadowOffsetY || 10;
     scene.bossShadow = createShadow(scene, scene.bossSprite, bossFrame, bossShadowReverse, bossShadowOffsetY);
     scene.bossSprite.setData("shadow", scene.bossShadow);
-    // The per-boss animation states below are handed to _setBossAnim, which
-    // calls setFrame() on the raw names — so they need the same atlas filter
-    // the entry art got, or a record that arrived without its pixels flips the
-    // boss to duke_0 the moment it changes stance. An UNRESOLVABLE set filters
-    // down to empty, and _setBossAnim leaves the current frame alone rather
-    // than drawing the wrong one; a set the record never defined stays empty
-    // exactly as before.
-    var bossAnimFrames = function(list) {
-      return bulletFramesInAtlas(scene, list, null);
-    };
     var patternSlot = bossPatternSlot(bossData, stageId);
-    if (patternSlot === 3 && bossData.anim) {
-      scene.vegaAnimIdle = bossAnimFrames(bossData.anim.idle);
-      scene.vegaAnimShoot = bossAnimFrames(bossData.anim.shoot);
-      scene.vegaAnimAttack = bossAnimFrames(bossData.anim.attack);
-    }
-    if (patternSlot === 4 && bossData.anim) {
-      scene.fangAnimIdle = bossAnimFrames(bossData.anim.idle);
-      scene.fangAnimWait = bossAnimFrames(bossData.anim.wait);
-      scene.fangAnimCharge = bossAnimFrames(bossData.anim.charge);
-      scene.fangAnimShoot = bossAnimFrames(bossData.anim.shoot);
-    }
-    // Akuma's routine switches between his own stances, built here as the
-    // hidden boss's entrance builds them. Run by his own record he is Akuma
-    // throughout — his voice, his danger balloon, the grab when a ship
-    // touches him (bossIsGoki) — and a record of someone else's pinned to
-    // his routine takes its attack or shoot set for each move, as the Boss
-    // Lab previews it. Built even without an anim block, so a previous
-    // boss's stances cannot carry over.
+    armBossStances(scene, bossData, patternSlot);
+    // Run by his own record Akuma is Akuma throughout — his voice, his
+    // danger balloon, the grab when a ship touches him.
     if (patternSlot === GOKI_PATTERN) {
-      var gokiAnim = bossData.anim || {};
-      var gokiStance = function(own) {
-        return bossAnimFrames(own || gokiAnim.attack || gokiAnim.shoot);
-      };
-      scene.gokiAnimIdle = bossAnimFrames(gokiAnim.idle);
-      scene.gokiAnimShootA = gokiStance(gokiAnim.shootA);
-      scene.gokiAnimShootB = gokiStance(gokiAnim.shootB);
-      scene.gokiAnimSyngoku = gokiStance(gokiAnim.syngoku);
-      scene.gokiAnimSyngokuFinish = bossAnimFrames(gokiAnim.syngokuFinish);
-      scene.gokiAnimSyngokuFinishTen = bossAnimFrames(gokiAnim.syngokuFinishTen);
       scene.bossIsGoki = isGokiRecord(bossData);
-    }
-    if (bossData.anim) {
-      scene.pyramidAnimIdle = bossAnimFrames(bossData.anim.idle);
-      scene.pyramidAnimAttack = bossAnimFrames(bossData.anim.attack);
-      scene.pyramidAnimShoot = bossAnimFrames(bossData.anim.shoot);
-      scene.pyramidAnimWarp = bossAnimFrames(bossData.anim.warp);
     }
     scene.enemies.push(scene.bossSprite);
     var dezaArmed = initDezaBoss(scene, bossData);
@@ -13802,6 +13908,8 @@
           scene.bossIsGoki = true;
           scene.bossStageId = 3;
           scene.gokiFlg = false;
+          // The boss he threw out took its second stage with it.
+          scene.bossStage2 = null;
           scene.bossHp = gokiData.hp || 350;
           scene.bossMaxHp = scene.bossHp;
           scene.bossScore = gokiData.score || 8e3;
@@ -13883,12 +13991,16 @@
       startDezaBoss(scene);
       return;
     }
+    if (bossStage2Due(scene)) {
+      bossStage2Start(scene);
+      return;
+    }
     var seed = Math.random();
     if (scene.bossIsGoki) {
       bossPatternGoki(scene, seed);
       return;
     }
-    var currentBossData = scene.recipe.bossData ? scene.recipe.bossData["boss" + String(scene.bossStageId)] : null;
+    var currentBossData = scene.bossStage2Done && scene.bossStage2 ? scene.bossStage2 : scene.recipe.bossData ? scene.recipe.bossData["boss" + String(scene.bossStageId)] : null;
     var patternId = bossPatternSlot(currentBossData, scene.bossStageId);
     switch (patternId) {
       case 0:
