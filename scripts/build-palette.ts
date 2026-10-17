@@ -18,7 +18,7 @@
 // mismatch fails the build rather than silently shipping one or the other.
 //
 // A second, human-sized image goes beside it: palette-sheet.png lays the same
-// entries out 16 across x 18 down at 12 px a swatch, for README.md — the
+// entries out 16 across x 18 down at 12 px a swatch, for README-Technical.md — the
 // 1-pixel-wide strip is the machine-readable one, not a picture.
 //
 // Both are COMMITTED and served from static/, like mesh-library.json.

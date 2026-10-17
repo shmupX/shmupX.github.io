@@ -4,7 +4,7 @@
 // timbre the Saturn's SCSP played. It is disc content, so it is not in this
 // repo and never will be. Tables DERIVED from the disc's binaries are a
 // different matter and are committed — the instrument map below, and the
-// ポリ吉 part-library JSON the model viewer loads (README.md "PlayStation 2").
+// ポリ吉 part-library JSON the model viewer loads (README-Technical.md "PlayStation 2").
 // What IS here is the instrument map that indexes it
 // (packages/shmup-engine/data/bgm-instruments.json), so anyone holding a disc
 // can have the real samples and everyone else falls back to the synthesised

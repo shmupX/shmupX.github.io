@@ -15,7 +15,7 @@ somewhere else_:
 | **…into your emulator**     | `deno task sav:run` / `sav:inject`                      | that cart merged into the save this machine already has |
 | **…and checked**            | `deno task sav:profile`                                 | the same level on the Saturn and in the browser, framed |
 
-The root [README](../../README.md) is the narrative — what each target is for,
+The root [technical README](../../README-Technical.md) is the narrative — what each target is for,
 every flag, and why the artifacts are shaped the way they are. This file is the
 map of the package.
 

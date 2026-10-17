@@ -13,7 +13,7 @@
 //
 // The output is COMMITTED and served from static/, so it deploys with the
 // site: Deno Deploy has no disc to rebuild it from, and the level editor's
-// model viewer needs it in production (decision 2026-09-02; see README.md
+// model viewer needs it in production (decision 2026-09-02; see README-Technical.md
 // "PlayStation 2"). The engine already ships smaller disc-derived tables in
 // packages/shmup-engine/data/ — this is the first one big enough to serve to
 // the browser rather than bundle. Finding no disc is not an error: the

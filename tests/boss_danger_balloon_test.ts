@@ -4,10 +4,10 @@
 // the stock boss_dengerous0..2.gif. `dangerBalloon` on a boss record now
 // swaps it for the author's art and, optionally, places it — the cloud game
 // "gs" has its stage-2 boss say "I'm Fired!!!" there. The runtime
-// (game.bundle.js, a vendored artifact patched by hand — README) resolves the
-// frames against the merged game_asset atlas and keeps the stock skull when
-// none of them travelled, since the balloon is the one cue a bomb will finish
-// the boss.
+// (game.bundle.js, a vendored artifact patched by hand — README-Technical.md)
+// resolves the frames against the merged game_asset atlas and keeps the stock
+// skull when none of them travelled, since the balloon is the one cue a bomb
+// will finish the boss.
 
 import { assert, assertEquals } from "@std/assert";
 
@@ -240,6 +240,37 @@ Deno.test("checkBossDanger keeps the skull for a boss without one", async () => 
   assertEquals(scene.made.frames, [STOCK[1], STOCK[2], STOCK[0]]);
 });
 
+Deno.test("past its second stage, a boss's balloon is the stage 2 record's", async () => {
+  const check = await checkBossDanger();
+  const OWN = ["dragon_balloon0", "dragon_balloon1"];
+  const base = {
+    name: "Daltonius",
+    dangerBalloon: { frames: FIRED, x: 50, y: 20 },
+  };
+  // bossStage2Record lays the block over the boss's own record, so a block
+  // with no balloon keeps the boss's.
+  const inherits = fightScene([...STOCK, ...FIRED, ...OWN], base);
+  inherits.bossStage2 = { ...base, anim: { idle: ["dragon"] } };
+  inherits.bossStage2Done = true;
+  check(inherits);
+  assertEquals(inherits.made.sprite.frame, FIRED[0]);
+
+  // A block that names its own balloon speaks with it, where it says.
+  const own = fightScene([...STOCK, ...FIRED, ...OWN], base);
+  own.bossStage2 = { ...base, dangerBalloon: { frames: OWN, x: 10, y: 5 } };
+  own.bossStage2Done = true;
+  check(own);
+  assertEquals(own.made.sprite.frame, OWN[0]);
+  assertEquals(own.made.sprite.x, 128 - 48 + 10);
+
+  // Before the change, stage 1's record speaks even though stage 2 waits.
+  const before = fightScene([...STOCK, ...FIRED, ...OWN], base);
+  before.bossStage2 = { ...base, dangerBalloon: { frames: OWN } };
+  before.bossStage2Done = false;
+  check(before);
+  assertEquals(before.made.sprite.frame, FIRED[0]);
+});
+
 Deno.test("the fight keeps the record it was built from, for the balloon to read", async () => {
   const js = await read(BUNDLE);
   assert(
@@ -250,7 +281,7 @@ Deno.test("the fight keeps the record it was built from, for the balloon to read
   assert(js.includes("scene.bossRecord = gokiData;"), "no takeover record");
   assert(
     functionSource(js, "checkBossDanger").includes(
-      "bossDangerBalloon(scene, scene.bossRecord, stockOffset)",
+      "bossDangerBalloon(scene, fighting, stockOffset)",
     ),
   );
   assert(!js.includes('"boss_dengerous" + dangerFrame'), "stock names left");

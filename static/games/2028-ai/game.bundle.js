@@ -10701,7 +10701,9 @@
     var lens = {
       cx: 0, cy: 0, ox: 0, oy: 0, broken: false,
       subjects: null, holo: null, holoR: null, holoB: null, body: null, scratch: null,
-      main: null, red: null, blue: null, tex: null, image: null
+      main: null, red: null, blue: null, tex: null, image: null,
+      field: null, rim: null, trail: null, flare: null, scan: null,
+      fieldOx: NaN, fieldOy: NaN, row: null
     };
     try {
       var canvas = function (w, h, opts) {
@@ -10718,6 +10720,12 @@
       lens.holoB = canvas(L, L);
       lens.body = canvas(L, L);
       lens.scratch = canvas(L, L);
+      lens.field = canvas(L, L);
+      lens.rim = canvas(L, L);
+      lens.trail = canvas(L, 11);
+      lens.flare = canvas(L, 10);
+      lens.scan = canvas(L, L);
+      spLensBakeStrips(lens);
       lens.main = lens.holo.ctx.createImageData(L, L);
       lens.red = lens.holo.ctx.createImageData(L, L);
       lens.blue = lens.holo.ctx.createImageData(L, L);
@@ -10763,6 +10771,64 @@
       lens.image.setVisible(false);
     }
   }
+  // What the paint used to redraw every frame and never changes: the sweep's
+  // trail and scan line, the flare under it on the hologram, and the
+  // hologram's scanlines, each drawn once into a strip the paint stamps at
+  // the scan line's row. The field and the rim (spLensBakeField) are fixed
+  // to the screen and baked again only if the button moves.
+  function spLensBakeStrips(lens) {
+    var L = SP_LENS_SIZE;
+    var tc = lens.trail.ctx;
+    var trail = tc.createLinearGradient(0, 0, 0, 10);
+    trail.addColorStop(0, "rgba(120,255,255,0)");
+    trail.addColorStop(1, "rgba(120,255,255,0.35)");
+    tc.fillStyle = trail;
+    tc.fillRect(0, 0, L, 10);
+    tc.fillStyle = "rgba(220,255,255,0.9)";
+    tc.fillRect(0, 10, L, 1);
+    var fc = lens.flare.ctx;
+    var flare = fc.createLinearGradient(0, 0, 0, 10);
+    flare.addColorStop(0, "rgba(255,255,255,0)");
+    flare.addColorStop(1, "rgba(255,255,255,0.65)");
+    fc.fillStyle = flare;
+    fc.fillRect(0, 0, L, 10);
+    var bc = lens.scan.ctx;
+    bc.fillStyle = "rgba(0,16,32,0.45)";
+    for (var y = 1; y < L; y += 2) bc.fillRect(0, y, L, 1);
+  }
+  function spLensBakeField(lens) {
+    var L = SP_LENS_SIZE, R = SP_LENS_R, ox = lens.ox, oy = lens.oy;
+    var lcx = lens.cx - ox, lcy = lens.cy - oy;
+    var ctx = lens.field.ctx;
+    ctx.clearRect(0, 0, L, L);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(lcx, lcy, R, 0, Math.PI * 2);
+    ctx.clip();
+    var fa = SP_LENS_FIELD_ALPHA, G = SP_LENS_GRID_PX;
+    if (fa > 0) {
+      // Scanlines on the even screen rows, the grid on the screen's 8 px
+      // lines — fixed to the screen, not the window, as the prototype draws them.
+      ctx.fillStyle = "rgba(0,0,0," + fa + ")";
+      for (var fy = Math.ceil(lens.cy - R); fy < lens.cy + R; fy++) {
+        if ((fy & 1) === 0) ctx.fillRect(lcx - R, fy - oy, 2 * R, 1);
+      }
+      ctx.fillStyle = "rgba(140,255,255," + fa + ")";
+      for (var gx = Math.ceil((lens.cx - R) / G) * G; gx <= lens.cx + R; gx += G) ctx.fillRect(gx - ox, lcy - R, 1, 2 * R);
+      for (var gy = Math.ceil((lens.cy - R) / G) * G; gy <= lens.cy + R; gy += G) ctx.fillRect(lcx - R, gy - oy, 2 * R, 1);
+    }
+    ctx.restore();
+    ctx = lens.rim.ctx;
+    ctx.clearRect(0, 0, L, L);
+    ctx.strokeStyle = "rgba(120,255,255,0.35)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(lcx, lcy, R + 0.5, 0, Math.PI * 2);
+    ctx.stroke();
+    lens.fieldOx = ox;
+    lens.fieldOy = oy;
+    lens.row = null;
+  }
   function paintSpLens(scene, lens, time) {
     var L = SP_LENS_SIZE, R = SP_LENS_R, ox = lens.ox, oy = lens.oy;
     var lcx = lens.cx - ox, lcy = lens.cy - oy;          // the disc's centre in the window
@@ -10788,7 +10854,13 @@
     }
     for (var p = 0; p < scene.players.length; p++) draw(scene.players[p] && scene.players[p].sprite);
     var phase = (time % SP_LENS_SCAN_MS) / SP_LENS_SCAN_MS;
-    var sy = lcy - R + phase * 2 * R;                    // the scan line, in window rows
+    var row = Math.floor(lcy - R + phase * 2 * R);      // the scan line, in window rows
+    if (lens.fieldOx !== ox || lens.fieldOy !== oy) spLensBakeField(lens);
+    // With nothing behind the disc the frame is the field and the sweep's row
+    // alone, so while the row holds it is the frame already on the texture:
+    // no repaint, and no upload. The sweep crosses a row every ~29 ms.
+    if (!any && lens.row === row) return;
+    lens.row = any ? null : row;
     if (any) {
       // 2. The ramp, and the red and blue plates for the fringe.
       var px = sc.getImageData(0, 0, L, L).data;
@@ -10813,13 +10885,8 @@
       bc.shadowBlur = 0;
       bc.shadowColor = "transparent";
       bc.globalCompositeOperation = "source-atop";
-      bc.fillStyle = "rgba(0,16,32,0.45)";
-      for (var y = 1; y < L; y += 2) bc.fillRect(0, y, L, 1);
-      var flare = bc.createLinearGradient(0, sy - 9, 0, sy + 1);
-      flare.addColorStop(0, "rgba(255,255,255,0)");
-      flare.addColorStop(1, "rgba(255,255,255,0.65)");
-      bc.fillStyle = flare;
-      bc.fillRect(0, sy - 9, L, 10);
+      bc.drawImage(lens.scan.el, 0, 0);
+      bc.drawImage(lens.flare.el, 0, row - 9);
       bc.globalCompositeOperation = "source-over";
     }
     // 4. Onto the disc, clipped to its ground: the field, the sweep, the
@@ -10827,36 +10894,15 @@
     var ctx = lens.tex.getContext();
     ctx.globalCompositeOperation = "source-over";
     ctx.clearRect(0, 0, L, L);
+    ctx.drawImage(lens.field.el, 0, 0);
     ctx.save();
     ctx.beginPath();
     ctx.arc(lcx, lcy, R, 0, Math.PI * 2);
     ctx.clip();
-    var fa = SP_LENS_FIELD_ALPHA, G = SP_LENS_GRID_PX;
-    if (fa > 0) {
-      // Scanlines on the even screen rows, the grid on the screen's 8 px
-      // lines — fixed to the screen, not the window, as the prototype draws them.
-      ctx.fillStyle = "rgba(0,0,0," + fa + ")";
-      for (var fy = Math.ceil(lens.cy - R); fy < lens.cy + R; fy++) {
-        if ((fy & 1) === 0) ctx.fillRect(lcx - R, fy - oy, 2 * R, 1);
-      }
-      ctx.fillStyle = "rgba(140,255,255," + fa + ")";
-      for (var gx = Math.ceil((lens.cx - R) / G) * G; gx <= lens.cx + R; gx += G) ctx.fillRect(gx - ox, lcy - R, 1, 2 * R);
-      for (var gy = Math.ceil((lens.cy - R) / G) * G; gy <= lens.cy + R; gy += G) ctx.fillRect(lcx - R, gy - oy, 2 * R, 1);
-    }
-    var trail = ctx.createLinearGradient(0, sy - 10, 0, sy);
-    trail.addColorStop(0, "rgba(120,255,255,0)");
-    trail.addColorStop(1, "rgba(120,255,255,0.35)");
-    ctx.fillStyle = trail;
-    ctx.fillRect(lcx - R, sy - 10, 2 * R, 10);
-    ctx.fillStyle = "rgba(220,255,255,0.9)";
-    ctx.fillRect(lcx - R, Math.floor(sy), 2 * R, 1);
+    ctx.drawImage(lens.trail.el, 0, row - 10);
     if (any) ctx.drawImage(lens.body.el, 0, 0);
     ctx.restore();
-    ctx.strokeStyle = "rgba(120,255,255,0.35)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(lcx, lcy, R + 0.5, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.drawImage(lens.rim.el, 0, 0);
     lens.tex.refresh();
   }
   function fireDezaBomb(scene, p) {
@@ -13450,6 +13496,154 @@
     // fang
   ];
   var GOKI_BALLOON_OFFSET = { x: 5, y: 20 };
+  // The weapons a boss record arms: its A/B/C slots, and the one a routine
+  // with a single weapon fires (its own, else A's).
+  function bossWeaponSlots(scene, bossData) {
+    scene.bossProjDataA = bossData.bulletDataA || bossData.projectileDataA || null;
+    scene.bossProjDataB = bossData.bulletDataB || bossData.projectileDataB || null;
+    scene.bossProjDataC = bossData.bulletDataC || bossData.projectileDataC || null;
+    scene.bossProjData = bossData.bulletData || bossData.projectileData || scene.bossProjDataA;
+  }
+  // The stance sets a boss's routine switches between, built from its record
+  // for the routine it flies (patternSlot). They are handed to _setBossAnim,
+  // which calls setFrame() on the raw names — so they need the same atlas
+  // filter the entry art got, or a record that arrived without its pixels
+  // flips the boss to duke_0 the moment it changes stance. An UNRESOLVABLE set
+  // filters down to empty, and _setBossAnim leaves the current frame alone
+  // rather than drawing the wrong one; a set the record never defined stays
+  // empty exactly as before.
+  function armBossStances(scene, bossData, patternSlot) {
+    var bossAnimFrames = function(list) {
+      return bulletFramesInAtlas(scene, list, null);
+    };
+    if (patternSlot === 3 && bossData.anim) {
+      scene.vegaAnimIdle = bossAnimFrames(bossData.anim.idle);
+      scene.vegaAnimShoot = bossAnimFrames(bossData.anim.shoot);
+      scene.vegaAnimAttack = bossAnimFrames(bossData.anim.attack);
+    }
+    if (patternSlot === 4 && bossData.anim) {
+      scene.fangAnimIdle = bossAnimFrames(bossData.anim.idle);
+      scene.fangAnimWait = bossAnimFrames(bossData.anim.wait);
+      scene.fangAnimCharge = bossAnimFrames(bossData.anim.charge);
+      scene.fangAnimShoot = bossAnimFrames(bossData.anim.shoot);
+    }
+    // Akuma's routine switches between his own stances, built here as the
+    // hidden boss's entrance builds them; a record of someone else's pinned
+    // to his routine takes its attack or shoot set for each move, as the
+    // Boss Lab previews it. Built even without an anim block, so a previous
+    // boss's stances cannot carry over.
+    if (patternSlot === GOKI_PATTERN) {
+      var gokiAnim = bossData.anim || {};
+      var gokiStance = function(own) {
+        return bossAnimFrames(own || gokiAnim.attack || gokiAnim.shoot);
+      };
+      scene.gokiAnimIdle = bossAnimFrames(gokiAnim.idle);
+      scene.gokiAnimShootA = gokiStance(gokiAnim.shootA);
+      scene.gokiAnimShootB = gokiStance(gokiAnim.shootB);
+      scene.gokiAnimSyngoku = gokiStance(gokiAnim.syngoku);
+      scene.gokiAnimSyngokuFinish = bossAnimFrames(gokiAnim.syngokuFinish);
+      scene.gokiAnimSyngokuFinishTen = bossAnimFrames(gokiAnim.syngokuFinishTen);
+    }
+    if (bossData.anim) {
+      scene.pyramidAnimIdle = bossAnimFrames(bossData.anim.idle);
+      scene.pyramidAnimAttack = bossAnimFrames(bossData.anim.attack);
+      scene.pyramidAnimShoot = bossAnimFrames(bossData.anim.shoot);
+      scene.pyramidAnimWarp = bossAnimFrames(bossData.anim.warp);
+    }
+  }
+  // A boss's second stage. A `stage2` block on its record is laid over the
+  // record once its hp falls below `hpBelow` of the bar (half, unless the
+  // block says otherwise): its stances and weapons replace the boss's own,
+  // key by key, and an `attackPattern` there changes the routine. The hp
+  // pool is the same one — stage 2 is the bottom of the bar, not a refill.
+  // `anim.morph` plays once on the way in. The cloud game `gs` turns its
+  // second boss, Daltonius, into Liu Kang's dragon this way, spitting
+  // dragon heads.
+  var BOSS_STAGE2_HP_BELOW = 0.5;
+  var BOSS_MORPH_FRAME_MS = 90;
+  var BOSS_MORPH_FADE_MS = 360;
+  var BOSS_WEAPON_SUFFIXES = ["", "A", "B", "C"];
+  // The record stage 2 flies: the boss's own with its stage2 block laid over
+  // it, or null for a boss with no second stage.
+  function bossStage2Record(bossData) {
+    var stage2 = bossData && bossData.stage2;
+    if (!stage2 || typeof stage2 !== "object") return null;
+    var merged = Object.assign({}, bossData, stage2);
+    delete merged.stage2;
+    merged.anim = Object.assign({}, bossData.anim || {}, stage2.anim || {});
+    // A weapon slot is one weapon under either spelling: a stage 2
+    // bulletDataA replaces the boss's projectileDataA, which would otherwise
+    // still win where the boss's own spelling is read first.
+    for (var i = 0; i < BOSS_WEAPON_SUFFIXES.length; i++) {
+      var bullet = "bulletData" + BOSS_WEAPON_SUFFIXES[i];
+      var projectile = "projectileData" + BOSS_WEAPON_SUFFIXES[i];
+      if (stage2[bullet] && !stage2[projectile]) delete merged[projectile];
+      if (stage2[projectile] && !stage2[bullet]) delete merged[bullet];
+    }
+    var below = Number(stage2.hpBelow);
+    merged.hpBelow = below > 0 && below < 1 ? below : BOSS_STAGE2_HP_BELOW;
+    return merged;
+  }
+  function bossStage2Due(scene) {
+    var stage2 = scene.bossStage2;
+    if (!stage2 || scene.bossStage2Done || !(scene.bossMaxHp > 0)) return false;
+    return scene.bossHp / scene.bossMaxHp < stage2.hpBelow;
+  }
+  // Become stage 2. Called from bossShootStart, between two moves, so the
+  // move in flight has finished and only one chain of moves ever runs: the
+  // morph hands back to bossShootStart when it is done. The boss stays
+  // hittable throughout.
+  function bossStage2Start(scene) {
+    var stage2 = scene.bossStage2;
+    var boss = scene.bossSprite;
+    scene.bossStage2Done = true;
+    bossWeaponSlots(scene, stage2);
+    boss.setData("projData", scene.bossProjData);
+    armBossStances(scene, stage2, bossPatternSlot(stage2, scene.bossStageId));
+    var idle = bulletFramesInAtlas(scene, stage2.anim.idle, null);
+    var morph = bulletFramesInAtlas(scene, stage2.anim.morph, null);
+    var frames = morph.length ? morph : idle;
+    // Stage 1's last pose fades out over the first frames of the morph, so
+    // one body reads as becoming the other rather than a cut.
+    var ghost = scene.add.sprite(boss.x, boss.y, boss.texture.key, boss.frame.name);
+    ghost.setOrigin(0.5);
+    ghost.setDepth(boss.depth);
+    scene.tweens.add({
+      targets: ghost,
+      alpha: 0,
+      duration: BOSS_MORPH_FADE_MS,
+      onComplete: function() {
+        ghost.destroy();
+      }
+    });
+    if (scene.cameras && scene.cameras.main) {
+      scene.cameras.main.flash(350, 255, 255, 255);
+      scene.cameras.main.shake(300, 0.01);
+    }
+    scene.playSound("se_sp", 0.7);
+    triggerHaptic("bossEnter");
+    // Stage 2 keeps the rest line's top edge: a taller body hangs lower
+    // rather than climbing off the top of the screen.
+    var restTop = (scene.bossBaseY || boss.y) - boss.height / 2;
+    var fi = 0;
+    var step = function() {
+      if (!_bossAlive(scene)) return;
+      if (fi < frames.length) {
+        _setBossAnim(scene, boss, [frames[fi++]]);
+        if (fi === 1) {
+          scene.bossBaseY = restTop + boss.height / 2;
+          boss.y = scene.bossBaseY;
+        }
+        scene.time.delayedCall(BOSS_MORPH_FRAME_MS, step);
+        return;
+      }
+      _setBossAnim(scene, boss, idle);
+      scene.time.delayedCall(500, function() {
+        bossShootStart(scene);
+      });
+    };
+    step();
+  }
   function bossAdd(scene) {
     if (scene.bossActive) return;
     scene.bossActive = true;
@@ -13489,10 +13683,9 @@
     scene.bossName = bossData.name || "boss";
     scene.bossRecord = bossData;
     scene.bossProjCnt = 0;
-    scene.bossProjDataA = bossData.bulletDataA || bossData.projectileDataA || null;
-    scene.bossProjDataB = bossData.bulletDataB || bossData.projectileDataB || null;
-    scene.bossProjDataC = bossData.bulletDataC || bossData.projectileDataC || null;
-    scene.bossProjData = bossData.bulletData || bossData.projectileData || scene.bossProjDataA;
+    bossWeaponSlots(scene, bossData);
+    scene.bossStage2 = bossStage2Record(bossData);
+    scene.bossStage2Done = false;
     // A cart has nowhere to keep a boss's own weapon records. The writer
     // (shmup-engine game-to-save.js) folds bulletDataA/B/C into the save-wide
     // bullet bank and points the fire points at them, and the decoder hands
@@ -13537,53 +13730,12 @@
     var bossShadowOffsetY = bossData.shadowOffsetY || 10;
     scene.bossShadow = createShadow(scene, scene.bossSprite, bossFrame, bossShadowReverse, bossShadowOffsetY);
     scene.bossSprite.setData("shadow", scene.bossShadow);
-    // The per-boss animation states below are handed to _setBossAnim, which
-    // calls setFrame() on the raw names — so they need the same atlas filter
-    // the entry art got, or a record that arrived without its pixels flips the
-    // boss to duke_0 the moment it changes stance. An UNRESOLVABLE set filters
-    // down to empty, and _setBossAnim leaves the current frame alone rather
-    // than drawing the wrong one; a set the record never defined stays empty
-    // exactly as before.
-    var bossAnimFrames = function(list) {
-      return bulletFramesInAtlas(scene, list, null);
-    };
     var patternSlot = bossPatternSlot(bossData, stageId);
-    if (patternSlot === 3 && bossData.anim) {
-      scene.vegaAnimIdle = bossAnimFrames(bossData.anim.idle);
-      scene.vegaAnimShoot = bossAnimFrames(bossData.anim.shoot);
-      scene.vegaAnimAttack = bossAnimFrames(bossData.anim.attack);
-    }
-    if (patternSlot === 4 && bossData.anim) {
-      scene.fangAnimIdle = bossAnimFrames(bossData.anim.idle);
-      scene.fangAnimWait = bossAnimFrames(bossData.anim.wait);
-      scene.fangAnimCharge = bossAnimFrames(bossData.anim.charge);
-      scene.fangAnimShoot = bossAnimFrames(bossData.anim.shoot);
-    }
-    // Akuma's routine switches between his own stances, built here as the
-    // hidden boss's entrance builds them. Run by his own record he is Akuma
-    // throughout — his voice, his danger balloon, the grab when a ship
-    // touches him (bossIsGoki) — and a record of someone else's pinned to
-    // his routine takes its attack or shoot set for each move, as the Boss
-    // Lab previews it. Built even without an anim block, so a previous
-    // boss's stances cannot carry over.
+    armBossStances(scene, bossData, patternSlot);
+    // Run by his own record Akuma is Akuma throughout — his voice, his
+    // danger balloon, the grab when a ship touches him.
     if (patternSlot === GOKI_PATTERN) {
-      var gokiAnim = bossData.anim || {};
-      var gokiStance = function(own) {
-        return bossAnimFrames(own || gokiAnim.attack || gokiAnim.shoot);
-      };
-      scene.gokiAnimIdle = bossAnimFrames(gokiAnim.idle);
-      scene.gokiAnimShootA = gokiStance(gokiAnim.shootA);
-      scene.gokiAnimShootB = gokiStance(gokiAnim.shootB);
-      scene.gokiAnimSyngoku = gokiStance(gokiAnim.syngoku);
-      scene.gokiAnimSyngokuFinish = bossAnimFrames(gokiAnim.syngokuFinish);
-      scene.gokiAnimSyngokuFinishTen = bossAnimFrames(gokiAnim.syngokuFinishTen);
       scene.bossIsGoki = isGokiRecord(bossData);
-    }
-    if (bossData.anim) {
-      scene.pyramidAnimIdle = bossAnimFrames(bossData.anim.idle);
-      scene.pyramidAnimAttack = bossAnimFrames(bossData.anim.attack);
-      scene.pyramidAnimShoot = bossAnimFrames(bossData.anim.shoot);
-      scene.pyramidAnimWarp = bossAnimFrames(bossData.anim.warp);
     }
     scene.enemies.push(scene.bossSprite);
     var dezaArmed = initDezaBoss(scene, bossData);
@@ -13757,6 +13909,8 @@
           scene.bossIsGoki = true;
           scene.bossStageId = 3;
           scene.gokiFlg = false;
+          // The boss he threw out took its second stage with it.
+          scene.bossStage2 = null;
           scene.bossHp = gokiData.hp || 350;
           scene.bossMaxHp = scene.bossHp;
           scene.bossScore = gokiData.score || 8e3;
@@ -13839,12 +13993,16 @@
       startDezaBoss(scene);
       return;
     }
+    if (bossStage2Due(scene)) {
+      bossStage2Start(scene);
+      return;
+    }
     var seed = Math.random();
     if (scene.bossIsGoki) {
       bossPatternGoki(scene, seed);
       return;
     }
-    var currentBossData = scene.recipe.bossData ? scene.recipe.bossData["boss" + String(scene.bossStageId)] : null;
+    var currentBossData = scene.bossStage2Done && scene.bossStage2 ? scene.bossStage2 : scene.recipe.bossData ? scene.recipe.bossData["boss" + String(scene.bossStageId)] : null;
     var patternId = bossPatternSlot(currentBossData, scene.bossStageId);
     switch (patternId) {
       case 0:
@@ -14046,7 +14204,11 @@
       triggerHaptic("warning");
       var stageId = scene.bossStageId || 0;
       var stockOffset = scene.bossIsGoki ? GOKI_BALLOON_OFFSET : BOSS_BALLOON_OFFSETS[assetStageId(stageId)] || BOSS_BALLOON_OFFSETS[0];
-      var balloon = bossDangerBalloon(scene, scene.bossRecord, stockOffset);
+      // Past its second stage a boss flies the stage2 record: its own with the
+      // block laid over, so it keeps the boss's balloon unless the block names
+      // one of its own.
+      var fighting = scene.bossStage2Done && scene.bossStage2 ? scene.bossStage2 : scene.bossRecord;
+      var balloon = bossDangerBalloon(scene, fighting, stockOffset);
       var balloonFrames = balloon.frames;
       var offsets = balloon.offset;
       var relX = offsets.x - scene.bossSprite.width / 2;
@@ -14479,6 +14641,47 @@
   }
 
   // ../2019-es7/src/phaser/GameScene.js
+  // A one-shot effect plays from a few standing voices per key, not from a
+  // new sound per call. Phaser's sound.play(key) builds a whole sound (its
+  // gain, mute and panner nodes, its listeners) for every call and tears it
+  // down when it ends, and the hit loop calls once per shot per enemy per
+  // fixed step: rando's piercing shot raking stage 1's stacked wave asked for
+  // 86 se_damage in a quarter second (14 in one step), and stood up 200+
+  // live copies of a 0.94 s sample at once, which is the audio graph and the
+  // garbage that stutters a phone. Each key keeps SFX_VOICES voices and
+  // re-strikes the oldest when all are sounding; a second strike of a key
+  // within SFX_MIN_GAP_MS (one rendered frame) is dropped, since the same
+  // sample started twice in a frame is only louder. The gap holds the
+  // Dezaemon tone bank to the same rate: it builds its nodes per call too.
+  var SFX_VOICES = 4;
+  var SFX_MIN_GAP_MS = 16;
+  var sfxVoices = {};
+  function sfxStrikeDue(key, now) {
+    var pool = sfxVoices[key] || (sfxVoices[key] = { voices: [], last: -Infinity });
+    if (now - pool.last < SFX_MIN_GAP_MS) return false;
+    pool.last = now;
+    return true;
+  }
+  function playSfxVoice(sound, key, vol, now) {
+    var pool = sfxVoices[key] || (sfxVoices[key] = { voices: [], last: now });
+    var voice = null, oldest = null, live = [];
+    for (var i = 0; i < pool.voices.length; i++) {
+      var v = pool.voices[i];
+      // One removed under us (removeAll / removeByKey, or another manager's).
+      if (!v || v.pendingRemove || v.manager !== sound) continue;
+      live.push(v);
+      if (!voice && !v.isPlaying && !v.isPaused) voice = v;
+      if (!oldest || v.__sfxAt < oldest.__sfxAt) oldest = v;
+    }
+    pool.voices = live;
+    if (!voice && live.length < SFX_VOICES) {
+      voice = sound.add(key);
+      live.push(voice);
+    }
+    voice = voice || oldest;
+    voice.__sfxAt = now;
+    voice.play({ volume: vol });
+  }
   var DEZA_SFX_MAP = {
     se_explosion: "explosion",
     se_bomb: "explosion",
@@ -15872,6 +16075,8 @@
     }
     playSound(key, volume) {
       if (gameState.lowModeFlg) return;
+      var now = performance.now();
+      if (!sfxStrikeDue(key, now)) return;
       // The synthesized Saturn effects belong to a cart's side of the
       // crossover; a web level that only borrowed the tone bank for its music
       // keeps its own shots and explosions.
@@ -15881,14 +16086,7 @@
       }
       try {
         var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
-        if (this.cache.audio.exists(key)) {
-          var existing = this.sound.get(key);
-          if (existing) {
-            this.sound.play(key, { volume: vol });
-          } else {
-            this.sound.add(key).play({ volume: vol });
-          }
-        }
+        if (this.cache.audio.exists(key)) playSfxVoice(this.sound, key, vol, now);
       } catch (e) {
       }
     }
