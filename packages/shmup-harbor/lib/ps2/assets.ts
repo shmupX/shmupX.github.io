@@ -1059,6 +1059,75 @@ export function stockPlatesOverOwnG(
   return drop;
 }
 
+/**
+ * The game's own ship where G sits on the continue card.
+ *
+ * The browser shows G only for the base game's player: a game whose
+ * playerData names frames of its own idles its ship in his box instead
+ * (playsOwnShip / dezaShipFace in game.bundle.js), since G belongs to 2028.Ai
+ * and not to it. The port has no such branch — it alternates continueFace0.gif
+ * and continueFace1.gif, centred on the box — so the ship is packed under
+ * those two names: the box's size, the ship centred in it at the largest
+ * whole-pixel scale that fits (a fractional one shimmers on pixel art), as the
+ * browser lays it out. The port's two faces stand in for the browser's idle
+ * loop, so a ship of one frame shows it on both. A recipe that only restates
+ * the base player, or names frames neither sheet has, keeps G, as the browser
+ * does rather than leave a hole.
+ */
+function continueFaceFrames(
+  record: LevelRecord,
+  stock: { playerData?: Record<string, unknown> },
+  index: Map<string, IndexedFrame>,
+  box: { w: number; h: number },
+  notes: string[],
+): SourceFrame[] {
+  const textures = (data?: Record<string, unknown>) =>
+    Array.isArray(data?.texture) ? data.texture as string[] : [];
+  const own = textures(record.playerData);
+  if (!own.length || own.join("\n") === textures(stock.playerData).join("\n")) {
+    return [];
+  }
+  const ships = own.map((name) => resolve(index, name))
+    .filter((found): found is IndexedFrame => !!found);
+  if (!ships.length) {
+    notes.push(
+      `continue: ${own[0]} is in neither sheet — G stays on the continue card`,
+    );
+    return [];
+  }
+
+  const fit = (ship: Raster) =>
+    Math.max(1, Math.floor(Math.min(box.w / ship.width, box.h / ship.height)));
+  const shown = [ships[0], ships[1] ?? ships[0]].map(wholeFrame);
+  notes.push(
+    `continue: the game's own ship (${
+      own.slice(0, 2).join(", ")
+    }) where G stood, at ${fit(shown[0])}x`,
+  );
+  return shown.map((ship, i) => {
+    const w = ship.width * fit(ship);
+    const h = ship.height * fit(ship);
+    // A ship too big for the box at 1:1 overhangs it in the browser, centred;
+    // the port centres the plate, so a plate grown to hold it does the same.
+    const plate = newRaster(Math.max(box.w, w), Math.max(box.h, h));
+    blit(
+      plate,
+      resizeTo(ship, w, h),
+      Math.round((plate.width - w) / 2),
+      Math.round((plate.height - h) / 2),
+    );
+    return {
+      name: `continueFace${i}.gif`,
+      sheet: plate,
+      entry: {
+        frame: { x: 0, y: 0, w: plate.width, h: plate.height },
+        rotated: false,
+        trimmed: false,
+      },
+    };
+  });
+}
+
 /** Produce every file the console reads, ready to hand to the ISO writer. */
 export async function stageAssets(options: StageOptions): Promise<StageResult> {
   const { gameDir, record } = options;
@@ -1146,9 +1215,25 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
       } left out — the title screen puts its own art there`,
     );
   }
+  // The game's own ship stands in for G on the continue card, over a face the
+  // game may have brought: the browser hides G's box whatever is in it.
+  const faceBox = uiJson.frames["continueFace0.gif"];
+  const faces = faceBox
+    ? continueFaceFrames(
+      record,
+      baseRecipe,
+      index,
+      faceBox.sourceSize ?? faceBox.frame,
+      notes,
+    )
+    : [];
+  const faceNames = new Set(faces.map((frame) => frame.name));
   const uiOverrides = [
-    ...uiOwn.filter((frame) => !covered.includes(frame)),
+    ...uiOwn.filter((frame) =>
+      !covered.includes(frame) && !faceNames.has(frame.name)
+    ),
     ...title.overrides,
+    ...faces,
   ];
   const uiDrop = new Set([
     ...title.drop,
@@ -1364,6 +1449,22 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
 // '0' and '1', so the level's first two player frames are fitted into two
 // cells — scaled to fit rather than stretched, since the source art is taller
 // than it is wide.
+/** A frame at its full source size, with any trimmed margin put back. */
+function wholeFrame(found: IndexedFrame): Raster {
+  const size = found.entry.sourceSize ?? found.entry.frame;
+  const origin = found.entry.trimmed && found.entry.spriteSourceSize
+    ? found.entry.spriteSourceSize
+    : { x: 0, y: 0 };
+  return cut(
+    found.sheet,
+    found.entry.frame,
+    size.w,
+    size.h,
+    origin.x,
+    origin.y,
+  );
+}
+
 function buildPlayerSheet(
   index: Map<string, IndexedFrame>,
   frameNames: string[],
@@ -1372,19 +1473,7 @@ function buildPlayerSheet(
   for (const name of frameNames) {
     const found = resolve(index, name);
     if (!found) continue;
-    const size = found.entry.sourceSize ?? found.entry.frame;
-    const origin = found.entry.trimmed && found.entry.spriteSourceSize
-      ? found.entry.spriteSourceSize
-      : { x: 0, y: 0 };
-    const full = cut(
-      found.sheet,
-      found.entry.frame,
-      size.w,
-      size.h,
-      origin.x,
-      origin.y,
-    );
-    cells.push(fitInto(full, 32, 32));
+    cells.push(fitInto(wholeFrame(found), 32, 32));
     if (cells.length === 2) break;
   }
   const sheet = newRaster(64, 32);

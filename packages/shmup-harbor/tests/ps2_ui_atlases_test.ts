@@ -199,6 +199,41 @@ Deno.test("a logo of the game's own still goes up over its own G", async () => {
   assertEquals(frames["subTitle.gif"], undefined);
 });
 
+Deno.test("a game that flies its own ship idles it where G stood on the continue card", async () => {
+  // gs's shape: one 32x50 ship frame in the level atlas.
+  const record: LevelRecord = {
+    name: "own-ship",
+    atlasImageDataURL: await dataUrl(solid(32, 50, [0, 255, 0, 255])),
+    atlasFrames: { "bby-ship": rect(0, 0, 32, 50) },
+    playerData: { texture: ["bby-ship"] },
+  };
+  const staged = await stageAssets({ gameDir: GAME_DIR, record });
+  for (const face of ["continueFace0.gif", "continueFace1.gif"]) {
+    // G's 100x131 box, the ship centred in it: green, not G.
+    const { entry, scale, rgba } = await stagedPixel(staged.files, face);
+    assertEquals(entry.frame.w * scale, 100);
+    assertEquals(rgba, [0, 255, 0, 255]);
+  }
+  assert(
+    staged.notes.some((n) =>
+      n.includes("own ship (bby-ship) where G stood, at 2x")
+    ),
+  );
+});
+
+Deno.test("a recipe that restates the base player keeps G on the continue card", async () => {
+  const stock = JSON.parse(
+    await Deno.readTextFile(join(GAME_DIR, "assets", "game.json")),
+  );
+  const staged = await stageAssets({
+    gameDir: GAME_DIR,
+    record: { playerData: { texture: stock.playerData.texture } },
+  });
+  const { rgba } = await stagedPixel(staged.files, "continueFace0.gif");
+  assert(rgba[3] > 0, "G's face is missing");
+  assertEquals(staged.notes.filter((n) => n.startsWith("continue:")), []);
+});
+
 Deno.test("a stock G keeps the stock logo and subtitle on it", async () => {
   const staged = await stageAssets({ gameDir: GAME_DIR, record: {} });
   const frames = parse(staged.files, "assets/game_ui.json").frames;

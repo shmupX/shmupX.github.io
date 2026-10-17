@@ -3335,6 +3335,15 @@ printed across the game's art (`gs`'s Geek Squad badge sits in exactly those
 rows). The browser never wears either on a custom game; the disc has no way to
 set the game's name in their place, so its G stands alone.
 
+**The continue card flies the game's own ship.** A game whose `playerData` names
+frames other than the base game's shows its ship in G's box on the browser's
+continue card (`playsOwnShip` / `dezaShipFace`). The port only ever alternates
+`continueFace0.gif` and `continueFace1.gif`, so the exporter packs the ship
+under those names (`continueFaceFrames`): G's 100x131 box with the ship centred
+at the largest whole-pixel scale that fits — 2x for `gs`'s 32x50 tag — its first
+two frames standing in for the browser's idle loop. A recipe that only restates
+the base player, or names frames neither sheet has, keeps G.
+
 **The output is a folder** — `athena.elf`, `main.js`, `athena.ini` and
 `assets/`. Copy it to a USB stick, or point an emulator straight at
 `athena.elf`. `--iso` also writes a disc image; it is opt-in because the folder
