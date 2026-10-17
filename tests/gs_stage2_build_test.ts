@@ -15,11 +15,12 @@ import {
   type Raster,
 } from "@shmupx/shmup-harbor/png";
 import { cut } from "@shmupx/shmup-harbor/raster";
-import { type FrameRect, sheetDataUrl } from "../mcp/lib/art.ts";
-import { setDatabaseUrl } from "../mcp/lib/rtdb.ts";
+import { type FrameRect, packFrames, sheetDataUrl } from "../mcp/lib/art.ts";
+import { decodeFrameName, setDatabaseUrl } from "../mcp/lib/rtdb.ts";
 import {
   apply,
   DALTONIUS,
+  DRAGON_HEADS,
   namedFrames,
   packedNames,
   plan,
@@ -127,7 +128,18 @@ async function seed(extra: Tree = {}) {
     ...extra,
   };
   const ram = await sheetDataUrl(patterned(32, 18));
-  return { sheet, frames, level, ram };
+  // The Character Library's deza_dragon atlas, where the dragon's heads live.
+  const heads = packFrames(DRAGON_HEADS.frames.map((name) => ({
+    name,
+    raster: patterned(32, 64),
+    source: name,
+    scope: "seed",
+  })));
+  const dragonAtlas = {
+    json: JSON.stringify(heads.json),
+    png: await sheetDataUrl(heads.sheet),
+  };
+  return { sheet, frames, level, ram, dragonAtlas };
 }
 
 async function withDb(
@@ -138,7 +150,11 @@ async function withDb(
   ) => Promise<void>,
 ) {
   const s = await seed(extra);
-  const db = fakeDb({ levels: { gs: s.level }, sprites: { RAM_0: s.ram } });
+  const db = fakeDb({
+    levels: { gs: s.level },
+    sprites: { RAM_0: s.ram },
+    atlases: { [DRAGON_HEADS.atlas]: s.dragonAtlas },
+  });
   setDatabaseUrl(db.url);
   try {
     await run(db, s);
@@ -165,8 +181,16 @@ Deno.test({
       const p = await plan();
       assertEquals(p.added.map((a) => a.frame).sort(), packedNames().sort());
       assertEquals(p.taken, []);
-      // One row under the old sheet: the boss is 128 tall.
-      assertEquals(p.atlas.after, { w: 2031, h: 113 + 4 + 128 });
+      // Packed under the old sheet, to its width, and no taller than the art.
+      const packed = Object.entries(p.atlasFrames)
+        .filter(([key]) => packedNames().includes(decodeFrameName(key)))
+        .map(([, r]) => r.frame);
+      assertEquals(packed.length, packedNames().length);
+      for (const r of packed) {
+        assert(r.y >= 113 + 4 && r.x + r.w <= 2031, JSON.stringify(r));
+      }
+      assertEquals(p.atlas.after.w, 2031);
+      assertEquals(p.atlas.after.h, Math.max(...packed.map((r) => r.y + r.h)));
 
       await apply(p);
       // The art before anything that names it.
@@ -178,11 +202,17 @@ Deno.test({
         "stages/stage1",
       ]);
 
-      const frames = db.read("levels/gs/atlasFrames") as Record<
+      const stored = db.read("levels/gs/atlasFrames") as Record<
         string,
         FrameRect
       >;
+      const frames: Record<string, FrameRect> = {};
+      for (const [k, r] of Object.entries(stored)) {
+        frames[decodeFrameName(k)] = r;
+      }
+      // Every frame the records draw, the dragon stage's included.
       for (const name of namedFrames()) assert(frames[name], `no ${name}`);
+      for (const name of DRAGON_HEADS.frames) assert(frames[name], name);
       const after = await decodeDataUrl(
         db.read("levels/gs/atlasImageDataURL") as string,
       );
@@ -201,6 +231,16 @@ Deno.test({
         cut(after, frames.Daltonius_fired0.frame),
         fired,
         "Daltonius_fired0",
+      );
+      const dragon = await decodePng(
+        await Deno.readFile(
+          new URL("../scripts/gs/art/liuKangDragon9.png", import.meta.url),
+        ),
+      );
+      sameRaster(
+        cut(after, frames.liuKangDragon9.frame),
+        dragon,
+        "liuKangDragon9",
       );
       assertEquals(db.read("levels/gs/bossData/boss1"), DALTONIUS);
       assertEquals(db.read("levels/gs/stages/stage1"), { enemylist: STAGE2 });

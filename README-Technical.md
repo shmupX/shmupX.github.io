@@ -428,11 +428,13 @@ they are written out in full.
     built the fight from, or past a second stage the `stage2` record (which
     keeps the boss's balloon unless its block names one), so the record the
     player is fighting is the one that speaks. The cloud game `gs` uses it: its
-    stage-2 boss, Daltonius, says "I'm Fired!!!" (`scripts/gs/build-stage2.ts`
-    writes that stage, and `--revert` takes it back out;
-    `scripts/gs/publish-daltonius.ts` puts him in the character library). The
-    character tools carry the balloon's art with the boss: `referencedFrames`
-    and `remapFrames` walk `dangerBalloon` like any other slot.
+    stage-2 boss, Daltonius, says "I'm Fired!!!", as Liu Kang's dragon too
+    (`scripts/gs/build-stage2.ts` writes that stage, dragon and all, and
+    `--revert` takes it back out; `scripts/gs/publish-daltonius.ts` puts the
+    same Daltonius in the character library; the dragon's cells are kept in
+    `scripts/gs/art`). The character tools carry the balloon's art with the
+    boss: `referencedFrames` and `remapFrames` walk `dangerBalloon` like any
+    other slot, and a `stage2` block like the record it is laid over.
     `tests/boss_danger_balloon_test.ts` pins it. Upstream home is
     `2019-es7/src/phaser/game-objects/Boss.js`.
   - A cart's boss arms itself out of the cart. A cart has nowhere to keep a

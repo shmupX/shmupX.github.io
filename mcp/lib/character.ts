@@ -168,6 +168,14 @@ export function referencedFrames(record: Character): string[] {
       : (balloon as { frames?: unknown } | undefined)?.frames,
   );
 
+  // A boss's second stage (game.bundle.js bossStage2Record) is laid over the
+  // record mid-fight: its anim sets, weapon slots and balloon are art the boss
+  // needs as much as its own.
+  const stage2 = record.stage2;
+  if (stage2 && typeof stage2 === "object" && !Array.isArray(stage2)) {
+    for (const name of referencedFrames(stage2 as Character)) names.add(name);
+  }
+
   return [...names];
 }
 
@@ -233,6 +241,11 @@ export function remapFrames(
   else if (balloon && typeof balloon === "object") {
     const o = balloon as { frames?: unknown };
     if (o.frames !== undefined) o.frames = list(o.frames);
+  }
+
+  const stage2 = next.stage2;
+  if (stage2 && typeof stage2 === "object" && !Array.isArray(stage2)) {
+    next.stage2 = remapFrames(stage2 as Character, rename);
   }
   return next;
 }

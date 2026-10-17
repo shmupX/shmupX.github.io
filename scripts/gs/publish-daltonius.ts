@@ -9,14 +9,16 @@
  *
  * Writes two nodes, as the character tools publish every character:
  *
- * - `atlases/Daltonius`: his art. His 15 poses and the three "I'm Fired!!!"
- *   balloon frames (scripts/gs/art), spriteX's RAM stick (sprites/RAM_0) for
- *   his small shot, and the gs game's hacked laptop (laptop0/laptop1, cut
- *   from levels/gs) for his big one.
+ * - `atlases/Daltonius`: his art. His 15 poses, the three "I'm Fired!!!"
+ *   balloon frames and the 13 cells of Liu Kang becoming the dragon
+ *   (scripts/gs/art), spriteX's RAM stick (sprites/RAM_0) for his small shot,
+ *   the gs game's hacked laptop (laptop0/laptop1, cut from levels/gs) for his
+ *   big one, and the dragon's heads (deza_dragon's deza1_52_0/1.gif).
  * - `characters/Daltonius`: the record gs flies as boss1 (DALTONIUS in
  *   build-stage2.ts), with `textureKey: "Daltonius"`. It keeps Akuma's
- *   routine pin and the danger balloon, so wherever he is placed he moves
- *   like Akuma and says he is fired.
+ *   routine pin, the danger balloon and the dragon stage, so wherever he is
+ *   placed he moves like Akuma, turns into the dragon at half his bar, and
+ *   says he is fired.
  *
  * Nothing is written without --apply. It refuses to replace a Daltonius
  * already in the library unless --force, and refuses to publish a record
@@ -39,7 +41,7 @@ import {
   referencedFrames,
 } from "../../mcp/lib/character.ts";
 import { decodeFrameName, get, getWithEtag } from "../../mcp/lib/rtdb.ts";
-import { ART, DALTONIUS, daltoniusArt } from "./build-stage2.ts";
+import { ART, DALTONIUS, daltoniusArt, DRAGON_HEADS } from "./build-stage2.ts";
 
 export const NAME = "Daltonius";
 
@@ -81,6 +83,9 @@ export async function buildDaltonius(): Promise<CreateResult> {
   }
   pulled.push(await resolveFrame({ sprite: "RAM_0" }));
   pulled.push(...await levelFrames("gs", ["laptop0", "laptop1"]));
+  for (const frame of DRAGON_HEADS.frames) {
+    pulled.push(await resolveFrame({ atlas: DRAGON_HEADS.atlas, frame }));
+  }
 
   const character = structuredClone({ ...DALTONIUS, textureKey: NAME });
   const { sheet, json } = packFrames(pulled);

@@ -17,11 +17,15 @@
  *   bullets and all (static/games/2028-ai/foo.json's enemyC).
  * - `bossData/boss1`, Daltonius: Akuma's frame set one for one (idle, shootA,
  *   shootB, the Ashura warp, both finish poses), drawn by draw_daltonius.py,
- *   pinned to Akuma's routine (`attackPattern: "bossExtra"`) with Akuma's own
- *   hp, score, interval and bullet stats. His small shot (bulletDataA) is
- *   spriteX's RAM stick (sprites/RAM_0) and his big one (bulletDataB) is the
- *   game's hacked laptop, laptop0/laptop1. His danger balloon is the
- *   whiteboard's "I'm Fired!!!" (`dangerBalloon`, read by game.bundle.js).
+ *   pinned to Akuma's routine (`attackPattern: "bossExtra"`) with Akuma's
+ *   score, interval and bullet stats and a 3500 hp bar. His small shot
+ *   (bulletDataA) is spriteX's RAM stick (sprites/RAM_0) and his big one
+ *   (bulletDataB) is the game's hacked laptop, laptop0/laptop1. His danger
+ *   balloon is the whiteboard's "I'm Fired!!!" (`dangerBalloon`, read by
+ *   game.bundle.js). Below half his bar he becomes Liu Kang's dragon
+ *   (`stage2`): monkey-kombat's liu-kang.png cells, liuKangDragon0-12 in
+ *   art/, morph into the dragon and bite, and both weapons spit the Character
+ *   Library's deza_dragon heads. The dragon keeps his balloon.
  * - the art all of that names, packed under the level's existing sheet, the
  *   way the level loader stacks a level's sheet under game_asset. Frames the
  *   level already carries are reused and never repainted, so a re-run adds
@@ -47,6 +51,7 @@ import {
   resolveFrame,
   sheetDataUrl,
 } from "../../mcp/lib/art.ts";
+import { referencedFrames } from "../../mcp/lib/character.ts";
 import {
   decodeFrameName,
   encodeKey,
@@ -72,6 +77,13 @@ const BOSS_POSES = {
   syngokuFinishTen: ["syungoku_finish_ten"],
 };
 const FIRED = ["Daltonius_fired0", "Daltonius_fired1", "Daltonius_fired2"];
+/** Liu Kang becoming the dragon (0-9) and the dragon biting (10-12). */
+const DRAGON = Array.from({ length: 13 }, (_, i) => `liuKangDragon${i}`);
+/** The dragon's heads, both of its weapons, out of the Character Library. */
+export const DRAGON_HEADS = {
+  atlas: "deza_dragon",
+  frames: ["deza1_52_0.gif", "deza1_52_1.gif"],
+};
 const FLIRTY = {
   flirtyGirl0: "flirtyGirl0.png",
   flirtyGirl1: "flirtyGirl1.png",
@@ -87,9 +99,9 @@ const anim = Object.fromEntries(
 );
 
 /**
- * Daltonius, the stage-2 boss. Akuma's numbers (the stock bossExtra)
- * throughout. The character library holds the same record
- * (publish-daltonius.ts).
+ * Daltonius, the stage-2 boss. Akuma's numbers (the stock bossExtra) but for
+ * his bar, which the dragon shares: stage 2 is the bottom half of it, not a
+ * refill. The character library holds the same record (publish-daltonius.ts).
  */
 export const DALTONIUS = {
   name: "Daltonius",
@@ -114,12 +126,41 @@ export const DALTONIUS = {
   // The balloon's tail tip sits by the crown, right of the topknot; the
   // balloon rises above and to the right of his head, as on the whiteboard.
   dangerBalloon: { frames: FIRED, x: 50, y: 20 },
-  hp: 350,
+  hp: 3500,
   interval: 200,
   score: 8000,
   shadowOffsetY: 10,
   shadowReverse: true,
   spgage: 30,
+  // Below half his bar, Liu Kang's dragon: the morph plays once, then every
+  // move is a bite, and both weapons spit dragon heads. Akuma's routine and
+  // the balloon carry over from the record.
+  stage2: {
+    hpBelow: 0.5,
+    anim: {
+      morph: DRAGON.slice(0, 10),
+      idle: [DRAGON[9]],
+      shootA: DRAGON.slice(10),
+      shootB: DRAGON.slice(10),
+      syngoku: DRAGON.slice(10),
+    },
+    bulletDataA: {
+      damage: 1,
+      hp: 5,
+      score: 100,
+      speed: 2.3,
+      spgage: 5,
+      texture: DRAGON_HEADS.frames,
+    },
+    bulletDataB: {
+      damage: 1,
+      hp: 20,
+      score: 500,
+      speed: 1.5,
+      spgage: 10,
+      texture: DRAGON_HEADS.frames,
+    },
+  },
 };
 
 /** The flirty girl, as the shipped game has her, on this level's frame names. */
@@ -174,27 +215,32 @@ export const STAGE2 = [
   ["00", "00", "00", "00", "00", "00", "00", "00"],
 ];
 
-/** Daltonius's own drawn frames: his poses and his balloon, each a PNG in art/. */
+/**
+ * Daltonius's frames that live as PNGs in art/: his poses, his balloon, and
+ * the dragon he becomes.
+ */
 export function daltoniusArt(): string[] {
-  return [...Object.values(anim).flat(), ...FIRED];
+  return [...Object.values(anim).flat(), ...FIRED, ...DRAGON];
 }
 
 /** Every frame this script packs into the level, by the name it gets there. */
 export function packedNames(): string[] {
-  return [...daltoniusArt(), "RAM_0", ...Object.keys(FLIRTY)];
+  return [
+    ...daltoniusArt(),
+    "RAM_0",
+    ...DRAGON_HEADS.frames,
+    ...Object.keys(FLIRTY),
+  ];
 }
 
-/** Every frame name the three records draw. */
+/** Every frame name the three records draw, the dragon's included. */
 export function namedFrames(): string[] {
-  const names = new Set<string>([
-    ...Object.values(anim).flat(),
-    ...FIRED,
-    ...DALTONIUS.bulletDataA.texture,
-    ...DALTONIUS.bulletDataB.texture,
-    ...FLIRTY_GIRL.texture,
-    ...FLIRTY_GIRL.projectileData.texture,
-  ]);
-  return [...names];
+  return [
+    ...new Set([
+      ...referencedFrames(DALTONIUS),
+      ...referencedFrames(FLIRTY_GIRL),
+    ]),
+  ];
 }
 
 /** Cut the flirty girl out of the shipped game's own atlas. */
@@ -274,7 +320,7 @@ export async function plan(): Promise<Plan> {
   }
   const have = new Set(Object.keys(rawFrames.value).map(decodeFrameName));
 
-  // Every source, in packing order: the boss's poses in one row, then the
+  // Every source, in packing order: the boss's poses and the dragon, then the
   // small things.
   const sources: (() => Promise<ResolvedFrame>)[] = [];
   for (const name of daltoniusArt()) {
@@ -283,6 +329,9 @@ export async function plan(): Promise<Plan> {
     );
   }
   sources.push(() => resolveFrame({ sprite: "RAM_0" }));
+  for (const frame of DRAGON_HEADS.frames) {
+    sources.push(() => resolveFrame({ atlas: DRAGON_HEADS.atlas, frame }));
+  }
   const flirty = await flirtyFrames();
   for (const f of flirty) sources.push(() => Promise.resolve(f));
 
