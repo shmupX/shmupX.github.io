@@ -414,6 +414,22 @@ they are written out in full.
     would play as a black band. A stage with Dezaemon scenery (`dezaBg`) never
     shows a stage-end backdrop at all, so the field is inert there. Upstream
     home is `2019-es7/src/phaser/GameScene.js`.
+  - A boss record can carry its own danger balloon. The skull that pops over a
+    boss once one bomb would finish it (`boss_dengerous0..2.gif`) is swapped for
+    the author's art by `dangerBalloon: {frames, x, y}` on the boss record:
+    `frames` are frames of the merged `game_asset` atlas, flipped every 250 ms
+    as the stock three are, and `x`/`y` place the balloon's bottom-left corner
+    (a speech balloon's tail) from the boss sprite's top-left, the measure
+    `BOSS_BALLOON_OFFSETS` uses. A bare array is the frames alone, at the slot's
+    stock offset. `bossDangerBalloon` drops frames the atlas lacks, and with
+    none left the stock skull and its offset come back: the balloon is the one
+    cue that a bomb will finish the boss, so it never goes missing. It reads
+    `scene.bossRecord`, the record `bossAdd` (or the hidden Akuma's takeover)
+    built the fight from, so the record the player is fighting is the one that
+    speaks. The cloud game `gs` uses it: its stage-2 boss says "I'm Fired!!!"
+    (`scripts/gs/build-stage2.ts` writes that stage, and `--revert` takes it
+    back out). `tests/boss_danger_balloon_test.ts` pins it. Upstream home is
+    `2019-es7/src/phaser/game-objects/Boss.js`.
   - A cart's boss arms itself out of the cart. A cart has nowhere to keep a
     boss's own weapon records: the writer folds `bulletDataA/B/C` into the
     save-wide bullet bank and points the fire points at them, and the decoder
