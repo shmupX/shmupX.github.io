@@ -43,7 +43,8 @@
 //                     scaffold/plugins/cordova-plugin-second-screen.
 //
 // Pipeline:
-//   1. Fetch the level record (Firebase REST, or --level-file).
+//   1. Fetch the level record (Firebase REST — shmupX/levels/<name> or the
+//      key shmupX/levelAliases names, never the root copy — or --level-file).
 //   2. Stage www/: cmg assets + patched game.bundle.js + foo.json + shell.
 //      (The custom atlas is merged at runtime by the level-loader plugin.)
 //   3. Download custom BGM into www/assets/custom-bgm/.
@@ -54,7 +55,8 @@ const fs = require("fs");
 const path = require("path");
 
 const { slugify, packageIdFor } = require("./lib/slug");
-const { fetchLevel } = require("./lib/fetch-level");
+const { resolveLevel, FIREBASE_DB_URL } = require("./lib/fetch-level");
+const { RTDB_ROOT } = require("./lib/rtdb-root");
 const { downloadBgmForLevel } = require("./lib/download-bgm");
 const { stageWww } = require("./lib/stage");
 const { stageWebDir, stageSecondScreen } = require("./lib/second-screen");
@@ -285,7 +287,16 @@ async function main() {
     console.log("  from file: " + args.flags["level-file"]);
   } else {
     try {
-      levelData = await fetchLevel(levelName);
+      // shmupX/levels/<name>, else the key shmupX/levelAliases names. The
+      // app keeps the name it was asked for (the slug, the package id and
+      // the launcher title above all come from it); only the record is the
+      // aliased one's.
+      const hit = await resolveLevel(levelName);
+      levelData = hit.data;
+      console.log(
+        "  from the cloud: " + RTDB_ROOT + "/levels/" + hit.key +
+          (hit.alias ? " (\"" + hit.alias + "\" is an alias of it)" : ""),
+      );
     } catch (err) {
       console.error("ERROR: " + err.message);
       process.exit(err.code === "LEVEL_NOT_FOUND" ? 3 : 1);
@@ -309,6 +320,11 @@ async function main() {
     extractPlugin: EXTRACT_MODE_PLUGIN,
     editorOrigin: args.flags["editor-origin"] || process.env.SHMUPX_EDITOR_ORIGIN ||
       null,
+    // The tree the app's EXTRACT MODE publishes characters and atlases into,
+    // baked into the shell (lib/shell-template.js says why it cannot ride
+    // firebase-config.js alone).
+    databaseURL: FIREBASE_DB_URL,
+    rtdbRoot: RTDB_ROOT,
     wwwRoot,
     levelName,
     levelData,

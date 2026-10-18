@@ -48,7 +48,9 @@ export const handler = define.handlers({
         platform: body.platform || "android",
         // A Dezaemon cart open in the editor has no cloud record to fetch, so
         // the editor sends the record itself. Absent for a normal cloud level,
-        // which is fetched exactly as before.
+        // which the export fetches by name from shmupX's own subtree,
+        // shmupX/levels/<name> (packages/shmup-harbor, lib/rtdb-root.ts) —
+        // the editor saved it there, and the root-level copy is cmg's.
         ...(body.levelRecord === undefined
           ? {}
           : { levelRecord: body.levelRecord }),

@@ -99,6 +99,23 @@ export {
   type ShelfListing,
   shelfSlug,
 } from "./lib/shelf.ts";
+// shmupX's games live under `shmupX/` in the database cmg shares; a cloud
+// level's name resolves there (key, then alias) and never at the root.
+export {
+  RTDB_ROOT,
+  rtdbPath,
+  SCOPED_NODES,
+  type ScopedNode,
+} from "./lib/rtdb-root.ts";
+export {
+  CLOUD_DB,
+  cloudAliasUrl,
+  type CloudLevel,
+  type CloudLevelOptions,
+  cloudLevelUrl,
+  type JsonGet,
+  resolveCloudLevel,
+} from "./lib/cloud-level.ts";
 
 // ── Saturn: the cart, the emulator, and the parity run ──────────────────────
 export {

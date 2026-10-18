@@ -139,7 +139,7 @@
   <div class="sx-app">
     <div class="sx-topbar">
       <div class="sx-topbar-left"><span class="dot"></span><span>SPRITEX // TILEMAP EDITOR</span></div>
-      <div class="sx-topbar-right"><span id="cloudState">RTDB · tilemaps/* · pixelSprites/* · levels/*</span></div>
+      <div class="sx-topbar-right"><span id="cloudState">RTDB · tilemaps/* · pixelSprites/* · shmupX/levels/*</span></div>
     </div>
     <div class="sx-header">
       <div class="sx-logo">TILEMAP</div>
@@ -219,14 +219,14 @@
             <input id="tilemapObjType" type="text" placeholder="OBJECT TYPE" disabled>
           </div>
 
-          <div class="sx-dock-section"><span>LEVEL SCENERY — levels/*</span></div>
+          <div class="sx-dock-section"><span>LEVEL SCENERY — shmupX/levels/*</span></div>
           <div class="row">
             <select id="levelSelect" style="flex:1"><option value="">-- Cloud level --</option></select>
             <select id="stageSelect" style="width:96px"><option value="">STAGE</option></select>
           </div>
           <div class="sx-hint">A stage's own tile grid (14 columns × 768 rows, 48 parts of 16) over the level's <code>backgroundCells</code> — what the runtime scrolls instead of the stock backdrop. Save writes it back to the level; APPLY hands it to an open Level Editor.</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <button id="btnLevelSave" class="btn primary" disabled title="Write this stage's scenery (and any new tiles) to levels/{name}">☁ SAVE TO LEVEL</button>
+            <button id="btnLevelSave" class="btn primary" disabled title="Write this stage's scenery (and any new tiles) to shmupX/levels/{name}">☁ SAVE TO LEVEL</button>
             <button id="btnLevelApply" class="btn" disabled title="Hand the edited scenery to an open Level Editor window (no cloud write)">→ APPLY TO EDITOR</button>
           </div>
           <div class="sx-note" id="levelNote"></div>

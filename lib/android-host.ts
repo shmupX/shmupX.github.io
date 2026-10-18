@@ -38,6 +38,7 @@ import {
   packagedBuildRoot,
   stagedRuntimeRoot,
 } from "@shmupx/shmup-harbor/build-workspace";
+import { rtdbPath } from "./rtdb-root.ts";
 import { repoRoot } from "@shmupx/shmup-harbor/repo-root";
 import { tailscaleCandidates } from "./tailscale.ts";
 
@@ -883,10 +884,16 @@ export async function buildCandidates(): Promise<BuildCandidate[]> {
       }
     }
   }
+  // shmupX's own games only: SHELF_DB is the database's base (it also serves
+  // the root-level shelves), and the levels are under the shmupX subtree —
+  // the root-level levels/* is cmg's catalog (lib/rtdb-root.ts).
   try {
-    const res = await fetch(`${SHELF_DB}/levels.json?shallow=true`, {
-      signal: AbortSignal.timeout(15000),
-    });
+    const res = await fetch(
+      `${SHELF_DB}/${rtdbPath("levels")}.json?shallow=true`,
+      {
+        signal: AbortSignal.timeout(15000),
+      },
+    );
     const names = res.ok ? await res.json() : null;
     if (names && typeof names === "object") {
       for (const name of Object.keys(names).sort()) {

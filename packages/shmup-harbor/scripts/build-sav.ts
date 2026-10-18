@@ -1,7 +1,8 @@
 // scripts/build-sav.ts — a level record as a Dezaemon 2 cart save.
 //
 //   deno task build:sav                                  # the bundled base game (foo.json) -> "Dez 2 - foo.sav"
-//   deno task build:sav foo                              # the cloud level levels/foo
+//   deno task build:sav foo                              # the cloud level shmupX/levels/foo
+//   deno task build:sav 2019                             # an alias: shmupX/levelAliases/2019 names 2019-PS2
 //   deno task build:sav ./backups/mygame.json            # a level record on disk
 //   deno task build:sav foo --palette snes               # reduce the art the Super Famicom way
 //   deno task build:sav foo --out build/sav/foo.sav --snes-pal build/sav/foo.pal --report
@@ -53,6 +54,8 @@ import {
   snesCgramBytes,
 } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
+import { resolveCloudLevel } from "../lib/cloud-level.ts";
+import { RTDB_ROOT } from "../lib/rtdb-root.ts";
 
 /** The bytes behind a base64 data URL, whatever its MIME type. */
 function dataUrlBytes(dataUrl: string): Uint8Array<ArrayBuffer> {
@@ -65,6 +68,8 @@ function dataUrlBytes(dataUrl: string): Uint8Array<ArrayBuffer> {
 }
 
 const ROOT = repoRoot();
+// The database base. The level itself is read from shmupX's subtree of it,
+// never the root-level copy, which is cmg's (lib/cloud-level.ts).
 const FIREBASE_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 const BASE_GAME = join(ROOT, "static", "games", "2028-ai");
 const BASE_ATLAS_JSON = join(BASE_GAME, "assets", "game_asset.json");
@@ -180,18 +185,26 @@ export async function loadLevel(
       source: level,
     };
   }
-  const url = `${FIREBASE_DB}/levels/${encodeURIComponent(level)}.json`;
+  // shmupX/levels/<name>, else the key shmupX/levelAliases names (so "2019"
+  // is 2019-PS2). One door for all five cart writers: build-ddd, build-kids,
+  // build-sfc and build-plus load their levels through this function too.
   log(`level: ${level} (cloud)`);
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`could not read the level (HTTP ${response.status})`);
+  const hit = await resolveCloudLevel(level, {
+    db: FIREBASE_DB,
+    accept: (value) => {
+      const record = value as LevelRecord | null;
+      return !!record && !!(record.enemylist || record.stages);
+    },
+  });
+  if (!hit) {
+    throw new Error(`level "${level}" not found in ${RTDB_ROOT}/levels`);
   }
-  const record = await response.json() as LevelRecord | null;
-  if (!record || (!record.enemylist && !record.stages)) {
-    throw new Error(`level "${level}" not found`);
+  if (hit.alias) {
+    log(`  "${hit.alias}" is an alias of ${RTDB_ROOT}/levels/${hit.key}`);
   }
+  const record = hit.value as LevelRecord;
   if (!record.name) record.name = level;
-  return { record, source: url };
+  return { record, source: hit.url };
 }
 
 /** Every frame name a level's records mention. */

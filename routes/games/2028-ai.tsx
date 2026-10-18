@@ -68,7 +68,10 @@ export default define.page(function Game2028() {
              into an exported app, so a level scores to one board wherever it is
              played. The compat SDK is deferred (never blocking the bundle) and
              firebaseScores.js waits a bounded time for it, so a slow or absent
-             network costs boot time nothing and just leaves the local cache. */
+             network costs boot time nothing and just leaves the local cache.
+             It also names shmupX's subtree of the database cmg shares
+             (__RTDB_ROOT__, and __CHARACTERS_DB__ for the characters module
+             CHARACTERS_MODULE below points scene scripts at). */
         }
         <script src="/firebase-config.js"></script>
         <script

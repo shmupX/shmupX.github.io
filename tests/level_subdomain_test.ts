@@ -147,7 +147,8 @@ Deno.test("the level listing is one shallow read, cached for a minute, and survi
     "2019-PS2",
     "Daioh",
   ]);
-  assertEquals(calls, ["https://db.test/levels.json?shallow=true"]);
+  // The db is the database's base; shmupX's levels are a subtree of it.
+  assertEquals(calls, ["https://db.test/shmupX/levels.json?shallow=true"]);
   clock += 30_000;
   await cloudLevelKeys("https://db.test", fetcher, now);
   assertEquals(calls.length, 1, "served from the cache inside a minute");
@@ -224,7 +225,7 @@ Deno.test("the alias index is one read, cached, and keeps only well-formed names
     "2019": "2019-PS2",
     streetfighter: "2019-PS2",
   });
-  assertEquals(calls, ["https://db.test/levelAliases.json"]);
+  assertEquals(calls, ["https://db.test/shmupX/levelAliases.json"]);
   clock += 30_000;
   await cloudLevelAliases("https://db.test", fetcher, now);
   assertEquals(calls.length, 1, "served from the cache inside a minute");
@@ -251,10 +252,16 @@ Deno.test("planAliases adds labels no level owns and refuses the rest", () => {
   ]);
 });
 
+// The browser SDK cannot take a databaseURL with a path in it, so the
+// loader spells the shmupX root into its ref() paths: shmupX/levels and
+// shmupX/levelAliases, never the root-level copies cmg keeps.
 Deno.test("?level=<alias> loads the level the alias names, by its key", async () => {
   const records: Record<string, unknown> = {
-    "levels/2019-PS2": { name: "2019", enemylist: [["00"]] },
-    "levelAliases/streetfighter": "2019-PS2",
+    "shmupX/levels/2019-PS2": { name: "2019", enemylist: [["00"]] },
+    "shmupX/levelAliases/streetfighter": "2019-PS2",
+    // cmg's root copies: a loader that read these would be reading cmg's game.
+    "levels/StreetFighter": { name: "cmg's", enemylist: [["00"]] },
+    "levelAliases/nobody": "2019-PS2",
   };
   const reads: string[] = [];
   const firebase = {
@@ -279,9 +286,9 @@ Deno.test("?level=<alias> loads the level the alias names, by its key", async ()
   assertEquals(data.name, "2019");
   assertEquals(plugin.resolvedLevelName, "2019-PS2");
   assertEquals(reads, [
-    "levels/StreetFighter",
-    "levelAliases/streetfighter",
-    "levels/2019-PS2",
+    "shmupX/levels/StreetFighter",
+    "shmupX/levelAliases/streetfighter",
+    "shmupX/levels/2019-PS2",
   ]);
   // A name that is neither a key nor an alias is still "not found".
   let missing = "";
@@ -307,7 +314,8 @@ Deno.test("the bundle's inlined loader looks aliases up the way the plugin does"
   assertEquals(fetchLevel(bundle), fetchLevel(plugin));
   for (
     const line of [
-      'aliasesPath: "levelAliases",',
+      'levelsPath: "shmupX/levels",',
+      'aliasesPath: "shmupX/levelAliases",',
       "const levelKey = this.resolvedLevelName || levelName;",
       "levelName: levelKey,",
     ]

@@ -56,6 +56,7 @@ import {
   runExport,
 } from "./export-build.ts";
 import { compareSlug, resultFiles, runCompare } from "./engine-compare.ts";
+import { RTDB_ROOT } from "./rtdb-root.ts";
 
 export const EXPORT_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 // Keep in step with static/export-queue.js (tests/export_queue_test.ts checks).
@@ -70,7 +71,38 @@ export const HEARTBEAT_MS = 20_000;
 // No I, O, 0 or 1: a code is read off one screen and typed into another.
 export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const CODE_LENGTH = 8;
-export const WORKER_VERSION = 1;
+// What the heartbeat says this worker is. 2: a job's level NAME is read from
+// shmupX's own subtree of the database (shmupX/levels, then
+// shmupX/levelAliases — lib/cloud-level.ts), never from the root-level
+// levels/ that is cmg's catalog; a job stamped with some other `rtdbRoot` is
+// refused rather than built; and the apps it builds carry a runtime scoped
+// to shmupX/ too (EXTRACT MODE, the per-game boards).
+//
+// A version-1 worker — any packaged desktop installed before the split —
+// does none of that, and it claims every job whose status is "queued"
+// whatever else the job says. So static/export-queue.js writes each job a
+// version-1 worker would get wrong with status "waiting" and `minWorker`,
+// which version 1 never claims; this worker claims both statuses, up to its
+// own version (jobClaimable), and its claims and re-queues are shaped so that
+// a version-1 desktop sharing the code cannot pick the job back up either
+// (claimMark, requeueStatus). The heartbeat's version is only the early,
+// readable refusal at queue time.
+export const WORKER_VERSION = 2;
+// The status a job no worker older than its `minWorker` may claim, and the
+// first version that knew it: a "waiting" job that somehow lacks a
+// `minWorker` is still one no version-1 worker can be allowed near.
+export const WAITING_STATUS = "waiting";
+const WAITING_MIN_WORKER = 2;
+
+/**
+ * The heartbeat field a worker of `version` stamps with its own last beat:
+ * "seenAtV2". A top-level key of its own rather than a map, so a PATCH from
+ * one version can never overwrite another's, and a stream's patch event
+ * carries it as a plain key.
+ */
+export function versionSeenKey(version: number): string {
+  return `seenAtV${version}`;
+}
 
 const BLOB_TTL_MS = 24 * 3600_000;
 const JOB_TTL_MS = 7 * 24 * 3600_000;
@@ -79,7 +111,13 @@ const MAX_ATTEMPTS = 2;
 const LOG_TAIL = 6000;
 const UPLOAD_PARALLEL = 3;
 
-export type JobStatus = "queued" | "building" | "done" | "failed" | "cancelled";
+export type JobStatus =
+  | "queued"
+  | "waiting"
+  | "building"
+  | "done"
+  | "failed"
+  | "cancelled";
 
 export interface JobArtifact {
   name: string;
@@ -114,6 +152,21 @@ export interface ExportJob {
   level: string;
   platform: string;
   /**
+   * The database subtree `level` is a key (or an alias) in, stamped by the
+   * client that queued it (static/export-queue.js JOB_RTDB_ROOT): "shmupX".
+   * A worker only builds names from its own RTDB_ROOT, so a job stamped with
+   * another is failed with a reason instead of built from the wrong tree. A
+   * job with no stamp predates it and is read from RTDB_ROOT like any other.
+   */
+  rtdbRoot?: string;
+  /**
+   * The oldest worker version that may build this job, written beside status
+   * "waiting" by static/export-queue.js (jobNeedsCurrentWorker). Absent on a
+   * "queued" job, which any version may take. A claim keeps it, so a job put
+   * back on the queue goes back as "waiting" (requeueStatus).
+   */
+  minWorker?: number;
+  /**
    * The level record to build, instead of the one `level` names in the
    * cloud — an imported .sav, which exists only in the requester's browser.
    */
@@ -140,6 +193,7 @@ export interface ExportJob {
   progress?: string;
   log?: string;
   error?: string;
+  /** Who claimed it: claimMark's `<code>:v<N>`, or a bare code from a v1 claim. */
   worker?: string;
   workerName?: string;
   claimedAt?: number;
@@ -285,12 +339,103 @@ export function applyAtPath(
   return next;
 }
 
-/** The oldest queued job. Ids sort chronologically (static/export-queue.js). */
+/**
+ * Why this worker must not build `job`, or null when it may.
+ *
+ * Only a job that names its level by key needs the database at all — one
+ * that brought its own record (`job.record`) builds from that whatever tree
+ * it came from. A stamp other than this worker's RTDB_ROOT means the
+ * requester meant a level in another subtree, and the closest thing this
+ * worker could build is a different game with the same name.
+ */
+export function jobRootProblem(job: Pick<ExportJob, "rtdbRoot" | "record">):
+  | string
+  | null {
+  if (job.record) return null;
+  if (job.rtdbRoot === undefined || job.rtdbRoot === RTDB_ROOT) return null;
+  const theirs = job.rtdbRoot || "/";
+  return `this job names a level in "${theirs}" of the database, and this ` +
+    `desktop builds levels only from "${RTDB_ROOT}" — update whichever of ` +
+    `the two is older and queue it again`;
+}
+
+/** The oldest worker version that may build `job`. */
+export function jobMinWorker(
+  job: Pick<ExportJob, "minWorker" | "status">,
+): number {
+  if (typeof job.minWorker === "number" && job.minWorker > 1) {
+    return job.minWorker;
+  }
+  return job.status === WAITING_STATUS ? WAITING_MIN_WORKER : 1;
+}
+
+/** True while `status` means nobody has claimed the job yet. */
+export function jobUnclaimed(status: string | undefined): boolean {
+  return status === "queued" || status === WAITING_STATUS;
+}
+
+/**
+ * Whether this worker may claim `job`: one still waiting, that asks for no
+ * newer worker than this one. A job for a newer version is left where it is,
+ * for a newer desktop on the same code — the client's heartbeat check is
+ * what tells its requester when there is none.
+ */
+export function jobClaimable(
+  job: Pick<ExportJob, "minWorker" | "status"> | null | undefined,
+): boolean {
+  return !!job && jobUnclaimed(job.status) &&
+    jobMinWorker(job) <= WORKER_VERSION;
+}
+
+/**
+ * The status a claimed job goes back to when its build is abandoned: the one
+ * it was queued with. A job that needs a current worker must never come back
+ * as "queued", or a version-1 desktop on the same code claims it next.
+ */
+export function requeueStatus(
+  job: Pick<ExportJob, "minWorker" | "status">,
+): "queued" | "waiting" {
+  return jobMinWorker(job) > 1 ? WAITING_STATUS : "queued";
+}
+
+/**
+ * What a claim writes into `worker`: the code, tagged with the version the job
+ * needs. Version 1 re-queues, at its own start, every "building" job whose
+ * `worker` is exactly its code — so an untagged claim made here could be
+ * flipped back to "queued" by the installed app opening on the same code
+ * mid-build, and claimed by it. A tagged one it leaves alone.
+ */
+export function claimMark(
+  code: string,
+  job: Pick<ExportJob, "minWorker" | "status">,
+): string {
+  return `${code}:v${jobMinWorker(job)}`;
+}
+
+/**
+ * Whether a "building" job's `worker` is one this worker should recover when
+ * it starts: its own claimMark for any version it can build, or the bare code
+ * a version-1 claim on the same code writes (a build that died with the old
+ * app, which nothing else would ever finish). A claim tagged for a newer
+ * version belongs to a newer desktop, which may be building it right now.
+ */
+export function claimedHere(worker: string | undefined, code: string): boolean {
+  if (!worker || !code) return false;
+  if (worker === code) return true;
+  const m = /^(.+):v(\d+)$/.exec(worker);
+  return !!m && m[1] === code && Number(m[2]) <= WORKER_VERSION;
+}
+
+/**
+ * The oldest job this worker may claim. Ids sort chronologically
+ * (static/export-queue.js), so "queued" and "waiting" jobs take their turn
+ * in the order they were asked for.
+ */
 export function pickNextJob(
   jobs: Record<string, ExportJob | undefined>,
 ): ExportJob | null {
   const queued = Object.entries(jobs)
-    .filter(([, job]) => job && job.status === "queued")
+    .filter(([, job]) => jobClaimable(job))
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return queued.length ? queued[0][1] ?? null : null;
 }
@@ -307,7 +452,7 @@ export function jobsToPrune(
   const remove: string[] = [];
   for (const [id, job] of Object.entries(jobs)) {
     if (!job) continue;
-    if (job.status === "queued" || job.status === "building") continue;
+    if (jobUnclaimed(job.status) || job.status === "building") continue;
     const finished = job.finishedAt ?? job.requestedAt ?? 0;
     if (finished + JOB_TTL_MS < now) {
       remove.push(id);
@@ -567,7 +712,7 @@ export class ExportWorker {
 
   status(): WorkerStatus {
     const queued = Object.values(this.snapshot)
-      .filter((job) => job?.status === "queued").length;
+      .filter((job) => jobUnclaimed(job?.status)).length;
     return {
       running: this.running,
       enabled: this.config?.enabled ?? true,
@@ -645,6 +790,8 @@ export class ExportWorker {
       await dbPatch(`${EXPORT_PATHS.workers}/${this.code}`, {
         stoppedAt: Date.now(),
         busy: null,
+        // Off now, whatever an older desktop on this code beats next.
+        [versionSeenKey(WORKER_VERSION)]: null,
       });
     } catch (e) {
       this.lastError = (e as Error).message;
@@ -691,6 +838,7 @@ export class ExportWorker {
 
   private async heartbeat(): Promise<void> {
     if (!this.running || !this.config) return;
+    const now = Date.now();
     try {
       await dbPatch(`${EXPORT_PATHS.workers}/${this.code}`, {
         name: this.config.name,
@@ -699,8 +847,13 @@ export class ExportWorker {
         platforms: this.caps.platforms,
         notes: this.caps.notes,
         version: WORKER_VERSION,
+        // `version` is whoever beat last when two desktops share the code;
+        // this stamp is this version's alone (no other version writes it), so
+        // the client can tell a current worker is online even between an
+        // older one's beats — static/export-queue.js workerVersion.
+        [versionSeenKey(WORKER_VERSION)]: now,
         startedAt: this.startedAt,
-        seenAt: Date.now(),
+        seenAt: now,
         stoppedAt: null,
         busy: this.current
           ? {
@@ -717,20 +870,25 @@ export class ExportWorker {
 
   // A job this same desktop was building when it last went away is queued
   // again — once. Twice in a row is a build that kills the app, and that goes
-  // to the requester as a failure rather than looping.
+  // to the requester as a failure rather than looping. It goes back with the
+  // status it was queued with, so a job held for a current worker stays out
+  // of a version-1 desktop's reach (requeueStatus).
   private async recoverStale(): Promise<void> {
     const { data } = await dbGet<Record<string, ExportJob>>(
       `${EXPORT_PATHS.queue}/${this.code}`,
     );
     this.snapshot = data ?? {};
     for (const job of Object.values(this.snapshot)) {
-      if (!job || job.status !== "building" || job.worker !== this.code) {
+      if (
+        !job || job.status !== "building" ||
+        !claimedHere(job.worker, this.code)
+      ) {
         continue;
       }
       const attempts = (job.attempts ?? 0) + 1;
       const patch: Tree = attempts < MAX_ATTEMPTS
         ? {
-          status: "queued",
+          status: requeueStatus(job),
           attempts,
           progress: "the desktop went away mid-build — queued again",
           updatedAt: Date.now(),
@@ -836,16 +994,20 @@ export class ExportWorker {
   // The database has no transactions over REST, but it has ETags: read the
   // job, and write it back only if nobody else has in the meantime. Two
   // desktops sharing one code (a copied config file) therefore never build
-  // the same job twice.
+  // the same job twice. The claim keeps the version the job needs (so a
+  // re-queue restores its status) and tags `worker` with it (claimMark), so
+  // a version-1 desktop sharing the code leaves the build alone.
   private async claim(job: ExportJob): Promise<boolean> {
     const path = `${EXPORT_PATHS.queue}/${this.code}/${job.id}`;
     const { data, etag } = await dbGet<ExportJob>(path, true);
-    if (!data || data.status !== "queued") return false;
+    if (!jobClaimable(data)) return false;
+    const need = jobMinWorker(data!);
     const now = Date.now();
     const claimed: ExportJob = {
-      ...data,
+      ...data!,
+      ...(need > 1 ? { minWorker: need } : {}),
       status: "building",
-      worker: this.code,
+      worker: claimMark(this.code, data!),
       workerName: this.config?.name ?? "",
       claimedAt: now,
       startedAt: now,
@@ -961,17 +1123,25 @@ export class ExportWorker {
     let error = "";
     try {
       let built: ExportOutcome;
+      // Either kind may look its level up by name — a comparison of a cloud
+      // level builds a cart from it first — so the tree is checked for both.
+      const problem = jobRootProblem(job);
+      if (problem) throw new Error(problem);
       if (job.kind === "engine-compare") {
         log(`comparing "${job.level}" on the Saturn and in the runtime`);
         built = await runCompareOutcome(job, log, signal);
       } else {
         // A job that brought its own game builds from that; one that only
         // names a level leaves `levelRecord` absent, and runExport fetches
-        // the cloud record itself exactly as it always has.
+        // the cloud record itself — from shmupX/levels (or the key
+        // shmupX/levelAliases names), the tree the job was stamped with.
         const levelRecord = job.record
           ? await this.fetchJobRecord(job, log)
           : undefined;
-        log(`building "${job.level}" for ${job.platform}`);
+        log(
+          `building "${job.level}" for ${job.platform}` +
+            (levelRecord === undefined ? ` from ${RTDB_ROOT}/levels` : ""),
+        );
         built = await runExport({
           level: job.level,
           platform: job.platform,
@@ -1000,10 +1170,12 @@ export class ExportWorker {
       const attempts = (job.attempts ?? 0) + 1;
       if (signal?.aborted && attempts < MAX_ATTEMPTS) {
         // Stopped by the user (or the app closing) mid-build: not the job's
-        // fault, so it goes back on the queue for the next start.
+        // fault, so it goes back on the queue for the next start — with the
+        // status it was queued with, which an older desktop on the same code
+        // may not be able to claim.
         outcome = "requeued";
         await dbPatch(`${EXPORT_PATHS.queue}/${this.code}/${job.id}`, {
-          status: "queued",
+          status: requeueStatus(job),
           attempts,
           progress: "the desktop stopped mid-build — queued again",
           updatedAt: Date.now(),

@@ -1,7 +1,7 @@
 // scripts/build-ddd.ts — a level record as a Dezaemon 3D 64DD data disk.
 //
 //   deno task build:ddd                                   # the bundled base game (foo.json) -> "Dezaemon 3D - foo.ndd"
-//   deno task build:ddd foo                               # the cloud level levels/foo
+//   deno task build:ddd foo                               # the cloud level shmupX/levels/foo
 //   deno task build:ddd ./backups/mygame.json             # a level record on disk
 //   deno task build:ddd foo --disk dev-fixtures/deza1.ndd # onto that donor disk (default: the first 64DD image in dev-fixtures/)
 //   deno task build:ddd foo --no-disk                     # a disk built from nothing: no donor, no boot program, no RAM area

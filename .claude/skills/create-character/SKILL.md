@@ -10,13 +10,26 @@ projectile slots, a Dezaemon trailer, and hp/score/interval/shadow fields. The
 `shmupx-character` MCP server (`mcp/server.ts`, registered in `.mcp.json`)
 reads that catalog, repacks art, and writes new characters back.
 
+The catalog is shmupX's own subtree of a database it shares with cmg:
+`shmupX/characters/<name>` and `shmupX/atlases/<name>`, beside the games at
+`shmupX/levels/<key>` (and their aliases, `shmupX/levelAliases`). The
+root-level `characters/`, `atlases/` and `levels/` are cmg's. The tools read
+and write shmupX's catalog only, with one read-only exception: **art** can be
+borrowed from any atlas, so a frame reference to an atlas shmupX lacks
+(`hadouken`, `bg-great-hall`) is cut from the root-level `atlases/<name>`.
+Nothing is ever written back there. `sprites/` (spriteX's whole images)
+stays at the root.
+
 ## The shape of the job
 
-1. **Find the clone source.** `shmupx_list_characters`, then
+1. **Find the clone source.** `shmupx_list_characters` (shmupX's catalog
+   only — a character only cmg has cannot be cloned), then
    `shmupx_get_character` on the one being mirrored. Its `referencedFrames`
    and `textureKey` tell you what art it carries.
-2. **Find the art.** `shmupx_list_atlases` (there are ~400; pass `match` to
-   filter) then `shmupx_list_frames` on the one you want.
+2. **Find the art.** `shmupx_list_atlases` (there are ~430 across shmupX's
+   own and the root catalog; pass `match` to filter — `shmupX` in the answer
+   names the ones that are shmupX's) then `shmupx_list_frames` on the one you
+   want (its `source` says which tree answered).
    **Always list the frames — never guess a frame name.** They frequently do
    not match the atlas name: the `hadouken` atlas's two frames are
    `atlas_s0` and `hadouken1`, and `bg-great-hall`'s only frame is also called
@@ -28,8 +41,10 @@ reads that catalog, repacks art, and writes new characters back.
    Offer this before publishing; it is the only way to actually see the thing.
 5. **Publish, on a yes.** Re-run `shmupx_create_character` with `apply: true`.
 6. **Put it in a level**, if asked: `shmupx_place_character` replaces a cloud
-   level's `boss<N>`. Dry-run first — it edits somebody else's level — and keep
-   the result's `replaced` record, which is the only way back.
+   level's `boss<N>` in shmupX's copy of it (`shmupX/levels/<key>`; an alias
+   such as `2019` names 2019-PS2). Dry-run first — it edits somebody else's
+   level — and keep the result's `replaced` record, which is the only way
+   back.
 
 ## Rules that are easy to get wrong
 
@@ -53,9 +68,10 @@ reads that catalog, repacks art, and writes new characters back.
   the runtime's `.gif`/`.png` forgiveness, and reverts the whole record to the
   base game's boss on a miss. The symptom is a boss that silently renders as
   2028.Ai's Bison. Check `renamed` in the result to see what moved.
-- **The catalog is shared and open-write.** Every write lands where spriteX,
-  the Pixel Editor and the level editor can see it. Show the dry run, get a
-  yes, then apply. Publishing over an existing name replaces it.
+- **The catalog is shared and open-write.** Every write lands in shmupX's
+  subtree, where the level editor's library and the game can see it (spriteX
+  still lists cmg's root catalog, not this one). Show the dry run, get a yes,
+  then apply. Publishing over an existing name replaces it.
 - **Art that is not in the catalog** goes in as `{file: "dev-fixtures/x.png"}`.
   `dev-fixtures/` is gitignored by design — it is the repo's local-only art
   drop — so tell the player to put the file there rather than trying to find

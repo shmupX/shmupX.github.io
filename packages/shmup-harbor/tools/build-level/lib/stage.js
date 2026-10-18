@@ -181,6 +181,8 @@ function stageWww(opts) {
     firebaseConfig,
     extractPlugin,
     editorOrigin,
+    databaseURL,
+    rtdbRoot,
     wwwRoot,
     levelName,
     levelData,
@@ -269,6 +271,12 @@ function stageWww(opts) {
       gameId: hasFirebase ? gameId : null,
       hasExtract,
       editorOrigin: editorOrigin || null,
+      // Which tree of the shared database is this app's. Baked whether or not
+      // firebase-config.js was staged above: EXTRACT MODE publishes from every
+      // export, and without it would fall back to the database's root, which
+      // is cmg's library (see renderShell).
+      databaseURL: databaseURL || null,
+      rtdbRoot,
     }),
   );
 }

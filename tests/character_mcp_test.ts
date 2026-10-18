@@ -15,6 +15,8 @@ import { dirname, fromFileUrl, join } from "@std/path";
 import { newRaster } from "@shmupx/shmup-harbor/png";
 import {
   assertSafeKey,
+  catalogUrl,
+  dbPath,
   decodeFrameKey,
   decodeFrameName,
   decodeKey,
@@ -80,22 +82,65 @@ Deno.test("the .json suffix lands on the node, not after the query", () => {
   const db = Deno.env.get("SHMUPX_DB");
   Deno.env.set("SHMUPX_DB", "https://db.test");
   try {
-    assertEquals(nodeUrl("characters"), "https://db.test/characters.json");
+    assertEquals(
+      nodeUrl("characters"),
+      "https://db.test/shmupX/characters.json",
+    );
     assertEquals(
       nodeUrl("characters?shallow=true"),
-      "https://db.test/characters.json?shallow=true",
+      "https://db.test/shmupX/characters.json?shallow=true",
     );
     // The shape the bug produced, spelled out so it cannot come back quietly.
     assert(!nodeUrl("atlases?shallow=true").includes("true.json"));
     // A query is optional, never invented, and only the first "?" splits.
     assertEquals(
       nodeUrl("characters/dezaBoss0"),
-      "https://db.test/characters/dezaBoss0.json",
+      "https://db.test/shmupX/characters/dezaBoss0.json",
     );
     assertEquals(
       nodeUrl("a?x=1?y=2"),
       "https://db.test/a.json?x=1?y=2",
     );
+  } finally {
+    if (db === undefined) Deno.env.delete("SHMUPX_DB");
+    else Deno.env.set("SHMUPX_DB", db);
+  }
+});
+
+Deno.test("the catalog nodes are shmupX's; sprites and the rest stay at the root", () => {
+  // SHMUPX_DB is the DATABASE: shmupX's subtree goes on per node, so the one
+  // base still reaches spriteX's root-level sprites/.
+  const db = Deno.env.get("SHMUPX_DB");
+  Deno.env.set("SHMUPX_DB", "https://db.test");
+  try {
+    assertEquals(
+      nodeUrl("levels/gs/bossData"),
+      "https://db.test/shmupX/levels/gs/bossData.json",
+    );
+    assertEquals(
+      nodeUrl("levelAliases/2019"),
+      "https://db.test/shmupX/levelAliases/2019.json",
+    );
+    assertEquals(
+      nodeUrl("atlases/dezaBoss0"),
+      "https://db.test/shmupX/atlases/dezaBoss0.json",
+    );
+    assertEquals(
+      nodeUrl("sprites/RAM_0"),
+      "https://db.test/sprites/RAM_0.json",
+    );
+    assertEquals(
+      nodeUrl("sprites?shallow=true"),
+      "https://db.test/sprites.json?shallow=true",
+    );
+    // The one read past the subtree: source art from cmg's root catalog.
+    assertEquals(
+      nodeUrl("atlases/hadouken", { unscoped: true }),
+      "https://db.test/atlases/hadouken.json",
+    );
+    assertEquals(dbPath("characters/x"), "shmupX/characters/x");
+    assertEquals(dbPath("atlases/x", { unscoped: true }), "atlases/x");
+    assertEquals(catalogUrl(), "https://db.test/shmupX");
   } finally {
     if (db === undefined) Deno.env.delete("SHMUPX_DB");
     else Deno.env.set("SHMUPX_DB", db);

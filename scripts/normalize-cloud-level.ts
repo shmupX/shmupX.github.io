@@ -18,12 +18,19 @@
 // PATCHes only the subtrees that changed (enemyData, bossData, playerData,
 // playerData2, atlasFrames), leaving the rest of the record — grid, stages,
 // thumbnails, scores — exactly as it was.
+//
+// The level is shmupX's copy, shmupX/levels/<key> (lib/rtdb-root.ts): the
+// database is shared with cmg, whose root-level levels/* is never read or
+// written here. A name that is not a key is looked up in shmupX/levelAliases
+// (lowercased, as ?level= does), so "2019" normalizes 2019-PS2.
 
 import {
   normalizeLegacyAtlasFrames,
   normalizeLegacyGame,
 } from "@shmupx/shmup-engine/legacy-names";
+import { rtdbPath } from "../lib/rtdb-root.ts";
 
+/** The database's base; shmupX's subtree goes on each path (rtdbPath). */
 const FIREBASE_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 
 // The parts of a record the rename can touch — fetched one by one so the
@@ -49,13 +56,33 @@ if (names.length !== 1) {
     'expected exactly one level name, e.g. deno task level:normalize "2019-PS2"',
   );
 }
-const name = names[0];
-const base = `${FIREBASE_DB}/levels/${encodeURIComponent(name)}`;
+const asked = names[0];
+const levelBase = (key: string) =>
+  `${FIREBASE_DB}/${rtdbPath(`levels/${encodeURIComponent(key)}`)}`;
 
-const exists = await fetch(`${base}/name.json`);
-if (!exists.ok || (await exists.json()) === null) {
-  fail(`level "${name}" not found`);
+async function exists(key: string): Promise<boolean> {
+  const response = await fetch(`${levelBase(key)}/name.json`);
+  return response.ok && (await response.json()) !== null;
 }
+
+// The exact key first, then the alias it might be.
+let name = asked;
+if (!await exists(name)) {
+  const alias = await fetch(
+    `${FIREBASE_DB}/${
+      rtdbPath(`levelAliases/${encodeURIComponent(asked.toLowerCase())}`)
+    }.json`,
+  );
+  const key = alias.ok ? await alias.json() : null;
+  if (typeof key !== "string" || !key || !await exists(key)) {
+    fail(
+      `level "${asked}" not found in ${rtdbPath("levels")} ` +
+        `(nor as an alias in ${rtdbPath("levelAliases")})`,
+    );
+  }
+  name = key;
+}
+const base = levelBase(name);
 
 const record: Record<string, unknown> = {};
 for (const part of PARTS) {
@@ -73,7 +100,11 @@ if (record.atlasFrames) {
   );
 }
 
-console.log(`Level  : ${name}`);
+console.log(
+  `Level  : ${name}${name === asked ? "" : ` (alias "${asked}")`} — ${
+    rtdbPath(`levels/${name}`)
+  }`,
+);
 for (const change of report.frames) {
   console.log(`  frame : ${change.path}: ${change.from} -> ${change.to}`);
 }
@@ -109,4 +140,6 @@ const response = await fetch(`${base}.json`, {
 if (!response.ok) {
   fail(`PATCH failed (HTTP ${response.status}): ${await response.text()}`);
 }
-console.log(`\nWritten: ${changed.join(", ")} of levels/${name}`);
+console.log(
+  `\nWritten: ${changed.join(", ")} of ${rtdbPath(`levels/${name}`)}`,
+);

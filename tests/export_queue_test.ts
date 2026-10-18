@@ -25,14 +25,29 @@ import {
   type ExportJob,
   ExportWorker,
   formatBuilderCode,
+  jobClaimable,
   type JobInput,
+  jobRootProblem,
   jobsToPrune,
   newBuilderCode,
   normalizeBuilderCode,
   parseSseChunk,
   pickNextJob,
+  versionSeenKey,
+  WAITING_STATUS,
+  WORKER_VERSION,
 } from "@shmupx/shmup-harbor/export-worker";
+import { RTDB_ROOT } from "@shmupx/shmup-harbor/rtdb-root";
 import * as client from "../static/export-queue.js";
+// The pre-split worker's own code, and a database both generations can share
+// (see that file for why the old one is read out of git, not copied).
+import {
+  driveWorker,
+  fakeRtdb,
+  loadV1Worker,
+} from "../packages/shmup-harbor/tests/support/export_worker_rig.ts";
+
+const V1 = await loadV1Worker();
 
 Deno.test("both ends name the same database and paths", () => {
   assertEquals(client.EXPORT_DB, EXPORT_DB);
@@ -42,6 +57,21 @@ Deno.test("both ends name the same database and paths", () => {
   // Chunks are cut by the sender and counted by the receiver, in both
   // directions now that a job can carry its own game up.
   assertEquals(client.CHUNK_BYTES, CHUNK_BYTES);
+  // A job's level name is a key in shmupX's subtree, and the client stamps
+  // the tree the worker reads names from. The queue itself stays at the
+  // root (EXPORT_PATHS above are not rooted).
+  assertEquals(client.JOB_RTDB_ROOT, RTDB_ROOT);
+  assertEquals(client.JOB_RTDB_ROOT, "shmupX");
+  // The client never demands a worker newer than the one this repo ships.
+  assert(client.MIN_WORKER_VERSION <= WORKER_VERSION);
+  assert(WORKER_VERSION >= 2, "version 2 is the first to read shmupX/levels");
+  // The status a version-1 worker never claims, spelled the same both ends,
+  // and the heartbeat stamp the client reads a current worker's beat off.
+  assertEquals(client.WAITING_STATUS, WAITING_STATUS);
+  assert(
+    /^seenAtV\d+$/.test(versionSeenKey(WORKER_VERSION)),
+    "workerVersion reads seenAtV<N>",
+  );
 });
 
 Deno.test("build codes are well-formed and normalise the same on both ends", () => {
@@ -417,5 +447,324 @@ Deno.test("a plain cloud job carries no game, and an unpacked one still reads", 
     () => decodeJobRecord(new TextEncoder().encode("{nope"), "none"),
     Error,
     "not readable JSON",
+  );
+});
+
+// ── Which tree a job's level name means, and who may build it ──────────────
+// shmupX's games live under shmupX/ in the database cmg shares, and a job that
+// names a level must be built from shmupX's copy, never cmg's root-level one
+// of the same name; an app built from a cart must carry the runtime that
+// saves to shmupX/ as well. The client stamps every job with the tree, and
+// writes each one a pre-split desktop would get wrong with a status that
+// desktop never claims ('waiting', with minWorker). It reads the heartbeat
+// first, so an old desktop is named as the reason before anything is sent.
+// The worker refuses a job stamped for a tree it does not read.
+
+/** static/export-queue.js is browser code: `window` has to exist. */
+async function withWindow<T>(fn: () => Promise<T>): Promise<T> {
+  const g = globalThis as unknown as Record<string, unknown>;
+  const hadWindow = "window" in g;
+  if (!hadWindow) g.window = globalThis;
+  try {
+    return await fn();
+  } finally {
+    if (!hadWindow) delete g.window;
+  }
+}
+
+const CART = { name: "Dez 2 - foo", enemylist: [[0]] };
+const queuedAt = (id: string) => `${EXPORT_PATHS.queue}/ABCDEFGH/${id}`;
+
+Deno.test("a worker refuses a job stamped for another tree", () => {
+  assertEquals(jobRootProblem({ rtdbRoot: "shmupX" }), null);
+  // Unstamped: queued before the stamp existed, read from shmupX like any.
+  assertEquals(jobRootProblem({}), null);
+  const problem = jobRootProblem({ rtdbRoot: "" });
+  assert(problem && problem.includes('"/"') && problem.includes("shmupX"));
+  assert(jobRootProblem({ rtdbRoot: "cmg" })?.includes('"cmg"'));
+  // A job that brought its own game never reads the database's levels.
+  const record = { size: 1, chunks: 1, chunkBytes: CHUNK_BYTES, path: "x" };
+  assertEquals(jobRootProblem({ rtdbRoot: "cmg", record }), null);
+});
+
+Deno.test("only a cart's PS2 disc may still go to any desktop", () => {
+  const needs = (platform?: string, kind?: string, carriesGame = false) =>
+    client.jobNeedsCurrentWorker({ platform, kind, carriesGame });
+  const apps = ["android", "ios", "linux", "windows", "desktop", "all"];
+  // A name is looked up by the desktop, whatever it is built into.
+  for (const p of [...apps, "ps2", "compare", undefined]) {
+    assert(needs(p), `named, ${p}`);
+  }
+  assert(needs("compare", "engine-compare"));
+  // A cart built into an app ships the desktop's own web runtime.
+  for (const p of [...apps, undefined]) assert(needs(p, "export", true), p);
+  // A comparison resolves its level by name even with a record beside it.
+  assert(needs("ps2", "engine-compare", true));
+  // An AthenaEnv disc of the record the job carries reads no level by name
+  // and ships no web runtime.
+  assert(!needs("ps2", undefined, true));
+  assert(!needs("PS2", "export", true));
+});
+
+Deno.test("an old desktop is named as too old, and only from its heartbeat", () => {
+  const now = 1_000_000_000;
+  assertEquals(client.workerTooOld(null), "");
+  // Never heartbeated (a fresh install not yet started): the job waits.
+  assertEquals(client.workerTooOld({ version: 1 }), "");
+  assertEquals(
+    client.workerTooOld({ seenAt: now, version: WORKER_VERSION }, { now }),
+    "",
+  );
+  const old = { seenAt: now, version: 1, name: "Old Mac" };
+  const named = client.workerTooOld(old, { now });
+  assert(named.startsWith("Old Mac ") && named.includes("root copy"), named);
+  const cart = client.workerTooOld(old, { now, carriesGame: true });
+  assert(cart.startsWith("Old Mac ") && cart.includes("EXTRACT MODE"), cart);
+  assert(
+    client.workerTooOld({ seenAt: now }, { now }),
+    "a heartbeat with no version is older still",
+  );
+
+  // Two desktops on one code PATCH one record, so `version` is whichever beat
+  // last; the current worker's own stamp says it is online regardless.
+  const shared = {
+    ...old,
+    name: "Mac",
+    [versionSeenKey(WORKER_VERSION)]: now - 10_000,
+  };
+  assertEquals(client.workerVersion(shared, now), WORKER_VERSION);
+  assertEquals(client.workerTooOld(shared, { now }), "");
+  // A stamp from a desktop gone quiet vouches for nothing.
+  const quiet = { ...shared, [versionSeenKey(WORKER_VERSION)]: now - 120_000 };
+  assertEquals(client.workerVersion(quiet, now), 1);
+  assert(client.workerTooOld(quiet, { now }));
+
+  const text = client.describeWorker(
+    { ...old, seenAt: now - 1000, platforms: { ps2: true } },
+    now,
+  ).text;
+  assert(text.includes("older shmupX"), text);
+  for (const w of [{ seenAt: now - 1000, version: WORKER_VERSION }, shared]) {
+    const t = client.describeWorker(w, now).text;
+    assert(!t.includes("older"), t);
+  }
+});
+
+Deno.test("each job is written for the workers that can build it, and kept from the rest", async () => {
+  const db = fakeRtdb();
+  try {
+    await withWindow(async () => {
+      // No heartbeat yet: every job is queued, to wait for the desktop.
+      const code = "ABCD-EFGH";
+      const cloud = await client.queueExport({
+        code,
+        level: "2019",
+        platform: "ps2",
+      });
+      // The heartbeat is read before anything is written.
+      assertEquals(db.calls[0], `GET ${EXPORT_PATHS.workers}/ABCDEFGH`);
+      const cartApp = await client.queueExport({
+        code,
+        level: CART.name,
+        platform: "android",
+        levelRecord: CART,
+      });
+      const compare = await client.queueExport({
+        code,
+        level: "gs",
+        platform: "compare",
+        kind: "engine-compare",
+        options: { from: 44, for: 5 },
+      });
+      const cartDisc = await client.queueExport({
+        code,
+        level: CART.name,
+        platform: "ps2",
+        levelRecord: CART,
+      });
+      const written = (id: string) => db.get(queuedAt(id)) as ExportJob;
+      for (const j of [cloud, cartApp, compare]) {
+        const w = written(j.id);
+        assertEquals(w.status, "waiting", j.platform);
+        assertEquals(w.minWorker, 2, j.platform);
+        assertEquals(w.rtdbRoot, "shmupX");
+        assertEquals(jobRootProblem(w), null);
+        assert(jobClaimable(w), "this repo's worker cannot take it");
+      }
+      const disc = written(cartDisc.id);
+      assertEquals(disc.status, "queued");
+      assertEquals(disc.minWorker, undefined);
+      assert(jobClaimable(disc));
+
+      // The pre-split worker's own pick, over the very records written: it
+      // sees the disc and nothing else.
+      if (V1) {
+        const all = db.get(`${EXPORT_PATHS.queue}/ABCDEFGH`) as Record<
+          string,
+          ExportJob
+        >;
+        assertEquals(V1.pickNextJob(all)?.id, cartDisc.id);
+        delete all[cartDisc.id];
+        assertEquals(V1.pickNextJob(all), null);
+      }
+    });
+  } finally {
+    db.restore();
+  }
+});
+
+Deno.test("an old desktop is refused before any of a cart goes up, except for a disc", async () => {
+  const db = fakeRtdb();
+  try {
+    await withWindow(async () => {
+      db.set(`${EXPORT_PATHS.workers}/ABCDEFGH`, {
+        name: "Old Mac",
+        seenAt: Date.now(),
+        version: 1,
+      });
+      // A pre-split desktop would build cmg's root copy of the name…
+      await assertRejects(
+        () =>
+          client.queueExport({
+            code: "ABCDEFGH",
+            level: "gs",
+            platform: "android",
+          }),
+        Error,
+        "Old Mac runs an older shmupX",
+      );
+      // …and an app from a cart whose EXTRACT MODE writes cmg's library.
+      await assertRejects(
+        () =>
+          client.queueExport({
+            code: "ABCDEFGH",
+            level: CART.name,
+            platform: "windows",
+            levelRecord: CART,
+          }),
+        Error,
+        "EXTRACT MODE",
+      );
+      assert(!db.calls.some((c) => !c.startsWith("GET")), db.calls.join("\n"));
+
+      // A cart's PS2 disc still goes to it, as a job any version may claim.
+      const disc = await client.queueExport({
+        code: "ABCDEFGH",
+        level: CART.name,
+        platform: "ps2",
+        levelRecord: CART,
+      });
+      assertEquals(disc.status, "queued");
+      assert(disc.record);
+
+      // And a current desktop gets cloud jobs again — held for it.
+      db.set(`${EXPORT_PATHS.workers}/ABCDEFGH`, {
+        name: "New Mac",
+        seenAt: Date.now(),
+        version: WORKER_VERSION,
+      });
+      const ok = await client.queueExport({
+        code: "ABCDEFGH",
+        level: "gs",
+        platform: "android",
+      });
+      assertEquals(ok.status, "waiting");
+      assertEquals((db.get(queuedAt(ok.id)) as ExportJob).minWorker, 2);
+    });
+  } finally {
+    db.restore();
+  }
+});
+
+Deno.test("a held job reads as queued, and can be taken back until it is claimed", async () => {
+  const db = fakeRtdb();
+  try {
+    await withWindow(async () => {
+      const job = await client.queueExport({
+        code: "ABCDEFGH",
+        level: "gs",
+        platform: "android",
+      });
+      assertEquals(job.status, "waiting");
+      assert(client.jobWaiting(job));
+      assertEquals(
+        client.jobStatusText(job),
+        "QUEUED · waiting for the desktop",
+      );
+      assert(await client.cancelJob("ABCDEFGH", job.id));
+      const after = db.get(queuedAt(job.id)) as ExportJob;
+      assertEquals(after.status, "cancelled");
+      assert(!client.jobWaiting(after));
+
+      const taken = await client.queueExport({
+        code: "ABCDEFGH",
+        level: "gs",
+        platform: "android",
+      });
+      db.set(`${queuedAt(taken.id)}/status`, "building");
+      assert(!await client.cancelJob("ABCDEFGH", taken.id));
+      assertEquals(
+        (db.get(queuedAt(taken.id)) as ExportJob).status,
+        "building",
+      );
+    });
+  } finally {
+    db.restore();
+  }
+});
+
+Deno.test({
+  name:
+    "two desktops on one code: the old one's beat does not hide the current one",
+  ignore: !V1,
+  fn: async () => {
+    const db = fakeRtdb();
+    try {
+      const current = driveWorker({ ExportWorker }, "ABCDEFGH", "Mac");
+      const old = driveWorker(V1!, "ABCDEFGH", "Mac");
+      for (const w of [current, old]) {
+        (w as unknown as Record<string, unknown>).running = true;
+      }
+      await current.heartbeat();
+      // The installed app beats last, as it does about half the time.
+      await old.heartbeat();
+      const record = db.get(`${EXPORT_PATHS.workers}/ABCDEFGH`);
+      assertEquals((record as { version: number }).version, 1);
+      assertEquals(client.workerVersion(record), WORKER_VERSION);
+      assertEquals(client.workerTooOld(record), "");
+      // The current one stops, and its stamp goes with it: the code is the
+      // old desktop's alone again.
+      await current.stop();
+      await old.heartbeat();
+      const after = db.get(`${EXPORT_PATHS.workers}/ABCDEFGH`);
+      assertEquals(client.workerVersion(after), 1);
+      assert(client.workerTooOld(after).startsWith("Mac runs an older shmupX"));
+    } finally {
+      db.restore();
+    }
+  },
+});
+
+Deno.test("the launcher's export rows treat a held job as queued", async () => {
+  const dashboard = await Deno.readTextFile(
+    new URL("../svelte-src/Dashboard.svelte", import.meta.url),
+  );
+  for (
+    const line of [
+      "jobWaiting as exportJobWaiting,",
+      "const queued = exportJobs.filter(exportJobWaiting).length;",
+      "case 'waiting': return { cls: '', text: 'QUEUED' };",
+      "if (exportJobWaiting(j)) return 'Cancel';",
+      "if (exportJobWaiting(job)) {",
+    ]
+  ) assert(dashboard.includes(line), line);
+  // The launcher serves static/dashboard.bundle.js, so an unbuilt edit ships
+  // nothing.
+  const bundle = await Deno.readTextFile(
+    new URL("../static/dashboard.bundle.js", import.meta.url),
+  );
+  assert(
+    bundle.includes('case"waiting":return{cls:"",text:"QUEUED"}'),
+    "rebuild it: deno task dashboard:build",
   );
 });

@@ -2,6 +2,7 @@
 //
 //   deno task 2019:zip            # from static/games/2019/level.json
 //   deno task 2019:zip --fetch    # refresh that file from the cloud level first
+//                                 # (shmupX/levels/2019-PS2, never cmg's root copy)
 //
 // "2019" is the shooter this repo's game is a build of, imported from its web
 // folder (dev-fixtures/2019-web) and exported for the PlayStation 2 as the
@@ -37,9 +38,11 @@ import { buildZip, type ZipEntry } from "@shmupx/shmup-harbor/zip";
 import { fromFileUrl } from "@std/path";
 import { injectLauncherMarker } from "../../lib/launcher-inject.ts";
 import { standaloneGamePageHtml } from "../../lib/game-page.ts";
+import { RTDB_ROOT, rtdbPath } from "../../lib/rtdb-root.ts";
 
 /** The cloud level the archive plays. */
 export const LEVEL = "2019-PS2";
+/** The database's base URL; shmupX's subtree goes on the path (rtdbPath). */
 export const RTDB = "https://evil-invaders-default-rtdb.firebaseio.com";
 
 // fromFileUrl, not .pathname: this checkout's path has a space in it.
@@ -85,18 +88,59 @@ export function slimRecord(
   return out;
 }
 
-/** Pull the cloud level into static/games/2019/level.json. */
-export async function fetchRecord(): Promise<Record<string, unknown>> {
-  const res = await fetch(`${RTDB}/levels/${encodeURIComponent(LEVEL)}.json`);
-  if (!res.ok) throw new Error(`levels/${LEVEL}: HTTP ${res.status}`);
-  const record = await res.json();
-  if (!record || typeof record !== "object") {
-    throw new Error(`levels/${LEVEL} is not a level record`);
+/** GET one REST URL's JSON: null for an empty node, an error for a non-2xx. */
+export type JsonGet = (url: string) => Promise<unknown>;
+
+async function getJson(url: string): Promise<unknown> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  return res.json();
+}
+
+/** What the runtime's loader takes for a level: a record with enemies. */
+function isLevel(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" &&
+    !!(value as { enemylist?: unknown }).enemylist;
+}
+
+/**
+ * The level a name means, the way the runtime's loader resolves one
+ * (static/phaser-plugins/level-loader.js fetchLevel): shmupX/levels/<name> as
+ * typed, else the key shmupX/levelAliases/<name lowercased> stands for, so
+ * "2019" means 2019-PS2 here as it does on ?level=. Only shmupX's own subtree
+ * (lib/rtdb-root.ts): the root-level copies are cmg's, and an archive built
+ * from one would ship cmg's version of the game.
+ */
+export async function cloudLevel(
+  name: string = LEVEL,
+  get: JsonGet = getJson,
+): Promise<{ key: string; record: Record<string, unknown> }> {
+  const levelUrl = (key: string) =>
+    `${RTDB}/${rtdbPath(`levels/${encodeURIComponent(key)}`)}.json`;
+  const direct = await get(levelUrl(name));
+  if (isLevel(direct)) return { key: name, record: direct };
+  const aliasUrl = `${RTDB}/${
+    rtdbPath(`levelAliases/${encodeURIComponent(name.toLowerCase())}`)
+  }.json`;
+  const key = await get(aliasUrl);
+  if (typeof key === "string" && key && key !== name) {
+    const aliased = await get(levelUrl(key));
+    if (isLevel(aliased)) return { key, record: aliased };
   }
+  throw new Error(
+    `${RTDB_ROOT}/levels/${name} is not a level record, nor an alias of one`,
+  );
+}
+
+/** Pull the cloud level into static/games/2019/level.json. */
+export async function fetchRecord(
+  get: JsonGet = getJson,
+): Promise<{ key: string; record: Record<string, unknown> }> {
+  const { key, record } = await cloudLevel(LEVEL, get);
   const slim = slimRecord(record);
   await Deno.mkdir(new URL("./", `file://${RECORD}`), { recursive: true });
   await Deno.writeTextFile(RECORD, JSON.stringify(slim) + "\n");
-  return slim;
+  return { key, record: slim };
 }
 
 /** The archive's entries, sorted. */
@@ -123,9 +167,9 @@ export async function gameEntries(): Promise<ZipEntry[]> {
 
 if (import.meta.main) {
   if (Deno.args.includes("--fetch")) {
-    const record = await fetchRecord();
+    const { key, record } = await fetchRecord();
     console.log(
-      `fetched levels/${LEVEL} -> ${RECORD} (${
+      `fetched ${RTDB_ROOT}/levels/${key} -> ${RECORD} (${
         Object.keys(record).length
       } fields${record.stageBackgrounds ? ", with stage backgrounds" : ""})`,
     );

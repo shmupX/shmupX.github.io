@@ -49,6 +49,7 @@
     "eshop:publish": "deno run -A scripts/publish-eshop-sav.ts",
     "level:normalize": "deno run -A scripts/normalize-cloud-level.ts",
     "level:alias": "deno run -A scripts/level-alias.ts",
+    "rtdb:split": "deno run -A scripts/rtdb-split.ts",
     "deza:manifest": "deno run -A scripts/build-deza-saves-manifest.ts",
     "deza:upload": "deno run -A scripts/upload-deza-saves.ts",
     "sfc:upload": "deno run -A scripts/upload-sfc-saves.ts",

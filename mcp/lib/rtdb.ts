@@ -1,12 +1,30 @@
 // The catalog database. spriteX, the Pixel Editor, the Tilemap Editor and the
 // level editor all read and write this one Realtime Database, so a character
 // published here is a character those tools list — that is the whole point of
-// putting creation on an MCP server rather than in a new editor screen.
+// putting creation on an MCP server rather than in a new editor screen. (The
+// level editor and the game read shmupX's subtree, below; spriteX's build has
+// the database root baked in, so it still lists cmg's catalog, not this one.)
 //
 // Reads are plain GETs. Writes are PUTs and there is no auth: the database is
 // open-write (see the /characters route's note about it), so every write path
 // in this module is gated behind an explicit `apply` in the tool layer and
 // every key is validated before it is interpolated into a URL.
+//
+// The database is shared with cmg, and shmupX's own catalog is a subtree of
+// it: levels, levelAliases, atlases and characters live under `shmupX/`
+// (lib/rtdb-root.ts), while the root-level copies of those four are cmg's.
+// Every path this module is handed is spelled the way it always was —
+// "characters/dezaBoss0", "levels/gs/bossData" — and nodeUrl puts the shmupX
+// root in front of the scoped ones, so every read and every write of the
+// tools lands in shmupX's subtree. Everything else (sprites/, spriteX's
+// whole-image art) stays at the root. The base URL is the DATABASE, never
+// the subtree: pointing SHMUPX_DB at <db>/shmupX would re-root sprites/ too.
+//
+// One read is allowed past the subtree, and only a read: `unscoped`, for
+// SOURCE art (art.ts), where cmg's full atlas catalog is what "any frame of
+// any atlas" has always meant. There is deliberately no unscoped write.
+
+import { RTDB_ROOT, rtdbPath } from "../../lib/rtdb-root.ts";
 
 const DEFAULT_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 
@@ -22,9 +40,37 @@ export function setDatabaseUrl(url: string | null): void {
   overrideUrl = url;
 }
 
-/** The database this server talks to. `SHMUPX_DB` overrides it for testing. */
+/**
+ * The database this server talks to — its base, not shmupX's subtree.
+ * `SHMUPX_DB` overrides it for testing.
+ */
 export function databaseUrl(): string {
   return overrideUrl ?? Deno.env.get("SHMUPX_DB") ?? DEFAULT_DB;
+}
+
+/** The URL of shmupX's own subtree, to report which tree a read came from. */
+export function catalogUrl(): string {
+  return `${databaseUrl()}/${RTDB_ROOT}`;
+}
+
+export interface ReadOptions {
+  /**
+   * Read the database-root copy of a scoped node — cmg's catalog — instead
+   * of shmupX's. For source art only (art.ts); there is no write counterpart.
+   */
+  unscoped?: boolean;
+}
+
+/**
+ * The path a node really has in the database: the shmupX root in front of
+ * levels/levelAliases/atlases/characters, everything else as given. What the
+ * errors name, so a failure says which tree it was reading.
+ */
+export function dbPath(
+  path: string,
+  { unscoped = false }: ReadOptions = {},
+): string {
+  return unscoped ? path : rtdbPath(path);
 }
 
 export class RtdbError extends Error {
@@ -116,24 +162,26 @@ export function assertSafeKey(kind: string, key: string): void {
  * console's HTML and threw on .json(). Neither names the cause, and both land
  * in the first step of creating a character.
  */
-export function nodeUrl(path: string): string {
+export function nodeUrl(path: string, options: ReadOptions = {}): string {
   const cut = path.indexOf("?");
   const node = cut === -1 ? path : path.slice(0, cut);
   const query = cut === -1 ? "" : path.slice(cut);
-  return `${databaseUrl()}/${node}.json${query}`;
+  return `${databaseUrl()}/${dbPath(node, options)}.json${query}`;
 }
 
 async function request(
   path: string,
   init?: RequestInit,
+  options: ReadOptions = {},
 ): Promise<Response> {
-  const url = nodeUrl(path);
+  const url = nodeUrl(path, options);
+  const where = dbPath(path, options);
   let res: Response;
   try {
     res = await fetch(url, { signal: AbortSignal.timeout(30_000), ...init });
   } catch (err) {
     throw new RtdbError(
-      `${init?.method ?? "GET"} ${path} failed: ${
+      `${init?.method ?? "GET"} ${where} failed: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
@@ -142,15 +190,18 @@ async function request(
     throw new RtdbError(
       `${
         init?.method ?? "GET"
-      } ${path} failed: HTTP ${res.status} ${res.statusText}`,
+      } ${where} failed: HTTP ${res.status} ${res.statusText}`,
     );
   }
   return res;
 }
 
 /** Read a node. Returns null for a node that does not exist. */
-export async function get<T = unknown>(path: string): Promise<T | null> {
-  return (await (await request(path)).json()) as T | null;
+export async function get<T = unknown>(
+  path: string,
+  options: ReadOptions = {},
+): Promise<T | null> {
+  return (await (await request(path, undefined, options)).json()) as T | null;
 }
 
 export interface Fetched<T> {
@@ -179,8 +230,12 @@ export async function getWithEtag<T = unknown>(
  * `?shallow=true` answers with `{key: true}` — the only sane way to list
  * /atlases, whose 400 children carry a megabyte of base64 each.
  */
-export async function listKeys(path: string): Promise<string[]> {
-  const data = await (await request(`${path}?shallow=true`)).json();
+export async function listKeys(
+  path: string,
+  options: ReadOptions = {},
+): Promise<string[]> {
+  const data = await (await request(`${path}?shallow=true`, undefined, options))
+    .json();
   return data && typeof data === "object" ? Object.keys(data).sort() : [];
 }
 
@@ -200,7 +255,9 @@ export async function put(
     "content-type": "application/json",
   };
   if (ifMatch) headers["if-match"] = ifMatch;
+  // Always the scoped spelling: a write never reaches cmg's root copy.
   const url = nodeUrl(path);
+  const where = dbPath(path);
   let res: Response;
   try {
     res = await fetch(url, {
@@ -211,18 +268,20 @@ export async function put(
     });
   } catch (err) {
     throw new RtdbError(
-      `PUT ${path} failed: ${err instanceof Error ? err.message : String(err)}`,
+      `PUT ${where} failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
     );
   }
   if (res.status === 412) {
     throw new RtdbError(
-      `PUT ${path} refused: the node changed since it was read (ETag mismatch). ` +
+      `PUT ${where} refused: the node changed since it was read (ETag mismatch). ` +
         `Something else wrote it in the meantime — read it again and redo the edit.`,
     );
   }
   if (!res.ok) {
     throw new RtdbError(
-      `PUT ${path} failed: HTTP ${res.status} ${res.statusText}`,
+      `PUT ${where} failed: HTTP ${res.status} ${res.statusText}`,
     );
   }
 }

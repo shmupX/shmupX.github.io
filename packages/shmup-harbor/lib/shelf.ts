@@ -45,6 +45,8 @@ import { encodePng } from "./ps2/png.ts";
 import * as deza from "@shmupx/shmup-engine";
 import { repoRoot } from "./repo-root.ts";
 import { forceImportedNoStory } from "./imported-level.ts";
+import { type CloudLevel, resolveCloudLevel } from "./cloud-level.ts";
+import { RTDB_ROOT } from "./rtdb-root.ts";
 
 const interleave = deza.interleave as (data: Uint8Array) => Uint8Array;
 
@@ -52,7 +54,13 @@ const interleave = deza.interleave as (data: Uint8Array) => Uint8Array;
 const LOGICAL_SAV_BYTES = 557056;
 const MISTER_SAV_BYTES = 1114112;
 
-/** The Realtime Database every shelf but the local one lives in. */
+/**
+ * The Realtime Database every shelf but the local one lives in — its BASE.
+ * The Dezaemon and eShop shelves sit at its root; cloud levels are shmupX's
+ * own, under the `shmupX/` subtree (./rtdb-root.ts), and only the level rung
+ * adds that root. Never swap this for `<db>/shmupX`: that would re-root the
+ * shelves too.
+ */
 export const SHELF_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 
 /** How long a shelf lookup waits before deciding this machine is offline. */
@@ -866,7 +874,16 @@ async function communitySave(
   );
 }
 
-/** A Firebase level, the only rung that hands the name on rather than a file. */
+/**
+ * A Firebase level, the only rung that hands the name on rather than a file.
+ *
+ * shmupX's own levels only: shmupX/levels/<raw>, else the key
+ * shmupX/levelAliases/<raw lowercased> names — the steps every build takes
+ * (./cloud-level.ts), so a name this rung answers for is one the build will
+ * find. The root-level levels/ is cmg's catalog and is never consulted. The
+ * typed name is what is handed on, alias or not: the build resolves it the
+ * same way, and the app is named after what was asked for.
+ */
 async function cloudLevel(
   raw: string,
   opts: ResolveOptions,
@@ -874,13 +891,24 @@ async function cloudLevel(
   if (opts.offline) return null;
   // `?shallow=true` answers with `true` rather than the whole record, which
   // for a level with a custom atlas is several megabytes this process has no
-  // use for — the Node tool fetches it again itself.
-  const probe = await tryJson(
-    `${SHELF_DB}/levels/${encodeURIComponent(raw)}.json?shallow=true`,
-    "level database",
-  );
+  // use for — the Node tool fetches it again itself. A database that cannot
+  // be reached is a miss here, as on every other network rung.
+  let probe: CloudLevel | null;
+  try {
+    probe = await resolveCloudLevel(raw, {
+      db: SHELF_DB,
+      get: (url) => tryJson(url, "level database"),
+      shallow: true,
+      accept: (value) => !!value,
+    });
+  } catch (_e) {
+    probe = null;
+  }
   if (!probe) return null;
-  const note = `shelf: "${raw}" → a cloud level (the build fetches it itself)`;
+  const note = probe.alias
+    ? `shelf: "${raw}" → the cloud level ${RTDB_ROOT}/levels/${probe.key} ` +
+      `(an alias; the build fetches it itself)`
+    : `shelf: "${raw}" → a cloud level (the build fetches it itself)`;
   opts.log?.(note);
   return {
     kind: "level",

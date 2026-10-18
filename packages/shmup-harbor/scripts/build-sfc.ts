@@ -1,7 +1,7 @@
 // scripts/build-sfc.ts — a level record as a Super Famicom Dezaemon SRAM image.
 //
 //   deno task build:sfc                                  # the bundled base game (foo.json) -> "Dezaemon SFC - foo.srm"
-//   deno task build:sfc foo                              # the cloud level levels/foo
+//   deno task build:sfc foo                              # the cloud level shmupX/levels/foo
 //   deno task build:sfc ./backups/mygame.json            # a level record on disk
 //   deno task build:sfc foo --out build/sfc/foo.srm --report
 //

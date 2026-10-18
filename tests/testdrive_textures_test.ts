@@ -6,6 +6,7 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   budgetOf,
+  cloudAliasUrl,
   cloudLevelUrl,
   degrade,
   FRAMEBUFFER_BYTES,
@@ -179,14 +180,20 @@ Deno.test("small helpers", () => {
   dv.setUint32(20, 2128);
   assertEquals(pngSize(png), { w: 2048, h: 2128 });
   assertThrows(() => pngSize(new Uint8Array(10)));
+  // shmupX's own copy of the level, never cmg's root-level levels/*.
   assertEquals(
     cloudLevelUrl("2019-PS2"),
-    "https://evil-invaders-default-rtdb.firebaseio.com/levels/2019-PS2.json",
+    "https://evil-invaders-default-rtdb.firebaseio.com/shmupX/levels/2019-PS2.json",
   );
   // The runtime's own sanitising: characters Firebase keys cannot hold.
   assertEquals(
     cloudLevelUrl("a.b/c"),
-    "https://evil-invaders-default-rtdb.firebaseio.com/levels/a_b_c.json",
+    "https://evil-invaders-default-rtdb.firebaseio.com/shmupX/levels/a_b_c.json",
+  );
+  // A name that is not a key is looked up as an alias, lowercased.
+  assertEquals(
+    cloudAliasUrl("StreetFighter"),
+    "https://evil-invaders-default-rtdb.firebaseio.com/shmupX/levelAliases/streetfighter.json",
   );
   const b = budgetOf(512, [{ name: "game_asset", w: 512, h: 512 }], {
     game_asset: 4,

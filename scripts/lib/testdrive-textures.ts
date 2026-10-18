@@ -36,6 +36,7 @@ import {
   resizeTo,
 } from "../../packages/shmup-harbor/lib/ps2/raster.ts";
 import type { Raster } from "../../packages/shmup-harbor/lib/ps2/png.ts";
+import { rtdbPath } from "../../lib/rtdb-root.ts";
 
 /** The console's video memory, and what the frame buffer takes of it. */
 export const GS_VRAM_BYTES = 4 * 1024 * 1024;
@@ -290,12 +291,34 @@ export function offlineInjector(records: Record<string, string>): string {
 })();`;
 }
 
-/** The cloud level database's REST address for a level, as the runtime reads it. */
+/**
+ * The cloud level database's REST address for a level, as the runtime reads
+ * it: shmupX's own copy, shmupX/levels/<key> (lib/rtdb-root.ts). The database
+ * is shared with cmg, and its root-level levels/* is cmg's catalog, which the
+ * runtime never reads.
+ */
 export const FIREBASE_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
+
+// The runtime's own sanitising of a ?level= name (readLevelParam).
+const levelKeyOf = (name: string) => name.replace(/[.#$/\[\]]/g, "_").trim();
+
 export function cloudLevelUrl(name: string): string {
-  // The runtime's own sanitising of a ?level= name (readLevelParam).
-  const key = name.replace(/[.#$/\[\]]/g, "_").trim();
-  return `${FIREBASE_DB}/levels/${encodeURIComponent(key)}.json`;
+  return `${FIREBASE_DB}/${
+    rtdbPath(`levels/${encodeURIComponent(levelKeyOf(name))}`)
+  }.json`;
+}
+
+/**
+ * Where the alias a name might be is kept: shmupX/levelAliases/<name,
+ * lowercased>, holding the level's key — what the loader reads when a
+ * ?level= name is not a key, so "2019" plays 2019-PS2.
+ */
+export function cloudAliasUrl(name: string): string {
+  return `${FIREBASE_DB}/${
+    rtdbPath(
+      `levelAliases/${encodeURIComponent(levelKeyOf(name).toLowerCase())}`,
+    )
+  }.json`;
 }
 
 /**

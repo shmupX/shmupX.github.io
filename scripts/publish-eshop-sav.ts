@@ -1,7 +1,7 @@
 // scripts/publish-eshop-sav.ts — a level as a Dezaemon 2 cart, published to
 // the eShop.
 //
-//   deno task eshop:publish foo                              # levels/foo → /eshop/{saves,covers,index}/foo
+//   deno task eshop:publish foo                              # shmupX/levels/foo → /eshop/{saves,covers,index}/foo
 //   deno task eshop:publish foo --name dezaFoo               # listed as "dezaFoo" (id dezafoo), replacing what is there
 //   deno task eshop:publish foo --name dezaFoo --author "EASIER BY CODE"
 //   deno task eshop:publish ./backups/mygame.json --palette snes

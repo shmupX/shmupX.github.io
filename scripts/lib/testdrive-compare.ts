@@ -48,6 +48,9 @@ export function compareUrls(
   const god = opts.god ?? true;
   const make = (version: Side) => {
     const u = new URL(base);
+    // The runtime resolves the name itself — shmupX/levels/<name>, then
+    // shmupX/levelAliases/<name lowercased> — so an alias passes through as
+    // typed and both panes land on the same key.
     u.searchParams.set("level", level);
     // `?stage=` skips the title and boots straight into the stage, which is
     // what makes a timed capture compare play and not two title screens.

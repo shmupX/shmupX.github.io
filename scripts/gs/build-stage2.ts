@@ -8,7 +8,9 @@
  *   deno run -A --node-modules-dir=none scripts/gs/build-stage2.ts --apply
  *   deno run -A --node-modules-dir=none scripts/gs/build-stage2.ts --revert
  *
- * What it adds to levels/gs, and nothing else:
+ * What it adds to shmupX/levels/gs — shmupX's copy of the game; cmg keeps its
+ * own at the root-level levels/gs, which this never reads or writes
+ * (mcp/lib/rtdb.ts roots every level path) — and nothing else:
  *
  * - `stages/stage1`, the second stage's wave list: flirty girls (G) and the
  *   game's own hacked laptops (C, the stage-1 enemy whose screens read
@@ -53,6 +55,7 @@ import {
 } from "../../mcp/lib/art.ts";
 import { referencedFrames } from "../../mcp/lib/character.ts";
 import {
+  dbPath,
   decodeFrameName,
   encodeKey,
   get,
@@ -316,7 +319,7 @@ export async function plan(): Promise<Plan> {
     `levels/${LEVEL}/atlasFrames`,
   );
   if (!image.value || !rawFrames.value) {
-    throw new Error(`levels/${LEVEL} has no atlas to add to`);
+    throw new Error(`${dbPath(`levels/${LEVEL}`)} has no atlas to add to`);
   }
   const have = new Set(Object.keys(rawFrames.value).map(decodeFrameName));
 
@@ -406,7 +409,7 @@ export async function revert(): Promise<string[]> {
   const written: string[] = [];
   for (const path of RECORD_PATHS) {
     await put(`levels/${LEVEL}/${path}`, null);
-    written.push(`levels/${LEVEL}/${path}`);
+    written.push(dbPath(`levels/${LEVEL}/${path}`));
   }
   const image = await getWithEtag<string>(`levels/${LEVEL}/atlasImageDataURL`);
   const frames = await getWithEtag<Record<string, FrameRect>>(
@@ -435,8 +438,8 @@ export async function revert(): Promise<string[]> {
   await put(`levels/${LEVEL}/atlasFrames`, keep, { ifMatch: frames.etag });
   await put(`levels/${LEVEL}/savedAt`, Date.now());
   written.push(
-    `levels/${LEVEL}/atlasImageDataURL`,
-    `levels/${LEVEL}/atlasFrames`,
+    dbPath(`levels/${LEVEL}/atlasImageDataURL`),
+    dbPath(`levels/${LEVEL}/atlasFrames`),
   );
   return written;
 }
@@ -453,7 +456,7 @@ export async function apply(
 ): Promise<string[]> {
   if (p.taken.length && !force) {
     throw new Error(
-      `levels/${LEVEL} already has ${
+      `${dbPath(`levels/${LEVEL}`)} already has ${
         p.taken.join(", ")
       }; --force replaces them`,
     );
@@ -467,13 +470,13 @@ export async function apply(
       ifMatch: p.etags.frames,
     });
     written.push(
-      `levels/${LEVEL}/atlasImageDataURL`,
-      `levels/${LEVEL}/atlasFrames`,
+      dbPath(`levels/${LEVEL}/atlasImageDataURL`),
+      dbPath(`levels/${LEVEL}/atlasFrames`),
     );
   }
   for (const [path, value] of Object.entries(p.records)) {
     await put(`levels/${LEVEL}/${path}`, value);
-    written.push(`levels/${LEVEL}/${path}`);
+    written.push(dbPath(`levels/${LEVEL}/${path}`));
   }
   await put(`levels/${LEVEL}/savedAt`, Date.now());
   return written;
@@ -487,7 +490,7 @@ if (import.meta.main && Deno.args.includes("--revert")) {
   const p = await plan();
   console.log(JSON.stringify(
     {
-      level: LEVEL,
+      level: dbPath(`levels/${LEVEL}`),
       added: p.added,
       reused: p.reused,
       atlas: p.atlas,

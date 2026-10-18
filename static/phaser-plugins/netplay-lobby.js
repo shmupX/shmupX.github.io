@@ -482,9 +482,24 @@
         });
     }
 
+    // Which game this page plays is settled only once its level resolves: the
+    // bundle's setActiveGame names it off the record that loaded (an alias,
+    // the baked level, the editor's PLAY) and fires "shmupx:game-id". This
+    // deferred module usually boots before that, and read then, every
+    // ?level= game looked like no game in particular and the panel listed
+    // everybody's runs. An exported app's baked __GAME_ID__ is known at once.
+    function gameIdSettled() {
+        var st = window.__GAME_STATE__;
+        if (window.__GAME_ID__ || (st && st.gameIdResolved)) return Promise.resolve();
+        return new Promise(function (resolve) {
+            window.addEventListener('shmupx:game-id', function () { resolve(); }, { once: true });
+        });
+    }
+
     function boot() {
         if (!enabled()) return;
-        import(MODULE).then(function (mod) {
+        Promise.all([import(MODULE), gameIdSettled()]).then(function (loaded) {
+            var mod = loaded[0];
             var opts = {};
             var uri = q('netplayUri');
             if (uri) opts.uri = uri;

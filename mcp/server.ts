@@ -9,7 +9,7 @@
  *
  *   shmupx_list_characters   — characters in the catalog (dezaBoss0 and friends)
  *   shmupx_get_character     — one character's full record, the clone source
- *   shmupx_list_atlases      — the ~400 atlases frames can be taken from
+ *   shmupx_list_atlases      — the ~430 atlases frames can be taken from
  *   shmupx_list_frames       — frame names inside one atlas
  *   shmupx_list_sprites      — whole-image sprites, usable as a frame each
  *   shmupx_create_character  — clone + swap + pack an atlas; publishes on apply
@@ -25,6 +25,13 @@
  *   shmupx_get_object        — one object's state and what each dial would move
  *   shmupx_update_object     — aggression / silhouette / palette dials; writes on apply
  *   shmupx_preview_object    — one frame as bare base64 PNG (the watch's shape)
+ *
+ * The catalog is shmupX's own subtree of the database it shares with cmg:
+ * shmupX/characters, shmupX/atlases, shmupX/levels (lib/rtdb-root.ts,
+ * mcp/lib/rtdb.ts). Every write lands there and nowhere else. Source art is
+ * the one exception on the read side: a frame can be borrowed from ANY atlas,
+ * so an atlas shmupX lacks is read from the root-level atlases/<name>, cmg's
+ * full catalog (and spriteX's), without ever being written back there.
  *
  * It also drives the browser `deno task game:debug` opens — the real runtime,
  * paused on one frame, steppable and pokeable over the DevTools port:
@@ -62,9 +69,8 @@ import { z } from "zod";
 import { resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
 
-import { databaseUrl } from "./lib/rtdb.ts";
+import { catalogUrl, databaseUrl, listKeys } from "./lib/rtdb.ts";
 import { frameMap, loadAtlas } from "./lib/art.ts";
-import { listKeys } from "./lib/rtdb.ts";
 import {
   buildCharacter,
   type CreateRequest,
@@ -155,7 +161,8 @@ type Args<S extends z.ZodRawShape> = z.infer<z.ZodObject<S>>;
 const frameRef = z.union([
   z.string().describe(
     'A frame of a catalog atlas, written "<atlas>/<frame>" — e.g. "hadouken/hadouken1". ' +
-      "Use shmupx_list_frames to get exact frame names.",
+      "shmupX's own atlas of that name is used when there is one, else the root " +
+      "catalog's (read only). Use shmupx_list_frames to get exact frame names.",
   ),
   z.object({
     atlas: z.string(),
@@ -165,7 +172,9 @@ const frameRef = z.union([
     ),
   }),
   z.object({
-    sprite: z.string().describe("A whole /sprites entry, used as one frame"),
+    sprite: z.string().describe(
+      "A whole /sprites entry (root-level, shared with spriteX), used as one frame",
+    ),
     as: z.string().optional(),
   }),
   z.object({
@@ -256,7 +265,8 @@ const createShape = {
 
 const placeShape = {
   level: z.string().describe(
-    "Cloud level name, e.g. 'akuma' (a key under /levels)",
+    "Cloud level name, e.g. 'gs' — a key under shmupX/levels, or an alias in " +
+      "shmupX/levelAliases ('2019' is 2019-PS2)",
   ),
   character: z.string().describe("Character to place, e.g. 'hadoukenBoss'"),
   stage: z.number().int().min(0).max(9).optional().describe(
@@ -357,7 +367,8 @@ const listObjectsShape = {
       "enemy (zako), player, projectile, art.",
   ),
   level: z.string().optional().describe(
-    "List a cloud level's boss slots (levels/<name>/bossData/boss<N>) instead of " +
+    "List a cloud level's boss slots (shmupX/levels/<name>/bossData/boss<N>; an alias " +
+      "such as '2019' names its level) instead of " +
       "the catalog — 'the second boss' there is boss1. Each slot names the catalog " +
       "character it came from, when there is one; THAT is the id the edit tools " +
       "take, since a level's copy is edited by editing the character and placing " +
@@ -500,7 +511,8 @@ const server = new McpServer({ name: "shmupx-character", version: "1.0.0" });
 server.registerTool("shmupx_list_characters", {
   title: "List characters",
   description:
-    "List the characters in the shmupX catalog (/characters/*). These are boss-shaped records — " +
+    "List the characters in the shmupX catalog (shmupX/characters/*; cmg's root-level " +
+    "characters are another app's and are not listed). These are boss-shaped records — " +
     "anim, projectile slots, a dezaemon trailer, hp/score — and any of them can be cloned. " +
     "dezaBoss0..N are the ones a Dezaemon 2 cart import produces.",
   inputSchema: {},
@@ -510,6 +522,7 @@ server.registerTool("shmupx_list_characters", {
     const names = await listCharacters();
     return ok({
       database: databaseUrl(),
+      catalog: catalogUrl(),
       count: names.length,
       characters: names,
     });
@@ -537,17 +550,29 @@ server.registerTool("shmupx_get_character", {
 server.registerTool("shmupx_list_atlases", {
   title: "List atlases",
   description:
-    "List every atlas in the catalog (/atlases/*). Each one is a sheet of named frames, and any " +
-    "frame of any of them can be swapped into a character.",
+    "List every atlas frames can be taken from: shmupX's own (shmupX/atlases/*, where the " +
+    "catalog's characters keep their art) and the root catalog's (atlases/*, cmg's and " +
+    "spriteX's ~430 sheets, read only). Each one is a sheet of named frames, and any frame " +
+    "of any of them can be swapped into a character; a name in both is shmupX's. " +
+    "`shmupX` lists the names that are shmupX's own.",
   inputSchema: listAtlasesShape,
   annotations: { readOnlyHint: true, openWorldHint: true },
 }, ({ match }: Args<typeof listAtlasesShape>) =>
   guard(async () => {
-    const all = await listKeys("atlases");
-    const names = match
-      ? all.filter((n) => n.toLowerCase().includes(match.toLowerCase()))
-      : all;
-    return ok({ total: all.length, count: names.length, atlases: names });
+    const [own, root] = await Promise.all([
+      listKeys("atlases"),
+      listKeys("atlases", { unscoped: true }),
+    ]);
+    const all = [...new Set([...own, ...root])].sort();
+    const hit = (n: string) =>
+      !match || n.toLowerCase().includes(match.toLowerCase());
+    const names = all.filter(hit);
+    return ok({
+      total: all.length,
+      count: names.length,
+      atlases: names,
+      shmupX: own.filter(hit),
+    });
   }));
 
 server.registerTool("shmupx_list_frames", {
@@ -571,6 +596,8 @@ server.registerTool("shmupx_list_frames", {
     if (!frames.length) return fail(`Atlas "${atlas}" has no frames.`);
     return ok({
       atlas,
+      // Which tree answered: shmupX's own atlas, or the root catalog's.
+      source: loaded.path,
       sheet: loaded.json?.meta?.size ?? null,
       count: frames.length,
       frames,
@@ -599,7 +626,8 @@ server.registerTool("shmupx_create_character", {
     "Clone a character's attributes, swap frames from any sprite or atlas into its animations, " +
     "projectiles and stage-end backdrop, and pack the result into its own atlas. " +
     "Returns the built record WITHOUT writing anything; pass apply=true to publish it to the " +
-    "catalog as characters/<name> + atlases/<name>. " +
+    "catalog as shmupX/characters/<name> + shmupX/atlases/<name> (never to cmg's root-level " +
+    "copies). " +
     "The catalog is shared and open-write, so always show the dry run first and let the player " +
     "confirm before applying.",
   inputSchema: createShape,
@@ -685,6 +713,7 @@ server.registerTool(
     title: "Place a character into a level's boss slot",
     description:
       "Replace a cloud level's boss<N> with a character from the catalog, carrying its art across. " +
+      "The level is shmupX's copy, shmupX/levels/<key>; an alias ('2019') names its level. " +
       "Only frames the level does not already have are added to its atlas — a level's own art is " +
       "left alone, and the runtime's .gif/.png sibling lookup lets the record find it. " +
       "Returns what would change WITHOUT writing; pass apply=true to write. " +
@@ -755,11 +784,11 @@ server.registerTool(
       "shading) — plus exact `stats` for anything precise, and answer with the field changes, " +
       "the frames transformed, and a preview PNG of the result (`png_base64`) whether or not " +
       "anything was written. Writes NOTHING unless apply=true. Then: numbers-only edits " +
-      "write characters/<id> alone; pixel edits on a character with its own atlas rewrite " +
-      "atlases/<id> in place — every frame the atlas held is kept, edited or not, under its " +
+      "write shmupX/characters/<id> alone; pixel edits on a character with its own atlas rewrite " +
+      "shmupX/atlases/<id> in place — every frame the atlas held is kept, edited or not, under its " +
       "existing key spelling, conditionally on the ETag it was read with — while an object " +
       "whose art lives in a shared atlas never has that atlas touched: its edited frames go to " +
-      "their own atlases/<id>. saveAs writes a new character (the name must be free) and " +
+      "their own shmupX/atlases/<id>. saveAs writes a new character (the name must be free) and " +
       "leaves the original alone. An apply with nothing changed writes nothing. The catalog " +
       "is shared and open-write, so say what will change before applying, and refuse to apply " +
       "while `unresolved` is non-empty. Every dial reports what the runtime would NOT notice " +
@@ -1007,5 +1036,5 @@ server.registerTool(
 
 await server.connect(new StdioServerTransport());
 console.error(
-  `shmupx character MCP server running on stdio (${databaseUrl()})`,
+  `shmupx character MCP server running on stdio (${catalogUrl()})`,
 );

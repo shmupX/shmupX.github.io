@@ -21,6 +21,7 @@ import type { Bytes, Raster } from "@shmupx/shmup-harbor/png";
 import { blit, cut } from "@shmupx/shmup-harbor/raster";
 import {
   assertSafeKey,
+  dbPath,
   decodeFrameName,
   decodeKey,
   encodeFrameKey,
@@ -203,11 +204,31 @@ export interface LoadedAtlas {
   /** Each frame's stored key spelling, by decoded name. */
   storedKeys: Record<string, string>;
   sheet: Raster | null;
-  /** The node's ETag when it was read; a conditional rewrite hands it back. */
+  /**
+   * The ETag of shmupX's node for this atlas when it was read; a conditional
+   * rewrite hands it back. Always shmupX's, even for an atlas that came from
+   * the root catalog — there it is the stamp of an ABSENT node, so a rewrite
+   * conditional on it creates shmupX's copy only while there still is none.
+   */
   etag: string | null;
+  /**
+   * Where the pixels came from: "shmupX/atlases/<name>", or "atlases/<name>"
+   * when shmupX has no such atlas and the read fell back to cmg's catalog.
+   */
+  path: string;
 }
 
 const atlasCache = new Map<string, LoadedAtlas>();
+
+// Atlases are read from two trees. shmupX/atlases/<name> is shmupX's own
+// catalog: the atlas a shmupX character's textureKey names, which the tools
+// rewrite in place and publish to. The root-level atlases/<name> is cmg's,
+// and it is also where spriteX's packer writes, so it holds the ~430 sheets
+// that "swap in any frame from any atlas" (hadouken, bg-great-hall,
+// deza_dragon...) has always meant. A name shmupX lacks is therefore read
+// from the root — READ, never written: whatever a tool then publishes goes to
+// shmupX's subtree (rtdb.ts has no unscoped write), so borrowing cmg's art
+// never edits cmg's catalog.
 
 /** Read one catalog atlas: its frame map, and its sheet decoded to RGBA. */
 export async function loadAtlas(
@@ -217,12 +238,20 @@ export async function loadAtlas(
   assertSafeKey("Atlas name", name);
   const cached = atlasCache.get(name);
   if (cached && (!sheet || cached.sheet)) return cached;
-  const { value: record, etag } = await getWithEtag<
-    { json?: unknown; png?: unknown }
-  >(`atlases/${name}`);
+  type Stored = { json?: unknown; png?: unknown };
+  const own = await getWithEtag<Stored>(`atlases/${name}`);
+  let record = own.value;
+  let path = dbPath(`atlases/${name}`);
+  if (!record || typeof record !== "object") {
+    record = await get<Stored>(`atlases/${name}`, { unscoped: true });
+    path = dbPath(`atlases/${name}`, { unscoped: true });
+  }
   if (!record || typeof record !== "object") {
     throw new ArtError(
-      `No atlas at atlases/${name}. Use shmupx_list_atlases to see valid names.`,
+      `No atlas at ${
+        dbPath(`atlases/${name}`)
+      }, nor at atlases/${name} in the ` +
+        `root catalog. Use shmupx_list_atlases to see valid names.`,
     );
   }
   const json = normalizeAtlasJson(record.json);
@@ -234,7 +263,8 @@ export async function loadAtlas(
     sheet: sheet && typeof record.png === "string"
       ? await decodePng(decodeBase64(record.png))
       : null,
-    etag,
+    etag: own.etag,
+    path,
   };
   atlasCache.set(name, loaded);
   return loaded;
@@ -244,19 +274,24 @@ export async function loadAtlas(
  * Only an atlas's frame map, read from the `atlases/<name>/json` leaf so the
  * megabyte of base64 sheet beside it never crosses the wire. What a listing
  * that wants every character's sprite size calls, 27 times, concurrently.
+ * shmupX's copy first, then the root catalog's, as loadAtlas reads them.
  */
 export async function loadAtlasJson(name: string): Promise<AtlasJson | null> {
   assertSafeKey("Atlas name", name);
   const cached = atlasCache.get(name);
   if (cached) return cached.json;
-  return normalizeAtlasJson(await get<unknown>(`atlases/${name}/json`));
+  const own = await get<unknown>(`atlases/${name}/json`);
+  return normalizeAtlasJson(
+    own ?? await get<unknown>(`atlases/${name}/json`, { unscoped: true }),
+  );
 }
 
 /**
  * Forget a cached atlas — every one, with no name. Called after a publish
- * rewrites `atlases/<name>`, so the next read in this process sees the pixels
- * that were just written rather than the ones the edit started from; without
- * it a second "redder" recolours the original again and nothing compounds.
+ * rewrites `shmupX/atlases/<name>`, so the next read in this process sees the
+ * pixels that were just written rather than the ones the edit started from;
+ * without it a second "redder" recolours the original again and nothing
+ * compounds.
  */
 export function invalidateAtlas(name?: string): void {
   if (name === undefined) atlasCache.clear();
@@ -303,7 +338,7 @@ export async function resolveFrame(ref: FrameRef): Promise<ResolvedFrame> {
     return {
       name: spec.as ?? spec.frame,
       raster: cut(atlas.sheet, rect.frame),
-      source: `atlases/${spec.atlas}#${spec.frame}`,
+      source: `${atlas.path}#${spec.frame}`,
       scope: spec.atlas,
     };
   }

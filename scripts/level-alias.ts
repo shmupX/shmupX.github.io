@@ -9,10 +9,17 @@
 // An alias is another label for a level: with `2019 -> 2019-PS2`,
 // 2019.codemonkey.games opens the game the way 2019-ps2.codemonkey.games does,
 // and so does /games/2028-ai?level=2019. The index is RTDB
-// `levelAliases/<alias>` = the level's key, beside `levels/`; the subdomain
-// redirect (lib/level-subdomain.ts) and the level loader's fetchLevel both
-// read it. lib/level-subdomain.ts's planAliases has the rules: a lowercase DNS
-// label, never a name a level already has, never one another level holds.
+// `shmupX/levelAliases/<alias>` = the level's key, beside `shmupX/levels/`;
+// the subdomain redirect (lib/level-subdomain.ts) and the level loader's
+// fetchLevel both read it. lib/level-subdomain.ts's planAliases has the rules:
+// a lowercase DNS label, never a name a level already has, never one another
+// level holds.
+//
+// Both are shmupX's own subtree of the database it shares with cmg
+// (lib/rtdb-root.ts), so this edits shmupX's aliases only. cmg's root-level
+// `levelAliases` is another app's index and is neither read nor written here.
+// The game can be named by an alias too (`deno task level:alias 2019` lists
+// 2019-PS2's), found the way a subdomain finds it.
 //
 // WRITES ARE OPT-IN, as in level:normalize: without `--write` this prints what
 // it would set and stops. A write PATCHes only the aliases named.
@@ -22,6 +29,7 @@ import {
   isAliasName,
   LEVELS_DB,
   LEVELS_PATH,
+  matchLevelKey,
   planAliases,
 } from "../lib/level-subdomain.ts";
 
@@ -102,7 +110,9 @@ if (names.length === 0) {
 const keys = Object.keys(
   (await getJson(`${LEVELS_PATH}.json?shallow=true`) ?? {}) as object,
 );
-const [level, ...wanted] = names;
+const [asked, ...wanted] = names;
+// A game named by one of its aliases is the game the alias names.
+const level = matchLevelKey(asked, keys, aliases) ?? asked;
 const plan = planAliases(level, wanted, keys, aliases);
 if (plan.errors.length) fail(plan.errors.join("\n       "));
 if (wanted.length === 0) {
@@ -114,6 +124,7 @@ if (!adds.length) {
   console.log(`Nothing to add: "${plan.key}" already answers to those.`);
   Deno.exit(0);
 }
+console.log(`${ALIASES_PATH}:`);
 for (const [name, key] of adds) console.log(`+ ${name} -> ${key}`);
 if (!write) {
   console.log("\nDry run — nothing written. Re-run with --write to add them.");

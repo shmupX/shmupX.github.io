@@ -12,21 +12,25 @@
 // apex does, which is what lets the redirect be relative: the game page and
 // its bundle load from the same host the visitor typed.
 //
-// The level is looked up by name in the cloud (RTDB `levels/*`, the same keys
-// the level loader reads with ?level=). Hostnames are case-insensitive and
-// RTDB keys are not — the level is stored as `2019-PS2` — so the label is
-// matched exactly first, then lowercased, then against every key's lowercase
-// (sorted, so a tie such as `ramsie`/`Ramsie` resolves the same way every
-// time). A key the DNS could never spell (a space, an underscore, a dot) is
-// simply not reachable this way.
+// The level is looked up by name in the cloud (RTDB `shmupX/levels/*`, the
+// same keys the level loader reads with ?level=). Only shmupX's own games are
+// there: the database is shared with cmg, whose catalog is the root-level
+// `levels/*`, and a label naming one of cmg's games and none of ours is a NEW
+// GAME here, not cmg's game (lib/rtdb-root.ts). Hostnames are
+// case-insensitive and RTDB keys are not — the level is stored as `2019-PS2`
+// — so the label is matched exactly first, then lowercased, then against
+// every key's lowercase (sorted, so a tie such as `ramsie`/`Ramsie` resolves
+// the same way every time). A key the DNS could never spell (a space, an
+// underscore, a dot) is simply not reachable this way.
 //
 // A game can also answer to ALIASES: other labels that name the same level,
 // so 2019.codemonkey.games and streetfighter.codemonkey.games both open
 // 2019-PS2. They live in one small index beside the levels, RTDB
-// `levelAliases/<alias>` = the level's key, written by `deno task level:alias`
-// (scripts/level-alias.ts). An alias is a lowercase DNS label and never wins
-// over a level's own key: a level called `2019` would answer to 2019 first.
-// The level loader reads the same index for ?level=<alias>.
+// `shmupX/levelAliases/<alias>` = the level's key, written by
+// `deno task level:alias` (scripts/level-alias.ts). An alias is a lowercase
+// DNS label and never wins over a level's own key: a level called `2019`
+// would answer to 2019 first. The level loader reads the same index for
+// ?level=<alias>.
 //
 // The key list comes from one shallow REST read, cached for a minute the way
 // /characters caches its listing. When the database cannot be read at all the
@@ -34,15 +38,20 @@
 // the common case, and the loader's own "no such level" screen is a better
 // failure than a stranger's editor opening over a name that exists.
 
+import { rtdbPath } from "./rtdb-root.ts";
+
 export const DEFAULT_SITE_HOSTS = ["codemonkey.games", "localhost"];
 
 /** Labels that are the apex under another name, never a level. */
 export const RESERVED_SUBDOMAINS = new Set(["www"]);
 
+// The DATABASE, not the subtree: CHARACTERS_DB names the base the way it
+// always has (a deployment that set it to the bare database URL still works),
+// and the shmupX root goes on the paths below.
 export const LEVELS_DB = Deno.env.get("CHARACTERS_DB") ??
   "https://evil-invaders-default-rtdb.firebaseio.com";
-export const LEVELS_PATH = "levels";
-export const ALIASES_PATH = "levelAliases";
+export const LEVELS_PATH = rtdbPath("levels");
+export const ALIASES_PATH = rtdbPath("levelAliases");
 export const KEYS_CACHE_MS = 60_000;
 
 export const GAME_URL = "/games/2028-ai";
@@ -206,7 +215,7 @@ export async function cloudLevelKeys(
     const res = await fetcher(`${db}/${LEVELS_PATH}.json?shallow=true`, {
       signal: AbortSignal.timeout(5_000),
     });
-    if (!res.ok) throw new Error(`levels.json ${res.status}`);
+    if (!res.ok) throw new Error(`${LEVELS_PATH}.json ${res.status}`);
     const body = await res.json() as Record<string, unknown> | null;
     const keys = body && typeof body === "object" ? Object.keys(body) : [];
     keysCache = { at: now(), keys };
@@ -223,7 +232,7 @@ export async function cloudLevelKeys(
 let aliasesCache: { at: number; aliases: Record<string, string> } | null = null;
 
 /**
- * The alias index, `levelAliases/*`, read whole (it is a few short strings)
+ * The alias index, `shmupX/levelAliases/*`, read whole (a few short strings)
  * and cached for a minute like the key listing; {} when there is none, null
  * when the read fails and nothing is cached yet. A value that is not a string
  * or a name that is not an alias is dropped rather than trusted.

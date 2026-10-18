@@ -24,6 +24,12 @@
  * Needs a Chromium, found by the profiler's own findChrome(): $CHROME_BIN
  * wins; otherwise the Playwright cache and the usual system installs are
  * searched. Nothing is downloaded.
+ *
+ * What it reads from the live database, read only: the clone source from
+ * shmupX's catalog (shmupX/characters/dezaBoss0 and the atlas its textureKey
+ * names, shmupX/atlases/dezaBoss0), and the borrowed art — hadouken,
+ * bg-great-hall — from shmupX/atlases when shmupX has them and otherwise from
+ * the root-level atlases/*, cmg's and spriteX's catalog (mcp/lib/art.ts).
  */
 
 import { parseArgs } from "@std/cli/parse-args";
@@ -198,7 +204,8 @@ const drawing = (game: string, names: string[]) =>
 const HELP = `deno task preview:verify [-- options]
 
   --name <s>             name for the built character (default hadoukenBoss)
-  --clone-from <s>       character to clone (default dezaBoss0)
+  --clone-from <s>       character to clone, from shmupX/characters
+                         (default dezaBoss0)
   --main-projectile <s>  comma-separated frame refs for bulletDataA
                          (default hadouken/atlas_s0,hadouken/hadouken1)
   --stage-bg-end <s>     stage-end backdrop frame ref, or "" for none

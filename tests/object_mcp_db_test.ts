@@ -11,6 +11,12 @@
 // alone, that a shared atlas is never rewritten, that a second edit
 // compounds on the first, that a raced write is refused, and that a dry run
 // writes nothing at all.
+//
+// The stand-in holds the database the way it is shared: shmupX's catalog
+// under shmupX/ and cmg's at the root. So it also proves the split — that the
+// tools list, read and write only shmupX's characters, levels and atlases,
+// that an alias names its level, and that an atlas shmupX lacks is borrowed
+// from the root for its pixels and never written back there.
 
 import {
   assert,
@@ -27,7 +33,9 @@ import { cut } from "@shmupx/shmup-harbor/raster";
 import {
   frameMap,
   invalidateAtlas,
+  loadAtlas,
   packFrames,
+  resolveFrame,
   sheetDataUrl,
 } from "../mcp/lib/art.ts";
 import {
@@ -44,6 +52,7 @@ import {
   renderObject,
   updateObject,
 } from "../mcp/lib/objects.ts";
+import { placeCharacter } from "../mcp/lib/place.ts";
 
 /** ─── a stand-in RTDB ──────────────────────────────────────────────────── */
 
@@ -251,6 +260,7 @@ async function seed(): Promise<Tree> {
       }),
       dezaBoss1_shot: await atlasRecord({ "shot_0.png": solid(2, 2, BLUE) }),
     },
+    levelAliases: { dp: "Daioh P!" },
     levels: {
       "Daioh P!": {
         bossData: {
@@ -266,6 +276,33 @@ async function seed(): Promise<Tree> {
         atlasFrames: { [encodeKey("boss_0.png")]: rect(0, 0, 4, 4) },
       },
     },
+  };
+}
+
+/**
+ * cmg's catalog, at the database root beside shmupX's. Nothing here may be
+ * listed as shmupX's or written; its atlases are source art a tool can
+ * borrow. Its redBoss1 sheet is grey where shmupX's is red, so a read that
+ * reached the wrong tree shows in the pixels.
+ */
+async function cmgRoot(): Promise<Tree> {
+  return {
+    characters: {
+      cmgOnly: { name: "cmgOnly", textureKey: "cmgArt", hp: 1 },
+    },
+    atlases: {
+      cmgArt: await atlasRecord({ "cmg_0.png": solid(4, 4, GREY) }),
+      rootOnly: await atlasRecord({ "root_0.png": solid(4, 4, GREY) }),
+      redBoss1: await atlasRecord({
+        "boss_0.png": solid(4, 4, GREY),
+        "boss_1.png": solid(4, 4, GREY),
+        "shot_0.png": solid(2, 2, GREY),
+      }),
+    },
+    levels: {
+      cmgLevel: { bossData: { boss0: { name: "cmgOnly" } } },
+    },
+    levelAliases: { cmgalias: "cmgLevel" },
   };
 }
 
@@ -299,7 +336,8 @@ const png = async (b64: string) =>
 /** ─── the tests ────────────────────────────────────────────────────────── */
 
 Deno.test("the object tools against a stand-in database", async (t) => {
-  const db = fakeDb(await seed());
+  const db = fakeDb({ shmupX: await seed(), ...(await cmgRoot()) });
+  const cmgBefore = structuredClone(await cmgRoot());
   setDatabaseUrl(db.url);
   invalidateAtlas();
   try {
@@ -366,11 +404,32 @@ Deno.test("the object tools against a stand-in database", async (t) => {
           query: "the last boss",
         });
         assertEquals(last.resolved?.id, "boss1");
-        // The key is exact, and a miss names what is there.
-        await assertRejects(
+        // The key is exact, and a miss names what is there — shmupX's levels,
+        // not cmg's.
+        const miss = await assertRejects(
           () => listObjects({ level: "Daioh" }),
           Error,
           "Daioh P!",
+        );
+        assert(!miss.message.includes("cmgLevel"), miss.message);
+        assert(miss.message.includes("shmupX/levels/Daioh"), miss.message);
+        // An alias in shmupX's index names its level, lowercased as ?level=
+        // looks it up; one only cmg's index has names nothing here.
+        const aliased = await listObjects({ level: "DP" });
+        assertEquals(aliased.objects.map((o) => o.id), [
+          "boss0",
+          "boss1",
+          "bossExtra",
+        ]);
+        await assertRejects(
+          () => listObjects({ level: "cmgalias" }),
+          Error,
+          "has no bossData",
+        );
+        await assertRejects(
+          () => listObjects({ level: "cmgLevel" }),
+          Error,
+          "has no bossData",
         );
       },
     );
@@ -472,7 +531,8 @@ Deno.test("the object tools against a stand-in database", async (t) => {
         assert(!("frameIndex" in u) && !("scale" in u));
         assertEquals(db.writes, []);
         assertEquals(
-          (db.read("characters/redBoss1") as { interval: number }).interval,
+          (db.read("shmupX/characters/redBoss1") as { interval: number })
+            .interval,
           100,
         );
         // A colour nobody knows fails before anything is read, whatever the
@@ -514,17 +574,17 @@ Deno.test("the object tools against a stand-in database", async (t) => {
     await t.step(
       "a numbers-only apply writes the record and leaves the atlas alone",
       async () => {
-        const atlasBefore = structuredClone(db.read("atlases/redBoss1"));
+        const atlasBefore = structuredClone(db.read("shmupX/atlases/redBoss1"));
         const u = await updateObject({
           id: "redBoss1",
           aggression: 1,
           apply: true,
         });
         assertEquals(u.applied, true);
-        assertEquals(u.written, ["characters/redBoss1"]);
+        assertEquals(u.written, ["shmupX/characters/redBoss1"]);
         assertEquals(u.atlas.write, "untouched");
-        assertEquals(db.writes, ["characters/redBoss1"]);
-        const record = db.read("characters/redBoss1") as Record<
+        assertEquals(db.writes, ["shmupX/characters/redBoss1"]);
+        const record = db.read("shmupX/characters/redBoss1") as Record<
           string,
           unknown
         >;
@@ -532,7 +592,7 @@ Deno.test("the object tools against a stand-in database", async (t) => {
         assertEquals((record.bulletDataA as { damage: number }).damage, 2);
         assertEquals(record.interval, 100);
         assertEquals(record.textureKey, "redBoss1");
-        assertEquals(db.read("atlases/redBoss1"), atlasBefore);
+        assertEquals(db.read("shmupX/atlases/redBoss1"), atlasBefore);
       },
     );
 
@@ -545,9 +605,9 @@ Deno.test("the object tools against a stand-in database", async (t) => {
           stats: { hp: 250, interval: 40 },
           apply: true,
         });
-        assertEquals(u.written, ["characters/redBoss1"]);
+        assertEquals(u.written, ["shmupX/characters/redBoss1"]);
         assertEquals(db.writes.length, before + 1);
-        const record = db.read("characters/redBoss1") as Record<
+        const record = db.read("shmupX/characters/redBoss1") as Record<
           string,
           unknown
         >;
@@ -567,11 +627,14 @@ Deno.test("the object tools against a stand-in database", async (t) => {
           palette: { hue: 120 },
           apply: true,
         });
-        assertEquals(u.written, ["atlases/redBoss1", "characters/redBoss1"]);
+        assertEquals(u.written, [
+          "shmupX/atlases/redBoss1",
+          "shmupX/characters/redBoss1",
+        ]);
         assertEquals(u.atlas.write, "in place");
         assertEquals(db.writes.slice(before), u.written);
 
-        const atlas = db.read("atlases/redBoss1") as {
+        const atlas = db.read("shmupX/atlases/redBoss1") as {
           json: string;
           png: string;
         };
@@ -602,7 +665,7 @@ Deno.test("the object tools against a stand-in database", async (t) => {
           apply: true,
         });
         assertEquals(u.applied, true);
-        const atlas = db.read("atlases/redBoss1") as {
+        const atlas = db.read("shmupX/atlases/redBoss1") as {
           json: string;
           png: string;
         };
@@ -628,7 +691,7 @@ Deno.test("the object tools against a stand-in database", async (t) => {
         assertEquals(u.atlas.write, "in place");
         assertEquals(u.atlas.frameCount, 2);
         assertEquals(u.art.transformed.sort(), ["atlas_s0", "old.gif"]);
-        const atlas = db.read("atlases/spritexGuy") as {
+        const atlas = db.read("shmupX/atlases/spritexGuy") as {
           json: string;
           png: string;
         };
@@ -645,7 +708,7 @@ Deno.test("the object tools against a stand-in database", async (t) => {
         // driven at the database layer: a stale ETag on a conditional PUT.
         const fresh = await getWithEtag("atlases/redBoss1");
         assert(fresh.etag, "the stand-in answers with an ETag");
-        db.poke("atlases/redBoss1/json", "{}");
+        db.poke("shmupX/atlases/redBoss1/json", "{}");
         await assertRejects(
           () =>
             put("atlases/redBoss1", { json: "{}", png: "" }, {
@@ -661,7 +724,7 @@ Deno.test("the object tools against a stand-in database", async (t) => {
         await put("atlases/redBoss1", now.value, { ifMatch: now.etag });
         // Put the seed's atlas back for the steps that follow.
         db.poke(
-          "atlases/redBoss1",
+          "shmupX/atlases/redBoss1",
           ((await seed()).atlases as Tree).redBoss1,
         );
         invalidateAtlas();
@@ -678,24 +741,30 @@ Deno.test("the object tools against a stand-in database", async (t) => {
           saveAs: "bigRed",
           apply: true,
         });
-        assertEquals(u.written, ["atlases/bigRed", "characters/bigRed"]);
+        assertEquals(u.written, [
+          "shmupX/atlases/bigRed",
+          "shmupX/characters/bigRed",
+        ]);
         assertEquals(u.atlas.write, "new");
         assertEquals(db.writes.slice(before), u.written);
         assertEquals([u.width_px, u.height_px], [6, 6]);
         assertEquals(u.art.scale, 1.5);
 
-        const copy = db.read("characters/bigRed") as Record<string, unknown>;
+        const copy = db.read("shmupX/characters/bigRed") as Record<
+          string,
+          unknown
+        >;
         assertEquals(copy.name, "bigRed");
         assertEquals(copy.textureKey, "bigRed");
         // The copy starts from the record as it stands.
         assertEquals(copy.hp, 250);
-        const original = db.read("characters/redBoss1") as Record<
+        const original = db.read("shmupX/characters/redBoss1") as Record<
           string,
           unknown
         >;
         assertEquals(original.textureKey, "redBoss1");
         // A new atlas carries only what the record names — no spare.
-        const atlas = db.read("atlases/bigRed") as {
+        const atlas = db.read("shmupX/atlases/bigRed") as {
           json: string;
           png: string;
         };
@@ -735,7 +804,7 @@ Deno.test("the object tools against a stand-in database", async (t) => {
         );
         assertEquals(db.writes.length, before);
         assertEquals(
-          (db.read("characters/hero") as { maxHp: number }).maxHp,
+          (db.read("shmupX/characters/hero") as { maxHp: number }).maxHp,
           3,
         );
       },
@@ -744,7 +813,9 @@ Deno.test("the object tools against a stand-in database", async (t) => {
     await t.step(
       "an object in a shared atlas: no-op writes nothing, numbers write the record, pixels fork",
       async () => {
-        const sharedBefore = structuredClone(db.read("atlases/shared_atlas"));
+        const sharedBefore = structuredClone(
+          db.read("shmupX/atlases/shared_atlas"),
+        );
         let before = db.writes.length;
         // Nothing asked, nothing written — and no fork.
         const noop = await updateObject({ id: "hero", apply: true });
@@ -754,7 +825,8 @@ Deno.test("the object tools against a stand-in database", async (t) => {
         assert(noop.warnings.some((w) => w.includes("Nothing changed")));
         assertEquals(db.writes.length, before);
         assertEquals(
-          (db.read("characters/hero") as { textureKey: string }).textureKey,
+          (db.read("shmupX/characters/hero") as { textureKey: string })
+            .textureKey,
           "shared_atlas",
         );
         // Numbers only: the record, still pointing at the shared sheet.
@@ -763,12 +835,13 @@ Deno.test("the object tools against a stand-in database", async (t) => {
           stats: { maxHp: 5 },
           apply: true,
         });
-        assertEquals(stats.written, ["characters/hero"]);
+        assertEquals(stats.written, ["shmupX/characters/hero"]);
         assertEquals(
-          (db.read("characters/hero") as { textureKey: string }).textureKey,
+          (db.read("shmupX/characters/hero") as { textureKey: string })
+            .textureKey,
           "shared_atlas",
         );
-        assertEquals(db.read("atlases/hero"), null);
+        assertEquals(db.read("shmupX/atlases/hero"), null);
         // Pixels: its own atlas, the shared one untouched.
         before = db.writes.length;
         const u = await updateObject({
@@ -776,15 +849,24 @@ Deno.test("the object tools against a stand-in database", async (t) => {
           palette: { toward: "red" },
           apply: true,
         });
-        assertEquals(u.written, ["atlases/hero", "characters/hero"]);
+        assertEquals(u.written, [
+          "shmupX/atlases/hero",
+          "shmupX/characters/hero",
+        ]);
         assertEquals(u.atlas.write, "new");
         assertEquals(db.writes.slice(before), u.written);
         assert(u.warnings.some((w) => w.includes("shared_atlas")));
-        assertEquals(db.read("atlases/shared_atlas"), sharedBefore);
-        const hero = db.read("characters/hero") as Record<string, unknown>;
+        assertEquals(db.read("shmupX/atlases/shared_atlas"), sharedBefore);
+        const hero = db.read("shmupX/characters/hero") as Record<
+          string,
+          unknown
+        >;
         assertEquals(hero.textureKey, "hero");
         assertEquals(hero.maxHp, 5);
-        const atlas = db.read("atlases/hero") as { json: string; png: string };
+        const atlas = db.read("shmupX/atlases/hero") as {
+          json: string;
+          png: string;
+        };
         assertEquals(rawKeys(atlas), ["hero_0.png"]);
         const [r, g, b] = await pixelOf(atlas, "hero_0.png");
         assertEquals(r, 255);
@@ -823,6 +905,141 @@ Deno.test("the object tools against a stand-in database", async (t) => {
       assert(u.warnings.some((w) => w.includes("Nothing changed")));
       assertEquals(u.note, "no change");
     });
+
+    await t.step(
+      "the catalog is shmupX's: cmg's characters are neither listed nor read",
+      async () => {
+        const list = await listObjects();
+        assertEquals(list.catalog, `${db.url}/shmupX`);
+        assert(!list.objects.some((o) => o.id === "cmgOnly"));
+        await assertRejects(
+          () => describeObject("cmgOnly"),
+          Error,
+          "No character at shmupX/characters/cmgOnly",
+        );
+      },
+    );
+
+    await t.step(
+      "an atlas shmupX lacks is borrowed from the root, and shmupX's own wins",
+      async () => {
+        invalidateAtlas();
+        const own = await loadAtlas("redBoss1");
+        assertEquals(own.path, "shmupX/atlases/redBoss1");
+        assertEquals([
+          ...cut(own.sheet!, own.frames["boss_0.png"].frame).data
+            .slice(0, 4),
+        ], [...RED, 255]);
+        const borrowed = await loadAtlas("cmgArt");
+        assertEquals(borrowed.path, "atlases/cmgArt");
+        assertEquals(Object.keys(borrowed.frames), ["cmg_0.png"]);
+        const frame = await resolveFrame("cmgArt/cmg_0.png");
+        assertEquals(frame.source, "atlases/cmgArt#cmg_0.png");
+        await assertRejects(
+          () => loadAtlas("nowhere"),
+          Error,
+          "No atlas at shmupX/atlases/nowhere",
+        );
+      },
+    );
+
+    await t.step(
+      "edits of borrowed art, and a placement by alias, write only shmupX's tree",
+      async () => {
+        // Two shmupX characters whose art only the root has: one pointing at
+        // a sheet under another name, one at a sheet under its own.
+        db.poke("shmupX/characters/borrower", {
+          name: "borrower",
+          textureKey: "cmgArt",
+          texture: ["cmg_0.png"],
+          hp: 5,
+          interval: 50,
+        });
+        db.poke("shmupX/characters/rootOnly", {
+          name: "rootOnly",
+          textureKey: "rootOnly",
+          texture: ["root_0.png"],
+          hp: 5,
+          interval: 50,
+        });
+        let before = db.writes.length;
+        const fork = await updateObject({
+          id: "borrower",
+          palette: { toward: "red" },
+          apply: true,
+        });
+        assertEquals(fork.atlas.write, "new");
+        assertEquals(fork.written, [
+          "shmupX/atlases/borrower",
+          "shmupX/characters/borrower",
+        ]);
+        assertEquals(db.writes.slice(before), fork.written);
+        // Its own name, so "in place" — but the place is shmupX's, created
+        // from the borrowed pixels on the stamp of a node that is not there.
+        before = db.writes.length;
+        const copy = await updateObject({
+          id: "rootOnly",
+          palette: { toward: "red" },
+          apply: true,
+        });
+        assertEquals(copy.atlas.write, "in place");
+        assertEquals(copy.written, [
+          "shmupX/atlases/rootOnly",
+          "shmupX/characters/rootOnly",
+        ]);
+        assertEquals(db.writes.slice(before), copy.written);
+        const [r] = await pixelOf(
+          db.read("shmupX/atlases/rootOnly") as { json: string; png: string },
+          "root_0.png",
+        );
+        assertEquals(r, 255);
+        // A placement names its level by key or by alias, and edits shmupX's
+        // copy of it: cmg's root-level levels/ is the same game's other copy.
+        db.poke("shmupX/levels/stage", {
+          atlasImageDataURL: await sheetDataUrl(solid(4, 4, GREY)),
+          atlasFrames: { [encodeKey("tile.png")]: rect(0, 0, 4, 4) },
+          bossData: { boss0: { name: "old" } },
+        });
+        db.poke("shmupX/levelAliases/st", "stage");
+        before = db.writes.length;
+        const dry = await placeCharacter({
+          level: "ST",
+          character: "redBoss1",
+        });
+        assertEquals([dry.level, dry.alias], ["stage", "st"]);
+        assertEquals(dry.replaced, { name: "old" });
+        assertEquals(dry.written, []);
+        assertEquals(db.writes.length, before);
+        const placed = await placeCharacter({
+          level: "st",
+          character: "redBoss1",
+          apply: true,
+        });
+        assertEquals(placed.written, [
+          "shmupX/levels/stage/atlasImageDataURL",
+          "shmupX/levels/stage/atlasFrames",
+          "shmupX/levels/stage/bossData/boss0",
+        ]);
+        assertEquals(db.writes.slice(before), placed.written);
+        assertEquals(
+          (db.read("shmupX/levels/stage/bossData/boss0") as { name: string })
+            .name,
+          "redBoss1",
+        );
+        await assertRejects(
+          () => placeCharacter({ level: "cmgLevel", character: "redBoss1" }),
+          Error,
+          "shmupX/levels/cmgLevel has no atlas",
+        );
+
+        // Every write of the whole run went to shmupX's subtree, and cmg's
+        // tree is exactly what it was.
+        assertEquals(db.writes.filter((w) => !w.startsWith("shmupX/")), []);
+        for (const node of Object.keys(cmgBefore)) {
+          assertEquals(db.read(node), cmgBefore[node], node);
+        }
+      },
+    );
   } finally {
     setDatabaseUrl(null);
     invalidateAtlas();

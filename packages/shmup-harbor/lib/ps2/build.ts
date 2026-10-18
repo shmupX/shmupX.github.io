@@ -27,7 +27,11 @@ import { loadSavLevel } from "./sav.ts";
 import { buildZip } from "./zip.ts";
 import type { FrameEntry } from "./atlas.ts";
 import { harborRoot } from "../repo-root.ts";
+import { resolveCloudLevel } from "../cloud-level.ts";
+import { RTDB_ROOT } from "../rtdb-root.ts";
 
+// The database base. A level is read from shmupX's own subtree of it
+// (../cloud-level.ts); the Dezaemon shelf's covers stay at its root.
 const FIREBASE_DB = "https://evil-invaders-default-rtdb.firebaseio.com";
 
 /**
@@ -227,19 +231,26 @@ async function loadRecord(
     return { record, fallbackName: record.name?.trim() || "shmupX" };
   }
   if (options.levelName) {
-    const url = `${FIREBASE_DB}/levels/${
-      encodeURIComponent(options.levelName)
-    }.json`;
+    // shmupX/levels/<name>, else the key shmupX/levelAliases names — so
+    // `build:ps2 2019` builds 2019-PS2, as ?level=2019 plays it — and never
+    // the root-level copy, which is cmg's.
     log(`  level from Firebase: ${options.levelName}`);
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`could not read the level (HTTP ${response.status})`);
+    const hit = await resolveCloudLevel(options.levelName, {
+      db: FIREBASE_DB,
+      accept: (value) => !!(value as LevelRecord | null)?.enemylist,
+    });
+    if (!hit) {
+      throw new Error(
+        `level "${options.levelName}" not found in ${RTDB_ROOT}/levels`,
+      );
     }
-    const record = await response.json() as LevelRecord | null;
-    if (!record || !record.enemylist) {
-      throw new Error(`level "${options.levelName}" not found`);
+    if (hit.alias) {
+      log(`    "${hit.alias}" is an alias of ${RTDB_ROOT}/levels/${hit.key}`);
     }
-    return { record, fallbackName: options.levelName };
+    return {
+      record: hit.value as LevelRecord,
+      fallbackName: options.levelName,
+    };
   }
   // No name: the game the repo already ships, so `deno task build:ps2` on a
   // fresh checkout produces something playable without touching the network.

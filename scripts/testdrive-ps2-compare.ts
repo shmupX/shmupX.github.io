@@ -67,7 +67,10 @@ Plays the cloud level's OG and MOD versions side by side in a headless Chrome,
 god mode on, and records the first seconds of the stage as one GIF in
 build/testdrive/ps2-compare/<slug>/.
 
-  <level>            a cloud level's name, e.g. "2019-PS2"
+  <level>            a cloud level's name, e.g. "2019-PS2", or one of its
+                     aliases ("2019"): a key or alias in shmupX/levels and
+                     shmupX/levelAliases, which is all ?level= reads — a
+                     name only cmg's root-level levels/* has plays stock
   --seconds <s>      how long to record (default: ${DEFAULT_SECONDS})
   --fps <n>          the GIF's frame rate (default: ${DEFAULT_FPS})
   --max-mb <n>       re-encode at a lower rate until the GIF is under this (default: ${DEFAULT_MAX_MB}; 0 for no limit)

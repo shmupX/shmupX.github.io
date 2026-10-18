@@ -56,6 +56,13 @@ export class ExportError extends Error {
 }
 
 export interface ExportRequest {
+  /**
+   * The level's name. Without `levelRecord` both builders read it from
+   * shmupX's own subtree of the database — `shmupX/levels/<level>`, else the
+   * key `shmupX/levelAliases/<level lowercased>` names (lib/cloud-level.ts,
+   * and its CommonJS twin in tools/build-level/lib/fetch-level.js) — and
+   * never from the root-level `levels/`, which is cmg's catalog.
+   */
   level: string;
   platform: string;
   /**
@@ -63,10 +70,11 @@ export interface ExportRequest {
    *
    * A Dezaemon cart open in the editor is not a cloud level and never will be:
    * it was imported from a .sav (a file, or the shelf) and lives in the
-   * browser, so there is no `/levels/<name>` for a build to fetch. The editor
-   * therefore hands the record over directly — the same shape it would have
-   * saved — and it is written to disk here for `--level-file`. That is the one
-   * thing that lets the .SAV half of the editor export to all five platforms.
+   * browser, so there is no `shmupX/levels/<name>` for a build to fetch. The
+   * editor therefore hands the record over directly — the same shape it would
+   * have saved — and it is written to disk here for `--level-file`. That is
+   * the one thing that lets the .SAV half of the editor export to all five
+   * platforms.
    */
   levelRecord?: unknown;
   /** Called with each line of build output as it is produced. */

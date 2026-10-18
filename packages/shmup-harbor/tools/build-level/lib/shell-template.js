@@ -8,6 +8,9 @@
 // WebView. The name is deliberately `phaser-game.html` so both the Cordova
 // `<content src>` default and electron/main.js's hard-coded loadURL find it.
 
+const { RTDB_ROOT } = require("./rtdb-root");
+const { FIREBASE_DB_URL } = require("./fetch-level");
+
 // Audio-unlock: route every AudioContext through a resume-on-input wrapper so
 // BGM starts after the first tap/key (mobile autoplay policy). Verbatim from the
 // host page.
@@ -211,6 +214,19 @@ function htmlEscape(s) {
 // it needs is loaded DEFERRED: an offline app has to boot at full speed and
 // fall back to its local high-score cache, so those scripts must never block
 // the bundle. firebaseScores.js waits a bounded time for the namespace.
+//
+// `rtdbRoot` / `databaseURL` say which tree of the shared database is this
+// app's: shmupX's games, characters and atlases live under `shmupX/` beside
+// cmg's root-level copies (lib/rtdb-root.js). They are baked as
+// window.__RTDB_ROOT__ and window.__CHARACTERS_DB__ — the same two globals
+// static/firebase-config.js sets on the hosted pages — and baked
+// UNCONDITIONALLY, unlike the leaderboard: firebase-config.js is staged only
+// when the level has a gameId, and EXTRACT MODE runs in every export, so an
+// app whose root rode that file alone would publish its sprites into cmg's
+// root-level library. Defined in the first <script>, before
+// firebase-config.js, game.bundle.js and extract-mode.js all load, so every
+// one of them sees the same root. Absent options mean this tool's own
+// constants, which is every build.
 const FIREBASE_SDK_BASE = "https://www.gstatic.com/firebasejs/10.12.5/";
 
 // Safe to inline in a <script>: the only sequence that could close the element
@@ -229,9 +245,14 @@ function renderShell(opts) {
   const extractTag = opts.hasExtract
     ? '\n    <script src="extract-mode.js"></script>'
     : "";
+  const rtdbRoot = typeof opts.rtdbRoot === "string" ? opts.rtdbRoot : RTDB_ROOT;
+  const databaseURL = String(opts.databaseURL || FIREBASE_DB_URL).replace(/\/+$/, "");
+  const charactersDb = rtdbRoot ? databaseURL + "/" + rtdbRoot : databaseURL;
   const flagsTag = "window.__EXPORTED_LEVEL_APP__ = true;" +
     (opts.godMode ? " window.__GAME_STATE__ = { godFlg: true };" : "") +
     (opts.gameId ? " window.__GAME_ID__ = " + jsonLiteral(String(opts.gameId)) + ";" : "") +
+    " window.__RTDB_ROOT__ = " + jsonLiteral(rtdbRoot) + ";" +
+    " window.__CHARACTERS_DB__ = " + jsonLiteral(charactersDb) + ";" +
     // An export has no /editor/ route of its own; without a host origin the
     // extract plugin hides its "open library editor" deep link.
     (opts.editorOrigin

@@ -1,20 +1,24 @@
 #!/usr/bin/env -S deno run -A --node-modules-dir=none
 /**
- * Put Daltonius, the gs cloud game's stage-2 boss, in the shared character
- * library, where spriteX, the Pixel Editor and the level editor's + LIBRARY
- * can see him.
+ * Put Daltonius, the gs cloud game's stage-2 boss, in shmupX's character
+ * library, where the level editor's + LIBRARY and the character tools can see
+ * him. That library is shmupX's subtree of the database it shares with cmg
+ * (lib/rtdb-root.ts): every path below is under shmupX/, rooted by
+ * mcp/lib/rtdb.ts, and cmg's root-level library is never written. (spriteX
+ * has the database root baked in, so it lists cmg's library, not this one.)
  *
  *   deno run -A --node-modules-dir=none scripts/gs/publish-daltonius.ts           # dry run
  *   deno run -A --node-modules-dir=none scripts/gs/publish-daltonius.ts --apply
  *
  * Writes two nodes, as the character tools publish every character:
  *
- * - `atlases/Daltonius`: his art. His 15 poses, the three "I'm Fired!!!"
- *   balloon frames and the 13 cells of Liu Kang becoming the dragon
- *   (scripts/gs/art), spriteX's RAM stick (sprites/RAM_0) for his small shot,
- *   the gs game's hacked laptop (laptop0/laptop1, cut from levels/gs) for his
- *   big one, and the dragon's heads (deza_dragon's deza1_52_0/1.gif).
- * - `characters/Daltonius`: the record gs flies as boss1 (DALTONIUS in
+ * - `shmupX/atlases/Daltonius`: his art. His 15 poses, the three "I'm
+ *   Fired!!!" balloon frames and the 13 cells of Liu Kang becoming the dragon
+ *   (scripts/gs/art), spriteX's RAM stick (the root-level sprites/RAM_0) for
+ *   his small shot, the gs game's hacked laptop (laptop0/laptop1, cut from
+ *   shmupX/levels/gs) for his big one, and the dragon's heads (deza_dragon's
+ *   deza1_52_0/1.gif, shmupX's atlas or else the root catalog's).
+ * - `shmupX/characters/Daltonius`: the record gs flies as boss1 (DALTONIUS in
  *   build-stage2.ts), with `textureKey: "Daltonius"`. It keeps Akuma's
  *   routine pin, the danger balloon and the dragon stage, so wherever he is
  *   placed he moves like Akuma, turns into the dragon at half his bar, and
@@ -40,7 +44,12 @@ import {
   publishCharacter,
   referencedFrames,
 } from "../../mcp/lib/character.ts";
-import { decodeFrameName, get, getWithEtag } from "../../mcp/lib/rtdb.ts";
+import {
+  dbPath,
+  decodeFrameName,
+  get,
+  getWithEtag,
+} from "../../mcp/lib/rtdb.ts";
 import { ART, DALTONIUS, daltoniusArt, DRAGON_HEADS } from "./build-stage2.ts";
 
 export const NAME = "Daltonius";
@@ -54,17 +63,21 @@ async function levelFrames(
   const raw = await get<Record<string, FrameRect>>(
     `levels/${level}/atlasFrames`,
   );
-  if (!url || !raw) throw new Error(`levels/${level} has no atlas`);
+  if (!url || !raw) {
+    throw new Error(`${dbPath(`levels/${level}`)} has no atlas`);
+  }
   const frames: Record<string, FrameRect> = {};
   for (const [k, v] of Object.entries(raw)) frames[decodeFrameName(k)] = v;
   const sheet = await decodeDataUrl(url);
   return names.map((name) => {
     const rect = frames[name];
-    if (!rect) throw new Error(`levels/${level} has no frame ${name}`);
+    if (!rect) {
+      throw new Error(`${dbPath(`levels/${level}`)} has no frame ${name}`);
+    }
     return {
       name,
       raster: cut(sheet, rect.frame),
-      source: `levels/${level}#${name}`,
+      source: `${dbPath(`levels/${level}`)}#${name}`,
       scope: level,
     };
   });
@@ -116,11 +129,15 @@ export async function publishDaltonius(
       `${NAME} names frames his atlas lacks: ${built.unresolved.join(", ")}`,
     );
   }
+  // shmupX's own nodes, the ones publishCharacter writes: the ETag guards
+  // exactly the atlas it replaces.
   const atlas = await getWithEtag(`atlases/${NAME}`);
   const record = await get(`characters/${NAME}`);
   if (!force && (atlas.value != null || record != null)) {
     throw new Error(
-      `the library already has ${NAME}; --force replaces him`,
+      `the library already has ${NAME} (${
+        dbPath(`characters/${NAME}`)
+      }); --force replaces him`,
     );
   }
   return await publishCharacter(built, { atlasIfMatch: atlas.etag });

@@ -9,8 +9,12 @@ The `shmupx-character` MCP server (`mcp/server.ts`, registered in `.mcp.json`)
 carries four tools that address the catalog's characters the way a person
 speaks about them, for sessions — a watch, a voice bridge — that cannot dictate
 an id. Every object is still a `characters/<id>` record with its art at
-`atlases/<textureKey>`; these tools only change how you reach it and what you
-turn.
+`atlases/<textureKey>` — in shmupX's own catalog, `shmupX/characters` and
+`shmupX/atlases`, a subtree of the database shmupX shares with cmg (the
+root-level copies are cmg's and are never written) — and these tools only
+change how you reach it and what you turn. A character whose `textureKey`
+names an atlas shmupX lacks has its art read, read-only, from the root-level
+`atlases/<textureKey>`; an edit of it writes shmupX's copy.
 
 ## The shape of the job
 
@@ -29,8 +33,9 @@ turn.
      is `dezaBoss1`, and in a level, _"boss 1"_ is the slot `boss1`.
    - A name beats a role word: _"akuma's bullets"_ resolves to `akuma` with
      `hints: ["projectile"]` — that is your cue for `scope: "projectiles"`.
-   - `"the second boss of Daioh P!"` → pass `level: "Daioh P!"`, the exact key
-     under `/levels`, spaces and punctuation included (a miss lists the keys).
+   - `"the second boss of gs"` → pass `level: "gs"`, the exact key under
+     `shmupX/levels`, spaces and punctuation included, or an alias from
+     `shmupX/levelAliases` (`"2019"` is 2019-PS2; a miss lists the keys).
      The slots come back as `boss0..bossN`, each with `character` naming the
      catalog entry to edit and `inCatalog` saying whether it exists there. A
      level's copy is edited by editing that character and placing it again with
@@ -112,8 +117,9 @@ black, grey, silver.
   kept under its existing key, conditionally on the ETag it was read with (a
   raced write is refused: read again and redo). Pixels on a character whose
   art lives in a shared atlas (`dukeNukem` → `duke_atlas`) → the shared sheet
-  is never touched; the edited frames go to a new `atlases/<id>`. An apply with
-  nothing changed writes nothing.
+  is never touched; the edited frames go to a new `atlases/<id>`. Every one of
+  those writes is under `shmupX/` (`written` names the real paths). An apply
+  with nothing changed writes nothing.
 - **`saveAs` must be a new name.** The tool refuses the object's own name and
   any name that already exists, so a copy can never overwrite somebody's
   character. Pick a name WITHOUT the boss's stage number — `bulkyRed`, not

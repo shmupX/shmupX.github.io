@@ -16,8 +16,14 @@
 //                                   when the job carries its own game
 //
 // A job names a cloud level and the desktop fetches it — except when there is
-// no cloud level to fetch. An imported .sav lives in this browser and nowhere
-// else, so the game itself rides up with the job (gzipped JSON, chunked like
+// no cloud level to fetch. The name is a key in shmupX's own subtree of the
+// database, shmupX/levels/<name> (or the key shmupX/levelAliases/<name
+// lowercased> stands for), never the root-level levels/ that is cmg's
+// catalog: every job says so in `rtdbRoot` (JOB_RTDB_ROOT below), and one a
+// desktop too old to read that tree would get wrong is written with a status
+// such a desktop never claims ('waiting', MIN_WORKER_VERSION below).
+// An imported .sav lives in this browser and nowhere else, so the game
+// itself rides up with the job (gzipped JSON, chunked like
 // an artifact but in the other direction) and the desktop builds from the
 // record instead of from the name. That is the same `levelRecord` a local
 // /api/build-apk takes, which is why a cart exports to every target here too.
@@ -41,6 +47,31 @@ export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const CODE_LENGTH = 8;
 // A worker heartbeats every 20 s; three missed beats is gone.
 export const WORKER_ONLINE_MS = 65_000;
+
+// The database subtree a job's level name is a key in: shmupX's own games
+// live under shmupX/ beside cmg's root-level copies, and the desktop reads a
+// name from there (packages/shmup-harbor/lib/rtdb-root.ts RTDB_ROOT — the
+// two are pinned by tests/export_queue_test.ts). Stamped on every job so a
+// worker that builds from some other tree refuses it instead of building
+// another game of the same name. The export queue itself stays at the root.
+export const JOB_RTDB_ROOT = 'shmupX';
+// The oldest worker a job may go to when what it builds depends on the split.
+// Version 1 — every packaged desktop installed before it — reads a level name
+// from the root-level copy and ignores the stamp, and it stages its own
+// pre-split runtime into every app it builds, whose EXTRACT MODE saves
+// characters into the root library. The stamp cannot stop it and neither can
+// a heartbeat read once at queue time (two desktops sharing a code overwrite
+// each other's, and an old one may open after the job is written), so such a
+// job is written with status WAITING_STATUS and `minWorker`: version 1 claims
+// only 'queued', and so never sees it at all. Which jobs those are is
+// jobNeedsCurrentWorker's call; the rest are 'queued' for any version.
+export const MIN_WORKER_VERSION = 2;
+// The status of a job no worker older than its `minWorker` may claim. A
+// version-1 worker treats it as finished business: it never claims, recovers
+// or re-queues it, and its prune forgets it only after the week it gives any
+// finished job. Everything that means "not claimed yet" reads both statuses
+// (jobWaiting), and to the person who queued it this is just QUEUED.
+export const WAITING_STATUS = 'waiting';
 
 export const BUILDER_CODE_KEY = 'shmupx-builder-code';
 const CLIENT_ID_KEY = 'shmupx-export-client';
@@ -220,9 +251,12 @@ export function describeWorker(worker, now = Date.now()) {
     const busy = worker.busy && worker.busy.level
       ? ' · building "' + worker.busy.level + '"'
       : '';
+    // Said up front, so nobody queues an export only to be refused. (A cart's
+    // PS2 disc still goes to it, which is why this advises rather than bars.)
+    const old = workerTooOld(worker, { now }) ? ' · an older shmupX — update it before exporting' : '';
     return {
       online: true,
-      text: name + ' is online · builds ' + (targets.length ? targets.join(' ') : 'nothing it could detect') + busy,
+      text: name + ' is online · builds ' + (targets.length ? targets.join(' ') : 'nothing it could detect') + busy + old,
     };
   }
   const ago = typeof worker.seenAt === 'number' ? relativeTime(now - worker.seenAt) : 'never';
@@ -242,6 +276,47 @@ export function relativeTime(ms) {
 
 export function fetchWorker(code) {
   return dbRequest('GET', EXPORT_PATHS.workers + '/' + code);
+}
+
+/**
+ * The newest worker version behind one heartbeat record. Two desktops that
+ * share a code (the installed app and a checkout's server read the same
+ * config file) PATCH the same record, so its `version` is whichever beat
+ * last. A worker of version 2 or newer also stamps a field of its own,
+ * `seenAtV<N>` (lib/export-worker.ts versionSeenKey), that no other version
+ * writes; a fresh one means that version is online now, whoever wrote
+ * `version`.
+ */
+export function workerVersion(worker, now = Date.now()) {
+  if (!worker || typeof worker !== 'object') return 0;
+  let version = typeof worker.version === 'number' ? worker.version : 0;
+  for (const [key, at] of Object.entries(worker)) {
+    const m = /^seenAtV(\d+)$/.exec(key);
+    if (!m || typeof at !== 'number' || now - at >= WORKER_ONLINE_MS) continue;
+    version = Math.max(version, Number(m[1]));
+  }
+  return version;
+}
+
+/**
+ * Why a job that needs a current worker (jobNeedsCurrentWorker) should not be
+ * queued for `worker`, or '' when it may.
+ *
+ * The status the job is written with is what keeps an old desktop off it;
+ * this is the early, readable refusal, so a job is not left waiting for a
+ * worker that will never come without anyone saying why. Only a code whose
+ * heartbeat shows no new-enough worker is refused: one never seen yet may be
+ * a fresh install that has not started, and the job waits for it as it
+ * always has. `carriesGame` picks the reason given.
+ */
+export function workerTooOld(worker, { now = Date.now(), carriesGame = false } = {}) {
+  if (!worker || typeof worker !== 'object' || typeof worker.seenAt !== 'number') return '';
+  if (workerVersion(worker, now) >= MIN_WORKER_VERSION) return '';
+  const why = carriesGame
+    ? 'whose app would still save EXTRACT MODE characters into the shared root library rather than shmupX\'s own'
+    : 'which would build this level from the shared root copy rather than shmupX\'s own';
+  return (worker.name || 'the desktop') + ' runs an older shmupX, ' + why +
+    ' — update it (or open the newer one), then export again';
 }
 
 /** Live view of one desktop. `cb({ worker, online, text })`. */
@@ -348,6 +423,31 @@ export async function uploadJobRecord(id, record, onProgress = () => {}) {
 }
 
 /**
+ * Whether a job may only go to a worker of MIN_WORKER_VERSION or newer.
+ *
+ * Every job does but a cart's PS2 disc. One that only names its level has the
+ * desktop look the name up, and an older desktop looks in cmg's tree. An
+ * engine comparison resolves its level by name whatever else it carries (the
+ * worker reads no record for one). A cart built into an app — android, ios,
+ * linux, windows, desktop or all — reads nothing by name, but ships the
+ * desktop's own copy of the web runtime, and an older desktop's EXTRACT MODE
+ * writes cmg's character library. A PS2 disc is lib/ps2's AthenaEnv build of
+ * the record the job carries: no web runtime on it and no database to reach.
+ *
+ * @param {{ platform?: string, kind?: string, carriesGame?: boolean }} job
+ */
+export function jobNeedsCurrentWorker({ platform, kind, carriesGame }) {
+  if (!carriesGame) return true;
+  if (kind && kind !== 'export') return true;
+  return String(platform || 'android').toLowerCase() !== 'ps2';
+}
+
+/** True while no desktop has claimed the job — the only time it can be cancelled. */
+export function jobWaiting(job) {
+  return !!job && (job.status === 'queued' || job.status === WAITING_STATUS);
+}
+
+/**
  * Queue `level` for `platform` on the desktop with `code`.
  *
  * Either the level is already saved to the cloud and the desktop reads it
@@ -364,18 +464,34 @@ export async function queueExport({ code, level, platform, kind, options, levelR
   code = normalizeBuilderCode(code);
   if (!code) throw new Error('a BUILD CODE is needed — open shmupX on the desktop that should build this and read it off Settings');
   if (!level) throw new Error('the game needs a name');
+  const carriesGame = levelRecord !== undefined && levelRecord !== null;
+  platform = String(platform || 'android').toLowerCase();
+  const needsCurrent = jobNeedsCurrentWorker({ platform, kind, carriesGame });
+  if (needsCurrent) {
+    // The status below is what keeps a pre-split desktop off the job. This
+    // GET is only the early word: when the code's heartbeat shows no worker
+    // new enough, say so now (before any of a cart goes up), rather than
+    // leave the job waiting for a desktop that cannot take it. A heartbeat
+    // that cannot be read lets the job through to wait like any other.
+    let worker = null;
+    try { worker = await fetchWorker(code); } catch (_) { worker = null; }
+    const stale = workerTooOld(worker, { carriesGame });
+    if (stale) throw new Error(stale);
+  }
   const id = newJobId();
   const job = {
     id,
     level: String(level),
-    platform: String(platform || 'android').toLowerCase(),
+    platform,
+    rtdbRoot: JOB_RTDB_ROOT,
     requester: getClientId(),
     requesterLabel: requesterLabel(),
     requestedAt: Date.now(),
-    status: 'queued',
+    status: needsCurrent ? WAITING_STATUS : 'queued',
     progress: 'waiting for the desktop',
     attempts: 0,
   };
+  if (needsCurrent) job.minWorker = MIN_WORKER_VERSION;
   // A job kind other than a build (the engine comparison) rides along with
   // its own parameters; a plain export leaves both out, as it always has.
   if (kind && kind !== 'export') job.kind = String(kind);
@@ -383,7 +499,7 @@ export async function queueExport({ code, level, platform, kind, options, levelR
   // The disc's web build, for the PS2 shelf's WEB row. Carried as given; the
   // shelf normalizes it on filing (static/ps2-library.js normalizePs2Web).
   if (web && typeof web === 'object') job.web = web;
-  if (levelRecord !== undefined && levelRecord !== null) {
+  if (carriesGame) {
     try {
       job.record = await uploadJobRecord(id, levelRecord, onProgress || (() => {}));
     } catch (e) {
@@ -408,7 +524,7 @@ export async function queueExport({ code, level, platform, kind, options, levelR
 export async function cancelJob(code, id) {
   const path = EXPORT_PATHS.queue + '/' + code + '/' + id;
   const job = await dbRequest('GET', path);
-  if (job && job.status === 'queued') {
+  if (jobWaiting(job)) {
     await dbRequest('PATCH', path, { status: 'cancelled', finishedAt: Date.now(), updatedAt: Date.now() });
     return true;
   }
@@ -563,7 +679,9 @@ export function jobTitle(job) {
 export function jobStatusText(job, now = Date.now()) {
   if (!job) return '';
   switch (job.status) {
-    case 'queued': return 'QUEUED · ' + (job.progress || 'waiting for the desktop');
+    // A job held for a newer desktop is queued all the same to whoever asked.
+    case 'queued':
+    case WAITING_STATUS: return 'QUEUED · ' + (job.progress || 'waiting for the desktop');
     case 'building': return 'BUILDING · ' + (job.progress || '…');
     case 'done': return job.blobsFreed ? 'EXPIRED · export it again' : 'READY · ' + relativeTime(now - (job.finishedAt || now));
     case 'failed': return 'FAILED · ' + (job.error || 'see the log');

@@ -2,10 +2,13 @@
 //
 // Two halves have to move together. The record is the easy one:
 // `levels/<name>/bossData/boss<N>` is exactly the shape a character already
-// is. The art is the half that bites — every sprite spawn resolves frames
-// against the level's own atlas, and `bulletFramesInAtlas` silently drops
-// names the atlas lacks and falls back to stock art, so a record placed
-// without its pixels renders wrong with no error anywhere.
+// is. (shmupX's copy of the level, shmupX/levels/<name> — rtdb.ts roots the
+// path, and a level named by alias, "2019", is placed into the level the
+// alias names. cmg's root-level copy of a game is never edited.) The art is
+// the half that bites — every sprite spawn resolves frames against the
+// level's own atlas, and `bulletFramesInAtlas` silently drops names the atlas
+// lacks and falls back to stock art, so a record placed without its pixels
+// renders wrong with no error anywhere.
 //
 // Only the frames the level is actually missing are added. A level's art is
 // its author's: akuma carries its own `dezaBoss0_*.png`, and overwriting
@@ -25,7 +28,15 @@ import {
   resolveFrame,
   sheetDataUrl,
 } from "./art.ts";
-import { assertSafeKey, decodeFrameName, encodeKey, get, put } from "./rtdb.ts";
+import {
+  assertSafeKey,
+  dbPath,
+  decodeFrameName,
+  encodeKey,
+  get,
+  put,
+} from "./rtdb.ts";
+import { resolveLevelKey } from "./levels.ts";
 import {
   type Character,
   getCharacter,
@@ -34,7 +45,10 @@ import {
 } from "./character.ts";
 
 export interface PlaceResult {
+  /** The level's own key: what `level` named, or what its alias stands for. */
   level: string;
+  /** The alias the level was asked for by, or null when it was its key. */
+  alias: string | null;
   slot: string;
   character: string;
   /** The record that was there before — keep it to put things back. */
@@ -82,6 +96,14 @@ export async function placeCharacter(
 ): Promise<PlaceResult> {
   assertSafeKey("Level name", level);
   const slot = `boss${stage}`;
+  // The exact key first, then the alias index, as ?level= resolves a name.
+  // An unknown name falls through as given and fails below on its atlas.
+  const found = await resolveLevelKey(level);
+  const alias = found?.alias ?? null;
+  if (found) {
+    assertSafeKey("Level name", found.key);
+    level = found.key;
+  }
 
   const record = await getCharacter(character);
   const existing = await get<Character>(`levels/${level}/bossData/${slot}`);
@@ -91,7 +113,9 @@ export async function placeCharacter(
   const sheetUrl = await get<string>(`levels/${level}/atlasImageDataURL`);
   if (!rawFrames || !sheetUrl) {
     throw new ArtError(
-      `levels/${level} has no atlas (atlasFrames / atlasImageDataURL). ` +
+      `${
+        dbPath(`levels/${level}`)
+      } has no atlas (atlasFrames / atlasImageDataURL). ` +
         `Placing a character into it would render stock art for every frame.`,
     );
   }
@@ -158,7 +182,9 @@ export async function placeCharacter(
   if (apply) {
     if (unresolved.length) {
       throw new ArtError(
-        `Refusing to place "${character}" into levels/${level}: ${unresolved.length} ` +
+        `Refusing to place "${character}" into ${
+          dbPath(`levels/${level}`)
+        }: ${unresolved.length} ` +
           `frame(s) have no pixels — ${
             unresolved.join(", ")
           }. The runtime would ` +
@@ -172,16 +198,17 @@ export async function placeCharacter(
       await put(`levels/${level}/atlasImageDataURL`, mergedUrl);
       await put(`levels/${level}/atlasFrames`, mergedFrames);
       written.push(
-        `levels/${level}/atlasImageDataURL`,
-        `levels/${level}/atlasFrames`,
+        dbPath(`levels/${level}/atlasImageDataURL`),
+        dbPath(`levels/${level}/atlasFrames`),
       );
     }
     await put(`levels/${level}/bossData/${slot}`, placed);
-    written.push(`levels/${level}/bossData/${slot}`);
+    written.push(dbPath(`levels/${level}/bossData/${slot}`));
   }
 
   return {
     level,
+    alias,
     slot,
     character,
     renamed: rename,

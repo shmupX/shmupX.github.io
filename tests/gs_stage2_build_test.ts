@@ -1,6 +1,9 @@
 // The gs cloud game's stage 2, as scripts/gs/build-stage2.ts writes it.
 //
-// The script edits levels/gs in the shared, open-write database, so what it
+// The script edits shmupX's copy of gs, shmupX/levels/gs, in the shared,
+// open-write database (cmg's root-level levels/gs is another app's and is
+// never touched; the dragon heads and the RAM stick it borrows are read from
+// the root, where spriteX and the Character Library keep them), so what it
 // writes has to be right the first time and has to come back out cleanly:
 // the art lands before the records that name it, every frame the records
 // draw is in the level's atlas afterwards, the level's own frames keep their
@@ -139,7 +142,9 @@ async function seed(extra: Tree = {}) {
     json: JSON.stringify(heads.json),
     png: await sheetDataUrl(heads.sheet),
   };
-  return { sheet, frames, level, ram, dragonAtlas };
+  // cmg's root-level copy of the game, which must come out as it went in.
+  const cmgCopy = { ...structuredClone(level), savedAt: 0 };
+  return { sheet, frames, level, ram, dragonAtlas, cmgCopy };
 }
 
 async function withDb(
@@ -151,8 +156,10 @@ async function withDb(
 ) {
   const s = await seed(extra);
   const db = fakeDb({
-    levels: { gs: s.level },
+    shmupX: { levels: { gs: s.level } },
+    levels: { gs: s.cmgCopy },
     sprites: { RAM_0: s.ram },
+    // Only at the root: source art shmupX's atlases lack is borrowed from it.
     atlases: { [DRAGON_HEADS.atlas]: s.dragonAtlas },
   });
   setDatabaseUrl(db.url);
@@ -194,7 +201,12 @@ Deno.test({
 
       await apply(p);
       // The art before anything that names it.
-      const order = db.writes.map((w) => w.replace("levels/gs/", ""));
+      // shmupX's copy of gs, and nothing else: not cmg's root-level levels/gs.
+      assertEquals(
+        db.writes.filter((w) => !w.startsWith("shmupX/levels/gs/")),
+        [],
+      );
+      const order = db.writes.map((w) => w.replace("shmupX/levels/gs/", ""));
       assertEquals(order.slice(0, 2), ["atlasImageDataURL", "atlasFrames"]);
       assertEquals(order.slice(2, 5), [
         "enemyData/enemyG",
@@ -202,7 +214,7 @@ Deno.test({
         "stages/stage1",
       ]);
 
-      const stored = db.read("levels/gs/atlasFrames") as Record<
+      const stored = db.read("shmupX/levels/gs/atlasFrames") as Record<
         string,
         FrameRect
       >;
@@ -214,7 +226,7 @@ Deno.test({
       for (const name of namedFrames()) assert(frames[name], `no ${name}`);
       for (const name of DRAGON_HEADS.frames) assert(frames[name], name);
       const after = await decodeDataUrl(
-        db.read("levels/gs/atlasImageDataURL") as string,
+        db.read("shmupX/levels/gs/atlasImageDataURL") as string,
       );
       // The level's own frames: same rects, same pixels.
       for (const [name, r] of Object.entries(s.frames)) {
@@ -242,9 +254,14 @@ Deno.test({
         dragon,
         "liuKangDragon9",
       );
-      assertEquals(db.read("levels/gs/bossData/boss1"), DALTONIUS);
-      assertEquals(db.read("levels/gs/stages/stage1"), { enemylist: STAGE2 });
-      assertEquals(db.read("levels/gs/bossData/boss0"), s.level.bossData.boss0);
+      assertEquals(db.read("shmupX/levels/gs/bossData/boss1"), DALTONIUS);
+      assertEquals(db.read("shmupX/levels/gs/stages/stage1"), {
+        enemylist: STAGE2,
+      });
+      assertEquals(
+        db.read("shmupX/levels/gs/bossData/boss0"),
+        s.level.bossData.boss0,
+      );
 
       // A second run finds everything there and adds nothing.
       const again = await plan();
@@ -261,14 +278,17 @@ Deno.test({
       for (
         const path of ["stages/stage1", "bossData/boss1", "enemyData/enemyG"]
       ) {
-        assertEquals(db.read(`levels/gs/${path}`), null, path);
+        assertEquals(db.read(`shmupX/levels/gs/${path}`), null, path);
       }
-      assertEquals(db.read("levels/gs/atlasFrames"), s.frames);
+      assertEquals(db.read("shmupX/levels/gs/atlasFrames"), s.frames);
       sameRaster(
-        await decodeDataUrl(db.read("levels/gs/atlasImageDataURL") as string),
+        await decodeDataUrl(
+          db.read("shmupX/levels/gs/atlasImageDataURL") as string,
+        ),
         s.sheet,
         "reverted sheet",
       );
+      assertEquals(db.read("levels/gs"), s.cmgCopy, "cmg's copy of gs moved");
     });
   },
 });
@@ -284,7 +304,7 @@ Deno.test({
       assertEquals(p.taken, ["bossData/boss1"]);
       await assertRejects(() => apply(p), Error, "bossData/boss1");
       assertEquals(db.writes, []);
-      assertEquals(db.read("levels/gs/bossData/boss1"), theirs);
+      assertEquals(db.read("shmupX/levels/gs/bossData/boss1"), theirs);
     });
   },
 });

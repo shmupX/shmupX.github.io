@@ -32,6 +32,8 @@
     "./disc-file": "./lib/disc-file.ts",
     "./sndpac": "./lib/sndpac.ts",
     "./repo-root": "./lib/repo-root.ts",
+    "./rtdb-root": "./lib/rtdb-root.ts",
+    "./cloud-level": "./lib/cloud-level.ts",
     "./build-sav": "./scripts/build-sav.ts",
     "./inject-cart": "./scripts/inject-cart.ts",
     "./sav-profiler": "./tools/sav-profiler/main.ts"

@@ -7,6 +7,8 @@
 // two used to drift by construction: the route owned the scripts, and every
 // other shell (tools/build-level's, the profiler's) was a hand copy.
 
+import { RTDB_ROOT } from "./rtdb-root.ts";
+
 // Maps the bare "phaser" specifier onto the shim that re-exports the UMD
 // global this page loads, so scene scripts share the game's single Phaser.
 export const PHASER_IMPORT_MAP = JSON.stringify({
@@ -20,8 +22,19 @@ export const PHASER_IMPORT_MAP = JSON.stringify({
 // imports by name with no rebuild. Standalone/offline exports of this game
 // lack the route (and this global), so scene-script.js falls back to the
 // static GitHub Pages build.
+//
+// Either module reads the records themselves (characters/<n>, and the atlas
+// a textureKey names) over REST from __CHARACTERS_DB__, else the database
+// root, which is cmg's catalog. shmupX's is the shmupX/ subtree
+// (lib/rtdb-root.ts). /firebase-config.js, loaded ahead of this on both
+// pages, sets the global; it is named here as well for a page where that
+// file did not load, so a scene script's characters are never cmg's.
 export const CHARACTERS_MODULE = `
 globalThis.__CHARACTERS_MODULE__ = location.origin + "/characters";
+if (!globalThis.__CHARACTERS_DB__) {
+  globalThis.__CHARACTERS_DB__ = ((globalThis.__FIREBASE_CONFIG__ && globalThis.__FIREBASE_CONFIG__.databaseURL) ||
+    "https://evil-invaders-default-rtdb.firebaseio.com").replace(/\\/+$/, "") + "/${RTDB_ROOT}";
+}
 `;
 
 export const AUDIO_UNLOCK = `

@@ -1,7 +1,7 @@
 // scripts/build-kids.ts — a level record as a Dezaemon Kids! memory card.
 //
 //   deno task build:kids                                  # the bundled base game (foo.json) -> "Dezaemon Kids - foo.mcr"
-//   deno task build:kids foo                              # the cloud level levels/foo
+//   deno task build:kids foo                              # the cloud level shmupX/levels/foo
 //   deno task build:kids ./backups/mygame.json            # a level record on disk
 //   deno task build:kids foo --out build/kids/foo.mcr --report
 //   deno task build:kids foo --name "SKY TALE"            # the card's own name (ten ASCII characters) over the level's

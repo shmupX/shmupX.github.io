@@ -1,5 +1,5 @@
 // EXTRACT MODE — save any on-screen player/enemy/boss to the shared character
-// library (/characters + /atlases in the evil-invaders RTDB).
+// library (shmupX/characters + shmupX/atlases in the evil-invaders RTDB).
 //
 // Two consumers share this file:
 //   - The level editor (static/editor/index.html) uses the pure helpers
@@ -18,14 +18,34 @@
 //   atlases/{name}    => { json: JSON.stringify(atlasJson), png: dataURL }
 //   characters/{name} => the character record verbatim + { name, textureKey }
 // The atlas JSON is stored as a STRING so RTDB never mangles frame-name keys.
+// Both live under shmupX's own subtree of the database it shares with cmg
+// (lib/rtdb-root.ts): the root-level characters/ and atlases/ are cmg's
+// catalog. Callers hand this file the DATABASE URL (opts.db, the page's
+// databaseURL) and it puts the root on itself (libraryURL), so no caller can
+// publish to cmg's copy by passing the URL it always passed.
 (function () {
     'use strict';
 
     var DEFAULT_DB = 'https://evil-invaders-default-rtdb.firebaseio.com';
+    // The subtree the library lives under — window.__RTDB_ROOT__ where the
+    // page's Firebase config set it, and the same "shmupX" where it did not
+    // (an exported app with no leaderboard stages no config).
+    var DEFAULT_ROOT = 'shmupX';
 
+    // The database itself, as the page's Firebase config names it.
     function dbURL() {
         var cfg = window.__FIREBASE_CONFIG__ || window.firebaseConfig;
         return (cfg && cfg.databaseURL) || DEFAULT_DB;
+    }
+
+    // Where characters/ and atlases/ are: the database's shmupX/ subtree. A
+    // base that already ends in the root is taken as it is, so a caller that
+    // passes the scoped URL by mistake does not get shmupX/shmupX/.
+    function libraryURL(db) {
+        var root = (typeof window.__RTDB_ROOT__ === 'string' && window.__RTDB_ROOT__) || DEFAULT_ROOT;
+        var base = String(db || dbURL()).replace(/\/+$/, '');
+        var tail = '/' + root;
+        return base.slice(-tail.length) === tail ? base : base + tail;
     }
 
     // A key the editor prefixes with '_' is a variant it set aside, not part
@@ -216,7 +236,7 @@
             throw new Error("'__BASE' is a reserved Phaser frame name");
         }
 
-        var DB = opts.db || dbURL();
+        var DB = libraryURL(opts.db);
         var existing = await fetch(DB + '/characters/' + encodeURIComponent(name) + '.json')
             .then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
         if (existing) {
@@ -226,7 +246,9 @@
             if (!ok) return null;
         }
         // One multi-path update so atlas + record land atomically — two
-        // sequential PUTs could strand an old record on a new atlas.
+        // sequential PUTs could strand an old record on a new atlas. It is
+        // made at the subtree (<db>/shmupX/.json), so its keys stay relative
+        // and both land under shmupX/.
         var body = {};
         body['atlases/' + name] = { json: JSON.stringify(opts.atlasJson), png: opts.canvas.toDataURL('image/png') };
         body['characters/' + name] = record;
@@ -480,6 +502,7 @@
 
     window.ShmupExtract = {
         dbURL: dbURL,
+        libraryURL: libraryURL,
         bossTravelRecord: bossTravelRecord,
         bossPublishRecord: bossPublishRecord,
         zakoTravelRecord: zakoTravelRecord,
@@ -1060,7 +1083,7 @@
 
     // The first of name, name_2, name_3… the library does not hold yet.
     async function freeName(name) {
-        var DB = dbURL();
+        var DB = libraryURL();
         var taken = function (n) {
             return fetch(DB + '/characters/' + encodeURIComponent(n) + '.json')
                 .then(function (r) { return r.ok ? r.json() : null; })

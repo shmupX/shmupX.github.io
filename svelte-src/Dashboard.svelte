@@ -116,6 +116,7 @@
     jobArtifactLabel as exportJobArtifactLabel,
     jobStatusText as exportJobStatusText,
     jobTitle as exportJobTitle,
+    jobWaiting as exportJobWaiting,
     markReceived as markExportReceived,
     notifyJobDone,
     ps2DiscArtifact,
@@ -1092,9 +1093,12 @@
   let exportsSummary = $derived.by(() => {
     if (!exportJobs.length) return 'nothing queued  ·  export from the editor';
     const n = (s) => exportJobs.filter((j) => j.status === s).length;
+    // 'waiting' is a job held for a desktop new enough to build it — still
+    // queued, to whoever asked for it (static/export-queue.js WAITING_STATUS).
+    const queued = exportJobs.filter(exportJobWaiting).length;
     const parts = [];
     if (n('building')) parts.push(n('building') + ' building');
-    if (n('queued')) parts.push(n('queued') + ' queued');
+    if (queued) parts.push(queued + ' queued');
     if (n('done')) parts.push(n('done') + ' ready');
     if (n('failed')) parts.push(n('failed') + ' failed');
     return parts.join('  ·  ') || exportJobs.length + ' listed';
@@ -1786,7 +1790,8 @@
         return { cls: 'ok', text: exportFiled[job.id] ? 'IN LIBRARY' : 'READY' };
       case 'failed': return { cls: 'err', text: '! FAILED' };
       case 'building': return { cls: 'dl', text: 'BUILDING' };
-      case 'queued': return { cls: '', text: 'QUEUED' };
+      case 'queued':
+      case 'waiting': return { cls: '', text: 'QUEUED' };
       default: return { cls: '', text: String(job.status || '').toUpperCase() };
     }
   }
@@ -1803,7 +1808,7 @@
       return 'Download';
     }
     if (j.status === 'failed' && j.log) return 'Show log';
-    if (j.status === 'queued') return 'Cancel';
+    if (exportJobWaiting(j)) return 'Cancel';
     return j.status === 'building' ? 'Building…' : 'Dismiss';
   });
 
@@ -1838,7 +1843,7 @@
       return;
     }
     if (job.status === 'failed' && job.log) { alert(job.log); return; }
-    if (job.status === 'queued') {
+    if (exportJobWaiting(job)) {
       try {
         showToast((await cancelExportJob(job.code, job.id)) ? 'Cancelled.' : 'Too late — the desktop already picked it up.');
       } catch (e) { showToast('Could not cancel: ' + (e?.message || e)); }

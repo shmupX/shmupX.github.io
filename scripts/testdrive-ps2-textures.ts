@@ -61,6 +61,7 @@ import { gifLine, hasCommand, Rig, writeGif } from "./lib/testdrive-rig.ts";
 import {
   type Budget,
   budgetOf,
+  cloudAliasUrl,
   cloudLevelUrl,
   DEFAULT_SHEET,
   degrade,
@@ -202,11 +203,21 @@ if (!await hasCommand("ffmpeg", ["-version"])) {
 
 // ── The level, as the runtime would fetch it ─────────────────────────────────
 log(`fetching "${level}" from the level database…`);
-const levelUrl = cloudLevelUrl(level);
-const record = await fetch(levelUrl).then((r) => {
-  if (!r.ok) throw new Error(`HTTP ${r.status} for ${levelUrl}`);
-  return r.json() as Promise<Record<string, unknown> | null>;
-}).catch((e) => fail(`could not fetch the level: ${e.message}`));
+const getJson = <T>(url: string) =>
+  fetch(url).then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+    return r.json() as Promise<T | null>;
+  }).catch((e) => fail(`could not fetch the level: ${e.message}`));
+// The key first, then the alias it might be — the loader's own order, so a
+// name that plays at ?level= drives here too ("2019" is 2019-PS2).
+let record = await getJson<Record<string, unknown>>(cloudLevelUrl(level));
+if (!record) {
+  const key = await getJson<unknown>(cloudAliasUrl(level));
+  if (typeof key === "string" && key) {
+    log(`"${level}" is an alias of "${key}"`);
+    record = await getJson<Record<string, unknown>>(cloudLevelUrl(key));
+  }
+}
 if (!record) await fail(`there is no cloud level named "${level}"`);
 const recordJson = JSON.stringify(record);
 log(

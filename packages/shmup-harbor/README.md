@@ -31,8 +31,29 @@ map of the package.
 - `lib/export-build.ts` — one level into an installable app, on this machine.
   PS2 runs in-process; everything else spawns `node tools/build-level`.
 - `lib/export-worker.ts` — the same build, asked for from somewhere else: the
-  BUILD CODE, the queue over the Realtime Database, and the artifact upload.
+  BUILD CODE, the queue over the Realtime Database, and the artifact upload. It
+  is `WORKER_VERSION` 2: it builds a job's level name from `shmupX/` and fails a
+  job stamped with another `rtdbRoot`, and it claims `queued` and `waiting` jobs
+  alike, up to its version. `waiting` (with `minWorker: 2`) is the status the
+  client writes for every job a pre-split version-1 desktop would build wrong,
+  since version 1 claims only `queued`; a claim is tagged `<code>:v<N>` so a
+  version-1 app on the same code never re-queues it, and an abandoned build goes
+  back with the status it came with. `tests/export_worker_test.ts` runs version
+  1's real worker, out of git, against those jobs.
 - `lib/shelf.ts` — turns a name somebody typed into something a build can stage.
+- `lib/rtdb-root.ts`, `lib/cloud-level.ts` — where a cloud level's name is
+  looked up. shmupX's games live under `shmupX/` in the database it shares with
+  cmg: `shmupX/levels/<name>`, then the key `shmupX/levelAliases/<name>` names
+  (the alias lowercased), never the root copies, which are cmg's. Every build
+  that takes a level by name goes through `resolveCloudLevel`;
+  `tools/build-level/lib/fetch-level.js` is its CommonJS twin.
+  `lib/rtdb-root.ts` copies the app's `lib/rtdb-root.ts` (a workspace package
+  cannot import the app), and build-level keeps a CommonJS third copy;
+  `tests/rtdb_root_test.ts` holds all three to the same answers. The shelves
+  harbor reads (`dezaemon/*`, `eshop/*`) and the export queue stay at the
+  database root, so `SHELF_DB`, like every database URL here, is the base, with
+  the root put on per path and never `<db>/shmupX`. Both modules are subpath
+  exports (`./rtdb-root`, `./cloud-level`).
 - `lib/cart-inject.ts`, `lib/mednafen.ts` — the Saturn cart merge and the
   emulator around it.
 - `lib/engine-compare.ts`, `tools/sav-profiler/` — the parity run: the same cart

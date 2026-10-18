@@ -6,7 +6,9 @@
 // spoken edit never carries an id, and "make the boss bulkier" has to become
 // a record name, a set of frames and some numbers before anything can happen.
 // This module is that translation. An object is still exactly a
-// characters/<id> record with its art at atlases/<textureKey>; what is added
+// characters/<id> record with its art at atlases/<textureKey> — shmupX's own
+// catalog, shmupX/characters and shmupX/atlases (rtdb.ts roots the paths;
+// cmg's root-level copies are another app's); what is added
 // is a role read off the record's shape, an ordinal read off the stage number
 // in its name, a resolver for the phrase, and three edits — aggression,
 // silhouette, palette — defined in terms of what the runtime actually reads
@@ -31,11 +33,17 @@ import {
 } from "./art.ts";
 import {
   assertSafeKey,
+  catalogUrl,
   databaseUrl,
+  dbPath,
   decodeFrameName,
   get,
   listKeys,
 } from "./rtdb.ts";
+import { levelSegment, resolveLevelKey } from "./levels.ts";
+
+// Where it lives now; re-exported so the name every caller imported stays.
+export { levelSegment };
 import {
   type Character,
   type CreateResult,
@@ -746,28 +754,11 @@ export interface ListResult extends Partial<Resolution> {
   scope: "catalog" | "level";
   level: string | null;
   database: string;
+  /** shmupX's subtree of that database, which every object is read from. */
+  catalog: string;
   count: number;
   objects: ObjectSummary[];
   query: string | null;
-}
-
-/**
- * A level name as a URL path segment. Level keys are what their authors
- * typed — "Daioh P!", "SummerCarnival'99 LECCA" — so the identifier rule the
- * other trees use is too strict here; what matters is that the segment
- * cannot walk the path or start a query.
- */
-export function levelSegment(level: string): string {
-  if (
-    !level || level.length > 200 ||
-    // deno-lint-ignore no-control-regex
-    /[/.#$[\]\x00-\x1f\x7f]/.test(level)
-  ) {
-    throw new ArtError(
-      `Level name ${JSON.stringify(level)} is not a valid database key.`,
-    );
-  }
-  return encodeURIComponent(level);
 }
 
 async function catalogEntries(): Promise<Entry[]> {
@@ -791,7 +782,9 @@ async function catalogEntries(): Promise<Entry[]> {
 }
 
 async function levelEntries(level: string): Promise<Entry[]> {
-  const segment = levelSegment(level);
+  // "2019" is 2019-PS2 by alias, the way ?level=2019 finds it.
+  const key = (await resolveLevelKey(level))?.key ?? level;
+  const segment = levelSegment(key);
   const [bossData, rawFrames, catalog] = await Promise.all([
     get<Record<string, Character>>(`levels/${segment}/bossData`),
     get<Record<string, FrameRect>>(`levels/${segment}/atlasFrames`),
@@ -800,9 +793,14 @@ async function levelEntries(level: string): Promise<Entry[]> {
   if (!bossData || typeof bossData !== "object") {
     const levels = await listKeys("levels").catch(() => [] as string[]);
     throw new ArtError(
-      `levels/${level} has no bossData. The name has to be the exact key under /levels, ` +
-        `spaces and punctuation included` +
-        (levels.length ? `: ${levels.join(", ")}` : "") +
+      `${
+        dbPath(`levels/${key}`)
+      } has no bossData. The name has to be a key under ` +
+        `${
+          dbPath("levels")
+        } (spaces and punctuation included) or an alias in ` +
+        `${dbPath("levelAliases")}` +
+        (levels.length ? `; the levels are: ${levels.join(", ")}` : "") +
         `. Omit level to list the catalog instead.`,
     );
   }
@@ -849,6 +847,7 @@ export async function listObjects(req: ListRequest = {}): Promise<ListResult> {
     scope: req.level ? "level" : "catalog",
     level: req.level ?? null,
     database: databaseUrl(),
+    catalog: catalogUrl(),
     count: objects.length,
     objects,
     query: req.query ?? null,
@@ -1054,7 +1053,7 @@ export async function renderObject(req: RenderRequest): Promise<RenderResult> {
     entry.record,
     entry.atlas.sheet,
     entry.atlas.frames,
-    `atlases/${entry.atlas.name}`,
+    entry.atlas.path,
     req,
   );
 }
@@ -1354,10 +1353,14 @@ export async function updateObject(req: UpdateRequest): Promise<UpdateResult> {
   const changes: FieldChange[] = [];
 
   if (req.apply && req.saveAs !== undefined) {
+    // Taken means taken in shmupX's catalog, the only one this writes to;
+    // a name only cmg's root-level catalog uses is free here.
     const taken = await get<unknown>(`characters/${target}`);
     if (taken !== null) {
       throw new ArtError(
-        `characters/${target} already exists. saveAs writes a NEW character — pick another ` +
+        `${
+          dbPath(`characters/${target}`)
+        } already exists. saveAs writes a NEW character — pick another ` +
           `name, or edit ${target} directly by id.`,
       );
     }
@@ -1460,7 +1463,7 @@ export async function updateObject(req: UpdateRequest): Promise<UpdateResult> {
     pulled.push({
       name,
       raster,
-      source: `atlases/${atlasName}#${name}`,
+      source: `${atlas!.path}#${name}`,
       scope: atlasName,
     });
   }
@@ -1486,7 +1489,9 @@ export async function updateObject(req: UpdateRequest): Promise<UpdateResult> {
   if (atlasWrite === "new" && req.saveAs === undefined) {
     warnings.push(
       `textureKey "${atlasName}" is an atlas other records may share, so it is left alone: ` +
-        `the edited art is packed into atlases/${target} and the record now points there.`,
+        `the edited art is packed into ${
+          dbPath(`atlases/${target}`)
+        } and the record now points there.`,
     );
   }
   record.name = target;

@@ -16,8 +16,9 @@
 //   LEVEL SCENERY a cloud level's stage.background ({cols, rows, tiles: base64
 //                 u16be words — bits 0-9 index backgroundCells, bit 15 h-flip,
 //                 bit 14 v-flip as the runtime reads them, 0xFFFF empty}) over
-//                 its backgroundCells frames, loaded from levels/* or handed
-//                 over by an open Level Editor, and written back either way.
+//                 its backgroundCells frames, loaded from shmupX/levels/* (or
+//                 handed over by an open Level Editor) and written back
+//                 either way.
 //   PIXEL SPRITES pixelSprites/* (the Pixel Editor's records) as a live tile
 //                 source: every 16x16 cell of every sprite is a tile the map
 //                 can take, and taking one appends it to the map's tileset —
@@ -120,6 +121,37 @@ function getDb() {
   return db;
 }
 const DB_URL = (window.__FIREBASE_CONFIG__ && window.__FIREBASE_CONFIG__.databaseURL) || "https://evil-invaders-default-rtdb.firebaseio.com";
+// shmupX's games live under shmupX/ in the database cmg shares: the
+// root-level levels/ and levelAliases/ are cmg's catalog, and shmupX's copies
+// sit beside them (lib/rtdb-root.ts; firebase-config.js sets the global).
+// Only the LEVEL SCENERY paths take the root — tilemaps/* and pixelSprites/*
+// are shared tool stores and stay where they are, which is why DB_URL stays
+// the database's base and the root goes on per path. (The SDK could not take
+// a databaseURL with a path in it anyway.)
+const RTDB_ROOT = typeof window.__RTDB_ROOT__ === "string" ? window.__RTDB_ROOT__ : "shmupX";
+const rooted = (node) => (RTDB_ROOT ? `${RTDB_ROOT}/${node}` : node);
+const LEVELS_PATH = rooted("levels");
+const ALIASES_PATH = rooted("levelAliases");
+
+// The level a name means: LEVELS_PATH/<name>, else the key
+// ALIASES_PATH/<name lowercased> stands for — level-loader.js fetchLevel's
+// steps, so ?level=2019 opens (and saves) 2019-PS2 here as it plays it in
+// the runtime. A key is never lowercased itself: "Ramsie" and "ramsie" have
+// been two different records. Answers { key, record }, record null on a miss.
+async function readCloudLevel(d, name) {
+  const read = async (key) => (await d.ref(`${LEVELS_PATH}/${key}`).once("value")).val();
+  const record = await read(name);
+  if (record) return { key: name, record };
+  let key = null;
+  try {
+    key = (await d.ref(`${ALIASES_PATH}/${String(name).toLowerCase()}`).once("value")).val();
+  } catch (_e) {
+    key = null;
+  }
+  if (typeof key !== "string" || !key || key === name) return { key: name, record: null };
+  return { key, record: await read(key) };
+}
+
 // level-loader.js's key encoding: "." becomes U+2024 in a frame key.
 const encodeKey = (k) => k.replace(/\./g, "․");
 const decodeKey = (k) => k.replace(/․/g, ".");
@@ -1527,7 +1559,7 @@ function readBridgeSession() {
 async function populateLevelSelect() {
   const select = $("levelSelect");
   try {
-    const res = await fetch(`${DB_URL}/levels.json?shallow=true`);
+    const res = await fetch(`${DB_URL}/${LEVELS_PATH}.json?shallow=true`);
     const data = res.ok ? await res.json() : null;
     const keys = data ? Object.keys(data).sort((a, b) => a.localeCompare(b)) : [];
     select.innerHTML = '<option value="">-- Cloud level --</option>';
@@ -1569,7 +1601,7 @@ async function openLevelSession({ name, stages, backgroundCells, atlases, stageK
   $("levelSelect").value = name;
   updateStageSelect();
   const ok = await openStage(level.stageKey);
-  levelNote(fromEditor ? `FROM THE LEVEL EDITOR · ${stageKeys.length} STAGE${stageKeys.length === 1 ? "" : "S"} · ${cells.length} CELLS` : `levels/${name} · ${stageKeys.length} STAGE${stageKeys.length === 1 ? "" : "S"} · ${cells.length} CELLS`);
+  levelNote(fromEditor ? `FROM THE LEVEL EDITOR · ${stageKeys.length} STAGE${stageKeys.length === 1 ? "" : "S"} · ${cells.length} CELLS` : `${LEVELS_PATH}/${name} · ${stageKeys.length} STAGE${stageKeys.length === 1 ? "" : "S"} · ${cells.length} CELLS`);
   return ok;
 }
 function updateStageSelect() {
@@ -1637,11 +1669,14 @@ async function loadLevelFromCloud(name, stageKey) {
     return false;
   }
   if (level && Object.values(level.maps).some((e) => e.dirty) && !confirm("Switch level and discard unsaved scenery edits?")) return false;
-  levelNote(`LOADING levels/${name}…`);
+  levelNote(`LOADING ${LEVELS_PATH}/${name}…`);
   try {
-    const snap = await d.ref(`levels/${name}`).once("value");
-    const record = snap.val();
+    // An alias opens the level it names, under that level's KEY, so the
+    // session (and SAVE TO LEVEL) works on the real record from here on.
+    const found = await readCloudLevel(d, name);
+    const record = found.record;
     if (!record) throw new Error("level not found");
+    name = found.key;
     const stages = {};
     if (record.stages && typeof record.stages === "object") {
       for (const [k, s] of Object.entries(record.stages)) if (s) stages[k] = s;
@@ -1714,35 +1749,45 @@ async function saveLevelScenery() {
     levelNote("NO SCENERY CHANGES TO SAVE");
     return;
   }
-  levelNote(`SAVING levels/${name}…`);
+  levelNote(`SAVING ${LEVELS_PATH}/${name}…`);
   try {
-    const snap = await d.ref(`levels/${name}`).once("value");
-    const record = snap.val();
-    if (!record) throw new Error(`levels/${name} does not exist — save the game from the Level Editor first`);
+    // The name may be an alias — a Level Editor hand-off names the game the
+    // way its author typed it — so it is resolved to the level's key first,
+    // and the scenery lands on that record rather than on a new one.
+    const found = await readCloudLevel(d, name);
+    const record = found.record;
+    if (!record) throw new Error(`${LEVELS_PATH}/${name} does not exist — save the game from the Level Editor first`);
+    const key = found.key;
+    // One multi-path update from the database root, so every key is spelled
+    // out in full — and every one of them is under LEVELS_PATH. Nothing else
+    // this editor writes (tilemaps/*) may ride along on this update, or it
+    // would be re-rooted with them.
+    const at = `${LEVELS_PATH}/${key}`;
     const updates = {};
     const flatKey = flatStageOf(record);
     for (const [k, e] of dirty) {
       const bg = mapToScenery(e.map);
-      updates[`levels/${name}/stages/${k}/background`] = bg;
-      if (flatKey === k || (!record.stages && k === "stage0")) updates[`levels/${name}/background`] = bg;
+      updates[`${at}/stages/${k}/background`] = bg;
+      if (flatKey === k || (!record.stages && k === "stage0")) updates[`${at}/background`] = bg;
     }
     if (level.newCells.length) {
-      updates[`levels/${name}/backgroundCells`] = level.cells.slice();
+      updates[`${at}/backgroundCells`] = level.cells.slice();
       const ext = await extendLevelAtlas(record, level.newCells);
-      updates[`levels/${name}/atlasImageDataURL`] = ext.atlasImageDataURL;
-      updates[`levels/${name}/atlasFrames`] = ext.atlasFrames;
+      updates[`${at}/atlasImageDataURL`] = ext.atlasImageDataURL;
+      updates[`${at}/atlasFrames`] = ext.atlasFrames;
     } else if (!Array.isArray(record.backgroundCells) || record.backgroundCells.length !== level.cells.length) {
-      updates[`levels/${name}/backgroundCells`] = level.cells.slice();
+      updates[`${at}/backgroundCells`] = level.cells.slice();
     }
     await d.ref().update(updates);
+    level.name = key;
     for (const [, e] of dirty) e.dirty = false;
     const added = level.newCells.length;
     level.newCells = [];
     level.record = { ...record, backgroundCells: level.cells.slice() };
     mapDirty = false;
     updateStageSelect();
-    levelNote(`SAVED · levels/${name} · ${dirty.length} STAGE${dirty.length === 1 ? "" : "S"}${added ? ` · ${added} NEW CELL${added === 1 ? "" : "S"} PACKED INTO THE LEVEL ATLAS` : ""}`);
-    setStatus(`SAVED SCENERY TO levels/${name}`);
+    levelNote(`SAVED · ${at} · ${dirty.length} STAGE${dirty.length === 1 ? "" : "S"}${added ? ` · ${added} NEW CELL${added === 1 ? "" : "S"} PACKED INTO THE LEVEL ATLAS` : ""}`);
+    setStatus(`SAVED SCENERY TO ${at}`);
     broadcastApply({ saved: true });
   } catch (err) {
     console.error(err);

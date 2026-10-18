@@ -1,7 +1,7 @@
 // scripts/build-plus.ts — a level record as a Dezaemon+ memory card.
 //
 //   deno task build:plus                                  # the bundled base game (foo.json) -> "Dezaemon Plus - foo.mcr"
-//   deno task build:plus foo                              # the cloud level levels/foo
+//   deno task build:plus foo                              # the cloud level shmupX/levels/foo
 //   deno task build:plus ./backups/mygame.json            # a level record on disk
 //   deno task build:plus foo --out build/plus/foo.mcr --report
 //

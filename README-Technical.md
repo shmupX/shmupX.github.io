@@ -488,6 +488,19 @@ they are written out in full.
     second and had 200+ copies of the 0.94 s sample alive at once, which is
     what stuttered its Android export. The same play now peaks at 22 live
     sounds in all. `tests/sfx_voices_test.ts`.
+  - The level loader reads `shmupX/levels` and `shmupX/levelAliases` (its
+    `DEFAULTS`, and the in-game Android forge's `LEVELS_PATH` / `ALIASES_PATH`,
+    which now follows an alias too), and the high scores are one board and one
+    cookie per game, named only once the level has resolved (`startGameScores`
+    from `PluginBootScene`). See **shmupX's corner of the shared database** and
+    **WORLD BEST and TODAY'S BEST, per game** below;
+    `tests/shmupx_root_runtime_test.ts` and `tests/game_scores_test.ts` pin
+    both. Upstream homes are `2019-es7/src/firebaseScores.js`, `gameIdentity.js`
+    and `highScoreUi.js`.
+- `lib/rtdb-root.ts` — where shmupX's own games sit in the Realtime Database it
+  shares with cmg: `levels`, `levelAliases`, `atlases` and `characters` under
+  `shmupX/`, beside cmg's root copies (see **shmupX's corner of the shared
+  database** below).
 - `mcp/` — the **character MCP server** (`deno task mcp:character`, registered
   for this repo by `.mcp.json`): clone a character out of the catalog, swap any
   frame of any sprite or atlas into its animations, its projectiles or its
@@ -561,6 +574,7 @@ deno task bgm:tone        # transcribe an mp3 (path or URL) onto the Dezaemon 2 
 deno task extension:zip   # pack the Sprite Picker extension into static/extension/ for the download page (part of build)
 deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
 deno task level:alias     # other names a cloud game answers to (2019 -> 2019-PS2); dry run, --write sets
+deno task rtdb:split      # seed shmupX's own subtree of the database from cmg's root copies (dry run; --write copies, --force replaces)
 deno task refresh:compare # stock vs max refresh: emulated 240 Hz side by side (mp4s), --live on this display, --compare saved results
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
@@ -654,7 +668,7 @@ consumes: indexed cells whose bytes are already what sec0–3 store.
 ## Writing a .sav
 
 The import pipeline runs backwards too. `packages/shmup-engine/src/write/` turns
-a level record — the shape the editor saves to `levels/<name>` and
+a level record — the shape the editor saves to `shmupX/levels/<name>` and
 `static/games/2028-ai/foo.json` ships — plus its atlas frames into the eight raw
 sections of a Dezaemon 2 save, and `src/bup-write.js` compresses them
 (`src/compress.js`, the Okumura LZSS the decoder pins, within ~2% of the
@@ -672,7 +686,7 @@ enemies, drops and bombs. Real hardware and MiSTer remain untested.
 
 ```sh
 deno task build:sav                          # foo.json -> build/sav/Dez 2 - foo.sav
-deno task build:sav "Master Arena Mod"       # that cloud level
+deno task build:sav rando                    # that cloud level (shmupX/levels/rando)
 deno task build:sav ./backups/mygame.json    # a level record on disk
 deno task build:sav foo --palette snes --snes-pal build/sav/foo.pal --report
 deno task build:sav foo --author "EASIER BY CODE"   # who the staff roll presents it by
@@ -695,7 +709,7 @@ missing.
 
 ```sh
 deno task sav:run                       # build foo, merge into the cart, launch Mednafen
-deno task sav:run "Master Arena Mod"    # that cloud level
+deno task sav:run rando                 # that cloud level
 deno task sav:run --install-only        # merge into the cart, do not launch
 DEZAEMON_DISC=/path/to/Dez2.cue deno task sav:run   # point it at your disc
 ```
@@ -1474,19 +1488,25 @@ stroke, `tilemaps/*` in the cloud) ported here, with three additions:
   that grid a quarter turn over; VERTICAL puts the start at the bottom,
   HORIZONTAL at the left, PART jumps a 16-row screen at a time, and arrows move
   on the screen, not in the data.
-- **Level scenery.** LEVEL SCENERY loads a cloud level (`levels/*`) and any of
-  its stages; the level editor's TILEMAP badge hands over the open game instead
-  (every stage, `backgroundCells`, the working atlas — through the same
-  IndexedDB bridge the model viewer reads). The grid is `stage.background`
-  (`{cols, rows, tiles}` — base64 u16be words: bits 0–9 index `backgroundCells`,
-  bit 15 h-flip, bit 14 v-flip as the runtime reads them, `0xFFFF` empty) and
-  edits go back two ways: **SAVE TO LEVEL** writes `stages/{stage}/background`
-  (and the flat `background` when that is the record's open stage), and any new
-  cells to `backgroundCells` and packed onto the level atlas; **APPLY TO
-  EDITOR** posts the same over the editor's bridge channel (`tilemap-apply`),
-  which the open level editor folds into its in-memory game — save there to keep
-  it. Switching stages keeps each stage's unsaved edits, and a stage that had no
-  scenery starts as an empty grid.
+- **Level scenery.** LEVEL SCENERY loads a cloud level (`shmupX/levels/*`; a
+  name that is only an alias, `2019`, opens the level it names under that
+  level's key, and SAVE TO LEVEL resolves it the same way, so scenery never
+  lands on a new record beside the real one) and any of its stages; the level
+  editor's TILEMAP badge hands over the open game instead (every stage,
+  `backgroundCells`, the working atlas — through the same IndexedDB bridge the
+  model viewer reads). The grid is `stage.background` (`{cols, rows, tiles}` —
+  base64 u16be words: bits 0–9 index `backgroundCells`, bit 15 h-flip, bit 14
+  v-flip as the runtime reads them, `0xFFFF` empty) and edits go back two ways:
+  **SAVE TO LEVEL** writes `stages/{stage}/background` (and the flat
+  `background` when that is the record's open stage), and any new cells to
+  `backgroundCells` and packed onto the level atlas; **APPLY TO EDITOR** posts
+  the same over the editor's bridge channel (`tilemap-apply`), which the open
+  level editor folds into its in-memory game — save there to keep it. Switching
+  stages keeps each stage's unsaved edits, and a stage that had no scenery
+  starts as an empty grid. Only the level paths take the `shmupX/` root:
+  `tilemaps/*` and `pixelSprites/*` are shared tool stores and stay at the
+  database root, and every key of SAVE TO LEVEL's one multi-path update is under
+  `shmupX/levels/<key>` (`tests/tilemap_editor_rtdb_test.ts`).
 - **Pixel sprites as tiles.** TILE PALETTE → PIXEL SPRITES lists every non-empty
   16×16 cell of every `pixelSprites/*` record, live: a sprite saved in the Pixel
   Editor appears without a reload. **+ ADD TO MAP** appends the chosen cell to
@@ -1514,20 +1534,25 @@ registers it for the repo, so an MCP client in this checkout has them already.
 the whole thing answers a sentence like _"a character that mirrors the
 attributes of dezaBoss0, main projectile set to hadouken"_.
 
-A **character** is what the catalog already stores at `characters/{name}`,
-paired with its art at `atlases/{name}` — the record the level editor's ADD
-button folds into a level as `bossData.boss<N>`, and the shape the runtime reads
-when the boss arrives. `dezaBoss0` is one of them: the record a Dezaemon 2 cart
-import writes for stage 0, carrying `anim`, the projectile slots, the decoded
-`dezaemon` trailer, and `hp`/`score`/`interval`/`spgage`/`shadow*`. So **cloning
-is a deep copy plus a new `textureKey`**, and swapping art is a matter of
-repacking the atlas that key points at.
+A **character** is what the catalog already stores at
+`shmupX/characters/{name}`, paired with its art at `shmupX/atlases/{name}` — the
+record the level editor's ADD button folds into a level as `bossData.boss<N>`,
+and the shape the runtime reads when the boss arrives. The catalog is shmupX's
+own subtree of the database (see **shmupX's corner of the shared database**
+below): the tools read characters there and nowhere else, and every write they
+make lands there. The root-level `characters/` is cmg's, so a name only cmg uses
+counts as free and cannot be cloned. `dezaBoss0` is one of them: the record a
+Dezaemon 2 cart import writes for stage 0, carrying `anim`, the projectile
+slots, the decoded `dezaemon` trailer, and
+`hp`/`score`/`interval`/`spgage`/`shadow*`. So **cloning is a deep copy plus a
+new `textureKey`**, and swapping art is a matter of repacking the atlas that key
+points at.
 
 | tool                       | what it does                                             |
 | -------------------------- | -------------------------------------------------------- |
-| `shmupx_list_characters`   | the catalog's characters                                 |
+| `shmupx_list_characters`   | the catalog's characters (`shmupX/characters`)           |
 | `shmupx_get_character`     | one record, its fields and every frame it references     |
-| `shmupx_list_atlases`      | the ~400 atlases frames can come from                    |
+| `shmupx_list_atlases`      | shmupX's atlases plus the root's ~430, read only         |
 | `shmupx_list_frames`       | frame names and sizes inside one atlas                   |
 | `shmupx_list_sprites`      | whole-image sprites, each usable as one frame            |
 | `shmupx_create_character`  | clone + swap + pack; writes nothing unless `apply`       |
@@ -1545,6 +1570,18 @@ rather than guessing: the `hadouken` atlas's two frames are `atlas_s0` and
 that is not in the catalog goes in as `{file: "dev-fixtures/x.png"}` — that
 directory is gitignored by design, the same local-only drop the powerup atlas
 and the disc tasks read from.
+
+**Source art may come from the root.** "Any frame of any atlas" has always meant
+spriteX's sheets, and spriteX's packer writes only the root-level `atlases/` —
+`hadouken` and `bg-great-hall` are there and not in shmupX's subtree. So an
+atlas `shmupX/atlases` lacks is read from the root instead: a plain GET
+(`mcp/lib/rtdb.ts`'s `unscoped` read option, which has no write counterpart),
+with shmupX's own copy winning a name in both. Borrowing is all it is — what a
+build then publishes goes to `shmupX/` like everything else — and the tree that
+answered is reported (`shmupx_list_frames`' `source`, and a frame's provenance,
+`atlases/hadouken#hadouken1` from the root or `shmupX/atlases/<name>#<frame>`).
+`shmupx_list_atlases` lists the union, with the names that are shmupX's own as
+`shmupX`.
 
 **Stage-end backdrops.** `stageBgEnd` on a character replaces the shipped
 `stage_end0..4` art that rises behind the boss, from any frame reference — the
@@ -1571,21 +1608,25 @@ Three rules the tools enforce, because the runtime does not:
   naming art that never travelled with it is a bug that reports itself nowhere.
   A build reports `unresolved`, and `apply` refuses while it is non-empty.
 
-Publishing writes `atlases/{name}` and `characters/{name}`, and that database is
-the one spriteX, the Pixel Editor, the Tilemap Editor and the level editor all
-read — and it is open-write. So a build is a dry run by default, and
-`apply: true` is the only way to reach a write.
+Publishing writes `shmupX/atlases/{name}` and `shmupX/characters/{name}`, which
+the level editor's `+ LIBRARY`, its LIBRARY EDITOR and the game read. (spriteX
+has the database root baked into its build and still lists cmg's catalog, not
+this one.) The database is the one spriteX, the Pixel Editor, the Tilemap Editor
+and the level editor all share, and it is open-write. So a build is a dry run by
+default, and `apply: true` is the only way to reach a write.
 
 **Placing** a character into a cloud level (`shmupx_place_character`) moves two
-things together: the record into `levels/<name>/bossData/boss<N>`, and any frame
-the level's atlas lacks into that atlas. Frames the level already has are left
-alone — a level's art is its author's — and the record is renamed to match how
-that level spells them. The rename is load-bearing: `mergeRecipe`'s repair pass
-tests each animation's first frame against the atlas _exactly_, with none of
-`resolveFrame`'s `.gif`/`.png` forgiveness, and reverts the record to the base
-game's boss on a miss — so a record placed under the wrong extension silently
-renders as 2028.Ai's Bison. The result's `replaced` field is the previous
-record: the way back.
+things together: the record into `shmupX/levels/<key>/bossData/boss<N>`, and any
+frame the level's atlas lacks into that atlas. The level is named the way the
+site names it — its key, else an alias (`2019` places into `2019-PS2`) — and the
+result's `level` is the key it resolved to, with the alias it came through as
+`alias`. Frames the level already has are left alone — a level's art is its
+author's — and the record is renamed to match how that level spells them. The
+rename is load-bearing: `mergeRecipe`'s repair pass tests each animation's first
+frame against the atlas _exactly_, with none of `resolveFrame`'s `.gif`/`.png`
+forgiveness, and reverts the record to the base game's boss on a miss — so a
+record placed under the wrong extension silently renders as 2028.Ai's Bison. The
+result's `replaced` field is the previous record: the way back.
 
 **Previewing** does not publish at all. The runtime fetches one fixed URL before
 Phaser boots — `/games/2028-ai/foo.json` — and plays whatever record it gets, so
@@ -1646,8 +1687,9 @@ note}`, bare base64 with
 no `data:` prefix). The daemon that turns a dictated sentence into that PNG is
 `tools/watch-bridge/`.
 
-An object is still exactly a `characters/<id>` record with its art at
-`atlases/<textureKey>`. What is added:
+An object is still exactly a `shmupX/characters/<id>` record with its art at
+`shmupX/atlases/<textureKey>` (or, for an atlas shmupX does not have, the root
+copy it borrows, as above). What is added:
 
 - **A role, read off the record's shape.** The catalog is one flat tree holding
   bosses beside zako, a player, a bullet and a backdrop, and none of them say
@@ -1677,10 +1719,10 @@ An object is still exactly a `characters/<id>` record with its art at
   bullets"_ is `akuma`, about its shots); the ordinal decides last. `resolved`
   is the one answer, `candidates` the shortlist when there are several,
   `explanation` how the phrase was read. With `level` it lists a cloud level's
-  `boss<N>` slots instead — the name must be the exact key under `/levels`,
-  `"Daioh P!"` included, and a miss lists what is there — each slot naming the
-  catalog character it came from, since a level's copy is edited by editing the
-  character and placing it again.
+  `boss<N>` slots instead — the name must be a key under `shmupX/levels`
+  exactly, or an alias of one (`2019` lists `2019-PS2`'s), and a miss lists what
+  is there — each slot naming the catalog character it came from, since a
+  level's copy is edited by editing the character and placing it again.
 - **Three dials, as arithmetic on what is there — and only on what the runtime
   reads.** `shmupx_update_object` moves numbers and pixels relative to their
   current values, so a second _"more aggressive"_ compounds on the first, and it
@@ -1709,23 +1751,28 @@ An object is still exactly a `characters/<id>` record with its art at
   - `scope` says which frames the art dials touch: `body` (default — the object
     itself, not its shots or its backdrop), `projectiles`, or `all`.
 
-**What a write touches.** Nothing but numbers changed: only `characters/<id>` is
-written, whoever owns the atlas. Pixels changed on a character whose
-`textureKey` is its own name — everything the character tools create, and every
-cart import — and its atlas is rewritten in place with _every_ frame it held,
-edited or not, under the key spellings it already had, and conditionally on the
-ETag it was read with (`if-match`): nothing another record names disappears, and
-a write that raced spriteX or the editor is refused rather than winning. Pixels
-changed on a character whose `textureKey` points elsewhere (`dukeNukem` →
-`duke_atlas`) and that shared sheet is never touched: the edited frames go to a
-new `atlases/<id>` and the record is repointed, exactly as a freshly created
-character is laid out. `saveAs` writes a new record and a new atlas under a name
-that must not exist yet, and leaves the original alone. Frame keys inside an
-atlas's `json` string are written plain — `foo.gif`, not the one-dot-leader the
-level records need for real database keys — because the level editor's library
-loader matches a record's plain names against them with no decoding, so a
-leader-spelled key is a frame the editor cannot find. (`shmupx_create_character`
-now writes them plain for the same reason.)
+**What a write touches.** Every write lands under `shmupX/`, so the
+`characters/<id>` and `atlases/<id>` below are shmupX's. Nothing but numbers
+changed: only `characters/<id>` is written, whoever owns the atlas. Pixels
+changed on a character whose `textureKey` is its own name — everything the
+character tools create, and every cart import — and its atlas is rewritten in
+place with _every_ frame it held, edited or not, under the key spellings it
+already had, and conditionally on the ETag it was read with (`if-match`):
+nothing another record names disappears, and a write that raced spriteX or the
+editor is refused rather than winning. When that atlas exists only at the root
+(and was read from there, as above), the rewrite goes to `atlases/<id>` under
+`shmupX/` on the ETag of that absent node, so it can only create shmupX's copy
+while there still is none, and the root's is never touched. Pixels changed on a
+character whose `textureKey` points elsewhere (`dukeNukem` → `duke_atlas`) and
+that shared sheet is never touched: the edited frames go to a new `atlases/<id>`
+and the record is repointed, exactly as a freshly created character is laid out.
+`saveAs` writes a new record and a new atlas under a name that must not exist
+yet, and leaves the original alone. Frame keys inside an atlas's `json` string
+are written plain — `foo.gif`, not the one-dot-leader the level records need for
+real database keys — because the level editor's library loader matches a
+record's plain names against them with no decoding, so a leader-spelled key is a
+frame the editor cannot find. (`shmupx_create_character` now writes them plain
+for the same reason.)
 
 **Nothing writes without `apply`**, as everywhere in this server — and it
 matters more here. A hands-free session — `tools/watch-bridge/` — spawns a fresh
@@ -2106,7 +2153,13 @@ the host's latency; their movement is predicted locally to hide most of it.
   client, bundled same-origin for the same reason the engine is.
 - `static/phaser-plugins/netplay-lobby.js` — the live-runs panel on the title
   screen (with a real preview drawn from the host's snapshots) and the guest
-  view.
+  view. It lists the runs of the game this page is playing (every run, for a
+  page with no game id), and that is known only once its level resolves, so it
+  waits for the bundle's `shmupx:game-id` window event (or a baked
+  `__GAME_ID__`, or `__GAME_STATE__.gameIdResolved` already set) before it
+  opens; read any sooner, every `?level=` game looked like no game in particular
+  and the panel listed everybody's runs. See **WORLD BEST and TODAY'S BEST, per
+  game** below.
 - `game.bundle.js` `cmgNet*` — the host half.
 - The launcher marks games with a live run (`svelte-src/Dashboard.svelte`).
 
@@ -2126,6 +2179,95 @@ Then open the game with
 Shipping it means `spacetime login` and `deno task netplay:publish`.
 
 Requires Deno canary (`deno upgrade canary`).
+
+## WORLD BEST and TODAY'S BEST, per game
+
+The title and the score card show two numbers, and both belong to the game being
+played. Each game has its own board, at the database root (a shared service
+store, not part of the catalog that moved under `shmupX/`):
+
+| path                                     | what                                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------------------- |
+| `leaderboards/<gameId>/allTime`          | WORLD BEST: `{value, updatedAt}`, raised by a transaction that keeps the higher |
+| `leaderboards/<gameId>/daily/<UTC date>` | TODAY'S BEST, the same, one board per UTC day (`2026-10-18`)                    |
+| `leaderboards/<gameId>/meta`             | `{name, updatedAt}`: what the game is called                                    |
+
+**Which game a page is.** The id is `gameIdForLevel`: the record's `gameId` (the
+editor mints one on a game's first save and keeps it through every re-save),
+else a slug of its name plus an 8-hex FNV-1a digest of the exact name, so
+`Ramsie` and `ramsie` stay two boards. Three copies must agree —
+`static/phaser-plugins/level-loader.js`, the bundle's `gameIdentity` section,
+and build-level's `lib/game-id.js`, which bakes an exported app's `__GAME_ID__`
+— and `tests/game_scores_test.ts` runs them side by side. It is decided **once
+the level resolves**, off the record that actually loaded: `loadLevel`'s result
+carries `gameId`, and `PluginBootScene` calls
+`startGameScores(gameForLevelResult(result))` before the title or the stage
+starts. A plain visit is the baked `foo.json`, `foo-a9f37ed7`. A `?level=`, an
+alias and a `<name>.codemonkey.games` visit are the record fetched, so
+`?level=2019` scores on `2019-PS2`'s `2019-ps2-adb9fb3f` and its meta is named
+by the key. The fallback recipe of a level that did not load is no game's. An
+exported app's baked `__GAME_ID__` outranks all of it, and only such an app
+loads its scores as the game is created. Nothing reads or writes a board or the
+cookie before then: the id used to be read off `__OFFLINE_LEVEL__` alone, so
+every cloud game was "no game" and every edited one was 2028.Ai. `setActiveGame`
+keeps the id on `gameState.gameId` and fires `shmupx:game-id` on `window`
+(`{ detail: { gameId } }`), which the netplay lobby waits for (see **Online**
+above). A page that moves to another game bumps `scoreEpoch`, and a read or
+write still out for the old one lands nowhere.
+
+**No id, no board.** A page with no game id — a level that did not load, the
+editor's PLAY of a game never saved — keeps its best for that page alone: no
+board, no cookie, no wait for the Firebase SDK, and the sync line reads LOCAL
+CACHE ONLY. `leaderboards/globalHighScore`, which every such page used to share,
+so one game's best was every unnamed game's WORLD BEST, is neither read nor
+written. `__FIREBASE_DATABASE_PATH__` still overrides the all-time path, with no
+daily board or meta beside it; no page sets it.
+
+**The cookie is this device's best, and only that.** It is
+`afc2019_highScore_<gameId>` (a game id is already a legal cookie name), kept
+for a year. It used to be one `afc2019_highScore` for the whole origin — the
+hosted player, every `?level=` game, the editor's PLAY, the eShop archive — so
+each game showed whatever had been played last as its WORLD BEST, and the boot
+pushed that up into its board: the same 68102600 sits on `foo-a9f37ed7`,
+`2019-ps2-adb9fb3f`, `rando-b90175cc`, `ultra-bird-ea3a65d4` and
+`globalHighScore`. `create2028Game` now expires that cookie (`max-age=0`) and
+nothing reads it. The WORLD BEST a page shows is the higher of two numbers kept
+apart, the local best and the board's, and the board's never goes into the
+cookie: a cookie that took it handed it back on the next visit, so a board
+cleaned of a bogus record was raised again by every browser that had only ever
+seen it. A run goes into the cookie through `keepLocalBest`, which never lowers
+it. The one push-up left is at boot, for a local best above the board's (a run
+played offline, or while the board was out of reach), and it raises `allTime`
+and `meta` only, never today's board — the cookie keeps no date.
+
+**TODAY'S BEST is the UTC day's.** The board is `daily/<toISOString date>`, read
+once per game. A page left open past UTC midnight — the title, the desktop app,
+an export — drops yesterday's number to 0 and reads the new day's board once
+(`currentDailyHighScore`, which the title asks every frame), and a read that
+lands late never lowers what the page itself raised for that day. A finished run
+goes to the boards (`runWantsSubmit`, from the continue scene's game over and
+from the ending) when it beats WORLD BEST **or** TODAY'S BEST, or while the
+board is still loading or out of reach; before, TODAY'S BEST moved only with a
+new all-time record.
+
+**The editor's PLAY.** The recipe carries the open game's `gameId` only while
+the name box still holds the cloud key that id came with (`cloudGameKey`, set by
+a cloud LOAD, a SAVE and `?fromPlay=1`, and cleared by a folder import), and
+then carries that key too, as `meta.editorGameKey`; the runtime names the board
+after it rather than after the name box, which is free text. A game whose name
+was typed over plays with no board until it is saved (SAVE mints a new id for a
+new name), as do a NEW GAME and a fresh `.sav` import, and a recipe with an id
+but no key leaves the board's name alone. Never `foo.json`'s id: a PLAY boots
+over 2028.Ai's own record, and scoring by it put every edited game on 2028.Ai's
+board. `?fromPlay=1` takes the key back from `editorGameKey`, which never
+reaches a SAVE.
+
+**Old bundles still score the old way** until they are rebuilt:
+`static/games/2019-web.zip` (`deno task 2019:zip`), apps already exported and
+the packaged desktop app still read the shared cookie and push it up. The
+contaminated boards above are left as they are; cleaning them is a manual write,
+and it holds only once those bundles are gone. `tests/game_scores_test.ts` runs
+the bundle's own score code under a fake SDK and a cookie jar.
 
 ## A soundtrack off the tone bank
 
@@ -2189,10 +2331,10 @@ covered) is now 21 slots — 160.6 BPM for the first 4:47, 114.7 to 12:23, a
 metric modulation to 86.05 until 15:20, then 114.8 to the end — scored 0.751
 chroma and 0.711 onset-F against the source (0.734 against a rolling-threshold
 truth that does not let the loud sections set the bar for the quiet ones), 14 s
-to convert. It was PATCHed
-onto `levels/foo` (the four `boss_*_bgm` overrides dropped, the two voice
-entries kept) and dezaFoo republished from it with `deno task eshop:publish
-foo --name dezaFoo --author "EASIER BY CODE"`.
+to convert. It was PATCHed onto `levels/foo` (the four `boss_*_bgm` overrides
+dropped, the two voice entries kept) — the root copy, before the split;
+`rtdb:split` carries it into `shmupX/levels/foo` — and dezaFoo republished from
+it with `deno task eshop:publish foo --name dezaFoo --author "EASIER BY CODE"`.
 
 ## A Dezaemon save is not 2028.Ai
 
@@ -2338,7 +2480,7 @@ sequencer, the boot path), the reader was brought up to it, and
 
 ```
 deno task build:sfc                           # foo.json -> build/sfc/Dezaemon SFC - foo.srm
-deno task build:sfc "Master Arena Mod"        # that cloud level, six stages
+deno task build:sfc Ramsie                    # that cloud level, five stages
 deno task build:sfc foo --report              # the per-stage entries, records, chips and rows as JSON
 ```
 
@@ -2524,7 +2666,7 @@ emulator mounts in slot 1, holding one `BISLPS-01503DEZAKIDS` save:
 
 ```
 deno task build:kids                          # foo.json -> build/kids/Dezaemon Kids - foo.mcr
-deno task build:kids "Master Arena Mod"       # that cloud level
+deno task build:kids rando                    # that cloud level
 deno task build:kids foo --name "SKY TALE"    # the card's own ten-character name
 deno task build:kids foo --background 3       # one of the disc's 38 backdrops behind every stage
 ```
@@ -2550,7 +2692,7 @@ save, which both Dezaemon+ (SLPS-00335) and Dezaemon Plus Select 100
 
 ```
 deno task build:plus                          # foo.json -> build/plus/Dezaemon Plus - foo.mcr
-deno task build:plus "Master Arena Mod"       # that cloud level
+deno task build:plus rando                    # that cloud level
 deno task build:plus foo --report             # the per-stage tile, sheet and boss summary as JSON
 ```
 
@@ -2643,7 +2785,7 @@ prototype dump and this repo's reader use:
 
 ```
 deno task build:ddd                                    # foo.json -> build/n64/Dezaemon 3D - foo.ndd
-deno task build:ddd "Master Arena Mod"                 # that cloud level
+deno task build:ddd rando                              # that cloud level
 deno task build:ddd foo --disk dev-fixtures/deza1.NDD  # onto that donor disk (default: the first 64DD image in dev-fixtures/)
 deno task build:ddd foo --ddd                          # the user area alone, 64,458,560 bytes
 deno task build:ddd foo --as GEARSQ                    # the project's name on the disk, up to eight letters and digits
@@ -3318,19 +3460,27 @@ deno task shelf:list                   # every name the above will accept
 `deno task shelf:list` prints the four shelves it searches, in the order it
 searches them:
 
-| Shelf                       | Where it lives                                                           | Example              |
-| --------------------------- | ------------------------------------------------------------------------ | -------------------- |
-| this repo's own games       | `static/games/<slug>/foo.json`                                           | `2028_ai`            |
-| the local `.sav` collection | `static/editor/dezaemon/saves/` (gitignored — usually empty)             | `air-streamer-ver-a` |
-| the eShop                   | `data/eshop.json`, then `/eshop/index` in the database                   | `dezaFoo`            |
-| the community library       | `/dezaemon/index` in the database (262 saves)                            | `g-fencer-755`       |
-| a cloud level               | `/levels/<name>` — **last**, so every name that worked before still does | `"My Level"`         |
+| Shelf                       | Where it lives                                                 | Example              |
+| --------------------------- | -------------------------------------------------------------- | -------------------- |
+| this repo's own games       | `static/games/<slug>/foo.json`                                 | `2028_ai`            |
+| the local `.sav` collection | `static/editor/dezaemon/saves/` (gitignored — usually empty)   | `air-streamer-ver-a` |
+| the eShop                   | `data/eshop.json`, then `/eshop/index` in the database         | `dezaFoo`            |
+| the community library       | `/dezaemon/index` in the database (262 saves)                  | `g-fencer-755`       |
+| a cloud level               | `/shmupX/levels/<name>`, or the key its alias names — **last** | `"My Level"`         |
 
 A name matches on its **slug**, so `2028_ai`, `2028-ai` and `2028 AI` are one
 game, and a Dezaemon save answers to its title as readily as its slug
 (`"Shadow Force"` → `shadow-force`). A name on two shelves is refused rather
 than guessed, naming both spellings; `game:` / `sav:` / `eshop:` / `deza:` /
 `cloud:` force a single shelf. A miss lists near matches.
+
+The cloud rung is shmupX's own levels and nothing else: `shmupX/levels/<name>`,
+then the key `shmupX/levelAliases/<name lowercased>` names (harbor's
+`resolveCloudLevel`, the steps every build by name takes), never the root
+`levels/`, which is cmg's catalog — so a game only cmg has is a miss here, not a
+build of cmg's copy. It is still last, so a name another shelf answers first
+goes there: `Ramsie` is the community save `ramsie`, and `2019` the eShop's web
+build, unless `cloud:Ramsie` / `cloud:2019` asks for the level.
 
 Everything that is not a cloud level is decoded here, cached under
 `build/shelf/<slug>/`, and handed to `tools/build-level` as `--level-file` — a
@@ -3469,37 +3619,39 @@ on. On the other device the editor's export menu has a DESKTOP row: type the
 code there once (or open the editor with `?builder=ABCD-EFGH`), and the row
 reports live whether that desktop is online and which targets its toolchain can
 build. An export that cannot build locally then goes to that desktop — whether
-it is online or not; a queued job waits until it opens shmupX. An imported
-`.sav` queues too: it has no cloud level for the desktop to fetch, so the record
-goes up with the job (gzipped, chunked, written before the job is, so a
-half-uploaded game can never be claimed) and the worker hands it to `runExport`
-as `levelRecord` — the same door the local button uses.
+it is online or not; a queued job waits until it opens shmupX, unless the
+desktop's heartbeat says it is too old for the job (below). An imported `.sav`
+queues too: it has no cloud level for the desktop to fetch, so the record goes
+up with the job (gzipped, chunked, written before the job is, so a half-uploaded
+game can never be claimed) and the worker hands it to `runExport` as
+`levelRecord` — the same door the local button uses.
 
 Everything travels through the Realtime Database, which every surface here
 already talks to:
 
-| path                          | what                                                                                                |
-| ----------------------------- | --------------------------------------------------------------------------------------------------- |
-| `exportWorkers/<code>`        | the desktop's heartbeat every 20 s — name, OS, detected targets, what it is building                |
-| `exportQueue/<code>/<jobId>`  | one job: level, platform, requester, status, the last build line, the log tail, the artifact list   |
-| `exportBlobs/<jobId>/<i>/<n>` | the artifact bytes as 512 KB base64 chunks (the disc _and_ a zip of the USB folder for a PS2 build) |
-| `exportInputs/<jobId>/<n>`    | the game itself, same chunking, for a job with no cloud level behind it — an imported `.sav`        |
+| path                          | what                                                                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `exportWorkers/<code>`        | the desktop's heartbeat every 20 s — name, OS, worker version, detected targets, what it is building                    |
+| `exportQueue/<code>/<jobId>`  | one job: level, platform, requester, status, the tree its level is in, the last build line, the log tail, the artifacts |
+| `exportBlobs/<jobId>/<i>/<n>` | the artifact bytes as 512 KB base64 chunks (the disc _and_ a zip of the USB folder for a PS2 build)                     |
+| `exportInputs/<jobId>/<n>`    | the game itself, same chunking, for a job with no cloud level behind it — an imported `.sav`                            |
 
 The worker streams its queue over the REST API's server-sent events, claims the
-oldest queued job with an ETag-conditional write (two desktops sharing a copied
-config never build the same job twice), runs `lib/export-build.ts` — the builder
-extracted out of `routes/api/build-apk.ts` — and uploads what came out. A job
-the desktop was building when it was closed is queued again once, then failed.
-The requester's page watches the job and, when it is done, offers what that
-artifact can do: **INSTALL APK** (the download hands the file to Android's
-installer), **DOWNLOAD** for an `.exe` / AppImage, and for a PS2 build
-**DOWNLOAD DISC**, **DOWNLOAD USB FOLDER** and **→ PS2 LIBRARY**, which files
-the disc in the launcher's PlayStation 2 shelf and installs the Play! core if it
-is not there — the same hand-off a local build gets — plus **PLAY WEB BUILD** as
-soon as the build lands, filed or not, when the job carries the level's web
-build (`web`, below). The launcher lists the same jobs under Settings → EXPORTS
-(A collects, ✕ dismisses; its rows have no web-build action), toasts when one
-finishes, and posts a system notification where the page may.
+oldest job it may take (below) with an ETag-conditional write (two desktops
+sharing a copied config never build the same job twice), runs
+`lib/export-build.ts` — the builder extracted out of `routes/api/build-apk.ts` —
+and uploads what came out. A job the desktop was building when it was closed is
+put back once, with the status it was queued with, then failed. The requester's
+page watches the job and, when it is done, offers what that artifact can do:
+**INSTALL APK** (the download hands the file to Android's installer),
+**DOWNLOAD** for an `.exe` / AppImage, and for a PS2 build **DOWNLOAD DISC**,
+**DOWNLOAD USB FOLDER** and **→ PS2 LIBRARY**, which files the disc in the
+launcher's PlayStation 2 shelf and installs the Play! core if it is not there —
+the same hand-off a local build gets — plus **PLAY WEB BUILD** as soon as the
+build lands, filed or not, when the job carries the level's web build (`web`,
+below). The launcher lists the same jobs under Settings → EXPORTS (A collects, ✕
+dismisses; its rows have no web-build action), toasts when one finishes, and
+posts a system notification where the page may.
 
 Chunks are freed once the requester reports the bytes landed, or after a day; a
 job's uploaded game is freed the moment that job stops being buildable; finished
@@ -3508,22 +3660,55 @@ ride the database rather than Firebase Storage because the project has no
 Storage bucket provisioned (`storageBucket` in the config names one, but it
 404s, and the editor's custom-audio upload already warns about it). If one
 appears, an artifact record can carry a `url` instead of chunks and the client
-falls through to `fetch()`. Nothing here needs database rules beyond what
-`levels/` already has — the queue paths are open-write like the rest.
+falls through to `fetch()`. Nothing here needs database rules beyond what the
+level nodes already have — the queue paths are open-write like the rest, and
+stay at the database root rather than under `shmupX/`.
+
+**A job names a level in shmupX's tree, and an older desktop never takes one it
+would get wrong.** Every job is stamped `rtdbRoot: "shmupX"` (`JOB_RTDB_ROOT`),
+and the worker reads a name from `shmupX/levels`, or the key
+`shmupX/levelAliases` names; `jobRootProblem` fails a job stamped with any other
+root rather than build a different game of the same name, and an unstamped job
+from an older client is read from `shmupX/` too. The worker is
+`WORKER_VERSION` 2. Version 1 — every packaged desktop installed before the
+split — reads names from cmg's root copy, ignores the stamp, stages its own
+pre-split runtime (whose EXTRACT MODE writes cmg's root library) into every app
+it builds, and claims anything whose status is `queued`. So `queueExport` writes
+every job that depends on the split with status `waiting` and `minWorker: 2` —
+all of them but a cart's PS2 disc, which is AthenaEnv with no web runtime and no
+database (`jobNeedsCurrentWorker`) — and version 1 never claims, recovers or
+re-queues a `waiting` job; its prune forgets one a week after it was asked for,
+as it does any finished job. Version 2 claims `queued` and `waiting` alike, up
+to its own version; tags a claim `<code>:v<N>` in `worker`, so a version-1 app
+opening on the same code mid-build (it re-queues only builds claimed under its
+bare code) leaves it alone; and puts an abandoned build back as `waiting` when
+that is how it came. The heartbeat is the early, readable refusal: before any of
+a cart goes up, `queueExport` reads `exportWorkers/<code>` once and refuses a
+job that needs version 2 when the heartbeat shows no worker that new
+(`workerTooOld`, which says why). A code never seen yet, or a heartbeat that
+cannot be read, lets the job through to wait. Two desktops on one code overwrite
+each other's `version`, so a version-2 worker also stamps `seenAtV2`, which no
+other version writes, and a fresh one counts (`workerVersion`). The DESKTOP row
+adds "an older shmupX — update it before exporting" for a code with no such
+worker, and the editor, the launcher's EXPORTS and CANCEL all treat `waiting` as
+QUEUED (`jobWaiting`). Until a version-2 desktop is released, then, an installed
+app takes only a cart's PS2 disc from today's clients.
+`packages/shmup-harbor/tests/export_worker_test.ts` runs version 1's real
+worker, loaded out of git, against the jobs today's client writes.
 
 `SHMUPX_EXPORT_WORKER=0` keeps a local host from ever starting the server;
 `SHMUPX_BUILD_CODE=ABCDEFGH` pins the code for a test rig without touching the
 config file. `GET /api/export-worker` is the status (and what starts it), `POST`
 with `{ action: "start" | "stop" | "regenerate" | "rename" }` drives it.
 [`tests/export_queue_test.ts`](tests/export_queue_test.ts) pins the seams
-between the two ends: the paths, the codes, the stream parser and the chunk
-codec.
+between the two ends: the paths, the codes, the stream parser, the chunk codec,
+the stamp and the version gate.
 
 ## PlayStation 2
 
 ```sh
 deno task build:ps2                     # the game this repo ships
-deno task build:ps2 "Master Arena Mod"  # that Firebase level
+deno task build:ps2 gs                  # that cloud level (shmupX/levels/gs)
 deno task build:ps2 --sav "Dez 2 - Chohsoku Stringer.sav"   # that Saturn cart
 ```
 
@@ -3878,8 +4063,8 @@ compiles) it also boots the new `.iso` and captures its title screen, which is
 the only picture of the disc itself a browser cannot give. Everything lands in
 `build/testdrive/ps2-web/<slug>/` with a `report.json`; `--rebuild` runs
 `build:mac` first, `--quit` closes the app afterwards, `--no-pcsx2` skips the
-emulator. Like a person pressing EXPORT, it saves the open game to the shared
-level database under its name first, so a directory import leaves a cloud level
+emulator. Like a person pressing EXPORT, it saves the open game to
+`shmupX/levels` under its name first, so a directory import leaves a cloud level
 named after the folder (or `--name`).
 
 **Watching OG against MOD.** `deno task testdrive:ps2:compare "2019-PS2"`
@@ -4457,10 +4642,10 @@ every game anyone can get — and it is read from two places by
   pointed at a `foo.json` beside it, and that level record — with Phaser, the
   plugins and the 68 MB of assets fetched off this origin by root-relative URL,
   where they already are. `deno task 2019:zip` packs it from the committed
-  `static/games/2019/level.json` (`--fetch` refreshes that from the database
-  after the level is re-exported; the editor's `frameThumbnails` are dropped on
-  the way), `deno task build` runs it, and `tests/stage_backgrounds_test.ts`
-  checks the archive's shape.
+  `static/games/2019/level.json` (`--fetch` refreshes that from
+  `shmupX/levels/2019-PS2` after the level is re-exported; the editor's
+  `frameThumbnails` are dropped on the way), `deno task build` runs it, and
+  `tests/stage_backgrounds_test.ts` checks the archive's shape.
 - Each GitHub-tracked build's own **`codemonkey.json`** — the file the cmg
   launcher has always let a game ship at its root — read off the tracked branch
   (`raw.githubusercontent.com/<owner>/<repo>/<branch>/codemonkey.json`) after
@@ -4557,6 +4742,153 @@ numbers. → MEDNAFEN CART (`POST /api/saturn-save`, the same code as
 `deno task sav:run`) installs the cart for the desktop emulator, which has the
 512 KB cartridge, and launches it.
 
+## shmupX's corner of the shared database
+
+The Realtime Database (`evil-invaders-default-rtdb`) is shared with cmg, the
+sibling app, and for as long as both have existed they read and wrote the same
+root-level `levels`, `levelAliases`, `atlases` and `characters`. Those root
+copies are cmg's: its catalog holds everything either app ever saved — every
+level anyone made, spriteX's ~430 sheets — and shmupX never writes them. shmupX
+reads and writes its own games in a subtree beside them, `shmupX/`, holding only
+what it ships:
+
+| path                          | what                                                          |
+| ----------------------------- | ------------------------------------------------------------- |
+| `shmupX/levels/<key>`         | the five games: `2019-PS2`, `foo`, `gs`, `Ramsie` and `rando` |
+| `shmupX/levelAliases/<alias>` | `2019` and `streetfighter`, both naming `2019-PS2`            |
+| `shmupX/characters/<id>`      | the 29 library characters those games name                    |
+| `shmupX/atlases/<id>`         | each one's art, under the character's own id                  |
+
+Two of the copies are not verbatim, because a level's `gameId` picks its
+leaderboard (see **WORLD BEST and TODAY'S BEST, per game**). `foo` is pinned to
+`foo-a9f37ed7`, the id the stock game's own `foo.json` derives and the board its
+scores are on, in place of the root record's `foo-5d6de24c`, which the editor
+minted and nothing ever scored to; so a plain visit, `?level=foo` and a `foo`
+export share one board. `Ramsie` has no id at the root, so the one its name
+derives, `ramsie-cae9647a`, is written down, and the editor's first save does
+not mint a random one and move its board. Lowercase `ramsie` is another record,
+and stays cmg's.
+
+Only those four nodes moved. Everything else is a shared tool or service store
+and stays at the root: `leaderboards`, `sprites`, `pixelSprites`, `pixelRooms`,
+`tilemaps`, `maps`, `fonts`, `eshop`, `dezaemon`, `dezaemonSfc`, `builders`, the
+export queue (`exportWorkers`, `exportQueue`, `exportBlobs`, `exportInputs`),
+`netplay`, `game`, `games` and `spritePicker`. That is why the root is a path
+prefix chosen per node and not a new database URL: a base of `<db>/shmupX` would
+re-root `sprites/` and the export queue too, which nothing ever copied there. It
+is one constant with no environment override, so two spellings cannot drift
+apart, and the variable you might reach for, `$SHMUPX_ROOT`, already names the
+checkout's path on disk.
+
+**One rule, in three copies.** [`lib/rtdb-root.ts`](lib/rtdb-root.ts) is
+`RTDB_ROOT = "shmupX"`, `SCOPED_NODES`, and `rtdbPath(path)`, which puts
+`shmupX/` in front of a path whose first segment is a scoped node and leaves
+every other path alone (the segment ends at `/`, `?` or `.`, so
+`levels.json?shallow=true` counts, and a leading slash stays where it was). A
+workspace package cannot import the app, so
+[`packages/shmup-harbor/lib/rtdb-root.ts`](packages/shmup-harbor/lib/rtdb-root.ts)
+repeats it, and build-level's `lib/rtdb-root.js` again in CommonJS;
+`packages/shmup-harbor/tests/rtdb_root_test.ts` runs all three over the same
+paths. A database base read from the environment (`CHARACTERS_DB`, `SHMUPX_DB`)
+is still the base, and the prefix goes on top.
+
+Pages spell it as two globals beside their Firebase config.
+`static/firebase-config.js` sets `window.__RTDB_ROOT__ = "shmupX"` and
+`window.__CHARACTERS_DB__`, the database URL with the root on it, while
+`databaseURL` itself stays the root: the Firebase SDK refuses a `databaseURL`
+with a path in it, so SDK readers put the root into their `ref()` paths. The
+level editor sets the same two inline beside its own config, next to a copy of
+`rtdbPath`. An exported app's shell (`tools/build-level/lib/shell-template.js`)
+bakes both into its first script on every build, not only with a leaderboard:
+`firebase-config.js` is staged only for a level with a `gameId`, and EXTRACT
+MODE runs in every export. The character library module
+(`easierbycode.com/2019-es7/characters` and its `<character-editor>`) reads
+`characters/<n>` and the atlas a `textureKey` names over REST from
+`__CHARACTERS_DB__`, so the `/characters` route lists `shmupX/characters` and
+starts every module it serves with
+`globalThis.__CHARACTERS_DB__ ||=
+"<db>/shmupX"`, and `lib/game-page.ts`'s
+`CHARACTERS_MODULE` sets it for a page that has not. EXTRACT MODE
+(`static/phaser-plugins/extract-mode.js`) scopes itself: callers still hand it
+the database URL, `libraryURL` adds the root — read when a publish runs, not
+when the script loads, because the editor sets the global after loading it, and
+never twice — and the one atomic PATCH goes to `<db>/shmupX/.json` with relative
+`atlases/` and `characters/` keys. `tests/shmupx_root_runtime_test.ts` and
+`tests/editor_rtdb_root_test.ts` pin the pages.
+
+**A name means one game everywhere.** Whatever takes a level by name reads
+`shmupX/levels/<name>` exactly as typed (`Ramsie` and `ramsie` were always two
+records), then `shmupX/levelAliases/<name lowercased>` and the key it names —
+the runtime's `fetchLevel` steps — and never the root: the level loader, the
+level editor's LOAD and SAVE, the Tilemap Editor, the subdomains, the shelf's
+cloud rung, every harbor build (`resolveCloudLevel` in
+`packages/shmup-harbor/lib/cloud-level.ts`, `resolveLevel` in build-level's
+`lib/fetch-level.js`), the export worker, the MCP tools (`mcp/lib/levels.ts`),
+`level:normalize`, the PS2 test drives and `2019:zip --fetch`. From there a game
+goes by its key: a LOAD of `2019` puts `2019-PS2` in the editor's name box, so
+the next SAVE writes `2019-PS2` back. A SAVE under a name that is only an alias,
+with no record of its own, asks first — OK saves over the alias's game, Cancel
+saves nothing — since a record saved there would shadow the alias for
+`?level=2019` and `2019.codemonkey.games`; the per-entry SAVE of an enemy, boss
+or player under such a name hands over to that whole-game SAVE, and an EXPORT
+whose save was cancelled stops rather than build the other game. A SAVE also
+keeps a record's own `name` (`2019-PS2` is called "2019"), which is what the
+title draws for a game with no logo of its own.
+
+The editor's library reads the subtree too: `+ LIBRARY`, the LIBRARY EDITOR (its
+`<character-editor>` is given `db`) and Firebase Sprites, which lists
+`shmupX/atlases` alone. spriteX's packer writes only the root `atlases/`, so a
+sheet packed there is no longer offered in Firebase Sprites (the character tools
+still borrow from it — see **Creating a character**), and spriteX itself has the
+root baked into its build and still lists cmg's catalog.
+
+**Seeding it: `deno task rtdb:split`.**
+[`scripts/rtdb-split.ts`](scripts/rtdb-split.ts) copies those records out of the
+root once, one record at a time, and writes nothing without `--write`:
+
+```sh
+deno task rtdb:split                       # the plan: every key, its size and state
+deno task rtdb:split -- --write            # copy what is missing, then read every record back
+deno task rtdb:split -- --write --force    # also replace records that differ under shmupX/
+deno task rtdb:split -- --db https://x.firebaseio.com   # another database: its base, never a subtree
+```
+
+Each record is classified against what `shmupX/` already holds. **new** is
+written. **same** is left alone, so a second run writes nothing. **partial** is
+what a run that died between the PUTs of a split record leaves — exactly its
+first pieces in write order and nothing else — and gets the rest. **differs** is
+anything else, an edit made under `shmupX/` or a root copy cmg changed since,
+and is skipped and reported unless `--force`, which replaces it in one PUT.
+Being a subset of the plan is not enough to count as partial: a field deleted
+under `shmupX/` also leaves one, and re-sending the plan would put it back. The
+one edit it cannot tell from an interruption is a split record (`foo`, `rando`)
+cut back to exactly its leading pieces, so the dry run lists a partial record
+with the pieces it would still send, `(N to write)` — look at it before the
+`--write`.
+
+Before any write it stops (exit 2) if a record is missing at the root, an alias
+no longer points at `2019-PS2`, or a pin no longer derives; both pins are
+recomputed with build-level's `lib/game-id.js`, the derivation exports bake.
+Every PUT is checked to land under `shmupX/<scoped node>/` (`assertInsideRoot`)
+— no DELETE, no PATCH, no PUT of null, nothing at the root. A record over 4 MiB
+goes up a child at a time through `scripts/lib/rtdb-publish.ts`'s throttled put
+(`foo` and `rando`, ~6 MB each, take 22 and 25), atlases first, then characters,
+levels and aliases, so nothing is published before what it points at; then every
+record is read back and compared by SHA-256 of its key-sorted JSON. Exit 0 is
+done (or a dry run), 1 a failed write or read-back, 2 a refused argument or a
+root that no longer looks as expected, 3 written and verified with differing
+records left alone. The live plan on 2026-10-18 was 65 records, 18.2 MiB, in 110
+PUTs. `tests/rtdb_split_test.ts` runs it against an in-memory database.
+
+**Until it has run with `--write`, `shmupX/` is empty** (a GET of it answered
+`null` on 2026-10-18), and everything above finds nothing: a `?level=` visit
+falls back to the stock recipe with no board, every subdomain opens NEW GAME,
+the editor's cloud list and library are empty, a build by name reports not
+found, `/characters` exports no names, the MCP catalog is empty, and the
+preview-verify CI gate, which clones `shmupX/characters/dezaBoss0`, goes red.
+Only a plain visit is unaffected — it plays the baked `foo.json`. Seed it before
+deploying a build of this tree.
+
 ## Deploy
 
 Deno Deploy git integration: the app is linked to this repo in the Deploy
@@ -4613,37 +4945,40 @@ of a subdomain is routed by its label (`lib/level-subdomain.ts`, wired in
 Only the root is redirected; every other path on a subdomain serves exactly as
 the apex does, which is what lets the redirect stay relative (the game and its
 bundle load from the host the visitor typed). The lookup is one shallow REST
-read of the cloud `levels/*` keys, cached for a minute like `/characters`;
-hostnames are case-insensitive and RTDB keys are not, so the label is matched
-exactly, then by case (`2019-ps2` finds `2019-PS2`; a tie such as
-`ramsie`/`Ramsie` resolves to the same one every time). A key the DNS cannot
-spell — a space, a dot, an underscore — is not reachable this way. If the
-database cannot be read at all, the label goes to the game rather than the
-editor: a shared link to a real level is the common case, and the loader's own
-"no such level" screen beats a stranger's editor opening over a name that
-exists. `www.codemonkey.games` is the apex, never a level. The dev tunnel's
-rewritten Host is looked past to `X-Forwarded-Host`, and `*.localhost` works the
-same in a checkout (`daioh.localhost:5173/`). `tests/level_subdomain_test.ts`
-pins all of it.
+read of shmupX's `shmupX/levels/*` keys, cached for a minute like `/characters`.
+Those are the only games it knows: a label naming one of cmg's root-level levels
+and none of shmupX's is a NEW GAME here, not cmg's game. Hostnames are
+case-insensitive and RTDB keys are not, so the label is matched exactly, then by
+case (`2019-ps2` finds `2019-PS2`; a tie between two keys that differ only in
+case resolves to the same one every time). A key the DNS cannot spell — a space,
+a dot, an underscore — is not reachable this way. If the database cannot be read
+at all, the label goes to the game rather than the editor: a shared link to a
+real level is the common case, and the loader's own "no such level" screen beats
+a stranger's editor opening over a name that exists. `www.codemonkey.games` is
+the apex, never a level. The dev tunnel's rewritten Host is looked past to
+`X-Forwarded-Host`, and `*.localhost` works the same in a checkout
+(`gs.localhost:5173/`). `tests/level_subdomain_test.ts` pins all of it.
 
 **Aliases.** A game can answer to other names too: `2019.codemonkey.games` and
 `streetfighter.codemonkey.games` both open `2019-PS2`, and so do
 `/games/2028-ai?level=2019` and `?level=streetfighter`. The names live in one
-small index beside the levels, RTDB `levelAliases/<alias>` = the level's key,
-read whole and cached for a minute next to the key listing; the level loader's
-`fetchLevel` falls back to it when a `?level=` name is no level's key, and keeps
-the key it stood for (the result's `levelName`, the title's name, the game's
-**Edit Levels** link). An alias is a lowercase DNS label and never beats a
-level's own name. Set them with the task, a dry run unless `--write`:
+small index beside the levels, RTDB `shmupX/levelAliases/<alias>` = the level's
+key, read whole and cached for a minute next to the key listing; the level
+loader's `fetchLevel` falls back to it when a `?level=` name is no level's key,
+and keeps the key it stood for (the result's `levelName`, the title's name, the
+game's **Edit Levels** link). An alias is a lowercase DNS label and never beats
+a level's own name. Set them with the task, a dry run unless `--write`:
 
 ```bash
 deno task level:alias 2019-PS2 2019 streetfighter -- --write
 ```
 
 `deno task level:alias` alone lists every alias, `level:alias <level>` one
-game's, and `-- --remove <alias> --write` takes one back. `planAliases` in
-`lib/level-subdomain.ts` refuses an alias another level holds or a level
-already owns as its own name.
+game's (the game may be named by an alias too: `level:alias 2019` lists
+`2019-PS2`'s), and `-- --remove <alias> --write` takes one back. It edits
+shmupX's index only; cmg's root-level `levelAliases` is neither read nor
+written. `planAliases` in `lib/level-subdomain.ts` refuses an alias another
+level holds or a level already owns as its own name.
 
 **DNS and Deploy both have to know the wildcard.** Add `*.codemonkey.games` as a
 custom domain on the app in the Deploy dashboard (it issues the wildcard
@@ -4732,10 +5067,10 @@ module registries, and the MCP server itself initializes and answers
 Its _tools_ are another matter. Every one that reads or writes the catalog goes
 to the Firebase RTDB at `evil-invaders-default-rtdb.firebaseio.com`, so a
 session whose egress policy denies that host gets
-`GET characters?shallow=true failed: fetch failed` from `shmupx_list_characters`
-and cannot get past step 1 of → CREATE A CHARACTER. That is a proxy denial
-rather than a certificate problem — `DENO_CERT` makes no difference to it — and
-it has to be fixed in the environment's network policy, not in this repo. An
-environment meant to build characters on the web needs `*.firebaseio.com`
-reachable, and wants `deno.land` and `dl.deno.land` too, so the hook takes its
-canonical path instead of the fallback.
+`GET shmupX/characters?shallow=true failed: fetch failed` from
+`shmupx_list_characters` and cannot get past step 1 of → CREATE A CHARACTER.
+That is a proxy denial rather than a certificate problem — `DENO_CERT` makes no
+difference to it — and it has to be fixed in the environment's network policy,
+not in this repo. An environment meant to build characters on the web needs
+`*.firebaseio.com` reachable, and wants `deno.land` and `dl.deno.land` too, so
+the hook takes its canonical path instead of the fallback.

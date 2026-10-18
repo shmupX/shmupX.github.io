@@ -18,12 +18,18 @@
 # This gate is NOT hermetic, and that is worth stating plainly rather than
 # discovering during a release. preview:verify clones dezaBoss0, and it reads
 # that character out of the live Firebase catalog at
-# evil-invaders-default-rtdb.firebaseio.com (mcp/lib/rtdb.ts). That database is
-# shared with spriteX, the Pixel Editor and the level editor, it is mutable,
-# and it is open-write with no auth. Two consequences follow:
+# evil-invaders-default-rtdb.firebaseio.com (mcp/lib/rtdb.ts): shmupX's own
+# subtree, shmupX/characters/dezaBoss0 and shmupX/atlases/dezaBoss0, plus the
+# hadouken and bg-great-hall art it borrows, which comes from shmupX/atlases
+# when shmupX has it and from the root-level atlases/* (cmg's and spriteX's
+# catalog) when it does not. That database is shared with cmg, spriteX, the
+# Pixel Editor and the level editor, it is mutable, and it is open-write with
+# no auth. Two consequences follow:
 #
 #   1. This job can go red because somebody edited or deleted dezaBoss0, or
-#      because one of its atlases changed, and not because the pull request
+#      because one of its atlases changed, or because shmupX/ has not been
+#      seeded with dezaBoss0 (the catalog character is only ever read from
+#      there, never from cmg's root copy), and not because the pull request
 #      broke anything. A red run here means "look at the log", not "the diff is
 #      wrong" — the failure message names the frames and the atlas involved.
 #   2. It needs outbound network at merge time, so a Firebase outage or a
@@ -35,7 +41,9 @@
 # every artist actually publishes into had drifted out from under the loader.
 # Chasing hermeticity here would gate on the wrong thing. If it becomes noisy,
 # the fix is `SHMUPX_DB` (rtdb.ts honours it) pointed at a pinned mirror, not
-# deleting the gate.
+# deleting the gate. SHMUPX_DB names the DATABASE, never the subtree: rtdb.ts
+# puts shmupX/ on the catalog nodes itself, so a mirror holds shmupX/ and the
+# root-level atlases/ side by side, as the real one does.
 name: preview-verify
 
 on:

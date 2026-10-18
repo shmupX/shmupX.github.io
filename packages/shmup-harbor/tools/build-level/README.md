@@ -34,7 +34,10 @@ Output goes to `build/<slug>/` (git-ignored): `www/` (staged app),
 
 ## How it works
 
-1. **Fetch** the level record from the evil-invaders RTDB (`lib/fetch-level.js`).
+1. **Fetch** the level record from the evil-invaders RTDB (`lib/fetch-level.js`):
+   `shmupX/levels/<name>`, else the key `shmupX/levelAliases/<name lowercased>`
+   names, so `2019` builds `2019-PS2`. Never the root `levels/` — that is
+   cmg's catalog in the database the two apps share (`lib/rtdb-root.js`).
 2. **Stage `www/`** (`lib/stage.js`) from `static/games/2028-ai/`:
    - the whole `assets/` tree + `lib/phaser.min.js`,
    - `game.bundle.js` — cmg's own game bundle, **patched for offline hosting**:

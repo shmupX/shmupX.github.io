@@ -20,7 +20,7 @@ import {
   resolveFrame,
   sheetDataUrl,
 } from "./art.ts";
-import { assertSafeKey, get, listKeys, put } from "./rtdb.ts";
+import { assertSafeKey, dbPath, get, listKeys, put } from "./rtdb.ts";
 
 export type Character = Record<string, unknown>;
 
@@ -250,18 +250,26 @@ export function remapFrames(
   return next;
 }
 
-/** List the characters in the catalog. */
+/**
+ * List the characters in the catalog: shmupX's own, shmupX/characters. The
+ * root-level characters/* is cmg's catalog, and unlike source art (art.ts) a
+ * character is never borrowed from it — what these tools clone, edit and
+ * place is shmupX's library.
+ */
 export function listCharacters(): Promise<string[]> {
   return listKeys("characters");
 }
 
-/** Read one character record. */
+/** Read one character record, from shmupX's catalog only. */
 export async function getCharacter(name: string): Promise<Character> {
   assertSafeKey("Character name", name);
   const record = await get<Character>(`characters/${name}`);
   if (!record || typeof record !== "object") {
     throw new ArtError(
-      `No character at characters/${name}. Use shmupx_list_characters to see valid names.`,
+      `No character at ${
+        dbPath(`characters/${name}`)
+      } (shmupX's catalog; cmg's root-level characters are not read). ` +
+        `Use shmupx_list_characters to see valid names.`,
     );
   }
   return record;
@@ -469,7 +477,11 @@ export interface PublishOptions {
 }
 
 /**
- * Publish a built character: the record, and the atlas its textureKey names.
+ * Publish a built character: the record, and the atlas its textureKey names,
+ * both into shmupX's catalog (shmupX/atlases/<name>, shmupX/characters/<name>;
+ * rtdb.ts roots every write there). cmg's root-level copies are never written,
+ * so a character published here is not in cmg's catalog. The answer names the
+ * paths as the database has them.
  *
  * Two writes rather than one multi-path update, because the catalog stores
  * them as siblings of unrelated trees and a PUT to the root would replace far
@@ -502,7 +514,10 @@ export async function publishCharacter(
     // Whatever happened, the cache no longer matches the database.
     invalidateAtlas(result.name);
   }
-  return [`atlases/${result.name}`, `characters/${result.name}`];
+  return [
+    dbPath(`atlases/${result.name}`),
+    dbPath(`characters/${result.name}`),
+  ];
 }
 
 /** Publish only a character's record, leaving whatever atlas it names alone. */
@@ -512,5 +527,5 @@ export async function publishRecord(
 ): Promise<string[]> {
   assertSafeKey("Character name", name);
   await put(`characters/${name}`, record);
-  return [`characters/${name}`];
+  return [dbPath(`characters/${name}`)];
 }

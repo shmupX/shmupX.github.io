@@ -100,8 +100,10 @@ app.use((ctx) => {
 // the game with that level, or — when no level has the name — to the
 // editor's NEW GAME with the name filled in. Only the root; every other path
 // on a subdomain serves as the apex does. lib/level-subdomain.ts has the
-// matching rules, the cached level listing and the alias index it reads
-// (2019.codemonkey.games is 2019-PS2 by alias). Ahead of
+// matching rules, the cached level listing and the alias index it reads —
+// both from shmupX's own subtree (shmupX/levels, shmupX/levelAliases), never
+// the root copies cmg keeps — (2019.codemonkey.games is 2019-PS2 by alias).
+// Ahead of
 // staticFiles() and the dashboard route, GET and HEAD only.
 app.use(async (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return ctx.next();

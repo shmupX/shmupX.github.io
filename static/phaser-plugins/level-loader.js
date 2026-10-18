@@ -50,9 +50,15 @@
 export const DEFAULTS = {
   defaultLevel: "foo",
   baseRecipeKey: "recipe",
-  levelsPath: "levels",
+  // shmupX's own games: the shmupX/ subtree of the database it shares with
+  // cmg (lib/rtdb-root.ts), whose root-level levels/ and levelAliases/ are
+  // cmg's catalog. Spelled into the ref() paths, not the config's
+  // databaseURL: the Firebase SDK refuses a databaseURL with a path in it.
+  // The level editor reads these too (LEVEL_LOADER_DEFAULTS), so where it
+  // saves a game is where the game loads it from.
+  levelsPath: "shmupX/levels",
   // A level's other names: alias -> key (lib/level-subdomain.ts).
-  aliasesPath: "levelAliases",
+  aliasesPath: "shmupX/levelAliases",
   atlasKey: "game_asset",
   // The SP cut-in a custom game plays where it drew none: rando's, a
   // spritesheet of cutin0..cutin8 in order, loaded with the atlases
@@ -424,6 +430,48 @@ export function getFirebaseDatabase(firebase, config) {
     firebase.initializeApp(config);
   }
   return firebase.database();
+}
+
+// ---- Game identity ------------------------------------------------------------
+
+// Which game a level record is, for its leaderboard (and the netplay lobby):
+// the id the editor minted onto it the first time it was saved (`gameId`,
+// kept through every re-save), or, for a record that has none, a slug of its
+// name plus an FNV-1a digest of the exact name, so "Ramsie" and "ramsie"
+// stay two boards. The same derivation as 2019-es7's gameIdentity.js, which
+// the bundle carries beside its inlined copy of this module (so the bundle
+// has these three once, not twice), and as tools/build-level's
+// lib/game-id.js, which bakes an exported app's __GAME_ID__. All three must
+// agree or one level would score to two boards depending on where it was
+// played; tests/game_scores_test.ts runs them side by side.
+const ID_MAX = 48;
+
+// RTDB keys cannot contain . $ # [ ] / or control characters, and level names
+// are user-supplied, so everything outside a conservative set is collapsed.
+export function slugifyGameId(value) {
+  const slug = String(value == null ? "" : value).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, ID_MAX);
+  return slug;
+}
+
+export function nameDigest(name) {
+  let h = 2166136261;
+  const s = String(name == null ? "" : name);
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+export function gameIdForLevel(level) {
+  if (!level || typeof level !== "object") return null;
+  if (typeof level.gameId === "string" && level.gameId.trim()) {
+    return slugifyGameId(level.gameId) || null;
+  }
+  const name = typeof level.name === "string" ? level.name : "";
+  if (!name.trim()) return null;
+  const slug = slugifyGameId(name) || "level";
+  return slug + "-" + nameDigest(name);
 }
 
 export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
@@ -1274,8 +1322,13 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
     // Resolve, merge and apply a level, returning a description the caller uses
     // to drive scene flow:
     //   { recipe, stageId, hasCustomEnemies, showTitle, bossRush, source,
-    //     levelName, bgmSourceURLs }
+    //     levelName, gameId, bgmSourceURLs }
     // `source` is one of "editor" | "firebase" | "offline" | "fallback".
+    // `gameId` is which game the level is, for its leaderboard (gameIdForLevel),
+    // decided by what actually loaded: the record fetched (the aliased one for
+    // ?level=2019), the baked offline record, or the id the editor saved the
+    // game under, for its PLAY. Null when there is none: the fallback, and a
+    // PLAY of a game never saved.
     loadLevel(options) {
       // The stock cut-in's fingerprints, once rando's is painted over it.
       this._stockCutin = null;
@@ -1338,6 +1391,11 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
             bossRush,
             source: "editor",
             levelName: null,
+            // The PLAY recipe's own gameId, the one the editor saved the game
+            // under. Never the page's baked level's: a PLAY boots over 2028.Ai's
+            // foo.json, and scoring by that put every edited game on 2028.Ai's
+            // board.
+            gameId: gameIdForLevel({ gameId: recipe.gameId }),
             bgmSourceURLs: {},
           }));
         });
@@ -1400,6 +1458,9 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
             bossRush,
             source,
             levelName: levelKey,
+            // Off the record that loaded, never the name on the URL: an alias
+            // and the key it stands for are one game, on one board.
+            gameId: gameIdForLevel(data),
             bgmSourceURLs,
           }));
         });
@@ -1420,6 +1481,9 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           bossRush,
           source: "fallback",
           levelName,
+          // The base recipe stands in for a level that did not load. It is
+          // no game's, so it scores to no board.
+          gameId: null,
           bgmSourceURLs: {},
         };
       });

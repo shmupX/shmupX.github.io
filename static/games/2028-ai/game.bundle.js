@@ -3,9 +3,15 @@
   var DEFAULTS = {
     defaultLevel: "foo",
     baseRecipeKey: "recipe",
-    levelsPath: "levels",
+    // shmupX's own games: the shmupX/ subtree of the database it shares with
+    // cmg (lib/rtdb-root.ts), whose root-level levels/ and levelAliases/ are
+    // cmg's catalog. Spelled into the ref() paths, not the config's
+    // databaseURL: the Firebase SDK refuses a databaseURL with a path in it.
+    // The level editor reads these too (LEVEL_LOADER_DEFAULTS), so where it
+    // saves a game is where the game loads it from.
+    levelsPath: "shmupX/levels",
     // A level's other names: alias -> key (lib/level-subdomain.ts).
-    aliasesPath: "levelAliases",
+    aliasesPath: "shmupX/levelAliases",
     atlasKey: "game_asset",
     // The SP cut-in a custom game plays where it drew none: rando's, a
     // spritesheet of cutin0..cutin8 in order, loaded with the atlases
@@ -1085,8 +1091,13 @@
       // Resolve, merge and apply a level, returning a description the caller uses
       // to drive scene flow:
       //   { recipe, stageId, hasCustomEnemies, showTitle, bossRush, source,
-      //     levelName, bgmSourceURLs }
+      //     levelName, gameId, bgmSourceURLs }
       // `source` is one of "editor" | "firebase" | "offline" | "fallback".
+      // `gameId` is which game the level is, for its leaderboard (gameIdForLevel),
+      // decided by what actually loaded: the record fetched (the aliased one for
+      // ?level=2019), the baked offline record, or the id the editor saved the
+      // game under, for its PLAY. Null when there is none: the fallback, and a
+      // PLAY of a game never saved.
       loadLevel(options) {
         // The stock cut-in's fingerprints, once rando's is painted over it.
         this._stockCutin = null;
@@ -1142,6 +1153,11 @@
               bossRush,
               source: "editor",
               levelName: null,
+              // The PLAY recipe's own gameId, the one the editor saved the game
+              // under. Never the page's baked level's: a PLAY boots over 2028.Ai's
+              // foo.json, and scoring by that put every edited game on 2028.Ai's
+              // board.
+              gameId: gameIdForLevel({ gameId: recipe.gameId }),
               bgmSourceURLs: {}
             }));
           });
@@ -1192,6 +1208,9 @@
               bossRush,
               source,
               levelName: levelKey,
+              // Off the record that loaded, never the name on the URL: an alias
+              // and the key it stands for are one game, on one board.
+              gameId: gameIdForLevel(data),
               bgmSourceURLs
             }));
           });
@@ -1211,6 +1230,9 @@
             bossRush,
             source: "fallback",
             levelName,
+            // The base recipe stands in for a level that did not load. It is
+            // no game's, so it scores to no board.
+            gameId: null,
             bgmSourceURLs: {}
           };
         });
@@ -1973,11 +1995,13 @@
     // with its story, its CONTINUE? prompt and the editor's title — not a
     // cart that happens to carry a cutscene.
     // The editor's PLAY stamps editorReturn/editorLevelName onto meta so the
-    // OSD can hand the level back; that is not provenance, so a pre-stamp
-    // record carrying only those keys still reaches the per-enemy check.
+    // OSD can hand the level back, and editorGameKey to name the board its
+    // gameId scores on (gameForLevelResult); that is not provenance, so a
+    // pre-stamp record carrying only those keys still reaches the per-enemy
+    // check.
     if (r.meta && typeof r.meta === "object") {
       for (var mk in r.meta) {
-        if (mk !== "editorReturn" && mk !== "editorLevelName") return false;
+        if (mk !== "editorReturn" && mk !== "editorLevelName" && mk !== "editorGameKey") return false;
       }
     }
     var ed = r.enemyData;
@@ -2079,18 +2103,21 @@
   function scoreCountsAsRecord(state = gameState) {
     return !state.godFlg || isExportedLevelApp();
   }
-  function setHighScore(value, source = "merged") {
+  // The best the page shows as WORLD BEST (gameState.highScore) is the higher
+  // of two that stay apart: localHighScore, the best run played on this
+  // device (its cookie, saveHighScore), and remoteHighScore, the game's
+  // board. Neither is folded into the other. A cookie that took the board's
+  // number handed it back on the next visit (readRemoteHighScore's push-up),
+  // so a board cleaned of a bogus WORLD BEST was raised again by every
+  // browser that had only ever seen it.
+  function setHighScore(value, source) {
     const normalized = normalizeScore(value);
     if (source === "local") {
       gameState.localHighScore = normalized;
     } else if (source === "remote") {
       gameState.remoteHighScore = normalized;
-    } else {
-      gameState.localHighScore = Math.max(normalizeScore(gameState.localHighScore), normalized);
-      gameState.remoteHighScore = Math.max(normalizeScore(gameState.remoteHighScore), normalized);
     }
     gameState.highScore = Math.max(
-      normalized,
       normalizeScore(gameState.localHighScore),
       normalizeScore(gameState.remoteHighScore)
     );
@@ -2104,8 +2131,10 @@
     gameState.scoreSyncStatus = typeof status === "string" && status ? status : "idle";
     gameState.scoreSyncMessage = typeof message === "string" ? message : "";
   }
-  function loadHighScore(cookieKey = "afc2019_highScore") {
-    const value = readCookie(cookieKey);
+  // The local best is this game's own cookie (highScoreCookieKey). With no
+  // game id there is none: nothing to file the score under.
+  function loadHighScore(cookieKey = highScoreCookieKey()) {
+    const value = cookieKey ? readCookie(cookieKey) : null;
     if (value === null) {
       setHighScore(0, "local");
       return 0;
@@ -2114,21 +2143,25 @@
     setHighScore(highScore, "local");
     return highScore;
   }
-  function saveHighScore(cookieKey = "afc2019_highScore") {
-    if (typeof document === "undefined") {
-      return normalizeScore(gameState.highScore);
+  // The cookie keeps the local best and nothing else: never the board's
+  // WORLD BEST, nor whatever gameState.highScore shows (setHighScore says
+  // why). A new best goes in through keepLocalBest.
+  function saveHighScore(cookieKey = highScoreCookieKey()) {
+    const localBest = normalizeScore(gameState.localHighScore);
+    // A game with no id keeps its best for this page only.
+    if (typeof document === "undefined" || !cookieKey) {
+      return localBest;
     }
-    const highScore = setHighScore(
-      Math.max(
-        normalizeScore(gameState.highScore),
-        normalizeScore(gameState.localHighScore),
-        normalizeScore(gameState.remoteHighScore)
-      ),
-      "local"
-    );
     const oneYearSeconds = 60 * 60 * 24 * 365;
-    document.cookie = encodeURIComponent(cookieKey) + "=" + encodeURIComponent(String(highScore)) + ";path=/;max-age=" + String(oneYearSeconds);
-    return highScore;
+    document.cookie = encodeURIComponent(cookieKey) + "=" + encodeURIComponent(String(localBest)) + ";path=/;max-age=" + String(oneYearSeconds);
+    return localBest;
+  }
+  // A run played on this device, kept as its local best when it is one.
+  // Never lowered: a run submitted for today's board can sit below this
+  // game's all-time best.
+  function keepLocalBest(score) {
+    setHighScore(Math.max(normalizeScore(score), normalizeScore(gameState.localHighScore)), "local");
+    return saveHighScore();
   }
 
   // ../2019-es7/src/gameIdentity.js
@@ -2156,21 +2189,61 @@
     const slug = slugifyGameId(name) || "level";
     return slug + "-" + nameDigest(name);
   }
+  // The game this page is playing, as the boot named it once the level
+  // resolved (setActiveGame, from PluginBootScene): { gameId, name }, or null
+  // until then. The id is the level loader's (loadLevel's `gameId`), derived
+  // from the record that actually loaded, because nothing else knows it: a
+  // ?level=, an alias or a <name>.<host> visit bakes no record, and the
+  // editor's PLAY boots over 2028.Ai's own foo.json. Read off
+  // __OFFLINE_LEVEL__ alone, every cloud game was "no game" (one shared
+  // legacy board) and every edited one was 2028.Ai.
+  var activeGame = null;
+  // An exported app's baked __GAME_ID__ outranks everything: it is the board
+  // the app was built for. Otherwise the resolved level's, and null (no board
+  // at all) until the level has resolved.
   function resolveGameId() {
     if (typeof globalThis === "undefined") return null;
     const baked = globalThis.__GAME_ID__;
     if (typeof baked === "string" && baked.trim()) {
       return slugifyGameId(baked) || null;
     }
-    return gameIdForLevel(globalThis.__OFFLINE_LEVEL__);
+    return activeGame ? activeGame.gameId : null;
+  }
+  // Whether it is settled which game this is, even when the answer is none.
+  function gameIdKnown() {
+    return !!resolveGameId() || !!activeGame;
   }
 
   // ../2019-es7/src/firebaseScores.js
-  var LEGACY_DATABASE_PATH = "leaderboards/globalHighScore";
   var LEADERBOARD_ROOT = "leaderboards";
   var SDK_WAIT_MS = 8e3;
+  // The local best, one cookie per game: afc2019_highScore_<gameId> (a game
+  // id is a slug, [a-z0-9-], so it is a legal cookie name as it stands). It
+  // used to be one afc2019_highScore for the whole origin (the hosted
+  // player, every ?level= game, the editor's PLAY, the eShop archive), so
+  // each game showed whatever had been played last as its WORLD BEST, and
+  // readRemoteHighScore pushed that up into its board: the same 68102600
+  // sits on foo, 2019-PS2, rando and Ultra Bird. That cookie is never read
+  // again, and the boot expires it (expireLegacyHighScore), so a stale copy
+  // of this bundle on the origin has nothing left to push. The per-game
+  // cookie keeps only runs played on this device (saveHighScore), never a
+  // board's number, so it has none of the board's to push back either.
+  var HIGH_SCORE_COOKIE = "afc2019_highScore";
   var initializePromise = null;
+  // The game initializePromise loaded the scores of (undefined: none yet).
+  var initializedGameId = void 0;
+  // The all-time board's ref, and the path it was made for: it is reused for
+  // that board only.
   var databaseRef = null;
+  var databaseRefPath = null;
+  // Bumped whenever the page changes games (resetFirebaseScores). A read or
+  // a write that went out for the old game checks it when it lands and drops
+  // its answer, rather than put one game's numbers on another.
+  var scoreEpoch = 0;
+  // The UTC day (dailyBoardKey) of the board gameState.dailyHighScore came
+  // off, or null when none has been read or raised for this game yet
+  // (currentDailyHighScore).
+  var dailyScoreDay = null;
   function getFirebaseConfig() {
     const config = globalThis.__FIREBASE_CONFIG__;
     if (!config || typeof config !== "object") {
@@ -2188,14 +2261,29 @@
     const date = now instanceof Date ? now : /* @__PURE__ */ new Date();
     return date.toISOString().slice(0, 10);
   }
-  function getBoardPaths() {
+  function highScoreCookieKey(gameId = resolveGameId()) {
+    return gameId ? HIGH_SCORE_COOKIE + "_" + gameId : null;
+  }
+  function expireLegacyHighScore() {
+    if (typeof document === "undefined") {
+      return;
+    }
+    try {
+      document.cookie = encodeURIComponent(HIGH_SCORE_COOKIE) + "=;path=/;max-age=0";
+    } catch (_e) {
+    }
+  }
+  function getBoardPaths(gameId = resolveGameId()) {
     const override = typeof globalThis.__FIREBASE_DATABASE_PATH__ === "string" ? trimPath(globalThis.__FIREBASE_DATABASE_PATH__) : "";
     if (override) {
       return { allTime: override, daily: null, meta: null };
     }
-    const gameId = resolveGameId();
+    // No game id (the level has not resolved yet, did not load, or is an
+    // editor PLAY of a game never saved) is no board at all. Every such page
+    // used to share leaderboards/globalHighScore, so one game's best was
+    // every unnamed game's WORLD BEST; nothing reads or writes it now.
     if (!gameId) {
-      return { allTime: LEGACY_DATABASE_PATH, daily: null, meta: null };
+      return { allTime: null, daily: null, meta: null };
     }
     const root = LEADERBOARD_ROOT + "/" + gameId;
     return {
@@ -2250,15 +2338,19 @@
     }
     return firebaseNamespace.database();
   }
-  function ensureDatabaseRef() {
-    if (databaseRef) {
+  function ensureDatabaseRef(path = getBoardPaths().allTime) {
+    if (!path) {
+      return null;
+    }
+    if (databaseRef && databaseRefPath === path) {
       return databaseRef;
     }
     const db = ensureDatabase();
     if (!db) {
       return null;
     }
-    databaseRef = db.ref(getBoardPaths().allTime);
+    databaseRef = db.ref(path);
+    databaseRefPath = path;
     return databaseRef;
   }
   function refFor(path) {
@@ -2268,35 +2360,66 @@
     const db = ensureDatabase();
     return db ? db.ref(path) : null;
   }
+  // The board's number, as the board's: it can raise what the page shows,
+  // never the local best or its cookie (setHighScore).
   function syncRemoteScoreToState(remoteScore) {
-    const mergedHighScore = Math.max(
-      normalizeScore(gameState.localHighScore),
-      normalizeScore(gameState.highScore),
-      normalizeScore(remoteScore)
-    );
-    setHighScore(remoteScore, "remote");
-    setHighScore(mergedHighScore, "merged");
-    saveHighScore();
+    const shown = setHighScore(remoteScore, "remote");
     setScoreSyncStatus("ready");
-    return mergedHighScore;
+    return shown;
   }
   function syncFallbackState(status, message = "") {
     loadHighScore();
     setScoreSyncStatus(status, message);
     return normalizeScore(gameState.highScore);
   }
-  function readDailyHighScore() {
-    const ref = refFor(getBoardPaths().daily);
+  function readDailyHighScore(path = getBoardPaths().daily, epoch = scoreEpoch) {
+    const ref = refFor(path);
     if (!ref) {
       return Promise.resolve(normalizeScore(gameState.dailyHighScore));
     }
     return ref.once("value").then((snapshot) => {
+      if (epoch !== scoreEpoch) {
+        return normalizeScore(gameState.dailyHighScore);
+      }
       const daily = extractScore(snapshot && typeof snapshot.val === "function" ? snapshot.val() : 0);
-      return setDailyHighScore(daily);
+      // A day's board only goes up, so a read that lands after this page
+      // raised that same board (a run submitted just past midnight, while
+      // the new day's read was still out) does not take it back down.
+      const held = dailyScoreDay === boardDay(path) ? normalizeScore(gameState.dailyHighScore) : 0;
+      return keepDailyHighScore(Math.max(daily, held), path);
     }).catch(() => normalizeScore(gameState.dailyHighScore));
   }
+  // The UTC day of a daily board's path, which getBoardPaths ends with
+  // dailyBoardKey().
+  function boardDay(path) {
+    return typeof path === "string" && path ? path.slice(path.lastIndexOf("/") + 1) : null;
+  }
+  // TODAY'S BEST, and which day's board it came off (dailyScoreDay).
+  function keepDailyHighScore(value, path) {
+    dailyScoreDay = boardDay(path);
+    return setDailyHighScore(value);
+  }
+  // TODAY'S BEST as of now. Today's board is read once per game, and a page
+  // left open (the title, the desktop app, an export) outlives the UTC day:
+  // past midnight the number held is yesterday's, so it counts for nothing
+  // and the new day's board is read in its place, once. The title asks every
+  // frame and the end of a run asks before it submits (runWantsSubmit), so
+  // neither shows nor measures a run against yesterday's board.
+  function currentDailyHighScore() {
+    if (dailyScoreDay !== null && dailyScoreDay !== dailyBoardKey()) {
+      dailyScoreDay = null;
+      setDailyHighScore(0);
+      readDailyHighScore(getBoardPaths().daily, scoreEpoch);
+    }
+    return normalizeScore(gameState.dailyHighScore);
+  }
   function readRemoteHighScore() {
-    const ref = ensureDatabaseRef();
+    const epoch = scoreEpoch;
+    const paths = getBoardPaths();
+    if (!paths.allTime) {
+      return Promise.resolve(syncFallbackState("disabled", "No game id: local scores only."));
+    }
+    const ref = ensureDatabaseRef(paths.allTime);
     if (!ref) {
       if (getFirebaseConfig()) {
         return Promise.resolve(syncFallbackState("error", "Firebase SDK unavailable."));
@@ -2305,27 +2428,112 @@
     }
     setScoreSyncStatus("loading");
     return ref.once("value").then((snapshot) => {
+      if (epoch !== scoreEpoch) {
+        return normalizeScore(gameState.highScore);
+      }
       const remoteScore = extractScore(snapshot && typeof snapshot.val === "function" ? snapshot.val() : 0);
-      const mergedHighScore = syncRemoteScoreToState(remoteScore);
-      return readDailyHighScore().then(() => {
-        if (mergedHighScore > remoteScore) {
-          return submitHighScore(mergedHighScore).then(() => mergedHighScore);
+      syncRemoteScoreToState(remoteScore);
+      return readDailyHighScore(paths.daily, epoch).then(() => {
+        if (epoch !== scoreEpoch) {
+          return normalizeScore(gameState.highScore);
         }
-        return mergedHighScore;
+        // A best played on this device that its board does not hold (a run
+        // played offline, or while the board was out of reach) goes up, and
+        // only that: the cookie never takes the board's number, so a board
+        // cleaned since is not raised back by a device that only saw it. Up
+        // to the all-time board alone: the cookie keeps no date, and today's
+        // board is for runs played today.
+        const localBest = normalizeScore(gameState.localHighScore);
+        if (localBest > remoteScore) {
+          return submitHighScore(localBest, { daily: false }).then(() => normalizeScore(gameState.highScore));
+        }
+        return normalizeScore(gameState.highScore);
       });
     }).catch((error) => {
+      if (epoch !== scoreEpoch) {
+        return normalizeScore(gameState.highScore);
+      }
       return syncFallbackState("error", error && error.message ? error.message : "Firebase read failed.");
     });
   }
   function initializeFirebaseScores() {
-    if (!initializePromise) {
+    // Not before the level has said which game this is (setActiveGame): the
+    // cookie, the board and today's board are all that game's, and a read
+    // made sooner would be for no game, or for the wrong one.
+    if (!gameIdKnown()) {
+      return Promise.resolve(normalizeScore(gameState.highScore));
+    }
+    const gameId = resolveGameId();
+    if (!initializePromise || initializedGameId !== gameId) {
+      initializedGameId = gameId;
+      const epoch = scoreEpoch;
+      const hasBoard = !!getBoardPaths(gameId).allTime;
       loadHighScore();
-      if (getFirebaseConfig() && !getFirebaseNamespace()) {
+      if (hasBoard && getFirebaseConfig() && !getFirebaseNamespace()) {
         setScoreSyncStatus("loading");
       }
-      initializePromise = whenFirebaseNamespace().then(() => readRemoteHighScore());
+      // A game with no board has no SDK to wait for.
+      initializePromise = (hasBoard ? whenFirebaseNamespace() : Promise.resolve()).then(() => {
+        return epoch === scoreEpoch ? readRemoteHighScore() : normalizeScore(gameState.highScore);
+      });
     }
     return initializePromise;
+  }
+  // Start over for another game: its own board, today's board and cookie,
+  // from zero, and whatever is still in flight for the last one lands
+  // nowhere (scoreEpoch).
+  function resetFirebaseScores() {
+    scoreEpoch += 1;
+    initializePromise = null;
+    initializedGameId = void 0;
+    databaseRef = null;
+    databaseRefPath = null;
+    gameState.highScore = 0;
+    gameState.localHighScore = 0;
+    gameState.remoteHighScore = 0;
+    gameState.dailyHighScore = 0;
+    dailyScoreDay = null;
+    setScoreSyncStatus("idle");
+  }
+  // The boot names the game once its level resolves (PluginBootScene, with
+  // loadLevel's gameId and a name for its board). gameState.gameId carries
+  // the id for the rest of the page; the netplay lobby
+  // (static/phaser-plugins/netplay-lobby.js) lists that game's runs, and
+  // waits for "shmupx:game-id" to know the id is settled.
+  function setActiveGame(game) {
+    const g = game && typeof game === "object" ? game : {};
+    const id = typeof g.gameId === "string" && g.gameId.trim() ? slugifyGameId(g.gameId) || null : null;
+    const name = typeof g.name === "string" && g.name.trim() ? g.name : null;
+    activeGame = { gameId: id, name };
+    const gameId = resolveGameId();
+    if (initializedGameId !== gameId) {
+      resetFirebaseScores();
+    }
+    gameState.gameId = gameId;
+    gameState.gameIdResolved = true;
+    if (typeof window !== "undefined" && typeof window.dispatchEvent === "function" && typeof CustomEvent === "function") {
+      try {
+        window.dispatchEvent(new CustomEvent("shmupx:game-id", { detail: { gameId } }));
+      } catch (_e) {
+      }
+    }
+    return gameId;
+  }
+  // Name the game and load its scores. Scenes read gameState every frame, so
+  // nothing waits on the SDK for this.
+  function startGameScores(game) {
+    setActiveGame(game);
+    return initializeFirebaseScores().catch(() => normalizeScore(gameState.highScore));
+  }
+  // Whether a finished run goes to the boards: a new all-time best, one that
+  // beats today's board (TODAY'S BEST used to move only on a new all-time
+  // record), or any run while the board is still loading or out of reach.
+  // raiseBoard keeps the higher of the two either way. Today's board is the
+  // one of the day the run ends on (currentDailyHighScore), not the day the
+  // page was opened.
+  function runWantsSubmit(score) {
+    const value = normalizeScore(score);
+    return value >= normalizeScore(gameState.highScore) || value > currentDailyHighScore() || gameState.scoreSyncStatus === "loading" || gameState.scoreSyncStatus === "error";
   }
   function raiseBoard(path, candidate, firebaseNamespace) {
     const ref = refFor(path);
@@ -2342,10 +2550,19 @@
       return extractScore(result && result.snapshot ? result.snapshot.val() : candidate);
     });
   }
+  // What a board's meta calls its game: the resolved game's name. Before the
+  // boot names one (only an exported app, whose baked id is known from the
+  // start, gets here that early), the record it baked.
+  function boardName() {
+    if (activeGame) {
+      return activeGame.name;
+    }
+    const level = globalThis.__OFFLINE_LEVEL__;
+    return level && typeof level.name === "string" ? level.name : null;
+  }
   function stampBoardMeta(path, firebaseNamespace) {
     const ref = refFor(path);
-    const level = globalThis.__OFFLINE_LEVEL__;
-    const name = level && typeof level.name === "string" ? level.name : null;
+    const name = boardName();
     if (!ref || !name) {
       return Promise.resolve();
     }
@@ -2355,25 +2572,40 @@
     }).catch(() => {
     });
   }
-  function submitHighScore(score) {
+  // A run's score, to this game's boards: all-time, today's and the meta.
+  // `{ daily: false }` leaves today's board alone, for the boot's push-up of
+  // a best this device kept (readRemoteHighScore), which is no run of
+  // today's.
+  function submitHighScore(score, options) {
+    const raiseDaily = !(options && options.daily === false);
     const godRun = !!gameState.godFlg;
     if (godRun && !isExportedLevelApp()) {
       return Promise.resolve(normalizeScore(gameState.highScore));
     }
     const candidate = normalizeScore(score);
     if (candidate > 0) {
-      setHighScore(candidate, "local");
-      saveHighScore();
+      keepLocalBest(candidate);
     }
     if (godRun) {
       setScoreSyncStatus("disabled", "God mode run — not submitted.");
+      return Promise.resolve(normalizeScore(gameState.highScore));
+    }
+    // The boards of the game this run was played in, fixed now. No game id,
+    // no board to raise.
+    const epoch = scoreEpoch;
+    const paths = getBoardPaths();
+    if (!paths.allTime) {
+      setScoreSyncStatus("disabled", "No game id: local scores only.");
       return Promise.resolve(normalizeScore(gameState.highScore));
     }
     if (getFirebaseConfig()) {
       setScoreSyncStatus("saving");
     }
     return whenFirebaseNamespace().then((firebaseNamespace) => {
-      const ref = ensureDatabaseRef();
+      if (epoch !== scoreEpoch) {
+        return normalizeScore(gameState.highScore);
+      }
+      const ref = ensureDatabaseRef(paths.allTime);
       if (!ref || !firebaseNamespace) {
         if (!getFirebaseConfig()) {
           setScoreSyncStatus("disabled", "Firebase config missing.");
@@ -2382,15 +2614,20 @@
         }
         return normalizeScore(gameState.highScore);
       }
-      const paths = getBoardPaths();
       return Promise.allSettled([
         raiseBoard(paths.allTime, candidate, firebaseNamespace),
-        raiseBoard(paths.daily, candidate, firebaseNamespace),
+        raiseDaily ? raiseBoard(paths.daily, candidate, firebaseNamespace) : Promise.resolve(null),
         stampBoardMeta(paths.meta, firebaseNamespace)
       ]).then((results) => {
+        if (epoch !== scoreEpoch) {
+          return normalizeScore(gameState.highScore);
+        }
         const [allTime, daily] = results;
-        if (daily.status === "fulfilled") {
-          setDailyHighScore(Math.max(candidate, normalizeScore(daily.value)));
+        // Filed under the day the board was raised for (paths.daily, fixed
+        // when the run was submitted), so a submit that lands past midnight
+        // reads as yesterday's.
+        if (raiseDaily && paths.daily && daily.status === "fulfilled") {
+          keepDailyHighScore(Math.max(candidate, normalizeScore(daily.value)), paths.daily);
         }
         if (allTime.status !== "fulfilled") {
           const error = allTime.reason;
@@ -2489,7 +2726,10 @@
   // ../2019-es7/src/phaser/BootScene.js
   var EDITOR_PLAY_RECIPE_KEY = "__editorPhaserRecipe__";
   var EDITOR_PLAY_STAGE_KEY = "__editorPhaserStageId__";
-  var FIREBASE_LEVELS_PATH = "levels";
+  // Dead under PluginBootScene, whose create() is the one that runs, but on
+  // the loader's subtree all the same, so nothing in this bundle still names
+  // cmg's root-level levels/.
+  var FIREBASE_LEVELS_PATH = "shmupX/levels";
   function readLevelParam() {
     if (typeof window === "undefined") {
       return null;
@@ -3373,8 +3613,10 @@
   function getWorldBestLabel() {
     return "WORLD BEST";
   }
+  // Today's, as of the frame asking: never the board of a day the page has
+  // since left behind (currentDailyHighScore).
   function getDailyHighScore() {
-    return normalizeScore(gameState.dailyHighScore);
+    return currentDailyHighScore();
   }
   function getDailyBestLabel() {
     return "TODAY'S BEST";
@@ -17308,15 +17550,16 @@
           self.showGameOverPanel();
         }
       });
-      if (Number(gameState.score || 0) >= Number(gameState.highScore || 0) || gameState.scoreSyncStatus === "loading" || gameState.scoreSyncStatus === "error") {
+      if (runWantsSubmit(gameState.score)) {
         submitHighScore(Number(gameState.score || 0)).catch(function() {
         });
       }
     }
     showGameOverPanel() {
       if (scoreCountsAsRecord() && Number(gameState.score || 0) > Number(gameState.highScore || 0)) {
-        gameState.highScore = Number(gameState.score || 0);
-        saveHighScore();
+        // A run played here, so it is this device's best as well, and the
+        // cookie keeps it (saveHighScore stores the local best alone).
+        keepLocalBest(Number(gameState.score || 0));
         this.add.sprite(
           0,
           this.loseFace.y + this.loseFace.height + 10,
@@ -17606,11 +17849,11 @@
       this.add.rectangle(GCX8, GCY5, GW15, GH13, 0);
       this.continueFlg = false;
       if (scoreCountsAsRecord() && Number(gameState.score || 0) > Number(gameState.highScore || 0)) {
-        gameState.highScore = Number(gameState.score || 0);
-        saveHighScore();
+        // As the continue scene's game-over panel does: this device's best.
+        keepLocalBest(Number(gameState.score || 0));
         this.continueFlg = true;
       }
-      if (Number(gameState.score || 0) >= Number(gameState.highScore || 0) || gameState.scoreSyncStatus === "loading" || gameState.scoreSyncStatus === "error") {
+      if (runWantsSubmit(gameState.score)) {
         submitHighScore(Number(gameState.score || 0)).catch(function() {
         });
       }
@@ -18248,16 +18491,37 @@
 
   // ../2019-es7/src/forge/fetch-level.js
   var FIREBASE_DB_URL = "https://evil-invaders-default-rtdb.firebaseio.com";
-  var LEVELS_PATH = "levels";
-  async function fetchLevel(levelName) {
-    const url = FIREBASE_DB_URL + "/" + LEVELS_PATH + "/" + encodeURIComponent(levelName) + ".json";
+  // shmupX's own games, where the level loader reads them (DEFAULTS.levelsPath
+  // and aliasesPath). Only these two nodes live under shmupX/, so the root
+  // goes on the path rather than on FIREBASE_DB_URL.
+  var LEVELS_PATH = "shmupX/levels";
+  var ALIASES_PATH = "shmupX/levelAliases";
+  async function readLevelJson(path, key) {
+    const url = FIREBASE_DB_URL + "/" + path + "/" + encodeURIComponent(key) + ".json";
     const res = await fetch(url);
     if (!res.ok) {
       const err = new Error("HTTP " + res.status + " for " + url);
       err.code = "HTTP_ERROR";
       throw err;
     }
-    const data = await res.json();
+    return res.json();
+  }
+  async function fetchLevel(levelName) {
+    let data = await readLevelJson(LEVELS_PATH, levelName);
+    if (!data || !data.enemylist) {
+      // Not a level's key: perhaps one of a level's alias names, looked up
+      // the way the loader does (lowercase), so a typed "2019" builds
+      // 2019-PS2. A missing alias is just "not found" below.
+      let key = null;
+      try {
+        key = await readLevelJson(ALIASES_PATH, String(levelName).toLowerCase());
+      } catch (_e) {
+        key = null;
+      }
+      if (typeof key === "string" && key && key !== levelName) {
+        data = await readLevelJson(LEVELS_PATH, key);
+      }
+    }
     if (!data || !data.enemylist) {
       const err = new Error('Level "' + levelName + '" not found');
       err.code = "LEVEL_NOT_FOUND";
@@ -18939,6 +19203,31 @@
     if (cheat.forceBoss) gameState.forceBossName = cheat.forceBoss;
     return true;
   }
+  // The game a resolved level is, for setActiveGame: loadLevel's gameId (off
+  // the record that loaded, or the editor's PLAY recipe), and a name for its
+  // board: the level's key for a cloud level (2019-PS2 for ?level=2019, as an
+  // alias's key names the game), the baked record's name offline, and for a
+  // PLAY the cloud key its gameId belongs to (meta.editorGameKey).
+  function gameForLevelResult(result) {
+    var r = result || {};
+    var name = null;
+    if (r.source === "firebase") {
+      name = r.levelName;
+    } else if (r.source === "offline") {
+      var level = globalThis.__OFFLINE_LEVEL__;
+      name = level && level.name;
+    } else if (r.source === "editor") {
+      // A PLAY that carries a gameId scores on that game's board, so the
+      // board goes by that game's key, not by the name box: that is free
+      // text, and a copy being typed in as "gs-hard" (or any other game's
+      // name) would rename gs's board. A recipe with an id but no key
+      // leaves the meta's name alone. Only a PLAY with no id, which has no
+      // board, goes by the name box.
+      var meta = r.recipe && r.recipe.meta;
+      name = meta && (r.gameId ? meta.editorGameKey : meta.editorLevelName);
+    }
+    return { gameId: r.gameId || null, name: typeof name === "string" ? name : null };
+  }
   var PluginBootScene = class extends BootScene {
     preload() {
       this.load.setBaseURL(ASSET_BASE);
@@ -18961,6 +19250,11 @@
           cmgApplyCheatStart(recipe);
         }
       }).then((result) => {
+        // Which game this is, now that its level has resolved, and only now
+        // its WORLD BEST, TODAY'S BEST and local best: nothing reads or
+        // writes a board before this line. The title reads gameState every
+        // frame, so it need not wait for the SDK.
+        startGameScores(gameForLevelResult(result));
         if (result.bgmSourceURLs) {
           gameState.bgmSourceURLs = result.bgmSourceURLs;
         }
@@ -19057,8 +19351,18 @@
   };
   function create2028Game() {
     syncRuntimeFlagsFromLocation();
-    initializeFirebaseScores().catch(() => {
-    });
+    // The origin-wide high-score cookie every game used to share: expired,
+    // and never read again (HIGH_SCORE_COOKIE says why).
+    expireLegacyHighScore();
+    // Scores load once it is known which game this is. An exported app knows
+    // from the start (its baked __GAME_ID__), so it warms up here; every
+    // other page waits for its level to resolve (PluginBootScene's
+    // startGameScores), since a ?level=, an alias and the editor's PLAY are
+    // named only by the record they load.
+    if (resolveGameId()) {
+      initializeFirebaseScores().catch(() => {
+      });
+    }
     const phaserContainer = document.getElementById("phaser-canvas");
     if (phaserContainer) phaserContainer.style.display = "flex";
     const config = {
