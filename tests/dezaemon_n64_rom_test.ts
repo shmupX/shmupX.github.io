@@ -78,6 +78,24 @@ Deno.test("the three dump orders are told apart by their mark and put back into 
   assertEquals(n64ByteOrder(new Uint8Array(8)), null);
 });
 
+Deno.test("the 64DD IPL's own mark is an N64 image in every order", () => {
+  // A real IPL opens 0x80270740, not a cartridge's 0x80371240.
+  const z = image(0x40, "64DD IPL (JPN)", "    ");
+  z.set([0x80, 0x27, 0x07, 0x40], 0);
+  const orders = [
+    [z, "z64"],
+    [swap16(z), "v64"],
+    [swap32(z), "n64"],
+  ] as const;
+  for (const [bytes, order] of orders) {
+    const h = readN64Header(bytes);
+    assertEquals(h.order, order);
+    assertEquals(h.name, "64DD IPL (JPN)");
+    assert(looksLikeN64ddIpl(h, "64DD_IPL.bin"), `${order} is an IPL`);
+  }
+  assertEquals(toZ64(swap32(z)), z);
+});
+
 Deno.test("the header is read through any order, and names the game", () => {
   const z = image(0x40, "DEZAEMON3D");
   const h = readN64Header(swap16(z));

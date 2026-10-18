@@ -105,11 +105,20 @@ export interface DezaemonN64Set {
   ipl: N64ddIpl | null;
 }
 
-/** The byte-order mark of each N64 dump order. */
+/**
+ * The byte-order mark of each N64 dump order. The first word is the PI bus
+ * timing the boot code is read with, and it is not the same on every image:
+ * a cartridge's is 0x80371240, the 64DD IPL's 0x80270740 (the retail Japanese
+ * IPL, "64DD IPL (JPN)", dumped 2026-10-18). Both are listed in all three
+ * orders, or a real IPL reads as no N64 image at all and is never found.
+ */
 const MARKS: Record<string, N64ByteOrder> = {
   "80371240": "z64",
   "37804012": "v64",
   "40123780": "n64",
+  "80270740": "z64",
+  "27804007": "v64",
+  "40072780": "n64",
 };
 
 function hex4(bytes: Uint8Array): string {
