@@ -7549,6 +7549,153 @@
     src.stop(t + dur + 0.2);
   }
 
+  // Running at the display's own refresh rate (hand edit; README-Technical.md).
+  //
+  // The game and title scenes advance their logic in fixed 120 Hz steps (an
+  // 8.33 ms STEP, twice the Saturn's 60 fps) and Phaser draws once per display
+  // frame. On a 60 Hz display that is two steps a frame; on a 240 Hz display
+  // it is a step every other frame, so everything the steps move holds still
+  // for every second frame drawn, and motion reads as 120 Hz on a 240 Hz
+  // monitor (and judders at 144). Here each drawn frame shows the step-driven
+  // motion where it would be at that moment: between the state before the
+  // frame's last step and the state after it, by how far the clock has run
+  // into the next step. That is one step (8.3 ms) behind the logic, the usual
+  // price of interpolating rather than guessing ahead.
+  //
+  // Only what is drawn changes. Every logic position is put back on the
+  // scene's 'preupdate', before the scene clock's delayed calls and the
+  // tweens run on 'update' and before the fixed steps, so the game plays
+  // exactly as it does without this: same hits, same timings, same frames of
+  // the same steps. Motion is only blended where the step itself made it: an
+  // object a tween, a timer or a handler moved since the step is drawn where
+  // it stands, as is one that jumped further than a step's travel (a warp, a
+  // respawn) and one the step created.
+  //
+  // `?refresh=` picks it: `auto` (the default) blends once the display runs
+  // faster than the 120 Hz logic, `max` always blends, `stock` never does.
+  // scripts/refresh-compare.ts records the two side by side on an emulated
+  // 240 Hz display.
+  var REFRESH_TELEPORT_PX = 48;
+  var REFRESH_ON_BELOW = 0.92;
+  var REFRESH_OFF_ABOVE = 0.98;
+  function refreshModeFromLocation() {
+    var mode = null;
+    try {
+      mode = new URLSearchParams(window.location.search).get("refresh");
+    } catch (e) {
+    }
+    return mode === "max" || mode === "stock" ? mode : "auto";
+  }
+  function refreshInterpolator(scene, step) {
+    if (scene._refresh) return scene._refresh;
+    var ri = scene._refresh = {
+      mode: refreshModeFromLocation(),
+      step: step,
+      on: false,
+      avg: 0,
+      tick: 0,
+      // [object, isTile, logicA, logicB, drawnA, drawnB] per blended object
+      drawn: []
+    };
+    ri.on = ri.mode === "max";
+    scene.events.on("preupdate", function() {
+      refreshRestore(ri);
+    });
+    scene.events.on("shutdown", function() {
+      ri.drawn.length = 0;
+      ri.avg = 0;
+      ri.on = ri.mode === "max";
+    });
+    return ri;
+  }
+  // `auto` follows the display: a frame shorter than the step on average
+  // means steps land on only some frames, which is what blending is for.
+  function refreshFrame(ri, delta) {
+    if (ri.mode !== "auto") return;
+    ri.avg = ri.avg ? ri.avg * 0.9 + delta * 0.1 : delta;
+    if (!ri.on && ri.avg < ri.step * REFRESH_ON_BELOW) ri.on = true;
+    else if (ri.on && ri.avg > ri.step * REFRESH_OFF_ABOVE) ri.on = false;
+  }
+  // Put back every logic position this frame's draw moved, unless something
+  // has moved the object since (a pointer handler, say), whose word stands.
+  function refreshRestore(ri) {
+    var d = ri.drawn;
+    for (var i = 0; i < d.length; i += 6) {
+      var o = d[i];
+      if (d[i + 1]) {
+        if (o.tilePositionX === d[i + 4]) o.tilePositionX = d[i + 2];
+        if (o.tilePositionY === d[i + 5]) o.tilePositionY = d[i + 3];
+      } else {
+        if (o.x === d[i + 4]) o.x = d[i + 2];
+        if (o.y === d[i + 5]) o.y = d[i + 3];
+      }
+    }
+    d.length = 0;
+  }
+  // Before the frame's last step: where everything stands going into it.
+  function refreshCapture(ri, scene) {
+    if (!ri.on) return;
+    var tick = ++ri.tick;
+    var list = scene.children.list;
+    for (var i = 0; i < list.length; i++) {
+      var o = list[i];
+      o._rfTick = tick;
+      o._rfX = o.x;
+      o._rfY = o.y;
+      if (typeof o.tilePositionX === "number") {
+        o._rfTx = o.tilePositionX;
+        o._rfTy = o.tilePositionY;
+      }
+    }
+  }
+  // After it: where the step left them, so a later move can be told apart.
+  function refreshSettle(ri, scene) {
+    if (!ri.on) return;
+    var list = scene.children.list;
+    for (var i = 0; i < list.length; i++) {
+      var o = list[i];
+      if (o._rfTick !== ri.tick) continue;
+      o._rfCx = o.x;
+      o._rfCy = o.y;
+      if (typeof o.tilePositionX === "number") {
+        o._rfCtx = o.tilePositionX;
+        o._rfCty = o.tilePositionY;
+      }
+    }
+  }
+  function refreshBlend(ri, o, tile, px, py, cx, cy, lx, ly, a) {
+    if (lx !== cx || ly !== cy) return;
+    if (px === cx && py === cy) return;
+    if (!tile && (Math.abs(cx - px) > REFRESH_TELEPORT_PX || Math.abs(cy - py) > REFRESH_TELEPORT_PX)) return;
+    var dx = px + (cx - px) * a;
+    var dy = py + (cy - py) * a;
+    if (tile) {
+      o.tilePositionX = dx;
+      o.tilePositionY = dy;
+    } else {
+      o.x = dx;
+      o.y = dy;
+    }
+    ri.drawn.push(o, tile ? 1 : 0, lx, ly, dx, dy);
+  }
+  // Just before the draw: `acc` is how far the clock has run into the next
+  // step, so `a` is how far along the last step's travel to draw everything.
+  function refreshApply(ri, scene, acc) {
+    if (!ri.on) return;
+    var a = acc / ri.step;
+    if (!(a >= 0)) return;
+    if (a > 1) a = 1;
+    var list = scene.children.list;
+    for (var i = 0; i < list.length; i++) {
+      var o = list[i];
+      if (o._rfTick !== ri.tick || o._rfCx === void 0 || !o.visible) continue;
+      refreshBlend(ri, o, false, o._rfX, o._rfY, o._rfCx, o._rfCy, o.x, o.y, a);
+      if (o._rfCtx !== void 0) {
+        refreshBlend(ri, o, true, o._rfTx, o._rfTy, o._rfCtx, o._rfCty, o.tilePositionX, o.tilePositionY, a);
+      }
+    }
+  }
+
   // ../2019-es7/src/phaser/TitleScene.js
   var BOARD_CYCLE_MS = 3e3;
   var PhaserTitleScene = class extends Phaser.Scene {
@@ -8229,9 +8376,14 @@
     }
     update(time, delta) {
       var STEP = 8.333333;
+      var refresh = refreshInterpolator(this, STEP);
+      refreshFrame(refresh, delta);
       this._accumulator = (this._accumulator || 0) + Math.min(delta, 66.67);
+      var steps = 0;
       while (this._accumulator >= STEP) {
         this._accumulator -= STEP;
+        if (this._accumulator < STEP) refreshCapture(refresh, this);
+        steps++;
         if (this.bg) {
           this.bg.tilePositionX -= 0.5;
         }
@@ -8240,6 +8392,8 @@
         this._dezaHalf = !this._dezaHalf;
         if (this._dezaHalf && this.dezaTitle && this._dezaPhase && !(this.staffRollPanel && this.staffRollPanel.active)) this._stepDezaTitle();
       }
+      if (steps) refreshSettle(refresh, this);
+      refreshApply(refresh, this, this._accumulator);
       this._stepBoardCycle(delta);
       var daily = this._boardOnShow() === "daily";
       if (this.worldBestLabel) {
@@ -16121,11 +16275,19 @@
     // =================================================================
     update(time, delta) {
       var STEP = 8.333333;
+      var refresh = refreshInterpolator(this, STEP);
+      refreshFrame(refresh, delta);
       this._accumulator = (this._accumulator || 0) + Math.min(delta, 66.67);
+      var steps = 0;
       while (this._accumulator >= STEP) {
         this._accumulator -= STEP;
+        if (this._accumulator < STEP) refreshCapture(refresh, this);
+        steps++;
         this.fixedUpdate(time, STEP);
       }
+      if (steps) refreshSettle(refresh, this);
+      // Drawn where the display's own refresh puts it (refreshApply).
+      refreshApply(refresh, this, this._accumulator);
       // The SP button's X-ray lens, once per rendered frame, after every
       // fixed step has moved what it shows.
       if (this.spLens) updateSpLens(this, this.spLens, time);

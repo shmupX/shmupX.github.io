@@ -437,6 +437,14 @@ they are written out in full.
     other slot, and a `stage2` block like the record it is laid over.
     `tests/boss_danger_balloon_test.ts` pins it. Upstream home is
     `2019-es7/src/phaser/game-objects/Boss.js`.
+  - The game draws at the display's own refresh rate. The game and title scenes
+    step their logic at a fixed 120 Hz, so a 240 Hz monitor used to see every
+    step drawn twice; `refreshApply` and the helpers beside it (before
+    `TitleScene.js` in the bundle) draw step-driven motion where it would be at
+    each frame's moment, and put the logic back before anything reads it.
+    `?refresh=auto|max|stock` picks it. See **Drawing at the display's refresh
+    rate** below; `tests/refresh_interpolation_test.ts` pins it. Upstream home
+    is `2019-es7/src/phaser/GameScene.js` and `TitleScene.js`.
   - A cart's boss arms itself out of the cart. A cart has nowhere to keep a
     boss's own weapon records: the writer folds `bulletDataA/B/C` into the
     save-wide bullet bank and points the fire points at them, and the decoder
@@ -553,6 +561,7 @@ deno task bgm:tone        # transcribe an mp3 (path or URL) onto the Dezaemon 2 
 deno task extension:zip   # pack the Sprite Picker extension into static/extension/ for the download page (part of build)
 deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
 deno task level:alias     # other names a cloud game answers to (2019 -> 2019-PS2); dry run, --write sets
+deno task refresh:compare # the game on an emulated 240 Hz display, stock and max refresh side by side (mp4s + metrics; --check asserts)
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
@@ -1864,6 +1873,93 @@ Four of them, and each one reads as a bug in the game:
 `tests/game_debug_test.ts` pins the parts of all this that fail silently — the
 button and key tables, and the probe's own self-consistency including that `[R]`
 rule — without touching the network or starting a browser.
+
+## Drawing at the display's refresh rate
+
+The game and title scenes advance their logic in fixed 120 Hz steps (an 8.33 ms
+`STEP`, twice the Saturn's 60 fps), and Phaser draws once per display frame —
+the config's `fps: { target: 60 }` is not a cap, so on a 240 Hz monitor the game
+already draws 240 times a second. What it drew was the problem: a step lands on
+every second frame, so everything the steps move stood still on every other
+frame and motion read as 120 Hz on a 240 Hz monitor (and stalled one frame in
+six at 144).
+
+The runtime now draws each frame's step-driven motion where it would be at that
+frame's moment: between the state before the frame's last step and the state
+after it, by how far the clock has run into the next step
+(`accumulator / STEP`). That puts the picture one step (8.3 ms) behind the
+logic, the usual price of interpolating rather than guessing ahead. It is a hand
+edit to `game.bundle.js` (the `refresh*` helpers before `TitleScene.js`, called
+from both scenes' `update`), and it is built never to change the game:
+
+- Every logic position is put back on the scene's `preupdate` — before the
+  clock's delayed calls and the tweens run on `update`, and before the steps —
+  so hits, timers and patterns read exactly what they would have without it.
+- Only the step's own travel is blended. A body something else moved since (a
+  pointer drag between frames) keeps where it was put; one that jumped further
+  than a step's travel (48 px: a warp, a respawn) or that the step created is
+  drawn where it is; one that is not visible is left alone.
+- Top-level display objects and tile-sprite scroll (`tilePositionX/Y`) are
+  covered; things inside containers (the HUD) are not, and nothing there moves
+  per step. Tweens (which Phaser runs up to 240 times a second) and sprite
+  animations already follow the display, not the steps.
+
+`?refresh=` picks it. `auto`, the default, blends once the display runs faster
+than the logic: a smoothed frame time under 92% of a step turns it on, over 98%
+turns it off, so a 120 Hz display running a touch fast does not flicker it. At
+60 and 120 Hz it stays off and the game draws exactly as before. `max` always
+blends; `stock` never does.
+
+### Seeing it: `deno task refresh:compare`
+
+Records the shipped level on an emulated 240 Hz display (`--hz` for any other),
+the stock picture and the max-refresh picture side by side, and measures them.
+Output goes to `build/refresh-compare/` (`--out` moves it): `compare-240fps.mp4`
+in real time, one video frame per display frame, for a monitor that can show it,
+`compare-slowmo-4x.mp4` at 60 fps and four times slower (`--slowmo`) so the
+difference shows on any screen, and `metrics.json`. On the shipped level:
+
+| per moving object, 5 s of stage 1                      | stock         | max refresh    |
+| ------------------------------------------------------ | ------------- | -------------- |
+| frames its motion is drawn on                          | 55.5% (133/s) | 100.0% (240/s) |
+| evenness, frame to frame (1 = smooth, 0 = 0/2× judder) | 0.11          | 0.98           |
+
+and the stock re-run below matched the logic on all 1,200 frames. `--check`
+turns those into assertions and the exit code.
+
+How it gets numbers worth trusting:
+
+- **The monitor is emulated, exactly.** It drives the game through the debug
+  probe (see **Debugging the game, one frame at a time**), whose clock it sets
+  to advance 1000/hz ms a frame — rounded up to 2⁻¹⁰ ms, so every frame's delta
+  is the same bits on every run. With an arbitrary start the subtraction Phaser
+  takes its delta from rounds differently run to run, and a timer due exactly on
+  a frame boundary (the stage card's 2500 ms is frame 600 at 240 Hz) fired a
+  frame early on some runs.
+- **`Date.now()` follows that clock too.** Phaser 4 times tweens by
+  `Date.now()`, not by the frame's delta (`TweenManager.getDelta`, capped at 240
+  updates a second), so in a stepped page every tween otherwise runs at whatever
+  speed the page happens to be stepped at. `game:debug` does not pin it, so a
+  tween there moves with the wall clock between steps (a gap over 500 ms counts
+  as 33 ms).
+- **One game, drawn twice.** The left half is not a second game: after each
+  frame is drawn, the positions the blend moved are put back to the logic's, the
+  scene is drawn again — exactly what stock draws for that state — and the blend
+  is restored. Every difference between the halves is the refresh handling. The
+  extra draw runs on a random stream of its own, so camera shake cannot take
+  numbers from the game's.
+- **It plays the same.** The stage is entered from inside the page, START tapped
+  on the probe's pad, and `Math.random` is reseeded the moment the stage scene
+  starts (the hand-off runs on a real-time `setTimeout`, so this is what lines
+  two runs up). Then the same seed is played again with `?refresh=stock`, and
+  every object's logic position has to match frame for frame (`--no-stock-run`
+  skips it). Their pictures do not match: the SP lens's scan line is placed from
+  the absolute loop time, which depends on how long boot took.
+- The ship sweeps side to side on the pad, so its own motion is measured too.
+
+`tests/refresh_compare_test.ts` pins what the metrics say about motion of a
+known shape.
+
 
 ## Two players
 
