@@ -8,12 +8,16 @@ import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import {
   BGM_RATE,
+  bgmPlan,
   bgmRequests,
   buildBgmPack,
   buildSfxPack,
+  FALLBACK_BOSS_BGM,
   findFfmpeg,
+  SCENE_BGM,
   SFX_BUDGET_BYTES,
   SFX_DIR,
+  SFX_GAIN,
   SFX_RATE,
   sfxRequests,
 } from "../lib/ps2/sound-pack.ts";
@@ -211,4 +215,90 @@ Deno.test("music is separable from the rest of the audio", gated, async () => {
   // touching the effects.
   assertEquals(await buildBgmPack(GAME_DIR, { ffmpeg: null }), null);
   assert(pack!.files.length > 0);
+});
+
+/** Is there a stock track by this key — what the base game's sound tree has. */
+const stock = (key: string) => bgmRequests().some((r) => r.key === key);
+
+Deno.test("a game's own bosses play the stock game's last track", () => {
+  // gs: two stages, two bosses of its own, no music of its own.
+  const plan = bgmPlan([
+    { stage: 0, name: "geekstar" },
+    { stage: 1, name: "Daltonius" },
+  ], stock);
+  assertEquals(FALLBACK_BOSS_BGM, "boss_fang_bgm");
+  assertEquals(plan.keys, [...SCENE_BGM, "boss_fang_bgm"]);
+  assertEquals(plan.alias, {
+    boss_geekstar_bgm: "boss_fang_bgm",
+    boss_Daltonius_bgm: "boss_fang_bgm",
+  });
+});
+
+Deno.test("a boss with a track plays it, once, and the rest stay off", () => {
+  const plan = bgmPlan([
+    { stage: 0, name: "bison" },
+    { stage: 1, name: "barlog" },
+    { stage: 2, name: "bison" },
+  ], stock);
+  assertEquals(plan.keys, [...SCENE_BGM, "boss_bison_bgm", "boss_barlog_bgm"]);
+  assertEquals(plan.alias, {});
+  // A boss of the game's own WITH a track in the sound tree plays that.
+  const own = bgmPlan(
+    [{ stage: 0, name: "Daltonius" }],
+    (key) => key === "boss_Daltonius_bgm",
+  );
+  assertEquals(own.keys, [...SCENE_BGM, "boss_Daltonius_bgm"]);
+  assertEquals(own.alias, {});
+  // No bosses at all still leaves the scenes their music.
+  assertEquals(bgmPlan([], stock).keys, SCENE_BGM);
+});
+
+Deno.test("only the tracks the stages play are staged", gated, async () => {
+  const two = await buildBgmPack(GAME_DIR, {
+    ffmpeg,
+    bosses: [{ stage: 0, name: "geekstar" }, { stage: 1, name: "Daltonius" }],
+  });
+  assertEquals(two!.keys.sort(), [...SCENE_BGM, "boss_fang_bgm"].sort());
+  assertEquals(two!.alias!["boss_Daltonius_bgm"], "boss_fang_bgm");
+  for (const file of two!.files) {
+    assert(/^assets\/sounds\/\w+\.wav$/.test(file.path), file.path);
+  }
+});
+
+/** Peak of an audsrv .adp, decoded the way the SPU2 does. */
+function adpPeak(adp: Uint8Array): number {
+  const filters = [[0, 0], [60, 0], [115, -52], [98, -55], [122, -60]];
+  let s1 = 0, s2 = 0, peak = 0;
+  for (let at = 16; at + 16 <= adp.length; at += 16) {
+    const shift = adp[at] & 15;
+    const [f0, f1] = filters[adp[at] >> 4] ?? [0, 0];
+    for (let k = 0; k < 28; k++) {
+      const byte = adp[at + 2 + (k >> 1)];
+      const nibble = k & 1 ? byte >> 4 : byte & 15;
+      let s = (((nibble << 12) << 16) >> 16) >> shift;
+      s = Math.max(-32768, Math.min(32767, s + ((s1 * f0 + s2 * f1) >> 6)));
+      s2 = s1;
+      s1 = s;
+      peak = Math.max(peak, Math.abs(s));
+    }
+  }
+  return peak;
+}
+
+Deno.test("the explosions are encoded at the browser's mix", gated, () => {
+  for (const gain of Object.values(SFX_GAIN)) assert(gain > 0 && gain < 1);
+  for (const key of Object.keys(SFX_GAIN)) {
+    assert(sfxRequests().some((r) => r.key === key), `no such effect: ${key}`);
+  }
+  // The source peaks at -2.5 dBFS (0.75 of full scale), so ungained it would
+  // decode near 24,500; at a quarter it is near 6,100.
+  const explosion = pack!.files.find((f) =>
+    f.path === `${SFX_DIR}/se_explosion.adp`
+  )!;
+  const peak = adpPeak(explosion.data);
+  assert(peak > 0, "se_explosion decodes to silence");
+  assert(
+    peak <= 32767 * 0.75 * SFX_GAIN.se_explosion + 512,
+    `se_explosion peaks at ${peak}, not turned down`,
+  );
 });

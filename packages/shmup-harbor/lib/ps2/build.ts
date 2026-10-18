@@ -471,14 +471,15 @@ export async function buildPs2(
 
   const notes = [...staged.notes];
 
-  // The base game's own audio: effects as SPU2 ADPCM, music as Ogg Vorbis.
-  // Both need ffmpeg on the build host; without it there are no packs.
+  // The base game's own audio: effects as SPU2 ADPCM, music as WAV — only
+  // the tracks this game's stages play (staged.bosses). Both need ffmpeg on
+  // the build host; without it there are no packs.
   const sfx = options.skipAudio
     ? null
     : await buildSfxPack(gameDir, { budgetBytes: options.sfxBudgetBytes });
   const bgm = options.skipAudio || options.skipMusic
     ? null
-    : await buildBgmPack(gameDir);
+    : await buildBgmPack(gameDir, { bosses: staged.bosses });
   if (sfx) {
     for (const note of sfx.notes) log(`    ${note}`);
     notes.push(...sfx.notes);
@@ -529,10 +530,21 @@ export async function buildPs2(
   // a `--no-audio` disc sat on a black screen forever. runtime-sound.ts reads
   // this and stays silent instead.
   const audsrvFlag = hasAudio ? "" : "globalThis.__PS2_AUDSRV__ = false;";
+  // Which tracks the disc carries, and what a boss with no track of its own
+  // plays instead. The port asks for all nine stock tracks and names a
+  // stage's music after its boss, so without this a level's own boss
+  // (`boss_Daltonius_bgm`) plays its stage in silence, and a track left off
+  // the disc costs a cdfs miss. See `__PS2_BGM__` in runtime-sound.ts.
+  const bgmPlan = bgm && bgm.files.length
+    ? `globalThis.__PS2_BGM__ = ${
+      JSON.stringify({ tracks: bgm.keys, alias: bgm.alias ?? {} })
+    };`
+    : "";
   const preamble = [
     options.uncapped ? "globalThis.__PS2_UNCAPPED__ = true;" : "",
     gameFps === 30 ? "" : `globalThis.__PS2_GAME_FPS__ = ${gameFps};`,
     sfxKeys,
+    bgmPlan,
     audsrvFlag,
   ].filter(Boolean).join("\n");
   const uncappedMainJs = preamble
@@ -722,9 +734,10 @@ function readme(
       : []),
     ...(audio.bgm
       ? [
-        "assets/sounds/*.ogg",
-        "    The music, as Ogg Vorbis for audsrv's streamer. It is most of",
-        "    the disc; rebuild with --no-music to leave it out.",
+        "assets/sounds/*.wav",
+        "    The music this game's stages play, as WAV for audsrv's",
+        "    streamer. It is most of the disc; rebuild with --no-music to",
+        "    leave it out.",
         "",
       ]
       : []),

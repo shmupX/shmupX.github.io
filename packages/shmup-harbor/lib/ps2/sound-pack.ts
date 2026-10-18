@@ -26,7 +26,7 @@
 
 import { basename, extname, join } from "@std/path";
 import { encodeAdp, encodeWav, fitToHeadroom } from "./adpcm.ts";
-import type { StagedFile } from "./assets.ts";
+import type { StageBoss, StagedFile } from "./assets.ts";
 
 /**
  * Rate the effects are resampled to. The SPU2 tops out at 48 kHz and these are
@@ -61,6 +61,24 @@ export const BGM_RATE = 22_050;
  * play and loses boss taunts at the margin.
  */
 export const SFX_BUDGET_BYTES = 1024 * 1024;
+
+/**
+ * Effects that are encoded quieter than their source, as a gain on the PCM.
+ *
+ * The port fires every effect at full voice volume (`playSfx` with no volume)
+ * and the browser does not: it plays the voices at 0.7 and the explosions at
+ * 0.175 and 0.15, a quarter of that and less. On the console the explosion was
+ * therefore the loudest thing in the game, four times the browser's balance,
+ * on every kill — and a wave going down at once stacks a voice per enemy. The
+ * encode was not at fault (it decodes within 0.1 dB of the source at 29 dB
+ * SNR, nothing clipped); the level was. So the browser's balance is baked in:
+ * its volume over the voices' 0.7, applied before encoding, which costs the
+ * ADPCM nothing since every block picks its own shift.
+ */
+export const SFX_GAIN: Readonly<Record<string, number>> = {
+  se_explosion: 0.175 / 0.7,
+  se_sp_explosion: 0.15 / 0.7,
+};
 
 /** Where the effects land on the disc — one flat directory. */
 export const SFX_DIR = "assets/sounds";
@@ -159,6 +177,53 @@ export function bgmRequests(): { key: string; path: string }[] {
   ].map((key) => ({ key, path: `assets/sounds/${key}.wav` }));
 }
 
+/**
+ * The music every game plays whatever its stages: the interlude before each
+ * stage, the continue countdown and the game-over jingle.
+ */
+export const SCENE_BGM = ["adventure_bgm", "bgm_continue", "bgm_gameover"];
+
+/**
+ * What a boss with no track of its own plays: the stock game's last stage's.
+ *
+ * The port names a stage's music after its boss, so a game's own boss —
+ * gs's Daltonius — asks for `boss_Daltonius_bgm`, which nothing on the disc
+ * answers, and its stage would play in silence.
+ */
+export const FALLBACK_BOSS_BGM = "boss_fang_bgm";
+
+/** The music one disc carries, and what plays in place of a missing track. */
+export interface BgmPlan {
+  /** Every track the console can reach, in the order they are first heard. */
+  keys: string[];
+  /** A boss's own key -> the track it plays instead, when it has none. */
+  alias: Record<string, string>;
+}
+
+/**
+ * The tracks a game's stages actually play, worked out from its bosses.
+ *
+ * All nine of the port's tracks are 33 MB of WAV, most of a disc, and a game
+ * with two stages plays five of them at most. So the disc carries the
+ * scene music, plus each boss's own track when the game's sound tree has one
+ * under that name (`has`), plus FALLBACK_BOSS_BGM for every boss that does
+ * not. Stock bosses all have one; a level's own bosses rarely do.
+ */
+export function bgmPlan(
+  bosses: StageBoss[],
+  has: (key: string) => boolean,
+): BgmPlan {
+  const keys = [...SCENE_BGM];
+  const alias: Record<string, string> = {};
+  for (const { name } of bosses) {
+    const own = `boss_${name}_bgm`;
+    const plays = has(own) ? own : FALLBACK_BOSS_BGM;
+    if (plays !== own) alias[own] = plays;
+    if (!keys.includes(plays)) keys.push(plays);
+  }
+  return { keys, alias };
+}
+
 export interface SoundPack {
   /** Files to stage on the disc. */
   files: StagedFile[];
@@ -173,6 +238,11 @@ export interface SoundPack {
    * `__PS2_SFX__` in lib/ps2/runtime-sound.ts.
    */
   keys: string[];
+  /**
+   * Music only: a boss's own track key -> the track it plays instead (see
+   * bgmPlan). build.ts hands it to runtime-sound.ts as `__PS2_BGM__`.
+   */
+  alias?: Record<string, string>;
   notes: string[];
 }
 
@@ -263,6 +333,13 @@ async function decodeMono(
   return new Int16Array(out.stdout.buffer.slice(0, even));
 }
 
+/** `pcm` times `gain`, rounded; only ever used to turn something down. */
+function scaled(pcm: Int16Array, gain: number): Int16Array {
+  const out = new Int16Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) out[i] = Math.round(pcm[i] * gain);
+  return out;
+}
+
 /**
  * Encode every effect the port asks for. Returns null when there is no ffmpeg
  * to decode with — the caller then builds silent, as it always could.
@@ -300,7 +377,8 @@ export async function buildSfxPack(
       missing.push(key);
       continue;
     }
-    const fitted = fitToHeadroom(pcm);
+    const gain = SFX_GAIN[key] ?? 1;
+    const fitted = fitToHeadroom(gain === 1 ? pcm : scaled(pcm, gain));
     if (fitted.scale !== 1) attenuated++;
     encoded.push({
       key,
@@ -357,6 +435,17 @@ export async function buildSfxPack(
         `${dropped.join(", ")} (raise --sfx-budget to keep them)`,
     );
   }
+  const quieter = Object.entries(SFX_GAIN)
+    .filter(([key]) => files.some((f) => keyOf(f.path) === key));
+  if (quieter.length) {
+    notes.push(
+      `sound effects: ${
+        quieter.map(([key, gain]) =>
+          `${key} ${(20 * Math.log10(gain)).toFixed(1)} dB`
+        ).join(", ")
+      }, to the browser's mix`,
+    );
+  }
   if (attenuated) {
     notes.push(
       `sound effects: ${attenuated} pulled under the SPU2 encoder's headroom`,
@@ -404,11 +493,15 @@ async function encodeWavTrack(
 
 /**
  * Transcode the music. Separate from the effects because it is streamed, not
- * sampled: it stays compressed, keeps both channels, and is decoded on the EE.
+ * sampled: it is decoded on the EE and fed to audsrv a buffer at a time.
+ *
+ * `bosses` is the game's stages (StageResult.bosses), and with it only the
+ * tracks those stages play are staged — see bgmPlan. Without it, every track
+ * the port loads is.
  */
 export async function buildBgmPack(
   gameDir: string,
-  options: { ffmpeg?: string | null } = {},
+  options: { ffmpeg?: string | null; bosses?: StageBoss[] } = {},
 ): Promise<SoundPack | null> {
   const ffmpeg = options.ffmpeg === undefined
     ? await findFfmpeg()
@@ -416,11 +509,14 @@ export async function buildBgmPack(
   if (!ffmpeg) return null;
 
   const sources = await indexSources(join(gameDir, "assets", "sounds"));
+  const plan: BgmPlan = options.bosses
+    ? bgmPlan(options.bosses, (key) => sources.has(key))
+    : { keys: bgmRequests().map((r) => r.key), alias: {} };
   const files: StagedFile[] = [];
   const missing: string[] = [];
   let bytes = 0;
 
-  for (const { key, path } of bgmRequests()) {
+  for (const key of plan.keys) {
     const source = sources.get(key);
     if (!source) {
       missing.push(key);
@@ -432,16 +528,40 @@ export async function buildBgmPack(
       continue;
     }
     bytes += wav.length;
-    files.push({ path, data: wav });
+    files.push({ path: `assets/sounds/${key}.wav`, data: wav });
   }
 
   const notes = [
-    `music: ${files.length} of ${bgmRequests().length} tracks, ${
+    `music: ${files.length} of ${plan.keys.length} tracks, ${
       (bytes / 1048576).toFixed(1)
     } MB of ${BGM_RATE / 1000} kHz mono WAV`,
   ];
+  if (options.bosses) {
+    const stages = options.bosses.map(({ stage, name }) => {
+      const own = `boss_${name}_bgm`;
+      return `stage${stage} ${plan.alias[own] ?? own}` +
+        (plan.alias[own] ? ` (${name} has no ${own})` : "");
+    });
+    notes.push(
+      `music: ${stages.length ? stages.join(", ") : "no stage has a boss"}`,
+    );
+    const unplayed = bgmRequests().map((r) => r.key)
+      .filter((key) => !plan.keys.includes(key));
+    if (unplayed.length) {
+      notes.push(
+        `music: left off the disc, as no stage plays them — ${
+          unplayed.join(", ")
+        }`,
+      );
+    }
+  }
   if (missing.length) {
     notes.push(`music: no source for ${missing.join(", ")}`);
   }
-  return { files, keys: files.map((f) => keyOf(f.path)), notes };
+  return {
+    files,
+    keys: files.map((f) => keyOf(f.path)),
+    alias: plan.alias,
+    notes,
+  };
 }

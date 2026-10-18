@@ -12,6 +12,7 @@ import {
   discStage,
   laterStages,
   type LevelRecord,
+  stageBosses,
   stageRecipes,
 } from "../lib/ps2/assets.ts";
 
@@ -332,4 +333,41 @@ Deno.test("a later stage's types stay in enemyData", () => {
   const disc = discStage(record, { stage1: [["C0", "C3"]] });
   assertEquals(names(Object.values(disc.enemyData)), ["a", "c"]);
   assertEquals(disc.later, { stage1: [["C0", "C3"]] });
+});
+
+Deno.test("each stage's boss is the level's, or the base game's when it has none", () => {
+  const base = {
+    bossData: {
+      boss0: { name: "bison" },
+      boss1: { name: "barlog" },
+      bossExtra: { name: "goki" },
+    },
+  };
+  // gs: two bosses of its own, which replace the base game's outright — the
+  // port plays nothing of the base's boss1 even though the level has one too.
+  const gs: LevelRecord = {
+    enemylist: [],
+    bossData: { boss0: { name: "geekstar" }, boss1: { name: "Daltonius" } },
+  };
+  assertEquals(stageBosses(gs, base), [
+    { stage: 0, name: "geekstar" },
+    { stage: 1, name: "Daltonius" },
+  ]);
+  // No bosses of its own: the base game's, and never bossExtra, which the
+  // port does not play.
+  assertEquals(stageBosses({ enemylist: [] }, base), [
+    { stage: 0, name: "bison" },
+    { stage: 1, name: "barlog" },
+  ]);
+  // Past the port's fifth stage is never reached; a gap is a stage with no
+  // boss and so no music of its own.
+  const gappy: LevelRecord = {
+    enemylist: [],
+    bossData: {
+      boss0: { name: "a" },
+      boss3: { name: "d" },
+      boss5: { name: "f" },
+    },
+  };
+  assertEquals(stageBosses(gappy, base).map((b) => b.stage), [0, 3]);
 });

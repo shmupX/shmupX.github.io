@@ -195,6 +195,35 @@ export function createAthenaSound(): PumpedSoundPlayer {
   const sfx: Record<string, AthenaSfx> = {};
   const streamPaths: Record<string, string> = {};
 
+  // The music the disc carries, when the build said so (`__PS2_BGM__`, from
+  // lib/ps2/sound-pack.ts bgmPlan). Only the tracks the game's stages play are
+  // staged, so the port's other loadStream calls are skipped rather than left
+  // to cost a cdfs miss later. And the port names each stage's music after its
+  // boss, so a level's own boss asks for a track nobody made —
+  // `boss_Daltonius_bgm` — which `alias` sends to the one it plays instead.
+  // The staged tracks are registered here, not only at loadStream, because
+  // a boss's own track is one the port never loads.
+  const bgm =
+    (globalThis as { __PS2_BGM__?: { tracks?: unknown; alias?: unknown } })
+      .__PS2_BGM__;
+  const stagedBgm: Record<string, true> | null =
+    bgm && Array.isArray(bgm.tracks)
+      ? Object.fromEntries(
+        bgm.tracks.map((key) => [String(key), true as const]),
+      )
+      : null;
+  const bgmAlias: Record<string, string> = bgm && bgm.alias &&
+      typeof bgm.alias === "object"
+    ? bgm.alias as Record<string, string>
+    : {};
+  if (stagedBgm) {
+    for (const key of Object.keys(stagedBgm)) {
+      streamPaths[key] = soundPath(key, ".wav");
+    }
+  }
+  const trackKey = (key: string): string =>
+    Object.prototype.hasOwnProperty.call(bgmAlias, key) ? bgmAlias[key] : key;
+
   // The one track that is open. `loop` is what tells pump() to restart it;
   // `running` keeps pump() from restarting a track that has not started yet.
   let track: AthenaStream | null = null;
@@ -229,7 +258,7 @@ export function createAthenaSound(): PumpedSoundPlayer {
   };
 
   const startTrack = (key: string, loop: boolean, volume?: number): void => {
-    const path = streamPaths[key];
+    const path = streamPaths[trackKey(key)];
     if (!canStream || !path) return;
     dropTrack();
     if (!canOpen(path)) return;
@@ -285,9 +314,12 @@ export function createAthenaSound(): PumpedSoundPlayer {
       }
     },
 
-    // Just the path: nothing is opened until something plays it.
+    // Just the path: nothing is opened until something plays it. A track the
+    // build left off the disc is not even that.
     loadStream(key, path) {
-      streamPaths[key] = wavPath(path);
+      const file = wavPath(path);
+      if (stagedBgm && !stagedBgm[soundStem(file)]) return;
+      streamPaths[key] = file;
     },
 
     playSfx: fireSfx,
@@ -296,8 +328,9 @@ export function createAthenaSound(): PumpedSoundPlayer {
     // has to serve both. A track reached this way is a jingle and plays once;
     // only playBgm loops.
     playSound(key, volume) {
-      if (streamPaths[key] !== undefined) startTrack(key, false, volume);
-      else fireSfx(key, volume);
+      if (streamPaths[trackKey(key)] !== undefined) {
+        startTrack(key, false, volume);
+      } else fireSfx(key, volume);
     },
 
     playBgm(key, volume) {

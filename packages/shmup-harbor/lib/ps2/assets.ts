@@ -106,6 +106,11 @@ export interface StageResult {
   files: StagedFile[];
   /** Human-readable notes for the build log. */
   notes: string[];
+  /**
+   * The boss each stage the console plays brings on, in stage order — what
+   * the music it plays is named after (see stageBosses).
+   */
+  bosses: StageBoss[];
 }
 
 /** One frame, and which sheet it must be cut from. */
@@ -449,6 +454,42 @@ export function laterStages(
     const key = `stage${id}`;
     const grid = gridOf(record.stages?.[key]) ?? gridOf(base[key]);
     if (grid) out[key] = grid;
+  }
+  return out;
+}
+
+/** A stage the console plays, and the name of the boss it ends with. */
+export interface StageBoss {
+  stage: number;
+  name: string;
+}
+
+/**
+ * Every boss the console can bring on, by stage — which is also every stage
+ * that starts music of its own.
+ *
+ * The port starts a stage's music from its boss: `"boss_" + bossData["boss" +
+ * stageId].name + "_bgm"` (svelte-ps2 scenes/game.ts), out of the recipe the
+ * level was merged into, for each stage from the first to its fifth and round
+ * again once the ending resets the game (laterStages). A level that carries
+ * bosses replaces the base recipe's outright; one that carries none keeps the
+ * base game's. A stage with no boss under its number starts no music, so it
+ * is not here, and neither is `bossExtra`, which the port never plays.
+ */
+export function stageBosses(
+  record: LevelRecord,
+  base: Record<string, unknown>,
+): StageBoss[] {
+  const own = record.bossData ?? {};
+  const bossData = Object.keys(own).length > 0
+    ? own
+    : (base.bossData ?? {}) as Record<string, Record<string, unknown>>;
+  const out: StageBoss[] = [];
+  for (let id = 0; id <= LAST_STAGE; id++) {
+    const boss = bossData[`boss${id}`];
+    // The port's own concatenation, so a nameless boss asks for what it asks
+    // for on the console: `boss_undefined_bgm`.
+    if (boss) out.push({ stage: id, name: `${boss.name}` });
   }
   return out;
 }
@@ -1554,7 +1595,7 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
       (hasBossData ? ", custom boss" : ""),
   );
 
-  return { files, notes };
+  return { files, notes, bosses: stageBosses(record, baseRecipe) };
 }
 
 // ps2-sp loads the player from a uniform 32x32 grid sheet and animates cells
