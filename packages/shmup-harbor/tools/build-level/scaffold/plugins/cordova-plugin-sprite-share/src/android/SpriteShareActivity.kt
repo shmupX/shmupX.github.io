@@ -258,6 +258,7 @@ class SpriteShareActivity : Activity() {
                         out.write(chunk, 0, bytesRead)
                     }
                 }
+                true
             } ?: false
         } catch (e: Exception) {
             Log.e(TAG, "Failed to copy shared image", e)

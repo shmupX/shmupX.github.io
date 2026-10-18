@@ -45,6 +45,13 @@
         <preference name="FullScreen" value="true" />
         <preference name="Orientation" value="portrait" />
         <preference name="AndroidLaunchMode" value="singleTask" />
+        <!-- The android plugins (second-screen, sprite-share) are Kotlin.
+             cordova-android leaves the Kotlin Gradle plugin off unless this
+             says otherwise, and then copies their .kt files into the project
+             and compiles none of them: second-screen loads at startup, so the
+             APK installed and died on launch with ClassNotFoundException
+             com.easierbycode.secondscreen.SecondScreenPlugin. -->
+        <preference name="GradlePluginKotlinEnabled" value="true" />
         <!-- Handle config changes in-app so orientation change doesn't restart the activity -->
         <edit-config file="AndroidManifest.xml" target="/manifest/application/activity" mode="merge">
             <activity android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"

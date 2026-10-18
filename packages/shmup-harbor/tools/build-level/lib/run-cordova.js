@@ -37,6 +37,31 @@ function run(cmd, args, opts) {
   if (r.status !== 0) throw new Error(cmd + " exited " + r.status);
 }
 
+// Gradle skips .kt sources without a word when the Kotlin plugin is off, and
+// the APK still builds — it just lacks every plugin class, and the one that
+// loads at startup (second-screen) takes the app down the moment it opens.
+// Fail here, where the reason can be said, instead of on the phone.
+function assertKotlinCompiles(androidRoot) {
+  function hasKotlin(dir) {
+    if (!fs.existsSync(dir)) return false;
+    return fs.readdirSync(dir, { withFileTypes: true }).some(function (e) {
+      if (e.isDirectory()) return hasKotlin(path.join(dir, e.name));
+      return e.isFile() && e.name.endsWith(".kt");
+    });
+  }
+  if (!hasKotlin(path.join(androidRoot, "app", "src", "main", "java"))) return;
+  const config = JSON.parse(
+    fs.readFileSync(path.join(androidRoot, "cdv-gradle-config.json"), "utf8"),
+  );
+  if (!config.IS_GRADLE_PLUGIN_KOTLIN_ENABLED) {
+    throw new Error(
+      "android: the plugins' Kotlin sources would not be compiled — " +
+        'config.xml needs <preference name="GradlePluginKotlinEnabled" ' +
+        'value="true" /> (see scaffold/config.xml).',
+    );
+  }
+}
+
 // ------------------------------------------------------------------- iOS
 
 // Compile the staged Xcode project and wrap the result as an .ipa.
@@ -201,6 +226,7 @@ async function buildCordova(opts) {
   }
 
   if (platform === "android") {
+    assertKotlinCompiles(path.join(cordovaDir, "platforms", "android"));
     run("cordova", ["compile", "android", "--debug", "--packageType=apk"], {
       cwd: cordovaDir,
     });
