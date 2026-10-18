@@ -298,6 +298,41 @@ const LINUX_CANDIDATES = [
   "/usr/bin/chromium-browser",
 ];
 
+/**
+ * Windows installs, machine-wide and per user. Edge ships with Windows, so a
+ * Windows box always has one of these even with no Chrome on it.
+ */
+function windowsCandidates(): string[] {
+  if (Deno.build.os !== "windows") return [];
+  const roots = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
+    .map((k) => Deno.env.get(k))
+    .filter((r): r is string => !!r);
+  return [
+    "Google\\Chrome\\Application\\chrome.exe",
+    "Microsoft\\Edge\\Application\\msedge.exe",
+    "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+  ].flatMap((app) => roots.map((r) => `${r}\\${app}`));
+}
+
+/**
+ * Flatpak exports, after the system installs: on SteamOS and Bazzite a
+ * Flatpak is usually the only Chromium there is. The export is a launcher
+ * script rather than the browser itself, so a caller should close the browser
+ * over DevTools (Browser.close) before it kills the process it started.
+ */
+function flatpakCandidates(): string[] {
+  if (Deno.build.os !== "linux") return [];
+  const home = Deno.env.get("HOME");
+  const dirs = ["/var/lib/flatpak/exports/bin"];
+  if (home) dirs.push(join(home, ".local/share/flatpak/exports/bin"));
+  return [
+    "com.google.Chrome",
+    "org.chromium.Chromium",
+    "com.microsoft.Edge",
+    "com.brave.Browser",
+  ].flatMap((id) => dirs.map((d) => join(d, id)));
+}
+
 const PLAYWRIGHT_PREFIX = "chromium-";
 const revision = (dir: string) =>
   Number(dir.slice(PLAYWRIGHT_PREFIX.length)) || 0;
@@ -381,8 +416,10 @@ export async function findChrome(flag: string | null = null): Promise<string> {
   }
   const candidates = [
     ...CHROME_CANDIDATES,
+    ...windowsCandidates(),
     ...playwrightCandidates(),
     ...LINUX_CANDIDATES,
+    ...flatpakCandidates(),
   ].filter((p): p is string => !!p);
   for (const c of candidates) {
     try {

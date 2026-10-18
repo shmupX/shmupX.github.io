@@ -1,10 +1,11 @@
-// The numbers `deno task refresh:compare` judges a recording by.
+// The numbers `deno task refresh:compare` judges a run by.
 //
-// scripts/refresh-compare.ts records the game on an emulated 240 Hz display,
-// stock and max refresh side by side, and turns each object's per-frame
-// positions into how often its motion is drawn and how evenly. These pin what
-// those numbers say about motion whose shape is known in advance, so a pass
-// from the real recording means what it claims.
+// scripts/refresh-compare.ts plays the game on an emulated or a real display,
+// stock and max refresh, and turns each object's per-frame positions into how
+// often its motion is drawn and how evenly — by position, and on the game's
+// pixel grid, which is what reaches the screen. These pin what those numbers
+// say about motion whose shape is known in advance, so a pass from a real run
+// means what it claims.
 
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import {
@@ -13,8 +14,9 @@ import {
   type FrameRecord,
   judge,
   type ObjectSample,
+  stepSpan,
   type ViewCadence,
-} from "../scripts/refresh-compare.ts";
+} from "../scripts/lib/refresh-metrics.ts";
 
 /**
  * `frames` display frames at 240 Hz of bodies moving one pixel per 120 Hz
@@ -110,5 +112,106 @@ Deno.test("the stock run must match the logic frame for frame; what is drawn may
   assertEquals(
     firstDivergence(max, stock.slice(1)),
     "30 frames against 29",
+  );
+});
+
+const STEP = 8.333333;
+
+/**
+ * `seconds` of a display at `hz` the way the runtime drives one: a fixed
+ * 120 Hz step whenever the accumulator holds one, each moving a body `speed`
+ * px, and max refresh drawing it between the last two steps by how far the
+ * clock has run into the next. Positions on the pixel grid are floored, as
+ * the canvas renderer floors them.
+ */
+function display(hz: number, speed: number, seconds = 2): FrameRecord[] {
+  const out: FrameRecord[] = [];
+  const dt = Math.ceil((1000 / hz) * 1024) / 1024;
+  let acc = 0, steps = 0;
+  for (let t = 0; t < Math.round(seconds * hz); t++) {
+    acc += dt;
+    while (acc >= STEP) {
+      acc -= STEP;
+      steps++;
+    }
+    const logic = steps * speed;
+    const drawn = steps ? (steps - 1 + acc / STEP) * speed : 0;
+    out.push({
+      frame: t,
+      scene: "PhaserGameScene",
+      on: true,
+      objs: [[
+        "ship",
+        drawn,
+        200,
+        logic,
+        200,
+        "ship",
+        Math.floor(drawn),
+        200,
+        Math.floor(logic),
+        200,
+      ]],
+    });
+  }
+  return out;
+}
+
+Deno.test("the window spans a step at any display rate", () => {
+  for (
+    const [hz, span] of [[60, 2], [120, 2], [144, 2], [240, 2], [239.9, 2], [
+      360,
+      3,
+    ], [500, 5]]
+  ) {
+    assertEquals(stepSpan(hz), span, `${hz} Hz`);
+  }
+  // At 500 Hz a step lands on one frame in four or five; stock draws a move
+  // on exactly those, at the logic's own 120 a second, and max refresh on
+  // every frame.
+  const c = cadence(display(500, 1), 500);
+  assertAlmostEquals(c.stock.moved, 0.24, 0.01);
+  assertAlmostEquals(c.stock.drawnHz, 120, 4);
+  assertEquals(c.max.moved, 1);
+  assertAlmostEquals(c.max.evenness, 1, 0.02);
+});
+
+Deno.test("on screen a body moves a whole pixel at a time: fast movers gain, slow ones cannot", () => {
+  const onScreen = (hz: number, speed: number) => {
+    const c = cadence(display(hz, speed), hz);
+    assert(c.pixels, "no pixel view");
+    assertEquals(judge(c, hz), [], `${hz} Hz at ${speed} px/step`);
+    return [c.pixels.stock.moved, c.pixels.max.moved];
+  };
+  // A pixel a step at 240 Hz: half a pixel a frame shows on every other
+  // frame either way.
+  const [s1, m1] = onScreen(240, 1);
+  assertAlmostEquals(s1, 0.5, 0.02);
+  assertAlmostEquals(m1, 0.5, 0.02);
+  // Three a step: stock jumps 3 px every other frame; max refresh shows
+  // 1 and 2 px on every frame.
+  const [s3, m3] = onScreen(240, 3);
+  assertAlmostEquals(s3, 0.5, 0.02);
+  assertEquals(m3, 1);
+  // Two a step at 500 Hz: stock on one frame in four, max refresh on one in
+  // two, evenly spread.
+  const [s2, m2] = onScreen(500, 2);
+  assertAlmostEquals(s2, 0.24, 0.02);
+  assertAlmostEquals(m2, 0.48, 0.03);
+  // The background's 0.7 px a step: no better, and no worse.
+  const [s07, m07] = onScreen(500, 0.7);
+  assert(m07 + 0.01 >= s07, `${m07} < ${s07}`);
+});
+
+Deno.test("the check fails max refresh moving things on fewer frames on screen than stock", () => {
+  const c = cadence(display(240, 3), 240);
+  assert(c.pixels);
+  const worse = {
+    ...c,
+    pixels: { stock: c.pixels.stock, max: { ...c.pixels.max, moved: 0.3 } },
+  };
+  assertEquals(
+    judge(worse, 240),
+    ["on screen, max refresh moved things on fewer frames than stock (30.0% against 50.0%)"],
   );
 });
