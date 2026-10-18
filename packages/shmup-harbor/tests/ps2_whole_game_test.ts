@@ -549,6 +549,18 @@ Deno.test("the port draws every stage's enemies and its boss, to the ending", as
       ),
       "boss3 fired shots that were never drawn",
     );
+    // game_asset carries only what the port can draw (portAssetFrames): the
+    // explosions and the player's own shots are still among it.
+    const everything = [...played.drawn.values()].flatMap((set) => [...set]);
+    const shots = recipe.playerData.shootNormal.texture as string[];
+    for (
+      const [what, hit] of [
+        ["an explosion", (f: string) => f.startsWith("game_asset:explosion0")],
+        ["a player shot", (f: string) => shots.includes(f.split(":")[1])],
+      ] as const
+    ) {
+      assert(everything.some(hit), `${what} was never drawn`);
+    }
     console.log(
       `  five stages and the ending in ${played.frames} frames; ` +
         [0, 1, 2, 3, 4].map((stage) => `${played.drawn.get(stage)?.size ?? 0}`)

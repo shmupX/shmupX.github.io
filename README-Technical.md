@@ -3356,6 +3356,25 @@ the port never draws is left out with a note. `tests/ps2_ui_atlases_test.ts`
 reads the bundled runtime and fails if the port ever asks game_ui for a name the
 set lacks.
 
+**game_asset likewise.** The stock sheet is 221 frames — every enemy, boss and
+effect of 2028.Ai's five stages, 2.3M texels — and packed whole it came out at
+1/4, a 32px enemy 8 texels across and the player's shots a smear. The port draws
+a fraction of it on any one disc (`portAssetFrames`): the frames its code names
+(`PORT_ASSET_FRAMES`: the four power-ups, `explosion00`–`06`, the turbo effect's
+`hit0`–`4`), the player's shots and barrier out of game.json, and enemies and
+bosses — game.json's, unless level.json carries a table of them, in which case
+the port swaps the whole table for the level's and points it at the level atlas
+(`loadFirebaseLevel`). What a level leaves on game_asset is a boss without
+`anim` and every boss's shots, which the port files there whatever the record
+says. With the same one doubling as game_ui, `gs` and the game this repo ships
+pack game_asset at 1/1; a level with no enemies or bosses of its own carries all
+five stock bosses and reaches 1/2. All three sheets at their largest are 1.5 MB,
+3.69 MB of the GS's 4 with the frame buffer — what a backdrop's full 1024
+game_ui used to cost on its own. `tests/ps2_asset_frames_test.ts` reads the
+bundled runtime for the names its code spells out or builds, and
+`tests/ps2_whole_game_test.ts` plays the shipped game to the ending and checks
+its enemies, bosses, explosions and shots are all drawn.
+
 **God mode** is a title-screen secret: hold L and R (either shoulder button of a
 side) while pressing START — or SELECT, which starts in turbo mode — and that
 run cannot be hurt. A confirming chime (`se_correct`) plays over the usual START

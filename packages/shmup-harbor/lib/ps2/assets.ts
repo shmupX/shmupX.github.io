@@ -1054,6 +1054,68 @@ export function portDrawsUi(name: string): boolean {
 }
 
 /**
+ * The game_asset frames the port names in its own code: the four power-ups
+ * (ITEM_CODES), the explosion every ship, enemy and boss dies in
+ * (`"explosion0" + n`, 0-6) and the turbo effect's impacts (`"hit" + n`,
+ * 0-4). Everything else it draws from game_asset is named by a recipe
+ * (portAssetFrames). tests/ps2_asset_frames_test.ts reads the bundled runtime
+ * and fails if its code names a game_asset frame this set lacks.
+ */
+export const PORT_ASSET_FRAMES: ReadonlySet<string> = new Set([
+  "powerupBig0.gif",
+  "powerupBig1.gif",
+  "powerup3way0.gif",
+  "powerup3way1.gif",
+  "speedupItem0.gif",
+  "speedupItem1.gif",
+  "barrierItem0.gif",
+  "barrierItem1.gif",
+  ...[0, 1, 2, 3, 4, 5, 6].map((n) => `explosion0${n}.gif`),
+  ...[0, 1, 2, 3, 4].map((n) => `hit${n}.gif`),
+]);
+
+/**
+ * Every game_asset frame the port can draw on this disc, by the names it asks
+ * for (either spelling resolves, as the port's resolveFrameName does).
+ *
+ * The port draws the player's shots and barrier from game_asset, out of the
+ * game.json playerData (the ship itself is the cyber-liberty sheet), along
+ * with the frames its code names (PORT_ASSET_FRAMES). Enemies and bosses are
+ * game.json's unless level.json carries a table of them, and then the port
+ * swaps the whole table for the level's and points it at the level atlas
+ * (loadFirebaseLevel): every level enemy, shots and all, and every level boss
+ * with `anim`. What stays on game_asset is a level boss without `anim` and
+ * every boss's shots, which the port files there whatever the record says
+ * (see bossShots below) — and all of game.json's own.
+ *
+ * The stock sheet is 221 frames — every enemy, boss and effect of 2028.Ai's
+ * five stages — and packed whole into 512 it came out at 1/4, a 32px enemy 8
+ * texels across. A disc only ever draws a fraction of them.
+ */
+function portAssetFrames(
+  record: LevelRecord,
+  base: Record<string, unknown> & { playerData?: Record<string, unknown> },
+  level: { enemies: boolean; bosses: Record<string, unknown>[] | null },
+): Set<string> {
+  const out = new Set(PORT_ASSET_FRAMES);
+  collectTextures(base.playerData, out);
+  collectTextures(record.playerData, out);
+  if (!level.enemies) collectTextures(base.enemyData, out);
+  if (!level.bosses) collectTextures(base.bossData, out);
+  for (const boss of level.bosses ?? []) {
+    if (!boss.anim) collectTextures(boss, out);
+    else {for (const list of bossShotLists(boss)) {
+        list.forEach((f) => out.add(f));
+      }}
+  }
+  for (const name of [...out]) {
+    const alt = altName(name);
+    if (alt) out.add(alt);
+  }
+  return out;
+}
+
+/**
  * The stock plates that would sit on a game's own G, left out.
  *
  * The port centres titleG at y 60 and then draws the logo at y 75 and the
@@ -1313,24 +1375,39 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
     }
   }
 
+  // game_asset likewise carries only the frames this disc can draw from it.
+  // The same tests level.json is written by, below.
+  const assetWanted = portAssetFrames(record, baseRecipe, {
+    enemies: Object.keys(disc.enemyData).length > 0,
+    bosses: Object.keys(record.bossData ?? {}).length > 0
+      ? recipes.bosses
+      : null,
+  });
+  const assetDrop = new Set(
+    Object.keys(baseJson.frames).filter((name) => !assetWanted.has(name)),
+  );
+
   for (const name of ["game_asset", "game_ui"]) {
-    // game_ui carries only what the port draws from it (PORT_UI_FRAMES): the
-    // title and the continue card. It may take one doubling past the other
-    // sheets, as the level atlas may — 512x1024 at the default, 0.5 MB
-    // paletted — which is what the stock title's three 256-wide plates and
-    // G, or a cover or uploaded backdrop beside them, need to pack at 1/1.
-    // A backdrop's sheet used to be the full 1024 at 1 MB and still came out
-    // at 1/2, so this is less of the GS's 4 MB than that ever was (see the
-    // note in encodeSheet()).
+    // Each sheet carries only what the port can draw from it — game_ui the
+    // title and the continue card (PORT_UI_FRAMES), game_asset this disc's
+    // shots, effects and stock enemies (portAssetFrames) — and may take one
+    // doubling past `maxSheet`, as the level atlas may: 512x1024 at the
+    // default, 0.5 MB paletted. buildPs2Atlas takes the smallest sheet at the
+    // best scale, so the room is only spent when it buys resolution back:
+    // the stock title's three 256-wide plates and G at 1/1, say, or seven
+    // 128px explosions that overflow a 512 sheet's rows. All three sheets at
+    // their largest are 1.5 MB, which with the frame buffer is the 3.69 MB of
+    // the GS's 4 a backdrop's full 1024 game_ui used to cost on its own
+    // terms (see the note in encodeSheet()).
     const ui = name === "game_ui";
     const built = await repackBaseAtlas(
       gameDir,
       name,
-      ui ? Math.min(maxSheet * 2, 1024) : maxSheet,
+      Math.min(maxSheet * 2, 1024),
       name === "game_asset" ? upright : new Set(),
       ui ? uiOverrides : [...bossShots.values()],
-      ui ? uiDrop : new Set(),
-      ui ? maxSheet * maxSheet * 2 : Infinity,
+      ui ? uiDrop : assetDrop,
+      maxSheet * maxSheet * 2,
     );
     files.push(...built.files);
     notes.push(built.note);
