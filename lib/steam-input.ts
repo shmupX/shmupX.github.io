@@ -394,7 +394,9 @@ export async function turnOffSteamInput(opts: {
 
 interface Watch {
   opts: Parameters<typeof turnOffSteamInput>[0];
-  timer: number | null;
+  // Whatever setInterval returns here: a number, or a Timeout once @types/node
+  // is installed (which is what Deno 2 hands back at runtime either way).
+  timer: ReturnType<typeof setInterval> | null;
   log: (line: string) => void;
 }
 

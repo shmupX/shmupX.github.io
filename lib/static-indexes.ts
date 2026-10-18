@@ -22,6 +22,7 @@
 export const STATIC_INDEXES = [
   "/desktop",
   "/editor",
+  "/extension",
   "/games/super-mario-sp",
   "/pixel-composer",
   "/pixel-editor",
