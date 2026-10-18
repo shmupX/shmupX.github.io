@@ -204,23 +204,33 @@ function fakeContext(calls: string[]) {
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
-async function lensPainter() {
+// `HTMLCanvasElement` and `document` stand in for the browser's where a test
+// gives them; Deno has neither, so by default no sheet counts as a canvas.
+async function lensPainter(
+  canvasClass?: unknown,
+  doc?: unknown,
+) {
   const js = await read(BUNDLE);
   const consts = js.slice(
     js.indexOf("  var SP_LENS_SIZE = 64;"),
     js.indexOf("  var SP_LENS_DEPTH = 104;"),
   );
   return new Function(
+    "HTMLCanvasElement",
+    "document",
     consts +
       functionSource(js, "spLensTintPixels") +
+      functionSource(js, "spLensSheetPixels") +
+      functionSource(js, "spLensFrameSource") +
       functionSource(js, "spLensDrawSprite") +
       functionSource(js, "spLensBakeStrips") +
       functionSource(js, "spLensBakeField") +
       functionSource(js, "paintSpLens") +
-      "\nreturn { paint: paintSpLens, bake: spLensBakeStrips };",
-  )() as {
+      "\nreturn { paint: paintSpLens, bake: spLensBakeStrips, source: spLensFrameSource };",
+  )(canvasClass, doc) as {
     paint: (scene: Json, lens: Json, time: number) => void;
     bake: (lens: Json) => void;
+    source: (lens: Json, frame: Json) => Json;
   };
 }
 
@@ -324,4 +334,144 @@ Deno.test("a frame with nothing behind the disc is painted only when the scan li
   lens.cx += 8;
   paint(empty, lens, 63);
   assertEquals(uploads, 6);
+});
+
+Deno.test("a canvas sheet is read once per lens, each frame cut once, and the lens draws from the cut", async () => {
+  // gs merges its art over game_asset at load, so the sheet is a 2048x2544
+  // canvas, and every drawImage out of a canvas snapshots all of it: 35 ms a
+  // paint on a Pixel 9 whenever anything crossed the disc. A frame-sized
+  // canvas costs 0.1 ms.
+  const reads: number[][] = [];
+  const puts: number[][] = [];
+  class FakeCanvas {
+    width = 0;
+    height = 0;
+    opts: unknown = null;
+    getContext(_type: string, opts: unknown) {
+      this.opts = opts;
+      return {
+        getImageData: (x: number, y: number, w: number, h: number) => {
+          reads.push([x, y, w, h]);
+          return { width: w, height: h, data: new Uint8ClampedArray(0) };
+        },
+        putImageData: (_px: unknown, ...rect: number[]) => void puts.push(rect),
+      };
+    }
+  }
+  const made: FakeCanvas[] = [];
+  const doc = {
+    createElement: () => {
+      const c = new FakeCanvas();
+      made.push(c);
+      return c;
+    },
+  };
+  const { paint, bake, source } = await lensPainter(FakeCanvas, doc);
+  const sheet = new FakeCanvas();
+  sheet.width = 2048;
+  sheet.height = 2544;
+  const frame = (cutX: number, cutY: number, w: number, h: number) => ({
+    source: { image: sheet },
+    x: 0,
+    y: 0,
+    cutX,
+    cutY,
+    cutWidth: w,
+    cutHeight: h,
+    realWidth: w,
+    realHeight: h,
+  });
+  const ship = frame(300, 1200, 31, 38);
+  const shot = frame(40, 2400, 8, 16);
+
+  const lens: Json = {};
+  const cut = source(lens, ship);
+  assertEquals(reads, [[0, 0, 2048, 2544]], "the sheet read once, whole");
+  assertEquals(made.length, 1);
+  assertEquals([cut.el.width, cut.el.height, cut.x, cut.y], [31, 38, 0, 0]);
+  assertEquals(cut.el.opts, { willReadFrequently: true });
+  assertEquals(puts, [[-300, -1200, 300, 1200, 31, 38]]);
+  // The same frame again is the same cut; another frame is cut from the same
+  // read.
+  assertEquals(source(lens, ship), cut);
+  source(lens, shot);
+  assertEquals(reads.length, 1);
+  assertEquals(made.length, 2);
+  // A sheet grown since (art merged in again) is read and cut again.
+  sheet.height = 2600;
+  assert(source(lens, ship) !== cut);
+  assertEquals(reads.length, 2);
+  // A frame of an <img> sheet is drawn from the sheet, where it sits.
+  const img = { width: 1024, height: 512 };
+  const fromImg = source(lens, { ...ship, source: { image: img } });
+  assertEquals([fromImg.el, fromImg.x, fromImg.y], [img, 300, 1200]);
+  assertEquals(source(lens, { ...ship, source: null }), null);
+  // A new lens (the next GameScene) reads the sheet afresh.
+  source({}, ship);
+  assertEquals(reads.length, 3);
+
+  // And the paint draws the subject out of its cut, never the sheet.
+  const calls: string[] = [];
+  const subjects = fakeContext(calls);
+  const drawnFrom: unknown[][] = [];
+  subjects.drawImage = (...a: unknown[]) => void drawnFrom.push(a);
+  const canvas = () => ({ el: {}, ctx: fakeContext(calls) });
+  const painted: Json = {
+    cx: 221.5,
+    cy: 290.5,
+    ox: 190,
+    oy: 259,
+    subjects: { el: {}, ctx: subjects },
+    holo: canvas(),
+    holoR: canvas(),
+    holoB: canvas(),
+    body: canvas(),
+    scratch: canvas(),
+    field: canvas(),
+    rim: canvas(),
+    trail: canvas(),
+    flare: canvas(),
+    scan: canvas(),
+    main: { data: new Uint8ClampedArray(64 * 64 * 4) },
+    red: { data: new Uint8ClampedArray(64 * 64 * 4) },
+    blue: { data: new Uint8ClampedArray(64 * 64 * 4) },
+    tex: { getContext: () => fakeContext(calls), refresh() {} },
+    fieldOx: NaN,
+    fieldOy: NaN,
+    row: null,
+  };
+  bake(painted);
+  const sprite = {
+    active: true,
+    visible: true,
+    alpha: 1,
+    x: 221,
+    y: 290,
+    displayWidth: 31,
+    displayHeight: 38,
+    originX: 0.5,
+    originY: 0.5,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+    flipX: false,
+    flipY: false,
+    isTinted: false,
+    frame: ship,
+  };
+  const scene = {
+    enemies: [],
+    items: [],
+    enemyBullets: [],
+    playerBullets: [],
+    players: [{ sprite }],
+  };
+  paint(scene, painted, 0);
+  paint(scene, painted, 1);
+  assertEquals(drawnFrom.length, 2);
+  const shipCut = painted.cuts.get(ship);
+  for (const args of drawnFrom) {
+    assert(args[0] === shipCut.el, "the paint drew from the sheet");
+    assertEquals(args.slice(1, 5), [0, 0, 31, 38]);
+  }
 });

@@ -10809,15 +10809,56 @@
       blue[i + 3] = a;
     }
   }
+  // A sheet held as a canvas (game_asset, once a level's art is merged over it
+  // at load) is costly to draw from: every drawImage out of a canvas snapshots
+  // the whole of it, 35 ms a paint on a Pixel 9 for gs's 2048x2544 game_asset
+  // (as much from a CPU copy or an ImageBitmap of it), against 0.1 ms from a
+  // frame-sized canvas. gs stuttered every time something flew behind the
+  // disc. So the lens reads a canvas sheet's pixels once (createSpLens, while
+  // the scene is being built) and cuts each frame it meets into a canvas of
+  // its own the first time, on the CPU. Each GameScene builds a new lens, so
+  // art changed since is picked up at the next stage. A frame from an <img>
+  // sheet is drawn from the sheet, as before.
+  function spLensSheetPixels(lens, img) {
+    var sheets = lens.sheets || (lens.sheets = new Map());
+    var px = sheets.get(img);
+    if (px && px.width === img.width && px.height === img.height) return px;
+    var ctx = img.getContext("2d");
+    px = ctx ? ctx.getImageData(0, 0, img.width, img.height) : null;
+    sheets.set(img, px);
+    return px;
+  }
+  function spLensFrameSource(lens, f) {
+    var img = f && f.source && f.source.image;
+    if (!img) return null;
+    var whole = { el: img, x: f.cutX, y: f.cutY };
+    if (!lens || typeof HTMLCanvasElement === "undefined" || !(img instanceof HTMLCanvasElement)) return whole;
+    var px = spLensSheetPixels(lens, img);
+    if (!px) return whole;
+    var cuts = lens.cuts || (lens.cuts = new Map());
+    var cut = cuts.get(f);
+    if (cut && cut.px === px) return cut;
+    var el = document.createElement("canvas");
+    el.width = f.cutWidth;
+    el.height = f.cutHeight;
+    var ctx = el.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return whole;
+    ctx.putImageData(px, -f.cutX, -f.cutY, f.cutX, f.cutY, f.cutWidth, f.cutHeight);
+    cut = { el: el, x: 0, y: 0, px: px };
+    cuts.set(f, cut);
+    return cut;
+  }
   // One sprite as the renderer draws it, into a window whose top-left is
   // (ox, oy) on screen: trim offsets, origin, scale, flips, rotation, alpha
   // and a multiplied tint (an item's colour) — nothing in this game uses a
   // blend mode or a fill tint. Positions round to whole pixels as pixelArt
   // rounds them.
-  function spLensDrawSprite(ctx, s, ox, oy, scratch) {
+  function spLensDrawSprite(ctx, s, ox, oy, scratch, lens) {
     var f = s.frame;
-    var img = f && f.source && f.source.image;
-    if (!img || !f.cutWidth || !f.cutHeight) return;
+    if (!f || !f.cutWidth || !f.cutHeight) return;
+    var src = spLensFrameSource(lens, f);
+    if (!src) return;
+    var img = src.el;
     var dx = f.x - s.originX * f.realWidth;
     var dy = f.y - s.originY * f.realHeight;
     ctx.save();
@@ -10834,16 +10875,16 @@
       sc.globalCompositeOperation = "source-over";
       sc.clearRect(0, 0, scratch.el.width, scratch.el.height);
       sc.imageSmoothingEnabled = false;
-      sc.drawImage(img, f.cutX, f.cutY, f.cutWidth, f.cutHeight, 0, 0, f.cutWidth, f.cutHeight);
+      sc.drawImage(img, src.x, src.y, f.cutWidth, f.cutHeight, 0, 0, f.cutWidth, f.cutHeight);
       sc.globalCompositeOperation = "multiply";
       sc.fillStyle = "#" + ("000000" + (s.tintTopLeft & 16777215).toString(16)).slice(-6);
       sc.fillRect(0, 0, f.cutWidth, f.cutHeight);
       sc.globalCompositeOperation = "destination-in";
-      sc.drawImage(img, f.cutX, f.cutY, f.cutWidth, f.cutHeight, 0, 0, f.cutWidth, f.cutHeight);
+      sc.drawImage(img, src.x, src.y, f.cutWidth, f.cutHeight, 0, 0, f.cutWidth, f.cutHeight);
       sc.globalCompositeOperation = "source-over";
       ctx.drawImage(scratch.el, 0, 0, f.cutWidth, f.cutHeight, dx, dy, f.cutWidth, f.cutHeight);
     } else {
-      ctx.drawImage(img, f.cutX, f.cutY, f.cutWidth, f.cutHeight, dx, dy, f.cutWidth, f.cutHeight);
+      ctx.drawImage(img, src.x, src.y, f.cutWidth, f.cutHeight, dx, dy, f.cutWidth, f.cutHeight);
     }
     ctx.restore();
   }
@@ -10889,6 +10930,11 @@
         : scene.textures.createCanvas(SP_LENS_TEXTURE, L, L);
       lens.tex.getContext().clearRect(0, 0, L, L);
       lens.tex.refresh();
+      // The pixels of the sheet nearly everything behind the disc is cut
+      // from, read now, while the scene is being built, rather than the first
+      // time a sprite crosses the disc mid-fight (spLensFrameSource).
+      var sheet = scene.textures.exists("game_asset") && scene.textures.get("game_asset").getSourceImage();
+      if (sheet instanceof HTMLCanvasElement) spLensSheetPixels(lens, sheet);
       spLensFollowButton(scene, lens);
       lens.image = scene.add.image(lens.ox, lens.oy, SP_LENS_TEXTURE);
       lens.image.setOrigin(0, 0);
@@ -10998,7 +11044,7 @@
       var reach = R + Math.max(s.displayWidth, s.displayHeight) / 2;
       var dx = s.x - lens.cx, dy = s.y - lens.cy;
       if (dx * dx + dy * dy > reach * reach) return;    // cheap cull
-      spLensDrawSprite(sc, s, ox, oy, lens.scratch);
+      spLensDrawSprite(sc, s, ox, oy, lens.scratch, lens);
       any = true;
     };
     var lists = [scene.enemies, scene.items, scene.enemyBullets, scene.playerBullets];
