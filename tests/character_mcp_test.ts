@@ -225,6 +225,29 @@ Deno.test("referencedFrames walks every slot the runtime reads", () => {
     ["x.png"],
   );
   assertEquals(referencedFrames({ stageBgEnd: { alpha: 0.45 } }), []);
+
+  // A boss's own danger balloon is art it needs too, in either spelling, so a
+  // clone or a placement carries it.
+  assertEquals(
+    referencedFrames({ dangerBalloon: { frames: ["b0", "b1"], x: 50, y: 20 } }),
+    ["b0", "b1"],
+  );
+  assertEquals(referencedFrames({ dangerBalloon: ["b0"] }), ["b0"]);
+  assertEquals(referencedFrames({ dangerBalloon: { x: 5 } }), []);
+
+  // So is a second stage's: its stances, its weapons, its balloon.
+  assertEquals(
+    referencedFrames({
+      anim: { idle: ["i0"] },
+      stage2: {
+        anim: { idle: ["d9"], morph: ["d0", "d9"], _note: ["skip"] },
+        bulletDataA: { texture: ["head0"] },
+        dangerBalloon: ["b0"],
+        hpBelow: 0.5,
+      },
+    }).sort(),
+    ["b0", "d0", "d9", "head0", "i0"],
+  );
 });
 
 Deno.test("a key that could walk the URL is refused", () => {
@@ -331,6 +354,34 @@ Deno.test("remapFrames rewrites every slot referencedFrames collects", () => {
     })
       .stageBgEnd,
     "a.png",
+  );
+  // So is the danger balloon, keeping its placement.
+  assertEquals(
+    (remapFrames({ dangerBalloon: { frames: ["a.gif"], x: 50, y: 20 } }, {
+      "a.gif": "a.png",
+    }) as { dangerBalloon: unknown }).dangerBalloon,
+    { frames: ["a.png"], x: 50, y: 20 },
+  );
+  assertEquals(
+    (remapFrames({ dangerBalloon: ["a.gif"] }, { "a.gif": "a.png" }) as {
+      dangerBalloon: unknown;
+    }).dangerBalloon,
+    ["a.png"],
+  );
+  // And a second stage, which keeps everything that is not art.
+  assertEquals(
+    (remapFrames({
+      stage2: {
+        anim: { idle: ["a.gif"] },
+        bulletDataB: { texture: ["a.gif"], speed: 1.5 },
+        hpBelow: 0.5,
+      },
+    }, { "a.gif": "a.png" }) as { stage2: unknown }).stage2,
+    {
+      anim: { idle: ["a.png"] },
+      bulletDataB: { texture: ["a.png"], speed: 1.5 },
+      hpBelow: 0.5,
+    },
   );
   // Nothing to rename is a faithful copy.
   assertEquals(remapFrames(record, {}), record);

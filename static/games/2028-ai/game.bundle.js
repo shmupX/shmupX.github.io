@@ -13681,6 +13681,7 @@
     scene.bossIntervalCnt = 0;
     scene.bossIntervalCounter = 0;
     scene.bossName = bossData.name || "boss";
+    scene.bossRecord = bossData;
     scene.bossProjCnt = 0;
     bossWeaponSlots(scene, bossData);
     scene.bossStage2 = bossStage2Record(bossData);
@@ -13915,6 +13916,7 @@
           scene.bossScore = gokiData.score || 8e3;
           scene.bossInterval = gokiData.interval || 200;
           scene.bossName = gokiData.name || "goki";
+          scene.bossRecord = gokiData;
           scene.bossProjDataA = gokiData.bulletDataA || null;
           scene.bossProjDataB = gokiData.bulletDataB || null;
           scene.bossProjDataC = null;
@@ -14162,6 +14164,38 @@
       scene.enemyBullets.push(bullet);
     }
   }
+  // A boss record's own danger balloon. `dangerBalloon` on a boss record
+  // swaps the skull that pops over a boss once one bomb would finish it for
+  // the author's art:
+  //
+  //   {frames: ["myBalloon0", ...], x: 70, y: 30}
+  //
+  // `frames` are frames of the merged game_asset atlas, flipped every 250 ms
+  // as the stock three are. `x`/`y` place the balloon's bottom-left corner
+  // (its tail, for a speech balloon) from the boss sprite's top-left, the
+  // measure BOSS_BALLOON_OFFSETS uses; left out, the slot's stock offset
+  // stands. A bare array is the frames alone. Frames the atlas lacks are
+  // dropped, and with none left the stock skull and its offset come back:
+  // the balloon is the one cue that a bomb will finish the boss, so it never
+  // goes missing, and an offset tuned for art that did not travel would put
+  // the skull in the wrong place.
+  var DANGER_BALLOON_FRAMES = ["boss_dengerous0.gif", "boss_dengerous1.gif", "boss_dengerous2.gif"];
+  function bossDangerBalloon(scene, bossData, stockOffset) {
+    var spec = bossData && bossData.dangerBalloon;
+    if (Array.isArray(spec)) spec = { frames: spec };
+    var own = spec && typeof spec === "object" && Array.isArray(spec.frames)
+      ? bulletFramesInAtlas(scene, spec.frames, [])
+      : [];
+    if (!own.length) return { frames: DANGER_BALLOON_FRAMES, offset: stockOffset };
+    var x = Number(spec.x), y = Number(spec.y);
+    return {
+      frames: own,
+      offset: {
+        x: spec.x != null && Number.isFinite(x) ? x : stockOffset.x,
+        y: spec.y != null && Number.isFinite(y) ? y : stockOffset.y
+      }
+    };
+  }
   function checkBossDanger(scene) {
     if (scene.bossDangerShown || !scene.bossSprite || !scene.bossSprite.active) return;
     var spDamage = scene.recipe.playerData.spDamage || 50;
@@ -14169,14 +14203,21 @@
       scene.bossDangerShown = true;
       triggerHaptic("warning");
       var stageId = scene.bossStageId || 0;
-      var offsets = scene.bossIsGoki ? GOKI_BALLOON_OFFSET : BOSS_BALLOON_OFFSETS[assetStageId(stageId)] || BOSS_BALLOON_OFFSETS[0];
+      var stockOffset = scene.bossIsGoki ? GOKI_BALLOON_OFFSET : BOSS_BALLOON_OFFSETS[assetStageId(stageId)] || BOSS_BALLOON_OFFSETS[0];
+      // Past its second stage a boss flies the stage2 record: its own with the
+      // block laid over, so it keeps the boss's balloon unless the block names
+      // one of its own.
+      var fighting = scene.bossStage2Done && scene.bossStage2 ? scene.bossStage2 : scene.bossRecord;
+      var balloon = bossDangerBalloon(scene, fighting, stockOffset);
+      var balloonFrames = balloon.frames;
+      var offsets = balloon.offset;
       var relX = offsets.x - scene.bossSprite.width / 2;
       var relY = offsets.y - scene.bossSprite.height / 2;
       var dangerBalloon = scene.add.sprite(
         scene.bossSprite.x + relX,
         scene.bossSprite.y + relY,
         "game_asset",
-        "boss_dengerous0.gif"
+        balloonFrames[0]
       );
       dangerBalloon.setOrigin(0, 1);
       dangerBalloon.setDepth(46);
@@ -14197,8 +14238,8 @@
         loop: true,
         callback: function() {
           if (!dangerBalloon || !dangerBalloon.active) return;
-          dangerFrame = (dangerFrame + 1) % 3;
-          dangerBalloon.setFrame("boss_dengerous" + dangerFrame + ".gif");
+          dangerFrame = (dangerFrame + 1) % balloonFrames.length;
+          dangerBalloon.setFrame(balloonFrames[dangerFrame]);
         }
       });
     }
@@ -14997,6 +15038,7 @@
       this.bossIntervalCnt = 0;
       this.bossIntervalCounter = 0;
       this.bossName = "";
+      this.bossRecord = null;
       this.bossStageId = stageId;
       this.bossProjCnt = 0;
       this.bossDangerShown = false;
