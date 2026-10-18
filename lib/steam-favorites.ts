@@ -45,6 +45,7 @@ import {
   type SteamOs,
   steamRoots,
 } from "./steam-library.ts";
+import { keepSteamInputOff } from "./steam-input.ts";
 import { parseBinaryVdf, type VdfMap, writeBinaryVdf } from "./steam-vdf.ts";
 
 /** The dashboard's starred rows: `[{ id, title, icon? }]`, id `<section>:<row key>`. */
@@ -778,7 +779,16 @@ export function scheduleFavoritesSync(
   pending = setTimeout(async () => {
     pending = null;
     try {
-      const report = await runFavoritesSync(await opts(), await values());
+      const run = await opts();
+      const report = await runFavoritesSync(run, await values());
+      // A new favorite is a new entry, and on macOS each one needs Steam
+      // Input off before the pad reaches it (lib/steam-input.ts).
+      if (report.ok && run.os === "darwin" && run.exe) {
+        await keepSteamInputOff(
+          { os: run.os, env: run.env, exes: [run.exe] },
+          console.log,
+        );
+      }
       if (report.added.length || report.removed.length) {
         console.log(
           `  Steam favorites: +${report.added.length} −${report.removed.length}` +

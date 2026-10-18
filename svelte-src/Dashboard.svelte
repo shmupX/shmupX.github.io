@@ -1319,7 +1319,12 @@
         (app && app.ok ? '  ·  installed, and updates from now on' : '') +
         (app && !app.ok ? '  ·  not installed, so it will not update' : '') +
         (data.steamRunning ? '  ·  RESTART STEAM to see it' : '') +
-        (data.installed.length > 1 ? '  ·  ' + data.installed.length + ' accounts' : '');
+        (data.installed.length > 1 ? '  ·  ' + data.installed.length + ' accounts' : '') +
+        // macOS only (lib/steam-input.ts): Steam Input keeps the pad from the
+        // launcher there, so the entry is switched off — at once with Steam
+        // closed, else when it next closes while this launcher is open.
+        (data.steamInput && data.steamInput.changed ? '  ·  Steam Input off, so the pad reaches shmupX' : '') +
+        (data.steamInput && data.steamInput.state === 'steam-open' ? '  ·  Steam Input goes off when you quit Steam with shmupX still open' : '');
       // The install failing is not the press failing — the shortcut is there —
       // but it is the reason updates stay off, so it does not pass silently.
       if (app && !app.ok && app.error) showToast('Added to Steam, but not installed: ' + app.error);
@@ -7902,11 +7907,18 @@
   // nothing — document.fullscreenElement is null even though there is nothing
   // to gain. Comparing the viewport against the screen catches that case too,
   // so R3 stays a no-op there instead of firing a doomed request every press.
+  //
+  // On a Mac with a camera notch a fullscreen window stops below it: the macOS
+  // launcher (lib/macos-fullscreen.ts) measures 1470x923 on a 1470x956 screen,
+  // which is exactly screen.availHeight. A window with a title bar never
+  // reaches availHeight, so matching it is fullscreen too.
   function isEffectivelyFullscreen() {
     if (document.fullscreenElement) return true;
     const sw = window.screen?.width;
     const sh = window.screen?.height;
-    return !!(sw && sh && window.innerWidth >= sw - 2 && window.innerHeight >= sh - 2);
+    const ah = window.screen?.availHeight || sh;
+    return !!(sw && sh && window.innerWidth >= sw - 2 &&
+      window.innerHeight >= Math.min(sh, ah) - 2);
   }
 
   // Chrome only grants fullscreen with transient user activation, and a gamepad
