@@ -9,6 +9,9 @@
 //   deno task build:linux "My Level"     → that one Firebase level, as an AppImage
 //   deno task build:android shmup-party-ps2 → an eShop web build, as an APK
 //   deno task shelf:list                 → every name the three above accept
+//   deno task build:steam [windows|linux|mac]
+//                                        → build/steam/<platform>-<arch>/, the
+//                                          Steam depot, plus build/steam/members/
 //
 // Two different products share these tasks, picked by whether a game name is
 // given:
@@ -60,6 +63,18 @@
 //   --no-appimage          Linux: stop at the plain app directory, unwrapped
 //   --no-bundle            macOS: stop at the plain app directory, no .app
 //
+// The Steam build (`steam` in place of the platform) is the launcher with what
+// is not ours to sell left out (lib/member-content.ts): those files go into
+// build/steam/members/shmupx-member-<id>.zip instead, which a member drops into
+// the launcher's members folder to have them back (lib/member-packs.ts). It
+// carries a flavor marker (lib/launcher-flavor.ts) that keeps its updater off
+// — Steam ships the updates — and never fetches member content from the
+// deploy. Windows is the single .exe, with no console window; Linux is the
+// plain app directory (AppRun at its root), since Steam runs a depot's files
+// in place; macOS is the .app. Alongside: a README naming the launch file for
+// each platform, and steamcmd build-script templates in build/steam/steamworks.
+//   --members-only         write the member packs and stop: no web build, no binary
+//
 // Flags (game builds):
 //   --sav <path>           build this Dezaemon 2 cart, whatever the name says
 //   --slot <n>             which game in a cart that holds more than one
@@ -89,7 +104,24 @@ import {
 } from "../lib/shelf.ts";
 import { unzip } from "../../../static/zip-read.js";
 import { harborRoot, repoRoot } from "../lib/repo-root.ts";
-import { excludedFromBinary } from "../../../lib/streamed-payloads.ts";
+import {
+  excludedFromBinary,
+  keptRomsets,
+  LEFT_OUT,
+} from "../../../lib/streamed-payloads.ts";
+import {
+  memberPacks,
+  packFileName,
+  packFor,
+  REVIEW,
+} from "../../../lib/member-content.ts";
+import {
+  minimalExcludes,
+  treeUrls,
+  writeMemberPacks,
+  type WrittenPack,
+} from "../../../lib/member-build.ts";
+import { FLAVOR_FILE, flavorFileText } from "../../../lib/launcher-flavor.ts";
 
 const ROOT = repoRoot();
 
@@ -103,6 +135,7 @@ const MOBILE = new Set<Platform>(["android", "ios"]);
 // straight through to tools/build-level.
 const OWN_FLAGS = new Set([
   "--arch",
+  "--members-only",
   "--skip-build",
   "--no-export-tools",
   "--no-terminal",
@@ -139,6 +172,10 @@ const PASSTHROUGH_VALUE_FLAGS = new Set([
 
 interface Options {
   platform: Platform;
+  /** `steam` in place of the platform: the Steam build (see the header). */
+  steam: boolean;
+  /** --members-only: the Steam build's member packs and nothing else. */
+  membersOnly: boolean;
   arch: Arch;
   outDir: string;
   level: string | null;
@@ -175,6 +212,15 @@ function fail(message: string): never {
 }
 
 function parseArgs(argv: string[]): Options {
+  // `steam [platform]`: the same launcher, packaged for the store. The
+  // platform is optional and defaults to this host, like `desktop`.
+  const steam = (argv[0] ?? "").toLowerCase() === "steam";
+  if (steam) {
+    const next = (argv[1] ?? "").toLowerCase();
+    argv = /^(windows|linux|mac|macos|darwin)$/.test(next)
+      ? argv.slice(1)
+      : ["desktop", ...argv.slice(1)];
+  }
   const first = (argv[0] ?? "").toLowerCase();
   const named: Record<string, Platform> = {
     windows: "windows",
@@ -194,6 +240,8 @@ function parseArgs(argv: string[]): Options {
   const platform = first === "desktop" ? hostPlatform() : named[first];
   const opts: Options = {
     platform,
+    steam,
+    membersOnly: false,
     // Windows on ARM runs x64 binaries under emulation but not the reverse, so
     // a Windows build defaults to x86_64 whatever the host is. Linux and macOS
     // builds default to this host's arch, so `deno task build:linux` /
@@ -205,7 +253,7 @@ function parseArgs(argv: string[]): Options {
       : platform === "windows"
       ? "x86_64"
       : hostArch(),
-    outDir: join(ROOT, "build", "desktop"),
+    outDir: join(ROOT, "build", steam ? "steam" : "desktop"),
     level: null,
     skipBuild: false,
     exportTools: true,
@@ -268,6 +316,7 @@ function parseArgs(argv: string[]): Options {
     else if (arg === "--no-terminal") opts.noTerminal = true;
     else if (arg === "--no-appimage") opts.appImage = false;
     else if (arg === "--no-bundle") opts.appBundle = false;
+    else if (arg === "--members-only") opts.membersOnly = true;
     else if (arg.startsWith("--")) {
       if (OWN_FLAGS.has(arg.split("=")[0])) continue;
       opts.passthrough.push(arg);
@@ -284,6 +333,20 @@ function parseArgs(argv: string[]): Options {
   if (opts.sav && opts.level && !opts.name) {
     opts.name = opts.level;
     opts.level = null;
+  }
+
+  if (opts.steam) {
+    if (MOBILE.has(opts.platform)) {
+      fail("the Steam build is a desktop launcher: windows, linux or mac");
+    }
+    if (opts.level || opts.sav) {
+      fail("the Steam build is the launcher itself and takes no game name");
+    }
+    // Steam runs a depot's files where they lie, and an AppImage that mounts
+    // itself under Steam's runtime container is one more thing to go wrong.
+    opts.appImage = false;
+    // A console window behind a store game is a bug report waiting to happen.
+    opts.noTerminal = true;
   }
 
   // android and ios have no launcher product to fall back on: tools/build-level
@@ -444,15 +507,51 @@ async function embedArgs(opts: Options): Promise<string[]> {
   const eshop = JSON.parse(
     await Deno.readTextFile(join(ROOT, "data", "eshop.json")),
   );
-  const leftOut = excludedFromBinary(eshop);
-  const excludes = leftOut.map((p) => "_fresh/client" + p);
-  if (opts.exportTools) {
-    // The export tools' own copy of the game, included whole below.
+  const excludes: string[] = [];
+  if (opts.steam) {
+    // The Steam build leaves out every member file instead (lib/member-
+    // content.ts), as few --exclude flags as cover them: folders wherever a
+    // whole folder is member content. The export tools' copy of 2028-ai is
+    // the second place its member files would otherwise ride along.
+    const packs = memberPacks(keptRomsets(eshop));
+    const client = join(ROOT, "_fresh", "client");
+    const clientUrls = await treeUrls(client);
+    const member = new Set(clientUrls.filter((u) => packFor(u, packs)));
     excludes.push(
-      ...leftOut.filter((p) => p.startsWith("/games/2028-ai/")).map((p) =>
-        "static" + p
-      ),
+      ...minimalExcludes(clientUrls, member).map((u) => "_fresh/client" + u),
+      ...LEFT_OUT.map((u) => "_fresh/client" + u),
     );
+    if (opts.exportTools) {
+      const game = "/games/2028-ai";
+      const gameUrls =
+        (await treeUrls(join(ROOT, "static", ...game.slice(1).split("/"))))
+          .map((u) => game + u);
+      const gameMember = new Set(gameUrls.filter((u) => packFor(u, packs)));
+      excludes.push(
+        ...minimalExcludes(gameUrls, gameMember).map((u) => "static" + u),
+      );
+    }
+    console.log(
+      `  Steam build: ${member.size} member file(s) left out ` +
+        `(${excludes.length} exclude(s)).`,
+    );
+    // The marker that makes this binary the Steam build (lib/launcher-
+    // flavor.ts), written fresh each time so its date is this build's.
+    const flavor = join(ROOT, ...FLAVOR_FILE.split("/"));
+    await ensureDir(dirname(flavor));
+    await Deno.writeTextFile(flavor, flavorFileText(new Date()));
+    args.push("--include", "./" + FLAVOR_FILE);
+  } else {
+    const leftOut = excludedFromBinary(eshop);
+    excludes.push(...leftOut.map((p) => "_fresh/client" + p));
+    if (opts.exportTools) {
+      // The export tools' own copy of the game, included whole below.
+      excludes.push(
+        ...leftOut.filter((p) => p.startsWith("/games/2028-ai/")).map((p) =>
+          "static" + p
+        ),
+      );
+    }
   }
   for (const rel of excludes) {
     if (await exists(join(ROOT, rel))) args.push("--exclude", "./" + rel);
@@ -670,10 +769,16 @@ async function buildDesktopApp(opts: Options): Promise<string> {
     opts.platform === "mac" ? "shmupX" : `shmupX${wrap}`,
   );
   const built = join(buildDir, `shmupX${wrap}`);
-  const artifact = join(
-    opts.outDir,
-    `shmupX-${opts.platform === "mac" ? "mac" : "linux"}-${opts.arch}${wrap}`,
-  );
+  // The Steam build lays each platform out as the depot it uploads as: the
+  // app directory itself for Linux, the .app in a folder of its own for macOS.
+  const artifact = opts.steam
+    ? opts.platform === "mac"
+      ? join(opts.outDir, `mac-${opts.arch}`, "shmupX.app")
+      : join(opts.outDir, `linux-${opts.arch}`)
+    : join(
+      opts.outDir,
+      `shmupX-${opts.platform === "mac" ? "mac" : "linux"}-${opts.arch}${wrap}`,
+    );
 
   const args = [
     "desktop",
@@ -698,6 +803,7 @@ async function buildDesktopApp(opts: Options): Promise<string> {
   // rebuilt from scratch each run, so an artifact left over from a previous
   // build of the same target has to go first or the rename fails.
   await Deno.remove(artifact, { recursive: true }).catch(() => {});
+  await ensureDir(dirname(artifact));
   await moveInto(built, artifact);
   if (stageDir !== null) {
     await Deno.remove(stageDir, { recursive: true }).catch(() => {});
@@ -708,7 +814,9 @@ async function buildDesktopApp(opts: Options): Promise<string> {
 /** Windows: `deno compile`, which keeps the single-file .exe. */
 async function compileLauncher(opts: Options): Promise<string> {
   const target = targetTriple(opts);
-  const output = join(opts.outDir, `shmupX-windows-${opts.arch}.exe`);
+  const output = opts.steam
+    ? join(opts.outDir, `windows-${opts.arch}`, "shmupX.exe")
+    : join(opts.outDir, `shmupX-windows-${opts.arch}.exe`);
 
   const args = [
     "compile",
@@ -730,6 +838,185 @@ async function compileLauncher(opts: Options): Promise<string> {
   await ensureDir(dirname(output));
   await run(Deno.execPath(), args);
   return output;
+}
+
+// ------------------------------------------------------------------- steam
+
+/** What Steam launches in each platform's depot (Steamworks → Installation → General). */
+const STEAM_LAUNCH: Record<string, string> = {
+  windows: "shmupX.exe",
+  linux: "AppRun",
+  mac: "shmupX.app",
+};
+
+/**
+ * The member packs: every file the Steam binary left out, by pack, as zips in
+ * build/steam/members/. Read from _fresh/client — exactly what the binary
+ * would otherwise have embedded — or, for --members-only, from static/, which
+ * that is a copy of.
+ */
+async function writeSteamPacks(opts: Options): Promise<WrittenPack[]> {
+  const eshop = JSON.parse(
+    await Deno.readTextFile(join(ROOT, "data", "eshop.json")),
+  );
+  const client = join(ROOT, "_fresh", "client");
+  const root = !opts.membersOnly && await exists(client)
+    ? client
+    : join(ROOT, "static");
+  console.log(`\nMember packs, from ${root}:`);
+  const written = await writeMemberPacks({
+    root,
+    outDir: join(opts.outDir, "members"),
+    packs: memberPacks(keptRomsets(eshop)),
+    built: new Date(),
+    log: (line) => console.log(line),
+  });
+  if (!written.length) {
+    console.log("  (none: this checkout holds no member content)");
+  }
+  return written;
+}
+
+/** The depot folders a Steam build directory holds: windows-x86_64, linux-x86_64, mac-aarch64… */
+async function steamDepots(outDir: string): Promise<string[]> {
+  const found: string[] = [];
+  try {
+    for await (const e of Deno.readDir(outDir)) {
+      if (
+        e.isDirectory && /^(windows|linux|mac)-(x86_64|aarch64)$/.test(e.name)
+      ) {
+        found.push(e.name);
+      }
+    }
+  } catch { /* nothing built yet */ }
+  return found.sort();
+}
+
+/**
+ * build/steam/README.txt, and steamcmd scripts with the ids left to fill in:
+ * app_build.vdf names one depot per platform folder this directory holds, and
+ * each depot_build_<folder>.vdf maps that folder's files to the depot root.
+ */
+async function writeSteamNotes(
+  opts: Options,
+  written: WrittenPack[],
+): Promise<void> {
+  const depots = await steamDepots(opts.outDir);
+  const built = new Date().toISOString();
+  const works = join(opts.outDir, "steamworks");
+  await ensureDir(works);
+  const idOf = (depot: string) =>
+    `<${depot.toUpperCase().replace(/-/g, "_")}_DEPOT_ID>`;
+  for (const depot of depots) {
+    await Deno.writeTextFile(
+      join(works, `depot_build_${depot}.vdf`),
+      `"DepotBuild"\n{\n` +
+        `\t"DepotID"\t"${idOf(depot)}"\n` +
+        `\t"ContentRoot"\t"../${depot}/"\n` +
+        `\t"FileMapping"\n\t{\n` +
+        `\t\t"LocalPath"\t"*"\n\t\t"DepotPath"\t"."\n\t\t"Recursive"\t"1"\n` +
+        `\t}\n}\n`,
+    );
+  }
+  await Deno.writeTextFile(
+    join(works, "app_build.vdf"),
+    `// steamcmd +login <account> +run_app_build "<this file>" +quit\n` +
+      `// Fill in the ids from the Steamworks partner site first.\n` +
+      `"AppBuild"\n{\n` +
+      `\t"AppID"\t"<APP_ID>"\n` +
+      `\t"Desc"\t"shmupX ${built}"\n` +
+      `\t"BuildOutput"\t"output/"\n` +
+      `\t"Depots"\n\t{\n` +
+      depots.map((d) => `\t\t"${idOf(d)}"\t"depot_build_${d}.vdf"\n`)
+        .join("") +
+      `\t}\n}\n`,
+  );
+
+  const pad = (text: string, width: number) => text.padEnd(width);
+  const lines = [
+    "shmupX — the Steam build",
+    `Built ${built} by \`deno task build:steam\`.`,
+    "",
+    "WHAT IS HERE",
+    ...depots.map((d) =>
+      `  ${pad(d + "/", 18)}a depot: upload its contents. Launch: ${
+        STEAM_LAUNCH[d.split("-")[0]]
+      }`
+    ),
+    `  ${pad("members/", 18)}member packs. NOT part of any depot — see below.`,
+    `  ${
+      pad("steamworks/", 18)
+    }steamcmd build scripts; fill in the app and depot ids.`,
+    "",
+    "  Upload the Linux and macOS depots from a Linux or macOS machine, so",
+    "  their files keep the executable bit.",
+    "",
+    "  This build never updates itself (Steam ships the updates) and never",
+    "  downloads member content: those files come from member packs only.",
+    "",
+    "MEMBER PACKS",
+    "  What this build leaves out because it is not ours to sell, one zip per",
+    "  pack:",
+    ...(written.length
+      ? written.map((w) =>
+        `    ${
+          pad(
+            packFileName(w.id),
+            Math.max(...written.map((x) => packFileName(x.id).length)) + 2,
+          )
+        }${w.title}`
+      )
+      : ["    (none were written: this checkout held no member content)"]),
+    "",
+    "  To put one back, any of:",
+    "    * the launcher's Settings → MEMBER FILES, and pick the zip;",
+    "    * drop the zip (or the folder it unzips to) into a members folder:",
+    "        Windows  %LOCALAPPDATA%\\shmupX\\members",
+    "        Linux    ~/.local/share/shmupX/members",
+    "        macOS    ~/Library/Application Support/shmupX/members",
+    "      or a folder called members beside the game's own files",
+    "      (Steam → Manage → Browse local files);",
+    "    * start it with --members <folder>, or set SHMUPX_MEMBERS.",
+    "  The next request for one of its files finds it; no restart.",
+    "  A source checkout takes them back with",
+    "  `deno task members:restore build/steam/members/*.zip`.",
+    "",
+    "FAVORITES IN STEAM",
+    "  A game or shelf game starred in the launcher becomes its own entry in",
+    '  Steam (tagged "shmupX favorites"), which starts the launcher straight',
+    "  into that game and quits it with the game. Restart Steam to see new ones.",
+    "",
+    "STILL TO REVIEW before a store page goes up",
+    ...REVIEW.map((r) => `  - ${r}`),
+    "",
+  ];
+  await Deno.writeTextFile(join(opts.outDir, "README.txt"), lines.join("\n"));
+}
+
+/** `deno task build:steam`: the depot for one platform, the member packs, and the notes. */
+async function buildSteam(opts: Options): Promise<void> {
+  await ensureDir(opts.outDir);
+  if (!opts.membersOnly) {
+    console.log(
+      `Packaging the shmupX launcher for Steam, ${opts.platform}/${opts.arch}.`,
+    );
+    await buildWeb(opts.skipBuild);
+    const artifact = opts.platform === "windows"
+      ? await compileLauncher(opts)
+      : await buildDesktopApp(opts);
+    const depot = opts.platform === "linux" ? artifact : dirname(artifact);
+    const size = await artifactSize(depot) / 1024 / 1024;
+    console.log(
+      `\nDepot: ${depot} (${size.toFixed(1)} MB). Launch: ${
+        STEAM_LAUNCH[opts.platform]
+      }`,
+    );
+  }
+  const written = await writeSteamPacks(opts);
+  await writeSteamNotes(opts, written);
+  console.log(`\nNotes: ${join(opts.outDir, "README.txt")}`);
+  console.log("\nStill to review before a store page goes up:");
+  for (const line of REVIEW) console.log(`  - ${line}`);
 }
 
 // ------------------------------------------------------------ level builds
@@ -983,6 +1270,8 @@ const opts = parseArgs(Deno.args);
 try {
   if (opts.list) {
     await printShelf(opts);
+  } else if (opts.steam) {
+    await buildSteam(opts);
   } else if (opts.level || opts.sav) {
     await buildLevel(opts);
   } else {

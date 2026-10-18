@@ -5,6 +5,7 @@ import {
   localWriteGuard,
 } from "../../lib/local-guards.ts";
 import { currentLauncherBinary } from "../../lib/launcher-binary.ts";
+import { launcherFlavor } from "../../lib/launcher-flavor.ts";
 import {
   installLauncher,
   type InstallPlan,
@@ -66,7 +67,11 @@ function env(): Record<string, string> {
 async function survey() {
   const os = launcherOs();
   const environment = env();
-  const binary = currentLauncherBinary();
+  // The Steam build was installed BY Steam: adding it again as a non-Steam
+  // game would only put a second copy of it in the library. Its favorites
+  // still get entries of their own (lib/steam-favorites.ts).
+  const steamCopy = launcherFlavor(environment) === "steam";
+  const binary = steamCopy ? null : currentLauncherBinary();
   const roots = await steamRoots(os, environment);
   const install: InstallPlan = installPlan({ os, env: environment, binary });
   return {
@@ -82,6 +87,8 @@ async function survey() {
     // game. Saying which build task produces one is more use than "unavailable".
     reason: binary
       ? roots.length ? null : "Steam is not installed on this machine"
+      : steamCopy
+      ? "this copy came from Steam, so it is in your library already"
       : "this is a source checkout — run `deno task build:desktop` and add the " +
         "app it produces",
   };

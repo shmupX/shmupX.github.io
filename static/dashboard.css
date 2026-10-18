@@ -466,6 +466,24 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   .live-chip.open { animation: none; }
 }
 
+/*
+   A row's star (Dashboard.svelte toggleRowFav, static/steam-favorites.js).
+   Filled on a favorite — which, on a local install, is a game of its own in
+   Steam — and hollow on the highlighted row, where F, L3 or a click stars it.
+   Same footprint as the live chip beside it: one line, never resizing the
+   row's title. Dark on the selected row's yellow, yellow on the dark ones.
+*/
+.row-fav {
+  flex-shrink: 0; margin-left: 1vmin; padding: 0 0.6vmin;
+  font: inherit; font-size: 0.95em; line-height: 1.4;
+  color: rgba(255, 255, 255, 0.55); background: none;
+  border: 0; cursor: pointer;
+}
+.row-fav.on { color: #F6FF4A; }
+.game-row.sel .row-fav { color: rgba(6, 23, 43, 0.6); }
+.game-row.sel .row-fav.on { color: #06172b; }
+.row-fav:hover { color: #F6FF4A; }
+
 .shelf-badge {
   display: flex; align-items: center; gap: 1vmin; flex-shrink: 0;
   /* .game-bar is pointer-inert (the row is the click target) — the badge

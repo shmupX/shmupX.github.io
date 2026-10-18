@@ -15,13 +15,21 @@ import { dirname } from "@std/path";
 
 /**
  * What survives a restart: the installed emulator cores (svelte-src/
- * Dashboard.svelte EMU_KEY, static/ps2-library.js) and the arcade shelf
- * (static/eshop-library.js ARCADE_SHELF_KEY).
+ * Dashboard.svelte EMU_KEY, static/ps2-library.js), the arcade shelf
+ * (static/eshop-library.js ARCADE_SHELF_KEY), and the favorites — the
+ * dashboard's starred rows and the shelf's starred games — which are also
+ * what lib/steam-favorites.ts turns into Steam entries, so main.ts passes a
+ * change to either on to it.
  */
 export const KEPT_KEYS: readonly string[] = [
   "shmupx-emulators",
   "shmupx-arcade-shelf",
+  "cmg-game-favs",
+  "cmg-deza-favs",
 ];
+
+/** The file the kept values live in, under the launcher's data directory. */
+export const KEPT_FILE_NAME = "kept-storage.json";
 
 /** Where a page sends a change. */
 export const KEPT_STORAGE_URL = "/api/kept-storage";

@@ -185,14 +185,29 @@ export async function keepArcadeBoard(
   romPath: string,
   opts: { root: string; fetchImpl?: typeof fetch },
 ): Promise<void> {
+  const source = sourceFor(romPath);
+  const board = source
+    ? await ensureStored(romPath, { ...opts, source })
+    : null;
+  if (!board?.ok) return;
+  await keepArcadePlayer(romPath, opts);
+}
+
+/**
+ * Everything but the romset: what keepArcadeBoard keeps once the board is
+ * held. The Steam build calls it directly, since its romsets come from a
+ * member pack (lib/member-packs.ts) and the player and core do not.
+ */
+export async function keepArcadePlayer(
+  romPath: string,
+  opts: { root: string; fetchImpl?: typeof fetch },
+): Promise<void> {
   const keep = (path: string) => {
     const source = sourceFor(path);
     return source
       ? ensureStored(path, { ...opts, source })
       : Promise.resolve(null);
   };
-  const board = await keep(romPath);
-  if (!board?.ok) return;
   const rom = decodeURIComponent(romPath.slice(romPath.lastIndexOf("/") + 1))
     .replace(/\.zip$/, "");
   const recipeAt = await keep(`${ENGINE_DIR}${encodeURIComponent(rom)}.json`);
@@ -205,6 +220,13 @@ export async function keepArcadeBoard(
     }
   }
   await Promise.all(arcadeFiles(rom, recipe).map(keep));
+}
+
+/** The engine recipe an arcade romset's board is played by: kept once the board's player is. */
+export function arcadeRecipePath(romPath: string): string {
+  const rom = decodeURIComponent(romPath.slice(romPath.lastIndexOf("/") + 1))
+    .replace(/\.zip$/, "");
+  return `${ENGINE_DIR}${encodeURIComponent(rom)}.json`;
 }
 
 /** True for a kept folder's track manifest (custom-bgm/manifest.json). */
