@@ -42,6 +42,8 @@ import {
 import { currentLauncherBinary } from "./lib/launcher-binary.ts";
 import { FLAVOR_FILE, readFlavorFile } from "./lib/launcher-flavor.ts";
 import { readKept } from "./lib/kept-storage.ts";
+import { enterNativeFullscreen } from "./lib/macos-fullscreen.ts";
+import { keepSteamInputOff } from "./lib/steam-input.ts";
 import { startAutoUpdate } from "./lib/self-update.ts";
 import { restoreDisplays, restoreDisplaysSync } from "./lib/second-screen.ts";
 import {
@@ -339,10 +341,34 @@ const httpServer = Deno.serve({
     // process' lifetime; borrowing a browser on top of it would put the
     // launcher up twice.
     if (open && !UNDER_DENO_DESKTOP) openWindow(url);
+    // That window opens as an ordinary one, and on macOS nothing but the
+    // window itself can make it fullscreen — the page's request needs a click
+    // a pad player launching from Big Picture never makes. --windowed keeps it
+    // a window, as it does the borrowed browsers.
+    if (UNDER_DENO_DESKTOP && OS === "darwin" && !windowed) {
+      enterNativeFullscreen({ log: console.log });
+    }
     startBuildServer();
     // Favorites that changed while this launcher was not running — starred
     // on another copy's shelf, or entries Steam dropped — are put back now.
-    if (STANDALONE) syncFavorites(url);
+    // Then, on macOS, Steam Input goes off for every shmupX entry that has no
+    // setting of the player's own: Steam has no virtual pad to hand the
+    // launcher there, and holds on to the real one (lib/steam-input.ts). Only
+    // possible while Steam is closed, so it waits for that if it has to.
+    if (STANDALONE) {
+      syncFavorites(url).then(() => {
+        if (OS !== "darwin") return;
+        let execPath = "";
+        try {
+          execPath = Deno.execPath();
+        } catch { /* matched on the entries' tags instead */ }
+        return keepSteamInputOff({
+          os: OS,
+          env: Deno.env.toObject(),
+          exes: [launcherFile?.path ?? "", execPath],
+        }, console.log);
+      }).catch((err) => console.warn(`  Steam Input: ${err.message}`));
+    }
   },
 }, (req, info) => server.fetch(req, info));
 

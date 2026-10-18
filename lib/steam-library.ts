@@ -131,6 +131,21 @@ export async function steamIsRunning(
   os: SteamOs,
   env: Record<string, string>,
 ): Promise<boolean> {
+  if (os === "darwin") {
+    // The client's process is steam_osx, and pgrep is on every Mac. Whether
+    // it is up decides more there than the advice: lib/steam-input.ts may only
+    // write Steam's localconfig.vdf while it is not.
+    try {
+      const { code } = await new Deno.Command("pgrep", {
+        args: ["-x", "steam_osx"],
+        stdout: "null",
+        stderr: "null",
+      }).output();
+      return code === 0;
+    } catch {
+      return false;
+    }
+  }
   if (os !== "linux") return false; // nothing reliable to read without a process list
   const home = env.HOME ?? "";
   if (!home) return false;

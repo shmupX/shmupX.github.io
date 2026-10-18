@@ -2764,11 +2764,16 @@ Two routes, because they are good at different things:
   cross-build from anywhere Deno runs — including from Windows. `deno desktop`
   picks the port itself, so `--port` / `SHMUPX_PORT` are no-ops there. Its
   window is a plain one — `Deno.BrowserWindow` has no fullscreen or kiosk
-  option — so the dashboard asks for fullscreen itself as soon as it is up
-  (`requestLauncherFullscreen` in `svelte-src/Dashboard.svelte`, keyed on
-  `/api/desktop-window` saying the process owns a window). A request with no
-  gesture behind it is refused, so the first input — a key, a click, or any
-  pad button — cashes it in; R3 and the OSD's Fullscreen row still work.
+  option. On macOS `desktop.ts` makes it fullscreen anyway, natively and at
+  once, by sending the window `toggleFullScreen:` through the Objective-C
+  runtime (`lib/macos-fullscreen.ts`); `--windowed` / `SHMUPX_WINDOWED=1`
+  keeps the window. Launched from Big Picture there is no click to wait for,
+  and a pad press is not a gesture Chromium accepts. Elsewhere the dashboard
+  asks for fullscreen itself as soon as it is up (`requestLauncherFullscreen`
+  in `svelte-src/Dashboard.svelte`, keyed on `/api/desktop-window` saying the
+  process owns a window). A request with no gesture behind it is refused, so
+  the first input — a key, a click, or any pad button — cashes it in; R3 and
+  the OSD's Fullscreen row still work.
 
 CEF rather than the default OS webview because this is a controller-driven
 Phaser game and the native webviews do not agree about the Gamepad API:
@@ -3075,6 +3080,21 @@ is never replaced. A favorite runs a file its arguments can reach: the
 installed copy of an AppImage, the Steam depot's `AppRun`, and on macOS the
 binary inside the bundle. As with ADD TO STEAM, **restart Steam** to see new
 entries.
+
+**On macOS, Steam Input is switched off for shmupX's entries.** Steam Input
+hands a game the pad by hiding it behind a virtual one, and macOS has no
+virtual gamepad to hide it behind: Steam keeps the real pad open, applies a
+template that sends the launcher nothing, and from Big Picture every press
+lands in Steam instead. `lib/steam-input.ts` writes the same per-game choice
+Steam's own Controller settings do — `UseSteamControllerConfig "0"` under the
+entry's appid in each account's `localconfig.vdf` — for the launcher's entry
+and every favorite's, and leaves alone any entry the player already chose a
+setting for. Steam rewrites that file from memory while it runs, so the edit is
+made only while Steam is closed: at once if it is, otherwise the moment it quits
+while the launcher is still open (the restart ADD TO STEAM asks for anyway).
+The edit is an insertion before a closing brace and nothing else; a file it
+cannot read is reported and left untouched. On Windows and Linux, where the
+virtual pad is what makes a controller work at all, none of this runs.
 
 ### Keeping it current
 
@@ -4070,7 +4090,7 @@ The default mapping, by standard-mapping slot:
 | 0–3    | face bottom/right/left/top | Space / C / C / Space                                   |
 | 4–7    | LB / RB / LT / RT          | Q / E / R / T                                           |
 | 8, 9   | Select, Start              | Backspace, Enter (Start also taps the game to start it) |
-| 10, 11 | L3, R3                     | F, G (R3 enters fullscreen; the desktop app also goes fullscreen on the first button press) |
+| 10, 11 | L3, R3                     | F, G (R3 enters fullscreen; the macOS app starts fullscreen, and the Linux one goes fullscreen on the first button press) |
 | 16     | Home / Guide               | H                                                       |
 | 17, 18 | Capture, Stadia Assistant  | F9, H                                                   |
 

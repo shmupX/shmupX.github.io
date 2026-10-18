@@ -17,6 +17,7 @@ import {
   type SteamOs,
   steamRoots,
 } from "../../lib/steam-library.ts";
+import { keepSteamInputOff } from "../../lib/steam-input.ts";
 
 // /api/steam — put this launcher in Steam's library as a non-Steam game.
 //
@@ -153,10 +154,24 @@ export const handler = define.handlers({
         launchOptions: "",
         tags: ["shmupX"],
       }, { os: state.os, env: env() });
+      // On macOS Steam Input has no virtual pad to give the launcher and keeps
+      // the real one to itself, so the entry is switched off — now if Steam is
+      // closed, else the moment it is (lib/steam-input.ts). Elsewhere it is
+      // what makes the pad work, and this does nothing.
+      let execPath = "";
+      try {
+        execPath = Deno.execPath();
+      } catch { /* matched on the entry's tags instead */ }
+      const steamInput = report.ok && state.os === "darwin"
+        ? await keepSteamInputOff(
+          { os: state.os, env: env(), exes: [exe, execPath] },
+          console.log,
+        )
+        : null;
       // `report.ok` is the last word on whether anything was written, so it
       // comes after the spread rather than before it.
       return Response.json(
-        { ...state, ...report, installedApp, ok: report.ok },
+        { ...state, ...report, installedApp, steamInput, ok: report.ok },
         {
           status: report.ok ? 200 : 500,
         },
