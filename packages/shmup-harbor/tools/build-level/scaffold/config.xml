@@ -27,7 +27,10 @@
     <!-- Pin appcompat to 1.6.1 to avoid AAPT2 resource parsing failures seen with 1.7.0 in CI -->
     <preference name="AndroidXAppCompatVersion" value="1.6.1" />
 
-    <!-- Immersive sticky mode is applied via hooks/after_prepare.js (patches MainActivity.kt) -->
+    <!-- Immersive mode is the Fullscreen preference above: CordovaActivity hides
+         both system bars and hides them again whenever the window regains
+         focus. The hook makes the iOS WebView inspectable and clears files
+         older builds left in the Android platform directory. -->
     <hook type="after_prepare" src="hooks/after_prepare.js" />
 
     <platform name="android">
@@ -100,8 +103,9 @@
     </platform>
 
     <!-- Plugins removed: cordova-plugin-statusbar and cordova-plugin-vibration
-         are incompatible with cordova-android 13+ (Kotlin-based MainActivity).
-         Status bar hiding is handled natively via hooks/after_prepare.js.
+         are incompatible with cordova-android 13+.
+         Status bar hiding is the Fullscreen preference (CordovaActivity's
+         immersive mode).
          Vibration is available via the Web Vibration API (navigator.vibrate). -->
 
     <!-- iOS-only haptic feedback: plugins/cordova-plugin-ios-haptics
