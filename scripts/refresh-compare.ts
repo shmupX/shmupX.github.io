@@ -224,6 +224,20 @@ async function machineOf(cdp: Cdp): Promise<Machine & { screen: Screen }> {
   return { ...(await hostMachine()), ...rest };
 }
 
+/** Whether ffmpeg runs from PATH: the recordings need it, nothing else does. */
+async function haveFfmpeg(): Promise<boolean> {
+  try {
+    const out = await new Deno.Command("ffmpeg", {
+      args: ["-version"],
+      stdout: "null",
+      stderr: "null",
+    }).output();
+    return out.success;
+  } catch {
+    return false;
+  }
+}
+
 /** A video encoder fed PNG frames on stdin. */
 function encoder(out: string, inputFps: number, outputFps: number) {
   const child = new Deno.Command("ffmpeg", {
@@ -782,6 +796,15 @@ async function main(): Promise<number> {
   const outDir = args.out ?? join(repoRoot(), "build", "refresh-compare");
   if (args.compare) return await compare(args._.map(String), outDir);
 
+  // Said before a minute of booting, not by a bare spawn error mid-run.
+  if (!args.live && args.video && !(await haveFfmpeg())) {
+    console.error(
+      "FAIL  the recordings need ffmpeg, and there is none on PATH. Install " +
+        "it (Windows: winget install Gyan.FFmpeg, then open a new terminal) " +
+        "or pass --no-video; --live needs no ffmpeg.",
+    );
+    return 1;
+  }
   const mode = args.mode === "max" ? "max" : "auto";
   const levelPath = args.level ??
     join(repoRoot(), "static/games/2028-ai/foo.json");

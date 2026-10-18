@@ -14,7 +14,7 @@
 // interest is captured with Page.startScreencast — timestamped frames of the
 // live canvas, the same clock as the Saturn's Start press.
 
-import { join } from "@std/path";
+import { basename, join } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { serveDir } from "@std/http/file-server";
 import { repoRoot } from "../../../lib/repo-root.ts";
@@ -396,27 +396,161 @@ function playwrightCandidates(): string[] {
  * are taken at their word: a caller who names a binary means that binary,
  * including one none of the searches below would ever have turned up.
  */
+function envOrNothing(name: string): string | undefined {
+  try {
+    return Deno.env.get(name);
+  } catch {
+    return undefined; // a name Deno will not look up ("=" in it, say)
+  }
+}
+
+/**
+ * A browser path as someone typed it into a variable or a flag, made into one
+ * a process can open. Windows is where these go wrong in ways the path itself
+ * hides: Explorer's "Copy as path" wraps it in quotes, which then become part
+ * of the value; and `setx` run from PowerShell, or a value typed into the
+ * Environment Variables dialog, can keep `%LOCALAPPDATA%` unexpanded.
+ */
+export function normalizeBrowserPath(
+  raw: string,
+  env: (name: string) => string | undefined = envOrNothing,
+): string {
+  let p = raw.trim();
+  if (p.length >= 2 && (p[0] === '"' || p[0] === "'") && p.at(-1) === p[0]) {
+    p = p.slice(1, -1).trim();
+  }
+  p = p.replace(/%([^%\\/]+)%/g, (whole, name: string) => env(name) ?? whole);
+  if (p === "~" || p.startsWith("~/")) {
+    const home = env("HOME");
+    if (home) p = home + p.slice(1);
+  }
+  return p;
+}
+
+/** The executables a browser folder is searched for, in this order. */
+const BROWSER_EXECUTABLES = [
+  "chrome.exe",
+  "msedge.exe",
+  "brave.exe",
+  "chrome",
+  "chromium",
+  "google-chrome",
+];
+
+/**
+ * The browser at `path`: the file itself, or — for a folder, the easy slip of
+ * naming Chrome's Application folder rather than chrome.exe — the browser in
+ * it, or a macOS .app bundle's executable. Null when there is none.
+ */
+export async function browserAt(path: string): Promise<string | null> {
+  try {
+    const st = await Deno.stat(path);
+    if (st.isFile) return path;
+    if (!st.isDirectory) return null;
+    const inside = path.endsWith(".app")
+      ? [join(path, "Contents", "MacOS", basename(path, ".app"))]
+      : BROWSER_EXECUTABLES.map((exe) => join(path, exe));
+    for (const c of inside) {
+      try {
+        if ((await Deno.stat(c)).isFile) return c;
+      } catch { /* next */ }
+    }
+  } catch { /* not there */ }
+  return null;
+}
+
+/** The value of one `reg query` line: `    NAME    REG_SZ    value`. */
+export function parseRegQuery(text: string): string | null {
+  const m = text.match(/REG_(?:EXPAND_)?SZ[ \t]+(.*?)[ \t]*\r?$/m);
+  return m && m[1] ? m[1] : null;
+}
+
+async function regValue(key: string, name: string | null) {
+  try {
+    const out = await new Deno.Command("reg", {
+      args: ["query", key, ...(name ? ["/v", name] : ["/ve"])],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return out.success
+      ? parseRegQuery(new TextDecoder().decode(out.stdout))
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * CHROME_BIN as Windows saved it. `setx` and the Environment Variables dialog
+ * write the registry; only programs started afterwards are handed the new
+ * value, and a terminal tab or an editor's terminal that was already open (or
+ * opened from an app that was) keeps the old environment. The saved value is
+ * what was meant, so it is read from where it was saved.
+ */
+async function savedWindowsVariable(name: string): Promise<string | null> {
+  if (Deno.build.os !== "windows") return null;
+  for (
+    const key of [
+      "HKCU\\Environment",
+      "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+    ]
+  ) {
+    const v = await regValue(key, name);
+    if (v) return v;
+  }
+  return null;
+}
+
+/**
+ * Where Windows itself says Chrome, Edge and Brave are (App Paths, which
+ * every installer writes): an install anywhere but the default folders.
+ */
+async function windowsRegisteredBrowsers(): Promise<string[]> {
+  if (Deno.build.os !== "windows") return [];
+  const out: string[] = [];
+  for (const exe of ["chrome.exe", "msedge.exe", "brave.exe"]) {
+    for (const hive of ["HKCU", "HKLM"]) {
+      const v = await regValue(
+        `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exe}`,
+        null,
+      );
+      if (v) out.push(normalizeBrowserPath(v));
+    }
+  }
+  return out;
+}
+
 export async function findChrome(flag: string | null = null): Promise<string> {
   // A browser named OUTRIGHT is a instruction, not a suggestion: if --chrome or
   // $CHROME_BIN points at something that is not there, say so instead of
   // quietly searching on and running a different browser than the one asked
   // for. Falling through silently is how a typo'd $CHROME_BIN turns into an
   // afternoon of wondering why a fix "did nothing" in the browser under test.
-  for (
-    const [named, how] of [[flag, "--chrome"], [
-      Deno.env.get("CHROME_BIN"),
-      "$CHROME_BIN",
-    ]] as const
-  ) {
-    if (!named) continue;
-    try {
-      if ((await Deno.stat(named)).isFile) return named;
-    } catch { /* fall through to the throw below */ }
-    throw new WebError(`${how} points at ${named}, which is not a file`);
+  const env = Deno.env.get("CHROME_BIN");
+  const saved = env ? null : await savedWindowsVariable("CHROME_BIN");
+  const named: [string | null | undefined, string][] = [
+    [flag, "--chrome"],
+    [env, "$CHROME_BIN"],
+    [saved, "CHROME_BIN (saved in Windows; this terminal predates it)"],
+  ];
+  for (const [raw, how] of named) {
+    if (!raw) continue;
+    const path = normalizeBrowserPath(raw);
+    const found = await browserAt(path);
+    if (found) return found;
+    // The value is shown quoted, as JSON, so a stray quote or an unexpanded
+    // %VARIABLE% in it is visible rather than looking like the right path.
+    throw new WebError(
+      `${how} is ${JSON.stringify(raw)}` +
+        (path !== raw ? `, read as ${JSON.stringify(path)}` : "") +
+        `, and there is no browser there. Name the browser's executable ` +
+        `(chrome.exe, msedge.exe…) or the folder it is in.`,
+    );
   }
   const candidates = [
     ...CHROME_CANDIDATES,
     ...windowsCandidates(),
+    ...(await windowsRegisteredBrowsers()),
     ...playwrightCandidates(),
     ...LINUX_CANDIDATES,
     ...flatpakCandidates(),
@@ -430,10 +564,10 @@ export async function findChrome(flag: string | null = null): Promise<string> {
   // useful question is "where did you look", and on a container the answer is
   // usually one wrong revision directory away from working.
   throw new WebError(
-    "no Chrome found — set CHROME_BIN to a Chrome/Chromium executable, or " +
-      "install one where Playwright keeps them ($PLAYWRIGHT_BROWSERS_PATH, " +
-      "default ~/.cache/ms-playwright). Nothing is downloaded. Looked at: " +
-      candidates.join(", "),
+    "no Chrome found — set CHROME_BIN to a Chrome/Chromium executable (or " +
+      "pass --chrome), or install one where Playwright keeps them " +
+      "($PLAYWRIGHT_BROWSERS_PATH, default ~/.cache/ms-playwright). " +
+      "Nothing is downloaded. Looked at: " + candidates.join(", "),
   );
 }
 
