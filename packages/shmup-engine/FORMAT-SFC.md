@@ -530,12 +530,18 @@ factory sample's SOUND DATA and BGM PATCH (the ROM's songs), all embedded in
   sheet (slot 0 blank) and ENEMY ODR names them per the class layout.
 - **Waves**: each grid row is a 14-byte record on its line — the level's wave
   row, else lines 2, 6, 10 …; columns spread over 1..14 — de-duplicated into
-  records 2..255. **The boss** paints its first frame into the 8×4 sheet —
-  placed by `bossSlotForCell`, the wide layout's two 4-wide halves, since the
-  group is not the picture row-major — wears the sample's stage-0 block with
-  the hit-point index nearest hits × 25 and the wide layout, and is spawned by
-  a class-5 byte twelve lines past the last wave. (Row-major placement drew
-  rando's Ryu as scattered pieces, 2026-10-16.)
+  records 2..255. **The boss** paints its first frame into the sheet in the
+  layout that draws it larger (`sfcBossIsTall`; a tie, art that fits either box
+  whole included, stays wide): wide, 8×4 chips (128×64) placed by
+  `bossSlotForCell` as two 4-wide halves, since that group is not the picture
+  row-major; tall, 4×8 chips (64×128), all 32 slots 4 wide row-major. It wears
+  the sample's stage-0 block with the hit-point index nearest hits × 25 and the
+  layout bit to match (byte 6 bit 6 — also the body, a 96×48 box wide or 48×96
+  tall), and is spawned by a class-5 byte twelve lines past the last wave. A
+  boss taller than it is wide stands up: gs's Daltonius (96×128) draws 64×85
+  where the wide sheet shrank him to 48×64. The report's boss says `tall`.
+  (Row-major placement drew rando's Ryu as scattered pieces; the tall mapping
+  was photographed in play with every chip coded, both 2026-10-16.)
 - **The ship** is the level's own frames — the first as the level pose, the
   second (else the first) banking left and its mirror banking right, each
   fitted to 32×32 — in the three pose slots the player handler names (chips

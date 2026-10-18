@@ -21,8 +21,9 @@
 //     32x16, 16x32, 32x32, 64x64), its frames chips of the stage's 64-slot
 //     enemy sheet named by ENEMY ODR, its waves spawn records of APPEAR
 //     DATA fired by the line table, one line a map row;
-//   - the boss is the 8x4-chip BOSS GROUP sheet with the sample's stage-0
-//     block for its behaviour, spawned by a class-5 byte after the last wave;
+//   - the boss is the BOSS GROUP sheet, 8x4 chips or 4x8 for tall art, with
+//     the sample's stage-0 block for its behaviour, spawned by a class-5
+//     byte after the last wave;
 //   - the ship is the level's own frames (Duke when it has none) in the
 //     three poses the player handler names — chips 0-3 of the ship sheet
 //     banking left, 4-7 level, 8-11 banking right, drawn as four 16x16 OBJs
@@ -155,6 +156,19 @@ function b64ToBytes(b64) {
     const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
+}
+
+/**
+ * Whether a w x h boss is written tall (4x8 chips, 64x128) rather than wide
+ * (8x4, 128x64): tall when the art fitted to it would draw larger, so a
+ * boss taller than it is wide stands up; wide on a tie, art that fits either
+ * box whole included.
+ */
+export function sfcBossIsTall(w, h) {
+    const wideW = BOSS_SHEET_COLS * CHIP_DIM, wideH = BOSS_SHEET_ROWS * CHIP_DIM;
+    const scaleWide = Math.min(1, wideW / w, wideH / h);
+    const scaleTall = Math.min(1, wideH / w, wideW / h);
+    return scaleTall > scaleWide;
 }
 
 /** A level column (0..width-1) -> a playfield column 1..14, the ends pinned. */
@@ -717,7 +731,9 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
             }
         }
 
-        // The boss: its art in the 8x4 sheet, the sample's block with its hit points and score.
+        // The boss: its art in the 32-chip sheet, wide (8x4) or tall (4x8)
+        // as the art draws larger, the sample's block with its hit points
+        // and score.
         const bossWords = new Uint16Array(BOSS_GROUP_CHIPS).fill(CHIP_BLANK_WORD);
         const bossBlock = Uint8Array.from(SFC_FACTORY_BOSS_BLOCK);
         let boss = null;
@@ -727,31 +743,38 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
                 : Array.isArray(bossRec.texture) ? bossRec.texture : [];
             const frames = names.map(lookup).filter(Boolean);
             if (!frames.length) warn(`${st.key}: boss (${bossRec.name || "?"}) has no art in the atlas — drawn blank`);
-            if (frames.length && (frames[0].w > BOSS_SHEET_COLS * CHIP_DIM || frames[0].h > BOSS_SHEET_ROWS * CHIP_DIM)) {
-                warn(`${st.key}: boss (${bossRec.name || "?"}) is ${frames[0].w}x${frames[0].h}; a Super Famicom boss is 128x64 — downscaled`);
+            const tall = frames.length > 0 && sfcBossIsTall(frames[0].w, frames[0].h);
+            const cols = tall ? BOSS_SHEET_ROWS : BOSS_SHEET_COLS, rowsOf = tall ? BOSS_SHEET_COLS : BOSS_SHEET_ROWS;
+            const boxW = cols * CHIP_DIM, boxH = rowsOf * CHIP_DIM;
+            if (frames.length && (frames[0].w > boxW || frames[0].h > boxH)) {
+                warn(`${st.key}: boss (${bossRec.name || "?"}) is ${frames[0].w}x${frames[0].h}; a ${tall ? "tall" : "wide"} Super Famicom boss is ${boxW}x${boxH} — downscaled`);
             }
             if (frames.length) {
-                const fitted = fitRgba(frames[0], BOSS_SHEET_COLS * CHIP_DIM, BOSS_SHEET_ROWS * CHIP_DIM);
+                const fitted = fitRgba(frames[0], boxW, boxH);
                 const q = quantizeToRow([{ key: "boss", ...fitted }]);
                 writeCgramRow(bytes, PALETTE_ROW_STAGE_BOSS + s, q.words);
                 rows.push({ row: PALETTE_ROW_STAGE_BOSS + s, owner: `${st.key} boss`, colors: q.colors });
-                // The boss is written wide (block byte 6 bit 6 clear, below),
-                // whose 32 slots are not the 8x4 picture row-major but two
-                // 4-wide halves, the left in slots 0-15 and the right in
-                // 16-31 (bossSlotForCell); row-major scattered rando's Ryu.
-                for (let cy = 0; cy < BOSS_SHEET_ROWS; cy++) {
-                    for (let cx = 0; cx < BOSS_SHEET_COLS; cx++) {
+                // The block's layout bit (byte 6 bit 6, below) says how the
+                // 32 slots sit on screen (bossSlotForCell): wide, they are
+                // not the 8x4 picture row-major but two 4-wide halves, the
+                // left in slots 0-15 and the right in 16-31 (row-major
+                // scattered rando's Ryu); tall, they are the 4x8 picture
+                // row-major, 0-15 the top half.
+                for (let cy = 0; cy < rowsOf; cy++) {
+                    for (let cx = 0; cx < cols; cx++) {
                         const px = cutChip(q.frames[0].indices, fitted.w, cx, cy);
                         if (isTransparent(px)) continue;
                         const hit = bankChip(px, `${st.key} boss`);
-                        if (hit) bossWords[bossSlotForCell(cx, cy)] = chipWordForIndex(hit.chip, hit);
+                        if (hit) bossWords[bossSlotForCell(cx, cy, tall)] = chipWordForIndex(hit.chip, hit);
                     }
                 }
             }
             const hits = bossRec.hp === "infinity" ? Infinity : Math.max(1, Number(bossRec.hp) || 100);
             bossBlock[0x0d] = (bossBlock[0x0d] & 0xf8) | (hits === Infinity ? SFC_BOSS_HP.length - 1 : nearestIndex(SFC_BOSS_HP, hits * SFC_HIT_UNITS));
-            bossBlock[6] &= ~0x40; // wide: the sheet as drawn, 128x64
-            boss = { name: bossRec.name || `boss${s}`, hits, hpIndex: bossBlock[0x0d] & 7, frames: frames.length };
+            // The layout bit is also the body: wide a 96x48 box, tall 48x96.
+            if (tall) bossBlock[6] |= 0x40;
+            else bossBlock[6] &= ~0x40;
+            boss = { name: bossRec.name || `boss${s}`, hits, hpIndex: bossBlock[0x0d] & 7, frames: frames.length, tall };
             if (form) boss.form = form;
         }
         writeWords(bytes, REGION.bossGroup.offset + s * BOSS_GROUP_STAGE_BYTES, bossWords);

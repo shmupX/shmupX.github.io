@@ -91,7 +91,15 @@ export async function buildSfc(
     lines: number;
     mapChips: number;
     rowsDrawn: number;
-    boss: { name: string; hpIndex: number; line: number; form?: number } | null;
+    boss:
+      | {
+        name: string;
+        hpIndex: number;
+        line: number;
+        form?: number;
+        tall?: boolean;
+      }
+      | null;
   };
   for (const st of rep.stages as StageReport[]) {
     log(
@@ -101,7 +109,9 @@ export async function buildSfc(
         st.boss
           ? `; boss "${st.boss.name}"${
             st.boss.form ? ` (form ${st.boss.form})` : ""
-          } hp index ${st.boss.hpIndex} on line ${st.boss.line}`
+          } ${
+            st.boss.tall ? "tall" : "wide"
+          }, hp index ${st.boss.hpIndex} on line ${st.boss.line}`
           : "; no boss"
       }`,
     );

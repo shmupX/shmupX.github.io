@@ -29,7 +29,7 @@ import {
   titleSlotForCell,
   verifySfcChecksums,
 } from "../src/sfc/index.js";
-import { composeTitlePicture } from "../src/sfc/sfc-write.js";
+import { composeTitlePicture, sfcBossIsTall } from "../src/sfc/sfc-write.js";
 import { decodePaletteData, writeCgramRow } from "../src/sfc/cgram.js";
 import { hasFixtures, loadFixture } from "./_fixtures.js";
 
@@ -617,6 +617,47 @@ Deno.test("a wide boss is two 4-wide halves, a tall one 4 wide row-major: a pict
     [25],
   );
   assertStrictEquals(save.enemies[0].boss.tall, false);
+});
+
+Deno.test("a boss taller than it is wide is written tall: 4x8 chips, 64x128, the block's bit set", () => {
+  // the rule: the layout that draws the art larger; a tie stays wide
+  assertStrictEquals(sfcBossIsTall(96, 128), true, "gs's Daltonius");
+  assertStrictEquals(sfcBossIsTall(129, 169), true, "his dragon");
+  assertStrictEquals(sfcBossIsTall(100, 60), false);
+  assertStrictEquals(sfcBossIsTall(120, 120), false, "square: a tie");
+  assertStrictEquals(sfcBossIsTall(40, 60), false, "fits either box whole");
+  // a 64x128 boss with one opaque cell, (2, 5): tall slots are row-major, so
+  // only slot 5 * 4 + 2 = 22 is painted
+  const boss = { w: 64, h: 128, rgba: new Uint8Array(64 * 128 * 4) };
+  for (let y = 80; y < 96; y++) {
+    for (let x = 32; x < 48; x++) {
+      boss.rgba.set([255, 0, 255, 255], (y * 64 + x) * 4);
+    }
+  }
+  const out = exportLevelToSfcSram(level(), { ...art(), "boss0.png": boss });
+  assertEquals(out.warnings, []);
+  const save = parseSfcSav(out.sram);
+  assertEquals(
+    save.groups.boss[0].chips.filter((c) => !c.empty).map((c) => c.slot),
+    [22],
+  );
+  assertStrictEquals(save.enemies[0].boss.tall, true);
+  assertStrictEquals(out.report.stages[0].boss.tall, true);
+  // the block's other bits are the sample's: only the layout bit moved
+  assertStrictEquals(save.enemies[0].boss.hp, 3, "300 hits, as before");
+  // tall art bigger than the box is fitted to 64x128 and says so
+  const big = exportLevelToSfcSram(level(), {
+    ...art(),
+    "boss0.png": frame(96, 128, [0, 255, 0]),
+  });
+  assert(
+    big.warnings.some((w) => w.includes("a tall Super Famicom boss is 64x128")),
+  );
+  const bigSave = parseSfcSav(big.sram);
+  assertStrictEquals(bigSave.enemies[0].boss.tall, true);
+  // 96x128 draws 64x85 tall where wide would shrink it to 48x64: the slots
+  // the fitted picture covers are painted
+  assert(bigSave.groups.boss[0].chips.filter((c) => !c.empty).length >= 20);
 });
 
 Deno.test("the report says what the title was made of, and what flies", () => {
