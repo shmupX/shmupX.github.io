@@ -2020,8 +2020,15 @@ Bazzite, run it from Desktop Mode, since Game Mode's compositor sets its own
 rate.
 
 Chrome is found as everywhere else (`--chrome`, `$CHROME_BIN`, then the usual
-installs), which now includes Chrome, Edge and Brave on Windows and the Flatpak
-exports on Linux. A live run needs no ffmpeg.
+installs), which includes Chrome, Edge and Brave on Windows — in their default
+folders or wherever Windows' App Paths registry says — and the Flatpak exports
+on Linux. A named browser may be quoted (Explorer's "Copy as path"), hold
+`%VARIABLES%` (`setx` from PowerShell keeps them), or be the folder the browser
+is in; and on Windows a `CHROME_BIN` saved with `setx` or the Environment
+Variables dialog is read from the registry even by a terminal opened before it,
+which never sees the new value otherwise. When a named browser is not there, the
+error shows the value exactly as it was read. A live run needs no ffmpeg; an
+emulated one checks for it before anything boots (`--no-video` skips it).
 
 Every run, live or emulated, saves a result file to
 `build/refresh-compare/results/<label>-<source>-<hz>hz-<time>.json` (`--save`
