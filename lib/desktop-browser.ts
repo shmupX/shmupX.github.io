@@ -451,6 +451,11 @@ export interface OpenOptions {
   dataDir: string;
   windowed: boolean;
   log: (line: string) => void;
+  /**
+   * Aborting it closes a browser this process owns: the launcher started
+   * for one game (desktop.ts --game) ends when that game does, window and all.
+   */
+  signal?: AbortSignal;
 }
 
 function commandOnPath(env: Record<string, string>, os: DesktopOs) {
@@ -542,7 +547,17 @@ export async function openLauncherWindow(
       `  Window: ${launch.label}, ${o.windowed ? "windowed" : "kiosk"} mode.`,
     );
     const started = Date.now();
+    const close = () => {
+      try {
+        child.kill();
+      } catch { /* already gone */ }
+    };
+    if (o.signal?.aborted) close();
+    o.signal?.addEventListener("abort", close, { once: true });
     const status = await child.status;
+    o.signal?.removeEventListener("abort", close);
+    // Closed on purpose, however soon: not a browser that failed to start.
+    if (o.signal?.aborted) return "closed";
     if (Date.now() - started < EARLY_EXIT_MS) {
       o.log(
         `  ${launch.label} exited with code ${status.code} right away — trying the next browser.`,

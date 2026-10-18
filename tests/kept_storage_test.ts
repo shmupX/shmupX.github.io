@@ -108,6 +108,8 @@ Deno.test("in the page it restores what is missing and sends every change back",
     assertEquals(sent[1].values, {
       "shmupx-emulators": null,
       "shmupx-arcade-shelf": "[1,2]",
+      "cmg-game-favs": null,
+      "cmg-deza-favs": null,
     });
     assert(sent[1].stamp >= sent[0].stamp && sent[0].stamp > 0);
     assertEquals(Object.keys(sent[1].values).sort(), [...KEPT_KEYS].sort());

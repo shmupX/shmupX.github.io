@@ -1082,6 +1082,15 @@ export async function installArcadeGame(entry, { onProgress = noop, fetchImpl = 
     throw new Error('could not reach the romset at ' + romUrl + ': ' + (e?.message || e));
   }
   if (!res || (!res.ok && res.status !== 206)) {
+    // The Steam build carries no romsets: they come in a member pack, and its
+    // server says which (main.ts) rather than fetching the board itself.
+    const pack = res && res.headers && res.headers.get('x-shmupx-member-pack');
+    if (pack) {
+      throw new Error(
+        'this board comes in the arcade member pack (shmupx-member-' + pack +
+          '.zip) — add it from Settings → MEMBER FILES',
+      );
+    }
     throw new Error(
       'the romset at ' + romUrl + ' is not there (HTTP ' + (res ? res.status : '?') + ')',
     );

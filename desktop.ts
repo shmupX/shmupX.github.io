@@ -12,7 +12,16 @@
 //     the artifact is an .AppImage or a .app that cross-builds from any host.
 //
 // Either way, closing the window quits the launcher, which is what Steam needs
-// to see the "game" end; --keep-serving keeps the build server up regardless. The
+// to see the "game" end; --keep-serving keeps the build server up regardless.
+//
+// A favorite's own Steam entry (lib/steam-favorites.ts) starts this same file
+// with --game <section>:<row> or --play <shelf slug>: the dashboard opens that
+// game straight away (routes/api/launch.ts), and leaving the game quits the
+// launcher, window and all. The favorites are synced into Steam at startup and
+// on the way out as well as whenever one changes; --steam-sync does just that
+// and exits, for a run with Steam closed. The Steam build carries a marker
+// (lib/launcher-flavor.ts) that is read here first, before the server loads,
+// since that is what tells the server where its member content comes from. The
 // same binary is what routes/api/build-apk.ts calls "the packaged desktop app":
 // the tool + game it stages out of the read-only deno-compile VFS are embedded
 // here by the `--include` flags the build script passes.
@@ -31,8 +40,15 @@ import {
   openLauncherWindow,
 } from "./lib/desktop-browser.ts";
 import { currentLauncherBinary } from "./lib/launcher-binary.ts";
+import { FLAVOR_FILE, readFlavorFile } from "./lib/launcher-flavor.ts";
+import { readKept } from "./lib/kept-storage.ts";
 import { startAutoUpdate } from "./lib/self-update.ts";
 import { restoreDisplays, restoreDisplaysSync } from "./lib/second-screen.ts";
+import {
+  localRunOptions,
+  runFavoritesSync,
+  type SyncReport,
+} from "./lib/steam-favorites.ts";
 
 interface FetchServer {
   fetch(
@@ -61,6 +77,17 @@ const OS: DesktopOs = Deno.build.os === "windows"
 const UNDER_DENO_DESKTOP =
   typeof (Deno as { BrowserWindow?: unknown }).BrowserWindow === "function";
 
+// The Steam build. Only a packaged app reads the marker: a checkout that once
+// ran a Steam build still has the file under build/, and is not the Steam
+// build for it. Steam ships this copy's updates, so the updater stays off.
+const STANDALONE = (Deno.build as { standalone?: boolean }).standalone === true;
+if (
+  STANDALONE && readFlavorFile(new URL(`./${FLAVOR_FILE}`, import.meta.url))
+) {
+  Deno.env.set("SHMUPX_FLAVOR", "steam");
+  Deno.env.set("SHMUPX_NO_UPDATE", "1");
+}
+
 interface Args {
   port?: number;
   open: boolean;
@@ -68,7 +95,22 @@ interface Args {
   windowed: boolean;
   /** Stay up after the window closes (SHMUPX_KEEP_SERVING). */
   keepServing: boolean;
+  /** --steam-sync: put the favorites in Steam, and exit. */
+  syncOnly: boolean;
 }
+
+// The one game to open (routes/api/launch.ts reads these), and where else to
+// look for member packs (lib/member-packs.ts). Environment variables, because
+// the built server is a module graph of its own and reads them from there.
+const VALUE_FLAGS: Record<string, (value: string) => void> = {
+  "--game": (v) => Deno.env.set("SHMUPX_LAUNCH_GAME", v),
+  "--play": (v) => Deno.env.set("SHMUPX_LAUNCH_PLAY", v),
+  "--members": (v) => {
+    const before = Deno.env.get("SHMUPX_MEMBERS");
+    const sep = Deno.build.os === "windows" ? ";" : ":";
+    Deno.env.set("SHMUPX_MEMBERS", before ? `${v}${sep}${before}` : v);
+  },
+};
 
 function parseArgs(argv: string[]): Args {
   const env = Deno.env;
@@ -76,10 +118,17 @@ function parseArgs(argv: string[]): Args {
     open: !env.get("SHMUPX_NO_OPEN"),
     windowed: !!env.get("SHMUPX_WINDOWED"),
     keepServing: !!env.get("SHMUPX_KEEP_SERVING"),
+    syncOnly: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--no-open") args.open = false;
+    const eq = arg.indexOf("=");
+    const flag = eq > 0 ? arg.slice(0, eq) : arg;
+    if (Object.hasOwn(VALUE_FLAGS, flag)) {
+      const value = eq > 0 ? arg.slice(eq + 1) : argv[++i];
+      if (value) VALUE_FLAGS[flag](value);
+    } else if (arg === "--steam-sync") args.syncOnly = true;
+    else if (arg === "--no-open") args.open = false;
     else if (arg === "--windowed") args.windowed = true;
     else if (arg === "--keep-serving") args.keepServing = true;
     else if (arg === "--browser" && argv[i + 1]) {
@@ -129,7 +178,44 @@ async function loadServer(): Promise<FetchServer> {
   }
 }
 
-const { port: portArg, open, windowed, keepServing } = parseArgs(Deno.args);
+const { port: portArg, open, windowed, keepServing, syncOnly } = parseArgs(
+  Deno.args,
+);
+
+/** One favorites sync, said in a line; never a reason to fail. */
+async function syncFavorites(origin?: string): Promise<SyncReport | null> {
+  try {
+    const opts = await localRunOptions(origin);
+    const report = await runFavoritesSync(
+      opts,
+      (await readKept(opts.keptFile)).values,
+    );
+    if (report.added.length || report.removed.length || !report.ok) {
+      console.log(
+        report.ok
+          ? `  Steam favorites: +${report.added.length} −${report.removed.length}` +
+            (report.steamRunning ? " (restart Steam to see them)" : "")
+          : `  Steam favorites: ${
+            report.reason ?? report.problems[0] ?? "not synced"
+          }`,
+      );
+    }
+    return report;
+  } catch (err) {
+    console.warn(`  Steam favorites: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+if (syncOnly) {
+  const report = await syncFavorites();
+  console.log(
+    report?.ok
+      ? `  ${report.favorites} favorite(s) in Steam, ${report.accounts} account(s).`
+      : "  Nothing was written.",
+  );
+  Deno.exit(report?.ok ? 0 : 1);
+}
 const envPort = Number(Deno.env.get("SHMUPX_PORT") ?? "");
 const requested = portArg ??
   (Number.isFinite(envPort) && envPort > 0 ? envPort : undefined);
@@ -144,6 +230,19 @@ const port = UNDER_DENO_DESKTOP ? DEFAULT_PORT : requested ?? pickPort(
 const server = await loadServer();
 
 const shutdown = new AbortController();
+// Closes a browser this process owns (lib/desktop-browser.ts).
+const closeWindow = new AbortController();
+let quitRequested = false;
+// The quit routes/api/launch.ts calls when the one game this launcher was
+// started for ends. On globalThis because that route lives in the built
+// server's module graph, not this one.
+(globalThis as { __shmupxQuit?: () => void }).__shmupxQuit = () => {
+  if (quitRequested) return;
+  quitRequested = true;
+  console.log("\n  Game closed — quitting.\n");
+  closeWindow.abort();
+  shutdown.abort();
+};
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   // SIGTERM isn't supported on Windows — registering it there throws.
   if (Deno.build.os === "windows" && signal === "SIGTERM") continue;
@@ -187,6 +286,7 @@ async function openWindow(url: string): Promise<void> {
     dataDir: launcherDataDir(OS, Deno.env.toObject()),
     windowed,
     log: console.log,
+    signal: closeWindow.signal,
   });
   if (outcome !== "closed") return;
   if (keepServing) {
@@ -240,6 +340,9 @@ const httpServer = Deno.serve({
     // launcher up twice.
     if (open && !UNDER_DENO_DESKTOP) openWindow(url);
     startBuildServer();
+    // Favorites that changed while this launcher was not running — starred
+    // on another copy's shelf, or entries Steam dropped — are put back now.
+    if (STANDALONE) syncFavorites(url);
   },
 }, (req, info) => server.fetch(req, info));
 
@@ -252,3 +355,15 @@ globalThis.addEventListener("unload", () => restoreDisplaysSync());
 
 await httpServer.finished;
 await restoreDisplays();
+// And on the way out, which is when RetroDECK syncs its own: the last word
+// before Steam next reads its library. Bounded, so a slow network never holds
+// the exit Steam is waiting to see.
+if (STANDALONE) {
+  await Promise.race([
+    syncFavorites(),
+    new Promise((resolve) => setTimeout(resolve, 4000)),
+  ]);
+}
+// Under `deno desktop` the CEF window outlives the server it shows unless the
+// process ends: a launcher started for one game has to go when the game does.
+if (quitRequested) Deno.exit(0);

@@ -12,15 +12,26 @@ import { launcherDataDir } from "./lib/desktop-browser.ts";
 import {
   applyKept,
   injectKeptStorage,
+  KEPT_FILE_NAME,
   KEPT_STORAGE_URL,
   readBody,
   readKept,
 } from "./lib/kept-storage.ts";
+import { decodedPath, steamMemberLibrary } from "./lib/member-packs.ts";
+import { MEMBER_DEFAULTS, packFileName } from "./lib/member-content.ts";
+import {
+  GAME_FAVS_KEY,
+  localRunOptions,
+  scheduleFavoritesSync,
+  SHELF_FAVS_KEY,
+} from "./lib/steam-favorites.ts";
 import { isStored, serveStored, sweepPartials } from "./lib/offline-store.ts";
 import {
+  arcadeRecipePath,
   isKeptManifest,
   isLeftOut,
   keepArcadeBoard,
+  keepArcadePlayer,
   keptManifest,
   localizeCatalog,
   ROMSET_PATH,
@@ -122,6 +133,16 @@ app.use(async (ctx) => {
 //   back into every page's localStorage before its scripts run
 //   (lib/kept-storage.ts).
 //
+// - The favorites — the dashboard's starred rows, the shelf's starred games —
+//   are kept keys too, and a change to either is passed on to
+//   lib/steam-favorites.ts, which gives each favorite its own Steam entry.
+// - The Steam build (lib/launcher-flavor.ts) carries no member content and
+//   never downloads it: every path a member rule names (lib/member-content.ts)
+//   is answered out of the member packs the player has dropped in or imported
+//   (lib/member-packs.ts), or with a 404 that names the pack it comes in. A
+//   romset from a pack still brings its player and core, from where any
+//   packaged app gets them.
+//
 // None of it runs outside a packaged app: a checkout and the deploy serve
 // static/ as they always have.
 const STANDALONE = (Deno.build as { standalone?: boolean }).standalone === true;
@@ -134,7 +155,9 @@ const DATA_DIR = launcherDataDir(
   Deno.env.toObject(),
 );
 const STORE_ROOT = join(DATA_DIR, "offline");
-const KEPT_FILE = join(DATA_DIR, "kept-storage.json");
+const KEPT_FILE = join(DATA_DIR, KEPT_FILE_NAME);
+const MEMBERS = steamMemberLibrary();
+const FAV_KEYS = [GAME_FAVS_KEY, SHELF_FAVS_KEY];
 if (STANDALONE) sweepPartials(STORE_ROOT);
 app.use(async (ctx) => {
   if (!STANDALONE) return ctx.next();
@@ -143,11 +166,67 @@ app.use(async (ctx) => {
   if (pathname === KEPT_STORAGE_URL) {
     if (method !== "PUT") return new Response(null, { status: 405 });
     const body = await readBody(ctx.req);
+    const before = body === null ? null : await readKept(KEPT_FILE);
     const status = body === null ? 400 : await applyKept(KEPT_FILE, body);
+    if (before && status === 204) {
+      const after = await readKept(KEPT_FILE);
+      if (FAV_KEYS.some((k) => before.values[k] !== after.values[k])) {
+        const origin = new URL(ctx.req.url).origin;
+        scheduleFavoritesSync(
+          () => localRunOptions(origin),
+          async () => (await readKept(KEPT_FILE)).values,
+        );
+      }
+    }
     return new Response(null, { status });
   }
   if (method !== "GET" && method !== "HEAD") return ctx.next();
   if (isLeftOut(pathname)) return new Response(null, { status: 404 });
+
+  if (MEMBERS) {
+    const path = decodedPath(pathname);
+    const rule = path ? MEMBERS.ruleFor(path) : null;
+    if (path && rule) {
+      const res = await MEMBERS.serve(ctx.req, path);
+      if (res) {
+        if (
+          ROMSET_PATH.test(pathname) &&
+          (res.status === 200 || res.status === 206)
+        ) {
+          // As keepArcadeBoard does for a download: the first time, the
+          // install's probe waits for the player, so installed means
+          // playable offline; after that it is topped up in the background.
+          const first =
+            !(await isStored(STORE_ROOT, arcadeRecipePath(pathname)));
+          const player = keepArcadePlayer(pathname, { root: STORE_ROOT })
+            .catch((err) =>
+              console.warn(`[members] ${pathname}: ${err.message}`)
+            );
+          if (first) await player;
+        }
+        return res;
+      }
+      if (path in MEMBER_DEFAULTS) {
+        return new Response(method === "HEAD" ? null : MEMBER_DEFAULTS[path], {
+          headers: {
+            "content-type": "application/json; charset=UTF-8",
+            "cache-control": "no-store",
+          },
+        });
+      }
+      return new Response(
+        `${pathname} comes in the "${rule.title}" member pack ` +
+          `(${packFileName(rule.id)}).`,
+        {
+          status: 404,
+          headers: {
+            "content-type": "text/plain; charset=UTF-8",
+            "x-shmupx-member-pack": rule.id,
+          },
+        },
+      );
+    }
+  }
 
   if (pathname === "/emulators.json" && method === "GET") {
     const res = await ctx.next();

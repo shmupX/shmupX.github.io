@@ -119,8 +119,31 @@ export function makeShortcut(input: ShortcutInput): VdfMap {
   };
 }
 
+/**
+ * The collection a favorite's own entry is filed under (lib/steam-
+ * favorites.ts). Those entries run the same binary as the launcher's, with
+ * --game or --play, so the tag is what tells them apart: the launcher's own
+ * entry must never be matched to one, or pressing ADD TO STEAM would turn a
+ * favorite back into the launcher.
+ */
+export const FAVORITES_TAG = "shmupX favorites";
+
+/** The collections an entry is filed under. */
+export function tagsOf(entry: VdfMap): string[] {
+  const tags = entry.tags;
+  return tags && typeof tags === "object"
+    ? Object.values(tags as VdfMap).map(String)
+    : [];
+}
+
+/** Is this one of the favorites' entries rather than the launcher's? */
+export function isFavoriteShortcut(entry: VdfMap): boolean {
+  return tagsOf(entry).includes(FAVORITES_TAG) &&
+    /(^|\s)--(game|play)(\s|=|$)/.test(String(entry.LaunchOptions ?? ""));
+}
+
 /** The `shortcuts` map of a parsed file, or an empty one. */
-function shortcutsOf(root: VdfMap): VdfMap {
+export function shortcutsOf(root: VdfMap): VdfMap {
   const found = root.shortcuts;
   return found && typeof found === "object" ? found as VdfMap : {};
 }
@@ -144,7 +167,8 @@ export interface AddResult {
  * updated in place under a new name — or the player renames the entry in Steam
  * — an appid match would miss and the library would grow a second shmupX every
  * time. Matching on either field is what makes pressing the button twice
- * idempotent.
+ * idempotent. A favorite's entry (FAVORITES_TAG) runs the same binary under
+ * a game's name and is never the launcher's, so it is passed over.
  *
  * An entry that is already there keeps its appid, so whatever artwork the
  * player put on it survives.
@@ -162,8 +186,9 @@ export function addShortcut(root: VdfMap, input: ShortcutInput): AddResult {
     const entry = value as VdfMap;
     const sameExe = unquotePath(entry.Exe) === wantedExe;
     const sameName = String(entry.AppName ?? "") === input.appName;
-    if (!mine && (sameExe || sameName)) mine = entry;
-    else entries.push(entry);
+    if (!mine && !isFavoriteShortcut(entry) && (sameExe || sameName)) {
+      mine = entry;
+    } else entries.push(entry);
   }
 
   const fresh = makeShortcut(input);
@@ -220,7 +245,7 @@ export function removeShortcut(
     const sameExe = wantedExe !== null && unquotePath(entry.Exe) === wantedExe;
     const sameName = !!match.appName &&
       String(entry.AppName ?? "") === match.appName;
-    if (sameExe || sameName) {
+    if (!isFavoriteShortcut(entry) && (sameExe || sameName)) {
       removed++;
       continue;
     }

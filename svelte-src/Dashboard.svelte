@@ -8,6 +8,10 @@
   // lives in static/steam-nudge.js because tests/steam_nudge_test.ts is the
   // only place it can be exercised without a real AppImage runtime.
   import { steamNudge } from '../static/steam-nudge.js';
+  import {
+    GAME_FAVS_KEY, favRowId, isGameFav, launchTarget, readGameFavs,
+    shelfPlayUrl, toggleGameFav,
+  } from '../static/steam-favorites.js';
   // The PS2 shelf the level editor files its own builds in, and the rule for
   // what emu-sw.js is allowed to mirror. Shared with static/editor/index.html
   // (which imports the same module at runtime) so the two cannot drift — see
@@ -1180,6 +1184,110 @@
     } catch (_) { steam = null; }
   }
 
+  // ─── Favorites → Steam ─────────────────────────────────────────────────────
+  // A starred row (F, L3, or its ☆) gets an entry of its own in Steam's
+  // library, as the shelf's starred games do: the page only writes the star —
+  // a packaged launcher's server sees every change to the key and writes the
+  // entries (lib/steam-favorites.ts). The row below says what the last sync
+  // did and switches it off; off takes the entries back out.
+  let gameFavs = $state((() => {
+    try { return readGameFavs(localStorage.getItem(GAME_FAVS_KEY)); } catch (_) { return []; }
+  })());
+  let steamFavs = $state(null);
+  let steamFavsTimer = 0;
+  let steamFavsSummary = $derived.by(() => {
+    if (!steamFavs) return '';
+    if (!steamFavs.enabled) return 'OFF  ·  stars stay in the launcher';
+    const last = steamFavs.last;
+    const n = (steamFavs.favorites || []).length;
+    if (last && !last.ok) return 'ON  ·  ' + (last.reason || (last.problems || [])[0] || 'not synced yet');
+    if (!n) return 'ON  ·  star a game (F · L3) or a shelf game (X) to put it in Steam';
+    return 'ON  ·  ' + n + (n === 1 ? ' game' : ' games') + ' in Steam' +
+      (last && last.steamRunning && last.added && last.added.length ? '  ·  RESTART STEAM to see new ones' : '');
+  });
+  async function refreshSteamFavs() {
+    try {
+      const r = await fetch('/api/steam-favorites', { cache: 'no-store' });
+      const data = r.ok ? await r.json() : null;
+      // Only where there is a binary for Steam to run: a checkout has none.
+      steamFavs = data && data.ok && data.available ? data : null;
+    } catch (_) { steamFavs = null; }
+  }
+  // The server syncs a moment after a star changes; read what it did after it.
+  function refreshSteamFavsSoon() {
+    clearTimeout(steamFavsTimer);
+    steamFavsTimer = setTimeout(refreshSteamFavs, 3000);
+  }
+  async function setSteamFavs(enabled) {
+    try {
+      const r = await fetch('/api/steam-favorites', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'enable', enabled }),
+      });
+      const data = await r.json();
+      if (data && data.ok) steamFavs = data;
+      showToast('Steam favorites: ' + (steamFavsSummary || (enabled ? 'on' : 'off')));
+    } catch (e) {
+      showToast('Steam favorites: ' + (e?.message || e));
+    }
+  }
+  function toggleRowFav(section, row) {
+    if (!section || !row) return;
+    const next = toggleGameFav(gameFavs, section.id, row);
+    if (!next) return;
+    gameFavs = next;
+    try { localStorage.setItem(GAME_FAVS_KEY, JSON.stringify(next)); } catch (_) { /* a star for this session only */ }
+    sfx.nav();
+    const name = row.name || row.title || '';
+    const on = isGameFav(next, section.id, row);
+    showToast(on
+      ? '★ ' + name + (steamFavs?.enabled ? ' — its own game in Steam' : '')
+      : name + ' unstarred');
+    refreshSteamFavsSoon();
+  }
+
+  // ─── Member files (the Steam build) ────────────────────────────────────────
+  // What the Steam build leaves out comes back as shmupx-member-*.zip packs
+  // (lib/member-packs.ts). The row imports them; dropping them into the
+  // members folder works as well, and needs no restart either.
+  let members = $state(null);
+  let memberInputEl = $state(null);
+  let membersSummary = $derived.by(() => {
+    if (!members) return '';
+    const have = (members.packs || []).length;
+    const missing = (members.missing || []).length;
+    return (have ? have + ' installed' : 'none installed') +
+      (missing ? '  ·  ' + missing + ' not' : '') + '  ·  press to import a pack';
+  });
+  async function refreshMembers() {
+    try {
+      const r = await fetch('/api/members', { cache: 'no-store' });
+      const data = r.ok ? await r.json() : null;
+      members = data && data.ok && data.available ? data : null;
+    } catch (_) { members = null; }
+  }
+  async function importMemberFiles(e) {
+    const files = [...(e.currentTarget.files || [])];
+    e.currentTarget.value = '';
+    for (const file of files) {
+      try {
+        const r = await fetch('/api/members', {
+          method: 'POST',
+          headers: { 'x-file-name': file.name, 'content-type': 'application/zip' },
+          body: file,
+        });
+        const data = await r.json();
+        showToast(data && data.ok
+          ? 'Member files: ' + (data.pack.title || data.pack.id) + ' — ' + data.pack.count + ' file(s)'
+          : 'Member files: ' + ((data && data.error) || ('HTTP ' + r.status)));
+      } catch (err) {
+        showToast('Member files: ' + (err?.message || err));
+      }
+    }
+    refreshMembers();
+  }
+
   // Answers whether anything was written, for the first-run offer below: a
   // press that failed has to leave that offer up, since it is the only way back
   // to it. The Settings row ignores the result.
@@ -1852,6 +1960,10 @@
     ...(builder ? [{ id: 'builder', label: 'BUILD SERVER', sub: builderSummary }] : []),
     // ...and only a packaged launcher has a file to add (see refreshSteam).
     ...(steam ? [{ id: 'steam', label: 'ADD TO STEAM', sub: steamSummary }] : []),
+    // Starred games as Steam entries of their own, wherever Steam is here.
+    ...(steamFavs ? [{ id: 'steam-favs', label: 'STEAM FAVORITES', sub: steamFavsSummary }] : []),
+    // The Steam build's member packs: what it left out, and the way back in.
+    ...(members ? [{ id: 'members', label: 'MEMBER FILES', sub: membersSummary }] : []),
     // ...and only one that armed an updater has a channel to report.
     ...(updates ? [{ id: 'updates', label: 'UPDATES', sub: updatesSummary }] : []),
     // Last, and unconditional: every copy — hosted tab, source checkout,
@@ -5383,6 +5495,10 @@
       builderAction(builder?.running ? 'stop' : 'start');
     } else if (it.id === 'steam') {
       addToSteam();
+    } else if (it.id === 'steam-favs') {
+      setSteamFavs(!steamFavs?.enabled);
+    } else if (it.id === 'members') {
+      memberInputEl?.click();
     } else if (it.id === 'updates') {
       // Nothing to press: re-read, and say the whole line, which the row itself
       // may have had to cut short.
@@ -6204,7 +6320,83 @@
     if (gameSel >= GAMES.length) gameSel = 0;
   }
 
+  // ─── Started for one game ───────────────────────────────────────────────────
+  // A favorite's own Steam entry starts the launcher with --game <section>:<row>
+  // or --play <shelf slug> (lib/steam-favorites.ts). /api/launch hands that
+  // back; the effect below opens it as soon as its row has loaded (a console's
+  // shelf arrives after the strip), and closing that game quits the launcher,
+  // so Steam sees the game it started end. Once per tab: a reload mid-game must
+  // not stack a second launch, and a launcher that could not quit stays the
+  // whole launcher.
+  const LAUNCH_DONE_KEY = 'shmupx-launch-done';
+  const LAUNCH_WAIT_MS = 20000;
+  let launchPending = $state(null);   // { game, play } still to open
+  let launchSingle = false;           // quit when the game it opened closes
+  async function readLaunchTarget() {
+    try { if (sessionStorage.getItem(LAUNCH_DONE_KEY)) return; } catch (_) { /* no session storage: launch anyway */ }
+    let t = null;
+    try {
+      const r = await fetch('/api/launch', { cache: 'no-store' });
+      t = r.ok ? await r.json() : null;
+    } catch (_) { return; } // the hosted site has no such route
+    if (!t || !t.ok || !t.single) return;
+    launchSingle = true;
+    launchPending = { game: t.game || '', play: t.play || '' };
+    setTimeout(() => {
+      if (!launchPending) return;
+      launchPending = null;
+      launchSingle = false;
+      showToast('Could not find ' + (t.play || t.game) + ' — here is the whole launcher');
+    }, LAUNCH_WAIT_MS);
+  }
+  function launchDone() {
+    launchPending = null;
+    try { sessionStorage.setItem(LAUNCH_DONE_KEY, '1'); } catch (_) { /* once per launch is enough */ }
+  }
+  // Re-runs as the catalogue and the console shelves load, until the row is
+  // there. The launch itself is untracked: it reads half the dashboard, none
+  // of which should make this run again.
+  $effect(() => {
+    const t = launchPending;
+    if (!t || !bootGone || gameOn) return;
+    if (t.play) {
+      const g = GAMES.find((x) => SAV_PICKER_IDS.has(x.id));
+      const url = g ? shelfPlayUrl(g.url, t.play, window.location.origin) : '';
+      if (!url) return;
+      untrack(() => {
+        launchDone();
+        screen = 'games';
+        launchGame(g.id, url);
+      });
+      return;
+    }
+    const at = launchTarget(SECTIONS, t.game);
+    if (!at) return;
+    untrack(() => {
+      const section = SECTIONS[at.section];
+      launchDone();
+      screen = 'games';
+      stripFocus = false;
+      secSel = at.section;
+      section.setSel(at.row);
+      section.activate(at.row);
+    });
+  });
+  function quitLauncher() {
+    fetch('/api/launch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'quit' }),
+    }).then((r) => r.json()).then((d) => {
+      // Nothing to quit (a launcher that is not ours to end): stay up as the
+      // whole launcher from here on.
+      if (!d || !d.quitting) launchSingle = false;
+    }).catch(() => { launchSingle = false; });
+  }
+
   function closeGame() {
+    // A launcher started for this one game ends with it.
+    if (launchSingle) quitLauncher();
     // Keep gameSrc set through the fade-out so the iframe unmounts after the
     // transition plays.
     let unmounted = false;
@@ -7055,6 +7247,9 @@
       else if (openSavPickerForRow()) lastInput = 'pad';
       else actEshopUpdate();
     }
+    // L3 stars the row under the cursor: a favorite is a game of its own in
+    // Steam (static/steam-favorites.js). Nothing else on these screens uses it.
+    if (justPressed(10) && screen === 'games' && !stripOn) toggleRowFav(curSection, curRow);
     // SELECT backs out on its RELEASE edge, so SELECT + Up can chord (above)
     // without Back firing the moment SELECT goes down. Only a press that
     // began in this branch arms it — a release inherited from the in-game or
@@ -7214,6 +7409,8 @@
     else if (e.key === 'u' || e.key === 'U') actEshopUpdate();
     // F steps the eShop's status filter, the way ◀ ▶ do.
     else if (screen === 'eshop' && (e.key === 'f' || e.key === 'F')) eshopCycleFilter(1);
+    // ...and stars a row in Games and the consoles, the keyboard twin of L3.
+    else if (screen === 'games' && !stripOn && (e.key === 'f' || e.key === 'F')) toggleRowFav(curSection, curRow);
     // Keyboard twin of FBTN_TOP on a LIBRARY card: Y (or E) edits.
     else if (screen === 'library' && (e.key === 'y' || e.key === 'Y' || e.key === 'e' || e.key === 'E')) editLibraryCard(libSel);
     // ...and on a Mobile build: Y opens where it can go.
@@ -7630,6 +7827,9 @@
     refreshSecondScreen();
     refreshAndroid();
     refreshSteam();
+    refreshSteamFavs();
+    refreshMembers();
+    readLaunchTarget();
     refreshUpdates();
     requestLauncherFullscreen();
     loadManifest();
@@ -8187,6 +8387,21 @@
                     <b class="live-chip" class:open={liveFor(r).joinable}>
                       {liveFor(r).joinable ? 'LIVE · OPEN' : 'LIVE'}
                     </b>
+                  {/if}
+                  <!-- The row's star: filled on a favorite, hollow on the
+                       highlighted row where starring one means something
+                       (a local install, where it becomes a Steam entry). Its
+                       own click target, like the shelf badge. -->
+                  {#if favRowId(curSection.id, r) && (isGameFav(gameFavs, curSection.id, r) || (steamFavs && !stripOn && i === curSel))}
+                    <button
+                      type="button"
+                      class="row-fav {isGameFav(gameFavs, curSection.id, r) ? 'on' : ''}"
+                      tabindex="-1"
+                      aria-pressed={isGameFav(gameFavs, curSection.id, r)}
+                      aria-label={isGameFav(gameFavs, curSection.id, r) ? 'Unstar' : 'Star: its own game in Steam'}
+                      onclick={(e) => { e.stopPropagation(); if (consumeRowPress()) return; stripFocus = false; curSection.setSel(i); toggleRowFav(curSection, r); }}
+                      onpointerdown={(e) => e.stopPropagation()}
+                    >{isGameFav(gameFavs, curSection.id, r) ? '★' : '☆'}</button>
                   {/if}
                   {#if r.kind === 'eshop-web'}
                     <!-- A graduated eShop build: its kind, and its update
@@ -8797,6 +9012,17 @@
 
 <!-- Shown once, on the launch where this copy turns out to be a Linux AppImage
      running where it sits — see static/steam-nudge.js. -->
+<!-- Settings → MEMBER FILES opens this (the Steam build only). -->
+<input
+  class="member-input"
+  type="file"
+  accept=".zip,application/zip"
+  multiple
+  hidden
+  bind:this={memberInputEl}
+  onchange={importMemberFiles}
+/>
+
 <SteamNudge open={steamNudgeOpen} sel={steamNudgeSel} busy={steamBusy}
      headline={steamNudgeVerdict.headline} detail={steamNudgeVerdict.detail}
      restart={steamNudgeVerdict.restart}

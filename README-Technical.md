@@ -2948,10 +2948,133 @@ localStorage and the emulator service worker all start empty. So the packaged
   romset's first request (the eShop install's probe) waits for the whole board
   — romset, player, recipe, core — so a board installed once plays offline.
   Manifests and player pages refresh when the network answers within 4s.
-- **`kept-storage.json`** — the installed-cores set and the arcade shelf
-  (`lib/kept-storage.ts`). Every HTML page the packaged server sends starts
-  with a script that puts them back into localStorage before the page's own
-  scripts read them, and sends each later change back.
+- **`kept-storage.json`** — the installed-cores set, the arcade shelf and the
+  favorites (`lib/kept-storage.ts`). Every HTML page the packaged server sends
+  starts with a script that puts them back into localStorage before the page's
+  own scripts read them, and sends each later change back.
+- **`members/`, `steam-favorites.json`, `steam-art/`** — the Steam build's
+  member packs and the favorites sync (both below).
+
+### The Steam build
+
+`deno task build:steam` (or `build:steam windows|linux|mac`) packages the same
+launcher for the Steam store, laid out as the depots it uploads as:
+
+| folder                       | what Steam launches | built by                                    |
+| ---------------------------- | ------------------- | ------------------------------------------- |
+| `build/steam/windows-x86_64` | `shmupX.exe`        | `deno compile`, no console window           |
+| `build/steam/linux-x86_64`   | `AppRun`            | `deno desktop`, the plain app directory     |
+| `build/steam/mac-aarch64`    | `shmupX.app`        | `deno desktop`, the bundle                  |
+| `build/steam/members`        | —                   | the member packs: **not** part of any depot |
+| `build/steam/steamworks`     | —                   | steamcmd scripts, app and depot ids to fill |
+
+Beside them, `build/steam/README.txt` says all of that again for whoever does
+the upload. Linux gets the app directory rather than the AppImage because
+Steam runs a depot's files where they lie, and a self-mounting squashfs under
+Steam's runtime container is one more thing to go wrong. Upload the Linux and
+macOS depots from a Linux or macOS machine so their files keep the executable
+bit.
+
+**What it leaves out.** Some of what a checkout serves is not this project's to
+sell, and `lib/member-content.ts` is the whole policy for it: one rule per
+**member pack**, matched against URL paths. A file belongs to the first pack
+whose rule names it:
+
+| pack                     | what                                                                 |
+| ------------------------ | -------------------------------------------------------------------- |
+| `dezaemon-sfc`           | the Super Famicom cartridge `sfc:stage` puts in `static/snes/`       |
+| `dezaemon-3d`            | the Dezaemon 3D cartridge, the 64DD IPL, and the translation's patch |
+| `dezaemon-2-disc`        | `mesh-library.json`, the part library decoded off the Saturn disc    |
+| `dezaemon-saves`         | the community save collection and its manifest                       |
+| `arcade`                 | every arcade romset (`/games/<id>/<romset>.zip`)                     |
+| `2028-ai-soundtrack`     | 2028.Ai's custom BGM                                                 |
+| `2028-ai-street-fighter` | the six bosses' Street Fighter music and voice clips                 |
+| `super-mario-sp`         | the Super Mario World ROM hack                                       |
+
+The build leaves every matching file out of the binary — as few `--exclude`s as
+cover them, a folder wherever a whole folder is member content, since Windows
+caps `deno compile`'s command line at 32,767 characters (`lib/member-build.ts`
+`minimalExcludes`) — and writes them into
+`build/steam/members/shmupx-member-<id>.zip` instead: each file at its own URL
+path, plus a `member.json` naming the pack and its files. A pack with nothing
+in this checkout is not written. `deno task members:pack` writes just the packs,
+from `static/`, without building anything.
+
+Some of it the rules cannot take out by file, and every Steam build prints those
+for the project's owner to decide: 2028.Ai's sprite atlas packs the Street
+Fighter bosses' frames in with the game's own art, its announcer voices are not
+traced to a source, and the engine carries tables extracted from Dezaemon 2's
+binaries (`REVIEW` in `lib/member-content.ts`).
+
+**How it does without.** The binary embeds `build/flavor/flavor.json`, and
+`desktop.ts` reads that marker before the server loads (`lib/launcher-flavor.ts`;
+only a packaged app reads it, so a checkout that once ran a Steam build is not
+one). In the Steam build:
+
+- every path a member rule names is answered out of the member packs
+  (`lib/member-packs.ts`), and never fetched from the deploy the way the free
+  download fetches its romsets and BGM. A pack that is not there is a 404 that
+  names it (and its `x-shmupx-member-pack` header lets the eShop's arcade
+  install say so); the saves manifest falls back to an empty one, the model
+  viewer to placeholder meshes, and 2028.Ai plays silence where a boss track
+  would be;
+- the updater stays off: Steam ships the updates;
+- **Settings → ADD TO STEAM** says the copy is in the library already, since
+  Steam installed it.
+
+**Putting a pack back.** A pack is served straight out of the zip: the central
+directory is read once, and each request reads one entry — just the asked-for
+bytes of a stored one, so the arcade install's one-byte probe of a 14MB romset
+reads one byte. Nothing is unpacked. It is found in any of:
+
+- **Settings → MEMBER FILES**, which imports a picked zip into the data
+  directory's `members/` (`/api/members`);
+- that folder itself — `%LOCALAPPDATA%\shmupX\members`,
+  `~/.local/share/shmupX/members`, `~/Library/Application Support/shmupX/members`
+  — or a `members` folder beside the game's own files (Steam → Manage → Browse
+  local files);
+- `--members <folder>` or `SHMUPX_MEMBERS` (several, with the PATH delimiter).
+
+A zip dropped in while the launcher runs is found by the next request for one
+of its files, with no restart, and a folder holding a `member.json` works as
+well as the zip it came from. A pack can only ever answer for paths a member
+rule names, so no zip can stand in for the launcher's own pages. A source
+checkout takes packs back with `deno task members:restore <zip or folder>...`,
+which writes their files into `static/` — again, member paths only.
+
+### Favorites in Steam
+
+Like RetroDECK's Steam Sync: star a game and it becomes a game of its own in
+Steam's library. That works for a row in **Games** or on a console's shelf (F,
+L3, or the row's ☆) and for a game on the Dezaemon shelf (its X, or the
+editor's SAVED GAMES drawer, which shares that list). The entry runs the
+launcher with `--game <section>:<row>` or `--play <slug>`. The dashboard opens
+that game as soon as its row has loaded (`/api/launch`), and leaving the game
+quits the launcher, window and all — a borrowed browser is closed too — so
+Steam sees the game it started end. Unstarring a game takes its entry out.
+
+The page does nothing but star. Both lists are kept keys (`lib/kept-storage.ts`
+`cmg-game-favs`, `cmg-deza-favs`), so in a packaged launcher every change to
+them already reaches the server, and `main.ts` hands it to
+`lib/steam-favorites.ts`. That sync also runs when the launcher starts and on
+its way out (the moment RetroDECK runs its own); under `deno desktop`, closing
+the window ends the process before an exit sync can run, so there the start and
+the change-time syncs carry it. `shmupX --steam-sync` runs one and exits, for a
+pass with Steam closed. **Settings → STEAM FAVORITES** shows what the last sync
+did and switches it off; off takes every favorite's entry out again.
+
+The entries are told apart from everything else in `shortcuts.vdf` by their
+`shmupX favorites` collection and their `--game`/`--play`, never by name or
+appid. So an entry the player renames or files in another collection keeps its
+appid, and with it its artwork, through every later sync. For the same reason
+ADD TO STEAM never mistakes one for the launcher's own entry, even though they
+run the same binary. A shelf game is listed under its own title from the
+database, with its title screen as the library art; a dashboard row uses its
+name and icon. The art is written only where none is, so art the player picked
+is never replaced. A favorite runs a file its arguments can reach: the
+installed copy of an AppImage, the Steam depot's `AppRun`, and on macOS the
+binary inside the bundle. As with ADD TO STEAM, **restart Steam** to see new
+entries.
 
 ### Keeping it current
 
