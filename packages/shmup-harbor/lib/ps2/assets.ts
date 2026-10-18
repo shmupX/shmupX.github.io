@@ -271,26 +271,33 @@ export function stage2Frames(boss: Record<string, unknown>): string[] {
   ];
 }
 
-/**
- * The frame lists a boss fires: `projectileData` — or `bulletData`, which
- * normalizeRecipe turns into it — and `projectileDataA`, the one further slot
- * a port attack pattern reads (the second boss's spread). The B and C slots
- * are the browser engine's. Then those of its second stage.
- */
+/** The frame lists a boss fires, in either of its stages. */
 function bossShotLists(boss: Record<string, unknown>): string[][] {
-  return [
-    textureOf(boss.projectileData) ?? textureOf(boss.bulletData),
-    textureOf(boss.projectileDataA),
-    ...stage2ShotLists(boss),
-  ].filter((list): list is string[] => list !== null);
+  return [...armedShotLists(boss), ...stage2ShotLists(boss)];
 }
 
 /**
- * The frame lists a boss's second stage fires, armed as runtime-patches.ts
- * arms it: the block laid over the boss slot by slot, a slot under either
- * spelling (bulletData first, as the browser reads it), and the one weapon
- * every routine fires being the record's own, else slot A's. gs's dragon fires
- * deza1_52_0/1 from both.
+ * The frame lists a record fires, armed as runtime-patches.ts arms it (the
+ * browser's bossWeaponSlots), each slot under either spelling, bulletData
+ * first: the one weapon every port routine fires, the record's own else slot
+ * A's; slot A, the second boss's spread; and slot B, thrown every third move.
+ * Slot C is armed and fired by nothing. gs's Daltonius fires RAM_0 from the
+ * first two and laptop0/1 from B.
+ */
+export function armedShotLists(record: Record<string, unknown>): string[][] {
+  const weapon = (suffix: string) =>
+    textureOf(record[`bulletData${suffix}`]) ??
+      textureOf(record[`projectileData${suffix}`]);
+  const slotA = weapon("A");
+  return [weapon("") ?? slotA, slotA, weapon("B")].filter((
+    list,
+  ): list is string[] => list !== null);
+}
+
+/**
+ * The frame lists a boss's second stage fires: the block laid over the boss
+ * slot by slot, as bossStage2Record lays it, and armed the same way. gs's
+ * dragon fires deza1_52_0/1 from all three.
  */
 export function stage2ShotLists(boss: Record<string, unknown>): string[][] {
   const block = stage2Block(boss);
@@ -302,13 +309,7 @@ export function stage2ShotLists(boss: Record<string, unknown>): string[][] {
     if (block[bullet] && !block[projectile]) delete merged[projectile];
     if (block[projectile] && !block[bullet]) delete merged[bullet];
   }
-  const weapon = (suffix: string) =>
-    textureOf(merged[`bulletData${suffix}`]) ??
-      textureOf(merged[`projectileData${suffix}`]);
-  const slotA = weapon("A");
-  return [weapon("") ?? slotA, slotA].filter((list): list is string[] =>
-    list !== null
-  );
+  return armedShotLists(merged);
 }
 
 /**

@@ -23,6 +23,28 @@ export interface RuntimePatch {
   defines?: readonly string[];
 }
 
+// A boss's weapons, the browser's (game.bundle.js: bossWeaponSlots). A record
+// arms up to four slots, each under either spelling — bulletData or
+// projectileData, then A, B and C — and the one weapon a routine fires is the
+// record's own, else slot A's. The port reads only `projectileData`
+// (normalizeRecipe's copy of a bulletData) and `projectileDataA`, so a boss
+// that names only A and B slots — gs's Daltonius, the stock Sagat, Vega and
+// Fang, every boss foo.json ships — fired normalizeRecipe's empty stand-in:
+// the port's red 6x6 squares, never its own art.
+//
+// - Every boss is armed the browser's way as createBoss makes it, each slot in
+//   the shape normalizeRecipe gives a boss's bulletData. A slot whose texture
+//   names no frame is no weapon, so the stand-in no longer shadows slot A; a
+//   boss with no weapon at all still fires it, as it always did.
+// - No port routine fires slot B. The browser's do, as a heavy throw between
+//   volleys of the rest — Daltonius flies Akuma's: six of slot A straight at
+//   the ship, or one of slot B, about as often. So here every third move of a
+//   boss with a slot B is one straight shot of it, and the next waits 40 steps
+//   (the port's slowest straight-shot cooldown). The routine's own pattern is
+//   not advanced by a throw. Every third, not at random, so a run replays the
+//   same, as the port's routines do. Slot C is armed and fired by nothing,
+//   since the browser fires it only from routines the port does not have.
+//
 // A boss's second stage, the browser's (game.bundle.js: bossStage2Record,
 // bossStage2Due, bossStage2Start; README-Technical.md, "A boss can have a
 // second stage"). A `stage2` block on a boss record is laid over the record
@@ -40,20 +62,14 @@ export interface RuntimePatch {
 //   (tests/ps2_boss_stage2_test.ts holds them together). The pool is the same
 //   one: stage 2 is the bottom of the bar, not a refill.
 // - "Between two moves" is bossLoop's attack site: when the cooldown runs
-//   out, a boss that is due changes instead of attacking.
+//   out, a boss that is due changes instead of making its move (bossMove).
 // - The port draws a boss with one frame list, `texture` — normalizeRecipe's
 //   copy of anim.idle — and never its other stances, so stage 2 stands in the
 //   block's `texture`, else its `anim.idle`, else the boss's own. The shoot
 //   and syngoku stances the browser's routines switch to stay unused, as the
 //   boss's own do (lib/ps2/assets.ts packs only what is drawn).
-// - Its routines read two weapons: `projectileData`, fired by every one, and
-//   `projectileDataA`, the second boss's spread. Stage 2 arms all four slots
-//   the browser's way (bossWeaponSlots: bulletData or projectileData, the
-//   one weapon a routine fires being the record's own else slot A's), each in
-//   the shape normalizeRecipe gives a boss's bulletData. A slot whose texture
-//   names no frame is no weapon: normalizeRecipe gives a boss with no
-//   bulletData an empty stand-in, which would otherwise shadow slot A and
-//   fire the port's red squares, as gs's Daltonius does before he changes.
+// - Stage 2 arms its slots from the record it flies, as stage 1 did from the
+//   boss's (above).
 // - The routine is picked by `stageId`, never by attackPattern, so only a
 //   block's OWN attackPattern changes it, and only to one the port has
 //   (`bossN`); a boss's attackPattern does nothing here in either stage.
@@ -71,10 +87,12 @@ export interface RuntimePatch {
 //   the morph plays se_sp, as the browser does.
 //
 // No `$` in here: it is spliced into a String.replace replacement.
-export const BOSS_STAGE2_RUNTIME = String
-  .raw`// shmupX lib/ps2/runtime-patches.ts: a boss's second stage.
+export const BOSS_RUNTIME = String
+  .raw`// shmupX lib/ps2/runtime-patches.ts: a boss's weapons and second stage.
 var BOSS_STAGE2_HP_BELOW = 0.5;
 var BOSS_WEAPON_SUFFIXES = ["", "A", "B", "C"];
+var BOSS_HEAVY_EVERY = 3;
+var BOSS_HEAVY_STEPS = 40;
 var BOSS_STAGE2_MORPH_STEPS = 3;
 var BOSS_STAGE2_FADE_STEPS = 11;
 var BOSS_STAGE2_REST_STEPS = 15;
@@ -105,8 +123,10 @@ function bossStage2Due(b) {
 function bossStage2List(list) {
   return Array.isArray(list) && list.length > 0 ? list : null;
 }
-function bossStage2Arm(b, data) {
+function bossArm(b, data) {
   var block = data && data.stage2;
+  bossWeaponSlots(b, data);
+  b.heavyPhase = 0;
   b.stage2 = bossStage2Record(data);
   b.stage2Done = 0;
   b.stage2Idle = null;
@@ -121,7 +141,7 @@ function bossStage2Arm(b, data) {
   }
   return b;
 }
-function bossStage2Weapon(record, suffix) {
+function bossWeapon(record, suffix) {
   var bullet = record["bulletData" + suffix];
   if (bullet && bossStage2List(bullet.texture)) {
     return {
@@ -135,12 +155,25 @@ function bossStage2Weapon(record, suffix) {
   var projectile = record["projectileData" + suffix];
   return projectile && bossStage2List(projectile.texture) ? projectile : null;
 }
-function bossStage2Weapons(b, record) {
-  b.projectileDataA = bossStage2Weapon(record, "A");
-  b.projectileDataB = bossStage2Weapon(record, "B");
-  b.projectileDataC = bossStage2Weapon(record, "C");
-  b.projectileData = bossStage2Weapon(record, "") || b.projectileDataA ||
+function bossWeaponSlots(b, record) {
+  b.projectileDataA = bossWeapon(record, "A");
+  b.projectileDataB = bossWeapon(record, "B");
+  b.projectileDataC = bossWeapon(record, "C");
+  b.projectileData = bossWeapon(record, "") || b.projectileDataA ||
     record.projectileData || null;
+}
+function bossMove(ctx, b) {
+  if (bossStage2Due(b)) {
+    bossStage2Start(ctx, b);
+    return;
+  }
+  if (b.projectileDataB && ++b.heavyPhase % BOSS_HEAVY_EVERY === 0) {
+    bossShootStraight(b, b.projectileDataB);
+    b.attackCooldown = BOSS_HEAVY_STEPS;
+    ctx.sound.playSfx("se_shoot");
+    return;
+  }
+  bossAttack(ctx, b);
 }
 function bossStage2Frames(ctx, atlas, list) {
   var out = [];
@@ -177,7 +210,7 @@ function bossStage2Rest(b) {
 function bossStage2Start(ctx, b) {
   var stage2 = b.stage2;
   b.stage2Done = 1;
-  bossStage2Weapons(b, stage2);
+  bossWeaponSlots(b, stage2);
   if (b.stage2Routine !== null) b.stageId = b.stage2Routine;
   if (b.frames.length > 0) {
     b.stage2Ghost = {
@@ -245,9 +278,9 @@ function bossStage2Ghost(ctx, b) {
 }
 `;
 
-/** The top-level names BOSS_STAGE2_RUNTIME declares. */
-const BOSS_STAGE2_NAMES = [
-  ...BOSS_STAGE2_RUNTIME.matchAll(/^(?:var|function) (\w+)/gm),
+/** The top-level names BOSS_RUNTIME declares. */
+const BOSS_NAMES = [
+  ...BOSS_RUNTIME.matchAll(/^(?:var|function) (\w+)/gm),
 ].map((m) => m[1]);
 
 export const RUNTIME_PATCHES: readonly RuntimePatch[] = [
@@ -263,24 +296,24 @@ export const RUNTIME_PATCHES: readonly RuntimePatch[] = [
     replace: "$1  if ($2.state.godMode) return;\n",
   },
   {
-    // A boss's second stage, 1 of 4: the helpers go in ahead of createBoss,
-    // which is wrapped so every boss it makes is armed for its stage 2 — or
-    // for none, when its record has no block.
-    name: "boss stage 2: armed",
+    // A boss, 1 of 4: the helpers go in ahead of createBoss, which is wrapped
+    // so every boss it makes is armed the browser's way, and for its second
+    // stage — or for none, when its record has no block.
+    name: "boss: armed",
     find: /function createBoss\((\w+), (\w+), (\w+)\) \{/,
-    replace: BOSS_STAGE2_RUNTIME +
+    replace: BOSS_RUNTIME +
       "function createBoss($1, $2, $3) {\n" +
-      "  return bossStage2Arm(createBossBody($1, $2, $3), $2);\n" +
+      "  return bossArm(createBossBody($1, $2, $3), $2);\n" +
       "}\n" +
       "function createBossBody($1, $2, $3) {",
-    defines: [...BOSS_STAGE2_NAMES, "createBossBody"],
+    defines: [...BOSS_NAMES, "createBossBody"],
   },
   {
-    // 2 of 4: between two moves. bossLoop attacks when the cooldown runs out;
-    // a boss that is due changes then instead.
-    name: "boss stage 2: between moves",
-    find: /(\s)bossAttack\((\w+), (\w+)\);/,
-    replace: "$1(bossStage2Due($3) ? bossStage2Start : bossAttack)($2, $3);",
+    // 2 of 4: one move when the cooldown runs out — the change to stage 2 when
+    // it is due, slot B's throw on its turn, else the port's routine.
+    name: "boss: one move at a time",
+    find: /(\.attackCooldown <= 0\) \{\r?\n\s*)bossAttack\((\w+), (\w+)\);/,
+    replace: "$1bossMove($2, $3);",
   },
   {
     // 3 of 4: the morph. While it plays the boss neither moves nor fires —
