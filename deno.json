@@ -70,6 +70,7 @@
     "watch:install": "cd tools/shmupx-watch && ./gradlew :app:installDebug",
     "preview:verify": "deno run -A scripts/verify-preview.ts",
     "game:debug": "deno run -A scripts/debug-game.ts",
+    "refresh:compare": "deno run -A scripts/refresh-compare.ts",
     "testdrive:ps2:web": "deno run -A scripts/testdrive-ps2-web.ts",
     "testdrive:ps2:compare": "deno run -A scripts/testdrive-ps2-compare.ts",
     "testdrive:ps2:textures": "deno run -A scripts/testdrive-ps2-textures.ts",
