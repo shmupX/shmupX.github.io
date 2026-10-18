@@ -2228,10 +2228,13 @@ daily board or meta beside it; no page sets it.
 for a year. It used to be one `afc2019_highScore` for the whole origin — the
 hosted player, every `?level=` game, the editor's PLAY, the eShop archive — so
 each game showed whatever had been played last as its WORLD BEST, and the boot
-pushed that up into its board: the same 68102600 sits on `foo-a9f37ed7`,
-`2019-ps2-adb9fb3f`, `rando-b90175cc`, `ultra-bird-ea3a65d4` and
-`globalHighScore`. `create2028Game` now expires that cookie (`max-age=0`) and
-nothing reads it. The WORLD BEST a page shows is the higher of two numbers kept
+pushed that up into its board. foo's 68102600 (`foo-a9f37ed7`, set
+2026-08-30) was copied that way onto `2019-ps2-adb9fb3f`, `rando-b90175cc`,
+`ultra-bird-ea3a65d4` and `globalHighScore`. The copies were deleted on
+2026-10-18, after this runtime went live. Each board kept its `meta`, and
+`globalHighScore` is gone. A backup of all five nodes is in
+`dev-fixtures/leaderboards-backup-2026-10-18.json`. `create2028Game` now
+expires that cookie (`max-age=0`) and nothing reads it. The WORLD BEST a page shows is the higher of two numbers kept
 apart, the local best and the board's, and the board's never goes into the
 cookie: a cookie that took it handed it back on the next visit, so a board
 cleaned of a bogus record was raised again by every browser that had only ever
