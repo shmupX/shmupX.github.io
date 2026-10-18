@@ -26,6 +26,17 @@ Deno.test("the god-mode guard goes in at the top of playerOnDamage", () => {
     "  if (p.barrierFlg || p.damageAnimFlg || p.dead) return;",
     "  p.hp -= amount;",
     "}",
+    // What the boss's second stage anchors on (tests/ps2_boss_stage2_test.ts):
+    // every patch's anchor has to be there for any of them to go on.
+    "function createBoss(ctx2, data, stageId) {",
+    "}",
+    "function bossLoop(ctx2, b) {",
+    "  const bMul = ctx2.state.turboMode ? 2 : 1;",
+    "  b.moveTimer += bMul;",
+    "  bossAttack(ctx2, b);",
+    "}",
+    "function bossDraw(ctx2, b) {",
+    "}",
   ].join("\n");
   const patched = patchRuntime(port);
   assert(

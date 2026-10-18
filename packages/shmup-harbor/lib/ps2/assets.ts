@@ -232,24 +232,83 @@ function textureOf(value: unknown): string[] | null {
  * patterns only the browser engine has. Collecting all of them, the way an
  * enemy's textures are collected, put 43 frames on the sheet for the five
  * stock bosses where 16 are ever drawn — and with five bosses to carry, that
- * is the difference between the level atlas at full size and at 1/4.
+ * is the difference between the level atlas at full size and at 1/4. A boss
+ * with a second stage draws that stage's morph and stance too (stage2Frames).
  */
 function bossFrames(boss: Record<string, unknown>): string[] {
   const anim = boss.anim as { idle?: unknown } | null | undefined;
-  return textureOf(boss) ?? textureOf({ texture: anim?.idle }) ?? [];
+  return [
+    ...textureOf(boss) ?? textureOf({ texture: anim?.idle }) ?? [],
+    ...stage2Frames(boss),
+  ];
+}
+
+/** A boss's `stage2` block, when it has one (runtime-patches.ts). */
+function stage2Block(
+  boss: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const block = boss.stage2;
+  return block && typeof block === "object"
+    ? block as Record<string, unknown>
+    : null;
+}
+
+/**
+ * The frames a boss's second stage draws (runtime-patches.ts): `anim.morph`,
+ * played once on the way in, and the frames it then stands in — the block's
+ * `texture`, else its `anim.idle`, else the boss's own, which bossFrames has
+ * already. Its other stances go unused, as the boss's own do: gs's dragon
+ * changes through liuKangDragon0-9 and stands in 9, and its shoot and syngoku
+ * stances, 10-12, are the browser's alone.
+ */
+export function stage2Frames(boss: Record<string, unknown>): string[] {
+  const block = stage2Block(boss);
+  if (!block) return [];
+  const anim = block.anim as { idle?: unknown; morph?: unknown } | undefined;
+  return [
+    ...textureOf({ texture: anim?.morph }) ?? [],
+    ...textureOf(block) ?? textureOf({ texture: anim?.idle }) ?? [],
+  ];
 }
 
 /**
  * The frame lists a boss fires: `projectileData` — or `bulletData`, which
  * normalizeRecipe turns into it — and `projectileDataA`, the one further slot
  * a port attack pattern reads (the second boss's spread). The B and C slots
- * are the browser engine's.
+ * are the browser engine's. Then those of its second stage.
  */
 function bossShotLists(boss: Record<string, unknown>): string[][] {
   return [
     textureOf(boss.projectileData) ?? textureOf(boss.bulletData),
     textureOf(boss.projectileDataA),
+    ...stage2ShotLists(boss),
   ].filter((list): list is string[] => list !== null);
+}
+
+/**
+ * The frame lists a boss's second stage fires, armed as runtime-patches.ts
+ * arms it: the block laid over the boss slot by slot, a slot under either
+ * spelling (bulletData first, as the browser reads it), and the one weapon
+ * every routine fires being the record's own, else slot A's. gs's dragon fires
+ * deza1_52_0/1 from both.
+ */
+export function stage2ShotLists(boss: Record<string, unknown>): string[][] {
+  const block = stage2Block(boss);
+  if (!block) return [];
+  const merged: Record<string, unknown> = { ...boss, ...block };
+  for (const suffix of ["", "A", "B", "C"]) {
+    const bullet = `bulletData${suffix}`;
+    const projectile = `projectileData${suffix}`;
+    if (block[bullet] && !block[projectile]) delete merged[projectile];
+    if (block[projectile] && !block[bullet]) delete merged[bullet];
+  }
+  const weapon = (suffix: string) =>
+    textureOf(merged[`bulletData${suffix}`]) ??
+      textureOf(merged[`projectileData${suffix}`]);
+  const slotA = weapon("A");
+  return [weapon("") ?? slotA, slotA].filter((list): list is string[] =>
+    list !== null
+  );
 }
 
 /**
