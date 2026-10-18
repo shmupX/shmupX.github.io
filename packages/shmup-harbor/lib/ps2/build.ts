@@ -274,7 +274,7 @@ async function loadRecord(
  * main.js. A silently stale runtime is about the worst thing this exporter
  * can ship, since the disc looks freshly built.
  */
-async function localGraph(entry: string): Promise<string[]> {
+export async function localGraph(entry: string): Promise<string[]> {
   const seen = new Set<string>();
   const queue = [entry];
   while (queue.length) {

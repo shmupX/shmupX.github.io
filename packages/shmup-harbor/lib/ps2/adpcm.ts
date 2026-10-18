@@ -1,4 +1,5 @@
-// SPU2 ADPCM and WAV encoding for the PS2 export.
+// SPU2 ADPCM and WAV encoding for the PS2 export, and the decoder the browser
+// build plays a build's effects back with (decodeAdp, at the bottom).
 //
 // AthenaEnv plays sound effects through audsrv, which wants ps2sdk's `.adp`
 // container: a 16-byte "APCM" header followed by 16-byte SPU2 ADPCM blocks of
@@ -222,6 +223,87 @@ export function encodeAdp(pcm: Int16Array, opts: AdpOptions): Uint8Array {
   out[at++] = (predictNr << 4) | shiftFactor;
   out[at++] = FLAG_END | FLAG_REPEAT | FLAG_LOOP_START;
   return out;
+}
+
+/** What `decodeAdp()` reads back out of an audsrv `.adp`. */
+export interface DecodedAdp {
+  pcm: Int16Array;
+  /**
+   * The rate the SPU2 plays it at, `pitch * 48000 / 4096`. Not quite the rate
+   * it was encoded from: the header stores a floored pitch, so 22050 Hz comes
+   * back as 22042.97 — which is what a console actually plays.
+   */
+  rate: number;
+  /** The container's loop flag. */
+  loop: boolean;
+  /** First sample of the loop: the block flagged LOOP_START, or 0. */
+  loopStartSample: number;
+}
+
+// The SPU2's own decode filter, in 64ths: SPU_F above, the right way round.
+const SPU_K: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [60, 0],
+  [115, -52],
+  [98, -55],
+  [122, -60],
+];
+
+/**
+ * audsrv `.adp` bytes -> PCM s16, the way the SPU2 decodes a voice.
+ *
+ * The browser build (lib/ps2/web-sound.ts) plays a build's effects from the
+ * very files the disc carries, so this is the hardware decoder rather than an
+ * inverse of `encodeAdp`'s arithmetic: each nibble is `(d << 12) >> shift`,
+ * plus the filtered previous two OUTPUT samples. Decoding stops at the
+ * header's sample count, which leaves out the padding of the last block and
+ * the silent terminator after it.
+ */
+export function decodeAdp(bytes: Uint8Array): DecodedAdp {
+  const magic = String.fromCharCode(...bytes.subarray(0, 4));
+  if (bytes.length < 16 || magic !== "APCM") {
+    throw new Error("not an audsrv .adp: no APCM header");
+  }
+  const channels = bytes[5];
+  if (channels !== 1) {
+    throw new Error(`a ${channels}-channel .adp; only mono is decoded`);
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const loop = bytes[6] !== 0;
+  const pitch = view.getUint32(8, true);
+  const samples = view.getUint32(12, true);
+  const blocks = Math.floor((bytes.length - 16) / ADPCM_BLOCK_BYTES);
+
+  const pcm = new Int16Array(samples);
+  let loopStartSample = -1;
+  let s1 = 0;
+  let s2 = 0;
+  let at = 0;
+  for (let b = 0; b < blocks && at < samples; b++) {
+    const base = 16 + b * ADPCM_BLOCK_BYTES;
+    const predictNr = Math.min(bytes[base] >> 4, SPU_K.length - 1);
+    const shiftFactor = bytes[base] & 0x0f;
+    if (bytes[base + 1] & FLAG_LOOP_START && loopStartSample < 0) {
+      loopStartSample = b * ADPCM_BLOCK_SAMPLES;
+    }
+    const [k0, k1] = SPU_K[predictNr];
+    for (let i = 0; i < ADPCM_BLOCK_SAMPLES && at < samples; i++) {
+      const byte = bytes[base + 2 + (i >> 1)];
+      // Low nibble first, sign-extended from 4 bits.
+      const d = (((i & 1 ? byte >> 4 : byte) & 0x0f) << 28) >> 28;
+      const s = ((d << 12) >> shiftFactor) + ((s1 * k0 + s2 * k1 + 32) >> 6);
+      const clamped = Math.max(-32768, Math.min(32767, s));
+      pcm[at++] = clamped;
+      s2 = s1;
+      s1 = clamped;
+    }
+  }
+  return {
+    pcm,
+    rate: pitch * 48000 / 4096,
+    loop,
+    loopStartSample: loop && loopStartSample > 0 ? loopStartSample : 0,
+  };
 }
 
 /** PCM s16 -> the canonical 44-byte-header mono WAV AthenaEnv's streamer expects. */

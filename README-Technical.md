@@ -4149,6 +4149,39 @@ should run in the browser needs a web build beside it — which is what the
 mirror's `kind: "web"` rows are, and what the PLAYSTATION 2 section does for a
 disc built here: the `WEB` row under it plays the same level in the browser.
 
+**The web build of AthenaEnv.** What does run a disc's own game in a browser
+is `writeWebBuild(buildDir, outDir)` in
+[`lib/ps2/web-build.ts`](packages/shmup-harbor/lib/ps2/web-build.ts). It copies
+a `build:ps2` app folder — less `athena.elf` and `SYSTEM.CNF`, which only a
+console opens — and writes three files beside it: `host.js`
+([`lib/ps2/web-host.ts`](packages/shmup-harbor/lib/ps2/web-host.ts) with
+svelte-ps2's Phaser host, bundled by `deno bundle` and cached in
+`build/ps2/.cache`), an `index.html`, and the `files.json` a page cannot list
+for itself. Served over HTTP, the page preloads every PNG as a texture keyed by
+its AthenaEnv path, fetches the JSON the game will `std.loadFile`, decodes the
+`.adp` effects with the SPU2 decoder beside the encoder (`decodeAdp` in
+`adpcm.ts`) and plays them and the WAV music through WebAudio, then imports the
+build's own `main.js`. That main.js draws through `createNativeRuntime`, the
+console adapter, so the page rebuilds a console's globals over
+`createRuntime(createPhaserHost(...))`
+([`lib/ps2/web-native.ts`](packages/shmup-harbor/lib/ps2/web-native.ts)): GS
+colours rescaled back, `Screen.clear` and `flip` folded into the host's frame,
+`new Font()` as the built-in font. The title's secrets and the runtime patches
+therefore run exactly as they do on hardware. The one thing main.js had to
+learn is to stop spinning when a page owns the clock: when `__PS2_HOST_LOOP__`
+is set, `runtime-entry.ts` hands it the frame instead of looping, and the page
+ticks it once per Phaser frame. Keyboard (arrows, <kbd>Z</kbd>/<kbd>Space</kbd>,
+<kbd>Enter</kbd>, <kbd>Shift</kbd>, <kbd>Q</kbd>/<kbd>E</kbd> for L1/R1), any
+standard gamepad and a script all drive the one pad. A bot holds buttons with
+`__PS2_PADS__.set(mask)` and reads the game from `__PS2_CTX__`, which
+runtime-entry.ts publishes; `__PS2_HOST__` reports readiness, frames, errors
+and every sound the game asked for, and `?debug` prints those sounds under the
+screen. The Timer reads Phaser's loop clock rather than `performance.now()`, so
+a debugger that steps requestAnimationFrame steps the game's logic
+deterministically. `packages/shmup-harbor/tests/ps2_web_host_test.ts` boots a
+compiled main.js through the same adapter with a recording host in Phaser's
+place, and plays both title secrets through the bot's pad.
+
 **Audio.** audsrv splits sound in two, and so does the export.
 [`lib/ps2/sound-pack.ts`](packages/shmup-harbor/lib/ps2/sound-pack.ts) builds
 both packs and

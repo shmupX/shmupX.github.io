@@ -7,10 +7,11 @@
 // if the port ever drifts — a >>> where the C shifts arithmetically, a
 // truncation that rounds — these bytes stop matching.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   ADPCM_BLOCK_SAMPLES,
   alignLoopForAdpcm,
+  decodeAdp,
   encodeAdp,
   encodeWav,
 } from "../lib/ps2/adpcm.ts";
@@ -359,52 +360,81 @@ Deno.test("a looping .adp marks the loop region in the block flags", () => {
   assertEquals(flagsOf(last) & 3, 3, "last data block ends and repeats");
 });
 
-// The SPU2 decoder, so the encoder is checked against what a console would
-// actually hear rather than only against itself.
-const DEC_F: [number, number][] = [
-  [0, 0],
-  [60, 0],
-  [115, -52],
-  [98, -55],
-  [122, -60],
-];
+// decodeAdp is the SPU2's decoder, so the encoder is checked against what a
+// console would actually hear rather than only against itself — and the
+// browser build, which plays a build's effects through it, is checked too.
 
-function decodeAdp(adp: Uint8Array): Int16Array {
-  const nsamples = new DataView(adp.buffer).getUint32(12, true);
-  const out = new Int16Array(nsamples);
-  let s1 = 0;
-  let s2 = 0;
-  let at = 0;
-  for (let block = 16; block + 16 <= adp.length && at < nsamples; block += 16) {
-    const shift = adp[block] & 0x0f;
-    const predict = (adp[block] >> 4) & 0x0f;
-    const [f0, f1] = DEC_F[Math.min(predict, 4)];
-    for (let i = 0; i < ADPCM_BLOCK_SAMPLES && at < nsamples; i++) {
-      const byte = adp[block + 2 + (i >> 1)];
-      const nibble = i & 1 ? byte >> 4 : byte & 0x0f;
-      const s = ((nibble << 12) << 16) >> 16; // sign-extend the top nibble
-      const sample = (s >> shift) + ((s1 * f0 + s2 * f1) >> 6);
-      const clamped = Math.min(32767, Math.max(-32768, sample));
-      out[at++] = clamped;
-      s2 = s1;
-      s1 = clamped;
-    }
+function snrDb(source: Int16Array, decoded: Int16Array): number {
+  let err = 0;
+  let signal = 0;
+  for (let i = 0; i < source.length; i++) {
+    const d = decoded[i] - source[i];
+    err += d * d;
+    signal += source[i] * source[i];
   }
-  return out;
+  return 10 * Math.log10(signal / err);
 }
 
 Deno.test("encodeAdp round-trips within ADPCM's error budget", () => {
-  const decoded = decodeAdp(encodeAdp(GOLDEN_PCM, { rate: 44100 }));
+  const decoded = decodeAdp(encodeAdp(GOLDEN_PCM, { rate: 44100 })).pcm;
   assertEquals(decoded.length, GOLDEN_PCM.length);
-  let err = 0;
-  let signal = 0;
-  for (let i = 0; i < GOLDEN_PCM.length; i++) {
-    const d = decoded[i] - GOLDEN_PCM[i];
-    err += d * d;
-    signal += GOLDEN_PCM[i] * GOLDEN_PCM[i];
-  }
-  const snr = 10 * Math.log10(signal / err);
+  const snr = snrDb(GOLDEN_PCM, decoded);
   assert(snr > 20, `4-bit ADPCM should clear 20 dB SNR, got ${snr.toFixed(1)}`);
+});
+
+Deno.test("decodeAdp gets a sweep and a tone back out of encodeAdp", () => {
+  const rate = 22050;
+  // A second of 220 Hz rising to 2 kHz, and a steady 440 Hz: the sweep makes
+  // every block pick its predictor afresh, the tone lets the filters settle.
+  const sweep = Int16Array.from({ length: rate }, (_, i) =>
+    Math.round(
+      12000 * Math.sin(2 * Math.PI * (220 + 1800 * i / rate) * i / rate),
+    ));
+  const tone = Int16Array.from(
+    { length: 5000 },
+    (_, i) => Math.round(9000 * Math.sin(2 * Math.PI * 440 * i / rate)),
+  );
+
+  const decoded = decodeAdp(encodeAdp(sweep, { rate }));
+  assertEquals(decoded.pcm.length, sweep.length, "padding left out");
+  // The header stores floor(rate * 4096 / 48000); that is what plays.
+  assertEquals(decoded.rate, Math.floor(rate * 4096 / 48000) * 48000 / 4096);
+  assert(Math.abs(decoded.rate - rate) < 10);
+  assertEquals(decoded.loop, false);
+  assertEquals(decoded.loopStartSample, 0);
+  // A sign slip or a nibble-order swap is noise, far under these.
+  const sweepSnr = snrDb(sweep, decoded.pcm);
+  assert(sweepSnr > 28, `sweep came back at ${sweepSnr.toFixed(1)} dB`);
+  const toneSnr = snrDb(tone, decodeAdp(encodeAdp(tone, { rate })).pcm);
+  assert(toneSnr > 38, `tone came back at ${toneSnr.toFixed(1)} dB`);
+});
+
+Deno.test("decodeAdp reads the loop back from a looping .adp", () => {
+  const tone = Int16Array.from(
+    { length: 4999 },
+    (_, i) => Math.round(9000 * Math.sin(2 * Math.PI * 440 * i / 22050)),
+  );
+  const aligned = alignLoopForAdpcm(tone, 61);
+  const decoded = decodeAdp(
+    encodeAdp(aligned.pcm, {
+      rate: 22050,
+      loop: true,
+      loopStartSample: aligned.loopStart,
+    }),
+  );
+  assertEquals(decoded.loop, true);
+  assertEquals(decoded.loopStartSample, aligned.loopStart);
+  assertEquals(decoded.pcm.length, aligned.pcm.length);
+});
+
+Deno.test("decodeAdp turns silence into silence and refuses what is not an .adp", () => {
+  const silent = decodeAdp(encodeAdp(new Int16Array(100), { rate: 22050 }));
+  assertEquals(silent.pcm.length, 100);
+  assert(silent.pcm.every((s) => s === 0));
+  assertThrows(() => decodeAdp(encodeWav(GOLDEN_PCM, 22050)), Error, "APCM");
+  const stereo = encodeAdp(GOLDEN_PCM, { rate: 22050 });
+  stereo[5] = 2;
+  assertThrows(() => decodeAdp(stereo), Error, "only mono");
 });
 
 Deno.test("alignLoopForAdpcm repeats short loops exactly", () => {

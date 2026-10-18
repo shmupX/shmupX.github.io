@@ -198,6 +198,12 @@ const game = createGame(runtime, {
 // `createGame` hands back the context to do it with.
 ctx = game.ctx;
 
+// The context, published for whatever is watching the game from outside it:
+// the browser build's bot (lib/ps2/web-host.ts) reads the ship, the boss and
+// the scene off it. On a console nothing reads it, and a property on the
+// global object costs nothing.
+(globalThis as { __PS2_CTX__?: GameContext }).__PS2_CTX__ = ctx;
+
 // The edge is read off the pad here rather than through `ctx.input`, because
 // the port's `isPressed` is an edge against a snapshot it retakes on every
 // LOGIC step — and there are `rate` of those per rendered frame. By the time
@@ -224,7 +230,7 @@ const STARTS = [START, runtime.Pads.SELECT];
 const held = (masks: number[]) => masks.some((mask) => pad.pressed(mask));
 const state = ctx.state as typeof ctx.state & { godMode?: number };
 
-for (;;) {
+function frame(): void {
   // Sample the pad BEFORE the frame runs, so this edge and the one the port's
   // own input layer takes during the frame are the same press. Reading it
   // afterwards puts this a frame ahead: the repair would set `paused` before
@@ -233,23 +239,37 @@ for (;;) {
   const startDown = pad.pressed(START);
   const startPressed = startDown && !startWasDown;
   startWasDown = startDown;
-  const pausedBefore = ctx.state.paused;
-  const titleWaiting = ctx.scenes.current === SCENE_TITLE &&
-    !ctx.scenes.fading;
+  const pausedBefore = game.ctx.state.paused;
+  const titleWaiting = game.ctx.scenes.current === SCENE_TITLE &&
+    !game.ctx.scenes.fading;
 
   runtime.tick();
   sound.pump();
 
-  if (titleWaiting && ctx.scenes.fading) {
+  if (titleWaiting && game.ctx.scenes.fading) {
     const god = held(STARTS) && held(L) && held(R);
     state.godMode = god ? 1 : 0;
     if (god) sound.playSound("se_correct");
   }
 
-  if (startPressed && ctx.scenes.current === SCENE_GAME) {
+  if (startPressed && game.ctx.scenes.current === SCENE_GAME) {
     const paused = !pausedBefore;
-    ctx.state.paused = paused ? 1 : 0;
-    ctx.scheduler.paused = paused;
-    ctx.tweens.paused = paused;
+    game.ctx.state.paused = paused ? 1 : 0;
+    game.ctx.scheduler.paused = paused;
+    game.ctx.tweens.paused = paused;
   }
 }
+
+// The loop the console runs, unless the page around it owns the clock.
+//
+// On a PS2 this file is the whole program and the frame is its only job, so
+// it spins. The browser build (lib/ps2/web-host.ts) evaluates this very
+// main.js inside a Phaser game whose frames come from requestAnimationFrame —
+// a loop that never returns would hang the tab before the first one — so it
+// parks a function on `__PS2_HOST_LOOP__` before importing this, and is handed
+// the frame to call once per tick instead. A console never sets it.
+const hostLoop = (globalThis as {
+  __PS2_HOST_LOOP__?: (frame: () => void) => void;
+}).__PS2_HOST_LOOP__;
+if (typeof hostLoop === "function") hostLoop(frame);
+else for (;;) frame();

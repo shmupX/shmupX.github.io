@@ -474,6 +474,11 @@ export function gameIdForLevel(level) {
   return slug + "-" + nameDigest(name);
 }
 
+// Anything with a Plugins.ScenePlugin will do — the real namespace on a page,
+// a stub in the tests — so the parameter is typed as loosely as it is used,
+// not as `typeof Phaser` (which it would be inferred as wherever Phaser's own
+// type declarations are in the program).
+/** @param {{ Plugins: { ScenePlugin: new (...args: any[]) => object } }} [Phaser] */
 export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
   if (!Phaser || !Phaser.Plugins || !Phaser.Plugins.ScenePlugin) {
     throw new Error(
