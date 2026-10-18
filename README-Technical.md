@@ -414,6 +414,18 @@ they are written out in full.
     would play as a black band. A stage with Dezaemon scenery (`dezaBg`) never
     shows a stage-end backdrop at all, so the field is inert there. Upstream
     home is `2019-es7/src/phaser/GameScene.js`.
+  - A Dezaemon zako with no bank art fires its own projectile. `dezaVolley`
+    re-skins every shot a Dezaemon-driven zako fires with the level's bullet
+    bank (`dezaemonBullets.art[fire.mode]`), and with no bank it drew a cyan
+    ring — so a web level's Dezaemon zako, which has no bank, could never show
+    the projectile its record names. It now falls back to the zako's own
+    `bulletData`/`projectileData` frames (`bulletFramesInAtlas`, so only art the
+    atlas carries) before the ring; a cart import with a bank is unchanged. gs's
+    Leonard (`scripts/gs/add-leonard.ts`) fires deza2_02's pattern with a geek
+    badge this way, and an import that kept no bank — the rando level's imps
+    among them — now shows each zako's own extracted shot art.
+    `tests/deza_zako_own_shot_test.ts` pins it. Upstream home is
+    `2019-es7/src/phaser/GameScene.js`.
   - A boss record can carry its own danger balloon. The skull that pops over a
     boss once one bomb would finish it (`boss_dengerous0..2.gif`) is swapped for
     the author's art by `dangerBalloon: {frames, x, y}` on the boss record:
@@ -1729,8 +1741,9 @@ copy it borrows, as above). What is added:
   says in `warnings` what it left alone because the runtime would never notice:
   - _aggression_ (-1..1): every projectile slot's `damage` is multiplied by 1 +
     0.5a, and so is its `speed` — every bullet spawner reads them — except on a
-    Dezaemon zako, whose `dezaVolley` takes shot speed and art from the level's
-    bullet bank after the spawn. A stock zako's `interval`
+    Dezaemon zako, whose `dezaVolley` takes shot speed (and art, when the level
+    has a bank) from the level's bullet bank after the spawn. A stock zako's
+    `interval`
     (`getData("interval") || 300`, the ticks between its shots) is multiplied by
     1 − 0.5a. Nobody else's interval is read: a Dezaemon zako fires on the
     cart's fire table (`zakoReload`) and a boss on its pattern script (`bossAdd`

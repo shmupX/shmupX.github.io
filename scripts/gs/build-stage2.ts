@@ -66,7 +66,7 @@ import {
 const LEVEL = "gs";
 export const ART = new URL("./art/", import.meta.url);
 const SHIPPED = new URL("../../static/games/2028-ai/foo.json", import.meta.url);
-const PAD = 4;
+export const PAD = 4;
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -269,9 +269,9 @@ async function flirtyFrames(): Promise<ResolvedFrame[]> {
 /**
  * Shelf-pack to the level sheet's own width, in the order given, so the sheet
  * only grows down. A frame wider than that sheet widens it rather than being
- * clipped.
+ * clipped. add-leonard.ts packs the same way.
  */
-function packTo(width: number, entries: ResolvedFrame[]) {
+export function packTo(width: number, entries: ResolvedFrame[]) {
   const sheetW = Math.max(width, ...entries.map((e) => e.raster.width));
   const placed: { entry: ResolvedFrame; x: number; y: number }[] = [];
   let x = 0, y = 0, rowH = 0;

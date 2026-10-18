@@ -6130,10 +6130,18 @@
       ? (dezaRank(scene) * 4 / 512 + cfg.speedAdd) * 2
       : ZAKO_BULLET_SPEED;
     // The save's own bullet art for this type (4-frame anim from the global
-    // bank), else the drawn ring fallback.
+    // bank); with none, the zako's own projectile frames, the art its record
+    // names (a web level's Dezaemon zako — gs's Leonard fires deza2_02's
+    // pattern with a badge — or an import that kept no bank); else the drawn
+    // ring fallback.
     var art = cfgs && scene.recipe.dezaemonBullets.art && scene.recipe.dezaemonBullets.art[fire.mode];
     var atlas = art && art.length ? scene.textures.get("game_asset") : null;
     if (!(atlas && atlas.has(art[0]))) art = null;
+    if (!art) {
+      var ownProj = enemy.getData("projData");
+      var ownArt = ownProj ? bulletFramesInAtlas(scene, ownProj.texture || [], null) : [];
+      if (ownArt.length) art = ownArt;
+    }
     if (!art) ensureZakoBulletTexture(scene);
     // A steering state is a property of the GEOMETRY, so a volley re-fired by
     // one of the burst handlers carries whatever its own geometry says. The
