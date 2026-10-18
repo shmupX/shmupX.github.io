@@ -40,7 +40,10 @@ function downloadFile(url, dest) {
     });
 }
 
-async function downloadBgmForLevel(levelData, outDir) {
+// cacheDir: where a copy may already sit under the same name — the stock
+// game's custom-bgm/, which `deno task build` fills from foo.json. A level that
+// borrows 2028.Ai's soundtrack takes it from there instead of the network.
+async function downloadBgmForLevel(levelData, outDir, cacheDir) {
     if (!levelData || !levelData.customAudioURLs) {
         return { manifest: {}, downloaded: 0 };
     }
@@ -55,6 +58,10 @@ async function downloadBgmForLevel(levelData, outDir) {
         if (urlToFile[url]) { manifest[key] = urlToFile[url]; continue; }
         const filename = crypto.createHash("sha1").update(url).digest("hex").slice(0, 16) + ".mp3";
         const dest = path.join(outDir, filename);
+        const cached = cacheDir ? path.join(cacheDir, filename) : null;
+        if (!fs.existsSync(dest) && cached && fs.existsSync(cached)) {
+            fs.copyFileSync(cached, dest);
+        }
         if (!fs.existsSync(dest)) {
             try {
                 console.log("  fetching " + key + " -> " + filename);

@@ -347,6 +347,7 @@ async function main() {
       const r = await downloadBgmForLevel(
         levelData,
         path.join(wwwRoot, "assets", "custom-bgm"),
+        path.join(GAME_DIR, "assets", "custom-bgm"),
       );
       console.log("  bgm files: " + r.downloaded);
     } catch (err) {

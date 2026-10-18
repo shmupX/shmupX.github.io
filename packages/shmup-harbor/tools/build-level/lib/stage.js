@@ -16,7 +16,8 @@ function copyFile(src, dst) {
   fs.copyFileSync(src, dst);
 }
 
-function copyDir(src, dst) {
+// skip(srcPath) leaves an entry, and everything under it, behind.
+function copyDir(src, dst, skip) {
   if (!fs.existsSync(src)) return;
   fs.mkdirSync(dst, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -27,7 +28,8 @@ function copyDir(src, dst) {
     if (entry.name.startsWith("._")) continue;
     const s = path.join(src, entry.name);
     const d = path.join(dst, entry.name);
-    if (entry.isDirectory()) copyDir(s, d);
+    if (skip && skip(s)) continue;
+    if (entry.isDirectory()) copyDir(s, d, skip);
     else if (entry.isFile()) fs.copyFileSync(s, d);
   }
 }
@@ -106,6 +108,59 @@ function withImportedNoStory(levelData) {
   return Object.assign({}, levelData, { noStory: true });
 }
 
+// The stock boss themes by asset stage (stageId % 5). The runtime's
+// playBossBgm picks a stage's music by its slot, not by its boss, and Akuma's
+// theme only plays on stage 3, the one stage he can turn up on.
+const STAGE_BGM = ["bison", "barlog", "sagat", "vega", "fang"];
+
+// The stock boss themes a level's stages never play. Only a record with
+// `stages` is the whole game: without it mergeRecipe keeps the base game's
+// stages around the level's one, and every theme stays.
+function unplayedStageBgm(levelData) {
+  const stages = levelData && levelData.stages;
+  if (!stages || typeof stages !== "object") return [];
+  const played = new Set();
+  for (const key of [levelData.stageKey || "stage0"].concat(Object.keys(stages))) {
+    const m = /^stage(\d+)$/.exec(key);
+    // recipeStageIds ignores a stage past 9 the same way.
+    if (!m || Number(m[1]) > 9) continue;
+    const id = Number(m[1]);
+    played.add(STAGE_BGM[id % STAGE_BGM.length]);
+    if (id === 3) played.add("goki");
+  }
+  return STAGE_BGM.concat(["goki"])
+    .filter((name) => !played.has(name))
+    .map((name) => "boss_" + name + "_bgm");
+}
+
+// Leave out the boss themes the level never plays, ~2 MB of mp3 apiece. The
+// BootScene preloads every mp3 in RESOURCE_PATHS and pins a red ERR: banner
+// over the game for any it cannot load, so a theme comes out of the bundle's
+// list and www/ together, or not at all. Returns the keys it left out.
+function trimStageBgm(wwwRoot, levelData) {
+  const bundlePath = path.join(wwwRoot, "game.bundle.js");
+  let js = fs.readFileSync(bundlePath, "utf8");
+  const dropped = [];
+  for (const key of unplayedStageBgm(levelData)) {
+    const file = path.join(wwwRoot, "assets", "sounds", key + ".mp3");
+    const entry = new RegExp(
+      "\\r?\\n[ \\t]*" + key + ': "assets/sounds/' + key + '\\.mp3",',
+    );
+    if (!fs.existsSync(file)) continue;
+    if (!entry.test(js)) {
+      // A bundle that lists its sounds some other way keeps them all: a
+      // bigger app, never a broken one.
+      console.warn("  bgm: " + key + " not in the bundle's RESOURCE_PATHS; kept.");
+      continue;
+    }
+    js = js.replace(entry, "");
+    fs.rmSync(file);
+    dropped.push(key);
+  }
+  if (dropped.length) fs.writeFileSync(bundlePath, js);
+  return dropped;
+}
+
 // gameDir  = <cmg>/static/games/2028-ai
 // gamepad  = <cmg>/static/gamepad-compatibility-plugin.js (optional)
 // phaserGlobalShim = <cmg>/static/phaser-plugins/phaser-global.js (optional);
@@ -138,7 +193,15 @@ function stageWww(opts) {
   // Full asset tree (game_asset/game_ui/title_ui atlases, stage + loading
   // backgrounds, fonts, sounds, game.json) — the same set the hosted game
   // loads, copied wholesale so nothing the BootScene preloads is missing.
-  copyDir(path.join(gameDir, "assets"), path.join(wwwRoot, "assets"));
+  //
+  // Except custom-bgm/: that is 2028.Ai's own soundtrack (`deno task build`
+  // downloads it from foo.json's customAudioURLs), and the runtime only reads
+  // it for keys the LEVEL's customAudioURLs names. Copied in, every export
+  // carried its 41 MB track whether it played it or not; a level's own
+  // custom BGM is lib/download-bgm.js's to stage.
+  const stockCustomBgm = path.join(gameDir, "assets", "custom-bgm");
+  copyDir(path.join(gameDir, "assets"), path.join(wwwRoot, "assets"), (s) =>
+    s === stockCustomBgm);
 
   // Phaser runtime + the (patched) game bundle.
   copyFile(
@@ -162,6 +225,10 @@ function stageWww(opts) {
     path.join(wwwRoot, "game.bundle.js"),
     patchBundleForOffline(path.join(gameDir, "game.bundle.js")),
   );
+  const unplayed = trimStageBgm(wwwRoot, levelData);
+  if (unplayed.length) {
+    console.log("  bgm: left out " + unplayed.join(", ") + " (no stage plays them)");
+  }
 
   // Controller-compat shim (optional).
   const hasGamepad = !!(gamepad && fs.existsSync(gamepad));
@@ -209,6 +276,8 @@ function stageWww(opts) {
 module.exports = {
   stageWww,
   patchBundleForOffline,
+  unplayedStageBgm,
+  trimStageBgm,
   copyDir,
   copyFile,
   isImportedRecord,
