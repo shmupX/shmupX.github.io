@@ -561,7 +561,7 @@ deno task bgm:tone        # transcribe an mp3 (path or URL) onto the Dezaemon 2 
 deno task extension:zip   # pack the Sprite Picker extension into static/extension/ for the download page (part of build)
 deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
 deno task level:alias     # other names a cloud game answers to (2019 -> 2019-PS2); dry run, --write sets
-deno task refresh:compare # the game on an emulated 240 Hz display, stock and max refresh side by side (mp4s + metrics; --check asserts)
+deno task refresh:compare # stock vs max refresh: emulated 240 Hz side by side (mp4s), --live on this display, --compare saved results
 
 deno task player2:art     # re-bake player 2's ship from shmup-party-phaser4
 deno task deza:tonebank   # cut the Saturn tone bank out of a SNDPAC.BIN
@@ -1917,15 +1917,33 @@ the stock picture and the max-refresh picture side by side, and measures them.
 Output goes to `build/refresh-compare/` (`--out` moves it): `compare-240fps.mp4`
 in real time, one video frame per display frame, for a monitor that can show it,
 `compare-slowmo-4x.mp4` at 60 fps and four times slower (`--slowmo`) so the
-difference shows on any screen, and `metrics.json`. On the shipped level:
+difference shows on any screen, and a result file in `results/` (see below). On
+the shipped level, 5 s of stage 1:
 
-| per moving object, 5 s of stage 1                      | stock         | max refresh    |
-| ------------------------------------------------------ | ------------- | -------------- |
-| frames its motion is drawn on                          | 55.5% (133/s) | 100.0% (240/s) |
-| evenness, frame to frame (1 = smooth, 0 = 0/2× judder) | 0.11          | 0.98           |
+| per moving object                     | 240 Hz stock  | 240 Hz max     | 500 Hz stock  | 500 Hz max    |
+| ------------------------------------- | ------------- | -------------- | ------------- | ------------- |
+| frames its motion is drawn on         | 55.5% (133/s) | 100.0% (240/s) | 26.6% (133/s) | 94.3% (472/s) |
+| evenness (1 = smooth, 0 = 0/2× steps) | 0.11          | 0.98           | 0.00          | 0.89          |
+| frames it moves on screen (whole px)  | 40.1% (96/s)  | 58.1% (139/s)  | 19.2% (96/s)  | 37.6% (188/s) |
 
-and the stock re-run below matched the logic on all 1,200 frames. `--check`
-turns those into assertions and the exit code.
+and a stock replay of each matched the logic on every frame. Stock draws motion
+133 times a second whatever the display, because that is the logic's rate (plus
+what tweens and timers move); max refresh draws it on every frame. At 500 Hz it
+is 94%, not 100%, because the score pop-ups rise by tween, and Phaser runs
+tweens at most 240 times a second in either mode.
+
+**On screen is the row to read.** `pixelArt: true` turns on Phaser's
+`roundPixels`: the canvas renderer floors every sprite's position and WebGL
+rounds the corners of every sprite that is only translated, onto the game's
+256×480 grid, which is then scaled up whole. So a sprite visibly moves only when
+it crosses a whole game pixel. Something moving several pixels a step — a
+bullet, the ship — now moves on every frame instead of jumping on every other
+one (or every fourth, at 500 Hz); something slower than a pixel a frame — the
+background's 0.7 px a step — cannot move more often than its pixels allow, with
+or without this. `--check` asserts that on screen max refresh never moves things
+on fewer frames than stock.
+
+`--check` turns the numbers into assertions and the exit code.
 
 How it gets numbers worth trusting:
 
@@ -1955,11 +1973,80 @@ How it gets numbers worth trusting:
   every object's logic position has to match frame for frame (`--no-stock-run`
   skips it). Their pictures do not match: the SP lens's scan line is placed from
   the absolute loop time, which depends on how long boot took.
+- **A body counts while it is being stepped.** It is "moving" on a frame when
+  its logic moved within the frames one step can take at that rate (2 at 240 Hz,
+  5 at 500), so every display rate samples every frame of its motion — not just
+  the frames next to a step, which would flatter stock.
+- **Work is timed apart from the recording.** The side-by-side capture between
+  frames leaves garbage that lands in the next frame's measured work, so with
+  video on, a third run replays the tested mode just to time it.
 - The ship sweeps side to side on the pad, so its own motion is measured too.
 
-`tests/refresh_compare_test.ts` pins what the metrics say about motion of a
-known shape.
+### Real displays: `--live`, results and `--compare`
 
+The emulated run is the same run on any machine; a machine's own display is
+another matter, and that is what `--live` measures. Run it on each machine, keep
+the result files, and compare them anywhere — say a desktop with a 500 Hz
+monitor and a Legion Go:
+
+```sh
+# on the desktop
+deno task refresh:compare -- --live --label "4080 Super, 500 Hz" --display-hz 500
+# on the Legion Go
+deno task refresh:compare -- --live --label "Legion Go" --display-hz 144
+# anywhere, with both files (or the folders they are in)
+deno task refresh:compare -- --compare desk.json legion.json
+```
+
+A live run opens Chrome fullscreen on the display (`--window` keeps a window;
+`--chrome-arg=FLAG`, repeatable, passes anything else, such as
+`--chrome-arg=--window-position=2560,0` to land on a second monitor) and plays
+the game at whatever rate the display gives it, with `?god=1` so the ship cannot
+die. Hands off for the minute it takes; Chrome closes itself. Once the stage is
+`--warmup` seconds in (6) it records stock and the mode under test (`--mode`,
+auto by default) in turns of `--slice` seconds (1) — stock, max, max, stock and
+round again, so a stage that gets busier or a machine that warms up weighs on
+both alike — until each has `--seconds` (10), switching the scene's own refresh
+state between them. In the page, frame by frame (`meterSetup` in
+`scripts/lib/refresh-page.ts`), it notes when the frame came, the main-thread
+work (the update, then the draw), the steps it ran, whether it was blended, and
+the motion cadence both ways. There is no video: nothing inside the page can
+capture a 500 Hz display. The display rate is measured off the frames;
+`--display-hz` only records what the display is supposed to run at, so a
+mismatch (a monitor left at 144 in the OS settings, a compositor holding Chrome
+to 60) shows up in the comparison. On Linux, a run that measures 60 Hz on a
+faster display may need `--chrome-arg=--ozone-platform=wayland`; on SteamOS or
+Bazzite, run it from Desktop Mode, since Game Mode's compositor sets its own
+rate.
+
+Chrome is found as everywhere else (`--chrome`, `$CHROME_BIN`, then the usual
+installs), which now includes Chrome, Edge and Brave on Windows and the Flatpak
+exports on Linux. A live run needs no ffmpeg.
+
+Every run, live or emulated, saves a result file to
+`build/refresh-compare/results/<label>-<source>-<hz>hz-<time>.json` (`--save`
+names one). It is plain JSON (`scripts/lib/refresh-results.ts`, format
+`shmupx.refresh-result`, version 1): the machine (OS, CPU, GPU, browser, Canvas
+or WebGL), the display, the settings, and for each mode the cadence by position
+and on screen, frame pacing (interval percentiles, frames missed), work (mean
+and percentiles, update and draw apart, p95 against the frame's budget), steps
+per frame and how much was blended — plus every frame's raw timings, for
+whatever the summary leaves out. `--compare` takes files and folders, puts each
+result in its own column, prints it, and writes `comparison.md` (for an issue or
+a chat) and `comparison.html` (with each result's frame-interval histogram) to
+`--out`. A file from another version of the format is refused with its version.
+
+Reading a comparison: Chrome rounds `performance.now()` to 0.1 ms on a page like
+this one, so read the means, and treat a difference under about 0.1 ms in "work
+it adds" as noise — two live runs on one machine with blending off measured
+−0.10 and −0.06 ms. Emulated runs draw with Chrome's software canvas, where the
+background scrolled by a fraction of a texel between steps is what costs: the
++0.41 ms "draw" there falls to +0.07 ms with tile blending turned off. Under
+WebGL that offset is a texture coordinate, the GPU's to sample.
+
+`tests/refresh_compare_test.ts` pins what the metrics say about motion of a
+known shape, on screen too, at 240 and 500 Hz; `tests/refresh_results_test.ts`
+pins the result file and the comparison.
 
 ## Two players
 
