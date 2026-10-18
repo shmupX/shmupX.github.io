@@ -102,6 +102,7 @@ import { parseSfcSav } from "./index.js";
 import { quantizeFrames, USER_COLOR_FLAG } from "../palette/palette-target.js";
 import { decodeFrameKey, fitRgba, hflipRgba, levelStages, spreadFrames } from "../write/game-to-save.js";
 import { decodePlayerArt } from "../player-art.js";
+import { bossBodyFrames, splitBossStage2 } from "../boss-stage2.js";
 
 /** The playfield's spawn columns 1..14, and the map row a wave spawns on when the level says nothing. */
 export const SFC_FIRST_SPAWN_LINE = 2;
@@ -386,6 +387,38 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
     const enemyData = level.enemyData || {};
     const bossData = level.bossData || {};
 
+    // A boss's second stage. The cart's boss has one sheet, its three phases
+    // cycle on a timer rather than on its hit points, and its death clears
+    // the stage, so the form change cannot happen inside one stage: a boss
+    // with a stage2 block becomes two bosses either side of a stage break —
+    // its stage's boss is the first form with the top of the bar, and a stage
+    // put in after it, the same scenery and no waves, has the second form for
+    // its boss with the rest (FORMAT-SFC.md "A boss's second stage"). Stages
+    // the level already fills come first: a split that has no stage left to
+    // go in stays one boss, and says so.
+    const plan = [];
+    const splits = [];
+    let spare = STAGE_COUNT - stages.length;
+    stages.forEach((st, s) => {
+        const rec = bossData[`boss${s}`] || (s === 0 && stages.length === 1 ? bossData.boss0 : null);
+        const split = rec ? splitBossStage2(rec) : null;
+        if (split && spare <= 0) {
+            warn(`${st.key}: boss (${rec.name || "?"}) has a second stage, but the save's ${STAGE_COUNT} stages are full — it flies its first form alone, the whole bar`);
+        }
+        if (!split || spare <= 0) {
+            plan.push({ st, bossRec: rec, form: 0 });
+            return;
+        }
+        spare--;
+        const key = `${st.key}:stage2`;
+        plan.push({ st, bossRec: split.first, form: 1 });
+        plan.push({ st: { key, enemylist: [], background: st.background, scroll: st.scroll }, bossRec: split.second, form: 2 });
+        splits.push({ stage: st.key, into: key, name: rec.name || `boss${s}`, second: bossBodyFrames(split.second)[0] || "?", hp: [split.first.hp, split.second.hp] });
+    });
+    const transform = splits.length
+        ? `approximated: two chained bosses across a stage break (${splits.map((x) => `${x.stage} ${x.name}, then ${x.into} its second form ${x.second}`).join("; ")}); the bullets stay the ROM's`
+        : "none";
+
     const bytes = formatSfcSram({ seal: false });
     const bank = new SfcChipBank();
     const fullWarned = new Set();
@@ -485,7 +518,7 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
     }
 
     // --- per stage ---
-    const built = stages.map((st, s) => {
+    const built = plan.map(({ st, bossRec, form }, s) => {
         const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : (level.width || 8));
         const stageReport = { key: st.key, placements: 0, records: 0, lines: 0, enemies: [], boss: null, mapChips: 0, cellsDrawn: 0, rowsDrawn: 0 };
 
@@ -685,7 +718,6 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
         }
 
         // The boss: its art in the 8x4 sheet, the sample's block with its hit points and score.
-        const bossRec = bossData[`boss${s}`] || (s === 0 && stages.length === 1 ? bossData.boss0 : null);
         const bossWords = new Uint16Array(BOSS_GROUP_CHIPS).fill(CHIP_BLANK_WORD);
         const bossBlock = Uint8Array.from(SFC_FACTORY_BOSS_BLOCK);
         let boss = null;
@@ -720,6 +752,7 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
             bossBlock[0x0d] = (bossBlock[0x0d] & 0xf8) | (hits === Infinity ? SFC_BOSS_HP.length - 1 : nearestIndex(SFC_BOSS_HP, hits * SFC_HIT_UNITS));
             bossBlock[6] &= ~0x40; // wide: the sheet as drawn, 128x64
             boss = { name: bossRec.name || `boss${s}`, hits, hpIndex: bossBlock[0x0d] & 7, frames: frames.length };
+            if (form) boss.form = form;
         }
         writeWords(bytes, REGION.bossGroup.offset + s * BOSS_GROUP_STAGE_BYTES, bossWords);
         entryData.set(bossBlock, BOSS_BLOCK_OFFSET);
@@ -818,6 +851,8 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
         title,
         titleParts,
         sound: "factory",
+        transform,
+        splits,
     };
     return { bytes, name, warnings, report };
 }

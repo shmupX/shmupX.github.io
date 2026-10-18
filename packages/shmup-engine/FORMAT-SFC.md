@@ -561,6 +561,44 @@ factory sample's SOUND DATA and BGM PATCH (the ROM's songs), all embedded in
   image is read back through `parseSfcSav` and `verifySfcChecksums` before it
   leaves.
 
+## A boss's second stage (`src/sfc/sfc-write.js`, `src/boss-stage2.js`; researched 2026-10-18)
+
+The web runtime lays a boss record's `stage2` block over the boss once its hp
+falls below `hpBelow` of the bar: new stances, new weapons, the same bar
+(README-Technical.md "A boss can have a second stage"; gs's Daltonius turns into
+Liu Kang's dragon). **The cart has no such mechanism**:
+
+- one boss per stage — one 8×4-chip BOSS GROUP sheet, one 32-byte block, one
+  palette row (12 + n), the fixed object slot 63;
+- its three "phases" (block bytes 3-12) are attack phases that **cycle on a
+  timer** (16-47 frames), not on hit points, and none of them names other art;
+- its death sets `$19CF`, STAGE CLEAR: a second class-5 byte later in the stage
+  could only respawn the same boss, and after the first death the stage is
+  already over.
+
+So the writer splits such a boss into **two chained bosses either side of a
+stage break**: the boss's own stage keeps it in its first form with the top of
+the bar (1 − `hpBelow` of the hp), and a stage put in right after it — the same
+scenery, no waves, report key `<stage>:stage2` — has the second form for its
+boss (its own sheet, palette row and block) with the rest. The game always plays
+six stages, so an extra one costs nothing but the slot; a level that already
+fills all six keeps the boss in its first form alone, with the whole bar, and
+warns. The report's `transform` reads "approximated: two chained bosses across a
+stage break", naming the stages; `splits` lists them, and each boss is marked
+`form: 1 | 2`.
+
+**What does not carry over**: the weapons. Enemy bullets are the ROM's art (MY
+SHIP GROUP chips 24-45, factory words), and which chip each shot type 0-2 draws
+is untraced, so neither form can show the record's projectile textures (gs:
+`RAM_0`, `laptop0/1`, `deza1_52_0/1`); both forms wear the sample's block and
+its shot types. The hit points are coarse too: both of gs's halves (1,750 hits
+each, ×25) land on the table's top value, 24,000.
+
+Not tried (time-boxed): a must-destroy class-4 64×64 enemy as the first form
+before the boss. It would avoid the stage break, but a 64×64 sprite cannot hold
+a boss's art, enemy hit points top out at 2,000 (80 hits), and the movement
+families leave the screen.
+
 ## Running a save (`scripts/lib/sfc-verify.ts`, `lib/sfc-mesen.ts`; observed 2026-10-14)
 
 `deno task sfc:verify <srm>` boots the real cart in Mesen 2's test runner

@@ -81,7 +81,9 @@ export async function buildPlus(
   for (const st of rep.stages) {
     if (st.boss) {
       log(
-        `${st.key}: boss "${st.boss.name}" ${
+        `${st.key}: boss "${st.boss.name}"${
+          st.boss.form ? ` (form ${st.boss.form})` : ""
+        } ${
           st.boss.vertical ? "64x128" : "128x64"
         }, ${st.boss.tiles} tiles, ${st.boss.hits} hits; ${st.enemyEntries} enemy tiles over ${st.enemyTiles} sheet cells`,
       );
@@ -91,6 +93,7 @@ export async function buildPlus(
       );
     }
   }
+  log(`transform: ${rep.transform}`);
   for (const w of result.warnings) log(`warning: ${w}`);
 
   const outPath = resolve(

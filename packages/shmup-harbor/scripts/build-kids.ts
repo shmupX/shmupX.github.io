@@ -96,6 +96,7 @@ export async function buildKids(
   log(
     `sections: graphics ${rep.sizes.graphics} B, data ${rep.sizes.data} B packed; ${rep.slack} B to spare`,
   );
+  log(`transform: ${rep.transform}`);
   for (const w of result.warnings) log(`warning: ${w}`);
 
   const outPath = resolve(

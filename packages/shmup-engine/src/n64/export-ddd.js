@@ -71,7 +71,7 @@ export function exportLevelToDdd(level, art, options = {}) {
         name: project.name,
         project: project.report,
         directory: built.directory,
-        report: { ...built.report, project: project.report, templateProject: templateName },
+        report: { ...built.report, project: project.report, templateProject: templateName, transform: project.report.transform },
         warnings: [...project.warnings, ...built.warnings],
     };
 }

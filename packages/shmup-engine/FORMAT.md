@@ -1925,6 +1925,48 @@ screen lists the cartridge with free space and loads the game, and the stage
 plays (enemies, score, item drops, bombs). Real hardware and MiSTer are still
 untested.
 
+### A boss's second stage (`src/write/game-to-save.js`, `src/boss-stage2.js`; researched 2026-10-18)
+
+The web runtime lays a boss record's `stage2` block over the boss once its hp
+falls below `hpBelow` of the bar: new stances, new weapons, the same bar
+(README-Technical.md "A boss can have a second stage"; gs's Daltonius turns into
+Liu Kang's dragon). What the cart has of that:
+
+- **An hp-gated phase change, natively.** The trailer's HP-stage count (byte 0
+  bits 4-5, 1-4 stages) cuts the bar into equal bands, and a band change moves
+  the boss to the next playlist byte (2-5), i.e. to other patterns, whose fire
+  points name other bullet types (Boss record, above). The line can only fall on
+  a band edge: ½, ⅓, ⅔, ¼ or ¾ (`saturnStage2Bands` picks the nearest; gs's
+  `hpBelow: 0.5` is exactly two stages, the second).
+- **No form change.** The core art is one set of frames at `+0x500` for the
+  whole fight (four 64×64, two 128×64, two 64×128 or one 128×128 by size class),
+  nothing ties a frame to an HP stage, and how the engine cycles them is
+  untraced. One boss per stage (`0xF0`-`0xF3`, at most one), no mid-boss.
+
+So the writer gives a boss with a `stage2` block (a web boss: a decoded one
+keeps its own trailer and warns) the HP stages its line needs, plays patterns 0
+and 1 in the bands above the line and **2 and 3 below it**, and points the lower
+patterns' fire points at the bullet types the block's weapons claimed — right
+after the boss's own, before the next boss's; a slot the block leaves alone, or
+one naming the art of the slot before it, claims nothing new. The bar stays one
+bar (the boss's whole hp). The report's `transform` reads "approximated: the
+boss's own hp stages change its patterns and bullets at the line", naming the
+bullets, and each boss with a block carries
+`stage2: {hpStages, bands, hpBelow, weapons}`.
+
+**The catch is the three bullet types** a save holds game-wide (Shot sprites,
+above), claimed in order: the cart's own bank, the zako's shots, then each boss
+and its second stage. gs needs four — a flirty-girl zako's kiss, `RAM_0`,
+`laptop0/1`, `deza1_52_0/1` — so in a gs build (boss rush or not) the dragon's
+heads find no type left and the bottom band fires the top band's bullets; the
+transform string says so ("no bullet type was left") and the writer warns. Then
+the only thing that changes at the line is the boss's pattern loop.
+
+Not tried (time-boxed, untraced behaviour): the dragon as a type-4 static part
+(`dx = dy = 0`) spawned by the lower patterns, drawing a 64×64 band-6 record
+over the core. Whether a static part follows a moving boss, and how it sits over
+the core's art, is unknown, and a part is a zako (its own hp, not the bar's).
+
 ## Cross-check option (high-leverage)
 
 Load a Mednafen savestate taken inside Dezaemon 2 into Ghidra (SH-2, with the

@@ -91,7 +91,7 @@ export async function buildSfc(
     lines: number;
     mapChips: number;
     rowsDrawn: number;
-    boss: { name: string; hpIndex: number; line: number } | null;
+    boss: { name: string; hpIndex: number; line: number; form?: number } | null;
   };
   for (const st of rep.stages as StageReport[]) {
     log(
@@ -99,11 +99,14 @@ export async function buildSfc(
         st.enemies.map((e) => `${e.name} c${e.klass} ${e.size}`).join(", ")
       }); ${st.records} spawn records over ${st.lines} lines; ${st.mapChips} scenery chips over ${st.rowsDrawn} rows${
         st.boss
-          ? `; boss "${st.boss.name}" hp index ${st.boss.hpIndex} on line ${st.boss.line}`
+          ? `; boss "${st.boss.name}"${
+            st.boss.form ? ` (form ${st.boss.form})` : ""
+          } hp index ${st.boss.hpIndex} on line ${st.boss.line}`
           : "; no boss"
       }`,
     );
   }
+  log(`transform: ${rep.transform}`);
   for (const w of result.warnings) log(`warning: ${w}`);
 
   const outPath = resolve(

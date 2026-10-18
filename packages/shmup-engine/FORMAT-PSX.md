@@ -1364,6 +1364,54 @@ games to the same readings.
 Not written: the enemy-bullet records in CONFIG (ANGEL WING's stand) and the
 title animation beyond the sample's. The Dezaemon+ writer is above.
 
+## A boss's second stage (`kids-write.js`, `plus-write.js`, `src/boss-stage2.js`; researched 2026-10-18)
+
+The web runtime lays a boss record's `stage2` block over the boss once its hp
+falls below `hpBelow` of the bar: new stances, new weapons, the same bar
+(README-Technical.md "A boss can have a second stage"; gs's Daltonius turns into
+Liu Kang's dragon). The two PlayStation games part company here.
+
+**Kids! has it natively.** A boss's two 15-byte records are its two phases
+(RECORDS, above): it spawns with the sum of both records' hit points, and when
+they fall below record 1's an explosion plays and record 1's size class, hit
+box, score and weapons take over, drawn from the sprite table at `+0x580`. So a
+boss with a `stage2` block is written as exactly that — record 0 and `+0x500`
+the boss (its first idle frame, its size class, its own weapons), record 1 and
+`+0x580` the second stage (the block's idle frame, its own size class and
+weapons) — and the hit points split at the line: record 0 holds 1 − `hpBelow` of
+the hits, record 1 the rest. The hit-point classes are per phase and coarse
+(100, 450, 900, 1,500 hits), so the line is the ratio of two class values: an
+even split, gs's 0.5, is exact (both halves land on 1,500); other lines come out
+as the nearest the classes allow. Each phase's three weapons keep the sample's
+offsets, timings and patterns for its size and shoot the quad their own art
+landed in (`kidsBossWeapons`: weapon w fires slot A/B/C's art, A's where the
+slot is empty; the block's weapons join the seven-quad pool after the boss's
+own) — so gs's Daltonius shoots `RAM_0` and `laptop0` and the dragon
+`deza1_52_0`. A weapon whose art found no quad keeps the sample's bullet.
+`report.transform` is `"native"`, and the stage's boss carries `bullets` and
+`stage2: {sizeClass, frames, hits, hpClass, bullets, hpBelow}`. Without a block
+the writer is as before: both records the same boss, the second frame on
+`+0x580`. Not booted with a block yet; the phase change itself is the trace's
+(`0x8013C6AC`, `0x8013DA64`).
+
+**Dezaemon+ has nothing to carry it.** One 32-byte boss definition and one
+32-word BOSS GROUP a stage; its "phases" are movement scripts that end on a
+`0x7FFF` step (bytes 0-2), with no hit-point gate, no other picture and the same
+three guns throughout; nothing documents a part or a form. A second `D` nibble
+in APPEAR could only spawn the same boss again (untraced). So the writer splits
+such a boss into **two chained bosses either side of a stage break**: the boss's
+own stage keeps it in its first form with the top of the bar, and a stage put in
+right after it — the same scenery, no waves, report key `<stage>:stage2`,
+counted in `gameSettings`' stage count — has the second form for its boss (its
+own definition, picture and palette row 12 + stage) with the rest. A level that
+already fills all five stages keeps the boss in its first form alone, with the
+whole bar, and warns. **No bullet art reaches the save**: a gun picks only a
+pattern, a rate and a mode, and the shots' palette row 20 is never planned, so
+neither form shows the record's projectiles; both wear the sample's guns. The
+hit points cap at index 7 (32,000, ~1,334 hits a form). The report's `transform`
+reads "approximated: two chained bosses across a stage break", naming the
+stages; `splits` lists them, and each boss is marked `form: 1 | 2`.
+
 ## Unresolved
 
 - **Kids! CONFIG, what is left**: the first two bytes of each player-ship record

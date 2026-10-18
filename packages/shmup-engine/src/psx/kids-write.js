@@ -114,6 +114,7 @@ import {
 } from "./kids-edit.js";
 import { CLUT_OFFSET, ICON_DIM, TITLE_FRAME_SIZE, TITLE_LENGTH, TITLE_OFFSET } from "./save-header.js";
 import { buildMemoryCard } from "./memcard-write.js";
+import { bossBodyFrames, bossWeapons, splitBossStage2, weaponTextures } from "../boss-stage2.js";
 
 // --- the geometry the samples agree on -----------------------------------------
 //
@@ -344,6 +345,26 @@ export const KIDS_BOSS_BEHAVIOUR = Object.freeze([
     Object.freeze({ pattern: 2, speed: 0, weapons: [{ dx: -6, dy: -12, bullet: 6, timing: 2, pattern: 9, aim: false }, { dx: -24, dy: -12, bullet: 4, timing: 1, pattern: 0, aim: true }, { dx: 12, dy: -13, bullet: 4, timing: 1, pattern: 0, aim: true }] }),
     Object.freeze({ pattern: 12, speed: 1, weapons: [{ dx: 0, dy: 53, bullet: 7, timing: 2, pattern: 0, aim: false }, { dx: 0, dy: -30, bullet: 3, timing: 0, pattern: 3, aim: true }, { dx: -1, dy: 2, bullet: 1, timing: 1, pattern: 3, aim: false }] }),
 ]);
+
+/**
+ * A boss phase's three weapons: the sample's offsets, timings and patterns
+ * for its size, each shooting the quad the art of its own weapon slot (A, B,
+ * C; a slot it lacks takes A's) landed in — quadOf(frame name) says which,
+ * null for none. A weapon whose art has no quad keeps the sample's bullet,
+ * the built-in lasers 7 and 8 among them.
+ */
+export function kidsBossWeapons(sample, rec, quadOf) {
+    const slots = bossWeapons(rec);
+    const quadOfSlot = (i) => {
+        const hit = slots[i] || slots[0];
+        const first = hit ? weaponTextures(hit.weapon)[0] : null;
+        return first ? quadOf(first) : null;
+    };
+    return sample.map((w, i) => {
+        const q = quadOfSlot(i);
+        return q === null ? { ...w } : { ...w, bullet: q };
+    });
+}
 
 /** The per-stage initialiser's boss record (`10 09 00 …`): pattern 0, speed 1, 64x64, hit-point and score class 1, no weapons. */
 export const KIDS_BOSS_DEFAULT = Object.freeze(Array.from(encodeKidsBoss({ pattern: 0, speed: 1, sizeClass: 0, hpClass: 1, scoreClass: 1 })));
@@ -956,12 +977,23 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
         const frames = tex.map(lookup).filter(Boolean);
         if (frames.length && !bulletArt.some((b) => b[0].key === frames[0].key)) bulletArt.push(frames);
     }
+    // A boss's second stage (its stage2 block) is its record 1, and the
+    // weapons it brings are shot from the quads their art lands in, so they
+    // join the pool after the boss's own.
+    const bossSplits = new Map(); // stage index -> splitBossStage2(boss)
     for (let s = 0; s < stages.length; s++) {
         const b = bossData[`boss${s}`];
         if (!b) continue;
         for (const slot of ["bulletDataA", "projectileDataA", "bulletData", "projectileData", "bulletDataB", "projectileDataB", "bulletDataC", "projectileDataC"]) {
             const tex = b[slot] && Array.isArray(b[slot].texture) ? b[slot].texture : [];
             const frames = tex.map(lookup).filter(Boolean);
+            if (frames.length && !bulletArt.some((x) => x[0].key === frames[0].key)) bulletArt.push(frames);
+        }
+        const split = splitBossStage2(b);
+        if (!split) continue;
+        bossSplits.set(s, split);
+        for (const { weapon } of bossWeapons(split.second)) {
+            const frames = weaponTextures(weapon).map(lookup).filter(Boolean);
             if (frames.length && !bulletArt.some((x) => x[0].key === frames[0].key)) bulletArt.push(frames);
         }
     }
@@ -1148,11 +1180,70 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
         // second phase is an invisible one), the sample bosses' movement and
         // weapons for its size, the 0xC0 anchor a few rows past the last wave
         // with the scroll halted under it.
+        //
+        // A boss with a stage2 block is the format's own two phases, written
+        // as the runtime flies them (FORMAT-PSX.md "A boss's second stage"):
+        // record 0 and the sprite table at +0x500 are the boss, record 1 and
+        // +0x580 its second stage — its own size class, art, score and
+        // weapons — and the hit points split at the line, since the cart
+        // changes phase when the total falls below record 1's. Each phase's
+        // weapons shoot the quads their own art landed in.
         let boss = null;
         const bossWords = [new Uint16Array(KIDS_SPRITE_BOSS_WORDS).fill(KIDS_BLANK), new Uint16Array(KIDS_SPRITE_BOSS_WORDS).fill(KIDS_BLANK)];
         const bossRecords = [Uint8Array.from(KIDS_BOSS_DEFAULT), Uint8Array.from(KIDS_BOSS_DEFAULT)];
-        const bossRec = bossData[`boss${s}`];
-        if (bossRec) {
+        const split = bossSplits.get(s) || null;
+        const bossRec = split ? split.first : bossData[`boss${s}`];
+        if (bossRec && split) {
+            const phases = [split.first, split.second].map((rec, phase) => {
+                const frames = bossBodyFrames(rec).map(lookup).filter(Boolean);
+                const label = phase ? `${rec.name || "?"} stage 2` : rec.name || "?";
+                const maxW = frames.reduce((a, f) => Math.max(a, f.w), 64);
+                const maxH = frames.reduce((a, f) => Math.max(a, f.h), 64);
+                const sizeClass = kidsBossClassFor(maxW, maxH);
+                const [aw, ah] = KIDS_BOSS_ART_CELLS[sizeClass];
+                if (frames.length && (maxW > aw * CG_CELL || maxH > ah * CG_CELL)) {
+                    warn(`${st.key}: boss (${label}) is ${maxW}x${maxH}; its art is ${aw * CG_CELL}x${ah * CG_CELL} — downscaled`);
+                }
+                if (!frames.length) warn(`${st.key}: boss (${label}) has no art in the atlas — its sprite is unpainted`);
+                if (frames.length) {
+                    const cells = bankFrame(fitIndexed(frames[0], aw * CG_CELL, ah * CG_CELL), aw * CG_CELL, ah * CG_CELL, `boss${s}`);
+                    if (cells) for (let cy = 0; cy < ah; cy++) for (let cx = 0; cx < aw; cx++) bossWords[phase][cy * KIDS_BOSS_GRID + cx] = cells[cy * aw + cx];
+                }
+                const hits = rec.hp === "infinity" ? Infinity : Math.max(1, Number(rec.hp) || 50);
+                const hpClass = hits === Infinity ? 3 : nearestIndex(KIDS_BOSS_HP, hits * KIDS_SHOT_UNITS);
+                const scoreClass = nearestIndex(KIDS_BOSS_SCORE, Number(rec.score) || KIDS_BOSS_SCORE[1]);
+                const behaviour = KIDS_BOSS_BEHAVIOUR[sizeClass];
+                const weapons = kidsBossWeapons(behaviour.weapons, rec, (n) => {
+                    const f = lookup(n);
+                    return f && quadOfArt.has(f.key) ? quadOfArt.get(f.key) : null;
+                });
+                bossRecords[phase] = encodeKidsBoss({ ...behaviour, weapons, sizeClass, hpClass, scoreClass });
+                return { sizeClass, frames: frames.length, hits, hpClass, bullets: weapons.map((w) => w.bullet) };
+            });
+            const sizeClass = Math.max(phases[0].sizeClass, phases[1].sizeClass);
+            const [fw, fh] = KIDS_BOSS_FOOTPRINT[sizeClass];
+            let row = Math.min(KIDS_APPEAR_ROWS - 1, Math.max(lastRow + KIDS_BOSS_ROW_GAP, fh - 1));
+            const col = KIDS_BOSS_COLUMN[sizeClass];
+            while (row < KIDS_APPEAR_ROWS && !rectFree(row, col, fw, fh)) row++;
+            if (row >= KIDS_APPEAR_ROWS) {
+                warn(`${st.key}: no room left for the boss past the last wave — it is left out`);
+            } else {
+                stamp(row, col, fw, fh, KIDS_APPEAR_PRESENT | (KIDS_APPEAR_BOSS_CLASS << 4));
+                const [p1, p2] = phases;
+                boss = {
+                    name: bossRec.name || `boss${s}`,
+                    sizeClass: p1.sizeClass,
+                    row,
+                    col,
+                    frames: p1.frames,
+                    hits: p1.hits,
+                    hpClass: p1.hpClass,
+                    bullets: p1.bullets,
+                    stage2: { sizeClass: p2.sizeClass, frames: p2.frames, hits: p2.hits, hpClass: p2.hpClass, bullets: p2.bullets, hpBelow: split.hpBelow },
+                };
+                lastRow = Math.max(lastRow, row);
+            }
+        } else if (bossRec) {
             const names = bossRec.anim && Array.isArray(bossRec.anim.idle)
                 ? [...bossRec.anim.idle, ...(Array.isArray(bossRec.anim.attack) ? bossRec.anim.attack : [])]
                 : Array.isArray(bossRec.texture) ? bossRec.texture : [];
@@ -1350,13 +1441,26 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
                 placements: b.placed,
                 dropped: b.dropped,
                 records: [...new Set(b.records.values())].map((r) => ({ name: r.name, cell: r.letter + r.digit, klass: r.klass, id: r.id, frames: r.frames, ...(r.item ? { item: KIDS_ITEM_SLOTS[r.item - 1].name } : {}) })),
-                boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, frames: b.boss.frames, hpClass: b.boss.hpClass } : null,
+                boss: b.boss
+                    ? {
+                        name: b.boss.name,
+                        sizeClass: b.boss.sizeClass,
+                        row: b.boss.row,
+                        col: b.boss.col,
+                        frames: b.boss.frames,
+                        hpClass: b.boss.hpClass,
+                        // A second stage: record 1, its class and bullets.
+                        ...(b.boss.stage2 ? { bullets: b.boss.bullets, stage2: b.boss.stage2 } : {}),
+                    }
+                    : null,
                 chips: b.chips,
                 lastRow: b.lastRow,
             })),
             ship: shipSource,
             items: itemSources,
             bullets: bulletSlots,
+            // The format's own two boss phases carry a stage2 block (boss-stage2.js).
+            transform: built.some((b) => b.boss && b.boss.stage2) ? "native" : "none",
             title,
             backgroundSet,
             cells: { used: bank.used, chips: bank.chips, sprites: bank.sprites, shared: bank.shared, free: bank.free },

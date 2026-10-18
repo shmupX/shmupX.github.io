@@ -77,6 +77,7 @@ import {
     MD_MODEL_COUNT,
     parseStageBl,
 } from "./records.js";
+import { bossBodyFrames, bossWeapons, splitBossStage2, weaponTextures } from "../boss-stage2.js";
 
 /** One texture: a 64x32 RGBA5551 tile, 0x1000 bytes. */
 export const N64_TEXTURE_BYTES = TILE_BYTES;
@@ -400,7 +401,10 @@ function animationModels(slots) {
  * An enemy entry (records.js encodeEnemyEntry's shape) for an editor enemy
  * record: score and HP from the record, the animation over the placed
  * frames, the speed, a shot when the record fires, the item its cells drop,
- * and for a boss the stage-clear and lock-on flags with a fixed motion.
+ * and for a boss the stage-clear and lock-on flags with a fixed motion. A
+ * boss's shot is its projectileData, else its first weapon slot that names
+ * art (bulletDataA, bulletData …, as the runtime's bossWeaponSlots reads
+ * them), so a web boss armed only with those fires too.
  * Every table here is a reading of the document's ranges (likely).
  *
  * @param {object} rec        enemyData.enemyX (or a boss record)
@@ -414,7 +418,8 @@ export function enemyEntryFromEditor(rec, { slots, size, frames, drop = null, bo
     const speed = Number.isFinite(r.speed) ? r.speed : 1;
     const frameRate = Number(r.frameRate);
     const animated = frames > 1 && Number.isFinite(frameRate) && frameRate > 0;
-    const proj = r.projectileData || null;
+    const armed = boss ? bossWeapons(r).find((w) => weaponTextures(w.weapon).length) : null;
+    const proj = r.projectileData || (armed ? armed.weapon : null);
     const interval = Number(r.interval);
     const fires = !!proj && Number.isFinite(interval) && interval > 0;
     const item = drop !== null && drop in N64_DROP_ITEMS ? N64_DROP_ITEMS[drop] : null;
@@ -566,10 +571,39 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
     // template's CMD is carried as it is, and then these show nothing.
     common.models = templateFiles.has("CMD") ? [] : [...cmd.entries()].map(([slot, m]) => ({ slot, texture: m.texture, key: m.key }));
 
+    // --- a boss's second stage ---
+    // A boss here is an enemy entry with the stage-clear flag: one set of
+    // four animation models, no hit-point gate, no form, no part (FORMAT-N64.md
+    // "A boss's second stage"). So a boss with a stage2 block becomes two
+    // bosses either side of a stage break: its stage's boss is the first form
+    // with the top of the bar, and a stage put in after it, with no waves,
+    // has the second form for its boss with the rest, carrying the block's
+    // weapons. The level's own stages come first: a split with no stage left
+    // to go in stays one boss, and says so.
+    const stagePlan = [];
+    const splits = [];
+    let spare = N64_STAGE_COUNT - stages.length;
+    stages.forEach((st, i) => {
+        const rec = bossData[`boss${i}`] || null;
+        const split = rec ? splitBossStage2(rec) : null;
+        if (split && spare <= 0) {
+            warn(`${st.key}: boss${i} has a second stage, but the project's ${N64_STAGE_COUNT} stages are full — it flies its first form alone, the whole bar`);
+        }
+        if (!split || spare <= 0) {
+            stagePlan.push({ st, boss: rec, bossKey: `boss${i}`, form: 0 });
+            return;
+        }
+        spare--;
+        const key = `${st.key}:stage2`;
+        stagePlan.push({ st, boss: split.first, bossKey: `boss${i}`, form: 1 });
+        stagePlan.push({ st: { key, enemylist: [] }, boss: split.second, bossKey: `boss${i}:stage2`, form: 2 });
+        splits.push({ stage: st.key, into: key, name: rec.name || `boss${i}`, second: bossBodyFrames(split.second)[0] || "?", hp: [split.first.hp, split.second.hp] });
+    });
+
     // --- the stages ---
     const stageReports = [];
     const built = new Map(); // ext -> bytes
-    stages.forEach((st, i) => {
+    stagePlan.forEach(({ st, boss, bossKey, form }, i) => {
         const stage = STAGES[i];
         const grExt = `${stage}GR`, mdExt = `${stage}MD`, blExt = `${stage}BL`;
         const sheet = sheetFrom(grExt, N64_GR_TEXTURES);
@@ -671,7 +705,6 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
 
         // Descending frame order, as the sample stages keep theirs; at most
         // 1000 between the enemies and the boss, which goes last.
-        const boss = bossData[`boss${i}`] || null;
         placements.sort((a, b) => b.frame - a.frame);
         const room = LAYOUT_MAX_ENEMIES - (boss ? 1 : 0);
         if (placements.length > room) {
@@ -684,12 +717,12 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         if (boss) {
             const names = boss.anim && Array.isArray(boss.anim.idle) && boss.anim.idle.length ? boss.anim.idle : frameNames(boss.texture);
             const frames = names.map(lookup).filter(Boolean);
-            if (!frames.length) warn(`${st.key}: boss${i} has no idle frame in the art`);
+            if (!frames.length) warn(`${st.key}: ${bossKey} has no idle frame in the art`);
             const kept = spreadFrames(frames, Math.min(framesPerEnemy, frames.length));
-            const slots = kept.map((f, k) => placeFrame(`boss${i}:${k}:${f.key}`, f));
+            const slots = kept.map((f, k) => placeFrame(`${bossKey}:${k}:${f.key}`, f));
             const size = frames.reduce((a, f) => Math.max(a, f.w, f.h), 64);
             if (entries.length >= N64_BL_ENEMIES) {
-                warn(`${st.key}: no enemy entry left for boss${i}; the stage has no end`);
+                warn(`${st.key}: no enemy entry left for ${bossKey}; the stage has no end`);
             } else {
                 bossEntry = entries.length;
                 entries.push(enemyEntryFromEditor(boss, { slots, size, frames: kept.length, boss: true }));
@@ -720,7 +753,8 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             stage,
             ext: grExt,
             enemies: gridLetters,
-            boss: boss ? `boss${i}` : null,
+            boss: boss ? bossKey : null,
+            ...(boss && form ? { form } : {}),
             textures: sheet.placed,
             painted: sheet.painted,
             used: sheet.count - sheet.free,
@@ -743,7 +777,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
     // The final stage as the files number it (8 for the eighth, since 7 is
     // skipped). The one sample — final stage 2 with stages 0, 1, 2 — cannot
     // tell a stage number from an index; they part only at the eighth. (likely)
-    const finalStage = STAGES[stages.length - 1];
+    const finalStage = STAGES[stagePlan.length - 1];
     if (!templateFiles.has("CMD")) {
         const cmdModels = [], cmdTextures = [];
         for (const [slot, m] of cmd) {
@@ -787,7 +821,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
     // --- every file ---
     const files = [];
     const sources = [];
-    const sheets = new Set(["CGR", ...stages.map((_, i) => `${STAGES[i]}GR`)]);
+    const sheets = new Set(["CGR", ...stagePlan.map((_, i) => `${STAGES[i]}GR`)]);
     for (const ext of projectExts()) {
         /** @type {Uint8Array} */
         let data;
@@ -823,6 +857,11 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         finalStage,
         common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, scaled: common.scaled, models: common.models },
         stages: stageReports,
+        // How the project's bosses carry their second stages (boss-stage2.js).
+        transform: splits.length
+            ? `approximated: two chained bosses across a stage break (${splits.map((x) => `${x.stage} ${x.name}, then ${x.into} its second form ${x.second}`).join("; ")}); the bullets are the project's own two, not the weapons' art`
+            : "none",
+        splits,
         files: sources,
         bytes: files.reduce((a, f) => a + f.data.length, 0),
     };

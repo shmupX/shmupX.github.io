@@ -45,6 +45,7 @@ import { CG_CELL } from "../palette/deza2-palette.js";
 import { colorHistogram, medianCut } from "../palette/palette-target.js";
 import { decodeFrameKey, fitRgba, levelStages, spreadFrames } from "../write/game-to-save.js";
 import { decodePlayerArt } from "../player-art.js";
+import { bossBodyFrames, splitBossStage2 } from "../boss-stage2.js";
 import {
     PLUS_ANIM_INTERVALS,
     PLUS_APPEAR_BOSS_NIBBLE,
@@ -736,8 +737,38 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
     // The title logo.
     const titlePlan = opts.title1 && opts.title1.rgba ? plan(plusPaletteRow("title"), opts.title1, 128, 64, "title") : null;
 
+    // A boss's second stage. A Dezaemon+ boss is one picture and one
+    // definition a stage, its movement phases end on their scripts rather
+    // than on its hit points, and its guns are the same three throughout, so
+    // the form change cannot happen inside a stage: a boss with a stage2
+    // block becomes two bosses either side of a stage break — its stage's
+    // boss is the first form with the top of the bar, and a stage put in
+    // after it, the same scenery and no waves, has the second form for its
+    // boss with the rest (FORMAT-PSX.md "A boss's second stage"). The level's
+    // own stages come first: a split with no stage left to go in stays one
+    // boss, and says so.
+    const stagePlan = [];
+    const splits = [];
+    let spare = PLUS_STAGES - stages.length;
+    stages.forEach((st, s) => {
+        const rec = bossData[`boss${s}`];
+        const split = rec ? splitBossStage2(rec) : null;
+        if (split && spare <= 0) {
+            warn(`${st.key}: boss (${rec.name || "?"}) has a second stage, but the save's ${PLUS_STAGES} stages are full — it flies its first form alone, the whole bar`);
+        }
+        if (!split || spare <= 0) {
+            stagePlan.push({ st, bossRec: rec, form: 0 });
+            return;
+        }
+        spare--;
+        const key = `${st.key}:stage2`;
+        stagePlan.push({ st, bossRec: split.first, form: 1 });
+        stagePlan.push({ st: { key, enemylist: [], background: st.background, scroll: st.scroll }, bossRec: split.second, form: 2 });
+        splits.push({ stage: st.key, into: key, name: rec.name || `boss${s}`, second: bossBodyFrames(split.second)[0] || "?", hp: [split.first.hp, split.second.hp] });
+    });
+
     // Per stage: definitions, placements, the boss, the scenery.
-    const built = stages.map((st, s) => {
+    const built = stagePlan.map(({ st, bossRec, form }, s) => {
         const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : (level.width || 8));
         const spawnRows = st.enemylist.slice().reverse();
         const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
@@ -817,7 +848,6 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
         // sample boss's behaviour with the level's hit points and score, and
         // a 0xD0 byte a few bands past the last wave.
         let boss = null;
-        const bossRec = bossData[`boss${s}`];
         if (bossRec) {
             const names = bossRec.anim && Array.isArray(bossRec.anim.idle)
                 ? [...bossRec.anim.idle, ...(Array.isArray(bossRec.anim.attack) ? bossRec.anim.attack : [])]
@@ -842,6 +872,7 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
             if (!bands.has(band)) bands.set(band, new Uint8Array(PLUS_APPEAR_RECORD_SIZE));
             bands.get(band)[PLUS_BOSS_COLUMN] = 0x80 | (PLUS_APPEAR_BOSS_NIBBLE << 4);
             boss = { name: bossRec.name || `boss${s}`, band, picture, vertical, record, frameCount: frames.length, hits };
+            if (form) boss.form = form;
             lastRow = Math.max(lastRow, band);
         }
 
@@ -976,7 +1007,7 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
             dropped: b.dropped,
             definitions: [...b.defs.values()].map((d) => ({ name: d.name, klass: d.klass, id: d.id, index: d.index })),
             boss: b.boss
-                ? { name: b.boss.name, band: b.boss.band, frames: b.boss.frameCount, vertical: b.boss.vertical, tiles: bossPainted, hits: b.boss.hits }
+                ? { name: b.boss.name, band: b.boss.band, frames: b.boss.frameCount, vertical: b.boss.vertical, tiles: bossPainted, hits: b.boss.hits, ...(b.boss.form ? { form: b.boss.form } : {}) }
                 : null,
             chips,
             groups: groups - 1,
@@ -1060,6 +1091,11 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
             title: titlePainted ? "uploaded" : "none",
             rows: rows.map((r) => ({ row: r.row, colors: r.count || 0 })).filter((r) => r.colors),
             tiles: { used: bank.used, shared: bank.shared, free: bank.free },
+            // How the save's bosses carry their second stages (boss-stage2.js).
+            transform: splits.length
+                ? `approximated: two chained bosses across a stage break (${splits.map((x) => `${x.stage} ${x.name}, then ${x.into} its second form ${x.second}`).join("; ")}); a Dezaemon+ save has no bullet art, so the guns keep the sample's`
+                : "none",
+            splits,
         },
     };
 }

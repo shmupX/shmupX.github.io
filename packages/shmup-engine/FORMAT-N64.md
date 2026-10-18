@@ -683,6 +683,42 @@ DOWNLOAD. Both say what every disk is: untested on hardware or in an emulator.
 - any disk type but 0 beyond the geometry (a warning says so), any `.ndd` whose
   system area is development-format, and the D64 or MAME image shapes.
 
+### A boss's second stage (`project-write.js`, `src/boss-stage2.js`; researched 2026-10-18)
+
+The web runtime lays a boss record's `stage2` block over the boss once its hp
+falls below `hpBelow` of the bar: new stances, new weapons, the same bar
+(README-Technical.md "A boss can have a second stage"; gs's Daltonius turns into
+Liu Kang's dragon). A project has **no boss record at all**: a boss is an
+ordinary 0x5C enemy entry with the hit byte's stage-clear (0x40) and lock-on
+(0x80) flags, four animation model numbers and one frame speed, an HP byte of
+0-15 hits, and three shot slots. No field documented here gates anything on hit
+points, swaps an entry's models, or spawns one entry when another dies;
+`enemySet`/`enemyRise` (0x44/0x45) and a shot's `launchedEnemy` are names
+without a traced meaning.
+
+So the writer splits such a boss into **two chained bosses either side of a
+stage break**: the boss's own stage keeps it in its first form with the top of
+the bar, and a stage put in right after it — no waves, the template's map for
+that stage number, report key `<stage>:stage2`, boss `boss<n>:stage2` — has the
+second form for its stage-clear entry (its own textures and models in that
+stage's GR and MD) with the rest; `GAM`'s final stage moves one on. A level that
+already fills all eight stages keeps the boss in its first form alone, with the
+whole bar, and warns. Placing both forms in one stage — the second at a later
+frame, the first without the stage-clear flag — was not tried: placements are
+timed by frame, so nothing would hold the dragon back until Daltonius dies. The
+HP byte caps both halves at 16 hits (gs: 1,750 each).
+
+A boss now fires: its shot is its `projectileData`, else its first weapon slot
+that names art (`bulletDataA`, `bulletData` …, as the runtime reads them) —
+before this a web boss armed only with `bulletData*` (Daltonius, among others)
+wrote no shot at all. **The bullets are the project's own**, though: `GAM`'s
+sprite tables name two enemy shots and two lasers game-wide, the writer paints
+no projectile art, and the shot type is always bullet 1, so neither form shows
+the record's textures. The report's `transform` (and `exportLevelToDdd`'s) reads
+"approximated: two chained bosses across a stage break", naming the stages, and
+lists the `splits`; each stage's report carries `form: 1 | 2` beside its `boss`.
+Like every disk this writes, untested on hardware or in an emulator.
+
 ## The launcher's player (likely — `static/n64dd/play.html`, `static/n64dd-library.js`, `lib/dezaemon-n64.ts`)
 
 A data disk boots only beside Dezaemon 3D's cartridge and the 64DD's own IPL

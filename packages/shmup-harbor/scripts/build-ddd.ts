@@ -121,6 +121,7 @@ interface DddReport {
   files: number;
   romFree: number;
   templateProject: string | null;
+  transform: string;
 }
 
 function fail(message: string): never {
@@ -284,6 +285,7 @@ export async function buildDdd(
         : ""
     }; ${rep.romFree} bytes of the ROM area free`,
   );
+  log(`transform: ${rep.transform}`);
   for (const w of result.warnings) log(`warning: ${w}`);
   log(
     "note: the level is placed as the format document says a level is laid out, and no disk this writes has been booted — the image is untested on hardware or in an emulator",

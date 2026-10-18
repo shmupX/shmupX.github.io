@@ -82,6 +82,7 @@ import { CG_CELL } from "../palette/deza2-palette.js";
 import { CgFullError, CgPacker, REF_HFLIP, REF_VFLIP } from "./cg-pack.js";
 import { encodeModels } from "./encode-model.js";
 import { creditStripRgba, NAMES_PER_ROLE, resolveAttribution, staffRolesFor } from "./attribution.js";
+import { bossStage2Record, weaponTextures } from "../boss-stage2.js";
 
 // --- layout constants ------------------------------------------------------------
 
@@ -456,6 +457,39 @@ export function encodeBossTrailer(spec = {}) {
         }
     }
     return t;
+}
+
+/**
+ * A second stage's line as the cart's equal hp bands: {hpStages, bands}, the
+ * bar cut into hpStages bands (2-4) of which the last `bands` are stage 2 —
+ * the cut nearest the line, the fewer bands on a tie. Half is two bands, the
+ * second of them.
+ */
+export function saturnStage2Bands(hpBelow) {
+    let best = { hpStages: 2, bands: 1 }, bestD = Infinity;
+    for (const [hpStages, bands] of [[2, 1], [3, 1], [3, 2], [4, 1], [4, 3]]) {
+        const d = Math.abs(bands / hpStages - hpBelow);
+        if (d < bestD - 1e-9) {
+            bestD = d;
+            best = { hpStages, bands };
+        }
+    }
+    return best;
+}
+
+/** The report's `transform` (boss-stage2.js): how the save's bosses carry their second stages. */
+function saturnTransform(built, bulletTypes) {
+    const parts = [];
+    for (const b of built) {
+        const st2 = b.boss && b.boss.stage2;
+        if (!st2) continue;
+        const fired = [...new Set(st2.weapons.filter((t) => t !== null).map((t) => bulletTypes[t] && bulletTypes[t].first).filter(Boolean))];
+        const bands = st2.bands === 1 ? `the last of ${st2.hpStages} hp stages` : `the last ${st2.bands} of ${st2.hpStages} hp stages`;
+        parts.push(`${b.key} ${b.boss.name}: ${bands} fire ${fired.length ? fired.join(", ") : "its first stage's bullets (no bullet type was left)"}`);
+    }
+    return parts.length
+        ? `approximated: the boss's own hp stages change its patterns and bullets at the line (${parts.join("; ")}); its core keeps the first form's art`
+        : "none";
 }
 
 /** Four patterns a boss with no record of its own fights with. */
@@ -928,17 +962,41 @@ export function buildSaveFromGame(level, art, options = {}) {
     // leaves a decoded boss on `bulletData: {}`, and an empty record claims
     // nothing. The fire points are remapped through this below, so a boss
     // whose weapon A landed in type 2 fires type 2.
+    //
+    // A boss's second stage (a `stage2` block) claims next, before the next
+    // boss: its weapons laid over the boss's as the runtime lays them
+    // (bossStage2Record), so the bottom of the bar can fire what the block
+    // arms it with. A slot the block left alone, or one that names the same
+    // art as the slot before, claims nothing more. A decoded boss keeps its
+    // own trailer and has no second stage here.
     const bossWeaponTypes = new Map(); // stage index -> [typeA|null, typeB|null, typeC|null]
+    const bossStage2 = new Map(); // stage index -> {record, weapons: [typeA|null, typeB|null, typeC|null]}
     const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
+    const weaponSlots = (b) => [
+        armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData),
+        armed(b.bulletDataB, b.projectileDataB),
+        armed(b.bulletDataC, b.projectileDataC),
+    ];
     stages.forEach((st, s) => {
         const b = bossData[`boss${s}`];
         if (!b) return;
         const owner = `${st.key}: boss (${b.name || "?"})`;
-        bossWeaponTypes.set(s, [
-            claimBulletType(armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData), owner),
-            claimBulletType(armed(b.bulletDataB, b.projectileDataB), owner),
-            claimBulletType(armed(b.bulletDataC, b.projectileDataC), owner),
-        ]);
+        const own = weaponSlots(b);
+        const types = own.map((w) => claimBulletType(w, owner));
+        bossWeaponTypes.set(s, types);
+        const s2 = !(b.dezaemon && b.dezaemon.boss) ? bossStage2Record(b) : null;
+        if (!s2) return;
+        const claimed = new Map(); // first frame -> type, this stage's claims so far
+        bossStage2.set(s, {
+            record: s2,
+            weapons: weaponSlots(s2).map((w, i) => {
+                if (!w) return null;
+                if (w === own[i]) return types[i];
+                const first = weaponTextures(w)[0];
+                if (!claimed.has(first)) claimed.set(first, claimBulletType(w, `${owner} stage 2`));
+                return claimed.get(first);
+            }),
+        });
     });
 
     // Per stage: placements, records, boss, items, scenery.
@@ -1174,6 +1232,38 @@ export function buildSaveFromGame(level, art, options = {}) {
             const weaponTypes = bossWeaponTypes.get(s) || [null, null, null];
             const fireType = (type) => (type <= 2 ? (weaponTypes[type] ?? weaponTypes[0] ?? type) : type);
             const remapFirePoints = (fps) => fps.map((fp) => ({ ...fp, type: fireType(fp.type) }));
+            // A second stage rides the cart's own hp stages: the bar is cut
+            // into equal bands and a band change moves the boss to the next
+            // pattern list, so the bands below the stage-2 line play two
+            // patterns of their own that fire the block's weapons (falling
+            // back to the boss's where the block left a slot alone or no
+            // type was left). The core art cannot change: a boss has one set
+            // of core frames (FORMAT.md "A boss's second stage").
+            const second = bossStage2.get(s) || null;
+            let stage2 = null;
+            let fight = {
+                hpStages: 2,
+                patterns: DEFAULT_BOSS_PATTERNS.map((p) => ({ ...p, firePoints: remapFirePoints(p.firePoints) })),
+            };
+            if (second && !decoded) {
+                const { hpStages, bands } = saturnStage2Bands(second.record.hpBelow);
+                const w2 = second.weapons;
+                const fireType2 = (type) => (type <= 2 ? (w2[type] ?? w2[0] ?? fireType(type)) : type);
+                const remap2 = (fps) => fps.map((fp) => ({ ...fp, type: fireType2(fp.type) }));
+                const [p0, p1, p2] = DEFAULT_BOSS_PATTERNS;
+                const first = [0, 0, 1, 1], last = [2, 2, 3, 3];
+                fight = {
+                    hpStages,
+                    playlist: [0, 1, 2, 3].map((k) => (k < hpStages - bands ? first : last)),
+                    patterns: [
+                        { ...p0, firePoints: remapFirePoints(p0.firePoints) },
+                        { ...p2, firePoints: remapFirePoints(p2.firePoints) },
+                        { ...p1, firePoints: remap2(p1.firePoints) },
+                        { ...p2, firePoints: remap2(p2.firePoints) },
+                    ],
+                };
+                stage2 = { hpStages, bands, hpBelow: second.record.hpBelow, weapons: w2 };
+            }
             const trailer = encodeBossTrailer(decoded
                 ? {
                     sizeClass,
@@ -1195,13 +1285,14 @@ export function buildSaveFromGame(level, art, options = {}) {
                 }
                 : {
                     sizeClass,
-                    hpStages: 2,
                     hp: (Math.max(1, Number(bossRec.hp) || 100)) * BOSS_UNITS_PER_HIT,
                     score: Number(bossRec.score) || BOSS_SCORE_TABLE[2],
                     optionFlag: false,
-                    patterns: DEFAULT_BOSS_PATTERNS.map((p) => ({ ...p, firePoints: remapFirePoints(p.firePoints) })),
+                    ...fight,
                 });
             boss = { sizeClass, row, col, frames: planKeys, trailer, name: bossRec.name || `boss${s}`, weapons: weaponTypes };
+            if (stage2) boss.stage2 = stage2;
+            else if (second) warn(`${st.key}: boss (${bossRec.name || "?"}) keeps its cart's own trailer — its stage2 block is not written`);
             lastRow = Math.max(lastRow, row);
         }
 
@@ -1676,12 +1767,17 @@ export function buildSaveFromGame(level, art, options = {}) {
                 records: [...b.records.values()].map((r) => ({ name: r.name, record: r.index, band: r.band, ...(r.drop ? { drop: r.drop } : {}) })),
                 // weapons: the global bullet type each of the boss's own
                 // weapons A/B/C landed in, null where it carries none.
-                boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, weapons: b.boss.weapons } : null,
+                // stage2: the hp stages a second stage rides on and the types
+                // its weapons landed in (bossStage2 above).
+                boss: b.boss
+                    ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, weapons: b.boss.weapons, ...(b.boss.stage2 ? { stage2: b.boss.stage2 } : {}) }
+                    : null,
                 items: b.items.length,
                 background: !!b.background,
                 extent: b.extent,
             })),
             ship: shipSource,
+            transform: saturnTransform(built, bulletTypes),
             player2: ship2Idle.length > 0,
             bulletTypes: paintedTypes(),
             weaponArt: { slots: weaponKeys.filter(Boolean).length, levelShotFrames: shotFrames.length },
