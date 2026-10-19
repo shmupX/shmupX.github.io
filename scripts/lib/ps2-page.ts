@@ -7,7 +7,9 @@
 export interface Ps2PageInput {
   /** The game's name as players see it. */
   title: string;
-  /** The folder under static/games/ the page lives in, e.g. "gs-ps2". */
+  /** The level the page is built from, as the build commands name it. */
+  level: string;
+  /** The folder under static/games/ the page lives in, e.g. "squad". */
   slug: string;
   /** File names beside the page. */
   iso: string;
@@ -259,12 +261,8 @@ ${controls}
 ## Rebuilding
 
 \`\`\`sh
-deno task ps2:page ${
-    p.slug.replace(/-ps2$/, "")
-  }               # the disc, the USB folder, the web build and this page
-deno task testdrive:parity ${
-    p.slug.replace(/-ps2$/, "")
-  }       # the preview GIF, every target side by side
+deno task ps2:page ${p.level}               # the disc, the USB folder, the web build and this page
+deno task testdrive:parity ${p.level}       # the preview GIF, every target side by side
 \`\`\`
 
 The ISO, the zip and \`play/\` are build output and are not committed; this

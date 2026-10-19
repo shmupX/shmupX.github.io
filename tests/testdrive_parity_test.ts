@@ -51,6 +51,8 @@ Deno.test("a boss's projectile kinds are its distinct texture sets, the second s
 Deno.test("targets parse in grid order and refuse unknown names", () => {
   assertEquals(parseTargets("sfc,web"), ["web", "sfc"]);
   assertEquals(parseTargets(undefined).length, 7);
+  // Nothing captured: --reuse rewrites only the grid and the GIF.
+  assertEquals(parseTargets("none"), []);
   assertThrows(() => parseTargets("web,gba"), Error, "gba");
 });
 
@@ -157,18 +159,19 @@ Deno.test("the RAM locator narrows a candidate list by every pair", () => {
 
 Deno.test("the PS2 page offers the disc, the folder and the browser build, with the GIF on top", () => {
   const input = {
-    title: "gs",
-    slug: "gs-ps2",
-    iso: "gs-ps2.iso",
-    zip: "gs-ps2-usb.zip",
+    title: "SQUAD",
+    level: "gs",
+    slug: "squad",
+    iso: "squad.iso",
+    zip: "squad-usb.zip",
     gif: "preview.gif",
     isoBytes: 12 * 1048576,
     zipBytes: 3 * 1048576,
-    gifCaption: "gs's boss <everywhere>",
+    gifCaption: "SQUAD's boss <everywhere>",
   };
   const html = ps2PageHtml(input);
-  assert(html.includes('href="./gs-ps2.iso" download'));
-  assert(html.includes('href="./gs-ps2-usb.zip" download'));
+  assert(html.includes('href="./squad.iso" download'));
+  assert(html.includes('href="./squad-usb.zip" download'));
   assert(html.includes('href="./play/"'));
   assert(html.includes('src="./preview.gif"'));
   assert(html.includes("12.0 MB"));
@@ -177,10 +180,12 @@ Deno.test("the PS2 page offers the disc, the folder and the browser build, with 
   const md = ps2Readme(input);
   assert(
     md.startsWith(
-      "# gs — PlayStation 2\n\n![gs's boss <everywhere>](preview.gif)",
+      "# SQUAD — PlayStation 2\n\n![SQUAD's boss <everywhere>](preview.gif)",
     ),
   );
+  // The commands name the level, not the page's public name.
   assert(md.includes("deno task ps2:page gs "));
+  assert(md.includes("deno task testdrive:parity gs "));
   // No GIF yet: no image, and nothing broken.
   assert(!ps2PageHtml({ ...input, gif: null }).includes("<img"));
 });

@@ -25,14 +25,16 @@
 // checkout may or may not have them. They are GENERATED_INDEXES: listed so the
 // bare URL redirects once the build has run, and not required on disk.
 export const GENERATED_INDEXES = [
-  "/games/gs-ps2/play",
+  "/games/squad/play",
 ];
 
 export const STATIC_INDEXES = [
   "/desktop",
   "/editor",
   "/extension",
+  // gs's PS2 page under its first name: a redirect to /games/squad/ now.
   "/games/gs-ps2",
+  "/games/squad",
   "/games/super-mario-sp",
   "/pixel-composer",
   "/pixel-editor",

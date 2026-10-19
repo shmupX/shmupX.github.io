@@ -88,6 +88,8 @@ export const PANES: Record<PaneId, PaneSpec> = {
 /** Parse `--targets web,sfc` (or `all`) into pane ids, in grid order. */
 export function parseTargets(value: string | undefined): PaneId[] {
   if (!value || value === "all") return [...PANE_IDS];
+  // Nothing to capture: with --reuse, only the grid and the GIF are rewritten.
+  if (value === "none") return [];
   const asked = value.split(",").map((s) => s.trim().toLowerCase()).filter(
     Boolean,
   );

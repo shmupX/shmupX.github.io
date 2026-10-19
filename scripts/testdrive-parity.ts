@@ -26,13 +26,14 @@
  * own size, its window cut out by wall-clock time, resampled to a steady rate
  * and kept as an mp4 at full rate beside the pad log of the run
  * (panes/<id>.mp4, panes/<id>.inputs.json): the attract mode's sources. Then
- * the clips are stacked four over three, each held on its last frame until
- * the longest ends, captioned, and written as grid.mp4 and parity.gif — the
- * GIF re-encoded at lower rates, then smaller, until it fits --max-mb.
+ * the clips are stacked four to a row, each held on its last frame until the
+ * longest ends, captioned, and written as grid.mp4 and parity.gif — the GIF
+ * re-encoded at lower rates, then smaller, until it fits --max-mb (5 MB, a
+ * README's and a download page's budget, unless told otherwise).
  *
  * A target that cannot run here (a fixture missing, a pane whose boot this
- * tool does not know yet) is drawn as its caption over black and said why in
- * report.json, rather than failing the run.
+ * tool does not know yet) is said why in report.json, rather than failing the
+ * run, and left out of the grid: it shows only the panes that have a clip.
  *
  *   deno task testdrive:parity gs
  *   deno task testdrive:parity gs -- --targets web,sfc --headed
@@ -109,7 +110,8 @@ stage into build/testdrive/parity/<slug>/ (parity.gif, grid.mp4, panes/,
 report.json).
 
   <level>            a cloud level's name (default: gs)
-  --targets <list>   web,ps2,sfc,saturn,kids,plus,n64dd or all (default: all)
+  --targets <list>   web,ps2,sfc,saturn,kids,plus,n64dd, all (default), or
+                     none — with --reuse, only the grid and the GIF again
   --stage <n>        the stage whose boss is recorded, 0-based (default: 1)
   --from-hp <f>      open the window when the boss is down to this share (default: 0.55)
   --tail <s>         seconds kept after the last new projectile (default: 2)
@@ -120,7 +122,7 @@ report.json).
   --attempts <n>     runs a pane may take to get its window (default: 3)
   --fps <n>          the clips' frame rate (default: 30)
   --gif-fps <n>      the GIF's frame rate before the budget ladder (default: 15)
-  --max-mb <n>       the GIF's budget; 0 for none (default: 10)
+  --max-mb <n>       the GIF's budget; 0 for none (default: 5)
   --origin <url>     a dev server already up (default: start vite here)
   --serve-port <n>   the port vite is started on (default: 5198)
   --cdp-port <n>     the DevTools port (default: 9336)
@@ -145,7 +147,7 @@ const flags = parseArgs(Deno.args.filter((a) => a !== "--"), {
     attempts: 3,
     fps: 30,
     "gif-fps": 15,
-    "max-mb": 10,
+    "max-mb": 5,
     "serve-port": 5198,
     "cdp-port": 9336,
     headed: false,
@@ -997,7 +999,15 @@ function caption(r: PaneResult): string {
 }
 
 async function writeGrid(results: PaneResult[]) {
-  const inputs: GridInput[] = results.map((r) => ({
+  // Only the panes with a clip: a pending or failed target is a caption over
+  // black, which the report already says. With none captured, every caption
+  // still goes in, so the grid says why it is empty.
+  const shown = results.filter((r) => r.clip);
+  const left = results.filter((r) => !r.clip).map((r) => PANES[r.id].label);
+  if (shown.length && left.length) {
+    log(`  left out of the grid (no clip): ${left.join(", ")}`);
+  }
+  const inputs: GridInput[] = (shown.length ? shown : results).map((r) => ({
     id: r.id,
     clip: r.clip ?? null,
     caption: caption(r),
@@ -1016,8 +1026,9 @@ async function writeGrid(results: PaneResult[]) {
   log(`writing ${grid}…`);
   await ffmpeg(gridArgs(inputs, opts));
   const gif = join(OUT, "parity.gif");
+  // Decimal megabytes: under 5 MB is under 5,000,000 bytes by either count.
   const budget = Number(flags["max-mb"]) > 0
-    ? Number(flags["max-mb"]) * 1048576
+    ? Number(flags["max-mb"]) * 1e6
     : Infinity;
   let bytes = Infinity;
   let used = { fps: Number(flags["gif-fps"]), scale: 1 };
@@ -1027,7 +1038,7 @@ async function writeGrid(results: PaneResult[]) {
     bytes = (await Deno.stat(gif)).size;
     log(
       `  parity.gif at ${rung.fps} fps, scale ${rung.scale}: ${
-        (bytes / 1048576).toFixed(1)
+        (bytes / 1e6).toFixed(2)
       } MB`,
     );
     if (bytes <= budget) break;
@@ -1063,22 +1074,25 @@ const summary = bossRushRecord(rush, { startStage: STAGE });
 log(describeBossRush(summary));
 await Deno.writeTextFile(join(OUT, "rush.json"), JSON.stringify(rush));
 
-const rig = await Rig.start({
-  origin: flags.origin,
-  servePort: Number(flags["serve-port"]),
-  cdpPort: Number(flags["cdp-port"]),
-  chrome: flags.chrome ?? null,
-  headed: flags.headed,
-  viewport: { width: PANES.web.width, height: PANES.web.height },
-  profileName: "parity",
-  log,
-});
 const ran = new Map<PaneId, PaneResult>();
+// `--targets none` captures nothing, so neither vite nor Chrome is started.
+const rig = targets.length
+  ? await Rig.start({
+    origin: flags.origin,
+    servePort: Number(flags["serve-port"]),
+    cdpPort: Number(flags["cdp-port"]),
+    chrome: flags.chrome ?? null,
+    headed: flags.headed,
+    viewport: { width: PANES.web.width, height: PANES.web.height },
+    profileName: "parity",
+    log,
+  })
+  : null;
 try {
   for (const id of targets) {
     log(`\n── ${PANES[id].label} ──`);
     try {
-      const r = await RUNNERS[id]({ rig, record, rush, kinds });
+      const r = await RUNNERS[id]({ rig: rig!, record, rush, kinds });
       log(`${id}: ${r.status}${r.reason ? ` — ${r.reason}` : ""}`);
       ran.set(id, r);
     } catch (e) {
@@ -1088,7 +1102,7 @@ try {
     }
   }
 } finally {
-  await rig.close();
+  await rig?.close();
 }
 
 // Every pane has a cell, in grid order: this run's, else — with --reuse — the
@@ -1149,7 +1163,7 @@ for (const r of results) {
 if (gif) {
   log(
     `  ${gif.gif} (${
-      (gif.bytes / 1048576).toFixed(1)
+      (gif.bytes / 1e6).toFixed(2)
     } MB, ${gif.fps} fps, scale ${gif.scale}${
       gif.overBudget ? ", OVER BUDGET" : ""
     })`,

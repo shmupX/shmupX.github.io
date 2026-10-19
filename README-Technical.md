@@ -608,7 +608,7 @@ deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (l
                           # every cart / card / disk / PS2 exporter above takes --boss-rush[=STAGE]: no waves but one showcase
                           # row of every enemy type (and the level's drops), bosses only, from that stage on (lib/boss-rush.ts)
 deno task testdrive:parity # one level's boss on every target side by side — web, PS2, SFC, Saturn, Kids!, Dezaemon+, 64DD — a tool-assisted pilot fighting it, as one GIF + per-pane mp4s and input logs
-deno task ps2:page        # a game's PS2 download / PLAY page in static/games/<slug>-ps2/: ISO, USB zip, the web build, README, the GIF
+deno task ps2:page        # a game's PS2 download / PLAY page in static/games/<its alias, else level-ps2>/ (gs: /games/squad/): ISO, USB zip, the web build, README, the GIF
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task ships:atlas     # cut dev-fixtures/ship-sheet/ships.png into the editor's NEW GAME character roster
 deno task tonebank:table  # re-pack the instrument map into src/audio/

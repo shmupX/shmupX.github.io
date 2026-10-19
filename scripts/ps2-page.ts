@@ -16,9 +16,15 @@
  *                   the disc's own main.js on the web build of AthenaEnv
  *   preview.gif     the seven-target capture (`deno task testdrive:parity`),
  *                   copied in when there is one — or --gif <file>
+ *   .gitignore      the ISO, the zip and play/: build output, never committed
  *
- * The ISO, the zip and play/ are build output (gitignored); the page, the
- * README and the GIF are what is committed.
+ * The page, the README and the GIF are what is committed.
+ *
+ * The slug and the title are the game's public name: the one alias the level
+ * answers to as a subdomain (`deno task level:alias`), when it has exactly
+ * one — gs is squad.codemonkey.games, so its page is /games/squad/, titled
+ * SQUAD — else `<level>-ps2` and the level's own name. --slug and --title
+ * say otherwise.
  *
  *   deno task ps2:page gs
  *   deno task ps2:page gs -- --slug gs-ps2 --title "GS" --gif build/testdrive/parity/gs/parity.gif
@@ -32,6 +38,7 @@ import { repoRoot } from "@shmupx/shmup-harbor/repo-root";
 import { buildPs2 } from "../packages/shmup-harbor/lib/ps2/build.ts";
 import { writeWebBuild } from "../packages/shmup-harbor/lib/ps2/web-build.ts";
 import { buildZip, treeEntries } from "../packages/shmup-harbor/lib/ps2/zip.ts";
+import { cloudLevelAliases } from "../lib/level-subdomain.ts";
 import { ps2PageHtml, ps2Readme } from "./lib/ps2-page.ts";
 
 const ROOT = repoRoot();
@@ -46,13 +53,21 @@ if (flags.help || !flags._[0]) {
   Deno.exit(flags.help ? 0 : 2);
 }
 const level = String(flags._[0]);
-const slug = flags.slug ??
-  `${
-    level.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  }-ps2`;
-const title = flags.title ?? level;
+const levelSlug = level.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-|-$/g, "");
+
+/** The one alias the level answers to, when it has exactly one; else null. */
+async function publicName(): Promise<string | null> {
+  const aliases = await cloudLevelAliases() ?? {};
+  const names = Object.keys(aliases).filter((name) => aliases[name] === level);
+  return names.length === 1 ? names[0] : null;
+}
+const alias = flags.slug && flags.title ? null : await publicName();
+const slug = flags.slug ?? alias ?? `${levelSlug}-ps2`;
+const title = flags.title ?? (alias ? alias.toUpperCase() : level);
 const out = join(ROOT, "static", "games", slug);
 await ensureDir(out);
+await Deno.writeTextFile(join(out, ".gitignore"), "*.iso\n*.zip\nplay/\n");
 
 console.log(`building ${level} for the PS2 (folder + disc)…`);
 const built = await buildPs2({
@@ -78,14 +93,10 @@ await Deno.writeFile(join(out, zip), zipped);
 console.log("writing the web build…");
 await writeWebBuild(built.appDir, join(out, "play"), { title });
 
-const gifFrom = flags.gif ? resolve(flags.gif) : join(
-  ROOT,
-  "build",
-  "testdrive",
-  "parity",
-  basename(slug.replace(/-ps2$/, "")),
-  "parity.gif",
-);
+// testdrive:parity writes under the level's own name, whatever the slug.
+const gifFrom = flags.gif
+  ? resolve(flags.gif)
+  : join(ROOT, "build", "testdrive", "parity", basename(level), "parity.gif");
 let gif: string | null = null;
 if (await exists(gifFrom)) {
   await Deno.copyFile(gifFrom, join(out, "preview.gif"));
@@ -99,6 +110,7 @@ if (await exists(gifFrom)) {
 
 const input = {
   title,
+  level,
   slug,
   iso,
   zip,
