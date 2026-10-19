@@ -68,6 +68,32 @@ Deno.test("a known level goes to the game, an unknown one to NEW GAME under its 
   );
 });
 
+Deno.test("the visitor's own query rides along — all of it but the level the label decides", () => {
+  assertEquals(
+    subdomainTarget("2019-ps2", KEYS, {}, "?god=1&stage=1"),
+    "/games/2028-ai?level=2019-PS2&god=1&stage=1",
+  );
+  assertEquals(
+    subdomainTarget("2019-ps2", KEYS, {}, "?level=other&god=1"),
+    "/games/2028-ai?level=2019-PS2&god=1",
+  );
+  assertEquals(
+    subdomainTarget("my-first-level", KEYS, {}, "?new=x&theme=dark"),
+    "/editor/?new=my-first-level&theme=dark",
+  );
+  assertEquals(
+    subdomainTarget("2019-ps2", null, {}, "?god=1"),
+    "/games/2028-ai?level=2019-ps2&god=1",
+  );
+  const r = subdomainRedirect(
+    new Request("http://x/?god=1", {
+      headers: { host: "2019-ps2.codemonkey.games" },
+    }),
+    KEYS,
+  )!;
+  assertEquals(r.headers.get("location"), "/games/2028-ai?level=2019-PS2&god=1");
+});
+
 Deno.test("only a subdomain's root is redirected, on GET and HEAD, honouring X-Forwarded-Host", () => {
   const req = (
     url: string,

@@ -154,19 +154,43 @@ export function planAliases(
   return { key, set, errors };
 }
 
-/** Where a subdomain's root goes. `keys` null means the database was unreachable. */
+/**
+ * `path?name=value`, then every parameter of the visitor's own query but
+ * `name`: squad.codemonkey.games/?god=1 is the game with god mode on, the way
+ * /games/2028-ai?level=gs&god=1 is. The label decides the level, so a `level`
+ * (or `new`) the visitor typed as well is the one thing not carried.
+ */
+function withQuery(
+  path: string,
+  name: string,
+  value: string,
+  search: string,
+): string {
+  const params = new URLSearchParams();
+  params.set(name, value);
+  for (const [k, v] of new URLSearchParams(search)) {
+    if (k !== name) params.append(k, v);
+  }
+  return `${path}?${params.toString()}`;
+}
+
+/**
+ * Where a subdomain's root goes. `keys` null means the database was
+ * unreachable. `search` is the visitor's own query, carried along (withQuery).
+ */
 export function subdomainTarget(
   label: string,
   keys: readonly string[] | null,
   aliases: LevelAliases = {},
+  search = "",
 ): string {
   if (keys === null) {
     const aliased = Object.hasOwn(aliases, label) ? aliases[label] : label;
-    return `${GAME_URL}?level=${encodeURIComponent(aliased)}`;
+    return withQuery(GAME_URL, "level", aliased, search);
   }
   const key = matchLevelKey(label, keys, aliases);
-  if (key !== null) return `${GAME_URL}?level=${encodeURIComponent(key)}`;
-  return `${NEW_GAME_URL}?new=${encodeURIComponent(label)}`;
+  if (key !== null) return withQuery(GAME_URL, "level", key, search);
+  return withQuery(NEW_GAME_URL, "new", label, search);
 }
 
 /**
@@ -192,7 +216,7 @@ export function subdomainRedirect(
   return new Response(null, {
     status: 302,
     headers: {
-      location: subdomainTarget(label, keys, aliases),
+      location: subdomainTarget(label, keys, aliases, url.search),
       "cache-control": "no-store",
     },
   });
