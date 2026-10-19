@@ -223,7 +223,7 @@ const atlasCache = new Map<string, LoadedAtlas>();
 // Atlases are read from two trees. shmupX/atlases/<name> is shmupX's own
 // catalog: the atlas a shmupX character's textureKey names, which the tools
 // rewrite in place and publish to. The root-level atlases/<name> is cmg's,
-// and it is also where spriteX's packer writes, so it holds the ~430 sheets
+// and it is where easierbycode.com's spriteX packs, so it holds the ~430 sheets
 // that "swap in any frame from any atlas" (hadouken, bg-great-hall,
 // deza_dragon...) has always meant. A name shmupX lacks is therefore read
 // from the root — READ, never written: whatever a tool then publishes goes to

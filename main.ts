@@ -26,6 +26,7 @@ import {
   SHELF_FAVS_KEY,
 } from "./lib/steam-favorites.ts";
 import { isStored, serveStored, sweepPartials } from "./lib/offline-store.ts";
+import { serveSpriteX } from "./lib/spritex-proxy.ts";
 import {
   arcadeRecipePath,
   isKeptManifest,
@@ -267,6 +268,13 @@ app.use(async (ctx) => {
   headers.delete("last-modified");
   return new Response(html, { status: 200, headers });
 });
+
+// codemonkey.games/spriteX/ is spriteX, served from its own deployment with
+// shmupX's database root set on its pages, so it lists and packs into
+// shmupX/atlases rather than cmg's root catalog (lib/spritex-proxy.ts).
+// After the packaged app's middleware, so its pages get the kept storage
+// every page gets; ahead of staticFiles(), which has nothing there.
+app.use(async (ctx) => (await serveSpriteX(ctx.req)) ?? ctx.next());
 
 app.use(staticFiles());
 

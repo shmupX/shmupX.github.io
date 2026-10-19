@@ -69,8 +69,9 @@ stays at the root.
   base game's boss on a miss. The symptom is a boss that silently renders as
   2028.Ai's Bison. Check `renamed` in the result to see what moved.
 - **The catalog is shared and open-write.** Every write lands in shmupX's
-  subtree, where the level editor's library and the game can see it (spriteX
-  still lists cmg's root catalog, not this one). Show the dry run, get a yes,
+  subtree, where the level editor's library, the game and spriteX at
+  codemonkey.games/spriteX/ can see it (spriteX at easierbycode.com still lists
+  cmg's root catalog). Show the dry run, get a yes,
   then apply. Publishing over an existing name replaces it.
 - **Art that is not in the catalog** goes in as `{file: "dev-fixtures/x.png"}`.
   `dev-fixtures/` is gitignored by design — it is the repo's local-only art
