@@ -59,11 +59,56 @@
         return k.charAt(0) === '_';
     }
 
+    // An enemy that never fires leaves without a projectile. The Dezaemon
+    // mapper starts every zako from the starter enemy, so each one carries
+    // the stock purple fireball (normalProjectile0-2) in `bulletData` whether
+    // it can fire or not, and most of a roster cannot: ryu_level_moon's
+    // appearance may fire, but its byte 5 picks geometry 0, the engine's
+    // empty routine. Published as-is, that dead projectile was packed into
+    // the moon's atlas and kept in its record. The test is the runtime's own
+    // (game.bundle.js): a behaviour-driven zako fires only when enabled with
+    // a big shot or a geometry other than 0 (initEnemyBehavior, zakoGeometry),
+    // and a web enemy's reload loop skips a negative interval (0 reads as
+    // 300). A boss is armed by its fire points instead (bossTravelRecord).
+    // An enemy without a projectile is what a non-firing one reads as anyway:
+    // its projData is null.
+    var PROJECTILE_KEYS = ['bulletData', 'projectileData'];
+
+    function zakoGeometry(fire) {
+        if (fire.geometry != null) return fire.geometry;
+        if (fire.pattern != null) return 10 + fire.pattern;
+        return (fire.direction || 0) & 15;
+    }
+
+    function neverFires(record) {
+        if (!record || typeof record !== 'object') return false;
+        var deza = record.dezaemon;
+        if (deza && deza.boss) return false;
+        var fire = deza && deza.behavior && deza.behavior.fire;
+        if (fire) return !(fire.enabled && (fire.bigShot != null || zakoGeometry(fire) !== 0));
+        return typeof record.interval === 'number' && record.interval < 0;
+    }
+
+    // The record without a projectile it can never fire; the record itself
+    // when it has nothing to drop.
+    function dropDeadProjectile(record) {
+        if (!neverFires(record)) return record;
+        var out = record;
+        for (var i = 0; i < PROJECTILE_KEYS.length; i++) {
+            if (!Object.prototype.hasOwnProperty.call(record, PROJECTILE_KEYS[i])) continue;
+            if (out === record) out = Object.assign({}, record);
+            delete out[PROJECTILE_KEYS[i]];
+        }
+        return out;
+    }
+
     // Every frame name a character record references, in order, deduped —
     // the same depth<=2 walk the editor's publish flow uses, so player
     // (texture + shoot*/barrier frame lists), enemy (texture) and boss
-    // (anim.*) records all collect correctly.
+    // (anim.*) records all collect correctly. A projectile the record can
+    // never fire is not walked (dropDeadProjectile).
     function collectFrameNames(record) {
+        record = dropDeadProjectile(record);
         var wanted = [];
         var seen = new Set();
         var collect = function (obj, depth) {
@@ -226,7 +271,7 @@
     // opts: { name, record, canvas, atlasJson, db?, missing?, confirmOverwrite? }
     async function publishRecord(opts) {
         var name = opts.name;
-        var record = JSON.parse(JSON.stringify(opts.record));
+        var record = dropDeadProjectile(JSON.parse(JSON.stringify(opts.record)));
         delete record._enemyKey; // runtime-only tag createEnemy leaves on recipe entries
         if (!record.name) record.name = name;
         record.textureKey = name;
@@ -507,6 +552,7 @@
         bossPublishRecord: bossPublishRecord,
         zakoTravelRecord: zakoTravelRecord,
         collectFrameNames: collectFrameNames,
+        dropDeadProjectile: dropDeadProjectile,
         previewFrameName: previewFrameName,
         cropFrames: cropFrames,
         packFrames: packFrames,

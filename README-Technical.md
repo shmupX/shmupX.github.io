@@ -1349,6 +1349,20 @@ warps and fields but never left her idle pose, because `bossAdd` built the Vega
 and Fang sets for the slot she sat in rather than the one she plays
 (`bossPatternSlot`, shared with `bossShootStart`).
 
+**An enemy that never fires is published without a projectile.** The mapper
+starts every zako from the starter enemy, so each one carries the stock purple
+fireball (`normalProjectile0-2`) in `bulletData` whether it can fire or not.
+`ryu_level_moon`, a backdrop moon whose byte 5 picks geometry 0 (the engine's
+empty routine), went into the library with that fireball packed into its atlas
+and named in its record. `collectFrameNames` and `publishRecord` now drop
+`bulletData`/`projectileData` from a record that can never fire
+(`dropDeadProjectile`), by the runtime's own test: a behaviour-driven zako fires
+when `fire.enabled` and it has a big shot or a geometry other than 0
+(`initEnemyBehavior`), and a web enemy is silent only at a negative `interval`
+(0 reads as 300). Bosses are armed by their fire points and are left alone. A
+missing projectile is what a silent enemy reads as anyway (`projData` null).
+`tests/extract_mode_projectile_test.ts` pins it.
+
 **The launcher's LIBRARY** is that shelf as game cards, reached from the Games
 list's LIBRARY row (it appears once the shelf holds something). `libraryCards()`
 orders them — each game, then its mods — so a mod sits under the game it came
