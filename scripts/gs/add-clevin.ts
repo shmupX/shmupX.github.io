@@ -1,13 +1,15 @@
 #!/usr/bin/env -S deno run -A --node-modules-dir=none
 /**
- * Put Leonard into the gs cloud game's second stage.
+ * Put Clevin into the gs cloud game's second stage.
  *
- *   deno run -A --node-modules-dir=none scripts/gs/add-leonard.ts            # dry run
- *   deno run -A --node-modules-dir=none scripts/gs/add-leonard.ts --out x.json
- *   deno run -A --node-modules-dir=none scripts/gs/add-leonard.ts --apply
- *   deno run -A --node-modules-dir=none scripts/gs/add-leonard.ts --revert
+ *   deno run -A --node-modules-dir=none scripts/gs/add-clevin.ts            # dry run
+ *   deno run -A --node-modules-dir=none scripts/gs/add-clevin.ts --out x.json
+ *   deno run -A --node-modules-dir=none scripts/gs/add-clevin.ts --apply
+ *   deno run -A --node-modules-dir=none scripts/gs/add-clevin.ts --revert
  *
- * Leonard is the round grey face with the glasses (art/leonard.png). He
+ * (Added as Leonard, frame `leonard`; renamed Clevin on 2026-10-19.)
+ *
+ * Clevin is the round grey face with the glasses (art/clevin.png). He
  * attacks exactly as deza2_02 does, the horned imp of the rando level's third
  * stage (shmupX/levels/rando/enemyData/enemyC, a Dezaemon 2 import): the same
  * entry script, the same aimed fire table, the same eighteen cart bytes, so a
@@ -18,18 +20,18 @@
  * What it adds to shmupX/levels/gs (shmupX's copy; cmg's root-level copy is
  * never read or written, mcp/lib/rtdb.ts roots every level path):
  *
- * - `enemyData/enemyH`, Leonard;
+ * - `enemyData/enemyH`, Clevin;
  * - six H cells on empty rows of `stages/stage1`'s wave list (WAVES): two
- *   Leonards early, two mid-stage, two late. A cell that is not empty is
+ *   Clevins early, two mid-stage, two late. A cell that is not empty is
  *   refused, never overwritten;
- * - leonard and geekBadge_0, packed under the level's sheet the way
+ * - clevin and geekBadge_0, packed under the level's sheet the way
  *   build-stage2.ts packs, reused when the level already has them.
  *
  * Without --apply nothing is written. --out writes the whole level as it
  * would be after the write, for a local play-through (window.__OFFLINE_LEVEL__,
  * see build-stage2.ts). --apply writes the art and the wave list under the
  * ETags they were read with, so a save that raced this one is refused, and
- * Leonard's record only into an empty slot (--force replaces it). --revert
+ * Clevin's record only into an empty slot (--force replaces it). --revert
  * takes the H cells, the record and the two frames back out — a frame some
  * other record of the level still draws stays.
  */
@@ -60,14 +62,14 @@ const LEVEL = "gs";
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
-/** Leonard's letter in the wave list: the next one gs has free. */
+/** Clevin's letter in the wave list: the next one gs has free. */
 export const LETTER = "H";
 /** His frame and his shot's, by the names they get in the level's atlas. */
-export const BODY = "leonard";
+export const BODY = "clevin";
 export const SHOT = "geekBadge_0";
 
 /**
- * Leonard: deza2_02 (rando's enemyC, read 2026-10-18) with his face and the
+ * Clevin: deza2_02 (rando's enemyC, read 2026-10-18) with his face and the
  * badge. Everything that makes the imp attack as it does is kept — the
  * runtime drives a Dezaemon zako from `dezaemon.behavior` (fire table,
  * speed, death word) and `dezaemon.entry` (its movement script), keys its
@@ -85,8 +87,8 @@ export const SHOT = "geekBadge_0";
  * the imp's hit-point index 0: the Saturn table goes 256, 12800, … with no
  * step in between.
  */
-export const LEONARD = {
-  name: "leonard",
+export const CLEVIN = {
+  name: "clevin",
   texture: [BODY],
   hp: 48,
   interval: 5,
@@ -180,7 +182,7 @@ export const LEONARD = {
 };
 
 /**
- * Where Leonard comes in: row index of stage 2's wave list (top row last —
+ * Where Clevin comes in: row index of stage 2's wave list (top row last —
  * the runtime plays the list bottom-up) -> that row with his cells. Each of
  * these rows is empty in the stage build-stage2.ts wrote.
  */
@@ -190,20 +192,20 @@ export const WAVES: Record<number, string[]> = {
   4: ["00", "00", "00", "H0", "H0", "00", "00", "00"],
 };
 
-const isLeonard = (cell: unknown) =>
+const isClevin = (cell: unknown) =>
   typeof cell === "string" && cell.length === 2 && cell[0] === LETTER;
 
 /**
- * The wave list with Leonard's cells laid in. Throws when a cell he needs
- * holds anything but "00" — another enemy, or Leonard from an earlier run —
+ * The wave list with Clevin's cells laid in. Throws when a cell he needs
+ * holds anything but "00" — another enemy, or Clevin from an earlier run —
  * or when the list is too short to have the row.
  */
-export function withLeonard(enemylist: string[][]): string[][] {
+export function withClevin(enemylist: string[][]): string[][] {
   const out = enemylist.map((row) => row.slice());
   const clash: string[] = [];
   for (const [at, cells] of Object.entries(WAVES)) {
     const r = Number(at);
-    if (!out[r]) throw new Error(`stage 2 has no row ${r} for Leonard`);
+    if (!out[r]) throw new Error(`stage 2 has no row ${r} for Clevin`);
     cells.forEach((cell, c) => {
       if (cell === "00") return;
       if (out[r][c] !== "00") clash.push(`row ${r} column ${c} (${out[r][c]})`);
@@ -211,17 +213,17 @@ export function withLeonard(enemylist: string[][]): string[][] {
     });
   }
   if (clash.length) {
-    throw new Error(`Leonard's cells are taken: ${clash.join(", ")}`);
+    throw new Error(`Clevin's cells are taken: ${clash.join(", ")}`);
   }
   return out;
 }
 
-/** The wave list with every Leonard cell emptied. */
-export function withoutLeonard(enemylist: string[][]): string[][] {
-  return enemylist.map((row) => row.map((c) => (isLeonard(c) ? "00" : c)));
+/** The wave list with every Clevin cell emptied. */
+export function withoutClevin(enemylist: string[][]): string[][] {
+  return enemylist.map((row) => row.map((c) => (isClevin(c) ? "00" : c)));
 }
 
-/** The frames this script packs: Leonard from art/, the badge from spriteX. */
+/** The frames this script packs: Clevin from art/, the badge from spriteX. */
 async function sources(): Promise<ResolvedFrame[]> {
   return [
     await resolveFrame({
@@ -238,7 +240,7 @@ export interface Plan {
   atlas: { before: { w: number; h: number }; after: { w: number; h: number } };
   atlasImageDataURL: string | null;
   atlasFrames: Record<string, FrameRect>;
-  record: typeof LEONARD;
+  record: typeof CLEVIN;
   enemylist: string[][];
   taken: boolean;
   etags: { image: string | null; frames: string | null; waves: string | null };
@@ -260,7 +262,7 @@ export async function plan(): Promise<Plan> {
       `${dbPath(`levels/${LEVEL}`)} has no stage 2 — run build-stage2.ts first`,
     );
   }
-  const enemylist = withLeonard(waves.value);
+  const enemylist = withClevin(waves.value);
 
   const have = new Set(Object.keys(rawFrames.value).map(decodeFrameName));
   const pull: ResolvedFrame[] = [];
@@ -269,7 +271,7 @@ export async function plan(): Promise<Plan> {
     if (have.has(f.name)) reused.push(f.name);
     else pull.push(f);
   }
-  const missing = referencedFrames(LEONARD).filter((n) =>
+  const missing = referencedFrames(CLEVIN).filter((n) =>
     !have.has(n) && !pull.some((f) => f.name === n)
   );
   if (missing.length) throw new Error(`no art for ${missing.join(", ")}`);
@@ -302,7 +304,7 @@ export async function plan(): Promise<Plan> {
     },
     atlasImageDataURL: pull.length ? await sheetDataUrl(after) : null,
     atlasFrames,
-    record: LEONARD,
+    record: CLEVIN,
     enemylist,
     taken: (await get(`levels/${LEVEL}/enemyData/enemy${LETTER}`)) != null,
     etags: { image: image.etag, frames: rawFrames.etag, waves: waves.etag },
@@ -312,7 +314,7 @@ export async function plan(): Promise<Plan> {
 /**
  * Write a plan: the art first, then the record that names it, then the wave
  * list that places it — art and waves under the ETags they were read with.
- * Refuses to replace an enemy already in Leonard's slot unless `force`.
+ * Refuses to replace an enemy already in Clevin's slot unless `force`.
  */
 export async function apply(
   p: Plan,
@@ -372,9 +374,9 @@ export async function revert(): Promise<string[]> {
   const wavesPath = `levels/${LEVEL}/stages/stage1/enemylist`;
   const waves = await getWithEtag<string[][]>(wavesPath);
   if (
-    Array.isArray(waves.value) && waves.value.some((r) => r.some(isLeonard))
+    Array.isArray(waves.value) && waves.value.some((r) => r.some(isClevin))
   ) {
-    await put(wavesPath, withoutLeonard(waves.value), { ifMatch: waves.etag });
+    await put(wavesPath, withoutClevin(waves.value), { ifMatch: waves.etag });
     written.push(dbPath(wavesPath));
   }
   const slot = `levels/${LEVEL}/enemyData/enemy${LETTER}`;

@@ -138,7 +138,7 @@ Deno.test("rows spread evenly, each on the gaps of the one before", () => {
 
 Deno.test("the showcase is two staggered rows, weaker first, an empty row between", () => {
   assertEquals(showcaseRows(["E", "F", "B", "C", "D", "A", "G"], 8), SHOWCASE);
-  // gs's eight types — Leonard (H) the toughest — are a four-and-four
+  // gs's eight types — Clevin (H) the toughest — are a four-and-four
   // checkerboard: nobody side by side, nobody straight behind anybody.
   const gs = showcaseRows(["H", "E", "F", "B", "C", "D", "A", "G"], 8);
   assertEquals(gs, [

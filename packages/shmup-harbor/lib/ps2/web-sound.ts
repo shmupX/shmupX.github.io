@@ -2,7 +2,8 @@
 //
 // main.js talks to audsrv through runtime-sound.ts, which uses exactly four
 // things: `Sound.setVolume`, `Sound.findChannel`, `Sound.Sfx(path)` for the
-// ADPCM one-shots and `Sound.Stream(path)` for the WAV music. This answers
+// ADPCM one-shots (and their `playing(channel)`, which holds one effect to a
+// few voices) and `Sound.Stream(path)` for the WAV music. This answers
 // those from the build's own files — the `.adp` effects are decoded with the
 // SPU2 decoder in ./adpcm.ts, the music by the browser — so the page plays
 // what the disc carries, not a set of web twins.
@@ -93,7 +94,10 @@ export interface WebSoundOptions {
   logLimit?: number;
 }
 
-/** audsrv has 24 voices; findChannel cycles through as many. */
+/**
+ * audsrv has 24 voices. findChannel hands out the lowest one not sounding, and
+ * a play on one that is sounding is refused, as on a console.
+ */
 export const AUDSRV_CHANNELS = 24;
 
 /** The name runtime-sound.ts knows an effect by: the basename, no extension. */
@@ -173,30 +177,38 @@ export function createWebSound(options: WebSoundOptions): WebSound {
     return pending;
   };
 
-  let nextChannel = 0;
+  // audsrv's 24 voices: the effect each is sounding, or null. A channel is
+  // busy until its sample ends, as the SPU2's ENDX bit says on a console.
+  const voices: ({ owner: WebSfx; source: AudioBufferSourceNode } | null)[] =
+    new Array(AUDSRV_CHANNELS).fill(null);
 
   const module: WebSoundModule = {
     setVolume(volume) {
       if (master) master.gain.value = audsrvGain(volume);
     },
 
+    // AthenaEnv's sound_sfx_find_channel: the lowest channel not sounding,
+    // and -1 when none is.
     findChannel() {
-      const channel = nextChannel;
-      nextChannel = (nextChannel + 1) % AUDSRV_CHANNELS;
-      return channel;
+      return voices.indexOf(null);
     },
 
     Sfx(path) {
       void decodeEffect(path);
       const live = new Set<AudioBufferSourceNode>();
-      return {
+      const sfx: WebSfx = {
         volume: 100,
         pan: 0,
         pitch: 0,
-        play(channel = 0) {
+        play(channel = -1) {
+          const ch = channel >= 0 && channel < AUDSRV_CHANNELS
+            ? channel
+            : module.findChannel();
           const effect = effects.get(path);
-          note(path, "sfx", !!(context && master && effect));
-          if (!context || !master || !effect) return channel;
+          // audsrv_ch_play_adpcm refuses a channel that is still sounding.
+          const free = ch >= 0 && voices[ch] === null;
+          note(path, "sfx", !!(context && master && effect) && free);
+          if (!free || !context || !master || !effect) return ch;
           resume();
           const source = context.createBufferSource();
           source.buffer = effect.buffer;
@@ -206,17 +218,25 @@ export function createWebSound(options: WebSoundOptions): WebSound {
             source.loopEnd = effect.buffer.duration;
           }
           const gain = context.createGain();
-          gain.gain.value = audsrvGain(this.volume);
+          gain.gain.value = audsrvGain(sfx.volume);
           const panner = context.createStereoPanner();
-          panner.pan.value = audsrvPan(this.pan);
+          panner.pan.value = audsrvPan(sfx.pan);
           source.connect(gain).connect(panner).connect(master);
-          source.onended = () => live.delete(source);
+          const ended = () => {
+            live.delete(source);
+            if (voices[ch]?.source === source) voices[ch] = null;
+          };
+          source.onended = ended;
           live.add(source);
+          voices[ch] = { owner: sfx, source };
           source.start();
-          return channel;
+          return ch;
         },
-        playing() {
-          return live.size > 0;
+        // audsrv_is_adpcm_playing: this effect, still sounding on `channel`.
+        // With no channel, whether it is sounding anywhere.
+        playing(channel?: number) {
+          if (channel === undefined) return live.size > 0;
+          return voices[channel]?.owner === sfx;
         },
         free() {
           for (const source of live) {
@@ -227,8 +247,12 @@ export function createWebSound(options: WebSoundOptions): WebSound {
             }
           }
           live.clear();
+          for (let ch = 0; ch < AUDSRV_CHANNELS; ch++) {
+            if (voices[ch]?.owner === sfx) voices[ch] = null;
+          }
         },
       };
+      return sfx;
     },
 
     Stream(path) {

@@ -1,9 +1,9 @@
-// Leonard in the gs cloud game's second stage, as scripts/gs/add-leonard.ts
+// Clevin in the gs cloud game's second stage, as scripts/gs/add-clevin.ts
 // writes him.
 //
 // The script edits shmupX/levels/gs in the shared, open-write database, so
 // what it writes has to be right the first time and come back out cleanly:
-// Leonard attacks as deza2_02 does, his cells only ever land on empty ones,
+// Clevin attacks as deza2_02 does, his cells only ever land on empty ones,
 // his art is in the atlas before anything names it, and --revert leaves the
 // atlas, the record slot and the wave list as they were. All of it against a
 // stand-in database, never the real one.
@@ -21,15 +21,15 @@ import { STAGE2 } from "../scripts/gs/build-stage2.ts";
 import {
   apply,
   BODY,
-  LEONARD,
+  CLEVIN,
   LETTER,
   plan,
   revert,
   SHOT,
   WAVES,
-  withLeonard,
-  withoutLeonard,
-} from "../scripts/gs/add-leonard.ts";
+  withClevin,
+  withoutClevin,
+} from "../scripts/gs/add-clevin.ts";
 
 type Tree = Record<string, unknown>;
 
@@ -142,9 +142,9 @@ async function withDb(
   }
 }
 
-Deno.test("Leonard attacks as deza2_02 does, with his face and the badge", () => {
+Deno.test("Clevin attacks as deza2_02 does, with his face and the badge", () => {
   // The imp's movement script and fire table, kept whole.
-  assertEquals(LEONARD.dezaemon.behavior.fire, {
+  assertEquals(CLEVIN.dezaemon.behavior.fire, {
     aimed: true,
     direction: 17,
     directionEx: 0,
@@ -154,34 +154,34 @@ Deno.test("Leonard attacks as deza2_02 does, with his face and the badge", () =>
     mode: 1,
     window: 4,
   });
-  assertEquals(LEONARD.dezaemon.entry.rows.length, 11);
-  assertEquals(LEONARD.dezaemon.attributes.length, 36, "eighteen cart bytes");
-  assertEquals(LEONARD.dezaemon.placementId, 130);
+  assertEquals(CLEVIN.dezaemon.entry.rows.length, 11);
+  assertEquals(CLEVIN.dezaemon.attributes.length, 36, "eighteen cart bytes");
+  assertEquals(CLEVIN.dezaemon.placementId, 130);
   // Where the imp sat in rando does not travel with him.
   for (const key of ["stage", "record", "placements"]) {
-    assert(!(key in LEONARD.dezaemon), key);
+    assert(!(key in CLEVIN.dezaemon), key);
   }
   // Sixteen times the imp's 3 hp, and the badge in the slot the runtime reads.
-  assertEquals(LEONARD.hp, 48);
-  assertEquals(LEONARD.bulletData.texture, [SHOT]);
-  assertEquals(referencedFrames(LEONARD).sort(), [SHOT, BODY].sort());
+  assertEquals(CLEVIN.hp, 48);
+  assertEquals(CLEVIN.bulletData.texture, [SHOT]);
+  assertEquals(referencedFrames(CLEVIN).sort(), [SHOT, BODY].sort());
 });
 
 Deno.test("his cells land only on empty cells, and come back out", () => {
-  const laid = withLeonard(STAGE2);
+  const laid = withClevin(STAGE2);
   const cells = laid.flat().filter((c) => c[0] === LETTER);
   assertEquals(cells.length, 6);
   for (const at of Object.keys(WAVES)) {
     assert(STAGE2[Number(at)].every((c) => c === "00"), `row ${at} was empty`);
   }
-  assertEquals(withoutLeonard(laid), STAGE2);
+  assertEquals(withoutClevin(laid), STAGE2);
   assertEquals(STAGE2.flat().filter((c) => c[0] === LETTER), [], "untouched");
   // A second run, or another enemy in his place, is refused.
-  assertThrows(() => withLeonard(laid), Error, "taken");
+  assertThrows(() => withClevin(laid), Error, "taken");
   const crowded = STAGE2.map((r) => r.slice());
   crowded[9][1] = "C0";
-  assertThrows(() => withLeonard(crowded), Error, "row 9 column 1 (C0)");
-  assertThrows(() => withLeonard(STAGE2.slice(0, 5)), Error, "no row");
+  assertThrows(() => withClevin(crowded), Error, "row 9 column 1 (C0)");
+  assertThrows(() => withClevin(STAGE2.slice(0, 5)), Error, "no row");
 });
 
 Deno.test({
@@ -214,11 +214,11 @@ Deno.test({
       }
       assertEquals(
         db.read(`shmupX/levels/gs/enemyData/enemy${LETTER}`),
-        LEONARD,
+        CLEVIN,
       );
       assertEquals(
         db.read("shmupX/levels/gs/stages/stage1/enemylist"),
-        withLeonard(STAGE2),
+        withClevin(STAGE2),
       );
       // Twice is refused: his cells are taken.
       await assertRejects(() => plan(), Error, "taken");
@@ -245,7 +245,7 @@ Deno.test({
   async fn() {
     await withDb(async (db) => {
       await apply(await plan());
-      // Someone gives the laptop the badge too, after Leonard landed.
+      // Someone gives the laptop the badge too, after Clevin landed.
       const laptop = db.read("shmupX/levels/gs/enemyData/enemyC") as Tree;
       await fetch(`${db.url}/shmupX/levels/gs/enemyData/enemyC.json`, {
         method: "PUT",
@@ -256,7 +256,7 @@ Deno.test({
         db.read("shmupX/levels/gs/atlasFrames") as Tree,
       ).map(decodeFrameName);
       assert(names.includes(SHOT), "the badge stays: the laptop draws it");
-      assert(!names.includes(BODY), "Leonard's face goes");
+      assert(!names.includes(BODY), "Clevin's face goes");
     });
   },
 });

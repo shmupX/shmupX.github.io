@@ -3,7 +3,7 @@
 // dezaVolley re-skins every shot a Dezaemon-driven zako fires: the level's
 // bullet bank (dezaemonBullets.art[fire.mode]) when it has one, then — new —
 // the zako's own bulletData/projectileData frames, and only then the drawn
-// ring. gs's Leonard (scripts/gs/add-leonard.ts) is deza2_02's pattern on a
+// ring. gs's Clevin (scripts/gs/add-clevin.ts) is deza2_02's pattern on a
 // web level with no bank, and fired the ring instead of his geek badge. The
 // runtime is game.bundle.js, a vendored artifact patched by hand (README).
 

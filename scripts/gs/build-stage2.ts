@@ -269,7 +269,7 @@ async function flirtyFrames(): Promise<ResolvedFrame[]> {
 /**
  * Shelf-pack to the level sheet's own width, in the order given, so the sheet
  * only grows down. A frame wider than that sheet widens it rather than being
- * clipped. add-leonard.ts packs the same way.
+ * clipped. add-clevin.ts packs the same way.
  */
 export function packTo(width: number, entries: ResolvedFrame[]) {
   const sheetW = Math.max(width, ...entries.map((e) => e.raster.width));

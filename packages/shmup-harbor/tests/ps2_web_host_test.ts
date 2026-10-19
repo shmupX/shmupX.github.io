@@ -38,6 +38,7 @@ import {
   createWebSound,
   soundKey,
 } from "../lib/ps2/web-sound.ts";
+import { encodeAdp } from "../lib/ps2/adpcm.ts";
 import { webIndexHtml, writeWebBuild } from "../lib/ps2/web-build.ts";
 import { stageAssets } from "../lib/ps2/assets.ts";
 import { buildRuntimeBundle } from "../lib/ps2/build.ts";
@@ -357,12 +358,87 @@ Deno.test("a silent page still answers Sound, and logs what the game asked for",
     ["sfx", false],
     ["stream", false],
   ]);
-  // findChannel walks audsrv's 24 voices.
-  const channels = Array.from({ length: 30 }, () => Sound.findChannel());
-  assertEquals(Math.max(...channels), 23);
+  // Nothing sounds on a silent page, so every channel stays free.
+  assertEquals(Sound.findChannel(), 0);
   assertEquals(soundKey("assets/sounds/scene_x/voice_ko.wav"), "voice_ko");
   assertEquals([audsrvGain(150), audsrvGain(-5), audsrvGain(50)], [1, 0, 0.5]);
   assertEquals([audsrvPan(-200), audsrvPan(25)], [-1, 0.25]);
+});
+
+/** Enough of an AudioContext for one-shots, its sources ended by hand. */
+function fakeAudioContext() {
+  const sources: { onended: (() => void) | null; stop(): void }[] = [];
+  const node = () => ({ connect: <T>(next: T) => next });
+  const context = {
+    state: "running",
+    destination: {},
+    currentTime: 0,
+    resume: () => Promise.resolve(),
+    createGain: () => ({ ...node(), gain: { value: 1 } }),
+    createStereoPanner: () => ({ ...node(), pan: { value: 0 } }),
+    createBuffer: (_: number, length: number, rate: number) => ({
+      duration: length / rate,
+      getChannelData: () => new Float32Array(length),
+    }),
+    createBufferSource: () => {
+      const source = {
+        ...node(),
+        buffer: null,
+        loop: false,
+        onended: null as (() => void) | null,
+        start() {},
+        stop() {
+          source.onended?.();
+        },
+      };
+      sources.push(source);
+      return source;
+    },
+  };
+  return { context: context as unknown as AudioContext, sources };
+}
+
+Deno.test("the page's 24 voices are audsrv's: lowest free first, a sounding one refuses", async () => {
+  const { context, sources } = fakeAudioContext();
+  const adp = encodeAdp(new Int16Array(2800).fill(1000), { rate: 22050 });
+  const sound = createWebSound({
+    context,
+    load: () => Promise.resolve(adp),
+  });
+  await sound.preload([
+    "assets/sounds/se_explosion.adp",
+    "assets/sounds/se_shoot.adp",
+  ]);
+  const Sound = sound.module;
+  const boom = Sound.Sfx("assets/sounds/se_explosion.adp");
+  const shot = Sound.Sfx("assets/sounds/se_shoot.adp");
+
+  assertEquals(boom.play(Sound.findChannel()), 0);
+  assertEquals(Sound.findChannel(), 1);
+  assertEquals([boom.playing(0), shot.playing(0), boom.playing(1)], [
+    true,
+    false,
+    false,
+  ]);
+  // Channel 0 is sounding: audsrv refuses the shot, and nothing starts.
+  shot.play(0);
+  assertEquals(sources.length, 1);
+  assertEquals(sound.log.at(-1)?.audible, false);
+
+  for (let ch = Sound.findChannel(); ch >= 0; ch = Sound.findChannel()) {
+    shot.play(ch);
+  }
+  assertEquals(sources.length, 24);
+  assertEquals(Sound.findChannel(), -1);
+
+  // The explosion rings out and its channel is the first free one again.
+  sources[0].onended?.();
+  assertEquals(boom.playing(0), false);
+  assertEquals(Sound.findChannel(), 0);
+  // free() lets go of every channel an effect held.
+  shot.free();
+  assertEquals(Sound.findChannel(), 0);
+  assertEquals(shot.playing(23), false);
 });
 
 // --------------------------------------------------------------- files ----

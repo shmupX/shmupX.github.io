@@ -39,8 +39,22 @@
 /** The subset of AthenaEnv's `Sound` this uses. */
 interface AthenaSfx {
   play(channel: number): void;
+  /** Is `channel` still sounding this effect? (`audsrv_is_adpcm_playing`) */
+  playing?(channel: number): boolean;
   volume?: number;
 }
+
+/**
+ * How many of one effect may sound at once: the browser runtime's
+ * `SFX_VOICES` (static/games/2028-ai/game.bundle.js, tests/sfx_voices_test.ts).
+ *
+ * The SPU2 sums its 24 voices and clips, and audsrv starts every one of them
+ * at full volume. A wave going down fired an explosion per enemy, each on a
+ * voice of its own, and a dozen of them keyed on in the same frame came out
+ * as one explosion a dozen times too loud — the noise the console made where
+ * the browser played a burst.
+ */
+export const SFX_VOICES = 4;
 
 interface AthenaStream {
   play(): void;
@@ -77,7 +91,10 @@ export interface SoundPlayer {
 
 /** What runtime-entry.ts drives once a frame. */
 export interface PumpedSoundPlayer extends SoundPlayer {
-  /** Restart a looping track that has run out. Cheap, and never throws. */
+  /**
+   * Once a rendered frame: restart a looping track that has run out, and let
+   * every effect strike again (see fireSfx). Cheap, and never throws.
+   */
   pump(): void;
 }
 
@@ -195,6 +212,11 @@ export function createAthenaSound(): PumpedSoundPlayer {
   const sfx: Record<string, AthenaSfx> = {};
   const streamPaths: Record<string, string> = {};
 
+  // Per effect, the channels it was last started on, oldest first; and the
+  // effects struck since the last pump(). See fireSfx.
+  const voices: Record<string, number[]> = {};
+  let struck: Record<string, true> = {};
+
   // The music the disc carries, when the build said so (`__PS2_BGM__`, from
   // lib/ps2/sound-pack.ts bgmPlan). Only the tracks the game's stages play are
   // staged, so the port's other loadStream calls are skipped rather than left
@@ -230,15 +252,43 @@ export function createAthenaSound(): PumpedSoundPlayer {
   let trackLoops = false;
   let trackRunning = false;
 
-  // audsrv hands out a free voice per call; pong.js reuses one channel for
-  // everything, which cuts the previous effect off. Asking per play lets
-  // overlapping shots and explosions actually overlap.
+  // A free voice per play, so overlapping shots and explosions overlap; -1
+  // when all 24 are sounding. Never channel 0 in its place: audsrv refuses a
+  // channel that is still sounding (`audsrv_ch_play_adpcm` returns
+  // -AUDSRV_ERR_NO_MORE_CHANNELS), and AthenaEnv's `play` sets that channel's
+  // volume and records the effect as its owner before asking — so an effect
+  // forced onto a busy channel 0 was silent, re-levelled whatever was on it,
+  // and left `findChannel` handing channel 0 back while it was still busy.
+  // Nor is -1 passed on: for a negative channel AthenaEnv looks one up itself
+  // and indexes its volume table with the -1 it gets when there is none. An
+  // AthenaEnv with no `findChannel` has the one channel pong.js uses.
   const channel = (): number => {
     try {
       const ch = Sound.findChannel();
-      return typeof ch === "number" && ch >= 0 ? ch : 0;
+      if (typeof ch !== "number") return 0;
+      return ch >= 0 ? ch : -1;
     } catch {
       return 0;
+    }
+  };
+
+  // Forget the channels an effect is no longer sounding on. `playing(ch)` is
+  // audsrv asking the SPU2 whether that voice is still running and still on
+  // this sample, so a channel another effect has since taken counts as gone.
+  // An AthenaEnv that cannot be asked holds nothing back.
+  const prune = (s: AthenaSfx, mine: number[]): void => {
+    if (typeof s.playing !== "function") {
+      mine.length = 0;
+      return;
+    }
+    for (let i = mine.length - 1; i >= 0; i--) {
+      let on = false;
+      try {
+        on = !!s.playing(mine[i]);
+      } catch {
+        // Unanswerable is as good as finished.
+      }
+      if (!on) mine.splice(i, 1);
     }
   };
 
@@ -276,14 +326,34 @@ export function createAthenaSound(): PumpedSoundPlayer {
     }
   };
 
+  // The browser's two rules for one effect (game.bundle.js playSound), here.
+  //
+  // One strike per rendered frame: a wave going down asks for an explosion
+  // per enemy inside the same frame's logic steps, and the browser holds a key
+  // to one per 16 ms frame (`SFX_MIN_GAP_MS`). pump() is this frame's end.
+  //
+  // No more than SFX_VOICES of it sounding. The browser re-strikes its oldest
+  // voice at that point; audsrv cannot — a sounding channel refuses a new
+  // sample and AthenaEnv has no stop for one — so the strike is dropped. With
+  // four of the same explosion already ringing, a fifth is not missed.
   const fireSfx = (key: string, volume?: number): void => {
     const s = sfx[key];
-    if (!s) return;
+    if (!s || struck[key]) return;
+    struck[key] = true;
+    const mine = voices[key] ?? (voices[key] = []);
+    // Only asked when it could matter: each answer is an RPC to the IOP.
+    if (mine.length >= SFX_VOICES) prune(s, mine);
+    if (mine.length >= SFX_VOICES) return;
+    const ch = channel();
+    if (ch < 0) return;
     try {
       if (volume !== undefined && typeof s.volume === "number") {
         s.volume = toAudsrvVolume(volume);
       }
-      s.play(channel());
+      s.play(ch);
+      const again = mine.indexOf(ch);
+      if (again >= 0) mine.splice(again, 1);
+      mine.push(ch);
     } catch {
       // A voice that will not start is not worth taking the frame down for.
     }
@@ -346,6 +416,7 @@ export function createAthenaSound(): PumpedSoundPlayer {
     },
 
     pump() {
+      struck = {};
       if (!track || !trackLoops) return;
       try {
         if (!trackRunning) {

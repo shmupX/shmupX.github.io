@@ -6131,7 +6131,7 @@
       : ZAKO_BULLET_SPEED;
     // The save's own bullet art for this type (4-frame anim from the global
     // bank); with none, the zako's own projectile frames, the art its record
-    // names (a web level's Dezaemon zako — gs's Leonard fires deza2_02's
+    // names (a web level's Dezaemon zako — gs's Clevin fires deza2_02's
     // pattern with a badge — or an import that kept no bank); else the drawn
     // ring fallback.
     var art = cfgs && scene.recipe.dezaemonBullets.art && scene.recipe.dezaemonBullets.art[fire.mode];

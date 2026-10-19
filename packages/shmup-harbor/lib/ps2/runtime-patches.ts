@@ -522,6 +522,267 @@ const BOSS_NAMES = [
   ...BOSS_RUNTIME.matchAll(/^(?:var|function) (\w+)/gm),
 ].map((m) => m[1]);
 
+// A Dezaemon zako, the browser's (game.bundle.js: initEntryScript,
+// stepEntryScript, updateEnemyFire, dezaVolley). A record imported from a
+// Dezaemon cart — or built from one, as gs's Clevin is from rando's horned
+// imp (scripts/gs/add-clevin.ts) — moves by `dezaemon.entry`, its appearance
+// script, and fires by `dezaemon.behavior.fire`, on the engine's fire pulse.
+// The port reads neither. It flew such a record at `speed || 1` (straight
+// down, `speed` being 0) and fired it every `interval` steps — the cart's
+// fire-table interval, 5, read as steps: 24 shots a second at 120, straight
+// down, from above the screen on.
+//
+// - The script is the browser's, row for row: [duration, angle, turn, amp,
+//   flags], one row per Saturn frame of its duration, the angle turning by
+//   `turn` a frame, `amp / 256` px a frame along it. 0 is right, 0x4000 up,
+//   0xC000 down; a right-half spawn mirrors the lateral part and the ground
+//   flag the vertical one. A Saturn frame is two of the browser's 120 Hz
+//   steps, so 60 / `__PS2_GAME_FPS__` of them pass a step here (turbo
+//   doubles it), and the velocity a row sets is spread over the steps.
+//   Terrain rides (amp bit 15, flags bit 8) need the scrolling map the port
+//   does not have; such a row moves as a plain one. With no script the port
+//   moves the record as before.
+// - The gun is the browser's: a pulse that adds 28 + rank/2 a Saturn frame
+//   and fires past 255, a reload of TYPE012_INTERVAL by fire window plus
+//   0..window-1 pulses, counted down on pulses, a volley only while the
+//   zako's centre is 8 px inside the screen, and none within 40 px of the
+//   ship. Rank starts at 8 + 8*stage and climbs one per 128 Saturn frames of
+//   the wave phase toward 32 + 4*power + 8*stage, as the browser's does
+//   (without its reset when a ship is lost). Each zako keeps its own pulse —
+//   the browser's is the scene's — so their volleys keep the same rhythm and
+//   are not in step.
+// - A volley is the geometry table's spread about the ship's heading, or
+//   straight down unaimed; 11 jitters, 12 spirals, 10-12 burst. The bullet is
+//   the record's own art (its bulletData, as normalizeRecipe hands it over) at
+//   the browser's zako speed, 1.35 px a Saturn frame — or the cart's bullet
+//   config, when the level carries `dezaemonBullets`. Steering (8, 9) is not
+//   modelled; those fly straight. The port's own gun stands down.
+// - Its random draws come from one LCG, as the overlay's do, so a run
+//   replays the same. The ship it aims at is the overlay's (bossOverlayShip).
+//
+// No `$` in here: it is spliced into a String.replace replacement.
+export const DEZA_ZAKO_RUNTIME = String
+  .raw`// shmupX lib/ps2/runtime-patches.ts: a Dezaemon zako's script and gun.
+var DEZA_TYPE012_INTERVAL = [14, 12, 10, 8, 6, 4, 2, 1];
+var DEZA_FIRE_WINDOW = [29, 22, 16, 11, 7, 4, 2, 1];
+var DEZA_GEOMETRY_SPREADS = {
+  1: [0], 2: [-8, 8], 3: [0, -8, 8], 4: [0, -16, 16], 5: [-8, 8, -24, 24],
+  6: [0, -8, 8, -16, 16], 7: [0, -16, 16, -32, 32], 8: [0, -16, 16, -32, 32],
+  9: [0], 10: [0], 13: [-64, 64], 14: [0, -64, 64, 128],
+  15: [0, -32, 32, -64, 64, -96, 96, 128]
+};
+var DEZA_SPIRAL_DELTAS = [192, 208, 224, 240, 0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176];
+var DEZA_ANGLE_UNIT = Math.PI * 2 / 256;
+var DEZA_ZAKO_BULLET_SPEED = 1.35;
+var DEZA_POINT_BLANK = 40;
+var DEZA_ENTRY_ADVANCE = 0x1;
+var DEZA_ENTRY_NO_COS = 0x20;
+var DEZA_ENTRY_NO_SIN = 0x40;
+var DEZA_SEED = 1;
+function dezaRandom() {
+  DEZA_SEED = (DEZA_SEED * 75 + 74) % 65537;
+  return DEZA_SEED / 65537;
+}
+function dezaSaturnPerStep() {
+  return 60 / (globalThis.__PS2_GAME_FPS__ || 30);
+}
+function dezaScene() {
+  return typeof globalThis.__PS2_GS__ === "function" ? globalThis.__PS2_GS__() : null;
+}
+function dezaGeometry(fire) {
+  if (fire.geometry != null) return fire.geometry;
+  if (fire.pattern != null) return 10 + fire.pattern;
+  return (fire.direction || 0) & 15;
+}
+function dezaAimed(fire) {
+  if (fire.aimed != null) return fire.aimed;
+  return ((fire.direction || 0) & 16) !== 0;
+}
+function dezaReload(fire) {
+  var rate = DEZA_FIRE_WINDOW.indexOf(fire.window);
+  if (rate < 0) rate = 0;
+  var interval = fire.mode === 3 ? fire.interval : DEZA_TYPE012_INTERVAL[rate];
+  if (fire.bigShot) return interval;
+  return interval + Math.floor(dezaRandom() * (fire.window || 1));
+}
+function dezaRank(ctx) {
+  var stage = ctx.state.stageId || 0;
+  var start = 8 + 8 * stage;
+  var gs = dezaScene();
+  if (!gs) return start;
+  var powered = [gs.player, gs.player2].some(function (p) {
+    return p && !p.dead && p.shootMode && p.shootMode !== "normal";
+  });
+  var target = 32 + 4 * (powered ? 3 : 1) + 8 * stage;
+  var ramp = Math.floor((gs.frameCnt || 0) * dezaSaturnPerStep() / 128);
+  return start < target ? Math.min(target, start + ramp) : Math.max(target, start - ramp);
+}
+function dezaZakoArm(e, data) {
+  var dz = data && data.dezaemon;
+  if (!dz || typeof dz !== "object") return e;
+  var b = dz.behavior || {};
+  var rows = dz.entry && Array.isArray(dz.entry.rows) && dz.entry.rows.length ? dz.entry.rows : null;
+  var fire = b.fire && b.fire.enabled ? b.fire : null;
+  e.deza = {
+    rows: rows,
+    idx: 0,
+    rowT: 0,
+    angle: 0,
+    turn: 0,
+    amp: 0,
+    flags: 0,
+    vx: 0,
+    vy: 0,
+    active: false,
+    loaded: false,
+    mirror: null,
+    ground: !!b.ground,
+    speed: Number.isFinite(b.speed) ? b.speed : 0,
+    fire: fire,
+    reload: fire ? dezaReload(fire) : -1,
+    burst: 0,
+    acc: 0,
+    sub: 0
+  };
+  if (rows) e.speed = 0;
+  e.interval = 0;
+  return e;
+}
+function dezaEntryFrame(d) {
+  var recompute = false;
+  if (--d.rowT < 0) {
+    var row = d.rows[d.idx < d.rows.length ? d.idx : d.rows.length - 1];
+    d.flags = row[4];
+    d.rowT = row[0];
+    d.angle = row[1];
+    d.turn = row[2];
+    d.amp = row[3] & 0x7fff;
+    d.loaded = true;
+    if (d.flags & DEZA_ENTRY_ADVANCE) {
+      d.idx = d.idx + 1 < d.rows.length ? d.idx + 1 : d.rows.length - 1;
+    }
+    recompute = true;
+  } else if (d.turn) {
+    d.angle = (d.angle + d.turn) & 0xffff;
+    recompute = true;
+  }
+  if (!recompute) return;
+  var th = (d.angle >>> 8) * DEZA_ANGLE_UNIT;
+  var v = d.amp / 256;
+  d.vx = d.flags & DEZA_ENTRY_NO_COS ? 0 : Math.cos(th) * v;
+  if (d.mirror) d.vx = -d.vx;
+  d.vy = d.flags & DEZA_ENTRY_NO_SIN ? 0 : -Math.sin(th) * v;
+  if (d.ground) d.vy = -d.vy;
+  d.active = d.amp > 0;
+}
+function dezaVolley(ctx, e, d, geom) {
+  var proj = e.projectileData;
+  var gs = dezaScene();
+  if (!proj || !gs) return;
+  var fire = d.fire;
+  var x = e.x + e.width / 2;
+  var y = e.y + e.height / 2;
+  var base = Math.PI;
+  if (dezaAimed(fire)) {
+    var ship = bossOverlayShip();
+    if (!ship) return;
+    var dx = ship.x + ship.width / 2 - x;
+    var dy = ship.y + ship.height / 2 - y;
+    if (Math.abs(dx) < DEZA_POINT_BLANK && Math.abs(dy) < DEZA_POINT_BLANK) return;
+    base = Math.atan2(dx, -dy);
+  }
+  var bank = ctx.state.recipe && ctx.state.recipe.dezaemonBullets;
+  var cfg = bank && bank.configs && bank.configs[fire.mode];
+  var speed = cfg && Number.isFinite(cfg.speedAdd)
+    ? (dezaRank(ctx) * 4 / 512 + cfg.speedAdd) * 2
+    : DEZA_ZAKO_BULLET_SPEED;
+  var angles;
+  if (geom === 11) {
+    angles = [base + (Math.floor(dezaRandom() * 32) - 16) * DEZA_ANGLE_UNIT];
+  } else if (geom === 12) {
+    angles = [base + DEZA_SPIRAL_DELTAS[d.burst & 15] * DEZA_ANGLE_UNIT];
+  } else {
+    angles = (DEZA_GEOMETRY_SPREADS[geom] || [0]).map(function (s) {
+      return base + s * DEZA_ANGLE_UNIT;
+    });
+  }
+  for (var i = 0; i < angles.length; i++) {
+    gs.projectiles.push(createProjectile({
+      x: x,
+      y: y,
+      rotX: Math.sin(angles[i]),
+      // createProjectile reads a 0 as "down"; a level shot is a hair off it.
+      rotY: -Math.cos(angles[i]) || 1e-9,
+      speed: speed * dezaSaturnPerStep(),
+      damage: proj.damage || 1,
+      hp: proj.hp || 1,
+      name: "bullet",
+      frames: proj.texture || [],
+      atlas: proj.atlas || e.atlas || "game_asset"
+    }));
+  }
+  ctx.sound.playSfx("se_shoot");
+}
+function dezaFireFrame(ctx, e, d) {
+  d.acc += 28 + (dezaRank(ctx) >> 1);
+  var pulse = d.acc > 255;
+  if (pulse) d.acc = 0;
+  var fire = d.fire;
+  if (!fire || d.reload < 0) return;
+  var geom = dezaGeometry(fire);
+  var big = !!fire.bigShot;
+  if (!big && geom === 0) return;
+  var cy = e.y + e.height / 2;
+  var onScreen = cy >= 8 && cy <= GH - 8;
+  var isBurst = geom >= 10 && geom <= 12;
+  var burstLen = geom === 10 ? 4 : geom === 11 ? 5 : 16;
+  var firedMidBurst = false;
+  if (isBurst && d.burst > 0) {
+    if (geom === 12 || pulse) {
+      dezaVolley(ctx, e, d, geom);
+      d.burst = (d.burst + 1) % burstLen;
+      firedMidBurst = true;
+    }
+  } else if (big) {
+    if (d.reload <= 0 && onScreen) {
+      d.reload = dezaReload(fire);
+      dezaVolley(ctx, e, d, 1);
+    } else if (d.reload > 0) d.reload -= 1;
+    return;
+  } else if (pulse && d.reload <= 0 && onScreen) {
+    d.reload = dezaReload(fire);
+    dezaVolley(ctx, e, d, geom);
+    if (isBurst) d.burst = 1;
+  }
+  if (pulse && d.reload > 0 && !firedMidBurst) d.reload -= 1;
+}
+function dezaZakoStep(ctx, e) {
+  var d = e.deza;
+  if (d.mirror === null) d.mirror = e.x + e.width / 2 > GW / 2;
+  var frames = dezaSaturnPerStep() * (ctx.state.turboMode ? 2 : 1);
+  d.sub += frames;
+  while (d.sub >= 1) {
+    d.sub -= 1;
+    if (d.rows) dezaEntryFrame(d);
+    dezaFireFrame(ctx, e, d);
+  }
+  if (!d.rows) return;
+  // A zero-amplitude row leaves the zako to its record's speed, straight
+  // down, as the browser's does — once the script has started.
+  if (d.active) {
+    e.x += d.vx * frames;
+    e.y += d.vy * frames;
+  } else if (d.loaded) {
+    e.y += d.speed * frames;
+  }
+}
+`;
+
+/** The top-level names DEZA_ZAKO_RUNTIME declares. */
+const DEZA_NAMES = [
+  ...DEZA_ZAKO_RUNTIME.matchAll(/^(?:var|function) (\w+)/gm),
+].map((m) => m[1]);
+
 export const RUNTIME_PATCHES: readonly RuntimePatch[] = [
   {
     // God mode. The title's L+R+START secret (runtime-entry.ts) sets
@@ -533,6 +794,78 @@ export const RUNTIME_PATCHES: readonly RuntimePatch[] = [
     name: "god mode",
     find: /(function playerOnDamage\((\w+), \w+, \w+\) \{\r?\n)/,
     replace: "$1  if ($2.state.godMode) return;\n",
+  },
+  {
+    // An enemy the ship runs into, the browser's way: one hit, and the enemy
+    // dies of it (game.bundle.js: playerDamage then enemyDie), scored as the
+    // port scores one the barrier takes. The port only hurt the ship and left
+    // the enemy flying through it, so a laptop crossing the ship hit it again
+    // each time its blink ran out — every 31 steps at 120 a second, three
+    // hits and a lost life from one laptop. And the contact box is the
+    // body's frame less a tenth of it each side, where the port and the
+    // browser take the whole frame: gs's laptop leaves its frame's corners
+    // empty, and a ship beside one was hit by the empty corner, the laptop
+    // visibly off to its right. Shots still hit the whole frame.
+    name: "enemy contact: one hit, and the enemy dies",
+    find:
+      /(enemyDead\((\w+), (\w+)\);(\r?\n)\s*hudOnEnemyKill\(\2\.hud, \3\.score, \3\.spgage\);\4\s*\2\.sound\.playSfx\("se_guard"\);\4\s*\}\4\s*\} else if \(hitTestAABB\()\3\.x \+ \3\.hitX, \3\.y \+ \3\.hitY, \3\.hitW, \3\.hitH, ((\w+)\.x \+ \6\.hitX, \6\.y \+ \6\.hitY, \6\.hitW, \6\.hitH\)\) \{\4(\s*))gamePlayerDamage\(1\);/,
+    replace:
+      "$1$3.x + $3.hitX + $3.hitW * 0.1, $3.y + $3.hitY + $3.hitH * 0.1, " +
+      "$3.hitW * 0.8, $3.hitH * 0.8, $5gamePlayerDamage(1);" +
+      "$4$7enemyDead($2, $3);" +
+      "$4$7hudOnEnemyKill($2.hud, $3.score, $3.spgage);",
+  },
+  {
+    // The ship's blink after a hit, while nothing hurts it, in the port's own
+    // time: 30 steps and a flicker every 2 of its 30 a second — a second,
+    // blinking at 7.5 Hz. The build runs `__PS2_GAME_FPS__` steps a second
+    // (120 by default, lib/ps2/build.ts), which made it a quarter of a second
+    // flickering at 30 Hz.
+    name: "ship blink: the port's second",
+    find:
+      /(\.damageAnimTimer % )4 < 2\)([\s\S]{0,400}?\.damageAnimTimer > )30\)/,
+    replace: "$1(4 * ((globalThis.__PS2_GAME_FPS__ || 30) / 30)) < " +
+      "2 * ((globalThis.__PS2_GAME_FPS__ || 30) / 30))" +
+      "$2(30 * ((globalThis.__PS2_GAME_FPS__ || 30) / 30)))",
+  },
+  {
+    // An enemy's shadow where the browser casts it, and as dark: centred a
+    // body's height below the body's centre less `shadowOffsetY`, flipped or
+    // not (game.bundle.js: updateShadowPosition; the Pixi original's
+    // BaseUnit), a black silhouette at half alpha. The port centred a flipped
+    // shadow `shadowOffsetY` ABOVE the body's centre, in a grey that keeps
+    // the art readable, so all that showed of it was the body's own bottom
+    // rows upside down, poking out over its head — gs's enemies all wore one.
+    name: "enemy shadow: below, and black",
+    find:
+      /(\w+)\.rt\.Color\.new\(60, 60, 60, 60\);(\r?\n\s*)const shadowY = (\w+)\.shadowReverse \? [^;]+;/,
+    replace: "$1.rt.Color.new(0, 0, 0, 64);" +
+      "$2const shadowY = $3.y + $3.height * 1.5 - $3.shadowOffsetY;",
+  },
+  {
+    // A Dezaemon zako, 1 of 2: the helpers go in ahead of createEnemy, which
+    // is wrapped so a record with a `dezaemon` block is armed the browser's
+    // way, and the port's own mover and gun stand down for it.
+    name: "dezaemon zako: armed",
+    find: /function createEnemy\((\w+), (\w+)\) \{/,
+    replace: DEZA_ZAKO_RUNTIME +
+      "function createEnemy($1, $2) {\n" +
+      "  return dezaZakoArm(createEnemyBody($1, $2), $2);\n" +
+      "}\n" +
+      "function createEnemyBody($1, $2) {",
+    defines: [...DEZA_NAMES, "createEnemyBody"],
+  },
+  {
+    // 2 of 2: every step, ahead of the port's own, its script and its gun.
+    // An exploding zako stops where it was hit.
+    name: "dezaemon zako: script and gun",
+    find: /function enemyLoop\((\w+), (\w+), (\w+)\) \{/,
+    replace: "function enemyLoop($1, $2, $3) {\n" +
+      "  if ($2.deza && !$2.dead && !$2.deadFlg) dezaZakoStep($1, $2);\n" +
+      "  return enemyLoopBody($1, $2, $3);\n" +
+      "}\n" +
+      "function enemyLoopBody($1, $2, $3) {",
+    defines: ["enemyLoopBody"],
   },
   {
     // A boss, 1 of 4: the helpers go in ahead of createBoss, which is wrapped

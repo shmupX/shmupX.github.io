@@ -35,11 +35,11 @@
   },
   {
    "path": "assets/level.json",
-   "size": 6065
+   "size": 6063
   },
   {
    "path": "assets/level_atlas.json",
-   "size": 7997
+   "size": 7996
   },
   {
    "path": "assets/level_atlas.png",
@@ -275,7 +275,7 @@
   },
   {
    "path": "main.js",
-   "size": 128601
+   "size": 136767
   }
  ]
 }

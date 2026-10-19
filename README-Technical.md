@@ -446,7 +446,7 @@ they are written out in full.
     the projectile its record names. It now falls back to the zako's own
     `bulletData`/`projectileData` frames (`bulletFramesInAtlas`, so only art the
     atlas carries) before the ring; a cart import with a bank is unchanged. gs's
-    Leonard (`scripts/gs/add-leonard.ts`) fires deza2_02's pattern with a geek
+    Clevin (`scripts/gs/add-clevin.ts`) fires deza2_02's pattern with a geek
     badge this way, and an import that kept no bank — the rando level's imps
     among them — now shows each zako's own extracted shot art.
     `tests/deza_zako_own_shot_test.ts` pins it. Upstream home is
@@ -4056,6 +4056,33 @@ time `buildRuntimeBundle` hands the bundle out; an anchor that is not there
 exactly once fails the build rather than ship a disc without it. It belongs
 upstream, as a `godMode` the port reads itself.
 
+**A Dezaemon zako flies its script.** The port reads neither half of a
+record's `dezaemon` block, so gs's Clevin — a cart zako's record with his own
+face — fell straight down at the port's default speed and fired every 5 steps,
+the fire table's interval read as steps: a stream of badges, 24 a second.
+`lib/ps2/runtime-patches.ts` (`DEZA_ZAKO_RUNTIME`) wraps `createEnemy` and
+`enemyLoop` with the browser's appearance script — row for row, a Saturn frame
+being two of the browser's 120 Hz steps — and its gun: the fire pulse, the
+fire-window reload, the on-screen and point-blank gates and the geometry table,
+aimed at the ship, at the browser's zako bullet speed. The port's own mover and
+gun stand down for such a record; terrain rides and steered shots (geometries 8
+and 9) are not modelled. `tests/ps2_deza_zako_test.ts` flies Clevin's real
+record through the patched port beside the browser's own `stepEntryScript`.
+
+**Running into an enemy** costs one hit and kills the enemy, as in the browser.
+The port only hurt the ship and left the enemy flying through it, and the
+ship's blink after a hit — the port's 30 steps — lasted a quarter of a second
+at the build's 120, so one laptop crossing the ship took a whole life. The
+blink is now the port's second at any game speed, and contact takes the body's
+frame less a tenth of it each side: gs's laptop leaves its frame's corners
+empty, and a ship beside one was being hit with the laptop visibly off to its
+right. Shots still hit the whole frame. And an enemy's shadow is cast where
+the browser casts it — centred a body's height below the body's centre, less
+`shadowOffsetY`, as a black silhouette at half alpha — where the port centred a
+flipped one just above the body's centre in grey, so only the body's bottom
+rows showed, upside down over its head. `tests/ps2_enemy_contact_test.ts` pins
+all three.
+
 **The output is a folder** — `athena.elf`, `main.js`, `athena.ini` and
 `assets/`. Copy it to a USB stick, or point an emulator straight at
 `athena.elf`. `--iso` also writes a disc image; it is opt-in because the folder
@@ -4353,6 +4380,18 @@ host**, and without it the export is silent as it always was.
   [`tests/ps2_runtime_smoke_test.ts`](packages/shmup-harbor/tests/ps2_runtime_smoke_test.ts)
   boots the newest export and asserts the runtime probes for nothing the disc
   lacks.
+
+  On the console every effect takes an audsrv voice of its own, at full
+  volume, and the SPU2 sums and clips them: a wave going down keyed an
+  explosion per enemy in the same frame. So `runtime-sound.ts` holds each
+  effect to the browser's two rules — one strike per rendered frame, and no
+  more than four (`SFX_VOICES`) sounding at once, counted with
+  `Sfx.playing(channel)`. audsrv refuses a channel that is still sounding and
+  AthenaEnv has no stop for one, so a strike over the cap is dropped where the
+  browser re-strikes its oldest voice; with all 24 voices busy a strike is
+  dropped too, rather than forced onto channel 0. The web host's `Sound`
+  ([`web-sound.ts`](packages/shmup-harbor/lib/ps2/web-sound.ts)) keeps the same
+  24-channel table, so the browser build drops the same strikes.
 - **Music** is streamed, as 22.05 kHz mono **WAV** — 31.9 MB of the export, so
   `--no-music` drops it and keeps the effects. Not Ogg, even though the port
   asks for `.ogg` and AthenaEnv does link libVorbis: Vorbis gets decoded inside
