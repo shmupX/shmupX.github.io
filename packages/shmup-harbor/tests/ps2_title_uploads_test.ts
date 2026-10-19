@@ -125,7 +125,8 @@ function parse(files: StagedFile[], path: string) {
 }
 
 Deno.test("the game this repo ships takes its own title onto the disc", async () => {
-  // Its logo is a GIF, its subtitle a PNG and its backdrop a 768x1376 PNG.
+  // Its logo is a GIF, its subtitle a PNG and its backdrop an 845x480 PNG:
+  // rando's gold 2028 redrawn to tile (scripts/2028-ai/draw_2028_backdrop.py).
   const record = JSON.parse(
     await Deno.readTextFile(join(GAME_DIR, "foo.json")),
   ) as LevelRecord;
@@ -147,7 +148,7 @@ Deno.test("the game this repo ships takes its own title onto the disc", async ()
   assert(
     staged.notes.some((n) =>
       n.includes(
-        "logo 256x91, subtitle 256x20, backdrop 768x1376 (its top-left",
+        "logo 256x91, subtitle 256x20, backdrop 845x480 (its top-left",
       )
     ),
     staged.notes.join("\n"),

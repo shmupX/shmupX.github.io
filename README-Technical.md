@@ -257,9 +257,8 @@ they are written out in full.
     cloud game `rando` drew — for the subtitle, the game's own ship, frame 0,
     where G stands (`shipTitleGTexture`), and `rando`'s gold 2028 for the
     scrolling backdrop in place of `title_bg.jpg`'s blue 2019 —
-    `assets/img/titleBgCustom.jpg`, the top 768x480 of its 768x1376 upload,
-    which is every row a 1:1 tileSprite scrolling sideways shows (the default
-    visit's own record carries the same picture). The Android forge's
+    `assets/img/titleBgCustom.jpg`, `rando`'s plate redrawn as an 845x480
+    tile (see the scrolling backdrop below). The Android forge's
     `KEEP_FILES` stages both plates. A title plate of its own also makes the
     record a game (`recordIsAGame`), so a `?level=` visit opens on that title.
     The default visit is 2028.Ai itself and carries no `customTitle`; a cart's
@@ -270,13 +269,27 @@ they are written out in full.
     within one width of its texture (`wrapTilePositionX`, folded in
     TitleScene's `update` before a frame's steps, and only on a frame that
     runs one, so the refresh blend never straddles the fold). A backdrop
-    wraps without a seam only where its width is a period of its pattern;
-    `rando`'s 768 is not, so the shared gold 2028 still shows one at each
-    wrap. The cloud game `gs` brings its own: the same gold plate reading
-    869, an 845x480 tile that repeats exactly every 845 pixels, drawn from
-    the 2028 plate by `scripts/gs/draw_869_backdrop.py` and written as the
-    level's `titleBgDataURL` by `scripts/gs/title-backdrop.ts` (`--revert`
-    takes it back out). `tests/refresh_interpolation_test.ts` and
+    wraps without a seam only where its width is a period of its pattern.
+    `rando`'s upload (the top 768x480 of it, kept as
+    `scripts/2028-ai/art/titleBgCustom-rando.jpg`) is not: 768 is no period
+    of its lattice, so it showed a seam at every wrap. The shared plate is
+    that gold 2028 redrawn by `scripts/2028-ai/draw_2028_backdrop.py`: the
+    same words, emboss, gold and grain, measured off the upload, as an
+    845x480 tile, three rows of the lattice across, so it repeats exactly
+    every 845 pixels; its words sit where the upload's do. The records that
+    carried the whole upload (a 768x1376 PNG, kept as
+    `scripts/2028-ai/art/titleBgUpload-rando.png`) as their own
+    `titleBgDataURL` carry the tile instead, as a PNG
+    (`scripts/2028-ai/art/titleBg2028.png`, since the PS2, Saturn and SFC
+    exporters read only PNG and GIF title art): 2028.Ai's `foo.json`, which
+    a plain visit bakes, and the database's `rando` and `foo`, written by
+    `scripts/2028-ai/title-backdrop.ts` (a dry run unless `--apply`;
+    `--revert` puts the upload back). The cloud game `gs` brings its own:
+    the same gold plate reading 869, also 845x480, drawn the same way by
+    `scripts/gs/draw_869_backdrop.py` and written as the level's
+    `titleBgDataURL` by `scripts/gs/title-backdrop.ts` (`--revert` takes it
+    back out). `tests/refresh_interpolation_test.ts`,
+    `tests/custom_title_test.ts`, `tests/seamless_2028_backdrop_test.ts` and
     `tests/gs_title_backdrop_test.ts` pin them.
   - The STAFF ROLL (the title's panel and the ending's) sets shmupX's own
     credits as text, `SHMUPX_STAFF_ROLL`, unless the custom game's `game_ui`
