@@ -7,11 +7,12 @@
  * the folder a USB stick takes and the bootable disc of the same tree — and
  * writes into static/games/<slug>/, which the site serves at /games/<slug>/:
  *
- *   index.html      the download page: the preview GIF, ⬇ ISO, ⬇ USB folder,
- *                   ▶ PLAY IN BROWSER, how to play, the secrets
+ *   index.html      the download page: the preview GIF, ⬇ ISO (a split
+ *                   button, the USB folder behind its arrow), ▶ PLAY IN
+ *                   BROWSER, how to play, the secrets
  *   README.md       the same, for a repository's front page
  *   <slug>.iso      the disc
- *   <slug>-usb.zip  the folder, zipped under its own name
+ *   <slug>-usb.zip  the folder, zipped under the title (SQUAD/athena.elf, …)
  *   play/           the web build of the same tree (lib/ps2/web-build.ts):
  *                   the disc's own main.js on the web build of AthenaEnv
  *   preview.gif     the seven-target capture (`deno task testdrive:parity`),
@@ -58,9 +59,19 @@ const level = String(flags._[0]);
 const levelSlug = level.toLowerCase().replace(/[^a-z0-9]+/g, "-")
   .replace(/^-|-$/g, "");
 
-/** The one alias the level answers to, when it has exactly one; else null. */
+/**
+ * The one alias the level answers to, when it has exactly one; else null.
+ * An alias list that could not be read is not "no alias": guessing on would
+ * write gs's page over the redirect at /games/gs-ps2/ instead of /games/squad/.
+ */
 async function publicName(): Promise<string | null> {
-  const aliases = await cloudLevelAliases() ?? {};
+  const aliases = await cloudLevelAliases();
+  if (!aliases) {
+    throw new Error(
+      `could not read the level aliases, so not which page ${level} is — ` +
+        `try again, or name it with --slug and --title`,
+    );
+  }
   const names = Object.keys(aliases).filter((name) => aliases[name] === level);
   return names.length === 1 ? names[0] : null;
 }
@@ -84,9 +95,13 @@ if (!built.appDir || !built.isoPath) {
 const iso = `${slug}.iso`;
 await Deno.copyFile(built.isoPath, join(out, iso));
 const zip = `${slug}-usb.zip`;
+// The folder it unpacks to carries the game's public name — SQUAD, not the
+// build's own Gs — in characters any stick and launcher take.
+const folder = title.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") ||
+  basename(built.appDir);
 // A fixed stamp, so the same build zips to the same bytes.
 const zipped = await buildZip(
-  await treeEntries(built.appDir),
+  await treeEntries(built.appDir, folder),
   new Date("2026-10-18T00:00:00Z"),
 );
 await Deno.writeFile(join(out, zip), zipped);
@@ -115,6 +130,7 @@ const input = {
   slug,
   iso,
   zip,
+  folder,
   gif,
   isoBytes: (await Deno.stat(join(out, iso))).size,
   zipBytes: zipped.length,

@@ -11,7 +11,7 @@ AthenaEnv port of the shooter, with the level's own art, enemies and bosses.
 
 - **[⬇ squad.iso](squad.iso)** (13.3 MB) — a bootable disc image for
   PCSX2, or a DVD-R for a softmodded console.
-- **[⬇ squad-usb.zip](squad-usb.zip)** (9.7 MB) — the same game as a folder
+- **[⬇ squad-usb.zip](squad-usb.zip)** (9.7 MB) — the same game as a folder, `SQUAD/`
   (`athena.elf` + `main.js` + `assets/`) to launch from a USB stick with
   wLaunchELF or OPL.
 - **[▶ Play in the browser](play/)** — the disc's own `main.js`, unmodified,

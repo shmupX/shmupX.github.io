@@ -14,6 +14,8 @@ export interface Ps2PageInput {
   /** File names beside the page. */
   iso: string;
   zip: string;
+  /** The folder the zip unpacks to, e.g. "SQUAD". */
+  folder?: string;
   /** The preview GIF beside the page, or null when there is none yet. */
   gif: string | null;
   /** Sizes in bytes, for the buttons' hints. */
@@ -151,6 +153,53 @@ export function ps2PageHtml(p: Ps2PageInput): string {
       .btn-secondary { font-weight: 700; font-size: 13px; color: var(--green); background: rgba(14, 106, 43, 0.16); }
       .btn-secondary .hint { color: rgba(220, 255, 180, 0.6); }
       .btn-secondary:hover { background: rgba(14, 106, 43, 0.34); box-shadow: 0 0 18px rgba(124, 255, 79, 0.3); }
+      /* The disc, with the USB folder behind its arrow. */
+      .split {
+        position: relative;
+        display: flex;
+        width: min(440px, 100%);
+        border-radius: 8px;
+        box-shadow: 0 0 22px rgba(124, 255, 79, 0.4);
+        transition: box-shadow 0.12s ease;
+      }
+      .split:hover { box-shadow: 0 0 34px rgba(124, 255, 79, 0.65); }
+      .split .btn-primary { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+      .split .btn-primary:hover { transform: none; filter: brightness(1.06); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+      .split-main { flex: 1; width: auto; border-radius: 8px 0 0 8px; }
+      .split-more { display: flex; }
+      .split-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 56px;
+        height: 100%;
+        padding: 0;
+        border-left-color: rgba(4, 30, 12, 0.4);
+        border-radius: 0 8px 8px 0;
+        cursor: pointer;
+        list-style: none;
+        user-select: none;
+      }
+      .split-toggle::-webkit-details-marker { display: none; }
+      .split-toggle:focus-visible, .split-main:focus-visible, .split-menu a:focus-visible {
+        outline: 2px solid var(--yellow);
+        outline-offset: 2px;
+      }
+      .split-toggle svg { width: 16px; height: 16px; transition: transform 0.12s ease; }
+      .split-more[open] .split-toggle svg { transform: rotate(180deg); }
+      .split-menu {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        right: 0;
+        z-index: 2;
+      }
+      .split-menu .btn {
+        display: block;
+        width: 100%;
+        background: #04180a linear-gradient(rgba(14, 106, 43, 0.34), rgba(14, 106, 43, 0.34));
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.7);
+      }
       .howto {
         margin: 40px auto 0;
         width: min(560px, 100%);
@@ -183,18 +232,27 @@ ${
       : ""
   }
       <div class="buttons">
-        <a class="btn btn-primary" href="./${esc(p.iso)}" download>
-          ⬇ DOWNLOAD PS2 ISO
-          <span class="hint">${esc(p.iso)} · ${
+        <div class="split">
+          <a class="btn btn-primary split-main" href="./${esc(p.iso)}" download>
+            ⬇ DOWNLOAD PS2 ISO
+            <span class="hint">${esc(p.iso)} · ${
     mb(p.isoBytes)
   } — PS2 / PCSX2 / Play!</span>
-        </a>
-        <a class="btn btn-secondary" href="./${esc(p.zip)}" download>
-          ⬇ DOWNLOAD USB FOLDER
-          <span class="hint">${esc(p.zip)} · ${
+          </a>
+          <details class="split-more">
+            <summary class="btn btn-primary split-toggle" aria-label="More downloads" title="More downloads">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </summary>
+            <div class="split-menu">
+              <a class="btn btn-secondary" href="./${esc(p.zip)}" download>
+                ⬇ DOWNLOAD USB FOLDER
+                <span class="hint">${esc(p.zip)} · ${
     mb(p.zipBytes)
   } — wLaunchELF / OPL</span>
-        </a>
+              </a>
+            </div>
+          </details>
+        </div>
         <a class="btn btn-secondary" href="./play/">▶ PLAY IN BROWSER
           <span class="hint">the same main.js, on the web build of AthenaEnv</span>
         </a>
@@ -204,7 +262,9 @@ ${
         <h2>HOW TO PLAY</h2>
         <ul>
           <li><b>Emulator:</b> open the ISO in PCSX2.</li>
-          <li><b>Real hardware:</b> unzip the USB folder onto a stick and launch <b>athena.elf</b> from wLaunchELF or OPL, or burn the ISO to DVD-R for a softmodded console.</li>
+          <li><b>Real hardware:</b> take the USB folder from the arrow beside DOWNLOAD PS2 ISO, unzip it onto a stick and launch <b>${
+    p.folder ? `${esc(p.folder)}/` : ""
+  }athena.elf</b> from wLaunchELF or OPL, or burn the ISO to DVD-R for a softmodded console.</li>
           <li><b>Browser:</b> PLAY IN BROWSER runs the disc's own main.js — a gamepad works too.</li>
 ${rows}
         </ul>
@@ -215,6 +275,22 @@ ${rows}
         EXPORTED BY <a href="https://github.com/easierbycode/shmupX.github.io">SHMUPX</a>
       </footer>
     </main>
+    <script>
+      // The arrow's menu also closes on a click elsewhere, on Escape, and
+      // once its download starts; <details> opens and closes it without this.
+      for (const more of document.querySelectorAll(".split-more")) {
+        const close = () => more.removeAttribute("open");
+        document.addEventListener("click", (e) => {
+          if (more.open && !more.contains(e.target)) close();
+        });
+        document.addEventListener("keydown", (e) => {
+          if (e.key !== "Escape" || !more.open) return;
+          close();
+          more.querySelector("summary").focus();
+        });
+        more.querySelector(".split-menu").addEventListener("click", close);
+      }
+    </script>
   </body>
 </html>
 `;
@@ -239,7 +315,9 @@ AthenaEnv port of the shooter, with the level's own art, enemies and bosses.
 
 - **[⬇ ${p.iso}](${p.iso})** (${mb(p.isoBytes)}) — a bootable disc image for
   PCSX2, or a DVD-R for a softmodded console.
-- **[⬇ ${p.zip}](${p.zip})** (${mb(p.zipBytes)}) — the same game as a folder
+- **[⬇ ${p.zip}](${p.zip})** (${mb(p.zipBytes)}) — the same game as a folder${
+    p.folder ? `, \`${p.folder}/\`` : ""
+  }
   (\`athena.elf\` + \`main.js\` + \`assets/\`) to launch from a USB stick with
   wLaunchELF or OPL.
 - **[▶ Play in the browser](play/)** — the disc's own \`main.js\`, unmodified,

@@ -169,14 +169,27 @@ Deno.test("the PS2 page offers the disc, the folder and the browser build, with 
     zipBytes: 3 * 1048576,
     gifCaption: "SQUAD's boss <everywhere>",
   };
-  const html = ps2PageHtml(input);
+  const html = ps2PageHtml({ ...input, folder: "SQUAD" });
   assert(html.includes('href="./squad.iso" download'));
   assert(html.includes('href="./squad-usb.zip" download'));
+  // One split button: the disc up front, the USB folder behind its arrow.
+  const split = html.slice(
+    html.indexOf('<div class="split">'),
+    html.indexOf('href="./play/"'),
+  );
+  assert(split.indexOf("squad.iso") < split.indexOf('class="split-more"'));
+  const menu = split.slice(split.indexOf('<details class="split-more">'));
+  assert(menu.includes('aria-label="More downloads"'));
+  assert(menu.includes('href="./squad-usb.zip" download'));
+  assert(html.includes("<b>SQUAD/athena.elf</b>"));
   assert(html.includes('href="./play/"'));
   assert(html.includes('src="./preview.gif"'));
   assert(html.includes("12.0 MB"));
   assert(html.includes("&lt;everywhere&gt;"), "the caption is escaped");
   assert(html.includes("Hold L1+R1"));
+  assert(
+    ps2Readme({ ...input, folder: "SQUAD" }).includes("as a folder, `SQUAD/`"),
+  );
   const md = ps2Readme(input);
   assert(
     md.startsWith(
