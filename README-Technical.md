@@ -4313,12 +4313,13 @@ ticks it once per Phaser frame. Keyboard (arrows, <kbd>Z</kbd>/<kbd>Space</kbd>,
 standard gamepad and a script all drive the one pad. A bot holds buttons with
 `__PS2_PADS__.set(mask)` and reads the game from `__PS2_CTX__`, which
 runtime-entry.ts publishes; `__PS2_HOST__` reports readiness, frames, errors
-and every sound the game asked for, and `?debug` prints those sounds under the
-screen. The Timer reads Phaser's loop clock rather than `performance.now()`, so
-a debugger that steps requestAnimationFrame steps the game's logic
-deterministically. `packages/shmup-harbor/tests/ps2_web_host_test.ts` boots a
-compiled main.js through the same adapter with a recording host in Phaser's
-place, and plays both title secrets through the bot's pad.
+and every sound the game asked for, and `?debug` prints those sounds along the
+foot of the screen. The Timer reads Phaser's loop clock rather than
+`performance.now()`, so a debugger that steps requestAnimationFrame steps the
+game's logic deterministically.
+`packages/shmup-harbor/tests/ps2_web_host_test.ts` boots a compiled main.js
+through the same adapter with a recording host in Phaser's place, and plays
+both title secrets through the bot's pad.
 
 **Audio.** audsrv splits sound in two, and so does the export.
 [`lib/ps2/sound-pack.ts`](packages/shmup-harbor/lib/ps2/sound-pack.ts) builds

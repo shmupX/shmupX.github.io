@@ -30,6 +30,8 @@ import {
   flameCut,
   flameName,
   isFlame,
+  isLetterEdge,
+  letterCover,
   LETTERS,
   OVERLAY,
   plan,
@@ -401,6 +403,60 @@ Deno.test("the title is covered only where it is his logo", () => {
     Error,
     "is not geekstar0",
   );
+});
+
+Deno.test("the title's letters go black with the grey edge round them", () => {
+  // A letter 2x1, white in the logo with the dim grey it fades out through
+  // a pixel round it — and his mask's teal a pixel off it, which stays.
+  const bar = newRaster(2, 1);
+  bar.data.set([255, 255, 255, 255, 255, 255, 255, 255]);
+  const letters = { "geek-g": bar, "geek-e": bar, "geek-k": bar };
+  const [g] = OVERLAY.parts;
+  const logo = newRaster(170, 105);
+  for (let y = g.y - 1; y <= g.y + 1; y++) {
+    for (let x = g.x - 1; x <= g.x + 2; x++) put(logo, x, y, [13, 13, 13, 255]);
+  }
+  put(logo, g.x - 1, g.y, [0, 72, 80, 255]);
+  put(logo, g.x, g.y, [255, 255, 255, 255]);
+  put(logo, g.x + 1, g.y, [255, 255, 255, 255]);
+  // Two pixels out is not his edge, grey or not.
+  put(logo, g.x + 3, g.y, [13, 13, 13, 255]);
+  assert(isLetterEdge(13, 8, 4, 255) && isLetterEdge(50, 50, 50, 255));
+  assert(!isLetterEdge(0, 72, 80, 255), "the mask's teal");
+  assert(!isLetterEdge(144, 144, 160, 255), "the mask's grey");
+  assert(!isLetterEdge(13, 13, 13, 0), "transparent");
+
+  const cover = letterCover(logo, letters);
+  const at = (x: number, y: number) => cover[y * 170 + x];
+  assertEquals([at(g.x, g.y), at(g.x + 1, g.y)], [1, 1], "the letter");
+  assertEquals(at(g.x - 1, g.y - 1), 1, "its edge");
+  assertEquals(at(g.x + 2, g.y + 1), 1, "its edge");
+  assertEquals(at(g.x - 1, g.y), 0, "the mask");
+  assertEquals(at(g.x + 3, g.y), 0, "two out");
+
+  // A title covered before the edge was is covered the rest of the way.
+  const area = { x: 0, y: 0, w: 256, h: 300 };
+  const title = newRaster(256, 300);
+  for (let y = 0; y < 105; y++) {
+    title.data.set(
+      logo.data.subarray(y * 170 * 4, (y + 1) * 170 * 4),
+      ((y + TITLE_AT.y) * 256 + TITLE_AT.x) * 4,
+    );
+  }
+  const half = { ...title, data: title.data.slice() };
+  put(half, TITLE_AT.x + g.x, TITLE_AT.y + g.y, [0, 0, 0, 255]);
+  put(half, TITLE_AT.x + g.x + 1, TITLE_AT.y + g.y, [0, 0, 0, 255]);
+  const covered = coverTitle(half, area, logo, letters);
+  assert(covered !== "covered");
+  const px = (img: Raster, x: number, y: number) => {
+    const i = ((TITLE_AT.y + y) * 256 + TITLE_AT.x + x) * 4;
+    return [...img.data.subarray(i, i + 4)];
+  };
+  assertEquals(px(covered, g.x - 1, g.y - 1), [0, 0, 0, 255]);
+  assertEquals(px(covered, g.x - 1, g.y), [0, 72, 80, 255]);
+  assertEquals(px(covered, g.x + 3, g.y), [13, 13, 13, 255]);
+  assertEquals(coverTitle(covered, area, logo, letters), "covered");
+  assertEquals(uncoverTitle(covered, area, logo, letters).data, title.data);
 });
 
 Deno.test({

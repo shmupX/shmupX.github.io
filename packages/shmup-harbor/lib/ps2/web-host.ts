@@ -128,7 +128,7 @@ function hostStorage(): HostStorage {
   };
 }
 
-/** A line of what the game just played, under the screen, with ?debug. */
+/** A line of what the game just played, at the screen's foot, with ?debug. */
 function soundHud(): (event: SoundEvent) => void {
   if (!debug) return () => {};
   const hud = document.createElement("div");

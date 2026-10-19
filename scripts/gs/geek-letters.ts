@@ -20,7 +20,8 @@
  * `glow`: the flame cut out of each of his frames, tinted at run time).
  *
  * The title's G is the same logo, so its white letters are covered the same
- * way: black, as they are in the game.
+ * way: black, as they are in the game — and the dim grey edge a pixel round
+ * each, which would otherwise still outline "Geek" on the black.
  *
  * What it writes to shmupX/levels/gs (shmupX's copy; cmg's root-level copy is
  * never read or written, mcp/lib/rtdb.ts roots every level path):
@@ -31,7 +32,8 @@
  * - `bossData/boss0/overlay`, only onto Geekstar (the record must be his) and
  *   only into an empty field (--force replaces one that differs);
  * - `uiAtlases/game_ui/imageDataURL`, its `titleG.gif` with the letters
- *   covered — only where the title is still his logo, uncovered.
+ *   covered — only where the title is still his logo, uncovered; a title
+ *   covered before the edge was is covered the rest of the way.
  *
  * Without --apply nothing is written. --out writes the whole level as it
  * would be after the write, for a local play-through (window.__OFFLINE_LEVEL__,
@@ -181,13 +183,71 @@ export function flameCut(frames: Record<string, Raster>): FlameCut | null {
  * The title's G: gs's own (uiAtlases/game_ui, `titleG.gif`) is Geekstar's
  * logo — his frame geekstar0, pixel for pixel, at TITLE_AT in it — so its
  * white letters are covered the way his are in the game, by the same black
- * letters at the same places in the logo.
+ * letters at the same places in the logo, and their edge with them.
  */
 export const TITLE_FRAME = "titleG.gif";
 export const TITLE_LOGO = "geekstar0";
 export const TITLE_AT = { x: 38, y: 178 };
 
 type Rect = FrameRect["frame"];
+
+/**
+ * A white letter's edge in the logo: the dim grey it fades out through, 4 to
+ * 50 a channel in Geekstar's. Never his mask, which comes within a pixel of
+ * the E's — it is bright, or coloured (its darkest, a teal, is 0,72,80).
+ */
+export const isLetterEdge = (
+  r: number,
+  g: number,
+  b: number,
+  a: number,
+): boolean =>
+  a >= 128 && Math.max(r, g, b) <= 64 &&
+  Math.max(r, g, b) - Math.min(r, g, b) <= 16;
+
+/**
+ * What the black letters cover in the logo, one flag a pixel: every pixel of
+ * a letter, and the edge a pixel out from it. The letters are hard-edged and
+ * the logo's white ones are not, so black over the letters alone leaves that
+ * edge drawing "Geek" in outline on the oval.
+ */
+export function letterCover(
+  logo: Raster,
+  letters: Record<string, Raster>,
+): Uint8Array {
+  const { width, height } = logo;
+  const solid = new Uint8Array(width * height);
+  for (const part of OVERLAY.parts) {
+    const letter = letters[part.frame];
+    for (let y = 0; y < letter.height; y++) {
+      for (let x = 0; x < letter.width; x++) {
+        if (letter.data[(y * letter.width + x) * 4 + 3] < 128) continue;
+        const lx = part.x + x, ly = part.y + y;
+        if (lx < width && ly < height) solid[ly * width + lx] = 1;
+      }
+    }
+  }
+  const cover = solid.slice();
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (solid[y * width + x]) continue;
+      let touches = false;
+      for (let dy = -1; dy <= 1 && !touches; dy++) {
+        for (let dx = -1; dx <= 1 && !touches; dx++) {
+          const nx = x + dx, ny = y + dy;
+          touches = nx >= 0 && ny >= 0 && nx < width && ny < height &&
+            solid[ny * width + nx] === 1;
+        }
+      }
+      const [r, g, b, a] = logo.data.subarray(
+        (y * width + x) * 4,
+        (y * width + x) * 4 + 4,
+      );
+      if (touches && isLetterEdge(r, g, b, a)) cover[y * width + x] = 1;
+    }
+  }
+  return cover;
+}
 
 /**
  * Each pixel the black letters cover in the title: its index into the
@@ -199,17 +259,13 @@ function* titleCovered(
   logo: Raster,
   letters: Record<string, Raster>,
 ): Generator<[number, number]> {
-  for (const part of OVERLAY.parts) {
-    const letter = letters[part.frame];
-    for (let y = 0; y < letter.height; y++) {
-      for (let x = 0; x < letter.width; x++) {
-        if (letter.data[(y * letter.width + x) * 4 + 3] < 128) continue;
-        const lx = part.x + x, ly = part.y + y;
-        const tx = rect.x + TITLE_AT.x + lx, ty = rect.y + TITLE_AT.y + ly;
-        if (lx >= logo.width || ly >= logo.height) continue;
-        if (tx >= title.width || ty >= title.height) continue;
-        yield [(ty * title.width + tx) * 4, (ly * logo.width + lx) * 4];
-      }
+  const cover = letterCover(logo, letters);
+  for (let ly = 0; ly < logo.height; ly++) {
+    for (let lx = 0; lx < logo.width; lx++) {
+      if (!cover[ly * logo.width + lx]) continue;
+      const tx = rect.x + TITLE_AT.x + lx, ty = rect.y + TITLE_AT.y + ly;
+      if (tx >= title.width || ty >= title.height) continue;
+      yield [(ty * title.width + tx) * 4, (ly * logo.width + lx) * 4];
     }
   }
 }
