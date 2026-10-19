@@ -14,10 +14,12 @@ import { glyphIcon, tileIcon } from "./icons.js";
 import { installPadNav } from "./pad.js";
 
 const STORE_KEY = "cmg-desktop";
-const SPRITEX_URL = "https://easierbycode.com/spriteX/";
+// spriteX as this origin serves it (lib/spritex-proxy.ts), working on
+// shmupX's catalog; easierbycode.com/spriteX/ is the same app on cmg's.
+const SPRITEX_URL = "/spriteX/";
 // Sh'M↑ Party's Wave Editor lives with the game it authors waves for — the
 // shmup-party-ps2 Pages deploy, beside the /play/ build the eShop installs
-// — so, like spriteX, it is framed from there rather than mirrored here.
+// — so it is framed from there rather than mirrored here.
 const WAVE_EDITOR_URL = "https://easierbycode.com/shmup-party-ps2/wave-editor/";
 const IFRAME_ALLOW = "autoplay; fullscreen; gamepad; xr-spatial-tracking";
 

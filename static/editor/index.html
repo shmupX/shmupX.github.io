@@ -6387,8 +6387,9 @@
                 return;
             }
             try {
-                // shmupX's atlases (shmupX/atlases), the library's art — not
-                // the root's, which are cmg's and every sheet spriteX packs.
+                // shmupX's atlases (shmupX/atlases), the library's art and
+                // every sheet /spriteX/ packs — not the root's, which are
+                // cmg's and easierbycode.com's spriteX's.
                 const snap = await firebaseDb.ref(rtdbPath('atlases')).once('value');
                 const val = snap.val() || {};
                 fbAtlasesCache = val;

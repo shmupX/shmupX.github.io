@@ -1507,6 +1507,37 @@ been placed); and the Background Manager's RECENT PICKS strip makes any
 arrival the stage or boss backdrop of the open set with one button, since the
 picker cuts a background panel off a sheet as readily as a sprite.
 
+## spriteX at /spriteX/
+
+`codemonkey.games/spriteX/` is spriteX
+([easierbycode/spriteX](https://github.com/easierbycode/spriteX)) working on
+shmupX's catalog: its character list, its atlas list and its PACKER's saves are
+`shmupX/characters` and `shmupX/atlases`, the subtree the level editor and the
+game read (see **shmupX's corner of the shared database**). A sheet packed here
+is in the level editor's Firebase Sprites the moment it is saved. `sprites/`,
+`fonts/`, `maps/` and `tilemaps/` stay at the root, as they do for every shmupX
+tool. `easierbycode.com/spriteX/` is the same app on cmg's root catalog, and the
+CMG Desktop's spriteX icon opens this one.
+
+It is not a copy. [`lib/spritex-proxy.ts`](lib/spritex-proxy.ts), ahead of
+`staticFiles()` in `main.ts`, answers every GET and HEAD under `/spriteX/` from
+spriteX's own GitHub Pages deployment, so it is never a release behind, and adds
+one script to the top of each page's head: `window.__RTDB_ROOT__ = "shmupX"`,
+from `lib/rtdb-root.ts`'s `RTDB_ROOT`. spriteX puts that root in front of the
+same four scoped nodes `rtdbPath` does; without it (its own deployment, or a
+spriteX build from before it read the global) it edits the root. The bare
+`/spriteX` is a 301 to `/spriteX/`, since spriteX's URLs are relative; redirects
+inside spriteX are rewritten onto this origin; a path that could resolve outside
+`/spriteX/` is a 404; an upstream that does not answer is a 502.
+
+**spriteX's service worker is not served here.** Its activate step deletes every
+cache but its own, and Cache Storage belongs to the origin, so on this one it
+would delete the emulator downloads (`shmupx-emu-v1`) and every installed eShop
+game (`shmupx-eshop-v1`). `/spriteX/sw.js` is answered with a worker that is
+only comments: spriteX's registration succeeds and caches nothing, so the copy
+here is online-only, as its database is. `tests/spritex_proxy_test.ts` pins all
+of it against a fake upstream.
+
 ## Pixel Editor and Tilemap Editor
 
 Two workbench tools alongside spriteX, both in the CMG Desktop's Tools folder
@@ -1644,16 +1675,17 @@ directory is gitignored by design, the same local-only drop the powerup atlas
 and the disc tasks read from.
 
 **Source art may come from the root.** "Any frame of any atlas" has always meant
-spriteX's sheets, and spriteX's packer writes only the root-level `atlases/` —
-`hadouken` and `bg-great-hall` are there and not in shmupX's subtree. So an
-atlas `shmupX/atlases` lacks is read from the root instead: a plain GET
-(`mcp/lib/rtdb.ts`'s `unscoped` read option, which has no write counterpart),
-with shmupX's own copy winning a name in both. Borrowing is all it is — what a
-build then publishes goes to `shmupX/` like everything else — and the tree that
-answered is reported (`shmupx_list_frames`' `source`, and a frame's provenance,
-`atlases/hadouken#hadouken1` from the root or `shmupX/atlases/<name>#<frame>`).
-`shmupx_list_atlases` lists the union, with the names that are shmupX's own as
-`shmupX`.
+spriteX's sheets, and the ~430 sheets spriteX packed before it had a copy on
+this origin are in the root-level `atlases/`, where easierbycode.com's spriteX
+still packs — `hadouken` and `bg-great-hall` are there and not in shmupX's
+subtree. So an atlas `shmupX/atlases` lacks is read from the root instead: a
+plain GET (`mcp/lib/rtdb.ts`'s `unscoped` read option, which has no write
+counterpart), with shmupX's own copy winning a name in both. Borrowing is all it
+is — what a build then publishes goes to `shmupX/` like everything else — and
+the tree that answered is reported (`shmupx_list_frames`' `source`, and a
+frame's provenance, `atlases/hadouken#hadouken1` from the root or
+`shmupX/atlases/<name>#<frame>`). `shmupx_list_atlases` lists the union, with
+the names that are shmupX's own as `shmupX`.
 
 **Stage-end backdrops.** `stageBgEnd` on a character replaces the shipped
 `stage_end0..4` art that rises behind the boss, from any frame reference — the
@@ -1681,8 +1713,8 @@ Three rules the tools enforce, because the runtime does not:
   A build reports `unresolved`, and `apply` refuses while it is non-empty.
 
 Publishing writes `shmupX/atlases/{name}` and `shmupX/characters/{name}`, which
-the level editor's `+ LIBRARY`, its LIBRARY EDITOR and the game read. (spriteX
-has the database root baked into its build and still lists cmg's catalog, not
+the level editor's `+ LIBRARY`, its LIBRARY EDITOR, the game and spriteX at
+`/spriteX/` read. (spriteX at easierbycode.com still lists cmg's catalog, not
 this one.) The database is the one spriteX, the Pixel Editor, the Tilemap Editor
 and the level editor all share, and it is open-write. So a build is a dry run by
 default, and `apply: true` is the only way to reach a write.
@@ -4965,10 +4997,12 @@ title draws for a game with no logo of its own.
 
 The editor's library reads the subtree too: `+ LIBRARY`, the LIBRARY EDITOR (its
 `<character-editor>` is given `db`) and Firebase Sprites, which lists
-`shmupX/atlases` alone. spriteX's packer writes only the root `atlases/`, so a
-sheet packed there is no longer offered in Firebase Sprites (the character tools
-still borrow from it — see **Creating a character**), and spriteX itself has the
-root baked into its build and still lists cmg's catalog.
+`shmupX/atlases` alone. spriteX is two copies of one app: at
+`codemonkey.games/spriteX/` it reads and packs into the subtree, so a sheet
+packed there is offered in Firebase Sprites, and at `easierbycode.com/spriteX/`
+it is cmg's and packs into the root `atlases/`, which Firebase Sprites does not
+list (the character tools still borrow from it — see **Creating a character**).
+See **spriteX at /spriteX/**.
 
 **Seeding it: `deno task rtdb:split`.**
 [`scripts/rtdb-split.ts`](scripts/rtdb-split.ts) copies those records out of the

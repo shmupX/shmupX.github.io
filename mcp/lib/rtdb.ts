@@ -2,8 +2,9 @@
 // level editor all read and write this one Realtime Database, so a character
 // published here is a character those tools list — that is the whole point of
 // putting creation on an MCP server rather than in a new editor screen. (The
-// level editor and the game read shmupX's subtree, below; spriteX's build has
-// the database root baked in, so it still lists cmg's catalog, not this one.)
+// level editor, the game and spriteX at codemonkey.games/spriteX/ read
+// shmupX's subtree, below; spriteX at easierbycode.com still lists cmg's
+// catalog, not this one.)
 //
 // Reads are plain GETs. Writes are PUTs and there is no auth: the database is
 // open-write (see the /characters route's note about it), so every write path
