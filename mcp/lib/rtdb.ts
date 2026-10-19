@@ -213,12 +213,18 @@ export interface Fetched<T> {
 /**
  * Read a node together with its ETag. Asking with `X-Firebase-ETag: true`
  * makes the database stamp the answer; handing that stamp back on a PUT as
- * `if-match` turns a lost-update race into a refusal.
+ * `if-match` turns a lost-update race into a refusal. `timeoutMs` (30 s by
+ * default) bounds the whole read, body included: a megabytes-long data URL
+ * over a slow link needs more.
  */
 export async function getWithEtag<T = unknown>(
   path: string,
+  { timeoutMs = 30_000 }: { timeoutMs?: number } = {},
 ): Promise<Fetched<T>> {
-  const res = await request(path, { headers: { "X-Firebase-ETag": "true" } });
+  const res = await request(path, {
+    headers: { "X-Firebase-ETag": "true" },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   return {
     value: (await res.json()) as T | null,
     etag: res.headers.get("etag"),
@@ -244,12 +250,16 @@ export async function listKeys(
  * refuses (412) when the node has changed since that read, and the refusal
  * arrives as an error that says so rather than as a silent overwrite. The
  * atlases are shared with spriteX and both editors, so an in-place rewrite
- * of one is exactly the write that needs this.
+ * of one is exactly the write that needs this. `timeoutMs` as for
+ * getWithEtag.
  */
 export async function put(
   path: string,
   value: unknown,
-  { ifMatch }: { ifMatch?: string | null } = {},
+  { ifMatch, timeoutMs = 30_000 }: {
+    ifMatch?: string | null;
+    timeoutMs?: number;
+  } = {},
 ): Promise<void> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -264,7 +274,7 @@ export async function put(
       method: "PUT",
       headers,
       body: JSON.stringify(value),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     throw new RtdbError(

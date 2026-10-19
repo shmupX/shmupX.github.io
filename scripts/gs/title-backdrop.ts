@@ -9,7 +9,8 @@
  *   deno run -A --node-modules-dir=none scripts/gs/title-backdrop.ts --revert
  *
  * The art is art/titleBg869.jpg, drawn by draw_869_backdrop.py from rando's
- * gold 2028 (static/games/2028-ai/assets/img/titleBgCustom.jpg): the same
+ * gold 2028 (its upload, kept as scripts/2028-ai/art/titleBgCustom-rando.jpg;
+ * static/games/2028-ai/assets/img/titleBgCustom.jpg is it redrawn): the same
  * gold, emboss, size, angle and spacing, as an 845x480 tile that repeats
  * exactly every 845 pixels across, so the title's endless sideways scroll
  * (TitleScene's wrapTilePositionX) never shows a seam.

@@ -398,9 +398,12 @@ Deno.test("the custom backdrop is rando's gold 2028, as wide as it tiles and as 
   }
   const height = (jpg[at + 5] << 8) | jpg[at + 6];
   const width = (jpg[at + 7] << 8) | jpg[at + 8];
-  // 768 is rando's own width, so the sideways scroll repeats where its did;
+  // 845 is where the lattice of 2028s, 121.22 px between rows tilted 25.5
+  // degrees, comes round again three rows across
+  // (scripts/2028-ai/draw_2028_backdrop.py), so the sideways scroll wraps
+  // without a seam; rando's own 768 was not a period of it and showed one.
   // 480 is GAME_DIMENSIONS.HEIGHT, every row a 1:1 tileSprite shows.
-  assertEquals([width, height], [768, 480]);
+  assertEquals([width, height], [845, 480]);
 });
 
 Deno.test("the game page self-hosts Orbitron and starts its load for the canvas", async () => {

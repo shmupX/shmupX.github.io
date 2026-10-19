@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """The gs cloud game's title backdrop: the gold 2028 plate, reading 869.
 
-A custom game that brought no backdrop of its own scrolls rando's gold 2028
+A custom game that brought no backdrop of its own scrolls a gold 2028
 (static/games/2028-ai/assets/img/titleBgCustom.jpg): outlined varsity
 numerals embossed on a grained gold plate, in rows tilted 25.5 degrees. This
 draws the same plate reading "869", in the same gold, emboss, size, angle
 and spacing, as a tile that repeats exactly every TILE_W pixels across, so
-the title's sideways scroll never shows a seam. (The 2028 plate's own 768 is
-not a period of its pattern, and it shows one at every wrap.)
+the title's sideways scroll never shows a seam. Everything is measured off
+rando's original 768x480 upload, kept as scripts/2028-ai/art/
+titleBgCustom-rando.jpg: its 768 was not a period of its pattern, so it
+showed a seam at every wrap, and scripts/2028-ai/draw_2028_backdrop.py
+redraws the shared plate from it the same way.
 
     python3 scripts/gs/draw_869_backdrop.py [out.jpg]
 
@@ -35,6 +38,7 @@ Nothing is drawn by hand; everything is measured off the 2028 plate:
 
 import os
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 from PIL import Image
@@ -42,7 +46,7 @@ from scipy import ndimage as nd
 from scipy.signal import fftconvolve
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PLATE = os.path.join(HERE, "..", "..", "static", "games", "2028-ai", "assets", "img", "titleBgCustom.jpg")
+PLATE = os.path.join(HERE, "..", "2028-ai", "art", "titleBgCustom-rando.jpg")
 OUT = os.path.join(HERE, "art", "titleBg869.jpg")
 
 ANGLE = 25.5        # the rows' tilt, degrees anticlockwise
@@ -298,12 +302,20 @@ def word_relief(digits, K, fillc):
     return relief + nd.gaussian_filter(word.astype(float), 4)[..., None] * fillc
 
 
-def tile(relief, plate_path):
+def tile(relief, plate_path, P, per_row, origin, seed):
+    """
+    The plate with a word's relief at every lattice point: words P apart
+    along a row (1x), rows ROW_R apart, `per_row` words along each of the
+    three rows the tile crosses, staggered so the fourth row comes round on
+    the first. The relief's centre is the lattice point; `origin` is where
+    word (0, 0) sits along and across the rows. `seed` fixes the grain.
+    """
+    WH, WW = relief.shape[:2]
+    WCY, WCX = WH / 2, WW / 2
     th = np.radians(ANGLE)
-    P = (2 * PITCH + (WORD_P - 3 * PITCH)) / SC     # 869's word period, 1x
     TW = int(round(3 * ROW_R / np.sin(th)))         # three rows across
     R = TW * np.sin(th) / 3
-    s = (TW * np.cos(th) - 4 * P) / 3               # the stagger that closes it
+    s = (TW * np.cos(th) - per_row * P) / 3         # the stagger that closes it
     eu = np.array([np.cos(th), -np.sin(th)])
     ev = np.array([np.sin(th), np.cos(th)])
     py, px = np.mgrid[0:TILE_H, 0:TW].astype(float)
@@ -311,7 +323,7 @@ def tile(relief, plate_path):
     py += 0.5
     U = px * eu[0] + py * eu[1]
     V = px * ev[0] + py * ev[1]
-    O = np.array([40.0, 60.0])
+    O = np.asarray(origin, float)
     out = np.zeros((TILE_H, TW, 3))
     j0 = np.floor((V - O[1]) / R).astype(int)
     for dj in (-1, 0, 1, 2):
@@ -321,7 +333,7 @@ def tile(relief, plate_path):
             i = i0 + di
             r = WCY + (V - (O[1] + j * R)) * SC
             c = WCX + (U - (O[0] + i * P + j * s)) * SC
-            inside = (r >= 0) & (r <= WH - 1) & (c >= 0) & (c <= WW4 - 1)
+            inside = (r >= 0) & (r <= WH - 1) & (c >= 0) & (c <= WW - 1)
             for ch in range(3):
                 smp = nd.map_coordinates(relief[..., ch], [r, c], order=3, mode="constant", cval=0.0)
                 out[..., ch] += np.where(inside, smp, 0.0)
@@ -336,7 +348,7 @@ def tile(relief, plate_path):
         den = nd.gaussian_filter1d(blank.sum(1), 25, mode="nearest")
         prof[:, c] = num / np.maximum(den, 1e-3)
     # and its grain, wrapped so the tile's edges meet
-    rng = np.random.default_rng(SEED)
+    rng = np.random.default_rng(seed)
 
     def grain():
         return nd.gaussian_filter(rng.standard_normal((TILE_H, TW)), 0.55, mode="wrap")
@@ -348,10 +360,14 @@ def tile(relief, plate_path):
     return np.clip(np.round(img), 0, 255).astype(np.uint8), TW, P, R, s
 
 
-def main():
-    out_path = sys.argv[1] if len(sys.argv) > 1 else OUT
-    rot, valid = level_plate(PLATE)
-    centres, _, _ = find_words(rot, valid)
+def measure(plate_path):
+    """
+    Steps 1 and 2 on the plate: its words' lattice, their outlines G (4x, on
+    the word box OY, OX, the lattice point at its centre), the emboss kernel
+    K and the glyph fill. draw_2028_backdrop.py reuses it.
+    """
+    rot, valid = level_plate(plate_path)
+    centres, sol_x, sol_y = find_words(rot, valid)
     first = average(rot, valid, centres)
     avg = registered_average(rot, valid, centres)
     G, K, Y = fit_emboss(avg, first_trace(first))
@@ -360,10 +376,22 @@ def main():
     pred = np.stack([fftconvolve(X, K[..., c], mode="same") for c in range(3)], -1)
     Mb = nd.gaussian_filter(G.astype(float), 4)
     fillc = np.array([(Mb * (Y[..., c] - pred[..., c])).sum() / (Mb * Mb).sum() for c in range(3)])
-    relief = word_relief(glyphs(G), K, fillc)
-    img, TW, P, R, s = tile(relief, PLATE)
+    return SimpleNamespace(G=G, K=K, fillc=fillc, centres=centres, sol_x=sol_x, sol_y=sol_y,
+                           level_shape=rot.shape[:2])
+
+
+def save(img, out_path):
     Image.fromarray(img).save(out_path, quality=95, subsampling=2, optimize=True)
-    print(f"{out_path}: {TW}x{TILE_H}, {len(centres)} words measured, "
+
+
+def main():
+    out_path = sys.argv[1] if len(sys.argv) > 1 else OUT
+    m = measure(PLATE)
+    relief = word_relief(glyphs(m.G), m.K, m.fillc)
+    P = (2 * PITCH + (WORD_P - 3 * PITCH)) / SC     # 869's word period, 1x
+    img, TW, P, R, s = tile(relief, PLATE, P, 4, (40.0, 60.0), SEED)
+    save(img, out_path)
+    print(f"{out_path}: {TW}x{TILE_H}, {len(m.centres)} words measured, "
           f"word period {P:.3f}, rows {R:.3f} apart, stagger {s:.3f}")
 
 
