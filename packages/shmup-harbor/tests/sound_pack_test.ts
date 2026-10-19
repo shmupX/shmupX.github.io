@@ -290,15 +290,15 @@ Deno.test("the explosions are encoded at the browser's mix", gated, () => {
   for (const key of Object.keys(SFX_GAIN)) {
     assert(sfxRequests().some((r) => r.key === key), `no such effect: ${key}`);
   }
-  // The source peaks at -2.5 dBFS (0.75 of full scale), so ungained it would
-  // decode near 24,500; at a quarter it is near 6,100.
+  // The source peaks at -1.3 dBFS (0.86 of full scale), so ungained it would
+  // decode near 28,200; at a quarter it is near 7,100.
   const explosion = pack!.files.find((f) =>
     f.path === `${SFX_DIR}/se_explosion.adp`
   )!;
   const peak = adpPeak(explosion.data);
   assert(peak > 0, "se_explosion decodes to silence");
   assert(
-    peak <= 32767 * 0.75 * SFX_GAIN.se_explosion + 512,
+    peak <= 32767 * 0.86 * SFX_GAIN.se_explosion + 512,
     `se_explosion peaks at ${peak}, not turned down`,
   );
 });

@@ -122,6 +122,10 @@
    "size": 24832
   },
   {
+   "path": "assets/sounds/g_stage_voice_1.adp",
+   "size": 57792
+  },
+  {
    "path": "assets/sounds/g_stage_voice_2.adp",
    "size": 20608
   },
@@ -159,7 +163,7 @@
   },
   {
    "path": "assets/sounds/se_explosion.adp",
-   "size": 20000
+   "size": 11056
   },
   {
    "path": "assets/sounds/se_guard.adp",
@@ -183,7 +187,7 @@
   },
   {
    "path": "assets/sounds/se_sp_explosion.adp",
-   "size": 28464
+   "size": 6560
   },
   {
    "path": "assets/sounds/voice_congra.adp",
@@ -271,7 +275,7 @@
   },
   {
    "path": "main.js",
-   "size": 128583
+   "size": 128601
   }
  ]
 }
