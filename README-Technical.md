@@ -266,6 +266,18 @@ they are written out in full.
     own title and an import's ship logo are settled first.
     `tests/custom_title_test.ts` pins the three copies. Mirrors
     `level-loader.js`.
+  - The title's backdrop scrolls sideways without end. Its offset is kept
+    within one width of its texture (`wrapTilePositionX`, folded in
+    TitleScene's `update` before a frame's steps, and only on a frame that
+    runs one, so the refresh blend never straddles the fold). A backdrop
+    wraps without a seam only where its width is a period of its pattern;
+    `rando`'s 768 is not, so the shared gold 2028 still shows one at each
+    wrap. The cloud game `gs` brings its own: the same gold plate reading
+    869, an 845x480 tile that repeats exactly every 845 pixels, drawn from
+    the 2028 plate by `scripts/gs/draw_869_backdrop.py` and written as the
+    level's `titleBgDataURL` by `scripts/gs/title-backdrop.ts` (`--revert`
+    takes it back out). `tests/refresh_interpolation_test.ts` and
+    `tests/gs_title_backdrop_test.ts` pin them.
   - The STAFF ROLL (the title's panel and the ending's) sets shmupX's own
     credits as text, `SHMUPX_STAFF_ROLL`, unless the custom game's `game_ui`
     set carries a `staffrollName.gif`: then `ownStaffrollPlate` draws that
@@ -1996,7 +2008,10 @@ from both scenes' `update`), and it is built never to change the game:
   drawn where it is; one that is not visible is left alone.
 - Top-level display objects and tile-sprite scroll (`tilePositionX/Y`) are
   covered; things inside containers (the HUD) are not, and nothing there moves
-  per step. Tweens (which Phaser runs up to 240 times a second) and sprite
+  per step. The title folds its backdrop's offset into one texture width only
+  on a frame that runs a step, before the steps: a frame that only re-blends
+  the last step would otherwise find the logic moved and draw it unblended.
+  Tweens (which Phaser runs up to 240 times a second) and sprite
   animations already follow the display, not the steps.
 
 `?refresh=` picks it. `auto`, the default, blends once the display runs faster

@@ -411,3 +411,94 @@ Deno.test("both stepped scenes capture before their last step and draw after it"
     ),
   );
 });
+
+/**
+ * The refresh helpers and PhaserTitleScene.update, for a page at `search`,
+ * with the score board and the pad it also reads stubbed out.
+ */
+async function titleRuntime(search: string) {
+  const js = await read(BUNDLE);
+  const src = VARS.map((n) => varSource(js, n)).join("") +
+    HELPERS.map((n) => functionSource(js, n)).join("") +
+    functionSource(js, "wrapTilePositionX") +
+    "\nvar none = function () { return 0; };" +
+    "\nvar getDailyBestLabel = none, getWorldBestLabel = none," +
+    " getDailyHighScore = none, getDisplayedHighScore = none," +
+    " getHighScoreSyncText = none, getHighScoreSyncTint = none;" +
+    "\nfunction pollGamepads() { return {}; }" +
+    "\nvar update = function " +
+    methodSource(js, "update", 'super({ key: "PhaserTitleScene" });')
+      .trim() +
+    ";" +
+    "\nreturn { update: update, wrapTilePositionX: wrapTilePositionX };";
+  return new Function("window", src)({ location: { search } }) as Json;
+}
+
+Deno.test("a tile offset folds into one width of its texture", async () => {
+  const { wrapTilePositionX } = await titleRuntime("");
+  const tile = { frame: { width: 845 }, tilePositionX: -0.5 };
+  wrapTilePositionX(tile);
+  assertEquals(tile.tilePositionX, 844.5);
+  tile.tilePositionX = 845 * 3 + 2;
+  wrapTilePositionX(tile);
+  assertEquals(tile.tilePositionX, 2);
+  tile.tilePositionX = 0;
+  wrapTilePositionX(tile);
+  assertEquals(tile.tilePositionX, 0);
+  // No frame to measure, no fold.
+  const bare = { tilePositionX: -900 };
+  wrapTilePositionX(bare);
+  assertEquals(bare.tilePositionX, -900);
+});
+
+Deno.test("the title's backdrop scrolls without end, drawn the same distance every frame through each fold", async () => {
+  const W = 845;
+  for (
+    const [search, hz, travel] of [["?refresh=max", 240, 0.25], [
+      "?refresh=stock",
+      120,
+      0.5,
+    ]] as const
+  ) {
+    const rt = await titleRuntime(search);
+    const bg = {
+      x: 0,
+      y: 0,
+      visible: true,
+      tilePositionX: 0,
+      tilePositionY: 0,
+      frame: { width: W },
+    };
+    const s = scene([bg]);
+    Object.assign(s, {
+      bg,
+      // Past the START check, which reads the keyboard.
+      transitioning: true,
+      _stepBoardCycle() {},
+      _boardOnShow: () => "allTime",
+    });
+    let folds = 0;
+    let last: number | null = null;
+    // Four times round the texture.
+    const frames = Math.ceil((4 * W) / travel) + 8;
+    for (let i = 0; i < frames; i++) {
+      const { logic, drawn } = frame(rt, s, 1000 / hz);
+      const x = drawn[0][2]!;
+      // The logic never strays more than a frame's steps out of one width.
+      assert(
+        logic[0][2]! > -1 && logic[0][2]! < W,
+        `${search}: ${logic[0][2]}`,
+      );
+      if (last !== null && i > 2) {
+        let moved = last - x;
+        if (moved < 0) {
+          moved += W;
+          folds++;
+        }
+        assertAlmostEquals(moved, travel, 1e-3, `${search} frame ${i}`);
+      }
+      last = x;
+    }
+    assert(folds >= 4, `${search}: folded ${folds} times`);
+  }
+});

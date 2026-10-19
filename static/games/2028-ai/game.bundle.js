@@ -7945,6 +7945,17 @@
       }
     }
   }
+  // A tileSprite's offset is in texture pixels (Phaser's TileSprite divides it
+  // by the frame size for the shader), so its texture repeats every
+  // frame.width of tilePositionX whatever the tile scale. Folding the offset
+  // into [0, frame.width) draws exactly the same picture, and keeps the
+  // number small however long the title is left running.
+  function wrapTilePositionX(tile) {
+    var period = tile.frame ? tile.frame.width : 0;
+    if (!(period > 0)) return;
+    var x = tile.tilePositionX % period;
+    tile.tilePositionX = x < 0 ? x + period : x;
+  }
 
   // ../2019-es7/src/phaser/TitleScene.js
   var BOARD_CYCLE_MS = 3e3;
@@ -8629,6 +8640,12 @@
       var refresh = refreshInterpolator(this, STEP);
       refreshFrame(refresh, delta);
       this._accumulator = (this._accumulator || 0) + Math.min(delta, 66.67);
+      // The backdrop scrolls left without end. Its offset is folded back into
+      // one width of its texture here, before the steps and only on a frame
+      // that runs one: the step the draw blends (refreshApply) is then always
+      // captured on the folded side, and a frame that only re-blends the last
+      // step never finds its logic moved from under it.
+      if (this.bg && this._accumulator >= STEP) wrapTilePositionX(this.bg);
       var steps = 0;
       while (this._accumulator >= STEP) {
         this._accumulator -= STEP;
