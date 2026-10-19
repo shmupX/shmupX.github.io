@@ -14180,6 +14180,7 @@
     var bossShadowOffsetY = bossData.shadowOffsetY || 10;
     scene.bossShadow = createShadow(scene, scene.bossSprite, bossFrame, bossShadowReverse, bossShadowOffsetY);
     scene.bossSprite.setData("shadow", scene.bossShadow);
+    armBossOverlay(scene, scene.bossSprite, bossData);
     var patternSlot = bossPatternSlot(bossData, stageId);
     armBossStances(scene, bossData, patternSlot);
     // Run by his own record Akuma is Akuma throughout — his voice, his
@@ -14704,6 +14705,211 @@
       balloon.x = scene.bossSprite.x + (balloon.getData("relX") || 0);
       balloon.y = scene.bossSprite.y + (balloon.getData("relY") || 0);
     }
+  }
+  // A boss record's own `overlay`: art laid over the boss's, part by part, and
+  // the parts as a weapon. gs's Geekstar wears his logo's letters this way —
+  // G, E, E, K, each drawn exactly over the white letter it hides and filled
+  // with `cover` (black), so the logo reads as four dark letters. Every
+  // `shot.every` ms one of them, picked at random, comes alive: a copy fades
+  // in over its slot, flashing through `shot.colors`, and at full opacity it
+  // leaves as an aimed shot that keeps flashing. The slot stays covered.
+  //
+  // While a letter charges — from the moment it starts to fade in until it
+  // leaves — `glow` lights the boss in the letter's colour: one frame per boss
+  // frame (his mask's red eyes and mouth, cut out in white), laid under the
+  // letters over the art it was cut from and tinted the letter's current
+  // neon, so the flame flashes in step with the shot it is about to throw.
+  //
+  //   overlay: {
+  //     parts: [{ frame, x, y }],   x, y: the part's top-left in the boss frame
+  //     cover: "#000000",           a part's fill while it is not a shot
+  //     shot: { every, chargeMs, flashMs, colors, speed, damage, hp, score,
+  //             spgage }            no shot: the parts are only art
+  //     glow: { x, y, frames: { <boss frame>: <glow frame> } }
+  //   }
+  //
+  // A part whose frame the atlas does not have drops the whole overlay rather
+  // than drawing the atlas's first frame over the boss; a glow frame it does
+  // not have leaves that boss frame unlit.
+  var OVERLAY_NEON = ["#ff2bd6", "#00f0ff", "#39ff14", "#fff200", "#ff6a00"];
+  function overlayColor(value, fallback) {
+    if (typeof value === "number" && isFinite(value)) return value;
+    if (typeof value === "string") {
+      var n = parseInt(value.replace(/^#|^0x/i, ""), 16);
+      if (!isNaN(n)) return n;
+    }
+    return fallback;
+  }
+  function bossOverlayParts(scene, record) {
+    var overlay = record && record.overlay;
+    if (!overlay || !Array.isArray(overlay.parts) || !overlay.parts.length) return null;
+    var parts = [];
+    for (var i = 0; i < overlay.parts.length; i++) {
+      var part = overlay.parts[i];
+      if (!part || typeof part.frame !== "string") return null;
+      var frames = bulletFramesInAtlas(scene, [part.frame], []);
+      if (!frames.length) return null;
+      parts.push({ frame: frames[0], x: Number(part.x) || 0, y: Number(part.y) || 0 });
+    }
+    return parts;
+  }
+  // A boss frame -> glow frame map with both sides resolved in the atlas;
+  // null when no pair of it is there.
+  function bossOverlayGlow(scene, record) {
+    var glow = record && record.overlay && record.overlay.glow;
+    if (!glow || !glow.frames || typeof glow.frames !== "object") return null;
+    var frames = {};
+    var first = null;
+    for (var key in glow.frames) {
+      var from = bulletFramesInAtlas(scene, [key], []);
+      var to = bulletFramesInAtlas(scene, [glow.frames[key]], []);
+      if (!from.length || !to.length) continue;
+      frames[from[0]] = to[0];
+      first = first || to[0];
+    }
+    return first ? { x: Number(glow.x) || 0, y: Number(glow.y) || 0, frames: frames, first: first } : null;
+  }
+  // The shot's flash, by the clock rather than by frame counts, so a charge in
+  // the boss's container, the same letter in flight and the boss's glow all
+  // flash in step. Answers the colour it set.
+  function flashOverlayTint(scene, sprite) {
+    var tints = sprite.getData("tints");
+    if (!tints || !tints.length) return null;
+    var ms = sprite.getData("tintMs") || 60;
+    var tint = tints[Math.floor(scene.time.now / ms) % tints.length];
+    sprite.setTint(tint);
+    return tint;
+  }
+  function armBossOverlay(scene, boss, record) {
+    var parts = bossOverlayParts(scene, record);
+    if (!parts) return null;
+    var overlay = record.overlay;
+    var frameW = boss.width;
+    var frameH = boss.height;
+    var cover = overlayColor(overlay.cover, 0);
+    var box = scene.add.container(boss.x, boss.y);
+    box.setDepth(boss.depth + 0.5);
+    // Under the letters: what the glow was cut from sits beneath them too.
+    var glow = bossOverlayGlow(scene, record);
+    if (glow) {
+      var lamp = scene.add.sprite(0, 0, "game_asset", glow.first);
+      lamp.setOrigin(0.5);
+      lamp.x = glow.x + lamp.width / 2 - frameW / 2;
+      lamp.y = glow.y + lamp.height / 2 - frameH / 2;
+      lamp.setVisible(false);
+      box.add(lamp);
+      glow.sprite = lamp;
+    }
+    var slots = parts.map(function(part) {
+      var piece = scene.add.sprite(0, 0, "game_asset", part.frame);
+      piece.setOrigin(0.5);
+      piece.x = part.x + piece.width / 2 - frameW / 2;
+      piece.y = part.y + piece.height / 2 - frameH / 2;
+      piece.setTint(cover).setTintMode(Phaser.TintModes.FILL);
+      box.add(piece);
+      return { frame: part.frame, x: piece.x, y: piece.y };
+    });
+    var state = { box: box, slots: slots, charge: null, shot: overlay.shot || null, timer: null, glow: glow };
+    // After the scene's update and its tweens, so the container lands where
+    // the boss ended its frame — entry glide, spin, zoom and the death shake.
+    var sync = function() {
+      if (!boss.active) return;
+      box.x = boss.x;
+      box.y = boss.y;
+      box.setScale(boss.scaleX, boss.scaleY);
+      box.rotation = boss.rotation;
+      box.alpha = boss.alpha;
+      box.visible = boss.visible;
+      var tint = state.charge && state.charge.active ? flashOverlayTint(scene, state.charge) : null;
+      if (glow) {
+        var lit = tint !== null && boss.frame ? glow.frames[boss.frame.name] : null;
+        glow.sprite.setVisible(!!lit);
+        if (lit) glow.sprite.setFrame(lit).setTint(tint);
+      }
+    };
+    sync();
+    scene.events.on("postupdate", sync);
+    if (state.shot) {
+      state.timer = scene.time.addEvent({
+        delay: Math.max(250, Number(state.shot.every) || 2500),
+        loop: true,
+        callback: function() {
+          chargeOverlayShot(scene, boss, state);
+        }
+      });
+    }
+    boss.once("destroy", function() {
+      scene.events.off("postupdate", sync);
+      if (state.timer) state.timer.remove(false);
+      if (state.charge) scene.tweens.killTweensOf(state.charge);
+      box.destroy();
+    });
+    boss.setData("overlay", state);
+    return state;
+  }
+  function chargeOverlayShot(scene, boss, state) {
+    if (state.charge || !boss.active || scene.bossSprite !== boss) return;
+    if (scene.bossEntering || scene.theWorldFlg || !_bossAlive(scene)) return;
+    var shot = state.shot;
+    var slot = state.slots[Math.floor(Math.random() * state.slots.length)];
+    var colors = (Array.isArray(shot.colors) && shot.colors.length ? shot.colors : OVERLAY_NEON).map(function(c) {
+      return overlayColor(c, 16777215);
+    });
+    var charge = scene.add.sprite(slot.x, slot.y, "game_asset", slot.frame);
+    charge.setOrigin(0.5);
+    charge.setAlpha(0);
+    charge.setData("tints", colors);
+    charge.setData("tintMs", Math.max(16, Number(shot.flashMs) || 60));
+    flashOverlayTint(scene, charge);
+    state.box.add(charge);
+    state.charge = charge;
+    scene.tweens.add({
+      targets: charge,
+      alpha: 1,
+      duration: Math.max(100, Number(shot.chargeMs) || 900),
+      ease: "Linear",
+      onComplete: function() {
+        fireOverlayShot(scene, boss, state, charge);
+      }
+    });
+  }
+  function fireOverlayShot(scene, boss, state, charge) {
+    if (!charge.active) return;
+    if (scene.bossSprite !== boss || !_bossAlive(scene)) {
+      state.charge = null;
+      charge.destroy();
+      return;
+    }
+    // Held, lit, through a time stop: it leaves when the world moves again.
+    if (scene.theWorldFlg) {
+      scene.time.delayedCall(100, function() {
+        fireOverlayShot(scene, boss, state, charge);
+      });
+      return;
+    }
+    var box = state.box;
+    var cos = Math.cos(box.rotation);
+    var sin = Math.sin(box.rotation);
+    var lx = charge.x * box.scaleX;
+    var ly = charge.y * box.scaleY;
+    box.remove(charge);
+    state.charge = null;
+    charge.setPosition(box.x + lx * cos - ly * sin, box.y + lx * sin + ly * cos);
+    charge.setAlpha(1);
+    charge.setDepth(47);
+    var shot = state.shot;
+    charge.setData("speed", Number(shot.speed) || 3);
+    charge.setData("damage", shot.damage || 1);
+    charge.setData("hp", shot.hp || 1);
+    charge.setData("score", shot.score || 0);
+    charge.setData("spgage", shot.spgage || 0);
+    var aimAt = aimPlayer(scene);
+    var dx = aimAt ? aimAt.x - charge.x : 0;
+    var dy = aimAt ? aimAt.y - charge.y : 1;
+    var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    charge.setData("rotX", dx / dist);
+    charge.setData("rotY", dy / dist);
+    scene.enemyBullets.push(charge);
   }
   function bossDie(scene, boss, owner) {
     if (scene.stageCleared) return;
@@ -16935,6 +17141,7 @@
             }
           }
         }
+        if (eBullet.getData("tints")) flashOverlayTint(this, eBullet);
         if (eBullet.y > GH11 + 20 || eBullet.y < -20 || eBullet.x < -20 || eBullet.x > GW13 + 20) {
           eBullet.destroy();
           this.enemyBullets.splice(eb, 1);

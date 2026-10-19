@@ -168,6 +168,23 @@ export function referencedFrames(record: Character): string[] {
       : (balloon as { frames?: unknown } | undefined)?.frames,
   );
 
+  // A boss's overlay (game.bundle.js armBossOverlay): the parts laid over it,
+  // and the glow cut for each of its frames.
+  const overlay = record.overlay as
+    | { parts?: unknown; glow?: { frames?: unknown } }
+    | undefined;
+  if (overlay && typeof overlay === "object") {
+    if (Array.isArray(overlay.parts)) {
+      for (const part of overlay.parts) {
+        add((part as { frame?: unknown } | null)?.frame);
+      }
+    }
+    const glow = overlay.glow?.frames;
+    if (glow && typeof glow === "object") {
+      for (const frame of Object.values(glow)) add(frame);
+    }
+  }
+
   // A boss's second stage (game.bundle.js bossStage2Record) is laid over the
   // record mid-fight: its anim sets, weapon slots and balloon are art the boss
   // needs as much as its own.
@@ -241,6 +258,26 @@ export function remapFrames(
   else if (balloon && typeof balloon === "object") {
     const o = balloon as { frames?: unknown };
     if (o.frames !== undefined) o.frames = list(o.frames);
+  }
+
+  // The glow is keyed by the boss's own frames, which are renamed too.
+  const overlay = next.overlay as
+    | { parts?: unknown; glow?: { frames?: Record<string, unknown> } }
+    | undefined;
+  if (overlay && typeof overlay === "object") {
+    if (Array.isArray(overlay.parts)) {
+      for (const part of overlay.parts) {
+        if (part && typeof part === "object" && "frame" in part) {
+          part.frame = one(part.frame);
+        }
+      }
+    }
+    const glow = overlay.glow;
+    if (glow?.frames && typeof glow.frames === "object") {
+      glow.frames = Object.fromEntries(
+        Object.entries(glow.frames).map(([k, v]) => [one(k) as string, one(v)]),
+      );
+    }
   }
 
   const stage2 = next.stage2;
