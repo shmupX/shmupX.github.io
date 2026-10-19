@@ -18,6 +18,7 @@ import {
   levelEnemyTypes,
   parseBossRushFlag,
   showcaseRows,
+  spreadColumns,
 } from "../lib/boss-rush.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -80,15 +81,28 @@ function gsLike(): Json {
   };
 }
 
-/** gs's showcase formation: toughest in the middle, the weakest on both wings. */
-const ARCH = ["G0", "D0", "B0", "E0", "F0", "C0", "A0", "G0"];
+/**
+ * gs's showcase formation: the weaker half first, spread across the row, an
+ * empty row, then the stronger half on the columns between — each row
+ * strongest in its middle.
+ */
+const SHOWCASE = [
+  ["G0", "00", "00", "D0", "00", "00", "A0", "00"],
+  EMPTY,
+  ["00", "B0", "00", "E0", "00", "F0", "00", "C0"],
+];
 
 /**
- * …carrying gs's four drops, each on an enemy that drops it in the level:
- * the barrier (9) on the car, the 3-way (2) and the shot speed (3) on the two
- * flirty girls, the big shot (1) on the laptop.
+ * …carrying gs's four drops, each on an enemy that drops it in the level
+ * where one does: the barrier (9) on the car, the 3-way (2) on the flirty
+ * girl, the big shot (1) on the laptop; the shot speed (3), whose only
+ * carrier already holds the 3-way, on the first free cell.
  */
-const GS_ROW = ["G2", "D0", "B9", "E0", "F0", "C1", "A0", "G3"];
+const GS_ROWS = [
+  ["G2", "00", "00", "D3", "00", "00", "A0", "00"],
+  EMPTY,
+  ["00", "B9", "00", "E0", "00", "F0", "00", "C1"],
+];
 
 Deno.test("parseBossRushFlag reads both spellings and refuses junk", () => {
   assertEquals(parseBossRushFlag("--boss-rush"), 0);
@@ -104,33 +118,63 @@ Deno.test("the level's enemy types come strongest first, from every stage", () =
   assertEquals(levelEnemyTypes(gsLike()), ["E", "F", "B", "C", "D", "A", "G"]);
 });
 
-Deno.test("the showcase is an arch by toughness, mirrored into spare columns", () => {
-  assertEquals(
-    showcaseRows(["E", "F", "B", "C", "D", "A", "G"], 8),
-    [ARCH],
-  );
-  // An odd width has a true middle column.
-  assertEquals(showcaseRows(["X", "Y", "Z"], 5), [[
-    "00",
-    "Y0",
-    "X0",
-    "Z0",
-    "00",
-  ]]);
-  // Two types in eight columns leave the wings empty rather than inventing
-  // enemies the mirror has nothing to copy.
-  assertEquals(showcaseRows(["X", "Y"], 8), [[
-    "00",
-    "00",
-    "00",
-    "X0",
-    "Y0",
-    "00",
-    "00",
-    "00",
-  ]]);
-  // More types than columns spill into a second row.
-  assertEquals(showcaseRows(["A", "B", "C", "D", "E"], 4).length, 2);
+Deno.test("rows spread evenly, each on the gaps of the one before", () => {
+  assertEquals(spreadColumns(4, 8, 0), [0, 2, 4, 6]);
+  assertEquals(spreadColumns(4, 8, 1), [1, 3, 5, 7]);
+  assertEquals(spreadColumns(3, 8, 0), [0, 3, 6]);
+  assertEquals(spreadColumns(3, 8, 1), [1, 4, 7]);
+  assertEquals(spreadColumns(1, 8, 0), [3]);
+  // Never two in one cell, at any width, for as many as every other column.
+  for (let width = 1; width <= 12; width++) {
+    for (let count = 1; count <= Math.ceil(width / 2); count++) {
+      for (const stagger of [0, 1]) {
+        const cols = spreadColumns(count, width, stagger);
+        assertEquals(new Set(cols).size, count, `${count} in ${width}`);
+        assert(cols.every((c) => c >= 0 && c < width), `${count} in ${width}`);
+      }
+    }
+  }
+});
+
+Deno.test("the showcase is two staggered rows, weaker first, an empty row between", () => {
+  assertEquals(showcaseRows(["E", "F", "B", "C", "D", "A", "G"], 8), SHOWCASE);
+  // gs's eight types — Leonard (H) the toughest — are a four-and-four
+  // checkerboard: nobody side by side, nobody straight behind anybody.
+  const gs = showcaseRows(["H", "E", "F", "B", "C", "D", "A", "G"], 8);
+  assertEquals(gs, [
+    ["G0", "00", "D0", "00", "C0", "00", "A0", "00"],
+    EMPTY,
+    ["00", "F0", "00", "H0", "00", "E0", "00", "B0"],
+  ]);
+  for (const row of [gs[0], gs[2]]) {
+    for (let c = 1; c < row.length; c++) {
+      assert(row[c] === "00" || row[c - 1] === "00", row.join(" "));
+    }
+  }
+  assert(gs[0].every((cell, c) => cell === "00" || gs[2][c] === "00"));
+  // An odd width, and two types: still two rows.
+  assertEquals(showcaseRows(["X", "Y", "Z"], 5), [
+    ["00", "00", "Z0", "00", "00"],
+    ["00", "00", "00", "00", "00"],
+    ["00", "X0", "00", "00", "Y0"],
+  ]);
+  assertEquals(showcaseRows(["X", "Y"], 8), [
+    ["00", "00", "00", "Y0", "00", "00", "00", "00"],
+    EMPTY,
+    ["00", "00", "00", "00", "X0", "00", "00", "00"],
+  ]);
+  // One type is one row.
+  assertEquals(showcaseRows(["X"], 8), [
+    ["00", "00", "00", "X0", "00", "00", "00", "00"],
+  ]);
+  // More types than every other column holds take more rows.
+  assertEquals(showcaseRows(["A", "B", "C", "D", "E"], 4), [
+    ["00", "E0", "00", "00"],
+    ["00", "00", "00", "00"],
+    ["00", "C0", "00", "D0"],
+    ["00", "00", "00", "00"],
+    ["B0", "00", "A0", "00"],
+  ]);
   assertEquals(showcaseRows([], 8), []);
 });
 
@@ -141,9 +185,9 @@ Deno.test("the level's drops ride the showcase once each, on enemies that drop t
     ["1", ["C"]],
     ["3", ["G"]],
   ]);
-  const rows = [ARCH.slice()];
+  const rows = SHOWCASE.map((row) => row.slice());
   hangDrops(rows, levelDrops(gsLike()));
-  assertEquals(rows, [GS_ROW]);
+  assertEquals(rows, GS_ROWS);
   // A drop no showcased enemy carries goes on the first free cell, middle out.
   const lone = [["00", "X0", "Y0", "00"]];
   hangDrops(lone, [["5", ["Q"]], ["1", ["Y"]], ["2", ["Q"]]]);
@@ -157,15 +201,15 @@ Deno.test("every stage keeps its scenery and boss and trades its waves for the s
   assertEquals(summary.dropped, []);
   assertEquals(summary.bosses, ["boss0", "boss1"]);
   assertEquals(summary.waveRowsCleared, 12);
-  assertEquals(summary.showcase, [GS_ROW]);
-  // Each stage keeps its own opening beat of empty rows ahead of the row.
-  assertEquals(record.stages.stage0.enemylist, [EMPTY, GS_ROW]);
-  assertEquals(record.stages.stage1.enemylist, [EMPTY, EMPTY, GS_ROW]);
+  assertEquals(summary.showcase, GS_ROWS);
+  // Each stage keeps its own opening beat of empty rows ahead of the rows.
+  assertEquals(record.stages.stage0.enemylist, [EMPTY, ...GS_ROWS]);
+  assertEquals(record.stages.stage1.enemylist, [EMPTY, EMPTY, ...GS_ROWS]);
   assertEquals(record.stages.stage0.background, { cols: 8 });
   assertEquals("waveRows" in record.stages.stage0, false);
   // The flat fields are the first stage's copy; lib/export-build.ts refuses
   // a record without them.
-  assertEquals(record.enemylist, [EMPTY, GS_ROW]);
+  assertEquals(record.enemylist, [EMPTY, ...GS_ROWS]);
   assertEquals(record.noStory, true);
   assertEquals("storyData" in record, false);
 });
@@ -178,7 +222,7 @@ Deno.test("a start stage cuts the stages before it and renumbers the rest with t
   assertEquals(Object.keys(record.stages), ["stage0"]);
   assertEquals(record.stages.stage0.background, { cols: 10 });
   // The cut stage's enemies still make the showcase: it is the LEVEL's.
-  assertEquals(record.stages.stage0.enemylist, [EMPTY, EMPTY, GS_ROW]);
+  assertEquals(record.stages.stage0.enemylist, [EMPTY, EMPTY, ...GS_ROWS]);
   assertEquals(Object.keys(record.bossData), ["boss0"]);
   assertEquals(record.bossData.boss0.name, "Daltonius");
   // The morph rides along untouched — the boss is the same boss.
@@ -189,7 +233,7 @@ Deno.test("a start stage cuts the stages before it and renumbers the rest with t
   assertEquals(record.stageKey, "stage0");
   const line = describeBossRush(summary);
   assert(line.includes("from stage1 (stage0 cut)"), line);
-  assert(line.includes(GS_ROW.join(" ")), line);
+  assert(line.includes(GS_ROWS[2].join(" ")), line);
 });
 
 Deno.test("a start stage past the last one is refused, naming the count", () => {
@@ -211,13 +255,13 @@ Deno.test("a flat single-stage record is its one stage", () => {
   const summary = bossRushRecord(record);
   assertEquals(summary.stages, ["stage0"]);
   assertEquals(summary.waveRowsCleared, 2);
-  // B (hp 5) in the middle, A beside it still carrying its power-up.
-  assertEquals(record.enemylist, [["00", "00", "00", "00"], [
-    "00",
-    "B0",
-    "A1",
-    "00",
-  ]]);
+  // A first, still carrying its power-up, then B (hp 5) on the next column.
+  assertEquals(record.enemylist, [
+    ["00", "00", "00", "00"],
+    ["00", "A1", "00", "00"],
+    ["00", "00", "00", "00"],
+    ["00", "00", "B0", "00"],
+  ]);
   assertEquals("waveRows" in record, false);
   assertThrows(() => bossRushRecord(record, { startStage: 1 }), Error);
 });
@@ -247,9 +291,16 @@ Deno.test("the oldest records' top-level stageN blocks are renumbered in place",
     "stage0",
     "stage1",
   ]);
-  // One column wide: the three types stack into three one-cell rows, the
-  // power-up (1) on the first that drops it and the 3-way (2) on B.
-  assertEquals(record.stage0.enemylist, [["A1"], ["B2"], ["C0"]]);
+  // One column wide: the three types stack into one-cell rows with an empty
+  // row between each, the power-up (1) on the first that drops it and the
+  // 3-way (2) on B.
+  assertEquals(record.stage0.enemylist, [
+    ["C1"],
+    ["00"],
+    ["B2"],
+    ["00"],
+    ["A0"],
+  ]);
   assertEquals(record.bossData, { boss0: { n: 1 }, boss1: { n: 2 } });
 });
 
@@ -258,6 +309,6 @@ Deno.test("the console writers' stage reader sees the rush the way it is meant",
   bossRushRecord(record, { startStage: 1 });
   const stages = levelStages(record);
   assertEquals(stages.map((s: Json) => s.key), ["stage0"]);
-  assertEquals(stages[0].enemylist, [EMPTY, EMPTY, GS_ROW]);
+  assertEquals(stages[0].enemylist, [EMPTY, EMPTY, ...GS_ROWS]);
   assertEquals(record.bossData.boss0.name, "Daltonius");
 });

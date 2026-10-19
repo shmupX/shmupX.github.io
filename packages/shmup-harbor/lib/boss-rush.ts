@@ -11,23 +11,24 @@
 //
 // What it does to the record:
 //
-// - Every stage keeps its scenery and its boss and trades its waves for ONE
-//   showcase row: every enemy type the level places anywhere (cut stages
-//   included), one of each, strongest in the middle and each weaker type a
-//   column further out, alternating sides, with the row's leftover columns
-//   mirroring the wing opposite — an arch by toughness, the way a formation
-//   is drawn in the editor. The level's item drops ride on it too, each once,
-//   on an enemy that drops it in the level (hangDrops): the row shows the
-//   items as well, and the boss is met armed the way the level arms you —
-//   which a tool-assisted run against a boss timer needs. The stage's own run
-//   of empty rows before its first
-//   wave is kept ahead of it, so the row comes in on the stage's own beat
-//   rather than over its title. Each writer places a stage's boss a fixed gap
-//   after the last wave, so the boss follows the row on every target. More
-//   types than the row has columns spill into a second row; gs's seven fit
-//   its eight. A stage's `waveRows` (the editor's wave grid) goes, and the
-//   top-level flat `enemylist` becomes the first stage's — an array either
-//   way, because lib/export-build.ts refuses a record without one.
+// - Every stage keeps its scenery and its boss and trades its waves for a
+//   short showcase: every enemy type the level places anywhere (cut stages
+//   included), one of each, in two staggered rows with an empty row between —
+//   the weaker half first, the stronger half last, before the boss — each
+//   row spread evenly across the width and strongest in its middle, the
+//   second row on the columns between the first's (showcaseRows). gs's eight
+//   types make a four-and-four checkerboard; one row of all eight packed side
+//   by side read as a wall on the Super Famicom. The level's item drops ride
+//   on it too, each once, on an enemy that drops it in the level (hangDrops):
+//   the rows show the items as well, and the boss is met armed the way the
+//   level arms you — which a tool-assisted run against a boss timer needs.
+//   The stage's own run of empty rows before its first wave is kept ahead of
+//   it, so the showcase comes in on the stage's own beat rather than over its
+//   title. Each writer places a stage's boss a fixed gap after the last wave,
+//   so the boss follows the showcase on every target. A stage's `waveRows`
+//   (the editor's wave grid) goes, and the top-level flat `enemylist` becomes
+//   the first stage's — an array either way, because lib/export-build.ts
+//   refuses a record without one.
 // - A Dezaemon import's boss can carry the cart's own boss row
 //   (`bossData.bossN.dezaemon.row`), which the Saturn writer prefers over the
 //   gap after the last wave; that row is dropped so the boss comes on early
@@ -202,24 +203,62 @@ function centreOut(width: number): number[] {
 }
 
 /**
- * The showcase: `types` (strongest first) laid into rows of `width`, the
- * first type nearest the middle and each next one a column further out on
- * alternating sides. A row with columns to spare fills each from the column
- * mirroring it, so the formation reads symmetric. No drops yet — hangDrops.
+ * `count` columns spread evenly across a row of `width`, shifted half a slot
+ * left (`stagger` 0) or right (1), so the rows of a showcase alternate between
+ * the columns and the gaps of the one before: four in eight are 0 2 4 6, then
+ * 1 3 5 7. Distinct for any count up to half the width, rounded up.
+ */
+export function spreadColumns(
+  count: number,
+  width: number,
+  stagger: number,
+): number[] {
+  const shift = stagger % 2 === 0 ? -0.5 : 0.5;
+  const taken = new Set<number>();
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) {
+    let col = Math.round((i + 0.5) * width / count - 0.5 + shift);
+    col = Math.min(width - 1, Math.max(0, col));
+    // Never two in one cell: the nearest free column, where rounding collides.
+    for (let d = 1; taken.has(col) && d < width; d++) {
+      if (col + d < width && !taken.has(col + d)) col += d;
+      else if (col - d >= 0 && !taken.has(col - d)) col -= d;
+    }
+    taken.add(col);
+    out.push(col);
+  }
+  return out;
+}
+
+/**
+ * The showcase: `types` (strongest first) in rows of `width` with an empty row
+ * between each two. Two rows at least, once there are two types — the weaker
+ * half first, the stronger last — and more only when a row would need more
+ * than every other column. Each row is spread evenly (spreadColumns), on the
+ * columns between the row before's, its strongest type nearest the middle.
+ * No drops yet — hangDrops.
  */
 export function showcaseRows(types: string[], width: number): string[][] {
-  const rows: string[][] = [];
-  const order = centreOut(width);
-  for (let i = 0; i < types.length; i += width) {
-    const chunk = types.slice(i, i + width);
-    const row = new Array<string>(width).fill("00");
-    chunk.forEach((t, k) => row[order[k]] = `${t}0`);
-    for (let k = chunk.length; k < width; k++) {
-      const col = order[k];
-      row[col] = row[width - 1 - col];
-    }
-    rows.push(row);
+  if (!types.length || width < 1) return [];
+  const perRow = types.length < 2
+    ? 1
+    : Math.min(Math.ceil(width / 2), Math.ceil(types.length / 2));
+  // Strongest first, so the first chunk is the last row to come in.
+  const chunks: string[][] = [];
+  for (let i = 0; i < types.length; i += perRow) {
+    chunks.push(types.slice(i, i + perRow));
   }
+  chunks.reverse();
+  const mid = (width - 1) / 2;
+  const rows: string[][] = [];
+  chunks.forEach((chunk, r) => {
+    if (r > 0) rows.push(new Array<string>(width).fill("00"));
+    const row = new Array<string>(width).fill("00");
+    const cols = spreadColumns(chunk.length, width, r)
+      .sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid) || a - b);
+    chunk.forEach((t, k) => row[cols[k]] = `${t}0`);
+    rows.push(row);
+  });
   return rows;
 }
 
