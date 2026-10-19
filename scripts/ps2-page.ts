@@ -16,9 +16,11 @@
  *                   the disc's own main.js on the web build of AthenaEnv
  *   preview.gif     the seven-target capture (`deno task testdrive:parity`),
  *                   copied in when there is one — or --gif <file>
- *   .gitignore      the ISO, the zip and play/: build output, never committed
  *
- * The page, the README and the GIF are what is committed.
+ * All of it is committed, the ISO, the zip and play/ included. Deno Deploy
+ * builds the site from this repository and `deno task build` does not run
+ * this (it needs the cloud level and the AthenaEnv release), so anything here
+ * git does not carry is a dead link on the live page.
  *
  * The slug and the title are the game's public name: the one alias the level
  * answers to as a subdomain (`deno task level:alias`), when it has exactly
@@ -67,7 +69,6 @@ const slug = flags.slug ?? alias ?? `${levelSlug}-ps2`;
 const title = flags.title ?? (alias ? alias.toUpperCase() : level);
 const out = join(ROOT, "static", "games", slug);
 await ensureDir(out);
-await Deno.writeTextFile(join(out, ".gitignore"), "*.iso\n*.zip\nplay/\n");
 
 console.log(`building ${level} for the PS2 (folder + disc)…`);
 const built = await buildPs2({

@@ -265,7 +265,8 @@ deno task ps2:page ${p.level}               # the disc, the USB folder, the web 
 deno task testdrive:parity ${p.level}       # the preview GIF, every target side by side
 \`\`\`
 
-The ISO, the zip and \`play/\` are build output and are not committed; this
-README, index.html and the GIF are.
+Everything here is committed, the ISO, the zip and \`play/\` included: the site
+is deployed from this repository, and a build output git does not carry is a
+dead link on the live page.
 `;
 }

@@ -20,14 +20,9 @@
 // would all resolve against /games/ and the emulator would fetch its core from
 // one directory too high.
 //
-// A few are written by a build and gitignored rather than committed — a PS2
-// Download / PLAY page's in-browser build, `deno task ps2:page <level>` — so a
-// checkout may or may not have them. They are GENERATED_INDEXES: listed so the
-// bare URL redirects once the build has run, and not required on disk.
-export const GENERATED_INDEXES = [
-  "/games/squad/play",
-];
-
+// /games/squad/play is a PS2 page's in-browser build (`deno task ps2:page`).
+// It is build output but committed all the same: Deploy serves only what git
+// carries, and `deno task build` does not make it.
 export const STATIC_INDEXES = [
   "/desktop",
   "/editor",
@@ -35,12 +30,12 @@ export const STATIC_INDEXES = [
   // gs's PS2 page under its first name: a redirect to /games/squad/ now.
   "/games/gs-ps2",
   "/games/squad",
+  "/games/squad/play",
   "/games/super-mario-sp",
   "/pixel-composer",
   "/pixel-editor",
   "/tilemap-editor",
   "/virtual-pad",
-  ...GENERATED_INDEXES,
 ];
 
 /**

@@ -9,11 +9,7 @@
 // is checked against the tree rather than trusted.
 
 import { assertEquals } from "@std/assert";
-import {
-  dirIndexRedirect,
-  GENERATED_INDEXES,
-  STATIC_INDEXES,
-} from "../lib/static-indexes.ts";
+import { dirIndexRedirect, STATIC_INDEXES } from "../lib/static-indexes.ts";
 
 const STATIC = new URL("../static/", import.meta.url);
 
@@ -40,12 +36,8 @@ async function dirIndexes(dir: URL, prefix = ""): Promise<string[]> {
 
 Deno.test("STATIC_INDEXES matches the directory indexes under static/", async () => {
   const onDisk = await dirIndexes(STATIC);
-  // A generated index is required only where its build has run.
-  const listed = STATIC_INDEXES.filter((p) =>
-    !GENERATED_INDEXES.includes(p) || onDisk.includes(p)
-  );
   assertEquals(
-    [...listed].sort(),
+    [...STATIC_INDEXES].sort(),
     onDisk,
     "lib/static-indexes.ts has drifted from static/. A path on disk but not in " +
       "the list serves its page at the bare URL with every relative URL in it " +

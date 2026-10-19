@@ -1,0 +1,277 @@
+{
+ "version": 1,
+ "files": [
+  {
+   "path": "assets/cyber_liberty.png",
+   "size": 228
+  },
+  {
+   "path": "assets/fonts/OFL-Orbitron.txt",
+   "size": 4519
+  },
+  {
+   "path": "assets/fonts/orbitron.ttf",
+   "size": 38576
+  },
+  {
+   "path": "assets/game.json",
+   "size": 17431
+  },
+  {
+   "path": "assets/game_asset.json",
+   "size": 8241
+  },
+  {
+   "path": "assets/game_asset.png",
+   "size": 13317
+  },
+  {
+   "path": "assets/game_ui.json",
+   "size": 804
+  },
+  {
+   "path": "assets/game_ui.png",
+   "size": 7392
+  },
+  {
+   "path": "assets/level.json",
+   "size": 6065
+  },
+  {
+   "path": "assets/level_atlas.json",
+   "size": 7997
+  },
+  {
+   "path": "assets/level_atlas.png",
+   "size": 38231
+  },
+  {
+   "path": "assets/sounds/adventure_bgm.wav",
+   "size": 774798
+  },
+  {
+   "path": "assets/sounds/bgm_continue.wav",
+   "size": 678484
+  },
+  {
+   "path": "assets/sounds/bgm_gameover.wav",
+   "size": 185268
+  },
+  {
+   "path": "assets/sounds/boss_barlog_voice_add.adp",
+   "size": 24528
+  },
+  {
+   "path": "assets/sounds/boss_bison_voice_add.adp",
+   "size": 20912
+  },
+  {
+   "path": "assets/sounds/boss_fang_bgm.wav",
+   "size": 5412706
+  },
+  {
+   "path": "assets/sounds/boss_fang_voice_add.adp",
+   "size": 52656
+  },
+  {
+   "path": "assets/sounds/boss_goki_voice_add.adp",
+   "size": 31792
+  },
+  {
+   "path": "assets/sounds/boss_sagat_voice_add.adp",
+   "size": 24528
+  },
+  {
+   "path": "assets/sounds/boss_vega_voice_add.adp",
+   "size": 34208
+  },
+  {
+   "path": "assets/sounds/g_adbenture_voice0.adp",
+   "size": 19696
+  },
+  {
+   "path": "assets/sounds/g_continue_no_voice0.adp",
+   "size": 13648
+  },
+  {
+   "path": "assets/sounds/g_continue_no_voice1.adp",
+   "size": 22416
+  },
+  {
+   "path": "assets/sounds/g_continue_yes_voice0.adp",
+   "size": 41168
+  },
+  {
+   "path": "assets/sounds/g_continue_yes_voice1.adp",
+   "size": 10624
+  },
+  {
+   "path": "assets/sounds/g_continue_yes_voice2.adp",
+   "size": 32096
+  },
+  {
+   "path": "assets/sounds/g_damage_voice.adp",
+   "size": 4576
+  },
+  {
+   "path": "assets/sounds/g_powerup_voice.adp",
+   "size": 6688
+  },
+  {
+   "path": "assets/sounds/g_sp_voice.adp",
+   "size": 24832
+  },
+  {
+   "path": "assets/sounds/g_stage_voice_2.adp",
+   "size": 20608
+  },
+  {
+   "path": "assets/sounds/g_stage_voice_3.adp",
+   "size": 27552
+  },
+  {
+   "path": "assets/sounds/g_stage_voice_4.adp",
+   "size": 14864
+  },
+  {
+   "path": "assets/sounds/se_barrier_end.adp",
+   "size": 28160
+  },
+  {
+   "path": "assets/sounds/se_barrier_start.adp",
+   "size": 27248
+  },
+  {
+   "path": "assets/sounds/se_correct.adp",
+   "size": 20608
+  },
+  {
+   "path": "assets/sounds/se_cursor.adp",
+   "size": 10928
+  },
+  {
+   "path": "assets/sounds/se_damage.adp",
+   "size": 11840
+  },
+  {
+   "path": "assets/sounds/se_decision.adp",
+   "size": 28464
+  },
+  {
+   "path": "assets/sounds/se_explosion.adp",
+   "size": 20000
+  },
+  {
+   "path": "assets/sounds/se_guard.adp",
+   "size": 11232
+  },
+  {
+   "path": "assets/sounds/se_over.adp",
+   "size": 8512
+  },
+  {
+   "path": "assets/sounds/se_shoot.adp",
+   "size": 3664
+  },
+  {
+   "path": "assets/sounds/se_shoot_b.adp",
+   "size": 7296
+  },
+  {
+   "path": "assets/sounds/se_sp.adp",
+   "size": 23936
+  },
+  {
+   "path": "assets/sounds/se_sp_explosion.adp",
+   "size": 28464
+  },
+  {
+   "path": "assets/sounds/voice_congra.adp",
+   "size": 23328
+  },
+  {
+   "path": "assets/sounds/voice_countdown0.adp",
+   "size": 14864
+  },
+  {
+   "path": "assets/sounds/voice_countdown1.adp",
+   "size": 13648
+  },
+  {
+   "path": "assets/sounds/voice_countdown2.adp",
+   "size": 12128
+  },
+  {
+   "path": "assets/sounds/voice_countdown3.adp",
+   "size": 12128
+  },
+  {
+   "path": "assets/sounds/voice_countdown4.adp",
+   "size": 12736
+  },
+  {
+   "path": "assets/sounds/voice_countdown5.adp",
+   "size": 12128
+  },
+  {
+   "path": "assets/sounds/voice_countdown6.adp",
+   "size": 12432
+  },
+  {
+   "path": "assets/sounds/voice_countdown7.adp",
+   "size": 12128
+  },
+  {
+   "path": "assets/sounds/voice_countdown8.adp",
+   "size": 8512
+  },
+  {
+   "path": "assets/sounds/voice_countdown9.adp",
+   "size": 11536
+  },
+  {
+   "path": "assets/sounds/voice_fight.adp",
+   "size": 16672
+  },
+  {
+   "path": "assets/sounds/voice_gameover.adp",
+   "size": 24224
+  },
+  {
+   "path": "assets/sounds/voice_ko.adp",
+   "size": 23024
+  },
+  {
+   "path": "assets/sounds/voice_round0.adp",
+   "size": 21200
+  },
+  {
+   "path": "assets/sounds/voice_round1.adp",
+   "size": 22416
+  },
+  {
+   "path": "assets/sounds/voice_round2.adp",
+   "size": 16064
+  },
+  {
+   "path": "assets/sounds/voice_round3.adp",
+   "size": 21808
+  },
+  {
+   "path": "assets/sounds/voice_thankyou.adp",
+   "size": 21808
+  },
+  {
+   "path": "assets/sounds/voice_titlecall.adp",
+   "size": 26352
+  },
+  {
+   "path": "athena.ini",
+   "size": 76
+  },
+  {
+   "path": "main.js",
+   "size": 128583
+  }
+ ]
+}
