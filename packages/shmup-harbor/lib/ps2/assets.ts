@@ -233,14 +233,48 @@ function textureOf(value: unknown): string[] | null {
  * enemy's textures are collected, put 43 frames on the sheet for the five
  * stock bosses where 16 are ever drawn — and with five bosses to carry, that
  * is the difference between the level atlas at full size and at 1/4. A boss
- * with a second stage draws that stage's morph and stance too (stage2Frames).
+ * with a second stage draws that stage's morph and stance too (stage2Frames),
+ * and one with an overlay its parts and glow (overlayFrames).
  */
 function bossFrames(boss: Record<string, unknown>): string[] {
   const anim = boss.anim as { idle?: unknown } | null | undefined;
-  return [
+  const drawn = [
     ...textureOf(boss) ?? textureOf({ texture: anim?.idle }) ?? [],
     ...stage2Frames(boss),
   ];
+  return [...drawn, ...overlayFrames(boss, drawn)];
+}
+
+/**
+ * The frames a boss's `overlay` draws (runtime-patches.ts): its parts — gs's
+ * Geekstar wears his logo's G, E, E, K, one of which is now and then thrown —
+ * and the glow cut of each frame in `drawn`, the frames the port stands the
+ * boss in. The browser lights all of a boss's frames; the port draws only
+ * these, so the cuts of the rest would sit on the sheet unused.
+ */
+export function overlayFrames(
+  boss: Record<string, unknown>,
+  drawn: readonly string[],
+): string[] {
+  const overlay = boss.overlay as
+    | { parts?: unknown; glow?: { frames?: unknown } }
+    | null
+    | undefined;
+  if (!overlay || typeof overlay !== "object") return [];
+  const out: string[] = [];
+  if (Array.isArray(overlay.parts)) {
+    for (const part of overlay.parts) {
+      const frame = (part as { frame?: unknown } | null)?.frame;
+      if (typeof frame === "string" && frame) out.push(frame);
+    }
+  }
+  const glow = overlay.glow?.frames;
+  if (glow && typeof glow === "object") {
+    for (const [lit, cut] of Object.entries(glow)) {
+      if (drawn.includes(lit) && typeof cut === "string" && cut) out.push(cut);
+    }
+  }
+  return out;
 }
 
 /** A boss's `stage2` block, when it has one (runtime-patches.ts). */

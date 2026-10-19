@@ -19,15 +19,26 @@
 // every URL in it is relative. Served at the bare /games/super-mario-sp they
 // would all resolve against /games/ and the emulator would fetch its core from
 // one directory too high.
+//
+// A few are written by a build and gitignored rather than committed — a PS2
+// Download / PLAY page's in-browser build, `deno task ps2:page <level>` — so a
+// checkout may or may not have them. They are GENERATED_INDEXES: listed so the
+// bare URL redirects once the build has run, and not required on disk.
+export const GENERATED_INDEXES = [
+  "/games/gs-ps2/play",
+];
+
 export const STATIC_INDEXES = [
   "/desktop",
   "/editor",
   "/extension",
+  "/games/gs-ps2",
   "/games/super-mario-sp",
   "/pixel-composer",
   "/pixel-editor",
   "/tilemap-editor",
   "/virtual-pad",
+  ...GENERATED_INDEXES,
 ];
 
 /**

@@ -269,7 +269,14 @@ export function buildDisk(options = {}) {
     });
     const inv = checkDirectory(back);
     if (back.length && !(inv.contiguous && inv.blocksFit && inv.withinCapacity)) {
-        throw new Error("the directory this wrote fails its own invariants (contiguous, blocksFit, withinCapacity)");
+        // Name the files, so a layout that lands one across the zone boundary
+        // at LBA 268 (where the block shrinks) says so instead of only failing.
+        const bad = back.filter((b) => !checkDirectory([b]).blocksFit || !checkDirectory([b]).withinCapacity)
+            .map((b) => `${b.name}.${b.ext} (LBA ${b.startLba}+${b.blockCount}, ${b.storedSize} bytes)`);
+        throw new Error(
+            "the directory this wrote fails its own invariants (contiguous, blocksFit, withinCapacity)" +
+                (bad.length ? `: ${bad.join(", ")}` : ""),
+        );
     }
     back.forEach((b, i) => {
         const f = files[i];

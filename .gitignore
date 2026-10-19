@@ -24,6 +24,12 @@ static/games/super-mario-sp-web.zip
 # The same for the 2019 game's PS2 web build: `deno task 2019:zip` packs it
 # from static/games/2019/level.json and this checkout's game.bundle.js.
 static/games/2019-web.zip
+# A game's PS2 download page (`deno task ps2:page`): the page, its README and
+# the preview GIF are committed; the disc, the USB zip and the web build are
+# rebuilt from the level.
+static/games/*-ps2/*.iso
+static/games/*-ps2/*.zip
+static/games/*-ps2/play/
 
 # Finder's per-directory metadata. No leading slash, so it is ignored at every
 # depth — macOS drops one into any folder it has been browsed in.

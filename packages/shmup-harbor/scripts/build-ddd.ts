@@ -52,7 +52,12 @@ import {
   NDD_IMAGE_BYTES,
 } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
-import { loadLevel, loadLevelArt, titleArt } from "./build-sav.ts";
+import {
+  bossRushArg,
+  loadLevel,
+  loadLevelArt,
+  titleArt,
+} from "./build-sav.ts";
 
 const ROOT = repoRoot();
 const FIXTURES = join(ROOT, "dev-fixtures");
@@ -77,6 +82,8 @@ export interface BuildDddOptions {
   out?: string | null;
   /** Skip the base game's atlas for missing frames. */
   noBaseAtlas?: boolean;
+  /** Cut the level to its bosses from this stage on (lib/boss-rush.ts). */
+  bossRush?: number | null;
   log?: (message: string) => void;
 }
 
@@ -179,7 +186,9 @@ export async function buildDdd(
 ): Promise<BuildDddResult> {
   const log = options.log ?? (() => {});
   const format: DiskFormat = options.format ?? "ndd";
-  const { record } = await loadLevel(options.level, log);
+  const { record } = await loadLevel(options.level, log, {
+    bossRush: options.bossRush,
+  });
   const art = await loadLevelArt(record, {
     noBaseAtlas: options.noBaseAtlas,
     log,
@@ -344,11 +353,12 @@ if (import.meta.main) {
     } else if (arg === "--out") opts.out = value();
     else if (arg.startsWith("--out=")) opts.out = arg.slice(6);
     else if (arg === "--no-base-atlas") opts.noBaseAtlas = true;
+    else if (arg.startsWith("--boss-rush")) opts.bossRush = bossRushArg(arg);
     else if (arg === "--report") report = true;
     else if (arg === "--help" || arg === "-h") {
       console.log(
         "usage: deno task build:ddd [level-name | level.json] [--as NAME] [--disk <ddd|ndd> | --no-disk]\n" +
-          "       [--template NAME | --no-template] [--ndd | --ddd] [--out file] [--no-base-atlas] [--report]",
+          "       [--template NAME | --no-template] [--ndd | --ddd] [--out file] [--no-base-atlas] [--boss-rush[=STAGE]] [--report]",
       );
       Deno.exit(0);
     } else if (arg.startsWith("--")) fail(`unknown option ${arg}`);

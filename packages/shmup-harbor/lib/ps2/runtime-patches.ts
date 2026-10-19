@@ -73,18 +73,55 @@ export interface RuntimePatch {
 // - The routine is picked by `stageId`, never by attackPattern, so only a
 //   block's OWN attackPattern changes it, and only to one the port has
 //   (`bossN`); a boss's attackPattern does nothing here in either stage.
-// - Timings are logic steps, as every one of the port's is, at its own 30 a
-//   second (and twice as fast in turbo, like its cooldowns): a morph frame
-//   is 3 (the browser's 90 ms), stage 1's last pose fades out over 11 (360
-//   ms) above the first frames of the morph, and the routine picks up 15
-//   after the morph (500 ms). The boss holds still and holds fire while it
-//   changes, and stays hittable throughout.
+// - Timings are the browser's milliseconds, counted in logic steps at the
+//   build's game speed (bossSteps: `__PS2_GAME_FPS__`, 120 a second by
+//   default, lib/ps2/build.ts; else the port's own 30), and twice as fast in
+//   turbo, like its cooldowns: a morph frame is 90 ms (3 steps at 30, 11 at
+//   120), stage 1's last pose fades out over 360 ms above the first frames of
+//   the morph, and the routine picks up 500 ms after the morph. The boss
+//   holds still and holds fire while it changes, and stays hittable
+//   throughout.
 // - The first morph frame keeps the top edge of the body it replaces — a
 //   taller body hangs lower rather than climbing off the screen — and every
 //   frame after keeps its centre; the hit box is each frame's size, as
 //   createBoss makes it.
 // - The browser's camera flash and shake have no equivalent on the console;
 //   the morph plays se_sp, as the browser does.
+//
+// A boss's overlay, the browser's (game.bundle.js: armBossOverlay,
+// chargeOverlayShot, fireOverlayShot; README-Technical.md, "A boss can wear
+// parts that come off as shots"). `overlay.parts` are drawn over the boss,
+// each by its top-left in the boss's frame and filled with `cover`; with a
+// `shot`, every `shot.every` ms one part's copy fades in over its slot in
+// `shot.chargeMs`, flashing through `shot.colors`, and at full opacity leaves
+// as an aimed shot that keeps flashing; and while a part charges, `glow` lays
+// the cut of the boss's current frame under the parts in the part's colour.
+// gs's Geekstar wears his logo's G, E, E, K this way, black over the white
+// ones, and his mask's red eyes and mouth burn in the thrown letter's colour.
+//
+// - A fill and a flash are both one AthenaEnv draw colour, which multiplies
+//   the texture as the browser's tint does: black fills a part solid (its dark
+//   outline too, as Phaser's FILL does), a neon colour turns the white letter
+//   neon. The colour's alpha carries the fade.
+// - The record's timings are the browser's milliseconds, counted in logic
+//   steps at the build's own game speed — `__PS2_GAME_FPS__`, 120 a second by
+//   default (lib/ps2/build.ts), the browser's own logic rate, else the port's
+//   30 — so the letters come as often on a disc as on the web: every 2600 ms
+//   is 312 steps there, a 900 ms charge 108, a 60 ms flash 7. Turbo runs them
+//   twice as fast, as it runs everything. The clock runs only once the boss
+//   has arrived and stops with it in a time stop, as the browser's does.
+// - The browser picks the part at random. The port picks every part from one
+//   fixed sequence instead (an LCG seeded per boss), so a run replays the
+//   same, as its routines do.
+// - The shot flies at `shot.speed` per step, as every other boss shot here
+//   flies at its record's speed, aimed at the first ship still flying (the
+//   scene the port publishes for the web host, `__PS2_GS__`, has them); with
+//   none it falls straight down. Its hit box is the letter, as in the browser.
+//   The scene's projectiles keep only the fields createProjectile knows, so
+//   the flash rides on three of their own (tints, flashSteps, tintSteps),
+//   carried over by a wrapper, and is drawn by another.
+// - The glow lights only the frames the port draws a boss in (its idle
+//   stance); lib/ps2/assets.ts packs just those cuts.
 //
 // No `$` in here: it is spliced into a String.replace replacement.
 export const BOSS_RUNTIME = String
@@ -93,9 +130,13 @@ var BOSS_STAGE2_HP_BELOW = 0.5;
 var BOSS_WEAPON_SUFFIXES = ["", "A", "B", "C"];
 var BOSS_HEAVY_EVERY = 3;
 var BOSS_HEAVY_STEPS = 40;
-var BOSS_STAGE2_MORPH_STEPS = 3;
-var BOSS_STAGE2_FADE_STEPS = 11;
-var BOSS_STAGE2_REST_STEPS = 15;
+var BOSS_STAGE2_MORPH_MS = 90;
+var BOSS_STAGE2_FADE_MS = 360;
+var BOSS_STAGE2_REST_MS = 500;
+function bossSteps(ms) {
+  var perSecond = Number(globalThis.__PS2_GAME_FPS__) || 30;
+  return Math.max(1, Math.round(ms * perSecond / 1000));
+}
 function bossStage2Record(bossData) {
   var stage2 = bossData && bossData.stage2;
   if (!stage2 || typeof stage2 !== "object") return null;
@@ -205,7 +246,7 @@ function bossStage2Pose(ctx, b, frames, keepTop) {
 function bossStage2Rest(b) {
   b.stage2Morph = null;
   b.shootFlg = 1;
-  b.attackCooldown = BOSS_STAGE2_REST_STEPS;
+  b.attackCooldown = bossSteps(BOSS_STAGE2_REST_MS);
 }
 function bossStage2Start(ctx, b) {
   var stage2 = b.stage2;
@@ -236,7 +277,7 @@ function bossStage2Step(ctx, b) {
   var ghost = b.stage2Ghost;
   if (ghost) {
     ghost.steps += mul;
-    if (ghost.steps >= BOSS_STAGE2_FADE_STEPS) b.stage2Ghost = null;
+    if (ghost.steps >= bossSteps(BOSS_STAGE2_FADE_MS)) b.stage2Ghost = null;
   }
   var morph = b.stage2Morph;
   if (!morph) return false;
@@ -249,8 +290,8 @@ function bossStage2Step(ctx, b) {
     b.tintTimer = 0;
   }
   morph.steps += mul;
-  if (morph.steps < BOSS_STAGE2_MORPH_STEPS) return true;
-  morph.steps -= BOSS_STAGE2_MORPH_STEPS;
+  if (morph.steps < bossSteps(BOSS_STAGE2_MORPH_MS)) return true;
+  morph.steps -= bossSteps(BOSS_STAGE2_MORPH_MS);
   morph.at++;
   if (morph.at < morph.frames.length) {
     bossStage2Pose(ctx, b, [morph.frames[morph.at]], false);
@@ -263,7 +304,7 @@ function bossStage2Step(ctx, b) {
 function bossStage2Ghost(ctx, b) {
   var ghost = b.stage2Ghost;
   if (!ghost || b.deadFlg || !b.visible) return;
-  var alpha = (1 - ghost.steps / BOSS_STAGE2_FADE_STEPS) * b.alpha;
+  var alpha = (1 - ghost.steps / bossSteps(BOSS_STAGE2_FADE_MS)) * b.alpha;
   if (alpha <= 0) return;
   ctx.atlas.drawFrame(
     ghost.atlas,
@@ -274,6 +315,204 @@ function bossStage2Ghost(ctx, b) {
     ctx.vp.scale,
     alpha,
     null
+  );
+}
+var OVERLAY_NEON = [
+  [255, 43, 214],
+  [0, 240, 255],
+  [57, 255, 20],
+  [255, 242, 0],
+  [255, 106, 0]
+];
+function overlayRgb(value, fallback) {
+  var n = typeof value === "number" && isFinite(value) ? value :
+    typeof value === "string" ? parseInt(value.replace(/^#|^0x/i, ""), 16) : NaN;
+  return isNaN(n) ? fallback : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function overlaySteps(ms, fallback, least) {
+  var n = Number(ms);
+  return Math.max(least, bossSteps(n > 0 ? n : fallback));
+}
+function overlayArt(ctx, atlas, name) {
+  if (typeof name !== "string") return null;
+  var frame = ctx.atlas.resolveFrameName(atlas, name);
+  if (!ctx.atlas.hasFrame(atlas, frame)) return null;
+  var size = ctx.atlas.getFrameSize(atlas, frame);
+  return { frame: frame, x: 0, y: 0, w: size.w, h: size.h };
+}
+function bossOverlayArm(ctx, b, data) {
+  b.overlay = null;
+  var overlay = data && data.overlay;
+  if (!overlay || !Array.isArray(overlay.parts) || !overlay.parts.length) {
+    return b;
+  }
+  var parts = [];
+  for (var i = 0; i < overlay.parts.length; i++) {
+    var part = overlay.parts[i];
+    var art = part ? overlayArt(ctx, b.atlas, part.frame) : null;
+    if (!art) return b;
+    art.x = Number(part.x) || 0;
+    art.y = Number(part.y) || 0;
+    parts.push(art);
+  }
+  var glow = null;
+  var lit = overlay.glow && overlay.glow.frames;
+  if (lit && typeof lit === "object") {
+    for (var key in lit) {
+      var from = overlayArt(ctx, b.atlas, key);
+      var cut = overlayArt(ctx, b.atlas, lit[key]);
+      if (!from || !cut) continue;
+      if (!glow) {
+        glow = {
+          x: Number(overlay.glow.x) || 0,
+          y: Number(overlay.glow.y) || 0,
+          frames: {}
+        };
+      }
+      glow.frames[from.frame] = cut;
+    }
+  }
+  var shot = overlay.shot;
+  var colors = [];
+  if (shot && Array.isArray(shot.colors)) {
+    for (var c = 0; c < shot.colors.length; c++) {
+      colors.push(overlayRgb(shot.colors[c], [255, 255, 255]));
+    }
+  }
+  b.overlay = {
+    parts: parts,
+    cover: overlayRgb(overlay.cover, [0, 0, 0]),
+    glow: glow,
+    shot: shot && typeof shot === "object" ? {
+      every: overlaySteps(shot.every, 2600, 8),
+      charge: overlaySteps(shot.chargeMs, 900, 3),
+      flash: overlaySteps(shot.flashMs, 60, 1),
+      colors: colors.length ? colors : OVERLAY_NEON,
+      speed: Number(shot.speed) || 3,
+      damage: shot.damage || 1,
+      hp: shot.hp || 1
+    } : null,
+    timer: 0,
+    seed: 1,
+    charge: null
+  };
+  return b;
+}
+function bossOverlayStep(ctx, b) {
+  var o = b.overlay;
+  if (!o || !o.shot || b.deadFlg) return;
+  var mul = ctx.state.turboMode ? 2 : 1;
+  if (o.charge) {
+    o.charge.steps += mul;
+    if (o.charge.steps >= o.shot.charge) bossOverlayFire(b, o);
+  }
+  o.timer += mul;
+  if (o.timer < o.shot.every) return;
+  o.timer -= o.shot.every;
+  if (o.charge) return;
+  // The sequence's high bits: its low ones repeat (1 mod 4 for a long run).
+  o.seed = (o.seed * 75 + 74) % 65537;
+  o.charge = {
+    part: o.parts[Math.floor(o.seed * o.parts.length / 65537)],
+    steps: 0
+  };
+}
+function bossOverlayShip() {
+  var gs = typeof globalThis.__PS2_GS__ === "function" ?
+    globalThis.__PS2_GS__() : null;
+  if (!gs) return null;
+  if (gs.player && !gs.player.dead) return gs.player;
+  if (gs.player2 && !gs.player2.dead) return gs.player2;
+  return null;
+}
+function bossOverlayFire(b, o) {
+  var c = o.charge;
+  o.charge = null;
+  var x = b.x + c.part.x + c.part.w / 2;
+  var y = b.y + c.part.y + c.part.h / 2;
+  var ship = bossOverlayShip();
+  var dx = ship ? ship.x + ship.width / 2 - x : 0;
+  var dy = ship ? ship.y + ship.height / 2 - y : 1;
+  var d = Math.sqrt(dx * dx + dy * dy) || 1;
+  b.pendingProjectiles.push({
+    x: x,
+    y: y,
+    rotX: dx / d,
+    rotY: dy / d,
+    speed: o.shot.speed,
+    damage: o.shot.damage,
+    hp: o.shot.hp,
+    name: "bullet",
+    atlas: b.atlas,
+    frames: [c.part.frame],
+    width: c.part.w,
+    height: c.part.h,
+    tints: o.shot.colors,
+    flashSteps: o.shot.flash,
+    tintSteps: c.steps
+  });
+}
+function overlayColor(ctx, rgb, alpha) {
+  var a = Math.max(0, Math.min(1, alpha));
+  return ctx.rt.Color.new(rgb[0], rgb[1], rgb[2], Math.floor(a * 128));
+}
+function overlayFlash(tints, steps, flash) {
+  return tints[Math.floor(steps / (flash || 1)) % tints.length];
+}
+function overlayDraw(ctx, b, art, x, y, color) {
+  ctx.atlas.drawFrame(
+    b.atlas,
+    art.frame,
+    ctx.vp.toX(b.x + x + art.w / 2),
+    ctx.vp.toY(b.y + y + art.h / 2),
+    ctx.vp.scale,
+    ctx.vp.scale,
+    1,
+    color
+  );
+}
+function bossOverlayDraw(ctx, b) {
+  var o = b.overlay;
+  if (!o || b.deadFlg || !b.visible || b.alpha <= 0 || !b.frames.length) return;
+  var c = o.charge;
+  var neon = c ? overlayFlash(o.shot.colors, c.steps, o.shot.flash) : null;
+  if (neon && o.glow) {
+    var cut = o.glow.frames[
+      ctx.atlas.resolveFrameName(b.atlas, b.frames[b.animFrame])
+    ];
+    if (cut) {
+      overlayDraw(ctx, b, cut, o.glow.x, o.glow.y, overlayColor(ctx, neon, b.alpha));
+    }
+  }
+  var cover = overlayColor(ctx, o.cover, b.alpha);
+  for (var i = 0; i < o.parts.length; i++) {
+    overlayDraw(ctx, b, o.parts[i], o.parts[i].x, o.parts[i].y, cover);
+  }
+  if (c) {
+    var fade = b.alpha * Math.min(1, c.steps / o.shot.charge);
+    overlayDraw(ctx, b, c.part, c.part.x, c.part.y, overlayColor(ctx, neon, fade));
+  }
+}
+function projectileTints(proj, data) {
+  if (data && Array.isArray(data.tints) && data.tints.length) {
+    proj.tints = data.tints;
+    proj.flashSteps = data.flashSteps || 1;
+    proj.tintSteps = data.tintSteps || 0;
+  }
+  return proj;
+}
+function projectileFlashDraw(ctx, proj) {
+  if (proj.deadFlg || proj.dead || !proj.frames.length) return;
+  var atlas = proj.atlas || "game_asset";
+  ctx.atlas.drawFrame(
+    atlas,
+    ctx.atlas.resolveFrameName(atlas, proj.frames[proj.animFrame] || proj.frames[0]),
+    ctx.vp.toX(proj.x),
+    ctx.vp.toY(proj.y),
+    ctx.vp.scale,
+    ctx.vp.scale,
+    1,
+    overlayColor(ctx, overlayFlash(proj.tints, proj.tintSteps, proj.flashSteps), 1)
   );
 }
 `;
@@ -297,13 +536,13 @@ export const RUNTIME_PATCHES: readonly RuntimePatch[] = [
   },
   {
     // A boss, 1 of 4: the helpers go in ahead of createBoss, which is wrapped
-    // so every boss it makes is armed the browser's way, and for its second
-    // stage — or for none, when its record has no block.
+    // so every boss it makes is armed the browser's way, for its second stage
+    // and for its overlay — or for neither, when its record has no block.
     name: "boss: armed",
     find: /function createBoss\((\w+), (\w+), (\w+)\) \{/,
     replace: BOSS_RUNTIME +
       "function createBoss($1, $2, $3) {\n" +
-      "  return bossArm(createBossBody($1, $2, $3), $2);\n" +
+      "  return bossOverlayArm($1, bossArm(createBossBody($1, $2, $3), $2), $2);\n" +
       "}\n" +
       "function createBossBody($1, $2, $3) {",
     defines: [...BOSS_NAMES, "createBossBody"],
@@ -316,24 +555,101 @@ export const RUNTIME_PATCHES: readonly RuntimePatch[] = [
     replace: "$1bossMove($2, $3);",
   },
   {
-    // 3 of 4: the morph. While it plays the boss neither moves nor fires —
-    // bossLoop stops short of both — and the ghost of stage 1 fades.
+    // 3 of 4: every step once the boss has arrived, the overlay's clock; then
+    // the morph. While it plays the boss neither moves nor fires — bossLoop
+    // stops short of both — and the ghost of stage 1 fades.
     name: "boss stage 2: the morph",
     find:
       /(\n(\s*)const (\w+) = (\w+)\.state\.turboMode \? 2 : 1;\r?\n\s*(\w+)\.moveTimer \+= \3;)/,
-    replace: "\n$2if (bossStage2Step($4, $5)) return;$1",
+    replace: "\n$2bossOverlayStep($4, $5);" +
+      "\n$2if (bossStage2Step($4, $5)) return;$1",
   },
   {
     // 4 of 4: stage 1's last pose, drawn over the first frames of the morph
-    // as it fades, so one body reads as becoming the other rather than a cut.
+    // as it fades, so one body reads as becoming the other rather than a cut;
+    // then the overlay, over whichever body is standing.
     name: "boss stage 2: the ghost",
     find: /function bossDraw\((\w+), (\w+)\) \{/,
     replace: "function bossDraw($1, $2) {\n" +
       "  bossDrawBody($1, $2);\n" +
       "  bossStage2Ghost($1, $2);\n" +
+      "  bossOverlayDraw($1, $2);\n" +
       "}\n" +
       "function bossDrawBody($1, $2) {",
     defines: ["bossDrawBody"],
+  },
+  {
+    // An overlay's shot, 1 of 3: the scene makes each boss shot a projectile
+    // with createProjectile, which keeps only the fields it knows; the flash
+    // is carried over.
+    name: "overlay shot: made",
+    find: /function createProjectile\((\w+)\) \{/,
+    replace: "function createProjectile($1) {\n" +
+      "  return projectileTints(createProjectileBody($1), $1);\n" +
+      "}\n" +
+      "function createProjectileBody($1) {",
+    defines: ["createProjectileBody"],
+  },
+  {
+    // 2 of 3: its flash keeps time with the steps it flies.
+    name: "overlay shot: flies",
+    find: /function projectileLoop\((\w+), (\w+), (\w+)\) \{/,
+    replace: "function projectileLoop($1, $2, $3) {\n" +
+      "  if ($2.tints) $2.tintSteps += $1.state.turboMode ? 2 : 1;\n" +
+      "  return projectileLoopBody($1, $2, $3);\n" +
+      "}\n" +
+      "function projectileLoopBody($1, $2, $3) {",
+    defines: ["projectileLoopBody"],
+  },
+  {
+    // 3 of 3: and is drawn in its colour of the moment.
+    name: "overlay shot: drawn",
+    find: /function projectileDraw\((\w+), (\w+)\) \{/,
+    replace: "function projectileDraw($1, $2) {\n" +
+      "  if ($2.tints) {\n" +
+      "    projectileFlashDraw($1, $2);\n" +
+      "    return;\n" +
+      "  }\n" +
+      "  projectileDrawBody($1, $2);\n" +
+      "}\n" +
+      "function projectileDrawBody($1, $2) {",
+    defines: ["projectileDrawBody"],
+  },
+  {
+    // The text face. The port makes one Font('default') — AthenaEnv's
+    // built-in — for every line it prints, the title's HI-SCORE and PRESS
+    // START and the HUD alike. A build that carries a face of its own names
+    // it in `__PS2_FONT__` (lib/ps2/build.ts, Orbitron by default) with the
+    // scale that keeps it inside the port's layout in `__PS2_FONT_SCALE__`;
+    // a build that names none keeps the built-in font at the port's scale.
+    //
+    // `__PS2_FONT_BOLD__` thickens it: AthenaEnv rasterises a TrueType face at
+    // its own size and scales the bitmap down, and at the half size the port's
+    // layout needs, Orbitron's hairline crossbars fall between pixels ("H
+    // SCORE"). Drawing each line again a pixel right and a pixel down keeps
+    // every stroke at least two pixels wide.
+    name: "font: the build's own",
+    find:
+      /const (\w+) = new (\w+)\.Font\("default"\);(\r?\n)(\s*)\1\.scale = (\w+)\.scale;/,
+    replace:
+      'const $1 = new $2.Font(globalThis.__PS2_FONT__ || "default");$3$4$1.scale = $5.scale * (globalThis.__PS2_FONT_SCALE__ || 1);' +
+      "$3$4if (globalThis.__PS2_FONT_BOLD__) {$3$4  const print1 = $1.print.bind($1);" +
+      "$3$4  $1.print = (x, y, text, color) => { print1(x, y, text, color); print1(x + 1, y, text, color); print1(x, y + 1, text, color); };" +
+      "$3$4}",
+  },
+  {
+    // The game scene's state — the ship, the enemies, the boss, the shots in
+    // flight, the items — lives in createGameScene's own closure, where
+    // nothing outside the scene can see it. A pilot that flies the web build
+    // (scripts/testdrive-parity.ts, through lib/ps2/web-host.ts) has to: it
+    // reads `globalThis.__PS2_GS__()`, the scene the game made last. A getter,
+    // so it reads the state only once the scene has built it. A console has
+    // nothing that calls it, so on hardware it is one unused property.
+    name: "game scene: published",
+    find:
+      /function createGameScene\((\w+), (\w+) = null\) \{(\r?\n)(\s*)const (\w+) = \{/,
+    replace:
+      "function createGameScene($1, $2 = null) {$3$4globalThis.__PS2_GS__ = () => $5;$3$4const $5 = {",
   },
 ];
 

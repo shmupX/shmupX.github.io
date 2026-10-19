@@ -15,7 +15,12 @@ import { dirname, join, relative, resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { exportLevelToSfcSram } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
-import { loadLevel, loadLevelArt, titleArt } from "./build-sav.ts";
+import {
+  bossRushArg,
+  loadLevel,
+  loadLevelArt,
+  titleArt,
+} from "./build-sav.ts";
 
 const ROOT = repoRoot();
 
@@ -24,6 +29,8 @@ export interface BuildSfcOptions {
   name?: string | null;
   out?: string | null;
   noBaseAtlas?: boolean;
+  /** Cut the level to its bosses from this stage on (lib/boss-rush.ts). */
+  bossRush?: number | null;
   log?: (message: string) => void;
 }
 
@@ -46,7 +53,9 @@ export async function buildSfc(
   options: BuildSfcOptions = {},
 ): Promise<BuildSfcResult> {
   const log = options.log ?? (() => {});
-  const { record } = await loadLevel(options.level, log);
+  const { record } = await loadLevel(options.level, log, {
+    bossRush: options.bossRush,
+  });
   const art = await loadLevelArt(record, {
     noBaseAtlas: options.noBaseAtlas,
     log,
@@ -151,6 +160,7 @@ if (import.meta.main) {
     else if (arg === "--out") opts.out = value();
     else if (arg.startsWith("--out=")) opts.out = arg.slice(6);
     else if (arg === "--no-base-atlas") opts.noBaseAtlas = true;
+    else if (arg.startsWith("--boss-rush")) opts.bossRush = bossRushArg(arg);
     else if (arg === "--report") report = true;
     else if (arg.startsWith("--")) fail(`unknown option ${arg}`);
     else if (opts.level) fail(`unexpected argument ${arg}`);

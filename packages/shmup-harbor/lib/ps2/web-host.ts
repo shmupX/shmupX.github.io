@@ -38,6 +38,7 @@ import {
   registerCanvasBitmapFont,
 } from "@easierbycode/svelte-ps2/phaser";
 import { WebPadSource } from "./web-pads.ts";
+import { registerProportionalCanvasFont } from "./web-font.ts";
 import { createWebSound, type SoundEvent, type WebSound } from "./web-sound.ts";
 import {
   athenaPath,
@@ -207,6 +208,23 @@ async function boot(): Promise<void> {
   const pads = new WebPadSource();
   g.__PS2_PADS__ = pads.scripted;
 
+  // A TrueType face the build ships (lib/ps2/build.ts — Orbitron by default)
+  // is the one main.js asks for by path; the page loads it before the game
+  // starts, so the canvas font it backs is drawn in it and not a fallback.
+  const fonts = new Map<string, string>();
+  const faces = paths.filter((path) => /\.(ttf|otf)$/i.test(path));
+  for (let i = 0; i < faces.length; i++) {
+    const family = `ps2-face-${i}`;
+    try {
+      const face = new FontFace(family, `url(${url(faces[i])})`);
+      await face.load();
+      document.fonts.add(face);
+      fonts.set(faces[i], family);
+    } catch (error) {
+      console.warn(`[ps2 host] ${faces[i]} did not load as a font`, error);
+    }
+  }
+
   say("");
   startGame({
     pngs: paths.filter((path) => /\.png$/i.test(path)),
@@ -214,6 +232,7 @@ async function boot(): Promise<void> {
     files,
     pads,
     sound,
+    fonts,
   });
 }
 
@@ -223,6 +242,8 @@ interface GameSetup {
   files: BuildFiles;
   pads: WebPadSource;
   sound: WebSound;
+  /** The build's own font files, by AthenaEnv path → the CSS family loaded. */
+  fonts: Map<string, string>;
 }
 
 function startGame(setup: GameSetup): void {
@@ -250,6 +271,20 @@ function startGame(setup: GameSetup): void {
         fontFamily: 'Consolas, "Lucida Console", "Courier New", monospace',
         fontSize: 12,
       });
+      // The build's own faces, each a proportional canvas font (./web-font.ts)
+      // at the size AthenaEnv draws a TrueType face before scaling — about 21
+      // pixels to the em, measured in PCSX2 — so the scale main.js puts on it
+      // (`__PS2_FONT_SCALE__`, lib/ps2/build.ts) sizes it as on a console.
+      const faceKeys = new Map<string, string>();
+      for (const [path, family] of setup.fonts) {
+        const key = `ps2-font-${family}`;
+        registerProportionalCanvasFont(this, key, {
+          fontFamily: `"${family}", Consolas, monospace`,
+          fontSize: 21,
+          tracking: 1,
+        });
+        faceKeys.set(path, key);
+      }
       const { host } = createPhaserHost({
         scene: this,
         screen: SCREEN,
@@ -257,7 +292,9 @@ function startGame(setup: GameSetup): void {
         // Screen.clear paints the clear colour main.js asks for.
         clear: false,
         resolveTexture: athenaPath,
-        resolveFont: () => ({ key: FONT_KEY }),
+        resolveFont: (path: string) => ({
+          key: faceKeys.get(athenaPath(path)) ?? FONT_KEY,
+        }),
       });
       const runtime = createRuntime(host);
       this.runtime = runtime;

@@ -605,6 +605,10 @@ deno task sfc:verify      # …then boot that .srm under the real cart in Mesen,
 deno task sfc:openemu     # …or put it under the cart in OpenEmu (macOS): quit OpenEmu, retire the auto save state that would outrank it, install, launch
 deno task build:ddd       # a level as a Dezaemon 3D 64DD disk (.ndd) beside the prototype disk's sample projects
 deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (ls / get / report / png / all / put / rm / convert / sys)
+                          # every cart / card / disk / PS2 exporter above takes --boss-rush[=STAGE]: no waves but one showcase
+                          # row of every enemy type (and the level's drops), bosses only, from that stage on (lib/boss-rush.ts)
+deno task testdrive:parity # one level's boss on every target side by side — web, PS2, SFC, Saturn, Kids!, Dezaemon+, 64DD — a tool-assisted pilot fighting it, as one GIF + per-pane mp4s and input logs
+deno task ps2:page        # a game's PS2 download / PLAY page in static/games/<slug>-ps2/: ISO, USB zip, the web build, README, the GIF
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task ships:atlas     # cut dev-fixtures/ship-sheet/ships.png into the editor's NEW GAME character roster
 deno task tonebank:table  # re-pack the instrument map into src/audio/
@@ -1250,6 +1254,37 @@ Daltonius, into Liu Kang's dragon (the `liuKangDragon0`–`12` cells of
 monkey-kombat's `liu-kang.png`, packed into the level's atlas) spitting the
 Character Library's `deza_dragon` heads (`deza1_52_0.gif`, `deza1_52_1.gif`).
 `tests/boss_stage2_test.ts` pins it.
+
+**A boss can wear parts that come off as shots.** An `overlay` block on a boss
+record lays art over the boss's own, in a container that rides on the boss
+(position, zoom, spin, fade and the death shake, synced after each frame's
+update): `parts: [{frame, x, y}]`, each placed by its top-left in the boss's
+frame and filled with `cover`. With a `shot` block, every `shot.every` ms one
+part, picked at random, comes alive: a copy fades in over its slot in
+`shot.chargeMs`, flashing through `shot.colors` every `shot.flashMs`, and at
+full opacity leaves as an aimed shot (`speed`, `damage`, `hp`, `score`,
+`spgage` as any bullet record) that keeps flashing. The covered slot stays
+covered. A `glow: {x, y, frames}` block maps each boss frame to a cut of the
+boss laid at one place under the parts and shown only while a part charges,
+tinted that part's current colour. `armBossOverlay` builds it in `bossAdd`; a
+part frame the atlas lacks drops the whole overlay rather than drawing
+`duke_0` over the boss. The cloud game `gs` uses it for its first boss,
+Geekstar: the white "Geek" across his logo is squad-game's `geek-g`/`geek-e`/
+`geek-k` explosion letters pixel for pixel, so the letters sit over it in
+black, one at a time flashes neon and flies at the ship, and the red flame in
+his mask's eyes and mouth burns in the letter's colour while it charges
+(`scripts/gs/geek-letters.ts` packs the letters and cuts the flame out of each
+of his frames; it covers the title G's letters the same way, since gs's own
+`titleG.gif` is his `geekstar0` pixel for pixel; `--revert` takes it all back
+out). The character tools carry the overlay's art with the boss:
+`referencedFrames` and `remapFrames` walk its parts and its glow, keys
+included. `tests/gs_geek_letters_test.ts` pins it. The PS2 export carries it
+too (`lib/ps2/runtime-patches.ts` patches it into the port, `lib/ps2/assets.ts`
+packs the parts and the glow of the frames the port draws): a fill or a flash
+is one AthenaEnv draw colour, the record's milliseconds count in logic steps at
+the build's game speed, and the port picks the part from a fixed sequence
+rather than at random, so a run replays the same. `tests/ps2_boss_overlay_test.ts`
+pins it. The console exporters do not carry it.
 
 **A Dezaemon zako leaves with its squad.** The Ambition of Valkyrie's
 motorcycle is four records. The upright bike (stage 3, record 32) rides
@@ -3952,6 +3987,22 @@ upstream, as a `godMode` the port reads itself.
 `athena.elf`. `--iso` also writes a disc image; it is opt-in because the folder
 is what actually gets run, and a burned homebrew disc needs FMCB or a modchip
 regardless.
+
+**A rebuild reuses what has not changed**, from `build/ps2/.cache` beside the
+bundled runtime and athena.elf — not the build's own folder, which `--zip`
+removes, and every level shares it. The sound packs (`cachedSoundPack`) are the
+base game's sound tree through ffmpeg and are the same for every level: about
+half a minute of a build, now done once and kept under a key of every sound file
+by path, size and modification time, the effects' budget, and the encoders' own
+source, so changing any of those makes a fresh pack. The level
+(`fetchLevelRecord`) is revalidated rather than downloaded again: Firebase hands
+out an ETag on request and answers a GET carrying it with 304 and no body while
+the record is unchanged, so a rebuild costs one round trip, not the whole record
+(186 KB for `gs`). `savedAt` cannot stand in for that, since the editor's
+per-entry saves skip it. When Firebase cannot be reached the kept copy is used,
+and the log says so. A `gs` rebuild went from 57 s to 8 s. An ISO that cannot be
+written because an emulator has it open says so, rather than failing with the
+bare Windows sharing error.
 
 **Sheets ship paletted.** Every atlas goes out as an 8-bit indexed PNG, which
 AthenaEnv uploads as `GS_PSM_T8` — a quarter of the VRAM of the RGBA form. That

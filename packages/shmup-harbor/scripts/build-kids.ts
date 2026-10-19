@@ -25,7 +25,12 @@ import {
   KIDS_STOCK_ITEM_FRAMES,
 } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
-import { loadLevel, loadLevelArt, titleArt } from "./build-sav.ts";
+import {
+  bossRushArg,
+  loadLevel,
+  loadLevelArt,
+  titleArt,
+} from "./build-sav.ts";
 
 const ROOT = repoRoot();
 
@@ -40,6 +45,8 @@ export interface BuildKidsOptions {
   /** Skip the base game's atlas for missing frames. */
   noBaseAtlas?: boolean;
   horizontal?: boolean;
+  /** Cut the level to its bosses from this stage on (lib/boss-rush.ts). */
+  bossRush?: number | null;
   log?: (message: string) => void;
 }
 
@@ -62,7 +69,9 @@ export async function buildKids(
   options: BuildKidsOptions = {},
 ): Promise<BuildKidsResult> {
   const log = options.log ?? (() => {});
-  const { record } = await loadLevel(options.level, log);
+  const { record } = await loadLevel(options.level, log, {
+    bossRush: options.bossRush,
+  });
   const art = await loadLevelArt(record, {
     noBaseAtlas: options.noBaseAtlas,
     log,
@@ -135,6 +144,7 @@ if (import.meta.main) {
       opts.background = Number(arg.slice(13));
     } else if (arg === "--horizontal") opts.horizontal = true;
     else if (arg === "--no-base-atlas") opts.noBaseAtlas = true;
+    else if (arg.startsWith("--boss-rush")) opts.bossRush = bossRushArg(arg);
     else if (arg === "--report") report = true;
     else if (arg.startsWith("--")) fail(`unknown option ${arg}`);
     else if (opts.level) fail(`unexpected argument ${arg}`);

@@ -39,6 +39,24 @@ Deno.test("the god-mode guard goes in at the top of playerOnDamage", () => {
     "}",
     "function bossDraw(ctx2, b) {",
     "}",
+    // What a boss overlay's shot anchors on.
+    "function createProjectile(data) {",
+    "}",
+    "function projectileLoop(ctx2, proj, player) {",
+    "}",
+    "function projectileDraw(ctx2, proj) {",
+    "}",
+    // What the text face and the game scene's handle anchor on
+    // (tests/ps2_scene_handle_test.ts).
+    "function createGameFont(rt, vp) {",
+    '  const font = new rt.Font("default");',
+    "  font.scale = vp.scale;",
+    "}",
+    "function createGameScene(ctx2, net = null) {",
+    "  const gs = {",
+    "    waveInterval: 80,",
+    "  };",
+    "}",
   ].join("\n");
   const patched = patchRuntime(port);
   assert(

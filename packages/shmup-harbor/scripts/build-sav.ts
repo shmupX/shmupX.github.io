@@ -8,6 +8,11 @@
 //   deno task build:sav foo --out build/sav/foo.sav --snes-pal build/sav/foo.pal --report
 //   deno task build:sav foo --author "EASIER BY CODE"    # who the staff roll presents it by
 //   deno task build:sav foo --name dezaFoo               # the cart's own name (its comment, its file) over the level's
+//   deno task build:sav gs --boss-rush=1                 # no waves, bosses only, starting on stage 1 (0 is the first)
+//
+// --boss-rush[=STAGE] is shared by every console exporter (build:sfc,
+// build:kids, build:plus, build:ddd take it through loadLevel below, and
+// build:ps2 through lib/ps2/build.ts): lib/boss-rush.ts says what it cuts.
 //
 // The export is the inverse of the .sav import the editor does: the record's
 // atlas (`atlasImageDataURL` + `atlasFrames`, the level's custom frames) is
@@ -56,6 +61,11 @@ import {
 import { repoRoot } from "../lib/repo-root.ts";
 import { resolveCloudLevel } from "../lib/cloud-level.ts";
 import { RTDB_ROOT } from "../lib/rtdb-root.ts";
+import {
+  bossRushRecord,
+  describeBossRush,
+  parseBossRushFlag,
+} from "../lib/boss-rush.ts";
 
 /** The bytes behind a base64 data URL, whatever its MIME type. */
 function dataUrlBytes(dataUrl: string): Uint8Array<ArrayBuffer> {
@@ -131,6 +141,8 @@ export interface BuildSavOptions {
   /** Skip the base game's atlas for missing frames. */
   noBaseAtlas?: boolean;
   gameMode?: number;
+  /** Cut the level to its bosses from this stage on (lib/boss-rush.ts). */
+  bossRush?: number | null;
   log?: (message: string) => void;
 }
 
@@ -146,6 +158,20 @@ export interface BuildSavResult {
 function fail(message: string): never {
   console.error(`error: ${message}`);
   Deno.exit(2);
+}
+
+/**
+ * `--boss-rush` / `--boss-rush=N` as the console exporters' argument loops
+ * take it: the stage to start on, or exit with the reason it is malformed.
+ */
+export function bossRushArg(arg: string): number {
+  try {
+    const stage = parseBossRushFlag(arg);
+    if (stage === undefined) fail(`unknown option ${arg}`);
+    return stage;
+  } catch (e) {
+    fail((e as Error).message);
+  }
 }
 
 function toFrame(r: Raster): ArtFrame {
@@ -167,7 +193,25 @@ export function sliceAtlas(
   return into;
 }
 
+/**
+ * A level record by name, path or default — and, with `bossRush` set, cut
+ * down to its bosses from that stage on (lib/boss-rush.ts), the one form of
+ * the `--boss-rush[=N]` flag every console exporter shares.
+ */
 export async function loadLevel(
+  level: string | null | undefined,
+  log: (m: string) => void,
+  { bossRush = null }: { bossRush?: number | null } = {},
+): Promise<{ record: LevelRecord; source: string }> {
+  const loaded = await readLevel(level, log);
+  if (bossRush != null) {
+    const rush = bossRushRecord(loaded.record, { startStage: bossRush });
+    log(describeBossRush(rush));
+  }
+  return loaded;
+}
+
+async function readLevel(
   level: string | null | undefined,
   log: (m: string) => void,
 ): Promise<{ record: LevelRecord; source: string }> {
@@ -180,8 +224,11 @@ export async function loadLevel(
     await Deno.stat(level).then((s) => s.isFile, () => false);
   if (isFile) {
     log(`level: ${level}`);
+    const record = JSON.parse(await Deno.readTextFile(level));
+    // A build cache (build/ps2/.cache/levels/<name>.json) wraps the record
+    // beside its ETag; take the record out rather than export the wrapper.
     return {
-      record: JSON.parse(await Deno.readTextFile(level)),
+      record: record && record.record && record.etag ? record.record : record,
       source: level,
     };
   }
@@ -331,7 +378,9 @@ export async function buildSav(
   if (!(palette in PALETTE_TARGETS)) {
     throw new Error(`unknown palette "${palette}" (saturn | snes)`);
   }
-  const { record } = await loadLevel(options.level, log);
+  const { record } = await loadLevel(options.level, log, {
+    bossRush: options.bossRush,
+  });
   if (options.name?.trim()) {
     record.name = options.name.trim();
     log(`name: ${record.name} (--name, over the level's own)`);
@@ -508,12 +557,13 @@ if (import.meta.main) {
     else if (arg === "--horizontal") opts.gameMode = (opts.gameMode ?? 0) | 1;
     else if (arg === "--two-player") opts.gameMode = (opts.gameMode ?? 0) | 2;
     else if (arg === "--no-base-atlas") opts.noBaseAtlas = true;
+    else if (arg.startsWith("--boss-rush")) opts.bossRush = bossRushArg(arg);
     else if (arg === "--report") report = true;
     else if (arg === "--help" || arg === "-h") {
       console.log(
         "usage: deno task build:sav [level-name | level.json] [--palette saturn|snes] [--out file.sav]\n" +
           "       [--name NAME] [--snes-pal file.pal] [--slot 1-5] [--comment TEXT] [--horizontal] [--two-player]\n" +
-          "       [--author NAME | --no-author] [--no-base-atlas] [--report]",
+          "       [--author NAME | --no-author] [--no-base-atlas] [--boss-rush[=STAGE]] [--report]",
       );
       Deno.exit(0);
     } else if (arg.startsWith("-")) fail(`unknown argument ${arg}`);

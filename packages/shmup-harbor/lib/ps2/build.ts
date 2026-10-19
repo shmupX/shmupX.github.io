@@ -22,12 +22,18 @@ import {
   cacheSndpac,
   findSndpac,
 } from "./tone-bank-pack.ts";
-import { buildBgmPack, buildSfxPack } from "./sound-pack.ts";
+import {
+  buildBgmPack,
+  buildSfxPack,
+  cachedSoundPack,
+  SFX_BUDGET_BYTES,
+} from "./sound-pack.ts";
 import { loadSavLevel } from "./sav.ts";
+import { bossRushRecord, describeBossRush } from "../boss-rush.ts";
 import { buildZip } from "./zip.ts";
 import type { FrameEntry } from "./atlas.ts";
 import { harborRoot } from "../repo-root.ts";
-import { resolveCloudLevel } from "../cloud-level.ts";
+import { cloudAliasUrl, cloudLevelUrl } from "../cloud-level.ts";
 import { RTDB_ROOT } from "../rtdb-root.ts";
 
 // The database base. A level is read from shmupX's own subtree of it
@@ -99,6 +105,12 @@ export interface BuildPs2Options {
   /** Which game in a cart image that holds more than one. Default: the first. */
   savSlot?: number | null;
   /**
+   * Cut the level to its bosses from this stage on (lib/boss-rush.ts): no
+   * waves, the stages before it dropped. The build lands in
+   * "<name> boss rush <stage>" beside the level's own.
+   */
+  bossRush?: number | null;
+  /**
    * Which of a save's stages to export — a .sav build exports one. Default: the
    * first stage that has anything placed on it.
    */
@@ -157,6 +169,13 @@ export interface BuildPs2Options {
   /** Take the flip off the vertical blank and show AthenaEnv's frame counter. */
   uncapped?: boolean;
   /**
+   * The game's text face — the title's HI-SCORE / PRESS START and the HUD.
+   * "orbitron" (the default) ships shmupX's own Orbitron, the face of its
+   * pages and the editor, as a TrueType file beside main.js; "default" keeps
+   * AthenaEnv's built-in font.
+   */
+  font?: "orbitron" | "default";
+  /**
    * Logic steps per second. The port's own step is 30; the export defaults to
    * `DEFAULT_GAME_FPS` because 30 plays sluggishly on a TV. See
    * runtime-entry.ts — this scales the clock FixedStep reads, not the frame
@@ -205,8 +224,155 @@ interface LoadedLevel {
   customAtlas?: { sheet: Raster; frames: Record<string, FrameEntry> } | null;
 }
 
+/**
+ * A level as Firebase has it now, without downloading it again when nothing
+ * has changed since the last build.
+ *
+ * A record is the level's whole art as data URLs, 186 KB for gs, and over a
+ * slow connection that one GET was a quarter of a build. The Realtime
+ * Database hands out an ETag for a location on request (`X-Firebase-ETag`)
+ * and answers a GET that carries it back in `If-None-Match` with 304 and no
+ * body while the data is the same, so the copy kept in `cacheDir` is checked
+ * for one round trip and used only when it is still exactly what Firebase
+ * holds. `savedAt` will not do for that: the editor's per-entry saves write
+ * playerData or a boss straight to the level without touching it. And when
+ * Firebase cannot be reached at all, the kept copy is used and said to be.
+ */
+export async function fetchLevelRecord(
+  name: string,
+  cacheDir: string,
+  log: (message: string) => void,
+  fetcher: typeof fetch = fetch,
+): Promise<LevelRecord | null> {
+  // shmupX's own copy (../cloud-level.ts), never the root one, which is cmg's.
+  const url = cloudLevelUrl(name, FIREBASE_DB);
+  const keptPath = join(cacheDir, "levels", `${encodeURIComponent(name)}.json`);
+  let kept: { etag: string; fetchedAt: string; record: LevelRecord } | null =
+    null;
+  try {
+    kept = JSON.parse(await Deno.readTextFile(keptPath));
+  } catch {
+    // First build of this level here.
+  }
+
+  let response: Response;
+  try {
+    response = await fetcher(url, {
+      headers: {
+        "X-Firebase-ETag": "true",
+        ...(kept ? { "If-None-Match": kept.etag } : {}),
+      },
+    });
+  } catch (error) {
+    if (!kept) throw error;
+    log(
+      `  level from Firebase: ${name} — unreachable (${
+        (error as Error).message
+      }); using the copy from ${kept.fetchedAt}`,
+    );
+    return kept.record;
+  }
+  if (response.status === 304 && kept) {
+    await response.body?.cancel();
+    log(`  level from Firebase: ${name} (unchanged since the last build)`);
+    return kept.record;
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    if (kept) {
+      log(
+        `  level from Firebase: ${name} — HTTP ${response.status}; using ` +
+          `the copy from ${kept.fetchedAt}`,
+      );
+      return kept.record;
+    }
+    throw new Error(`could not read the level (HTTP ${response.status})`);
+  }
+  const record = await response.json() as LevelRecord | null;
+  log(`  level from Firebase: ${name}`);
+  const etag = response.headers.get("ETag");
+  if (record && etag) {
+    await ensureDir(dirname(keptPath));
+    await Deno.writeTextFile(
+      keptPath,
+      JSON.stringify({ etag, fetchedAt: new Date().toISOString(), record }),
+    );
+  }
+  return record;
+}
+
+/** Where the disc keeps its text face, as main.js asks for it. */
+export const PS2_FONT_PATH = "assets/fonts/orbitron.ttf";
+
+/**
+ * The scale Orbitron is drawn at, on top of the port's own (the viewport's).
+ * AthenaEnv draws a TrueType face about 21 pixels to the em before scaling
+ * (measured in PCSX2: "PRESS START" ran 203 pixels at scale 1), and the port
+ * lays its title and HUD out for its built-in font's glyphs, about six
+ * pixels wide — "PRESS START" is centred as 90 pixels, "SELECT = TURBO MODE"
+ * as 110, and HI-SCORE has 78 before its number. At 0.5 the face keeps
+ * HI-SCORE clear of its number and SELECT = TURBO MODE inside the field; at
+ * 0.36 it centred better but its strokes fell between pixels. It is drawn
+ * bold (runtime-patches.ts). The web host draws its canvas copy at the same
+ * 21 pixels (web-host.ts), so this one number sizes both.
+ */
+export const PS2_FONT_SCALE = 0.5;
+
+/**
+ * The font files a build carries for `font`, or null for AthenaEnv's
+ * built-in one. Orbitron is the editor's own copy (static/games/2028-ai/
+ * assets/fonts), shipped with its SIL Open Font License beside it, as the
+ * licence asks of any copy that travels.
+ */
+async function stageFont(
+  root: string,
+  font: "orbitron" | "default",
+  log: (message: string) => void,
+): Promise<{ path: string; scale: number; files: StagedFile[] } | null> {
+  if (font === "default") return null;
+  try {
+    const ttf = await Deno.readFile(
+      join(root, "static", "games", "2028-ai", "assets", "fonts", "Orbitron-Variable.ttf"),
+    );
+    const licence = await Deno.readFile(
+      join(root, "static", "fonts", "OFL-Orbitron.txt"),
+    );
+    log(`  font: Orbitron (${(ttf.length / 1024).toFixed(0)}KB TrueType)`);
+    return {
+      path: PS2_FONT_PATH,
+      scale: PS2_FONT_SCALE,
+      files: [
+        { path: PS2_FONT_PATH, data: ttf },
+        { path: "assets/fonts/OFL-Orbitron.txt", data: licence },
+      ],
+    };
+  } catch {
+    log("  font: no Orbitron in this checkout — AthenaEnv's built-in font");
+    return null;
+  }
+}
+
+/**
+ * The level key shmupX/levelAliases names for `name`, or null. An index that
+ * cannot be read names nothing — the runtime's rule, and resolveCloudLevel's.
+ */
+async function levelAlias(name: string): Promise<string | null> {
+  try {
+    const response = await fetch(cloudAliasUrl(name, FIREBASE_DB));
+    if (!response.ok) {
+      await response.body?.cancel();
+      return null;
+    }
+    const key = await response.json();
+    return typeof key === "string" && key ? key : null;
+  } catch {
+    return null;
+  }
+}
+
 async function loadRecord(
   options: BuildPs2Options,
+  cacheDir: string,
   log: (message: string) => void,
 ): Promise<LoadedLevel> {
   if (options.savFile) {
@@ -231,26 +397,25 @@ async function loadRecord(
     return { record, fallbackName: record.name?.trim() || "shmupX" };
   }
   if (options.levelName) {
-    // shmupX/levels/<name>, else the key shmupX/levelAliases names — so
+    // shmupX/levels/<name>, revalidated against the copy the last build kept
+    // (fetchLevelRecord); else the key shmupX/levelAliases names — so
     // `build:ps2 2019` builds 2019-PS2, as ?level=2019 plays it — and never
     // the root-level copy, which is cmg's.
-    log(`  level from Firebase: ${options.levelName}`);
-    const hit = await resolveCloudLevel(options.levelName, {
-      db: FIREBASE_DB,
-      accept: (value) => !!(value as LevelRecord | null)?.enemylist,
-    });
-    if (!hit) {
-      throw new Error(
-        `level "${options.levelName}" not found in ${RTDB_ROOT}/levels`,
-      );
+    const name = options.levelName;
+    const direct = await fetchLevelRecord(name, cacheDir, log);
+    if (direct?.enemylist) return { record: direct, fallbackName: name };
+    // Not a key: the alias index, then the key it names through the same
+    // cache — resolveCloudLevel's steps 2 and 3 (../cloud-level.ts), without
+    // asking for the name's own path a second time.
+    const key = await levelAlias(name);
+    const aliased = key && key !== name
+      ? await fetchLevelRecord(key, cacheDir, log)
+      : null;
+    if (!aliased?.enemylist) {
+      throw new Error(`level "${name}" not found in ${RTDB_ROOT}/levels`);
     }
-    if (hit.alias) {
-      log(`    "${hit.alias}" is an alias of ${RTDB_ROOT}/levels/${hit.key}`);
-    }
-    return {
-      record: hit.value as LevelRecord,
-      fallbackName: options.levelName,
-    };
+    log(`    "${name}" is an alias of ${RTDB_ROOT}/levels/${key}`);
+    return { record: aliased, fallbackName: name };
   }
   // No name: the game the repo already ships, so `deno task build:ps2` on a
   // fresh checkout produces something playable without touching the network.
@@ -438,8 +603,22 @@ export async function buildPs2(
     ? resolve(options.cacheDir)
     : join(root, "build", "ps2", ".cache");
 
-  const { record, fallbackName, customAtlas } = await loadRecord(options, log);
-  const name = safeName(options.levelName ?? fallbackName);
+  const { record, fallbackName, customAtlas } = await loadRecord(
+    options,
+    cacheDir,
+    log,
+  );
+  // A boss-rush build is a different game from the level's own, so it goes in
+  // a folder of its own rather than over the disc a player would download.
+  let baseName = options.levelName ?? fallbackName;
+  if (options.bossRush != null) {
+    const rush = bossRushRecord(record as Record<string, unknown>, {
+      startStage: options.bossRush,
+    });
+    log(`  ${describeBossRush(rush)}`);
+    baseName += ` boss rush ${options.bossRush}`;
+  }
+  const name = safeName(baseName);
   const app = appName(name);
   const outRoot = options.outDir
     ? resolve(options.outDir)
@@ -484,13 +663,36 @@ export async function buildPs2(
 
   // The base game's own audio: effects as SPU2 ADPCM, music as WAV — only
   // the tracks this game's stages play (staged.bosses). Both need ffmpeg on
-  // the build host; without it there are no packs.
-  const sfx = options.skipAudio
+  // the build host; without it there are no packs. The last build's are
+  // reused while the sound tree, the encoders and — for the music — the
+  // stages' bosses are unchanged (cachedSoundPack): most of a build's time.
+  const budgetBytes = options.sfxBudgetBytes ?? SFX_BUDGET_BYTES;
+  const sfxRun = options.skipAudio ? null : await cachedSoundPack(
+    cacheDir,
+    "sfx",
+    gameDir,
+    { budgetBytes },
+    () => buildSfxPack(gameDir, { budgetBytes }),
+  );
+  const bgmRun = options.skipAudio || options.skipMusic
     ? null
-    : await buildSfxPack(gameDir, { budgetBytes: options.sfxBudgetBytes });
-  const bgm = options.skipAudio || options.skipMusic
-    ? null
-    : await buildBgmPack(gameDir, { bosses: staged.bosses });
+    : await cachedSoundPack(
+      cacheDir,
+      "bgm",
+      gameDir,
+      { bosses: staged.bosses },
+      () => buildBgmPack(gameDir, { bosses: staged.bosses }),
+    );
+  const sfx = sfxRun?.pack ?? null;
+  const bgm = bgmRun?.pack ?? null;
+  const reused = [sfxRun?.reused && "effects", bgmRun?.reused && "music"]
+    .filter(Boolean);
+  if (reused.length) {
+    log(
+      `  sound: the ${reused.join(" and ")} from the last build ` +
+        `(sources unchanged)`,
+    );
+  }
   if (sfx) {
     for (const note of sfx.notes) log(`    ${note}`);
     notes.push(...sfx.notes);
@@ -551,12 +753,23 @@ export async function buildPs2(
       JSON.stringify({ tracks: bgm.keys, alias: bgm.alias ?? {} })
     };`
     : "";
+  // The text face (runtime-patches.ts "font: the build's own"): the port
+  // makes one Font('default') for every line it prints; with these it makes
+  // it from the TrueType file the disc carries, at a scale that keeps its
+  // wider glyphs inside the layout the port drew for AthenaEnv's own.
+  const font = await stageFont(options.root, options.font ?? "orbitron", log);
+  const fontFlags = font
+    ? `globalThis.__PS2_FONT__ = ${JSON.stringify(font.path)};` +
+      ` globalThis.__PS2_FONT_SCALE__ = ${font.scale};` +
+      " globalThis.__PS2_FONT_BOLD__ = true;"
+    : "";
   const preamble = [
     options.uncapped ? "globalThis.__PS2_UNCAPPED__ = true;" : "",
     gameFps === 30 ? "" : `globalThis.__PS2_GAME_FPS__ = ${gameFps};`,
     sfxKeys,
     bgmPlan,
     audsrvFlag,
+    fontFlags,
   ].filter(Boolean).join("\n");
   const uncappedMainJs = preamble
     ? new Uint8Array([...encoder.encode(preamble + "\n"), ...mainJs])
@@ -580,6 +793,7 @@ export async function buildPs2(
     ...(sfx?.files ?? []),
     ...(bgm?.files ?? []),
     ...(toneBank?.files ?? []),
+    ...(font?.files ?? []),
   ];
 
   // The folder and the zip are the same tree; --zip asks for it as one file,
@@ -645,7 +859,20 @@ export async function buildPs2(
       date: BUILD_DATE,
     });
     isoPath = join(dir, `${app}.iso`);
-    await Deno.writeFile(isoPath, iso);
+    try {
+      await Deno.writeFile(isoPath, iso);
+    } catch (error) {
+      // Windows will not overwrite a file another program holds open, and the
+      // one that holds a disc image open is an emulator that has it loaded.
+      if (!/os error 32|being used by another process/.test(String(error))) {
+        throw error;
+      }
+      throw new Error(
+        `${isoPath} is open in another program — an emulator with the disc ` +
+          `loaded, most likely. Close it (or eject the disc) and build again.` +
+          (options.zip ? "" : ` ${appDir} is already up to date.`),
+      );
+    }
     artifacts.push(isoPath);
     log(`  iso: ${(iso.length / 1048576).toFixed(1)}MB`);
   }

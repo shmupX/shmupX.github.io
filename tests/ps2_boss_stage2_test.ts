@@ -330,6 +330,23 @@ const STAND_IN = [
   "function bossDraw(ctx2, b) {",
   "  if (!b.visible) return;",
   "}",
+  "function createProjectile(data) {",
+  "  return { x: data.x || 0 };",
+  "}",
+  "function projectileLoop(ctx2, proj, player) {",
+  "  return true;",
+  "}",
+  "function projectileDraw(ctx2, proj) {",
+  "}",
+  "function createGameFont(rt, vp) {",
+  '  const font = new rt.Font("default");',
+  "  font.scale = vp.scale;",
+  "}",
+  "function createGameScene(ctx2, net = null) {",
+  "  const gs = {",
+  "    waveInterval: 80,",
+  "  };",
+  "}",
   "",
 ].join("\n");
 
@@ -339,12 +356,13 @@ Deno.test("the patch wraps createBoss and bossDraw and hooks bossLoop between mo
   assert(patched.includes(BOSS_RUNTIME));
   assert(patched.includes(
     "function createBoss(ctx2, data, stageId) {\n" +
-      "  return bossArm(createBossBody(ctx2, data, stageId), data);\n" +
+      "  return bossOverlayArm(ctx2, bossArm(createBossBody(ctx2, data, stageId), data), data);\n" +
       "}\nfunction createBossBody(ctx2, data, stageId) {\n" +
       "  const b = { frames: data.texture || [] };",
   ));
   assert(patched.includes(
-    "  if (bossStage2Step(ctx2, b)) return;\n" +
+    "  bossOverlayStep(ctx2, b);\n" +
+      "  if (bossStage2Step(ctx2, b)) return;\n" +
       "  const bMul = ctx2.state.turboMode ? 2 : 1;\n" +
       "  b.moveTimer += bMul;",
   ));
@@ -353,7 +371,8 @@ Deno.test("the patch wraps createBoss and bossDraw and hooks bossLoop between mo
   ));
   assert(patched.includes(
     "function bossDraw(ctx2, b) {\n  bossDrawBody(ctx2, b);\n" +
-      "  bossStage2Ghost(ctx2, b);\n}\nfunction bossDrawBody(ctx2, b) {",
+      "  bossStage2Ghost(ctx2, b);\n  bossOverlayDraw(ctx2, b);\n}\n" +
+      "function bossDrawBody(ctx2, b) {",
   ));
   // The god-mode guard still goes on beside them.
   assert(patched.includes("  if (ctx2.state.godMode) return;\n"));

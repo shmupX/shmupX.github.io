@@ -26,6 +26,8 @@
 //   --slot <n>           which game in a .sav that holds more than one
 //   --stage <n>          which of the save's stages to export (a .sav build
 //                        exports one; default: the first with anything on it)
+//   --boss-rush[=<n>]    no waves, bosses only, from stage n (0, the first, by
+//                        default) — written to "<name> boss rush <n>"
 //   --athena-elf <path>  use this AthenaEnv build instead of downloading one
 //   --refresh-athena     re-download AthenaEnv even if it is cached
 //   --atlas-max <px>     cap generated atlases at this size (default 512)
@@ -41,6 +43,7 @@
 
 import { relative } from "@std/path";
 import { buildPs2 } from "../lib/ps2/build.ts";
+import { parseBossRushFlag } from "../lib/boss-rush.ts";
 import { repoRoot } from "../lib/repo-root.ts";
 
 const ROOT = repoRoot();
@@ -90,7 +93,14 @@ function parse(argv: string[]) {
     // --sav="./Dez 2 - Chohsoku Stringer.sav".
     const eq = arg.indexOf("=");
     const name = eq < 0 ? arg : arg.slice(0, eq);
-    if (VALUE_FLAGS.has(name)) {
+    if (name === "--boss-rush") {
+      // The one flag whose value is optional: --boss-rush or --boss-rush=N.
+      try {
+        flags[name] = String(parseBossRushFlag(arg));
+      } catch (error) {
+        fail((error as Error).message);
+      }
+    } else if (VALUE_FLAGS.has(name)) {
       const value = eq < 0 ? argv[++i] : arg.slice(eq + 1);
       if (value === undefined) fail(`${name} needs a value`);
       flags[name] = value;
@@ -141,6 +151,9 @@ try {
     savFile,
     savSlot: slot === undefined ? null : Number(slot),
     stage: typeof flags["--stage"] === "string" ? flags["--stage"] : null,
+    bossRush: typeof flags["--boss-rush"] === "string"
+      ? Number(flags["--boss-rush"])
+      : null,
     outDir: typeof flags["--out"] === "string" ? flags["--out"] : null,
     athenaElf: typeof flags["--athena-elf"] === "string"
       ? flags["--athena-elf"]

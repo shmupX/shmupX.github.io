@@ -24,9 +24,10 @@
 // lands on the disc is the port's path — runtime-sound.ts swaps the effects'
 // extension to `.adp` and nothing else has to agree.
 
-import { basename, extname, join } from "@std/path";
+import { basename, dirname, extname, join, relative } from "@std/path";
 import { encodeAdp, encodeWav, fitToHeadroom } from "./adpcm.ts";
 import type { StageBoss, StagedFile } from "./assets.ts";
+import { harborRoot } from "../repo-root.ts";
 
 /**
  * Rate the effects are resampled to. The SPU2 tops out at 48 kHz and these are
@@ -244,6 +245,134 @@ export interface SoundPack {
    */
   alias?: Record<string, string>;
   notes: string[];
+}
+
+/**
+ * A pack the last build made from the same inputs, or a fresh one from
+ * `make`.
+ *
+ * Neither pack depends on the level: both are the base game's sound tree run
+ * through ffmpeg and this file's encoders, and that is most of a build's time
+ * — half a minute of decoding the same sixty effects and nine tracks for a
+ * disc whose only change is a sprite. So a pack is kept in `cacheDir` under a
+ * key made of everything that can change it: every file in the sound tree by
+ * path, size and modification time, `settings` (the effects' budget), and the
+ * text of this file and adpcm.ts. Any of those moving makes a fresh pack,
+ * which then replaces the kept one. The cache is beside the bundled runtime
+ * and athena.elf, not in a build's own folder, because `--zip` removes that
+ * folder and every level shares the one pack anyway.
+ *
+ * Where the encoders' source cannot be read (a packaged app carries no
+ * checkout) nothing is kept and `make` runs as before.
+ */
+export async function cachedSoundPack(
+  cacheDir: string,
+  kind: "sfx" | "bgm",
+  gameDir: string,
+  settings: Record<string, unknown>,
+  make: () => Promise<SoundPack | null>,
+): Promise<{ pack: SoundPack | null; reused: boolean }> {
+  const key = await soundPackKey(kind, gameDir, settings);
+  if (!key) return { pack: await make(), reused: false };
+  const dir = join(cacheDir, "sounds", kind);
+  const manifest = join(dir, "pack.json");
+
+  try {
+    const kept = JSON.parse(await Deno.readTextFile(manifest)) as {
+      key: string;
+      paths: string[];
+      keys: string[];
+      alias?: Record<string, string>;
+      notes: string[];
+    };
+    if (kept.key === key) {
+      const files: StagedFile[] = [];
+      for (const path of kept.paths) {
+        files.push({ path, data: await Deno.readFile(join(dir, path)) });
+      }
+      return {
+        pack: {
+          files,
+          keys: kept.keys,
+          ...(kept.alias ? { alias: kept.alias } : {}),
+          notes: kept.notes,
+        },
+        reused: true,
+      };
+    }
+  } catch {
+    // Nothing kept, or not all of it: make it again.
+  }
+
+  const pack = await make();
+  // No ffmpeg makes no pack; keep nothing, so the next build tries again.
+  if (!pack) return { pack, reused: false };
+  await Deno.remove(dir, { recursive: true }).catch(() => {});
+  for (const file of pack.files) {
+    const target = join(dir, file.path);
+    await Deno.mkdir(dirname(target), { recursive: true });
+    await Deno.writeFile(target, file.data);
+  }
+  // Last, so a build stopped halfway leaves no manifest to trust.
+  await Deno.writeTextFile(
+    manifest,
+    JSON.stringify({
+      key,
+      paths: pack.files.map((file) => file.path),
+      keys: pack.keys,
+      alias: pack.alias,
+      notes: pack.notes,
+    }),
+  );
+  return { pack, reused: false };
+}
+
+/** What a sound pack is made from, hashed; null when it cannot be known. */
+async function soundPackKey(
+  kind: string,
+  gameDir: string,
+  settings: Record<string, unknown>,
+): Promise<string | null> {
+  const parts: string[] = [kind, JSON.stringify(settings)];
+  try {
+    for (const file of ["sound-pack.ts", "adpcm.ts"]) {
+      parts.push(
+        await Deno.readTextFile(join(harborRoot(), "lib", "ps2", file)),
+      );
+    }
+  } catch {
+    return null;
+  }
+  const soundsDir = join(gameDir, "assets", "sounds");
+  const listing: string[] = [];
+  const walk = async (dir: string) => {
+    for await (const entry of Deno.readDir(dir)) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory) {
+        await walk(path);
+        continue;
+      }
+      const stat = await Deno.stat(path);
+      listing.push(
+        `${relative(soundsDir, path).replaceAll("\\", "/")} ${stat.size} ${
+          stat.mtime?.getTime() ?? 0
+        }`,
+      );
+    }
+  };
+  try {
+    await walk(soundsDir);
+  } catch {
+    // No sound tree: the pack is empty, and that is a key like any other.
+  }
+  parts.push(...listing.sort());
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(parts.join("\n")),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /**
