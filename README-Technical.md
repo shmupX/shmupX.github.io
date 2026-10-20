@@ -1002,6 +1002,51 @@ game's stock enemies' behaviours — is left behind, and the builder says so in
 its warnings. The six credit strips are written too, from the same drawn title
 art (`tests` cover a cart keeping both on the way back out).
 
+**The story.** A save has no words for a cutscene, but every stage opens on the
+first rows of its background map, so `build:sav` draws the level's story there
+([`lib/story-panels.ts`](packages/shmup-harbor/lib/story-panels.ts)): what the
+web's story scene shows — the speaker's plate (gs's `GS`, else `G`) and the
+stage's words in a black box, every part in turn — with the stage's picture
+under them, 224 px wide and up to twelve rows tall, filling the screen between
+the score and its bottom edge as the stage starts. It then scrolls away beneath
+the ship, slowly: a quarter of the stage's speed for the first 64 px, half until
+it has gone, and the stage's waves, boss and scroll extent move up by exactly
+the rows it took, so the first wave enters as the words leave. The story is the
+last art on the cart: it is matched to the palette the game's sprites already
+chose, never claiming one of the 64 user colours, and drawn in the CG cells they
+left — every stage's story at the largest size at which they all fit, else
+smaller pictures, the words alone, the opening part's words, or not at all, and
+a story with no room costs its stage nothing. The build log says what each stage
+opens on, and which of the story's stages have no stage on the cart (gs's story
+runs to stage 4; its cart has two). FORMAT.md "A level's story, as a stage's
+opening scenery" has the rows and the measurements. Until 2026-10-20 the story
+was a 128×128 picture and one line built from zako records, which a game with
+big enemies had already used up: gs's never showed, and its stages opened on ten
+empty seconds instead.
+
+**The story on the other consoles.** The same backdrops open each stage of the
+other carts, through the same composer (`levelStoryBackdrops` in
+`build-sav.ts`) and the same rule — the largest size every stage's story fits
+at, after everything else is on the cart, a stage's waves moved up by exactly
+what it took: the **Super Famicom** paints them into its 16-px map rows, where
+nothing can slow the scroll, so a story stays about four seconds (measured in
+snes9x; FORMAT-SFC.md "A level's story"); **Dezaemon+** into the same kind of
+map at half speed, and **Dezaemon Kids!** into its 32-px chips with the first
+64 px at a quarter speed, drawn a size smaller when the pictures would pack past
+the card's fifteen blocks (FORMAT-PSX.md; neither PlayStation game's opening
+rows are measured, and neither is booted here, so those two are checked by
+reading the map back). A cart a story's stage is missing from says so in the
+build log. The **PS2** build is not a cart: `lib/ps2/story.ts` stages the
+story's pictures on a sheet of their own (`assets/story.png`) with its words in
+`assets/story.json`, and `lib/ps2/runtime-story.ts` takes the place of the
+port's STAGE N card before every stage with the web's story scene — the picture,
+the speaker's plate, the words typed out, CROSS for the next part and START to
+skip — without a new svelte-ps2. The **64DD** disk shows none yet, and
+`build:ddd` says so: its stage scenery is a 3D ground, and the sample game's
+own full-screen briefings — the mechanism a story would use, 40 `portrait`
+layout effects and a clear — are decoded but not booted, so their timing is a
+guess (FORMAT-N64.md "A level's story").
+
 **Item icons.** A save gives each of its eight item slots exactly one 16×16 cell
 of the global sprite bank (refs 94–101), so a pickup in a cart is a **still** —
 there is nowhere for a second frame to go. With the four winged letter emblems
@@ -2610,9 +2655,8 @@ arrived as a `.sav` or out of the web catalog:
   the decoder's `move.mode`, which both of the engine's collision drivers test
   first — becomes `dezaNoCollision` on the spawned object, and the shots, the
   columns, the bomb, the homing and tether picks and the ship's hull all skip
-  it. `build:sav` writes it on every story-panel piece, so the picture and the
-  words a stage opens on are scenery the ship flies through, on hardware and
-  here, rather than four zako it died on.
+  it, so a piece its author marked as scenery is scenery the ship flies
+  through, on hardware and here, rather than a zako it dies on.
 
 ![The extended runtime in play: the boxer boss worked over mid-screen, the ship's fire raking sideways along the bottom, HP and COMBO across the top](static/extended-runtime.webp)
 
@@ -4978,7 +5022,7 @@ every game anyone can get — and it is read from two places by
   `/eshop/covers/<id>`, and the listing under `/eshop/index/<id>` last).
   `deno task eshop:publish <level> --name <name>`
   ([`scripts/publish-eshop-sav.ts`](scripts/publish-eshop-sav.ts)) is that
-  export from a checkout: `build:sav`'s cart, story panels and all, with
+  export from a checkout: `build:sav`'s cart, its story and all, with
   `--name` as its own name (the header comment, and the `Dez 2 - <name>.sav`
   the shop installs it as), `composeCover` over the cart just written, and
   `publishDezaGame`'s three writes in the editor's order — the database

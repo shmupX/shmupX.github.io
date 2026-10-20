@@ -42,6 +42,7 @@ import {
 } from "./atlas.ts";
 import { decodeGif, isGif } from "./gif.ts";
 import { quantize } from "./palette.ts";
+import { buildPs2Story, PS2_STORY_JSON, PS2_STORY_PNG } from "./story.ts";
 import { blit, cut, fitInto, resizeTo } from "./raster.ts";
 
 /** A Firebase `levels/{name}` record, as the editor saves it. */
@@ -1688,6 +1689,35 @@ export async function stageAssets(options: StageOptions): Promise<StageResult> {
       (hasEnemyData ? ", custom enemies" : ", base enemies") +
       (hasBossData ? ", custom boss" : ""),
   );
+
+  // --- the story (story.ts), told before each stage by runtime-story.ts ---
+  const story = await buildPs2Story(
+    record,
+    (m) => notes.push(`story: ${m}`),
+  );
+  if (story) {
+    if (story.atlas) {
+      const sheet = await encodeSheet(story.atlas.image, "story sheet");
+      files.push({ path: PS2_STORY_PNG, data: sheet.data });
+      notes.push(sheet.note);
+    }
+    files.push({
+      path: PS2_STORY_JSON,
+      data: json({
+        ...(story.atlas ? story.atlas.json : { frames: {} }),
+        story: story.story,
+      }),
+    });
+    const told = Object.entries(story.story.stages);
+    notes.push(
+      `story: ${story.story.speaker} tells stage${
+        told.length === 1 ? "" : "s"
+      } ${told.map(([s, parts]) => `${s} (${parts.length})`).join(", ")}` +
+        (story.atlas
+          ? `, ${Object.keys(story.atlas.json.frames).length} picture(s)`
+          : ", no pictures"),
+    );
+  }
 
   return { files, notes, bosses: stageBosses(record, baseRecipe) };
 }

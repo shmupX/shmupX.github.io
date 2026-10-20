@@ -16,6 +16,7 @@ import {
   SCENE_TITLE,
 } from "@easierbycode/svelte-ps2/ps2-sp";
 import { createAthenaSound } from "./runtime-sound.ts";
+import { installStory } from "./runtime-story.ts";
 
 // Set the screen up before anything draws.
 //
@@ -197,6 +198,12 @@ const game = createGame(runtime, {
 // what the press meant, from the state as it was before the frame ran.
 // `createGame` hands back the context to do it with.
 ctx = game.ctx;
+
+// The level's story, when the build staged one (lib/ps2/story.ts): its scene
+// takes the place of the port's STAGE N card before every stage. The title
+// is the scene running now, so the card it replaces has not been entered yet.
+const storyJson = (globalThis as { __PS2_STORY__?: string }).__PS2_STORY__;
+if (typeof storyJson === "string") installStory(ctx, storyJson);
 
 // The context, published for whatever is watching the game from outside it:
 // the browser build's bot (lib/ps2/web-host.ts) reads the ship, the boss and

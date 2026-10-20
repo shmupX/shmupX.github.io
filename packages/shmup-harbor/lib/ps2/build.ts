@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { resolveAthenaElf } from "./athena.ts";
 import { type LevelRecord, stageAssets, type StagedFile } from "./assets.ts";
+import { PS2_STORY_JSON } from "./story.ts";
 import { buildIso } from "./iso9660.ts";
 import { patchRuntime } from "./runtime-patches.ts";
 import { decodeDataUrl, decodePng, type Raster } from "./png.ts";
@@ -332,7 +333,15 @@ async function stageFont(
   if (font === "default") return null;
   try {
     const ttf = await Deno.readFile(
-      join(root, "static", "games", "2028-ai", "assets", "fonts", "Orbitron-Variable.ttf"),
+      join(
+        root,
+        "static",
+        "games",
+        "2028-ai",
+        "assets",
+        "fonts",
+        "Orbitron-Variable.ttf",
+      ),
     );
     const licence = await Deno.readFile(
       join(root, "static", "fonts", "OFL-Orbitron.txt"),
@@ -763,8 +772,14 @@ export async function buildPs2(
       ` globalThis.__PS2_FONT_SCALE__ = ${font.scale};` +
       " globalThis.__PS2_FONT_BOLD__ = true;"
     : "";
+  // The story (lib/ps2/story.ts), named rather than probed for: a disc that
+  // has none must not pay a cdfs miss to find that out.
+  const storyFlag = staged.files.some((f) => f.path === PS2_STORY_JSON)
+    ? `globalThis.__PS2_STORY__ = ${JSON.stringify(PS2_STORY_JSON)};`
+    : "";
   const preamble = [
     options.uncapped ? "globalThis.__PS2_UNCAPPED__ = true;" : "",
+    storyFlag,
     gameFps === 30 ? "" : `globalThis.__PS2_GAME_FPS__ = ${gameFps};`,
     sfxKeys,
     bgmPlan,
