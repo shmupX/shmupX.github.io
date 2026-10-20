@@ -1,3 +1,4 @@
+globalThis.__PS2_STORY__ = "assets/story.json";
 globalThis.__PS2_GAME_FPS__ = 120;
 globalThis.__PS2_SFX__ = ["boss_barlog_voice_add","boss_bison_voice_add","boss_fang_voice_add","boss_goki_voice_add","boss_sagat_voice_add","boss_vega_voice_add","g_adbenture_voice0","g_continue_no_voice0","g_continue_no_voice1","g_continue_yes_voice0","g_continue_yes_voice1","g_continue_yes_voice2","g_damage_voice","g_powerup_voice","g_sp_voice","g_stage_voice_1","g_stage_voice_2","g_stage_voice_3","g_stage_voice_4","se_barrier_end","se_barrier_start","se_correct","se_cursor","se_damage","se_decision","se_explosion","se_guard","se_over","se_shoot","se_shoot_b","se_sp","se_sp_explosion","voice_congra","voice_countdown0","voice_countdown1","voice_countdown2","voice_countdown3","voice_countdown4","voice_countdown5","voice_countdown6","voice_countdown7","voice_countdown8","voice_countdown9","voice_fight","voice_gameover","voice_ko","voice_round0","voice_round1","voice_round2","voice_round3","voice_thankyou","voice_titlecall"];
 globalThis.__PS2_BGM__ = {"tracks":["adventure_bgm","bgm_continue","bgm_gameover","boss_fang_bgm"],"alias":{"boss_geekstar_bgm":"boss_fang_bgm","boss_Daltonius_bgm":"boss_fang_bgm"}};
@@ -4487,6 +4488,185 @@ function createAthenaSound() {
   };
 }
 
+// packages/shmup-harbor/lib/ps2/runtime-story.ts
+var STORY_ATLAS = "story";
+var PICTURE_H = 235;
+var PLATE = {
+  x: 16,
+  y: 235,
+  minW: 80,
+  h: 24
+};
+var BOX = {
+  x: 8,
+  y: 247,
+  w: 240,
+  h: 180
+};
+var PAD = 12;
+var EDGE = 2;
+function installStory(ctx2, jsonPath) {
+  const text = ctx2.rt.std.loadFile(jsonPath);
+  if (!text) return false;
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (!data.story || !data.story.stages) return false;
+  const frames = {};
+  if (data.meta?.image && data.frames) {
+    const dir = jsonPath.slice(0, jsonPath.lastIndexOf("/") + 1);
+    if (ctx2.atlas.loadAtlas(STORY_ATLAS, dir + data.meta.image, jsonPath)) {
+      const ds = data.meta.ps2DisplayScale || 1;
+      for (const [name, f] of Object.entries(data.frames)) {
+        frames[name] = {
+          w: f.frame.w * ds,
+          h: f.frame.h * ds
+        };
+      }
+    }
+  }
+  ctx2.scenes.register(SCENE_ADV, createStoryScene(ctx2, data.story, frames));
+  return true;
+}
+function createStoryScene(ctx2, script, frames) {
+  const g2 = globalThis;
+  let measure = null;
+  const face = () => {
+    if (!measure) {
+      try {
+        const f = new ctx2.rt.Font(g2.__PS2_FONT__ || "default");
+        f.scale = ctx2.vp.scale * (g2.__PS2_FONT_SCALE__ || 1);
+        measure = f;
+      } catch {
+        measure = {
+          scale: 1,
+          getTextSize: (t) => ({
+            width: t.length * 9,
+            height: 14
+          })
+        };
+      }
+    }
+    return measure;
+  };
+  const textWidth = (t) => face().getTextSize(t).width + 1;
+  let lineH = 0;
+  const lineHeight = () => lineH || (lineH = Math.max(12, Math.ceil(face().getTextSize("Ag").height) + 4));
+  const wrap = (text, maxW) => {
+    const out = [];
+    for (const paragraph of text.split("\n")) {
+      let line = "";
+      for (const word of paragraph.split(" ").filter(Boolean)) {
+        const next = line ? `${line} ${word}` : word;
+        if (line && textWidth(next) > maxW) {
+          out.push(line);
+          line = word;
+        } else line = next;
+      }
+      out.push(line);
+    }
+    return out;
+  };
+  const s = {
+    parts: [],
+    part: 0,
+    lines: [],
+    total: 0,
+    shown: 0,
+    timer: 0,
+    done: false
+  };
+  const startPart = () => {
+    const p = s.parts[s.part];
+    s.lines = wrap(p.text, ctx2.vp.toW(BOX.w - 2 * PAD));
+    s.total = s.lines.reduce((n, l) => n + l.length, 0);
+    s.shown = 0;
+  };
+  const finish = () => {
+    s.done = true;
+    ctx2.sound.stopBgm();
+    ctx2.scenes.switch(SCENE_GAME);
+  };
+  function init() {
+    s.parts = script.stages[String(ctx2.state.stageId)] ?? [];
+    s.part = 0;
+    s.timer = 0;
+    s.done = false;
+    if (s.parts.length) startPart();
+    ctx2.sound.playBgm("adventure_bgm");
+    ctx2.sound.playSound("g_adbenture_voice0");
+  }
+  function update() {
+    if (s.done) return;
+    s.timer++;
+    if (!s.parts.length) {
+      if (s.timer >= 240 || ctx2.input.isConfirmPressed() && s.timer > 30) {
+        finish();
+      }
+      return;
+    }
+    if (ctx2.input.isStartPressed()) {
+      finish();
+      return;
+    }
+    if (s.shown < s.total) s.shown++;
+    if (ctx2.input.isConfirmPressed() && s.timer > 10) {
+      if (s.shown < s.total) s.shown = s.total;
+      else if (s.part + 1 < s.parts.length) {
+        s.part++;
+        startPart();
+        ctx2.sound.playSound("se_cursor");
+      } else finish();
+    }
+  }
+  function draw() {
+    const { rt, vp, font } = ctx2;
+    rt.Draw.rect(0, 0, SCREEN_W, SCREEN_H, rt.Color.new(0, 0, 0));
+    const white = rt.Color.new(255, 255, 255);
+    const stageLabel = "STAGE " + String(ctx2.state.stageId + 1);
+    if (!s.parts.length) {
+      const t = s.timer < 60 ? s.timer / 60 : s.timer < 180 ? 1 : Math.max(0, 1 - (s.timer - 180) / 60);
+      const faded = rt.Color.new(255, 255, 255, Math.floor(t * 128));
+      font.print(vp.toX(GCX - 60), vp.toY(GCY - 20), stageLabel, faded);
+      font.print(vp.toX(GCX - 50), vp.toY(GCY + 10), "GET READY!", faded);
+      return;
+    }
+    const part = s.parts[s.part];
+    const pic = part.frame ? frames[part.frame] : void 0;
+    if (part.frame && pic) {
+      ctx2.atlas.drawFrameTL(STORY_ATLAS, part.frame, vp.toX((256 - pic.w) / 2), vp.toY(Math.max(0, (PICTURE_H - pic.h) / 2)), vp.scale, vp.scale);
+    }
+    const framed = (x, y, w, h) => {
+      rt.Draw.rect(vp.toX(x), vp.toY(y), vp.toW(w), vp.toH(h), white);
+      rt.Draw.rect(vp.toX(x + EDGE), vp.toY(y + EDGE), vp.toW(w - 2 * EDGE), vp.toH(h - 2 * EDGE), rt.Color.new(0, 0, 0));
+    };
+    framed(BOX.x, BOX.y, BOX.w, BOX.h);
+    const nameW = Math.max(PLATE.minW, Math.ceil(textWidth(script.speaker) / vp.scale) + 24);
+    framed(PLATE.x, PLATE.y, nameW, PLATE.h);
+    font.print(vp.toX(PLATE.x + 12), vp.toY(PLATE.y + 5), script.speaker, white);
+    const lh = lineHeight();
+    font.print(vp.toX(BOX.x + PAD), vp.toY(BOX.y + BOX.h - PAD) - lh, stageLabel, white);
+    let left = s.shown;
+    for (let i = 0; i < s.lines.length && left > 0; i++) {
+      const line = s.lines[i].slice(0, left);
+      left -= s.lines[i].length;
+      font.print(vp.toX(BOX.x + PAD), vp.toY(BOX.y + PAD) + i * lh, line, white);
+    }
+    if (s.shown >= s.total) {
+      const prompt = s.part + 1 < s.parts.length ? "NEXT >" : "GO! >";
+      font.print(vp.toX(BOX.x + BOX.w - PAD) - textWidth(prompt), vp.toY(BOX.y + BOX.h - PAD) - lh, prompt, white);
+    }
+  }
+  return {
+    init,
+    update,
+    draw
+  };
+}
+
 // packages/shmup-harbor/lib/ps2/runtime-entry.ts
 var screen = globalThis.Screen;
 var uncapped = globalThis.__PS2_UNCAPPED__ === true;
@@ -4569,6 +4749,8 @@ var game = createGame(runtime, {
   }
 });
 ctx = game.ctx;
+var storyJson = globalThis.__PS2_STORY__;
+if (typeof storyJson === "string") installStory(ctx, storyJson);
 globalThis.__PS2_CTX__ = ctx;
 var pad = runtime.Pads.get();
 var START = runtime.Pads.START;

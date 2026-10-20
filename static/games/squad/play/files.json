@@ -43,7 +43,7 @@
   },
   {
    "path": "assets/level_atlas.png",
-   "size": 38231
+   "size": 38248
   },
   {
    "path": "assets/sounds/adventure_bgm.wav",
@@ -270,12 +270,20 @@
    "size": 26352
   },
   {
+   "path": "assets/story.json",
+   "size": 1169
+  },
+  {
+   "path": "assets/story.png",
+   "size": 12709
+  },
+  {
    "path": "athena.ini",
    "size": 76
   },
   {
    "path": "main.js",
-   "size": 136767
+   "size": 142357
   }
  ]
 }
