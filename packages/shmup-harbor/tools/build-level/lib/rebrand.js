@@ -1,8 +1,9 @@
 "use strict";
 
 // Produces the rebranded config.xml (Cordova), electron package.json and
-// manifest.json for one level: display name = level name, package id =
-// com.easierbycode.<slug>. Unlike the 2019-es7 original there is no
+// manifest.json for one level: display name = the record's title, else the
+// level name (appTitleFor), package id = com.easierbycode.<slug>. Unlike the
+// 2019-es7 original there is no
 // phaser-game.html rewrite here — stage.js authors the offline shell directly,
 // and its <content src="phaser-game.html"> is already the Cordova default.
 
@@ -15,6 +16,17 @@ function xmlEscape(s) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+// What the launcher calls the app: the record's `title` when it has one —
+// gs's is SQUAD — else the name it was built by. Only the label: the slug and
+// the package id stay the build name's, so a game retitled after it was
+// installed updates in place rather than landing beside itself.
+function appTitleFor(levelName, levelData) {
+  const own = levelData && typeof levelData.title === "string"
+    ? levelData.title.trim()
+    : "";
+  return own || levelName;
 }
 
 // `entry` is the page the app opens: phaser-game.html for a staged level, a
@@ -45,6 +57,7 @@ function rebrandManifestJson(sourcePath, levelName) {
 }
 
 module.exports = {
+  appTitleFor,
   rebrandConfigXml,
   rebrandManifestJson,
 };

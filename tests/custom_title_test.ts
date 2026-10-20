@@ -98,11 +98,15 @@ Deno.test("a title plate of its own makes a record a game", () => {
   );
 });
 
-Deno.test("the title calls a game by its record's name, else by its key", () => {
+Deno.test("the title calls a game by its record's title, else its name, else its key", () => {
   assertEquals(titleNameOf({ name: " gs " }, "GS"), "gs");
   assertEquals(titleNameOf({ name: "" }, "gs"), "gs");
   assertEquals(titleNameOf({}, "gs"), "gs");
   assertEquals(titleNameOf(null, null), null);
+  // `name` stays the key the editor saves under; `title` is the one on screen.
+  assertEquals(titleNameOf({ name: "gs", title: " SQUAD " }, "gs"), "SQUAD");
+  assertEquals(titleNameOf({ name: "gs", title: "  " }, "gs"), "gs");
+  assertEquals(titleNameOf({ title: 7 }, "gs"), "gs");
 });
 
 // ---- the loader puts it on the recipe ---------------------------------------

@@ -123,10 +123,13 @@
     return art;
   }
 
-  // What the title calls a game that drew no logo: the record's own name, else
-  // the key it was fetched by.
+  // What the title calls a game that drew no logo: the record's title, else its
+  // own name, else the key it was fetched by. `name` is the key the editor saves
+  // under, so a game called something else on screen says so in `title` (gs's
+  // is SQUAD) — which the app it exports is called on a phone, too.
   function titleNameOf(data, levelName) {
-    const own = data && typeof data.name === "string" ? data.name.trim() : "";
+    const text = (v) => (typeof v === "string" ? v.trim() : "");
+    const own = data ? text(data.title) || text(data.name) : "";
     return own || (typeof levelName === "string" ? levelName : "") || null;
   }
 
@@ -8807,6 +8810,12 @@
     }
     return true;
   }
+  // Who the plate above the story box names: the story's own speaker
+  // (storyData.speaker — gs's is GS), else G, whose story 2028.Ai's is.
+  function storySpeaker(storyData) {
+    var own = storyData && typeof storyData.speaker === "string" ? storyData.speaker.trim() : "";
+    return own || "G";
+  }
   function decideEnding(recipe) {
     var finalStage = recipe ? lastStageId(recipe) : 4;
     if (gameState.stageId > finalStage) return true;
@@ -8908,18 +8917,26 @@
       this.txtBg.fillStyle(0, 1);
       this.txtBg.fillRoundedRect(8, GAME_DIMENSIONS.CENTER_Y + 7, GAME_DIMENSIONS.WIDTH - 16, 180, 6);
       this.txtBg.strokeRoundedRect(8, GAME_DIMENSIONS.CENTER_Y + 7, GAME_DIMENSIONS.WIDTH - 16, 180, 6);
+      var speaker = storySpeaker(this.scenario);
       var nameBg = this.add.graphics();
-      nameBg.lineStyle(2, 16777215, 1);
-      nameBg.fillStyle(0, 1);
-      nameBg.fillRoundedRect(16, GAME_DIMENSIONS.CENTER_Y - 5, 80, 24, 6);
-      nameBg.strokeRoundedRect(16, GAME_DIMENSIONS.CENTER_Y - 5, 80, 24, 6);
-      this.nameTxt = addPixiPositionedText(this, 50, GAME_DIMENSIONS.CENTER_Y - 4, "G", {
+      this.nameTxt = addPixiPositionedText(this, 50, GAME_DIMENSIONS.CENTER_Y - 4, speaker, {
         fontFamily: "sans-serif",
         fontSize: "16px",
         fontStyle: "bold",
         color: "#ffffff",
         padding: { x: 10, y: 10 }
       });
+      // G's one letter sits at x 50 on an 80px plate. Any other name is set
+      // on the plate's middle, and widens the plate when it would not fit.
+      var nameW = 80;
+      if (speaker !== "G") {
+        nameW = Math.max(80, Math.ceil(this.nameTxt.width - 20) + 24);
+        this.nameTxt.setX(Math.round(16 + nameW / 2 - this.nameTxt.width / 2));
+      }
+      nameBg.lineStyle(2, 16777215, 1);
+      nameBg.fillStyle(0, 1);
+      nameBg.fillRoundedRect(16, GAME_DIMENSIONS.CENTER_Y - 5, nameW, 24, 6);
+      nameBg.strokeRoundedRect(16, GAME_DIMENSIONS.CENTER_Y - 5, nameW, 24, 6);
       this.txt = addPixiPositionedText(this, 15, GAME_DIMENSIONS.CENTER_Y + 30, "", {
         fontFamily: "sans-serif",
         fontSize: "16px",

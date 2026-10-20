@@ -209,10 +209,13 @@ export function customTitleArt(data) {
   return art;
 }
 
-// What the title calls a game that drew no logo: the record's own name, else
-// the key it was fetched by.
+// What the title calls a game that drew no logo: the record's title, else its
+// own name, else the key it was fetched by. `name` is the key the editor saves
+// under, so a game called something else on screen says so in `title` (gs's
+// is SQUAD) — which the app it exports is called on a phone, too.
 export function titleNameOf(data, levelName) {
-  const own = data && typeof data.name === "string" ? data.name.trim() : "";
+  const text = (v) => (typeof v === "string" ? v.trim() : "");
+  const own = data ? text(data.title) || text(data.name) : "";
   return own || (typeof levelName === "string" ? levelName : "") || null;
 }
 

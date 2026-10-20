@@ -63,6 +63,7 @@ const { stageWebDir, stageSecondScreen } = require("./lib/second-screen");
 const { writeAppIcon } = require("./lib/app-icon");
 const { gameIdForLevel } = require("./lib/game-id");
 const {
+  appTitleFor,
   rebrandConfigXml,
   rebrandManifestJson,
 } = require("./lib/rebrand");
@@ -303,6 +304,11 @@ async function main() {
     }
   }
 
+  // What the phone's launcher calls the app. The slug and package id above
+  // stay the build name's whatever the record's title says.
+  const appTitle = appTitleFor(levelName, levelData);
+  if (appTitle !== levelName) console.log("  app title: " + appTitle);
+
   // 2. Stage www
   console.log("\n[2/4] Staging offline www/ from cmg's 2028-ai game…");
   // The level's leaderboard identity. The editor mints it onto the record the
@@ -337,7 +343,7 @@ async function main() {
     wwwRoot,
     layout: padLayout,
     entry: "phaser-game.html",
-    title: levelName,
+    title: appTitle,
   });
 
   // The launcher icon: the game's own ship when it flies one, else the
@@ -381,7 +387,7 @@ async function main() {
   const results = {};
   const rebrandedConfig = rebrandConfigXml(
     path.join(SCAFFOLD_ROOT, "config.xml"),
-    levelName,
+    appTitle,
     packageId,
   );
   for (const p of platforms) {
@@ -423,7 +429,7 @@ async function main() {
   try {
     const m = rebrandManifestJson(
       path.join(SCAFFOLD_ROOT, "manifest.json"),
-      levelName,
+      appTitle,
     );
     fs.writeFileSync(
       path.join(wwwRoot, "manifest.json"),
