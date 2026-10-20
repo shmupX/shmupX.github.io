@@ -1020,10 +1020,14 @@ is stored blown up, and the factor is measured rather than assumed — and centr
 it there, so nothing is ever resampled; a letter this small does not survive it.
 ([`lib/ps2/gif.ts`](packages/shmup-harbor/lib/ps2/gif.ts) decodes every frame of
 a GIF, disposal methods and loop count included, rather than only the first.)
-The GIFs themselves are **not in the repo** — `dev-fixtures/` is gitignored — so
-the build reports how many of the nine item types wear an emblem, or that it is
-drawing squares; a GIF that will not decode costs only its own letter, and a
-checkout without the art exports exactly what it always did. Import the cart
+The GIFs themselves are **not in the repo** — `dev-fixtures/` is gitignored — but
+the runtime's atlas cut from them is (below), and its `emblemStill<L>.gif`
+frames are exactly those stills, so a checkout without the GIFs takes the
+letters from `static/games/2028-ai/assets/powerups.json` instead
+(`loadAtlasEmblems`) and its carts' pickups still look like the game's. The
+build reports which letters wear an emblem and where they came from; a GIF that
+will not decode costs only its own letter, and only a checkout with neither the
+GIFs nor the atlas draws the squares. Import the cart
 back and its icons dress its drops again (`dezaemonItems.iconByDrop`), which is
 what the runtime then draws for its pickups — the same path a community save's
 own icons take. The drops themselves come back through the records' death

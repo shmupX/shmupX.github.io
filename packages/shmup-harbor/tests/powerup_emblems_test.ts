@@ -18,13 +18,16 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import {
+  EMBLEM_ATLAS,
   EMBLEM_CELL,
   EMBLEM_DIR,
   EMBLEM_LETTERS,
   emblemFromGif,
+  loadAtlasEmblems,
   loadItemEmblems,
   pixelScale,
 } from "../lib/powerup-emblems.ts";
+import { encodePng, newRaster } from "../lib/ps2/png.ts";
 import { repoRoot } from "../lib/repo-root.ts";
 
 const ROOT = repoRoot();
@@ -636,3 +639,83 @@ Deno.test("the committed powerups atlas animates four letters and carries their 
     );
   }
 });
+
+// ---------------------------------------------------------------------------
+// loadAtlasEmblems — the committed stills, for a checkout without the GIFs
+// ---------------------------------------------------------------------------
+
+Deno.test("loadAtlasEmblems cuts all four letters out of the committed atlas", async () => {
+  const warnings: string[] = [];
+  const out = await loadAtlasEmblems(
+    join(ROOT, EMBLEM_ATLAS),
+    (m) => warnings.push(m),
+  );
+  assert(out);
+  assertEquals(warnings, []);
+  assertEquals(Object.keys(out).sort(), ["b", "f", "r", "s"]);
+  for (const [letter, emblem] of Object.entries(out)) {
+    assertEquals([emblem.w, emblem.h], [EMBLEM_CELL, EMBLEM_CELL], letter);
+    const box = opaqueBox(emblem.rgba);
+    assert(
+      box.count > 40,
+      `${letter}: the emblem is painted (${box.count} px)`,
+    );
+    assert(box.w <= 14 && box.h <= 15, `${letter}: the folded pose`);
+  }
+});
+
+Deno.test("loadAtlasEmblems returns null for an atlas that is not there", async () => {
+  assertEquals(
+    await loadAtlasEmblems(join(ROOT, "no-such-dir-here", "powerups.json")),
+    null,
+  );
+});
+
+Deno.test("loadAtlasEmblems warns past a still that is not the cell's size", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const sheet = newRaster(40, 20);
+    sheet.data.fill(255);
+    await Deno.mkdir(join(dir, "img"));
+    await Deno.writeFile(
+      join(dir, "img", "powerups.png"),
+      await encodePng(sheet),
+    );
+    const json = join(dir, "powerups.json");
+    await Deno.writeTextFile(
+      json,
+      JSON.stringify({
+        meta: { image: "img/powerups.png" },
+        frames: {
+          "emblemStillF.gif": { frame: { x: 0, y: 0, w: 16, h: 16 } },
+          "emblemStillB.gif": { frame: { x: 18, y: 0, w: 20, h: 16 } },
+        },
+      }),
+    );
+    const warnings: string[] = [];
+    const out = await loadAtlasEmblems(json, (m) => warnings.push(m));
+    assert(out);
+    assertEquals(Object.keys(out), ["f"]);
+    assertEquals(Array.from(out.f.rgba.subarray(0, 4)), [255, 255, 255, 255]);
+    assert(warnings.some((w) => w.includes("emblemStillB.gif is 20x16")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test(
+  "the committed stills are the GIFs' own cut, pixel for pixel",
+  gated,
+  async () => {
+    const gifs = await loadItemEmblems(ART);
+    const atlas = await loadAtlasEmblems(join(ROOT, EMBLEM_ATLAS));
+    assert(gifs && atlas);
+    for (const letter of EMBLEM_LETTERS) {
+      assertEquals(
+        Array.from(atlas[letter].rgba),
+        Array.from(gifs[letter].rgba),
+        `${letter}: rebuild the atlas with deno task powerups:atlas`,
+      );
+    }
+  },
+);

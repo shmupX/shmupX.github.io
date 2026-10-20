@@ -14,11 +14,16 @@
 // frame this cuts, so nothing is ever resampled: the spread pose is 26 wide
 // and could only reach 16 by throwing pixels away.
 //
-// The art is not in the repo. `loadItemEmblems()` returns null when the
-// directory is absent, and every caller then falls back to the squares, the
-// same way the engine's fixture-gated tests degrade.
+// The GIFs are not in the repo, so `loadItemEmblems()` returns null when the
+// directory is absent. What is in the repo is the runtime's atlas of the same
+// emblems (`deno task powerups:atlas`), whose stills are this file's own cut
+// of each GIF: `loadAtlasEmblems()` reads those, so a checkout without the
+// GIFs still dresses its items the way the game does, and only one without
+// either falls back to the squares.
 
+import { dirname, join } from "@std/path";
 import { decodeGifFrames, isGif } from "./ps2/gif.ts";
+import { decodePng } from "./ps2/png.ts";
 
 /** An RGBA frame in the shape the engine's writer takes. */
 export interface EmblemFrame {
@@ -29,6 +34,13 @@ export interface EmblemFrame {
 
 /** Where the GIFs live, relative to the repo root. Gitignored. */
 export const EMBLEM_DIR = "dev-fixtures/powerups";
+
+/**
+ * The runtime's atlas of the same emblems, relative to the repo root —
+ * committed, built from the GIFs by scripts/build-powerup-atlas.ts, which
+ * cuts each letter's `emblemStill<L>.gif` with emblemFromGif().
+ */
+export const EMBLEM_ATLAS = "static/games/2028-ai/assets/powerups.json";
 
 /** The cell an item icon occupies in the cart. */
 export const EMBLEM_CELL = 16;
@@ -202,6 +214,67 @@ export async function loadItemEmblems(
     } catch (e) {
       onWarn(`powerup-${letter}.gif: ${(e as Error).message}`);
     }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * The emblem for every letter whose still is in the runtime's powerups atlas
+ * (`jsonPath`, its sheet named by the JSON's meta.image), keyed like
+ * loadItemEmblems() — or null when the atlas is not there. A still that is
+ * not the cell's size is reported through `onWarn` and skipped.
+ */
+export async function loadAtlasEmblems(
+  jsonPath: string,
+  onWarn: (message: string) => void = () => {},
+): Promise<Record<string, EmblemFrame> | null> {
+  let atlas: {
+    meta?: { image?: string };
+    frames?: Record<
+      string,
+      { frame: { x: number; y: number; w: number; h: number } }
+    >;
+  };
+  try {
+    atlas = JSON.parse(await Deno.readTextFile(jsonPath));
+  } catch {
+    return null;
+  }
+  const image = join(
+    dirname(jsonPath),
+    atlas.meta?.image ?? "img/powerups.png",
+  );
+  let sheet: Awaited<ReturnType<typeof decodePng>>;
+  try {
+    sheet = await decodePng(await Deno.readFile(image));
+  } catch (e) {
+    onWarn(`powerups atlas: ${image} (${(e as Error).message})`);
+    return null;
+  }
+  const out: Record<string, EmblemFrame> = {};
+  for (const letter of EMBLEM_LETTERS) {
+    const name = `emblemStill${letter.toUpperCase()}.gif`;
+    const rect = atlas.frames?.[name]?.frame;
+    if (!rect) continue;
+    if (rect.w !== EMBLEM_CELL || rect.h !== EMBLEM_CELL) {
+      onWarn(
+        `powerups atlas: ${name} is ${rect.w}x${rect.h}, not ${EMBLEM_CELL}x${EMBLEM_CELL}`,
+      );
+      continue;
+    }
+    if (rect.x + rect.w > sheet.width || rect.y + rect.h > sheet.height) {
+      onWarn(`powerups atlas: ${name} lies outside its sheet`);
+      continue;
+    }
+    const rgba = new Uint8Array(EMBLEM_CELL * EMBLEM_CELL * 4);
+    for (let y = 0; y < EMBLEM_CELL; y++) {
+      const s = ((rect.y + y) * sheet.width + rect.x) * 4;
+      rgba.set(
+        sheet.data.subarray(s, s + EMBLEM_CELL * 4),
+        y * EMBLEM_CELL * 4,
+      );
+    }
+    out[letter] = { w: EMBLEM_CELL, h: EMBLEM_CELL, rgba };
   }
   return Object.keys(out).length ? out : null;
 }

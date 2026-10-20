@@ -48,7 +48,12 @@ import { ensureDir } from "@std/fs";
 import { decodeDataUrl, decodePng, type Raster } from "../lib/ps2/png.ts";
 import { decodeGif, isGif } from "../lib/ps2/gif.ts";
 import { cut } from "../lib/ps2/raster.ts";
-import { EMBLEM_DIR, loadItemEmblems } from "../lib/powerup-emblems.ts";
+import {
+  EMBLEM_ATLAS,
+  EMBLEM_DIR,
+  loadAtlasEmblems,
+  loadItemEmblems,
+} from "../lib/powerup-emblems.ts";
 import { loadAthenaFont } from "../lib/bitmap-font.ts";
 import { storyPanels } from "../lib/story-panels.ts";
 import {
@@ -490,19 +495,27 @@ export async function buildSav(
     plates.subtitle;
   const titleG = await ownTitleG(record, art, log);
 
-  // Real item icons when the powerup GIFs are sitting in dev-fixtures, the
-  // coloured squares when they are not. A cart holds one 16x16 cell per item
-  // slot, so these are stills — the GIFs' own animation has nowhere to go.
-  const itemEmblems = await loadItemEmblems(
-    join(ROOT, EMBLEM_DIR),
-    (m) => log(`warning: ${m}`),
-  );
+  // The game's own item icons: cut from the powerup GIFs when they are
+  // sitting in dev-fixtures, else the same stills out of the runtime's
+  // committed powerups atlas; the coloured squares only without either. A
+  // cart holds one 16x16 cell per item slot, so these are stills — the GIFs'
+  // own animation has nowhere to go.
+  const warn = (m: string) => log(`warning: ${m}`);
+  const fromGifs = await loadItemEmblems(join(ROOT, EMBLEM_DIR), warn);
+  const fromAtlas = await loadAtlasEmblems(join(ROOT, EMBLEM_ATLAS), warn);
+  const itemEmblems = fromGifs || fromAtlas
+    ? { ...fromAtlas, ...fromGifs }
+    : null;
   log(
     itemEmblems
       ? `item icons: ${
         Object.keys(itemEmblems).map((l) => l.toUpperCase()).join(" ")
-      } wear a powerup emblem (${Object.keys(itemEmblems).length} of 4 letters)`
-      : `item icons: no powerup GIFs in ${EMBLEM_DIR} — drawing coloured squares`,
+      } wear a powerup emblem (${
+        Object.keys(itemEmblems).length
+      } of 4 letters, from ${
+        fromGifs ? EMBLEM_DIR : "the runtime's powerups atlas"
+      })`
+      : `item icons: no powerup art in ${EMBLEM_DIR} or ${EMBLEM_ATLAS} — drawing coloured squares`,
   );
 
   // The story, as objects the stage opens on: a .sav cannot carry a cutscene,
