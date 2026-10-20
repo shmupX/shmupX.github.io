@@ -99,6 +99,17 @@ import {
   locateExpr,
 } from "./lib/parity-emu.ts";
 import { buildSfc } from "../packages/shmup-harbor/scripts/build-sfc.ts";
+import {
+  findSaturnDisc,
+  injectDisc,
+} from "../packages/shmup-harbor/scripts/inject-disc.ts";
+import {
+  DIALOG_YES,
+  PLAY_U,
+  SATURN,
+  SATURN_RAM,
+  saturnPage,
+} from "./lib/parity-saturn.ts";
 
 const ROOT = repoRoot();
 
@@ -963,14 +974,178 @@ const runSfc: PaneRunner = async (ctx) => {
   }, ctx);
 };
 
+/**
+ * The Saturn's JP BIOS (Dezaemon 2 is a Japanese disc): $SATURN_BIOS, else
+ * a sega_101.bin under dev-fixtures/, beside Mednafen, or in a cmg checkout
+ * next to this one.
+ */
+async function findSaturnBios(): Promise<string | null> {
+  const home = Deno.env.get(
+    Deno.build.os === "windows" ? "USERPROFILE" : "HOME",
+  );
+  const candidates = [
+    Deno.env.get("SATURN_BIOS"),
+    await findFixture((n) => n.toLowerCase() === "sega_101.bin"),
+    home && join(home, "saturn", "mednafen", "firmware", "sega_101.bin"),
+    home && join(home, ".mednafen", "firmware", "sega_101.bin"),
+    join(ROOT, "..", "cmg", "static", "bios", "sega_101.bin"),
+  ];
+  for (const path of candidates) {
+    if (path && await exists(path, { isFile: true })) return path;
+  }
+  return null;
+}
+
+/**
+ * Saturn Dezaemon 2 with no backup cartridge: the rush written onto the disc
+ * as its boot image (disc:inject), its bring-your-own-disc zip and the JP
+ * BIOS served to a page of EmulatorJS's yabause (lib/parity-saturn.ts).
+ * Power-on → the no-cartridge dialog's はい → the title (START, or nothing is
+ * clickable) → PLAY → U → the game's title → START → START is GAME START,
+ * each step read off HWRAM, never timed. Lives are u8 0x06084354, the ship
+ * object slot 2's px << 7 words, Saturn R (the game's rapid fire) fires.
+ */
+const runSaturn: PaneRunner = async (ctx) => {
+  const bios = await findSaturnBios();
+  if (!bios) {
+    return {
+      id: "saturn",
+      status: "blocked",
+      reason:
+        "no Saturn JP BIOS (sega_101.bin) — set SATURN_BIOS or drop it under dev-fixtures/",
+    };
+  }
+  if (!await findSaturnDisc(ROOT)) {
+    return {
+      id: "saturn",
+      status: "blocked",
+      reason: "no Dezaemon 2 disc in dev-fixtures/ (or $DEZAEMON_DISC)",
+    };
+  }
+  const disc = await injectDisc({
+    level: join(OUT, "rush.json"),
+    out: join(OUT, "saturn"),
+    zip: true,
+    log: (m) => log(`  ${m}`),
+  });
+  if (!disc.zipPath) throw new Error("disc:inject wrote no zip");
+  const spec = PANES.saturn;
+  const cdp = ctx.rig.cdp;
+  const hwram = (a: number) => a - 0x06000000;
+  const byte = (a: number) => cdp.eval<number>(`__sat.b(${a})`);
+  const word = (a: number) => cdp.eval<number>(`__sat.w(${a})`);
+  return await runEmuPane({
+    id: "saturn",
+    url: `${ctx.rig.origin}/__parity/saturn/play.html`,
+    files: {
+      "/__parity/saturn/play.html": {
+        body: saturnPage({
+          disc: "/__parity/saturn/disc.zip",
+          bios: "/__parity/saturn/bios.bin",
+          width: spec.width,
+          height: spec.height,
+        }),
+        type: "text/html; charset=utf-8",
+      },
+      "/__parity/saturn/disc.zip": {
+        body: await Deno.readFile(disc.zipPath),
+        type: "application/zip",
+      },
+      "/__parity/saturn/bios.bin": {
+        body: await Deno.readFile(bios),
+        type: "application/octet-stream",
+      },
+    },
+    boot: async () => {
+      await until("the yabause core", 120_000, () =>
+        cdp.eval<boolean>(
+          `!!(window.EJS_emulator && EJS_emulator.gameManager && EJS_emulator.started)`,
+        ), 500);
+      await cdp.eval(SATURN_RAM);
+      const { base } = await until(
+        "HWRAM in the core's heap",
+        120_000,
+        async () => {
+          const at = await cdp.eval<number>(`__sat.find()`);
+          return at >= 0 ? { base: at } : null;
+        },
+        1000,
+      );
+      // The no-cartridge dialog: its pointer starts between はい and いいえ,
+      // where a click lands on neither. The flag is stored once the title
+      // has started, a few seconds after はい.
+      await until("the no-cartridge dialog's はい", 120_000, async () => {
+        if (await byte(SATURN.workFlag) === 1) return true;
+        if (await word(SATURN.overlay) !== 0x2fe6) return false;
+        await cdp.eval(
+          `__sat.steer(${DIALOG_YES.x}, ${DIALOG_YES.y}, null, 4000)`,
+        );
+        await press(cdp, 0);
+        const t = Date.now();
+        while (Date.now() - t < 6000) {
+          await sleep(500);
+          if (await byte(SATURN.workFlag) === 1) return true;
+        }
+        return false;
+      }, 500);
+      log("saturn: past the no-cartridge dialog");
+      await until("the title's menu", 60_000, async () => {
+        if (await word(SATURN.menuState) === 1) return true;
+        await press(cdp, 3);
+        await sleep(1000);
+        return await word(SATURN.menuState) === 1;
+      }, 0);
+      // PLAY → U: trusted by the hovered item, not by the picture — an icon
+      // can look lit while the pointer is outside its hit box.
+      await until("PLAY → U", 60_000, async () => {
+        if (await word(SATURN.menuState) !== 1) return true;
+        const at = await cdp.eval<{ hover: number }>(
+          `__sat.steer(${PLAY_U.x}, ${PLAY_U.y}, ${PLAY_U.hover}, 6000)`,
+        );
+        if (at.hover !== PLAY_U.hover) return false;
+        await press(cdp, 0);
+        await sleep(2000);
+        return await word(SATURN.menuState) !== 1;
+      }, 0);
+      log("saturn: the game is loading");
+      // The game's title: START opens its menu (or leaves the high-score
+      // page for the title), START again is GAME START. Pressed until the
+      // play state says P1 is in a running game — no further, as START in
+      // the stage is pause.
+      await until("the game's first stage", 120_000, async () => {
+        const inPlay = async () => (await byte(SATURN.playState) & 0x83) === 3;
+        if (await inPlay()) return true;
+        await press(cdp, 3, 120);
+        await sleep(1400);
+        return await inPlay();
+      }, 0);
+      return base;
+    },
+    pilot: {
+      wordSwap: true,
+      lives: [hwram(SATURN.lives)],
+      fire: 13,
+      pad: { up: 4, down: 5, left: 6, right: 7 },
+      checkpointMs: 1500,
+      rewindCheckpoints: 2,
+      maxTries: 6,
+      seed: 7,
+      // The low word of each u32 slot: px << 7 fits in it.
+      ship: {
+        x: hwram(SATURN.shipX) + 2,
+        y: hwram(SATURN.shipY) + 2,
+        shift: 7,
+        box: { x0: 72, x1: 248, y0: 120, y1: 200 },
+      },
+    },
+  }, ctx);
+};
+
 const RUNNERS: Record<PaneId, PaneRunner> = {
   web: runWeb,
   ps2: runPs2,
   sfc: runSfc,
-  saturn: pending(
-    "saturn",
-    "the Saturn pane's boot is not written yet (packages/shmup-harbor/scripts/inject-disc.ts writes the disc it would play)",
-  ),
+  saturn: runSaturn,
   kids: pending("kids", "the Kids! pane's boot is not written yet"),
   plus: pending("plus", "the Dezaemon+ pane's boot is not written yet"),
   n64dd: pending("n64dd", "the 64DD pane's boot is not written yet"),

@@ -922,7 +922,11 @@ and audio tracks in one `.bin` is refused.
 
 **Boot it with no cartridge.** The game first says a save needs 1,500 free
 blocks and asks whether to start anyway — `はい`. At the title, START, then the
-PLAY panel's `U` plays the game; there is nothing to LOAD.
+PLAY panel's `U` plays the game; there is nothing to LOAD. `testdrive:parity`'s
+Saturn pane walks the same path headless, reading each step off the console's
+RAM rather than waiting on timings: the dialog's pointer starts between the two
+answers and has to be steered onto `はい`, and the game's lives byte, ship
+position and fire button are in `scripts/lib/parity-saturn.ts`.
 
 What it writes, and why it can: the disc keeps six complete games as
 `SGM_*.CMP`, and `SGM_INIT.CMP` is not a sample but the game the editor holds at

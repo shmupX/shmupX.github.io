@@ -58,8 +58,9 @@ export const PANES: Record<PaneId, PaneSpec> = {
   saturn: {
     id: "saturn",
     label: "SATURN",
+    // yabause draws Dezaemon 2 at 320x240 (4:3); a shorter page pillarboxes it.
     width: 320,
-    height: 224,
+    height: 240,
     stage2: "approximated",
   },
   kids: {

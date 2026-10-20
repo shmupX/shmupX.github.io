@@ -21,6 +21,11 @@ import type { Frame } from "./parity.ts";
 export interface EmuPilotConfig {
   /** Heap offset of the console's work RAM. */
   ramBase: number;
+  /**
+   * The core keeps that RAM as little-endian 16-bit words (yabause's Saturn
+   * work RAM), so the console's byte A sits at heap byte A ^ 1.
+   */
+  wordSwap?: boolean;
   /** Addresses (within that RAM) of the lives counter; a drop in any is a death. */
   lives: number[];
   /** RetroPad index held throughout to fire. */
@@ -35,10 +40,13 @@ export interface EmuPilotConfig {
   /**
    * Where the ship's x and y bytes are, and the box it should keep to. With
    * them the pilot flies to random points in that box; without, it sways.
+   * `shift` reads each as a big-endian 16-bit word in units of 2^shift
+   * pixels instead of a byte (the Saturn's px << 7).
    */
   ship?: {
     x: number;
     y: number;
+    shift?: number;
     box: { x0: number; x1: number; y0: number; y1: number };
   } | null;
   /** Fresh flights tried from one checkpoint before stepping further back. */
@@ -59,7 +67,12 @@ export function emuPilot(config: EmuPilotConfig): string {
     seed: cfg.seed || 1, held: {}, inputs: [], escalate: 0, lastRewindWall: 0,
     tries: 0, best: [], bestMs: 0,
   };
-  function ram(a) { return M.HEAPU8[cfg.ramBase + a]; }
+  var swap = cfg.wordSwap ? 1 : 0;
+  function ram(a) { return M.HEAPU8[cfg.ramBase + (a ^ swap)]; }
+  function pos(a) {
+    var s = cfg.ship.shift;
+    return s == null ? ram(a) : ((ram(a) << 8) | ram(a + 1)) >> s;
+  }
   function livesNow() { return cfg.lives.map(ram); }
   function hold(idx, on) {
     if (!!emu.held[idx] === !!on) return;
@@ -138,7 +151,7 @@ export function emuPilot(config: EmuPilotConfig): string {
         emu.ty = b.y0 + rnd() * (b.y1 - b.y0);
         vtimer = 20 + Math.floor(rnd() * 30);
       }
-      var sx = ram(cfg.ship.x), sy = ram(cfg.ship.y);
+      var sx = pos(cfg.ship.x), sy = pos(cfg.ship.y);
       hold(cfg.pad.left, sx > emu.tx + 4);
       hold(cfg.pad.right, sx < emu.tx - 4);
       hold(cfg.pad.up, sy > emu.ty + 4);
