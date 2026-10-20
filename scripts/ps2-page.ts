@@ -15,8 +15,14 @@
  *   <slug>-usb.zip  the folder, zipped under the title (SQUAD/athena.elf, …)
  *   play/           the web build of the same tree (lib/ps2/web-build.ts):
  *                   the disc's own main.js on the web build of AthenaEnv
- *   preview.gif     the seven-target capture (`deno task testdrive:parity`),
- *                   copied in when there is one — or --gif <file>
+ *   preview.gif     the parity capture (`deno task testdrive:parity`), every
+ *                   target it could run side by side, copied in when there
+ *                   is one — or --gif <file> — and captioned from the
+ *                   report.json beside it with the targets it has
+ *
+ * --page-only builds nothing: it takes the disc and the zip already beside
+ * the page, copies in the GIF and rewrites index.html and README.md — a new
+ * capture onto the page without a new disc.
  *
  * All of it is committed, the ISO, the zip and play/ included. Deno Deploy
  * builds the site from this repository and `deno task build` does not run
@@ -32,26 +38,32 @@
  *   deno task ps2:page gs
  *   deno task ps2:page gs -- --slug gs-ps2 --title "GS" --gif build/testdrive/parity/gs/parity.gif
  *   deno task ps2:page gs -- --no-music     # a smaller disc: the effects but not the streamed music
+ *   deno task ps2:page gs -- --page-only    # the latest parity GIF, the disc left as it is
  */
 
 import { parseArgs } from "@std/cli/parse-args";
-import { basename, join, resolve } from "@std/path";
+import { basename, dirname, join, resolve } from "@std/path";
 import { ensureDir, exists } from "@std/fs";
 import { repoRoot } from "@shmupx/shmup-harbor/repo-root";
 import { buildPs2 } from "../packages/shmup-harbor/lib/ps2/build.ts";
 import { writeWebBuild } from "../packages/shmup-harbor/lib/ps2/web-build.ts";
 import { buildZip, treeEntries } from "../packages/shmup-harbor/lib/ps2/zip.ts";
 import { cloudLevelAliases } from "../lib/level-subdomain.ts";
-import { ps2PageHtml, ps2Readme } from "./lib/ps2-page.ts";
+import {
+  parityCaption,
+  type ParityReport,
+  ps2PageHtml,
+  ps2Readme,
+} from "./lib/ps2-page.ts";
 
 const ROOT = repoRoot();
 const flags = parseArgs(Deno.args.filter((a) => a !== "--"), {
   string: ["slug", "title", "gif", "caption"],
-  boolean: ["no-music", "help"],
+  boolean: ["no-music", "page-only", "help"],
 });
 if (flags.help || !flags._[0]) {
   console.log(
-    'deno task ps2:page "<level>" [-- --slug <name> --title <text> --gif <file> --caption <text> --no-music]',
+    'deno task ps2:page "<level>" [-- --slug <name> --title <text> --gif <file> --caption <text> --no-music --page-only]',
   );
   Deno.exit(flags.help ? 0 : 2);
 }
@@ -81,42 +93,66 @@ const title = flags.title ?? (alias ? alias.toUpperCase() : level);
 const out = join(ROOT, "static", "games", slug);
 await ensureDir(out);
 
-console.log(`building ${level} for the PS2 (folder + disc)…`);
-const built = await buildPs2({
-  root: ROOT,
-  levelName: level,
-  iso: true,
-  skipMusic: flags["no-music"],
-});
-if (!built.appDir || !built.isoPath) {
-  throw new Error("the PS2 build wrote no folder or no disc");
-}
-
 const iso = `${slug}.iso`;
-await Deno.copyFile(built.isoPath, join(out, iso));
 const zip = `${slug}-usb.zip`;
-// The folder it unpacks to carries the game's public name — SQUAD, not the
-// build's own Gs — in characters any stick and launcher take.
-const folder = title.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") ||
-  basename(built.appDir);
-// A fixed stamp, so the same build zips to the same bytes.
-const zipped = await buildZip(
-  await treeEntries(built.appDir, folder),
-  new Date("2026-10-18T00:00:00Z"),
-);
-await Deno.writeFile(join(out, zip), zipped);
+// The folder the zip unpacks to carries the game's public name — SQUAD, not
+// the build's own Gs — in characters any stick and launcher take.
+const titleFolder = title.replace(/[^A-Za-z0-9_-]+/g, "_")
+  .replace(/^_+|_+$/g, "");
+let folder: string | undefined = titleFolder || undefined;
+let zipBytes: number;
 
-console.log("writing the web build…");
-await writeWebBuild(built.appDir, join(out, "play"), { title });
+if (flags["page-only"]) {
+  for (const name of [iso, zip]) {
+    if (!await exists(join(out, name), { isFile: true })) {
+      throw new Error(
+        `--page-only: no ${name} in ${out} — run deno task ps2:page ${level} first`,
+      );
+    }
+  }
+  zipBytes = (await Deno.stat(join(out, zip))).size;
+  console.log(`keeping the disc, the zip and play/ in ${out}`);
+} else {
+  console.log(`building ${level} for the PS2 (folder + disc)…`);
+  const built = await buildPs2({
+    root: ROOT,
+    levelName: level,
+    iso: true,
+    skipMusic: flags["no-music"],
+  });
+  if (!built.appDir || !built.isoPath) {
+    throw new Error("the PS2 build wrote no folder or no disc");
+  }
+
+  await Deno.copyFile(built.isoPath, join(out, iso));
+  folder = titleFolder || basename(built.appDir);
+  // A fixed stamp, so the same build zips to the same bytes.
+  const zipped = await buildZip(
+    await treeEntries(built.appDir, folder),
+    new Date("2026-10-18T00:00:00Z"),
+  );
+  await Deno.writeFile(join(out, zip), zipped);
+  zipBytes = zipped.length;
+
+  console.log("writing the web build…");
+  await writeWebBuild(built.appDir, join(out, "play"), { title });
+}
 
 // testdrive:parity writes under the level's own name, whatever the slug.
 const gifFrom = flags.gif
   ? resolve(flags.gif)
   : join(ROOT, "build", "testdrive", "parity", basename(level), "parity.gif");
 let gif: string | null = null;
+// What the GIF shows, from the report testdrive:parity writes beside it. A
+// GIF kept from an earlier run has none here, so it goes out under the plain
+// caption rather than one naming targets it may not have.
+let report: ParityReport | null = null;
 if (await exists(gifFrom)) {
   await Deno.copyFile(gifFrom, join(out, "preview.gif"));
   gif = "preview.gif";
+  report = await Deno.readTextFile(join(dirname(gifFrom), "report.json"))
+    .then((text) => JSON.parse(text) as ParityReport)
+    .catch(() => null);
 } else if (await exists(join(out, "preview.gif"))) {
   gif = "preview.gif";
   console.log(`no GIF at ${gifFrom}; keeping the one already beside the page`);
@@ -133,14 +169,18 @@ const input = {
   folder,
   gif,
   isoBytes: (await Deno.stat(join(out, iso))).size,
-  zipBytes: zipped.length,
+  zipBytes,
   gifCaption: flags.caption ??
-    `${title}'s stage-2 boss on every target shmupX exports to, a tool-assisted pilot fighting it: web, PS2, Super Famicom, Saturn, PS1 Kids!, PS1 Dezaemon+ and 64DD`,
+    (report && parityCaption(title, report)) ?? undefined,
 };
 await Deno.writeTextFile(join(out, "index.html"), ps2PageHtml(input));
 await Deno.writeTextFile(join(out, "README.md"), ps2Readme(input));
 console.log(`\n/games/${slug}/ — ${out}`);
 console.log(`  ${iso} ${(input.isoBytes / 1048576).toFixed(1)} MB`);
 console.log(`  ${zip} ${(input.zipBytes / 1048576).toFixed(1)} MB`);
-console.log(`  play/  the web build`);
-console.log(`  ${gif ?? "(no preview GIF)"}`);
+console.log(`  play/  the web build${flags["page-only"] ? " (kept)" : ""}`);
+console.log(
+  `  ${gif ?? "(no preview GIF)"}${
+    input.gifCaption ? ` — ${input.gifCaption}` : ""
+  }`,
+);

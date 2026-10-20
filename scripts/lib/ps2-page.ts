@@ -36,6 +36,56 @@ const esc = (text: string) =>
 
 export const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
 
+/** Each parity pane (scripts/lib/parity.ts's ids, in its order) as a sentence names it. */
+export const TARGET_NAMES: Record<string, string> = {
+  web: "web",
+  ps2: "PS2",
+  sfc: "Super Famicom",
+  saturn: "Saturn",
+  kids: "PS1 Kids!",
+  plus: "PS1 Dezaemon+",
+  n64dd: "64DD",
+};
+
+/** The parts of testdrive:parity's report.json the caption reads. */
+export interface ParityReport {
+  /** The recorded boss's stage, 0-based. */
+  stage?: number;
+  boss?: string;
+  panes?: { id: string; status: string }[];
+}
+
+const WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven"];
+
+/**
+ * What a parity GIF shows, from the report written beside it: the targets it
+ * captured and no others — the grid leaves a pane without a clip out — so the
+ * caption never names a console the picture does not have. Null when it
+ * captured none.
+ */
+export function parityCaption(
+  title: string,
+  report: ParityReport,
+): string | null {
+  const names = (report.panes ?? [])
+    .filter((p) => p.status === "captured")
+    .map((p) => TARGET_NAMES[p.id] ?? p.id);
+  if (!names.length) return null;
+  const total = Object.keys(TARGET_NAMES).length;
+  const list = names.length === 1
+    ? names[0]
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  const boss = `${title}'s ${
+    report.stage === undefined ? "" : `stage-${report.stage + 1} `
+  }boss${report.boss ? `, ${report.boss},` : ""}`;
+  const where = names.length >= total
+    ? "every target shmupX exports to"
+    : `${WORDS[names.length] ?? names.length} of the ${
+      WORDS[total] ?? total
+    } targets shmupX exports to`;
+  return `${boss} on ${where}, a tool-assisted pilot fighting it: ${list}`;
+}
+
 /** The controls every PS2 export plays with (lib/ps2/web-build.ts's keys). */
 export const CONTROLS = [
   ["Move", "D-pad / left stick", "Arrow keys"],
@@ -340,7 +390,8 @@ ${controls}
 
 \`\`\`sh
 deno task ps2:page ${p.level}               # the disc, the USB folder, the web build and this page
-deno task testdrive:parity ${p.level}       # the preview GIF, every target side by side
+deno task testdrive:parity ${p.level}       # the preview GIF, every target it can run side by side
+deno task ps2:page ${p.level} -- --page-only  # that GIF onto this page, around the disc already here
 \`\`\`
 
 Everything here is committed, the ISO, the zip and \`play/\` included: the site

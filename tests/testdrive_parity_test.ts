@@ -21,7 +21,11 @@ import {
   locateExpr,
   runClockAt,
 } from "../scripts/lib/parity-emu.ts";
-import { ps2PageHtml, ps2Readme } from "../scripts/lib/ps2-page.ts";
+import {
+  parityCaption,
+  ps2PageHtml,
+  ps2Readme,
+} from "../scripts/lib/ps2-page.ts";
 
 /** gs's Daltonius as the record has it (the parts the kinds read). */
 const DALTONIUS = {
@@ -201,4 +205,38 @@ Deno.test("the PS2 page offers the disc, the folder and the browser build, with 
   assert(md.includes("deno task testdrive:parity gs "));
   // No GIF yet: no image, and nothing broken.
   assert(!ps2PageHtml({ ...input, gif: null }).includes("<img"));
+});
+
+Deno.test("the page's GIF caption names only the targets the parity run captured", () => {
+  const pane = (id: string, status = "captured") => ({ id, status });
+  const report = {
+    stage: 1,
+    boss: "Daltonius",
+    panes: [
+      pane("web"),
+      pane("ps2"),
+      pane("sfc"),
+      pane("saturn"),
+      pane("kids", "blocked"),
+      pane("plus", "blocked"),
+      pane("n64dd", "failed"),
+    ],
+  };
+  assertEquals(
+    parityCaption("SQUAD", report),
+    "SQUAD's stage-2 boss, Daltonius, on four of the seven targets shmupX exports to, a tool-assisted pilot fighting it: web, PS2, Super Famicom and Saturn",
+  );
+  const all = report.panes.map((p) => pane(p.id));
+  assertEquals(
+    parityCaption("SQUAD", { stage: 1, panes: all }),
+    "SQUAD's stage-2 boss on every target shmupX exports to, a tool-assisted pilot fighting it: web, PS2, Super Famicom, Saturn, PS1 Kids!, PS1 Dezaemon+ and 64DD",
+  );
+  assertEquals(
+    parityCaption("SQUAD", { panes: [pane("saturn")] }),
+    "SQUAD's boss on one of the seven targets shmupX exports to, a tool-assisted pilot fighting it: Saturn",
+  );
+  assertEquals(
+    parityCaption("SQUAD", { panes: [pane("web", "failed")] }),
+    null,
+  );
 });
