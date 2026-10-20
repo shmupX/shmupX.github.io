@@ -6287,6 +6287,40 @@ function quantizeFrames(frames, target = "saturn", options = {}) {
   const out = target === "snes" ? quantizeSnes(frames, options) : quantizeSaturn(frames, options);
   return { target: spec, ...out };
 }
+function indexWithBank(frames, bank, target = "saturn") {
+  if (!PALETTE_TARGETS[target]) throw new Error(`unknown palette target ${JSON.stringify(target)} (saturn | snes)`);
+  const userEntries = (first, last) => {
+    const out = [];
+    for (let i = first; i < last; i++) {
+      if (bank[i] & USER_COLOR_FLAG) out.push({ index: i, word: bank[i] & 32767 });
+    }
+    return out;
+  };
+  if (target === "snes") {
+    const rows = [];
+    for (let r = USER_ROW_FIRST; r < DEZA2_CG_COLORS / DEZA2_PALETTE_COLS; r++) {
+      const cands = userEntries(r * DEZA2_PALETTE_COLS + 1, (r + 1) * DEZA2_PALETTE_COLS);
+      if (cands.length) rows.push({ row: r, set: candidateSet(cands) });
+    }
+    return frames.map((f) => {
+      if (!rows.length) return { key: f.key, w: f.w, h: f.h, group: f.group, indexed: new Uint8Array(f.w * f.h), row: null };
+      let best = rows[0], bestError = Infinity;
+      for (const r of rows) {
+        let e = 0;
+        for (const [w, n] of colorHistogram([f])) {
+          e += dist2(r.set.wordOf.get(r.set.nearest(w)), r5of(w), g5of(w), b5of(w)) * n;
+        }
+        if (e < bestError) {
+          bestError = e;
+          best = r;
+        }
+      }
+      return { key: f.key, w: f.w, h: f.h, group: f.group, indexed: indexFrame(f, best.set), row: best.row };
+    });
+  }
+  const set = candidateSet([...systemCandidates(), ...userEntries(USER_ROW_FIRST * DEZA2_PALETTE_COLS, DEZA2_CG_COLORS)]);
+  return frames.map((f) => ({ key: f.key, w: f.w, h: f.h, group: f.group, indexed: indexFrame(f, set), row: null }));
+}
 function bankToSec4(bank) {
   const sec4 = new Uint8Array(512);
   for (let i = 0; i < 256; i++) {
@@ -6388,6 +6422,33 @@ var CgPacker = class {
     return index;
   }
   /**
+   * The new cells storing every one of `frames` ({indexed, w, h}, w and h
+   * multiples of 16) would take — a blank cell, or one already stored or
+   * already counted, costs nothing — without storing anything. What
+   * addFrame checks for one frame, asked of several at once.
+   */
+  cellsNeeded(frames) {
+    let need2 = 0;
+    const seen = /* @__PURE__ */ new Set();
+    for (const f of frames) {
+      const cells = indexedToCells(f.indexed, f.w, f.h);
+      for (let c = 0; c < cells.length / CG_CELL_BYTES; c++) {
+        const cell = cells.subarray(c * CG_CELL_BYTES, (c + 1) * CG_CELL_BYTES);
+        let blank = true;
+        for (let i = 0; i < CG_CELL_BYTES; i++) if (cell[i]) {
+          blank = false;
+          break;
+        }
+        if (blank) continue;
+        const k = keyOf(cell);
+        if (this.byKey.has(k) || seen.has(k)) continue;
+        seen.add(k);
+        need2++;
+      }
+    }
+    return need2;
+  }
+  /**
    * Store an indexed frame whose w and h are multiples of 16. Returns its
    * refs in reading order (cellsW * cellsH words). Throws CgFullError —
    * with nothing partially stored — when the frame does not fit.
@@ -6395,21 +6456,7 @@ var CgPacker = class {
   addFrame(indexed, w, h) {
     const cells = indexedToCells(indexed, w, h);
     const count = cells.length / CG_CELL_BYTES;
-    let need2 = 0;
-    const seen = /* @__PURE__ */ new Set();
-    for (let c = 0; c < count; c++) {
-      const cell = cells.subarray(c * CG_CELL_BYTES, (c + 1) * CG_CELL_BYTES);
-      let blank = true;
-      for (let i = 0; i < CG_CELL_BYTES; i++) if (cell[i]) {
-        blank = false;
-        break;
-      }
-      if (blank) continue;
-      const k = keyOf(cell);
-      if (this.byKey.has(k) || seen.has(k)) continue;
-      seen.add(k);
-      need2++;
-    }
+    const need2 = this.cellsNeeded([{ indexed, w, h }]);
     if (need2 > this.free) throw new CgFullError(need2 - this.free);
     const refs = new Uint16Array(count);
     for (let c = 0; c < count; c++) {
@@ -6702,9 +6749,9 @@ var EMBLEM_LETTER_BY_TYPE = Object.freeze({ 4: "b", 7: "f" });
 var DEFAULT_ITEM_MOVEMENT = 1;
 var DROP_TO_SLOT = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 9: 5 };
 var STRAIGHT_APPEARANCE_BASE = 32;
-var STORY_PICTURE_BAND = 6;
-var STORY_TEXT_BAND = 4;
-var STORY_QUIET_ROWS = 48;
+var STORY_FIRST_ROW = 3;
+var STORY_LEAD_ROWS = 8;
+var STORY_SCROLL_SPEEDS = [1, 2];
 var STRAIGHT_SPEEDS = [128, 256, 384, 512, 640, 768, 1152, 1536];
 var SHOT_UNITS = 5120;
 var BOSS_UNITS_PER_HIT = SHOT_UNITS;
@@ -6764,6 +6811,10 @@ function nearestIndex(table, value) {
   return best;
 }
 var clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function extentAfter(lastRow, firstRow = 0) {
+  const end = clamp(Math.ceil((lastRow + 32) / 16 / 2) * 2, 2, 48);
+  return [Math.min(end - 2, Math.max(0, end - 4, Math.ceil(firstRow / 16))), end];
+}
 function b64ToBytes(b64) {
   const bin = atob(String(b64));
   const out = new Uint8Array(bin.length);
@@ -7228,7 +7279,7 @@ function puffSprite(size = 16) {
   return fr;
 }
 function buildSaveFromGame(level, art2, options = {}) {
-  const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, titleG: null, itemEmblems: null, storyPanels: null, useBackground: true, attribution: null, author: null, ...options };
+  const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, titleG: null, itemEmblems: null, storyBackdrops: null, useBackground: true, attribution: null, author: null, ...options };
   const warnings = [];
   const warn = (m) => warnings.push(m);
   const artMap = /* @__PURE__ */ new Map();
@@ -7440,64 +7491,6 @@ function buildSaveFromGame(level, art2, options = {}) {
         if (!first) first = entry;
       }
     }
-    const panel = opts.storyPanels ? opts.storyPanels.find((p) => p.stage === s) : null;
-    if (panel) {
-      const storyBytes = encodeEnemyRecord({
-        appearance: STRAIGHT_APPEARANCE_BASE,
-        animIndex: 3,
-        scoreIndex: 0,
-        hpIndex: 0,
-        noCollision: true,
-        deathMode: 0,
-        fireGeometry: 0,
-        aimed: false
-      });
-      const place = (tiles, band, cols, colBase, rowBase, what) => {
-        const def = RECORD_ART[band];
-        const stepCol = def.w, stepRow = def.h;
-        const rows = Math.max(1, Math.ceil(tiles.length / cols));
-        const free = [];
-        for (let i = def.first; i < def.first + def.count; i++) {
-          if (!taken.has(i)) free.push(i);
-        }
-        if (free.length < tiles.length) {
-          warn(
-            `${st.key}: the story ${what} needs ${tiles.length} ${def.w * CG_CELL}x${def.h * CG_CELL} records and the stage has ${free.length} free \u2014 panel dropped`
-          );
-          return;
-        }
-        for (const tile of tiles) {
-          const index = free.shift();
-          taken.add(index);
-          const key = `story:${s}:${what}:${tile.col},${tile.row}`;
-          const frame = { key, w: tile.w, h: tile.h, rgba: tile.rgba };
-          const planKeys = Array.from(
-            { length: def.frames },
-            (_, f) => planFrame(`${key}:${f}`, frame, def.w * CG_CELL, def.h * CG_CELL, "story", 2)
-          );
-          const letter = `\0${key}`;
-          records.set(letter, { index, band, frames: planKeys, bytes: storyBytes, name: key, drop: 0 });
-          recordOf.set(letter + "0", letter);
-          placements.push({
-            row: rowBase + (rows - 1 - tile.row) * stepRow,
-            col: colBase + tile.col * stepCol,
-            letter,
-            drop: 0
-          });
-        }
-      };
-      for (const p of placements) {
-        p.row = Math.min(PLACEMENT_ROWS - 1, p.row + STORY_QUIET_ROWS);
-      }
-      lastRow = Math.min(PLACEMENT_ROWS - 1, lastRow + STORY_QUIET_ROWS);
-      if (panel.text && panel.text.length) {
-        place(panel.text, STORY_TEXT_BAND, panel.text.length, 3, FIRST_SPAWN_ROW, "text");
-      }
-      if (panel.picture && panel.picture.length) {
-        place(panel.picture, STORY_PICTURE_BAND, 2, 7, FIRST_SPAWN_ROW + 4, "picture");
-      }
-      lastRow = Math.max(lastRow, FIRST_SPAWN_ROW + 16);
-    }
     let boss = null;
     const bossRec = bossData[`boss${s}`] || (s === 0 && !bossData.boss0 ? null : null);
     if (bossRec) {
@@ -7570,7 +7563,7 @@ function buildSaveFromGame(level, art2, options = {}) {
         optionFlag: false,
         ...fight
       });
-      boss = { sizeClass, row, col, frames: planKeys, trailer, name: bossRec.name || `boss${s}`, weapons: weaponTypes };
+      boss = { sizeClass, row, col, frames: planKeys, trailer, name: bossRec.name || `boss${s}`, weapons: weaponTypes, rowFromWaves: !Number.isInteger(dz.row) };
       if (stage2) boss.stage2 = stage2;
       else if (second) warn(`${st.key}: boss (${bossRec.name || "?"}) keeps its cart's own trailer \u2014 its stage2 block is not written`);
       lastRow = Math.max(lastRow, row);
@@ -7619,11 +7612,9 @@ function buildSaveFromGame(level, art2, options = {}) {
         extent = [st.scroll.loopPart, st.scroll.endPart];
       }
     }
-    if (!extent) {
-      const end = clamp(Math.ceil((lastRow + 32) / 16 / 2) * 2, 2, 48);
-      extent = [Math.max(0, end - 4), end];
-    }
-    return { key: st.key, placements, records, recordOf, boss, items, background, curve, extent, lastRow };
+    const extentFromRows = !extent;
+    if (!extent) extent = extentAfter(lastRow);
+    return { key: st.key, placements, records, recordOf, boss, items, background, curve, extent, extentFromRows, lastRow, story: null };
   });
   const importedIcons = importedSlots && level.dezaemonItems && Array.isArray(level.dezaemonItems.icons) ? level.dezaemonItems.icons : null;
   const itemKeys = itemSlotBytes.map((b, i) => {
@@ -7765,6 +7756,70 @@ function buildSaveFromGame(level, art2, options = {}) {
     return r || new Uint16Array(count).fill(EMPTY_REF);
   };
   const painted = (key) => !!(key && refsByKey.get(key));
+  const storyCandidates = [];
+  for (const sb of Array.isArray(opts.storyBackdrops) ? opts.storyBackdrops : []) {
+    const b = built[sb && sb.stage];
+    if (!b) continue;
+    if (b.background) {
+      warn(`${b.key}: keeps its own scenery \u2014 its story is not drawn`);
+      continue;
+    }
+    const variants = (Array.isArray(sb.variants) ? sb.variants : []).filter(
+      (v) => v && v.w === BG_COLS * CG_CELL && v.h > 0 && v.h % CG_CELL === 0 && v.h <= BG_ROWS * CG_CELL && v.rgba && v.rgba.length >= v.w * v.h * 4
+    );
+    if (variants.length) storyCandidates.push({ stage: sb.stage, variants, indexed: /* @__PURE__ */ new Map() });
+    else warn(`${b.key}: its story is not ${BG_COLS * CG_CELL} px wide in whole 16-px rows \u2014 not drawn`);
+  }
+  const storyFrame = (c, v) => {
+    if (!c.indexed.has(v)) {
+      const [f] = indexWithBank([{ key: `story:${c.stage}:${v.label}`, w: v.w, h: v.h, rgba: v.rgba }], q.bank, opts.palette);
+      c.indexed.set(v, { indexed: f.indexed, w: v.w, h: v.h });
+    }
+    return c.indexed.get(v);
+  };
+  const pickAt = (k) => storyCandidates.map((c) => ({ c, v: c.variants[Math.min(k, c.variants.length - 1)] }));
+  let storyPicks = [];
+  const sizes = storyCandidates.reduce((n, c) => Math.max(n, c.variants.length), 0);
+  for (let k = 0; k < sizes; k++) {
+    const picks = pickAt(k);
+    if (packer.cellsNeeded(picks.map(({ c, v }) => storyFrame(c, v))) <= packer.free) {
+      storyPicks = picks;
+      break;
+    }
+  }
+  if (!storyPicks.length && storyCandidates.length) {
+    storyPicks = pickAt(sizes - 1).filter(({ c, v }) => {
+      if (packer.cellsNeeded([storyFrame(c, v)]) <= packer.free) return true;
+      warn(`${built[c.stage].key}: no CG cells left for its story \u2014 not drawn`);
+      return false;
+    });
+  }
+  for (const { c, v } of storyPicks) {
+    const before = packer.used;
+    let refs;
+    try {
+      const f = storyFrame(c, v);
+      refs = packer.addFrame(f.indexed, f.w, f.h);
+    } catch (e) {
+      if (!(e instanceof CgFullError)) throw e;
+      warn(`${built[c.stage].key}: no CG cells left for its story \u2014 not drawn`);
+      continue;
+    }
+    const b = built[c.stage];
+    const rows = v.h / CG_CELL;
+    const top = STORY_FIRST_ROW + rows;
+    const shift = top + STORY_LEAD_ROWS;
+    for (const p of b.placements) p.row = Math.min(PLACEMENT_ROWS - 1, p.row + shift);
+    if (b.boss && b.boss.rowFromWaves) b.boss.row = Math.min(PLACEMENT_ROWS - 8, b.boss.row + shift);
+    b.lastRow = Math.min(PLACEMENT_ROWS - 1, b.lastRow + shift);
+    if (b.extentFromRows) b.extent = extentAfter(b.lastRow, top);
+    const curve = b.curve ? b.curve.slice() : new Uint8Array(SEC5_REGIONS.scrollCurves.stride).fill(DEFAULT_SCROLL_BYTE);
+    for (let i = 0; i < Math.min(curve.length, Math.ceil(top / 4)); i++) {
+      curve[i] = curve[i] & ~7 | STORY_SCROLL_SPEEDS[Math.min(i, STORY_SCROLL_SPEEDS.length - 1)];
+    }
+    b.curve = curve;
+    b.story = { size: v.label, rows, cols: v.w / CG_CELL, refs, cells: packer.used - before };
+  }
   const sec5 = new Uint8Array(SECTION_SIZES[5]);
   const putWord2 = (at, w) => {
     sec5[at] = w >> 8;
@@ -7828,6 +7883,16 @@ function buildSaveFromGame(level, art2, options = {}) {
           if (h) ref ^= REF_HFLIP;
           if (v) ref ^= REF_VFLIP;
           putWord2(bgBase + (r * BG_COLS + c) * 2, ref);
+        }
+      }
+    }
+    if (b.story) {
+      const bgBase = SEC5_REGIONS.stageBanks.offset + s * SEC5_REGIONS.stageBanks.stride;
+      const { rows, cols, refs } = b.story;
+      for (let cy = 0; cy < rows; cy++) {
+        for (let cx = 0; cx < cols; cx++) {
+          const ref = refs[cy * cols + cx];
+          if (ref !== EMPTY_REF) putWord2(bgBase + ((STORY_FIRST_ROW + rows - 1 - cy) * BG_COLS + cx) * 2, ref);
         }
       }
     }
@@ -7938,6 +8003,8 @@ function buildSaveFromGame(level, art2, options = {}) {
         boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, weapons: b.boss.weapons, ...b.boss.stage2 ? { stage2: b.boss.stage2 } : {} } : null,
         items: b.items.length,
         background: !!b.background,
+        // What of the stage's story landed on its opening rows, if any.
+        story: b.story ? { size: b.story.size, rows: b.story.rows, cells: b.story.cells } : null,
         extent: b.extent
       })),
       ship: shipSource,
@@ -9859,6 +9926,10 @@ var KIDS_BOSS_COLUMN = Object.freeze([3, 2, 3, 2]);
 var KIDS_SCROLL_RUN = 2;
 var KIDS_SCROLL_HALT = 0;
 var KIDS_MAP_FILL = 32896;
+var KIDS_STORY_FIRST_ROW = 1;
+var KIDS_STORY_LEAD_ROWS = 4;
+var KIDS_STORY_SCROLL = 1;
+var KIDS_STORY_SLOW_UNITS = 1;
 var clamp2 = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 function nearestIndex2(table, value) {
   let best = 0, bestD = Infinity;
@@ -10275,7 +10346,10 @@ function factoryKidsTail() {
   return tail;
 }
 function buildKidsGameFromLevel(level, art2, options = {}) {
-  const opts = { name: null, title1: null, title2: null, backgroundSet: 0, horizontal: false, ...options };
+  const opts = { name: null, title1: null, title2: null, backgroundSet: 0, horizontal: false, storyBackdrops: null, storyPicks: null, storyMinSize: 0, ...options };
+  if (!opts.storyPicks && Array.isArray(opts.storyBackdrops) && opts.storyBackdrops.length) {
+    return buildKidsWithStory(level, art2, opts);
+  }
   const warnings = [];
   const warn = (m) => warnings.push(m);
   const artMap = /* @__PURE__ */ new Map();
@@ -10422,6 +10496,8 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
   });
   const built = stages.map((st, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
+    const story = opts.storyPicks ? opts.storyPicks.get(s) || null : null;
+    const storyShift = story ? KIDS_STORY_FIRST_ROW + story.chipRows + KIDS_STORY_LEAD_ROWS : 0;
     const spawnRows = st.enemylist.slice().reverse();
     const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
     const appear = new Uint8Array(KIDS_APPEAR_STAGE_BYTES);
@@ -10528,9 +10604,13 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
         }
       }
     };
-    let placed = 0, dropped = 0, lastRow = KIDS_FIRST_SPAWN_ROW;
+    let placed = 0, dropped = 0, lastRow = KIDS_FIRST_SPAWN_ROW + storyShift;
     spawnRows.forEach((row, k) => {
-      const scrollRow = waveRows ? clamp2(Math.round(waveRows[k] / 2), 0, KIDS_MAX_SPAWN_ROW) : Math.min(KIDS_MAX_SPAWN_ROW, KIDS_FIRST_SPAWN_ROW + k * KIDS_ROW_STEP);
+      const scrollRow = clamp2(
+        (waveRows ? Math.round(waveRows[k] / 2) : KIDS_FIRST_SPAWN_ROW + k * KIDS_ROW_STEP) + storyShift,
+        0,
+        KIDS_MAX_SPAWN_ROW
+      );
       row.forEach((cell, c) => {
         if (!cell || cell === "00") return;
         const rec = records.get(cell);
@@ -10712,15 +10792,38 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
         warn(`${st.key}: could not read the background grid (${e.message}) \u2014 scenery skipped`);
       }
     }
+    let storyReport = null;
+    if (story && !chips) {
+      const before = bank.used;
+      const chipRgba = new Uint8Array(32 * 32 * 4);
+      try {
+        for (let cy = 0; cy < story.chipRows; cy++) {
+          for (let cc = 0; cc < KIDS_MAP_COLUMNS; cc++) {
+            chipRgba.fill(0);
+            for (let y = 0; y < 32; y++) {
+              const sy = cy * 32 + y;
+              if (sy >= story.h) break;
+              chipRgba.set(story.rgba.subarray((sy * story.w + cc * 32) * 4, (sy * story.w + cc * 32 + 32) * 4), y * 32 * 4);
+            }
+            const word = bank.addChip(quantizeKidsFrame({ w: 32, h: 32, rgba: chipRgba }));
+            mapWords[(KIDS_STORY_FIRST_ROW + story.chipRows - 1 - cy) * KIDS_MAP_COLUMNS + cc] = word;
+          }
+        }
+        storyReport = { size: story.label, rows: story.chipRows, cells: bank.used - before, first: KIDS_STORY_FIRST_ROW };
+      } catch (e) {
+        if (!(e instanceof KidsBankFullError)) throw e;
+        warn(`${st.key}: CG pages full (${KIDS_CELL_COUNT} cells) \u2014 its story left unfinished`);
+      }
+    }
     const scroll = new Uint8Array(KIDS_SCROLL_STAGE_BYTES);
     const haltRow = boss ? boss.row : Math.min(KIDS_APPEAR_ROWS - 1, lastRow + KIDS_BOSS_ROW_GAP);
     const haltUnit = Math.floor(haltRow * 32 / KIDS_SCROLL_UNIT_PIXELS);
     for (let u = 0; u < KIDS_SCROLL_UNITS; u++) {
-      const nibble = u < haltUnit ? KIDS_SCROLL_RUN : KIDS_SCROLL_HALT;
+      const nibble = storyReport && u < KIDS_STORY_SLOW_UNITS ? KIDS_STORY_SCROLL : u < haltUnit ? KIDS_SCROLL_RUN : KIDS_SCROLL_HALT;
       if (u & 1) scroll[u >> 1] |= nibble << 4;
       else scroll[u >> 1] |= nibble;
     }
-    return { key: st.key, appear, records, bossWords, bossRecords, boss, mapWords, chips, scroll, placed, dropped, lastRow };
+    return { key: st.key, appear, records, bossWords, bossRecords, boss, mapWords, chips, scroll, placed, dropped, lastRow, story: storyReport };
   });
   let title = "none";
   for (const [art3, t] of [[opts.title1, KIDS_SHIP_LAYOUT.title1], [opts.title2, KIDS_SHIP_LAYOUT.title2]]) {
@@ -10803,7 +10906,8 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
           ...b.boss.stage2 ? { bullets: b.boss.bullets, stage2: b.boss.stage2 } : {}
         } : null,
         chips: b.chips,
-        lastRow: b.lastRow
+        lastRow: b.lastRow,
+        story: b.story
       })),
       ship: shipSource,
       items: itemSources,
@@ -10816,19 +10920,98 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
     }
   };
 }
+function buildKidsWithStory(level, art2, opts) {
+  const dry = buildKidsGameFromLevel(level, art2, { ...opts, storyBackdrops: null, storyPicks: null });
+  const notes = [];
+  const w = KIDS_MAP_COLUMNS * 32;
+  const candidates = [];
+  for (const sb of opts.storyBackdrops) {
+    const s = dry.report.stages.findIndex((st) => st.key === `stage${sb && sb.stage}`);
+    if (s < 0) continue;
+    const key = dry.report.stages[s].key;
+    if (dry.report.stages[s].chips > 0) {
+      notes.push(`${key}: keeps its own scenery \u2014 its story is not drawn`);
+      continue;
+    }
+    const variants = [];
+    for (const v of Array.isArray(sb.variants) ? sb.variants : []) {
+      if (!v || v.w !== w || !v.h || !v.rgba) continue;
+      const chipRows = Math.ceil(v.h / 32);
+      if (KIDS_STORY_FIRST_ROW + chipRows > KIDS_MAP_ROWS) continue;
+      const probe = new KidsCellBank();
+      const chipRgba = new Uint8Array(32 * 32 * 4);
+      try {
+        for (let cy = 0; cy < chipRows; cy++) {
+          for (let cc = 0; cc < KIDS_MAP_COLUMNS; cc++) {
+            chipRgba.fill(0);
+            for (let y = 0; y < 32 && cy * 32 + y < v.h; y++) {
+              const sy = cy * 32 + y;
+              chipRgba.set(v.rgba.subarray((sy * w + cc * 32) * 4, (sy * w + cc * 32 + 32) * 4), y * 128);
+            }
+            probe.addChip(quantizeKidsFrame({ w: 32, h: 32, rgba: chipRgba }));
+          }
+        }
+      } catch (e) {
+        if (!(e instanceof KidsBankFullError)) throw e;
+        continue;
+      }
+      variants.push({ pick: { ...v, chipRows }, cells: probe.used });
+    }
+    if (variants.length) candidates.push({ s, key, variants });
+  }
+  const free = dry.report.cells.free;
+  const cost = (picks2) => picks2.reduce((n, p) => n + p.v.cells, 0);
+  const pickAt = (k) => candidates.map((c) => ({ c, v: c.variants[Math.min(k, c.variants.length - 1)] }));
+  const sizes = Math.max(0, ...candidates.map((c) => c.variants.length));
+  const start = Math.max(0, opts.storyMinSize || 0);
+  let picks = [];
+  if (start >= sizes) {
+    if (candidates.length) notes.push(`the story packs past what a Kids! save holds at every size \u2014 not drawn`);
+  } else {
+    for (let k = start; k < sizes && !picks.length; k++) {
+      if (cost(pickAt(k)) <= free) picks = pickAt(k);
+    }
+    if (!picks.length && candidates.length) {
+      for (const p of pickAt(sizes - 1)) {
+        if (cost([...picks, p]) <= free) picks.push(p);
+        else notes.push(`${p.c.key}: no cells left in the save's graphics for its story \u2014 not drawn`);
+      }
+    }
+  }
+  const built = buildKidsGameFromLevel(level, art2, {
+    ...opts,
+    storyBackdrops: null,
+    storyPicks: new Map(picks.map(({ c, v }) => [c.s, v.pick]))
+  });
+  built.warnings.push(...notes);
+  return built;
+}
 function kidsCardFileName(name) {
   const clean = String(name || "game").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim() || "game";
   return `Dezaemon Kids - ${clean}.mcr`;
 }
 function exportLevelToKidsCard(level, art2, options = {}) {
-  const game = buildKidsGameFromLevel(level, art2, options);
-  const { block, seal: seal2, sizes } = buildKidsBlock({
-    graphics: game.graphics,
-    data: game.data,
-    tail: game.tail,
-    name: game.name.bytes,
-    icon: game.icon
-  });
+  let game, packed;
+  const first = options.storyMinSize || 0;
+  let size = first;
+  for (; ; size++) {
+    game = buildKidsGameFromLevel(level, art2, { ...options, storyMinSize: size });
+    try {
+      packed = buildKidsBlock({
+        graphics: game.graphics,
+        data: game.data,
+        tail: game.tail,
+        name: game.name.bytes,
+        icon: game.icon
+      });
+      break;
+    } catch (e) {
+      const story = game.report.stages.some((st) => st.story);
+      if (!story || !/does not fit a memory-card file/.test(String(e && e.message))) throw e;
+    }
+  }
+  if (size > first) game.warnings.push("the story was drawn smaller so the save fits its fifteen blocks");
+  const { block, seal: seal2, sizes } = packed;
   const card = buildMemoryCard([{ filename: KIDS_PRODUCT, data: block }]);
   return {
     card,
@@ -11626,6 +11809,11 @@ var PLUS_FIRST_SPAWN_ROW = 8;
 var PLUS_ROW_STEP = 12;
 var PLUS_BOSS_ROW_GAP = 24;
 var PLUS_MAX_SPAWN_ROW = PLUS_SCROLL_BANDS - 64;
+var PLUS_STORY_TOP_ROW = 11;
+var PLUS_STORY_LEAD_ROWS = 8;
+var PLUS_STORY_MIN_BOSS_ROW = 80;
+var PLUS_STORY_SCROLL_EFFECT = 65;
+var PLUS_STORY_W = 14 * CG_CELL;
 var PLUS_SPAWN_COLUMNS = PLUS_APPEAR_RECORD_SIZE;
 var RUNTIME_TO_PLUS_SPEED = 0.5;
 var PLUS_SHOT_DAMAGE = 24;
@@ -11851,7 +12039,10 @@ function layoutShip(poses) {
   return { shipGroup, shipOdr, painted };
 }
 function buildPlusGameFromLevel(level, art2, options = {}) {
-  const opts = { name: null, title1: null, horizontal: false, ...options };
+  const opts = { name: null, title1: null, horizontal: false, storyBackdrops: null, storyPicks: null, ...options };
+  if (!opts.storyPicks && Array.isArray(opts.storyBackdrops) && opts.storyBackdrops.length) {
+    return buildPlusWithStory(level, art2, opts);
+  }
   const warnings = [];
   const warn = (m) => warnings.push(m);
   const artMap = /* @__PURE__ */ new Map();
@@ -11954,10 +12145,16 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
       const framePlans = spreadFrames(frames, c.frames).map((f, i) => plan(plusPaletteRow("enemy", s), f, c.w, c.h, `${st.key} enemy${letter} ${i}`));
       defs.set(letter, { klass, id, index: c.base + id, bytes, frames: framePlans, name: rec.name || `enemy${letter}` });
     }
+    const story = opts.storyPicks ? opts.storyPicks.get(s) || null : null;
+    const storyShift = story ? PLUS_STORY_TOP_ROW + 1 + PLUS_STORY_LEAD_ROWS : 0;
     const bands = /* @__PURE__ */ new Map();
-    let placed = 0, dropped = 0, lastRow = PLUS_FIRST_SPAWN_ROW;
+    let placed = 0, dropped = 0, lastRow = PLUS_FIRST_SPAWN_ROW + storyShift;
     spawnRows.forEach((row, k) => {
-      const band = waveRows ? clamp3(Math.round(waveRows[k]), 0, PLUS_MAX_SPAWN_ROW) : Math.min(PLUS_MAX_SPAWN_ROW, PLUS_FIRST_SPAWN_ROW + k * PLUS_ROW_STEP);
+      const band = clamp3(
+        (waveRows ? Math.round(waveRows[k]) : PLUS_FIRST_SPAWN_ROW + k * PLUS_ROW_STEP) + storyShift,
+        0,
+        PLUS_MAX_SPAWN_ROW
+      );
       row.forEach((cell, col) => {
         if (!cell || cell === "00") return;
         const def = defs.get(cell.slice(0, -1));
@@ -12002,7 +12199,10 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
         hpIndex: nearestIndex3(PLUS_BOSS_HP, hits * PLUS_SHOT_DAMAGE),
         scoreIndex: nearestIndex3(PLUS_BOSS_SCORE, Number(bossRec.score) || PLUS_BOSS_SCORE[1])
       });
-      const band = Math.min(PLUS_SCROLL_BANDS - 8, lastRow + PLUS_BOSS_ROW_GAP);
+      const band = Math.min(
+        PLUS_SCROLL_BANDS - 8,
+        Math.max(lastRow + PLUS_BOSS_ROW_GAP, story ? PLUS_STORY_MIN_BOSS_ROW : 0)
+      );
       if (!bands.has(band)) bands.set(band, new Uint8Array(PLUS_APPEAR_RECORD_SIZE));
       bands.get(band)[PLUS_BOSS_COLUMN] = 128 | PLUS_APPEAR_BOSS_NIBBLE << 4;
       boss = { name: bossRec.name || `boss${s}`, band, picture, vertical, record, frameCount: frames.length, hits };
@@ -12039,7 +12239,8 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
         warn(`${st.key}: could not read the background grid (${e.message}) \u2014 scenery skipped`);
       }
     }
-    return { key: st.key, defs, bands, boss, scenery, placed, dropped, lastRow };
+    const storyPlan = story && !scenery.length ? { ...plan(plusPaletteRow("map", s), story, story.w, story.h, `${st.key} story`), label: story.label } : null;
+    return { key: st.key, defs, bands, boss, scenery, storyPlan, placed, dropped, lastRow };
   });
   for (const r of rows) if (r.frames.length) r.build();
   const indexedOf = (p) => rows[p.row].index(p.fitted);
@@ -12081,18 +12282,35 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
         groupOfTile.set(t.tile, g);
         putU16le5(mapGroup, g * 2, plusTileWord(t.tile));
       }
-      const half = PLUS_MAP_HALVES[sc.col < 8 ? 0 : 1];
-      const k = sc.col < 8 ? sc.col : sc.col - 9;
-      const at = sc.row * PLUS_MAP_ROW_BYTES;
-      const hflip = sc.hflip !== t.hflip, vflip = sc.vflip !== t.vflip;
-      map[at + half.chips[k]] = g | (hflip ? 128 : 0);
-      if (vflip) map[at + half.flags] |= 1 << 7 - k;
+      putPlusMapCell(map, sc.row, sc.col, g, sc.hflip !== t.hflip, sc.vflip !== t.vflip);
       chips++;
     }
     if (sceneryDropped) warn(`${b.key}: the scenery needs more than 127 distinct tiles; ${sceneryDropped} chips left blank`);
+    let story = null;
+    if (b.storyPlan) {
+      const tiles = bankTiles(b.storyPlan, true);
+      const cols = b.storyPlan.w / CG_CELL, storyRows = b.storyPlan.h / CG_CELL;
+      let painted = 0;
+      tiles.forEach((t, i) => {
+        if (!t) return;
+        let g = groupOfTile.get(t.tile);
+        if (g === void 0) {
+          if (groups >= 128) return;
+          g = groups++;
+          groupOfTile.set(t.tile, g);
+          putU16le5(mapGroup, g * 2, plusTileWord(t.tile));
+        }
+        const cy = Math.floor(i / cols), cx = i % cols;
+        putPlusMapCell(map, PLUS_STORY_TOP_ROW - cy, 1 + cx, g, t.hflip, t.vflip);
+        painted++;
+      });
+      story = { size: b.storyPlan.label, rows: storyRows, chips: painted, top: PLUS_STORY_TOP_ROW };
+    }
     const scroll = piece("scroll");
-    for (let i = 0; i < 256; i++) scroll[i] = i % 32;
+    const opening = story ? Math.ceil((PLUS_STORY_TOP_ROW + 1) / 4) : 0;
+    for (let i = 0; i < 256; i++) scroll[i] = i < 32 || !opening ? i % 32 : opening + (i - opening) % (32 - opening);
     scroll.fill(PLUS_SCROLL_EFFECT_DEFAULT, 256, 512);
+    if (opening) scroll.fill(PLUS_STORY_SCROLL_EFFECT, 256, 256 + opening);
     const appear = piece("appear");
     appear.fill(PLUS_APPEAR_END_MARK, PLUS_APPEAR_RECORD_SIZE, 2 * PLUS_APPEAR_RECORD_SIZE);
     let next = 2;
@@ -12136,7 +12354,8 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
       chips,
       groups: groups - 1,
       enemyTiles: sheet.painted,
-      enemyEntries: sheet.entries
+      enemyEntries: sheet.entries,
+      story
     };
   });
   for (let s = built.length; s < PLUS_STAGES; s++) {
@@ -12209,6 +12428,62 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
       splits
     }
   };
+}
+function putPlusMapCell(map, row, col, group, hflip, vflip) {
+  const half = PLUS_MAP_HALVES[col < 8 ? 0 : 1];
+  const k = col < 8 ? col : col - 8;
+  const at = row * PLUS_MAP_ROW_BYTES;
+  map[at + half.chips[k]] = group | (hflip ? 128 : 0);
+  if (vflip) map[at + half.flags] |= 1 << 7 - k;
+}
+function buildPlusWithStory(level, art2, opts) {
+  const dry = buildPlusGameFromLevel(level, art2, { ...opts, storyBackdrops: null, storyPicks: null });
+  const notes = [];
+  const candidates = [];
+  for (const sb of opts.storyBackdrops) {
+    const s = dry.report.stages.findIndex((st) => st.key === `stage${sb && sb.stage}`);
+    if (s < 0) continue;
+    const key = dry.report.stages[s].key;
+    if (dry.report.stages[s].chips > 0) {
+      notes.push(`${key}: keeps its own scenery \u2014 its story is not drawn`);
+      continue;
+    }
+    const variants = [];
+    for (const v of Array.isArray(sb.variants) ? sb.variants : []) {
+      if (!v || v.w !== PLUS_STORY_W || !v.h || v.h % CG_CELL || !v.rgba) continue;
+      if (v.h / CG_CELL > PLUS_STORY_TOP_ROW + 1) continue;
+      const row = new PlusPaletteRow(0);
+      row.consider(v);
+      const tiles = indexedTiles(row.build().index(v), v.w, v.h);
+      const probe = new PlusTileBank();
+      for (const t of tiles) probe.addFlippable(t);
+      if (probe.used > 127) continue;
+      variants.push({ v, tiles: probe.used });
+    }
+    if (variants.length) candidates.push({ s, key, variants });
+    else notes.push(`${key}: no size of its story fits a stage map (${PLUS_STORY_W} px wide, ${PLUS_STORY_TOP_ROW + 1} rows, 127 distinct tiles) \u2014 not drawn`);
+  }
+  const free = dry.report.tiles.free;
+  const cost = (picks2) => picks2.reduce((n, p) => n + p.pick.tiles, 0);
+  const pickAt = (k) => candidates.map((c) => ({ c, pick: c.variants[Math.min(k, c.variants.length - 1)] }));
+  const sizes = Math.max(0, ...candidates.map((c) => c.variants.length));
+  let picks = [];
+  for (let k = 0; k < sizes && !picks.length; k++) {
+    if (cost(pickAt(k)) <= free) picks = pickAt(k);
+  }
+  if (!picks.length && candidates.length) {
+    for (const p of pickAt(sizes - 1)) {
+      if (cost([...picks, p]) <= free) picks.push(p);
+      else notes.push(`${p.c.key}: no tiles left in the save's graphics for its story \u2014 not drawn`);
+    }
+  }
+  const built = buildPlusGameFromLevel(level, art2, {
+    ...opts,
+    storyBackdrops: null,
+    storyPicks: new Map(picks.map(({ c, pick }) => [c.s, pick.v]))
+  });
+  built.warnings.push(...notes);
+  return built;
 }
 function buildPlusBlock(block) {
   if (!(block instanceof Uint8Array) || block.length !== PLUS_BLOCK_SIZE) throw new Error(`a Dezaemon+ block is ${PLUS_BLOCK_SIZE} bytes`);
@@ -16907,6 +17182,18 @@ function decodeScrollEffect(bytes) {
   }
   return stages;
 }
+var MAP_BLOCK_ROWS = 4;
+function storyScrollSequence(openingBlocks) {
+  const blocks = MAP_ROWS / MAP_BLOCK_ROWS;
+  const k = Math.max(0, Math.min(blocks - 1, openingBlocks));
+  const seq = new Uint8Array(SCROLL_BANDS);
+  for (let i = 0; i < SCROLL_BANDS; i++) seq[i] = i < blocks ? i : k + (i - k) % (blocks - k);
+  return seq;
+}
+function writeScrollSequence(bytes, stage, seq) {
+  bytes.set(seq.subarray(0, SCROLL_BANDS), REGION2.scroll.offset + stage * SCROLL_STAGE_BYTES);
+  return bytes;
+}
 function writeDefaultScroll(bytes, stage) {
   const at = REGION2.scroll.offset + stage * SCROLL_STAGE_BYTES;
   for (let i = 0; i < SCROLL_BANDS; i++) {
@@ -18329,6 +18616,10 @@ var SFC_FIRST_SPAWN_LINE = 2;
 var SFC_LINE_STEP = 4;
 var SFC_BOSS_LINE_GAP = 12;
 var SFC_LAST_SPAWN_LINE = APPEAR_LINES - 2;
+var SFC_STORY_TOP_ROW = 11;
+var SFC_STORY_LEAD_LINES = 8;
+var SFC_STORY_MIN_BOSS_LINE = 80;
+var SFC_STORY_FIRST_COL = 1;
 var SFC_HIT_UNITS = 25;
 var SFC_DEFAULT_AIM = 13;
 var SFC_TITLE_COLS = 8;
@@ -18511,7 +18802,10 @@ function composeTitlePicture({ logo = null, subtitle = null, backdrop = null } =
   return { w: W, h: H, rgba: out };
 }
 function buildSfcGameFromLevel(level, art2, options = {}) {
-  const opts = { name: null, title1: null, title2: null, titleBg: null, horizontal: false, ...options };
+  const opts = { name: null, title1: null, title2: null, titleBg: null, horizontal: false, storyBackdrops: null, storyPicks: null, ...options };
+  if (!opts.storyPicks && Array.isArray(opts.storyBackdrops) && opts.storyBackdrops.length) {
+    return buildWithStory(level, art2, opts);
+  }
   const warnings = [];
   const warn = (m) => warnings.push(m);
   const name = String(opts.name || level.name || "game").trim() || "game";
@@ -18622,7 +18916,7 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
   }
   const built = plan.map(({ st, bossRec, form }, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
-    const stageReport = { key: st.key, placements: 0, records: 0, lines: 0, enemies: [], boss: null, mapChips: 0, cellsDrawn: 0, rowsDrawn: 0 };
+    const stageReport = { key: st.key, placements: 0, records: 0, lines: 0, enemies: [], boss: null, mapChips: 0, cellsDrawn: 0, rowsDrawn: 0, story: null };
     const mapGroup = new Uint16Array(MAP_GROUP_CHIPS).fill(CHIP_EMPTY_WORD);
     mapGroup[0] = CHIP_BLANK_WORD;
     const mapSlotOfChip = /* @__PURE__ */ new Map();
@@ -18688,9 +18982,37 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
         warn(`${st.key}: could not read the background grid (${e.message}) \u2014 scenery skipped`);
       }
     }
+    const story = opts.storyPicks ? opts.storyPicks.get(s) : null;
+    if (story && !stageReport.mapChips) {
+      writeCgramRow(bytes, PALETTE_ROW_STAGE_BG + s, story.q.words);
+      rows.push({ row: PALETTE_ROW_STAGE_BG + s, owner: `${st.key} story`, colors: story.q.colors });
+      const before = bank.used;
+      const cols = MAP_COLUMNS - 2 * SFC_STORY_FIRST_COL;
+      for (let cy = 0; cy < story.rows; cy++) {
+        for (let cx = 0; cx < cols; cx++) {
+          const px = cutChip(story.q.frames[0].indices, cols * CHIP_DIM, cx, cy);
+          if (isTransparent(px)) continue;
+          const hit = bankChip(px, `${st.key} story`);
+          if (!hit) continue;
+          let slot = mapSlotOfChip.get(hit.chip);
+          if (slot === void 0) {
+            if (mapSlotOfChip.size >= MAP_GROUP_CHIPS - 1) continue;
+            slot = mapSlotOfChip.size + 1;
+            mapSlotOfChip.set(hit.chip, slot);
+            mapGroup[slot] = chipWordForIndex(hit.chip);
+          }
+          cells[SFC_STORY_TOP_ROW - cy][SFC_STORY_FIRST_COL + cx] = { slot, hflip: hit.hflip, vflip: hit.vflip };
+        }
+      }
+      stageReport.story = { size: story.label, rows: story.rows, chips: bank.used - before, top: SFC_STORY_TOP_ROW };
+    }
     const mapAt = REGION2.map.offset + s * MAP_STAGE_BYTES;
     for (let r = 0; r < MAP_ROWS; r++) encodeMapRow(bytes, mapAt + r * MAP_ROW_BYTES, cells[r]);
     writeWords(bytes, REGION2.mapGroup.offset + s * MAP_GROUP_STAGE_BYTES, mapGroup);
+    if (stageReport.story) {
+      writeScrollSequence(bytes, s, storyScrollSequence(Math.ceil((SFC_STORY_TOP_ROW + 1) / MAP_BLOCK_ROWS)));
+    }
+    const storyShift = stageReport.story ? SFC_STORY_TOP_ROW + 1 + SFC_STORY_LEAD_LINES : 0;
     const spawnRows = st.enemylist.slice().reverse();
     const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
     const usage = /* @__PURE__ */ new Map();
@@ -18867,7 +19189,7 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     };
     let lastLine = -1, placed = 0, dropped = 0;
     spawnRows.forEach((row, k) => {
-      const line = clamp5(waveRows ? Math.round(waveRows[k]) : SFC_FIRST_SPAWN_LINE + k * SFC_LINE_STEP, 0, SFC_LAST_SPAWN_LINE);
+      const line = clamp5((waveRows ? Math.round(waveRows[k]) : SFC_FIRST_SPAWN_LINE + k * SFC_LINE_STEP) + storyShift, 0, SFC_LAST_SPAWN_LINE);
       const record = new Uint8Array(APPEAR_RECORD_BYTES);
       let any = false;
       row.forEach((cell, c) => {
@@ -18905,7 +19227,11 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     });
     if (dropped) warn(`${st.key}: ${dropped} placement${dropped === 1 ? "" : "s"} shared a column with another on the same line and ${dropped === 1 ? "was" : "were"} left out`);
     if (boss) {
-      const line = clamp5(lastLine + SFC_BOSS_LINE_GAP, SFC_BOSS_LINE_GAP, SFC_LAST_SPAWN_LINE);
+      const line = clamp5(
+        Math.max(lastLine + SFC_BOSS_LINE_GAP, stageReport.story ? SFC_STORY_MIN_BOSS_LINE : 0),
+        SFC_BOSS_LINE_GAP,
+        SFC_LAST_SPAWN_LINE
+      );
       const record = new Uint8Array(APPEAR_RECORD_BYTES);
       record[Math.floor(APPEAR_COLUMNS / 2)] = encodeAppearByte({ klass: APPEAR_BOSS_CLASS, entry: 0 });
       const idx = addRecord(record);
@@ -18939,6 +19265,60 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     splits
   };
   return { bytes, name, warnings, report };
+}
+function buildWithStory(level, art2, opts) {
+  const dry = buildSfcGameFromLevel(level, art2, { ...opts, storyBackdrops: null, storyPicks: null });
+  const notes = [];
+  const cols = MAP_COLUMNS - 2 * SFC_STORY_FIRST_COL;
+  const candidates = [];
+  for (const sb of opts.storyBackdrops) {
+    const s = dry.report.stages.findIndex((st) => st.key === `stage${sb && sb.stage}`);
+    if (s < 0) continue;
+    const key = dry.report.stages[s].key;
+    if (dry.report.stages[s].mapChips > 0) {
+      notes.push(`${key}: keeps its own scenery \u2014 its story is not drawn`);
+      continue;
+    }
+    const variants = [];
+    for (const v of Array.isArray(sb.variants) ? sb.variants : []) {
+      if (!v || v.w !== cols * CHIP_DIM || !v.h || v.h % CHIP_DIM || !v.rgba) continue;
+      const rows = v.h / CHIP_DIM;
+      if (rows > SFC_STORY_TOP_ROW + 1) continue;
+      const q = quantizeToRow([{ key: "story", w: v.w, h: v.h, rgba: v.rgba }]);
+      const chips = /* @__PURE__ */ new Set();
+      for (let cy = 0; cy < rows; cy++) {
+        for (let cx = 0; cx < cols; cx++) {
+          const px = cutChip(q.frames[0].indices, v.w, cx, cy);
+          if (!isTransparent(px)) chips.add(keyOf2(px));
+        }
+      }
+      if (chips.size > MAP_GROUP_CHIPS - 1) continue;
+      variants.push({ label: v.label, rows, q, chips });
+    }
+    if (variants.length) candidates.push({ s, key, variants });
+    else notes.push(`${key}: no size of its story fits a stage map (${cols * CHIP_DIM} px wide, ${SFC_STORY_TOP_ROW + 1} rows, ${MAP_GROUP_CHIPS - 1} distinct chips) \u2014 not drawn`);
+  }
+  const free = dry.report.chips.free;
+  const cost = (picks2) => new Set(picks2.flatMap(({ v }) => [...v.chips])).size;
+  const pickAt = (k) => candidates.map((c) => ({ c, v: c.variants[Math.min(k, c.variants.length - 1)] }));
+  const sizes = Math.max(0, ...candidates.map((c) => c.variants.length));
+  let picks = [];
+  for (let k = 0; k < sizes && !picks.length; k++) {
+    if (cost(pickAt(k)) <= free) picks = pickAt(k);
+  }
+  if (!picks.length && candidates.length) {
+    for (const p of pickAt(sizes - 1)) {
+      if (cost([...picks, p]) <= free) picks.push(p);
+      else notes.push(`${p.c.key}: no chips left in the save's two sheets for its story \u2014 not drawn`);
+    }
+  }
+  const built = buildSfcGameFromLevel(level, art2, {
+    ...opts,
+    storyBackdrops: null,
+    storyPicks: new Map(picks.map(({ c, v }) => [c.s, v]))
+  });
+  built.warnings.push(...notes);
+  return built;
 }
 function fitIndexed(frame, w, h) {
   if (frame.w === w && frame.h === h) return frame.indices;
