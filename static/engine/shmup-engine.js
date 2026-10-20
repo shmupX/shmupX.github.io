@@ -1711,11 +1711,11 @@ function readBankComposition(sec5, slot) {
   if (cells.every((c) => c.empty)) return null;
   return { w: slot.w, h: slot.h, cells };
 }
-function trimRgba(img) {
+function trimRgba(img, cutoff = 1) {
   let minX = img.w, minY = img.h, maxX = -1, maxY = -1;
   for (let y = 0; y < img.h; y++) {
     for (let x = 0; x < img.w; x++) {
-      if (img.rgba[(y * img.w + x) * 4 + 3]) {
+      if (img.rgba[(y * img.w + x) * 4 + 3] >= cutoff) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -6635,6 +6635,59 @@ function authorFromEnvironment(env = {}) {
   return home.split(/[\\/]/).pop() || null;
 }
 
+// packages/shmup-engine/src/boss-stage2.js
+var BOSS_STAGE2_HP_BELOW = 0.5;
+var BOSS_WEAPON_SUFFIXES = Object.freeze(["", "A", "B", "C"]);
+function bossStage2Record(bossData) {
+  const stage2 = bossData && bossData.stage2;
+  if (!stage2 || typeof stage2 !== "object") return null;
+  const merged = { ...bossData, ...stage2 };
+  delete merged.stage2;
+  merged.anim = { ...bossData.anim || {}, ...stage2.anim || {} };
+  for (const suffix of BOSS_WEAPON_SUFFIXES) {
+    const bullet = `bulletData${suffix}`, projectile = `projectileData${suffix}`;
+    if (stage2[bullet] && !stage2[projectile]) delete merged[projectile];
+    if (stage2[projectile] && !stage2[bullet]) delete merged[bullet];
+  }
+  const below = Number(stage2.hpBelow);
+  merged.hpBelow = below > 0 && below < 1 ? below : BOSS_STAGE2_HP_BELOW;
+  return merged;
+}
+function splitBossStage2(bossData) {
+  const second = bossStage2Record(bossData);
+  if (!second) return null;
+  const hpBelow = second.hpBelow;
+  delete second.hpBelow;
+  const first = { ...bossData };
+  delete first.stage2;
+  const hp = Number(bossData.hp);
+  if (bossData.hp !== "infinity" && Number.isFinite(hp) && hp > 0) {
+    const top = Math.max(1, Math.round(hp * (1 - hpBelow)));
+    first.hp = top;
+    second.hp = Math.max(1, Math.round(hp) - top);
+  }
+  return { first, second, hpBelow };
+}
+function bossWeapons(bossData) {
+  const out = [];
+  if (!bossData) return out;
+  for (const suffix of BOSS_WEAPON_SUFFIXES) {
+    const weapon = bossData[`bulletData${suffix}`] || bossData[`projectileData${suffix}`];
+    if (weapon && typeof weapon === "object") out.push({ slot: suffix, weapon });
+  }
+  return out;
+}
+function weaponTextures(weapon) {
+  const t = weapon && weapon.texture;
+  if (typeof t === "string" && t) return [t];
+  return Array.isArray(t) ? t.filter((n) => typeof n === "string" && n) : [];
+}
+function bossBodyFrames(bossData) {
+  const anim = bossData && bossData.anim;
+  if (anim && Array.isArray(anim.idle) && anim.idle.length) return anim.idle.slice();
+  return Array.isArray(bossData && bossData.texture) ? bossData.texture.slice() : [];
+}
+
 // packages/shmup-engine/src/write/game-to-save.js
 var FIRST_SPAWN_ROW = 8;
 var ROW_STEP = 12;
@@ -6893,6 +6946,28 @@ function encodeBossTrailer(spec = {}) {
     }
   }
   return t;
+}
+function saturnStage2Bands(hpBelow) {
+  let best = { hpStages: 2, bands: 1 }, bestD = Infinity;
+  for (const [hpStages, bands] of [[2, 1], [3, 1], [3, 2], [4, 1], [4, 3]]) {
+    const d = Math.abs(bands / hpStages - hpBelow);
+    if (d < bestD - 1e-9) {
+      bestD = d;
+      best = { hpStages, bands };
+    }
+  }
+  return best;
+}
+function saturnTransform(built, bulletTypes) {
+  const parts = [];
+  for (const b of built) {
+    const st2 = b.boss && b.boss.stage2;
+    if (!st2) continue;
+    const fired = [...new Set(st2.weapons.filter((t) => t !== null).map((t) => bulletTypes[t] && bulletTypes[t].first).filter(Boolean))];
+    const bands = st2.bands === 1 ? `the last of ${st2.hpStages} hp stages` : `the last ${st2.bands} of ${st2.hpStages} hp stages`;
+    parts.push(`${b.key} ${b.boss.name}: ${bands} fire ${fired.length ? fired.join(", ") : "its first stage's bullets (no bullet type was left)"}`);
+  }
+  return parts.length ? `approximated: the boss's own hp stages change its patterns and bullets at the line (${parts.join("; ")}); its core keeps the first form's art` : "none";
 }
 var DEFAULT_BOSS_PATTERNS = [
   { moveScript: 1, moveSpeed: 3, fireTickIndex: 2, firePoints: [{ dx: 0, dy: 24, type: 0, rate: 2, param: 17 }] },
@@ -7153,7 +7228,7 @@ function puffSprite(size = 16) {
   return fr;
 }
 function buildSaveFromGame(level, art2, options = {}) {
-  const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, storyPanels: null, useBackground: true, attribution: null, author: null, ...options };
+  const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, titleG: null, itemEmblems: null, storyPanels: null, useBackground: true, attribution: null, author: null, ...options };
   const warnings = [];
   const warn = (m) => warnings.push(m);
   const artMap = /* @__PURE__ */ new Map();
@@ -7248,16 +7323,33 @@ function buildSaveFromGame(level, art2, options = {}) {
     if (t !== null) bulletTypeOf.set(letter, t);
   }
   const bossWeaponTypes = /* @__PURE__ */ new Map();
+  const bossStage2 = /* @__PURE__ */ new Map();
   const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
+  const weaponSlots = (b) => [
+    armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData),
+    armed(b.bulletDataB, b.projectileDataB),
+    armed(b.bulletDataC, b.projectileDataC)
+  ];
   stages.forEach((st, s) => {
     const b = bossData[`boss${s}`];
     if (!b) return;
     const owner = `${st.key}: boss (${b.name || "?"})`;
-    bossWeaponTypes.set(s, [
-      claimBulletType(armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData), owner),
-      claimBulletType(armed(b.bulletDataB, b.projectileDataB), owner),
-      claimBulletType(armed(b.bulletDataC, b.projectileDataC), owner)
-    ]);
+    const own = weaponSlots(b);
+    const types = own.map((w) => claimBulletType(w, owner));
+    bossWeaponTypes.set(s, types);
+    const s2 = !(b.dezaemon && b.dezaemon.boss) ? bossStage2Record(b) : null;
+    if (!s2) return;
+    const claimed = /* @__PURE__ */ new Map();
+    bossStage2.set(s, {
+      record: s2,
+      weapons: weaponSlots(s2).map((w, i) => {
+        if (!w) return null;
+        if (w === own[i]) return types[i];
+        const first = weaponTextures(w)[0];
+        if (!claimed.has(first)) claimed.set(first, claimBulletType(w, `${owner} stage 2`));
+        return claimed.get(first);
+      })
+    });
   });
   const built = stages.map((st, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
@@ -7429,6 +7521,31 @@ function buildSaveFromGame(level, art2, options = {}) {
       const weaponTypes = bossWeaponTypes.get(s) || [null, null, null];
       const fireType = (type) => type <= 2 ? weaponTypes[type] ?? weaponTypes[0] ?? type : type;
       const remapFirePoints = (fps) => fps.map((fp) => ({ ...fp, type: fireType(fp.type) }));
+      const second = bossStage2.get(s) || null;
+      let stage2 = null;
+      let fight = {
+        hpStages: 2,
+        patterns: DEFAULT_BOSS_PATTERNS.map((p) => ({ ...p, firePoints: remapFirePoints(p.firePoints) }))
+      };
+      if (second && !decoded) {
+        const { hpStages, bands } = saturnStage2Bands(second.record.hpBelow);
+        const w2 = second.weapons;
+        const fireType2 = (type) => type <= 2 ? w2[type] ?? w2[0] ?? fireType(type) : type;
+        const remap2 = (fps) => fps.map((fp) => ({ ...fp, type: fireType2(fp.type) }));
+        const [p0, p1, p2] = DEFAULT_BOSS_PATTERNS;
+        const first = [0, 0, 1, 1], last = [2, 2, 3, 3];
+        fight = {
+          hpStages,
+          playlist: [0, 1, 2, 3].map((k) => k < hpStages - bands ? first : last),
+          patterns: [
+            { ...p0, firePoints: remapFirePoints(p0.firePoints) },
+            { ...p2, firePoints: remapFirePoints(p2.firePoints) },
+            { ...p1, firePoints: remap2(p1.firePoints) },
+            { ...p2, firePoints: remap2(p2.firePoints) }
+          ]
+        };
+        stage2 = { hpStages, bands, hpBelow: second.record.hpBelow, weapons: w2 };
+      }
       const trailer = encodeBossTrailer(decoded ? {
         sizeClass,
         hpStages: decoded.hpStages,
@@ -7448,13 +7565,14 @@ function buildSaveFromGame(level, art2, options = {}) {
         }))
       } : {
         sizeClass,
-        hpStages: 2,
         hp: Math.max(1, Number(bossRec.hp) || 100) * BOSS_UNITS_PER_HIT,
         score: Number(bossRec.score) || BOSS_SCORE_TABLE[2],
         optionFlag: false,
-        patterns: DEFAULT_BOSS_PATTERNS.map((p) => ({ ...p, firePoints: remapFirePoints(p.firePoints) }))
+        ...fight
       });
       boss = { sizeClass, row, col, frames: planKeys, trailer, name: bossRec.name || `boss${s}`, weapons: weaponTypes };
+      if (stage2) boss.stage2 = stage2;
+      else if (second) warn(`${st.key}: boss (${bossRec.name || "?"}) keeps its cart's own trailer \u2014 its stage2 block is not written`);
       lastRow = Math.max(lastRow, row);
     }
     const items = [];
@@ -7524,12 +7642,13 @@ function buildSaveFromGame(level, art2, options = {}) {
   const subtitleH = CG_CELL;
   const uploaded1 = opts.title1 && opts.title1.rgba ? opts.title1 : null;
   const uploaded2 = opts.title2 && opts.title2.rgba ? opts.title2 : null;
-  const title1Art = uploaded1 || drawnTitle("title1");
+  const ownG = !uploaded1 && !uploaded2 && !drawnTitle("title1") && !drawnTitle("title2") && opts.titleG && opts.titleG.rgba ? trimRgba(opts.titleG, ALPHA_CUTOFF) : null;
+  const title1Art = uploaded1 || drawnTitle("title1") || ownG;
   const title2Art = uploaded2 || drawnTitle("title2");
   const hasTitle1 = !!title1Art;
   const hasTitle2 = !!title2Art;
   const placed = (art3, role, box) => {
-    const at = !uploaded1 && !uploaded2 ? titleLayout[role] : null;
+    const at = !uploaded1 && !uploaded2 && !ownG ? titleLayout[role] : null;
     if (at && Number.isInteger(at.x) && Number.isInteger(at.y)) {
       return placeRgba(art3, Math.min(art3.w, titleW), Math.min(art3.h, titleH), titleW, titleH, at.x, at.y);
     }
@@ -7814,12 +7933,15 @@ function buildSaveFromGame(level, art2, options = {}) {
         records: [...b.records.values()].map((r) => ({ name: r.name, record: r.index, band: r.band, ...r.drop ? { drop: r.drop } : {} })),
         // weapons: the global bullet type each of the boss's own
         // weapons A/B/C landed in, null where it carries none.
-        boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, weapons: b.boss.weapons } : null,
+        // stage2: the hp stages a second stage rides on and the types
+        // its weapons landed in (bossStage2 above).
+        boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, weapons: b.boss.weapons, ...b.boss.stage2 ? { stage2: b.boss.stage2 } : {} } : null,
         items: b.items.length,
         background: !!b.background,
         extent: b.extent
       })),
       ship: shipSource,
+      transform: saturnTransform(built, bulletTypes),
       player2: ship2Idle.length > 0,
       bulletTypes: paintedTypes(),
       weaponArt: { slots: weaponKeys.filter(Boolean).length, levelShotFrames: shotFrames.length },
@@ -7835,7 +7957,7 @@ function buildSaveFromGame(level, art2, options = {}) {
         credits: creditKeys.filter(painted).length,
         // Where the art came from, so a caller can say whether the cart
         // kept its own title screen or wears an uploaded one.
-        source: uploaded1 || uploaded2 ? "uploaded" : painted(title1Key) || painted(title2Key) ? "cart" : "none"
+        source: uploaded1 || uploaded2 ? "uploaded" : ownG ? painted(title1Key) ? "titleG" : "none" : painted(title1Key) || painted(title2Key) ? "cart" : "none"
       },
       // Who the staff roll credits and on whose say-so (attribution.js):
       // "option" | "level" | "cart" | "default" | "none". `credits` is
@@ -9562,6 +9684,18 @@ var KIDS_BOSS_BEHAVIOUR = Object.freeze([
   Object.freeze({ pattern: 2, speed: 0, weapons: [{ dx: -6, dy: -12, bullet: 6, timing: 2, pattern: 9, aim: false }, { dx: -24, dy: -12, bullet: 4, timing: 1, pattern: 0, aim: true }, { dx: 12, dy: -13, bullet: 4, timing: 1, pattern: 0, aim: true }] }),
   Object.freeze({ pattern: 12, speed: 1, weapons: [{ dx: 0, dy: 53, bullet: 7, timing: 2, pattern: 0, aim: false }, { dx: 0, dy: -30, bullet: 3, timing: 0, pattern: 3, aim: true }, { dx: -1, dy: 2, bullet: 1, timing: 1, pattern: 3, aim: false }] })
 ]);
+function kidsBossWeapons(sample, rec, quadOf) {
+  const slots = bossWeapons(rec);
+  const quadOfSlot = (i) => {
+    const hit = slots[i] || slots[0];
+    const first = hit ? weaponTextures(hit.weapon)[0] : null;
+    return first ? quadOf(first) : null;
+  };
+  return sample.map((w, i) => {
+    const q = quadOfSlot(i);
+    return q === null ? { ...w } : { ...w, bullet: q };
+  });
+}
 var KIDS_BOSS_DEFAULT = Object.freeze(Array.from(encodeKidsBoss({ pattern: 0, speed: 1, sizeClass: 0, hpClass: 1, scoreClass: 1 })));
 var KIDS_CONFIG_TEMPLATE = Object.freeze([
   0,
@@ -10225,12 +10359,20 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
     const frames = tex.map(lookup).filter(Boolean);
     if (frames.length && !bulletArt.some((b) => b[0].key === frames[0].key)) bulletArt.push(frames);
   }
+  const bossSplits = /* @__PURE__ */ new Map();
   for (let s = 0; s < stages.length; s++) {
     const b = bossData[`boss${s}`];
     if (!b) continue;
     for (const slot of ["bulletDataA", "projectileDataA", "bulletData", "projectileData", "bulletDataB", "projectileDataB", "bulletDataC", "projectileDataC"]) {
       const tex = b[slot] && Array.isArray(b[slot].texture) ? b[slot].texture : [];
       const frames = tex.map(lookup).filter(Boolean);
+      if (frames.length && !bulletArt.some((x) => x[0].key === frames[0].key)) bulletArt.push(frames);
+    }
+    const split = splitBossStage2(b);
+    if (!split) continue;
+    bossSplits.set(s, split);
+    for (const { weapon } of bossWeapons(split.second)) {
+      const frames = weaponTextures(weapon).map(lookup).filter(Boolean);
       if (frames.length && !bulletArt.some((x) => x[0].key === frames[0].key)) bulletArt.push(frames);
     }
   }
@@ -10418,8 +10560,59 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
     let boss = null;
     const bossWords = [new Uint16Array(KIDS_SPRITE_BOSS_WORDS).fill(KIDS_BLANK), new Uint16Array(KIDS_SPRITE_BOSS_WORDS).fill(KIDS_BLANK)];
     const bossRecords = [Uint8Array.from(KIDS_BOSS_DEFAULT), Uint8Array.from(KIDS_BOSS_DEFAULT)];
-    const bossRec = bossData[`boss${s}`];
-    if (bossRec) {
+    const split = bossSplits.get(s) || null;
+    const bossRec = split ? split.first : bossData[`boss${s}`];
+    if (bossRec && split) {
+      const phases = [split.first, split.second].map((rec, phase) => {
+        const frames = bossBodyFrames(rec).map(lookup).filter(Boolean);
+        const label = phase ? `${rec.name || "?"} stage 2` : rec.name || "?";
+        const maxW = frames.reduce((a, f) => Math.max(a, f.w), 64);
+        const maxH = frames.reduce((a, f) => Math.max(a, f.h), 64);
+        const sizeClass2 = kidsBossClassFor(maxW, maxH);
+        const [aw, ah] = KIDS_BOSS_ART_CELLS[sizeClass2];
+        if (frames.length && (maxW > aw * CG_CELL || maxH > ah * CG_CELL)) {
+          warn(`${st.key}: boss (${label}) is ${maxW}x${maxH}; its art is ${aw * CG_CELL}x${ah * CG_CELL} \u2014 downscaled`);
+        }
+        if (!frames.length) warn(`${st.key}: boss (${label}) has no art in the atlas \u2014 its sprite is unpainted`);
+        if (frames.length) {
+          const cells = bankFrame(fitIndexed2(frames[0], aw * CG_CELL, ah * CG_CELL), aw * CG_CELL, ah * CG_CELL, `boss${s}`);
+          if (cells) for (let cy = 0; cy < ah; cy++) for (let cx = 0; cx < aw; cx++) bossWords[phase][cy * KIDS_BOSS_GRID + cx] = cells[cy * aw + cx];
+        }
+        const hits = rec.hp === "infinity" ? Infinity : Math.max(1, Number(rec.hp) || 50);
+        const hpClass = hits === Infinity ? 3 : nearestIndex2(KIDS_BOSS_HP, hits * KIDS_SHOT_UNITS);
+        const scoreClass = nearestIndex2(KIDS_BOSS_SCORE, Number(rec.score) || KIDS_BOSS_SCORE[1]);
+        const behaviour = KIDS_BOSS_BEHAVIOUR[sizeClass2];
+        const weapons = kidsBossWeapons(behaviour.weapons, rec, (n) => {
+          const f = lookup(n);
+          return f && quadOfArt.has(f.key) ? quadOfArt.get(f.key) : null;
+        });
+        bossRecords[phase] = encodeKidsBoss({ ...behaviour, weapons, sizeClass: sizeClass2, hpClass, scoreClass });
+        return { sizeClass: sizeClass2, frames: frames.length, hits, hpClass, bullets: weapons.map((w) => w.bullet) };
+      });
+      const sizeClass = Math.max(phases[0].sizeClass, phases[1].sizeClass);
+      const [fw, fh] = KIDS_BOSS_FOOTPRINT[sizeClass];
+      let row = Math.min(KIDS_APPEAR_ROWS - 1, Math.max(lastRow + KIDS_BOSS_ROW_GAP, fh - 1));
+      const col = KIDS_BOSS_COLUMN[sizeClass];
+      while (row < KIDS_APPEAR_ROWS && !rectFree(row, col, fw, fh)) row++;
+      if (row >= KIDS_APPEAR_ROWS) {
+        warn(`${st.key}: no room left for the boss past the last wave \u2014 it is left out`);
+      } else {
+        stamp(row, col, fw, fh, KIDS_APPEAR_PRESENT | KIDS_APPEAR_BOSS_CLASS << 4);
+        const [p1, p2] = phases;
+        boss = {
+          name: bossRec.name || `boss${s}`,
+          sizeClass: p1.sizeClass,
+          row,
+          col,
+          frames: p1.frames,
+          hits: p1.hits,
+          hpClass: p1.hpClass,
+          bullets: p1.bullets,
+          stage2: { sizeClass: p2.sizeClass, frames: p2.frames, hits: p2.hits, hpClass: p2.hpClass, bullets: p2.bullets, hpBelow: split.hpBelow }
+        };
+        lastRow = Math.max(lastRow, row);
+      }
+    } else if (bossRec) {
       const names = bossRec.anim && Array.isArray(bossRec.anim.idle) ? [...bossRec.anim.idle, ...Array.isArray(bossRec.anim.attack) ? bossRec.anim.attack : []] : Array.isArray(bossRec.texture) ? bossRec.texture : [];
       const frames = names.map(lookup).filter(Boolean);
       const maxW = frames.reduce((a, f) => Math.max(a, f.w), 64);
@@ -10599,13 +10792,24 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
         placements: b.placed,
         dropped: b.dropped,
         records: [...new Set(b.records.values())].map((r) => ({ name: r.name, cell: r.letter + r.digit, klass: r.klass, id: r.id, frames: r.frames, ...r.item ? { item: KIDS_ITEM_SLOTS[r.item - 1].name } : {} })),
-        boss: b.boss ? { name: b.boss.name, sizeClass: b.boss.sizeClass, row: b.boss.row, col: b.boss.col, frames: b.boss.frames, hpClass: b.boss.hpClass } : null,
+        boss: b.boss ? {
+          name: b.boss.name,
+          sizeClass: b.boss.sizeClass,
+          row: b.boss.row,
+          col: b.boss.col,
+          frames: b.boss.frames,
+          hpClass: b.boss.hpClass,
+          // A second stage: record 1, its class and bullets.
+          ...b.boss.stage2 ? { bullets: b.boss.bullets, stage2: b.boss.stage2 } : {}
+        } : null,
         chips: b.chips,
         lastRow: b.lastRow
       })),
       ship: shipSource,
       items: itemSources,
       bullets: bulletSlots,
+      // The format's own two boss phases carry a stage2 block (boss-stage2.js).
+      transform: built.some((b) => b.boss && b.boss.stage2) ? "native" : "none",
       title,
       backgroundSet,
       cells: { used: bank.used, chips: bank.chips, sprites: bank.sprites, shared: bank.shared, free: bank.free }
@@ -11686,7 +11890,26 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
   }
   const shipPlans = [shipFrames[0], shipFrames[1] || shipFrames[0], shipFrames[1] || shipFrames[0]].map((f, i) => plan(plusPaletteRow("player"), f, 32, 32, `ship ${i}`));
   const titlePlan = opts.title1 && opts.title1.rgba ? plan(plusPaletteRow("title"), opts.title1, 128, 64, "title") : null;
-  const built = stages.map((st, s) => {
+  const stagePlan = [];
+  const splits = [];
+  let spare = PLUS_STAGES - stages.length;
+  stages.forEach((st, s) => {
+    const rec = bossData[`boss${s}`];
+    const split = rec ? splitBossStage2(rec) : null;
+    if (split && spare <= 0) {
+      warn(`${st.key}: boss (${rec.name || "?"}) has a second stage, but the save's ${PLUS_STAGES} stages are full \u2014 it flies its first form alone, the whole bar`);
+    }
+    if (!split || spare <= 0) {
+      stagePlan.push({ st, bossRec: rec, form: 0 });
+      return;
+    }
+    spare--;
+    const key = `${st.key}:stage2`;
+    stagePlan.push({ st, bossRec: split.first, form: 1 });
+    stagePlan.push({ st: { key, enemylist: [], background: st.background, scroll: st.scroll }, bossRec: split.second, form: 2 });
+    splits.push({ stage: st.key, into: key, name: rec.name || `boss${s}`, second: bossBodyFrames(split.second)[0] || "?", hp: [split.first.hp, split.second.hp] });
+  });
+  const built = stagePlan.map(({ st, bossRec, form }, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
     const spawnRows = st.enemylist.slice().reverse();
     const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
@@ -11761,7 +11984,6 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
     });
     if (dropped) warn(`${st.key}: ${dropped} placement${dropped === 1 ? "" : "s"} overlapped another in the same band and ${dropped === 1 ? "was" : "were"} left out`);
     let boss = null;
-    const bossRec = bossData[`boss${s}`];
     if (bossRec) {
       const names = bossRec.anim && Array.isArray(bossRec.anim.idle) ? [...bossRec.anim.idle, ...Array.isArray(bossRec.anim.attack) ? bossRec.anim.attack : []] : Array.isArray(bossRec.texture) ? bossRec.texture : [];
       const frames = names.map(lookup).filter(Boolean);
@@ -11784,6 +12006,7 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
       if (!bands.has(band)) bands.set(band, new Uint8Array(PLUS_APPEAR_RECORD_SIZE));
       bands.get(band)[PLUS_BOSS_COLUMN] = 128 | PLUS_APPEAR_BOSS_NIBBLE << 4;
       boss = { name: bossRec.name || `boss${s}`, band, picture, vertical, record, frameCount: frames.length, hits };
+      if (form) boss.form = form;
       lastRow = Math.max(lastRow, band);
     }
     const scenery = [];
@@ -11909,7 +12132,7 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
       placements: b.placed,
       dropped: b.dropped,
       definitions: [...b.defs.values()].map((d) => ({ name: d.name, klass: d.klass, id: d.id, index: d.index })),
-      boss: b.boss ? { name: b.boss.name, band: b.boss.band, frames: b.boss.frameCount, vertical: b.boss.vertical, tiles: bossPainted, hits: b.boss.hits } : null,
+      boss: b.boss ? { name: b.boss.name, band: b.boss.band, frames: b.boss.frameCount, vertical: b.boss.vertical, tiles: bossPainted, hits: b.boss.hits, ...b.boss.form ? { form: b.boss.form } : {} } : null,
       chips,
       groups: groups - 1,
       enemyTiles: sheet.painted,
@@ -11980,7 +12203,10 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
       shipTiles: ship.painted,
       title: titlePainted ? "uploaded" : "none",
       rows: rows.map((r) => ({ row: r.row, colors: r.count || 0 })).filter((r) => r.colors),
-      tiles: { used: bank.used, shared: bank.shared, free: bank.free }
+      tiles: { used: bank.used, shared: bank.shared, free: bank.free },
+      // How the save's bosses carry their second stages (boss-stage2.js).
+      transform: splits.length ? `approximated: two chained bosses across a stage break (${splits.map((x) => `${x.stage} ${x.name}, then ${x.into} its second form ${x.second}`).join("; ")}); a Dezaemon+ save has no bullet art, so the guns keep the sample's` : "none",
+      splits
     }
   };
 }
@@ -12819,7 +13045,10 @@ function buildDisk(options = {}) {
   });
   const inv = checkDirectory(back);
   if (back.length && !(inv.contiguous && inv.blocksFit && inv.withinCapacity)) {
-    throw new Error("the directory this wrote fails its own invariants (contiguous, blocksFit, withinCapacity)");
+    const bad = back.filter((b) => !checkDirectory([b]).blocksFit || !checkDirectory([b]).withinCapacity).map((b) => `${b.name}.${b.ext} (LBA ${b.startLba}+${b.blockCount}, ${b.storedSize} bytes)`);
+    throw new Error(
+      "the directory this wrote fails its own invariants (contiguous, blocksFit, withinCapacity)" + (bad.length ? `: ${bad.join(", ")}` : "")
+    );
   }
   back.forEach((b, i) => {
     const f = files[i];
@@ -14446,7 +14675,8 @@ function enemyEntryFromEditor(rec, { slots, size, frames, drop = null, boss = fa
   const speed = Number.isFinite(r.speed) ? r.speed : 1;
   const frameRate = Number(r.frameRate);
   const animated = frames > 1 && Number.isFinite(frameRate) && frameRate > 0;
-  const proj = r.projectileData || null;
+  const armed = boss ? bossWeapons(r).find((w) => weaponTextures(w.weapon).length) : null;
+  const proj = r.projectileData || (armed ? armed.weapon : null);
   const interval = Number(r.interval);
   const fires = !!proj && Number.isFinite(interval) && interval > 0;
   const item = drop !== null && drop in N64_DROP_ITEMS ? N64_DROP_ITEMS[drop] : null;
@@ -14566,9 +14796,28 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
   });
   common.placed = cgr.placed;
   common.models = templateFiles.has("CMD") ? [] : [...cmd.entries()].map(([slot, m]) => ({ slot, texture: m.texture, key: m.key }));
+  const stagePlan = [];
+  const splits = [];
+  let spare = N64_STAGE_COUNT - stages.length;
+  stages.forEach((st, i) => {
+    const rec = bossData[`boss${i}`] || null;
+    const split = rec ? splitBossStage2(rec) : null;
+    if (split && spare <= 0) {
+      warn(`${st.key}: boss${i} has a second stage, but the project's ${N64_STAGE_COUNT} stages are full \u2014 it flies its first form alone, the whole bar`);
+    }
+    if (!split || spare <= 0) {
+      stagePlan.push({ st, boss: rec, bossKey: `boss${i}`, form: 0 });
+      return;
+    }
+    spare--;
+    const key = `${st.key}:stage2`;
+    stagePlan.push({ st, boss: split.first, bossKey: `boss${i}`, form: 1 });
+    stagePlan.push({ st: { key, enemylist: [] }, boss: split.second, bossKey: `boss${i}:stage2`, form: 2 });
+    splits.push({ stage: st.key, into: key, name: rec.name || `boss${i}`, second: bossBodyFrames(split.second)[0] || "?", hp: [split.first.hp, split.second.hp] });
+  });
   const stageReports = [];
   const built = /* @__PURE__ */ new Map();
-  stages.forEach((st, i) => {
+  stagePlan.forEach(({ st, boss, bossKey, form }, i) => {
     const stage = STAGES[i];
     const grExt = `${stage}GR`, mdExt = `${stage}MD`, blExt = `${stage}BL`;
     const sheet = sheetFrom(grExt, N64_GR_TEXTURES);
@@ -14656,7 +14905,6 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
       const x = width <= 1 ? 0 : Math.round(-N64_LAYOUT_HALF_WIDTH + c.col * 2 * N64_LAYOUT_HALF_WIDTH / (width - 1));
       placements.push({ enemy: index, x, y: N64_SPAWN_Y, frame: -(c.row * N64_FRAMES_PER_ROW) });
     }
-    const boss = bossData[`boss${i}`] || null;
     placements.sort((a, b) => b.frame - a.frame);
     const room = LAYOUT_MAX_ENEMIES - (boss ? 1 : 0);
     if (placements.length > room) {
@@ -14667,12 +14915,12 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     if (boss) {
       const names = boss.anim && Array.isArray(boss.anim.idle) && boss.anim.idle.length ? boss.anim.idle : frameNames(boss.texture);
       const frames = names.map(lookup).filter(Boolean);
-      if (!frames.length) warn(`${st.key}: boss${i} has no idle frame in the art`);
+      if (!frames.length) warn(`${st.key}: ${bossKey} has no idle frame in the art`);
       const kept = spreadFrames(frames, Math.min(framesPerEnemy, frames.length));
-      const slots = kept.map((f, k) => placeFrame(`boss${i}:${k}:${f.key}`, f));
+      const slots = kept.map((f, k) => placeFrame(`${bossKey}:${k}:${f.key}`, f));
       const size = frames.reduce((a, f) => Math.max(a, f.w, f.h), 64);
       if (entries.length >= N64_BL_ENEMIES) {
-        warn(`${st.key}: no enemy entry left for boss${i}; the stage has no end`);
+        warn(`${st.key}: no enemy entry left for ${bossKey}; the stage has no end`);
       } else {
         bossEntry = entries.length;
         entries.push(enemyEntryFromEditor(boss, { slots, size, frames: kept.length, boss: true }));
@@ -14699,7 +14947,8 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
       stage,
       ext: grExt,
       enemies: gridLetters,
-      boss: boss ? `boss${i}` : null,
+      boss: boss ? bossKey : null,
+      ...boss && form ? { form } : {},
       textures: sheet.placed,
       painted: sheet.painted,
       used: sheet.count - sheet.free,
@@ -14717,7 +14966,7 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     });
   });
   if (common.missed.length) warn(`the CGR sheet ran out of blank textures; not drawn: ${common.missed.join(", ")}`);
-  const finalStage = STAGES[stages.length - 1];
+  const finalStage = STAGES[stagePlan.length - 1];
   if (!templateFiles.has("CMD")) {
     const cmdModels = [], cmdTextures = [];
     for (const [slot, m] of cmd) {
@@ -14751,7 +15000,7 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
   if (!templateFiles.has("ULB")) built.set("ULB", buildUlbFile([], []));
   const files = [];
   const sources = [];
-  const sheets = /* @__PURE__ */ new Set(["CGR", ...stages.map((_, i) => `${STAGES[i]}GR`)]);
+  const sheets = /* @__PURE__ */ new Set(["CGR", ...stagePlan.map((_, i) => `${STAGES[i]}GR`)]);
   for (const ext of projectExts()) {
     let data;
     let source;
@@ -14784,6 +15033,9 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     finalStage,
     common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, scaled: common.scaled, models: common.models },
     stages: stageReports,
+    // How the project's bosses carry their second stages (boss-stage2.js).
+    transform: splits.length ? `approximated: two chained bosses across a stage break (${splits.map((x) => `${x.stage} ${x.name}, then ${x.into} its second form ${x.second}`).join("; ")}); the bullets are the project's own two, not the weapons' art` : "none",
+    splits,
     files: sources,
     bytes: files.reduce((a, f) => a + f.data.length, 0)
   };
@@ -14825,7 +15077,7 @@ function exportLevelToDdd(level, art2, options = {}) {
     name: project.name,
     project: project.report,
     directory: built.directory,
-    report: { ...built.report, project: project.report, templateProject: templateName },
+    report: { ...built.report, project: project.report, templateProject: templateName, transform: project.report.transform },
     warnings: [...project.warnings, ...built.warnings]
   };
 }
@@ -18104,6 +18356,12 @@ function b64ToBytes4(b64) {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
+function sfcBossIsTall(w, h) {
+  const wideW = BOSS_SHEET_COLS * CHIP_DIM, wideH = BOSS_SHEET_ROWS * CHIP_DIM;
+  const scaleWide = Math.min(1, wideW / w, wideH / h);
+  const scaleTall = Math.min(1, wideH / w, wideW / h);
+  return scaleTall > scaleWide;
+}
 function sfcSpawnColumn(col, width) {
   if (width <= 1) return APPEAR_FIRST_COLUMN + Math.floor(APPEAR_COLUMNS / 2);
   return APPEAR_FIRST_COLUMN + Math.round(clamp5(col, 0, width - 1) * (APPEAR_COLUMNS - 1) / (width - 1));
@@ -18271,6 +18529,26 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
   if (opts.horizontal) warn("the grid is horizontal; the Super Famicom game scrolls vertically and is written as such \u2014 enemies come down the screen");
   const enemyData = level.enemyData || {};
   const bossData = level.bossData || {};
+  const plan = [];
+  const splits = [];
+  let spare = STAGE_COUNT - stages.length;
+  stages.forEach((st, s) => {
+    const rec = bossData[`boss${s}`] || (s === 0 && stages.length === 1 ? bossData.boss0 : null);
+    const split = rec ? splitBossStage2(rec) : null;
+    if (split && spare <= 0) {
+      warn(`${st.key}: boss (${rec.name || "?"}) has a second stage, but the save's ${STAGE_COUNT} stages are full \u2014 it flies its first form alone, the whole bar`);
+    }
+    if (!split || spare <= 0) {
+      plan.push({ st, bossRec: rec, form: 0 });
+      return;
+    }
+    spare--;
+    const key = `${st.key}:stage2`;
+    plan.push({ st, bossRec: split.first, form: 1 });
+    plan.push({ st: { key, enemylist: [], background: st.background, scroll: st.scroll }, bossRec: split.second, form: 2 });
+    splits.push({ stage: st.key, into: key, name: rec.name || `boss${s}`, second: bossBodyFrames(split.second)[0] || "?", hp: [split.first.hp, split.second.hp] });
+  });
+  const transform = splits.length ? `approximated: two chained bosses across a stage break (${splits.map((x) => `${x.stage} ${x.name}, then ${x.into} its second form ${x.second}`).join("; ")}); the bullets stay the ROM's` : "none";
   const bytes = formatSfcSram({ seal: false });
   const bank = new SfcChipBank();
   const fullWarned = /* @__PURE__ */ new Set();
@@ -18342,7 +18620,7 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     writeWords(bytes, REGION2.titleGroup.offset, words);
     title = "uploaded";
   }
-  const built = stages.map((st, s) => {
+  const built = plan.map(({ st, bossRec, form }, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
     const stageReport = { key: st.key, placements: 0, records: 0, lines: 0, enemies: [], boss: null, mapChips: 0, cellsDrawn: 0, rowsDrawn: 0 };
     const mapGroup = new Uint16Array(MAP_GROUP_CHIPS).fill(CHIP_EMPTY_WORD);
@@ -18532,7 +18810,6 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
         stageReport.enemies.push({ name: made.name, cell: made.cell, klass: k, entry, size: `${kspec.w}x${kspec.h}`, frames: Math.min(kspec.frames, Math.max(1, frames.length)), itemDrop });
       }
     }
-    const bossRec = bossData[`boss${s}`] || (s === 0 && stages.length === 1 ? bossData.boss0 : null);
     const bossWords = new Uint16Array(BOSS_GROUP_CHIPS).fill(CHIP_BLANK_WORD);
     const bossBlock = Uint8Array.from(SFC_FACTORY_BOSS_BLOCK);
     let boss = null;
@@ -18540,27 +18817,32 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
       const names = bossRec.anim && Array.isArray(bossRec.anim.idle) ? [...bossRec.anim.idle, ...Array.isArray(bossRec.anim.attack) ? bossRec.anim.attack : []] : Array.isArray(bossRec.texture) ? bossRec.texture : [];
       const frames = names.map(lookup).filter(Boolean);
       if (!frames.length) warn(`${st.key}: boss (${bossRec.name || "?"}) has no art in the atlas \u2014 drawn blank`);
-      if (frames.length && (frames[0].w > BOSS_SHEET_COLS * CHIP_DIM || frames[0].h > BOSS_SHEET_ROWS * CHIP_DIM)) {
-        warn(`${st.key}: boss (${bossRec.name || "?"}) is ${frames[0].w}x${frames[0].h}; a Super Famicom boss is 128x64 \u2014 downscaled`);
+      const tall = frames.length > 0 && sfcBossIsTall(frames[0].w, frames[0].h);
+      const cols = tall ? BOSS_SHEET_ROWS : BOSS_SHEET_COLS, rowsOf = tall ? BOSS_SHEET_COLS : BOSS_SHEET_ROWS;
+      const boxW = cols * CHIP_DIM, boxH = rowsOf * CHIP_DIM;
+      if (frames.length && (frames[0].w > boxW || frames[0].h > boxH)) {
+        warn(`${st.key}: boss (${bossRec.name || "?"}) is ${frames[0].w}x${frames[0].h}; a ${tall ? "tall" : "wide"} Super Famicom boss is ${boxW}x${boxH} \u2014 downscaled`);
       }
       if (frames.length) {
-        const fitted = fitRgba(frames[0], BOSS_SHEET_COLS * CHIP_DIM, BOSS_SHEET_ROWS * CHIP_DIM);
+        const fitted = fitRgba(frames[0], boxW, boxH);
         const q = quantizeToRow([{ key: "boss", ...fitted }]);
         writeCgramRow(bytes, PALETTE_ROW_STAGE_BOSS + s, q.words);
         rows.push({ row: PALETTE_ROW_STAGE_BOSS + s, owner: `${st.key} boss`, colors: q.colors });
-        for (let cy = 0; cy < BOSS_SHEET_ROWS; cy++) {
-          for (let cx = 0; cx < BOSS_SHEET_COLS; cx++) {
+        for (let cy = 0; cy < rowsOf; cy++) {
+          for (let cx = 0; cx < cols; cx++) {
             const px = cutChip(q.frames[0].indices, fitted.w, cx, cy);
             if (isTransparent(px)) continue;
             const hit = bankChip(px, `${st.key} boss`);
-            if (hit) bossWords[bossSlotForCell(cx, cy)] = chipWordForIndex(hit.chip, hit);
+            if (hit) bossWords[bossSlotForCell(cx, cy, tall)] = chipWordForIndex(hit.chip, hit);
           }
         }
       }
       const hits = bossRec.hp === "infinity" ? Infinity : Math.max(1, Number(bossRec.hp) || 100);
       bossBlock[13] = bossBlock[13] & 248 | (hits === Infinity ? SFC_BOSS_HP.length - 1 : nearestIndex5(SFC_BOSS_HP, hits * SFC_HIT_UNITS));
-      bossBlock[6] &= ~64;
-      boss = { name: bossRec.name || `boss${s}`, hits, hpIndex: bossBlock[13] & 7, frames: frames.length };
+      if (tall) bossBlock[6] |= 64;
+      else bossBlock[6] &= ~64;
+      boss = { name: bossRec.name || `boss${s}`, hits, hpIndex: bossBlock[13] & 7, frames: frames.length, tall };
+      if (form) boss.form = form;
     }
     writeWords(bytes, REGION2.bossGroup.offset + s * BOSS_GROUP_STAGE_BYTES, bossWords);
     entryData.set(bossBlock, BOSS_BLOCK_OFFSET);
@@ -18652,7 +18934,9 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
     shipChips,
     title,
     titleParts,
-    sound: "factory"
+    sound: "factory",
+    transform,
+    splits
   };
   return { bytes, name, warnings, report };
 }

@@ -65,6 +65,7 @@ import {
     GLOBAL_WEAPON_SLOTS,
     RECORD_ART,
     TITLE_SLOTS,
+    trimRgba,
 } from "../decode/decode-sprites.js";
 import {
     BOSS_FIRE_TICK_FRAMES,
@@ -77,7 +78,7 @@ import { ANIM_PERIOD_TABLE, FIRE_INTERVAL_TABLE, HP_TABLE, SCORE_TABLE } from ".
 import { MEASURE_SIZE, MEASURES, SONG_SIZE, SONG_SLOTS } from "../decode/decode-song.js";
 import { SECTION_SIZES } from "../decompress.js";
 import { decodePlayerArt } from "../player-art.js";
-import { bankToSec4, frameGroup, quantizeFrames } from "../palette/palette-target.js";
+import { ALPHA_CUTOFF, bankToSec4, frameGroup, quantizeFrames } from "../palette/palette-target.js";
 import { CG_CELL } from "../palette/deza2-palette.js";
 import { CgFullError, CgPacker, REF_HFLIP, REF_VFLIP } from "./cg-pack.js";
 import { encodeModels } from "./encode-model.js";
@@ -803,12 +804,14 @@ export function puffSprite(size = 16) {
  * With no `title1`/`title2` the title screen is taken from the level's own
  * `dezaemonTitle` (role -> atlas frame name) and `dezaemonTitleScreen.layout`,
  * which is what lets a cart imported from a .sav keep its title and credits
- * when it is written back out.
+ * when it is written back out. With none of those either, `titleG` ({w, h,
+ * rgba}: the game's own titleG.gif, the plate the browser's and the PS2's
+ * title slide in) becomes TITLE 1, trimmed to the pixels it draws.
  *
  * Returns {sections, bank, warnings, report}.
  */
 export function buildSaveFromGame(level, art, options = {}) {
-    const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, itemEmblems: null, storyPanels: null, useBackground: true, attribution: null, author: null, ...options };
+    const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, titleG: null, itemEmblems: null, storyPanels: null, useBackground: true, attribution: null, author: null, ...options };
     const warnings = [];
     const warn = (m) => warnings.push(m);
 
@@ -1377,13 +1380,18 @@ export function buildSaveFromGame(level, art, options = {}) {
     const blastBKeys = blastFrames(32).map((f, i) => planFrame(`blastB:${i}`, f, 32, 32, "blast", 3));
     // THE DRAWN TITLE SCREEN.
     //
-    // Two sources, in this order:
+    // Three sources, in this order:
     //
     //   1. `opts.title1` / `opts.title2` — an image the author put in the
     //      TITLE EDITOR (or a cloud level's logoDataURL / subTitleDataURL).
     //   2. `level.dezaemonTitle` — the title a save this game was IMPORTED
     //      from already had, as atlas frame names ("dezaTitle1.gif") that
     //      `art` carries the pixels for.
+    //   3. `opts.titleG` — the game's own titleG.gif, the plate the browser's
+    //      title (and the PS2's) slides in and a game may replace in the
+    //      Atlas Manager. A game with no logo of its own wears only that on
+    //      those titles (gs's Geek Squad badge), so the cart wears it too, as
+    //      TITLE 1; with no G either, the cart has no title page.
     //
     // (2) is why a cart survives the round trip. Without it, a Dezaemon save
     // opened in the editor and written back out came away with an empty title
@@ -1410,14 +1418,23 @@ export function buildSaveFromGame(level, art, options = {}) {
     const subtitleH = CG_CELL;
     const uploaded1 = opts.title1 && opts.title1.rgba ? opts.title1 : null;
     const uploaded2 = opts.title2 && opts.title2.rgba ? opts.title2 : null;
-    const title1Art = uploaded1 || drawnTitle("title1");
+    const ownG = !uploaded1 && !uploaded2 && !drawnTitle("title1") && !drawnTitle("title2") &&
+            opts.titleG && opts.titleG.rgba
+        // Cut to what draws (the quantizer's alpha cutoff): the browser lays
+        // the plate out on a big transparent canvas — gs's titleG.gif is
+        // 256x364 with its 170x105 badge low in the middle — which shrunk
+        // whole into the 128x64 slot would come out a thumbnail.
+        ? trimRgba(opts.titleG, ALPHA_CUTOFF)
+        : null;
+    const title1Art = uploaded1 || drawnTitle("title1") || ownG;
     const title2Art = uploaded2 || drawnTitle("title2");
     const hasTitle1 = !!title1Art;
     const hasTitle2 = !!title2Art;
     // Trimmed art with a recorded home goes back at those coordinates; an
-    // uploaded image (no placement to honour) keeps the stacking rule above.
+    // uploaded image or the G (no placement to honour) keeps the stacking
+    // rule above, which for one plate alone is centred in its slot.
     const placed = (art, role, box) => {
-        const at = !uploaded1 && !uploaded2 ? titleLayout[role] : null;
+        const at = !uploaded1 && !uploaded2 && !ownG ? titleLayout[role] : null;
         if (at && Number.isInteger(at.x) && Number.isInteger(at.y)) {
             return placeRgba(art, Math.min(art.w, titleW), Math.min(art.h, titleH), titleW, titleH, at.x, at.y);
         }
@@ -1795,6 +1812,8 @@ export function buildSaveFromGame(level, art, options = {}) {
                 // kept its own title screen or wears an uploaded one.
                 source: (uploaded1 || uploaded2)
                     ? "uploaded"
+                    : ownG
+                    ? (painted(title1Key) ? "titleG" : "none")
                     : (painted(title1Key) || painted(title2Key) ? "cart" : "none"),
             },
             // Who the staff roll credits and on whose say-so (attribution.js):

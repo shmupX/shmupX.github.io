@@ -36,6 +36,7 @@
     "build:sfc": "deno run -A packages/shmup-harbor/scripts/build-sfc.ts",
     "sav:run": "deno run -A packages/shmup-harbor/scripts/run-mednafen.ts",
     "sav:inject": "deno run -A packages/shmup-harbor/scripts/sav-inject.ts",
+    "disc:inject": "deno run -A packages/shmup-harbor/scripts/inject-disc.ts",
     "sav:profile": "deno run -A packages/shmup-harbor/tools/sav-profiler/main.ts",
     "2028-ai:bgm": "deno run -A scripts/2028-ai/download-custom-bgm.ts",
     "super-mario-sp:rom": "deno run -A tools/super-mario-sp/main.ts",

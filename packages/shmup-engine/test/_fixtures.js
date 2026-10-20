@@ -41,7 +41,7 @@ export function loadFixtureText(name) {
 // does — a bare copy, the extraction cache, or straight out of a Dezaemon 2
 // disc image dropped in the repo's gitignored dev-fixtures/.
 
-import { openDisc, readFile } from "../src/cd/iso9660-read.js";
+import { findEntry, openDisc, readFile } from "../src/cd/iso9660-read.js";
 
 const DEV_FIXTURES = new URL("../../../dev-fixtures/", import.meta.url);
 const BANK_CANDIDATES = [
@@ -145,4 +145,99 @@ export function hasDevFixtures(...names) {
 
 export function loadDevFixture(name) {
   return Deno.readFileSync(devFixtureUrl(name));
+}
+
+// --- The whole data track ---------------------------------------------------
+//
+// The disc writer's tests need the image itself, not one file off it, and the
+// collection keeps a console per folder (dev-fixtures/Saturn/Dezaemon 2
+// (Japan)/), so this looks two folders down. A track is recognised by its
+// contents (isRetailTrack below) from the first MiB, so the PlayStation rips
+// beside it are never read whole.
+
+const PROBE_BYTES = 1 << 20;
+let discImageProbe;
+
+function readPrefix(url) {
+  let file;
+  try {
+    file = Deno.openSync(url);
+    const buf = new Uint8Array(PROBE_BYTES);
+    let got = 0;
+    while (got < buf.length) {
+      const n = file.readSync(buf.subarray(got));
+      if (n === null) break;
+      got += n;
+    }
+    return buf.subarray(0, got);
+  } catch {
+    return null;
+  } finally {
+    file?.close();
+  }
+}
+
+// The retail data track, and only it: the tests that use it pin the retail
+// layout (raw MODE1/2352 sectors, the stock 166,670-byte boot image), so a
+// cooked .iso or a disc a run of disc:inject left behind is passed over and the
+// search goes on.
+function isRetailTrack(disc) {
+  if (!disc || disc.sectorSize !== 2352 || disc.dataOffset !== 16) return false;
+  if (!findEntry(disc, "GAME.CMP") || !findEntry(disc, "DEZA2.PAL")) {
+    return false;
+  }
+  const boot = findEntry(disc, "SGM_INIT.CMP");
+  return !!boot && boot.size === 166670;
+}
+
+function findDiscImage(dir, depth) {
+  let entries;
+  try {
+    entries = [...Deno.readDirSync(dir)].sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    const url = new URL(
+      encodeURIComponent(entry.name) + (entry.isDirectory ? "/" : ""),
+      dir,
+    );
+    if (
+      entry.isFile &&
+      DISC_EXTENSIONS.some((ext) => entry.name.toLowerCase().endsWith(ext))
+    ) {
+      const prefix = readPrefix(url);
+      const disc = prefix && openDisc(prefix);
+      if (isRetailTrack(disc)) return url;
+    }
+  }
+  if (depth === 0) return null;
+  for (const entry of entries) {
+    if (!entry.isDirectory || entry.name.startsWith(".")) continue;
+    const hit = findDiscImage(
+      new URL(encodeURIComponent(entry.name) + "/", dir),
+      depth - 1,
+    );
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The retail Dezaemon 2 data track's bytes, or null. Found once per process. */
+export function loadDiscImage() {
+  if (discImageProbe === undefined) {
+    discImageProbe = findDiscImage(DEV_FIXTURES, 2);
+  }
+  return discImageProbe ? Deno.readFileSync(discImageProbe) : null;
+}
+
+/** True when loadDiscImage() will return bytes. */
+export function hasDiscImage() {
+  if (discImageProbe === undefined) {
+    discImageProbe = findDiscImage(DEV_FIXTURES, 2);
+  }
+  return discImageProbe !== null;
 }

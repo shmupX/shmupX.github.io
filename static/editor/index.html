@@ -8214,10 +8214,43 @@
         // What every .sav build in this page hands the cart writer beside the
         // level and its art.
         async function dezaSavOptions() {
-            const [title1, title2, author] = await Promise.all([
+            const [upload1, upload2, author, logo, subtitle, titleG] = await Promise.all([
                 dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL), dezaHostAuthor(),
+                dezaUiPlate(['logo.gif', 'logo.png']),
+                dezaUiPlate(['subTitle.gif', 'subTitle.png', 'subTitleEn.gif', 'subTitleEn.png']),
+                dezaUiPlate(['titleG.gif', 'titleG.png']),
             ]);
-            return { palette: dezaSavPalette, gameMode: dezaSavGameMode(), title1, title2, author };
+            // An uploaded logo / subtitle, else the game's own plate in its
+            // game_ui set (which the browser and the PS2 draw over the G), and
+            // the G itself for a game with neither.
+            return {
+                palette: dezaSavPalette, gameMode: dezaSavGameMode(),
+                title1: upload1 || logo, title2: upload2 || subtitle, titleG, author,
+            };
+        }
+
+        // One of the game's own title plates — the first of `names` in its
+        // game_ui set, a frame replaced in the Atlas Manager — as RGBA, or
+        // null. The G (titleG.gif, the plate the browser's title and the PS2's
+        // slide in) becomes TITLE 1 when the game has no logo, subtitle or
+        // drawn title of its own (buildSaveFromGame), so a game whose titles
+        // wear only its G wears it on the Saturn too (scripts/build-sav.ts
+        // ownTitleG / ownLogoPlates, for the command line).
+        async function dezaUiPlate(names) {
+            const set = (uiAtlasesForSave() || {}).game_ui;
+            if (!set || !set.imageDataURL || !set.frames) return null;
+            const plain = (k) => k.replace(/․/g, '.');
+            const key = names.map((n) => Object.keys(set.frames).find((k) => plain(k) === n)).find(Boolean);
+            const f = key && set.frames[key] && set.frames[key].frame;
+            if (!f) return null;
+            const sheet = await dataUrlToRgba(set.imageDataURL);
+            if (!sheet || f.x + f.w > sheet.w || f.y + f.h > sheet.h) return null;
+            const rgba = new Uint8ClampedArray(f.w * f.h * 4);
+            for (let y = 0; y < f.h; y++) {
+                const s = ((f.y + y) * sheet.w + f.x) * 4;
+                rgba.set(sheet.rgba.subarray(s, s + f.w * 4), y * f.w * 4);
+            }
+            return { w: f.w, h: f.h, rgba };
         }
 
         function dezaCreditRows() {

@@ -1780,6 +1780,79 @@ DEMO recordings load raw at `0x002FF000`; sec6 song pointer = songIdx ×
 0x1084 + sec6 base (engine proof of the 24×4,228 grid); the play engine
 fetches CG cells as cellIndex×256 from `0x00200000` into VDP1 VRAM.
 
+Correction (2026-10-19): there are **17** overlay loader stanzas, not 18 — 17
+8-byte request entries `{char *name, 0x002C8A84}` at `0x0602437C..0x06024403`,
+one stanza function each — and every overlay, D2MENU included, unpacks to
+`0x06064000`. Before every mode dispatch the kernel (`0x060045F0`) DMA-fills
+HWRAM `0x06064000..0x060D6FFF` with zero.
+
+### SGM_INIT.CMP, the boot image (traced 2026-10-19)
+
+Why `src/write/disc-inject.js` can put a game on the disc (statically traced
+in 0KERNEL / D2MENU / GAME / S_OPT, then booted in EmulatorJS's yabause with
+no cartridge — see README-Technical.md "Or put it on the disc"):
+
+- **Read once per power-on, by D2MENU's cold entry only.** Kernel main
+  (`0x06004910`) calls stanza `0x06009180` once, which enters D2MENU at
+  `+0x00`; every later return to the menu uses stanza `0x06009104` and the warm
+  entry `+0x48`. Only the cold entry calls `0x06065194`, which loads LOG_EPIC,
+  LOG_PIC, SNDPAC, HELP_PIC, MENU_SPR, then `SGM_INIT.CMP` through request
+  entry `0x06067660` = `{"SGM_INIT.CMP", 0x002C8A84}` (polled through kernel
+  `0x06006F9C` at `0x0606528C`), and unpacks it with the `.CMP` wrapper
+  `0x060050F8` from `0x002C8A84` straight to `0x00200000`
+  (`0x060652A4..AA`). The wrapper takes its length from the file's own u32 LE
+  header; the core stops when that many stream bytes are used. No output size
+  is passed (766,596 appears nowhere), the return value is ignored, and nothing
+  after it checks, copies or fixes up the image.
+- **Found by name, read for the directory's length.** The kernel's file layer
+  is SEGA's GFS (`GFS_SGL Version 2.11 1996-03-21` at `0x0600A00C`). At boot,
+  GFS_Init (`0x0600A02C`) fills a 250-entry table (`0x0604CDC0`, 24 bytes an
+  entry: FAD from the record's **big-endian** extent + 150, size from its
+  big-endian length, name cut at `;`) from the root directory, once. A file is
+  found by `strncmp(name, entry, 12)` (`0x0600C710`); the loader `0x06006F04`
+  reads `(nsct - 1) * 2048 + lastsz` bytes — exactly the directory's length.
+  No FAD, LBA or size of any disc file is a constant anywhere in the kernel or
+  an overlay (scanned for every file's LBA, FAD and size), the volume space size
+  is never read, and nothing plays CD-DA by address. So a file may change length
+  and may move.
+- **Capacity.** Staged whole at `0x002C8A84`, a `.CMP` may be at most
+  `0x00300000 - 0x002C8A84` = **226,684 bytes**; in place, SGM_INIT has 82
+  sectors (LBA 1416..1497, GAME.CMP follows at 1498) = 167,936 bytes.
+- **The decoder's ring is partly stale.** The core clears ring bytes
+  `0x000..0xFED` only (`0x06005016..26`); `0xFEE..0xFFF` keep the previous
+  file's last bytes. Every retail `.CMP` and every stream `compress.js` has
+  produced so far reads none of those 18 before writing them;
+  `staleRingReads()` checks a stream for it.
+- **PLAY → U plays RAM.** D2MENU's return 3 is kernel mode 4, GAME's entry
+  `+0x94`, loader kind 3, which loads only `GSYS_CHA.CMP`; its unconditional
+  unpack from `0x06098000` reads a zero length (the HWRAM wipe above) and does
+  nothing. So U runs whatever is at `0x00200000` — after a cold boot, the boot
+  image. S1–S3 (GAME loader kinds 0–2, or 4/5 for MIYA/ELFI with flag byte
+  `0x06056985`) unpack their `SGM_*.CMP` over `0x00200000`, and nothing brings
+  the boot image back before the next power-on.
+- **The editor-work flag.** `u8 0x06056980` is 0 after a cold boot
+  (D2MENU `0x06066818..26` stores one zero into it, the demo rotation index
+  `0x06056981` and a music-restart flag `0x06056982`) and 1 after OPTION's LOAD
+  or SAVE. While it is 0, the title counts 900 frames without a pad change
+  (`0x0606557A`) and then runs the attract demo (`0x06066EDC`), a sample game
+  played through GAME's loader — over `0x00200000`; and S1–S3 skip the
+  "data will be erased" prompt (`0x06066A16`). Its only other readers are the
+  prompt's drawing (`0x06066C42`) and D2MENU's own stores. A cart LOAD and the
+  SGM_INIT path otherwise leave LWRAM byte-identical: S_OPT's LOAD
+  (`0x06068150` read, `0x06068234` unpack) checks the table's checksums, unpacks
+  each section to its live address and does nothing else. `disc-inject.js`
+  rewrites the seven instructions at D2MENU `+0x281A` to store 1, 0, 0.
+- **Driving the menu without a cart**, for anything that boots it headless:
+  the no-cartridge dialog (`はい` / `いいえ`) comes first; then the title is
+  menu state `u16 0x0606C0C4` = 0, where nothing is clickable (the hovered item
+  is forced to -1 at `0x060656C2`) until START (`u8 0x060577E1`, START's push
+  bit) moves it to 1. The hovered item is `s8 0x0606C0E2` (U = 3), the pointer
+  `u16 0x060577A6` / `0x0605778E` (x, y; U answers at about x 135, y 171-178),
+  and a click is `u8 0x06057789`, set for one frame by a push of the
+  configured buttons (masks `0x060577D0/D2` = Saturn A, C) while the held flag
+  `0x06057788` was clear. In EmulatorJS's yabause the RetroPad's B (index 0)
+  is the Saturn's A and its A (index 8) the Saturn's B, which backs out.
+
 Known editor facts to guide the sec5 field map (GameFAQs editor FAQ +
 Dezaemon DB): up to 10 stages × 48 map screens with spatial enemy placement;
 7 zako size classes (16×16 up to 128×128, 1–6 anim frames); 4 boss classes

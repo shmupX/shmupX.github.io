@@ -603,6 +603,7 @@ deno task build:ps2:iso   # …plus a bootable disc image
 deno task build:sav       # a level as a Dezaemon 2 cart save (.sav) for MiSTer / hardware
 deno task sav:run         # …then launch it in Mednafen, cart preloaded (Windows / Linux / WSL→Windows)
 deno task sav:inject      # …or merge it into one of the five save slots on the cart this machine's emulator keeps
+deno task disc:inject     # …or write it onto the Dezaemon 2 disc itself, for a Saturn with no cart (the browser's): PLAY → U plays it
 deno task sav:profile     # play a .sav in Mednafen and in the runtime at once and record a window of both (macOS)
 deno task eshop:check     # validate data/eshop.json against the built manifest
 deno task eshop:covers    # cover a published eShop game that went out without one (dry run; --write uploads)
@@ -894,6 +895,65 @@ printed against the emulator notes above, and check that nothing rewrote the
 cart afterwards (a running emulator, or a save state carrying its own copy of
 the cartridge, both do).
 
+### Or put it on the disc
+
+A Saturn with no backup cartridge cannot LOAD a game at all — the browser's
+Saturn (EmulatorJS around yabause) is one, with only the console's 32 KB of
+internal memory. `deno task disc:inject [level]` writes the game onto the disc
+instead, as the disc's own boot image, so the console powers on already holding
+it:
+
+```sh
+deno task disc:inject gs                          # build/disc/Dezaemon 2 (gs)/
+deno task disc:inject gs --zip                    # …plus the browser player's bring-your-own-disc zip
+deno task disc:inject --sav "Dez 2 - Ramsie.sav"  # the game on a cart you already have (--slot N for another)
+deno task disc:inject gs --disc "D:/iso/Dezaemon 2 (Japan).cue"
+```
+
+The level is built exactly as `build:sav` builds it, and the folder gets both:
+`Dezaemon 2 (gs).cue` with its two tracks — the data track carrying the game,
+the audio track copied — and `Dez 2 - gs.sav`, the same bytes as a cart. A
+`--sav` disc is named after the cart's file (`Dez 2 - Ramsie.sav` is Ramsie),
+not its header comment, which on most carts is an editor's stock "DEZA2 SGM".
+The disc is found by `--disc`, then `$DEZAEMON_DISC`, then by content anywhere
+two folders down in `dev-fixtures/`, then in `~/saturn/Dezaemon 2 (Japan)/`,
+where `sav:run` looks. It needs one file per track: a rip that keeps the data
+and audio tracks in one `.bin` is refused.
+
+**Boot it with no cartridge.** The game first says a save needs 1,500 free
+blocks and asks whether to start anyway — `はい`. At the title, START, then the
+PLAY panel's `U` plays the game; there is nothing to LOAD.
+
+What it writes, and why it can: the disc keeps six complete games as
+`SGM_*.CMP`, and `SGM_INIT.CMP` is not a sample but the game the editor holds at
+power-on (the stock one is Bio Metal Gust's bytes). The menu reads it once per
+power-on, by name, for exactly the length the ISO 9660 directory gives, and
+unpacks it onto the live sections with no check of any kind (FORMAT.md
+"SGM_INIT.CMP, the boot image"). So the task replaces that one file, rewrites
+its directory record, and gives every sector it touched a fresh EDC and ECC. A
+game that fits the 82 sectors the stock 166,670 bytes held — gs packs to under
+99 KB, and three carts in four of the community collection fit — goes in place,
+and the track keeps its length and the cue its timings. One that does not —
+Ramsie re-packs to 168,537 bytes, 83 sectors — goes to the end of the data
+track, which grows by that many sectors; Track 2 being its own file, the cue
+still needs no change.
+
+It also patches the menu, one store in `D2MENU.CMP`: a power-on clears the flag
+that says the editor holds the player's work, and while it is clear the title
+plays its attract demo after 15 idle seconds — a sample game unpacked over the
+editor's — and S1–S3 overwrite the editor's game without asking. The patch sets
+the flag at boot, as a cart LOAD does, so the injected game stays put.
+`--keep-menu` leaves the menu as the source disc has it — stock, for a retail
+disc — and the run says which.
+
+Checked on 2026-10-19 in EmulatorJS's yabause with the Japanese BIOS and no
+cartridge: the gs disc boots to its title and sits there (the stock disc fell
+into the Gust demo in the same wait), the flag reads 1, and `U` plays gs — its
+title page wearing its own G (see "A cart keeps its own title" below), its
+headphone and laptop rows; the Ramsie disc, its boot image moved to LBA 3101 on
+a track 83 sectors longer, boots the same way into Ramsie's own drawn title and
+first stage. Mednafen and real hardware are untested.
+
 **Palette.** A level's atlas is 24-bit; the cart holds 15-bit colours from a 16
 × 16 bank, so the art is reduced on the way out, under one of two targets
 (`src/palette/palette-target.js`):
@@ -1060,9 +1120,21 @@ carried no `dezaemonTitle` for the runtime's title scene to gate on, and
 writer now falls back to the level's `dezaemonTitle` +
 `dezaemonTitleScreen.layout` (atlas frame names and where each trimmed piece sat
 in its slot), and writes the six credit strips it never wrote at all, so a
-community cart survives import → export → play unchanged. `report.title.source`
-says which of the two the cart came out wearing — `"cart"`, `"uploaded"` or
-`"none"` — and `deno task build:sav` prints it. Story scenes were already right:
+community cart survives import → export → play unchanged. The title plates a
+game replaced in the Atlas Manager count as its own, as they do in the browser
+(`customTitleArt`) and on the PS2: a `logo.gif` or `subTitle.gif` in the
+record's `game_ui` set is TITLE 1 / TITLE 2 when nothing was uploaded in the
+TITLE EDITOR. A game with none of those and no drawn title, but its own
+**titleG.gif** (the plate the browser's title and the PS2's slide in; in the
+`game_ui` set, or an older save's level atlas), wears that as TITLE 1, cut to
+the pixels it draws and fitted to the 128×64 slot: gs's Geek Squad badge,
+170×105 in a 256×364 plate, comes out 104×64 and is drawn at 2× above the
+Saturn's own PRESS START line, where the cart used to show a blank page. The
+Saturn's title has no backdrop, so gs's gold scrolling one stays a browser and
+PS2 thing. `build-sav.ts` (`ownLogoPlates`, `ownTitleG`) and the editor's SATURN
+row (`dezaUiPlate`) both pass them. `report.title.source` says which
+the cart came out wearing — `"cart"`, `"uploaded"`, `"titleG"` or `"none"` — and
+`deno task build:sav` prints it. Story scenes were already right:
 every import carries `noStory`, so the runtime's AdvScene hands straight on to
 the stage.
 

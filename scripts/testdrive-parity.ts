@@ -969,7 +969,7 @@ const RUNNERS: Record<PaneId, PaneRunner> = {
   sfc: runSfc,
   saturn: pending(
     "saturn",
-    "the Saturn pane needs the game injected into the disc (disc:inject), not in this checkout yet",
+    "the Saturn pane's boot is not written yet (packages/shmup-harbor/scripts/inject-disc.ts writes the disc it would play)",
   ),
   kids: pending("kids", "the Kids! pane's boot is not written yet"),
   plus: pending("plus", "the Dezaemon+ pane's boot is not written yet"),

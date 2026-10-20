@@ -171,8 +171,10 @@ the level's own `dezaemonTitle` + `dezaemonTitleScreen.layout` — the atlas fra
 names and slot placements `mapSaveToGame` produced when the game was imported
 from a cart. That fallback, plus the six credit strips it writes alongside, is
 what lets a community save go import → export → play without losing its title to
-the host runtime's own. `report.title.source` is `"cart"`, `"uploaded"` or
-`"none"`.
+the host runtime's own. With neither, a `titleG` option (the game's own
+titleG.gif, the plate the browser's title slides in) becomes TITLE 1, trimmed to
+its opaque pixels. `report.title.source` is `"cart"`, `"uploaded"`, `"titleG"`
+or `"none"`.
 
 The deeper decoder internals (per-section decoders, player art, and so on) are
 importable through subpath exports: `@shmupx/shmup-engine/decode`,
@@ -182,6 +184,14 @@ importable through subpath exports: `@shmupx/shmup-engine/decode`,
 `.../iso9660-read`, `.../mesh-library`, `.../decode-mdldt`, `.../model-mesh`,
 `.../compress`, `.../bup-write`, `.../palette-target`, `.../cg-pack`,
 `.../game-to-save`, `.../export-sav`, `.../cover`, `.../sfc`, `.../psx`.
+
+Three are only reachable that way, being for writing a disc image rather than a
+save: `.../cd-sector` (`buildMode1Sector`, `isValidMode1Sector`, `cdEdc` — a
+MODE1/2352 sector with its EDC and ECC), `.../iso9660-patch` (`replaceFile`,
+`directoryRecords` — one file swapped on a mastered track, in place or moved to
+its end) and `.../disc-inject` (`injectGameIntoDisc`, `readDiscGame`,
+`sampleGameCmp`, `patchMenu`, `staleRingReads` — a game written onto the
+Dezaemon 2 disc as its boot image, FORMAT.md "SGM_INIT.CMP, the boot image").
 
 `FORMAT.md` documents the reverse-engineered save format; `games-db.json` is the
 catalog of known community games.

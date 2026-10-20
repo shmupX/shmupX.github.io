@@ -351,12 +351,15 @@ function readBankComposition(sec5, slot) {
 // Crop a rendered RGBA to its opaque bounding box so a logo drawn in a
 // corner of its slot packs tight; x/y record where the crop sat inside the
 // slot, because the engine draws the WHOLE slot centred on its anchor and a
-// faithful title has to keep that corner.
-function trimRgba(img) {
+// faithful title has to keep that corner. A pixel counts from alpha `cutoff`
+// up: any alpha at all for a cart's own art, which is never translucent; the
+// writer passes the quantizer's 128 for art bound for a cart, whose faint
+// edges would come out transparent anyway (game-to-save.js, the titleG plate).
+export function trimRgba(img, cutoff = 1) {
     let minX = img.w, minY = img.h, maxX = -1, maxY = -1;
     for (let y = 0; y < img.h; y++) {
         for (let x = 0; x < img.w; x++) {
-            if (img.rgba[(y * img.w + x) * 4 + 3]) {
+            if (img.rgba[(y * img.w + x) * 4 + 3] >= cutoff) {
                 if (x < minX) minX = x;
                 if (x > maxX) maxX = x;
                 if (y < minY) minY = y;

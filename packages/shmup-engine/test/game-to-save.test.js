@@ -592,6 +592,55 @@ Deno.test("both title logos stack: the logo on top, the subtitle in the bottom r
   );
 });
 
+// gs's titles wear only its own titleG.gif — a 256x364 plate, transparent but
+// for its 170x105 badge low in the middle — so the cart wears it too.
+function titleGPlate() {
+  const g = { w: 256, h: 364, rgba: new Uint8Array(256 * 364 * 4) };
+  for (let y = 178; y < 283; y++) {
+    for (let x = 38; x < 208; x++) g.rgba.set([255, 128, 0, 255], (y * 256 + x) * 4);
+  }
+  // A faint halo pixel far from the badge: below the quantizer's cutoff, so it
+  // would come out transparent anyway and must not widen the cut.
+  g.rgba.set([255, 255, 255, 40], (100 * 256 + 10) * 4);
+  return g;
+}
+
+Deno.test("a game's own titleG is TITLE 1, cut to what it draws, when it has no title of its own", () => {
+  const out = buildSaveFromGame(level(), art(), { titleG: titleGPlate() });
+  assertStrictEquals(out.report.title.source, "titleG");
+  assert(out.report.title.title1 && !out.report.title.title2);
+  const decoded = decodeSave(buildPayload(out.sections));
+  const t1 = decoded.sprites.find((s) => s.key === "dezaTitle1");
+  assert(t1, "the cart has a TITLE 1");
+  // The 170x105 badge alone, fitted to the 128x64 slot: 104x64. Shrunk whole,
+  // the 256x364 plate would have come out 45x64.
+  assertStrictEquals(t1.w, 104);
+  assertStrictEquals(t1.h, 64);
+  assert(
+    Array.from({ length: 32 }, (_, i) => bankWord(out.sections, TITLE_SLOTS.title2.first + i))
+      .every((w) => w === 0xffff),
+    "TITLE 2 stays empty",
+  );
+});
+
+Deno.test("a logo, a subtitle or a cart's drawn title wins over the game's G", () => {
+  const titleG = titleGPlate();
+  const logo = buildSaveFromGame(level(), art(), { titleG, title1: frame(256, 91, [200, 200, 200]) });
+  assertStrictEquals(logo.report.title.source, "uploaded");
+  const subtitle = buildSaveFromGame(level(), art(), { titleG, title2: frame(256, 20, [100, 200, 255]) });
+  assertStrictEquals(subtitle.report.title.source, "uploaded");
+  assert(!subtitle.report.title.title1, "the G does not slip in beside an uploaded subtitle");
+  const drawn = buildSaveFromGame(
+    { ...level(), dezaemonTitle: { title1: "dezaTitle1.gif" } },
+    { ...art(), "dezaTitle1.gif": frame(120, 44, [240, 220, 40]) },
+    { titleG },
+  );
+  assertStrictEquals(drawn.report.title.source, "cart");
+  // A G that draws nothing leaves the page blank, as before.
+  const empty = buildSaveFromGame(level(), art(), { titleG: { w: 8, h: 8, rgba: new Uint8Array(256) } });
+  assertStrictEquals(empty.report.title.source, "none");
+});
+
 Deno.test("rotateCcwRgba and placeRgba move pixels where they say", () => {
   const src = {
     w: 3,

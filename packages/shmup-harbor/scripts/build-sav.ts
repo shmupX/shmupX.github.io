@@ -151,6 +151,11 @@ export interface BuildSavResult {
   palPath: string | null;
   bytes: number;
   fileName: string;
+  /** The game's name: the cart's own (--name) or the level's. */
+  name: string;
+  /** The eight sections as the cart holds them, decompressed, sec0..sec7 —
+   * what scripts/inject-disc.ts writes onto the disc instead. */
+  sections: Uint8Array[];
   warnings: string[];
   report: Record<string, unknown>;
 }
@@ -323,6 +328,92 @@ export async function loadLevelArt(
   return art;
 }
 
+/** The names each title plate answers to in a game's own `game_ui` set — the
+ * ones customTitleArt (static/phaser-plugins/level-loader.js) counts. */
+const TITLE_G_NAMES = ["titleG.gif", "titleG.png"];
+const LOGO_NAMES = ["logo.gif", "logo.png"];
+const SUBTITLE_NAMES = [
+  "subTitle.gif",
+  "subTitle.png",
+  "subTitleEn.gif",
+  "subTitleEn.png",
+];
+
+/**
+ * One of the game's own title plates — a frame it replaced in the editor's
+ * Atlas Manager under game_ui — as RGBA, or null when it brought none: the
+ * first of `names` in the record's `uiAtlases.game_ui` set, and, with
+ * `levelAtlas`, the copy a record saved before that set existed left in its
+ * level atlas (already in `art`), which the runtime honours for the G alone.
+ */
+async function ownUiPlate(
+  record: LevelRecord,
+  art: Record<string, ArtFrame>,
+  names: readonly string[],
+  { levelAtlas = false, log = () => {} }: {
+    levelAtlas?: boolean;
+    log?: (m: string) => void;
+  } = {},
+): Promise<ArtFrame | null> {
+  const ui = (record.uiAtlases as
+    | Record<
+      string,
+      { imageDataURL?: string; frames?: Record<string, FrameRect> }
+    >
+    | undefined)?.game_ui;
+  const plain = (k: string) => k.replace(/․/g, ".");
+  const key = ui?.frames &&
+    names.map((n) => Object.keys(ui.frames!).find((k) => plain(k) === n))
+      .find(Boolean);
+  if (ui?.imageDataURL && key && ui.frames![key]?.frame) {
+    try {
+      const sheet = await decodeDataUrl(ui.imageDataURL);
+      return toFrame(cut(sheet, ui.frames![key].frame));
+    } catch (e) {
+      log(
+        `title: the game's own ${plain(key)} could not be decoded (${
+          (e as Error).message
+        })`,
+      );
+    }
+  }
+  if (levelAtlas) { for (const name of names) if (art[name]) return art[name]; }
+  return null;
+}
+
+/**
+ * The game's own titleG — the plate the browser's title and the PS2's slide
+ * in — as RGBA, or null when it brought none: from its game_ui set, else an
+ * older save's level atlas, where the runtime looks. The writer makes it
+ * TITLE 1 when the game has no logo, subtitle or drawn title of its own
+ * (buildSaveFromGame), so a game like gs, whose titles wear only its G, wears
+ * it on the Saturn too instead of a blank page.
+ */
+export function ownTitleG(
+  record: LevelRecord,
+  art: Record<string, ArtFrame>,
+  log: (m: string) => void = () => {},
+): Promise<ArtFrame | null> {
+  return ownUiPlate(record, art, TITLE_G_NAMES, { levelAtlas: true, log });
+}
+
+/**
+ * The game's own logo and subtitle plates from its game_ui set (logo.gif,
+ * subTitle.gif or subTitleEn.gif), for a game that replaced them in the Atlas
+ * Manager instead of uploading them in the TITLE EDITOR: the browser and the
+ * PS2 draw those over the G, so the cart takes them as TITLE 1 / TITLE 2 the
+ * way it takes an uploaded logo and subtitle.
+ */
+export async function ownLogoPlates(
+  record: LevelRecord,
+  log: (m: string) => void = () => {},
+): Promise<{ logo: ArtFrame | null; subtitle: ArtFrame | null }> {
+  return {
+    logo: await ownUiPlate(record, {}, LOGO_NAMES, { log }),
+    subtitle: await ownUiPlate(record, {}, SUBTITLE_NAMES, { log }),
+  };
+}
+
 /**
  * A title-screen image — the level's logo or subtitle data URL — as RGBA.
  * PNG and GIF decode here (the editor stores logos as either); a JPEG logo
@@ -390,8 +481,14 @@ export async function buildSav(
     noBaseAtlas: options.noBaseAtlas,
     log,
   });
-  const title1 = await titleArt(record.logoDataURL, "logo", log);
-  const title2 = await titleArt(record.subTitleDataURL, "subtitle", log);
+  // The logo and subtitle: uploaded in the TITLE EDITOR, else the game's own
+  // plates in its game_ui set; and its own G, for a game with neither.
+  const plates = await ownLogoPlates(record, log);
+  const title1 = (await titleArt(record.logoDataURL, "logo", log)) ??
+    plates.logo;
+  const title2 = (await titleArt(record.subTitleDataURL, "subtitle", log)) ??
+    plates.subtitle;
+  const titleG = await ownTitleG(record, art, log);
 
   // Real item icons when the powerup GIFs are sitting in dev-fixtures, the
   // coloured squares when they are not. A cart holds one 16x16 cell per item
@@ -444,6 +541,7 @@ export async function buildSav(
     gameMode: options.gameMode ?? 0,
     title1,
     title2,
+    titleG,
     itemEmblems,
     storyPanels: panels,
     author: options.author === undefined ? defaultAuthor() : options.author,
@@ -456,6 +554,8 @@ export async function buildSav(
       : `title: ${
         t.source === "cart"
           ? "the game's own drawn title page"
+          : t.source === "titleG"
+          ? "the game's own titleG.gif, the plate its browser and PS2 titles show"
           : "the level's uploaded logo art"
       }` +
         ` (${
@@ -515,6 +615,8 @@ export async function buildSav(
     palPath,
     bytes: result.sav.length,
     fileName,
+    name: record.name || options.level || "game",
+    sections: result.sections,
     warnings: result.warnings,
     report: result.report as Record<string, unknown>,
   };
