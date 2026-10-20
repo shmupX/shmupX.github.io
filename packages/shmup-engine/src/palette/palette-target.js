@@ -374,6 +374,47 @@ export function quantizeFrames(frames, target = "saturn", options = {}) {
     return { target: spec, ...out };
 }
 
+/**
+ * Index more frames against a bank quantizeFrames() already built, without
+ * letting them change it: every pixel snaps to the nearest colour the bank
+ * holds. For art that must not compete with the game's sprites for the user
+ * rows — a stage's story backdrop, drawn after everything else is packed.
+ * The saturn target reads every opaque entry; the snes target keeps each
+ * frame inside the one user row that serves it best, as quantizeSnes does.
+ * Returns the same frame shape quantizeFrames() does.
+ */
+export function indexWithBank(frames, bank, target = "saturn") {
+    if (!PALETTE_TARGETS[target]) throw new Error(`unknown palette target ${JSON.stringify(target)} (saturn | snes)`);
+    const userEntries = (first, last) => {
+        const out = [];
+        for (let i = first; i < last; i++) {
+            if (bank[i] & USER_COLOR_FLAG) out.push({ index: i, word: bank[i] & 0x7fff });
+        }
+        return out;
+    };
+    if (target === "snes") {
+        const rows = [];
+        for (let r = USER_ROW_FIRST; r < DEZA2_CG_COLORS / DEZA2_PALETTE_COLS; r++) {
+            const cands = userEntries(r * DEZA2_PALETTE_COLS + 1, (r + 1) * DEZA2_PALETTE_COLS);
+            if (cands.length) rows.push({ row: r, set: candidateSet(cands) });
+        }
+        return frames.map((f) => {
+            if (!rows.length) return { key: f.key, w: f.w, h: f.h, group: f.group, indexed: new Uint8Array(f.w * f.h), row: null };
+            let best = rows[0], bestError = Infinity;
+            for (const r of rows) {
+                let e = 0;
+                for (const [w, n] of colorHistogram([f])) {
+                    e += dist2(r.set.wordOf.get(r.set.nearest(w)), r5of(w), g5of(w), b5of(w)) * n;
+                }
+                if (e < bestError) { bestError = e; best = r; }
+            }
+            return { key: f.key, w: f.w, h: f.h, group: f.group, indexed: indexFrame(f, best.set), row: best.row };
+        });
+    }
+    const set = candidateSet([...systemCandidates(), ...userEntries(USER_ROW_FIRST * DEZA2_PALETTE_COLS, DEZA2_CG_COLORS)]);
+    return frames.map((f) => ({ key: f.key, w: f.w, h: f.h, group: f.group, indexed: indexFrame(f, set), row: null }));
+}
+
 /** sec4 bytes (u16be) from a 256-word bank. */
 export function bankToSec4(bank) {
     const sec4 = new Uint8Array(512);

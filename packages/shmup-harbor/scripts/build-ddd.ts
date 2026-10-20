@@ -52,12 +52,7 @@ import {
   NDD_IMAGE_BYTES,
 } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
-import {
-  bossRushArg,
-  loadLevel,
-  loadLevelArt,
-  titleArt,
-} from "./build-sav.ts";
+import { bossRushArg, loadLevel, loadLevelArt, titleArt } from "./build-sav.ts";
 
 const ROOT = repoRoot();
 const FIXTURES = join(ROOT, "dev-fixtures");
@@ -252,6 +247,18 @@ export async function buildDdd(
   });
   const rep = result.report as unknown as DddReport;
   log(`name: ${result.name}`);
+  // The carts open a stage on its story; this disk's would be a full-screen
+  // portrait briefing whose timing no boot has settled (FORMAT-N64.md "A
+  // level's story"), and a mistimed one is worse than none.
+  const story = record.storyData as Record<string, unknown> | undefined;
+  if (
+    story && !record.noStory &&
+    Object.keys(story).some((k) => /^stage\d+$/.test(k))
+  ) {
+    log(
+      "story: not drawn on the 64DD yet — a stage-start briefing is a portrait layout effect whose timing is untraced (FORMAT-N64.md)",
+    );
+  }
   log(
     rep.templateProject
       ? `template: ${rep.templateProject}${

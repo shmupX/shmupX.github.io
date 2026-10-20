@@ -25,8 +25,10 @@ import {
   KIDS_STOCK_ITEM_FRAMES,
 } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
+import { storyLogLine, type StoryStageReport } from "../lib/story-panels.ts";
 import {
   bossRushArg,
+  levelStoryBackdrops,
   loadLevel,
   loadLevelArt,
   titleArt,
@@ -81,6 +83,7 @@ export async function buildKids(
   });
   const title1 = await titleArt(record.logoDataURL, "logo", log);
   const title2 = await titleArt(record.subTitleDataURL, "subtitle", log);
+  const backdrops = await levelStoryBackdrops(record, log);
 
   const result = exportLevelToKidsCard(record, art, {
     name: options.name?.trim() || null,
@@ -88,9 +91,11 @@ export async function buildKids(
     title2,
     backgroundSet: options.background ?? 0,
     horizontal: options.horizontal ?? false,
+    storyBackdrops: backdrops,
   });
   const rep = result.report;
   log(`name: ${result.name}`);
+  log(storyLogLine(backdrops, rep.stages as StoryStageReport[]));
   log(
     `stages: ${
       rep.stages.map((s: { key: string; placements: number; boss: unknown }) =>

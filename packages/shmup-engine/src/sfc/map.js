@@ -14,12 +14,13 @@
 // names a MAP GROUP word (groups.js), and slot 0 is by the editor's
 // convention the blank chip.
 //
-// SCROLL EFECT is 6 x 0x200: two 256-byte tables, one entry per 8-px band of
-// the 2,048-px stage. The clear routine ($00:8B19) fills the first with
-// i & 0x1F and the second with 0x42; the second reads as the band's scroll
-// speed (0x40 = 1 px per frame by the sample's decelerating 46..41 run) and
-// the first as a per-band effect index — likely, the play-time reader is not
-// traced. Environment-neutral ESM (Node + browser).
+// SCROLL EFECT is 6 x 0x200: two 256-byte tables, one entry per 64 px of the
+// stage. The first is the map-row-block sequencer (FORMAT-SFC.md "MAP DATA
+// and SCROLL EFECT", traced): the streamer fetches block A[(scroll >> 6) + 4]
+// and shows map rows A[i]*4 .. +3, so the clear routine's i & 0x1F plays the
+// map in order and replays it every 2,048 px. The second (cleared to 0x42)
+// has no reader in the play engine — the scroll runs at exactly 1 px/frame.
+// Environment-neutral ESM (Node + browser).
 
 import { REGION } from "./regions.js";
 
@@ -125,6 +126,29 @@ export function decodeScrollEffect(bytes) {
         stages.push({ stage: s, offset, bytes: view, effect, speed, min, max });
     }
     return stages;
+}
+
+/** Map rows per sequencer block. */
+export const MAP_BLOCK_ROWS = 4;
+
+/**
+ * The sequencer for a stage whose first `openingBlocks` blocks must never be
+ * shown again — a story painted into its opening rows (sfc-write.js): the map
+ * once in order, then blocks openingBlocks..31 round and round, where the
+ * clear routine's i & 0x1F would bring the opening back every 2,048 px.
+ */
+export function storyScrollSequence(openingBlocks) {
+    const blocks = MAP_ROWS / MAP_BLOCK_ROWS;
+    const k = Math.max(0, Math.min(blocks - 1, openingBlocks));
+    const seq = new Uint8Array(SCROLL_BANDS);
+    for (let i = 0; i < SCROLL_BANDS; i++) seq[i] = i < blocks ? i : k + ((i - k) % (blocks - k));
+    return seq;
+}
+
+/** A stage's block sequencer (the first of its two tables). */
+export function writeScrollSequence(bytes, stage, seq) {
+    bytes.set(seq.subarray(0, SCROLL_BANDS), REGION.scroll.offset + stage * SCROLL_STAGE_BYTES);
+    return bytes;
 }
 
 /** The editor's clear image of a stage's two tables, written at `at`. */

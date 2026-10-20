@@ -56,7 +56,17 @@ import {
     ODR_VFLIP,
     USER_CHIP_COUNT,
 } from "./chips.js";
-import { encodeMapRow, MAP_COLUMNS, MAP_ROW_BYTES, MAP_ROWS, MAP_STAGE_BYTES, STAGE_COUNT } from "./map.js";
+import {
+    encodeMapRow,
+    MAP_BLOCK_ROWS,
+    MAP_COLUMNS,
+    MAP_ROW_BYTES,
+    MAP_ROWS,
+    MAP_STAGE_BYTES,
+    STAGE_COUNT,
+    storyScrollSequence,
+    writeScrollSequence,
+} from "./map.js";
 import {
     BOSS_GROUP_CHIPS,
     BOSS_GROUP_STAGE_BYTES,
@@ -112,6 +122,24 @@ export const SFC_LINE_STEP = 4;
 export const SFC_BOSS_LINE_GAP = 12;
 /** The last line a spawn may use: the stage is 1,024 lines, the END goes one past the last spawn. */
 export const SFC_LAST_SPAWN_LINE = APPEAR_LINES - 2;
+/**
+ * A stage's story (`storyBackdrops`) is painted into its map with its top on
+ * this row. As a stage opens the screen shows map rows 0-13, row 0 at its
+ * foot and row 13's top just above its top edge, under the score and the
+ * REST counter (measured in snes9x, 2026-10-20), so a story topped at row 11
+ * opens whole, just below them.
+ */
+export const SFC_STORY_TOP_ROW = 11;
+/** Lines a story stage's waves wait past its top row, as the Saturn's do. */
+export const SFC_STORY_LEAD_LINES = 8;
+/**
+ * The earliest line a story stage's boss may stand on: a living boss loops
+ * the scroll inside a 1,024-px window, and one that started on the story's
+ * blocks would bring them back.
+ */
+export const SFC_STORY_MIN_BOSS_LINE = 80;
+/** The story's columns: the map's 16 less one each side, 224 px. */
+export const SFC_STORY_FIRST_COL = 1;
 /** What one web-game hit is worth against the ENEMY DATA hit-point table (a guess: the plain shot's damage is untraced). */
 export const SFC_HIT_UNITS = 25;
 /** The aim value the sample's firing enemies carry (byte 1 bits 0-4; its pattern is untraced). */
@@ -375,12 +403,18 @@ export function composeTitlePicture({ logo = null, subtitle = null, backdrop = n
  * text name), `title1`, `title2` and `titleBg` ({w, h, rgba}: the title
  * editor's logo, subtitle and backdrop, composed into the title picture by
  * composeTitlePicture), `horizontal` (refused with a warning: the cart
- * scrolls vertically).
+ * scrolls vertically), `storyBackdrops` ([{stage, variants: [{label, w: 224,
+ * h, rgba}]}], harbor's lib/story-panels.ts: each stage's story, painted into
+ * its opening map rows at the largest size the sheets have room for — see
+ * buildWithStory).
  *
  * Returns {bytes, name, warnings, report}.
  */
 export function buildSfcGameFromLevel(level, art, options = {}) {
-    const opts = { name: null, title1: null, title2: null, titleBg: null, horizontal: false, ...options };
+    const opts = { name: null, title1: null, title2: null, titleBg: null, horizontal: false, storyBackdrops: null, storyPicks: null, ...options };
+    if (!opts.storyPicks && Array.isArray(opts.storyBackdrops) && opts.storyBackdrops.length) {
+        return buildWithStory(level, art, opts);
+    }
     const warnings = [];
     const warn = (m) => warnings.push(m);
     const name = String(opts.name || level.name || "game").trim() || "game";
@@ -534,7 +568,7 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
     // --- per stage ---
     const built = plan.map(({ st, bossRec, form }, s) => {
         const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : (level.width || 8));
-        const stageReport = { key: st.key, placements: 0, records: 0, lines: 0, enemies: [], boss: null, mapChips: 0, cellsDrawn: 0, rowsDrawn: 0 };
+        const stageReport = { key: st.key, placements: 0, records: 0, lines: 0, enemies: [], boss: null, mapChips: 0, cellsDrawn: 0, rowsDrawn: 0, story: null };
 
         // Scenery: the level's 16x16 cell grid, one chip a cell, centred.
         const mapGroup = new Uint16Array(MAP_GROUP_CHIPS).fill(CHIP_EMPTY_WORD);
@@ -603,9 +637,42 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
                 warn(`${st.key}: could not read the background grid (${e.message}) — scenery skipped`);
             }
         }
+        // The story (buildWithStory picked its size): the stage's opening
+        // rows, in the scenery's palette row, which a stage with scenery of
+        // its own was never given a story to share. Map rows count up the
+        // screen, so the raster's top row of chips is the story's top row.
+        const story = opts.storyPicks ? opts.storyPicks.get(s) : null;
+        if (story && !stageReport.mapChips) {
+            writeCgramRow(bytes, PALETTE_ROW_STAGE_BG + s, story.q.words);
+            rows.push({ row: PALETTE_ROW_STAGE_BG + s, owner: `${st.key} story`, colors: story.q.colors });
+            const before = bank.used;
+            const cols = MAP_COLUMNS - 2 * SFC_STORY_FIRST_COL;
+            for (let cy = 0; cy < story.rows; cy++) {
+                for (let cx = 0; cx < cols; cx++) {
+                    const px = cutChip(story.q.frames[0].indices, cols * CHIP_DIM, cx, cy);
+                    if (isTransparent(px)) continue;
+                    const hit = bankChip(px, `${st.key} story`);
+                    if (!hit) continue;
+                    let slot = mapSlotOfChip.get(hit.chip);
+                    if (slot === undefined) {
+                        if (mapSlotOfChip.size >= MAP_GROUP_CHIPS - 1) continue;
+                        slot = mapSlotOfChip.size + 1;
+                        mapSlotOfChip.set(hit.chip, slot);
+                        mapGroup[slot] = chipWordForIndex(hit.chip);
+                    }
+                    cells[SFC_STORY_TOP_ROW - cy][SFC_STORY_FIRST_COL + cx] = { slot, hflip: hit.hflip, vflip: hit.vflip };
+                }
+            }
+            stageReport.story = { size: story.label, rows: story.rows, chips: bank.used - before, top: SFC_STORY_TOP_ROW };
+        }
         const mapAt = REGION.map.offset + s * MAP_STAGE_BYTES;
         for (let r = 0; r < MAP_ROWS; r++) encodeMapRow(bytes, mapAt + r * MAP_ROW_BYTES, cells[r]);
         writeWords(bytes, REGION.mapGroup.offset + s * MAP_GROUP_STAGE_BYTES, mapGroup);
+        // Its blocks are shown once, as the stage opens, and never again.
+        if (stageReport.story) {
+            writeScrollSequence(bytes, s, storyScrollSequence(Math.ceil((SFC_STORY_TOP_ROW + 1) / MAP_BLOCK_ROWS)));
+        }
+        const storyShift = stageReport.story ? SFC_STORY_TOP_ROW + 1 + SFC_STORY_LEAD_LINES : 0;
 
         // Enemies: an entry a letter-and-drop, its frames in the stage's sheet.
         const spawnRows = st.enemylist.slice().reverse();
@@ -802,7 +869,7 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
         };
         let lastLine = -1, placed = 0, dropped = 0;
         spawnRows.forEach((row, k) => {
-            const line = clamp(waveRows ? Math.round(waveRows[k]) : SFC_FIRST_SPAWN_LINE + k * SFC_LINE_STEP, 0, SFC_LAST_SPAWN_LINE);
+            const line = clamp((waveRows ? Math.round(waveRows[k]) : SFC_FIRST_SPAWN_LINE + k * SFC_LINE_STEP) + storyShift, 0, SFC_LAST_SPAWN_LINE);
             const record = new Uint8Array(APPEAR_RECORD_BYTES);
             let any = false;
             row.forEach((cell, c) => {
@@ -841,7 +908,11 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
         });
         if (dropped) warn(`${st.key}: ${dropped} placement${dropped === 1 ? "" : "s"} shared a column with another on the same line and ${dropped === 1 ? "was" : "were"} left out`);
         if (boss) {
-            const line = clamp(lastLine + SFC_BOSS_LINE_GAP, SFC_BOSS_LINE_GAP, SFC_LAST_SPAWN_LINE);
+            const line = clamp(
+                Math.max(lastLine + SFC_BOSS_LINE_GAP, stageReport.story ? SFC_STORY_MIN_BOSS_LINE : 0),
+                SFC_BOSS_LINE_GAP,
+                SFC_LAST_SPAWN_LINE,
+            );
             const record = new Uint8Array(APPEAR_RECORD_BYTES);
             record[Math.floor(APPEAR_COLUMNS / 2)] = encodeAppearByte({ klass: APPEAR_BOSS_CLASS, entry: 0 });
             const idx = addRecord(record);
@@ -878,6 +949,77 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
         splits,
     };
     return { bytes, name, warnings, report };
+}
+
+/**
+ * The story pass. A cart has no cutscenes, but a stage opens on its first map
+ * rows, so each stage's story (the Saturn's `storyBackdrops`) is painted
+ * there, in the stage's scenery palette row, from SFC_STORY_TOP_ROW down.
+ * The story is the last art on the cart: a build without it says how many of
+ * the 512 chips the game leaves, then every stage's story is taken at the
+ * largest size at which they all fit — each within a MAP GROUP's 127 distinct
+ * chips and the map rows the opening screen shows — else each at its
+ * smallest while chips last, and the image is built again with those painted
+ * in. A stage with scenery of its own keeps it; a story with no room costs
+ * its stage nothing.
+ *
+ * Unlike the Saturn, nothing slows the scroll — the cart advances it 1 px a
+ * frame whatever SCROLL EFECT says — so a story stays about 224 frames: its
+ * top on the screen's top row, its words first to be read.
+ */
+function buildWithStory(level, art, opts) {
+    const dry = buildSfcGameFromLevel(level, art, { ...opts, storyBackdrops: null, storyPicks: null });
+    const notes = [];
+    const cols = MAP_COLUMNS - 2 * SFC_STORY_FIRST_COL;
+    const candidates = [];
+    for (const sb of opts.storyBackdrops) {
+        const s = dry.report.stages.findIndex((st) => st.key === `stage${sb && sb.stage}`);
+        if (s < 0) continue; // a story for a stage this cart does not have
+        const key = dry.report.stages[s].key;
+        if (dry.report.stages[s].mapChips > 0) {
+            notes.push(`${key}: keeps its own scenery — its story is not drawn`);
+            continue;
+        }
+        const variants = [];
+        for (const v of Array.isArray(sb.variants) ? sb.variants : []) {
+            if (!v || v.w !== cols * CHIP_DIM || !v.h || v.h % CHIP_DIM || !v.rgba) continue;
+            const rows = v.h / CHIP_DIM;
+            if (rows > SFC_STORY_TOP_ROW + 1) continue;
+            const q = quantizeToRow([{ key: "story", w: v.w, h: v.h, rgba: v.rgba }]);
+            const chips = new Set();
+            for (let cy = 0; cy < rows; cy++) {
+                for (let cx = 0; cx < cols; cx++) {
+                    const px = cutChip(q.frames[0].indices, v.w, cx, cy);
+                    if (!isTransparent(px)) chips.add(keyOf(px));
+                }
+            }
+            if (chips.size > MAP_GROUP_CHIPS - 1) continue;
+            variants.push({ label: v.label, rows, q, chips });
+        }
+        if (variants.length) candidates.push({ s, key, variants });
+        else notes.push(`${key}: no size of its story fits a stage map (${cols * CHIP_DIM} px wide, ${SFC_STORY_TOP_ROW + 1} rows, ${MAP_GROUP_CHIPS - 1} distinct chips) — not drawn`);
+    }
+    const free = dry.report.chips.free;
+    const cost = (picks) => new Set(picks.flatMap(({ v }) => [...v.chips])).size;
+    const pickAt = (k) => candidates.map((c) => ({ c, v: c.variants[Math.min(k, c.variants.length - 1)] }));
+    const sizes = Math.max(0, ...candidates.map((c) => c.variants.length));
+    let picks = [];
+    for (let k = 0; k < sizes && !picks.length; k++) {
+        if (cost(pickAt(k)) <= free) picks = pickAt(k);
+    }
+    if (!picks.length && candidates.length) {
+        for (const p of pickAt(sizes - 1)) {
+            if (cost([...picks, p]) <= free) picks.push(p);
+            else notes.push(`${p.c.key}: no chips left in the save's two sheets for its story — not drawn`);
+        }
+    }
+    const built = buildSfcGameFromLevel(level, art, {
+        ...opts,
+        storyBackdrops: null,
+        storyPicks: new Map(picks.map(({ c, v }) => [c.s, v])),
+    });
+    built.warnings.push(...notes);
+    return built;
 }
 
 /** A frame's indices fitted to w x h (centred, never upscaled). */

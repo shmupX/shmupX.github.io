@@ -21,6 +21,7 @@ import {
   bandFor,
   bossClassFor,
   buildSaveFromGame,
+  DEFAULT_SCROLL_BYTE,
   emptySong,
   encodeBossTrailer,
   encodeEnemyRecord,
@@ -32,6 +33,9 @@ import {
   placeRgba,
   rotateCcwRgba,
   spreadFrames,
+  STORY_FIRST_ROW,
+  STORY_LEAD_ROWS,
+  STORY_SCROLL_SPEEDS,
 } from "../src/write/game-to-save.js";
 import {
   GLOBAL_WEAPON_SLOTS,
@@ -199,39 +203,108 @@ Deno.test("encodeEnemyRecord round-trips through decodeEnemyRecord", () => {
   assertStrictEquals(both.move.mode, 3);
 });
 
-Deno.test("a story panel's pieces carry the NO-COLLISION attribute", () => {
-  // Four 64x64 quarters, the shape storyPanels() hands build:sav.
-  const quarter = (col, row) => ({
-    col,
-    row,
-    w: 64,
-    h: 64,
-    rgba: frame(64, 64, [180, 120, 60]).rgba,
-  });
-  const storyPanels = [{
-    stage: 0,
-    picture: [quarter(0, 0), quarter(1, 0), quarter(0, 1), quarter(1, 1)],
-    text: [],
-  }];
-  const { sections, warnings } = buildSaveFromGame(level(), art(), {
-    storyPanels,
+// --- a stage's story, as the opening rows of its background map ---
+
+/** A story backdrop: 224 wide, `rows` map rows, one colour or (noise) a new cell every 16 px. */
+function backdrop(label, rows, rgb, noise = false) {
+  const w = 224, h = rows * 16;
+  const rgba = new Uint8Array(w * h * 4);
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) & 255;
+  for (let i = 0; i < w * h; i++) {
+    rgba.set(noise ? [rnd(), rnd(), rnd(), 255] : [...rgb, 255], i * 4);
+  }
+  return { label, w, h, rgba };
+}
+
+const bgWord = (sections, stage, row, col) => {
+  const at = SEC5_REGIONS.stageBanks.offset +
+    stage * SEC5_REGIONS.stageBanks.stride + (row * 14 + col) * 2;
+  return (sections[5][at] << 8) | sections[5][at + 1];
+};
+const paintedRow = (sections, stage, row) =>
+  Array.from({ length: 14 }, (_, c) => bgWord(sections, stage, row, c))
+    .some((w) => w !== 0xffff);
+/** The first placement-grid row anything spawns on. */
+const firstPlaced = (sections, stage) => {
+  const { offset, stride } = SEC5_REGIONS.placement;
+  const at = sections[5].subarray(offset + stage * stride, offset + (stage + 1) * stride)
+    .findIndex((b) => b !== 0);
+  return Math.floor(at / 20);
+};
+const curveOf = (sections, stage) => {
+  const { offset, stride } = SEC5_REGIONS.scrollCurves;
+  return sections[5].subarray(offset + stage * stride, offset + (stage + 1) * stride);
+};
+
+Deno.test("a stage's story is painted into the opening rows of its background map", () => {
+  const plain = buildSaveFromGame(level(), art());
+  const { sections, warnings, report } = buildSaveFromGame(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [backdrop("words", 3, [255, 255, 255])] }],
   });
   assertEquals(warnings.filter((w) => /story/.test(w)), []);
-  const decoded = decodeSave(buildPayload(sections));
-  // The picture lives in band 6 (records 56-59), beside the level's own two.
-  const pieces = decoded.enemies.filter((e) => e.record >= 56);
-  assertStrictEquals(pieces.length, 4);
-  for (const piece of pieces) {
-    assertStrictEquals(
-      piece.behavior.move.mode & 2,
-      2,
-      `record ${piece.record} can be collided with`,
-    );
-    assertStrictEquals(piece.behavior.fire.geometry, 0, "a piece never fires");
-  }
-  // The level's own enemies are untouched by it.
-  const dot = decoded.enemies.find((e) => e.record < 16);
-  assertStrictEquals(dot.behavior.move.mode & 2, 0);
+  const top = STORY_FIRST_ROW + 3;
+  for (let r = 0; r < STORY_FIRST_ROW; r++) assert(!paintedRow(sections, 0, r), `row ${r} under the screen's edge`);
+  for (let r = STORY_FIRST_ROW; r < top; r++) assert(paintedRow(sections, 0, r), `row ${r} carries the story`);
+  assert(!paintedRow(sections, 0, top), "nothing above it");
+  // The waves wait for it, the scroll slows while it is on screen and then
+  // runs as before, and the stage's palette is the game's own.
+  assertStrictEquals(
+    firstPlaced(sections, 0),
+    firstPlaced(plain.sections, 0) + top + STORY_LEAD_ROWS,
+  );
+  const curve = curveOf(sections, 0);
+  assertEquals(
+    [...curve.subarray(0, Math.ceil(top / 4))].map((b) => b & 7),
+    STORY_SCROLL_SPEEDS.slice(0, Math.ceil(top / 4)),
+  );
+  assertStrictEquals(curve[Math.ceil(top / 4)], DEFAULT_SCROLL_BYTE);
+  assertEquals(sections[4], plain.sections[4], "a story chooses no colour");
+  assertEquals(report.stages[0].story, { size: "words", rows: 3, cells: 1 });
+});
+
+Deno.test("a story the CG pages cannot hold is drawn smaller, else not at all", () => {
+  const plain = buildSaveFromGame(level(), art());
+  // 80 rows of noise are 1120 cells of their own: more than the pages hold.
+  const huge = backdrop("huge", 80, null, true);
+  const smaller = buildSaveFromGame(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [huge, backdrop("small", 2, [0, 0, 255])] }],
+  });
+  assertEquals(smaller.warnings.filter((w) => /story/.test(w)), []);
+  assertStrictEquals(smaller.report.stages[0].story.size, "small");
+
+  const none = buildSaveFromGame(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [huge] }],
+  });
+  assert(none.warnings.some((w) => /no CG cells left for its story/.test(w)));
+  assertStrictEquals(none.report.stages[0].story, null);
+  // A story with no room costs the stage nothing: no quiet opening.
+  assertStrictEquals(firstPlaced(none.sections, 0), firstPlaced(plain.sections, 0));
+  assertEquals(curveOf(none.sections, 0), curveOf(plain.sections, 0));
+  assert(!paintedRow(none.sections, 0, STORY_FIRST_ROW));
+});
+
+Deno.test("a story for a stage the cart lacks, or not 224 wide, is passed over", () => {
+  const { warnings, report } = buildSaveFromGame(level(), art(), {
+    storyBackdrops: [
+      { stage: 4, variants: [backdrop("words", 2, [255, 255, 255])] },
+      { stage: 0, variants: [{ ...backdrop("words", 2, [255, 255, 255]), w: 200 }] },
+    ],
+  });
+  assertEquals(warnings.filter((w) => /story/.test(w)).length, 1);
+  assert(warnings.some((w) => /not 224 px wide/.test(w)));
+  assertStrictEquals(report.stages[0].story, null);
+});
+
+Deno.test("a boss fight's scroll loop never reaches back to the story", () => {
+  // No boss, so the stage's extent hangs on its last wave alone.
+  const bossless = { ...level(), bossData: {} };
+  const { report } = buildSaveFromGame(bossless, art(), {
+    storyBackdrops: [{ stage: 0, variants: [backdrop("words", 12, [255, 255, 255])] }],
+  });
+  const [loop, end] = report.stages[0].extent;
+  assert(loop * 16 >= STORY_FIRST_ROW + 12, `loop part ${loop} starts above the story`);
+  assert(loop < end);
 });
 
 Deno.test("encodeBossTrailer round-trips through decodeBossTrailer", () => {

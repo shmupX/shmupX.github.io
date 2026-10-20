@@ -71,6 +71,7 @@ const { sav, fileName, warnings, report } = exportLevelToSav(level, art, {
   palette: "saturn", // or "snes": one 15-colour row per sprite
   title1: logoRgba, // optional {w, h, rgba} for the drawn TITLE 1 / TITLE 2
   itemEmblems: { f: powerIcon, s: shotIcon, r: rapidIcon, b: barrierIcon }, // optional 16×16 icon per letter; else a square
+  storyBackdrops: [{ stage: 0, variants: [{ label, w: 224, h, rgba }] }], // optional: a stage's story as its opening scenery, largest size first
   author: "easierbycode", // optional: who presents a level that names nobody
 });
 await Deno.writeFile(fileName, sav); // "Dez 2 - <name>.sav", 1,114,112 bytes

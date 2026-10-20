@@ -2040,6 +2040,40 @@ Not tried (time-boxed, untraced behaviour): the dragon as a type-4 static part
 over the core. Whether a static part follows a moving boss, and how it sits over
 the core's art, is unknown, and a part is a zako (its own hp, not the bar's).
 
+### A level's story, as a stage's opening scenery (`storyBackdrops`; 2026-10-20)
+
+The format has no cutscenes, but a stage opens on the first rows of its
+background tilemap (sec5 `+0x00000`), so the writer paints the story there:
+a 224-wide raster per stage (14 map columns; harbor's `lib/story-panels.ts`
+composes the speaker's plate, the words and the picture), cut into 16×16 cells
+and laid from map row 3 upward, the raster's top row on the highest map row.
+Measured in EmulatorJS's yabause with gs: as a stage opens, the screen's bottom
+edge shows map y ~37, so rows 0-2 start out of sight, and 12 rows from row 3
+fill the screen up to the score. Map rows count up the screen and scroll down
+it, so the story's foot leaves first.
+
+What the writer does around it (`buildSaveFromGame`, the story section):
+
+- **Last in, palette untouched.** The rasters are indexed against the bank the
+  game's art already chose (`indexWithBank`, palette-target.js) and packed after
+  everything else, into whatever of the 1024 cells is left: all stages at the
+  largest size at which they fit together (`CgPacker.cellsNeeded`), else each at
+  its smallest while cells last. A stage with imported scenery keeps it.
+- **The stage makes room only for what landed.** Its placements, a boss row
+  derived from them, and a scroll extent derived from its last row all move up
+  by `3 + rows + 8`, so the first wave enters as the story's top leaves; the
+  extent's loop part is kept above the story, so a boss fight's loop never
+  scrolls back to it.
+- **The scroll slows while it is on screen.** Curve bytes covering the story's
+  rows get speed 1 (0.25 px/frame) for the first 64 px, then 2 (0.5 px/frame);
+  never 0, which would hold the scroll on the story for good (the curve is
+  indexed by the scroll position itself).
+
+Until this, the story was a 128×128 picture and one line built from band-6 and
+band-4 zako records (no-collision, hp 0). A game whose enemies had already taken
+those four band-6 records — gs — lost its story to "panel dropped" warnings and
+still opened on 48 empty rows.
+
 ## Cross-check option (high-leverage)
 
 Load a Mednafen savestate taken inside Dezaemon 2 into Ghidra (SH-2, with the

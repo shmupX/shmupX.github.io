@@ -567,6 +567,33 @@ factory sample's SOUND DATA and BGM PATCH (the ROM's songs), all embedded in
   image is read back through `parseSfcSav` and `verifySfcChecksums` before it
   leaves.
 
+### A level's story, as a stage's opening map rows (`buildWithStory`; 2026-10-20)
+
+The cart has no cutscenes, so each stage's story (harbor's
+`lib/story-panels.ts`: the speaker's plate, the words, the picture, 224 px wide)
+is painted into the stage's MAP DATA where it opens:
+
+- **Where.** As a stage opens the screen shows map rows 0-13, row 0 at its foot
+  and row 13's top just above its top edge, under the score and the REST
+  counter (measured in snes9x with gs, 2026-10-20). The story's top goes on row
+  11 (`SFC_STORY_TOP_ROW`), down to row 0 for twelve rows, columns 1-14, the
+  raster's top row of chips on the highest map row: map rows count up the
+  screen.
+- **Colours and chips.** It is quantised into the stage's scenery row (`n`,
+  BG palette 7), which only scenery shares, and cut into chips in the shared
+  512; a MAP GROUP names 127. A build without the story first says what the
+  game leaves; every stage's story is then taken at the largest size at which
+  they all fit, else each at its smallest while chips last. A stage with
+  scenery keeps it.
+- **The sequencer.** The clear routine's `i & 0x1F` would replay the story every
+  2,048 px, so a story stage's SCROLL EFECT `+0x000` plays blocks 0-31 once and
+  then cycles blocks 3-31 (`storyScrollSequence`): the story's three blocks are
+  never named again. A living boss loops inside a 1,024-px window, so the boss
+  of a story stage stands on line 80 or later.
+- **Timing.** Nothing slows the scroll (`+0x100` has no reader; 1 px a frame),
+  so a story is on screen for about 224 frames, its words longest. Waves wait
+  `11 + 1 + 8` lines more, so the first enters as the story leaves.
+
 ## A boss's second stage (`src/sfc/sfc-write.js`, `src/boss-stage2.js`; researched 2026-10-18)
 
 The web runtime lays a boss record's `stage2` block over the boss once its hp

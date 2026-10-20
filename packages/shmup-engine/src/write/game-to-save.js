@@ -78,7 +78,7 @@ import { ANIM_PERIOD_TABLE, FIRE_INTERVAL_TABLE, HP_TABLE, SCORE_TABLE } from ".
 import { MEASURE_SIZE, MEASURES, SONG_SIZE, SONG_SLOTS } from "../decode/decode-song.js";
 import { SECTION_SIZES } from "../decompress.js";
 import { decodePlayerArt } from "../player-art.js";
-import { ALPHA_CUTOFF, bankToSec4, frameGroup, quantizeFrames } from "../palette/palette-target.js";
+import { ALPHA_CUTOFF, bankToSec4, frameGroup, indexWithBank, quantizeFrames } from "../palette/palette-target.js";
 import { CG_CELL } from "../palette/deza2-palette.js";
 import { CgFullError, CgPacker, REF_HFLIP, REF_VFLIP } from "./cg-pack.js";
 import { encodeModels } from "./encode-model.js";
@@ -129,16 +129,24 @@ export const DROP_TO_SLOT = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 9: 5 };
 
 /** Appearance ids 0x20-0x27: straight-down fliers at these speeds (units/frame, 256 = 1 px). */
 export const STRAIGHT_APPEARANCE_BASE = 0x20;
-/** Band 6 (4x4 cells, 64x64) carries a story picture's quarters. */
-export const STORY_PICTURE_BAND = 6;
-/** Band 4 (4x2 cells, 64x32) carries the story strip's quarters. */
-export const STORY_TEXT_BAND = 4;
 /**
- * Scroll rows the stage's own waves are pushed back by, so the story has the
- * opening to itself. At 16 px a row this is a little over a screen and a half
- * of scroll — time to read the line before anything is shooting.
+ * The map row a stage's story starts on. As a stage opens, its map's first
+ * rows sit under the screen's bottom edge (measured in yabause: the screen's
+ * bottom shows map y ~37), so a story drawn from row 0 would open with its
+ * foot cut off.
  */
-export const STORY_QUIET_ROWS = 48;
+export const STORY_FIRST_ROW = 3;
+/**
+ * Rows a stage's waves wait past its story: half a screen, so the first wave
+ * enters as the story's last row leaves rather than over its words.
+ */
+export const STORY_LEAD_ROWS = 8;
+/**
+ * The scroll speeds (curve bits 0-2) while a stage's story is on screen:
+ * 0.25 px/frame for the first 64 px, so the whole of it holds still long
+ * enough to take in, then 0.5 px/frame until it has gone.
+ */
+export const STORY_SCROLL_SPEEDS = [1, 2];
 export const STRAIGHT_SPEEDS = [128, 256, 384, 512, 640, 768, 1152, 1536];
 /** One full-power weapon-1 bullet, the unit the importer sizes hp in. */
 export const SHOT_UNITS = 5120;
@@ -219,6 +227,17 @@ function nearestIndex(table, value) {
 }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/**
+ * A stage's scroll extent [loop, end] in 256-px parts, from its last placed
+ * row: two parts of lead past it, looping the last four. `firstRow` keeps the
+ * loop clear of the rows below it (a story's), which a boss fight's loop must
+ * never scroll back to.
+ */
+function extentAfter(lastRow, firstRow = 0) {
+    const end = clamp(Math.ceil((lastRow + 32) / 16 / 2) * 2, 2, 48);
+    return [Math.min(end - 2, Math.max(0, end - 4, Math.ceil(firstRow / 16))), end];
+}
 
 function b64ToBytes(b64) {
     const bin = atob(String(b64));
@@ -797,7 +816,9 @@ export function puffSprite(size = 16) {
  * `title1` / `title2` ({w, h, rgba} logos for the drawn title screen),
  * `itemEmblems` (a 16x16 {w, h, rgba} per letter — f, s, r, b — for the item
  * icons; see DEFAULT_ITEM_LETTERS), `useBackground` (pack imported scenery;
- * default true), `attribution` (the
+ * default true), `storyBackdrops` ([{stage, variants: [{label, w, h, rgba}]}]:
+ * each stage's story as the opening rows of its background map, largest
+ * first; see the story section below), `attribution` (the
  * staff roll, over whatever the level says) and `author` (the name a web game
  * that credits nobody is presented by) — see attribution.js for both.
  *
@@ -811,7 +832,7 @@ export function puffSprite(size = 16) {
  * Returns {sections, bank, warnings, report}.
  */
 export function buildSaveFromGame(level, art, options = {}) {
-    const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, titleG: null, itemEmblems: null, storyPanels: null, useBackground: true, attribution: null, author: null, ...options };
+    const opts = { palette: "saturn", gameMode: 0, title1: null, title2: null, titleG: null, itemEmblems: null, storyBackdrops: null, useBackground: true, attribution: null, author: null, ...options };
     const warnings = [];
     const warn = (m) => warnings.push(m);
 
@@ -1112,95 +1133,6 @@ export function buildSaveFromGame(level, art, options = {}) {
             }
         }
 
-        // The story panel: a stage's opening picture and its words, placed as
-        // objects the stage opens on. A .sav has no words for a cutscene, but
-        // it has enemies and a scroll, so the story becomes something that
-        // hangs in the playfield and descends through it.
-        //
-        // The geometry is the runtime's: a Dezaemon cart spawns a placement
-        // at `gridLeft + col * 16 + 16` across and `-(row * 16 + 8)` down, so
-        // a cell is 16 px each way and a 64 px tile is four of them. An
-        // imported grid is PLACEMENT_COLS wide, which puts column c at
-        // x = c * 16 - 16; columns 7 and 11 therefore centre a 128-wide
-        // picture on the 256-wide playfield, and 3/7/11/15 lay a 256-wide
-        // strip across it. Rows count UP the screen, so the top half of the
-        // picture takes the HIGHER row.
-        const panel = opts.storyPanels
-            ? opts.storyPanels.find((p) => p.stage === s)
-            : null;
-        if (panel) {
-            // A piece never fires, never drops, and is nothing to touch: it
-            // carries the NO-COLLISION attribute (byte 2 bit 5), which both
-            // of the engine's collision drivers test first — no player shot,
-            // no bomb, no ship contact — so the picture is scenery the ship
-            // flies through, not a wall it dies on. It used to carry twenty
-            // hits instead, "so the panel still comes apart for anyone who
-            // wants to shoot it", and the panel's quarters killed the player
-            // on contact like any other zako; a story is not an enemy.
-            const storyBytes = encodeEnemyRecord({
-                appearance: STRAIGHT_APPEARANCE_BASE,
-                animIndex: 3,
-                scoreIndex: 0,
-                hpIndex: 0,
-                noCollision: true,
-                deathMode: 0,
-                fireGeometry: 0,
-                aimed: false,
-            });
-            const place = (tiles, band, cols, colBase, rowBase, what) => {
-                const def = RECORD_ART[band];
-                const stepCol = def.w, stepRow = def.h;
-                const rows = Math.max(1, Math.ceil(tiles.length / cols));
-                // All of a picture or none of it: half a panel reads as a bug,
-                // where none at all just reads as a stage without a story.
-                const free = [];
-                for (let i = def.first; i < def.first + def.count; i++) {
-                    if (!taken.has(i)) free.push(i);
-                }
-                if (free.length < tiles.length) {
-                    warn(
-                        `${st.key}: the story ${what} needs ${tiles.length} ${def.w * CG_CELL}x${def.h * CG_CELL} records and the stage has ${free.length} free — panel dropped`,
-                    );
-                    return;
-                }
-                for (const tile of tiles) {
-                    const index = free.shift();
-                    taken.add(index);
-                    const key = `story:${s}:${what}:${tile.col},${tile.row}`;
-                    const frame = { key, w: tile.w, h: tile.h, rgba: tile.rgba };
-                    const planKeys = Array.from(
-                        { length: def.frames },
-                        (_, f) => planFrame(`${key}:${f}`, frame, def.w * CG_CELL, def.h * CG_CELL, "story", 2),
-                    );
-                    const letter = `\x00${key}`;
-                    records.set(letter, { index, band, frames: planKeys, bytes: storyBytes, name: key, drop: 0 });
-                    recordOf.set(letter + "0", letter);
-                    placements.push({
-                        row: rowBase + (rows - 1 - tile.row) * stepRow,
-                        col: colBase + tile.col * stepCol,
-                        letter,
-                        drop: 0,
-                    });
-                }
-            };
-            // Everything the stage already spawns moves down, so the opening
-            // belongs to the story rather than to the first wave.
-            for (const p of placements) {
-                p.row = Math.min(PLACEMENT_ROWS - 1, p.row + STORY_QUIET_ROWS);
-            }
-            lastRow = Math.min(PLACEMENT_ROWS - 1, lastRow + STORY_QUIET_ROWS);
-            // Text lowest, then the picture stacked above it (see the table
-            // in the panel builder): rows 8, 12 and 16 put the block between
-            // y 184 and y 360 of a 480-tall screen at stage start.
-            if (panel.text && panel.text.length) {
-                place(panel.text, STORY_TEXT_BAND, panel.text.length, 3, FIRST_SPAWN_ROW, "text");
-            }
-            if (panel.picture && panel.picture.length) {
-                place(panel.picture, STORY_PICTURE_BAND, 2, 7, FIRST_SPAWN_ROW + 4, "picture");
-            }
-            lastRow = Math.max(lastRow, FIRST_SPAWN_ROW + 16);
-        }
-
         // The boss: this stage's bossData entry, if any.
         let boss = null;
         const bossRec = bossData[`boss${s}`] || (s === 0 && !bossData.boss0 ? null : null);
@@ -1293,7 +1225,7 @@ export function buildSaveFromGame(level, art, options = {}) {
                     optionFlag: false,
                     ...fight,
                 });
-            boss = { sizeClass, row, col, frames: planKeys, trailer, name: bossRec.name || `boss${s}`, weapons: weaponTypes };
+            boss = { sizeClass, row, col, frames: planKeys, trailer, name: bossRec.name || `boss${s}`, weapons: weaponTypes, rowFromWaves: !Number.isInteger(dz.row) };
             if (stage2) boss.stage2 = stage2;
             else if (second) warn(`${st.key}: boss (${bossRec.name || "?"}) keeps its cart's own trailer — its stage2 block is not written`);
             lastRow = Math.max(lastRow, row);
@@ -1344,11 +1276,11 @@ export function buildSaveFromGame(level, art, options = {}) {
                 extent = [st.scroll.loopPart, st.scroll.endPart];
             }
         }
-        if (!extent) {
-            const end = clamp(Math.ceil((lastRow + 32) / 16 / 2) * 2, 2, 48);
-            extent = [Math.max(0, end - 4), end];
-        }
-        return { key: st.key, placements, records, recordOf, boss, items, background, curve, extent, lastRow };
+        // An extent of the stage's own is kept; one derived from its rows is
+        // derived again if a story moves them (below).
+        const extentFromRows = !extent;
+        if (!extent) extent = extentAfter(lastRow);
+        return { key: st.key, placements, records, recordOf, boss, items, background, curve, extent, extentFromRows, lastRow, story: null };
     });
 
     // Item icons and blasts (procedural), and the drawn title screen.
@@ -1595,6 +1527,92 @@ export function buildSaveFromGame(level, art, options = {}) {
     /** True when a planned frame really got cells — the CG pages can fill up. */
     const painted = (key) => !!(key && refsByKey.get(key));
 
+    // --- the story, as each stage's opening scenery ---
+    //
+    // A .sav has no words for a cutscene, but every stage has a background
+    // map, and its first rows are what the screen shows as the stage opens.
+    // So a stage's story picture and words (`storyBackdrops`, composed by
+    // lib/story-panels.ts: a 224-wide raster for each size it can be drawn
+    // at) are painted into those rows: on screen as the stage starts, then
+    // scrolling away beneath the ship. They are the last art on the cart, so
+    // they never cost the game a sprite: indexed against the finished palette
+    // (they choose no user colour) and packed into whatever cells are left —
+    // every stage's story at the largest size at which they all fit, else
+    // each at its smallest while room lasts. A stage then moves its waves,
+    // its boss and its scroll extent up by exactly the rows its story took,
+    // and scrolls slowly while the story is on screen; a story with no room
+    // costs the stage nothing.
+    const storyCandidates = [];
+    for (const sb of Array.isArray(opts.storyBackdrops) ? opts.storyBackdrops : []) {
+        const b = built[sb && sb.stage];
+        if (!b) continue; // a story for a stage this cart does not have
+        if (b.background) {
+            warn(`${b.key}: keeps its own scenery — its story is not drawn`);
+            continue;
+        }
+        const variants = (Array.isArray(sb.variants) ? sb.variants : []).filter((v) =>
+            v && v.w === BG_COLS * CG_CELL && v.h > 0 && v.h % CG_CELL === 0 && v.h <= BG_ROWS * CG_CELL &&
+            v.rgba && v.rgba.length >= v.w * v.h * 4
+        );
+        if (variants.length) storyCandidates.push({ stage: sb.stage, variants, indexed: new Map() });
+        else warn(`${b.key}: its story is not ${BG_COLS * CG_CELL} px wide in whole 16-px rows — not drawn`);
+    }
+    const storyFrame = (c, v) => {
+        if (!c.indexed.has(v)) {
+            const [f] = indexWithBank([{ key: `story:${c.stage}:${v.label}`, w: v.w, h: v.h, rgba: v.rgba }], q.bank, opts.palette);
+            c.indexed.set(v, { indexed: f.indexed, w: v.w, h: v.h });
+        }
+        return c.indexed.get(v);
+    };
+    const pickAt = (k) => storyCandidates.map((c) => ({ c, v: c.variants[Math.min(k, c.variants.length - 1)] }));
+    let storyPicks = [];
+    const sizes = storyCandidates.reduce((n, c) => Math.max(n, c.variants.length), 0);
+    for (let k = 0; k < sizes; k++) {
+        const picks = pickAt(k);
+        if (packer.cellsNeeded(picks.map(({ c, v }) => storyFrame(c, v))) <= packer.free) {
+            storyPicks = picks;
+            break;
+        }
+    }
+    if (!storyPicks.length && storyCandidates.length) {
+        // Not even the smallest of every story at once: each at its smallest,
+        // earliest stage first, while the cells last.
+        storyPicks = pickAt(sizes - 1).filter(({ c, v }) => {
+            if (packer.cellsNeeded([storyFrame(c, v)]) <= packer.free) return true;
+            warn(`${built[c.stage].key}: no CG cells left for its story — not drawn`);
+            return false;
+        });
+    }
+    for (const { c, v } of storyPicks) {
+        const before = packer.used;
+        let refs;
+        try {
+            const f = storyFrame(c, v);
+            refs = packer.addFrame(f.indexed, f.w, f.h);
+        } catch (e) {
+            if (!(e instanceof CgFullError)) throw e;
+            warn(`${built[c.stage].key}: no CG cells left for its story — not drawn`);
+            continue;
+        }
+        const b = built[c.stage];
+        const rows = v.h / CG_CELL;
+        const top = STORY_FIRST_ROW + rows;
+        const shift = top + STORY_LEAD_ROWS;
+        for (const p of b.placements) p.row = Math.min(PLACEMENT_ROWS - 1, p.row + shift);
+        if (b.boss && b.boss.rowFromWaves) b.boss.row = Math.min(PLACEMENT_ROWS - 8, b.boss.row + shift);
+        b.lastRow = Math.min(PLACEMENT_ROWS - 1, b.lastRow + shift);
+        if (b.extentFromRows) b.extent = extentAfter(b.lastRow, top);
+        // Slow from the stage's start until the story has scrolled away: one
+        // curve byte per 64 px of map. Never 0, which would stop the scroll
+        // on the story for good.
+        const curve = b.curve ? b.curve.slice() : new Uint8Array(SEC5_REGIONS.scrollCurves.stride).fill(DEFAULT_SCROLL_BYTE);
+        for (let i = 0; i < Math.min(curve.length, Math.ceil(top / 4)); i++) {
+            curve[i] = (curve[i] & ~7) | STORY_SCROLL_SPEEDS[Math.min(i, STORY_SCROLL_SPEEDS.length - 1)];
+        }
+        b.curve = curve;
+        b.story = { size: v.label, rows, cols: v.w / CG_CELL, refs, cells: packer.used - before };
+    }
+
     // --- sec5 ---
     const sec5 = new Uint8Array(SECTION_SIZES[5]);
     const putWord = (at, w) => { sec5[at] = w >> 8; sec5[at + 1] = w & 0xff; };
@@ -1660,6 +1678,18 @@ export function buildSaveFromGame(level, art, options = {}) {
                     if (h) ref ^= REF_HFLIP;
                     if (v) ref ^= REF_VFLIP;
                     putWord(bgBase + (r * BG_COLS + c) * 2, ref);
+                }
+            }
+        }
+        if (b.story) {
+            // Map rows count up the screen from where the stage starts, so the
+            // raster's top row of cells takes the story's highest map row.
+            const bgBase = SEC5_REGIONS.stageBanks.offset + s * SEC5_REGIONS.stageBanks.stride;
+            const { rows, cols, refs } = b.story;
+            for (let cy = 0; cy < rows; cy++) {
+                for (let cx = 0; cx < cols; cx++) {
+                    const ref = refs[cy * cols + cx];
+                    if (ref !== EMPTY_REF) putWord(bgBase + ((STORY_FIRST_ROW + rows - 1 - cy) * BG_COLS + cx) * 2, ref);
                 }
             }
         }
@@ -1791,6 +1821,8 @@ export function buildSaveFromGame(level, art, options = {}) {
                     : null,
                 items: b.items.length,
                 background: !!b.background,
+                // What of the stage's story landed on its opening rows, if any.
+                story: b.story ? { size: b.story.size, rows: b.story.rows, cells: b.story.cells } : null,
                 extent: b.extent,
             })),
             ship: shipSource,

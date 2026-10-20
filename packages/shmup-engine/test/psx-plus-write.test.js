@@ -17,6 +17,9 @@ import {
   mapPlusColumn,
   PLUS_DEF_CLASSES,
   PLUS_EMPTY_TILE,
+  PLUS_STORY_MIN_BOSS_ROW,
+  PLUS_STORY_SCROLL_EFFECT,
+  PLUS_STORY_TOP_ROW,
   PLUS_FACTORY_SETTINGS,
   PLUS_GROUP_HFLIP,
   PLUS_LAYOUT_HFLIP,
@@ -499,4 +502,57 @@ Deno.test("limits and refusals", () => {
     Error,
     String(PLUS_BLOCK_SIZE),
   );
+});
+
+// --- a stage's story, as its opening map rows ---
+
+/** A story backdrop: 224 wide, `rows` map rows, one colour or (noise) a new tile every 16 px. */
+function storyRaster(label, rows, rgb, noise = false) {
+  const w = 224, h = rows * 16;
+  const rgba = new Uint8Array(w * h * 4);
+  let seed = 17;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) & 255;
+  for (let i = 0; i < w * h; i++) {
+    rgba.set(noise ? [rnd(), rnd(), rnd(), 255] : [...rgb, 255], i * 4);
+  }
+  return { label, w, h, rgba };
+}
+
+Deno.test("a stage's story opens the map: its top on the top row, columns 1-14, played once, slowly", () => {
+  const out = exportLevelToPlusCard(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [storyRaster("words", 3, [255, 255, 255])] }],
+  });
+  assertEquals(out.warnings.filter((w) => /story/.test(w)), []);
+  const save = parsePsxSav(out.card).saves[0];
+  assert(save.checksums.ok);
+  const st = save.stages[0];
+  const top = PLUS_STORY_TOP_ROW;
+  const painted = (r) => st.mapRows[r].some((chip) => !chip.blank);
+  for (let r = top - 2; r <= top; r++) {
+    assert(painted(r), `row ${r} carries the story`);
+    for (let c = 1; c <= 14; c++) assert(!st.mapRows[r][c].blank, `row ${r} column ${c}`);
+    assert(st.mapRows[r][0].blank && st.mapRows[r][15].blank, "columns 0 and 15 stay empty");
+  }
+  assert(!painted(top - 3) && !painted(top + 1));
+  const k = Math.ceil((top + 1) / 4);
+  const scroll = st.parts.scroll;
+  assertEquals([...scroll.subarray(0, 32)], Array.from({ length: 32 }, (_, i) => i));
+  assert([...scroll.subarray(32, 256)].every((b) => b >= k && b < 32), "its blocks never come back");
+  assertEquals([...scroll.subarray(256, 256 + k)], new Array(k).fill(PLUS_STORY_SCROLL_EFFECT));
+  assertStrictEquals(scroll[256 + k], 0x42);
+  assert(out.report.stages[0].boss.band >= PLUS_STORY_MIN_BOSS_ROW);
+  assertEquals(out.report.stages[0].story, { size: "words", rows: 3, chips: 42, top });
+});
+
+Deno.test("a Dezaemon+ story past a stage map's 127 tiles is drawn smaller, else not at all", () => {
+  const huge = storyRaster("huge", 12, null, true);
+  const smaller = exportLevelToPlusCard(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [huge, storyRaster("small", 2, [0, 0, 255])] }],
+  });
+  assertStrictEquals(smaller.report.stages[0].story.size, "small");
+  const none = exportLevelToPlusCard(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [huge] }],
+  });
+  assert(none.warnings.some((w) => /no size of its story fits a stage map/.test(w)));
+  assertStrictEquals(none.report.stages[0].story, null);
 });

@@ -39,10 +39,9 @@ interface Foo {
 }
 
 const foo: Foo = JSON.parse(await Deno.readTextFile(FOO));
-// The stage's story panel is exported as objects too: four 64x64 quarters of
-// the picture and four 64x32 quarters of the text strip, each its own record.
-// foo carries a story, so every count below allows for them.
-const STORY_PANEL_RECORDS = 8;
+// foo carries a story, which the cart draws into its stage's opening
+// background rows (lib/story-panels.ts), not as records: the counts below are
+// foo's own enemies alone.
 // A cart record drops one item, so the writer makes one record per letter AND
 // drop digit ("A0", "A1" ...), and the game read back from the cart keeps one
 // enemyData entry per record: both count the distinct cells, not the letters.
@@ -143,17 +142,16 @@ Deno.test("deno task build:sav turns foo into foo.sav, a cart MiSTer can read", 
     assertStrictEquals(decoded.stageCount, 1);
     assertStrictEquals(
       decoded.enemies.length,
-      recordsUsed.size + STORY_PANEL_RECORDS,
+      recordsUsed.size,
     );
     const placements = decoded.enemies.reduce(
       (n: number, e: { placements: number }) => n + e.placements,
       0,
     );
-    // One placement per grid cell, plus the panel's eight pieces.
-    assertStrictEquals(placements, placedCells + STORY_PANEL_RECORDS);
+    // One placement per grid cell.
+    assertStrictEquals(placements, placedCells);
     // How many frames a record carries is its band's business: the small
-    // bands hold four, the 64x32 and 32x64 bands two, and the 64x64 band —
-    // where the story picture's quarters live — one.
+    // bands hold four, the 64x32 and 32x64 bands two, and the 64x64 band one.
     const framesForRecord = (index: number) =>
       index < 48 ? 4 : index < 56 ? 2 : 1;
     for (const e of decoded.enemies) {
@@ -226,18 +224,17 @@ Deno.test("deno task build:sav turns foo into foo.sav, a cart MiSTer can read", 
     assert(v.ok, v.errors.join("; "));
     const fooWaves = foo.enemylist.filter((row) => row.some((c) => c !== "00"));
     const allBack = gameJson.stage0.enemylist as string[][];
-    // The story opens the stage, and an enemylist is stored last-first, so
-    // the panel is the last three rows: read backwards they are the text
-    // strip (four pieces, lowest on screen) then the picture's lower and
-    // upper halves (two each). foo's own waves precede them.
-    const STORY_WAVES = 3;
-    const storyWaves = allBack.slice(-STORY_WAVES);
-    const backWaves = allBack.slice(0, -STORY_WAVES);
-    assertEquals(
-      storyWaves.map((row) => row.filter((c) => c !== "00").length),
-      [2, 2, 4],
-      "the panel is two picture halves over a four-piece text strip",
-    );
+    // The story opens the stage as scenery: the background map's rows from
+    // the third up carry it, the rows under the screen's edge do not, and
+    // the waves are foo's own.
+    const bg = decoded.bgStages[0] as { cols: number; words: Uint16Array };
+    const rowPainted = (r: number) =>
+      bg.words.subarray(r * bg.cols, (r + 1) * bg.cols).some((w) =>
+        w !== 0xffff
+      );
+    assert(!rowPainted(0) && !rowPainted(2), "under the screen's edge");
+    assert(rowPainted(3) && rowPainted(8), "the story's rows");
+    const backWaves = allBack.filter((row) => row.some((c) => c !== "00"));
     assertStrictEquals(
       backWaves.length,
       fooWaves.length,
@@ -250,7 +247,7 @@ Deno.test("deno task build:sav turns foo into foo.sav, a cart MiSTer can read", 
     );
     assertStrictEquals(
       Object.keys(gameJson.enemyData).length,
-      recordsUsed.size + STORY_PANEL_RECORDS,
+      recordsUsed.size,
     );
 
     // colour fidelity: enemy A's first frame comes back within 15-bit rounding
@@ -345,7 +342,7 @@ Deno.test("the Super Famicom palette target: one 15-colour row per sprite, plus 
     assert(engine.validateGameJson(gameJson).ok);
     assertStrictEquals(
       decoded.enemies.length,
-      recordsUsed.size + STORY_PANEL_RECORDS,
+      recordsUsed.size,
     );
   } finally {
     await Deno.remove(dir, { recursive: true });

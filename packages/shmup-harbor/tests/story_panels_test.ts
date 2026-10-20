@@ -1,15 +1,22 @@
-// Story panels: the level's cutscene pictures cut down to art a cart can hold.
-// The foo level is committed, so the end-to-end case runs without a fixture.
+// Story backdrops: the level's story — its pictures and words — drawn as the
+// opening rows of each stage's background on a cart. The foo level is
+// committed, so the end-to-end case runs without a fixture.
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import {
+  BACKDROP_H,
+  BACKDROP_ROW,
+  BACKDROP_W,
+  composeBackdrop,
+  containPicture,
   decodeStoryPicture,
   fitPanel,
-  splitIntoTiles,
-  storyPanels,
-  TILE,
+  storyBackdrops,
+  storyParts,
+  storySpeaker,
 } from "../lib/story-panels.ts";
+import { loadAthenaFont } from "../lib/bitmap-font.ts";
 import { newRaster } from "../lib/ps2/png.ts";
 import { repoRoot } from "../lib/repo-root.ts";
 
@@ -67,77 +74,6 @@ Deno.test("fitPanel does not bleed colour out of transparent pixels", () => {
   for (let i = 3; i < out.data.length; i += 4) assertEquals(out.data[i], 0);
 });
 
-Deno.test("splitIntoTiles cuts a panel into band-sized pieces", () => {
-  const tiles = splitIntoTiles(solid(TILE * 2, TILE * 2, 1, 2, 3));
-  assertEquals(tiles.length, 4);
-  assertEquals(tiles.map((t) => `${t.col},${t.row}`), [
-    "0,0",
-    "1,0",
-    "0,1",
-    "1,1",
-  ]);
-  for (const t of tiles) {
-    assertEquals([t.w, t.h], [TILE, TILE]);
-    assertEquals(t.rgba.length, TILE * TILE * 4);
-  }
-});
-
-Deno.test("splitIntoTiles keeps each piece's own pixels", () => {
-  // Left tile red, right tile green, so a mixed-up cut is visible.
-  const panel = newRaster(TILE * 2, TILE);
-  for (let y = 0; y < TILE; y++) {
-    for (let x = 0; x < TILE * 2; x++) {
-      const d = (y * TILE * 2 + x) * 4;
-      panel.data[d] = x < TILE ? 255 : 0;
-      panel.data[d + 1] = x < TILE ? 0 : 255;
-      panel.data[d + 3] = 255;
-    }
-  }
-  const [left, right] = splitIntoTiles(panel);
-  assertEquals([left.rgba[0], left.rgba[1]], [255, 0]);
-  assertEquals([right.rgba[0], right.rgba[1]], [0, 255]);
-});
-
-Deno.test("storyPanels returns nothing when a level has no story", async () => {
-  assertEquals(await storyPanels(null), []);
-  assertEquals(await storyPanels({}), []);
-  assertEquals(await storyPanels({ customImages: {} }), []);
-});
-
-Deno.test("storyPanels warns past a picture it cannot decode", async () => {
-  const warnings: string[] = [];
-  const out = await storyPanels(
-    { customImages: { stage0_part0: "data:image/gif;base64,bm90YWdpZg==" } },
-    { onWarn: (m) => warnings.push(m) },
-  );
-  assertEquals(out, []);
-  assertEquals(warnings.length, 1);
-  assert(warnings[0].includes("stage 0"), warnings[0]);
-});
-
-Deno.test("storyPanels takes the opening part of each stage", async () => {
-  const level = JSON.parse(await Deno.readTextFile(FOO));
-  const warnings: string[] = [];
-  const panels = await storyPanels(level.storyData, {
-    onWarn: (m) => warnings.push(m),
-  });
-  assertEquals(warnings, []);
-  // foo tells its story over stages 0-3; stage 4 carries no picture.
-  assertEquals(panels.map((p) => p.stage), [0, 1, 2, 3]);
-  for (const p of panels) {
-    assertEquals(p.sourceKey, `stage${p.stage}_part0`, "the opening part");
-    assertEquals([p.picture.width, p.picture.height], [TILE * 2, TILE * 2]);
-    assertEquals(p.tiles.length, 4, "a 2x2 block of band-6 records");
-    // A panel that came out blank would export an invisible story.
-    const opaque = p.tiles.reduce((n, t) => {
-      let c = 0;
-      for (let i = 3; i < t.rgba.length; i += 4) if (t.rgba[i]) c++;
-      return n + c;
-    }, 0);
-    assert(opaque > 1000, `stage ${p.stage} panel has ${opaque} opaque pixels`);
-  }
-});
-
 Deno.test("decodeStoryPicture reads the animated GIFs a story is stored as", async () => {
   const level = JSON.parse(await Deno.readTextFile(FOO));
   const raw = level.storyData.customImages.stage1_part0 as string;
@@ -145,4 +81,96 @@ Deno.test("decodeStoryPicture reads the animated GIFs a story is stored as", asy
   const pic = await decodeStoryPicture(raw);
   assert(pic.width > 0 && pic.height > 0);
   assertEquals(pic.data.length, pic.width * pic.height * 4);
+});
+
+Deno.test("containPicture keeps the picture's own shape", () => {
+  const out = containPicture(solid(180, 240, 9, 9, 9), BACKDROP_W, 160);
+  assertEquals([out.width, out.height], [120, 160]);
+});
+
+Deno.test("storyParts and storySpeaker read a story as the web scene does", () => {
+  const sd = {
+    speaker: " GS ",
+    stage0: { part: [{ text: "one" }, { text: "" }, { text: "two" }] },
+  };
+  assertEquals(storyParts(sd, 0), ["one", "two"], "an empty part says nothing");
+  assertEquals(storyParts(sd, 1), []);
+  assertEquals(storySpeaker(sd), "GS");
+  assertEquals(storySpeaker({}), "G", "2028.Ai's own story is G's");
+});
+
+Deno.test("composeBackdrop sets the words over the picture, in whole rows", async () => {
+  const font = await loadAthenaFont(repoRoot());
+  const pic = solid(100, 50, 200, 40, 40);
+  const out = composeBackdrop(font, "GS", ["hello"], pic);
+  assertEquals(out.width, BACKDROP_W);
+  assertEquals(out.height % BACKDROP_ROW, 0);
+  const at = (x: number, y: number) =>
+    Array.from(
+      out.data.subarray((y * out.width + x) * 4, (y * out.width + x) * 4 + 4),
+    );
+  // The plate's white edge at the top left; the picture centred lower down.
+  assertEquals(at(4, 0), [255, 255, 255, 255]);
+  let picTop = -1;
+  for (let y = 0; y < out.height && picTop < 0; y++) {
+    if (at(BACKDROP_W / 2, y)[0] === 200) picTop = y;
+  }
+  assert(picTop > 20, `the picture sits under the words (row ${picTop})`);
+  assertEquals(at(62, picTop), [200, 40, 40, 255], "its left edge at x 62");
+  assertEquals(at(61, picTop)[3], 0, "transparent beside it");
+});
+
+Deno.test("storyBackdrops returns nothing when a level has no story", async () => {
+  assertEquals(await storyBackdrops(null), []);
+  assertEquals(await storyBackdrops({}), []);
+  assertEquals(await storyBackdrops({ customImages: {} }), []);
+});
+
+Deno.test("storyBackdrops keeps a stage's words past a picture it cannot decode", async () => {
+  const warnings: string[] = [];
+  const out = await storyBackdrops(
+    {
+      customImages: { stage0_part0: "data:image/gif;base64,bm90YWdpZg==" },
+      stage0: { part: [{ text: "still told" }] },
+    },
+    { font: await loadAthenaFont(repoRoot()), onWarn: (m) => warnings.push(m) },
+  );
+  assertEquals(warnings.length, 1);
+  assert(warnings[0].includes("stage 0"), warnings[0]);
+  assertEquals(out.map((b) => [b.stage, b.sourceKey]), [[0, null]]);
+  assertEquals(out[0].variants.map((v) => v.label), ["words"]);
+});
+
+Deno.test("storyBackdrops draws every stage of foo's story, largest first", async () => {
+  const level = JSON.parse(await Deno.readTextFile(FOO));
+  const warnings: string[] = [];
+  const out = await storyBackdrops(level.storyData, {
+    font: await loadAthenaFont(repoRoot()),
+    onWarn: (m) => warnings.push(m),
+  });
+  assertEquals(warnings, []);
+  // foo has pictures for stages 0-3 and words for 0-4.
+  assertEquals(out.map((b) => [b.stage, b.sourceKey]), [
+    [0, "stage0_part0"],
+    [1, "stage1_part0"],
+    [2, "stage2_part0"],
+    [3, "stage3_part0"],
+    [4, null],
+  ]);
+  for (const b of out) {
+    assertEquals(b.speaker, "G");
+    const labels = b.variants.map((v) => v.label);
+    if (b.sourceKey) {
+      assert(/^picture \d+x\d+ \+ words$/.test(labels[0]), labels[0]);
+      assertEquals(b.variants[0].h, BACKDROP_H, "the opening screen, filled");
+    }
+    assert(labels.includes("words"), `stage ${b.stage}: ${labels}`);
+    for (let i = 0; i < b.variants.length; i++) {
+      const v = b.variants[i];
+      assertEquals(v.w, BACKDROP_W);
+      assertEquals(v.h % BACKDROP_ROW, 0);
+      assertEquals(v.rgba.length, v.w * v.h * 4);
+      if (i) assert(v.h <= b.variants[i - 1].h, `stage ${b.stage}: ${labels}`);
+    }
+  }
 });

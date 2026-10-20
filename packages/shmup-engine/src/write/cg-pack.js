@@ -95,6 +95,31 @@ export class CgPacker {
     }
 
     /**
+     * The new cells storing every one of `frames` ({indexed, w, h}, w and h
+     * multiples of 16) would take — a blank cell, or one already stored or
+     * already counted, costs nothing — without storing anything. What
+     * addFrame checks for one frame, asked of several at once.
+     */
+    cellsNeeded(frames) {
+        let need = 0;
+        const seen = new Set();
+        for (const f of frames) {
+            const cells = indexedToCells(f.indexed, f.w, f.h);
+            for (let c = 0; c < cells.length / CG_CELL_BYTES; c++) {
+                const cell = cells.subarray(c * CG_CELL_BYTES, (c + 1) * CG_CELL_BYTES);
+                let blank = true;
+                for (let i = 0; i < CG_CELL_BYTES; i++) if (cell[i]) { blank = false; break; }
+                if (blank) continue;
+                const k = keyOf(cell);
+                if (this.byKey.has(k) || seen.has(k)) continue;
+                seen.add(k);
+                need++;
+            }
+        }
+        return need;
+    }
+
+    /**
      * Store an indexed frame whose w and h are multiples of 16. Returns its
      * refs in reading order (cellsW * cellsH words). Throws CgFullError —
      * with nothing partially stored — when the frame does not fit.
@@ -103,18 +128,7 @@ export class CgPacker {
         const cells = indexedToCells(indexed, w, h);
         const count = cells.length / CG_CELL_BYTES;
         // Count the cells that would be new before touching the pages.
-        let need = 0;
-        const seen = new Set();
-        for (let c = 0; c < count; c++) {
-            const cell = cells.subarray(c * CG_CELL_BYTES, (c + 1) * CG_CELL_BYTES);
-            let blank = true;
-            for (let i = 0; i < CG_CELL_BYTES; i++) if (cell[i]) { blank = false; break; }
-            if (blank) continue;
-            const k = keyOf(cell);
-            if (this.byKey.has(k) || seen.has(k)) continue;
-            seen.add(k);
-            need++;
-        }
+        const need = this.cellsNeeded([{ indexed, w, h }]);
         if (need > this.free) throw new CgFullError(need - this.free);
         const refs = new Uint16Array(count);
         for (let c = 0; c < count; c++) {

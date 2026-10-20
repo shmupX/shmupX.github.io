@@ -16,8 +16,10 @@ import { dirname, join, relative, resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { exportLevelToPlusCard } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
+import { storyLogLine, type StoryStageReport } from "../lib/story-panels.ts";
 import {
   bossRushArg,
+  levelStoryBackdrops,
   loadLevel,
   loadLevelArt,
   titleArt,
@@ -63,16 +65,19 @@ export async function buildPlus(
     log,
   });
   const title1 = await titleArt(record.logoDataURL, "logo", log);
+  const backdrops = await levelStoryBackdrops(record, log);
 
   const result = exportLevelToPlusCard(record, art, {
     name: options.name?.trim() || null,
     title1,
     horizontal: options.horizontal ?? false,
+    storyBackdrops: backdrops,
   });
   const rep = result.report;
   log(
     `name: ${result.name} (the card file's; a Dezaemon+ save has no text name)`,
   );
+  log(storyLogLine(backdrops, rep.stages as StoryStageReport[]));
   log(
     `stages: ${
       rep.stages.map((s: { key: string; placements: number; boss: unknown }) =>

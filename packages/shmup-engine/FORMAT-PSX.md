@@ -891,6 +891,20 @@ then **four button bitmasks** for the key configuration — `0x01` circle, `0x02
 cross, `0x04` triangle, `0x08` square, `0x10` L1, `0x20` L2, `0x40` R1, `0x80`
 R2, not indices. The factory value is `00 00 00 00 02 01 08 02`.
 
+**A level's story** (`storyBackdrops`, 2026-10-20) is painted into a stage's
+opening MAP rows as the Super Famicom writer paints it (FORMAT-SFC.md "A
+level's story"): harbor's 224-wide raster (the speaker's plate, the words, the
+picture), its top on row 11 (`PLUS_STORY_TOP_ROW`) down to row 0, columns 1-14,
+in the stage's own map palette row, which only scenery shares. A build without
+it first says how many of the 508 tiles the game leaves, and each variant must
+fit a MAP GROUP's 127 distinct tiles (mirrors shared), so a busy picture often
+comes down a size. The story's SCROLL steps get effect `0x41` (0.5 px/frame),
+the sequencer plays blocks 0-31 once and then cycles 3-31, the waves wait
+`11 + 1 + 8` bands more and the boss stands on band 80 or later. Unlike the
+Super Famicom's, which map rows the PlayStation screen shows as a stage opens
+is unmeasured. Writing it also fixed the scenery path's column numbering, which
+put chip columns 8-14 one byte left (column 8 on the flag byte).
+
 ## SOUND, the song format (confirmed — `src/psx/plus-song.js`)
 
 **Every RAM address in this section is a `DEZA.EXE` (SLPS-00335) address** — the
@@ -1360,6 +1374,19 @@ games to the same readings.
   level's uploaded one and the subtitle the second, each fitted to its 8×6
   block; the item icons are the base game's power-up emblems (the ship for 1UP,
   a coin for the bonuses) and the blast is the Saturn writer's procedural rings.
+
+- **A level's story** (`storyBackdrops`, 2026-10-20) is painted into a stage's
+  opening MAP rows from chip row 1 up (`KIDS_STORY_FIRST_ROW`; which rows the
+  screen shows as a stage opens is unmeasured, so row 0, at its foot, is left
+  to the scroll): harbor's 224-wide raster cut into 32×32 chips through the
+  fixed bank, the raster's top row of chips on the highest row. A build
+  without it first says how many of the 1,024 cells the game leaves; every
+  stage's story is taken at the largest size at which they all fit, else each
+  at its smallest while cells last, and `exportLevelToKidsCard` asks again a
+  size smaller when the pictures pack past the fifteen blocks. Its first
+  SCROLL unit crawls at nibble 1 (0.25 px/frame — there is no half speed,
+  and a halt with nothing on screen would end the stage), and its waves and
+  boss wait `1 + rows + 4` rows more.
 
 Not written: the enemy-bullet records in CONFIG (ANGEL WING's stand) and the
 title animation beyond the sample's. The Dezaemon+ writer is above.

@@ -376,6 +376,21 @@ export const PLUS_FIRST_SPAWN_ROW = 8;
 export const PLUS_ROW_STEP = 12;
 export const PLUS_BOSS_ROW_GAP = 24;
 export const PLUS_MAX_SPAWN_ROW = PLUS_SCROLL_BANDS - 64;
+/**
+ * A stage's story (`storyBackdrops`) is painted into its map with its top on
+ * this row, as on the Super Famicom original whose map and sequencer this is
+ * (sfc-write.js SFC_STORY_TOP_ROW, measured there; the Dezaemon+ screen's
+ * own first rows are untraced).
+ */
+export const PLUS_STORY_TOP_ROW = 11;
+/** Bands a story stage's waves wait past its top row. */
+export const PLUS_STORY_LEAD_ROWS = 8;
+/** The earliest band a story stage's boss stands on, clear of its blocks. */
+export const PLUS_STORY_MIN_BOSS_ROW = 80;
+/** The effect byte of a story's scroll steps: bits 0-2 = 1, 0.5 px/frame. */
+export const PLUS_STORY_SCROLL_EFFECT = 0x41;
+/** A story's width: the map's 14 drawn columns. */
+export const PLUS_STORY_W = 14 * CG_CELL;
 /** The fourteen spawn columns are the fourteen visible chip columns. */
 export const PLUS_SPAWN_COLUMNS = PLUS_APPEAR_RECORD_SIZE; // 14
 /** A Dezaemon+ px/frame against a runtime px/frame, the Saturn writer's ratio. */
@@ -685,7 +700,10 @@ export function layoutShip(poses) {
  * seals it and reads it back.
  */
 export function buildPlusGameFromLevel(level, art, options = {}) {
-    const opts = { name: null, title1: null, horizontal: false, ...options };
+    const opts = { name: null, title1: null, horizontal: false, storyBackdrops: null, storyPicks: null, ...options };
+    if (!opts.storyPicks && Array.isArray(opts.storyBackdrops) && opts.storyBackdrops.length) {
+        return buildPlusWithStory(level, art, opts);
+    }
     const warnings = [];
     const warn = (m) => warnings.push(m);
 
@@ -814,13 +832,18 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
             defs.set(letter, { klass, id, index: c.base + id, bytes, frames: framePlans, name: rec.name || `enemy${letter}` });
         }
 
-        // Placements: a record per 16-px band that spawns something.
+        // Placements: a record per 16-px band that spawns something — past
+        // the stage's story, when it opens on one.
+        const story = opts.storyPicks ? opts.storyPicks.get(s) || null : null;
+        const storyShift = story ? PLUS_STORY_TOP_ROW + 1 + PLUS_STORY_LEAD_ROWS : 0;
         const bands = new Map(); // band -> Uint8Array(14)
-        let placed = 0, dropped = 0, lastRow = PLUS_FIRST_SPAWN_ROW;
+        let placed = 0, dropped = 0, lastRow = PLUS_FIRST_SPAWN_ROW + storyShift;
         spawnRows.forEach((row, k) => {
-            const band = waveRows
-                ? clamp(Math.round(waveRows[k]), 0, PLUS_MAX_SPAWN_ROW)
-                : Math.min(PLUS_MAX_SPAWN_ROW, PLUS_FIRST_SPAWN_ROW + k * PLUS_ROW_STEP);
+            const band = clamp(
+                (waveRows ? Math.round(waveRows[k]) : PLUS_FIRST_SPAWN_ROW + k * PLUS_ROW_STEP) + storyShift,
+                0,
+                PLUS_MAX_SPAWN_ROW,
+            );
             row.forEach((cell, col) => {
                 if (!cell || cell === "00") return;
                 const def = defs.get(cell.slice(0, -1));
@@ -868,7 +891,10 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
                 hpIndex: nearestIndex(PLUS_BOSS_HP, hits * PLUS_SHOT_DAMAGE),
                 scoreIndex: nearestIndex(PLUS_BOSS_SCORE, Number(bossRec.score) || PLUS_BOSS_SCORE[1]),
             });
-            const band = Math.min(PLUS_SCROLL_BANDS - 8, lastRow + PLUS_BOSS_ROW_GAP);
+            const band = Math.min(
+                PLUS_SCROLL_BANDS - 8,
+                Math.max(lastRow + PLUS_BOSS_ROW_GAP, story ? PLUS_STORY_MIN_BOSS_ROW : 0),
+            );
             if (!bands.has(band)) bands.set(band, new Uint8Array(PLUS_APPEAR_RECORD_SIZE));
             bands.get(band)[PLUS_BOSS_COLUMN] = 0x80 | (PLUS_APPEAR_BOSS_NIBBLE << 4);
             boss = { name: bossRec.name || `boss${s}`, band, picture, vertical, record, frameCount: frames.length, hits };
@@ -908,7 +934,10 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
                 warn(`${st.key}: could not read the background grid (${e.message}) — scenery skipped`);
             }
         }
-        return { key: st.key, defs, bands, boss, scenery, placed, dropped, lastRow };
+        const storyPlan = story && !scenery.length
+            ? { ...plan(plusPaletteRow("map", s), story, story.w, story.h, `${st.key} story`), label: story.label }
+            : null;
+        return { key: st.key, defs, bands, boss, scenery, storyPlan, placed, dropped, lastRow };
     });
 
     // --- quantise every row, then index and bank the planned art ---
@@ -953,19 +982,42 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
                 groupOfTile.set(t.tile, g);
                 putU16le(mapGroup, g * 2, plusTileWord(t.tile));
             }
-            const half = PLUS_MAP_HALVES[sc.col < 8 ? 0 : 1];
-            const k = sc.col < 8 ? sc.col : sc.col - 9;
-            const at = sc.row * PLUS_MAP_ROW_BYTES;
-            const hflip = sc.hflip !== t.hflip, vflip = sc.vflip !== t.vflip;
-            map[at + half.chips[k]] = g | (hflip ? 0x80 : 0);
-            if (vflip) map[at + half.flags] |= 1 << (7 - k);
+            putPlusMapCell(map, sc.row, sc.col, g, sc.hflip !== t.hflip, sc.vflip !== t.vflip);
             chips++;
         }
         if (sceneryDropped) warn(`${b.key}: the scenery needs more than 127 distinct tiles; ${sceneryDropped} chips left blank`);
+        // The story (buildPlusWithStory picked its size): the stage's opening
+        // rows, its top on PLUS_STORY_TOP_ROW, columns 1-14, in the map's
+        // palette row, which a stage with scenery was never given a story to
+        // share. Map rows count up the screen, so the raster's top row of
+        // tiles is the story's top row.
+        let story = null;
+        if (b.storyPlan) {
+            const tiles = bankTiles(b.storyPlan, true);
+            const cols = b.storyPlan.w / CG_CELL, storyRows = b.storyPlan.h / CG_CELL;
+            let painted = 0;
+            tiles.forEach((t, i) => {
+                if (!t) return;
+                let g = groupOfTile.get(t.tile);
+                if (g === undefined) {
+                    if (groups >= 128) return;
+                    g = groups++;
+                    groupOfTile.set(t.tile, g);
+                    putU16le(mapGroup, g * 2, plusTileWord(t.tile));
+                }
+                const cy = Math.floor(i / cols), cx = i % cols;
+                putPlusMapCell(map, PLUS_STORY_TOP_ROW - cy, 1 + cx, g, t.hflip, t.vflip);
+                painted++;
+            });
+            story = { size: b.storyPlan.label, rows: storyRows, chips: painted, top: PLUS_STORY_TOP_ROW };
+        }
         // SCROLL: the 32 blocks in order, looping; the effect byte the sample's.
+        // A story's blocks play once, slowly, and never again.
         const scroll = piece("scroll");
-        for (let i = 0; i < 256; i++) scroll[i] = i % 32;
+        const opening = story ? Math.ceil((PLUS_STORY_TOP_ROW + 1) / 4) : 0;
+        for (let i = 0; i < 256; i++) scroll[i] = i < 32 || !opening ? i % 32 : opening + ((i - opening) % (32 - opening));
         scroll.fill(PLUS_SCROLL_EFFECT_DEFAULT, 256, 512);
+        if (opening) scroll.fill(PLUS_STORY_SCROLL_EFFECT, 256, 256 + opening);
         // APPEAR: record 0 empty, 1 the end mark, then one per band.
         const appear = piece("appear");
         appear.fill(PLUS_APPEAR_END_MARK, PLUS_APPEAR_RECORD_SIZE, 2 * PLUS_APPEAR_RECORD_SIZE);
@@ -1013,6 +1065,7 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
             groups: groups - 1,
             enemyTiles: sheet.painted,
             enemyEntries: sheet.entries,
+            story,
         };
     });
     // Stages past the last: empty tiles in their groups too.
@@ -1098,6 +1151,78 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
             splits,
         },
     };
+}
+
+/**
+ * Chip `col` (0-15) of a MAP row: bytes 0-7 are columns 0-7, byte 8 their
+ * vertical flips (bit 7 the leftmost), bytes 9-16 columns 8-15, byte 17
+ * theirs. Columns 0 and 15 are never drawn.
+ */
+function putPlusMapCell(map, row, col, group, hflip, vflip) {
+    const half = PLUS_MAP_HALVES[col < 8 ? 0 : 1];
+    const k = col < 8 ? col : col - 8;
+    const at = row * PLUS_MAP_ROW_BYTES;
+    map[at + half.chips[k]] = group | (hflip ? 0x80 : 0);
+    if (vflip) map[at + half.flags] |= 1 << (7 - k);
+}
+
+/**
+ * The story pass, as the Super Famicom writer's (sfc-write.js
+ * buildWithStory): a build without it says how many of the 508 tiles the
+ * game leaves, then every stage's story is taken at the largest size at
+ * which they all fit — each in its own 15-colour map row and within a MAP
+ * GROUP's 127 distinct tiles — else each at its smallest while tiles last,
+ * and the save is built again with those painted in. A stage with scenery
+ * keeps it; a story with no room costs its stage nothing.
+ */
+function buildPlusWithStory(level, art, opts) {
+    const dry = buildPlusGameFromLevel(level, art, { ...opts, storyBackdrops: null, storyPicks: null });
+    const notes = [];
+    const candidates = [];
+    for (const sb of opts.storyBackdrops) {
+        const s = dry.report.stages.findIndex((st) => st.key === `stage${sb && sb.stage}`);
+        if (s < 0) continue; // a story for a stage this save does not have
+        const key = dry.report.stages[s].key;
+        if (dry.report.stages[s].chips > 0) {
+            notes.push(`${key}: keeps its own scenery — its story is not drawn`);
+            continue;
+        }
+        const variants = [];
+        for (const v of Array.isArray(sb.variants) ? sb.variants : []) {
+            if (!v || v.w !== PLUS_STORY_W || !v.h || v.h % CG_CELL || !v.rgba) continue;
+            if (v.h / CG_CELL > PLUS_STORY_TOP_ROW + 1) continue;
+            const row = new PlusPaletteRow(0);
+            row.consider(v);
+            const tiles = indexedTiles(row.build().index(v), v.w, v.h);
+            const probe = new PlusTileBank();
+            for (const t of tiles) probe.addFlippable(t);
+            if (probe.used > 127) continue;
+            variants.push({ v, tiles: probe.used });
+        }
+        if (variants.length) candidates.push({ s, key, variants });
+        else notes.push(`${key}: no size of its story fits a stage map (${PLUS_STORY_W} px wide, ${PLUS_STORY_TOP_ROW + 1} rows, 127 distinct tiles) — not drawn`);
+    }
+    const free = dry.report.tiles.free;
+    const cost = (picks) => picks.reduce((n, p) => n + p.pick.tiles, 0);
+    const pickAt = (k) => candidates.map((c) => ({ c, pick: c.variants[Math.min(k, c.variants.length - 1)] }));
+    const sizes = Math.max(0, ...candidates.map((c) => c.variants.length));
+    let picks = [];
+    for (let k = 0; k < sizes && !picks.length; k++) {
+        if (cost(pickAt(k)) <= free) picks = pickAt(k);
+    }
+    if (!picks.length && candidates.length) {
+        for (const p of pickAt(sizes - 1)) {
+            if (cost([...picks, p]) <= free) picks.push(p);
+            else notes.push(`${p.c.key}: no tiles left in the save's graphics for its story — not drawn`);
+        }
+    }
+    const built = buildPlusGameFromLevel(level, art, {
+        ...opts,
+        storyBackdrops: null,
+        storyPicks: new Map(picks.map(({ c, pick }) => [c.s, pick.v])),
+    });
+    built.warnings.push(...notes);
+    return built;
 }
 
 /**

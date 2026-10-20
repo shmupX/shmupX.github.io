@@ -681,7 +681,46 @@ DOWNLOAD. Both say what every disk is: untested on hardware or in an emulator.
 - textures beyond what the blank slots hold: a sheet that runs out is reported,
   not grown — a project has 40 + 8 × 260 textures and no more;
 - any disk type but 0 beyond the geometry (a warning says so), any `.ndd` whose
-  system area is development-format, and the D64 or MAME image shapes.
+  system area is development-format, and the D64 or MAME image shapes;
+- a level's story, which the other carts paint into a stage's opening map rows
+  (harbor's `lib/story-panels.ts`) — see the next section for what the samples
+  show and what a boot still has to settle. `build:ddd` says so in its log.
+
+### A level's story: what the sample's briefings show (traced 2026-10-20, not booted)
+
+The cart writers open a stage on its story drawn into its scenery; this disk's
+scenery is a 3D ground, but its sample game opens stages on **full-screen
+pictures** — the "PHASE 01 AREA GUARD" boss briefing — and those are a
+mechanism a writer could reuse (read off `deza1.NDD`'s `SAMPLEZ1`, whose `SAMP`
+twin is byte-identical; nothing booted):
+
+- **One texture numbering.** Effect and model texture numbers count 0-39 for the
+  `CGR` sheet and 40-299 for the stage's `#GR` tiles 0-259 (tile = number − 40).
+  The stage models' texture indices (103-299) read cleanly that way: 9 of 597
+  references land on a blank tile against 540 read as raw tile numbers — so
+  `project-write.js`'s stage models, which store the raw `#GR` tile index
+  (around line 624), probably point 40 textures early. Unverified; the common
+  models (`CGR`) are unaffected.
+- **`portrait` draws one 64×32 texture a cell.** Value 0 is set (0) or clear
+  (255), value 1 the texture (one byte, so `#GR` tiles 0-215 only), value 2 the
+  position `row*10 + col` — rows of 32 px (0-7), columns in 32-px steps (0-9),
+  so a texture can sit at half-texture steps — and value 3 flags (sets seen with
+  1, 3, 5, 7; clears with 4, 8, 12). The briefings are 40 sets at even columns
+  0-8 and rows 0-7, one frame, a 320×256 grid whose last 16 lines are black
+  (320×240 of art), then one clear `[255, 255, 0, 12]`; the dialogue cut-ins
+  are 128×32 strips at x 32. Stage 2 also hides the ship (`playerVisibility`)
+  for its opening 250 frames.
+- **A story could be** its picture and words baked into 320×240, cut into 40
+  textures in `#GR` tiles at or below 215, 40 sets and a clear (41 of a stage's
+  500 effects), sorted by frame and inside the tail's `totalEffects`.
+
+What only a boot settles, and why the writer does not do it yet: the frame time
+base (the sample briefings last 30 and 55 frames — under a second at 60 Hz,
+which reads wrong for a briefing), whether a portrait at frame 0 fires (the
+earliest sample one is frame 103), what the flag bits mean, whether a portrait
+draws over the HUD and the scene and whether the scroll and the waves run on
+underneath it. A clear at the wrong frame would leave the picture over the
+whole stage or flash it unreadably, which is worse than no story.
 
 ### A boss's second stage (`project-write.js`, `src/boss-stage2.js`; researched 2026-10-18)
 

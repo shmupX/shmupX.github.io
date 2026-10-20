@@ -55,7 +55,12 @@ import {
   loadItemEmblems,
 } from "../lib/powerup-emblems.ts";
 import { loadAthenaFont } from "../lib/bitmap-font.ts";
-import { storyPanels } from "../lib/story-panels.ts";
+import {
+  type StoryBackdrop,
+  storyBackdrops,
+  storyLogLine,
+  type StoryStageReport,
+} from "../lib/story-panels.ts";
 import {
   authorFromEnvironment,
   exportLevelToSav,
@@ -465,6 +470,27 @@ export function defaultAuthor(): string | null {
   return authorFromEnvironment(env);
 }
 
+/**
+ * The level's story as each stage's opening scenery (lib/story-panels.ts),
+ * for every cart writer — the Saturn's, the Super Famicom's, the two
+ * PlayStation games'. None when composing it fails: a story must never make
+ * an export fail.
+ */
+export async function levelStoryBackdrops(
+  record: LevelRecord,
+  log: (m: string) => void = () => {},
+): Promise<StoryBackdrop[]> {
+  try {
+    return await storyBackdrops(record.storyData, {
+      font: await loadAthenaFont(ROOT),
+      onWarn: (m) => log(`warning: ${m}`),
+    });
+  } catch (e) {
+    log(`warning: the story could not be drawn (${(e as Error).message})`);
+    return [];
+  }
+}
+
 /** Build the .sav. Exported so the E2E test drives the same code the task does. */
 export async function buildSav(
   options: BuildSavOptions = {},
@@ -518,34 +544,10 @@ export async function buildSav(
       : `item icons: no powerup art in ${EMBLEM_DIR} or ${EMBLEM_ATLAS} — drawing coloured squares`,
   );
 
-  // The story, as objects the stage opens on: a .sav cannot carry a cutscene,
-  // but it can carry a picture that hangs in the playfield and descends.
-  let panels: { stage: number; picture: unknown[]; text: unknown[] }[] = [];
-  try {
-    const font = await loadAthenaFont(ROOT);
-    const built = await storyPanels(record.storyData, {
-      font,
-      onWarn: (m) => log(`warning: ${m}`),
-    });
-    panels = built.map((p) => ({
-      stage: p.stage,
-      picture: p.tiles,
-      text: p.textTiles,
-    }));
-    log(
-      panels.length
-        ? `story: ${panels.length} stage${
-          panels.length === 1 ? "" : "s"
-        } open on a panel (${
-          built.map((p) =>
-            `${p.stage}:${p.tiles.length}pic+${p.textTiles.length}txt`
-          ).join(" ")
-        })`
-        : "story: the level carries no cutscene pictures — stages open as they are",
-    );
-  } catch (e) {
-    log(`warning: story panels could not be built (${(e as Error).message})`);
-  }
+  // The story, as each stage's opening scenery: a .sav cannot carry a
+  // cutscene, but every stage starts on the first rows of its background
+  // map, and the writer paints the picture and the words there.
+  const backdrops = await levelStoryBackdrops(record, log);
 
   const result = exportLevelToSav(record, art, {
     palette,
@@ -556,10 +558,11 @@ export async function buildSav(
     title2,
     titleG,
     itemEmblems,
-    storyPanels: panels,
+    storyBackdrops: backdrops,
     author: options.author === undefined ? defaultAuthor() : options.author,
     attribution: options.attribution,
   });
+  log(storyLogLine(backdrops, result.report.stages as StoryStageReport[]));
   const t = result.report.title;
   log(
     t.source === "none"

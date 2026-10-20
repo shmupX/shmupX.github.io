@@ -32,6 +32,10 @@ import {
   KIDS_MOVE_STRAIGHT,
   KIDS_SHIP_LAYOUT,
   KIDS_SPRITE_STRIPS,
+  KIDS_STORY_FIRST_ROW,
+  KIDS_STORY_LEAD_ROWS,
+  KIDS_STORY_SCROLL,
+  KIDS_STORY_SLOW_UNITS,
   kidsBossClassFor,
   kidsCardFileName,
   KidsCellBank,
@@ -813,4 +817,64 @@ Deno.test({
     }
     assertStrictEquals(KIDS_APPEAR_COLUMNS, 9);
   },
+});
+
+// --- a stage's story, as its opening map rows ---
+
+/** A story backdrop: 224 wide, `h` px, one colour or (noise) a new chip every 32 px. */
+function storyRaster(label, h, rgb, noise = false) {
+  const w = 224;
+  const rgba = new Uint8Array(w * h * 4);
+  let seed = 13;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) & 255;
+  for (let i = 0; i < w * h; i++) {
+    rgba.set(noise ? [rnd(), rnd(), rnd(), 255] : [...rgb, 255], i * 4);
+  }
+  return { label, w, h, rgba };
+}
+
+Deno.test("a stage's story opens its map: chip rows from the first story row up, waves after it", () => {
+  const plain = exportLevelToKidsCard(level(), art());
+  const out = exportLevelToKidsCard(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [storyRaster("words", 64, [255, 255, 255])] }],
+  });
+  assertEquals(out.warnings.filter((w) => /story/.test(w)), []);
+  const save = parsePsxSav(out.card).saves[0];
+  assert(save.checksums.ok);
+  const map = save.map[0];
+  const painted = (r) => Array.from({ length: 7 }, (_, c) => map.words[r * 7 + c]).some((w) => (w & KIDS_BLANK) === 0);
+  const first = KIDS_STORY_FIRST_ROW;
+  assert(!painted(first - 1) && painted(first) && painted(first + 1) && !painted(first + 2));
+  assertStrictEquals(
+    out.report.stages[0].lastRow,
+    plain.report.stages[0].lastRow + first + 2 + KIDS_STORY_LEAD_ROWS,
+    "the waves and the boss wait for it",
+  );
+  assertStrictEquals(save.scroll[0].steps[0].nibble, KIDS_STORY_SCROLL, "its first 64 px crawl");
+  assertStrictEquals(save.scroll[0].steps[KIDS_STORY_SLOW_UNITS].nibble, 2);
+  assertEquals(out.report.stages[0].story, { size: "words", rows: 2, cells: 4, first });
+});
+
+Deno.test("a story the cells or the save cannot hold is drawn smaller, else not at all", () => {
+  // 40 chip rows of noise want 1,120 cells: more than the bank holds.
+  const smaller = exportLevelToKidsCard(level(), art(), {
+    storyBackdrops: [{
+      stage: 0,
+      variants: [storyRaster("huge", 40 * 32, null, true), storyRaster("words", 32, [255, 255, 255])],
+    }],
+  });
+  assertStrictEquals(smaller.report.stages[0].story.size, "words");
+  // 32 chip rows of noise fit the cells but not the save's fifteen blocks.
+  const packed = exportLevelToKidsCard(level(), art(), {
+    storyBackdrops: [{
+      stage: 0,
+      variants: [storyRaster("big", 32 * 32, null, true), storyRaster("words", 32, [255, 255, 255])],
+    }],
+  });
+  assertStrictEquals(packed.report.stages[0].story.size, "words");
+  assert(packed.warnings.some((w) => /drawn smaller so the save fits/.test(w)));
+  const none = exportLevelToKidsCard(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [storyRaster("big", 32 * 32, null, true)] }],
+  });
+  assertStrictEquals(none.report.stages[0].story, null);
 });

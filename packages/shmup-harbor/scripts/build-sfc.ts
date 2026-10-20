@@ -15,8 +15,10 @@ import { dirname, join, relative, resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { exportLevelToSfcSram } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
+import { storyLogLine, type StoryStageReport } from "../lib/story-panels.ts";
 import {
   bossRushArg,
+  levelStoryBackdrops,
   loadLevel,
   loadLevelArt,
   titleArt,
@@ -65,15 +67,20 @@ export async function buildSfc(
   const title1 = await titleArt(record.logoDataURL, "logo", log);
   const title2 = await titleArt(record.subTitleDataURL, "subtitle", log);
   const titleBg = await titleArt(record.titleBgDataURL, "backdrop", log);
+  // The story, as each stage's opening scenery (lib/story-panels.ts; the
+  // writer's buildWithStory picks the size its chips allow).
+  const backdrops = await levelStoryBackdrops(record, log);
 
   const result = exportLevelToSfcSram(record, art, {
     name: options.name?.trim() || null,
     title1,
     title2,
     titleBg,
+    storyBackdrops: backdrops,
   });
   const rep = result.report;
   log(`name: ${result.name}`);
+  log(storyLogLine(backdrops, rep.stages as StoryStageReport[]));
   log(
     `ship: ${rep.ship} (${rep.shipChips} chips); title: ${rep.title}${
       rep.titleParts.length ? ` (${rep.titleParts.join(", ")})` : ""

@@ -29,7 +29,13 @@ import {
   titleSlotForCell,
   verifySfcChecksums,
 } from "../src/sfc/index.js";
-import { composeTitlePicture, sfcBossIsTall } from "../src/sfc/sfc-write.js";
+import {
+  composeTitlePicture,
+  SFC_STORY_LEAD_LINES,
+  SFC_STORY_MIN_BOSS_LINE,
+  SFC_STORY_TOP_ROW,
+  sfcBossIsTall,
+} from "../src/sfc/sfc-write.js";
 import { decodePaletteData, writeCgramRow } from "../src/sfc/cgram.js";
 import { hasFixtures, loadFixture } from "./_fixtures.js";
 
@@ -678,4 +684,91 @@ Deno.test("the report says what the title was made of, and what flies", () => {
     parseSfcSav(none.sram).groups.title.filter((c) => !c.empty).length,
     0,
   );
+});
+
+// --- a stage's story, as its opening map rows ---
+
+/** A story backdrop: 224 wide, `rows` map rows, one colour or (noise) a new chip every 16 px. */
+function storyRaster(label, rows, rgb, noise = false) {
+  const w = 224, h = rows * 16;
+  const rgba = new Uint8Array(w * h * 4);
+  let seed = 11;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) & 255;
+  for (let i = 0; i < w * h; i++) {
+    rgba.set(noise ? [rnd(), rnd(), rnd(), 255] : [...rgb, 255], i * 4);
+  }
+  return { label, w, h, rgba };
+}
+
+const paintedMapRow = (map, r) =>
+  Array.from({ length: 16 }, (_, c) => map.slots[r * 16 + c]).some((s) => s > 0);
+
+Deno.test("a stage's story opens its map: its top on the top row, columns 1-14, waves after it", () => {
+  const plain = exportLevelToSfcSram(level(), art());
+  const out = exportLevelToSfcSram(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [storyRaster("words", 3, [255, 255, 255])] }],
+  });
+  assertEquals(out.warnings.filter((w) => /story/.test(w)), []);
+  assert(verifySfcChecksums(out.sram).ok);
+  const save = parseSfcSav(out.sram);
+  const map = save.maps[0];
+  const top = SFC_STORY_TOP_ROW;
+  for (let r = top - 2; r <= top; r++) {
+    assert(paintedMapRow(map, r), `row ${r} carries the story`);
+    assertStrictEquals(map.slots[r * 16], 0, "the left margin is blank");
+    assertStrictEquals(map.slots[r * 16 + 15], 0, "the right margin is blank");
+  }
+  assert(!paintedMapRow(map, top - 3) && !paintedMapRow(map, top + 1));
+  // The waves wait for it, and the boss stands where its loop cannot reach it.
+  const shift = top + 1 + SFC_STORY_LEAD_LINES;
+  const ap = save.appear[0];
+  assert(ap.lines[2 + shift] > 1 && !(ap.lines[2] > 1), "the first wave moved up");
+  assert(out.report.stages[0].boss.line >= SFC_STORY_MIN_BOSS_LINE);
+  // Its blocks play once; the clear routine's sequencer would replay them.
+  const k = Math.ceil((top + 1) / 4);
+  const seq = save.scroll[0].effect;
+  assertEquals([...seq.subarray(0, 32)], Array.from({ length: 32 }, (_, i) => i));
+  assert([...seq.subarray(32)].every((b) => b >= k && b < 32));
+  assertStrictEquals(parseSfcSav(plain.sram).scroll[0].effect[32], 0);
+  assertEquals(out.report.stages[0].story, { size: "words", rows: 3, chips: 1, top });
+});
+
+Deno.test("a story too big for a stage map is drawn smaller, else not at all", () => {
+  // 12 rows of noise are 168 distinct chips; a stage's MAP GROUP names 127.
+  const huge = storyRaster("huge", 12, null, true);
+  const smaller = exportLevelToSfcSram(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [huge, storyRaster("small", 2, [0, 0, 255])] }],
+  });
+  assertEquals(smaller.warnings.filter((w) => /story/.test(w)), []);
+  assertStrictEquals(smaller.report.stages[0].story.size, "small");
+  const none = exportLevelToSfcSram(level(), art(), {
+    storyBackdrops: [{ stage: 0, variants: [huge] }],
+  });
+  assert(none.warnings.some((w) => /no size of its story fits a stage map/.test(w)));
+  assertStrictEquals(none.report.stages[0].story, null);
+  assertEquals(
+    parseSfcSav(none.sram).appear[0].lines,
+    parseSfcSav(exportLevelToSfcSram(level(), art()).sram).appear[0].lines,
+    "a story with no room costs the stage nothing",
+  );
+});
+
+Deno.test("scenery keeps its stage; a story for a stage the cart lacks is passed over", () => {
+  const lv = level();
+  lv.backgroundCells = ["bgA.png"];
+  const tiles = new Uint8Array(14 * 2 * 2); // two rows of cell 0
+  lv.background = { cols: 14, tiles: btoa(String.fromCharCode(...tiles)) };
+  const a = art();
+  a["bgA.png"] = frame(16, 16, [90, 120, 40]);
+  const out = exportLevelToSfcSram(lv, a, {
+    storyBackdrops: [
+      { stage: 0, variants: [storyRaster("words", 2, [255, 255, 255])] },
+      { stage: 3, variants: [storyRaster("words", 2, [255, 255, 255])] },
+    ],
+  });
+  assertEquals(out.warnings.filter((w) => /story/.test(w)), [
+    "stage0: keeps its own scenery — its story is not drawn",
+  ]);
+  assertStrictEquals(out.report.stages[0].story, null);
+  assertStrictEquals(out.report.stages[0].mapChips, 1);
 });

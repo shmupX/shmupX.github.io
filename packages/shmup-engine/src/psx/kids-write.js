@@ -429,6 +429,22 @@ export const KIDS_SCROLL_RUN = 2;
 export const KIDS_SCROLL_HALT = 0;
 /** The initialiser's blank chip word, the commonest blank in the collection. */
 export const KIDS_MAP_FILL = 0x8080;
+/**
+ * A stage's story (`storyBackdrops`) is painted into its map from this chip
+ * row up. Rows count up the screen from where the stage starts; which of
+ * them the Kids! screen shows as it opens is unmeasured, so row 0, under
+ * its foot, is left to the scroll.
+ */
+export const KIDS_STORY_FIRST_ROW = 1;
+/** Rows (32 px) a story stage's waves wait past its story: 128 px. */
+export const KIDS_STORY_LEAD_ROWS = 4;
+/**
+ * A story's first scroll units (64 px each) crawl at this nibble, 0.25
+ * px/frame — the scroll has no half speed, and never a halt, which with
+ * nothing on screen ends a stage.
+ */
+export const KIDS_STORY_SCROLL = 1;
+export const KIDS_STORY_SLOW_UNITS = 1;
 
 // --- small helpers -----------------------------------------------------------------
 
@@ -885,7 +901,10 @@ export function factoryKidsTail() {
  * Returns {graphics, data, tail, name, icon, warnings, report}.
  */
 export function buildKidsGameFromLevel(level, art, options = {}) {
-    const opts = { name: null, title1: null, title2: null, backgroundSet: 0, horizontal: false, ...options };
+    const opts = { name: null, title1: null, title2: null, backgroundSet: 0, horizontal: false, storyBackdrops: null, storyPicks: null, storyMinSize: 0, ...options };
+    if (!opts.storyPicks && Array.isArray(opts.storyBackdrops) && opts.storyBackdrops.length) {
+        return buildKidsWithStory(level, art, opts);
+    }
     const warnings = [];
     const warn = (m) => warnings.push(m);
 
@@ -1031,6 +1050,10 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
     // --- per stage ---
     const built = stages.map((st, s) => {
         const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : (level.width || 8));
+        // The stage's story (buildKidsWithStory picked its size): its waves
+        // wait for it to scroll away.
+        const story = opts.storyPicks ? opts.storyPicks.get(s) || null : null;
+        const storyShift = story ? KIDS_STORY_FIRST_ROW + story.chipRows + KIDS_STORY_LEAD_ROWS : 0;
         const spawnRows = st.enemylist.slice().reverse();
         const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
         const appear = new Uint8Array(KIDS_APPEAR_STAGE_BYTES);
@@ -1149,11 +1172,13 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
                 }
             }
         };
-        let placed = 0, dropped = 0, lastRow = KIDS_FIRST_SPAWN_ROW;
+        let placed = 0, dropped = 0, lastRow = KIDS_FIRST_SPAWN_ROW + storyShift;
         spawnRows.forEach((row, k) => {
-            const scrollRow = waveRows
-                ? clamp(Math.round(waveRows[k] / 2), 0, KIDS_MAX_SPAWN_ROW)
-                : Math.min(KIDS_MAX_SPAWN_ROW, KIDS_FIRST_SPAWN_ROW + k * KIDS_ROW_STEP);
+            const scrollRow = clamp(
+                (waveRows ? Math.round(waveRows[k] / 2) : KIDS_FIRST_SPAWN_ROW + k * KIDS_ROW_STEP) + storyShift,
+                0,
+                KIDS_MAX_SPAWN_ROW,
+            );
             row.forEach((cell, c) => {
                 if (!cell || cell === "00") return;
                 const rec = records.get(cell);
@@ -1351,18 +1376,50 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
             }
         }
 
+        // The story: the stage's opening map rows, from KIDS_STORY_FIRST_ROW
+        // up, 32x32 chips through the disc's own colours. Map rows count up
+        // the screen, so the raster's top row of chips is the story's top.
+        let storyReport = null;
+        if (story && !chips) {
+            const before = bank.used;
+            const chipRgba = new Uint8Array(32 * 32 * 4);
+            try {
+                for (let cy = 0; cy < story.chipRows; cy++) {
+                    for (let cc = 0; cc < KIDS_MAP_COLUMNS; cc++) {
+                        chipRgba.fill(0);
+                        for (let y = 0; y < 32; y++) {
+                            const sy = cy * 32 + y;
+                            if (sy >= story.h) break;
+                            chipRgba.set(story.rgba.subarray((sy * story.w + cc * 32) * 4, (sy * story.w + cc * 32 + 32) * 4), y * 32 * 4);
+                        }
+                        const word = bank.addChip(quantizeKidsFrame({ w: 32, h: 32, rgba: chipRgba }));
+                        mapWords[(KIDS_STORY_FIRST_ROW + story.chipRows - 1 - cy) * KIDS_MAP_COLUMNS + cc] = word;
+                    }
+                }
+                storyReport = { size: story.label, rows: story.chipRows, cells: bank.used - before, first: KIDS_STORY_FIRST_ROW };
+            } catch (e) {
+                if (!(e instanceof KidsBankFullError)) throw e;
+                warn(`${st.key}: CG pages full (${KIDS_CELL_COUNT} cells) — its story left unfinished`);
+            }
+        }
+
         // Scroll: run to the boss and halt under it — or, with no boss, halt a
         // screen past the last wave: a halted scroll with nothing left alive
-        // on screen is what ends a stage (GAMES.bin 0x8011C2F4).
+        // on screen is what ends a stage (GAMES.bin 0x8011C2F4). A story's
+        // first 64 px crawl, so the whole of it holds still long enough to
+        // take in; never a halt, which with nothing on screen would end the
+        // stage on the story.
         const scroll = new Uint8Array(KIDS_SCROLL_STAGE_BYTES);
         const haltRow = boss ? boss.row : Math.min(KIDS_APPEAR_ROWS - 1, lastRow + KIDS_BOSS_ROW_GAP);
         const haltUnit = Math.floor((haltRow * 32) / KIDS_SCROLL_UNIT_PIXELS);
         for (let u = 0; u < KIDS_SCROLL_UNITS; u++) {
-            const nibble = u < haltUnit ? KIDS_SCROLL_RUN : KIDS_SCROLL_HALT;
+            const nibble = storyReport && u < KIDS_STORY_SLOW_UNITS
+                ? KIDS_STORY_SCROLL
+                : u < haltUnit ? KIDS_SCROLL_RUN : KIDS_SCROLL_HALT;
             if (u & 1) scroll[u >> 1] |= nibble << 4;
             else scroll[u >> 1] |= nibble;
         }
-        return { key: st.key, appear, records, bossWords, bossRecords, boss, mapWords, chips, scroll, placed, dropped, lastRow };
+        return { key: st.key, appear, records, bossWords, bossRecords, boss, mapWords, chips, scroll, placed, dropped, lastRow, story: storyReport };
     });
 
     // --- the two title pictures (the logo, then the subtitle) ---
@@ -1455,6 +1512,7 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
                     : null,
                 chips: b.chips,
                 lastRow: b.lastRow,
+                story: b.story,
             })),
             ship: shipSource,
             items: itemSources,
@@ -1466,6 +1524,83 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
             cells: { used: bank.used, chips: bank.chips, sprites: bank.sprites, shared: bank.shared, free: bank.free },
         },
     };
+}
+
+/**
+ * The story pass, as the Saturn's and the Super Famicom's: a build without it
+ * says how many of the 1,024 cells the game leaves, then every stage's story
+ * is taken at the largest size at which they all fit — four cells a 32x32
+ * chip, through the disc's fixed colours — else each at its smallest while
+ * cells last, and the game is built again with those painted in. A stage
+ * with scenery keeps it; a story with no room costs its stage nothing.
+ * `storyMinSize` skips the larger sizes: exportLevelToKidsCard asks again,
+ * smaller, when the stories pack past what a save holds.
+ */
+function buildKidsWithStory(level, art, opts) {
+    const dry = buildKidsGameFromLevel(level, art, { ...opts, storyBackdrops: null, storyPicks: null });
+    const notes = [];
+    const w = KIDS_MAP_COLUMNS * 32;
+    const candidates = [];
+    for (const sb of opts.storyBackdrops) {
+        const s = dry.report.stages.findIndex((st) => st.key === `stage${sb && sb.stage}`);
+        if (s < 0) continue; // a story for a stage this save does not have
+        const key = dry.report.stages[s].key;
+        if (dry.report.stages[s].chips > 0) {
+            notes.push(`${key}: keeps its own scenery — its story is not drawn`);
+            continue;
+        }
+        const variants = [];
+        for (const v of Array.isArray(sb.variants) ? sb.variants : []) {
+            if (!v || v.w !== w || !v.h || !v.rgba) continue;
+            const chipRows = Math.ceil(v.h / 32);
+            if (KIDS_STORY_FIRST_ROW + chipRows > KIDS_MAP_ROWS) continue;
+            const probe = new KidsCellBank();
+            const chipRgba = new Uint8Array(32 * 32 * 4);
+            try {
+                for (let cy = 0; cy < chipRows; cy++) {
+                    for (let cc = 0; cc < KIDS_MAP_COLUMNS; cc++) {
+                        chipRgba.fill(0);
+                        for (let y = 0; y < 32 && cy * 32 + y < v.h; y++) {
+                            const sy = cy * 32 + y;
+                            chipRgba.set(v.rgba.subarray((sy * w + cc * 32) * 4, (sy * w + cc * 32 + 32) * 4), y * 128);
+                        }
+                        probe.addChip(quantizeKidsFrame({ w: 32, h: 32, rgba: chipRgba }));
+                    }
+                }
+            } catch (e) {
+                if (!(e instanceof KidsBankFullError)) throw e;
+                continue; // more cells than the whole bank, alone
+            }
+            variants.push({ pick: { ...v, chipRows }, cells: probe.used });
+        }
+        if (variants.length) candidates.push({ s, key, variants });
+    }
+    const free = dry.report.cells.free;
+    const cost = (picks) => picks.reduce((n, p) => n + p.v.cells, 0);
+    const pickAt = (k) => candidates.map((c) => ({ c, v: c.variants[Math.min(k, c.variants.length - 1)] }));
+    const sizes = Math.max(0, ...candidates.map((c) => c.variants.length));
+    const start = Math.max(0, opts.storyMinSize || 0);
+    let picks = [];
+    if (start >= sizes) {
+        if (candidates.length) notes.push(`the story packs past what a Kids! save holds at every size — not drawn`);
+    } else {
+        for (let k = start; k < sizes && !picks.length; k++) {
+            if (cost(pickAt(k)) <= free) picks = pickAt(k);
+        }
+        if (!picks.length && candidates.length) {
+            for (const p of pickAt(sizes - 1)) {
+                if (cost([...picks, p]) <= free) picks.push(p);
+                else notes.push(`${p.c.key}: no cells left in the save's graphics for its story — not drawn`);
+            }
+        }
+    }
+    const built = buildKidsGameFromLevel(level, art, {
+        ...opts,
+        storyBackdrops: null,
+        storyPicks: new Map(picks.map(({ c, v }) => [c.s, v.pick])),
+    });
+    built.warnings.push(...notes);
+    return built;
 }
 
 /** The file a Kids! card is downloaded as: a raw 128 KB image, ".mcr" as Mednafen names them. */
@@ -1482,14 +1617,29 @@ export function kidsCardFileName(name) {
  * what the two sections packed to and `report.slack` the bytes to spare.
  */
 export function exportLevelToKidsCard(level, art, options = {}) {
-    const game = buildKidsGameFromLevel(level, art, options);
-    const { block, seal, sizes } = buildKidsBlock({
-        graphics: game.graphics,
-        data: game.data,
-        tail: game.tail,
-        name: game.name.bytes,
-        icon: game.icon,
-    });
+    // A story's pictures pack poorly: when they push the save past its
+    // fifteen blocks, they are drawn a size smaller, down to none.
+    let game, packed;
+    const first = options.storyMinSize || 0;
+    let size = first;
+    for (; ; size++) {
+        game = buildKidsGameFromLevel(level, art, { ...options, storyMinSize: size });
+        try {
+            packed = buildKidsBlock({
+                graphics: game.graphics,
+                data: game.data,
+                tail: game.tail,
+                name: game.name.bytes,
+                icon: game.icon,
+            });
+            break;
+        } catch (e) {
+            const story = game.report.stages.some((st) => st.story);
+            if (!story || !/does not fit a memory-card file/.test(String(e && e.message))) throw e;
+        }
+    }
+    if (size > first) game.warnings.push("the story was drawn smaller so the save fits its fifteen blocks");
+    const { block, seal, sizes } = packed;
     const card = buildMemoryCard([{ filename: KIDS_PRODUCT, data: block }]);
     return {
         card,
