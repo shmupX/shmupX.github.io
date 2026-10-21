@@ -13492,6 +13492,19 @@
     if (m) return Number(m[1]);
     return !ap && isGokiRecord(bossData) ? GOKI_PATTERN : stageId;
   }
+  // Whether a ship touching the boss is caught in Akuma's Shun Goku Satsu
+  // rather than scraped for 1 hp. The grab is part of his routine, so it goes
+  // with the routine, not his name: his own record and the hidden boss
+  // (bossIsGoki), and every boss bossShootStart flies his routine for — the
+  // record it reads, stage 2's once that has begun. rando's trump and gs's
+  // Daltonius, pinned to "bossExtra", dived at the ship like him and only
+  // scraped it.
+  function bossGrabs(scene) {
+    if (scene.bossIsGoki) return true;
+    if (scene.dezaBossState) return false;
+    var bossData = scene.bossStage2Done && scene.bossStage2 ? scene.bossStage2 : scene.recipe && scene.recipe.bossData ? scene.recipe.bossData["boss" + String(scene.bossStageId)] : null;
+    return bossPatternSlot(bossData, scene.bossStageId) === GOKI_PATTERN;
+  }
   function _setBossAnim(scene, boss, frames) {
     if (!frames || frames.length === 0 || !boss || !boss.active) return;
     boss.setData("frames", frames);
@@ -14249,8 +14262,9 @@
     armBossOverlay(scene, scene.bossSprite, bossData);
     var patternSlot = bossPatternSlot(bossData, stageId);
     armBossStances(scene, bossData, patternSlot);
-    // Run by his own record Akuma is Akuma throughout — his voice, his
-    // danger balloon, the grab when a ship touches him.
+    // Run by his own record Akuma is Akuma throughout — his voice and his
+    // danger balloon. The grab when a ship touches him goes with his routine
+    // (bossGrabs), so a boss pinned to it grabs too.
     if (patternSlot === GOKI_PATTERN) {
       scene.bossIsGoki = isGokiRecord(bossData);
     }
@@ -17144,7 +17158,7 @@
             hit = true;
             break;
           }
-          if (this.bossIsGoki) {
+          if (bossGrabs(this)) {
             // A singleton cinematic: it freezes the world and takes over the
             // screen, so exactly one ship gets grabbed even if both touched the
             // boss on this tick.

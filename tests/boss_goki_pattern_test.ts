@@ -126,6 +126,72 @@ Deno.test("bossShootStart flies Akuma's routine for his record and for a GOKI pi
   assertEquals(shoot(scene(bosses.boss1, false)), "barlog");
 });
 
+async function grabs() {
+  const js = await read(BUNDLE);
+  return new Function(
+    'var GOKI_PATTERN = "goki"; var BOSS_STAGE2_HP_BELOW = 0.5;' +
+      ' var BOSS_WEAPON_SUFFIXES = ["", "A", "B", "C"];' +
+      functionSource(js, "isGokiRecord") +
+      functionSource(js, "bossPatternSlot") +
+      functionSource(js, "bossStage2Record") +
+      functionSource(js, "bossGrabs") +
+      "\nreturn { bossGrabs, bossStage2Record };",
+  )() as {
+    bossGrabs: (scene: unknown) => boolean;
+    bossStage2Record: (bossData: unknown) => Json;
+  };
+}
+
+// rando's trump and gs's Daltonius fly Akuma's routine by their
+// "bossExtra" pin, but a ship that met one on his Ashura dive lost 1 hp, as
+// against any boss: only a record named goki grabbed.
+Deno.test("a boss flying Akuma's routine grabs a ship that touches it", async () => {
+  const { bossGrabs, bossStage2Record } = await grabs();
+  const bosses = await stock();
+  const shipped = JSON.parse(await read("static/games/2028-ai/foo.json"));
+  const scene = (key: string, boss: Json, extra: Json = {}) => ({
+    recipe: { bossData: { [key]: boss } },
+    bossStageId: Number(key.slice(4)),
+    bossIsGoki: false,
+    ...extra,
+  });
+  // Akuma himself, and the hidden boss's takeover, as before.
+  assert(bossGrabs(scene("boss1", bosses.bossExtra, { bossIsGoki: true })));
+  // trump, pinned to his routine as boss2 (rando's and the shipped game's).
+  assert(bossGrabs(scene("boss2", shipped.bossData.boss2)));
+  // Daltonius's shape: pinned, and stage 2 keeps the pin unless it names its
+  // own routine.
+  const pinned = { ...bosses.boss1, attackPattern: "bossExtra" };
+  const dragon = bossStage2Record({ ...pinned, stage2: { anim: {} } });
+  assert(bossGrabs(scene("boss1", pinned)));
+  assert(
+    bossGrabs(scene("boss1", pinned, {
+      bossStage2: dragon,
+      bossStage2Done: true,
+    })),
+  );
+  assert(
+    !bossGrabs(scene("boss1", pinned, {
+      bossStage2: { ...dragon, attackPattern: "boss1" },
+      bossStage2Done: true,
+    })),
+  );
+  // Every other routine scrapes, and so does a Dezaemon boss whatever its pin
+  // (bossShootStart flies its own fire points).
+  for (const key of ["boss0", "boss1", "boss2", "boss3", "boss4"]) {
+    assert(!bossGrabs(scene(key, bosses[key])), key);
+  }
+  assert(!bossGrabs(scene("boss1", pinned, { dezaBossState: {} })));
+  assert(!bossGrabs(scene("boss1", null)));
+  // The ship-contact branch asks it.
+  const js = await read(BUNDLE);
+  assert(
+    js.includes("          if (bossGrabs(this)) {\n"),
+    "contact ignores it",
+  );
+  assert(!js.includes("          if (this.bossIsGoki) {\n"), "still by name");
+});
+
 Deno.test("bossAdd builds Akuma's stances for his routine and makes his record Akuma", async () => {
   const js = await read(BUNDLE);
   const src = functionSource(js, "bossAdd");

@@ -1396,8 +1396,12 @@ to fall through to the slot's routine). It goes by his name, not his stances:
 the shipped game's `boss2`, trump, is drawn on Akuma's stance set and flies his
 routine because `foo.json` pins him to it (`"bossExtra"`). `bossAdd` builds the
 stance sets that routine switches between and, on Akuma's own record, sets
-`bossIsGoki` — his voice, his danger balloon, and the Shun Goku Satsu grab when
-a ship touches him, as the hidden boss does. The Boss Lab, the editor's boss
+`bossIsGoki` — his voice and his danger balloon, as the hidden boss has. The
+Shun Goku Satsu grab when a ship touches him goes with the routine instead
+(`bossGrabs`, which reads the record `bossShootStart` flies, stage 2's once it
+has begun): rando's trump and gs's Daltonius, pinned to `"bossExtra"`, catch a
+ship on their Ashura dive in their own `syngoku` / `syngokuFinishTen` stances,
+where they used to scrape it for 1 hp. The Boss Lab, the editor's boss
 strip and `modOverlay()` name the same default (`BossLab.ownPattern`).
 `tests/boss_goki_pattern_test.ts` pins it.
 
