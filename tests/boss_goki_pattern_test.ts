@@ -382,37 +382,41 @@ Deno.test("clearAkebonoOverlays fades what is still up and destroys it, once", a
   assertEquals(tweens.length, 1);
 });
 
-// The grab's kill of a one-hit ship is seen.
+// A KO is the end of the run, not one ship of a stock.
 //
-// A ship out of a stock — a cart played OG, the SAVE SHELF's exports among
-// them — is replaced inside the grab's hit (dezaNextShip), so the next ship
-// was already flying when the world came back, and the grab read as
-// survived: rando's Akuma on the shelf showed the KO and the fight went on
-// with the same ship in the air, one icon fewer at the foot of the screen the
-// only sign. The replacement now stays off screen until the world is back,
-// and arrives there as a replacement does, blinking at the spawn point.
-Deno.test("a ship the grab took out of a stock is seen to go, and its replacement waits for the world", async () => {
+// The shipped game's ship dies of the grab's hit and goes to CONTINUE?. A
+// one-hit ship out of a stock — a cart played OG, the SAVE SHELF's exports
+// among them — was replaced inside the hit (dezaNextShip): rando's Akuma
+// left the next ship flying under his KO, while Trump, met once the stock
+// was spent, ended the run. The stock is spent before the hit lands now, so
+// the hit is the last ship's whoever flies the routine. And nothing fires
+// while time is stopped: the grab hides the SP button but left it live, and
+// a bomb tapped inside the hold would have held the ship invincible through
+// the hit.
+Deno.test("the grab's KO spends a stock ship's stock before the hit, and no bomb fires inside the hold", async () => {
   const js = await read(BUNDLE);
   const grab = functionSource(js, "gokiPlayerAttack");
   const hit = grab.indexOf("scene.playerDamage(p, 100);");
   assert(hit > 0, "the grab no longer lands its hit");
-  // Only a replacement is hidden: a web ship dies of the hit, a shielded or
-  // blinking one was never caught, god mode keeps its ship.
-  assert(grab.includes("var stockBefore = shipStock()[p.index];"));
+  const spend = grab.indexOf("shipStock()[p.index] = 0;");
+  assert(spend > 0 && spend < hit, "the stock is not spent before the hit");
   assert(
-    grab.includes("if (!p.dead && shipStock()[p.index] < stockBefore) {"),
-    "the grab does not tell a replacement from a survivor",
+    grab.includes('if (!componentOn("armor") && !gameState.godFlg) {'),
+    "a web ship's HP, or god mode, is spent like a stock",
   );
-  const hidden = grab.indexOf("p.gokiReplaced = true;");
-  assert(hidden > hit, "the replacement is not hidden after the hit");
-  assert(grab.includes("p.sprite.setVisible(false);"));
-  assert(grab.includes("if (p.shadow) p.shadow.setVisible(false);"));
-  // And comes out when the world does, before Akuma fires again.
-  const resume = functionSource(js, "_gokiGrabResume");
-  const shown = resume.indexOf("p.gokiReplaced = false;");
-  assert(shown > 0, "the resume leaves the replacement hidden");
-  assert(resume.includes("p.sprite.setVisible(true);"));
-  assert(resume.includes("if (p.shadow) p.shadow.setVisible(true);"));
-  assert(shown < resume.indexOf("bossShootStart(scene);"));
-  assert(resume.indexOf("scene.theWorldFlg = false;") < shown);
+  assert(
+    grab.indexOf("scene.updateShipStock();") < hit,
+    "the icons still show the stock",
+  );
+  // Nothing of the replacement's hiding is left: there is no replacement.
+  assert(!js.includes("gokiReplaced"));
+  // The SP button refuses while the world is stopped.
+  const fire = js.slice(
+    js.indexOf("    onSpFire(p) {"),
+    js.indexOf("    doSpFire(p) {"),
+  );
+  assert(
+    fire.includes("if (!this.gameStarted || this.theWorldFlg) return;"),
+    "a bomb can be fired while time is stopped",
+  );
 });
