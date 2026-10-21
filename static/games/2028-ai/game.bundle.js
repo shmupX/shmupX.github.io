@@ -3176,6 +3176,10 @@
       // And the SP cut-in for one that drew none: rando's nine frames, which
       // the level loader paints over cutin0-8 in game_asset (applyCustomCutin).
       this.load.spritesheet("cutin_custom", "assets/img/cutinCustom.png", { frameWidth: 256, frameHeight: 142 });
+      // The bomb's emblem — Contra's winged eagle, four colours — for the SP
+      // button and the bomb drop of a cart that came back wearing the
+      // writer's stand-in square (dezaSpFaces, dropItem).
+      this.load.spritesheet(CONTRA_BOMB_KEY, "assets/img/contraBomb.png", { frameWidth: CONTRA_BOMB_W, frameHeight: CONTRA_BOMB_H });
       for (var i = 0; i < 5; i++) {
         this.load.image("stage_loop" + i, "assets/img/stage/stage_loop" + i + ".png");
         this.load.image("stage_end" + i, "assets/img/stage/stage_end" + i + ".png");
@@ -10990,6 +10994,38 @@
   // and a neutral one when spent.
   var SP_FACE_SIZE = 67;      // hudCabtn0per.gif, and the frame the crop assumes
   var SP_FACE_ICON_ZOOM = 3;  // 16px art -> 48px, whole pixels, never resampled
+  // The bomb's own emblem: Contra's winged eagle, four frames cycling colour
+  // the way the winged letters do (assets/img/contraBomb.png, 24x15 a frame,
+  // the strip from spriteX). The cart writer gives a bomb item no letter — it
+  // has none — and draws its stand-in instead (game-to-save.js itemIcon: a
+  // 12x12 box with its corners off and a glint, in the type's colour), so a
+  // web game exported to the SAVE SHELF came back wearing an orange square as
+  // its bomb pickup, and the button wore it too. The square is the writer's,
+  // not the author's — isWriterItemSquare knows it by its silhouette, as
+  // emblemSilhouetteMatches knows the letters — so the button and the drop
+  // (dropItem) wear the eagle in its place. A cart whose author drew a bomb
+  // icon keeps it, as every icon an author drew is kept.
+  var CONTRA_BOMB_KEY = "contraBomb";
+  var CONTRA_BOMB_W = 24;
+  var CONTRA_BOMB_H = 15;
+  var CONTRA_BOMB_FRAMES = 4;
+  var CONTRA_BOMB_ZOOM = 2;         // 24x15 -> 48x30, inside the 56 px ground
+  var CONTRA_BOMB_FRAME_MS = 200;   // the emblem GIFs' own 5 fps
+  function isWriterItemSquare(scene, frameName) {
+    var mask = scene.frameAlphaMask("game_asset", frameName);
+    if (!mask || mask.width !== 16 || mask.height !== 16) return false;
+    for (var y = 0; y < 16; y++) {
+      for (var x = 0; x < 16; x++) {
+        var box = x >= 2 && x <= 13 && y >= 2 && y <= 13 &&
+          !((x === 2 || x === 13) && (y === 2 || y === 13));
+        if (!!mask.data[y * 16 + x] !== box) return false;
+      }
+    }
+    return true;
+  }
+  function contraBombFace(i) {
+    return { texture: CONTRA_BOMB_KEY, frame: i, zoom: CONTRA_BOMB_ZOOM };
+  }
   // The save's bomb icon as an atlas frame name, or null when this game has
   // none — 2028-AI itself, an import whose author configured no bomb item,
   // and one who left that slot's cell unpainted. Those keep the CA BOMB art.
@@ -11000,12 +11036,15 @@
     if (!frame || !scene.textures.exists("game_asset")) return null;
     return scene.textures.get("game_asset").has(frame) ? frame : null;
   }
-  function drawSpFace(scene, key, frameName, lit) {
+  // `icon` names the art for the middle of the disc: { texture, frame } and
+  // its whole-pixel zoom (the 16 px cell's 3 unless it says otherwise).
+  function drawSpFace(scene, key, icon, lit) {
     var size = SP_FACE_SIZE, r = size / 2;
-    var f = scene.textures.getFrame("game_asset", frameName);
+    var f = scene.textures.getFrame(icon.texture, icon.frame);
     var img = f && f.source && f.source.image;
     if (!img) return false;
-    var w = f.width * SP_FACE_ICON_ZOOM, h = f.height * SP_FACE_ICON_ZOOM;
+    var zoom = icon.zoom || SP_FACE_ICON_ZOOM;
+    var w = f.width * zoom, h = f.height * zoom;
     // The icon lands on its own scratch canvas first: the spent face
     // flattens it to dark greyscale, and filtering it in place would take
     // the rim and the ground down with it.
@@ -11053,15 +11092,34 @@
   }
   // {full, empty} texture keys for this game's own SP button, or null to
   // keep the shipped one. Keyed by the icon's frame so a level change cannot
-  // hand back another game's button.
+  // hand back another game's button. `frames` is the eagle's four lit faces,
+  // one a colour, for the button to cycle while a bomb is in stock
+  // (cycleSpFace); null for an author's own still, which has one.
   function dezaSpFaces(scene) {
     var frameName = dezaSpIconFrame(scene);
     if (!frameName) return null;
-    var faces = { full: "dezaSpFull:" + frameName, empty: "dezaSpEmpty:" + frameName };
-    if (scene.textures.exists(faces.full)) return faces;
+    var eagle = scene.textures.exists(CONTRA_BOMB_KEY) && isWriterItemSquare(scene, frameName);
+    var tag = eagle ? CONTRA_BOMB_KEY : frameName;
+    var faces = { full: "dezaSpFull:" + tag, empty: "dezaSpEmpty:" + tag, frames: null };
+    if (eagle) {
+      faces.frames = [];
+      for (var i = 0; i < CONTRA_BOMB_FRAMES; i++) faces.frames.push("dezaSpFull:" + tag + ":" + i);
+      faces.full = faces.frames[0];
+    }
+    // The spent face is drawn last, so its being there says the set is whole.
+    if (scene.textures.exists(faces.empty)) return faces;
+    var icon = function(n) {
+      return eagle ? contraBombFace(n) : { texture: "game_asset", frame: frameName };
+    };
     try {
-      if (!drawSpFace(scene, faces.full, frameName, true)) return null;
-      if (!drawSpFace(scene, faces.empty, frameName, false)) return null;
+      if (eagle) {
+        for (var j = 0; j < CONTRA_BOMB_FRAMES; j++) {
+          if (!drawSpFace(scene, faces.frames[j], icon(j), true)) return null;
+        }
+      } else if (!drawSpFace(scene, faces.full, icon(0), true)) {
+        return null;
+      }
+      if (!drawSpFace(scene, faces.empty, icon(0), false)) return null;
     } catch (e) {
       // A tainted or WebGL-only atlas source: the CA BOMB disc still works.
       return null;
@@ -15230,6 +15288,7 @@
       akebonoTenShock.setOrigin(0.5);
       akebonoTenShock.setDepth(6);
       akebonoTenShock.setAlpha(0);
+      _keepAkebonoOverlay(scene, [akebonoBg, akebonoTen, akebonoTenShock]);
       scene.tweens.add({
         targets: akebonoTen,
         scaleX: 1,
@@ -15264,10 +15323,8 @@
     scene.time.delayedCall(2700, function() {
       scene.playerDamage(p, 100);
       if (gameState.godFlg) {
-        scene.time.delayedCall(800, function() {
-          scene.theWorldFlg = false;
-          scene.spBtn.setAlpha(1);
-          bossShootStart(scene);
+        scene.time.delayedCall(GOKI_GRAB_RESUME_MS, function() {
+          _gokiGrabResume(scene);
         });
       }
     });
@@ -15289,7 +15346,59 @@
           }
         }
       }
+      // The ship he took was one of a stock — a cart played OG, or any game
+      // with the 3-HIT SHIP off: playerDamage above put the next one in the
+      // air (dezaNextShip) — or it was shielded, or a second player is still
+      // flying. The run is on, and only the time-stop said otherwise: the KO
+      // stayed up, the button dark and Akuma idle, for good. Give the world
+      // back once the KO has been seen, as god mode already did.
+      if (!gameState.godFlg && !scene._runEnded && !allPlayersDead(scene)) {
+        scene.time.delayedCall(GOKI_GRAB_RESUME_MS, function() {
+          _gokiGrabResume(scene);
+        });
+      }
     });
+  }
+  // How long the KO stays up after a grab the run survives before the fight
+  // goes on — god mode's own 800 ms past the hit.
+  var GOKI_GRAB_RESUME_MS = 800;
+  // What a Shun Goku Satsu and its KO leave on the screen — the akebono
+  // backdrop (looping, depth 5), the 天 and its shock ring, the K and the O
+  // at depth 200 — kept so a fight that goes on can take them down. bossDie's
+  // KO needs no list: STAGE CLEAR ends the scene under it.
+  function _keepAkebonoOverlay(scene, sprites) {
+    if (!scene.akebonoOverlays) scene.akebonoOverlays = [];
+    for (var i = 0; i < sprites.length; i++) scene.akebonoOverlays.push(sprites[i]);
+  }
+  function clearAkebonoOverlays(scene) {
+    var parts = scene.akebonoOverlays || [];
+    scene.akebonoOverlays = [];
+    scene.akebonoBgSprite = null;
+    var live = [];
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i] && parts[i].active) {
+        scene.tweens.killTweensOf(parts[i]);
+        live.push(parts[i]);
+      }
+    }
+    if (!live.length) return;
+    scene.tweens.add({
+      targets: live,
+      alpha: 0,
+      duration: 300,
+      onComplete: function() {
+        for (var j = 0; j < live.length; j++) {
+          if (live[j].active) live[j].destroy();
+        }
+      }
+    });
+  }
+  // The world back after a grab: the KO down, the button lit, Akuma firing.
+  function _gokiGrabResume(scene) {
+    clearAkebonoOverlays(scene);
+    scene.theWorldFlg = false;
+    if (scene.spBtn) scene.spBtn.setAlpha(1);
+    bossShootStart(scene);
   }
 
   // ../2019-es7/src/phaser/effects/AkebonoFinish.js
@@ -15322,6 +15431,7 @@
     koO.setOrigin(0.5);
     koO.setDepth(200);
     koO.setScale(0);
+    _keepAkebonoOverlay(scene, [akebonoBg, koK, koO]);
     scene.tweens.add({
       targets: koK,
       scaleX: 1,
@@ -15645,6 +15755,16 @@
       this.sceneSwitch = 0;
       this.bossActive = false;
       this.bossReached = false;
+      // The boss-arrival slide (bossAdd: the loop backdrop and its overlay
+      // move down 214 px to bring stage_end in from the top). The Scene
+      // instance outlives a scene.stop/start, so a run that ended mid-slide —
+      // the last ship lost in the boss's first seconds, GAME OVER, GO TO
+      // TITLE, START — carried the flag and its count into this create(): the
+      // fresh backdrop built below slid down for whatever the count had left,
+      // and the stage opened with a black band across its top. Same for a
+      // boss killed inside the slide and the stage after it.
+      this.bossAppearBgFlg = false;
+      this.bossAppearBgScroll = 0;
       this.bossTimerCountDown = 99;
       this.bossTimerFrameCnt = 0;
       this.bossTimerStartFlg = false;
@@ -15920,6 +16040,13 @@
       this.spBtn = this.spBtnWrap;
       this.spReadyTween = null;
       this.updateSpGauge();
+      // The eagle's four colours at the emblem GIFs' own pace while a bomb is
+      // in stock; an author's own still has one face and no clock.
+      this.spFaceFrames = spFaces && spFaces.frames ? spFaces.frames : null;
+      this.spFaceFrame = 0;
+      if (this.spFaceFrames) {
+        this.time.addEvent({ delay: CONTRA_BOMB_FRAME_MS, loop: true, callback: this.cycleSpFace, callbackScope: this });
+      }
       this.bossTimerLabel = this.add.sprite(GCX6 - 42, 58, "game_ui", "timeTxt.gif");
       this.bossTimerLabel.setOrigin(0, 0);
       this.bossTimerLabel.setDepth(101);
@@ -16538,6 +16665,16 @@
     // =================================================================
     // SP gauge
     // =================================================================
+    // The next of the eagle's colours on the lit face. Only while the meter
+    // is full: below that the lit face is cropped to the fill over the dim
+    // one, which has one colour, and there is nothing to cycle.
+    cycleSpFace() {
+      if (!this.spFaceFrames || !this.spBtnBar || !this.spBtnBar.active) return;
+      if (!this.spBtnReadyBg || this.spBtnReadyBg.alpha < 1) return;
+      this.spFaceFrame = (this.spFaceFrame + 1) % this.spFaceFrames.length;
+      this.spBtnBar.setTexture(this.spFaceFrames[this.spFaceFrame]);
+      this.updateSpGauge();
+    }
     updateSpGauge() {
       if (!this.spBtnBar) return;
       // One widget, and it belongs to player 1 — it is also a touch BUTTON, and
@@ -16721,7 +16858,26 @@
         }
       }
       var item = null;
-      if (letter && this.textures.exists("powerups")) {
+      // The bomb drop of a cart written from a web game is the writer's
+      // stand-in square (it gives a bomb no letter): the eagle flies in its
+      // place, as it sits on the SP button (dezaSpFaces).
+      var eagle = itemName === "dezaSp" && usingOwn && !ownItems &&
+        this.textures.exists(CONTRA_BOMB_KEY) && isWriterItemSquare(this, own);
+      if (eagle) {
+        var eagleAnim = "contraBombEmblem";
+        if (!this.anims.exists(eagleAnim)) {
+          this.anims.create({
+            key: eagleAnim,
+            frames: this.anims.generateFrameNumbers(CONTRA_BOMB_KEY, { start: 0, end: CONTRA_BOMB_FRAMES - 1 }),
+            frameRate: 1e3 / CONTRA_BOMB_FRAME_MS,
+            repeat: -1
+          });
+        }
+        item = this.add.sprite(x, y, CONTRA_BOMB_KEY, 0);
+        item.play(eagleAnim);
+        tint = 0;
+      }
+      if (!item && letter && this.textures.exists("powerups")) {
         var emblemTex = this.textures.get("powerups");
         var emblemFrames = [];
         for (var ef = 0; ef < 4; ef++) {
@@ -17158,7 +17314,12 @@
             hit = true;
             break;
           }
-          if (bossGrabs(this)) {
+          // A ship that cannot be hit cannot be caught either — blinking
+          // after a hit or a respawn (hurtFlg), under a bomb's cover, behind
+          // a barrier: the grab's own hit would bounce off all three, and the
+          // next ship out of the stock arrives blinking under the Akuma who
+          // took the last one.
+          if (bossGrabs(this) && !p.hurtFlg && !p.dezaBombInvuln && !p.barrierActive) {
             // A singleton cinematic: it freezes the world and takes over the
             // screen, so exactly one ship gets grabbed even if both touched the
             // boss on this tick.

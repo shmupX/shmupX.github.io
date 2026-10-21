@@ -382,6 +382,35 @@ they are written out in full.
     only when the level is not a Dezaemon import and actually carries a
     `bossExtra`, and the no-record fallback lifts the time-stop before it hands
     over. Upstream fix belongs in `2019-es7/src/phaser/game-objects/Boss.js`.
+  - Akuma's grab gives the world back when the run survives it. The Shun Goku
+    Satsu (`gokiPlayerAttack`: a boss on his routine catching a ship that
+    touches it) stops time, lands its hit and shows the KO, and only god mode
+    ever lifted the stop — a web game's ship died of the hit and the run went to
+    CONTINUE?, so nothing else had to. A ship out of a stock (a cart played OG,
+    or the 3-HIT SHIP off) is replaced inside the hit (`dezaNextShip`), a
+    shielded one survives it, a second player may still be flying: the fight
+    then sat frozen on the KO for good (rando's Akuma). The grab now keeps what
+    it draws (`akebonoOverlays`) and, with a player still flying and the run not
+    ended, fades the KO and hands back to `bossShootStart` 800 ms after it, as
+    god mode did. And a ship the grab's own hit would bounce off — blinking
+    after a hit or a respawn, under a bomb, behind a barrier — is not caught, so
+    the next ship out of the stock is not taken again where it appears.
+    `tests/boss_goki_pattern_test.ts`.
+  - `create()` drops the boss-arrival slide (`bossAppearBgFlg`,
+    `bossAppearBgScroll`). The Scene instance outlives a scene.stop/start, so a
+    run that ended inside the boss's first seconds — GAME OVER, GO TO TITLE,
+    START — carried the slide into the next game's stage 1, whose fresh backdrop
+    slid down for whatever was left of the 214 px and opened with a black band
+    across its top. `tests/boss_appear_scroll_test.ts`.
+  - The SP button and the bomb drop wear Contra's winged eagle
+    (`assets/img/contraBomb.png`, four colours, the `contraBomb` spritesheet)
+    where a cart came back with the writer's stand-in square as its bomb icon:
+    the writer gives a bomb item no letter (`lib/powerup-emblems.ts`), so a web
+    game exported to the SAVE SHELF played with an orange box on the button and
+    on every bomb pickup. `isWriterItemSquare` knows the box by its silhouette,
+    as the letters are known; an author's own bomb icon is kept. The lit face
+    cycles the four colours while a bomb is in stock (`cycleSpFace`).
+    `tests/contra_bomb_test.ts`.
   - The true ending is 2028.Ai's too. `decideEnding` sent any run whose last
     stage is index 4 to the credits from stage 3's clear unless four akebono
     finishes and no continue had unlocked it. NO STORY, which every import
