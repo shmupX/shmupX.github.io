@@ -1,9 +1,11 @@
-// The gs cloud game's third-stage story carries the glitter bunny pin on its
-// second part (scripts/gs/cut_bunny_pin.py cuts it out of the upload,
-// scripts/gs/story-bunny-pin.ts puts it on the level as
+// The third-stage story of the gs cloud game, and of rando, the game the
+// SAVE SHELF's exports play, carries the glitter bunny pin on its second part
+// (scripts/gs/cut_bunny_pin.py cuts it out of the upload,
+// scripts/gs/story-bunny-pin.ts puts it on either level as
 // storyData/customImages/stage2_part1). gs has two stages, so that entry is
-// the one past its last, and the pin makes it an epilogue of gs's own. The
-// script runs against a stand-in database here, never the real one.
+// the one past its last, and the pin makes it an epilogue of gs's own;
+// rando's slot held the raw upload, which --revert gives back. The script
+// runs against a stand-in database here, never the real one.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { decodeBase64 } from "@std/encoding/base64";
@@ -12,10 +14,13 @@ import { setDatabaseUrl } from "../mcp/lib/rtdb.ts";
 import {
   apply,
   KEY,
+  levelOf,
   PICTURE,
   pictureDataUrl,
   plan,
   revert,
+  UPLOAD,
+  uploadDataUrl,
 } from "../scripts/gs/story-bunny-pin.ts";
 
 type Tree = Record<string, unknown>;
@@ -261,9 +266,90 @@ Deno.test("--revert takes the picture out, and the entry is the seeded story it 
       `${IMAGES}/${KEY}`,
       "data:image/png;base64,AAAA",
     );
-    assertEquals(await revert({ force: true }), [`${IMAGES}/${KEY}`]);
+    assertEquals(await revert("gs", { force: true }), [`${IMAGES}/${KEY}`]);
     assertEquals(db.read(`${IMAGES}/${KEY}`), null);
   });
+});
+
+/** rando's story as the editor saved it: three stages, the raw photo on the third. */
+const RANDO = "shmupX/levels/rando";
+const RANDO_IMAGES = `${RANDO}/storyData/customImages`;
+const randoSeed = (stage2Part1: string | null) => ({
+  shmupX: {
+    levels: {
+      rando: {
+        name: "rando",
+        stages: { stage0: {}, stage1: {}, stage2: {} },
+        storyData: {
+          stage2: {
+            part: [
+              {
+                background: "2",
+                text: "T3 promised to evolve global intelligence",
+              },
+              {
+                background: "Done",
+                text: "Digital Satan promised our deepest desires ",
+              },
+            ],
+          },
+          customImages: {
+            stage0_part0: "data:image/png;base64,AAAA",
+            ...(stage2Part1 == null ? {} : { stage2_part1: stage2Part1 }),
+          },
+        },
+      },
+    },
+  },
+});
+
+Deno.test("on rando the pin replaces the raw upload, and --revert gives the upload back", async () => {
+  const jpg = await Deno.readFile(UPLOAD);
+  assertEquals([jpg[0], jpg[1]], [0xff, 0xd8]);
+  const upload = await uploadDataUrl();
+  assert(upload.startsWith("data:image/jpeg;base64,"));
+  assertEquals(decodeBase64(upload.slice(upload.indexOf(",") + 1)), jpg);
+
+  await withDb(randoSeed(upload), async (db) => {
+    const p = await plan("rando");
+    assertEquals(p.state, "before");
+    assertEquals(await apply(p), [`${RANDO_IMAGES}/${KEY}`]);
+    assertEquals(db.read(`${RANDO_IMAGES}/${KEY}`), await pictureDataUrl());
+    assertEquals(
+      db.read(`${RANDO_IMAGES}/stage0_part0`),
+      "data:image/png;base64,AAAA",
+    );
+    assert(typeof db.read(`${RANDO}/savedAt`) === "number");
+    // gs is not touched by a write to rando.
+    assertEquals(db.read("shmupX/levels/gs"), null);
+    assertEquals((await plan("rando")).state, "already as planned");
+    assertEquals(await apply(await plan("rando")), []);
+
+    assertEquals(await revert("rando"), [`${RANDO_IMAGES}/${KEY}`]);
+    assertEquals(db.read(`${RANDO_IMAGES}/${KEY}`), upload);
+    assertEquals((await plan("rando")).state, "before");
+    assertEquals(await revert("rando"), []);
+  });
+  // An empty rando slot is filled too, and --revert still gives the slot the
+  // upload: that is what rando held.
+  await withDb(randoSeed(null), async (db) => {
+    assertEquals((await plan("rando")).state, "new");
+    await apply(await plan("rando"));
+    assertEquals(await revert("rando"), [`${RANDO_IMAGES}/${KEY}`]);
+    assertEquals(db.read(`${RANDO_IMAGES}/${KEY}`), upload);
+  });
+});
+
+Deno.test("only the two levels that carry the pin are accepted", () => {
+  assertEquals(levelOf("gs"), "gs");
+  assertEquals(levelOf("rando"), "rando");
+  let failed = "";
+  try {
+    levelOf("foo");
+  } catch (e) {
+    failed = (e as Error).message;
+  }
+  assert(failed.includes("foo") && failed.includes("rando"), failed);
 });
 
 async function saveElsewhere(base: string, path: string, value: unknown) {

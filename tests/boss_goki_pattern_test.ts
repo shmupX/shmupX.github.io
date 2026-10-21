@@ -381,3 +381,38 @@ Deno.test("clearAkebonoOverlays fades what is still up and destroys it, once", a
   sandbox.clear(scene);
   assertEquals(tweens.length, 1);
 });
+
+// The grab's kill of a one-hit ship is seen.
+//
+// A ship out of a stock — a cart played OG, the SAVE SHELF's exports among
+// them — is replaced inside the grab's hit (dezaNextShip), so the next ship
+// was already flying when the world came back, and the grab read as
+// survived: rando's Akuma on the shelf showed the KO and the fight went on
+// with the same ship in the air, one icon fewer at the foot of the screen the
+// only sign. The replacement now stays off screen until the world is back,
+// and arrives there as a replacement does, blinking at the spawn point.
+Deno.test("a ship the grab took out of a stock is seen to go, and its replacement waits for the world", async () => {
+  const js = await read(BUNDLE);
+  const grab = functionSource(js, "gokiPlayerAttack");
+  const hit = grab.indexOf("scene.playerDamage(p, 100);");
+  assert(hit > 0, "the grab no longer lands its hit");
+  // Only a replacement is hidden: a web ship dies of the hit, a shielded or
+  // blinking one was never caught, god mode keeps its ship.
+  assert(grab.includes("var stockBefore = shipStock()[p.index];"));
+  assert(
+    grab.includes("if (!p.dead && shipStock()[p.index] < stockBefore) {"),
+    "the grab does not tell a replacement from a survivor",
+  );
+  const hidden = grab.indexOf("p.gokiReplaced = true;");
+  assert(hidden > hit, "the replacement is not hidden after the hit");
+  assert(grab.includes("p.sprite.setVisible(false);"));
+  assert(grab.includes("if (p.shadow) p.shadow.setVisible(false);"));
+  // And comes out when the world does, before Akuma fires again.
+  const resume = functionSource(js, "_gokiGrabResume");
+  const shown = resume.indexOf("p.gokiReplaced = false;");
+  assert(shown > 0, "the resume leaves the replacement hidden");
+  assert(resume.includes("p.sprite.setVisible(true);"));
+  assert(resume.includes("if (p.shadow) p.shadow.setVisible(true);"));
+  assert(shown < resume.indexOf("bossShootStart(scene);"));
+  assert(resume.indexOf("scene.theWorldFlg = false;") < shown);
+});

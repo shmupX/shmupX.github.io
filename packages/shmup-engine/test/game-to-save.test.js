@@ -228,24 +228,37 @@ const paintedRow = (sections, stage, row) =>
 /** The first placement-grid row anything spawns on. */
 const firstPlaced = (sections, stage) => {
   const { offset, stride } = SEC5_REGIONS.placement;
-  const at = sections[5].subarray(offset + stage * stride, offset + (stage + 1) * stride)
+  const at = sections[5].subarray(
+    offset + stage * stride,
+    offset + (stage + 1) * stride,
+  )
     .findIndex((b) => b !== 0);
   return Math.floor(at / 20);
 };
 const curveOf = (sections, stage) => {
   const { offset, stride } = SEC5_REGIONS.scrollCurves;
-  return sections[5].subarray(offset + stage * stride, offset + (stage + 1) * stride);
+  return sections[5].subarray(
+    offset + stage * stride,
+    offset + (stage + 1) * stride,
+  );
 };
 
 Deno.test("a stage's story is painted into the opening rows of its background map", () => {
   const plain = buildSaveFromGame(level(), art());
   const { sections, warnings, report } = buildSaveFromGame(level(), art(), {
-    storyBackdrops: [{ stage: 0, variants: [backdrop("words", 3, [255, 255, 255])] }],
+    storyBackdrops: [{
+      stage: 0,
+      variants: [backdrop("words", 3, [255, 255, 255])],
+    }],
   });
   assertEquals(warnings.filter((w) => /story/.test(w)), []);
   const top = STORY_FIRST_ROW + 3;
-  for (let r = 0; r < STORY_FIRST_ROW; r++) assert(!paintedRow(sections, 0, r), `row ${r} under the screen's edge`);
-  for (let r = STORY_FIRST_ROW; r < top; r++) assert(paintedRow(sections, 0, r), `row ${r} carries the story`);
+  for (let r = 0; r < STORY_FIRST_ROW; r++) {
+    assert(!paintedRow(sections, 0, r), `row ${r} under the screen's edge`);
+  }
+  for (let r = STORY_FIRST_ROW; r < top; r++) {
+    assert(paintedRow(sections, 0, r), `row ${r} carries the story`);
+  }
   assert(!paintedRow(sections, 0, top), "nothing above it");
   // The waves wait for it, the scroll slows while it is on screen and then
   // runs as before, and the stage's palette is the game's own.
@@ -268,7 +281,10 @@ Deno.test("a story the CG pages cannot hold is drawn smaller, else not at all", 
   // 80 rows of noise are 1120 cells of their own: more than the pages hold.
   const huge = backdrop("huge", 80, null, true);
   const smaller = buildSaveFromGame(level(), art(), {
-    storyBackdrops: [{ stage: 0, variants: [huge, backdrop("small", 2, [0, 0, 255])] }],
+    storyBackdrops: [{
+      stage: 0,
+      variants: [huge, backdrop("small", 2, [0, 0, 255])],
+    }],
   });
   assertEquals(smaller.warnings.filter((w) => /story/.test(w)), []);
   assertStrictEquals(smaller.report.stages[0].story.size, "small");
@@ -279,7 +295,10 @@ Deno.test("a story the CG pages cannot hold is drawn smaller, else not at all", 
   assert(none.warnings.some((w) => /no CG cells left for its story/.test(w)));
   assertStrictEquals(none.report.stages[0].story, null);
   // A story with no room costs the stage nothing: no quiet opening.
-  assertStrictEquals(firstPlaced(none.sections, 0), firstPlaced(plain.sections, 0));
+  assertStrictEquals(
+    firstPlaced(none.sections, 0),
+    firstPlaced(plain.sections, 0),
+  );
   assertEquals(curveOf(none.sections, 0), curveOf(plain.sections, 0));
   assert(!paintedRow(none.sections, 0, STORY_FIRST_ROW));
 });
@@ -288,7 +307,10 @@ Deno.test("a story for a stage the cart lacks, or not 224 wide, is passed over",
   const { warnings, report } = buildSaveFromGame(level(), art(), {
     storyBackdrops: [
       { stage: 4, variants: [backdrop("words", 2, [255, 255, 255])] },
-      { stage: 0, variants: [{ ...backdrop("words", 2, [255, 255, 255]), w: 200 }] },
+      {
+        stage: 0,
+        variants: [{ ...backdrop("words", 2, [255, 255, 255]), w: 200 }],
+      },
     ],
   });
   assertEquals(warnings.filter((w) => /story/.test(w)).length, 1);
@@ -300,10 +322,16 @@ Deno.test("a boss fight's scroll loop never reaches back to the story", () => {
   // No boss, so the stage's extent hangs on its last wave alone.
   const bossless = { ...level(), bossData: {} };
   const { report } = buildSaveFromGame(bossless, art(), {
-    storyBackdrops: [{ stage: 0, variants: [backdrop("words", 12, [255, 255, 255])] }],
+    storyBackdrops: [{
+      stage: 0,
+      variants: [backdrop("words", 12, [255, 255, 255])],
+    }],
   });
   const [loop, end] = report.stages[0].extent;
-  assert(loop * 16 >= STORY_FIRST_ROW + 12, `loop part ${loop} starts above the story`);
+  assert(
+    loop * 16 >= STORY_FIRST_ROW + 12,
+    `loop part ${loop} starts above the story`,
+  );
   assert(loop < end);
 });
 
@@ -494,13 +522,20 @@ Deno.test("a tiny level assembles, and decodeSave reads it back", () => {
   assertStrictEquals(decoded.enemies.length, 3);
   const dots = decoded.enemies.filter((e) => e.record < 16);
   const slab = decoded.enemies.find((e) => e.record >= 48 && e.record < 52);
-  assert(dots.length === 2 && slab, "dot is two 16x16 records, slab a 64x32 one");
+  assert(
+    dots.length === 2 && slab,
+    "dot is two 16x16 records, slab a 64x32 one",
+  );
   const dot = dots.find((e) => e.placements === 3);
   const dotDrop = dots.find((e) => e.placements === 2);
   assert(dot && dotDrop, "three plain dots, two dropping ones");
   assertStrictEquals(slab.placements, 2);
   assertStrictEquals(dot.spriteKeys.length, 4);
-  assertEquals(dotDrop.spriteKeys, dot.spriteKeys, "the variants share their art");
+  assertEquals(
+    dotDrop.spriteKeys,
+    dot.spriteKeys,
+    "the variants share their art",
+  );
   assertStrictEquals(slab.spriteKeys.length, 2);
   assertStrictEquals(decoded.sprites[dot.spriteKeys[0]].w, 16);
   assertStrictEquals(decoded.sprites[slab.spriteKeys[0]].w, 64);
@@ -670,7 +705,9 @@ Deno.test("both title logos stack: the logo on top, the subtitle in the bottom r
 function titleGPlate() {
   const g = { w: 256, h: 364, rgba: new Uint8Array(256 * 364 * 4) };
   for (let y = 178; y < 283; y++) {
-    for (let x = 38; x < 208; x++) g.rgba.set([255, 128, 0, 255], (y * 256 + x) * 4);
+    for (let x = 38; x < 208; x++) {
+      g.rgba.set([255, 128, 0, 255], (y * 256 + x) * 4);
+    }
   }
   // A faint halo pixel far from the badge: below the quantizer's cutoff, so it
   // would come out transparent anyway and must not widen the cut.
@@ -690,7 +727,10 @@ Deno.test("a game's own titleG is TITLE 1, cut to what it draws, when it has no 
   assertStrictEquals(t1.w, 104);
   assertStrictEquals(t1.h, 64);
   assert(
-    Array.from({ length: 32 }, (_, i) => bankWord(out.sections, TITLE_SLOTS.title2.first + i))
+    Array.from(
+      { length: 32 },
+      (_, i) => bankWord(out.sections, TITLE_SLOTS.title2.first + i),
+    )
       .every((w) => w === 0xffff),
     "TITLE 2 stays empty",
   );
@@ -698,11 +738,20 @@ Deno.test("a game's own titleG is TITLE 1, cut to what it draws, when it has no 
 
 Deno.test("a logo, a subtitle or a cart's drawn title wins over the game's G", () => {
   const titleG = titleGPlate();
-  const logo = buildSaveFromGame(level(), art(), { titleG, title1: frame(256, 91, [200, 200, 200]) });
+  const logo = buildSaveFromGame(level(), art(), {
+    titleG,
+    title1: frame(256, 91, [200, 200, 200]),
+  });
   assertStrictEquals(logo.report.title.source, "uploaded");
-  const subtitle = buildSaveFromGame(level(), art(), { titleG, title2: frame(256, 20, [100, 200, 255]) });
+  const subtitle = buildSaveFromGame(level(), art(), {
+    titleG,
+    title2: frame(256, 20, [100, 200, 255]),
+  });
   assertStrictEquals(subtitle.report.title.source, "uploaded");
-  assert(!subtitle.report.title.title1, "the G does not slip in beside an uploaded subtitle");
+  assert(
+    !subtitle.report.title.title1,
+    "the G does not slip in beside an uploaded subtitle",
+  );
   const drawn = buildSaveFromGame(
     { ...level(), dezaemonTitle: { title1: "dezaTitle1.gif" } },
     { ...art(), "dezaTitle1.gif": frame(120, 44, [240, 220, 40]) },
@@ -710,7 +759,9 @@ Deno.test("a logo, a subtitle or a cart's drawn title wins over the game's G", (
   );
   assertStrictEquals(drawn.report.title.source, "cart");
   // A G that draws nothing leaves the page blank, as before.
-  const empty = buildSaveFromGame(level(), art(), { titleG: { w: 8, h: 8, rgba: new Uint8Array(256) } });
+  const empty = buildSaveFromGame(level(), art(), {
+    titleG: { w: 8, h: 8, rgba: new Uint8Array(256) },
+  });
   assertStrictEquals(empty.report.title.source, "none");
 });
 
@@ -1185,5 +1236,214 @@ Deno.test("a cart's bullets survive a second trip through the editor", () => {
   assertEquals(
     second.settings.bullets.configs.map((c) => c.raw),
     first.settings.bullets.configs.map((c) => c.raw),
+  );
+});
+
+// A record that spawns a child when it dies brings the child along.
+//
+// rando's motorcycle (an import, verbatim bytes) throws its rider: its death
+// word is mode 2, SPAWN the record its byte 3 names, and the mapper linked
+// that child by roster key (dezaemon.deathChild). The rider is placed on no
+// cell, so the writer, which wrote a record per placed letter, wrote nothing
+// for it, and the bike's word still named the rider's slot in the cart it
+// came from — on the SAVE SHELF the bike exploded and nobody fell off. The
+// child is written too now, its parent's byte 3 pointed at the slot it got;
+// a child's child follows; the digit cells keep their drop in the word's
+// place.
+function hex(bytes) {
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** The record index a stage's report gave a name (its no-drop record). */
+function recordNamed(report, stage, name) {
+  const r = report.stages[stage].records.find((e) =>
+    e.name === name && !e.drop
+  );
+  assert(
+    r,
+    `${name} is not in the report: ${
+      JSON.stringify(report.stages[stage].records)
+    }`,
+  );
+  return r.record;
+}
+
+Deno.test("a verbatim record's successor is written with it, and its word points at the new slot", () => {
+  const lvl = level();
+  // The bike, an import at record 35 whose word spawned its cart's record 36
+  // (placement id 0xb4): the rider, which spawns a spark. Their art is
+  // smaller than their import's band, so they land in other slots here.
+  lvl.enemylist = [
+    ["00", "00", "A1", "00", "00", "A0", "00", "A0"],
+  ];
+  lvl.enemyData = {
+    enemyA: {
+      name: "bike",
+      hp: 20,
+      score: 200,
+      speed: 1,
+      interval: -1,
+      texture: ["dot0.png", "dot1.png"],
+      dezaemon: {
+        record: 35,
+        attributes: hex(
+          encodeEnemyRecord({
+            hpIndex: 2,
+            deathMode: 2,
+            deathParam: 0xb4 & 0x7f,
+          }),
+        ),
+        deathChild: "enemyB",
+      },
+    },
+    enemyB: {
+      name: "rider",
+      hp: 1,
+      score: 100,
+      speed: 1,
+      interval: -1,
+      texture: ["slab0.png"],
+      dezaemon: {
+        record: 36,
+        attributes: hex(
+          encodeEnemyRecord({
+            noCollision: true,
+            deathMode: 2,
+            deathParam: 0xb5 & 0x7f,
+          }),
+        ),
+        deathChild: "enemyC",
+      },
+    },
+    enemyC: {
+      name: "spark",
+      hp: 1,
+      score: 0,
+      speed: 1,
+      interval: -1,
+      texture: ["shot0.png"],
+      dezaemon: {
+        record: 37,
+        attributes: hex(
+          encodeEnemyRecord({ noCollision: true, deathPresentation: 0 }),
+        ),
+      },
+    },
+  };
+  const { sections, warnings, report } = buildSaveFromGame(lvl, art());
+  // The drop-1 cell keeps the drop in the word's place, as before.
+  assertEquals(warnings.filter((w) => /dies alone|no free/.test(w)), []);
+  assert(
+    warnings.some((w) =>
+      /enemyA \(bike\) spawns a child when it dies; on its drop-1 cells/.test(w)
+    ),
+  );
+
+  const decoded = decodeSave(buildPayload(sections));
+  const at = (record) => decoded.enemies.find((e) => e.record === record);
+  const bike = at(recordNamed(report, 0, "bike"));
+  const rider = at(recordNamed(report, 0, "rider"));
+  const spark = at(recordNamed(report, 0, "spark"));
+  assert(
+    bike && rider && spark,
+    `records ${decoded.enemies.map((e) => e.record).sort().join(",")}`,
+  );
+  // The rider and the spark are placed nowhere.
+  assertStrictEquals(bike.placements, 2);
+  assertStrictEquals(rider.placements, 0);
+  assertStrictEquals(spark.placements, 0);
+  // The chain, slot by slot, in the slots this cart gave them.
+  assertStrictEquals(bike.behavior.death.mode, 2);
+  assertStrictEquals(bike.behavior.death.record, rider.record);
+  assertStrictEquals(rider.behavior.death.mode, 2);
+  assertStrictEquals(rider.behavior.death.record, spark.record);
+  assertStrictEquals(spark.behavior.death.mode, 0);
+  assert(rider.behavior.move.mode & 2, "the rider lost its no-collision bit");
+  assert(spark.behavior.death.silent, "the spark lost its silent death");
+  // The rider's art is its own: the slab, in the band that holds a 40x30.
+  assert(rider.spriteKeys.length > 0);
+  assertStrictEquals(decoded.sprites[rider.spriteKeys[0]].w, 64);
+  // The drop-1 variant of the bike drops, and spawns nothing.
+  const bikeDrop = decoded.enemies.find((e) =>
+    e.record !== bike.record && e.placements === 1
+  );
+  assert(bikeDrop, "no drop-1 bike");
+  assertStrictEquals(bikeDrop.behavior.death.mode, 1);
+  assertStrictEquals(decoded.enemies.length, 4);
+  // And read back, the mapper links the chain by key again.
+  const { gameJson } = mapSaveToGame(decoded);
+  const keyOf = (record) =>
+    Object.keys(gameJson.enemyData).find((k) =>
+      gameJson.enemyData[k].dezaemon &&
+      gameJson.enemyData[k].dezaemon.record === record
+    );
+  assertStrictEquals(
+    gameJson.enemyData[keyOf(bike.record)].dezaemon.deathChild,
+    keyOf(rider.record),
+  );
+  assertStrictEquals(
+    gameJson.enemyData[keyOf(rider.record)].dezaemon.deathChild,
+    keyOf(spark.record),
+  );
+});
+
+Deno.test("a successor the roster already placed is reused, and one the roster lacks is warned about", () => {
+  const lvl = level();
+  // The rider is placed too, on a cell with no digit: one record serves
+  // both the cell and the word.
+  lvl.enemylist = [
+    ["00", "00", "A0", "00", "00", "B0", "00", "00"],
+  ];
+  lvl.enemyData = {
+    enemyA: {
+      name: "bike",
+      hp: 20,
+      score: 200,
+      speed: 1,
+      interval: -1,
+      texture: ["dot0.png"],
+      dezaemon: {
+        record: 35,
+        attributes: hex(encodeEnemyRecord({ deathMode: 2, deathParam: 0x34 })),
+        deathChild: "enemyB",
+      },
+    },
+    enemyB: {
+      name: "rider",
+      hp: 1,
+      score: 100,
+      speed: 1,
+      interval: -1,
+      texture: ["dot1.png"],
+      dezaemon: {
+        record: 36,
+        attributes: hex(encodeEnemyRecord({ noCollision: true })),
+      },
+    },
+  };
+  const { sections, warnings, report } = buildSaveFromGame(lvl, art());
+  assertEquals(warnings.filter((w) => /dies alone|no free/.test(w)), []);
+  const decoded = decodeSave(buildPayload(sections));
+  const bike = decoded.enemies.find((e) =>
+    e.record === recordNamed(report, 0, "bike")
+  );
+  const rider = decoded.enemies.find((e) =>
+    e.record === recordNamed(report, 0, "rider")
+  );
+  assert(bike && rider);
+  assertStrictEquals(rider.placements, 1);
+  assertStrictEquals(bike.behavior.death.mode, 2);
+  assertStrictEquals(bike.behavior.death.record, rider.record);
+  assertStrictEquals(decoded.enemies.length, 2);
+
+  // A word whose child the roster does not hold stays as it was, with a
+  // warning, and the bike still dies — alone.
+  lvl.enemyData.enemyA.dezaemon.deathChild = "enemyZ";
+  const again = buildSaveFromGame(lvl, art());
+  assert(
+    again.warnings.some((w) =>
+      /enemyA \(bike\) spawns enemyZ when it dies, but enemyData has no such record/
+        .test(w)
+    ),
   );
 });
