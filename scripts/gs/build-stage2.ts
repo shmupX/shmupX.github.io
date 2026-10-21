@@ -137,7 +137,9 @@ export const DALTONIUS = {
   spgage: 30,
   // Below half his bar, Liu Kang's dragon: the morph plays once, then every
   // move is a bite, and both weapons spit dragon heads. Akuma's routine and
-  // the balloon carry over from the record.
+  // the balloon carry over from the record. So does Akuma's grab, whose
+  // finish poses are the bite's last jaw-shut frame: without its own the
+  // dragon struck them as Daltonius.
   stage2: {
     hpBelow: 0.5,
     anim: {
@@ -146,6 +148,8 @@ export const DALTONIUS = {
       shootA: DRAGON.slice(10),
       shootB: DRAGON.slice(10),
       syngoku: DRAGON.slice(10),
+      syngokuFinish: [DRAGON[12]],
+      syngokuFinishTen: [DRAGON[12]],
     },
     bulletDataA: {
       damage: 1,
