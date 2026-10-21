@@ -245,3 +245,38 @@ Deno.test("the button cycles the eagle's colours while a bomb is in stock, and t
     "a letter would draw over the eagle",
   );
 });
+
+// A game's own face is lit across its whole ground.
+//
+// updateSpGauge crops the lit face over the dim one as the meter fills, to
+// the 51x50 inside which the shipped meter's lit art lies. A game's own face
+// (drawSpFace) lights a 56 px disc, so cropped the same way its warm ground
+// showed as a square inside the dim disc, the eagle on it. The whole face is
+// lit at full now, and fills from the top as the shipped meter does.
+Deno.test("the meter crops a game's own face to its whole disc", async () => {
+  const js = await read(BUNDLE);
+  const create = js.slice(
+    js.indexOf("      var spFaces = dezaSpFaces(this);"),
+    js.indexOf("      this.spLens = createSpLens(this);"),
+  );
+  assert(
+    create.includes("this.spOwnFace = !!spFaces;"),
+    "create does not say whose face the button wears",
+  );
+  const gauge = methodSource(
+    js,
+    "updateSpGauge",
+    "var PhaserGameScene = class",
+  );
+  const own = gauge.indexOf("} else if (this.spOwnFace) {");
+  assert(own > 0, "the meter crops every face alike");
+  assert(
+    gauge.includes(
+      "this.spBtnBar.setCrop(0, 0, SP_FACE_SIZE, Math.round(SP_FACE_SIZE * ratio));",
+    ),
+    "a game's own face is not lit across the whole disc",
+  );
+  // The shipped meter keeps its crop, after the own-face branch.
+  assert(gauge.indexOf("this.spBtnBar.setCrop(8, cropY, 51, cropH);") > own);
+  assert(js.includes("\n  var SP_FACE_SIZE = 67;"));
+});

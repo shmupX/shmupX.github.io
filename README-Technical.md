@@ -408,15 +408,16 @@ they are written out in full.
     after a hit or a respawn, under a bomb, behind a barrier — is not caught, so
     the next ship out of the stock is not taken again where it appears.
     `tests/boss_goki_pattern_test.ts`.
-  - The grab's kill of a one-hit ship is seen. A ship out of a stock is
-    replaced inside the grab's hit (`dezaNextShip`), so the next ship was
-    already flying when the world came back and the grab read as survived:
-    rando's Akuma on the SAVE SHELF showed the KO and the fight went on with
-    the same ship in the air, one icon fewer at the foot of the screen the
-    only sign. The replacement now stays off screen until the world is back
-    (`p.gokiReplaced`, lifted in `_gokiGrabResume`) and arrives there as a
-    replacement does, blinking at the spawn point; the blast at the grab
-    point is the death it was. `tests/boss_goki_pattern_test.ts`.
+  - The grab's KO is the end of the run, not one ship of a stock. The shipped
+    game's ship dies of the hit and goes to CONTINUE?; a one-hit ship out of a
+    stock (a cart played OG, the SAVE SHELF's exports among them) was replaced
+    inside the hit (`dezaNextShip`), so rando's Akuma left the next ship flying
+    under his KO while Trump, met once the stock was spent, ended the run. The
+    stock is spent before the hit lands, so the hit is the last ship's whoever
+    flies the routine. And `onSpFire` refuses while time is stopped: the grab
+    hides the SP button but left it live, and a bomb tapped inside the hold
+    would have held the ship invincible through the hit.
+    `tests/boss_goki_pattern_test.ts`.
   - A dying enemy's successor is drawn from a pool of its own.
     `spawnDeathChild` counted everything in the air against
     `DEZA_MAX_LIVE_ZAKO` — the zako, a boss's parts (`spawnDezaPart`, up to
@@ -439,6 +440,13 @@ they are written out in full.
     as the letters are known; an author's own bomb icon is kept. The lit face
     cycles the four colours while a bomb is in stock (`cycleSpFace`).
     `tests/contra_bomb_test.ts`.
+  - A game's own face is lit across its whole disc. `updateSpGauge` crops the
+    lit face over the dim one as the meter fills, to the 51x50 inside which the
+    shipped meter's lit art lies; a game's own face (`drawSpFace`) lights a
+    56 px disc, so cropped the same way its warm ground showed as a square
+    inside the dim disc, the eagle on it. A face of the game's own
+    (`spOwnFace`) is cropped to the whole disc at full, and fills from the top
+    as the shipped meter does. `tests/contra_bomb_test.ts`.
   - The true ending is 2028.Ai's too. `decideEnding` sent any run whose last
     stage is index 4 to the credits from stage 3's clear unless four akebono
     finishes and no continue had unlocked it. NO STORY, which every import

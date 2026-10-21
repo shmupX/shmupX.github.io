@@ -15331,21 +15331,18 @@
       });
     });
     scene.time.delayedCall(2700, function() {
-      var stockBefore = shipStock()[p.index];
-      scene.playerDamage(p, 100);
-      // A ship out of a stock is replaced inside that hit (dezaNextShip), so
-      // the next one was already flying when the world came back and the
-      // grab read as survived — rando's Akuma on the SAVE SHELF, where a ship
-      // is one of three: KO, then the same ship in the air, one icon fewer at
-      // the foot of the screen the only sign. The replacement stays off
-      // screen until the world is back (_gokiGrabResume) and arrives there
-      // as a replacement does, blinking at the spawn point; the blast at the
-      // grab point is the death it was.
-      if (!p.dead && shipStock()[p.index] < stockBefore) {
-        p.gokiReplaced = true;
-        p.sprite.setVisible(false);
-        if (p.shadow) p.shadow.setVisible(false);
+      // A KO is the end of the run, not one ship of a stock. The shipped
+      // game's ship dies of the hit and goes to CONTINUE?; a one-hit ship
+      // out of a stock (a cart played OG — the SAVE SHELF's exports) was
+      // replaced inside the hit instead (dezaNextShip), so rando's Akuma
+      // left the next ship flying under his KO while Trump, met once the
+      // stock was spent, ended the run. The stock is spent before the hit
+      // lands, so the hit is the last ship's, whoever flies the routine.
+      if (!componentOn("armor") && !gameState.godFlg) {
+        shipStock()[p.index] = 0;
+        scene.updateShipStock();
       }
+      scene.playerDamage(p, 100);
       if (gameState.godFlg) {
         scene.time.delayedCall(GOKI_GRAB_RESUME_MS, function() {
           _gokiGrabResume(scene);
@@ -15422,15 +15419,6 @@
     clearAkebonoOverlays(scene);
     scene.theWorldFlg = false;
     if (scene.spBtn) scene.spBtn.setAlpha(1);
-    // The ship that replaced the one the grab took comes out now.
-    for (var i = 0; i < scene.players.length; i++) {
-      var p = scene.players[i];
-      if (!p || !p.gokiReplaced) continue;
-      p.gokiReplaced = false;
-      if (p.dead) continue;
-      p.sprite.setVisible(true);
-      if (p.shadow) p.shadow.setVisible(true);
-    }
     bossShootStart(scene);
   }
 
@@ -16039,6 +16027,7 @@
       // faces are the shipped size, so the crop, the hit circle and the glow
       // behind them are unchanged.
       var spFaces = dezaSpFaces(this);
+      this.spOwnFace = !!spFaces;
       this.spBtnBarBg = spFaces
         ? this.add.sprite(0, 0, spFaces.empty)
         : this.add.sprite(0, 0, "game_ui", "hudCabtn100per.gif");
@@ -16536,7 +16525,10 @@
     // `p` is the ship that pressed. Defaults to player 1 so the on-screen SP
     // button, which belongs to the touch player, keeps working unchanged.
     onSpFire(p) {
-      if (!this.gameStarted) return;
+      // Nothing fires while time is stopped: the grab hides the button but
+      // left it live, and a bomb tapped inside Akuma's hold (types 1, 2, 4,
+      // 6 and 7 hold the ship invincible) would have bounced the KO off.
+      if (!this.gameStarted || this.theWorldFlg) return;
       p = p && p.index != null ? p : this.players[0];
       if (!p || p.dead) return;
       // A Dezaemon import flies the save's OWN bomb off this button: its stock
@@ -16722,6 +16714,14 @@
         : Math.min(owner.spGauge / 100, 1);
       if (ratio <= 0) {
         this.spBtnBar.setCrop(0, 0, 0, 0);
+      } else if (this.spOwnFace) {
+        // A game's own face (drawSpFace) is lit across its whole ground, a
+        // 56 px disc, where the shipped meter's lit art stops inside the
+        // 51x50 the crop below reveals: cropped like the shipped one, the
+        // warm ground showed as a square inside the dim disc, the eagle on
+        // it. The whole face is lit at full, and it fills from the top the
+        // way the shipped meter does.
+        this.spBtnBar.setCrop(0, 0, SP_FACE_SIZE, Math.round(SP_FACE_SIZE * ratio));
       } else {
         var cropY = Math.round(8 * ratio);
         var cropH = Math.round(50 * ratio);
