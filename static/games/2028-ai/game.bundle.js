@@ -3983,7 +3983,7 @@
   // ending's — so there is one place to change a name. Role labels wear the
   // Dezaemon staff-roll decoration the carts themselves use.
   var SHMUPX_STAFF_ROLL = [
-    [".: ART :.", "AGENT DOM POM"],
+    [".: ART :.", "AGENT DOM POM, AGENT PRESLAR"],
     [".: GAME TESTING :.", "SEAMUS MCNAMARA"],
     [".: MAKER TESTING :.", "AGENT BASS, AGENT SMITH"],
     [".: PLAN :.", "JC BUSTILLOS"],
