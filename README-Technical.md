@@ -336,6 +336,14 @@ they are written out in full.
     own size from the top-left corner: gs's 180×240 sat 38 px left of centre,
     and the default level's 642×547 showed only its top-left quarter. The
     stock 256×220 portraits stay at 0,0. `tests/story_images_test.ts`.
+  - gs's second stage opens its second story part on the glitter bunny pin:
+    `storyData/customImages/stage1_part1` is the pin alone, cut out of its
+    photo (`scripts/gs/art/bunnyPinUpload.jpg`: the pin on black among a
+    scatter of stars) by `scripts/gs/cut_bunny_pin.py` onto a transparent
+    180×240 (`scripts/gs/art/bunnyPin.png`), the size the game's other story
+    pictures are, and written by `scripts/gs/story-bunny-pin.ts` (a dry run
+    unless `--apply`; `--revert` puts back the hacked-laptops GIF the four
+    parts shared, from `stage1_part0`). `tests/gs_story_bunny_pin_test.ts`.
   - CONTINUE? → YES resumes on the stage that killed you, for every game. The
     Phaser port reset `stageId` to 0 there (2019-es7 275fab6, with the title's
     and the ending's resets, which stay), so a continue on gs's second stage
