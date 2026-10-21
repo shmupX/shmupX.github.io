@@ -123,3 +123,45 @@ Deno.test("AdvScene never shows the stock portrait under a part that has its own
   // A late decode does not overwrite the part the player has moved on to.
   assert(src.includes("self._advCustomWant === texKey"));
 });
+
+Deno.test("a game's own story picture is fitted and centred above the story box", async () => {
+  const js = await read("static/games/2028-ai/game.bundle.js");
+  const start = js.indexOf("  function storyPictureFit(w, h, boxW, boxH) {");
+  const end = js.indexOf(
+    "\n  // Who the plate above the story box names",
+    start,
+  );
+  assert(start > 0 && end > start, "no storyPictureFit");
+  const fit = new Function(
+    js.slice(start, end) + "\nreturn storyPictureFit;",
+  )() as (
+    w: number,
+    h: number,
+    boxW: number,
+    boxH: number,
+  ) => { x: number; y: number; scale: number };
+  // gs's pictures are 180x240: centred, where they used to hang from x 0.
+  assertEquals(fit(180, 240, 256, 240), { x: 38, y: 0, scale: 1 });
+  // Too big for the box: scaled down at its own shape, centred both ways.
+  assertEquals(fit(512, 480, 256, 240), { x: 0, y: 0, scale: 0.5 });
+  assertEquals(fit(512, 128, 256, 240), { x: 0, y: 88, scale: 0.5 });
+  // A stock-sized picture keeps its size.
+  assertEquals(fit(256, 220, 256, 240), { x: 0, y: 10, scale: 1 });
+  // Nothing measurable: left where it is.
+  assertEquals(fit(0, 0, 256, 240), { x: 0, y: 0, scale: 1 });
+
+  // AdvScene places the backdrop every time it changes it: a game's own
+  // picture as it lands (decoded already, or late), the stock one as a part
+  // without its own comes up — back at 0,0, unscaled.
+  const scene = js.slice(
+    js.indexOf("    _applyCustomImage(stageKey, partNum) {"),
+    js.indexOf("\n    goToNextScene() {"),
+  );
+  assertEquals(scene.match(/_placeBackdrop\(\);/g)?.length, 3);
+  assert(
+    scene.includes(
+      "storyPictureFit(s.frame.realWidth, s.frame.realHeight, GAME_DIMENSIONS.WIDTH, GAME_DIMENSIONS.CENTER_Y)",
+    ),
+  );
+  assert(scene.includes('indexOf("advCustom_") !== 0'));
+});

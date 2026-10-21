@@ -330,6 +330,17 @@ they are written out in full.
     third-stage text before its ending, and a game whose story had no entry
     for the stage replayed its first one. The base game's own epilogue is its
     hardcoded `stage5`, which stays.
+  - `PhaserAdvScene` fits a game's own story picture inside the 256×240 above
+    the story box at its own shape and centres it there (`storyPictureFit`,
+    `_placeBackdrop`), as the PS2's story scene does. It used to draw it at its
+    own size from the top-left corner: gs's 180×240 sat 38 px left of centre,
+    and the default level's 642×547 showed only its top-left quarter. The
+    stock 256×220 portraits stay at 0,0. `tests/story_images_test.ts`.
+  - CONTINUE? → YES resumes on the stage that killed you, for every game. The
+    Phaser port reset `stageId` to 0 there (2019-es7 275fab6, with the title's
+    and the ending's resets, which stay), so a continue on gs's second stage
+    went back to its first; 2019's own ContinueScene, the PS2 port and an
+    imported cart never did. `tests/continue_resume_test.ts`.
   - A cheat opens the level where it asks, and holds. The Guide writes its
     Cheats into the frame's URL (`?stage=N`, `?bossRush=1`, `?boss=goki`,
     `?finalBoss=1`) and reloads it, and `PluginBootScene` read them into

@@ -8810,6 +8810,18 @@
     }
     return true;
   }
+  // Where a game's own story picture goes: fitted inside the boxW x boxH above
+  // the story box at its own shape, and centred there — the PS2's story scene
+  // places it the same way (lib/ps2/runtime-story.ts). Answers {x, y, scale}.
+  function storyPictureFit(w, h, boxW, boxH) {
+    if (!(w > 0 && h > 0)) return { x: 0, y: 0, scale: 1 };
+    var scale = Math.min(boxW / w, boxH / h);
+    return {
+      x: Math.round((boxW - w * scale) / 2),
+      y: Math.max(0, Math.round((boxH - h * scale) / 2)),
+      scale: scale
+    };
+  }
   // Who the plate above the story box names: the story's own speaker
   // (storyData.speaker — gs's is GS), else G, whose story 2028.Ai's is.
   function storySpeaker(storyData) {
@@ -9040,6 +9052,7 @@
       this._advCustomWant = texKey;
       if (this.textures.exists(texKey)) {
         this.bgSprite.setTexture(texKey);
+        this._placeBackdrop();
         this.bgSprite.setVisible(true);
       } else {
         this.bgSprite.setVisible(false);
@@ -9048,6 +9061,7 @@
           if (!self.textures.exists(texKey)) self.textures.addImage(texKey, img);
           if (self.bgSprite && self.bgSprite.active && self._advCustomWant === texKey) {
             self.bgSprite.setTexture(texKey);
+            self._placeBackdrop();
             self.bgSprite.setVisible(true);
           }
         };
@@ -9058,6 +9072,23 @@
         };
         img.src = dataURL;
       }
+    }
+    // A game's own picture is fitted and centred above the story box
+    // (storyPictureFit). It used to hang from the top-left corner at its own
+    // size, so gs's 180x240 sat 38 px left of centre — further off on a phone
+    // that crops the game's sides — and a bigger one ran off the screen. The
+    // stock portraits are the box's width and stay where they always were.
+    _placeBackdrop() {
+      var s = this.bgSprite;
+      if (!s) return;
+      if (String(s.texture && s.texture.key).indexOf("advCustom_") !== 0) {
+        s.setScale(1);
+        s.setPosition(0, 0);
+        return;
+      }
+      var fit = storyPictureFit(s.frame.realWidth, s.frame.realHeight, GAME_DIMENSIONS.WIDTH, GAME_DIMENSIONS.CENTER_Y);
+      s.setScale(fit.scale);
+      s.setPosition(fit.x, fit.y);
     }
     onNextPress() {
       var maxParts = this.scenario[this.stageKey].part.length;
@@ -9080,6 +9111,7 @@
           if (this.textures.getFrame("game_ui", bgKey)) {
             this.bgSprite.setTexture("game_ui", bgKey);
           }
+          this._placeBackdrop();
           this.bgSprite.setVisible(true);
         }
         var bgKeyForSound = "advBg" + this.scenario[this.stageKey].part[this.partNum].background + ".gif";
@@ -17947,14 +17979,12 @@
               gameState.player2Spgage = 0;
             }
             resetShipStock();
-            // 2028.Ai's continue restarts the run from stage 0. An imported
-            // save resumes on the stage that killed you — a Dezaemon cart is
-            // somebody's ten-stage game, and sending them back to the start is
-            // a punishment its author never wrote.
-            if (!isImportedLevel()) {
-              gameState.stageId = 0;
-              gameState.dezaBgmResume = null;
-            }
+            // A continue resumes on the stage that killed you, song and all
+            // (dezaBgmResume: the death paused it), as 2019's own ContinueScene
+            // did — it never touched stageId — and as the PS2 port and an
+            // imported cart always have. The Phaser port reset it to 0 with
+            // the title's and the ending's resets (2019-es7 275fab6), so a
+            // continue on gs's second stage sent the player back to its first.
             gameState.continueCnt = Number(gameState.continueCnt || 0) + 1;
             gameState.score = gameState.continueCnt;
             nextScene = "PhaserGameScene";
