@@ -1,9 +1,9 @@
-// The gs cloud game's second stage opens its second story part on the glitter
-// bunny pin (scripts/gs/cut_bunny_pin.py cuts it out of the upload,
+// The gs cloud game's third-stage story carries the glitter bunny pin on its
+// second part (scripts/gs/cut_bunny_pin.py cuts it out of the upload,
 // scripts/gs/story-bunny-pin.ts puts it on the level as
-// storyData/customImages/stage1_part1 in place of the picture the four parts
-// shared). The script runs against a stand-in database here, never the real
-// one.
+// storyData/customImages/stage2_part1). gs has two stages, so that entry is
+// the one past its last, and the pin makes it an epilogue of gs's own. The
+// script runs against a stand-in database here, never the real one.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { decodeBase64 } from "@std/encoding/base64";
@@ -16,7 +16,6 @@ import {
   pictureDataUrl,
   plan,
   revert,
-  SHARED_WITH,
 } from "../scripts/gs/story-bunny-pin.ts";
 
 type Tree = Record<string, unknown>;
@@ -95,8 +94,10 @@ async function withDb(
 
 const GS = "shmupX/levels/gs";
 const IMAGES = `${GS}/storyData/customImages`;
-/** The hacked-laptops GIF every part of gs's story showed. */
+/** The hacked-laptops GIF gs's four story parts share. */
 const SHARED = "data:image/gif;base64,R0lGODlhtADwAAAA";
+/** gs's story as the record holds it: its two stages' words, then the
+ * editor's seed, 2028.Ai's own third-stage story, past them. */
 const STAGES = {
   stage0: { part: [{ background: "0", text: "But alas that is the glory" }] },
   stage1: {
@@ -108,17 +109,37 @@ const STAGES = {
       },
     ],
   },
-};
-const seed = (customImages: Tree) => ({
-  shmupX: {
-    levels: { gs: { name: "gs", storyData: { ...STAGES, customImages } } },
+  stage2: {
+    part: [
+      {
+        background: "2",
+        text:
+          "The people of Earth, \ncoming together to \nachieve the high score, \nis truly a beautiful thing.",
+      },
+      {
+        background: "Done",
+        text:
+          "This beauty is something \nthat both you as well as I,\nboth possess!",
+      },
+    ],
   },
-});
+};
 const sharing = () => ({
   stage0_part0: SHARED,
   stage0_part1: SHARED,
   stage1_part0: SHARED,
   stage1_part1: SHARED,
+});
+const seed = (customImages: Tree) => ({
+  shmupX: {
+    levels: {
+      gs: {
+        name: "gs",
+        stages: { stage0: {}, stage1: {} },
+        storyData: { ...STAGES, customImages },
+      },
+    },
+  },
 });
 
 Deno.test("the pin is cut onto a clear 180x240, the shape of gs's other story pictures", async () => {
@@ -152,17 +173,50 @@ Deno.test("the pin is cut onto a clear 180x240, the shape of gs's other story pi
   assertEquals(alpha(90, 120), 255);
 });
 
-Deno.test("--apply gives the part its own picture in place of the shared one, once", async () => {
+Deno.test("the pin goes on the third stage's second part, and makes that entry gs's epilogue", async () => {
+  assertEquals(KEY, "stage2_part1");
+  const js = (await Deno.readTextFile(
+    new URL("../static/games/2028-ai/game.bundle.js", import.meta.url),
+  )).replaceAll("\r\n", "\n");
+  const start = js.indexOf("  function storyLines(entry) {");
+  const end = js.indexOf("  // Where a game's own story picture goes", start);
+  assert(start > 0 && end > start, "no authoredEpilogue");
+  const authoredEpilogue = new Function(
+    "ADV_SCENARIO_EN",
+    "ADV_SCENARIO_JA",
+    js.slice(start, end) + "\nreturn authoredEpilogue;",
+  )({ stage2: STAGES.stage2 }, {}) as (
+    storyData: unknown,
+    stageId: number,
+  ) => boolean;
+  // The seeded words alone are the base game's: no epilogue, and a two-stage
+  // game goes from its second stage straight to its ending.
+  assertEquals(
+    authoredEpilogue({ ...STAGES, customImages: sharing() }, 2),
+    false,
+  );
+  // With the pin on the entry's second part, AdvScene plays it after stage 2.
+  assertEquals(
+    authoredEpilogue({
+      ...STAGES,
+      customImages: { ...sharing(), [KEY]: await pictureDataUrl() },
+    }, 2),
+    true,
+  );
+});
+
+Deno.test("--apply writes the picture into the empty slot, once", async () => {
   await withDb(seed(sharing()), async (db) => {
     const p = await plan();
-    assertEquals(p.state, "shared");
+    assertEquals(p.state, "new");
     assertEquals(await apply(p), [`${IMAGES}/${KEY}`]);
     assertEquals(db.read(`${IMAGES}/${KEY}`), await pictureDataUrl());
-    // The other three parts keep theirs, and the words are untouched.
-    for (const k of ["stage0_part0", "stage0_part1", SHARED_WITH]) {
-      assertEquals(db.read(`${IMAGES}/${k}`), SHARED, k);
-    }
-    assertEquals(db.read(`${GS}/storyData/stage1`), STAGES.stage1);
+    // The four earlier parts keep their picture, and the words are untouched.
+    assertEquals(db.read(IMAGES), {
+      ...sharing(),
+      [KEY]: await pictureDataUrl(),
+    });
+    assertEquals(db.read(`${GS}/storyData/stage2`), STAGES.stage2);
     assert(typeof db.read(`${GS}/savedAt`) === "number");
     // cmg's root-level copy is never written.
     assertEquals(db.read("levels"), null);
@@ -173,45 +227,33 @@ Deno.test("--apply gives the part its own picture in place of the shared one, on
   });
 });
 
-Deno.test("an empty slot is filled", async () => {
-  await withDb(seed({ stage1_part0: SHARED }), async (db) => {
+Deno.test("another picture stays unless --force, and a racing save is refused", async () => {
+  const theirs = "data:image/png;base64,AAAA";
+  await withDb(seed({ ...sharing(), [KEY]: theirs }), async (db) => {
     const p = await plan();
-    assertEquals(p.state, "new");
-    assertEquals(await apply(p), [`${IMAGES}/${KEY}`]);
+    assertEquals(p.state, "differs");
+    await assertRejects(() => apply(p), Error, "--force");
+    assertEquals(db.read(`${IMAGES}/${KEY}`), theirs);
+    await assertRejects(() => revert(), Error, "--force");
+    assertEquals(db.read(`${IMAGES}/${KEY}`), theirs);
+    // Read, then someone else saves: the ETag no longer matches.
+    const stale = await plan();
+    await saveElsewhere(db.url, `${IMAGES}/${KEY}`, "data:,changed");
+    await assertRejects(() => apply(stale, { force: true }), Error, "ETag");
+    assertEquals(await apply(await plan(), { force: true }), [
+      `${IMAGES}/${KEY}`,
+    ]);
     assertEquals(db.read(`${IMAGES}/${KEY}`), await pictureDataUrl());
   });
 });
 
-Deno.test("a picture of the part's own stays unless --force, and a racing save is refused", async () => {
-  const theirs = "data:image/png;base64,AAAA";
-  await withDb(
-    seed({ ...sharing(), stage1_part1: theirs }),
-    async (db) => {
-      const p = await plan();
-      assertEquals(p.state, "differs");
-      await assertRejects(() => apply(p), Error, "--force");
-      assertEquals(db.read(`${IMAGES}/${KEY}`), theirs);
-      await assertRejects(() => revert(), Error, "--force");
-      assertEquals(db.read(`${IMAGES}/${KEY}`), theirs);
-      // Read, then someone else saves: the ETag no longer matches.
-      const stale = await plan();
-      await saveElsewhere(db.url, `${IMAGES}/${KEY}`, "data:,changed");
-      await assertRejects(() => apply(stale, { force: true }), Error, "ETag");
-      assertEquals(await apply(await plan(), { force: true }), [
-        `${IMAGES}/${KEY}`,
-      ]);
-      assertEquals(db.read(`${IMAGES}/${KEY}`), await pictureDataUrl());
-    },
-  );
-});
-
-Deno.test("--revert puts the shared picture back", async () => {
+Deno.test("--revert takes the picture out, and the entry is the seeded story it was", async () => {
   await withDb(seed(sharing()), async (db) => {
     await apply(await plan());
     assertEquals(await revert(), [`${IMAGES}/${KEY}`]);
-    assertEquals(db.read(`${IMAGES}/${KEY}`), SHARED);
-    assertEquals(db.read(`${IMAGES}/${SHARED_WITH}`), SHARED);
-    assertEquals((await plan()).state, "shared");
+    assertEquals(db.read(`${IMAGES}/${KEY}`), null);
+    assertEquals(db.read(IMAGES), sharing());
+    assertEquals(db.read(`${GS}/storyData/stage2`), STAGES.stage2);
     assertEquals(await revert(), []);
     // --force takes out a picture this script did not write, the same way.
     await saveElsewhere(
@@ -220,17 +262,7 @@ Deno.test("--revert puts the shared picture back", async () => {
       "data:image/png;base64,AAAA",
     );
     assertEquals(await revert({ force: true }), [`${IMAGES}/${KEY}`]);
-    assertEquals(db.read(`${IMAGES}/${KEY}`), SHARED);
-  });
-});
-
-Deno.test("--revert with nothing to copy takes the picture out", async () => {
-  await withDb(seed({ stage0_part0: SHARED }), async (db) => {
-    await apply(await plan());
-    assertEquals(await revert(), [`${IMAGES}/${KEY}`]);
     assertEquals(db.read(`${IMAGES}/${KEY}`), null);
-    assertEquals(db.read(`${IMAGES}/stage0_part0`), SHARED);
-    assertEquals(await revert(), []);
   });
 });
 

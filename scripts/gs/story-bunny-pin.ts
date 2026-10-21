@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run -A --node-modules-dir=none
 /**
- * Give the gs cloud game's second stage a second story picture of its own:
+ * Give the gs cloud game's third-stage story a picture for its second part:
  * the glitter bunny pin.
  *
  *   deno run -A --node-modules-dir=none scripts/gs/story-bunny-pin.ts            # dry run
@@ -16,26 +16,31 @@
  * What it writes to shmupX/levels/gs (mcp/lib/rtdb.ts roots every level
  * path there; cmg's root-level copy is never touched):
  *
- * - `storyData/customImages/stage1_part1`, the PNG as a data URL: the
- *   picture AdvScene shows over the second stage's second part ("and bytes
- *   in my little magic information rectangle"), decoded into the
- *   advCustom_stage1_part1 texture by the level loader's applyStoryImages
- *   before the first scene, and the picture a cart opens the stage on
- *   (shmup-harbor's story-panels take PNG as well as GIF). The four parts
- *   of gs's story shared one picture, the hacked-laptops GIF; this part gets
- *   its own and the other three keep theirs.
+ * - `storyData/customImages/stage2_part1`, the PNG as a data URL: the
+ *   picture AdvScene shows over the third-stage story's second part,
+ *   decoded into the advCustom_stage2_part1 texture by the level loader's
+ *   applyStoryImages before the first scene, and the picture a cart opens
+ *   that stage on (shmup-harbor's story-panels take PNG as well as GIF).
+ *   The entry's words are the ones the editor seeded, 2028.Ai's third-stage
+ *   story: the pin's part reads "This beauty is something that both you as
+ *   well as I, both possess!". gs's four earlier parts keep the
+ *   hacked-laptops GIF they share.
  * - `savedAt`, as every edit of the level does.
  *
+ * gs has two stages (stages/stage0 and stage1), so until it gets a third
+ * this entry is the one past its last, and a picture there makes it an
+ * epilogue of gs's own (game.bundle.js's authoredEpilogue): AdvScene plays
+ * stage2's story, seeded words and pin, after the second stage, where a
+ * two-stage game with no such entry goes straight to its ending. A third
+ * stage, when it comes, opens on it instead.
+ *
  * Without --apply nothing is written. --apply writes under the ETag the
- * field was read with, so a save that raced this one is refused. It fills
- * an empty slot or replaces the shared picture (the one stage1_part0 still
- * carries); a picture that is neither needs --force. Run again, it writes
- * nothing. --out writes the whole level as it would be after the write, for
- * a local play-through (window.__OFFLINE_LEVEL__, see build-stage2.ts).
- * --revert puts the shared picture back, copied from stage1_part0 — or,
- * with no stage1_part0 to copy, takes the part's picture out, and AdvScene
- * shows 2028.Ai's stock portrait for it. --force reverts a picture this
- * script did not write.
+ * field was read with, so a save that raced this one is refused, and only
+ * into an empty slot (--force replaces another picture); run again, it
+ * writes nothing. --out writes the whole level as it would be after the
+ * write, for a local play-through (window.__OFFLINE_LEVEL__, see
+ * build-stage2.ts). --revert takes the picture out again (--force takes
+ * out another), and the entry is the seeded story it was: no epilogue.
  */
 
 import { encodeBase64 } from "@std/encoding/base64";
@@ -44,12 +49,9 @@ import { dbPath, get, getWithEtag, put } from "../../mcp/lib/rtdb.ts";
 import { ART } from "./build-stage2.ts";
 
 const LEVEL = "gs";
-const IMAGES = `levels/${LEVEL}/storyData/customImages`;
-/** The second stage's second part. */
-export const KEY = "stage1_part1";
-/** The part whose picture this one shared, and gets back on --revert. */
-export const SHARED_WITH = "stage1_part0";
-const FIELD = `${IMAGES}/${KEY}`;
+/** The third stage's second story part. */
+export const KEY = "stage2_part1";
+const FIELD = `levels/${LEVEL}/storyData/customImages/${KEY}`;
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -66,28 +68,22 @@ export interface Plan {
   dataUrl: string;
   /** The field's ETag when it was read. */
   etag: string | null;
-  /** "shared": the part still shows the picture stage1_part0 shows. */
-  state: "new" | "already as planned" | "shared" | "differs";
+  state: "new" | "already as planned" | "differs";
 }
 
 /** What --apply would write. Writes nothing. */
 export async function plan(): Promise<Plan> {
   const dataUrl = await pictureDataUrl();
-  const [{ value, etag }, shared] = await Promise.all([
-    getWithEtag<unknown>(FIELD),
-    get<unknown>(`${IMAGES}/${SHARED_WITH}`),
-  ]);
+  const { value, etag } = await getWithEtag<unknown>(FIELD);
   const state: Plan["state"] = value == null
     ? "new"
     : value === dataUrl
     ? "already as planned"
-    : shared != null && value === shared
-    ? "shared"
     : "differs";
   return { dataUrl, etag, state };
 }
 
-/** Write the picture over the shared one or into an empty slot. */
+/** Write the picture, unless it is there already. */
 export async function apply(
   p: Plan,
   { force = false }: { force?: boolean } = {},
@@ -95,9 +91,7 @@ export async function apply(
   if (p.state === "already as planned") return [];
   if (p.state === "differs" && !force) {
     throw new Error(
-      `${
-        dbPath(FIELD)
-      } already holds a picture of its own; --force replaces it`,
+      `${dbPath(FIELD)} already holds another picture; --force replaces it`,
     );
   }
   await put(FIELD, p.dataUrl, { ifMatch: p.etag });
@@ -105,27 +99,19 @@ export async function apply(
   return [dbPath(FIELD)];
 }
 
-/**
- * Put the shared picture back (stage1_part0's), or with none to copy take
- * the part's picture out.
- */
+/** Take the picture out: the entry is the seeded story it was. */
 export async function revert(
   { force = false }: { force?: boolean } = {},
 ): Promise<string[]> {
-  const [{ value, etag }, shared] = await Promise.all([
-    getWithEtag<unknown>(FIELD),
-    get<unknown>(`${IMAGES}/${SHARED_WITH}`),
-  ]);
-  if (value == null || (shared != null && value === shared)) return [];
+  const { value, etag } = await getWithEtag<unknown>(FIELD);
+  if (value == null) return [];
   if (value !== await pictureDataUrl() && !force) {
     throw new Error(
       `${dbPath(FIELD)} holds a picture this script did not write; ` +
         `--force takes it out anyway`,
     );
   }
-  await put(FIELD, typeof shared === "string" ? shared : null, {
-    ifMatch: etag,
-  });
+  await put(FIELD, null, { ifMatch: etag });
   await put(`levels/${LEVEL}/savedAt`, Date.now());
   return [dbPath(FIELD)];
 }
@@ -146,8 +132,6 @@ if (import.meta.main) {
         dataUrlLength: p.dataUrl.length,
         state: p.state === "differs"
           ? "differs (--force replaces it)"
-          : p.state === "shared"
-          ? `shared with ${SHARED_WITH} (replaced)`
           : p.state,
       },
       null,
