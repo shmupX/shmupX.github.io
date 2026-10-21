@@ -10797,9 +10797,19 @@
     if (!data) return;
     // The engine draws the child from a separate 150-slot pool; the runtime's
     // single cap stands in for it, so a chain of successors cannot outrun it.
-    if (scene.enemies.length >= DEZA_MAX_LIVE_ZAKO) return;
+    // It is the successors that it counts: against everything in the air it
+    // was no pool of their own — a boss's parts (spawnDezaPart, up to the same
+    // cap) filled it, and a motorcycle shot under rando's first boss died
+    // without throwing its rider.
+    var successors = 0;
+    for (var i = 0; i < scene.enemies.length; i++) {
+      var live = scene.enemies[i];
+      if (live && live.active && live.getData("dezaSuccessor")) successors++;
+    }
+    if (successors >= DEZA_MAX_LIVE_ZAKO) return;
     data._enemyKey = key.replace(/^enemy/, "");
     var child = createEnemy(scene, data, enemy.x, enemy.y, null);
+    child.setData("dezaSuccessor", true);
     // The successor is tagged with the PARENT's parameter, not its own
     // placement id — that is what makes a squad share one chain key.
     child.setData("dezaKey", death.key);
@@ -15321,7 +15331,21 @@
       });
     });
     scene.time.delayedCall(2700, function() {
+      var stockBefore = shipStock()[p.index];
       scene.playerDamage(p, 100);
+      // A ship out of a stock is replaced inside that hit (dezaNextShip), so
+      // the next one was already flying when the world came back and the
+      // grab read as survived — rando's Akuma on the SAVE SHELF, where a ship
+      // is one of three: KO, then the same ship in the air, one icon fewer at
+      // the foot of the screen the only sign. The replacement stays off
+      // screen until the world is back (_gokiGrabResume) and arrives there
+      // as a replacement does, blinking at the spawn point; the blast at the
+      // grab point is the death it was.
+      if (!p.dead && shipStock()[p.index] < stockBefore) {
+        p.gokiReplaced = true;
+        p.sprite.setVisible(false);
+        if (p.shadow) p.shadow.setVisible(false);
+      }
       if (gameState.godFlg) {
         scene.time.delayedCall(GOKI_GRAB_RESUME_MS, function() {
           _gokiGrabResume(scene);
@@ -15398,6 +15422,15 @@
     clearAkebonoOverlays(scene);
     scene.theWorldFlg = false;
     if (scene.spBtn) scene.spBtn.setAlpha(1);
+    // The ship that replaced the one the grab took comes out now.
+    for (var i = 0; i < scene.players.length; i++) {
+      var p = scene.players[i];
+      if (!p || !p.gokiReplaced) continue;
+      p.gokiReplaced = false;
+      if (p.dead) continue;
+      p.sprite.setVisible(true);
+      if (p.shadow) p.shadow.setVisible(true);
+    }
     bossShootStart(scene);
   }
 

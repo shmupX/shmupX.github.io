@@ -408,6 +408,22 @@ they are written out in full.
     after a hit or a respawn, under a bomb, behind a barrier — is not caught, so
     the next ship out of the stock is not taken again where it appears.
     `tests/boss_goki_pattern_test.ts`.
+  - The grab's kill of a one-hit ship is seen. A ship out of a stock is
+    replaced inside the grab's hit (`dezaNextShip`), so the next ship was
+    already flying when the world came back and the grab read as survived:
+    rando's Akuma on the SAVE SHELF showed the KO and the fight went on with
+    the same ship in the air, one icon fewer at the foot of the screen the
+    only sign. The replacement now stays off screen until the world is back
+    (`p.gokiReplaced`, lifted in `_gokiGrabResume`) and arrives there as a
+    replacement does, blinking at the spawn point; the blast at the grab
+    point is the death it was. `tests/boss_goki_pattern_test.ts`.
+  - A dying enemy's successor is drawn from a pool of its own.
+    `spawnDeathChild` counted everything in the air against
+    `DEZA_MAX_LIVE_ZAKO` — the zako, a boss's parts (`spawnDezaPart`, up to
+    the same cap), the successors themselves — so once rando's first boss had
+    its parts out, a shot motorcycle died without throwing its rider. It
+    counts the successors alone now, tagged `dezaSuccessor` as they spawn.
+    `tests/deza_successor_pool_test.ts`.
   - `create()` drops the boss-arrival slide (`bossAppearBgFlg`,
     `bossAppearBgScroll`). The Scene instance outlives a scene.stop/start, so a
     run that ended inside the boss's first seconds — GAME OVER, GO TO TITLE,
@@ -1041,7 +1057,11 @@ hp/score/interval/speed as a straight-down flier that fires aimed shots; a
 cell's drop digit becomes the record's death word — one record per digit an
 enemy's cells carry, sharing the art, since a record has one drop and a web
 game's B0/B1/B9 cells are three; only a stage out of records collapses them to
-the most common digit), the boss trailer (re-encoded
+the most common digit; and a verbatim record whose own word spawns a child
+— rando's motorcycle throwing its rider — brings the child along, written as
+a record of its own that is placed nowhere, the word pointed at the slot it
+got, a child's child after it, since the rider is placed on no cell and the
+shelf's bike used to explode with nobody falling off it), the boss trailer (re-encoded
 from an import's decoded record, else four default patterns), scroll curve and
 extents, and the settings block (mode from the grid's VERT/HORIZ switch,
 loadouts, item slots, bullet configs, BGM table). An import's `dezaemonBgm`
@@ -1512,7 +1532,11 @@ naming whatever the new game calls that key. The squad is numbered after the
 record's own frames, so a game that imported the record before it had one (rando's
 `motorcycle_deza2_32_<n>.png`) still finds its art. `motorcycle_deza2_32` in
 the library carries the two lean poses and the rider.
-`tests/zako_squad_test.ts` pins it.
+`tests/zako_squad_test.ts` pins it. The SAVE SHELF's cart carries the chain
+too: `game-to-save.js` writes a record for every child a placed record's
+death word spawns and points the word at it (its cells with a drop digit
+keep the drop, a record having one death word), so a shelf bike throws its
+rider as the web one does. `packages/shmup-engine/test/game-to-save.test.js`.
 
 **EXTRACT MODE's card and atlas skip the keys the editor set aside, and a
 placed boss wears her routine's poses.** A key the editor prefixes with `_` is
