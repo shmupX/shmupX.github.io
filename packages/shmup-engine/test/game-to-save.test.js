@@ -1050,24 +1050,25 @@ Deno.test("a boss's own weapons claim bullet types, and its fire points follow t
   const { lv, a } = armedLevel();
   const { sections, warnings, report } = buildSaveFromGame(lv, a);
   assertEquals(warnings.filter((w) => !/drop digits/.test(w)), []);
-  // the zako's shot claimed type 0 first; the boss's A and B are 1 and 2
+  // the boss's A claimed type 0 before anything; the zako's shot is 1 and
+  // the boss's B, claimed after the zako, is 2
   assertStrictEquals(report.bulletTypes, 3);
-  assertEquals(report.stages[0].boss.weapons, [1, 2, null]);
+  assertEquals(report.stages[0].boss.weapons, [0, 2, null]);
 
   const decoded = decodeSave(buildPayload(sections));
   assertStrictEquals(decoded.globalArt.bullets.filter(Boolean).length, 3);
-  // the four default patterns fire A, A+A, B, A — moved off types 0/1
-  assertEquals(firedWeapons(decoded.bosses[0].behavior), [[1], [1, 1], [2], [
-    1,
+  // the four default patterns fire A, A+A, B, A — B moved off type 1
+  assertEquals(firedWeapons(decoded.bosses[0].behavior), [[0], [0, 0], [2], [
+    0,
   ]]);
   // and back in the editor the boss arms out of the bank at those types
   const { gameJson } = mapSaveToGame(decoded);
   assertStrictEquals(gameJson.dezaemonBullets.art.filter(Boolean).length, 3);
   assertEquals(firedWeapons(gameJson.bossData.boss0.dezaemon.boss), [
-    [1],
-    [1, 1],
+    [0],
+    [0, 0],
     [2],
-    [1],
+    [0],
   ]);
 });
 
@@ -1076,7 +1077,7 @@ Deno.test("a one-weapon boss fires that weapon from every fire point; a boss wit
   delete lv.bossData.boss0.projectileDataB;
   const one = decodeSave(buildPayload(buildSaveFromGame(lv, a).sections));
   // the default third pattern names weapon B; without one it falls back to A
-  assertEquals(firedWeapons(one.bosses[0].behavior), [[1], [1, 1], [1], [1]]);
+  assertEquals(firedWeapons(one.bosses[0].behavior), [[0], [0, 0], [0], [0]]);
 
   const none = decodeSave(
     buildPayload(buildSaveFromGame(level(), art()).sections),
@@ -1111,14 +1112,18 @@ Deno.test("a fourth projectile does not fit a cart, and the writer says so", () 
   a["shotD.png"] = frame(6, 6, [0, 255, 0]);
   const { sections, warnings, report } = buildSaveFromGame(lv, a);
   assertStrictEquals(report.bulletTypes, 3);
-  assertEquals(report.stages[0].boss.weapons, [null, null, null]);
+  // the boss's A first, then two of the three zako shots; the third zako's
+  // and the boss's B find no room, and the writer says so for each
+  assertEquals(report.stages[0].boss.weapons, [0, null, null]);
   assertStrictEquals(
     warnings.filter((w) => /three bullet types/.test(w)).length,
     2,
   );
-  // nothing claimed, so the fire points keep the default numbers
+  assert(warnings.some((w) => /enemyD: .*shotD\.png/.test(w)), "the zako's");
+  assert(warnings.some((w) => /boss \(big\): .*hex0\.png/.test(w)), "the B");
+  // the boss's B, with no type, fires its A from the default third pattern
   const decoded = decodeSave(buildPayload(sections));
-  assertEquals(firedWeapons(decoded.bosses[0].behavior), [[0], [0, 0], [1], [
+  assertEquals(firedWeapons(decoded.bosses[0].behavior), [[0], [0, 0], [0], [
     0,
   ]]);
 });
@@ -1164,19 +1169,20 @@ function dominantBand(sprite) {
 Deno.test("a cart's own bullet bank goes back out at its own indices, before any web claim", () => {
   const { lv, a } = cartLevel();
   const { sections, warnings, report } = buildSaveFromGame(lv, a);
-  // the bank held types 1 and 2; the zako's shot took the free type 0; the
-  // boss's weapon found no room and said so
+  // the bank held types 1 and 2; the boss's weapon A took the free type 0
+  // ahead of the zako, whose shot found no room — and the writer said so
   assertStrictEquals(report.bulletTypes, 3);
-  assertEquals(report.stages[0].boss.weapons, [null, null, null]);
+  assertEquals(report.stages[0].boss.weapons, [0, null, null]);
   assertStrictEquals(
     warnings.filter((w) => /three bullet types/.test(w)).length,
     1,
   );
+  assert(warnings.some((w) => /enemyA: .*shot0\.png/.test(w)));
 
   const decoded = decodeSave(buildPayload(sections));
   assertEquals(decoded.globalArt.bullets.map(Boolean), [true, true, true]);
-  // type 1 is the magenta bank art, type 2 the green, type 0 the zako's
-  // yellow. Read on the SECOND frame: the engine draws type 2's last two
+  // type 1 is the magenta bank art, type 2 the green, type 0 the boss's
+  // cyan. Read on the SECOND frame: the engine draws type 2's last two
   // frames from refs 132 and 136 (BULLET_ENGINE_SLOTS), which are also the
   // first decoder frame of types 0 and 1, and the writer paints the engine
   // layout last on purpose — so whenever type 2 is painted, frame 0 of the
@@ -1191,7 +1197,7 @@ Deno.test("a cart's own bullet bank goes back out at its own indices, before any
   );
   assertStrictEquals(
     dominantBand(decoded.sprites[decoded.globalArt.bullets[0][1]]),
-    "3,3,0",
+    "0,3,3",
   );
   // and the config bytes went back raw (the fourth config is the blast byte)
   assertEquals(decoded.settings.bullets.configs.slice(0, 3).map((c) => c.raw), [

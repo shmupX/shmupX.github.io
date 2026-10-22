@@ -1076,9 +1076,15 @@ switch under DEZAEMON 2 (SATURN) picks it.
 past 64×64), the boss core (class F0–F3 by size), the ship (the level's own,
 else Duke), the eight item icons (**Item icons** below) and two blast anims
 (drawn procedurally), the three bullet types — an import's own bank first, at
-the indices its verbatim zako records name, then the web enemies' projectiles,
-then each boss's own weapons A/B/C with its fire points pointed at wherever they
-landed; a weapon that does not fit the three is dropped with a warning — the
+the indices its verbatim zako records name, then each stage boss's weapon A,
+one type per boss, then the web enemies' projectiles, then each boss's
+weapons B and C, with its fire points pointed at wherever they landed; a
+weapon that does not fit the three is dropped with a warning, and a boss's
+weapon that was dropped fires its weapon A's type. The zako used to claim
+before any boss and a boss's second weapon before the next boss's first, so
+the cloud game `rando`'s cart gave its three types to a flirty girl's lips and
+its first boss's two bullets, and Akuma and Trump, with nothing of their own,
+threw those on the SAVE SHELF — the
 logo and subtitle as the drawn TITLE 1/2, an import's scenery — is packed into
 the 1024 shared CG cells (mirrors and duplicates cost nothing). Each stage gets
 its placement grid (json rows spawn last-first, so they are reversed into scroll
