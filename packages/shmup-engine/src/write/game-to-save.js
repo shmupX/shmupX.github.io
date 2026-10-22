@@ -922,12 +922,20 @@ export function buildSaveFromGame(level, art, options = {}) {
     //      the bank's `configs` — so a mod of a community cart came back
     //      with its zako firing 0xFFFF refs: invisible on hardware, the
     //      drawn ring in the runtime;
-    //   2. the web-authored zako's `projectileData`, in grid order;
-    //   3. each stage boss's own weapons A/B/C — bulletDataA/B/C, the slots
-    //      the stock 2028.Ai bosses and anything extracted into the library
-    //      arm themselves with, and the one weapon the writer never looked
-    //      at before: a web boss folded into a cart came back out firing
-    //      whatever a zako had put in type 0, or nothing at all.
+    //   2. each stage boss's weapon A, one type per boss in stage order:
+    //      the shot a boss fight is known by. The web zako used to claim
+    //      before any boss, and a boss's second weapon before the next
+    //      boss's first, so the cloud game rando's cart gave its three
+    //      types to a flirty girl's lips and its first boss's two bullets,
+    //      and Akuma and Trump, left with nothing of their own, threw
+    //      those at the ship on the SAVE SHELF;
+    //   3. the web-authored zako's `projectileData`, in grid order;
+    //   4. each stage boss's weapons B and C — bulletDataB/C, the slots the
+    //      stock 2028.Ai bosses and anything extracted into the library arm
+    //      themselves with — and its stage2 block's, before the next boss's.
+    //      A weapon that finds no type fires its boss's weapon A (the fire
+    //      points are remapped below), so a boss with any shot of its own
+    //      never throws another record's.
     //
     // The same art claims one type however many records name it. What does
     // not fit is warned about: the cart's limit is three, not the writer's.
@@ -986,7 +994,25 @@ export function buildSaveFromGame(level, art, options = {}) {
         planBulletType(t, tex[0], frames, Number(proj.speed) || 1);
         return t;
     };
-    // 2. The web-authored zako.
+    // The slots the runtime reads a boss's weapons from (bossAdd:
+    // bulletDataX || projectileDataX, the bare bulletData standing in for
+    // A). An armed slot is only one that names art — map-to-game leaves a
+    // decoded boss on `bulletData: {}`, and an empty record claims nothing.
+    const bossWeaponTypes = new Map(); // stage index -> [typeA|null, typeB|null, typeC|null]
+    const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
+    const weaponSlots = (b) => [
+        armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData),
+        armed(b.bulletDataB, b.projectileDataB),
+        armed(b.bulletDataC, b.projectileDataC),
+    ];
+    const bossOwner = (st, b) => `${st.key}: boss (${b.name || "?"})`;
+    // 2. Each boss's weapon A, one type per boss.
+    stages.forEach((st, s) => {
+        const b = bossData[`boss${s}`];
+        if (!b) return;
+        bossWeaponTypes.set(s, [claimBulletType(weaponSlots(b)[0], bossOwner(st, b)), null, null]);
+    });
+    // 3. The web-authored zako.
     const usedLetters = new Set();
     for (const st of stages) for (const row of st.enemylist) for (const c of row) if (c !== "00") usedLetters.add(c.slice(0, -1));
     for (const letter of usedLetters) {
@@ -994,12 +1020,9 @@ export function buildSaveFromGame(level, art, options = {}) {
         const t = claimBulletType(rec && rec.projectileData, `enemy${letter}`);
         if (t !== null) bulletTypeOf.set(letter, t);
     }
-    // 3. Each boss's weapons A/B/C, in the slots the runtime reads them from
-    // (bossAdd: bulletDataX || projectileDataX, the bare bulletData standing
-    // in for A). An armed slot is only one that names art — map-to-game
-    // leaves a decoded boss on `bulletData: {}`, and an empty record claims
-    // nothing. The fire points are remapped through this below, so a boss
-    // whose weapon A landed in type 2 fires type 2.
+    // 4. Each boss's weapons B and C. The fire points are remapped through
+    // bossWeaponTypes below, so a boss whose weapon A landed in type 2 fires
+    // type 2, and a weapon that found no type fires A's.
     //
     // A boss's second stage (a `stage2` block) claims next, before the next
     // boss: its weapons laid over the boss's as the runtime lays them
@@ -1007,21 +1030,15 @@ export function buildSaveFromGame(level, art, options = {}) {
     // arms it with. A slot the block left alone, or one that names the same
     // art as the slot before, claims nothing more. A decoded boss keeps its
     // own trailer and has no second stage here.
-    const bossWeaponTypes = new Map(); // stage index -> [typeA|null, typeB|null, typeC|null]
     const bossStage2 = new Map(); // stage index -> {record, weapons: [typeA|null, typeB|null, typeC|null]}
-    const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
-    const weaponSlots = (b) => [
-        armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData),
-        armed(b.bulletDataB, b.projectileDataB),
-        armed(b.bulletDataC, b.projectileDataC),
-    ];
     stages.forEach((st, s) => {
         const b = bossData[`boss${s}`];
         if (!b) return;
-        const owner = `${st.key}: boss (${b.name || "?"})`;
+        const owner = bossOwner(st, b);
         const own = weaponSlots(b);
-        const types = own.map((w) => claimBulletType(w, owner));
-        bossWeaponTypes.set(s, types);
+        const types = bossWeaponTypes.get(s);
+        types[1] = claimBulletType(own[1], owner);
+        types[2] = claimBulletType(own[2], owner);
         const s2 = !(b.dezaemon && b.dezaemon.boss) ? bossStage2Record(b) : null;
         if (!s2) return;
         const claimed = new Map(); // first frame -> type, this stage's claims so far
