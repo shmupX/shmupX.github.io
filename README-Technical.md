@@ -348,6 +348,30 @@ they are written out in full.
     its entry is the one past its last, and the pin makes it an authored
     epilogue: its seeded words and the pin play after stage 2, where the game
     went straight to its ending. `tests/gs_story_bunny_pin_test.ts`.
+  - rando's first boss fires a beam and a Hadoken. Its slot
+    (`shmupX/levels/rando/bossData/boss0`) is the Character Library's
+    dezaBoss0 — Ryu riding a Hadoken, on his Dezaemon record — and out of
+    both of his weapons he threw the cart's stock bullets (dezaBullet0 and
+    dezaBullet2, carried as `dezaBoss0_4..11`): small red and cyan dots.
+    `scripts/rando/first-boss-arms.ts` arms weapon A, his aimed shots, with
+    the library's `hadouken` (the two-frame flicker hadoukenBoss fires, the
+    comet of his own part 37) and weapon C, the spread and the spiral, with
+    its `beam` — six frames packed under the level's sheet; the record's hp,
+    patterns, parts, flame, speeds and damage stay as they are. A dry run
+    unless `--apply` (`--out` writes the level as it would be, for a
+    play-through on `window.__OFFLINE_LEVEL__`); `--revert` puts the stock
+    bullets back and takes the frames out. Akuma (purple and red fireballs)
+    and Trump (green laser, gold fireball) already fire what their records
+    name. `tests/rando_first_boss_arms_test.ts`.
+  - A weapon record's `facing` turns its bullets to their heading: the
+    direction the art is drawn flying, in degrees clockwise from right (0 =
+    right, 90 = down). `faceBulletHeading` rotates each bullet of such a
+    record to its flight direction, from every boss spawner that knows it — a
+    Dezaemon boss's fire points (`spawnDezaBossBullet`) and a stock routine's
+    straight and aimed shots — so rando's beam, a horizontal bar, flies
+    point-first wherever it is aimed. A record without it is never turned, as
+    before: a fireball reads the same at any angle.
+    `tests/boss_bullet_facing_test.ts`.
   - CONTINUE? → YES resumes on the stage that killed you, for every game. The
     Phaser port reset `stageId` to 0 there (2019-es7 275fab6, with the title's
     and the ending's resets, which stay), so a continue on gs's second stage
@@ -1474,6 +1498,16 @@ where they used to scrape it for 1 hp. The Boss Lab, the editor's boss
 strip and `modOverlay()` name the same default (`BossLab.ownPattern`).
 `tests/boss_goki_pattern_test.ts` pins it.
 
+The Boss Lab's sim throws the weapon the runtime would: each slot under
+either spelling, `bulletDataX` or `projectileDataX`, in the order
+`bossWeaponSlots` reads them (`projData`), the bare slot standing in for a
+missing A and A for a missing B. It read only the `bulletData` spelling, so a
+boss armed as `foo.json` spells its bosses — rando's Trump, `projectileDataA`
+a green laser and `projectileDataB` a gold fireball — had no weapon in the
+lab's eyes, borrowed the next record's and threw Akuma's purple fireball.
+Only a boss with no weapon at all borrows one now.
+`tests/boss_lab_weapons_test.ts`.
+
 **A boss can have a second stage.** A `stage2` block on a boss record is laid
 over the record once the boss's hp falls below `hpBelow` of its bar (`0.5`
 unless the block says otherwise): its `anim` sets and its weapon slots
@@ -1934,6 +1968,11 @@ Three rules the tools enforce, because the runtime does not:
 - **A multi-frame bullet is a list, not an animation.** Bullets carry no Phaser
   animation; `spawnDezaBossBullet` hand-flips `texture` with `setFrame()`, at
   `frameRate` if the slot names one.
+- **`facing` turns a bullet to its heading.** A slot whose art is drawn flying
+  in one direction — the library's `beam`, a horizontal bar — names that
+  direction in degrees clockwise from right (0 = right, 90 = down), and
+  `faceBulletHeading` rotates each bullet of it to its flight direction. A
+  slot without it is never turned: a fireball reads the same at any angle.
 - **Nothing publishes with frames that have no pixels.** The runtime filters
   unknown frame names out silently and falls back to stock art, so a record
   naming art that never travelled with it is a bug that reports itself nowhere.

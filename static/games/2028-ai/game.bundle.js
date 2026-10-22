@@ -6734,6 +6734,7 @@
       bullet.setData("animTimer", 0);
       if (projData.frameRate) bullet.setData("frameRate", projData.frameRate);
     }
+    faceBulletHeading(bullet, projData, dirX, dirY);
     if (tint) bullet.setTint(tint);
     scene.enemyBullets.push(bullet);
     return bullet;
@@ -14629,6 +14630,20 @@
         break;
     }
   }
+  // A weapon record's `facing`: the direction its art is drawn flying, in
+  // degrees clockwise from right (0 = right, 90 = down). A bullet of such a
+  // record is turned to its flight direction, so a beam drawn as a horizontal
+  // bar flies point-first wherever it is aimed. A record without it is never
+  // turned, as before: a fireball reads the same at any angle. rando's first
+  // boss fires the Character Library's `beam` this way (scripts/rando/
+  // first-boss-arms.ts).
+  function faceBulletHeading(bullet, projData, dirX, dirY) {
+    var raw = projData ? projData.facing : null;
+    // A number, or a record read back as text; nothing else is a direction.
+    var facing = typeof raw === "number" || typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
+    if (!Number.isFinite(facing)) return;
+    bullet.setRotation(Math.atan2(dirY, dirX) - facing * Math.PI / 180);
+  }
   function bossShootStraight(scene, projData) {
     if (!projData || !scene.bossSprite) return;
     var frames = bulletFramesInAtlas(scene, projData.texture, DEZA_BOSS_BULLET.texture);
@@ -14644,6 +14659,7 @@
     bullet.setData("spgage", projData.spgage || 0);
     bullet.setData("rotX", 0);
     bullet.setData("rotY", 1);
+    faceBulletHeading(bullet, projData, 0, 1);
     if (frames.length > 1) {
       bullet.setData("frames", frames);
       bullet.setData("animIdx", 0);
@@ -14671,6 +14687,7 @@
     var dist = Math.sqrt(dx * dx + dy * dy) || 1;
     bullet.setData("rotX", dx / dist);
     bullet.setData("rotY", dy / dist);
+    faceBulletHeading(bullet, projData, dx / dist, dy / dist);
     if (frames.length > 1) {
       bullet.setData("frames", frames);
       bullet.setData("animIdx", 0);

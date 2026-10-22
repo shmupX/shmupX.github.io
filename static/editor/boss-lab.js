@@ -315,11 +315,25 @@
             if (b.anim[key]) return key;
             return b.anim.attack ? 'attack' : (b.anim.shoot ? 'shoot' : this.animKeys(b)[0]);
         }
+        // The weapon a fire step throws: slot A or B of the boss's record,
+        // resolved the way the runtime arms a boss (bossWeaponSlots and the
+        // routines' `projA`/`projB` in game.bundle.js) — each slot under
+        // either spelling, bulletDataX or projectileDataX; the bare
+        // bulletData/projectileData stands in for a missing A, and for a
+        // missing B before A does. Only a boss with no weapon at all borrows
+        // one, so the sim still shows something: its routine's own record,
+        // then Akuma's, then boss1's. The lab read only the bulletData
+        // spelling here, so rando's Trump — projectileDataA a green laser,
+        // projectileDataB a gold fireball, as foo.json spells them — threw
+        // Akuma's purple fireball in the sim.
         projData(sel) {
+            const armed = w => (w && w.texture && w.texture.length ? w : null);
+            const slot = (b, suffix) => armed(b['bulletData' + suffix]) || armed(b['projectileData' + suffix]);
             const pick = b => {
                 if (!b) return null;
-                const d = sel === 'B' ? (b.bulletDataB || b.bulletDataA || b.bulletData) : (b.bulletDataA || b.bulletData);
-                return d && d.texture && d.texture.length ? d : null;
+                const bare = slot(b, '');
+                const a = slot(b, 'A') || bare;
+                return (sel === 'B' ? slot(b, 'B') || bare || a : a) || null;
             };
             const d = this.data();
             return pick(this.curBoss()) || pick(d[this.effKey(this.curKey())]) || pick(d.bossExtra) || pick(d.boss1);
