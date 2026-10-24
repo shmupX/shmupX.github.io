@@ -7276,7 +7276,14 @@
             try { version = new URLSearchParams(location.search).get('version') || ''; } catch (_e) { /* no URL to read */ }
             try {
                 const shelf = await dezaShelf();
-                const flags = shelf.versionParams(shelf.normalizeVersion(version) || (lineageForked() ? 'mod' : ''));
+                const picked = shelf.normalizeVersion(version) || (lineageForked() ? 'mod' : '');
+                const flags = shelf.versionParams(picked);
+                // A web game's own .SAV export is still its author's game, and
+                // its story — laid back from the shelf record (applyModOverlay)
+                // — is the author's too: OG leaves a cart's story out, so ask
+                // for it by name unless the author turned NO STORY on.
+                if (picked !== 'mod' && lineageActive() && lineage.ownStory &&
+                    gameData && gameData.storyData && !gameData.noStory) flags.story = 1;
                 return Object.keys(flags).map((k) => '&' + k + '=' + flags[k]).join('');
             } catch (_e) { return ''; }
         }
@@ -8214,19 +8221,56 @@
         // What every .sav build in this page hands the cart writer beside the
         // level and its art.
         async function dezaSavOptions() {
-            const [upload1, upload2, author, logo, subtitle, titleG] = await Promise.all([
+            const [upload1, upload2, author, logo, subtitle, titleG, itemEmblems] = await Promise.all([
                 dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL), dezaHostAuthor(),
                 dezaUiPlate(['logo.gif', 'logo.png']),
                 dezaUiPlate(['subTitle.gif', 'subTitle.png', 'subTitleEn.gif', 'subTitleEn.png']),
                 dezaUiPlate(['titleG.gif', 'titleG.png']),
+                dezaItemEmblems(),
             ]);
             // An uploaded logo / subtitle, else the game's own plate in its
             // game_ui set (which the browser and the PS2 draw over the G), and
             // the G itself for a game with neither.
             return {
                 palette: dezaSavPalette, gameMode: dezaSavGameMode(),
-                title1: upload1 || logo, title2: upload2 || subtitle, titleG, author,
+                title1: upload1 || logo, title2: upload2 || subtitle, titleG, author, itemEmblems,
             };
+        }
+
+        // The winged F / S / R / B emblems the runtime flies for a web game's
+        // drops, as the writer's `itemEmblems` ({ f, s, r, b } of 16x16 RGBA):
+        // the emblemStill<L>.gif stills out of 2028.Ai's powerups atlas, the
+        // same cells `deno task build:sav` cuts (lib/powerup-emblems.ts
+        // loadAtlasEmblems). Without them the writer burns its procedural
+        // coloured squares into the cart, and that is what the shelf played.
+        // Null when the atlas cannot be read: the squares stand, as before.
+        let dezaItemEmblemsMemo = null;
+        function dezaItemEmblems() {
+            if (dezaItemEmblemsMemo) return dezaItemEmblemsMemo;
+            const base = '/games/2028-ai/assets/';
+            dezaItemEmblemsMemo = (async () => {
+                try {
+                    const res = await fetch(base + 'powerups.json');
+                    if (!res.ok) return null;
+                    const atlas = await res.json();
+                    const sheet = await dataUrlToRgba(base + ((atlas.meta && atlas.meta.image) || 'img/powerups.png'));
+                    if (!sheet) return null;
+                    const out = {};
+                    for (const letter of ['s', 'b', 'f', 'r']) {
+                        const f = atlas.frames && atlas.frames['emblemStill' + letter.toUpperCase() + '.gif'];
+                        const r = f && f.frame;
+                        if (!r || r.w !== 16 || r.h !== 16 || r.x + r.w > sheet.w || r.y + r.h > sheet.h) continue;
+                        const rgba = new Uint8Array(16 * 16 * 4);
+                        for (let y = 0; y < 16; y++) {
+                            const s = ((r.y + y) * sheet.w + r.x) * 4;
+                            rgba.set(sheet.rgba.subarray(s, s + 16 * 4), y * 16 * 4);
+                        }
+                        out[letter] = { w: 16, h: 16, rgba };
+                    }
+                    return Object.keys(out).length ? out : null;
+                } catch (_e) { return null; }
+            })();
+            return dezaItemEmblemsMemo;
         }
 
         // One of the game's own title plates — the first of `names` in its
@@ -8593,6 +8637,7 @@
             } else if (rec) {
                 L.parent = { id: rec.id, title: rec.title || title };
                 L.origin = rec.source === 'eshop' ? 'ESHOP GAME' : rec.source === 'import' ? 'DEZAEMON 2 · SATURN .SAV' : 'YOUR .SAV EXPORT';
+                L.ownStory = rec.source === 'export';
                 // A web game's own .SAV export carries its overlay too (the
                 // bosses' routines, the story): lay it back, as for a mod.
                 applyModOverlay(rec.web);

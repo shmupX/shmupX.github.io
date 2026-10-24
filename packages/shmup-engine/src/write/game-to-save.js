@@ -419,6 +419,20 @@ export function withDeathDrop(bytes, slot) {
     return b;
 }
 
+/**
+ * A copy of an 18-byte record whose death word spawns the record at `index`
+ * (0-59) of the same stage's table: byte 2 bits 6-7 = mode 2, byte 3 = that
+ * record's placement id with its occupied bit stripped — the engine ORs the
+ * bit back on and reads the band and index out of it (FORMAT.md, "The death
+ * word").
+ */
+export function withDeathChild(bytes, index) {
+    const b = Uint8Array.from(bytes);
+    b[2] = (b[2] & 0x3f) | (2 << 6);
+    b[3] = zakoPlacementId(index) & 0x7f;
+    return b;
+}
+
 export function enemyRecordFromEditor(rec, { bulletType = 0, dropSlot = null } = {}) {
     const speed = Number.isFinite(rec.speed) ? rec.speed : 1;
     const hits = rec.hp === "infinity" ? 1 : Math.max(1, Number(rec.hp) || 1);
@@ -908,12 +922,20 @@ export function buildSaveFromGame(level, art, options = {}) {
     //      the bank's `configs` — so a mod of a community cart came back
     //      with its zako firing 0xFFFF refs: invisible on hardware, the
     //      drawn ring in the runtime;
-    //   2. the web-authored zako's `projectileData`, in grid order;
-    //   3. each stage boss's own weapons A/B/C — bulletDataA/B/C, the slots
-    //      the stock 2028.Ai bosses and anything extracted into the library
-    //      arm themselves with, and the one weapon the writer never looked
-    //      at before: a web boss folded into a cart came back out firing
-    //      whatever a zako had put in type 0, or nothing at all.
+    //   2. each stage boss's weapon A, one type per boss in stage order:
+    //      the shot a boss fight is known by. The web zako used to claim
+    //      before any boss, and a boss's second weapon before the next
+    //      boss's first, so the cloud game rando's cart gave its three
+    //      types to a flirty girl's lips and its first boss's two bullets,
+    //      and Akuma and Trump, left with nothing of their own, threw
+    //      those at the ship on the SAVE SHELF;
+    //   3. the web-authored zako's `projectileData`, in grid order;
+    //   4. each stage boss's weapons B and C — bulletDataB/C, the slots the
+    //      stock 2028.Ai bosses and anything extracted into the library arm
+    //      themselves with — and its stage2 block's, before the next boss's.
+    //      A weapon that finds no type fires its boss's weapon A (the fire
+    //      points are remapped below), so a boss with any shot of its own
+    //      never throws another record's.
     //
     // The same art claims one type however many records name it. What does
     // not fit is warned about: the cart's limit is three, not the writer's.
@@ -972,7 +994,25 @@ export function buildSaveFromGame(level, art, options = {}) {
         planBulletType(t, tex[0], frames, Number(proj.speed) || 1);
         return t;
     };
-    // 2. The web-authored zako.
+    // The slots the runtime reads a boss's weapons from (bossAdd:
+    // bulletDataX || projectileDataX, the bare bulletData standing in for
+    // A). An armed slot is only one that names art — map-to-game leaves a
+    // decoded boss on `bulletData: {}`, and an empty record claims nothing.
+    const bossWeaponTypes = new Map(); // stage index -> [typeA|null, typeB|null, typeC|null]
+    const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
+    const weaponSlots = (b) => [
+        armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData),
+        armed(b.bulletDataB, b.projectileDataB),
+        armed(b.bulletDataC, b.projectileDataC),
+    ];
+    const bossOwner = (st, b) => `${st.key}: boss (${b.name || "?"})`;
+    // 2. Each boss's weapon A, one type per boss.
+    stages.forEach((st, s) => {
+        const b = bossData[`boss${s}`];
+        if (!b) return;
+        bossWeaponTypes.set(s, [claimBulletType(weaponSlots(b)[0], bossOwner(st, b)), null, null]);
+    });
+    // 3. The web-authored zako.
     const usedLetters = new Set();
     for (const st of stages) for (const row of st.enemylist) for (const c of row) if (c !== "00") usedLetters.add(c.slice(0, -1));
     for (const letter of usedLetters) {
@@ -980,12 +1020,9 @@ export function buildSaveFromGame(level, art, options = {}) {
         const t = claimBulletType(rec && rec.projectileData, `enemy${letter}`);
         if (t !== null) bulletTypeOf.set(letter, t);
     }
-    // 3. Each boss's weapons A/B/C, in the slots the runtime reads them from
-    // (bossAdd: bulletDataX || projectileDataX, the bare bulletData standing
-    // in for A). An armed slot is only one that names art — map-to-game
-    // leaves a decoded boss on `bulletData: {}`, and an empty record claims
-    // nothing. The fire points are remapped through this below, so a boss
-    // whose weapon A landed in type 2 fires type 2.
+    // 4. Each boss's weapons B and C. The fire points are remapped through
+    // bossWeaponTypes below, so a boss whose weapon A landed in type 2 fires
+    // type 2, and a weapon that found no type fires A's.
     //
     // A boss's second stage (a `stage2` block) claims next, before the next
     // boss: its weapons laid over the boss's as the runtime lays them
@@ -993,21 +1030,15 @@ export function buildSaveFromGame(level, art, options = {}) {
     // arms it with. A slot the block left alone, or one that names the same
     // art as the slot before, claims nothing more. A decoded boss keeps its
     // own trailer and has no second stage here.
-    const bossWeaponTypes = new Map(); // stage index -> [typeA|null, typeB|null, typeC|null]
     const bossStage2 = new Map(); // stage index -> {record, weapons: [typeA|null, typeB|null, typeC|null]}
-    const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
-    const weaponSlots = (b) => [
-        armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData),
-        armed(b.bulletDataB, b.projectileDataB),
-        armed(b.bulletDataC, b.projectileDataC),
-    ];
     stages.forEach((st, s) => {
         const b = bossData[`boss${s}`];
         if (!b) return;
-        const owner = `${st.key}: boss (${b.name || "?"})`;
+        const owner = bossOwner(st, b);
         const own = weaponSlots(b);
-        const types = own.map((w) => claimBulletType(w, owner));
-        bossWeaponTypes.set(s, types);
+        const types = bossWeaponTypes.get(s);
+        types[1] = claimBulletType(own[1], owner);
+        types[2] = claimBulletType(own[2], owner);
         const s2 = !(b.dezaemon && b.dezaemon.boss) ? bossStage2Record(b) : null;
         if (!s2) return;
         const claimed = new Map(); // first frame -> type, this stage's claims so far
@@ -1077,20 +1108,25 @@ export function buildSaveFromGame(level, art, options = {}) {
             }
             return null;
         };
+        // An enemy's frames as the cart draws them, and the smallest art band
+        // that holds them — for a placed record and for a successor alike.
+        const zakoArt = (letter, rec) => {
+            const frames = (Array.isArray(rec.texture) ? rec.texture : []).map(lookup).filter(Boolean);
+            if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas — placed invisible`);
+            const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
+            const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
+            if (frames.length && (maxW > 64 || maxH > 64)) {
+                warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 — downscaled`);
+            }
+            return { frames, minBand: bandFor(maxW, maxH) };
+        };
         for (const letter of letters) {
             const rec = enemyData[`enemy${letter}`];
             if (!rec) {
                 warn(`${st.key}: grid names enemy${letter} but enemyData has no such record — cells left empty`);
                 continue;
             }
-            const frames = (Array.isArray(rec.texture) ? rec.texture : []).map(lookup).filter(Boolean);
-            if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas — placed invisible`);
-            const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
-            const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
-            const minBand = bandFor(maxW, maxH);
-            if (frames.length && (maxW > 64 || maxH > 64)) {
-                warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 — downscaled`);
-            }
+            const { frames, minBand } = zakoArt(letter, rec);
             const preferred = rec.dezaemon && Number.isInteger(rec.dezaemon.record) ? rec.dezaemon.record : -1;
             const verbatim = rec.dezaemon ? hexToBytes(rec.dezaemon.attributes, 18) : null;
             // The digits on this enemy's cells, most common first.
@@ -1126,11 +1162,62 @@ export function buildSaveFromGame(level, art, options = {}) {
                     }
                 }
                 const key = letter + digit;
-                const entry = { key, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${letter}`, drop };
+                const entry = { key, letter, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${letter}`, drop };
                 records.set(key, entry);
                 recordOf.set(key, key);
                 if (!first) first = entry;
             }
+        }
+
+        // Successors (FORMAT.md, "The death word", mode 2). A verbatim record
+        // that spawns a child when it dies — rando's motorcycle throws its
+        // rider — names that child by roster key, `dezaemon.deathChild`, the
+        // way the mapper linked it on import; its byte 3 still names the slot
+        // the child had in the cart it came from. A child reachable only that
+        // way is placed on no cell, so the loop above wrote nothing for it,
+        // and the word pointed at whatever this stage put in that slot: the
+        // bike exploded and nobody fell off it. Each such child is written
+        // here as a record of its own — its own art, its import's slot when
+        // free, no drop — and its parents' byte 3 is pointed at the slot it
+        // got. A child's own child follows the same way; a child the loop
+        // already wrote (placed on a cell with no digit) is reused, and a
+        // chain that comes back round stops. The digit cells keep their drop
+        // in the word's place, as warned above: a record has one death word.
+        const childLetterOf = (rec) => {
+            const k = rec && rec.dezaemon ? rec.dezaemon.deathChild : null;
+            return typeof k === "string" && k.startsWith("enemy") ? k.slice("enemy".length) : null;
+        };
+        const spawnsChild = (entry) => (entry.bytes[2] >> 6) === 2;
+        const pending = [...records.values()].filter(spawnsChild);
+        while (pending.length) {
+            const parent = pending.shift();
+            const childLetter = childLetterOf(enemyData[`enemy${parent.letter}`]);
+            if (!childLetter) continue;
+            let child = records.get(childLetter + 0) || records.get(childLetter + "c") || null;
+            if (!child) {
+                const rec = enemyData[`enemy${childLetter}`];
+                if (!rec) {
+                    warn(`${st.key}: enemy${parent.letter} (${parent.name}) spawns enemy${childLetter} when it dies, but enemyData has no such record — it dies alone`);
+                    continue;
+                }
+                const { frames, minBand } = zakoArt(childLetter, rec);
+                const preferred = rec.dezaemon && Number.isInteger(rec.dezaemon.record) ? rec.dezaemon.record : -1;
+                const found = freeIndex(minBand, preferred);
+                if (!found) {
+                    warn(`${st.key}: no free enemy record for enemy${childLetter} (${rec.name || "?"}), which enemy${parent.letter} spawns when it dies — a stage holds 60 — it dies alone`);
+                    continue;
+                }
+                taken.add(found.index);
+                const def = RECORD_ART[found.band];
+                const bw = def.w * CG_CELL, bh = def.h * CG_CELL;
+                const planKeys = spreadFrames(frames, def.frames).map((f) => planFrame(`e:${f.key}:${bw}x${bh}`, f, bw, bh, frameGroup(f.key), 2));
+                const verbatim = rec.dezaemon ? hexToBytes(rec.dezaemon.attributes, 18) : null;
+                const bytes = verbatim || enemyRecordFromEditor(rec, { bulletType: bulletTypeOf.get(childLetter) || 0, dropSlot: null });
+                child = { key: childLetter + "c", letter: childLetter, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${childLetter}`, drop: 0 };
+                records.set(child.key, child);
+                if (spawnsChild(child)) pending.push(child);
+            }
+            parent.bytes = withDeathChild(parent.bytes, child.index);
         }
 
         // The boss: this stage's bossData entry, if any.
