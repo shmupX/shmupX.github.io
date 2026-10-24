@@ -6948,6 +6948,12 @@ function withDeathDrop(bytes, slot) {
   b[3] = slot & 7;
   return b;
 }
+function withDeathChild(bytes, index) {
+  const b = Uint8Array.from(bytes);
+  b[2] = b[2] & 63 | 2 << 6;
+  b[3] = zakoPlacementId(index) & 127;
+  return b;
+}
 function enemyRecordFromEditor(rec, { bulletType = 0, dropSlot = null } = {}) {
   const speed = Number.isFinite(rec.speed) ? rec.speed : 1;
   const hits = rec.hp === "infinity" ? 1 : Math.max(1, Number(rec.hp) || 1);
@@ -7366,6 +7372,19 @@ function buildSaveFromGame(level, art2, options = {}) {
     planBulletType(t, tex[0], frames, Number(proj.speed) || 1);
     return t;
   };
+  const bossWeaponTypes = /* @__PURE__ */ new Map();
+  const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
+  const weaponSlots = (b) => [
+    armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData),
+    armed(b.bulletDataB, b.projectileDataB),
+    armed(b.bulletDataC, b.projectileDataC)
+  ];
+  const bossOwner = (st, b) => `${st.key}: boss (${b.name || "?"})`;
+  stages.forEach((st, s) => {
+    const b = bossData[`boss${s}`];
+    if (!b) return;
+    bossWeaponTypes.set(s, [claimBulletType(weaponSlots(b)[0], bossOwner(st, b)), null, null]);
+  });
   const usedLetters = /* @__PURE__ */ new Set();
   for (const st of stages) for (const row of st.enemylist) for (const c of row) if (c !== "00") usedLetters.add(c.slice(0, -1));
   for (const letter of usedLetters) {
@@ -7373,21 +7392,15 @@ function buildSaveFromGame(level, art2, options = {}) {
     const t = claimBulletType(rec && rec.projectileData, `enemy${letter}`);
     if (t !== null) bulletTypeOf.set(letter, t);
   }
-  const bossWeaponTypes = /* @__PURE__ */ new Map();
   const bossStage2 = /* @__PURE__ */ new Map();
-  const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
-  const weaponSlots = (b) => [
-    armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData),
-    armed(b.bulletDataB, b.projectileDataB),
-    armed(b.bulletDataC, b.projectileDataC)
-  ];
   stages.forEach((st, s) => {
     const b = bossData[`boss${s}`];
     if (!b) return;
-    const owner = `${st.key}: boss (${b.name || "?"})`;
+    const owner = bossOwner(st, b);
     const own = weaponSlots(b);
-    const types = own.map((w) => claimBulletType(w, owner));
-    bossWeaponTypes.set(s, types);
+    const types = bossWeaponTypes.get(s);
+    types[1] = claimBulletType(own[1], owner);
+    types[2] = claimBulletType(own[2], owner);
     const s2 = !(b.dezaemon && b.dezaemon.boss) ? bossStage2Record(b) : null;
     if (!s2) return;
     const claimed = /* @__PURE__ */ new Map();
@@ -7437,20 +7450,23 @@ function buildSaveFromGame(level, art2, options = {}) {
       }
       return null;
     };
+    const zakoArt = (letter, rec) => {
+      const frames = (Array.isArray(rec.texture) ? rec.texture : []).map(lookup).filter(Boolean);
+      if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas \u2014 placed invisible`);
+      const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
+      const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
+      if (frames.length && (maxW > 64 || maxH > 64)) {
+        warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 \u2014 downscaled`);
+      }
+      return { frames, minBand: bandFor(maxW, maxH) };
+    };
     for (const letter of letters) {
       const rec = enemyData[`enemy${letter}`];
       if (!rec) {
         warn(`${st.key}: grid names enemy${letter} but enemyData has no such record \u2014 cells left empty`);
         continue;
       }
-      const frames = (Array.isArray(rec.texture) ? rec.texture : []).map(lookup).filter(Boolean);
-      if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas \u2014 placed invisible`);
-      const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
-      const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
-      const minBand = bandFor(maxW, maxH);
-      if (frames.length && (maxW > 64 || maxH > 64)) {
-        warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 \u2014 downscaled`);
-      }
+      const { frames, minBand } = zakoArt(letter, rec);
       const preferred = rec.dezaemon && Number.isInteger(rec.dezaemon.record) ? rec.dezaemon.record : -1;
       const verbatim = rec.dezaemon ? hexToBytes(rec.dezaemon.attributes, 18) : null;
       const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
@@ -7485,11 +7501,47 @@ function buildSaveFromGame(level, art2, options = {}) {
           }
         }
         const key = letter + digit;
-        const entry = { key, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${letter}`, drop };
+        const entry = { key, letter, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${letter}`, drop };
         records.set(key, entry);
         recordOf.set(key, key);
         if (!first) first = entry;
       }
+    }
+    const childLetterOf = (rec) => {
+      const k = rec && rec.dezaemon ? rec.dezaemon.deathChild : null;
+      return typeof k === "string" && k.startsWith("enemy") ? k.slice("enemy".length) : null;
+    };
+    const spawnsChild = (entry) => entry.bytes[2] >> 6 === 2;
+    const pending = [...records.values()].filter(spawnsChild);
+    while (pending.length) {
+      const parent = pending.shift();
+      const childLetter = childLetterOf(enemyData[`enemy${parent.letter}`]);
+      if (!childLetter) continue;
+      let child = records.get(childLetter + 0) || records.get(childLetter + "c") || null;
+      if (!child) {
+        const rec = enemyData[`enemy${childLetter}`];
+        if (!rec) {
+          warn(`${st.key}: enemy${parent.letter} (${parent.name}) spawns enemy${childLetter} when it dies, but enemyData has no such record \u2014 it dies alone`);
+          continue;
+        }
+        const { frames, minBand } = zakoArt(childLetter, rec);
+        const preferred = rec.dezaemon && Number.isInteger(rec.dezaemon.record) ? rec.dezaemon.record : -1;
+        const found = freeIndex(minBand, preferred);
+        if (!found) {
+          warn(`${st.key}: no free enemy record for enemy${childLetter} (${rec.name || "?"}), which enemy${parent.letter} spawns when it dies \u2014 a stage holds 60 \u2014 it dies alone`);
+          continue;
+        }
+        taken.add(found.index);
+        const def = RECORD_ART[found.band];
+        const bw = def.w * CG_CELL, bh = def.h * CG_CELL;
+        const planKeys = spreadFrames(frames, def.frames).map((f) => planFrame(`e:${f.key}:${bw}x${bh}`, f, bw, bh, frameGroup(f.key), 2));
+        const verbatim = rec.dezaemon ? hexToBytes(rec.dezaemon.attributes, 18) : null;
+        const bytes = verbatim || enemyRecordFromEditor(rec, { bulletType: bulletTypeOf.get(childLetter) || 0, dropSlot: null });
+        child = { key: childLetter + "c", letter: childLetter, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${childLetter}`, drop: 0 };
+        records.set(child.key, child);
+        if (spawnsChild(child)) pending.push(child);
+      }
+      parent.bytes = withDeathChild(parent.bytes, child.index);
     }
     let boss = null;
     const bossRec = bossData[`boss${s}`] || (s === 0 && !bossData.boss0 ? null : null);
