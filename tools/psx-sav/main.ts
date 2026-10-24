@@ -14,7 +14,8 @@
 // Both games' maps render as the real thing: a Kids! stage is 7 chips of 32x32
 // px drawn from the save's CG cells through the disc's fixed palette bank, and
 // a Dezaemon+ stage is 16 chips of 16x16 px drawn through the stage's MAP
-// GROUP table into the save's own 4bpp graphics bank and palette row.
+// GROUP table into the save's own 4bpp graphics bank and palette row, row 0
+// (where the stage starts) at the foot of the picture as on the screen.
 //
 // `edit` is the only verb that writes, and each --set goes through exactly one
 // setter — src/psx/plus-edit.js for Dezaemon+, src/psx/kids-edit.js for Kids!.
@@ -113,7 +114,7 @@ const USAGE = `usage:
   --stage   stage for map renders (default 0)
   --page    Kids! CG page for graphics renders (default: all four side by side)
   --row     Dezaemon+ palette row for graphics renders (default: the map's own)
-  --rows    map rows to draw (default: all of them)
+  --rows    map rows to draw, from row 0 at the foot (default: all of them)
   --scale   integer upscale (default 1; icons default to 8)
   --range   offsets, half-open, e.g. 0x10100:0x10400
   --section which part of a Kids! save --range addresses (default header, the
@@ -399,6 +400,7 @@ function renderKidsMap(save: Save, stage: number, maxRows: number): Raster {
   const out = newRaster(KIDS_MAP_COLUMNS * KIDS_CHIP_DIM, rows * KIDS_CHIP_DIM);
   fill(out, 0, 0, out.width, out.height, [0, 0, 0, 255]);
   const pal = kidsRgba(false);
+  // Map rows count up the screen: row 0, where the stage starts, at the foot.
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < KIDS_MAP_COLUMNS; c++) {
       drawKidsChip(
@@ -407,7 +409,7 @@ function renderKidsMap(save: Save, stage: number, maxRows: number): Raster {
         pal,
         map.words[r * KIDS_MAP_COLUMNS + c],
         c * KIDS_CHIP_DIM,
-        r * KIDS_CHIP_DIM,
+        (rows - 1 - r) * KIDS_CHIP_DIM,
       );
     }
   }
@@ -464,6 +466,7 @@ function renderPlusMap(save: Save, stage: number, maxRows: number): Raster {
   const rows = Math.min(maxRows || PLUS_MAP_ROWS, PLUS_MAP_ROWS);
   const out = newRaster(PLUS_MAP_COLUMNS * PLUS_CHIP_DIM, rows * PLUS_CHIP_DIM);
   fill(out, 0, 0, out.width, out.height, [0, 0, 0, 255]);
+  // Map rows count up the screen: row 0, where the stage starts, at the foot.
   for (let r = 0; r < rows; r++) {
     st.mapRows[r].forEach(
       (
@@ -479,7 +482,7 @@ function renderPlusMap(save: Save, stage: number, maxRows: number): Raster {
             if (v === 0) continue;
             const dx = col * PLUS_CHIP_DIM +
               (chip.hflip ? PLUS_CHIP_DIM - 1 - x : x);
-            const dy = r * PLUS_CHIP_DIM +
+            const dy = (rows - 1 - r) * PLUS_CHIP_DIM +
               (chip.vflip ? PLUS_CHIP_DIM - 1 - y : y);
             put(out, dx, dy, pal[v]);
           }

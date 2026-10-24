@@ -9926,7 +9926,8 @@ var KIDS_BOSS_COLUMN = Object.freeze([3, 2, 3, 2]);
 var KIDS_SCROLL_RUN = 2;
 var KIDS_SCROLL_HALT = 0;
 var KIDS_MAP_FILL = 32896;
-var KIDS_STORY_FIRST_ROW = 1;
+var KIDS_STORY_TOP_ROW = 4;
+var KIDS_STORY_ROWS = KIDS_STORY_TOP_ROW + 1;
 var KIDS_STORY_LEAD_ROWS = 4;
 var KIDS_STORY_SCROLL = 1;
 var KIDS_STORY_SLOW_UNITS = 1;
@@ -10497,7 +10498,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
   const built = stages.map((st, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
     const story = opts.storyPicks ? opts.storyPicks.get(s) || null : null;
-    const storyShift = story ? KIDS_STORY_FIRST_ROW + story.chipRows + KIDS_STORY_LEAD_ROWS : 0;
+    const storyShift = story ? KIDS_STORY_TOP_ROW + 1 + KIDS_STORY_LEAD_ROWS : 0;
     const spawnRows = st.enemylist.slice().reverse();
     const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
     const appear = new Uint8Array(KIDS_APPEAR_STAGE_BYTES);
@@ -10755,7 +10756,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
             let any = false;
             for (let dy = 0; dy < 2; dy++) {
               for (let dx = 0; dx < 2; dx++) {
-                const r = cr * 2 + dy, c = firstCol + cc * 2 + dx;
+                const r = cr * 2 + 1 - dy, c = firstCol + cc * 2 + dx;
                 if (r >= rows || c >= cols) continue;
                 const w = tiles[r * cols + c];
                 if (w === 65535) continue;
@@ -10806,10 +10807,10 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
               chipRgba.set(story.rgba.subarray((sy * story.w + cc * 32) * 4, (sy * story.w + cc * 32 + 32) * 4), y * 32 * 4);
             }
             const word = bank.addChip(quantizeKidsFrame({ w: 32, h: 32, rgba: chipRgba }));
-            mapWords[(KIDS_STORY_FIRST_ROW + story.chipRows - 1 - cy) * KIDS_MAP_COLUMNS + cc] = word;
+            mapWords[(KIDS_STORY_TOP_ROW - cy) * KIDS_MAP_COLUMNS + cc] = word;
           }
         }
-        storyReport = { size: story.label, rows: story.chipRows, cells: bank.used - before, first: KIDS_STORY_FIRST_ROW };
+        storyReport = { size: story.label, rows: story.chipRows, cells: bank.used - before, top: KIDS_STORY_TOP_ROW };
       } catch (e) {
         if (!(e instanceof KidsBankFullError)) throw e;
         warn(`${st.key}: CG pages full (${KIDS_CELL_COUNT} cells) \u2014 its story left unfinished`);
@@ -10937,7 +10938,7 @@ function buildKidsWithStory(level, art2, opts) {
     for (const v of Array.isArray(sb.variants) ? sb.variants : []) {
       if (!v || v.w !== w || !v.h || !v.rgba) continue;
       const chipRows = Math.ceil(v.h / 32);
-      if (KIDS_STORY_FIRST_ROW + chipRows > KIDS_MAP_ROWS) continue;
+      if (chipRows > KIDS_STORY_ROWS) continue;
       const probe = new KidsCellBank();
       const chipRgba = new Uint8Array(32 * 32 * 4);
       try {
@@ -19594,6 +19595,7 @@ export {
   INTERNAL_SRM_SIZE,
   KIDS_BACKGROUND_SETS,
   KIDS_STOCK_ITEM_FRAMES,
+  KIDS_STORY_ROWS,
   LAYER_COUNT,
   LIBRARY_MESH_COUNT,
   LIGHT_AZIMUTH,

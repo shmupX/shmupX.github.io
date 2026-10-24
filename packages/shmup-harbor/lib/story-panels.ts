@@ -343,10 +343,15 @@ const variant = (label: string, r: Raster): StoryVariant => ({
  */
 export async function storyBackdrops(
   storyData: unknown,
-  { font = null, onWarn = () => {} }: {
+  { font = null, onWarn = () => {}, height = BACKDROP_H }: {
     /** The face to set the words in. */
     font?: BitmapFont | null;
     onWarn?: (message: string) => void;
+    /**
+     * The opening screen's room under the score, whole rows: a cart with less
+     * than BACKDROP_H (Dezaemon Kids!, 160) asks for its own.
+     */
+    height?: number;
   } = {},
 ): Promise<StoryBackdrop[]> {
   const sd = storyData as { customImages?: Record<string, unknown> } | null;
@@ -384,11 +389,11 @@ export async function storyBackdrops(
       // The picture takes what the words leave of the opening screen, then
       // two thirds of that, then two fifths; a story whose words fill the
       // screen still shows its picture, below them, at a third of it.
-      const room = BACKDROP_H -
+      const room = height -
         (words ? wordsHeight(font!, lines.length) + GAP : 0);
       const heights = room >= 48
         ? [room, Math.round(room * 2 / 3), Math.round(room * 2 / 5)]
-        : [Math.round(BACKDROP_H / 3)];
+        : [Math.round(height / 3)];
       const seen = new Set<string>();
       for (const h of heights) {
         const pic = containPicture(source, BACKDROP_W, h);

@@ -430,12 +430,15 @@ export const KIDS_SCROLL_HALT = 0;
 /** The initialiser's blank chip word, the commonest blank in the collection. */
 export const KIDS_MAP_FILL = 0x8080;
 /**
- * A stage's story (`storyBackdrops`) is painted into its map from this chip
- * row up. Rows count up the screen from where the stage starts; which of
- * them the Kids! screen shows as it opens is unmeasured, so row 0, under
- * its foot, is left to the scroll.
+ * A stage's story (`storyBackdrops`) is painted into its map with its top on
+ * this chip row, down towards row 0. Measured in Mednafen (gs, 2026-10-20): as
+ * a stage opens the screen shows map y 1..224, row 0 at its foot, and the
+ * score and lives cover it down to row 5's top, so rows 4..0 are what opens
+ * under the HUD (FORMAT-PSX.md "Writing a Kids! save").
  */
-export const KIDS_STORY_FIRST_ROW = 1;
+export const KIDS_STORY_TOP_ROW = 4;
+/** The most chip rows a story takes: the top row down to row 0, 160 px. */
+export const KIDS_STORY_ROWS = KIDS_STORY_TOP_ROW + 1;
 /** Rows (32 px) a story stage's waves wait past its story: 128 px. */
 export const KIDS_STORY_LEAD_ROWS = 4;
 /**
@@ -1053,7 +1056,7 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
         // The stage's story (buildKidsWithStory picked its size): its waves
         // wait for it to scroll away.
         const story = opts.storyPicks ? opts.storyPicks.get(s) || null : null;
-        const storyShift = story ? KIDS_STORY_FIRST_ROW + story.chipRows + KIDS_STORY_LEAD_ROWS : 0;
+        const storyShift = story ? KIDS_STORY_TOP_ROW + 1 + KIDS_STORY_LEAD_ROWS : 0;
         const spawnRows = st.enemylist.slice().reverse();
         const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
         const appear = new Uint8Array(KIDS_APPEAR_STAGE_BYTES);
@@ -1336,9 +1339,12 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
                     for (let cc = 0; cc < KIDS_MAP_COLUMNS; cc++) {
                         chipRgba.fill(0);
                         let any = false;
+                        // Map rows count up the screen and a chip is drawn
+                        // top down, so its top half is the upper of its two
+                        // grid rows: 2cr + 1 (measured, FORMAT-PSX.md).
                         for (let dy = 0; dy < 2; dy++) {
                             for (let dx = 0; dx < 2; dx++) {
-                                const r = cr * 2 + dy, c = firstCol + cc * 2 + dx;
+                                const r = cr * 2 + 1 - dy, c = firstCol + cc * 2 + dx;
                                 if (r >= rows || c >= cols) continue;
                                 const w = tiles[r * cols + c];
                                 if (w === 0xffff) continue;
@@ -1376,9 +1382,10 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
             }
         }
 
-        // The story: the stage's opening map rows, from KIDS_STORY_FIRST_ROW
-        // up, 32x32 chips through the disc's own colours. Map rows count up
-        // the screen, so the raster's top row of chips is the story's top.
+        // The story: the stage's opening map rows, its top on
+        // KIDS_STORY_TOP_ROW and down from there, 32x32 chips through the
+        // disc's own colours. Map rows count up the screen, so the raster's
+        // top row of chips is the story's top row.
         let storyReport = null;
         if (story && !chips) {
             const before = bank.used;
@@ -1393,10 +1400,10 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
                             chipRgba.set(story.rgba.subarray((sy * story.w + cc * 32) * 4, (sy * story.w + cc * 32 + 32) * 4), y * 32 * 4);
                         }
                         const word = bank.addChip(quantizeKidsFrame({ w: 32, h: 32, rgba: chipRgba }));
-                        mapWords[(KIDS_STORY_FIRST_ROW + story.chipRows - 1 - cy) * KIDS_MAP_COLUMNS + cc] = word;
+                        mapWords[(KIDS_STORY_TOP_ROW - cy) * KIDS_MAP_COLUMNS + cc] = word;
                     }
                 }
-                storyReport = { size: story.label, rows: story.chipRows, cells: bank.used - before, first: KIDS_STORY_FIRST_ROW };
+                storyReport = { size: story.label, rows: story.chipRows, cells: bank.used - before, top: KIDS_STORY_TOP_ROW };
             } catch (e) {
                 if (!(e instanceof KidsBankFullError)) throw e;
                 warn(`${st.key}: CG pages full (${KIDS_CELL_COUNT} cells) — its story left unfinished`);
@@ -1553,7 +1560,7 @@ function buildKidsWithStory(level, art, opts) {
         for (const v of Array.isArray(sb.variants) ? sb.variants : []) {
             if (!v || v.w !== w || !v.h || !v.rgba) continue;
             const chipRows = Math.ceil(v.h / 32);
-            if (KIDS_STORY_FIRST_ROW + chipRows > KIDS_MAP_ROWS) continue;
+            if (chipRows > KIDS_STORY_ROWS) continue; // its top would open under the HUD
             const probe = new KidsCellBank();
             const chipRgba = new Uint8Array(32 * 32 * 4);
             try {

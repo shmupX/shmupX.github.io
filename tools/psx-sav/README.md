@@ -26,7 +26,10 @@ dump has — a raw 128 KB memory-card image, a DexDrive `.gme`, a single-save
   chips, each built from a 2×2 group of the save's CG cells and coloured through
   the fixed disc palette; a Dezaemon+ stage through that stage's MAP GROUP table
   into the save's graphics pages and its own palette row. Both apply the
-  horizontal and vertical flips. `--rows N` crops a long stage.
+  horizontal and vertical flips, and both put row 0, where the stage starts,
+  at the foot of the picture with later rows above it, as the screen scrolls
+  them in (measured in Mednafen, FORMAT-PSX.md). `--rows N` keeps a long
+  stage's first N rows.
 - `png cells` (or `graphics`) draws the graphics bank itself: Kids!'s four CG
   pages, or Dezaemon+'s 256×512 4bpp bitmap through palette row `--row`.
   `png palettes` draws the colour bank — Kids!'s fixed 256 entries as a 16×16
