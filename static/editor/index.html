@@ -8103,6 +8103,137 @@
             });
         }
 
+        // ============ THE STORY ON A CART (each stage's opening scenery) ============
+        // A cart has no cutscenes, so every cart writer here paints a stage's
+        // story — the speaker's plate, the words in their box, the picture —
+        // into the map rows the stage opens on, at the largest size its cells
+        // allow. The backdrops are composed by the engine
+        // (Dezaemon.storyBackdrops, packages/shmup-engine/src/story/), the very
+        // function `deno task build:sav / build:sfc / build:kids / build:plus`
+        // run, so a cart downloaded here opens its stages as the CLI's does.
+        // The two differ only in how a picture becomes RGBA: the CLI has its own
+        // GIF and PNG decoders, the page has the browser's. The words are set in
+        // the Saturn's own face, the sheet the runtime serves.
+        const DEZA_STORY_FONT_URL = '/games/2028-ai/assets/fonts/athenaFont.png';
+        let dezaStoryFontLoad = null;
+        function dezaStoryFont() {
+            if (!dezaStoryFontLoad) {
+                dezaStoryFontLoad = dataUrlToRgba(DEZA_STORY_FONT_URL).then((sheet) => {
+                    if (!sheet) { dezaStoryFontLoad = null; return null; }   // asked again next export
+                    return window.Dezaemon.bitmapFontFromSheet({ width: sheet.w, height: sheet.h, data: sheet.rgba });
+                });
+            }
+            return dezaStoryFontLoad;
+        }
+
+        // An image (a data URL, or a file the page serves) as RGBA exactly as
+        // stored: its first frame — the one a background can hold, and the
+        // image createImageBitmap takes from an animated GIF — with no colour
+        // conversion, so its pixels are the file's own, as the CLI's decoders
+        // read them. The story's pictures and the item emblems' sheet both go
+        // onto a cart, where a shifted colour is a different palette entry.
+        async function imageRgbaAsStored(url) {
+            if (typeof createImageBitmap !== 'function') {
+                const px = await dataUrlToRgba(url);
+                if (!px) throw new Error('the browser could not decode it');
+                return { width: px.w, height: px.h, data: px.rgba };
+            }
+            const blob = await (await fetch(url)).blob();
+            const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+            try {
+                const c = document.createElement('canvas');
+                c.width = bmp.width; c.height = bmp.height;
+                const ctx = c.getContext('2d', { willReadFrequently: true });
+                ctx.drawImage(bmp, 0, 0);
+                return { width: c.width, height: c.height, data: ctx.getImageData(0, 0, c.width, c.height).data };
+            } finally { bmp.close(); }
+        }
+
+        // A cart export with the open game's story drawn in: `write` is the
+        // writer's call, handed the backdrops to pass as its `storyBackdrops`.
+        // What it returns gains the story's own warnings (a picture that would
+        // not decode) ahead of the writer's and, for a game that tells one,
+        // `storyLine` — the build log's "story:" line (Dezaemon.storyLogLine).
+        // A story never stops an export: one that cannot be drawn is a warning
+        // and stages that open as they are.
+        async function exportWithStory(write) {
+            const E = window.Dezaemon;
+            const storyData = gameData && gameData.storyData;
+            const warnings = [];
+            let backdrops = [];
+            if (storyData && typeof E.storyBackdrops === 'function') {
+                try {
+                    const font = await dezaStoryFont();
+                    if (!font) warnings.push('the story\'s face (' + DEZA_STORY_FONT_URL + ') did not load — its words are not drawn');
+                    backdrops = await E.storyBackdrops(storyData, {
+                        font, decodePicture: imageRgbaAsStored, onWarn: (m) => warnings.push(m),
+                    });
+                } catch (e) {
+                    warnings.push('the story could not be drawn (' + (e && e.message || e) + ')');
+                    backdrops = [];
+                }
+            }
+            const out = write(backdrops);
+            if (warnings.length) out.warnings = warnings.concat(out.warnings || []);
+            if (backdrops.length) out.storyLine = E.storyLogLine(backdrops, (out.report && out.report.stages) || []);
+            return out;
+        }
+
+        // " · STORY OPENS 2 STAGES", for the line under a finished build; the
+        // whole "story:" line goes to the console beside the warnings.
+        function dezaStorySummary(out) {
+            if (!out.storyLine) return '';
+            console.info(out.storyLine);
+            const stages = (out.report && out.report.stages) || [];
+            const n = stages.filter((s) => s.story).length;
+            return n ? ' · STORY OPENS ' + n + ' STAGE' + (n === 1 ? '' : 'S') : ' · NO STAGE HAS ROOM FOR THE STORY';
+        }
+
+        // ============ ITEM EMBLEMS (a Saturn cart's power-up icons) ============
+        // A Dezaemon 2 save gives each item slot one 16x16 cell, and the writer
+        // fills it with a coloured square unless it is handed art (`itemEmblems`,
+        // keyed by letter: f, s, r, b — which slot wears which is the writer's
+        // call). `build:sav` hands it the winged letters the runtime flies, the
+        // folded pose of each powerup GIF, which the runtime's powerups atlas
+        // carries as emblemStill<L>.gif (packages/shmup-harbor/lib/
+        // powerup-emblems.ts loadAtlasEmblems). The page cuts the same four
+        // stills out of the atlas it serves, so a cart exported here wears them
+        // too.
+        const DEZA_EMBLEM_ATLAS_URL = '/games/2028-ai/assets/powerups.json';
+        const DEZA_EMBLEM_CELL = 16;
+        let dezaItemEmblemsLoad = null;
+        function dezaItemEmblems() {
+            if (!dezaItemEmblemsLoad) {
+                dezaItemEmblemsLoad = (async () => {
+                    const atlas = await (await fetch(DEZA_EMBLEM_ATLAS_URL)).json();
+                    const base = new URL(DEZA_EMBLEM_ATLAS_URL, location.href);
+                    const sheet = await imageRgbaAsStored(new URL((atlas.meta && atlas.meta.image) || 'img/powerups.png', base).href);
+                    const cell = DEZA_EMBLEM_CELL, out = {};
+                    for (const letter of ['s', 'b', 'f', 'r']) {
+                        const name = 'emblemStill' + letter.toUpperCase() + '.gif';
+                        const r = atlas.frames && atlas.frames[name] && atlas.frames[name].frame;
+                        if (!r) continue;
+                        if (r.w !== cell || r.h !== cell || r.x + cell > sheet.width || r.y + cell > sheet.height) {
+                            console.warn('item icons: ' + name + ' is not a ' + cell + 'x' + cell + ' cell of its sheet — that letter keeps its square');
+                            continue;
+                        }
+                        const rgba = new Uint8ClampedArray(cell * cell * 4);
+                        for (let y = 0; y < cell; y++) {
+                            const s = ((r.y + y) * sheet.width + r.x) * 4;
+                            rgba.set(sheet.data.subarray(s, s + cell * 4), y * cell * 4);
+                        }
+                        out[letter] = { w: cell, h: cell, rgba };
+                    }
+                    return Object.keys(out).length ? out : null;
+                })().catch((e) => {
+                    console.warn('item icons: the powerups atlas did not load — the cart draws coloured squares', e);
+                    dezaItemEmblemsLoad = null;   // asked again next export
+                    return null;
+                });
+            }
+            return dezaItemEmblemsLoad;
+        }
+
         // settings +0x00: bit0 = horizontal, bit1 = 2P join-in — the grid's
         // orientation switch and the imported save's own mode bit.
         function dezaSavGameMode() {
@@ -8214,18 +8345,20 @@
         // What every .sav build in this page hands the cart writer beside the
         // level and its art.
         async function dezaSavOptions() {
-            const [upload1, upload2, author, logo, subtitle, titleG] = await Promise.all([
+            const [upload1, upload2, author, logo, subtitle, titleG, itemEmblems] = await Promise.all([
                 dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL), dezaHostAuthor(),
                 dezaUiPlate(['logo.gif', 'logo.png']),
                 dezaUiPlate(['subTitle.gif', 'subTitle.png', 'subTitleEn.gif', 'subTitleEn.png']),
                 dezaUiPlate(['titleG.gif', 'titleG.png']),
+                dezaItemEmblems(),
             ]);
             // An uploaded logo / subtitle, else the game's own plate in its
             // game_ui set (which the browser and the PS2 draw over the G), and
-            // the G itself for a game with neither.
+            // the G itself for a game with neither. The item cells wear the
+            // runtime's power-up emblems, as build:sav's do.
             return {
                 palette: dezaSavPalette, gameMode: dezaSavGameMode(),
-                title1: upload1 || logo, title2: upload2 || subtitle, titleG, author,
+                title1: upload1 || logo, title2: upload2 || subtitle, titleG, author, itemEmblems,
             };
         }
 
@@ -8400,7 +8533,8 @@
             const art = collectAtlasArtForSav();
             const opts = await dezaSavOptions();
             if (palette) opts.palette = palette;
-            return { out: window.Dezaemon.exportLevelToSav(record, art, opts), record };
+            const out = await exportWithStory((storyBackdrops) => window.Dezaemon.exportLevelToSav(record, art, { ...opts, storyBackdrops }));
+            return { out, record };
         }
 
         // A game that is on the shelf (→ SAVE SHELF) is built there again on
@@ -8469,7 +8603,7 @@
                 const rep = out.report || {};
                 const summary = (rep.stages ? rep.stages.length : 0) + ' STAGE' + (rep.stages && rep.stages.length === 1 ? '' : 'S') +
                     ' · ' + (rep.cells || 0) + '/1024 CG CELLS · ' + dezaSavPalette.toUpperCase() + ' PALETTE · ' + mb + ' MB' +
-                    dezaCreditSummary(rep);
+                    dezaStorySummary(out) + dezaCreditSummary(rep);
                 const warn = out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : '';
                 if (action === 'shelf') {
                     const shelf = await dezaShelf();
@@ -8756,7 +8890,8 @@
             const record = await buildLevelRecordForSav();
             if (name) record.name = name;
             const art = collectAtlasArtForSav();
-            const out = window.Dezaemon.exportLevelToSav(record, art, await dezaSavOptions());
+            const opts = await dezaSavOptions();
+            const out = await exportWithStory((storyBackdrops) => window.Dezaemon.exportLevelToSav(record, art, { ...opts, storyBackdrops }));
             return { out, record };
         }
 
@@ -8926,23 +9061,25 @@
             const record = await buildLevelRecordForSav();
             const art = collectAtlasArtForSav();
             const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
-            const out = window.Dezaemon.exportLevelToKidsCard(record, art, {
+            const out = await exportWithStory((storyBackdrops) => window.Dezaemon.exportLevelToKidsCard(record, art, {
                 name: record.name,
                 title1, title2,
                 backgroundSet: kidsBackdropSet(),
                 horizontal: gridOrientation === 'horizontal',
-            });
+                storyBackdrops,
+            }));
             return { out, record };
         }
         async function buildPlusCardForExport() {
             const record = await buildLevelRecordForSav();
             const art = collectAtlasArtForSav();
             const title1 = await dataUrlToRgba(logoDataURL);
-            const out = window.Dezaemon.exportLevelToPlusCard(record, art, {
+            const out = await exportWithStory((storyBackdrops) => window.Dezaemon.exportLevelToPlusCard(record, art, {
                 name: record.name,
                 title1,
                 horizontal: gridOrientation === 'horizontal',
-            });
+                storyBackdrops,
+            }));
             return { out, record };
         }
         let kidsCardBusy = false;
@@ -8976,7 +9113,8 @@
                 const summary = '"' + out.name + '" · ' + stages + ' STAGE' + (stages === 1 ? '' : 'S') +
                     (game === 'plus'
                         ? ' · ' + ((rep.tiles && rep.tiles.used) || 0) + '/512 TILES · ' + ((rep.rows && rep.rows.length) || 0) + ' PALETTE ROWS'
-                        : ' · ' + ((rep.cells && rep.cells.used) || 0) + '/1024 CG CELLS · ' + Math.round((rep.slack || 0) / 1024) + ' KB TO SPARE');
+                        : ' · ' + ((rep.cells && rep.cells.used) || 0) + '/1024 CG CELLS · ' + Math.round((rep.slack || 0) / 1024) + ' KB TO SPARE') +
+                    dezaStorySummary(out);
                 const warn = out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : '';
                 if (action === 'mednafen') {
                     kidsCardNote('INSTALLING THE CARD FOR MEDNAFEN…');
@@ -9292,7 +9430,8 @@
             const [title1, title2, titleBg] = await Promise.all([
                 dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL), dataUrlToRgba(titleBgDataURL),
             ]);
-            const out = window.Dezaemon.exportLevelToSfcSram(record, art, { name: record.name, title1, title2, titleBg });
+            const out = await exportWithStory((storyBackdrops) =>
+                window.Dezaemon.exportLevelToSfcSram(record, art, { name: record.name, title1, title2, titleBg, storyBackdrops }));
             return { out, record };
         }
         let sfcSramBusy = false;
@@ -9322,8 +9461,8 @@
                 const rep = out.report || {};
                 const stages = rep.stages ? rep.stages.length : 0;
                 const summary = '"' + out.name + '" · ' + stages + ' STAGE' + (stages === 1 ? '' : 'S') +
-                    ' · ' + ((rep.tiles && rep.tiles.used) || 0) + '/' + ((rep.tiles && rep.tiles.capacity) || 2048) + ' TILES · ' +
-                    ((rep.rows && rep.rows.length) || 0) + ' PALETTE ROWS';
+                    ' · ' + ((rep.chips && rep.chips.used) || 0) + '/' + ((rep.chips && rep.chips.capacity) || 512) + ' CHIPS · ' +
+                    ((rep.rows && rep.rows.length) || 0) + ' PALETTE ROWS' + dezaStorySummary(out);
                 const warn = out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : '';
                 if (action === 'mednafen') {
                     sfcSramNote('INSTALLING THE SAVE FOR MEDNAFEN…');
@@ -9420,7 +9559,8 @@
                 const record = await buildLevelRecordForSav();
                 record.name = name;
                 const art = collectAtlasArtForSav();
-                const out = window.Dezaemon.exportLevelToSav(record, art, await dezaSavOptions());
+                const opts = await dezaSavOptions();
+                const out = await exportWithStory((storyBackdrops) => window.Dezaemon.exportLevelToSav(record, art, { ...opts, storyBackdrops }));
                 eshopNote('RENDERING THE COVER…');
                 const cover = await dezaCoverDataUrl(out.sav);
                 eshopNote('PUBLISHING "' + name + '"…');

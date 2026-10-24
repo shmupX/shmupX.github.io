@@ -8265,6 +8265,325 @@ function exportLevelToSav(level, art2, options = {}) {
   };
 }
 
+// packages/shmup-engine/src/story/bitmap-font.js
+var FIRST_CODE = 32;
+function newRaster(width, height) {
+  return { width, height, data: new Uint8Array(width * height * 4) };
+}
+function bitmapFontFromSheet(sheet, glyphW = 8, glyphH = 8) {
+  if (sheet.height < glyphH) {
+    throw new Error(`font: ${sheet.height} rows cannot hold a ${glyphH}px glyph`);
+  }
+  const count = Math.floor(sheet.width / glyphW);
+  const glyphs = [];
+  for (let g = 0; g < count; g++) {
+    const mask = new Uint8Array(glyphW * glyphH);
+    for (let y = 0; y < glyphH; y++) {
+      for (let x = 0; x < glyphW; x++) {
+        const s = (y * sheet.width + g * glyphW + x) * 4;
+        mask[y * glyphW + x] = sheet.data[s + 3] ? 1 : 0;
+      }
+    }
+    glyphs.push(mask);
+  }
+  return { glyphW, glyphH, glyphs };
+}
+function wrapText(text, cols) {
+  const out = [];
+  for (const paragraph of foldToAscii(text).split("\n")) {
+    const words = paragraph.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      out.push("");
+      continue;
+    }
+    let line = "";
+    for (let word of words) {
+      while (word.length > cols) {
+        if (line) {
+          out.push(line);
+          line = "";
+        }
+        out.push(word.slice(0, cols));
+        word = word.slice(cols);
+      }
+      if (!line) line = word;
+      else if (line.length + 1 + word.length <= cols) line += " " + word;
+      else {
+        out.push(line);
+        line = word;
+      }
+    }
+    if (line) out.push(line);
+  }
+  return out;
+}
+var FOLD2 = {
+  "\u2018": "'",
+  "\u2019": "'",
+  "\u201A": ",",
+  "\u201C": '"',
+  "\u201D": '"',
+  "\u2013": "-",
+  "\u2014": "-",
+  "\u2212": "-",
+  "\u2026": "...",
+  "\xA0": " ",
+  "\xB4": "'",
+  "`": "'"
+};
+function foldToAscii(text) {
+  let out = "";
+  for (const ch of String(text ?? "")) out += FOLD2[ch] ?? ch;
+  return out;
+}
+function glyphIndex(font, ch) {
+  const code = ch.codePointAt(0) ?? 32;
+  const index = code - FIRST_CODE;
+  return index >= 0 && index < font.glyphs.length ? index : -1;
+}
+function renderText(font, text, w, h, opts = {}) {
+  const colour = opts.colour ?? [255, 255, 255];
+  const align = opts.align ?? "centre";
+  const lineGap = opts.lineGap ?? font.glyphH + 1;
+  const out = newRaster(w, h);
+  const cols = Math.max(1, Math.floor(w / font.glyphW));
+  const rows = Math.max(1, Math.floor((h + (lineGap - font.glyphH)) / lineGap));
+  const lines = wrapText(text, cols).slice(0, rows);
+  if (!lines.length) return out;
+  const blockH = lines.length * lineGap - (lineGap - font.glyphH);
+  const top = Math.max(0, Math.floor((h - blockH) / 2));
+  const plot2 = (px, py, r, g, b) => {
+    if (px < 0 || py < 0 || px >= w || py >= h) return;
+    const d = (py * w + px) * 4;
+    out.data[d] = r;
+    out.data[d + 1] = g;
+    out.data[d + 2] = b;
+    out.data[d + 3] = 255;
+  };
+  lines.forEach((line, row) => {
+    const lineW = line.length * font.glyphW;
+    const left = align === "centre" ? Math.floor((w - lineW) / 2) : 0;
+    const y0 = top + row * lineGap;
+    for (let i = 0; i < line.length; i++) {
+      const gi = glyphIndex(font, line[i]);
+      if (gi < 0) continue;
+      const mask = font.glyphs[gi];
+      const x0 = left + i * font.glyphW;
+      if (opts.shadow) {
+        for (let y = 0; y < font.glyphH; y++) {
+          for (let x = 0; x < font.glyphW; x++) {
+            if (mask[y * font.glyphW + x]) plot2(x0 + x + 1, y0 + y + 1, 0, 0, 0);
+          }
+        }
+      }
+      for (let y = 0; y < font.glyphH; y++) {
+        for (let x = 0; x < font.glyphW; x++) {
+          if (mask[y * font.glyphW + x]) plot2(x0 + x, y0 + y, colour[0], colour[1], colour[2]);
+        }
+      }
+    }
+  });
+  return out;
+}
+
+// packages/shmup-engine/src/story/story-panels.js
+var BACKDROP_W = 224;
+var BACKDROP_ROW = 16;
+var BACKDROP_H = 12 * BACKDROP_ROW;
+function fitPanel(src, w, h) {
+  const out = newRaster(w, h);
+  const scale = Math.min(src.width / w, src.height / h);
+  const cropW = Math.min(src.width, Math.round(w * scale));
+  const cropH = Math.min(src.height, Math.round(h * scale));
+  const cropX = Math.floor((src.width - cropW) / 2);
+  const cropY = Math.floor((src.height - cropH) / 2);
+  for (let y = 0; y < h; y++) {
+    const sy0 = cropY + Math.floor(y * cropH / h);
+    const sy1 = Math.max(sy0 + 1, cropY + Math.floor((y + 1) * cropH / h));
+    for (let x = 0; x < w; x++) {
+      const sx0 = cropX + Math.floor(x * cropW / w);
+      const sx1 = Math.max(sx0 + 1, cropX + Math.floor((x + 1) * cropW / w));
+      let r = 0, g = 0, b = 0, a = 0, n = 0;
+      for (let sy = sy0; sy < sy1 && sy < src.height; sy++) {
+        for (let sx = sx0; sx < sx1 && sx < src.width; sx++) {
+          const s = (sy * src.width + sx) * 4;
+          const sa = src.data[s + 3];
+          if (sa) {
+            r += src.data[s] * sa;
+            g += src.data[s + 1] * sa;
+            b += src.data[s + 2] * sa;
+          }
+          a += sa;
+          n++;
+        }
+      }
+      if (!n) continue;
+      const d = (y * w + x) * 4;
+      const alpha = a / n;
+      out.data[d + 3] = Math.round(alpha);
+      if (a > 0) {
+        out.data[d] = Math.round(r / a);
+        out.data[d + 1] = Math.round(g / a);
+        out.data[d + 2] = Math.round(b / a);
+      }
+    }
+  }
+  return out;
+}
+function containPicture(src, w, h) {
+  const scale = Math.min(w / src.width, h / src.height);
+  return fitPanel(
+    src,
+    Math.max(1, Math.round(src.width * scale)),
+    Math.max(1, Math.round(src.height * scale))
+  );
+}
+function storyParts(storyData, stage) {
+  const st = storyData && storyData[`stage${stage}`];
+  if (!st || !Array.isArray(st.part)) return [];
+  return st.part.map((p) => p && typeof p.text === "string" ? p.text : "").filter((t) => t.trim());
+}
+function storySpeaker(storyData) {
+  const own = storyData && storyData.speaker;
+  return typeof own === "string" && own.trim() ? own.trim() : "G";
+}
+var BORDER = 1;
+var PAD = 3;
+var GAP = 4;
+var WHITE = [255, 255, 255];
+function fillRect(r, x0, y0, w, h, rgb) {
+  for (let y = Math.max(0, y0); y < Math.min(r.height, y0 + h); y++) {
+    for (let x = Math.max(0, x0); x < Math.min(r.width, x0 + w); x++) {
+      r.data.set([rgb[0], rgb[1], rgb[2], 255], (y * r.width + x) * 4);
+    }
+  }
+}
+function frameBox(r, x, y, w, h) {
+  fillRect(r, x, y, w, h, WHITE);
+  fillRect(r, x + BORDER, y + BORDER, w - 2 * BORDER, h - 2 * BORDER, [0, 0, 0]);
+}
+function blit2(dst, src, x0, y0) {
+  for (let y = 0; y < src.height; y++) {
+    const dy = y0 + y;
+    if (dy < 0 || dy >= dst.height) continue;
+    for (let x = 0; x < src.width; x++) {
+      const dx = x0 + x;
+      if (dx < 0 || dx >= dst.width) continue;
+      const s = (y * src.width + x) * 4;
+      if (!src.data[s + 3]) continue;
+      dst.data.set(src.data.subarray(s, s + 4), (dy * dst.width + dx) * 4);
+    }
+  }
+}
+function wordsHeight(font, lines) {
+  const plateH = font.glyphH + 2 * (BORDER + PAD);
+  const boxH = lines * (font.glyphH + 1) - 1 + 2 * (BORDER + PAD);
+  return plateH - BORDER + boxH;
+}
+function composeBackdrop(font, speaker, lines, picture) {
+  const gw = font?.glyphW ?? 8, gh = font?.glyphH ?? 8;
+  const lineGap = gh + 1;
+  const words = font && lines.length > 0;
+  const plateW = speaker.length * gw + 2 * (BORDER + PAD);
+  const plateH = gh + 2 * (BORDER + PAD);
+  const boxH = lines.length * lineGap - 1 + 2 * (BORDER + PAD);
+  const wordsH = words ? wordsHeight(font, lines.length) : 0;
+  const pictureY = words && picture ? wordsH + GAP : wordsH;
+  const contentH = pictureY + (picture ? picture.height : 0);
+  const h = Math.max(BACKDROP_ROW, Math.ceil(contentH / BACKDROP_ROW) * BACKDROP_ROW);
+  const out = newRaster(BACKDROP_W, h);
+  if (words) {
+    const boxY = plateH - BORDER;
+    frameBox(out, 0, boxY, BACKDROP_W, boxH);
+    frameBox(out, 4, 0, plateW, plateH);
+    blit2(
+      out,
+      renderText(font, speaker, speaker.length * gw, gh, { colour: WHITE }),
+      4 + BORDER + PAD,
+      BORDER + PAD
+    );
+    const inner = BACKDROP_W - 2 * (BORDER + PAD);
+    blit2(
+      out,
+      renderText(font, lines.join("\n"), inner, lines.length * lineGap - 1, {
+        colour: WHITE,
+        align: "left",
+        lineGap
+      }),
+      BORDER + PAD,
+      boxY + BORDER + PAD
+    );
+  }
+  if (picture) {
+    blit2(out, picture, Math.floor((BACKDROP_W - picture.width) / 2), pictureY);
+  }
+  return out;
+}
+function boxLines(font, parts) {
+  const cols = Math.floor((BACKDROP_W - 2 * (BORDER + PAD)) / font.glyphW);
+  return parts.flatMap((p) => wrapText(p, cols));
+}
+function storyLogLine(backdrops, stages) {
+  if (!backdrops.length) {
+    return "story: the level tells none \u2014 stages open as they are";
+  }
+  const keys = new Set(stages.map((s) => s.key));
+  const drawn = stages.filter((s) => s.story).map((s) => `${s.key} ${s.story.size} (${s.story.rows} rows)`);
+  const beyond = backdrops.filter((b) => !keys.has(`stage${b.stage}`)).map((b) => b.stage);
+  return `story: ${drawn.length ? `opens ${drawn.join(", ")}` : "no stage has room for it"}${beyond.length ? ` (stage${beyond.length === 1 ? "" : "s"} ${beyond.join(", ")} of the story ${beyond.length === 1 ? "has" : "have"} no stage on the cart)` : ""}`;
+}
+var variant = (label, r) => ({ label, w: r.width, h: r.height, rgba: r.data });
+async function storyBackdrops(storyData, { font = null, decodePicture = null, onWarn = () => {
+} } = {}) {
+  const sd = storyData;
+  if (!sd || typeof sd !== "object") return [];
+  const images = sd.customImages && typeof sd.customImages === "object" ? sd.customImages : {};
+  const speaker = storySpeaker(sd);
+  const out = [];
+  for (let stage = 0; stage < 16; stage++) {
+    const parts = storyParts(sd, stage);
+    const key = Object.keys(images).filter((k) => new RegExp("^stage" + stage + "_part\\d+$").test(k)).sort((a, b) => Number(a.split("part")[1]) - Number(b.split("part")[1])).find((k) => typeof images[k] === "string") ?? null;
+    let source = null;
+    if (key && decodePicture) {
+      try {
+        source = await decodePicture(images[key]);
+      } catch (e) {
+        onWarn(`story picture for stage ${stage} (${key}): ${e && e.message || e}`);
+      }
+    }
+    const lines = font ? boxLines(font, parts) : [];
+    if (!source && !lines.length) continue;
+    const variants = [];
+    const words = font && lines.length ? composeBackdrop(font, speaker, lines, null) : null;
+    if (source) {
+      const room = BACKDROP_H - (words ? wordsHeight(font, lines.length) + GAP : 0);
+      const heights = room >= 48 ? [room, Math.round(room * 2 / 3), Math.round(room * 2 / 5)] : [Math.round(BACKDROP_H / 3)];
+      const seen = /* @__PURE__ */ new Set();
+      for (const h of heights) {
+        const pic = containPicture(source, BACKDROP_W, h);
+        const size = `${pic.width}x${pic.height}`;
+        if (seen.has(size) || pic.height < 16) continue;
+        seen.add(size);
+        variants.push(
+          variant(
+            `picture ${size}${words ? " + words" : ""}`,
+            composeBackdrop(font, speaker, words ? lines : [], pic)
+          )
+        );
+      }
+    }
+    if (words) {
+      variants.push(variant("words", words));
+      const opening = boxLines(font, parts.slice(0, 1));
+      if (parts.length > 1 && opening.length < lines.length) {
+        variants.push(variant("opening words", composeBackdrop(font, speaker, opening, null)));
+      }
+    }
+    out.push({ stage, sourceKey: source ? key : null, speaker, parts, variants });
+  }
+  return out;
+}
+
 // packages/shmup-engine/src/psx/kids-palette.js
 var KIDS_PALETTE = Object.freeze([
   0,
@@ -9697,7 +10016,7 @@ var KIDS_BOSS_SCORE = Object.freeze([5e4, 11e4, 55e4]);
 var KIDS_BOSS_SPEEDS = 3;
 function encodeKidsRecord({
   movement = KIDS_MOVE_STRAIGHT,
-  variant = 0,
+  variant: variant2 = 0,
   fromBehind = false,
   hardness = 0,
   scoreTier = 0,
@@ -9713,7 +10032,7 @@ function encodeKidsRecord({
   ground = false
 } = {}) {
   return [
-    movement & 31 | variant % 3 << 5 | (fromBehind ? 128 : 0),
+    movement & 31 | variant2 % 3 << 5 | (fromBehind ? 128 : 0),
     hardness & 7 | (scoreTier & 3) << 3 | opacity % 5 << 5,
     bullet % 9 | (timing & 3) << 4 | (animIndex & 3) << 6,
     shotPattern & 15 | (aim ? 16 : 0) | (item & 7) << 5,
@@ -17604,9 +17923,9 @@ function decodeEnemyEntry2(bytes, at) {
     }
   };
 }
-function encodeEnemyEntry2({ family = 0, variant = 0, aim = 0, rate = 0, shotType = 0, itemDrop = false, hp = 0, flags = 0, score = 0, anim = 0, shotParam = 0 } = {}) {
+function encodeEnemyEntry2({ family = 0, variant: variant2 = 0, aim = 0, rate = 0, shotType = 0, itemDrop = false, hp = 0, flags = 0, score = 0, anim = 0, shotParam = 0 } = {}) {
   return [
-    (family & 31) << 3 | variant & 7,
+    (family & 31) << 3 | variant2 & 7,
     aim & 31 | (rate & 7) << 5,
     shotType & 3 | (itemDrop ? 4 : 0),
     hp & 7 | (flags & 7) << 5,
@@ -19657,6 +19976,7 @@ export {
   bandFor,
   bankToPalettes,
   bankToSec4,
+  bitmapFontFromSheet,
   blastFrames,
   bossClassFor,
   bpmOfTempoIndex,
@@ -19819,6 +20139,8 @@ export {
   spreadFrames,
   stageSaveInInternalRam,
   stepSecondsOf,
+  storyBackdrops,
+  storyLogLine,
   summarizeSfcSav,
   swatchCell,
   swatchCellRect,

@@ -2044,8 +2044,9 @@ the core's art, is unknown, and a part is a zako (its own hp, not the bar's).
 
 The format has no cutscenes, but a stage opens on the first rows of its
 background tilemap (sec5 `+0x00000`), so the writer paints the story there:
-a 224-wide raster per stage (14 map columns; harbor's `lib/story-panels.ts`
-composes the speaker's plate, the words and the picture), cut into 16×16 cells
+a 224-wide raster per stage (14 map columns; `src/story/story-panels.js`
+`storyBackdrops` composes the speaker's plate, the words and the picture, for
+the CLI builds and the editor's exports alike), cut into 16×16 cells
 and laid from map row 3 upward, the raster's top row on the highest map row.
 Measured in EmulatorJS's yabause with gs: as a stage opens, the screen's bottom
 edge shows map y ~37, so rows 0-2 start out of sight, and 12 rows from row 3

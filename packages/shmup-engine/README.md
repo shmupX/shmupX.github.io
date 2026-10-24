@@ -63,15 +63,24 @@ And back again — a level record (the cloud save shape: `enemylist`, `width`,
 `enemyData`, `bossData`, ... or `stages.stageN`) and its atlas frames as RGBA:
 
 ```js
-import { exportLevelToSav } from "@shmupx/shmup-engine";
+import {
+  bitmapFontFromSheet,
+  exportLevelToSav,
+  storyBackdrops,
+} from "@shmupx/shmup-engine";
 
 // art: { "redEyeOcto0.png": { w, h, rgba }, ... } — the caller slices the
 // atlas (a canvas in the browser, lib/ps2/png.ts in Deno); the module has no DOM.
+// The story's face and pictures likewise: font = bitmapFontFromSheet(athenaFont
+// as {width, height, data}), decodePicture = a data URL -> Promise of the same.
 const { sav, fileName, warnings, report } = exportLevelToSav(level, art, {
   palette: "saturn", // or "snes": one 15-colour row per sprite
   title1: logoRgba, // optional {w, h, rgba} for the drawn TITLE 1 / TITLE 2
   itemEmblems: { f: powerIcon, s: shotIcon, r: rapidIcon, b: barrierIcon }, // optional 16×16 icon per letter; else a square
-  storyBackdrops: [{ stage: 0, variants: [{ label, w: 224, h, rgba }] }], // optional: a stage's story as its opening scenery, largest size first
+  storyBackdrops: await storyBackdrops(level.storyData, {
+    font,
+    decodePicture,
+  }), // optional: each stage's story as its opening scenery, [{ stage, variants: [{ label, w: 224, h, rgba }] }], largest size first
   author: "easierbycode", // optional: who presents a level that names nobody
 });
 await Deno.writeFile(fileName, sav); // "Dez 2 - <name>.sav", 1,114,112 bytes
@@ -165,6 +174,12 @@ The root module (`mod.js`) flat-exports the surface the level editor binds as
   `resolveAttribution` (option > level > the cart's own art > default author),
   `creditStripRgba` (a name set in the built-in 3×5 face, 64×16),
   `authorFromEnvironment` (account name, else the home directory's)
+- **`./src/story/story-panels.js`** — `storyBackdrops` (a level's `storyData` ->
+  each stage's story as 224-wide opening scenery, every size it can be drawn at,
+  for any cart writer's `storyBackdrops`), `storyLogLine`, `fitPanel`,
+  `containPicture`, `composeBackdrop`, `storyParts`, `storySpeaker`
+- **`./src/story/bitmap-font.js`** — `bitmapFontFromSheet` (Dezaemon 2's 8×8
+  face from its sheet's RGBA), `renderText`, `wrapText`, `foldToAscii`
 
 `buildSaveFromGame` paints the drawn title screen from `title1`/`title2` when
 the caller has images (the editor's TITLE EDITOR uploads), and otherwise from

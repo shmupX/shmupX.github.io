@@ -1532,7 +1532,7 @@ export function buildSaveFromGame(level, art, options = {}) {
     // A .sav has no words for a cutscene, but every stage has a background
     // map, and its first rows are what the screen shows as the stage opens.
     // So a stage's story picture and words (`storyBackdrops`, composed by
-    // lib/story-panels.ts: a 224-wide raster for each size it can be drawn
+    // src/story/story-panels.js: a 224-wide raster for each size it can be drawn
     // at) are painted into those rows: on screen as the stage starts, then
     // scrolling away beneath the ship. They are the last art on the cart, so
     // they never cost the game a sprite: indexed against the finished palette

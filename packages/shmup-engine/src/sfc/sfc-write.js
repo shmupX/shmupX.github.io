@@ -404,7 +404,7 @@ export function composeTitlePicture({ logo = null, subtitle = null, backdrop = n
  * editor's logo, subtitle and backdrop, composed into the title picture by
  * composeTitlePicture), `horizontal` (refused with a warning: the cart
  * scrolls vertically), `storyBackdrops` ([{stage, variants: [{label, w: 224,
- * h, rgba}]}], harbor's lib/story-panels.ts: each stage's story, painted into
+ * h, rgba}]}], src/story/story-panels.js: each stage's story, painted into
  * its opening map rows at the largest size the sheets have room for — see
  * buildWithStory).
  *

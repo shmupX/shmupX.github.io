@@ -569,9 +569,9 @@ factory sample's SOUND DATA and BGM PATCH (the ROM's songs), all embedded in
 
 ### A level's story, as a stage's opening map rows (`buildWithStory`; 2026-10-20)
 
-The cart has no cutscenes, so each stage's story (harbor's
-`lib/story-panels.ts`: the speaker's plate, the words, the picture, 224 px wide)
-is painted into the stage's MAP DATA where it opens:
+The cart has no cutscenes, so each stage's story (`src/story/story-panels.js`
+`storyBackdrops`: the speaker's plate, the words, the picture, 224 px wide) is
+painted into the stage's MAP DATA where it opens:
 
 - **Where.** As a stage opens the screen shows map rows 0-13, row 0 at its foot
   and row 13's top just above its top edge, under the score and the REST

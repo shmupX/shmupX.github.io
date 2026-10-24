@@ -36,6 +36,8 @@
     "./game-to-save": "./src/write/game-to-save.js",
     "./export-sav": "./src/write/export-sav.js",
     "./attribution": "./src/write/attribution.js",
+    "./bitmap-font": "./src/story/bitmap-font.js",
+    "./story-panels": "./src/story/story-panels.js",
     "./sfc": "./src/sfc/index.js",
     "./psx": "./src/psx/index.js",
     "./n64": "./src/n64/index.js"

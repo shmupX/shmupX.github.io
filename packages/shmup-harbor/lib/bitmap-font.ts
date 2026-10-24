@@ -10,20 +10,22 @@
 //
 // The glyphs are used as a MASK: only their alpha is read, and the colour is
 // the caller's, so the same face can be drawn in any ink over any picture.
+//
+// The typesetting itself is the engine's (src/story/bitmap-font.js), because
+// the level editor sets a cart's story in the page with the very same face;
+// this file reads the sheet off disk and gives the engine's functions types.
 
-import { decodePng, newRaster, type Raster } from "./ps2/png.ts";
+import { decodePng, type Raster } from "./ps2/png.ts";
+import * as face from "@shmupx/shmup-engine/bitmap-font";
 
 /** Where the face lives, relative to the repo root. */
 export const ATHENA_FONT_PATH =
   "static/games/2028-ai/assets/fonts/athenaFont.png";
 
-/** The first code point the sheet carries. TEXT_SET1 starts at a space. */
-const FIRST_CODE = 32;
-
 export interface BitmapFont {
   glyphW: number;
   glyphH: number;
-  /** Alpha mask per glyph, indexed by code point minus FIRST_CODE. */
+  /** Alpha mask per glyph, indexed by code point minus 32. */
   glyphs: Uint8Array[];
 }
 
@@ -48,24 +50,11 @@ export async function loadBitmapFont(
   glyphH = 8,
 ): Promise<BitmapFont> {
   const sheet = await decodePng(await Deno.readFile(path));
-  if (sheet.height < glyphH) {
-    throw new Error(
-      `font ${path}: ${sheet.height} rows cannot hold a ${glyphH}px glyph`,
-    );
+  try {
+    return face.bitmapFontFromSheet(sheet, glyphW, glyphH);
+  } catch (e) {
+    throw new Error(`${(e as Error).message} (${path})`);
   }
-  const count = Math.floor(sheet.width / glyphW);
-  const glyphs: Uint8Array[] = [];
-  for (let g = 0; g < count; g++) {
-    const mask = new Uint8Array(glyphW * glyphH);
-    for (let y = 0; y < glyphH; y++) {
-      for (let x = 0; x < glyphW; x++) {
-        const s = (y * sheet.width + g * glyphW + x) * 4;
-        mask[y * glyphW + x] = sheet.data[s + 3] ? 1 : 0;
-      }
-    }
-    glyphs.push(mask);
-  }
-  return { glyphW, glyphH, glyphs };
 }
 
 /** The Dezaemon face, from a repo root. */
@@ -75,142 +64,25 @@ export function loadAthenaFont(root: string): Promise<BitmapFont> {
 
 /**
  * `text` broken to `cols` characters a line, honouring the newlines the
- * author typed and breaking on spaces where it can.
- *
- * A word longer than the line is cut rather than allowed to overrun, because
- * a panel has no margin to spill into.
+ * author typed and breaking on spaces where it can. A word longer than the
+ * line is cut rather than allowed to overrun.
  */
-export function wrapText(text: string, cols: number): string[] {
-  const out: string[] = [];
-  for (const paragraph of foldToAscii(text).split("\n")) {
-    const words = paragraph.trim().split(/\s+/).filter(Boolean);
-    if (!words.length) {
-      out.push("");
-      continue;
-    }
-    let line = "";
-    for (let word of words) {
-      while (word.length > cols) {
-        if (line) {
-          out.push(line);
-          line = "";
-        }
-        out.push(word.slice(0, cols));
-        word = word.slice(cols);
-      }
-      if (!line) line = word;
-      else if (line.length + 1 + word.length <= cols) line += " " + word;
-      else {
-        out.push(line);
-        line = word;
-      }
-    }
-    if (line) out.push(line);
-  }
-  return out;
-}
+export const wrapText: (text: string, cols: number) => string[] = face.wrapText;
 
 /**
- * Typographic characters an editor inserts silently, folded to the ASCII the
- * sheet can draw. Without this a curly apostrophe drops out and the text
- * reads "humanity s last hope".
+ * `text` with the typographic characters an editor inserts silently (curly
+ * quotes, dashes, an ellipsis) folded to the ASCII the sheet can draw.
  */
-const FOLD: Record<string, string> = {
-  "‘": "'",
-  "’": "'",
-  "‚": ",",
-  "“": '"',
-  "”": '"',
-  "–": "-",
-  "—": "-",
-  "−": "-",
-  "…": "...",
-  " ": " ",
-  "´": "'",
-  "`": "'",
-};
-
-/** `text` with those foldings applied. */
-export function foldToAscii(text: string): string {
-  let out = "";
-  for (const ch of String(text ?? "")) out += FOLD[ch] ?? ch;
-  return out;
-}
+export const foldToAscii: (text: string) => string = face.foldToAscii;
 
 /**
- * A code point the sheet can draw. Anything outside it — the story text
- * carries mis-decoded Greek in places — becomes a space rather than a wrong
- * glyph or a crash.
+ * `text` drawn into a `w` x `h` raster, wrapped and vertically centred; lines
+ * that do not fit the height are dropped from the bottom.
  */
-function glyphIndex(font: BitmapFont, ch: string): number {
-  const code = ch.codePointAt(0) ?? 32;
-  const index = code - FIRST_CODE;
-  return index >= 0 && index < font.glyphs.length ? index : -1;
-}
-
-/**
- * `text` drawn into a `w` x `h` raster, wrapped and vertically centred.
- *
- * Lines that do not fit the height are dropped from the bottom: a story
- * caption that overruns its strip is better short than spilling over the
- * picture below it.
- */
-export function renderText(
+export const renderText: (
   font: BitmapFont,
   text: string,
   w: number,
   h: number,
-  opts: TextOptions = {},
-): Raster {
-  const colour = opts.colour ?? [255, 255, 255];
-  const align = opts.align ?? "centre";
-  const lineGap = opts.lineGap ?? font.glyphH + 1;
-  const out = newRaster(w, h);
-
-  const cols = Math.max(1, Math.floor(w / font.glyphW));
-  const rows = Math.max(1, Math.floor((h + (lineGap - font.glyphH)) / lineGap));
-  const lines = wrapText(text, cols).slice(0, rows);
-  if (!lines.length) return out;
-
-  const blockH = lines.length * lineGap - (lineGap - font.glyphH);
-  const top = Math.max(0, Math.floor((h - blockH) / 2));
-
-  const plot = (px: number, py: number, r: number, g: number, b: number) => {
-    if (px < 0 || py < 0 || px >= w || py >= h) return;
-    const d = (py * w + px) * 4;
-    out.data[d] = r;
-    out.data[d + 1] = g;
-    out.data[d + 2] = b;
-    out.data[d + 3] = 255;
-  };
-
-  lines.forEach((line, row) => {
-    const lineW = line.length * font.glyphW;
-    const left = align === "centre" ? Math.floor((w - lineW) / 2) : 0;
-    const y0 = top + row * lineGap;
-    for (let i = 0; i < line.length; i++) {
-      const gi = glyphIndex(font, line[i]);
-      if (gi < 0) continue;
-      const mask = font.glyphs[gi];
-      const x0 = left + i * font.glyphW;
-      // Shadow first, so the ink lands on top of it.
-      if (opts.shadow) {
-        for (let y = 0; y < font.glyphH; y++) {
-          for (let x = 0; x < font.glyphW; x++) {
-            if (mask[y * font.glyphW + x]) {
-              plot(x0 + x + 1, y0 + y + 1, 0, 0, 0);
-            }
-          }
-        }
-      }
-      for (let y = 0; y < font.glyphH; y++) {
-        for (let x = 0; x < font.glyphW; x++) {
-          if (mask[y * font.glyphW + x]) {
-            plot(x0 + x, y0 + y, colour[0], colour[1], colour[2]);
-          }
-        }
-      }
-    }
-  });
-  return out;
-}
+  opts?: TextOptions,
+) => Raster = face.renderText;

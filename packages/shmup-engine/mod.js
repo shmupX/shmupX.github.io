@@ -304,6 +304,14 @@ export {
   resolveAttribution,
 } from "./src/write/attribution.js";
 export { STAFF_ROLE_LABELS } from "./src/decode/decode-settings.js";
+// --- A level's story as each stage's opening scenery (src/story/): the
+// `storyBackdrops` every cart writer below takes, composed by the editor in
+// the page as `build:sav` and the other CLI builds compose it. The caller
+// reads the font sheet and decodes the pictures; the drawing internals
+// (fitPanel, renderText, wrapText…) are too general for a flat surface and
+// stay behind the ./story-panels and ./bitmap-font subpaths. ---
+export { bitmapFontFromSheet } from "./src/story/bitmap-font.js";
+export { storyBackdrops, storyLogLine } from "./src/story/story-panels.js";
 // --- Dezaemon Kids! on the PlayStation: a level record -> a memory card
 // (src/psx/kids-write.js, src/psx/memcard-write.js). The PlayStation parsers
 // stay behind the ./psx subpath, where tools/psx-sav reads them; the editor

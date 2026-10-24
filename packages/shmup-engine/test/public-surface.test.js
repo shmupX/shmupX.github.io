@@ -119,3 +119,17 @@ Deno.test("mod.js exports the Nintendo 64 surface", () => {
     "Dezaemon 3D - Tiny.ddd",
   );
 });
+
+// The story: what the editor's cart exports compose in the page and hand
+// every writer as `storyBackdrops` (src/story/).
+Deno.test("mod.js exports the story surface", () => {
+  for (
+    const name of ["bitmapFontFromSheet", "storyBackdrops", "storyLogLine"]
+  ) {
+    assert(name in engine, `missing export ${name}`);
+  }
+  assertStrictEquals(
+    engine.storyLogLine([], []),
+    "story: the level tells none — stages open as they are",
+  );
+});

@@ -1015,9 +1015,10 @@ art (`tests` cover a cart keeping both on the way back out).
 
 **The story.** A save has no words for a cutscene, but every stage opens on the
 first rows of its background map, so `build:sav` draws the level's story there
-([`lib/story-panels.ts`](packages/shmup-harbor/lib/story-panels.ts)): what the
-web's story scene shows — the speaker's plate (gs's `GS`, else `G`) and the
-stage's words in a black box, every part in turn — with the stage's picture
+([`src/story/story-panels.js`](packages/shmup-engine/src/story/story-panels.js),
+through [`lib/story-panels.ts`](packages/shmup-harbor/lib/story-panels.ts)):
+what the web's story scene shows — the speaker's plate (gs's `GS`, else `G`) and
+the stage's words in a black box, every part in turn — with the stage's picture
 under them, 224 px wide and up to twelve rows tall, filling the screen between
 the score and its bottom edge as the stage starts. It then scrolls away beneath
 the ship, slowly: a quarter of the stage's speed for the first 64 px, half until
@@ -1036,27 +1037,32 @@ big enemies had already used up: gs's never showed, and its stages opened on ten
 empty seconds instead.
 
 **The story on the other consoles.** The same backdrops open each stage of the
-other carts, through the same composer (`levelStoryBackdrops` in
-`build-sav.ts`) and the same rule — the largest size every stage's story fits
-at, after everything else is on the cart, a stage's waves moved up by exactly
-what it took: the **Super Famicom** paints them into its 16-px map rows, where
-nothing can slow the scroll, so a story stays about four seconds (measured in
-snes9x; FORMAT-SFC.md "A level's story"); **Dezaemon+** into the same kind of
-map at half speed, and **Dezaemon Kids!** into its 32-px chips with the first
-64 px at a quarter speed, drawn a size smaller when the pictures would pack past
-the card's fifteen blocks (FORMAT-PSX.md; neither PlayStation game's opening
-rows are measured, and neither is booted here, so those two are checked by
-reading the map back). A cart a story's stage is missing from says so in the
-build log. The **PS2** build is not a cart: `lib/ps2/story.ts` stages the
-story's pictures on a sheet of their own (`assets/story.png`) with its words in
-`assets/story.json`, and `lib/ps2/runtime-story.ts` takes the place of the
-port's STAGE N card before every stage with the web's story scene — the picture,
-the speaker's plate, the words typed out, CROSS for the next part and START to
-skip — without a new svelte-ps2. The **64DD** disk shows none yet, and
-`build:ddd` says so: its stage scenery is a 3D ground, and the sample game's
-own full-screen briefings — the mechanism a story would use, 40 `portrait`
-layout effects and a clear — are decoded but not booted, so their timing is a
-guess (FORMAT-N64.md "A level's story").
+other carts, through the same composer (`levelStoryBackdrops` in `build-sav.ts`)
+and the same rule — the largest size every stage's story fits at, after
+everything else is on the cart, a stage's waves moved up by exactly what it
+took: the **Super Famicom** paints them into its 16-px map rows, where nothing
+can slow the scroll, so a story stays about four seconds (measured in snes9x;
+FORMAT-SFC.md "A level's story"); **Dezaemon+** into the same kind of map at
+half speed, and **Dezaemon Kids!** into its 32-px chips with the first 64 px at
+a quarter speed, drawn a size smaller when the pictures would pack past the
+card's fifteen blocks (FORMAT-PSX.md; neither PlayStation game's opening rows
+are measured, and neither is booted here, so those two are checked by reading
+the map back). A cart a story's stage is missing from says so in the build log.
+The editor's EXPORT sheet builds the same four carts in the page with the same
+composer, out of the engine bundle (`Dezaemon.storyBackdrops`): it decodes the
+pictures with the browser and sets the words in the `athenaFont.png` the runtime
+serves, and each export's line says how many stages open on the story, with the
+full "story:" line and any warning in the console. The **PS2** build is not a
+cart: `lib/ps2/story.ts` stages the story's pictures on a sheet of their own
+(`assets/story.png`) with its words in `assets/story.json`, and
+`lib/ps2/runtime-story.ts` takes the place of the port's STAGE N card before
+every stage with the web's story scene — the picture, the speaker's plate, the
+words typed out, CROSS for the next part and START to skip — without a new
+svelte-ps2. The **64DD** disk shows none yet, and `build:ddd` says so: its stage
+scenery is a 3D ground, and the sample game's own full-screen briefings — the
+mechanism a story would use, 40 `portrait` layout effects and a clear — are
+decoded but not booted, so their timing is a guess (FORMAT-N64.md "A level's
+story").
 
 **Item icons.** A save gives each of its eight item slots exactly one 16×16 cell
 of the global sprite bank (refs 94–101), so a pickup in a cart is a **still** —

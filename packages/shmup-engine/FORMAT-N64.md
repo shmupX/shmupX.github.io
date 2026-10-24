@@ -683,8 +683,8 @@ DOWNLOAD. Both say what every disk is: untested on hardware or in an emulator.
 - any disk type but 0 beyond the geometry (a warning says so), any `.ndd` whose
   system area is development-format, and the D64 or MAME image shapes;
 - a level's story, which the other carts paint into a stage's opening map rows
-  (harbor's `lib/story-panels.ts`) — see the next section for what the samples
-  show and what a boot still has to settle. `build:ddd` says so in its log.
+  (`src/story/story-panels.js`) — see the next section for what the samples show
+  and what a boot still has to settle. `build:ddd` says so in its log.
 
 ### A level's story: what the sample's briefings show (traced 2026-10-20, not booted)
 
