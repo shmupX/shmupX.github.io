@@ -91,8 +91,8 @@ read-only directory beside the two samples. Built on a donor (the prototype as
 for byte, so the cartridge still has what it needs for disk mode. Built from
 nothing it has the notice, the files, the directory and an empty RAM area: this
 repo's reader opens it, and the cartridge is **not** expected to enter disk mode
-on it. Either way the result is untested on hardware or in an emulator — no
-cartridge, no emulator and no disk fixture exist here.
+on it (not tried). One built on `deza1.NDD` was booted in the launcher's player
+("The launcher's player"); none has been put on hardware.
 
 ## Container geometry (confirmed — `src/n64/geometry.js`)
 
@@ -569,7 +569,8 @@ and gets the same 64,458,560 bytes, then puts a third project on, checks the
 save area is untouched, removes it and gets the prototype back.
 
 **`buildN64ProjectFromLevel(level, art, options)`** — `name`, `template`,
-`title1`, `title2`, `framesPerEnemy` — makes the thirty files, and since the
+`title1`, `title2`, `framesPerEnemy`, `storyBackdrops` — makes the thirty files,
+and since the
 codecs landed it places the level rather than only its art. Each frame becomes
 ONE 64×32 texture — a model shows one texture, so a frame wider than 64 or
 taller than 32 is shrunk to fit with its aspect kept (`shrinkRgba()`,
@@ -580,24 +581,31 @@ about). Into `CGR`: the two title pictures fitted to 128×64 (2×2 textures), tw
 spread frames of the ship (the level's, or the base game's duke when the level
 names none), and up to eight item frames (names matching `item`, `powerup`,
 `speedup`, `1up`). Per stage, for each enemy letter its enemylist uses, most
-placed first: up to four spread frames into `GR`, a **billboard model** per
-frame into `MD` (`spriteModel()`: a flat quad of 4 units a pixel on tile 1 with
-UVs over the sprite's own pixel box — the UV units being the document's as
-written, open), its texture index in the model's slot, and an **enemy entry**
+placed first: up to four spread frames into `GR` (blank textures first, then a
+template's art the map does not name, from the top of the sheet down — see
+"A model's texture"), a **billboard model** per frame into `MD`
+(`spriteModel()`: a quad lying on the ground plane, 10 units a pixel of the
+frame it came from, on tile 1 set to the whole texture, its UVs the sprite's
+own texels with the top row at the far edge), its texture number in the
+model's slot (40 + the `GR` tile, `N64_GR_TEXTURE_BASE`), and an **enemy entry**
 per drop digit its cells carry (`enemyEntryFromEditor()`: score and HP from the
 record, the four frame model numbers as 20 + the slot, the motion speed, a
 bullet-1 shot aimed at the player when the record names an interval, the item
 the digit maps to — the three shot power-ups the shot item, 4 bonus1, 5 the
 bomb, 9 the shield); then the boss's idle frames and an entry with the
 stage-clear and lock-on flags, its HP capped at 15 (15 when the record names
-none) and a fixed motion. The **layout** puts every cell on the map layer at x
-across -400..400 by column and y 240, at the frame its row scrolls in
-(`-(row × 16)`, the row from the Saturn writer's `FIRST_SPAWN_ROW`/`ROW_STEP` or
-the stage's `waveRows`, so the two consoles pace a level the same way), the boss
-at x 0, y 400 after the last wave, entries in descending frame order; the map
-settings and map entries come from a template stage's `BL` when there is one,
-else the map is unset; no effects are written. The common files: the ship and
-the item icons as common models 10 and 12..18 (the slots the cartridge's game
+none) and a fixed motion. The **layout** puts every cell on the map layer, as
+enemy number 20 + its entry (`N64_ENEMY_NUMBER_BASE`; 0-19 are the common `CBL`
+enemies), at x across -400..400 by column and y 240, at the scroll its row
+comes on at (`-(row × 160)`, `N64_SCROLL_PER_ROW`: a stage scrolls 600 a
+second and the Saturn 60 px, so a 16-px row is 160; the row from the Saturn
+writer's `FIRST_SPAWN_ROW`/`ROW_STEP` or the stage's `waveRows`; a "frame"
+here is a scroll distance, see "A level's story"), the boss at x 0, y 400
+after the last wave, entries in descending frame order; the map settings and
+map entries come from a template stage's `BL` when there is one, else the map
+is unset; the effects are the opening scene every stage gets
+(`N64_STAGE_SCENE`, "A model's texture") and a stage's story ("A level's
+story"). The common files: the ship and the item icons as common models 10 and 12..18 (the slots the cartridge's game
 uses) in `CMD`, the seven item entries pointing at them in `CBL`, `GAM` with the
 final stage set (a template's `GAM` is carried with only that byte changed — the
 prototype's 1,360-byte ones included), blank songs in `MUS`, an empty `ULB`; a
@@ -614,7 +622,7 @@ template is a project's thirty files decompressed —
 that way. Every number here that is not a measurement is a constant with its
 evidence beside it (`N64_MODEL_NUMBER_BASE`, `N64_LAYOUT_HALF_WIDTH`,
 `N64_SPAWN_Y`, `N64_UNITS_PER_PIXEL`, the speed, hit-size and drop tables), all
-**likely**: nothing the builder writes has been booted.
+**likely**; what a boot settled is in the next section.
 
 **`exportLevelToDdd(level, art, options)`** — the project options above plus
 `disk`, `template`, `format`, `systemArea` — is the one call: the project onto
@@ -647,19 +655,29 @@ CONSOLE › **N64**, is the same call from the engine bundle
 projects are listed, and a donor with none gets no template), a PROJECT NAME
 field (eight letters and digits, the open game's name cut to fit by default; a
 name on the donor replaces that project), a FORMAT pick between NDD and DDD, and
-DOWNLOAD. Both say what every disk is: untested on hardware or in an emulator.
+DOWNLOAD. Only `build:ddd` draws a story: the editor's call passes no
+`storyBackdrops` (harbor's `lib/story-panels.ts` and its font are not in the
+bundle). No disk has been put on hardware.
 
 **What the writer does not write** — the list a future session starts from:
 
-- anything a boot would settle: whether a billboard's UVs and tile land on its
-  texture, whether model 20 + _k_ is slot _k_, whether x ±400 spans the screen
-  and y 240 is where an enemy should appear, whether the frame offsets pace the
-  level — every one of them a reading of the document and the sample stages, and
-  the test of all of them is the game, which no one here has run;
-- layout effects: no song command, no camera, no altitude, no stage-clear
-  command (the boss's flag is relied on instead); the map is unset unless a
-  template stage lends its map table, and a template's effects are never carried
-  (a stage-clear or a camera move at the wrong frame would be worse than none);
+- where a placement should go: x ±400 puts gs's columns in the middle third of
+  the screen where the ship flies, and layout y reads as height (rows at y 100
+  to 700 came on smaller and nearer the horizon as y fell), so whether 240 is
+  the ship's own height, and whether a wider x would suit a level better, is
+  open — the sample's map layers run ±627;
+- a tile's `offset` beyond 0 (the selection's corner in 4×4 blocks, 0x20 a
+  row): the writer only ever selects a whole texture, and how a model's texture
+  index pages past its first texture is untested;
+- layout effects beyond the scene's and the story's: no song command, no
+  stage-clear command (the boss's flag is relied on instead), one camera for the
+  whole stage; the map is unset unless a template stage lends its map table,
+  and a template's effects are never carried (a stage-clear or a camera move at
+  the wrong frame would be worse than none). The ground a template's map lends
+  is not seen with the scene written here: gs's stages are black behind the
+  sprites;
+- the template's ship: with a template its `GAM` and `CMD` are carried, and on
+  gs the ship draws as a grey block rather than the sample's own jet;
 - what a template-less `GAM` still names: it is the cartridge's initial game
   with the final stage set and the player's frames on the ship's model, and it
   keeps the shield's models (7 and 5, empty slots on a disk built here — the
@@ -679,48 +697,134 @@ DOWNLOAD. Both say what every disk is: untested on hardware or in an emulator.
   documented 1,369, and the "slightly different, incompatible formatting" the
   translation's notes say they have beyond that;
 - textures beyond what the blank slots hold: a sheet that runs out is reported,
-  not grown — a project has 40 + 8 × 260 textures and no more;
+  not grown — a project has 40 + 8 × 260 textures and no more (a story alone
+  takes back a template's art, below);
 - any disk type but 0 beyond the geometry (a warning says so), any `.ndd` whose
   system area is development-format, and the D64 or MAME image shapes;
-- a level's story, which the other carts paint into a stage's opening map rows
-  (harbor's `lib/story-panels.ts`) — see the next section for what the samples
-  show and what a boot still has to settle. `build:ddd` says so in its log.
+- a story drawn by the editor's export (only `build:ddd` passes one), and a
+  story for a stage past the level's own (a boss's split second stage never
+  gets one).
 
-### A level's story: what the sample's briefings show (traced 2026-10-20, not booted)
+### A level's story (traced 2026-10-20, booted the same day)
 
 The cart writers open a stage on its story drawn into its scenery; this disk's
-scenery is a 3D ground, but its sample game opens stages on **full-screen
-pictures** — the "PHASE 01 AREA GUARD" boss briefing — and those are a
-mechanism a writer could reuse (read off `deza1.NDD`'s `SAMPLEZ1`, whose `SAMP`
-twin is byte-identical; nothing booted):
+scenery is a 3D ground, so a stage opens on its story the way the sample game
+opens its boss briefings — the "PHASE 01 AREA GUARD" picture: forty `portrait`
+layout effects covering the screen, then one effect clearing them. The trace
+came off `deza1.NDD`'s `SAMPLEZ1` (its `SAMP` twin is byte-identical); the
+boot is a disk built by `build:ddd gs --disk deza1.NDD`, and test disks made
+from it with one thing varied, in `static/n64dd/play.html` (EmulatorJS 4.2.3,
+mupen64plus-next; "The launcher's player").
 
-- **One texture numbering.** Effect and model texture numbers count 0-39 for the
-  `CGR` sheet and 40-299 for the stage's `#GR` tiles 0-259 (tile = number − 40).
-  The stage models' texture indices (103-299) read cleanly that way: 9 of 597
-  references land on a blank tile against 540 read as raw tile numbers — so
-  `project-write.js`'s stage models, which store the raw `#GR` tile index
-  (around line 624), probably point 40 textures early. Unverified; the common
-  models (`CGR`) are unaffected.
-- **`portrait` draws one 64×32 texture a cell.** Value 0 is set (0) or clear
-  (255), value 1 the texture (one byte, so `#GR` tiles 0-215 only), value 2 the
-  position `row*10 + col` — rows of 32 px (0-7), columns in 32-px steps (0-9),
-  so a texture can sit at half-texture steps — and value 3 flags (sets seen with
-  1, 3, 5, 7; clears with 4, 8, 12). The briefings are 40 sets at even columns
-  0-8 and rows 0-7, one frame, a 320×256 grid whose last 16 lines are black
-  (320×240 of art), then one clear `[255, 255, 0, 12]`; the dialogue cut-ins
-  are 128×32 strips at x 32. Stage 2 also hides the ship (`playerVisibility`)
-  for its opening 250 frames.
-- **A story could be** its picture and words baked into 320×240, cut into 40
-  textures in `#GR` tiles at or below 215, 40 sets and a clear (41 of a stage's
-  500 effects), sorted by frame and inside the tail's `totalEffects`.
+What the boot settled:
 
-What only a boot settles, and why the writer does not do it yet: the frame time
-base (the sample briefings last 30 and 55 frames — under a second at 60 Hz,
-which reads wrong for a briefing), whether a portrait at frame 0 fires (the
-earliest sample one is frame 103), what the flag bits mean, whether a portrait
-draws over the HUD and the scene and whether the scroll and the waves run on
-underneath it. A clear at the wrong frame would leave the picture over the
-whole stage or flash it unreadably, which is worse than no story.
+- **One texture numbering** (confirmed). Model and effect textures count 0-39
+  for `CGR` and 40-299 for the stage's `#GR` tiles (tile = number − 40): a
+  portrait naming 140 drew `#GR` tile 100. The sample's stage models name
+  103-299, which only this reading keeps inside 260 tiles, so the writer's
+  stage models now store 40 + tile (`N64_GR_TEXTURE_BASE`); they had stored the
+  raw tile.
+- **A layout's enemy numbers count from 20** (confirmed). 0-19 are the common
+  `CBL` enemies; a stage's entry _k_ is placed as 20 + _k_. The sample's
+  layouts name 20..173 only, its third stage places its stage-clear entry, 51,
+  as 71, and a placement of 20 + _k_ came on with the model of entry _k_. The
+  writer had placed entry _k_ as _k_ — a common enemy.
+- **The effect clock is 30 Hz** (confirmed): the stage clock in RAM
+  (`0x801C8384`) advances 30 a second, and an effect's frame is read against it
+  — the sample's stage 0, a demo flight with its stage-clear at 829, fades to
+  stage 1 about 1,660 video frames in. The sample's briefings (30 and 55) are
+  one and two seconds.
+- **`portrait`** (flags from the translation's notes, set and clear booted):
+  value 0 set (0) or clear (255); value 1 the texture, one byte, so `#GR` tiles
+  0-215 only; value 2 the position `row × 10 + column`, rows of 32 px (0-7),
+  columns 32 px apart (0-9), so a 64-px texture takes every other one; value 3
+  the flags — 1 set (else remove), 2 composite (else opaque), 4 wipe (else
+  instant), 8 clear all. Forty sets at frame 0 show from the stage's first
+  frame (under its fade in from white, about a second and a half), over the 3D
+  scene and over the HUD, a 320×256 grid whose last 16 lines are below the
+  screen; `[255, 255, 0, 12]` takes all forty down. The textures need not be
+  distinct: a cell names any texture.
+- **Layout "frames" are scroll distances, not time** (confirmed). Each layer —
+  map, A, B — has a scroll position in RAM (`0x801C85D0`, `D4`, `D8`) that
+  counts up as the stage runs, and a placement comes on as its layer's
+  position passes -frame (likely: entries nearer than the start came on at
+  once). A stage with no scroll effect advances every layer 20 a frame, as rate
+  3 does; rate 2 advanced 10 a frame; `mapScrollRate [0, 7]` holds the map
+  where it stands, which was 229 or 404 at the first frame in different boots.
+  The sample's stage 1 places map enemies out to -106,807 while its own
+  stage-clear effect is at 2,900.
+- Whether the waves run on underneath: they would — a portrait is drawn over
+  everything and holds nothing back — so the story holds the scroll itself.
+
+What the writer does (`project-write.js`: `storyScreen`, `storyEffects`,
+`storyFrames`, `TextureSheet.claim`): a stage `stage<N>` with a backdrop in
+`storyBackdrops` (harbor's `lib/story-panels.ts`, 224 px wide, its sizes
+largest first) takes the first size no taller than 240 whose textures fit:
+centred on an opaque black 320×240, cut into the forty 64×32 cells, identical
+cells sharing one texture (gs's stage 0 takes 23). The textures go into the
+stage's `#GR` tiles 0-215 that are blank, then into a template's art that
+nothing this project writes points at — its own models replace the template's,
+so only the map's texture bytes are in use, and since that byte's numbering is
+open a tile is kept under both readings (t, and t − 40). The effects: at frame
+0 the ship hidden, the map's scroll held and the forty portraits (set,
+opaque, instant); at the story's frames the clear, the ship back and the map at
+rate 3, which goes on as a stage with no scroll effect would. The story stays
+four seconds and a frame for every two characters of its words, six to fifteen
+seconds (`N64_STORY_*`). Every placement moves 404 further on
+(`N64_SCROLL_START`), so nothing comes on behind the story. A story with no
+size that fits is warned about and left out; a smaller picture, the words
+alone, then the opening words are the fallbacks the backdrop carries. The
+stage's report carries `story: {size, textures, reclaimed, frames, seconds}`,
+and `build:ddd` logs it on its `story:` line (`storyLogLine`).
+
+Booted on gs: the game lists the `GS` project, loads it, and stage 0 opens on
+the GS plate, "But alas that is the glory of the digital age" and the stage's
+picture, readable once the fade has gone; the clear comes on time, the ship
+comes back and the map scrolls on from where it was held. Stage 1's story is the
+same effects on its own sheet. Then the waves come: gs's headphone invaders and
+geek car, upright and in their own colours, coming down the screen toward the
+ship from the horizon (the next section).
+
+### A model's texture, and a sprite that draws (booted 2026-10-21)
+
+The writer's first billboards drew nothing, so they were taken apart by test
+disks (`mdtest`/`sq` scripts in the side-session notes' `64dd-boot-harness`).
+The decisive one moved the sample's city stage into stage 0 and replaced only
+its models — the sample's own placement, pacing and camera, the model varied:
+
+- **Geometry.** A quad lying in the XZ plane (y 0) wound `[0, 1, 2]`,
+  `[0, 2, 3]` over near-left, near-right, far-right, far-left draws; the other
+  winding is culled, and a quad in XY is edge-on to the camera and shows
+  nothing. Untextured faces draw in their `light` colour.
+- **UVs are texels**, and a tile is `1 << (widthPower + 1)` across but
+  `1 << (heightPower − 1)` down — the document's "4 = 32, 5 = 64" holds for the
+  width only. A face spanning UV 0..64 × 0..32 on a tile of powers 5 and 4
+  showed the texture once across and its top 8 rows four times down; on powers
+  5 and 6 (the editor's blank tile, so the whole 64×32 texture) it shows the
+  texture once. The writer's quads had used height power 4.
+- **Upright.** With u running along +x and v from the texture's height at the
+  near edge to 0 at the far edge, a numbered test texture read the right way
+  up and unmirrored; the three other assignments read flipped or mirrored.
+- **The texture number** is the one numbering (40 + `#GR` tile), as the
+  portraits showed.
+- **A scene to draw in.** On gs's own stage the corrected sprites still drew
+  nothing until the stage carried the sample city stage's frame-0 effects —
+  altitude 10, fog `[56, 24, 0, 0]`, camera zoom 0, angle 0, rotation 10. With
+  them the sprites came on (`N64_STAGE_SCENE`, every stage, at frame 0, before
+  the story's).
+- **Size.** The sample's ship model (264 units across) shows about 27 px wide
+  where the player flies; at 10 units a pixel a sprite draws near its own size
+  there (`N64_UNITS_PER_PIXEL`), and a frame shrunk to fit its 64×32 texture
+  keeps its own size on screen.
+
+So `billboardModel()` (records.js) lies in XZ, wound up, on the whole texture
+by default, and `spriteModel()` sets the UVs to the sprite's own box. Booted on
+gs: after the story, the stage's enemies come on near the horizon and grow as
+they come down toward the ship, at the 160-a-row pace. A stage sheet with no
+blank textures left (gs's stage 0 under `SAMPLEZ1`'s, 252 painted) used to
+drop most of a level's frames; frames now take back the template's art the map
+does not name, from the top of the sheet down, so all fifteen of gs's stage-0
+frames are drawn and its story still finds tiles below 216.
 
 ### A boss's second stage (`project-write.js`, `src/boss-stage2.js`; researched 2026-10-18)
 
@@ -758,7 +862,7 @@ the record's textures. The report's `transform` (and `exportLevelToDdd`'s) reads
 lists the `splits`; each stage's report carries `form: 1 | 2` beside its `boss`.
 Like every disk this writes, untested on hardware or in an emulator.
 
-## The launcher's player (likely — `static/n64dd/play.html`, `static/n64dd-library.js`, `lib/dezaemon-n64.ts`)
+## The launcher's player (booted — `static/n64dd/play.html`, `static/n64dd-library.js`, `lib/dezaemon-n64.ts`)
 
 A data disk boots only beside Dezaemon 3D's cartridge and the 64DD's own IPL
 ROM, neither of which is ours to ship, so the launcher finds both on the
@@ -775,8 +879,8 @@ z64 order first).
 
 How the three files reach EmulatorJS 4.2.3's mupen64plus-next core was read out
 of the sources — EmulatorJS's `emulator.js` and its RetroArch fork, and
-libretro's `mupen64plus-libretro-nx` as the EmulatorJS fork builds it — and not
-run; every line of it is **likely** until a browser has booted a disk:
+libretro's `mupen64plus-libretro-nx` as the EmulatorJS fork builds it, and then
+booted (below the list):
 
 - The cartridge is the content: EmulatorJS writes the game to `/<name>` and
   starts the core on `/Dezaemon3D.z64`.
@@ -819,10 +923,39 @@ run; every line of it is **likely** until a browser has booted a disk:
   has none — a disk built without a donor has none, since the writable area is
   not written — and refuses to go on when that copy fails.
 
-Confidence stops at likely for all of it: the shipped 4.2.3 wasm was not
-inspected (the CDN is unreachable from the session that wrote this), nothing was
-run in a browser, and the `.ndd` passing the core's checks is the writer's
-claim, never an emulator's.
+That was written from the sources; on 2026-10-20 it was **booted** (Claude's
+browser pane, the CDN's 4.2.3, the translated cartridge `04D0423E…` and
+`64DD_IPL.n64` staged by `n64:stage`, disks built on `deza1.NDD`), and the
+recipe holds as written: the core finds `/Dezaemon3D.z64.ndd` and
+`/Mupen64plus/IPL.n64`, the cartridge goes into disk mode, and GAME SELECT lists
+`DST` (RAM), `SAMPLEZ1`, `SAMP` and the project a build put on — which loads,
+shows its high scores and title, and plays. A disk built from nothing was not
+tried. What driving it took, for the next session (the scripts were scratch):
+
+- **Input.** `gameManager.simulateInput(0, index, value)`: RetroPad 0 is the
+  N64's **A** (confirm) and 1 its **B** — the page's `PAD` comment, which calls
+  8 A, has them the wrong way round — 3 START, 4-7 the d-pad, 16-19 the stick
+  right, left, down, up (32767 full). The select screen's pointer moves half a
+  pixel a frame on the d-pad, so a d-pad hold is a repeatable path; its hot spot
+  is about 9 px above the drawn hand, and the list's ▼ (about 140, 176) scrolls
+  it a row a press. START on the menu, or a press before a screen has settled,
+  can land in the editor or a cartridge demo, and once an A went unanswered on
+  GAME SELECT with the project highlighted — a fresh boot is the remedy.
+- **Hidden pane.** The pane throttles `requestAnimationFrame` to a few frames a
+  second; a `MessageChannel`-paced replacement installed before `loader.js`
+  runs the core at 60 (fast-forward with ratio 0 reaches about 100).
+- **Pictures.** The core's own screenshot is black; with `preserveDrawingBuffer`
+  forced the canvas can be read, but when the pane's size or pixel ratio
+  changes the canvas shows a zoomed corner until a reload, so the pane's own
+  screenshot at 0.4 (320×240, the N64's pixels) was the reliable one.
+- **State.** RDRAM sits in `Module.HEAPU8` (found by the cartridge's boot code
+  from ROM `0x1000`; `0xF6D0000` in that build), a word at its host order. A
+  save state restored after a project has loaded leaves a grey screen, and so
+  does a `restart()`; each test was a page load.
+- **Writing test disks.** `buildDisk()` refuses a project whose file straddles
+  the zone change at LBA 268 (`layoutFiles()` counts the blocks across it,
+  `checkDirectory()`'s `blocksFit` by the starting zone); keeping the donor's
+  two samples starts a new project at 368 and avoids it.
 
 ## Unresolved
 
@@ -846,10 +979,11 @@ claim, never an emulator's.
   settle, except that none exists;
 - the `MUS` sequence body: 24 × 0x2C80 bytes with no description at all, and no
   cheap route, since the playback code is on a cartridge nobody has;
-- whether a disk this writes puts the cartridge into disk mode (on a donor) or
-  mounts in an emulator (as an `.ndd`), and whether the project it carries plays
-  as the level: the checks an emulator makes are reproduced and the records are
-  the document's, and the result has never been run;
+- whether a disk built from nothing puts the cartridge into disk mode (one built
+  on `deza1.NDD` does, booted), and where a level's placements belong on the
+  screen (see "What the writer does not write");
+- whether `buildDisk()`'s straddle-aware block count or `blocksFit`'s
+  start-zone count is the game's reading for a file across LBA 268;
 - the other six disk types' directory blocks, if a disk of another type ever
   carried ATNFS.
 

@@ -74,6 +74,7 @@ import {
   SONG_BYTES,
   SONG_COUNT,
   SONG_HEADER_BYTES,
+  tileHeightPixels,
   tilePixels,
   ULB_TEXTURES_OFFSET,
 } from "../src/n64/records.js";
@@ -865,27 +866,32 @@ Deno.test("the model files put their texture indices after the models and leave 
   );
 });
 
-Deno.test("a billboard is four vertices and two faces over one tile", () => {
+Deno.test("a billboard is four vertices on the ground plane and two faces over one tile", () => {
   const m = billboardModel({
     width: 64,
     height: 32,
     tileWidthPower: 5,
-    tileHeightPower: 4,
+    tileHeightPower: 6,
     tile: 1,
     light: 4,
   });
+  // near-left, near-right, far-right, far-left: flat in XZ, wound to face up
   assertEquals(m.vertices, [
-    { x: -32, y: 16, z: 0 },
-    { x: 32, y: 16, z: 0 },
-    { x: 32, y: -16, z: 0 },
-    { x: -32, y: -16, z: 0 },
+    { x: -32, y: 0, z: 16 },
+    { x: 32, y: 0, z: 16 },
+    { x: 32, y: 0, z: -16 },
+    { x: -32, y: 0, z: -16 },
   ]);
+  // a tile is 1 << (width power + 1) across and 1 << (height power - 1) down
   assertStrictEquals(tilePixels(5), 64);
   assertStrictEquals(tilePixels(4), 32);
+  assertStrictEquals(tileHeightPixels(6), 32);
+  assertStrictEquals(tileHeightPixels(4), 8);
   assertEquals(m.faces[0].vertices, [0, 1, 2]);
-  assertEquals(m.faces[0].uv, [[0, 0], [64, 0], [64, 32]]);
+  // the texture's top row at the far edge, its left column at -x: upright
+  assertEquals(m.faces[0].uv, [[0, 32], [64, 32], [64, 0]]);
   assertEquals(m.faces[1].vertices, [0, 2, 3]);
-  assertEquals(m.faces[1].uv, [[0, 0], [64, 32], [0, 32]]);
+  assertEquals(m.faces[1].uv, [[0, 32], [64, 0], [0, 0]]);
   assertStrictEquals(m.faces[0].tile, 1);
   assertStrictEquals(m.faces[0].untextured, false);
   assertEquals(m.tiles[1], {
@@ -893,7 +899,7 @@ Deno.test("a billboard is four vertices and two faces over one tile", () => {
     mirrorV: false,
     widthPower: 5,
     mirrorH: false,
-    heightPower: 4,
+    heightPower: 6,
   });
   assertStrictEquals(m.light, 4);
   const b = encodeModel(m);
@@ -903,7 +909,7 @@ Deno.test("a billboard is four vertices and two faces over one tile", () => {
   const back = decodeModel(b);
   assertEquals(back.vertices, m.vertices);
   assertEquals(back.faces[1].uv, m.faces[1].uv);
-  // the task's default: tile 0, a 64 x 32 tile
+  // the default: tile 0, the whole 64 x 32 texture (the editor's blank tile)
   const d = billboardModel();
   assertStrictEquals(d.faces[0].tile, 0);
   assertEquals(d.tiles[0], {
@@ -911,8 +917,9 @@ Deno.test("a billboard is four vertices and two faces over one tile", () => {
     mirrorV: false,
     widthPower: 5,
     mirrorH: false,
-    heightPower: 4,
+    heightPower: 6,
   });
+  assertEquals(d.faces[0].uv, [[0, 32], [64, 32], [64, 0]]);
 });
 
 // --- GAM ---------------------------------------------------------------------

@@ -1052,11 +1052,15 @@ story's pictures on a sheet of their own (`assets/story.png`) with its words in
 `assets/story.json`, and `lib/ps2/runtime-story.ts` takes the place of the
 port's STAGE N card before every stage with the web's story scene — the picture,
 the speaker's plate, the words typed out, CROSS for the next part and START to
-skip — without a new svelte-ps2. The **64DD** disk shows none yet, and
-`build:ddd` says so: its stage scenery is a 3D ground, and the sample game's
-own full-screen briefings — the mechanism a story would use, 40 `portrait`
-layout effects and a clear — are decoded but not booted, so their timing is a
-guess (FORMAT-N64.md "A level's story").
+skip — without a new svelte-ps2. The **64DD** disk's stage scenery is a 3D
+ground, so `build:ddd` opens each stage on its story the way the sample game
+opens its boss briefings: the backdrop centred on a black 320×240, cut into 40
+textures in the stage's `#GR` sheet and shown by 40 `portrait` layout effects
+at frame 0 over the scene and the HUD, the ship hidden and the map's scroll
+held, then one effect clears them and the stage goes on — six to fifteen
+seconds by the length of its words, every placement moved past where the
+scroll waited. Booted in the launcher's player on gs (FORMAT-N64.md "A level's
+story").
 
 **Item icons.** A save gives each of its eight item slots exactly one 16×16 cell
 of the global sprite bank (refs 94–101), so a pickup in a cart is a **still** —
@@ -3089,9 +3093,9 @@ RAM area, LBA 1418 to 4291, is carried verbatim: the two directory copies inside
 it are rewritten and nothing else there is touched.
 
 What is **not** written, and what is not known: the writable directory and its
-allocation map, `DEZA3D.SYS` and `DEZA3D.HSC`; any layout effect (no song, no
-camera, no stage-clear command — the boss's flag is relied on); the `MUS`
-bodies. And every number the records carry that is not a measurement — that a
+allocation map, `DEZA3D.SYS` and `DEZA3D.HSC`; any layout effect but a story's
+(no song, no camera, no stage-clear command — the boss's flag is relied on); the
+`MUS` bodies. And every number the records carry that is not a measurement — that a
 stage's model _k_ is model number 20 + _k_, that x ±400 spans the screen and y
 240 is where an enemy appears, the UV units of a billboard — is a reading of the
 document and of the cartridge's sample stages, marked _likely_ in the code, and
@@ -3101,8 +3105,11 @@ repo's reader and is not expected to put the cartridge into disk mode. Every
 disk is read back through the parser before it is written — the directory, its
 invariants, every new stream decompressed and compared — and the fixture-gated
 test rebuilds the prototype from its own two projects and gets the same bytes.
-Nothing here has booted one, though: there is no cartridge, no emulator and no
-disk fixture in CI, so every image is untested on hardware or in an emulator.
+CI boots none — there is no cartridge or disk fixture in it — but a disk built
+on the prototype was booted in the launcher's player on 2026-10-20/21: the
+project is listed, loads and plays, its stages open on their story, and its
+enemies come down the screen as sprites lying on the ground plane
+(FORMAT-N64.md "A model's texture"). None has been put on hardware.
 `packages/shmup-engine/FORMAT-N64.md` records the writer's reach, confidence by
 confidence, and its "What the writer does not write" is the list of what a boot
 would settle.

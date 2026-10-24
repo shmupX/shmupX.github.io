@@ -290,10 +290,14 @@ function boxLines(font: BitmapFont, parts: string[]): string[] {
   return parts.flatMap((p) => wrapText(p, cols));
 }
 
-/** What a cart writer reports of a stage's story, if it drew one. */
+/**
+ * What a writer reports of a stage's story, if it drew one: the map rows it
+ * took on a cart, or the seconds it stays up on the 64DD, where it is a
+ * full-screen briefing rather than scenery.
+ */
 export interface StoryStageReport {
   key: string;
-  story?: { size: string; rows: number } | null;
+  story?: { size: string; rows?: number; seconds?: number } | null;
 }
 
 /**
@@ -310,7 +314,11 @@ export function storyLogLine(
   }
   const keys = new Set(stages.map((s) => s.key));
   const drawn = stages.filter((s) => s.story).map((s) =>
-    `${s.key} ${s.story!.size} (${s.story!.rows} rows)`
+    `${s.key} ${s.story!.size} (${
+      s.story!.seconds !== undefined
+        ? `${s.story!.seconds} s`
+        : `${s.story!.rows} rows`
+    })`
   );
   const beyond = backdrops.filter((b) => !keys.has(`stage${b.stage}`))
     .map((b) => b.stage);
