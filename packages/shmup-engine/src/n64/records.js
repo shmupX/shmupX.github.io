@@ -962,11 +962,22 @@ export const TILE_OFFSET_MAX = 0x1ef;
 export const LIGHT_POSITION_MAX = 0x1d;
 
 /**
- * The pixels a tile's width or height power stands for, as the document
- * puts it: "power of 2 (4 = 32, 5 = 64, etc.)", so 1 << (power + 1). (likely)
+ * The pixels a tile's width power stands for, as the document puts it:
+ * "power of 2 (4 = 32, 5 = 64, etc.)", so 1 << (power + 1). Booted
+ * 2026-10-21: a width power of 5 spans the 64-px texture once. (confirmed)
  */
 export function tilePixels(power) {
     return 1 << (check("tile power", power, 0, 7) + 1);
+}
+
+/**
+ * The rows a tile's height power stands for: 1 << (power - 1), not the
+ * width's rule. Booted 2026-10-21: a height power of 4 repeated the top 8
+ * rows of a texture, and the editor's blank tile (width 5, height 6) is the
+ * whole 64x32 texture. (confirmed)
+ */
+export function tileHeightPixels(power) {
+    return 1 << (check("tile power", power, 1, 7) - 1);
 }
 
 const FACE_TEXTURING = [
@@ -1214,33 +1225,37 @@ export function parseUlbFile(bytes) {
 }
 
 /**
- * A flat quad that shows one tile of a 64x32 texture: four vertices in the
- * XY plane, `width` x `height` model units about the origin, two faces
- * with UVs over the tile's pixel box and the texturing byte naming `tile`,
- * textured, unmasked. The UV units and the tile's `offset` units are taken
- * from the document as written — pixels, with the tile's size 1 << (power
- * + 1) — and are untested on hardware (likely, not confirmed); the sample
- * models' textured faces name tiles 1..9 and leave tile 0 at the editor's
- * blank, so a caller matching them passes tile: 1.
+ * A flat quad that shows one tile of a 64x32 texture the way the game draws
+ * a sprite: four vertices lying in the XZ plane (the ground's, y = 0),
+ * `width` model units across x and `height` along z about the origin, two
+ * faces wound to face up, with UVs over the tile's pixel box set so the
+ * texture's top row is the far edge (-z) and its left column -x — upright
+ * and unmirrored to the player. The texturing byte names `tile`; textured,
+ * unmasked. All booted 2026-10-21 (FORMAT-N64.md "A model's texture"): UVs
+ * are texels, a tile is 1 << (width power + 1) by 1 << (height power - 1),
+ * a quad in XY is edge-on and draws nothing, and the other winding is
+ * culled. The sample models' textured faces name tiles 1..9 and leave tile 0
+ * at the editor's blank, so a caller matching them passes tile: 1.
  *
  * @param {{width?: number, height?: number, tileWidthPower?: number, tileHeightPower?: number,
  *          tileOffset?: number, tile?: number, light?: number}} [options]
  * @returns {object}  a model record for encodeModel()
  */
-export function billboardModel({ width = 64, height = 32, tileWidthPower = 5, tileHeightPower = 4, tileOffset = 0, tile = 0, light = 0 } = {}) {
+export function billboardModel({ width = 64, height = 32, tileWidthPower = 5, tileHeightPower = 6, tileOffset = 0, tile = 0, light = 0 } = {}) {
     check("billboard.width", width, 1, 0x7fff);
     check("billboard.height", height, 1, 0x7fff);
     check("billboard.tile", tile, 0, MODEL_TILES - 1);
     const u = tilePixels(tileWidthPower);
-    const v = tilePixels(tileHeightPower);
+    const v = tileHeightPixels(tileHeightPower);
     const x0 = -(width >> 1), x1 = width - (width >> 1);
-    const y0 = -(height >> 1), y1 = height - (height >> 1);
+    const zFar = -(height >> 1), zNear = height - (height >> 1);
     const tiles = fill(MODEL_TILES, tileDefaults);
     tiles[tile] = { offset: tileOffset, mirrorV: false, widthPower: tileWidthPower, mirrorH: false, heightPower: tileHeightPower };
     const face = (vertices, uv) => ({ ...faceDefaults(), vertices, uv, tile });
     return {
-        vertices: [{ x: x0, y: y1, z: 0 }, { x: x1, y: y1, z: 0 }, { x: x1, y: y0, z: 0 }, { x: x0, y: y0, z: 0 }],
-        faces: [face([0, 1, 2], [[0, 0], [u, 0], [u, v]]), face([0, 2, 3], [[0, 0], [u, v], [0, v]])],
+        // near-left, near-right, far-right, far-left
+        vertices: [{ x: x0, y: 0, z: zNear }, { x: x1, y: 0, z: zNear }, { x: x1, y: 0, z: zFar }, { x: x0, y: 0, z: zFar }],
+        faces: [face([0, 1, 2], [[0, v], [u, v], [u, 0]]), face([0, 2, 3], [[0, v], [u, 0], [0, 0]])],
         tiles,
         light,
     };

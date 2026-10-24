@@ -28,19 +28,23 @@
 // TEMPLATE project on the donor (the donor's first, or --template NAME)
 // lending its CMD, CBL, MUS, ULB and map tables, or, with --no-template, GAM
 // the cartridge's own initial game, CMD and CBL the level's ship and item
-// icons alone, the songs blank and the maps unset. Every unit the records
-// carry that is not a measurement is a reading of the format document marked
-// likely in the engine, and no disk this writes has been booted.
+// icons alone, the songs blank and the maps unset. Each stage with a story
+// opens on it as a full-screen portrait briefing (lib/story-panels.ts, the
+// writer's storyEffects). Every unit the records carry that is not a
+// measurement is a reading of the format document marked likely in the
+// engine.
 //
 // The donor matters more here than on the other consoles. A disk built on the
 // prototype keeps the boot program and the RAM area the cartridge needs to go
 // into disk mode; a disk built from nothing (--no-disk, or no image in
 // dev-fixtures/) is recognised by this repo's reader and is not expected to
-// put the cartridge into disk mode. Either way the image is untested on
-// hardware or in an emulator: no cartridge, emulator or disk fixture exists
-// here. The donor is found by size, never by name — a .ddd or .ndd is exactly
-// one of two lengths — and an .ndd is preferred over a .ddd because it brings
-// its own system area.
+// put the cartridge into disk mode. A disk built on deza1.NDD was booted in
+// static/n64dd/play.html (EmulatorJS mupen64plus-next) on 2026-10-20/21: the
+// project is listed, loads and plays, its stages open on their story and its
+// enemies draw as sprites on the ground plane (FORMAT-N64.md); no disk has
+// been put on hardware. The donor is found by size, never by name — a .ddd
+// or .ndd is exactly one of two lengths — and an .ndd is preferred over a
+// .ddd because it brings its own system area.
 
 import { basename, dirname, join, relative, resolve } from "@std/path";
 import { ensureDir } from "@std/fs";
@@ -52,7 +56,14 @@ import {
   NDD_IMAGE_BYTES,
 } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
-import { bossRushArg, loadLevel, loadLevelArt, titleArt } from "./build-sav.ts";
+import { storyLogLine, type StoryStageReport } from "../lib/story-panels.ts";
+import {
+  bossRushArg,
+  levelStoryBackdrops,
+  loadLevel,
+  loadLevelArt,
+  titleArt,
+} from "./build-sav.ts";
 
 const ROOT = repoRoot();
 const FIXTURES = join(ROOT, "dev-fixtures");
@@ -104,6 +115,8 @@ interface SheetReport {
   used: number;
   free: number;
   missed: string[];
+  reclaimed?: number;
+  story?: { textures: number; reclaimed: number } | null;
 }
 interface DddReport {
   project: {
@@ -237,6 +250,11 @@ export async function buildDdd(
     );
   }
 
+  // The story, as each stage's opening briefing: forty portrait effects
+  // covering the screen while the scroll waits (FORMAT-N64.md "A level's
+  // story"); the writer takes the largest size its textures allow.
+  const backdrops = await levelStoryBackdrops(record, log);
+
   const result = exportLevelToDdd(record, art, {
     name: options.name?.trim() || null,
     disk,
@@ -244,21 +262,11 @@ export async function buildDdd(
     format,
     title1,
     title2,
+    storyBackdrops: backdrops,
   });
   const rep = result.report as unknown as DddReport;
   log(`name: ${result.name}`);
-  // The carts open a stage on its story; this disk's would be a full-screen
-  // portrait briefing whose timing no boot has settled (FORMAT-N64.md "A
-  // level's story"), and a mistimed one is worse than none.
-  const story = record.storyData as Record<string, unknown> | undefined;
-  if (
-    story && !record.noStory &&
-    Object.keys(story).some((k) => /^stage\d+$/.test(k))
-  ) {
-    log(
-      "story: not drawn on the 64DD yet — a stage-start briefing is a portrait layout effect whose timing is untraced (FORMAT-N64.md)",
-    );
-  }
+  log(storyLogLine(backdrops, rep.project.stages as StoryStageReport[]));
   log(
     rep.templateProject
       ? `template: ${rep.templateProject}${
@@ -266,10 +274,18 @@ export async function buildDdd(
       } — its files underlie every one the art does not paint`
       : "template: none — GAM is the cartridge's initial game with the final stage set, CMD and CBL hold the ship and item icons alone, the songs are blank, the maps unset",
   );
-  const sheet = (label: string, s: SheetReport) =>
-    `${label} ${count(s.textures.length, "frame")} in ${
-      count(s.used - s.painted, "texture")
+  // Frames and a story may take back a template's textures (the writer's
+  // `reclaimed`), so the textures are counted from what was placed.
+  const sheet = (label: string, s: SheetReport) => {
+    const story = s.story ?? null;
+    const reclaimed = s.reclaimed ?? 0;
+    const frames = s.textures.filter((t) => !t.key.endsWith(":story"));
+    return `${label} ${count(frames.length, "frame")} in ${
+      count(s.used - s.painted + reclaimed - (story?.textures ?? 0), "texture")
+    }${story ? ` + its story in ${story.textures}` : ""}${
+      reclaimed ? ` (${reclaimed} of them the template's, taken back)` : ""
     }${s.painted ? ` beside ${s.painted} painted` : ""}, ${s.free} free`;
+  };
   log(
     `textures: ${
       [
@@ -304,7 +320,7 @@ export async function buildDdd(
   log(`transform: ${rep.transform}`);
   for (const w of result.warnings) log(`warning: ${w}`);
   log(
-    "note: the level is placed as the format document says a level is laid out, and no disk this writes has been booted — the image is untested on hardware or in an emulator",
+    "note: booted in mupen64plus-next on a deza1.NDD donor, a disk like this loads and plays, opens its stages on their story and draws its enemies as sprites (FORMAT-N64.md); untested on hardware",
   );
 
   const outPath = resolve(

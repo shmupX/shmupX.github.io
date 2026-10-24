@@ -35,7 +35,7 @@ export function templateFromDisk(image, name = null) {
  * Export a level record + its RGBA frames as a 64DD disk.
  *
  * Options: everything buildN64ProjectFromLevel() takes (`name`, `title1`,
- * `title2`, `framesPerEnemy`) plus
+ * `title2`, `framesPerEnemy`, `storyBackdrops`) plus
  *   disk      a donor .ddd/.ndd to write the project onto; omitted, a disk
  *             is built from nothing
  *   template  "disk" (the donor's first project's files underlie the new
