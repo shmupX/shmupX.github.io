@@ -46,6 +46,7 @@ import {
   PLUS_BLOCK_SIZE,
   PLUS_PRODUCT,
   plusChecksums,
+  plusPaletteRow,
 } from "../src/psx/plus.js";
 import { parsePsxSav } from "../src/psx/index.js";
 import { CARD_SIZE } from "../src/psx/memcard.js";
@@ -519,6 +520,9 @@ function storyRaster(label, rows, rgb, noise = false) {
 }
 
 Deno.test("a stage's story opens the map: its top on the top row, columns 1-14, played once, slowly", () => {
+  // Measured in Mednafen on Select 100: map y 0 opens on the screen's line
+  // 233, so row 11's top is ten lines under SCORE and REST; row 12's is on REST.
+  assertStrictEquals(PLUS_STORY_TOP_ROW, 11);
   const out = exportLevelToPlusCard(level(), art(), {
     storyBackdrops: [{ stage: 0, variants: [storyRaster("words", 3, [255, 255, 255])] }],
   });
@@ -542,6 +546,24 @@ Deno.test("a stage's story opens the map: its top on the top row, columns 1-14, 
   assertStrictEquals(scroll[256 + k], 0x42);
   assert(out.report.stages[0].boss.band >= PLUS_STORY_MIN_BOSS_ROW);
   assertEquals(out.report.stages[0].story, { size: "words", rows: 3, chips: 42, top });
+});
+
+Deno.test("a Dezaemon+ story's top tile row is the raster's top: map rows count up the screen", () => {
+  // Top 16 px white, the next 32 px red: row 11 (highest on screen) is white.
+  const raster = storyRaster("two", 3, [255, 0, 0]);
+  for (let i = 0; i < 224 * 16; i++) raster.rgba.set([255, 255, 255, 255], i * 4);
+  const out = exportLevelToPlusCard(level(), art(), { storyBackdrops: [{ stage: 0, variants: [raster] }] });
+  const save = parsePsxSav(out.card).saves[0];
+  const st = save.stages[0];
+  const groups = decodePlusMapGroup(st);
+  const colours = save.palettes[plusPaletteRow("map", 0)].colors;
+  const centre = (r) => {
+    const g = groups[st.mapRows[r][1].group];
+    return colours[save.graphics.indexed[(g.y + 8) * save.graphics.width + g.x + 8]];
+  };
+  const top = centre(PLUS_STORY_TOP_ROW), below = centre(PLUS_STORY_TOP_ROW - 1);
+  assert(top.r > 200 && top.g > 200 && top.b > 200, `row ${PLUS_STORY_TOP_ROW} is the white top`);
+  assert(below.r > 200 && below.g < 60 && below.b < 60, `row ${PLUS_STORY_TOP_ROW - 1} is red`);
 });
 
 Deno.test("a Dezaemon+ story past a stage map's 127 tiles is drawn smaller, else not at all", () => {

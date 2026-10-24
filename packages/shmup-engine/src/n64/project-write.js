@@ -15,16 +15,19 @@
 //              so a frame wider than 64 or taller than 32 is shrunk to fit,
 //              aspect kept — laid into the sheet's BLANK textures, never
 //              over a painted one, so a template's own art survives
-//   #MD        a billboard per placed frame: a flat quad the size of the
-//              sprite, textured from its texture (records.js billboardModel;
-//              the UV units are the document's as written, OPEN)
+//   #MD        a billboard per placed frame: a quad the size of the sprite
+//              lying on the ground plane, its texels from its texture,
+//              numbered from 40 as the game counts them (records.js
+//              billboardModel; booted, CONFIRMED)
 //   #BL        an enemy entry per enemy letter (one per drop digit on its
 //              cells, as the Saturn writer does, because an entry carries
 //              one item), its frames' model numbers, score, HP, speed, a
 //              shot when it fires, the item it drops; the boss with the
 //              stage-clear flag; the layout of every cell on the map layer
-//              at the frame its row scrolls in; no effects; the map carried
-//              from a template stage or left unset
+//              at the scroll its row comes on at, entries numbered from 20;
+//              the opening scene (N64_STAGE_SCENE) and the stage's story as
+//              portrait effects (storyEffects), no other effect; the map
+//              carried from a template stage or left unset
 //   CMD, CBL   the ship and the item icons as common models 10 and 12..18 —
 //              the slots the cartridge's own game uses — with the seven item
 //              entries pointing at them; a template's bytes when given
@@ -36,13 +39,12 @@
 // a constant below with its evidence. The two that matter most: model
 // numbers in an entry are 20 + the stage's model slot (the sample game's
 // stage entries name 20..148 almost exclusively and its seven items 12..18,
-// so the common CMD is read as coming first — LIKELY, on no stronger
-// evidence than that); layout x runs
-// about -400..400 across the screen and the frame offset counts DOWN from
-// the start, entries in descending order (measured on the sample's three
-// stages — LIKELY in meaning, CONFIRMED in shape). Nothing this writes has
-// been booted: FORMAT-N64.md "What the writer does not write" is the list of
-// what is still carried rather than built.
+// so the common CMD is read as coming first — booted, a sprite's entry
+// shows its model); layout x runs about -400..400 and the frame offset is a
+// scroll distance counting DOWN from the start, entries in descending order
+// (measured on the sample's three stages, the scroll booted). Booted in
+// mupen64plus-next 2026-10-20/21: FORMAT-N64.md "What the writer does not
+// write" is the list of what is still carried rather than built.
 //
 // Environment-neutral ESM (Node + browser).
 
@@ -71,9 +73,11 @@ import {
     buildUlbFile,
     CBL_ITEMS,
     CMD_MODEL_COUNT,
+    EFFECT_ENTRIES,
     encodeGam,
     ENEMY_SCORE_TABLE,
     LAYOUT_MAX_ENEMIES,
+    MAP_TEXTURE_UNSET,
     MD_MODEL_COUNT,
     parseStageBl,
 } from "./records.js";
@@ -124,8 +128,13 @@ export const N64_MODEL_NUMBER_BASE = N64_CMD_MODELS;
 export const N64_PLAYER_MODEL = 10;
 export const N64_ITEM_MODELS = Object.freeze([12, 13, 14, 15, 16, 17, 18]);
 
-/** A sprite pixel in model units: 32 px becomes a 128-unit quad, the size of the sample game's ordinary objects. (likely) */
-export const N64_UNITS_PER_PIXEL = 4;
+/**
+ * A sprite pixel in model units. Booted, the sample's ship model (264 units
+ * across) shows about 27 px wide where the player flies, so 10 units a pixel
+ * draws a sprite there near its own size; 32 px becomes a 320-unit quad,
+ * about the sample's ordinary enemies. (likely)
+ */
+export const N64_UNITS_PER_PIXEL = 10;
 
 /** The layout's x across the screen: the sample's map layers run about -400..430. (likely) */
 export const N64_LAYOUT_HALF_WIDTH = 400;
@@ -139,8 +148,164 @@ export const N64_SPAWN_Y = 240;
  * because an entry has to go somewhere. (likely)
  */
 export const N64_BOSS_Y = 400;
-/** A placement row (16 px) in frames at the Saturn's 1 px/frame, so the two consoles pace a level the same way. (likely) */
-export const N64_FRAMES_PER_ROW = 16;
+/**
+ * A placement row (16 px) in scroll units. A layout's "frame" is how far its
+ * layer has scrolled, and a stage scrolls 20 a frame at 30 frames a second
+ * (booted), 600 a second; the Saturn scrolls 60 px a second, so a row is
+ * 160 and the two consoles pace a level the same way. (confirmed rate,
+ * likely pairing)
+ */
+export const N64_SCROLL_PER_ROW = 160;
+
+/**
+ * The opening scene every stage gets at frame 0: the sample's city stage's
+ * own first camera — altitude 10, its fog, the camera neutral (angle and
+ * zoom 0, rotation 10). Booted 2026-10-21: without a scene effect a stage
+ * shows nothing on its ground, sprites included; with these the sprites
+ * draw. (confirmed)
+ */
+export const N64_STAGE_SCENE = Object.freeze([
+    Object.freeze({ frame: 0, command: "altitude", values: Object.freeze([10, 7, 0, 0]) }),
+    Object.freeze({ frame: 0, command: "fog", values: Object.freeze([56, 24, 0, 0]) }),
+    Object.freeze({ frame: 0, command: "cameraZoom", values: Object.freeze([0, 0, 3, 0]) }),
+    Object.freeze({ frame: 0, command: "cameraAngle", values: Object.freeze([0, 0, 3, 0]) }),
+    Object.freeze({ frame: 0, command: "cameraRotation", values: Object.freeze([0, 10, 1, 0]) }),
+]);
+
+/**
+ * One texture numbering for models and portraits: 0-39 the CGR sheet, 40-299
+ * a stage's #GR tiles, tile = number - 40. Booted 2026-10-20: a portrait
+ * naming 140 drew #GR tile 100; the sample's stage models name 103-299, which
+ * only a numbering from 40 keeps inside 260 tiles. (confirmed)
+ */
+export const N64_GR_TEXTURE_BASE = N64_CGR_TEXTURES;
+
+/**
+ * A layout's enemy numbers: 0-19 the common CBL enemies, 20 on the stage's
+ * own entries. The sample's layouts name 20..173 only and its third stage
+ * places its stage-clear entry, 51, as 71; booted 2026-10-20, a stage entry
+ * placed as 20 + k came on with its model. (confirmed)
+ */
+export const N64_ENEMY_NUMBER_BASE = N64_CBL_ENEMIES;
+
+// --- a stage's story -------------------------------------------------------------------------
+// A cart opens a stage on its story painted into its first map rows; this
+// disk's scenery is a 3D ground, so its story is what the sample game's
+// boss briefings are: forty `portrait` layout effects in one frame, a 64x32
+// texture a cell, covering the screen, then one effect clearing them all.
+// Booted 2026-10-20 in mupen64plus-next (FORMAT-N64.md "A level's story"):
+// portraits set at frame 0 show from the stage's first frame, over the 3D
+// scene and the HUD; the clear takes them all down; the clock is 30 Hz.
+
+/** The portrait grid: 5 x 8 cells of 64x32, 320x256, of which the screen shows 320x240. */
+export const N64_STORY_COLS = 5;
+export const N64_STORY_ROWS = 8;
+export const N64_STORY_W = N64_STORY_COLS * TILE_WIDTH;
+export const N64_STORY_H = 240;
+
+/** A portrait names its texture in one byte: #GR tiles 0..215 only. */
+export const N64_PORTRAIT_MAX_TEXTURE = 0xff;
+
+/** A cell's portrait position: row * 10 + column, the columns 32 px apart, so a 64-px texture takes every other one. (confirmed by the boot) */
+export function portraitPosition(row, col) {
+    return row * 10 + col * 2;
+}
+
+/** Portrait flags (file formats.txt): 1 set, 2 composite (else opaque), 4 wipe, 8 clear all. The story sets opaque and instant; the clear is the sample briefings' own, all with a wipe. */
+export const N64_PORTRAIT_SET = 1;
+export const N64_PORTRAIT_CLEAR = Object.freeze([0xff, 0xff, 0, 12]);
+
+/** Effect frames count at 30 a second: the stage clock the effects run on advanced 30 a second in the boot. (confirmed) */
+export const N64_EFFECT_FPS = 30;
+
+/**
+ * How long a story stays up, in effect frames: four seconds and a frame for
+ * every two characters of its words (about the pace the web's typewriter
+ * shows them), between six and fifteen seconds. The stage's own fade in from
+ * white takes the first second and a half of it (booted).
+ */
+export const N64_STORY_BASE_FRAMES = 4 * N64_EFFECT_FPS;
+export const N64_STORY_MIN_FRAMES = 6 * N64_EFFECT_FPS;
+export const N64_STORY_MAX_FRAMES = 15 * N64_EFFECT_FPS;
+
+/**
+ * The map layer's scroll rate once a story has gone. A stage with no scroll
+ * effect advances every layer 20 a frame, and so does rate 3 (both booted),
+ * so the stage goes on as it would have; `[0, 7]` holds it while the story
+ * is up. (confirmed)
+ */
+export const N64_SCROLL_RATE = 3;
+
+/**
+ * Where a layer's scroll stands as its stage starts: the map held from frame
+ * 0 stood at 404 (booted). A placement comes on once its layer's scroll
+ * passes -frame (likely), so a story stage's layout is moved this much
+ * further on: nothing comes on behind the story, the first wave after it.
+ */
+export const N64_SCROLL_START = 404;
+
+/** A story's frames for the words it carries. */
+export function storyFrames(parts = []) {
+    const chars = parts.join(" ").length;
+    return clamp(N64_STORY_BASE_FRAMES + Math.ceil(chars / 2), N64_STORY_MIN_FRAMES, N64_STORY_MAX_FRAMES);
+}
+
+/**
+ * A story variant (src/story/story-panels.js: {w <= 320, h <= 240, rgba})
+ * as the portrait grid: centred on an opaque black 320x240, cut into the
+ * forty 64x32 textures row-major. Identical cells (the black border, mostly)
+ * share one texture: `cells[k]` is the index into `textures` of cell k.
+ * @param {{w: number, h: number, rgba: Uint8Array|Uint8ClampedArray}} variant
+ * @returns {{cells: number[], textures: Uint8Array[]}}
+ */
+export function storyScreen(variant) {
+    const w = N64_STORY_W, h = N64_STORY_ROWS * TILE_HEIGHT;
+    const rgba = new Uint8Array(w * h * 4);
+    for (let i = 3; i < rgba.length; i += 4) rgba[i] = 0xff;
+    const x0 = Math.floor((w - variant.w) / 2), y0 = Math.floor((N64_STORY_H - variant.h) / 2);
+    for (let y = 0; y < variant.h; y++) {
+        for (let x = 0; x < variant.w; x++) {
+            const s = (y * variant.w + x) * 4;
+            if (variant.rgba[s + 3] < 128) continue;
+            rgba.set([variant.rgba[s], variant.rgba[s + 1], variant.rgba[s + 2], 0xff], ((y0 + y) * w + x0 + x) * 4);
+        }
+    }
+    const { tiles } = textureGrid({ w, h, rgba });
+    const textures = [], seen = new Map(), cells = [];
+    for (const t of tiles) {
+        const key = t.join(",");
+        if (!seen.has(key)) {
+            seen.set(key, textures.length);
+            textures.push(t);
+        }
+        cells.push(seen.get(key));
+    }
+    return { cells, textures };
+}
+
+/**
+ * The effects that show a story: at frame 0 the ship hidden, the map's
+ * scroll held and the forty portraits; at `frames` the portraits cleared,
+ * the ship back and the scroll going again.
+ * @param {number[]} textureNumbers  each cell's texture number, row-major
+ * @param {number} frames
+ */
+export function storyEffects(textureNumbers, frames) {
+    const effects = [
+        { frame: 0, command: "playerVisibility", values: [0, 0, 0, 0] },
+        { frame: 0, command: "mapScrollRate", values: [0, 7, 0, 0] },
+    ];
+    textureNumbers.forEach((texture, k) => {
+        const row = Math.floor(k / N64_STORY_COLS), col = k % N64_STORY_COLS;
+        effects.push({ frame: 0, command: "portrait", values: [0, texture, portraitPosition(row, col), N64_PORTRAIT_SET] });
+    });
+    effects.push(
+        { frame: frames, command: "portrait", values: [...N64_PORTRAIT_CLEAR] },
+        { frame: frames, command: "playerVisibility", values: [1, 0, 0, 0] },
+        { frame: frames, command: "mapScrollRate", values: [N64_SCROLL_RATE, 7, 0, 0] },
+    );
+    return effects;
+}
 
 /** motion speed 1..3 (0..7) from a runtime px/frame. (likely) */
 export const N64_SPEED_TABLE = Object.freeze([0, 0.5, 1, 1.5, 2, 3, 4, 6]);
@@ -270,33 +435,31 @@ export function spriteTexture(frame, options = {}) {
     return { grid: textureGrid(small, options), w: small.w, h: small.h, scaled: small.scaled };
 }
 
-/** The tile power for `px` pixels: the smallest p with 1 << (p + 1) >= px (16 -> 3, 32 -> 4, 64 -> 5). */
-export function tilePower(px) {
-    let p = 0;
-    while ((1 << (p + 1)) < px && p < 7) p++;
-    return p;
-}
-
 /**
- * The billboard model for a sprite of w x h texture pixels: a quad of
- * N64_UNITS_PER_PIXEL units a pixel, its two faces' UVs over the sprite's own
- * pixel box on tile 1 (the sample models leave tile 0 blank), the tile sized
- * to the next power of two. (likely: the UV units are the document's)
+ * The billboard model for a sprite of w x h texture pixels, top-left in its
+ * 64x32 texture: a quad lying on the ground plane, N64_UNITS_PER_PIXEL units
+ * a pixel of the frame it was cut from (`shown`: a frame shrunk to fit its
+ * texture keeps its size on screen, at the texture's resolution), on tile 1
+ * (the sample models leave tile 0 blank) set to the whole texture (width
+ * power 5, height power 6: 64 x 32), its UVs — texels — over the sprite's
+ * own pixel box, the top row at the far edge. Booted 2026-10-21 (records.js
+ * billboardModel). (confirmed)
  * @param {{w: number, h: number}} sprite
  * @param {number} [light]
+ * @param {{w: number, h: number}} [shown]  the frame's own size; the sprite's by default
  */
-export function spriteModel(sprite, light = 0) {
+export function spriteModel(sprite, light = 0, shown = sprite) {
     const w = Math.max(1, sprite.w), h = Math.max(1, sprite.h);
     const model = billboardModel({
-        width: clamp(w * N64_UNITS_PER_PIXEL, 1, 0x7fff),
-        height: clamp(h * N64_UNITS_PER_PIXEL, 1, 0x7fff),
-        tileWidthPower: tilePower(w),
-        tileHeightPower: tilePower(h),
+        width: clamp(Math.max(1, shown.w) * N64_UNITS_PER_PIXEL, 1, 0x7fff),
+        height: clamp(Math.max(1, shown.h) * N64_UNITS_PER_PIXEL, 1, 0x7fff),
+        tileWidthPower: 5,
+        tileHeightPower: 6,
         tile: 1,
         light,
     });
-    model.faces[0].uv = [[0, 0], [w, 0], [w, h]];
-    model.faces[1].uv = [[0, 0], [w, h], [0, h]];
+    model.faces[0].uv = [[0, h], [w, h], [w, 0]];
+    model.faces[1].uv = [[0, h], [w, 0], [0, 0]];
     return model;
 }
 
@@ -355,6 +518,40 @@ export class TextureSheet {
             }
         }
         return null;
+    }
+
+    /**
+     * Single textures for art that need not lie in a run — a portrait names
+     * each cell's texture by itself, a model its one texture: blank ones
+     * first, then painted ones `reclaim(index)` allows (a template's art
+     * nothing this project writes points at), from the bottom up or, with
+     * `fromTop`, from the top down; none past `max`. The textures this sheet
+     * placed are never taken back.
+     * @param {string} key
+     * @param {Uint8Array[]} textures
+     * @param {{max?: number, reclaim?: ((index: number) => boolean)|null, fromTop?: boolean}} [options]
+     * @returns {{indices: number[], reclaimed: number}|null}  null when too few are left
+     */
+    claim(key, textures, { max = this.count - 1, reclaim = null, fromTop = false } = {}) {
+        const ours = new Set();
+        for (const p of this.placed) {
+            for (const i of p.indices ?? Array.from({ length: p.textures }, (_, k) => p.index + k)) ours.add(i);
+        }
+        const blank = [], painted = [];
+        for (let i = 0; i <= Math.min(max, this.count - 1); i++) {
+            if (this.blank[i]) blank.push(i);
+            else if (reclaim && !ours.has(i) && reclaim(i)) painted.push(i);
+        }
+        if (fromTop) painted.reverse();
+        if (blank.length + painted.length < textures.length) return null;
+        const indices = [...blank, ...painted].slice(0, textures.length);
+        indices.forEach((i, k) => {
+            this.bytes.set(textures[k], i * TILE_BYTES);
+            this.blank[i] = false;
+        });
+        const reclaimed = Math.max(0, textures.length - blank.length);
+        this.placed.push({ key, index: indices[0] ?? 0, cols: textures.length, rows: 1, textures: textures.length, indices, reclaimed });
+        return { indices, reclaimed };
     }
 }
 
@@ -475,6 +672,10 @@ function itemEntry(model, scale) {
  *             give them off a disk; null for none
  *   title1, title2  the title pictures as RGBA frames, each fitted to 128x64
  *   framesPerEnemy  frames kept per enemy animation (4)
+ *   storyBackdrops  [{stage, parts, variants: [{label, w, h, rgba}]}],
+ *             src/story/story-panels.js: each stage's story, largest size first;
+ *             stage <N> opens on the first size whose textures fit, as a
+ *             full-screen portrait briefing (storyScreen, storyEffects)
  *
  * Returns {name, files: [{ext, data}], report, warnings}; the report's shape
  * is the literal at the end of this function, which is what a caller's type
@@ -483,10 +684,11 @@ function itemEntry(model, scale) {
  * @param {object} level
  * @param {Record<string, {w: number, h: number, rgba: Uint8Array|Uint8ClampedArray}>} art
  * @param {{name?: string|null, template?: Array<{ext: string, data: Uint8Array}>|Map<string, Uint8Array>|null,
- *          title1?: object|null, title2?: object|null, framesPerEnemy?: number}} [options]
+ *          title1?: object|null, title2?: object|null, framesPerEnemy?: number,
+ *          storyBackdrops?: Array<{stage: number, parts?: string[], variants: Array<{label: string, w: number, h: number, rgba: Uint8Array}>}>|null}} [options]
  */
 export function buildN64ProjectFromLevel(level, art, options = {}) {
-    const { template = null, title1 = null, title2 = null, framesPerEnemy = N64_FRAMES_PER_ENEMY } = options;
+    const { template = null, title1 = null, title2 = null, framesPerEnemy = N64_FRAMES_PER_ENEMY, storyBackdrops = null } = options;
     const warnings = [];
     const warn = (m) => warnings.push(m);
     const name = normalizeProjectName(options.name ?? (level && level.name) ?? "SHMUPX");
@@ -553,7 +755,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         const t = spriteTexture(f);
         if (t.scaled) common.scaled.push(`ship:${i}:${f.key}`);
         const at = placeCommon(`ship:${i}:${f.key}`, t.grid);
-        if (at !== null && i === 0) cmd.set(N64_PLAYER_MODEL, { model: spriteModel(t), texture: at, key: `ship:${f.key}` });
+        if (at !== null && i === 0) cmd.set(N64_PLAYER_MODEL, { model: spriteModel(t, 0, f), texture: at, key: `ship:${f.key}` });
     });
     const itemFrames = Object.entries(art || {}).filter(([k]) => /item|powerup|speedup|1up/i.test(k)).slice(0, 8);
     itemFrames.forEach(([k], i) => {
@@ -563,7 +765,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         if (t.scaled) common.scaled.push(`item:${decodeFrameKey(k)}`);
         const at = placeCommon(`item:${decodeFrameKey(k)}`, t.grid);
         if (at !== null && i < N64_ITEM_MODELS.length) {
-            cmd.set(N64_ITEM_MODELS[i], { model: spriteModel(t), texture: at, key: `item:${decodeFrameKey(k)}` });
+            cmd.set(N64_ITEM_MODELS[i], { model: spriteModel(t, 0, f), texture: at, key: `item:${decodeFrameKey(k)}` });
         }
     });
     common.placed = cgr.placed;
@@ -613,7 +815,34 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         const missed = [];
         const scaled = [];
 
-        // A frame -> its texture and model slot; -1 for a frame that found no room.
+        // The map: a template stage's, else unset.
+        let mapSettings = {}, map = [];
+        const templateBl = templateFiles.get(blExt);
+        if (templateBl) {
+            try {
+                const t = parseStageBl(templateBl);
+                mapSettings = t.mapSettings;
+                map = t.map;
+            } catch (e) {
+                warn(`${st.key}: the template's ${blExt} could not be read for its map (${e.message}); the map is unset`);
+            }
+        }
+        // A template's art this project can take back: it writes its own
+        // models and carries none of the template's effects, so only the
+        // map's texture bytes are in use — and since that byte's numbering is
+        // open, a tile is kept under both readings (t, and t - 40).
+        const mapTextures = new Set();
+        for (const m of map) {
+            if (m.texture === MAP_TEXTURE_UNSET) continue;
+            mapTextures.add(m.texture);
+            mapTextures.add(m.texture - N64_GR_TEXTURE_BASE);
+        }
+        const unnamedByMap = (index) => !mapTextures.has(index);
+
+        // A frame -> its texture and model slot; -1 for a frame that found no
+        // room. Blank textures first, then a template's art the map does not
+        // name, from the top of the sheet down so the tiles a story can name
+        // (0-215) are the last taken.
         const placeFrame = (key, frame) => {
             if (models.used >= models.count) {
                 missed.push(key); // no model slot left: the texture would show nothing
@@ -621,12 +850,16 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             }
             const t = spriteTexture(frame);
             if (t.scaled) scaled.push(key);
-            const at = sheet.place(key, t.grid);
+            let at = sheet.place(key, t.grid);
+            if (at === null) {
+                const got = sheet.claim(key, t.grid.tiles, { reclaim: unnamedByMap, fromTop: true });
+                at = got ? got.indices[0] : null;
+            }
             if (at === null) {
                 missed.push(key);
                 return -1;
             }
-            return models.add(spriteModel(t), at);
+            return models.add(spriteModel(t, 0, frame), N64_GR_TEXTURE_BASE + at);
         };
 
         // The cells: which letters, how often, with which drop digits.
@@ -700,7 +933,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             const index = entryOf.get(`${c.letter}${c.drop}`);
             if (index === undefined) continue;
             const x = width <= 1 ? 0 : Math.round(-N64_LAYOUT_HALF_WIDTH + (c.col * 2 * N64_LAYOUT_HALF_WIDTH) / (width - 1));
-            placements.push({ enemy: index, x, y: N64_SPAWN_Y, frame: -(c.row * N64_FRAMES_PER_ROW) });
+            placements.push({ enemy: N64_ENEMY_NUMBER_BASE + index, x, y: N64_SPAWN_Y, frame: -(c.row * N64_SCROLL_PER_ROW) });
         }
 
         // Descending frame order, as the sample stages keep theirs; at most
@@ -726,28 +959,53 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             } else {
                 bossEntry = entries.length;
                 entries.push(enemyEntryFromEditor(boss, { slots, size, frames: kept.length, boss: true }));
-                placements.push({ enemy: bossEntry, x: 0, y: N64_BOSS_Y, frame: -((lastRow + BOSS_ROW_GAP) * N64_FRAMES_PER_ROW) });
+                placements.push({ enemy: N64_ENEMY_NUMBER_BASE + bossEntry, x: 0, y: N64_BOSS_Y, frame: -((lastRow + BOSS_ROW_GAP) * N64_SCROLL_PER_ROW) });
             }
         }
 
         if (missed.length) warn(`${st.key}: the ${grExt} sheet or the ${mdExt} table ran out of room; not drawn: ${missed.join(", ")}`);
 
-        // The map: a template stage's, else unset.
-        let mapSettings = {}, map = [];
-        const templateBl = templateFiles.get(blExt);
-        if (templateBl) {
-            try {
-                const t = parseStageBl(templateBl);
-                mapSettings = t.mapSettings;
-                map = t.map;
-            } catch (e) {
-                warn(`${st.key}: the template's ${blExt} could not be read for its map (${e.message}); the map is unset`);
+        // The story: the stage's own (`stage<N>`, never a boss's split second
+        // stage), at the largest size whose textures the sheet still has —
+        // its blank textures, then a template's art the map does not name.
+        let story = null;
+        // Every stage opens on the scene its sprites need (N64_STAGE_SCENE).
+        let effects = N64_STAGE_SCENE.map((e) => ({ frame: e.frame, command: e.command, values: [...e.values] }));
+        const backdrop = /^stage\d+$/.test(st.key) && Array.isArray(storyBackdrops)
+            ? storyBackdrops.find((b) => `stage${b.stage}` === st.key) || null
+            : null;
+        if (backdrop) {
+            const max = N64_PORTRAIT_MAX_TEXTURE - N64_GR_TEXTURE_BASE;
+            const tried = [];
+            for (const v of backdrop.variants || []) {
+                if (!(v.w <= N64_STORY_W && v.h <= N64_STORY_H)) {
+                    tried.push(`${v.label} is ${v.w}x${v.h}, over the screen's ${N64_STORY_W}x${N64_STORY_H}`);
+                    continue;
+                }
+                const screen = storyScreen(v);
+                const got = sheet.claim(`${st.key}:story`, screen.textures, { max, reclaim: unnamedByMap });
+                if (!got) {
+                    tried.push(`${v.label} needs ${screen.textures.length} textures`);
+                    continue;
+                }
+                const frames = storyFrames(backdrop.parts || []);
+                // The scene's and the story's are the only effects this writer lays: 50 of a stage's 500.
+                effects = [...effects, ...storyEffects(screen.cells.map((c) => N64_GR_TEXTURE_BASE + got.indices[c]), frames)].slice(0, EFFECT_ENTRIES);
+                story = { size: v.label, textures: screen.textures.length, reclaimed: got.reclaimed, frames, seconds: Math.round(frames / N64_EFFECT_FPS) };
+                break;
+            }
+            if (story) {
+                // Nothing comes on behind the story: the scroll is held where
+                // a stage starts, so the layout moves on past that.
+                for (const p of placements) p.frame -= N64_SCROLL_START;
+            } else {
+                warn(`${st.key}: no size of its story fits the ${grExt} sheet's textures up to tile ${max} (${tried.join("; ") || "no sizes"}) — not drawn`);
             }
         }
 
         built.set(grExt, sheet.bytes);
         built.set(mdExt, buildMdFile(models.models, models.textures));
-        built.set(blExt, buildStageBl({ enemies: entries, layout: { map: placements }, mapSettings, map, effects: [] }));
+        built.set(blExt, buildStageBl({ enemies: entries, layout: { map: placements }, mapSettings, map, effects }));
         stageReports.push({
             key: st.key,
             stage,
@@ -761,6 +1019,9 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             free: sheet.free,
             missed,
             scaled,
+            // the template's textures taken back, the story's among them
+            reclaimed: sheet.placed.reduce((a, p) => a + (p.reclaimed ?? 0), 0),
+            story,
             records: {
                 entries: entries.length,
                 models: models.used,

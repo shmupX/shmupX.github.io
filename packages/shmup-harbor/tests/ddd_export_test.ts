@@ -16,8 +16,10 @@
 // system area the way mupen64plus-core validates it, the ATNFS directory and
 // its three invariants, every file decompressing to its documented size, and
 // the stage-0 texture sheet holding a frame for every enemy letter foo's grid
-// names. Nothing here claims the disk boots — no cartridge, emulator or disk
-// fixture exists to try it on.
+// names, and stage 0 opening on foo's story as portrait effects. Nothing here
+// boots the disk: the cartridge, the IPL and the donor are not in the repo
+// (FORMAT-N64.md "A level's story" is what a boot of a donor-built disk
+// showed).
 
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { join } from "@std/path";
@@ -25,10 +27,17 @@ import {
   DDD_IMAGE_BYTES,
   DEZAEMON_INITIAL_CODE,
   DIRECTORY_COPY_LBAS,
+  EFFECT_COMMANDS,
   extractFile,
   FIRST_FILE_LBA,
+  N64_GR_TEXTURE_BASE,
+  N64_PORTRAIT_CLEAR,
+  N64_PORTRAIT_MAX_TEXTURE,
+  N64_SCROLL_RATE,
+  N64_STAGE_SCENE,
   NDD_IMAGE_BYTES,
   parseDddImage,
+  parseStageBl,
   PROJECT_FILE_COUNT,
   readDirectory,
   readSystemArea,
@@ -71,6 +80,7 @@ interface StageReport {
   key: string;
   ext: string;
   textures: { key: string }[];
+  story: { size: string; frames: number; seconds: number } | null;
 }
 
 Deno.test({
@@ -99,7 +109,7 @@ Deno.test({
       assertStrictEquals(result.donor, null);
       assertStrictEquals(result.template, null);
       assertStrictEquals(result.bytes, NDD_IMAGE_BYTES);
-      assert(log.includes("untested on hardware or in an emulator"));
+      assert(log.includes("untested on hardware"));
 
       const image = await Deno.readFile(out);
       assertStrictEquals(image.length, NDD_IMAGE_BYTES);
@@ -182,6 +192,50 @@ Deno.test({
         common.textures.some((t) => t.key.startsWith("ship:")),
         "the ship is in CGR",
       );
+
+      // foo's stage 0 opens on its story: forty portraits over the screen at
+      // frame 0, every one naming a #GR texture a byte holds, the ship hidden
+      // and the map's scroll held until one effect clears them all.
+      const story = stages[0].story;
+      assert(story, "stage 0 carries foo's story");
+      assert(
+        log.includes(`story: opens stage0 ${story.size} (${story.seconds} s)`),
+        log,
+      );
+      const bl = parseStageBl(
+        extractFile(user, parsed.directory.find((e) => e.ext === "0BL")!).data,
+      );
+      const set = bl.effects.filter((e) =>
+        EFFECT_COMMANDS[e.command] === "portrait" && e.values[0] === 0
+      );
+      assertStrictEquals(set.length, 40);
+      assert(set.every((e) => e.frame === 0));
+      assert(
+        set.every((e) =>
+          e.values[1] >= N64_GR_TEXTURE_BASE &&
+          e.values[1] <= N64_PORTRAIT_MAX_TEXTURE
+        ),
+      );
+      const clear = bl.effects.filter((e) =>
+        EFFECT_COMMANDS[e.command] === "portrait" && e.values[0] === 0xff
+      );
+      assertEquals(clear.map((e) => [e.frame, ...e.values]), [[
+        story.frames,
+        ...N64_PORTRAIT_CLEAR,
+      ]]);
+      assertEquals(
+        bl.effects.filter((e) => EFFECT_COMMANDS[e.command] !== "portrait")
+          .map((e) => [e.frame, EFFECT_COMMANDS[e.command], e.values[0]]),
+        [
+          // the opening scene every stage gets, so its sprites draw
+          ...N64_STAGE_SCENE.map((e) => [e.frame, e.command, e.values[0]]),
+          [0, "playerVisibility", 0],
+          [0, "mapScrollRate", 0],
+          [story.frames, "playerVisibility", 1],
+          [story.frames, "mapScrollRate", N64_SCROLL_RATE],
+        ],
+      );
+      assertStrictEquals(bl.tail.totalEffects, bl.effects.length);
       assertEquals(result.warnings, [], "foo builds without a warning");
     } finally {
       await Deno.remove(dir, { recursive: true });

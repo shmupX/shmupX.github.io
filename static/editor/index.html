@@ -7276,7 +7276,14 @@
             try { version = new URLSearchParams(location.search).get('version') || ''; } catch (_e) { /* no URL to read */ }
             try {
                 const shelf = await dezaShelf();
-                const flags = shelf.versionParams(shelf.normalizeVersion(version) || (lineageForked() ? 'mod' : ''));
+                const picked = shelf.normalizeVersion(version) || (lineageForked() ? 'mod' : '');
+                const flags = shelf.versionParams(picked);
+                // A web game's own .SAV export is still its author's game, and
+                // its story — laid back from the shelf record (applyModOverlay)
+                // — is the author's too: OG leaves a cart's story out, so ask
+                // for it by name unless the author turned NO STORY on.
+                if (picked !== 'mod' && lineageActive() && lineage.ownStory &&
+                    gameData && gameData.storyData && !gameData.noStory) flags.story = 1;
                 return Object.keys(flags).map((k) => '&' + k + '=' + flags[k]).join('');
             } catch (_e) { return ''; }
         }
@@ -8155,8 +8162,10 @@
         // not decode) ahead of the writer's and, for a game that tells one,
         // `storyLine` — the build log's "story:" line (Dezaemon.storyLogLine).
         // A story never stops an export: one that cannot be drawn is a warning
-        // and stages that open as they are.
-        async function exportWithStory(write) {
+        // and stages that open as they are. `height` is the room a cart's
+        // screen opens with under its score, for a writer with less than the
+        // composer's twelve rows (Kids!, as build:kids asks).
+        async function exportWithStory(write, { height } = {}) {
             const E = window.Dezaemon;
             const storyData = gameData && gameData.storyData;
             const warnings = [];
@@ -8166,7 +8175,7 @@
                     const font = await dezaStoryFont();
                     if (!font) warnings.push('the story\'s face (' + DEZA_STORY_FONT_URL + ') did not load — its words are not drawn');
                     backdrops = await E.storyBackdrops(storyData, {
-                        font, decodePicture: imageRgbaAsStored, onWarn: (m) => warnings.push(m),
+                        font, decodePicture: imageRgbaAsStored, onWarn: (m) => warnings.push(m), height,
                     });
                 } catch (e) {
                     warnings.push('the story could not be drawn (' + (e && e.message || e) + ')');
@@ -8727,6 +8736,7 @@
             } else if (rec) {
                 L.parent = { id: rec.id, title: rec.title || title };
                 L.origin = rec.source === 'eshop' ? 'ESHOP GAME' : rec.source === 'import' ? 'DEZAEMON 2 · SATURN .SAV' : 'YOUR .SAV EXPORT';
+                L.ownStory = rec.source === 'export';
                 // A web game's own .SAV export carries its overlay too (the
                 // bosses' routines, the story): lay it back, as for a mod.
                 applyModOverlay(rec.web);
@@ -9067,7 +9077,11 @@
                 backgroundSet: kidsBackdropSet(),
                 horizontal: gridOrientation === 'horizontal',
                 storyBackdrops,
-            }));
+            }), {
+                // The Kids! screen opens with five 32-px map rows under its
+                // score and lives.
+                height: window.Dezaemon.KIDS_STORY_ROWS * 32,
+            });
             return { out, record };
         }
         async function buildPlusCardForExport() {

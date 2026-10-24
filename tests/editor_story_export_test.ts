@@ -44,6 +44,16 @@ Deno.test("every cart export in the editor draws the story", async () => {
       `${m[1]} at ${at} does not pass the story to the writer`,
     );
   }
+  // Kids! opens with less room under its score, and asks for it as
+  // build:kids does (KIDS_STORY_ROWS 32-px rows).
+  const kids = html.slice(
+    html.indexOf("async function buildKidsCardForExport()"),
+    html.indexOf("async function buildPlusCardForExport()"),
+  );
+  assert(
+    kids.includes("height: window.Dezaemon.KIDS_STORY_ROWS * 32"),
+    "the Kids! export composes the story at the Saturn's height",
+  );
   // Each export's line says what the story did.
   assertEquals(
     [...html.matchAll(/(?<!function )dezaStorySummary\(out\)/g)].length,

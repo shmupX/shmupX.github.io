@@ -378,16 +378,18 @@ export const PLUS_BOSS_ROW_GAP = 24;
 export const PLUS_MAX_SPAWN_ROW = PLUS_SCROLL_BANDS - 64;
 /**
  * A stage's story (`storyBackdrops`) is painted into its map with its top on
- * this row, as on the Super Famicom original whose map and sequencer this is
- * (sfc-write.js SFC_STORY_TOP_ROW, measured there; the Dezaemon+ screen's
- * own first rows are untraced).
+ * this row, as on the Super Famicom original (sfc-write.js SFC_STORY_TOP_ROW).
+ * Measured in Mednafen on Select 100 (gs, 2026-10-20): as a stage opens, map
+ * y 0 is the screen's line 233, so row 11's top lands ten lines under the
+ * score and REST and row 12's would sit on REST (FORMAT-PSX.md "A level's
+ * story").
  */
 export const PLUS_STORY_TOP_ROW = 11;
 /** Bands a story stage's waves wait past its top row. */
 export const PLUS_STORY_LEAD_ROWS = 8;
 /** The earliest band a story stage's boss stands on, clear of its blocks. */
 export const PLUS_STORY_MIN_BOSS_ROW = 80;
-/** The effect byte of a story's scroll steps: bits 0-2 = 1, 0.5 px/frame. */
+/** The effect byte of a story's scroll steps: speed index 1 (bits 0-2), 0.25 px/frame on Select 100 (measured frame by frame in Mednafen). */
 export const PLUS_STORY_SCROLL_EFFECT = 0x41;
 /** A story's width: the map's 14 drawn columns. */
 export const PLUS_STORY_W = 14 * CG_CELL;

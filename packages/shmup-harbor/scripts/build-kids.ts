@@ -23,6 +23,7 @@ import { ensureDir } from "@std/fs";
 import {
   exportLevelToKidsCard,
   KIDS_STOCK_ITEM_FRAMES,
+  KIDS_STORY_ROWS,
 } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
 import { storyLogLine, type StoryStageReport } from "../lib/story-panels.ts";
@@ -83,7 +84,10 @@ export async function buildKids(
   });
   const title1 = await titleArt(record.logoDataURL, "logo", log);
   const title2 = await titleArt(record.subTitleDataURL, "subtitle", log);
-  const backdrops = await levelStoryBackdrops(record, log);
+  // The Kids! screen opens with five 32-px map rows under its score and lives.
+  const backdrops = await levelStoryBackdrops(record, log, {
+    height: KIDS_STORY_ROWS * 32,
+  });
 
   const result = exportLevelToKidsCard(record, art, {
     name: options.name?.trim() || null,

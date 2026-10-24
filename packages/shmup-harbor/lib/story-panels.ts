@@ -1,6 +1,7 @@
 // Story backdrops: a level's story — its pictures and its words — set as the
 // opening scenery of each stage on a cart: the Saturn's Dezaemon 2, the Super
-// Famicom's Dezaemon, and the PlayStation's Kids! and Dezaemon+.
+// Famicom's Dezaemon, and the PlayStation's Kids! and Dezaemon+ (the 64DD
+// shows the same rasters as a briefing before each stage).
 //
 // The composer is the engine's (src/story/story-panels.js — what is drawn,
 // at which sizes, and why), because the level editor's exports compose the
@@ -45,10 +46,14 @@ export interface StoryBackdrop {
   variants: StoryVariant[];
 }
 
-/** What a cart writer reports of a stage's story, if it drew one. */
+/**
+ * What a writer reports of a stage's story, if it drew one: the map rows it
+ * took on a cart, or the seconds it stays up on the 64DD, where it is a
+ * full-screen briefing rather than scenery.
+ */
 export interface StoryStageReport {
   key: string;
-  story?: { size: string; rows: number } | null;
+  story?: { size: string; rows?: number; seconds?: number } | null;
 }
 
 /** The bytes behind a base64 data URL. */
@@ -127,15 +132,21 @@ export const storyLogLine: (
  */
 export function storyBackdrops(
   storyData: unknown,
-  { font = null, onWarn = () => {} }: {
+  { font = null, onWarn = () => {}, height = BACKDROP_H }: {
     /** The face to set the words in. */
     font?: BitmapFont | null;
     onWarn?: (message: string) => void;
+    /**
+     * The opening screen's room under the score, whole rows: a cart with less
+     * than BACKDROP_H (Dezaemon Kids!, 160) asks for its own.
+     */
+    height?: number;
   } = {},
 ): Promise<StoryBackdrop[]> {
   return panels.storyBackdrops(storyData, {
     font,
     decodePicture: decodeStoryPicture,
     onWarn,
+    height,
   });
 }

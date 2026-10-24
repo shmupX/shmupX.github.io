@@ -218,6 +218,20 @@ px. It fills the same bytes and renders plausibly at a glance, but every feature
 comes out doubled side by side: it is two chip rows drawn next to each other.
 The chip reading renders as real scenery.)_
 
+**Which way up (confirmed in Mednafen, 2026-10-20).** Map rows count up the
+screen: a stage opens with row 0 at its foot, and the scroll brings the higher
+rows down from the top. A chip is drawn top down, `n, n+1` above `n+8, n+9`. A
+level's scenery grid counts up the same way (its row 0 is where the stage
+starts), so a chip's top half is grid row 2r + 1 and its bottom half grid row
+2r. `kids-write.js` had the two halves the other way round, which the screen
+showed on a card whose scenery coloured each grid row: bottom up, the bands came
+out 1, 0, 3, 2, 5, 4… It now writes them 0, 1, 2, 3. `psx:probe png <sav> map`
+draws row 0 at the foot too, since 2026-10-21; it used to draw it at the top,
+which turned a stage over by whole rows, each chip upright. Athena's own sample
+games show the difference: in `SGM_MOMO`'s opening screen a bush two chip rows
+tall came out as two separated halves, and `SGM_MIYA`'s shoreline as broken
+steps, and both are whole now.
+
 ### SCROLL
 
 6 × 0x60 bytes: one **nibble per 64 px** of map, low nibble first, 192 nibbles
@@ -649,7 +663,8 @@ A MAP GROUP word names a 16×16 px tile in the graphics bank:
 | 8-9  | texture page (a save carries pages 0 and 1)  |
 
 `deno task psx:probe png <sav> map --stage N` draws a stage through this and it
-comes out as the game's own scenery.
+comes out as the game's own scenery, row 0 at the foot: on gs's card it matches
+Select 100's screen at scroll 0 line for line ("A level's story" below).
 
 ### SCROLL, APPEAR, ENEMY DATA, SPRITE LAYOUT, GROUPS
 
@@ -898,12 +913,26 @@ picture), its top on row 11 (`PLUS_STORY_TOP_ROW`) down to row 0, columns 1-14,
 in the stage's own map palette row, which only scenery shares. A build without
 it first says how many of the 508 tiles the game leaves, and each variant must
 fit a MAP GROUP's 127 distinct tiles (mirrors shared), so a busy picture often
-comes down a size. The story's SCROLL steps get effect `0x41` (0.5 px/frame),
-the sequencer plays blocks 0-31 once and then cycles 3-31, the waves wait
-`11 + 1 + 8` bands more and the boss stands on band 80 or later. Unlike the
-Super Famicom's, which map rows the PlayStation screen shows as a stage opens
-is unmeasured. Writing it also fixed the scenery path's column numbering, which
-put chip columns 8-14 one byte left (column 8 on the flag byte).
+comes down a size. The story's SCROLL steps get effect `0x41` (speed index 1:
+0.25 px/frame, measured below), the sequencer plays blocks 0-31 once and then
+cycles 3-31, the waves wait
+`11 + 1 + 8` bands more and the boss stands on band 80 or later. Writing it
+also fixed the scenery path's column numbering, which put chip columns 8-14 one
+byte left (column 8 on the flag byte).
+
+**Where it opens (measured in Mednafen 1.29 on Select 100 with gs,
+2026-10-20).** The Super Famicom's row 11 is right here too. On a card whose
+story steps had speed index 0, which holds the map still (and, with nothing on
+screen, ends the stage within a few seconds), map y 0 opened on line 233 of the
+280×240 snapshot and the rows counted up the screen: the story's rows 11..0 sat
+on lines 42-233 by x 30-253 (columns 1-14), upright, its plate ten lines under
+SCORE (lines 15-21) and REST (25-31). Row 12's top would be line 26, on REST.
+BOMB (lines 220-226, x 220-248) covers only the story's right margin beside the
+picture. The next stage, on effect `0x41`, opened on its own story, which slid
+down the screen as it scrolled. On gs's own card, stepped a frame at a time,
+the story moves 1.25 px every 5 frames: speed index 1 is 0.25 px/frame, as
+Kids!'s nibble 1, not the 0.5 first assumed. Select 100's GAME LOAD reads the
+card in slot 2 (Mednafen's `<disc>.1.mcr`).
 
 ## SOUND, the song format (confirmed — `src/psx/plus-song.js`)
 
@@ -1376,17 +1405,32 @@ games to the same readings.
   a coin for the bonuses) and the blast is the Saturn writer's procedural rings.
 
 - **A level's story** (`storyBackdrops`, 2026-10-20) is painted into a stage's
-  opening MAP rows from chip row 1 up (`KIDS_STORY_FIRST_ROW`; which rows the
-  screen shows as a stage opens is unmeasured, so row 0, at its foot, is left
-  to the scroll): harbor's 224-wide raster cut into 32×32 chips through the
-  fixed bank, the raster's top row of chips on the highest row. A build
-  without it first says how many of the 1,024 cells the game leaves; every
-  stage's story is taken at the largest size at which they all fit, else each
-  at its smallest while cells last, and `exportLevelToKidsCard` asks again a
-  size smaller when the pictures pack past the fifteen blocks. Its first
-  SCROLL unit crawls at nibble 1 (0.25 px/frame — there is no half speed,
-  and a halt with nothing on screen would end the stage), and its waves and
-  boss wait `1 + rows + 4` rows more.
+  opening MAP rows, its top on chip row 4 (`KIDS_STORY_TOP_ROW`) and down
+  towards row 0, five rows at most (`KIDS_STORY_ROWS`, 160 px): harbor's
+  224-wide raster, which `build:kids` asks for at 160 px tall, cut into 32×32
+  chips through the fixed bank, the raster's top row of chips on row 4. A
+  taller variant is passed over. A build without it first says how many of
+  the 1,024 cells the game leaves; every stage's story is taken at the largest
+  size at which they all fit, else each at its smallest while cells last, and
+  `exportLevelToKidsCard` asks again a size smaller when the pictures pack past
+  the fifteen blocks. Its first SCROLL unit crawls at nibble 1 (0.25 px/frame
+  — there is no half speed, and a halt with nothing on screen ends the stage),
+  and its waves and boss wait `4 + 1 + 4` rows more.
+
+  **Where it opens (measured in Mednafen 1.29 with gs, 2026-10-20).** A card
+  whose first stage opened with its scroll halted (nibble 0) held the map at
+  scroll 0 until the stage ended. In a 280×240 snapshot the playfield is lines
+  8-231 by x 30-252, and it shows map y 1..224: line = 232 − y. Row 0 sits on
+  lines 201-232, its bottom line just under the screen, and row 6's top is
+  line 9. SCORE takes lines 16-31 and the lives icons 32-47, at the left (x
+  30-77; the 2P PRESS START blinks across 16-31 on the right), and BOMB lines
+  216-231 at the left. Row 5's top, line 41, would put the speaker's plate
+  under the lives, so rows 4..0 (lines 73-232) are the room under the HUD;
+  gs's first story, then six rows from row 1, opened with its plate and words
+  under SCORE and the lives. The story opens upright, plate, words, then
+  picture down the screen, and slides down as the stage scrolls, 1.25 px every
+  5 frames over its first unit. Rebuilt with its top on row 4, gs's card fades
+  in with the plate, the words and the picture all below the lives.
 
 Not written: the enemy-bullet records in CONFIG (ANGEL WING's stand) and the
 title animation beyond the sample's. The Dezaemon+ writer is above.

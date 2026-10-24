@@ -32,10 +32,11 @@ import {
   KIDS_MOVE_STRAIGHT,
   KIDS_SHIP_LAYOUT,
   KIDS_SPRITE_STRIPS,
-  KIDS_STORY_FIRST_ROW,
   KIDS_STORY_LEAD_ROWS,
+  KIDS_STORY_ROWS,
   KIDS_STORY_SCROLL,
   KIDS_STORY_SLOW_UNITS,
+  KIDS_STORY_TOP_ROW,
   kidsBossClassFor,
   kidsCardFileName,
   KidsCellBank,
@@ -55,6 +56,7 @@ import {
   KIDS_GRAPHICS_SIZE,
   KIDS_PRODUCT,
   KIDS_STAGES,
+  kidsCell,
   kidsFootprintOwner,
   parseKidsSave,
 } from "../src/psx/kids.js";
@@ -622,6 +624,28 @@ Deno.test("scenery: a level's 16x16 cell grid becomes 32x32 chips on aligned cel
   assertEquals(out.warnings, []);
 });
 
+Deno.test("scenery: a chip's top half is the upper of its two grid rows", () => {
+  // Grid row 0 is where the stage starts, at the foot of the screen, and map
+  // rows count up it; a chip is drawn top down (measured in Mednafen). So
+  // grid row 1 (blue) is the chip's top half and grid row 0 (red) its bottom.
+  const lv = level();
+  const cols = 14;
+  const tiles = new Uint8Array(cols * 2 * 2);
+  for (let c = 0; c < cols; c++) tiles[(cols + c) * 2 + 1] = 1;
+  lv.backgroundCells = ["bgRed.png", "bgBlue.png"];
+  lv.background = { cols, tiles: btoa(String.fromCharCode(...tiles)) };
+  const a = art();
+  a["bgRed.png"] = frame(16, 16, [255, 0, 0]);
+  a["bgBlue.png"] = frame(16, 16, [0, 0, 255]);
+  const game = buildKidsGameFromLevel(lv, a);
+  const w = game.data[0] | (game.data[1] << 8);
+  assertStrictEquals(w & KIDS_BLANK, 0, "chip 0,0 painted");
+  const n = w & KIDS_CELL_MASK, vflip = (w & 0x4000) !== 0;
+  const centre = (cell) => kidsCell(game.graphics, cell)[8 * 16 + 8];
+  assertStrictEquals(centre(vflip ? n + 8 : n), nearestKidsIndex(0, 0, 255), "top half: grid row 1");
+  assertStrictEquals(centre(vflip ? n : n + 8), nearestKidsIndex(255, 0, 0), "bottom half: grid row 0");
+});
+
 Deno.test("limits: stages past six, a record table that fills, a horizontal grid, a name that will not fit", () => {
   const lv = level();
   lv.stages = {};
@@ -833,7 +857,11 @@ function storyRaster(label, h, rgb, noise = false) {
   return { label, w, h, rgba };
 }
 
-Deno.test("a stage's story opens its map: chip rows from the first story row up, waves after it", () => {
+Deno.test("a stage's story opens its map: its top on the top story row and down, waves after it", () => {
+  // Measured in Mednafen: the screen opens on rows 0-6, the score and lives
+  // over rows 5-6, so the story's top is row 4 and it is five rows at most.
+  assertStrictEquals(KIDS_STORY_TOP_ROW, 4);
+  assertStrictEquals(KIDS_STORY_ROWS, 5);
   const plain = exportLevelToKidsCard(level(), art());
   const out = exportLevelToKidsCard(level(), art(), {
     storyBackdrops: [{ stage: 0, variants: [storyRaster("words", 64, [255, 255, 255])] }],
@@ -843,38 +871,60 @@ Deno.test("a stage's story opens its map: chip rows from the first story row up,
   assert(save.checksums.ok);
   const map = save.map[0];
   const painted = (r) => Array.from({ length: 7 }, (_, c) => map.words[r * 7 + c]).some((w) => (w & KIDS_BLANK) === 0);
-  const first = KIDS_STORY_FIRST_ROW;
-  assert(!painted(first - 1) && painted(first) && painted(first + 1) && !painted(first + 2));
+  const top = KIDS_STORY_TOP_ROW;
+  assert(!painted(top + 1) && painted(top) && painted(top - 1) && !painted(top - 2));
   assertStrictEquals(
     out.report.stages[0].lastRow,
-    plain.report.stages[0].lastRow + first + 2 + KIDS_STORY_LEAD_ROWS,
+    plain.report.stages[0].lastRow + top + 1 + KIDS_STORY_LEAD_ROWS,
     "the waves and the boss wait for it",
   );
   assertStrictEquals(save.scroll[0].steps[0].nibble, KIDS_STORY_SCROLL, "its first 64 px crawl");
   assertStrictEquals(save.scroll[0].steps[KIDS_STORY_SLOW_UNITS].nibble, 2);
-  assertEquals(out.report.stages[0].story, { size: "words", rows: 2, cells: 4, first });
+  assertEquals(out.report.stages[0].story, { size: "words", rows: 2, cells: 4, top });
 });
 
-Deno.test("a story the cells or the save cannot hold is drawn smaller, else not at all", () => {
-  // 40 chip rows of noise want 1,120 cells: more than the bank holds.
+Deno.test("a story's top chip row is the raster's top: map rows count up the screen", () => {
+  // Top 32 px white, the next 32 px red: row 4 (higher on screen) is white.
+  const raster = storyRaster("two", 64, [255, 0, 0]);
+  for (let i = 0; i < 224 * 32; i++) raster.rgba.set([255, 255, 255, 255], i * 4);
+  const game = buildKidsGameFromLevel(level(), art(), { storyBackdrops: [{ stage: 0, variants: [raster] }] });
+  const word = (r) => game.data[(r * 7) * 2] | (game.data[(r * 7) * 2 + 1] << 8);
+  const colour = (w) => kidsCell(game.graphics, w & KIDS_CELL_MASK)[8 * 16 + 8];
+  assertStrictEquals(colour(word(KIDS_STORY_TOP_ROW)), nearestKidsIndex(255, 255, 255));
+  assertStrictEquals(colour(word(KIDS_STORY_TOP_ROW - 1)), nearestKidsIndex(255, 0, 0));
+});
+
+Deno.test("a story taller than the five rows under the HUD is not drawn at that size", () => {
+  const tall = storyRaster("tall", (KIDS_STORY_ROWS + 1) * 32, [255, 255, 255]);
   const smaller = exportLevelToKidsCard(level(), art(), {
-    storyBackdrops: [{
-      stage: 0,
-      variants: [storyRaster("huge", 40 * 32, null, true), storyRaster("words", 32, [255, 255, 255])],
-    }],
+    storyBackdrops: [{ stage: 0, variants: [tall, storyRaster("words", 32, [255, 255, 255])] }],
   });
   assertStrictEquals(smaller.report.stages[0].story.size, "words");
-  // 32 chip rows of noise fit the cells but not the save's fifteen blocks.
-  const packed = exportLevelToKidsCard(level(), art(), {
-    storyBackdrops: [{
-      stage: 0,
-      variants: [storyRaster("big", 32 * 32, null, true), storyRaster("words", 32, [255, 255, 255])],
-    }],
-  });
-  assertStrictEquals(packed.report.stages[0].story.size, "words");
-  assert(packed.warnings.some((w) => /drawn smaller so the save fits/.test(w)));
   const none = exportLevelToKidsCard(level(), art(), {
-    storyBackdrops: [{ stage: 0, variants: [storyRaster("big", 32 * 32, null, true)] }],
+    storyBackdrops: [{ stage: 0, variants: [tall] }],
   });
   assertStrictEquals(none.report.stages[0].story, null);
+});
+
+Deno.test("stories the save cannot hold are drawn smaller, else not at all", () => {
+  // Six stages, each opening on five rows of noise: they fit the cells but not
+  // the save's fifteen blocks.
+  const lv = level();
+  lv.stages = {};
+  for (let s = 0; s < KIDS_STAGES; s++) lv.stages[`stage${s}`] = { enemylist: lv.enemylist };
+  const noise = (s) => {
+    const r = storyRaster("big", KIDS_STORY_ROWS * 32, null, true);
+    for (let i = 0; i < r.rgba.length; i += 4) r.rgba[i] ^= s * 37;
+    return r;
+  };
+  const words = storyRaster("words", 32, [255, 255, 255]);
+  const packed = exportLevelToKidsCard(lv, art(), {
+    storyBackdrops: Array.from({ length: KIDS_STAGES }, (_, s) => ({ stage: s, variants: [noise(s), words] })),
+  });
+  assert(packed.report.stages.every((st) => st.story && st.story.size === "words"));
+  assert(packed.warnings.some((w) => /drawn smaller so the save fits/.test(w)));
+  const none = exportLevelToKidsCard(lv, art(), {
+    storyBackdrops: Array.from({ length: KIDS_STAGES }, (_, s) => ({ stage: s, variants: [noise(s)] })),
+  });
+  assert(none.report.stages.every((st) => st.story === null));
 });

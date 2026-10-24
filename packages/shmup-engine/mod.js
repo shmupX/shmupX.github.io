@@ -321,6 +321,7 @@ export {
   exportLevelToKidsCard,
   KIDS_BACKGROUND_SETS,
   KIDS_STOCK_ITEM_FRAMES,
+  KIDS_STORY_ROWS,
   kidsCardFileName,
 } from "./src/psx/kids-write.js";
 export {

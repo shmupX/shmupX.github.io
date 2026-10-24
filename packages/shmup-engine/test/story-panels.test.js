@@ -132,6 +132,18 @@ Deno.test("storyBackdrops hands decodePicture each stage's opening picture", asy
   }
 });
 
+Deno.test("storyBackdrops fits a picture to the room a cart asks for", async () => {
+  const decodePicture = () => Promise.resolve(solid(180, 240, [9, 9, 9]));
+  const story = {
+    customImages: { stage0_part0: "data:image/gif;base64,AA==" },
+  };
+  const full = await storyBackdrops(story, { decodePicture });
+  const kids = await storyBackdrops(story, { decodePicture, height: 160 });
+  assertEquals(full[0].variants[0].label, "picture 144x192");
+  assertEquals(kids[0].variants[0].label, "picture 120x160");
+  assertEquals(kids[0].variants[0].h, 160);
+});
+
 Deno.test("storyBackdrops keeps the words when a picture cannot be decoded, or no decoder is given", async () => {
   const font = bitmapFontFromSheet(solidSheet());
   const story = {
@@ -178,6 +190,13 @@ Deno.test("storyLogLine says what each cart stage opens on and what the cart can
   assertEquals(
     storyLogLine(backdrops.slice(0, 1), [{ key: "stage0" }]),
     "story: no stage has room for it",
+  );
+  // The 64DD's story is a briefing that stays up a while, not map rows.
+  assertEquals(
+    storyLogLine(backdrops.slice(0, 1), [
+      { key: "stage0", story: { size: "words", seconds: 6 } },
+    ]),
+    "story: opens stage0 words (6 s)",
   );
   assertEquals(
     storyLogLine([], []),

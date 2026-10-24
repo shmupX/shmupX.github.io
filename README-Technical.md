@@ -336,6 +336,42 @@ they are written out in full.
     own size from the top-left corner: gs's 180×240 sat 38 px left of centre,
     and the default level's 642×547 showed only its top-left quarter. The
     stock 256×220 portraits stay at 0,0. `tests/story_images_test.ts`.
+  - The third-stage story of gs, and of `rando` (the game the SAVE SHELF's
+    exports play), carries the glitter bunny pin on its second part:
+    `storyData/customImages/stage2_part1` is the pin alone, cut out of its
+    photo (`scripts/gs/art/bunnyPinUpload.jpg`: the pin on black among a
+    scatter of stars) by `scripts/gs/cut_bunny_pin.py` onto a transparent
+    180×240 (`scripts/gs/art/bunnyPin.png`), the size the game's other story
+    pictures are, and written by `scripts/gs/story-bunny-pin.ts` (`--level
+    rando` for rando; a dry run unless `--apply`; `--revert` puts back what
+    the slot held: rando's raw upload, nothing on gs). gs has two stages, so
+    its entry is the one past its last, and the pin makes it an authored
+    epilogue: its seeded words and the pin play after stage 2, where the game
+    went straight to its ending. `tests/gs_story_bunny_pin_test.ts`.
+  - rando's first boss fires a beam and a Hadoken. Its slot
+    (`shmupX/levels/rando/bossData/boss0`) is the Character Library's
+    dezaBoss0 — Ryu riding a Hadoken, on his Dezaemon record — and out of
+    both of his weapons he threw the cart's stock bullets (dezaBullet0 and
+    dezaBullet2, carried as `dezaBoss0_4..11`): small red and cyan dots.
+    `scripts/rando/first-boss-arms.ts` arms weapon A, his aimed shots, with
+    the library's `hadouken` (the two-frame flicker hadoukenBoss fires, the
+    comet of his own part 37) and weapon C, the spread and the spiral, with
+    its `beam` — six frames packed under the level's sheet; the record's hp,
+    patterns, parts, flame, speeds and damage stay as they are. A dry run
+    unless `--apply` (`--out` writes the level as it would be, for a
+    play-through on `window.__OFFLINE_LEVEL__`); `--revert` puts the stock
+    bullets back and takes the frames out. Akuma (purple and red fireballs)
+    and Trump (green laser, gold fireball) already fire what their records
+    name. `tests/rando_first_boss_arms_test.ts`.
+  - A weapon record's `facing` turns its bullets to their heading: the
+    direction the art is drawn flying, in degrees clockwise from right (0 =
+    right, 90 = down). `faceBulletHeading` rotates each bullet of such a
+    record to its flight direction, from every boss spawner that knows it — a
+    Dezaemon boss's fire points (`spawnDezaBossBullet`) and a stock routine's
+    straight and aimed shots — so rando's beam, a horizontal bar, flies
+    point-first wherever it is aimed. A record without it is never turned, as
+    before: a fireball reads the same at any angle.
+    `tests/boss_bullet_facing_test.ts`.
   - CONTINUE? → YES resumes on the stage that killed you, for every game. The
     Phaser port reset `stageId` to 0 there (2019-es7 275fab6, with the title's
     and the ending's resets, which stay), so a continue on gs's second stage
@@ -382,6 +418,59 @@ they are written out in full.
     only when the level is not a Dezaemon import and actually carries a
     `bossExtra`, and the no-record fallback lifts the time-stop before it hands
     over. Upstream fix belongs in `2019-es7/src/phaser/game-objects/Boss.js`.
+  - Akuma's grab gives the world back when the run survives it. The Shun Goku
+    Satsu (`gokiPlayerAttack`: a boss on his routine catching a ship that
+    touches it) stops time, lands its hit and shows the KO, and only god mode
+    ever lifted the stop — a web game's ship died of the hit and the run went to
+    CONTINUE?, so nothing else had to. A ship out of a stock (a cart played OG,
+    or the 3-HIT SHIP off) is replaced inside the hit (`dezaNextShip`), a
+    shielded one survives it, a second player may still be flying: the fight
+    then sat frozen on the KO for good (rando's Akuma). The grab now keeps what
+    it draws (`akebonoOverlays`) and, with a player still flying and the run not
+    ended, fades the KO and hands back to `bossShootStart` 800 ms after it, as
+    god mode did. And a ship the grab's own hit would bounce off — blinking
+    after a hit or a respawn, under a bomb, behind a barrier — is not caught, so
+    the next ship out of the stock is not taken again where it appears.
+    `tests/boss_goki_pattern_test.ts`.
+  - The grab's KO is the end of the run, not one ship of a stock. The shipped
+    game's ship dies of the hit and goes to CONTINUE?; a one-hit ship out of a
+    stock (a cart played OG, the SAVE SHELF's exports among them) was replaced
+    inside the hit (`dezaNextShip`), so rando's Akuma left the next ship flying
+    under his KO while Trump, met once the stock was spent, ended the run. The
+    stock is spent before the hit lands, so the hit is the last ship's whoever
+    flies the routine. And `onSpFire` refuses while time is stopped: the grab
+    hides the SP button but left it live, and a bomb tapped inside the hold
+    would have held the ship invincible through the hit.
+    `tests/boss_goki_pattern_test.ts`.
+  - A dying enemy's successor is drawn from a pool of its own.
+    `spawnDeathChild` counted everything in the air against
+    `DEZA_MAX_LIVE_ZAKO` — the zako, a boss's parts (`spawnDezaPart`, up to
+    the same cap), the successors themselves — so once rando's first boss had
+    its parts out, a shot motorcycle died without throwing its rider. It
+    counts the successors alone now, tagged `dezaSuccessor` as they spawn.
+    `tests/deza_successor_pool_test.ts`.
+  - `create()` drops the boss-arrival slide (`bossAppearBgFlg`,
+    `bossAppearBgScroll`). The Scene instance outlives a scene.stop/start, so a
+    run that ended inside the boss's first seconds — GAME OVER, GO TO TITLE,
+    START — carried the slide into the next game's stage 1, whose fresh backdrop
+    slid down for whatever was left of the 214 px and opened with a black band
+    across its top. `tests/boss_appear_scroll_test.ts`.
+  - The SP button and the bomb drop wear Contra's winged eagle
+    (`assets/img/contraBomb.png`, four colours, the `contraBomb` spritesheet)
+    where a cart came back with the writer's stand-in square as its bomb icon:
+    the writer gives a bomb item no letter (`lib/powerup-emblems.ts`), so a web
+    game exported to the SAVE SHELF played with an orange box on the button and
+    on every bomb pickup. `isWriterItemSquare` knows the box by its silhouette,
+    as the letters are known; an author's own bomb icon is kept. The lit face
+    cycles the four colours while a bomb is in stock (`cycleSpFace`).
+    `tests/contra_bomb_test.ts`.
+  - A game's own face is lit across its whole disc. `updateSpGauge` crops the
+    lit face over the dim one as the meter fills, to the 51x50 inside which the
+    shipped meter's lit art lies; a game's own face (`drawSpFace`) lights a
+    56 px disc, so cropped the same way its warm ground showed as a square
+    inside the dim disc, the eagle on it. A face of the game's own
+    (`spOwnFace`) is cropped to the whole disc at full, and fills from the top
+    as the shipped meter does. `tests/contra_bomb_test.ts`.
   - The true ending is 2028.Ai's too. `decideEnding` sent any run whose last
     stage is index 4 to the credits from stage 3's clear unless four akebono
     finishes and no continue had unlocked it. NO STORY, which every import
@@ -987,9 +1076,15 @@ switch under DEZAEMON 2 (SATURN) picks it.
 past 64×64), the boss core (class F0–F3 by size), the ship (the level's own,
 else Duke), the eight item icons (**Item icons** below) and two blast anims
 (drawn procedurally), the three bullet types — an import's own bank first, at
-the indices its verbatim zako records name, then the web enemies' projectiles,
-then each boss's own weapons A/B/C with its fire points pointed at wherever they
-landed; a weapon that does not fit the three is dropped with a warning — the
+the indices its verbatim zako records name, then each stage boss's weapon A,
+one type per boss, then the web enemies' projectiles, then each boss's
+weapons B and C, with its fire points pointed at wherever they landed; a
+weapon that does not fit the three is dropped with a warning, and a boss's
+weapon that was dropped fires its weapon A's type. The zako used to claim
+before any boss and a boss's second weapon before the next boss's first, so
+the cloud game `rando`'s cart gave its three types to a flirty girl's lips and
+its first boss's two bullets, and Akuma and Trump, with nothing of their own,
+threw those on the SAVE SHELF — the
 logo and subtitle as the drawn TITLE 1/2, an import's scenery — is packed into
 the 1024 shared CG cells (mirrors and duplicates cost nothing). Each stage gets
 its placement grid (json rows spawn last-first, so they are reversed into scroll
@@ -1000,7 +1095,11 @@ hp/score/interval/speed as a straight-down flier that fires aimed shots; a
 cell's drop digit becomes the record's death word — one record per digit an
 enemy's cells carry, sharing the art, since a record has one drop and a web
 game's B0/B1/B9 cells are three; only a stage out of records collapses them to
-the most common digit), the boss trailer (re-encoded
+the most common digit; and a verbatim record whose own word spawns a child
+— rando's motorcycle throwing its rider — brings the child along, written as
+a record of its own that is placed nowhere, the word pointed at the slot it
+got, a child's child after it, since the rider is placed on no cell and the
+shelf's bike used to explode with nobody falling off it), the boss trailer (re-encoded
 from an import's decoded record, else four default patterns), scroll curve and
 extents, and the settings block (mode from the grid's VERT/HORIZ switch,
 loadouts, item slots, bullet configs, BGM table). An import's `dezaemonBgm`
@@ -1058,11 +1157,14 @@ cart: `lib/ps2/story.ts` stages the story's pictures on a sheet of their own
 `lib/ps2/runtime-story.ts` takes the place of the port's STAGE N card before
 every stage with the web's story scene — the picture, the speaker's plate, the
 words typed out, CROSS for the next part and START to skip — without a new
-svelte-ps2. The **64DD** disk shows none yet, and `build:ddd` says so: its stage
-scenery is a 3D ground, and the sample game's own full-screen briefings — the
-mechanism a story would use, 40 `portrait` layout effects and a clear — are
-decoded but not booted, so their timing is a guess (FORMAT-N64.md "A level's
-story").
+svelte-ps2. The **64DD** disk's stage scenery is a 3D ground, so `build:ddd`
+opens each stage on its story the way the sample game opens its boss briefings:
+the backdrop centred on a black 320×240, cut into 40 textures in the stage's
+`#GR` sheet and shown by 40 `portrait` layout effects at frame 0 over the scene
+and the HUD, the ship hidden and the map's scroll held, then one effect clears
+them and the stage goes on — six to fifteen seconds by the length of its words,
+every placement moved past where the scroll waited. Booted in the launcher's
+player on gs (FORMAT-N64.md "A level's story").
 
 **Item icons.** A save gives each of its eight item slots exactly one 16×16 cell
 of the global sprite bank (refs 94–101), so a pickup in a cart is a **still** —
@@ -1411,6 +1513,16 @@ where they used to scrape it for 1 hp. The Boss Lab, the editor's boss
 strip and `modOverlay()` name the same default (`BossLab.ownPattern`).
 `tests/boss_goki_pattern_test.ts` pins it.
 
+The Boss Lab's sim throws the weapon the runtime would: each slot under
+either spelling, `bulletDataX` or `projectileDataX`, in the order
+`bossWeaponSlots` reads them (`projData`), the bare slot standing in for a
+missing A and A for a missing B. It read only the `bulletData` spelling, so a
+boss armed as `foo.json` spells its bosses — rando's Trump, `projectileDataA`
+a green laser and `projectileDataB` a gold fireball — had no weapon in the
+lab's eyes, borrowed the next record's and threw Akuma's purple fireball.
+Only a boss with no weapon at all borrows one now.
+`tests/boss_lab_weapons_test.ts`.
+
 **A boss can have a second stage.** A `stage2` block on a boss record is laid
 over the record once the boss's hp falls below `hpBelow` of its bar (`0.5`
 unless the block says otherwise): its `anim` sets and its weapon slots
@@ -1477,7 +1589,11 @@ naming whatever the new game calls that key. The squad is numbered after the
 record's own frames, so a game that imported the record before it had one (rando's
 `motorcycle_deza2_32_<n>.png`) still finds its art. `motorcycle_deza2_32` in
 the library carries the two lean poses and the rider.
-`tests/zako_squad_test.ts` pins it.
+`tests/zako_squad_test.ts` pins it. The SAVE SHELF's cart carries the chain
+too: `game-to-save.js` writes a record for every child a placed record's
+death word spawns and points the word at it (its cells with a drop digit
+keep the drop, a record having one death word), so a shelf bike throws its
+rider as the web one does. `packages/shmup-engine/test/game-to-save.test.js`.
 
 **EXTRACT MODE's card and atlas skip the keys the editor set aside, and a
 placed boss wears her routine's poses.** A key the editor prefixes with `_` is
@@ -1867,6 +1983,11 @@ Three rules the tools enforce, because the runtime does not:
 - **A multi-frame bullet is a list, not an animation.** Bullets carry no Phaser
   animation; `spawnDezaBossBullet` hand-flips `texture` with `setFrame()`, at
   `frameRate` if the slot names one.
+- **`facing` turns a bullet to its heading.** A slot whose art is drawn flying
+  in one direction — the library's `beam`, a horizontal bar — names that
+  direction in degrees clockwise from right (0 = right, 90 = down), and
+  `faceBulletHeading` rotates each bullet of it to its flight direction. A
+  slot without it is never turned: a fireball reads the same at any angle.
 - **Nothing publishes with frames that have no pixels.** The runtime filters
   unknown frame names out silently and falls back to stock art, so a record
   naming art that never travelled with it is a bug that reports itself nowhere.
@@ -3095,9 +3216,9 @@ RAM area, LBA 1418 to 4291, is carried verbatim: the two directory copies inside
 it are rewritten and nothing else there is touched.
 
 What is **not** written, and what is not known: the writable directory and its
-allocation map, `DEZA3D.SYS` and `DEZA3D.HSC`; any layout effect (no song, no
-camera, no stage-clear command — the boss's flag is relied on); the `MUS`
-bodies. And every number the records carry that is not a measurement — that a
+allocation map, `DEZA3D.SYS` and `DEZA3D.HSC`; any layout effect but a story's
+(no song, no camera, no stage-clear command — the boss's flag is relied on); the
+`MUS` bodies. And every number the records carry that is not a measurement — that a
 stage's model _k_ is model number 20 + _k_, that x ±400 spans the screen and y
 240 is where an enemy appears, the UV units of a billboard — is a reading of the
 document and of the cartridge's sample stages, marked _likely_ in the code, and
@@ -3107,8 +3228,11 @@ repo's reader and is not expected to put the cartridge into disk mode. Every
 disk is read back through the parser before it is written — the directory, its
 invariants, every new stream decompressed and compared — and the fixture-gated
 test rebuilds the prototype from its own two projects and gets the same bytes.
-Nothing here has booted one, though: there is no cartridge, no emulator and no
-disk fixture in CI, so every image is untested on hardware or in an emulator.
+CI boots none — there is no cartridge or disk fixture in it — but a disk built
+on the prototype was booted in the launcher's player on 2026-10-20/21: the
+project is listed, loads and plays, its stages open on their story, and its
+enemies come down the screen as sprites lying on the ground plane
+(FORMAT-N64.md "A model's texture"). None has been put on hardware.
 `packages/shmup-engine/FORMAT-N64.md` records the writer's reach, confidence by
 confidence, and its "What the writer does not write" is the list of what a boot
 would settle.

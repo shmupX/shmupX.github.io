@@ -474,16 +474,19 @@ export function defaultAuthor(): string | null {
  * The level's story as each stage's opening scenery (lib/story-panels.ts),
  * for every cart writer — the Saturn's, the Super Famicom's, the two
  * PlayStation games'. None when composing it fails: a story must never make
- * an export fail.
+ * an export fail. `height` is the room the cart's screen opens with under its
+ * score (story-panels.ts BACKDROP_H unless a writer says less).
  */
 export async function levelStoryBackdrops(
   record: LevelRecord,
   log: (m: string) => void = () => {},
+  { height }: { height?: number } = {},
 ): Promise<StoryBackdrop[]> {
   try {
     return await storyBackdrops(record.storyData, {
       font: await loadAthenaFont(ROOT),
       onWarn: (m) => log(`warning: ${m}`),
+      height,
     });
   } catch (e) {
     log(`warning: the story could not be drawn (${(e as Error).message})`);

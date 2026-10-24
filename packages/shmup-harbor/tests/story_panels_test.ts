@@ -174,3 +174,19 @@ Deno.test("storyBackdrops draws every stage of foo's story, largest first", asyn
     }
   }
 });
+
+Deno.test("storyBackdrops fills a cart's own room: Dezaemon Kids! opens with 160 px", async () => {
+  const level = JSON.parse(await Deno.readTextFile(FOO));
+  const out = await storyBackdrops(level.storyData, {
+    font: await loadAthenaFont(repoRoot()),
+    height: 160,
+  });
+  for (const b of out.filter((b) => b.sourceKey)) {
+    assertEquals(
+      b.variants[0].h,
+      160,
+      `stage ${b.stage}: the opening screen, filled`,
+    );
+    assert(b.variants.every((v) => v.h <= 160), `stage ${b.stage}`);
+  }
+});

@@ -270,10 +270,12 @@ function boxLines(font, parts) {
  * A build's "story:" log line: what each of the cart's stages opens on, and
  * which of the story's stages the cart has no stage for (a stage is matched
  * by its key, `stage<N>`, so a boss's split second stage is never one). The
- * writers' `report.stages` are the second argument as they come.
+ * writers' `report.stages` are the second argument as they come: a cart's
+ * story says the map rows it took, the 64DD's the seconds its full-screen
+ * briefing stays up.
  *
  * @param {StoryBackdrop[]} backdrops
- * @param {{ key: string, story?: { size: string, rows: number } | null }[]} stages
+ * @param {{ key: string, story?: { size: string, rows?: number, seconds?: number } | null }[]} stages
  * @returns {string}
  */
 export function storyLogLine(backdrops, stages) {
@@ -281,7 +283,9 @@ export function storyLogLine(backdrops, stages) {
         return "story: the level tells none — stages open as they are";
     }
     const keys = new Set(stages.map((s) => s.key));
-    const drawn = stages.filter((s) => s.story).map((s) => `${s.key} ${s.story.size} (${s.story.rows} rows)`);
+    const drawn = stages.filter((s) => s.story).map((s) =>
+        `${s.key} ${s.story.size} (${s.story.seconds !== undefined ? `${s.story.seconds} s` : `${s.story.rows} rows`})`
+    );
     const beyond = backdrops.filter((b) => !keys.has(`stage${b.stage}`)).map((b) => b.stage);
     return `story: ${drawn.length ? `opens ${drawn.join(", ")}` : "no stage has room for it"}${
         beyond.length
@@ -305,13 +309,15 @@ const variant = (label, r) => ({ label, w: r.width, h: r.height, rgba: r.data })
  * Options: `font` (the face to set the words in, bitmapFontFromSheet),
  * `decodePicture` (a `customImages` data URL -> Promise<{ width, height,
  * data }> RGBA; an animated GIF's first frame, which is all a background
- * holds), `onWarn` (message => void).
+ * holds), `onWarn` (message => void), `height` (the opening screen's room
+ * under the score, whole rows: a cart with less than BACKDROP_H — Dezaemon
+ * Kids!, KIDS_STORY_ROWS * 32 = 160 — asks for its own).
  *
  * @param {unknown} storyData
- * @param {{ font?: BitmapFont | null, decodePicture?: ((dataUrl: string) => Promise<{ width: number, height: number, data: ArrayLike<number> }>) | null, onWarn?: (message: string) => void }} [options]
+ * @param {{ font?: BitmapFont | null, decodePicture?: ((dataUrl: string) => Promise<{ width: number, height: number, data: ArrayLike<number> }>) | null, onWarn?: (message: string) => void, height?: number }} [options]
  * @returns {Promise<StoryBackdrop[]>}
  */
-export async function storyBackdrops(storyData, { font = null, decodePicture = null, onWarn = () => {} } = {}) {
+export async function storyBackdrops(storyData, { font = null, decodePicture = null, onWarn = () => {}, height = BACKDROP_H } = {}) {
     const sd = storyData;
     if (!sd || typeof sd !== "object") return [];
     const images = sd.customImages && typeof sd.customImages === "object" ? sd.customImages : {};
@@ -341,10 +347,10 @@ export async function storyBackdrops(storyData, { font = null, decodePicture = n
             // The picture takes what the words leave of the opening screen, then
             // two thirds of that, then two fifths; a story whose words fill the
             // screen still shows its picture, below them, at a third of it.
-            const room = BACKDROP_H - (words ? wordsHeight(font, lines.length) + GAP : 0);
+            const room = height - (words ? wordsHeight(font, lines.length) + GAP : 0);
             const heights = room >= 48
                 ? [room, Math.round(room * 2 / 3), Math.round(room * 2 / 5)]
-                : [Math.round(BACKDROP_H / 3)];
+                : [Math.round(height / 3)];
             const seen = new Set();
             for (const h of heights) {
                 const pic = containPicture(source, BACKDROP_W, h);

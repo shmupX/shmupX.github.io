@@ -186,7 +186,9 @@ Deno.test("a boss flying Akuma's routine grabs a ship that touches it", async ()
   // The ship-contact branch asks it.
   const js = await read(BUNDLE);
   assert(
-    js.includes("          if (bossGrabs(this)) {\n"),
+    js.includes(
+      "          if (bossGrabs(this) && !p.hurtFlg && !p.dezaBombInvuln && !p.barrierActive) {\n",
+    ),
     "contact ignores it",
   );
   assert(!js.includes("          if (this.bossIsGoki) {\n"), "still by name");
@@ -248,4 +250,173 @@ Deno.test("the Boss Lab and the editor name Akuma's own routine as the runtime r
   // The boss strip's DEFAULT label, and the mod overlay a cart export keeps.
   assert(editor.includes("BossLab.ownPattern(key, entry)"));
   assert(editor.includes("BossLab.ownPattern(k, b)"));
+});
+
+// The grab gives the world back when the run survives it.
+//
+// gokiPlayerAttack stops time, lands its hit and shows the KO, and only god
+// mode ever lifted the stop: a web game's ship died of the hit and the run
+// went to CONTINUE?, so nothing else had to. A ship out of a stock — a cart
+// played OG, or the 3-HIT SHIP off — is replaced inside the hit
+// (dezaNextShip), a shielded one survives it, a second player may still be
+// flying: the fight then sat frozen on the KO for good, the button dark and
+// Akuma idle (rando's Akuma, reproduced in a headless Chromium: theWorldFlg
+// up 900 frames after the grab with the next ship in the air). The grab now
+// keeps what it draws and, with a player still flying and the run not ended,
+// fades the KO and hands back to bossShootStart, as god mode did.
+Deno.test("the grab gives the world back when a ship survives it", async () => {
+  const js = await read(BUNDLE);
+  const grab = functionSource(js, "gokiPlayerAttack");
+  assert(
+    grab.includes(
+      "if (!gameState.godFlg && !scene._runEnded && !allPlayersDead(scene)) {",
+    ),
+    "a run that survives the grab is not given the world back",
+  );
+  // Both roads back are the one function, god mode's included.
+  assertEquals(grab.split("_gokiGrabResume(scene);").length - 1, 2);
+  assertEquals(
+    grab.split("scene.time.delayedCall(GOKI_GRAB_RESUME_MS, function() {")
+      .length - 1,
+    2,
+  );
+  assert(js.includes("\n  var GOKI_GRAB_RESUME_MS = 800;\n"));
+  // The resume waits on the KO, which the hit is 300 ms ahead of.
+  assert(
+    grab.indexOf("scene.time.delayedCall(3e3, function() {") <
+      grab.lastIndexOf("_gokiGrabResume(scene);"),
+  );
+  assert(grab.includes("scene.showAkebonoFinish();"));
+  // What the grab and the KO draw is kept, so the resume can take it down.
+  assert(
+    grab.includes(
+      "_keepAkebonoOverlay(scene, [akebonoBg, akebonoTen, akebonoTenShock]);",
+    ),
+  );
+  const ko = functionSource(js, "showAkebonoFinish");
+  assert(ko.includes("_keepAkebonoOverlay(scene, [akebonoBg, koK, koO]);"));
+  // And a ship the grab's own hit would bounce off — blinking after a hit
+  // or a respawn, under a bomb, behind a barrier — is not caught: the next
+  // ship out of the stock arrives blinking under the Akuma who took the last.
+  assert(
+    js.includes(
+      "if (bossGrabs(this) && !p.hurtFlg && !p.dezaBombInvuln && !p.barrierActive) {",
+    ),
+    "a ship that cannot be hit is still caught",
+  );
+  const resume = functionSource(js, "_gokiGrabResume");
+  for (
+    const line of [
+      "clearAkebonoOverlays(scene);",
+      "scene.theWorldFlg = false;",
+      "if (scene.spBtn) scene.spBtn.setAlpha(1);",
+      "bossShootStart(scene);",
+    ]
+  ) assert(resume.includes(line), `the resume lacks ${line}`);
+});
+
+Deno.test("clearAkebonoOverlays fades what is still up and destroys it, once", async () => {
+  const js = await read(BUNDLE);
+  const sandbox = new Function(
+    functionSource(js, "_keepAkebonoOverlay") +
+      functionSource(js, "clearAkebonoOverlays") +
+      "\nreturn { keep: _keepAkebonoOverlay, clear: clearAkebonoOverlays };",
+  )() as {
+    keep: (scene: unknown, sprites: unknown[]) => void;
+    clear: (scene: unknown) => void;
+  };
+  type Sprite = { active: boolean; destroyed: number; destroy: () => void };
+  const sprite = (active: boolean): Sprite => {
+    const s: Sprite = {
+      active,
+      destroyed: 0,
+      destroy: () => {
+        s.destroyed++;
+        s.active = false;
+      },
+    };
+    return s;
+  };
+  const killed: unknown[] = [];
+  const tweens: {
+    targets: Sprite[];
+    alpha: number;
+    duration: number;
+    onComplete: () => void;
+  }[] = [];
+  const scene = {
+    akebonoOverlays: undefined as unknown,
+    akebonoBgSprite: {} as unknown,
+    tweens: {
+      killTweensOf: (t: unknown) => killed.push(t),
+      add: (cfg: (typeof tweens)[number]) => tweens.push(cfg),
+    },
+  };
+  const bg = sprite(true),
+    ten = sprite(true),
+    gone = sprite(false),
+    k = sprite(true);
+  sandbox.keep(scene, [bg, ten, gone]);
+  sandbox.keep(scene, [k]);
+  assertEquals((scene.akebonoOverlays as unknown[]).length, 4);
+  sandbox.clear(scene);
+  // Only what is still on the screen is faded; its own tweens (the 天's
+  // scale and the shock ring's) are stopped first so they cannot fight the
+  // fade.
+  assertEquals(killed, [bg, ten, k]);
+  assertEquals(tweens.length, 1);
+  assertEquals(tweens[0].targets, [bg, ten, k]);
+  assertEquals(tweens[0].alpha, 0);
+  assertEquals(tweens[0].duration, 300);
+  assertEquals((scene.akebonoOverlays as unknown[]).length, 0);
+  assertEquals(scene.akebonoBgSprite, null);
+  tweens[0].onComplete();
+  assertEquals([bg.destroyed, ten.destroyed, gone.destroyed, k.destroyed], [
+    1,
+    1,
+    0,
+    1,
+  ]);
+  // A second clear, with nothing kept, adds no tween.
+  sandbox.clear(scene);
+  assertEquals(tweens.length, 1);
+});
+
+// A KO is the end of the run, not one ship of a stock.
+//
+// The shipped game's ship dies of the grab's hit and goes to CONTINUE?. A
+// one-hit ship out of a stock — a cart played OG, the SAVE SHELF's exports
+// among them — was replaced inside the hit (dezaNextShip): rando's Akuma
+// left the next ship flying under his KO, while Trump, met once the stock
+// was spent, ended the run. The stock is spent before the hit lands now, so
+// the hit is the last ship's whoever flies the routine. And nothing fires
+// while time is stopped: the grab hides the SP button but left it live, and
+// a bomb tapped inside the hold would have held the ship invincible through
+// the hit.
+Deno.test("the grab's KO spends a stock ship's stock before the hit, and no bomb fires inside the hold", async () => {
+  const js = await read(BUNDLE);
+  const grab = functionSource(js, "gokiPlayerAttack");
+  const hit = grab.indexOf("scene.playerDamage(p, 100);");
+  assert(hit > 0, "the grab no longer lands its hit");
+  const spend = grab.indexOf("shipStock()[p.index] = 0;");
+  assert(spend > 0 && spend < hit, "the stock is not spent before the hit");
+  assert(
+    grab.includes('if (!componentOn("armor") && !gameState.godFlg) {'),
+    "a web ship's HP, or god mode, is spent like a stock",
+  );
+  assert(
+    grab.indexOf("scene.updateShipStock();") < hit,
+    "the icons still show the stock",
+  );
+  // Nothing of the replacement's hiding is left: there is no replacement.
+  assert(!js.includes("gokiReplaced"));
+  // The SP button refuses while the world is stopped.
+  const fire = js.slice(
+    js.indexOf("    onSpFire(p) {"),
+    js.indexOf("    doSpFire(p) {"),
+  );
+  assert(
+    fire.includes("if (!this.gameStarted || this.theWorldFlg) return;"),
+    "a bomb can be fired while time is stopped",
+  );
 });

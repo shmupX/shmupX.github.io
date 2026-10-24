@@ -6948,6 +6948,12 @@ function withDeathDrop(bytes, slot) {
   b[3] = slot & 7;
   return b;
 }
+function withDeathChild(bytes, index) {
+  const b = Uint8Array.from(bytes);
+  b[2] = b[2] & 63 | 2 << 6;
+  b[3] = zakoPlacementId(index) & 127;
+  return b;
+}
 function enemyRecordFromEditor(rec, { bulletType = 0, dropSlot = null } = {}) {
   const speed = Number.isFinite(rec.speed) ? rec.speed : 1;
   const hits = rec.hp === "infinity" ? 1 : Math.max(1, Number(rec.hp) || 1);
@@ -7366,6 +7372,19 @@ function buildSaveFromGame(level, art2, options = {}) {
     planBulletType(t, tex[0], frames, Number(proj.speed) || 1);
     return t;
   };
+  const bossWeaponTypes = /* @__PURE__ */ new Map();
+  const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
+  const weaponSlots = (b) => [
+    armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData),
+    armed(b.bulletDataB, b.projectileDataB),
+    armed(b.bulletDataC, b.projectileDataC)
+  ];
+  const bossOwner = (st, b) => `${st.key}: boss (${b.name || "?"})`;
+  stages.forEach((st, s) => {
+    const b = bossData[`boss${s}`];
+    if (!b) return;
+    bossWeaponTypes.set(s, [claimBulletType(weaponSlots(b)[0], bossOwner(st, b)), null, null]);
+  });
   const usedLetters = /* @__PURE__ */ new Set();
   for (const st of stages) for (const row of st.enemylist) for (const c of row) if (c !== "00") usedLetters.add(c.slice(0, -1));
   for (const letter of usedLetters) {
@@ -7373,21 +7392,15 @@ function buildSaveFromGame(level, art2, options = {}) {
     const t = claimBulletType(rec && rec.projectileData, `enemy${letter}`);
     if (t !== null) bulletTypeOf.set(letter, t);
   }
-  const bossWeaponTypes = /* @__PURE__ */ new Map();
   const bossStage2 = /* @__PURE__ */ new Map();
-  const armed = (...slots) => slots.find((p) => p && Array.isArray(p.texture) && p.texture.length) || null;
-  const weaponSlots = (b) => [
-    armed(b.bulletDataA, b.projectileDataA, b.bulletData, b.projectileData),
-    armed(b.bulletDataB, b.projectileDataB),
-    armed(b.bulletDataC, b.projectileDataC)
-  ];
   stages.forEach((st, s) => {
     const b = bossData[`boss${s}`];
     if (!b) return;
-    const owner = `${st.key}: boss (${b.name || "?"})`;
+    const owner = bossOwner(st, b);
     const own = weaponSlots(b);
-    const types = own.map((w) => claimBulletType(w, owner));
-    bossWeaponTypes.set(s, types);
+    const types = bossWeaponTypes.get(s);
+    types[1] = claimBulletType(own[1], owner);
+    types[2] = claimBulletType(own[2], owner);
     const s2 = !(b.dezaemon && b.dezaemon.boss) ? bossStage2Record(b) : null;
     if (!s2) return;
     const claimed = /* @__PURE__ */ new Map();
@@ -7437,20 +7450,23 @@ function buildSaveFromGame(level, art2, options = {}) {
       }
       return null;
     };
+    const zakoArt = (letter, rec) => {
+      const frames = (Array.isArray(rec.texture) ? rec.texture : []).map(lookup).filter(Boolean);
+      if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas \u2014 placed invisible`);
+      const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
+      const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
+      if (frames.length && (maxW > 64 || maxH > 64)) {
+        warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 \u2014 downscaled`);
+      }
+      return { frames, minBand: bandFor(maxW, maxH) };
+    };
     for (const letter of letters) {
       const rec = enemyData[`enemy${letter}`];
       if (!rec) {
         warn(`${st.key}: grid names enemy${letter} but enemyData has no such record \u2014 cells left empty`);
         continue;
       }
-      const frames = (Array.isArray(rec.texture) ? rec.texture : []).map(lookup).filter(Boolean);
-      if (!frames.length) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) has no art in the atlas \u2014 placed invisible`);
-      const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
-      const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
-      const minBand = bandFor(maxW, maxH);
-      if (frames.length && (maxW > 64 || maxH > 64)) {
-        warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 \u2014 downscaled`);
-      }
+      const { frames, minBand } = zakoArt(letter, rec);
       const preferred = rec.dezaemon && Number.isInteger(rec.dezaemon.record) ? rec.dezaemon.record : -1;
       const verbatim = rec.dezaemon ? hexToBytes(rec.dezaemon.attributes, 18) : null;
       const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
@@ -7485,11 +7501,47 @@ function buildSaveFromGame(level, art2, options = {}) {
           }
         }
         const key = letter + digit;
-        const entry = { key, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${letter}`, drop };
+        const entry = { key, letter, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${letter}`, drop };
         records.set(key, entry);
         recordOf.set(key, key);
         if (!first) first = entry;
       }
+    }
+    const childLetterOf = (rec) => {
+      const k = rec && rec.dezaemon ? rec.dezaemon.deathChild : null;
+      return typeof k === "string" && k.startsWith("enemy") ? k.slice("enemy".length) : null;
+    };
+    const spawnsChild = (entry) => entry.bytes[2] >> 6 === 2;
+    const pending = [...records.values()].filter(spawnsChild);
+    while (pending.length) {
+      const parent = pending.shift();
+      const childLetter = childLetterOf(enemyData[`enemy${parent.letter}`]);
+      if (!childLetter) continue;
+      let child = records.get(childLetter + 0) || records.get(childLetter + "c") || null;
+      if (!child) {
+        const rec = enemyData[`enemy${childLetter}`];
+        if (!rec) {
+          warn(`${st.key}: enemy${parent.letter} (${parent.name}) spawns enemy${childLetter} when it dies, but enemyData has no such record \u2014 it dies alone`);
+          continue;
+        }
+        const { frames, minBand } = zakoArt(childLetter, rec);
+        const preferred = rec.dezaemon && Number.isInteger(rec.dezaemon.record) ? rec.dezaemon.record : -1;
+        const found = freeIndex(minBand, preferred);
+        if (!found) {
+          warn(`${st.key}: no free enemy record for enemy${childLetter} (${rec.name || "?"}), which enemy${parent.letter} spawns when it dies \u2014 a stage holds 60 \u2014 it dies alone`);
+          continue;
+        }
+        taken.add(found.index);
+        const def = RECORD_ART[found.band];
+        const bw = def.w * CG_CELL, bh = def.h * CG_CELL;
+        const planKeys = spreadFrames(frames, def.frames).map((f) => planFrame(`e:${f.key}:${bw}x${bh}`, f, bw, bh, frameGroup(f.key), 2));
+        const verbatim = rec.dezaemon ? hexToBytes(rec.dezaemon.attributes, 18) : null;
+        const bytes = verbatim || enemyRecordFromEditor(rec, { bulletType: bulletTypeOf.get(childLetter) || 0, dropSlot: null });
+        child = { key: childLetter + "c", letter: childLetter, index: found.index, band: found.band, frames: planKeys, bytes, name: rec.name || `enemy${childLetter}`, drop: 0 };
+        records.set(child.key, child);
+        if (spawnsChild(child)) pending.push(child);
+      }
+      parent.bytes = withDeathChild(parent.bytes, child.index);
     }
     let boss = null;
     const bossRec = bossData[`boss${s}`] || (s === 0 && !bossData.boss0 ? null : null);
@@ -8528,13 +8580,15 @@ function storyLogLine(backdrops, stages) {
     return "story: the level tells none \u2014 stages open as they are";
   }
   const keys = new Set(stages.map((s) => s.key));
-  const drawn = stages.filter((s) => s.story).map((s) => `${s.key} ${s.story.size} (${s.story.rows} rows)`);
+  const drawn = stages.filter((s) => s.story).map(
+    (s) => `${s.key} ${s.story.size} (${s.story.seconds !== void 0 ? `${s.story.seconds} s` : `${s.story.rows} rows`})`
+  );
   const beyond = backdrops.filter((b) => !keys.has(`stage${b.stage}`)).map((b) => b.stage);
   return `story: ${drawn.length ? `opens ${drawn.join(", ")}` : "no stage has room for it"}${beyond.length ? ` (stage${beyond.length === 1 ? "" : "s"} ${beyond.join(", ")} of the story ${beyond.length === 1 ? "has" : "have"} no stage on the cart)` : ""}`;
 }
 var variant = (label, r) => ({ label, w: r.width, h: r.height, rgba: r.data });
 async function storyBackdrops(storyData, { font = null, decodePicture = null, onWarn = () => {
-} } = {}) {
+}, height = BACKDROP_H } = {}) {
   const sd = storyData;
   if (!sd || typeof sd !== "object") return [];
   const images = sd.customImages && typeof sd.customImages === "object" ? sd.customImages : {};
@@ -8556,8 +8610,8 @@ async function storyBackdrops(storyData, { font = null, decodePicture = null, on
     const variants = [];
     const words = font && lines.length ? composeBackdrop(font, speaker, lines, null) : null;
     if (source) {
-      const room = BACKDROP_H - (words ? wordsHeight(font, lines.length) + GAP : 0);
-      const heights = room >= 48 ? [room, Math.round(room * 2 / 3), Math.round(room * 2 / 5)] : [Math.round(BACKDROP_H / 3)];
+      const room = height - (words ? wordsHeight(font, lines.length) + GAP : 0);
+      const heights = room >= 48 ? [room, Math.round(room * 2 / 3), Math.round(room * 2 / 5)] : [Math.round(height / 3)];
       const seen = /* @__PURE__ */ new Set();
       for (const h of heights) {
         const pic = containPicture(source, BACKDROP_W, h);
@@ -10245,7 +10299,8 @@ var KIDS_BOSS_COLUMN = Object.freeze([3, 2, 3, 2]);
 var KIDS_SCROLL_RUN = 2;
 var KIDS_SCROLL_HALT = 0;
 var KIDS_MAP_FILL = 32896;
-var KIDS_STORY_FIRST_ROW = 1;
+var KIDS_STORY_TOP_ROW = 4;
+var KIDS_STORY_ROWS = KIDS_STORY_TOP_ROW + 1;
 var KIDS_STORY_LEAD_ROWS = 4;
 var KIDS_STORY_SCROLL = 1;
 var KIDS_STORY_SLOW_UNITS = 1;
@@ -10816,7 +10871,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
   const built = stages.map((st, s) => {
     const width = Math.max(1, st.enemylist[0] ? st.enemylist[0].length : level.width || 8);
     const story = opts.storyPicks ? opts.storyPicks.get(s) || null : null;
-    const storyShift = story ? KIDS_STORY_FIRST_ROW + story.chipRows + KIDS_STORY_LEAD_ROWS : 0;
+    const storyShift = story ? KIDS_STORY_TOP_ROW + 1 + KIDS_STORY_LEAD_ROWS : 0;
     const spawnRows = st.enemylist.slice().reverse();
     const waveRows = Array.isArray(st.waveRows) && st.waveRows.length === st.enemylist.length ? st.waveRows.slice().reverse() : null;
     const appear = new Uint8Array(KIDS_APPEAR_STAGE_BYTES);
@@ -11074,7 +11129,7 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
             let any = false;
             for (let dy = 0; dy < 2; dy++) {
               for (let dx = 0; dx < 2; dx++) {
-                const r = cr * 2 + dy, c = firstCol + cc * 2 + dx;
+                const r = cr * 2 + 1 - dy, c = firstCol + cc * 2 + dx;
                 if (r >= rows || c >= cols) continue;
                 const w = tiles[r * cols + c];
                 if (w === 65535) continue;
@@ -11125,10 +11180,10 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
               chipRgba.set(story.rgba.subarray((sy * story.w + cc * 32) * 4, (sy * story.w + cc * 32 + 32) * 4), y * 32 * 4);
             }
             const word = bank.addChip(quantizeKidsFrame({ w: 32, h: 32, rgba: chipRgba }));
-            mapWords[(KIDS_STORY_FIRST_ROW + story.chipRows - 1 - cy) * KIDS_MAP_COLUMNS + cc] = word;
+            mapWords[(KIDS_STORY_TOP_ROW - cy) * KIDS_MAP_COLUMNS + cc] = word;
           }
         }
-        storyReport = { size: story.label, rows: story.chipRows, cells: bank.used - before, first: KIDS_STORY_FIRST_ROW };
+        storyReport = { size: story.label, rows: story.chipRows, cells: bank.used - before, top: KIDS_STORY_TOP_ROW };
       } catch (e) {
         if (!(e instanceof KidsBankFullError)) throw e;
         warn(`${st.key}: CG pages full (${KIDS_CELL_COUNT} cells) \u2014 its story left unfinished`);
@@ -11256,7 +11311,7 @@ function buildKidsWithStory(level, art2, opts) {
     for (const v of Array.isArray(sb.variants) ? sb.variants : []) {
       if (!v || v.w !== w || !v.h || !v.rgba) continue;
       const chipRows = Math.ceil(v.h / 32);
-      if (KIDS_STORY_FIRST_ROW + chipRows > KIDS_MAP_ROWS) continue;
+      if (chipRows > KIDS_STORY_ROWS) continue;
       const probe = new KidsCellBank();
       const chipRgba = new Uint8Array(32 * 32 * 4);
       try {
@@ -14423,6 +14478,9 @@ var LIGHT_POSITION_MAX = 29;
 function tilePixels(power) {
   return 1 << check("tile power", power, 0, 7) + 1;
 }
+function tileHeightPixels(power) {
+  return 1 << check("tile power", power, 1, 7) - 1;
+}
 var FACE_TEXTURING = [
   { name: "untextured", mask: 128, bool: true },
   { name: "lightMask", mask: 64, bool: true },
@@ -14547,20 +14605,21 @@ function buildUlbFile(models = [], textures = []) {
   });
   return out;
 }
-function billboardModel({ width = 64, height = 32, tileWidthPower = 5, tileHeightPower = 4, tileOffset = 0, tile = 0, light = 0 } = {}) {
+function billboardModel({ width = 64, height = 32, tileWidthPower = 5, tileHeightPower = 6, tileOffset = 0, tile = 0, light = 0 } = {}) {
   check("billboard.width", width, 1, 32767);
   check("billboard.height", height, 1, 32767);
   check("billboard.tile", tile, 0, MODEL_TILES - 1);
   const u = tilePixels(tileWidthPower);
-  const v = tilePixels(tileHeightPower);
+  const v = tileHeightPixels(tileHeightPower);
   const x0 = -(width >> 1), x1 = width - (width >> 1);
-  const y0 = -(height >> 1), y1 = height - (height >> 1);
+  const zFar = -(height >> 1), zNear = height - (height >> 1);
   const tiles = fill(MODEL_TILES, tileDefaults);
   tiles[tile] = { offset: tileOffset, mirrorV: false, widthPower: tileWidthPower, mirrorH: false, heightPower: tileHeightPower };
   const face = (vertices, uv) => ({ ...faceDefaults(), vertices, uv, tile });
   return {
-    vertices: [{ x: x0, y: y1, z: 0 }, { x: x1, y: y1, z: 0 }, { x: x1, y: y0, z: 0 }, { x: x0, y: y0, z: 0 }],
-    faces: [face([0, 1, 2], [[0, 0], [u, 0], [u, v]]), face([0, 2, 3], [[0, 0], [u, v], [0, v]])],
+    // near-left, near-right, far-right, far-left
+    vertices: [{ x: x0, y: 0, z: zNear }, { x: x1, y: 0, z: zNear }, { x: x1, y: 0, z: zFar }, { x: x0, y: 0, z: zFar }],
+    faces: [face([0, 1, 2], [[0, v], [u, v], [u, 0]]), face([0, 2, 3], [[0, v], [u, 0], [0, 0]])],
     tiles,
     light
   };
@@ -15066,6 +15125,7 @@ var N64_CGR_TEXTURES = DOCUMENTED_SIZES.CGR / TILE_BYTES;
 var N64_GR_TEXTURES = DOCUMENTED_SIZES.GR / TILE_BYTES;
 var N64_CMD_MODELS = CMD_MODEL_COUNT;
 var N64_MD_MODELS = MD_MODEL_COUNT;
+var N64_CBL_ENEMIES = 20;
 var N64_BL_ENEMIES = BL_ENEMY_COUNT;
 var N64_STAGE_COUNT = STAGES.length;
 var N64_TITLE_COLS = 2;
@@ -15074,11 +15134,80 @@ var N64_FRAMES_PER_ENEMY = 4;
 var N64_MODEL_NUMBER_BASE = N64_CMD_MODELS;
 var N64_PLAYER_MODEL = 10;
 var N64_ITEM_MODELS = Object.freeze([12, 13, 14, 15, 16, 17, 18]);
-var N64_UNITS_PER_PIXEL = 4;
+var N64_UNITS_PER_PIXEL = 10;
 var N64_LAYOUT_HALF_WIDTH = 400;
 var N64_SPAWN_Y = 240;
 var N64_BOSS_Y = 400;
-var N64_FRAMES_PER_ROW = 16;
+var N64_SCROLL_PER_ROW = 160;
+var N64_STAGE_SCENE = Object.freeze([
+  Object.freeze({ frame: 0, command: "altitude", values: Object.freeze([10, 7, 0, 0]) }),
+  Object.freeze({ frame: 0, command: "fog", values: Object.freeze([56, 24, 0, 0]) }),
+  Object.freeze({ frame: 0, command: "cameraZoom", values: Object.freeze([0, 0, 3, 0]) }),
+  Object.freeze({ frame: 0, command: "cameraAngle", values: Object.freeze([0, 0, 3, 0]) }),
+  Object.freeze({ frame: 0, command: "cameraRotation", values: Object.freeze([0, 10, 1, 0]) })
+]);
+var N64_GR_TEXTURE_BASE = N64_CGR_TEXTURES;
+var N64_ENEMY_NUMBER_BASE = N64_CBL_ENEMIES;
+var N64_STORY_COLS = 5;
+var N64_STORY_ROWS = 8;
+var N64_STORY_W = N64_STORY_COLS * TILE_WIDTH;
+var N64_STORY_H = 240;
+var N64_PORTRAIT_MAX_TEXTURE = 255;
+function portraitPosition(row, col) {
+  return row * 10 + col * 2;
+}
+var N64_PORTRAIT_SET = 1;
+var N64_PORTRAIT_CLEAR = Object.freeze([255, 255, 0, 12]);
+var N64_EFFECT_FPS = 30;
+var N64_STORY_BASE_FRAMES = 4 * N64_EFFECT_FPS;
+var N64_STORY_MIN_FRAMES = 6 * N64_EFFECT_FPS;
+var N64_STORY_MAX_FRAMES = 15 * N64_EFFECT_FPS;
+var N64_SCROLL_RATE = 3;
+var N64_SCROLL_START = 404;
+function storyFrames(parts = []) {
+  const chars = parts.join(" ").length;
+  return clamp4(N64_STORY_BASE_FRAMES + Math.ceil(chars / 2), N64_STORY_MIN_FRAMES, N64_STORY_MAX_FRAMES);
+}
+function storyScreen(variant2) {
+  const w = N64_STORY_W, h = N64_STORY_ROWS * TILE_HEIGHT;
+  const rgba = new Uint8Array(w * h * 4);
+  for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+  const x0 = Math.floor((w - variant2.w) / 2), y0 = Math.floor((N64_STORY_H - variant2.h) / 2);
+  for (let y = 0; y < variant2.h; y++) {
+    for (let x = 0; x < variant2.w; x++) {
+      const s = (y * variant2.w + x) * 4;
+      if (variant2.rgba[s + 3] < 128) continue;
+      rgba.set([variant2.rgba[s], variant2.rgba[s + 1], variant2.rgba[s + 2], 255], ((y0 + y) * w + x0 + x) * 4);
+    }
+  }
+  const { tiles } = textureGrid({ w, h, rgba });
+  const textures = [], seen = /* @__PURE__ */ new Map(), cells = [];
+  for (const t of tiles) {
+    const key = t.join(",");
+    if (!seen.has(key)) {
+      seen.set(key, textures.length);
+      textures.push(t);
+    }
+    cells.push(seen.get(key));
+  }
+  return { cells, textures };
+}
+function storyEffects(textureNumbers, frames) {
+  const effects = [
+    { frame: 0, command: "playerVisibility", values: [0, 0, 0, 0] },
+    { frame: 0, command: "mapScrollRate", values: [0, 7, 0, 0] }
+  ];
+  textureNumbers.forEach((texture, k) => {
+    const row = Math.floor(k / N64_STORY_COLS), col = k % N64_STORY_COLS;
+    effects.push({ frame: 0, command: "portrait", values: [0, texture, portraitPosition(row, col), N64_PORTRAIT_SET] });
+  });
+  effects.push(
+    { frame: frames, command: "portrait", values: [...N64_PORTRAIT_CLEAR] },
+    { frame: frames, command: "playerVisibility", values: [1, 0, 0, 0] },
+    { frame: frames, command: "mapScrollRate", values: [N64_SCROLL_RATE, 7, 0, 0] }
+  );
+  return effects;
+}
 var N64_SPEED_TABLE = Object.freeze([0, 0.5, 1, 1.5, 2, 3, 4, 6]);
 var N64_HIT_SIZE_TABLE = Object.freeze([8, 16, 24, 32, 48, 64, 96, 128]);
 var N64_DROP_ITEMS = Object.freeze({ 1: 0, 2: 0, 3: 0, 4: 5, 5: 2, 9: 3 });
@@ -15165,23 +15294,18 @@ function spriteTexture(frame, options = {}) {
   const small = shrinkRgba(frame);
   return { grid: textureGrid(small, options), w: small.w, h: small.h, scaled: small.scaled };
 }
-function tilePower(px) {
-  let p = 0;
-  while (1 << p + 1 < px && p < 7) p++;
-  return p;
-}
-function spriteModel(sprite, light = 0) {
+function spriteModel(sprite, light = 0, shown = sprite) {
   const w = Math.max(1, sprite.w), h = Math.max(1, sprite.h);
   const model = billboardModel({
-    width: clamp4(w * N64_UNITS_PER_PIXEL, 1, 32767),
-    height: clamp4(h * N64_UNITS_PER_PIXEL, 1, 32767),
-    tileWidthPower: tilePower(w),
-    tileHeightPower: tilePower(h),
+    width: clamp4(Math.max(1, shown.w) * N64_UNITS_PER_PIXEL, 1, 32767),
+    height: clamp4(Math.max(1, shown.h) * N64_UNITS_PER_PIXEL, 1, 32767),
+    tileWidthPower: 5,
+    tileHeightPower: 6,
     tile: 1,
     light
   });
-  model.faces[0].uv = [[0, 0], [w, 0], [w, h]];
-  model.faces[1].uv = [[0, 0], [w, h], [0, h]];
+  model.faces[0].uv = [[0, h], [w, h], [w, 0]];
+  model.faces[1].uv = [[0, h], [w, 0], [0, 0]];
   return model;
 }
 function isBlankTexture(bytes) {
@@ -15229,6 +15353,39 @@ var TextureSheet = class {
       }
     }
     return null;
+  }
+  /**
+   * Single textures for art that need not lie in a run — a portrait names
+   * each cell's texture by itself, a model its one texture: blank ones
+   * first, then painted ones `reclaim(index)` allows (a template's art
+   * nothing this project writes points at), from the bottom up or, with
+   * `fromTop`, from the top down; none past `max`. The textures this sheet
+   * placed are never taken back.
+   * @param {string} key
+   * @param {Uint8Array[]} textures
+   * @param {{max?: number, reclaim?: ((index: number) => boolean)|null, fromTop?: boolean}} [options]
+   * @returns {{indices: number[], reclaimed: number}|null}  null when too few are left
+   */
+  claim(key, textures, { max = this.count - 1, reclaim = null, fromTop = false } = {}) {
+    const ours = /* @__PURE__ */ new Set();
+    for (const p of this.placed) {
+      for (const i of p.indices ?? Array.from({ length: p.textures }, (_, k) => p.index + k)) ours.add(i);
+    }
+    const blank = [], painted = [];
+    for (let i = 0; i <= Math.min(max, this.count - 1); i++) {
+      if (this.blank[i]) blank.push(i);
+      else if (reclaim && !ours.has(i) && reclaim(i)) painted.push(i);
+    }
+    if (fromTop) painted.reverse();
+    if (blank.length + painted.length < textures.length) return null;
+    const indices = [...blank, ...painted].slice(0, textures.length);
+    indices.forEach((i, k) => {
+      this.bytes.set(textures[k], i * TILE_BYTES);
+      this.blank[i] = false;
+    });
+    const reclaimed = Math.max(0, textures.length - blank.length);
+    this.placed.push({ key, index: indices[0] ?? 0, cols: textures.length, rows: 1, textures: textures.length, indices, reclaimed });
+    return { indices, reclaimed };
   }
 };
 var ModelTable = class {
@@ -15315,7 +15472,7 @@ function itemEntry(model, scale) {
   };
 }
 function buildN64ProjectFromLevel(level, art2, options = {}) {
-  const { template = null, title1 = null, title2 = null, framesPerEnemy = N64_FRAMES_PER_ENEMY } = options;
+  const { template = null, title1 = null, title2 = null, framesPerEnemy = N64_FRAMES_PER_ENEMY, storyBackdrops: storyBackdrops2 = null } = options;
   const warnings = [];
   const warn = (m) => warnings.push(m);
   const name = normalizeProjectName(options.name ?? (level && level.name) ?? "SHMUPX");
@@ -15375,7 +15532,7 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     const t = spriteTexture(f);
     if (t.scaled) common.scaled.push(`ship:${i}:${f.key}`);
     const at = placeCommon(`ship:${i}:${f.key}`, t.grid);
-    if (at !== null && i === 0) cmd.set(N64_PLAYER_MODEL, { model: spriteModel(t), texture: at, key: `ship:${f.key}` });
+    if (at !== null && i === 0) cmd.set(N64_PLAYER_MODEL, { model: spriteModel(t, 0, f), texture: at, key: `ship:${f.key}` });
   });
   const itemFrames = Object.entries(art2 || {}).filter(([k]) => /item|powerup|speedup|1up/i.test(k)).slice(0, 8);
   itemFrames.forEach(([k], i) => {
@@ -15385,7 +15542,7 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     if (t.scaled) common.scaled.push(`item:${decodeFrameKey(k)}`);
     const at = placeCommon(`item:${decodeFrameKey(k)}`, t.grid);
     if (at !== null && i < N64_ITEM_MODELS.length) {
-      cmd.set(N64_ITEM_MODELS[i], { model: spriteModel(t), texture: at, key: `item:${decodeFrameKey(k)}` });
+      cmd.set(N64_ITEM_MODELS[i], { model: spriteModel(t, 0, f), texture: at, key: `item:${decodeFrameKey(k)}` });
     }
   });
   common.placed = cgr.placed;
@@ -15420,6 +15577,24 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     const placements = [];
     const missed = [];
     const scaled = [];
+    let mapSettings = {}, map = [];
+    const templateBl = templateFiles.get(blExt);
+    if (templateBl) {
+      try {
+        const t = parseStageBl(templateBl);
+        mapSettings = t.mapSettings;
+        map = t.map;
+      } catch (e) {
+        warn(`${st.key}: the template's ${blExt} could not be read for its map (${e.message}); the map is unset`);
+      }
+    }
+    const mapTextures = /* @__PURE__ */ new Set();
+    for (const m of map) {
+      if (m.texture === MAP_TEXTURE_UNSET) continue;
+      mapTextures.add(m.texture);
+      mapTextures.add(m.texture - N64_GR_TEXTURE_BASE);
+    }
+    const unnamedByMap = (index) => !mapTextures.has(index);
     const placeFrame = (key, frame) => {
       if (models.used >= models.count) {
         missed.push(key);
@@ -15427,12 +15602,16 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
       }
       const t = spriteTexture(frame);
       if (t.scaled) scaled.push(key);
-      const at = sheet.place(key, t.grid);
+      let at = sheet.place(key, t.grid);
+      if (at === null) {
+        const got = sheet.claim(key, t.grid.tiles, { reclaim: unnamedByMap, fromTop: true });
+        at = got ? got.indices[0] : null;
+      }
       if (at === null) {
         missed.push(key);
         return -1;
       }
-      return models.add(spriteModel(t), at);
+      return models.add(spriteModel(t, 0, frame), N64_GR_TEXTURE_BASE + at);
     };
     const width = Math.max(1, level && level.width || 0, ...st.enemylist.map((row) => row.length));
     const spawnRows = st.enemylist.slice().reverse();
@@ -15497,7 +15676,7 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
       const index = entryOf.get(`${c.letter}${c.drop}`);
       if (index === void 0) continue;
       const x = width <= 1 ? 0 : Math.round(-N64_LAYOUT_HALF_WIDTH + c.col * 2 * N64_LAYOUT_HALF_WIDTH / (width - 1));
-      placements.push({ enemy: index, x, y: N64_SPAWN_Y, frame: -(c.row * N64_FRAMES_PER_ROW) });
+      placements.push({ enemy: N64_ENEMY_NUMBER_BASE + index, x, y: N64_SPAWN_Y, frame: -(c.row * N64_SCROLL_PER_ROW) });
     }
     placements.sort((a, b) => b.frame - a.frame);
     const room = LAYOUT_MAX_ENEMIES - (boss ? 1 : 0);
@@ -15518,24 +15697,41 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
       } else {
         bossEntry = entries.length;
         entries.push(enemyEntryFromEditor(boss, { slots, size, frames: kept.length, boss: true }));
-        placements.push({ enemy: bossEntry, x: 0, y: N64_BOSS_Y, frame: -((lastRow + BOSS_ROW_GAP) * N64_FRAMES_PER_ROW) });
+        placements.push({ enemy: N64_ENEMY_NUMBER_BASE + bossEntry, x: 0, y: N64_BOSS_Y, frame: -((lastRow + BOSS_ROW_GAP) * N64_SCROLL_PER_ROW) });
       }
     }
     if (missed.length) warn(`${st.key}: the ${grExt} sheet or the ${mdExt} table ran out of room; not drawn: ${missed.join(", ")}`);
-    let mapSettings = {}, map = [];
-    const templateBl = templateFiles.get(blExt);
-    if (templateBl) {
-      try {
-        const t = parseStageBl(templateBl);
-        mapSettings = t.mapSettings;
-        map = t.map;
-      } catch (e) {
-        warn(`${st.key}: the template's ${blExt} could not be read for its map (${e.message}); the map is unset`);
+    let story = null;
+    let effects = N64_STAGE_SCENE.map((e) => ({ frame: e.frame, command: e.command, values: [...e.values] }));
+    const backdrop = /^stage\d+$/.test(st.key) && Array.isArray(storyBackdrops2) ? storyBackdrops2.find((b) => `stage${b.stage}` === st.key) || null : null;
+    if (backdrop) {
+      const max = N64_PORTRAIT_MAX_TEXTURE - N64_GR_TEXTURE_BASE;
+      const tried = [];
+      for (const v of backdrop.variants || []) {
+        if (!(v.w <= N64_STORY_W && v.h <= N64_STORY_H)) {
+          tried.push(`${v.label} is ${v.w}x${v.h}, over the screen's ${N64_STORY_W}x${N64_STORY_H}`);
+          continue;
+        }
+        const screen = storyScreen(v);
+        const got = sheet.claim(`${st.key}:story`, screen.textures, { max, reclaim: unnamedByMap });
+        if (!got) {
+          tried.push(`${v.label} needs ${screen.textures.length} textures`);
+          continue;
+        }
+        const frames = storyFrames(backdrop.parts || []);
+        effects = [...effects, ...storyEffects(screen.cells.map((c) => N64_GR_TEXTURE_BASE + got.indices[c]), frames)].slice(0, EFFECT_ENTRIES);
+        story = { size: v.label, textures: screen.textures.length, reclaimed: got.reclaimed, frames, seconds: Math.round(frames / N64_EFFECT_FPS) };
+        break;
+      }
+      if (story) {
+        for (const p of placements) p.frame -= N64_SCROLL_START;
+      } else {
+        warn(`${st.key}: no size of its story fits the ${grExt} sheet's textures up to tile ${max} (${tried.join("; ") || "no sizes"}) \u2014 not drawn`);
       }
     }
     built.set(grExt, sheet.bytes);
     built.set(mdExt, buildMdFile(models.models, models.textures));
-    built.set(blExt, buildStageBl({ enemies: entries, layout: { map: placements }, mapSettings, map, effects: [] }));
+    built.set(blExt, buildStageBl({ enemies: entries, layout: { map: placements }, mapSettings, map, effects }));
     stageReports.push({
       key: st.key,
       stage,
@@ -15549,6 +15745,9 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
       free: sheet.free,
       missed,
       scaled,
+      // the template's textures taken back, the story's among them
+      reclaimed: sheet.placed.reduce((a, p) => a + (p.reclaimed ?? 0), 0),
+      story,
       records: {
         entries: entries.length,
         models: models.used,
@@ -19913,6 +20112,7 @@ export {
   INTERNAL_SRM_SIZE,
   KIDS_BACKGROUND_SETS,
   KIDS_STOCK_ITEM_FRAMES,
+  KIDS_STORY_ROWS,
   LAYER_COUNT,
   LIBRARY_MESH_COUNT,
   LIGHT_AZIMUTH,

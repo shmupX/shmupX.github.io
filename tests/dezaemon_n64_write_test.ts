@@ -17,6 +17,7 @@ import {
   BLANK_BYTE,
   buildDisk,
   buildN64ProjectFromLevel,
+  buildStageBl,
   buildSystemArea,
   checkDirectory,
   checkSystemData,
@@ -34,6 +35,7 @@ import {
   directoryOffsets,
   DISK_ID_LBAS,
   DOCUMENTED_SIZES,
+  EFFECT_COMMANDS,
   encodeDirectory,
   encodeDiskId,
   encodeRgba5551,
@@ -47,10 +49,20 @@ import {
   layoutFiles,
   lbaToOffset,
   N64_CGR_TEXTURES,
+  N64_ENEMY_NUMBER_BASE,
+  N64_GR_TEXTURE_BASE,
   N64_GR_TEXTURES,
   N64_MD_MODELS,
   N64_MODEL_NUMBER_BASE,
+  N64_PORTRAIT_CLEAR,
+  N64_PORTRAIT_MAX_TEXTURE,
+  N64_SCROLL_PER_ROW,
+  N64_SCROLL_RATE,
+  N64_SCROLL_START,
+  N64_STAGE_SCENE,
+  N64_STORY_MIN_FRAMES,
   N64_TEXTURE_BYTES,
+  N64_UNITS_PER_PIXEL,
   NDD_IMAGE_BYTES,
   normalizeProjectName,
   packProject,
@@ -59,6 +71,7 @@ import {
   parseDddImage,
   parseMdFile,
   parseStageBl,
+  portraitPosition,
   projectExts,
   putProject,
   ramStartOffset,
@@ -67,6 +80,8 @@ import {
   readSystemArea,
   removeProject,
   STAGES,
+  storyFrames,
+  storyScreen,
   SYSTEM_AREA_BYTES,
   SYSTEM_BLOCK_BYTES,
   SYSTEM_DATA_LBAS,
@@ -884,11 +899,22 @@ Deno.test("a project from a level is thirty files at documented sizes with the a
   assertEquals(bl.layout.b, []);
   assertEquals(
     bl.layout.map.map((e: Any) => [e.enemy, e.x, e.y, e.frame]),
-    [[0, -400, 240, -320], [1, 400, 240, -320], [2, 0, 400, -704]],
+    [[20, -400, 240, -3200], [21, 400, 240, -3200], [22, 0, 400, -7040]],
+    "entries numbered from 20, after the common enemies; 160 of scroll a row",
   );
+  assertEquals(N64_SCROLL_PER_ROW, 160);
   assertEquals(bl.tail.firstA, 4);
   assertEquals(bl.tail.firstB, 5);
-  assertEquals(bl.tail.totalEffects, 0);
+  // the opening scene and nothing else: altitude, fog and a neutral camera
+  assertEquals(bl.tail.totalEffects, N64_STAGE_SCENE.length);
+  assertEquals(
+    bl.effects.map((e: Any) => [e.frame, EFFECT_COMMANDS[e.command], e.values]),
+    N64_STAGE_SCENE.map((e) => [e.frame, e.command, [...e.values]]),
+  );
+  assertEquals(
+    bl.effects.map((e: Any) => EFFECT_COMMANDS[e.command]),
+    ["altitude", "fog", "cameraZoom", "cameraAngle", "cameraRotation"],
+  );
   assertEquals(
     bl.mapSettings,
     { scale: 5, loopStart: 0, loopEnd: 3 },
@@ -902,24 +928,46 @@ Deno.test("a project from a level is thirty files at documented sizes with the a
   // the models: a billboard per placed frame on its texture
   const md = parseMdFile(p.files.find((f) => f.ext === "0MD")!.data) as Any;
   assertEquals(md.models.filter(Boolean).length, 6);
-  assertEquals(md.textureIndices.slice(0, 7), [0, 1, 2, 3, 4, 5, 0]);
+  assertEquals(
+    md.textureIndices.slice(0, 7),
+    [40, 41, 42, 43, 44, 45, 0],
+    "a stage model names #GR tile k as texture 40 + k",
+  );
   const quad = md.models[0]!;
   assertEquals(quad.vertexCount, 4);
   assertEquals(quad.faceCount, 2);
+  assertEquals(N64_UNITS_PER_PIXEL, 10);
   assertEquals(quad.vertices.slice(0, 4).map((v: Any) => [v.x, v.y, v.z]), [
-    [-64, 64, 0],
-    [64, 64, 0],
-    [64, -64, 0],
-    [-64, -64, 0],
-  ], "a 32x32 sprite is a 128-unit quad");
-  assertEquals(quad.faces[0].uv, [[0, 0], [32, 0], [32, 32]]);
+    [-160, 0, 160],
+    [160, 0, 160],
+    [160, 0, -160],
+    [-160, 0, -160],
+  ], "a 32x32 sprite is a 320-unit quad on the ground plane");
+  assertEquals(
+    quad.faces[0].uv,
+    [[0, 32], [32, 32], [32, 0]],
+    "the sprite's own texels, its top row at the far edge",
+  );
+  assertEquals(quad.faces[1].uv, [[0, 32], [32, 0], [0, 0]]);
   assertEquals(quad.faces[0].tile, 1);
-  assertEquals(quad.tiles[1].widthPower, 4, "a 32-px tile");
+  assertEquals(
+    [quad.tiles[1].widthPower, quad.tiles[1].heightPower],
+    [5, 6],
+    "the tile is the whole 64x32 texture",
+  );
   const beeModel = md.models[4]!;
   assertEquals(
     beeModel.faces[0].uv,
-    [[0, 0], [64, 0], [64, 32]],
+    [[0, 32], [64, 32], [64, 0]],
     "the bee was shrunk to 64x32",
+  );
+  assertEquals(
+    [
+      beeModel.vertices[1].x - beeModel.vertices[0].x,
+      beeModel.vertices[0].z - beeModel.vertices[3].z,
+    ],
+    [960, 480],
+    "and keeps its 96x48 size on screen",
   );
   // the common records: the ship as model 10, the item as model 12, the shot item entry pointing at it, the final stage
   const cmd = parseCmdFile(p.files.find((f) => f.ext === "CMD")!.data) as Any;
@@ -947,6 +995,223 @@ Deno.test("a project from a level is thirty files at documented sizes with the a
     0,
   );
   assertEquals(p.report.finalStage, 0);
+});
+
+// ── a stage's story ─────────────────────────────────────────────────────────
+
+/** A story size: a `w` x `h` picture of distinct colours, so no two cells match. */
+function storyVariant(label: string, w: number, h: number) {
+  const rgba = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      rgba.set(
+        [(x * 7) & 0xff, (y * 5) & 0xff, (x + y) & 0xff, 255],
+        (y * w + x) * 4,
+      );
+    }
+  }
+  return { label, w, h, rgba };
+}
+
+const effectName = (e: Any) => EFFECT_COMMANDS[e.command];
+
+Deno.test("a stage opens on its story: forty portraits over the screen, the ship hidden and the scroll held, then cleared", () => {
+  const parts = ["Hello there,", "pilot."];
+  const p = buildN64ProjectFromLevel(tinyLevel(), tinyArt(), {
+    storyBackdrops: [
+      {
+        stage: 0,
+        parts,
+        variants: [
+          storyVariant("too tall", 224, 256),
+          storyVariant("picture + words", 224, 192),
+          storyVariant("words", 224, 48),
+        ],
+      },
+      // a story for a stage the level does not have is left alone
+      { stage: 5, parts: ["far"], variants: [storyVariant("words", 224, 48)] },
+    ],
+  });
+  const s0 = p.report.stages[0];
+  const frames = storyFrames(parts);
+  assertEquals(
+    frames,
+    N64_STORY_MIN_FRAMES,
+    "a short story stays the six-second minimum",
+  );
+  const screen = storyScreen(storyVariant("picture + words", 224, 192));
+  assertEquals(screen.cells.length, 40, "the 5 x 8 grid of 64x32 cells");
+  assert(
+    screen.textures.length < 40,
+    "the black cells round the picture share one texture",
+  );
+  assertEquals(s0.story, {
+    size: "picture + words",
+    textures: screen.textures.length,
+    reclaimed: 0,
+    frames,
+    seconds: frames / 30,
+  }, "the 256-tall size is over the screen; the next fits");
+
+  const bl = parseStageBl(p.files.find((f) => f.ext === "0BL")!.data) as Any;
+  assertEquals(bl.tail.totalEffects, N64_STAGE_SCENE.length + 45);
+  // the opening scene first, then the story's own
+  const at0 = bl.effects.filter((e: Any) => e.frame === 0)
+    .slice(N64_STAGE_SCENE.length);
+  assertEquals(at0.length, 42);
+  assertEquals(effectName(at0[0]), "playerVisibility");
+  assertEquals(at0[0].values, [0, 0, 0, 0]);
+  assertEquals(effectName(at0[1]), "mapScrollRate");
+  assertEquals(at0[1].values, [0, 7, 0, 0], "the map's scroll is held");
+  const portraits = at0.slice(2);
+  assert(portraits.every((e: Any) => effectName(e) === "portrait"));
+  assertEquals(
+    portraits.map((e: Any) => e.values[2]),
+    Array.from(
+      { length: 40 },
+      (_, k) => portraitPosition(Math.floor(k / 5), k % 5),
+    ),
+    "row-major, row * 10 + column, a 64-px texture every other column",
+  );
+  assertEquals(portraitPosition(7, 4), 78);
+  assert(
+    portraits.every((e: Any) => e.values[0] === 0 && e.values[3] === 1),
+    "set, opaque, instant",
+  );
+  // every cell names a #GR texture a byte can hold, and that texture is the cell's art
+  const gr = p.files.find((f) => f.ext === "0GR")!.data;
+  portraits.forEach((e: Any, k: number) => {
+    const texture = e.values[1];
+    assert(
+      texture >= N64_GR_TEXTURE_BASE && texture <= N64_PORTRAIT_MAX_TEXTURE,
+      `cell ${k}: ${texture}`,
+    );
+    const tile = texture - N64_GR_TEXTURE_BASE;
+    assert(
+      same(
+        gr.subarray(tile * N64_TEXTURE_BYTES, (tile + 1) * N64_TEXTURE_BYTES),
+        screen.textures[screen.cells[k]],
+      ),
+      `cell ${k} shows its own texture`,
+    );
+  });
+  // the enemies keep their textures: the story took the blank ones after them
+  const enemyTiles = new Set(
+    s0.textures.filter((t: Any) => !t.key.endsWith(":story")).map((t: Any) =>
+      t.index
+    ),
+  );
+  assert(
+    portraits.every((e: Any) =>
+      !enemyTiles.has(e.values[1] - N64_GR_TEXTURE_BASE)
+    ),
+  );
+
+  const after = bl.effects.filter((e: Any) => e.frame !== 0);
+  assertEquals(after.map((e: Any) => [e.frame, effectName(e), e.values]), [
+    [frames, "portrait", [...N64_PORTRAIT_CLEAR]],
+    [frames, "playerVisibility", [1, 0, 0, 0]],
+    [frames, "mapScrollRate", [N64_SCROLL_RATE, 7, 0, 0]],
+  ]);
+  // nothing comes on behind it: the layout moves on past where the scroll stands
+  assertEquals(
+    bl.layout.map.map((e: Any) => e.frame),
+    [
+      -3200 - N64_SCROLL_START,
+      -3200 - N64_SCROLL_START,
+      -7040 - N64_SCROLL_START,
+    ],
+  );
+  assertEquals(p.warnings.length, 1, "only enemyC's missing record");
+});
+
+Deno.test("a story falls back to a smaller size, takes back a template's unnamed art, and is dropped when nothing fits", () => {
+  // A template stage whose sheet is painted through and whose map names
+  // every tile but the last few a portrait can reach.
+  const painted = new Uint8Array(N64_GR_TEXTURES * N64_TEXTURE_BYTES).fill(
+    0x11,
+  );
+  const max = N64_PORTRAIT_MAX_TEXTURE - N64_GR_TEXTURE_BASE; // 215
+  const withFree = (free: number) => [
+    { ext: "0GR", data: painted },
+    {
+      ext: "0BL",
+      data: buildStageBl({
+        // a map texture byte is kept under both readings, t and t - 40
+        map: Array.from(
+          { length: max + 1 - free },
+          (_, t) => ({ texture: t }),
+        ) as Any,
+      }),
+    },
+  ];
+  const story = [{
+    stage: 0,
+    parts: ["A story."],
+    variants: [
+      storyVariant("picture + words", 224, 192),
+      storyVariant("small words", 64, 32),
+    ],
+  }];
+  const small = storyScreen(storyVariant("small words", 64, 32));
+  assertEquals(small.textures.length, 3, "two cells of words and the black");
+
+  const p = buildN64ProjectFromLevel(tinyLevel(), tinyArt(), {
+    template: withFree(5),
+    storyBackdrops: story,
+  });
+  const s0 = p.report.stages[0];
+  assertEquals(
+    s0.story.size,
+    "small words",
+    "the picture needs more than five",
+  );
+  assertEquals(
+    s0.story.reclaimed,
+    3,
+    "no blank texture: the template's, taken back",
+  );
+  // the frames take back the template's art too, from the top of the sheet
+  // down, so the tiles a portrait can name are left for the story
+  assertEquals(s0.missed, []);
+  assertEquals(
+    s0.textures.filter((t: Any) => !t.key.endsWith(":story")).map((t: Any) =>
+      t.index
+    ),
+    [259, 258, 257, 256, 255, 254],
+  );
+  assertEquals(s0.reclaimed, 6 + 3);
+  const bl = parseStageBl(p.files.find((f) => f.ext === "0BL")!.data) as Any;
+  const tiles = new Set<number>(
+    bl.effects.filter((e: Any) =>
+      effectName(e) === "portrait" && e.values[0] === 0
+    )
+      .map((e: Any) => e.values[1] - N64_GR_TEXTURE_BASE),
+  );
+  assertEquals(
+    [...tiles].sort((a, b) => a - b),
+    [211, 212, 213],
+    "only tiles the map names under neither reading",
+  );
+
+  const none = buildN64ProjectFromLevel(tinyLevel(), tinyArt(), {
+    template: withFree(2),
+    storyBackdrops: story,
+  });
+  assertEquals(none.report.stages[0].story, null);
+  assert(
+    none.warnings.some((w) => w.includes("no size of its story fits")),
+    none.warnings.join("; "),
+  );
+  const blNone = parseStageBl(
+    none.files.find((f) => f.ext === "0BL")!.data,
+  ) as Any;
+  assertEquals(
+    blNone.tail.totalEffects,
+    N64_STAGE_SCENE.length,
+    "the scene alone",
+  );
+  assertEquals(blNone.layout.map[0].frame, -3200, "no story, no shift");
 });
 
 Deno.test("a template project underlies the art and the art never covers a painted texture", () => {
@@ -1070,7 +1335,7 @@ Deno.test("the layout's cap keeps the boss last, a partial hit counts as one, an
   assertEquals(bl.layout.map.length, 1000);
   assertEquals(
     bl.layout.map[999].enemy,
-    big.report.stages[0].records.bossEntry,
+    N64_ENEMY_NUMBER_BASE + big.report.stages[0].records.bossEntry,
     "the boss is the last placement",
   );
   assertEquals(
