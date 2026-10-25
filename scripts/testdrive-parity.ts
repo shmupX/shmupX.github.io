@@ -83,6 +83,7 @@ import {
   projectileKinds,
 } from "./lib/parity.ts";
 import {
+  Abort,
   hasCommand,
   type Log,
   Rig,
@@ -110,6 +111,22 @@ import {
   SATURN_RAM,
   saturnPage,
 } from "./lib/parity-saturn.ts";
+import {
+  buildDdd,
+  findDonorDisk,
+} from "../packages/shmup-harbor/scripts/build-ddd.ts";
+import {
+  findDezaemonN64,
+  readDezaemonN64Rom,
+  readN64ddIpl,
+} from "../lib/dezaemon-n64.ts";
+import {
+  listRow,
+  N64DD,
+  N64DD_BARE,
+  n64ddRam,
+  rdramNeedle,
+} from "./lib/parity-n64dd.ts";
 
 const ROOT = repoRoot();
 
@@ -660,6 +677,24 @@ function serveFolder(dir: string, port: number) {
   return { origin: `http://127.0.0.1:${port}`, close: () => server.shutdown() };
 }
 
+/** Serve bytes held here over HTTP on 127.0.0.1, by path; close() stops it. */
+function serveFiles(
+  files: Record<string, { body: Uint8Array | string; type: string }>,
+  port: number,
+) {
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port, onListen: () => {} },
+    (req) => {
+      const f = files[new URL(req.url).pathname];
+      if (!f) return new Response("not found", { status: 404 });
+      return new Response(f.body as BodyInit, {
+        headers: { "content-type": f.type, "cache-control": "no-store" },
+      });
+    },
+  );
+  return { origin: `http://127.0.0.1:${port}`, close: () => server.shutdown() };
+}
+
 /** Make the PS2 page all screen: the game canvas, nothing around it. */
 const PS2_FULL_SCREEN = `(function () {
   // Runs before the document has an element to hang a style on, so it waits.
@@ -793,7 +828,10 @@ async function findFixture(
 interface EmuPane {
   id: PaneId;
   url: string;
-  files: Record<string, { body: Uint8Array | string; type: string }>;
+  /** Files answered from here (interceptFiles); none when the page's own server has them. */
+  files?: Record<string, { body: Uint8Array | string; type: string }>;
+  /** Page code run on every new document, after EJS_BARE. */
+  scripts?: string[];
   /** From the loaded page to the stage's first frame; answers the RAM's heap offset. */
   boot: (cdp: Cdp) => Promise<number>;
   pilot: Omit<EmuPilotConfig, "ramBase">;
@@ -806,8 +844,8 @@ async function runEmuPane(
   const spec = PANES[pane.id];
   const cdp = ctx.rig.cdp;
   await setViewport(cdp, spec.width, spec.height);
-  const served = await interceptFiles(cdp, pane.files);
-  const unscript = await onNewDocument(cdp, [EJS_BARE]);
+  const served = pane.files ? await interceptFiles(cdp, pane.files) : null;
+  const unscript = await onNewDocument(cdp, [EJS_BARE, ...pane.scripts ?? []]);
   const want = Number(flags["console-seconds"]) * 1000;
   const cap = Number(flags["console-wall"]) * 1000;
   try {
@@ -877,7 +915,7 @@ async function runEmuPane(
     };
   } finally {
     await unscript();
-    await served.stop();
+    await served?.stop();
   }
 }
 
@@ -1141,6 +1179,233 @@ const runSaturn: PaneRunner = async (ctx) => {
   }, ctx);
 };
 
+/**
+ * The donor build:ddd lays the rush onto: the 64DD prototype data disk
+ * (deza1.NDD), an image of 64DD size in dev-fixtures/ or a folder under it,
+ * judged by size as build:ddd judges it. A disk built from nothing has no
+ * boot program and no RAM area, and the cartridge does not go into disk mode
+ * on it.
+ */
+async function findDdDonor(): Promise<string | null> {
+  const root = join(ROOT, "dev-fixtures");
+  const top = await findDonorDisk(root);
+  if (top) return top;
+  try {
+    for await (const e of Deno.readDir(root)) {
+      if (!e.isDirectory) continue;
+      const hit = await findDonorDisk(join(root, e.name));
+      if (hit) return hit;
+    }
+  } catch { /* no dev-fixtures/ */ }
+  return null;
+}
+
+/**
+ * Dezaemon 3D on the 64DD: the rush laid onto the prototype data disk as a
+ * project (build:ddd), beside the English cartridge (lib/dezaemon-n64.ts) and
+ * the IPL, in the launcher's player (static/n64dd/play.html) — served with the
+ * three files from here, a 64 MB disk being more than one DevTools message
+ * should carry. Power-on → the title's flight and then its logo title (START
+ * on each) → the root menu's GAME → GAME SELECT → the project's row → its
+ * title → A is GAME START, each step read off RDRAM (lib/parity-n64dd.ts),
+ * never timed. Lives are u8 0x8023648D, the ship s16s at 0x80237050/54; the
+ * analog stick flies it (the d-pad does not), N64 A fires.
+ */
+const runN64dd: PaneRunner = async (ctx) => {
+  const blocked = (reason: string): PaneResult => ({
+    id: "n64dd",
+    status: "blocked",
+    reason,
+  });
+  const found = await findDezaemonN64(ROOT, {
+    extra: [
+      Deno.env.get("DEZAEMON_N64_ROM") ?? "",
+      Deno.env.get("N64DD_IPL") ?? "",
+    ].filter(Boolean),
+  });
+  if (!found.rom || found.rom.edition === "unknown") {
+    return blocked(
+      "no Dezaemon 3D cartridge the translation takes in dev-fixtures/ (or $DEZAEMON_N64_ROM)",
+    );
+  }
+  if (!found.ipl) {
+    return blocked("no 64DD IPL in dev-fixtures/ (or $N64DD_IPL)");
+  }
+  const donor = await findDdDonor();
+  if (!donor) {
+    return blocked("no 64DD prototype disk (deza1.NDD) in dev-fixtures/");
+  }
+  const disk = await buildDdd({
+    level: join(OUT, "rush.json"),
+    disk: donor,
+    out: join(OUT, "n64dd", "rush.ndd"),
+    log: (m) => log(`  ${m}`),
+  });
+  // GAME SELECT lists DST, the donor's RAM-area project, then the pressed
+  // projects in directory order.
+  const pressed = (disk.report.projects as { name: string }[]).map((p) =>
+    p.name
+  );
+  const row = 1 + pressed.indexOf(disk.name);
+  if (row < 1 || row > 3) {
+    throw new Error(
+      `${disk.name} would be GAME SELECT's row ${row}, past the four it shows`,
+    );
+  }
+  const rom = await readDezaemonN64Rom(found.rom, { root: ROOT });
+  const needle = rdramNeedle(rom);
+  const site = serveFiles({
+    "/play.html": {
+      body: await Deno.readTextFile(
+        join(ROOT, "static", "n64dd", "play.html"),
+      ),
+      type: "text/html; charset=utf-8",
+    },
+    "/rom.z64": { body: rom, type: "application/octet-stream" },
+    "/ipl.n64": {
+      body: await readN64ddIpl(found.ipl),
+      type: "application/octet-stream",
+    },
+    "/disk.ndd": {
+      body: await Deno.readFile(disk.outPath),
+      type: "application/octet-stream",
+    },
+  }, Number(flags["serve-port"]) + 3);
+  const url =
+    `${site.origin}/play.html?rom=/rom.z64&ipl=/ipl.n64&disk=/disk.ndd`;
+  const cdp = ctx.rig.cdp;
+  const dd = <T>(expr: string) => cdp.eval<T>(expr);
+  const rdram = (a: number) => a & 0x7fffff;
+  const target = listRow(row);
+  const boot = async (): Promise<number> => {
+    await until("the mupen64plus-next core", 120_000, () =>
+      dd<boolean>(
+        `!!(window.EJS_emulator && EJS_emulator.gameManager && EJS_emulator.started)`,
+      ), 500);
+    await dd(n64ddRam(needle));
+    const { base } = await until(
+      "RDRAM in the core's heap",
+      60_000,
+      async () => {
+        const at = await dd<number>(`__dd.find()`);
+        return at >= 0 ? { base: at } : null;
+      },
+      500,
+    );
+    // Nothing takes a press before the title, whose clock starts from 0
+    // there: run to it fast.
+    await dd(
+      `(function () { var gm = EJS_emulator.gameManager; gm.setFastForwardRatio(0); gm.toggleFastForward(1); return true; })()`,
+    );
+    try {
+      await until(
+        "the title",
+        120_000,
+        () => dd<boolean>(`__dd.clock() >= 60`),
+        100,
+      );
+    } finally {
+      await dd(`EJS_emulator.gameManager.toggleFastForward(0), true`);
+    }
+    // START on the title's flight, then on the logo title it leads to, until
+    // the root menu's pointer rests on GAME — and never on the root menu
+    // itself, where START leads into the editor. The flight takes no press
+    // in its first two seconds, and at 920 on its clock it gives way to the
+    // editor's demo, so a boot that has not reached the logo title by then is
+    // powered on again.
+    await until("the root menu", 60_000, async () => {
+      if (await dd<number>(`__dd.clock()`) >= 900) {
+        throw new Abort("the title ran into its demo before it took START");
+      }
+      return await dd<boolean>(
+        `__dd.step(3, __dd.title, __dd.rootMenu, 1500)`,
+      );
+    }, 0);
+    // GAME: A while the pointer rests on it, until the page is GAME SELECT.
+    await until("GAME SELECT", 60_000, () =>
+      dd<boolean>(
+        `__dd.step(0, __dd.rootMenu, function () { return __dd.menu() === 15; }, 3000)`,
+      ), 0);
+    // The project's row: the pointer flown there until the item under it is
+    // that row — which also waits out GAME SELECT's settling, as the item
+    // under a pointer that has not moved can stay what it was — then A,
+    // until GAME SELECT is gone.
+    // GAME SELECT can also come up without its list and never move its
+    // pointer: two steers that leave it where it was are a power-on again.
+    let unmoved = 0;
+    await until(`GAME SELECT's row ${row}`, 60_000, async () => {
+      if (await dd<number>(`__dd.menu()`) !== 15) return true;
+      const from = await dd<{ x: number; y: number }>(`__dd.pointer()`);
+      const at = await dd<{ x: number; y: number; item: number }>(
+        `__dd.steer(${target.x}, ${target.y}, ${target.item}, 6000)`,
+      );
+      if (at.item !== target.item) {
+        if (at.x === from.x && at.y === from.y && ++unmoved >= 2) {
+          throw new Abort("GAME SELECT came up without its list");
+        }
+        return false;
+      }
+      return await dd<boolean>(
+        `__dd.step(0, function () { return __dd.menu() === 15 && __dd.item() === ${target.item}; }, function () { return __dd.menu() !== 15; }, 3000)`,
+      );
+    }, 0);
+    log(`n64dd: ${disk.name} picked from GAME SELECT; loading it`);
+    // The project's title: A is GAME START — its cursor starts there, and A
+    // on the high-score page is GAME START too — pressed until the clock
+    // starts again from 0: the stage.
+    const frozen = await dd<number>(`__dd.clock()`);
+    await until("the project's first stage", 120_000, () =>
+      dd<boolean>(
+        `__dd.step(0, function () { return __dd.menu() === 2; }, function () { var c = __dd.clock(); return c !== ${frozen} && c < 30; }, 1500)`,
+      ), 0);
+    return base;
+  };
+  try {
+    return await runEmuPane({
+      id: "n64dd",
+      url,
+      scripts: [N64DD_BARE],
+      // A press the menus did not take leaves them somewhere no further
+      // press is safe from: a fresh power-on is the remedy.
+      boot: async () => {
+        for (let power = 1;; power++) {
+          try {
+            return await boot();
+          } catch (e) {
+            const where = await dd<string>(
+              `window.__dd && __dd.base >= 0 ? "page " + __dd.menu() + ", item " + __dd.item() + ", clock " + __dd.clock() : "RDRAM not found"`,
+            ).catch(() => "no page");
+            const why = `${e instanceof Error ? e.message : e} (${where})`;
+            if (power >= 3) throw new Error(why);
+            log(`n64dd: ${why}; powering on again`);
+            await cdp.send("Page.navigate", { url });
+          }
+        }
+      },
+      pilot: {
+        longSwap: true,
+        lives: [rdram(N64DD.lives)],
+        fire: 0,
+        pad: { up: 19, down: 18, left: 17, right: 16 },
+        padValue: 0x7fff,
+        checkpointMs: 1500,
+        rewindCheckpoints: 2,
+        maxTries: 6,
+        seed: 7,
+        // y 173, where the ship starts, is as low as it goes.
+        ship: {
+          x: rdram(N64DD.shipX),
+          y: rdram(N64DD.shipY),
+          signed: true,
+          box: { x0: -170, x1: 170, y0: 40, y1: 170 },
+        },
+      },
+    }, ctx);
+  } finally {
+    await site.close();
+  }
+};
+
 const RUNNERS: Record<PaneId, PaneRunner> = {
   web: runWeb,
   ps2: runPs2,
@@ -1148,7 +1413,7 @@ const RUNNERS: Record<PaneId, PaneRunner> = {
   saturn: runSaturn,
   kids: pending("kids", "the Kids! pane's boot is not written yet"),
   plus: pending("plus", "the Dezaemon+ pane's boot is not written yet"),
-  n64dd: pending("n64dd", "the 64DD pane's boot is not written yet"),
+  n64dd: runN64dd,
 };
 
 // ── The grid ─────────────────────────────────────────────────────────────────

@@ -3284,6 +3284,16 @@ from the cartridge's save. The recipe is one object at the top of the page, so a
 correction is one edit; `packages/shmup-engine/FORMAT-N64.md` "The launcher's
 player" has the trace.
 
+`testdrive:parity`'s 64DD pane drives this page headless: the boss rush laid
+onto the prototype by `build:ddd`, the page and the three files served from a
+local port, and power-on → the title → GAME → GAME SELECT → the project → GAME
+START walked by reading RDRAM rather than waiting on timings — the title takes
+no START in its first two seconds and gives way to the editor's demo at 920 on
+its clock, where START leads into the paint editor, so a boot that misses it
+powers on again. The analog stick flies the ship (the d-pad does not), N64 A
+fires, and the page, list, lives and ship addresses are in
+`scripts/lib/parity-n64dd.ts`.
+
 ## Desktop app
 
 `deno task build:windows` / `build:linux` / `build:mac` package the launcher

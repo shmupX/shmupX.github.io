@@ -944,7 +944,13 @@ tried. What driving it took, for the next session (the scripts were scratch):
   is about 9 px above the drawn hand, and the list's ▼ (about 140, 176) scrolls
   it a row a press. START on the menu, or a press before a screen has settled,
   can land in the editor or a cartridge demo, and once an A went unanswered on
-  GAME SELECT with the project highlighted — a fresh boot is the remedy.
+  GAME SELECT with the project highlighted — a fresh boot is the remedy. GAME
+  SELECT can also come up without its list, its pointer taking no d-pad, which
+  a fresh boot cures too. The title is two screens, each wanting START — the
+  flight, then the cartridge's logo title — and at 920 on its 30 Hz clock the
+  flight gives way to the editor's demo. `scripts/lib/parity-n64dd.ts` reads
+  every step off RDRAM (the shell's page byte, the item under the pointer, the
+  clock) and `testdrive:parity`'s 64DD pane boots by it.
 - **Hidden pane.** The pane throttles `requestAnimationFrame` to a few frames a
   second; a `MessageChannel`-paced replacement installed before `loader.js`
   runs the core at 60 (fast-forward with ratio 0 reaches about 100).

@@ -1,5 +1,6 @@
 // The pure halves of `deno task testdrive:parity` (scripts/lib/parity.ts,
-// scripts/lib/parity-emu.ts) and `deno task ps2:page` (scripts/lib/ps2-page.ts).
+// scripts/lib/parity-emu.ts, scripts/lib/parity-n64dd.ts) and `deno task
+// ps2:page` (scripts/lib/ps2-page.ts).
 // Nothing here starts a browser, an emulator or ffmpeg.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
@@ -21,6 +22,7 @@ import {
   locateExpr,
   runClockAt,
 } from "../scripts/lib/parity-emu.ts";
+import { listRow, rdramNeedle } from "../scripts/lib/parity-n64dd.ts";
 import {
   parityCaption,
   ps2PageHtml,
@@ -159,6 +161,28 @@ Deno.test("the RAM locator narrows a candidate list by every pair", () => {
   const js = locateExpr([[0x0d, 1], [0x3d6, 5]], true);
   assert(js.includes("[[13,1],[982,5]]"), js);
   assert(js.includes("window.__ram = out"));
+});
+
+Deno.test("the 64DD's RDRAM is looked for by the boot code, as host-order words where the IPL puts it", () => {
+  const rom = new Uint8Array(0x1040);
+  rom.set([0x80, 0x02, 0x5c, 0x00], 8); // the header's entry point, 0x80025C00
+  rom.set([0x3c, 0x08, 0x80, 0x0a, 0x25, 0x08, 0x4c, 0x80], 0x1000);
+  const { bytes, at } = rdramNeedle(rom);
+  assertEquals(at, 0x25c00);
+  assertEquals(bytes.length, 64);
+  assertEquals(bytes.slice(0, 8), [
+    0x0a,
+    0x80,
+    0x08,
+    0x3c,
+    0x80,
+    0x4c,
+    0x08,
+    0x25,
+  ]);
+  // GAME SELECT: DST is row 0, its item 10; the pointer's hot spot per row.
+  assertEquals(listRow(0), { x: 105, y: 115, item: 10 });
+  assertEquals(listRow(3), { x: 105, y: 177, item: 13 });
 });
 
 Deno.test("the PS2 page offers the disc, the folder and the browser build, with the GIF on top", () => {

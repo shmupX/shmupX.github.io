@@ -26,12 +26,22 @@ export interface EmuPilotConfig {
    * work RAM), so the console's byte A sits at heap byte A ^ 1.
    */
   wordSwap?: boolean;
+  /**
+   * The core keeps that RAM as host-order 32-bit words (mupen64plus's RDRAM),
+   * so the console's byte A sits at heap byte A ^ 3.
+   */
+  longSwap?: boolean;
   /** Addresses (within that RAM) of the lives counter; a drop in any is a death. */
   lives: number[];
   /** RetroPad index held throughout to fire. */
   fire: number;
-  /** RetroPad indices of the d-pad. */
+  /** RetroPad indices of the d-pad, or of the analog stick's four directions. */
   pad: { up: number; down: number; left: number; right: number };
+  /**
+   * What a held direction sends: 1 for a d-pad button (the default), 0x7fff
+   * for an analog stick at full throw.
+   */
+  padValue?: number;
   checkpointMs: number;
   /** How many checkpoints back a death rewinds to (2 = the one before last). */
   rewindCheckpoints: number;
@@ -41,12 +51,14 @@ export interface EmuPilotConfig {
    * Where the ship's x and y bytes are, and the box it should keep to. With
    * them the pilot flies to random points in that box; without, it sways.
    * `shift` reads each as a big-endian 16-bit word in units of 2^shift
-   * pixels instead of a byte (the Saturn's px << 7).
+   * pixels instead of a byte (the Saturn's px << 7); `signed` reads a signed
+   * 16-bit word (the 64DD's x, which is 0 at the centre).
    */
   ship?: {
     x: number;
     y: number;
     shift?: number;
+    signed?: boolean;
     box: { x0: number; x1: number; y0: number; y1: number };
   } | null;
   /** Fresh flights tried from one checkpoint before stepping further back. */
@@ -67,18 +79,22 @@ export function emuPilot(config: EmuPilotConfig): string {
     seed: cfg.seed || 1, held: {}, inputs: [], escalate: 0, lastRewindWall: 0,
     tries: 0, best: [], bestMs: 0,
   };
-  var swap = cfg.wordSwap ? 1 : 0;
+  var swap = cfg.longSwap ? 3 : cfg.wordSwap ? 1 : 0;
   function ram(a) { return M.HEAPU8[cfg.ramBase + (a ^ swap)]; }
   function pos(a) {
     var s = cfg.ship.shift;
-    return s == null ? ram(a) : ((ram(a) << 8) | ram(a + 1)) >> s;
+    if (s == null && !cfg.ship.signed) return ram(a);
+    var w = (ram(a) << 8) | ram(a + 1);
+    if (cfg.ship.signed) w = (w << 16) >> 16;
+    return w >> (s || 0);
   }
   function livesNow() { return cfg.lives.map(ram); }
-  function hold(idx, on) {
+  function hold(idx, on, value) {
     if (!!emu.held[idx] === !!on) return;
     emu.held[idx] = !!on;
-    gm.simulateInput(0, idx, on ? 1 : 0);
+    gm.simulateInput(0, idx, on ? value || 1 : 0);
   }
+  function steer(idx, on) { hold(idx, on, cfg.padValue); }
   // A cheap deterministic generator, so a reseed changes the sway.
   function rnd() { emu.seed = (emu.seed * 1103515245 + 12345) & 0x7fffffff; return emu.seed / 0x7fffffff; }
   var phase = 0, period = 90, dir = 1, vdir = 0, vtimer = 0, t = 0;
@@ -152,20 +168,20 @@ export function emuPilot(config: EmuPilotConfig): string {
         vtimer = 20 + Math.floor(rnd() * 30);
       }
       var sx = pos(cfg.ship.x), sy = pos(cfg.ship.y);
-      hold(cfg.pad.left, sx > emu.tx + 4);
-      hold(cfg.pad.right, sx < emu.tx - 4);
-      hold(cfg.pad.up, sy > emu.ty + 4);
-      hold(cfg.pad.down, sy < emu.ty - 4);
+      steer(cfg.pad.left, sx > emu.tx + 4);
+      steer(cfg.pad.right, sx < emu.tx - 4);
+      steer(cfg.pad.up, sy > emu.ty + 4);
+      steer(cfg.pad.down, sy < emu.ty - 4);
       return;
     }
     // The sway: left and right on a reseedable period, now and then a short
     // dip up or down, fire held throughout.
     var x = Math.sin(((t + phase) / period) * Math.PI * 2) * dir;
-    hold(cfg.pad.left, x < -0.25);
-    hold(cfg.pad.right, x > 0.25);
+    steer(cfg.pad.left, x < -0.25);
+    steer(cfg.pad.right, x > 0.25);
     if (--vtimer <= 0) { vdir = rnd() < 0.3 ? (rnd() < 0.5 ? -1 : 1) : 0; vtimer = 20 + Math.floor(rnd() * 40); }
-    hold(cfg.pad.up, vdir < 0);
-    hold(cfg.pad.down, vdir > 0);
+    steer(cfg.pad.up, vdir < 0);
+    steer(cfg.pad.down, vdir > 0);
   }
   emu.timer = setInterval(function () { try { tick(); } catch (e) { emu.err = String(e && e.stack || e); } }, 16);
   emu.stop = function () {
