@@ -15,6 +15,7 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   BLANK_BYTE,
+  buildCmdFile,
   buildDisk,
   buildN64ProjectFromLevel,
   buildStageBl,
@@ -38,6 +39,7 @@ import {
   EFFECT_COMMANDS,
   encodeDirectory,
   encodeDiskId,
+  encodeGam,
   encodeRgba5551,
   encodeSystemData,
   exportLevelToDdd,
@@ -59,6 +61,7 @@ import {
   N64_SCROLL_PER_ROW,
   N64_SCROLL_RATE,
   N64_SCROLL_START,
+  N64_SPRITE_SCALE,
   N64_STAGE_SCENE,
   N64_STORY_MIN_FRAMES,
   N64_TEXTURE_BYTES,
@@ -73,12 +76,16 @@ import {
   parseStageBl,
   portraitPosition,
   projectExts,
+  PROTOTYPE_GAM_BYTES,
+  PROTOTYPE_GAM_GAP,
   putProject,
   ramStartOffset,
   readDirectory,
   readProjects,
   readSystemArea,
   removeProject,
+  spriteAtlasTexel,
+  spriteModel,
   STAGES,
   storyFrames,
   storyScreen,
@@ -884,6 +891,11 @@ Deno.test("a project from a level is thirty files at documented sizes with the a
     "B1: drop digit 1 is the shot item",
   );
   assertEquals(beeEntry.hit.size, 6, "96 px across");
+  assertEquals(
+    beeEntry.scale,
+    N64_SPRITE_SCALE,
+    "the ship's scale: they fly in its plane",
+  );
   const bossEntry = bl.enemies[2];
   assertEquals(bossEntry.hit.stageClear, true);
   assertEquals(bossEntry.hit.lockOn, true);
@@ -894,12 +906,14 @@ Deno.test("a project from a level is thirty files at documented sizes with the a
     [0xff, 0xff, 0xff, 0xff],
     "the fourth entry is the plain default",
   );
-  // the layout: the grid's last row scrolls in first; x across the screen; descending frames; the boss last
+  // the layout: the grid's last row scrolls in first; x across the ship's
+  // reach; every enemy and the boss at the ship's height; descending
+  // frames; the boss last
   assertEquals(bl.layout.a, []);
   assertEquals(bl.layout.b, []);
   assertEquals(
     bl.layout.map.map((e: Any) => [e.enemy, e.x, e.y, e.frame]),
-    [[20, -400, 240, -3200], [21, 400, 240, -3200], [22, 0, 400, -7040]],
+    [[20, -220, 800, -3200], [21, 220, 800, -3200], [22, 0, 800, -7040]],
     "entries numbered from 20, after the common enemies; 160 of scroll a row",
   );
   assertEquals(N64_SCROLL_PER_ROW, 160);
@@ -1215,12 +1229,33 @@ Deno.test("a story falls back to a smaller size, takes back a template's unnamed
 });
 
 Deno.test("a template project underlies the art and the art never covers a painted texture", () => {
+  // a cartridge-layout GAM, marked; a CMD with a model of its own in slot 5
+  // and another in the ship's slot
+  const marked = encodeGam({ fontColor: 2 });
+  const templateModel = spriteModel({ w: 8, h: 8 });
+  const templateCmd = buildCmdFile(
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      templateModel,
+      null,
+      null,
+      null,
+      null,
+      templateModel,
+    ],
+    [0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 7],
+  );
   const template = projectExts().map((ext) => {
     const size =
       DOCUMENTED_SIZES[ext.replace(/^\d/, "") as keyof typeof DOCUMENTED_SIZES];
-    const data = new Uint8Array(size);
+    let data = new Uint8Array(size);
     if (ext === "0GR") data.fill(0x55, 0, 3 * N64_TEXTURE_BYTES); // three painted textures
-    if (ext === "GAM") data.fill(0x42);
+    if (ext === "GAM") data = Uint8Array.from(marked);
+    if (ext === "CMD") data = Uint8Array.from(templateCmd);
     return { ext, data };
   });
   const p = buildN64ProjectFromLevel(tinyLevel(), tinyArt(), { template });
@@ -1236,20 +1271,53 @@ Deno.test("a template project underlies the art and the art never covers a paint
     gr.subarray(0, 3 * N64_TEXTURE_BYTES).every((b) => b === 0x55),
     "the template's textures survive",
   );
+  // the template's GAM with the final stage set and the player on the
+  // level's ship, model 10 at N64_SPRITE_SCALE — and nothing else touched
   const gam = p.files.find((f) => f.ext === "GAM")!.data;
-  assertEquals(gam[0], 0, "the template's GAM with the final stage set");
-  assert(gam.subarray(1).every((b) => b === 0x42), "and nothing else touched");
+  const g = decodeGam(gam);
+  assertEquals(g.finalStage, 0);
+  assertEquals(g.player.models, [10, 10, 10, 10]);
+  assertEquals(g.player.scale, N64_SPRITE_SCALE);
+  assertEquals(g.fontColor, 2);
   assertEquals(
-    p.report.files.find((f: { ext: string }) => f.ext === "GAM")?.source,
-    "template, final stage set",
+    encodeGam({ ...g, finalStage: 2, player: decodeGam(marked).player }),
+    marked,
+    "nothing else touched",
   );
-  for (const ext of ["CMD", "CBL", "MUS", "ULB"]) {
+  const source = (ext: string) =>
+    p.report.files.find((f: { ext: string }) => f.ext === ext)?.source;
+  assertEquals(source("GAM"), "template, final stage and ship set");
+  // the ship and the item in the template's CMD, its own model 5 kept
+  assertEquals(source("CMD"), "template, ship and items set");
+  const cmd = parseCmdFile(p.files.find((f) => f.ext === "CMD")!.data) as Any;
+  assertEquals(
+    cmd.models.map((m: Any, i: number) => (m ? i : -1)).filter((i: number) =>
+      i >= 0
+    ),
+    [5, 10, 12],
+  );
+  assertEquals(cmd.textureIndices[5], 7);
+  assertEquals(
+    [cmd.textureIndices[10], cmd.textureIndices[12]],
+    p.report.common.models.map((m: Any) => m.texture),
+  );
+  for (const ext of ["CBL", "MUS", "ULB"]) {
     assertEquals(
-      p.report.files.find((f: { ext: string }) => f.ext === ext)?.source,
+      source(ext),
       "template",
       `${ext} is carried from the template`,
     );
   }
+  // the HUD's stock ship is the level's, where the GAM's sprite table puts it:
+  // (0, 0x260) of the atlas, the top left of texture 38, the white ship
+  assertEquals(p.report.common.hud?.stockShip.textures, [38]);
+  const cgr = p.files.find((f) => f.ext === "CGR")!.data;
+  const word = (texture: number, x: number, y: number) => {
+    const at = texture * N64_TEXTURE_BYTES + (y * 64 + x) * 2;
+    return (cgr[at] << 8) | cgr[at + 1];
+  };
+  assertEquals(word(38, 8, 8), 0xffff, "white, opaque");
+  assertEquals(word(38, 20, 8), 0, "the icon is 16 wide");
   assertEquals(
     p.report.files.find((f: { ext: string }) => f.ext === "0BL")?.source,
     "records",
@@ -1260,18 +1328,58 @@ Deno.test("a template project underlies the art and the art never covers a paint
     p.report.files.find((f: { ext: string }) => f.ext === "0GR")?.source,
     "art over template",
   );
-  // a template's odd-sized file (the prototype's GAM is 1,360 bytes, not 1,369) is written as it is
-  const short = template.map((
-    f,
-  ) => (f.ext === "GAM"
-    ? { ext: "GAM", data: new Uint8Array(1360).fill(1) }
-    : f)
+  // the prototype's GAM, nine bytes short, is written in the cartridge's
+  // layout: the nine bytes back at 0xA8
+  const proto = new Uint8Array(PROTOTYPE_GAM_BYTES);
+  proto.set(marked.subarray(0, PROTOTYPE_GAM_GAP));
+  proto.set(marked.subarray(PROTOTYPE_GAM_GAP + 9), PROTOTYPE_GAM_GAP);
+  const withProto = (gamData: Uint8Array) =>
+    buildN64ProjectFromLevel(tinyLevel(), tinyArt(), {
+      template: template.map((f) =>
+        f.ext === "GAM" ? { ext: "GAM", data: gamData } : f
+      ),
+    });
+  const fromProto = withProto(proto);
+  const repaired = fromProto.files.find((f) => f.ext === "GAM")!.data;
+  assertEquals(
+    repaired,
+    gam,
+    "the same GAM as the cartridge-layout template's",
   );
   assertEquals(
-    buildN64ProjectFromLevel(tinyLevel(), tinyArt(), { template: short }).files
-      .find((f) => f.ext === "GAM")!.data.length,
-    1360,
+    fromProto.report.files.find((f: { ext: string }) => f.ext === "GAM")
+      ?.source,
+    "template in the cartridge's layout, final stage and ship set",
   );
+  assertEquals(fromProto.report.gam.repaired, true);
+  // a GAM of a length neither layout explains is carried, its final stage set
+  const odd = withProto(new Uint8Array(100).fill(1));
+  const oddGam = odd.files.find((f) => f.ext === "GAM")!.data;
+  assertEquals(oddGam.length, 100);
+  assertEquals([oddGam[0], oddGam[1]], [0, 1]);
+  assert(odd.warnings.some((w) => w.includes("template GAM is 100 bytes")));
+  assertEquals(odd.report.common.hud, null, "its sprites unread");
+});
+
+Deno.test("GAM's sprite atlas is two textures to a 32-px band, and a sprite painted there is no longer blank", () => {
+  assertEquals(spriteAtlasTexel(0, 0x260), { texture: 38, x: 0, y: 0 });
+  assertEquals(spriteAtlasTexel(16, 0x260), { texture: 38, x: 16, y: 0 });
+  assertEquals(spriteAtlasTexel(64 + 5, 0x1c0 + 3), {
+    texture: 29,
+    x: 5,
+    y: 3,
+  });
+  assertEquals(spriteAtlasTexel(128, 0), null, "128 wide");
+  assertEquals(spriteAtlasTexel(0, 40 * 16), null, "40 textures, 640 high");
+  const sheet = new TextureSheet(N64_CGR_TEXTURES);
+  assertEquals(
+    sheet.paintAtlas(60, 0x260, solid(8, 4, [255, 255, 255])),
+    [38, 39],
+    "a sprite across a band's two textures",
+  );
+  assertEquals(sheet.blank[38], false);
+  assertEquals(sheet.free, N64_CGR_TEXTURES - 2);
+  assertEquals(sheet.paintAtlas(120, 0, solid(16, 16, [1, 1, 1])), null);
 });
 
 Deno.test("more stages than a project holds are dropped with a warning, and a full sheet is warned about", () => {

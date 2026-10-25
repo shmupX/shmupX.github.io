@@ -24,15 +24,20 @@
 //              one item), its frames' model numbers, score, HP, speed, a
 //              shot when it fires, the item it drops; the boss with the
 //              stage-clear flag; the layout of every cell on the map layer
-//              at the scroll its row comes on at, entries numbered from 20;
+//              at the scroll its row comes on at, in the ship's plane (its
+//              height, N64_PLANE_Y), entries numbered from 20;
 //              the opening scene (N64_STAGE_SCENE) and the stage's story as
 //              portrait effects (storyEffects), no other effect; the map
 //              carried from a template stage or left unset
 //   CMD, CBL   the ship and the item icons as common models 10 and 12..18 —
 //              the slots the cartridge's own game uses — with the seven item
-//              entries pointing at them; a template's bytes when given
-//   GAM        a template's with its final stage set, else the cartridge's
-//              initial game (records.js gamDefaults) with the final stage set
+//              entries pointing at them; over a template's CMD in those
+//              slots, its CBL carried (the sample's items name 12..18)
+//   GAM        a template's in the cartridge's layout (the prototype's is
+//              nine bytes short: records.js repairPrototypeGam), else the
+//              cartridge's initial game (gamDefaults); the final stage set,
+//              the player on model 10, and the HUD's stock ship — a sprite
+//              in the CGR sheet where the GAM points — the level's ship
 //   MUS, ULB   a template's, else blank songs and an empty library
 //
 // Where a number here is a reading rather than a measurement it is named in
@@ -40,10 +45,12 @@
 // numbers in an entry are 20 + the stage's model slot (the sample game's
 // stage entries name 20..148 almost exclusively and its seven items 12..18,
 // so the common CMD is read as coming first — booted, a sprite's entry
-// shows its model); layout x runs about -400..400 and the frame offset is a
+// shows its model); a layout entry's y is its height, and only an enemy at
+// the ship's (800 under the stage's opening altitude) can be shot, its x
+// within the ship's reach (booted 2026-10-25), and the frame offset is a
 // scroll distance counting DOWN from the start, entries in descending order
 // (measured on the sample's three stages, the scroll booted). Booted in
-// mupen64plus-next 2026-10-20/21: FORMAT-N64.md "What the writer does not
+// mupen64plus-next 2026-10-20/21/25: FORMAT-N64.md "What the writer does not
 // write" is the list of what is still carried rather than built.
 //
 // Environment-neutral ESM (Node + browser).
@@ -76,10 +83,14 @@ import {
     EFFECT_ENTRIES,
     encodeGam,
     ENEMY_SCORE_TABLE,
+    GAM_OFFSETS,
+    GAM_SPRITES,
     LAYOUT_MAX_ENEMIES,
     MAP_TEXTURE_UNSET,
     MD_MODEL_COUNT,
+    parseCmdFile,
     parseStageBl,
+    repairPrototypeGam,
 } from "./records.js";
 import { bossBodyFrames, bossWeapons, splitBossStage2, weaponTextures } from "../boss-stage2.js";
 
@@ -124,9 +135,48 @@ export const N64_FRAMES_PER_ENEMY = 4;
  */
 export const N64_MODEL_NUMBER_BASE = N64_CMD_MODELS;
 
-/** The common model slots the cartridge's own game gives the ship (GAM player.models[0] = 10) and the seven items (CBL's item entries name 12..18). (likely) */
+/** The common model slots the cartridge's own game gives the ship (GAM player.models[0] = 10) and the seven items (CBL's item entries name 12..18; so do the sample's). (likely) */
 export const N64_PLAYER_MODEL = 10;
 export const N64_ITEM_MODELS = Object.freeze([12, 13, 14, 15, 16, 17, 18]);
+
+/**
+ * The scale every sprite flies at in the ship's plane (N64_PLANE_Y): the
+ * ship's in GAM and every enemy entry's. A sprite is a billboard of
+ * N64_UNITS_PER_PIXEL units a pixel, and the ship's plane is near the
+ * camera: booted 2026-10-25, gs's 32 x 50 ship at 100 drew about 82 px
+ * across and an invader at the ship's height about as much over, so 40 draws
+ * either near its own size. The cartridge's own 66 and the sample's 61 are
+ * for their 3D ships. (measured)
+ */
+export const N64_SPRITE_SCALE = 40;
+
+/**
+ * GAM's sprite tables (shots, blasts, the HUD's stock icons …) address the
+ * CGR sheet as an atlas 128 px wide: a band of 32 px is two textures side
+ * by side, texture 2k on the left and 2k + 1 on the right. The cartridge's
+ * default coordinates (y 0x1C0..0x260) fall on textures 28..39, which is
+ * where the sample's sheet keeps its shots and blasts, and its 16 x 16 stock
+ * ship and bomb sit at (0, 0x260) and (16, 0x260): the top left of texture
+ * 38. (confirmed by the sample's art)
+ */
+export const N64_SPRITE_ATLAS_WIDTH = 2 * TILE_WIDTH;
+/** The HUD's stock icons, one per life and per bomb: 16 x 16. (confirmed by the sample's art) */
+export const N64_STOCK_ICON = 16;
+
+/**
+ * A sprite-atlas pixel -> the texture it lies in and where in it, or null
+ * outside the atlas's `textures`.
+ * @param {number} x
+ * @param {number} y
+ * @param {number} [textures]
+ * @returns {{texture: number, x: number, y: number}|null}
+ */
+export function spriteAtlasTexel(x, y, textures = N64_CGR_TEXTURES) {
+    if (x < 0 || y < 0 || x >= N64_SPRITE_ATLAS_WIDTH) return null;
+    const texture = Math.floor(y / TILE_HEIGHT) * 2 + Math.floor(x / TILE_WIDTH);
+    if (texture >= textures) return null;
+    return { texture, x: x % TILE_WIDTH, y: y % TILE_HEIGHT };
+}
 
 /**
  * Whether an art frame is an item icon. The writer lays the first eight it
@@ -142,25 +192,30 @@ export function isN64ItemFrame(key) {
 }
 
 /**
- * A sprite pixel in model units. Booted, the sample's ship model (264 units
- * across) shows about 27 px wide where the player flies, so 10 units a pixel
- * draws a sprite there near its own size; 32 px becomes a 320-unit quad,
- * about the sample's ordinary enemies. (likely)
+ * A sprite pixel in model units: 32 px becomes a 320-unit quad, about the
+ * sample's ordinary enemies, and at N64_SPRITE_SCALE in the ship's plane a
+ * sprite draws near its own size (booted). (likely)
  */
 export const N64_UNITS_PER_PIXEL = 10;
 
-/** The layout's x across the screen: the sample's map layers run about -400..430. (likely) */
-export const N64_LAYOUT_HALF_WIDTH = 400;
-/** Where an enemy is placed on the map plane: the sample's second stage opens its enemies at y 240. (likely) */
-export const N64_SPAWN_Y = 240;
 /**
- * Where the boss is placed: y 400 is where the sample's second stage puts its
- * one layer-A object — an invincible, scoreless one early in the stage, not a
- * boss. The samples' own bosses are not placed by their layouts at all (the
- * third stage ends by a stage-clear effect), so this is a reading, held
- * because an entry has to go somewhere. (likely)
+ * The layout's x across the screen: the ship's own reach, x -223..223
+ * (booted 2026-10-25), less a little. The sample's map layers run about
+ * -400..430, but their enemies fly below the ship, where the view is wider;
+ * in the ship's plane an enemy past its reach could not be shot. (measured)
  */
-export const N64_BOSS_Y = 400;
+export const N64_LAYOUT_HALF_WIDTH = 220;
+/**
+ * Where every enemy and the boss are placed: in the ship's plane. A layout
+ * entry's y is its height over the ground, and the ship and its shots fly
+ * at the height the stage's altitude effect sets — 800 under
+ * N64_STAGE_SCENE's altitude 10 (booted 2026-10-25: altitude 5 put the ship
+ * at 0, 8 at 400, 10 at 800). An enemy at 240, where this writer placed them
+ * before, passed under the shot and under the ship; at 800 it is shot down.
+ * The entry's own altitude byte (0, 4 or 8) made no difference at either
+ * height. (measured)
+ */
+export const N64_PLANE_Y = 800;
 /**
  * A placement row (16 px) in scroll units. A layout's "frame" is how far its
  * layer has scrolled, and a stage scrolls 20 a frame at 30 frames a second
@@ -566,6 +621,35 @@ export class TextureSheet {
         this.placed.push({ key, index: indices[0] ?? 0, cols: textures.length, rows: 1, textures: textures.length, indices, reclaimed });
         return { indices, reclaimed };
     }
+
+    /**
+     * A sprite painted at (x, y) of the sheet read as GAM's sprite atlas
+     * (spriteAtlasTexel), over whatever is there, its clear pixels clearing
+     * it: a HUD icon belongs where the GAM points, not where room is. The
+     * textures it touches are no longer blank, so no frame is placed over it.
+     * @param {{w: number, h: number, rgba: Uint8Array|Uint8ClampedArray}} sprite
+     * @returns {number[]|null}  the textures painted, or null when the sprite runs off the atlas
+     */
+    paintAtlas(x, y, sprite) {
+        const words = encodeRgba5551(sprite);
+        const spots = [];
+        for (let py = 0; py < sprite.h; py++) {
+            for (let px = 0; px < sprite.w; px++) {
+                const t = spriteAtlasTexel(x + px, y + py, this.count);
+                if (!t) return null;
+                spots.push([t, (py * sprite.w + px) * 2]);
+            }
+        }
+        const touched = new Set();
+        for (const [t, w] of spots) {
+            const at = t.texture * TILE_BYTES + (t.y * TILE_WIDTH + t.x) * 2;
+            this.bytes[at] = words[w];
+            this.bytes[at + 1] = words[w + 1];
+            this.blank[t.texture] = false;
+            touched.add(t.texture);
+        }
+        return [...touched];
+    }
 }
 
 /** A model table of `count` slots: models and the texture index each shows. */
@@ -642,7 +726,7 @@ export function enemyEntryFromEditor(rec, { slots, size, frames, drop = null, bo
             frameSpeed: animated ? nearestIndex(ANIM_PERIOD_TABLE, 60 / frameRate) : 0x7f,
             models: animationModels(slots),
         },
-        scale: 100,
+        scale: N64_SPRITE_SCALE,
         motion: { type: boss ? 1 : 0, speed1: nearestIndex(N64_SPEED_TABLE, speed) },
         hit: {
             lockOn: boss,
@@ -746,23 +830,51 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
     };
     const cgr = sheetFrom("CGR", N64_CGR_TEXTURES);
     const common = { placed: [], missed: [], models: [], scaled: [] };
+    /** @type {{stockShip: {x: number, y: number, textures: number[], key: string}}|null} */
+    let hud = null; // the HUD sprites painted where the GAM points
     const cmd = new Map(); // common slot -> {model, texture}
     const placeCommon = (key, grid) => {
         const at = cgr.place(key, grid);
         if (at === null) common.missed.push(key);
         return at;
     };
-    for (const [key, pic] of [["title1", title1], ["title2", title2]]) {
-        const f = asFrame(pic);
-        if (!f) continue;
-        placeCommon(key, textureGrid(fitRgba(f, N64_TITLE_COLS * TILE_WIDTH, N64_TITLE_ROWS * TILE_HEIGHT)));
-    }
     const frameNames = (v) => (Array.isArray(v) ? v : []); // a hand-edited record may carry a string here; the schema says a list
     let shipFrames = frameNames(((level && level.playerData) || {}).texture).map(lookup).filter(Boolean);
     let shipSource = "level";
     if (!shipFrames.length) {
         shipSource = "duke";
         shipFrames = decodePlayerArt().filter((f) => /^duke_\d$/.test(f.key)).slice(0, 2);
+    }
+
+    // --- GAM, first for where its sprites are ---
+    // A template's in the cartridge's layout (the prototype's is nine bytes
+    // short and read as it is would misplace everything after item 2's
+    // score: repairPrototypeGam), else the cartridge's initial game. A
+    // template GAM of a length neither layout explains is carried as it is
+    // with only its final stage set.
+    const templateGam = templateFiles.get("GAM") || null;
+    const repaired = templateGam ? repairPrototypeGam(templateGam) : null;
+    if (templateGam && !repaired) warn(`template GAM is ${templateGam.length} bytes, neither the cartridge's ${DOCUMENTED_SIZES.GAM} nor the prototype's; carried as it is, its ship and sprites unread`);
+    const gam = Uint8Array.from(templateGam ? repaired ?? templateGam : encodeGam({}));
+    const gamRepaired = !!repaired && repaired !== templateGam;
+    const gamKnown = gam.length === DOCUMENTED_SIZES.GAM;
+    const u16 = (b, at) => (b[at] << 8) | b[at + 1];
+
+    // The HUD's stock ship — one per life — is the level's ship, at the
+    // sprite the GAM names for it, before any frame is placed so none lands
+    // under it.
+    if (gamKnown && shipFrames.length) {
+        const k = GAM_SPRITES.indexOf("playerStockShip");
+        const x = u16(gam, GAM_OFFSETS.spriteX + k * 2), y = u16(gam, GAM_OFFSETS.spriteY + k * 2);
+        const textures = cgr.paintAtlas(x, y, fitRgba(shipFrames[0], N64_STOCK_ICON, N64_STOCK_ICON));
+        if (textures) hud = { stockShip: { x, y, textures, key: shipFrames[0].key } };
+        else warn(`the GAM puts the stock ship at (${x}, ${y}), off the CGR sheet's sprite atlas; the HUD keeps what is there`);
+    }
+
+    for (const [key, pic] of [["title1", title1], ["title2", title2]]) {
+        const f = asFrame(pic);
+        if (!f) continue;
+        placeCommon(key, textureGrid(fitRgba(f, N64_TITLE_COLS * TILE_WIDTH, N64_TITLE_ROWS * TILE_HEIGHT)));
     }
     spreadFrames(shipFrames, Math.min(2, shipFrames.length)).forEach((f, i) => {
         const t = spriteTexture(f);
@@ -782,9 +894,6 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         }
     });
     common.placed = cgr.placed;
-    // The report names the common models only when CMD is written here; a
-    // template's CMD is carried as it is, and then these show nothing.
-    common.models = templateFiles.has("CMD") ? [] : [...cmd.entries()].map(([slot, m]) => ({ slot, texture: m.texture, key: m.key }));
 
     // --- a boss's second stage ---
     // A boss here is an enemy entry with the stage-clear flag: one set of
@@ -946,7 +1055,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             const index = entryOf.get(`${c.letter}${c.drop}`);
             if (index === undefined) continue;
             const x = width <= 1 ? 0 : Math.round(-N64_LAYOUT_HALF_WIDTH + (c.col * 2 * N64_LAYOUT_HALF_WIDTH) / (width - 1));
-            placements.push({ enemy: N64_ENEMY_NUMBER_BASE + index, x, y: N64_SPAWN_Y, frame: -(c.row * N64_SCROLL_PER_ROW) });
+            placements.push({ enemy: N64_ENEMY_NUMBER_BASE + index, x, y: N64_PLANE_Y, frame: -(c.row * N64_SCROLL_PER_ROW) });
         }
 
         // Descending frame order, as the sample stages keep theirs; at most
@@ -972,7 +1081,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
             } else {
                 bossEntry = entries.length;
                 entries.push(enemyEntryFromEditor(boss, { slots, size, frames: kept.length, boss: true }));
-                placements.push({ enemy: N64_ENEMY_NUMBER_BASE + bossEntry, x: 0, y: N64_BOSS_Y, frame: -((lastRow + BOSS_ROW_GAP) * N64_SCROLL_PER_ROW) });
+                placements.push({ enemy: N64_ENEMY_NUMBER_BASE + bossEntry, x: 0, y: N64_PLANE_Y, frame: -((lastRow + BOSS_ROW_GAP) * N64_SCROLL_PER_ROW) });
             }
         }
 
@@ -1052,7 +1161,14 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
     // skipped). The one sample — final stage 2 with stages 0, 1, 2 — cannot
     // tell a stage number from an index; they part only at the eighth. (likely)
     const finalStage = STAGES[stagePlan.length - 1];
-    if (!templateFiles.has("CMD")) {
+    // The ship and the item icons are the level's: on their own in a CMD
+    // written here, or over a template's in its slots 10 and 12..18 — its
+    // other models, the shield's among them, kept. A template CMD that cannot
+    // be read is carried as it is, and then the ship and the items show its
+    // models.
+    let cmdOverTemplate = false;
+    const templateCmd = templateFiles.get("CMD") || null;
+    if (!templateCmd) {
         const cmdModels = [], cmdTextures = [];
         for (const [slot, m] of cmd) {
             cmdModels[slot] = m.model;
@@ -1061,13 +1177,28 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         for (let s = 0; s < cmdModels.length; s++) if (cmdModels[s] === undefined) cmdModels[s] = null;
         for (let s = 0; s < cmdTextures.length; s++) if (cmdTextures[s] === undefined) cmdTextures[s] = 0;
         built.set("CMD", buildCmdFile(cmdModels, cmdTextures));
+    } else if (cmd.size) {
+        try {
+            const t = parseCmdFile(templateCmd);
+            for (const [slot, m] of cmd) {
+                t.models[slot] = m.model;
+                t.textureIndices[slot] = m.texture;
+            }
+            built.set("CMD", buildCmdFile(t.models, t.textureIndices));
+            cmdOverTemplate = true;
+        } catch (e) {
+            warn(`the template's CMD could not be read (${e.message}); carried as it is, so the ship and the items show its models`);
+        }
     }
+    const cmdOurs = !templateCmd || cmdOverTemplate;
+    common.models = cmdOurs ? [...cmd.entries()].map(([slot, m]) => ({ slot, texture: m.texture, key: m.key })) : [];
     if (!templateFiles.has("CBL")) {
         // The item entries point at the common models written above; when a
-        // template's CMD is carried instead, those slots hold its models, not
-        // the icons, so the items show nothing rather than something else.
+        // template's CMD is carried as it is, those slots hold its models,
+        // not the icons, so the items show nothing rather than something
+        // else. A template's CBL is carried: the sample's items name 12..18.
         const items = {};
-        if (!templateFiles.has("CMD")) {
+        if (cmdOurs) {
             CBL_ITEMS.forEach((item, k) => {
                 const slot = N64_ITEM_MODELS[k];
                 if (cmd.has(slot)) items[item] = itemEntry(slot, N64_ITEM_SCALES[k]);
@@ -1075,20 +1206,20 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         }
         built.set("CBL", buildCbl({ items }));
     }
-    if (templateFiles.has("GAM")) {
-        const gam = Uint8Array.from(templateFiles.get("GAM"));
-        if (gam.length) gam[0] = finalStage;
-        built.set("GAM", gam);
-    } else {
-        // The cartridge's initial game, with the final stage set and the
-        // player's four frames on the ship written above (its own [10, 0, 0,
-        // 0] would show model 0, an empty slot here, for three frames). What
-        // it still names and this does not write — the shield's models 7 and
-        // 5, the title settings' textures — is in FORMAT-N64.md's list.
-        const gam = { finalStage };
-        if (cmd.has(N64_PLAYER_MODEL)) gam.player = { models: [N64_PLAYER_MODEL, N64_PLAYER_MODEL, N64_PLAYER_MODEL, N64_PLAYER_MODEL] };
-        built.set("GAM", encodeGam(gam));
+    // The GAM read above, its final stage set and — when the ship's model is
+    // the level's — the player's four frames on it at N64_SPRITE_SCALE (the
+    // cartridge's own [10, 0, 0, 0] would show model 0 for three frames, the
+    // sample's 149 a stage model this project does not write). What it still
+    // names and this does not write — the shield's models, the title
+    // settings' textures — is in FORMAT-N64.md's list.
+    const shipOurs = cmdOurs && cmd.has(N64_PLAYER_MODEL);
+    if (gam.length) gam[GAM_OFFSETS.finalStage] = finalStage;
+    if (gamKnown && shipOurs) {
+        gam[GAM_OFFSETS.playerScale] = N64_SPRITE_SCALE >> 8;
+        gam[GAM_OFFSETS.playerScale + 1] = N64_SPRITE_SCALE & 0xff;
+        gam.fill(N64_PLAYER_MODEL, GAM_OFFSETS.playerModels, GAM_OFFSETS.playerModels + 4);
     }
+    built.set("GAM", gam);
     if (!templateFiles.has("MUS")) built.set("MUS", buildMusFile([]));
     if (!templateFiles.has("ULB")) built.set("ULB", buildUlbFile([], []));
 
@@ -1108,7 +1239,9 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         } else if (built.has(ext)) {
             data = built.get(ext);
             if (sheets.has(ext)) source = fromTemplate ? "art over template" : "art";
-            else if (ext === "GAM" && fromTemplate) source = "template, final stage set";
+            else if (ext === "GAM" && fromTemplate) {
+                source = `template${gamRepaired ? " in the cartridge's layout" : ""}, final stage${gamKnown && shipOurs ? " and ship" : ""} set`;
+            } else if (ext === "CMD" && fromTemplate) source = "template, ship and items set";
             else source = "records";
         } else if (fromTemplate) {
             data = fromTemplate;
@@ -1129,7 +1262,8 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         template: templateFiles.size ? [...templateFiles.keys()] : null,
         ship: shipSource,
         finalStage,
-        common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, scaled: common.scaled, models: common.models },
+        common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, scaled: common.scaled, models: common.models, hud },
+        gam: { repaired: gamRepaired, ship: gamKnown && shipOurs },
         stages: stageReports,
         // How the project's bosses carry their second stages (boss-stage2.js).
         transform: splits.length

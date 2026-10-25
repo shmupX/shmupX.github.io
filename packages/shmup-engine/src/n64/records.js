@@ -1623,11 +1623,50 @@ export function encodeGam(gam = {}) {
 }
 
 /**
+ * The prototype disk's GAM (SAMPLEZ1's and SAMP's, byte-identical): the
+ * cartridge's layout less nine bytes. The translation's readme warns the
+ * prototype's GAM has "slightly different, incompatible formatting"; read
+ * against the cartridge's own initial GAM, everything up to and including
+ * item 2's score (0xA7) sits where the cartridge has it and everything from
+ * the byte at 0xA8 on sits nine bytes early — the second score table, the
+ * player's and the shield's settings, both sprite tables, the vibration
+ * bytes, the title words, the ending, the lights, the title background and
+ * the songs all land on the cartridge's offsets once nine bytes are put back
+ * at 0xA8, the run the document leaves as "…" after item 2's score
+ * (confirmed by the alignment). The cartridge reads a disk's GAM in its own
+ * layout, so the prototype's, read as it is, gives a ship of scale 11 on
+ * model 0 and sprite coordinates half a word out (booted 2026-10-24).
+ */
+export const PROTOTYPE_GAM_BYTES = DOCUMENTED_SIZES.GAM - 9;
+/** Where the prototype's GAM lacks the cartridge's nine bytes. */
+export const PROTOTYPE_GAM_GAP = 0xa8;
+
+/**
+ * A GAM in the cartridge's layout: a prototype GAM (PROTOTYPE_GAM_BYTES)
+ * with its nine bytes put back at PROTOTYPE_GAM_GAP — the cartridge's own
+ * initial values there, zero — or a 0x559-byte GAM as it is; null for any
+ * other length, which neither layout explains.
+ * @param {Uint8Array} bytes
+ * @returns {Uint8Array|null}
+ */
+export function repairPrototypeGam(bytes) {
+    if (!(bytes instanceof Uint8Array)) throw new Error("GAM: bytes are a Uint8Array");
+    if (bytes.length === DOCUMENTED_SIZES.GAM) return bytes;
+    if (bytes.length !== PROTOTYPE_GAM_BYTES) return null;
+    const missing = DOCUMENTED_SIZES.GAM - PROTOTYPE_GAM_BYTES;
+    const out = new Uint8Array(DOCUMENTED_SIZES.GAM);
+    out.set(bytes.subarray(0, PROTOTYPE_GAM_GAP));
+    out.set(gamDefaults().unknownA8.subarray(0, missing), PROTOTYPE_GAM_GAP);
+    out.set(bytes.subarray(PROTOTYPE_GAM_GAP), PROTOTYPE_GAM_GAP + missing);
+    return out;
+}
+
+/**
  * A GAM -> its settings, the shape of gamDefaults() plus `missing`: the
  * names of the fields a short buffer did not reach, which read as null.
- * Never throws for length — the prototype disk's own GAM files are 1,360
- * bytes, nine short, and the translation notes their format differs — so a
- * caller sees what is there and what is not.
+ * Never throws for length, so a caller sees what is there and what is not —
+ * though a prototype GAM read here is misread from 0xA8 on; repair it first
+ * (repairPrototypeGam).
  * @param {Uint8Array} bytes
  */
 export function decodeGam(bytes) {

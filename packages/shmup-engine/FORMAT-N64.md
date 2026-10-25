@@ -594,40 +594,48 @@ frame it came from, on tile 1 set to the whole texture, its UVs the sprite's
 own texels with the top row at the far edge), its texture number in the
 model's slot (40 + the `GR` tile, `N64_GR_TEXTURE_BASE`), and an **enemy entry**
 per drop digit its cells carry (`enemyEntryFromEditor()`: score and HP from the
-record, the four frame model numbers as 20 + the slot, the motion speed, a
-bullet-1 shot aimed at the player when the record names an interval, the item
-the digit maps to — the three shot power-ups the shot item, 4 bonus1, 5 the
-bomb, 9 the shield); then the boss's idle frames and an entry with the
-stage-clear and lock-on flags, its HP capped at 15 (15 when the record names
-none) and a fixed motion. The **layout** puts every cell on the map layer, as
-enemy number 20 + its entry (`N64_ENEMY_NUMBER_BASE`; 0-19 are the common `CBL`
-enemies), at x across -400..400 by column and y 240, at the scroll its row
-comes on at (`-(row × 160)`, `N64_SCROLL_PER_ROW`: a stage scrolls 600 a
-second and the Saturn 60 px, so a 16-px row is 160; the row from the Saturn
-writer's `FIRST_SPAWN_ROW`/`ROW_STEP` or the stage's `waveRows`; a "frame"
-here is a scroll distance, see "A level's story"), the boss at x 0, y 400
-after the last wave, entries in descending frame order; the map settings and
-map entries come from a template stage's `BL` when there is one, else the map
-is unset; the effects are the opening scene every stage gets
+record, the four frame model numbers as 20 + the slot, scale 40
+(`N64_SPRITE_SCALE`), the motion speed, a bullet-1 shot aimed at the player
+when the record names an interval, the item the digit maps to — the three shot
+power-ups the shot item, 4 bonus1, 5 the bomb, 9 the shield); then the boss's
+idle frames and an entry with the stage-clear and lock-on flags, its HP capped
+at 15 (15 when the record names none) and a fixed motion. The **layout** puts
+every cell on the map layer, as enemy number 20 + its entry
+(`N64_ENEMY_NUMBER_BASE`; 0-19 are the common `CBL` enemies), at x across
+-220..220 by column (`N64_LAYOUT_HALF_WIDTH`, the ship's reach) and y 800 (the
+ship's height, `N64_PLANE_Y` — "The ship, its HUD and its shot"), at the
+scroll its row comes on at (`-(row × 160)`, `N64_SCROLL_PER_ROW`: a stage
+scrolls 600 a second and the Saturn 60 px, so a 16-px row is 160; the row from
+the Saturn writer's `FIRST_SPAWN_ROW`/`ROW_STEP` or the stage's `waveRows`; a
+"frame" here is a scroll distance, see "A level's story"), the boss at x 0, y
+800 after the last wave, entries in descending frame order; the map settings
+and map entries come from a template stage's `BL` when there is one, else the
+map is unset; the effects are the opening scene every stage gets
 (`N64_STAGE_SCENE`, "A model's texture") and a stage's story ("A level's
-story"). The common files: the ship and the item icons as common models 10 and 12..18 (the slots the cartridge's game
-uses) in `CMD`, the seven item entries pointing at them in `CBL`, `GAM` with the
-final stage set (a template's `GAM` is carried with only that byte changed — the
-prototype's 1,360-byte ones included), blank songs in `MUS`, an empty `ULB`; a
-template's `CMD`, `CBL`, `MUS` and `ULB` are carried instead. The report says
-per file whether it is `art`, `art over
-template`, `records`, `template`,
-`template, final stage set` or `blank`, per sheet how many textures were painted
-by the template, used, free, missed and scaled, and per stage its `records`:
-entries, models, placements, the boss's entry and whether the map is the
-template's. The limits are the format's: 180 entries, 130 models, 1,000
-placements and 260 textures a stage, each warned about when it runs out. A
-template is a project's thirty files decompressed —
-`templateFromDisk(image, name)` gives the named or the first project of a disk
-that way. Every number here that is not a measurement is a constant with its
-evidence beside it (`N64_MODEL_NUMBER_BASE`, `N64_LAYOUT_HALF_WIDTH`,
-`N64_SPAWN_Y`, `N64_UNITS_PER_PIXEL`, the speed, hit-size and drop tables), all
-**likely**; what a boot settled is in the next section.
+story"). The common files: the ship and the item icons as common models 10
+and 12..18 (the slots the cartridge's game uses) in `CMD` — over a template's
+`CMD` in those slots, its other models kept — the seven item entries pointing
+at them in `CBL` (a template's `CBL` is carried: the sample's items name
+12..18); `GAM` the template's in the cartridge's layout (`repairPrototypeGam()`
+for the prototype's 1,360-byte one) or the cartridge's initial game, with the
+final stage set, the player's four frames on model 10 at scale 40, and the
+HUD's stock ship — a 16×16 sprite in `CGR` where the `GAM` points — the
+level's ship; blank songs in `MUS`, an empty `ULB`, a template's `MUS` and
+`ULB` carried instead. The report says per file whether it is `art`,
+`art over template`, `records`, `template`, `template, ship and items set`,
+`template, final stage and ship set` (`… in the cartridge's layout, …` when
+repaired) or `blank`, per sheet how many textures were painted by the
+template, used, free, missed and scaled, the HUD sprite it painted
+(`common.hud`), and per stage its `records`: entries, models, placements, the
+boss's entry and whether the map is the template's. The limits are the
+format's: 180 entries, 130 models, 1,000 placements and 260 textures a stage,
+each warned about when it runs out. A template is a project's thirty files
+decompressed — `templateFromDisk(image, name)` gives the named or the first
+project of a disk that way. Every number here that is not a measurement is a
+constant with its evidence beside it (`N64_MODEL_NUMBER_BASE`,
+`N64_UNITS_PER_PIXEL`, the speed, hit-size and drop tables), all **likely**;
+`N64_PLANE_Y`, `N64_LAYOUT_HALF_WIDTH` and `N64_SPRITE_SCALE` are measured;
+what the boots settled is in the sections after.
 
 **`exportLevelToDdd(level, art, options)`** — the project options above plus
 `disk`, `template`, `format`, `systemArea` — is the one call: the project onto
@@ -666,11 +674,11 @@ line says how many stages open on it. No disk has been put on hardware.
 
 **What the writer does not write** — the list a future session starts from:
 
-- where a placement should go: x ±400 puts gs's columns in the middle third of
-  the screen where the ship flies, and layout y reads as height (rows at y 100
-  to 700 came on smaller and nearer the horizon as y fell), so whether 240 is
-  the ship's own height, and whether a wider x would suit a level better, is
-  open — the sample's map layers run ±627;
+- placements off the ship's plane: every enemy goes at the ship's height, so
+  nothing flies above or below it as the sample's do (the sample's map layers
+  run ±627 at heights -120..592); the altitude table past its three measured
+  points, what an entry's own altitude byte does, and whether an enemy that
+  touches the ship kills it are open ("The ship, its HUD and its shot");
 - a tile's `offset` beyond 0 (the selection's corner in 4×4 blocks, 0x20 a
   row): the writer only ever selects a whole texture, and how a model's texture
   index pages past its first texture is untested;
@@ -681,8 +689,10 @@ line says how many stages open on it. No disk has been put on hardware.
   the wrong frame would be worse than none). The ground a template's map lends
   is not seen with the scene written here: gs's stages are black behind the
   sprites;
-- the template's ship: with a template its `GAM` and `CMD` are carried, and on
-  gs the ship draws as a grey block rather than the sample's own jet;
+- the level's sprites beyond the ship: its shots, blasts and bomb icon are the
+  template's (`GAM`'s sprite tables are carried and only the stock ship is
+  painted over); with no template the `CGR` holds no sprite art at all, so
+  shots and blasts draw nothing there;
 - what a template-less `GAM` still names: it is the cartridge's initial game
   with the final stage set and the player's frames on the ship's model, and it
   keeps the shield's models (7 and 5, empty slots on a disk built here — the
@@ -698,9 +708,9 @@ line says how many stages open on it. No disk has been put on hardware.
   after the arrays;
 - a system area's defect tables (zero) and `PTN64`, which the parity page
   records but does not place;
-- the nine bytes by which the prototype's two `GAM` files fall short of the
-  documented 1,369, and the "slightly different, incompatible formatting" the
-  translation's notes say they have beyond that;
+- what the nine bytes the prototype's `GAM` lacks at 0xA8 hold (put back as
+  the cartridge's zeros), what its byte 0xA8 (0x14, landing at 0xB1) means,
+  and the prototype's own contents of the two "SRAM-only" tables;
 - textures beyond what the blank slots hold: a sheet that runs out is reported,
   not grown — a project has 40 + 8 × 260 textures and no more (a story alone
   takes back a template's art, below);
@@ -819,7 +829,10 @@ its models — the sample's own placement, pacing and camera, the model varied:
 - **Size.** The sample's ship model (264 units across) shows about 27 px wide
   where the player flies; at 10 units a pixel a sprite draws near its own size
   there (`N64_UNITS_PER_PIXEL`), and a frame shrunk to fit its 64×32 texture
-  keeps its own size on screen.
+  keeps its own size on screen. (That ship was the misread `GAM`'s — common
+  model 0 at scale 11 — and the enemies flew below the ship's plane; in that
+  plane a sprite at 10 units a pixel wants scale 40: "The ship, its HUD and its
+  shot".)
 
 So `billboardModel()` (records.js) lies in XZ, wound up, on the whole texture
 by default, and `spriteModel()` sets the UVs to the sprite's own box. Booted on
@@ -829,6 +842,67 @@ blank textures left (gs's stage 0 under `SAMPLEZ1`'s, 252 painted) used to
 drop most of a level's frames; frames now take back the template's art the map
 does not name, from the top of the sheet down, so all fifteen of gs's stage-0
 frames are drawn and its story still finds tiles below 216.
+
+### The ship, its HUD and its shot (booted 2026-10-25)
+
+Recorded by `testdrive:parity`'s 64DD pane, gs's rush on `deza1.NDD` drew its
+ship as a small grey block, the HUD's lives and bombs as coloured noise, and
+its shot went through every enemy. Three causes, each found in RDRAM
+(`scripts/lib/parity-n64dd.ts` has the addresses) and settled by test disks:
+
+- **The template's `GAM` was misread** (confirmed). The prototype's `GAM`
+  (SAMPLEZ1's and SAMP's, byte-identical) is 1,360 bytes, and the cartridge
+  reads a disk's in its own 0x559 layout. Against the cartridge's initial
+  `GAM`, everything up to item 2's score (0xA7) sits where the cartridge has it
+  and everything from 0xA8 on sits nine bytes early: the second score table,
+  the player and the shield, both sprite tables, the vibration bytes, the title
+  words, the ending, the lights, the title background and the songs all land
+  on the cartridge's offsets once nine bytes are put back at 0xA8 — the run the
+  document leaves as "…" after item 2's score. Read as it was, the ship was
+  scale 11 on common model 0 and every sprite coordinate was half a word out:
+  the HUD's noise. `repairPrototypeGam()` (records.js) puts the nine bytes back
+  as the cartridge's own zeros (the prototype's byte at 0xA8, 0x14, lands at
+  0xB1); repaired, the sample's reads player scale 61 on model 149 (a stage
+  slot its own stages fill), shield 11/5/5/5 at 89, three bombs, altitude 9,
+  the stock ship and bomb at (0, 0x260) and (16, 0x260). In the prototype the
+  two "SRAM-only" tables near the end hold bit patterns and the paint tool's
+  palette is zero; a disk ignores the first two and the third is the editor's.
+  The translation's readme warns of the format and says it "can be repaired
+  fairly easily". With it repaired the HUD drew the template's clean icons.
+- **The sprite atlas** (confirmed by the sample's art). `GAM`'s sprite tables —
+  shots, blasts, dust, the sight, the HUD's stock icons — address the `CGR`
+  sheet as an atlas 128 px wide in which a 32-px band is two textures side by
+  side, 2k on the left and 2k + 1 on the right (`spriteAtlasTexel()`). The
+  cartridge's default coordinates, y 0x1C0..0x260, fall on textures 28..39,
+  which is where the sample keeps its shots and blasts, and its 16×16 stock
+  ship and bomb are the top left of texture 38. The writer paints the level's
+  ship there, fitted to 16×16, where the `GAM` puts the stock ship, before any
+  frame is placed (`TextureSheet.paintAtlas()`); booted, the lives drew as
+  three of gs's ships. The bomb icon and every other sprite stay the
+  template's.
+- **The enemies flew under the ship** (measured). A layout entry's y is its
+  height, and the ship and its shots fly at the height the stage's `altitude`
+  effect sets: under the opening scene's altitude 10 the ship's object (x, 800
+  / y, 1) and every shot sat at 800; altitude 8 put it at 400 and 5 at 0 — a
+  table, not one slope. The writer had placed every enemy at 240 and the boss
+  at 400. A test disk of eight one-hit copies of one entry at x 0, one after
+  another: every copy at y 240 passed under the shot whatever its own altitude
+  byte (0, 4 or 8) and layer (map, A or B); every copy at 800 was shot down,
+  and a score counter came up with the first. The ship reaches x ±223. So
+  every enemy and the boss go at 800 (`N64_PLANE_Y`) with a level's columns
+  across ±220 (`N64_LAYOUT_HALF_WIDTH`); booted, a one-hit enemy of gs's in
+  front of the ship went down, scored 200 and dropped its item.
+
+What else follows: the ship is the level's — common model 10 over a
+template's `CMD` (its other models, the shield's among them, kept; the item
+icons into 12..18 the same way), the `GAM`'s player frames all on 10 — and in
+the ship's plane, near the camera, a billboard at scale 100 draws about two
+and a half times its sprite (gs's 32×50 ship came out 82 px across, an invader
+at the ship's height as much over), so the ship and every entry fly at 40
+(`N64_SPRITE_SCALE`). Still open: whether an enemy that touches the ship kills
+it (none did; one passed within 31 units of it, but in the stage's first four
+seconds, when the ship may still be untouchable), the altitude table past its
+three points, and what an entry's altitude byte does.
 
 ### A boss's second stage (`project-write.js`, `src/boss-stage2.js`; researched 2026-10-18)
 

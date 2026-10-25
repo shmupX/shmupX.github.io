@@ -3204,15 +3204,20 @@ describes, through the typed codecs in
 stage's `MD`, an enemy entry per enemy letter (one per drop digit on its cells)
 in its `BL` with score, HP, speed, a shot when the record fires and the item it
 drops, the boss with the stage-clear flag, and the layout — every cell on the
-map layer at x across the screen by column, at the frame its row scrolls in, the
-boss after the last wave; the ship and the item icons as common models 10 and
-12..18 in `CMD` with the item entries in `CBL` pointing at them; `GAM` with the
-final stage set. A donor's first project is the template (`--template NAME`
-picks another): its `CMD`, `CBL`, `MUS` and `ULB` are carried byte for byte, its
-`GAM` with one byte changed, its stage map tables reused; without one, `GAM` is
-the cartridge's own initial game with the final stage set (the codecs' defaults
-re-encode that save byte for byte), `CMD` and `CBL` hold the level's ship and
-item icons and nothing else, the songs are blank and the maps unset. No record
+map layer at the ship's own height, across the ship's reach by column, at the
+frame its row scrolls in, the boss after the last wave; the ship and the item
+icons as common models 10 and 12..18 in `CMD` with the item entries in `CBL`
+pointing at them; `GAM` with the final stage set, the player on the ship's
+model, and the HUD's stock ship painted as the level's ship where the `GAM`'s
+sprite table points into `CGR`. A donor's first project is the template
+(`--template NAME` picks another): its `CBL`, `MUS` and `ULB` are carried byte
+for byte, its `CMD` with the ship and the item icons put in their slots, its
+`GAM` repaired to the cartridge's layout — the prototype's is nine bytes short
+and read as it is gave a tiny ship and a HUD of noise — and its stage map
+tables reused; without one, `GAM` is the cartridge's own initial game (the
+codecs' defaults re-encode that save byte for byte), `CMD` and `CBL` hold the
+level's ship and item icons and nothing else, the songs are blank and the maps
+unset. No record
 names the item icons, so the CLI asks the base atlas for its power-up frames and
 orders the art as the editor's atlas holds it; on gs the editor's disk and
 `build:ddd`'s are byte-identical on a donor. The donor's RAM area, LBA 1418 to
@@ -3223,11 +3228,13 @@ What is **not** written, and what is not known: the writable directory and its
 allocation map, `DEZA3D.SYS` and `DEZA3D.HSC`; any layout effect but a story's
 (no song, no camera, no stage-clear command — the boss's flag is relied on); the
 `MUS` bodies. And every number the records carry that is not a measurement — that a
-stage's model _k_ is model number 20 + _k_, that x ±400 spans the screen and y
-240 is where an enemy appears, the UV units of a billboard — is a reading of the
-document and of the cartridge's sample stages, marked _likely_ in the code, and
-untested: a disk built on the prototype keeps the boot program and the save area
-the cartridge needs for disk mode; one built from nothing is recognised by this
+stage's model _k_ is model number 20 + _k_, the speed and hit-size tables — is a
+reading of the document and of the cartridge's sample stages, marked _likely_ in
+the code; where an enemy flies was measured in a boot on 2026-10-25 (a layout
+entry's y is its height, and only one at the ship's, 800, can be shot), as was
+the scale a sprite wants there. A disk built on the prototype keeps the boot
+program and the save area the cartridge needs for disk mode; one built from
+nothing is recognised by this
 repo's reader and is not expected to put the cartridge into disk mode. Every
 disk is read back through the parser before it is written — the directory, its
 invariants, every new stream decompressed and compared — and the fixture-gated
@@ -3236,7 +3243,9 @@ CI boots none — there is no cartridge or disk fixture in it — but a disk bui
 on the prototype was booted in the launcher's player on 2026-10-20/21: the
 project is listed, loads and plays, its stages open on their story, and its
 enemies come down the screen as sprites lying on the ground plane
-(FORMAT-N64.md "A model's texture"). None has been put on hardware.
+(FORMAT-N64.md "A model's texture"); on 2026-10-25 its ship and HUD drew as the
+level's and its shot brought an enemy down (FORMAT-N64.md "The ship, its HUD
+and its shot"). None has been put on hardware.
 `packages/shmup-engine/FORMAT-N64.md` records the writer's reach, confidence by
 confidence, and its "What the writer does not write" is the list of what a boot
 would settle.

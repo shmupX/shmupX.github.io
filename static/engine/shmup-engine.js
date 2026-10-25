@@ -14533,6 +14533,16 @@ function encodeFace(face = {}, label = "face") {
   b[19] = pack(label, FACE_TEXTURING, f);
   return b;
 }
+function decodeFace(bytes, at = 0) {
+  needBytes("face", bytes, at, FACE_BYTES);
+  return {
+    vertices: [bytes[at], bytes[at + 1], bytes[at + 2]],
+    pad: bytes[at + 3],
+    uv: [0, 1, 2].map((i) => [s16(bytes, at + 4 + i * 4), s16(bytes, at + 6 + i * 4)]),
+    light: [bytes[at + 16], bytes[at + 17], bytes[at + 18]],
+    ...unpack(FACE_TEXTURING, bytes[at + 19])
+  };
+}
 function encodeTile(tile = {}, label = "tile") {
   const t = merge(label, tileDefaults(), tile);
   const b = new Uint8Array(MODEL_TILE_BYTES);
@@ -14542,6 +14552,16 @@ function encodeTile(tile = {}, label = "tile") {
   putU322(b, 12, `${label}.mirrorH`, check(`${label}.mirrorH`, t.mirrorH, 0, 1));
   putU322(b, 16, `${label}.heightPower`, check(`${label}.heightPower`, t.heightPower, 0, 7));
   return b;
+}
+function decodeTile(bytes, at = 0) {
+  needBytes("tile", bytes, at, MODEL_TILE_BYTES);
+  return {
+    offset: u323(bytes, at),
+    mirrorV: u323(bytes, at + 4) !== 0,
+    widthPower: u323(bytes, at + 8),
+    mirrorH: u323(bytes, at + 12) !== 0,
+    heightPower: u323(bytes, at + 16)
+  };
 }
 function encodeModel(model = {}, label = "model") {
   const m = merge(label, modelDefaults(), model);
@@ -14569,6 +14589,31 @@ function encodeModel(model = {}, label = "model") {
   b.set(m.unknownC11, MODEL_OFFSETS.unknownC11);
   return b;
 }
+function decodeModel(bytes, at = 0) {
+  needBytes("model", bytes, at, MODEL_BYTES);
+  const vertexCount = bytes[at];
+  const faceCount = bytes[at + 1];
+  let nv = MODEL_MAX_VERTICES;
+  while (nv > vertexCount && isZero(bytes, at + MODEL_OFFSETS.vertices + (nv - 1) * VERTEX_BYTES, VERTEX_BYTES)) nv--;
+  let nf = MODEL_MAX_FACES;
+  while (nf > faceCount && isZero(bytes, at + MODEL_OFFSETS.faces + (nf - 1) * FACE_BYTES, FACE_BYTES)) nf--;
+  return {
+    vertexCount,
+    faceCount,
+    vertices: fill(nv, () => null).map((_, i) => {
+      const p = at + MODEL_OFFSETS.vertices + i * VERTEX_BYTES;
+      return { x: s16(bytes, p), y: s16(bytes, p + 2), z: s16(bytes, p + 4) };
+    }),
+    faces: fill(nf, () => null).map((_, i) => decodeFace(bytes, at + MODEL_OFFSETS.faces + i * FACE_BYTES)),
+    unknownA2A: u164(bytes, at + MODEL_OFFSETS.unknownA2A),
+    tiles: fill(MODEL_TILES, () => null).map((_, i) => decodeTile(bytes, at + MODEL_OFFSETS.tiles + i * MODEL_TILE_BYTES)),
+    hScale: fill(MODEL_TILES, () => 0).map((_, i) => u164(bytes, at + MODEL_OFFSETS.hScale + i * 2)),
+    vScale: fill(MODEL_TILES, () => 0).map((_, i) => u164(bytes, at + MODEL_OFFSETS.vScale + i * 2)),
+    groups: fill(MODEL_MAX_VERTICES, () => 0).map((_, i) => s82(bytes, at + MODEL_OFFSETS.groups + i)),
+    light: bytes[at + MODEL_OFFSETS.light],
+    unknownC11: bytes.slice(at + MODEL_OFFSETS.unknownC11, at + MODEL_BYTES)
+  };
+}
 var MD_MODEL_COUNT = 130;
 var CMD_MODEL_COUNT = 20;
 var ULB_MODEL_COUNT = 8;
@@ -14588,11 +14633,21 @@ function buildModelFile(label, models, textureIndices, count, size) {
   textureIndices.forEach((t, i) => putU163(out, count * MODEL_BYTES + i * 2, `${label} textureIndices[${i}]`, t ?? 0));
   return out;
 }
+function parseModelFile(label, bytes, count, size) {
+  needBytes(label, bytes, 0, size);
+  return {
+    models: fill(count, () => null).map((_, i) => isZero(bytes, i * MODEL_BYTES, MODEL_BYTES) ? null : decodeModel(bytes, i * MODEL_BYTES)),
+    textureIndices: fill(count, () => 0).map((_, i) => u164(bytes, count * MODEL_BYTES + i * 2))
+  };
+}
 function buildMdFile(models = [], textureIndices = []) {
   return buildModelFile("#MD", models, textureIndices, MD_MODEL_COUNT, DOCUMENTED_SIZES.MD);
 }
 function buildCmdFile(models = [], textureIndices = []) {
   return buildModelFile("CMD", models, textureIndices, CMD_MODEL_COUNT, DOCUMENTED_SIZES.CMD);
+}
+function parseCmdFile(bytes) {
+  return parseModelFile("CMD", bytes, CMD_MODEL_COUNT, DOCUMENTED_SIZES.CMD);
 }
 function buildUlbFile(models = [], textures = []) {
   if (!Array.isArray(textures)) throw new Error("ULB textures are a list");
@@ -15009,6 +15064,19 @@ function encodeGam(gam = {}) {
   putU8(b, o.unknown558, "gam.unknown558", g.unknown558);
   return b;
 }
+var PROTOTYPE_GAM_BYTES = DOCUMENTED_SIZES.GAM - 9;
+var PROTOTYPE_GAM_GAP = 168;
+function repairPrototypeGam(bytes) {
+  if (!(bytes instanceof Uint8Array)) throw new Error("GAM: bytes are a Uint8Array");
+  if (bytes.length === DOCUMENTED_SIZES.GAM) return bytes;
+  if (bytes.length !== PROTOTYPE_GAM_BYTES) return null;
+  const missing = DOCUMENTED_SIZES.GAM - PROTOTYPE_GAM_BYTES;
+  const out = new Uint8Array(DOCUMENTED_SIZES.GAM);
+  out.set(bytes.subarray(0, PROTOTYPE_GAM_GAP));
+  out.set(gamDefaults().unknownA8.subarray(0, missing), PROTOTYPE_GAM_GAP);
+  out.set(bytes.subarray(PROTOTYPE_GAM_GAP), PROTOTYPE_GAM_GAP + missing);
+  return out;
+}
 var SONG_BYTES = 11418;
 var SONG_HEADER_BYTES = 26;
 var SONG_COUNT = 24;
@@ -15134,13 +15202,21 @@ var N64_FRAMES_PER_ENEMY = 4;
 var N64_MODEL_NUMBER_BASE = N64_CMD_MODELS;
 var N64_PLAYER_MODEL = 10;
 var N64_ITEM_MODELS = Object.freeze([12, 13, 14, 15, 16, 17, 18]);
+var N64_SPRITE_SCALE = 40;
+var N64_SPRITE_ATLAS_WIDTH = 2 * TILE_WIDTH;
+var N64_STOCK_ICON = 16;
+function spriteAtlasTexel(x, y, textures = N64_CGR_TEXTURES) {
+  if (x < 0 || y < 0 || x >= N64_SPRITE_ATLAS_WIDTH) return null;
+  const texture = Math.floor(y / TILE_HEIGHT) * 2 + Math.floor(x / TILE_WIDTH);
+  if (texture >= textures) return null;
+  return { texture, x: x % TILE_WIDTH, y: y % TILE_HEIGHT };
+}
 function isN64ItemFrame(key) {
   return /item|powerup|speedup|1up/i.test(key);
 }
 var N64_UNITS_PER_PIXEL = 10;
-var N64_LAYOUT_HALF_WIDTH = 400;
-var N64_SPAWN_Y = 240;
-var N64_BOSS_Y = 400;
+var N64_LAYOUT_HALF_WIDTH = 220;
+var N64_PLANE_Y = 800;
 var N64_SCROLL_PER_ROW = 160;
 var N64_STAGE_SCENE = Object.freeze([
   Object.freeze({ frame: 0, command: "altitude", values: Object.freeze([10, 7, 0, 0]) }),
@@ -15390,6 +15466,34 @@ var TextureSheet = class {
     this.placed.push({ key, index: indices[0] ?? 0, cols: textures.length, rows: 1, textures: textures.length, indices, reclaimed });
     return { indices, reclaimed };
   }
+  /**
+   * A sprite painted at (x, y) of the sheet read as GAM's sprite atlas
+   * (spriteAtlasTexel), over whatever is there, its clear pixels clearing
+   * it: a HUD icon belongs where the GAM points, not where room is. The
+   * textures it touches are no longer blank, so no frame is placed over it.
+   * @param {{w: number, h: number, rgba: Uint8Array|Uint8ClampedArray}} sprite
+   * @returns {number[]|null}  the textures painted, or null when the sprite runs off the atlas
+   */
+  paintAtlas(x, y, sprite) {
+    const words = encodeRgba5551(sprite);
+    const spots = [];
+    for (let py = 0; py < sprite.h; py++) {
+      for (let px = 0; px < sprite.w; px++) {
+        const t = spriteAtlasTexel(x + px, y + py, this.count);
+        if (!t) return null;
+        spots.push([t, (py * sprite.w + px) * 2]);
+      }
+    }
+    const touched = /* @__PURE__ */ new Set();
+    for (const [t, w] of spots) {
+      const at = t.texture * TILE_BYTES + (t.y * TILE_WIDTH + t.x) * 2;
+      this.bytes[at] = words[w];
+      this.bytes[at + 1] = words[w + 1];
+      this.blank[t.texture] = false;
+      touched.add(t.texture);
+    }
+    return [...touched];
+  }
 };
 var ModelTable = class {
   constructor(count) {
@@ -15443,7 +15547,7 @@ function enemyEntryFromEditor(rec, { slots, size, frames, drop = null, boss = fa
       frameSpeed: animated ? nearestIndex4(ANIM_PERIOD_TABLE, 60 / frameRate) : 127,
       models: animationModels(slots)
     },
-    scale: 100,
+    scale: N64_SPRITE_SCALE,
     motion: { type: boss ? 1 : 0, speed1: nearestIndex4(N64_SPEED_TABLE, speed) },
     hit: {
       lockOn: boss,
@@ -15513,23 +15617,38 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
   };
   const cgr = sheetFrom("CGR", N64_CGR_TEXTURES);
   const common = { placed: [], missed: [], models: [], scaled: [] };
+  let hud = null;
   const cmd = /* @__PURE__ */ new Map();
   const placeCommon = (key, grid) => {
     const at = cgr.place(key, grid);
     if (at === null) common.missed.push(key);
     return at;
   };
-  for (const [key, pic] of [["title1", title1], ["title2", title2]]) {
-    const f = asFrame(pic);
-    if (!f) continue;
-    placeCommon(key, textureGrid(fitRgba(f, N64_TITLE_COLS * TILE_WIDTH, N64_TITLE_ROWS * TILE_HEIGHT)));
-  }
   const frameNames = (v) => Array.isArray(v) ? v : [];
   let shipFrames = frameNames((level && level.playerData || {}).texture).map(lookup).filter(Boolean);
   let shipSource = "level";
   if (!shipFrames.length) {
     shipSource = "duke";
     shipFrames = decodePlayerArt().filter((f) => /^duke_\d$/.test(f.key)).slice(0, 2);
+  }
+  const templateGam = templateFiles.get("GAM") || null;
+  const repaired = templateGam ? repairPrototypeGam(templateGam) : null;
+  if (templateGam && !repaired) warn(`template GAM is ${templateGam.length} bytes, neither the cartridge's ${DOCUMENTED_SIZES.GAM} nor the prototype's; carried as it is, its ship and sprites unread`);
+  const gam = Uint8Array.from(templateGam ? repaired ?? templateGam : encodeGam({}));
+  const gamRepaired = !!repaired && repaired !== templateGam;
+  const gamKnown = gam.length === DOCUMENTED_SIZES.GAM;
+  const u166 = (b, at) => b[at] << 8 | b[at + 1];
+  if (gamKnown && shipFrames.length) {
+    const k = GAM_SPRITES.indexOf("playerStockShip");
+    const x = u166(gam, GAM_OFFSETS.spriteX + k * 2), y = u166(gam, GAM_OFFSETS.spriteY + k * 2);
+    const textures = cgr.paintAtlas(x, y, fitRgba(shipFrames[0], N64_STOCK_ICON, N64_STOCK_ICON));
+    if (textures) hud = { stockShip: { x, y, textures, key: shipFrames[0].key } };
+    else warn(`the GAM puts the stock ship at (${x}, ${y}), off the CGR sheet's sprite atlas; the HUD keeps what is there`);
+  }
+  for (const [key, pic] of [["title1", title1], ["title2", title2]]) {
+    const f = asFrame(pic);
+    if (!f) continue;
+    placeCommon(key, textureGrid(fitRgba(f, N64_TITLE_COLS * TILE_WIDTH, N64_TITLE_ROWS * TILE_HEIGHT)));
   }
   spreadFrames(shipFrames, Math.min(2, shipFrames.length)).forEach((f, i) => {
     const t = spriteTexture(f);
@@ -15549,7 +15668,6 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     }
   });
   common.placed = cgr.placed;
-  common.models = templateFiles.has("CMD") ? [] : [...cmd.entries()].map(([slot, m]) => ({ slot, texture: m.texture, key: m.key }));
   const stagePlan = [];
   const splits = [];
   let spare = N64_STAGE_COUNT - stages.length;
@@ -15679,7 +15797,7 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
       const index = entryOf.get(`${c.letter}${c.drop}`);
       if (index === void 0) continue;
       const x = width <= 1 ? 0 : Math.round(-N64_LAYOUT_HALF_WIDTH + c.col * 2 * N64_LAYOUT_HALF_WIDTH / (width - 1));
-      placements.push({ enemy: N64_ENEMY_NUMBER_BASE + index, x, y: N64_SPAWN_Y, frame: -(c.row * N64_SCROLL_PER_ROW) });
+      placements.push({ enemy: N64_ENEMY_NUMBER_BASE + index, x, y: N64_PLANE_Y, frame: -(c.row * N64_SCROLL_PER_ROW) });
     }
     placements.sort((a, b) => b.frame - a.frame);
     const room = LAYOUT_MAX_ENEMIES - (boss ? 1 : 0);
@@ -15700,7 +15818,7 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
       } else {
         bossEntry = entries.length;
         entries.push(enemyEntryFromEditor(boss, { slots, size, frames: kept.length, boss: true }));
-        placements.push({ enemy: N64_ENEMY_NUMBER_BASE + bossEntry, x: 0, y: N64_BOSS_Y, frame: -((lastRow + BOSS_ROW_GAP) * N64_SCROLL_PER_ROW) });
+        placements.push({ enemy: N64_ENEMY_NUMBER_BASE + bossEntry, x: 0, y: N64_PLANE_Y, frame: -((lastRow + BOSS_ROW_GAP) * N64_SCROLL_PER_ROW) });
       }
     }
     if (missed.length) warn(`${st.key}: the ${grExt} sheet or the ${mdExt} table ran out of room; not drawn: ${missed.join(", ")}`);
@@ -15763,7 +15881,9 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
   });
   if (common.missed.length) warn(`the CGR sheet ran out of blank textures; not drawn: ${common.missed.join(", ")}`);
   const finalStage = STAGES[stagePlan.length - 1];
-  if (!templateFiles.has("CMD")) {
+  let cmdOverTemplate = false;
+  const templateCmd = templateFiles.get("CMD") || null;
+  if (!templateCmd) {
     const cmdModels = [], cmdTextures = [];
     for (const [slot, m] of cmd) {
       cmdModels[slot] = m.model;
@@ -15772,10 +15892,24 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     for (let s = 0; s < cmdModels.length; s++) if (cmdModels[s] === void 0) cmdModels[s] = null;
     for (let s = 0; s < cmdTextures.length; s++) if (cmdTextures[s] === void 0) cmdTextures[s] = 0;
     built.set("CMD", buildCmdFile(cmdModels, cmdTextures));
+  } else if (cmd.size) {
+    try {
+      const t = parseCmdFile(templateCmd);
+      for (const [slot, m] of cmd) {
+        t.models[slot] = m.model;
+        t.textureIndices[slot] = m.texture;
+      }
+      built.set("CMD", buildCmdFile(t.models, t.textureIndices));
+      cmdOverTemplate = true;
+    } catch (e) {
+      warn(`the template's CMD could not be read (${e.message}); carried as it is, so the ship and the items show its models`);
+    }
   }
+  const cmdOurs = !templateCmd || cmdOverTemplate;
+  common.models = cmdOurs ? [...cmd.entries()].map(([slot, m]) => ({ slot, texture: m.texture, key: m.key })) : [];
   if (!templateFiles.has("CBL")) {
     const items = {};
-    if (!templateFiles.has("CMD")) {
+    if (cmdOurs) {
       CBL_ITEMS.forEach((item, k) => {
         const slot = N64_ITEM_MODELS[k];
         if (cmd.has(slot)) items[item] = itemEntry(slot, N64_ITEM_SCALES[k]);
@@ -15783,15 +15917,14 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     }
     built.set("CBL", buildCbl({ items }));
   }
-  if (templateFiles.has("GAM")) {
-    const gam = Uint8Array.from(templateFiles.get("GAM"));
-    if (gam.length) gam[0] = finalStage;
-    built.set("GAM", gam);
-  } else {
-    const gam = { finalStage };
-    if (cmd.has(N64_PLAYER_MODEL)) gam.player = { models: [N64_PLAYER_MODEL, N64_PLAYER_MODEL, N64_PLAYER_MODEL, N64_PLAYER_MODEL] };
-    built.set("GAM", encodeGam(gam));
+  const shipOurs = cmdOurs && cmd.has(N64_PLAYER_MODEL);
+  if (gam.length) gam[GAM_OFFSETS.finalStage] = finalStage;
+  if (gamKnown && shipOurs) {
+    gam[GAM_OFFSETS.playerScale] = N64_SPRITE_SCALE >> 8;
+    gam[GAM_OFFSETS.playerScale + 1] = N64_SPRITE_SCALE & 255;
+    gam.fill(N64_PLAYER_MODEL, GAM_OFFSETS.playerModels, GAM_OFFSETS.playerModels + 4);
   }
+  built.set("GAM", gam);
   if (!templateFiles.has("MUS")) built.set("MUS", buildMusFile([]));
   if (!templateFiles.has("ULB")) built.set("ULB", buildUlbFile([], []));
   const files = [];
@@ -15807,7 +15940,9 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     } else if (built.has(ext)) {
       data = built.get(ext);
       if (sheets.has(ext)) source = fromTemplate ? "art over template" : "art";
-      else if (ext === "GAM" && fromTemplate) source = "template, final stage set";
+      else if (ext === "GAM" && fromTemplate) {
+        source = `template${gamRepaired ? " in the cartridge's layout" : ""}, final stage${gamKnown && shipOurs ? " and ship" : ""} set`;
+      } else if (ext === "CMD" && fromTemplate) source = "template, ship and items set";
       else source = "records";
     } else if (fromTemplate) {
       data = fromTemplate;
@@ -15827,7 +15962,8 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     template: templateFiles.size ? [...templateFiles.keys()] : null,
     ship: shipSource,
     finalStage,
-    common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, scaled: common.scaled, models: common.models },
+    common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, scaled: common.scaled, models: common.models, hud },
+    gam: { repaired: gamRepaired, ship: gamKnown && shipOurs },
     stages: stageReports,
     // How the project's bosses carry their second stages (boss-stage2.js).
     transform: splits.length ? `approximated: two chained bosses across a stage break (${splits.map((x) => `${x.stage} ${x.name}, then ${x.into} its second form ${x.second}`).join("; ")}); the bullets are the project's own two, not the weapons' art` : "none",

@@ -70,6 +70,9 @@ import {
   parseStageBl,
   parseUlbFile,
   PITCH_SILENCE,
+  PROTOTYPE_GAM_BYTES,
+  PROTOTYPE_GAM_GAP,
+  repairPrototypeGam,
   SCORE_BYTES,
   SONG_BYTES,
   SONG_COUNT,
@@ -1067,6 +1070,45 @@ Deno.test("a short GAM decodes with the missing fields named rather than throwin
   assert(tiny.missing.includes("timeAttackStage"));
   assert(tiny.missing.includes("palette"));
   assert(tiny.missing.length > 30);
+});
+
+Deno.test("a prototype GAM gets its nine bytes back at 0xA8 and then reads as the cartridge's", () => {
+  // a cartridge GAM with marked fields either side of the gap; the nine
+  // bytes the prototype lacks are zero in it, as in the cartridge's own
+  const cart = encodeGam({
+    fontColor: 2,
+    item2Score: 5,
+    loadout: { shotPower: 0, laserPower: 0, bombs: 3, unknownBits: 0 },
+    initialAltitude: 7,
+    player: { scale: 61, frameSpeed: -1, models: [149, 0, 0, 0] },
+    bgm: { title: 0, ending: 28, gameOver: 40, stageClear: -1 },
+  });
+  assertEquals(PROTOTYPE_GAM_BYTES, 1360);
+  const proto = new Uint8Array(PROTOTYPE_GAM_BYTES);
+  proto.set(cart.subarray(0, PROTOTYPE_GAM_GAP));
+  proto.set(cart.subarray(PROTOTYPE_GAM_GAP + 9), PROTOTYPE_GAM_GAP);
+  const fixed = repairPrototypeGam(proto);
+  assertEquals(fixed, cart);
+  const g = decodeGam(fixed);
+  assertEquals(
+    [
+      g.fontColor,
+      g.item2Score,
+      g.loadout.bombs,
+      g.initialAltitude,
+      g.player.scale,
+      g.player.models[0],
+      g.bgm.stageClear,
+    ],
+    [2, 5, 3, 7, 61, 149, -1],
+  );
+  // read as it is, the prototype is out from 0xA8 on
+  const misread = decodeGam(proto);
+  assertEquals(misread.fontColor, 2);
+  assert(misread.player.scale !== 61 && misread.player.models[0] !== 149);
+  // a cartridge GAM is itself; any other length is neither layout
+  assertStrictEquals(repairPrototypeGam(cart), cart);
+  assertStrictEquals(repairPrototypeGam(new Uint8Array(100)), null);
 });
 
 // --- MUS ---------------------------------------------------------------------
