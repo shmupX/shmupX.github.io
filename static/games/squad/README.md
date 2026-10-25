@@ -1,8 +1,8 @@
 # SQUAD — PlayStation 2
 
-![SQUAD's stage-2 boss, Daltonius, on four of the seven targets shmupX exports to, a tool-assisted pilot fighting it: web, PS2, Super Famicom and Saturn](preview.gif)
+![SQUAD's stage-2 boss, Daltonius, on every target shmupX exports to, a tool-assisted pilot fighting it: web, PS2, Super Famicom, Saturn, PS1 Kids!, PS1 Dezaemon+ and 64DD](preview.gif)
 
-SQUAD's stage-2 boss, Daltonius, on four of the seven targets shmupX exports to, a tool-assisted pilot fighting it: web, PS2, Super Famicom and Saturn.
+SQUAD's stage-2 boss, Daltonius, on every target shmupX exports to, a tool-assisted pilot fighting it: web, PS2, Super Famicom, Saturn, PS1 Kids!, PS1 Dezaemon+ and 64DD.
 
 SQUAD is a shmupX game exported to the PlayStation 2 by
 `deno task build:ps2`: [svelte-ps2](https://github.com/easierbycode/svelte-ps2)'s

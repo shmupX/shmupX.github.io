@@ -1,6 +1,9 @@
 # shmupX — codemonkey.games
 
-![A shmupX level playing in Dezaemon 2 on the Saturn](docs/preview.gif)
+![SQUAD's stage-2 boss, Daltonius, on every target shmupX exports to, a tool-assisted pilot fighting it: web, PS2, Super Famicom, Saturn, PS1 Kids!, PS1 Dezaemon+ and 64DD](docs/preview.gif)
+
+_One level on all seven targets at once — the web, the PS2 build and the five
+emulated originals — recorded by `deno task testdrive:parity`._
 
 How to play with shmupX. Building, exporting and everything under the hood is in
 the [technical README](README-Technical.md).

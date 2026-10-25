@@ -1,6 +1,6 @@
 # shmupX — codemonkey.games
 
-![A shmupX level playing in Dezaemon 2 on the Saturn](docs/preview.gif)
+![SQUAD's stage-2 boss, Daltonius, on every target shmupX exports to, a tool-assisted pilot fighting it: web, PS2, Super Famicom, Saturn, PS1 Kids!, PS1 Dezaemon+ and 64DD](docs/preview.gif)
 
 The final CMG launcher, rebuilt as **shmupX**: a Deno Fresh 2 + Vite app for
 [Deno Deploy](https://deploy.deno.com) with a single built-in game — the shmupX
