@@ -127,6 +127,15 @@ import {
   n64ddRam,
   rdramNeedle,
 } from "./lib/parity-n64dd.ts";
+import { buildKids } from "../packages/shmup-harbor/scripts/build-kids.ts";
+import { buildPlus } from "../packages/shmup-harbor/scripts/build-plus.ts";
+import {
+  findPsxDisc,
+  type PsxDisc,
+  psxDiscZipLength,
+  psxDiscZipStream,
+} from "../lib/dezaemon-psx.ts";
+import { KIDS, KIDS_AT, PLUS, PSX_RAM, psxPage } from "./lib/parity-psx.ts";
 
 const ROOT = repoRoot();
 
@@ -782,9 +791,6 @@ const runPs2: PaneRunner = async (ctx) => {
   }
 };
 
-const pending = (id: PaneId, reason: string): PaneRunner => () =>
-  Promise.resolve({ id, status: "blocked", reason });
-
 /** EmulatorJS's own chrome — the menu bar, its button, the virtual pad — off. */
 const EJS_BARE = `(function () {
   function add() {
@@ -805,8 +811,12 @@ async function findFixture(
     try {
       for await (const e of Deno.readDir(dir)) {
         const path = join(dir, e.name);
-        if (e.isFile && test(e.name)) return path;
-        if (e.isDirectory && depth > 0) {
+        // A worktree junctions the main checkout's console folders in.
+        const linked = e.isSymlink
+          ? await Deno.stat(path).catch(() => null)
+          : null;
+        if ((e.isFile || linked?.isFile) && test(e.name)) return path;
+        if ((e.isDirectory || linked?.isDirectory) && depth > 0) {
           const hit = await walk(path, depth - 1);
           if (hit) return hit;
         }
@@ -1013,6 +1023,23 @@ const runSfc: PaneRunner = async (ctx) => {
 };
 
 /**
+ * `file` in cmg's static/bios/, in a cmg checkout next to this one — or next
+ * to the checkout a worktree under .claude/worktrees/ belongs to, which is
+ * where a sibling actually sits: every ancestor's neighbour is looked at.
+ */
+async function cmgBios(file: string): Promise<string | null> {
+  let dir = ROOT;
+  for (let up = 0; up < 5; up++) {
+    const path = join(dir, "..", "cmg", "static", "bios", file);
+    if (await exists(path, { isFile: true })) return path;
+    const parent = resolve(dir, "..");
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/**
  * The Saturn's JP BIOS (Dezaemon 2 is a Japanese disc): $SATURN_BIOS, else
  * a sega_101.bin under dev-fixtures/, beside Mednafen, or in a cmg checkout
  * next to this one.
@@ -1026,7 +1053,7 @@ async function findSaturnBios(): Promise<string | null> {
     await findFixture((n) => n.toLowerCase() === "sega_101.bin"),
     home && join(home, "saturn", "mednafen", "firmware", "sega_101.bin"),
     home && join(home, ".mednafen", "firmware", "sega_101.bin"),
-    join(ROOT, "..", "cmg", "static", "bios", "sega_101.bin"),
+    await cmgBios("sega_101.bin"),
   ];
   for (const path of candidates) {
     if (path && await exists(path, { isFile: true })) return path;
@@ -1177,6 +1204,392 @@ const runSaturn: PaneRunner = async (ctx) => {
       },
     },
   }, ctx);
+};
+
+/**
+ * The PlayStation's JP BIOS (both Dezaemons are SLPS discs): $PSX_BIOS, else
+ * a scph5500.bin under dev-fixtures/, in Mednafen's firmware folder, or in a
+ * cmg checkout next to this one (cmg's PlayStation player boots it too).
+ */
+async function findPsxBios(): Promise<string | null> {
+  const home = Deno.env.get(
+    Deno.build.os === "windows" ? "USERPROFILE" : "HOME",
+  );
+  const candidates = [
+    Deno.env.get("PSX_BIOS"),
+    await findFixture((n) => n.toLowerCase() === "scph5500.bin"),
+    home && join(home, "saturn", "mednafen", "firmware", "scph5500.bin"),
+    home && join(home, ".mednafen", "firmware", "scph5500.bin"),
+    await cmgBios("scph5500.bin"),
+  ];
+  for (const path of candidates) {
+    if (path && await exists(path, { isFile: true })) return path;
+  }
+  return null;
+}
+
+/**
+ * A PlayStation disc as the stored zip of its cue and track (the zip the
+ * launcher hands its player) at /disc.zip, from a server of its own on
+ * 127.0.0.1: a disc is 150-700 MB, no body for a DevTools message. The pane's
+ * page is opened on this origin too — interceptFiles answers it by path — as
+ * Chrome's Local Network Access refuses a page on one loopback port a fetch
+ * from another.
+ */
+function serveDisc(disc: PsxDisc, port: number) {
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port, onListen: () => {} },
+    (req) => {
+      const headers = { "cache-control": "no-store" };
+      if (new URL(req.url).pathname !== "/disc.zip") {
+        return new Response("not found", { status: 404, headers });
+      }
+      return new Response(psxDiscZipStream(disc), {
+        headers: {
+          ...headers,
+          "content-type": "application/zip",
+          "content-length": String(psxDiscZipLength(disc)),
+        },
+      });
+    },
+  );
+  return {
+    origin: `http://127.0.0.1:${port}`,
+    close: () => server.shutdown(),
+  };
+}
+
+/**
+ * The page, the card and the BIOS of a PlayStation pane, under
+ * /__parity/<id>/ on serveDisc's origin.
+ */
+async function psxFiles(
+  id: PaneId,
+  disc: PsxDisc,
+  card: string,
+  bios: string,
+) {
+  const spec = PANES[id];
+  const octet = "application/octet-stream";
+  return {
+    [`/__parity/${id}/play.html`]: {
+      body: psxPage({
+        disc: "/disc.zip",
+        bios: `/__parity/${id}/scph5500.bin`,
+        name: disc.content,
+        width: spec.width,
+        height: spec.height,
+      }),
+      type: "text/html; charset=utf-8",
+    },
+    [`/__parity/${id}/card.mcr`]: {
+      body: await Deno.readFile(card),
+      type: octet,
+    },
+    [`/__parity/${id}/scph5500.bin`]: {
+      body: await Deno.readFile(bios),
+      type: octet,
+    },
+  };
+}
+
+/**
+ * Wait for the psx core to run. While it does not, the probe fails with what
+ * EmulatorJS is showing (a download's progress, "Network Error"), so a
+ * timeout says where the boot stopped.
+ */
+async function psxCore(cdp: Cdp) {
+  await until("the psx core", 240_000, async () => {
+    const state = await cdp.eval<string>(`(function () {
+      var e = window.EJS_emulator;
+      if (!e) return "no EmulatorJS yet";
+      if (e.gameManager && e.started) return "ok";
+      return (e.textElem && e.textElem.innerText) || "loading";
+    })()`);
+    if (state === "ok") return true;
+    throw new Error(state);
+  }, 500);
+}
+
+/** Wait out the core's start and find main RAM by the EXE's `needle`. */
+async function psxRam(cdp: Cdp, needle: string, at: number): Promise<number> {
+  await cdp.eval(PSX_RAM);
+  const { base } = await until(
+    "PS1 RAM in the core's heap",
+    120_000,
+    async () => {
+      // Not `>= 0`: no hit at all is minus zero.
+      const found = await cdp.eval<number>(
+        `__psx.find(${JSON.stringify(needle)}, ${at})`,
+      );
+      return found > 0 ? { base: found } : null;
+    },
+    1000,
+  );
+  return base;
+}
+
+/**
+ * Dezaemon Kids!: the rush as a memory card (build:kids) in slot 1, the disc
+ * from dev-fixtures/, EmulatorJS's pcsx_rearmed (lib/parity-psx.ts). Power-on
+ * → circle past Peron's welcome to the main menu → 作ろう! → Peron → ロード →
+ * slot 1 → はい, the card loading → back out to the main menu → 遊ぼう! → the
+ * ユーザーゲーム island → the game's title → START is GAME START. Every click
+ * flies the pointer by its RAM and is pressed again until the screen it opens
+ * reads back. Lives are two counters, the ship an object's px << 7 words,
+ * square (held, the game's own rapid fire) fires.
+ */
+const runKids: PaneRunner = async (ctx) => {
+  const bios = await findPsxBios();
+  if (!bios) {
+    return {
+      id: "kids",
+      status: "blocked",
+      reason:
+        "no PlayStation JP BIOS (scph5500.bin) — set PSX_BIOS or drop it under dev-fixtures/",
+    };
+  }
+  const disc = await findPsxDisc(ROOT, "slps-01503");
+  if (!disc) {
+    return {
+      id: "kids",
+      status: "blocked",
+      reason: "no Dezaemon Kids! disc (SLPS-01503) in dev-fixtures/",
+    };
+  }
+  const card = join(OUT, "kids", "rush.mcr");
+  await buildKids({
+    level: join(OUT, "rush.json"),
+    out: card,
+    log: (m) => log(`  ${m}`),
+  });
+  const cdp = ctx.rig.cdp;
+  const byte = (a: number) => cdp.eval<number>(`__psx.b(${a})`);
+  const word = (a: number) => cdp.eval<number>(`__psx.w(${a})`);
+  /** Fly the pointer to `at` and press circle until `opened` reads true. */
+  const click = (
+    what: string,
+    at: { x: number; y: number },
+    opened: () => Promise<boolean>,
+    timeoutMs = 20_000,
+  ) =>
+    until(what, timeoutMs, async () => {
+      if (await opened()) return true;
+      await cdp.eval(`__psx.steer(${at.x}, ${at.y})`);
+      await press(cdp, 8);
+      const t = Date.now();
+      while (Date.now() - t < 2000) {
+        await sleep(150);
+        if (await opened()) return true;
+      }
+      return false;
+    }, 0);
+  const site = serveDisc(disc, Number(flags["serve-port"]) + 3);
+  try {
+    return await runEmuPane({
+      id: "kids",
+      url: `${site.origin}/__parity/kids/play.html`,
+      files: await psxFiles("kids", disc, card, bios),
+      boot: async () => {
+        await psxCore(cdp);
+        // The card goes in before KIDS.EXE is in RAM, so nothing the RAM
+        // holds next can be left from the boot before the reset.
+        await cdp.eval(installSaveExpr("/__parity/kids/card.mcr"));
+        const base = await psxRam(cdp, KIDS.needle, KIDS.needleAt);
+        const atMain = async () =>
+          await word(KIDS.gfx) === KIDS.gfxMain &&
+          await byte(KIDS.layer) === 1 &&
+          (await Promise.all(KIDS.mainButtons.map(byte))).every((b) => b === 1);
+        await until("the main menu", 120_000, async () => {
+          if (await atMain()) return true;
+          // Circle skips the logo, Peron's welcome, and the title's はじまるよ
+          // (under the pointer where it starts).
+          await press(cdp, 8);
+          await sleep(1000);
+          return false;
+        }, 0);
+        log("kids: at the main menu");
+        const gfx = (v: number) => async () => await word(KIDS.gfx) === v;
+        const layer = (v: number) => async () => await byte(KIDS.layer) === v;
+        await click("作ろう!", KIDS_AT.make, gfx(KIDS.gfxMake));
+        await click("PERON MENU", KIDS_AT.peron, layer(2));
+        await click("ロード", KIDS_AT.load, layer(3));
+        // Slot 1 is pressed until its question is up; while the slots are
+        // still being read, a press does nothing.
+        await click(
+          "slot 1",
+          KIDS_AT.slot1,
+          async () => await byte(KIDS.dialog) === 0,
+        );
+        // はい, then circle until the bubble closes: the question's はい
+        // starts the load, the presses during it are dropped, and the one
+        // after it closes the "done" bubble.
+        await cdp.eval(`__psx.steer(${KIDS_AT.yes.x}, ${KIDS_AT.yes.y})`);
+        await until("the card to load", 120_000, async () => {
+          await press(cdp, 8);
+          await sleep(1500);
+          return await byte(KIDS.dialog) === 255;
+        }, 0);
+        log("kids: the card is loaded");
+        await click("back", KIDS_AT.back, layer(2));
+        await click("PERON MENU closed", KIDS_AT.peron, layer(1));
+        await click("the exit", KIDS_AT.exit, atMain);
+        await click("遊ぼう!", KIDS_AT.play, gfx(KIDS.gfxPlay));
+        await click(
+          "the user-game island",
+          KIDS_AT.island,
+          async () => await word(KIDS.runtime) === KIDS.runtimeWord,
+          30_000,
+        );
+        log("kids: the game is loading");
+        // The title card cycles with the item list and the high scores, and
+        // START lands only on the card: pressed every second until the stock
+        // is dealt, and no more, so no press reaches the stage itself.
+        const inStage = async () =>
+          (await Promise.all(KIDS.lives.map(byte))).every((n) => n === 2);
+        await until("the game's first stage", 120_000, async () => {
+          if (await inStage()) return true;
+          await press(cdp, 3, 120);
+          await sleep(900);
+          return await inStage();
+        }, 0);
+        return base;
+      },
+      pilot: {
+        lives: [...KIDS.lives],
+        fire: 1,
+        pad: { up: 4, down: 5, left: 6, right: 7 },
+        checkpointMs: 1500,
+        rewindCheckpoints: 2,
+        maxTries: 6,
+        seed: 7,
+        ship: {
+          x: KIDS.shipX,
+          y: KIDS.shipY,
+          shift: 7,
+          littleEndian: true,
+          box: { x0: 40, x1: 216, y0: 120, y1: 200 },
+        },
+      },
+    }, ctx);
+  } finally {
+    await site.close();
+  }
+};
+
+/**
+ * Dezaemon Plus Select 100: the rush as a memory card (build:plus) written
+ * into slot 2 — the one slot its GAME LOAD reads — the disc from
+ * dev-fixtures/, EmulatorJS's pcsx_rearmed. Power-on → START at the title →
+ * MEMORY CARD → GAME LOAD → the game's menu → START (held: a short one is
+ * dropped) is GAME START. Each step is read off the menu record and the
+ * runtime's state byte. Lives are REST, the ship its field position, square
+ * fires.
+ */
+const runPlus: PaneRunner = async (ctx) => {
+  const bios = await findPsxBios();
+  if (!bios) {
+    return {
+      id: "plus",
+      status: "blocked",
+      reason:
+        "no PlayStation JP BIOS (scph5500.bin) — set PSX_BIOS or drop it under dev-fixtures/",
+    };
+  }
+  // The 1996 Dezaemon+ (SLPS-00335) reads the same cards, but its RAM is not
+  // Select 100's: this pane knows only the re-release.
+  const disc = await findPsxDisc(ROOT, "slps-01504");
+  if (!disc) {
+    return {
+      id: "plus",
+      status: "blocked",
+      reason: "no Dezaemon Plus Select 100 disc (SLPS-01504) in dev-fixtures/",
+    };
+  }
+  const card = join(OUT, "plus", "rush.mcr");
+  await buildPlus({
+    level: join(OUT, "rush.json"),
+    out: card,
+    log: (m) => log(`  ${m}`),
+  });
+  const cdp = ctx.rig.cdp;
+  const byte = (a: number) => cdp.eval<number>(`__psx.b(${a})`);
+  const screen = async () =>
+    `${await byte(PLUS.screenA)}/${await byte(PLUS.screenB)}`;
+  /** Cursor to item 2, circle until `opened` reads true. */
+  const pick = (what: string, opened: () => Promise<boolean>) =>
+    until(what, 30_000, async () => {
+      if (await opened()) return true;
+      const at = await byte(PLUS.cursor);
+      if (at !== 2) {
+        await press(cdp, at < 2 ? 5 : 4);
+        await sleep(250);
+        return false;
+      }
+      await press(cdp, 8);
+      await sleep(800);
+      return await opened();
+    }, 0);
+  const site = serveDisc(disc, Number(flags["serve-port"]) + 3);
+  try {
+    return await runEmuPane({
+      id: "plus",
+      url: `${site.origin}/__parity/plus/play.html`,
+      files: await psxFiles("plus", disc, card, bios),
+      boot: async () => {
+        await psxCore(cdp);
+        await cdp.eval(PSX_RAM);
+        const slot2 = await cdp.eval<number>(
+          `__psx.card2("/__parity/plus/card.mcr")`,
+        );
+        if (slot2 < 0) throw new Error("the core's slot-2 card was not found");
+        await cdp.eval(`EJS_emulator.gameManager.restart(), true`);
+        const base = await psxRam(cdp, PLUS.needle, PLUS.needleAt);
+        await until("Select 100's menu", 120_000, async () => {
+          if (await screen() === "255/255") return true;
+          if (await byte(PLUS.screenA) === 1) await press(cdp, 3);
+          await sleep(700);
+          return await screen() === "255/255";
+        }, 0);
+        await pick("MEMORY CARD", async () => await screen() === "0/6");
+        await pick("GAME LOAD", async () => await byte(PLUS.screenA) === 240);
+        log("plus: GAME LOAD is reading slot 2");
+        await until(
+          "the game's menu",
+          180_000,
+          async () => await byte(PLUS.state) === 32,
+          1000,
+        );
+        // START on the high scores goes back to the menu, on the menu it is
+        // GAME START.
+        await until("the game's first stage", 60_000, async () => {
+          const inStage = async () =>
+            await byte(PLUS.state) === 34 && await byte(PLUS.lives) === 2;
+          if (await inStage()) return true;
+          if (await byte(PLUS.state) === 32) await press(cdp, 3, 350);
+          await sleep(1500);
+          return await inStage();
+        }, 0);
+        return base;
+      },
+      pilot: {
+        lives: [PLUS.lives],
+        fire: 1,
+        pad: { up: 4, down: 5, left: 6, right: 7 },
+        checkpointMs: 1500,
+        rewindCheckpoints: 2,
+        maxTries: 6,
+        seed: 7,
+        ship: {
+          x: PLUS.shipX,
+          y: PLUS.shipY,
+          box: { x0: 40, x1: 216, y0: 110, y1: 200 },
+        },
+      },
+    }, ctx);
+  } finally {
+    await site.close();
+  }
 };
 
 /**
@@ -1411,8 +1824,8 @@ const RUNNERS: Record<PaneId, PaneRunner> = {
   ps2: runPs2,
   sfc: runSfc,
   saturn: runSaturn,
-  kids: pending("kids", "the Kids! pane's boot is not written yet"),
-  plus: pending("plus", "the Dezaemon+ pane's boot is not written yet"),
+  kids: runKids,
+  plus: runPlus,
   n64dd: runN64dd,
 };
 

@@ -692,6 +692,34 @@ Deno.test("limits: stages past six, a record table that fills, a horizontal grid
   const classes = m.report.stages[0].records.map((r) => r.klass);
   assertStrictEquals(classes.filter((k) => k === 0).length, 16);
   assertStrictEquals(classes.filter((k) => k === 1).length, 4);
+
+  // ten 64x64 enemies: class 3 holds eight, and the other two are drawn
+  // in the smallest box that shows them as large, 32x32, not left out
+  const big = { ...many, enemylist: [[]], enemyData: {} };
+  const bigRow = [];
+  for (let i = 0; i < 10; i++) {
+    const letter = String.fromCharCode(65 + i);
+    bigRow.push(letter + "0");
+    big.enemyData[`enemy${letter}`] = {
+      name: letter,
+      hp: 1,
+      score: 100,
+      speed: 1,
+      interval: -1,
+      texture: [`b${i}.png`],
+    };
+    a[`b${i}.png`] = frame(60, 60, [i * 20, 40, 255 - i * 20]);
+  }
+  big.enemylist = [bigRow];
+  const bm = buildKidsGameFromLevel(big, a);
+  const bigClasses = bm.report.stages[0].records.map((r) => r.klass);
+  assertStrictEquals(bigClasses.filter((k) => k === 3).length, 8);
+  assertStrictEquals(bigClasses.filter((k) => k === 0).length, 2);
+  assertStrictEquals(
+    bm.warnings.filter((w) => /64x64 records are all taken/.test(w)).length,
+    2,
+  );
+  assert(!bm.warnings.some((w) => /no free record/.test(w)));
 });
 
 Deno.test("a name is refused by the block builder unless it is the 20 Shift-JIS bytes", () => {

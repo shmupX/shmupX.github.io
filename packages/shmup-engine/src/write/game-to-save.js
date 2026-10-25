@@ -328,6 +328,26 @@ export function mapColumn(col, width) {
     return Math.round((col * (PLACEMENT_COLS - 1)) / (width - 1));
 }
 
+/**
+ * The enemy class a w x h px sprite takes on a console whose classes are
+ * fixed boxes with a few slots each — `classes` [{w, h, count}], `used` the
+ * slots each has given out. The smallest class with room whose box holds the
+ * art (art past the largest box counts as that box), else, rather than
+ * leave the enemy out, the class with room that draws it largest under
+ * fitRgba, the smaller box of two that draw it alike. `shrunk` says the
+ * second happened. -1 when every class is full.
+ */
+export function pickEnemyClass(classes, used, w, h) {
+    const aw = Math.min(w, Math.max(...classes.map((c) => c.w)));
+    const ah = Math.min(h, Math.max(...classes.map((c) => c.h)));
+    const free = classes.map((c, klass) => ({ ...c, klass })).filter((c) => used[c.klass] < c.count);
+    const holds = free.filter((c) => c.w >= aw && c.h >= ah).sort((a, b) => a.w * a.h - b.w * b.h);
+    if (holds.length) return { klass: holds[0].klass, shrunk: false };
+    const scale = (c) => Math.min(c.w / aw, c.h / ah);
+    const smaller = free.sort((a, b) => scale(b) - scale(a) || a.w * a.h - b.w * b.h);
+    return smaller.length ? { klass: smaller[0].klass, shrunk: true } : { klass: -1, shrunk: false };
+}
+
 /** Pick `count` frames spread evenly over `list` (cycling when short). */
 export function spreadFrames(list, count) {
     if (!list.length) return [];

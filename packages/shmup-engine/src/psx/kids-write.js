@@ -52,6 +52,7 @@ import {
     fitRgba,
     itemIcon,
     levelStages,
+    pickEnemyClass,
     rotateCcwRgba,
     shotSprite,
     spreadFrames,
@@ -137,6 +138,10 @@ export const KIDS_SPRITE_STRIPS = Object.freeze([
     Object.freeze({ klass: 2, w: 2, h: 4, frames: 2, stripW: 4, stripH: 4 }),
     Object.freeze({ klass: 3, w: 4, h: 4, frames: 1, stripW: 4, stripH: 4 }),
 ]);
+/** The spawn classes as pickEnemyClass reads them: each one's box in px and its record count. */
+const KIDS_CLASS_BOXES = Object.freeze(KIDS_SPRITE_STRIPS.map((strip, k) =>
+    Object.freeze({ w: strip.w * CG_CELL, h: strip.h * CG_CELL, count: KIDS_APPEAR_CLASSES[k].count })
+));
 
 /**
  * A boss part's 64 words are an 8x8 cell grid (128x128 px), row-major, and the
@@ -1118,9 +1123,17 @@ export function buildKidsGameFromLevel(level, art, options = {}) {
             const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
             let first = null; // the record the most common digit got
             for (const digit of digits) {
-                let klass = artClass;
-                while (klass < KIDS_APPEAR_CLASSES.length && counts[klass] >= KIDS_APPEAR_CLASSES[klass].count) klass++;
+                // The first record may take a smaller class than the art's,
+                // rather than leave the enemy out; a further digit's record
+                // takes a class that holds the first's box, else shares it.
+                const box = first ? KIDS_CLASS_BOXES[first.klass] : { w: maxW, h: maxH };
+                const pick = pickEnemyClass(KIDS_CLASS_BOXES, counts, box.w, box.h);
+                const klass = pick.klass >= 0 && !(first && pick.shrunk) ? pick.klass : KIDS_APPEAR_CLASSES.length;
                 const item = KIDS_ITEM_FOR_DROP[digit] || 0;
+                if (!first && pick.shrunk) {
+                    const want = KIDS_CLASS_BOXES[artClass], got = KIDS_CLASS_BOXES[klass];
+                    warn(`${st.key}: the stage's ${want.w}x${want.h} records are all taken — enemy${letter} (${rec.name || "?"}) drawn ${got.w}x${got.h}`);
+                }
                 if (klass >= KIDS_APPEAR_CLASSES.length) {
                     if (first) {
                         warn(`${st.key}: enemy${letter} carries several drop digits and the stage is out of records — its drop-${digit} cells drop ${first.item ? KIDS_ITEM_SLOTS[first.item - 1].name : "nothing"} instead`);
