@@ -522,12 +522,18 @@ factory sample's SOUND DATA and BGM PATCH (the ROM's songs), all embedded in
   stay the defaults (the map in order, 1 px/frame).
 - **An enemy** takes an entry of the class its art fits (16×16, 32×16, 16×32,
   32×32, 64×64, falling to the next shape that holds it when a class is full),
-  one entry per drop digit since the drop is a bit: family 1 (straight down) at
-  the variant nearest its speed, hit points the nearest table value to hits × 25
-  (the plain shot's damage is untraced; 1 hit = 1), score and animation interval
-  nearest the tables, the sample's aim value 13 with the rate nearest its
-  interval when it fires, no flags. Its frames go into the stage's 64-slot enemy
-  sheet (slot 0 blank) and ENEMY ODR names them per the class layout.
+  one entry per drop digit since the drop is a bit. When every class that holds
+  the art is full, the enemy is drawn smaller rather than left out
+  (`pickEnemyClass`): it takes the class with room that shows it largest, and
+  its chips come last and whole. The enemy sheet takes all its frames, else its
+  first frame alone, else it is left out. So an enemy drawn at its own size
+  never loses a chip to one drawn smaller. Each entry gets: family 1 (straight
+  down) at the variant nearest its speed, hit points the nearest table value to
+  hits × 25 (the plain shot's damage is untraced; 1 hit = 1), score and
+  animation interval nearest the tables, the sample's aim value 13 with the rate
+  nearest its interval when it fires, no flags. Its frames go into the stage's
+  64-slot enemy sheet (slot 0 blank) and ENEMY ODR names them per the class
+  layout.
 - **Waves**: each grid row is a 14-byte record on its line — the level's wave
   row, else lines 2, 6, 10 …; columns spread over 1..14 — de-duplicated into
   records 2..255. **The boss** paints its first frame into the sheet in the

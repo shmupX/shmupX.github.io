@@ -21,6 +21,7 @@ import {
   locateExpr,
   runClockAt,
 } from "../scripts/lib/parity-emu.ts";
+import { KIDS, PSX_RAM } from "../scripts/lib/parity-psx.ts";
 import {
   parityCaption,
   ps2PageHtml,
@@ -159,6 +160,31 @@ Deno.test("the RAM locator narrows a candidate list by every pair", () => {
   const js = locateExpr([[0x0d, 1], [0x3d6, 5]], true);
   assert(js.includes("[[13,1],[982,5]]"), js);
   assert(js.includes("window.__ram = out"));
+});
+
+Deno.test("the PS1 RAM finder keeps only the EXE copy whose base holds the BIOS vector", () => {
+  // A heap with KIDS.EXE's bytes twice: in "RAM", whose 0x80 has the vector
+  // every BIOS copies there, and in a stray buffer, which does not.
+  const heap = new Uint8Array(0x300000);
+  const ram = 0x10000, stray = 0x250000;
+  const needle = new TextEncoder().encode(KIDS.needle);
+  heap.set(needle, ram + KIDS.needleAt);
+  heap.set(needle, stray);
+  const ejs = { Module: { HEAPU8: heap } };
+  const win: Record<string, unknown> = {};
+  new Function("window", "EJS_emulator", PSX_RAM)(win, ejs);
+  const psx = win.__psx as {
+    find: (s: string, at: number) => number;
+    b: (a: number) => number;
+  };
+  assert(!(psx.find(KIDS.needle, KIDS.needleAt) > 0));
+  heap.set(
+    [0, 0, 0x1a, 0x3c, 0x80, 0x0c, 0x5a, 0x27, 8, 0, 0x40, 3],
+    ram + 0x80,
+  );
+  assertEquals(psx.find(KIDS.needle, KIDS.needleAt), ram);
+  heap[ram + KIDS.layer] = 3;
+  assertEquals(psx.b(KIDS.layer), 3);
 });
 
 Deno.test("the PS2 page offers the disc, the folder and the browser build, with the GIF on top", () => {

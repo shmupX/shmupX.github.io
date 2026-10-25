@@ -41,12 +41,14 @@ export interface EmuPilotConfig {
    * Where the ship's x and y bytes are, and the box it should keep to. With
    * them the pilot flies to random points in that box; without, it sways.
    * `shift` reads each as a big-endian 16-bit word in units of 2^shift
-   * pixels instead of a byte (the Saturn's px << 7).
+   * pixels instead of a byte (the Saturn's px << 7); with `littleEndian` the
+   * word is a signed little-endian one (the PlayStation's).
    */
   ship?: {
     x: number;
     y: number;
     shift?: number;
+    littleEndian?: boolean;
     box: { x0: number; x1: number; y0: number; y1: number };
   } | null;
   /** Fresh flights tried from one checkpoint before stepping further back. */
@@ -71,6 +73,7 @@ export function emuPilot(config: EmuPilotConfig): string {
   function ram(a) { return M.HEAPU8[cfg.ramBase + (a ^ swap)]; }
   function pos(a) {
     var s = cfg.ship.shift;
+    if (cfg.ship.littleEndian) return (((ram(a + 1) << 8) | ram(a)) << 16 >> 16) >> (s || 0);
     return s == null ? ram(a) : ((ram(a) << 8) | ram(a + 1)) >> s;
   }
   function livesNow() { return cfg.lives.map(ram); }

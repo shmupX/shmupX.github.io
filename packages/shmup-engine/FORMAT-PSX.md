@@ -614,7 +614,13 @@ into are checksum groups, not picture boundaries.
 count — with bit 15 = STP and colour 0 transparent. MAIN.EXE `0x800114D4`
 LoadImages them to VRAM `(0, 480+row)` and the draw code picks a row by what it
 is drawing: the **map takes the stage's own row**, every enemy class 6+stage,
-the boss 12+stage, the player 18, title and ending 19, shots 20, effects 21.
+the boss 12+stage, the player 18, title and ending 19, then **row 20 the enemy
+bullets, the explosions and the bomb blast and row 21 the player's shot**. The
+last two were measured, not traced. On Select 100 (2026-10-25), gs's card was
+played with rows 20-23 painted one colour each: the shot came out in 21's colour
+and the rest in 20's. Nothing in that play drew with 22 or 23. Every colour of a
+row left zero is `0x0000`, which the PlayStation draws transparent: the program
+draws the shots, which still hit, and nothing shows.
 
 ## A stage block (confirmed — 0x223C, `PLUS_STAGE_LAYOUT`)
 
@@ -813,11 +819,28 @@ powers 1-3), so the enemy table {1, 50, 100, 200, 400, 800, 1000, 2000} is 1 / 3
 overwritten by `0x3FC..0x3FE`; every cell byte is `ODR[i] | DEFAULT[i]`, DEFAULT
 being the program's table at `0x8007DCF4` (identity for 0-60, then
 `7B 7A 79 78 F9 FA FB FC BB BA B9 3D 3E 3F 00…`), so the user's ODR carries flip
-bits only (every corpus ODR byte is 0, 0x40, 0x80 or 0xC0). Rows 320-351 of the
-sheet are eight 32×32 blocks: words 0-3, 4-7, 8-11, 12-15 at x 0..127 as [TL,
-TR, BL, BR] and 30-45 at x 128..255; the player draws block 0, and the three
-ship attitudes are blocks 0-2 (likely — every rendered game shows them there,
-block 3 bomb/charge art, blocks 4-7 explosion art). Words 64-71 are never read.
+bits only (every corpus ODR byte is 0, 0x40, 0x80 or 0xC0). **The cell byte is
+the cell's only flip**: bit 6 h, bit 7 v, its low six bits the word, and the
+word goes to the tile copier `0x8001AF7C` as it is. That copier takes
+`word >> 8` as the page, so a word carrying BOSS GROUP's `0x4000` names page
+`0x40` and the cell never draws. A mirrored ship tile is a plain word with its
+ODR byte set. The sheet, cell by cell (the routine's eight blits):
+
+| cells | sheet (x, y)     | layout                                               | in the sample game                                       |
+| ----- | ---------------- | ---------------------------------------------------- | -------------------------------------------------------- |
+| 0-15  | (0, 320), 128×32 | four 32×32 blocks, each [TL, TR, BL, BR]             | the ship's three attitudes, then a blue arc              |
+| 30-45 | (128, 320)       | the same, blocks 4-7                                 | a large explosion's four frames                          |
+| 16-29 | (0, 352)         | one row of 14                                        | eight enemy bullets, then six small explosions           |
+| 46-55 | (0, 368)         | one row of 10                                        | seven item capsules, the player's shot, an orb, a rocket |
+| 72-74 | (160, 368)       | words 61-63, the forced blanks                       | —                                                        |
+| 56-71 | (0, 384)         | one row of 16, while the byte at `0x80112AE3` is set | missile arrows and a checker tile (61-71 mirror 56-60)   |
+
+While `0x80112AE3` is clear, row 384 is cell 56 and then **words 72-76** read
+straight from the work array, without DEFAULT, so those five words are read.
+Words 64-71 never are. The player draws block 0, and the three ship attitudes
+are blocks 0-2 (likely: every rendered game shows them there). "In the sample
+game" is Athena's UPLOAD sample through palette rows 18-21. Its ODR is all zero,
+and its words name pages 2/3 (the disc-load path's).
 
 ## Writing a Dezaemon+ save (`src/psx/plus-write.js`)
 
@@ -827,16 +850,27 @@ enemies' `6+stage`, its boss's `12+stage`, the player's 18, the title's 19 — a
 packed as 16×16 tiles into pages 0/1 (508 of the 512, the corner kept blank);
 scenery cells land 1:1 as chips over MAP GROUP (group 0 the blank chip, the
 first 128 rows, SCROLL looping the 32 blocks); APPEAR gets one record per 16-px
-band that spawns (record 0 empty, 1 the end mark); a zako is `encodePlusEnemy`
-with script `8 + speed index`, hit points sized at 24 a hit, the reader's score
-and animation tables; its frames are laid at `plusFrameRect` and the sheet's 320
-bytes and 64 group words follow (`layoutEnemySheet`); the boss is one 128×64 or
-64×128 picture by its art's shape, its record Athena's sample boss's scripts and
-guns with the level's hit points and score (`encodePlusBoss`); the title is the
-logo in the boss's grid; the ship is three 2×2 poses, ODR zero; the globals, the
-sixteen songs (silent — the BGM assignment names the disc's own), the factory
-ladders and settings are fixed; `sealPlusChecksums` seals; the block is read
-back through `parsePlusSave` and the card built around it.
+band that spawns (record 0 empty, 1 the end mark). A zako takes the smallest
+class that holds its art, or, when those are full, the class with room that
+shows it largest (`pickEnemyClass`). That smaller one is laid on the sheet last
+and whole: all its frames, its first frame alone, or not at all, its spawns then
+left out of APPEAR. A zako is `encodePlusEnemy` with script `8 + speed index`,
+hit points sized at 24 a hit, the reader's score and animation tables; its
+frames are laid at `plusFrameRect` and the sheet's 320 bytes and 64 group words
+follow (`layoutEnemySheet`); the boss is one 128×64 or 64×128 picture by its
+art's shape, its record Athena's sample boss's scripts and guns with the level's
+hit points and score (`encodePlusBoss`); the title is the logo in the boss's
+grid; the ship is three 2×2 poses with a mirrored tile's flip in its ODR byte,
+set in the factory's MY SHIP sheet, and both are banked before any stage art.
+The factory sheet is words 12-60 and 72-76: the sample's 49 tiles for the
+bullets, explosions, items, shot and missiles, which nothing in a level draws.
+Palette rows 20-23 are the sample's too (`src/psx/plus-factory-data.js`, from
+the Select 100 disc's UPLOAD sample by `tools/psx-sav/plus-factory-data.ts`).
+Before 2026-10-25 both were left blank and every shot, bullet, explosion and
+item drew invisible. The globals, the sixteen songs (silent: the BGM assignment
+names the disc's own), the factory ladders and the settings are fixed.
+`sealPlusChecksums` seals, the block is read back through `parsePlusSave`, and
+the card is built around it.
 
 ## GLOBAL, SOUND, HIGH SCORE, SETTINGS
 
@@ -1362,6 +1396,11 @@ games to the same readings.
   rides the map. The step format is
   `{u16 duration, u16 angle (1/65536 turn), u16 angular velocity,
   u16 speed 8.8 | ride-the-scroll bit 15, u16 flags}`.
+- **The spawn class** is the smallest whose box holds the art (32×32, 64×32,
+  32×64, 64×64). When those are full, it is the class with room that shows the
+  art largest, the smaller of two that show it alike (`pickEnemyClass`), so the
+  enemy is drawn smaller rather than left out. A further drop digit's record
+  takes a class that holds the first's box, else shares the first record.
 - **The record** is `encodeKidsRecord`: hardness from the record's hp against
   the spawn class's table (the nearest of the three counted values; `infinity`
   is 3), the score tier the nearest of the class's three, the bullet the quad

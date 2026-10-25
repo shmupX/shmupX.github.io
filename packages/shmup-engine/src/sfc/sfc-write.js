@@ -111,7 +111,7 @@ import { formatSfcSram } from "./sfc-format.js";
 import { SFC_FACTORY_BOSS_BLOCK, SFC_FACTORY_GLOBAL_ROWS, SFC_FACTORY_SHIP_WORDS } from "./factory-data.js";
 import { parseSfcSav } from "./index.js";
 import { quantizeFrames, USER_COLOR_FLAG } from "../palette/palette-target.js";
-import { decodeFrameKey, fitRgba, hflipRgba, levelStages, spreadFrames } from "../write/game-to-save.js";
+import { decodeFrameKey, fitRgba, hflipRgba, levelStages, pickEnemyClass, spreadFrames } from "../write/game-to-save.js";
 import { decodePlayerArt } from "../player-art.js";
 import { bossBodyFrames, splitBossStage2 } from "../boss-stage2.js";
 
@@ -214,8 +214,8 @@ export function sfcClassFor(w, h) {
     return 4;
 }
 
-/** Where an entry of a class may fall back to when its class is full: the next shape that holds it. */
-const CLASS_FALLBACKS = Object.freeze([[0, 1, 2, 3, 4], [1, 3, 4], [2, 3, 4], [3, 4], [4]]);
+/** The enemy classes as pickEnemyClass reads them: each box and its entry count. */
+const SFC_CLASS_BOXES = Object.freeze(SFC_ENEMY_CLASSES.map((c) => Object.freeze({ w: c.w, h: c.h, count: c.entries })));
 
 export function sfcSramFileName(name) {
     const safe = String(name || "game").replace(/[\\/:*?"<>|]+/g, " ").trim() || "game";
@@ -730,6 +730,25 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
             }
             return { slot, hflip: hit.hflip, vflip: hit.vflip };
         };
+        const paintChips = (chips) => {
+            for (const { at, px } of chips) {
+                const ref = sheetSlot(px);
+                if (ref) odr[at] = encodeOdrByte(ref);
+            }
+        };
+        // The sheet slots a run of chips would add: the distinct opaque chips,
+        // mirrors as one, not on the sheet yet. Nothing is banked to count.
+        const freshChips = (chips) => {
+            const fresh = new Set();
+            for (const { px } of chips) {
+                if (isTransparent(px)) continue;
+                const hit = bank.byKey.get(keyOf(px));
+                if (hit && sheetSlotOfChip.has(hit.chip)) continue;
+                fresh.add(hit ? hit.chip : [[false, false], [true, false], [false, true], [true, true]].map(([h, v]) => keyOf(flipChip(px, h, v))).sort()[0]);
+            }
+            return fresh.size;
+        };
+        const shrunkPaints = [];
         for (const letter of letters) {
             const rec = enemyData[`enemy${letter}`];
             if (!rec) {
@@ -741,13 +760,14 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
             const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
             const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
             if (frames.length && (maxW > 64 || maxH > 64)) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; a sprite tops out at 64x64 — downscaled`);
-            const wanted = sfcClassFor(maxW, maxH);
-            let klass = CLASS_FALLBACKS[wanted].find((k) => counts[k] < SFC_ENEMY_CLASSES[k].entries);
-            if (klass === undefined) {
+            const { klass, shrunk } = pickEnemyClass(SFC_CLASS_BOXES, counts, maxW, maxH);
+            if (klass < 0) {
                 warn(`${st.key}: no free entry for enemy${letter} (${rec.name || "?"}) — a stage holds 16 + 16 + 16 + 8 + 4 — cells left empty`);
                 continue;
             }
             const spec = SFC_ENEMY_CLASSES[klass];
+            const want = SFC_ENEMY_CLASSES[sfcClassFor(maxW, maxH)];
+            const why = `the stage's ${want.w}x${want.h} entries are all taken — enemy${letter} (${rec.name || "?"})`;
             // the drop digits: one entry per digit, as the Saturn writer, since an entry's drop is a bit
             const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
             const speed = Number.isFinite(rec.speed) ? Math.max(0.5, rec.speed) : 1;
@@ -767,7 +787,9 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
             };
             let first = null;
             for (const digit of digits) {
-                const k = first ? CLASS_FALLBACKS[klass].find((c) => counts[c] < SFC_ENEMY_CLASSES[c].entries) : klass;
+                // a further digit's entry takes a class that holds the first's box, never a smaller one
+                const again = first ? pickEnemyClass(SFC_CLASS_BOXES, counts, spec.w, spec.h) : null;
+                const k = !first ? klass : again.klass >= 0 && !again.shrunk ? again.klass : undefined;
                 if (k === undefined) {
                     warn(`${st.key}: enemy${letter} carries several drop digits and the stage is out of entries — its drop-${digit} cells ${first.itemDrop ? "drop an item" : "drop nothing"} too`);
                     records.set(letter + digit, first);
@@ -779,23 +801,47 @@ export function buildSfcGameFromLevel(level, art, options = {}) {
                 entryData.set(encodeEnemyEntry({ ...fields, itemDrop }), kspec.base + entry * ENEMY_ENTRY_BYTES);
                 // frames: the class's count, each cut into cols x rows chips, frame-major
                 const chipsPerFrame = kspec.cols * kspec.rows;
-                spreadFrames(frames, kspec.frames).forEach((f, fi) => {
-                    const q = indexedByKey.get(f.key);
-                    if (!q) return;
-                    const fitted = fitIndexed(q, kspec.w, kspec.h);
-                    for (let cy = 0; cy < kspec.rows; cy++) {
-                        for (let cx = 0; cx < kspec.cols; cx++) {
-                            const ref = sheetSlot(cutChip(fitted, kspec.w, cx, cy));
-                            if (!ref) continue;
-                            odr[kspec.odrBase + entry * chipsPerFrame * kspec.frames + fi * chipsPerFrame + cy * kspec.cols + cx] = encodeOdrByte(ref);
+                const chipsOf = (list) => {
+                    const out = [];
+                    spreadFrames(list, kspec.frames).forEach((f, fi) => {
+                        const q = indexedByKey.get(f.key);
+                        if (!q) return;
+                        const fitted = fitIndexed(q, kspec.w, kspec.h);
+                        for (let cy = 0; cy < kspec.rows; cy++) {
+                            for (let cx = 0; cx < kspec.cols; cx++) {
+                                out.push({ at: kspec.odrBase + entry * chipsPerFrame * kspec.frames + fi * chipsPerFrame + cy * kspec.cols + cx, px: cutChip(fitted, kspec.w, cx, cy) });
+                            }
                         }
-                    }
-                });
+                    });
+                    return out;
+                };
                 const made = { klass: k, entry, itemDrop, name: rec.name || `enemy${letter}`, cell: letter + digit, frames: frames.length };
+                const reported = { name: made.name, cell: made.cell, klass: k, entry, size: `${kspec.w}x${kspec.h}`, frames: Math.min(kspec.frames, Math.max(1, frames.length)), itemDrop };
+                // An enemy drawn smaller than its class takes the sheet's
+                // chips last, so it never costs one drawn at its own size,
+                // and whole or not at all (shrunkPaints, below).
+                if (shrunk) shrunkPaints.push({ made, reported, why, all: () => chipsOf(frames), one: () => chipsOf(frames.slice(0, 1)) });
+                else paintChips(chipsOf(frames));
                 records.set(letter + digit, made);
                 if (!first) first = made;
-                stageReport.enemies.push({ name: made.name, cell: made.cell, klass: k, entry, size: `${kspec.w}x${kspec.h}`, frames: Math.min(kspec.frames, Math.max(1, frames.length)), itemDrop });
+                stageReport.enemies.push(reported);
             }
+        }
+        // Each drawn-smaller entry: its frames if the sheet holds them, else
+        // its first frame in every frame, else it is left out rather than
+        // drawn with holes, its cells spawning nothing.
+        for (const { made, reported, why, all, one } of shrunkPaints) {
+            const room = ENEMY_GROUP_CHIPS - 1 - sheetSlotOfChip.size;
+            const runs = [all(), one()];
+            const pick = runs.findIndex((c) => freshChips(c) <= room);
+            if (pick >= 0) {
+                paintChips(runs[pick]);
+                warn(`${st.key}: ${why} drawn ${reported.size}${pick ? `, its first frame only (the enemy sheet is near its ${ENEMY_GROUP_CHIPS - 1} chips)` : ""}`);
+                continue;
+            }
+            for (const [cell, r] of records) if (r === made) records.delete(cell);
+            stageReport.enemies.splice(stageReport.enemies.indexOf(reported), 1);
+            warn(`${st.key}: ${why} left out: the enemy sheet's ${ENEMY_GROUP_CHIPS - 1} chips cannot hold it even ${reported.size}`);
         }
 
         // The boss: its art in the 32-chip sheet, wide (8x4) or tall (4x8)
