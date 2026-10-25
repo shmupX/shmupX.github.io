@@ -15134,6 +15134,9 @@ var N64_FRAMES_PER_ENEMY = 4;
 var N64_MODEL_NUMBER_BASE = N64_CMD_MODELS;
 var N64_PLAYER_MODEL = 10;
 var N64_ITEM_MODELS = Object.freeze([12, 13, 14, 15, 16, 17, 18]);
+function isN64ItemFrame(key) {
+  return /item|powerup|speedup|1up/i.test(key);
+}
 var N64_UNITS_PER_PIXEL = 10;
 var N64_LAYOUT_HALF_WIDTH = 400;
 var N64_SPAWN_Y = 240;
@@ -15534,7 +15537,7 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     const at = placeCommon(`ship:${i}:${f.key}`, t.grid);
     if (at !== null && i === 0) cmd.set(N64_PLAYER_MODEL, { model: spriteModel(t, 0, f), texture: at, key: `ship:${f.key}` });
   });
-  const itemFrames = Object.entries(art2 || {}).filter(([k]) => /item|powerup|speedup|1up/i.test(k)).slice(0, 8);
+  const itemFrames = Object.entries(art2 || {}).filter(([k]) => isN64ItemFrame(k)).slice(0, 8);
   itemFrames.forEach(([k], i) => {
     const f = lookup(k);
     if (!f) return;
@@ -20265,6 +20268,7 @@ export {
   isDddImage,
   isGameSave,
   isGzip,
+  isN64ItemFrame,
   isSfcSav,
   itemIcon,
   kidsCardFileName,

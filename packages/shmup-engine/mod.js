@@ -348,7 +348,10 @@ export {
   imageFormat as n64ImageFormat,
   readProjects as n64ReadProjects,
 } from "./src/n64/disk-write.js";
-export { buildN64ProjectFromLevel } from "./src/n64/project-write.js";
+export {
+  buildN64ProjectFromLevel,
+  isN64ItemFrame,
+} from "./src/n64/project-write.js";
 export { normalizeProjectName as n64ProjectName } from "./src/n64/directory.js";
 export { DDD_IMAGE_BYTES, NDD_IMAGE_BYTES } from "./src/n64/geometry.js";
 export { isDddImage } from "./src/n64/index.js";

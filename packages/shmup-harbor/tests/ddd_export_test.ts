@@ -46,6 +46,7 @@ import {
   userArea,
 } from "@shmupx/shmup-engine/n64";
 import { buildDdd } from "../scripts/build-ddd.ts";
+import { type ArtFrame, inEditorAtlasOrder } from "../scripts/build-sav.ts";
 import { repoRoot } from "../lib/repo-root.ts";
 
 const ROOT = repoRoot();
@@ -192,6 +193,25 @@ Deno.test({
         common.textures.some((t) => t.key.startsWith("ship:")),
         "the ship is in CGR",
       );
+      // and the base game's item icons, which no record names: the editor's
+      // art is the whole base atlas, so the CLI asks it for the same frames
+      // and orders them as the editor does — the base's ahead of foo's own
+      // .png copies — and the two disks wear the same icons in the same order.
+      assertEquals(
+        common.textures.filter((t) => t.key.startsWith("item:")).map((t) =>
+          t.key
+        ),
+        [
+          "item:barrierItem0.gif",
+          "item:barrierItem1.gif",
+          "item:powerup3way0.gif",
+          "item:powerup3way1.gif",
+          "item:powerupBig0.gif",
+          "item:powerupBig1.gif",
+          "item:speedupItem0.gif",
+          "item:speedupItem1.gif",
+        ],
+      );
 
       // foo's stage 0 opens on its story: forty portraits over the screen at
       // frame 0, every one naming a #GR texture a byte holds, the ship hidden
@@ -282,4 +302,28 @@ Deno.test({
       await Deno.remove(dir, { recursive: true });
     }
   },
+});
+
+Deno.test("the CLI orders a level's art as the editor's atlas holds it", () => {
+  const frame = (h: number): ArtFrame => ({
+    w: 1,
+    h,
+    rgba: new Uint8Array(h * 4),
+  });
+  // loadLevelArt's order: the level's own frames, then the base's it named
+  const art = {
+    "myItem.png": frame(16),
+    "speedupItem0.gif": frame(16), // the level's replacement of a base frame
+    "boss.png": frame(64),
+    "barrierItem0.gif": frame(16),
+  };
+  const base = ["barrierItem0.gif", "duke_0", "speedupItem0.gif"];
+  // The editor's: the base's in its order, the replacement in its place,
+  // then the level's new frames, tallest first and otherwise as they came.
+  assertEquals(Object.keys(inEditorAtlasOrder(art, base)), [
+    "boss.png",
+    "barrierItem0.gif",
+    "speedupItem0.gif",
+    "myItem.png",
+  ]);
 });

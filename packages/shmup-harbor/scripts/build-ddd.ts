@@ -51,6 +51,7 @@ import { ensureDir } from "@std/fs";
 import {
   DDD_IMAGE_BYTES,
   exportLevelToDdd,
+  isN64ItemFrame,
   n64ImageFormat,
   n64ReadProjects,
   NDD_IMAGE_BYTES,
@@ -58,7 +59,9 @@ import {
 import { repoRoot } from "../lib/repo-root.ts";
 import { storyLogLine, type StoryStageReport } from "../lib/story-panels.ts";
 import {
+  baseAtlasFrameNames,
   bossRushArg,
+  inEditorAtlasOrder,
   levelStoryBackdrops,
   loadLevel,
   loadLevelArt,
@@ -197,10 +200,20 @@ export async function buildDdd(
   const { record } = await loadLevel(options.level, log, {
     bossRush: options.bossRush,
   });
-  const art = await loadLevelArt(record, {
-    noBaseAtlas: options.noBaseAtlas,
-    log,
-  });
+  // The item icons: no record names them, and the writer takes the first it
+  // meets (isN64ItemFrame). The editor's art is the whole base atlas with
+  // the level's frames folded in, so the CLI asks the base atlas for every
+  // frame the writer would take and orders the art as the editor's is —
+  // the same icons in the same slots as the editor's disk.
+  const baseNames = await baseAtlasFrameNames();
+  const art = inEditorAtlasOrder(
+    await loadLevelArt(record, {
+      noBaseAtlas: options.noBaseAtlas,
+      log,
+      extraNames: baseNames.filter(isN64ItemFrame),
+    }),
+    baseNames,
+  );
   const title1 = await titleArt(record.logoDataURL, "logo", log);
   const title2 = await titleArt(record.subTitleDataURL, "subtitle", log);
 

@@ -73,6 +73,7 @@ const EXPECTED_N64 = [
   "DDD_IMAGE_BYTES",
   "exportLevelToDdd",
   "isDddImage",
+  "isN64ItemFrame",
   "n64ImageFormat",
   "n64ProjectName",
   "n64ReadProjects",
@@ -113,6 +114,8 @@ Deno.test("mod.js exports the Nintendo 64 surface", () => {
   assertStrictEquals(engine.NDD_IMAGE_BYTES, 64931840);
   assertStrictEquals(engine.n64ProjectName("my game 2"), "MYGAME2");
   assertStrictEquals(engine.n64ImageFormat(new Uint8Array(16)), null);
+  assertStrictEquals(engine.isN64ItemFrame("speedupItem0.gif"), true);
+  assertStrictEquals(engine.isN64ItemFrame("duke_0"), false);
   assertStrictEquals(engine.dddFileName("Tiny"), "Dezaemon 3D - Tiny.ndd");
   assertStrictEquals(
     engine.dddFileName("Tiny", "ddd"),

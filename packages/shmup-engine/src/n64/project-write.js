@@ -129,6 +129,19 @@ export const N64_PLAYER_MODEL = 10;
 export const N64_ITEM_MODELS = Object.freeze([12, 13, 14, 15, 16, 17, 18]);
 
 /**
+ * Whether an art frame is an item icon. The writer lays the first eight it
+ * meets, in the art's own order, into the CGR sheet, and the first seven
+ * become the item models; no record names them, so a caller hands them over
+ * beside the frames the records ask for — the editor's art is the whole base
+ * atlas, build:ddd asks the base atlas for every frame this takes.
+ * @param {string} key
+ * @returns {boolean}
+ */
+export function isN64ItemFrame(key) {
+    return /item|powerup|speedup|1up/i.test(key);
+}
+
+/**
  * A sprite pixel in model units. Booted, the sample's ship model (264 units
  * across) shows about 27 px wide where the player flies, so 10 units a pixel
  * draws a sprite there near its own size; 32 px becomes a 320-unit quad,
@@ -757,7 +770,7 @@ export function buildN64ProjectFromLevel(level, art, options = {}) {
         const at = placeCommon(`ship:${i}:${f.key}`, t.grid);
         if (at !== null && i === 0) cmd.set(N64_PLAYER_MODEL, { model: spriteModel(t, 0, f), texture: at, key: `ship:${f.key}` });
     });
-    const itemFrames = Object.entries(art || {}).filter(([k]) => /item|powerup|speedup|1up/i.test(k)).slice(0, 8);
+    const itemFrames = Object.entries(art || {}).filter(([k]) => isN64ItemFrame(k)).slice(0, 8);
     itemFrames.forEach(([k], i) => {
         const f = lookup(k);
         if (!f) return;

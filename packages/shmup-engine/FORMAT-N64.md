@@ -579,8 +579,13 @@ sheets' **blank** textures (`TextureSheet.place()`: never over a painted one, so
 a template's own art survives; a frame that fits nowhere is `missed` and warned
 about). Into `CGR`: the two title pictures fitted to 128×64 (2×2 textures), two
 spread frames of the ship (the level's, or the base game's duke when the level
-names none), and up to eight item frames (names matching `item`, `powerup`,
-`speedup`, `1up`). Per stage, for each enemy letter its enemylist uses, most
+names none), and up to eight item frames (`isN64ItemFrame()`: names matching
+`item`, `powerup`, `speedup`, `1up`), the first the art holds. No record names
+them, so the caller hands them over: the editor's art is the whole base atlas,
+and `build:ddd` asks the base atlas for every frame that matches and orders the
+art as the editor's atlas holds it (`inEditorAtlasOrder()` in harbor's
+`scripts/build-sav.ts`), so the two put the same icons in the same slots. Per
+stage, for each enemy letter its enemylist uses, most
 placed first: up to four spread frames into `GR` (blank textures first, then a
 template's art the map does not name, from the top of the sheet down — see
 "A model's texture"), a **billboard model** per frame into `MD`

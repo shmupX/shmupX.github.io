@@ -338,6 +338,41 @@ export async function loadLevelArt(
   return art;
 }
 
+/**
+ * Every frame name the base game's atlas holds, in its own order — what a
+ * builder picks `extraNames` from when its writer paints frames no record
+ * names (build:ddd's item icons). Empty when the atlas cannot be read, as
+ * loadLevelArt then has no base sheet to cut them from either.
+ */
+export async function baseAtlasFrameNames(): Promise<string[]> {
+  try {
+    const json = JSON.parse(await Deno.readTextFile(BASE_ATLAS_JSON));
+    return Object.keys(json.frames ?? {});
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * `art` in the order the editor's level atlas holds the same frames: the
+ * base atlas's in its order (a level's replacement in its place), then the
+ * level's own new ones as its atlas lists them, all tallest first and
+ * otherwise as they came — how the Atlas Manager packs a cloud level
+ * (buildAtlasWithReplacements in static/editor/index.html), and so the order
+ * the editor hands a writer. Only a writer that takes frames by their order
+ * rather than by name cares: the 64DD's item icons (isN64ItemFrame).
+ */
+export function inEditorAtlasOrder(
+  art: Record<string, ArtFrame>,
+  baseNames: readonly string[],
+): Record<string, ArtFrame> {
+  const base = baseNames.map((n) => n.replace(/․/g, ".")).filter((n) => art[n]);
+  const inBase = new Set(base);
+  const keys = [...base, ...Object.keys(art).filter((k) => !inBase.has(k))];
+  keys.sort((a, b) => art[b].h - art[a].h); // stable, as the editor's is
+  return Object.fromEntries(keys.map((k) => [k, art[k]]));
+}
+
 /** The names each title plate answers to in a game's own `game_ui` set — the
  * ones customTitleArt (static/phaser-plugins/level-loader.js) counts. */
 const TITLE_G_NAMES = ["titleG.gif", "titleG.png"];

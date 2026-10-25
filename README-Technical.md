@@ -3212,9 +3212,12 @@ picks another): its `CMD`, `CBL`, `MUS` and `ULB` are carried byte for byte, its
 `GAM` with one byte changed, its stage map tables reused; without one, `GAM` is
 the cartridge's own initial game with the final stage set (the codecs' defaults
 re-encode that save byte for byte), `CMD` and `CBL` hold the level's ship and
-item icons and nothing else, the songs are blank and the maps unset. The donor's
-RAM area, LBA 1418 to 4291, is carried verbatim: the two directory copies inside
-it are rewritten and nothing else there is touched.
+item icons and nothing else, the songs are blank and the maps unset. No record
+names the item icons, so the CLI asks the base atlas for its power-up frames and
+orders the art as the editor's atlas holds it; on gs the editor's disk and
+`build:ddd`'s are byte-identical on a donor. The donor's RAM area, LBA 1418 to
+4291, is carried verbatim: the two directory copies inside it are rewritten and
+nothing else there is touched.
 
 What is **not** written, and what is not known: the writable directory and its
 allocation map, `DEZA3D.SYS` and `DEZA3D.HSC`; any layout effect but a story's
