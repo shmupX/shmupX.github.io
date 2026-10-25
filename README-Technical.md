@@ -3099,6 +3099,19 @@ card file's name is the level's. The → MEDNAFEN row posts it to
 machine has. `FORMAT-PSX.md` "The sprite sheets" and "Writing a Dezaemon+
 save" are the trace.
 
+`testdrive:parity`'s Kids! and Dezaemon+ panes play both cards headless, in
+EmulatorJS's PlayStation core (pcsx_rearmed) on the Japanese BIOS — `$PSX_BIOS`,
+then `scph5500.bin` anywhere two folders down in `dev-fixtures/`, Mednafen's
+firmware folder, or a cmg checkout beside this one — and read every step off
+the console's RAM rather than waiting on timings. Kids! takes its card in slot
+1 and walks PERON's ロード, then the PLAY screen's user-game island. Select
+100's MEMORY CARD › GAME LOAD reads slot 2 only, a card pcsx opens just once,
+when the game loads, so the page turns `pcsx_rearmed_memcard2` on (EmulatorJS
+passes its default options only with `EJS_disableLocalStorage`) and writes the
+card straight into the core's slot-2 buffer. The pane knows Select 100
+(SLPS-01504), not the 1996 disc. The addresses are in
+`scripts/lib/parity-psx.ts`.
+
 ### The Nintendo 64 disk
 
 Dezaemon 3D (Athena, 1997) went 3D and put its user data on a **64DD disk**, and
