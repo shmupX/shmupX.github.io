@@ -45,7 +45,7 @@
 
 import { CG_CELL } from "../palette/deza2-palette.js";
 import { colorHistogram, medianCut } from "../palette/palette-target.js";
-import { decodeFrameKey, fitRgba, levelStages, spreadFrames } from "../write/game-to-save.js";
+import { decodeFrameKey, fitRgba, levelStages, pickEnemyClass, spreadFrames } from "../write/game-to-save.js";
 import { decodePlayerArt } from "../player-art.js";
 import { bossBodyFrames, splitBossStage2 } from "../boss-stage2.js";
 import {
@@ -608,6 +608,10 @@ export function plusFrameRect(klass, n, k) {
  * format's ceiling, and what does not fit is left blank and reported.
  *
  * `defs` is [{klass, id, tiles: [frame][cell] of {tile, hflip, vflip} | null}].
+ * A definition marked `shrunk` (drawn smaller than its own class, see
+ * pickEnemyClass) is all or nothing: its frames if their tiles fit what is
+ * left, else its first frame in every frame, else it is left out
+ * (`leftOut`) rather than drawn with holes.
  */
 export function layoutEnemySheet(defs) {
     const enemyGroup = new Uint16Array(64).fill(PLUS_EMPTY_TILE);
@@ -615,11 +619,21 @@ export function layoutEnemySheet(defs) {
     const entryOfTile = new Map();
     let entries = 1;
     let painted = 0, dropped = 0;
+    const leftOut = [], oneFrame = [];
+    const fresh = (frames) => new Set(frames.flat().filter((t) => t && !entryOfTile.has(t.tile)).map((t) => t.tile)).size;
     for (const d of defs) {
         const c = PLUS_DEF_CLASSES[d.klass];
         const cw = c.w / CG_CELL, ch = c.h / CG_CELL;
-        d.tiles.forEach((cells, k) => {
-            if (k >= c.frames) return;
+        let frames = d.tiles.slice(0, c.frames);
+        if (d.shrunk && fresh(frames) > 64 - entries) {
+            frames = frames.map(() => frames[0] || []);
+            if (fresh(frames) > 64 - entries) {
+                leftOut.push(d);
+                continue;
+            }
+            oneFrame.push(d);
+        }
+        frames.forEach((cells, k) => {
             const r = plusFrameRect(d.klass, d.id, k);
             for (let cy = 0; cy < ch; cy++) {
                 for (let cx = 0; cx < cw; cx++) {
@@ -639,7 +653,7 @@ export function layoutEnemySheet(defs) {
             }
         });
     }
-    return { enemyGroup, spriteLayout, painted, entries: entries - 1, dropped };
+    return { enemyGroup, spriteLayout, painted, entries: entries - 1, dropped, leftOut, oneFrame };
 }
 
 /**
@@ -824,13 +838,13 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
             if (frames.length && (maxW > 64 || maxH > 64)) {
                 warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 — downscaled`);
             }
-            let klass = plusClassFor(maxW, maxH);
-            while (klass < PLUS_DEF_CLASSES.length && counts[klass] >= PLUS_DEF_CLASSES[klass].count) klass++;
-            if (klass >= PLUS_DEF_CLASSES.length) {
-                warn(`${st.key}: no free definition for enemy${letter} (${rec.name || "?"}) — a stage holds 16 + 16 + 16 + 8 + 4, and a full class gives way only to a larger one — cells left empty`);
+            const { klass, shrunk } = pickEnemyClass(PLUS_DEF_CLASSES, counts, maxW, maxH);
+            if (klass < 0) {
+                warn(`${st.key}: no free definition for enemy${letter} (${rec.name || "?"}) — a stage holds 16 + 16 + 16 + 8 + 4 — cells left empty`);
                 continue;
             }
             const c = PLUS_DEF_CLASSES[klass];
+            const want = PLUS_DEF_CLASSES[plusClassFor(maxW, maxH)];
             const id = counts[klass]++;
             const hits = rec.hp === "infinity" ? 2000 / PLUS_SHOT_DAMAGE : Math.max(1, Number(rec.hp) || 1);
             const interval = Number(rec.interval);
@@ -845,7 +859,7 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
                 animIndex: Number.isFinite(rec.frameRate) && rec.frameRate > 0 ? nearestIndex(PLUS_ANIM_INTERVALS, 60 / rec.frameRate) : 3,
             });
             const framePlans = spreadFrames(frames, c.frames).map((f, i) => plan(plusPaletteRow("enemy", s), f, c.w, c.h, `${st.key} enemy${letter} ${i}`));
-            defs.set(letter, { klass, id, index: c.base + id, bytes, frames: framePlans, name: rec.name || `enemy${letter}` });
+            defs.set(letter, { klass, id, index: c.base + id, bytes, frames: framePlans, name: rec.name || `enemy${letter}`, shrunk, why: `the stage's ${want.w}x${want.h} definitions are all taken — enemy${letter} (${rec.name || "?"})` });
         }
 
         // Placements: a record per 16-px band that spawns something — past
@@ -1042,13 +1056,39 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
         for (let i = 0; i < 256; i++) scroll[i] = i < 32 || !opening ? i % 32 : opening + ((i - opening) % (32 - opening));
         scroll.fill(PLUS_SCROLL_EFFECT_DEFAULT, 256, 512);
         if (opening) scroll.fill(PLUS_STORY_SCROLL_EFFECT, 256, 256 + opening);
+        // The boss's picture, then the enemy sheet, banked in that order. A
+        // definition drawn smaller than its class takes the sheet's tiles
+        // last, so it never costs one drawn at its own size, and one the
+        // sheet has no room for is left out of APPEAR below.
+        const bossTiles = b.boss && b.boss.picture ? bankTiles(b.boss.picture, true) : [];
+        const sheetDefs = [...b.defs.values()].sort((x, y) => x.shrunk - y.shrunk);
+        const sheet = layoutEnemySheet(sheetDefs.map((d) => ({ ...d, tiles: d.frames.map((p) => bankTiles(p, true)) })));
+        if (sheet.dropped) warn(`${b.key}: the enemies need more than 63 distinct tiles; ${sheet.dropped} cells left blank`);
+        const leftOut = new Set(sheet.leftOut.map((d) => d.index));
+        const leftOutSpawns = new Set(sheet.leftOut.map((d) => 0x80 | (PLUS_DEF_CLASSES[d.klass].nibble << 4) | (d.id & 15)));
+        for (const d of sheetDefs.filter((x) => x.shrunk)) {
+            const c = PLUS_DEF_CLASSES[d.klass];
+            warn(`${b.key}: ${d.why} ${
+                leftOut.has(d.index) ? `left out: the enemy sheet's 63 tiles cannot hold it even ${c.w}x${c.h}`
+                : sheet.oneFrame.some((x) => x.index === d.index) ? `drawn ${c.w}x${c.h}, its first frame only (the enemy sheet is near its 63 tiles)`
+                : `drawn ${c.w}x${c.h}`
+            }`);
+        }
+        const enemyGroup = piece("enemyGroup");
+        for (let i = 0; i < 64; i++) putU16le(enemyGroup, i * 2, sheet.enemyGroup[i]);
+        piece("spriteLayout").set(sheet.spriteLayout);
         // APPEAR: record 0 empty, 1 the end mark, then one per band.
         const appear = piece("appear");
         appear.fill(PLUS_APPEAR_END_MARK, PLUS_APPEAR_RECORD_SIZE, 2 * PLUS_APPEAR_RECORD_SIZE);
         let next = 2;
         const rowTable = appear.subarray(PLUS_APPEAR_RECORDS * PLUS_APPEAR_RECORD_SIZE);
-        let bandsDropped = 0;
-        for (const [band, rec] of [...b.bands.entries()].sort((x, y) => x[0] - y[0])) {
+        let bandsDropped = 0, unplaced = 0;
+        for (const [band, spawns] of [...b.bands.entries()].sort((x, y) => x[0] - y[0])) {
+            const rec = Uint8Array.from(spawns);
+            for (let i = 0; i < rec.length; i++) {
+                if (leftOutSpawns.has(rec[i])) { rec[i] = 0; unplaced++; }
+            }
+            if (rec.every((v) => !v)) continue;
             if (next >= PLUS_APPEAR_RECORDS) { bandsDropped++; continue; }
             appear.set(rec, next * PLUS_APPEAR_RECORD_SIZE);
             rowTable[band] = next++;
@@ -1058,30 +1098,23 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
         const enemyData = piece("enemyData");
         const config = piece("config");
         config.fill(PLUS_STAGE_CONFIG_DEFAULT);
-        for (const d of b.defs.values()) enemyData.set(d.bytes, d.index * PLUS_ENEMY_SIZE);
+        for (const d of b.defs.values()) if (!leftOut.has(d.index)) enemyData.set(d.bytes, d.index * PLUS_ENEMY_SIZE);
         // The boss: its record and its picture.
         const bossGroup = piece("bossGroup");
         let bossPainted = 0;
         if (b.boss) {
             enemyData.set(b.boss.record, PLUS_BOSS_OFFSET);
-            const tiles = b.boss.picture ? bankTiles(b.boss.picture, true) : [];
-            const words = layoutBoss(tiles, b.boss.vertical);
+            const words = layoutBoss(bossTiles, b.boss.vertical);
             for (let i = 0; i < words.length; i++) putU16le(bossGroup, i * 2, words[i]);
             bossPainted = words.filter((w) => w !== PLUS_EMPTY_TILE).length;
         } else {
             for (let i = 0; i < bossGroup.length; i += 2) putU16le(bossGroup, i, PLUS_EMPTY_TILE);
         }
-        // The enemy sheet.
-        const sheet = layoutEnemySheet([...b.defs.values()].map((d) => ({ ...d, tiles: d.frames.map((p) => bankTiles(p, true)) })));
-        if (sheet.dropped) warn(`${b.key}: the enemies need more than 63 distinct tiles; ${sheet.dropped} cells left blank`);
-        const enemyGroup = piece("enemyGroup");
-        for (let i = 0; i < 64; i++) putU16le(enemyGroup, i * 2, sheet.enemyGroup[i]);
-        piece("spriteLayout").set(sheet.spriteLayout);
         return {
             key: b.key,
-            placements: b.placed,
+            placements: b.placed - unplaced,
             dropped: b.dropped,
-            definitions: [...b.defs.values()].map((d) => ({ name: d.name, klass: d.klass, id: d.id, index: d.index })),
+            definitions: [...b.defs.values()].filter((d) => !leftOut.has(d.index)).map((d) => ({ name: d.name, klass: d.klass, id: d.id, index: d.index })),
             boss: b.boss
                 ? { name: b.boss.name, band: b.boss.band, frames: b.boss.frameCount, vertical: b.boss.vertical, tiles: bossPainted, hits: b.boss.hits, ...(b.boss.form ? { form: b.boss.form } : {}) }
                 : null,

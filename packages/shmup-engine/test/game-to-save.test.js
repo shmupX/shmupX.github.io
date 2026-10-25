@@ -30,6 +30,7 @@ import {
   itemIcon,
   levelStages,
   mapColumn,
+  pickEnemyClass,
   placeRgba,
   rotateCcwRgba,
   spreadFrames,
@@ -147,6 +148,67 @@ Deno.test("geometry helpers", () => {
     0,
     "nothing above the margin",
   );
+});
+
+Deno.test("pickEnemyClass: the smallest box that holds the art, else the full-size class's art drawn smaller, never dropped while a slot is free", () => {
+  // the Super Famicom's and Dezaemon+'s five boxes and slots
+  const boxes = [
+    { w: 16, h: 16, count: 16 },
+    { w: 32, h: 16, count: 16 },
+    { w: 16, h: 32, count: 16 },
+    { w: 32, h: 32, count: 8 },
+    { w: 64, h: 64, count: 4 },
+  ];
+  const used = [0, 0, 0, 0, 0];
+  assertEquals(pickEnemyClass(boxes, used, 12, 12), {
+    klass: 0,
+    shrunk: false,
+  });
+  assertEquals(pickEnemyClass(boxes, used, 30, 14), {
+    klass: 1,
+    shrunk: false,
+  });
+  // art past the largest box is that box's art
+  assertEquals(pickEnemyClass(boxes, used, 95, 71), {
+    klass: 4,
+    shrunk: false,
+  });
+  // a full class gives way to a larger one that holds the art: 32x16 art
+  // skips the 16x32 box, which would squash it
+  assertEquals(pickEnemyClass(boxes, [0, 16, 0, 0, 0], 30, 14), {
+    klass: 3,
+    shrunk: false,
+  });
+  // the 64x64 slots taken: big art drops to the box that draws it largest,
+  // 32x32 for square art, and for wide art too (32x16 would halve it again)
+  assertEquals(pickEnemyClass(boxes, [0, 0, 0, 0, 4], 64, 64), {
+    klass: 3,
+    shrunk: true,
+  });
+  assertEquals(pickEnemyClass(boxes, [0, 0, 0, 0, 4], 74, 58), {
+    klass: 3,
+    shrunk: true,
+  });
+  // 32x32 taken too: very wide art takes the wide box
+  assertEquals(pickEnemyClass(boxes, [0, 0, 0, 8, 4], 64, 24), {
+    klass: 1,
+    shrunk: true,
+  });
+  // two boxes that draw it the same size: the smaller (Kids!'s boxes)
+  const kids = [
+    { w: 32, h: 32, count: 16 },
+    { w: 64, h: 32, count: 8 },
+    { w: 32, h: 64, count: 8 },
+    { w: 64, h: 64, count: 8 },
+  ];
+  assertEquals(pickEnemyClass(kids, [0, 0, 0, 8], 64, 64), {
+    klass: 0,
+    shrunk: true,
+  });
+  assertEquals(pickEnemyClass(boxes, [16, 16, 16, 8, 4], 12, 12), {
+    klass: -1,
+    shrunk: false,
+  });
 });
 
 Deno.test("levelStages reads the flat record, the stages map, and stageN keys", () => {

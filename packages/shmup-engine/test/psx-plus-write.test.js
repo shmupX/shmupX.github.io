@@ -13,6 +13,7 @@ import {
   buildPlusGameFromLevel,
   encodePlusEnemy,
   exportLevelToPlusCard,
+  layoutEnemySheet,
   layoutShip,
   layoutTitle,
   mapPlusColumn,
@@ -577,6 +578,82 @@ Deno.test("limits and refusals", () => {
     Error,
     String(PLUS_BLOCK_SIZE),
   );
+});
+
+Deno.test("big enemies past the four 64x64 definitions are drawn 32x32, not left out", () => {
+  const letters = "ABCDEF".split("");
+  const lv = {
+    name: "big",
+    width: letters.length,
+    enemylist: [letters.map((l) => `${l}0`)],
+    enemyData: {},
+    bossData: {},
+  };
+  const a = art();
+  for (const l of letters) {
+    lv.enemyData[`enemy${l}`] = {
+      name: l,
+      hp: 1,
+      score: 100,
+      speed: 1,
+      interval: -1,
+      texture: [`big${l}.png`],
+    };
+    a[`big${l}.png`] = frame(60, 60, [l.charCodeAt(0) * 3 & 255, 40, 40]);
+  }
+  const out = buildPlusGameFromLevel(lv, a);
+  const st = out.report.stages[0];
+  assertEquals(st.definitions.map((d) => d.klass).sort(), [3, 3, 4, 4, 4, 4]);
+  assertStrictEquals(st.placements, 6);
+  assertStrictEquals(
+    out.warnings.filter((w) => /64x64 definitions are all taken/.test(w))
+      .length,
+    2,
+  );
+  assert(!out.warnings.some((w) => /no free definition/.test(w)));
+});
+
+Deno.test("a drawn-smaller definition takes the enemy sheet last and whole: every frame, else its first, else left out", () => {
+  // `smalls` 16x16 definitions of four distinct tiles each fill the sheet;
+  // then a 32x32 one marked shrunk, two frames of four new tiles.
+  const squeeze = (smalls) => {
+    const defs = [];
+    for (let i = 0; i < smalls; i++) {
+      defs.push({
+        klass: 0,
+        id: i,
+        tiles: [0, 1, 2, 3].map((k) => [{ tile: 1 + i * 4 + k }]),
+      });
+    }
+    const big = {
+      klass: 3,
+      id: 0,
+      shrunk: true,
+      tiles: [
+        [200, 201, 202, 203].map((tile) => ({ tile })),
+        [204, 205, 206, 207].map((tile) => ({ tile })),
+      ],
+    };
+    return { big, sheet: layoutEnemySheet([...defs, big]) };
+  };
+  // 52 taken, 11 free: both frames
+  let { big, sheet } = squeeze(13);
+  assertEquals([sheet.leftOut, sheet.oneFrame], [[], []]);
+  assertStrictEquals(sheet.entries, 60);
+  // 56 taken, 7 free: the first frame in both
+  ({ big, sheet } = squeeze(14));
+  assertEquals([sheet.leftOut, sheet.oneFrame], [[], [big]]);
+  assertStrictEquals(sheet.entries, 60);
+  const r0 = plusFrameRect(3, 0, 0), r1 = plusFrameRect(3, 0, 1);
+  assertStrictEquals(
+    sheet.spriteLayout[plusLayoutIndexFor(r1.x / 16, r1.y / 16)],
+    sheet.spriteLayout[plusLayoutIndexFor(r0.x / 16, r0.y / 16)],
+  );
+  // 60 taken, 3 free: left out, not drawn with holes
+  ({ big, sheet } = squeeze(15));
+  assertEquals(sheet.leftOut, [big]);
+  assertStrictEquals(sheet.entries, 60);
+  assertStrictEquals(sheet.dropped, 0);
 });
 
 // --- a stage's story, as its opening map rows ---

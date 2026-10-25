@@ -850,23 +850,27 @@ enemies' `6+stage`, its boss's `12+stage`, the player's 18, the title's 19 — a
 packed as 16×16 tiles into pages 0/1 (508 of the 512, the corner kept blank);
 scenery cells land 1:1 as chips over MAP GROUP (group 0 the blank chip, the
 first 128 rows, SCROLL looping the 32 blocks); APPEAR gets one record per 16-px
-band that spawns (record 0 empty, 1 the end mark); a zako is `encodePlusEnemy`
-with script `8 + speed index`, hit points sized at 24 a hit, the reader's score
-and animation tables; its frames are laid at `plusFrameRect` and the sheet's 320
-bytes and 64 group words follow (`layoutEnemySheet`); the boss is one 128×64 or
-64×128 picture by its art's shape, its record Athena's sample boss's scripts and
-guns with the level's hit points and score (`encodePlusBoss`); the title is the
-logo in the boss's grid; the ship is three 2×2 poses with a mirrored tile's flip
-in its ODR byte, set in the factory's MY SHIP sheet, and both are banked before
-any stage art. The factory sheet is words 12-60 and 72-76: the sample's 49 tiles
-for the bullets, explosions, items, shot and missiles, which nothing in a level
-draws. Palette rows 20-23 are the sample's too (`src/psx/plus-factory-data.js`,
-from the Select 100 disc's UPLOAD sample by
-`tools/psx-sav/plus-factory-data.ts`). Before 2026-10-25 both were left blank
-and every shot, bullet, explosion and item drew invisible. The globals, the
-sixteen songs (silent: the BGM assignment names the disc's own), the factory
-ladders and the settings are fixed. `sealPlusChecksums` seals, the block is read
-back through `parsePlusSave`, and the card is built around it.
+band that spawns (record 0 empty, 1 the end mark). A zako takes the smallest
+class that holds its art, or, when those are full, the class with room that
+shows it largest (`pickEnemyClass`). That smaller one is laid on the sheet last
+and whole: all its frames, its first frame alone, or not at all, its spawns then
+left out of APPEAR. A zako is `encodePlusEnemy` with script `8 + speed index`,
+hit points sized at 24 a hit, the reader's score and animation tables; its
+frames are laid at `plusFrameRect` and the sheet's 320 bytes and 64 group words
+follow (`layoutEnemySheet`); the boss is one 128×64 or 64×128 picture by its
+art's shape, its record Athena's sample boss's scripts and guns with the level's
+hit points and score (`encodePlusBoss`); the title is the logo in the boss's
+grid; the ship is three 2×2 poses with a mirrored tile's flip in its ODR byte,
+set in the factory's MY SHIP sheet, and both are banked before any stage art.
+The factory sheet is words 12-60 and 72-76: the sample's 49 tiles for the
+bullets, explosions, items, shot and missiles, which nothing in a level draws.
+Palette rows 20-23 are the sample's too (`src/psx/plus-factory-data.js`, from
+the Select 100 disc's UPLOAD sample by `tools/psx-sav/plus-factory-data.ts`).
+Before 2026-10-25 both were left blank and every shot, bullet, explosion and
+item drew invisible. The globals, the sixteen songs (silent: the BGM assignment
+names the disc's own), the factory ladders and the settings are fixed.
+`sealPlusChecksums` seals, the block is read back through `parsePlusSave`, and
+the card is built around it.
 
 ## GLOBAL, SOUND, HIGH SCORE, SETTINGS
 
@@ -1392,6 +1396,11 @@ games to the same readings.
   rides the map. The step format is
   `{u16 duration, u16 angle (1/65536 turn), u16 angular velocity,
   u16 speed 8.8 | ride-the-scroll bit 15, u16 flags}`.
+- **The spawn class** is the smallest whose box holds the art (32×32, 64×32,
+  32×64, 64×64). When those are full, it is the class with room that shows the
+  art largest, the smaller of two that show it alike (`pickEnemyClass`), so the
+  enemy is drawn smaller rather than left out. A further drop digit's record
+  takes a class that holds the first's box, else shares the first record.
 - **The record** is `encodeKidsRecord`: hardness from the record's hp against
   the spawn class's table (the nearest of the three counted values; `infinity`
   is 3), the score tier the nearest of the class's three, the bullet the quad

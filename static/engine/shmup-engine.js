@@ -6884,6 +6884,16 @@ function mapColumn(col, width) {
   }
   return Math.round(col * (PLACEMENT_COLS - 1) / (width - 1));
 }
+function pickEnemyClass(classes, used, w, h) {
+  const aw = Math.min(w, Math.max(...classes.map((c) => c.w)));
+  const ah = Math.min(h, Math.max(...classes.map((c) => c.h)));
+  const free = classes.map((c, klass) => ({ ...c, klass })).filter((c) => used[c.klass] < c.count);
+  const holds = free.filter((c) => c.w >= aw && c.h >= ah).sort((a, b) => a.w * a.h - b.w * b.h);
+  if (holds.length) return { klass: holds[0].klass, shrunk: false };
+  const scale = (c) => Math.min(c.w / aw, c.h / ah);
+  const smaller = free.sort((a, b) => scale(b) - scale(a) || a.w * a.h - b.w * b.h);
+  return smaller.length ? { klass: smaller[0].klass, shrunk: true } : { klass: -1, shrunk: false };
+}
 function spreadFrames(list, count) {
   if (!list.length) return [];
   if (list.length === count) return list.slice();
@@ -10018,6 +10028,9 @@ var KIDS_SPRITE_STRIPS = Object.freeze([
   Object.freeze({ klass: 2, w: 2, h: 4, frames: 2, stripW: 4, stripH: 4 }),
   Object.freeze({ klass: 3, w: 4, h: 4, frames: 1, stripW: 4, stripH: 4 })
 ]);
+var KIDS_CLASS_BOXES = Object.freeze(KIDS_SPRITE_STRIPS.map(
+  (strip, k) => Object.freeze({ w: strip.w * CG_CELL, h: strip.h * CG_CELL, count: KIDS_APPEAR_CLASSES[k].count })
+));
 var KIDS_BOSS_GRID = 8;
 var KIDS_BOSS_ART_CELLS = Object.freeze([[4, 4], [8, 4], [4, 8], [8, 8]]);
 var KIDS_BOSS_FOOTPRINT = Object.freeze([[2, 2], [4, 2], [2, 4], [4, 4]]);
@@ -10929,9 +10942,14 @@ function buildKidsGameFromLevel(level, art2, options = {}) {
       const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
       let first = null;
       for (const digit of digits) {
-        let klass = artClass;
-        while (klass < KIDS_APPEAR_CLASSES.length && counts[klass] >= KIDS_APPEAR_CLASSES[klass].count) klass++;
+        const box = first ? KIDS_CLASS_BOXES[first.klass] : { w: maxW, h: maxH };
+        const pick = pickEnemyClass(KIDS_CLASS_BOXES, counts, box.w, box.h);
+        const klass = pick.klass >= 0 && !(first && pick.shrunk) ? pick.klass : KIDS_APPEAR_CLASSES.length;
         const item = KIDS_ITEM_FOR_DROP[digit] || 0;
+        if (!first && pick.shrunk) {
+          const want = KIDS_CLASS_BOXES[artClass], got = KIDS_CLASS_BOXES[klass];
+          warn(`${st.key}: the stage's ${want.w}x${want.h} records are all taken \u2014 enemy${letter} (${rec.name || "?"}) drawn ${got.w}x${got.h}`);
+        }
         if (klass >= KIDS_APPEAR_CLASSES.length) {
           if (first) {
             warn(`${st.key}: enemy${letter} carries several drop digits and the stage is out of records \u2014 its drop-${digit} cells drop ${first.item ? KIDS_ITEM_SLOTS[first.item - 1].name : "nothing"} instead`);
@@ -12535,11 +12553,21 @@ function layoutEnemySheet(defs) {
   const entryOfTile = /* @__PURE__ */ new Map();
   let entries = 1;
   let painted = 0, dropped = 0;
+  const leftOut = [], oneFrame = [];
+  const fresh = (frames) => new Set(frames.flat().filter((t) => t && !entryOfTile.has(t.tile)).map((t) => t.tile)).size;
   for (const d of defs) {
     const c = PLUS_DEF_CLASSES[d.klass];
     const cw = c.w / CG_CELL, ch = c.h / CG_CELL;
-    d.tiles.forEach((cells, k) => {
-      if (k >= c.frames) return;
+    let frames = d.tiles.slice(0, c.frames);
+    if (d.shrunk && fresh(frames) > 64 - entries) {
+      frames = frames.map(() => frames[0] || []);
+      if (fresh(frames) > 64 - entries) {
+        leftOut.push(d);
+        continue;
+      }
+      oneFrame.push(d);
+    }
+    frames.forEach((cells, k) => {
       const r = plusFrameRect(d.klass, d.id, k);
       for (let cy = 0; cy < ch; cy++) {
         for (let cx = 0; cx < cw; cx++) {
@@ -12566,7 +12594,7 @@ function layoutEnemySheet(defs) {
       }
     });
   }
-  return { enemyGroup, spriteLayout, painted, entries: entries - 1, dropped };
+  return { enemyGroup, spriteLayout, painted, entries: entries - 1, dropped, leftOut, oneFrame };
 }
 function layoutBoss(tiles, vertical = false) {
   const words = new Uint16Array(32).fill(PLUS_EMPTY_TILE);
@@ -12690,13 +12718,13 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
       if (frames.length && (maxW > 64 || maxH > 64)) {
         warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; zako art tops out at 64x64 \u2014 downscaled`);
       }
-      let klass = plusClassFor(maxW, maxH);
-      while (klass < PLUS_DEF_CLASSES.length && counts[klass] >= PLUS_DEF_CLASSES[klass].count) klass++;
-      if (klass >= PLUS_DEF_CLASSES.length) {
-        warn(`${st.key}: no free definition for enemy${letter} (${rec.name || "?"}) \u2014 a stage holds 16 + 16 + 16 + 8 + 4, and a full class gives way only to a larger one \u2014 cells left empty`);
+      const { klass, shrunk } = pickEnemyClass(PLUS_DEF_CLASSES, counts, maxW, maxH);
+      if (klass < 0) {
+        warn(`${st.key}: no free definition for enemy${letter} (${rec.name || "?"}) \u2014 a stage holds 16 + 16 + 16 + 8 + 4 \u2014 cells left empty`);
         continue;
       }
       const c = PLUS_DEF_CLASSES[klass];
+      const want = PLUS_DEF_CLASSES[plusClassFor(maxW, maxH)];
       const id = counts[klass]++;
       const hits = rec.hp === "infinity" ? 2e3 / PLUS_SHOT_DAMAGE : Math.max(1, Number(rec.hp) || 1);
       const interval = Number(rec.interval);
@@ -12711,7 +12739,7 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
         animIndex: Number.isFinite(rec.frameRate) && rec.frameRate > 0 ? nearestIndex3(PLUS_ANIM_INTERVALS, 60 / rec.frameRate) : 3
       });
       const framePlans = spreadFrames(frames, c.frames).map((f, i) => plan(plusPaletteRow("enemy", s), f, c.w, c.h, `${st.key} enemy${letter} ${i}`));
-      defs.set(letter, { klass, id, index: c.base + id, bytes, frames: framePlans, name: rec.name || `enemy${letter}` });
+      defs.set(letter, { klass, id, index: c.base + id, bytes, frames: framePlans, name: rec.name || `enemy${letter}`, shrunk, why: `the stage's ${want.w}x${want.h} definitions are all taken \u2014 enemy${letter} (${rec.name || "?"})` });
     }
     const story = opts.storyPicks ? opts.storyPicks.get(s) || null : null;
     const storyShift = story ? PLUS_STORY_TOP_ROW + 1 + PLUS_STORY_LEAD_ROWS : 0;
@@ -12884,12 +12912,33 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
     for (let i = 0; i < 256; i++) scroll[i] = i < 32 || !opening ? i % 32 : opening + (i - opening) % (32 - opening);
     scroll.fill(PLUS_SCROLL_EFFECT_DEFAULT, 256, 512);
     if (opening) scroll.fill(PLUS_STORY_SCROLL_EFFECT, 256, 256 + opening);
+    const bossTiles = b.boss && b.boss.picture ? bankTiles(b.boss.picture, true) : [];
+    const sheetDefs = [...b.defs.values()].sort((x, y) => x.shrunk - y.shrunk);
+    const sheet = layoutEnemySheet(sheetDefs.map((d) => ({ ...d, tiles: d.frames.map((p) => bankTiles(p, true)) })));
+    if (sheet.dropped) warn(`${b.key}: the enemies need more than 63 distinct tiles; ${sheet.dropped} cells left blank`);
+    const leftOut = new Set(sheet.leftOut.map((d) => d.index));
+    const leftOutSpawns = new Set(sheet.leftOut.map((d) => 128 | PLUS_DEF_CLASSES[d.klass].nibble << 4 | d.id & 15));
+    for (const d of sheetDefs.filter((x) => x.shrunk)) {
+      const c = PLUS_DEF_CLASSES[d.klass];
+      warn(`${b.key}: ${d.why} ${leftOut.has(d.index) ? `left out: the enemy sheet's 63 tiles cannot hold it even ${c.w}x${c.h}` : sheet.oneFrame.some((x) => x.index === d.index) ? `drawn ${c.w}x${c.h}, its first frame only (the enemy sheet is near its 63 tiles)` : `drawn ${c.w}x${c.h}`}`);
+    }
+    const enemyGroup = piece("enemyGroup");
+    for (let i = 0; i < 64; i++) putU16le5(enemyGroup, i * 2, sheet.enemyGroup[i]);
+    piece("spriteLayout").set(sheet.spriteLayout);
     const appear = piece("appear");
     appear.fill(PLUS_APPEAR_END_MARK, PLUS_APPEAR_RECORD_SIZE, 2 * PLUS_APPEAR_RECORD_SIZE);
     let next = 2;
     const rowTable = appear.subarray(PLUS_APPEAR_RECORDS * PLUS_APPEAR_RECORD_SIZE);
-    let bandsDropped = 0;
-    for (const [band, rec] of [...b.bands.entries()].sort((x, y) => x[0] - y[0])) {
+    let bandsDropped = 0, unplaced = 0;
+    for (const [band, spawns] of [...b.bands.entries()].sort((x, y) => x[0] - y[0])) {
+      const rec = Uint8Array.from(spawns);
+      for (let i = 0; i < rec.length; i++) {
+        if (leftOutSpawns.has(rec[i])) {
+          rec[i] = 0;
+          unplaced++;
+        }
+      }
+      if (rec.every((v) => !v)) continue;
       if (next >= PLUS_APPEAR_RECORDS) {
         bandsDropped++;
         continue;
@@ -12901,28 +12950,22 @@ function buildPlusGameFromLevel(level, art2, options = {}) {
     const enemyData2 = piece("enemyData");
     const config = piece("config");
     config.fill(PLUS_STAGE_CONFIG_DEFAULT);
-    for (const d of b.defs.values()) enemyData2.set(d.bytes, d.index * PLUS_ENEMY_SIZE);
+    for (const d of b.defs.values()) if (!leftOut.has(d.index)) enemyData2.set(d.bytes, d.index * PLUS_ENEMY_SIZE);
     const bossGroup = piece("bossGroup");
     let bossPainted = 0;
     if (b.boss) {
       enemyData2.set(b.boss.record, PLUS_BOSS_OFFSET);
-      const tiles = b.boss.picture ? bankTiles(b.boss.picture, true) : [];
-      const words = layoutBoss(tiles, b.boss.vertical);
+      const words = layoutBoss(bossTiles, b.boss.vertical);
       for (let i = 0; i < words.length; i++) putU16le5(bossGroup, i * 2, words[i]);
       bossPainted = words.filter((w) => w !== PLUS_EMPTY_TILE).length;
     } else {
       for (let i = 0; i < bossGroup.length; i += 2) putU16le5(bossGroup, i, PLUS_EMPTY_TILE);
     }
-    const sheet = layoutEnemySheet([...b.defs.values()].map((d) => ({ ...d, tiles: d.frames.map((p) => bankTiles(p, true)) })));
-    if (sheet.dropped) warn(`${b.key}: the enemies need more than 63 distinct tiles; ${sheet.dropped} cells left blank`);
-    const enemyGroup = piece("enemyGroup");
-    for (let i = 0; i < 64; i++) putU16le5(enemyGroup, i * 2, sheet.enemyGroup[i]);
-    piece("spriteLayout").set(sheet.spriteLayout);
     return {
       key: b.key,
-      placements: b.placed,
+      placements: b.placed - unplaced,
       dropped: b.dropped,
-      definitions: [...b.defs.values()].map((d) => ({ name: d.name, klass: d.klass, id: d.id, index: d.index })),
+      definitions: [...b.defs.values()].filter((d) => !leftOut.has(d.index)).map((d) => ({ name: d.name, klass: d.klass, id: d.id, index: d.index })),
       boss: b.boss ? { name: b.boss.name, band: b.boss.band, frames: b.boss.frameCount, vertical: b.boss.vertical, tiles: bossPainted, hits: b.boss.hits, ...b.boss.form ? { form: b.boss.form } : {} } : null,
       chips,
       groups: groups - 1,
@@ -19383,7 +19426,7 @@ function sfcClassFor(w, h) {
   if (w <= 32 && h <= 32) return 3;
   return 4;
 }
-var CLASS_FALLBACKS = Object.freeze([[0, 1, 2, 3, 4], [1, 3, 4], [2, 3, 4], [3, 4], [4]]);
+var SFC_CLASS_BOXES = Object.freeze(SFC_ENEMY_CLASSES.map((c) => Object.freeze({ w: c.w, h: c.h, count: c.entries })));
 function sfcSramFileName(name) {
   const safe = String(name || "game").replace(/[\\/:*?"<>|]+/g, " ").trim() || "game";
   return `Dezaemon SFC - ${safe}.srm`;
@@ -19786,6 +19829,23 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
       }
       return { slot, hflip: hit.hflip, vflip: hit.vflip };
     };
+    const paintChips = (chips) => {
+      for (const { at, px } of chips) {
+        const ref = sheetSlot(px);
+        if (ref) odr[at] = encodeOdrByte(ref);
+      }
+    };
+    const freshChips = (chips) => {
+      const fresh = /* @__PURE__ */ new Set();
+      for (const { px } of chips) {
+        if (isTransparent(px)) continue;
+        const hit = bank.byKey.get(keyOf2(px));
+        if (hit && sheetSlotOfChip.has(hit.chip)) continue;
+        fresh.add(hit ? hit.chip : [[false, false], [true, false], [false, true], [true, true]].map(([h, v]) => keyOf2(flipChip(px, h, v))).sort()[0]);
+      }
+      return fresh.size;
+    };
+    const shrunkPaints = [];
     for (const letter of letters) {
       const rec = enemyData[`enemy${letter}`];
       if (!rec) {
@@ -19797,13 +19857,14 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
       const maxW = frames.reduce((a, f) => Math.max(a, f.w), 16);
       const maxH = frames.reduce((a, f) => Math.max(a, f.h), 16);
       if (frames.length && (maxW > 64 || maxH > 64)) warn(`${st.key}: enemy${letter} (${rec.name || "?"}) is ${maxW}x${maxH}; a sprite tops out at 64x64 \u2014 downscaled`);
-      const wanted = sfcClassFor(maxW, maxH);
-      let klass = CLASS_FALLBACKS[wanted].find((k) => counts[k] < SFC_ENEMY_CLASSES[k].entries);
-      if (klass === void 0) {
+      const { klass, shrunk } = pickEnemyClass(SFC_CLASS_BOXES, counts, maxW, maxH);
+      if (klass < 0) {
         warn(`${st.key}: no free entry for enemy${letter} (${rec.name || "?"}) \u2014 a stage holds 16 + 16 + 16 + 8 + 4 \u2014 cells left empty`);
         continue;
       }
       const spec = SFC_ENEMY_CLASSES[klass];
+      const want = SFC_ENEMY_CLASSES[sfcClassFor(maxW, maxH)];
+      const why = `the stage's ${want.w}x${want.h} entries are all taken \u2014 enemy${letter} (${rec.name || "?"})`;
       const digits = [...usage.get(letter).digits.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
       const speed = Number.isFinite(rec.speed) ? Math.max(0.5, rec.speed) : 1;
       const interval = Number(rec.interval);
@@ -19822,7 +19883,8 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
       };
       let first = null;
       for (const digit of digits) {
-        const k = first ? CLASS_FALLBACKS[klass].find((c) => counts[c] < SFC_ENEMY_CLASSES[c].entries) : klass;
+        const again = first ? pickEnemyClass(SFC_CLASS_BOXES, counts, spec.w, spec.h) : null;
+        const k = !first ? klass : again.klass >= 0 && !again.shrunk ? again.klass : void 0;
         if (k === void 0) {
           warn(`${st.key}: enemy${letter} carries several drop digits and the stage is out of entries \u2014 its drop-${digit} cells ${first.itemDrop ? "drop an item" : "drop nothing"} too`);
           records.set(letter + digit, first);
@@ -19833,23 +19895,41 @@ function buildSfcGameFromLevel(level, art2, options = {}) {
         const itemDrop = digit !== "0";
         entryData.set(encodeEnemyEntry2({ ...fields, itemDrop }), kspec.base + entry * ENEMY_ENTRY_BYTES2);
         const chipsPerFrame = kspec.cols * kspec.rows;
-        spreadFrames(frames, kspec.frames).forEach((f, fi) => {
-          const q = indexedByKey.get(f.key);
-          if (!q) return;
-          const fitted = fitIndexed(q, kspec.w, kspec.h);
-          for (let cy = 0; cy < kspec.rows; cy++) {
-            for (let cx = 0; cx < kspec.cols; cx++) {
-              const ref = sheetSlot(cutChip(fitted, kspec.w, cx, cy));
-              if (!ref) continue;
-              odr[kspec.odrBase + entry * chipsPerFrame * kspec.frames + fi * chipsPerFrame + cy * kspec.cols + cx] = encodeOdrByte(ref);
+        const chipsOf = (list) => {
+          const out = [];
+          spreadFrames(list, kspec.frames).forEach((f, fi) => {
+            const q = indexedByKey.get(f.key);
+            if (!q) return;
+            const fitted = fitIndexed(q, kspec.w, kspec.h);
+            for (let cy = 0; cy < kspec.rows; cy++) {
+              for (let cx = 0; cx < kspec.cols; cx++) {
+                out.push({ at: kspec.odrBase + entry * chipsPerFrame * kspec.frames + fi * chipsPerFrame + cy * kspec.cols + cx, px: cutChip(fitted, kspec.w, cx, cy) });
+              }
             }
-          }
-        });
+          });
+          return out;
+        };
         const made = { klass: k, entry, itemDrop, name: rec.name || `enemy${letter}`, cell: letter + digit, frames: frames.length };
+        const reported = { name: made.name, cell: made.cell, klass: k, entry, size: `${kspec.w}x${kspec.h}`, frames: Math.min(kspec.frames, Math.max(1, frames.length)), itemDrop };
+        if (shrunk) shrunkPaints.push({ made, reported, why, all: () => chipsOf(frames), one: () => chipsOf(frames.slice(0, 1)) });
+        else paintChips(chipsOf(frames));
         records.set(letter + digit, made);
         if (!first) first = made;
-        stageReport.enemies.push({ name: made.name, cell: made.cell, klass: k, entry, size: `${kspec.w}x${kspec.h}`, frames: Math.min(kspec.frames, Math.max(1, frames.length)), itemDrop });
+        stageReport.enemies.push(reported);
       }
+    }
+    for (const { made, reported, why, all, one } of shrunkPaints) {
+      const room = ENEMY_GROUP_CHIPS - 1 - sheetSlotOfChip.size;
+      const runs = [all(), one()];
+      const pick = runs.findIndex((c) => freshChips(c) <= room);
+      if (pick >= 0) {
+        paintChips(runs[pick]);
+        warn(`${st.key}: ${why} drawn ${reported.size}${pick ? `, its first frame only (the enemy sheet is near its ${ENEMY_GROUP_CHIPS - 1} chips)` : ""}`);
+        continue;
+      }
+      for (const [cell, r] of records) if (r === made) records.delete(cell);
+      stageReport.enemies.splice(stageReport.enemies.indexOf(reported), 1);
+      warn(`${st.key}: ${why} left out: the enemy sheet's ${ENEMY_GROUP_CHIPS - 1} chips cannot hold it even ${reported.size}`);
     }
     const bossWords = new Uint16Array(BOSS_GROUP_CHIPS).fill(CHIP_BLANK_WORD);
     const bossBlock = Uint8Array.from(SFC_FACTORY_BOSS_BLOCK);

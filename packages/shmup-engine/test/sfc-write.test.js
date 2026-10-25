@@ -356,6 +356,73 @@ Deno.test("scenery: the level's 16x16 cell grid becomes map rows naming group sl
   assertStrictEquals(slot.user, true);
 });
 
+/** w x h px of opaque noise: one 16x16 chip of it shares nothing with another. */
+function noise(w, h, seed) {
+  const rgba = new Uint8Array(w * h * 4);
+  let x = (seed * 2654435761) >>> 0;
+  for (let i = 0; i < w * h; i++) {
+    x = (x * 1103515245 + 12345) >>> 0;
+    rgba.set([x & 255, (x >>> 8) & 255, (x >>> 16) & 255, 255], i * 4);
+  }
+  return { w, h, rgba };
+}
+
+Deno.test("an entry drawn smaller than its class takes the enemy sheet last and whole: every frame, else its first, else left out", () => {
+  // Four invisible 64x64 enemies take the 64x64 entries for no chips;
+  // `smalls` 16x16 ones of four noise frames take four chips each; a fifth
+  // 64x64 one, two noise frames, drops to 32x32 (four chips a frame).
+  const squeeze = (smalls) => {
+    const lv = level();
+    const a = art();
+    const letters = [];
+    const add = (letter, textures) => {
+      letters.push(letter);
+      lv.enemyData[`enemy${letter}`] = {
+        name: `n${letter}`,
+        hp: 1,
+        score: 50,
+        speed: 1,
+        interval: -1,
+        texture: textures,
+      };
+    };
+    lv.enemyData = {};
+    for (let i = 0; i < 4; i++) {
+      a[`clear${i}.png`] = { w: 64, h: 64, rgba: new Uint8Array(64 * 64 * 4) };
+      add(String.fromCharCode(65 + i), [`clear${i}.png`]);
+    }
+    for (let i = 0; i < smalls; i++) {
+      const names = [0, 1, 2, 3].map((k) => `small${i}_${k}.png`);
+      names.forEach((n, k) => (a[n] = noise(16, 16, 100 + i * 4 + k)));
+      add(String.fromCharCode(69 + i), names);
+    }
+    a["big0.png"] = noise(64, 64, 1);
+    a["big1.png"] = noise(64, 64, 2);
+    add("Z", ["big0.png", "big1.png"]);
+    lv.enemylist = [letters.map((l) => `${l}0`)];
+    lv.width = letters.length;
+    const out = buildSfcGameFromLevel(lv, a);
+    const z = out.warnings.find((w) => w.includes("enemyZ"));
+    assert(
+      !out.warnings.some((w) => /enemy sheet is full/.test(w)),
+      "no entry at its own size loses a chip",
+    );
+    return { z, enemies: out.report.stages[0].enemies.map((e) => e.name) };
+  };
+  // 52 chips taken, 11 free: both frames
+  let r = squeeze(13);
+  assert(/drawn 32x32$/.test(r.z), r.z);
+  assert(r.enemies.includes("nZ"));
+  // 56 taken, 7 free: the first frame in both
+  r = squeeze(14);
+  assert(/drawn 32x32, its first frame only/.test(r.z), r.z);
+  assert(r.enemies.includes("nZ"));
+  // 60 taken, 3 free: left out, its cells spawning nothing
+  r = squeeze(15);
+  assert(/left out/.test(r.z), r.z);
+  assert(!r.enemies.includes("nZ"));
+});
+
 Deno.test("limits: stages past six, a horizontal grid, too many entries", () => {
   const lv = level();
   lv.stages = {};
@@ -389,6 +456,36 @@ Deno.test("limits: stages past six, a horizontal grid, too many entries", () => 
   const classes = big.report.stages[0].enemies.map((e) => e.klass);
   assertStrictEquals(classes.filter((k) => k === 0).length, 16);
   assertStrictEquals(classes.filter((k) => k === 1).length, 1);
+  // six big enemies: four 64x64 entries, then the other two drawn 32x32
+  // rather than left out
+  const six = level();
+  const bigLetters = "ABCDEF".split("");
+  six.enemylist = [bigLetters.map((l) => `${l}0`)];
+  six.width = bigLetters.length;
+  six.enemyData = {};
+  const b = art();
+  for (const l of bigLetters) {
+    six.enemyData[`enemy${l}`] = {
+      name: l,
+      hp: 1,
+      score: 50,
+      speed: 1,
+      interval: -1,
+      texture: [`big${l}.png`],
+    };
+    b[`big${l}.png`] = frame(60, 60, [l.charCodeAt(0) * 3 & 255, 40, 40]);
+  }
+  const sixOut = buildSfcGameFromLevel(six, b);
+  assertEquals(
+    sixOut.report.stages[0].enemies.map((e) => e.klass).sort(),
+    [3, 3, 4, 4, 4, 4],
+  );
+  assertStrictEquals(
+    sixOut.warnings.filter((w) => /64x64 entries are all taken/.test(w))
+      .length,
+    2,
+  );
+  assert(!sixOut.warnings.some((w) => /no free entry/.test(w)));
   assertThrows(
     () => buildSfcGameFromLevel({ name: "x" }, {}),
     Error,
