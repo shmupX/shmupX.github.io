@@ -1164,7 +1164,8 @@ the backdrop centred on a black 320×240, cut into 40 textures in the stage's
 and the HUD, the ship hidden and the map's scroll held, then one effect clears
 them and the stage goes on — six to fifteen seconds by the length of its words,
 every placement moved past where the scroll waited. Booted in the launcher's
-player on gs (FORMAT-N64.md "A level's story").
+player on gs (FORMAT-N64.md "A level's story"). The editor's 64DD export draws
+the same briefings with the composer in the bundle.
 
 **Item icons.** A save gives each of its eight item slots exactly one 16×16 cell
 of the global sprite bank (refs 94–101), so a pickup in a cart is a **still** —

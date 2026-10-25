@@ -8114,10 +8114,12 @@
         // A cart has no cutscenes, so every cart writer here paints a stage's
         // story — the speaker's plate, the words in their box, the picture —
         // into the map rows the stage opens on, at the largest size its cells
-        // allow. The backdrops are composed by the engine
-        // (Dezaemon.storyBackdrops, packages/shmup-engine/src/story/), the very
-        // function `deno task build:sav / build:sfc / build:kids / build:plus`
-        // run, so a cart downloaded here opens its stages as the CLI's does.
+        // allow; the 64DD's ground is 3D, so its writer shows the same picture
+        // as a full-screen briefing instead. The backdrops are composed by the
+        // engine (Dezaemon.storyBackdrops, packages/shmup-engine/src/story/),
+        // the very function `deno task build:sav / build:sfc / build:kids /
+        // build:plus / build:ddd` run, so a cart or a disk downloaded here
+        // opens its stages as the CLI's does.
         // The two differ only in how a picture becomes RGBA: the CLI has its own
         // GIF and PNG decoders, the page has the browser's. The words are set in
         // the Saturn's own face, the sheet the runtime serves.
@@ -8184,8 +8186,15 @@
             }
             const out = write(backdrops);
             if (warnings.length) out.warnings = warnings.concat(out.warnings || []);
-            if (backdrops.length) out.storyLine = E.storyLogLine(backdrops, (out.report && out.report.stages) || []);
+            if (backdrops.length) out.storyLine = E.storyLogLine(backdrops, dezaStoryStages(out));
             return out;
+        }
+
+        // The stages a writer's report lists: a cart's at report.stages, the
+        // 64DD's under its project.
+        function dezaStoryStages(out) {
+            const rep = out.report || {};
+            return rep.stages || (rep.project && rep.project.stages) || [];
         }
 
         // " · STORY OPENS 2 STAGES", for the line under a finished build; the
@@ -8193,8 +8202,7 @@
         function dezaStorySummary(out) {
             if (!out.storyLine) return '';
             console.info(out.storyLine);
-            const stages = (out.report && out.report.stages) || [];
-            const n = stages.filter((s) => s.story).length;
+            const n = dezaStoryStages(out).filter((s) => s.story).length;
             return n ? ' · STORY OPENS ' + n + ' STAGE' + (n === 1 ? '' : 'S') : ' · NO STAGE HAS ROOM FOR THE STORY';
         }
 
@@ -9306,7 +9314,9 @@
             // A donor with no project has nothing to copy the other files
             // from; the writer would refuse "disk" as a template, so none.
             if (n64DonorBytes && !n64DonorProjects.length) options.template = null;
-            const out = window.Dezaemon.exportLevelToDdd(record, art, options);
+            // Each stage with a story opens on it as a full-screen briefing,
+            // composed at the full twelve rows, as build:ddd asks.
+            const out = await exportWithStory((storyBackdrops) => window.Dezaemon.exportLevelToDdd(record, art, { ...options, storyBackdrops }));
             return { out, record };
         }
         let n64DiskBusy = false;
@@ -9393,6 +9403,7 @@
                     ' · TEXTURES PLACED ' + sheet(proj.common) + ' (CGR)' +
                     (stages.length ? ' + ' + stages.map((s) => sheet(s) + ' (' + s.ext + ')').join(' + ') : '') +
                     ' · ' + (rep.templateProject ? 'TEMPLATE ' + rep.templateProject : 'NO DONOR') +
+                    dezaStorySummary(out) +
                     ' · ' + (out.image.length / 1048576).toFixed(1) + ' MB';
                 const warn = out.warnings.length ? ' · ' + out.warnings.length + ' WARNING' + (out.warnings.length === 1 ? '' : 'S') + ' (SEE CONSOLE)' : '';
                 const caveat = n64DonorBytes ? '' : ' · WITHOUT A DONOR THE DISK HAS NO SAVE AREA, SO THE CARTRIDGE IS NOT EXPECTED TO ENTER DISK MODE';

@@ -655,10 +655,9 @@ CONSOLE › **N64**, is the same call from the engine bundle
 projects are listed, and a donor with none gets no template), a PROJECT NAME
 field (eight letters and digits, the open game's name cut to fit by default; a
 name on the donor replaces that project), a FORMAT pick between NDD and DDD, and
-DOWNLOAD. Only `build:ddd` draws a story: the editor's call passes no
-`storyBackdrops` yet, though the composer is in the bundle
-(`src/story/story-panels.js`, `Dezaemon.storyBackdrops`) and the editor's four
-cart exports pass it. No disk has been put on hardware.
+DOWNLOAD. The editor draws the story as `build:ddd` does, with the composer in
+the bundle (`src/story/story-panels.js`, `Dezaemon.storyBackdrops`), and its
+line says how many stages open on it. No disk has been put on hardware.
 
 **What the writer does not write** — the list a future session starts from:
 
@@ -702,8 +701,7 @@ cart exports pass it. No disk has been put on hardware.
   takes back a template's art, below);
 - any disk type but 0 beyond the geometry (a warning says so), any `.ndd` whose
   system area is development-format, and the D64 or MAME image shapes;
-- a story drawn by the editor's export (only `build:ddd` passes one), and a
-  story for a stage past the level's own (a boss's split second stage never
+- a story for a stage past the level's own (a boss's split second stage never
   gets one).
 
 ### A level's story (traced 2026-10-20, booted the same day)

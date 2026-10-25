@@ -1,9 +1,10 @@
-// A cart exported from the editor opens its stages on the game's story, as
-// one built by `deno task build:sav / build:sfc / build:kids / build:plus`
-// does. The editor composes the backdrops in the page with the engine's
-// storyBackdrops (tests/engine_bundle_test.ts pins the bundle to the CLI's
-// composer) and hands them to the writer — every writer call, or the carts
-// that skip it open on empty scenery with no error anywhere.
+// A cart or a 64DD disk exported from the editor opens its stages on the
+// game's story, as one built by `deno task build:sav / build:sfc / build:kids
+// / build:plus / build:ddd` does. The editor composes the backdrops in the
+// page with the engine's storyBackdrops (tests/engine_bundle_test.ts pins the
+// bundle to the CLI's composer) and hands them to the writer — every writer
+// call, or the exports that skip it open on empty scenery with no error
+// anywhere.
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
@@ -18,12 +19,14 @@ Deno.test("every cart export in the editor draws the story", async () => {
   const html = await editor();
   const calls = [
     ...html.matchAll(
-      /window\.Dezaemon\.(exportLevelToSav|exportLevelToKidsCard|exportLevelToPlusCard|exportLevelToSfcSram)\(record/g,
+      /window\.Dezaemon\.(exportLevelToSav|exportLevelToKidsCard|exportLevelToPlusCard|exportLevelToSfcSram|exportLevelToDdd)\(record/g,
     ),
   ];
   // Saturn three times (EXPORT, SAVE MOD, PUBLISH TO ESHOP; the shelf
-  // rebuild goes through EXPORT's), then Kids!, Dezaemon+ and the SFC.
+  // rebuild goes through EXPORT's), then Kids!, Dezaemon+, the SFC and the
+  // 64DD (DOWNLOAD and → PLAY 64DD both build through one call).
   assertEquals(calls.map((m) => m[1]).sort(), [
+    "exportLevelToDdd",
     "exportLevelToKidsCard",
     "exportLevelToPlusCard",
     "exportLevelToSav",
@@ -54,10 +57,21 @@ Deno.test("every cart export in the editor draws the story", async () => {
     kids.includes("height: window.Dezaemon.KIDS_STORY_ROWS * 32"),
     "the Kids! export composes the story at the Saturn's height",
   );
-  // Each export's line says what the story did.
+  // Each export's line says what the story did: Saturn, PlayStation, SFC
+  // and 64DD.
   assertEquals(
     [...html.matchAll(/(?<!function )dezaStorySummary\(out\)/g)].length,
-    3,
+    4,
+  );
+  // The 64DD's writer lists its stages under the project, so the story's
+  // line and summary have to look there too.
+  const stages = html.slice(
+    html.indexOf("function dezaStoryStages(out)"),
+    html.indexOf("function dezaStorySummary(out)"),
+  );
+  assert(
+    stages.includes("rep.project && rep.project.stages"),
+    "dezaStoryStages reads the 64DD's report.project.stages",
   );
 });
 
