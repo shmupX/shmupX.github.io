@@ -3094,6 +3094,11 @@ one for the title, one for the ship) over the two 256×256 4bpp texture pages,
 the enemy sheet is laid out through the SPRITE LAYOUT and ENEMY GROUP words
 the 1996 program's tile copier reads, the boss and title as two 4×4 tile
 blocks, and the nineteen checksums the game verifies are sealed last. The
+ship's three poses sit in the factory's MY SHIP sheet: the shots, enemy
+bullets, explosions and items are user art in a Dezaemon+ save. The card
+carries Athena's own, from the Select 100 disc's UPLOAD sample, along with its
+palette rows 20-23 (`src/psx/plus-factory-data.js`; regenerate with
+`deno run -A tools/psx-sav/plus-factory-data.ts`). The
 card file's name is the level's. The → MEDNAFEN row posts it to
 `/api/psx-save?game=plus`, which installs it for whichever Dezaemon+ disc the
 machine has. `FORMAT-PSX.md` "The sprite sheets" and "Writing a Dezaemon+

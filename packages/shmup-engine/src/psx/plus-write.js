@@ -12,8 +12,10 @@
 //   GRAPHICS   two 256x256 4bpp texture pages, 512 tiles of 16x16, every tile
 //              indexing ONE of the 24 palette rows — the map its stage's row,
 //              enemies 6+stage, the boss 12+stage, the player 18, the title
-//              19, shots 20. Each row is quantised to fifteen colours from
-//              the art that will draw with it.
+//              19. Each row is quantised to fifteen colours from the art
+//              that will draw with it. The rest of the player's sheet (the
+//              shots, enemy bullets, explosions, items) is the factory's
+//              tiles, with its rows 20-23 (plus-factory-data.js).
 //   MAP        128 rows x 16 chips per stage (columns 0 and 15 empty, the
 //              224-px playfield between), each chip a MAP GROUP index with
 //              its own h-flip and a row-wide v-flip byte; MAP GROUP names the
@@ -88,6 +90,7 @@ import {
     plusPaletteRow,
 } from "./plus.js";
 import { sealPlusChecksums } from "./plus-edit.js";
+import { PLUS_FACTORY_ROWS, PLUS_FACTORY_SHIP_TILES, plusFactorySheet } from "./plus-factory-data.js";
 import { CLUT_OFFSET, TITLE_FRAME_SIZE, TITLE_OFFSET } from "./save-header.js";
 import { buildMemoryCard } from "./memcard-write.js";
 import { defaultKidsIcon, encodeKidsIcon, KIDS_ALPHA_CUTOFF } from "./kids-write.js";
@@ -668,19 +671,30 @@ export function layoutTitle(tiles) {
  * The program lays the first sixteen words out as four 2x2 blocks — words
  * 0-3, 4-7, 8-11 the ship's three attitudes (0x8002378C; the player draws
  * block 0), stored [TL, TR, BL, BR] — forces words 61-63 to 0x3FC..0x3FE,
- * never reads 64-71, and ORs the ODR bytes, which carry flips only, over
- * its own default cell table. So: three poses, every other word the blank
- * cell, every ODR byte zero.
+ * never reads 64-71, and ORs the ODR bytes over its own default cell table
+ * (identity for cells 0-60). That byte is the cell's whole flip: 0x40 h,
+ * 0x80 v, as a SPRITE LAYOUT byte's, and the word goes to the tile copier
+ * as it is, which takes `word >> 8` as the page — a word carrying the
+ * boss's 0x4000 names page 0x40 and the cell never draws. The rest of the
+ * sheet is the enemy bullets, the explosions, the items, the player's shot
+ * and the missiles, which nothing in a level draws: `factory` gives a bank
+ * tile per word for those (the sample's, plus-factory-data.js), and a word
+ * without one is the blank cell. So: three poses, plain tile words, a
+ * mirrored tile's flips in its ODR byte, the factory's sheet around them.
  */
-export function layoutShip(poses) {
+export function layoutShip(poses, factory = []) {
     const group = PLUS_GLOBAL_LAYOUT.find((p) => p.name === "shipGroup").length / 2;
     const shipGroup = new Uint16Array(group).fill(PLUS_EMPTY_TILE);
     const shipOdr = new Uint8Array(PLUS_GLOBAL_LAYOUT.find((p) => p.name === "shipOdr").length);
     let painted = 0;
+    factory.forEach((tile, i) => {
+        if (tile !== null && tile !== undefined && i < group) shipGroup[i] = plusTileWord(tile);
+    });
     poses.slice(0, 3).forEach((tiles, p) => {
         tiles.forEach((t, i) => {
             if (!t || i >= 4) return;
-            shipGroup[p * 4 + i] = plusTileWord(t.tile) | (t.hflip ? PLUS_GROUP_HFLIP : 0) | (t.vflip ? PLUS_GROUP_VFLIP : 0);
+            shipGroup[p * 4 + i] = plusTileWord(t.tile);
+            shipOdr[p * 4 + i] = (t.hflip ? PLUS_LAYOUT_HFLIP : 0) | (t.vflip ? PLUS_LAYOUT_VFLIP : 0);
             painted++;
         });
     });
@@ -813,7 +827,7 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
             let klass = plusClassFor(maxW, maxH);
             while (klass < PLUS_DEF_CLASSES.length && counts[klass] >= PLUS_DEF_CLASSES[klass].count) klass++;
             if (klass >= PLUS_DEF_CLASSES.length) {
-                warn(`${st.key}: no free definition for enemy${letter} (${rec.name || "?"}) — a stage holds 60 — cells left empty`);
+                warn(`${st.key}: no free definition for enemy${letter} (${rec.name || "?"}) — a stage holds 16 + 16 + 16 + 8 + 4, and a full class gives way only to a larger one — cells left empty`);
                 continue;
             }
             const c = PLUS_DEF_CLASSES[klass];
@@ -960,6 +974,14 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
         }
     };
 
+    // The ship and the factory's sheet around it first: every stage draws
+    // them, so no amount of level art may leave them unpainted.
+    const factorySheet = plusFactorySheet();
+    const ship = layoutShip(
+        shipPlans.map((p) => bankTiles(p, true)),
+        PLUS_FACTORY_SHIP_TILES.map((t) => (t < 0 ? null : bank.add(factorySheet[t]))),
+    );
+
     const block = new Uint8Array(PLUS_BLOCK_SIZE);
 
     // Per stage: map + MAP GROUP, scroll, appear, definitions, config, boss, sheet.
@@ -1097,7 +1119,6 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
     }
     const ending = global("endingGroup");
     for (let i = 0; i < ending.length; i += 2) putU16le(ending, i, PLUS_EMPTY_TILE);
-    const ship = layoutShip(shipPlans.map((p) => bankTiles(p, true)));
     const shipGroup = global("shipGroup");
     for (let i = 0; i < ship.shipGroup.length; i++) putU16le(shipGroup, i * 2, ship.shipGroup[i]);
     global("shipOdr").set(ship.shipOdr);
@@ -1120,7 +1141,7 @@ export function buildPlusGameFromLevel(level, art, options = {}) {
     // GRAPHICS + PALETTES.
     block.set(bank.toBitmap(), PLUS_GRAPHICS_OFFSET);
     rows.forEach((r, i) => {
-        const words = r.words || new Uint16Array(16);
+        const words = r.words || PLUS_FACTORY_ROWS[i] || new Uint16Array(16);
         for (let c = 0; c < 16; c++) putU16le(block, PLUS_PALETTE_OFFSET + i * PLUS_PALETTE_ROW_BYTES + c * 2, words[c]);
     });
 

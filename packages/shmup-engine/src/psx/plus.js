@@ -336,6 +336,9 @@ export function decodePlusPalettes(block) {
 /**
  * Which palette row an object draws with (MAIN.EXE, CLUT ids at 0x8018d180):
  * the map takes the stage's own row, enemies 6+stage, the boss 12+stage.
+ * "shot" and "effect" are older names than what they were measured to draw
+ * (Select 100, rows painted one colour each): 20 is the enemy bullets, the
+ * explosions and the bomb blast, 21 the player's shot.
  */
 export function plusPaletteRow(what, stage = 0) {
     switch (what) {

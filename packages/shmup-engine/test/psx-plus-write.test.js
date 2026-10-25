@@ -13,6 +13,7 @@ import {
   buildPlusGameFromLevel,
   encodePlusEnemy,
   exportLevelToPlusCard,
+  layoutShip,
   layoutTitle,
   mapPlusColumn,
   PLUS_DEF_CLASSES,
@@ -50,6 +51,26 @@ import {
 } from "../src/psx/plus.js";
 import { parsePsxSav } from "../src/psx/index.js";
 import { CARD_SIZE } from "../src/psx/memcard.js";
+import {
+  PLUS_FACTORY_ROWS,
+  PLUS_FACTORY_SHIP_TILES,
+  plusFactorySheet,
+} from "../src/psx/plus-factory-data.js";
+
+/** The 256 palette indices a tile word names in a parsed save's bank. */
+function bankTile(save, word) {
+  const n = plusTileIndex(word);
+  const { indexed, width } = save.graphics;
+  const x = (n % 16) * 16, y = Math.floor(n / 16) * 16;
+  const out = new Uint8Array(256);
+  for (let r = 0; r < 16; r++) {
+    out.set(
+      indexed.subarray((y + r) * width + x, (y + r) * width + x + 16),
+      r * 16,
+    );
+  }
+  return out;
+}
 
 function frame(w, h, [r, g, b]) {
   const rgba = new Uint8Array(w * h * 4);
@@ -274,6 +295,31 @@ Deno.test("layoutTitle puts the 8x4 block down as two 4x4 blocks, the boss's gri
   assertStrictEquals(layoutTitle([])[0], PLUS_EMPTY_TILE);
 });
 
+Deno.test("layoutShip keeps a mirrored cell's flip in MY SHIP ODR and lays the factory's sheet around the poses", () => {
+  // A tag whose bottom-right is its bottom-left mirrored. The ship's copier
+  // (MAIN.EXE 0x8002378C) takes a cell's flips from its ODR byte and pages
+  // the word by `word >> 8`: 0x4000 in the word would lose the cell.
+  const pose = [{ tile: 5 }, { tile: 6 }, { tile: 7 }, {
+    tile: 7,
+    hflip: true,
+  }];
+  const factory = new Array(77).fill(null);
+  factory[16] = 40;
+  factory[72] = 41;
+  const { shipGroup, shipOdr, painted } = layoutShip(
+    [pose, pose, pose],
+    factory,
+  );
+  assertStrictEquals(painted, 12);
+  assertStrictEquals(shipGroup[3], plusTileWord(7));
+  assertStrictEquals(shipOdr[3], PLUS_LAYOUT_HFLIP);
+  assertStrictEquals(shipOdr[2], 0);
+  assertStrictEquals(shipGroup[16], plusTileWord(40));
+  assertStrictEquals(shipGroup[72], plusTileWord(41));
+  assertStrictEquals(shipGroup[17], PLUS_EMPTY_TILE);
+  assertEquals(Array.from(shipGroup.subarray(61, 64)), [0x3fc, 0x3fd, 0x3fe]);
+});
+
 Deno.test("a level becomes a card plus.js reads back as a Dezaemon+ game whose checksums verify", () => {
   const out = exportLevelToPlusCard(level(), art(), {
     title1: frame(100, 40, [255, 255, 0]),
@@ -394,7 +440,9 @@ Deno.test("a level becomes a card plus.js reads back as a Dezaemon+ game whose c
   }
   assertStrictEquals(cells, out.report.stages[0].enemyTiles);
   assert(cells >= 8, `${cells} enemy cells painted`);
-  // the ship: three 2x2 poses in words 0-11, the forced words, the dead ones
+  // the ship: three 2x2 poses in words 0-11, the factory's sheet in 12-60
+  // and 72-76, the forced words, the dead ones; every word a plain tile,
+  // the flips (if any) in MY SHIP ODR
   const sg = save.globals.parts.shipGroup;
   const shipWords = [];
   for (let i = 0; i < 77; i++) shipWords.push(sg[i * 2] | (sg[i * 2 + 1] << 8));
@@ -404,7 +452,24 @@ Deno.test("a level becomes a card plus.js reads back as a Dezaemon+ game whose c
   );
   assertEquals(shipWords.slice(61, 64), [0x3fc, 0x3fd, 0x3fe]);
   assertEquals(shipWords.slice(64, 72), [0, 0, 0, 0, 0, 0, 0, 0]);
-  assert(save.globals.parts.shipOdr.every((b) => b === 0));
+  for (const i of [...Array(61).keys(), 72, 73, 74, 75, 76]) {
+    assert(plusTileIndex(shipWords[i]) !== null, `word ${i} names a tile`);
+    assertStrictEquals(shipWords[i] & 0xfe00, 0, `word ${i} is plain`);
+  }
+  assert(
+    save.globals.parts.shipOdr.every((b) => (b & 0x3f) === 0),
+    "ODR carries flips only",
+  );
+  // the factory's sheet is the sample's tiles, byte for byte
+  const sheet = plusFactorySheet();
+  PLUS_FACTORY_SHIP_TILES.forEach((t, i) => {
+    if (t < 0) return;
+    assertEquals(
+      bankTile(save, shipWords[i]),
+      sheet[t],
+      `word ${i} is the sample's tile ${t}`,
+    );
+  });
   // the title: 32 words, painted
   assertStrictEquals(out.report.title, "uploaded");
   const tg = save.globals.parts.titleGroup;
@@ -422,6 +487,15 @@ Deno.test("a level becomes a card plus.js reads back as a Dezaemon+ game whose c
   );
   for (const r of save.palettes) {
     assertStrictEquals(r.colors[0].raw, 0, "colour 0 transparent");
+  }
+  // the shots' and effects' rows, and 22-23, are the sample's: no level art
+  // claims them, and zero there is the PlayStation's transparent colour
+  for (const row of [20, 21, 22, 23]) {
+    assertEquals(
+      save.palettes[row].colors.map((c) => c.raw),
+      [...PLUS_FACTORY_ROWS[row]],
+      `row ${row}`,
+    );
   }
   // no scenery: the map is blank and MAP GROUP empty past the blank group
   assertStrictEquals(st.used, 0);
