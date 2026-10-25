@@ -7,6 +7,7 @@
 //   deno task build:ddd foo --no-disk                     # a disk built from nothing: no donor, no boot program, no RAM area
 //   deno task build:ddd foo --as GEARSQ --template SAMP   # the project's name on the disk, and the donor project under it
 //   deno task build:ddd foo --ddd --out build/n64/foo.ddd --report
+//   deno task build:ddd foo --title-words "FOO WARS"     # the title picture's words, for a level with no logo (default: static/n64dd/titles.json, else its title)
 //
 // The Nintendo 64 counterpart of build-kids.ts: the same level record and the
 // same art go through packages/shmup-engine/src/n64/export-ddd.js instead of
@@ -57,6 +58,7 @@ import {
   NDD_IMAGE_BYTES,
 } from "@shmupx/shmup-engine";
 import { repoRoot } from "../lib/repo-root.ts";
+import { loadAthenaFont } from "../lib/bitmap-font.ts";
 import { storyLogLine, type StoryStageReport } from "../lib/story-panels.ts";
 import {
   baseAtlasFrameNames,
@@ -93,6 +95,8 @@ export interface BuildDddOptions {
   noBaseAtlas?: boolean;
   /** Cut the level to its bosses from this stage on (lib/boss-rush.ts). */
   bossRush?: number | null;
+  /** The title picture's words for a level with no logo, over static/n64dd/titles.json's. */
+  titleWords?: string | null;
   log?: (message: string) => void;
 }
 
@@ -121,8 +125,20 @@ interface SheetReport {
   reclaimed?: number;
   story?: { textures: number; reclaimed: number } | null;
 }
+interface TitlePicture {
+  source: "logo" | "words" | "subtitle" | "cleared";
+  sheet: string;
+  y: number;
+  textures: number[];
+}
+interface TitleReport {
+  words: string | null;
+  title1: TitlePicture | null;
+  title2: TitlePicture | null;
+}
 interface DddReport {
   project: {
+    title: TitleReport;
     common: SheetReport;
     stages: (SheetReport & { key: string; ext: string })[];
     files: { ext: string; bytes: number; source: string }[];
@@ -145,6 +161,42 @@ interface DddReport {
 function fail(message: string): never {
   console.error(`error: ${message}`);
   Deno.exit(2);
+}
+
+/** Where a level's 64DD title words are kept, by its name; the editor fetches the same file. */
+export const DDD_TITLES = join(ROOT, "static", "n64dd", "titles.json");
+
+/** A level's 64DD title words from DDD_TITLES, or null when it lists none. */
+export async function dddTitleWords(
+  levelName: string,
+  file: string = DDD_TITLES,
+): Promise<string | null> {
+  try {
+    const all = JSON.parse(await Deno.readTextFile(file));
+    const words = all?.[levelName]?.titleWords;
+    return typeof words === "string" && words.trim() ? words.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The build log's "title:" line, from the writer's report. */
+export function titleLogLine(t: TitleReport | undefined): string {
+  const one = t?.title1;
+  if (!one) {
+    return "title: the template's own pictures (no logo, and no words to draw)";
+  }
+  const what = one.source === "logo"
+    ? "the level's logo"
+    : `"${t!.words}" in the story's face`;
+  const two = t?.title2
+    ? t.title2.source === "cleared"
+      ? "; title 2 cleared"
+      : "; title 2 the level's subtitle"
+    : "";
+  return `title: ${what}, at y ${one.y} (${one.sheet} textures ${
+    one.textures.join(", ")
+  })${two}`;
 }
 
 function count(n: number, one: string, many = `${one}s`): string {
@@ -268,6 +320,22 @@ export async function buildDdd(
   // story"); the writer takes the largest size its textures allow.
   const backdrops = await levelStoryBackdrops(record, log);
 
+  // The title: a level with no logo shows words in the story's face — its
+  // 64DD title words (static/n64dd/titles.json, or --title-words), else its
+  // own title — where the GAM points, in place of the donor's logo.
+  const titleWords = options.titleWords?.trim() ||
+    (await dddTitleWords(String(record.name ?? ""))) || null;
+  let font = null;
+  try {
+    font = await loadAthenaFont(ROOT);
+  } catch (e) {
+    log(
+      `warning: the story's face did not load (${
+        (e as Error).message
+      }); a level with no logo keeps the template's title`,
+    );
+  }
+
   const result = exportLevelToDdd(record, art, {
     name: options.name?.trim() || null,
     disk,
@@ -275,10 +343,13 @@ export async function buildDdd(
     format,
     title1,
     title2,
+    font,
+    titleWords,
     storyBackdrops: backdrops,
   });
   const rep = result.report as unknown as DddReport;
   log(`name: ${result.name}`);
+  log(titleLogLine(rep.project.title));
   log(storyLogLine(backdrops, rep.project.stages as StoryStageReport[]));
   log(
     rep.templateProject
@@ -389,12 +460,15 @@ if (import.meta.main) {
     } else if (arg === "--out") opts.out = value();
     else if (arg.startsWith("--out=")) opts.out = arg.slice(6);
     else if (arg === "--no-base-atlas") opts.noBaseAtlas = true;
+    else if (arg === "--title-words") opts.titleWords = value();
+    else if (arg.startsWith("--title-words=")) opts.titleWords = arg.slice(14);
     else if (arg.startsWith("--boss-rush")) opts.bossRush = bossRushArg(arg);
     else if (arg === "--report") report = true;
     else if (arg === "--help" || arg === "-h") {
       console.log(
         "usage: deno task build:ddd [level-name | level.json] [--as NAME] [--disk <ddd|ndd> | --no-disk]\n" +
-          "       [--template NAME | --no-template] [--ndd | --ddd] [--out file] [--no-base-atlas] [--boss-rush[=STAGE]] [--report]",
+          "       [--template NAME | --no-template] [--ndd | --ddd] [--out file] [--no-base-atlas] [--boss-rush[=STAGE]]\n" +
+          "       [--title-words WORDS] [--report]",
       );
       Deno.exit(0);
     } else if (arg.startsWith("--")) fail(`unknown option ${arg}`);

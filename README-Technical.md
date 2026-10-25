@@ -3214,9 +3214,14 @@ mount a disk: the donor's, or one built for a type-0 disk with the fields
 mupen64plus-core checks. Inside the project, the level is placed, not only
 drawn. Each frame becomes one 64×32 RGBA5551 texture (the one confirmed record
 format; a bigger frame is shrunk to fit, aspect kept) in a _free_ slot of the
-`CGR` sheet — the title pictures, the ship, the item icons — or of its stage's
-`GR` sheet, never over a texture the template painted, so a donor project's own
-art survives. Then the records the 2024 translation's `file formats.txt`
+`CGR` sheet — the ship, the item icons — or of its stage's `GR` sheet, never
+over a texture the template painted, so a donor project's own art survives.
+The title is painted where the `GAM` points into its 128-px atlas (on the
+sample, stage 0's sheet, over its `SOLID GEAR` logo): the level's logo, or with
+none its 64DD title words in the story's face (`static/n64dd/titles.json` —
+gs's disk reads `SQUAD GAME`; its web title is its own), and the project takes
+the level's `title` as its name before its key, so gs is `SQUAD` on GAME
+SELECT. Then the records the 2024 translation's `file formats.txt`
 describes, through the typed codecs in
 `packages/shmup-engine/src/n64/records.js`: a billboard model per frame in the
 stage's `MD`, an enemy entry per enemy letter (one per drop digit on its cells)

@@ -9285,15 +9285,32 @@
             n64DonorStatus('.' + format.toUpperCase() + ' · ' + (n64DonorProjects.join(' · ') || 'NO PROJECT') +
                 ' · ' + files + ' FILE' + (files === 1 ? '' : 'S'), '#84cc16');
         }
+        // The cloud record's `title` (gs's is SQUAD, the name an Android build
+        // installs under), with the key it came in as. The editor never writes
+        // it, so it names the open game only while the game goes by that key.
+        let cloudTitle = { name: '', title: '' };
+        function openCloudTitle() {
+            return cloudTitle.title && cloudTitle.name === dezaSavGameName() ? cloudTitle.title : '';
+        }
         // The PROJECT NAME field: one to eight letters and digits, the way the
-        // directory stores a name. Empty, the open game's label cut to fit —
-        // or SHMUPX when the label leaves no letter or digit to cut.
+        // directory stores a name. Empty, the open game's title — else its
+        // label — cut to fit, as build:ddd names it, or SHMUPX when that leaves
+        // no letter or digit to cut.
         function n64DefaultProjectName() {
             const E = window.Dezaemon;
             if (E && typeof E.n64ProjectName === 'function') {
-                try { return E.n64ProjectName(openGameLabel()); } catch (e) { }
+                try { return E.n64ProjectName(openCloudTitle() || openGameLabel()); } catch (e) { }
             }
             return 'SHMUPX';
+        }
+        // A level's 64DD title words from /n64dd/titles.json — the file
+        // build:ddd reads — or '' when it lists none or will not load.
+        async function n64TitleWords(name) {
+            try {
+                const res = await fetch('/n64dd/titles.json', { cache: 'no-cache' });
+                const words = res.ok ? ((await res.json())[name] || {}).titleWords : null;
+                return typeof words === 'string' ? words.trim() : '';
+            } catch (e) { return ''; }
         }
         function n64ProjectNameInput() {
             const el = document.getElementById('n64-project-name');
@@ -9305,11 +9322,16 @@
             const record = await buildLevelRecordForSav();
             const art = collectAtlasArtForSav();
             const [title1, title2] = await Promise.all([dataUrlToRgba(logoDataURL), dataUrlToRgba(subTitleDataURL)]);
+            // With no logo, the title is words in the story's face: the
+            // level's 64DD title words, else its own title, else its name.
+            const [titleWords, font] = title1 ? [null, null]
+                : await Promise.all([n64TitleWords(record.name), dezaStoryFont()]);
             const options = {
                 name: n64ProjectNameInput(),
                 disk: n64DonorBytes || null,
                 format: format || n64Format,
                 title1, title2,
+                font, titleWords: titleWords || openCloudTitle() || null,
             };
             // A donor with no project has nothing to copy the other files
             // from; the writer would refuse "disk" as a template, so none.
@@ -14098,6 +14120,7 @@ function GAME3D_RUNTIME(DATA) {
                     customFrameKeys = new Set();
                 }
                 document.getElementById('firebase-level-name').value = name;
+                cloudTitle = { name, title: typeof d.title === 'string' ? d.title.trim() : '' };
                 document.getElementById('status').textContent = `STATUS: GAME: ${String(name).toUpperCase()} (CLOUD)`;
                 leaveSavMode();
 // Restore sprite thumbnails from Firebase data

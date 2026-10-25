@@ -1,0 +1,4 @@
+{
+  "//": "A level's 64DD title words, by its name: a level with no uploaded logo shows them as the disk's title picture, in the story's face (project-write.js titleWordsPicture). build:ddd reads this file and the editor's 64DD export fetches it, so both build the same disk; a level not listed shows its own title, else its name. The web title is the level's own and is not changed by this.",
+  "gs": { "titleWords": "SQUAD GAME" }
+}

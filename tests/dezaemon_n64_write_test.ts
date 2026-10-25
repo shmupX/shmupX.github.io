@@ -45,11 +45,13 @@ import {
   exportLevelToDdd,
   extractFile,
   FIRST_FILE_LBA,
+  gamDefaults,
   imageFormat,
   isDddImage,
   isDezaemonDiskId,
   layoutFiles,
   lbaToOffset,
+  N64_CGR_BANDS,
   N64_CGR_TEXTURES,
   N64_ENEMY_NUMBER_BASE,
   N64_GR_TEXTURE_BASE,
@@ -65,6 +67,8 @@ import {
   N64_STAGE_SCENE,
   N64_STORY_MIN_FRAMES,
   N64_TEXTURE_BYTES,
+  N64_TITLE_H,
+  N64_TITLE_W,
   N64_UNITS_PER_PIXEL,
   NDD_IMAGE_BYTES,
   normalizeProjectName,
@@ -87,6 +91,7 @@ import {
   spriteAtlasTexel,
   spriteModel,
   STAGES,
+  stageBandTextures,
   storyFrames,
   storyScreen,
   SYSTEM_AREA_BYTES,
@@ -96,6 +101,7 @@ import {
   templateFromDisk,
   textureGrid,
   TextureSheet,
+  titleWordsPicture,
   userArea,
   writeDirectory,
 } from "../packages/shmup-engine/src/n64/index.js";
@@ -812,21 +818,28 @@ Deno.test("a project from a level is thirty files at documented sizes with the a
     ["enemyB:0:big.png", "boss0:0:boss.png"],
     "the 96x48 bee and the 128x128 boss were shrunk to fit",
   );
-  assertEquals(s0.used, 6);
-  assertEquals(s0.free, N64_GR_TEXTURES - 6);
+  assertEquals(s0.used, 6 + 4, "the frames, and the title's 2x2");
+  assertEquals(s0.free, N64_GR_TEXTURES - 10);
   assertEquals(p.warnings.length, 1);
   assert(p.warnings[0].includes("enemyC"));
-  // the common sheet: the title fitted to 2x2, the ship's two frames, one item
+  // the title: where the cartridge's GAM points both pictures (y 928), which
+  // is stage 0's band 9 — fitted to 2x2 there, and the one picture kept
+  assertEquals(p.report.title, {
+    words: null,
+    title1: { source: "logo", sheet: "0GR", y: 928, textures: [18, 19, 20, 21] },
+    title2: null,
+  });
+  // the common sheet: the ship's two frames, one item
   const common = p.report.common.textures.map((
     t: { key: string; textures: number },
   ) => [t.key.split(":")[0], t.textures]);
-  assertEquals(common, [["title1", 4], ["ship", 1], ["ship", 1], ["item", 1]]);
+  assertEquals(common, [["ship", 1], ["ship", 1], ["item", 1]]);
   assertEquals(p.report.ship, "level");
   assertEquals(
     p.report.common.models.map((
       m: { slot: number; texture: number },
     ) => [m.slot, m.texture]),
-    [[10, 4], [12, 6]],
+    [[10, 0], [12, 2]],
     "the ship is common model 10 on its first texture, the item model 12",
   );
   assertEquals(
@@ -994,8 +1007,8 @@ Deno.test("a project from a level is thirty files at documented sizes with the a
       12,
     ],
   );
-  assertEquals(cmd.textureIndices[10], 4);
-  assertEquals(cmd.textureIndices[12], 6);
+  assertEquals(cmd.textureIndices[10], 0);
+  assertEquals(cmd.textureIndices[12], 2);
   const cbl = parseCbl(p.files.find((f) => f.ext === "CBL")!.data) as Any;
   assertEquals(cbl.items.shot.animation.models, [12, 12, 12, 12]);
   assertEquals(cbl.items.shot.hit.hpMode, 2, "an item cannot be shot down");
@@ -1009,6 +1022,146 @@ Deno.test("a project from a level is thirty files at documented sizes with the a
     0,
   );
   assertEquals(p.report.finalStage, 0);
+});
+
+// ── the title ───────────────────────────────────────────────────────────────
+
+/** A font whose every glyph but the space is a solid 8x8 block. */
+function blockFont() {
+  const glyphs = Array.from(
+    { length: 96 },
+    (_, i) => new Uint8Array(64).fill(i === 0 ? 0 : 1),
+  );
+  return { glyphW: 8, glyphH: 8, glyphs };
+}
+
+Deno.test("a map byte names a band of the title atlas: two of stage 0's textures from band N64_CGR_BANDS on", () => {
+  assertEquals(N64_CGR_BANDS, 20, "the CGR's 40 textures, two a band");
+  assertEquals(stageBandTextures(N64_CGR_BANDS), [0, 1]);
+  assertEquals(stageBandTextures(N64_CGR_BANDS + 9), [18, 19]);
+  assertEquals(
+    stageBandTextures(N64_CGR_BANDS + N64_GR_TEXTURES / 2 - 1),
+    [N64_GR_TEXTURES - 2, N64_GR_TEXTURES - 1],
+  );
+  assertEquals(stageBandTextures(N64_CGR_BANDS - 1), null, "a CGR band");
+  assertEquals(
+    stageBandTextures(N64_CGR_BANDS + N64_GR_TEXTURES / 2),
+    null,
+    "past the sheet",
+  );
+});
+
+Deno.test("titleWordsPicture sets words as large as they fit, on one line or two", () => {
+  const font = blockFont();
+  // the letters' red is 255; the edge and the shadow are dark
+  const inked = (p: Any, x: number, y: number) =>
+    p.rgba[(y * p.w + x) * 4] === 255;
+  const rowsAt = (p: Any, x: number) => {
+    const rows: number[] = [];
+    for (let y = 0; y < p.h; y++) if (inked(p, x, y)) rows.push(y);
+    return rows;
+  };
+  const px = (p: Any, x: number, y: number) =>
+    Array.from(p.rgba.subarray((y * p.w + x) * 4, (y * p.w + x) * 4 + 4));
+
+  const two = titleWordsPicture(font, "SQUAD GAME");
+  assertEquals([two.w, two.h], [N64_TITLE_W, N64_TITLE_H]);
+  assertEquals([N64_TITLE_W, N64_TITLE_H], [128, 64], "2x2 textures");
+  // ten letters on one line would be scale 1; five a line make scale 3:
+  // two 120x24 lines two rows apart, centred
+  const rows = rowsAt(two, 64);
+  assertEquals(
+    [rows[0], rows[23], rows[24], rows[rows.length - 1], rows.length],
+    [7, 30, 33, 56, 48],
+  );
+  assert(inked(two, 4, 7) && inked(two, 123, 7));
+  assert(!inked(two, 3, 7) && !inked(two, 124, 7));
+  assertEquals(px(two, 4, 7), [255, 232, 96, 255], "gold at a line's top");
+  assertEquals(px(two, 4, 30), [255, 82, 16, 255], "orange at its foot");
+  assertEquals(px(two, 3, 7), [48, 16, 0, 255], "a dark edge round it");
+  assertEquals(px(two, 0, 0), [0, 0, 0, 0], "and clear beyond");
+
+  // six letters fit one line at scale 2: 96x16, centred
+  const one = titleWordsPicture(font, "SHMUPX");
+  const oneRows = rowsAt(one, 64);
+  assertEquals([oneRows[0], oneRows[oneRows.length - 1]], [24, 39]);
+  assert(inked(one, 16, 24) && !inked(one, 15, 24) && inked(one, 111, 24));
+
+  assert(titleWordsPicture(font, "   ").rgba.every((v) => v === 0));
+});
+
+Deno.test("the title: words where the GAM points, the second picture cleared, the name from the level's title", () => {
+  const gam = gamDefaults();
+  gam.title1.y = 928; // stage 0's band 9, where the sample keeps its logo
+  gam.title2.y = 992; // and band 11, its second
+  const template = [{ ext: "GAM", data: encodeGam(gam) }];
+  const level = { ...tinyLevel(), title: "Squad" };
+  const p = buildN64ProjectFromLevel(level, tinyArt(), {
+    template,
+    font: blockFont(),
+    titleWords: "SQUAD GAME",
+  });
+  assertEquals(p.name, "SQUAD", "named for the level's title, not its name");
+  assertEquals(p.report.title, {
+    words: "SQUAD GAME",
+    title1: {
+      source: "words",
+      sheet: "0GR",
+      y: 928,
+      textures: [18, 19, 20, 21],
+    },
+    title2: {
+      source: "cleared",
+      sheet: "0GR",
+      y: 992,
+      textures: [22, 23, 24, 25],
+    },
+  });
+  const gr = p.files.find((f) => f.ext === "0GR")!.data;
+  const alpha = (i: number) =>
+    decodeRgba5551(
+      gr.subarray(i * N64_TEXTURE_BYTES, (i + 1) * N64_TEXTURE_BYTES),
+    ).data.filter((_: number, k: number) => k % 4 === 3);
+  // texture 18 is the picture's top-left 64x32, opaque where it is
+  const words = titleWordsPicture(blockFont(), "SQUAD GAME");
+  const wanted: number[] = [];
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 64; x++) wanted.push(words.rgba[(y * 128 + x) * 4 + 3]);
+  }
+  assertEquals(Array.from(alpha(18)), wanted);
+  for (const i of [22, 23, 24, 25]) {
+    assert(alpha(i).every((a: number) => a === 0), `texture ${i} is clear`);
+  }
+  assert(
+    p.report.stages[0].textures.every((t: Any) =>
+      t.index < 18 || t.index > 25
+    ),
+    "the frames keep off the title",
+  );
+
+  // the words default to the level's title
+  const own = buildN64ProjectFromLevel(level, tinyArt(), {
+    template,
+    font: blockFont(),
+  });
+  assertEquals(own.report.title.words, "Squad");
+  // with no font nothing is drawn: the template's pictures stay
+  const plain = buildN64ProjectFromLevel(level, tinyArt(), { template });
+  assertEquals(plain.report.title, { words: null, title1: null, title2: null });
+  // a GAM that points into the CGR's bands has it painted there, and with
+  // both pictures on one band, title 1 is the one kept
+  gam.title1.y = gam.title2.y = 64;
+  const cgr = buildN64ProjectFromLevel(level, tinyArt(), {
+    template: [{ ext: "GAM", data: encodeGam(gam) }],
+    font: blockFont(),
+  });
+  assertEquals(cgr.report.title.title1, {
+    source: "words",
+    sheet: "CGR",
+    y: 64,
+    textures: [4, 5, 6, 7],
+  });
+  assertEquals(cgr.report.title.title2, null);
 });
 
 // ── a stage's story ─────────────────────────────────────────────────────────
@@ -1151,10 +1304,11 @@ Deno.test("a story falls back to a smaller size, takes back a template's unnamed
     {
       ext: "0BL",
       data: buildStageBl({
-        // a map texture byte is kept under both readings, t and t - 40
+        // a map texture byte names a band of the title atlas, two textures
+        // of stage 0's sheet from band N64_CGR_BANDS on (stageBandTextures)
         map: Array.from(
-          { length: max + 1 - free },
-          (_, t) => ({ texture: t }),
+          { length: (max + 1 - free) / 2 },
+          (_, k) => ({ texture: N64_CGR_BANDS + k }),
         ) as Any,
       }),
     },
@@ -1171,14 +1325,14 @@ Deno.test("a story falls back to a smaller size, takes back a template's unnamed
   assertEquals(small.textures.length, 3, "two cells of words and the black");
 
   const p = buildN64ProjectFromLevel(tinyLevel(), tinyArt(), {
-    template: withFree(5),
+    template: withFree(6),
     storyBackdrops: story,
   });
   const s0 = p.report.stages[0];
   assertEquals(
     s0.story.size,
     "small words",
-    "the picture needs more than five",
+    "the picture needs more than six",
   );
   assertEquals(
     s0.story.reclaimed,
@@ -1204,8 +1358,8 @@ Deno.test("a story falls back to a smaller size, takes back a template's unnamed
   );
   assertEquals(
     [...tiles].sort((a, b) => a - b),
-    [211, 212, 213],
-    "only tiles the map names under neither reading",
+    [210, 211, 212],
+    "only tiles no map band names",
   );
 
   const none = buildN64ProjectFromLevel(tinyLevel(), tinyArt(), {

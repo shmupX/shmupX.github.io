@@ -15437,8 +15437,6 @@ var N64_MD_MODELS = MD_MODEL_COUNT;
 var N64_CBL_ENEMIES = 20;
 var N64_BL_ENEMIES = BL_ENEMY_COUNT;
 var N64_STAGE_COUNT = STAGES.length;
-var N64_TITLE_COLS = 2;
-var N64_TITLE_ROWS = 2;
 var N64_FRAMES_PER_ENEMY = 4;
 var N64_MODEL_NUMBER_BASE = N64_CMD_MODELS;
 var N64_PLAYER_MODEL = 10;
@@ -15451,6 +15449,76 @@ function spriteAtlasTexel(x, y, textures = N64_CGR_TEXTURES) {
   const texture = Math.floor(y / TILE_HEIGHT) * 2 + Math.floor(x / TILE_WIDTH);
   if (texture >= textures) return null;
   return { texture, x: x % TILE_WIDTH, y: y % TILE_HEIGHT };
+}
+var N64_CGR_BANDS = N64_CGR_TEXTURES / 2;
+var N64_TITLE_W = N64_SPRITE_ATLAS_WIDTH;
+var N64_TITLE_H = 2 * TILE_HEIGHT;
+function stageBandTextures(band) {
+  const k = band - N64_CGR_BANDS;
+  if (!(k >= 0) || 2 * k + 1 >= N64_GR_TEXTURES) return null;
+  return [2 * k, 2 * k + 1];
+}
+function titleWordsPicture(font, words) {
+  const W = N64_TITLE_W, H = N64_TITLE_H, margin = 3, gap = 2;
+  const text = foldToAscii(String(words || "")).trim().replace(/\s+/g, " ");
+  const layouts = [[text]];
+  const spaces = [...text.matchAll(/ /g)].map((m) => m.index);
+  if (spaces.length) {
+    const at = spaces.reduce((a, b) => Math.abs(2 * b - text.length) < Math.abs(2 * a - text.length) ? b : a);
+    layouts.push([text.slice(0, at), text.slice(at + 1)]);
+  }
+  let best = null;
+  for (const lines2 of layouts) {
+    const widest = Math.max(...lines2.map((l) => l.length)) * font.glyphW;
+    const tall = lines2.length * font.glyphH;
+    const scale2 = Math.floor(Math.min((W - 2 * margin) / widest, (H - 2 * margin - gap * (lines2.length - 1)) / tall));
+    if (scale2 >= 1 && (!best || scale2 > best.scale)) best = { lines: lines2, scale: scale2 };
+  }
+  const out = { w: W, h: H, rgba: new Uint8Array(W * H * 4) };
+  if (!best || !text) return out;
+  const { lines, scale } = best;
+  const ink = new Uint8Array(W * H);
+  const row = new Int16Array(W * H).fill(-1);
+  const lineH = font.glyphH * scale;
+  const blockH = lines.length * lineH + gap * (lines.length - 1);
+  lines.forEach((line, n) => {
+    const mask = renderText(font, line, line.length * font.glyphW, font.glyphH);
+    const x0 = Math.floor((W - line.length * font.glyphW * scale) / 2);
+    const y0 = Math.floor((H - blockH) / 2) + n * (lineH + gap);
+    for (let y = 0; y < lineH; y++) {
+      for (let x = 0; x < line.length * font.glyphW * scale; x++) {
+        if (!mask.data[(Math.floor(y / scale) * mask.width + Math.floor(x / scale)) * 4 + 3]) continue;
+        const at = (y0 + y) * W + x0 + x;
+        ink[at] = 1;
+        row[at] = y;
+      }
+    }
+  });
+  const put = (at, rgb) => out.rgba.set([rgb[0], rgb[1], rgb[2], 255], at * 4);
+  const shadow = Math.max(1, scale >> 1);
+  const near = (x, y, d) => {
+    for (let dy = -d; dy <= d; dy++) {
+      for (let dx = -d; dx <= d; dx++) {
+        const X = x + dx, Y = y + dy;
+        if (X >= 0 && Y >= 0 && X < W && Y < H && ink[Y * W + X]) return true;
+      }
+    }
+    return false;
+  };
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const at = y * W + x;
+      if (ink[at]) {
+        const t = row[at] / Math.max(1, lineH - 1);
+        put(at, [255, Math.round(232 - 150 * t), Math.round(96 - 80 * t)]);
+      } else if (near(x, y, 1)) {
+        put(at, [48, 16, 0]);
+      } else if (x >= shadow && y >= shadow && near(x - shadow, y - shadow, 1)) {
+        put(at, [0, 0, 0]);
+      }
+    }
+  }
+  return out;
 }
 function isN64ItemFrame(key) {
   return /item|powerup|speedup|1up/i.test(key);
@@ -15820,10 +15888,10 @@ function itemEntry(model, scale) {
   };
 }
 function buildN64ProjectFromLevel(level, art2, options = {}) {
-  const { template = null, title1 = null, title2 = null, framesPerEnemy = N64_FRAMES_PER_ENEMY, storyBackdrops: storyBackdrops2 = null } = options;
+  const { template = null, title1 = null, title2 = null, framesPerEnemy = N64_FRAMES_PER_ENEMY, storyBackdrops: storyBackdrops2 = null, font = null, titleWords = null } = options;
   const warnings = [];
   const warn = (m) => warnings.push(m);
-  const name = normalizeProjectName(options.name ?? (level && level.name) ?? "SHMUPX");
+  const name = normalizeProjectName(options.name ?? (level && (level.title || level.name) || "SHMUPX"));
   const templateFiles = /* @__PURE__ */ new Map();
   if (template) {
     const list = template instanceof Map ? [...template.entries()].map(([ext, data]) => ({ ext, data })) : template;
@@ -15886,10 +15954,39 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     if (textures) hud = { stockShip: { x, y, textures, key: shipFrames[0].key } };
     else warn(`the GAM puts the stock ship at (${x}, ${y}), off the CGR sheet's sprite atlas; the HUD keeps what is there`);
   }
-  for (const [key, pic] of [["title1", title1], ["title2", title2]]) {
-    const f = asFrame(pic);
-    if (!f) continue;
-    placeCommon(key, textureGrid(fitRgba(f, N64_TITLE_COLS * TILE_WIDTH, N64_TITLE_ROWS * TILE_HEIGHT)));
+  const titleBands = [];
+  const titleJobs = [];
+  const title = { words: null, title1: null, title2: null };
+  if (gamKnown) {
+    const y1 = u166(gam, GAM_OFFSETS.title1Y), y2 = u166(gam, GAM_OFFSETS.title2Y);
+    for (const y of [y1, y2]) titleBands.push(Math.floor(y / TILE_HEIGHT), Math.floor(y / TILE_HEIGHT) + 1);
+    const backdrop = gam[GAM_OFFSETS.titleBackgroundTexture] << 24 >> 16 | gam[GAM_OFFSETS.titleBackgroundTexture + 1];
+    if (backdrop >= 0) for (let b = backdrop; b < backdrop + 4; b++) titleBands.push(b);
+    if (gam[GAM_OFFSETS.ending] === 1) {
+      for (let b = gam[GAM_OFFSETS.ending + 1]; b <= gam[GAM_OFFSETS.ending + 2]; b++) titleBands.push(b);
+    }
+    const logo = asFrame(title1), sub = asFrame(title2);
+    const words = !logo && font ? String(titleWords ?? (level && (level.title || level.name) || "")).trim() : "";
+    const pic1 = logo ? fitRgba(logo, N64_TITLE_W, N64_TITLE_H) : words ? titleWordsPicture(font, words) : null;
+    if (pic1) {
+      title.words = logo ? null : words;
+      titleJobs.push({ key: "title1", y: y1, picture: pic1, source: logo ? "logo" : "words" });
+      if (y2 !== y1) {
+        const pic2 = sub ? fitRgba(sub, N64_TITLE_W, N64_TITLE_H) : { w: N64_TITLE_W, h: N64_TITLE_H, rgba: new Uint8Array(N64_TITLE_W * N64_TITLE_H * 4) };
+        titleJobs.push({ key: "title2", y: y2, picture: pic2, source: sub ? "subtitle" : "cleared" });
+      }
+    }
+  }
+  const cgrTitleRows = N64_CGR_BANDS * TILE_HEIGHT;
+  for (const job of titleJobs) {
+    if (job.y + N64_TITLE_H <= cgrTitleRows) {
+      const textures = cgr.paintAtlas(0, job.y, job.picture);
+      title[job.key] = { source: job.source, sheet: "CGR", y: job.y, textures };
+      job.done = true;
+    } else if (job.y < cgrTitleRows) {
+      warn(`the GAM puts ${job.key} across the CGR sheet's foot (y ${job.y}); not drawn`);
+      job.done = true;
+    }
   }
   spreadFrames(shipFrames, Math.min(2, shipFrames.length)).forEach((f, i) => {
     const t = spriteTexture(f);
@@ -15953,8 +16050,20 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     const mapTextures = /* @__PURE__ */ new Set();
     for (const m of map) {
       if (m.texture === MAP_TEXTURE_UNSET) continue;
-      mapTextures.add(m.texture);
-      mapTextures.add(m.texture - N64_GR_TEXTURE_BASE);
+      for (const t of stageBandTextures(m.texture) ?? []) mapTextures.add(t);
+    }
+    if (i === 0) {
+      for (const b of titleBands) for (const t of stageBandTextures(b) ?? []) mapTextures.add(t);
+      for (const job of titleJobs) {
+        if (job.done) continue;
+        const textures = sheet.paintAtlas(0, job.y - N64_CGR_BANDS * TILE_HEIGHT, job.picture);
+        if (!textures) {
+          warn(`the GAM puts ${job.key} at y ${job.y}, past stage 0's ${grExt} sheet; not drawn`);
+          continue;
+        }
+        title[job.key] = { source: job.source, sheet: grExt, y: job.y, textures };
+        for (const t of textures) mapTextures.add(t);
+      }
     }
     const unnamedByMap = (index) => !mapTextures.has(index);
     const placeFrame = (key, frame) => {
@@ -16205,6 +16314,8 @@ function buildN64ProjectFromLevel(level, art2, options = {}) {
     finalStage,
     common: { textures: cgr.placed, painted: cgr.painted, used: cgr.count - cgr.free, free: cgr.free, missed: common.missed, scaled: common.scaled, models: common.models, hud },
     gam: { repaired: gamRepaired, ship: gamKnown && shipOurs },
+    // the title's pictures: {source: logo | words | subtitle | cleared, sheet, y, textures}, or null where the template's stays
+    title,
     stages: stageReports,
     // How the project's bosses carry their second stages (boss-stage2.js).
     transform: splits.length ? `approximated: two chained bosses across a stage break (${splits.map((x) => `${x.stage} ${x.name}, then ${x.into} its second form ${x.second}`).join("; ")}); the bullets are the project's own two, not the weapons' art` : "none",

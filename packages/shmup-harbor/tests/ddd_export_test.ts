@@ -45,7 +45,12 @@ import {
   SYSTEM_AREA_BYTES,
   userArea,
 } from "@shmupx/shmup-engine/n64";
-import { buildDdd } from "../scripts/build-ddd.ts";
+import {
+  buildDdd,
+  DDD_TITLES,
+  dddTitleWords,
+  titleLogLine,
+} from "../scripts/build-ddd.ts";
 import { type ArtFrame, inEditorAtlasOrder } from "../scripts/build-sav.ts";
 import { repoRoot } from "../lib/repo-root.ts";
 
@@ -111,6 +116,14 @@ Deno.test({
       assertStrictEquals(result.template, null);
       assertStrictEquals(result.bytes, NDD_IMAGE_BYTES);
       assert(log.includes("untested on hardware"));
+      // foo's logo goes where the cartridge's GAM points both title
+      // pictures: stage 0's band 9, 2x2 textures
+      assert(
+        log.includes(
+          "title: the level's logo, at y 928 (0GR textures 18, 19, 20, 21)\n",
+        ),
+        log,
+      );
 
       const image = await Deno.readFile(out);
       assertStrictEquals(image.length, NDD_IMAGE_BYTES);
@@ -302,6 +315,40 @@ Deno.test({
       await Deno.remove(dir, { recursive: true });
     }
   },
+});
+
+Deno.test("a level's 64DD title words come from static/n64dd/titles.json, the file the editor fetches", async () => {
+  assertStrictEquals(
+    DDD_TITLES,
+    join(ROOT, "static", "n64dd", "titles.json"),
+  );
+  assertStrictEquals(await dddTitleWords("gs"), "SQUAD GAME");
+  assertStrictEquals(await dddTitleWords("foo"), null, "foo is not listed");
+  assertStrictEquals(
+    await dddTitleWords("gs", join(ROOT, "no-such-titles.json")),
+    null,
+    "no file, no words",
+  );
+  const picture = (source: string, y: number, textures: number[]) => ({
+    source,
+    sheet: "0GR",
+    y,
+    textures,
+  });
+  assertStrictEquals(
+    titleLogLine(
+      {
+        words: "SQUAD GAME",
+        title1: picture("words", 928, [18, 19, 20, 21]),
+        title2: picture("cleared", 992, [22, 23, 24, 25]),
+      } as Parameters<typeof titleLogLine>[0],
+    ),
+    'title: "SQUAD GAME" in the story\'s face, at y 928 (0GR textures 18, 19, 20, 21); title 2 cleared',
+  );
+  assertStrictEquals(
+    titleLogLine({ words: null, title1: null, title2: null }),
+    "title: the template's own pictures (no logo, and no words to draw)",
+  );
 });
 
 Deno.test("the CLI orders a level's art as the editor's atlas holds it", () => {

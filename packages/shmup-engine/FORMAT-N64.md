@@ -392,8 +392,8 @@ test). A **texture** is a 64×32 tile of 0x1000 bytes; `CGR` is 0x28000 = **40**
 of them and a stage's `GR` 0x104000 = **260** — the published documentation says
 520, and 0x104000 ÷ 2 ÷ (64 × 32) is 260. Rendered as a contact sheet
 (`decodeTileSheet()`, `n64:probe png`) the tiles are unmistakably art: the
-sample's `GEAR SQUID` title logos, `WARNING` and `DANGER` plates, a briefing
-screen, cut-in portraits.
+sample's two `SOLID GEAR` title logos (stage 0's sheet, not `CGR` — "The
+title"), `WARNING` and `DANGER` plates, a briefing screen, cut-in portraits.
 
 Decoding scales a channel by × 255 / 31 so 31 lands on 255 (`decodeRgba5551`).
 Encoding (`encodeRgba5551` in `project-write.js`) rounds × 31 / 255, takes alpha
@@ -568,8 +568,9 @@ area. The fixture-gated test rebuilds the prototype from its own two projects
 and gets the same 64,458,560 bytes, then puts a third project on, checks the
 save area is untouched, removes it and gets the prototype back.
 
-**`buildN64ProjectFromLevel(level, art, options)`** — `name`, `template`,
-`title1`, `title2`, `framesPerEnemy`, `storyBackdrops` — makes the thirty files,
+**`buildN64ProjectFromLevel(level, art, options)`** — `name` (by default the
+level's `title`, else its name), `template`, `title1`, `title2`, `font`,
+`titleWords`, `framesPerEnemy`, `storyBackdrops` — makes the thirty files,
 and since the
 codecs landed it places the level rather than only its art. Each frame becomes
 ONE 64×32 texture — a model shows one texture, so a frame wider than 64 or
@@ -577,8 +578,8 @@ taller than 32 is shrunk to fit with its aspect kept (`shrinkRgba()`,
 `spriteTexture()`) and the report lists it under `scaled` — laid into the
 sheets' **blank** textures (`TextureSheet.place()`: never over a painted one, so
 a template's own art survives; a frame that fits nowhere is `missed` and warned
-about). Into `CGR`: the two title pictures fitted to 128×64 (2×2 textures), two
-spread frames of the ship (the level's, or the base game's duke when the level
+about). The title's pictures go where the `GAM` points, first ("The title").
+Into `CGR`: two spread frames of the ship (the level's, or the base game's duke when the level
 names none), and up to eight item frames (`isN64ItemFrame()`: names matching
 `item`, `powerup`, `speedup`, `1up`), the first the art holds. No record names
 them, so the caller hands them over: the editor's art is the whole base atlas,
@@ -666,11 +667,13 @@ CONSOLE › **N64**, is the same call from the engine bundle
 (`window.Dezaemon.exportLevelToDdd`, so the bundle has to postdate the writer —
 `deno task engine:bundle`): a DONOR DISK file input (checked by length; its
 projects are listed, and a donor with none gets no template), a PROJECT NAME
-field (eight letters and digits, the open game's name cut to fit by default; a
-name on the donor replaces that project), a FORMAT pick between NDD and DDD, and
-DOWNLOAD. The editor draws the story as `build:ddd` does, with the composer in
-the bundle (`src/story/story-panels.js`, `Dezaemon.storyBackdrops`), and its
-line says how many stages open on it. No disk has been put on hardware.
+field (eight letters and digits, the open game's cloud `title` — else its name —
+cut to fit by default, as `build:ddd` names it; a name on the donor replaces
+that project), a FORMAT pick between NDD and DDD, and DOWNLOAD. The editor
+draws the story as `build:ddd` does, with the composer in the bundle
+(`src/story/story-panels.js`, `Dezaemon.storyBackdrops`), and its line says how
+many stages open on it; it fetches `/n64dd/titles.json` for the title's words
+as `build:ddd` reads it. No disk has been put on hardware.
 
 **What the writer does not write** — the list a future session starts from:
 
@@ -696,8 +699,13 @@ line says how many stages open on it. No disk has been put on hardware.
 - what a template-less `GAM` still names: it is the cartridge's initial game
   with the final stage set and the player's frames on the ship's model, and it
   keeps the shield's models (7 and 5, empty slots on a disk built here — the
-  shield draws nothing) and the title settings' texture references, whose
-  meaning is open;
+  shield draws nothing) and the two title settings words (`0x22E`, `0x230`),
+  whose meaning is open (the pictures' y and the backdrop are read — "The
+  title");
+- the title's model: under the menu gs's title shows a large flat yellow shape,
+  likely the level's ship (its colour, a billboard's quad) where the sample
+  shows a model of its own; which model the title draws, and from where, is
+  open;
 - the `MUS` sequence bodies: 24 blank songs, or a template's;
 - the RAM area: the writable directory, the allocation map, `DEZA3D.SYS`,
   `DEZA3D.HSC`, and any **saved** (as opposed to pressed) project — carried from
@@ -778,8 +786,9 @@ centred on an opaque black 320×240, cut into the forty 64×32 cells, identical
 cells sharing one texture (gs's stage 0 takes 23). The textures go into the
 stage's `#GR` tiles 0-215 that are blank, then into a template's art that
 nothing this project writes points at — its own models replace the template's,
-so only the map's texture bytes are in use, and since that byte's numbering is
-open a tile is kept under both readings (t, and t − 40). The effects: at frame
+so what stays in use is the map's texture bytes, each a band of two textures
+(`stageBandTextures`, "The title"), and on stage 0 the title's pictures, its
+backdrop and an ending's pictures. The effects: at frame
 0 the ship hidden, the map's scroll held and the forty portraits (set,
 opaque, instant); at the story's frames the clear, the ship back and the map at
 rate 3, which goes on as a stage with no scroll effect would. The story stays
@@ -791,7 +800,8 @@ alone, then the opening words are the fallbacks the backdrop carries. The
 stage's report carries `story: {size, textures, reclaimed, frames, seconds}`,
 and `build:ddd` logs it on its `story:` line (`storyLogLine`).
 
-Booted on gs: the game lists the `GS` project, loads it, and stage 0 opens on
+Booted on gs: the game lists the project (`GS` then; `SQUAD` since a project
+is named for the level's title), loads it, and stage 0 opens on
 the GS plate, "But alas that is the glory of the digital age" and the stage's
 picture, readable once the fade has gone; the clear comes on time, the ship
 comes back and the map scrolls on from where it was held. Stage 1's story is the
@@ -903,6 +913,55 @@ at the ship's height as much over), so the ship and every entry fly at 40
 it (none did; one passed within 31 units of it, but in the stage's first four
 seconds, when the ship may still be untouchable), the altitude table past its
 three points, and what an entry's altitude byte does.
+
+### The title (booted 2026-10-25)
+
+gs's disk opened on the sample's `SOLID GEAR` logo, then on fragments of gs's
+own art and story where it had been. The logo was never in `CGR`:
+
+- **The title atlas** (confirmed by the sample's art and a boot). `GAM`'s
+  title 1 and title 2 y (`0x232`, `0x234`) are rows of one atlas 128 px wide:
+  `CGR`'s forty textures as twenty 32-px bands, two textures a band as in the
+  sprite atlas, then stage 0's `GR` the same way (`N64_CGR_BANDS` = 20). A
+  title picture is 128×64, two bands. The sample's are at 928 and 992 — stage
+  0's bands 9 and 11, textures 18-21 and 22-25 — its colour and its silver
+  `SOLID GEAR`; the cartridge's initial game puts both at 928 and shows one.
+- **The backdrop** (confirmed by a boot). `titleBackgroundTexture` (`0x511`,
+  20) is the atlas band of a 128×128 picture behind the title, four bands: the
+  sample's sky strip and grey clouds, stage 0's textures 0-7. A story that took
+  bands 1-3 showed through it.
+- **The map's texture byte** reads the same atlas: byte t is band t, so a
+  stage's map names its sheet's textures 2(t − 20) and 2(t − 20) + 1
+  (`stageBandTextures()`; likely — the sample's map bytes fall on its walls).
+  The writer had kept tiles under two guesses, t and t − 40, which left the
+  logo, the backdrop and the walls for a story or a frame to take.
+- **An ending of pictures** (`GAM` `0x236` type 1) names bands start..end, a
+  128×32 block each; kept like the rest.
+
+What the writer does: the level's logo is title 1 and its subtitle title 2,
+fitted to 128×64; a level with no logo, given a `font`, gets words in the
+story's face (`titleWordsPicture()`: one line or two, split at the space that
+balances them, at the largest whole scale with a 3-px margin, gold to orange
+with a dark edge and a drop shadow) — `titleWords`, else the level's `title`,
+else its name — and title 2 is cleared so a donor's second logo does not show.
+They are painted where the `GAM` points, into `CGR` or stage 0's sheet, before
+any frame; those bands, the backdrop's four and an ending's are kept from
+frames and story. With neither a logo nor a font the template's own pictures
+stay. The report carries `title: {words, title1, title2}` (each `{source,
+sheet, y, textures}`), and `build:ddd` logs it on its `title:` line
+(`titleLogLine`). A level's words live in `static/n64dd/titles.json` by its
+name — gs's are `SQUAD GAME` — which `build:ddd` reads (`--title-words`
+overrides) and the editor's export fetches; its web title is its own.
+
+The project's name is the level's `title` before its name, so gs — whose cloud
+record's `title` is `SQUAD`, the label an Android build installs under — is
+listed as `SQUAD`. GAME SELECT's other panel, `USER GAME` / `SOLID GEAR` /
+`Usagi san`, is the cartridge's built-in games, in its ROM: no disk changes it.
+
+Booted on a `deza1.NDD` donor: GAME SELECT listed `DST`, `SAMPLEZ1`, `SAMP`,
+`SQUAD`; picked, the title showed `SQUAD GAME` over the sample's sky and
+clouds with the menu under it and the high scores over it in turn, and GAME
+START opened stage 0 on its story, then gs's enemies as before.
 
 ### A boss's second stage (`project-write.js`, `src/boss-stage2.js`; researched 2026-10-18)
 
