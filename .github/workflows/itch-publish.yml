@@ -1,0 +1,217 @@
+# Publishing one game to itch.io — from the editor's PUBLISH panel, on a
+# GitHub runner.
+#
+# The panel (routes/api/publish.ts, lib/store-publish.ts) dispatches this with
+# the game's name, the page it goes to (user/game) and the channels picked.
+# One build per channel, with the tool the editor's local export uses
+# (tools/build-level; `deno desktop` underneath, which cross-builds every
+# desktop target from this Linux runner):
+#
+#   win     windows   the MSI's files, the launcher .exe beside denort.dll
+#   linux   linux     the .AppImage
+#   mac     osx       the .app (arm64 — every Mac sold since 2020)
+#   web     html5     the Phaser build, index.html at its root, which itch.io
+#                     plays in the page
+#
+# Then one zip per channel (attached to the run, a week) and one `butler push`
+# per channel, with --userversion from the panel's VERSION field. itch.io reads
+# the platform off the channel's name, so the names are its conventional ones.
+#
+# THE SECRET: BUTLER_API_KEY, made at https://itch.io/user/settings/api-keys.
+# Without it the run builds and packs every channel, then stops before the
+# push and says so.
+#
+# WHAT A RUN SAYS: as steam-publish.yml — ::error with a title is why it
+# failed, `::notice title=Result::` the headline, `::notice title=Detail::`
+# the log line. The step names are the panel's chips (lib/store-publish.ts
+# ITCH_STEP_*); tests/store_publish_test.ts pins them.
+
+name: itch-publish
+
+run-name: "itch.io · ${{ inputs.level }} · ${{ inputs.request || 'by hand' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: >-
+          The game: a shmupX/levels name, or an alias of one, as the editor
+          saves it.
+        required: true
+        type: string
+      target:
+        description: The itch.io page, as user/game.
+        required: true
+        type: string
+      version:
+        description: The build's version, for --userversion (20261026.1).
+        required: false
+        default: ""
+        type: string
+      channels:
+        description: "Which channels to push, comma-separated: win,linux,mac,web."
+        required: false
+        default: "win,linux,web"
+        type: string
+      request:
+        description: >-
+          An id for the dispatcher to find this run by. The editor fills it
+          in; leave it blank by hand.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: itch-publish-${{ inputs.level }}
+  cancel-in-progress: false
+
+jobs:
+  itch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LEVEL: ${{ inputs.level }}
+      TARGET: ${{ inputs.target }}
+      CHANNELS: ${{ inputs.channels }}
+      BUILD_ROOT: ${{ github.workspace }}/build/itch-publish
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.7
+
+      - name: Which channels, which version
+        id: ids
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          case "$TARGET" in
+            */*) ;;
+            *) echo "::error title=itch.io::The target is user/game, not '$TARGET'."; exit 1 ;;
+          esac
+          picked=""
+          for ch in $(echo "$CHANNELS" | tr ',' ' '); do
+            case "$ch" in
+              win|linux|mac|web) picked="$picked $ch" ;;
+              *) echo "::error title=itch.io::'$ch' is not a channel (win, linux, mac, web)."; exit 1 ;;
+            esac
+          done
+          picked=$(echo $picked)
+          [ -n "$picked" ] || { echo "::error title=itch.io::No channel picked."; exit 1; }
+          version="$VERSION"
+          [ -n "$version" ] || version="$(date -u +%Y%m%d).1"
+          echo "picked=$picked" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Channels: $picked; version $version; page $TARGET"
+
+      - name: Build the picked channels
+        env:
+          PICKED: ${{ steps.ids.outputs.picked }}
+        run: |
+          set -euo pipefail
+          out="$BUILD_ROOT/channels"
+          rm -rf "$out" && mkdir -p "$out"
+          for ch in $PICKED; do
+            echo "--- $ch ---"
+            case "$ch" in
+              web)
+                node packages/shmup-harbor/tools/build-level "$LEVEL" linux --stage-only --out "$BUILD_ROOT/web"
+                mkdir -p "$out/html5"
+                cp -R "$BUILD_ROOT/web/www/." "$out/html5/"
+                # itch.io opens index.html; the staged page is phaser-game.html.
+                [ -f "$out/html5/index.html" ] || cp "$out/html5/phaser-game.html" "$out/html5/index.html"
+                ;;
+              win)
+                sudo apt-get update -qq && sudo apt-get install -y -qq msitools >/dev/null
+                node packages/shmup-harbor/tools/build-level "$LEVEL" windows --out "$BUILD_ROOT/windows" --win-arch x64
+                msi=$(ls "$BUILD_ROOT"/windows/dist/*.msi | head -1)
+                mkdir -p "$BUILD_ROOT/win-unpacked"
+                msiextract -C "$BUILD_ROOT/win-unpacked" "$msi" >/dev/null
+                exe=$(find "$BUILD_ROOT/win-unpacked" -iname '*.exe' | head -1)
+                [ -n "$exe" ] || { echo "::error title=Build::The MSI unpacked without an .exe."; exit 1; }
+                mkdir -p "$out/windows" && cp -R "$(dirname "$exe")/." "$out/windows/"
+                ;;
+              linux)
+                node packages/shmup-harbor/tools/build-level "$LEVEL" linux --out "$BUILD_ROOT/linux" --linux-arch x64
+                mkdir -p "$out/linux" && cp "$BUILD_ROOT"/linux/dist/*.AppImage "$out/linux/"
+                chmod +x "$out"/linux/*.AppImage
+                ;;
+              mac)
+                node packages/shmup-harbor/tools/build-level "$LEVEL" mac --out "$BUILD_ROOT/mac" --mac-arch arm64
+                mkdir -p "$out/osx" && cp -R "$BUILD_ROOT"/mac/dist/*.app "$out/osx/"
+                ;;
+            esac
+          done
+          du -sh "$out"/*
+
+      - name: Pack one zip per channel
+        run: |
+          set -euo pipefail
+          mkdir -p "$BUILD_ROOT/packs"
+          slug=$(echo "$LEVEL" | tr -cd 'a-zA-Z0-9' | tr 'A-Z' 'a-z')
+          [ -n "$slug" ] || slug=game
+          for dir in "$BUILD_ROOT"/channels/*/; do
+            name=$(basename "$dir")
+            (cd "$dir" && zip -qry "$BUILD_ROOT/packs/$slug-$name.zip" .)
+            ls -la "$BUILD_ROOT/packs/$slug-$name.zip"
+          done
+
+      - name: Attach the packs to the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: itch-channels
+          path: ${{ env.BUILD_ROOT }}/packs/*.zip
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: butler push, per channel
+        id: push
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+          VERSION: ${{ steps.ids.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$BUTLER_API_KEY" ]; then
+            echo "::error title=butler::No BUTLER_API_KEY in this repository's secrets, so every channel was built and packed (attached to this run) but nothing was pushed. Make a key at https://itch.io/user/settings/api-keys, put it in the secret, and publish again."
+            exit 1
+          fi
+          curl -sL https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default -o "$BUILD_ROOT/butler.zip"
+          mkdir -p "$BUILD_ROOT/butler" && (cd "$BUILD_ROOT/butler" && unzip -qo ../butler.zip)
+          chmod +x "$BUILD_ROOT/butler/butler"
+          "$BUILD_ROOT/butler/butler" -V
+          pushed=""
+          for dir in "$BUILD_ROOT"/channels/*/; do
+            name=$(basename "$dir")
+            "$BUILD_ROOT/butler/butler" push "$dir" "$TARGET:$name" --userversion "$VERSION"
+            pushed="$pushed, $name"
+          done
+          pushed=${pushed#, }
+          echo "::notice title=Result::Pushed $pushed to $TARGET."
+          n=$(ls -d "$BUILD_ROOT"/channels/*/ | wc -l | tr -d ' ')
+          echo "::notice title=Detail::version $VERSION · $n channels"
+          echo "pushed=$pushed" >> "$GITHUB_OUTPUT"
+
+      - name: Say what happened
+        if: always()
+        env:
+          PUSHED: ${{ steps.push.outputs.pushed }}
+          PUSH: ${{ steps.push.outcome }}
+          VERSION: ${{ steps.ids.outputs.version }}
+        run: |
+          {
+            echo "## itch.io · $LEVEL"
+            echo ""
+            echo "- page \`$TARGET\`, version \`$VERSION\`"
+            case "$PUSH" in
+              success) echo "- **pushed** $PUSHED" ;;
+              failure) echo "- the push **failed** — the step's error says why" ;;
+              *) echo "- not pushed" ;;
+            esac
+            echo "- the packs are attached to this run as \`itch-channels\`"
+          } >> "$GITHUB_STEP_SUMMARY"

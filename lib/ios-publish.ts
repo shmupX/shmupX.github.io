@@ -376,6 +376,51 @@ export class GitHubActions {
     return Array.isArray(data?.artifacts) ? data.artifacts : [];
   }
 
+  /**
+   * The repository's secret NAMES — never a value; GitHub has no call that
+   * gives one — or null when the token may not list them (a fine-grained
+   * token without Secrets read, a collaborator's classic one). The PUBLISH
+   * panel's credential lines read off this; a run says for itself otherwise.
+   */
+  async secretNames(): Promise<string[] | null> {
+    try {
+      const res = await this.api(
+        "GET",
+        `/repos/${this.repo}/actions/secrets?per_page=100`,
+      );
+      const data = await res.json();
+      return Array.isArray(data?.secrets)
+        ? data.secrets.map((s: { name: string }) => String(s.name))
+        : [];
+    } catch (e) {
+      if (e instanceof PublishError && (e.status === 403 || e.status === 404)) {
+        return null;
+      }
+      throw e;
+    }
+  }
+
+  /** The repository's variables (name → value), or null when not readable. */
+  async variables(): Promise<Record<string, string> | null> {
+    try {
+      const res = await this.api(
+        "GET",
+        `/repos/${this.repo}/actions/variables?per_page=100`,
+      );
+      const data = await res.json();
+      const out: Record<string, string> = {};
+      for (const v of Array.isArray(data?.variables) ? data.variables : []) {
+        if (v && typeof v.name === "string") out[v.name] = String(v.value ?? "");
+      }
+      return out;
+    } catch (e) {
+      if (e instanceof PublishError && (e.status === 403 || e.status === 404)) {
+        return null;
+      }
+      throw e;
+    }
+  }
+
   /** A job is a check run, and the workflow's ::error lines are its annotations. */
   async annotations(jobId: number): Promise<Annotation[]> {
     const res = await this.api(

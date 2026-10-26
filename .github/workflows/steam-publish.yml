@@ -1,0 +1,255 @@
+# Publishing one game to Steam — from the editor's PUBLISH panel, on a GitHub
+# runner.
+#
+# The panel (routes/api/publish.ts, lib/store-publish.ts) dispatches this with
+# the game's name and the app and depot ids from its STEAM settings. The runner
+# builds the game's Linux and Windows desktop apps with the very tool the
+# editor's local export uses (tools/build-level … linux | windows, `deno
+# desktop` underneath), lays both into ONE depot — linux/ holds the AppImage's
+# AppDir, AppRun at its root; windows/ holds the MSI's files, the launcher .exe
+# beside denort.dll — uploads it with SteamPipe and sets it live on a branch.
+# One depot, two folders, so the panel asks for one depot id; the launch
+# options in Steamworks point at windows/<slug>.exe (Windows) and linux/AppRun
+# (Linux), once each.
+#
+# THE SECRETS are the two the steamcmd login needs, under the names the
+# game-ci/steam-deploy action made customary so a config.vdf made for it works
+# here as it is:
+#   STEAM_USERNAME      the Steamworks account that may upload this app
+#   STEAM_CONFIG_VDF    its steamcmd config.vdf, base64 — log in with steamcmd
+#                       once (Steam Guard answered), then
+#                       `base64 -w0 ~/Steam/config/config.vdf`
+# Without them the run builds and lays out the depot, then stops before the
+# upload and says so: a dry run of everything but Valve.
+#
+# THE BRANCH. SteamPipe can set a build live on any branch but the default
+# one, which only Steamworks itself sets live — so BETA goes live from here
+# and DEFAULT uploads, then names the page where the build is set live. The
+# panel says this on the row.
+#
+# WHAT A RUN SAYS. The panel reads the job's annotations: ::error lines with a
+# title are why a run failed, `::notice title=Result::` is the headline of a
+# run that got through, `::notice title=Detail::` the line the panel's log
+# keeps under it. The step names are what the panel's chips key off
+# (lib/store-publish.ts STEAM_STEP_*); tests/store_publish_test.ts pins them.
+
+name: steam-publish
+
+run-name: "Steam · ${{ inputs.level }} · ${{ inputs.request || 'by hand' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: >-
+          The game: a shmupX/levels name, or an alias of one, as the editor
+          saves it.
+        required: true
+        type: string
+      app_id:
+        description: The Steam app id the depot belongs to.
+        required: true
+        type: string
+      depot_id:
+        description: The depot id the build goes into.
+        required: true
+        type: string
+      branch:
+        description: >-
+          Which branch the build is set live on: default (set live in
+          Steamworks after the upload) or beta (set live from here).
+        required: false
+        default: "default"
+        type: string
+      description:
+        description: The build's description in Steamworks.
+        required: false
+        default: ""
+        type: string
+      request:
+        description: >-
+          An id for the dispatcher to find this run by. The editor fills it
+          in; leave it blank by hand.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+# One build of a game at a time, as ios-publish.yml does.
+concurrency:
+  group: steam-publish-${{ inputs.level }}
+  cancel-in-progress: false
+
+jobs:
+  steam:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LEVEL: ${{ inputs.level }}
+      APP_ID: ${{ inputs.app_id }}
+      DEPOT_ID: ${{ inputs.depot_id }}
+      BRANCH: ${{ inputs.branch }}
+      DESCRIPTION: ${{ inputs.description }}
+      BUILD_ROOT: ${{ github.workspace }}/build/steam-publish
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.7
+
+      - name: Which build this is
+        id: ids
+        run: |
+          case "$APP_ID" in ''|*[!0-9]*) echo "::error title=Steam::The app id must be a number, not '$APP_ID'."; exit 1 ;; esac
+          case "$DEPOT_ID" in ''|*[!0-9]*) echo "::error title=Steam::The depot id must be a number, not '$DEPOT_ID'."; exit 1 ;; esac
+          case "$BRANCH" in default|beta) ;; *) echo "::error title=Steam::The branch is default or beta, not '$BRANCH'."; exit 1 ;; esac
+          desc="$DESCRIPTION"
+          [ -n "$desc" ] || desc="$LEVEL · $(date -u +%Y-%m-%d) · editor publish"
+          echo "description=$desc" >> "$GITHUB_OUTPUT"
+          echo "App $APP_ID, depot $DEPOT_ID, branch $BRANCH: $desc"
+
+      - name: Build the Linux and Windows desktop apps
+        run: |
+          node packages/shmup-harbor/tools/build-level "$LEVEL" linux \
+            --out "$BUILD_ROOT/linux" --linux-arch x64
+          node packages/shmup-harbor/tools/build-level "$LEVEL" windows \
+            --out "$BUILD_ROOT/windows" --win-arch x64
+          ls -la "$BUILD_ROOT/linux/dist" "$BUILD_ROOT/windows/dist"
+
+      - name: Lay the builds into the depot
+        id: depot
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq msitools >/dev/null
+          depot="$BUILD_ROOT/depot"
+          rm -rf "$depot" && mkdir -p "$depot"
+
+          # Linux: the AppDir inside the AppImage, which Steam runs in place
+          # (no FUSE in the Steam runtime, so never the AppImage itself).
+          app=$(ls "$BUILD_ROOT"/linux/dist/*.AppImage | head -1)
+          chmod +x "$app"
+          (cd "$BUILD_ROOT/linux" && "$app" --appimage-extract >/dev/null)
+          mv "$BUILD_ROOT/linux/squashfs-root" "$depot/linux"
+          [ -x "$depot/linux/AppRun" ] || { echo "::error title=Depot::The AppImage unpacked without an AppRun at its root."; exit 1; }
+
+          # Windows: the MSI's files, as the installer would lay them out.
+          msi=$(ls "$BUILD_ROOT"/windows/dist/*.msi | head -1)
+          mkdir -p "$depot/windows"
+          msiextract -C "$depot/windows" "$msi" >/dev/null
+          # msiextract keeps the installer's directory tree (Program Files/…);
+          # flatten to the folder that holds the .exe so the launch path is short.
+          exe=$(find "$depot/windows" -iname '*.exe' | head -1)
+          [ -n "$exe" ] || { echo "::error title=Depot::The MSI unpacked without an .exe."; exit 1; }
+          home=$(dirname "$exe")
+          if [ "$home" != "$depot/windows" ]; then
+            tmp="$BUILD_ROOT/win-flat" && rm -rf "$tmp" && mv "$home" "$tmp" && rm -rf "$depot/windows" && mv "$tmp" "$depot/windows"
+          fi
+          echo "exe=windows/$(basename "$exe")" >> "$GITHUB_OUTPUT"
+
+          # The SteamPipe scripts. SetLive goes in only for a branch SteamPipe
+          # may set live — the default one is Steamworks's to set.
+          mkdir -p "$BUILD_ROOT/output"
+          cat > "$BUILD_ROOT/depot_$DEPOT_ID.vdf" <<EOF
+          "DepotBuild"
+          {
+            "DepotID" "$DEPOT_ID"
+            "ContentRoot" "$depot"
+            "FileMapping"
+            {
+              "LocalPath" "*"
+              "DepotPath" "."
+              "recursive" "1"
+            }
+          }
+          EOF
+          {
+            echo '"AppBuild"'
+            echo '{'
+            echo "  \"AppID\" \"$APP_ID\""
+            echo "  \"Desc\" \"${{ steps.ids.outputs.description }}\""
+            if [ "$BRANCH" != "default" ]; then echo "  \"SetLive\" \"$BRANCH\""; fi
+            echo "  \"ContentRoot\" \"$depot\""
+            echo "  \"BuildOutput\" \"$BUILD_ROOT/output\""
+            echo '  "Depots"'
+            echo '  {'
+            echo "    \"$DEPOT_ID\" \"$BUILD_ROOT/depot_$DEPOT_ID.vdf\""
+            echo '  }'
+            echo '}'
+          } > "$BUILD_ROOT/app_build.vdf"
+          cat "$BUILD_ROOT/app_build.vdf"
+          du -sh "$depot/linux" "$depot/windows"
+          echo "Launch options for Steamworks: Windows → windows/$(basename "$exe"); Linux → linux/AppRun"
+
+      - name: Upload with SteamPipe
+        id: upload
+        env:
+          STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
+          STEAM_CONFIG_VDF: ${{ secrets.STEAM_CONFIG_VDF }}
+        run: |
+          set -euo pipefail
+          if [ -z "$STEAM_USERNAME" ] || [ -z "$STEAM_CONFIG_VDF" ]; then
+            echo "::error title=SteamPipe::No STEAM_CONFIG_VDF (and STEAM_USERNAME) in this repository's secrets, so the depot was built and laid out but not uploaded. Log in with steamcmd once, base64 its config.vdf into the secret, and publish again."
+            exit 1
+          fi
+          # steamcmd from Ubuntu's own package, the way game-ci/steam-deploy
+          # installs it; the licence prompt is answered up front.
+          sudo dpkg --add-architecture i386
+          sudo add-apt-repository -y multiverse >/dev/null
+          sudo apt-get update -qq
+          echo steam steam/question select "I AGREE" | sudo debconf-set-selections
+          echo steam steam/license note '' | sudo debconf-set-selections
+          sudo apt-get install -y -qq steamcmd >/dev/null
+          mkdir -p "$HOME/Steam/config"
+          echo "$STEAM_CONFIG_VDF" | base64 -d > "$HOME/Steam/config/config.vdf"
+          chmod 600 "$HOME/Steam/config/config.vdf"
+          set +e
+          steamcmd +login "$STEAM_USERNAME" +run_app_build "$BUILD_ROOT/app_build.vdf" +quit 2>&1 | tee "$BUILD_ROOT/steamcmd.log"
+          code=${PIPESTATUS[0]}
+          set -e
+          rm -f "$HOME/Steam/config/config.vdf"
+          build=$(grep -o 'BuildID [0-9]*' "$BUILD_ROOT/steamcmd.log" | tail -1 | grep -o '[0-9]*' || true)
+          if [ "$code" -ne 0 ] || [ -z "$build" ]; then
+            if grep -qi 'Steam Guard\|Two-factor\|FAILED (Invalid Password)\|Login Failure' "$BUILD_ROOT/steamcmd.log"; then
+              echo "::error title=SteamPipe::steamcmd could not log in as $STEAM_USERNAME: the config.vdf in STEAM_CONFIG_VDF is stale, or Steam Guard wants answering again. Log in with steamcmd on a machine, answer the code, and put the new config.vdf in the secret."
+            else
+              echo "::error title=SteamPipe::steamcmd exited $code — Valve's reason is in the step's log."
+            fi
+            exit 1
+          fi
+          echo "build_id=$build" >> "$GITHUB_OUTPUT"
+          echo "Uploaded build $build to app $APP_ID (depot $DEPOT_ID)."
+
+      - name: Set live on the branch
+        env:
+          BUILD_ID: ${{ steps.upload.outputs.build_id }}
+        run: |
+          if [ "$BRANCH" = "default" ]; then
+            echo "::notice title=Result::Build $BUILD_ID uploaded. The default branch is set live in Steamworks: https://partner.steamgames.com/apps/builds/$APP_ID"
+          else
+            echo "::notice title=Result::Build $BUILD_ID is live on the $BRANCH branch."
+          fi
+          echo "::notice title=Detail::depot $DEPOT_ID · $BRANCH · build $BUILD_ID"
+
+      - name: Say what happened
+        if: always()
+        env:
+          BUILD_ID: ${{ steps.upload.outputs.build_id }}
+          UPLOAD: ${{ steps.upload.outcome }}
+          EXE: ${{ steps.depot.outputs.exe }}
+        run: |
+          {
+            echo "## Steam · $LEVEL"
+            echo ""
+            echo "- app \`$APP_ID\`, depot \`$DEPOT_ID\`, branch \`$BRANCH\`"
+            echo "- launch options: Windows \`${EXE:-windows/<slug>.exe}\`, Linux \`linux/AppRun\`"
+            case "$UPLOAD" in
+              success) echo "- **uploaded** as build \`$BUILD_ID\`" ;;
+              failure) echo "- the upload **failed** — the step's error says why" ;;
+              *) echo "- not uploaded" ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"

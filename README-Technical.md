@@ -4180,6 +4180,74 @@ makes the recipe here, generalised to any level and bundle id, a known-good one.
 the run title the dispatch is found by, the inputs the workflow declares, and
 the route's three refusals.
 
+#### The PUBLISH panel (App Store Connect, Steam, itch.io)
+
+The drawer's **PUBLISH ›** row (and the IOS target's **PUBLISH IOS BUILD**)
+opens a bottom sheet that takes the saved game to three stores at once, every
+build on a GitHub runner — the iOS pipeline above, generalised. `static/editor/
+publish-panel.js` draws it; `routes/api/publish.ts` over `lib/store-publish.ts`
+is its server; `tests/store_publish_test.ts` pins the seams the way the iOS
+test does.
+
+- **STORES.** Three cards — App Store Connect (`ios-publish.yml`), Steam
+  (`steam-publish.yml`), itch.io (`itch-publish.yml`) — each a toggle (include
+  it in this publish) and a `›` that opens its settings in place. The line
+  under each name says whether the repository holds the secrets the store
+  needs, read off GitHub's secret _names_ (never values; a token that may not
+  list them gets "the run says"). Steam needs `STEAM_USERNAME` and
+  `STEAM_CONFIG_VDF` (a steamcmd `config.vdf`, base64, after one logged-in
+  run); itch.io needs `BUTLER_API_KEY`. Without them a run builds everything
+  and stops before the upload, saying so. Repository variables default the
+  settings: `IOS_BUNDLE_ID`, `STEAM_APP_ID`, `STEAM_DEPOT_ID`, `ITCH_TARGET`.
+- **Steam** builds the Linux and Windows desktop apps on `ubuntu-latest` with
+  `tools/build-level … linux | windows` and lays both into **one depot**:
+  `linux/` is the AppImage's AppDir (AppRun at its root — Steam runs a depot in
+  place and its runtime has no FUSE), `windows/` the MSI's files (msiextract).
+  Launch options in Steamworks point at `windows/<slug>.exe` and `linux/AppRun`.
+  SteamPipe can set any branch but the default one live, so BETA goes live
+  from the run and DEFAULT uploads and names the Steamworks page to set it live
+  on.
+- **itch.io** builds one channel per pick — `windows` (the MSI's files),
+  `linux` (the AppImage), `osx` (the arm64 .app), `html5` (the Phaser build,
+  `--stage-only`, `index.html` at its root) — packs a zip per channel
+  (attached to the run for a week) and `butler push`es each with
+  `--userversion` from the VERSION field.
+- **App Store Connect** is the iOS workflow with two more inputs: `upload`
+  off signs and attaches without TestFlight, `review` on adds a step after the
+  upload — `scripts/asc-review.ts` waits for Apple to process the build, puts
+  the store listing on the editable App Store version (the description on its
+  en-US localization, the panel's 6.7″ and 6.5″ stills on any display size
+  that has none yet), attaches the build and submits it for review, every
+  refusal an `::error` with Apple's reason.
+- **PUBLISH** saves the game first (the runners read it from the cloud by
+  name, which is why an imported cart has to be saved as a cloud game), writes
+  the **STORE LISTING** — title, description, the App Store stills — to
+  `shmupX/storeListings/<name>`, dispatches each picked workflow and watches
+  the runs: one row per store, a chip per step (STAGE · SIGN · UPLOAD;
+  STAGE · DEPOT · UPLOAD · BRANCH; STAGE · PACK · PUSH), a headline, OPEN RUN
+  and the artifacts. A run survives a reload; the watch picks it back up.
+- **CAPTURE SCREENSHOTS** (`routes/api/store-shots.ts`, `lib/store-shots.ts`)
+  runs `scripts/testdrive-parity.ts <game> --targets web` — the tool-assisted
+  pilot fighting the boss on the web runtime — and cuts one still from the
+  middle of `panes/web.mp4` at every size the picked stores take (App Store
+  1290×2796 and 1284×2778, Steam capsule 616×353, header 460×215 and 1920×1080,
+  itch cover 630×500 and 1920×1080), nearest-neighbour scaled and letterboxed,
+  into `build/publish/<slug>/shots/`. The App Store ones ride up with the next
+  publish; the Steam and itch.io ones are downloads for their store pages,
+  which neither store takes over its upload tool.
+- **PUBLISHES** is the game's log: every run of the three workflows whose
+  title names it, newest first, with the headline, the `::notice
+  title=Detail::` line each workflow leaves (bundle id and build number; depot,
+  branch and build; version and channel count), RUN #n and any artifact.
+  Completed runs are cached in the server for the session.
+
+Every store's workflow reads the same way: `::error` annotations with a title
+are why a run failed, `::notice title=Result::` is the headline of one that
+got through, `::notice title=Detail::` the log's line. `SHMUPX_PUBLISH_REPO` /
+`SHMUPX_PUBLISH_REF` point every store at a fork or a branch at once (the iOS
+pair still works); a workflow has to be on that ref before its store can be
+dispatched.
+
 ## Remote exports (build on your desktop)
 
 The editor's EXPORT button only builds where it is served from a local host:

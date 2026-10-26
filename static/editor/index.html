@@ -35,6 +35,9 @@
     <!-- The PIXEL EDITOR the character sheet sends frames to, mounted in
          place of the grid (static/editor/pixel-editor.js). -->
     <script src="/editor/pixel-editor.js"></script>
+    <!-- PUBLISH panel (window.PublishPanel): one saved game to the stores,
+         every build on a GitHub runner (static/editor/publish-panel.js). -->
+    <script src="/editor/publish-panel.js"></script>
     <script type="module">
         // Dezaemon 2 (Saturn) save importer. The whole .sav/game.json pipeline
         // lives in the shmup-engine JSR module (packages/shmup-engine), bundled
@@ -97,6 +100,7 @@
             --sr1: #fffea1; --sr2: #F6FF4A; --sr3: #d8e640; --sr4: #a4b00b; --srink: #0e0e02; --srsub: rgba(14,14,2,.7); --srglow: rgba(255,240,90,.5);
             --tgbg: rgba(124,255,79,.25); --tgedge: rgba(140,255,110,.5);
             --kn1: #fffdc9; --kn2: #F6FF4A; --kn3: #a4b00b; --knglow: rgba(246,255,74,.7);
+            --stripe: rgba(140,255,110,.07);
         }
         body.theme-nintendo {
             --edge: rgba(213,213,216,.3);
@@ -113,6 +117,7 @@
             --sr1: #ff5b66; --sr2: #e4000f; --sr3: #c00011; --sr4: #8c000c; --srink: #fff; --srsub: rgba(255,255,255,.75); --srglow: rgba(228,0,15,.5);
             --tgbg: rgba(228,0,15,.25); --tgedge: rgba(255,91,102,.5);
             --kn1: #ffd9db; --kn2: #e4000f; --kn3: #7a000a; --knglow: rgba(255,69,84,.7);
+            --stripe: rgba(139,160,194,.08);
         }
 
         /* ===== APP LAYOUT ===== */
@@ -774,6 +779,114 @@
         .sheet-sec .menu-row { min-height: 44px; }
         .sheet-opts > .display-row .seg { min-height: 36px; letter-spacing: .1em; }
         .sheet-foot { text-align: center; line-height: 1.7; }
+
+        /* ===== PUBLISH PANEL (publish-panel.js) =====
+           The export sheet's bottom sheet, wider: three store cards in a
+           grid, the open store's settings as a .sheet-sec, one PUBLISH row,
+           the runs in flight as chips, then the listing and the log in two
+           columns on a desktop and one on a phone. */
+        .picker-panel.pub { max-width: 900px; max-height: 88vh; }
+        .pub-title-sub {
+            margin-left: auto; font-family: 'Share Tech Mono', monospace; font-size: 10px; font-weight: 400;
+            letter-spacing: .12em; color: var(--rsub); text-shadow: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .pub-stores { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; }
+        .pub-store {
+            display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 12px 12px 14px; min-height: 68px;
+            border-radius: 12px; background: var(--rbg); border: 1px solid var(--redge); color: var(--rink);
+            font-family: 'Orbitron', sans-serif; transition: all .15s;
+        }
+        .pub-store.on { border-color: var(--shedge); box-shadow: 0 0 16px var(--selglow); }
+        .pub-store.open { border-color: var(--shedge); }
+        @media (hover: hover) { .pub-store:hover { border-color: var(--shedge); } }
+        .pub-store-main {
+            display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; background: none; border: 0; padding: 0;
+            color: inherit; text-align: left; cursor: pointer; font-family: inherit;
+        }
+        .pub-store.on .sheet-badge { border-color: var(--shedge); color: var(--sel); }
+        .pub-cred {
+            display: flex; align-items: center; gap: 6px; font-family: 'Share Tech Mono', monospace; font-size: 8px;
+            letter-spacing: .12em; line-height: 1.4; color: var(--bink);
+        }
+        .pub-cred.warn { color: var(--sel); }
+        .pub-cred.unknown { color: var(--rsub); }
+        .pub-cred .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 6px currentColor; flex-shrink: 0; }
+        .pub-store-gear {
+            width: 28px; height: 44px; display: flex; align-items: center; justify-content: center; background: none; border: 0;
+            border-left: 1px solid var(--redge); padding: 0 0 0 6px; cursor: pointer; font-size: 16px; line-height: 1;
+            color: var(--bink2); transition: transform .15s;
+        }
+        .pub-store.open .pub-store-gear { color: var(--sel); transform: rotate(90deg); }
+        .pub-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+        .pub-field {
+            display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px; border-radius: 10px;
+            background: rgba(0,0,0,.45); border: 1px solid var(--redge); color: var(--hint); font-family: 'Orbitron', sans-serif;
+        }
+        .pub-field .display-lbl { flex-shrink: 0; }
+        .pub-field .menu-input { margin-bottom: 0; flex: 1; min-width: 0; width: auto; }
+        .pub-tail { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .1em; color: var(--rsub); padding-right: 6px; flex-shrink: 0; }
+        .pub-toggle-row { justify-content: space-between; }
+        .pub-row-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .pub-row-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+        .pub-row-sub { font-family: 'Share Tech Mono', monospace; font-size: 8px; font-weight: 400; letter-spacing: .14em; color: var(--bink2); }
+        .pub-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pub-note { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .1em; line-height: 1.7; color: var(--raillbl); padding: 0 2px; }
+        .pub-note.warn { color: var(--sel); }
+        .pub-note.ok { color: #84cc16; }
+        .pub-note.run { color: #f59e0b; }
+        .pub-note.fail { color: #f87171; }
+        .pub-note a, .pub-log-links a { color: inherit; text-decoration: underline; }
+        .pub-go { min-height: 48px; font-size: 11px; font-weight: 800; letter-spacing: .12em; transition: opacity .15s; }
+        .pub-go:disabled { opacity: .5; cursor: default; }
+        .pub-go .pub-go-label { flex: 1; }
+        .pub-go .pub-go-sub { font-family: 'Share Tech Mono', monospace; font-size: 8px; font-weight: 400; letter-spacing: .14em; color: var(--bink2); }
+        .pub-runs { display: flex; flex-direction: column; gap: 9px; }
+        .pub-run { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; background: rgba(0,0,0,.45); border: 1px solid var(--redge); }
+        .pub-run-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .pub-run-name { font-size: 9px; font-weight: 700; letter-spacing: .12em; color: var(--rink); width: 118px; flex-shrink: 0; }
+        .pub-chips { flex: 1; min-width: 220px; display: flex; gap: 4px; }
+        .pub-chip {
+            flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 4px; border-radius: 7px;
+            border: 1px solid var(--redge); color: var(--rsub); font-family: 'Share Tech Mono', monospace; font-size: 8px;
+            letter-spacing: .12em; white-space: nowrap;
+        }
+        .pub-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--redge); flex-shrink: 0; }
+        .pub-chip.done { color: #84cc16; }
+        .pub-chip.done .dot { background: #84cc16; box-shadow: 0 0 6px rgba(132,204,22,.6); }
+        .pub-chip.run { color: #f59e0b; border-color: #f59e0b; background: rgba(245,158,11,.12); }
+        .pub-chip.run .dot { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+        .pub-chip.fail { color: #f87171; border-color: #f87171; background: rgba(248,113,113,.12); }
+        .pub-chip.fail .dot { background: #f87171; }
+        .pub-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px 18px; margin-top: 6px; }
+        .pub-col { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+        .pub-textarea {
+            width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--redge); background: rgba(0,0,0,.5);
+            color: var(--rink); font-size: 11px; font-family: 'Share Tech Mono', monospace; outline: none; resize: vertical; line-height: 1.6;
+        }
+        .pub-textarea::placeholder { color: var(--rsub); }
+        .pub-shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 6px; }
+        .pub-shot { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .pub-shot a { display: block; }
+        .pub-shot-tile {
+            border-radius: 8px; border: 1px dashed var(--redge); position: relative; overflow: hidden;
+            background: repeating-linear-gradient(135deg, var(--stripe) 0 6px, transparent 6px 12px);
+            display: flex; align-items: center; justify-content: center; font-family: 'Share Tech Mono', monospace; font-size: 8px;
+            letter-spacing: .1em; color: var(--rsub); text-align: center; padding: 4px;
+        }
+        .pub-shot-tile.ready { border-style: solid; border-color: var(--tgedge); color: var(--bink); }
+        .pub-shot-tile.recording { border-color: #f59e0b; color: #f59e0b; }
+        .pub-shot-tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+        .pub-shot-lbl { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .08em; line-height: 1.4; color: var(--rsub); text-align: center; }
+        .pub-log-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--rbg); border: 1px solid var(--redge); }
+        .pub-log-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+        .pub-log-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
+        .pub-log-title .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .pub-log-title-txt { font-size: 10px; font-weight: 800; letter-spacing: .08em; line-height: 1.4; color: var(--rink); min-width: 0; text-wrap: pretty; }
+        .pub-log-when { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .1em; line-height: 1.5; color: var(--rsub); }
+        .pub-log-links {
+            display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0;
+            font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .12em; color: var(--bink2);
+        }
 
         .menu-flex-spacer { flex: 1; min-height: 8px; }
         .menu-status {
@@ -1543,6 +1656,12 @@
         </div>
     </div>
 
+    <!-- PUBLISH SHEET: one saved game to the stores (App Store Connect,
+         Steam, itch.io), every build on a GitHub runner. The drawer's
+         PUBLISH › row and the IOS target's PUBLISH IOS BUILD open it;
+         static/editor/publish-panel.js draws everything inside. -->
+    <div id="publish-sheet" class="picker-overlay hidden"></div>
+
     <!-- TOAST -->
     <div id="toast" class="hidden"></div>
 
@@ -1566,6 +1685,10 @@
         <button class="menu-row" id="menu-save-row" onclick="quickSave();closeMenu()"><span class="mono-badge">SA</span><span class="row-txt"><span id="menu-save-label">SAVE ALL</span><span class="row-sub hidden" id="menu-save-sub"></span></span></button>
         <button class="menu-row" onclick="openSheet('import')"><span class="mono-badge">IM</span><span class="row-txt"><span>IMPORT</span><span class="row-sub">WEB &middot; DEZAEMON</span></span><span class="row-chev">&rsaquo;</span></button>
         <button class="menu-row" onclick="openSheet('export')"><span class="mono-badge">EX</span><span class="row-txt"><span>EXPORT</span><span class="row-sub" id="menu-export-sub">WEB &middot; DEZAEMON 2 (SATURN) &middot; 3D</span></span><span class="row-chev">&rsaquo;</span></button>
+        <!-- PUBLISH opens the store panel (publish-panel.js). Hidden while an
+             imported cart is open: the runners read the game from the cloud
+             by name, and a cart has no cloud record until it is saved as one. -->
+        <button class="menu-row hide-when-sav" onclick="openPublishPanel()" title="Publish the saved game to the stores: App Store Connect, Steam, itch.io — every build on a GitHub runner"><span class="mono-badge">PB</span><span class="row-txt"><span>PUBLISH</span><span class="row-sub">APP STORE &middot; STEAM &middot; ITCH.IO</span></span><span class="row-chev">&rsaquo;</span></button>
         <!-- NEW GAME opens on CHOOSE YOUR CHARACTER (the modal below the
              library): Duke, Bill, or any ship on the roster sheet, and the
              blank game is then built around the pick (startNewGame). -->
@@ -2005,6 +2128,9 @@
         // same __editorPhaser*__ localStorage keys and ?editorPlay/?level params
         // this editor writes, so play links work unchanged).
         const GAME_PLAY_URL = '/games/' + GAME_ID;
+        // The PUBLISH panel (publish-panel.js), mounted at the end of this
+        // script; declared here so closeSheet() can close it from the start.
+        let publishPanel = null;
         document.getElementById('model-viewer-link').href = 'model-viewer.html?game=' + GAME_ID;
         // The editor's built-in loaders fetch the base game's assets with paths
         // relative to the game dir ("assets/…", "img/…") — a convention from
@@ -2697,6 +2823,7 @@
         function closeSheet() {
             document.getElementById('import-sheet').classList.add('hidden');
             document.getElementById('export-sheet').classList.add('hidden');
+            if (publishPanel) publishPanel.close();
         }
         function toggleSheetSection(btn, force) {
             const sec = document.getElementById('sheet-sec-' + btn.dataset.sec);
@@ -14637,6 +14764,7 @@ function GAME3D_RUNTIME(DATA) {
                 payload.uiAtlases = uiAtlasesForSave();
                 payload.gameId = await ensureGameId(name);
                 await firebaseDb.ref(`${LEVEL_LOADER_DEFAULTS.levelsPath}/${name}`).update(payload);
+                lastCloudSaveAt = Date.now();   // the PUBLISH panel's "SAVED 14:02"
                 // The atlas snapshot went up with the records, so a later
                 // per-entry save no longer has art to strand.
                 atlasAheadOfCloud = false;
@@ -15135,6 +15263,21 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             const local = !!(opts && opts.local);
             let name, levelRecord = undefined;
 
+            // iOS: publishing is a Mac's job and this machine is most likely
+            // not one — PUBLISH IOS BUILD hands the game to the PUBLISH panel,
+            // which saves it and sends it to a GitHub-hosted Mac. The EXPORT
+            // XCODE PROJECT row (opts.local) keeps the local export: the
+            // project, or an unsigned .ipa on a Mac with Xcode.
+            if (exportPlatform === 'ios' && !local) {
+                if (sav) {
+                    setStatus('The Mac build reads the game from the cloud by name, and an imported cart has no cloud record — save it as a cloud game first, or EXPORT XCODE PROJECT builds it here.', '#f87171');
+                    return;
+                }
+                setStatus('');
+                openPublishPanel({ store: 'ios' });
+                return;
+            }
+
             if (sav) {
                 // An imported cart has no cloud record and nothing to save to,
                 // so the record travels with the request instead of being
@@ -15174,27 +15317,6 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             }
             // Settled now, while the open game is still the one being built.
             const web = ps2WebIdentity(sav, name);
-
-            // iOS: publishing is a Mac's job and this machine is most likely
-            // not one — PUBLISH IOS BUILD below hands the saved game to a
-            // GitHub-hosted Mac. The EXPORT XCODE PROJECT row (opts.local)
-            // keeps the local export: the project, or an unsigned .ipa on a
-            // Mac with Xcode.
-            if (exportPlatform === 'ios' && !local) {
-                if (sav) {
-                    setStatus('The Mac build reads the game from the cloud by name, and an imported cart has no cloud record — save it as a cloud game first, or EXPORT XCODE PROJECT builds it here.', '#f87171');
-                    return;
-                }
-                btn.disabled = true;
-                try {
-                    if (await publishIosBuild(name, setStatus)) return;
-                } finally {
-                    btn.disabled = false;
-                }
-                // No publisher on this origin (the hosted site, a static host):
-                // the local export it always was, which from there queues on a
-                // paired desktop — see REMOTE EXPORTS below.
-            }
 
             hidePs2ExportActions();
             btn.disabled = true;
@@ -15265,158 +15387,48 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             }
         }
 
-        // ================== PUBLISH IOS BUILD ==================
-        // Only Xcode compiles an iOS app and Xcode runs only on a Mac, so the
-        // IOS target does not build here. /api/publish-ios dispatches
-        // .github/workflows/ios-publish.yml — a GitHub-hosted Mac that stages
-        // the saved game with the same tool the local export uses, signs it
-        // with the Apple certificate in the repository's secrets and uploads
-        // the .ipa to TestFlight, as 2019-es7 has shipped for a year — and
-        // this watches the run: which step it is on, whether Apple took the
-        // upload, the .ipa to download either way. The route needs a GitHub
-        // token on the serving machine (GITHUB_TOKEN, or the GitHub CLI signed
-        // in) and answers 403 on the hosted site, where exportGameToApk()
-        // falls back to the local export.
-        let iosPublishTimer = null;
-        const IOS_PUBLISH_KEY = 'cmg-ios-publish';   // the run in flight, so a reload resumes watching it
-
-        function stopIosPublishWatch() {
-            if (iosPublishTimer) { clearTimeout(iosPublishTimer); iosPublishTimer = null; }
+        // ================== PUBLISH PANEL ==================
+        // One saved game to the stores -- App Store Connect, Steam, itch.io --
+        // every build on a GitHub runner (static/editor/publish-panel.js,
+        // routes/api/publish.ts). The drawer's PUBLISH row and the IOS
+        // target's PUBLISH IOS BUILD open it; it saves the game first, writes
+        // the store listing beside it, dispatches each store's workflow and
+        // watches the runs. A run keeps going on GitHub through a reload, so
+        // the panel is mounted at load and picks the watch back up on its own.
+        let lastCloudSaveAt = null;
+        function ensurePublishPanel() {
+            if (publishPanel || !window.PublishPanel) return publishPanel;
+            publishPanel = PublishPanel.mount(document.getElementById('publish-sheet'), {
+                levelName: () => document.getElementById('firebase-level-name').value.trim(),
+                label: openGameLabel,
+                isSav: savModeLoaded,
+                lastSavedAt: () => lastCloudSaveAt,
+                save: saveToFirebase,
+                writeListing: writeStoreListing,
+                flash,
+            });
+            return publishPanel;
         }
-
-        // True when this origin has a publisher and it answered — well or
-        // badly, the status line says which. False when there is none here
-        // and the caller should build locally.
-        async function publishIosBuild(name, setStatus) {
-            stopIosPublishWatch();
-            setStatus('Asking GitHub for a Mac to build "' + name + '" on…', '#f59e0b');
-            let resp, data;
-            try {
-                resp = await fetch('/api/publish-ios', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ level: name }),
-                });
-                data = await resp.json().catch(() => ({}));
-            } catch (e) {
-                setStatus('Publish error: ' + e.message, '#f87171');
-                return true;
-            }
-            if (resp.status === 403 || resp.status === 404) return false;
-            if (!resp.ok || !data.ok) {
-                setStatus('Publish failed: ' + (data.error || ('HTTP ' + resp.status)) +
-                    (data.hint ? ' — ' + data.hint : ''), '#f87171');
-                return true;
-            }
-            const job = {
-                request: data.request,
-                runId: data.run ? data.run.id : null,
-                level: name,
-                at: Date.now(),
-                actionsUrl: data.actionsUrl || '',
-            };
-            try { localStorage.setItem(IOS_PUBLISH_KEY, JSON.stringify(job)); } catch (e) {}
-            if (data.run) renderIosPublish(job, data.run, []);
-            else setStatus('Dispatched "' + name + '" to GitHub — waiting for the run to appear…', '#f59e0b');
-            watchIosPublish(job);
-            return true;
+        function openPublishPanel(opts) {
+            closeMenu();
+            closePicker();
+            closeSheet();
+            if (!ensurePublishPanel()) { alert('publish-panel.js did not load -- reload the editor'); return; }
+            publishPanel.open(opts || {});
         }
-
-        // Poll the run every eight seconds until it completes. The request id
-        // is enough to start with: the route finds the run by it.
-        function watchIosPublish(job) {
-            stopIosPublishWatch();
-            const statusEl = document.getElementById('export-apk-status');
-            const setStatus = (msg, color) => {
-                statusEl.textContent = msg;
-                statusEl.style.color = color || '#888';
-            };
-            const forget = () => { try { localStorage.removeItem(IOS_PUBLISH_KEY); } catch (e) {} };
-            const tick = async () => {
-                iosPublishTimer = null;
-                let data;
-                try {
-                    const q = job.runId
-                        ? 'run=' + encodeURIComponent(job.runId)
-                        : 'request=' + encodeURIComponent(job.request);
-                    const r = await fetch('/api/publish-ios?' + q, { cache: 'no-store' });
-                    data = await r.json().catch(() => ({}));
-                    if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
-                } catch (e) {
-                    setStatus('Lost sight of the GitHub run: ' + e.message +
-                        (job.actionsUrl ? ' — ' + job.actionsUrl : ''), '#f87171');
-                    iosPublishTimer = setTimeout(tick, 15000);
-                    return;
-                }
-                if (!data.run) {
-                    // Not listed yet. GitHub takes a few seconds; two minutes
-                    // means the dispatch went nowhere this can see.
-                    if (Date.now() - job.at > 120000) {
-                        setStatus('GitHub accepted the dispatch but listed no run for it. Look at ' +
-                            (job.actionsUrl || 'the Actions tab') + '.', '#f87171');
-                        forget();
-                        return;
-                    }
-                    iosPublishTimer = setTimeout(tick, 5000);
-                    return;
-                }
-                if (!job.runId) {
-                    job.runId = data.run.id;
-                    try { localStorage.setItem(IOS_PUBLISH_KEY, JSON.stringify(job)); } catch (e) {}
-                }
-                renderIosPublish(job, data.run, data.artifacts || []);
-                if (data.run.status === 'completed') {
-                    forget();
-                    if (data.run.conclusion === 'success') {
-                        flash(data.run.uploaded
-                            ? '"' + job.level + '" is on its way to TestFlight.'
-                            : '"' + job.level + '" iOS build finished — see EXPORT → APP.');
-                    }
-                    return;
-                }
-                iosPublishTimer = setTimeout(tick, 8000);
-            };
-            tick();
+        // The game's store listing -- title, description, the App Store stills
+        // -- beside its level under shmupX/storeListings/<name>, where the
+        // review step of ios-publish.yml (scripts/asc-review.ts) reads it.
+        // Spelled rooted: storeListings is shmupX's own node, never one of the
+        // four that moved out of cmg's root, so it is not on rtdbPath's scoped
+        // list -- and rtdbPath leaves a rooted path as it is.
+        async function writeStoreListing(level, listing) {
+            initFirebase();
+            if (!firebaseDb) throw new Error('Firebase not available');
+            await firebaseDb.ref(rtdbPath((window.__RTDB_ROOT__ || 'shmupX') + '/storeListings/' + level)).set(
+                Object.assign({}, listing, { updatedAt: firebase.database.ServerValue.TIMESTAMP }));
         }
-
-        // The run as a status line: its headline (lib/ios-publish.ts
-        // summarizeRun), the workflow's own reasons when it failed, a link to
-        // the run and one per .ipa it left. Names come out of an open-write
-        // path, so everything is escaped.
-        function renderIosPublish(job, run, artifacts) {
-            const statusEl = document.getElementById('export-apk-status');
-            if (!statusEl) return;
-            const esc = (s) => String(s)
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-            const link = (href, text) =>
-                ' <a href="' + esc(href) + '" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">' + esc(text) + '</a>';
-            const done = run.status === 'completed';
-            const ok = done && run.conclusion === 'success';
-            statusEl.style.color = !done ? '#f59e0b' : ok ? (run.uploaded ? '#84cc16' : '#f59e0b') : '#f87171';
-            let html = esc('"' + job.level + '" on a GitHub Mac — ' + run.headline);
-            if (ok && run.uploaded) html += esc(' It shows in App Store Connect once Apple has processed it.');
-            if (ok && run.signed === false) html += esc(' Add the Apple signing secrets to the repository and publish again for TestFlight.');
-            if (done && !ok) for (const e of (run.errors || []).slice(1)) html += '<br>' + esc(e);
-            html += link(run.url, 'OPEN RUN');
-            for (const a of artifacts) {
-                html += link(a.url, 'DOWNLOAD .IPA (ZIP, ' + (a.size / 1048576).toFixed(1) + ' MB)');
-            }
-            statusEl.innerHTML = html;
-        }
-
-        // A publish survives a reload — the run keeps going on GitHub — so
-        // pick the watch back up, for two hours, while IOS is the target.
-        function resumeIosPublishWatch() {
-            let job = null;
-            try { job = JSON.parse(localStorage.getItem(IOS_PUBLISH_KEY) || 'null'); } catch (e) {}
-            if (!job || !job.at || Date.now() - job.at > 7200000) {
-                try { localStorage.removeItem(IOS_PUBLISH_KEY); } catch (e) {}
-                return;
-            }
-            if (exportPlatform !== 'ios') return;
-            watchIosPublish(job);
-        }
-        resumeIosPublishWatch();
+        ensurePublishPanel();
 
         // ================== DEZAEMON (SUPER FAMICOM) ==================
         // "→ SNES LIBRARY": a Super Famicom Dezaemon SRAM dump off the player's

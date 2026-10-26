@@ -72,6 +72,13 @@ on:
         required: false
         default: true
         type: boolean
+      review:
+        description: >-
+          Once Apple has processed the uploaded build, submit it for App Store
+          review with the game's store listing (scripts/asc-review.ts).
+        required: false
+        default: false
+        type: boolean
       request:
         description: >-
           An id for the dispatcher to find this run by. The editor fills it
@@ -95,7 +102,9 @@ jobs:
     # 26, which cordova-ios 7 has not met. 15 carries the Xcode 16 line the
     # recipe is known to build on.
     runs-on: macos-15
-    timeout-minutes: 60
+    # The build is twenty minutes; a review submission waits on Apple to
+    # process the upload, which is usually ten more and sometimes forty.
+    timeout-minutes: 100
     env:
       LEVEL: ${{ inputs.level }}
       # Under the checkout's own build/ (git-ignored, where every local export
@@ -310,6 +319,28 @@ jobs:
           fi
           echo "Uploaded $IPA as build $BUILD_NUMBER."
 
+      # REVIEW, from the PUBLISH panel: wait for Apple to process the build,
+      # put the game's store listing (title, description, the stills the
+      # panel captured) on the App Store version, attach the build and submit
+      # it. scripts/asc-review.ts does the App Store Connect API; the listing
+      # is read from the database the editor wrote it to.
+      - uses: denoland/setup-deno@v2
+        if: steps.upload.outcome == 'success' && inputs.review
+        with:
+          deno-version: v2.9.7
+      - name: Submit the processed build for App Store review
+        if: steps.upload.outcome == 'success' && inputs.review
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY: ${{ secrets.ASC_API_KEY }}
+        run: |
+          deno run -A scripts/asc-review.ts \
+            --level "$LEVEL" \
+            --bundle-id "${{ steps.ids.outputs.bundle_id }}" \
+            --build-number "${{ steps.ids.outputs.build_number }}" \
+            --wait-minutes 60
+
       # Attached whether or not Apple took it: a refused upload still leaves a
       # signed .ipa worth having, and an unsigned one is the whole point of a
       # run without secrets.
@@ -345,6 +376,9 @@ jobs:
             esac
             if [ -n "${IPA:-}" ]; then echo "- the .ipa is attached to this run as \`ios-ipa\`"; fi
           } >> "$GITHUB_STEP_SUMMARY"
+          # The line the PUBLISH panel's log keeps under this run.
+          if [ "$SIGNED" = "true" ]; then how="signed"; else how="unsigned"; fi
+          echo "::notice title=Detail::$BUNDLE_ID · build $BUILD_NUMBER · $how"
 
       - name: Clean up the keychain and the API key
         if: always()
