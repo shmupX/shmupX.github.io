@@ -109,7 +109,27 @@ they are written out in full.
   its place, and the stock art back. Replacements are PNG data URLs on
   `gameData.stageBackgrounds`, which ride the cloud save and PLAY's recipe;
   the runtime's level loader puts them over its own art and over the
-  starfield it draws for a level with custom enemies.
+  starfield it draws for a level with custom enemies. ADVANCED EDITORS →
+  **CABINET** is the page _around_ the game, as the 2019 game's own page had
+  it: a BACKDROP over the page behind everything (its `img/bg.jpg`, an
+  arcade), a FRAME around the screen (its `img/frame.jpg`, a bezel: scaled to
+  the game's height and centered on it, unless a SCREEN rect — X Y W H in the
+  picture's pixels — says where the game draws), the HOW TO PLAY card the
+  title's button opens (its `howto_en.jpg`; without a card the title has no
+  button, where it used to have one that did nothing), and the LOADING
+  SCREEN — the spinner's frames, 120 ms each, over the picture drawn faintly
+  under them (its `loading0..2.gif`, which are _not_ the runtime's). Each slot
+  takes UPLOAD FILE or FROM URL (the loading slot takes several frames at
+  once, sorted by name) and clears back to nothing or the stock spinner. The
+  pictures are data URLs on `gameData.cabinet` (`{ backdrop, frame: { image,
+  screen? }, howto, loading: { frames, bg? } }`, `normalizeCabinet` in
+  `level-loader.js`, which drops anything else); a JPEG over 600 KB is
+  re-encoded at 82% on its way in, since every boot fetches the record whole
+  (the 2019 poster: 1.3 MB → 0.4 MB). The runtime's level loader puts them
+  up on both roads in (`applyCabinet`) and reads the loading screen ahead of
+  the level (`loadingArt`); the originals are kept in
+  `static/games/2019/cabinet/` and the cloud game 2019 carries them.
+  `tests/cabinet_test.ts` pins all of it.
 - `static/palette.png` — the 288 Dezaemon 2 palette colours, one pixel each (see
   **The Dezaemon 2 palette** below); `palette-sheet.png` is the same as a
   picture. Both from `deno task deza:palette`.
@@ -172,6 +192,28 @@ they are written out in full.
     roads in (`mergeAtlas` and `mergeEditorAtlas`), since a `?level=` visit goes
     straight into the stage. `tests/stage_backgrounds_test.ts` checks the two
     copies carry it.
+  - `applyCabinet` and `loadingArt`, with the helpers they share
+    (`normalizeCabinet`, `cabinetScreenRect`, `installCabinetFrame`,
+    `installCabinetHowto`): a level's **cabinet** — the page around the game,
+    see the editor's CABINET above. `applyCabinet` runs first on both roads
+    in: the backdrop goes over the body, the frame into `#phaser-canvas`
+    behind the canvas, re-laid by a ResizeObserver whenever the page's
+    `fitCanvas` re-sizes the canvas, and the HOW TO PLAY card becomes an
+    overlay that defines `window.howtoModalOpen`, stopping its pointer events
+    at its edge so a tap on it never reaches Phaser's window listeners (the
+    title's tap zone would start the game). `loadingArt` reads the level's
+    loading screen ahead of the level itself, since `loadLevel` runs in
+    `create()` and the spinner is over by then: the editor's PLAY recipe or
+    the baked record at hand, else the one `cabinet/loading` node off the
+    database (through the alias index). `PluginBootScene.preload` calls it,
+    never awaiting; `BootScene.applyLoadingArt` decodes what comes back into
+    `loading_custom<N>` / `loading_bg_custom` textures and the spinner reads
+    its keys from `loadingKeys` / `loadingBgKey` from then on, mid-animation
+    if it is already up (it used to count three fixed stock frames).
+    `TitleScene` shows its HOW TO PLAY button only when
+    `window.howtoModalOpen` exists — it used to show one that did nothing on
+    every page but 2019-es7's own. `tests/cabinet_test.ts` pins both copies
+    and the bundle's two scenes.
   - Every font stack that read `Orbitron` — the Dezaemon title prompt
     (`dezaCellText`), the STAFF ROLL card's thanks and credit labels, and the
     standalone PAUSE panel — reads `athenaFont`: Dezaemon 2's own 8×8 game font,
@@ -5240,7 +5282,11 @@ every game anyone can get — and it is read from two places by
   `static/games/2019/level.json` (`--fetch` refreshes that from
   `shmupX/levels/2019-PS2` after the level is re-exported; the editor's
   `frameThumbnails` are dropped on the way), `deno task build` runs it, and
-  `tests/stage_backgrounds_test.ts` checks the archive's shape.
+  `tests/stage_backgrounds_test.ts` checks the archive's shape. The level
+  carries the 2019 page's **cabinet** too — the arcade behind the game, the
+  bezel around its screen, the HOW TO PLAY poster and the game's own loading
+  spinner (the editor's CABINET, above) — so the archive plays inside it; the
+  originals it was set from are `static/games/2019/cabinet/`.
 - Each GitHub-tracked build's own **`codemonkey.json`** — the file the cmg
   launcher has always let a game ship at its root — read off the tracked branch
   (`raw.githubusercontent.com/<owner>/<repo>/<branch>/codemonkey.json`) after

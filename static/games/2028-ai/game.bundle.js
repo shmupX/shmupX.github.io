@@ -149,6 +149,172 @@
     const stages = data.stages && typeof data.stages === "object" ? data.stages : null;
     return !!stages && Object.keys(stages).filter((k) => /^stage\d+$/.test(k)).length > 1;
   }
+  // ---- The cabinet: the page around the game ---------------------------------
+
+  // What a level puts around the game on its page (`cabinet`), as the editor's
+  // CABINET saves it and the plugin's applyCabinet / loadingArt put it up:
+  //
+  //   backdrop  a picture over the page behind everything (drawn cover)
+  //   frame     { image, screen? } — a bezel around the screen. Without a
+  //             `screen` rect it is scaled to the game's height and centered on
+  //             it, the way the 2019 page laid img/frame.jpg under its canvas;
+  //             with one ({ x, y, w, h } in the picture's own pixels) that part
+  //             of it is where the game draws.
+  //   howto     the HOW TO PLAY card the title's button opens
+  //   loading   { frames, bg? } — the loading screen: the spinner's frames,
+  //             played in order, and the picture shown faintly under them, in
+  //             place of the runtime's loading0..2.gif over loading_bg.png
+  //
+  // Every picture is a data URL (or a URL the page may fetch). The 2019 game's
+  // page had all four, and the cloud game 2019 carries them. normalizeCabinet
+  // returns the record's cabinet with everything that is not one of these
+  // dropped, or null when nothing is left; the editor stores exactly that.
+  const CABINET_GAME_W = 256;
+  const CABINET_GAME_H = 480;
+
+  function isImageSource(value) {
+    return typeof value === "string" && /^(data:image\/|https?:\/\/|\.{0,2}\/)/.test(value);
+  }
+
+  function normalizeLoadingArt(art) {
+    if (!art || typeof art !== "object") return null;
+    let frames = art.frames;
+    // The database hands a sparse array back as an object of indices.
+    if (frames && typeof frames === "object" && !Array.isArray(frames)) {
+      frames = Object.keys(frames).sort((a, b) => Number(a) - Number(b)).map((k) => frames[k]);
+    }
+    frames = Array.isArray(frames) ? frames.filter(isImageSource) : [];
+    const bg = isImageSource(art.bg) ? art.bg : null;
+    if (!frames.length && !bg) return null;
+    return bg ? { frames, bg } : { frames };
+  }
+
+  function normalizeCabinet(cabinet) {
+    if (!cabinet || typeof cabinet !== "object") return null;
+    const out = {};
+    if (isImageSource(cabinet.backdrop)) out.backdrop = cabinet.backdrop;
+    const frame = cabinet.frame;
+    if (frame && typeof frame === "object" && isImageSource(frame.image)) {
+      out.frame = { image: frame.image };
+      const s = frame.screen;
+      if (s && typeof s === "object") {
+        const rect = { x: Number(s.x), y: Number(s.y), w: Number(s.w), h: Number(s.h) };
+        if ([rect.x, rect.y, rect.w, rect.h].every(Number.isFinite) && rect.w > 0 && rect.h > 0) {
+          out.frame.screen = rect;
+        }
+      }
+    }
+    if (isImageSource(cabinet.howto)) out.howto = cabinet.howto;
+    const loading = normalizeLoadingArt(cabinet.loading);
+    if (loading) out.loading = loading;
+    return Object.keys(out).length ? out : null;
+  }
+
+  // Where the game draws inside a frame picture of `imageW` x `imageH`: its
+  // `screen` rect, or the 2019 page's convention — as tall as the picture, the
+  // game's own proportions, centered.
+  function cabinetScreenRect(frame, imageW, imageH) {
+    const s = frame && frame.screen;
+    if (s && Number(s.w) > 0 && Number(s.h) > 0) {
+      return { x: Number(s.x) || 0, y: Number(s.y) || 0, w: Number(s.w), h: Number(s.h) };
+    }
+    const w = imageH * CABINET_GAME_W / CABINET_GAME_H;
+    return { x: (imageW - w) / 2, y: 0, w, h: imageH };
+  }
+
+  // The frame around the screen, put into the canvas's container behind the
+  // canvas and sized so its screen rect lies over the canvas — again whenever
+  // the page re-fits the canvas (its fitCanvas sets the canvas's CSS size on
+  // every resize; a ResizeObserver follows). `img` has decoded.
+  function installCabinetFrame(host, img, frame) {
+    const old = host.querySelector("#shmupx-cabinet-frame");
+    if (old) old.remove();
+    if (getComputedStyle(host).position === "static") host.style.position = "relative";
+    img.id = "shmupx-cabinet-frame";
+    img.alt = "";
+    img.draggable = false;
+    img.style.cssText = "position:absolute;left:0;top:0;z-index:0;max-width:none;max-height:none;" +
+      "pointer-events:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;";
+    host.insertBefore(img, host.firstChild);
+    const layout = () => {
+      const canvas = host.querySelector("canvas");
+      if (!canvas) return;
+      canvas.style.position = "relative";
+      canvas.style.zIndex = "1";
+      const cw = canvas.offsetWidth;
+      const ch = canvas.offsetHeight;
+      if (!cw || !ch) return;
+      const W = img.naturalWidth;
+      const H = img.naturalHeight;
+      const r = cabinetScreenRect(frame, W, H);
+      const s = Math.min(cw / r.w, ch / r.h);
+      img.style.width = W * s + "px";
+      img.style.height = H * s + "px";
+      img.style.left = canvas.offsetLeft + (cw - r.w * s) / 2 - r.x * s + "px";
+      img.style.top = canvas.offsetTop + (ch - r.h * s) / 2 - r.y * s + "px";
+    };
+    layout();
+    const canvas = host.querySelector("canvas");
+    if (canvas && typeof ResizeObserver === "function") {
+      new ResizeObserver(layout).observe(canvas);
+    } else if (typeof window !== "undefined") {
+      window.addEventListener("resize", () => setTimeout(layout, 60));
+    }
+  }
+
+  // The HOW TO PLAY card, as the 2019 page showed it: over a dark cover, as
+  // wide as the page (scrolling when taller), closed by its ×, a tap on the
+  // cover or Escape. It defines window.howtoModalOpen, which the title's HOW TO
+  // PLAY button calls — and the button shows only when that exists.
+  function installCabinetHowto(src) {
+    const old = document.getElementById("shmupx-howto");
+    if (old) old.remove();
+    const modal = document.createElement("div");
+    modal.id = "shmupx-howto";
+    modal.style.cssText = "position:fixed;inset:0;z-index:10001;display:none;";
+    const cover = document.createElement("div");
+    cover.style.cssText = "position:absolute;inset:0;background:rgba(0,0,0,.9);";
+    const content = document.createElement("div");
+    content.style.cssText = "position:relative;height:100%;width:90%;max-width:1500px;margin:0 auto;" +
+      "overflow:auto;text-align:center;-webkit-overflow-scrolling:touch;";
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = "HOW TO PLAY";
+    img.draggable = false;
+    img.style.cssText = "display:inline-block;width:100%;height:auto;";
+    content.appendChild(img);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Close");
+    close.style.cssText = "position:absolute;top:1.5%;right:5%;width:34px;height:34px;padding:0;border:0;" +
+      "border-radius:4px;background:#fff;color:#000;font:700 26px/34px sans-serif;text-align:center;cursor:pointer;";
+    modal.appendChild(cover);
+    modal.appendChild(content);
+    modal.appendChild(close);
+    const open = () => {
+      modal.style.display = "block";
+      content.scrollTop = 0;
+    };
+    const hide = () => {
+      modal.style.display = "none";
+    };
+    cover.addEventListener("click", hide);
+    close.addEventListener("click", hide);
+    // Phaser hears pointer-ups on the window as well as on its canvas, and the
+    // title's tap zone starts the game on one: what happens on the card stays
+    // on the card.
+    const kept = ["pointerdown", "pointerup", "pointermove", "mousedown", "mouseup", "mousemove",
+      "touchstart", "touchend", "touchmove", "click"];
+    for (const type of kept) modal.addEventListener(type, (e) => e.stopPropagation());
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && modal.style.display !== "none") hide();
+    });
+    document.body.appendChild(modal);
+    globalThis.howtoModalOpen = open;
+    globalThis.howtoModalClose = hide;
+  }
+
   function openCustomAudioDB(dbName, store) {
     if (typeof indexedDB === "undefined") {
       return Promise.reject(new Error("IndexedDB not available"));
@@ -887,6 +1053,53 @@
         return Promise.all(jobs).then((done) => done.some(Boolean));
       }
 
+      // ---- The cabinet (level-loader.js: applyCabinet, loadingArt) -------
+      applyCabinet(levelData) {
+        const cabinet = normalizeCabinet(levelData && levelData.cabinet);
+        if (!cabinet || typeof document === "undefined") return Promise.resolve(false);
+        const host = document.getElementById("phaser-canvas") || document.body;
+        if (cabinet.backdrop) {
+          const style = document.body.style;
+          style.backgroundColor = "#000";
+          style.backgroundImage = 'url("' + cabinet.backdrop.replace(/["\\\s]/g, "") + '")';
+          style.backgroundRepeat = "no-repeat";
+          style.backgroundPosition = "center";
+          style.backgroundSize = "cover";
+        }
+        if (cabinet.howto) installCabinetHowto(cabinet.howto);
+        if (!cabinet.frame) return Promise.resolve(true);
+        return loadImage(cabinet.frame.image).then((img) => {
+          if (img) installCabinetFrame(host, img, cabinet.frame);
+          return true;
+        });
+      }
+      loadingArt(options) {
+        const o = Object.assign({}, DEFAULTS, options || {});
+        const pick = (record) => normalizeLoadingArt(record && record.cabinet && record.cabinet.loading);
+        let early;
+        try {
+          const editorPlay = this.readEditorPlayRequest(o);
+          if (editorPlay && editorPlay.recipe) return Promise.resolve(pick(editorPlay.recipe));
+          const offline = o.offlineLevel !== void 0 ? o.offlineLevel : typeof globalThis !== "undefined" ? globalThis.__OFFLINE_LEVEL__ : null;
+          if (offline) return Promise.resolve(pick(offline));
+          const levelName = this.readLevelParam() || o.defaultLevel;
+          const firebase2 = o.firebase || (typeof globalThis !== "undefined" ? globalThis.firebase : void 0);
+          const config = o.firebaseConfig || (typeof globalThis !== "undefined" ? globalThis.firebaseConfig || globalThis.__FIREBASE_CONFIG__ : null);
+          const db = getFirebaseDatabase(firebase2, config);
+          const read = (key) => db.ref(o.levelsPath + "/" + key + "/cabinet/loading").once("value").then((snapshot) => snapshot.val());
+          early = read(levelName).then((art) => {
+            if (art) return art;
+            return db.ref(o.aliasesPath + "/" + String(levelName).toLowerCase()).once("value").then((snapshot) => {
+              const key = snapshot.val();
+              return typeof key === "string" && key && key !== levelName ? read(key) : null;
+            });
+          });
+        } catch (_e) {
+          return Promise.resolve(null);
+        }
+        return early.then((art) => normalizeLoadingArt(art)).catch(() => null);
+      }
+
       // ---- Stage backgrounds ------------------------------------------------
 
       // A web game's own scrolling backdrops: `stageBackgrounds` is
@@ -1132,7 +1345,7 @@
           // keeps the cut-in it has says so (`ownCutin`, below).
           const editorName = recipe.meta && recipe.meta.editorLevelName;
           if (editorName && !recipe.ownCutin) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
-          return this.applyUiAtlases(recipe).then(() => this.mergeEditorAtlas(o)).then(() => this.applyStageBackgrounds(recipe)).then(() => {
+          return this.applyCabinet(recipe).then(() => this.applyUiAtlases(recipe).then(() => this.mergeEditorAtlas(o)).then(() => this.applyStageBackgrounds(recipe)).then(() => {
             // The game's title art, for the title the ending returns to: PLAY
             // itself opens in the stage. Without this that title was the base
             // game's, over the game's own story.
@@ -1145,6 +1358,7 @@
             // Applied as textures above; the recipe the scene keeps need not
             // carry half a megabyte of PNG as well.
             delete recipe.stageBackgrounds;
+            delete recipe.cabinet;
             delete recipe.uiAtlases;
             for (const dataKey in o.titleImageKeys) delete recipe[dataKey];
             prime(recipe, info);
@@ -1163,7 +1377,7 @@
               gameId: gameIdForLevel({ gameId: recipe.gameId }),
               bgmSourceURLs: {}
             }));
-          });
+          }));
         }
         const explicitLevel = this.readLevelParam();
         const levelName = explicitLevel || o.defaultLevel;
@@ -1180,7 +1394,7 @@
         return this.fetchLevel(levelName, o).then((data) => {
           const levelKey = this.resolvedLevelName || levelName;
           if ((explicitLevel || exportedApp) && !(data && data.ownCutin)) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
-          return this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
+          return this.applyCabinet(data).then(() => this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
             const recipe = this.mergeRecipe(baseRecipe, data, o.atlasKey);
             this.applyTitleImages(data, o.titleImageKeys);
             // What of its title the level brought, and its name, for TitleScene
@@ -1216,7 +1430,7 @@
               gameId: gameIdForLevel(data),
               bgmSourceURLs
             }));
-          });
+          }));
         }).catch((err) => {
           console.warn("Level load failed for '" + levelName + "':", err);
           if (!o.fallbackOnError) {
@@ -3040,14 +3254,19 @@
       this.loadingBg = null;
       this.loadingG = null;
       this.loadingFrameIndex = 0;
+      // The spinner's textures: the stock loading0..2.gif over loading_bg.png,
+      // or the ones a level brought (applyLoadingArt, keyed loading_custom<N>).
+      this.loadingKeys = ["loading0", "loading1", "loading2"];
+      this.loadingBgKey = "loading_bg";
+      this.loadingDone = false;
       var self = this;
       function ensureLoadingPreview() {
-        if (self.loadingBg || !self.textures.exists("loading_bg") || !self.textures.exists("loading0")) {
+        if (self.loadingBg || self.loadingDone || !self.textures.exists(self.loadingBgKey) || !self.textures.exists(self.loadingKeys[0])) {
           return;
         }
-        self.loadingBg = self.add.image(cx, cy, "loading_bg");
+        self.loadingBg = self.add.image(cx, cy, self.loadingBgKey);
         self.loadingBg.setAlpha(0.09);
-        self.loadingG = self.add.image(cx, cy, "loading0");
+        self.loadingG = self.add.image(cx, cy, self.loadingKeys[0]);
         self.time.addEvent({
           delay: 120,
           loop: true,
@@ -3055,14 +3274,15 @@
             if (!self.loadingG) {
               return;
             }
-            self.loadingFrameIndex = (self.loadingFrameIndex + 1) % 3;
-            self.loadingG.setTexture("loading" + String(self.loadingFrameIndex));
+            self.loadingFrameIndex = (self.loadingFrameIndex + 1) % self.loadingKeys.length;
+            self.loadingG.setTexture(self.loadingKeys[self.loadingFrameIndex]);
             if (self.loadingBg) {
               self.loadingBg.flipX = !self.loadingBg.flipX;
             }
           }
         });
       }
+      this._ensureLoadingPreview = ensureLoadingPreview;
       var failedAudioFiles = [];
       this.load.on("loaderror", function(file) {
         if (file.key === "custom-bgm-manifest") {
@@ -3101,6 +3321,7 @@
         el.textContent += "ERR: " + file.key + " (" + file.type + ") " + (file.src || file.url || "") + "\n";
       });
       this.load.on("complete", function() {
+        self.loadingDone = true;
         if (self.loadingG) {
           self.loadingG.destroy();
           self.loadingG = null;
@@ -3530,6 +3751,47 @@
           game.scene.stop("BootScene");
           game.scene.start(nextSceneKey);
         }, 50);
+      });
+    }
+    // The loading screen a level brought (level-loader's loadingArt:
+    // cabinet.loading), in place of the stock spinner: its frames and the
+    // picture under them become textures of their own, and the spinner reads
+    // them from here on — mid-animation if it is already up, from its first
+    // frame if the stock art is still on its way. Nothing once the preload
+    // is over.
+    applyLoadingArt(art) {
+      var self = this;
+      if (!art || this.loadingDone) return Promise.resolve(false);
+      var frames = Array.isArray(art.frames) ? art.frames : [];
+      var jobs = frames.map(function(src, i) {
+        return loadImage(src).then(function(img) {
+          if (!img) return null;
+          var key = "loading_custom" + i;
+          if (self.textures.exists(key)) self.textures.remove(key);
+          self.textures.addImage(key, img);
+          return key;
+        });
+      });
+      var bgJob = art.bg ? loadImage(art.bg).then(function(img) {
+        if (!img) return null;
+        if (self.textures.exists("loading_bg_custom")) self.textures.remove("loading_bg_custom");
+        self.textures.addImage("loading_bg_custom", img);
+        return "loading_bg_custom";
+      }) : Promise.resolve(null);
+      return Promise.all([Promise.all(jobs), bgJob]).then(function(r) {
+        if (self.loadingDone) return false;
+        var keys = r[0].filter(Boolean);
+        if (keys.length) {
+          self.loadingKeys = keys;
+          self.loadingFrameIndex = 0;
+          if (self.loadingG) self.loadingG.setTexture(keys[0]);
+        }
+        if (r[1]) {
+          self.loadingBgKey = r[1];
+          if (self.loadingBg) self.loadingBg.setTexture(r[1]);
+        }
+        if (self._ensureLoadingPreview) self._ensureLoadingPreview();
+        return !!(keys.length || r[1]);
       });
     }
     _loadCustomAudio(callback) {
@@ -8242,7 +8504,10 @@
       // arithmetic) keeps its reference point.
       this.twitterBtn.setVisible(false);
       this.twitterBtn.disableInteractive();
-      if (this.dezaTitle) {
+      // HOW TO PLAY opens the card the page has — window.howtoModalOpen, the
+      // level's own (the level loader's applyCabinet) or a host page's — so a
+      // title without one has no button for it: pressed, it did nothing.
+      if (this.dezaTitle || typeof window === "undefined" || typeof window.howtoModalOpen !== "function") {
         this.howtoBtn.setVisible(false);
         this.howtoBtn.disableInteractive();
       }
@@ -19735,6 +20000,16 @@
   var PluginBootScene = class extends BootScene {
     preload() {
       this.load.setBaseURL(ASSET_BASE);
+      // The level's own loading screen, if it brought one (cabinet.loading),
+      // read ahead of the level: loadLevel resolves it in create(), once this
+      // preload — and the spinner it shows — is over. Never awaited: the
+      // stock spinner draws until the level's lands, and stays if none does.
+      var self = this;
+      this.levelLoader.loadingArt({ defaultLevel: "foo" }).then(function(art) {
+        return art ? self.applyLoadingArt(art) : false;
+      }).catch(function() {
+        return false;
+      });
       super.preload();
     }
     create() {

@@ -899,6 +899,25 @@
         .bg-image-slot .slot-preview img { width: 100%; height: 100%; max-height: none; object-fit: contain; image-rendering: pixelated; }
         .bg-image-slot .slot-state { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .15em; margin-bottom: 6px; }
         .bg-image-slot .slot-state.custom { color: var(--sel); }
+
+        /* Cabinet: the page around the game — four slots that wrap */
+        .cabinet-slots { flex-wrap: wrap; }
+        .cabinet-slot { flex: 1 1 220px; min-width: 200px; }
+        .cabinet-slot .slot-preview { aspect-ratio: auto; min-height: 80px; max-height: 280px; background: #000; }
+        .cabinet-slot .slot-preview img { max-height: 240px; object-fit: contain; image-rendering: auto; }
+        .cabinet-slot .slot-state { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .15em; margin-bottom: 6px; }
+        .cabinet-slot .slot-state.custom { color: var(--sel); }
+        .cabinet-slot .slot-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+        .cabinet-slot .slot-actions .slot-upload-btn { width: auto; flex: 1 1 45%; }
+        .cabinet-loading .slot-preview { aspect-ratio: 256/480; height: 240px; max-height: 240px; width: auto; margin: 0 auto 8px; }
+        .cabinet-loading .slot-preview .cabinet-loading-bg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; max-height: none; object-fit: cover; opacity: .09; image-rendering: pixelated; }
+        .cabinet-loading .slot-preview .cabinet-loading-spin { position: absolute; left: 25%; top: 50%; width: 50%; height: auto; max-height: none; transform: translateY(-50%); image-rendering: pixelated; }
+        .cabinet-frames { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 8px; }
+        .cabinet-frames .fr { position: relative; width: 44px; height: 44px; border: 1px solid var(--redge); border-radius: 6px; background: #000; }
+        .cabinet-frames .fr img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+        .cabinet-frames .fr button { position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--redge); background: var(--rbg); color: var(--rink); font-size: 10px; line-height: 1; cursor: pointer; padding: 0; }
+        .cabinet-rect { display: flex; gap: 4px; align-items: center; justify-content: center; margin: 6px 0; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .15em; color: var(--raillbl); }
+        .cabinet-rect input { width: 48px; background: rgba(0,0,0,.5); border: 1px solid var(--redge); color: var(--rink); border-radius: 4px; font-size: 10px; padding: 3px 4px; font-family: 'Share Tech Mono', monospace; }
         .bg-image-slot .slot-state.stock { color: var(--raillbl); }
         .bg-image-slot .slot-actions { display: flex; gap: 6px; }
         .bg-image-slot .slot-actions .slot-upload-btn { flex: 1; }
@@ -1498,6 +1517,7 @@
             <button class="menu-row" onclick="showTitleEditor()"><span class="mono-badge sm">TI</span>TITLE</button>
             <button class="menu-row" onclick="showAudioEditor()"><span class="mono-badge sm">AU</span>AUDIO</button>
             <button class="menu-row" onclick="closeMenu();openBackgroundManager()" title="The stage backdrops a game without tile scenery scrolls: view the current art, replace it from a file or a URL"><span class="mono-badge sm">BG</span>BACKGROUNDS</button>
+            <button class="menu-row" onclick="closeMenu();openCabinetManager()" title="The page around the game: a backdrop behind it, a frame around the screen, the HOW TO PLAY card the title's button opens, and the loading screen"><span class="mono-badge sm">CB</span>CABINET</button>
         </div>
         <div class="menu-note">BOSS PATTERNS MOVED TO THE TOOLBAR &rarr; BOSS LAB</div>
         <div class="menu-label">DISPLAY</div>
@@ -1777,6 +1797,21 @@
         </div>
     </div>
 
+    <!-- CABINET: the page around the game, as the level record carries it
+         (`cabinet`) and the runtime's level loader puts it up: a BACKDROP
+         behind everything, a FRAME around the screen, the HOW TO PLAY card
+         the title's button opens, and the LOADING screen (the spinner's
+         frames and the picture under them). The 2019 game's page had all
+         four; see the CABINET section of the script. -->
+    <div id="cabinet-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+        <div class="picker-panel" style="max-height:86vh;overflow:auto">
+            <div class="picker-title">CABINET</div>
+            <div style="font-size:11px;color:#888;margin-bottom:10px;font-family:monospace;">The page around the game: what is behind it, the frame around its screen, the HOW TO PLAY card and the loading screen</div>
+            <div id="cabinet-slots" class="story-images-row cabinet-slots"></div>
+            <div id="cabinet-note" class="menu-note"></div>
+        </div>
+    </div>
+
     <!-- AUDIO EDITOR MODAL -->
     <div id="audio-editor-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:85vh;max-width:800px;">
@@ -1812,18 +1847,22 @@
     <script type="module">
         import {
             DEFAULTS,
+            cabinetScreenRect,
             decodeFirebaseKey,
             encodeFirebaseKey,
             getFirebaseDatabase,
+            normalizeCabinet,
             openCustomAudioDB,
             parseStageId,
             sanitizeLevelName,
         } from '/phaser-plugins/level-loader.js';
         Object.assign(window, {
             LEVEL_LOADER_DEFAULTS: DEFAULTS,
+            cabinetScreenRect,
             decodeFirebaseKey,
             encodeFirebaseKey,
             getFirebaseDatabase,
+            normalizeCabinet,
             openCustomAudioDB,
             parseStageId,
             sanitizeLevelName,
@@ -3261,10 +3300,7 @@
         // level does not depend on the address staying up; a server that
         // refuses cross-origin reads is tried again through an <img>, which
         // only works when it sends CORS headers, and the failure says so.
-        async function backgroundFromUrl(set, part) {
-            const url = prompt('Image URL for ' + (part === 'loop' ? 'the stage backdrop' : 'the boss backdrop') + ' of set ' + set + ':', '');
-            if (!url || !url.trim()) return;
-            const address = url.trim();
+        async function imageDataURLFromAddress(address) {
             let dataURL = null;
             try {
                 const resp = await fetch(address, { mode: 'cors' });
@@ -3289,10 +3325,351 @@
                     img.src = address;
                 });
             }
-            if (!dataURL) { alert('Could not load an image from that URL. The address has to serve an image the browser may read (same origin, or CORS headers); save the file and upload it instead.'); return; }
+            return dataURL;
+        }
+        const IMAGE_URL_FAILED = 'Could not load an image from that URL. The address has to serve an image the browser may read (same origin, or CORS headers); save the file and upload it instead.';
+        async function backgroundFromUrl(set, part) {
+            const url = prompt('Image URL for ' + (part === 'loop' ? 'the stage backdrop' : 'the boss backdrop') + ' of set ' + set + ':', '');
+            if (!url || !url.trim()) return;
+            const dataURL = await imageDataURLFromAddress(url.trim());
+            if (!dataURL) { alert(IMAGE_URL_FAILED); return; }
             setStageBackgroundPart(set, part, dataURL);
             renderBackgroundManager();
             flash((part === 'loop' ? 'STAGE' : 'BOSS') + ' BACKDROP SET ' + set + ' REPLACED FROM URL');
+        }
+
+        // ================== CABINET ==================
+        // The page around the game, as the level record carries it
+        // (`cabinet`, level-loader.js's normalizeCabinet) and the runtime's
+        // level loader puts it up (applyCabinet, loadingArt): a BACKDROP
+        // behind everything, a FRAME around the screen, the HOW TO PLAY card
+        // the title's button opens, and the LOADING screen — the spinner's
+        // frames and the picture under them. The 2019 game's page had all
+        // four (img/bg.jpg and img/frame.jpg around its canvas, howto_en.jpg
+        // in its modal, loading0..2.gif over loading_bg.png), and the
+        // runtime's own spinner is not the 2019 one, so the cloud game 2019
+        // carries them. Pictures are data URLs that ride the cloud save and
+        // PLAY's recipe like the stage backdrops; a big JPEG is re-encoded on
+        // its way in (shrinkCabinetImage), since every boot fetches the
+        // record whole.
+        const CABINET_PARTS = [
+            { part: 'backdrop', label: 'BACKDROP', hint: 'fills the page behind the game, edge to edge (the 2019 page: an arcade, 1280 x 1024)' },
+            { part: 'frame', label: 'FRAME', hint: 'around the screen: as tall as the game and centered on it, unless a SCREEN rect says where the game draws (the 2019 page: a bezel, 766 x 1024)' },
+            { part: 'howto', label: 'HOW TO PLAY', hint: 'the card the title\'s HOW TO PLAY button opens; without one the title has no button (the 2019 page: a poster, 1000 x 1667)' },
+            { part: 'loading', label: 'LOADING SCREEN', hint: 'the spinner\'s frames, 120 ms each in order, over a picture drawn faintly (stock: three 128 x 128 frames over a 256 x 480 picture; the runtime\'s spinner, not the 2019 game\'s)' },
+        ];
+        const CABINET_REENCODE_BYTES = 600 * 1024;
+        function getCabinet() {
+            const c = gameData && gameData.cabinet;
+            return (c && typeof c === 'object') ? c : null;
+        }
+        // Whole-record set, as the cloud load and the save use it: what is
+        // not a cabinet field is dropped (normalizeCabinet), and an empty one
+        // is no field at all, so the save writes null rather than {}.
+        function setCabinet(cab) {
+            if (!gameData) gameData = {};
+            const clean = normalizeCabinet(cab);
+            if (clean) gameData.cabinet = clean; else delete gameData.cabinet;
+        }
+        function setCabinetPart(part, value) {
+            const cab = Object.assign({}, getCabinet() || {});
+            if (value == null) delete cab[part]; else cab[part] = value;
+            setCabinet(cab);
+        }
+        function dataURLBytes(dataURL) {
+            const i = typeof dataURL === 'string' ? dataURL.indexOf(',') : -1;
+            return i < 0 ? 0 : Math.floor((dataURL.length - i - 1) * 3 / 4);
+        }
+        function kbOf(bytes) { return bytes >= 1024 * 1024 ? (bytes / (1024 * 1024)).toFixed(1) + ' MB' : Math.round(bytes / 1024) + ' KB'; }
+        // A JPEG over 600 KB comes back re-encoded at 82% — the 2019 poster
+        // is 1.3 MB as scanned and 0.4 MB so, with nothing a phone can see
+        // — and anything else (a PNG frame with a see-through screen, a GIF
+        // spinner) exactly as given.
+        async function shrinkCabinetImage(dataURL) {
+            if (!/^data:image\/jpeg[;,]/.test(dataURL) || dataURLBytes(dataURL) <= CABINET_REENCODE_BYTES) return { dataURL, note: '' };
+            const img = await new Promise((resolve) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = () => resolve(null); i.src = dataURL; });
+            if (!img) return { dataURL, note: '' };
+            const cv = document.createElement('canvas');
+            cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+            cv.getContext('2d').drawImage(img, 0, 0);
+            const out = cv.toDataURL('image/jpeg', 0.82);
+            if (out.length >= dataURL.length) return { dataURL, note: '' };
+            return { dataURL: out, note: ' · RE-ENCODED ' + kbOf(dataURLBytes(dataURL)) + ' → ' + kbOf(dataURLBytes(out)) };
+        }
+        function readFileDataURL(file) {
+            return new Promise((resolve, reject) => {
+                if (!file.type || !file.type.startsWith('image/')) { reject(new Error('Pick an image file (PNG, GIF, JPEG, WebP).')); return; }
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(new Error('Could not read ' + file.name));
+                reader.readAsDataURL(file);
+            });
+        }
+        async function cabinetImageFromFile(file) { return shrinkCabinetImage(await readFileDataURL(file)); }
+        async function cabinetImageFromAddress(address) {
+            const dataURL = await imageDataURLFromAddress(address);
+            if (!dataURL) { alert(IMAGE_URL_FAILED + '\n\n' + address); return null; }
+            return shrinkCabinetImage(dataURL);
+        }
+        // One address, or several (the spinner's frames), split on whitespace
+        // and commas.
+        function promptAddresses(what, several) {
+            const text = prompt('Image URL' + (several ? 's, one per line or separated by spaces,' : '') + ' for ' + what + ':', '');
+            if (!text || !text.trim()) return [];
+            return text.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+        }
+        function openCabinetManager() {
+            if (!gameData) { alert('Load a game first'); return; }
+            renderCabinetManager();
+            document.getElementById('cabinet-modal').classList.remove('hidden');
+        }
+        let _cabinetSpinner = null;   // the LOADING preview's timer
+        function renderCabinetManager() {
+            const cab = getCabinet() || {};
+            const container = document.getElementById('cabinet-slots');
+            container.innerHTML = '';
+            clearInterval(_cabinetSpinner); _cabinetSpinner = null;
+            for (const spec of CABINET_PARTS) {
+                const slot = document.createElement('div');
+                slot.className = 'title-image-slot cabinet-slot cabinet-' + spec.part;
+                const label = document.createElement('div');
+                label.className = 'slot-label';
+                label.textContent = spec.label;
+                slot.appendChild(label);
+                const state = document.createElement('div');
+                state.className = 'slot-state ' + (cab[spec.part] ? 'custom' : 'stock');
+                slot.appendChild(state);
+                const hint = document.createElement('div');
+                hint.style.cssText = 'font-size:9px;color:#555;margin-bottom:6px;font-family:monospace;';
+                hint.textContent = spec.hint;
+                slot.appendChild(hint);
+                const preview = document.createElement('div');
+                preview.className = 'slot-preview';
+                slot.appendChild(preview);
+                const actions = document.createElement('div');
+                actions.className = 'slot-actions';
+                slot.appendChild(actions);
+                if (spec.part === 'loading') renderCabinetLoadingSlot(slot, state, preview, actions, cab.loading || null);
+                else renderCabinetPictureSlot(spec, slot, state, preview, actions, cab);
+                container.appendChild(slot);
+            }
+            document.getElementById('cabinet-note').textContent =
+                (getCabinet() ? 'THE CABINET RIDES THE CLOUD SAVE AND PLAY. ' : 'NOTHING SET: THE GAME PLAYS ON A BLACK PAGE, WITH NO HOW TO PLAY BUTTON AND THE STOCK SPINNER. ') +
+                'EVERY PLAYER FETCHES THESE PICTURES WITH THE LEVEL, SO KEEP THEM SMALL; A JPEG OVER 600 KB IS RE-ENCODED ON ITS WAY IN.';
+        }
+        function cabinetActionButton(actions, text, onclick, title) {
+            const b = document.createElement('button');
+            b.className = 'slot-upload-btn';
+            b.textContent = text;
+            if (title) b.title = title;
+            b.onclick = onclick;
+            actions.appendChild(b);
+            return b;
+        }
+        function cabinetUploadButton(actions, text, multiple, onfiles) {
+            const l = document.createElement('label');
+            l.className = 'slot-upload-btn';
+            l.textContent = text;
+            const input = document.createElement('input');
+            input.type = 'file'; input.accept = 'image/*'; input.multiple = !!multiple; input.style.display = 'none';
+            input.onchange = (e) => { const files = Array.from(e.target.files || []); if (files.length) onfiles(files); e.target.value = ''; };
+            l.appendChild(input);
+            actions.appendChild(l);
+            return l;
+        }
+        function renderCabinetPictureSlot(spec, slot, state, preview, actions, cab) {
+            const part = spec.part;
+            const value = part === 'frame' ? (cab.frame && cab.frame.image) : cab[part];
+            state.textContent = value ? 'SET · ' + kbOf(dataURLBytes(value)) + ' · SAVED WITH THE LEVEL' : 'NONE';
+            if (value) {
+                const img = document.createElement('img');
+                img.alt = spec.label;
+                img.src = value;
+                img.onload = () => {
+                    state.textContent += ' · ' + img.naturalWidth + ' x ' + img.naturalHeight;
+                    if (part === 'frame') drawCabinetFramePreview(preview, img, cab.frame);
+                };
+                preview.appendChild(img);
+            } else {
+                const ph = document.createElement('div');
+                ph.style.cssText = 'color:#555;font-size:11px;';
+                ph.textContent = part === 'backdrop' ? 'black page' : part === 'frame' ? 'no frame' : 'no card, no button';
+                preview.appendChild(ph);
+            }
+            const put = (res, how) => {
+                if (!res) return;
+                setCabinetPart(part, part === 'frame' ? Object.assign({}, cab.frame || {}, { image: res.dataURL }) : res.dataURL);
+                renderCabinetManager();
+                flash(spec.label + ' SET' + how + res.note);
+            };
+            cabinetUploadButton(actions, 'UPLOAD FILE', false, async (files) => {
+                try { put(await cabinetImageFromFile(files[0]), ''); } catch (e) { alert(e.message); }
+            });
+            cabinetActionButton(actions, 'FROM URL', async () => {
+                const [address] = promptAddresses(spec.label.toLowerCase());
+                if (address) put(await cabinetImageFromAddress(address), ' FROM URL');
+            });
+            if (part === 'frame' && value) renderCabinetScreenFields(slot, cab.frame);
+            if (value) {
+                const resetBtn = document.createElement('button');
+                resetBtn.className = 'slot-reset-btn';
+                resetBtn.textContent = '✕ ' + (part === 'howto' ? 'No card' : 'None');
+                resetBtn.onclick = () => { setCabinetPart(part, null); renderCabinetManager(); flash(spec.label + ' CLEARED'); };
+                slot.appendChild(resetBtn);
+            }
+        }
+        // The frame as the page will show it: the picture, with the game's
+        // title backdrop where the game draws (cabinetScreenRect — the game
+        // keeps its proportions inside that rect, centered, as the runtime
+        // fits it).
+        function drawCabinetFramePreview(preview, frameImg, frame) {
+            const W = frameImg.naturalWidth, H = frameImg.naturalHeight;
+            if (!W || !H) return;
+            const scale = Math.min(1, 240 / H, (preview.clientWidth || 240) / W);
+            const cv = document.createElement('canvas');
+            cv.width = Math.max(1, Math.round(W * scale)); cv.height = Math.max(1, Math.round(H * scale));
+            cv.style.cssText = 'max-width:100%;height:auto;display:block;margin:0 auto;';
+            const ctx = cv.getContext('2d');
+            ctx.drawImage(frameImg, 0, 0, cv.width, cv.height);
+            const r = cabinetScreenRect(frame, W, H);
+            const s = Math.min(r.w / 256, r.h / 480);
+            const gw = 256 * s, gh = 480 * s;
+            const gx = r.x + (r.w - gw) / 2, gy = r.y + (r.h - gh) / 2;
+            const screen = new Image();
+            screen.onload = () => {
+                const sw = Math.min(screen.naturalWidth, screen.naturalHeight * 256 / 480);
+                const sh = Math.min(screen.naturalHeight, sw * 480 / 256);
+                ctx.drawImage(screen, 0, 0, sw, sh, gx * scale, gy * scale, gw * scale, gh * scale);
+                ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1;
+                ctx.strokeRect(gx * scale + .5, gy * scale + .5, gw * scale - 1, gh * scale - 1);
+            };
+            screen.onerror = () => {
+                ctx.fillStyle = 'rgba(132,204,22,.35)';
+                ctx.fillRect(gx * scale, gy * scale, gw * scale, gh * scale);
+            };
+            screen.src = titleBgDataURL || gameAssetUrl('assets/img/title_bg.jpg');
+            preview.innerHTML = '';
+            preview.appendChild(cv);
+        }
+        // Where the game draws inside the frame picture, in its own pixels.
+        // Empty is the 2019 layout: as tall as the picture, the game's
+        // proportions, centered.
+        function renderCabinetScreenFields(slot, frame) {
+            const row = document.createElement('div');
+            row.className = 'cabinet-rect';
+            const lbl = document.createElement('span');
+            lbl.textContent = 'SCREEN';
+            lbl.title = 'Where the game draws, in the picture\'s own pixels (X Y W H). Empty: as tall as the picture, the game\'s proportions, centered.';
+            row.appendChild(lbl);
+            const s = frame.screen || {};
+            const inputs = {};
+            for (const k of ['x', 'y', 'w', 'h']) {
+                const inp = document.createElement('input');
+                inp.type = 'number'; inp.placeholder = k.toUpperCase(); inp.title = k.toUpperCase();
+                inp.value = s[k] != null ? s[k] : '';
+                inputs[k] = inp;
+                row.appendChild(inp);
+            }
+            const apply = () => {
+                const rect = { x: Number(inputs.x.value), y: Number(inputs.y.value), w: Number(inputs.w.value), h: Number(inputs.h.value) };
+                const next = { image: frame.image };
+                if (rect.w > 0 && rect.h > 0) next.screen = rect;
+                setCabinetPart('frame', next);
+                renderCabinetManager();
+            };
+            for (const k in inputs) inputs[k].onchange = apply;
+            if (frame.screen) {
+                const clear = document.createElement('button');
+                clear.className = 'slot-reset-btn';
+                clear.style.marginTop = '0';
+                clear.textContent = 'CENTERED';
+                clear.title = 'Back to the 2019 layout: as tall as the picture and centered on the game';
+                clear.onclick = () => { setCabinetPart('frame', { image: frame.image }); renderCabinetManager(); };
+                row.appendChild(clear);
+            }
+            slot.insertBefore(row, slot.querySelector('.slot-actions'));
+        }
+        function renderCabinetLoadingSlot(slot, state, preview, actions, loading) {
+            const frames = loading && Array.isArray(loading.frames) ? loading.frames : [];
+            const bg = loading && loading.bg ? loading.bg : null;
+            const shown = frames.length ? frames : [0, 1, 2].map((n) => gameAssetUrl('assets/img/loading/loading' + n + '.gif'));
+            state.textContent = loading
+                ? 'SET · ' + (frames.length ? frames.length + ' FRAME' + (frames.length === 1 ? '' : 'S') : 'STOCK FRAMES') + (bg ? ' + PICTURE' : '') +
+                    ' · ' + kbOf(frames.concat(bg ? [bg] : []).reduce((n, d) => n + dataURLBytes(d), 0)) + ' · SAVED WITH THE LEVEL'
+                : 'STOCK · THE RUNTIME\'S SPINNER';
+            // The spinner as the loading screen plays it: the frames in
+            // turn over the picture, faint, flipped every other frame.
+            const under = document.createElement('img');
+            under.className = 'cabinet-loading-bg';
+            under.src = bg || gameAssetUrl('assets/img/loading/loading_bg.png');
+            under.alt = '';
+            preview.appendChild(under);
+            const spin = document.createElement('img');
+            spin.className = 'cabinet-loading-spin';
+            spin.src = shown[0];
+            spin.alt = 'loading';
+            preview.appendChild(spin);
+            let i = 0;
+            _cabinetSpinner = setInterval(() => {
+                i = (i + 1) % shown.length;
+                spin.src = shown[i];
+                under.style.transform = i % 2 ? 'scaleX(-1)' : '';
+            }, 120);
+            // The frames, each with its ×.
+            if (frames.length) {
+                const strip = document.createElement('div');
+                strip.className = 'cabinet-frames';
+                frames.forEach((src, n) => {
+                    const fr = document.createElement('div');
+                    fr.className = 'fr';
+                    const im = document.createElement('img'); im.src = src; im.alt = 'frame ' + n; fr.appendChild(im);
+                    const x = document.createElement('button'); x.textContent = '×'; x.title = 'Drop frame ' + n;
+                    x.onclick = () => { const next = frames.slice(); next.splice(n, 1); setCabinetLoading(next, bg); flash('LOADING FRAME ' + n + ' DROPPED'); };
+                    fr.appendChild(x);
+                    strip.appendChild(fr);
+                });
+                slot.insertBefore(strip, actions);
+            }
+            const addFrames = (results) => {
+                const got = results.filter(Boolean).map((r) => r.dataURL);
+                if (!got.length) return;
+                setCabinetLoading(frames.concat(got), bg);
+                flash(got.length + ' LOADING FRAME' + (got.length === 1 ? '' : 'S') + ' ADDED');
+            };
+            cabinetUploadButton(actions, '+ FRAMES', true, async (files) => {
+                try {
+                    files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+                    addFrames(await Promise.all(files.map(cabinetImageFromFile)));
+                } catch (e) { alert(e.message); }
+            });
+            cabinetActionButton(actions, 'FRAMES FROM URL', async () => {
+                const addresses = promptAddresses('the spinner\'s frames', true);
+                if (addresses.length) addFrames(await Promise.all(addresses.map(cabinetImageFromAddress)));
+            });
+            cabinetUploadButton(actions, 'PICTURE', false, async (files) => {
+                try {
+                    const r = await cabinetImageFromFile(files[0]);
+                    setCabinetLoading(frames, r.dataURL);
+                    flash('LOADING PICTURE SET' + r.note);
+                } catch (e) { alert(e.message); }
+            });
+            cabinetActionButton(actions, 'PICTURE FROM URL', async () => {
+                const [address] = promptAddresses('the picture under the spinner');
+                if (!address) return;
+                const r = await cabinetImageFromAddress(address);
+                if (r) { setCabinetLoading(frames, r.dataURL); flash('LOADING PICTURE SET FROM URL' + r.note); }
+            });
+            if (loading) {
+                const resetBtn = document.createElement('button');
+                resetBtn.className = 'slot-reset-btn';
+                resetBtn.textContent = '✕ Back to the stock spinner';
+                resetBtn.onclick = () => { setCabinetLoading([], null); flash('LOADING SCREEN BACK TO STOCK'); };
+                slot.appendChild(resetBtn);
+            }
+        }
+        function setCabinetLoading(frames, bg) {
+            setCabinetPart('loading', frames.length || bg ? Object.assign({ frames }, bg ? { bg } : {}) : null);
+            renderCabinetManager();
         }
 
         async function loadGameFilesFromFileList(files) {
@@ -13771,6 +14148,9 @@ function GAME3D_RUNTIME(DATA) {
                 // no longer carries, since the write below is a merge.
                 payload.stageBackgrounds = (gameData && gameData.stageBackgrounds &&
                     typeof gameData.stageBackgrounds === 'object') ? gameData.stageBackgrounds : null;
+                // The page around the game (the CABINET: backdrop, frame, HOW
+                // TO PLAY card, loading screen) rides the same way.
+                payload.cabinet = normalizeCabinet(getCabinet());
                 payload.dezaemonBgm = (gameData && gameData.dezaemonBgm) || null;
                 // The save's three global bullet configs + blast anims — one
                 // record for the whole game, like the soundtrack.
@@ -14005,6 +14385,7 @@ function GAME3D_RUNTIME(DATA) {
                 if (Array.isArray(d.backgroundCells)) gameData.backgroundCells = d.backgroundCells;
                 else delete gameData.backgroundCells;
                 setStageBackgrounds((d.stageBackgrounds && typeof d.stageBackgrounds === 'object') ? d.stageBackgrounds : null);
+                setCabinet(d.cabinet);
                 if (d.dezaemonBgm) gameData.dezaemonBgm = d.dezaemonBgm;
                 else delete gameData.dezaemonBgm;
                 if (d.dezaemonBullets) gameData.dezaemonBullets = d.dezaemonBullets;

@@ -1,7 +1,7 @@
 {
-  "version": "bd8cf06",
+  "version": "4036696",
   "versionSource": "git",
-  "generatedAt": "2026-10-21T00:34:54.484Z",
+  "generatedAt": "2026-10-26T17:46:09.174Z",
   "games": [
     {
       "id": "shmupx",
@@ -45,8 +45,8 @@
       "source": "url",
       "downloadUrl": "/games/2019-web.zip",
       "entry": "index.html",
-      "size": "0.6 MB",
-      "date": "10.11.26",
+      "size": "2.0 MB",
+      "date": "10.26.26",
       "players": 1
     },
     {
