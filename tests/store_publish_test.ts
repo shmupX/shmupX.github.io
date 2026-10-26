@@ -428,6 +428,30 @@ Deno.test("summarizeStoreRun: the chips, the headline, the detail, the outcome",
     s.headline,
     `Failed at "${ITCH_STEP_PUSH}". butler: No BUTLER_API_KEY`,
   );
+  // GitHub lists its own "exit code 1" before the workflow's titled reason;
+  // the titled one leads the headline (seen on the first real dry run).
+  s = summarizeStoreRun(
+    "itch",
+    run("completed", "failure", "itch.io · foo · abcdefghjk"),
+    job([done(ITCH_STEP_PUSH, "failure")], "failure"),
+    [
+      {
+        annotation_level: "failure",
+        title: null,
+        message: "Process completed with exit code 1.",
+      },
+      {
+        annotation_level: "failure",
+        title: "butler",
+        message: "No BUTLER_API_KEY in this repository's secrets.",
+      },
+    ],
+  );
+  assertEquals(s.errors, [
+    "butler: No BUTLER_API_KEY in this repository's secrets.",
+    "Process completed with exit code 1.",
+  ]);
+  assertStringIncludes(s.headline, "butler: No BUTLER_API_KEY");
 
   // iOS keeps lib/ios-publish.ts's reading, plus the REVIEW chip when asked.
   s = summarizeStoreRun(

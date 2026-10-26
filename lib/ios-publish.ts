@@ -410,7 +410,9 @@ export class GitHubActions {
       const data = await res.json();
       const out: Record<string, string> = {};
       for (const v of Array.isArray(data?.variables) ? data.variables : []) {
-        if (v && typeof v.name === "string") out[v.name] = String(v.value ?? "");
+        if (v && typeof v.name === "string") {
+          out[v.name] = String(v.value ?? "");
+        }
       }
       return out;
     } catch (e) {
@@ -546,9 +548,16 @@ export function summarizeRun(
   ) uploaded = false;
   else if (run.status === "completed") uploaded = false;
 
-  const errors = annotations
-    .filter((a) => a.annotation_level === "failure" && a.message)
-    .map((a) => (a.title ? `${a.title}: ${a.message}` : a.message).trim());
+  // The workflow's own reasons carry a title; the runner's "Process completed
+  // with exit code 1" does not, and GitHub lists it first. The titled ones
+  // lead, so the headline says why rather than that.
+  const failures = annotations.filter((a) =>
+    a.annotation_level === "failure" && a.message
+  );
+  const errors = [
+    ...failures.filter((a) => a.title),
+    ...failures.filter((a) => !a.title),
+  ].map((a) => (a.title ? `${a.title}: ${a.message}` : a.message).trim());
 
   let headline: string;
   if (run.status === "completed") {
