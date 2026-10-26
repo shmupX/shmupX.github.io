@@ -366,8 +366,36 @@
             updateBannerSub();
             flash('PATTERNS APPLIED · ' + n + ' CHANGED · WRITTEN TO EDITOR BRIDGE');
         }
+        // X PIXELS in the lab: hand the boss and the frame on screen to the
+        // editor's pixel editor over the same bridge. An open editor answers
+        // with pixel-ack and opens its character sheet on them; when none
+        // answers, the editor is opened on the request, which rides into the
+        // new tab in sessionStorage (editorPixelRequest).
+        let pixelAckTimer = null, pixelAckLabel = '';
+        function sendToPixel(bossKey, frame) {
+            const req = { type: 'send-to-pixel', gameId: GAME_ID, bossKey, frame: frame || null };
+            const label = String(bossKey).toUpperCase() + (frame ? ' · ' + String(frame).replace(/\.(gif|png)$/i, '').toUpperCase() : '');
+            try { sessionStorage.setItem('editorPixelRequest', JSON.stringify(req)); } catch (e) {}
+            let posted = false;
+            try { if (channel) { channel.postMessage(req); posted = true; } } catch (e) {}
+            clearTimeout(pixelAckTimer);
+            pixelAckLabel = label;
+            flash('SENT TO PIXEL EDITOR · ' + label + ' · VIA EDITOR BRIDGE');
+            pixelAckTimer = setTimeout(() => {
+                pixelAckTimer = null;
+                window.open($('nav-editor').href, 'shmupx-editor');
+                flash('OPENING THE LEVEL EDITOR · ' + label);
+            }, posted ? 700 : 0);
+        }
         if (channel) channel.onmessage = (ev) => {
             const m = ev.data;
+            if (m && m.type === 'pixel-ack' && m.gameId === GAME_ID) {
+                if (!pixelAckTimer) return;
+                clearTimeout(pixelAckTimer); pixelAckTimer = null;
+                try { sessionStorage.removeItem('editorPixelRequest'); } catch (e) {}
+                flash('IN THE EDITOR · CHARACTER SHEET · ' + pixelAckLabel);
+                return;
+            }
             if (!m || m.type !== 'boss-data' || m.gameId !== GAME_ID || !m.bossData || typeof m.bossData !== 'object') return;
             bossData = m.bossData;
             state.customData = true;
@@ -435,6 +463,7 @@
                         playerFrames: () => playerFrames,
                         theme: state.theme,
                         onApply: applyPatterns,
+                        onSendToPixel: sendToPixel,
                     });
                     updateBannerSub();
                 };

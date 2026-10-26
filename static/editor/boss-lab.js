@@ -17,6 +17,7 @@
 //     onBack: () => {},                   // B when nothing is pending (omit → B is inert)
 //     onSave: () => {} | null,            // Y SAVE when the host has a save target
 //     canSave: () => bool,                // gates Y SAVE (omit → shown whenever onSave is)
+//     onSendToPixel: (bossKey, frame) => {} | null,  // X PIXELS: open the host's pixel editor on this boss, the frame showing pre-selected
 //     stageBossKey: () => 'boss0',        // the slot the open stage fights (stage N → bossN)
 //     stageLabel: () => 'STAGE 00',       // how that stage is named in the chrome
 //     onAssignStageBoss: key => slotKey,  // APPLY: put this record in the stage's slot; returns the slot
@@ -110,8 +111,8 @@
     // The lab paints itself off these variables on its own root, so it looks
     // the same whether the host page is the editor or the viewer.
     const THEMES = {
-        xbox: { edge: 'rgba(140,255,110,.35)', ink: '#d9ffcb', tglow: 'rgba(124,255,79,.8)', mono: 'rgba(156,255,107,.65)', monodim: 'rgba(220,255,180,.45)', sel: '#F6FF4A', selglow: 'rgba(246,255,74,.55)', dot: '#7CFF4F', rbg: 'rgba(4,24,10,.6)', redge: 'rgba(140,255,110,.28)', rink: '#d6ffc4', rsub: 'rgba(220,255,180,.55)', btnbg: 'radial-gradient(circle at 35% 30%, rgba(40,90,45,.5), rgba(6,30,12,.95) 70%)', btnactive: 'radial-gradient(circle at 35% 30%, rgba(60,120,60,.9), rgba(6,30,12,.95) 70%)', bink: '#9CFF6B', shedge: 'rgba(246,255,74,.65)', ov1: 'rgba(60,54,8,.55)', ov2: 'rgba(24,22,4,.65)', orbA: 'radial-gradient(circle at 35% 30%, #d6ffd0 0%, #6fd06f 25%, #0e6a2b 60%, #04240f 95%)', orbAe: 'rgba(140,255,110,.6)', orbAi: '#04240f', orbB: 'radial-gradient(circle at 35% 30%, #fdf6b0 0%, #cfc23e 30%, #6a6410 65%, #201d02 100%)', orbBe: 'rgba(246,255,74,.5)', orbBi: '#161300', orbY: 'radial-gradient(circle at 35% 30%, #e8e8ff 0%, #8f8fd8 30%, #2c2c6e 65%, #0a0a24 100%)', orbYe: 'rgba(160,160,255,.5)', orbYi: '#0a0a24' },
-        nintendo: { edge: 'rgba(213,213,216,.3)', ink: '#e9ecf1', tglow: 'rgba(255,59,73,.7)', mono: 'rgba(139,160,194,.8)', monodim: 'rgba(139,160,194,.55)', sel: '#ff5b66', selglow: 'rgba(228,0,15,.5)', dot: '#ff3b49', rbg: '#0f1622', redge: '#2a3850', rink: '#e9ecf1', rsub: 'rgba(139,160,194,.7)', btnbg: 'radial-gradient(circle at 35% 30%, rgba(49,58,78,.5), rgba(12,16,26,.95) 70%)', btnactive: 'radial-gradient(circle at 35% 30%, rgba(90,20,26,.9), rgba(20,8,12,.95) 70%)', bink: '#e9ecf1', shedge: 'rgba(255,91,102,.7)', ov1: 'rgba(74,3,8,.55)', ov2: 'rgba(36,1,4,.65)', orbA: 'radial-gradient(circle at 35% 30%, #ffd9db 0%, #ff6b76 20%, #e4000f 50%, #4a0308 85%)', orbAe: 'rgba(255,140,148,.75)', orbAi: '#fff', orbB: 'radial-gradient(circle at 35% 30%, #fff 0%, #d5d5d8 25%, #88848b 60%, #2f2f2f 95%)', orbBe: 'rgba(213,213,216,.75)', orbBi: '#e4000f', orbY: 'radial-gradient(circle at 35% 30%, #f2f4f8 0%, #b7bcc6 30%, #565a66 70%, #14161d 100%)', orbYe: 'rgba(213,213,216,.5)', orbYi: '#14161d' }
+        xbox: { edge: 'rgba(140,255,110,.35)', ink: '#d9ffcb', tglow: 'rgba(124,255,79,.8)', mono: 'rgba(156,255,107,.65)', monodim: 'rgba(220,255,180,.45)', sel: '#F6FF4A', selglow: 'rgba(246,255,74,.55)', dot: '#7CFF4F', rbg: 'rgba(4,24,10,.6)', redge: 'rgba(140,255,110,.28)', rink: '#d6ffc4', rsub: 'rgba(220,255,180,.55)', btnbg: 'radial-gradient(circle at 35% 30%, rgba(40,90,45,.5), rgba(6,30,12,.95) 70%)', btnactive: 'radial-gradient(circle at 35% 30%, rgba(60,120,60,.9), rgba(6,30,12,.95) 70%)', bink: '#9CFF6B', shedge: 'rgba(246,255,74,.65)', ov1: 'rgba(60,54,8,.55)', ov2: 'rgba(24,22,4,.65)', orbA: 'radial-gradient(circle at 35% 30%, #d6ffd0 0%, #6fd06f 25%, #0e6a2b 60%, #04240f 95%)', orbAe: 'rgba(140,255,110,.6)', orbAi: '#04240f', orbB: 'radial-gradient(circle at 35% 30%, #fdf6b0 0%, #cfc23e 30%, #6a6410 65%, #201d02 100%)', orbBe: 'rgba(246,255,74,.5)', orbBi: '#161300', orbY: 'radial-gradient(circle at 35% 30%, #e8e8ff 0%, #8f8fd8 30%, #2c2c6e 65%, #0a0a24 100%)', orbYe: 'rgba(160,160,255,.5)', orbYi: '#0a0a24', orbX: 'radial-gradient(circle at 35% 30%, #d9efff 0%, #5fb4ff 25%, #0d4f9e 60%, #041a3a 95%)', orbXe: 'rgba(120,190,255,.6)', orbXi: '#041a3a' },
+        nintendo: { edge: 'rgba(213,213,216,.3)', ink: '#e9ecf1', tglow: 'rgba(255,59,73,.7)', mono: 'rgba(139,160,194,.8)', monodim: 'rgba(139,160,194,.55)', sel: '#ff5b66', selglow: 'rgba(228,0,15,.5)', dot: '#ff3b49', rbg: '#0f1622', redge: '#2a3850', rink: '#e9ecf1', rsub: 'rgba(139,160,194,.7)', btnbg: 'radial-gradient(circle at 35% 30%, rgba(49,58,78,.5), rgba(12,16,26,.95) 70%)', btnactive: 'radial-gradient(circle at 35% 30%, rgba(90,20,26,.9), rgba(20,8,12,.95) 70%)', bink: '#e9ecf1', shedge: 'rgba(255,91,102,.7)', ov1: 'rgba(74,3,8,.55)', ov2: 'rgba(36,1,4,.65)', orbA: 'radial-gradient(circle at 35% 30%, #ffd9db 0%, #ff6b76 20%, #e4000f 50%, #4a0308 85%)', orbAe: 'rgba(255,140,148,.75)', orbAi: '#fff', orbB: 'radial-gradient(circle at 35% 30%, #fff 0%, #d5d5d8 25%, #88848b 60%, #2f2f2f 95%)', orbBe: 'rgba(213,213,216,.75)', orbBi: '#e4000f', orbY: 'radial-gradient(circle at 35% 30%, #f2f4f8 0%, #b7bcc6 30%, #565a66 70%, #14161d 100%)', orbYe: 'rgba(213,213,216,.5)', orbYi: '#14161d', orbX: 'radial-gradient(circle at 35% 30%, #dfe7ff 0%, #8fa6ff 25%, #2b3fa8 60%, #0b1240 95%)', orbXe: 'rgba(160,180,255,.6)', orbXi: '#fff' }
     };
 
     const CSS = `
@@ -210,7 +211,7 @@
 .bl-opt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .bl-opt-chip { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .08em; padding: 3px 8px; border-radius: 6px; background: rgba(0,0,0,.35); border: 1px solid var(--redge); color: var(--rink); }
 .bl-opt.pend .bl-opt-chip { border-color: var(--sel); color: var(--sel); }
-/* pad footer: A APPLY · B REVERT / BACK · (Y SAVE when the host has a save target) */
+/* pad footer: A APPLY · B REVERT / BACK · (X PIXELS when the host has a pixel editor) · (Y SAVE when the host has a save target) */
 .bl-foot { flex-shrink: 0; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 22px; padding: 12px 16px 14px; border-top: 1px solid var(--edge); }
 .bl-foot-btn { display: flex; align-items: center; gap: 9px; background: none; border: none; padding: 0; min-height: 44px; color: var(--rink); font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .16em; cursor: pointer; }
 .bl-foot-btn.dim { opacity: .45; }
@@ -219,6 +220,7 @@
 .bl-foot-btn.glow .bl-orb-a { box-shadow: 0 0 12px var(--selglow); }
 .bl-orb-b { background: var(--orbB); border: 1px solid var(--orbBe); color: var(--orbBi); }
 .bl-orb-y { background: var(--orbY); border: 1px solid var(--orbYe); color: var(--orbYi); }
+.bl-orb-x { background: var(--orbX); border: 1px solid var(--orbXe); color: var(--orbXi); }
 @keyframes blBossIn { from { opacity: 0; transform: translate(-50%,-50%) scale(1.5); filter: brightness(3); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); filter: brightness(1); } }
 @keyframes blHitRing { from { opacity: 1; transform: translate(-50%,-50%) scale(.5); } to { opacity: 0; transform: translate(-50%,-50%) scale(1.6); } }
 @keyframes blDash { to { stroke-dashoffset: -14; } }
@@ -489,6 +491,12 @@
             this.revertBtn.appendChild(this.revertLabel);
             this.revertBtn.onclick = () => this.revert();
             foot.appendChild(this.revertBtn);
+            this.pixelBtn = el('button', 'bl-foot-btn');
+            this.pixelBtn.title = 'Send this boss to the pixel editor — the frame showing now is pre-selected';
+            this.pixelBtn.appendChild(el('span', 'bl-orb bl-orb-x', 'X'));
+            this.pixelBtn.appendChild(el('span', '', 'PIXELS'));
+            this.pixelBtn.onclick = () => this.sendPixel();
+            foot.appendChild(this.pixelBtn);
             this.saveBtn = el('button', 'bl-foot-btn');
             this.saveBtn.appendChild(el('span', 'bl-orb bl-orb-y', 'Y'));
             this.saveBtn.appendChild(el('span', '', 'SAVE'));
@@ -625,6 +633,14 @@
             this.revertBtn.classList.toggle('dim', !n && !this.opts.onBack);
             const canSave = !!this.opts.onSave && (this.opts.canSave ? !!this.opts.canSave() : true);
             this.saveBtn.style.display = canSave ? '' : 'none';
+            this.pixelBtn.style.display = this.opts.onSendToPixel ? '' : 'none';
+        }
+        // X PIXELS: hand the boss to the host's pixel editor with the frame on
+        // screen right now, so a glitch spotted mid-pattern is one tap away.
+        sendPixel() {
+            if (!this.opts.onSendToPixel) return;
+            const b = this.curBoss(), s = this.sim, fr = (b && b.anim && b.anim[s.animKey]) || [];
+            this.opts.onSendToPixel(this.curKey(), fr.length ? fr[s.frame % fr.length] : null);
         }
 
         // ---------- assignment ----------

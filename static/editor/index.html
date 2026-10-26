@@ -32,6 +32,9 @@
          panel this editor mounts in place of the wave grid, and that
          boss-viewer.html mounts standalone. -->
     <script src="/editor/boss-lab.js"></script>
+    <!-- The PIXEL EDITOR the character sheet sends frames to, mounted in
+         place of the grid (static/editor/pixel-editor.js). -->
+    <script src="/editor/pixel-editor.js"></script>
     <script type="module">
         // Dezaemon 2 (Saturn) save importer. The whole .sav/game.json pipeline
         // lives in the shmup-engine JSR module (packages/shmup-engine), bundled
@@ -195,7 +198,7 @@
         }
         .tb-spacer { flex: 1; min-width: 4px; }
         /* ===== CONTEXTUAL TOOLBAR =====
-           Grid mode: enemy · item · delete · extract | PLAY · BOSS LAB · (3D) · (SAVE) · MENU.
+           Grid mode: enemy · item · delete · character | PLAY · BOSS LAB · (3D) · (SAVE) · MENU.
            With the lab open (body.boss-lab) the left cluster gives way to a
            status line and the lab stands in for the rail, grid and pad footer.
            The 3D badge shows only while the loaded game carries sec7 models;
@@ -213,6 +216,14 @@
         #lab-status .lab-status-short { display: none; }
         #boss-lab-host { display: none; flex: 1; min-height: 0; position: relative; }
         body.boss-lab #boss-lab-host { display: flex; flex-direction: column; }
+        /* PIXEL EDITOR (body.pixel-editor): opens in place of the grid — or of
+           the lab, when X PIXELS sent the boss — behind the same status line;
+           B returns to whichever was open. */
+        body.pixel-editor #toolbar .grid-only { display: none !important; }
+        body.pixel-editor #stage-rail, body.pixel-editor #grid-area, body.pixel-editor #pad-footer, body.pixel-editor #nes-stripe, body.pixel-editor #boss-lab-host { display: none !important; }
+        body.pixel-editor #lab-status { display: flex; }
+        #pixel-editor-host { display: none; flex: 1; min-height: 0; position: relative; }
+        body.pixel-editor #pixel-editor-host { display: flex; flex-direction: column; }
         body:not(.has-save-target) #save-badge, body:not(.has-save-target) #pad-hint-y { display: none !important; }
         body:not(.has-3d-models) #model-viewer-link { display: none !important; }
         /* One scenery tool at a time: a game whose stages carry tile scenery
@@ -305,8 +316,8 @@
         body.theme-nintendo .grid-cell.drag-over { box-shadow: inset 0 0 0 2px #ff3b49, 0 0 14px rgba(228,0,15,.5); }
         /* Both carry the mode class: #grid-icon-view flips live in
            updateToolUI, .editor-grid on the next renderGrid. */
-        .editor-grid.mode-extract .grid-cell.occupied, #grid-icon-view.mode-extract .grid-cell.occupied { cursor: crosshair; }
-        .editor-grid.mode-extract .grid-cell.occupied:hover, #grid-icon-view.mode-extract .grid-cell.occupied:hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
+        .editor-grid.mode-character .grid-cell.occupied, #grid-icon-view.mode-character .grid-cell.occupied { cursor: crosshair; }
+        .editor-grid.mode-character .grid-cell.occupied:hover, #grid-icon-view.mode-character .grid-cell.occupied:hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
         /* BOSS STRIP: the stage boss is not a grid cell — the runtime spawns
            bossData["boss"+stageId] once the last wave clears — so it gets its
            own full-width row under the waves, in that same spawn position. */
@@ -323,8 +334,8 @@
         .boss-strip:not(.empty) { cursor: pointer; }
         .boss-strip.empty { opacity: .4; border-style: dashed; cursor: default; }
         body.theme-nintendo .boss-strip { background: #10182a; border-color: #2a3850; color: #ffd7da; }
-        .editor-grid.mode-extract .boss-strip:not(.empty), #grid-icon-view.mode-extract .boss-strip:not(.empty) { cursor: crosshair; }
-        .editor-grid.mode-extract .boss-strip:not(.empty):hover, #grid-icon-view.mode-extract .boss-strip:not(.empty):hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
+        .editor-grid.mode-character .boss-strip:not(.empty), #grid-icon-view.mode-character .boss-strip:not(.empty) { cursor: crosshair; }
+        .editor-grid.mode-character .boss-strip:not(.empty):hover, #grid-icon-view.mode-character .boss-strip:not(.empty):hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
 
         /* ===== NES CABINET STRIPE (nintendo theme) ===== */
         #nes-stripe {
@@ -352,6 +363,8 @@
         body.theme-nintendo .pad-orb-b { background: radial-gradient(circle at 35% 30%, #fff 0%, #d5d5d8 25%, #88848b 60%, #2f2f2f 95%); border: 1px solid rgba(213,213,216,.75); color: #e4000f; }
         body.theme-nintendo .pad-orb-a { background: radial-gradient(circle at 35% 30%, #ffd9db 0%, #ff6b76 20%, #e4000f 50%, #4a0308 85%); border: 1px solid rgba(255,140,148,.75); box-shadow: 0 0 14px rgba(228,0,15,.5); color: #fff; }
         body.theme-nintendo .pad-orb-y { background: radial-gradient(circle at 35% 30%, #f2f4f8 0%, #b7bcc6 30%, #565a66 70%, #14161d 100%); border: 1px solid rgba(213,213,216,.5); color: #14161d; }
+        .pad-orb-x { background: radial-gradient(circle at 35% 30%, #d9efff 0%, #5fb4ff 25%, #0d4f9e 60%, #041a3a 95%); border: 1px solid rgba(120,190,255,.6); color: #041a3a; }
+        body.theme-nintendo .pad-orb-x { background: radial-gradient(circle at 35% 30%, #dfe7ff 0%, #8fa6ff 25%, #2b3fa8 60%, #0b1240 95%); border: 1px solid rgba(160,180,255,.6); color: #fff; }
         .pad-hint.active .pad-orb-b { box-shadow: 0 0 12px rgba(246,255,74,.8); }
         .pad-hint.active .pad-orb-a { box-shadow: 0 0 12px rgba(140,255,110,.8); }
         body.theme-nintendo .pad-hint.active .pad-orb-b { box-shadow: 0 0 12px rgba(213,213,216,.8); }
@@ -533,6 +546,67 @@
         .picker-add-row .menu-btn { width: auto; flex: 1; justify-content: center; margin: 0; padding: 8px 6px; font-size: 10px; }
         .picker-add-row .menu-btn.on { border-color: var(--rink); color: #fff; }
         #enemy-picker-stock { margin-top: 10px; }
+        /* SELECT ENEMY rows: the full-width ARM option, and a 44px pixel
+           button on the right that opens the row's CHARACTER SHEET. */
+        .picker-row { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
+        .picker-row .picker-opt { flex: 1; min-width: 0; min-height: 64px; }
+        .picker-row .picker-opt .opt-remove { right: -4px; }
+        /* Phones: one row per enemy, so the ARM option keeps its name beside the pixel button. */
+        @media (max-width: 479px) { #enemy-picker-grid { grid-template-columns: minmax(0, 1fr); } }
+        .opt-pixel {
+            flex-shrink: 0; width: 44px; border-radius: 12px; border: 1px solid var(--redge); background: var(--rbg); color: var(--bink);
+            display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; transition: all .15s;
+        }
+        .opt-pixel svg { width: 18px; height: 18px; display: block; }
+        .opt-pixel:active { transform: scale(0.95); }
+        @media (hover: hover) {
+            .opt-pixel:hover { border-color: var(--shedge); color: var(--sel); box-shadow: 0 0 12px rgba(246,255,74,.3); }
+            body.theme-nintendo .opt-pixel:hover { box-shadow: 0 0 12px rgba(228,0,15,.3); }
+        }
+
+        /* ===== CHARACTER SHEET ===== */
+        .char-panel { max-height: 82vh; }
+        .cs-title { justify-content: space-between; }
+        .cs-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .cs-code { font-family: 'Share Tech Mono', monospace; font-size: 10px; font-weight: 400; letter-spacing: .14em; color: var(--counter); text-shadow: none; white-space: nowrap; }
+        .cs-head { display: flex; align-items: center; gap: 14px; padding: 2px 6px 12px; }
+        .cs-sprite {
+            width: 88px; height: 88px; flex-shrink: 0; border-radius: 14px; border: 1px solid var(--redge);
+            background: repeating-linear-gradient(0deg, rgba(140,255,110,.08) 0 1px, transparent 1px 8px), repeating-linear-gradient(90deg, rgba(140,255,110,.08) 0 1px, transparent 1px 8px), rgba(0,0,0,.5);
+            display: flex; align-items: center; justify-content: center;
+        }
+        body.theme-nintendo .cs-sprite { background: repeating-linear-gradient(0deg, rgba(213,213,216,.08) 0 1px, transparent 1px 8px), repeating-linear-gradient(90deg, rgba(213,213,216,.08) 0 1px, transparent 1px 8px), rgba(0,0,0,.5); }
+        .cs-sprite img { width: 64px; height: 64px; object-fit: contain; image-rendering: pixelated; }
+        .cs-info { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em; line-height: 1.5; color: var(--rsub); }
+        .cs-meta { color: var(--rink); }
+        .cs-sel { color: var(--sel); }
+        .cs-frames-hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 6px 8px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .22em; color: var(--raillbl); }
+        .cs-mini-row { display: flex; gap: 6px; }
+        .cs-mini { cursor: pointer; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .12em; padding: 0 12px; min-height: 36px; border-radius: 8px; background: rgba(0,0,0,.3); border: 1px solid var(--redge); color: var(--rink); }
+        .cs-group { padding: 0 6px 12px; display: flex; flex-direction: column; gap: 8px; }
+        .cs-group-hdr {
+            display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; background: none; border: none; padding: 0; min-height: 32px;
+            cursor: pointer; text-align: left; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: 800; letter-spacing: .14em; color: var(--hint);
+        }
+        .cs-group-hdr.on { color: var(--sel); }
+        .cs-group-count { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .14em; font-weight: 400; color: var(--raillbl); }
+        .cs-frames { display: flex; flex-wrap: wrap; gap: 8px; }
+        .cs-frame {
+            display: flex; flex-direction: column; align-items: center; gap: 4px; width: 72px; padding: 6px 4px 5px; border-radius: 10px; cursor: pointer;
+            transition: all .15s; border: 1px solid var(--redge); background: var(--rbg); color: var(--rsub);
+        }
+        .cs-frame.on { border-color: var(--sel); color: var(--sel); background: linear-gradient(180deg, rgba(60,54,8,.55), rgba(24,22,4,.65)); box-shadow: 0 0 12px rgba(246,255,74,.45); }
+        body.theme-nintendo .cs-frame.on { background: linear-gradient(180deg, rgba(74,3,8,.55), rgba(36,1,4,.65)); box-shadow: 0 0 12px rgba(228,0,15,.45); }
+        .cs-frame img { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; }
+        .cs-frame span { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .04em; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cs-foot {
+            display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 22px; margin: 0 -12px; padding: 12px 16px 0;
+            border-top: 1px solid var(--redge); font-size: 10px; font-weight: 700; letter-spacing: .16em; color: var(--hint);
+        }
+        .cs-foot .pad-hint { min-height: 44px; gap: 9px; }
+        .cs-foot .pad-hint.dim { opacity: .45; }
+        .cs-foot .pad-hint.glow .pad-orb-a { box-shadow: 0 0 12px rgba(140,255,110,.8); }
+        body.theme-nintendo .cs-foot .pad-hint.glow .pad-orb-a { box-shadow: 0 0 14px rgba(228,0,15,.8); }
         .picker-stock-note {
             grid-column: 1 / -1; padding: 4px 2px 0; text-align: center;
             font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em; color: var(--raillbl);
@@ -1079,12 +1153,14 @@
             </button>
             <!-- Delete badge (Lucide eraser) -->
             <button id="delete-mode-btn" class="badge grid-only" title="Delete mode" onclick="setDeleteMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
-            <!-- Extract badge (Lucide pipette): click a placed enemy to
-                 inspect it and save it to the shared character library -->
-            <button id="extract-mode-btn" class="badge grid-only" title="Extract mode — click a placed enemy or the stage boss to save it to the character library" onclick="setExtractMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg></button>
+            <!-- CHARACTER tool (pixel grid): tap a placed enemy or the boss
+                 strip to open its CHARACTER SHEET — pick frames for the pixel
+                 editor, or extract it to the shared character library (the
+                 old EXTRACT badge moved inside the sheet, as X). -->
+            <button id="character-tool-btn" class="badge grid-only" title="Character tool — tap a placed enemy or the stage boss to open it: send it to the pixel editor or extract it to the character library" onclick="setCharacterTool()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1" fill="currentColor"/></svg></button>
 
             <!-- Boss lab status line: stands in for the tool badges while the lab is open -->
-            <div id="lab-status"><span class="lab-dot"></span><span class="lab-status-long">BOSS LAB · PATTERNS PREVIEW LIVE · APPLY WRITES TO GAME DATA</span><span class="lab-status-short">BOSS LAB · LIVE PREVIEW</span></div>
+            <div id="lab-status"><span class="lab-dot"></span><span class="lab-status-long" id="lab-status-long">BOSS LAB · PATTERNS PREVIEW LIVE · APPLY WRITES TO GAME DATA</span><span class="lab-status-short" id="lab-status-short">BOSS LAB · LIVE PREVIEW</span></div>
 
             <div class="tb-spacer"></div>
 
@@ -1125,6 +1201,10 @@
         <!-- BOSS LAB (boss-lab.js) — stands in for the rail, grid and pad footer while open -->
         <div id="boss-lab-host"></div>
 
+        <!-- PIXEL EDITOR (pixel-editor.js) — the frames a character sheet
+             sent, in place of the grid, or of the lab when X PIXELS sent them -->
+        <div id="pixel-editor-host"></div>
+
         <!-- NES CABINET STRIPE (nintendo theme only) -->
         <div id="nes-stripe"></div>
 
@@ -1158,7 +1238,7 @@
                 <button type="button" class="menu-btn" onclick="newEnemyFromPicker()" title="Add a blank enemy and edit it">+ NEW</button>
             </div>
             <div id="enemy-picker-stock" class="picker-grid hidden"></div>
-            <div class="picker-hint">TAP TO ARM · TAP GRID TO PLACE · × REMOVES FROM THIS GAME</div>
+            <div class="picker-hint">TAP TO ARM · TAP GRID TO PLACE · PIXEL BUTTON OPENS THE CHARACTER SHEET · × REMOVES FROM THIS GAME</div>
         </div>
     </div>
 
@@ -1665,11 +1745,37 @@
         </div>
     </div>
 
-    <!-- EXTRACT TOOL INFO CARD (toolbar pipette -> click a placed enemy) -->
-    <div id="extract-info-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
-        <div class="picker-panel" style="width:min(340px,90vw)">
-            <div class="picker-title">EXTRACT</div>
-            <div id="extract-info-body" style="padding:0 4px;"></div>
+    <!-- CHARACTER SHEET: one character — a placed enemy, a picker row, the
+         stage boss — with its frames grouped by animation and projectile.
+         Opened by the CHARACTER tool, the enemy picker's pixel button, X PIXELS
+         in the boss lab and the viewer over the bridge. Tap a frame or a group
+         header to pick; A sends the picked frames to the PIXEL EDITOR, X
+         extracts the character to the shared library, B closes. -->
+    <div id="char-sheet" class="picker-overlay hidden" onclick="if(event.target===this)closeCharacterSheet()">
+        <div class="picker-panel char-panel">
+            <div class="picker-title cs-title"><span id="cs-name" class="cs-name"></span><span id="cs-code" class="cs-code"></span></div>
+            <div class="cs-head">
+                <div class="cs-sprite"><img id="cs-img" alt="" draggable="false"></div>
+                <div class="cs-info">
+                    <span id="cs-meta" class="cs-meta"></span>
+                    <span id="cs-from"></span>
+                    <span id="cs-sel" class="cs-sel"></span>
+                </div>
+            </div>
+            <div class="cs-frames-hdr">
+                <span>FRAMES · TAP TO SELECT</span>
+                <div class="cs-mini-row">
+                    <button type="button" class="cs-mini" onclick="charPickAll()">ALL</button>
+                    <button type="button" class="cs-mini" onclick="charPickNone()">NONE</button>
+                </div>
+            </div>
+            <div id="cs-groups"></div>
+            <div class="cs-foot">
+                <button type="button" class="pad-hint" id="cs-send" onclick="charSendToPixel()"><span class="pad-orb pad-orb-a">A</span><span id="cs-send-label">PIXEL EDITOR</span></button>
+                <button type="button" class="pad-hint" onclick="charExtractToLibrary()"><span class="pad-orb pad-orb-x">X</span><span>EXTRACT TO LIBRARY</span></button>
+                <button type="button" class="pad-hint" onclick="closeCharacterSheet()"><span class="pad-orb pad-orb-b">B</span><span>CLOSE</span></button>
+            </div>
+            <div class="picker-hint sheet-foot" id="cs-note"></div>
         </div>
     </div>
 
@@ -4245,7 +4351,20 @@
                     e.dataTransfer.setData('application/json', JSON.stringify({ type: 'enemy', key: ek, letter }));
                     e.dataTransfer.effectAllowed = 'copy';
                 });
-                c.appendChild(opt);
+                // The row: the ARM option, and the pixel button that opens this
+                // enemy's CHARACTER SHEET (frames → pixel editor, or extract).
+                const row = document.createElement('div');
+                row.className = 'picker-row';
+                row.appendChild(opt);
+                const px = document.createElement('button');
+                px.type = 'button';
+                px.className = 'opt-pixel';
+                px.title = 'Open the character sheet — send ' + getEnemyDisplayName(ek) + ' to the pixel editor';
+                px.setAttribute('aria-label', px.title);
+                px.innerHTML = CHARACTER_GRID_SVG;
+                px.onclick = (e) => { e.stopPropagation(); openCharacterSheet({ kind: 'enemy', key: ek, from: 'picker' }); };
+                row.appendChild(px);
+                c.appendChild(row);
             });
             // An open stock list drops the entries that just came in.
             if (!document.getElementById('enemy-picker-stock').classList.contains('hidden')) renderStockEnemyList();
@@ -4519,12 +4638,17 @@
             if (currentTool === 'delete') flash('DELETE TOOL ARMED');
         }
 
-        function setExtractMode() {
-            currentTool = currentTool === 'extract' ? (selectedEnemyLetter ? 'place' : 'none') : 'extract';
+        // The CHARACTER tool (the old EXTRACT badge): tap a placed enemy or
+        // the boss strip to open its CHARACTER SHEET — frames for the pixel
+        // editor, or the character for the shared library.
+        function setCharacterTool() {
+            currentTool = currentTool === 'character' ? (selectedEnemyLetter ? 'place' : 'none') : 'character';
             closePicker();
             updateToolUI();
-            if (currentTool === 'extract') flash('EXTRACT TOOL ARMED · CLICK AN ENEMY OR THE BOSS');
+            if (currentTool === 'character') flash('CHARACTER TOOL · TAP AN ENEMY OR THE BOSS → PIXEL EDITOR / EXTRACT');
         }
+        // The pixel-grid glyph the CHARACTER tool and the picker's pixel buttons share.
+        const CHARACTER_GRID_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1" fill="currentColor"/></svg>';
 
         // Lucide zap — the powerup badge's face when no item art is armed.
         const POWERUP_ZAP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>';
@@ -4574,8 +4698,8 @@
             // Delete button
             document.getElementById('delete-mode-btn').classList.toggle('active', currentTool === 'delete');
 
-            // Extract button
-            document.getElementById('extract-mode-btn').classList.toggle('active', currentTool === 'extract');
+            // Character tool
+            document.getElementById('character-tool-btn').classList.toggle('active', currentTool === 'character');
 
             // Footer pad hints mirror the toolbar state
             document.getElementById('pad-hint-b').classList.toggle('active', currentTool === 'delete');
@@ -4583,9 +4707,9 @@
 
             // Grid mode class
             const gv = document.getElementById('grid-icon-view');
-            gv.classList.remove('mode-place', 'mode-delete', 'mode-extract', 'mode-none');
+            gv.classList.remove('mode-place', 'mode-delete', 'mode-character', 'mode-none');
             gv.classList.add(currentTool === 'delete' ? 'mode-delete' :
-                currentTool === 'extract' ? 'mode-extract' :
+                currentTool === 'character' ? 'mode-character' :
                 (currentTool === 'place' && selectedEnemyLetter) ? 'mode-place' : 'mode-none');
 
             updateContextualToolbar();
@@ -4648,6 +4772,8 @@
                 stageBossKey: () => 'boss' + getCurrentStageId(),
                 stageLabel: () => 'STAGE ' + String(getCurrentStageId()).padStart(2, '0'),
                 onAssignStageBoss: (key) => assignStageBoss(key, getCurrentStageId()),
+                // X PIXELS: the boss on stage, the frame showing pre-selected, into the character sheet.
+                onSendToPixel: (key, frame) => openCharacterSheet({ kind: 'boss', key, from: 'lab', frame }),
             });
             return bossLab;
         }
@@ -4727,6 +4853,7 @@
         }
         function closeBossLab() {
             if (!bossLabOpen) return;
+            if (pixelOpen && pixelOverLab) closePixelEditor();   // the pixel editor sat over the lab
             bossLabOpen = false;
             document.body.classList.remove('boss-lab');
             if (bossLab && bossLab.pendingCount()) bossLab.revert();
@@ -4734,7 +4861,149 @@
             updateContextualToolbar();
             flash('BACK TO STAGE ' + getCurrentStageId());
         }
-        function toggleBossLab() { if (bossLabOpen) closeBossLab(); else openBossLab(); }
+        function toggleBossLab() {
+            // From the pixel editor: back to the lab it was opened over, or
+            // out of a grid-opened one and into the lab.
+            if (pixelOpen) { const overLab = pixelOverLab; closePixelEditor(); if (overLab && bossLabOpen) return; }
+            if (bossLabOpen) closeBossLab(); else openBossLab();
+        }
+
+        // ================== PIXEL EDITOR ==================
+        // pixel-editor.js, mounted in place of the grid — or of the lab, when
+        // X PIXELS sent the boss — and fed by the character sheet's A. Every
+        // stroke lands on a working copy; A APPLY hands the painted frames
+        // back here and they take the Atlas Manager's own replace path
+        // (replacedFrames → mergeExtraSpritesIntoAtlas), so the grid, the
+        // picker, the lab, PLAY, the viewer and the next save all read the new
+        // pixels. B REVERT drops the strokes; B BACK returns to whatever was
+        // open before. `var`: updateStageBanner runs from init code above.
+        var pixelEditor = null;
+        var pixelOpen = false;
+        var pixelJob = null;         // { subject, frames, active, origin }
+        var pixelOverLab = false;    // opened over the lab: B goes back there
+        // The atlas key a record's frame name resolves to (either extension spelling).
+        function atlasFrameKey(name) {
+            if (!atlasData || !atlasData.frames) return null;
+            for (const k of altFrameNames(name)) if (atlasData.frames[k] && atlasData.frames[k].frame) return k;
+            return null;
+        }
+        // A frame's pixels at full size, cut from the atlas — what the editor paints on a copy of.
+        function pixelFrameSource(name) {
+            const k = atlasFrameKey(name);
+            if (!k || !atlasImage || !atlasImage.complete || !atlasImage.naturalWidth) return null;
+            const f = atlasData.frames[k].frame;
+            const cv = document.createElement('canvas');
+            cv.width = f.w; cv.height = f.h;
+            cv.getContext('2d').drawImage(atlasImage, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+            return cv;
+        }
+        function ensurePixelEditor() {
+            if (pixelEditor || !window.PixelEditor) return pixelEditor;
+            pixelEditor = PixelEditor.mount(document.getElementById('pixel-editor-host'), {
+                getFrame: pixelFrameSource,
+                onApply: applyPixelEdits,
+                onBack: closePixelEditor,
+                theme: document.body.classList.contains('theme-nintendo') ? 'nintendo' : 'xbox',
+            });
+            return pixelEditor;
+        }
+        // Where APPLY lands: the game's atlas — or, once an opened cart has
+        // been edited into a mod, that mod, with the parent untouched.
+        function pixelNote() {
+            return lineageForked()
+                ? 'APPLY WRITES INTO THIS MOD · PARENT ' + lineage.parent.title.toUpperCase() + ' STAYS UNTOUCHED'
+                : 'APPLY WRITES TO THE GAME ATLAS · EVERY USE OF THIS FRAME UPDATES';
+        }
+        // job = { subject: { name, code, kind }, frames: [{ name, anim }], active, origin }
+        function openPixelEditor(job) {
+            if (!ensurePixelEditor()) { alert('pixel-editor.js did not load — reload the editor'); return; }
+            if (!pixelOpen) {
+                pixelOverLab = bossLabOpen;
+                pixelOpen = true;
+                document.body.classList.add('pixel-editor');
+                closeMenu();
+            }
+            pixelJob = job;
+            pixelEditor.load({ subject: job.subject, frames: job.frames, active: job.active || 0, originLabel: job.origin || '', note: pixelNote() });
+            updateStageBanner();
+            updateContextualToolbar();
+        }
+        function closePixelEditor() {
+            if (!pixelOpen) return;
+            if (pixelEditor && pixelEditor.pendingCount()) pixelEditor.revert();
+            pixelOpen = false;
+            pixelJob = null;
+            document.body.classList.remove('pixel-editor');
+            if (pixelOverLab && bossLabOpen) flash('BACK TO BOSS LAB');
+            else { renderGrid(); flash('BACK TO STAGE ' + getCurrentStageId()); }
+            pixelOverLab = false;
+            updateStageBanner();
+            updateContextualToolbar();
+        }
+        // A APPLY: the painted frames replace their atlas entries the way the
+        // Atlas Manager's replace does, so everything that draws them repaints.
+        function applyPixelEdits(edits, n) {
+            let hit = 0;
+            edits.forEach((e) => {
+                const k = atlasFrameKey(e.name);
+                if (!k) return;
+                replacedFrames[k] = { key: k, canvas: e.canvas, w: e.w, h: e.h };
+                customFrameKeys.add(k);
+                hit++;
+            });
+            if (!hit) { flash('NOTHING TO WRITE · FRAMES NOT IN THIS ATLAS'); return; }
+            mergeExtraSpritesIntoAtlas().then((ok) => {
+                if (!ok) { flash('ATLAS UPDATE FAILED'); return; }
+                renderGrid();
+                refreshEnemyPickerIfOpen();
+                if (bossLab) bossLab.refresh();
+                lineageCheckSoon();
+                flash('ATLAS UPDATED · ' + hit + (hit === 1 ? ' FRAME' : ' FRAMES') + (lineageForked() ? ' · INTO THE MOD' : ''));
+                updateContextualToolbar();
+            });
+        }
+        // The toolbar's status line while the grid is away: the lab's, or the
+        // pixel editor's with what is inbound and where APPLY writes.
+        function updateModeStatus() {
+            const long = document.getElementById('lab-status-long'), short = document.getElementById('lab-status-short');
+            if (!long || !short) return;
+            if (pixelOpen && pixelJob) {
+                const n = pixelJob.frames.length, inbound = n + (n === 1 ? ' FRAME' : ' FRAMES') + ' INBOUND';
+                long.textContent = 'PIXEL EDITOR · ' + String(pixelJob.subject.name || '').toUpperCase() + ' · ' + inbound
+                    + (lineageForked() ? ' · APPLY WRITES INTO THE MOD' : ' · APPLY WRITES TO THE ATLAS');
+                short.textContent = 'PIXEL EDITOR · ' + inbound;
+                if (pixelEditor) pixelEditor.setNote(pixelNote());
+            } else {
+                long.textContent = 'BOSS LAB · PATTERNS PREVIEW LIVE · APPLY WRITES TO GAME DATA';
+                short.textContent = 'BOSS LAB · LIVE PREVIEW';
+            }
+        }
+        // X PIXELS in the standalone viewer arrives over the bridge: open the
+        // character sheet on that boss, the frame it showed pre-selected, as
+        // the lab's own X does, and tell the viewer an editor took it.
+        function receivePixelRequest(m) {
+            if (!bossData || !bossData[m.bossKey]) return;
+            try { sessionStorage.removeItem('editorPixelRequest'); } catch (e) {}
+            try { if (viewerBridgeChannel) viewerBridgeChannel.postMessage({ type: 'pixel-ack', gameId: GAME_ID, bossKey: m.bossKey }); } catch (e) {}
+            openCharacterSheet({ kind: 'boss', key: m.bossKey, from: 'viewer', frame: m.frame || null });
+        }
+        // A viewer with no editor open opens one on its request, which rides
+        // into the new tab in sessionStorage: take it up once the game is in.
+        (function watchPixelRequest() {
+            let raw = null;
+            try { raw = sessionStorage.getItem('editorPixelRequest'); } catch (e) {}
+            if (!raw) return;
+            let m = null;
+            try { m = JSON.parse(raw); } catch (e) { return; }
+            if (!m || m.type !== 'send-to-pixel' || m.gameId !== GAME_ID || !m.bossKey) return;
+            let tries = 0;
+            const t = setInterval(() => {
+                if (++tries > 120) { clearInterval(t); return; }
+                if (!bossData || !bossData[m.bossKey] || !atlasData || !atlasImage || !atlasImage.complete || !atlasImage.naturalWidth) return;
+                clearInterval(t);
+                receivePixelRequest(m);
+            }, 500);
+        })();
         // Which badges the toolbar shows follows the loaded game: SAVE needs a
         // save target, 3D needs sec7 models, and the invader badge lights up
         // while the lab is open (so does the drawer's BOSS LAB row).
@@ -4743,7 +5012,7 @@
             document.body.classList.toggle('has-3d-models', hasSec7Models());
             document.body.classList.toggle('uses-tilemap', gameUsesTilemap());
             const b = document.getElementById('boss-lab-btn');
-            if (b) b.classList.toggle('active', bossLabOpen);
+            if (b) b.classList.toggle('active', bossLabOpen && !pixelOpen);
             const row = document.getElementById('menu-boss-lab');
             if (row) row.classList.toggle('hi', bossLabOpen);
             const lbl = document.getElementById('menu-boss-lab-label');
@@ -4766,6 +5035,7 @@
             const m = ev.data;
             lineageCheckSoon();   // an edit made in another window still forks an opened cart
             if (m && m.type === 'tilemap-apply' && (!m.gameId || m.gameId === GAME_ID)) { applyTilemapFromEditor(m); return; }
+            if (m && m.type === 'send-to-pixel' && m.gameId === GAME_ID && m.bossKey) { receivePixelRequest(m); return; }
             if (!m || m.type !== 'boss-patterns' || m.gameId !== GAME_ID || !m.changes || !bossData) return;
             let n = 0;
             for (const k in m.changes) {
@@ -4785,6 +5055,14 @@
 
         // ================== OSD CHROME ==================
         function updateStageBanner() {
+            updateModeStatus();
+            if (pixelOpen && pixelJob) {
+                const n = pixelJob.frames.length;
+                document.getElementById('stage-banner-title').textContent = 'PIXEL EDITOR';
+                document.getElementById('stage-banner-waves').textContent =
+                    String(pixelJob.subject.name || '').toUpperCase() + ' · ' + String(n).padStart(2, '0') + (n === 1 ? ' FRAME' : ' FRAMES');
+                return;
+            }
             if (bossLabOpen) {
                 document.getElementById('stage-banner-title').textContent = 'BOSS LAB';
                 document.getElementById('stage-banner-waves').textContent =
@@ -4827,6 +5105,7 @@
         function applyTheme(t) {
             document.body.classList.toggle('theme-nintendo', t === 'nintendo');
             if (bossLab) bossLab.setTheme(t === 'nintendo' ? 'nintendo' : 'xbox');
+            if (pixelEditor) pixelEditor.setTheme(t === 'nintendo' ? 'nintendo' : 'xbox');
             const x = document.getElementById('seg-xbox'), n = document.getElementById('seg-nintendo');
             if (x && n) {
                 x.classList.toggle('on', t !== 'nintendo');
@@ -4912,7 +5191,7 @@
             const horizontal = gridOrientation === 'horizontal';
             grid.className = `editor-grid ${horizontal ? 'horizontal ' : ''}${
                 currentTool === 'delete' ? 'mode-delete' :
-                currentTool === 'extract' ? 'mode-extract' :
+                currentTool === 'character' ? 'mode-character' :
                 (currentTool === 'place' && selectedEnemyLetter) ? 'mode-place' : 'mode-none'}`;
 
             if (horizontal) {
@@ -4969,12 +5248,13 @@
         }
 
         // The stage boss, rendered where it actually arrives: after the last
-        // wave, with the attack pattern it runs. Clickable by the EXTRACT tool
-        // (bosses never appear in the grid, so this is their only pipette
-        // target); otherwise it opens the boss lab on it (the character editor
-        // still reaches the record through CHARACTER → Bosses). bossExtra is
-        // intentionally not reachable here — it is not stage-bound (only the
-        // ?boss=goki swap uses it).
+        // wave, with the attack pattern it runs. With the CHARACTER tool armed
+        // it opens the boss's character sheet (bosses never appear in the
+        // grid, so this is their only target there); otherwise it opens the
+        // boss lab on it (the character editor still reaches the record
+        // through CHARACTER → Bosses). bossExtra is intentionally not
+        // reachable here — it is not stage-bound (only the ?boss=goki swap
+        // uses it).
         function createBossStrip() {
             const sid = getCurrentStageId();
             const key = 'boss' + sid;
@@ -5016,9 +5296,9 @@
             tag.className = 'boss-tag';
             tag.textContent = 'BOSS · ' + key;
             strip.appendChild(tag);
-            strip.title = 'Open in the boss lab';
+            strip.title = 'Open in the boss lab · with the character tool armed, opens the character sheet instead';
             strip.onclick = () => {
-                if (currentTool === 'extract') { openExtractCard(key); return; }
+                if (currentTool === 'character') { openCharacterSheet({ kind: 'boss', key, from: 'strip' }); return; }
                 openBossLab(key);
             };
             return strip;
@@ -5078,9 +5358,9 @@
         }
 
         function handleCellClick(wi, si) {
-            if (currentTool === 'extract') {
+            if (currentTool === 'character') {
                 const cur = currentGrid[wi][si];
-                if (cur && cur !== '00') openExtractCard('enemy' + cellEnemyLetter(cur));
+                if (cur && cur !== '00') openCharacterSheet({ kind: 'enemy', key: 'enemy' + cellEnemyLetter(cur), from: 'grid', wi, si });
                 return;
             }
             if (currentTool === 'delete') {
@@ -5159,7 +5439,7 @@
             writeStageGrid(gameData[currentStageKey], currentGrid);
         }
 
-        // ================== TILEMAP / PIXEL EDITORS ==================
+        // ================== TILEMAP EDITOR ==================
         // The Tilemap Editor (/tilemap-editor/) edits a stage's scenery — the
         // 14x768 tile grid over gameData.backgroundCells — in a vertical or
         // horizontal view, and hands edits back over the viewer bridge channel
@@ -5202,9 +5482,8 @@
             await storeTilemapForViewers();
             openExternalUrl(new URL('/tilemap-editor/', location.href).href, 'TILEMAP EDITOR');
         }
-        function openPixelEditor() {
-            openExternalUrl(new URL('/pixel-editor/', location.href).href, 'PIXEL EDITOR');
-        }
+        // (The pixel editor is no longer a separate page: see PIXEL EDITOR
+        // above — it opens in place, fed by the character sheet.)
         // The Tilemap Editor's APPLY: take the stage grids it edited, the cell
         // list, and any cells it added (as atlas extras, then repacked).
         function applyTilemapFromEditor(m) {
@@ -6451,111 +6730,194 @@
             }
         }
 
-        // ================== EXTRACT TOOL ==================
-        // The toolbar pipette: click a placed enemy — or the boss strip under
-        // the last wave — to inspect it and push it into the shared library.
-        // key is a full record key: 'enemyA', 'boss2' or 'playerData'.
-        function openExtractCard(key) {
-            const entry = key === 'playerData' ? playerData : (bossData[key] || enemyData[key]);
-            if (!entry) { flash('NO DATA FOR ' + key.toUpperCase()); return; }
-            const kind = characterKindOf(entry);
-            const body = document.getElementById('extract-info-body');
-            body.innerHTML = '';
-
-            const head = document.createElement('div');
-            head.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;';
-            const thumbFrame = libraryFrames(entry)[0];
-            const url = thumbFrame ? getThumbURL(thumbFrame) : null;
-            if (url) {
-                const img = document.createElement('img');
-                img.src = url;
-                img.style.cssText = 'width:48px;height:48px;image-rendering:pixelated;object-fit:contain;';
-                head.appendChild(img);
-            }
-            const title = document.createElement('div');
-            const nm = document.createElement('div');
-            nm.textContent = kind === 'boss' ? bossDisplayName(key, entry) : (entry.name || key);
-            nm.style.cssText = 'font-weight:700;font-size:13px;';
-            const sub = document.createElement('div');
-            sub.textContent = key;
-            sub.style.cssText = 'font-size:10px;color:#888;';
-            title.appendChild(nm);
-            title.appendChild(sub);
-            head.appendChild(title);
-            body.appendChild(head);
-
-            const stats = document.createElement('div');
-            stats.style.cssText = 'font-size:11px;font-family:monospace;margin-bottom:12px;display:grid;grid-template-columns:auto 1fr;gap:2px 12px;';
-            const addStat = (l, v) => {
-                if (v === undefined || v === null) return;
-                const a = document.createElement('span'); a.textContent = l; a.style.color = '#888';
-                const b = document.createElement('span'); b.textContent = String(v);
-                stats.appendChild(a); stats.appendChild(b);
-            };
-            addStat('HP', entry.hp);
-            addStat('SCORE', entry.score);
-            addStat('SPEED', entry.speed);
-            addStat('INTERVAL', entry.interval);
-            if (kind === 'boss') {
-                addStat('SP GAUGE', entry.spgage);
-                addStat('PATTERN', entry.attackPattern
-                    ? bossDisplayName(entry.attackPattern, bossData[entry.attackPattern])
-                    : bossDisplayName(key, entry));
-            }
-            const EX = window.ShmupExtract;
-            const names = EX ? EX.collectFrameNames(entry) : (entry.texture || []);
-            let crop = null;
-            if (EX && atlasData && atlasImage) {
-                const fr = atlasData.frames || {};
-                crop = EX.cropFrames(entry, (fk) => {
-                    const f = fr[fk];
-                    return f && f.frame
-                        ? { image: atlasImage, x: f.frame.x, y: f.frame.y, w: f.frame.w, h: f.frame.h }
-                        : null;
+        // ================== CHARACTER SHEET ==================
+        // One character — a placed enemy, a picker row, the stage boss — with
+        // its frames grouped by animation and projectile. Opened by the
+        // CHARACTER tool (a grid cell, the boss strip), the enemy picker's
+        // pixel button, X PIXELS in the boss lab and the viewer over the
+        // bridge. Tap a frame or a group header to pick; A sends the picked
+        // frames to the PIXEL EDITOR, X extracts the character to the shared
+        // library (what the toolbar's EXTRACT badge used to do), B closes.
+        // sel = { kind: 'enemy' | 'boss', key, from: 'grid' | 'strip' | 'picker' | 'lab' | 'viewer', wi, si, frame, picked: Set }
+        let charSheet = null;
+        function charRecord(sel) { return sel.kind === 'boss' ? bossData[sel.key] : enemyData[sel.key]; }
+        function charName(sel) { return sel.kind === 'boss' ? bossDisplayName(sel.key, charRecord(sel)) : getEnemyDisplayName(sel.key); }
+        function charCode(sel) {
+            const rec = charRecord(sel) || {};
+            return sel.kind === 'boss' ? sel.key + ' · HP ' + (rec.hp != null ? rec.hp : '?') : sel.key + ' · CODE ' + getEnemyLetter(sel.key);
+        }
+        // A camelCase anim key as a label: shootA → SHOOT A.
+        function charGroupLabel(k) { return String(k).replace(/([a-z])([A-Z])/g, '$1 $2').toUpperCase(); }
+        // bison_idle0.gif → idle0: the prefix is the character, the extension noise.
+        function shortFrameName(n) { return String(n).replace(/\.(gif|png)$/i, '').replace(/^[a-zA-Z]+?_/, ''); }
+        // A frame under either spelling of its extension: records say .gif,
+        // a repacked atlas may say .png.
+        function altFrameNames(n) {
+            n = String(n);
+            const alt = /\.gif$/i.test(n) ? n.replace(/\.gif$/i, '.png') : /\.png$/i.test(n) ? n.replace(/\.png$/i, '.gif') : null;
+            return alt ? [n, alt] : [n];
+        }
+        // The frames a record owns, grouped: a boss's anim groups then its
+        // projectiles, an enemy's texture strip then its projectile. A name
+        // can repeat within a group (barlog's idle loops back), so each is
+        // listed once; a frame the atlas lacks is left out.
+        function charFrameGroups(sel) {
+            const rec = charRecord(sel);
+            if (!rec) return [];
+            const groups = [];
+            const add = (key, label, list) => {
+                if (!Array.isArray(list)) return;
+                const seen = new Set(), frames = [];
+                list.forEach((f) => {
+                    if (typeof f !== 'string' || seen.has(f)) return;
+                    seen.add(f);
+                    const url = getThumbURL(f);
+                    if (url) frames.push({ name: f, url });
                 });
-            }
-            const uniq = crop ? EX.uniqueFrameCount(crop.sprites) : null;
-            let frameLabel = String(names.length);
-            if (crop && crop.missing.length) frameLabel += ` (${crop.missing.length} missing)`;
-            else if (uniq !== null && uniq < names.length) frameLabel += ` (${uniq} unique)`;
-            addStat('FRAMES', frameLabel);
-            body.appendChild(stats);
-            // Dezaemon art often repeats one picture across all four animation
-            // slots — say so, or a static library preview reads as a broken save.
-            if (uniq === 1 && names.length > 1 && crop && !crop.missing.length) {
-                const note = document.createElement('div');
-                note.textContent = 'All frames identical — this art does not animate.';
-                note.style.cssText = 'font-size:10px;color:#888;margin:-6px 0 10px;';
-                body.appendChild(note);
-            }
-
-            const btns = document.createElement('div');
-            btns.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
-            const save = document.createElement('button');
-            save.className = 'menu-btn';
-            save.style.cssText = 'background:#84cc16;color:#000;font-weight:700;';
-            save.textContent = 'SAVE TO LIBRARY';
-            save.onclick = async () => {
-                const name = await publishEntryToLibrary(entry, entry.name || (kind === 'boss' ? bossDisplayName(key, entry) : key), key);
-                if (name) {
-                    document.getElementById('extract-info-modal').classList.add('hidden');
-                    if (confirm(`Saved '${name}'. Open it in the CHARACTER LIBRARY EDITOR?`)) openLibraryEditor(name);
-                }
+                if (frames.length) groups.push({ key, label, frames });
             };
-            const edit = document.createElement('button');
-            edit.className = 'menu-btn';
-            edit.textContent = 'EDIT';
-            edit.onclick = () => {
-                document.getElementById('extract-info-modal').classList.add('hidden');
-                document.getElementById('enemy-editor-modal').classList.remove('hidden');
-                switchEditorTab(kind === 'boss' ? 'bosses' : kind === 'player' ? 'player' : 'enemies');
-                editEnemy(key);
-            };
-            btns.appendChild(save);
-            btns.appendChild(edit);
-            body.appendChild(btns);
-
-            document.getElementById('extract-info-modal').classList.remove('hidden');
+            if (rec.anim && typeof rec.anim === 'object') {
+                for (const a of Object.keys(rec.anim)) if (!a.startsWith('_')) add('anim:' + a, charGroupLabel(a), rec.anim[a]);
+            }
+            add('texture', 'IDLE', rec.texture);
+            for (const k of BOSS_PROJECTILE_KEYS) {
+                const d = rec[k];
+                if (d && typeof d === 'object') add(k, 'PROJECTILE ' + (k.replace(/^(bullet|projectile)Data/, '') || 'A'), d.texture);
+            }
+            return groups;
+        }
+        // Open the sheet. A frame hint (the one the lab or the viewer showed)
+        // pre-selects that frame's whole group; otherwise the first group.
+        function openCharacterSheet(sel) {
+            if (currentAtlasKey !== LEVEL_ATLAS_KEY) { ensureLevelAtlasOpen().then(() => openCharacterSheet(sel)); return; }
+            const rec = charRecord(sel);
+            if (!rec) { flash('NO DATA FOR ' + String(sel.key).toUpperCase()); return; }
+            const groups = charFrameGroups(sel);
+            if (!groups.length) { flash('NO FRAMES FOR ' + charName(sel).toUpperCase() + ' IN THIS ATLAS'); return; }
+            const want = sel.frame ? altFrameNames(sel.frame) : null;
+            const g = want ? groups.find((x) => x.frames.some((f) => want.includes(f.name))) : null;
+            charSheet = Object.assign({}, sel, { picked: new Set((g || groups[0]).frames.map((f) => f.name)) });
+            closePicker();
+            renderCharacterSheet();
+            document.getElementById('char-sheet').classList.remove('hidden');
+        }
+        function renderCharacterSheet() {
+            const sel = charSheet;
+            if (!sel) return;
+            const groups = charFrameGroups(sel), picked = sel.picked;
+            const total = groups.reduce((a, g) => a + g.frames.length, 0);
+            const pad2 = (v) => String(v).padStart(2, '0');
+            const sid = getCurrentStageId();
+            document.getElementById('cs-name').textContent = charName(sel).toUpperCase();
+            document.getElementById('cs-code').textContent = charCode(sel);
+            document.getElementById('cs-img').src = groups.length ? groups[0].frames[0].url : '';
+            let meta;
+            if (sel.kind === 'enemy') {
+                const letter = getEnemyLetter(sel.key);
+                const uses = currentGrid.reduce((a, row) => a + row.filter((c) => c && c !== '00' && cellEnemyLetter(c) === letter).length, 0);
+                meta = 'ENEMY · PLACED ' + uses + '× ON STAGE ' + pad2(sid) + ' · ' + total + (total === 1 ? ' FRAME' : ' FRAMES');
+            } else {
+                meta = 'BOSS · ' + groups.length + (groups.length === 1 ? ' GROUP · ' : ' GROUPS · ') + total + (total === 1 ? ' FRAME' : ' FRAMES');
+            }
+            document.getElementById('cs-meta').textContent = meta;
+            document.getElementById('cs-from').textContent =
+                sel.from === 'grid' ? 'FROM WAVE ' + pad2(sel.wi) + ' · SLOT ' + sel.si
+                : sel.from === 'lab' ? 'FROM THE BOSS LAB'
+                : sel.from === 'viewer' ? 'FROM THE BOSS VIEWER'
+                : sel.from === 'strip' ? 'FROM THE STAGE BOSS STRIP' : 'FROM THE ENEMY PICKER';
+            document.getElementById('cs-sel').textContent = picked.size + ' OF ' + total + ' SELECTED';
+            const host = document.getElementById('cs-groups');
+            host.innerHTML = '';
+            groups.forEach((g) => {
+                const all = g.frames.every((f) => picked.has(f.name));
+                const wrap = document.createElement('div');
+                wrap.className = 'cs-group';
+                const hdr = document.createElement('button');
+                hdr.type = 'button';
+                hdr.className = 'cs-group-hdr' + (all ? ' on' : '');
+                const lbl = document.createElement('span');
+                lbl.textContent = g.label;
+                const cnt = document.createElement('span');
+                cnt.className = 'cs-group-count';
+                cnt.textContent = g.frames.length + (g.frames.length === 1 ? ' FRAME' : ' FRAMES') + ' · TAP TO TOGGLE';
+                hdr.appendChild(lbl);
+                hdr.appendChild(cnt);
+                hdr.onclick = () => { g.frames.forEach((f) => all ? picked.delete(f.name) : picked.add(f.name)); renderCharacterSheet(); };
+                wrap.appendChild(hdr);
+                const row = document.createElement('div');
+                row.className = 'cs-frames';
+                g.frames.forEach((f) => {
+                    const on = picked.has(f.name);
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'cs-frame' + (on ? ' on' : '');
+                    const img = document.createElement('img');
+                    img.src = f.url; img.alt = ''; img.draggable = false;
+                    const t = document.createElement('span');
+                    t.textContent = shortFrameName(f.name);
+                    t.title = f.name;
+                    b.appendChild(img);
+                    b.appendChild(t);
+                    b.onclick = () => { if (on) picked.delete(f.name); else picked.add(f.name); renderCharacterSheet(); };
+                    row.appendChild(b);
+                });
+                wrap.appendChild(row);
+                host.appendChild(wrap);
+            });
+            const send = document.getElementById('cs-send');
+            send.classList.toggle('dim', !picked.size);
+            send.classList.toggle('glow', picked.size > 0);
+            document.getElementById('cs-send-label').textContent = 'PIXEL EDITOR' + (picked.size ? ' (' + picked.size + ')' : '');
+            document.getElementById('cs-note').textContent = lineageForked()
+                ? 'PIXEL EDITS SAVE INTO THIS MOD · PARENT ' + lineage.parent.title.toUpperCase() + ' STAYS UNTOUCHED'
+                : 'PIXEL EDITS WRITE TO THE GAME ATLAS · EVERY PLACEMENT UPDATES';
+        }
+        function closeCharacterSheet() {
+            charSheet = null;
+            document.getElementById('char-sheet').classList.add('hidden');
+        }
+        function charPickAll() {
+            if (!charSheet) return;
+            charFrameGroups(charSheet).forEach((g) => g.frames.forEach((f) => charSheet.picked.add(f.name)));
+            renderCharacterSheet();
+        }
+        function charPickNone() {
+            if (!charSheet) return;
+            charSheet.picked.clear();
+            renderCharacterSheet();
+        }
+        // A: the picked frames become the pixel editor's INBOUND tray; the
+        // sheet closes and the editor opens in place of the grid or the lab.
+        function charSendToPixel() {
+            const sel = charSheet;
+            if (!sel) return;
+            const frames = [];
+            charFrameGroups(sel).forEach((g) => g.frames.forEach((f) => { if (sel.picked.has(f.name)) frames.push({ name: f.name, anim: g.label }); }));
+            if (!frames.length) { flash('PICK A FRAME FIRST'); return; }
+            const pad2 = (v) => String(v).padStart(2, '0'), sid = getCurrentStageId(), name = charName(sel);
+            const origin =
+                sel.from === 'grid' ? 'FROM STAGE ' + pad2(sid) + ' · WAVE ' + pad2(sel.wi) + ' · SLOT ' + sel.si
+                : sel.from === 'lab' ? 'FROM THE BOSS LAB · ' + sel.key
+                : sel.from === 'viewer' ? 'FROM THE BOSS VIEWER · ' + sel.key
+                : sel.from === 'strip' ? 'FROM STAGE ' + pad2(sid) + ' · BOSS' : 'FROM THE ENEMY PICKER · ' + sel.key;
+            const want = sel.frame ? altFrameNames(sel.frame) : [];
+            const active = Math.max(0, frames.findIndex((f) => want.includes(f.name)));
+            closeCharacterSheet();
+            openPixelEditor({ subject: { name, code: charCode(sel), kind: sel.kind }, frames, active, origin });
+            flash('SENT TO PIXEL EDITOR · ' + name.toUpperCase() + ' · ' + frames.length + (frames.length === 1 ? ' FRAME' : ' FRAMES'));
+        }
+        // X: the toolbar's old EXTRACT, now inside the sheet — publish the
+        // character to the shared library (publishEntryToLibrary asks for
+        // the name), then offer the CHARACTER LIBRARY EDITOR on it.
+        async function charExtractToLibrary() {
+            const sel = charSheet;
+            if (!sel) return;
+            const rec = charRecord(sel);
+            if (!rec) return;
+            const name = await publishEntryToLibrary(rec, rec.name || charName(sel), sel.key);
+            if (!name) return;
+            closeCharacterSheet();
+            if (confirm(`Saved '${name}'. Open it in the CHARACTER LIBRARY EDITOR?`)) openLibraryEditor(name);
         }
 
         // ================== ATLAS ==================

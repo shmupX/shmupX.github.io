@@ -1634,7 +1634,8 @@ tumbling down the road. The mapper links that rider by roster key
 issued it. So the motorcycle, published to the Character Library and imported
 into rando's first stage, pointed at an enemyAZ rando does not have. A shot
 bike left no rider, and nothing carried the lean poses at all. Publishing
-(EXTRACT MODE, the editor's PUBLISH TO LIBRARY and its EXTRACT tool) now goes
+(EXTRACT MODE, the editor's PUBLISH TO LIBRARY and the character sheet's
+EXTRACT TO LIBRARY) now goes
 through `ShmupExtract.zakoTravelRecord`, which writes a `squad` onto the record
 under the keys its members had. The squad holds the zako's poses (records of
 its stage identical to it in every byte but the appearance id, drawn in art of
@@ -1911,6 +1912,29 @@ cloud sprite loads it into the room (a cloud sprite is a snapshot; the room is
 the live copy). Above 1080 px the TOOLS and SPRITE docks sit beside the canvas;
 below it (the CMG Desktop window, a phone) they are drawers over it, and the
 shortcut legend is behind the ⓘ in the footer.
+
+**The level editor's own PIXEL EDITOR** (`static/editor/pixel-editor.js`). A
+second pixel editor, for the art a game already has: it opens _in place of the
+wave grid_ (or of the Boss Lab) on frames cut from the game's atlas, and never
+leaves the editor. Three doors lead to it, all through the **CHARACTER SHEET**:
+the toolbar's CHARACTER tool (the pixel-grid badge where the EXTRACT pipette
+used to be — tap a placed enemy or the boss strip), the pixel button on every
+SELECT ENEMY row, and X PIXELS in the Boss Lab, whose sheet opens with the
+animation group of the frame on screen pre-selected (the standalone
+`boss-viewer.html` has the same button: it hands the boss to an open editor over
+the bridge, `send-to-pixel` / `pixel-ack`, or opens one on the request). The
+sheet lists the character's frames by animation and projectile — tap a frame or
+a group header, ALL / NONE above — and **A PIXEL EDITOR (n)** sends the picked
+frames to the INBOUND tray, **X EXTRACT TO LIBRARY** is what the EXTRACT badge
+did (`publishEntryToLibrary`), **B** closes. The canvas sits at integer zoom
+with a toggleable grid; pencil, fill, pick and erase work on a working copy,
+with a palette read off the sprite (its most-used colours). **A APPLY (n)**
+hands the painted frames back and they take the Atlas Manager's own replace
+path (`replacedFrames` → `mergeExtraSpritesIntoAtlas`), so the grid, the
+picker, the lab, PLAY and the viewer repaint and the next cloud save or SAVE
+MOD carries the pixels; **B** reverts, or, with nothing pending, returns to
+whatever was open. On a mod the sheet and the editor say so: the edits land in
+the mod and the parent stays untouched.
 
 **SpriteX Tilemap Editor** (`/tilemap-editor/`). spriteX's TILEMAP tab (Tiled
 JSON + tileset PNG, tile and object layers, place / erase / pick, undo per
