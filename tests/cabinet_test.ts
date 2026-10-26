@@ -14,6 +14,8 @@
 
 import { assert, assertEquals } from "@std/assert";
 import {
+  cabinetBackdropBox,
+  cabinetFrameBox,
   cabinetScreenRect,
   normalizeCabinet,
   normalizeLoadingArt,
@@ -89,6 +91,44 @@ Deno.test("cabinetScreenRect: the 2019 layout unless the frame says where the ga
   );
 });
 
+Deno.test("on a phone the frame and the backdrop end where the game does: no edge rows above or below it", () => {
+  // A 412 x 779 phone: the game fills the width (412 x 772) and the page
+  // centers it 3.5px from the top. The 2019 frame (766 x 1024) is as tall as
+  // the game and overhangs its sides; the 2019 backdrop (1280 x 1024) is as
+  // tall as the game too, not the viewport, so the 3.5px above and below the
+  // game stay black instead of showing the backdrop's top and bottom rows.
+  const phone = { left: 0, top: 3.5, width: 412, height: 772 };
+  const frame = cabinetFrameBox({ image: PNG }, 766, 1024, phone);
+  assertEquals(frame.y, 3.5);
+  assertEquals(frame.h, 772);
+  assert(
+    frame.x < 0 && frame.x + frame.w > 412,
+    "the bezel is beside the game",
+  );
+  const bg = cabinetBackdropBox(1280, 1024, 412, phone);
+  assertEquals(bg.y, 3.5);
+  assertEquals(bg.h, 772);
+  assert(bg.x < 0 && bg.w > 412, "the backdrop covers the page's width");
+  // A 1920 x 1080 desktop: the game is as tall as the viewport, and the
+  // backdrop covers it exactly as `cover` would (scaled to the width, the
+  // overflow split above and below).
+  const desktop = { left: 672, top: 0, width: 576, height: 1080 };
+  const wide = cabinetBackdropBox(1280, 1024, 1920, desktop);
+  assertEquals(wide, { x: 0, y: -228, w: 1920, h: 1536 });
+  const bezel = cabinetFrameBox({ image: PNG }, 766, 1024, desktop);
+  assertEquals(bezel.y, 0);
+  assertEquals(bezel.h, 1080);
+  assertEquals(Math.round(bezel.x + bezel.w / 2), 960);
+  // A screen rect places the game inside the picture.
+  const inset = cabinetFrameBox(
+    { image: PNG, screen: { x: 100, y: 50, w: 200, h: 375 } },
+    400,
+    500,
+    { left: 10, top: 20, width: 256, height: 480 },
+  );
+  assertEquals(inset, { x: 10 - 128, y: 20 - 64, w: 512, h: 640 });
+});
+
 Deno.test("the editor carries the cabinet through the cloud save and load", async () => {
   const editor = await read("static/editor/index.html");
   assert(
@@ -148,6 +188,16 @@ Deno.test("the level loader — the plugin and the bundle's inlined copy — put
     assert(
       js.includes("globalThis.howtoModalOpen = open;"),
       path + ": the HOW TO PLAY card does not define howtoModalOpen",
+    );
+    assert(
+      js.includes("installCabinetBackdrop(host, img, cabinet.backdrop)") &&
+        js.includes("cabinetBackdropBox(W, H, pageW, game)"),
+      path + ": the backdrop is not sized to the game",
+    );
+    assert(
+      js.includes("cabinetFrameBox(frame, W, H, game)") &&
+        js.includes("canvas.getBoundingClientRect()"),
+      path + ": the frame is laid at the rounded offset",
     );
     assert(
       js.includes('"/cabinet/loading").once("value")'),

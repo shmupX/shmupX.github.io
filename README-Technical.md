@@ -112,9 +112,12 @@ they are written out in full.
   starfield it draws for a level with custom enemies. ADVANCED EDITORS →
   **CABINET** is the page _around_ the game, as the 2019 game's own page had
   it: a BACKDROP over the page behind everything (its `img/bg.jpg`, an
-  arcade), a FRAME around the screen (its `img/frame.jpg`, a bezel: scaled to
-  the game's height and centered on it, unless a SCREEN rect — X Y W H in the
-  picture's pixels — says where the game draws), the HOW TO PLAY card the
+  arcade — drawn as wide as the page and as tall as the game, centered on
+  it: covering the viewport instead showed its edge rows as two lines above
+  and below the game on a phone), a FRAME around the screen (its
+  `img/frame.jpg`, a bezel: scaled to the game's height and centered on it,
+  unless a SCREEN rect — X Y W H in the picture's pixels — says where the
+  game draws), the HOW TO PLAY card the
   title's button opens (its `howto_en.jpg`; without a card the title has no
   button, where it used to have one that did nothing), and the LOADING
   SCREEN — the spinner's frames, 120 ms each, over the picture drawn faintly
@@ -193,12 +196,17 @@ they are written out in full.
     straight into the stage. `tests/stage_backgrounds_test.ts` checks the two
     copies carry it.
   - `applyCabinet` and `loadingArt`, with the helpers they share
-    (`normalizeCabinet`, `cabinetScreenRect`, `installCabinetFrame`,
+    (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
+    `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
     `installCabinetHowto`): a level's **cabinet** — the page around the game,
     see the editor's CABINET above. `applyCabinet` runs first on both roads
-    in: the backdrop goes over the body, the frame into `#phaser-canvas`
-    behind the canvas, re-laid by a ResizeObserver whenever the page's
-    `fitCanvas` re-sizes the canvas, and the HOW TO PLAY card becomes an
+    in: the backdrop goes over the body, sized by `cabinetBackdropBox` (the
+    page's width, the game's height), the frame into `#phaser-canvas` behind
+    the canvas, placed by `cabinetFrameBox` from the canvas's client rect
+    (offsetTop rounds away the half pixel the page's flex centering leaves,
+    and a frame laid at the rounded offset overhangs the canvas by it), both
+    re-laid by a ResizeObserver whenever the page's `fitCanvas` re-sizes the
+    canvas, and the HOW TO PLAY card becomes an
     overlay that defines `window.howtoModalOpen`, stopping its pointer events
     at its edge so a tap on it never reaches Phaser's window listeners (the
     title's tap zone would start the game). `loadingArt` reads the level's

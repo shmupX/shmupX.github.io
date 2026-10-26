@@ -149,6 +149,7 @@
     const stages = data.stages && typeof data.stages === "object" ? data.stages : null;
     return !!stages && Object.keys(stages).filter((k) => /^stage\d+$/.test(k)).length > 1;
   }
+
   // ---- The cabinet: the page around the game ---------------------------------
 
   // What a level puts around the game on its page (`cabinet`), as the editor's
@@ -222,10 +223,111 @@
     return { x: (imageW - w) / 2, y: 0, w, h: imageH };
   }
 
+  // Where a frame picture of `imageW` x `imageH` is drawn so that its screen
+  // rect lies over the game, `game` being the canvas's box (left, top, width,
+  // height) in the coordinates the answer is wanted in. Scaled to fit the
+  // canvas, centered on it.
+  function cabinetFrameBox(frame, imageW, imageH, game) {
+    const r = cabinetScreenRect(frame, imageW, imageH);
+    const s = Math.min(game.width / r.w, game.height / r.h);
+    return {
+      x: game.left + (game.width - r.w * s) / 2 - r.x * s,
+      y: game.top + (game.height - r.h * s) / 2 - r.y * s,
+      w: imageW * s,
+      h: imageH * s,
+    };
+  }
+
+  // Where a backdrop picture of `imageW` x `imageH` is drawn: covering a box as
+  // wide as the page (`pageW`) and as tall as the game, centered on the game —
+  // not the viewport. The 2019 page drew bg.jpg to cover its viewport, but its
+  // canvas was as tall as the viewport; here the canvas is fitted inside it,
+  // and on a phone that leaves a few pixels above and below the game where a
+  // viewport-covering backdrop showed its own top and bottom rows as two lines.
+  // Sized to the game it fills the sides of a wide screen just as before and
+  // stays behind the canvas on a narrow one.
+  function cabinetBackdropBox(imageW, imageH, pageW, game) {
+    const s = Math.max(pageW / imageW, game.height / imageH);
+    const w = imageW * s;
+    const h = imageH * s;
+    return {
+      x: game.left + game.width / 2 - w / 2,
+      y: game.top + game.height / 2 - h / 2,
+      w,
+      h,
+    };
+  }
+
+  // The canvas's box in page coordinates, to the fraction: the page centers it
+  // with flexbox at, say, 3.5px from the top, and offsetTop rounds that to 4 —
+  // a frame laid at the rounded offset overhangs the canvas by half a pixel on
+  // one side, a hairline of its edge. Client rects keep the fraction. Under the
+  // page's landscape fallback (lib/game-page.ts FIT_PORTRAIT rotates the
+  // document and patches the canvas's getBoundingClientRect to answer in the
+  // unrotated, local frame) the rect is already in the page's own coordinates.
+  function cabinetCanvasBox(canvas) {
+    const c = canvas.getBoundingClientRect();
+    return { left: c.left, top: c.top, width: c.width, height: c.height };
+  }
+
+  // The same box relative to the canvas's container, where the frame is
+  // positioned. The container is the page's origin under the rotation (it fills
+  // the page); otherwise its own rect says where it is.
+  function cabinetCanvasBoxIn(host, canvas) {
+    const c = cabinetCanvasBox(canvas);
+    const t = getComputedStyle(document.documentElement).transform;
+    if (t && t !== "none") return c;
+    const h = host.getBoundingClientRect();
+    c.left -= h.left + host.clientLeft;
+    c.top -= h.top + host.clientTop;
+    return c;
+  }
+
+  // Runs `layout` now and again whenever the canvas or its container changes
+  // size: the page's fitCanvas sets the canvas's CSS size on every resize and
+  // orientation change, and a ResizeObserver follows it (a resize listener
+  // where there is none).
+  function watchCabinetLayout(host, layout) {
+    layout();
+    const canvas = host.querySelector("canvas");
+    if (typeof ResizeObserver === "function") {
+      const observer = new ResizeObserver(layout);
+      observer.observe(host);
+      if (canvas) observer.observe(canvas);
+    } else if (typeof window !== "undefined") {
+      window.addEventListener("resize", () => setTimeout(layout, 60));
+    }
+  }
+
+  // The backdrop over the page, drawn as cabinetBackdropBox says on the body.
+  // `img` has decoded (null: the picture would not, and plain cover is what
+  // there is).
+  function installCabinetBackdrop(host, img, src) {
+    const style = document.body.style;
+    style.backgroundColor = "#000";
+    style.backgroundImage = 'url("' + src.replace(/["\\\s]/g, "") + '")';
+    style.backgroundRepeat = "no-repeat";
+    style.backgroundPosition = "center";
+    style.backgroundSize = "cover";
+    if (!img || !img.naturalWidth || !img.naturalHeight) return;
+    const W = img.naturalWidth;
+    const H = img.naturalHeight;
+    const layout = () => {
+      const pageW = document.body.clientWidth;
+      const pageH = document.body.clientHeight;
+      if (!pageW || !pageH) return;
+      const canvas = host.querySelector("canvas");
+      let game = canvas && cabinetCanvasBox(canvas);
+      if (!game || !game.width || !game.height) game = { left: 0, top: 0, width: pageW, height: pageH };
+      const b = cabinetBackdropBox(W, H, pageW, game);
+      style.backgroundSize = b.w + "px " + b.h + "px";
+      style.backgroundPosition = b.x + "px " + b.y + "px";
+    };
+    watchCabinetLayout(host, layout);
+  }
+
   // The frame around the screen, put into the canvas's container behind the
-  // canvas and sized so its screen rect lies over the canvas — again whenever
-  // the page re-fits the canvas (its fitCanvas sets the canvas's CSS size on
-  // every resize; a ResizeObserver follows). `img` has decoded.
+  // canvas and drawn as cabinetFrameBox says. `img` has decoded.
   function installCabinetFrame(host, img, frame) {
     const old = host.querySelector("#shmupx-cabinet-frame");
     if (old) old.remove();
@@ -236,30 +338,22 @@
     img.style.cssText = "position:absolute;left:0;top:0;z-index:0;max-width:none;max-height:none;" +
       "pointer-events:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;";
     host.insertBefore(img, host.firstChild);
+    const W = img.naturalWidth;
+    const H = img.naturalHeight;
     const layout = () => {
       const canvas = host.querySelector("canvas");
       if (!canvas) return;
       canvas.style.position = "relative";
       canvas.style.zIndex = "1";
-      const cw = canvas.offsetWidth;
-      const ch = canvas.offsetHeight;
-      if (!cw || !ch) return;
-      const W = img.naturalWidth;
-      const H = img.naturalHeight;
-      const r = cabinetScreenRect(frame, W, H);
-      const s = Math.min(cw / r.w, ch / r.h);
-      img.style.width = W * s + "px";
-      img.style.height = H * s + "px";
-      img.style.left = canvas.offsetLeft + (cw - r.w * s) / 2 - r.x * s + "px";
-      img.style.top = canvas.offsetTop + (ch - r.h * s) / 2 - r.y * s + "px";
+      const game = cabinetCanvasBoxIn(host, canvas);
+      if (!game.width || !game.height) return;
+      const b = cabinetFrameBox(frame, W, H, game);
+      img.style.width = b.w + "px";
+      img.style.height = b.h + "px";
+      img.style.left = b.x + "px";
+      img.style.top = b.y + "px";
     };
-    layout();
-    const canvas = host.querySelector("canvas");
-    if (canvas && typeof ResizeObserver === "function") {
-      new ResizeObserver(layout).observe(canvas);
-    } else if (typeof window !== "undefined") {
-      window.addEventListener("resize", () => setTimeout(layout, 60));
-    }
+    watchCabinetLayout(host, layout);
   }
 
   // The HOW TO PLAY card, as the 2019 page showed it: over a dark cover, as
@@ -1058,20 +1152,16 @@
         const cabinet = normalizeCabinet(levelData && levelData.cabinet);
         if (!cabinet || typeof document === "undefined") return Promise.resolve(false);
         const host = document.getElementById("phaser-canvas") || document.body;
-        if (cabinet.backdrop) {
-          const style = document.body.style;
-          style.backgroundColor = "#000";
-          style.backgroundImage = 'url("' + cabinet.backdrop.replace(/["\\\s]/g, "") + '")';
-          style.backgroundRepeat = "no-repeat";
-          style.backgroundPosition = "center";
-          style.backgroundSize = "cover";
-        }
         if (cabinet.howto) installCabinetHowto(cabinet.howto);
-        if (!cabinet.frame) return Promise.resolve(true);
-        return loadImage(cabinet.frame.image).then((img) => {
-          if (img) installCabinetFrame(host, img, cabinet.frame);
-          return true;
-        });
+        const backdrop = cabinet.backdrop
+          ? loadImage(cabinet.backdrop).then((img) => installCabinetBackdrop(host, img, cabinet.backdrop))
+          : null;
+        const frame = cabinet.frame
+          ? loadImage(cabinet.frame.image).then((img) => {
+            if (img) installCabinetFrame(host, img, cabinet.frame);
+          })
+          : null;
+        return Promise.all([backdrop, frame]).then(() => true);
       }
       loadingArt(options) {
         const o = Object.assign({}, DEFAULTS, options || {});
