@@ -31,12 +31,32 @@ function appTitleFor(levelName, levelData) {
 
 // `entry` is the page the app opens: phaser-game.html for a staged level, a
 // web build's own page (e.g. play/index.html) for an eShop web entry.
-function rebrandConfigXml(sourceXml, levelName, packageId, entry) {
+//
+// `buildNumber` is what tells two uploads of the same 1.0.0 apart: iOS's
+// CFBundleVersion, which App Store Connect refuses to take twice for one
+// version, and Android's versionCode. A TestFlight run passes one
+// (.github/workflows/ios-publish.yml); a local build leaves it off and the
+// platforms derive their own from `version`. CFBundleVersion may be dotted
+// (20261025.1430.7); versionCode is an integer or nothing, so a dotted number
+// reaches only the iOS side.
+function rebrandConfigXml(sourceXml, levelName, packageId, entry, buildNumber) {
   let xml = fs.readFileSync(sourceXml, "utf8");
   xml = xml.replace(
     /<widget\s+id="[^"]*"/,
     '<widget id="' + xmlEscape(packageId) + '"',
   );
+  if (buildNumber) {
+    xml = xml.replace(/<widget\b[^>]*>/, function (tag) {
+      tag = tag
+        .replace(/\s+ios-CFBundleVersion="[^"]*"/, "")
+        .replace(/\s+android-versionCode="[^"]*"/, "");
+      let attrs = ' ios-CFBundleVersion="' + xmlEscape(buildNumber) + '"';
+      if (/^\d+$/.test(String(buildNumber))) {
+        attrs += ' android-versionCode="' + xmlEscape(buildNumber) + '"';
+      }
+      return tag.replace(/(\sversion="[^"]*")/, "$1" + attrs);
+    });
+  }
   xml = xml.replace(
     /<name>[\s\S]*?<\/name>/,
     "<name>" + xmlEscape(levelName) + "</name>",

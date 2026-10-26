@@ -19,6 +19,14 @@
 // Flags:
 //   --stage-only      Stage www/ and stop (no native compile). Verifiable
 //                     without cordova/Android SDK/electron-builder.
+//   --project-only    android / ios: stage the native Cordova project (platform
+//                     added, plugins in, `cordova prepare` run) and stop before
+//                     compiling it. The artifact is the project directory. This
+//                     is how .github/workflows/ios-publish.yml gets an Xcode
+//                     project to archive and sign on a GitHub Mac.
+//   --build-number <n> ios-CFBundleVersion (and android-versionCode when it is
+//                     a plain integer) for config.xml — what App Store Connect
+//                     tells two uploads of the same version apart by.
 //   --out <dir>       Override build root (default: <cmg>/build/<slug>)
 //   --package-id <id> Override package id (default: com.easierbycode.<slug>)
 //   --skip-bgm        Skip custom BGM downloads
@@ -130,6 +138,7 @@ function parseArgs(argv) {
   const takesValue = new Set([
     "out",
     "package-id",
+    "build-number",
     "level-file",
     "win-target",
     "win-arch",
@@ -165,7 +174,8 @@ async function main() {
     console.error(
       "Usage: node tools/build-level <levelName> " +
         "<android|ios|linux|windows|mac|desktop|all> " +
-        "[--stage-only] [--out DIR] [--package-id ID] [--skip-bgm] " +
+        "[--stage-only] [--project-only] [--out DIR] [--package-id ID] " +
+        "[--build-number N] [--skip-bgm] " +
         "[--win-target portable|nsis|zip|dir] [--win-arch x64|arm64|ia32] " +
         "[--mac-target dmg|zip|dir] [--mac-arch x64|arm64|universal] " +
         "[--linux-arch x64|arm64|armv7l] [--level-file PATH]",
@@ -226,6 +236,20 @@ async function main() {
     if (!["ios", "android", "linux", "windows", "mac"].includes(p)) {
       console.error("Unknown platform: " + p);
       process.exit(2);
+    }
+  }
+  // A native project to hand to another compiler is a Cordova idea: the deno
+  // desktop targets have no project stage, they go straight to an app.
+  const projectOnly = !!args.flags["project-only"];
+  if (projectOnly) {
+    for (const p of platforms) {
+      if (p !== "android" && p !== "ios") {
+        console.error(
+          "--project-only stages a Cordova project, so it builds only android " +
+            "and ios; " + p + " has no project to stop at.",
+        );
+        process.exit(2);
+      }
     }
   }
 
@@ -389,6 +413,8 @@ async function main() {
     path.join(SCAFFOLD_ROOT, "config.xml"),
     appTitle,
     packageId,
+    undefined,
+    args.flags["build-number"],
   );
   for (const p of platforms) {
     console.log("\n--- " + p.toUpperCase() + " ---");
@@ -417,6 +443,7 @@ async function main() {
           platform: p,
           configXml: rebrandedConfig,
           iconDir: appIcon ? appIcon.dir : null,
+          projectOnly,
         });
       }
     } catch (err) {
@@ -513,6 +540,7 @@ async function buildWebApp(o) {
     o.levelName,
     packageId,
     o.entry,
+    o.args.flags["build-number"],
   );
   for (const p of o.platforms) {
     console.log("\n--- " + p.toUpperCase() + " ---");
@@ -528,6 +556,7 @@ async function buildWebApp(o) {
         configXml,
         iconDir: null,
         entry: o.entry,
+        projectOnly: !!o.args.flags["project-only"],
       });
     } catch (err) {
       console.error(p + " build failed: " + err.message);

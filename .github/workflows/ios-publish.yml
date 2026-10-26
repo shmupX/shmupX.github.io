@@ -1,0 +1,350 @@
+# Publishing one game as an iOS build — from a machine that has no Xcode.
+#
+# Every other target the editor exports is built on the machine pressing the
+# button (lib/export-build.ts): an APK needs the Android SDK, the desktop three
+# need only Deno, a PS2 disc is pure Deno. iOS is the one target only Xcode can
+# finish, and Xcode runs only on a Mac — so off a Mac the local export stops at
+# an Xcode project, which nobody can install. This workflow is the Mac. The
+# editor's PUBLISH IOS BUILD (routes/api/publish-ios.ts) and
+# `deno task publish:ios <level>` dispatch it; it stages the level with the
+# very tool the local export uses (tools/build-level … ios --project-only),
+# archives the project with xcodebuild, signs it with the Apple certificate and
+# profile in this repository's secrets, exports an .ipa and uploads it to
+# TestFlight.
+#
+# THE APP IT UPLOADS AS. App Store Connect takes a build only for a bundle id it
+# already has an app record for, signed with a profile for that id. The default
+# is com.easierbycode.game2028 — 2019-es7's "2028.ai", the record the cloud
+# game "foo" (which IS that game) has been uploaded to and tested on devices
+# under. The IOS_BUNDLE_ID repository variable overrides it for every run, the
+# bundle_id input for one. A level published under any other id needs its own
+# record and profile first.
+#
+# THE SECRETS are the ones 2019-es7's ios-testflight.yml already uses, under
+# the same names, so they copy over as they are:
+#   BUILD_CERTIFICATE_BASE64, P12_PASSWORD     the Apple Distribution .p12
+#   BUILD_PROVISION_PROFILE_BASE64             the App Store provisioning profile
+#   KEYCHAIN_PASSWORD                          any string; it locks a throwaway keychain
+#   APPLE_TEAM_ID, CODE_SIGN_IDENTITY          the team, "Apple Distribution: …"
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_API_KEY     an App Store Connect API key (.p8)
+# Without the certificate and profile the run does not fail: it archives an
+# UNSIGNED .ipa, attaches it to the run, skips the upload and says so — a dry
+# run of everything but Apple, and the file every sideloading route re-signs.
+#
+# BUILD NUMBERS. App Store Connect refuses a CFBundleVersion it has already seen
+# for a version, and 2019-es7's own runs used 1.0.<run number>. A timestamp —
+# 20261025.1430.<run number> — sorts above all of those and above itself
+# tomorrow, so two repositories can feed one app record without colliding.
+#
+# THE RUN NAME carries the dispatcher's request id. workflow_dispatch answers
+# 204 and names no run, so the client lists recent runs and takes the one whose
+# title ends in the id it sent (lib/ios-publish.ts) — the only handle there is.
+#
+# WHAT A FAILURE SAYS. Known refusals are reported as ::error annotations with a
+# title, which the API hands back as the job's annotations — that is how the
+# editor's status line can say "Apple wants an agreement signed" rather than
+# "exit 1". The one seen so far on 2019-es7's runs is exactly that: every
+# upload since 2026-08 has been refused with REQUIRED_AGREEMENTS_MISSING_OR_
+# EXPIRED, which only the Account Holder can clear, in App Store Connect.
+
+name: ios-publish
+
+run-name: "iOS · ${{ inputs.level }} · ${{ inputs.request || 'by hand' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: >-
+          The game: a shmupX/levels name, or an alias of one, as the editor
+          saves it.
+        required: true
+        type: string
+      bundle_id:
+        description: >-
+          Sign and upload as this bundle id. Blank means the IOS_BUNDLE_ID
+          repository variable, else com.easierbycode.game2028.
+        required: false
+        default: ""
+        type: string
+      upload:
+        description: Upload the signed .ipa to TestFlight.
+        required: false
+        default: true
+        type: boolean
+      request:
+        description: >-
+          An id for the dispatcher to find this run by. The editor fills it
+          in; leave it blank by hand.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+# One build of a game at a time: a second press queues behind the first rather
+# than racing it to the same build-number minute.
+concurrency:
+  group: ios-publish-${{ inputs.level }}
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    # macos-14, where 2019-es7's recipe ran, is deprecated; macos-26 ships Xcode
+    # 26, which cordova-ios 7 has not met. 15 carries the Xcode 16 line the
+    # recipe is known to build on.
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      LEVEL: ${{ inputs.level }}
+      BUILD_ROOT: ${{ runner.temp }}/level
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Cordova
+        run: npm i -g cordova@12
+
+      - name: Pick Xcode
+        # The newest 16 the image has, the pair cordova-ios 7.1.1 is known good
+        # with; the image's default otherwise.
+        run: |
+          pick=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$pick" ]; then sudo xcode-select -s "$pick/Contents/Developer"; fi
+          xcodebuild -version
+
+      - name: Which app, which build number
+        id: ids
+        env:
+          INPUT_BUNDLE_ID: ${{ inputs.bundle_id }}
+          VAR_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
+        run: |
+          id="$INPUT_BUNDLE_ID"
+          [ -n "$id" ] || id="$VAR_BUNDLE_ID"
+          [ -n "$id" ] || id="com.easierbycode.game2028"
+          build="$(date -u +%Y%m%d).$(date -u +%H%M).${{ github.run_number }}"
+          echo "bundle_id=$id" >> "$GITHUB_OUTPUT"
+          echo "build_number=$build" >> "$GITHUB_OUTPUT"
+          echo "Bundle id   : $id"
+          echo "Build number: $build"
+
+      - name: Can this run sign?
+        id: sign
+        env:
+          CERT: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          PROFILE: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+        run: |
+          if [ -n "$CERT" ] && [ -n "$PROFILE" ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Unsigned::No BUILD_CERTIFICATE_BASE64 / BUILD_PROVISION_PROFILE_BASE64 in this repository's secrets — this run makes an unsigned .ipa and uploads nothing to TestFlight."
+          fi
+
+      - name: Stage the game as an Xcode project
+        run: |
+          node packages/shmup-harbor/tools/build-level "$LEVEL" ios \
+            --out "$BUILD_ROOT" \
+            --package-id "${{ steps.ids.outputs.bundle_id }}" \
+            --build-number "${{ steps.ids.outputs.build_number }}" \
+            --project-only
+          ios="$BUILD_ROOT/cordova/platforms/ios"
+          ws=$(ls -d "$ios"/*.xcworkspace 2>/dev/null | head -1)
+          if [ -z "$ws" ]; then
+            echo "::error title=Stage::cordova prepare left no .xcworkspace under $ios"
+            exit 1
+          fi
+          scheme=$(basename "$ws" .xcworkspace)
+          echo "IOS_ROOT=$ios" >> "$GITHUB_ENV"
+          echo "WORKSPACE=$ws" >> "$GITHUB_ENV"
+          echo "SCHEME=$scheme" >> "$GITHUB_ENV"
+          echo "Workspace: $ws (scheme $scheme)"
+
+      # ── Signed: 2019-es7's ios-testflight.yml recipe, with the app's id
+      #    read from the profile instead of written into the steps ──────────
+      - name: Install the Apple certificate and provisioning profile
+        if: steps.sign.outputs.signed == 'true'
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          BUNDLE_ID: ${{ steps.ids.outputs.bundle_id }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          # Xcode finds a profile by its UUID, so that is the file's name.
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          plist=$(security cms -D -i "$PP_PATH")
+          PP_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin <<< "$plist")
+          PP_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< "$plist")
+          PP_APP_ID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /dev/stdin <<< "$plist")
+          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$PP_UUID".mobileprovision
+          echo "PP_NAME=$PP_NAME" >> "$GITHUB_ENV"
+          echo "Profile: $PP_NAME ($PP_UUID) for $PP_APP_ID"
+
+          # Said here, in a second, rather than by xcodebuild ten minutes in.
+          case "$PP_APP_ID" in
+            *".$BUNDLE_ID"|*".*") ;;
+            *)
+              echo "::error title=Profile::The provisioning profile is for $PP_APP_ID, not $BUNDLE_ID. Publish under the profile's bundle id, or add a profile (and an App Store Connect record) for this one."
+              exit 1 ;;
+          esac
+
+      - name: Archive and export the signed .ipa
+        if: steps.sign.outputs.signed == 'true'
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CODE_SIGN_IDENTITY: ${{ secrets.CODE_SIGN_IDENTITY }}
+          BUNDLE_ID: ${{ steps.ids.outputs.bundle_id }}
+        run: |
+          cd "$IOS_ROOT"
+          xcodebuild archive \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -sdk iphoneos \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/app.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
+            PROVISIONING_PROFILE_SPECIFIER="$PP_NAME" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            IPHONEOS_DEPLOYMENT_TARGET=14.0 \
+            -allowProvisioningUpdates
+
+          opts="$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Clear dict" "$opts"
+          /usr/libexec/PlistBuddy -c "Add :method string app-store-connect" "$opts"
+          /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$opts"
+          /usr/libexec/PlistBuddy -c "Add :teamID string $TEAM_ID" "$opts"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$opts"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$BUNDLE_ID string $PP_NAME" "$opts"
+          /usr/libexec/PlistBuddy -c "Add :uploadBitcode bool false" "$opts"
+          /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool true" "$opts"
+          plutil -lint "$opts"
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/app.xcarchive" \
+            -exportOptionsPlist "$opts" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates
+          ipa=$(ls "$RUNNER_TEMP"/export/*.ipa | head -1)
+          echo "IPA=$ipa" >> "$GITHUB_ENV"
+          echo "Signed: $ipa"
+
+      # ── Unsigned: tools/build-level's own buildIosIpa, as the fallback ─────
+      - name: Archive an unsigned .ipa
+        if: steps.sign.outputs.signed != 'true'
+        run: |
+          cd "$IOS_ROOT"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -sdk iphoneos \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/derived" \
+            build \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_ENTITLEMENTS=
+          app=$(ls -d "$RUNNER_TEMP"/derived/Build/Products/Release-iphoneos/*.app | head -1)
+          name=$(basename "$app" .app)
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" "$RUNNER_TEMP/export"
+          cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$RUNNER_TEMP/export/$name.ipa" Payload)
+          echo "IPA=$RUNNER_TEMP/export/$name.ipa" >> "$GITHUB_ENV"
+          echo "Unsigned: $RUNNER_TEMP/export/$name.ipa"
+
+      - name: Upload to TestFlight
+        id: upload
+        if: steps.sign.outputs.signed == 'true' && inputs.upload
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY: ${{ secrets.ASC_API_KEY }}
+          BUILD_NUMBER: ${{ steps.ids.outputs.build_number }}
+        run: |
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_API_KEY" ]; then
+            echo "::error title=TestFlight::ASC_KEY_ID, ASC_ISSUER_ID and ASC_API_KEY are not all in this repository's secrets, so the signed .ipa was built but not uploaded. It is attached to this run."
+            exit 1
+          fi
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$ASC_API_KEY" > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+          set +e
+          out=$(xcrun altool --upload-app --type ios \
+            --file "$IPA" \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -ne 0 ]; then
+            case "$out" in
+              *REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED*|*"agreement is missing or has expired"*)
+                echo "::error title=TestFlight::Apple refused the upload: a Developer Program agreement needs accepting. The Account Holder signs it at https://appstoreconnect.apple.com/agreements — then publish again. The signed .ipa is attached to this run meanwhile." ;;
+              *"bundle version must be higher"*|*"has already been used"*|*"already been uploaded"*)
+                echo "::error title=TestFlight::App Store Connect already has build $BUILD_NUMBER for this version. Publish again: the number is the clock, so the next one is new." ;;
+              *)
+                echo "::error title=TestFlight::altool exited $code — Apple's reason is in the step's log." ;;
+            esac
+            exit "$code"
+          fi
+          echo "Uploaded $IPA as build $BUILD_NUMBER."
+
+      # Attached whether or not Apple took it: a refused upload still leaves a
+      # signed .ipa worth having, and an unsigned one is the whole point of a
+      # run without secrets.
+      - name: Attach the .ipa to the run
+        if: always() && env.IPA != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: ${{ env.IPA }}
+          if-no-files-found: error
+
+      - name: Say what happened
+        if: always()
+        env:
+          SIGNED: ${{ steps.sign.outputs.signed }}
+          UPLOAD: ${{ steps.upload.outcome }}
+          BUNDLE_ID: ${{ steps.ids.outputs.bundle_id }}
+          BUILD_NUMBER: ${{ steps.ids.outputs.build_number }}
+        run: |
+          {
+            echo "## iOS · $LEVEL"
+            echo ""
+            echo "- bundle id \`$BUNDLE_ID\`, build \`$BUILD_NUMBER\`"
+            if [ "$SIGNED" = "true" ]; then
+              echo "- signed with the repository's Apple Distribution certificate"
+            else
+              echo "- **unsigned** — the repository has no Apple certificate and profile in its secrets"
+            fi
+            case "$UPLOAD" in
+              success) echo "- **uploaded to TestFlight** — it appears in App Store Connect once Apple has processed it" ;;
+              failure) echo "- the TestFlight upload **failed** — the step's error says why" ;;
+              *) echo "- not uploaded" ;;
+            esac
+            if [ -n "${IPA:-}" ]; then echo "- the .ipa is attached to this run as \`ios-ipa\`"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up the keychain and the API key
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" 2>/dev/null || true
+          rm -rf ~/.appstoreconnect || true

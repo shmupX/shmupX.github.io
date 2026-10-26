@@ -18,6 +18,12 @@ was — linux, android, ios. `deno task build:windows <levelName>` /
 `build:linux` / `build:mac` are wrappers around this.
 
 Flags: `--stage-only` (stage `www/` and stop — no native compile),
+`--project-only` (android / ios: stage the Cordova project — platform added,
+plugins in, `cordova prepare` run — and stop before compiling it; the artifact
+is the project directory, which is what `.github/workflows/ios-publish.yml`
+archives and signs on a GitHub Mac), `--build-number <n>` (config.xml's
+`ios-CFBundleVersion`, and `android-versionCode` when `n` is a plain integer —
+what App Store Connect tells two uploads of one version apart by),
 `--out <dir>`, `--package-id <id>`, `--skip-bgm`,
 `--win-target <portable|nsis|zip|dir>` (default `portable` — one self-contained
 `.exe`, the closest thing to the AppImage), `--win-arch <x64|arm64|ia32>`

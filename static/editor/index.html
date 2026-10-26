@@ -1371,7 +1371,7 @@
                          (ExportRequest.levelRecord) — to this origin's builder when it has
                          one, and to the paired desktop's when it does not. All five
                          targets work either way, from either half. -->
-                    <div class="display-row" title="Which app the export builds. Linux/Windows/macOS are deno desktop builds and cross-compile from any host. PS2 builds a bootable AthenaEnv disc and a USB-ready folder.">
+                    <div class="display-row" title="Which app the export builds. Linux/Windows/macOS are deno desktop builds and cross-compile from any host. PS2 builds a bootable AthenaEnv disc and a USB-ready folder. IOS is built, signed and uploaded to TestFlight on a GitHub-hosted Mac — the serving machine only needs a GitHub token.">
                         <span class="display-lbl">TARGET</span>
                         <div class="seg-wrap" id="export-platform-segs">
                             <button class="seg xseg" data-platform="android" onclick="setExportPlatform('android')">ANDROID</button>
@@ -1382,6 +1382,14 @@
                         </div>
                     </div>
                     <button class="menu-row" id="export-apk-btn" onclick="exportGameToApk()"><span class="mono-badge" id="export-apk-badge">AP</span><span id="export-apk-label">EXPORT TO APK</span></button>
+                    <!-- IOS only. The main button PUBLISHES: only Xcode compiles an iOS
+                         app and Xcode runs only on a Mac, so the build happens on a
+                         GitHub-hosted one (/api/publish-ios → .github/workflows/
+                         ios-publish.yml), signed with the repository's Apple certificate
+                         and uploaded to TestFlight. This row keeps the local export the
+                         target used to be: the Xcode project — or an unsigned .ipa on a
+                         Mac with Xcode — built here or on a paired desktop. -->
+                    <button class="menu-row hidden" id="export-ios-local-btn" onclick="exportGameToApk({ local: true })" title="Build here instead of on a GitHub Mac: an unsigned .ipa on a Mac with Xcode, the Xcode project anywhere else — or queued on a paired desktop. Nothing goes to TestFlight."><span class="mono-badge">XC</span>EXPORT XCODE PROJECT</button>
                     <div id="export-apk-status" class="menu-note"></div>
                     <!-- Build somewhere else. On the hosted site and the PWA there is no
                          /api/build-apk to post to, so exportGameToApk() queues the export
@@ -14212,15 +14220,20 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
         }
 
         // TARGET picker: which platform the export is compiled for. Persisted
-        // like the other editor toggles. android needs cordova + the SDK, ios
-        // macOS + Xcode; linux/windows are deno desktop builds, which need
-        // nothing installed beyond Deno and cross-compile anywhere. PS2 needs
-        // nothing installed — it runs on a JavaScript interpreter for the
-        // console (AthenaEnv), which the build downloads once and caches — and
-        // yields both a bootable .iso and a folder to drop on a USB stick.
+        // like the other editor toggles. android needs cordova + the SDK;
+        // linux/windows are deno desktop builds, which need nothing installed
+        // beyond Deno and cross-compile anywhere. PS2 needs nothing installed
+        // — it runs on a JavaScript interpreter for the console (AthenaEnv),
+        // which the build downloads once and caches — and yields both a
+        // bootable .iso and a folder to drop on a USB stick. ios is the one
+        // target not built here at all: only Xcode compiles one, so PUBLISH
+        // sends the saved game to a GitHub-hosted Mac that signs it and
+        // uploads it to TestFlight (publishIosBuild below); the EXPORT XCODE
+        // PROJECT row underneath keeps the local export, for a Mac with Xcode
+        // or for the project itself.
         const EXPORT_PLATFORMS = {
             android: { label: 'EXPORT TO APK',   badge: 'AP', artifact: 'APK' },
-            ios:     { label: 'EXPORT IOS APP',  badge: 'IP', artifact: 'iOS app' },
+            ios:     { label: 'PUBLISH IOS BUILD', badge: 'TF', artifact: 'iOS build' },
             linux:   { label: 'EXPORT APPIMAGE', badge: 'LX', artifact: 'AppImage' },
             windows: { label: 'EXPORT INSTALLER', badge: 'EX', artifact: 'MSI' },
             ps2:     { label: 'EXPORT PS2 DISC', badge: 'P2', artifact: 'PS2 disc' },
@@ -14235,6 +14248,8 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             const badge = document.getElementById('export-apk-badge');
             if (label) label.textContent = cfg.label;
             if (badge) badge.textContent = cfg.badge;
+            const local = document.getElementById('export-ios-local-btn');
+            if (local) local.classList.toggle('hidden', exportPlatform !== 'ios');
         }
         function setExportPlatform(p) {
             applyExportPlatform(p);
@@ -14363,7 +14378,9 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             return said || lines[lines.length - 1] || '';
         }
 
-        async function exportGameToApk() {
+        // `opts.local` is the EXPORT XCODE PROJECT row: build the iOS target
+        // here (or on the paired desktop) rather than publish it from GitHub.
+        async function exportGameToApk(opts) {
             const statusEl = document.getElementById('export-apk-status');
             const setStatus = (msg, color) => {
                 statusEl.textContent = msg;
@@ -14372,6 +14389,7 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             const btn = document.getElementById('export-apk-btn');
             const cfg = EXPORT_PLATFORMS[exportPlatform];
             const sav = savModeLoaded();
+            const local = !!(opts && opts.local);
             let name, levelRecord = undefined;
 
             if (sav) {
@@ -14413,6 +14431,27 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
             }
             // Settled now, while the open game is still the one being built.
             const web = ps2WebIdentity(sav, name);
+
+            // iOS: publishing is a Mac's job and this machine is most likely
+            // not one — PUBLISH IOS BUILD below hands the saved game to a
+            // GitHub-hosted Mac. The EXPORT XCODE PROJECT row (opts.local)
+            // keeps the local export: the project, or an unsigned .ipa on a
+            // Mac with Xcode.
+            if (exportPlatform === 'ios' && !local) {
+                if (sav) {
+                    setStatus('The Mac build reads the game from the cloud by name, and an imported cart has no cloud record — save it as a cloud game first, or EXPORT XCODE PROJECT builds it here.', '#f87171');
+                    return;
+                }
+                btn.disabled = true;
+                try {
+                    if (await publishIosBuild(name, setStatus)) return;
+                } finally {
+                    btn.disabled = false;
+                }
+                // No publisher on this origin (the hosted site, a static host):
+                // the local export it always was, which from there queues on a
+                // paired desktop — see REMOTE EXPORTS below.
+            }
 
             hidePs2ExportActions();
             btn.disabled = true;
@@ -14482,6 +14521,159 @@ if (!name) { name = prompt('Level name:'); if (!name) return; }
                 btn.disabled = false;
             }
         }
+
+        // ================== PUBLISH IOS BUILD ==================
+        // Only Xcode compiles an iOS app and Xcode runs only on a Mac, so the
+        // IOS target does not build here. /api/publish-ios dispatches
+        // .github/workflows/ios-publish.yml — a GitHub-hosted Mac that stages
+        // the saved game with the same tool the local export uses, signs it
+        // with the Apple certificate in the repository's secrets and uploads
+        // the .ipa to TestFlight, as 2019-es7 has shipped for a year — and
+        // this watches the run: which step it is on, whether Apple took the
+        // upload, the .ipa to download either way. The route needs a GitHub
+        // token on the serving machine (GITHUB_TOKEN, or the GitHub CLI signed
+        // in) and answers 403 on the hosted site, where exportGameToApk()
+        // falls back to the local export.
+        let iosPublishTimer = null;
+        const IOS_PUBLISH_KEY = 'cmg-ios-publish';   // the run in flight, so a reload resumes watching it
+
+        function stopIosPublishWatch() {
+            if (iosPublishTimer) { clearTimeout(iosPublishTimer); iosPublishTimer = null; }
+        }
+
+        // True when this origin has a publisher and it answered — well or
+        // badly, the status line says which. False when there is none here
+        // and the caller should build locally.
+        async function publishIosBuild(name, setStatus) {
+            stopIosPublishWatch();
+            setStatus('Asking GitHub for a Mac to build "' + name + '" on…', '#f59e0b');
+            let resp, data;
+            try {
+                resp = await fetch('/api/publish-ios', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ level: name }),
+                });
+                data = await resp.json().catch(() => ({}));
+            } catch (e) {
+                setStatus('Publish error: ' + e.message, '#f87171');
+                return true;
+            }
+            if (resp.status === 403 || resp.status === 404) return false;
+            if (!resp.ok || !data.ok) {
+                setStatus('Publish failed: ' + (data.error || ('HTTP ' + resp.status)) +
+                    (data.hint ? ' — ' + data.hint : ''), '#f87171');
+                return true;
+            }
+            const job = {
+                request: data.request,
+                runId: data.run ? data.run.id : null,
+                level: name,
+                at: Date.now(),
+                actionsUrl: data.actionsUrl || '',
+            };
+            try { localStorage.setItem(IOS_PUBLISH_KEY, JSON.stringify(job)); } catch (e) {}
+            if (data.run) renderIosPublish(job, data.run, []);
+            else setStatus('Dispatched "' + name + '" to GitHub — waiting for the run to appear…', '#f59e0b');
+            watchIosPublish(job);
+            return true;
+        }
+
+        // Poll the run every eight seconds until it completes. The request id
+        // is enough to start with: the route finds the run by it.
+        function watchIosPublish(job) {
+            stopIosPublishWatch();
+            const statusEl = document.getElementById('export-apk-status');
+            const setStatus = (msg, color) => {
+                statusEl.textContent = msg;
+                statusEl.style.color = color || '#888';
+            };
+            const forget = () => { try { localStorage.removeItem(IOS_PUBLISH_KEY); } catch (e) {} };
+            const tick = async () => {
+                iosPublishTimer = null;
+                let data;
+                try {
+                    const q = job.runId
+                        ? 'run=' + encodeURIComponent(job.runId)
+                        : 'request=' + encodeURIComponent(job.request);
+                    const r = await fetch('/api/publish-ios?' + q, { cache: 'no-store' });
+                    data = await r.json().catch(() => ({}));
+                    if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
+                } catch (e) {
+                    setStatus('Lost sight of the GitHub run: ' + e.message +
+                        (job.actionsUrl ? ' — ' + job.actionsUrl : ''), '#f87171');
+                    iosPublishTimer = setTimeout(tick, 15000);
+                    return;
+                }
+                if (!data.run) {
+                    // Not listed yet. GitHub takes a few seconds; two minutes
+                    // means the dispatch went nowhere this can see.
+                    if (Date.now() - job.at > 120000) {
+                        setStatus('GitHub accepted the dispatch but listed no run for it. Look at ' +
+                            (job.actionsUrl || 'the Actions tab') + '.', '#f87171');
+                        forget();
+                        return;
+                    }
+                    iosPublishTimer = setTimeout(tick, 5000);
+                    return;
+                }
+                if (!job.runId) {
+                    job.runId = data.run.id;
+                    try { localStorage.setItem(IOS_PUBLISH_KEY, JSON.stringify(job)); } catch (e) {}
+                }
+                renderIosPublish(job, data.run, data.artifacts || []);
+                if (data.run.status === 'completed') {
+                    forget();
+                    if (data.run.conclusion === 'success') {
+                        flash(data.run.uploaded
+                            ? '"' + job.level + '" is on its way to TestFlight.'
+                            : '"' + job.level + '" iOS build finished — see EXPORT → APP.');
+                    }
+                    return;
+                }
+                iosPublishTimer = setTimeout(tick, 8000);
+            };
+            tick();
+        }
+
+        // The run as a status line: its headline (lib/ios-publish.ts
+        // summarizeRun), the workflow's own reasons when it failed, a link to
+        // the run and one per .ipa it left. Names come out of an open-write
+        // path, so everything is escaped.
+        function renderIosPublish(job, run, artifacts) {
+            const statusEl = document.getElementById('export-apk-status');
+            if (!statusEl) return;
+            const esc = (s) => String(s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const link = (href, text) =>
+                ' <a href="' + esc(href) + '" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">' + esc(text) + '</a>';
+            const done = run.status === 'completed';
+            const ok = done && run.conclusion === 'success';
+            statusEl.style.color = !done ? '#f59e0b' : ok ? (run.uploaded ? '#84cc16' : '#f59e0b') : '#f87171';
+            let html = esc('"' + job.level + '" on a GitHub Mac — ' + run.headline);
+            if (ok && run.uploaded) html += esc(' It shows in App Store Connect once Apple has processed it.');
+            if (ok && run.signed === false) html += esc(' Add the Apple signing secrets to the repository and publish again for TestFlight.');
+            if (done && !ok) for (const e of (run.errors || []).slice(1)) html += '<br>' + esc(e);
+            html += link(run.url, 'OPEN RUN');
+            for (const a of artifacts) {
+                html += link(a.url, 'DOWNLOAD .IPA (ZIP, ' + (a.size / 1048576).toFixed(1) + ' MB)');
+            }
+            statusEl.innerHTML = html;
+        }
+
+        // A publish survives a reload — the run keeps going on GitHub — so
+        // pick the watch back up, for two hours, while IOS is the target.
+        function resumeIosPublishWatch() {
+            let job = null;
+            try { job = JSON.parse(localStorage.getItem(IOS_PUBLISH_KEY) || 'null'); } catch (e) {}
+            if (!job || !job.at || Date.now() - job.at > 7200000) {
+                try { localStorage.removeItem(IOS_PUBLISH_KEY); } catch (e) {}
+                return;
+            }
+            if (exportPlatform !== 'ios') return;
+            watchIosPublish(job);
+        }
+        resumeIosPublishWatch();
 
         // ================== DEZAEMON (SUPER FAMICOM) ==================
         // "→ SNES LIBRARY": a Super Famicom Dezaemon SRAM dump off the player's

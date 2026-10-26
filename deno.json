@@ -20,6 +20,7 @@
     "members:restore": "deno run -A scripts/members-restore.ts",
     "build:android": "deno run -A packages/shmup-harbor/scripts/build-desktop.ts android",
     "build:ios": "deno run -A packages/shmup-harbor/scripts/build-desktop.ts ios",
+    "publish:ios": "deno run -A scripts/publish-ios.ts",
     "shelf:list": "deno run -A packages/shmup-harbor/scripts/build-desktop.ts android --list",
     "steam:waydroid": "deno run -A scripts/steam-waydroid.ts",
     "release:keygen": "deno run -A scripts/release-desktop.ts --keygen",

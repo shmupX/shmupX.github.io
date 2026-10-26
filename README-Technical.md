@@ -696,6 +696,7 @@ deno task build:desktop   # …whichever of those three matches this host
 deno task shelf:list      # every game name the five build targets accept
 deno task build:android   # one game from the shelf as an .apk (needs a name)
 deno task build:ios       # …as an unsigned .ipa (needs a name, and a Mac)
+deno task publish:ios     # one game to TestFlight, built and signed on a GitHub Mac (needs a name, and a GitHub token)
 deno task steam:waydroid  # that .apk into Waydroid, as a Lutris game and a Steam shortcut (Bazzite)
 deno task build:ps2       # a level as a PlayStation 2 USB folder
 deno task build:ps2:zip   # …as one .zip of that folder
@@ -1380,7 +1381,11 @@ is saved first and built from its name; an imported cart has no cloud record and
 never will, so the editor hands the **record itself** over instead
 (`levelRecord` on `/api/build-apk`, written to disk for `--level-file`), which
 means the export carries whatever you have just edited rather than whatever the
-database last saw.
+database last saw. The one exception is IOS's **PUBLISH IOS BUILD**, which is
+not built here but on a GitHub Mac that reads the game from the cloud by name
+(see _Publishing an iOS build_ under the desktop app), so a cart has to be saved
+as a cloud game first — its EXPORT XCODE PROJECT row still builds the cart
+itself.
 
 **A cart builds on a paired desktop too.** The remote build queue used to pair a
 desktop with a level _name_, which a cart has none of, so the one export that
@@ -4039,6 +4044,67 @@ step gave up, and what each target produced is recorded in
 `build/<slug>/artifacts.json` by the tool itself rather than guessed at from
 file extensions afterwards — which is how three targets came to report success
 over an empty `dist/`.
+
+#### Publishing an iOS build (TestFlight)
+
+An Xcode project is as far as this machine can take iOS, so the editor's IOS
+target does not build here at all: **PUBLISH IOS BUILD** sends the saved game to
+a Mac GitHub lends. `/api/publish-ios` (`lib/ios-publish.ts`) dispatches
+`.github/workflows/ios-publish.yml` with the level's name; on `macos-15` the
+workflow stages the game with the very tool the local export uses
+(`tools/build-level <level> ios --project-only`), archives the project with
+`xcodebuild`, signs it with the Apple Distribution certificate and provisioning
+profile in the repository's secrets, exports an `.ipa`, uploads it to TestFlight
+with an App Store Connect API key and attaches the `.ipa` to the run. The editor
+watches the run — which step it is on, whether Apple took the upload, a
+`DOWNLOAD .IPA` link either way — and the same from a terminal is
+`deno task publish:ios foo` (`--no-upload` signs without uploading,
+`--run <id>` watches one already going, `--download <dir>` saves the artifact).
+The old local export stays one row down, **EXPORT XCODE PROJECT**.
+
+Three things have to be true on the machine serving the editor and in the
+repository:
+
+- **A GitHub token** that may run Actions on `shmupX/shmupX.github.io`:
+  `GITHUB_TOKEN` or `GH_TOKEN` in the server's environment, or the GitHub CLI
+  signed in (`gh auth login` — the route reads `gh auth token`). A classic
+  token needs the `repo` and `workflow` scopes; a fine-grained one, Actions
+  read and write. Without one the route answers 412 and the status line says
+  which to set. `SHMUPX_IOS_REPO` / `SHMUPX_IOS_REF` point a fork or a branch
+  at itself; `workflow_dispatch` only knows a workflow file that is on the ref
+  it is asked for, so the workflow has to be on `main` (or on the ref named)
+  before the button works.
+- **The Apple secrets**, the ones 2019-es7's `ios-testflight.yml` already uses,
+  under the same names so they copy over as they are: `BUILD_CERTIFICATE_BASE64`
+  and `P12_PASSWORD` (the Apple Distribution `.p12`),
+  `BUILD_PROVISION_PROFILE_BASE64` (an App Store profile), `KEYCHAIN_PASSWORD`
+  (any string), `APPLE_TEAM_ID`, `CODE_SIGN_IDENTITY`
+  (`Apple Distribution: …`), and `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_API_KEY`
+  (an App Store Connect API key). **Without the certificate and profile the run
+  does not fail**: it archives an unsigned `.ipa`, attaches it, skips the upload
+  and says so — a dry run of everything but Apple.
+- **An app record and a profile for the bundle id.** App Store Connect takes a
+  build only for a bundle id it already has an app for, signed with a profile
+  for that id. The default is `com.easierbycode.game2028` — 2019-es7's
+  _2028.ai_, the record the cloud game _foo_ (which is that game) has been
+  uploaded to and tested on devices under; the `IOS_BUNDLE_ID` repository
+  variable or the dispatch's `bundle_id` input changes it. The workflow reads
+  the profile's own application identifier and refuses, in a second, a bundle
+  id the profile is not for. Build numbers are the clock
+  (`20261025.1430.<run number>`), so this repository's uploads never collide
+  with the `1.0.<run number>` 2019-es7's own runs used on the same record.
+
+What a failure says is the workflow's own: known refusals are `::error`
+annotations with a title, which the API hands back as the job's annotations and
+the status line prints. The one on every 2019-es7 run since 2026-08 is Apple's
+`REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED` — a Developer Program agreement the
+Account Holder has to accept at <https://appstoreconnect.apple.com/agreements>
+before any upload goes through; the signed `.ipa` is attached to the run
+meanwhile. The signing and the archive on those runs are fine, which is what
+makes the recipe here, generalised to any level and bundle id, a known-good one.
+`tests/ios_publish_test.ts` pins the seams: the step names the summary reads,
+the run title the dispatch is found by, the inputs the workflow declares, and
+the route's three refusals.
 
 ## Remote exports (build on your desktop)
 

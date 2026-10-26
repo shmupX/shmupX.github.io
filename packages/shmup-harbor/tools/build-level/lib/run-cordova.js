@@ -166,6 +166,11 @@ async function buildCordova(opts) {
     platform,
     configXml,
     iconDir,
+    // Stage the native project and stop before compiling it (--project-only).
+    // For a compiler this host does not run: the TestFlight workflow
+    // (.github/workflows/ios-publish.yml) takes the Xcode project from here and
+    // archives it itself, under a signing identity this tool never holds.
+    projectOnly,
   } = opts;
   // The page the app opens — and so the one that needs cordova.js.
   const entry = opts.entry || "phaser-game.html";
@@ -223,6 +228,18 @@ async function buildCordova(opts) {
     if (fs.existsSync(plug)) {
       run("cordova", ["plugin", "add", plug, "--nosave"], { cwd: cordovaDir });
     }
+  }
+
+  if (projectOnly) {
+    // `cordova prepare` is what lays www/, config.xml and the plugins into the
+    // native project; `platform add` above already ran one, and a second is
+    // cheap insurance that the project reflects everything staged since.
+    run("cordova", ["prepare", platform], { cwd: cordovaDir });
+    const projectRoot = path.join(cordovaDir, "platforms", platform);
+    console.log(
+      platform + ": --project-only, the native project is at " + projectRoot,
+    );
+    return { artifacts: [projectRoot] };
   }
 
   if (platform === "android") {
