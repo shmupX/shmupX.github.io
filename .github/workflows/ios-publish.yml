@@ -98,7 +98,10 @@ jobs:
     timeout-minutes: 60
     env:
       LEVEL: ${{ inputs.level }}
-      BUILD_ROOT: ${{ runner.temp }}/level
+      # Under the checkout's own build/ (git-ignored, where every local export
+      # lands too), not $RUNNER_TEMP: the `runner` context does not exist at
+      # job level, and GitHub refuses to parse a workflow that names it here.
+      BUILD_ROOT: ${{ github.workspace }}/build/ios-publish
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
