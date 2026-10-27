@@ -13,11 +13,14 @@ import {
   compareRecords,
   creditsFromIndex,
   describeShip,
+  DOT_LEADER,
   EDITOR_KEYS,
   type Json,
+  rtdbFrameKeys,
   SERVER_TIMESTAMP,
   tileDiff,
 } from "../scripts/reimport-cloud-level.ts";
+import { badRtdbKey } from "../scripts/lib/rtdb-publish.ts";
 
 /** A scenery grid out of u16be words, as a record stores one. */
 function scenery(cols: number, rows: number, words: number[]): Json {
@@ -93,9 +96,10 @@ function cartRecord(): Json {
     noStory: true,
     continueComment: " ",
     atlasImageDataURL: "data:image/png;base64,BBBB",
+    // The importer names a frame by its file, dot and all.
     atlasFrames: {
-      "deza0_00_0․gif": { frame: { x: 0, y: 0, w: 16, h: 16 } },
-      "dezaShip0․gif": { frame: { x: 16, y: 0, w: 16, h: 16 } },
+      "deza0_00_0.gif": { frame: { x: 0, y: 0, w: 16, h: 16 } },
+      "dezaShip0.gif": { frame: { x: 16, y: 0, w: 16, h: 16 } },
     },
   };
 }
@@ -194,6 +198,30 @@ Deno.test("the name is the record's own, the save time the server's", () => {
     deriveGameId: derive,
   });
   assertEquals(bare.payload.name, "ramsie-copy");
+});
+
+Deno.test("the cart's frame names are keyed the editor's way: a dot becomes ONE DOT LEADER, which RTDB takes", () => {
+  const { payload } = buildPayload({
+    existing: augustRecord(),
+    cart: cartRecord(),
+    key: "Ramsie",
+    deriveGameId: derive,
+  });
+  const frames = payload.atlasFrames as Record<string, unknown>;
+  assertEquals(Object.keys(frames), [`deza0_00_0${DOT_LEADER}gif`, `dezaShip0${DOT_LEADER}gif`]);
+  assertEquals(frames[`dezaShip0${DOT_LEADER}gif`], { frame: { x: 16, y: 0, w: 16, h: 16 } });
+  // The whole record passes the uploader's own check — the server timestamp's
+  // ".sv" is the database's key, not ours — where the cart as decoded would
+  // not, and the check names the key, not a byte offset.
+  assertEquals(badRtdbKey(payload), null);
+  assertEquals(badRtdbKey(cartRecord()), "/atlasFrames/deza0_00_0.gif");
+  assertEquals(badRtdbKey({ a: [{ "b/c": 1 }] }), "/a/0/b/c");
+  assertEquals(badRtdbKey({ "": 1 }), "/");
+  assertEquals(badRtdbKey({ "x#y": 1 }), "/x#y");
+  assertEquals(badRtdbKey({ savedAt: SERVER_TIMESTAMP, ok: "a.b" }), null);
+  // Only a map is re-keyed; anything else passes through.
+  assertEquals(rtdbFrameKeys(["a.gif"]), ["a.gif"]);
+  assertEquals(rtdbFrameKeys(null), null);
 });
 
 Deno.test("thumbnails are dropped, and nothing stale survives the PUT", () => {

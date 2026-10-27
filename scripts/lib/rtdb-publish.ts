@@ -31,6 +31,32 @@ export async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
+/** The database's own dotted keys: server values and a node's priority. */
+const RTDB_OWN_KEYS = new Set([".sv", ".priority", ".value"]);
+
+/**
+ * The first key in a value that RTDB would refuse — empty, or holding `.`,
+ * `$`, `#`, `[`, `]` or `/` — as a path from the value's root, or null.
+ */
+export function badRtdbKey(value: unknown, at = ""): string | null {
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const bad = badRtdbKey(value[i], `${at}/${i}`);
+      if (bad) return bad;
+    }
+    return null;
+  }
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if ((k === "" || /[.$#[\]/]/.test(k)) && !RTDB_OWN_KEYS.has(k)) {
+      return `${at}/${k}`;
+    }
+    const bad = badRtdbKey(v, `${at}/${k}`);
+    if (bad) return bad;
+  }
+  return null;
+}
+
 export interface PutOptions {
   /** Database origin, no trailing slash. */
   db: string;
@@ -69,6 +95,14 @@ export function makePut(
   }
 
   return async function put(path: string, value: unknown): Promise<number> {
+    // A key the database refuses fails the whole PUT with a 400 three retries
+    // later and a byte offset for an address; say where it is instead.
+    const bad = badRtdbKey(value);
+    if (bad) {
+      throw new Error(
+        `${path}: RTDB refuses the key at ${bad} — a key may not be empty or hold . $ # [ ] /`,
+      );
+    }
     const body = JSON.stringify(value);
     const bytes = new TextEncoder().encode(body).length;
     await throttle(bytes);

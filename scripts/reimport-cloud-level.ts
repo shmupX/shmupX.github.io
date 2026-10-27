@@ -28,7 +28,10 @@
 // leaderboard id above all (a new one would orphan the game's scores), the
 // GOD MODE knob, the CABINET, the staff-roll attribution, custom audio, a
 // story the author wrote, title art, UI atlas overrides. Frame thumbnails are
-// dropped: the editor rebuilds them from the atlas on LOAD.
+// dropped: the editor rebuilds them from the atlas on LOAD. A frame is named
+// by its file, and RTDB refuses a key with a dot in it, so the atlas map is
+// keyed the way the editor's SAVE keys it — ONE DOT LEADER (U+2024) in the
+// dot's place, which every reader turns back.
 //
 // The level is shmupX's copy, shmupX/levels/<key> (lib/rtdb-root.ts), found
 // the way a subdomain finds it: the name as typed, then the alias index. The
@@ -200,6 +203,29 @@ export interface BuildReport {
 }
 
 /**
+ * RTDB refuses a key that is empty or holds `.`, `$`, `#`, `[`, `]` or `/`,
+ * and a frame is named by its file ("deza0_00_0.gif"). The editor's SAVE
+ * keys such a map with ONE DOT LEADER (U+2024) in the dot's place and every
+ * reader turns it back (the editor's LOAD, lib/ps2/assets.ts, the parity
+ * rig); a cart's decode names its frames plainly, so the maps it hands over
+ * are re-keyed here the same way.
+ */
+export const DOT_LEADER = "․";
+/** The top-level maps a record keys by frame name. */
+export const FRAME_MAPS: ReadonlySet<string> = new Set([
+  "atlasFrames",
+  "frameThumbnails",
+]);
+export function rtdbFrameKeys(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map((
+      [name, frame],
+    ) => [name.replaceAll(".", DOT_LEADER), frame]),
+  );
+}
+
+/**
  * The record to publish: the cart's decode laid out as the editor's SAVE
  * writes it, with what only the editor knows carried over.
  */
@@ -210,7 +236,7 @@ export function buildPayload(
   const fromCart: string[] = [];
   for (const [k, v] of Object.entries(cart)) {
     if (v === undefined || v === null) continue;
-    payload[k] = v;
+    payload[k] = FRAME_MAPS.has(k) ? rtdbFrameKeys(v) : v;
     fromCart.push(k);
   }
   // The record's own name is what it is called everywhere (the title, the
