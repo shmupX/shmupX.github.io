@@ -25,6 +25,27 @@ Read them together: `contact-sheet.mjs` tells you record 22 is the winged
 statue, `dump-behavior.mjs` tells you record 22 is ground, max-LIFE, and carries
 an untraced special fire pattern.
 
+## Comparing parity runs
+
+`deno task testdrive:parity -- --sav <cart> --full` leaves a per-object
+survey beside each pane's clip (`panes/<id>.survey.json`, 10 Hz: the Saturn's
+HWRAM slots, the web's and the PS2 port's object lists). The Saturn-against-web
+reading of one run is the rig's own `report-survey.md` (`--survey-report
+<out-dir>` rebuilds it from disk; `scripts/lib/parity-report.ts`). These set
+two Saturn runs against each other and draw a cart's cells; README-Parity.md
+§3 is built on their output. Python 3, standard library only, except the
+last, which is Deno.
+
+| Tool                                                      | Answers                                                                                                                                                                                 |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parity-compare-runs.py <out-a> <out-b>`                  | Two Saturn runs (the cart and its round trip, say): each sprite kind by slot class, enemy-pool births by formation key with the first birth's sprite, hp, attack and attributes.          |
+| `parity-compare-keys.py <out-a> <out-b>`                  | For chosen formation keys (Ramsie's big-shot records by default), everything the two runs spawned under them, with the import's roster names and fire modes.                              |
+| `parity-cells.ts <cart.sav> <out.png>`                    | A cart's character cells at refs 104-143 (the engine bullet slots and the decoder's bullet refs) as a 6×4 sheet, with each ref's cell, ink and top colours — how the writer's blast-slot painting was caught. |
+
+Formation key = placement id = 128 + 16 × band + the record's index in its
+band; birth counts are inflated by the rewind pilot's replays, so compare
+first births and their scroll positions, not totals.
+
 ## Checking the writer against the corpus
 
 One save proves the decoder reads it; the corpus proves the writer does not

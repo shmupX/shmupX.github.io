@@ -6,7 +6,11 @@ _One level on all seven targets at once — the web, the PS2 build and the five
 emulated originals — recorded by `deno task testdrive:parity`._
 
 How to play with shmupX. Building, exporting and everything under the hood is in
-the [technical README](README-Technical.md).
+the [technical README](README-Technical.md). How close each target plays a
+Dezaemon 2 cart to the Saturn, and the plan to close the gap, is
+[README-Parity.md](README-Parity.md); the weapon systems of every target and
+what it takes to drop any Dezaemon weapon as an item is
+[README-Weapons.md](README-Weapons.md).
 
 ## Legion Go: play on a monitor, use the handheld's screen as the controller
 

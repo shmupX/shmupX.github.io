@@ -35,9 +35,25 @@
  * tool does not know yet) is said why in report.json, rather than failing the
  * run, and left out of the grid: it shows only the panes that have a clip.
  *
+ * `--sav FILE` plays a Dezaemon 2 cart instead of a cloud level: the level is
+ * the cart's fresh import (lib/shelf.ts levelRecordFromCart, the same code the
+ * PS2 and desktop builds use), never a cloud record of the same name. With
+ * `--full` the boss rush is off and every pane plays the game's FIRST STAGE
+ * from its start — the console panes as they always have, the web pane under
+ * god mode for `--console-seconds` — and the Saturn pane plays the ORIGINAL
+ * cart, put on the disc as it is (disc:inject --sav), while every other target
+ * plays the import written back out by its exporter. That is the parity
+ * survey: the Saturn and web panes sample every object on screen as they
+ * play (lib/parity-survey.ts — enemies by placement id, every bullet with
+ * what it is drawn with and what fired it, the scroll position they came on
+ * at) into panes/<id>.survey.json, so the two sides can be compared object by
+ * object, not clip by clip. Without `--full`, a `--sav` run is the usual boss
+ * rush, built from the import on every target, the Saturn included.
+ *
  *   deno task testdrive:parity gs
  *   deno task testdrive:parity gs -- --targets web,sfc --headed
  *   deno task testdrive:parity gs -- --from-hp 0.6 --max-mb 0
+ *   deno task testdrive:parity -- --sav "dev-fixtures/Saturn/Dez 2 - Ramsie.sav" --full --targets saturn,web
  *   deno task testdrive:parity -- --help
  *
  * Output: build/testdrive/parity/<slug>/ — parity.gif, grid.mp4, panes/,
@@ -136,6 +152,27 @@ import {
   psxDiscZipStream,
 } from "../lib/dezaemon-psx.ts";
 import { KIDS, KIDS_AT, PLUS, PSX_RAM, psxPage } from "./lib/parity-psx.ts";
+import { levelRecordFromCart } from "../packages/shmup-harbor/lib/shelf.ts";
+import {
+  PS2_SURVEY_DUMP,
+  ps2Survey,
+  type SaturnBirth,
+  type SaturnSample,
+  saturnSurvey,
+  SURVEY_DUMP,
+  type SurveyDump,
+  surveySummary,
+  type WebBirth,
+  type WebSample,
+  webSurvey,
+} from "./lib/parity-survey.ts";
+import {
+  type RushRecord,
+  type SaturnSurveyFile,
+  surveyReport,
+  WEB_GATE_LEAD,
+  type WebSurveyFile,
+} from "./lib/parity-report.ts";
 
 const ROOT = repoRoot();
 
@@ -147,9 +184,19 @@ stage into build/testdrive/parity/<slug>/ (parity.gif, grid.mp4, panes/,
 report.json).
 
   <level>            a cloud level's name (default: gs)
+  --sav <file>       play this Dezaemon 2 cart's fresh import instead (its
+                     first game; --slot <1-5> picks another)
+  --full             no boss rush: every pane plays the first stage from its
+                     start, the Saturn pane the ORIGINAL cart (--sav only),
+                     and the Saturn and web panes keep a per-object survey
+                     (panes/<id>.survey.json); with both surveys the run
+                     writes report-survey.md and exits 1 on its FAIL
+  --saturn-export    with --sav --full: the Saturn plays the import written
+                     back out (build:sav) rather than the cart itself
   --targets <list>   web,ps2,sfc,saturn,kids,plus,n64dd, all (default), or
                      none — with --reuse, only the grid and the GIF again
-  --stage <n>        the stage whose boss is recorded, 0-based (default: 1)
+  --stage <n>        the stage whose boss is recorded, 0-based (default: 1;
+                     with --full the web pane's stage, default 0)
   --from-hp <f>      open the window when the boss is down to this share (default: 0.55)
   --tail <s>         seconds kept after the last new projectile (default: 2)
   --max-window <s>   the longest a window may run (default: 60)
@@ -169,13 +216,28 @@ report.json).
   --keep-frames      keep the raw screencast frames
   --reuse <list>     panes NOT run this time that keep their earlier capture
                      in the grid (from report.json), or all
+  --survey-report <dir>
+                     no run: write report-survey.md for an earlier --full run's
+                     out dir (its panes/*.survey.json and rush.json) and exit
+                     0 on PASS, 1 on FAIL, 2 when a file is missing
+  --survey-lead <px> the web's expected gate lead the report takes out before
+                     judging a record's first-seen scroll (default ${WEB_GATE_LEAD};
+                     a negative lead as --survey-lead=-N)
   --help`;
 
 const flags = parseArgs(Deno.args.filter((a) => a !== "--"), {
-  boolean: ["headed", "keep-frames", "help"],
-  string: ["targets", "origin", "chrome", "out", "reuse"],
+  boolean: ["headed", "keep-frames", "help", "full", "saturn-export"],
+  string: [
+    "targets",
+    "origin",
+    "chrome",
+    "out",
+    "reuse",
+    "sav",
+    "survey-report",
+    "survey-lead",
+  ],
   default: {
-    stage: 1,
     "from-hp": 0.55,
     tail: 2,
     "max-window": 60,
@@ -190,6 +252,7 @@ const flags = parseArgs(Deno.args.filter((a) => a !== "--"), {
     headed: false,
     "keep-frames": false,
     help: false,
+    full: false,
   },
 });
 
@@ -199,15 +262,50 @@ if (flags.help) {
 }
 
 const log: Log = (line) => console.log(line);
-const LEVEL = String(flags._[0] ?? "gs");
-const slug =
-  LEVEL.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") ||
-  "level";
+/** The cart a --sav run plays, resolved; null for a cloud level. */
+const SAV = flags.sav ? resolve(String(flags.sav)) : null;
+const SAV_SLOT = flags.slot != null ? Number(flags.slot) : null;
+/** No boss rush: the first stage from its start, surveyed. */
+const FULL = !!flags.full;
+if (FULL && !SAV && flags._[0] == null) {
+  // A full run of a cloud level is allowed, but the default gs is a boss
+  // showcase; say so rather than guess (not for a report-only run).
+  if (flags["survey-report"] === undefined) {
+    log("--full plays the level from its first stage; using gs");
+  }
+}
+if (SAV && flags._[0] != null) {
+  console.error("error: a level name or --sav, not both");
+  Deno.exit(2);
+}
+/** A cart is named after its file, as disc:inject names it (cartGameName). */
+const cartName = (path: string) =>
+  path.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "").replace(/^Dez 2 - /, "")
+    .replace(/^Dezaemon 2 \((.*)\)$/, "$1").trim() || "cart";
+const LEVEL = SAV ? cartName(SAV) : String(flags._[0] ?? "gs");
+const slug = (LEVEL.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
+  /^-|-$/g,
+  "",
+) || "level") + (SAV ? "-sav" : "") + (FULL ? "-full" : "");
 const OUT = resolve(
   flags.out ?? join(ROOT, "build", "testdrive", "parity", slug),
 );
-const STAGE = Number(flags.stage);
+const STAGE = flags.stage != null ? Number(flags.stage) : FULL ? 0 : 1;
 const FPS = Number(flags.fps);
+// The web's gate lead report-survey.md takes out before judging a record's
+// first-seen scroll; an unreadable value would judge nothing (NaN compares
+// false), so it is refused up front.
+const SURVEY_LEAD = flags["survey-lead"] == null
+  ? WEB_GATE_LEAD
+  : Number(String(flags["survey-lead"]).trim() || "NaN");
+if (!Number.isFinite(SURVEY_LEAD)) {
+  console.error(
+    `error: --survey-lead must be a number of px, got ${
+      JSON.stringify(flags["survey-lead"])
+    }`,
+  );
+  Deno.exit(2);
+}
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -229,6 +327,21 @@ interface PaneResult {
 // ── The level ────────────────────────────────────────────────────────────────
 
 async function loadRecord(): Promise<Json> {
+  if (SAV) {
+    // The cart's fresh import — never a cloud record that happens to share
+    // its name: what the Saturn plays and what the web plays must come from
+    // the same bytes.
+    const bytes = await Deno.readFile(SAV);
+    log(`cart: ${SAV} (${(bytes.length / 1024).toFixed(0)} KB)`);
+    const { record, name, notes } = await levelRecordFromCart(bytes, {
+      slot: SAV_SLOT,
+      name: LEVEL,
+      log,
+    });
+    for (const n of notes) log(`  ${n}`);
+    log(`  imported as "${name}"`);
+    return record;
+  }
   const cacheDir = join(ROOT, "build", "ps2", ".cache");
   const record = await fetchLevelRecord(LEVEL, cacheDir, log);
   if (!record) throw new Error(`level "${LEVEL}" not found`);
@@ -605,10 +718,297 @@ async function runPilotPane(
 }
 
 /**
+ * A survey's dump, fetched as JSON text in pieces. Handed back by value, a
+ * dump is first built into a protocol tree inside the renderer, and a big
+ * one (the PS2 pane's, hundreds of objects a sample at TURBO) took the
+ * renderer down: the page stopped answering for good and the rig waited on
+ * it for hours. Stringifying in the page and reading the text in 2 MB
+ * slices costs the renderer only the string; every step is time-boxed, and
+ * a failure leaves the pane its clip, with no survey, instead of a hang.
+ */
+async function fetchSurvey<T>(
+  cdp: Cdp,
+  dumpCode: string,
+  id: PaneId,
+): Promise<T | null> {
+  const PIECE = 2_000_000;
+  const boxed = <V>(p: Promise<V>, ms: number, what: string): Promise<V> =>
+    new Promise<V>((resolve, reject) => {
+      const t = setTimeout(
+        () => reject(new Error(`${what} did not answer in ${ms / 1000} s`)),
+        ms,
+      );
+      p.then((v) => {
+        clearTimeout(t);
+        resolve(v);
+      }, (e) => {
+        clearTimeout(t);
+        reject(e);
+      });
+    });
+  try {
+    const size = await boxed(
+      cdp.eval<number>(
+        `(function(){ var d = ${dumpCode}; window.__surveyJson = d === null ? "null" : JSON.stringify(d); return window.__surveyJson.length; })()`,
+      ),
+      60_000,
+      `${id}: the survey dump`,
+    );
+    let text = "";
+    for (let at = 0; at < size; at += PIECE) {
+      text += await boxed(
+        cdp.eval<string>(
+          `window.__surveyJson.substring(${at}, ${at + PIECE})`,
+        ),
+        30_000,
+        `${id}: survey piece at ${at}`,
+      );
+    }
+    await cdp.eval(`delete window.__surveyJson, true`).catch(() => {});
+    log(
+      `  ${id}: survey ${(size / 1e6).toFixed(1)} MB in ${
+        Math.max(1, Math.ceil(size / PIECE))
+      } piece(s)`,
+    );
+    return JSON.parse(text) as T;
+  } catch (e) {
+    log(`  ${id}: survey lost — ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** The verdict report.json carries once report-survey.md is written. */
+interface SurveyVerdict {
+  file: string;
+  ok: boolean;
+  failures: string[];
+  notJudged: string[];
+}
+
+/**
+ * report-survey.md for an out dir that holds a Saturn and a web survey:
+ * the two files set against each other by record (lib/parity-report.ts).
+ * Returns null, having said why, when either survey is missing or unreadable.
+ */
+async function writeSurveyReport(
+  dir: string,
+  rush: RushRecord,
+  files: { saturn: string | null; web: string | null },
+): Promise<SurveyVerdict | null> {
+  const read = async <T>(
+    file: string | null,
+    what: string,
+  ): Promise<T | null> => {
+    if (!file) {
+      log(`survey report: no ${what} survey this run`);
+      return null;
+    }
+    if (!await exists(file)) {
+      log(`survey report: no ${what} survey at ${file}`);
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(await Deno.readTextFile(file)) as T;
+      const when = (await Deno.stat(file)).mtime;
+      log(
+        `survey report: ${what} survey ${file}${
+          when
+            ? ` (written ${when.toISOString().slice(0, 16).replace("T", " ")} UTC)`
+            : ""
+        }`,
+      );
+      return parsed;
+    } catch (e) {
+      log(`survey report: ${what} survey at ${file} is not readable JSON — ${(e as Error).message}`);
+      return null;
+    }
+  };
+  const saturn = await read<SaturnSurveyFile>(files.saturn, "Saturn");
+  const web = await read<WebSurveyFile>(files.web, "web");
+  if (!saturn || !web) return null;
+  const report = surveyReport({ saturn, web, rush }, {
+    expectedLead: SURVEY_LEAD,
+  });
+  const file = join(dir, "report-survey.md");
+  await Deno.writeTextFile(file, report.markdown);
+  log(
+    `${file}: ${report.ok ? "PASS" : "FAIL"} — ${report.rows.length} records, ${report.kinds.length} bullet kinds, ${report.failures.length} finding(s)` +
+      (report.notJudged.length ? `, ${report.notJudged.length} not judged` : ""),
+  );
+  for (const f of report.failures) log(`  FAIL ${f}`);
+  return {
+    file,
+    ok: report.ok,
+    failures: report.failures,
+    notJudged: report.notJudged,
+  };
+}
+
+/** --survey-report: the report alone, for a run already on disk. */
+async function surveyReportOnly(dir: string): Promise<number> {
+  const rushFile = join(dir, "rush.json");
+  if (!await exists(rushFile)) {
+    console.error(`error: no rush.json in ${dir} — is it a testdrive out dir?`);
+    return 2;
+  }
+  let rush: RushRecord;
+  try {
+    rush = JSON.parse(await Deno.readTextFile(rushFile)) as RushRecord;
+  } catch (e) {
+    console.error(
+      `error: ${rushFile} is not readable JSON — ${(e as Error).message}`,
+    );
+    return 2;
+  }
+  const verdict = await writeSurveyReport(dir, rush, {
+    saturn: join(dir, "panes", "saturn.survey.json"),
+    web: join(dir, "panes", "web.survey.json"),
+  });
+  if (!verdict) return 2;
+  return verdict.ok ? 0 : 1;
+}
+
+/** Where a pane's survey goes, and its line in the log. */
+async function writeSurvey(
+  id: PaneId,
+  dump: SurveyDump<unknown, { t: number }> | null,
+  extra: Record<string, unknown>,
+): Promise<{ file: string | null; summary: Record<string, unknown> | null }> {
+  if (!dump) return { file: null, summary: null };
+  const panes = join(OUT, "panes");
+  await ensureDir(panes);
+  const file = join(panes, `${id}.survey.json`);
+  await Deno.writeTextFile(
+    file,
+    JSON.stringify({ pane: id, level: LEVEL, ...extra, ...dump }),
+  );
+  const summary = surveySummary(dump);
+  log(
+    `${id}: survey — ${dump.n} samples, ${dump.births.length} births, ${
+      Object.keys(dump.kinds).length
+    } kinds, up to ${dump.maxObjs} live objects${
+      dump.err ? ` (error: ${dump.err})` : ""
+    }`,
+  );
+  return { file, summary };
+}
+
+/**
+ * The web runtime under --full: the level's first stage from its start, under
+ * god mode, for --console-seconds, the survey sampling every object and
+ * flying the ship. The record is served as foo.json as runWeb serves the
+ * rush; the stage is --stage (0 by default), where the Saturn pane can only
+ * play the cart's first.
+ */
+const runWebSurvey: PaneRunner = async (ctx) => {
+  const spec = PANES.web;
+  const cdp = ctx.rig.cdp;
+  const served = await interceptFiles(cdp, {
+    "/games/2028-ai/foo.json": {
+      body: JSON.stringify(ctx.rush),
+      type: "application/json",
+    },
+  });
+  const unscript = await onNewDocument(cdp, [
+    PROBE,
+    `globalThis.__OFFLINE_LEVEL_NAME__ = ${JSON.stringify(LEVEL)};`,
+  ]);
+  const want = Number(flags["console-seconds"]) * 1000;
+  try {
+    await setViewport(cdp, spec.width, spec.height);
+    await cdp.send("Page.navigate", {
+      url: `${ctx.rig.origin}/games/2028-ai?stage=${STAGE}&story=0&god=1`,
+    });
+    await until(
+      "the web stage to start",
+      120_000,
+      () =>
+        cdp.eval<boolean>(`(function(){
+        var g = window.__PHASER_GAME__;
+        if (!g || !g.scene.isActive("PhaserGameScene")) return false;
+        return !!g.scene.getScene("PhaserGameScene").gameStarted;
+      })()`),
+      250,
+    );
+    await cdp.eval(webSurvey({
+      periodMs: 100,
+      box: { x0: 40, x1: 216, y0: 300, y1: 440 },
+      seed: 7,
+    }));
+    const cast = await screencast(cdp, join(OUT, "frames", "web"), spec);
+    await cdp.eval(`window.__survey.on = true`);
+    const t0 = Date.now();
+    log(`web: in stage ${STAGE} (GOD); surveying for ${want / 1000} s`);
+    let lastLog = 0;
+    let ended: string | null = null;
+    while (Date.now() - t0 < want + 2000) {
+      await sleep(250);
+      const st = await cdp.eval<
+        { n: number; err: string | null; ended: string | null; t0: number }
+      >(
+        `(function(){ var S = window.__survey; return S ? { n: S.n, err: S.err, ended: S.ended, t0: S.t0 } : null; })()`,
+      ).catch(() => null);
+      if (!st) continue;
+      if (st.err) throw new Error(`survey error: ${st.err}`);
+      if (st.ended) {
+        ended = st.ended;
+        break;
+      }
+      if (Date.now() - lastLog > 10_000) {
+        lastLog = Date.now();
+        log(`  web: ${st.n} samples, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+      }
+    }
+    const dump = await fetchSurvey<SurveyDump<WebBirth, WebSample>>(
+      cdp,
+      SURVEY_DUMP,
+      "web",
+    );
+    const frames = await cast.stop();
+    const from = dump?.t0 ?? t0;
+    const { clip, seconds } = await writeClip(
+      "web",
+      frames,
+      from,
+      Math.min(Date.now(), from + want),
+    );
+    if (!flags["keep-frames"]) {
+      await Deno.remove(join(OUT, "frames", "web"), { recursive: true })
+        .catch(() => {});
+    }
+    const survey = await writeSurvey("web", dump, {
+      source: "import",
+      stage: STAGE,
+      modes: ["GOD"],
+    });
+    return {
+      id: "web",
+      status: "captured",
+      clip,
+      seconds,
+      attempts: 1,
+      telemetry: {
+        window: `stage ${STAGE}'s first ${
+          (seconds).toFixed(1)
+        } s under god mode`,
+        ended,
+        survey: survey.summary,
+        surveyFile: survey.file,
+      },
+      modes: ["GOD"],
+    };
+  } finally {
+    await unscript();
+    await served.stop();
+  }
+};
+
+/**
  * The web runtime: 2028.Ai's own page with the rush served as its foo.json,
  * booted by the cheat URL straight into the first stage.
  */
 const runWeb: PaneRunner = async (ctx) => {
+  if (FULL) return await runWebSurvey(ctx);
   const served = await interceptFiles(ctx.rig.cdp, {
     "/games/2028-ai/foo.json": {
       body: JSON.stringify(ctx.rush),
@@ -732,15 +1132,21 @@ const runPs2: PaneRunner = async (ctx) => {
   const built = await buildPs2({
     root: ROOT,
     levelName: LEVEL,
-    bossRush: STAGE,
+    // A cart's import is read from the file every other pane builds from,
+    // never from the cloud by the cart's name.
+    levelFile: SAV ? join(OUT, "rush.json") : null,
+    bossRush: FULL ? null : STAGE,
     skipAudio: true,
     log: (m) => log(`  ${m.trim()}`),
   });
   if (!built.appDir) throw new Error("the PS2 build wrote no app folder");
   const webDir = join(OUT, "ps2-web");
-  await writeWebBuild(built.appDir, webDir, { title: `${LEVEL} boss rush` });
+  await writeWebBuild(built.appDir, webDir, {
+    title: FULL ? LEVEL : `${LEVEL} boss rush`,
+  });
   const site = serveFolder(webDir, Number(flags["serve-port"]) + 2);
   try {
+    if (FULL) return await runPs2Full(ctx, site.origin);
     return await runPilotPane({
       id: "ps2",
       url: () => `${site.origin}/index.html`,
@@ -790,6 +1196,122 @@ const runPs2: PaneRunner = async (ctx) => {
     await site.close();
   }
 };
+
+/**
+ * The PS2 build under --full: its one stage from the title, started with
+ * SELECT + L1 + R1 (turbo and god mode: the port has no stage select and its
+ * ship is mortal), surveyed for --console-seconds the way the web pane is.
+ */
+async function runPs2Full(
+  ctx: PaneContext,
+  origin: string,
+): Promise<PaneResult> {
+  const spec = PANES.ps2;
+  const cdp = ctx.rig.cdp;
+  const unscript = await onNewDocument(cdp, [PS2_FULL_SCREEN]);
+  const want = Number(flags["console-seconds"]) * 1000;
+  try {
+    await setViewport(cdp, spec.width, spec.height);
+    await cdp.send("Page.navigate", { url: `${origin}/index.html` });
+    await until(
+      "the PS2 title",
+      120_000,
+      () =>
+        cdp.eval<boolean>(`!!(window.__PS2_HOST__ && __PS2_HOST__.ready &&
+        window.__PS2_CTX__ && __PS2_CTX__.scenes.current === "title")`),
+      250,
+    );
+    const inStage = () =>
+      cdp.eval<boolean>(
+        `!!(window.__PS2_GS__ && __PS2_CTX__.scenes.current === "game" &&
+        __PS2_GS__() && __PS2_GS__().player)`,
+      );
+    await until("the PS2 stage", 60_000, async () => {
+      if (await inStage()) return true;
+      await cdp.eval(
+        `(function(){ var B = __PS2_PADS__.BUTTONS; __PS2_PADS__.set(B.SELECT | B.L1 | B.R1); return true; })()`,
+      );
+      await sleep(300);
+      await cdp.eval(`__PS2_PADS__.clear(), true`);
+      await sleep(1700);
+      return await inStage();
+    }, 0);
+    const state = await cdp.eval<{ turbo: number; god: number }>(
+      `({ turbo: __PS2_CTX__.state.turboMode, god: __PS2_CTX__.state.godMode || 0 })`,
+    );
+    const modes = [
+      ...(state.turbo ? ["TURBO"] : []),
+      ...(state.god ? ["GOD"] : []),
+    ];
+    await cdp.eval(ps2Survey({
+      periodMs: 100,
+      box: { x0: 40, x1: 200, y0: 300, y1: 440 },
+      seed: 7,
+    }));
+    const cast = await screencast(cdp, join(OUT, "frames", "ps2"), spec);
+    await cdp.eval(`window.__survey.on = true`);
+    const t0 = Date.now();
+    log(`ps2: in the stage (${modes.join(", ")}); surveying for ${want / 1000} s`);
+    let lastLog = 0;
+    let ended: string | null = null;
+    while (Date.now() - t0 < want + 2000) {
+      await sleep(250);
+      const st = await cdp.eval<
+        { n: number; err: string | null; ended: string | null }
+      >(
+        `(function(){ var S = window.__survey; return S ? { n: S.n, err: S.err, ended: S.ended } : null; })()`,
+      ).catch(() => null);
+      if (!st) continue;
+      if (st.err) throw new Error(`survey error: ${st.err}`);
+      if (st.ended) {
+        ended = st.ended;
+        break;
+      }
+      if (Date.now() - lastLog > 10_000) {
+        lastLog = Date.now();
+        log(`  ps2: ${st.n} samples, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+      }
+    }
+    const dump = await fetchSurvey<SurveyDump<WebBirth, WebSample>>(
+      cdp,
+      PS2_SURVEY_DUMP,
+      "ps2",
+    );
+    const frames = await cast.stop();
+    const from = dump?.t0 ?? t0;
+    const { clip, seconds } = await writeClip(
+      "ps2",
+      frames,
+      from,
+      Math.min(Date.now(), from + want),
+    );
+    if (!flags["keep-frames"]) {
+      await Deno.remove(join(OUT, "frames", "ps2"), { recursive: true })
+        .catch(() => {});
+    }
+    const survey = await writeSurvey("ps2", dump, {
+      source: "export",
+      modes,
+    });
+    return {
+      id: "ps2",
+      status: "captured",
+      clip,
+      seconds,
+      attempts: 1,
+      telemetry: {
+        window: `the stage's first ${seconds.toFixed(1)} s`,
+        source: "export",
+        ended,
+        survey: survey.summary,
+        surveyFile: survey.file,
+      },
+      modes,
+    };
+  } finally {
+    await unscript();
+  }
+}
 
 /** EmulatorJS's own chrome — the menu bar, its button, the virtual pad — off. */
 const EJS_BARE = `(function () {
@@ -845,6 +1367,10 @@ interface EmuPane {
   /** From the loaded page to the stage's first frame; answers the RAM's heap offset. */
   boot: (cdp: Cdp) => Promise<number>;
   pilot: Omit<EmuPilotConfig, "ramBase">;
+  /** What the pane plays: the cart itself, or the record written back out. */
+  source?: "cart" | "export";
+  /** The survey's page code for this RAM, installed beside the pilot (--full). */
+  survey?: (ramBase: number) => string;
 }
 
 async function runEmuPane(
@@ -863,8 +1389,11 @@ async function runEmuPane(
     const ramBase = await pane.boot(cdp);
     log(`${pane.id}: in the stage; its RAM is at heap ${ramBase}`);
     await cdp.eval(emuPilot({ ...pane.pilot, ramBase }));
+    if (pane.survey) await cdp.eval(pane.survey(ramBase));
     const cast = await screencast(cdp, join(OUT, "frames", pane.id), spec);
-    await cdp.eval(`window.__emu.on = true`);
+    await cdp.eval(
+      `window.__emu.on = true, window.__survey && (window.__survey.on = true)`,
+    );
     const t0 = Date.now();
     let st: EmuStatus | null = null;
     let lastLog = 0;
@@ -887,6 +1416,13 @@ async function runEmuPane(
     }
     await cdp.eval(`window.__emu.stop(), true`);
     st = await cdp.eval<EmuStatus>(EMU_STATUS);
+    const dump = pane.survey
+      ? await fetchSurvey<SurveyDump<SaturnBirth, SaturnSample>>(
+        cdp,
+        SURVEY_DUMP,
+        pane.id,
+      )
+      : null;
     const frames = await cast.stop();
     const last = st.kept.filter((s): s is [number, number] => s[1] !== null);
     const lastMs = last.reduce((n, [a, b]) => n + (b - a), 0);
@@ -907,6 +1443,13 @@ async function runEmuPane(
       await Deno.remove(join(OUT, "frames", pane.id), { recursive: true })
         .catch(() => {});
     }
+    // The survey's samples carry wall time; the kept spans say which of them
+    // belong to the run the clip shows (a rewind cut the rest).
+    const survey = await writeSurvey(pane.id, dump, {
+      source: pane.source ?? "export",
+      kept,
+      deaths: st.deaths,
+    });
     return {
       id: pane.id,
       status: "captured",
@@ -916,10 +1459,14 @@ async function runEmuPane(
         window: `the stage's first ${
           (Math.min(keptMs, want) / 1000).toFixed(1)
         } s of surviving play`,
+        source: pane.source ?? "export",
         deathsCut: st.deaths,
         keptSpans: kept.length,
         wallSeconds: Math.round((Date.now() - t0) / 1000),
         reachedWanted: keptMs >= want,
+        ...(survey.summary
+          ? { survey: survey.summary, surveyFile: survey.file }
+          : {}),
       },
       modes: [],
     };
@@ -1087,13 +1634,36 @@ const runSaturn: PaneRunner = async (ctx) => {
       reason: "no Dezaemon 2 disc in dev-fixtures/ (or $DEZAEMON_DISC)",
     };
   }
-  const disc = await injectDisc({
-    level: join(OUT, "rush.json"),
-    out: join(OUT, "saturn"),
-    zip: true,
-    log: (m) => log(`  ${m}`),
-  });
+  // --sav --full: the cart itself goes on the disc, byte for byte, so the
+  // Saturn plays the original and the web its import — the comparison the
+  // survey is for. A rush, or a cloud level, is built from the record; so is
+  // a --saturn-export run, which puts the import's round trip (build:sav) on
+  // the Saturn instead, to tell what the writer loses from what the runtime
+  // plays differently.
+  const original = !!(SAV && FULL) && !flags["saturn-export"];
+  const disc = await injectDisc(
+    original
+      ? {
+        sav: SAV!,
+        slot: SAV_SLOT,
+        name: LEVEL,
+        out: join(OUT, "saturn"),
+        zip: true,
+        log: (m) => log(`  ${m}`),
+      }
+      : {
+        level: join(OUT, "rush.json"),
+        out: join(OUT, "saturn"),
+        zip: true,
+        log: (m) => log(`  ${m}`),
+      },
+  );
   if (!disc.zipPath) throw new Error("disc:inject wrote no zip");
+  log(
+    `saturn: plays ${
+      original ? "the ORIGINAL cart" : "the record written back out (build:sav)"
+    }`,
+  );
   const spec = PANES.saturn;
   const cdp = ctx.rig.cdp;
   const hwram = (a: number) => a - 0x06000000;
@@ -1101,6 +1671,10 @@ const runSaturn: PaneRunner = async (ctx) => {
   const word = (a: number) => cdp.eval<number>(`__sat.w(${a})`);
   return await runEmuPane({
     id: "saturn",
+    source: original ? "cart" : "export",
+    survey: FULL
+      ? (ramBase) => saturnSurvey({ ramBase, periodMs: 100, slots: 256 })
+      : undefined,
     url: `${ctx.rig.origin}/__parity/saturn/play.html`,
     files: {
       "/__parity/saturn/play.html": {
@@ -1901,6 +2475,14 @@ async function writeGrid(results: PaneResult[]) {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+if (flags["survey-report"] !== undefined) {
+  const dir = String(flags["survey-report"]).trim();
+  if (!dir) {
+    console.error("error: --survey-report needs an earlier run's out dir");
+    Deno.exit(2);
+  }
+  Deno.exit(await surveyReportOnly(resolve(dir)));
+}
 if (!await hasCommand("ffmpeg", ["-version"])) {
   console.error("error: ffmpeg is not on PATH — it cuts the clips and the GIF");
   Deno.exit(2);
@@ -1922,9 +2504,20 @@ log(
     Object.entries(kinds).map(([k, f]) => `${k}=${f.join("/")}`).join(", ")
   }`,
 );
+// Under --full the "rush" is the whole game: the file every exporter builds
+// from keeps its name, so the panes need not know which they were given.
 const rush = structuredClone(record);
-const summary = bossRushRecord(rush, { startStage: STAGE });
-log(describeBossRush(summary));
+const summary = FULL ? null : bossRushRecord(rush, { startStage: STAGE });
+if (summary) log(describeBossRush(summary));
+else {
+  log(
+    `full game: ${
+      Object.keys(record.stages ?? {}).filter((k) => /^stage\d+$/.test(k))
+        .length || 1
+    } stage(s); every pane plays the first from its start` +
+      (STAGE ? `, the web pane stage ${STAGE}` : ""),
+  );
+}
 await Deno.writeTextFile(join(OUT, "rush.json"), JSON.stringify(rush));
 
 const ran = new Map<PaneId, PaneResult>();
@@ -1991,8 +2584,27 @@ for (const id of PANE_IDS) {
 }
 
 const gif = results.some((r) => r.clip) ? await writeGrid(results) : null;
+// Under --full, with a Saturn and a web survey (this run's, or a reused
+// pane's by its report.json entry — never a stale file in the out dir), the
+// two are set against each other as report-survey.md. The Saturn pane plays
+// the cart's stage 0, so a web pane on another stage has nothing to meet.
+const surveyFileOf = (id: PaneId): string | null => {
+  const t = results.find((r) => r.id === id)?.telemetry;
+  return t && typeof t.surveyFile === "string" ? t.surveyFile : null;
+};
+if (FULL && STAGE !== 0) {
+  log(`survey report: skipped — the Saturn plays stage 0, the web stage ${STAGE}`);
+}
+const survey = FULL && STAGE === 0
+  ? await writeSurveyReport(OUT, rush as RushRecord, {
+    saturn: surveyFileOf("saturn"),
+    web: surveyFileOf("web"),
+  })
+  : null;
 const report = {
   level: LEVEL,
+  source: SAV ? { cart: SAV, slot: SAV_SLOT } : { cloud: LEVEL },
+  mode: FULL ? "full" : "boss rush",
   stage: STAGE,
   boss: boss.name ?? bossKey,
   fromHp: Number(flags["from-hp"]),
@@ -2000,6 +2612,7 @@ const report = {
   bossRush: summary,
   panes: results,
   grid: gif,
+  survey,
 };
 await Deno.writeTextFile(
   join(OUT, "report.json"),
@@ -2021,4 +2634,9 @@ if (gif) {
       gif.overBudget ? ", OVER BUDGET" : ""
     })`,
   );
+}
+if (survey) {
+  log(`  ${survey.file} (${survey.ok ? "PASS" : "FAIL"})`);
+  // Last, with every artifact written: a failing survey verdict fails the run.
+  if (!survey.ok) Deno.exit(1);
 }

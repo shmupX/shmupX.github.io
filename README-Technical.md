@@ -786,6 +786,10 @@ deno task n64:probe       # look inside the Nintendo 64 Dezaemon 3D 64DD disk (l
                           # every cart / card / disk / PS2 exporter above takes --boss-rush[=STAGE]: no waves but one showcase
                           # row of every enemy type (and the level's drops), bosses only, from that stage on (lib/boss-rush.ts)
 deno task testdrive:parity # one level's boss on every target side by side — web, PS2, SFC, Saturn, Kids!, Dezaemon+, 64DD — a tool-assisted pilot fighting it, as one GIF + per-pane mp4s and input logs
+                          # -- --sav "Dez 2 - Ramsie.sav" --full: a cart's first stage from its start, the ORIGINAL cart on the Saturn against its
+                          # import on the web, every object sampled into panes/<id>.survey.json (README-Parity.md has the Ramsie findings)
+                          # and the two surveys set against each other as report-survey.md (exit 1 on its FAIL); -- --survey-report <out-dir>
+                          # rebuilds that report from a run on disk, --survey-lead <px> the web's gate lead it takes out first (240)
 deno task ps2:page        # a game's PS2 download / PLAY page in static/games/<its alias, else level-ps2>/ (gs: /games/squad/): ISO, USB zip, the web build, README, the GIF
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task ships:atlas     # cut dev-fixtures/ship-sheet/ships.png into the editor's NEW GAME character roster
