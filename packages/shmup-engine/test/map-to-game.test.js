@@ -774,6 +774,78 @@ Deno.test("decoded behavior lands on the runtime fields and rides along whole", 
   assert(validateGameJson(gameJson).ok);
 });
 
+// Bullet type 3 spawns the enemy record byte 5 names, from the shooter's own
+// stage (decode-enemy.js decodeBigShot); the runtime spawns that roster entry
+// as a zako, so the mapper resolves it to a roster key the way it resolves a
+// death word's child.
+Deno.test("a type-3 shooter's record resolves to its roster key, like a death child", () => {
+  const channel = { enabled: false, from: 0, to: 0, step: 0, repeat: 0, trigger: 0 };
+  const behavior = (fire) => ({
+    appearance: 0,
+    hp: 12800,
+    animPeriod: 15,
+    score: 100,
+    ground: false,
+    movePattern: 0,
+    move: { mode: 0, flag: false },
+    fire,
+    death: { mode: 0 },
+    zoom: { ...channel },
+    rotation: { ...channel, mode: 0 },
+    scale: { ...channel, axes: "xy" },
+    direction: { ...channel },
+  });
+  const big = {
+    enabled: true,
+    mode: 3,
+    interval: 11,
+    window: 7,
+    geometry: null,
+    aimed: false,
+    pattern: null,
+    direction: 0,
+    directionEx: 0,
+    steering: null,
+    bigShot: { band: 0, index: 13, character: 0x43 + 52, frames: 4, record: 13, key: 141 },
+  };
+  const quiet = {
+    enabled: true,
+    mode: 0,
+    interval: 119,
+    window: 29,
+    geometry: 0,
+    aimed: false,
+    pattern: null,
+    direction: 0,
+    directionEx: 0,
+    steering: null,
+    bigShot: null,
+  };
+  const entry = (name, stage, record, placements, fire) => ({
+    name,
+    stage,
+    record,
+    placements,
+    bytes: new Uint8Array(18),
+    behavior: behavior(fire),
+  });
+  const decoded = emptyDecoded();
+  decoded.enemies = [
+    entry("deza0_04", 0, 4, 6, big),
+    entry("deza0_13", 0, 13, 0, quiet),
+    // The same record index on another stage is another record.
+    entry("deza1_13", 1, 13, 1, quiet),
+  ];
+  const { gameJson } = mapSaveToGame(decoded);
+  const shooter = gameJson.enemyData.enemyA;
+  assertStrictEquals(shooter.dezaemon.bigShotChild, "enemyB");
+  assertStrictEquals(gameJson.enemyData.enemyB.dezaemon.bigShotChild, undefined);
+  assertStrictEquals(gameJson.enemyData.enemyC.dezaemon.bigShotChild, undefined);
+  // The deterministic reload rides on the record as its interval.
+  assertStrictEquals(shooter.interval, 11);
+  assertStrictEquals(shooter.dezaemon.behavior.fire.bigShot.record, 13);
+});
+
 Deno.test("an armoured enemy imports as indestructible", () => {
   // Record byte 2 bit 4 -> the engine's hit-attribute bit 0. A flagged target
   // has its hp rolled back to 0x7FFFFFFF the moment it is damaged (+0x8B80),

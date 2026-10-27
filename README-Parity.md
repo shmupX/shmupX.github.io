@@ -211,6 +211,33 @@ ground spawn offset and the arm test are traced (`+0x152E8`, `+0x1679A`,
 
 ### P2. "Purple fireballs": the big shot is drawn with 2028.Ai's stock bullet
 
+**Landed 2026-10-27** (the trace is in FORMAT.md "Bullet type 3"; the
+paragraphs below are the measurement it answered). A big shot is not a
+bullet and has no updater of its own: `+0x190AE` takes a slot from the
+150-slot enemy pool, `+0x18E7C` writes `b5 | 0x80` as its formation key
+and runs the band's spawn wrapper — the same seven wrappers the grid uses —
+into the ordinary zako initialiser `+0x153C8` with `record = BASE[band] |
+(b5 & 15)`, so the object IS that record, spawned where the shooter stands:
+its hp, armour, death word, fire config, class and appearance script, and
+it moves as that script says. The decoder now names the record and the key
+(`decodeBigShot`), the roster walk carries every record a big shot names
+(`spawnClosure`, the death child's walk widened — Ramsie stage 0 gains 3, 5,
+13 and 24 as spawn-only entries, so their frames reach the atlas), the
+mapper resolves it to `dezaemon.bigShotChild`, and the runtime spawns that
+roster entry as a zako (`spawnBigShot`, beside `spawnDeathChild`) on the
+hardware's cadence: the reload counts down every frame and refills from
+the interval on the frame it reads 0, in or out of the fire window, so the
+period is interval + 1 frames; the interval comes from the shooter's own
+band's table (T20, below). `configs[3]` is gone. A big shot that leaves
+the field upward is retired at once (it was born on the field, so above
+the top edge it is outside the despawn box `+0x173A4`), and a zako the
+behaviour driver retires is now removed whether or not it has a hitbox —
+without that, D's armoured shots parked above the screen until the pool
+was full. What still differs is the fire window's geometry (P1: the
+hardware's 224-px screen and 48..272-px lateral band are applied on the
+web's 256×480 field) and the per-row fire gate's first tick on an import
+older than the entry rows.
+
 **Measured.** The web fired 123 `normalProjectile0.gif` bullets in 60 s —
 the stock 2028.Ai soldier bolt, a 14×20 violet teardrop (mean RGB
 130, 35, 203) — 120 of them attributed to the five type-3 records that
@@ -231,8 +258,13 @@ attack 512), none armoured: 703 births carrying borrowed sprites over the
 wall run. The web's are bullets with hp 1. Z is the sixth shooter: the
 decoder marks its appearance (0x79) no-fire and the web Z never fires,
 while the Saturn fired its big shot about two seconds after each Z entry.
+(Settled 2026-10-27: the no-fire bit is a property of the script ROW, not
+the appearance — the row load `+0x4F24` copies each row's flags into the
+mode word the dispatcher tests — and 0x79's glide rows are silent while its
+40-tick hover rows fire. The runtime gates on the live row now;
+`APPEARANCE_NOFIRE` says only which appearances open silent.)
 
-Why, in order:
+Why, in order (as it stood before the fix):
 
 1. `mapSaveToGame` clones `defaults.starterEnemy` for every zako, whose
    `bulletData.texture` is `normalProjectile0-2.gif`, and only overwrites
@@ -262,32 +294,30 @@ Why, in order:
    light blue). Ramsie's boss was not reached in this run; its pattern 1
    fires a type-0 spiral, which the bank covers.
 
-- Hardware: `+0x190AE` allocates one class-99 object and `+0x18E7C` picks
-  character `base + index·step` from byte 5 (band bits 4-6, bases
-  0x43/0x83/0xA3/0xC3/0x103/0x10B/0x113, steps 4/4/4/4/2/2/1) — i.e. the
-  sprite of record `BASE[band] + index` with `BASE = [0,16,24,32,48,52,56]`;
-  no aim bit; deterministic reload from the interval alone (Ramsie: D every
-  11 frames, U/V every 3, F and R every 59). FORMAT.md L1130-1161.
-- Round trip (§3): because the importer carries no record for a big shot,
-  the cart writer hands records 3, 5 and 13 to other enemies, and the
-  written cart's D, F, U and V fire those — one-hit, unarmoured, in the
-  wrong art. The same missing record costs the web its art and the export
-  its object.
-- Fix, importer: extract the frames of every record a big shot names (and
-  give `decodeBigShot` its record index), put them on the atlas, and write
-  the big shot's own `texture`, hp, armour bit and band attack on the
-  firing record; drop `configs[3]`; stop gating a type-3 record on the
-  appearance's no-fire bit. Fix, runtime: spawn a big shot as an object
-  with that art, hp and armour (shootable unless armoured; it collides
-  like a zako and its contact word is the band's), not as a bullet.
-- Trace: the seven per-band updaters `+0x16070 / +0x16148 / +0x16238 /
-  +0x16328 / +0x16400 / +0x164F0 / +0x165E0` — how a big shot moves
-  (speed, heading, lifetime, whether it rides the scroll), which the
-  runtime today replaces with a straight flight (the sampled shots fell
-  ~1-1.3 px per frame for a few tenths of a second and then held their y,
-  which is either the updater or their death); and why the no-fire
-  appearance gate does not stop Z. Ramsie stage 0 places six type-3
-  records 26 times, so this trace is the first on the list.
+- Hardware: `+0x190AE` takes a slot from the enemy pool (`0x06068A40`
+  over slots 99..248 — "class 99" was that pool's first slot) and
+  `+0x18E7C` runs the band's spawn wrapper into the zako initialiser with
+  `record = BASE[band] | (b5 & 15)`, `BASE = [0,16,24,32,48,52,56]`
+  (`0x0608603C`); the character `base + (index & mask)·step` is that
+  record's; no aim bit; deterministic reload, period interval + 1 frames
+  from the band's table (Ramsie: D every 12 frames, U/V every 4, F and R
+  every 60, Z every 30 in its hover rows). FORMAT.md "Bullet type 3".
+- Round trip (§3): because the importer carried no record for a big shot,
+  the cart writer handed records 3, 5 and 13 to other enemies, and the
+  written cart's D, F, U and V fired those — one-hit, unarmoured, in the
+  wrong art. The records are roster entries now (placements 0), so
+  `freeIndex` can keep them at their own index; the round trip is to be
+  re-measured (Phase 6).
+- Code, after the fix: `decodeBigShot` (`record`, `key`),
+  `bigShotInterval`, `spawnClosure` in `decode-stage.js`,
+  `dezaemon.bigShotChild` in `map-to-game.js`; `spawnBigShot`,
+  `dezaFireWindow` and the row gate in `updateEnemyFire`
+  (`game.bundle.js`); `DEZA_MAX_LIVE_ZAKO` is the pool's 150. The PS2 port's
+  zako patch (`packages/shmup-harbor/lib/ps2/runtime-patches.ts`) still
+  fires its stand-in bullet for type 3.
+- Trace: closed (T1, T20 below). What the survey called the shots' fall
+  and halt was record 13's own script (appearance 0x9a: a 384-unit drift
+  down, then a slow turn).
 
 ### P3. The ship fires 2028.Ai's art, not the cart's
 
@@ -450,9 +480,15 @@ per-level table `+0x21D6C`) in slots 68-69 alongside VULCAN B's.
 - The steered children of geometry 9 and the kink of geometry 8 fire at
   twice the traced distance (P1).
 - Type 3's `configs[3]` (P2).
-- The fire window: the runtime starts a volley only with the enemy at
-  y 8..GH−8 (its own rule); hardware clamps on the 320-wide grid and fires
-  anywhere visible (`+0x1985E`).
+- The fire window: landed 2026-10-27 as `dezaFireWindow` — the hardware's
+  rule (`+0x1983E..+0x1987E`: the scroll coordinate on the 224-px screen,
+  96 px above it allowed in a horizontal game, and the lateral coordinate
+  within 48..272 of the 320-px grid) applied to the web's field as y
+  0..GH and x 16..GW−16; the window's height is P1's.
+- The fire gate is per script ROW (flags bit 4, copied into the mode word
+  at every row load, `+0x4F24`), not per appearance: landed 2026-10-27 in
+  `updateEnemyFire`, with the reload counting through a silent row as it
+  does off the field. Ramsie's Z fires in its hovers.
 - Blasts: the save's blast anims A/B (refs 102-131) and their hold nibbles
   ride on the record (`dezaemonBullets.blastArt`) and are never drawn; the
   web plays 2028.Ai's `explosion00-06.gif`. Death presentation byte 4 bits
@@ -550,11 +586,13 @@ and ramps down at −1 per 128 frames where the engine's NORMAL rate is
 one per 16. Rank sets enemy bullet speed and the fire-tick rate, so this
 drifts every late-stage bullet.
 
-The web's live-object cap also differs in kind: `DEZA_MAX_LIVE_ZAKO = 48`
-**drops** a wave cell outright when 48 objects are live (and gates boss
-parts the same way), where the hardware pools 150 enemy slots and the
+The web's live-object cap also differs in kind: `DEZA_MAX_LIVE_ZAKO`
+**drops** a wave cell outright when that many objects are live (and gates
+boss parts the same way), where the hardware pools 150 enemy slots and the
 survey counted 152 live objects at once — Ramsie's stage 2 places 504
-spawns.
+spawns. The constant is the pool's 150 since 2026-10-27 (the allocator
+`0x06068A40` runs over slots 99..248 and a full pool drops the spawn, which
+is what the cap does); it was 48.
 
 ### P10. What already matches (and the plan does not touch)
 
@@ -578,7 +616,7 @@ pieces of them a 60-second stage exercises.
 | # | Difference | Kind | Blocks 1:1 | Trace needed |
 | --- | --- | --- | --- | --- |
 | P1 | 256×480 window vs 320×224; rows enter 240 px early, ground objects armed like air, bullets cross in 2.14× the time | runtime geometry | yes | draw order only (T18) |
-| P2 | big shots drawn as the stock purple bolt; their art never imported | importer + runtime | yes | the 7 band updaters |
+| P2 | **landed 2026-10-27** — a big shot is the named record spawned as a zako; its art, hp, armour and script are the record's | importer + runtime | re-survey | none |
 | P3 | ship's shots, pods, charge and bombs drawn with Duke's art / shapes | importer + runtime | yes | effect art per level |
 | P4 | weapon-change items inert; drops fall; barrier timed; cycle baked | runtime + importer | yes | `+0x1CF3C`, barrier, stock seeds |
 | P5 | SUB 1-4 missing (Ramsie P1 flies H-MISSILE) | runtime | yes | SUB handlers |
@@ -708,7 +746,7 @@ P-item above.
 
 | # | What | Where to start | Blocks | Why it matters for Ramsie |
 | --- | --- | --- | --- | --- |
-| T1 | The seven per-band big-shot updaters: motion, lifetime, ride, collision of a class-99 object | `+0x16070 +0x16148 +0x16238 +0x16328 +0x16400 +0x164F0 +0x165E0`; the class-99 state handler via `0x06084590` | P2 | 23 placements on stage 0 fire them every 3-59 frames; today they fly straight as bullets |
+| T1 | **Settled 2026-10-27.** The seven `+0x16070..+0x165E0` routines are the grid's own spawn wrappers, not updaters: a big shot is the record byte 5 names, spawned through the zako initialiser at the shooter's position, and moves by that record's appearance script and change channels. FORMAT.md "Bullet type 3". | — | P2 | the runtime spawns the roster entry as a zako |
 | T2 | SUB weapons 1-4: H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER handlers (geometry, speed, lifetime, homing) | jump table `+0x15150` entries 1-4 (`+0xF498` is entry 1) | P5 | P1's starting weapon and preset 2's; also decides the hp divisor (SUB 20 vs MAIN 45) |
 | T3 | Weapon-change pickup `+0x1CF3C`: what it resets | `+0x1CF3C`, the six pod-rebuild events | P4 | eight weapon-change pickups on stage 0 alone |
 | T4 | Boss fire-point types 5 (beam) and 6 (flame): geometry, damage, duration, art | period table `+0x21FA0` and its readers in the executor `+0x19FF4` | P8 | stage-0 boss pattern 0 and 2 run a beam |
@@ -726,8 +764,8 @@ P-item above.
 | T16 | The "periodic extra spawner" that also writes formation keys (FORMAT.md L790) | `--xref 0x06090530` writers | P10 | unknown spawns would show as survey births with no placement |
 | T17 | Death presentation: small vs full blast objects, the blast hold nibbles' consumers | spawners `+0x1C104` / `+0x1C1F0` | P6 | every kill |
 | T18 | Object draw priority / sort order (player vs enemy vs bullets vs effects) | the sort key writers around `+0x473E` | P1 | needed once the field is 320×224 and frames are compared pixelwise |
-| T19 | Enemy CONTACT attack per art band — the survey read 256 / 512 / 768 / 1024 / 1280 for bands 0 / 2 / 3 / 4-5 / 6, independent of hp; FORMAT.md has no such table | the seven spawn wrappers `+0x16070..+0x165F8` (the same that set frame count and char base) | P6 | what a hull touch and a charge orb's mutual-hp trade cost on every enemy |
-| T20 | Bullet type 3's reload table — `0x6085F80` (D every 9 frames) or `0x6085F90` (11) for `b4&3 == 3` | the type-3 arm `+0x19986` | P2 | D's cadence; the survey's D died too fast (1.8 shots per alive-second) to settle it |
+| T19 | **Settled 2026-10-27.** The seven spawn wrappers write the band's CONTACT attack as an immediate into `0x0608C720`: 256 / 512 / 512 / 768 / 1024 / 1024 / 1280 for bands 0-6 (`+0x160D4` and its six twins), independent of hp — the survey's 256 / 512 / 768 / 1024 / 1280 for bands 0 / 2 / 3 / 4-5 / 6. Not yet read by the runtime. | — | P6 | what a hull touch and a charge orb's mutual-hp trade cost on every enemy |
+| T20 | **Settled 2026-10-27.** `0x6085F90` for a shooter in the four-frame bands 0-3 (records 0-47), `0x6085F80` for bands 4-6 (`+0x154E4` tests the band wrapper's frame-count word against 3); the shot goes out on the frame the reload reads 0 and the same frame refills it, so the period is interval + 1 frames (D: 12). | — | P2 | `bigShotInterval` in the decoder |
 
 Documentation to strike at the same time, so the plan starts from the
 latest readings: FORMAT.md L219 (scroll curve "open"), L304-331's bullet

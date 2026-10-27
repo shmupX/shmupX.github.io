@@ -15,7 +15,7 @@
 //
 // Environment-neutral ESM (Node + browser).
 
-import { decodeEnemyRecord, zakoRecordFromKey } from "./decode-enemy.js";
+import { BIG_SHOT_TYPE, decodeBigShot, decodeEnemyRecord, zakoRecordFromKey } from "./decode-enemy.js";
 
 export const SEC5_REGIONS = {
     stageBanks: { offset: 0x00000, count: 10, stride: 0x5400 },
@@ -309,11 +309,14 @@ export function enemyPairKey(stage, record) {
 }
 
 // stages -> {enemies, stages, stagesUsing} for mapSaveToGame().
-// Records a stage can spawn through mode-2 death words but never places on its
-// grid, found by walking parent -> child until nothing new turns up. The engine
-// has no depth limit here (a child's own record supplies its own death word),
-// so the walk is bounded only by the 60-record table.
-function deathChildClosure(stage, placed) {
+// Records a stage can spawn but never places on its grid: a mode-2 death word
+// spawns its child record when the parent dies, and a bullet-type-3 record
+// spawns the record its byte 5 names on every reload (decode-enemy.js
+// decodeBigShot) — both from the same stage's table, both at the parent's
+// position, and a spawned record may spawn in turn, so this walks parent ->
+// child until nothing new turns up. The engine has no depth limit here, so
+// the walk is bounded only by the 60-record table.
+function spawnClosure(stage, placed) {
     const found = new Set();
     const queue = [...placed];
     const seen = new Set(queue);
@@ -322,15 +325,18 @@ function deathChildClosure(stage, placed) {
         const entry = stage.enemies.records[record];
         if (!entry || !entry.defined) continue;
         const bytes = entry.bytes;
-        if (((bytes[2] >> 6) & 3) !== 2) continue;
-        const child = zakoRecordFromKey(bytes[3] | 0x80);
-        if (child < 0 || child >= ZAKO_SLOT_COUNT || seen.has(child)) continue;
-        seen.add(child);
-        // Only a record with content is worth carrying — an all-zero one would
-        // land in the roster as an invisible do-nothing enemy.
-        if (!stage.enemies.records[child] || !stage.enemies.records[child].defined) continue;
-        found.add(child);
-        queue.push(child);
+        const children = [];
+        if (((bytes[2] >> 6) & 3) === 2) children.push(zakoRecordFromKey(bytes[3] | 0x80));
+        if ((bytes[4] & 3) === BIG_SHOT_TYPE) children.push(decodeBigShot(bytes[5]).record);
+        for (const child of children) {
+            if (child < 0 || child >= ZAKO_SLOT_COUNT || seen.has(child)) continue;
+            seen.add(child);
+            // Only a record with content is worth carrying — an all-zero one
+            // would land in the roster as an invisible do-nothing enemy.
+            if (!stage.enemies.records[child] || !stage.enemies.records[child].defined) continue;
+            found.add(child);
+            queue.push(child);
+        }
     }
     return found;
 }
@@ -375,10 +381,11 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = nu
         );
         // A record the map never places can still reach the screen: the death
         // word's child mode spawns one from the same stage's table when its
-        // parent dies, and that child may spawn a child of its own. Follow that
+        // parent dies, a type-3 shooter spawns the record its byte 5 names on
+        // every reload, and either may spawn one of its own. Follow that
         // chain so the roster holds everything the stage can actually put in
         // front of the player, not just what the grid seeds.
-        for (const record of deathChildClosure(st, placed)) placed.add(record);
+        for (const record of spawnClosure(st, placed)) placed.add(record);
         for (const record of [...placed].sort((a, b) => a - b)) {
             const key = enemyPairKey(s, record);
             indexOf.set(key, enemies.length);
@@ -390,13 +397,14 @@ export function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = nu
                 record,
                 key,
                 // 0 for a record the grid never places — it reaches the
-                // screen only as another record's death-word child.
+                // screen only as another record's death-word child or big
+                // shot.
                 placements: uses.get(key) || 0,
                 // The 18-byte definition decoded into named fields — hp, score,
                 // speed, fire config and the four change channels. Engine-traced
                 // (see decode-enemy.js); this is what makes imported enemies
                 // play with their own stats instead of defaults.
-                behavior: bytes ? decodeEnemyRecord(bytes) : null,
+                behavior: bytes ? decodeEnemyRecord(bytes, { record }) : null,
                 // The raw 18 bytes still ride along for auditability.
                 bytes,
             });

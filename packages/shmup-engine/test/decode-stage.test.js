@@ -13,6 +13,7 @@ import {
   PLACEMENT_COLS,
   placementColumn,
   placementColumnToEditor,
+  projectForEditor,
   SEC5_REGIONS,
 } from "../src/decode/decode-stage.js";
 import { SECTION_SIZES } from "../src/decompress.js";
@@ -177,6 +178,58 @@ Deno.test({
       }
     }
   },
+});
+
+// A bullet-type-3 record spawns the record its byte 5 names (decode-enemy.js
+// decodeBigShot) — a zako the grid may never place, exactly like a death
+// word's child. Ramsie's D (record 4) spawns record 13, which nothing
+// places; the atlas had no art for it and the runtime drew a stock bullet.
+Deno.test("the roster carries the record a type-3 shooter spawns, placed or not", () => {
+  const records = Array.from({ length: 60 }, (_, index) => ({
+    index,
+    defined: false,
+    bytes: new Uint8Array(18),
+  }));
+  const define = (record, patch) => {
+    const bytes = new Uint8Array(18);
+    for (const [k, v] of Object.entries(patch)) bytes[Number(k)] = v;
+    records[record] = { index: record, defined: true, bytes };
+  };
+  // D: appearance 0x9b, hp index 2, interval index 4 + bullet type 3,
+  // byte 5 = band 0 index 13.
+  define(4, { 0: 0x9b, 2: 0x02, 4: 0x43, 5: 0x0d });
+  // Its shot, record 13: armoured, and its own death word spawns record 14
+  // (mode 2 in byte 2's top bits, the child's placement byte in byte 3).
+  define(13, { 0: 0x9a, 2: 0x91, 3: 14 });
+  define(14, { 0: 0x3c });
+  // A type-3 record naming an undefined record carries nothing extra.
+  define(7, { 0: 0x02, 4: 0x23, 5: 0x03 });
+  const stage = {
+    placement: {
+      objects: [
+        { kind: "zako", record: 4, row: 10, col: 3 },
+        { kind: "zako", record: 7, row: 12, col: 5 },
+      ],
+      boss: null,
+    },
+    enemies: { records },
+    scrollCurve: null,
+  };
+  const { enemies, stages } = projectForEditor([stage]);
+  assertEquals(
+    enemies.map((e) => [e.record, e.placements]),
+    [[4, 1], [7, 1], [13, 0], [14, 0]],
+  );
+  assertStrictEquals(enemies[0].behavior.fire.bigShot.record, 13);
+  assertStrictEquals(enemies[0].behavior.fire.bigShot.key, 0x8d);
+  // The shooter's interval comes from its own band's table (record 4 is in
+  // the four-frame bands): index 4 of 0x6085F90.
+  assertStrictEquals(enemies[0].behavior.fire.interval, 11);
+  // Only the placed records sit on the grid.
+  const cells = stages[0].rows.flat().filter(Boolean).map((c) =>
+    enemies[c.enemy].record
+  );
+  assertEquals(cells.sort((a, b) => a - b), [4, 7]);
 });
 
 Deno.test({

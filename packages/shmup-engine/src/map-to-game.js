@@ -423,11 +423,24 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
         enemyKeyByStageRecord.set(`${e.stage}:${e.record}`, `enemy${enemyLetterByIndex[i]}`);
     });
     decodedEnemies.forEach((e, i) => {
-        const death = e.behavior && e.behavior.death;
-        if (!death || death.mode !== 2) return;
-        const child = enemyKeyByStageRecord.get(`${e.stage}:${death.record}`);
         const rec = enemyData[`enemy${enemyLetterByIndex[i]}`];
-        if (child && rec && rec.dezaemon) rec.dezaemon.deathChild = child;
+        if (!rec || !rec.dezaemon) return;
+        const death = e.behavior && e.behavior.death;
+        if (death && death.mode === 2) {
+            const child = enemyKeyByStageRecord.get(`${e.stage}:${death.record}`);
+            if (child) rec.dezaemon.deathChild = child;
+        }
+        // Bullet type 3 is the same mechanism on the firing path: the record
+        // byte 5 names, spawned at the shooter's position every reload
+        // (decode-enemy.js decodeBigShot). The runtime spawns it as a zako
+        // of its own — hp, armour, death word, appearance script and all —
+        // which is what the hardware does; a recipe without this key falls
+        // back to a stock bullet.
+        const big = e.behavior && e.behavior.fire && e.behavior.fire.bigShot;
+        if (big) {
+            const shot = enemyKeyByStageRecord.get(`${e.stage}:${big.record}`);
+            if (shot) rec.dezaemon.bigShotChild = shot;
+        }
     });
     if (Object.keys(enemyData).length === 0) {
         enemyData.enemyA = clone(defaults.starterEnemy);

@@ -684,10 +684,21 @@ one tick per frame:
   keeping the legacy everything-scrolls model for imports that predate the
   entry data
 
-Other flag bits: **bit4 = this appearance never fires** (48 of 256 ids —
-the long-known `APPEARANCE_NOFIRE`), bit9 = expire the row early past a
-resolver threshold, bit12 = halve the duration for the band's variant-B
-spawn.
+Other flag bits: **bit4 = no fire while THIS ROW runs** — the row load
+(`+0x4F14..+0x4F24`) copies the flags word into the mode word
+`0x0608E890[slot]` and the fire dispatcher tests that word's bit 4
+(`+0x19882`) on every frame for every bullet type, so an appearance whose
+rows alternate (0x78/0x79: glide rows 4113/17, hover rows 1) fires only in
+the hovers; the long-known `APPEARANCE_NOFIRE` (48 of 256 ids) is row 0's
+bit, i.e. which appearances open silent (corrected 2026-10-27; the runtime
+gates on the live row). bit9 = expire the row early past a resolver
+threshold. bit12 = **the row lasts 1.5× longer for a pool-spawned object**:
+`+0x4F26..+0x4F40` tests the object's flag byte `0x0608EF40` bit 7 — set by
+the initialiser `+0x1543E` when its third argument is 0, which is how the
+band picker `+0x18E7C` (death children, big shots, boss parts) calls it,
+where a grid spawn passes non-zero and gets the entry offset instead — and
+rewrites the duration as `(dur + (dur << 1)) >> 1` (the "halve for the
+variant-B spawn" of the earlier note read the `rotl` as a shift right).
 
 One AI tick is one display frame: the master walker makes a single pass
 over slots 0–248 per frame with no segmentation (`+0x791C`), and a row
@@ -1112,53 +1123,114 @@ until then.)*
   `u16[0x608ef30]` + `[128,256,512,896][(cfg>>4)&3]`). It is not a "fire
   mode".
 - **Intervals split by bullet type**: types 0-2 load `u8` intervals from
-  `0x6085f70` = [14,12,10,8,6,4,2,1]; type 3 from `0x6085f80` (or `0x6085f90`
-  when a mode global equals 3) = [119,59,29,19,9,5,3,1]; all tables are u16be
-  with the value in the low byte, indexed by `(b4>>4)&7`, randomization
-  window from `0x6085f60` = [29,22,16,11,7,4,2,1]. Reload (u8, `0x6090830`)
-  = interval + rand % window, refilled at each shot, decremented inside the
-  enemy's AI slice — the walker services the pool in segments, so wall-clock
-  cadence runs several display frames per decrement (the runtime calibrates
-  this stride against capture footage).
-- The appearance gate stands: bit 4 of the definition word (u16 at +8 via
-  the 256-entry pointer table at `0x6088e5c`, cached per enemy at spawn)
-  still silences 48 of 256 appearances (`APPEARANCE_NOFIRE`, byte-exact).
+  `0x6085f70` = [14,12,10,8,6,4,2,1]; type 3 from `0x6085f90` =
+  [119,59,39,19,11,7,3,1] when the shooter's frame-count word
+  (`0x06094640[slot]`, written by its art band's spawn wrapper) is 3 — the
+  four-frame bands 0-3, records 0-47 — and from `0x6085f80` =
+  [119,59,29,19,9,5,3,1] otherwise (bands 4-6, records 48-63; `+0x154E4`,
+  traced 2026-10-27 — the "mode global" of the earlier note); all tables
+  are u16be with the value in the low byte, indexed by `(b4>>4)&7`,
+  randomization window from `0x6085f60` = [29,22,16,11,7,4,2,1]. Reload (u8,
+  `0x6090830`) = interval + rand % window, refilled at each shot, decremented
+  inside the enemy's AI slice — the walker services the pool in segments, so
+  wall-clock cadence runs several display frames per decrement (the runtime
+  calibrates this stride against capture footage).
+- The fire gate is **the current script row's flags bit 4**, not a property
+  of the appearance (corrected 2026-10-27): the interpreter's row load
+  (`+0x4F14..+0x4F24`) copies the row's flags word (+8) into
+  `0x0608E890[slot]`, and the dispatcher tests that word's bit 4 (`+0x19882`)
+  before either bullet arm. The definition word the older reading cached
+  "at spawn" is row 0's flags, which the initialiser stores into the same
+  slot (`+0x15702`), so `APPEARANCE_NOFIRE` (48 of 256 ids) says only which
+  appearances OPEN on a silent row — Ramsie's Z (appearance 0x79) is silent
+  for its 64-tick glides and fires its big shot in the 40-tick hovers
+  between them (rows 4113/17 against rows 1). Class 0x32 rewrites the same
+  bit itself (hover clears it, dash sets it, `+0x6936` / `+0x6946`).
 - Rotation channel modes 3/4 ("engine-special") are aim-style: the sprite
   tracks the player rather than spinning, and its facing carries into
   facing-relative shots.
 
-**Bullet type 3 — the big shot** (traced 2026-09-12). When record byte 4 bits
-0-1 are 3 the enemy does not fire bullets: `+0x190AE` allocates one object of
-class 99 and hands byte 5 to `+0x18E7C`, whose seven-way jump table at
-`0x0607CEAC` picks an ART BAND from bits 4-6 (value 7 folds to band 0) and a
-character inside it from the low bits:
+**Bullet type 3 — the big shot is another enemy record, spawned** (traced
+2026-09-12; the spawn path, cadence and motion settled 2026-10-27). When
+record byte 4 bits 0-1 are 3 the enemy does not fire bullets: on the frame
+its reload reads 0 and it stands in the fire window, `+0x19910` calls the
+shooter wrapper `0x0607CFAC`, whose jump table `0x0607CFE4` sends type 3 to
+`+0x190AE`. That arm takes a slot from the ENEMY POOL — `0x06068A40(99,
+0xF9)` is the pool allocator over slots 99..248, the 150 slots every zako,
+death child and boss part share, and a full pool returns −1 and the shot is
+dropped ("class 99" in the earlier reading was the pool's first slot) — and
+hands byte 5 to `+0x18E7C`, which writes `b5 | 0x80` into the slot's
+FORMATION KEY `0x06090530` and dispatches on bits 4-6 (value 7 folds to band
+0) to the band's spawn wrapper, **the same seven wrappers the placement
+walker runs for a grid cell**:
 
-| band | char base | step | index bits | wrapper |
-|------|-----------|------|-----------|---------|
-| 0 | `0x43` | 4 | `b5 & 0xF` | `+0x16070` |
-| 1 | `0x83` | 4 | `b5 & 0xF` | `+0x16148` |
-| 2 | `0xA3` | 4 | `b5 & 0xF` | `+0x16238` |
-| 3 | `0xC3` | 4 | `b5 & 0xF` | `+0x16328` |
-| 4 | `0x103` | 2 | `b5 & 3` | `+0x16400` |
-| 5 | `0x10B` | 2 | `b5 & 3` | `+0x164F0` |
-| 6 | `0x113` | 1 | `b5 & 3` | `+0x165E0` |
+| band | char base | step | char index | record base (`0x0608603C`) | contact attack (`0x0608C720`) | wrapper |
+|------|-----------|------|-----------|-----------|-----------|---------|
+| 0 | `0x43` | 4 | `b5 & 0xF` | 0 | 256 | `+0x16070` |
+| 1 | `0x83` | 4 | `b5 & 0xF` | 16 | 512 | `+0x16148` |
+| 2 | `0xA3` | 4 | `b5 & 0xF` | 24 | 512 | `+0x16238` |
+| 3 | `0xC3` | 4 | `b5 & 0xF` | 32 | 768 | `+0x16328` |
+| 4 | `0x103` | 2 | `b5 & 3` | 48 | 1024 | `+0x16400` |
+| 5 | `0x10B` | 2 | `b5 & 3` | 52 | 1024 | `+0x164F0` |
+| 6 | `0x113` | 1 | `b5 & 3` | 56 | 1280 | `+0x165E0` |
+
+Each wrapper (band 0, `+0x16070`) writes the slot's size class and
+hitbox words (`0x0608D7F0` / `0x06094E40` = 6, `0x06092850` = 2), its
+lateral and scroll positions from the SHOOTER's (`0x06090040` /
+`0x0608D400`), the char slot `base + (index & mask) * step`, the frame-count
+word `0x06094640` (3/3/3/3/1/1/0), the band's CONTACT ATTACK as an
+immediate into `0x0608C720` (the column above — every grid object carries
+it too, independent of its hp; it is what a hull touch costs the player
+and what a charge orb's mutual-hp trade pays), and then **calls the ordinary zako
+initialiser `0x060793C8` (`+0x153C8`) with `record = base[band] | (b5 &
+0xF)`** — the record base OR the whole low nibble, so in bands 4-6 an index
+past the band's four records reads on into the next band exactly as a
+placement byte does. The object therefore IS that record: its hp from byte
+2 through the difficulty scaler, its hit attributes (ARMOUR included), its
+death word, its own fire config and reload, its class from byte 0 and its
+appearance script pointer — and it **moves as that record's script and
+change channels say**, from the shooter's position, with no per-band
+updater of any kind (the "seven per-frame updaters" of the earlier note
+are these spawn wrappers). Two differences from a grid spawn: the
+initialiser's third argument is 0 (`+0x1543E` sets `0x0608EF40` bit 7
+instead of calling the grid's entry offset `+0x152E8`, so the object starts
+where the shooter is and does not wait on the arm line), and `+0x18F10`
+hands an ANCHORED shooter's terrain anchor down to it (the death child's
+spawn takes the same path). The type-3 arm then writes the shooter's
+heading into `0x06091E30` when the record's class is 0x36 (state 54 — the
+aim-once flier, whose own first tick re-aims it at a player when one
+exists), and requests SFX 8 through `0x0606BC9C(3)` unless the hit
+attributes read 2 (gated once per frame by `0x06091852` bit 3 and the SFX
+enable `0x060840C8` bit 7). The type-4 arm beside it (`+0x19122`) is the
+boss-part spawn and reads `0x6085F40` for hp; type 3 reads no hp table of
+its own.
 
 `character = base + index * step`, the steps being the 4/4/4/4/2/2/1 frame
 counts those wrappers already carry. Three further rules follow from the same
 gates: there is **no aim bit** (`b5 & 0x10` is the low bit of the band, and
 `+0x190AE` never calls the aim helper), **a low nibble of 0 does not silence
-the enemy**, and the reload is **deterministic** — the type-3 arm at `+0x19986`
-decrements every serviced frame with no reference to the fire-tick flag and
-refills from the interval alone, where the type-0/1/2 path adds `rand % window`.
+the enemy**, and the reload is **deterministic**: the type-3 arm at `+0x19986`
+decrements `0x06090830` every serviced frame with no reference to the
+fire-tick flag and, on the frame it is 0, refills it from the interval
+(`0x0608D300`) — in or out of the fire window, so an off-screen shooter
+never banks a shot — where the type-0/1/2 path adds `rand % window`. The
+shot goes out on the frame the reload reads 0 (`+0x19910`), so the period
+is **interval + 1 display frames**, the interval from `0x6085F90` for a
+shooter in bands 0-3 and `0x6085F80` for bands 4-6 (above). Ramsie stage 0:
+D (record 4, `b5 = 0x0D`) spawns record 13 — armoured, hp 12800 — every 12
+frames, F (7) spawns record 3 every 60, R (38) record 1 every 60, U and V
+(48, 49) record 5 every 4, Z (56) record 24 every 30 while its script row
+allows fire.
 
 Across the 262 community saves that is 8,376 of 58,249 placed definitions
 (14.4%), of which 1,018 have a zero low nibble and were read as silent. Band 7
 never occurs in any of them, which is the field's own signature: it is a
 seven-value selector, not the `bit4 = aim / bits5-7 = extra` split byte 5 has
-on the other path. The seven bands' per-frame updaters
-(`+0x16070`/`148`/`238`/`328`/`400`/`4F0`/`5E0`) are **still untraced**, so the
-runtime flies the object straight; decoder: `decodeBigShot` in
-`src/decode/decode-enemy.js`.
+on the other path. Decoder: `decodeBigShot` (band, index, character,
+`record`, `key`) and `bigShotInterval` in `src/decode/decode-enemy.js`; the
+roster walk `spawnClosure` in `decode-stage.js` carries every record a big
+shot names, `map-to-game.js` resolves it to `dezaemon.bigShotChild`, and
+the 2028-ai runtime spawns that roster entry as a zako (`spawnBigShot`).
 
 **Durability shares one unit space with damage — and the player-weapon
 damage tables are traced.** Objects live in one pool. Enemy hp is

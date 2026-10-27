@@ -13,6 +13,7 @@ import {
   ANIM_PERIOD_TABLE,
   appearanceFires,
   BIG_SHOT_BANDS,
+  bigShotInterval,
   BULLET_STEERING,
   bulletSteering,
   CHANNEL_TRIGGER_BAND_OFFSET,
@@ -427,11 +428,13 @@ Deno.test("placement cell byte <-> record index is the engine's band math", () =
 // Bullet type 3 is not a bullet: byte 4 bits 0-1 gate two jumps in the fire
 // routine (0x0607D828 and 0x0607D89A) that skip both the "low nibble 0 never
 // fires" early-out and the whole 16-way geometry dispatcher, and the shooter's
-// own jump table (0x0607CFE4) sends the type to 0x0607D0AE, which spawns one
-// class-99 object out of the enemy art. So byte 5 changes meaning underneath
-// it, and a decoder that reads it as geometry is wrong for one record in
-// seven across the community collection.
-Deno.test("bullet type 3 reads byte 5 as art, not as a fire geometry", () => {
+// own jump table (0x0607CFE4) sends the type to 0x0607D0AE, which spawns the
+// ENEMY RECORD byte 5 names — through the band's own spawn wrapper into the
+// zako initialiser +0x153C8, so the object is that record, hp, armour,
+// script and all. So byte 5 changes meaning underneath it, and a decoder
+// that reads it as geometry is wrong for one record in seven across the
+// community collection.
+Deno.test("bullet type 3 reads byte 5 as a record, not as a fire geometry", () => {
   const bytes = new Uint8Array(18);
   bytes[4] = 0x43; // interval index 4, bullet type 3
   bytes[5] = 0x3e; // band 3, character index 14
@@ -442,6 +445,9 @@ Deno.test("bullet type 3 reads byte 5 as art, not as a fire geometry", () => {
     index: 14,
     character: 0xc3 + 14 * 4,
     frames: 4,
+    // band 3's records start at 32; the formation key is b5 | 0x80
+    record: 32 + 14,
+    key: 0xbe,
   });
   // Nothing may still claim a geometry, an aim or a direction for this record.
   assertStrictEquals(fire.geometry, null);
@@ -463,7 +469,14 @@ Deno.test("a zero low nibble silences an ordinary bullet type but not type 3", (
   const fire = decodeEnemyRecord(loud).fire;
   assertStrictEquals(fire.geometry, null);
   // Band 3, character index 0 — it fires, and the old reading called it silent.
-  assertEquals(fire.bigShot, { band: 3, index: 0, character: 0xc3, frames: 4 });
+  assertEquals(fire.bigShot, {
+    band: 3,
+    index: 0,
+    character: 0xc3,
+    frames: 4,
+    record: 32,
+    key: 0xb0,
+  });
 });
 
 Deno.test("the seven art bands fold band 7 onto band 0 and mask their index", () => {
@@ -472,22 +485,58 @@ Deno.test("the seven art bands fold band 7 onto band 0 and mask their index", ()
     index: 0,
     character: 0x43,
     frames: 4,
+    record: 0,
+    key: 0x80,
   });
-  assertEquals(decodeBigShot(0x70), decodeBigShot(0x00)); // 7 folds to 0
-  // Bands 4 and 5 step two frames and mask to 2 bits, band 6 steps one.
+  // 7 folds to 0 for the band and the record; the key keeps the raw bits.
+  assertEquals(decodeBigShot(0x70), { ...decodeBigShot(0x00), key: 0xf0 });
+  // Bands 4 and 5 step two frames and mask the CHARACTER index to 2 bits,
+  // band 6 steps one — but the record is the band base OR the whole nibble
+  // (+0x1660A: `or r4,r5` on the unmasked index), so an index past the
+  // band's four records reads on into the next band, as a placement byte
+  // does (zakoRecordFromKey).
   assertEquals(decodeBigShot(0x4f), {
     band: 4,
     index: 3,
     character: 0x103 + 6,
     frames: 2,
+    record: 48 | 15,
+    key: 0xcf,
   });
   assertEquals(decodeBigShot(0x6f), {
     band: 6,
     index: 3,
     character: 0x113 + 3,
     frames: 1,
+    record: 56 | 15,
+    key: 0xef,
   });
+  assertEquals(decodeBigShot(0x51).record, 52 | 1);
   assertEquals(BIG_SHOT_BANDS.length, 7);
+});
+
+// The type-3 reload is read at the shooter's spawn from one of two tables by
+// the shooter's own art band's frame count (+0x154E4 tests the frame-count
+// word the band wrapper wrote against 3): the four-frame bands 0-3 count
+// from 0x6085F90, the two- and one-frame bands 4-6 from 0x6085F80. Ramsie's
+// D (record 4) reads 11 from the first and its U and V (48, 49) read 3 from
+// the second; its Z (56) reads 29 where the single-table reading gave 39.
+Deno.test("a type-3 record's interval comes from its own band's table", () => {
+  const bytes = new Uint8Array(18);
+  bytes[4] = 0x23; // interval index 2, bullet type 3
+  bytes[5] = 0x01;
+  assertEquals(decodeEnemyRecord(bytes, { record: 4 }).fire.interval, 39);
+  assertEquals(decodeEnemyRecord(bytes, { record: 47 }).fire.interval, 39);
+  assertEquals(decodeEnemyRecord(bytes, { record: 48 }).fire.interval, 29);
+  assertEquals(decodeEnemyRecord(bytes, { record: 56 }).fire.interval, 29);
+  // Without a record the four-frame bands' table stands (records 0-47).
+  assertEquals(decodeEnemyRecord(bytes).fire.interval, 39);
+  assertEquals(bigShotInterval(0x43, 4), 11);
+  assertEquals(bigShotInterval(0x63, 48), 3);
+  assertEquals(bigShotInterval(0x63, 4), 3);
+  // Types 0-2 are untouched by the record.
+  bytes[4] = 0x22;
+  assertEquals(decodeEnemyRecord(bytes, { record: 56 }).fire.interval, 29);
 });
 
 // --- change-channel triggers: four independent fields in one status word ---

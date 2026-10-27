@@ -73,9 +73,13 @@ export const SCORE_TABLE = [50, 100, 200, 500, 1000, 2000, 5000, 10000];
 // difficulty value, unscaled.
 export const HP_TABLE = [256, 12800, 25600, 51200, 102400, 204800, 256000, 512000];
 
-// (b4>>4)&7 -> fire interval in frames, by fire mode (b4&3). The engine
-// keeps two pairs of tables; f81/f91 are the common reload intervals, f61
-// is the randomization window added on top, f71 a slower base variant.
+// (b4>>4)&7 -> fire interval in frames, by bullet type (b4&3). Four u16be
+// tables at 0x6085F60..0x6085F9F, values in the low byte: f60 is the
+// randomization window bullet types 0-2 add to their reload, f70 their base
+// interval, and f80 / f90 the two type-3 (big shot) intervals, picked at
+// the shooter's spawn by its art band's frame count — f90 for the four-frame
+// bands (records 0-47), f80 for the two- and one-frame bands (records 48-63);
+// +0x154E4, see bigShotInterval.
 export const FIRE_WINDOW_TABLE = [29, 22, 16, 11, 7, 4, 2, 1];
 export const FIRE_BASE_TABLE = [14, 12, 10, 8, 6, 4, 2, 1];
 export const FIRE_INTERVAL_TABLE = [119, 59, 29, 19, 9, 5, 3, 1];
@@ -105,11 +109,16 @@ export const DIRECTION_TABLE = [
     0, 0, 128, 1, 0, 2, 0, // pad, then DIRECTION_STEP_TABLE's bytes
 ];
 
-// Whether an appearance (byte 0) can fire at all. The engine's fire
-// dispatcher (+0x19882) tests bit 4 of the appearance definition word — the
-// u16 at +8 of the 256-entry pointer table at 0x6088e5c — and skips firing
-// when it is set. Extracted verbatim from GAME.bin: bit i of byte i>>3, LSB
-// first, set = that appearance never fires (48 of 256).
+// Whether an appearance (byte 0) OPENS on a row that may fire. The engine's
+// fire dispatcher (+0x19882) tests bit 4 of the mode word 0x0608E890, which
+// the script interpreter's row load (+0x4F24) refills from every row's
+// flags word — so the gate is per ROW, and this table (bit 4 of the u16 at
+// +8 of the script the 256-entry pointer table at 0x6088e5c names, i.e.
+// row 0's flags) says only how the appearance starts: Ramsie's Z (0x79) is
+// in it and fires in the hovers between its glides. The runtime gates on
+// the live row (appearance-table.js carries `noFire` per row); this stands
+// for an import that carries no rows. Extracted verbatim from GAME.bin: bit
+// i of byte i>>3, LSB first, set = row 0 is silent (48 of 256).
 const APPEARANCE_NOFIRE_HEX =
     "0000000000ffff00000000ff000000ffff000000ff0000000000000000000000";
 export function appearanceFires(appearance) {
@@ -121,12 +130,23 @@ export function appearanceFires(appearance) {
 }
 
 /**
- * Bullet type 3 does not fire bullets at all: it spawns one object of class 99
- * drawn from the enemy art, and byte 5 stops being a geometry selector. Bits
- * 4-6 pick one of seven art bands (value 7 folds to 0) and the low bits pick a
- * character inside it — `base + index * frames`, the frame counts being the
- * 4/4/4/4/2/2/1 the seven spawn wrappers +0x16070..+0x165e0 use.
- * Dispatch: GAME.bin 0x0607CE7C, wrappers 0x0607A070/148/238/328/400/4F0/5E0.
+ * Bullet type 3 does not fire bullets at all: it spawns ANOTHER ENEMY RECORD
+ * of the same stage at the shooter's position, and byte 5 names that record
+ * the way a placement cell byte does — bits 4-6 the art band (value 7 folds
+ * to 0), the low bits the index inside it, `record = BASE[band] | (b5 & 15)`
+ * over the same seven bands the grid uses (`zakoRecordFromKey`). Traced
+ * 2026-10-27 (FORMAT.md "Bullet type 3"): `+0x190AE` takes a slot from the
+ * 150-slot enemy pool (0x06068A40 over slots 99..248 — the "class 99" of
+ * the older reading is that pool's first slot), `+0x18E7C` writes `b5 | 0x80`
+ * as the object's FORMATION KEY and runs the band's spawn wrapper
+ * (+0x16070..+0x165E0 — char slot `base + (index & mask) * frames`, size,
+ * frame count, the band's contact attack), and the wrapper ends in the
+ * ordinary zako initialiser `+0x153C8` with the named record: the object
+ * carries that record's hp, armour, death word, fire config, class and
+ * appearance script, and MOVES as that script says. Nothing per band
+ * updates it afterwards; the seven wrappers are the grid's own.
+ * Dispatch: GAME.bin 0x0607CE7C, wrappers 0x0607A070/148/238/328/400/4F0/5E0,
+ * band record bases at 0x0608603C = [0x00,0x10,0x18,0x20,0x30,0x34,0x38].
  */
 export const BIG_SHOT_BANDS = Object.freeze([
     { base: 0x43, frames: 4, mask: 0x0f },
@@ -142,13 +162,39 @@ export const BIG_SHOT_TYPE = 3;
 
 /**
  * Record byte 5 read the way the engine reads it for bullet type 3.
+ *
+ * `record` is the enemy record the shot spawns (the band's record base OR
+ * the whole low nibble — bands 4-6 mask the CHARACTER index to two bits but
+ * not the record, so an index of 4-15 there reads on into the next band, as
+ * `zakoRecordFromKey` does for a placement byte), and `key` the formation key
+ * every such object carries, `b5 | 0x80`.
  * @param {number} b5
  */
 export function decodeBigShot(b5) {
     const band = ((b5 >> 4) & 7) % BIG_SHOT_BANDS.length; // 7 folds to 0
     const spec = BIG_SHOT_BANDS[band];
     const index = b5 & spec.mask;
-    return { band, index, character: spec.base + index * spec.frames, frames: spec.frames };
+    return {
+        band,
+        index,
+        character: spec.base + index * spec.frames,
+        frames: spec.frames,
+        record: ZAKO_BAND_BASE[band] | (b5 & 0x0f),
+        key: 0x80 | (b5 & 0x7f),
+    };
+}
+
+// The type-3 reload is read at the SHOOTER's spawn from one of two tables by
+// the shooter's own frame-count word (+0x154E4: 3 — the four-frame bands 0-3,
+// records 0-47 — takes 0x6085F90; the two- and one-frame bands 4-6, records
+// 48-63, take 0x6085F80). It counts down every serviced frame; the shot
+// goes out on the frame it reads 0 and the same frame refills it from the
+// interval (+0x19910 / +0x19986), so the period is interval + 1 frames.
+export function bigShotInterval(b4, record = null) {
+    const table = record !== null && record >= ZAKO_BAND_BASE[4]
+        ? FIRE_INTERVAL_TABLE
+        : FIRE_INTERVAL_TABLE_ALT;
+    return clampIndex((b4 >> 4) & 7, table);
 }
 
 // `b5 & 0xF` values the fire dispatcher routes away from the angle path.
@@ -453,7 +499,10 @@ function decodeDeathWord(b) {
     return death;
 }
 
-export function decodeEnemyRecord(bytes) {
+// `record` is the definition's index in its stage's table (0-59). It decides
+// which reload table a type-3 record counts from; without it the four-frame
+// bands' table stands, which is right for records 0-47.
+export function decodeEnemyRecord(bytes, { record = null } = {}) {
     const b = Array.from(bytes);
     const rotationMode = b[9] & 7;
     const scaleMode = b[12] & 3;
@@ -491,25 +540,27 @@ export function decodeEnemyRecord(bytes) {
             // re-traced"). `enabled` carries only the appearance gate; the
             // runtime combines it with `direction`.
             enabled: appearanceFires(b[0]),
-            // b4 & 3 = BULLET TYPE: which of the save's four global bullet
-            // configs this enemy fires (settings +37..+40). Bullet types
-            // 0-2 reload from the short table [14,12,10,8,6,4,2,1]
-            // (0x6085f70); only type 3 uses the long tables kept here — the
-            // runtime substitutes the short table for types 0-2.
+            // b4 & 3 = BULLET TYPE: 0-2 pick one of the save's three global
+            // bullet configs (settings +37..+39) and reload from the short
+            // table [14,12,10,8,6,4,2,1] (0x6085f70) — the runtime substitutes
+            // it for the value here; 3 is the big shot, whose interval comes
+            // from the long tables by the shooter's band (bigShotInterval).
             mode: b[4] & 3,
-            interval: clampIndex((b[4] >> 4) & 7,
-                (b[4] & 3) === 3 ? FIRE_INTERVAL_TABLE_ALT : FIRE_INTERVAL_TABLE),
+            interval: (b[4] & 3) === BIG_SHOT_TYPE
+                ? bigShotInterval(b[4], record)
+                : clampIndex((b[4] >> 4) & 7, FIRE_INTERVAL_TABLE),
             window: FIRE_WINDOW_TABLE[(b[4] >> 4) & 7],
             // Bullet type 3 is a different weapon entirely, and the two gates
             // that make it so are at 0x0607D828 and 0x0607D89A: both compare
             // the spawn-cached b4 & 3 against 2 and, when it is greater, jump
             // past the "low nibble 0 = never fires" early-out AND past the
             // whole 16-way geometry dispatcher. The shooter's own jump table
-            // (0x0607CFE4) sends it to 0x0607D0AE, which spawns ONE object of
-            // class 99 out of the enemy art. So for this type byte 5 is art,
-            // there is no aim bit, the reload is deterministic (no random
-            // window, and it ticks every serviced frame rather than on the
-            // fire pulse), and a low nibble of 0 does not silence anything.
+            // (0x0607CFE4) sends it to 0x0607D0AE, which spawns ONE zako of
+            // the record byte 5 names (decodeBigShot). So for this type byte
+            // 5 is a record, there is no aim bit, the reload is deterministic
+            // (no random window, and it ticks every serviced frame rather
+            // than on the fire pulse), and a low nibble of 0 does not silence
+            // anything.
             bigShot: (b[4] & 3) === BIG_SHOT_TYPE ? decodeBigShot(b[5]) : null,
             // Byte 5's low nibble picks a bullet-geometry function from the
             // 16-pointer table at 0x6086074 — all 16 traced (2026-08-28):

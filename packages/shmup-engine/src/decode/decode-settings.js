@@ -80,9 +80,12 @@ export function weaponShotDamage(weapon) {
 
 // The three global bullet configs (+0x25..+0x27) and the blast byte (+0x28).
 // Engine-traced 2026-08-28: the shooter (GAME.CMP +0x19002) reads
-// settings[0x25 + (enemy record byte4 & 3)] LIVE via the settings pointer —
-// so bullet type 3 aliases the blast byte, an engine quirk that ships here
-// as data (configs[3]). Config byte: bits0-2 damage index into
+// settings[0x25 + (enemy record byte4 & 3)] LIVE via the settings pointer.
+// That read sits inside the type-0/1/2 arm, which a type-3 record never
+// reaches — type 3 spawns an enemy record, not a bullet (decode-enemy.js
+// decodeBigShot) — so nothing reads +0x28 as a bullet config and `configs`
+// has three entries (it carried the blast byte as a fourth until
+// 2026-10-27). Config byte: bits0-2 damage index into
 // [60,30,15,10,5,3,2,1] (the same durability units enemy LIFE decodes in),
 // bits4-5 speed-add index into [128,256,512,896] engine units — the spawn
 // stores (speed*sin)>>16 into 25.7 positions, and the draw path divides those
@@ -274,7 +277,7 @@ export function decodeSettings(sec5) {
         // [5000,10000,20000,50000,100000,200000,500000,1000000] (+0x21F00).
         scoreItemValue: [5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000][sec5[base + 0x24] & 7],
         bullets: {
-            configs: [0x25, 0x26, 0x27, 0x28].map((o) => bulletConfig(sec5[base + o])),
+            configs: [0x25, 0x26, 0x27].map((o) => bulletConfig(sec5[base + o])),
             blast: {
                 a: BLAST_HOLD_TABLE[sec5[base + 0x28] & 7],
                 b: BLAST_HOLD_TABLE[(sec5[base + 0x28] >> 4) & 7],

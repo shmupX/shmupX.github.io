@@ -5792,7 +5792,10 @@
     var interval = fire.mode === 3 ? fire.interval : TYPE012_INTERVAL[rate];
     // Bullet type 3 refills from its interval alone: the engine's type-3 arm
     // (0x0607D986) has no `rand % window` term, so its cadence is
-    // deterministic rather than rank-pulsed.
+    // deterministic rather than rank-pulsed — the interval from the band's
+    // own table (0x6085F90 for records 0-47, 0x6085F80 for 48-63), which the
+    // decoder picked by the record (bigShotInterval), counted down every
+    // frame.
     if (fire.bigShot) return interval;
     return interval + Math.floor(Math.random() * (fire.window || 1));
   }
@@ -5925,8 +5928,15 @@
   //
   // Velocity: (trig * amp) >> 16 into px*128 positions = amp/256 px/frame.
   var ENTRY_ADVANCE = 0x1;
+  // Row flags bit4: no fire while this row runs — the row load copies the
+  // flags into the mode word the fire dispatcher tests (+0x4F24, +0x19882).
+  var ENTRY_NO_FIRE = 0x10;
   var ENTRY_NO_COS = 0x20; // suppress the lateral component
   var ENTRY_NO_SIN = 0x40; // suppress the scroll component
+  // Row flags bit12: the row runs 1.5x longer for an object spawned out of
+  // the pool rather than off the grid (a death child, a big shot: flag byte
+  // 0x0608EF40 bit 7, +0x4F26..+0x4F40 rewrites dur as (dur + 2*dur) >> 1).
+  var ENTRY_LONG_ROW = 0x1000;
   // Row flags bit7 picks which of the engine's TWO script movers runs the row.
   // Mover B (+0x5054) inlines a relative ride and never consults the anchor
   // bit; mover A (+0x4EC4) calls the terrain-ride helper (+0x4BFC), which is
@@ -5945,7 +5955,10 @@
       angle: 0,
       turn: 0,
       amp: 0,
-      flags: 0,
+      // Row 0's flags until the first tick loads it, so the fire gate reads
+      // the right bit on the spawn frame (the initialiser +0x15702 stores
+      // the same word).
+      flags: rows[0][4] || 0,
       rides: false,
       ridesNow: false,
       moverB: false,
@@ -5977,6 +5990,9 @@
       var row = e.rows[e.idx < e.rows.length ? e.idx : e.rows.length - 1];
       e.flags = row[4];
       e.rowT = row[0];
+      if ((row[4] & ENTRY_LONG_ROW) && e.rowT < 0x7fff && enemy.getData("dezaSuccessor")) {
+        e.rowT = (e.rowT + (e.rowT << 1)) >> 1;
+      }
       e.angle = row[1];
       e.turn = row[2];
       e.amp = row[3] & 0x7fff;
@@ -6213,16 +6229,19 @@
     return true;
   }
   function initEnemyBehavior(enemy, behavior, dezaemon, scene) {
+    var hasEntry = !!(dezaemon && dezaemon.entry && dezaemon.entry.rows && dezaemon.entry.rows.length);
     // Geometry 0 is the engine's empty routine — most of a roster never
     // fires. Everything else fires, the burst patterns 10-12 included.
     // Bullet type 3 is the exception: its two gates skip the nibble-0
-    // early-out, so it fires whatever byte 5 says (0x0607D828).
-    var fires = behavior.fire.enabled &&
+    // early-out, so it fires whatever byte 5 says (0x0607D828). Whether a
+    // given frame may fire is the script row's call (updateEnemyFire), so
+    // the appearance's own no-fire bit only decides this for an import that
+    // carries no rows.
+    var fires = (hasEntry || behavior.fire.enabled) &&
       (behavior.fire.bigShot != null || zakoGeometry(behavior.fire) !== 0);
     var facesPlayer = behavior.rotation.enabled && behavior.rotation.mode >= 3;
     var horiz = dezaHorizontal(scene);
     var band = dezaBand(dezaemon);
-    var hasEntry = !!(dezaemon && dezaemon.entry && dezaemon.entry.rows && dezaemon.entry.rows.length);
     var specialCls = dezaemon && dezaemon.entry && dezaemon.entry.objectClass;
     // Record byte 2 bit 5, the engine's NO-COLLISION attribute (bit 1 of the
     // decoder's move.mode): both of the Saturn's collision drivers test it
@@ -6363,7 +6382,13 @@
     // anything that stays hidden past the top for ten seconds.
     if (entry && enemy.y < -8) {
       st.hiddenT = (st.hiddenT || 0) + 1;
-      if (st.hiddenT > 600) enemy.setData("dezaGone", true);
+      // A pool-spawned object (a big shot, a death child) was born on the
+      // field, so above the top edge it is outside the engine's despawn box
+      // (+0x173A4: x 16..304, y -16..256) and leaves at once; a grid spawn
+      // is allowed its entry from above.
+      if (st.hiddenT > 600 || (enemy.y < -16 && enemy.getData("dezaSuccessor"))) {
+        enemy.setData("dezaGone", true);
+      }
     } else if (st.hiddenT) {
       st.hiddenT = 0;
     }
@@ -6617,18 +6642,35 @@
     }
     return false;
   }
+  // The engine's fire window (+0x1983E..+0x1987E), the same for every bullet
+  // type: the object's scroll coordinate on the 224-px screen (a horizontal
+  // game allows 96 px above it) and its lateral coordinate within 48..272 of
+  // the 320-px grid — which on the runtime's 256-px window, 32 px in from
+  // each grid edge, is x 16..240. No margin at the top or bottom edge.
+  function dezaFireWindow(scene, enemy) {
+    var GW = scene.scale ? scene.scale.width : 256;
+    var GH = scene.scale ? scene.scale.height : 480;
+    var top = dezaHorizontal(scene) ? -96 : 0;
+    return enemy.y >= top && enemy.y <= GH && enemy.x >= 16 && enemy.x <= GW - 16;
+  }
   function updateEnemyFire(scene, enemy, shootFn) {
     var st = enemy.getData("deza");
     if (!st) return false;
     var fire = st.behavior.fire;
     var geom = zakoGeometry(fire);
     var big = fire.bigShot || null;
-    if (!fire.enabled || st.reload < 0) return true;
+    if (st.reload < 0) return true;
     if (!big && geom === 0) return true;
     if (st.sp && st.sp.noFire) return true; // 0x32 mid-dash: fire suppressed
     if (st.tick % SATURN_TICKS_PER_FRAME) return true;
-    var GH14 = scene.scale ? scene.scale.height : 480;
-    var onScreen = enemy.y >= 8 && enemy.y <= GH14 - 8;
+    // The fire gate is the script's CURRENT row, flags bit 4 (the row load
+    // +0x4F24 copies the row's flags into the mode word the dispatcher
+    // tests at +0x19882): Ramsie's Z is silent while it glides and fires in
+    // the hovers between. The reload keeps counting through a silent row,
+    // as it does off the field. An import without entry rows keeps the
+    // appearance's own bit, which is row 0's.
+    var rowSilent = st.entry ? (st.entry.flags & ENTRY_NO_FIRE) !== 0 : !fire.enabled;
+    var onScreen = !rowSilent && dezaFireWindow(scene, enemy);
     var pulse = scene._dezaFirePulse;
     var isBurst = geom >= 10 && geom <= 12;
     var burstLen = geom === 10 ? 4 : geom === 11 ? 5 : 16;
@@ -6642,16 +6684,22 @@
         firedMidBurst = true;
       }
     } else if (big) {
-      // Type 3 is not on the fire pulse: it counts down every serviced frame
-      // and spawns ONE class-99 object drawn from the enemy art, where the
-      // other types spread bullets. The seven bands' own updaters
-      // (0x0607A070..5E0) are untraced, so the object flies straight — but one
-      // shot on a deterministic reload is what hardware does, and an N-way
-      // spread of ordinary bullets, which is what this used to do, is not.
-      if (st.reload <= 0 && onScreen) {
+      // Type 3 is not on the fire pulse and is not a bullet. Every serviced
+      // frame its reload counts down; on the frame it reads 0 the enemy, if
+      // it is in the fire window, spawns the RECORD byte 5 names — another
+      // zako of this stage at the shooter's position, with that record's
+      // hp, armour, death word and appearance script (spawnBigShot) — and
+      // the same frame refills the reload from the interval alone, in or out
+      // of the window alike, so an enemy off the field never banks a shot
+      // (+0x19910 fires, +0x19986 counts and refills; period = interval + 1
+      // frames). A recipe that carries no record for the shot gets the old
+      // stand-in, one stock bullet.
+      if (st.reload <= 0) {
+        if (onScreen && !spawnBigShot(scene, enemy, big)) {
+          dezaVolley(scene, enemy, st, 1, shootFn);
+        }
         st.reload = zakoReload(fire);
-        dezaVolley(scene, enemy, st, 1, shootFn);
-      } else if (st.reload > 0) st.reload -= 1;
+      } else st.reload -= 1;
       return true;
     } else if (pulse && st.reload <= 0 && onScreen) {
       st.reload = zakoReload(fire);
@@ -10754,7 +10802,11 @@
   // ../2019-es7/src/phaser/game-objects/Enemy.js
   var GW2 = GAME_DIMENSIONS.WIDTH;
   var GH2 = GAME_DIMENSIONS.HEIGHT;
-  var DEZA_MAX_LIVE_ZAKO = 48;
+  // The engine's enemy pool: the allocator 0x06068A40 hands every zako,
+  // death child, big shot and boss part a slot from 99..248 — 150 of them —
+  // and a spawn that finds none is dropped (traced 2026-10-27). Was 48, a
+  // guess that dropped Ramsie's waves once its armoured big shots filled it.
+  var DEZA_MAX_LIVE_ZAKO = 150;
   function resolveFrame(scene, atlasKey, frameName) {
     var atlas = scene.textures.get(atlasKey);
     if (!atlas) return frameName;
@@ -10901,6 +10953,9 @@
       enemy.setData("dezaKey", data.dezaemon.placementId);
       enemy.setData("dezaDeath", data.dezaemon.behavior && data.dezaemon.behavior.death);
       enemy.setData("dezaChild", data.dezaemon.deathChild || null);
+      // Bullet type 3: the roster key of the record this enemy spawns as its
+      // big shot (map-to-game.js), resolved the way the death child is.
+      enemy.setData("dezaBigShot", data.dezaemon.bigShotChild || null);
     }
     if (data.dezaemon && data.dezaemon.behavior) {
       initEnemyBehavior(enemy, data.dezaemon.behavior, data.dezaemon, scene);
@@ -11169,14 +11224,47 @@
     // The successor is tagged with the PARENT's parameter, not its own
     // placement id — that is what makes a squad share one chain key.
     child.setData("dezaKey", death.key);
-    // An anchored parent hands its terrain anchor down verbatim, so the child
-    // stays glued to the same spot on the map (+0x18F10).
+    inheritDezaAnchor(enemy, child);
+  }
+  // An anchored parent hands its terrain anchor down verbatim, so the child
+  // stays glued to the same spot on the map (+0x18F10 — the tail of the band
+  // picker every spawned record goes through, death child and big shot
+  // alike).
+  function inheritDezaAnchor(enemy, child) {
     var pst = enemy.getData("deza");
     var cst = child.getData("deza");
     if (pst && pst.entry && pst.entry.anchored && cst && cst.entry) {
       cst.entry.anchorY = pst.entry.anchorY;
       cst.entry.anchorScroll = pst.entry.anchorScroll;
     }
+  }
+  // Bullet type 3's shot: the record byte 5 names, spawned at the shooter's
+  // position as a zako of its own — its hp, armour, death word, class and
+  // appearance script all its record's, its formation key `b5 | 0x80`
+  // (+0x190AE -> +0x18E7C -> the zako initialiser +0x153C8). It draws on the
+  // same 150-slot pool the death children do (0x06068A40 over slots 99..248)
+  // and is refused the same way when the pool is full. Returns false when
+  // the recipe carries no such record (an import older than the roster that
+  // holds it), so the caller can fall back.
+  function spawnBigShot(scene, enemy, big) {
+    var key = enemy.getData("dezaBigShot");
+    var data = key && scene.recipe && scene.recipe.enemyData
+      ? scene.recipe.enemyData[key]
+      : null;
+    if (!data) return false;
+    var successors = 0;
+    for (var i = 0; i < scene.enemies.length; i++) {
+      var live = scene.enemies[i];
+      if (live && live.active && live.getData("dezaSuccessor")) successors++;
+    }
+    if (successors >= DEZA_MAX_LIVE_ZAKO) return true;
+    data._enemyKey = key.replace(/^enemy/, "");
+    var shot = createEnemy(scene, data, enemy.x, enemy.y, null);
+    shot.setData("dezaSuccessor", true);
+    shot.setData("dezaBigShotOf", enemy.getData("dezaKey"));
+    if (big && Number.isFinite(big.key)) shot.setData("dezaKey", big.key);
+    inheritDezaAnchor(enemy, shot);
+    return true;
   }
   // `owner` is the slot whose weapon landed the kill: the combo, its multiplier
   // and the SP charge are that player's, while the score itself goes into the
@@ -17742,7 +17830,11 @@
         }
         if (hit) continue;
         var entryMargin = this.dezaEntryMargin || 20;
-    if (!isBoss && (enemy.y > GH11 + entryMargin || enemy.x < -40 || enemy.x > GW13 + 40)) {
+    // dezaGone: retired by the behaviour driver (hidden past the top too
+    // long, or a pool-spawned object outside the despawn box); it used to
+    // be honoured only for the no-contact branch above, so a retired zako
+    // with a hitbox stayed in the pool.
+    if (!isBoss && (enemy.getData("dezaGone") || enemy.y > GH11 + entryMargin || enemy.x < -40 || enemy.x > GW13 + 40)) {
           var idx = this.enemies.indexOf(enemy);
           if (idx >= 0) this.enemies.splice(idx, 1);
           var osShadow = enemy.getData("shadow");

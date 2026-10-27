@@ -835,7 +835,18 @@ function decodeBigShot(b5) {
   const band = (b5 >> 4 & 7) % BIG_SHOT_BANDS.length;
   const spec = BIG_SHOT_BANDS[band];
   const index = b5 & spec.mask;
-  return { band, index, character: spec.base + index * spec.frames, frames: spec.frames };
+  return {
+    band,
+    index,
+    character: spec.base + index * spec.frames,
+    frames: spec.frames,
+    record: ZAKO_BAND_BASE[band] | b5 & 15,
+    key: 128 | b5 & 127
+  };
+}
+function bigShotInterval(b4, record = null) {
+  const table = record !== null && record >= ZAKO_BAND_BASE[4] ? FIRE_INTERVAL_TABLE : FIRE_INTERVAL_TABLE_ALT;
+  return clampIndex(b4 >> 4 & 7, table);
 }
 var SPECIAL_FIRE_PATTERNS = { 10: 0, 11: 1, 12: 2 };
 var BULLET_STEERING = Object.freeze({ KINK: 19, SPLIT: 17, SPLIT_AIMED: 18 });
@@ -940,7 +951,7 @@ function decodeDeathWord(b) {
   }
   return death;
 }
-function decodeEnemyRecord(bytes) {
+function decodeEnemyRecord(bytes, { record = null } = {}) {
   const b = Array.from(bytes);
   const rotationMode = b[9] & 7;
   const scaleMode = b[12] & 3;
@@ -980,27 +991,25 @@ function decodeEnemyRecord(bytes) {
       // re-traced"). `enabled` carries only the appearance gate; the
       // runtime combines it with `direction`.
       enabled: appearanceFires(b[0]),
-      // b4 & 3 = BULLET TYPE: which of the save's four global bullet
-      // configs this enemy fires (settings +37..+40). Bullet types
-      // 0-2 reload from the short table [14,12,10,8,6,4,2,1]
-      // (0x6085f70); only type 3 uses the long tables kept here — the
-      // runtime substitutes the short table for types 0-2.
+      // b4 & 3 = BULLET TYPE: 0-2 pick one of the save's three global
+      // bullet configs (settings +37..+39) and reload from the short
+      // table [14,12,10,8,6,4,2,1] (0x6085f70) — the runtime substitutes
+      // it for the value here; 3 is the big shot, whose interval comes
+      // from the long tables by the shooter's band (bigShotInterval).
       mode: b[4] & 3,
-      interval: clampIndex(
-        b[4] >> 4 & 7,
-        (b[4] & 3) === 3 ? FIRE_INTERVAL_TABLE_ALT : FIRE_INTERVAL_TABLE
-      ),
+      interval: (b[4] & 3) === BIG_SHOT_TYPE ? bigShotInterval(b[4], record) : clampIndex(b[4] >> 4 & 7, FIRE_INTERVAL_TABLE),
       window: FIRE_WINDOW_TABLE[b[4] >> 4 & 7],
       // Bullet type 3 is a different weapon entirely, and the two gates
       // that make it so are at 0x0607D828 and 0x0607D89A: both compare
       // the spawn-cached b4 & 3 against 2 and, when it is greater, jump
       // past the "low nibble 0 = never fires" early-out AND past the
       // whole 16-way geometry dispatcher. The shooter's own jump table
-      // (0x0607CFE4) sends it to 0x0607D0AE, which spawns ONE object of
-      // class 99 out of the enemy art. So for this type byte 5 is art,
-      // there is no aim bit, the reload is deterministic (no random
-      // window, and it ticks every serviced frame rather than on the
-      // fire pulse), and a low nibble of 0 does not silence anything.
+      // (0x0607CFE4) sends it to 0x0607D0AE, which spawns ONE zako of
+      // the record byte 5 names (decodeBigShot). So for this type byte
+      // 5 is a record, there is no aim bit, the reload is deterministic
+      // (no random window, and it ticks every serviced frame rather
+      // than on the fire pulse), and a low nibble of 0 does not silence
+      // anything.
       bigShot: (b[4] & 3) === BIG_SHOT_TYPE ? decodeBigShot(b[5]) : null,
       // Byte 5's low nibble picks a bullet-geometry function from the
       // 16-pointer table at 0x6086074 — all 16 traced (2026-08-28):
@@ -1216,7 +1225,7 @@ function placementColumn(col) {
 function enemyPairKey(stage, record) {
   return `${stage}:${record}`;
 }
-function deathChildClosure(stage, placed) {
+function spawnClosure(stage, placed) {
   const found = /* @__PURE__ */ new Set();
   const queue = [...placed];
   const seen = new Set(queue);
@@ -1225,13 +1234,16 @@ function deathChildClosure(stage, placed) {
     const entry = stage.enemies.records[record];
     if (!entry || !entry.defined) continue;
     const bytes = entry.bytes;
-    if ((bytes[2] >> 6 & 3) !== 2) continue;
-    const child = zakoRecordFromKey(bytes[3] | 128);
-    if (child < 0 || child >= ZAKO_SLOT_COUNT || seen.has(child)) continue;
-    seen.add(child);
-    if (!stage.enemies.records[child] || !stage.enemies.records[child].defined) continue;
-    found.add(child);
-    queue.push(child);
+    const children = [];
+    if ((bytes[2] >> 6 & 3) === 2) children.push(zakoRecordFromKey(bytes[3] | 128));
+    if ((bytes[4] & 3) === BIG_SHOT_TYPE) children.push(decodeBigShot(bytes[5]).record);
+    for (const child of children) {
+      if (child < 0 || child >= ZAKO_SLOT_COUNT || seen.has(child)) continue;
+      seen.add(child);
+      if (!stage.enemies.records[child] || !stage.enemies.records[child].defined) continue;
+      found.add(child);
+      queue.push(child);
+    }
   }
   return found;
 }
@@ -1257,7 +1269,7 @@ function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = 
     const placed = new Set(
       st.placement.objects.filter((o) => o.kind === "zako").map((o) => o.record)
     );
-    for (const record of deathChildClosure(st, placed)) placed.add(record);
+    for (const record of spawnClosure(st, placed)) placed.add(record);
     for (const record of [...placed].sort((a, b) => a - b)) {
       const key = enemyPairKey(s, record);
       indexOf.set(key, enemies.length);
@@ -1269,13 +1281,14 @@ function projectForEditor(stages, { cols = PLACEMENT_COLS, itemSlots = null } = 
         record,
         key,
         // 0 for a record the grid never places — it reaches the
-        // screen only as another record's death-word child.
+        // screen only as another record's death-word child or big
+        // shot.
         placements: uses.get(key) || 0,
         // The 18-byte definition decoded into named fields — hp, score,
         // speed, fire config and the four change channels. Engine-traced
         // (see decode-enemy.js); this is what makes imported enemies
         // play with their own stats instead of defaults.
-        behavior: bytes ? decodeEnemyRecord(bytes) : null,
+        behavior: bytes ? decodeEnemyRecord(bytes, { record }) : null,
         // The raw 18 bytes still ride along for auditability.
         bytes
       });
@@ -2442,11 +2455,18 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
     enemyKeyByStageRecord.set(`${e.stage}:${e.record}`, `enemy${enemyLetterByIndex[i]}`);
   });
   decodedEnemies.forEach((e, i) => {
-    const death = e.behavior && e.behavior.death;
-    if (!death || death.mode !== 2) return;
-    const child = enemyKeyByStageRecord.get(`${e.stage}:${death.record}`);
     const rec = enemyData[`enemy${enemyLetterByIndex[i]}`];
-    if (child && rec && rec.dezaemon) rec.dezaemon.deathChild = child;
+    if (!rec || !rec.dezaemon) return;
+    const death = e.behavior && e.behavior.death;
+    if (death && death.mode === 2) {
+      const child = enemyKeyByStageRecord.get(`${e.stage}:${death.record}`);
+      if (child) rec.dezaemon.deathChild = child;
+    }
+    const big = e.behavior && e.behavior.fire && e.behavior.fire.bigShot;
+    if (big) {
+      const shot = enemyKeyByStageRecord.get(`${e.stage}:${big.record}`);
+      if (shot) rec.dezaemon.bigShotChild = shot;
+    }
   });
   if (Object.keys(enemyData).length === 0) {
     enemyData.enemyA = clone(defaults.starterEnemy);
@@ -3107,7 +3127,7 @@ function decodeSettings(sec5) {
     // [5000,10000,20000,50000,100000,200000,500000,1000000] (+0x21F00).
     scoreItemValue: [5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 5e5, 1e6][sec5[base + 36] & 7],
     bullets: {
-      configs: [37, 38, 39, 40].map((o) => bulletConfig(sec5[base + o])),
+      configs: [37, 38, 39].map((o) => bulletConfig(sec5[base + o])),
       blast: {
         a: BLAST_HOLD_TABLE[sec5[base + 40] & 7],
         b: BLAST_HOLD_TABLE[sec5[base + 40] >> 4 & 7]
