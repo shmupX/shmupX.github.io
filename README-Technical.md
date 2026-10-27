@@ -763,6 +763,7 @@ deno task bgm:tone        # transcribe an mp3 (path or URL) onto the Dezaemon 2 
 deno task extension:zip   # pack the Sprite Picker extension into static/extension/ for the download page (part of build)
 deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
 deno task level:alias     # other names a cloud game answers to (2019 -> 2019-PS2); dry run, --write sets
+deno task level:reimport  # decode a cloud level's Dezaemon cart again with today's engine and publish it over the record, keeping its gameId (dry run; --write publishes, --restore puts the backup back)
 deno task rtdb:split      # seed shmupX's own subtree of the database from cmg's root copies (dry run; --write copies, --force replaces)
 deno task refresh:compare # stock vs max refresh: emulated 240 Hz side by side (mp4s), --live on this display, --compare saved results
 
@@ -5796,6 +5797,40 @@ game's (the game may be named by an alias too: `level:alias 2019` lists
 shmupX's index only; cmg's root-level `levelAliases` is neither read nor
 written. `planAliases` in `lib/level-subdomain.ts` refuses an alias another
 level holds or a level already owns as its own name.
+
+**A cart imported long ago is a snapshot of that day's importer.** `Ramsie`
+was saved in August 2026 by an importer that did not yet pull the cart's own
+ship, bullets and item icons out of the global art bank — the record flew the
+stock ship, duke — and wrote the scenery's flip bits in the convention
+`decode-stage.js` has since corrected (bit15 is the vertical flip, bit14 the
+horizontal; the earlier reading had them swapped). Today's runtime reads such a
+record faithfully, which is the problem: every mirrored tile draws flipped the
+wrong way, and the boss chambers come out scrambled. Nothing in the runtime can
+put the ship back, since the record never carried its frames, so the fix is the
+record, decoded afresh:
+
+```bash
+deno task level:reimport Ramsie             # what would change: ship, meta, each stage's scenery
+deno task level:reimport Ramsie -- --write  # publish it
+```
+
+[`scripts/reimport-cloud-level.ts`](scripts/reimport-cloud-level.ts) decodes
+the cart the way `.SAV LOAD GAME` and every build by name do (the harbor's
+shelf: the community library's `dezaemon/saves/<slug>`, the local collection,
+or `--sav <file>`) and lays the result out the way the editor's SAVE writes a
+level. The cart decides everything a cart knows; what only the editor knows is
+kept from the record it replaces — the `gameId` above all, since a new one
+would orphan the game's scores, then GOD MODE, the CABINET, the attribution,
+custom audio, an author's story, title art and UI atlas overrides — and the
+frame thumbnails are dropped for the editor to rebuild on LOAD. The dry run
+counts, per stage, the cells that change and how many of them are the same
+tile re-flipped, which is the signature of the old convention. The record as it
+stands goes to `build/cloud-levels/<key>.<savedAt>.json` first, and
+`-- --restore <that file> --write` puts it back; a write is one PUT of the whole
+record, so a reader never sees half of one. `--out <file>` writes the record it
+would publish, which `deno task game:debug`'s level server can play.
+`tests/level_reimport_test.ts` pins what is kept, what is dropped and what the
+dry run says.
 
 **DNS and Deploy both have to know the wildcard.** Add `*.codemonkey.games` as a
 custom domain on the app in the Deploy dashboard (it issues the wildcard
