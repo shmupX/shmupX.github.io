@@ -142,10 +142,11 @@
       "date": "NSW",
       "coreA": "core // voland",
       "coreB": "wasm",
-      "size": "~25 MB",
+      "size": "on this origin",
+      "local": true,
       "player": "/switch/play.html",
       "manifest": "/NintendoSwitch/manifest.json",
-      "prefixes": ["/switch/", "/NintendoSwitch/"],
+      "prefixes": [],
       "isolated": true
     }
   ]

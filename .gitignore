@@ -58,6 +58,18 @@ static/n64dd/*.n64
 static/n64dd/*.v64
 static/n64dd/*.bin
 
+# The Nintendo Switch pack's content, staged under static/ for `deno task
+# members:pack` to put in shmupx-member-switch.zip (lib/member-content.ts):
+# the cartridges and their covers (the list beside them is committed, empty,
+# and `deno task switch:manifest` rewrites it from what is here), the Voland
+# core scripts/build-voland-core.sh builds -- a GPL artifact that must not
+# ride into a commit or a deploy -- and the keys dumped from your own console.
+# No packaged build embeds any of it (lib/streamed-payloads.ts).
+static/NintendoSwitch/*
+!static/NintendoSwitch/manifest.json
+static/switch/core/
+static/switch/keys/
+
 # Local .sav test fixtures (community Dezaemon 2 saves — never committed).
 # Drop .sav/.bcr/.bkr files here to enable the fixture-gated engine tests.
 # debug-tools/ is the exception — scripts that read the fixtures, not the

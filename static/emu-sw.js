@@ -12,10 +12,11 @@
 //      a SAME-ORIGIN frame (gamepad-support.js bails silently otherwise). A
 //      player loaded straight from the cmg origin would be cross-origin and
 //      silently unplayable, so every byte has to arrive under our own origin.
-//   2. PS2 and Switch need SharedArrayBuffer, which the browser only grants a
+//   2. PS2 needs SharedArrayBuffer, which the browser only grants a
 //      cross-origin-isolated document. Responses synthesised here carry the
 //      COOP/COEP the isolated players need, plus CORP on every mirrored
-//      subresource so require-corp does not reject them.
+//      subresource so require-corp does not reject them. (The Switch needs
+//      it too, but its player is on this origin now — see MIRRORABLE.)
 //
 // The worker also serves the eShop's installed web games. Those live in a
 // second cache, "shmupx-eshop-v1", filled by static/eshop-library.js
@@ -75,6 +76,12 @@ const ESHOP_PREFIX = "/eshop/";
 // under Play!'s HLE kernel, so the ps2 core's catalogue entry reads no manifest
 // and the section lists only what this machine built and what the eShop
 // installed on it (Sh'M↑ Party comes in from its own zip, under /eshop/).
+//
+// /switch/ and /NintendoSwitch/ left the list when the Switch player moved
+// onto this origin: static/switch/play.html is served here, and its core,
+// keys and cartridges come in the `switch` member pack (lib/member-content.ts),
+// which this origin serves too. Its catalogue entry is `local` like the
+// Super Famicom's, and main.ts stamps the COOP/COEP it needs.
 const MIRRORABLE = [
   "/nes/", "/Nintendo/",
   "/turbografx16/", "/TurboGrafx-16/",
@@ -83,7 +90,6 @@ const MIRRORABLE = [
   "/arcade/",
   "/naomi/", "/Naomi/", "/icons/naomi-reindeer.png",
   "/ps2/", "/PlayStation2/",
-  "/switch/", "/NintendoSwitch/",
   "/emulator-controls.js", "/shaders/", "/bios/",
 ];
 

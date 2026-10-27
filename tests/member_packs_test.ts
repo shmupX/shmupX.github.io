@@ -36,7 +36,9 @@ import {
   memberContentType,
   memberDirs,
   MemberLibrary,
+  namedMemberDirs,
   parseRange,
+  readZipEntry,
   readZipIndex,
   ZipFormatError,
 } from "../lib/member-packs.ts";
@@ -78,6 +80,14 @@ Deno.test("every member path falls to its pack, and the game's own files to none
     ["/games/2028-ai/assets/sounds/voice_fight.mp3", null],
     ["/games/2028-ai/game.bundle.js", null],
     ["/games/super-mario-sp/super-mario-sp.sfc", "super-mario-sp"],
+    // The Switch is a whole console: its page, core, keys and cartridges.
+    ["/switch/play.html", "switch"],
+    ["/switch/core/switch_core.wasm", "switch"],
+    ["/switch/keys/prod.keys", "switch"],
+    ["/NintendoSwitch/Game (USA).xci", "switch"],
+    ["/NintendoSwitch/manifest.json", "switch"],
+    ["/NintendoSwitch/covers/Game.png", "switch"],
+    ["/bios/scph5500.bin", null],
     ["/games/2019-web.zip", null],
     ["/dashboard.bundle.js", null],
   ];
@@ -372,6 +382,109 @@ Deno.test("a folder pack, an import, and a pack dropped in while running", async
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("a console pack carries its sections, and a launcher reads them back only as far as the pack honours them", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const root = join(dir, "static");
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const files: Record<string, Uint8Array> = {
+      "/switch/play.html": enc("<!doctype html>switch"),
+      "/switch/core/switch_core.js": enc("export default () => ({})"),
+      "/switch/keys/prod.keys": enc("header_key = 00"),
+      "/NintendoSwitch/manifest.json": enc('[{"file":"a.nro","name":"a"}]'),
+      "/NintendoSwitch/a.nro": enc("NRO0"),
+    };
+    for (const [url, data] of Object.entries(files)) {
+      const path = join(root, ...url.slice(1).split("/"));
+      await Deno.mkdir(join(path, ".."), { recursive: true });
+      await Deno.writeFile(path, data);
+    }
+    const out = join(dir, "members");
+    const log: string[] = [];
+    const written = await writeMemberPacks({
+      root,
+      outDir: out,
+      packs: PACKS,
+      built: new Date("2026-10-26T00:00:00Z"),
+      log: (line) => log.push(line),
+    });
+    assertEquals(written.map((w) => w.id), ["switch"]);
+    assertStringIncludes(log[0], "adds the NINTENDO SWITCH section");
+    const zip = join(out, packFileName("switch"));
+    const index = await readZipIndex(zip);
+    const meta = JSON.parse(
+      new TextDecoder().decode(
+        await readZipEntry(zip, index.get("member.json")!),
+      ),
+    );
+    assertEquals(meta.ui.sections[0].id, "switch");
+    assertEquals(meta.ui.sections[0].player, "/switch/play.html");
+    assertEquals(meta.files.length, 5);
+
+    // Read back as the launcher reads it: the section rides on the pack,
+    // and the shelf's rows come out of the zip like any other file.
+    const library = new MemberLibrary({
+      dirs: () => [out],
+      importDir: out,
+      rules: memberPacks([]),
+    });
+    assertEquals(library.exclusive, false);
+    const { packs } = await library.packs();
+    assertEquals(packs[0].ui?.sections.map((s) => s.id), ["switch"]);
+    assertEquals(
+      packs[0].ui?.sections[0].manifest,
+      "/NintendoSwitch/manifest.json",
+    );
+    const shelf = await library.serve(
+      new Request("http://x/NintendoSwitch/manifest.json"),
+      "/NintendoSwitch/manifest.json",
+    );
+    assertEquals(await shelf!.json(), [{ file: "a.nro", name: "a" }]);
+    const keys = await library.serve(
+      new Request("http://x/switch/keys/prod.keys"),
+      "/switch/keys/prod.keys",
+    );
+    assertEquals(await keys!.text(), "header_key = 00");
+
+    // A pack whose member.json promises a section its files cannot honour
+    // — the player is not in it — adds nothing, and still serves.
+    const promise = await buildZip([
+      {
+        path: "member.json",
+        data: enc(JSON.stringify({
+          format: "shmupx.member-pack",
+          version: 1,
+          id: "switch",
+          ui: {
+            sections: [{ ...SWITCH_SECTION, player: "/switch/gone.html" }],
+          },
+        })),
+      },
+      { path: "switch/keys/prod.keys", data: enc("x") },
+    ], new Date());
+    const imported = await library.importPack(promise, "promise.zip");
+    assertEquals(imported.ui, undefined);
+    assertEquals(imported.files, ["/switch/keys/prod.keys"]);
+    assert("/NintendoSwitch/manifest.json" in MEMBER_DEFAULTS);
+    assertEquals(MEMBER_DEFAULTS["/NintendoSwitch/manifest.json"], "[]");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+const SWITCH_SECTION = memberPacks([]).find((p) => p.id === "switch")!.ui!
+  .sections[0];
+
+Deno.test("only SHMUPX_MEMBERS names the folders a non-Steam build reads", () => {
+  const sep = Deno.build.os === "windows" ? ";" : ":";
+  assertEquals(
+    namedMemberDirs({ SHMUPX_MEMBERS: ["/a/members", " /b "].join(sep) }),
+    ["/a/members", "/b"],
+  );
+  assertEquals(namedMemberDirs({}), []);
+  assertEquals(namedMemberDirs({ SHMUPX_MEMBERS: "" }), []);
 });
 
 Deno.test("a restore writes member files into a checkout and nothing else", async () => {

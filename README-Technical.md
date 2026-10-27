@@ -3656,6 +3656,7 @@ whose rule names it:
 | `2028-ai-soundtrack`     | 2028.Ai's custom BGM                                                 |
 | `2028-ai-street-fighter` | the six bosses' Street Fighter music and voice clips                 |
 | `super-mario-sp`         | the Super Mario World ROM hack                                       |
+| `switch`                 | the Nintendo Switch: its player, Voland core, keys and cartridges    |
 
 The build leaves every matching file out of the binary — as few `--exclude`s as
 cover them, a folder wherever a whole folder is member content, since Windows
@@ -3707,6 +3708,71 @@ well as the zip it came from. A pack can only ever answer for paths a member
 rule names, so no zip can stand in for the launcher's own pages. A source
 checkout takes packs back with `deno task members:restore <zip or folder>...`,
 which writes their files into `static/` — again, member paths only.
+
+**A pack can bring a console.** A pack's `member.json` may carry `ui`: strip
+sections in the shape of a `static/emulators.json` core entry
+(`lib/member-ui.ts`), which `/api/members` hands the dashboard with the pack.
+The dashboard adds a tile for each the moment MEMBER FILES imports the pack —
+shelved from the list the pack carries and opened the way an installed core's
+rows are, with the bring-your-own picker and the empty-shelf note the pack
+wrote for itself — and the tile goes when the next read finds the pack gone.
+The Settings row counts the shelves in the strip, and a catalogue core the
+pack provides defers to it: its EMULATORS row reads MEMBER PACK and installs
+nothing. The declaration is read strictly — only the known fields, and only
+sections whose player, shelf list and icon the pack itself carries — so a
+pack's tile can open what the pack brought and nothing else. The `switch` pack
+is the first (below); the rule's `ui` in `lib/member-content.ts` is what
+`members:pack` writes into its `member.json`.
+
+**Trying a pack before a Steam build.** Only the Steam build reads packs on
+its own. Any other build — the free launcher, a checkout under
+`deno task dev` — reads them when `SHMUPX_MEMBERS` (or `--members`) names a
+folder, from that folder only, and files an import there; its packs answer
+first, and whatever the build carries or downloads answers for the rest.
+`/api/members` says which kind it is (`exclusive`). One wrinkle under
+`deno task dev`: Vite serves `static/` before the Fresh app sees a request,
+so a file the checkout holds — the committed, empty Switch cartridge list —
+shadows the pack's copy there; what the checkout lacks (the core, the keys,
+the cartridges) comes from the pack as it would in a launcher.
+
+### The Switch pack
+
+cmg's Nintendo Switch section — Voland in the browser, bring-your-own
+cartridges — is here as a member pack rather than a mirrored core. What a
+checkout stages under `static/` is what `deno task members:pack` zips into
+`build/steam/members/shmupx-member-switch.zip`:
+
+| path                      | what                                                        | how it gets there                      |
+| ------------------------- | ----------------------------------------------------------- | -------------------------------------- |
+| `static/switch/play.html` | the player, ported from cmg's                               | committed                              |
+| `static/switch/core/`     | Voland's `switch_core.js` + `.wasm`, a GPL build artifact   | `scripts/build-voland-core.sh`, in WSL |
+| `static/switch/keys/`     | `prod.keys` (and `title.keys`) dumped from your own console | you                                    |
+| `static/NintendoSwitch/`  | `.xci` / `.nsp` / `.nro` cartridges, `covers/`, and the list | you; `deno task switch:manifest`       |
+
+Only the page and an empty list are committed; the rest is gitignored, and no
+packaged build embeds it either (`lib/streamed-payloads.ts`
+`LEFT_OUT_FOLDERS` — a cartridge runs to tens of gigabytes). The pack is the
+only way any of it reaches a launcher, which is why the page is in the pack
+too: the pack is the whole console, and a launcher without it has no Switch
+tile. Build the core first — the script clones Voland, patches the one CMake
+line that does not link, and installs the output; from Windows run it in WSL,
+since emsdk publishes no windows-arm64 Emscripten — then drop the keys and
+cartridges in and run `switch:manifest` before `members:pack`.
+
+What the player can do is what Voland can do, which as of this port is
+instantiate: the core answers its nine exported calls and the page reports
+CORE ONLINE — CANNOT BOOT CARTRIDGES, because upstream's CPU backend is a
+no-op and nothing in its FFI takes a cartridge or a key. The page keeps one
+seam for the day that changes (`bootCartridge`, and an `adapter.js` beside
+the core defining `window.ShmupXVolandAdapter`). Without a core it shows a
+setup panel that checks cross-origin isolation, WebGPU, OPFS, WASM memory64
+and the keys, and prints the build recipe. The player is a top-level page,
+not the game frame, because SharedArrayBuffer needs COOP/COEP
+(`ISOLATED_PLAYERS`); a cartridge picked from disk reaches it through
+IndexedDB (`shmupx-byo`, the handoff `lib/member-ui.ts` names) and `?byo=1`.
+The keys live under `/switch/keys/` rather than cmg's `/bios/`, which the
+emulator mirror claims for the PSX and Saturn BIOS whenever a mirrored core
+is installed.
 
 ### Favorites in Steam
 
@@ -5268,7 +5334,7 @@ shmupX ships no emulators. Settings → EMULATORS lists the ten cores in
 the console then appears as a tile in the top strip. With nothing installed
 there is only one section, so the strip hides itself entirely.
 
-Two of the ten are not on the mirror at all. `snes` is flagged **`local`** and
+Three of the ten are not on the mirror at all. `snes` is flagged **`local`** and
 carries no path prefixes, because its player is
 [`static/snes/play.html`](static/snes/play.html) on this very origin — cmg has
 never served `/snes/play.html`. Installing it therefore downloads nothing,
@@ -5281,7 +5347,14 @@ online-only until somebody vendors that core. Its tile has nothing to list — n
 manifest, nothing filed on it — and says so (NO SHELF, once the dashboard bundle
 is rebuilt: `deno task dashboard:build`), pointing at the editor's → PLAY 64DD
 row, which is what opens it and what installs the core when it is not yet. See
-_The Nintendo 64 disk_.
+_The Nintendo 64 disk_. `switch` is local too, since the Switch build moved
+here from cmg: its player is
+[`static/switch/play.html`](static/switch/play.html), and the Voland core it
+loads, the keys and the cartridges are the Steam build's `switch` member pack
+(_The Switch pack_, under _The Steam build_). On the website and in the free
+launcher the tile opens the player's setup panel, which says what is missing;
+in a launcher that has the pack, the tile is the pack's own and the catalogue
+row reads MEMBER PACK.
 
 Nothing else is vendored here. [`static/emu-sw.js`](static/emu-sw.js) is a
 service worker that mirrors an installed core's path prefixes from the cmg
@@ -5309,7 +5382,8 @@ It has to be a worker rather than plain fetches:
 - PS2 and Switch need SharedArrayBuffer, so their responses are stamped
   COOP/COEP, and every mirrored subresource gets CORP or `require-corp` rejects
   it. `ISOLATED_PLAYERS` in `main.ts` and `vite.config.ts` covers the case where
-  those files are served from disk instead — keep the three lists in sync. The
+  those files are served from disk instead, which the Switch's always are now
+  — keep the three lists in sync. The
   headers only isolate a top-level document, so a disc row for a core flagged
   `isolated` leaves the launcher's frame (`launchEmuRow`); opened inside it, the
   PS2 player stops at "PS2 needs cross-origin isolation".

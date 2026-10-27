@@ -402,21 +402,26 @@
   // stored as-is and the section renders its shelf note rather than an error.
   async function loadEmuManifest(core, force = false) {
     if (!core) return;
-    // A local core has no mirror shelf to read, and therefore no manifest in
-    // its catalogue entry. Leaving the id unset is the right answer rather than
-    // a null: emuNote's manifest states are about the mirror, and the sections
-    // that have no mirror write their own note (see the Super Famicom one).
+    // A core with no manifest has no shelf to read: most local cores, whose
+    // every row is something this machine holds. Leaving the id unset is the
+    // right answer rather than a null: emuNote's manifest states are about the
+    // mirror, and the sections that have no mirror write their own note (see
+    // the Super Famicom one).
     if (!core.manifest) return;
     if (emuManifestPending.has(core.id)) return;
     if (!force && emuManifests[core.id] !== undefined) return;
     emuManifestPending.add(core.id);
     try {
-      await readyEmuWorker();
-      // The manifest exists only on the mirror, so with the worker not in front
-      // of this page the fetch is a certain 404 against our own origin. Record
-      // the failure without making it, so the note can say what actually fixes
-      // it rather than blaming the core.
-      if (!emuControlled) throw new Error('the mirror is not in front of this page');
+      // A mirrored shelf exists only on the mirror, so with the worker not in
+      // front of this page the fetch is a certain 404 against our own origin.
+      // Record the failure without making it, so the note can say what
+      // actually fixes it rather than blaming the core. A local shelf — the
+      // Switch's cartridge list, served by this origin out of its member pack
+      // — has no mirror to wait for.
+      if (!core.local) {
+        await readyEmuWorker();
+        if (!emuControlled) throw new Error('the mirror is not in front of this page');
+      }
       const r = await fetch(core.manifest, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
@@ -470,6 +475,9 @@
         return;
       }
       set({ busy: false, step: 1, total: 1, err: '' });
+      // A local core with a shelf list (the Switch's cartridges) reads it
+      // from this origin; loadEmuManifest skips the mirror for a local core.
+      await loadEmuManifest(core, true);
       return;
     }
     // A catalogue `shared` entry ending in "/" is a PREFIX for the worker to
@@ -1010,13 +1018,17 @@
   // the cursor — the ✕ on the row is still how you uninstall.
   function emuFlagged(c) {
     if (!c) return false;
+    // A console a member pack provides is the pack's to flag, not the core's.
+    if (packSectionFor(c.id)) return false;
     if (emuStatus[c.id]?.err) return true;
     return emuInstalled.includes(c.id) && emuManifests[c.id] === null;
   }
 
   // Row badge on the Emulators screen — the same GET / ⬇ / INSTALLED vocabulary
-  // the network installs use elsewhere in the launcher.
+  // the network installs use elsewhere in the launcher. A console a member
+  // pack provides (packSections) has nothing to install: the pack is it.
   function emuBadge(c) {
+    if (packSectionFor(c.id)) return { cls: 'ok', text: 'MEMBER PACK' };
     const st = emuStatus[c.id];
     if (st?.busy) return { cls: 'dl', text: '⬇ ' + st.step + ' / ' + st.total };
     if (emuFlagged(c)) return { cls: 'err', text: '! RETRY' };
@@ -1031,6 +1043,11 @@
     emuSel = i;
     if (emuStatus[c.id]?.busy) return;
     sfx.enter();
+    const fromPack = packSectionFor(c.id);
+    if (fromPack) {
+      showToast(c.name + ' comes from the ' + fromPack.packTitle + ' member pack — its tile is in the strip already.');
+      return;
+    }
     // A on a flagged row retries rather than uninstalling — the fix for a
     // half-installed core, or for one whose shelf never arrived, is the one
     // press already under the cursor. The ✕ on the row still uninstalls.
@@ -1046,6 +1063,8 @@
   let emuStateLabel = $derived.by(() => {
     const c = emuCurrent;
     if (!c) return '—';
+    const fromPack = packSectionFor(c.id);
+    if (fromPack) return 'MEMBER PACK · ' + String(fromPack.packTitle).toUpperCase();
     const st = emuStatus[c.id];
     if (st?.busy) return 'INSTALLING ' + st.step + ' / ' + st.total;
     if (st?.err) return st.err;
@@ -1055,6 +1074,7 @@
   let emuActionLabel = $derived.by(() => {
     const c = emuCurrent;
     if (!c) return 'Select';
+    if (packSectionFor(c.id)) return 'Member pack';
     const st = emuStatus[c.id];
     if (st?.busy) return 'Working…';
     if (emuFlagged(c)) return 'Retry';
@@ -1257,12 +1277,53 @@
   // members folder works as well, and needs no restart either.
   let members = $state(null);
   let memberInputEl = $state(null);
+  // ─── The sections member packs add ─────────────────────────────────────────
+  // A pack's member.json may carry `ui`: strip sections in the shape of a
+  // catalogue core (lib/member-ui.ts), which /api/members hands over with the
+  // pack. The Switch pack's tile, shelf and cartridge picker are one; any
+  // console a later pack brings is another, with nothing here that knows it
+  // by name. A section exists exactly as long as its pack does: it appears
+  // the moment MEMBER FILES imports one (refreshMembers), and goes when the
+  // next read finds the pack gone. Each is served by this origin out of the
+  // pack, so it is `local` to everything below — no mirror, no worker — and
+  // its player opens the way launchEmuRow opens a catalogue core's.
+  let packSections = $derived.by(() => {
+    const out = [];
+    const seen = new Set();
+    for (const p of members?.packs || []) {
+      for (const s of p.ui?.sections || []) {
+        if (seen.has(s.id)) continue;
+        seen.add(s.id);
+        out.push({ ...s, local: true, pack: p.id, packTitle: p.title || p.id });
+      }
+    }
+    return out;
+  });
+  // The pack section that provides a catalogue core's console, when one does:
+  // the core needs no install then, and its tile is the pack's.
+  function packSectionFor(id) {
+    return packSections.find((s) => s.id === id) || null;
+  }
+  // A section's shelf is read when its pack arrives, and again on every later
+  // read of the packs: an import replaces a pack's zip, shelf list and all.
+  // Forced, so a list read before the pack was there is not the one kept.
+  // untrack: the read inside loadEmuManifest must not make this effect follow
+  // the shelves it fills.
+  $effect(() => {
+    const sections = packSections;
+    untrack(() => {
+      for (const s of sections) if (s.manifest) loadEmuManifest(s, true);
+    });
+  });
   let membersSummary = $derived.by(() => {
     if (!members) return '';
     const have = (members.packs || []).length;
     const missing = (members.missing || []).length;
+    const added = packSections.length;
     return (have ? have + ' installed' : 'none installed') +
-      (missing ? '  ·  ' + missing + ' not' : '') + '  ·  press to import a pack';
+      (missing ? '  ·  ' + missing + ' not' : '') +
+      (added ? '  ·  ' + added + (added === 1 ? ' shelf' : ' shelves') + ' in the strip' : '') +
+      '  ·  press to import a pack';
   });
   async function refreshMembers() {
     try {
@@ -1282,14 +1343,77 @@
           body: file,
         });
         const data = await r.json();
+        // Say what the strip gained, since that is the part the player sees.
+        const adds = (data?.ok && data.pack.ui?.sections || []).map((s) => s.title).join(', ');
         showToast(data && data.ok
-          ? 'Member files: ' + (data.pack.title || data.pack.id) + ' — ' + data.pack.count + ' file(s)'
+          ? 'Member files: ' + (data.pack.title || data.pack.id) + ' — ' + data.pack.count + ' file(s)' +
+            (adds ? ' · ' + adds + ' added to the strip' : '')
           : 'Member files: ' + ((data && data.error) || ('HTTP ' + r.status)));
       } catch (err) {
         showToast('Member files: ' + (err?.message || err));
       }
     }
     refreshMembers();
+  }
+
+  // A pack section's bring-your-own picker. Its player is a top-level page
+  // when the section is isolated, so the picked File cannot be posted into a
+  // frame; it is parked in IndexedDB for the player to collect — the handoff
+  // lib/member-ui.ts names and static/switch/play.html reads — and the player
+  // opened with ?byo=1. The accepted extensions come from the section's own
+  // picker, so this knows nothing about cartridges.
+  const BYO_DATABASE = 'shmupx-byo';
+  const BYO_STORE = 'files';
+  const BYO_KEY = 'file';
+  let packPickerError = $state({});
+  function parkByoFile(file) {
+    return new Promise((resolve, reject) => {
+      const open = indexedDB.open(BYO_DATABASE, 1);
+      open.onupgradeneeded = () => { open.result.createObjectStore(BYO_STORE); };
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction(BYO_STORE, 'readwrite');
+        tx.objectStore(BYO_STORE).put(file, BYO_KEY);
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => { db.close(); reject(tx.error); };
+      };
+    });
+  }
+  async function onPackPickerChange(ev, s) {
+    const input = ev.currentTarget;
+    const files = Array.from(input.files || []);
+    // Allow re-picking the same file after a cancel by clearing the value.
+    setTimeout(() => { try { input.value = ''; } catch (_) {} }, 0);
+    if (!files.length) return;
+    const setErr = (msg) => (packPickerError = { ...packPickerError, [s.id]: msg });
+    const exts = String(s.picker?.accept || '').split(',').map((t) => t.trim().toLowerCase())
+      .filter((t) => t.startsWith('.'));
+    const main = exts.length
+      ? files.find((f) => exts.some((ext) => f.name.toLowerCase().endsWith(ext)))
+      : files[0];
+    if (!main) { setErr('Pick a ' + exts.join(' / ') + ' file.'); return; }
+    setErr('');
+    try {
+      await parkByoFile(main);
+    } catch (e) {
+      setErr('Handoff failed: ' + (e?.message || e));
+      return;
+    }
+    sfx.enter();
+    chromeDismissed = false;
+    const url = s.player + '?byo=1';
+    if (s.isolated) { location.href = url; return; }
+    gameSrc = url;
+    setTimeout(() => { gameOn = true; }, 30);
+  }
+  // The empty-shelf note for a pack section that wrote none of its own.
+  function packNote(s) {
+    return {
+      title: 'NOTHING ON THIS SHELF',
+      pre: 'The ', path: s.packTitle, post: ' member pack lists nothing to play yet.',
+      hint: [],
+    };
   }
 
   // Answers whether anything was written, for the first-run offer below: a
@@ -5165,7 +5289,10 @@
       rows: mobileRows,
       byod: { title: 'NO BUILDS YET', pre: 'Press A on ', path: 'BUILD A GAME', post: ' to make an APK.', hint: [] },
     }] : []),
-    ...installedCores.map((c) => ({
+    // A console a member pack provides takes its tile from the pack's section
+    // below rather than from the catalogue: the pack is what makes it playable
+    // here, and its section is the one that knows the pack's picker and note.
+    ...installedCores.filter((c) => !packSectionFor(c.id)).map((c) => ({
       id: 'emu-' + c.id, name: c.name, mark: c.mark, icon: c.icon || null,
       title: c.title, metaType: c.metaType, date: c.date,
       coreA: c.coreA, coreB: c.coreB,
@@ -5174,6 +5301,25 @@
       activate: (i) => launchEmuRow(c, coreRows(c)[i]),
       rows: coreRows(c),
       byod: emuNote(c),
+    })),
+    // The sections member packs add (packSections): a tile each, shelved and
+    // opened like an installed core's — the section object IS a core to
+    // coreRows and launchEmuRow — plus the bring-your-own picker and the
+    // empty-shelf note the pack wrote for itself.
+    ...packSections.map((s) => ({
+      id: 'pack-' + s.id, name: s.name, mark: s.mark, icon: s.icon || null,
+      title: s.title, metaType: s.metaType, date: s.date,
+      coreA: s.coreA, coreB: s.coreB,
+      sel: () => emuSecSel[s.id] || 0,
+      setSel: (v) => (emuSecSel = { ...emuSecSel, [s.id]: v }),
+      activate: (i) => launchEmuRow(s, coreRows(s)[i]),
+      rows: coreRows(s),
+      ...(s.picker ? {
+        picker: { accept: s.picker.accept, multiple: !!s.picker.multiple, onchange: (ev) => onPackPickerChange(ev, s) },
+        add: { icon: '⬆', label: s.picker.label || 'Add', run: openSectionPicker },
+      } : {}),
+      byod: s.byod || packNote(s),
+      err: packPickerError[s.id] || '',
     })),
   ]);
 
@@ -5289,6 +5435,9 @@
     } else if (m.id === 'settings') {
       screen = 'settings';
       settingsSel = 0;
+      // A pack dropped into the members folder by hand is found by the next
+      // read; opening the screen that lists them is the natural one.
+      refreshMembers();
     } else if (m.id === 'desktop') {
       // Switch to Desktop mode — the windowed workstation at /desktop/.
       // Root-relative on purpose, same convention as the level editor.

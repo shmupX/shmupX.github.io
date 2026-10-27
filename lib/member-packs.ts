@@ -14,10 +14,18 @@
 // for paths a member rule names, so a zip dropped in by mistake — or on
 // purpose — can never stand in for the launcher's own pages.
 //
+// A pack that is a whole console says so: its member.json's `ui` names the
+// strip sections it adds (lib/member-ui.ts), read here into the pack's
+// record for /api/members to hand the dashboard, which adds them the moment
+// the pack is imported.
+//
 // Where packs are looked for, first match winning:
 //   $SHMUPX_MEMBERS          one or more folders, the platform's PATH delimiter
 //   <data dir>/members       where the launcher's MEMBER FILES import puts them
 //   <beside the binary>/members   e.g. Steam's "Browse local files" folder
+//
+// Only the Steam build looks in all three; any other build reads packs only
+// when SHMUPX_MEMBERS names a folder, and only from there (memberLibrary).
 
 import { crc32 } from "@shmupx/shmup-harbor/zip";
 import { serveFile } from "@std/http/file-server";
@@ -31,6 +39,7 @@ import {
   memberPacks,
   packFor,
 } from "./member-content.ts";
+import { type MemberUi, readMemberUi } from "./member-ui.ts";
 
 // ------------------------------------------------------------------ zip index
 
@@ -206,6 +215,8 @@ export interface InstalledPack {
   files: string[];
   /** Files it carries that no member rule names, and so never serves. */
   ignored: number;
+  /** The strip sections it adds to the launcher, as far as its member.json's `ui` reads (lib/member-ui.ts). */
+  ui?: MemberUi;
 }
 
 /** A pack that could not be read, and why. */
@@ -252,15 +263,19 @@ function readManifest(text: string): Partial<MemberManifest> | null {
   }
 }
 
-/** The folders packs are looked for in, most specific first. */
+/** The folders SHMUPX_MEMBERS names (desktop.ts's --members sets it), in order. */
+export function namedMemberDirs(env: Record<string, string>): string[] {
+  return (env.SHMUPX_MEMBERS ?? "").split(DELIMITER).map((d) => d.trim())
+    .filter(Boolean);
+}
+
+/** The folders the Steam build looks for packs in, most specific first. */
 export function memberDirs(opts: {
   env: Record<string, string>;
   dataDir: string;
   execPath?: string;
 }): string[] {
-  const dirs = (opts.env.SHMUPX_MEMBERS ?? "").split(DELIMITER).map((d) =>
-    d.trim()
-  ).filter(Boolean);
+  const dirs = namedMemberDirs(opts.env);
   dirs.push(join(opts.dataDir, "members"));
   if (opts.execPath) {
     const beside = dirname(opts.execPath);
@@ -339,6 +354,7 @@ export class MemberLibrary {
   #dirs: () => string[];
   #importDir: string;
   #rules: readonly MemberPack[];
+  #exclusive: boolean;
   #packs: InstalledPack[] = [];
   #problems: PackProblem[] = [];
   #index = new Map<string, Hit>();
@@ -350,14 +366,25 @@ export class MemberLibrary {
     /** Where an import is filed: <data dir>/members. */
     importDir: string;
     rules: readonly MemberPack[];
+    /**
+     * Whether the packs are the only source of member content, as they are
+     * in the Steam build: a member path no pack holds is then a 404 that
+     * names the pack. Off, the build answers it as it always has.
+     */
+    exclusive?: boolean;
   }) {
     this.#dirs = opts.dirs;
     this.#importDir = opts.importDir;
     this.#rules = opts.rules;
+    this.#exclusive = opts.exclusive ?? false;
   }
 
   get rules(): readonly MemberPack[] {
     return this.#rules;
+  }
+
+  get exclusive(): boolean {
+    return this.#exclusive;
   }
 
   /** The rule a URL path falls under, or null when it is not member content. */
@@ -464,6 +491,8 @@ export class MemberLibrary {
     }
     pack.files.sort();
     if (!pack.title) pack.title = this.#titleOf(pack);
+    const ui = readMemberUi(manifest?.ui, (p) => hits.has(p));
+    if (ui) pack.ui = ui;
     return { pack, hits };
   }
 
@@ -510,6 +539,8 @@ export class MemberLibrary {
     await walk(dir, []);
     pack.files.sort();
     if (!pack.title) pack.title = this.#titleOf(pack);
+    const ui = readMemberUi(manifest.ui, (p) => hits.has(p));
+    if (ui) pack.ui = ui;
     return { pack, hits };
   }
 
@@ -622,21 +653,44 @@ export class MemberLibrary {
 let shared: MemberLibrary | null | undefined;
 
 /**
- * The Steam build's packs, one library for the whole server (main.ts serves
- * from it, /api/members lists and imports into it); null in any other build,
- * which carries or downloads its member content instead.
+ * The packs this server reads, one library for the whole process (main.ts
+ * serves from it, /api/members lists and imports into it), or null when it
+ * reads none.
+ *
+ * The Steam build always has one, and it is `exclusive`: every member path
+ * is answered out of the packs or not at all, since that binary carries none
+ * of the content and never downloads it. Any other build — the free
+ * download, a checkout under `deno task dev` — has one only when
+ * SHMUPX_MEMBERS names a folder (desktop.ts's --members sets it), reads only
+ * that folder, and files an import there. Its packs answer first, and what
+ * the build carries or downloads answers for the rest: that is how a pack is
+ * tried in a checkout before a Steam build is made, and how the free
+ * launcher takes a pack it has no other source for, such as the Switch's.
  */
-export function steamMemberLibrary(): MemberLibrary | null {
+export function memberLibrary(): MemberLibrary | null {
   if (shared !== undefined) return shared;
   const standalone = (Deno.build as { standalone?: boolean }).standalone ===
     true;
-  if (!standalone || !isSteamFlavor()) return (shared = null);
+  const steam = standalone && isSteamFlavor();
+  const env = Deno.env.toObject();
+  const named = namedMemberDirs(env);
+  if (!steam && !named.length) return (shared = null);
+  // Every romset shape counts as the arcade pack's, so the eShop's own list
+  // is not needed here (lib/member-content.ts).
+  const rules = memberPacks([]);
+  if (!steam) {
+    shared = new MemberLibrary({
+      dirs: () => namedMemberDirs(Deno.env.toObject()),
+      importDir: named[0],
+      rules,
+    });
+    return shared;
+  }
   const os = Deno.build.os === "windows"
     ? "windows"
     : Deno.build.os === "darwin"
     ? "darwin"
     : "linux";
-  const env = Deno.env.toObject();
   const dataDir = launcherDataDir(os, env);
   let execPath = "";
   try {
@@ -647,9 +701,8 @@ export function steamMemberLibrary(): MemberLibrary | null {
     // folder created after startup both count.
     dirs: () => memberDirs({ env: Deno.env.toObject(), dataDir, execPath }),
     importDir: join(dataDir, "members"),
-    // Every romset shape counts as the arcade pack's, so the eShop's own list
-    // is not needed here (lib/member-content.ts).
-    rules: memberPacks([]),
+    rules,
+    exclusive: true,
   });
   return shared;
 }

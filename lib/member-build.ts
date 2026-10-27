@@ -18,6 +18,7 @@ import {
   packFileName,
   packFor,
 } from "./member-content.ts";
+import { describeMemberUi, readMemberUi } from "./member-ui.ts";
 
 /** Every file under `root` as a URL path, sorted. AppleDouble and Finder litter are not files. */
 export async function treeUrls(root: string): Promise<string[]> {
@@ -123,6 +124,11 @@ export async function writeMemberPacks(opts: {
   for (const pack of opts.packs) {
     const files = assigned.get(pack.id) ?? [];
     if (!files.some((f) => !(f in MEMBER_DEFAULTS))) continue;
+    // The rule's UI, read the way the launcher will read it, against the
+    // files this pack actually holds: a section whose player is not here
+    // is not written, rather than written and then dropped on import.
+    const carried = new Set(files);
+    const ui = pack.ui ? readMemberUi(pack.ui, (p) => carried.has(p)) : null;
     const manifest: MemberManifest = {
       format: MEMBER_FORMAT,
       version: 1,
@@ -131,6 +137,7 @@ export async function writeMemberPacks(opts: {
       why: pack.why,
       built: opts.built.toISOString(),
       files,
+      ...(ui ? { ui } : {}),
     };
     const entries: ZipEntry[] = [{
       path: "member.json",
@@ -157,7 +164,8 @@ export async function writeMemberPacks(opts: {
     });
     log(
       `  ${packFileName(pack.id)}  ${files.length} file(s), ` +
-        `${(zip.length / 1048576).toFixed(1)} MB — ${pack.title}`,
+        `${(zip.length / 1048576).toFixed(1)} MB — ${pack.title}` +
+        (ui ? `; adds ${describeMemberUi(ui)}` : ""),
     );
   }
   for await (const e of Deno.readDir(opts.outDir)) {

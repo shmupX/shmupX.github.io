@@ -17,7 +17,7 @@ import {
   readBody,
   readKept,
 } from "./lib/kept-storage.ts";
-import { decodedPath, steamMemberLibrary } from "./lib/member-packs.ts";
+import { decodedPath, memberLibrary } from "./lib/member-packs.ts";
 import { MEMBER_DEFAULTS, packFileName } from "./lib/member-content.ts";
 import {
   GAME_FAVS_KEY,
@@ -145,9 +145,15 @@ app.use(async (ctx) => {
 //   (lib/member-packs.ts), or with a 404 that names the pack it comes in. A
 //   romset from a pack still brings its player and core, from where any
 //   packaged app gets them.
+// - What no packaged build embeds (lib/streamed-payloads.ts LEFT_OUT_FOLDERS:
+//   the Switch's core, keys and cartridges) is a pack's to answer, a default
+//   where one is kept (the empty cartridge list), or a 404.
 //
-// None of it runs outside a packaged app: a checkout and the deploy serve
-// static/ as they always have.
+// None of it runs outside a packaged app — a checkout and the deploy serve
+// static/ as they always have — except the packs: a build that SHMUPX_MEMBERS
+// (--members) names a folder to reads packs from it, a checkout under `deno
+// task dev` included, and they answer ahead of whatever else that build has.
+// That is how a pack is tried before a Steam build is made.
 const STANDALONE = (Deno.build as { standalone?: boolean }).standalone === true;
 const DATA_DIR = launcherDataDir(
   Deno.build.os === "windows"
@@ -159,14 +165,26 @@ const DATA_DIR = launcherDataDir(
 );
 const STORE_ROOT = join(DATA_DIR, "offline");
 const KEPT_FILE = join(DATA_DIR, KEPT_FILE_NAME);
-const MEMBERS = steamMemberLibrary();
+const MEMBERS = memberLibrary();
 const FAV_KEYS = [GAME_FAVS_KEY, SHELF_FAVS_KEY];
 if (STANDALONE) sweepPartials(STORE_ROOT);
+
+/** A MEMBER_DEFAULTS answer for the decoded URL path `path`, or null when it has none. */
+function memberDefault(path: string, method: string): Response | null {
+  if (!(path in MEMBER_DEFAULTS)) return null;
+  return new Response(method === "HEAD" ? null : MEMBER_DEFAULTS[path], {
+    headers: {
+      "content-type": "application/json; charset=UTF-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
 app.use(async (ctx) => {
-  if (!STANDALONE) return ctx.next();
+  if (!STANDALONE && !MEMBERS) return ctx.next();
   const { method } = ctx.req;
   const { pathname } = new URL(ctx.req.url);
-  if (pathname === KEPT_STORAGE_URL) {
+  if (STANDALONE && pathname === KEPT_STORAGE_URL) {
     if (method !== "PUT") return new Response(null, { status: 405 });
     const body = await readBody(ctx.req);
     const before = body === null ? null : await readKept(KEPT_FILE);
@@ -184,7 +202,6 @@ app.use(async (ctx) => {
     return new Response(null, { status });
   }
   if (method !== "GET" && method !== "HEAD") return ctx.next();
-  if (isLeftOut(pathname)) return new Response(null, { status: 404 });
 
   if (MEMBERS) {
     const path = decodedPath(pathname);
@@ -209,26 +226,30 @@ app.use(async (ctx) => {
         }
         return res;
       }
-      if (path in MEMBER_DEFAULTS) {
-        return new Response(method === "HEAD" ? null : MEMBER_DEFAULTS[path], {
-          headers: {
-            "content-type": "application/json; charset=UTF-8",
-            "cache-control": "no-store",
+      // The Steam build has nothing else to answer with. Any other build
+      // goes on to what it carries or downloads — or, just below, to what
+      // it never carries.
+      if (MEMBERS.exclusive) {
+        return memberDefault(path, method) ?? new Response(
+          `${pathname} comes in the "${rule.title}" member pack ` +
+            `(${packFileName(rule.id)}).`,
+          {
+            status: 404,
+            headers: {
+              "content-type": "text/plain; charset=UTF-8",
+              "x-shmupx-member-pack": rule.id,
+            },
           },
-        });
+        );
       }
-      return new Response(
-        `${pathname} comes in the "${rule.title}" member pack ` +
-          `(${packFileName(rule.id)}).`,
-        {
-          status: 404,
-          headers: {
-            "content-type": "text/plain; charset=UTF-8",
-            "x-shmupx-member-pack": rule.id,
-          },
-        },
-      );
     }
+  }
+
+  if (!STANDALONE) return ctx.next();
+  if (isLeftOut(pathname)) {
+    const path = decodedPath(pathname);
+    return (path ? memberDefault(path, method) : null) ??
+      new Response(null, { status: 404 });
   }
 
   if (pathname === "/emulators.json" && method === "GET") {

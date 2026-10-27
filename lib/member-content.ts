@@ -16,8 +16,14 @@
 // simply not written. REVIEW lists what the rules cannot separate by file and
 // is printed on every Steam build, because a judgement about what may be sold
 // is the project owner's, not this script's.
+//
+// A pack that is a whole console also says what the launcher should show for
+// it: `ui`, strip sections in the catalogue's own shape (lib/member-ui.ts),
+// written into its member.json and read back by the launcher, which adds the
+// sections the moment the pack is imported.
 
 import { ROMSET_PATH } from "./streamed-payloads.ts";
+import type { MemberUi } from "./member-ui.ts";
 
 /** One member pack: what it holds, whose it is, and which paths it takes. */
 export interface MemberPack {
@@ -28,15 +34,20 @@ export interface MemberPack {
   why: string;
   /** Does this URL path ("/snes/Dezaemon.sfc") belong to the pack? */
   match(path: string): boolean;
+  /** The strip sections the pack adds to the launcher, if it is a console (lib/member-ui.ts). */
+  ui?: MemberUi;
 }
 
 /**
- * A served file the Steam build still answers for when its pack is absent:
- * the saves manifest lists the whole collection, so without the saves the
- * shelf must see an empty one rather than a list of files that 404.
+ * A served file the Steam build still answers for when its pack is absent —
+ * and the free launcher, which never carries these: the saves manifest lists
+ * the whole collection, so without the saves the shelf must see an empty one
+ * rather than a list of files that 404, and the Switch's cartridge list is
+ * the same for its shelf.
  */
 export const MEMBER_DEFAULTS: Readonly<Record<string, string>> = {
   "/editor/dezaemon/saves.manifest.json": JSON.stringify({ saves: [] }),
+  "/NintendoSwitch/manifest.json": "[]",
 };
 
 const re = (...patterns: RegExp[]) => (path: string) =>
@@ -109,6 +120,60 @@ export function memberPacks(arcadeRomsets: readonly string[]): MemberPack[] {
       // Its eShop archive is LEFT_OUT of every packaged build already.
       match: re(/^\/games\/super-mario-sp\//),
     },
+    {
+      // The Nintendo Switch, ported from cmg's Voland section: the player
+      // page, the Voland core built from source (scripts/build-voland-core.sh,
+      // into static/switch/core/), the keys dumped from the player's own
+      // console (static/switch/keys/) and the cartridges with their list
+      // (static/NintendoSwitch/, `deno task switch:manifest`). The page is
+      // the project's own, but it is in the pack too: the pack is the whole
+      // console, and the only build with a Switch tile is one that has the
+      // pack. No packaged build embeds the rest — a cartridge runs to tens
+      // of gigabytes (lib/streamed-payloads.ts LEFT_OUT_FOLDERS).
+      id: "switch",
+      title: "The Nintendo Switch",
+      why: "Voland's core is a GPL build made here, the keys are dumped " +
+        "from your own console, and the cartridges are yours: none of it " +
+        "is ours to ship",
+      match: re(/^\/switch\//, /^\/NintendoSwitch\//),
+      ui: {
+        sections: [{
+          id: "switch",
+          name: "Nintendo Switch",
+          mark: "NSW",
+          title: "NINTENDO SWITCH",
+          metaType: "NSW / CART",
+          date: "NSW",
+          coreA: "core // voland",
+          coreB: "member pack",
+          player: "/switch/play.html",
+          manifest: "/NintendoSwitch/manifest.json",
+          isolated: true,
+          picker: {
+            accept: ".xci,.nsp,.nro,application/octet-stream",
+            label: "Add Cartridge",
+          },
+          byod: {
+            title: "BYOC — Bring Your Own Cartridge",
+            pre: "No cartridges in the ",
+            path: "switch",
+            post: " member pack. Pick one from disk:",
+            btn: "Choose cartridge…",
+            hint: [
+              [
+                ".xci dumps · .nsp packages, from hardware you own — .nro " +
+                "homebrew needs no keys.",
+              ],
+              [
+                "Everything else decrypts with the ",
+                { code: "prod.keys" },
+                " the pack carries, dumped from your own console.",
+              ],
+            ],
+          },
+        }],
+      },
+    },
   ];
 }
 
@@ -155,6 +220,8 @@ export interface MemberManifest {
   built: string;
   /** URL paths, sorted. */
   files: string[];
+  /** The strip sections the pack adds, when it is a console (lib/member-ui.ts). */
+  ui?: MemberUi;
 }
 
 export const MEMBER_FORMAT = "shmupx.member-pack";

@@ -71,8 +71,27 @@ export const LEFT_OUT: readonly string[] = [
   "/games/super-mario-sp-web.zip",
 ];
 
+/**
+ * Folders no packaged app embeds: the Nintendo Switch's emulator core, keys
+ * and cartridges, which a checkout holds under static/ for `deno task
+ * members:pack` to put in the `switch` member pack (lib/member-content.ts).
+ * The Steam build serves them from that pack, and so does the free launcher
+ * when `--members` names one; neither has any other source for them, and a
+ * cartridge runs to tens of gigabytes, which no binary should carry. Their
+ * paths are answered as the pack's are: from a pack, with a MEMBER_DEFAULTS
+ * entry (the cartridge list, empty), or 404 (main.ts).
+ */
+export const LEFT_OUT_FOLDERS: readonly string[] = [
+  "/switch/core/",
+  "/switch/keys/",
+  "/NintendoSwitch/",
+];
+
 export function isLeftOut(pathname: string): boolean {
-  return LEFT_OUT.includes(pathname);
+  return LEFT_OUT.includes(pathname) ||
+    LEFT_OUT_FOLDERS.some((f) =>
+      pathname === f.slice(0, -1) || pathname.startsWith(f)
+    );
 }
 
 /** The romUrls a packaged app keeps: every arcade row's that has the romset shape. */
@@ -91,9 +110,12 @@ export function keptRomsets(
 export function excludedFromBinary(
   eshop: ReadonlyArray<{ kind?: unknown; romUrl?: unknown }>,
 ): string[] {
-  return [...keptRomsets(eshop), ...KEPT_FOLDERS, ...LEFT_OUT].map((p) =>
-    p.replace(/\/$/, "")
-  );
+  return [
+    ...keptRomsets(eshop),
+    ...KEPT_FOLDERS,
+    ...LEFT_OUT,
+    ...LEFT_OUT_FOLDERS,
+  ].map((p) => p.replace(/\/$/, ""));
 }
 
 /** Where a packaged app downloads `pathname` from to keep it, or null when it does not keep it. */

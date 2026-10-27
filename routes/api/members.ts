@@ -1,18 +1,22 @@
 import { define } from "../../utils.ts";
 import { crossSiteGuard, localWriteGuard } from "../../lib/local-guards.ts";
-import { steamMemberLibrary } from "../../lib/member-packs.ts";
+import { memberLibrary } from "../../lib/member-packs.ts";
 import { packFileName } from "../../lib/member-content.ts";
 
-// /api/members — the Steam build's member packs (lib/member-packs.ts).
+// /api/members — the member packs this build reads (lib/member-packs.ts).
 //
-//   GET   { available, packs, problems, missing, dirs, importDir }: what is
-//         installed, what could not be read and why, and which packs none of
-//         the installed ones provide.
+//   GET   { available, exclusive, packs, problems, missing, dirs, importDir }:
+//         what is installed — each pack with the strip sections its `ui` adds
+//         (lib/member-ui.ts), which is how the dashboard grows a tile the
+//         moment a pack is imported — what could not be read and why, and
+//         which packs none of the installed ones provide.
 //   POST  the zip itself as the body (x-file-name: its name) — filed into the
 //         launcher's members folder, and served from the next request on.
 //
-// Only the Steam build has packs: every other build carries its member content
-// or downloads it, and answers { available: false }.
+// The Steam build always reads packs, and nothing but packs (`exclusive`).
+// Any other build reads them only when SHMUPX_MEMBERS names a folder, and
+// answers { available: false } otherwise: it carries its member content or
+// downloads it.
 
 const MAX_PACK = 2 ** 31 - 1;
 
@@ -20,7 +24,7 @@ export const handler = define.handlers({
   async GET(ctx) {
     const denied = crossSiteGuard(ctx.req);
     if (denied) return denied;
-    const library = steamMemberLibrary();
+    const library = memberLibrary();
     if (!library) {
       return Response.json({ ok: true, available: false }, {
         headers: { "cache-control": "no-store" },
@@ -41,6 +45,7 @@ export const handler = define.handlers({
     return Response.json({
       ok: true,
       available: true,
+      exclusive: library.exclusive,
       packs: packs.map((p) => ({ ...p, count: p.files.length })),
       problems,
       missing,
@@ -52,10 +57,14 @@ export const handler = define.handlers({
   async POST(ctx) {
     const denied = localWriteGuard(ctx.req);
     if (denied) return denied;
-    const library = steamMemberLibrary();
+    const library = memberLibrary();
     if (!library) {
       return Response.json(
-        { ok: false, error: "Only the Steam build takes member packs." },
+        {
+          ok: false,
+          error: "This build reads no member packs: the Steam build does, " +
+            "and any other when --members (SHMUPX_MEMBERS) names a folder.",
+        },
         { status: 409 },
       );
     }

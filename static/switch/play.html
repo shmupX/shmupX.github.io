@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Nintendo Switch</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #000;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        color: #9cff6b;
+        font-family: "Share Tech Mono", monospace;
+      }
+      #wrap {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      /* Voland renders through WebGPU into this canvas. The id is `game`
+         because upstream's platform/web/src/main.ts looks that id up and calls
+         transferControlToOffscreen() on it — once control is transferred the
+         element can no longer be drawn to from this thread, so nothing here
+         touches it beyond layout. Letterboxed to the Switch's native 16:9. */
+      #game {
+        display: block;
+        max-width: 100%;
+        max-height: 100%;
+        aspect-ratio: 16 / 9;
+        background: #000;
+        outline: none;
+      }
+      #status {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 0.4em 0.6em;
+        font-size: 12px;
+        opacity: 0.6;
+        text-align: center;
+        pointer-events: none;
+      }
+      #err {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 2em;
+      }
+      #err.show { display: flex; }
+      /* The "core not installed" panel. This is the expected state until a
+         Voland build is dropped in, so it gets real layout rather than the
+         one-line #err treatment. */
+      #setup {
+        position: fixed;
+        inset: 0;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.9em;
+        padding: 2em;
+        overflow-y: auto;
+        text-align: center;
+      }
+      #setup.show { display: flex; }
+      #setup h1 {
+        margin: 0;
+        font-size: 20px;
+        letter-spacing: 0.16em;
+        font-weight: normal;
+      }
+      #setup p {
+        margin: 0;
+        max-width: 64ch;
+        font-size: 13px;
+        line-height: 1.6;
+        opacity: 0.78;
+      }
+      #setup pre {
+        margin: 0;
+        max-width: min(92vw, 76ch);
+        overflow-x: auto;
+        text-align: left;
+        font-size: 12px;
+        line-height: 1.55;
+        padding: 0.85em 1em;
+        border: 1px solid rgba(156, 255, 107, 0.28);
+        background: rgba(156, 255, 107, 0.05);
+      }
+      #setup .checks {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.25em 1em;
+        font-size: 12px;
+        text-align: left;
+        max-width: min(92vw, 76ch);
+      }
+      #setup .checks .ok { color: #9cff6b; }
+      #setup .checks .bad { color: #ff6b6b; }
+      #setup .hint { font-size: 11px; opacity: 0.52; }
+      /* Hide the cursor when a gamepad is driving. */
+      body.pad-on, body.pad-on * { cursor: none !important; }
+    </style>
+    <script src="/gamepad-compatibility-plugin.js"></script>
+  </head>
+  <body>
+    <div id="wrap">
+      <canvas id="game" width="1280" height="720" tabindex="-1"></canvas>
+    </div>
+    <div id="status">booting Voland…</div>
+    <div id="err">No cartridge specified.</div>
+    <div id="setup"></div>
+    <script>
+      (function () {
+        "use strict";
+
+        // ── The Nintendo Switch player, ported from cmg's static/switch/
+        // play.html. This page is the project's own, but everything it runs
+        // on is the `switch` member pack's (lib/member-content.ts): the core
+        // under /switch/core/, the keys under /switch/keys/, the cartridges
+        // and their list under /NintendoSwitch/. A packaged launcher serves
+        // all of it, this page included, out of that pack; a checkout serves
+        // whatever is staged under static/.
+        //
+        // Voland (github.com/voland-emu/Voland) is a browser-first Switch
+        // emulator: a C11 core compiled to WASM, WebGPU rendering, guest RAM
+        // in one shared memory64 WebAssembly.Memory, a Worker per subsystem.
+        // GPL-2.0. It ships no keys, firmware or games.
+        //
+        // Upstream publishes NO prebuilt WASM: no releases, no tags, and
+        // platform/web/package.json is private. Its README states the CPU
+        // backend is still a no-op and nothing runs yet. Concretely, the whole
+        // exported FFI surface is the nine functions listed in FFI_EXPORTS
+        // below — there is no ROM loader, no key loader, no save-state.
+        //
+        // So this page does everything that genuinely works today (cartridge
+        // handoff, capability gating, canvas, exit controls) and then looks for
+        // a built core. Absent one it says so and prints the recipe; present
+        // one, it hands off to a single documented seam (bootCartridge) rather
+        // than faking an API upstream has not defined. When upstream ships a
+        // loader, bootCartridge is the only function to rewrite.
+
+        var CORE_DIR = "/switch/core/";
+        // core/CMakeLists.txt names the emscripten target switch_core_wasm with
+        // OUTPUT_NAME "switch_core" and SUFFIX ".js", so a real build emits
+        // switch_core.js + switch_core.wasm. The alternates stay as a cheap
+        // hedge in case upstream renames the target.
+        var CORE_CANDIDATES = ["switch_core.js", "voland_core.js", "voland.js"];
+        var ADAPTER_URL = CORE_DIR + "adapter.js";
+        var KEYS_DIR = "/switch/keys/";
+        var PROD_KEYS_URL = KEYS_DIR + "prod.keys";
+        var TITLE_KEYS_URL = KEYS_DIR + "title.keys";
+        var CARTRIDGE_DIR = "/NintendoSwitch/";
+
+        // The bring-your-own handoff (lib/member-ui.ts BYO_DATABASE/STORE/
+        // KEY): the dashboard parks the picked File here before opening this
+        // page with ?byo=1, because a top-level page has no parent to
+        // postMessage a File from.
+        var BYO_DATABASE = "shmupx-byo";
+        var BYO_STORE = "files";
+        var BYO_KEY = "file";
+
+        // -sEXPORTED_FUNCTIONS, verbatim from CMakeLists.txt. Note what is
+        // absent: nothing here loads a cartridge or accepts a key.
+        var FFI_EXPORTS = [
+          "_emulator_create_ffi", "_emulator_destroy_ffi", "_emulator_run_ffi",
+          "_emulator_step_ffi", "_layout_get_ffi", "_cpu_backend_id_ffi",
+          "_cpu_get_reg_ffi", "_cpu_set_reg_ffi", "_cpu_get_pc_ffi",
+        ];
+
+        // -sINITIAL_MEMORY = -sMAXIMUM_MEMORY = 5637144576 (~5.25 GiB), growth
+        // disabled, and -sIMPORTED_MEMORY=1 — so the HOST constructs the single
+        // WebAssembly.Memory and passes it in. 5637144576 / 65536 = 86016.
+        var TOTAL_MEMORY_PAGES = 86016;
+
+        var params = new URLSearchParams(location.search);
+        var rom = params.get("rom") || "";
+        var byo = params.get("byo") === "1" || params.get("byoc") === "1";
+
+        var statusEl = document.getElementById("status");
+        var errEl = document.getElementById("err");
+        var setupEl = document.getElementById("setup");
+        var canvas = document.getElementById("game");
+
+        function setStatus(t) { if (statusEl) statusEl.textContent = t; }
+        function fail(msg) {
+          if (errEl) { errEl.textContent = msg; errEl.classList.add("show"); }
+          if (statusEl) statusEl.style.display = "none";
+          try { console.error("[switch] " + msg); } catch (_) {}
+        }
+
+        if (!byo && !rom) { fail("No cartridge specified."); return; }
+
+        if (window.CMGGamepadCompat) {
+          window.CMGGamepadCompat.install({
+            sourceParent: true,
+            preferSinglePad: true,
+            forceIndexZero: true,
+          });
+        }
+
+        // ── Cursor hide on gamepad. Top-level here, but keep the parent probe
+        // so an embedded run still tracks the dashboard's pad. ──
+        function anyPad() {
+          try {
+            var pp = window.parent;
+            if (pp && pp !== window && pp.navigator && pp.navigator.getGamepads) {
+              var pg = pp.navigator.getGamepads() || [];
+              for (var i = 0; i < pg.length; i++) {
+                if (pg[i] && pg[i].connected) return true;
+              }
+            }
+          } catch (_) { /* cross-origin or unavailable */ }
+          var lg = (navigator.getGamepads && navigator.getGamepads()) || [];
+          for (var j = 0; j < lg.length; j++) {
+            if (lg[j] && lg[j].connected) return true;
+          }
+          return false;
+        }
+        function refreshPadClass() {
+          document.body.classList.toggle("pad-on", anyPad());
+        }
+        window.addEventListener("gamepadconnected", refreshPadClass);
+        window.addEventListener("gamepaddisconnected", refreshPadClass);
+        refreshPadClass();
+        setInterval(refreshPadClass, 1000);
+
+        function postParent(type) {
+          try {
+            window.parent.postMessage({ type: type }, window.location.origin);
+          } catch (_) {}
+        }
+
+        // The dashboard opens this player as a TOP-LEVEL navigation: COOP+COEP
+        // are scoped to /switch/* (main.ts, vite.config.ts), an iframe can't
+        // cross-origin-isolate unless the embedder did too, and upstream's own
+        // CSP sets frame-ancestors 'none'. Mirrors the PS2 player, including
+        // its exit affordances.
+        var topLevel = (function () {
+          try { return window.parent === window; } catch (_) { return true; }
+        })();
+
+        function exitToDashboard() {
+          if (history.length > 1) history.back();
+          else location.href = "/";
+        }
+
+        // ` / ~ mirrors the SELECT + Down chord; Escape exits. Top-level has no
+        // dashboard OSD to toggle, so both go straight back.
+        window.addEventListener("keydown", function (e) {
+          if (
+            e.code === "Backquote" || e.key === "`" || e.key === "~" ||
+            e.keyCode === 192
+          ) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (topLevel) exitToDashboard();
+            else postParent("tg16-toggle-controls");
+          } else if (topLevel && e.code === "Escape") {
+            e.preventDefault();
+            exitToDashboard();
+          }
+        }, true);
+
+        // Top-level gamepad exit: hold SELECT + START ~0.7s. Reads the
+        // compat-plugin-patched getGamepads, so SNES-style pads arrive with
+        // Select/Start normalized into the standard 8/9 slots.
+        if (topLevel) {
+          var chordSince = 0;
+          setInterval(function () {
+            var pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+            var chord = false;
+            for (var i = 0; i < pads.length; i++) {
+              var p = pads[i];
+              if (!p || !p.connected || !p.buttons) continue;
+              if (p.buttons[8] && p.buttons[8].pressed && p.buttons[9] && p.buttons[9].pressed) {
+                chord = true;
+                break;
+              }
+            }
+            if (!chord) { chordSince = 0; return; }
+            if (!chordSince) { chordSince = Date.now(); return; }
+            if (Date.now() - chordSince > 700) exitToDashboard();
+          }, 120);
+        }
+
+        // Top-level touch exit: bottom-left + top-right held together ~700ms,
+        // matching the PS2 player (a touch-only device has no keyboard or pad
+        // and would otherwise have no way back to the launcher).
+        if (topLevel) {
+          var cornersHeld = {}; // pointerId -> 'bl' | 'tr'
+          var cornerExitTimer = 0;
+          var cornerAt = function (x, y) {
+            var s = Math.min(0.13 * Math.min(innerWidth, innerHeight), 104);
+            if (x <= s && y >= innerHeight - s) return "bl";
+            if (x >= innerWidth - s && y <= s) return "tr";
+            return null;
+          };
+          var bothCorners = function () {
+            var bl = false, tr = false;
+            for (var k in cornersHeld) {
+              if (cornersHeld[k] === "bl") bl = true;
+              if (cornersHeld[k] === "tr") tr = true;
+            }
+            return bl && tr;
+          };
+          var cancelCornerExit = function () {
+            if (cornerExitTimer) { clearTimeout(cornerExitTimer); cornerExitTimer = 0; }
+          };
+          window.addEventListener("pointerdown", function (e) {
+            var c = cornerAt(e.clientX, e.clientY);
+            if (!c) return;
+            cornersHeld[e.pointerId] = c;
+            if (bothCorners() && !cornerExitTimer) {
+              cornerExitTimer = setTimeout(function () {
+                cornerExitTimer = 0;
+                if (bothCorners()) exitToDashboard();
+              }, 700);
+            }
+          }, true);
+          window.addEventListener("pointermove", function (e) {
+            if (cornersHeld[e.pointerId] &&
+                cornerAt(e.clientX, e.clientY) !== cornersHeld[e.pointerId]) {
+              delete cornersHeld[e.pointerId];
+              if (!bothCorners()) cancelCornerExit();
+            }
+          }, true);
+          var dropCorner = function (e) {
+            delete cornersHeld[e.pointerId];
+            if (!bothCorners()) cancelCornerExit();
+          };
+          window.addEventListener("pointerup", dropCorner, true);
+          window.addEventListener("pointercancel", dropCorner, true);
+        }
+
+        var touchReported = false;
+        window.addEventListener("touchstart", function () {
+          if (touchReported) return;
+          touchReported = true;
+          postParent("tg16-first-touch");
+        }, { capture: true, passive: true });
+
+        // ── Capability probes ───────────────────────────────────────────────
+        // Mirrors upstream platform/web/src/capabilities.ts, plus the memory64
+        // check its CMake flags imply. All cheap and side-effect free — the
+        // real 5.25 GiB reservation only happens on a genuine boot.
+        var isolated = typeof crossOriginIsolated === "boolean"
+          ? crossOriginIsolated
+          : false;
+        var hasSab = typeof SharedArrayBuffer === "function";
+        var hasWebGpu = "gpu" in navigator;
+        var hasOpfs = !!(navigator.storage && "getDirectory" in navigator.storage);
+        var hasMemory64 = (function () {
+          // Feature-detect with a 1-page i64 memory. The limits MUST be BigInt:
+          // when address is "i64" the JS API coerces initial/maximum with
+          // ToBigInt, so passing Numbers throws "Cannot convert 1 to a BigInt"
+          // on engines that DO support memory64 — a plain Number probe reports
+          // exactly backwards. An engine without memory64 ignores the unknown
+          // `address` member and then fails to coerce the BigInt to a Number,
+          // so this throws there too. Correct in both directions.
+          try {
+            new WebAssembly.Memory({ initial: 1n, maximum: 1n, address: "i64" });
+            return true;
+          } catch (_) {
+            return false;
+          }
+        })();
+
+        // ── Keys ────────────────────────────────────────────────────────────
+        // HEAD only, deliberately. Nothing in the exported FFI can consume a
+        // key yet, so pulling prod.keys into this page's JS heap would be pure
+        // exposure for zero function. A presence probe is all the setup report
+        // needs; when a loader exists, read them inside bootCartridge and hand
+        // them straight to the core.
+        // Existence check that never materializes the body. HEAD first; if the
+        // server doesn't answer it (static handlers vary — Vite in dev, Fresh's
+        // staticFiles() on Deno Deploy, the embedded server in a compiled
+        // launcher, a member pack's zip), fall back to a one-byte ranged GET
+        // and cancel the stream. A false negative here would wrongly report
+        // keys as missing, so the fallback matters more than the saved round
+        // trip.
+        function probe(url) {
+          return fetch(url, { method: "HEAD" })
+            .then(function (r) {
+              if (r.ok) return true;
+              if (r.status === 404 || r.status === 403) return false;
+              return rangeProbe(url);
+            })
+            .catch(function () { return rangeProbe(url); });
+        }
+
+        function rangeProbe(url) {
+          return fetch(url, { headers: { Range: "bytes=0-0" } })
+            .then(function (r) {
+              // Drop the body unread — for prod.keys that is the whole point.
+              try { if (r.body) r.body.cancel(); } catch (_) {}
+              return r.ok;
+            })
+            .catch(function () { return false; });
+        }
+
+        function findCore() {
+          var i = 0;
+          function next() {
+            if (i >= CORE_CANDIDATES.length) return Promise.resolve(null);
+            var url = CORE_DIR + CORE_CANDIDATES[i++];
+            return probe(url).then(function (ok) { return ok ? url : next(); });
+          }
+          return next();
+        }
+
+        // ── Cartridge resolution ────────────────────────────────────────────
+        // BYO: the dashboard parked the picked File in IndexedDB before
+        // navigating here (a top-level page has no parent to postMessage a
+        // File from — the same handoff the PS2 player uses). Hosted: fetch
+        // from /NintendoSwitch/, which a packaged launcher answers out of the
+        // member pack.
+        function loadCartridgeFromIdb() {
+          return new Promise(function (resolve, reject) {
+            var open = indexedDB.open(BYO_DATABASE, 1);
+            open.onupgradeneeded = function () {
+              open.result.createObjectStore(BYO_STORE);
+            };
+            open.onerror = function () {
+              reject(new Error("IndexedDB unavailable."));
+            };
+            open.onsuccess = function () {
+              var db = open.result;
+              var tx = db.transaction(BYO_STORE, "readwrite");
+              var store = tx.objectStore(BYO_STORE);
+              var get = store.get(BYO_KEY);
+              get.onsuccess = function () {
+                var file = get.result;
+                store.delete(BYO_KEY);
+                if (!file) {
+                  reject(new Error("no cartridge file was handed off."));
+                  return;
+                }
+                resolve(file);
+              };
+              get.onerror = function () {
+                reject(new Error("could not read the cartridge file."));
+              };
+              tx.oncomplete = function () { db.close(); };
+            };
+          });
+        }
+
+        // Drop a stashed cartridge we are never going to boot. Without this a
+        // BYO pick that lands on the setup panel (the normal case until a core
+        // exists) would strand a multi-gigabyte File in IndexedDB forever —
+        // loadCartridgeFromIdb is what normally deletes it, and we bail before
+        // reaching it.
+        function clearStashedCartridge() {
+          try {
+            var open = indexedDB.open(BYO_DATABASE, 1);
+            open.onupgradeneeded = function () {
+              open.result.createObjectStore(BYO_STORE);
+            };
+            open.onsuccess = function () {
+              var db = open.result;
+              try {
+                var tx = db.transaction(BYO_STORE, "readwrite");
+                tx.objectStore(BYO_STORE).delete(BYO_KEY);
+                tx.oncomplete = function () { db.close(); };
+              } catch (_) { db.close(); }
+            };
+          } catch (_) {}
+        }
+
+        function loadCartridge() {
+          if (byo) return loadCartridgeFromIdb();
+          var url = CARTRIDGE_DIR + encodeURIComponent(rom);
+          setStatus("fetching " + rom + "…");
+          return fetch(url).then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status + " fetching " + rom);
+            return r.blob();
+          }).then(function (blob) {
+            return new File([blob], rom);
+          });
+        }
+
+        // ── The adapter seam ────────────────────────────────────────────────
+        // Everything above is real. Everything below depends on an API upstream
+        // has not shipped, so it is confined here.
+        function bootCartridge(coreUrl, cartridge) {
+          // The host owns the memory (-sIMPORTED_MEMORY=1). This is a 5.25 GiB
+          // shared reservation and will legitimately fail on many machines, so
+          // report that as itself rather than as a core error.
+          var memory;
+          try {
+            // BigInt limits are mandatory alongside address: "i64" — see the
+            // hasMemory64 probe above. Numbers here throw a TypeError that
+            // would masquerade as an out-of-memory failure.
+            memory = new WebAssembly.Memory({
+              initial: BigInt(TOTAL_MEMORY_PAGES),
+              maximum: BigInt(TOTAL_MEMORY_PAGES),
+              shared: true,
+              address: "i64",
+            });
+          } catch (e) {
+            throw new Error(
+              "could not reserve the 5.25 GiB shared guest memory Voland " +
+              "requires (" + (e && e.message ? e.message : e) + ").",
+            );
+          }
+
+          return import(coreUrl).then(function (mod) {
+            var factory = mod &&
+              (mod.default || mod.createVolandCoreModule || mod.Voland);
+            if (typeof factory !== "function") {
+              throw new Error(
+                coreUrl + " did not export a module factory " +
+                "(expected the -sEXPORT_NAME=createVolandCoreModule default export).",
+              );
+            }
+            return factory({
+              canvas: canvas,
+              wasmMemory: memory,
+              locateFile: function (path) {
+                return new URL(path, new URL(coreUrl, location.href)).href;
+              },
+              mainScriptUrlOrBlob: new URL(coreUrl, location.href).href,
+              print: function (t) { try { console.log("[voland] " + t); } catch (_) {} },
+              printErr: function (t) { try { console.warn("[voland] " + t); } catch (_) {} },
+            });
+          }).then(function (module) {
+            // An adapter shipped next to the core owns the run loop. Once
+            // upstream can accept a cartridge, this is where that happens.
+            if (window.ShmupXVolandAdapter &&
+                typeof window.ShmupXVolandAdapter.boot === "function") {
+              return window.ShmupXVolandAdapter.boot({
+                module: module,
+                memory: memory,
+                cartridge: cartridge,
+                canvas: canvas,
+                prodKeysUrl: PROD_KEYS_URL,
+                titleKeysUrl: TITLE_KEYS_URL,
+                onStatus: setStatus,
+              }).then(function () { return { booted: true }; });
+            }
+            // No adapter, because there is nothing to adapt yet: none of the
+            // nine exported functions takes a cartridge. Rather than pretend,
+            // exercise the FFI that DOES exist so the report is grounded in
+            // what this build actually did, then say plainly that a game
+            // cannot be loaded. Every call is guarded — a core that fails here
+            // is far more interesting than one that silently reports nothing.
+            return { booted: false, diagnostics: probeCore(module, memory) };
+          });
+        }
+
+        // Call the real exports and report what came back. i64 params/returns
+        // arrive as BigInt (-sWASM_BIGINT=1 with MEMORY64), so cycle budgets go
+        // in as BigInt and pointers/PC come out as BigInt.
+        function probeCore(module, memory) {
+          var out = [];
+          function attempt(label, fn) {
+            try {
+              out.push({ label: label, ok: true, value: String(fn()) });
+            } catch (e) {
+              out.push({
+                label: label,
+                ok: false,
+                value: (e && e.message ? e.message : String(e)),
+              });
+            }
+          }
+          var BACKENDS = { 0: "noop", 1: "interpreter", 2: "ballistic" };
+          attempt("guest memory", function () {
+            return memory.buffer.byteLength.toLocaleString() + " bytes";
+          });
+          attempt("emulator_create_ffi()", function () {
+            return module._emulator_create_ffi() === 1 ? "1 (ok)" : "0 (failed)";
+          });
+          attempt("cpu_backend_id_ffi()", function () {
+            var id = module._cpu_backend_id_ffi();
+            return id + " (" + (BACKENDS[id] || "unknown") + ")";
+          });
+          attempt("cpu_get_pc_ffi()", function () {
+            return "0x" + module._cpu_get_pc_ffi().toString(16);
+          });
+          attempt("layout_get_ffi()", function () {
+            return "0x" + module._layout_get_ffi().toString(16);
+          });
+          attempt("emulator_run_ffi(1000)", function () {
+            return "exit reason " + module._emulator_run_ffi(1000n);
+          });
+          attempt("emulator_destroy_ffi()", function () {
+            module._emulator_destroy_ffi();
+            return "ok";
+          });
+          return out;
+        }
+
+        function showCoreOnline(cartridgeName, diagnostics) {
+          if (statusEl) statusEl.style.display = "none";
+          var rows = "";
+          for (var i = 0; i < diagnostics.length; i++) {
+            var d = diagnostics[i];
+            var cls = d.ok ? "ok" : "bad";
+            rows += '<span class="' + cls + '">' + (d.ok ? "OK" : "--") + "  " +
+              esc(d.label) + '</span><span class="' + cls + '">' +
+              esc(d.value) + "</span>";
+          }
+          setupEl.innerHTML =
+            "<h1>CORE ONLINE — CANNOT BOOT CARTRIDGES</h1>" +
+            "<p>The Voland core built, instantiated against the 5.25 GiB shared " +
+            "memory, and answered every call below. What it cannot do is load " +
+            "<code>" + esc(cartridgeName) + "</code>: the CPU backend is the " +
+            "no-op stub, and none of the nine exported functions accepts a " +
+            "cartridge or a key. That work is upstream's Phase 2+.</p>" +
+            '<div class="checks">' + rows + "</div>" +
+            '<p class="hint">Exports: ' + esc(FFI_EXPORTS.join(", ")) + "</p>" +
+            '<p class="hint">When a loader lands, add <code>' +
+            esc(ADAPTER_URL) + "</code> defining <code>window.ShmupXVolandAdapter" +
+            "</code> to the pack and this page will boot through it instead.</p>" +
+            '<p class="hint">Press Escape or ` to go back.</p>';
+          setupEl.classList.add("show");
+        }
+
+        // ── Setup panel ─────────────────────────────────────────────────────
+        function esc(s) {
+          return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        }
+
+        function showSetup(checks) {
+          if (statusEl) statusEl.style.display = "none";
+          var rows = "";
+          for (var i = 0; i < checks.length; i++) {
+            var c = checks[i];
+            var cls = c.ok ? "ok" : "bad";
+            rows += '<span class="' + cls + '">' + (c.ok ? "OK" : "--") +
+              "  " + esc(c.label) + '</span><span class="' + cls + '">' +
+              esc(c.detail) + "</span>";
+          }
+          setupEl.innerHTML =
+            "<h1>VOLAND CORE NOT INSTALLED</h1>" +
+            "<p>The cartridge handoff, keys, canvas and exit controls are all " +
+            "wired up. The emulator itself is the missing piece: Voland " +
+            "publishes no prebuilt WASM — no releases, no package — and its " +
+            "README states the CPU backend is still a no-op.</p>" +
+            '<div class="checks">' + rows + "</div>" +
+            "<p>Build it from source — <code>scripts/build-voland-core.sh</code> " +
+            "does the whole thing and installs into <code>static/switch/core/</code>, " +
+            "where <code>deno task members:pack</code> picks it up for the " +
+            "<code>switch</code> member pack. Run it from Linux; on Windows that " +
+            "means WSL, since emsdk ships no windows-arm64 Emscripten:</p>" +
+            "<pre>bash scripts/build-voland-core.sh\n\n" +
+            "# from Windows, in the checkout:\n" +
+            "wsl -d Ubuntu -- bash scripts/build-voland-core.sh</pre>" +
+            '<p class="hint">The README\'s bare cmake recipe does not link: ' +
+            "upstream wraps its <code>-sEXPORTED_FUNCTIONS=[…]</code> across " +
+            "several lines and emcc's parser stops at the first newline. The " +
+            "script patches that before configuring.</p>" +
+            '<p class="hint">Its exported FFI is currently ' +
+            esc(FFI_EXPORTS.join(", ")) + " — nothing there loads a cartridge, " +
+            "so a run also needs <code>" + esc(ADAPTER_URL) + "</code> " +
+            "defining <code>window.ShmupXVolandAdapter</code>.</p>" +
+            '<p class="hint">Press Escape or ` to go back.</p>';
+          setupEl.classList.add("show");
+        }
+
+        // ── Boot ────────────────────────────────────────────────────────────
+        Promise.all([findCore(), probe(PROD_KEYS_URL), probe(TITLE_KEYS_URL)])
+          .then(function (r) {
+            var coreUrl = r[0];
+            var hasProdKeys = r[1];
+            var hasTitleKeys = r[2];
+
+            if (!coreUrl) {
+              if (byo) clearStashedCartridge();
+              showSetup([
+                {
+                  label: "cross-origin isolated",
+                  ok: isolated && hasSab,
+                  detail: isolated && hasSab
+                    ? "SharedArrayBuffer available"
+                    : "COOP/COEP missing — SharedArrayBuffer blocked",
+                },
+                {
+                  label: "WebGPU",
+                  ok: hasWebGpu,
+                  detail: hasWebGpu
+                    ? "navigator.gpu present"
+                    : "navigator.gpu missing — enable WebGPU",
+                },
+                {
+                  label: "OPFS",
+                  ok: hasOpfs,
+                  detail: hasOpfs
+                    ? "origin-private filesystem available"
+                    : "navigator.storage.getDirectory missing",
+                },
+                {
+                  label: "WASM memory64",
+                  ok: hasMemory64,
+                  detail: hasMemory64
+                    ? "i64 memory supported (5.25 GiB needed at boot)"
+                    : "no i64 address support — Voland cannot run here",
+                },
+                {
+                  label: "prod.keys",
+                  ok: hasProdKeys,
+                  detail: hasProdKeys
+                    ? "present at " + PROD_KEYS_URL
+                    : "not found at " + PROD_KEYS_URL + " (static/switch/keys/ in a checkout)",
+                },
+                {
+                  label: "title.keys",
+                  ok: hasTitleKeys,
+                  detail: hasTitleKeys
+                    ? "present at " + TITLE_KEYS_URL
+                    : "not found (per-game keys; needed for some titles)",
+                },
+                {
+                  label: "voland core",
+                  ok: false,
+                  detail: "none of " + CORE_CANDIDATES.join(" / ") +
+                    " found under " + CORE_DIR,
+                },
+              ]);
+              return;
+            }
+
+            // A core is installed — from here the failure modes are real.
+            if (!isolated || !hasSab) {
+              fail(
+                "Switch needs cross-origin isolation (crossOriginIsolated is " +
+                "false). The server must send COOP: same-origin + COEP: " +
+                "require-corp.",
+              );
+              return;
+            }
+            if (!hasWebGpu) {
+              fail("Switch needs WebGPU (navigator.gpu is unavailable in this browser).");
+              return;
+            }
+            if (!hasMemory64) {
+              fail(
+                "Switch needs WASM memory64 — this engine has no i64 memory " +
+                "support, so Voland's 5.25 GiB guest RAM cannot be allocated.",
+              );
+              return;
+            }
+
+            setStatus("loading cartridge…");
+            var cartName = "";
+            loadCartridge().then(function (cartridge) {
+              var name = cartridge.name || "";
+              cartName = name;
+              if (/\.(nsz|xcz)$/i.test(name)) {
+                throw new Error(
+                  "Voland does not support compressed NSZ/XCZ dumps — " +
+                  "decompress to .nsp/.xci first.",
+                );
+              }
+              // .nro is homebrew and runs without keys; .xci/.nsp do not.
+              if (!hasProdKeys && !/\.nro$/i.test(name)) {
+                throw new Error(
+                  "no prod.keys found. Voland decrypts cartridges with keys " +
+                  "dumped from your own console — put them in the pack at " +
+                  PROD_KEYS_URL + " (static/switch/keys/ in a checkout).",
+                );
+              }
+              document.title = name.replace(/\.[^.]+$/, "") || "Nintendo Switch";
+              setStatus("loading core…");
+              return bootCartridge(coreUrl, cartridge);
+            }).then(function (result) {
+              if (result && result.booted) {
+                setStatus("");
+                return;
+              }
+              showCoreOnline(
+                cartName || "the cartridge",
+                (result && result.diagnostics) || [],
+              );
+            }).catch(function (e) {
+              fail("Voland failed: " + (e && e.message ? e.message : e));
+            });
+          });
+      })();
+    </script>
+  </body>
+</html>

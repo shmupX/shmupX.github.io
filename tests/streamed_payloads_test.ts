@@ -50,6 +50,15 @@ Deno.test("the custom BGM is kept, the Mario archive left out, nothing beside th
   assert(isLeftOut("/games/super-mario-sp-web.zip"));
   assertEquals(isLeftOut("/games/super-mario-sp/emulatorjs/loader.js"), false);
   assertEquals(isLeftOut("/games/2019-web.zip"), false);
+  // The Switch pack's content is never embedded: the core, the keys and the
+  // cartridge folder, list included. The player page is the binary's own.
+  assert(isLeftOut("/switch/core/switch_core.wasm"));
+  assert(isLeftOut("/switch/keys/prod.keys"));
+  assert(isLeftOut("/NintendoSwitch/Game (USA).xci"));
+  assert(isLeftOut("/NintendoSwitch/manifest.json"));
+  assert(isLeftOut("/NintendoSwitch"), "the folder itself, as an --exclude");
+  assertEquals(isLeftOut("/switch/play.html"), false);
+  assertEquals(isLeftOut("/NintendoSwitchy"), false);
   // What build-desktop excludes is exactly what the server answers for.
   const eshop = JSON.parse(await read("data/eshop.json"));
   for (const p of excludedFromBinary(eshop)) {
