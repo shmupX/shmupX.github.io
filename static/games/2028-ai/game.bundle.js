@@ -988,6 +988,12 @@
         if (typeof levelData.ownItems === "boolean") {
           recipe.ownItems = levelData.ownItems;
         }
+        // A stage that ends when its field is clear rather than on its wave
+        // timer (GameScene's wave block) — the cloud game 95-demo's formation
+        // levels end on their last kill, as Space Invaders' do.
+        if (typeof levelData.endsOnClear === "boolean") {
+          recipe.endsOnClear = levelData.endsOnClear;
+        }
         const atlasFrames = (() => {
           try {
             const atlas = this.scene.textures.get(atlasKey);
@@ -16339,6 +16345,20 @@
         if (this.waveDueByScroll) this.dezaBg.scrollPos = this.dezaBg.stopScroll;
         else this.worldTime = this.bossDueTick;
       }
+      // endsOnClear: the spawn-order index of the last row that holds an
+      // enemy. Once it has spawned, an empty field ends the stage there and
+      // then, without waiting out the empty rows behind it (fixedUpdate).
+      this.endsOnClear = !!(this.recipe && this.recipe.endsOnClear);
+      this.lastLiveRow = -1;
+      for (var lr = 0; lr < this.stageEnemyPositionList.length; lr++) {
+        var liveRow = this.stageEnemyPositionList[lr] || [];
+        for (var lc = 0; lc < liveRow.length; lc++) {
+          if (String(liveRow[lc]) !== "00") {
+            this.lastLiveRow = lr;
+            break;
+          }
+        }
+      }
       this.stageBgOverlay = null;
       if (gameState.hasCustomEnemies && !this.dezaBg && this.textures.exists("stage_over_c")) {
         this.stageBgOverlay = this.add.tileSprite(0, 0, GW13, GH11, "stage_over_c");
@@ -18004,6 +18024,23 @@
         } else if (this.enemyWaveFrameCounter >= this.waveInterval) {
           this.enemyWaveFrameCounter -= this.waveInterval;
           enemyWave(this);
+        }
+        // A record with endsOnClear ends the stage the moment every row that
+        // holds an enemy has spawned and none is left on the field — shot
+        // down or flown off — instead of waiting out the rows behind them.
+        // The rest of the list is skipped and the wave's own end runs:
+        // bossAdd, which clears a stage that has no boss.
+        if (this.endsOnClear && this.enemyWaveFlg && this.lastLiveRow >= 0 &&
+            this.waveCount > this.lastLiveRow &&
+            this.waveCount < this.stageEnemyPositionList.length) {
+          var liveZako = 0;
+          for (var lz = 0; lz < this.enemies.length; lz++) {
+            if (this.enemies[lz] && this.enemies[lz].getData("type") !== "boss") liveZako++;
+          }
+          if (liveZako === 0) {
+            this.waveCount = this.stageEnemyPositionList.length;
+            enemyWave(this);
+          }
         }
       }
       if (this.bossTimerStartFlg && !gameState.godFlg) {
