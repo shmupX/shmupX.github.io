@@ -712,6 +712,25 @@ they are written out in full.
   kinds (arcade, SFC, PS2) live in that page's own Cache Storage and IndexedDB
   and cannot be started from a shell at all. The rules that decide whether to
   act on an incoming record are pure and tested in `tests/watch_launch_test.ts`.
+- `static/music-player/` — the **music player**: AZLegendGolden's cassette
+  deck (cmg's docked "AZ Legend" music app), vendored with no artist tracks so
+  the launcher serves its own copy at `/music-player/`. The Guide docks it in a
+  sidebar beside a running game, a game hands it its music (`?bgm=` on the URL,
+  `music-player:add-albums` over postMessage, or the `cmg-music-album` the
+  2028-ai runtime posts once its level resolves), and `game-bgm.js` there is
+  the module a game routes its own BGM through. Its
+  [README](static/music-player/README.md) has the protocol. See **The music
+  player and the watch remote** below.
+- `static/watch-music.js` — the launcher's half of the **watch music remote**:
+  a paired watchAmp lists the deck's albums and switches the song. Same
+  database and pairing code as `watch-launch.js`, its own `music` subtree;
+  tested in `tests/watch_music_test.ts`.
+- `tools/watchamp/` — **watchAmp**, the Wear OS MP3 player whose ♪ Desktop
+  music screen is that remote's wrist end, vendored from
+  [shmupX/watchAmp](https://github.com/shmupX/watchAmp) so the two halves live
+  together (`deno task watchamp:build` / `watchamp:install` / `watchamp:test`).
+  GPL-3.0, package `com.emre.aloud` — its own
+  [README](tools/watchamp/README.md) says why neither changes.
 - `packages/shmup-engine/` — the JSR module: everything for editing/exporting
   `.sav` and `game.json` games.
 - `packages/shmup-harbor/` — the other JSR module: everything for **porting**
@@ -2867,6 +2886,79 @@ to convert. It was PATCHed onto `levels/foo` (the four `boss_*_bgm` overrides
 dropped, the two voice entries kept) — the root copy, before the split;
 `rtdb:split` carries it into `shmupX/levels/foo` — and dezaFoo republished from
 it with `deno task eshop:publish foo --name dezaFoo --author "EASIER BY CODE"`.
+
+## The music player and the watch remote
+
+The launcher carries a music player of its own: AZLegendGolden's cassette deck,
+the "AZ Legend" music app cmg docks beside a game, vendored at
+[`static/music-player/`](static/music-player/README.md) with its tracks left
+behind. shmupX serves it at `/music-player/`; nothing in it reaches the artist's
+deployment, and every URL in it is relative (so `/music-player` is a directory
+index in `lib/static-indexes.ts`).
+
+**Opening it.** The Guide's **Music → Music Player** row slides the deck in over
+whatever is running — a sidebar on the right, the game still visible and playing
+on the left — and the back gesture (B, Esc) closes the deck before it closes the
+Guide. Closing the sidebar unmounts the frame, which is what stops the music; a
+reopen starts clean.
+
+**A game's music.** The deck boots empty and is handed albums three ways, which
+the player's README spells out: on its URL (`?bgm=<url>` per track, `title=`
+beside, `album=`, `autoplay=1`), over `music-player:add-albums` from a host, or
+— the way this launcher's own game does it — the running game posts
+`{ type: "cmg-music-album", album }` to the launcher once its level resolves
+(`cmgBroadcastMusicAlbum` in `game.bundle.js`: the stock boss, adventure and
+continue tracks under the asset base, with the level's `customAudioURLs` laid
+over them key by key; keys sharing one file make one row). The launcher checks
+the album — http(s) URLs only, ids and titles bounded, 200 tracks at most
+(`sanitizeMusicAlbum`) — mounts the deck out of sight if it is not up (parked at
+two transparent pixels, not offscreen: a throttled frame loses the
+requestAnimationFrame loop its analyser feed runs on), and adds it. While the
+deck plays, the game's BGM factor goes out over `cmg-volume` as 0 and the stored
+volume is left alone, so the two never play over each other and the game's music
+comes straight back when the deck pauses or stops. A game whose sound code is
+its own can instead route BGM through the deck with
+`static/music-player/game-bgm.js` (cmg's `sound.js`, ported), which also mirrors
+the album onto the `azlegend-music` channel the editor's Audio panel already
+offers as BGM replacements.
+
+**The watch.** [watchAmp](tools/watchamp/README.md) — the Wear OS player built
+for the Pixel Watch 5, vendored at `tools/watchamp/` — has a **♪ Desktop music**
+screen that lists the deck's albums and switches the song, with previous / pause
+/ next. The launcher's half is `static/watch-music.js` (ported from cmg; the
+wire format is the one the watch was verified against) and its wiring in
+`svelte-src/Dashboard.svelte`:
+
+```
+watch --> /builders/<code>/music/launch    one slot, latest press wins
+watch --> /builders/<code>/music/control   pause · resume · stop · next · prev · sync
+here  --> /builders/<code>/music/playing   what the deck is doing
+here  --> /builders/<code>/music/library   the albums it can play
+```
+
+**To pair:** open **Settings → WATCH REMOTE** (or the Guide's **Music → Watch
+remote** toggle) and switch it on. The row shows the code to type into the watch
+once: on a desktop running shmupX it is the **BUILD CODE** the launcher already
+shows under BUILD SERVER — one code pairs a wrist to the export queue, the
+shmupX watch app and this remote, each under its own subtree of
+`builders/<code>` — and on the hosted site, which has no build server, a code
+the page makes up and remembers. It is off by default, so a launcher nobody
+paired holds no stream open.
+
+A press mounts the deck if it is not up, then sends it the ordinary
+`music-player:play`; a `sync` (the watch opening its remote) is answered by
+publishing the library and the current state afresh, stamped so the database
+notifies even when nothing changed. The database is open to anyone who knows the
+code, so nothing a record says is passed through: actions are matched against a
+fixed list, and album/track ids are looked up in the library the deck itself
+reported. Only ids and titles are published — never a track's URL. The first
+frame after every connect is history and is never acted on, which is what keeps
+a reconnect from replaying the last press.
+
+```
+deno test tests/watch_music_test.ts tests/music_player_test.ts
+deno task watchamp:test        # the watch end's JVM tests (JDK 17+, Android SDK)
+```
 
 ## A Dezaemon save is not 2028.Ai
 

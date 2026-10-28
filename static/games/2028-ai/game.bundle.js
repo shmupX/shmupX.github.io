@@ -20106,6 +20106,76 @@
     } catch (e) {
     }
   }
+  // cmg: the level's music, for the launcher's docked music player
+  // (static/music-player/; "The music player and the watch remote" in
+  // README-Technical). One album: the stock BGM this build ships — the boss
+  // themes, the adventure and continue tunes — under its asset base, with
+  // the level's own customAudioURLs laid over them key by key, the same
+  // override the level-loader applies to what the game plays. Keys that
+  // share one file (2028.Ai's bosses share a custom track) make one row.
+  // Only http(s) URLs go, and only to a parent frame; the launcher checks
+  // the album again before the deck sees it (sanitizeMusicAlbum). Sent once
+  // the level has resolved, like the cheats.
+  function cmgBroadcastMusicAlbum(result, sourceURLs) {
+    if (typeof window === "undefined" || window.parent === window) return;
+    var urls = {};
+    var key;
+    for (key in RESOURCE_PATHS) {
+      if (/bgm/.test(key) && typeof RESOURCE_PATHS[key] === "string") urls[key] = ASSET_BASE + RESOURCE_PATHS[key];
+    }
+    if (sourceURLs && typeof sourceURLs === "object") {
+      for (key in sourceURLs) {
+        // A level can override any sound; only its music is an album track.
+        if (!/bgm/.test(key)) continue;
+        if (typeof sourceURLs[key] === "string" && sourceURLs[key]) urls[key] = sourceURLs[key];
+      }
+    }
+    var byHref = {};
+    var order = [];
+    for (key in urls) {
+      var href;
+      try {
+        href = new URL(urls[key], window.location.href).href;
+      } catch (_e) {
+        continue;
+      }
+      if (href.indexOf("http:") !== 0 && href.indexOf("https:") !== 0) continue;
+      if (!byHref[href]) {
+        byHref[href] = [];
+        order.push(href);
+      }
+      byHref[href].push(key);
+    }
+    if (!order.length) return;
+    var tracks = order.map(function(href) {
+      var keys = byHref[href];
+      var title = keys.length > 1 ? "Custom BGM (" + keys.length + " slots)" : cmgMusicTitle(keys[0]);
+      return { id: keys[0], title: title, url: href };
+    });
+    // Named for the level: the cloud key, else the game an editor PLAY or an
+    // offline record stands for (gameForLevelResult), else the stock game.
+    var board = gameForLevelResult(result);
+    var name = (result && result.levelName) || (board && board.name) || "2028.Ai";
+    try {
+      window.parent.postMessage({
+        type: "cmg-music-album",
+        album: { id: "game-bgm:" + name, title: name + " BGM", tracks: tracks }
+      }, "*");
+    } catch (e) {
+    }
+  }
+  // "boss_bison_bgm" -> "Boss Bison"; an editor's opaque custom key keeps a
+  // stub of itself so two of them can be told apart on a watch.
+  function cmgMusicTitle(key) {
+    var k = String(key);
+    if (k === "bgm") return "BGM";
+    if (/^bgm[A-Za-z0-9]{4,}$/.test(k)) return "Custom BGM " + k.slice(3, 9);
+    var words = k.replace(/_?bgm_?/g, " ").replace(/_/g, " ").replace(/\s+/g, " ").trim();
+    if (!words) return k;
+    return words.replace(/(^|\s)[a-z]/g, function(c) {
+      return c.toUpperCase();
+    });
+  }
   // cmg: the boot-time cheats on the URL that open the level somewhere other
   // than its first stage — the Guide's Start Stage (?stage=N), Boss Rush
   // (?bossRush=1), Akuma Boss (?boss=goki) and Final Boss (?finalBoss=1).
@@ -20221,6 +20291,7 @@
         }
         cmgBroadcastCheats(gameState._phaserRecipe);
         cmgBroadcastLevelEditor(result, gameState._phaserRecipe);
+        cmgBroadcastMusicAlbum(result, result.bgmSourceURLs);
         return initSceneScripts({ recipe: gameState._phaserRecipe }).then(() => {
           let nextScene = result.showTitle ? "PhaserTitleScene" : "PhaserGameScene";
           if (cmgCheatStart(gameState._phaserRecipe)) {

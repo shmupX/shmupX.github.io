@@ -1,0 +1,16 @@
+# Copy to local.properties and fill in. Never commit local.properties.
+sdk.dir=/home/you/Android/Sdk
+
+# ── Desktop music remote (optional) ─────────────────────────────────────────
+# Both of these have working defaults and can be left out entirely: the code
+# can be typed on the watch (Library › Desktop music), where it is remembered.
+
+# The code the launcher shows in Settings › WATCH REMOTE, to skip typing it on
+# the watch. Eight characters from ABCDEFGHJKLMNPQRSTUVWXYZ23456789. Hyphen or
+# not is fine here — it is normalised — but note it is baked into the APK, so
+# do not set it for a build you intend to hand to anyone else.
+ALOUD_PAIR_CODE=
+
+# The Realtime Database the watch and the launcher meet in. Only change this
+# together with WATCH_DB in the launcher's static/watch-music.js.
+ALOUD_RTDB_URL=

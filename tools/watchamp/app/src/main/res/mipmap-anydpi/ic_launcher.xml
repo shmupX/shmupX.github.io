@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The 🐵 emoji as the Pixel Watch draws it (Noto Color Emoji), with Noto
+     Emoji's outline of the same glyph as the themed-icon layer. Bitmaps rather
+     than vectors because that is what an emoji is; the foreground keeps the
+     face inside the circle a watch launcher crops to. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_monkey" />
+    <monochrome android:drawable="@drawable/ic_launcher_monkey_mono" />
+</adaptive-icon>

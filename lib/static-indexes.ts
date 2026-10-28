@@ -32,6 +32,10 @@ export const STATIC_INDEXES = [
   "/games/squad",
   "/games/squad/play",
   "/games/super-mario-sp",
+  // The music player (AZLegendGolden's deck, vendored): every URL in it is
+  // relative too, so the launcher's sidebar and a game's hidden frame both
+  // load the one copy.
+  "/music-player",
   "/pixel-composer",
   "/pixel-editor",
   "/tilemap-editor",

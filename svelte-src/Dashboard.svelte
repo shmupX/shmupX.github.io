@@ -132,6 +132,21 @@
     sameOriginPath,
     watchLaunches,
   } from '../static/watch-launch.js';
+  // The music player docked in the sidebar (static/music-player/) and the
+  // watch remote that drives it — a paired watchAmp picking the song. See
+  // static/watch-music.js and "The music player and the watch remote" in
+  // README-Technical.
+  import {
+    ensureWatchCode,
+    findTrack,
+    formatWatchCode,
+    libraryFromState,
+    playingFromState,
+    publishMusic,
+    setWatchMusicEnabled,
+    watchMusic,
+    watchMusicEnabled,
+  } from '../static/watch-music.js';
   // The touch controller: laid over the game when the machine has a
   // touchscreen and no pad, or shown on the built-in screen while the game is
   // on a monitor (see "Touch Controller" below).
@@ -176,6 +191,42 @@
   let clockShort = $state('--:--');
   let gameSrc = $state(null);
   let gameOn = $state(false);
+  // ─── The music player sidebar ──────────────────────────────────────────────
+  // The deck at static/music-player/, docked over a running game (see "The
+  // music player" below). Held apart from gameSrc/gameOn so opening or
+  // closing it never touches the game.
+  let musicSrc = $state(null);
+  let musicOpen = $state(false);
+  // True while the deck is mounted only because a game or the watch asked for
+  // it and nobody has opened the sidebar: .music-sidebar.armed parks the frame
+  // at 2 transparent pixels instead of offscreen (see the CSS for why
+  // offscreen would starve its feed). Cleared the moment the sidebar opens.
+  let musicArmed = $state(false);
+  // The game's own BGM channel is held at zero while the deck plays.
+  let musicDucked = $state(false);
+  // The docked frame once it has registered over the `music-player:` protocol.
+  // Not reactive — only read inside message handlers.
+  let currentMusicPlayer = null;
+  // A game that scores itself from the deck's analyser feed posts
+  // cmg-music-autostart; see startMusicForGame.
+  let musicAutostartWanted = false;
+  let musicAutostartPlaying = false;
+  // ─── Watch music remote ────────────────────────────────────────────────────
+  // Off until switched on — Settings › WATCH REMOTE, or the Guide's Music
+  // section — and both show the pairing code. While on, this page listens for
+  // song picks from the paired watch and reports the deck's library and state
+  // back (static/watch-music.js). The code is reactive because those rows
+  // display it; the rest is plumbing only read inside handlers.
+  let watchMusicOn = $state(false);
+  let watchMusicCode = $state('');
+  let stopWatchMusic = null;
+  let lastMusicState = null;     // the deck's latest `state`, whoever asked
+  let watchLaunch = null;        // { id, album, track } — the press last acted on
+  let watchFailed = null;        // { id, detail } — the press last refused
+  let watchPendingPlay = null;   // a press waiting for the deck to boot
+  let watchPendingTimer = null;
+  let watchLibraryJson = '';     // last library/playing published, to skip
+  let watchPlayingJson = '';     // re-sending what the watch already has
   let bootGone = $state(false);
   let gameRowEls = $state([]);
   let gameListEl = $state(null);
@@ -1900,6 +1951,363 @@
     publishShelves(watchCode, { snes, ps2 });
   });
 
+  // ── The music player ───────────────────────────────────────────────────────
+  // AZLegendGolden's cassette deck, vendored at static/music-player/ and
+  // docked in a sidebar that runs IN PARALLEL to whatever is on: the game
+  // underneath keeps running and receiving input while the deck plays beside
+  // it. Opening and closing it never touches gameSrc/gameOn. A game hands the
+  // deck its music over cmg-music-album (the 2028-ai runtime does, once its
+  // level resolves), which mounts the deck out of sight if nobody has opened
+  // it; the Guide's Music → Music Player row slides it in.
+  const MUSIC_PLAYER_URL = '/music-player/';
+  const MUSIC_TITLE = 'MUSIC PLAYER';
+  const MUSIC_LAST_KEY = 'shmupx-music:last-track';
+  function postToMusicPlayer(message) {
+    if (!currentMusicPlayer) return;
+    // The deck is same-origin, so the target origin can be exact.
+    try { currentMusicPlayer.postMessage(message, window.location.origin); } catch (_) { /* frame gone */ }
+  }
+  // Make sure the deck is mounted, without showing it. Shared by the things
+  // that want music nobody opened by hand: a game handing over its album or
+  // asking to be scored, and a paired watch picking a song.
+  function mountMusicArmed() {
+    if (!musicSrc) {
+      // Deliberately NOT openMusic(): no sfx.enter() and musicOpen stays
+      // false, so the frame mounts slid-out. It renders (the sidebar is hidden
+      // with a transform, not display:none) which is what keeps its rAF — and
+      // so the frequency feed — alive.
+      musicSrc = MUSIC_PLAYER_URL;
+      musicOpen = false;
+      musicArmed = true;
+    }
+    return true;
+  }
+  function openMusic() {
+    sfx.enter();
+    musicSrc = MUSIC_PLAYER_URL;
+    musicOpen = true;
+    // Opening it for real supersedes the armed 2px parking spot. If a game had
+    // already auto-mounted the deck the src is unchanged, so the iframe is NOT
+    // remounted — the track that is playing keeps playing, and the sidebar
+    // just slides over it.
+    musicArmed = false;
+  }
+  function closeMusic() {
+    if (!musicOpen) return;
+    musicOpen = false;
+    sfx.back();
+    // Keep the iframe mounted through the slide-out, then drop it so its audio
+    // stops (mirrors the .game-iframe unmount delay). A reopen during the
+    // slide-out keeps it.
+    currentMusicPlayer = null; // the frame is going away — stop brokering its feed
+    musicDucked = false;
+    setTimeout(() => {
+      if (!musicOpen) { musicSrc = null; watchMusicGone(); }
+    }, 350);
+  }
+  // Remember what is playing so the next autostart resumes it rather than
+  // shuffling. The deck itself is stateless across reloads — its `state` only
+  // describes the live session — so the launcher is what gives "last played"
+  // any meaning. Written from every event/state we see, not just autostarted
+  // ones, so a track picked by hand is what we come back to.
+  function rememberLastTrack(st) {
+    if (!st || !st.currentAlbumId || !st.currentTrackId) return;
+    try {
+      localStorage.setItem(MUSIC_LAST_KEY, JSON.stringify({ album: st.currentAlbumId, track: st.currentTrackId }));
+    } catch (_) { /* storage disabled/full — autostart just goes random */ }
+  }
+  function lastTrack() {
+    try {
+      const v = JSON.parse(localStorage.getItem(MUSIC_LAST_KEY) || 'null');
+      return (v && v.album && v.track) ? v : null;
+    } catch (_) { return null; }
+  }
+  // Last played if it is still in the library, else random. The library check
+  // is the point: albums come and go (a game pushes its own), and a stale id
+  // would otherwise resolve to nothing.
+  function pickAutostartTrack(st) {
+    const albums = ((st && st.albums) || []).filter((a) => a?.tracks?.length);
+    if (!albums.length) return null;
+    const last = lastTrack();
+    if (last) {
+      const album = albums.find((a) => a.id === last.album);
+      const track = album?.tracks.find((t) => t.id === last.track);
+      if (album && track) return { album: album.id, track: track.id };
+    }
+    const album = albums[Math.floor(Math.random() * albums.length)];
+    const track = album.tracks[Math.floor(Math.random() * album.tracks.length)];
+    return { album: album.id, track: track.id };
+  }
+  // A game asked to be scored (cmg-music-autostart). Mount the deck if it is
+  // not up yet, then ask what is in its library — the `state` reply is where
+  // the track actually gets picked and played. `wanted` stays set after the
+  // first attempt because the first one usually fails: browsers keep an
+  // AudioContext suspended until the page has been interacted with, so a
+  // boot-time play() is rejected (the deck parks on "Tap Play to start"). The
+  // game re-asks on its first pointerdown, by which point the top document has
+  // sticky activation and the same request lands. `playing` latches once the
+  // deck reports real playback and stops us ever restarting a track under
+  // someone.
+  function startMusicForGame() {
+    if (musicAutostartPlaying) return;
+    mountMusicArmed();
+    musicAutostartWanted = true;
+    if (currentMusicPlayer) postToMusicPlayer({ type: 'music-player:get-state' });
+  }
+
+  // The album the running game handed over (cmg-music-album), checked: http(s)
+  // URLs only, ids and titles bounded, at most MUSIC_ALBUM_MAX_TRACKS. Held so
+  // a deck mounted later (or remounted after a close) gets it on its ready
+  // handshake. The frame is our own, but a level's customAudioURLs are
+  // whatever its author typed, so the album is treated like any other input.
+  const MUSIC_ALBUM_MAX_TRACKS = 200;
+  const MUSIC_TEXT_MAX = 120;
+  let gameAlbum = null;
+  function musicText(v, fallback) {
+    const s = typeof v === 'string' ? v.trim() : '';
+    return (s || fallback).slice(0, MUSIC_TEXT_MAX);
+  }
+  function sanitizeMusicAlbum(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const id = musicText(raw.id, '');
+    if (!id || !Array.isArray(raw.tracks)) return null;
+    const tracks = [];
+    const seen = new Set();
+    for (const t of raw.tracks) {
+      if (tracks.length >= MUSIC_ALBUM_MAX_TRACKS) break;
+      if (!t || typeof t !== 'object' || typeof t.url !== 'string') continue;
+      let url;
+      try { url = new URL(t.url, window.location.href); } catch (_) { continue; }
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
+      const tid = musicText(t.id, '');
+      if (!tid || seen.has(tid)) continue;
+      seen.add(tid);
+      const track = { id: tid, title: musicText(t.title, tid), url: url.href };
+      if (Number.isFinite(t.volume)) track.volume = Math.max(0, Math.min(1, t.volume));
+      if (Number.isFinite(t.loopEnd) && t.loopEnd > 0) {
+        track.loopEnd = t.loopEnd;
+        track.loopStart = Number.isFinite(t.loopStart) && t.loopStart >= 0 ? t.loopStart : 0;
+      }
+      tracks.push(track);
+    }
+    if (!tracks.length) return null;
+    return { id, title: musicText(raw.title, id), tracks };
+  }
+  function onGameMusicAlbum(raw) {
+    const album = sanitizeMusicAlbum(raw);
+    if (!album) return;
+    gameAlbum = album;
+    mountMusicArmed();
+    if (currentMusicPlayer) postToMusicPlayer({ type: 'music-player:add-albums', albums: [album], select: album.id });
+  }
+
+  // ── Watch music remote ─────────────────────────────────────────────────────
+  // The code the watch is paired by. On a desktop running shmupX it is the
+  // BUILD CODE (one code pairs a wrist to everything — the watch app's game
+  // launcher pairs by it too); on the hosted site, which has no build server,
+  // one this page made up and remembers.
+  function watchMusicPairingCode() {
+    return builder?.code || ensureWatchCode();
+  }
+  // Tell the paired watch what the deck has and what it is doing. Skips a
+  // record identical to the last one sent — a track change arrives as three
+  // deck events — unless `force`, which is how a `sync` gets an answer even
+  // when nothing changed (the watch reads the write itself as "desktop here").
+  function publishWatchMusic({ force = false } = {}) {
+    if (!watchMusicOn || !watchMusicCode) return;
+    // No state means the deck is not up, not that its library is empty: the
+    // albums the watch already holds are still what a press would get.
+    if (lastMusicState) {
+      const library = libraryFromState(lastMusicState);
+      const json = JSON.stringify(library);
+      if (force || json !== watchLibraryJson) {
+        watchLibraryJson = json;
+        publishMusic(watchMusicCode, 'library', library);
+      }
+    }
+    const playing = playingFromState(lastMusicState, { launch: watchLaunch, failed: watchFailed });
+    const json = JSON.stringify(playing);
+    if (force || json !== watchPlayingJson) {
+      watchPlayingJson = json;
+      publishMusic(watchMusicCode, 'playing', playing);
+    }
+  }
+  function failWatchLaunch(req, detail) {
+    watchFailed = { id: req.id, detail };
+    publishWatchMusic();
+  }
+  // Play what the watch asked for. The ids that reach the deck are the ones it
+  // reported itself (findTrack), never the strings that arrived.
+  function playForWatch(req) {
+    const found = findTrack(lastMusicState, req.album, req.track);
+    if (!found) { failWatchLaunch(req, 'not in the library'); return; }
+    watchLaunch = { id: req.id, album: found.album.id, track: found.track.id };
+    postToMusicPlayer({ type: 'music-player:play', album: found.album.id, track: found.track.id });
+    // A browser may refuse to start audio nobody clicked for, and the deck
+    // posts no event for a play() that was rejected. Ask what actually
+    // happened so the wrist is told the truth — the track, paused.
+    setTimeout(() => postToMusicPlayer({ type: 'music-player:get-state' }), 1500);
+  }
+  function onWatchLaunch(req) {
+    watchFailed = null;
+    mountMusicArmed();
+    if (currentMusicPlayer && lastMusicState) { playForWatch(req); return; }
+    // The deck is still booting (or was just mounted for this press). Hold the
+    // press for its `ready`, with a deadline so a deck that never comes up is
+    // reported rather than left for the watch to time out on.
+    watchPendingPlay = req;
+    clearTimeout(watchPendingTimer);
+    watchPendingTimer = setTimeout(() => {
+      if (watchPendingPlay !== req) return;
+      watchPendingPlay = null;
+      failWatchLaunch(req, 'music player did not start');
+    }, 10000);
+    if (currentMusicPlayer) postToMusicPlayer({ type: 'music-player:get-state' });
+  }
+  function onWatchControl(cmd) {
+    if (cmd.action === 'sync') {
+      // The watch opened its remote. Answer straight away with what we know —
+      // that write is what tells it a desktop is here — and bring the deck up
+      // so there is a library to offer; its `ready` publishes the rest.
+      mountMusicArmed();
+      publishWatchMusic({ force: true });
+      if (currentMusicPlayer) postToMusicPlayer({ type: 'music-player:get-state' });
+      return;
+    }
+    // pause · resume · stop · next · prev are the deck's own command names.
+    postToMusicPlayer({ type: 'music-player:' + cmd.action });
+  }
+  // The deck said something. Serve a press that was waiting for it, then
+  // report. True when a press was played — the caller's cue that the listener
+  // has chosen the music and autostart should stand down.
+  function watchMusicHeard() {
+    let played = false;
+    if (watchPendingPlay && currentMusicPlayer && lastMusicState) {
+      const req = watchPendingPlay;
+      watchPendingPlay = null;
+      clearTimeout(watchPendingTimer);
+      playForWatch(req);
+      played = true;
+    }
+    publishWatchMusic();
+    return played;
+  }
+  // The deck was unmounted: nothing is playing and nothing answers.
+  function watchMusicGone() {
+    lastMusicState = null;
+    watchLaunch = null;
+    publishWatchMusic();
+  }
+  function startWatchMusic() {
+    stopWatchMusic?.();
+    stopWatchMusic = null;
+    if (!watchMusicOn) return;
+    watchMusicCode = watchMusicPairingCode();
+    watchLibraryJson = '';
+    watchPlayingJson = '';
+    stopWatchMusic = watchMusic(watchMusicCode, { onLaunch: onWatchLaunch, onControl: onWatchControl });
+    // Say what we are up to now, so a watch that opens later is not shown
+    // whatever the last session left in the database.
+    publishWatchMusic({ force: true });
+    if (currentMusicPlayer) postToMusicPlayer({ type: 'music-player:get-state' });
+  }
+  function setWatchMusic(on) {
+    if (!on && watchMusicOn && watchMusicCode) {
+      // Going quiet: leave "idle" behind rather than a song the watch could no
+      // longer do anything about.
+      publishMusic(watchMusicCode, 'playing', playingFromState(null));
+    }
+    watchMusicOn = !!on;
+    setWatchMusicEnabled(watchMusicOn);
+    startWatchMusic();
+    if (watchMusicOn) showToast('Watch remote on — type ' + formatWatchCode(watchMusicCode) + ' into watchAmp → ♪ Desktop music.');
+  }
+  // The BUILD CODE arrives asynchronously (refreshBuilder) and can be
+  // regenerated in Settings; while the remote is on, it follows the code.
+  $effect(() => {
+    const code = builder?.code || null;
+    if (!watchMusicOn || !code) return;
+    if (code === untrack(() => watchMusicCode)) return;
+    untrack(startWatchMusic);
+  });
+
+  // The deck speaks the `music-player:` protocol. It registers itself here on
+  // its ready handshake, and while a track plays it streams
+  // `music-player:frequency` — the analyser bands driving its on-screen light
+  // rig — which is relayed to the running game frame so a game's own
+  // visualization can pulse in lock-step with the deck's lights.
+  function onMusicPlayerMessage(e) {
+    const d = e?.data;
+    if (!d || typeof d.type !== 'string' || d.type.indexOf('music-player:') !== 0) return;
+    // Only our own docked frame counts as the music player — a window we did
+    // not mount cannot be e.source — and it is same-origin, so the origin is
+    // checked too.
+    const mframe = document.getElementById('musicframe');
+    if (!mframe || e.source !== mframe.contentWindow) return;
+    if (e.origin && e.origin !== window.location.origin) return;
+    const command = d.type.slice('music-player:'.length);
+    // ready, event and state all carry the deck's full state; keep the latest
+    // for the watch remote, which needs the library to resolve a press.
+    if (d.state && command !== 'frequency') lastMusicState = d.state;
+    const playing = !!(d.state && !d.state.paused && d.state.currentTrackId);
+    if (command === 'ready' || command === 'register') {
+      currentMusicPlayer = mframe.contentWindow;
+      // The running game's album, for a deck that booted (or re-booted) after
+      // the game handed it over.
+      if (gameAlbum) postToMusicPlayer({ type: 'music-player:add-albums', albums: [gameAlbum], select: gameAlbum.id });
+      // Always ask for the state. The deck only sends its events — a track
+      // picked by hand on it, a pause, an album added later — to windows that
+      // have spoken to it, so the question is what registers this page as its
+      // client; the watch's record and the BGM ducking both depend on hearing
+      // them. (A game that asked for music before the frame booted, or a watch
+      // press that arrived first, is served off the reply too.)
+      postToMusicPlayer({ type: 'music-player:get-state' });
+      if (watchMusicHeard()) { musicAutostartPlaying = true; musicAutostartWanted = false; }
+      return;
+    }
+    if (command === 'event') {
+      // Track changes, play/pause, ended. Whatever is on now is what we resume.
+      rememberLastTrack(d.state);
+      if (playing) musicAutostartPlaying = true;
+      musicDucked = playing;
+      watchMusicHeard();
+      return;
+    }
+    if (command === 'state') {
+      // The get-state reply — the only place autostart picks and plays.
+      rememberLastTrack(d.state);
+      musicDucked = playing;
+      // A watch press served off this reply is the listener choosing the music.
+      if (watchMusicHeard()) { musicAutostartPlaying = true; musicAutostartWanted = false; return; }
+      if (!musicAutostartWanted) return;
+      if (playing) {
+        // Something is already playing. Leave it be — never restart a track
+        // under the listener.
+        musicAutostartPlaying = true;
+        musicAutostartWanted = false;
+        return;
+      }
+      const pick = pickAutostartTrack(d.state);
+      if (!pick) return; // empty library — nothing to start
+      // An explicit track matters: `play` with no track toggles playback, which
+      // would PAUSE a deck that is already going.
+      postToMusicPlayer({ type: 'music-player:play', album: pick.album, track: pick.track });
+      return;
+    }
+    if (command === 'frequency') {
+      // Adopt the frame as the current player if we missed its ready handshake,
+      // then only broker the frame we have registered as the current player.
+      if (!currentMusicPlayer) currentMusicPlayer = mframe.contentWindow;
+      if (e.source !== currentMusicPlayer) return;
+      // Forward the light-rig bands to the running game frame. targetOrigin
+      // '*' is fine — the payload is numeric audio levels and the game frame
+      // may be cross-origin. A game that does not listen simply ignores it.
+      const gframe = document.getElementById('gameframe');
+      const gw = gframe && gframe.contentWindow;
+      if (gw) { try { gw.postMessage(d, '*'); } catch (_) { /* frame gone */ } }
+    }
+  }
+
   let exportCurrent = $derived(exportJobs[exportsSel]);
   let exportsCounterText = $derived(
     String(Math.min(exportsSel + 1, exportJobs.length)).padStart(2, '0') + ' / ' +
@@ -2065,6 +2473,15 @@
       id: 'exports',
       label: 'EXPORTS',
       sub: exportsSummary,
+    },
+    // The watch music remote: a paired watchAmp picking the song the docked
+    // music player plays (static/watch-music.js). The row carries the code.
+    {
+      id: 'watch-music',
+      label: 'WATCH REMOTE',
+      sub: watchMusicOn
+        ? 'ON  ·  code ' + formatWatchCode(watchMusicCode) + '  ·  type it into watchAmp → ♪ Desktop music'
+        : 'OFF  ·  a paired watch picks what the music player plays',
     },
     // The on-screen pad for when no controller is connected — offered wherever
     // there is a touchscreen to put it on (see "Touch Controller").
@@ -3162,11 +3579,18 @@
   let volSfx = $state(loadVolPct(VOL_SFX_KEY, 13));
   // targetOrigin '*' for the same reason as setPlugin: the payload is benign
   // numbers and a volume-capable game could load cross-origin.
+  // While the docked music player plays, the game's BGM factor goes out as 0 —
+  // the deck is the music then — and the stored volume is left alone, so it
+  // comes straight back when the deck pauses or stops (musicDucked).
   function postVolume() {
     const iframe = document.getElementById('gameframe');
-    try { iframe?.contentWindow?.postMessage({ type: 'cmg-volume', bgm: volBgm / 100, sfx: volSfx / 100 }, '*'); }
+    try { iframe?.contentWindow?.postMessage({ type: 'cmg-volume', bgm: (musicDucked ? 0 : volBgm) / 100, sfx: volSfx / 100 }, '*'); }
     catch (_) { /* ignore */ }
   }
+  $effect(() => {
+    void musicDucked;
+    untrack(postVolume);
+  });
   function setVolume(key, pct) {
     pct = Math.max(0, Math.min(100, Math.round(pct)));
     if (key === 'vol-bgm') volBgm = pct; else volSfx = pct;
@@ -4717,6 +5141,14 @@
       ]);
     }
 
+    // The music player docked beside the game, and the watch remote that
+    // drives it (see "The music player" below). The remote's row is where the
+    // pairing code to type on the watch is shown.
+    addSection('Music', [
+      { key: 'music-player', kind: 'toggle', label: 'Music Player', value: musicOpen },
+      { key: 'watch-music', kind: 'toggle', label: watchMusicOn ? 'Watch remote · ' + formatWatchCode(watchMusicCode) : 'Watch remote', value: watchMusicOn },
+    ]);
+
     addSection('Look', [
       { key: 'hue', kind: 'color', label: 'Glow color', value: tweaks.hue, options: HUE_SWATCHES },
       { key: 'breathe', kind: 'slider', label: 'Breathe speed', value: tweaks.breatheSpeed, min: 0.4, max: 2.2, step: 0.1, unit: '×' },
@@ -4757,6 +5189,11 @@
   // closes the whole Guide; the ✕ button and tap-out always close outright.
   function osdBack() {
     if (osdView === 'cheats') { osdView = 'main'; osdSel = firstSelectable(osdItems); sfx.back(); return; }
+    // The back gesture dismisses the topmost overlay first: if the music
+    // player is docked open over the game, close it and stay in the Guide — a
+    // second press then closes the Guide. This is the primary close path for
+    // the docked deck, whose ✕ sits under the in-game two-corner gesture zone.
+    if (musicOpen) { closeMusic(); return; }
     closeOsd();
   }
   function closeOsd() {
@@ -4783,6 +5220,10 @@
     else if (it.key === 'touchcontrols') setTouchControls(!!v);
     else if (it.key === 'touchpad') setTouchPadPref(!!v);
     else if (it.key === 'touchpad-screen') setTouchPadScreenPref(!!v);
+    // The Music rows: slide the deck in or out over the game, and the watch
+    // remote on or off.
+    else if (it.key === 'music-player') { if (v) openMusic(); else closeMusic(); }
+    else if (it.key === 'watch-music') setWatchMusic(!!v);
   }
   function adjustOsd(i, dir) {
     const it = osdItems[i]; if (!it) return;
@@ -5650,6 +6091,8 @@
     } else if (it.id === 'touchpad-screen') {
       if (secondScreen?.available) setTouchPadScreenPref(!touchPadScreenPref);
       else showToast(secondScreen?.reason || 'Not available here');
+    } else if (it.id === 'watch-music') {
+      setWatchMusic(!watchMusicOn);
     } else if (it.id === 'builder') {
       builderAction(builder?.running ? 'stop' : 'start');
     } else if (it.id === 'steam') {
@@ -7792,6 +8235,22 @@
       return;
     }
     if (d.type === 'tg16-first-touch') { chromeDismissed = true; return; }
+    if (d.type === 'cmg-music-album') {
+      // The running game hands over its BGM for the docked music player (the
+      // 2028-ai runtime does once its level resolves). Benign from our own
+      // frame at any origin — the album is checked (http(s) URLs only,
+      // bounded) and only ever reaches the deck, which plays nothing until
+      // asked.
+      onGameMusicAlbum(d.album);
+      return;
+    }
+    if (d.type === 'cmg-music-autostart') {
+      // A game that scores itself from the deck's analyser feed wants a track
+      // running (startMusicForGame). Benign and idempotent from our own frame:
+      // worst case the deck starts playing, which is the whole point.
+      startMusicForGame();
+      return;
+    }
     if (d.type === 'cmg-cheats') {
       // The running game advertises the boot-time URL-param cheats it honours,
       // which the Guide turns into a Cheats submenu. Benign — worst case it
@@ -7976,6 +8435,7 @@
     // click reaches a row handler (Osd rows activate on click, not pointerdown).
     window.addEventListener('pointerdown', onPointerDown, true);
     window.addEventListener('message', onWindowMessage);
+    window.addEventListener('message', onMusicPlayerMessage);
     window.addEventListener('gamepadconnected', onPadConnect);
     window.addEventListener('gamepaddisconnected', onPadDisconnect);
     refreshPadConnected();
@@ -8004,6 +8464,10 @@
       initDezaemonPsx();
     });
     initExports();
+    // The watch music remote comes back the way it was left; it is off until
+    // switched on (static/watch-music.js).
+    watchMusicOn = watchMusicEnabled();
+    startWatchMusic();
     refreshEshop();
     refreshDezaShelf();
     // Other writers of the same stores — the editor in our frame, a second
@@ -8218,6 +8682,10 @@
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('pointerdown', onPointerDown, true);
     window.removeEventListener('message', onWindowMessage);
+    window.removeEventListener('message', onMusicPlayerMessage);
+    stopWatchMusic?.();
+    stopWatchMusic = null;
+    clearTimeout(watchPendingTimer);
     endStripDrag();
     window.removeEventListener('gamepadconnected', onPadConnect);
     window.removeEventListener('gamepaddisconnected', onPadDisconnect);
@@ -9093,6 +9561,28 @@
       title="game"
       allow="autoplay; fullscreen; gamepad; xr-spatial-tracking"
       onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); injectKeyActivityProbe(e); injectArcadeFill(e); applyTwinStick(); applySplitPads(); applyTouchControls(); applyGameTheme(); postVolume(); }}
+    ></iframe>
+  </div>
+{/if}
+
+<!-- The music player sidebar — the deck docked to the right edge, layered
+     above a running game (z 101) but below the Guide (z 102/103) so the Guide
+     can still open over it. No full-screen scrim: the game stays visible and
+     interactive at the left and keeps running IN PARALLEL while the deck plays.
+     Mounted while musicSrc is set; the iframe is dropped ~350ms after close
+     (closeMusic) so its audio stops once the panel slides out. -->
+{#if musicSrc}
+  <div class="music-sidebar {musicOpen ? 'on' : ''} {!musicOpen && musicArmed ? 'armed' : ''}" role="dialog" aria-label="Music player">
+    <div class="music-hd">
+      <span class="music-dot" aria-hidden="true">♪</span>
+      <span class="music-title">{MUSIC_TITLE}</span>
+      <button type="button" class="music-x" aria-label="Close music" onclick={closeMusic}>✕</button>
+    </div>
+    <iframe
+      id="musicframe"
+      src={musicSrc}
+      title="music player"
+      allow="autoplay; encrypted-media"
     ></iframe>
   </div>
 {/if}

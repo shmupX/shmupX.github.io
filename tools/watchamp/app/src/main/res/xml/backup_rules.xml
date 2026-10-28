@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API < 31: nothing is backed up — the library can be gigabytes. -->
+<full-backup-content>
+    <exclude domain="root" path="." />
+</full-backup-content>

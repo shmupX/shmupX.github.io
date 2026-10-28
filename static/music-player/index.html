@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<!-- The music player: AZLegendGolden's cassette deck (easierbycode/azlegend,
+     its static/player.html), vendored here so shmupX serves its own copy at
+     /music-player/ with no artist tracks. The launcher docks it in a sidebar
+     (svelte-src/Dashboard.svelte) and games drive it over postMessage — the
+     `music-player:` protocol in app.js. Every URL in this page is relative,
+     so the same files work wherever the directory is served from.
+     Albums come from the URL (?bgm=<url>, see bgm-params.js), from a host
+     over `music-player:add-albums`, or from an optional ./albums.json. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#050508" />
+    <title>Music Player</title>
+    <link rel="icon" href="./images/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles/cassette-tape-ui.css" />
+    <link rel="stylesheet" href="./styles/cassette-tape-ui-blur.css" />
+    <link rel="stylesheet" href="./styles/styles.css" />
+  </head>
+  <body>
+    <canvas id="visualizer" aria-hidden="true"></canvas>
+
+    <div class="app-shell">
+      <header class="top-bar">
+        <h1 class="brand">shmupX</h1>
+        <div class="top-actions">
+          <span id="playerStatus" class="status-text" aria-live="polite">Waiting for a game</span>
+        </div>
+      </header>
+
+      <main class="music-layout">
+        <section class="library-panel" aria-label="Album library">
+          <div id="albumTabs" class="album-tabs" role="tablist"></div>
+          <ol id="trackList" class="track-list"></ol>
+        </section>
+
+        <section class="deck-panel" aria-label="Tape player">
+          <div class="now-playing">
+            <p id="albumTitle" class="eyebrow">Album</p>
+            <h2 id="trackTitle">No track selected</h2>
+          </div>
+
+          <div id="tapeStage" class="tape-stage">
+            <div
+              id="tapeShell"
+              class="clear ma-r90 cutout tape stopped"
+              role="button"
+              tabindex="0"
+              aria-label="Play or pause"
+            >
+              <div class="transparency-sheet"></div>
+              <div
+                class="tape-shell image-mask"
+                data-image-repeat="true"
+                data-mask-url="image/ma-r90-mask.png"
+              ></div>
+              <div
+                class="tape-gradient image-mask"
+                data-mask-url="image/ma-r90-mask.png"
+              ></div>
+              <div class="tab-left">
+                <div class="notch"></div>
+                <div class="ridge"></div>
+              </div>
+              <div class="tab-right">
+                <div class="notch"></div>
+                <div class="ridge"></div>
+              </div>
+              <div class="rail-left"></div>
+              <div class="rail-right"></div>
+              <div class="rail-middle">
+                <div class="rail-middle-outline">
+                  <div class="tape-pad-holder">
+                    <div class="tape-pad"></div>
+                    <div class="tape-pad-line"></div>
+                  </div>
+                </div>
+                <div class="screw-bm"></div>
+              </div>
+              <div class="screw-tl"></div>
+              <div class="screw-tr"></div>
+              <div class="screw-bl"></div>
+              <div class="screw-br"></div>
+              <div class="screw-tm"></div>
+              <div class="left reel-mask"></div>
+              <div class="right reel-mask"></div>
+              <canvas class="connecting-tape"></canvas>
+              <div class="left reel"></div>
+              <div class="left spokes"></div>
+              <div class="right reel"></div>
+              <div class="right spokes"></div>
+              <div class="progress-notches">
+                <div class="n1"></div>
+                <div class="n2"></div>
+                <div class="n3"></div>
+                <div class="n4"></div>
+                <div class="n5"></div>
+                <div class="n6"></div>
+                <div class="n7"></div>
+                <div class="n8"></div>
+                <div class="n9"></div>
+              </div>
+              <div id="tapeLabel" class="label">shmupX</div>
+            </div>
+          </div>
+
+          <div class="transport">
+            <button id="prevButton" type="button" aria-label="Previous track">&lt;&lt;</button>
+            <button id="playButton" type="button">Play</button>
+            <button id="stopButton" type="button" aria-label="Stop">Stop</button>
+            <button id="nextButton" type="button" aria-label="Next track">&gt;&gt;</button>
+          </div>
+
+          <div class="seek-row">
+            <span id="currentTime">0:00</span>
+            <input
+              id="seekControl"
+              type="range"
+              min="0"
+              max="1000"
+              value="0"
+              step="1"
+              aria-label="Seek"
+            />
+            <span id="duration">0:00</span>
+          </div>
+
+          <audio id="audioPlayer" crossorigin="anonymous" preload="metadata"></audio>
+        </section>
+      </main>
+    </div>
+
+    <script defer src="./audio-visualizer.js"></script>
+    <script defer src="./bgm-params.js"></script>
+    <script defer src="./app.js"></script>
+  </body>
+</html>
