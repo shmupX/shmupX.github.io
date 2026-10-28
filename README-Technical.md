@@ -5859,9 +5859,12 @@ rows around a shot the source fires open it: for `fireGateFrames(stage)` frames,
 which is just long enough to be sure of a fire pulse and too short to fit a
 second shot (`window: 2` reloads in two or three pulses). So the formation fires
 one bullet per `fireDelay` from its bottom ranks and a diver fires twice, as in
-the source — straight down on levels 1–4, aimed from 5 on. The runtime still
-applies its own rules: no zako shot from within 16 px of a side edge, none at a
-ship closer than 40 px, and every zako bullet at the one fixed speed.
+the source. The source's divers always aim and its formation aims from level 5
+on, but a zako has one aim for every shot it fires, so on levels 1–4 an enemy
+aims when most of its own shots are dive shots and fires straight down
+otherwise. The runtime still applies its own rules: no zako shot from within 16
+px of a side edge, none at a ship closer than 40 px, and every zako bullet at
+the one fixed speed.
 
 **What differs from the source,** and why:
 
@@ -5870,8 +5873,9 @@ ship closer than 40 px, and every zako bullet at the one fixed speed.
 - A diver whose loop ends on the screen flies on until it is off it before it
   comes back, since a shmupX enemy cannot vanish.
 - 45 s after a formation locks, divers stop coming back and the rest peel off,
-  so a stage nobody clears still ends. `endsOnClear` ends it the moment the
-  field is empty, as the source ends a level on its last kill.
+  one dive turn every quarter of the level's dive delay (300–500 ms), so a stage
+  nobody clears still ends. `endsOnClear` ends it the moment the field is empty,
+  as the source ends a level on its last kill.
 - A diver scores what it scores in formation (the source doubles it), and the
   march does not speed up as the ranks thin (the replay has nobody shot).
 - The RedDevil flies Fang's routine (`attackPattern: "boss4"`), the stock

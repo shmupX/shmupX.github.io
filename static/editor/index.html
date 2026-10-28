@@ -15539,6 +15539,9 @@ function GAME3D_RUNTIME(DATA) {
                 payload.noStory = !!(gameData && gameData.noStory);
                 payload.ownCutin = !!(gameData && gameData.ownCutin);
                 payload.ownItems = !!(gameData && gameData.ownItems);
+                // A game whose stages end on their last kill (level-loader's
+                // endsOnClear, GameScene's wave block): 95-demo's formations.
+                payload.endsOnClear = !!(gameData && gameData.endsOnClear);
                 payload.godMode = godModeOn;
                 // Save audio URL overrides
                 var urlEntries = {};
@@ -15785,6 +15788,11 @@ function GAME3D_RUNTIME(DATA) {
                 // (level-loader's ownItems, the bundle's dropItem).
                 if (d.ownItems) gameData.ownItems = true;
                 else delete gameData.ownItems;
+                // ...and stages that end on their last kill rather than their
+                // wave timer (level-loader's endsOnClear), so PLAY and a SAVE
+                // under another name keep it.
+                if (d.endsOnClear) gameData.endsOnClear = true;
+                else delete gameData.endsOnClear;
                 syncNoStoryKnob();
                 if (typeof d.godMode === 'boolean') applyGodMode(d.godMode);
                 titleBgDataURL = d.titleBgDataURL || null;

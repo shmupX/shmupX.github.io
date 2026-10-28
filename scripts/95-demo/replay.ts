@@ -26,9 +26,14 @@
  * - The level ends. The source keeps its formation diving until the player
  *   has shot every last enemy; a shmupX stage needs its enemies to leave. So
  *   `horizonMs` after the wave locks, divers stop coming back and the rest
- *   peel off at four times the dive rate — the cloud game's
- *   `endsOnClear` ends the stage the moment the field is empty, whichever way
- *   it emptied.
+ *   peel off one dive turn every diveDelay / 4, clamped to 300-500 ms (so
+ *   4x the dive rate on levels 8-10, up to 8.4x on level 1) — the cloud
+ *   game's `endsOnClear` ends the stage the moment the field is empty,
+ *   whichever way it emptied.
+ * - A diver aims as the rest of its gun does. The source's divers always aim
+ *   and its formation only from level 5 on, and the replay records each shot
+ *   as it was fired (`Shot.aimed`); a zako has one aim for all its shots, so
+ *   build-level.ts aims an enemy when most of its own shots are aimed ones.
  */
 
 import {

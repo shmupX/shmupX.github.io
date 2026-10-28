@@ -30,9 +30,13 @@ import {
 } from "../scripts/95-demo/replay.ts";
 import { STAGES } from "../scripts/95-demo/source.ts";
 import {
+  buildArt,
   buildLevel,
+  buildStage,
   enemyLetters,
   fireGateFrames,
+  HORIZON_MS,
+  SEED,
 } from "../scripts/95-demo/build-level.ts";
 
 const read = (p: string) =>
@@ -138,6 +142,24 @@ Deno.test("an endsOnClear stage skips its empty tail once the field is clear", a
       "this.waveCount = this.stageEnemyPositionList.length; enemyWave(this);",
     ),
   );
+});
+
+Deno.test("the editor keeps endsOnClear through LOAD, PLAY and SAVE", async () => {
+  const editor = await read("static/editor/index.html");
+  // SAVE writes it beside ownItems, so a copy under another name keeps it...
+  assert(
+    editor.includes(
+      "payload.endsOnClear = !!(gameData && gameData.endsOnClear);",
+    ),
+  );
+  // ...and LOAD puts it on gameData, which PLAY's recipe is a copy of.
+  const load = slice(
+    editor,
+    "if (d.ownItems) gameData.ownItems = true;",
+    "syncNoStoryKnob();",
+  );
+  assert(load.includes("if (d.endsOnClear) gameData.endsOnClear = true;"));
+  assert(load.includes("else delete gameData.endsOnClear;"));
 });
 
 // --- appearance scripts, against the runtime's own stepper ----------------
@@ -346,6 +368,39 @@ Deno.test("enemy letters are unique per stage and never the stock A or B", () =>
       assert(/^[A-Z]{3}$/.test(l));
       assert(!seen.has(l));
       seen.add(l);
+    }
+  }
+});
+
+Deno.test("an enemy aims as most of its own shots do", async () => {
+  // The source's divers always aim and its formation aims from level 5 on; a
+  // zako has one aim, so the majority of the enemy's shots decides it.
+  const art = await buildArt();
+  for (let s = 0; s < 10; s++) {
+    const built = buildStage(s, art.half);
+    const replay = replayLevel({
+      level: s + 1,
+      def: STAGES[s],
+      half: art.half,
+      horizonMs: HORIZON_MS,
+      seed: SEED + s + 1,
+      hiddenSpeed: 40,
+    });
+    replay.flights.forEach((f, n) => {
+      const aimed = f.shots.filter((x) => x.aimed).length;
+      assertEquals(
+        built.enemies[n].aimed,
+        aimed * 2 > f.shots.length,
+        `stage ${s} enemy ${n}`,
+      );
+      if (STAGES[s].aimedShots) assertEquals(aimed, f.shots.length);
+      for (const shot of f.shots) {
+        if (shot.from === "dive") assert(shot.aimed, "a dive shot aims");
+      }
+    });
+    if (!STAGES[s].aimedShots) {
+      // some early enemies dive more than they shoot from formation
+      assert(built.enemies.some((e) => e.aimed), `stage ${s}: none aims`);
     }
   }
 });

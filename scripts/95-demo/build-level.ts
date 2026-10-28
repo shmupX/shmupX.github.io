@@ -27,6 +27,9 @@
  *   each carrying its script. The scripts open the record's fire gate only
  *   on the frames the source fires that enemy's gun, so the formation shoots
  *   one bullet per `fireDelay` from its bottom ranks, and divers fire twice.
+ *   The source's divers always aim and its formation aims from level 5 on;
+ *   a zako has one aim for every shot, so each enemy aims as most of its own
+ *   shots do.
  * - `bossData/boss9`, the RedDevil, on Fang's routine (`attackPattern:
  *   "boss4"`): its flap is the idle stance, its release the charge, its toot
  *   the shot; DevilBlast is the beam and DevilFire the aimed volley and the
@@ -425,6 +428,12 @@ export interface CompiledEnemy {
   lifeFrames: number;
   maxVisibleError: number;
   shots: number;
+  /**
+   * Whether its gun aims. The source's formation guns aim from level 5 on and
+   * its divers always aim, but a zako's aim is one flag for every shot it
+   * fires, so an enemy aims when most of its own shots are aimed ones.
+   */
+  aimed: boolean;
 }
 
 export interface StageBuild {
@@ -598,6 +607,8 @@ export function compileFlight(
     lifeFrames: life,
     maxVisibleError: worst,
     shots: flight.shots.length,
+    aimed: flight.shots.filter((s) => s.aimed).length * 2 >
+      flight.shots.length,
   };
 }
 
@@ -657,7 +668,7 @@ export function buildStage(stage: number, half: HalfSizes): StageBuild {
 }
 
 /** The record for one enemy: its art, its stats and its script. */
-function enemyRecord(e: CompiledEnemy, stage: number): Json {
+function enemyRecord(e: CompiledEnemy): Json {
   const type = ENEMY_TYPES[e.kind];
   return {
     name: e.kind,
@@ -688,7 +699,7 @@ function enemyRecord(e: CompiledEnemy, stage: number): Json {
         fire: {
           enabled: true,
           geometry: 1,
-          aimed: STAGES[stage].aimedShots,
+          aimed: e.aimed,
           mode: 0,
           window: FIRE_WINDOW,
         },
@@ -877,7 +888,7 @@ export async function buildLevel(): Promise<Build> {
   const enemyData: Json = {};
   for (const st of stages) {
     for (const e of st.enemies) {
-      enemyData[`enemy${e.letters}`] = enemyRecord(e, st.stage);
+      enemyData[`enemy${e.letters}`] = enemyRecord(e);
     }
   }
   const stageRecords: Json = {};
