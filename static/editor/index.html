@@ -10871,8 +10871,8 @@
         // dev therefore keeps working with no network, and the hosted editor
         // gets the library it could not otherwise serve.
         //
-        // Rows group under genre headers, genres Z-A so the vertical
-        // shoot-em-ups lead, titles A-Z within a genre, unmatched genres last.
+        // Rows run A-Z by title in one list, pinned favorites first — the
+        // launcher's coverflow order.
         let dezaLibraryState = null;   // { available, saves: [item], byTitle: Map, source }
 
         // Normalised shelf item, from either source:
@@ -11372,7 +11372,7 @@
                 }
                 count.textContent = shelfRows.length + ' ON YOUR SHELF';
             }
-            const groups = new Map();
+            const allRows = [];
             const favRows = [];
             for (const s of st.saves) {
                 // RTDB rows arrive with the games-db join already applied; a
@@ -11380,21 +11380,14 @@
                 const meta = dezaAttachLinks(s.meta || st.byTitle.get(dezaNormTitle(s.title)) || null,
                     st.byTitle, s.title);
                 const row = { file: s.file, title: s.title, meta, slug: s.slug, hasCover: s.hasCover };
-                // A pinned game lives in the FAVORITES group instead of its
-                // genre; un-starring it sends it back where it came from.
+                // A pinned game lives in the FAVORITES group instead of the
+                // main list; un-starring it sends it back where it came from.
                 if (dezaFavs.has(dezaFavId(row))) { favRows.push(row); continue; }
-                const genre = meta ? meta.genre : 'Unknown';
-                if (!groups.has(genre)) groups.set(genre, []);
-                groups.get(genre).push(row);
+                allRows.push(row);
             }
-            // The player's pinned games lead the shelf; then genres Z-A
-            // ("Vertical Shoot-em-up" family first); the Unknown bucket
-            // (saves the table doesn't know) always sits last.
-            const genres = [...groups.keys()]
-                .filter((g) => g !== 'Unknown')
-                .sort((a, b) => b.localeCompare(a));
-            if (groups.has('Unknown')) genres.push('Unknown');
-            const sections = genres.map((g) => [g.toUpperCase(), groups.get(g)]);
+            // The player's pinned games lead the shelf; then every other game
+            // in one A-Z list.
+            const sections = allRows.length ? [['ALL GAMES', allRows]] : [];
             if (favRows.length) sections.unshift(['★ FAVORITES', favRows]);
             // The player's own builds (→ SAVE SHELF) come first: newest at
             // the top, each with a ✕ instead of a star — and the eShop games
