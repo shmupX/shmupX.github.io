@@ -2291,9 +2291,12 @@ nothing in the middle.
   tools, which only make sense on the player's machine); the route turns the
   same shapes into Messages API `input_schema`s with `z.toJSONSchema`, so a
   model reaches the catalog through the same words either way.
-  `catalogTools({ local: false })` is the hosted variant: no `{file}` art, no
-  `writeTo`, and `shmupx_place_character` — which edits a level somebody else
-  authored — is not offered (`assistant: false`).
+  `catalogTools({ local: false, uploads: true })` is the hosted variant: no
+  `{file}` art, no `writeTo`, and `shmupx_place_character` — which edits a level
+  somebody else authored — is not offered (`assistant: false`); in exchange a
+  frame may be `{upload}`, a cut out of a picture the player attached (below).
+  The MCP server's `{ local: true }` table has no pictures to offer and is
+  unchanged.
 - **It never writes.** `lib/assistant/agent.ts` forces `apply` off on every
   writing tool whatever the model passed, and keeps the call as a _proposal_:
   the arguments, the dry run's summary, and the PNG of the first idle frame
@@ -2305,25 +2308,107 @@ nothing in the middle.
   publish.
 - **It sees what it made.** A tool result carrying `png_base64` goes back to the
   model as an image block beside the JSON, so "redder" is judged against the
-  sprite and not the field names.
+  sprite and not the field names. A build with a main projectile carries that
+  shot's first frame too (`previewOfBuild`'s `projectile`), which goes to the
+  model as a second image and onto the proposal, where the card shows it as a
+  SHOT beside the body: a picture made into a bullet is the part most likely to
+  come out the wrong size or the wrong colour.
+- **It takes pictures.** The sentence can come with up to three images — the
+  box's PICTURE button, a screenshot pasted into the sentence, or a file dropped
+  on the box — and then the sentence may be left out ("Make a character from the
+  attached picture." stands in for it). _"Use the ascii image (right) as
+  projectile for Ryuda (left)"_ with one picture holding both is the case it was
+  built on. The editor redraws whatever was picked onto a canvas and sends PNG,
+  scaled down with smoothing off when a side is over the limit, so the server
+  decodes one format. `mcp/lib/upload.ts` looks at each picture before the model
+  does: the background is the colour most of the border is; the subjects on it
+  are _regions_, numbered left to right (then top to bottom), with marks closer
+  than 1% of the picture's longer side merged (14 px on a 1400×743) so a block
+  of ASCII text is one region and not a thousand, while a 21 px gap still parts
+  two subjects; each region says whether it is pixel art someone enlarged — and
+  by how much, read off the regular spacing of its colour edges
+  (`detectPixelScale`), blended block edges and a fractional ×12.3 included — or
+  monochrome (text, line art, a scan) or just an image, and whether it is dark
+  on light. Those findings ride in the first user message as plain lines
+  (`describeUploads`: _region 0: x 0 y 0, 684×743 — pixel art at ×11.8 (58×63
+  native)_) after the pictures themselves as image blocks, each block under a
+  one-line text label that names it as those lines do (_Picture 0 "ryuda":_) —
+  the way the Messages API's vision guide introduces several images in one turn.
+  The model can see a picture but cannot measure it; the label is what ties the
+  image it saw to the lines that measured it, and to `{upload: 0}`. It uses one
+  as a frame by writing `{ upload: 0, region: 1 }` wherever a frame goes — an
+  anim state, `mainProjectile`, `projectiles`, `stageBgEnd` — or `crop` for a
+  rectangle no region covers. `cutUpload` turns that into a sprite: the field
+  around the subject goes transparent (a flood fill from the edge, so a white
+  highlight inside the sprite stays), enlarged pixel art comes back to its own
+  pixels by sampling each block's centre (`pixelScale` defaults to `auto`),
+  `maxSize` shrinks anything else, and `ink` redraws monochrome art in one
+  colour with its darkness as alpha — black text on white vanishes on the game's
+  dark starfield, so the prompt tells the model to ink it white. A frame over
+  256 px, or one that came out empty, is an error the model reads and retries.
+  One build cuts at most 16 frames out of the pictures (`MAX_UPLOAD_FRAMES` in
+  `mcp/lib/character.ts`, counted by distinct ref — the same ref written again
+  is the same cut, packed once): a cut of a whole picture is ~180 ms of
+  synchronous CPU, and a few kilobytes of refs with a fresh `as` each would
+  otherwise ask for minutes of it from one ask or one publish. The refs are
+  counted before anything is cut, so a build over the limit costs nothing. The
+  server keeps nothing between requests: the proposal's args say
+  `{upload: 0, region: 1}`, not pixels, so PUBLISH sends the same pictures again
+  — the editor keeps the exact base64 that ask sent on its cards, even if the
+  player has since changed what is attached — and the route decodes and analyses
+  them exactly as before running the call with `apply` on. Limits: three
+  pictures, 4 MB of PNG each (decoded), 2000 px a side, 16 MiB of request body
+  (refused from `content-length` with a 413 before it is read). 2000 and not
+  2048 because that is the Messages API's per-image limit once a request carries
+  more than 20 images, and an ask gets there on its own — every turn sends the
+  pictures again and every dry run adds a body and a shot — after which each
+  call is a 400 and the ask loses every proposal it made. A picture is opened in
+  two halves. `checkUploads` reads what costs nothing straight off the bytes:
+  the list, the base64, the byte count, the signature and the IHDR — its size, a
+  bit depth its colour type allows, not interlaced, and the only IHDR in the
+  file, since `decodePng` would otherwise decode a second header the check never
+  saw (1×1 first, 8192×8192 second). That half runs _before_ the request is
+  admitted, so a bad picture is a 400 that names it and costs no ask.
+  `openUploads` inflates and analyses, and runs only _after_ admission: three
+  pictures at the limit are seconds of synchronous CPU on an isolate every other
+  player's stream shares, and a client already over its limit must not be able
+  to buy those seconds with requests that end in a 429. Its inflate is capped at
+  exactly the bytes the IHDR says the pixels take, height × (stride + 1),
+  because a header honest about its size says nothing about the deflate behind
+  it: a few megabytes of deflated zeros inflate to gigabytes. A picture that
+  fails there is a 400 too, after the ask was counted — it lied about itself
+  where checking is cheap.
 - **It stops.** `ASSISTANT_MAX_STEPS` tool calls (default 12), then one turn
   with tools off so the model answers with what it has. Per client (the address)
   `ASSISTANT_ASKS_PER_HOUR` (8) and `ASSISTANT_PUBLISHES_PER_HOUR` (20); for
   everybody `ASSISTANT_ASKS_PER_DAY` (200). The counters live in Deno KV when
-  the runtime opens one and in memory otherwise (`lib/assistant/limits.ts`). The
-  system prompt and the tool table are prompt-cache breakpoints, so a turn costs
-  its new tokens plus a cache read.
+  the runtime opens one and in memory otherwise (`lib/assistant/limits.ts`).
+  Three prompt-cache breakpoints, all five-minute: the tool table and the system
+  prompt, marked by hand because every player's request shares them, and the
+  request's top-level `cache_control` — automatic caching, which the API keeps
+  on the conversation's last block as it grows. That third one is what makes the
+  pictures, and the PNGs each dry run sends back, a cache read on every turn
+  after the one that brought them, so a turn costs its new tokens plus a cache
+  read. (The capped last turn switches `tool_choice` off, which re-writes the
+  conversation once.)
 - **Where it shows up.** `GET /api/assistant` answers `{ available }` — true
   when `ANTHROPIC_API_KEY` is set — and the box exists only then: the hosted
   site, or a desktop install whose owner exported a key. `ASSISTANT_MODEL` picks
   the model (default `claude-sonnet-5-5`). The CHARACTER SHEET's **Y · DESCRIBE
   A CHANGE** opens the same box with the character's name filled in and passed
   to the model as a hint.
-- **The wire.** `POST { prompt, context }` streams NDJSON: `tool` and
+- **The wire.** `POST { prompt, context, uploads? }` streams NDJSON: `tool` and
   `tool_result` for the progress line, `text` as the model speaks, then `done`
-  with `proposals`, `steps` and `usage`, or `error`.
+  with `proposals`, `steps` and `usage`, or `error`. `uploads` is
+  `[{ name, png }]`, `png` the bare base64 of a PNG (a `data:` prefix is
+  stripped); with it the prompt may be empty. PUBLISH is
+  `POST { publish: { tool, args }, uploads? }`, the uploads being the ask's own.
+  `GET` states `maxUploads`, `maxUploadBytes` and `maxUploadSide`, which the
+  editor sizes and refuses pictures by before it sends them.
   `tests/assistant_route_test.ts` runs the loop, the limits and the route
-  against a scripted API and a toy tool table.
+  against a scripted API and a toy tool table; `tests/assistant_upload_test.ts`
+  runs the picture analysis and the cuts on synthetic pictures (and on the
+  motivating one, when `UPLOAD_FIXTURE` points at it).
 
 Turning it on is one environment variable on Deno Deploy, `ANTHROPIC_API_KEY`;
 the limits above are the defaults to tune from. The MCP server is unchanged to

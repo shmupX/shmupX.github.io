@@ -621,12 +621,37 @@
            The CHARACTER LIBRARY's prompt box: a sentence in, the agent's
            steps as it works, its answer, and one card per dry run it made,
            each with the sprite and a PUBLISH button. Hidden on a build with
-           no API key (GET /api/assistant says). */
-        .assist { display: flex; flex-direction: column; gap: 6px; margin: 0 4px 12px; padding: 10px 10px 8px; border-radius: 12px; border: 1px solid var(--redge); background: var(--rbg); }
-        .assist-row { display: flex; gap: 8px; align-items: stretch; }
+           no API key (GET /api/assistant says). Pictures the player attached
+           sit in a strip under the row, numbered as the model is told them;
+           a file dragged over the box lights it up (.drop). */
+        .assist { position: relative; display: flex; flex-direction: column; gap: 6px; margin: 0 4px 12px; padding: 10px 10px 8px; border-radius: 12px; border: 1px solid var(--redge); background: var(--rbg); }
+        .assist.drop { border-color: var(--sel); box-shadow: 0 0 14px var(--selglow); }
+        /* The drop sign covers the box without catching the pointer, so the
+           drag keeps landing on the box's own children and never leaves it. */
+        .assist.drop::after {
+            content: 'DROP A PICTURE'; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+            display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.72);
+            outline: 2px dashed var(--sel); outline-offset: -6px;
+            font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 800; letter-spacing: .2em; color: var(--sel);
+        }
+        .assist-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
         .assist-row .menu-input { margin: 0; flex: 1; min-width: 0; font-size: 12px; }
         .assist-row .menu-btn { width: auto; margin: 0; padding: 0 16px; justify-content: center; flex: none; }
         .assist-row .menu-btn[disabled] { opacity: .5; cursor: default; }
+        /* A phone has no room for the sentence beside two buttons: the input
+           takes the first line and PICTURE and ASK split the second. */
+        @media (max-width: 479px) {
+            .assist-row .menu-input { flex-basis: 100%; }
+            .assist-row .menu-btn { flex: 1; min-height: 40px; }
+        }
+        .assist-pics { display: flex; flex-wrap: wrap; gap: 6px; }
+        .assist-pic { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding: 3px 3px 3px 8px; border-radius: 10px; border: 1px solid var(--redge); background: rgba(0,0,0,.3); }
+        .assist-pic-n { flex: none; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 800; color: var(--sel); }
+        .assist-pic img { flex: none; width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; border-radius: 6px; background: rgba(0,0,0,.5); }
+        .assist-pic-info { min-width: 0; display: flex; flex-direction: column; gap: 2px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .1em; color: var(--rsub); }
+        .assist-pic-name { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--rink); }
+        .assist-pic-x { flex: none; width: 32px; height: 32px; padding: 0; border-radius: 8px; border: 1px solid var(--redge); background: none; color: var(--rsub); font-size: 16px; line-height: 1; cursor: pointer; }
+        @media (hover: hover) { .assist-pic-x:hover { border-color: var(--shedge); color: var(--sel); } }
         .assist-status { display: flex; align-items: center; gap: 8px; min-height: 16px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em; color: var(--raillbl); }
         .assist-status.busy::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--sel); box-shadow: 0 0 10px var(--selglow); animation: assistPulse 1s ease-in-out infinite; flex: none; }
         .assist-status.err { color: var(--sel); }
@@ -634,15 +659,23 @@
         .assist-steps { display: flex; flex-direction: column; gap: 2px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .1em; color: var(--rsub); }
         .assist-steps span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .assist-text { font-size: 12px; line-height: 1.5; color: var(--rink); white-space: pre-wrap; }
-        .assist-text:empty, .assist-steps:empty, .assist-cards:empty { display: none; }
+        .assist-text:empty, .assist-steps:empty, .assist-cards:empty, .assist-pics:empty { display: none; }
         .assist-cards { display: flex; flex-direction: column; gap: 6px; }
-        .assist-card { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 12px; border: 1px solid var(--redge); background: rgba(0,0,0,.3); }
+        /* A card wraps rather than squeezing its name: on a phone a card with
+           a SHOT beside the body sends PUBLISH to a line of its own, at the
+           right edge (the button's auto margin, which only a short line has
+           room to spend). */
+        .assist-card { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px; border-radius: 12px; border: 1px solid var(--redge); background: rgba(0,0,0,.3); }
         .assist-card .cs-sprite { width: 72px; height: 72px; }
         .assist-card .cs-sprite img { width: 56px; height: 56px; }
-        .assist-card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .12em; color: var(--rsub); }
+        .assist-card-art { flex: none; display: flex; align-items: center; gap: 6px; }
+        .assist-card-shot { display: flex; flex-direction: column; align-items: center; gap: 3px; font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .2em; color: var(--raillbl); }
+        .assist-card-shot .cs-sprite { width: 44px; height: 44px; border-radius: 10px; }
+        .assist-card-shot .cs-sprite img { width: 32px; height: 32px; }
+        .assist-card-info { flex: 1 1 100px; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .12em; color: var(--rsub); }
         .assist-card-name { font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 800; letter-spacing: .1em; color: var(--rink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .assist-card-warn { color: var(--sel); white-space: normal; }
-        .assist-card .menu-btn { width: auto; margin: 0; padding: 10px 14px; flex: none; }
+        .assist-card .menu-btn { width: auto; margin: 0 0 0 auto; padding: 10px 14px; flex: none; }
         .assist-card .menu-btn[disabled] { opacity: .5; cursor: default; }
         .assist-card.done { border-color: var(--tgedge); box-shadow: 0 0 10px var(--selglow); }
         /* CHARACTER LIBRARY rows: thumb, name over kind / hp / arms, PREVIEW,
@@ -1898,7 +1931,11 @@
     </div>
 
     <!-- CHARACTER LIBRARY (shmupX/characters in Firebase) -->
-    <div id="character-library-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+    <!-- The drag handlers sit on the whole overlay, not just the DESCRIBE IT
+         box: a file let go anywhere else on the panel would otherwise be
+         opened by the browser in place of the editor (assistDragEvent). -->
+    <div id="character-library-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')"
+         ondragenter="assistDragEvent(event)" ondragover="assistDragEvent(event)" ondragleave="assistDragEvent(event)" ondrop="assistDragEvent(event)">
         <div class="picker-panel" style="max-height:80vh">
             <div class="picker-title">CHARACTER LIBRARY</div>
             <!-- DESCRIBE IT: type what you want and the character assistant
@@ -1906,12 +1943,18 @@
                  clone of a boss with other art, a recolour, a bigger
                  silhouette — and answers with a card per dry run. PUBLISH
                  writes it to the library, where ADD picks it up like any
-                 other. Shown only when this build can answer. -->
+                 other. Shown only when this build can answer. PICTURE (or a
+                 paste into the sentence, or a file dropped on the box)
+                 attaches an image the model can cut frames out of; the strip
+                 under the row numbers them the way the model is told them. -->
             <div id="assist" class="assist hidden">
                 <form class="assist-row" onsubmit="assistAsk(event)">
-                    <input id="assist-prompt" class="menu-input" type="text" maxlength="400" placeholder="DESCRIBE IT · a boss like the stage 1 boss that throws hadoukens" autocomplete="off" spellcheck="false" aria-label="Describe a character">
+                    <input id="assist-prompt" class="menu-input" type="text" maxlength="400" placeholder="DESCRIBE IT · a boss like the stage 1 boss that throws hadoukens" autocomplete="off" spellcheck="false" aria-label="Describe a character" onpaste="assistPaste(event)">
+                    <button type="button" id="assist-pic-btn" class="menu-btn" onclick="assistPickPicture()" title="Attach a picture — or paste one into the box, or drop one on it">PICTURE</button>
                     <button type="submit" id="assist-go" class="menu-btn">ASK</button>
                 </form>
+                <input id="assist-file" type="file" accept="image/*" multiple hidden onchange="assistFilesPicked(this)">
+                <div id="assist-pics" class="assist-pics"></div>
                 <div id="assist-status" class="assist-status"></div>
                 <div id="assist-steps" class="assist-steps"></div>
                 <div id="assist-text" class="assist-text"></div>
@@ -6827,9 +6870,10 @@
         }
 
         // ================== DESCRIBE IT (the character assistant) ==================
-        // The prompt box at the top of the CHARACTER LIBRARY. One sentence goes
-        // to /api/assistant, which runs an agent over the same catalog tools
-        // the MCP server has (mcp/lib/tools.ts) on the site's own API key and
+        // The prompt box at the top of the CHARACTER LIBRARY. One sentence, and
+        // any pictures attached to it (below), go to /api/assistant, which
+        // runs an agent over the same catalog tools the MCP server has
+        // (mcp/lib/tools.ts) on the site's own API key and
         // streams its steps back as NDJSON; every dry run it made comes back
         // as a proposal, shown here as a card with the sprite. Nothing is
         // written until PUBLISH, which sends that one call back with apply
@@ -6856,7 +6900,261 @@
             const info = await assistAvailable();
             const box = document.getElementById('assist');
             if (box) box.classList.toggle('hidden', !info);
-            if (info) document.getElementById('assist-prompt').maxLength = info.maxPrompt || 400;
+            if (info) {
+                document.getElementById('assist-prompt').maxLength = info.maxPrompt || 400;
+                assistRenderPics();   // the GET answer may have moved the picture limit
+            }
+        }
+
+        // ---- Pictures. A sentence can come with up to three images — the
+        // PICTURE button, a paste into the prompt, or a file dropped on the
+        // box — and the model cuts frames out of them: {upload: 0, region: 1}
+        // wherever a frame goes (mcp/lib/upload.ts). Every one is redrawn onto
+        // a canvas and sent as PNG, whatever it was picked as, so the server
+        // only ever decodes one format. One wider or taller than the server
+        // takes is scaled to fit with smoothing off: enlarged pixel art keeps
+        // hard block edges, which is what the server's scale detector looks
+        // for. The server keeps nothing between requests, so the base64 an
+        // ask sent rides on that ask's cards and goes again with PUBLISH —
+        // the strip here can change under them without changing what they
+        // publish.
+        let assistPics = [];                     // { name, png (bare base64), w, h, from, url }, in the order the model numbers them
+        let assistPicQueue = Promise.resolve();  // picks are read one after another, so the count check and the order hold
+        const ASSIST_B64 = /^[A-Za-z0-9+/=]+$/;
+        // The limits GET /api/assistant states; a server from before pictures
+        // states none, and the contract's numbers stand in.
+        function assistLimits() {
+            const info = assistInfo || {};
+            const n = (v, d) => (Number.isFinite(v) && v > 0 ? v : d);
+            return {
+                maxUploads: n(info.maxUploads, 3),
+                maxUploadBytes: n(info.maxUploadBytes, 4000000),
+                maxUploadSide: n(info.maxUploadSide, 2000),
+            };
+        }
+        const assistMb = (bytes) => +(bytes / 1e6).toFixed(1) + ' MB';
+        // What the model calls the picture ("Picture 0 \"ryuda\""): the file's
+        // name less its extension, or "pasted" for the clipboard's, whose
+        // file name is the browser's own invention (image.png). The server
+        // makes it safe; this only keeps a long one from flooding the strip.
+        function assistPicName(file, pasted) {
+            const base = pasted ? 'pasted' : String((file && file.name) || '').replace(/\.[^./\\]*$/, '').trim();
+            return (base || 'picture').slice(0, 64);
+        }
+        // An image file as the PNG the request carries. Decoded with no colour
+        // conversion (as imageRgbaAsStored does) so a sprite's colours arrive
+        // as the file holds them: the server finds the background and splits
+        // the subjects by colour, and a white shifted by a display profile is
+        // no longer the background's white. A format createImageBitmap will
+        // not take (an SVG, in some browsers) gets a second try through <img>.
+        async function assistPictureFrom(file, name, limits) {
+            const fail = (text) => Object.assign(new Error(text), { forPlayer: true });
+            let src = null, objectUrl = null, w = 0, h = 0;
+            try {
+                if (typeof createImageBitmap === 'function') {
+                    try {
+                        src = await createImageBitmap(file, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+                        w = src.width; h = src.height;
+                    } catch (_) { src = null; }
+                }
+                if (!src) {
+                    objectUrl = URL.createObjectURL(file);
+                    const img = new Image();
+                    img.src = objectUrl;
+                    await img.decode();
+                    src = img; w = img.naturalWidth; h = img.naturalHeight;
+                }
+                if (!w || !h) throw new Error('no size');
+                const side = Math.max(w, h);
+                const k = side > limits.maxUploadSide ? limits.maxUploadSide / side : 1;
+                const cw = Math.max(1, Math.min(limits.maxUploadSide, Math.round(w * k)));
+                const ch = Math.max(1, Math.min(limits.maxUploadSide, Math.round(h * k)));
+                const canvas = document.createElement('canvas');
+                canvas.width = cw; canvas.height = ch;
+                const ctx = canvas.getContext('2d');
+                ctx.imageSmoothingEnabled = false;
+                ctx.drawImage(src, 0, 0, cw, ch);
+                const png = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+                if (!png) throw new Error('no png');
+                // The blob's size is the decoded byte count the server checks.
+                if (png.size > limits.maxUploadBytes) {
+                    throw fail(name.toUpperCase() + ' IS ' + assistMb(png.size) + ' AS A PNG · THE LIMIT IS ' + assistMb(limits.maxUploadBytes) + ' · CROP IT OR SEND A SMALLER ONE');
+                }
+                const dataUrl = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(String(reader.result || ''));
+                    reader.onerror = () => reject(reader.error);
+                    reader.readAsDataURL(png);
+                });
+                const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+                if (!ASSIST_B64.test(b64)) throw new Error('not base64');
+                return { name, png: b64, w: cw, h: ch, from: k < 1 ? { w, h } : null, url: URL.createObjectURL(png) };
+            } finally {
+                if (src && typeof src.close === 'function') src.close();
+                if (objectUrl) URL.revokeObjectURL(objectUrl);
+            }
+        }
+        function assistAddPictures(files, pasted) {
+            // Copied now: a file input's FileList empties when its value is reset.
+            const all = [...(files || [])];
+            const list = all.filter((f) => f && /^image\//i.test(f.type || ''));
+            if (!list.length) {
+                if (all.length) assistSetStatus('THAT IS NOT A PICTURE · PNG, JPEG, GIF OR WEBP', 'err');
+                return assistPicQueue;
+            }
+            assistPicQueue = assistPicQueue.then(async () => {
+                const limits = assistLimits();
+                if (!assistBusy) assistSetStatus('READING THE PICTURE…', 'busy');
+                const added = [];
+                let refused = '';
+                for (const file of list) {
+                    if (assistPics.length >= limits.maxUploads) {
+                        refused = 'AT MOST ' + limits.maxUploads + (limits.maxUploads === 1 ? ' PICTURE' : ' PICTURES') + ' · × ONE TO MAKE ROOM';
+                        break;
+                    }
+                    const name = assistPicName(file, pasted);
+                    try {
+                        const pic = await assistPictureFrom(file, name, limits);
+                        assistPics.push(pic);
+                        added.push(pic);
+                    } catch (e) {
+                        refused = e && e.forPlayer ? e.message : 'COULD NOT READ ' + name.toUpperCase() + ' AS A PICTURE';
+                    }
+                    assistRenderPics();
+                }
+                // A status mid-ask is the ask's; the strip shows the pictures either way.
+                if (refused) {
+                    assistSetStatus(refused, 'err');
+                } else if (!assistBusy) {
+                    const one = added.length === 1 ? added[0] : null;
+                    assistSetStatus(one
+                        ? 'PICTURE ' + assistPics.indexOf(one) + ' ATTACHED · ' + one.w + '×' + one.h + (one.from ? ' (SHRUNK FROM ' + one.from.w + '×' + one.from.h + ')' : '')
+                        : added.length + ' PICTURES ATTACHED', '');
+                }
+            }).catch(() => { /* every pick reports its own failure */ });
+            return assistPicQueue;
+        }
+        function assistRemovePicture(i) {
+            const [pic] = assistPics.splice(i, 1);
+            // The thumb's URL only: a card keeps its own copy of the base64.
+            if (pic && pic.url) URL.revokeObjectURL(pic.url);
+            assistRenderPics();
+            // The rest have just been renumbered, so a line naming "PICTURE 1"
+            // may name one that is gone or is now 0 — and the numbers are what
+            // the player types to the model. A count names none of them. (A
+            // status mid-ask is the ask's, as when adding.)
+            if (!assistBusy) {
+                const left = assistPics.length;
+                assistSetStatus(left ? left + (left === 1 ? ' PICTURE' : ' PICTURES') + ' ATTACHED' : '', '');
+            }
+        }
+        // The strip under the row: each picture's number (the `upload` the
+        // model names it by), a thumb, its name and size, and × to drop it.
+        // Taking one out renumbers the rest, as the next ask will.
+        function assistRenderPics() {
+            const host = document.getElementById('assist-pics');
+            if (!host) return;
+            host.textContent = '';
+            assistPics.forEach((pic, i) => {
+                const chip = document.createElement('div');
+                chip.className = 'assist-pic';
+                chip.title = 'Picture ' + i + ' · ' + pic.w + '×' + pic.h + (pic.from ? ' (shrunk from ' + pic.from.w + '×' + pic.from.h + ')' : '');
+                const n = document.createElement('span');
+                n.className = 'assist-pic-n';
+                n.textContent = String(i);
+                const img = document.createElement('img');
+                img.src = pic.url;
+                img.alt = '';
+                img.draggable = false;
+                const info = document.createElement('span');
+                info.className = 'assist-pic-info';
+                const nm = document.createElement('span');
+                nm.className = 'assist-pic-name';
+                nm.textContent = pic.name;   // a file name: text, never markup
+                const size = document.createElement('span');
+                size.textContent = pic.w + '×' + pic.h;
+                info.append(nm, size);
+                const x = document.createElement('button');
+                x.type = 'button';
+                x.className = 'assist-pic-x';
+                x.textContent = '×';
+                x.title = 'Remove picture ' + i;
+                x.setAttribute('aria-label', 'Remove picture ' + i);
+                x.onclick = () => assistRemovePicture(i);
+                chip.append(n, img, info, x);
+                host.appendChild(chip);
+            });
+            const limits = assistLimits();
+            const full = assistPics.length >= limits.maxUploads;
+            const btn = document.getElementById('assist-pic-btn');
+            if (btn) {
+                btn.disabled = full;
+                btn.title = full
+                    ? 'At most ' + limits.maxUploads + ' pictures — × one to make room'
+                    : 'Attach a picture — or paste one into the box, or drop one on it';
+            }
+            // With a picture attached the sentence is what to do with it, and
+            // may be left out altogether (the route reads that as "make a
+            // character from the attached picture").
+            const input = document.getElementById('assist-prompt');
+            if (input) {
+                if (!input.dataset.hint) input.dataset.hint = input.placeholder;
+                input.placeholder = assistPics.length ? 'SAY WHAT TO DO WITH THE PICTURE' : input.dataset.hint;
+            }
+        }
+        function assistPickPicture() {
+            const input = document.getElementById('assist-file');
+            if (input) input.click();
+        }
+        function assistFilesPicked(input) {
+            assistAddPictures(input.files, false);
+            input.value = '';   // so the same file picked again is a change again
+        }
+        // A screenshot pasted into the sentence is a picture; a paste with
+        // text and no image stays a text paste. One with both (a file copied
+        // in the Finder carries its name as text) is taken as the picture.
+        function assistPaste(ev) {
+            const cd = ev.clipboardData;
+            if (!cd) return;
+            let files = [...(cd.files || [])];
+            if (!files.length && cd.items) {
+                files = [...cd.items].filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter(Boolean);
+            }
+            const images = files.filter((f) => /^image\//i.test(f.type || ''));
+            if (!images.length) return;
+            ev.preventDefault();
+            assistAddPictures(images, true);
+        }
+        // Every drag event on the CHARACTER LIBRARY overlay. Only a drag that
+        // carries files is ours — the editor's own drags (an enemy onto the
+        // grid) carry JSON — and for those the default is always cancelled,
+        // since the browser's default for a file dropped on a page is to open
+        // it in place of the editor. Over the box the drop is a copy and the
+        // box lights up; anywhere else on the panel it is refused. A
+        // dragleave names where the pointer went (relatedTarget) when the
+        // browser knows; moving between the box's own children is not
+        // leaving, and when the browser does not say, the next dragover puts
+        // the light back.
+        function assistDragEvent(ev) {
+            const dt = ev.dataTransfer;
+            if (!dt || ![...(dt.types || [])].includes('Files')) return;
+            ev.preventDefault();
+            const box = document.getElementById('assist');
+            if (!box) return;
+            const open = !!assistInfo && !box.classList.contains('hidden');
+            const inside = (el) => !!el && el instanceof Node && box.contains(el);
+            if (ev.type === 'dragleave') {
+                if (!inside(ev.relatedTarget)) box.classList.remove('drop');
+                return;
+            }
+            const over = open && inside(ev.target);
+            if (ev.type === 'drop') {
+                box.classList.remove('drop');
+                if (over) assistAddPictures(dt.files, false);
+                return;
+            }
+            dt.dropEffect = over ? 'copy' : 'none';
+            box.classList.toggle('drop', over);
         }
         function assistPrefill(text, character) {
             assistFromCharacter = character || null;
@@ -6888,9 +7186,16 @@
         async function assistAsk(ev) {
             if (ev) ev.preventDefault();
             if (assistBusy) { if (assistAbort) assistAbort.abort(); return; }
+            await assistPicQueue;   // a picture still being read goes with this ask
+            if (assistBusy) return;
             const input = document.getElementById('assist-prompt');
             const prompt = (input.value || '').trim();
-            if (!prompt) { input.focus(); return; }
+            // What this ask sends, kept for its cards: their PUBLISH sends the
+            // same pictures again whatever the strip holds by then, since the
+            // frames in a proposal's args are cut out of these by number.
+            const uploads = assistPics.map(({ name, png }) => ({ name, png }));
+            // A picture alone is an ask; the route supplies the sentence.
+            if (!prompt && !uploads.length) { input.focus(); return; }
             const go = document.getElementById('assist-go');
             document.getElementById('assist-steps').textContent = '';
             document.getElementById('assist-text').textContent = '';
@@ -6903,7 +7208,9 @@
                 const res = await fetch('/api/assistant', {
                     method: 'POST',
                     headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ prompt, context: assistContext() }),
+                    body: JSON.stringify(uploads.length
+                        ? { prompt, context: assistContext(), uploads }
+                        : { prompt, context: assistContext() }),
                     signal: assistAbort.signal,
                 });
                 if (!res.ok) {
@@ -6927,7 +7234,7 @@
                         finished = true;
                         document.getElementById('assist-text').textContent = event.text || '';
                         const proposals = Array.isArray(event.proposals) ? event.proposals : [];
-                        assistRenderCards(proposals);
+                        assistRenderCards(proposals, uploads);
                         if (proposals.length) {
                             assistSetStatus(proposals.length === 1 ? 'READY · PUBLISH PUTS IT IN THE LIBRARY' : 'READY · ' + proposals.length + ' PROPOSALS', '');
                         } else {
@@ -6959,25 +7266,47 @@
                 go.textContent = 'ASK';
             }
         }
-        // One card per proposal: the sprite, what it is, and PUBLISH.
-        function assistRenderCards(proposals) {
+        // One card per proposal: the sprite (and its main shot, when the dry
+        // run packed one), what it is, and PUBLISH. `uploads` is the pictures
+        // the ask that made these sent, which PUBLISH sends back.
+        function assistRenderCards(proposals, uploads) {
             const host = document.getElementById('assist-cards');
             host.textContent = '';
+            const sprite = (b64) => {
+                const box = document.createElement('div');
+                box.className = 'cs-sprite';
+                // The PNGs come off the network: a data URL only for plain base64.
+                if (typeof b64 === 'string' && ASSIST_B64.test(b64)) {
+                    const img = document.createElement('img');
+                    img.src = 'data:image/png;base64,' + b64;
+                    img.alt = '';
+                    img.draggable = false;
+                    box.appendChild(img);
+                }
+                return box;
+            };
             proposals.forEach((p) => {
                 const s = p.summary || {};
                 const args = p.args || {};
                 const card = document.createElement('div');
                 card.className = 'assist-card';
-                const box = document.createElement('div');
-                box.className = 'cs-sprite';
-                if (typeof p.png_base64 === 'string' && /^[A-Za-z0-9+/=]+$/.test(p.png_base64)) {
-                    const img = document.createElement('img');
-                    img.src = 'data:image/png;base64,' + p.png_base64;
-                    img.alt = '';
-                    img.draggable = false;
-                    box.appendChild(img);
+                const art = document.createElement('div');
+                art.className = 'assist-card-art';
+                art.appendChild(sprite(p.png_base64));
+                // A picture made into a shot is the part most likely to come
+                // out wrong (the size, the ink), so the card shows it too.
+                const shot = p.projectile;
+                if (shot && typeof shot.png_base64 === 'string' && ASSIST_B64.test(shot.png_base64)) {
+                    const wrap = document.createElement('div');
+                    wrap.className = 'assist-card-shot';
+                    const w = Number(shot.width_px), h = Number(shot.height_px);
+                    if (w > 0 && h > 0) wrap.title = 'Main projectile · ' + w + '×' + h;
+                    const label = document.createElement('span');
+                    label.textContent = 'SHOT';
+                    wrap.append(sprite(shot.png_base64), label);
+                    art.appendChild(wrap);
                 }
-                card.appendChild(box);
+                card.appendChild(art);
                 const info = document.createElement('div');
                 info.className = 'assist-card-info';
                 const name = document.createElement('span');
@@ -7010,20 +7339,24 @@
                 btn.className = 'menu-btn';
                 btn.textContent = unresolved.length ? 'INCOMPLETE' : 'PUBLISH';
                 btn.disabled = !!unresolved.length;
-                btn.onclick = () => assistPublish(p, btn, card);
+                btn.onclick = () => assistPublish(p, btn, card, uploads);
                 card.appendChild(btn);
                 host.appendChild(card);
             });
         }
-        async function assistPublish(p, btn, card) {
+        // PUBLISH runs the dry run's call again with apply on. A call that
+        // cuts frames out of pictures needs them again — the server kept
+        // nothing — so the ask's own `uploads` go back with it, byte for byte.
+        async function assistPublish(p, btn, card, uploads) {
             if (btn.disabled) return;
             btn.disabled = true;
             btn.textContent = 'PUBLISHING…';
+            const publish = { tool: p.tool, args: p.args };
             try {
                 const res = await fetch('/api/assistant', {
                     method: 'POST',
                     headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ publish: { tool: p.tool, args: p.args } }),
+                    body: JSON.stringify(uploads && uploads.length ? { publish, uploads } : { publish }),
                 });
                 const body = await res.json().catch(() => ({}));
                 if (!res.ok || !body.ok) {

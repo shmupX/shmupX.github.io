@@ -16,6 +16,12 @@ async function pump(
 ): Promise<Bytes> {
   const writer = stream.writable.getWriter();
   const written = writer.write(bytes).then(() => writer.close());
+  // A corrupt stream errors the readable first and the loop below throws
+  // without ever reaching `await written`, whose rejection would then go
+  // unhandled and kill the process — a Deploy isolate, when the bytes came
+  // from an open-write catalog. Marking it handled here still lets the
+  // success path's `await written` see a rejection.
+  written.catch(() => {});
   const chunks: Uint8Array[] = [];
   let total = 0;
   for await (const part of stream.readable) {

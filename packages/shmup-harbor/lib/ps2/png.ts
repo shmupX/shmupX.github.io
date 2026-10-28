@@ -23,6 +23,81 @@ const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 // Bytes per complete pixel per colour type, at 8 bits per channel.
 const CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
 
+// The bit depths the PNG spec allows each colour type. Anything else is not a
+// PNG, and an unchecked depth goes straight into the stride: greyscale at
+// "depth 255" asks for 32 bytes a pixel, which a 130 KB file can claim.
+const DEPTHS: Record<number, readonly number[]> = {
+  0: [1, 2, 4, 8, 16],
+  2: [8, 16],
+  3: [1, 2, 4, 8],
+  4: [8, 16],
+  6: [8, 16],
+};
+
+/**
+ * Samples per pixel and allowed bit depths per colour type, for a caller that
+ * vets a PNG's header off its bytes before handing them to decodePng.
+ */
+export { CHANNELS as PNG_CHANNELS, DEPTHS as PNG_DEPTHS };
+
+/** Limits a caller decoding someone else's bytes can put on decodePng. */
+export interface DecodeLimits {
+  /**
+   * Refuse once the IDAT stream inflates past this many bytes. A PNG's pixel
+   * data inflates to exactly height × (stride + 1) bytes, so the caller passes
+   * that; without a cap a few megabytes of deflate (about 1000:1 on zeros)
+   * can be made to inflate to gigabytes under an honest small IHDR.
+   */
+  maxInflated?: number;
+  /** Refuse an IHDR wider or taller than this many pixels. */
+  maxSide?: number;
+}
+
+// How much of the IDAT stream one step of a capped inflate takes in. The
+// platform's DecompressionStream inflates a whole write in one go, so a
+// single write of a 4 MB bomb would hand back 4 GB before any cap could look
+// at it; fed this much at a time, one step yields at most about 4 MB.
+const INFLATE_STEP = 4096;
+
+/**
+ * Inflate a zlib stream, giving up — reader cancelled, input no longer fed —
+ * as soon as the output passes `max` bytes.
+ */
+async function inflateAtMost(bytes: Bytes, max: number): Promise<Bytes> {
+  const stream = new DecompressionStream("deflate");
+  const writer = stream.writable.getWriter();
+  const fed = (async () => {
+    for (let at = 0; at < bytes.length; at += INFLATE_STEP) {
+      await writer.write(bytes.subarray(at, at + INFLATE_STEP));
+    }
+    await writer.close();
+  })();
+  // Cancelling the reader errors the writable side under the feeder; that
+  // rejection is expected and must not surface as an unhandled one.
+  fed.catch(() => {});
+  const reader = stream.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > max) {
+      await reader.cancel();
+      throw new Error("png: pixel data is longer than the declared image");
+    }
+    chunks.push(value);
+  }
+  await fed;
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const part of chunks) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+}
+
 export function newRaster(width: number, height: number): Raster {
   return { width, height, data: new Uint8Array(width * height * 4) };
 }
@@ -100,13 +175,20 @@ function sampleAt(row: Uint8Array, index: number, depth: number): number {
   return (byte >> shift) & ((1 << depth) - 1);
 }
 
-/** Decode a PNG into 8-bit RGBA. Throws on interlaced or truncated input. */
-export async function decodePng(bytes: Bytes): Promise<Raster> {
+/**
+ * Decode a PNG into 8-bit RGBA. Throws on interlaced or truncated input, on a
+ * second IHDR, and on a bit depth its colour type does not allow. `limits`
+ * is for bytes that came from someone else — see DecodeLimits.
+ */
+export async function decodePng(
+  bytes: Bytes,
+  limits: DecodeLimits = {},
+): Promise<Raster> {
   for (let i = 0; i < SIGNATURE.length; i++) {
     if (bytes[i] !== SIGNATURE[i]) throw new Error("png: not a PNG file");
   }
 
-  let width = 0, height = 0, depth = 0, colorType = 0;
+  let width = 0, height = 0, depth = 0, colorType = 0, headers = 0;
   let palette: Uint8Array | null = null;
   let transparency: Uint8Array | null = null;
   const idat: Uint8Array[] = [];
@@ -122,6 +204,10 @@ export async function decodePng(bytes: Bytes): Promise<Raster> {
     );
     const body = bytes.subarray(at + 8, at + 8 + length);
     if (type === "IHDR") {
+      // There is exactly one. A second would otherwise quietly replace the
+      // first, and a caller that vetted the first one's size would be
+      // decoding a picture it never saw.
+      if (++headers > 1) throw new Error("png: more than one IHDR");
       width = u32(body, 0);
       height = u32(body, 4);
       depth = body[8];
@@ -146,6 +232,17 @@ export async function decodePng(bytes: Bytes): Promise<Raster> {
   if (channels === undefined) {
     throw new Error(`png: unsupported colour type ${colorType}`);
   }
+  if (!DEPTHS[colorType].includes(depth)) {
+    throw new Error(
+      `png: bit depth ${depth} is not one colour type ${colorType} allows`,
+    );
+  }
+  const { maxSide, maxInflated } = limits;
+  if (maxSide !== undefined && (width > maxSide || height > maxSide)) {
+    throw new Error(
+      `png: ${width}×${height} is over the ${maxSide} px limit on a side`,
+    );
+  }
 
   const merged = new Uint8Array(idat.reduce((n, part) => n + part.length, 0));
   let offset = 0;
@@ -153,7 +250,9 @@ export async function decodePng(bytes: Bytes): Promise<Raster> {
     merged.set(part, offset);
     offset += part.length;
   }
-  const inflated = await inflate(merged);
+  const inflated = maxInflated === undefined
+    ? await inflate(merged)
+    : await inflateAtMost(merged, maxInflated);
 
   const bitsPerPixel = channels * depth;
   const stride = Math.ceil((width * bitsPerPixel) / 8);

@@ -12,6 +12,7 @@
 import {
   ArtError,
   type AtlasJson,
+  type FrameContext,
   type FrameRef,
   invalidateAtlas,
   loadAtlas,
@@ -53,6 +54,20 @@ export const PROJECTILE_KEYS = [
  * exists, and writing `bulletData` on a dezaBoss clone changes nothing at all.
  */
 export const MAIN_PROJECTILE_KEY = "bulletDataA";
+
+/**
+ * The most frames one build may cut out of the attached pictures.
+ *
+ * Each cut is a crop, a pixel-scale detection, a background flood and a
+ * shrink over as much as a whole 2000-px picture — on the order of 180 ms of
+ * synchronous CPU — and the refs are tiny: `{upload: 0, as: "f7"}` is a new
+ * frame every time its `as` changes, so a few kilobytes of anim states could
+ * otherwise ask for minutes of it inside one ask or one publish. Sixteen is
+ * a boss's whole animation set and its shots with room over; a build that
+ * wants more is asking for the same frame under many names, and the same ref
+ * written again is packed once for nothing.
+ */
+export const MAX_UPLOAD_FRAMES = 16;
 
 export interface ProjectileOverride {
   texture?: FrameRef[];
@@ -330,6 +345,34 @@ function uniqueName(resolved: ResolvedFrame, taken: Set<string>): string {
   return candidate;
 }
 
+function isUploadRef(ref: FrameRef): boolean {
+  return typeof ref === "object" && ref !== null && "upload" in ref;
+}
+
+/**
+ * The cuts a request's build would make: its distinct upload refs, by the
+ * same JSON key pull() dedupes on, wherever in the request they appear.
+ */
+function uploadCuts(req: CreateRequest): number {
+  const refs: FrameRef[] = [
+    ...Object.values(req.anim ?? {}).flat(),
+    ...Object.values(req.projectiles ?? {}).flatMap((p) => p?.texture ?? []),
+    ...(req.stageBgEnd ? [req.stageBgEnd] : []),
+  ];
+  return new Set(refs.filter(isUploadRef).map((ref) => JSON.stringify(ref)))
+    .size;
+}
+
+function tooManyCuts(): ArtError {
+  return new ArtError(
+    `This build cuts more than ${MAX_UPLOAD_FRAMES} frames out of the ` +
+      `attached pictures; one build cuts at most ${MAX_UPLOAD_FRAMES}. ` +
+      "Reuse frames: write the identical ref (same fields, same `as`) " +
+      "wherever the same picture goes — it is cut and packed once — " +
+      "instead of a new `as` or maxSize for every state or frame.",
+  );
+}
+
 /**
  * Build a character record and the atlas that serves it.
  *
@@ -337,11 +380,25 @@ function uniqueName(resolved: ResolvedFrame, taken: Set<string>): string {
  * deliberate — the catalog is open-write and shared with spriteX and both
  * editors, so a dry run has to be the default and the only way to reach a
  * write is to ask for one.
+ *
+ * `options.uploads` are the pictures attached to the request being served,
+ * handed to every resolveFrame below so an `{upload: n}` ref anywhere in the
+ * request — an anim state, a projectile, the backdrop — can be cut. The refs
+ * stay plain data, so the JSON dedupe key still packs a picture asked for
+ * twice once, and that is also what MAX_UPLOAD_FRAMES counts: distinct
+ * upload refs, each a cut, never the places a cut is used.
  */
 export async function buildCharacter(
   req: CreateRequest,
+  options: FrameContext = {},
 ): Promise<CreateResult> {
   assertSafeKey("Character name", req.name);
+  // Counted up front, before the source is read or anything is cut: counting
+  // only as pull() cuts would refuse the seventeenth after the first sixteen
+  // had already spent their seconds, for a build that fails anyway. pull()
+  // still counts as it cuts, so a ref from anywhere this misses is held to
+  // the same limit.
+  if (uploadCuts(req) > MAX_UPLOAD_FRAMES) throw tooManyCuts();
   const warnings: string[] = [];
 
   const source = req.cloneFrom ? await getCharacter(req.cloneFrom) : {};
@@ -353,12 +410,15 @@ export async function buildCharacter(
   const byRef = new Map<string, ResolvedFrame>();
   const taken = new Set<string>();
   const pulled: ResolvedFrame[] = [];
+  let cuts = 0;
 
   const pull = async (ref: FrameRef): Promise<string> => {
     const key = JSON.stringify(ref);
     const already = byRef.get(key);
     if (already) return already.name;
-    const resolved = await resolveFrame(ref);
+    // Counted before the cut, so the one over the limit costs nothing.
+    if (isUploadRef(ref) && ++cuts > MAX_UPLOAD_FRAMES) throw tooManyCuts();
+    const resolved = await resolveFrame(ref, options);
     resolved.name = uniqueName(resolved, taken);
     taken.add(resolved.name);
     byRef.set(key, resolved);
@@ -470,7 +530,7 @@ export async function buildCharacter(
       const resolved = await resolveFrame({
         atlas: sourceAtlasName,
         frame: name,
-      });
+      }, options);
       taken.add(resolved.name);
       pulled.push(resolved);
     }

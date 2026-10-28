@@ -21,6 +21,16 @@ import {
   limitsFromEnv,
   openCounter,
 } from "../../lib/assistant/limits.ts";
+import {
+  type CheckedUpload,
+  checkUploads,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_SIDE,
+  MAX_UPLOADS,
+  openUploads,
+  type UploadedImage,
+  UploadError,
+} from "../../mcp/lib/upload.ts";
 
 // /api/assistant — the character assistant behind the editor's DESCRIBE IT box.
 //
@@ -30,20 +40,39 @@ import {
 // project's own API key — the same tools the MCP server offers a Claude
 // Code session, for a player who has neither.
 //
-//   GET   { available, model, limits, maxPrompt, maxSteps }
+//   GET   { available, model, limits, maxPrompt, maxSteps, tools,
+//           maxUploads, maxUploadBytes, maxUploadSide }
 //         Whether this build can answer at all: it can when ANTHROPIC_API_KEY
 //         is set, on the hosted site or on a desktop install whose owner set
-//         one. The editor shows the box only when this says so.
-//   POST  { prompt, context?: { level?, character? } }
-//         The request. Answers NDJSON, one event per line as the loop makes
-//         them — { type: "tool", label } and { type: "tool_result", note } for
-//         the progress line, { type: "text" } as the model speaks — ending in
-//         { type: "done", text, proposals, steps, usage } or { type: "error",
-//         message }. A proposal is a dry run the player may publish: a card
-//         with the sprite.
-//   POST  { publish: { tool, args } }
+//         one. The editor shows the box only when this says so, and sizes the
+//         pictures it lets a player attach by the last three.
+//   POST  { prompt, context?: { level?, character? },
+//           uploads?: [{ name?, png }] }
+//         The request. `uploads` are pictures the player attached, each the
+//         bare base64 of a PNG (a data: prefix is stripped) — the editor
+//         turns whatever was picked into PNG on a canvas first, so PNG is all
+//         this decodes. With pictures attached the prompt may be empty. A
+//         picture that is plainly not one, or is too big, is a 400 before
+//         anything is counted against the player's hour; one whose header
+//         passes and whose pixels then do not is a 400 after, because
+//         decoding is the expensive half and only an admitted request gets
+//         it. Answers NDJSON, one event per
+//         line as the loop makes them — { type: "tool", label } and
+//         { type: "tool_result", note } for the progress line, { type: "text" }
+//         as the model speaks — ending in { type: "done", text, proposals,
+//         steps, usage } or { type: "error", message }. A proposal is a dry
+//         run the player may publish: a card with the sprite, and with its
+//         main projectile when the preview has one.
+//   POST  { publish: { tool, args }, uploads?: [...] }
 //         The PUBLISH button: that one tool call again with apply on. Costs
-//         no credits; writes shmupX/characters/<name> and its atlas.
+//         no credits; writes shmupX/characters/<name> and its atlas. A
+//         proposal whose frames came out of a picture sends the same
+//         pictures again — this route keeps nothing between requests, so the
+//         pixels a ref like {upload: 0, region: 1} names have to come back
+//         with it, and are decoded and analysed exactly as the ask's were.
+//
+// A body over MAX_BODY_BYTES is refused by its content-length before it is
+// read, with a 413.
 //
 // Nothing the model does writes the catalog. The loop forces `apply` off on
 // every writing tool; only this route's publish branch turns it on, and
@@ -59,6 +88,17 @@ import {
 
 export const MAX_PROMPT = 400;
 const MAX_CONTEXT_FIELD = 80;
+
+/**
+ * The largest body this reads. Three pictures at MAX_UPLOAD_BYTES are 12 MB
+ * of PNG and 16 MB once base64'd, so a decimal 16 MB would refuse the very
+ * request the limits allow; the binary 16 MiB leaves ~750 KB for the JSON
+ * around them.
+ */
+export const MAX_BODY_BYTES = 16 * 1024 * 1024;
+
+/** What an empty prompt means when pictures came with it. */
+export const PICTURE_PROMPT = "Make a character from the attached picture.";
 
 export interface AssistantConfig {
   apiKey: string | null;
@@ -111,12 +151,79 @@ const json = (body: unknown, status = 200, headers: HeadersInit = {}) =>
     headers: { "cache-control": "no-store", ...headers },
   });
 
+/**
+ * The 400 that says what is wrong with a request's pictures. An
+ * UploadError's message is written for the player and goes back as it is.
+ * Anything else decodePng could throw on a malformed file is still the
+ * file's fault rather than this server's, so it is a 400 too — with a
+ * message that does not leak a stack frame into the editor.
+ */
+function pictureRefused(err: unknown, client: string): Response {
+  if (err instanceof UploadError) {
+    return json({ ok: false, error: err.message }, 400);
+  }
+  console.error(
+    `[assistant] ${client}: picture refused: ${
+      err instanceof Error ? err.message : String(err)
+    }`,
+  );
+  return json({ ok: false, error: "That picture could not be read." }, 400);
+}
+
+/**
+ * The request's pictures, checked but not yet decoded, or the 400 that says
+ * what is wrong with them. Nothing to check is no pictures: most asks carry
+ * none, and the editor leaves the field out for those (a scripted client may
+ * send an empty list instead, which means the same).
+ *
+ * This is the half that runs BEFORE admission, and only the cheap half: the
+ * list's shape, the base64, the byte count, the signature and the IHDR, all
+ * read off the bytes without inflating one. Garbage is still refused without
+ * costing the player an ask. Decoding and analysing are openPictures, after
+ * admit(): three pictures at the limit are seconds of synchronous CPU on an
+ * isolate every other player's stream shares, and a client already over its
+ * limit must not be able to buy those seconds with requests that end in a
+ * 429.
+ */
+function checkPictures(
+  raw: unknown,
+  client: string,
+): CheckedUpload[] | Response {
+  if (raw == null || (Array.isArray(raw) && raw.length === 0)) return [];
+  try {
+    return checkUploads(raw);
+  } catch (err) {
+    return pictureRefused(err, client);
+  }
+}
+
+/**
+ * The checked pictures decoded and analysed, once the request has been
+ * admitted, or the 400. A picture can still fail here — pixel data that will
+ * not inflate, or inflates past what its header declared — and it is still
+ * a 400, though by now the ask or the publish has been counted. That is
+ * deliberate: it is a picture that lied about itself in the part checkUploads
+ * reads cheaply, and handing the count back would hand back exactly the
+ * decoding this order exists to meter.
+ */
+async function openPictures(
+  checked: CheckedUpload[],
+  client: string,
+): Promise<UploadedImage[] | Response> {
+  if (!checked.length) return [];
+  try {
+    return await openUploads(checked);
+  } catch (err) {
+    return pictureRefused(err, client);
+  }
+}
+
 type Ctx = { req: Request; info?: Deno.ServeHandlerInfo };
 
 /** The handlers, with their dependencies injectable. */
 export function assistantHandlers(deps: AssistantDeps = {}) {
   const env = deps.env ?? envGet;
-  const tools = deps.tools ?? catalogTools({ local: false });
+  const tools = deps.tools ?? catalogTools({ local: false, uploads: true });
   const offered = tools.filter((t) => t.assistant);
   const counterP = Promise.resolve(deps.counter ?? openCounter());
   const listCatalog = deps.listCatalog ?? listCharacters;
@@ -131,6 +238,9 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
       maxPrompt: MAX_PROMPT,
       maxSteps: config.maxSteps,
       tools: offered.map((t) => t.name),
+      maxUploads: MAX_UPLOADS,
+      maxUploadBytes: MAX_UPLOAD_BYTES,
+      maxUploadSide: MAX_UPLOAD_SIDE,
     };
   };
 
@@ -149,6 +259,10 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
         400,
       );
     }
+    // Checked before admission, as in ask(): a picture that is plainly not
+    // one should not cost the player one of their publishes.
+    const checked = checkPictures(body.uploads, client);
+    if (checked instanceof Response) return checked;
     const admission = await admit(
       await counterP,
       config.limits,
@@ -172,9 +286,13 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
         }`,
       }, 400);
     }
+    // Decoded only now, admitted and with arguments that parse: the cheap
+    // refusals all come before the expensive part.
+    const uploads = await openPictures(checked, client);
+    if (uploads instanceof Response) return uploads;
     args.apply = true;
     delete args.preview;
-    const result = await guard(() => tool.run(args));
+    const result = await guard(() => tool.run(args, { uploads }));
     if (result.isError) {
       return json(
         { ok: false, error: result.content[0]?.text ?? "failed" },
@@ -182,8 +300,13 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
       );
     }
     const payload = result.structuredContent ?? {};
-    const { png_base64: _png, character: _record, provenance: _prov, ...rest } =
-      payload;
+    const {
+      png_base64: _png,
+      projectile: _shot,
+      character: _record,
+      provenance: _prov,
+      ...rest
+    } = payload;
     return json({ ok: true, tool: tool.name, ...rest });
   }
 
@@ -194,14 +317,22 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
     signal: AbortSignal,
   ): Promise<Response> {
     return (async () => {
-      const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-      if (!prompt) return json({ ok: false, error: "Say what to build." }, 400);
-      if (prompt.length > MAX_PROMPT) {
+      const typed = typeof body.prompt === "string" ? body.prompt.trim() : "";
+      if (typed.length > MAX_PROMPT) {
         return json({
           ok: false,
           error: `Keep it under ${MAX_PROMPT} characters.`,
         }, 400);
       }
+      // Checked before admission: bad input should not spend the player's
+      // hourly asks, and a picture that is plainly not one is bad input.
+      // Decoding waits until after (checkPictures says why).
+      const checked = checkPictures(body.uploads, client);
+      if (checked instanceof Response) return checked;
+      // A picture is a request on its own — "this, as a boss" — so with one
+      // attached an empty box means the obvious thing.
+      const prompt = typed || (checked.length ? PICTURE_PROMPT : "");
+      if (!prompt) return json({ ok: false, error: "Say what to build." }, 400);
       const raw = (body.context ?? {}) as Record<string, unknown>;
       const field = (v: unknown) =>
         typeof v === "string" && v.trim()
@@ -224,6 +355,8 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
           "retry-after": String(admission.retryAfterSeconds),
         });
       }
+      const uploads = await openPictures(checked, client);
+      if (uploads instanceof Response) return uploads;
 
       // The catalog's names go in the first turn so the model need not
       // spend a tool call asking; a database that will not answer right now
@@ -246,6 +379,7 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
               maxTokens: config.maxTokens,
               onEvent: send,
               signal,
+              uploads,
             });
             send({ type: "done", ...outcome });
           } catch (err) {
@@ -298,9 +432,22 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
           error: "The assistant is not available on this build.",
         }, 503);
       }
+      // By its declared length, before a byte of it is read: the largest
+      // body a request has any use for is three pictures at their limit, so
+      // anything bigger is refused without parsing megabytes of JSON first.
+      // A chunked body declares no length, so the read itself is capped too
+      // (readCapped) — otherwise it is the platform's ceiling, not ours.
+      const length = Number(ctx.req.headers.get("content-length"));
+      if (Number.isFinite(length) && length > MAX_BODY_BYTES) {
+        return json({ ok: false, error: "That is too big to send." }, 413);
+      }
+      const raw = await readCapped(ctx.req, MAX_BODY_BYTES);
+      if (raw === null) {
+        return json({ ok: false, error: "That is too big to send." }, 413);
+      }
       let body: Record<string, unknown>;
       try {
-        body = await ctx.req.json();
+        body = JSON.parse(raw);
         if (!body || typeof body !== "object") throw new Error("not an object");
       } catch {
         return json({ ok: false, error: "Send JSON." }, 400);
@@ -312,6 +459,35 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
       return ask(body, client, config, ctx.req.signal);
     },
   };
+}
+
+/**
+ * The body as text, or null once it passes `max` bytes — the reader is
+ * cancelled there, so a chunked body that never declared its length is not
+ * buffered past the limit either.
+ */
+async function readCapped(req: Request, max: number): Promise<string | null> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    all.set(chunk, at);
+    at += chunk.length;
+  }
+  return new TextDecoder().decode(all);
 }
 
 const handlers = assistantHandlers();

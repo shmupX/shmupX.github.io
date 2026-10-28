@@ -29,6 +29,7 @@ import {
   get,
   getWithEtag,
 } from "./rtdb.ts";
+import { cutUpload, type UploadedImage, type UploadRef } from "./upload.ts";
 
 /** Gap between packed cells, so no sampling can bleed across a frame edge. */
 const PAD = 2;
@@ -63,13 +64,29 @@ export interface AtlasJson {
 /**
  * Where one frame comes from. The string form `"atlas/frame"` is what a
  * caller types; the object forms exist for a local file, a whole /sprites
- * entry, and for renaming a frame on the way in.
+ * entry, a picture the player attached to this one request (upload.ts), and
+ * for renaming a frame on the way in.
  */
 export type FrameRef =
   | string
   | { atlas: string; frame: string; as?: string }
   | { sprite: string; as?: string }
-  | { file: string; as?: string };
+  | { file: string; as?: string }
+  | UploadRef;
+
+/**
+ * What a frame may be cut from besides the catalog and the working tree.
+ *
+ * Today that is the pictures attached to the request being served. They live
+ * nowhere — not in the catalog, not on disk — only in the request that
+ * brought them, so they reach resolveFrame as an argument rather than through
+ * a path it could look up. A ref naming `{upload: 0}` is therefore only
+ * meaningful inside the call that carried picture 0; PUBLISH sends the same
+ * pictures again for exactly that reason.
+ */
+export interface FrameContext {
+  uploads?: UploadedImage[];
+}
 
 export interface ResolvedFrame {
   /** Name this frame will carry in the packed sheet, and in the record. */
@@ -309,15 +326,32 @@ function parseRef(ref: FrameRef): Exclude<FrameRef, string> {
       `Frame reference ${
         JSON.stringify(ref)
       } has no atlas. Write "<atlas>/<frame>" (e.g. "hadouken/hadouken1"), ` +
-        `or {sprite: "name"} for a whole /sprites entry, or {file: "path.png"}.`,
+        `or {sprite: "name"} for a whole /sprites entry, {file: "path.png"}, ` +
+        `or {upload: 0} for an attached picture.`,
     );
   }
   return { atlas: ref.slice(0, slash), frame: ref.slice(slash + 1) };
 }
 
 /** Turn one reference into pixels plus the name it will carry. */
-export async function resolveFrame(ref: FrameRef): Promise<ResolvedFrame> {
+export async function resolveFrame(
+  ref: FrameRef,
+  ctx: FrameContext = {},
+): Promise<ResolvedFrame> {
   const spec = parseRef(ref);
+
+  // A picture the player attached. Checked first because its shape is the
+  // one that must never fall through to the file branch below: an upload
+  // ref that slipped past would be read as a path.
+  if ("upload" in spec) {
+    if (!ctx.uploads?.length) {
+      throw new ArtError(
+        "No picture is attached to this request — {upload: n} only works " +
+          "when the player attached one.",
+      );
+    }
+    return cutUpload(ctx.uploads, spec);
+  }
 
   if ("atlas" in spec) {
     const atlas = await loadAtlas(spec.atlas);

@@ -29,14 +29,29 @@
 // The API client is a fetch, not the SDK: the request is small, the response
 // is one JSON object, and a function that takes `fetch` is a function a test
 // can hand a scripted API to.
+//
+// A request may also carry pictures (mcp/lib/upload.ts has decoded and
+// analysed them by the time they arrive here). The model is shown each one as
+// an image block at the head of the first user message, under a one-line
+// label that names it the way the analysis does, with the analysis — the
+// regions on the background, their size, whether they are enlarged pixel art
+// or ink on paper — in the text after them, and every tool call runs with the
+// same pictures in its context so an `{upload: n}` frame ref can be cut.
+// They go in the first USER message and not the system prompt: the system
+// prompt and the tool table are the cached prefix every player's request
+// shares, and one player's pictures would make it nobody else's. Within one
+// request they are cached all the same, behind the automatic breakpoint that
+// follows the conversation's tail (callMessages).
 
 import {
   type CatalogTool,
   guard,
   parseArgs,
+  type ToolContext,
   type ToolResult,
   toolSpec,
 } from "../../mcp/lib/tools.ts";
+import { describeUploads, type UploadedImage } from "../../mcp/lib/upload.ts";
 
 /** ─── the Messages API, as much of it as this needs ────────────────────── */
 
@@ -98,10 +113,24 @@ export class ApiError extends Error {
 const RETRY_STATUSES = new Set([408, 429, 500, 502, 503, 529]);
 
 /**
- * One Messages API call. The system prompt and the tool table are marked for
- * prompt caching — they are the same ~5K tokens on every turn of every
- * player's request, and a cache read is a tenth of the price of sending
- * them again — and a 429 or a 5xx is retried once after a short wait.
+ * One Messages API call, and a 429 or a 5xx is retried once after a short
+ * wait.
+ *
+ * Three cache breakpoints, all the default five minutes. The last tool and
+ * the system prompt are marked by hand: they are the same ~5K tokens on
+ * every turn of every player's request, and a cache read is a tenth of the
+ * price of sending them again, so they get a read point of their own that
+ * nothing later in the conversation can move. The third is the request's
+ * top-level `cache_control` — the API's automatic breakpoint, which it puts
+ * on the last block of `messages` and walks forward as the conversation
+ * grows. That one is for this request alone: the pictures lead the first
+ * message (a few thousand tokens apiece) and every dry run adds a PNG or two,
+ * and without it each turn would send all of them again at full price. The
+ * history only ever grows at the end, so each turn reads the last one's
+ * prefix and writes just what it added. (The capped last turn changes
+ * `tool_choice`, which invalidates the cached conversation — not the tools or
+ * the system prompt — so that one turn writes it again, once a request.)
+ * Three of the four breakpoints a request may carry.
  */
 export async function callMessages(
   body: {
@@ -123,6 +152,7 @@ export async function callMessages(
   const payload = {
     model: options.model,
     max_tokens: body.max_tokens,
+    cache_control: { type: "ephemeral" },
     system: [{
       type: "text",
       text: body.system,
@@ -186,11 +216,13 @@ export interface Proposal {
   args: Record<string, unknown>;
   /** The character the publish would write. */
   name: string;
-  /** The dry run's answer, less the PNG and the full record. */
+  /** The dry run's answer, less the PNGs and the full record. */
   summary: Record<string, unknown>;
   png_base64?: string;
   width_px?: number;
   height_px?: number;
+  /** The first frame of its main projectile, for the card's SHOT box. */
+  projectile?: { png_base64: string; width_px?: number; height_px?: number };
 }
 
 export interface AgentOutcome {
@@ -222,6 +254,11 @@ export interface AgentOptions extends ApiOptions {
   maxTokens?: number;
   onEvent?: (event: AgentEvent) => void;
   signal?: AbortSignal;
+  /**
+   * Pictures the player attached, decoded and analysed. Shown to the model in
+   * the first message and handed to every tool call as its context.
+   */
+  uploads?: UploadedImage[];
 }
 
 /** ─── the prompt ───────────────────────────────────────────────────────── */
@@ -236,6 +273,9 @@ ART
 Frames come from atlases (about 430 sheets) and sprites (whole pictures). A frame is written "<atlas>/<frame>". Find atlases with shmupx_list_atlases and a match word. ALWAYS call shmupx_list_frames on an atlas before naming a frame of it and copy the name exactly: names rarely match the atlas (the hadouken atlas's frames are atlas_s0 and hadouken1; bg-great-hall's only frame is atlas_s0). A frame you did not list is a frame that comes back in unresolved.
 The shot a boss fires is mainProjectile — never the unsuffixed bulletData, which the runtime does not read. anim replaces whole states ({idle: [...], attack: [...]}); states not named keep the clone's frames. Backdrop art (bg-* atlases) goes in stageBgEnd. Plain numbers (hp, score) go in stats.
 
+PICTURES
+The player may attach pictures; the request lists each with its regions (separate subjects on the background) and what they look like. Use one as a frame by writing {upload: 0, region: 1} wherever a frame goes — anim, mainProjectile, projectiles, stageBgEnd. Pixel art that was enlarged comes back to its own pixels on its own (pixelScale auto); size anything else with maxSize: a boss is 48–128 px, a shot 8–48. The game is played over a dark starfield, so give monochrome dark-on-light art (text, line art, a scan) a light ink such as "#ffffff". Look at the dry run's PNGs (the body, and the main projectile when there is one) and fix what is wrong. When the player says "left" or "right", the regions are listed left to right. A picture needs no atlas listing: clone the source, then one dry run with the upload refs. When a picture is the body, put it in every anim state the clone has (its record lists them — shootA, syngoku and the like, not only idle), or the clone's own art shows whenever the boss changes state.
+
 EDITING BY PHRASE
 "Make the second boss redder", "the pyramid, bulkier", "boss 2 should hit harder": resolve the phrase with shmupx_list_objects first and use resolved.id. If it answers candidates instead of resolved, ask the player which one in one sentence and stop. Then shmupx_update_object: palette for colour (toward "red", hue, saturation, lightness), silhouette for size, aggression for shots, stats for exact numbers. Unless the player says to change the original, pass saveAs with a new name so the shared original stays as it was. The result's warnings say what the runtime would not notice — say so.
 
@@ -243,7 +283,7 @@ NAMES
 Use the name the player gave; otherwise choose a short camelCase name that is not in the catalog (hadoukenBoss, redPyramid). Names and art appear in a public catalog that other players browse: keep names tame, and decline hateful, sexual or harassing content in one sentence.
 
 HOW PUBLISHING WORKS HERE
-You cannot publish. Every shmupx_create_character and shmupx_update_object call you make is a dry run; the player sees your last dry run as a card with its sprite and a PUBLISH button, and publishing is their click. So: do not ask for confirmation, do not say you published or saved anything, and make sure your last dry run has an empty unresolved list — if it is not empty, list the frames you guessed and run it again with the real names. Each dry run answers with a PNG of the result; look at it and fix what is wrong.
+You cannot publish. Every shmupx_create_character and shmupx_update_object call you make is a dry run; the player sees your last dry run as a card with its sprite and a PUBLISH button, and publishing is their click. So: do not ask for confirmation, do not say you published or saved anything, and make sure your last dry run has an empty unresolved list — if it is not empty, list the frames you guessed and run it again with the real names. Each dry run answers with a PNG of the result (and of its main projectile, when it has one); look at them and fix what is wrong.
 
 BUDGET
 You have a small number of tool calls (the request says how many). A typical build is: get the clone source (or get_object for an edit), list atlases with a match word, list frames of the one or two atlases you will use, one dry run. Do not list every atlas without a match word, do not list sprites unless the player wants a whole picture, do not re-read what you already read.
@@ -251,13 +291,26 @@ You have a small number of tool calls (the request says how many). A typical bui
 ANSWERING
 Plain text, no markdown, no JSON, no tool names. Say what you built or changed and what it is made of, and anything the player should know (a warning, a frame you substituted, a thing you could not find). If the request is not about characters, say in one sentence what this box can do.`;
 
-/** The request, with what the editor knows around it. */
+/**
+ * The request, with what the editor knows around it — and, when the player
+ * attached pictures, what upload.ts made of each: its size, its background,
+ * and the regions a frame ref can name. The pictures themselves are image
+ * blocks ahead of this text, in the same order, each under a label that
+ * begins as its line here does.
+ */
 export function userMessage(
   prompt: string,
   context: AgentContext,
   maxSteps: number,
+  uploads: UploadedImage[] = [],
 ): string {
   const lines = [`Request: ${prompt.trim()}`];
+  if (uploads.length) {
+    lines.push(
+      `Pictures attached (${uploads.length}), shown above under the same names:`,
+      describeUploads(uploads),
+    );
+  }
   if (context.level) {
     lines.push(`Open in the editor: the game "${context.level}".`);
   }
@@ -370,10 +423,19 @@ function proposalName(tool: string, args: Record<string, unknown>): string {
 
 const SUMMARY_LIMIT = 24_000;
 
-/** The dry run's payload for the card: no PNG, no full record, bounded. */
+/** The dry run's payload for the card: no PNGs, no full record, bounded. */
 function summaryOf(payload: Record<string, unknown>): Record<string, unknown> {
-  const { png_base64: _png, character: _record, ...rest } = payload;
-  let out = rest;
+  const { png_base64: _png, character: _record, projectile, ...rest } = payload;
+  let out: Record<string, unknown> = rest;
+  // The projectile's frame name and size are worth a line on the card; its
+  // base64 already travels as the proposal's own `projectile`.
+  if (projectile && typeof projectile === "object") {
+    const { png_base64: _shot, ...shot } = projectile as Record<
+      string,
+      unknown
+    >;
+    out = { ...out, projectile: shot };
+  }
   if (JSON.stringify(out).length > SUMMARY_LIMIT) {
     const { provenance: _prov, ...smaller } = out;
     out = smaller;
@@ -386,18 +448,42 @@ interface Dispatched {
   proposal?: Proposal;
 }
 
+/** A projectile preview the payload carries, if it carries one. */
+function projectileOf(
+  payload: Record<string, unknown> | undefined,
+): { png_base64: string; width_px?: number; height_px?: number } | null {
+  const shot = payload?.projectile as Record<string, unknown> | undefined;
+  if (!shot || typeof shot !== "object") return null;
+  if (typeof shot.png_base64 !== "string") return null;
+  return {
+    png_base64: shot.png_base64,
+    width_px: shot.width_px as number | undefined,
+    height_px: shot.height_px as number | undefined,
+  };
+}
+
+const pngBlock = (data: string): ImageBlock => ({
+  type: "image",
+  source: { type: "base64", media_type: "image/png", data },
+});
+
 /**
  * Run one tool call the model asked for. Arguments are checked against the
  * tool's own shape — a miss is an error the model reads, not an exception —
  * and a writing tool runs as a dry run however it was asked. A result that
  * carries a PNG hands it to the model as an image block beside the JSON (the
  * JSON gets a note where the base64 was), so the model sees the sprite it
- * just made rather than a wall of base64.
+ * just made rather than a wall of base64; a build's main projectile, when the
+ * preview has one, follows as a second image the same way.
+ *
+ * `ctx` goes to the tool as it is: the pictures the request carried, which a
+ * frame ref names by index and the tool cuts from.
  */
 export async function dispatch(
   tools: Map<string, CatalogTool>,
   use: ToolUseBlock,
   onEvent: (event: AgentEvent) => void,
+  ctx?: ToolContext,
 ): Promise<Dispatched> {
   const tool = tools.get(use.name);
   if (!tool) {
@@ -436,7 +522,7 @@ export async function dispatch(
     label: describeCall(tool.name, args),
   });
 
-  const result = await guard(() => tool.run(args));
+  const result = await guard(() => tool.run(args, ctx));
   onEvent({
     type: "tool_result",
     name: tool.name,
@@ -448,19 +534,31 @@ export async function dispatch(
   const png = payload && typeof payload.png_base64 === "string"
     ? payload.png_base64
     : null;
+  const shot = projectileOf(payload);
   let content: ToolResultBlock["content"];
   if (png && payload) {
+    const attached = "(attached as an image)";
     const text = JSON.stringify(
-      { ...payload, png_base64: "(attached as an image)" },
+      {
+        ...payload,
+        png_base64: attached,
+        ...(shot
+          ? {
+            projectile: {
+              ...(payload.projectile as Record<string, unknown>),
+              png_base64: attached,
+            },
+          }
+          : {}),
+      },
       null,
       2,
     );
+    // Body first, then the shot: the order the JSON names them in.
     content = [
       { type: "text", text },
-      {
-        type: "image",
-        source: { type: "base64", media_type: "image/png", data: png },
-      },
+      pngBlock(png),
+      ...(shot ? [pngBlock(shot.png_base64)] : []),
     ];
   } else {
     content = result.content.map((c) => c.text).join("\n");
@@ -481,6 +579,7 @@ export async function dispatch(
           height_px: payload.height_px as number | undefined,
         }
         : {}),
+      ...(shot ? { projectile: shot } : {}),
     };
   }
 
@@ -521,13 +620,29 @@ export async function runAssistant(
   const byName = new Map(offered.map((t) => [t.name, t]));
   const specs = offered.map(toolSpec);
   const maxTokens = options.maxTokens ?? 2048;
+  const uploads = options.uploads ?? [];
+  const ctx: ToolContext = { uploads: options.uploads };
 
+  // The pictures lead and the text that describes them follows — the order
+  // the Messages API documents for an image and the question about it, and
+  // the order userMessage's "shown above" counts in. Each picture comes
+  // under a short text label, `Picture 0 "ryuda":`, the way the vision guide
+  // introduces several images in one turn: with two or three of them, "the
+  // second one" is a guess, while the label is the very name the analysis
+  // lines below and every `{upload: n}` ref use. The base64 is the PNG as the
+  // player's editor sent it, so the model sees exactly those pixels.
   const messages: Message[] = [{
     role: "user",
-    content: [{
-      type: "text",
-      text: userMessage(prompt, context, options.maxSteps),
-    }],
+    content: [
+      ...uploads.flatMap((upload): (TextBlock | ImageBlock)[] => [
+        { type: "text", text: `Picture ${upload.index} "${upload.name}":` },
+        pngBlock(upload.png_base64),
+      ]),
+      {
+        type: "text",
+        text: userMessage(prompt, context, options.maxSteps, uploads),
+      },
+    ],
   }];
   const proposals = new Map<string, Proposal>();
   const usage = zeroUsage();
@@ -588,7 +703,7 @@ export async function runAssistant(
         continue;
       }
       steps++;
-      const done = await dispatch(byName, use, onEvent);
+      const done = await dispatch(byName, use, onEvent, ctx);
       results.push(done.block);
       if (done.proposal) {
         proposals.set(

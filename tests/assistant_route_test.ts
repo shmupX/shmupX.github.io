@@ -13,29 +13,68 @@
 // table are marked for caching, that the route refuses without a key and
 // across sites, that the limits count what they should, and that PUBLISH
 // re-runs exactly the proposed call with apply on and nothing else.
+//
+// Pictures (DESCRIBE IT takes a picture as well as a sentence) add the rest:
+// that the model is shown them ahead of the request and told what upload.ts
+// made of them, that every tool call runs with them in its context, that a
+// picture which is plainly not one is refused before it spends an ask while
+// one that only fails to inflate is decoded no sooner than the request is
+// admitted, that one build cuts a bounded number of frames from them, that
+// PUBLISH decodes the same pictures again, and that a build's main projectile
+// reaches the model and the card as a second image. Most of that is plumbing
+// and is proved with hand-built UploadedImage values; the tests that need
+// upload.ts's own decoding and analysis say so, and run the real thing — the
+// end-to-end one cuts a body and an inked shot out of a synthetic picture
+// through the real hosted create tool, which reads nothing from the catalog
+// when it clones nothing.
 
 import {
   assert,
   assertEquals,
   assertExists,
   assertMatch,
+  assertRejects,
   assertStringIncludes,
 } from "@std/assert";
 import { z } from "zod";
-import { decodeBase64 } from "@std/encoding/base64";
-import { decodePng, newRaster } from "@shmupx/shmup-harbor/png";
-import { packFrames, sheetDataUrl } from "../mcp/lib/art.ts";
-import type { CreateResult } from "../mcp/lib/character.ts";
+import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
+import {
+  decodePng,
+  encodePng,
+  newRaster,
+  type Raster,
+} from "@shmupx/shmup-harbor/png";
+import {
+  ArtError,
+  packFrames,
+  resolveFrame,
+  sheetDataUrl,
+} from "../mcp/lib/art.ts";
+import {
+  buildCharacter,
+  type CreateResult,
+  MAX_UPLOAD_FRAMES,
+} from "../mcp/lib/character.ts";
 import {
   type CatalogTool,
   catalogTools,
   ok,
   previewOfBuild,
+  type ToolContext,
   toolSpec,
 } from "../mcp/lib/tools.ts";
 import {
+  decodeUploads,
+  describeUploads,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_SIDE,
+  MAX_UPLOADS,
+  type UploadedImage,
+} from "../mcp/lib/upload.ts";
+import {
   describeCall,
   describeResult,
+  dispatch,
   runAssistant,
   SYSTEM_PROMPT,
   userMessage,
@@ -47,7 +86,12 @@ import {
   limitsFromEnv,
   MemoryCounter,
 } from "../lib/assistant/limits.ts";
-import { assistantHandlers, MAX_PROMPT } from "../routes/api/assistant.ts";
+import {
+  assistantHandlers,
+  MAX_BODY_BYTES,
+  MAX_PROMPT,
+  PICTURE_PROMPT,
+} from "../routes/api/assistant.ts";
 
 /** ─── a scripted Messages API ──────────────────────────────────────────── */
 
@@ -92,9 +136,19 @@ function scriptedApi(queue: unknown[]) {
 
 const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+/** Another 1×1 (one gold pixel), so a test can tell the shot's image from the body's. */
+const SHOT_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4f4bhPwAHZALLB0SopwAAAABJRU5ErkJggg==";
 
-function fakeTools() {
+/**
+ * The tiny table. `contexts` keeps the ToolContext each call ran with, apart
+ * from `calls` so the PUBLISH test can still compare calls exactly; with
+ * `shot`, the create tool's preview carries a main projectile the way
+ * previewOfBuild's does.
+ */
+function fakeTools({ shot = false }: { shot?: boolean } = {}) {
   const calls: { name: string; args: Record<string, unknown> }[] = [];
+  const contexts: (ToolContext | undefined)[] = [];
   const tools: CatalogTool[] = [
     {
       name: "shmupx_list_atlases",
@@ -124,8 +178,9 @@ function fakeTools() {
       annotations: { readOnlyHint: false },
       writes: true,
       assistant: true,
-      run: (args: Record<string, unknown>) => {
+      run: (args: Record<string, unknown>, ctx?: ToolContext) => {
         calls.push({ name: "shmupx_create_character", args });
+        contexts.push(ctx);
         return Promise.resolve(ok({
           applied: !!args.apply,
           name: args.name,
@@ -134,7 +189,17 @@ function fakeTools() {
           unresolved: [],
           warnings: [],
           ...(args.preview
-            ? { png_base64: PNG, width_px: 1, height_px: 1 }
+            ? { png_base64: PNG, width_px: 1, height_px: 1, frame: "a" }
+            : {}),
+          ...(args.preview && shot
+            ? {
+              projectile: {
+                png_base64: SHOT_PNG,
+                width_px: 1,
+                height_px: 1,
+                frame: "a_shot",
+              },
+            }
             : {}),
           ...(args.apply
             ? { written: [`shmupX/characters/${args.name}`] }
@@ -160,8 +225,74 @@ function fakeTools() {
       },
     },
   ] as unknown as CatalogTool[];
-  return { tools, calls };
+  return { tools, calls, contexts };
 }
+
+/**
+ * An UploadedImage made by hand: what decodeUploads would answer for a
+ * 4×3 picture with one subject, without running it. Enough for anything that
+ * only carries pictures from one place to another.
+ */
+function handUpload(index: number, name: string, png = PNG): UploadedImage {
+  return {
+    index,
+    name,
+    raster: newRaster(4, 3),
+    analysis: {
+      width: 4,
+      height: 3,
+      background: {
+        r: 255,
+        g: 255,
+        b: 255,
+        hex: "#ffffff",
+        transparent: false,
+      },
+      regions: [{
+        index: 0,
+        x: 1,
+        y: 0,
+        w: 2,
+        h: 3,
+        pixelScale: 1,
+        native: { w: 2, h: 3 },
+        kind: "image",
+        darkOnLight: true,
+      }],
+    },
+    png_base64: png,
+  };
+}
+
+/**
+ * A real picture to upload, as the editor sends one: 40×20, white, a red 8×8
+ * block on the left and a black 6×4 one on the right — "Ryuda (left)" and
+ * "the ascii image (right)" at the size of a test. 18 px apart, far more
+ * than the merge distance a 40-px picture gets, so they are two regions.
+ */
+async function twoSubjects(): Promise<string> {
+  const r = newRaster(40, 20);
+  r.data.fill(255);
+  const paint = (
+    x0: number,
+    y0: number,
+    w: number,
+    h: number,
+    rgb: [number, number, number],
+  ) => {
+    for (let y = y0; y < y0 + h; y++) {
+      for (let x = x0; x < x0 + w; x++) {
+        r.data.set([...rgb, 255], (y * r.width + x) * 4);
+      }
+    }
+  };
+  paint(2, 4, 8, 8, [200, 30, 30]);
+  paint(28, 8, 6, 4, [0, 0, 0]);
+  return encodeBase64(await encodePng(r));
+}
+
+const decoded = async (b64: string): Promise<Raster> =>
+  await decodePng(decodeBase64(b64));
 
 const agentOptions = (
   tools: CatalogTool[],
@@ -274,6 +405,15 @@ Deno.test("the request carries the cached prefix, the context, and the sprite as
   ]);
   assertEquals(toolsSent.at(-1)?.cache_control, { type: "ephemeral" });
   assertEquals(toolsSent[0].cache_control, undefined);
+  // And the request itself asks for automatic caching, the breakpoint the
+  // API keeps on the conversation's last block: three of the four a request
+  // may carry, all the default five minutes, and no others.
+  assertEquals(first.cache_control, { type: "ephemeral" });
+  assertEquals(second.cache_control, { type: "ephemeral" });
+  for (const request of [first, second]) {
+    assertEquals(JSON.stringify(request).match(/"cache_control"/g)?.length, 3);
+    assert(!JSON.stringify(request.messages).includes("cache_control"));
+  }
   const user =
     (first.messages as { content: { text: string }[] }[])[0].content[0].text;
   assertStringIncludes(user, "Request: make x");
@@ -402,10 +542,171 @@ Deno.test("the labels read as the editor shows them", () => {
   );
 });
 
+/** ─── pictures, through the loop ───────────────────────────────────────── */
+
+Deno.test("dispatch hands the request's pictures to the tool as its context", async () => {
+  const { tools, contexts } = fakeTools();
+  const byName = new Map(tools.map((t) => [t.name, t]));
+  const uploads = [handUpload(0, "ryuda")];
+  const use = {
+    type: "tool_use" as const,
+    id: "t1",
+    name: "shmupx_create_character",
+    input: { name: "ryuda" },
+  };
+  await dispatch(byName, use, () => {}, { uploads });
+  // The same pictures, not a copy: a frame ref names them by index.
+  assertEquals(contexts.length, 1);
+  assert(contexts[0]?.uploads === uploads);
+
+  // No context is no pictures, as the MCP server calls it.
+  await dispatch(byName, use, () => {});
+  assertEquals(contexts[1], undefined);
+});
+
+Deno.test("a build's main projectile goes to the model as a second image, and onto the proposal", async () => {
+  const { tools } = fakeTools({ shot: true });
+  const api = scriptedApi([
+    reply(
+      [callTool("t1", "shmupx_create_character", { name: "ryuda" })],
+      "tool_use",
+    ),
+  ]);
+  const outcome = await runAssistant(
+    "ryuda",
+    {},
+    agentOptions(tools, api.fetch),
+  );
+
+  // Body, then shot, each an image block after the JSON that names them.
+  const block = (api.requests[1].messages as { content: Block[] }[]).at(-1)!
+    .content[0] as { content: Block[] };
+  assertEquals(block.content.map((b) => b.type), ["text", "image", "image"]);
+  assertEquals(
+    (block.content[1].source as { data: string }).data,
+    PNG,
+  );
+  assertEquals(
+    (block.content[2].source as { data: string }).data,
+    SHOT_PNG,
+  );
+  const sent = JSON.parse(String(block.content[0].text));
+  assertEquals(sent.png_base64, "(attached as an image)");
+  assertEquals(sent.projectile.png_base64, "(attached as an image)");
+  assertEquals(sent.projectile.frame, "a_shot");
+
+  // The card gets the shot as its own field; the summary keeps its name and
+  // size but not its pixels.
+  const [proposal] = outcome.proposals;
+  assertEquals(proposal.png_base64, PNG);
+  assertEquals(proposal.projectile, {
+    png_base64: SHOT_PNG,
+    width_px: 1,
+    height_px: 1,
+  });
+  assertEquals(proposal.summary.projectile, {
+    width_px: 1,
+    height_px: 1,
+    frame: "a_shot",
+  });
+  assert(!JSON.stringify(proposal.summary).includes(SHOT_PNG));
+});
+
+// Needs upload.ts's describeUploads.
+Deno.test("the first user message carries the pictures, then the request and what was made of them", async () => {
+  const { tools, contexts } = fakeTools();
+  const api = scriptedApi([
+    reply(
+      [callTool("t1", "shmupx_create_character", { name: "ryuda" })],
+      "tool_use",
+    ),
+  ]);
+  const uploads = [handUpload(0, "ryuda"), handUpload(1, "ascii", SHOT_PNG)];
+  await runAssistant(
+    "use the ascii image (right) as projectile for Ryuda (left)",
+    { catalog: ["dezaBoss0"] },
+    agentOptions(tools, api.fetch, { uploads }),
+  );
+  const [first] = api.requests;
+  const content = (first.messages as { role: string; content: Block[] }[])[0]
+    .content;
+
+  // One image block per picture, in the request's order, each under a label
+  // that names it as the analysis does; then the text.
+  assertEquals(content.map((b) => b.type), [
+    "text",
+    "image",
+    "text",
+    "image",
+    "text",
+  ]);
+  assertEquals(content[0].text, 'Picture 0 "ryuda":');
+  assertEquals(content[1].source, {
+    type: "base64",
+    media_type: "image/png",
+    data: PNG,
+  });
+  assertEquals(content[2].text, 'Picture 1 "ascii":');
+  assertEquals((content[3].source as { data: string }).data, SHOT_PNG);
+  const user = String(content[4].text);
+  for (const label of [content[0].text, content[2].text]) {
+    assertStringIncludes(user, `\n${label} `);
+  }
+  assertStringIncludes(
+    user,
+    "Request: use the ascii image (right) as projectile for Ryuda (left)",
+  );
+  assertStringIncludes(user, "Pictures attached (2)");
+  assertStringIncludes(user, describeUploads(uploads));
+  assertEquals(
+    user,
+    userMessage(
+      "use the ascii image (right) as projectile for Ryuda (left)",
+      { catalog: ["dezaBoss0"] },
+      6,
+      uploads,
+    ),
+  );
+
+  // The pictures are the player's, so they stay out of the shared prefix:
+  // the system prompt is the shared one and its breakpoints have not moved.
+  // What caches them for the rest of this request is the automatic
+  // breakpoint, asked for at the top level — no marker inside the messages.
+  const system = first.system as { text: string; cache_control?: unknown }[];
+  assertEquals(system.length, 1);
+  assertEquals(system[0].text, SYSTEM_PROMPT);
+  assert(!JSON.stringify(first.messages).includes("cache_control"));
+  assertEquals(first.cache_control, { type: "ephemeral" });
+
+  // And the tool call ran with them.
+  assert(contexts[0]?.uploads === uploads);
+});
+
+Deno.test("an upload ref with no picture attached is an error the model can read", async () => {
+  let message = "";
+  try {
+    await resolveFrame({ upload: 0, region: 1 });
+  } catch (err) {
+    message = err instanceof Error ? err.message : String(err);
+  }
+  assertStringIncludes(message, "No picture is attached to this request");
+  // Nor does an empty list count as one.
+  message = "";
+  try {
+    await resolveFrame({ upload: 0 }, { uploads: [] });
+  } catch (err) {
+    message = err instanceof Error ? err.message : String(err);
+  }
+  assertStringIncludes(message, "No picture is attached to this request");
+  // A request without pictures says nothing about them.
+  assert(!userMessage("x", {}, 3).includes("Pictures attached"));
+});
+
 /** ─── the real table, as the assistant sees it ─────────────────────────── */
 
 Deno.test("the hosted table offers no file art, no writeTo and no level placement", () => {
-  const hosted = catalogTools({ local: false });
+  // The options the route builds its table with.
+  const hosted = catalogTools({ local: false, uploads: true });
   const local = catalogTools({ local: true });
   const offered = hosted.filter((t) => t.assistant).map((t) => t.name);
   assert(!offered.includes("shmupx_place_character"));
@@ -421,6 +722,22 @@ Deno.test("the hosted table offers no file art, no writeTo and no level placemen
   assertStringIncludes(create(local), "writeTo");
   assertStringIncludes(create(local), "dev-fixtures");
 
+  // A frame may be cut out of an attached picture on the hosted table only:
+  // the MCP server's shapes, and a hosted table built without uploads, are
+  // as they were.
+  assertStringIncludes(create(hosted), '"upload"');
+  assertStringIncludes(create(hosted), '"region"');
+  assertStringIncludes(create(hosted), "dark starfield");
+  assert(!create(local).includes('"upload"'));
+  assert(!create(catalogTools({ local: false })).includes('"upload"'));
+  // The upload ref reaches every place a frame goes, through the one shape.
+  const props = toolSpec(
+    hosted.find((t) => t.name === "shmupx_create_character")!,
+  ).input_schema.properties as Record<string, unknown>;
+  for (const field of ["mainProjectile", "anim", "projectiles", "stageBgEnd"]) {
+    assertStringIncludes(JSON.stringify(props[field]), '"upload"', field);
+  }
+
   // Every spec is a JSON Schema object the API takes, and the schema keeps
   // the descriptions an MCP client reads.
   for (const tool of hosted) {
@@ -431,11 +748,11 @@ Deno.test("the hosted table offers no file art, no writeTo and no level placemen
   const update = toolSpec(
     hosted.find((t) => t.name === "shmupx_update_object")!,
   );
-  const props = update.input_schema.properties as Record<
+  const dials = update.input_schema.properties as Record<
     string,
     { description?: string }
   >;
-  assertMatch(props.palette.description ?? "", /Recolour the body art/);
+  assertMatch(dials.palette.description ?? "", /Recolour the body art/);
 });
 
 Deno.test("a build's preview is its first idle frame, cut back out of the sheet it packed", async () => {
@@ -472,12 +789,31 @@ Deno.test("a build's preview is its first idle frame, cut back out of the sheet 
   assertEquals([png.width, png.height], [3, 2]);
   assertEquals(png.data[0], 255);
 
+  // Beside it, the main projectile's first frame, cut the same way.
+  assertExists(preview.projectile);
+  assertEquals(preview.projectile.frame, "boss_shot");
+  assertEquals(
+    [preview.projectile.width_px, preview.projectile.height_px],
+    [1, 1],
+  );
+  const shotPng = await decoded(preview.projectile.png_base64);
+  assertEquals([shotPng.width, shotPng.height], [1, 1]);
+
+  // A shot the sheet does not hold is no shot to draw.
+  const unpacked = await previewOfBuild({
+    ...built,
+    character: { ...built.character, bulletDataA: { texture: ["elsewhere"] } },
+  });
+  assertEquals(unpacked?.frame, "boss_idle0");
+  assertEquals(unpacked?.projectile, undefined);
+
   // No idle state: the first frame of the atlas stands in. No frames: nothing.
   const bare = { ...built, character: {} };
   assertEquals(
     (await previewOfBuild(bare))?.frame,
     Object.keys(json.frames)[0],
   );
+  assertEquals((await previewOfBuild(bare))?.projectile, undefined);
   assertEquals(
     await previewOfBuild({
       ...built,
@@ -612,6 +948,10 @@ Deno.test("GET says whether this build can answer, and with what", async () => {
   assertEquals(some.maxPrompt, MAX_PROMPT);
   assertEquals(some.tools, ["shmupx_list_atlases", "shmupx_create_character"]);
   assertEquals(some.limits, DEFAULT_LIMITS);
+  // What the editor sizes attached pictures by.
+  assertEquals(some.maxUploads, MAX_UPLOADS);
+  assertEquals(some.maxUploadBytes, MAX_UPLOAD_BYTES);
+  assertEquals(some.maxUploadSide, MAX_UPLOAD_SIDE);
 });
 
 Deno.test("POST refuses without a key, across sites, and with nothing to say", async () => {
@@ -787,4 +1127,436 @@ Deno.test("PUBLISH re-runs the proposed call with apply on, and nothing else", a
   );
   assertEquals(bad.status, 400);
   assertStringIncludes((await bad.json()).error, "Bad arguments");
+});
+
+/** ─── pictures, through the route ──────────────────────────────────────── */
+
+Deno.test("a picture that is not one is refused before it spends an ask", async () => {
+  const { tools, calls } = fakeTools();
+  const t = Date.parse("2026-10-27T10:00:00Z");
+  const counter = new MemoryCounter(() => t);
+  const api = scriptedApi([]);
+  const handlers = assistantHandlers({
+    env: keyed({ ASSISTANT_ASKS_PER_HOUR: "1" }),
+    tools,
+    counter,
+    fetch: api.fetch,
+    listCatalog: () => Promise.resolve([]),
+    now: () => t,
+  });
+  const garbage = [
+    { prompt: "x", uploads: [{ png: "not base64 at all!" }] },
+    { prompt: "x", uploads: [{ png: encodeBase64(new Uint8Array(64)) }] },
+    { prompt: "x", uploads: "nope" },
+    {
+      prompt: "x",
+      uploads: Array.from({ length: MAX_UPLOADS + 1 }, () => ({ png: PNG })),
+    },
+    // A picture is no excuse for a prompt over the limit.
+    { prompt: "x".repeat(MAX_PROMPT + 1), uploads: [{ png: PNG }] },
+  ];
+  for (const body of garbage) {
+    const res = await handlers.POST(post(body));
+    assertEquals(res.status, 400, JSON.stringify(body).slice(0, 60));
+    const answer = await res.json();
+    assertEquals(answer.ok, false);
+    assertEquals(typeof answer.error, "string");
+  }
+  // Nothing was counted, nothing reached the model, nothing ran.
+  assertEquals(await counter.peek("ask:day:2026-10-27"), 0);
+  assertEquals(api.requests.length, 0);
+  assertEquals(calls.length, 0);
+  // So the one ask this client has this hour is still there.
+  assertEquals((await handlers.POST(post({ prompt: "x" }))).status, 200);
+});
+
+/** zlib's CRC-32, for building a PNG chunk by hand. */
+function crc32(bytes: Uint8Array): number {
+  let c = ~0;
+  for (const byte of bytes) {
+    c ^= byte;
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return ~c >>> 0;
+}
+
+/**
+ * A PNG that is honest everywhere but its pixels: the signature, a 4×4 RGBA
+ * IHDR, every chunk's length and CRC are right, and the IDAT is a zlib
+ * header over a deflate block of the reserved type. Everything checkUploads
+ * reads off the bytes passes; only inflating it — openUploads, the half that
+ * costs — finds out.
+ */
+function honestHeaderBadPixels(): string {
+  const u32 = (n: number) => {
+    const out = new Uint8Array(4);
+    new DataView(out.buffer).setUint32(0, n);
+    return [...out];
+  };
+  const chunk = (type: string, body: number[]) => {
+    const typed = [...new TextEncoder().encode(type), ...body];
+    return [
+      ...u32(body.length),
+      ...typed,
+      ...u32(crc32(Uint8Array.from(typed))),
+    ];
+  };
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  return encodeBase64(Uint8Array.from([
+    ...signature,
+    ...chunk("IHDR", [...u32(4), ...u32(4), 8, 6, 0, 0, 0]),
+    ...chunk("IDAT", [0x78, 0x9c, 0x07, 0, 0, 0, 0]),
+    ...chunk("IEND", []),
+  ]));
+}
+
+Deno.test("a picture is decoded only once its request is admitted", async () => {
+  const { tools, calls } = fakeTools();
+  const t = Date.parse("2026-10-27T10:00:00Z");
+  const counter = new MemoryCounter(() => t);
+  const api = scriptedApi([]);
+  const handlers = assistantHandlers({
+    env: keyed({
+      ASSISTANT_ASKS_PER_HOUR: "1",
+      ASSISTANT_PUBLISHES_PER_HOUR: "1",
+    }),
+    tools,
+    counter,
+    fetch: api.fetch,
+    listCatalog: () => Promise.resolve([]),
+    now: () => t,
+  });
+  const liar = [{ name: "liar", png: honestHeaderBadPixels() }];
+  const publish = {
+    publish: { tool: "shmupx_create_character", args: { name: "liar" } },
+    uploads: liar,
+  };
+
+  // Within the limit: admitted, counted, and only then refused, at the
+  // decode — the picture lied about itself where checking is cheap.
+  const ask = await handlers.POST(post({ prompt: "x", uploads: liar }));
+  assertEquals(ask.status, 400);
+  assertStringIncludes((await ask.json()).error, "Picture 0");
+  assertEquals(await counter.peek("ask:day:2026-10-27"), 1);
+  const pub = await handlers.POST(post(publish));
+  assertEquals(pub.status, 400);
+  assertEquals(
+    await counter.peek(`publish:5.5.5.5:${Math.floor(t / 3600_000)}`),
+    1,
+  );
+
+  // Over it, the same picture is a 429: the counter turned it away before
+  // anything inflated it, or it would have been that 400 again.
+  assertEquals(
+    (await handlers.POST(post({ prompt: "x", uploads: liar }))).status,
+    429,
+  );
+  assertEquals((await handlers.POST(post(publish))).status, 429);
+  assertEquals(api.requests.length, 0);
+  assertEquals(calls.length, 0);
+});
+
+// Needs upload.ts's decodeUploads and cutUpload, through the real
+// buildCharacter — which reads nothing from the catalog when it clones
+// nothing, and never writes.
+Deno.test("one build cuts at most MAX_UPLOAD_FRAMES frames out of the pictures", async () => {
+  const uploads = await decodeUploads([{
+    name: "pic",
+    png: await twoSubjects(),
+  }]);
+  const refs = (n: number) =>
+    Array.from(
+      { length: n },
+      (_, i) => ({ upload: 0, region: 0, as: `f${i}` }),
+    );
+
+  // Up to the cap, every one is cut — and the same ref used again anywhere
+  // in the build is the same cut, so it costs nothing against it.
+  const full = await buildCharacter({
+    name: "full",
+    anim: {
+      idle: refs(MAX_UPLOAD_FRAMES),
+      attack: Array.from(
+        { length: 40 },
+        () => ({ upload: 0, region: 0, as: "f0" }),
+      ),
+    },
+    projectiles: {
+      bulletDataA: { texture: [{ upload: 0, region: 0, as: "f1" }] },
+    },
+  }, { uploads });
+  assertEquals(full.atlas.frameCount, MAX_UPLOAD_FRAMES);
+
+  // One more is an error the model reads, before that cut is made.
+  await assertRejects(
+    () =>
+      buildCharacter({
+        name: "over",
+        anim: {
+          idle: refs(MAX_UPLOAD_FRAMES),
+          attack: refs(MAX_UPLOAD_FRAMES + 1),
+        },
+      }, { uploads }),
+    ArtError,
+    `at most ${MAX_UPLOAD_FRAMES}`,
+  );
+  await assertRejects(
+    () =>
+      buildCharacter({
+        name: "over",
+        anim: { idle: refs(MAX_UPLOAD_FRAMES + 1) },
+      }, { uploads }),
+    ArtError,
+    "Reuse frames",
+  );
+  // And it is refused before the first cut, not after sixteen of them: a
+  // build over the limit whose very first ref could not be cut still hears
+  // about the limit rather than about that ref.
+  await assertRejects(
+    () =>
+      buildCharacter({
+        name: "over",
+        anim: {
+          idle: Array.from(
+            { length: MAX_UPLOAD_FRAMES + 1 },
+            (_, i) => ({ upload: 0, region: 99, as: `f${i}` }),
+          ),
+        },
+      }, { uploads }),
+    ArtError,
+    "Reuse frames",
+  );
+});
+
+Deno.test("a body bigger than three pictures is refused by its length, unread", async () => {
+  const { tools } = fakeTools();
+  const api = scriptedApi([]);
+  const handlers = assistantHandlers({
+    env: keyed(),
+    tools,
+    counter: new MemoryCounter(),
+    fetch: api.fetch,
+    listCatalog: () => Promise.resolve([]),
+  });
+  const ctx = post({ prompt: "x" }, {
+    "content-length": String(MAX_BODY_BYTES + 1),
+  });
+  const res = await handlers.POST(ctx);
+  assertEquals(res.status, 413);
+  assertEquals(await res.json(), {
+    ok: false,
+    error: "That is too big to send.",
+  });
+  assertEquals(api.requests.length, 0);
+  // Unread is the point: a route that parsed the body first and refused it
+  // after would answer the same 413, having already paid for the megabytes.
+  assert(!ctx.req.bodyUsed, "the body was read before it was refused");
+  // Three pictures at the per-picture limit, base64'd, still fit.
+  assert(Math.ceil(MAX_UPLOAD_BYTES / 3) * 4 * MAX_UPLOADS < MAX_BODY_BYTES);
+});
+
+Deno.test("a chunked body that never says its length is cut off at the limit, not buffered whole", async () => {
+  const { tools } = fakeTools();
+  const api = scriptedApi([]);
+  const handlers = assistantHandlers({
+    env: keyed(),
+    tools,
+    counter: new MemoryCounter(),
+    fetch: api.fetch,
+    listCatalog: () => Promise.resolve([]),
+  });
+  // An endless stream of 1 MiB chunks: a route that buffered to the end
+  // would never answer. Counting what was pulled proves the read stopped.
+  const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+  let pulled = 0;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled++;
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const ctx = post({}, {});
+  const req = new Request(ctx.req.url, {
+    method: "POST",
+    headers: ctx.req.headers,
+    body,
+  });
+  assertEquals(req.headers.get("content-length"), null);
+  const res = await handlers.POST({ req, info: ctx.info });
+  assertEquals(res.status, 413);
+  assertEquals(await res.json(), {
+    ok: false,
+    error: "That is too big to send.",
+  });
+  assert(cancelled, "the reader was not cancelled at the limit");
+  assert(
+    pulled <= MAX_BODY_BYTES / chunk.length + 2,
+    `read ${pulled} MiB of a ${MAX_BODY_BYTES / chunk.length} MiB limit`,
+  );
+  assertEquals(api.requests.length, 0);
+});
+
+// Needs upload.ts's decodeUploads, analyzeUpload, cutUpload and
+// describeUploads: the real hosted table cuts the body and the shot out of
+// a synthetic picture. Nothing is read from the catalog — the build clones
+// nothing — and nothing is written: the loop forces apply off.
+Deno.test("a picture becomes a character: the model sees it, cuts a body and an inked shot from it, and the card shows both", async () => {
+  const png = await twoSubjects();
+  const api = scriptedApi([
+    reply([
+      callTool("t1", "shmupx_create_character", {
+        name: "ryuda",
+        anim: { idle: [{ upload: 0, region: 0 }] },
+        mainProjectile: [{ upload: 0, region: 1, ink: "#ffffff" }],
+      }),
+    ], "tool_use"),
+    reply([text("ryuda throws the right-hand picture, in white.")]),
+  ]);
+  const handlers = assistantHandlers({
+    env: keyed(),
+    counter: new MemoryCounter(),
+    fetch: api.fetch,
+    listCatalog: () => Promise.resolve(["dezaBoss0"]),
+  });
+  const res = await handlers.POST(post({
+    prompt: "use the ascii image (right) as projectile for Ryuda (left)",
+    uploads: [{ name: "pic", png: `data:image/png;base64,${png}` }],
+  }));
+  assertEquals(res.status, 200);
+  const events = await ndjson(res);
+  const done = events.at(-1)!;
+  assertEquals(done.type, "done", JSON.stringify(events));
+
+  // The model was shown the picture as sent (less its data: prefix), then
+  // told what upload.ts made of it.
+  const first = (api.requests[0].messages as { content: Block[] }[])[0]
+    .content;
+  assertEquals(first.map((b) => b.type), ["text", "image", "text"]);
+  assertEquals(first[0].text, 'Picture 0 "pic":');
+  assertEquals((first[1].source as { data: string }).data, png);
+  const uploads = await decodeUploads([{ name: "pic", png }]);
+  assertEquals(uploads[0].analysis.regions.length, 2);
+  assertStringIncludes(String(first[2].text), describeUploads(uploads));
+
+  // The dry run came back with the body and the shot as two images.
+  const result = (api.requests[1].messages as { content: Block[] }[]).at(-1)!
+    .content[0] as { content: Block[]; is_error?: boolean };
+  assertEquals(result.is_error, undefined, JSON.stringify(result.content));
+  assertEquals(result.content.map((b) => b.type), ["text", "image", "image"]);
+
+  // The card: the red block as the body, the black block as a white shot.
+  const [proposal] = done.proposals as {
+    png_base64: string;
+    projectile: { png_base64: string; width_px: number; height_px: number };
+    summary: { atlas: { frames: string[] }; unresolved: string[] };
+  }[];
+  assertEquals(proposal.summary.atlas.frames, ["pic_r0", "pic_r1"]);
+  assertEquals(proposal.summary.unresolved, []);
+  const body = await decoded(proposal.png_base64);
+  assertEquals([body.width, body.height], [8, 8]);
+  assertEquals([...body.data.slice(0, 4)], [200, 30, 30, 255]);
+  const shot = await decoded(proposal.projectile.png_base64);
+  assertEquals([shot.width, shot.height], [6, 4]);
+  assertEquals(
+    [proposal.projectile.width_px, proposal.projectile.height_px],
+    [6, 4],
+  );
+  for (let i = 0; i < shot.data.length; i += 4) {
+    if (shot.data[i + 3] === 0) continue;
+    assertEquals([...shot.data.slice(i, i + 3)], [255, 255, 255]);
+  }
+});
+
+// Needs upload.ts's decodeUploads.
+Deno.test("pictures alone are a request: an empty box asks for a character from them", async () => {
+  const { tools, contexts } = fakeTools();
+  const api = scriptedApi([
+    reply(
+      [callTool("t1", "shmupx_create_character", { name: "pic" })],
+      "tool_use",
+    ),
+  ]);
+  const handlers = assistantHandlers({
+    env: keyed(),
+    tools,
+    counter: new MemoryCounter(),
+    fetch: api.fetch,
+    listCatalog: () => Promise.resolve([]),
+  });
+  const png = await twoSubjects();
+  const res = await handlers.POST(
+    post({ prompt: "  ", uploads: [{ name: "pic", png }] }),
+  );
+  assertEquals(res.status, 200);
+  await ndjson(res);
+  const content = (api.requests[0].messages as { content: Block[] }[])[0]
+    .content;
+  assertStringIncludes(
+    String(content.at(-1)!.text),
+    `Request: ${PICTURE_PROMPT}`,
+  );
+  // The tool ran with the decoded picture in its context.
+  const [picture] = contexts[0]?.uploads ?? [];
+  assertExists(picture);
+  assertEquals(picture.index, 0);
+  assertEquals([picture.raster.width, picture.raster.height], [40, 20]);
+  assertEquals(picture.png_base64, png);
+});
+
+// Needs upload.ts's decodeUploads.
+Deno.test("PUBLISH decodes the same pictures again and re-runs the call with them", async () => {
+  const { tools, calls, contexts } = fakeTools();
+  const counter = new MemoryCounter();
+  const handlers = assistantHandlers({
+    env: keyed(),
+    tools,
+    counter,
+    fetch: scriptedApi([]).fetch,
+  });
+  const png = await twoSubjects();
+  const args = {
+    name: "ryuda",
+    anim: { idle: [{ upload: 0, region: 0 }] },
+  };
+  const res = await handlers.POST(post({
+    publish: { tool: "shmupx_create_character", args },
+    uploads: [{ name: "pic", png }],
+  }));
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).applied, true);
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].args.apply, true);
+  const [picture] = contexts[0]?.uploads ?? [];
+  assertExists(picture);
+  assertEquals([picture.raster.width, picture.raster.height], [40, 20]);
+  // Analysed exactly as the ask's were, so region 0 is the same rectangle.
+  const [again] = await decodeUploads([{ name: "pic", png }]);
+  assertEquals(picture.analysis, again.analysis);
+});
+
+Deno.test("PUBLISH with a picture that is not one runs nothing and counts nothing", async () => {
+  const { tools, calls } = fakeTools();
+  const t = Date.parse("2026-10-27T10:00:00Z");
+  const counter = new MemoryCounter(() => t);
+  const handlers = assistantHandlers({
+    env: keyed(),
+    tools,
+    counter,
+    fetch: scriptedApi([]).fetch,
+    now: () => t,
+  });
+  const res = await handlers.POST(post({
+    publish: { tool: "shmupx_create_character", args: { name: "ryuda" } },
+    uploads: [{ png: "garbage!" }],
+  }));
+  assertEquals(res.status, 400);
+  assertEquals(calls.length, 0);
+  assertEquals(
+    await counter.peek(`publish:5.5.5.5:${Math.floor(t / 3600_000)}`),
+    0,
+  );
 });

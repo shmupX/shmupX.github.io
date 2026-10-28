@@ -21,6 +21,14 @@
 // built character be written to a directory for inspection; the hosted
 // assistant has neither a working tree nor anywhere worth writing, so those
 // branches are not in the shapes it offers.
+//
+// `uploads` is the other way round: only the hosted assistant has them. A
+// player may attach pictures to a DESCRIBE IT request, and a frame may then
+// be cut out of one ({upload: 0, region: 1}). The pictures travel with the
+// request and nowhere else — the server keeps no copy — so they reach a
+// handler as its ToolContext, beside the arguments, never inside them. The
+// MCP server offers no such ref, because no MCP client sends a picture with
+// a tool call.
 
 import { z } from "zod";
 import { resolve } from "@std/path";
@@ -52,6 +60,7 @@ import {
   updateObject,
 } from "./objects.ts";
 import { pngBase64 } from "./pixels.ts";
+import type { UploadedImage } from "./upload.ts";
 
 /** ─── result helpers (same contract as spriteX's server) ───────────────── */
 
@@ -107,6 +116,22 @@ export interface CatalogToolOptions {
    * working tree, and a build may also be written to a directory.
    */
   local: boolean;
+  /**
+   * A request may carry pictures the player attached, and a frame may be cut
+   * out of one. Only the hosted assistant passes this; the MCP server's
+   * shapes stay as they were.
+   */
+  uploads?: boolean;
+}
+
+/**
+ * What one call carries besides its arguments. The pictures attached to the
+ * request being served are the whole of it today: they are megabytes of
+ * pixels the model has already been shown, so they ride beside the call
+ * rather than through the model's arguments, which name them by index.
+ */
+export interface ToolContext {
+  uploads?: UploadedImage[];
 }
 
 const atlasFrameRef = z.string().describe(
@@ -138,10 +163,54 @@ const fileRef = z.object({
   as: z.string().optional(),
 });
 
-function frameRefFor({ local }: CatalogToolOptions) {
-  return local
-    ? z.union([atlasFrameRef, namedFrameRef, spriteRef, fileRef])
-    : z.union([atlasFrameRef, namedFrameRef, spriteRef]);
+// The descriptions are what the model reads when it decides how to cut a
+// picture, so they carry the sizes and the starfield rule as well as the
+// meaning: a frame that is the whole 1400-px picture, or black text on the
+// game's black sky, is the mistake each one is there to head off.
+const uploadRef = z.object({
+  upload: z.number().int().min(0).describe(
+    "Which attached picture, 0-based (the request lists them)",
+  ),
+  region: z.number().int().min(0).optional().describe(
+    "One of the regions the request lists for that picture — prefer this to crop",
+  ),
+  crop: z.object({
+    x: z.number().int(),
+    y: z.number().int(),
+    w: z.number().int(),
+    h: z.number().int(),
+  }).optional().describe(
+    "A rectangle in the picture's pixels, when no region fits",
+  ),
+  background: z.enum(["remove", "keep"]).optional().describe(
+    "Default remove: the plain field around the subject goes transparent",
+  ),
+  ink: z.string().optional().describe(
+    "Monochrome art (text, line art, a scan): redraw its strokes in this colour on " +
+      "transparency — dark-on-light art vanishes on the game's dark starfield, so use " +
+      "a light ink such as '#ffffff'",
+  ),
+  pixelScale: z.union([z.number().min(1).max(64), z.literal("auto")])
+    .optional().describe(
+      "Default auto: undo the upscale the request reports for the region; 1 keeps every pixel",
+    ),
+  maxSize: z.number().int().min(4).max(256).optional().describe(
+    "Shrink so the longest side is at most this many px (a shot is 8–48, a boss 48–128)",
+  ),
+  scale: z.number().int().min(1).max(4).optional().describe(
+    "Enlarge by a whole number, nearest-neighbour, last",
+  ),
+  as: z.string().optional(),
+});
+
+function frameRefFor({ local, uploads = false }: CatalogToolOptions) {
+  return z.union([
+    atlasFrameRef,
+    namedFrameRef,
+    spriteRef,
+    ...(local ? [fileRef] : []),
+    ...(uploads ? [uploadRef] : []),
+  ]);
 }
 
 /**
@@ -208,7 +277,8 @@ export function shapesFor(options: CatalogToolOptions) {
     ),
     preview: z.boolean().optional().describe(
       "Also answer with the first idle frame of the built character as a PNG " +
-        "(png_base64, width_px, height_px), cut from the atlas it packed.",
+        "(png_base64, width_px, height_px), cut from the atlas it packed, and the " +
+        "first frame of its main projectile the same way under `projectile`.",
     ),
     ...(options.local
       ? {
@@ -412,39 +482,66 @@ export function summarize(built: CreateResult) {
   };
 }
 
+/** One frame of a build as the bare-base64 PNG shape the object tools answer with. */
+export interface FramePreview {
+  png_base64: string;
+  width_px: number;
+  height_px: number;
+  frame: string;
+}
+
+export interface BuildPreview extends FramePreview {
+  /**
+   * The first frame of the shot the record fires, when the packed atlas has
+   * it. A body that looks right says nothing about a projectile cut out of a
+   * picture — a shot left at 694 px, or black text that would vanish on the
+   * starfield — so the dry run shows that too.
+   */
+  projectile?: FramePreview;
+}
+
 /**
  * The first idle frame of a build, cut back out of the atlas it packed, as the
- * bare-base64 PNG shape the object tools answer with. The sheet is decoded
- * from the data URL the build already carries rather than kept as a raster
- * beside it: a build is made to be published, and one decode of a small
- * sheet is cheaper than every CreateResult carrying its pixels twice.
+ * bare-base64 PNG shape the object tools answer with — and beside it the first
+ * frame of its main projectile. The sheet is decoded from the data URL the
+ * build already carries rather than kept as a raster beside it: a build is
+ * made to be published, and one decode of a small sheet is cheaper than every
+ * CreateResult carrying its pixels twice.
+ *
+ * "Main projectile" is the slot shmupx_preview_object's 'projectile' state
+ * draws (framesFor), which is MAIN_PROJECTILE_KEY whenever that slot has
+ * frames — always, for a build that set mainProjectile — and otherwise the
+ * next slot the runtime would fire from.
  */
-export async function previewOfBuild(built: CreateResult): Promise<
-  {
-    png_base64: string;
-    width_px: number;
-    height_px: number;
-    frame: string;
-  } | null
-> {
-  let name: string | undefined;
-  try {
-    name = framesFor(built.character, "idle")[0];
-  } catch {
-    name = undefined;
-  }
+export async function previewOfBuild(
+  built: CreateResult,
+): Promise<BuildPreview | null> {
+  const first = (state: string): string | undefined => {
+    try {
+      return framesFor(built.character, state)[0];
+    } catch {
+      return undefined;
+    }
+  };
   const frames = built.atlas.json.frames;
+  let name = first("idle");
   name = name && frames[name] ? name : Object.keys(frames)[0];
   const rect = name ? frames[name] : undefined;
   if (!name || !rect) return null;
   const sheet = await decodeDataUrl(built.atlas.dataUrl);
-  const raster = cut(sheet, rect.frame);
-  return {
-    png_base64: await pngBase64(raster),
-    width_px: raster.width,
-    height_px: raster.height,
-    frame: name,
+  const draw = async (frame: string): Promise<FramePreview> => {
+    const raster = cut(sheet, frames[frame].frame);
+    return {
+      png_base64: await pngBase64(raster),
+      width_px: raster.width,
+      height_px: raster.height,
+      frame,
+    };
   };
+  const preview: BuildPreview = await draw(name);
+  const shot = first("projectile");
+  if (shot && frames[shot]) preview.projectile = await draw(shot);
+  return preview;
 }
 
 /** ─── the table ────────────────────────────────────────────────────────── */
@@ -474,7 +571,12 @@ export interface CatalogTool<S extends z.ZodRawShape = z.ZodRawShape> {
    * way of folding a catalog character into the level that is open — ADD.
    */
   assistant: boolean;
-  run(args: Args<S>): Promise<ToolResult>;
+  /**
+   * `ctx` is optional and most handlers never read it: the MCP server calls
+   * `run(args)` and always will, and only the hosted assistant has anything
+   * to put in it.
+   */
+  run(args: Args<S>, ctx?: ToolContext): Promise<ToolResult>;
 }
 
 // The handlers are typed against their own shapes; the table erases that to
@@ -488,6 +590,12 @@ const readOnly: ToolAnnotations = { readOnlyHint: true, openWorldHint: true };
 /** Every catalog tool, built for a process that is or is not on the player's machine. */
 export function catalogTools(options: CatalogToolOptions): CatalogTool[] {
   const { createShape } = shapesFor(options);
+  // Said in the description as well as the shape, because a model choosing
+  // where art can come from reads the description first.
+  const fromPictures = options.uploads
+    ? "Frames may also be cut out of the pictures the player attached to the request " +
+      "({upload: n, region: r} — the request lists each picture's regions). "
+    : "";
 
   return [
     tool({
@@ -623,6 +731,7 @@ export function catalogTools(options: CatalogToolOptions): CatalogTool[] {
       description:
         "Clone a character's attributes, swap frames from any sprite or atlas into its animations, " +
         "projectiles and stage-end backdrop, and pack the result into its own atlas. " +
+        fromPictures +
         "Returns the built record WITHOUT writing anything; pass apply=true to publish it to the " +
         "catalog as shmupX/characters/<name> + shmupX/atlases/<name> (never to cmg's root-level " +
         "copies). " +
@@ -637,8 +746,10 @@ export function catalogTools(options: CatalogToolOptions): CatalogTool[] {
       },
       writes: true,
       assistant: true,
-      run: async (args) => {
-        const built = await buildCharacter(toRequest(args));
+      run: async (args, ctx) => {
+        const built = await buildCharacter(toRequest(args), {
+          uploads: ctx?.uploads,
+        });
         const payload: Record<string, unknown> = {
           applied: false,
           ...summarize(built),
