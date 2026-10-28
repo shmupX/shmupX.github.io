@@ -383,8 +383,15 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
             });
             send({ type: "done", ...outcome });
           } catch (err) {
+            // The API's own words ride along: "credit balance is too low",
+            // "invalid x-api-key" and a schema complaint all arrive as a bare
+            // 400 or 401 otherwise, and the server log is not where the person
+            // looking at the box can see. They never carry the key, but a
+            // key-shaped string is blanked anyway, and the text is bounded.
             const message = err instanceof ApiError
-              ? `The model could not be reached (HTTP ${err.status}).`
+              ? `The model could not be reached (HTTP ${err.status}${
+                apiReason(err.message)
+              }).`
               : err instanceof Error && err.name === "AbortError"
               ? "Stopped."
               : "Something went wrong on the way to the model.";
@@ -459,6 +466,17 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
       return ask(body, client, config, ctx.req.signal);
     },
   };
+}
+
+/** ": <the API's message>" for an error event, or "" when it says nothing. */
+export function apiReason(message: string): string {
+  const text = message
+    .replace(/sk-ant-[\w-]+/g, "sk-ant-…")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.\s]+$/, "");
+  if (!text || /^HTTP \d+$/.test(text)) return "";
+  return ": " + (text.length > 200 ? text.slice(0, 199) + "…" : text);
 }
 
 /**

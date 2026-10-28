@@ -87,6 +87,7 @@ import {
   MemoryCounter,
 } from "../lib/assistant/limits.ts";
 import {
+  apiReason,
   assistantHandlers,
   MAX_BODY_BYTES,
   MAX_PROMPT,
@@ -1053,8 +1054,24 @@ Deno.test("an API that will not answer is an error event, not a broken stream", 
   const events = await ndjson(await handlers.POST(post({ prompt: "x" })));
   assertEquals(events, [{
     type: "error",
-    message: "The model could not be reached (HTTP 401).",
+    message: "The model could not be reached (HTTP 401: invalid x-api-key).",
   }]);
+});
+
+Deno.test("an API error's reason is bounded, and never repeats a key", () => {
+  assertEquals(apiReason(""), "");
+  assertEquals(apiReason("HTTP 400"), "");
+  assertEquals(
+    apiReason("Your credit balance is too low.\n"),
+    ": Your credit balance is too low",
+  );
+  assertEquals(
+    apiReason("bad key sk-ant-api03-abc_DEF-123 rejected"),
+    ": bad key sk-ant-… rejected",
+  );
+  const long = apiReason("x".repeat(500));
+  assertEquals(long.length, 2 + 200);
+  assert(long.endsWith("…"));
 });
 
 Deno.test("the limits answer 429 with a retry-after", async () => {
