@@ -72,6 +72,7 @@ import {
   type UploadedImage,
 } from "../mcp/lib/upload.ts";
 import {
+  callMessages,
   describeCall,
   describeResult,
   dispatch,
@@ -88,6 +89,7 @@ import {
 } from "../lib/assistant/limits.ts";
 import {
   apiReason,
+  assistantConfig,
   assistantHandlers,
   MAX_BODY_BYTES,
   MAX_PROMPT,
@@ -1056,6 +1058,51 @@ Deno.test("an API that will not answer is an error event, not a broken stream", 
     type: "error",
     message: "The model could not be reached (HTTP 401: invalid x-api-key).",
   }]);
+});
+
+Deno.test("a key not scoped to a workspace names one: ANTHROPIC_WORKSPACE_ID goes out as anthropic-workspace-id", async () => {
+  const env = (vars: Record<string, string>) => (k: string) => vars[k];
+  assertEquals(
+    assistantConfig(env({ ANTHROPIC_API_KEY: "k" })).workspaceId,
+    undefined,
+  );
+  assertEquals(
+    assistantConfig(env({
+      ANTHROPIC_API_KEY: "k",
+      ANTHROPIC_WORKSPACE_ID: "  wrkspc_test  ",
+    })).workspaceId,
+    "wrkspc_test",
+  );
+
+  const seen: Headers[] = [];
+  const fetch = (_url: string | URL | Request, init?: RequestInit) => {
+    seen.push(new Headers(init?.headers));
+    return Promise.resolve(
+      new Response(
+        JSON.stringify(reply([text("ok")])),
+        { headers: { "content-type": "application/json" } },
+      ),
+    );
+  };
+  const body = {
+    system: "s",
+    tools: [],
+    messages: [{
+      role: "user" as const,
+      content: [{ type: "text" as const, text: "hi" }],
+    }],
+    max_tokens: 16,
+  };
+  const base = {
+    apiKey: "k",
+    model: "m",
+    fetch: fetch as unknown as typeof globalThis.fetch,
+  };
+  await callMessages(body, base);
+  await callMessages(body, { ...base, workspaceId: "wrkspc_test" });
+  assertEquals(seen[0].get("anthropic-workspace-id"), null);
+  assertEquals(seen[1].get("anthropic-workspace-id"), "wrkspc_test");
+  assertEquals(seen[1].get("x-api-key"), "k");
 });
 
 Deno.test("an API error's reason is bounded, and never repeats a key", () => {

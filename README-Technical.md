@@ -2410,8 +2410,10 @@ nothing in the middle.
   runs the picture analysis and the cuts on synthetic pictures (and on the
   motivating one, when `UPLOAD_FIXTURE` points at it).
 
-Turning it on is one environment variable on Deno Deploy, `ANTHROPIC_API_KEY`;
-the limits above are the defaults to tune from. The MCP server is unchanged to
+Turning it on is one environment variable on Deno Deploy, `ANTHROPIC_API_KEY`
+— plus `ANTHROPIC_WORKSPACE_ID` (a `wrkspc_…` id, not a secret) when the key is
+not scoped to a workspace, which the API otherwise refuses with a 400 on every
+request; a workspace-scoped key needs nothing else. The limits above are the defaults to tune from. The MCP server is unchanged to
 its clients: `deno task mcp:character` registers the same tools under the same
 names.
 

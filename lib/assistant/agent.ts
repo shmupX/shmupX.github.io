@@ -95,6 +95,12 @@ interface ApiResponse {
 export interface ApiOptions {
   apiKey: string;
   model: string;
+  /**
+   * Sent as `anthropic-workspace-id` when set. A key that is not scoped to a
+   * workspace is refused with a 400 unless every request names one; a
+   * workspace-scoped key needs nothing here.
+   */
+  workspaceId?: string;
   /** The Messages endpoint; tests point it elsewhere. */
   url?: string;
   fetch?: typeof fetch;
@@ -168,6 +174,9 @@ export async function callMessages(
       "content-type": "application/json",
       "x-api-key": options.apiKey,
       "anthropic-version": API_VERSION,
+      ...(options.workspaceId
+        ? { "anthropic-workspace-id": options.workspaceId }
+        : {}),
     },
     body: JSON.stringify(payload),
     signal: signal

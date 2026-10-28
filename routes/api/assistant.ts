@@ -102,6 +102,8 @@ export const PICTURE_PROMPT = "Make a character from the attached picture.";
 
 export interface AssistantConfig {
   apiKey: string | null;
+  /** ANTHROPIC_WORKSPACE_ID — needed only by a key not scoped to a workspace. */
+  workspaceId: string | undefined;
   model: string;
   maxSteps: number;
   maxTokens: number;
@@ -118,6 +120,7 @@ export function assistantConfig(
   };
   return {
     apiKey: get("ANTHROPIC_API_KEY")?.trim() || null,
+    workspaceId: get("ANTHROPIC_WORKSPACE_ID")?.trim() || undefined,
     model: get("ASSISTANT_MODEL")?.trim() || DEFAULT_MODEL,
     maxSteps: int("ASSISTANT_MAX_STEPS", 12, 40),
     maxTokens: int("ASSISTANT_MAX_TOKENS", 2048, 8192),
@@ -371,6 +374,7 @@ export function assistantHandlers(deps: AssistantDeps = {}) {
           try {
             const outcome = await runAssistant(prompt, context, {
               apiKey: config.apiKey!,
+              workspaceId: config.workspaceId,
               model: config.model,
               url: deps.apiUrl,
               fetch: deps.fetch,
