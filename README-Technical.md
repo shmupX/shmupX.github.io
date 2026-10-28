@@ -5812,7 +5812,9 @@ numbers. → MEDNAFEN CART (`POST /api/saturn-save`, the same code as
 
 `95-demo` is [EVIL INVADERS '95](https://github.com/easierbycode/95-demo-sp), a
 Space Invaders × Galaga couch shooter written in Svelte 5 and Phaser 4, rebuilt
-as a cloud game by `scripts/95-demo/build-level.ts`:
+as a cloud game by `scripts/95-demo/build-level.ts`. It answers to the alias
+`95` too, so `95.codemonkey.games` opens it
+(`deno task level:alias 95-demo 95 -- --write`):
 
 ```sh
 deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts            # dry run: what it would write
@@ -5895,12 +5897,12 @@ level anyone made, spriteX's ~430 sheets — and shmupX never writes them. shmup
 reads and writes its own games in a subtree beside them, `shmupX/`, holding only
 what it ships:
 
-| path                          | what                                                                    |
-| ----------------------------- | ----------------------------------------------------------------------- |
-| `shmupX/levels/<key>`         | the six games: `2019-PS2`, `95-demo`, `foo`, `gs`, `Ramsie` and `rando` |
-| `shmupX/levelAliases/<alias>` | `2019` and `streetfighter`, both naming `2019-PS2`                      |
-| `shmupX/characters/<id>`      | the 29 library characters those games name                              |
-| `shmupX/atlases/<id>`         | each one's art, under the character's own id                            |
+| path                          | what                                                                       |
+| ----------------------------- | -------------------------------------------------------------------------- |
+| `shmupX/levels/<key>`         | the six games: `2019-PS2`, `95-demo`, `foo`, `gs`, `Ramsie` and `rando`    |
+| `shmupX/levelAliases/<alias>` | `2019` and `streetfighter` naming `2019-PS2`, `squad` `gs`, `95` `95-demo` |
+| `shmupX/characters/<id>`      | the 29 library characters those games name                                 |
+| `shmupX/atlases/<id>`         | each one's art, under the character's own id                               |
 
 Two of the copies are not verbatim, because a level's `gameId` picks its
 leaderboard (see **WORLD BEST and TODAY'S BEST, per game**). `foo` is pinned to
