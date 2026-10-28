@@ -2256,6 +2256,61 @@ nothing changed writes nothing.
 `.claude/skills/edit-object/SKILL.md` is the skill that drives these, including
 how spoken degrees — _a bit_, _much_, _way_ — become dial values.
 
+### The assistant: the same tools, from the editor
+
+A player at codemonkey.games has no MCP client. The CHARACTER LIBRARY's
+**DESCRIBE IT** box is the same catalog tools behind a sentence — _"a boss like
+the stage 1 boss that throws hadoukens"_, _"the pyramid, redder"_ — run by
+`routes/api/assistant.ts` against the Messages API on the site's own key, so the
+credits pay for every player's character and not for one desktop's. The watch
+bridge is this loop with `claude -p` in the middle; this is the loop with
+nothing in the middle.
+
+- **One table.** The tools moved out of `mcp/server.ts` into `mcp/lib/tools.ts`
+  — name, description, zod shape, handler — and both the server and the route
+  read it. The server registers the table (plus the preview server and the debug
+  tools, which only make sense on the player's machine); the route turns the
+  same shapes into Messages API `input_schema`s with `z.toJSONSchema`, so a
+  model reaches the catalog through the same words either way.
+  `catalogTools({ local: false })` is the hosted variant: no `{file}` art, no
+  `writeTo`, and `shmupx_place_character` — which edits a level somebody else
+  authored — is not offered (`assistant: false`).
+- **It never writes.** `lib/assistant/agent.ts` forces `apply` off on every
+  writing tool whatever the model passed, and keeps the call as a _proposal_:
+  the arguments, the dry run's summary, and the PNG of the first idle frame
+  (`previewOfBuild`, cut back out of the atlas the build packed). The editor
+  shows each proposal as a card with a PUBLISH button; PUBLISH posts
+  `{ publish: { tool, args } }` and the route runs that one call again with
+  `apply: true`. The catalog is open-write regardless, so this is not a lock on
+  the player — it is a guarantee about the model: no sentence can make it
+  publish.
+- **It sees what it made.** A tool result carrying `png_base64` goes back to the
+  model as an image block beside the JSON, so "redder" is judged against the
+  sprite and not the field names.
+- **It stops.** `ASSISTANT_MAX_STEPS` tool calls (default 12), then one turn
+  with tools off so the model answers with what it has. Per client (the address)
+  `ASSISTANT_ASKS_PER_HOUR` (8) and `ASSISTANT_PUBLISHES_PER_HOUR` (20); for
+  everybody `ASSISTANT_ASKS_PER_DAY` (200). The counters live in Deno KV when
+  the runtime opens one and in memory otherwise (`lib/assistant/limits.ts`). The
+  system prompt and the tool table are prompt-cache breakpoints, so a turn costs
+  its new tokens plus a cache read.
+- **Where it shows up.** `GET /api/assistant` answers `{ available }` — true
+  when `ANTHROPIC_API_KEY` is set — and the box exists only then: the hosted
+  site, or a desktop install whose owner exported a key. `ASSISTANT_MODEL` picks
+  the model (default `claude-sonnet-5-5`). The CHARACTER SHEET's **Y · DESCRIBE
+  A CHANGE** opens the same box with the character's name filled in and passed
+  to the model as a hint.
+- **The wire.** `POST { prompt, context }` streams NDJSON: `tool` and
+  `tool_result` for the progress line, `text` as the model speaks, then `done`
+  with `proposals`, `steps` and `usage`, or `error`.
+  `tests/assistant_route_test.ts` runs the loop, the limits and the route
+  against a scripted API and a toy tool table.
+
+Turning it on is one environment variable on Deno Deploy, `ANTHROPIC_API_KEY`;
+the limits above are the defaults to tune from. The MCP server is unchanged to
+its clients: `deno task mcp:character` registers the same tools under the same
+names.
+
 ## Debugging the game, one frame at a time
 
 `deno task game:debug` serves the shipped level

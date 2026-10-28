@@ -617,6 +617,35 @@
             font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em; color: var(--raillbl);
         }
 
+        /* ===== DESCRIBE IT (the character assistant) =====
+           The CHARACTER LIBRARY's prompt box: a sentence in, the agent's
+           steps as it works, its answer, and one card per dry run it made,
+           each with the sprite and a PUBLISH button. Hidden on a build with
+           no API key (GET /api/assistant says). */
+        .assist { display: flex; flex-direction: column; gap: 6px; margin: 0 4px 12px; padding: 10px 10px 8px; border-radius: 12px; border: 1px solid var(--redge); background: var(--rbg); }
+        .assist-row { display: flex; gap: 8px; align-items: stretch; }
+        .assist-row .menu-input { margin: 0; flex: 1; min-width: 0; font-size: 12px; }
+        .assist-row .menu-btn { width: auto; margin: 0; padding: 0 16px; justify-content: center; flex: none; }
+        .assist-row .menu-btn[disabled] { opacity: .5; cursor: default; }
+        .assist-status { display: flex; align-items: center; gap: 8px; min-height: 16px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em; color: var(--raillbl); }
+        .assist-status.busy::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--sel); box-shadow: 0 0 10px var(--selglow); animation: assistPulse 1s ease-in-out infinite; flex: none; }
+        .assist-status.err { color: var(--sel); }
+        @keyframes assistPulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+        .assist-steps { display: flex; flex-direction: column; gap: 2px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .1em; color: var(--rsub); }
+        .assist-steps span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .assist-text { font-size: 12px; line-height: 1.5; color: var(--rink); white-space: pre-wrap; }
+        .assist-text:empty, .assist-steps:empty, .assist-cards:empty { display: none; }
+        .assist-cards { display: flex; flex-direction: column; gap: 6px; }
+        .assist-card { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 12px; border: 1px solid var(--redge); background: rgba(0,0,0,.3); }
+        .assist-card .cs-sprite { width: 72px; height: 72px; }
+        .assist-card .cs-sprite img { width: 56px; height: 56px; }
+        .assist-card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .12em; color: var(--rsub); }
+        .assist-card-name { font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 800; letter-spacing: .1em; color: var(--rink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .assist-card-warn { color: var(--sel); white-space: normal; }
+        .assist-card .menu-btn { width: auto; margin: 0; padding: 10px 14px; flex: none; }
+        .assist-card .menu-btn[disabled] { opacity: .5; cursor: default; }
+        .assist-card.done { border-color: var(--tgedge); box-shadow: 0 0 10px var(--selglow); }
+
         /* ===== SAVED GAMES LIST ===== */
         .fb-level-item {
             display: flex; align-items: center; gap: 12px; padding: 10px 12px;
@@ -1838,6 +1867,22 @@
     <div id="character-library-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:80vh">
             <div class="picker-title">CHARACTER LIBRARY</div>
+            <!-- DESCRIBE IT: type what you want and the character assistant
+                 (routes/api/assistant.ts) builds it out of the catalog — a
+                 clone of a boss with other art, a recolour, a bigger
+                 silhouette — and answers with a card per dry run. PUBLISH
+                 writes it to the library, where ADD picks it up like any
+                 other. Shown only when this build can answer. -->
+            <div id="assist" class="assist hidden">
+                <form class="assist-row" onsubmit="assistAsk(event)">
+                    <input id="assist-prompt" class="menu-input" type="text" maxlength="400" placeholder="DESCRIBE IT · a boss like the stage 1 boss that throws hadoukens" autocomplete="off" spellcheck="false" aria-label="Describe a character">
+                    <button type="submit" id="assist-go" class="menu-btn">ASK</button>
+                </form>
+                <div id="assist-status" class="assist-status"></div>
+                <div id="assist-steps" class="assist-steps"></div>
+                <div id="assist-text" class="assist-text"></div>
+                <div id="assist-cards" class="assist-cards"></div>
+            </div>
             <div id="character-library-list" style="display:flex;flex-direction:column;gap:6px;padding:0 4px;"></div>
         </div>
     </div>
@@ -1896,6 +1941,7 @@
             <div class="cs-foot">
                 <button type="button" class="pad-hint" id="cs-send" onclick="charSendToPixel()"><span class="pad-orb pad-orb-a">A</span><span id="cs-send-label">PIXEL EDITOR</span></button>
                 <button type="button" class="pad-hint" onclick="charExtractToLibrary()"><span class="pad-orb pad-orb-x">X</span><span>EXTRACT TO LIBRARY</span></button>
+                <button type="button" class="pad-hint hidden" id="cs-describe" onclick="charDescribeChange()"><span class="pad-orb pad-orb-y">Y</span><span>DESCRIBE A CHANGE</span></button>
                 <button type="button" class="pad-hint" onclick="closeCharacterSheet()"><span class="pad-orb pad-orb-b">B</span><span>CLOSE</span></button>
             </div>
             <div class="picker-hint sheet-foot" id="cs-note"></div>
@@ -6482,6 +6528,8 @@
         async function openCharacterLibrary() {
             const overlay = document.getElementById('character-library-modal');
             overlay.classList.remove('hidden');
+            assistMount();
+            assistFromCharacter = null;
             const list = document.getElementById('character-library-list');
             list.textContent = 'Loading…';
             try {
@@ -6516,6 +6564,237 @@
             } catch (e) {
                 list.textContent = 'Could not load the library: ' + e.message;
             }
+        }
+
+        // ================== DESCRIBE IT (the character assistant) ==================
+        // The prompt box at the top of the CHARACTER LIBRARY. One sentence goes
+        // to /api/assistant, which runs an agent over the same catalog tools
+        // the MCP server has (mcp/lib/tools.ts) on the site's own API key and
+        // streams its steps back as NDJSON; every dry run it made comes back
+        // as a proposal, shown here as a card with the sprite. Nothing is
+        // written until PUBLISH, which sends that one call back with apply
+        // on; the library list then re-reads the catalog and ADD folds the
+        // character into this game like any other. The box only exists when
+        // GET /api/assistant says this build has a key: the hosted site, or a
+        // desktop install whose owner set one.
+        let assistInfo;                    // undefined: not asked yet; null: not available; else the GET answer
+        let assistBusy = false;
+        let assistAbort = null;
+        let assistFromCharacter = null;    // the sheet the player came from, as a hint to the model
+        async function assistAvailable() {
+            if (assistInfo !== undefined) return assistInfo;
+            try {
+                const res = await fetch('/api/assistant', { cache: 'no-store' });
+                const info = res.ok ? await res.json() : null;
+                assistInfo = info && info.available ? info : null;
+            } catch (_) {
+                assistInfo = null;
+            }
+            return assistInfo;
+        }
+        async function assistMount() {
+            const info = await assistAvailable();
+            const box = document.getElementById('assist');
+            if (box) box.classList.toggle('hidden', !info);
+            if (info) document.getElementById('assist-prompt').maxLength = info.maxPrompt || 400;
+        }
+        function assistPrefill(text, character) {
+            assistFromCharacter = character || null;
+            const input = document.getElementById('assist-prompt');
+            if (!input) return;
+            input.value = text || '';
+            setTimeout(() => { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }, 50);
+        }
+        function assistSetStatus(text, mode) {
+            const el = document.getElementById('assist-status');
+            el.textContent = text || '';
+            el.classList.toggle('busy', mode === 'busy');
+            el.classList.toggle('err', mode === 'err');
+        }
+        function assistStep(text) {
+            const log = document.getElementById('assist-steps');
+            const line = document.createElement('span');
+            line.textContent = text;
+            log.appendChild(line);
+            while (log.children.length > 6) log.removeChild(log.firstChild);
+        }
+        function assistContext() {
+            const ctx = {};
+            const level = dezaSavGameName();
+            if (level && level !== 'my game') ctx.level = level;
+            if (assistFromCharacter) ctx.character = assistFromCharacter;
+            return ctx;
+        }
+        async function assistAsk(ev) {
+            if (ev) ev.preventDefault();
+            if (assistBusy) { if (assistAbort) assistAbort.abort(); return; }
+            const input = document.getElementById('assist-prompt');
+            const prompt = (input.value || '').trim();
+            if (!prompt) { input.focus(); return; }
+            const go = document.getElementById('assist-go');
+            document.getElementById('assist-steps').textContent = '';
+            document.getElementById('assist-text').textContent = '';
+            document.getElementById('assist-cards').textContent = '';
+            assistBusy = true;
+            assistAbort = new AbortController();
+            go.textContent = 'STOP';
+            assistSetStatus('THINKING…', 'busy');
+            try {
+                const res = await fetch('/api/assistant', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ prompt, context: assistContext() }),
+                    signal: assistAbort.signal,
+                });
+                if (!res.ok) {
+                    const body = await res.json().catch(() => ({}));
+                    assistSetStatus(String(body.error || ('HTTP ' + res.status)).toUpperCase(), 'err');
+                    return;
+                }
+                // NDJSON: one event per line, handled as each line completes.
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let finished = false;
+                const handle = (event) => {
+                    if (event.type === 'tool') {
+                        assistSetStatus(String(event.label || '').toUpperCase() + '…', 'busy');
+                    } else if (event.type === 'tool_result') {
+                        assistStep((event.ok ? '· ' : '× ') + String(event.note || ''));
+                    } else if (event.type === 'text') {
+                        document.getElementById('assist-text').textContent = event.text || '';
+                    } else if (event.type === 'done') {
+                        finished = true;
+                        document.getElementById('assist-text').textContent = event.text || '';
+                        const proposals = Array.isArray(event.proposals) ? event.proposals : [];
+                        assistRenderCards(proposals);
+                        if (proposals.length) {
+                            assistSetStatus(proposals.length === 1 ? 'READY · PUBLISH PUTS IT IN THE LIBRARY' : 'READY · ' + proposals.length + ' PROPOSALS', '');
+                        } else {
+                            assistSetStatus(event.stop === 'steps' ? 'RAN OUT OF STEPS · TRY A SMALLER ASK' : 'NOTHING TO PUBLISH', '');
+                        }
+                    } else if (event.type === 'error') {
+                        finished = true;
+                        assistSetStatus(String(event.message || 'FAILED').toUpperCase(), 'err');
+                    }
+                };
+                for (;;) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    let nl;
+                    while ((nl = buffer.indexOf('\n')) >= 0) {
+                        const line = buffer.slice(0, nl).trim();
+                        buffer = buffer.slice(nl + 1);
+                        if (!line) continue;
+                        try { handle(JSON.parse(line)); } catch (_) { /* a torn line */ }
+                    }
+                }
+                if (!finished) assistSetStatus('THE CONNECTION DROPPED', 'err');
+            } catch (e) {
+                assistSetStatus(e && e.name === 'AbortError' ? 'STOPPED' : 'COULD NOT REACH THE ASSISTANT', 'err');
+            } finally {
+                assistBusy = false;
+                assistAbort = null;
+                go.textContent = 'ASK';
+            }
+        }
+        // One card per proposal: the sprite, what it is, and PUBLISH.
+        function assistRenderCards(proposals) {
+            const host = document.getElementById('assist-cards');
+            host.textContent = '';
+            proposals.forEach((p) => {
+                const s = p.summary || {};
+                const args = p.args || {};
+                const card = document.createElement('div');
+                card.className = 'assist-card';
+                const box = document.createElement('div');
+                box.className = 'cs-sprite';
+                if (typeof p.png_base64 === 'string' && /^[A-Za-z0-9+/=]+$/.test(p.png_base64)) {
+                    const img = document.createElement('img');
+                    img.src = 'data:image/png;base64,' + p.png_base64;
+                    img.alt = '';
+                    img.draggable = false;
+                    box.appendChild(img);
+                }
+                card.appendChild(box);
+                const info = document.createElement('div');
+                info.className = 'assist-card-info';
+                const name = document.createElement('span');
+                name.className = 'assist-card-name';
+                // Names come from an open-write catalog: textContent only (see the BP notes).
+                name.textContent = p.name || '?';
+                info.appendChild(name);
+                const meta = document.createElement('span');
+                const isNew = p.tool === 'shmupx_create_character';
+                let what = isNew
+                    ? ('NEW CHARACTER' + (s.clonedFrom ? ' · FROM ' + String(s.clonedFrom).toUpperCase() : ''))
+                    : (args.saveAs
+                        ? 'EDIT OF ' + String(args.id || '').toUpperCase() + ' · SAVED AS NEW'
+                        : 'EDITS ' + String(args.id || '').toUpperCase() + ' IN PLACE');
+                if (s.atlas && s.atlas.frameCount != null) what += ' · ' + s.atlas.frameCount + ' FRAMES';
+                if (Array.isArray(s.changes) && s.changes.length) what += ' · ' + s.changes.length + (s.changes.length === 1 ? ' FIELD' : ' FIELDS');
+                meta.textContent = what;
+                info.appendChild(meta);
+                const unresolved = Array.isArray(s.unresolved) ? s.unresolved : [];
+                const warnings = Array.isArray(s.warnings) ? s.warnings : [];
+                if (unresolved.length || warnings.length) {
+                    const warn = document.createElement('span');
+                    warn.className = 'assist-card-warn';
+                    warn.textContent = (unresolved.length ? unresolved.length + ' FRAME(S) WITHOUT PIXELS: ' + unresolved.join(', ') + ' ' : '') + warnings.join(' · ');
+                    info.appendChild(warn);
+                }
+                card.appendChild(info);
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'menu-btn';
+                btn.textContent = unresolved.length ? 'INCOMPLETE' : 'PUBLISH';
+                btn.disabled = !!unresolved.length;
+                btn.onclick = () => assistPublish(p, btn, card);
+                card.appendChild(btn);
+                host.appendChild(card);
+            });
+        }
+        async function assistPublish(p, btn, card) {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            btn.textContent = 'PUBLISHING…';
+            try {
+                const res = await fetch('/api/assistant', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ publish: { tool: p.tool, args: p.args } }),
+                });
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok || !body.ok) {
+                    btn.disabled = false;
+                    btn.textContent = 'PUBLISH';
+                    assistSetStatus(String(body.error || ('HTTP ' + res.status)).toUpperCase(), 'err');
+                    return;
+                }
+                btn.textContent = 'PUBLISHED';
+                card.classList.add('done');
+                assistSetStatus('PUBLISHED · ' + String(p.name).toUpperCase() + ' IS IN THE LIBRARY · ADD PUTS IT IN THIS GAME', '');
+                flash('PUBLISHED · ' + String(p.name).toUpperCase());
+                openCharacterLibrary();   // the list re-reads the catalog; this box sits outside it
+            } catch (_) {
+                btn.disabled = false;
+                btn.textContent = 'PUBLISH';
+                assistSetStatus('COULD NOT PUBLISH', 'err');
+            }
+        }
+        // Y on the CHARACTER SHEET: describe a change to this character. The
+        // sheet's record is this game's copy; the assistant edits the library
+        // character it came from (its name rides on the record), so the hint
+        // tells the model which one, and the phrase does the rest.
+        function charDescribeChange() {
+            const sel = charSheet;
+            if (!sel) return;
+            const rec = charRecord(sel) || {};
+            const name = typeof rec.name === 'string' && rec.name ? rec.name : charName(sel);
+            closeCharacterSheet();
+            openCharacterLibrary();
+            assistPrefill(name + ': ', name);
         }
 
         function nextEnemyKey() {
@@ -6995,6 +7274,8 @@
             send.classList.toggle('dim', !picked.size);
             send.classList.toggle('glow', picked.size > 0);
             document.getElementById('cs-send-label').textContent = 'PIXEL EDITOR' + (picked.size ? ' (' + picked.size + ')' : '');
+            const describe = document.getElementById('cs-describe');
+            if (describe) assistAvailable().then((info) => describe.classList.toggle('hidden', !info));
             document.getElementById('cs-note').textContent = lineageForked()
                 ? 'PIXEL EDITS SAVE INTO THIS MOD · PARENT ' + lineage.parent.title.toUpperCase() + ' STAYS UNTOUCHED'
                 : 'PIXEL EDITS WRITE TO THE GAME ATLAS · EVERY PLACEMENT UPDATES';
