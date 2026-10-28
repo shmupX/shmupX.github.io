@@ -1177,6 +1177,12 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       if (typeof levelData.ownItems === "boolean") {
         recipe.ownItems = levelData.ownItems;
       }
+      // A stage that ends when its field is clear rather than on its wave
+      // timer (GameScene's wave block) — the cloud game 95-demo's formation
+      // levels end on their last kill, as Space Invaders' do.
+      if (typeof levelData.endsOnClear === "boolean") {
+        recipe.endsOnClear = levelData.endsOnClear;
+      }
 
       const atlasFrames = (() => {
         try {

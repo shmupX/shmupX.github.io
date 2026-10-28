@@ -1,0 +1,62 @@
+{
+  "textures": [
+    {
+      "image": "pink-bunny.png",
+      "format": "RGBA8888",
+      "size": {
+        "w": 100,
+        "h": 50
+      },
+      "scale": 1,
+      "frames": [
+        {
+          "filename": "pink-bunny-0.png",
+          "rotated": false,
+          "trimmed": false,
+          "sourceSize": {
+            "w": 48,
+            "h": 48
+          },
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 48,
+            "h": 48
+          },
+          "frame": {
+            "x": 1,
+            "y": 1,
+            "w": 48,
+            "h": 48
+          }
+        },
+        {
+          "filename": "pink-bunny-1.png",
+          "rotated": false,
+          "trimmed": false,
+          "sourceSize": {
+            "w": 48,
+            "h": 48
+          },
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 48,
+            "h": 48
+          },
+          "frame": {
+            "x": 51,
+            "y": 1,
+            "w": 48,
+            "h": 48
+          }
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "app": "https://www.codeandweb.com/texturepacker",
+    "version": "3.0",
+    "smartupdate": "$TexturePacker:SmartUpdate:6066e6efe87b8f371eb0053657b6a463:150f1e39bb33350d5c0d9c5a4a17c970:d3a89e7c0c301862a9ffd1fb1aba8dfd$"
+  }
+}

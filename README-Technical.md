@@ -684,6 +684,18 @@ they are written out in full.
     `tests/shmupx_root_runtime_test.ts` and `tests/game_scores_test.ts` pin
     both. Upstream homes are `2019-es7/src/firebaseScores.js`, `gameIdentity.js`
     and `highScoreUi.js`.
+  - A stage can end on its last kill. A record's `endsOnClear: true` (carried
+    onto the recipe by both copies of `mergeRecipe`) makes GameScene note, in
+    `create`, the spawn-order index of the last enemylist row that holds an
+    enemy (`lastLiveRow`); once that row has spawned and no enemy but the boss
+    is left on the field — shot down or flown off — the wave block skips the
+    empty rows behind it and runs the wave's own end, `bossAdd`, which fights
+    the stage's boss or clears a stage that has none. Without the flag a stage
+    ends on its wave timer as before, so a runtime without this edit plays such
+    a record to the end of its rows. The cloud game `95-demo` uses it: a Space
+    Invaders level is over when its formation is (see **EVIL INVADERS '95 as a
+    cloud game** below). `tests/95_demo_test.ts` pins both copies and the wave
+    block. Upstream home is `2019-es7/src/phaser/GameScene.js`.
 - `lib/rtdb-root.ts` — where shmupX's own games sit in the Realtime Database it
   shares with cmg: `levels`, `levelAliases`, `atlases` and `characters` under
   `shmupX/`, beside cmg's root copies (see **shmupX's corner of the shared
@@ -5796,6 +5808,83 @@ numbers. → MEDNAFEN CART (`POST /api/saturn-save`, the same code as
 `deno task sav:run`) installs the cart for the desktop emulator, which has the
 512 KB cartridge, and launches it.
 
+## EVIL INVADERS '95 as a cloud game
+
+`95-demo` is [EVIL INVADERS '95](https://github.com/easierbycode/95-demo-sp), a
+Space Invaders × Galaga couch shooter written in Svelte 5 and Phaser 4, rebuilt
+as a cloud game by `scripts/95-demo/build-level.ts`:
+
+```sh
+deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts            # dry run: what it would write
+deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts --serve    # play it locally, nothing written
+deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts --apply    # write shmupX/levels/95-demo (--force replaces it)
+deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts --revert   # delete it again
+```
+
+The source's ten levels are the cloud game's ten stages, and the RedDevil that
+ends its first cycle is the tenth stage's boss. Its numbers are ported verbatim
+into `scripts/95-demo/source.ts` (the stage table, the tuning constants, the
+CORE_GALAGA flight paths, the animation table) and its art is copied byte for
+byte into `scripts/95-demo/art/`, so a conversion needs neither the network nor
+the source checkout, and comes out the same every time.
+
+**The formation is choreography.** A shmupX stage scrolls rows of enemies down
+the screen; the source flies squadrons in on Galaga loops, holds an Invaders
+formation that marches and fires from its bottom ranks, and peels enemies off
+into dives that come back round. `replay.ts` plays each level out at 60 Hz the
+way the source's `Enemies.svelte`, `Flight.ts` and `Formation.ts` do — the
+launch schedule, Phaser's arc-length path walk, the seek into a marching slot,
+the lock, the guns, the dive launcher with its gold-girl-and-escorts turn — with
+a seeded generator in place of `Math.random`, as if nobody were shot, and
+records every enemy's flight. `entry-script.ts` then compiles each flight into
+that enemy's own Dezaemon appearance script (`dezaemon.entry.rows`), the same
+mechanism the importer gives a cart's zako: it fits each row as a
+constant-speed, constant-turn arc from where the runtime will **actually** have
+put the enemy, against an exact port of `stepEntryScript` (1/256-turn steering,
+mirrored right-half spawns and all), so the error never accumulates; every
+visible frame lands within 0.75 px of the replay, and in the real runtime within
+a hundredth of a pixel of the compiler's own simulation. Each enemy spawns on
+the frame its flight starts, which the stage's `waveRows` encode with
+`waveInterval: 2` (one row value per Saturn frame) on the 16 px grid a
+`waveRows` stage spawns on. Where the source teleports — a diver re-entering
+above its slot, a squadron entering from a bottom corner — the enemy takes a
+hidden route round the outside of the screen instead, inside the runtime's cull
+box. `tests/95_demo_test.ts` checks the port against the bundle's own
+`stepEntryScript`.
+
+**The guns are gates.** A script's row can shut its enemy's fire, and only the
+rows around a shot the source fires open it: for `fireGateFrames(stage)` frames,
+which is just long enough to be sure of a fire pulse and too short to fit a
+second shot (`window: 2` reloads in two or three pulses). So the formation fires
+one bullet per `fireDelay` from its bottom ranks and a diver fires twice, as in
+the source — straight down on levels 1–4, aimed from 5 on. The runtime still
+applies its own rules: no zako shot from within 16 px of a side edge, none at a
+ship closer than 40 px, and every zako bullet at the one fixed speed.
+
+**What differs from the source,** and why:
+
+- The march glides between the source's step instants instead of stepping 9 px
+  at a time; stepping would cost two script rows per step for every enemy.
+- A diver whose loop ends on the screen flies on until it is off it before it
+  comes back, since a shmupX enemy cannot vanish.
+- 45 s after a formation locks, divers stop coming back and the rest peel off,
+  so a stage nobody clears still ends. `endsOnClear` ends it the moment the
+  field is empty, as the source ends a level on its last kill.
+- A diver scores what it scores in formation (the source doubles it), and the
+  march does not speed up as the ranks thin (the replay has nobody shot).
+- The RedDevil flies Fang's routine (`attackPattern: "boss4"`), the stock
+  routine whose stances match its animations: its flap is the idle, its release
+  the charge, its toot the shot, with DevilBlast as the beam and DevilFire as
+  the aimed volley and the ring. The three butt-devils it bursts into are its
+  `stage2`, one trio sprite on Barlog's routine below 36/86 of its bar — the
+  devils' 3 × 12 hp of the source's 86 in all — since a boss cannot spawn
+  enemies when it dies.
+- The source's later cycles are not here. A cloud game has ten stages and they
+  are the source's ten levels, so CoolInvader, RainbowInvader and the foo
+  raiders, which only appear from its second cycle on, have nowhere to go.
+- The title is set in the repo's 8×8 arcade face rather than Press Start 2P,
+  which the CLI cannot rasterise, in the source title's colours.
+
 ## shmupX's corner of the shared database
 
 The Realtime Database (`evil-invaders-default-rtdb`) is shared with cmg, the
@@ -5806,12 +5895,12 @@ level anyone made, spriteX's ~430 sheets — and shmupX never writes them. shmup
 reads and writes its own games in a subtree beside them, `shmupX/`, holding only
 what it ships:
 
-| path                          | what                                                          |
-| ----------------------------- | ------------------------------------------------------------- |
-| `shmupX/levels/<key>`         | the five games: `2019-PS2`, `foo`, `gs`, `Ramsie` and `rando` |
-| `shmupX/levelAliases/<alias>` | `2019` and `streetfighter`, both naming `2019-PS2`            |
-| `shmupX/characters/<id>`      | the 29 library characters those games name                    |
-| `shmupX/atlases/<id>`         | each one's art, under the character's own id                  |
+| path                          | what                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `shmupX/levels/<key>`         | the six games: `2019-PS2`, `95-demo`, `foo`, `gs`, `Ramsie` and `rando` |
+| `shmupX/levelAliases/<alias>` | `2019` and `streetfighter`, both naming `2019-PS2`                      |
+| `shmupX/characters/<id>`      | the 29 library characters those games name                              |
+| `shmupX/atlases/<id>`         | each one's art, under the character's own id                            |
 
 Two of the copies are not verbatim, because a level's `gameId` picks its
 leaderboard (see **WORLD BEST and TODAY'S BEST, per game**). `foo` is pinned to
