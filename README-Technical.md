@@ -5890,6 +5890,12 @@ the one fixed speed.
   raiders, which only appear from its second cycle on, have nowhere to go.
 - The title is set in the repo's 8×8 arcade face rather than Press Start 2P,
   which the CLI cannot rasterise, in the source title's colours.
+- The player's shot art is packed a quarter turn clockwise (`shotArt`): the
+  runtime fires every player shot a quarter turn anticlockwise, because the
+  stock shot art is drawn pointing right, and the PS2 exporter turns the same
+  frames upright. The runtime measures a player shot by its unturned frame, as
+  it does the stock one, so the dart hits as a 12 × 5 box where the source's
+  is 5 × 12.
 
 ## shmupX's corner of the shared database
 

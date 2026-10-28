@@ -170,6 +170,36 @@ export function rotateCcw(src: Raster): Raster {
 }
 
 /**
+ * Turn a raster a quarter turn clockwise: what pointed up now points right.
+ *
+ * rotateCcw's inverse. The browser runtime turns every player shot a quarter
+ * turn anticlockwise as it fires it (`setRotation(-Math.PI / 2)` in
+ * game.bundle.js's shootBullets), because the stock shot art is drawn
+ * side-on, so an importer whose shot art is drawn upright turns it this way
+ * before packing it.
+ */
+export function rotateCw(src: Raster): Raster {
+  const { width, height, data } = src;
+  const out: Raster = {
+    width: height,
+    height: width,
+    data: new Uint8Array(width * height * 4),
+  };
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      // (x, y) -> (height - 1 - y, x)
+      const from = (y * width + x) * 4;
+      const to = (x * height + (height - 1 - y)) * 4;
+      out.data[to] = data[from];
+      out.data[to + 1] = data[from + 1];
+      out.data[to + 2] = data[from + 2];
+      out.data[to + 3] = data[from + 3];
+    }
+  }
+  return out;
+}
+
+/**
  * Resample to an exact size, without preserving aspect.
  *
  * `fitInto` letterboxes to keep proportions; this deliberately does not,

@@ -28,7 +28,7 @@ import {
   replayLevel,
   seededRandom,
 } from "../scripts/95-demo/replay.ts";
-import { STAGES } from "../scripts/95-demo/source.ts";
+import { ANIMS, DRAW_SCALE, STAGES } from "../scripts/95-demo/source.ts";
 import {
   buildArt,
   buildLevel,
@@ -38,6 +38,9 @@ import {
   HORIZON_MS,
   SEED,
 } from "../scripts/95-demo/build-level.ts";
+import { atlasFrame, loadArt, toFieldArt } from "../scripts/95-demo/art.ts";
+import { decodePng } from "@shmupx/shmup-harbor/png";
+import { cut, rotateCcw, rotateCw } from "@shmupx/shmup-harbor/raster";
 
 const read = (p: string) =>
   Deno.readTextFile(new URL(`../${p}`, import.meta.url));
@@ -474,4 +477,71 @@ Deno.test("the 95-demo record: ten stages, its art, its boss", async () => {
   for (const k of ["atlasImageDataURL", "titleBgDataURL", "logoDataURL"]) {
     assert(String(record[k]).startsWith("data:image/png;base64,"), k);
   }
+});
+
+// --- the player's shots ------------------------------------------------------
+
+Deno.test("rotateCw undoes rotateCcw: a dart pointing up comes out pointing right", () => {
+  // A 1x3 dart, tip at the top.
+  const dart = { width: 1, height: 3, data: new Uint8Array(12) };
+  dart.data.set([30, 0, 0, 255], 0); // the tip
+  dart.data.set([20, 0, 0, 255], 4);
+  dart.data.set([10, 0, 0, 255], 8);
+  const turned = rotateCw(dart);
+  assertEquals([turned.width, turned.height], [3, 1]);
+  assertEquals([...turned.data.slice(8, 12)], [30, 0, 0, 255]); // tip at right
+  assertEquals([...rotateCcw(turned).data], [...dart.data]);
+});
+
+Deno.test("the player's shots fly pointing up: packed side-on, as the runtime turns them", async () => {
+  // The runtime fires every player shot a quarter turn anticlockwise (the
+  // stock shot00.gif is a 21x9 dart drawn pointing right). If this changes,
+  // so must shotArt in build-level.ts.
+  const shoot = lift(
+    await read("static/games/2028-ai/game.bundle.js"),
+    "shootBullets",
+  );
+  assert(shoot.includes("bullet.setRotation(-Math.PI / 2);"));
+  assert(shoot.includes("b.setRotation(-Math.PI / 2 + a * 0.2);"));
+
+  // So each frame a shoot record names, cut from the record's own sheet and
+  // given that turn, is the source's art upright as the source draws it.
+  const { record } = await buildLevel();
+  const png = record.atlasImageDataURL.slice("data:image/png;base64,".length);
+  const sheet = await decodePng(
+    Uint8Array.from(atob(png), (c: string) => c.charCodeAt(0)),
+  );
+  const upright = new Map([[
+    "ei95FighterShot",
+    toFieldArt(
+      await loadArt("player-bullet.png"),
+      DRAW_SCALE.playerBullet,
+      true,
+    ),
+  ]]);
+  for (const [i, name] of ANIMS.purpleBubble.frames.entries()) {
+    upright.set(
+      `ei95Orb${i}`,
+      toFieldArt(
+        await atlasFrame("purpleOrb.png", "purpleOrb.json", name),
+        DRAW_SCALE.purpleOrb,
+        true,
+      ),
+    );
+  }
+
+  const named = new Set<string>();
+  for (const key of ["shootNormal", "shootBig", "shoot3way"]) {
+    for (const f of record.playerData[key].texture) named.add(f);
+  }
+  assertEquals([...named].sort(), [...upright.keys()].sort());
+  for (const [name, art] of upright) {
+    const rect = record.atlasFrames[name].frame;
+    const shown = rotateCcw(cut(sheet, rect));
+    assertEquals([shown.width, shown.height], [art.width, art.height], name);
+    assertEquals(shown.data, art.data, name);
+  }
+  // The dart in particular is drawn tall and thin, so it is packed wide.
+  const dart = record.atlasFrames.ei95FighterShot.frame;
+  assert(dart.w > dart.h, `ei95FighterShot is ${dart.w}x${dart.h}`);
 });

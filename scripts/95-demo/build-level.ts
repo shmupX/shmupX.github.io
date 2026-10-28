@@ -60,6 +60,7 @@
 
 import { parseArgs } from "@std/cli/parse-args";
 import type { Raster } from "@shmupx/shmup-harbor/png";
+import { rotateCw } from "@shmupx/shmup-harbor/raster";
 import { validateGameJson } from "@shmupx/shmup-engine/game-schema";
 import { gameIdForLevel } from "../../static/phaser-plugins/level-loader.js";
 import {
@@ -216,6 +217,18 @@ export interface LevelArt {
   };
 }
 
+/**
+ * A player shot's frame, drawn upright as the source draws it, turned to
+ * point right: game.bundle.js's shootBullets fires every shot at
+ * `setRotation(-Math.PI / 2)`, a quarter turn anticlockwise, because the
+ * stock shot art (shot00.gif, 21x9) is drawn side-on, and the PS2 exporter
+ * turns the same frames upright for a renderer without rotation. Packed
+ * upright, the source's dart flew up the screen pointing left.
+ */
+export function shotArt(upright: Raster): Raster {
+  return rotateCw(upright);
+}
+
 /** Every frame the record names, cut and sized for the shmupX field. */
 export async function buildArt(): Promise<LevelArt> {
   const frames: ResolvedFrame[] = [];
@@ -277,12 +290,17 @@ export async function buildArt(): Promise<LevelArt> {
     toFieldArt(await loadArt("player1.png"), DRAW_SCALE.player1, true),
     "player1.png",
   );
+  // The runtime turns every player shot a quarter turn anticlockwise as it
+  // fires it, since the stock shot art is drawn pointing right; the source's
+  // is drawn pointing up, so it is packed turned the other way (shotArt).
   add(
     F.fighterShot,
-    toFieldArt(
-      await loadArt("player-bullet.png"),
-      DRAW_SCALE.playerBullet,
-      true,
+    shotArt(
+      toFieldArt(
+        await loadArt("player-bullet.png"),
+        DRAW_SCALE.playerBullet,
+        true,
+      ),
     ),
     "player-bullet.png",
   );
@@ -302,7 +320,7 @@ export async function buildArt(): Promise<LevelArt> {
     const raw = await atlasFrame("purpleOrb.png", "purpleOrb.json", name);
     add(
       F.orb(i),
-      toFieldArt(raw, DRAW_SCALE.purpleOrb, true),
+      shotArt(toFieldArt(raw, DRAW_SCALE.purpleOrb, true)),
       `purpleOrb.json#${name}`,
     );
   }
