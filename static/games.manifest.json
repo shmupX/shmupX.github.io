@@ -1,7 +1,7 @@
 {
-  "version": "4036696",
+  "version": "91bc545",
   "versionSource": "git",
-  "generatedAt": "2026-10-26T17:46:09.174Z",
+  "generatedAt": "2026-10-28T20:26:11.431Z",
   "games": [
     {
       "id": "shmupx",
@@ -48,6 +48,20 @@
       "size": "2.0 MB",
       "date": "10.26.26",
       "players": 1
+    },
+    {
+      "id": "95-demo",
+      "kind": "web",
+      "name": "EVIL INVADERS '95",
+      "title": "EVIL INVADERS '95",
+      "sub": "INVADERS x GALAGA // ten levels and the RedDevil · 2P couch shooter",
+      "icon": "/icons/95-demo-icon.png",
+      "source": "url",
+      "downloadUrl": "/games/95-demo-web.zip",
+      "entry": "index.html",
+      "size": "0.5 MB",
+      "date": "10.28.26",
+      "players": 2
     },
     {
       "id": "zunzunkyou-no-yabou",

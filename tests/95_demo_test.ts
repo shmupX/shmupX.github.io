@@ -39,6 +39,9 @@ import {
   SEED,
 } from "../scripts/95-demo/build-level.ts";
 import { atlasFrame, loadArt, toFieldArt } from "../scripts/95-demo/art.ts";
+import { gameEntries, ICON, TITLE } from "../scripts/95-demo/build-zip.ts";
+import { LEVEL_PATCH } from "../scripts/2019/build-zip.ts";
+import { LAUNCHER_MARKER } from "../lib/launcher-inject.ts";
 import { decodePng } from "@shmupx/shmup-harbor/png";
 import { cut, rotateCcw, rotateCw } from "@shmupx/shmup-harbor/raster";
 
@@ -544,4 +547,60 @@ Deno.test("the player's shots fly pointing up: packed side-on, as the runtime tu
   // The dart in particular is drawn tall and thin, so it is packed wide.
   const dart = record.atlasFrames.ei95FighterShot.frame;
   assert(dart.w > dart.h, `ei95FighterShot is ${dart.w}x${dart.h}`);
+});
+
+// --- the eShop's web build ----------------------------------------------------
+
+Deno.test("the eShop archive is the game page, the bundle pointed at its own level, and the record", async () => {
+  const entries = await gameEntries();
+  assertEquals(entries.map((e) => e.path), [
+    "foo.json",
+    "game.bundle.js",
+    "index.html",
+  ]);
+  const text = new TextDecoder();
+  const byPath = Object.fromEntries(
+    entries.map((e) => [e.path, text.decode(e.data)]),
+  );
+
+  // The record --apply writes, so an install plays the live game, scores and all.
+  const { record } = await buildLevel();
+  assertEquals(JSON.parse(byPath["foo.json"]), record);
+  assertEquals(record.gameId, "95-demo-8d9cd1fd");
+
+  const bundle = byPath["game.bundle.js"];
+  assert(
+    bundle.includes(LEVEL_PATCH.to),
+    "the bundle reads 2028.Ai's foo.json",
+  );
+  assertEquals(bundle.includes(LEVEL_PATCH.from), false);
+  assert(bundle.includes('var ASSET_BASE = "/games/2028-ai/";'));
+
+  const html = byPath["index.html"];
+  assert(html.includes(LAUNCHER_MARKER.trim()), "no launcher marker");
+  assert(html.includes('<script src="game.bundle.js" defer></script>'));
+  assert(html.includes(`<title>${TITLE}</title>`));
+});
+
+Deno.test("95-demo is listed as a web build, installed from this origin", async () => {
+  const eshop = JSON.parse(await read("data/eshop.json"));
+  const row = eshop.find((e: { id: string }) => e.id === "95-demo");
+  assert(row, "data/eshop.json has no 95-demo entry");
+  assertEquals(row.kind, "web");
+  assertEquals(row.name, TITLE);
+  assertEquals("shelf" in row, false, "it is no console's game");
+  assertEquals(row.source, "url");
+  assertEquals(row.downloadUrl, "/games/95-demo-web.zip");
+  assertEquals(row.entry, "index.html");
+  assertEquals(row.players, 2);
+  assertEquals(row.icon, "/icons/95-demo-icon.png");
+  assert((await Deno.stat(ICON)).isFile, "the icon the row points at ships");
+  // The archive is a build artifact, not a committed file.
+  assert((await read(".gitignore")).includes("static/games/95-demo-web.zip"));
+  const tasks = JSON.parse(await read("deno.json")).tasks;
+  assert(tasks["95-demo:zip"], "no 95-demo:zip task");
+  assert(
+    tasks.build.includes("deno task 95-demo:zip"),
+    "deno task build does not pack the archive",
+  );
 });

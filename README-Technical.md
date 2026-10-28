@@ -5712,6 +5712,16 @@ every game anyone can get — and it is read from two places by
   bezel around its screen, the HOW TO PLAY poster and the game's own loading
   spinner (the editor's CABINET, above) — so the archive plays inside it; the
   originals it was set from are `static/games/2019/cabinet/`.
+- **EVIL INVADERS '95** (`95-demo`) is the same three-file shape on the Games
+  list, packed by `deno task 95-demo:zip` (`scripts/95-demo/build-zip.ts`,
+  which `deno task build` runs) into `/games/95-demo-web.zip`. Its `foo.json`
+  is not a committed copy but `buildLevel()`'s record, the one
+  `build-level.ts --apply` writes, so the install plays the cloud game on its
+  leaderboard and cannot drift from the conversion. It is not a Dezaemon cart
+  (`eshop:publish`) because the cart keeps none of the game's flight scripts,
+  its dart or `endsOnClear`, and gives every stage a boss. Its row's box art
+  (`static/icons/95-demo-icon.png`) is drawn from the game's own title art and
+  sprites; `--icon` redraws it.
 - Each GitHub-tracked build's own **`codemonkey.json`** — the file the cmg
   launcher has always let a game ship at its root — read off the tracked branch
   (`raw.githubusercontent.com/<owner>/<repo>/<branch>/codemonkey.json`) after
@@ -5814,7 +5824,8 @@ numbers. → MEDNAFEN CART (`POST /api/saturn-save`, the same code as
 Space Invaders × Galaga couch shooter written in Svelte 5 and Phaser 4, rebuilt
 as a cloud game by `scripts/95-demo/build-level.ts`. It answers to the alias
 `95` too, so `95.codemonkey.games` opens it
-(`deno task level:alias 95-demo 95 -- --write`):
+(`deno task level:alias 95-demo 95 -- --write`), and the eShop lists it as a
+web build (**The eShop**, above):
 
 ```sh
 deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts            # dry run: what it would write

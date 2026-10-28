@@ -33,6 +33,20 @@
     "players": 1
   },
   {
+    "id": "95-demo",
+    "kind": "web",
+    "name": "EVIL INVADERS '95",
+    "title": "EVIL INVADERS '95",
+    "sub": "INVADERS x GALAGA // ten levels and the RedDevil · 2P couch shooter",
+    "icon": "/icons/95-demo-icon.png",
+    "source": "url",
+    "downloadUrl": "/games/95-demo-web.zip",
+    "entry": "index.html",
+    "size": "0.5 MB",
+    "date": "10.28.26",
+    "players": 2
+  },
+  {
     "id": "zunzunkyou-no-yabou",
     "kind": "arcade",
     "name": "Zunzunkyou No Yabou",
