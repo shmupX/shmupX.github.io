@@ -254,7 +254,10 @@ they are written out in full.
   - `cmgSetTurbo` / `cmgWrapLoop` are the Guide's Turbo (see **Turbo** below):
     the page advertises it with `cmg-turbo` beside the pause listener, and
     `create2028Game` wraps the game loop's callback so every scene gets its
-    delta times the factor.
+    delta times the factor. Standalone there is no Guide, so the PAUSE panel
+    carries a TURBO switch of its own (`cmgToggleRow`, between the sliders
+    and RESUME): an exported app's pause, a direct visit's.
+    `tests/turbo_pause_panel_test.ts`.
   - `cmgBroadcastCheats` posts the Guide's Cheats submenu to the launcher once
     the level has resolved, because the set depends on which level is running —
     see **A Dezaemon save is not 2028.Ai** below. `routes/games/2028-ai.tsx`
@@ -371,6 +374,11 @@ they are written out in full.
     and is never painted: `2019-PS2` carries the 2019 game's nine frames in
     its atlas, which are 2028.Ai's pixel for pixel and would otherwise be left
     out as a copy. The editor loads and saves the flag beside `noStory`.
+    `95-demo` carries rando's nine itself, in its own atlas under the stock
+    names, with `ownCutin: true`: its eShop web build is a standalone page
+    that bakes its `foo.json` in as the offline level, neither a `?level=`
+    visit nor an exported app, so the loader would not paint them there
+    (`scripts/95-demo/build-level.ts`, `CUTIN_SHEET`).
     `tests/custom_cutin_test.ts` pins both copies. Mirrors
     `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
@@ -2783,6 +2791,13 @@ to the launcher when it boots inside a frame, and the launcher answers with
 a frame that reloads with Turbo on (a cheat toggle, the editor's PLAY) comes
 back at 2×. The choice is never saved. Every game starts at 1×, and closing the
 game or opening the level editor turns Turbo off.
+
+A page with no Guide has the row on the runtime's own PAUSE panel instead
+(START, Escape or the two-corner tap, standalone): an exported app — the APK,
+the desktop builds, the eShop's web builds — and a direct visit to the game
+page. It reads TURBO 1X / 2X, between the volume sliders and RESUME, starts
+where `?turbo=1` left it, and flips the same `cmgSetTurbo` the Guide's reply
+does; the choice is not saved here either.
 
 `?turbo=1` starts a game at 2× instead, standalone or in the launcher. The
 runtime reads it when the bundle loads. Its `cmg-turbo` advert then carries
@@ -6007,6 +6022,14 @@ the one fixed speed.
   frames upright. The runtime measures a player shot by its unturned frame, as
   it does the stock one, so the dart hits as a 12 × 5 box where the source's
   is 5 × 12.
+- The source has no bomb. shmupX's SP bomb stays, worth a butt-devil
+  (`spDamage`), and its cut-in is rando's nine frames, the ones every custom
+  game plays, carried in the record's own sheet under the stock names with
+  `ownCutin: true` (`CUTIN_SHEET`): the eShop's web build is a standalone
+  page the loader would not paint them onto (**The eShop**, above). The sheet
+  is packed as wide as the stock atlas it stacks under, so the nine take two
+  rows of the texture rather than nine, and the build refuses a stack taller
+  than a phone's 4096 (`TEXTURE_LIMIT`).
 
 ## shmupX's corner of the shared database
 

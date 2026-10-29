@@ -4956,8 +4956,12 @@
   // or embedded (the cmg-turbo advert below tells the launcher it is on).
   var CMG_TURBO_SCALE = 2;
   var cmgTimeScale = 1;
+  // The standalone PAUSE panel's TURBO switch, once the panel is built, so a
+  // change made elsewhere (?turbo=1 at boot, a cmg-turbo-set) shows on it.
+  var cmgTurboInput = null;
   function cmgSetTurbo(on) {
     cmgTimeScale = on ? CMG_TURBO_SCALE : 1;
+    if (cmgTurboInput) cmgTurboInput.checked = cmgTimeScale !== 1;
   }
   cmgSetTurbo(readBooleanSearchParam("turbo", false));
   function cmgWrapLoop(game) {
@@ -4995,7 +4999,7 @@
     row.style.cssText = "display:flex;align-items:center;gap:10px;margin:14px 0;font-size:11px;letter-spacing:.15em;";
     var lbl = document.createElement("span");
     lbl.textContent = label;
-    lbl.style.cssText = "width:56px;text-align:left;";
+    lbl.style.cssText = "width:64px;text-align:left;";
     var val = document.createElement("span");
     val.style.cssText = "width:72px;text-align:right;font-family:inherit;";
     var input = document.createElement("input");
@@ -5016,6 +5020,34 @@
     row.appendChild(val);
     return row;
   }
+  // A switch in the sliders' layout — label, the control where the slider
+  // sits, its reading on the right. The row is the control's <label>, so a
+  // tap anywhere along it flips the switch. `reading` says what a state reads.
+  function cmgToggleRow(label, on, reading, onChange) {
+    var row = document.createElement("label");
+    row.style.cssText = "display:flex;align-items:center;gap:10px;margin:14px 0;font-size:11px;letter-spacing:.15em;cursor:pointer;";
+    var lbl = document.createElement("span");
+    lbl.textContent = label;
+    lbl.style.cssText = "width:64px;text-align:left;";
+    var val = document.createElement("span");
+    val.style.cssText = "width:72px;text-align:right;font-family:inherit;";
+    var slot = document.createElement("span");
+    slot.style.cssText = "flex:1;display:flex;align-items:center;";
+    var input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !!on;
+    input.style.cssText = "width:18px;height:18px;margin:0;accent-color:#fff;cursor:pointer;";
+    val.textContent = reading(input.checked);
+    input.addEventListener("change", function () {
+      onChange(input.checked);
+      val.textContent = reading(input.checked);
+    });
+    slot.appendChild(input);
+    row.appendChild(lbl);
+    row.appendChild(slot);
+    row.appendChild(val);
+    return row;
+  }
   function cmgEnsurePanel() {
     if (cmgPanelEl) return;
     var wrap = document.createElement("div");
@@ -5030,6 +5062,14 @@
     card.appendChild(title);
     card.appendChild(cmgSliderRow("BGM", "bgm"));
     card.appendChild(cmgSliderRow("SFX", "sfx"));
+    // The Guide's Turbo row, on a page that has no Guide (an exported app, a
+    // direct visit): the world at 2x (cmgSetTurbo), from wherever ?turbo=1
+    // left it.
+    var turbo = cmgToggleRow("TURBO", cmgTimeScale !== 1, function (on) {
+      return on ? "2X" : "1X";
+    }, cmgSetTurbo);
+    cmgTurboInput = turbo.querySelector("input");
+    card.appendChild(turbo);
     var btn = document.createElement("button");
     btn.textContent = "RESUME";
     btn.style.cssText = "margin-top:14px;padding:9px 26px;border-radius:6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;font-family:inherit;font-size:16px;letter-spacing:.24em;text-indent:.24em;cursor:pointer;";
