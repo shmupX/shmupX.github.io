@@ -9,8 +9,8 @@
 // visit to that page bakes foo.json in as the offline level, which the level
 // loader merges over the stock recipe exactly as it merges the cloud record
 // on ?level=95-demo, so the install plays what 95.codemonkey.games plays —
-// the Galaga flights, the fire gates, endsOnClear, the RedDevil — on the same
-// leaderboard (the record's gameId). Phaser, the plugins and the assets are
+// the Galaga flights, the fire gates, endsOnClear, the three bosses in turn —
+// on the same leaderboard (the record's gameId). Phaser, the plugins and the assets are
 // fetched off this origin, as for 2019.
 //
 // The record is not a committed copy: it is buildLevel()'s, the very record
@@ -19,8 +19,7 @@
 // `deno task build` needs no network, the same commit always builds the same
 // archive, and the archive cannot drift from the conversion. A Dezaemon 2
 // cart (`deno task eshop:publish`) is no substitute: the cart drops every
-// enemy's flight script, the dart and endsOnClear, and gives every stage a
-// boss.
+// enemy's flight script, the dart and endsOnClear.
 //
 // The shop row's icon is drawn from the game's own art — the title's
 // starfield, logo and tag line over a rank of its invaders and the fighter —

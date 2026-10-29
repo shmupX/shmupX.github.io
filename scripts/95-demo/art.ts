@@ -154,6 +154,22 @@ export function toFieldArt(
   return resample(src, w, h, hardEdge);
 }
 
+/**
+ * `src` tinted, as Phaser's setTint draws it: each colour channel multiplied
+ * by the tint's, alpha untouched. White art comes out in the tint's colour.
+ */
+export function tinted(src: Raster, tint: number): Raster {
+  const out = newRaster(src.width, src.height);
+  const [tr, tg, tb] = [(tint >> 16) & 255, (tint >> 8) & 255, tint & 255];
+  for (let i = 0; i < src.data.length; i += 4) {
+    out.data[i] = Math.round(src.data[i] * tr / 255);
+    out.data[i + 1] = Math.round(src.data[i + 1] * tg / 255);
+    out.data[i + 2] = Math.round(src.data[i + 2] * tb / 255);
+    out.data[i + 3] = src.data[i + 3];
+  }
+  return out;
+}
+
 /** Several frames side by side on one canvas, each at its own offset. */
 export function composite(
   w: number,

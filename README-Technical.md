@@ -426,6 +426,27 @@ they are written out in full.
     point-first wherever it is aimed. A record without it is never turned, as
     before: a fireball reads the same at any angle.
     `tests/boss_bullet_facing_test.ts`.
+  - A shot turned a quarter turn is snapped onto the pixel grid
+    (`snapQuarterTurn`). `pixelArt: true` has Phaser 4 round a sprite's
+    corners before it draws them, but only a sprite that is merely translated
+    (`vertexRoundMode` "safeAuto"); anything rotated keeps its corners
+    wherever its position and its frame put them. Every stock player shot
+    flies a quarter turn from its art (`shootBullets`), so a shot whose frame
+    is an odd number of pixels tall — 95-demo's dart is packed 12×5 — sat
+    with both long edges on half pixels while the ship rested on an integer
+    x, and every pixel centre across its width landed exactly on a texel
+    boundary. Nearest sampling on a boundary is the GPU's call: desktop
+    rasterisers happen to answer consistently, but a phone GPU answering
+    differently for the quad's two triangles dropped the dart's 1 px stem
+    and tail and drew only its 5 px band, until the ship moved to a
+    fractional x. A quarter-turned quad is still an axis-aligned rectangle
+    whose corners share one fractional part, so rounding them keeps its
+    size: an exact quarter turn at unit scale gets "fullAuto", the rounding
+    straight sprites already have, from every spawner that turns a shot (the
+    stock shots, `spawnDezaPlayerShot` and the homing, growing and deflected
+    steps that re-turn or resize one, `faceBulletHeading`, `bossShootBeam`);
+    any other angle, or a scaled shot, keeps the default, where rounding
+    would make the quad flicker. `tests/quarter_turn_shot_test.ts`.
   - CONTINUE? → YES resumes on the stage that killed you, for every game. The
     Phaser port reset `stageId` to 0 there (2019-es7 275fab6, with the title's
     and the ending's resets, which stay), so a continue on gs's second stage
@@ -5892,12 +5913,12 @@ deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts --apply    # 
 deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts --revert   # delete it again
 ```
 
-The source's ten levels are the cloud game's ten stages, and the RedDevil that
-ends its first cycle is the tenth stage's boss. Its numbers are ported verbatim
-into `scripts/95-demo/source.ts` (the stage table, the tuning constants, the
-CORE_GALAGA flight paths, the animation table) and its art is copied byte for
-byte into `scripts/95-demo/art/`, so a conversion needs neither the network nor
-the source checkout, and comes out the same every time.
+The source's ten levels are the cloud game's ten stages, and its three bosses
+end them in turn. Its numbers are ported verbatim into
+`scripts/95-demo/source.ts` (the stage table, the tuning constants, the
+CORE_GALAGA flight paths, the animation table, the boss roster) and its art is
+copied byte for byte into `scripts/95-demo/art/`, so a conversion needs neither
+the network nor the source checkout, and comes out the same every time.
 
 **The formation is choreography.** A shmupX stage scrolls rows of enemies down
 the screen; the source flies squadrons in on Galaga loops, holds an Invaders
@@ -5947,16 +5968,37 @@ the one fixed speed.
   as the source ends a level on its last kill.
 - A diver scores what it scores in formation (the source doubles it), and the
   march does not speed up as the ranks thin (the replay has nobody shot).
+- A boss ends every stage. The source fights one boss per eleven-level cycle
+  and rotates its roster each cycle — RedDevil, CoolInvader, RainbowInvader —
+  and a cloud game has ten stages and no cycles, so the roster turns each
+  stage instead (`BOSS_ROSTER`, `bossRecord`): the RedDevil ends stages 1, 4,
+  7 and 10, the CoolInvader 2, 5 and 8, the RainbowInvader 3, 6 and 9. A
+  boss's hp climbs with its stage (`bossHpScale`): the source's figure on the
+  tenth, two fifths of it on the first, so the early ones go down in a few
+  seconds and the tenth is the fight the source's is.
 - The RedDevil flies Fang's routine (`attackPattern: "boss4"`), the stock
   routine whose stances match its animations: its flap is the idle, its release
   the charge, its toot the shot, with DevilBlast as the beam and DevilFire as
   the aimed volley and the ring. The three butt-devils it bursts into are its
-  `stage2`, one trio sprite on Barlog's routine below 36/86 of its bar — the
-  devils' 3 × 12 hp of the source's 86 in all — since a boss cannot spawn
-  enemies when it dies.
+  `stage2`, one trio sprite on Barlog's routine below the devils' share of its
+  bar — their 3 × 12 hp of the source's 86 in all, both scaled alike — since a
+  boss cannot spawn enemies when it dies.
+- The two Invaders drift sideways, bounce off the walls and drop a huge
+  invader bullet straight down every two seconds. Barlog's routine (`"boss1"`)
+  is the stock one that slides across and drops straight shots, so they fly
+  it: its reposition and its slide to the ship each end in a straight shot,
+  about a second apart, and its dive stands in for a drift that reaches the
+  ship. Their flap is the idle (their hit frames are the same body flashed
+  red, which the runtime has no stance for). The bullet is the invader's own,
+  blown up to the source's 7.5× and 9×; the RainbowInvader's picks one of
+  eight tints at random every frame in the source, so its frames are baked in
+  the eight tints and cycled at 60 fps (`RAINBOW_SHOT_FRAMES`). The source's
+  player shots pass through it where the runtime's are spent on any enemy
+  bullet they meet, so it has DevilBlast's hp and score: it can be shot down.
 - The source's later cycles are not here. A cloud game has ten stages and they
-  are the source's ten levels, so CoolInvader, RainbowInvader and the foo
-  raiders, which only appear from its second cycle on, have nowhere to go.
+  are the source's ten levels, so the foo raiders, which only appear from its
+  second cycle on, have nowhere to go, and its bosses meet the player one a
+  stage rather than one a cycle.
 - The title is set in the repo's 8×8 arcade face rather than Press Start 2P,
   which the CLI cannot rasterise, in the source title's colours.
 - The player's shot art is packed a quarter turn clockwise (`shotArt`): the
