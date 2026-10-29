@@ -13031,6 +13031,7 @@
         // The only shot that bounces off a hard target.
         b.setData("dezaDeflects", true);
         b.setScale(1024 / 4096);
+        snapQuarterTurn(b);
         dezaSizeGrowingShot(b, 1024, DEZA_MAIN6_HALF_X, DEZA_MAIN6_HALF_Y);
       }
       scene.playSound("se_shot", 0.15);
@@ -13106,6 +13107,7 @@
           step: 1024 / SATURN_TICKS_PER_FRAME });
         b.setData("dezaLife", DEZA_CHARGE3_LIFE * SATURN_TICKS_PER_FRAME);
         b.setScale(0.5);
+        snapQuarterTurn(b);
         b.setAlpha(0.75);
       }
     }
@@ -13248,6 +13250,7 @@
           deflected.zoom - DEZA_MAIN6_DEFLECT_ZOOM_STEP / SATURN_TICKS_PER_FRAME);
         bullet.setScale(deflected.base * deflected.zoom / DEZA_MAIN6_DEFLECT_ZOOM);
       }
+      snapQuarterTurn(bullet);
       return true;
     }
     var accelY = bullet.getData("dezaAccelY");
@@ -13256,6 +13259,7 @@
     if (grow && grow.scale < grow.cap) {
       grow.scale = Math.min(grow.cap, grow.scale + grow.step);
       bullet.setScale(grow.scale / 4096);
+      snapQuarterTurn(bullet);
       // The engine recomputes the AABB from the live scale every frame
       // (+0x1292C), so a growing ball's reach grows with it instead of
       // staying at whatever it was born with.
@@ -13329,6 +13333,7 @@
     bullet.setData("dezaVx", Math.sin(th) * dezaMain4Speed(word));
     bullet.setData("dezaVy", -Math.cos(th) * dezaMain4Speed(word));
     bullet.setRotation(th - Math.PI / 2);
+    snapQuarterTurn(bullet);
     // The tail is drawn, not simulated: in the engine each link just replays the
     // head's path two frames behind, so a trail of samples reads the same.
     home.trail.push({ x: bullet.x, y: bullet.y });
@@ -13369,6 +13374,7 @@
     // the straight-ahead ones point +X while flying up, and a spread fans out
     // without turning at all.
     b.setRotation(Math.atan2(vy, vx));
+    snapQuarterTurn(b);
     b.setDepth(42);
     b.setData("damage", damage);
     b.setData("dezaVx", vx);
@@ -13486,6 +13492,31 @@
     bullet.setData("animTimer", 0);
     bullet.setData("frameRate", frameRate);
   }
+  // Snap a shot turned by a quarter turn onto the pixel grid. `pixelArt: true`
+  // has Phaser round a sprite's corners before it draws them, but only when
+  // the sprite is merely translated (vertexRoundMode "safeAuto"): anything
+  // rotated keeps its corners wherever its position and its frame put them.
+  // Every stock shot flies a quarter turn from its art, so a shot whose frame
+  // is an odd number of pixels tall (the 95-demo dart is 12x5) sits with both
+  // long edges on half pixels while the ship rests on an integer x, and every
+  // pixel centre across the shot's width then lands exactly on a texel
+  // boundary. Nearest sampling on a boundary is the GPU's call: desktop
+  // rasterisers happen to answer consistently, but a phone GPU that answers
+  // differently for the quad's two triangles drops the dart's 1 px stem and
+  // tail and draws only its 5 px band, until the ship moves to a fractional x
+  // and the centres fall inside texels again. A quarter-turned quad is still
+  // an axis-aligned rectangle whose corners share one fractional part, so
+  // rounding them moves it onto the grid without changing its size — the same
+  // rounding straight sprites already get — and any other angle, or a scaled
+  // shot (whose rounded corners would not keep its size), keeps the default,
+  // where rounding would make the quad flicker.
+  function snapQuarterTurn(sprite) {
+    if (!sprite || typeof sprite.setVertexRoundMode !== "function") return;
+    var q = sprite.rotation / (Math.PI / 2);
+    var quarter = Math.abs(q - Math.round(q)) < 1e-6 &&
+      Math.abs(sprite.scaleX) === 1 && Math.abs(sprite.scaleY) === 1;
+    sprite.setVertexRoundMode(quarter ? "fullAuto" : "safeAuto");
+  }
   // The frames a player bullet actually has art for: the weapon record's own
   // texture list, spelled the way this atlas spells it (.gif/.png differ
   // between the stock assets and an import), minus anything the atlas lacks,
@@ -13552,6 +13583,7 @@
         b.setData("owner", p.index);
         b.setData("big", false);
         b.setRotation(-Math.PI / 2 + a * 0.2);
+        snapQuarterTurn(b);
         attachAnim(b, frames, frameRate);
         scene.playerBullets.push(b);
       }
@@ -13569,6 +13601,7 @@
       if (isBig) {
         bullet.setScale(1.5);
       }
+      snapQuarterTurn(bullet);
       attachAnim(bullet, frames, frameRate);
       scene.playerBullets.push(bullet);
     }
@@ -15106,6 +15139,7 @@
     var facing = typeof raw === "number" || typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
     if (!Number.isFinite(facing)) return;
     bullet.setRotation(Math.atan2(dirY, dirX) - facing * Math.PI / 180);
+    snapQuarterTurn(bullet);
   }
   function bossShootStraight(scene, projData) {
     if (!projData || !scene.bossSprite) return;
@@ -15171,6 +15205,7 @@
       bullet.setOrigin(0.5);
       bullet.setDepth(47);
       bullet.setRotation(rad);
+      snapQuarterTurn(bullet);
       bullet.setData("speed", speed);
       bullet.setData("damage", projData.damage || 1);
       bullet.setData("hp", projData.hp || 1);

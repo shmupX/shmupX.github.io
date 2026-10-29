@@ -422,6 +422,27 @@ they are written out in full.
     point-first wherever it is aimed. A record without it is never turned, as
     before: a fireball reads the same at any angle.
     `tests/boss_bullet_facing_test.ts`.
+  - A shot turned a quarter turn is snapped onto the pixel grid
+    (`snapQuarterTurn`). `pixelArt: true` has Phaser 4 round a sprite's
+    corners before it draws them, but only a sprite that is merely translated
+    (`vertexRoundMode` "safeAuto"); anything rotated keeps its corners
+    wherever its position and its frame put them. Every stock player shot
+    flies a quarter turn from its art (`shootBullets`), so a shot whose frame
+    is an odd number of pixels tall — 95-demo's dart is packed 12×5 — sat
+    with both long edges on half pixels while the ship rested on an integer
+    x, and every pixel centre across its width landed exactly on a texel
+    boundary. Nearest sampling on a boundary is the GPU's call: desktop
+    rasterisers happen to answer consistently, but a phone GPU answering
+    differently for the quad's two triangles dropped the dart's 1 px stem
+    and tail and drew only its 5 px band, until the ship moved to a
+    fractional x. A quarter-turned quad is still an axis-aligned rectangle
+    whose corners share one fractional part, so rounding them keeps its
+    size: an exact quarter turn at unit scale gets "fullAuto", the rounding
+    straight sprites already have, from every spawner that turns a shot (the
+    stock shots, `spawnDezaPlayerShot` and the homing, growing and deflected
+    steps that re-turn or resize one, `faceBulletHeading`, `bossShootBeam`);
+    any other angle, or a scaled shot, keeps the default, where rounding
+    would make the quad flicker. `tests/quarter_turn_shot_test.ts`.
   - CONTINUE? → YES resumes on the stage that killed you, for every game. The
     Phaser port reset `stageId` to 0 there (2019-es7 275fab6, with the title's
     and the ending's resets, which stay), so a continue on gs's second stage

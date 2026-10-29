@@ -30,8 +30,11 @@ function functionSource(js: string, name: string): string {
 
 async function faceBulletHeading() {
   const js = await read(BUNDLE);
+  // faceBulletHeading snaps a quarter-turned bullet onto the pixel grid
+  // (snapQuarterTurn; tests/quarter_turn_shot_test.ts), so it travels with it.
   return new Function(
-    functionSource(js, "faceBulletHeading") + "\nreturn faceBulletHeading;",
+    functionSource(js, "snapQuarterTurn") +
+      functionSource(js, "faceBulletHeading") + "\nreturn faceBulletHeading;",
   )() as (
     bullet: { setRotation(r: number): void },
     projData: unknown,
