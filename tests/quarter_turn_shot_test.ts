@@ -107,9 +107,14 @@ Deno.test("every shot spawner that turns a bullet snaps it", async () => {
   // The stock player shots: the straight shot (after its size is settled,
   // since the big shot is scaled) and each of the 3-way's three.
   const shoot = functionSource(js, "shootBullets");
-  assert(shoot.includes("b.setRotation(-Math.PI / 2 + a * 0.2);\n        snapQuarterTurn(b);"));
   assert(
-    shoot.indexOf("bullet.setScale(1.5);") < shoot.indexOf("snapQuarterTurn(bullet);"),
+    shoot.includes(
+      "b.setRotation(-Math.PI / 2 + a * 0.2);\n        snapQuarterTurn(b);",
+    ),
+  );
+  assert(
+    shoot.indexOf("bullet.setScale(1.5);") <
+      shoot.indexOf("snapQuarterTurn(bullet);"),
     "the straight shot is snapped after it is scaled",
   );
   // A Dezaemon sub or charge shot, turned to its own velocity...
@@ -120,10 +125,21 @@ Deno.test("every shot spawner that turns a bullet snaps it", async () => {
     "spawnDezaPlayerShot",
   );
   // ...and again whenever its flight turns or resizes it.
-  assert(functionSource(js, "dezaStepHoming").includes("snapQuarterTurn(bullet);"), "homing");
+  assert(
+    functionSource(js, "dezaStepHoming").includes("snapQuarterTurn(bullet);"),
+    "homing",
+  );
   const step = functionSource(js, "dezaStepShot");
-  assert(step.includes("bullet.setScale(grow.scale / 4096);\n      snapQuarterTurn(bullet);"), "grow");
-  assert(step.includes("snapQuarterTurn(bullet);\n      return true;"), "deflect");
+  assert(
+    step.includes(
+      "bullet.setScale(grow.scale / 4096);\n      snapQuarterTurn(bullet);",
+    ),
+    "grow",
+  );
+  assert(
+    step.includes("snapQuarterTurn(bullet);\n      return true;"),
+    "deflect",
+  );
   // A boss's shots: the faced ones and the beam.
   assert(
     functionSource(js, "faceBulletHeading").includes(

@@ -48,8 +48,53 @@ export const BUTT_DEVIL_HP = 12;
 export const BUTT_DEVIL_COUNT = 3;
 export const BUTT_DEVIL_SCORE = 500;
 
-/** Stages 1..10 are formation waves; stage 11 of each cycle is the boss. */
+/** The CoolInvader and RainbowInvader: horizontal drift px/s, bouncing off the walls. */
+export const INVADER_BOSS_SPEED = 130;
+/** GenericEnemy.scheduleShooting: fire immediately, then every 2 s. */
+export const INVADER_BOSS_FIRE_INTERVAL = 2000;
+export const INVADER_BOSS_BULLET_SPEED = 260;
+/** RainbowInvaderBullet.update: a random tint from this list every frame. */
+export const RAINBOW_BULLET_TINTS = [
+  0xcf4242,
+  0xf5972a,
+  0xe39d4b,
+  0xecf030,
+  0x289e65,
+  0x3f5cf2,
+  0xa24dd6,
+  0xf69ef7,
+];
+
+export type InvaderBossKind = "cool" | "rainbow";
+
+export interface InvaderBossDef {
+  /** The sheet in SHEETS. */
+  sheet: "coolInvader" | "rainbowInvader";
+  /** Display scale on the 540-wide field. */
+  scale: number;
+  /** The invader bullet is drawn at this scale: `bullet.scale = sprite scale * 15`. */
+  bulletScale: number;
+  bulletTints?: number[];
+}
+
+/** src/consts.ts INVADER_BOSSES, minus the voxel particle bursts. */
+export const INVADER_BOSSES: Record<InvaderBossKind, InvaderBossDef> = {
+  cool: { sheet: "coolInvader", scale: 0.5, bulletScale: 7.5 },
+  rainbow: {
+    sheet: "rainbowInvader",
+    scale: 0.8,
+    bulletScale: 9,
+    bulletTints: RAINBOW_BULLET_TINTS,
+  },
+};
+
+/**
+ * Stages 1..10 are formation waves; stage 11 of each cycle is the boss. The
+ * boss roster rotates each cycle (src/GameRound.svelte): RedDevil, then
+ * CoolInvader, then RainbowInvader.
+ */
 export const STAGES_PER_CYCLE = 11;
+export const BOSS_ROSTER = ["redDevil", "cool", "rainbow"] as const;
 
 export type EnemyKind = "eyeDude" | "pinkBunny" | "goldGirl";
 
@@ -280,6 +325,8 @@ export const SHEETS = {
   invaderBullet: { file: "invader-bullet.png", frameW: 3, frameH: 7 },
   player2: { file: "player2.png", frameW: 52, frameH: 32 },
   redDevil: { file: "red-devil.png", frameW: 160, frameH: 166 },
+  coolInvader: { file: "cool-invader.png", frameW: 431, frameH: 275 },
+  rainbowInvader: { file: "rainbow-invader.png", frameW: 263, frameH: 174 },
   buttDevils: { file: "butt-devils.png", frameW: 43, frameH: 39 },
   devilFire: { file: "devil-fire.png", frameW: 42, frameH: 35 },
   devilBlast: { file: "devil-blast.png", frameW: 123, frameH: 96 },
@@ -297,6 +344,10 @@ export const ANIMS = {
   redDevilFlap: { frames: [0, 1], fps: 2 },
   redDevilRelease: { frames: [11, 12, 13, 14, 15, 14, 15, 14, 15], fps: 24 },
   redDevilToot: { frames: [14, 15], fps: 4 },
+  coolInvaderFlap: { frames: [0, 1], fps: 2 },
+  coolInvaderHit: { frames: [2, 3, 4, 5], fps: 12 },
+  rainbowInvaderFlap: { frames: [0, 1], fps: 2 },
+  rainbowInvaderHit: { frames: [2, 3, 4, 5], fps: 12 },
   buttDevilFlap: { frames: [3, 4, 5, 4], fps: 12 },
   devilFireBurn: {
     frames: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
@@ -314,6 +365,8 @@ export const DRAW_SCALE = {
   playerBullet: 0.8,
   purpleOrb: 1.6,
   redDevil: BOSS_SCALE,
+  coolInvader: INVADER_BOSSES.cool.scale,
+  rainbowInvader: INVADER_BOSSES.rainbow.scale,
   buttDevil: 1,
   devilFire: 1,
   devilBlast: 0.8,

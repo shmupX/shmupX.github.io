@@ -28,7 +28,12 @@ import {
   replayLevel,
   seededRandom,
 } from "../scripts/95-demo/replay.ts";
-import { ANIMS, DRAW_SCALE, STAGES } from "../scripts/95-demo/source.ts";
+import {
+  ANIMS,
+  DRAW_SCALE,
+  RAINBOW_BULLET_TINTS,
+  STAGES,
+} from "../scripts/95-demo/source.ts";
 import {
   buildArt,
   buildLevel,
@@ -468,12 +473,56 @@ Deno.test("the 95-demo record: ten stages, its art, its boss", async () => {
     for (const e of s.enemies) assert(e.maxVisibleError <= 0.75 + 1e-9);
   }
 
+  // A boss ends every stage: the source's roster, RedDevil, CoolInvader,
+  // RainbowInvader, turning each stage, with hp climbing to the source's
+  // figure on the tenth.
+  assertEquals(
+    Object.keys(record.bossData),
+    STAGES.map((_, s) => `boss${s}`),
+  );
+  assertEquals(
+    STAGES.map((_, s) => record.bossData[`boss${s}`].name),
+    [
+      "redDevil",
+      "coolInvader",
+      "rainbowInvader",
+      "redDevil",
+      "coolInvader",
+      "rainbowInvader",
+      "redDevil",
+      "coolInvader",
+      "rainbowInvader",
+      "redDevil",
+    ],
+  );
   const boss = record.bossData.boss9;
-  assertEquals(Object.keys(record.bossData), ["boss9"]);
   assertEquals(boss.attackPattern, "boss4");
   assertEquals(boss.hp, 86);
   assertEquals(boss.stage2.attackPattern, "boss1");
   assert(boss.stage2.hpBelow > 0.41 && boss.stage2.hpBelow < 0.42);
+  const first = record.bossData.boss0;
+  assertEquals(first.hp, 35); // 20 + 3 x 5: the devil and its trio, both at two fifths
+  assertEquals(first.stage2.hpBelow, 0.4286);
+  for (let s = 3; s < STAGES.length; s++) {
+    assert(
+      record.bossData[`boss${s}`].hp > record.bossData[`boss${s - 3}`].hp,
+      `boss${s} outgrows the last of its kind`,
+    );
+  }
+  const cool = record.bossData.boss1;
+  assertEquals(cool.attackPattern, "boss1");
+  assertEquals(cool.hp, 23);
+  assertEquals(cool.anim.idle.length, 6);
+  assertEquals(cool.bulletData.texture, [
+    "ei95CoolInvaderShot0",
+    "ei95CoolInvaderShot1",
+  ]);
+  const rainbow = record.bossData.boss2;
+  assertEquals(rainbow.attackPattern, "boss1");
+  assertEquals(rainbow.hp, 27);
+  assertEquals(rainbow.bulletData.texture.length, RAINBOW_BULLET_TINTS.length);
+  assertEquals(rainbow.bulletData.frameRate, 60);
+  assertEquals(record.bossData.boss8.hp, 47);
 
   // keys RTDB takes, art the runtime finds
   assert(!JSON.stringify(Object.keys(record.atlasFrames)).includes("."));

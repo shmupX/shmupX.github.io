@@ -1,8 +1,8 @@
 #!/usr/bin/env -S deno run -A --node-modules-dir=none
 /**
  * Convert EVIL INVADERS '95 (easierbycode/95-demo-sp) into the shmupX cloud
- * game `95-demo`: its ten formation levels as ten stages, and the RedDevil
- * that ends its first cycle as the boss of the tenth.
+ * game `95-demo`: its ten formation levels as ten stages, each ended by one
+ * of its three bosses in turn.
  *
  *   deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts            # dry run
  *   deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts --out x.json
@@ -30,12 +30,29 @@
  *   The source's divers always aim and its formation aims from level 5 on;
  *   a zako has one aim for every shot, so each enemy aims as most of its own
  *   shots do.
- * - `bossData/boss9`, the RedDevil, on Fang's routine (`attackPattern:
- *   "boss4"`): its flap is the idle stance, its release the charge, its toot
- *   the shot; DevilBlast is the beam and DevilFire the aimed volley and the
- *   ring. Its death burst of three butt-devils is its `stage2`: below 36/86
- *   of its bar (the devils' 3 x 12 hp of the source's 86 in all) it bursts
- *   into the trio, on Barlog's routine, dropping DevilFire.
+ * - `bossData/boss0..boss9`, a boss at the end of every stage. The source
+ *   fights one boss per eleven-level cycle and rotates its roster each cycle
+ *   (RedDevil, CoolInvader, RainbowInvader); a cloud game has ten stages and
+ *   no cycles, so the roster rotates per stage instead (BOSS_ROSTER): the
+ *   RedDevil ends stages 1, 4, 7 and 10, the CoolInvader 2, 5 and 8, the
+ *   RainbowInvader 3, 6 and 9. A boss's hp climbs with its stage
+ *   (bossHpScale): the source's figure on the last, two fifths of it on the
+ *   first, so the early ones go down in a few seconds and the tenth is the
+ *   fight the source's is.
+ *   - The RedDevil flies Fang's routine (`attackPattern: "boss4"`): its flap
+ *     is the idle stance, its release the charge, its toot the shot;
+ *     DevilBlast is the beam and DevilFire the aimed volley and the ring. Its
+ *     death burst of three butt-devils is its `stage2`: below the devils'
+ *     share of its bar (3 x 12 hp of 86 in all, both scaled alike) it bursts
+ *     into the trio, on Barlog's routine, dropping DevilFire.
+ *   - The two Invaders drift sideways, bounce off the walls and drop a huge
+ *     invader bullet straight down every two seconds. Barlog's routine
+ *     (`"boss1"`) is the stock one that slides across and drops straight
+ *     shots, so they fly it: its reposition and its slide to the ship each
+ *     end in a straight shot, a second or so apart, and its dive stands in
+ *     for a drift that reaches the ship. Their flap is the idle; the
+ *     RainbowInvader's bullet cycles the source's eight tints, baked as
+ *     frames at the source's one-tint-per-frame rate.
  * - `playerData`/`playerData2`, the source's two ships and the red/white
  *   shot; three hits, as the source's three lives.
  * - the art all of that names, packed into the level's own sheet, and a
@@ -46,9 +63,9 @@
  *   runtime without it ends each stage after its last enemy has flown off).
  *
  * The source's later cycles are not here: a cloud game has ten stages, and
- * those ten are the source's own ten levels, so its second and third bosses
- * (CoolInvader, RainbowInvader) and the foo raiders that only fly from its
- * second cycle on have no stage to be in.
+ * those ten are the source's own ten levels, so the foo raiders that only
+ * fly from its second cycle on have no stage to be in, and its bosses meet
+ * the player one a stage rather than one a cycle.
  *
  * Without --apply nothing is written. --out writes the record to a file;
  * --serve plays it on a local server (the way mcp/lib/preview.ts previews a
@@ -76,6 +93,7 @@ import {
   BOSS_BLAST_SPEED,
   BOSS_FIRE_SPEED,
   BOSS_HP,
+  BOSS_ROSTER,
   BOSS_SCORE,
   BUTT_DEVIL_COUNT,
   BUTT_DEVIL_HP,
@@ -84,6 +102,10 @@ import {
   ENEMY_TYPES,
   type EnemyKind,
   GAME_HEIGHT,
+  INVADER_BOSS_BULLET_SPEED,
+  INVADER_BOSSES,
+  type InvaderBossKind,
+  RAINBOW_BULLET_TINTS,
   SHEETS,
   SOURCE,
   STAGES,
@@ -116,6 +138,7 @@ import {
   logoArt,
   startTextArt,
   subTitleArt,
+  tinted,
   titleBackdropArt,
   toFieldArt,
 } from "./art.ts";
@@ -186,7 +209,26 @@ const F = {
   devilBlast: (i: number) => `ei95DevilBlast${i}`,
   buttDevils: (i: number) => `ei95ButtDevils${i}`,
   poof: (i: number) => `ei95Poof${i}`,
+  coolInvader: (i: number) => `ei95CoolInvader${i}`,
+  coolShot: (i: number) => `ei95CoolInvaderShot${i}`,
+  rainbowInvader: (i: number) => `ei95RainbowInvader${i}`,
+  rainbowShot: (i: number) => `ei95RainbowInvaderShot${i}`,
 };
+
+/**
+ * The RainbowInvader's bullet picks one of eight tints at random every
+ * frame; the runtime cycles frames instead, so the tints are baked, each
+ * over the flicker frame that is due: the tints turn at the source's 60 Hz
+ * (RAINBOW_SHOT_FPS), the flicker every four of them, its own 8 fps near
+ * enough (ANIMS.invaderBulletFlicker).
+ */
+export const RAINBOW_SHOT_FPS = 60;
+export const RAINBOW_SHOT_FRAMES = RAINBOW_BULLET_TINTS.map((tint, i) => ({
+  tint,
+  flicker: ANIMS.invaderBulletFlicker.frames[
+    Math.floor(i / 4) % ANIMS.invaderBulletFlicker.frames.length
+  ],
+}));
 
 const ENEMY_FRAMES: Record<EnemyKind, string[]> = {
   eyeDude: ANIMS.eyeDudeFlap.frames.map((_, i) => F.eyeDude(i)),
@@ -337,6 +379,60 @@ export async function buildArt(): Promise<LevelArt> {
       `${devil.art.file}#${fi}`,
     );
   }
+  // The two Invaders' flaps (their hit frames are the same body flashed red,
+  // which the runtime has no stance for), and the invader bullet blown up to
+  // the size each drops it at: white for the CoolInvader, the eight tints
+  // for the RainbowInvader.
+  const cool = await sheet("coolInvader");
+  ANIMS.coolInvaderFlap.frames.forEach((fi, i) =>
+    add(
+      F.coolInvader(i),
+      toFieldArt(
+        gridFrame(cool.raster, cool.art, fi),
+        DRAW_SCALE.coolInvader,
+        true,
+      ),
+      `${cool.art.file}#${fi}`,
+    )
+  );
+  const rainbow = await sheet("rainbowInvader");
+  ANIMS.rainbowInvaderFlap.frames.forEach((fi, i) =>
+    add(
+      F.rainbowInvader(i),
+      toFieldArt(
+        gridFrame(rainbow.raster, rainbow.art, fi),
+        DRAW_SCALE.rainbowInvader,
+        true,
+      ),
+      `${rainbow.art.file}#${fi}`,
+    )
+  );
+  ANIMS.invaderBulletFlicker.frames.forEach((fi, i) =>
+    add(
+      F.coolShot(i),
+      toFieldArt(
+        gridFrame(shot.raster, shot.art, fi),
+        INVADER_BOSSES.cool.bulletScale,
+        true,
+      ),
+      `${shot.art.file}#${fi}`,
+    )
+  );
+  RAINBOW_SHOT_FRAMES.forEach(({ tint, flicker }, i) =>
+    add(
+      F.rainbowShot(i),
+      tinted(
+        toFieldArt(
+          gridFrame(shot.raster, shot.art, flicker),
+          INVADER_BOSSES.rainbow.bulletScale,
+          true,
+        ),
+        tint,
+      ),
+      `${shot.art.file}#${flicker}`,
+    )
+  );
+
   const fire = await sheet("devilFire");
   ANIMS.devilFireBurn.frames.forEach((fi, i) =>
     add(
@@ -737,9 +833,23 @@ function enemyRecord(e: CompiledEnemy): Json {
 const repeatEach = (names: string[], n: number) =>
   names.flatMap((name) => new Array(n).fill(name));
 
-/** The RedDevil and its butt-devils, as boss9. */
-export function redDevilRecord(): Json {
-  const totalHp = BOSS_HP + BUTT_DEVIL_COUNT * BUTT_DEVIL_HP;
+/**
+ * How much of its source hp a boss has on stage s (0-based): two fifths on
+ * the first stage, rising evenly to the whole of it on the last. The source
+ * meets each boss once, after ten levels, at BOSS_HP; one a stage at that
+ * figure would have the opening stage end in the longest fight of the game.
+ */
+export function bossHpScale(stage: number): number {
+  return 0.4 + 0.6 * stage / (STAGES.length - 1);
+}
+const scaledHp = (hp: number, stage: number) =>
+  Math.max(1, Math.round(hp * bossHpScale(stage)));
+
+/** The RedDevil and its butt-devils, scaled to its stage. */
+export function redDevilRecord(stage = STAGES.length - 1): Json {
+  const bossHp = scaledHp(BOSS_HP, stage);
+  const devilHp = scaledHp(BUTT_DEVIL_HP, stage);
+  const totalHp = bossHp + BUTT_DEVIL_COUNT * devilHp;
   // The runtime turns a boss stance frame every 150 ms; the flap is 2 fps.
   const flap = repeatEach(ANIMS.redDevilFlap.frames.map(F.redDevil), 3);
   const fire = ANIMS.devilFireBurn.frames.map((_, i) => F.devilFire(i));
@@ -790,8 +900,7 @@ export function redDevilRecord(): Json {
       spgage: 1,
     },
     stage2: {
-      hpBelow: Math.round((BUTT_DEVIL_COUNT * BUTT_DEVIL_HP / totalHp) * 1e4) /
-        1e4,
+      hpBelow: Math.round((BUTT_DEVIL_COUNT * devilHp / totalHp) * 1e4) / 1e4,
       attackPattern: "boss1",
       anim: {
         morph: [
@@ -812,6 +921,74 @@ export function redDevilRecord(): Json {
       },
     },
   };
+}
+
+/**
+ * The CoolInvader or the RainbowInvader, scaled to its stage. The source's
+ * GenericEnemy drifts sideways, bounces off the walls and drops a huge
+ * invader bullet straight down every two seconds; Barlog's routine
+ * (`"boss1"`) is the stock one that slides across and drops straight shots,
+ * so the Invaders fly it: its reposition and its slide to the ship each end
+ * in a straight shot, about a second apart, and its dive stands in for a
+ * drift that reaches the ship. The flap is the idle stance; the bullet is
+ * the invader's own, blown up to the source's size, in the eight tints for
+ * the RainbowInvader (RAINBOW_SHOT_FRAMES).
+ */
+export function invaderRecord(kind: InvaderBossKind, stage: number): Json {
+  const flap = kind === "cool"
+    ? repeatEach(
+      ANIMS.coolInvaderFlap.frames.map((_, i) => F.coolInvader(i)),
+      3,
+    )
+    : repeatEach(
+      ANIMS.rainbowInvaderFlap.frames.map((_, i) => F.rainbowInvader(i)),
+      3,
+    );
+  const bullet = kind === "cool"
+    ? {
+      texture: ANIMS.invaderBulletFlicker.frames.map((_, i) => F.coolShot(i)),
+      frameRate: ANIMS.invaderBulletFlicker.fps,
+    }
+    : {
+      texture: RAINBOW_SHOT_FRAMES.map((_, i) => F.rainbowShot(i)),
+      frameRate: RAINBOW_SHOT_FPS,
+    };
+  return {
+    name: kind === "cool" ? "coolInvader" : "rainbowInvader",
+    attackPattern: "boss1",
+    hp: scaledHp(BOSS_HP, stage),
+    score: BOSS_SCORE,
+    spgage: 30,
+    interval: 200,
+    shadowReverse: false,
+    shadowOffsetY: SHADOW_PARK,
+    texture: flap,
+    anim: { idle: flap },
+    bulletData: {
+      ...bullet,
+      speed: tickSpeed(INVADER_BOSS_BULLET_SPEED),
+      damage: 1,
+      // The source's player shots pass through it; the runtime's are spent
+      // on whatever enemy bullet they meet, so a bullet this big is given
+      // the beam's hp and score: it can be shot down, as DevilBlast can.
+      hp: 10,
+      score: 100,
+      spgage: 3,
+    },
+  };
+}
+
+/** Which of the roster ends stage s, 0-based: the roster turns each stage. */
+export function bossKindFor(stage: number): (typeof BOSS_ROSTER)[number] {
+  return BOSS_ROSTER[stage % BOSS_ROSTER.length];
+}
+
+/** The boss record for stage s. */
+export function bossRecord(stage: number): Json {
+  const kind = bossKindFor(stage);
+  return kind === "redDevil"
+    ? redDevilRecord(stage)
+    : invaderRecord(kind, stage);
 }
 
 export function playerRecords(): { playerData: Json; playerData2: Json } {
@@ -920,6 +1097,8 @@ export async function buildLevel(): Promise<Build> {
 
   const packed = packFrames(art.frames);
   const { playerData, playerData2 } = playerRecords();
+  const bossData: Json = {};
+  for (const st of stages) bossData[`boss${st.stage}`] = bossRecord(st.stage);
   const record: Json = {
     name: LEVEL,
     title: TITLE,
@@ -937,7 +1116,7 @@ export async function buildLevel(): Promise<Build> {
     waveInterval: WAVE_INTERVAL,
     stages: stageRecords,
     enemyData,
-    bossData: { boss9: redDevilRecord() },
+    bossData,
     playerData,
     playerData2,
     atlasImageDataURL: await sheetDataUrl(packed.sheet),
@@ -996,7 +1175,13 @@ export function summary(b: Build): Json {
         Math.max(...s.enemies.map((e) => e.maxVisibleError)) * 100,
       ) / 100,
     })),
-    boss: "boss9 redDevil (Fang), stage2 butt-devils (Barlog)",
+    bosses: b.stages.map((s) => {
+      const boss = b.record.bossData[`boss${s.stage}`];
+      return `boss${s.stage} ${boss.name} (${boss.attackPattern}) hp ${boss.hp}` +
+        (boss.stage2
+          ? `, stage2 butt-devils (${boss.stage2.attackPattern})`
+          : "");
+    }),
     frames: b.frameCount,
     sheet: b.sheet,
     bytes: {
