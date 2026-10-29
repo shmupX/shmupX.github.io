@@ -424,7 +424,8 @@ export async function resolveFrame(
 }
 
 /**
- * Pack rasters into one sheet by shelf rows, tallest first.
+ * Pack rasters into one sheet by shelf rows, tallest first, `sheetWidth`
+ * wide at most (a frame wider than that gets a row to itself).
  *
  * Not a clever packer — the sheets here are a handful of sprites, and every
  * byte of the result is base64'd into a level record, so predictability beats
@@ -432,6 +433,7 @@ export async function resolveFrame(
  */
 export function packFrames(
   entries: ResolvedFrame[],
+  sheetWidth = SHEET_WIDTH,
 ): { sheet: Raster; json: AtlasJson } {
   const order = entries
     .map((entry, index) => ({ entry, index }))
@@ -443,7 +445,7 @@ export function packFrames(
   let penX = 0, penY = 0, rowH = 0, width = 0;
   for (const { entry } of order) {
     const { width: w, height: h } = entry.raster;
-    if (penX > 0 && penX + w > SHEET_WIDTH) {
+    if (penX > 0 && penX + w > sheetWidth) {
       penX = 0;
       penY += rowH + PAD;
       rowH = 0;

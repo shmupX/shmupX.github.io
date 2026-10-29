@@ -38,16 +38,24 @@ import {
   buildArt,
   buildLevel,
   buildStage,
+  CUTIN,
+  CUTIN_COUNT,
   enemyLetters,
   fireGateFrames,
   HORIZON_MS,
   SEED,
+  TEXTURE_LIMIT,
 } from "../scripts/95-demo/build-level.ts";
-import { atlasFrame, loadArt, toFieldArt } from "../scripts/95-demo/art.ts";
+import {
+  atlasFrame,
+  gridFrame,
+  loadArt,
+  toFieldArt,
+} from "../scripts/95-demo/art.ts";
 import { gameEntries, ICON, TITLE } from "../scripts/95-demo/build-zip.ts";
 import { LEVEL_PATCH } from "../scripts/2019/build-zip.ts";
 import { LAUNCHER_MARKER } from "../lib/launcher-inject.ts";
-import { decodePng } from "@shmupx/shmup-harbor/png";
+import { decodeDataUrl, decodePng } from "@shmupx/shmup-harbor/png";
 import { cut, rotateCcw, rotateCw } from "@shmupx/shmup-harbor/raster";
 
 const read = (p: string) =>
@@ -523,6 +531,43 @@ Deno.test("the 95-demo record: ten stages, its art, its boss", async () => {
   assertEquals(rainbow.bulletData.texture.length, RAINBOW_BULLET_TINTS.length);
   assertEquals(rainbow.bulletData.frameRate, 60);
   assertEquals(record.bossData.boss8.hp, 47);
+
+  // The SP bomb's cut-in is rando's nine — what every custom game plays —
+  // carried as the level's own under the stock names, so the eShop's web
+  // build, a plain page the loader does not paint (neither ?level= nor an
+  // exported app), shows them too: byte for byte the sheet's cells. The
+  // sheet is as wide as the stock atlas it stacks under, so they take two
+  // rows of the texture, not nine, and the stack fits a phone.
+  assertEquals(record.ownCutin, true);
+  const stock =
+    JSON.parse(await read("static/games/2028-ai/assets/game_asset.json")).meta
+      .size;
+  const sheet = await decodeDataUrl(record.atlasImageDataURL);
+  const rando = await decodePng(
+    await Deno.readFile(
+      new URL(
+        "../static/games/2028-ai/assets/img/cutinCustom.png",
+        import.meta.url,
+      ),
+    ),
+  );
+  const rows = new Set<number>();
+  for (let i = 0; i < CUTIN_COUNT; i++) {
+    const rect = record.atlasFrames[`cutin${i}․gif`].frame;
+    assertEquals([rect.w, rect.h], [CUTIN.frameW, CUTIN.frameH], `cutin${i}`);
+    rows.add(rect.y);
+    assertEquals(
+      cut(sheet, rect).data,
+      gridFrame(rando, CUTIN, i).data,
+      `cutin${i}`,
+    );
+  }
+  assertEquals(rows.size, 2);
+  assert(sheet.width <= stock.w, `${sheet.width} px wide: it widens the stack`);
+  assert(
+    stock.h + sheet.height <= TEXTURE_LIMIT,
+    `${stock.h + sheet.height} rows`,
+  );
 
   // keys RTDB takes, art the runtime finds
   assert(!JSON.stringify(Object.keys(record.atlasFrames)).includes("."));

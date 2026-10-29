@@ -371,6 +371,11 @@ they are written out in full.
     and is never painted: `2019-PS2` carries the 2019 game's nine frames in
     its atlas, which are 2028.Ai's pixel for pixel and would otherwise be left
     out as a copy. The editor loads and saves the flag beside `noStory`.
+    `95-demo` carries rando's nine itself, in its own atlas under the stock
+    names, with `ownCutin: true`: its eShop web build is a standalone page
+    that bakes its `foo.json` in as the offline level, neither a `?level=`
+    visit nor an exported app, so the loader would not paint them there
+    (`scripts/95-demo/build-level.ts`, `CUTIN_SHEET`).
     `tests/custom_cutin_test.ts` pins both copies. Mirrors
     `level-loader.js`.
   - `DEZA_ROLL_STRIP_DROP`: the staff roll's credit plates land with their
@@ -6007,6 +6012,14 @@ the one fixed speed.
   frames upright. The runtime measures a player shot by its unturned frame, as
   it does the stock one, so the dart hits as a 12 × 5 box where the source's
   is 5 × 12.
+- The source has no bomb. shmupX's SP bomb stays, worth a butt-devil
+  (`spDamage`), and its cut-in is rando's nine frames, the ones every custom
+  game plays, carried in the record's own sheet under the stock names with
+  `ownCutin: true` (`CUTIN_SHEET`): the eShop's web build is a standalone
+  page the loader would not paint them onto (**The eShop**, above). The sheet
+  is packed as wide as the stock atlas it stacks under, so the nine take two
+  rows of the texture rather than nine, and the build refuses a stack taller
+  than a phone's 4096 (`TEXTURE_LIMIT`).
 
 ## shmupX's corner of the shared database
 

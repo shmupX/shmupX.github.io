@@ -61,6 +61,11 @@
  * - `endsOnClear: true`: a stage ends the moment the field is empty, as a
  *   source level does when its last enemy dies (game.bundle.js reads it; a
  *   runtime without it ends each stage after its last enemy has flown off).
+ * - `ownCutin: true` and, in the sheet, the SP bomb's cut-in: rando's nine
+ *   frames under the stock names (CUTIN_SHEET). The source has no bomb and
+ *   no cut-in, and the runtime paints rando's over 2028.Ai's for a custom
+ *   game anyway — but only on a page it knows to be one, and the eShop's
+ *   web build is not, so the record carries them.
  *
  * The source's later cycles are not here: a cloud game has ten stages, and
  * those ten are the source's own ten levels, so the foo raiders that only
@@ -76,7 +81,7 @@
  */
 
 import { parseArgs } from "@std/cli/parse-args";
-import type { Raster } from "@shmupx/shmup-harbor/png";
+import { decodePng, type Raster } from "@shmupx/shmup-harbor/png";
 import { rotateCw } from "@shmupx/shmup-harbor/raster";
 import { validateGameJson } from "@shmupx/shmup-engine/game-schema";
 import { gameIdForLevel } from "../../static/phaser-plugins/level-loader.js";
@@ -106,6 +111,7 @@ import {
   INVADER_BOSSES,
   type InvaderBossKind,
   RAINBOW_BULLET_TINTS,
+  type SheetArt,
   SHEETS,
   SOURCE,
   STAGES,
@@ -194,7 +200,13 @@ function tickSpeed(pxPerSecond: number): number {
     1000;
 }
 
-/** Frame names: no extension, so RTDB keys need no encoding. */
+/**
+ * Frame names: no extension, so RTDB keys need no encoding — except the SP
+ * bomb's cut-in, which takes the stock atlas's own names (cutin0.gif ..
+ * cutin8.gif) because it replaces those frames: the runtime asks game_asset
+ * for exactly them (doSpFire), and a level frame of the same name wins the
+ * lookup once the level's sheet is stacked (_stackAtlas in level-loader.js).
+ */
 const F = {
   eyeDude: (i: number) => `ei95EyeDude${i}`,
   pinkBunny: (i: number) => `ei95PinkBunny${i}`,
@@ -213,7 +225,44 @@ const F = {
   coolShot: (i: number) => `ei95CoolInvaderShot${i}`,
   rainbowInvader: (i: number) => `ei95RainbowInvader${i}`,
   rainbowShot: (i: number) => `ei95RainbowInvaderShot${i}`,
+  cutin: (i: number) => `cutin${i}.gif`,
 };
+
+/**
+ * The SP bomb's cut-in: rando's nine frames, the ones the runtime paints
+ * over 2028.Ai's for every custom game that drew none (applyCustomCutin in
+ * level-loader.js reads them off this 3x3 sheet). The source has no bomb
+ * and no cut-in, so the conversion takes those, as any custom game gets —
+ * but carries them in its own atlas, under `ownCutin`, because the loader
+ * paints only a level named on the URL or an exported app, and the eShop's
+ * web build (build-zip.ts) is neither: a standalone page that bakes its
+ * foo.json in as the offline level, which played 2028.Ai's cut-in.
+ */
+const CUTIN_SHEET = new URL(
+  "../../static/games/2028-ai/assets/img/cutinCustom.png",
+  import.meta.url,
+);
+/** The sheet's grid: three 256x142 frames to a row, cutin0 top left. */
+export const CUTIN: SheetArt = {
+  file: "cutinCustom.png",
+  frameW: 256,
+  frameH: 142,
+};
+export const CUTIN_COUNT = 9;
+
+/**
+ * The stock atlas the level's sheet is stacked under, on one canvas as wide
+ * as the wider of the two (_stackAtlas): a sheet narrower than it costs the
+ * same width and only more height, so the level's is packed to its width.
+ * At the packer's own 512 the nine 256-wide cut-in frames would sit one to
+ * a row, 1300 rows of a phone's texture; across 2048 they are two.
+ */
+const STOCK_ATLAS = new URL(
+  "../../static/games/2028-ai/assets/game_asset.json",
+  import.meta.url,
+);
+/** The tallest texture a phone's GPU takes; the stack must fit it. */
+export const TEXTURE_LIMIT = 4096;
 
 /**
  * The RainbowInvader's bullet picks one of eight tints at random every
@@ -493,6 +542,13 @@ export async function buildArt(): Promise<LevelArt> {
       `${poof.art.file}#${fi}`,
     )
   );
+
+  // rando's cut-in as it is: its frames are already 256x142 on the 256-wide
+  // field, cut straight off the sheet, nothing resampled.
+  const cutin = await decodePng(await Deno.readFile(CUTIN_SHEET));
+  for (let i = 0; i < CUTIN_COUNT; i++) {
+    add(F.cutin(i), gridFrame(cutin, CUTIN, i), `${CUTIN.file}#${i}`);
+  }
 
   const size = (name: string) => {
     const f = frames.find((x) => x.name === name)!;
@@ -997,7 +1053,8 @@ export function playerRecords(): { playerData: Json; playerData2: Json } {
       name: "ei95Fighter",
       texture: [F.fighter],
       maxHp: STARTING_LIVES,
-      // The source has no bomb; shmupX's SP bomb stays, worth a butt-devil.
+      // The source has no bomb; shmupX's SP bomb stays, worth a butt-devil,
+      // with rando's cut-in (CUTIN_SHEET, `ownCutin` on the record).
       spDamage: BUTT_DEVIL_HP,
       speed: 150,
       defaultShootName: "normal",
@@ -1095,7 +1152,9 @@ export async function buildLevel(): Promise<Build> {
     };
   }
 
-  const packed = packFrames(art.frames);
+  // As wide as the stock atlas the sheet is stacked under (STOCK_ATLAS).
+  const stockAtlas = JSON.parse(await Deno.readTextFile(STOCK_ATLAS));
+  const packed = packFrames(art.frames, stockAtlas.meta.size.w);
   const { playerData, playerData2 } = playerRecords();
   const bossData: Json = {};
   for (const st of stages) bossData[`boss${st.stage}`] = bossRecord(st.stage);
@@ -1105,7 +1164,10 @@ export async function buildLevel(): Promise<Build> {
     gameId: gameIdForLevel({ name: LEVEL }),
     meta: { version: "1.0", source: "95-demo-sp", origin: SOURCE.repo },
     noStory: true,
-    ownCutin: false,
+    // The cut-in is the level's own — rando's nine, in its sheet
+    // (CUTIN_SHEET) — so the loader never paints over it, and every page
+    // that plays the record shows it, the eShop's web build included.
+    ownCutin: true,
     ownItems: false,
     godMode: false,
     endsOnClear: true,
@@ -1132,6 +1194,14 @@ export async function buildLevel(): Promise<Build> {
     !packed.json.frames[n]
   );
   if (missing.length) throw new Error(`frames not packed: ${missing}`);
+  // The texture the runtime draws from is the stock atlas with this sheet
+  // under it (_stackAtlas), and a phone's GPU takes only so tall a one.
+  const stacked = stockAtlas.meta.size.h + packed.sheet.height;
+  if (stacked > TEXTURE_LIMIT) {
+    throw new Error(
+      `the stacked atlas is ${stacked} rows tall; phones take ${TEXTURE_LIMIT}`,
+    );
+  }
   const bad = badRtdbKey(record);
   if (bad) throw new Error(`RTDB refuses the key at ${bad}`);
   // The runtime lays playerData over the stock ship's (mergeRecipe), so the
